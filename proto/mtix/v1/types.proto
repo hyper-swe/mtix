@@ -1,0 +1,288 @@
+// types.proto defines shared message types and enums for mtix gRPC API per FR-8.2.
+// All types mirror the Go model package for wire compatibility.
+syntax = "proto3";
+
+package mtix.v1;
+
+option go_package = "github.com/hyper-swe/mtix/internal/api/grpc/pb";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// --- Enums ---
+
+// Status represents the lifecycle state of a node per FR-3.5.
+// 7 valid states matching model.Status.
+enum Status {
+  STATUS_UNSPECIFIED  = 0;
+  STATUS_OPEN         = 1;
+  STATUS_IN_PROGRESS  = 2;
+  STATUS_BLOCKED      = 3;
+  STATUS_DONE         = 4;
+  STATUS_DEFERRED     = 5;
+  STATUS_CANCELLED    = 6;
+  STATUS_INVALIDATED  = 7;
+}
+
+// NodeType represents the tier classification per FR-1.2.
+enum NodeType {
+  NODE_TYPE_UNSPECIFIED = 0;
+  NODE_TYPE_STORY       = 1;
+  NODE_TYPE_EPIC        = 2;
+  NODE_TYPE_ISSUE       = 3;
+  NODE_TYPE_MICRO       = 4;
+  NODE_TYPE_AUTO        = 5;
+}
+
+// IssueType classifies the nature of work.
+enum IssueType {
+  ISSUE_TYPE_UNSPECIFIED = 0;
+  ISSUE_TYPE_BUG        = 1;
+  ISSUE_TYPE_FEATURE    = 2;
+  ISSUE_TYPE_TASK       = 3;
+  ISSUE_TYPE_CHORE      = 4;
+  ISSUE_TYPE_REFACTOR   = 5;
+  ISSUE_TYPE_TEST       = 6;
+  ISSUE_TYPE_DOC        = 7;
+}
+
+// DepType represents dependency relationship types per FR-4.2.
+enum DepType {
+  DEP_TYPE_UNSPECIFIED     = 0;
+  DEP_TYPE_BLOCKS          = 1;
+  DEP_TYPE_RELATED         = 2;
+  DEP_TYPE_DISCOVERED_FROM = 3;
+  DEP_TYPE_DUPLICATES      = 4;
+}
+
+// AgentState represents the current state of an LLM agent.
+enum AgentState {
+  AGENT_STATE_UNSPECIFIED = 0;
+  AGENT_STATE_IDLE        = 1;
+  AGENT_STATE_WORKING     = 2;
+  AGENT_STATE_STUCK       = 3;
+  AGENT_STATE_DONE        = 4;
+}
+
+// ActivityType represents the type of an activity entry per FR-3.6.
+// 9 valid types matching model.ActivityType.
+enum ActivityType {
+  ACTIVITY_TYPE_UNSPECIFIED   = 0;
+  ACTIVITY_TYPE_COMMENT       = 1;
+  ACTIVITY_TYPE_STATUS_CHANGE = 2;
+  ACTIVITY_TYPE_NOTE          = 3;
+  ACTIVITY_TYPE_ANNOTATION    = 4;
+  ACTIVITY_TYPE_UNCLAIM       = 5;
+  ACTIVITY_TYPE_CLAIM         = 6;
+  ACTIVITY_TYPE_SYSTEM        = 7;
+  ACTIVITY_TYPE_PROMPT_EDIT   = 8;
+  ACTIVITY_TYPE_CREATED       = 9;
+}
+
+// Priority represents the importance of a node (1=critical through 5=backlog).
+enum Priority {
+  PRIORITY_UNSPECIFIED = 0;
+  PRIORITY_CRITICAL    = 1;
+  PRIORITY_HIGH        = 2;
+  PRIORITY_MEDIUM      = 3;
+  PRIORITY_LOW         = 4;
+  PRIORITY_BACKLOG     = 5;
+}
+
+// EventType identifies the kind of event broadcast per FR-7.5a.
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED        = 0;
+  EVENT_TYPE_NODE_CREATED       = 1;
+  EVENT_TYPE_NODE_UPDATED       = 2;
+  EVENT_TYPE_NODE_DELETED       = 3;
+  EVENT_TYPE_NODE_UNDELETED     = 4;
+  EVENT_TYPE_STATUS_CHANGED     = 5;
+  EVENT_TYPE_PROGRESS_CHANGED   = 6;
+  EVENT_TYPE_NODE_CLAIMED       = 7;
+  EVENT_TYPE_NODE_UNCLAIMED     = 8;
+  EVENT_TYPE_NODE_CANCELLED     = 9;
+  EVENT_TYPE_NODES_INVALIDATED  = 10;
+  EVENT_TYPE_DEPENDENCY_ADDED   = 11;
+  EVENT_TYPE_DEPENDENCY_REMOVED = 12;
+  EVENT_TYPE_AGENT_STATE        = 13;
+  EVENT_TYPE_AGENT_STUCK        = 14;
+}
+
+// --- Messages ---
+
+// Node represents a single item in the mtix hierarchy per FR-3.1.
+// All 38 stored fields from the requirements.
+message Node {
+  // Identity
+  string id        = 1;
+  string parent_id = 2;
+  string project   = 3;
+  int32  depth     = 4;
+  int32  seq       = 5;
+
+  // Content
+  string title       = 6;
+  string description = 7;
+  string prompt      = 8;
+  string acceptance  = 9;
+
+  // Classification
+  NodeType  node_type  = 10;
+  IssueType issue_type = 11;
+  Priority  priority   = 12;
+  repeated string labels = 13;
+
+  // State
+  Status status          = 14;
+  double progress        = 15;
+  Status previous_status = 16;
+
+  // Assignment
+  string     assignee    = 17;
+  string     creator     = 18;
+  AgentState agent_state = 19;
+
+  // Timestamps
+  google.protobuf.Timestamp created_at  = 20;
+  google.protobuf.Timestamp updated_at  = 21;
+  google.protobuf.Timestamp closed_at   = 22;
+  google.protobuf.Timestamp defer_until = 23;
+
+  // Tracking
+  optional int32 estimate_min = 24;
+  optional int32 actual_min   = 25;
+  double weight               = 26;
+  string content_hash         = 27;
+
+  // Code References
+  repeated CodeRef code_refs    = 28;
+  repeated string  commit_refs  = 29;
+
+  // Prompt Steering
+  repeated Annotation annotations      = 30;
+  google.protobuf.Timestamp invalidated_at = 31;
+  string invalidated_by                    = 32;
+  string invalidation_reason               = 33;
+
+  // Soft-Delete
+  google.protobuf.Timestamp deleted_at = 34;
+  string deleted_by                    = 35;
+
+  // Metadata
+  google.protobuf.Struct metadata = 36;
+  string session_id               = 37;
+}
+
+// CodeRef represents a file/line/function reference per FR-3.2.
+message CodeRef {
+  string file     = 1;
+  int32  line     = 2;
+  string function = 3;
+  string snippet  = 4;
+}
+
+// Annotation represents a human annotation on a node's prompt per FR-3.4.
+message Annotation {
+  string id                            = 1;
+  string author                        = 2;
+  string text                          = 3;
+  google.protobuf.Timestamp created_at = 4;
+  bool   resolved                      = 5;
+}
+
+// Dependency represents a cross-branch relationship per FR-4.4.
+message Dependency {
+  string  from_id                       = 1;
+  string  to_id                         = 2;
+  DepType dep_type                      = 3;
+  google.protobuf.Timestamp created_at  = 4;
+  string  created_by                    = 5;
+  google.protobuf.Struct metadata       = 6;
+}
+
+// ActivityEntry represents a single event in a node's activity stream per FR-3.6.
+message ActivityEntry {
+  string       id                            = 1;
+  ActivityType type                          = 2;
+  string       author                        = 3;
+  string       text                          = 4;
+  google.protobuf.Timestamp created_at       = 5;
+  google.protobuf.Struct metadata            = 6;
+}
+
+// ContextChain represents the assembled context chain for prompt assembly per FR-6.2.
+message ContextChain {
+  repeated Node ancestors = 1;
+  Node          self      = 2;
+  repeated Node siblings  = 3;
+  repeated Node children  = 4;
+}
+
+// ContextResponse contains the full context response per FR-6.3.
+message ContextResponse {
+  ContextChain chain           = 1;
+  string       assembled_prompt = 2;
+}
+
+// SessionSummary contains session statistics for an agent.
+message SessionSummary {
+  string agent_id                       = 1;
+  string session_id                     = 2;
+  google.protobuf.Timestamp started_at  = 3;
+  google.protobuf.Timestamp ended_at    = 4;
+  int32  nodes_created                  = 5;
+  int32  nodes_completed                = 6;
+  int32  transitions                    = 7;
+  double duration_seconds               = 8;
+}
+
+// AgentInfo represents agent metadata.
+message AgentInfo {
+  string     id                            = 1;
+  AgentState state                         = 2;
+  string     current_node                  = 3;
+  google.protobuf.Timestamp last_heartbeat = 4;
+  google.protobuf.Struct metadata          = 5;
+}
+
+// ProgressResponse contains progress calculation results per FR-5.7.
+message ProgressResponse {
+  string node_id           = 1;
+  double progress          = 2;
+  int32  done_count        = 3;
+  int32  total_count       = 4;
+  int32  invalidated_count = 5;  // Per FR-5.6a
+}
+
+// StatsResponse contains project-level statistics.
+message StatsResponse {
+  int32 total_nodes    = 1;
+  map<string, int32> by_status = 2;
+  int32 blocked_count  = 3;
+  int32 stale_count    = 4;
+  int32 orphan_count   = 5;
+}
+
+// SearchResult wraps paginated node results.
+message SearchResult {
+  repeated Node nodes = 1;
+  int32  total        = 2;
+  bool   has_more     = 3;
+  int32  offset       = 4;
+  int32  limit        = 5;
+}
+
+// Event represents a domain event for real-time streaming per FR-7.5a.
+message Event {
+  EventType type                        = 1;
+  string    node_id                     = 2;
+  google.protobuf.Timestamp timestamp   = 3;
+  string    author                      = 4;
+  google.protobuf.Struct data           = 5;
+}
+
+// SubscriptionFilter defines optional client-side event filtering per FR-7.5a.
+message SubscriptionFilter {
+  string          under  = 1;  // Only events under this node prefix
+  repeated string events = 2;  // Whitelist of event type names
+}

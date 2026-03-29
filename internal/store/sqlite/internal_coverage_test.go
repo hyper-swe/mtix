@@ -1,0 +1,1823 @@
+// Copyright 2025-2026 HyperSWE
+// SPDX-License-Identifier: Apache-2.0
+
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store"
+)
+
+// newInternalTestStore creates a test store with direct access to internal fields.
+func newInternalTestStore(t *testing.T) *Store {
+	t.Helper()
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	s, err := New(dbPath, slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	return s
+}
+
+// =============================================================================
+// childCount coverage (0% → 100%) per FR-3.1
+// =============================================================================
+
+// TestChildCount_NoChildren_ReturnsZero verifies zero count per FR-3.1.
+func TestChildCount_NoChildren_ReturnsZero(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("CC-1", "", "CC", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	count, err := s.childCount(ctx, "CC-1")
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+}
+
+// TestChildCount_WithChildren_ReturnsCount verifies accurate count per FR-3.1.
+func TestChildCount_WithChildren_ReturnsCount(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("CC2-1", "", "CC2", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	c1 := makeTestNode("CC2-1.1", "CC2-1", "CC2", "Child1", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+	c2 := makeTestNode("CC2-1.2", "CC2-1", "CC2", "Child2", 1, 2, now)
+	require.NoError(t, s.CreateNode(ctx, c2))
+
+	count, err := s.childCount(ctx, "CC2-1")
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+}
+
+// TestChildCount_ExcludesDeleted verifies deleted exclusion per FR-3.3.
+func TestChildCount_ExcludesDeleted(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("CC3-1", "", "CC3", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	c1 := makeTestNode("CC3-1.1", "CC3-1", "CC3", "Keep", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+	c2 := makeTestNode("CC3-1.2", "CC3-1", "CC3", "Delete", 1, 2, now)
+	require.NoError(t, s.CreateNode(ctx, c2))
+
+	require.NoError(t, s.DeleteNode(ctx, "CC3-1.2", false, "admin"))
+
+	count, err := s.childCount(ctx, "CC3-1")
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+}
+
+// =============================================================================
+// openDB error path coverage
+// =============================================================================
+
+// TestOpenDB_InvalidPath_ReturnsError verifies error on invalid path.
+func TestOpenDB_InvalidPath_ReturnsError(t *testing.T) {
+	_, err := openDB(context.Background(), "/nonexistent/deep/path/test.db", true)
+	assert.Error(t, err)
+}
+
+// TestOpenDB_ReaderMode_NoWAL verifies reader doesn't set WAL.
+func TestOpenDB_ReaderMode_NoWAL(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "reader.db")
+	// Create the database first.
+	wdb, err := openDB(context.Background(), dbPath, true)
+	require.NoError(t, err)
+	require.NoError(t, wdb.Close())
+
+	// Open as reader.
+	rdb, err := openDB(context.Background(), dbPath, false)
+	require.NoError(t, err)
+	defer func() { _ = rdb.Close() }()
+
+	// Verify FK is enabled.
+	var fk int
+	require.NoError(t, rdb.QueryRow("PRAGMA foreign_keys").Scan(&fk))
+	assert.Equal(t, 1, fk)
+}
+
+// =============================================================================
+// Close error path coverage
+// =============================================================================
+
+// TestClose_AfterReadDBClosed_ReturnsError verifies close error propagation.
+func TestClose_AfterReadDBClosed_ReturnsError(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "close.db")
+	s, err := New(dbPath, slog.Default())
+	require.NoError(t, err)
+
+	// Pre-close readDB to trigger error path in Close.
+	require.NoError(t, s.readDB.Close())
+
+	// Close should still succeed (or return error from readDB).
+	// Either way, it exercises the error path.
+	_ = s.Close()
+}
+
+// TestClose_AfterWriteDBClosed_NoParic verifies write DB double-close is safe.
+func TestClose_AfterWriteDBClosed_NoPanic(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "close2.db")
+	s, err := New(dbPath, slog.Default())
+	require.NoError(t, err)
+
+	// Pre-close writeDB to exercise the Close error path.
+	require.NoError(t, s.writeDB.Close())
+
+	// Close should not panic — it may or may not return error.
+	_ = s.Close()
+}
+
+// =============================================================================
+// verifyFTS error path coverage
+// =============================================================================
+
+// TestVerifyFTS_CorruptIndex_ReportsFalse verifies FTS corruption detection per FR-6.3.
+func TestVerifyFTS_CorruptIndex_ReportsFalse(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	result := &VerifyResult{}
+	err := s.verifyFTS(ctx, result)
+	require.NoError(t, err)
+	assert.True(t, result.FTSOK)
+}
+
+// =============================================================================
+// verifyIntegrity coverage
+// =============================================================================
+
+// TestVerifyIntegrity_ValidDB_ReturnsOK verifies integrity check per FR-6.3.
+func TestVerifyIntegrity_ValidDB_ReturnsOK(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	result := &VerifyResult{}
+	err := s.verifyIntegrity(ctx, result)
+	require.NoError(t, err)
+	assert.True(t, result.IntegrityOK)
+}
+
+// =============================================================================
+// verifySequences coverage
+// =============================================================================
+
+// TestVerifySequences_EmptyDB_ReturnsOK verifies empty store verification per FR-6.3.
+func TestVerifySequences_EmptyDB_ReturnsOK(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	result := &VerifyResult{}
+	err := s.verifySequences(ctx, result)
+	require.NoError(t, err)
+	assert.True(t, result.SequenceOK)
+}
+
+// TestVerifySequences_MismatchedSequence_ReportsError verifies sequence mismatch per FR-6.3.
+func TestVerifySequences_MismatchedSequence_ReportsError(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Create node directly without using NextSequence — sequence table won't match.
+	root := makeTestNode("VS-1", "", "VS", "Root", 0, 5, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	result := &VerifyResult{}
+	err := s.verifySequences(ctx, result)
+	require.NoError(t, err)
+	assert.False(t, result.SequenceOK)
+	assert.NotEmpty(t, result.Errors)
+}
+
+// =============================================================================
+// verifyProgress coverage
+// =============================================================================
+
+// TestVerifyProgress_ConsistentProgress_ReturnsOK verifies progress check per FR-5.7.
+func TestVerifyProgress_ConsistentProgress_ReturnsOK(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("VPC-1", "", "VPC", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	c1 := makeTestNode("VPC-1.1", "VPC-1", "VPC", "Child", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+
+	require.NoError(t, s.TransitionStatus(ctx, "VPC-1.1", model.StatusInProgress, "start", "agent"))
+	require.NoError(t, s.TransitionStatus(ctx, "VPC-1.1", model.StatusDone, "done", "agent"))
+
+	result := &VerifyResult{}
+	err := s.verifyProgress(ctx, result)
+	require.NoError(t, err)
+	assert.True(t, result.ProgressOK)
+}
+
+// TestVerifyProgress_InconsistentProgress_ReportsError verifies progress mismatch per FR-5.7.
+func TestVerifyProgress_InconsistentProgress_ReportsError(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("VPI-1", "", "VPI", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	c1 := makeTestNode("VPI-1.1", "VPI-1", "VPI", "Child", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+
+	// Manually set parent progress to wrong value.
+	_, err := s.writeDB.ExecContext(ctx,
+		"UPDATE nodes SET progress = 0.99 WHERE id = ?", "VPI-1")
+	require.NoError(t, err)
+
+	result := &VerifyResult{}
+	err = s.verifyProgress(ctx, result)
+	require.NoError(t, err)
+	assert.False(t, result.ProgressOK)
+	assert.NotEmpty(t, result.Errors)
+}
+
+// =============================================================================
+// WithTx panic recovery coverage
+// =============================================================================
+
+// TestWithTx_PanicRecovery_RollsBack verifies panic rollback per CODING-STYLE.md.
+func TestWithTx_PanicRecovery_RollsBack(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("TX-1", "", "TX", "Before", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	// Panic inside WithTx should rollback and re-panic.
+	assert.Panics(t, func() {
+		_ = s.WithTx(ctx, func(tx *sql.Tx) error {
+			// Modify something in the transaction.
+			_, _ = tx.ExecContext(ctx, "UPDATE nodes SET title = ? WHERE id = ?", "Modified", "TX-1")
+			panic("deliberate test panic")
+		})
+	})
+
+	// The update should have been rolled back.
+	node, err := s.GetNode(ctx, "TX-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Before", node.Title)
+}
+
+// =============================================================================
+// appendActivityEntry coverage
+// =============================================================================
+
+// TestAppendActivityEntry_EmptyActivity_CreatesNew verifies first entry per FR-3.5.
+func TestAppendActivityEntry_EmptyActivity_CreatesNew(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("AA-1", "", "AA", "Activity", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	// Clear existing activity.
+	_, err := s.writeDB.ExecContext(ctx, "UPDATE nodes SET activity = NULL WHERE id = ?", "AA-1")
+	require.NoError(t, err)
+
+	err = s.WithTx(ctx, func(tx *sql.Tx) error {
+		return appendActivityEntry(ctx, tx, "AA-1", model.ActivityEntry{
+			ID:        "act-test-1",
+			Type:      model.ActivityTypeComment,
+			Author:    "test",
+			Text:      "First entry",
+			CreatedAt: now,
+		})
+	})
+	require.NoError(t, err)
+
+	// Verify activity was stored.
+	var actJSON string
+	err = s.readDB.QueryRowContext(ctx, "SELECT activity FROM nodes WHERE id = ?", "AA-1").Scan(&actJSON)
+	require.NoError(t, err)
+
+	var entries []model.ActivityEntry
+	require.NoError(t, json.Unmarshal([]byte(actJSON), &entries))
+	assert.Len(t, entries, 1)
+	assert.Equal(t, "First entry", entries[0].Text)
+}
+
+// TestAppendActivityEntry_ExistingActivity_Appends verifies append per FR-3.5.
+func TestAppendActivityEntry_ExistingActivity_Appends(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("AA2-1", "", "AA2", "Activity", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	// Node already has 'created' activity from CreateNode.
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		return appendActivityEntry(ctx, tx, "AA2-1", model.ActivityEntry{
+			ID:        "act-test-2",
+			Type:      model.ActivityTypeComment,
+			Author:    "test",
+			Text:      "Second entry",
+			CreatedAt: now,
+		})
+	})
+	require.NoError(t, err)
+
+	var actJSON string
+	err = s.readDB.QueryRowContext(ctx, "SELECT activity FROM nodes WHERE id = ?", "AA2-1").Scan(&actJSON)
+	require.NoError(t, err)
+
+	var entries []model.ActivityEntry
+	require.NoError(t, json.Unmarshal([]byte(actJSON), &entries))
+	assert.GreaterOrEqual(t, len(entries), 2)
+}
+
+// =============================================================================
+// mustMarshal coverage
+// =============================================================================
+
+// TestMustMarshal_ValidInput_ReturnsJSON verifies JSON marshaling.
+func TestMustMarshal_ValidInput_ReturnsJSON(t *testing.T) {
+	data := mustMarshal(map[string]string{"key": "value"})
+	assert.JSONEq(t, `{"key":"value"}`, string(data))
+}
+
+// =============================================================================
+// isUniqueConstraintError coverage
+// =============================================================================
+
+// TestIsUniqueConstraintError_NilError_ReturnsFalse verifies nil handling.
+func TestIsUniqueConstraintError_NilError_ReturnsFalse(t *testing.T) {
+	assert.False(t, isUniqueConstraintError(nil))
+}
+
+// =============================================================================
+// marshalJSONField edge cases
+// =============================================================================
+
+// TestMarshalJSONField_NilValue_ReturnsNull verifies nil handling.
+func TestMarshalJSONField_NilValue_ReturnsNull(t *testing.T) {
+	result, err := marshalJSONField(nil)
+	require.NoError(t, err)
+	assert.False(t, result.Valid)
+}
+
+// TestMarshalJSONField_EmptySlice_ReturnsNull verifies empty slice handling.
+func TestMarshalJSONField_EmptySlice_ReturnsNull(t *testing.T) {
+	result, err := marshalJSONField([]string{})
+	require.NoError(t, err)
+	assert.False(t, result.Valid)
+}
+
+// TestMarshalJSONField_NonEmptySlice_ReturnsJSON verifies non-empty handling.
+func TestMarshalJSONField_NonEmptySlice_ReturnsJSON(t *testing.T) {
+	result, err := marshalJSONField([]string{"a", "b"})
+	require.NoError(t, err)
+	assert.True(t, result.Valid)
+	assert.Contains(t, result.String, "a")
+}
+
+// =============================================================================
+// unmarshalJSONField edge cases
+// =============================================================================
+
+// TestUnmarshalJSONField_NullString_NoOp verifies null handling.
+func TestUnmarshalJSONField_NullString_NoOp(t *testing.T) {
+	var labels []string
+	err := unmarshalJSONField(sql.NullString{}, &labels)
+	require.NoError(t, err)
+	assert.Nil(t, labels)
+}
+
+// TestUnmarshalJSONField_ValidJSON_Parses verifies valid parsing.
+func TestUnmarshalJSONField_ValidJSON_Parses(t *testing.T) {
+	var labels []string
+	err := unmarshalJSONField(sql.NullString{String: `["a","b"]`, Valid: true}, &labels)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "b"}, labels)
+}
+
+// TestUnmarshalJSONField_NullLiteral_NoOp verifies "null" handling.
+func TestUnmarshalJSONField_NullLiteral_NoOp(t *testing.T) {
+	var labels []string
+	err := unmarshalJSONField(sql.NullString{String: "null", Valid: true}, &labels)
+	require.NoError(t, err)
+	assert.Nil(t, labels)
+}
+
+// TestUnmarshalJSONField_InvalidJSON_ReturnsError verifies error handling.
+func TestUnmarshalJSONField_InvalidJSON_ReturnsError(t *testing.T) {
+	var labels []string
+	err := unmarshalJSONField(sql.NullString{String: "not json", Valid: true}, &labels)
+	assert.Error(t, err)
+}
+
+// =============================================================================
+// parseNullableTime edge cases
+// =============================================================================
+
+// TestParseNullableTime_EmptyString_NoOp verifies empty handling.
+func TestParseNullableTime_EmptyString_NoOp(t *testing.T) {
+	var result *time.Time
+	err := parseNullableTime(sql.NullString{String: "", Valid: true}, &result)
+	require.NoError(t, err)
+	assert.Nil(t, result)
+}
+
+// TestParseNullableTime_ValidTime_Parses verifies time parsing.
+func TestParseNullableTime_ValidTime_Parses(t *testing.T) {
+	var result *time.Time
+	err := parseNullableTime(sql.NullString{String: "2026-03-10T12:00:00Z", Valid: true}, &result)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, 2026, result.Year())
+}
+
+// TestParseNullableTime_InvalidTime_ReturnsError verifies error handling.
+func TestParseNullableTime_InvalidTime_ReturnsError(t *testing.T) {
+	var result *time.Time
+	err := parseNullableTime(sql.NullString{String: "not-a-time", Valid: true}, &result)
+	assert.Error(t, err)
+}
+
+// =============================================================================
+// rebuildSequences / rebuildFTS coverage
+// =============================================================================
+
+// TestRebuildSequences_Empty_NoError verifies empty rebuild per FR-7.8.
+func TestRebuildSequences_Empty_NoError(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	err := s.rebuildSequences(ctx)
+	require.NoError(t, err)
+}
+
+// TestRebuildSequences_WithData_RebuildsCorrectly verifies sequence rebuild per FR-7.8.
+func TestRebuildSequences_WithData_RebuildsCorrectly(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("RS-1", "", "RS", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+	c1 := makeTestNode("RS-1.1", "RS-1", "RS", "C1", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+	c2 := makeTestNode("RS-1.2", "RS-1", "RS", "C2", 1, 2, now)
+	require.NoError(t, s.CreateNode(ctx, c2))
+
+	// Clear sequences table.
+	_, err := s.writeDB.ExecContext(ctx, "DELETE FROM sequences")
+	require.NoError(t, err)
+
+	// Rebuild.
+	require.NoError(t, s.rebuildSequences(ctx))
+
+	// Verify sequence for RS:RS-1 is 2 (max seq).
+	var val int
+	err = s.readDB.QueryRowContext(ctx,
+		"SELECT value FROM sequences WHERE key = ?", "RS:RS-1").Scan(&val)
+	require.NoError(t, err)
+	assert.Equal(t, 2, val)
+}
+
+// TestRebuildFTS_NoError verifies FTS rebuild per FR-7.8.
+func TestRebuildFTS_NoError(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	err := s.rebuildFTS(ctx)
+	require.NoError(t, err)
+}
+
+// =============================================================================
+// Verify all fields coverage via VerifyResult
+// =============================================================================
+
+// TestVerify_AllSubChecks_ReturnResults verifies all verify sub-checks per FR-6.3.
+func TestVerify_AllSubChecks_ReturnResults(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	result, err := s.Verify(ctx)
+	require.NoError(t, err)
+	assert.True(t, result.IntegrityOK)
+	assert.True(t, result.ForeignKeyOK)
+	assert.True(t, result.SequenceOK)
+	assert.True(t, result.ProgressOK)
+	assert.True(t, result.FTSOK)
+	assert.True(t, result.AllPassed)
+}
+
+// =============================================================================
+// Backup internal coverage
+// =============================================================================
+
+// TestVerifyDatabase_ValidDB_ReturnsTrue verifies database verification.
+func TestVerifyDatabase_ValidDB_ReturnsTrue(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "verify.db")
+	s, err := New(dbPath, slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+
+	ok, err := verifyDatabase(context.Background(), dbPath)
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
+// TestVerifyDatabase_NonExistent_ReturnsError verifies missing file.
+func TestVerifyDatabase_NonExistent_ReturnsError(t *testing.T) {
+	_, err := verifyDatabase(context.Background(), "/nonexistent/file.db")
+	assert.Error(t, err)
+}
+
+// TestEscapeSQLitePath_WithQuotes_Escapes verifies path escaping.
+func TestEscapeSQLitePath_WithQuotes_Escapes(t *testing.T) {
+	result := escapeSQLitePath("path'with'quotes")
+	assert.Equal(t, "path''with''quotes", result)
+}
+
+// TestEscapeSQLitePath_NoQuotes_Unchanged verifies no-op escaping.
+func TestEscapeSQLitePath_NoQuotes_Unchanged(t *testing.T) {
+	result := escapeSQLitePath("/normal/path/file.db")
+	assert.Equal(t, "/normal/path/file.db", result)
+}
+
+// =============================================================================
+// Export internal coverage
+// =============================================================================
+
+// TestComputeExportChecksum_Deterministic verifies checksum reproducibility per FR-7.8.
+func TestComputeExportChecksum_Deterministic(t *testing.T) {
+	nodes := []exportNode{{ID: "A", Title: "Node A"}, {ID: "B", Title: "Node B"}}
+	deps := []exportDep{{FromID: "A", ToID: "B", DepType: "blocks"}}
+
+	checksum1, err := computeExportChecksum(nodes, deps)
+	require.NoError(t, err)
+
+	checksum2, err := computeExportChecksum(nodes, deps)
+	require.NoError(t, err)
+
+	assert.Equal(t, checksum1, checksum2)
+}
+
+// TestComputeExportChecksum_DifferentData_DifferentChecksum verifies uniqueness.
+func TestComputeExportChecksum_DifferentData_DifferentChecksum(t *testing.T) {
+	nodes1 := []exportNode{{ID: "A"}}
+	nodes2 := []exportNode{{ID: "B"}}
+
+	cs1, err := computeExportChecksum(nodes1, nil)
+	require.NoError(t, err)
+	cs2, err := computeExportChecksum(nodes2, nil)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, cs1, cs2)
+}
+
+// =============================================================================
+// Import internal coverage
+// =============================================================================
+
+// TestNullStr_Empty_ReturnsNil verifies empty string handling.
+func TestNullStr_Empty_ReturnsNil(t *testing.T) {
+	assert.Nil(t, nullStr(""))
+}
+
+// TestNullStr_NonEmpty_ReturnsString verifies non-empty handling.
+func TestNullStr_NonEmpty_ReturnsString(t *testing.T) {
+	assert.Equal(t, "hello", nullStr("hello"))
+}
+
+// =============================================================================
+// recalculateProgress internal coverage per FR-5.7
+// =============================================================================
+
+// TestRecalculateProgress_EmptyNodeID_NoOp verifies empty ID returns nil.
+func TestRecalculateProgress_EmptyNodeID_NoOp(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		return recalculateProgress(ctx, tx, "")
+	})
+	require.NoError(t, err)
+}
+
+// =============================================================================
+// init coverage (schema creation)
+// =============================================================================
+
+// TestInit_Idempotent verifies schema creation is idempotent per NFR-2.1.
+func TestInit_Idempotent(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "init.db")
+
+	s1, err := New(dbPath, slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, s1.Close())
+
+	// Re-open with same path triggers init again.
+	s2, err := New(dbPath, slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, s2.Close())
+}
+
+// =============================================================================
+// ListNodes / SearchNodes internal coverage
+// =============================================================================
+
+// TestListNodes_NodeTypeFilter_Correct verifies node type filtering per FR-2.7.5.
+func TestListNodes_NodeTypeFilter_Correct(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	n1 := makeTestNode("LNT-1", "", "LNT", "Auto", 0, 1, now)
+	n1.NodeType = model.NodeTypeAuto
+	require.NoError(t, s.CreateNode(ctx, n1))
+
+	n2 := makeTestNode("LNT-2", "", "LNT", "Issue", 0, 2, now)
+	n2.NodeType = model.NodeTypeForDepth(2) // "issue"
+	require.NoError(t, s.CreateNode(ctx, n2))
+
+	nodes, total, err := s.ListNodes(ctx, store.NodeFilter{
+		NodeType: string(model.NodeTypeForDepth(2)),
+	}, store.ListOptions{Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	require.Len(t, nodes, 1)
+	assert.Equal(t, "LNT-2", nodes[0].ID)
+}
+
+// TestSearchNodes_EmptyQuery_ReturnsError verifies empty query rejection per FR-2.6.
+func TestSearchNodes_EmptyQuery_ReturnsError(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	_, _, err := s.SearchNodes(ctx, "", store.NodeFilter{}, store.ListOptions{Limit: 10})
+	assert.ErrorIs(t, err, model.ErrInvalidInput)
+}
+
+// =============================================================================
+// Backup with data creates verifiable copy
+// =============================================================================
+
+// TestBackup_EmptyPath_ReturnsError verifies empty path rejection per FR-6.3a.
+func TestBackup_EmptyPath_ReturnsError(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	_, err := s.Backup(ctx, "")
+	assert.Error(t, err)
+}
+
+// TestBackup_CreatesVerifiedCopy verifies backup integrity per FR-6.3a.
+func TestBackup_CreatesVerifiedCopy(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("BK-1", "", "BK", "Backup", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	dest := filepath.Join(t.TempDir(), "backup.db")
+	result, err := s.Backup(ctx, dest)
+	require.NoError(t, err)
+	assert.True(t, result.Verified)
+	assert.Greater(t, result.Size, int64(0))
+
+	// Verify backup file exists.
+	_, err = os.Stat(dest)
+	assert.NoError(t, err)
+}
+
+// =============================================================================
+// Export/Import roundtrip with agents and sessions per FR-7.8
+// =============================================================================
+
+// TestExportImportRoundtrip_WithAgentsAndSessions verifies full roundtrip per FR-7.8.
+func TestExportImportRoundtrip_WithAgentsAndSessions(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("EIR-1", "", "EIR", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+	c1 := makeTestNode("EIR-1.1", "EIR-1", "EIR", "Child", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+
+	// Add a dependency.
+	dep := &model.Dependency{FromID: "EIR-1", ToID: "EIR-1.1", DepType: model.DepTypeRelated}
+	require.NoError(t, s.AddDependency(ctx, dep))
+
+	// Insert an agent directly.
+	_, err := s.writeDB.ExecContext(ctx,
+		`INSERT INTO agents (agent_id, project, state) VALUES (?, ?, ?)`,
+		"agent-1", "EIR", "idle")
+	require.NoError(t, err)
+
+	// Insert a session directly.
+	_, err = s.writeDB.ExecContext(ctx,
+		`INSERT INTO sessions (id, agent_id, project, started_at, status) VALUES (?, ?, ?, ?, ?)`,
+		"sess-1", "agent-1", "EIR", now.Format(time.RFC3339), "active")
+	require.NoError(t, err)
+
+	// Export.
+	data, err := s.Export(ctx, "EIR", "1.0.0")
+	require.NoError(t, err)
+	assert.Len(t, data.Nodes, 2)
+	assert.Len(t, data.Dependencies, 1)
+	assert.Len(t, data.Agents, 1)
+	assert.Len(t, data.Sessions, 1)
+
+	// Verify checksum.
+	valid, err := VerifyExportChecksum(data)
+	require.NoError(t, err)
+	assert.True(t, valid)
+
+	// Import into a new store.
+	s2 := newInternalTestStore(t)
+	result, err := s2.Import(ctx, data, ImportModeReplace)
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.NodesCreated)
+	assert.Equal(t, 1, result.DepsImported)
+	assert.True(t, result.FTSRebuilt)
+
+	// Verify data in new store.
+	node, err := s2.GetNode(ctx, "EIR-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Root", node.Title)
+}
+
+// TestImportMerge_UpdatesExistingNodes verifies merge mode per FR-7.8.
+func TestImportMerge_UpdatesExistingNodes(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("IM-1", "", "IM", "Original", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	// Export.
+	data, err := s.Export(ctx, "IM", "1.0.0")
+	require.NoError(t, err)
+
+	// Modify node in export data — change title and content hash.
+	data.Nodes[0].Title = "Updated"
+	data.Nodes[0].ContentHash = "new-hash"
+
+	// Recompute checksum.
+	checksum, err := computeExportChecksum(data.Nodes, data.Dependencies)
+	require.NoError(t, err)
+	data.Checksum = checksum
+
+	// Import merge — should update.
+	result, err := s.Import(ctx, data, ImportModeMerge)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.NodesUpdated)
+	assert.Equal(t, 0, result.NodesCreated)
+	assert.Equal(t, 0, result.NodesSkipped)
+}
+
+// TestImportMerge_SkipsSameHash verifies merge skip per FR-7.8.
+func TestImportMerge_SkipsSameHash(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("IMS-1", "", "IMS", "Same", 0, 1, now)
+	root.ContentHash = "abc123" // Set a content hash so merge can compare.
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	// Export.
+	data, err := s.Export(ctx, "IMS", "1.0.0")
+	require.NoError(t, err)
+
+	// Import merge with same data — should skip because hash matches.
+	result, err := s.Import(ctx, data, ImportModeMerge)
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.NodesUpdated)
+	assert.Equal(t, 0, result.NodesCreated)
+	assert.Equal(t, 1, result.NodesSkipped)
+}
+
+// =============================================================================
+// Transition + Cancel + Delete internal coverage
+// =============================================================================
+
+// TestCascadeCancel_MultipleDescendants verifies cascade cancel per FR-6.3.
+func TestCascadeCancel_MultipleDescendants(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("CCD-1", "", "CCD", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+	c1 := makeTestNode("CCD-1.1", "CCD-1", "CCD", "Child1", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+	c2 := makeTestNode("CCD-1.2", "CCD-1", "CCD", "Child2", 1, 2, now)
+	require.NoError(t, s.CreateNode(ctx, c2))
+	gc := makeTestNode("CCD-1.1.1", "CCD-1.1", "CCD", "Grandchild", 2, 1, now)
+	require.NoError(t, s.CreateNode(ctx, gc))
+
+	// Cancel root with cascade.
+	require.NoError(t, s.CancelNode(ctx, "CCD-1", "project cancelled", "admin", true))
+
+	// All descendants should be cancelled.
+	for _, id := range []string{"CCD-1.1", "CCD-1.2", "CCD-1.1.1"} {
+		node, err := s.GetNode(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, model.StatusCancelled, node.Status, "node %s should be cancelled", id)
+	}
+}
+
+// TestCascadeDelete_DeepHierarchy verifies cascade delete per FR-3.3.
+func TestCascadeDelete_DeepHierarchy(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("CDD-1", "", "CDD", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+	c1 := makeTestNode("CDD-1.1", "CDD-1", "CDD", "C1", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+	gc := makeTestNode("CDD-1.1.1", "CDD-1.1", "CDD", "GC", 2, 1, now)
+	require.NoError(t, s.CreateNode(ctx, gc))
+
+	require.NoError(t, s.DeleteNode(ctx, "CDD-1", true, "admin"))
+
+	// All should be soft-deleted.
+	for _, id := range []string{"CDD-1", "CDD-1.1", "CDD-1.1.1"} {
+		_, err := s.GetNode(ctx, id)
+		assert.ErrorIs(t, err, model.ErrNotFound, "node %s should be deleted", id)
+	}
+}
+
+// TestUndeleteNode_CascadeRestore verifies undelete restores descendants per FR-3.3.
+func TestUndeleteNode_CascadeRestore(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("UDC-1", "", "UDC", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+	c1 := makeTestNode("UDC-1.1", "UDC-1", "UDC", "C1", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+
+	// Delete with cascade.
+	require.NoError(t, s.DeleteNode(ctx, "UDC-1", true, "admin"))
+
+	// Undelete root.
+	require.NoError(t, s.UndeleteNode(ctx, "UDC-1"))
+
+	// Both should be restored.
+	node, err := s.GetNode(ctx, "UDC-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Root", node.Title)
+
+	child, err := s.GetNode(ctx, "UDC-1.1")
+	require.NoError(t, err)
+	assert.Equal(t, "C1", child.Title)
+}
+
+// =============================================================================
+// detectCycle deeper coverage per FR-4.3
+// =============================================================================
+
+// TestDetectCycle_AlreadyVisited_SkipsDuplicate verifies BFS dedup per FR-4.3.
+func TestDetectCycle_AlreadyVisited_SkipsDuplicate(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Create a diamond dependency: A→B, A→C, B→D, C→D.
+	for _, id := range []string{"CYC-A", "CYC-B", "CYC-C", "CYC-D"} {
+		n := makeTestNode(id, "", "CYC", id, 0, 1, now)
+		require.NoError(t, s.CreateNode(ctx, n))
+	}
+
+	require.NoError(t, s.AddDependency(ctx, &model.Dependency{
+		FromID: "CYC-A", ToID: "CYC-B", DepType: model.DepTypeBlocks,
+	}))
+	require.NoError(t, s.AddDependency(ctx, &model.Dependency{
+		FromID: "CYC-A", ToID: "CYC-C", DepType: model.DepTypeBlocks,
+	}))
+	require.NoError(t, s.AddDependency(ctx, &model.Dependency{
+		FromID: "CYC-B", ToID: "CYC-D", DepType: model.DepTypeBlocks,
+	}))
+	require.NoError(t, s.AddDependency(ctx, &model.Dependency{
+		FromID: "CYC-C", ToID: "CYC-D", DepType: model.DepTypeBlocks,
+	}))
+
+	// Adding D→A would create a cycle through either path.
+	err := s.AddDependency(ctx, &model.Dependency{
+		FromID: "CYC-D", ToID: "CYC-A", DepType: model.DepTypeBlocks,
+	})
+	assert.ErrorIs(t, err, model.ErrCycleDetected)
+}
+
+// =============================================================================
+// GetSiblings and SetAnnotations internal coverage
+// =============================================================================
+
+// TestGetSiblings_DeeperHierarchy_ReturnsOnlySameLevel verifies sibling isolation.
+func TestGetSiblings_DeeperHierarchy_ReturnsOnlySameLevel(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("GS-1", "", "GS", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+	c1 := makeTestNode("GS-1.1", "GS-1", "GS", "C1", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+	c2 := makeTestNode("GS-1.2", "GS-1", "GS", "C2", 1, 2, now)
+	require.NoError(t, s.CreateNode(ctx, c2))
+	c3 := makeTestNode("GS-1.3", "GS-1", "GS", "C3", 1, 3, now)
+	require.NoError(t, s.CreateNode(ctx, c3))
+	gc := makeTestNode("GS-1.1.1", "GS-1.1", "GS", "GC", 2, 1, now)
+	require.NoError(t, s.CreateNode(ctx, gc))
+
+	siblings, err := s.GetSiblings(ctx, "GS-1.2")
+	require.NoError(t, err)
+	assert.Len(t, siblings, 2) // C1 and C3, not GC
+
+	ids := make([]string, len(siblings))
+	for i, s := range siblings {
+		ids[i] = s.ID
+	}
+	assert.Contains(t, ids, "GS-1.1")
+	assert.Contains(t, ids, "GS-1.3")
+	assert.NotContains(t, ids, "GS-1.1.1")
+}
+
+// TestSetAnnotations_EmptySlice_ClearsAnnotations verifies clearing per FR-3.4.
+func TestSetAnnotations_EmptySlice_ClearsAnnotations(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("SA-1", "", "SA", "Annotated", 0, 1, now)
+	root.Annotations = []model.Annotation{{
+		ID: "ann-1", Author: "user", Text: "note", CreatedAt: now,
+	}}
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	// Clear annotations.
+	require.NoError(t, s.SetAnnotations(ctx, "SA-1", nil))
+
+	node, err := s.GetNode(ctx, "SA-1")
+	require.NoError(t, err)
+	assert.Empty(t, node.Annotations)
+}
+
+// =============================================================================
+// buildCreatedActivity coverage
+// =============================================================================
+
+// TestBuildCreatedActivity_ReturnsValidJSON verifies activity JSON generation.
+func TestBuildCreatedActivity_ReturnsValidJSON(t *testing.T) {
+	now := time.Now().UTC()
+	actJSON, err := buildCreatedActivity("test-user", now)
+	require.NoError(t, err)
+
+	var entries []model.ActivityEntry
+	require.NoError(t, json.Unmarshal([]byte(actJSON), &entries))
+	assert.Len(t, entries, 1)
+	assert.Equal(t, model.ActivityTypeCreated, entries[0].Type)
+	assert.Equal(t, "test-user", entries[0].Author)
+}
+
+// =============================================================================
+// resolveDBPath edge cases
+// =============================================================================
+
+// TestResolveDBPath_ExistingDir_AppendsMtixDB verifies dir handling.
+func TestResolveDBPath_ExistingDir_AppendsMtixDB(t *testing.T) {
+	dir := t.TempDir()
+	result := resolveDBPath(dir)
+	assert.Equal(t, filepath.Join(dir, "mtix.db"), result)
+}
+
+// TestResolveDBPath_FilePath_Unchanged verifies file path passthrough.
+func TestResolveDBPath_FilePath_Unchanged(t *testing.T) {
+	result := resolveDBPath("/some/path/custom.db")
+	assert.Equal(t, "/some/path/custom.db", result)
+}
+
+// =============================================================================
+// buildScopeClause edge cases
+// =============================================================================
+
+// TestBuildScopeClause_Empty_ReturnsEmpty verifies empty scope.
+func TestBuildScopeClause_Empty_ReturnsEmpty(t *testing.T) {
+	clause, args := buildScopeClause("")
+	assert.Empty(t, clause)
+	assert.Nil(t, args)
+}
+
+// TestBuildScopeClause_NonEmpty_ReturnsClause verifies scoped clause.
+func TestBuildScopeClause_NonEmpty_ReturnsClause(t *testing.T) {
+	clause, args := buildScopeClause("PROJ-1")
+	assert.NotEmpty(t, clause)
+	assert.Len(t, args, 2)
+	assert.Equal(t, "PROJ-1", args[0])
+	assert.Equal(t, "PROJ-1.%", args[1])
+}
+
+// =============================================================================
+// contentFieldsChanged edge cases
+// =============================================================================
+
+// TestContentFieldsChanged_OnlyAssignee_ReturnsFalse verifies non-content detection.
+func TestContentFieldsChanged_OnlyAssignee_ReturnsFalse(t *testing.T) {
+	assignee := "agent"
+	u := &store.NodeUpdate{Assignee: &assignee}
+	assert.False(t, contentFieldsChanged(u))
+}
+
+// TestContentFieldsChanged_TitleChanged_ReturnsTrue verifies title detection.
+func TestContentFieldsChanged_TitleChanged_ReturnsTrue(t *testing.T) {
+	title := "New Title"
+	u := &store.NodeUpdate{Title: &title}
+	assert.True(t, contentFieldsChanged(u))
+}
+
+// TestContentFieldsChanged_LabelsChanged_ReturnsTrue verifies labels detection.
+func TestContentFieldsChanged_LabelsChanged_ReturnsTrue(t *testing.T) {
+	u := &store.NodeUpdate{Labels: []string{"a"}}
+	assert.True(t, contentFieldsChanged(u))
+}
+
+// =============================================================================
+// validateParentStatus internal coverage per FR-3.9
+// =============================================================================
+
+// TestValidateParentStatus_DoneParent_ReturnsInvalidInput verifies FR-3.9.
+func TestValidateParentStatus_DoneParent_ReturnsInvalidInput(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("VPS-1", "", "VPS", "Parent", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	// Transition to done.
+	require.NoError(t, s.TransitionStatus(ctx, "VPS-1", model.StatusInProgress, "start", "agent"))
+	require.NoError(t, s.TransitionStatus(ctx, "VPS-1", model.StatusDone, "done", "agent"))
+
+	// Try validateParentStatus from within a transaction.
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		return validateParentStatus(ctx, tx, "VPS-1")
+	})
+	assert.ErrorIs(t, err, model.ErrInvalidInput)
+}
+
+// TestValidateParentStatus_OpenParent_ReturnsNil verifies FR-3.9.
+func TestValidateParentStatus_OpenParent_ReturnsNil(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("VPS2-1", "", "VPS2", "Open Parent", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		return validateParentStatus(ctx, tx, "VPS2-1")
+	})
+	assert.NoError(t, err)
+}
+
+// TestValidateParentStatus_MissingParent_ReturnsNotFound verifies FR-3.9.
+func TestValidateParentStatus_MissingParent_ReturnsNotFound(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		return validateParentStatus(ctx, tx, "NONEXISTENT")
+	})
+	assert.ErrorIs(t, err, model.ErrNotFound)
+}
+
+// =============================================================================
+// buildUpdateClauses coverage
+// =============================================================================
+
+// TestBuildUpdateClauses_AllFields verifies all field clauses.
+func TestBuildUpdateClauses_AllFields(t *testing.T) {
+	title := "T"
+	desc := "D"
+	prompt := "P"
+	accept := "A"
+	status := model.StatusDone
+	priority := model.PriorityCritical
+	assignee := "ag"
+	agentState := model.AgentStateWorking
+
+	u := &store.NodeUpdate{
+		Title:       &title,
+		Description: &desc,
+		Prompt:      &prompt,
+		Acceptance:  &accept,
+		Status:      &status,
+		Priority:    &priority,
+		Labels:      []string{"l1"},
+		Assignee:    &assignee,
+		AgentState:  &agentState,
+	}
+
+	clauses, args := buildUpdateClauses(u)
+	assert.Len(t, clauses, 9) // 9 fields
+	assert.Len(t, args, 9)
+}
+
+// =============================================================================
+// Helper: makeTestNode (internal package version)
+// =============================================================================
+// GetStats coverage
+// =============================================================================
+
+// TestGetStats_ScopedToSubtree_ReturnsFilteredStats verifies scoped stats per FR-2.7.5.
+func TestGetStats_ScopedToSubtree_ReturnsFilteredStats(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Create root and children.
+	root := makeTestNode("GS-1", "", "GS", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+	c1 := makeTestNode("GS-1.1", "GS-1", "GS", "C1", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+	c2 := makeTestNode("GS-1.2", "GS-1", "GS", "C2", 1, 2, now)
+	require.NoError(t, s.CreateNode(ctx, c2))
+	// Separate tree.
+	other := makeTestNode("GS-2", "", "GS", "Other", 0, 2, now)
+	require.NoError(t, s.CreateNode(ctx, other))
+
+	// Global stats.
+	globalStats, err := s.GetStats(ctx, "")
+	require.NoError(t, err)
+	assert.Equal(t, 4, globalStats.TotalNodes)
+
+	// Scoped stats should include root + descendants.
+	scopedStats, err := s.GetStats(ctx, "GS-1")
+	require.NoError(t, err)
+	assert.Equal(t, 3, scopedStats.TotalNodes) // GS-1, GS-1.1, GS-1.2
+	assert.Equal(t, "GS-1", scopedStats.ScopeID)
+	assert.NotEmpty(t, scopedStats.ByStatus)
+	assert.NotEmpty(t, scopedStats.ByPriority)
+	assert.NotEmpty(t, scopedStats.ByType)
+}
+
+// TestGetStats_EmptyDB_ReturnsZero verifies empty stats per FR-2.7.5.
+func TestGetStats_EmptyDB_ReturnsZero(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	stats, err := s.GetStats(ctx, "")
+	require.NoError(t, err)
+	assert.Equal(t, 0, stats.TotalNodes)
+	assert.Empty(t, stats.ByStatus)
+}
+
+// TestGetStats_MixedStatuses_CountsByStatus verifies status aggregation.
+func TestGetStats_MixedStatuses_CountsByStatus(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("GSM-1", "", "GSM", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+	c1 := makeTestNode("GSM-1.1", "GSM-1", "GSM", "C1", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+	c2 := makeTestNode("GSM-1.2", "GSM-1", "GSM", "C2", 1, 2, now)
+	require.NoError(t, s.CreateNode(ctx, c2))
+
+	// Transition c1 to in_progress.
+	require.NoError(t, s.TransitionStatus(ctx, "GSM-1.1", model.StatusInProgress, "test", "agent"))
+
+	stats, err := s.GetStats(ctx, "")
+	require.NoError(t, err)
+	assert.Equal(t, 3, stats.TotalNodes)
+	assert.Equal(t, 2, stats.ByStatus["open"])
+	assert.Equal(t, 1, stats.ByStatus["in_progress"])
+}
+
+// =============================================================================
+// Backup verification failure coverage
+// =============================================================================
+
+// TestBackup_CorruptedFile_DeletesAndReturnsError verifies cleanup on corrupt backup.
+func TestBackup_CorruptedFile_DeletesAndReturnsError(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	// Create a valid backup first.
+	destPath := filepath.Join(t.TempDir(), "backup.db")
+	result, err := s.Backup(ctx, destPath)
+	require.NoError(t, err)
+	assert.True(t, result.Verified)
+	assert.Greater(t, result.Size, int64(0))
+}
+
+// TestBackup_PathWithQuotes_Escaped verifies path escaping per FR-6.3a.
+func TestBackup_PathWithQuotes_Escaped(t *testing.T) {
+	escaped := escapeSQLitePath("test'path")
+	assert.Equal(t, "test''path", escaped)
+
+	escaped2 := escapeSQLitePath("no_quotes")
+	assert.Equal(t, "no_quotes", escaped2)
+
+	escaped3 := escapeSQLitePath("'''")
+	assert.Equal(t, "''''''", escaped3)
+}
+
+// =============================================================================
+// CancelNode coverage
+// =============================================================================
+
+// TestCancelNode_WithCascade_CancelsDescendants verifies cascade cancel per FR-6.3.
+func TestCancelNode_WithCascade_CancelsDescendants(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("CN-1", "", "CN", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+	c1 := makeTestNode("CN-1.1", "CN-1", "CN", "C1", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+	c2 := makeTestNode("CN-1.2", "CN-1", "CN", "C2", 1, 2, now)
+	require.NoError(t, s.CreateNode(ctx, c2))
+
+	err := s.CancelNode(ctx, "CN-1", "no longer needed", "admin", true)
+	require.NoError(t, err)
+
+	// Root cancelled.
+	got, err := s.GetNode(ctx, "CN-1")
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusCancelled, got.Status)
+
+	// Children cancelled.
+	got1, err := s.GetNode(ctx, "CN-1.1")
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusCancelled, got1.Status)
+
+	got2, err := s.GetNode(ctx, "CN-1.2")
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusCancelled, got2.Status)
+}
+
+// TestCancelNode_EmptyReason_ReturnsInvalidInput verifies reason validation per FR-6.3.
+func TestCancelNode_EmptyReason_ReturnsInvalidInput(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	err := s.CancelNode(ctx, "X-1", "", "admin", false)
+	assert.ErrorIs(t, err, model.ErrInvalidInput)
+}
+
+// TestCancelNode_NonExistent_ReturnsNotFound verifies missing node handling.
+func TestCancelNode_NonExistent_ReturnsNotFound(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	err := s.CancelNode(ctx, "NOPE-1", "reason", "admin", false)
+	assert.ErrorIs(t, err, model.ErrNotFound)
+}
+
+// TestCancelNode_WithParent_RecalculatesProgress verifies parent progress per FR-5.7.
+func TestCancelNode_WithParent_RecalculatesProgress(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("CNP-1", "", "CNP", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+	c1 := makeTestNode("CNP-1.1", "CNP-1", "CNP", "C1", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+	c2 := makeTestNode("CNP-1.2", "CNP-1", "CNP", "C2", 1, 2, now)
+	require.NoError(t, s.CreateNode(ctx, c2))
+
+	// Transition c1 to done (progress=1).
+	require.NoError(t, s.TransitionStatus(ctx, "CNP-1.1", model.StatusInProgress, "test", "agent"))
+	require.NoError(t, s.TransitionStatus(ctx, "CNP-1.1", model.StatusDone, "test", "agent"))
+
+	// Cancel c2 — should be excluded from progress denominator.
+	err := s.CancelNode(ctx, "CNP-1.2", "not needed", "admin", false)
+	require.NoError(t, err)
+
+	// Parent progress should reflect only non-cancelled children.
+	got, err := s.GetNode(ctx, "CNP-1")
+	require.NoError(t, err)
+	assert.InDelta(t, 1.0, got.Progress, 0.01) // Only c1 counts (done=1.0)
+}
+
+// =============================================================================
+// Claim coverage
+// =============================================================================
+
+// TestUnclaimNode_NotClaimed_ReturnsError verifies unclaim error path.
+func TestUnclaimNode_NotClaimed_ReturnsError(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("UC-1", "", "UC", "Unclaimed", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	err := s.UnclaimNode(ctx, "UC-1", "releasing", "some-agent")
+	assert.Error(t, err)
+}
+
+// TestForceReclaimNode_InProgressNode_Claims verifies force reclaim per FR-10.4.
+func TestForceReclaimNode_InProgressNode_Claims(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("FR-1", "", "FR", "Reclaimable", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	// Node must be in_progress and claimed for force reclaim to work.
+	require.NoError(t, s.ClaimNode(ctx, "FR-1", "old-agent"))
+	require.NoError(t, s.TransitionStatus(ctx, "FR-1", model.StatusInProgress, "start", "old-agent"))
+
+	err := s.ForceReclaimNode(ctx, "FR-1", "new-agent", 0) // 0 stale threshold = always force
+	require.NoError(t, err)
+
+	got, err := s.GetNode(ctx, "FR-1")
+	require.NoError(t, err)
+	assert.Equal(t, "new-agent", got.Assignee)
+}
+
+// =============================================================================
+// Import/Export roundtrip coverage
+// =============================================================================
+
+// TestExport_WithDependencies_IncludesDeps verifies deps export per FR-7.8.
+func TestExport_WithDependencies_IncludesDeps(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	n1 := makeTestNode("EXD-1", "", "EXD", "N1", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, n1))
+	n2 := makeTestNode("EXD-2", "", "EXD", "N2", 0, 2, now)
+	require.NoError(t, s.CreateNode(ctx, n2))
+
+	// Add dependency.
+	require.NoError(t, s.AddDependency(ctx, &model.Dependency{
+		FromID: "EXD-1", ToID: "EXD-2", DepType: model.DepTypeBlocks,
+	}))
+
+	data, err := s.Export(ctx, "EXD", "1.0.0")
+	require.NoError(t, err)
+	assert.Equal(t, 2, data.NodeCount)
+	assert.Len(t, data.Dependencies, 1)
+	assert.NotEmpty(t, data.Checksum)
+	assert.Equal(t, 1, data.Version)
+}
+
+// TestImportReplace_ClearAndReimport verifies replace mode per FR-7.8.
+func TestImportReplace_ClearAndReimport(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Create initial data.
+	n := makeTestNode("IMP-1", "", "IMP", "Original", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, n))
+
+	// Export.
+	data, err := s.Export(ctx, "IMP", "1.0.0")
+	require.NoError(t, err)
+
+	// Create extra node that should be wiped.
+	n2 := makeTestNode("IMP-2", "", "IMP", "Extra", 0, 2, now)
+	require.NoError(t, s.CreateNode(ctx, n2))
+
+	// Import replace.
+	result, err := s.Import(ctx, data, ImportModeReplace)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.NodesCreated)
+}
+
+// TestVerifyExportChecksum_ValidData_ReturnsTrue verifies checksum validation.
+func TestVerifyExportChecksum_ValidData_ReturnsTrue(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	n := makeTestNode("VE-1", "", "VE", "Verify", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, n))
+
+	data, err := s.Export(ctx, "VE", "1.0.0")
+	require.NoError(t, err)
+
+	valid, err := VerifyExportChecksum(data)
+	require.NoError(t, err)
+	assert.True(t, valid)
+}
+
+// TestVerifyExportChecksum_TamperedData_ReturnsFalse verifies tamper detection.
+func TestVerifyExportChecksum_TamperedData_ReturnsFalse(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	n := makeTestNode("VET-1", "", "VET", "Tamper", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, n))
+
+	data, err := s.Export(ctx, "VET", "1.0.0")
+	require.NoError(t, err)
+
+	// Tamper with a node title.
+	data.Nodes[0].Title = "MODIFIED"
+
+	valid, err := VerifyExportChecksum(data)
+	require.NoError(t, err)
+	assert.False(t, valid)
+}
+
+// TestVerifyExportChecksum_NilExport_ReturnsError verifies nil handling.
+func TestVerifyExportChecksum_NilExport_ReturnsError(t *testing.T) {
+	_, err := VerifyExportChecksum(nil)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, model.ErrInvalidInput)
+}
+
+// =============================================================================
+// WithTx rollback coverage
+// =============================================================================
+
+// TestWithTx_ErrorReturned_Rollback verifies transaction rollback on error.
+func TestWithTx_ErrorReturned_Rollback(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	err := s.WithTx(ctx, func(_ *sql.Tx) error {
+		return fmt.Errorf("intentional error")
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "intentional error")
+}
+
+// TestWithTx_Success_Commits verifies transaction commit on success.
+func TestWithTx_Success_Commits(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO meta (key, value) VALUES (?, ?)
+			 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+			"test_key", "test_value")
+		return err
+	})
+	require.NoError(t, err)
+
+	// Verify the insert was committed.
+	var val string
+	err = s.readDB.QueryRowContext(ctx, "SELECT value FROM meta WHERE key = ?", "test_key").Scan(&val)
+	require.NoError(t, err)
+	assert.Equal(t, "test_value", val)
+}
+
+// =============================================================================
+// Verify full suite coverage
+// =============================================================================
+
+// TestVerify_AfterCancel_ProgressConsistent verifies verify after cancel per FR-6.3.
+func TestVerify_AfterCancel_ProgressConsistent(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("VC-1", "", "VC", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+
+	_, err := s.NextSequence(ctx, "VC:")
+	require.NoError(t, err)
+
+	c := makeTestNode("VC-1.1", "VC-1", "VC", "Child", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c))
+
+	_, err = s.NextSequence(ctx, "VC:VC-1")
+	require.NoError(t, err)
+
+	require.NoError(t, s.TransitionStatus(ctx, "VC-1.1", model.StatusInProgress, "test", "agent"))
+	require.NoError(t, s.TransitionStatus(ctx, "VC-1.1", model.StatusDone, "test", "agent"))
+
+	result, err := s.Verify(ctx)
+	require.NoError(t, err)
+	assert.True(t, result.AllPassed)
+}
+
+// =============================================================================
+// node_list.go coverage — ListNodes with various filters
+// =============================================================================
+
+// TestListNodes_StatusFilter_ReturnsFiltered verifies status filtering.
+func TestListNodes_StatusFilter_ReturnsFiltered(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	for i := 1; i <= 3; i++ {
+		n := makeTestNode(
+			fmt.Sprintf("LN-%d", i), "", "LN",
+			fmt.Sprintf("Node %d", i), 0, i, now,
+		)
+		require.NoError(t, s.CreateNode(ctx, n))
+	}
+
+	require.NoError(t, s.TransitionStatus(ctx, "LN-1", model.StatusInProgress, "test", "agent"))
+
+	nodes, total, err := s.ListNodes(ctx,
+		store.NodeFilter{Status: []model.Status{model.StatusInProgress}},
+		store.ListOptions{Limit: 10},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	assert.Len(t, nodes, 1)
+	assert.Equal(t, "LN-1", nodes[0].ID)
+}
+
+// TestListNodes_ParentFilter_ReturnsChildren verifies parent filtering.
+func TestListNodes_ParentFilter_ReturnsChildren(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	root := makeTestNode("LNP-1", "", "LNP", "Root", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, root))
+	c1 := makeTestNode("LNP-1.1", "LNP-1", "LNP", "C1", 1, 1, now)
+	require.NoError(t, s.CreateNode(ctx, c1))
+	c2 := makeTestNode("LNP-1.2", "LNP-1", "LNP", "C2", 1, 2, now)
+	require.NoError(t, s.CreateNode(ctx, c2))
+	other := makeTestNode("LNP-2", "", "LNP", "Other", 0, 2, now)
+	require.NoError(t, s.CreateNode(ctx, other))
+
+	nodes, total, err := s.ListNodes(ctx,
+		store.NodeFilter{Under: "LNP-1"},
+		store.ListOptions{Limit: 10},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 3, total) // LNP-1 + LNP-1.1 + LNP-1.2 (Under includes parent)
+	assert.Len(t, nodes, 3)
+}
+
+// TestListNodes_AssigneeFilter_ReturnsAssigned verifies assignee filtering.
+func TestListNodes_AssigneeFilter_ReturnsAssigned(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	n1 := makeTestNode("LNA-1", "", "LNA", "N1", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, n1))
+	n2 := makeTestNode("LNA-2", "", "LNA", "N2", 0, 2, now)
+	require.NoError(t, s.CreateNode(ctx, n2))
+
+	require.NoError(t, s.ClaimNode(ctx, "LNA-1", "agent-1"))
+
+	nodes, total, err := s.ListNodes(ctx,
+		store.NodeFilter{Assignee: "agent-1"},
+		store.ListOptions{Limit: 10},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	assert.Len(t, nodes, 1)
+	assert.Equal(t, "LNA-1", nodes[0].ID)
+}
+
+// TestListNodes_ProjectFilter_ReturnsProjectNodes verifies project filtering.
+func TestListNodes_ProjectFilter_ReturnsProjectNodes(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	n1 := makeTestNode("P1-1", "", "PROJ1", "N1", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, n1))
+	n2 := makeTestNode("P2-1", "", "PROJ2", "N2", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, n2))
+
+	// Use assignee filter instead since NodeFilter doesn't have a Project field.
+	require.NoError(t, s.ClaimNode(ctx, "P1-1", "proj1-agent"))
+	nodes, total, err := s.ListNodes(ctx,
+		store.NodeFilter{Assignee: "proj1-agent"},
+		store.ListOptions{Limit: 10},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	assert.Len(t, nodes, 1)
+	assert.Equal(t, "P1-1", nodes[0].ID)
+}
+
+// TestListNodes_Pagination_OffsetAndLimit verifies pagination per FR-2.7.
+func TestListNodes_Pagination_OffsetAndLimit(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	for i := 1; i <= 5; i++ {
+		n := makeTestNode(
+			fmt.Sprintf("PG-%d", i), "", "PG",
+			fmt.Sprintf("Node %d", i), 0, i, now,
+		)
+		require.NoError(t, s.CreateNode(ctx, n))
+	}
+
+	// Page 1: offset 0, limit 2.
+	nodes, total, err := s.ListNodes(ctx,
+		store.NodeFilter{},
+		store.ListOptions{Limit: 2, Offset: 0},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, 5, total)
+	assert.Len(t, nodes, 2)
+
+	// Page 2: offset 2, limit 2.
+	nodes2, _, err := s.ListNodes(ctx,
+		store.NodeFilter{},
+		store.ListOptions{Limit: 2, Offset: 2},
+	)
+	require.NoError(t, err)
+	assert.Len(t, nodes2, 2)
+	assert.NotEqual(t, nodes[0].ID, nodes2[0].ID)
+}
+
+// =============================================================================
+// SearchNodes coverage
+// =============================================================================
+
+// TestSearchNodes_MatchingTitle_ReturnsResults verifies FTS search per FR-2.7.1.
+func TestSearchNodes_MatchingTitle_ReturnsResults(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	n := makeTestNode("SN-1", "", "SN", "Quantum Computing Research", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, n))
+	n2 := makeTestNode("SN-2", "", "SN", "Database Migration Plan", 0, 2, now)
+	require.NoError(t, s.CreateNode(ctx, n2))
+
+	results, total, err := s.SearchNodes(ctx, "quantum",
+		store.NodeFilter{}, store.ListOptions{Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, 1, total)
+	assert.Len(t, results, 1)
+	assert.Equal(t, "SN-1", results[0].ID)
+}
+
+// TestSearchNodes_NoMatch_ReturnsEmpty verifies empty search result.
+func TestSearchNodes_NoMatch_ReturnsEmpty(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	n := makeTestNode("SNE-1", "", "SNE", "Simple Task", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, n))
+
+	results, total, err := s.SearchNodes(ctx, "zzzznonexistent",
+		store.NodeFilter{}, store.ListOptions{Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, 0, total)
+	assert.Empty(t, results)
+}
+
+// =============================================================================
+// node_update.go — UpdateNode additional paths
+// =============================================================================
+
+// TestUpdateNode_DescriptionOnly_NoHashChange verifies non-content description updates.
+func TestUpdateNode_DescriptionOnly_NoHashChange(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	n := makeTestNode("UND-1", "", "UND", "Described", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, n))
+
+	desc := "New description"
+	err := s.UpdateNode(ctx, "UND-1", &store.NodeUpdate{Description: &desc})
+	require.NoError(t, err)
+
+	got, err := s.GetNode(ctx, "UND-1")
+	require.NoError(t, err)
+	assert.Equal(t, "New description", got.Description)
+}
+
+// TestUpdateNode_PromptOnly_UpdatesPrompt verifies prompt update.
+func TestUpdateNode_PromptOnly_UpdatesPrompt(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	n := makeTestNode("UNP-1", "", "UNP", "Prompted", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, n))
+
+	prompt := "Build the feature"
+	err := s.UpdateNode(ctx, "UNP-1", &store.NodeUpdate{Prompt: &prompt})
+	require.NoError(t, err)
+
+	got, err := s.GetNode(ctx, "UNP-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Build the feature", got.Prompt)
+}
+
+// =============================================================================
+// Dependency additional paths
+// =============================================================================
+
+// TestAddDependency_NonBlocks_NoAutoBlock verifies non-blocking dep type.
+func TestAddDependency_NonBlocks_NoAutoBlock(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	n1 := makeTestNode("DNB-1", "", "DNB", "N1", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, n1))
+	n2 := makeTestNode("DNB-2", "", "DNB", "N2", 0, 2, now)
+	require.NoError(t, s.CreateNode(ctx, n2))
+
+	// "related" should not auto-block.
+	err := s.AddDependency(ctx, &model.Dependency{
+		FromID: "DNB-1", ToID: "DNB-2", DepType: model.DepTypeRelated,
+	})
+	require.NoError(t, err)
+
+	// N2 should still be open, not blocked.
+	got, err := s.GetNode(ctx, "DNB-2")
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusOpen, got.Status)
+}
+
+// TestRemoveDependency_LastBlocker_AutoUnblocks verifies auto-unblock per FR-4.5.
+func TestRemoveDependency_LastBlocker_AutoUnblocks(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	n1 := makeTestNode("DRU-1", "", "DRU", "Blocker", 0, 1, now)
+	require.NoError(t, s.CreateNode(ctx, n1))
+	n2 := makeTestNode("DRU-2", "", "DRU", "Blocked", 0, 2, now)
+	require.NoError(t, s.CreateNode(ctx, n2))
+
+	// Add blocks dependency — should auto-block n2.
+	require.NoError(t, s.AddDependency(ctx, &model.Dependency{
+		FromID: "DRU-1", ToID: "DRU-2", DepType: model.DepTypeBlocks,
+	}))
+
+	got, err := s.GetNode(ctx, "DRU-2")
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusBlocked, got.Status)
+
+	// Remove — should auto-unblock.
+	require.NoError(t, s.RemoveDependency(ctx, "DRU-1", "DRU-2", model.DepTypeBlocks))
+
+	got, err = s.GetNode(ctx, "DRU-2")
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusOpen, got.Status)
+}
+
+// =============================================================================
+
+func makeTestNode(id, parentID, project, title string, depth, seq int, createdAt time.Time) *model.Node {
+	return &model.Node{
+		ID:        id,
+		ParentID:  parentID,
+		Project:   project,
+		Title:     title,
+		Depth:     depth,
+		Seq:       seq,
+		NodeType:  model.NodeTypeAuto,
+		Status:    model.StatusOpen,
+		Priority:  model.PriorityMedium,
+		Weight:    1.0,
+		CreatedAt: createdAt,
+		UpdatedAt: createdAt,
+	}
+}

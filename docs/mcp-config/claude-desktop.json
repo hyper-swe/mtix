@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mtix-myproject": {
+      "command": "mtix",
+      "args": ["mcp", "--project", "/path/to/your/project"]
+    }
+  }
+}

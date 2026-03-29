@@ -1,0 +1,148 @@
+# mtix golangci-lint configuration (v2 format)
+# Safety-critical: zero-warning policy per QUALITY-STANDARDS.md §4.1
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    # Security
+    - gosec
+    # Correctness
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    # Code quality
+    - gocritic
+    - misspell
+    - gocyclo
+    - gocognit
+    - revive
+    - unused
+    - bodyclose
+    - noctx
+    - sqlclosecheck
+    - wastedassign
+
+  settings:
+    gosec:
+      excludes: []
+      severity: high
+      confidence: medium
+
+    govet:
+      enable:
+        - assign
+        - atomic
+        - bools
+        - buildtag
+        - composites
+        - copylocks
+        - httpresponse
+        - loopclosure
+        - lostcancel
+        - nilfunc
+        - printf
+        - shadow
+        - shift
+        - structtag
+        - tests
+        - unmarshal
+        - unreachable
+        - unusedresult
+
+    staticcheck:
+      checks:
+        - "all"
+
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+      exclude-functions:
+        # CLI output writes to stdout/stderr — errors are non-actionable.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Print
+        - fmt.Printf
+        - fmt.Println
+        # Deferred close errors in read-only contexts.
+        - (*database/sql.Rows).Close
+        - (*database/sql.DB).Close
+        - (*os.File).Close
+        - (io.Closer).Close
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+
+    misspell:
+      locale: US
+
+    gocyclo:
+      min-complexity: 15
+
+    gocognit:
+      min-complexity: 20
+
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
+
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Test files: suppress linters that produce false positives in tests.
+      - path: _test\.go
+        linters:
+          - unused
+          - gocritic
+          - noctx
+          - gosec
+          - errcheck
+          - bodyclose
+          - govet
+          - misspell
+          - gocognit
+      - path: _test\.go
+        linters:
+          - revive
+        text: "(dot-imports|unused-parameter)"
+      # "cancelled/Cancelled" is a legitimate domain term — StatusCancelled constant value.
+      - linters:
+          - misspell
+        text: "(?i)cancelled"
+    paths:
+      - vendor
+      - web/node_modules
+      - third_party

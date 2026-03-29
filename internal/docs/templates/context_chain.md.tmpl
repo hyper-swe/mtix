@@ -1,0 +1,115 @@
+# Context Chain Assembly
+
+> **Project:** {{ .ProjectPrefix }}
+
+## The Core Principle
+
+**The dot-notation hierarchy IS the context.** When an agent traverses from root to a leaf node (e.g., `PROJ-1` → `PROJ-1.3` → `PROJ-1.3.2`), each level adds context that the executing agent needs. By the time an agent reads the assembled prompt for `PROJ-1.3.2`, it has the full picture: the project goal, the epic scope, the specific task, and the micro-level instruction.
+
+This means: **every node's description and prompt must be written as if it is a chapter in a briefing document.** The parent provides the "why" and the scope. The child provides the "what" and the specifics. Together, they form a complete instruction set.
+
+## How It Works
+
+When you call `mtix context <id>` or `mtix_context`:
+
+1. **Ancestor chain** is built from root → target (inclusive)
+2. **Siblings** of the target are included for peer awareness
+3. **Blocking dependencies** are listed
+4. **Assembled prompt** combines all context into a single briefing
+
+The assembled prompt is the agent's primary briefing document. It contains everything needed to execute the task without reading any other source.
+
+## Writing Context-Rich Descriptions
+
+When creating or decomposing tasks, **write descriptions that complete the context chain.** Each level should add information the child nodes will inherit:
+
+### What Each Level Should Contain
+
+| Level | Contains | Example |
+|-------|----------|---------|
+| **Story** (root) | Business goal, success criteria, constraints | "Build a user authentication system. Must support OAuth2 and email/password. Session timeout: 30 minutes." |
+| **Epic** (L1) | Technical approach, architecture decisions, affected components | "Implement the auth API layer. Use JWT for stateless sessions. All endpoints under /api/v1/auth/. Rate limit: 10 req/min per IP." |
+| **Issue** (L2) | Specific feature scope, input/output contract, edge cases | "Implement POST /api/v1/auth/login. Accept {email, password}. Return {token, expires_at}. Handle: invalid credentials (401), locked account (423), rate exceeded (429)." |
+| **Micro Issue** (L3+) | Exact implementation instruction, file paths, function signatures, test cases | "Add exponential backoff retry to auth API calls. Max 3 retries, base delay 100ms. Use pkg/http/retry.go as reference. Test: verify 3rd retry succeeds after 2 transient failures." |
+
+### Good vs Poor Descriptions
+
+**POOR — vague, context-free:**
+```
+Title: "Fix the login bug"
+Description: "Login is broken, please fix it"
+Prompt: "Fix the bug"
+```
+An agent receiving this has no idea what's broken, where to look, or what "fixed" means.
+
+**GOOD — context-rich, actionable:**
+```
+Title: "Fix null pointer in JWT validation when token lacks 'exp' claim"
+Description: "The /api/v1/auth/verify endpoint crashes with a nil pointer
+dereference when a JWT token is missing the 'exp' (expiration) claim.
+This happens because parseToken() in internal/auth/jwt.go:47 calls
+claims.ExpiresAt.Time without checking for nil. Tokens from legacy
+OAuth providers may omit this claim."
+Prompt: "In internal/auth/jwt.go, modify parseToken() to handle missing
+'exp' claim. Return ErrInvalidToken with message 'missing expiration
+claim' instead of panicking. Add test case in jwt_test.go:
+TestParseToken_MissingExpClaim_ReturnsError. Reference the existing
+TestParseToken_ExpiredToken test for pattern."
+```
+
+### The Completeness Test
+
+Before creating a child node, ask: **"If an agent reads only the assembled context from root to this node, does it have everything it needs to execute?"**
+
+If the answer is no, add the missing context. Common gaps:
+- **File paths** — Which files to modify or reference
+- **Function names** — Exact functions to change or call
+- **Error cases** — What should happen when things go wrong
+- **Test expectations** — How to verify the work is correct
+- **Constraints** — Performance requirements, compatibility notes, security rules
+- **Dependencies** — What other code/systems this interacts with
+
+### What NOT to Repeat
+
+Don't duplicate parent context verbatim — the context chain assembler handles that. Instead, add **new information specific to this level:**
+
+```
+# Parent (PROJ-1.3): "Implement rate limiting for all auth endpoints.
+#   Use sliding window algorithm. Store counters in Redis."
+
+# POOR child — repeats parent:
+PROJ-1.3.1: "Implement rate limiting using sliding window in Redis"
+
+# GOOD child — adds specifics:
+PROJ-1.3.1: "Implement the sliding window counter in internal/ratelimit/window.go.
+  Key format: 'rl:{ip}:{endpoint}:{window_start}'.
+  Window size: 60s. Use MULTI/EXEC for atomic increment+expire.
+  Return (allowed bool, remaining int, resetAt time.Time)."
+```
+
+## Token Budget Strategy
+
+Use `max_tokens` to control prompt size:
+
+- **0 (unlimited):** Full context chain, all descriptions and prompts
+- **Small budget (< 2000):** Titles only for distant ancestors, full detail for 2 nearest levels
+- **Medium budget (2000–8000):** Descriptions for 2 nearest levels, titles for rest
+- **Large budget (> 8000):** Full detail at all levels
+
+## Attribution Markers
+
+The assembled prompt includes source attribution:
+
+- `[HUMAN]` — Content authored by humans
+- `[AI]` — Content authored by AI agents
+- `[SYSTEM]` — System-generated content
+
+## Best Practices
+
+1. **Always read context before starting work** — call `mtix_context` before executing
+2. **Write descriptions for the next agent, not for yourself** — be explicit about what you know
+3. **Include file paths and function names** — agents need concrete anchors
+4. **State the "why" at parent level, the "what" at child level** — avoid orphaned instructions
+5. **Check blocking dependencies** before proceeding
+6. **Review sibling status** for coordination awareness
+7. **When decomposing, test your prompts mentally** — traverse root to leaf and ask "would an agent know exactly what to do?"

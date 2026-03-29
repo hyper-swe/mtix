@@ -1,0 +1,60 @@
+# Session Protocol
+
+> **Project:** {{ .ProjectPrefix }}
+
+## Session Lifecycle
+
+### Start
+
+```
+mtix session start --agent <agent_id>
+```
+
+Or MCP: `mtix_session_start`
+
+- Creates a new session record
+- Automatically ends any previous active session for the agent
+- Returns a session ID for tracking
+
+### During Session
+
+- Send heartbeats: `mtix agent heartbeat` or `mtix_agent_heartbeat`
+- Heartbeat interval: at least every 5 minutes
+- Missing heartbeats trigger stale agent detection
+
+### End
+
+```
+mtix session end
+```
+
+Or MCP: `mtix_session_end`
+
+- Records session summary (nodes created, completed, time spent)
+- Releases any claimed nodes
+
+## Handoff Protocol
+
+When transferring work to another agent:
+
+1. Unclaim any in-progress nodes with a detailed reason
+2. End your session
+3. The next agent starts a new session and claims available nodes
+
+## Session Timeout
+
+Sessions automatically time out after the configured `session.timeout` (default: 4 hours). On timeout:
+
+- Session is marked as ended
+- Claimed nodes are unclaimed with reason "session timeout"
+
+## Compaction Survival
+
+Session data persists through database compaction. Session summaries are stored in the activity log and can be retrieved later for audit purposes.
+
+## Best Practices
+
+1. Always start a session before claiming nodes
+2. Send regular heartbeats to avoid stale detection
+3. End sessions cleanly — do not just disconnect
+4. Include meaningful reasons when unclaiming nodes

@@ -1,0 +1,37 @@
+# Blocked Handling
+
+> **Project:** {{ .ProjectPrefix }}
+
+## Overview
+
+Nodes become blocked when they have unresolved blocking dependencies. The system automatically manages the `blocked` status transition.
+
+## Creating External Dependency Placeholders
+
+When a task depends on something outside the project:
+
+1. Create a placeholder node: `mtix create "External: API approval" --under <parent>`
+2. Add a dependency: `mtix dep add <blocked_id> <placeholder_id> --type blocks`
+3. The dependent node automatically transitions to `blocked`
+
+## Resolving Blockers
+
+When the external dependency is resolved:
+
+1. Mark the placeholder done: `mtix done <placeholder_id>`
+2. The blocked node automatically transitions back to its previous status
+
+## Checking Blockers
+
+```
+mtix blocked <id>
+```
+
+Or via MCP: `mtix_blocked`
+
+## Best Practices
+
+1. Always create explicit dependency nodes — do not just defer
+2. Include expected resolution date in the placeholder description
+3. Use `needs_input` dependency type for information requests
+4. Use `blocks` dependency type for hard blockers

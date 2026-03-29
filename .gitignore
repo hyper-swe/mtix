@@ -1,0 +1,68 @@
+# Binaries (root-level only, not cmd/mtix/ source directory)
+/mtix
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+cover.out
+coverage.out
+*.out
+*.test
+*.prof
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go
+vendor/
+
+# Node.js (root-level, e.g. from running npm in project root)
+node_modules/
+
+# Web build output
+web/dist/
+web/node_modules/
+web/coverage/
+web/*.tsbuildinfo
+web/vite.config.d.ts
+web/vite.config.js
+web/vitest.config.d.ts
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Database files (local dev)
+*.db
+*.db-wal
+*.db-shm
+
+# Backups
+*.bak
+
+# Claude artifacts
+.claude/
+*.tgz
+
+# Playwright
+.playwright-mcp/
+screenshots/playwright/
+
+# mtix local state (database, logs, generated docs — derived from .mtix/tasks.json)
+.mtix/data/
+.mtix/logs/
+.mtix/docs/
+.mtix/id_mapping.json
+.mtix/tasks.json.tmp
+# .mtix/config.yaml and .mtix/tasks.json ARE tracked (source of truth)

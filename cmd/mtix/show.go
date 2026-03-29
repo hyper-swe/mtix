@@ -1,0 +1,207 @@
+// Copyright 2025-2026 HyperSWE
+// SPDX-License-Identifier: Apache-2.0
+
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/spf13/cobra"
+
+	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store"
+)
+
+// newShowCmd creates the mtix show command per FR-6.3.
+func newShowCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "show <id>",
+		Short: "Show full details of a node",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runShow(args[0])
+		},
+	}
+	return cmd
+}
+
+// newListCmd creates the mtix list command per FR-6.3.
+func newListCmd() *cobra.Command {
+	var (
+		status   string
+		under    string
+		assignee string
+		priority int
+		limit    int
+	)
+
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List nodes with filters",
+		Aliases: []string{"ls"},
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runList(status, under, assignee, priority, limit)
+		},
+	}
+
+	cmd.Flags().StringVar(&status, "status", "", "Filter by status")
+	cmd.Flags().StringVar(&under, "under", "", "Filter by parent subtree")
+	cmd.Flags().StringVar(&assignee, "assignee", "", "Filter by assignee")
+	cmd.Flags().IntVar(&priority, "priority", 0, "Filter by priority")
+	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum results")
+
+	return cmd
+}
+
+// newTreeCmd creates the mtix tree command per FR-6.3.
+func newTreeCmd() *cobra.Command {
+	var depth int
+
+	cmd := &cobra.Command{
+		Use:   "tree <id>",
+		Short: "Show ASCII tree visualization",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runTree(args[0], depth)
+		},
+	}
+
+	cmd.Flags().IntVar(&depth, "depth", 10, "Maximum tree depth")
+	return cmd
+}
+
+// runShow displays full details of a single node with status icons and progress bars.
+func runShow(id string) error {
+	if app.nodeSvc == nil {
+		return fmt.Errorf("not in an mtix project")
+	}
+
+	ctx := context.Background()
+	node, err := app.nodeSvc.GetNode(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	out := NewOutputWriter(app.jsonOutput)
+
+	if app.jsonOutput {
+		return out.WriteJSON(node)
+	}
+
+	icon := StatusIcon(string(node.Status))
+	out.WriteHuman("ID:       %s\n", node.ID)
+	out.WriteHuman("Title:    %s\n", node.Title)
+	out.WriteHuman("Status:   %s %s\n", icon, node.Status)
+	out.WriteHuman("Priority: %d\n", node.Priority)
+	out.WriteHuman("Type:     %s\n", node.NodeType)
+	if node.Assignee != "" {
+		out.WriteHuman("Assignee: %s\n", node.Assignee)
+	}
+	if node.Description != "" {
+		out.WriteHuman("Desc:     %s\n", node.Description)
+	}
+	if node.Prompt != "" {
+		out.WriteHuman("Prompt:   %s\n", Truncate(node.Prompt, 100))
+	}
+	out.WriteHuman("Progress: %s\n", ProgressBar(node.Progress, 15))
+	out.WriteHuman("Created:  %s\n", node.CreatedAt.Format("2006-01-02 15:04"))
+	return nil
+}
+
+// runList displays nodes with status icons and aligned columns.
+func runList(status, under, assignee string, priority, limit int) error {
+	if app.store == nil {
+		return fmt.Errorf("not in an mtix project")
+	}
+
+	ctx := context.Background()
+	filter := store.NodeFilter{
+		Under:    under,
+		Assignee: assignee,
+	}
+	if status != "" {
+		filter.Status = []model.Status{model.Status(status)}
+	}
+	if priority > 0 {
+		filter.Priority = &priority
+	}
+
+	opts := store.ListOptions{Limit: limit}
+	nodes, total, err := app.store.ListNodes(ctx, filter, opts)
+	if err != nil {
+		return err
+	}
+
+	out := NewOutputWriter(app.jsonOutput)
+
+	if app.jsonOutput {
+		return out.WriteJSON(map[string]any{
+			"nodes": nodes, "total": total,
+		})
+	}
+
+	headers := []string{"ID", "Status", "Pri", "Progress", "Title"}
+	rows := make([][]string, 0, len(nodes))
+	for _, n := range nodes {
+		icon := StatusIcon(string(n.Status))
+		rows = append(rows, []string{
+			n.ID,
+			fmt.Sprintf("%s %s", icon, n.Status),
+			fmt.Sprintf("%d", n.Priority),
+			fmt.Sprintf("%.0f%%", n.Progress*100),
+			Truncate(n.Title, 50),
+		})
+	}
+	out.WriteTable(headers, rows)
+
+	if total > len(nodes) {
+		out.WriteHuman("\n(%d of %d shown)\n", len(nodes), total)
+	}
+	return nil
+}
+
+// runTree displays an ASCII tree with status icons and connectors per FR-9.3.
+func runTree(id string, maxDepth int) error {
+	if app.store == nil {
+		return fmt.Errorf("not in an mtix project")
+	}
+
+	ctx := context.Background()
+	node, err := app.nodeSvc.GetNode(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	out := NewOutputWriter(app.jsonOutput)
+
+	if app.jsonOutput {
+		return out.WriteJSON(node)
+	}
+
+	printTreeFormatted(ctx, out, id, "", true, maxDepth, 0,
+		node.Title, string(node.Status), node.Progress)
+	return nil
+}
+
+// printTreeFormatted recursively prints an ASCII tree with status icons.
+func printTreeFormatted(ctx context.Context, out OutputWriter, id, prefix string, isLast bool, maxDepth, depth int, title, status string, progress float64) {
+	line := TreeLine(id, status, title, progress, prefix, isLast, depth, false)
+	out.WriteHuman("%s\n", line)
+
+	if depth >= maxDepth {
+		return
+	}
+
+	children, err := app.store.GetDirectChildren(ctx, id)
+	if err != nil {
+		return
+	}
+
+	childPrefix := TreeChildPrefix(prefix, isLast, depth)
+
+	for i, child := range children {
+		printTreeFormatted(ctx, out, child.ID, childPrefix, i == len(children)-1,
+			maxDepth, depth+1, child.Title, string(child.Status), child.Progress)
+	}
+}

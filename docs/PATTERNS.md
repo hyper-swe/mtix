@@ -1,0 +1,108 @@
+# LLM Integration Patterns
+
+> **Project:** PROJ
+
+## Pattern 1: Sequential Task Execution
+
+The simplest pattern — one agent works through tasks sequentially:
+
+```
+session_start → ready → claim → context → execute → done → ready → claim → ...
+```
+
+**When to use:** Single-agent workflows, simple task chains.
+
+## Pattern 2: Parallel Agent Coordination
+
+Multiple agents work on different branches of the task tree:
+
+```
+Agent A: claim(PROJ-1.1) → context → execute → done
+Agent B: claim(PROJ-1.2) → context → execute → done
+Agent C: claim(PROJ-1.3) → context → execute → done
+```
+
+**When to use:** Independent subtasks that can be parallelized.
+
+**Coordination rules:**
+- Agents must claim before working (prevents conflicts)
+- Use dependencies to express ordering constraints
+- Parent progress auto-updates as children complete
+
+## Pattern 3: Decompose-and-Delegate
+
+A planning agent decomposes tasks, then worker agents execute:
+
+```
+Planner: decompose(PROJ-1) → "Task A" "Task B" "Task C"
+Worker1: ready → claim(PROJ-1.1) → context → execute → done
+Worker2: ready → claim(PROJ-1.2) → context → execute → done
+Worker3: ready → claim(PROJ-1.3) → context → execute → done
+```
+
+**When to use:** Complex tasks requiring planning before execution.
+
+## Pattern 4: Context-Aware Task Decomposition
+
+The most critical pattern. When decomposing a task into subtasks, write each child's description and prompt so that **traversing from root to that child gives the executing agent everything it needs.**
+
+### The Flow
+
+```
+1. Read the parent node's context: mtix_context(parent_id)
+2. Understand the full scope from the assembled prompt
+3. Decompose into children, writing each child's prompt to ADD specifics:
+   - What files to modify
+   - What functions/APIs to call
+   - What edge cases to handle
+   - What tests to write
+   - What "done" looks like
+4. Create children: mtix_decompose(parent_id, children)
+```
+
+### Example: Good Decomposition
+
+Parent `PROJ-1.3` has prompt: *"Implement user profile API endpoints. RESTful design, JSON responses, input validation on all fields."*
+
+Decomposition:
+
+```json
+[
+  {
+    "title": "GET /api/v1/users/:id endpoint",
+    "prompt": "Implement GET handler in internal/api/http/handlers_user.go. Return user profile as JSON (id, name, email, created_at). Return 404 with {\"error\": \"not found\"} for unknown IDs. Add handler to router in server.go. Test: TestGetUser_ValidID_ReturnsProfile, TestGetUser_UnknownID_Returns404."
+  },
+  {
+    "title": "PATCH /api/v1/users/:id endpoint",
+    "prompt": "Implement PATCH handler in internal/api/http/handlers_user.go. Accept partial updates: name (max 100 chars), email (valid format). Return 400 with field-level errors for invalid input. Require X-Requested-With header (CSRF). Test: TestUpdateUser_ValidName, TestUpdateUser_InvalidEmail_Returns400, TestUpdateUser_MissingCSRF_Returns403."
+  },
+  {
+    "title": "Input validation middleware for user fields",
+    "prompt": "Create validateUserInput() in internal/api/http/middleware_user.go. Validate: name (1-100 chars, no control characters), email (RFC 5322 basic check), bio (max 500 chars, sanitize HTML). Return structured error: {\"errors\": [{\"field\": \"name\", \"message\": \"...\"}]}. Used by both create and update handlers."
+  }
+]
+```
+
+Each child adds **concrete details** (file paths, function names, validation rules, test names) that the parent didn't specify. An agent claiming `PROJ-1.3.2` will see the parent's "RESTful design, JSON responses, input validation" context PLUS the child's specific PATCH endpoint instructions.
+
+### The Completeness Test
+
+Before finalizing a decomposition, mentally traverse root → leaf for each child and ask:
+
+1. Does the agent know **what** to build? (feature scope)
+2. Does the agent know **where** to build it? (file paths, functions)
+3. Does the agent know **how to verify** it works? (test cases, acceptance criteria)
+4. Does the agent know **what to avoid**? (edge cases, constraints, anti-patterns)
+
+If any answer is "no," add the missing context to the child's prompt.
+
+## Anti-Patterns
+
+1. **Working without context** — Always call `mtix_context` before starting work
+2. **Working without claiming** — Always claim before starting work
+3. **Ignoring blockers** — Check dependencies before executing
+4. **Silent failure** — If stuck, update agent state to `stuck`, do not just stop
+5. **Missing heartbeats** — The system will reclaim your nodes if you go stale
+6. **Vague decomposition** — Writing child prompts like "implement the thing" wastes the context chain; be specific
+7. **Context duplication** — Don't repeat parent prompts verbatim in children; add new information
+8. **Empty task shells** — Creating tasks with only a title and no description, prompt, or acceptance criteria. The CLI warns about this — act on the warning. A task without context cannot be picked up by another agent

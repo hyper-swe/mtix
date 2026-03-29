@@ -1,0 +1,17 @@
+mtix - AI-native micro issue manager
+Copyright 2025-2026 HyperSWE
+
+This product includes software developed by HyperSWE.
+
+Third-party dependencies and their licenses:
+
+  github.com/gin-gonic/gin - MIT License
+  github.com/gorilla/websocket - BSD 2-Clause License
+  github.com/jackc/pgx/v5 - MIT License
+  github.com/oklog/ulid/v2 - Apache License 2.0
+  github.com/spf13/cobra - Apache License 2.0
+  github.com/spf13/pflag - BSD 3-Clause License
+  github.com/stretchr/testify - MIT License
+  google.golang.org/grpc - Apache License 2.0
+  google.golang.org/protobuf - BSD 3-Clause License
+  modernc.org/sqlite - BSD 3-Clause License

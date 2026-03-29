@@ -1,0 +1,279 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * mtix design system — Linear-inspired, refined industrial aesthetic.
+ * All colors reference CSS variables so themes swap via .dark class on <html>.
+ */
+
+/* Import distinctive fonts via system fallbacks — no external CDN needed for embedded app */
+:root {
+  /* ─── Light Theme ─── */
+  --color-bg: #f8f9fb;
+  --color-surface: #ffffff;
+  --color-surface-raised: #ffffff;
+  --color-surface-overlay: #ffffff;
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #64748b;
+  --color-text-tertiary: #94a3b8;
+  --color-accent: #6366f1;
+  --color-accent-hover: #4f46e5;
+  --color-accent-muted: rgba(99, 102, 241, 0.08);
+  --color-accent-subtle: rgba(99, 102, 241, 0.12);
+  --color-border: #e2e8f0;
+  --color-border-subtle: #f1f5f9;
+  --color-hover: rgba(0, 0, 0, 0.03);
+  --color-active: rgba(0, 0, 0, 0.05);
+  --color-focus-ring: rgba(99, 102, 241, 0.4);
+
+  /* Status colors — light */
+  --color-status-done: #10b981;
+  --color-status-in-progress: #3b82f6;
+  --color-status-blocked: #ef4444;
+  --color-status-open: #64748b;
+  --color-status-invalidated: #f59e0b;
+  --color-status-deferred: #8b5cf6;
+  --color-status-cancelled: #94a3b8;
+
+  /* Status backgrounds */
+  --color-status-done-bg: rgba(16, 185, 129, 0.08);
+  --color-status-in-progress-bg: rgba(59, 130, 246, 0.08);
+  --color-status-blocked-bg: rgba(239, 68, 68, 0.08);
+  --color-status-open-bg: rgba(100, 116, 139, 0.06);
+  --color-status-deferred-bg: rgba(139, 92, 246, 0.08);
+  --color-status-cancelled-bg: rgba(148, 163, 184, 0.06);
+  --color-status-invalidated-bg: rgba(245, 158, 11, 0.08);
+
+  /* Density — comfortable default */
+  --row-height: 36px;
+  --row-height-compact: 28px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+
+  /* Radii */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /* Transitions */
+  --transition-fast: 120ms ease;
+  --transition-base: 180ms ease;
+  --transition-slow: 280ms ease;
+
+  /* Typography */
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--color-text-primary);
+  background-color: var(--color-bg);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── Dark Theme ─── */
+.dark {
+  --color-bg: #0f1117;
+  --color-surface: #1a1d27;
+  --color-surface-raised: #1e2130;
+  --color-surface-overlay: #22253a;
+  --color-text-primary: #e2e8f0;
+  --color-text-secondary: #94a3b8;
+  --color-text-tertiary: #64748b;
+  --color-accent: #818cf8;
+  --color-accent-hover: #6366f1;
+  --color-accent-muted: rgba(129, 140, 248, 0.1);
+  --color-accent-subtle: rgba(129, 140, 248, 0.15);
+  --color-border: #2a2d3d;
+  --color-border-subtle: #1e2130;
+  --color-hover: rgba(255, 255, 255, 0.04);
+  --color-active: rgba(255, 255, 255, 0.06);
+  --color-focus-ring: rgba(129, 140, 248, 0.4);
+
+  /* Status colors — dark */
+  --color-status-done: #34d399;
+  --color-status-in-progress: #60a5fa;
+  --color-status-blocked: #f87171;
+  --color-status-open: #94a3b8;
+  --color-status-invalidated: #fbbf24;
+  --color-status-deferred: #a78bfa;
+  --color-status-cancelled: #64748b;
+
+  /* Status backgrounds — dark */
+  --color-status-done-bg: rgba(52, 211, 153, 0.1);
+  --color-status-in-progress-bg: rgba(96, 165, 250, 0.1);
+  --color-status-blocked-bg: rgba(248, 113, 113, 0.1);
+  --color-status-open-bg: rgba(148, 163, 184, 0.06);
+  --color-status-deferred-bg: rgba(167, 139, 250, 0.1);
+  --color-status-cancelled-bg: rgba(100, 116, 139, 0.06);
+  --color-status-invalidated-bg: rgba(251, 191, 36, 0.1);
+
+  /* Shadows — dark */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.2);
+  --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Compact density — tighter spacing throughout the UI */
+.density-compact {
+  --row-height: 28px;
+  --row-height-compact: 24px;
+  --topbar-height: 36px;
+  --spacing-section: 0.5rem;
+}
+
+/* ─── Global resets ─── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─── Focus styles ─── */
+:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm);
+}
+
+/* ─── Selection ─── */
+::selection {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-text-primary);
+}
+
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+}
+
+/* ─── Animations ─── */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.animate-fade-in {
+  animation: fadeIn var(--transition-base) both;
+}
+
+.animate-slide-up {
+  animation: slideUp var(--transition-slow) both;
+}
+
+.animate-slide-down {
+  animation: slideDown var(--transition-slow) both;
+}
+
+.animate-scale-in {
+  animation: scaleIn var(--transition-slow) both;
+}
+
+/* ─── Utility classes ─── */
+.text-balance {
+  text-wrap: balance;
+}
+
+/* Monospace for IDs and code */
+.font-mono {
+  font-family: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, "Consolas", monospace;
+  font-feature-settings: "liga" 1, "calt" 1;
+}
+
+/* ─── Input resets ─── */
+input, textarea, select {
+  font-family: inherit;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+/* ─── Table resets ─── */
+table {
+  border-collapse: collapse;
+}
+
+/* ─── Transitions for interactive elements ─── */
+button, a, [role="button"] {
+  transition: background-color var(--transition-fast),
+              color var(--transition-fast),
+              border-color var(--transition-fast),
+              opacity var(--transition-fast),
+              box-shadow var(--transition-fast);
+}
+
+/* ─── Kbd styling ─── */
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-tertiary);
+}

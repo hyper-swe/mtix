@@ -1,0 +1,1324 @@
+openapi: "3.1.0"
+info:
+  title: mtix API
+  description: |
+    REST API for mtix — an AI-native micro issue manager for code-generating LLMs.
+    Designed for safety-critical environments (DO-178C, IEC 62304, NASA-STD-8739.8).
+
+    Agent documentation: `.mtix/docs/AGENTS.md`
+  version: "1.0.0"
+  contact:
+    name: mtix
+  license:
+    name: MIT
+
+servers:
+  - url: "http://localhost:{port}"
+    description: Local mtix server
+    variables:
+      port:
+        default: "6849"
+        description: Configurable server port
+
+paths:
+  # ── Health ──────────────────────────────────────────────────
+  /health:
+    get:
+      operationId: getHealth
+      summary: Health check
+      description: Returns server status. Does NOT require X-Requested-With header.
+      tags: [System]
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  uptime_seconds:
+                    type: number
+                  version:
+                    type: string
+
+  # ── Nodes CRUD ──────────────────────────────────────────────
+  /api/v1/nodes:
+    get:
+      operationId: listNodes
+      summary: List nodes with filters
+      tags: [Nodes]
+      parameters:
+        - $ref: "#/components/parameters/status"
+        - $ref: "#/components/parameters/under"
+        - $ref: "#/components/parameters/nodeType"
+        - $ref: "#/components/parameters/priority"
+        - $ref: "#/components/parameters/assignee"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Paginated node list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeList"
+
+    post:
+      operationId: createNode
+      summary: Create a node
+      tags: [Nodes]
+      parameters:
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNodeRequest"
+      responses:
+        "201":
+          description: Node created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Node"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/nodes/{id}:
+    get:
+      operationId: getNode
+      summary: Get node by ID
+      tags: [Nodes]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+      responses:
+        "200":
+          description: Node details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Node"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    patch:
+      operationId: updateNode
+      summary: Update node fields
+      tags: [Nodes]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateNodeRequest"
+      responses:
+        "200":
+          description: Node updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Node"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    delete:
+      operationId: deleteNode
+      summary: Soft-delete node and descendants
+      tags: [Nodes]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+        - name: cascade
+          in: query
+          schema:
+            type: boolean
+            default: true
+          description: If false, delete only target node (children become orphans)
+      responses:
+        "200":
+          description: Node soft-deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/nodes/{id}/children:
+    get:
+      operationId: listChildren
+      summary: List direct children
+      tags: [Nodes]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Child nodes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeList"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/nodes/{id}/tree:
+    get:
+      operationId: getTree
+      summary: Full subtree
+      tags: [Nodes]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - name: depth
+          in: query
+          schema:
+            type: integer
+          description: Maximum depth to traverse
+      responses:
+        "200":
+          description: Subtree
+          content:
+            application/json:
+              schema:
+                type: object
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/nodes/{id}/ancestors:
+    get:
+      operationId: getAncestors
+      summary: Breadcrumb path to root
+      tags: [Nodes]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+      responses:
+        "200":
+          description: Ancestor chain
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ancestors:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Node"
+
+  /api/v1/nodes/{id}/progress:
+    get:
+      operationId: getProgress
+      summary: Progress rollup
+      tags: [Nodes]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+      responses:
+        "200":
+          description: Progress data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProgressResponse"
+
+  /api/v1/nodes/{id}/context:
+    get:
+      operationId: getContext
+      summary: Context chain assembly
+      description: Assembles full ancestor chain for LLM prompt construction per FR-12.6.
+      tags: [Context]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - name: max_tokens
+          in: query
+          schema:
+            type: integer
+          description: Token budget for assembled prompt
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json, assembled]
+            default: json
+      responses:
+        "200":
+          description: Context chain
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextChain"
+
+  /api/v1/nodes/{id}/stats:
+    get:
+      operationId: getStats
+      summary: Subtree statistics
+      tags: [Analytics]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+      responses:
+        "200":
+          description: Statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+
+  # ── Decompose ───────────────────────────────────────────────
+  /api/v1/nodes/{id}/decompose:
+    post:
+      operationId: decomposeNode
+      summary: Batch-create children with prompts
+      tags: [Nodes]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [children]
+              properties:
+                children:
+                  type: array
+                  items:
+                    type: object
+                    required: [title]
+                    properties:
+                      title:
+                        type: string
+                      prompt:
+                        type: string
+                      acceptance:
+                        type: string
+      responses:
+        "201":
+          description: Children created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nodes:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Node"
+
+  # ── Workflow ────────────────────────────────────────────────
+  /api/v1/nodes/{id}/claim:
+    post:
+      operationId: claimNode
+      summary: Claim node for work
+      tags: [Workflow]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Node claimed
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/nodes/{id}/unclaim:
+    post:
+      operationId: unclaimNode
+      summary: Release claim
+      tags: [Workflow]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: Claim released
+
+  /api/v1/nodes/{id}/done:
+    post:
+      operationId: markDone
+      summary: Mark node as done
+      tags: [Workflow]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: Node marked done (or idempotent if already done per FR-7.7a)
+
+  /api/v1/nodes/{id}/defer:
+    post:
+      operationId: deferNode
+      summary: Defer node
+      tags: [Workflow]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                until:
+                  type: string
+                  format: date-time
+                  description: ISO-8601 date. Omit for indefinite deferral.
+      responses:
+        "200":
+          description: Node deferred
+
+  /api/v1/nodes/{id}/cancel:
+    post:
+      operationId: cancelNode
+      summary: Cancel node
+      tags: [Workflow]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                cascade:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: Node cancelled
+
+  /api/v1/nodes/{id}/reopen:
+    post:
+      operationId: reopenNode
+      summary: Reopen done or cancelled node
+      tags: [Workflow]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: Node reopened
+
+  /api/v1/nodes/{id}/comment:
+    post:
+      operationId: addComment
+      summary: Add comment to activity stream
+      tags: [Workflow]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+                type:
+                  type: string
+                  enum: [comment, note]
+                  default: comment
+      responses:
+        "200":
+          description: Comment added
+
+  # ── Prompt & Annotations ────────────────────────────────────
+  /api/v1/nodes/{id}/prompt:
+    put:
+      operationId: updatePrompt
+      summary: Update prompt text
+      tags: [Prompt]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+      responses:
+        "200":
+          description: Prompt updated
+
+  /api/v1/nodes/{id}/prompt/annotate:
+    post:
+      operationId: annotatePrompt
+      summary: Add annotation to prompt
+      tags: [Prompt]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text:
+                  type: string
+      responses:
+        "201":
+          description: Annotation added
+
+  /api/v1/nodes/{id}/prompt/annotations/{ann_id}:
+    patch:
+      operationId: resolveAnnotation
+      summary: Resolve or unresolve annotation
+      tags: [Prompt]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - name: ann_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [resolved]
+              properties:
+                resolved:
+                  type: boolean
+      responses:
+        "200":
+          description: Annotation updated
+
+  # ── Rerun & Restore ─────────────────────────────────────────
+  /api/v1/nodes/{id}/rerun:
+    post:
+      operationId: rerunNode
+      summary: Trigger rerun — invalidate descendants
+      tags: [Workflow]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [strategy]
+              properties:
+                strategy:
+                  type: string
+                  enum: [all, open_only, delete, review]
+      responses:
+        "200":
+          description: Rerun triggered
+
+  /api/v1/nodes/{id}/restore:
+    post:
+      operationId: restoreNode
+      summary: Restore invalidated node to previous status
+      tags: [Workflow]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+      responses:
+        "200":
+          description: Node restored
+
+  /api/v1/nodes/{id}/undelete:
+    post:
+      operationId: undeleteNode
+      summary: Recover soft-deleted node within retention period
+      tags: [Workflow]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+        - $ref: "#/components/parameters/csrfHeader"
+      responses:
+        "200":
+          description: Node recovered
+
+  # ── Bulk ────────────────────────────────────────────────────
+  /api/v1/nodes/bulk:
+    patch:
+      operationId: bulkUpdate
+      summary: Bulk update nodes
+      tags: [Nodes]
+      parameters:
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Bulk update applied
+
+  # ── Query Endpoints ─────────────────────────────────────────
+  /api/v1/ready:
+    get:
+      operationId: getReady
+      summary: Available work
+      tags: [Query]
+      parameters:
+        - $ref: "#/components/parameters/under"
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          description: Ready nodes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeList"
+
+  /api/v1/blocked:
+    get:
+      operationId: getBlocked
+      summary: Blocked items
+      tags: [Query]
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Blocked nodes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeList"
+
+  /api/v1/stale:
+    get:
+      operationId: getStale
+      summary: Stale items
+      tags: [Query]
+      parameters:
+        - name: hours
+          in: query
+          schema:
+            type: integer
+            default: 24
+        - $ref: "#/components/parameters/limit"
+      responses:
+        "200":
+          description: Stale entries
+
+  /api/v1/orphans:
+    get:
+      operationId: getOrphans
+      summary: Orphaned nodes
+      tags: [Query]
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Orphan nodes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeList"
+
+  /api/v1/search:
+    get:
+      operationId: searchNodes
+      summary: Full-text search
+      tags: [Query]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/status"
+        - $ref: "#/components/parameters/nodeType"
+        - $ref: "#/components/parameters/under"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeList"
+
+  # ── Dependencies ────────────────────────────────────────────
+  /api/v1/deps:
+    post:
+      operationId: createDep
+      summary: Create dependency
+      tags: [Dependencies]
+      parameters:
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from_id, to_id, dep_type]
+              properties:
+                from_id:
+                  type: string
+                to_id:
+                  type: string
+                dep_type:
+                  type: string
+                  enum: [blocks, related, discovered_from, duplicates]
+                metadata:
+                  type: object
+      responses:
+        "201":
+          description: Dependency created
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/deps/{from}/{to}:
+    delete:
+      operationId: deleteDep
+      summary: Remove dependency
+      tags: [Dependencies]
+      parameters:
+        - name: from
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: to
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: dep_type
+          in: query
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/csrfHeader"
+      responses:
+        "200":
+          description: Dependency removed
+
+  /api/v1/deps/{id}:
+    get:
+      operationId: getDeps
+      summary: Get all dependencies for a node
+      tags: [Dependencies]
+      parameters:
+        - $ref: "#/components/parameters/nodeId"
+      responses:
+        "200":
+          description: Dependency list
+
+  # ── Sessions ────────────────────────────────────────────────
+  /api/v1/sessions/{agent_id}/start:
+    post:
+      operationId: startSession
+      summary: Begin agent session
+      tags: [Sessions]
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/csrfHeader"
+      responses:
+        "200":
+          description: Session started
+
+  /api/v1/sessions/{agent_id}/end:
+    post:
+      operationId: endSession
+      summary: End agent session
+      tags: [Sessions]
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/csrfHeader"
+      responses:
+        "200":
+          description: Session ended with summary
+
+  /api/v1/sessions/{agent_id}/summary:
+    get:
+      operationId: getSessionSummary
+      summary: Get session activity summary
+      tags: [Sessions]
+      parameters:
+        - name: agent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session summary
+
+  # ── Agents ──────────────────────────────────────────────────
+  /api/v1/agents/{id}/heartbeat:
+    post:
+      operationId: agentHeartbeat
+      summary: Agent heartbeat
+      tags: [Agents]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/csrfHeader"
+      responses:
+        "200":
+          description: Heartbeat recorded
+
+  /api/v1/agents/{id}/state:
+    patch:
+      operationId: updateAgentState
+      summary: Update agent state
+      tags: [Agents]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/csrfHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state:
+                  type: string
+                  enum: [idle, working, stuck, done]
+      responses:
+        "200":
+          description: State updated
+
+  /api/v1/agents/{id}/current:
+    get:
+      operationId: getAgentCurrent
+      summary: Get agent's current work
+      tags: [Agents]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Current work
+
+  # ── Sync ────────────────────────────────────────────────────
+  /api/v1/sync/push:
+    post:
+      operationId: syncPush
+      summary: Push to cloud
+      tags: [Sync]
+      parameters:
+        - $ref: "#/components/parameters/csrfHeader"
+      responses:
+        "200":
+          description: Push complete
+
+  /api/v1/sync/pull:
+    post:
+      operationId: syncPull
+      summary: Pull from cloud
+      tags: [Sync]
+      parameters:
+        - $ref: "#/components/parameters/csrfHeader"
+      responses:
+        "200":
+          description: Pull complete
+
+  /api/v1/sync/status:
+    get:
+      operationId: getSyncStatus
+      summary: Sync status
+      tags: [Sync]
+      responses:
+        "200":
+          description: Current sync status
+
+  # ── Project ─────────────────────────────────────────────────
+  /api/v1/project:
+    get:
+      operationId: getProject
+      summary: Current project info
+      tags: [Project]
+      responses:
+        "200":
+          description: Project info
+
+  /api/v1/project/stats:
+    get:
+      operationId: getProjectStats
+      summary: Project statistics
+      tags: [Project]
+      responses:
+        "200":
+          description: Project stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsResponse"
+
+  /api/v1/project/tree:
+    get:
+      operationId: getProjectTree
+      summary: Full project tree
+      tags: [Project]
+      responses:
+        "200":
+          description: Full tree
+
+  # ── Admin (localhost only, NOT under /api/v1) ───────────────
+  /admin/backup:
+    post:
+      operationId: adminBackup
+      summary: Create SQLite backup
+      description: Localhost only. Not under /api/v1.
+      tags: [Admin]
+      responses:
+        "200":
+          description: Backup created
+
+  /admin/export:
+    get:
+      operationId: adminExport
+      summary: Export full project as JSON
+      description: Localhost only. Not under /api/v1.
+      tags: [Admin]
+      responses:
+        "200":
+          description: Full project JSON export
+
+  /admin/import:
+    post:
+      operationId: adminImport
+      summary: Import project from JSON
+      description: Localhost only. Not under /api/v1.
+      tags: [Admin]
+      responses:
+        "200":
+          description: Import complete
+
+  /admin/gc:
+    post:
+      operationId: adminGC
+      summary: Run retention cleanup
+      description: Permanently removes expired soft-deleted nodes. Localhost only.
+      tags: [Admin]
+      responses:
+        "200":
+          description: GC complete
+
+  /admin/verify:
+    get:
+      operationId: adminVerify
+      summary: Run database integrity diagnostics
+      description: Localhost only. Not under /api/v1.
+      tags: [Admin]
+      responses:
+        "200":
+          description: Verification results
+
+components:
+  parameters:
+    nodeId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Dot-notation node ID (e.g., PROJ-42.1.3)
+
+    csrfHeader:
+      name: X-Requested-With
+      in: header
+      required: true
+      schema:
+        type: string
+        enum: [mtix]
+      description: CSRF protection header required on all mutations per NFR-5.5
+
+    status:
+      name: status
+      in: query
+      schema:
+        type: string
+        enum: [open, in_progress, blocked, done, deferred, cancelled, invalidated]
+
+    under:
+      name: under
+      in: query
+      schema:
+        type: string
+      description: Filter to subtree under this node ID
+
+    nodeType:
+      name: type
+      in: query
+      schema:
+        type: string
+        enum: [story, epic, issue, micro, auto]
+
+    priority:
+      name: priority
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 5
+
+    assignee:
+      name: assignee
+      in: query
+      schema:
+        type: string
+
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        default: 50
+        maximum: 500
+
+    offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        default: 0
+
+  schemas:
+    Node:
+      type: object
+      required: [id, title, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          description: Dot-notation ID (e.g., PROJ-42.1.3)
+        parent_id:
+          type: string
+        project:
+          type: string
+        depth:
+          type: integer
+        seq:
+          type: integer
+        title:
+          type: string
+          maxLength: 500
+        description:
+          type: string
+          maxLength: 51200
+        prompt:
+          type: string
+          maxLength: 102400
+        acceptance:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+        node_type:
+          type: string
+          enum: [story, epic, issue, micro, auto]
+        issue_type:
+          type: string
+          enum: [bug, feature, task, chore, refactor, test, doc]
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 5
+        status:
+          type: string
+          enum: [open, in_progress, blocked, done, deferred, cancelled, invalidated]
+        previous_status:
+          type: string
+        progress:
+          type: number
+          minimum: 0
+          maximum: 1
+        assignee:
+          type: string
+        creator:
+          type: string
+        agent_state:
+          type: string
+          enum: [idle, working, stuck, done]
+        weight:
+          type: number
+        content_hash:
+          type: string
+        child_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+        defer_until:
+          type: string
+          format: date-time
+          nullable: true
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    NodeList:
+      type: object
+      required: [nodes, total, has_more]
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Node"
+        total:
+          type: integer
+        has_more:
+          type: boolean
+
+    CreateNodeRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          maxLength: 500
+        parent_id:
+          type: string
+        project:
+          type: string
+        description:
+          type: string
+        prompt:
+          type: string
+        acceptance:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+        node_type:
+          type: string
+          enum: [story, epic, issue, micro, auto]
+        issue_type:
+          type: string
+          enum: [bug, feature, task, chore, refactor, test, doc]
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 5
+
+    UpdateNodeRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 500
+        description:
+          type: string
+        prompt:
+          type: string
+        acceptance:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 5
+        assignee:
+          type: string
+        code_refs:
+          type: array
+          items:
+            type: object
+        commit_refs:
+          type: array
+          items:
+            type: string
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Error code (NOT_FOUND, INVALID_INPUT, etc.)
+              enum:
+                - NOT_FOUND
+                - ALREADY_EXISTS
+                - INVALID_INPUT
+                - INVALID_TRANSITION
+                - CYCLE_DETECTED
+                - CONFLICT
+                - ALREADY_CLAIMED
+                - NODE_BLOCKED
+                - STILL_DEFERRED
+                - AGENT_STILL_ACTIVE
+                - NO_ACTIVE_SESSION
+                - INVALID_CONFIG_KEY
+            message:
+              type: string
+
+    ContextChain:
+      type: object
+      properties:
+        chain:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              title:
+                type: string
+              prompt:
+                type: string
+              depth:
+                type: integer
+        assembled_prompt:
+          type: string
+        token_count:
+          type: integer
+
+    StatsResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        by_status:
+          type: object
+          additionalProperties:
+            type: integer
+        by_priority:
+          type: object
+          additionalProperties:
+            type: integer
+        progress:
+          type: number
+
+    ProgressResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        progress:
+          type: number
+        total_children:
+          type: integer
+        done_children:
+          type: integer
+
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    Conflict:
+      description: Conflict (duplicate, already claimed, cycle)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: "Bearer token for cloud sync mode (Phase 5+). Not required for localhost."

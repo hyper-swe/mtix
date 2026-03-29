@@ -1,0 +1,409 @@
+// mtix.proto defines the MtixService gRPC API per FR-8.2.
+// All RPCs grouped by category with full request/response types.
+syntax = "proto3";
+
+package mtix.v1;
+
+option go_package = "github.com/hyper-swe/mtix/internal/api/grpc/pb";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+import "proto/mtix/v1/types.proto";
+
+// MtixService provides the full mtix gRPC API per FR-8.2.
+// 40+ RPCs across 8 categories: CRUD, LLM Shortcuts, Queries,
+// Context/Prompt, Session/Agent, Dependencies, Bulk, Real-time.
+service MtixService {
+  // --- CRUD ---
+  rpc CreateNode(CreateNodeRequest) returns (Node);
+  rpc GetNode(GetNodeRequest) returns (Node);
+  rpc UpdateNode(UpdateNodeRequest) returns (Node);
+  rpc DeleteNode(DeleteNodeRequest) returns (DeleteNodeResponse);
+  rpc UndeleteNode(UndeleteNodeRequest) returns (Node);
+  rpc ListChildren(ListChildrenRequest) returns (ListChildrenResponse);
+  rpc GetTree(GetTreeRequest) returns (GetTreeResponse);
+  rpc Decompose(DecomposeRequest) returns (DecomposeResponse);
+
+  // --- LLM Shortcuts ---
+  rpc Micro(MicroRequest) returns (Node);
+  rpc Claim(ClaimRequest) returns (Node);
+  rpc Unclaim(UnclaimRequest) returns (Node);
+  rpc Done(DoneRequest) returns (Node);
+  rpc Defer(DeferRequest) returns (Node);
+  rpc Cancel(CancelRequest) returns (Node);
+  rpc Reopen(ReopenRequest) returns (Node);
+  rpc Block(BlockRequest) returns (Node);
+  rpc Comment(CommentRequest) returns (CommentResponse);
+
+  // --- Queries ---
+  rpc Ready(ReadyRequest) returns (SearchResult);
+  rpc Blocked(BlockedRequest) returns (SearchResult);
+  rpc Stale(StaleRequest) returns (SearchResult);
+  rpc Orphans(OrphansRequest) returns (SearchResult);
+  rpc Search(SearchRequest) returns (SearchResult);
+  rpc Progress(ProgressRequest) returns (ProgressResponse);
+  rpc Stats(StatsRequest) returns (StatsResponse);
+
+  // --- Context / Prompt ---
+  rpc GetContext(GetContextRequest) returns (ContextResponse);
+  rpc UpdatePrompt(UpdatePromptRequest) returns (Node);
+  rpc AddAnnotation(AddAnnotationRequest) returns (Annotation);
+  rpc ResolveAnnotation(ResolveAnnotationRequest) returns (Annotation);
+  rpc Rerun(RerunRequest) returns (RerunResponse);
+  rpc Restore(RestoreRequest) returns (Node);
+
+  // --- Session / Agent ---
+  rpc SessionStart(SessionStartRequest) returns (SessionStartResponse);
+  rpc SessionEnd(SessionEndRequest) returns (SessionSummary);
+  rpc SessionSummaryRPC(SessionSummaryRequest) returns (SessionSummary);
+  rpc AgentHeartbeat(AgentHeartbeatRequest) returns (AgentHeartbeatResponse);
+  rpc GetAgentState(GetAgentStateRequest) returns (AgentInfo);
+  rpc SetAgentState(SetAgentStateRequest) returns (AgentInfo);
+  rpc AgentCurrent(AgentCurrentRequest) returns (AgentCurrentResponse);
+
+  // --- Dependencies ---
+  rpc AddDependency(AddDependencyRequest) returns (Dependency);
+  rpc RemoveDependency(RemoveDependencyRequest) returns (RemoveDependencyResponse);
+  rpc GetDependencyTree(GetDependencyTreeRequest) returns (GetDependencyTreeResponse);
+
+  // --- Bulk ---
+  rpc BulkUpdate(BulkUpdateRequest) returns (BulkUpdateResponse);
+
+  // --- Real-time ---
+  // Subscribe is a server-streaming RPC per FR-7.5a.
+  // Streams the same 11+ event types as the WebSocket endpoint.
+  rpc Subscribe(SubscribeRequest) returns (stream Event);
+}
+
+// --- CRUD Request/Response Messages ---
+
+message CreateNodeRequest {
+  string title       = 1;
+  string parent_id   = 2;
+  string project     = 3;
+  string description = 4;
+  string prompt      = 5;
+  string acceptance  = 6;
+  NodeType node_type = 7;
+  IssueType issue_type = 8;
+  Priority priority  = 9;
+  repeated string labels = 10;
+  string creator     = 11;
+  google.protobuf.Struct metadata = 12;
+}
+
+message GetNodeRequest {
+  string id = 1;
+}
+
+message UpdateNodeRequest {
+  string id = 1;
+  optional string title       = 2;
+  optional string description = 3;
+  optional string prompt      = 4;
+  optional string acceptance  = 5;
+  optional Priority priority  = 6;
+  repeated string labels      = 7;
+  bool labels_set             = 8;  // Explicit flag for labels (empty vs unset)
+  google.protobuf.Struct metadata = 9;
+}
+
+message DeleteNodeRequest {
+  string id      = 1;
+  bool   cascade = 2;
+  string author  = 3;
+}
+
+message DeleteNodeResponse {
+  int32 deleted_count = 1;
+}
+
+message UndeleteNodeRequest {
+  string id = 1;
+}
+
+message ListChildrenRequest {
+  string id     = 1;
+  int32  limit  = 2;
+  int32  offset = 3;
+}
+
+message ListChildrenResponse {
+  repeated Node children = 1;
+  bool has_more          = 2;
+}
+
+message GetTreeRequest {
+  string id        = 1;
+  int32  max_depth = 2;
+}
+
+message GetTreeResponse {
+  TreeNode root = 1;
+}
+
+// TreeNode is a recursive tree structure for GetTree.
+message TreeNode {
+  Node             node     = 1;
+  repeated TreeNode children = 2;
+}
+
+message DecomposeRequest {
+  string parent_id           = 1;
+  repeated DecomposeChild children = 2;
+  string author              = 3;
+}
+
+message DecomposeChild {
+  string title       = 1;
+  string description = 2;
+  string prompt      = 3;
+  string acceptance  = 4;
+}
+
+message DecomposeResponse {
+  repeated Node created = 1;
+}
+
+// --- LLM Shortcut Request/Response Messages ---
+
+message MicroRequest {
+  string parent_id  = 1;
+  string title      = 2;
+  string prompt     = 3;
+  string acceptance = 4;
+  string author     = 5;
+}
+
+message ClaimRequest {
+  string id    = 1;
+  string agent = 2;
+  bool   force = 3;  // Force reclaim from stale agent
+}
+
+message UnclaimRequest {
+  string id     = 1;
+  string agent  = 2;
+  string reason = 3;
+}
+
+message DoneRequest {
+  string id     = 1;
+  string agent  = 2;
+  string reason = 3;
+}
+
+message DeferRequest {
+  string id    = 1;
+  string agent = 2;
+  google.protobuf.Timestamp until = 3;
+}
+
+message CancelRequest {
+  string id     = 1;
+  string agent  = 2;
+  string reason = 3;
+}
+
+message ReopenRequest {
+  string id     = 1;
+  string agent  = 2;
+  string reason = 3;
+}
+
+message BlockRequest {
+  string id    = 1;
+  string agent = 2;
+}
+
+message CommentRequest {
+  string id     = 1;
+  string text   = 2;
+  string author = 3;
+}
+
+message CommentResponse {
+  string     node_id    = 1;
+  Annotation annotation = 2;
+}
+
+// --- Query Request Messages ---
+
+message ReadyRequest {
+  int32 limit  = 1;
+  int32 offset = 2;
+}
+
+message BlockedRequest {
+  int32 limit  = 1;
+  int32 offset = 2;
+}
+
+message StaleRequest {
+  int32 hours  = 1;
+  int32 limit  = 2;
+  int32 offset = 3;
+}
+
+message OrphansRequest {
+  int32 limit  = 1;
+  int32 offset = 2;
+}
+
+message SearchRequest {
+  string status    = 1;
+  string assignee  = 2;
+  string project   = 3;
+  string parent_id = 4;
+  string q         = 5;  // Full-text search query
+  int32  limit     = 6;
+  int32  offset    = 7;
+}
+
+message ProgressRequest {
+  string id = 1;
+}
+
+message StatsRequest {
+  string project = 1;  // Optional project filter
+}
+
+// --- Context/Prompt Request/Response Messages ---
+
+message GetContextRequest {
+  string id = 1;
+}
+
+message UpdatePromptRequest {
+  string id     = 1;
+  string prompt = 2;
+  string author = 3;
+}
+
+message AddAnnotationRequest {
+  string id     = 1;
+  string text   = 2;
+  string author = 3;
+}
+
+message ResolveAnnotationRequest {
+  string node_id       = 1;
+  string annotation_id = 2;
+  string author        = 3;
+}
+
+message RerunRequest {
+  string id     = 1;
+  string author = 2;
+  string reason = 3;
+}
+
+message RerunResponse {
+  int32 invalidated_count = 1;
+  string parent_id        = 2;
+}
+
+message RestoreRequest {
+  string id = 1;
+}
+
+// --- Session/Agent Request/Response Messages ---
+
+message SessionStartRequest {
+  string agent_id = 1;
+  google.protobuf.Struct metadata = 2;
+}
+
+message SessionStartResponse {
+  string session_id = 1;
+  string agent_id   = 2;
+}
+
+message SessionEndRequest {
+  string agent_id   = 1;
+  string session_id = 2;
+}
+
+message SessionSummaryRequest {
+  string agent_id   = 1;
+  string session_id = 2;
+}
+
+message AgentHeartbeatRequest {
+  string agent_id     = 1;
+  string current_node = 2;
+}
+
+message AgentHeartbeatResponse {
+  bool acknowledged = 1;
+}
+
+message GetAgentStateRequest {
+  string agent_id = 1;
+}
+
+message SetAgentStateRequest {
+  string     agent_id = 1;
+  AgentState state    = 2;
+  string     node_id  = 3;
+  string     reason   = 4;
+}
+
+message AgentCurrentRequest {
+  string agent_id = 1;
+}
+
+message AgentCurrentResponse {
+  repeated Node work = 1;
+}
+
+// --- Dependency Request/Response Messages ---
+
+message AddDependencyRequest {
+  string  from_id  = 1;
+  string  to_id    = 2;
+  DepType dep_type = 3;
+  string  author   = 4;
+}
+
+message RemoveDependencyRequest {
+  string  from_id  = 1;
+  string  to_id    = 2;
+  DepType dep_type = 3;
+}
+
+message RemoveDependencyResponse {
+  bool removed = 1;
+}
+
+message GetDependencyTreeRequest {
+  string id = 1;
+}
+
+message GetDependencyTreeResponse {
+  repeated Dependency dependencies = 1;
+}
+
+// --- Bulk Request/Response Messages ---
+
+message BulkUpdateRequest {
+  repeated BulkNodeUpdate updates = 1;
+}
+
+message BulkNodeUpdate {
+  string id                       = 1;
+  optional string title           = 2;
+  optional string description     = 3;
+  optional Priority priority      = 4;
+}
+
+message BulkUpdateResponse {
+  int32 updated_count = 1;
+  repeated string failed_ids = 2;
+}
+
+// --- Real-time Request Messages ---
+
+message SubscribeRequest {
+  SubscriptionFilter filter = 1;
+}

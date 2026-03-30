@@ -50,16 +50,42 @@ This is mtix's core design: **the hierarchy IS the briefing.** Parents provide t
 
 When decomposing tasks, write each child's description to complete this chain. The test: *"Can an agent execute this task using only the assembled context from root to this node?"*
 
-## Quick Start
+## Install
 
-### Prerequisites
-
-- Go 1.25+
-- Node.js 18+ (only for building the web UI)
-
-### Build
+### Homebrew (macOS/Linux)
 
 ```bash
+brew install hyper-swe/tap/mtix
+```
+
+### Binary Download
+
+Download pre-built binaries from [GitHub Releases](https://github.com/hyper-swe/mtix/releases).
+
+### Go Install
+
+```bash
+go install github.com/hyper-swe/mtix/cmd/mtix@latest
+```
+
+### Claude Code Plugin
+
+```
+/plugin marketplace add hyper-swe/mtix
+/plugin install mtix
+```
+
+### OpenAI Codex Plugin
+
+See [docs/codex/AGENTS.md](docs/codex/AGENTS.md) for Codex agent setup.
+
+## Quick Start
+
+### Build from Source
+
+```bash
+# Prerequisites: Go 1.25+, Node.js 18+ (web UI only)
+
 # Build the complete suite (web UI + Go binary)
 make build
 

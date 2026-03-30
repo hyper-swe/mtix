@@ -4,6 +4,7 @@
 package docs
 
 import (
+	"regexp"
 	"sort"
 
 	"github.com/spf13/cobra"
@@ -168,12 +169,18 @@ func IntrospectErrors() []string {
 	}
 }
 
+// validPrefix matches the allowed project prefix format: 1-10 uppercase alphanumeric characters.
+var validPrefix = regexp.MustCompile(`^[A-Z][A-Z0-9]{0,9}$`)
+
 // BuildTemplateData assembles all introspection data for template rendering.
 func BuildTemplateData(
 	root *cobra.Command,
 	reg *mcp.ToolRegistry,
 	prefix, version string,
 ) *TemplateData {
+	if !validPrefix.MatchString(prefix) {
+		prefix = "PROJ"
+	}
 	return &TemplateData{
 		ProjectPrefix: prefix,
 		Version:       version,

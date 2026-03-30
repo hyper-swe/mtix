@@ -21,8 +21,13 @@ import (
 // wsUpgrader configures the WebSocket upgrade from HTTP.
 // This is a stateless configuration value, not mutable global state.
 var wsUpgrader = websocket.Upgrader{ //nolint:gochecknoglobals // stateless config
-	CheckOrigin: func(_ *http.Request) bool {
-		return true // CORS handled by middleware
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true // Non-browser clients (CLI, Go, Python)
+		}
+		return strings.HasPrefix(origin, "http://localhost") ||
+			strings.HasPrefix(origin, "http://127.0.0.1")
 	},
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,

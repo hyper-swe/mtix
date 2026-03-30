@@ -92,7 +92,7 @@ func (s *SyncService) AutoImport(ctx context.Context, mtixDir string) error {
 		"file_size", len(data),
 		"node_count", exportData.NodeCount)
 
-	if _, importErr := s.store.Import(ctx, exportData, sqlite.ImportModeReplace); importErr != nil {
+	if _, importErr := s.store.Import(ctx, exportData, sqlite.ImportModeReplace, false); importErr != nil {
 		return fmt.Errorf("auto-import: %w", importErr)
 	}
 

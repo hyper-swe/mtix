@@ -73,7 +73,7 @@ func TestImport_ReplaceMode_MidFailure_RollsBack(t *testing.T) {
 	data.Checksum = sqlite.RecomputeExportChecksum(t, data)
 
 	// Import should fail due to FK constraint.
-	_, err = dstStore.Import(ctx, data, sqlite.ImportModeReplace)
+	_, err = dstStore.Import(ctx, data, sqlite.ImportModeReplace, false)
 	require.Error(t, err, "import should fail on FK constraint violation")
 
 	// Verify rollback: original node must still exist.
@@ -97,7 +97,7 @@ func TestImport_VerifiesNodeCount_MismatchAborts(t *testing.T) {
 		Checksum:  "fake",
 	}
 
-	_, err := s.Import(ctx, data, sqlite.ImportModeReplace)
+	_, err := s.Import(ctx, data, sqlite.ImportModeReplace, false)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, model.ErrInvalidInput)
 	assert.Contains(t, err.Error(), "node count mismatch")
@@ -114,7 +114,7 @@ func TestImport_VerifiesChecksum_MismatchAborts(t *testing.T) {
 		Checksum:  "invalid_checksum",
 	}
 
-	_, err := s.Import(ctx, data, sqlite.ImportModeReplace)
+	_, err := s.Import(ctx, data, sqlite.ImportModeReplace, false)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, model.ErrInvalidInput)
 	assert.Contains(t, err.Error(), "checksum verification failed")
@@ -138,7 +138,7 @@ func TestImport_ReplaceMode_DropsAndReimports(t *testing.T) {
 	}))
 
 	// Import in replace mode.
-	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeReplace)
+	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeReplace, false)
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, result.NodesCreated)
@@ -171,7 +171,7 @@ func TestImport_MergeMode_ContentHashComparison(t *testing.T) {
 		NodeType: model.NodeTypeIssue, ContentHash: "h1", CreatedAt: now, UpdatedAt: now,
 	}))
 
-	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeMerge)
+	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeMerge, false)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, result.NodesCreated, "IMP-2 should be created")
@@ -196,7 +196,7 @@ func TestImport_MergeMode_UpdatesDifferentHash(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	}))
 
-	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeMerge)
+	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeMerge, false)
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, result.NodesUpdated, "IMP-1 should be updated (different hash)")
@@ -216,7 +216,7 @@ func TestImport_FTSRebuiltAfterImport(t *testing.T) {
 	destStore := newTestStore(t)
 	ctx := context.Background()
 
-	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeReplace)
+	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeReplace, false)
 	require.NoError(t, err)
 	assert.True(t, result.FTSRebuilt)
 
@@ -233,7 +233,7 @@ func TestImport_NilData_ReturnsError(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	_, err := s.Import(ctx, nil, sqlite.ImportModeReplace)
+	_, err := s.Import(ctx, nil, sqlite.ImportModeReplace, false)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, model.ErrInvalidInput)
 }
@@ -267,7 +267,7 @@ func TestImport_ReplaceMode_WithDependencies_ImportsDeps(t *testing.T) {
 
 	// Import into destination.
 	destStore := newTestStore(t)
-	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeReplace)
+	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeReplace, false)
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.NodesCreated)
 	assert.Equal(t, 1, result.DepsImported)
@@ -299,7 +299,7 @@ func TestImport_MergeMode_WithDependencies_ImportsDeps(t *testing.T) {
 	require.NoError(t, err)
 
 	destStore := newTestStore(t)
-	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeMerge)
+	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeMerge, false)
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.NodesCreated)
 	assert.Equal(t, 1, result.DepsImported)
@@ -313,7 +313,7 @@ func TestImport_ReplaceMode_RebuildsFTSAndSequences(t *testing.T) {
 	destStore := newTestStore(t)
 	ctx := context.Background()
 
-	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeReplace)
+	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeReplace, false)
 	require.NoError(t, err)
 	assert.True(t, result.FTSRebuilt)
 
@@ -341,7 +341,13 @@ func TestImport_ReplaceMode_EmptyExport_ClearsData(t *testing.T) {
 	emptyExport, err := emptyStore.Export(ctx, "EMPTY", "0.1.0")
 	require.NoError(t, err)
 
-	result, err := destStore.Import(ctx, emptyExport, sqlite.ImportModeReplace)
+	// Without force, zero-node import into non-empty DB is rejected.
+	_, err = destStore.Import(ctx, emptyExport, sqlite.ImportModeReplace, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "zero nodes")
+
+	// With force, it succeeds and clears data.
+	result, err := destStore.Import(ctx, emptyExport, sqlite.ImportModeReplace, true)
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.NodesCreated)
 

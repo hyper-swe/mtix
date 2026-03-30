@@ -29,9 +29,9 @@ function sanitizeHTML(html: string): string {
   clean = clean.replace(/href\s*=\s*["']\s*data:[^"']*["']/gi, 'href="#"');
   clean = clean.replace(/src\s*=\s*["']\s*data:[^"']*["']/gi, 'src=""');
 
-  // Strip dangerous elements: iframe, object, embed, form, style.
-  clean = clean.replace(/<(iframe|object|embed|form|style|base|meta|link)\b[^>]*>[\s\S]*?<\/\1>/gi, "");
-  clean = clean.replace(/<(iframe|object|embed|form|style|base|meta|link)\b[^>]*\/?>/gi, "");
+  // Strip dangerous elements: iframe, object, embed, form, style, svg.
+  clean = clean.replace(/<(iframe|object|embed|form|style|base|meta|link|svg)\b[^>]*>[\s\S]*?<\/\1>/gi, "");
+  clean = clean.replace(/<(iframe|object|embed|form|style|base|meta|link|svg)\b[^>]*\/?>/gi, "");
 
   // Validate image src — only allow https:// URLs.
   clean = clean.replace(

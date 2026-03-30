@@ -148,7 +148,7 @@ func TestRunImport_NoStore_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runImport("data.json", "merge")
+	err := runImport("data.json", "merge", false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }
@@ -157,7 +157,7 @@ func TestRunImport_NoStore_ReturnsError(t *testing.T) {
 func TestRunImport_NonexistentFile_ReturnsError(t *testing.T) {
 	initTestApp(t)
 
-	err := runImport("/nonexistent/file.json", "merge")
+	err := runImport("/nonexistent/file.json", "merge", false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "read import file")
 }
@@ -169,7 +169,7 @@ func TestRunImport_InvalidJSON_ReturnsError(t *testing.T) {
 	badFile := filepath.Join(t.TempDir(), "bad.json")
 	require.NoError(t, os.WriteFile(badFile, []byte("{not json}"), 0o644))
 
-	err := runImport(badFile, "merge")
+	err := runImport(badFile, "merge", false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "parse import file")
 }
@@ -194,7 +194,7 @@ func TestRunImport_ExportThenImport_Roundtrip(t *testing.T) {
 	require.NoError(t, os.WriteFile(exportFile, data, 0o644))
 
 	// Import in merge mode.
-	err = runImport(exportFile, "merge")
+	err = runImport(exportFile, "merge", false)
 	assert.NoError(t, err)
 }
 
@@ -214,7 +214,7 @@ func TestRunImport_JSONMode_Succeeds(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(exportFile, data, 0o644))
 
-	err = runImport(exportFile, "merge")
+	err = runImport(exportFile, "merge", false)
 	assert.NoError(t, err)
 }
 
@@ -233,7 +233,7 @@ func TestRunImport_ReplaceMode_Succeeds(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(exportFile, data, 0o644))
 
-	err = runImport(exportFile, "replace")
+	err = runImport(exportFile, "replace", false)
 	assert.NoError(t, err)
 }
 

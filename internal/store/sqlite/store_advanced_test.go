@@ -297,7 +297,7 @@ func TestImport_NilData_ReturnsInvalidInput(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 
-	_, err := s.Import(ctx, nil, sqlite.ImportModeReplace)
+	_, err := s.Import(ctx, nil, sqlite.ImportModeReplace, false)
 	assert.ErrorIs(t, err, model.ErrInvalidInput)
 }
 

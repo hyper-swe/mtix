@@ -297,7 +297,7 @@ func TestImport_MergeMode_ExistingNodeNullHash_Updates(t *testing.T) {
 		"UPDATE nodes SET content_hash = NULL WHERE id = 'IMP-1'")
 	require.NoError(t, err)
 
-	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeMerge)
+	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeMerge, false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.NodesUpdated, "should update node with NULL hash")
 }
@@ -331,7 +331,7 @@ func TestImport_ReplaceMode_WithMultipleSequenceGroups_Rebuilds(t *testing.T) {
 	require.NoError(t, err)
 
 	destStore := newTestStore(t)
-	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeReplace)
+	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeReplace, false)
 	require.NoError(t, err)
 	assert.Equal(t, 3, result.NodesCreated)
 	assert.True(t, result.FTSRebuilt)

@@ -31,7 +31,18 @@ mtix is developed to safety-critical standards appropriate for use in environmen
 | WebSocket | 85% | 80% | 100% |
 | Overall Project | 90% | 85% | 100% |
 
-### 2.2 Coverage Enforcement
+### 2.2 Release Coverage Gates
+
+Release pipelines enforce coverage thresholds based on release type:
+
+| Release Type | Tag Pattern | Overall Minimum |
+|-------------|-------------|-----------------|
+| Beta | `v*.*.*-beta*`, `v*.*.*-rc*` | 85% |
+| GA (General Availability) | `v*.*.*` (clean semver) | 90% |
+
+Beta releases allow shipping while coverage is raised across packages. GA releases enforce the full per-layer thresholds above.
+
+### 2.3 Coverage Enforcement
 
 - **Line coverage** is measured on every commit using `go test -coverprofile` and `go tool cover -func`
 - **Branch coverage** is verified via two complementary mechanisms:

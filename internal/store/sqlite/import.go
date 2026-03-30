@@ -64,7 +64,7 @@ func (s *Store) Import(
 	// Reject zero-node imports into non-empty databases unless forced.
 	if len(data.Nodes) == 0 && !force {
 		var existingCount int
-		if err := s.readDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM nodes").Scan(&existingCount); err == nil && existingCount > 0 {
+		if countErr := s.readDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM nodes").Scan(&existingCount); countErr == nil && existingCount > 0 {
 			return nil, fmt.Errorf(
 				"import contains zero nodes but database has %d — use --force to confirm: %w",
 				existingCount, model.ErrInvalidInput)

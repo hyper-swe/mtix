@@ -26,6 +26,9 @@ Thumbs.db
 # Go
 vendor/
 
+# GoReleaser
+dist/
+
 # Node.js (root-level, e.g. from running npm in project root)
 node_modules/
 

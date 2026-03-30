@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,9 +82,18 @@ func CSRFMiddleware() gin.HandlerFunc {
 }
 
 // CORSMiddleware adds CORS headers for the web UI per FR-9.1.
+// Only allows localhost origins to prevent cross-site data leakage.
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
+		origin := c.Request.Header.Get("Origin")
+		if origin == "" ||
+			strings.HasPrefix(origin, "http://localhost") ||
+			strings.HasPrefix(origin, "http://127.0.0.1") {
+			if origin == "" {
+				origin = "*"
+			}
+			c.Header("Access-Control-Allow-Origin", origin)
+		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, X-Requested-With, X-Agent-ID, X-Request-ID")
 		c.Header("Access-Control-Expose-Headers", "X-Request-ID")

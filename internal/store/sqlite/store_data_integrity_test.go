@@ -98,7 +98,7 @@ func TestVerify_AfterImportCycle_AllPass(t *testing.T) {
 	data, err := s.Export(ctx, "VI", "1.0.0")
 	require.NoError(t, err)
 
-	_, err = s.Import(ctx, data, sqlite.ImportModeReplace)
+	_, err = s.Import(ctx, data, sqlite.ImportModeReplace, false)
 	require.NoError(t, err)
 
 	result, err := s.Verify(ctx)
@@ -277,7 +277,7 @@ func TestVerifyExportChecksum_NilExport_ReturnsError(t *testing.T) {
 func TestImport_NodeCountMismatch_ReturnsInvalidInput(t *testing.T) {
 	s := newTestStore(t)
 	data := &sqlite.ExportData{NodeCount: 5, Nodes: nil}
-	_, err := s.Import(context.Background(), data, sqlite.ImportModeReplace)
+	_, err := s.Import(context.Background(), data, sqlite.ImportModeReplace, false)
 	assert.ErrorIs(t, err, model.ErrInvalidInput)
 }
 
@@ -292,7 +292,7 @@ func TestImport_ChecksumMismatch_ReturnsInvalidInput(t *testing.T) {
 	require.NoError(t, err)
 	data.Checksum = "bad_checksum"
 
-	_, err = s.Import(ctx, data, sqlite.ImportModeReplace)
+	_, err = s.Import(ctx, data, sqlite.ImportModeReplace, false)
 	assert.ErrorIs(t, err, model.ErrInvalidInput)
 }
 
@@ -308,7 +308,7 @@ func TestImport_ReplaceMode_ClearsAndReimports(t *testing.T) {
 
 	require.NoError(t, s.CreateNode(ctx, makeRootNode("IR-2", "IR", "Extra", now)))
 
-	result, err := s.Import(ctx, data, sqlite.ImportModeReplace)
+	result, err := s.Import(ctx, data, sqlite.ImportModeReplace, false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.NodesCreated)
 	assert.True(t, result.FTSRebuilt)
@@ -327,7 +327,7 @@ func TestImport_MergeMode_SkipsUnchanged(t *testing.T) {
 	data, err := s.Export(ctx, "IM", "1.0.0")
 	require.NoError(t, err)
 
-	result, err := s.Import(ctx, data, sqlite.ImportModeMerge)
+	result, err := s.Import(ctx, data, sqlite.ImportModeMerge, false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.NodesSkipped)
 }
@@ -349,7 +349,7 @@ func TestImport_MergeMode_UpdatesChanged(t *testing.T) {
 	s2 := newTestStore(t)
 	require.NoError(t, s2.CreateNode(ctx, makeRootNode("MU-1", "MU", "Original", now)))
 
-	result, err := s2.Import(ctx, data, sqlite.ImportModeMerge)
+	result, err := s2.Import(ctx, data, sqlite.ImportModeMerge, false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.NodesUpdated)
 }
@@ -370,7 +370,7 @@ func TestImport_ReplaceMode_WithDeps(t *testing.T) {
 	require.NoError(t, err)
 
 	s2 := newTestStore(t)
-	result, err := s2.Import(ctx, data, sqlite.ImportModeReplace)
+	result, err := s2.Import(ctx, data, sqlite.ImportModeReplace, false)
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.NodesCreated)
 	assert.Equal(t, 1, result.DepsImported)

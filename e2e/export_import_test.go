@@ -123,7 +123,7 @@ func TestE2E_Import_AllNodesRestored(t *testing.T) {
 	t.Cleanup(func() { _ = target.Close() })
 
 	// Import into fresh database.
-	result, err := target.Import(env.ctx, data, sqlite.ImportModeReplace)
+	result, err := target.Import(env.ctx, data, sqlite.ImportModeReplace, false)
 	require.NoError(t, err)
 	assert.Equal(t, 39, result.NodesCreated)
 	assert.True(t, result.FTSRebuilt)
@@ -149,7 +149,7 @@ func TestE2E_Import_TreeStructurePreserved(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = target.Close() })
 
-	_, err = target.Import(env.ctx, data, sqlite.ImportModeReplace)
+	_, err = target.Import(env.ctx, data, sqlite.ImportModeReplace, false)
 	require.NoError(t, err)
 
 	// Verify tree structure by counting children at each depth.
@@ -204,7 +204,7 @@ func TestE2E_Import_DependenciesPreserved(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = target.Close() })
 
-	_, err = target.Import(env.ctx, data, sqlite.ImportModeReplace)
+	_, err = target.Import(env.ctx, data, sqlite.ImportModeReplace, false)
 	require.NoError(t, err)
 
 	// Verify dependency exists in target.
@@ -236,7 +236,7 @@ func TestE2E_Import_SequencesRebuilt(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = target.Close() })
 
-	_, err = target.Import(env.ctx, data, sqlite.ImportModeReplace)
+	_, err = target.Import(env.ctx, data, sqlite.ImportModeReplace, false)
 	require.NoError(t, err)
 
 	// Verify we can create new nodes without ID collision.
@@ -278,7 +278,7 @@ func TestE2E_Import_FTSRebuild(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = target.Close() })
 
-	_, err = target.Import(env.ctx, data, sqlite.ImportModeReplace)
+	_, err = target.Import(env.ctx, data, sqlite.ImportModeReplace, false)
 	require.NoError(t, err)
 
 	// FTS search should work on imported data.
@@ -305,7 +305,7 @@ func TestE2E_Import_MergeMode_Deduplication(t *testing.T) {
 	require.NoError(t, err)
 
 	// Import into the SAME database with merge mode.
-	result, err := env.sqlStore.Import(env.ctx, data, sqlite.ImportModeMerge)
+	result, err := env.sqlStore.Import(env.ctx, data, sqlite.ImportModeMerge, false)
 	require.NoError(t, err)
 
 	// In merge mode, existing nodes with matching content hash should be skipped.
@@ -344,7 +344,7 @@ func TestE2E_Import_NewIDsNoCollision(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = target.Close() })
 
-	_, err = target.Import(env.ctx, data, sqlite.ImportModeReplace)
+	_, err = target.Import(env.ctx, data, sqlite.ImportModeReplace, false)
 	require.NoError(t, err)
 
 	// Create additional nodes — they should get unique IDs.

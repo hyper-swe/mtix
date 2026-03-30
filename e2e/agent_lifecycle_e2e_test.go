@@ -226,7 +226,7 @@ func TestE2E_AgentLifecycle_ExportImportRoundtrip(t *testing.T) {
 	assert.GreaterOrEqual(t, len(data.Sessions), 1, "export should include sessions")
 
 	// Import replace into the same DB.
-	result, err := env.sqlStore.Import(env.ctx, data, "replace")
+	result, err := env.sqlStore.Import(env.ctx, data, "replace", false)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, result.NodesCreated, 1)
 

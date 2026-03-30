@@ -199,22 +199,24 @@ func runExport(format string) error {
 // newImportCmd creates the mtix import command per FR-6.3 and FR-7.8.
 func newImportCmd() *cobra.Command {
 	var mode string
+	var force bool
 
 	cmd := &cobra.Command{
 		Use:   "import <file>",
 		Short: "Import nodes from JSON export",
 		Args:  cobra.ExactArgs(1),
 		RunE: withAutoExport(func(_ *cobra.Command, args []string) error {
-			return runImport(args[0], mode)
+			return runImport(args[0], mode, force)
 		}),
 	}
 
 	cmd.Flags().StringVar(&mode, "mode", "merge", "Import mode: replace or merge")
+	cmd.Flags().BoolVar(&force, "force", false, "Allow importing zero nodes into a non-empty database")
 
 	return cmd
 }
 
-func runImport(filePath, mode string) error {
+func runImport(filePath, mode string, force bool) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -235,7 +237,7 @@ func runImport(filePath, mode string) error {
 	}
 
 	ctx := context.Background()
-	result, err := app.store.Import(ctx, &exportData, importMode)
+	result, err := app.store.Import(ctx, &exportData, importMode, force)
 	if err != nil {
 		return fmt.Errorf("import failed: %w", err)
 	}

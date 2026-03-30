@@ -761,7 +761,7 @@ func TestExportImportRoundtrip_WithAgentsAndSessions(t *testing.T) {
 
 	// Import into a new store.
 	s2 := newInternalTestStore(t)
-	result, err := s2.Import(ctx, data, ImportModeReplace)
+	result, err := s2.Import(ctx, data, ImportModeReplace, false)
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.NodesCreated)
 	assert.Equal(t, 1, result.DepsImported)
@@ -796,7 +796,7 @@ func TestImportMerge_UpdatesExistingNodes(t *testing.T) {
 	data.Checksum = checksum
 
 	// Import merge — should update.
-	result, err := s.Import(ctx, data, ImportModeMerge)
+	result, err := s.Import(ctx, data, ImportModeMerge, false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.NodesUpdated)
 	assert.Equal(t, 0, result.NodesCreated)
@@ -818,7 +818,7 @@ func TestImportMerge_SkipsSameHash(t *testing.T) {
 	require.NoError(t, err)
 
 	// Import merge with same data — should skip because hash matches.
-	result, err := s.Import(ctx, data, ImportModeMerge)
+	result, err := s.Import(ctx, data, ImportModeMerge, false)
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.NodesUpdated)
 	assert.Equal(t, 0, result.NodesCreated)
@@ -1420,7 +1420,7 @@ func TestImportReplace_ClearAndReimport(t *testing.T) {
 	require.NoError(t, s.CreateNode(ctx, n2))
 
 	// Import replace.
-	result, err := s.Import(ctx, data, ImportModeReplace)
+	result, err := s.Import(ctx, data, ImportModeReplace, false)
 	require.NoError(t, err)
 	assert.Equal(t, 1, result.NodesCreated)
 }

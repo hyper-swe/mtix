@@ -34,10 +34,12 @@ type ImportResult struct {
 // Import loads data from an ExportData structure per FR-7.8.
 // Verifies node_count and checksum before importing. Supports replace
 // and merge modes. Rebuilds sequences and FTS index after bulk import.
+// If force is false, importing zero nodes into a non-empty database is rejected.
 func (s *Store) Import(
 	ctx context.Context,
 	data *ExportData,
 	mode ImportMode,
+	force bool,
 ) (*ImportResult, error) {
 	if data == nil {
 		return nil, fmt.Errorf("import data is nil: %w", model.ErrInvalidInput)
@@ -57,6 +59,16 @@ func (s *Store) Import(
 	}
 	if !valid {
 		return nil, fmt.Errorf("checksum verification failed: %w", model.ErrInvalidInput)
+	}
+
+	// Reject zero-node imports into non-empty databases unless forced.
+	if len(data.Nodes) == 0 && !force {
+		var existingCount int
+		if err := s.readDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM nodes").Scan(&existingCount); err == nil && existingCount > 0 {
+			return nil, fmt.Errorf(
+				"import contains zero nodes but database has %d — use --force to confirm: %w",
+				existingCount, model.ErrInvalidInput)
+		}
 	}
 
 	var result ImportResult

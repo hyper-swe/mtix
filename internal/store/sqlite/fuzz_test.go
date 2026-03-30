@@ -104,7 +104,7 @@ func FuzzJSONImport(f *testing.F) {
 
 		// Import should never panic regardless of input.
 		// It should return an error for invalid data.
-		result, err := st.Import(ctx, &export, ImportModeReplace)
+		result, err := st.Import(ctx, &export, ImportModeReplace, false)
 
 		if err == nil && result != nil {
 			// If import succeeds, counts should be non-negative.

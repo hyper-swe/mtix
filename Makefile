@@ -25,7 +25,8 @@ TASKS_DB     := .mtix/data/mtix.db
         test-race test-cover test-all lint lint-go lint-web \
         security-scan security-audit bench fuzz e2e proto-gen docs-gen \
         release-artifacts clean verify preflight help \
-        setup tasks-export tasks-import tasks-sync
+        setup tasks-export tasks-import tasks-sync \
+        generate-plugin-skills agent-kit
 
 # ─── Default target ───
 all: build
@@ -49,7 +50,7 @@ build-web: install-web
 install-web:
 	@if [ ! -d $(WEB_DIR)/node_modules ]; then \
 		echo "Installing web dependencies..."; \
-		cd $(WEB_DIR) && npm install; \
+		cd $(WEB_DIR) && npm ci; \
 	fi
 
 ## build-checked: Run all tests, then build (use for releases)
@@ -388,6 +389,31 @@ release-minor: release-artifacts
 	echo "Tagging $$NEW (was $$CURRENT)"; \
 	git tag -a "$$NEW" -m "Release $$NEW"
 
+## ─── Plugin and agent kit ───
+
+## generate-plugin-skills: Render skill templates to .claude-plugin/skills/
+generate-plugin-skills: build-go
+	@echo "=== Generating plugin skill files ==="
+	@./$(BINARY) docs generate --force > /dev/null 2>&1 || true
+	@mkdir -p .claude-plugin/skills/references
+	@if [ -d .mtix/docs ]; then \
+		for f in .mtix/docs/*.md; do \
+			cp "$$f" .claude-plugin/skills/ 2>/dev/null || true; \
+		done; \
+	fi
+	@echo "Plugin skills generated in .claude-plugin/skills/"
+
+## agent-kit: Build the LLM agent kit tarball
+agent-kit: generate-plugin-skills
+	@echo "=== Building agent kit ==="
+	@VERSION=$$(echo $(VERSION) | sed 's/^v//'); \
+	if [ -x scripts/build-agent-kit.sh ]; then \
+		bash scripts/build-agent-kit.sh "$$VERSION"; \
+	else \
+		echo "scripts/build-agent-kit.sh not found — create it first (MTIX-1.4.2)"; \
+		exit 1; \
+	fi
+
 ## help: Show this help
 help:
 	@echo "mtix build system"
@@ -416,8 +442,10 @@ help:
 	@echo ""
 	@echo "Release:"
 	@echo "  release-artifacts Generate coverage + security reports"
-	@echo "  release-patch     Tag patch version bump (runs artifacts first)"
-	@echo "  release-minor     Tag minor version bump (runs artifacts first)"
+	@echo "  release-patch          Tag patch version bump (runs artifacts first)"
+	@echo "  release-minor          Tag minor version bump (runs artifacts first)"
+	@echo "  generate-plugin-skills Render skill files to .claude-plugin/skills/"
+	@echo "  agent-kit              Build LLM agent kit tarball"
 	@echo ""
 	@echo "Other:"
 	@echo "  clean          Remove build artifacts"

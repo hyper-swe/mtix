@@ -104,6 +104,7 @@ func (s *Server) setupMiddleware() {
 	s.router.Use(gin.Recovery())
 	s.router.Use(RequestIDMiddleware())
 	s.router.Use(LoggingMiddleware(s.logger))
+	s.router.Use(SecurityHeadersMiddleware())
 	s.router.Use(CacheControlMiddleware())
 	s.router.Use(CORSMiddleware())
 
@@ -169,9 +170,11 @@ func (s *Server) Start() error {
 
 	// Security warning for non-localhost binding per NFR-5.2.
 	if s.config.Bind != "127.0.0.1" && s.config.Bind != "localhost" {
-		s.logger.Warn("server binding to non-localhost address",
-			"bind", s.config.Bind,
-			"warning", "ensure authentication is configured")
+		fmt.Fprintf(os.Stderr, "\n"+
+			"WARNING: Binding to %s exposes the API to the network without authentication.\n"+
+			"All task data is readable and writable by anyone who can reach this address.\n"+
+			"This is intended for trusted networks only (e.g., local development, VPN).\n\n",
+			addr)
 	}
 
 	s.httpSrv = &http.Server{

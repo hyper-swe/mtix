@@ -46,6 +46,18 @@ func LoggingMiddleware(logger *slog.Logger) gin.HandlerFunc {
 	}
 }
 
+// SecurityHeadersMiddleware adds defense-in-depth response headers:
+// X-Frame-Options prevents clickjacking, X-Content-Type-Options prevents
+// MIME sniffing, and Referrer-Policy prevents URL leakage.
+func SecurityHeadersMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("Referrer-Policy", "same-origin")
+		c.Next()
+	}
+}
+
 // CacheControlMiddleware adds Cache-Control: no-store and Pragma: no-cache
 // to all responses per NFR-5.6. Prevents sensitive data from leaking
 // via browser caches, proxy caches, or CDN caches.

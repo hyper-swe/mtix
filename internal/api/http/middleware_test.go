@@ -221,3 +221,38 @@ func TestCORSMiddleware_PreflightRequest(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, w.Code)
 	assert.Contains(t, w.Header().Get("Access-Control-Allow-Methods"), "POST")
 }
+
+// TestSecurityHeadersMiddleware_SetsAllHeaders verifies defense-in-depth headers.
+func TestSecurityHeadersMiddleware_SetsAllHeaders(t *testing.T) {
+	router := setupTestRouter()
+	router.Use(SecurityHeadersMiddleware())
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(200, gin.H{"ok": true})
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
+	assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+	assert.Equal(t, "same-origin", w.Header().Get("Referrer-Policy"))
+}
+
+// TestCORSMiddleware_ExternalOrigin_Rejected verifies non-localhost origins are rejected.
+func TestCORSMiddleware_ExternalOrigin_Rejected(t *testing.T) {
+	router := setupTestRouter()
+	router.Use(CORSMiddleware())
+	router.GET("/test", func(c *gin.Context) {
+		c.JSON(200, gin.H{"ok": true})
+	})
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Origin", "https://evil.com")
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
+}

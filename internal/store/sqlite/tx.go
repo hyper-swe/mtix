@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // WithTx executes fn within a database transaction per CODING-STYLE.md §5.2.
@@ -19,7 +20,7 @@ import (
 func (s *Store) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) (err error) {
 	tx, err := s.writeDB.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin transaction: %w", err)
+		return wrapBusyError(fmt.Errorf("begin transaction: %w", err))
 	}
 
 	defer func() {
@@ -44,8 +45,21 @@ func (s *Store) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) (err erro
 	}
 
 	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("commit transaction: %w", err)
+		return wrapBusyError(fmt.Errorf("commit transaction: %w", err))
 	}
 
 	return nil
+}
+
+// wrapBusyError checks if an error is a SQLite busy/locked error and wraps
+// it with actionable guidance for agents and users.
+func wrapBusyError(err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "database is locked") || strings.Contains(msg, "SQLITE_BUSY") {
+		return fmt.Errorf("another mtix operation is in progress, retry in a moment: %w", err)
+	}
+	return err
 }

@@ -80,8 +80,17 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 }
 
 // openDB creates a database connection with appropriate settings.
+// Writer connections use BEGIN IMMEDIATE via _txlock=immediate DSN parameter,
+// ensuring busy_timeout is always applied (BEGIN DEFERRED bypasses it on
+// lock upgrade). Both read and write connections set busy_timeout = 5000ms
+// to prevent immediate failures during concurrent access.
 func openDB(ctx context.Context, path string, isWriter bool) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", path)
+	dsn := path
+	if isWriter {
+		dsn = path + "?_txlock=immediate"
+	}
+
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("sql.Open: %w", err)
 	}
@@ -94,6 +103,15 @@ func openDB(ctx context.Context, path string, isWriter bool) (*sql.DB, error) {
 		return nil, fmt.Errorf("enable foreign keys: %w", err)
 	}
 
+	// Busy timeout on ALL connections — prevents immediate SQLITE_BUSY failures
+	// during concurrent access from multiple processes or agents.
+	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout = 5000"); err != nil {
+		if closeErr := db.Close(); closeErr != nil {
+			return nil, fmt.Errorf("close after busy_timeout failure: %w", closeErr)
+		}
+		return nil, fmt.Errorf("set busy_timeout: %w", err)
+	}
+
 	if isWriter {
 		// Serialized writes — one connection (NFR-2.1).
 		db.SetMaxOpenConns(1)
@@ -104,14 +122,6 @@ func openDB(ctx context.Context, path string, isWriter bool) (*sql.DB, error) {
 				return nil, fmt.Errorf("close after wal failure: %w", closeErr)
 			}
 			return nil, fmt.Errorf("enable WAL: %w", err)
-		}
-
-		// Busy timeout to prevent immediate write failures (NFR-2.1).
-		if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout = 5000"); err != nil {
-			if closeErr := db.Close(); closeErr != nil {
-				return nil, fmt.Errorf("close after busy_timeout failure: %w", closeErr)
-			}
-			return nil, fmt.Errorf("set busy_timeout: %w", err)
 		}
 	}
 

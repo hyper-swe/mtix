@@ -1,0 +1,45 @@
+prefix: "MTIX"
+
+api:
+  http_port: 6849
+  grpc_port: 6850
+  bind: 127.0.0.1
+  rate_limit: 100
+
+mcp:
+  enabled: true
+  transport: "stdio"
+
+data:
+  dir: ".mtix/data"
+  soft_delete_retention: "30d"
+
+sync:
+  enabled: false
+  interval: "30s"
+  auto_sync: true
+  endpoint: 
+  team_id: 
+
+agent:
+  session_timeout: "4h"
+  auto_claim: true
+  stale_threshold: "24h"
+  stuck_timeout: 
+  id_pattern: "agent-*"
+  heartbeat_interval: "60s"
+
+context:
+  token_estimator: "chars4"
+
+logging:
+  file: ".mtix/logs/mtix.log"
+  level: "info"
+
+progress:
+  weighted: false
+
+ui:
+  collapse_done: false
+  default_depth: 3
+  theme: "system"

@@ -1,0 +1,28 @@
+{
+  "name": "mtix",
+  "version": "0.1.0",
+  "description": "AI-native micro issue manager for code-generating LLMs. Hierarchical task decomposition with context chains, multi-agent orchestration, and safety-critical standards.",
+  "author": {
+    "name": "HyperSWE",
+    "url": "https://github.com/hyper-swe"
+  },
+  "homepage": "https://github.com/hyper-swe/mtix",
+  "repository": "https://github.com/hyper-swe/mtix",
+  "license": "Apache-2.0",
+  "keywords": ["task-management", "multi-agent", "llm", "safety-critical"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "mtix",
+    "shortDescription": "AI-native micro issue manager for LLM agents",
+    "longDescription": "Hierarchical task decomposition with dot-notation context chains. Multiple LLM agents decompose, claim, and execute work concurrently. The hierarchy IS the briefing — each level adds context that flows down to the executing agent.",
+    "developerName": "HyperSWE",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/hyper-swe/mtix",
+    "defaultPrompt": [
+      "Use mtix to list ready tasks and claim one for execution.",
+      "Use mtix to decompose this task into subtasks with context chains."
+    ]
+  }
+}

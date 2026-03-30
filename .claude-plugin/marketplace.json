@@ -1,0 +1,16 @@
+{
+  "name": "hyper-swe",
+  "displayName": "HyperSWE",
+  "description": "Software engineering tools by HyperSWE",
+  "owner": {
+    "name": "HyperSWE"
+  },
+  "plugins": [
+    {
+      "name": "mtix",
+      "source": ".",
+      "description": "AI-native micro issue manager for code-generating LLMs",
+      "version": "0.1.0"
+    }
+  ]
+}

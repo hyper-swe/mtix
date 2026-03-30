@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mtix": {
+      "command": "mtix",
+      "args": ["mcp", "--project", "."]
+    }
+  }
+}

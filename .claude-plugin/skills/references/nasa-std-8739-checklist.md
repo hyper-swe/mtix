@@ -1,0 +1,71 @@
+# NASA-STD-8739.8 Compliance Mapping — MTIX
+
+This checklist maps mtix workflows to NASA-STD-8739.8 (Software Assurance and Software Safety Standard).
+
+## Mission Criticality Levels
+
+| Level | Impact | mtix Mapping |
+|-------|--------|--------------|
+| Class A — Human-rated | Loss of crew/mission | Story-level annotation: `NASA-A`. Full IV&V. Independent verification agent required. All transitions justified. |
+| Class B — Robotic/high-value | Loss of mission | Story-level annotation: `NASA-B`. IV&V on safety-critical paths. Independent verification recommended. |
+| Class C — Medium risk | Degraded performance | Story-level annotation: `NASA-C`. Standard verification with traceability. |
+| Class D — Low risk | Minimal impact | Story-level annotation: `NASA-D`. Standard mtix workflow. |
+
+## Independent Verification and Validation (IV&V)
+
+**For Class A/B missions, the implementing agent MUST NOT verify its own work.**
+
+mtix supports IV&V through:
+1. **Agent identity tracking** — every action is attributed to a specific agent
+2. **Session records** — auditable trail of who did what and when
+3. **Separate claim cycles** — verification agent claims a review task independently
+4. **Comments as evidence** — verification results documented via `mtix_comment`
+
+### IV&V Workflow in mtix
+1. Implementing agent completes the task and marks done
+2. A verification task (child or related node) is created or claimed by a DIFFERENT agent
+3. Verification agent reviews: code, tests, acceptance criteria, traceability
+4. Verification agent adds a comment with findings
+5. If issues found: verification agent reopens the original task with comments
+
+## Safety-Critical Code Review (§5.3.4)
+
+For safety-critical tasks:
+- Context chain must include safety constraints from the mission/system level
+- All state transitions require a justification comment via `mtix_comment`
+- No task may be marked done without evidence of testing
+- Anomaly reporting is mandatory for blocked or deferred tasks
+
+## Anomaly Tracking
+
+Every anomaly discovered during development must be recorded:
+
+1. Use `mtix_comment` on the affected task to document the anomaly
+2. If the anomaly blocks work, use `mtix_defer` with root cause
+3. Create a new task for anomaly resolution if needed (linked via `mtix_dep_add`)
+4. Anomaly resolution must include regression test evidence
+
+## Configuration Management
+
+mtix provides:
+- **Unique identification:** Dot-notation IDs for every work item
+- **Change tracking:** State machine with logged transitions
+- **Baselines:** Export snapshots with checksums (`mtix_export`)
+- **Integrity verification:** Content hash verification (`mtix_verify`)
+
+## Formal Methods
+
+For Class A missions requiring formal methods:
+- Document formal method approach in story-level task description
+- Formal verification evidence referenced in completion comments
+- Mathematical proofs or model checking results linked as acceptance evidence
+
+## Software Assurance Audit Trail
+
+mtix maintains a complete audit trail:
+- Agent registration and identity
+- Session start/end timestamps
+- Heartbeat records (liveness proof)
+- State transitions with timestamps
+- Comments with agent attribution
+- Export checksums for baseline integrity

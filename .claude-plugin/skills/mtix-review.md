@@ -1,0 +1,91 @@
+---
+description: "Review progress, audit tasks, verify integrity, and check status in MTIX project. Use when checking progress, finding stale work, auditing task completion, or verifying data integrity."
+allowed-tools:
+  - mcp__mtix__mtix_stats
+  - mcp__mtix__mtix_progress
+  - mcp__mtix__mtix_stale
+  - mcp__mtix__mtix_verify
+  - mcp__mtix__mtix_tree
+  - mcp__mtix__mtix_show
+  - mcp__mtix__mtix_list
+  - mcp__mtix__mtix_blocked
+  - mcp__mtix__mtix_dep_list
+  - mcp__mtix__mtix_search
+---
+
+# MTIX — Review & Audit
+
+## Context Chain Verification
+
+Before auditing any task, call `mcp__mtix__mtix_context` to understand the full context chain. Verify that each node in the chain adds meaningful detail — gaps in context are compliance gaps.
+
+## Traceability Audit
+
+Every completed (`done`) task must have:
+
+1. **Test evidence** — tests written, passing, and referenced in a completion comment
+2. **Acceptance criteria verification** — each criterion explicitly checked
+3. **Context chain completeness** — the assembled prompt from root→node provides enough detail for independent execution
+4. **Traceability comment** — linking task → requirement → test → result
+
+### Finding Incomplete Tasks
+Use `mcp__mtix__mtix_search` to find tasks with missing fields:
+- Search for tasks in `done` status that lack comments (missing verification evidence)
+- Search for tasks with empty `prompt` or `acceptance` fields (incomplete decomposition)
+
+## Integrity Verification
+
+Run `mcp__mtix__mtix_verify` to check content hash integrity across all nodes.
+
+- **Hash match:** Node data is intact since last write
+- **Hash mismatch:** Data corruption detected — escalate immediately. Do NOT modify corrupted nodes. Report the mismatch and the affected node IDs
+- Run verification after every import operation
+- Run verification as part of regular audit cycles
+
+## Stale Detection
+
+Call `mcp__mtix__mtix_stale` to identify agents that stopped heartbeating.
+
+For each stale agent:
+1. Check their claimed work via the stale report
+2. Investigate: Did the agent crash? Is it stuck? Is the work partially complete?
+3. If the agent is truly gone, the work should be unclaimed and reassigned
+4. Document findings via `mcp__mtix__mtix_comment` on the affected nodes
+
+## Progress Verification
+
+Call `mcp__mtix__mtix_progress` on root nodes to see rollup percentages.
+
+**Critical check:** Verify that the done percentage reflects actual completion, not just state transitions. A task marked `done` with stub implementations is worse than a task marked `open` — it hides incomplete work.
+
+### Red Flags
+- Progress shows 100% but acceptance criteria have gaps
+- Done tasks with no comments (no verification evidence)
+- Done tasks with empty `tests` fields (no test coverage)
+- Blocked tasks with no dependency annotations (silent blockers)
+
+## Orphan Detection
+
+Find tasks with incomplete decomposition:
+1. Call `mcp__mtix__mtix_tree` to see the hierarchy
+2. Look for leaf nodes with only a title (no description, prompt, or acceptance)
+3. These are compliance gaps — agents cannot execute tasks without context
+4. Flag them for the decomposing agent to complete
+
+## Dependency Graph Validation
+
+Call `mcp__mtix__mtix_dep_list` to review dependencies:
+- Verify all `blocks` dependencies are resolved before dependent work starts
+- Check for orphaned dependencies (pointing to deleted or cancelled nodes)
+- Ensure cross-branch dependencies are declared (not implicit)
+
+## Audit Checklist
+
+Run this checklist periodically:
+
+- [ ] `mcp__mtix__mtix_verify` — all content hashes pass
+- [ ] `mcp__mtix__mtix_stale` — no unaddressed stale agents
+- [ ] `mcp__mtix__mtix_blocked` — all blocked nodes have documented reasons
+- [ ] `mcp__mtix__mtix_stats` — overall project health metrics reviewed
+- [ ] No leaf nodes with empty prompt/acceptance fields
+- [ ] All done tasks have verification comments

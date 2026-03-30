@@ -1,0 +1,10 @@
+{
+  "name": "mtix",
+  "version": "0.1.0",
+  "description": "AI-native micro issue manager for code-generating LLMs. Hierarchical task decomposition with context chains, multi-agent orchestration, and safety-critical standards.",
+  "author": {
+    "name": "HyperSWE"
+  },
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/hyper-swe/mtix"
+}

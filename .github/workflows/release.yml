@@ -30,11 +30,11 @@ jobs:
         run: go mod verify
 
       - name: Run Go tests with race detector
-        run: go test ./... -race -count=1
+        run: go test $(go list ./... | grep -v node_modules) -race -count=1
 
       - name: Run Go tests with coverage
         run: |
-          go test ./... -coverprofile=coverage.out -count=1
+          go test $(go list ./... | grep -v node_modules) -coverprofile=coverage.out -count=1
           go tool cover -func=coverage.out | tail -1
 
       - name: Enforce coverage gate
@@ -154,7 +154,7 @@ jobs:
           fi
 
       - name: Run tests with JSON output
-        run: go test -json ./... -count=1 > test-results.json 2>/dev/null || true
+        run: go test -json $(go list ./... | grep -v node_modules) -count=1 > test-results.json 2>/dev/null || true
 
       - name: Generate VDD
         run: |

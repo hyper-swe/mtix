@@ -16,6 +16,9 @@ COVERFILE := cover.out
 WEB_DIR   := web
 EMBED_DIR := internal/web/dist
 
+# ─── Go packages (excludes third-party Go code in node_modules) ───
+GO_PKGS   := $(shell go list ./... | grep -v node_modules)
+
 # ─── Task tracking ───
 TASKS_EXPORT := .mtix/tasks.json
 TASKS_DB     := .mtix/data/mtix.db
@@ -107,7 +110,7 @@ test: test-go
 
 ## test-go: Run all Go tests
 test-go:
-	go test ./... -count=1
+	go test $(GO_PKGS) -count=1
 
 ## test-web: Run all web (Vitest) tests
 test-web: install-web
@@ -118,11 +121,11 @@ test-all: test-go test-web
 
 ## test-race: Run Go tests with race detector
 test-race:
-	go test ./... -race -count=1
+	go test $(GO_PKGS) -race -count=1
 
 ## test-cover: Run Go tests with coverage report
 test-cover:
-	go test ./... -coverprofile=$(COVERFILE) -count=1
+	go test $(GO_PKGS) -coverprofile=$(COVERFILE) -count=1
 	go tool cover -func=$(COVERFILE) | tail -1
 
 ## ─── Lint targets ───
@@ -142,13 +145,13 @@ lint-web: install-web
 
 ## security-scan: Run gosec and govulncheck
 security-scan:
-	gosec ./...
-	govulncheck ./...
+	gosec $(GO_PKGS)
+	govulncheck $(GO_PKGS)
 
 ## security-audit: Run full security audit (Go + Web) and update release artifacts
 security-audit:
 	@echo "=== Go vulnerability scan ==="
-	govulncheck ./...
+	govulncheck $(GO_PKGS)
 	@echo ""
 	@echo "=== Web vulnerability scan ==="
 	cd $(WEB_DIR) && npm audit
@@ -160,11 +163,11 @@ security-audit:
 
 ## bench: Run Go benchmarks
 bench:
-	go test ./... -bench=. -benchmem -count=5
+	go test $(GO_PKGS) -bench=. -benchmem -count=5
 
 ## fuzz: Run fuzz tests (30s)
 fuzz:
-	go test ./... -fuzz=. -fuzztime=30s
+	go test $(GO_PKGS) -fuzz=. -fuzztime=30s
 
 ## e2e: Run end-to-end tests
 e2e:
@@ -202,7 +205,7 @@ clean:
 
 ## verify: Full verification checklist (pre-commit / pre-release)
 verify: test-race test-web lint
-	go test ./... -coverprofile=$(COVERFILE) -count=1
+	go test $(GO_PKGS) -coverprofile=$(COVERFILE) -count=1
 	@echo ""
 	@echo "=== Coverage report ==="
 	@go tool cover -func=$(COVERFILE) | tail -1
@@ -243,7 +246,7 @@ preflight:
 	echo ""; \
 	\
 	echo "② Go tests (with race detector)..."; \
-	if go test ./... -race -count=1 > /dev/null 2>&1; then \
+	if go test $(GO_PKGS) -race -count=1 > /dev/null 2>&1; then \
 		echo "  ✓ PASS: All Go tests pass (race-clean)"; PASS=$$((PASS+1)); \
 	else \
 		echo "  ✗ FAIL: Go tests failed"; FAIL=$$((FAIL+1)); \
@@ -259,7 +262,7 @@ preflight:
 	echo ""; \
 	\
 	echo "④ Test coverage..."; \
-	go test ./... -coverprofile=$(COVERFILE) -count=1 > /dev/null 2>&1; \
+	go test $(GO_PKGS) -coverprofile=$(COVERFILE) -count=1 > /dev/null 2>&1; \
 	COV_LINE=$$(go tool cover -func=$(COVERFILE) 2>/dev/null | tail -1); \
 	COV=$$(echo "$$COV_LINE" | grep -oE '[0-9]+\.[0-9]+' | tail -1); \
 	COV_INT=$${COV%%.*}; \
@@ -283,7 +286,7 @@ preflight:
 	\
 	echo "⑥ Go vulnerability scan..."; \
 	if command -v govulncheck > /dev/null 2>&1; then \
-		if govulncheck ./... 2>&1 | grep -q "No vulnerabilities found"; then \
+		if govulncheck $(GO_PKGS) 2>&1 | grep -q "No vulnerabilities found"; then \
 			echo "  ✓ PASS: No Go vulnerabilities"; PASS=$$((PASS+1)); \
 		else \
 			echo "  ⚠ WARN: govulncheck findings — review output"; WARN=$$((WARN+1)); \
@@ -350,14 +353,14 @@ release-artifacts:
 	@echo "=== Generating release artifacts ==="
 	@echo ""
 	@echo "--- Go coverage report ---"
-	@go test ./... -coverprofile=$(COVERFILE) -count=1 > /dev/null 2>&1
+	@go test $(GO_PKGS) -coverprofile=$(COVERFILE) -count=1 > /dev/null 2>&1
 	@go tool cover -func=$(COVERFILE) | tail -1
 	@echo ""
 	@echo "--- Web coverage report ---"
 	@cd $(WEB_DIR) && npx vitest run --coverage 2>&1 | tail -5
 	@echo ""
 	@echo "--- Go vulnerability scan ---"
-	@govulncheck ./... 2>&1 || true
+	@govulncheck $(GO_PKGS) 2>&1 || true
 	@echo ""
 	@echo "--- Web vulnerability scan ---"
 	@cd $(WEB_DIR) && npm audit 2>&1 || true

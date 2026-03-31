@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-03-31T08:28:39Z",
+  "exported_at": "2026-03-31T09:04:35Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1643,7 +1643,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.8,
+      "progress": 0.8333333333333334,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1775,6 +1775,31 @@
       "created_at": "2026-03-31T07:52:45Z",
       "updated_at": "2026-03-31T08:28:39Z",
       "closed_at": "2026-03-31T08:28:39Z"
+    },
+    {
+      "id": "MTIX-5.6",
+      "parent_id": "MTIX-5",
+      "depth": 1,
+      "seq": 6,
+      "project": "MTIX",
+      "title": "Exclude node_modules from Go test scope",
+      "description": "The flatted npm package ships Go source code (277 lines, 7 functions at 0% coverage) that gets picked up by go test ./... because web/node_modules/ is under the Go module root. This third-party code drags overall coverage down. Exclude node_modules from Go test and lint commands.",
+      "prompt": "In Makefile: change all go test ./... invocations to use go list filtering: go test $(go list ./... | grep -v node_modules). In .github/workflows/ci.yml and release.yml: same filtering for go test commands. Verify go tool cover no longer includes flatted in coverage report.",
+      "acceptance": "1. go tool cover -func does not list any flatted functions. 2. Overall coverage increases. 3. All existing tests still pass. 4. CI workflows use filtered test command.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "dev",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "de93464432e3efc07d2797b2f12b4a2b0eec800856d03683add9b10b98f89c23",
+      "created_at": "2026-03-31T09:01:06Z",
+      "updated_at": "2026-03-31T09:04:35Z",
+      "closed_at": "2026-03-31T09:04:35Z"
     }
   ],
   "dependencies": null,
@@ -1783,11 +1808,11 @@
       "agent_id": "dev",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-5.5",
+      "current_node_id": "MTIX-5.6",
       "last_heartbeat": "2026-03-30T02:58:55Z"
     }
   ],
   "sessions": null,
-  "node_count": 72,
-  "checksum": "75db83bccbc6f2b979e7ea5c7054580d03cfcd15743d59e1f2d647dc7aa94095"
+  "node_count": 73,
+  "checksum": "039154ad212134d8ec955243593037bbb2559aeb67902b33ff3078e2134c7b3e"
 }

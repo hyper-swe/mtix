@@ -2175,3 +2175,556 @@ func TestImport_ZeroNodes_EmptyDB_WithoutForce_Succeeds(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, result.NodesCreated)
 }
+
+// ─── Store init/schema tests ───
+
+// TestInit_SchemaVersionMismatch_ReturnsConflict verifies that opening a
+// database with a newer schema version than supported is rejected.
+func TestInit_SchemaVersionMismatch_ReturnsConflict(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "version.db")
+	s, err := New(dbPath, slog.Default())
+	require.NoError(t, err)
+
+	// Bump the schema version beyond what the code supports.
+	_, err = s.writeDB.Exec("UPDATE meta SET value = '999' WHERE key = 'schema_version'")
+	require.NoError(t, err)
+	_ = s.Close()
+
+	// Re-opening should fail with a conflict error.
+	_, err = New(dbPath, slog.Default())
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, model.ErrConflict)
+}
+
+// ─── Stats tests ───
+
+// TestGetStats_WithProgress_ReturnsWeightedAverage verifies that stats
+// correctly computes weighted average progress across nodes.
+func TestGetStats_WithProgress_ReturnsWeightedAverage(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Create two nodes with different progress and weights.
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "PRG-1", Project: "PRG", Depth: 0, Seq: 1, Title: "Half done",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 2.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "p1",
+		CreatedAt: now, UpdatedAt: now,
+	}))
+	// Manually set progress (normally done by service layer).
+	_, err := s.writeDB.ExecContext(ctx, "UPDATE nodes SET progress = 0.5 WHERE id = 'PRG-1'")
+	require.NoError(t, err)
+
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "PRG-2", Project: "PRG", Depth: 0, Seq: 2, Title: "Not started",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "p2",
+		CreatedAt: now, UpdatedAt: now,
+	}))
+
+	stats, err := s.GetStats(ctx, "")
+	require.NoError(t, err)
+	assert.Equal(t, 2, stats.TotalNodes)
+	// Weighted avg: (0.5 * 2 + 0.0 * 1) / (2 + 1) = 1.0 / 3.0 ≈ 0.333
+	assert.InDelta(t, 0.333, stats.Progress, 0.01)
+}
+
+// TestGetStats_ScopedToSubtree_ReturnsOnlySubtreeCounts verifies that
+// scoped stats only count nodes in the specified subtree.
+func TestGetStats_ScopedToSubtree_ReturnsOnlySubtreeCounts(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "SC-1", Project: "SC", Depth: 0, Seq: 1, Title: "Parent",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeStory, ContentHash: "p1", CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "SC-1.1", ParentID: "SC-1", Project: "SC", Depth: 1, Seq: 1, Title: "Child",
+		Status: model.StatusOpen, Priority: model.PriorityHigh, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "c1", CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "SC-2", Project: "SC", Depth: 0, Seq: 2, Title: "Other root",
+		Status: model.StatusOpen, Priority: model.PriorityLow, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "o1", CreatedAt: now, UpdatedAt: now,
+	}))
+
+	// Scoped to SC-1 subtree — should only count SC-1 and SC-1.1.
+	stats, err := s.GetStats(ctx, "SC-1")
+	require.NoError(t, err)
+	assert.Equal(t, 2, stats.TotalNodes, "should count parent + child only")
+}
+
+// TestGetStats_EmptyDB_ReturnsZeroCounts verifies stats on empty database.
+func TestGetStats_EmptyDB_ReturnsZeroCounts(t *testing.T) {
+	s := newInternalTestStore(t)
+	stats, err := s.GetStats(context.Background(), "")
+	require.NoError(t, err)
+	assert.Equal(t, 0, stats.TotalNodes)
+	assert.Equal(t, 0.0, stats.Progress)
+}
+
+// ─── Cancel tests ───
+
+// TestCancelNode_WithCascade_SetsChildrenCancelled verifies cascade cancel
+// sets all non-terminal descendants to cancelled status.
+func TestCancelNode_WithCascade_SetsChildrenCancelled(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "CAN-1", Project: "CAN", Depth: 0, Seq: 1, Title: "Parent",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeStory, ContentHash: "p", CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "CAN-1.1", ParentID: "CAN-1", Project: "CAN", Depth: 1, Seq: 1,
+		Title: "Open child", Status: model.StatusOpen, Priority: model.PriorityMedium,
+		Weight: 1.0, NodeType: model.NodeTypeIssue, ContentHash: "c1",
+		CreatedAt: now, UpdatedAt: now,
+	}))
+
+	// Cancel parent — child should cascade.
+	require.NoError(t, s.CancelNode(ctx, "CAN-1", "testing", "admin", true))
+
+	parent, err := s.GetNode(ctx, "CAN-1")
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusCancelled, parent.Status)
+
+	child, err := s.GetNode(ctx, "CAN-1.1")
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusCancelled, child.Status)
+}
+
+// ─── Delete / Undelete tests ───
+
+// TestDeleteNode_WithCascade_DeletesDescendants verifies cascade soft-delete.
+func TestDeleteNode_WithCascade_DeletesDescendants(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "DEL-1", Project: "DEL", Depth: 0, Seq: 1, Title: "Parent",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeStory, ContentHash: "p", CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "DEL-1.1", ParentID: "DEL-1", Project: "DEL", Depth: 1, Seq: 1,
+		Title: "Child", Status: model.StatusOpen, Priority: model.PriorityMedium,
+		Weight: 1.0, NodeType: model.NodeTypeIssue, ContentHash: "c",
+		CreatedAt: now, UpdatedAt: now,
+	}))
+
+	require.NoError(t, s.DeleteNode(ctx, "DEL-1", true, "admin"))
+
+	_, err := s.GetNode(ctx, "DEL-1")
+	assert.ErrorIs(t, err, model.ErrNotFound, "parent should be deleted")
+	_, err = s.GetNode(ctx, "DEL-1.1")
+	assert.ErrorIs(t, err, model.ErrNotFound, "child should be cascade deleted")
+}
+
+// TestUndeleteNode_RestoresSoftDeletedNode verifies undelete brings back a node.
+func TestUndeleteNode_RestoresSoftDeletedNode(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "UND-1", Project: "UND", Depth: 0, Seq: 1, Title: "To undelete",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "u", CreatedAt: now, UpdatedAt: now,
+	}))
+
+	require.NoError(t, s.DeleteNode(ctx, "UND-1", false, "admin"))
+	_, err := s.GetNode(ctx, "UND-1")
+	require.ErrorIs(t, err, model.ErrNotFound)
+
+	require.NoError(t, s.UndeleteNode(ctx, "UND-1"))
+	node, err := s.GetNode(ctx, "UND-1")
+	require.NoError(t, err)
+	assert.Equal(t, "To undelete", node.Title)
+	assert.Nil(t, node.DeletedAt)
+}
+
+// TestUndeleteNode_NonExistent_ReturnsNotFound verifies undelete on missing node.
+func TestUndeleteNode_NonExistent_ReturnsNotFound(t *testing.T) {
+	s := newInternalTestStore(t)
+	err := s.UndeleteNode(context.Background(), "NOPE-1")
+	assert.ErrorIs(t, err, model.ErrNotFound)
+}
+
+// ─── Claim tests ───
+
+// TestForceReclaimNode_StaleAgent_Succeeds verifies that force-reclaim
+// works when the current agent's heartbeat is older than the threshold.
+func TestForceReclaimNode_StaleAgent_Succeeds(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	staleTime := now.Add(-1 * time.Hour)
+
+	// Create and claim a node.
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "FC-1", Project: "FC", Depth: 0, Seq: 1, Title: "Force reclaim test",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "fc", CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, s.ClaimNode(ctx, "FC-1", "old-agent"))
+
+	// Make the agent's heartbeat stale.
+	_, err := s.writeDB.ExecContext(ctx,
+		"UPDATE agents SET last_heartbeat = ? WHERE agent_id = ?",
+		staleTime.Format(time.RFC3339), "old-agent")
+	require.NoError(t, err)
+
+	// Force reclaim should succeed.
+	require.NoError(t, s.ForceReclaimNode(ctx, "FC-1", "new-agent", 30*time.Minute))
+
+	node, err := s.GetNode(ctx, "FC-1")
+	require.NoError(t, err)
+	assert.Equal(t, "new-agent", node.Assignee)
+}
+
+// TestForceReclaimNode_ActiveAgent_ReturnsError verifies that force-reclaim
+// fails when the current agent is still active (recent heartbeat).
+func TestForceReclaimNode_ActiveAgent_ReturnsError(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "FA-1", Project: "FA", Depth: 0, Seq: 1, Title: "Active agent test",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "fa", CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, s.ClaimNode(ctx, "FA-1", "active-agent"))
+
+	// Force reclaim should fail — agent is still active.
+	err := s.ForceReclaimNode(ctx, "FA-1", "new-agent", 30*time.Minute)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, model.ErrAgentStillActive)
+}
+
+// ─── Export tests ───
+
+// TestExport_WithDependencies_IncludesDepData verifies that export includes
+// dependency relationships between nodes.
+func TestExport_WithDependencies_IncludesDepData(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "EXD-1", Project: "EXD", Depth: 0, Seq: 1, Title: "Blocker",
+		Status: model.StatusOpen, Priority: model.PriorityHigh, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "b1", CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "EXD-2", Project: "EXD", Depth: 0, Seq: 2, Title: "Blocked",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "b2", CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, s.AddDependency(ctx, &model.Dependency{
+		FromID: "EXD-2", ToID: "EXD-1", DepType: model.DepTypeBlocks,
+		CreatedBy: "admin", CreatedAt: now,
+	}))
+
+	data, err := s.Export(ctx, "EXD", "0.1.0")
+	require.NoError(t, err)
+	assert.Equal(t, 2, data.NodeCount)
+	assert.GreaterOrEqual(t, len(data.Dependencies), 1, "export should include dependencies")
+}
+
+// TestExport_WithAgentsAndSessions_IncludesAll verifies full export
+// includes agents and sessions alongside nodes.
+func TestExport_WithAgentsAndSessions_IncludesAll(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	nowStr := now.Format(time.RFC3339)
+
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "EXA-1", Project: "EXA", Depth: 0, Seq: 1, Title: "Agent export test",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "a1", CreatedAt: now, UpdatedAt: now,
+	}))
+
+	// Register an agent directly.
+	_, err := s.writeDB.ExecContext(ctx,
+		"INSERT INTO agents (agent_id, project, state, state_changed_at, last_heartbeat) VALUES (?, ?, 'idle', ?, ?)",
+		"export-agent", "EXA", nowStr, nowStr)
+	require.NoError(t, err)
+
+	// Create a session.
+	_, err = s.writeDB.ExecContext(ctx,
+		"INSERT INTO sessions (id, agent_id, project, started_at, status) VALUES (?, ?, ?, ?, 'active')",
+		"sess-1", "export-agent", "EXA", nowStr)
+	require.NoError(t, err)
+
+	data, err := s.Export(ctx, "EXA", "0.1.0")
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(data.Agents), 1, "export should include agents")
+	assert.GreaterOrEqual(t, len(data.Sessions), 1, "export should include sessions")
+}
+
+// ─── Import merge tests ───
+
+// TestImport_MergeMode_UpdatesExistingNodes verifies that merge mode
+// updates nodes that exist with different content hashes.
+func TestImport_MergeMode_UpdatesExistingNodes(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Create a node.
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "MRG-1", Project: "MRG", Depth: 0, Seq: 1, Title: "Original title",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "hash-v1", CreatedAt: now, UpdatedAt: now,
+	}))
+
+	// Export, modify the title, re-import in merge mode.
+	srcStore := newInternalTestStore(t)
+	require.NoError(t, srcStore.CreateNode(ctx, &model.Node{
+		ID: "MRG-1", Project: "MRG", Depth: 0, Seq: 1, Title: "Updated title",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "hash-v2", CreatedAt: now, UpdatedAt: now,
+	}))
+	exportData, err := srcStore.Export(ctx, "MRG", "0.1.0")
+	require.NoError(t, err)
+
+	result, err := s.Import(ctx, exportData, ImportModeMerge, false)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.NodesUpdated, "should update existing node")
+
+	node, err := s.GetNode(ctx, "MRG-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Updated title", node.Title)
+}
+
+// TestImport_MergeMode_SkipsUnchangedNodes verifies that merge mode
+// skips nodes whose content hash hasn't changed.
+func TestImport_MergeMode_SkipsUnchangedNodes(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "SKP-1", Project: "SKP", Depth: 0, Seq: 1, Title: "Same title",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "same-hash", CreatedAt: now, UpdatedAt: now,
+	}))
+
+	// Export and re-import the same data.
+	exportData, err := s.Export(ctx, "SKP", "0.1.0")
+	require.NoError(t, err)
+
+	result, err := s.Import(ctx, exportData, ImportModeMerge, false)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.NodesSkipped, "unchanged node should be skipped")
+	assert.Equal(t, 0, result.NodesUpdated)
+}
+
+// ─── Node create edge cases ───
+
+// TestCreateNode_WithCodeRefsAndLabels_PersistsJSON verifies that
+// JSON fields (labels, code_refs) are correctly stored and retrieved.
+func TestCreateNode_WithCodeRefsAndLabels_PersistsJSON(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "JSON-1", Project: "JSON", Depth: 0, Seq: 1, Title: "JSON fields test",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "j1",
+		Labels:   []string{"bug", "urgent", "p0"},
+		CodeRefs: []model.CodeRef{
+			{File: "internal/store/sqlite/store.go", Line: 47},
+			{File: "cmd/mtix/main.go", Line: 15},
+		},
+		CreatedAt: now, UpdatedAt: now,
+	}))
+
+	node, err := s.GetNode(ctx, "JSON-1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bug", "urgent", "p0"}, node.Labels)
+	assert.Len(t, node.CodeRefs, 2)
+	assert.Equal(t, "internal/store/sqlite/store.go", node.CodeRefs[0].File)
+	assert.Equal(t, 47, node.CodeRefs[0].Line)
+}
+
+// TestCreateNode_WithAnnotations_PersistsJSON verifies annotations are stored.
+func TestCreateNode_WithAnnotations_PersistsJSON(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	annotations := []model.Annotation{
+		{ID: "ann-1", Text: "Review this carefully", Author: "admin", CreatedAt: now},
+	}
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "ANN-1", Project: "ANN", Depth: 0, Seq: 1, Title: "Annotation test",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "a1",
+		Annotations: annotations,
+		CreatedAt: now, UpdatedAt: now,
+	}))
+
+	node, err := s.GetNode(ctx, "ANN-1")
+	require.NoError(t, err)
+	require.Len(t, node.Annotations, 1)
+	assert.Equal(t, "Review this carefully", node.Annotations[0].Text)
+	assert.Equal(t, "admin", node.Annotations[0].Author)
+}
+
+// TestCreateNode_WithMetadata_PersistsRawJSON verifies metadata is stored as-is.
+func TestCreateNode_WithMetadata_PersistsRawJSON(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "META-1", Project: "META", Depth: 0, Seq: 1, Title: "Metadata test",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "m1",
+		Metadata: json.RawMessage(`{"custom":"field","nested":{"key":42}}`),
+		CreatedAt: now, UpdatedAt: now,
+	}))
+
+	node, err := s.GetNode(ctx, "META-1")
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"custom":"field","nested":{"key":42}}`, string(node.Metadata))
+}
+
+// ─── Dependency tests ───
+
+// TestRemoveDependency_ExistingDep_Succeeds verifies dependency removal.
+func TestRemoveDependency_ExistingDep_Succeeds(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "RD-1", Project: "RD", Depth: 0, Seq: 1, Title: "From",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "rd1", CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "RD-2", Project: "RD", Depth: 0, Seq: 2, Title: "To",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "rd2", CreatedAt: now, UpdatedAt: now,
+	}))
+
+	require.NoError(t, s.AddDependency(ctx, &model.Dependency{
+		FromID: "RD-1", ToID: "RD-2", DepType: model.DepTypeBlocks,
+		CreatedBy: "admin", CreatedAt: now,
+	}))
+	require.NoError(t, s.RemoveDependency(ctx, "RD-1", "RD-2", model.DepTypeBlocks))
+}
+
+// TestRemoveDependency_NonExistent_ReturnsNotFound verifies removing
+// a dependency that doesn't exist returns an error.
+func TestRemoveDependency_NonExistent_ReturnsNotFound(t *testing.T) {
+	s := newInternalTestStore(t)
+	err := s.RemoveDependency(context.Background(), "NOPE-1", "NOPE-2", model.DepTypeBlocks)
+	assert.ErrorIs(t, err, model.ErrNotFound)
+}
+
+// ─── GetDirectChildren tests ───
+
+// TestGetDirectChildren_WithMultipleChildren_ReturnsAll verifies correct
+// child retrieval with proper ordering.
+func TestGetDirectChildren_WithMultipleChildren_ReturnsAll(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "GDC-1", Project: "GDC", Depth: 0, Seq: 1, Title: "Parent",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeStory, ContentHash: "gp", CreatedAt: now, UpdatedAt: now,
+	}))
+	for i := 1; i <= 3; i++ {
+		require.NoError(t, s.CreateNode(ctx, &model.Node{
+			ID: fmt.Sprintf("GDC-1.%d", i), ParentID: "GDC-1", Project: "GDC",
+			Depth: 1, Seq: i, Title: fmt.Sprintf("Child %d", i),
+			Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+			NodeType: model.NodeTypeIssue, ContentHash: fmt.Sprintf("gc%d", i),
+			CreatedAt: now, UpdatedAt: now,
+		}))
+	}
+
+	children, err := s.GetDirectChildren(ctx, "GDC-1")
+	require.NoError(t, err)
+	assert.Len(t, children, 3)
+}
+
+// TestGetDirectChildren_NoChildren_ReturnsEmpty verifies leaf node returns empty.
+func TestGetDirectChildren_NoChildren_ReturnsEmpty(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "LEAF-1", Project: "LEAF", Depth: 0, Seq: 1, Title: "Leaf",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "l1", CreatedAt: now, UpdatedAt: now,
+	}))
+
+	children, err := s.GetDirectChildren(ctx, "LEAF-1")
+	require.NoError(t, err)
+	assert.Empty(t, children)
+}
+
+// ─── WithTx rollback test ───
+
+// TestWithTx_ErrorInFunction_RollsBack verifies that an error in the
+// transaction function causes a rollback, leaving no partial data.
+func TestWithTx_ErrorInFunction_RollsBack(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			"INSERT INTO meta (key, value) VALUES (?, ?)", "tx_test", "should_rollback")
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("intentional failure")
+	})
+	require.Error(t, err)
+
+	// The insert should have been rolled back.
+	var count int
+	require.NoError(t, s.readDB.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM meta WHERE key = 'tx_test'").Scan(&count))
+	assert.Equal(t, 0, count, "rolled back data should not persist")
+}
+
+// TestWithTx_PanicInFunction_RollsBackAndRepanics verifies that a panic
+// in the transaction function causes rollback and re-panics.
+func TestWithTx_PanicInFunction_RollsBackAndRepanics(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	assert.Panics(t, func() {
+		_ = s.WithTx(ctx, func(tx *sql.Tx) error {
+			_, _ = tx.ExecContext(ctx,
+				"INSERT INTO meta (key, value) VALUES (?, ?)", "panic_test", "should_rollback")
+			panic("intentional panic")
+		})
+	})
+
+	// The insert should have been rolled back.
+	var count int
+	require.NoError(t, s.readDB.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM meta WHERE key = 'panic_test'").Scan(&count))
+	assert.Equal(t, 0, count, "panic-rolled-back data should not persist")
+}

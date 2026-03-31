@@ -1028,3 +1028,63 @@ func TestLoggingInterceptor_LogsError(t *testing.T) {
 
 	assert.Error(t, err)
 }
+
+// TestHandleClaim_NonExistentNode_ReturnsError verifies claiming a
+// node that doesn't exist returns an appropriate error.
+func TestHandleClaim_NonExistentNode_ReturnsError(t *testing.T) {
+	s := testGRPCServer(t)
+	ctx := context.Background()
+
+	_, err := s.HandleClaim(ctx, "NONEXISTENT-1", "agent-1", false)
+	assert.Error(t, err)
+}
+
+// TestHandleUnclaim_NonExistentNode_ReturnsError verifies unclaiming a
+// node that doesn't exist returns an appropriate error.
+func TestHandleUnclaim_NonExistentNode_ReturnsError(t *testing.T) {
+	s := testGRPCServer(t)
+	ctx := context.Background()
+
+	_, err := s.HandleUnclaim(ctx, "NONEXISTENT-1", "reason", "agent-1")
+	assert.Error(t, err)
+}
+
+// TestHandleDeleteNode_NonExistentNode_ReturnsError verifies deleting a
+// node that doesn't exist returns an appropriate error.
+func TestHandleDeleteNode_NonExistentNode_ReturnsError(t *testing.T) {
+	s := testGRPCServer(t)
+	ctx := context.Background()
+
+	err := s.HandleDeleteNode(ctx, "NONEXISTENT-1", false, "agent-1")
+	assert.Error(t, err)
+}
+
+// TestHandleUndelete_NonExistentNode_ReturnsError verifies undeleting a
+// node that was never deleted returns an appropriate error.
+func TestHandleUndelete_NonExistentNode_ReturnsError(t *testing.T) {
+	s := testGRPCServer(t)
+	ctx := context.Background()
+
+	_, err := s.HandleUndelete(ctx, "NONEXISTENT-1")
+	assert.Error(t, err)
+}
+
+// TestHandleReopen_NonExistentNode_ReturnsError verifies reopening a
+// node that doesn't exist returns an appropriate error.
+func TestHandleReopen_NonExistentNode_ReturnsError(t *testing.T) {
+	s := testGRPCServer(t)
+	ctx := context.Background()
+
+	_, err := s.HandleReopen(ctx, "NONEXISTENT-1", "agent-1")
+	assert.Error(t, err)
+}
+
+// TestHandleBlock_NonExistentNode_ReturnsError verifies blocking a
+// node that doesn't exist returns an appropriate error.
+func TestHandleBlock_NonExistentNode_ReturnsError(t *testing.T) {
+	s := testGRPCServer(t)
+	ctx := context.Background()
+
+	_, err := s.HandleBlock(ctx, "NONEXISTENT-1", "agent-1")
+	assert.Error(t, err)
+}

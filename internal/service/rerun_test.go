@@ -502,3 +502,63 @@ func TestRerun_BroadcastsBatchEvent(t *testing.T) {
 	assert.True(t, hasInvalidated, "should broadcast nodes.invalidated")
 	assert.True(t, hasProgress, "should broadcast progress.changed")
 }
+
+// TestRerun_DeleteStrategy_InvalidatesThenSoftDeletes verifies delete strategy
+// invalidates each descendant before soft-deleting (FR-3.5b).
+func TestRerun_DeleteStrategy_InvalidatesThenSoftDeletes(t *testing.T) {
+	svc, s, _ := newTestNodeService(t)
+	ctx := context.Background()
+
+	parent, err := svc.CreateNode(ctx, &service.CreateNodeRequest{
+		Project: "PROJ", Title: "Parent for delete rerun", Creator: "admin",
+	})
+	require.NoError(t, err)
+
+	child, err := svc.CreateNode(ctx, &service.CreateNodeRequest{
+		ParentID: parent.ID, Project: "PROJ", Title: "Child to delete-rerun", Creator: "admin",
+	})
+	require.NoError(t, err)
+	require.NoError(t, s.ClaimNode(ctx, child.ID, "agent-1"))
+	require.NoError(t, s.TransitionStatus(ctx, child.ID, model.StatusDone, "done", "agent-1"))
+
+	// Rerun parent with delete strategy.
+	err = svc.Rerun(ctx, parent.ID, "delete", "testing delete rerun", "admin")
+	require.NoError(t, err)
+
+	// Child should be soft-deleted.
+	_, err = s.GetNode(ctx, child.ID)
+	assert.ErrorIs(t, err, model.ErrNotFound, "child should be soft-deleted after delete rerun")
+
+	// Parent should be open again.
+	p, err := s.GetNode(ctx, parent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusOpen, p.Status)
+}
+
+// TestRerun_NonExistentNode_ReturnsNotFound verifies rerun on missing node.
+func TestRerun_NonExistentNode_ReturnsNotFound(t *testing.T) {
+	svc, _, _ := newTestNodeService(t)
+	err := svc.Rerun(context.Background(), "PROJ-999", "all", "reason", "admin")
+	assert.ErrorIs(t, err, model.ErrNotFound)
+}
+
+// TestRerun_InvalidStrategy_WithChildren_ReturnsError verifies unknown strategy
+// is rejected when processing descendants (the switch default case).
+func TestRerun_InvalidStrategy_WithChildren_ReturnsError(t *testing.T) {
+	svc, _, _ := newTestNodeService(t)
+	ctx := context.Background()
+
+	parent, err := svc.CreateNode(ctx, &service.CreateNodeRequest{
+		Project: "PROJ", Title: "Parent for invalid strategy", Creator: "admin",
+	})
+	require.NoError(t, err)
+	_, err = svc.CreateNode(ctx, &service.CreateNodeRequest{
+		ParentID: parent.ID, Project: "PROJ", Title: "Child", Creator: "admin",
+	})
+	require.NoError(t, err)
+
+	// Unknown strategy should fail when it hits the descendant switch.
+	err = svc.Rerun(ctx, parent.ID, "unknown_strategy", "reason", "admin")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown rerun strategy")
+}

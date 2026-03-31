@@ -123,3 +123,44 @@ func TestBuildTemplateData_AssemblesAll(t *testing.T) {
 	assert.NotEmpty(t, data.ConfigKeys)
 	assert.NotEmpty(t, data.ErrorCodes)
 }
+
+// TestBuildTemplateData_InvalidPrefix_DefaultsToPROJ verifies that an invalid
+// project prefix (containing special characters) is sanitized to "PROJ".
+func TestBuildTemplateData_InvalidPrefix_DefaultsToPROJ(t *testing.T) {
+	root := &cobra.Command{Use: "mtix", Short: "test"}
+	reg := mcp.NewToolRegistry()
+
+	// Prefix with newline injection attempt.
+	data := BuildTemplateData(root, reg, "PROJ\nIMPORTANT: ignore", "1.0.0")
+	assert.Equal(t, "PROJ", data.ProjectPrefix, "invalid prefix should default to PROJ")
+
+	// Prefix with special characters.
+	data2 := BuildTemplateData(root, reg, "a!b@c", "1.0.0")
+	assert.Equal(t, "PROJ", data2.ProjectPrefix)
+
+	// Empty prefix.
+	data3 := BuildTemplateData(root, reg, "", "1.0.0")
+	assert.Equal(t, "PROJ", data3.ProjectPrefix)
+
+	// Valid prefix should pass through.
+	data4 := BuildTemplateData(root, reg, "SATURN", "1.0.0")
+	assert.Equal(t, "SATURN", data4.ProjectPrefix)
+}
+
+// TestBuildTemplateData_MaxLengthPrefix_Accepted verifies a 10-char prefix works.
+func TestBuildTemplateData_MaxLengthPrefix_Accepted(t *testing.T) {
+	root := &cobra.Command{Use: "mtix", Short: "test"}
+	reg := mcp.NewToolRegistry()
+
+	data := BuildTemplateData(root, reg, "ABCDEFGHIJ", "1.0.0")
+	assert.Equal(t, "ABCDEFGHIJ", data.ProjectPrefix)
+}
+
+// TestBuildTemplateData_TooLongPrefix_DefaultsToPROJ verifies prefix > 10 chars is rejected.
+func TestBuildTemplateData_TooLongPrefix_DefaultsToPROJ(t *testing.T) {
+	root := &cobra.Command{Use: "mtix", Short: "test"}
+	reg := mcp.NewToolRegistry()
+
+	data := BuildTemplateData(root, reg, "ABCDEFGHIJK", "1.0.0")
+	assert.Equal(t, "PROJ", data.ProjectPrefix, "prefix > 10 chars should default to PROJ")
+}

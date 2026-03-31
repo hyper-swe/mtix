@@ -338,3 +338,73 @@ func TestSession_AutoPopulatesSessionIDOnNodeMutation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, sessionID, activeID)
 }
+
+// TestSessionStart_AutoRegistersAgent verifies that SessionStart creates
+// the agent if it doesn't already exist (FR-10.1a defense-in-depth).
+func TestSessionStart_AutoRegistersAgent(t *testing.T) {
+	sessionSvc, _, _ := newTestSessionService(t)
+	ctx := context.Background()
+
+	// Start a session for an agent that hasn't been registered.
+	// SessionStart should auto-register it.
+	sessionID, err := sessionSvc.SessionStart(ctx, "new-agent", "PROJ")
+	require.NoError(t, err)
+	assert.NotEmpty(t, sessionID)
+}
+
+// TestSessionStart_AutoEndsExistingSession verifies that starting a new
+// session auto-ends any existing active session for the same agent.
+func TestSessionStart_AutoEndsExistingSession(t *testing.T) {
+	sessionSvc, _, store := newTestSessionService(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	registerAgent(t, store, "agent-1", "PROJ", now)
+
+	// Start first session.
+	session1, err := sessionSvc.SessionStart(ctx, "agent-1", "PROJ")
+	require.NoError(t, err)
+
+	// Start second session — first should be auto-ended.
+	session2, err := sessionSvc.SessionStart(ctx, "agent-1", "PROJ")
+	require.NoError(t, err)
+	assert.NotEqual(t, session1, session2)
+
+	// Active session should be the second one.
+	activeID, err := sessionSvc.GetActiveSessionID(ctx, "agent-1")
+	require.NoError(t, err)
+	assert.Equal(t, session2, activeID)
+}
+
+// TestSessionEnd_SuccessfulEnd_NoError verifies that ending an active
+// session completes without error.
+func TestSessionEnd_SuccessfulEnd_NoError(t *testing.T) {
+	sessionSvc, _, store := newTestSessionService(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	registerAgent(t, store, "agent-1", "PROJ", now)
+
+	_, err := sessionSvc.SessionStart(ctx, "agent-1", "PROJ")
+	require.NoError(t, err)
+
+	err = sessionSvc.SessionEnd(ctx, "agent-1")
+	require.NoError(t, err)
+
+	// No active session after end.
+	_, err = sessionSvc.GetActiveSessionID(ctx, "agent-1")
+	assert.Error(t, err)
+}
+
+// TestSessionEnd_NoActiveSession_ReturnsError2 verifies ending a session
+// when none is active returns an appropriate error.
+func TestSessionEnd_NoActiveSession_ReturnsError2(t *testing.T) {
+	sessionSvc, _, store := newTestSessionService(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	registerAgent(t, store, "agent-1", "PROJ", now)
+
+	err := sessionSvc.SessionEnd(ctx, "agent-1")
+	assert.Error(t, err)
+}

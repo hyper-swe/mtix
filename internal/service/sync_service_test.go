@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -740,4 +741,140 @@ func TestSyncService_Compare_InSync(t *testing.T) {
 	assert.Equal(t, report.FileNodeCount, report.DBNodeCount)
 	assert.Empty(t, report.OnlyInFile)
 	assert.Empty(t, report.OnlyInDB)
+}
+
+// TestAutoExport_WritesAtomically_TasksJsonExists verifies that auto-export
+// produces a valid tasks.json file with correct content.
+func TestAutoExport_WritesAtomically_TasksJsonExists(t *testing.T) {
+	svc, store, dir := newTestSyncService(t)
+	ctx := context.Background()
+	mtixDir := filepath.Join(dir, ".mtix")
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Create a node so the export has content.
+	require.NoError(t, store.CreateNode(ctx, &model.Node{
+		ID: "EXP-1", Project: "EXP", Depth: 0, Seq: 1, Title: "Export test",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "h1", CreatedAt: now, UpdatedAt: now,
+	}))
+
+	err := svc.AutoExport(ctx, mtixDir)
+	require.NoError(t, err)
+
+	// Verify tasks.json exists and is valid JSON.
+	data, err := os.ReadFile(filepath.Join(mtixDir, "tasks.json"))
+	require.NoError(t, err)
+	assert.Greater(t, len(data), 0)
+
+	var exported map[string]interface{}
+	require.NoError(t, json.Unmarshal(data, &exported))
+	assert.Contains(t, exported, "nodes")
+	assert.Contains(t, exported, "node_count")
+
+	// Verify hash file was written.
+	hashData, err := os.ReadFile(filepath.Join(mtixDir, "data", "sync.sha256"))
+	require.NoError(t, err)
+	assert.Equal(t, 64, len(strings.TrimSpace(string(hashData))), "hash should be 64 hex chars")
+
+	// Verify DB hash file was written for conflict detection.
+	dbHashData, err := os.ReadFile(filepath.Join(mtixDir, "data", "sync-db.sha256"))
+	require.NoError(t, err)
+	assert.Equal(t, 64, len(strings.TrimSpace(string(dbHashData))))
+}
+
+// TestAutoExport_ThenAutoImport_RoundTrips verifies that export→import
+// produces identical data (round-trip integrity).
+func TestAutoExport_ThenAutoImport_RoundTrips(t *testing.T) {
+	svc, store, dir := newTestSyncService(t)
+	ctx := context.Background()
+	mtixDir := filepath.Join(dir, ".mtix")
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, store.CreateNode(ctx, &model.Node{
+		ID: "RT-1", Project: "RT", Depth: 0, Seq: 1, Title: "Roundtrip test",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "rt1",
+		Description: "Test description for roundtrip",
+		CreatedAt: now, UpdatedAt: now,
+	}))
+
+	// Export.
+	require.NoError(t, svc.AutoExport(ctx, mtixDir))
+
+	// Create a fresh store and sync service to import into.
+	dir2 := t.TempDir()
+	mtixDir2 := filepath.Join(dir2, ".mtix")
+	require.NoError(t, os.MkdirAll(mtixDir2, 0755))
+
+	// Copy tasks.json to the new location.
+	data, err := os.ReadFile(filepath.Join(mtixDir, "tasks.json"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(mtixDir2, "tasks.json"), data, 0644))
+
+	dataDir2 := filepath.Join(mtixDir2, "data")
+	require.NoError(t, os.MkdirAll(dataDir2, 0755))
+	logger2 := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	store2, err2 := sqlite.New(dataDir2, logger2)
+	require.NoError(t, err2)
+	t.Cleanup(func() { store2.Close() })
+	svc2 := service.NewSyncService(store2, logger2, func() time.Time { return time.Now().UTC() })
+
+	// Import.
+	require.NoError(t, svc2.AutoImport(ctx, mtixDir2))
+
+	// Verify the imported node matches.
+	node, err := store2.GetNode(ctx, "RT-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Roundtrip test", node.Title)
+	assert.Equal(t, "Test description for roundtrip", node.Description)
+}
+
+// TestAutoImport_MissingTasksJson_NoOp verifies import gracefully skips
+// when tasks.json doesn't exist.
+func TestAutoImport_MissingTasksJson_NoOp(t *testing.T) {
+	svc, _, dir := newTestSyncService(t)
+	mtixDir := filepath.Join(dir, ".mtix")
+
+	// No tasks.json exists — import should be a no-op.
+	err := svc.AutoImport(context.Background(), mtixDir)
+	assert.NoError(t, err)
+}
+
+// TestAutoImport_ConflictDetection_BothChanged_Skips verifies that when
+// both tasks.json and DB have changed, import is skipped with no error.
+func TestAutoImport_ConflictDetection_BothChanged_Skips(t *testing.T) {
+	svc, store, dir := newTestSyncService(t)
+	ctx := context.Background()
+	mtixDir := filepath.Join(dir, ".mtix")
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Create initial state and export.
+	require.NoError(t, store.CreateNode(ctx, &model.Node{
+		ID: "CONF-1", Project: "CONF", Depth: 0, Seq: 1, Title: "Conflict test",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "c1", CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, svc.AutoExport(ctx, mtixDir))
+
+	// Modify tasks.json (simulating git pull).
+	tasksPath := filepath.Join(mtixDir, "tasks.json")
+	data, err := os.ReadFile(tasksPath)
+	require.NoError(t, err)
+	modified := strings.Replace(string(data), "Conflict test", "Modified externally", 1)
+	require.NoError(t, os.WriteFile(tasksPath, []byte(modified), 0644))
+
+	// Also modify the DB (simulating local work).
+	require.NoError(t, store.CreateNode(ctx, &model.Node{
+		ID: "CONF-2", Project: "CONF", Depth: 0, Seq: 2, Title: "Local change",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "c2", CreatedAt: now, UpdatedAt: now,
+	}))
+
+	// Import should detect conflict and skip (no error, just a warning).
+	err = svc.AutoImport(ctx, mtixDir)
+	assert.NoError(t, err)
+
+	// DB should still have the local change (import was skipped).
+	_, err = store.GetNode(ctx, "CONF-2")
+	assert.NoError(t, err, "local change should survive conflict skip")
 }

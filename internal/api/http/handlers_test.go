@@ -651,3 +651,111 @@ func TestAPI_Pagination_OffsetBeyondTotal_ReturnsEmpty(t *testing.T) {
 		assert.Empty(t, nodesList)
 	}
 }
+
+// TestAdmin_GC_ReturnsCompleted verifies POST /api/v1/admin/gc returns success.
+func TestAdmin_GC_ReturnsCompleted(t *testing.T) {
+	s := testServer(t)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/gc", nil)
+	req.Header.Set("X-Requested-With", "mtix")
+	s.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "completed", resp["status"])
+}
+
+// TestAdmin_Verify_ReturnsIntegrityCheck verifies POST /api/v1/admin/verify.
+func TestAdmin_Verify_ReturnsIntegrityCheck(t *testing.T) {
+	s := testServer(t)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/verify", nil)
+	req.Header.Set("X-Requested-With", "mtix")
+	s.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["integrity_check"])
+}
+
+// TestQuery_ReadyNodes_EmptyDB_ReturnsEmptyArray verifies GET /api/v1/ready
+// with no nodes returns empty array, not error.
+func TestQuery_ReadyNodes_EmptyDB_ReturnsEmptyArray(t *testing.T) {
+	s := testServer(t)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ready", nil)
+	s.Router().ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, float64(0), resp["total"])
+}
+
+// TestQuery_ReadyNodes_WithReadyNode_ReturnsIt verifies GET /api/v1/ready
+// returns nodes that have no assignee and are not blocked.
+func TestQuery_ReadyNodes_WithReadyNode_ReturnsIt(t *testing.T) {
+	s := testServer(t)
+
+	// Create a node via API.
+	body := `{"title":"Ready node","project":"TEST"}`
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/nodes", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Requested-With", "mtix")
+	s.Router().ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	// Query ready nodes.
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/ready", nil)
+	s.Router().ServeHTTP(w2, req2)
+
+	assert.Equal(t, http.StatusOK, w2.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp))
+	assert.GreaterOrEqual(t, resp["total"], float64(1))
+}
+
+// TestNode_GetChildren_EmptyParent_ReturnsEmptyArray verifies GET /api/v1/nodes/:id/children
+// returns empty array for a leaf node.
+func TestNode_GetChildren_EmptyParent_ReturnsEmptyArray(t *testing.T) {
+	s := testServer(t)
+
+	// Create a node.
+	body := `{"title":"Leaf node","project":"TEST"}`
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/nodes", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Requested-With", "mtix")
+	s.Router().ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var created map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+	nodeID := created["id"].(string)
+
+	// Get children — should be empty.
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/nodes/"+nodeID+"/children", nil)
+	s.Router().ServeHTTP(w2, req2)
+
+	assert.Equal(t, http.StatusOK, w2.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp))
+	assert.Equal(t, float64(0), resp["total"])
+}
+
+// TestDeps_GetDependencies_NonExistentNode_ReturnsEmptyOrError verifies
+// GET /api/v1/deps/:id handles missing nodes gracefully.
+func TestDeps_GetDependencies_NonExistentNode_ReturnsEmptyOrError(t *testing.T) {
+	s := testServer(t)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/deps/NONEXISTENT-1", nil)
+	s.Router().ServeHTTP(w, req)
+
+	// Should return 200 with empty deps, or 404 — either is acceptable.
+	assert.Contains(t, []int{http.StatusOK, http.StatusNotFound}, w.Code)
+}

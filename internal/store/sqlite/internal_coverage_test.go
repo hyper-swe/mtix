@@ -1821,3 +1821,357 @@ func makeTestNode(id, parentID, project, title string, depth, seq int, createdAt
 		UpdatedAt: createdAt,
 	}
 }
+
+// TestWrapBusyError_LockedError_WrapsWithGuidance verifies actionable message.
+func TestWrapBusyError_LockedError_WrapsWithGuidance(t *testing.T) {
+	err := fmt.Errorf("begin transaction: database is locked")
+	wrapped := wrapBusyError(err)
+	assert.Contains(t, wrapped.Error(), "another mtix operation is in progress")
+	assert.Contains(t, wrapped.Error(), "retry in a moment")
+	assert.ErrorIs(t, wrapped, err)
+}
+
+// TestWrapBusyError_SQLiteBusy_WrapsWithGuidance verifies SQLITE_BUSY wrapping.
+func TestWrapBusyError_SQLiteBusy_WrapsWithGuidance(t *testing.T) {
+	err := fmt.Errorf("SQLITE_BUSY")
+	wrapped := wrapBusyError(err)
+	assert.Contains(t, wrapped.Error(), "another mtix operation is in progress")
+}
+
+// TestWrapBusyError_NilError_ReturnsNil verifies nil passthrough.
+func TestWrapBusyError_NilError_ReturnsNil(t *testing.T) {
+	assert.Nil(t, wrapBusyError(nil))
+}
+
+// TestWrapBusyError_OtherError_PassesThrough verifies non-busy errors unchanged.
+func TestWrapBusyError_OtherError_PassesThrough(t *testing.T) {
+	err := fmt.Errorf("some other error")
+	assert.Equal(t, err, wrapBusyError(err))
+}
+
+// --- Store lifecycle tests ---
+
+// TestNew_ValidPath_OpensWithCorrectPragmas verifies that New sets
+// WAL mode, foreign keys, and busy_timeout on both connections.
+func TestNew_ValidPath_OpensWithCorrectPragmas(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "pragmas.db")
+	s, err := New(dbPath, slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = s.Close() }()
+
+	// Verify WAL mode on write connection.
+	var journalMode string
+	require.NoError(t, s.writeDB.QueryRow("PRAGMA journal_mode").Scan(&journalMode))
+	assert.Equal(t, "wal", journalMode)
+
+	// Verify foreign keys on both connections.
+	var fkWrite, fkRead int
+	require.NoError(t, s.writeDB.QueryRow("PRAGMA foreign_keys").Scan(&fkWrite))
+	require.NoError(t, s.readDB.QueryRow("PRAGMA foreign_keys").Scan(&fkRead))
+	assert.Equal(t, 1, fkWrite, "foreign_keys should be ON for write connection")
+	assert.Equal(t, 1, fkRead, "foreign_keys should be ON for read connection")
+
+	// Verify busy_timeout on both connections.
+	var btWrite, btRead int
+	require.NoError(t, s.writeDB.QueryRow("PRAGMA busy_timeout").Scan(&btWrite))
+	require.NoError(t, s.readDB.QueryRow("PRAGMA busy_timeout").Scan(&btRead))
+	assert.Equal(t, 5000, btWrite, "busy_timeout should be 5000 on write connection")
+	assert.Equal(t, 5000, btRead, "busy_timeout should be 5000 on read connection")
+}
+
+// TestNew_InvalidPath_ReturnsError verifies that an invalid database path fails.
+func TestNew_InvalidPath_ReturnsError(t *testing.T) {
+	_, err := New("/nonexistent/deep/path/that/cannot/exist/db.sqlite", slog.Default())
+	assert.Error(t, err)
+}
+
+// TestNew_DirectoryPath_ResolvesToMtixDB verifies that a directory path
+// resolves to mtix.db inside it.
+func TestNew_DirectoryPath_ResolvesToMtixDB(t *testing.T) {
+	dir := t.TempDir()
+	s, err := New(dir, slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = s.Close() }()
+
+	// The database file should exist at dir/mtix.db.
+	_, statErr := os.Stat(filepath.Join(dir, "mtix.db"))
+	assert.NoError(t, statErr, "mtix.db should be created in the directory")
+}
+
+// TestClose_DoubleClose_NoPanic verifies that closing an already-closed
+// store does not panic.
+func TestClose_DoubleClose_NoPanic(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "close.db")
+	s, err := New(dbPath, slog.Default())
+	require.NoError(t, err)
+
+	require.NoError(t, s.Close())
+	// Second close should not panic. It may or may not error
+	// depending on the SQLite driver implementation.
+	assert.NotPanics(t, func() { _ = s.Close() })
+}
+
+// --- Backup tests ---
+
+// TestBackup_ValidPath_CreatesVerifiedCopy verifies backup creates a
+// usable, verified database file with correct content.
+func TestBackup_ValidPath_CreatesVerifiedCopy(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Insert data to verify backup contains it.
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "BK-1", Project: "BK", Depth: 0, Seq: 1, Title: "Backup test",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "h1", CreatedAt: now, UpdatedAt: now,
+	}))
+
+	destPath := filepath.Join(t.TempDir(), "backup.db")
+	result, err := s.Backup(ctx, destPath)
+	require.NoError(t, err)
+
+	assert.Equal(t, destPath, result.Path)
+	assert.True(t, result.Verified)
+	assert.Greater(t, result.Size, int64(0))
+
+	// Open the backup and verify data exists.
+	backupStore, err := New(destPath, slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = backupStore.Close() }()
+
+	node, err := backupStore.GetNode(ctx, "BK-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Backup test", node.Title)
+}
+
+// TestBackup_UnwritablePath_ReturnsError verifies that an unwritable path fails.
+func TestBackup_UnwritablePath_ReturnsError(t *testing.T) {
+	s := newInternalTestStore(t)
+	_, err := s.Backup(context.Background(), "/nonexistent/dir/backup.db")
+	assert.Error(t, err)
+}
+
+// --- Verify tests ---
+
+// TestVerify_HealthyDatabase_AllChecksPass verifies that a fresh, correctly
+// initialized database passes all verification checks.
+func TestVerify_HealthyDatabase_AllChecksPass(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Create a parent and child so progress rollup can be verified.
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "VER-1", Project: "VER", Depth: 0, Seq: 1, Title: "Parent",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeStory, ContentHash: "p1", CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "VER-1.1", ParentID: "VER-1", Project: "VER", Depth: 1, Seq: 1,
+		Title: "Child", Status: model.StatusOpen, Priority: model.PriorityMedium,
+		Weight: 1.0, NodeType: model.NodeTypeIssue, ContentHash: "c1",
+		CreatedAt: now, UpdatedAt: now,
+	}))
+
+	// Populate sequences table (normally done by NextSequence via service layer).
+	_, seqErr := s.writeDB.ExecContext(ctx,
+		"INSERT INTO sequences (key, value) VALUES (?, ?), (?, ?)",
+		"VER:", 1, "VER:VER-1", 1)
+	require.NoError(t, seqErr)
+
+	result, err := s.Verify(ctx)
+	require.NoError(t, err)
+	assert.True(t, result.AllPassed, "all verification checks should pass: %v", result.Errors)
+	assert.True(t, result.IntegrityOK)
+	assert.True(t, result.ForeignKeyOK)
+	assert.True(t, result.SequenceOK)
+	assert.True(t, result.ProgressOK)
+	assert.True(t, result.FTSOK)
+	assert.Empty(t, result.Errors)
+}
+
+// TestVerify_EmptyDatabase_AllChecksPass verifies verification works
+// on a database with no nodes.
+func TestVerify_EmptyDatabase_AllChecksPass(t *testing.T) {
+	s := newInternalTestStore(t)
+	result, err := s.Verify(context.Background())
+	require.NoError(t, err)
+	assert.True(t, result.AllPassed)
+}
+
+// TestVerifyFTS_AfterInsertAndDelete_RemainsConsistent verifies FTS index
+// stays valid through create and delete operations.
+func TestVerifyFTS_AfterInsertAndDelete_RemainsConsistent(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Create then delete a node — FTS should still be consistent.
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "FTS-1", Project: "FTS", Depth: 0, Seq: 1, Title: "FTS test node",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "f1", CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, s.DeleteNode(ctx, "FTS-1", false, "test"))
+
+	result := &VerifyResult{}
+	require.NoError(t, s.verifyFTS(ctx, result))
+	assert.True(t, result.FTSOK, "FTS should be consistent after delete")
+}
+
+// --- escapeSQLitePath tests ---
+
+// TestEscapeSQLitePath_SingleQuotes_Escaped verifies SQL injection prevention.
+func TestEscapeSQLitePath_SingleQuotes_Escaped(t *testing.T) {
+	assert.Equal(t, "it''s a path", escapeSQLitePath("it's a path"))
+	assert.Equal(t, "normal/path.db", escapeSQLitePath("normal/path.db"))
+	assert.Equal(t, "''start", escapeSQLitePath("'start"))
+	assert.Equal(t, "end''", escapeSQLitePath("end'"))
+	assert.Equal(t, "no quotes", escapeSQLitePath("no quotes"))
+}
+
+// --- parseScannedTimestamps tests ---
+
+// TestParseScannedTimestamps_ValidTimestamps_Parses verifies correct parsing.
+func TestParseScannedTimestamps_ValidTimestamps_Parses(t *testing.T) {
+	n := &model.Node{}
+	d := &scanDest{
+		createdAtStr: "2026-03-30T12:00:00Z",
+		updatedAtStr: "2026-03-30T13:00:00Z",
+	}
+	err := parseScannedTimestamps(n, d)
+	require.NoError(t, err)
+	assert.Equal(t, 2026, n.CreatedAt.Year())
+	assert.Equal(t, 12, n.CreatedAt.Hour())
+	assert.Equal(t, 13, n.UpdatedAt.Hour())
+}
+
+// TestParseScannedTimestamps_InvalidCreatedAt_ReturnsError verifies error on bad timestamp.
+func TestParseScannedTimestamps_InvalidCreatedAt_ReturnsError(t *testing.T) {
+	n := &model.Node{}
+	d := &scanDest{createdAtStr: "not-a-date", updatedAtStr: "2026-03-30T12:00:00Z"}
+	err := parseScannedTimestamps(n, d)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "parse created_at")
+}
+
+// TestParseScannedTimestamps_InvalidUpdatedAt_ReturnsError verifies error on bad updated_at.
+func TestParseScannedTimestamps_InvalidUpdatedAt_ReturnsError(t *testing.T) {
+	n := &model.Node{}
+	d := &scanDest{createdAtStr: "2026-03-30T12:00:00Z", updatedAtStr: "bad"}
+	err := parseScannedTimestamps(n, d)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "parse updated_at")
+}
+
+// TestParseScannedTimestamps_NullableTimestamps_ParsesWhenPresent verifies
+// optional timestamps are parsed when non-null.
+func TestParseScannedTimestamps_NullableTimestamps_ParsesWhenPresent(t *testing.T) {
+	n := &model.Node{}
+	closedStr := sql.NullString{String: "2026-03-30T14:00:00Z", Valid: true}
+	deferStr := sql.NullString{String: "2026-04-01T00:00:00Z", Valid: true}
+	d := &scanDest{
+		createdAtStr: "2026-03-30T12:00:00Z",
+		updatedAtStr: "2026-03-30T13:00:00Z",
+		closedAt:     closedStr,
+		deferUntil:   deferStr,
+	}
+	err := parseScannedTimestamps(n, d)
+	require.NoError(t, err)
+	assert.NotNil(t, n.ClosedAt)
+	assert.Equal(t, 14, n.ClosedAt.Hour())
+	assert.NotNil(t, n.DeferUntil)
+}
+
+// --- parseScannedJSON tests ---
+
+// TestParseScannedJSON_EmptyFields_NoError verifies empty JSON fields don't error.
+func TestParseScannedJSON_EmptyFields_NoError(t *testing.T) {
+	n := &model.Node{}
+	d := &scanDest{}
+	err := parseScannedJSON(n, d)
+	require.NoError(t, err)
+}
+
+// TestParseScannedJSON_ValidLabels_Parses verifies label array parsing.
+func TestParseScannedJSON_ValidLabels_Parses(t *testing.T) {
+	n := &model.Node{}
+	d := &scanDest{
+		labelsJSON: sql.NullString{String: `["bug","urgent"]`, Valid: true},
+	}
+	err := parseScannedJSON(n, d)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"bug", "urgent"}, n.Labels)
+}
+
+// TestParseScannedJSON_InvalidLabelsJSON_ReturnsError verifies error on bad JSON.
+func TestParseScannedJSON_InvalidLabelsJSON_ReturnsError(t *testing.T) {
+	n := &model.Node{}
+	d := &scanDest{
+		labelsJSON: sql.NullString{String: `{not valid json`, Valid: true},
+	}
+	err := parseScannedJSON(n, d)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "parse labels")
+}
+
+// TestParseScannedJSON_MetadataField_PreservesRawJSON verifies metadata
+// is stored as raw JSON without parsing into a typed struct.
+func TestParseScannedJSON_MetadataField_PreservesRawJSON(t *testing.T) {
+	n := &model.Node{}
+	d := &scanDest{
+		metadataJSON: sql.NullString{String: `{"custom":"value","nested":{"key":1}}`, Valid: true},
+	}
+	err := parseScannedJSON(n, d)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"custom":"value","nested":{"key":1}}`, string(n.Metadata))
+}
+
+// --- Import zero-node protection tests ---
+
+// TestImport_ZeroNodes_NonEmptyDB_WithoutForce_Rejected verifies that
+// importing zero nodes into a database with existing data is rejected.
+func TestImport_ZeroNodes_NonEmptyDB_WithoutForce_Rejected(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Seed the database.
+	require.NoError(t, s.CreateNode(ctx, &model.Node{
+		ID: "EXIST-1", Project: "EXIST", Depth: 0, Seq: 1, Title: "Existing",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "e1", CreatedAt: now, UpdatedAt: now,
+	}))
+
+	// Create a valid empty export.
+	emptyStore := newInternalTestStore(t)
+	emptyExport, err := emptyStore.Export(ctx, "EMPTY", "0.1.0")
+	require.NoError(t, err)
+	require.Equal(t, 0, len(emptyExport.Nodes))
+
+	// Import without force should fail.
+	_, err = s.Import(ctx, emptyExport, ImportModeReplace, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "zero nodes")
+
+	// Original data should still exist.
+	node, err := s.GetNode(ctx, "EXIST-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Existing", node.Title)
+}
+
+// TestImport_ZeroNodes_EmptyDB_WithoutForce_Succeeds verifies that
+// importing zero nodes into an empty database is allowed (no false positive).
+func TestImport_ZeroNodes_EmptyDB_WithoutForce_Succeeds(t *testing.T) {
+	s := newInternalTestStore(t)
+	ctx := context.Background()
+
+	emptyStore := newInternalTestStore(t)
+	emptyExport, err := emptyStore.Export(ctx, "EMPTY", "0.1.0")
+	require.NoError(t, err)
+
+	result, err := s.Import(ctx, emptyExport, ImportModeReplace, false)
+	require.NoError(t, err)
+	assert.Equal(t, 0, result.NodesCreated)
+}

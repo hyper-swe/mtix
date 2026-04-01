@@ -48,12 +48,11 @@ checksum:
 signs:
   - cmd: cosign
     artifacts: checksum
-    signature: "${artifact}.sig"
+    signature: "${artifact}.bundle"
     args:
       - "sign-blob"
       - "--yes"
-      - "--output-signature=${signature}"
-      - "--bundle=${artifact}.bundle"
+      - "--bundle=${signature}"
       - "${artifact}"
 
 release:

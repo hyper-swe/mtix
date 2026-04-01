@@ -29,6 +29,11 @@ vendor/
 # GoReleaser
 dist/
 
+# Release build artifacts (generated during CI release workflow)
+BUILD-ENVIRONMENT.json
+web-dist-checksums.txt
+mtix-reference
+
 # Node.js (root-level, e.g. from running npm in project root)
 node_modules/
 

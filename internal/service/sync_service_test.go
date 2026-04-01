@@ -527,11 +527,16 @@ func TestAutoImport_ConflictDetection_DBHashMatchesStored_NoConflict(t *testing.
 	err = svc.AutoImport(ctx, mtixDir)
 	require.NoError(t, err)
 
-	// Hash should be updated (import happened).
+	// Hash should be updated and match the actual tasks.json file on disk.
 	storedHash, err := os.ReadFile(filepath.Join(mtixDir, "data", "sync.sha256"))
 	require.NoError(t, err)
-	jsonBytes, _ := json.MarshalIndent(newData, "", "  ")
-	assert.Equal(t, hashBytes(jsonBytes), string(storedHash))
+
+	// Read the actual tasks.json and compute its hash — this is what the
+	// sync service does internally, so the hash must match.
+	actualFileBytes, err := os.ReadFile(filepath.Join(mtixDir, "tasks.json"))
+	require.NoError(t, err)
+	assert.Equal(t, hashBytes(actualFileBytes), string(storedHash),
+		"stored hash must match SHA-256 of the actual tasks.json file on disk")
 }
 
 // TestAutoExport_EmptyDB_ProducesValidJSON verifies export with no nodes.

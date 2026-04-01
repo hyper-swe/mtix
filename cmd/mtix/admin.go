@@ -281,7 +281,7 @@ func newServeCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1",
-		"Bind address (use 0.0.0.0 with --insecure-bind)")
+		"Bind address (default localhost; non-localhost exposes API without auth)")
 	cmd.Flags().IntVar(&port, "port", 8377, "HTTP port")
 
 	return cmd

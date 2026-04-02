@@ -26,6 +26,9 @@ Thumbs.db
 # Go
 vendor/
 
+# Marketing (internal planning — not public)
+marketing/
+
 # GoReleaser
 dist/
 

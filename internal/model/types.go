@@ -8,11 +8,11 @@ package model
 type NodeType string
 
 const (
-	// NodeTypeStory represents a top-level work item (depth 0).
-	NodeTypeStory NodeType = "story"
-
-	// NodeTypeEpic represents a major grouping (depth 1).
+	// NodeTypeEpic represents a top-level initiative (depth 0).
 	NodeTypeEpic NodeType = "epic"
+
+	// NodeTypeStory represents a user story or feature (depth 1).
+	NodeTypeStory NodeType = "story"
 
 	// NodeTypeIssue represents a concrete work item (depth 2).
 	NodeTypeIssue NodeType = "issue"
@@ -25,13 +25,13 @@ const (
 )
 
 // NodeTypeForDepth derives the node type from hierarchy depth per FR-1.2.
-// depth 0 → story, depth 1 → epic, depth 2 → issue, depth 3+ → micro.
+// Follows Agile/Scrum convention: depth 0 → epic, depth 1 → story, depth 2 → issue, depth 3+ → micro.
 func NodeTypeForDepth(depth int) NodeType {
 	switch depth {
 	case 0:
-		return NodeTypeStory
-	case 1:
 		return NodeTypeEpic
+	case 1:
+		return NodeTypeStory
 	case 2:
 		return NodeTypeIssue
 	default:

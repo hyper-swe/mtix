@@ -226,7 +226,10 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode) (importActi
 }
 
 // insertExportNode inserts a node from export data.
+// node_type is derived from depth (not trusted from the file) for
+// tamper resistance and cross-version compatibility.
 func insertExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
+	n.NodeType = string(model.NodeTypeForDepth(n.Depth))
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO nodes (id, parent_id, depth, seq, project,
 		  title, description, prompt, acceptance, node_type,
@@ -247,7 +250,9 @@ func insertExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
 }
 
 // updateExportNode updates an existing node from export data.
+// node_type is derived from depth for consistency.
 func updateExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
+	n.NodeType = string(model.NodeTypeForDepth(n.Depth))
 	_, err := tx.ExecContext(ctx,
 		`UPDATE nodes SET
 		  parent_id=?, depth=?, seq=?, project=?,

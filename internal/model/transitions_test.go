@@ -117,8 +117,8 @@ func TestNodeTypeForDepth_AllDepths(t *testing.T) {
 		depth    int
 		expected NodeType
 	}{
-		{0, NodeTypeStory},
-		{1, NodeTypeEpic},
+		{0, NodeTypeEpic},
+		{1, NodeTypeStory},
 		{2, NodeTypeIssue},
 		{3, NodeTypeMicro},
 		{4, NodeTypeMicro},
@@ -143,8 +143,8 @@ func TestNodeTypeForDepth_AllDepths(t *testing.T) {
 // TestNodeTypeForDepth_Boundaries verifies edge cases.
 func TestNodeTypeForDepth_Boundaries(t *testing.T) {
 	// Exactly at boundaries.
-	assert.Equal(t, NodeTypeStory, NodeTypeForDepth(0))
-	assert.Equal(t, NodeTypeEpic, NodeTypeForDepth(1))
+	assert.Equal(t, NodeTypeEpic, NodeTypeForDepth(0))
+	assert.Equal(t, NodeTypeStory, NodeTypeForDepth(1))
 	assert.Equal(t, NodeTypeIssue, NodeTypeForDepth(2))
 
 	// Just after boundaries.

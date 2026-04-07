@@ -179,8 +179,8 @@ Soft-deleted nodes are automatically purged after the retention period (default 
 Every node has an ID that encodes its position in the hierarchy:
 
 ```
-PROJ-1              Story (depth 0)
-PROJ-1.1            Epic (depth 1)
+PROJ-1              Epic (depth 0)
+PROJ-1.1            Story (depth 1)
 PROJ-1.1.1          Issue (depth 2)
 PROJ-1.1.1.1        Micro issue (depth 3)
 PROJ-1.1.1.1.1      Sub-micro issue (depth 4)

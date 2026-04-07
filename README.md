@@ -6,7 +6,7 @@ mtix (micro-tix) is a hierarchical task management system where multiple LLM cod
 
 ## Why mtix
 
-**The hierarchy is the briefing.** When an agent picks up `PROJ-42.1.3`, it traverses the parent chain to assemble a complete prompt — business goal from the story, technical scope from the epic, exact instructions from the issue. No separate documentation, no context windows stuffed with irrelevant files. The tree structure carries the intent.
+**The hierarchy is the briefing.** When an agent picks up `PROJ-42.1.3`, it traverses the parent chain to assemble a complete prompt — business goal from the epic, user story from the feature scope, exact instructions from the issue. No separate documentation, no context windows stuffed with irrelevant files. The tree structure carries the intent.
 
 **Agents decompose, not templates.** A decomposing agent reads the parent's full context and produces children with problem-specific prompts, acceptance criteria, and test specifications. The structure emerges from the problem's complexity — a one-liner gets one subtask, a cross-cutting refactor gets twelve. No predefined shapes imposed.
 
@@ -18,7 +18,7 @@ mtix (micro-tix) is a hierarchical task management system where multiple LLM cod
 
 ## Features
 
-- **Infinite hierarchy** — Stories, epics, issues, micro issues, and beyond. No depth limit.
+- **Infinite hierarchy** — Epics, stories, issues, micro issues, and beyond. No depth limit.
 - **Dot-notation IDs** — `PROJ-42.1.3.2` encodes the full parent-child path. No UUIDs needed.
 - **7-state machine** — `open` / `in_progress` / `blocked` / `done` / `deferred` / `cancelled` / `invalidated` with enforced transitions.
 - **Automatic progress rollup** — Child completions propagate to root in a single transaction.

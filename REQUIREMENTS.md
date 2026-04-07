@@ -23,7 +23,7 @@
 
 **FR-1.1a** The system MUST support depths up to 50 without degradation. Creating a node deeper than depth 50 MUST emit a warning (`DEPTH_WARNING: Node at depth {N} exceeds recommended maximum of 50`) but MUST NOT reject the operation — the limit is advisory only. This prevents performance issues with progress rollup transactions and excessively deep recursive queries.
 
-**FR-1.2** Every item in the hierarchy is a **Node**. The system MUST treat all nodes uniformly — a node at depth 7 has the same schema and capabilities as a story at depth 0. Tier labels (story, epic, issue, micro) are derived from depth for display purposes only and are NOT enforced.
+**FR-1.2** Every item in the hierarchy is a **Node**. The system MUST treat all nodes uniformly — a node at depth 7 has the same schema and capabilities as an epic at depth 0. Tier labels (epic, story, issue, micro) are derived from depth for display purposes only and are NOT enforced.
 
 **FR-1.3** The hierarchy MUST be expressed as a tree visualization:
 
@@ -85,7 +85,7 @@ Story (S-1)
 - `id` — Dot-notation primary key (e.g., `PROJ-42.1.3.2`)
 - `parent_id` — Parent's ID (empty for root stories)
 - `project` — Project prefix (e.g., `PROJ`)
-- `depth` — Integer depth (0=story, 1=epic, 2=issue, 3+=micro)
+- `depth` — Integer depth (0=epic, 1=story, 2=issue, 3+=micro)
 - `seq` — Sequence number within parent
 - `child_count` — Number of direct children (computed at query time: `SELECT COUNT(*) FROM nodes WHERE parent_id = ? AND deleted_at IS NULL`; NOT stored as a column)
 
@@ -97,7 +97,7 @@ Story (S-1)
 - `activity` — Unified activity stream (see FR-3.6). Replaces the separate notes field. All comments, status changes, notes, and system events are entries in this stream.
 
 **Classification:**
-- `node_type` — story | epic | issue | micro | auto (auto = determined from depth)
+- `node_type` — epic | story | issue | micro | auto (auto = determined from depth)
 - `issue_type` — bug | feature | task | chore | refactor | test | doc
 - `priority` — Integer 1-5 (1=critical, 2=high, 3=medium, 4=low, 5=backlog). 1-indexed to match keyboard shortcuts in the web UI (press `1` for critical, `4` for low).
 - `labels` — Freeform string tags
@@ -1040,7 +1040,7 @@ CREATE TABLE nodes (
     acceptance      TEXT,
 
     -- Classification
-    node_type       TEXT DEFAULT 'auto', -- story|epic|issue|micro|auto
+    node_type       TEXT DEFAULT 'auto', -- epic|story|issue|micro|auto
     issue_type      TEXT,                -- bug|feature|task|chore|refactor|test|doc
     priority        INTEGER DEFAULT 3,   -- 1-5 (1=critical, 5=backlog)
     labels          TEXT,                -- JSON array: '["auth","urgent"]'

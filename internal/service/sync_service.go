@@ -74,6 +74,23 @@ func (s *SyncService) AutoImport(ctx context.Context, mtixDir string) error {
 		return nil
 	}
 
+	// Step 4b: Check if file was produced by our own export.
+	// If the file hash matches last_export_hash in the meta table, the file
+	// came from this database (our export or a sibling agent's export).
+	// Skip import to avoid redundant ImportModeReplace and the thundering
+	// herd problem with multiple agents on the same machine.
+	var lastExportHash string
+	if queryErr := s.store.QueryRow(ctx,
+		"SELECT value FROM meta WHERE key = 'last_export_hash'",
+	).Scan(&lastExportHash); queryErr == nil && lastExportHash == fileHash {
+		// File is from our own export — update sync.sha256 to prevent
+		// re-checking on next command, then skip.
+		_ = s.writeHashFile(hashPath, fileHash)
+		return nil
+	}
+	// If meta read fails or hash doesn't match → proceed with import
+	// (fail-safe to current behavior).
+
 	// Step 5: Parse and validate the already-read bytes.
 	exportData, err := s.parseAndValidateExport(ctx, data, tasksPath, mtixDir)
 	if err != nil {
@@ -253,6 +270,15 @@ func (s *SyncService) AutoExport(ctx context.Context, mtixDir string) error {
 	}
 	if err := os.WriteFile(hashPath, []byte(fileHash), 0644); err != nil {
 		return fmt.Errorf("write file hash: %w", err)
+	}
+
+	// Step 4b: Store export hash in meta table for redundant import detection.
+	// Sibling agents sharing this DB will see this hash and skip import.
+	if _, metaErr := s.store.WriteDB().ExecContext(ctx,
+		"INSERT OR REPLACE INTO meta (key, value) VALUES ('last_export_hash', ?)",
+		fileHash,
+	); metaErr != nil {
+		s.logger.Warn("failed to write last_export_hash to meta", "error", metaErr)
 	}
 
 	// Step 5: Update DB hash for conflict detection per FR-15.2h.

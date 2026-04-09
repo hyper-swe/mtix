@@ -883,3 +883,182 @@ func TestAutoImport_ConflictDetection_BothChanged_Skips(t *testing.T) {
 	_, err = store.GetNode(ctx, "CONF-2")
 	assert.NoError(t, err, "local change should survive conflict skip")
 }
+
+// --- Redundant import skip tests ---
+
+// TestAutoImport_SkipsWhenFileMatchesOwnExport verifies that after an
+// auto-export, a subsequent auto-import is skipped because the file
+// was produced by our own database — no external change occurred.
+// This prevents the thundering herd problem with multiple agents.
+//
+// This test simulates the RACE WINDOW: after export writes tasks.json
+// but sync.sha256 is stale (another agent reads between file write and
+// hash update). The meta table last_export_hash provides the correct
+// detection that the file came from our own export.
+func TestAutoImport_SkipsWhenFileMatchesOwnExport(t *testing.T) {
+	svc, store, dir := newTestSyncService(t)
+	ctx := context.Background()
+	mtixDir := filepath.Join(dir, ".mtix")
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Create a node.
+	require.NoError(t, store.CreateNode(ctx, &model.Node{
+		ID: "SKP-1", Project: "SKP", Depth: 0, Seq: 1, Title: "Original",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeEpic, ContentHash: "s1", CreatedAt: now, UpdatedAt: now,
+	}))
+
+	// Export — this writes tasks.json AND sets last_export_hash in meta.
+	require.NoError(t, svc.AutoExport(ctx, mtixDir))
+
+	// Modify the node in the DB (simulating a sibling agent's mutation).
+	_, err := store.WriteDB().ExecContext(ctx,
+		"UPDATE nodes SET title = 'Modified by sibling' WHERE id = 'SKP-1'")
+	require.NoError(t, err)
+
+	// SIMULATE THE RACE WINDOW: corrupt sync.sha256 to an old value
+	// AND reset the DB hash so conflict detection doesn't save us.
+	// This is the exact scenario with 9 agents: Agent A exports,
+	// Agent B reads the file before sync.sha256 is updated, and the
+	// DB hash still matches (because no conflict detection baseline drift).
+	hashPath := filepath.Join(mtixDir, "data", "sync.sha256")
+	dbHashPath := filepath.Join(mtixDir, "data", "sync-db.sha256")
+	require.NoError(t, os.WriteFile(hashPath, []byte("stale_hash_from_race_window"), 0644))
+	// Remove DB hash so hasConflict returns false (no baseline = no conflict).
+	os.Remove(dbHashPath)
+
+	// Without the meta table check, this would detect file hash changed +
+	// no conflict → full ImportModeReplace → overwrites sibling's mutation.
+	// WITH the meta table check, file hash matches last_export_hash → SKIP.
+	require.NoError(t, svc.AutoImport(ctx, mtixDir))
+
+	// Verify the sibling's mutation was NOT overwritten by a redundant import.
+	node, err := store.GetNode(ctx, "SKP-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Modified by sibling", node.Title,
+		"sibling agent's DB mutation should survive — import was skipped")
+}
+
+// TestAutoImport_ImportsWhenFileChangedExternally verifies that when
+// tasks.json is modified by an external source (git pull, another machine),
+// the import triggers correctly because the file hash differs from
+// last_export_hash.
+func TestAutoImport_ImportsWhenFileChangedExternally(t *testing.T) {
+	svc, store, dir := newTestSyncService(t)
+	ctx := context.Background()
+	mtixDir := filepath.Join(dir, ".mtix")
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Create initial node and export.
+	require.NoError(t, store.CreateNode(ctx, &model.Node{
+		ID: "EXT-1", Project: "EXT", Depth: 0, Seq: 1, Title: "Original title",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeEpic, ContentHash: "e1", CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, svc.AutoExport(ctx, mtixDir))
+
+	// Simulate external change: create a DIFFERENT tasks.json (like git pull
+	// bringing changes from another machine).
+	externalDir := t.TempDir()
+	externalDataDir := filepath.Join(externalDir, "data")
+	require.NoError(t, os.MkdirAll(externalDataDir, 0755))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	externalStore, err := sqlite.New(externalDataDir, logger)
+	require.NoError(t, err)
+	defer externalStore.Close()
+
+	require.NoError(t, externalStore.CreateNode(ctx, &model.Node{
+		ID: "EXT-1", Project: "EXT", Depth: 0, Seq: 1, Title: "Changed by another machine",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeEpic, ContentHash: "e2", CreatedAt: now, UpdatedAt: now,
+	}))
+	externalExport, err := externalStore.Export(ctx, "EXT", "0.1.0")
+	require.NoError(t, err)
+
+	// Overwrite tasks.json with external data (simulating git pull).
+	externalJSON, err := json.MarshalIndent(externalExport, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(mtixDir, "tasks.json"), externalJSON, 0644))
+
+	// Auto-import SHOULD trigger because file hash differs from last_export_hash.
+	require.NoError(t, svc.AutoImport(ctx, mtixDir))
+
+	// Verify the external change was imported.
+	node, err := store.GetNode(ctx, "EXT-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Changed by another machine", node.Title,
+		"external change should be imported")
+}
+
+// TestAutoImport_ImportsWhenNoExportHashExists verifies that on a fresh
+// database with no prior export, auto-import triggers normally (fail-safe
+// to current behavior).
+func TestAutoImport_ImportsWhenNoExportHashExists(t *testing.T) {
+	svc, store, dir := newTestSyncService(t)
+	ctx := context.Background()
+	mtixDir := filepath.Join(dir, ".mtix")
+
+	// Create tasks.json without ever exporting (simulating first clone).
+	srcDir := t.TempDir()
+	srcDataDir := filepath.Join(srcDir, "data")
+	require.NoError(t, os.MkdirAll(srcDataDir, 0755))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	srcStore, err := sqlite.New(srcDataDir, logger)
+	require.NoError(t, err)
+	defer srcStore.Close()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, srcStore.CreateNode(ctx, &model.Node{
+		ID: "FRESH-1", Project: "FRESH", Depth: 0, Seq: 1, Title: "From first clone",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeEpic, ContentHash: "f1", CreatedAt: now, UpdatedAt: now,
+	}))
+	exportData, err := srcStore.Export(ctx, "FRESH", "0.1.0")
+	require.NoError(t, err)
+	writeTasksJSON(t, dir, exportData)
+
+	// No prior export — no last_export_hash in meta.
+	// Auto-import should trigger (fail-safe).
+	require.NoError(t, svc.AutoImport(ctx, mtixDir))
+
+	// Verify the node was imported into our store.
+	node, err := store.GetNode(ctx, "FRESH-1")
+	require.NoError(t, err)
+	assert.Equal(t, "From first clone", node.Title)
+}
+
+// TestAutoImport_SkipsWhenSiblingAgentExported verifies that when Agent A
+// exports and Agent B (sharing the same DB) runs auto-import, the import
+// is skipped because the meta hash was set by Agent A's export.
+func TestAutoImport_SkipsWhenSiblingAgentExported(t *testing.T) {
+	svc, store, dir := newTestSyncService(t)
+	ctx := context.Background()
+	mtixDir := filepath.Join(dir, ".mtix")
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// Agent A creates a node and exports.
+	require.NoError(t, store.CreateNode(ctx, &model.Node{
+		ID: "SIB-1", Project: "SIB", Depth: 0, Seq: 1, Title: "Agent A work",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeEpic, ContentHash: "sib1", CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, svc.AutoExport(ctx, mtixDir))
+
+	// Agent B creates a different node (same DB — sibling agent).
+	require.NoError(t, store.CreateNode(ctx, &model.Node{
+		ID: "SIB-2", Project: "SIB", Depth: 0, Seq: 2, Title: "Agent B work",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeEpic, ContentHash: "sib2", CreatedAt: now, UpdatedAt: now,
+	}))
+
+	// Agent B's auto-import should SKIP.
+	// The file hash matches last_export_hash (Agent A set it).
+	// Agent B's work (SIB-2) is already in the DB.
+	require.NoError(t, svc.AutoImport(ctx, mtixDir))
+
+	// Both nodes should exist — Agent B's work was NOT overwritten.
+	_, err := store.GetNode(ctx, "SIB-1")
+	require.NoError(t, err, "Agent A's node should exist")
+	_, err = store.GetNode(ctx, "SIB-2")
+	require.NoError(t, err, "Agent B's node should survive — import was skipped")
+}

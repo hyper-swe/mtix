@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-04-07T17:45:54Z",
+  "exported_at": "2026-04-09T07:03:22Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1898,6 +1898,31 @@
       "created_at": "2026-04-07T16:29:42Z",
       "updated_at": "2026-04-07T17:45:54Z",
       "closed_at": "2026-04-07T17:45:54Z"
+    },
+    {
+      "id": "MTIX-8",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 8,
+      "project": "MTIX",
+      "title": "Skip redundant auto-import via meta table export hash",
+      "description": "Auto-import triggers on every command when tasks.json hash differs from stored hash. With multiple agents on the same machine, each mutation triggers an export (hash changes) which causes all other agents to do a full ImportModeReplace — a thundering herd problem. Fix: store last export hash in the meta table. If file hash matches last export hash, the file came from our own export — skip import. External changes (git pull) produce a different hash and import correctly.",
+      "prompt": "TDD approach — write failing test first.\n\nTEST (in internal/service/sync_service_test.go):\nTestAutoImport_SkipsWhenFileMatchesOwnExport: Create a sync service, insert nodes, call AutoExport (writes tasks.json + sets meta last_export_hash), then call AutoImport. Import should be skipped because the file hash matches the export hash. Verify by checking that nodes were NOT reimported (no write transaction occurred).\n\nTestAutoImport_ImportsWhenFileChangedExternally: Create a sync service, insert nodes, call AutoExport, then modify tasks.json externally (simulate git pull), then call AutoImport. Import SHOULD trigger because file hash differs from export hash. Verify by checking the imported data matches the modified file.\n\nTestAutoImport_ImportsWhenNoExportHashExists: Fresh database with no last_export_hash in meta. Place a tasks.json file. AutoImport should trigger (fail-safe to current behavior).\n\nTestAutoImport_SkipsWhenSiblingAgentExported: Agent A exports (sets meta hash). Agent B has not exported. Agent B runs AutoImport. Should skip because meta hash matches file hash (Agent A and B share the same DB).\n\nIMPLEMENTATION:\n1. In AutoExport (sync_service.go), after writing tasks.json and hash files, write the file hash to meta: store.WriteDB().ExecContext(ctx, INSERT OR REPLACE INTO meta (key, value) VALUES ('last_export_hash', ?), fileHash)\n\n2. In AutoImport (sync_service.go), after detecting file hash differs from stored hash, check meta: SELECT value FROM meta WHERE key = 'last_export_hash'. If file hash matches meta value, log at DEBUG level and return nil (skip import).\n\n3. Fail-safe: if meta read fails or returns no row, proceed with import (current behavior).\n\nFiles: internal/service/sync_service.go, internal/service/sync_service_test.go",
+      "acceptance": "1. TestAutoImport_SkipsWhenFileMatchesOwnExport passes. 2. TestAutoImport_ImportsWhenFileChangedExternally passes. 3. TestAutoImport_ImportsWhenNoExportHashExists passes. 4. TestAutoImport_SkipsWhenSiblingAgentExported passes. 5. All existing tests pass. 6. Coverage \u003e= 87%. 7. golangci-lint clean.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "dev",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "a81e74fbf7b9269970e786522ee914cb5d9f5c040d0e11231ca7a039cabe1fbc",
+      "created_at": "2026-04-08T17:59:08Z",
+      "updated_at": "2026-04-09T07:03:22Z",
+      "closed_at": "2026-04-09T07:03:22Z"
     }
   ],
   "dependencies": null,
@@ -1906,11 +1931,11 @@
       "agent_id": "dev",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-7",
+      "current_node_id": "MTIX-8",
       "last_heartbeat": "2026-03-30T02:58:55Z"
     }
   ],
   "sessions": null,
-  "node_count": 77,
-  "checksum": "49cb4bcd3c1d904982349838c1a58af945fea8e270f0be16e82f1fb561f32a96"
+  "node_count": 78,
+  "checksum": "e2cc3f4e1782e55c60a0a05389498f8a0a254fd082ad625c2cecb53e60257891"
 }

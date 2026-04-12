@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
 )
@@ -194,7 +195,11 @@ func runOrphans() error {
 }
 
 // printNodeList formats and prints a list of nodes using OutputWriter with status icons.
+// Applies natural dot-notation sort per FR-17.6 before rendering.
 func printNodeList(nodes []*model.Node, total int) error {
+	// Sort by natural dot-notation ID order per FR-17.6.
+	format.SortNodes(nodes)
+
 	out := NewOutputWriter(app.jsonOutput)
 
 	if app.jsonOutput {

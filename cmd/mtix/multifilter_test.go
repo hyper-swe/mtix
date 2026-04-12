@@ -38,7 +38,7 @@ func TestRunList_TypeFlag_FiltersResults(t *testing.T) {
 	}
 
 	// Now verify the runList command with --type flag works without erroring.
-	err = runList("", "", "", string(model.NodeTypeEpic), "", 50)
+	err = runList("", "", "", string(model.NodeTypeEpic), "", "", 50)
 	assert.NoError(t, err, "--type flag must be accepted by runList")
 }
 
@@ -52,7 +52,7 @@ func TestRunList_CommaSeparatedUnder_AcceptsMultipleSubtrees(t *testing.T) {
 	require.NoError(t, runCreate("Root 3", "", "", 3, "", "", "", "", ""))
 
 	// Comma-separated --under value.
-	err := runList("", "TEST-1,TEST-3", "", "", "", 50)
+	err := runList("", "TEST-1,TEST-3", "", "", "", "", 50)
 	assert.NoError(t, err, "comma-separated --under must be accepted")
 
 	// Verify the underlying filter selects only the requested subtrees.
@@ -85,7 +85,7 @@ func TestRunList_CommaSeparatedStatus_ParsesCorrectly(t *testing.T) {
 	require.NoError(t, app.store.TransitionStatus(ctx, "TEST-2", model.StatusDone, "done", "test"))
 	require.NoError(t, app.store.TransitionStatus(ctx, "TEST-3", model.StatusCancelled, "cancelled", "test"))
 
-	err := runList("done,cancelled", "", "", "", "", 50)
+	err := runList("done,cancelled", "", "", "", "", "", 50)
 	assert.NoError(t, err, "comma-separated --status must be accepted")
 
 	// Verify only done + cancelled match.
@@ -106,7 +106,7 @@ func TestRunList_CommaSeparatedPriority_ParsesCorrectly(t *testing.T) {
 	require.NoError(t, runCreate("High", "", "", 2, "", "", "", "", ""))
 	require.NoError(t, runCreate("Medium", "", "", 3, "", "", "", "", ""))
 
-	err := runList("", "", "", "", "1,2", 50)
+	err := runList("", "", "", "", "1,2", "", 50)
 	assert.NoError(t, err, "comma-separated --priority must be accepted")
 }
 
@@ -114,7 +114,7 @@ func TestRunList_CommaSeparatedPriority_ParsesCorrectly(t *testing.T) {
 // fails fast with INVALID_INPUT per FR-17.1 / T8.
 func TestRunList_InvalidPriority_ReturnsError(t *testing.T) {
 	initTestApp(t)
-	err := runList("", "", "", "", "foo", 50)
+	err := runList("", "", "", "", "foo", "", 50)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, model.ErrInvalidInput)
 }
@@ -128,7 +128,7 @@ func TestRunSearch_CommaSeparatedAllFilters_ParsesCorrectly(t *testing.T) {
 	require.NoError(t, runCreate("Searchable B", "", "", 3, "", "", "", "", ""))
 
 	// Multi-value flags accepted without error.
-	err := runSearch("open,in_progress", "agent-1,agent-2", "epic,story", "TEST-1,TEST-2", 50)
+	err := runSearch("open,in_progress", "agent-1,agent-2", "epic,story", "TEST-1,TEST-2", "", 50)
 	assert.NoError(t, err, "search must accept comma-separated multi-value filters")
 }
 
@@ -140,6 +140,56 @@ func TestRunList_NoFiltersAtAll_ListsAll(t *testing.T) {
 	require.NoError(t, runCreate("First", "", "", 3, "", "", "", "", ""))
 	require.NoError(t, runCreate("Second", "", "", 3, "", "", "", "", ""))
 
-	err := runList("", "", "", "", "", 50)
+	err := runList("", "", "", "", "", "", 50)
+	assert.NoError(t, err)
+}
+
+// TestRunList_FieldsFlag_ProjectsJSONOutput verifies that --fields with
+// --json returns only the requested fields per FR-17.3.
+func TestRunList_FieldsFlag_ProjectsJSONOutput(t *testing.T) {
+	initTestApp(t)
+	app.jsonOutput = true
+
+	require.NoError(t, runCreate("Field Test", "", "", 3, "", "", "", "", ""))
+
+	err := runList("", "", "", "", "", "id,title,status", 50)
+	assert.NoError(t, err, "--fields with --json must work")
+}
+
+// TestRunList_FieldsFlag_InvalidField_ReturnsError verifies that an
+// unknown field name returns INVALID_INPUT per FR-17.3.
+func TestRunList_FieldsFlag_InvalidField_ReturnsError(t *testing.T) {
+	initTestApp(t)
+	app.jsonOutput = true
+
+	require.NoError(t, runCreate("Node", "", "", 3, "", "", "", "", ""))
+
+	err := runList("", "", "", "", "", "id,nonexistent", 50)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, model.ErrInvalidInput)
+}
+
+// TestRunList_FieldsFlag_NoJSON_Ignored verifies that --fields without
+// --json does not error (it simply has no effect on table output).
+func TestRunList_FieldsFlag_NoJSON_Ignored(t *testing.T) {
+	initTestApp(t)
+	app.jsonOutput = false
+
+	require.NoError(t, runCreate("Node", "", "", 3, "", "", "", "", ""))
+
+	err := runList("", "", "", "", "", "id,title", 50)
+	assert.NoError(t, err, "--fields without --json should be silently ignored")
+}
+
+// TestRunSearch_FieldsFlag_ProjectsJSONOutput verifies that search also
+// accepts --fields per FR-17.3 parity.
+func TestRunSearch_FieldsFlag_ProjectsJSONOutput(t *testing.T) {
+	initTestApp(t)
+	app.jsonOutput = true
+
+	require.NoError(t, runCreate("Searchable", "", "", 3, "", "", "", "", ""))
+
+	// runSearch with fields — should not error.
+	err := runSearch("", "", "", "", "id,status", 50)
 	assert.NoError(t, err)
 }

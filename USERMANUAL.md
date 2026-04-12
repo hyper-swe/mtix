@@ -622,6 +622,25 @@ The HTTP API at `GET /api/v1/search` accepts the same syntax as either
 comma-separated (`?under=PROJ-1,PROJ-2`) or repeated (`?under=PROJ-1&under=PROJ-2`)
 query parameters.
 
+#### Field projection (`--fields`)
+
+With `--json`, use `--fields` to restrict the output to specific node fields.
+This reduces payload size and lets agents focus on exactly the data they need
+without post-processing.
+
+```bash
+# Only IDs, titles, and prompt text — ideal for context analysis
+mtix list --under PROJ-1 --status done --fields id,title,prompt --json
+
+# Just statuses for a progress overview
+mtix list --under PROJ-1 --fields id,status,progress --json
+```
+
+Field names must match the JSON tags exactly (lowercase, underscore-separated).
+Unknown field names return an error listing all valid fields. When `--fields`
+is omitted, the full node object is returned (current default behavior).
+`--fields` has no effect on table output (non-JSON mode).
+
 ### Quick Query Commands
 
 ```bash

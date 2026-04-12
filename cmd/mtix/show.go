@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
 )
@@ -35,6 +36,7 @@ func newListCmd() *cobra.Command {
 		assignee string
 		nodeType string
 		priority string
+		fields   string
 		limit    int
 	)
 
@@ -43,7 +45,7 @@ func newListCmd() *cobra.Command {
 		Short: "List nodes with filters",
 		Aliases: []string{"ls"},
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runList(status, under, assignee, nodeType, priority, limit)
+			return runList(status, under, assignee, nodeType, priority, fields, limit)
 		},
 	}
 
@@ -52,6 +54,7 @@ func newListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&assignee, "assignee", "", "Filter by assignee (comma-separated for multiple)")
 	cmd.Flags().StringVar(&nodeType, "type", "", "Filter by node type (comma-separated for multiple)")
 	cmd.Flags().StringVar(&priority, "priority", "", "Filter by priority (comma-separated for multiple)")
+	cmd.Flags().StringVar(&fields, "fields", "", "Restrict JSON output to these fields (comma-separated)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum results")
 
 	return cmd
@@ -114,7 +117,8 @@ func runShow(id string) error {
 
 // runList displays nodes with status icons and aligned columns.
 // Filter values are comma-separated strings parsed via splitCSV per FR-17.1.
-func runList(status, under, assignee, nodeType, priority string, limit int) error {
+// The fields parameter restricts JSON output to the specified fields per FR-17.3.
+func runList(status, under, assignee, nodeType, priority, fields string, limit int) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -135,15 +139,29 @@ func runList(status, under, assignee, nodeType, priority string, limit int) erro
 		filter.Status = append(filter.Status, model.Status(s))
 	}
 
+	fieldsList := splitCSV(fields)
+
 	opts := store.ListOptions{Limit: limit}
 	nodes, total, err := app.store.ListNodes(ctx, filter, opts)
 	if err != nil {
 		return err
 	}
 
+	// Apply natural sort per FR-17.6.
+	format.SortNodes(nodes)
+
 	out := NewOutputWriter(app.jsonOutput)
 
 	if app.jsonOutput {
+		if len(fieldsList) > 0 {
+			projected, projErr := format.ProjectNodes(nodes, fieldsList)
+			if projErr != nil {
+				return projErr
+			}
+			return out.WriteJSON(map[string]any{
+				"nodes": projected, "total": total,
+			})
+		}
 		return out.WriteJSON(map[string]any{
 			"nodes": nodes, "total": total,
 		})

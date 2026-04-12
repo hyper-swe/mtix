@@ -22,6 +22,7 @@ func newSearchCmd() *cobra.Command {
 		assignee string
 		nodeType string
 		under    string
+		fields   string
 		limit    int
 	)
 
@@ -29,7 +30,7 @@ func newSearchCmd() *cobra.Command {
 		Use:   "search",
 		Short: "Search nodes with advanced filters",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runSearch(status, assignee, nodeType, under, limit)
+			return runSearch(status, assignee, nodeType, under, fields, limit)
 		},
 	}
 
@@ -37,12 +38,13 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&assignee, "assignee", "", "Filter by assignee (comma-separated for multiple)")
 	cmd.Flags().StringVar(&nodeType, "type", "", "Filter by node type (comma-separated for multiple)")
 	cmd.Flags().StringVar(&under, "under", "", "Filter by parent subtree (comma-separated for multiple)")
+	cmd.Flags().StringVar(&fields, "fields", "", "Restrict JSON output to these fields (comma-separated)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum results")
 
 	return cmd
 }
 
-func runSearch(status, assignee, nodeType, under string, limit int) error {
+func runSearch(status, assignee, nodeType, under, fields string, limit int) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -62,7 +64,7 @@ func runSearch(status, assignee, nodeType, under string, limit int) error {
 		return err
 	}
 
-	return printNodeList(nodes, total)
+	return printNodeList(nodes, total, splitCSV(fields))
 }
 
 // newReadyCmd creates the mtix ready command per FR-6.3.
@@ -87,7 +89,7 @@ func runReady() error {
 		return err
 	}
 
-	return printNodeList(nodes, len(nodes))
+	return printNodeList(nodes, len(nodes), nil)
 }
 
 // newBlockedCmd creates the mtix blocked command per FR-6.3.
@@ -116,7 +118,7 @@ func runBlocked() error {
 		return err
 	}
 
-	return printNodeList(nodes, total)
+	return printNodeList(nodes, total, nil)
 }
 
 // newStaleCmd creates the mtix stale command per FR-6.3.
@@ -191,18 +193,29 @@ func runOrphans() error {
 		}
 	}
 
-	return printNodeList(roots, total)
+	return printNodeList(roots, total, nil)
 }
 
 // printNodeList formats and prints a list of nodes using OutputWriter with status icons.
 // Applies natural dot-notation sort per FR-17.6 before rendering.
-func printNodeList(nodes []*model.Node, total int) error {
+// When fields is non-nil and JSON mode is active, output is projected to
+// only the requested fields per FR-17.3.
+func printNodeList(nodes []*model.Node, total int, fields []string) error {
 	// Sort by natural dot-notation ID order per FR-17.6.
 	format.SortNodes(nodes)
 
 	out := NewOutputWriter(app.jsonOutput)
 
 	if app.jsonOutput {
+		if len(fields) > 0 {
+			projected, err := format.ProjectNodes(nodes, fields)
+			if err != nil {
+				return err
+			}
+			return out.WriteJSON(map[string]any{
+				"nodes": projected, "total": total,
+			})
+		}
 		return out.WriteJSON(map[string]any{
 			"nodes": nodes, "total": total,
 		})

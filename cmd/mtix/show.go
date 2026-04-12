@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -31,13 +32,16 @@ func newShowCmd() *cobra.Command {
 // All filter flags accept comma-separated multiple values.
 func newListCmd() *cobra.Command {
 	var (
-		status   string
-		under    string
-		assignee string
-		nodeType string
-		priority string
-		fields   string
-		limit    int
+		status        string
+		under         string
+		assignee      string
+		nodeType      string
+		priority      string
+		fields        string
+		outputFormat  string
+		maxFieldChars int
+		showEmpty     bool
+		limit         int
 	)
 
 	cmd := &cobra.Command{
@@ -45,7 +49,7 @@ func newListCmd() *cobra.Command {
 		Short: "List nodes with filters",
 		Aliases: []string{"ls"},
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runList(status, under, assignee, nodeType, priority, fields, limit)
+			return runList(status, under, assignee, nodeType, priority, fields, outputFormat, maxFieldChars, showEmpty, limit)
 		},
 	}
 
@@ -54,7 +58,10 @@ func newListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&assignee, "assignee", "", "Filter by assignee (comma-separated for multiple)")
 	cmd.Flags().StringVar(&nodeType, "type", "", "Filter by node type (comma-separated for multiple)")
 	cmd.Flags().StringVar(&priority, "priority", "", "Filter by priority (comma-separated for multiple)")
-	cmd.Flags().StringVar(&fields, "fields", "", "Restrict JSON output to these fields (comma-separated)")
+	cmd.Flags().StringVar(&fields, "fields", "", "Restrict output to these fields (comma-separated)")
+	cmd.Flags().StringVar(&outputFormat, "format", "", "Output format: briefing")
+	cmd.Flags().IntVar(&maxFieldChars, "max-field-chars", 0, "Truncate field values (briefing format)")
+	cmd.Flags().BoolVar(&showEmpty, "show-empty", false, "Include empty fields (briefing format)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum results")
 
 	return cmd
@@ -117,8 +124,9 @@ func runShow(id string) error {
 
 // runList displays nodes with status icons and aligned columns.
 // Filter values are comma-separated strings parsed via splitCSV per FR-17.1.
-// The fields parameter restricts JSON output to the specified fields per FR-17.3.
-func runList(status, under, assignee, nodeType, priority, fields string, limit int) error {
+// The fields parameter restricts output to the specified fields per FR-17.3.
+// The outputFormat parameter selects "briefing" format per FR-17.4.
+func runList(status, under, assignee, nodeType, priority, fields, outputFormat string, maxFieldChars int, showEmpty bool, limit int) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -149,6 +157,15 @@ func runList(status, under, assignee, nodeType, priority, fields string, limit i
 
 	// Apply natural sort per FR-17.6.
 	format.SortNodes(nodes)
+
+	// Briefing format per FR-17.4.
+	if outputFormat == "briefing" {
+		return format.RenderBriefing(os.Stdout, nodes, format.BriefingOpts{
+			Fields:        fieldsList,
+			MaxFieldChars: maxFieldChars,
+			ShowEmpty:     showEmpty,
+		})
+	}
 
 	out := NewOutputWriter(app.jsonOutput)
 

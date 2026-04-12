@@ -38,7 +38,7 @@ func TestRunList_TypeFlag_FiltersResults(t *testing.T) {
 	}
 
 	// Now verify the runList command with --type flag works without erroring.
-	err = runList("", "", "", string(model.NodeTypeEpic), "", "", 50)
+	err = runList("", "", "", string(model.NodeTypeEpic), "", "", "", 0, false, 50)
 	assert.NoError(t, err, "--type flag must be accepted by runList")
 }
 
@@ -52,7 +52,7 @@ func TestRunList_CommaSeparatedUnder_AcceptsMultipleSubtrees(t *testing.T) {
 	require.NoError(t, runCreate("Root 3", "", "", 3, "", "", "", "", ""))
 
 	// Comma-separated --under value.
-	err := runList("", "TEST-1,TEST-3", "", "", "", "", 50)
+	err := runList("", "TEST-1,TEST-3", "", "", "", "", "", 0, false, 50)
 	assert.NoError(t, err, "comma-separated --under must be accepted")
 
 	// Verify the underlying filter selects only the requested subtrees.
@@ -85,7 +85,7 @@ func TestRunList_CommaSeparatedStatus_ParsesCorrectly(t *testing.T) {
 	require.NoError(t, app.store.TransitionStatus(ctx, "TEST-2", model.StatusDone, "done", "test"))
 	require.NoError(t, app.store.TransitionStatus(ctx, "TEST-3", model.StatusCancelled, "cancelled", "test"))
 
-	err := runList("done,cancelled", "", "", "", "", "", 50)
+	err := runList("done,cancelled", "", "", "", "", "", "", 0, false, 50)
 	assert.NoError(t, err, "comma-separated --status must be accepted")
 
 	// Verify only done + cancelled match.
@@ -106,7 +106,7 @@ func TestRunList_CommaSeparatedPriority_ParsesCorrectly(t *testing.T) {
 	require.NoError(t, runCreate("High", "", "", 2, "", "", "", "", ""))
 	require.NoError(t, runCreate("Medium", "", "", 3, "", "", "", "", ""))
 
-	err := runList("", "", "", "", "1,2", "", 50)
+	err := runList("", "", "", "", "1,2", "", "", 0, false, 50)
 	assert.NoError(t, err, "comma-separated --priority must be accepted")
 }
 
@@ -114,7 +114,7 @@ func TestRunList_CommaSeparatedPriority_ParsesCorrectly(t *testing.T) {
 // fails fast with INVALID_INPUT per FR-17.1 / T8.
 func TestRunList_InvalidPriority_ReturnsError(t *testing.T) {
 	initTestApp(t)
-	err := runList("", "", "", "", "foo", "", 50)
+	err := runList("", "", "", "", "foo", "", "", 0, false, 50)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, model.ErrInvalidInput)
 }
@@ -140,7 +140,7 @@ func TestRunList_NoFiltersAtAll_ListsAll(t *testing.T) {
 	require.NoError(t, runCreate("First", "", "", 3, "", "", "", "", ""))
 	require.NoError(t, runCreate("Second", "", "", 3, "", "", "", "", ""))
 
-	err := runList("", "", "", "", "", "", 50)
+	err := runList("", "", "", "", "", "", "", 0, false, 50)
 	assert.NoError(t, err)
 }
 
@@ -152,7 +152,7 @@ func TestRunList_FieldsFlag_ProjectsJSONOutput(t *testing.T) {
 
 	require.NoError(t, runCreate("Field Test", "", "", 3, "", "", "", "", ""))
 
-	err := runList("", "", "", "", "", "id,title,status", 50)
+	err := runList("", "", "", "", "", "id,title,status", "", 0, false, 50)
 	assert.NoError(t, err, "--fields with --json must work")
 }
 
@@ -164,7 +164,7 @@ func TestRunList_FieldsFlag_InvalidField_ReturnsError(t *testing.T) {
 
 	require.NoError(t, runCreate("Node", "", "", 3, "", "", "", "", ""))
 
-	err := runList("", "", "", "", "", "id,nonexistent", 50)
+	err := runList("", "", "", "", "", "id,nonexistent", "", 0, false, 50)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, model.ErrInvalidInput)
 }
@@ -177,7 +177,7 @@ func TestRunList_FieldsFlag_NoJSON_Ignored(t *testing.T) {
 
 	require.NoError(t, runCreate("Node", "", "", 3, "", "", "", "", ""))
 
-	err := runList("", "", "", "", "", "id,title", 50)
+	err := runList("", "", "", "", "", "id,title", "", 0, false, 50)
 	assert.NoError(t, err, "--fields without --json should be silently ignored")
 }
 
@@ -192,4 +192,60 @@ func TestRunSearch_FieldsFlag_ProjectsJSONOutput(t *testing.T) {
 	// runSearch with fields — should not error.
 	err := runSearch("", "", "", "", "id,status", 50)
 	assert.NoError(t, err)
+}
+
+// --- Phase D: Briefing format tests ---
+
+// TestRunList_BriefingFormat_ProducesOutput verifies that --format briefing
+// renders output in the briefing format per FR-17.4.
+func TestRunList_BriefingFormat_ProducesOutput(t *testing.T) {
+	initTestApp(t)
+
+	require.NoError(t, runCreate("Briefing Test", "", "A description", 1, "", "", "", "", ""))
+
+	err := runList("", "", "", "", "", "", "briefing", 0, false, 50)
+	assert.NoError(t, err, "--format briefing must be accepted")
+}
+
+// TestRunList_BriefingFormat_WithFields verifies that --format briefing
+// combined with --fields restricts the rendered fields.
+func TestRunList_BriefingFormat_WithFields(t *testing.T) {
+	initTestApp(t)
+
+	require.NoError(t, runCreate("Briefing Fields", "", "Desc", 1, "", "Prompt text", "Accept text", "", ""))
+
+	err := runList("", "", "", "", "", "id,title,prompt", "briefing", 0, false, 50)
+	assert.NoError(t, err, "--format briefing with --fields must work")
+}
+
+// TestRunList_BriefingFormat_WithMaxFieldChars verifies truncation.
+func TestRunList_BriefingFormat_WithMaxFieldChars(t *testing.T) {
+	initTestApp(t)
+
+	require.NoError(t, runCreate("Truncation Test", "", "", 1, "", "", "", "", ""))
+
+	err := runList("", "", "", "", "", "", "briefing", 10, false, 50)
+	assert.NoError(t, err, "--format briefing with --max-field-chars must work")
+}
+
+// TestRunList_BriefingFormat_WithShowEmpty verifies that --show-empty
+// includes empty fields.
+func TestRunList_BriefingFormat_WithShowEmpty(t *testing.T) {
+	initTestApp(t)
+
+	require.NoError(t, runCreate("Empty Fields", "", "", 1, "", "", "", "", ""))
+
+	err := runList("", "", "", "", "", "", "briefing", 0, true, 50)
+	assert.NoError(t, err, "--format briefing with --show-empty must work")
+}
+
+// TestRunList_BriefingFormat_InvalidField verifies error on bad field.
+func TestRunList_BriefingFormat_InvalidField(t *testing.T) {
+	initTestApp(t)
+
+	require.NoError(t, runCreate("Node", "", "", 3, "", "", "", "", ""))
+
+	err := runList("", "", "", "", "", "id,bad_field", "briefing", 0, false, 50)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, model.ErrInvalidInput)
 }

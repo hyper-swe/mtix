@@ -44,7 +44,7 @@ func TestRunList_NoStore_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runList("", "", "", "", "", "", 50)
+	err := runList("", "", "", "", "", "", "", 0, false, 50)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }

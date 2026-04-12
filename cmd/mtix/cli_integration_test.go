@@ -812,7 +812,7 @@ func TestPrintNodeList_WithNodes_HumanOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get nodes from store to pass to printNodeList.
-	err = runList("", "", "", "", "", "", 50)
+	err = runList("", "", "", "", "", "", "", 0, false, 50)
 	assert.NoError(t, err)
 }
 
@@ -838,7 +838,7 @@ func TestRunList_WithUnderFilter_HumanOutput(t *testing.T) {
 	err = runDecompose("TEST-1", []string{"Under Child"})
 	require.NoError(t, err)
 
-	err = runList("", "TEST-1", "", "", "", "", 50)
+	err = runList("", "TEST-1", "", "", "", "", "", 0, false, 50)
 	assert.NoError(t, err)
 }
 
@@ -1065,7 +1065,7 @@ func TestRunList_WithPagination_ShowsCountHint(t *testing.T) {
 	}
 
 	// List with limit 1 to trigger pagination hint.
-	err := runList("", "", "", "", "", "", 1)
+	err := runList("", "", "", "", "", "", "", 0, false, 1)
 	assert.NoError(t, err)
 }
 
@@ -1076,6 +1076,6 @@ func TestRunList_WithAssigneeFilter_Succeeds(t *testing.T) {
 	err := runCreate("Assigned Node", "", "", 3, "", "", "", "", "agent-filter")
 	require.NoError(t, err)
 
-	err = runList("", "", "agent-filter", "", "", "", 50)
+	err = runList("", "", "agent-filter", "", "", "", "", 0, false, 50)
 	assert.NoError(t, err)
 }

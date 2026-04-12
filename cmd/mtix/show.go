@@ -26,13 +26,15 @@ func newShowCmd() *cobra.Command {
 	return cmd
 }
 
-// newListCmd creates the mtix list command per FR-6.3.
+// newListCmd creates the mtix list command per FR-6.3 / FR-17.1.
+// All filter flags accept comma-separated multiple values.
 func newListCmd() *cobra.Command {
 	var (
 		status   string
 		under    string
 		assignee string
-		priority int
+		nodeType string
+		priority string
 		limit    int
 	)
 
@@ -41,14 +43,15 @@ func newListCmd() *cobra.Command {
 		Short: "List nodes with filters",
 		Aliases: []string{"ls"},
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runList(status, under, assignee, priority, limit)
+			return runList(status, under, assignee, nodeType, priority, limit)
 		},
 	}
 
-	cmd.Flags().StringVar(&status, "status", "", "Filter by status")
-	cmd.Flags().StringVar(&under, "under", "", "Filter by parent subtree")
-	cmd.Flags().StringVar(&assignee, "assignee", "", "Filter by assignee")
-	cmd.Flags().IntVar(&priority, "priority", 0, "Filter by priority")
+	cmd.Flags().StringVar(&status, "status", "", "Filter by status (comma-separated for multiple)")
+	cmd.Flags().StringVar(&under, "under", "", "Filter by parent subtree (comma-separated for multiple)")
+	cmd.Flags().StringVar(&assignee, "assignee", "", "Filter by assignee (comma-separated for multiple)")
+	cmd.Flags().StringVar(&nodeType, "type", "", "Filter by node type (comma-separated for multiple)")
+	cmd.Flags().StringVar(&priority, "priority", "", "Filter by priority (comma-separated for multiple)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum results")
 
 	return cmd
@@ -110,21 +113,26 @@ func runShow(id string) error {
 }
 
 // runList displays nodes with status icons and aligned columns.
-func runList(status, under, assignee string, priority, limit int) error {
+// Filter values are comma-separated strings parsed via splitCSV per FR-17.1.
+func runList(status, under, assignee, nodeType, priority string, limit int) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
 
+	priorities, err := splitCSVInts(priority)
+	if err != nil {
+		return fmt.Errorf("invalid --priority value: %w: %w", err, model.ErrInvalidInput)
+	}
+
 	ctx := context.Background()
 	filter := store.NodeFilter{
-		Under:    under,
-		Assignee: assignee,
+		Under:    splitCSV(under),
+		Assignee: splitCSV(assignee),
+		NodeType: splitCSV(nodeType),
+		Priority: priorities,
 	}
-	if status != "" {
-		filter.Status = []model.Status{model.Status(status)}
-	}
-	if priority > 0 {
-		filter.Priority = &priority
+	for _, s := range splitCSV(status) {
+		filter.Status = append(filter.Status, model.Status(s))
 	}
 
 	opts := store.ListOptions{Limit: limit}

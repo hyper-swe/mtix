@@ -37,6 +37,18 @@ Call `mtix session start` or `mtix_session_start` with your agent ID and the {{ 
 ### 2. Find Work
 Call `mtix ready` or `mtix_ready` to list nodes available for pickup — unassigned, unblocked, open nodes.
 
+To scope queries to specific subtrees, statuses, types, or assignees, use multi-value filters (comma-separated). **Do NOT write post-processing stub code to filter mtix output** — the filters are built in:
+
+```bash
+# All done issues under two epics
+mtix list --under {{ .ProjectPrefix }}-1,{{ .ProjectPrefix }}-2 --status done --type issue --json
+
+# Critical/high priority open work assigned to two agents
+mtix list --priority 1,2 --status open --assignee agent-a,agent-b
+```
+
+Multiple values within one flag combine with OR; multiple flags combine with AND. All values are parameterized — no injection risk.
+
 ### 3. Read Context (MANDATORY)
 Call `mtix context <id>` or `mtix_context` — **this step is NON-NEGOTIABLE**. The assembled prompt is your complete briefing. Read it fully before proceeding.
 

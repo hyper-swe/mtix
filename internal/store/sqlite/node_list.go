@@ -71,53 +71,69 @@ func (s *Store) ListNodes(ctx context.Context, filter store.NodeFilter, opts sto
 	return nodes, total, nil
 }
 
-// buildFilterClauses builds SQL WHERE clauses from a NodeFilter.
-// Returns clauses and parameterized args — never concatenates user input into SQL.
+// buildFilterClauses builds SQL WHERE clauses from a NodeFilter per FR-17.1.
+// Convenience wrapper around buildFilterClausesWithPrefix using the empty
+// prefix (unaliased nodes table).
 func buildFilterClauses(filter store.NodeFilter) ([]string, []any) {
+	return buildFilterClausesWithPrefix(filter, "")
+}
+
+// buildFilterClausesWithPrefix builds SQL WHERE clauses from a NodeFilter,
+// prefixing every column reference with `prefix` (e.g., "n." for joins).
+// Returns clauses and parameterized args — NEVER concatenates user input
+// into SQL. Every filter value goes through a "?" placeholder bound at
+// query time. Multi-value fields use IN(?,?,?) or OR'd predicates per
+// FR-17.1.
+//
+// Security note (FR-17 audit T9): the Under filter uses LIKE ? || '%'
+// where the bound parameter is a literal node ID prefix. This is safe
+// against LIKE wildcard injection ONLY because FR-2.1a constrains project
+// prefixes to uppercase alphanumeric and hyphens, which excludes the
+// SQLite LIKE wildcards `%` and `_`. If FR-2.1a ever loosens, this code
+// MUST switch to ESCAPE-based wildcard escaping.
+func buildFilterClausesWithPrefix(filter store.NodeFilter, prefix string) ([]string, []any) {
 	var clauses []string
 	var args []any
 
-	// Status filter: IN clause with parameterized placeholders.
-	if len(filter.Status) > 0 {
-		placeholders := make([]string, len(filter.Status))
-		for i, s := range filter.Status {
+	addInClause := func(col string, count int, valueAdder func(int) any) {
+		if count == 0 {
+			return
+		}
+		placeholders := make([]string, count)
+		for i := 0; i < count; i++ {
 			placeholders[i] = "?"
-			args = append(args, string(s))
+			args = append(args, valueAdder(i))
 		}
 		clauses = append(clauses,
-			fmt.Sprintf("status IN (%s)", strings.Join(placeholders, ",")))
+			fmt.Sprintf("%s%s IN (%s)", prefix, col, strings.Join(placeholders, ",")))
 	}
 
-	// Under filter: subtree using LIKE with parameterized prefix.
-	// Matches the parent itself OR any descendant (id LIKE 'parent.%').
-	if filter.Under != "" {
-		clauses = append(clauses, "(id = ? OR id LIKE ? ESCAPE '\\')")
-		args = append(args, filter.Under, filter.Under+".%")
+	// Status filter: IN clause with parameterized placeholders.
+	addInClause("status", len(filter.Status), func(i int) any { return string(filter.Status[i]) })
+
+	// Under filter: per-value (id = ? OR id LIKE ? ESCAPE '\') joined by OR.
+	// Each value contributes two bound parameters (exact match + descendant
+	// prefix match). The whole group is parenthesized so AND-combination
+	// with other clauses works correctly.
+	if len(filter.Under) > 0 {
+		predicates := make([]string, len(filter.Under))
+		for i, u := range filter.Under {
+			predicates[i] = fmt.Sprintf("(%sid = ? OR %sid LIKE ? ESCAPE '\\')", prefix, prefix)
+			args = append(args, u, u+".%")
+		}
+		clauses = append(clauses, "("+strings.Join(predicates, " OR ")+")")
 	}
 
-	// Assignee filter.
-	if filter.Assignee != "" {
-		clauses = append(clauses, "assignee = ?")
-		args = append(args, filter.Assignee)
-	}
-
-	// NodeType filter.
-	if filter.NodeType != "" {
-		clauses = append(clauses, "node_type = ?")
-		args = append(args, filter.NodeType)
-	}
-
-	// Priority filter.
-	if filter.Priority != nil {
-		clauses = append(clauses, "priority = ?")
-		args = append(args, *filter.Priority)
-	}
+	// Assignee, NodeType, Priority filters: IN clauses.
+	addInClause("assignee", len(filter.Assignee), func(i int) any { return filter.Assignee[i] })
+	addInClause("node_type", len(filter.NodeType), func(i int) any { return filter.NodeType[i] })
+	addInClause("priority", len(filter.Priority), func(i int) any { return filter.Priority[i] })
 
 	// Labels filter: JSON array contains check.
 	// Uses json_each to search within the JSON labels array.
 	for _, label := range filter.Labels {
 		clauses = append(clauses,
-			"EXISTS (SELECT 1 FROM json_each(labels) WHERE json_each.value = ?)")
+			fmt.Sprintf("EXISTS (SELECT 1 FROM json_each(%slabels) WHERE json_each.value = ?)", prefix))
 		args = append(args, label)
 	}
 

@@ -1221,7 +1221,7 @@ func TestListNodes_UnderFilter_FiltersSubtree(t *testing.T) {
 	require.NoError(t, s.CreateNode(ctx, n3))
 
 	nodes, total, err := s.ListNodes(ctx, store.NodeFilter{
-		Under: "LN-1",
+		Under: []string{"LN-1"},
 	}, store.ListOptions{Limit: 10})
 	require.NoError(t, err)
 	assert.Equal(t, 2, total, "LN-1 + LN-1.1")
@@ -1244,7 +1244,7 @@ func TestListNodes_AssigneeFilter(t *testing.T) {
 	require.NoError(t, s.CreateNode(ctx, n2))
 
 	nodes, total, err := s.ListNodes(ctx, store.NodeFilter{
-		Assignee: "agent-1",
+		Assignee: []string{"agent-1"},
 	}, store.ListOptions{Limit: 10})
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
@@ -1287,7 +1287,7 @@ func TestListNodes_NodeTypeFilter(t *testing.T) {
 	require.NoError(t, s.CreateNode(ctx, n2))
 
 	nodes, total, err := s.ListNodes(ctx, store.NodeFilter{
-		NodeType: "issue",
+		NodeType: []string{"issue"},
 	}, store.ListOptions{Limit: 10})
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
@@ -1311,9 +1311,8 @@ func TestListNodes_PriorityFilter(t *testing.T) {
 	n2.ContentHash = "h2"
 	require.NoError(t, s.CreateNode(ctx, n2))
 
-	p := int(model.PriorityHigh)
 	nodes, total, err := s.ListNodes(ctx, store.NodeFilter{
-		Priority: &p,
+		Priority: []int{int(model.PriorityHigh)},
 	}, store.ListOptions{Limit: 10})
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
@@ -1414,7 +1413,7 @@ func TestSearchNodes_UnderFilter_FiltersSubtree(t *testing.T) {
 	require.NoError(t, s.CreateNode(ctx, n2))
 
 	nodes, total, err := s.SearchNodes(ctx, "node",
-		store.NodeFilter{Under: "SU-1"},
+		store.NodeFilter{Under: []string{"SU-1"}},
 		store.ListOptions{Limit: 10})
 	require.NoError(t, err)
 	assert.Equal(t, 2, total, "SU-1 + SU-1.1")

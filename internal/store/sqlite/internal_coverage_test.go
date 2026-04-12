@@ -665,7 +665,7 @@ func TestListNodes_NodeTypeFilter_Correct(t *testing.T) {
 	require.NoError(t, s.CreateNode(ctx, n2))
 
 	nodes, total, err := s.ListNodes(ctx, store.NodeFilter{
-		NodeType: string(model.NodeTypeForDepth(2)),
+		NodeType: []string{string(model.NodeTypeForDepth(2))},
 	}, store.ListOptions{Limit: 10})
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
@@ -1582,7 +1582,7 @@ func TestListNodes_ParentFilter_ReturnsChildren(t *testing.T) {
 	require.NoError(t, s.CreateNode(ctx, other))
 
 	nodes, total, err := s.ListNodes(ctx,
-		store.NodeFilter{Under: "LNP-1"},
+		store.NodeFilter{Under: []string{"LNP-1"}},
 		store.ListOptions{Limit: 10},
 	)
 	require.NoError(t, err)
@@ -1604,7 +1604,7 @@ func TestListNodes_AssigneeFilter_ReturnsAssigned(t *testing.T) {
 	require.NoError(t, s.ClaimNode(ctx, "LNA-1", "agent-1"))
 
 	nodes, total, err := s.ListNodes(ctx,
-		store.NodeFilter{Assignee: "agent-1"},
+		store.NodeFilter{Assignee: []string{"agent-1"}},
 		store.ListOptions{Limit: 10},
 	)
 	require.NoError(t, err)
@@ -1627,7 +1627,7 @@ func TestListNodes_ProjectFilter_ReturnsProjectNodes(t *testing.T) {
 	// Use assignee filter instead since NodeFilter doesn't have a Project field.
 	require.NoError(t, s.ClaimNode(ctx, "P1-1", "proj1-agent"))
 	nodes, total, err := s.ListNodes(ctx,
-		store.NodeFilter{Assignee: "proj1-agent"},
+		store.NodeFilter{Assignee: []string{"proj1-agent"}},
 		store.ListOptions{Limit: 10},
 	)
 	require.NoError(t, err)

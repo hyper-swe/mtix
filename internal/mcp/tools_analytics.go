@@ -53,7 +53,10 @@ func registerStatsTool(reg *ToolRegistry, st store.Store) {
 		total := 0
 
 		for _, s := range statuses {
-			filter := store.NodeFilter{Status: []model.Status{s}, Under: p.Under}
+			filter := store.NodeFilter{Status: []model.Status{s}}
+			if p.Under != "" {
+				filter.Under = []string{p.Under}
+			}
 			_, count, err := st.ListNodes(ctx, filter, store.ListOptions{Limit: 0})
 			if err != nil {
 				return nil, fmt.Errorf("count %s nodes: %w", s, err)

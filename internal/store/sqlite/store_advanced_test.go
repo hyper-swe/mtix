@@ -868,9 +868,8 @@ func TestListNodes_PriorityFilter_Correct(t *testing.T) {
 	n2.Priority = model.PriorityHigh
 	require.NoError(t, s.CreateNode(ctx, n2))
 
-	highPriority := int(model.PriorityHigh)
 	nodes, total, err := s.ListNodes(ctx, store.NodeFilter{
-		Priority: &highPriority,
+		Priority: []int{int(model.PriorityHigh)},
 	}, store.ListOptions{Limit: 10, Offset: 0})
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)

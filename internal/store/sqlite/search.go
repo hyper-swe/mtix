@@ -38,28 +38,11 @@ func (s *Store) SearchNodes(
 		return nil, 0, fmt.Errorf("search query is required: %w", model.ErrInvalidInput)
 	}
 
-	// Build WHERE clauses.
-	where := []string{"n.deleted_at IS NULL"}
-	args := []any{}
-
-	// Apply additional filters.
-	if len(filter.Status) > 0 {
-		placeholders := make([]string, len(filter.Status))
-		for i, s := range filter.Status {
-			placeholders[i] = "?"
-			args = append(args, string(s))
-		}
-		where = append(where, fmt.Sprintf("n.status IN (%s)", strings.Join(placeholders, ",")))
-	}
-	if filter.Under != "" {
-		where = append(where, "(n.id = ? OR n.id LIKE ?)")
-		args = append(args, filter.Under, filter.Under+".%")
-	}
-	if filter.Assignee != "" {
-		where = append(where, "n.assignee = ?")
-		args = append(args, filter.Assignee)
-	}
-
+	// Build WHERE clauses via the shared filter builder per FR-17.1.
+	// All filter values are bound parameters; see security note in
+	// node_list.go buildFilterClausesWithPrefix.
+	filterClauses, args := buildFilterClausesWithPrefix(filter, "n.")
+	where := append([]string{"n.deleted_at IS NULL"}, filterClauses...)
 	whereClause := strings.Join(where, " AND ")
 
 	// Count query. Use subquery for FTS5 MATCH (content-sync tables require

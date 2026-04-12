@@ -480,21 +480,21 @@ func initTestApp(t *testing.T) {
 // TestRunList_EmptyProject_ReturnsNoRows verifies list with no nodes.
 func TestRunList_EmptyProject_ReturnsNoRows(t *testing.T) {
 	initTestApp(t)
-	err := runList("", "", "", 0, 50)
+	err := runList("", "", "", "", "", 50)
 	assert.NoError(t, err)
 }
 
 // TestRunList_WithStatusFilter_ReturnsNoRows verifies list with status filter.
 func TestRunList_WithStatusFilter_ReturnsNoRows(t *testing.T) {
 	initTestApp(t)
-	err := runList("open", "", "", 0, 50)
+	err := runList("open", "", "", "", "", 50)
 	assert.NoError(t, err)
 }
 
 // TestRunList_WithPriorityFilter_ReturnsNoRows verifies list with priority filter.
 func TestRunList_WithPriorityFilter_ReturnsNoRows(t *testing.T) {
 	initTestApp(t)
-	err := runList("", "", "", 1, 50)
+	err := runList("", "", "", "", "1", 50)
 	assert.NoError(t, err)
 }
 
@@ -502,14 +502,14 @@ func TestRunList_WithPriorityFilter_ReturnsNoRows(t *testing.T) {
 func TestRunList_JSONMode_ReturnsJSON(t *testing.T) {
 	initTestApp(t)
 	app.jsonOutput = true
-	err := runList("", "", "", 0, 50)
+	err := runList("", "", "", "", "", 50)
 	assert.NoError(t, err)
 }
 
 // TestRunSearch_EmptyProject_ReturnsNoRows verifies search with no nodes.
 func TestRunSearch_EmptyProject_ReturnsNoRows(t *testing.T) {
 	initTestApp(t)
-	err := runSearch("", "", "", 50)
+	err := runSearch("", "", "", "", 50)
 	assert.NoError(t, err)
 }
 

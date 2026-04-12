@@ -65,7 +65,7 @@ func TestListNodes_UnderFilter_ReturnsSubtree(t *testing.T) {
 	require.NoError(t, s.CreateNode(ctx, makeRootNode("PROJ-2", "PROJ", "Unrelated", now)))
 
 	nodes, total, err := s.ListNodes(ctx, store.NodeFilter{
-		Under: "PROJ-1",
+		Under: []string{"PROJ-1"},
 	}, store.ListOptions{Limit: 50})
 	require.NoError(t, err)
 	assert.Equal(t, 3, total) // Parent + 2 children.
@@ -140,7 +140,7 @@ func TestListNodes_AssigneeFilter_ReturnsMatching(t *testing.T) {
 	require.NoError(t, s.CreateNode(ctx, makeRootNode("PROJ-2", "PROJ", "Unassigned", now)))
 
 	nodes, total, err := s.ListNodes(ctx, store.NodeFilter{
-		Assignee: "agent-001",
+		Assignee: []string{"agent-001"},
 	}, store.ListOptions{Limit: 50})
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
@@ -162,9 +162,8 @@ func TestListNodes_PriorityFilter_ReturnsMatching(t *testing.T) {
 	n2.Priority = model.PriorityLow
 	require.NoError(t, s.CreateNode(ctx, n2))
 
-	p := int(model.PriorityCritical)
 	nodes, total, err := s.ListNodes(ctx, store.NodeFilter{
-		Priority: &p,
+		Priority: []int{int(model.PriorityCritical)},
 	}, store.ListOptions{Limit: 50})
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
@@ -187,7 +186,7 @@ func TestListNodes_NodeTypeFilter_ReturnsMatching(t *testing.T) {
 	require.NoError(t, s.CreateNode(ctx, n2))
 
 	nodes, total, err := s.ListNodes(ctx, store.NodeFilter{
-		NodeType: string(model.NodeTypeIssue),
+		NodeType: []string{string(model.NodeTypeIssue)},
 	}, store.ListOptions{Limit: 50})
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)

@@ -560,6 +560,9 @@ mtix search --query "authentication"
 
 Uses SQLite FTS5 for full-text search across titles, descriptions, and prompts.
 
+`mtix search` accepts the same multi-value filter flags as `mtix list`
+(see below) — they combine with the FTS query.
+
 ### Filtered Listing
 
 ```bash
@@ -575,9 +578,49 @@ mtix list --assignee agent-claude
 # Filter by priority
 mtix list --priority 1
 
+# Filter by node type
+mtix list --type issue
+
 # Limit results
 mtix list --limit 20
 ```
+
+#### Multi-value filters
+
+Every filter on `mtix list` and `mtix search` accepts a comma-separated
+list of values. Multiple values within one flag combine with **OR**;
+multiple flags combine with **AND**. Empty/missing values are simply
+ignored.
+
+```bash
+# Done OR cancelled nodes (status OR within one flag)
+mtix list --status done,cancelled
+
+# Three subtrees at once (Under OR within one flag)
+mtix list --under PROJ-1,PROJ-2,PROJ-5
+
+# Two priorities AND two node types (AND across flags, OR within)
+mtix list --priority 1,2 --type issue,story
+
+# Real-world: get the focused slice an agent is working on
+mtix list --under PROJ-3,PROJ-4 --status done --type issue --json
+```
+
+| Flag | Type | Example |
+|---|---|---|
+| `--status` | enum list | `open,in_progress,done,cancelled` |
+| `--under` | ID list | `PROJ-1,PROJ-2,PROJ-5.3` |
+| `--type` | enum list | `epic,story,issue,micro` |
+| `--assignee` | string list | `agent-a,agent-b,human-vimal` |
+| `--priority` | int list (1–5) | `1,2,3` |
+
+All values are passed to SQLite as bound parameters — there is no SQL
+injection vector. Whitespace inside the list is trimmed; empty entries
+are skipped (`a,,b` is the same as `a,b`).
+
+The HTTP API at `GET /api/v1/search` accepts the same syntax as either
+comma-separated (`?under=PROJ-1,PROJ-2`) or repeated (`?under=PROJ-1&under=PROJ-2`)
+query parameters.
 
 ### Quick Query Commands
 

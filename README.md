@@ -131,6 +131,31 @@ mtix progress PROJ-1
 mtix list --status open
 ```
 
+### Filtering nodes (multi-value)
+
+Every filter on `mtix list` and `mtix search` accepts comma-separated values.
+Multiple values within one flag combine with **OR**; multiple flags combine
+with **AND**. This lets agents narrow large projects down to exactly the
+slice of work they care about in one call.
+
+```bash
+# All done OR cancelled epics under PROJ-1 OR PROJ-2
+mtix list --under PROJ-1,PROJ-2 --status done,cancelled --type epic
+
+# Critical or high priority issues across two assignees
+mtix list --priority 1,2 --type issue --assignee agent-a,agent-b
+
+# Search "auth" within two subtrees, restricted to two node types
+mtix search --query auth --under PROJ-1,PROJ-3 --type story,issue
+
+# JSON output for machine consumption
+mtix list --under PROJ-1 --status done --json
+```
+
+Available multi-value filters: `--status`, `--under`, `--type`, `--assignee`,
+`--priority`. All values are sent to SQLite as bound parameters; no
+SQL injection vector.
+
 ### Start the Server
 
 ```bash
@@ -221,7 +246,7 @@ mtix create <title> [--under ID]    Create a node
 mtix micro <title> --under ID       Create a micro issue
 mtix decompose <id> [titles...]     Batch create children
 mtix show <id>                      Show node details
-mtix list [--status S]              List nodes
+mtix list [--status S]              List nodes (filters accept comma-separated values)
 mtix tree <id>                      Show hierarchy tree
 mtix update <id> [--title T]        Update node fields
 mtix claim <id> --agent A           Assign to agent
@@ -232,7 +257,7 @@ mtix cancel <id> --reason R         Cancel a node
 mtix reopen <id>                    Reopen done/cancelled node
 mtix comment <id> <text>            Add a comment
 mtix dep add <from> <to>            Add dependency
-mtix search [--query Q]             Full-text search
+mtix search [--query Q]             Full-text search (filters accept comma-separated values)
 mtix ready                          Show nodes ready for work
 mtix blocked                        Show blocked nodes
 mtix stale                          Show stale nodes

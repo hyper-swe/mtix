@@ -20,13 +20,15 @@ type ListOptions struct {
 	Offset int `json:"offset"`
 }
 
-// NodeFilter defines filtering criteria for node queries.
+// NodeFilter defines filtering criteria for node queries per FR-17.1.
+// All multi-value fields combine OR within a field and AND across fields.
+// Empty/nil slices are equivalent to "no filter on this field".
 type NodeFilter struct {
 	Status   []model.Status `json:"status,omitempty"`
-	Under    string         `json:"under,omitempty"`
-	Assignee string         `json:"assignee,omitempty"`
-	NodeType string         `json:"node_type,omitempty"`
-	Priority *int           `json:"priority,omitempty"`
+	Under    []string       `json:"under,omitempty"`
+	Assignee []string       `json:"assignee,omitempty"`
+	NodeType []string       `json:"node_type,omitempty"`
+	Priority []int          `json:"priority,omitempty"`
 	Labels   []string       `json:"labels,omitempty"`
 }
 

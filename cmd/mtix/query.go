@@ -13,12 +13,14 @@ import (
 	"github.com/hyper-swe/mtix/internal/store"
 )
 
-// newSearchCmd creates the mtix search command per FR-6.3.
+// newSearchCmd creates the mtix search command per FR-6.3 / FR-17.1.
+// All filter flags accept comma-separated multiple values.
 func newSearchCmd() *cobra.Command {
 	var (
 		status   string
 		assignee string
 		nodeType string
+		under    string
 		limit    int
 	)
 
@@ -26,29 +28,31 @@ func newSearchCmd() *cobra.Command {
 		Use:   "search",
 		Short: "Search nodes with advanced filters",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runSearch(status, assignee, nodeType, limit)
+			return runSearch(status, assignee, nodeType, under, limit)
 		},
 	}
 
-	cmd.Flags().StringVar(&status, "status", "", "Filter by status")
-	cmd.Flags().StringVar(&assignee, "assignee", "", "Filter by assignee")
-	cmd.Flags().StringVar(&nodeType, "type", "", "Filter by node type")
+	cmd.Flags().StringVar(&status, "status", "", "Filter by status (comma-separated for multiple)")
+	cmd.Flags().StringVar(&assignee, "assignee", "", "Filter by assignee (comma-separated for multiple)")
+	cmd.Flags().StringVar(&nodeType, "type", "", "Filter by node type (comma-separated for multiple)")
+	cmd.Flags().StringVar(&under, "under", "", "Filter by parent subtree (comma-separated for multiple)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum results")
 
 	return cmd
 }
 
-func runSearch(status, assignee, nodeType string, limit int) error {
+func runSearch(status, assignee, nodeType, under string, limit int) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
 
 	filter := store.NodeFilter{
-		Assignee: assignee,
-		NodeType: nodeType,
+		Assignee: splitCSV(assignee),
+		NodeType: splitCSV(nodeType),
+		Under:    splitCSV(under),
 	}
-	if status != "" {
-		filter.Status = []model.Status{model.Status(status)}
+	for _, s := range splitCSV(status) {
+		filter.Status = append(filter.Status, model.Status(s))
 	}
 
 	ctx := context.Background()

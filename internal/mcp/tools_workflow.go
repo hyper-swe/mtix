@@ -275,7 +275,13 @@ func registerSearchTool(reg *ToolRegistry, st store.Store) {
 			p.Limit = 50
 		}
 
-		filter := store.NodeFilter{Under: p.Under, Assignee: p.Assignee}
+		filter := store.NodeFilter{}
+		if p.Under != "" {
+			filter.Under = []string{p.Under}
+		}
+		if p.Assignee != "" {
+			filter.Assignee = []string{p.Assignee}
+		}
 		if p.Status != "" {
 			filter.Status = []model.Status{model.Status(p.Status)}
 		}

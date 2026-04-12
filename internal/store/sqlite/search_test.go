@@ -185,7 +185,7 @@ func TestSearchNodes_WithAssigneeFilter(t *testing.T) {
 		CreatedAt: now.Add(time.Second), UpdatedAt: now.Add(time.Second),
 	}))
 
-	filter := store.NodeFilter{Assignee: "agent-A"}
+	filter := store.NodeFilter{Assignee: []string{"agent-A"}}
 	results, total, err := s.SearchNodes(ctx, "Findable", filter, store.ListOptions{Limit: 10})
 	require.NoError(t, err)
 	assert.Equal(t, 1, total)
@@ -250,7 +250,7 @@ func TestSearchNodes_WithUnderFilter(t *testing.T) {
 	}))
 
 	// Search within S-1 subtree only.
-	filter := store.NodeFilter{Under: "S-1"}
+	filter := store.NodeFilter{Under: []string{"S-1"}}
 	results, total, err := s.SearchNodes(ctx, "Searchable", filter, store.ListOptions{Limit: 10})
 	require.NoError(t, err)
 	assert.Equal(t, 2, total, "should find root and child in subtree")

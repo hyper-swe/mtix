@@ -6,6 +6,7 @@ package http
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,15 +18,41 @@ import (
 // maxListLimit is the maximum allowed limit for pagination per FR-7.6.
 const maxListLimit = 500
 
-// searchNodes handles GET /api/v1/search per FR-7.2 and FR-7.6.
+// csvQueryParam parses a query parameter as a multi-value list per FR-17.1.
+// Accepts both comma-separated form (?key=a,b,c) and repeated form
+// (?key=a&key=b&key=c). Returns nil for missing/empty input. Trims
+// whitespace and skips empty elements.
+func csvQueryParam(c *gin.Context, key string) []string {
+	values := c.QueryArray(key)
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		for _, p := range strings.Split(v, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				out = append(out, p)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// searchNodes handles GET /api/v1/search per FR-7.2, FR-7.6, FR-17.1.
+// Multi-value filters accept either comma-separated (?under=A,B) or
+// repeated query params (?under=A&under=B) — both forms produce slices.
 func (s *Server) searchNodes(c *gin.Context) {
 	filter := store.NodeFilter{
-		Under:    c.Query("under"),
-		Assignee: c.Query("assignee"),
-		NodeType: c.Query("type"),
+		Under:    csvQueryParam(c, "under"),
+		Assignee: csvQueryParam(c, "assignee"),
+		NodeType: csvQueryParam(c, "type"),
 	}
-	if status := c.Query("status"); status != "" {
-		filter.Status = []model.Status{model.Status(status)}
+	for _, st := range csvQueryParam(c, "status") {
+		filter.Status = append(filter.Status, model.Status(st))
 	}
 
 	limit := clampLimit(parseIntParam(c, "limit", 50))

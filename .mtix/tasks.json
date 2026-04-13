@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-04-13T08:15:40Z",
+  "exported_at": "2026-04-13T11:43:46Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1939,7 +1939,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.7142857142857143,
+      "progress": 0.8571428571428571,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -2087,15 +2087,15 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
+      "status": "deferred",
       "progress": 0,
-      "assignee": "",
+      "assignee": "dev",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "bc4c32d850730452cda934c732b00bf377d61fcc0cbbdb26459e9183149ba5a6",
       "created_at": "2026-04-11T14:01:57Z",
-      "updated_at": "2026-04-11T14:01:57Z"
+      "updated_at": "2026-04-13T09:42:08Z"
     },
     {
       "id": "MTIX-9.7",
@@ -2111,15 +2111,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "dev",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "8c2a092bd22aec7379f30c7e575c6e58eff213e6fff9fa068aff20fe565446b4",
       "created_at": "2026-04-11T14:01:57Z",
-      "updated_at": "2026-04-11T14:01:57Z"
+      "updated_at": "2026-04-13T11:43:46Z",
+      "closed_at": "2026-04-13T11:43:46Z"
     }
   ],
   "dependencies": null,
@@ -2128,11 +2129,11 @@
       "agent_id": "dev",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-9.5",
+      "current_node_id": "MTIX-9.7",
       "last_heartbeat": "2026-03-30T02:58:55Z"
     }
   ],
   "sessions": null,
   "node_count": 86,
-  "checksum": "42f690433ca6ed21c59795785dd39485197fb7a3b7638389e0145f03e0133f1d"
+  "checksum": "08702293895910ddcd5a37d30831f44986a20d8ca9dcf93125aa752f8cd2e8ff"
 }

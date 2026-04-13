@@ -25,6 +25,7 @@ mtix (micro-tix) is a hierarchical task management system where multiple LLM cod
 - **Dependency tracking** — Cross-branch `blocks`, `related`, `duplicates`, `discovered_from` with cycle detection.
 - **Prompt chain propagation** — Parent prompts cascade to children for LLM context assembly.
 - **Multi-agent orchestration** — Agent state tracking, sessions, heartbeats, stale detection.
+- **Agent-native query** — Multi-value filters (`--under A,B --status done,cancelled --type issue`), `--format briefing` for paste-into-context output, `--fields` for JSON projection. No post-processing stub code needed.
 - **CLI-first** — Every operation available via `mtix` CLI with `--json` for machine consumption.
 - **REST API** — Full CRUD, query, and admin endpoints with CSRF protection.
 - **gRPC API** — Protocol Buffers interface for high-performance integrations.

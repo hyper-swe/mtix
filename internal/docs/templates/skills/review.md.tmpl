@@ -8,6 +8,7 @@ allowed-tools:
   - mcp__mtix__mtix_tree
   - mcp__mtix__mtix_show
   - mcp__mtix__mtix_list
+  - mcp__mtix__mtix_briefing
   - mcp__mtix__mtix_blocked
   - mcp__mtix__mtix_dep_list
   - mcp__mtix__mtix_search
@@ -29,6 +30,13 @@ Every completed (`done`) task must have:
 4. **Traceability comment** — linking task → requirement → test → result
 
 ### Finding Incomplete Tasks
+Use `mcp__mtix__mtix_briefing` to review tasks across subtrees — it returns labeled text blocks with prompt and acceptance fields visible. **Do NOT write post-processing stub code** to filter or format mtix output.
+
+```
+# Review all done issues under two epics at once
+mtix_briefing(under="PROJ-1,PROJ-2", status="done", type="issue", fields="id,title,prompt,acceptance")
+```
+
 Use `mcp__mtix__mtix_search` to find tasks with missing fields:
 - Search for tasks in `done` status that lack comments (missing verification evidence)
 - Search for tasks with empty `prompt` or `acceptance` fields (incomplete decomposition)

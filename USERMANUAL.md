@@ -641,6 +641,52 @@ Unknown field names return an error listing all valid fields. When `--fields`
 is omitted, the full node object is returned (current default behavior).
 `--fields` has no effect on table output (non-JSON mode).
 
+#### Briefing format (`--format briefing`)
+
+The briefing format renders each node as a labeled text block, ready to paste
+into an LLM context window or read at a glance. No JSON parsing needed.
+
+```bash
+# Briefing of all done issues under two epics
+mtix list --under PROJ-1,PROJ-2 --status done --type issue --format briefing
+
+# Briefing with only specific fields
+mtix list --under PROJ-1 --format briefing --fields id,title,prompt,acceptance
+
+# Briefing with field truncation (useful for large prompts)
+mtix list --format briefing --max-field-chars 500
+
+# Include empty fields (omitted by default)
+mtix list --format briefing --show-empty
+```
+
+Output format:
+```
+================================================================================
+ID: PROJ-1.3
+TITLE: Implement rate limiting
+NODE_TYPE: issue
+STATUS: done
+PRIORITY: 1
+ASSIGNEE: agent-claude
+DESCRIPTION:
+  Add sliding window rate limiter to auth endpoints.
+PROMPT:
+  Implement token bucket algorithm in middleware/ratelimit.go...
+ACCEPTANCE:
+  1. Rate limit enforced at 100 req/s per agent.
+  2. 429 response with Retry-After header.
+```
+
+Each node block is separated by `=` characters. Single-line fields use
+`LABEL: value`. Multi-line fields use `LABEL:\n  indented body`. Control
+characters are sanitized (replaced with U+FFFD). Fields containing
+newlines in normally single-line positions are auto-promoted to multi-line
+to prevent label injection.
+
+**Via MCP:** use the `mtix_briefing` tool with the same filter parameters
+to get briefing output directly from an MCP-connected agent.
+
 ### Quick Query Commands
 
 ```bash

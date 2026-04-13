@@ -157,7 +157,8 @@ Once connected, the following MCP tools are available:
 |------|-------------|
 | `mtix_create` | Create a new node |
 | `mtix_show` | Get full node details |
-| `mtix_list` | List nodes with filters |
+| `mtix_list` | List nodes with filters (JSON output) |
+| `mtix_briefing` | List nodes in briefing format — labeled text blocks ready for LLM context. Accepts multi-value filters (`under`, `status`, `type`, `assignee`, `priority`), field restriction (`fields`), and truncation (`max_field_chars`). **Use this instead of writing post-processing stub code.** |
 | `mtix_update` | Update node fields |
 | `mtix_delete` | Soft-delete a node |
 | `mtix_undelete` | Recover a soft-deleted node |

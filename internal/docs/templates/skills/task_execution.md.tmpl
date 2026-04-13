@@ -10,6 +10,7 @@ allowed-tools:
   - mcp__mtix__mtix_defer
   - mcp__mtix__mtix_show
   - mcp__mtix__mtix_list
+  - mcp__mtix__mtix_briefing
   - mcp__mtix__mtix_search
   - mcp__mtix__mtix_agent_heartbeat
   - mcp__mtix__mtix_session_start

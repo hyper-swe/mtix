@@ -40,14 +40,24 @@ Call `mtix ready` or `mtix_ready` to list nodes available for pickup — unassig
 To scope queries to specific subtrees, statuses, types, or assignees, use multi-value filters (comma-separated). **Do NOT write post-processing stub code to filter mtix output** — the filters are built in:
 
 ```bash
-# All done issues under two epics
-mtix list --under {{ .ProjectPrefix }}-1,{{ .ProjectPrefix }}-2 --status done --type issue --json
+# All done issues under two epics — briefing format for direct context use
+mtix list --under {{ .ProjectPrefix }}-1,{{ .ProjectPrefix }}-2 --status done --type issue --format briefing
+
+# Same query but only ID, title, and prompt fields
+mtix list --under {{ .ProjectPrefix }}-1,{{ .ProjectPrefix }}-2 --status done --fields id,title,prompt --json
 
 # Critical/high priority open work assigned to two agents
-mtix list --priority 1,2 --status open --assignee agent-a,agent-b
+mtix list --priority 1,2 --status open --assignee agent-a,agent-b --format briefing
 ```
 
 Multiple values within one flag combine with OR; multiple flags combine with AND. All values are parameterized — no injection risk.
+
+**Output formats:**
+- `--format briefing` — labeled text blocks you can paste directly into your context. **Use this instead of writing Python/jq stub code.**
+- `--json` — full JSON for machine processing. Combine with `--fields id,title,prompt,acceptance` to restrict output to specific fields.
+- Default — human-readable table with status icons.
+
+**Via MCP:** Call `mtix_briefing` instead of `mtix_list` to get briefing-formatted text directly. Accepts the same filter parameters (`under`, `status`, `type`, `assignee`, `priority`, `fields`, `limit`).
 
 ### 3. Read Context (MANDATORY)
 Call `mtix context <id>` or `mtix_context` — **this step is NON-NEGOTIABLE**. The assembled prompt is your complete briefing. Read it fully before proceeding.

@@ -30,6 +30,7 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 | `mcp__mtix__mtix_decompose` | Batch create children |
 | `mcp__mtix__mtix_update` | Update node fields |
 | `mcp__mtix__mtix_search` | Full-text search |
+| `mcp__mtix__mtix_briefing` | **List nodes in briefing format** — labeled text blocks for context. Use instead of writing stub code to parse mtix_list output. Accepts multi-value filters (`under`, `status`, `type`, `fields`). |
 | `mcp__mtix__mtix_comment` | Add traceability comment |
 | `mcp__mtix__mtix_session_start` | Start work session |
 | `mcp__mtix__mtix_session_end` | End work session |
@@ -51,6 +52,7 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 - **Prefer MCP tools over CLI** when both are available — MCP tools return structured data
 - **Batch operations** — use `mcp__mtix__mtix_decompose` instead of multiple `mcp__mtix__mtix_create` calls
 - **Search before creating** — use `mcp__mtix__mtix_search` to check for existing similar tasks
+- **Use briefing format for analysis** — call `mcp__mtix__mtix_briefing` with multi-value filters instead of writing Python/jq post-processing code. Example: `mtix_briefing(under="PROJ-1,PROJ-2", status="done", type="issue", fields="id,title,prompt")`
 - **Progress checks** — use `mcp__mtix__mtix_progress` to verify rollup before reporting completion
 
 ## Error Handling

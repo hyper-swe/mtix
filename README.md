@@ -175,6 +175,16 @@ mtix show PROJ-1 --json
 mtix create "Fix bug" --under PROJ-1 --json
 ```
 
+## Companion Projects
+
+### mgit — Surgical rollback for LLM coding agents
+
+[mgit](https://github.com/hyper-swe/mgit) provides task-tagged micro-commits, surgical rollback, and auto-squash for LLM agents. When paired with mtix, agents micro-commit during each task, rollback wrong decisions without losing correct work, and auto-squash on `mtix done`. mtix handles *what to do*; mgit handles *how to safely do it*.
+
+```bash
+brew install hyper-swe/tap/mgit
+```
+
 ## Architecture
 
 ```

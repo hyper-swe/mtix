@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "mtix",
-      "source": ".",
+      "source": "./",
       "description": "AI-native micro issue manager for code-generating LLMs",
       "version": "0.1.0"
     }

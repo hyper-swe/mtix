@@ -57,7 +57,12 @@ func TestSplitCSVInts(t *testing.T) {
 		{"empty elements skipped", "1,,2", []int{1, 2}, false},
 		{"non-numeric returns error", "1,foo,3", nil, true},
 		{"float returns error", "1.5", nil, true},
-		{"negative ok", "-1", []int{-1}, false},
+		{"negative rejects out of range", "-1", nil, true},
+		{"zero rejects out of range", "0", nil, true},
+		{"six rejects out of range", "6", nil, true},
+		{"boundary 1 accepted", "1", []int{1}, false},
+		{"boundary 5 accepted", "5", []int{5}, false},
+		{"all valid priorities", "1,2,3,4,5", []int{1, 2, 3, 4, 5}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -80,16 +82,22 @@ func (s *SyncService) AutoImport(ctx context.Context, mtixDir string) error {
 	// Skip import to avoid redundant ImportModeReplace and the thundering
 	// herd problem with multiple agents on the same machine.
 	var lastExportHash string
-	if queryErr := s.store.QueryRow(ctx,
+	queryErr := s.store.QueryRow(ctx,
 		"SELECT value FROM meta WHERE key = 'last_export_hash'",
-	).Scan(&lastExportHash); queryErr == nil && lastExportHash == fileHash {
+	).Scan(&lastExportHash)
+	if queryErr == nil && lastExportHash == fileHash {
 		// File is from our own export — update sync.sha256 to prevent
 		// re-checking on next command, then skip.
-		_ = s.writeHashFile(hashPath, fileHash)
+		if hashErr := s.writeHashFile(hashPath, fileHash); hashErr != nil {
+			s.logger.Warn("failed to update sync hash after export-match skip", "error", hashErr)
+		}
 		return nil
 	}
-	// If meta read fails or hash doesn't match → proceed with import
-	// (fail-safe to current behavior).
+	if queryErr != nil && !errors.Is(queryErr, sql.ErrNoRows) {
+		// Genuine DB error (not "key not found") — log for audit trail
+		// per NASA-STD-8739.8 §7.2, then proceed with import as fail-safe.
+		s.logger.Warn("failed to read last_export_hash from meta, proceeding with import", "error", queryErr)
+	}
 
 	// Step 5: Parse and validate the already-read bytes.
 	exportData, err := s.parseAndValidateExport(ctx, data, tasksPath, mtixDir)
@@ -469,6 +477,10 @@ func (s *SyncService) Compare(ctx context.Context, mtixDir string) (*SyncReport,
 			report.OnlyInDB = append(report.OnlyInDB, id)
 		}
 	}
+
+	// Sort for deterministic output per DO-178C §5.1.2.
+	sort.Strings(report.OnlyInFile)
+	sort.Strings(report.OnlyInDB)
 
 	report.InSync = len(report.OnlyInFile) == 0 && len(report.OnlyInDB) == 0
 	return report, nil

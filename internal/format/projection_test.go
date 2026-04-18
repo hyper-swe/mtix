@@ -163,3 +163,19 @@ func TestProjectNodes_InvalidField(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, model.ErrInvalidInput)
 }
+
+// TestProjectNodes_EmptySliceWithFields verifies no panic on empty
+// node slice with field projection per NASA-STD-8739.8 §4.5.2.
+func TestProjectNodes_EmptySliceWithFields(t *testing.T) {
+	results, err := ProjectNodes([]*model.Node{}, []string{"id", "title"})
+	require.NoError(t, err)
+	assert.Empty(t, results)
+}
+
+// TestProjectNodes_NilSliceWithFields verifies no panic on nil
+// node slice with field projection.
+func TestProjectNodes_NilSliceWithFields(t *testing.T) {
+	results, err := ProjectNodes(nil, []string{"id", "title"})
+	require.NoError(t, err)
+	assert.Empty(t, results)
+}

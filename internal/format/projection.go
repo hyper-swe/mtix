@@ -110,6 +110,10 @@ func ProjectNode(n *model.Node, fields []string) (map[string]any, error) {
 func ProjectNodes(nodes []*model.Node, fields []string) ([]map[string]any, error) {
 	initNodeFields()
 
+	if len(nodes) == 0 {
+		return []map[string]any{}, nil
+	}
+
 	// Validate field names once if projection is requested.
 	if len(fields) > 0 {
 		if _, err := ProjectNode(nodes[0], fields); err != nil {

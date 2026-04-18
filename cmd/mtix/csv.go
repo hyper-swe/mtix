@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // splitCSV parses a comma-separated flag value into a slice of trimmed,
@@ -45,6 +47,9 @@ func splitCSVInts(s string) ([]int, error) {
 		v, err := strconv.Atoi(p)
 		if err != nil {
 			return nil, fmt.Errorf("invalid integer %q: %w", p, err)
+		}
+		if v < 1 || v > 5 {
+			return nil, fmt.Errorf("priority %d out of range (must be 1-5): %w", v, model.ErrInvalidInput)
 		}
 		out = append(out, v)
 	}

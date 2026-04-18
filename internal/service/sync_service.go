@@ -366,12 +366,20 @@ func (s *SyncService) hasConflict(ctx context.Context, mtixDir string) bool {
 }
 
 // computeDBHash exports the current DB state and computes its SHA-256 hash.
+// computeDBHash exports the current DB state and computes its SHA-256 hash.
+// The ExportedAt timestamp is zeroed before hashing so that the hash reflects
+// only data content, not when the export was generated. Without this, two
+// exports of identical data in different seconds produce different hashes,
+// causing false-positive conflict detection in hasConflict.
 func (s *SyncService) computeDBHash(ctx context.Context) string {
 	data, err := s.store.Export(ctx, "", "")
 	if err != nil {
 		s.logger.Debug("failed to export DB for conflict detection", "error", err)
 		return ""
 	}
+	// Zero envelope metadata that changes between calls but doesn't
+	// represent actual data changes.
+	data.ExportedAt = ""
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
 		return ""

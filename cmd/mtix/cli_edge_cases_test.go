@@ -509,7 +509,7 @@ func TestRunList_JSONMode_ReturnsJSON(t *testing.T) {
 // TestRunSearch_EmptyProject_ReturnsNoRows verifies search with no nodes.
 func TestRunSearch_EmptyProject_ReturnsNoRows(t *testing.T) {
 	initTestApp(t)
-	err := runSearch("", "", "", "", "", 50)
+	err := runSearch("", "", "", "", "", "", 50)
 	assert.NoError(t, err)
 }
 

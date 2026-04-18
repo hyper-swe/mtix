@@ -22,6 +22,7 @@ func newSearchCmd() *cobra.Command {
 		assignee string
 		nodeType string
 		under    string
+		priority string
 		fields   string
 		limit    int
 	)
@@ -30,7 +31,7 @@ func newSearchCmd() *cobra.Command {
 		Use:   "search",
 		Short: "Search nodes with advanced filters",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runSearch(status, assignee, nodeType, under, fields, limit)
+			return runSearch(status, assignee, nodeType, under, priority, fields, limit)
 		},
 	}
 
@@ -38,21 +39,28 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&assignee, "assignee", "", "Filter by assignee (comma-separated for multiple)")
 	cmd.Flags().StringVar(&nodeType, "type", "", "Filter by node type (comma-separated for multiple)")
 	cmd.Flags().StringVar(&under, "under", "", "Filter by parent subtree (comma-separated for multiple)")
+	cmd.Flags().StringVar(&priority, "priority", "", "Filter by priority (comma-separated, 1-5)")
 	cmd.Flags().StringVar(&fields, "fields", "", "Restrict JSON output to these fields (comma-separated)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum results")
 
 	return cmd
 }
 
-func runSearch(status, assignee, nodeType, under, fields string, limit int) error {
+func runSearch(status, assignee, nodeType, under, priority, fields string, limit int) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
+	}
+
+	priorities, err := splitCSVInts(priority)
+	if err != nil {
+		return fmt.Errorf("invalid --priority value: %w: %w", err, model.ErrInvalidInput)
 	}
 
 	filter := store.NodeFilter{
 		Assignee: splitCSV(assignee),
 		NodeType: splitCSV(nodeType),
 		Under:    splitCSV(under),
+		Priority: priorities,
 	}
 	for _, s := range splitCSV(status) {
 		filter.Status = append(filter.Status, model.Status(s))

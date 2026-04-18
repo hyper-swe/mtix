@@ -128,7 +128,7 @@ func TestRunSearch_CommaSeparatedAllFilters_ParsesCorrectly(t *testing.T) {
 	require.NoError(t, runCreate("Searchable B", "", "", 3, "", "", "", "", ""))
 
 	// Multi-value flags accepted without error.
-	err := runSearch("open,in_progress", "agent-1,agent-2", "epic,story", "TEST-1,TEST-2", "", 50)
+	err := runSearch("open,in_progress", "agent-1,agent-2", "epic,story", "TEST-1,TEST-2", "", "", 50)
 	assert.NoError(t, err, "search must accept comma-separated multi-value filters")
 }
 
@@ -190,7 +190,7 @@ func TestRunSearch_FieldsFlag_ProjectsJSONOutput(t *testing.T) {
 	require.NoError(t, runCreate("Searchable", "", "", 3, "", "", "", "", ""))
 
 	// runSearch with fields — should not error.
-	err := runSearch("", "", "", "", "id,status", 50)
+	err := runSearch("", "", "", "", "", "id,status", 50)
 	assert.NoError(t, err)
 }
 

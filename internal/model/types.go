@@ -4,7 +4,15 @@
 package model
 
 // NodeType represents the tier classification of a node.
-// Tier labels are derived from depth for display only and are NOT enforced (FR-1.2).
+// Tier labels are CANONICALLY DERIVED FROM DEPTH per FR-1.2:
+//   - At node creation (NodeService.CreateNode): NodeType is set from NodeTypeForDepth(depth).
+//   - At import (sqlite.Import / insertExportNode / updateExportNode): NodeType is overridden
+//     with NodeTypeForDepth(depth), ignoring any value in the input file (tamper resistance).
+//   - At export (sqlite.exportNodes): NodeType is overridden with NodeTypeForDepth(depth),
+//     normalizing any legacy stored value so export -> import -> export is byte-idempotent.
+//
+// In practice, callers should never need to set NodeType manually — the canonical value
+// is whatever NodeTypeForDepth says for that depth.
 type NodeType string
 
 const (

@@ -178,6 +178,17 @@ func (s *Store) exportNodes(ctx context.Context) ([]exportNode, error) {
 		); err != nil {
 			return nil, fmt.Errorf("scan export node: %w", err)
 		}
+		// node_type is canonical = depth-derived. Override any stored value
+		// to match the import-side normalization (see import.go:232,255).
+		// This makes export -> import -> export byte-idempotent (modulo
+		// exported_at) and self-heals legacy DBs from pre-v0.1.1-beta where
+		// the depth-to-type mapping was inverted (MTIX-12).
+		canonical := string(model.NodeTypeForDepth(n.Depth))
+		if n.NodeType != canonical {
+			s.logger.Debug("export normalized stored node_type",
+				"id", n.ID, "depth", n.Depth, "stored", n.NodeType, "canonical", canonical)
+			n.NodeType = canonical
+		}
 		nodes = append(nodes, n)
 	}
 	return nodes, rows.Err()

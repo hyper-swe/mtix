@@ -23,7 +23,13 @@
 
 **FR-1.1a** The system MUST support depths up to 50 without degradation. Creating a node deeper than depth 50 MUST emit a warning (`DEPTH_WARNING: Node at depth {N} exceeds recommended maximum of 50`) but MUST NOT reject the operation — the limit is advisory only. This prevents performance issues with progress rollup transactions and excessively deep recursive queries.
 
-**FR-1.2** Every item in the hierarchy is a **Node**. The system MUST treat all nodes uniformly — a node at depth 7 has the same schema and capabilities as an epic at depth 0. Tier labels (epic, story, issue, micro) are derived from depth for display purposes only and are NOT enforced.
+**FR-1.2** Every item in the hierarchy is a **Node**. The system MUST treat all nodes uniformly — a node at depth 7 has the same schema and capabilities as an epic at depth 0. Tier labels (epic, story, issue, micro) are derived from depth via `NodeTypeForDepth(depth)`. The mapping is enforced at all data boundaries:
+
+- **Create**: `NodeService.CreateNode` sets `NodeType = NodeTypeForDepth(depth)`.
+- **Import**: `sqlite.Import` overrides any stored `node_type` in the input file with `NodeTypeForDepth(depth)`. This provides tamper resistance — an attacker cannot mislead automation by editing `node_type` in `tasks.json`.
+- **Export**: `sqlite.exportNodes` overrides any stored `node_type` in the database with `NodeTypeForDepth(depth)`. This normalizes legacy values from pre-v0.1.1-beta databases (where the depth-to-type mapping was inverted) and makes the export → import → export round-trip byte-idempotent (modulo `exported_at` timestamp).
+
+The depth-to-type mapping itself follows Agile/Scrum convention: depth 0 = epic, depth 1 = story, depth 2 = issue, depth 3+ = micro. The system does NOT enforce business rules on these labels (e.g., children of an issue are not required to be micros) — they are display labels derived from structural position.
 
 **FR-1.3** The hierarchy MUST be expressed as a tree visualization:
 

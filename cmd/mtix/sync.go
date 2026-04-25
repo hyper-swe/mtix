@@ -55,11 +55,20 @@ func runSync(cmd *cobra.Command, fix bool) error {
 		printSyncReport(report)
 	}
 
-	if fix && !report.InSync {
+	// --fix always re-exports the database, even when the report says
+	// InSync=true. This refreshes both sentinel hash files and the meta
+	// last_export_hash, clearing the conflict-detection warning that
+	// AutoImport otherwise emits when the sentinels are stale despite
+	// content being equivalent (MTIX-11).
+	if fix {
 		if exportErr := app.syncSvc.AutoExport(ctx, app.mtixDir); exportErr != nil {
 			return fmt.Errorf("fix: %w", exportErr)
 		}
-		fmt.Println("Sync fixed: tasks.json updated from database.")
+		if report.InSync {
+			fmt.Println("Sentinels refreshed: tasks.json re-exported from database.")
+		} else {
+			fmt.Println("Sync fixed: tasks.json updated from database.")
+		}
 	}
 
 	return nil

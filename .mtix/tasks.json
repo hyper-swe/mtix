@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-04-25T17:48:17Z",
+  "exported_at": "2026-04-26T02:14:07Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -969,6 +969,31 @@
       "created_at": "2026-04-25T14:48:05Z",
       "updated_at": "2026-04-25T17:48:17Z",
       "closed_at": "2026-04-25T17:48:17Z"
+    },
+    {
+      "id": "MTIX-13",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 13,
+      "project": "MTIX",
+      "title": "Fix v0.1.1-beta tier-swap regression in web UI",
+      "description": "MTIX-7 (v0.1.1-beta) swapped depth-to-type mapping (depth 0: story → epic, depth 1: epic → story) for Agile/Scrum convention. Backend was updated. Web UI was missed: ContextChain levelIndicator() still returns OLD letters (depth 0 → S, depth 1 → E), and useFilters ALL_NODE_TYPES still lists story before epic. Every breadcrumb in the UI has been showing the wrong tier letter for many releases. Discovered while investigating MTIX-11/MTIX-12 user bug report.",
+      "prompt": "ROOT CAUSE\n\nMTIX-7 (commit 7ad4040, v0.1.1-beta) swapped the depth-to-type mapping:\n  OLD: depth 0 = story, depth 1 = epic\n  NEW: depth 0 = epic, depth 1 = story\n\nBackend was updated (NodeTypeForDepth, import.go, node_create.go).\nWeb UI was missed in TWO places + has a related second bug.\n\nBUGS\n\n1. web/src/components/ContextChain.tsx levelIndicator() — CRITICAL VISUAL BUG\n   Current:\n     if (depth === 0) return \"S\";  // wrong — should be \"E\" (Epic)\n     if (depth === 1) return \"E\";  // wrong — should be \"S\" (Story)\n     return \"I\";                    // partially wrong — depth 3+ should be \"M\"\n   \n   Every breadcrumb badge has shown the wrong letter since v0.1.1-beta.\n\n2. web/src/components/ContextChain.tsx docstring (line 3)\n   Says: \"S=Story, E=Epic, I=Issue\" — STALE since v0.1.1-beta.\n   Also missing M=Micro.\n\n3. web/src/hooks/useFilters.ts ALL_NODE_TYPES — MEDIUM\n   Currently: [\"story\", \"epic\", \"issue\", \"micro\"]\n   Should be: [\"epic\", \"story\", \"issue\", \"micro\"]\n   Filter checkboxes display in wrong hierarchical order.\n\n4. web/src/types/node.ts NodeType union — COSMETIC\n   Currently: \"story\" | \"epic\" | \"issue\" | \"micro\" | \"auto\"\n   Reorder to: \"epic\" | \"story\" | \"issue\" | \"micro\" | \"auto\"\n   No behavior change but reflects canonical mental model.\n\nCANONICAL DEPTH-TO-LETTER MAPPING (matches NodeTypeForDepth in Go)\n   depth 0 → E (Epic)\n   depth 1 → S (Story)\n   depth 2 → I (Issue)\n   depth 3+ → M (Micro)\n\nFIX (in this exact order)\n\nA. Update ContextChain.tsx:\n   - Swap depth 0 and 1 returns\n   - Add depth === 2 → \"I\" explicitly\n   - Default → \"M\"\n   - Update docstring to: \"E=Epic, S=Story, I=Issue, M=Micro\"\n\nB. Update useFilters.ts ALL_NODE_TYPES order: epic, story, issue, micro.\n\nC. Update node.ts NodeType union order: epic, story, issue, micro, auto.\n\nD. Update test fixtures in:\n   - web/src/components/__tests__/ContextChain.test.tsx — any assertion that\n     expected \"S\" at depth 0 should expect \"E\"; \"E\" at depth 1 → \"S\"\n   - Any other test that uses ALL_NODE_TYPES or NodeType\n\nTESTS (TDD red first)\n\n1. levelIndicator(0) === \"E\"\n2. levelIndicator(1) === \"S\"\n3. levelIndicator(2) === \"I\"\n4. levelIndicator(3) === \"M\"\n5. levelIndicator(7) === \"M\" (deep)\n6. ContextChain renders breadcrumb with correct letter for depth 0 (Epic → \"E\")\n7. ContextChain renders breadcrumb with correct letter for depth 1 (Story → \"S\")\n8. ALL_NODE_TYPES[0] === \"epic\" (canonical hierarchy first)\n\nACCEPTANCE\n1. All 8 tests pass.\n2. All existing TS tests pass after fixture updates.\n3. ESLint clean (npm run lint).\n4. TS typecheck passes.\n5. Manual verification: open the web UI, navigate to a depth-0 node, breadcrumb shows \"E\" not \"S\".",
+      "acceptance": "1. All 8 tests pass. 2. Existing TS tests pass. 3. ESLint clean. 4. TS typecheck passes. 5. Manual UI verification: depth-0 node shows E, depth-1 shows S. 6. No regression in Go test coverage.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "dev",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "1aea643aed028c4d370f977d9012fcfe5cd5d8598c88465d36a9000a6abbebec",
+      "created_at": "2026-04-26T02:02:30Z",
+      "updated_at": "2026-04-26T02:14:07Z",
+      "closed_at": "2026-04-26T02:14:07Z"
     },
     {
       "id": "MTIX-2",
@@ -2204,11 +2229,11 @@
       "agent_id": "dev",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-12",
+      "current_node_id": "MTIX-13",
       "last_heartbeat": "2026-03-30T02:58:55Z"
     }
   ],
   "sessions": null,
-  "node_count": 89,
-  "checksum": "2cab858d791ebf0a625711b4f0a755b11bb176c5a7c1c83fb4a0c7d099b48537"
+  "node_count": 90,
+  "checksum": "ce846d05638ab01bd76693c75023e84654e54d95f2b32627bfc8cb729d5b0db4"
 }

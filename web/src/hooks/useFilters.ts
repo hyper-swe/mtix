@@ -27,10 +27,14 @@ export const ALL_STATUSES: Status[] = [
   "invalidated",
 ];
 
-/** All available node types. */
+/**
+ * All available node types in canonical hierarchical order
+ * (top-down: epic → story → issue → micro). Matches Go's NodeTypeForDepth
+ * post-MTIX-7 (v0.1.1-beta).
+ */
 export const ALL_NODE_TYPES: NodeType[] = [
-  "story",
   "epic",
+  "story",
   "issue",
   "micro",
 ];

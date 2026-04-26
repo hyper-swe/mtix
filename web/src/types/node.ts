@@ -13,8 +13,12 @@ export type Status =
   | "cancelled"
   | "invalidated";
 
-/** Tier classification per FR-1.2. */
-export type NodeType = "story" | "epic" | "issue" | "micro" | "auto";
+/**
+ * Tier classification per FR-1.2 (canonical hierarchical order: epic →
+ * story → issue → micro). Tier is depth-derived at all data boundaries
+ * (create/import/export) — see the Go-side NodeTypeForDepth.
+ */
+export type NodeType = "epic" | "story" | "issue" | "micro" | "auto";
 
 /** Nature of work classification. */
 export type IssueType =

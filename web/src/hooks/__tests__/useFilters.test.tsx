@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { useFilters, filtersToParams, loadPresets } from "../useFilters";
+import {
+  useFilters,
+  filtersToParams,
+  loadPresets,
+  ALL_NODE_TYPES,
+} from "../useFilters";
 
 /**
  * Filter tests per MTIX-9.2.4.
@@ -159,5 +164,16 @@ describe("useFilters", () => {
     });
     expect(result.current.filters.statuses.has("open")).toBe(true);
     expect(result.current.filters.priorities.has(1)).toBe(true);
+  });
+});
+
+/**
+ * MTIX-13: ALL_NODE_TYPES order must match the canonical depth hierarchy
+ * (epic -> story -> issue -> micro). Pre-fix, "story" was listed first,
+ * reflecting the old pre-v0.1.1-beta convention.
+ */
+describe("ALL_NODE_TYPES (MTIX-13 canonical order)", () => {
+  it("lists types in canonical hierarchical order: epic, story, issue, micro", () => {
+    expect(ALL_NODE_TYPES).toEqual(["epic", "story", "issue", "micro"]);
   });
 });

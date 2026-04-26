@@ -1,18 +1,29 @@
 /**
  * ContextChain — ancestry path visualization from root to current node.
- * Shows level indicator (S=Story, E=Epic, I=Issue), title, and current marker.
- * Ancestors are clickable for navigation. Collapsible with summary/expanded modes.
- * Per requirement-ui.md § 2 View A and MTIX-9.3.3.
+ * Shows level indicator (E=Epic, S=Story, I=Issue, M=Micro), title, and
+ * current marker. Ancestors are clickable for navigation. Collapsible
+ * with summary/expanded modes. Per requirement-ui.md § 2 View A and
+ * MTIX-9.3.3.
  */
 
 import { useState, useCallback } from "react";
 import type { ContextEntry } from "../types";
 
-/** Map depth to level indicator per node type hierarchy. */
-function levelIndicator(depth: number): string {
-  if (depth === 0) return "S";
-  if (depth === 1) return "E";
-  return "I";
+/**
+ * Map depth to canonical tier letter, matching Go's NodeTypeForDepth
+ * post-MTIX-7 (v0.1.1-beta) Agile convention:
+ *   depth 0 -> E (Epic)
+ *   depth 1 -> S (Story)
+ *   depth 2 -> I (Issue)
+ *   depth 3+ -> M (Micro)
+ *
+ * Exported for testing — see ContextChain.test.tsx.
+ */
+export function levelIndicator(depth: number): string {
+  if (depth === 0) return "E";
+  if (depth === 1) return "S";
+  if (depth === 2) return "I";
+  return "M";
 }
 
 /** Determine source attribution for a prompt. */
@@ -78,6 +89,7 @@ export function ContextChain({
           return (
             <div
               key={entry.id}
+              data-testid={`chain-entry-${entry.id}`}
               className="flex items-start gap-2 py-1"
               style={{
                 paddingLeft: `${entry.depth * 12}px`,

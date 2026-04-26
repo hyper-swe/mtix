@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
-import { ContextChain } from "../ContextChain";
+import { render, screen, fireEvent, within } from "@testing-library/react";
+import { ContextChain, levelIndicator } from "../ContextChain";
 import type { ContextEntry } from "../../types";
 
 /**
@@ -153,5 +153,83 @@ describe("ContextChain", () => {
     );
 
     expect(container.firstChild).toBeNull();
+  });
+});
+
+/**
+ * MTIX-13: post-v0.1.1-beta canonical depth-to-letter mapping.
+ *
+ * After the v0.1.1-beta hierarchy swap (depth 0 = epic, depth 1 = story),
+ * the level indicator must follow the canonical mapping that matches
+ * Go's NodeTypeForDepth:
+ *   depth 0 -> "E" (Epic)
+ *   depth 1 -> "S" (Story)
+ *   depth 2 -> "I" (Issue)
+ *   depth 3+ -> "M" (Micro)
+ *
+ * Pre-fix, the function returned "S" at depth 0 and "E" at depth 1
+ * (the old convention) and "I" for any depth >= 2 (missing Micro).
+ */
+describe("levelIndicator (MTIX-13 canonical mapping)", () => {
+  it("returns E for depth 0 (Epic)", () => {
+    expect(levelIndicator(0)).toBe("E");
+  });
+
+  it("returns S for depth 1 (Story)", () => {
+    expect(levelIndicator(1)).toBe("S");
+  });
+
+  it("returns I for depth 2 (Issue)", () => {
+    expect(levelIndicator(2)).toBe("I");
+  });
+
+  it("returns M for depth 3 (Micro)", () => {
+    expect(levelIndicator(3)).toBe("M");
+  });
+
+  it("returns M for deep nodes (depth 7)", () => {
+    expect(levelIndicator(7)).toBe("M");
+  });
+});
+
+describe("ContextChain rendered badges (MTIX-13 strict per-depth)", () => {
+  // Strict per-depth assertion: the existing "shows level indicators (S/E/I)"
+  // test only checked that some badge of each letter exists — it would pass
+  // even with the inversion bug. These tests bind the badge letter to the
+  // specific node's chain entry so a regression of the swap is caught.
+  it("depth-0 entry renders 'E' badge (canonical Epic letter)", () => {
+    render(
+      <ContextChain
+        chain={mockChain}
+        currentNodeId="PROJ-1.1.2"
+        onNavigate={vi.fn()}
+      />,
+    );
+    const root = screen.getByTestId("chain-entry-PROJ-1");
+    expect(within(root).getByTestId("level-E")).toBeInTheDocument();
+  });
+
+  it("depth-1 entry renders 'S' badge (canonical Story letter)", () => {
+    render(
+      <ContextChain
+        chain={mockChain}
+        currentNodeId="PROJ-1.1.2"
+        onNavigate={vi.fn()}
+      />,
+    );
+    const child = screen.getByTestId("chain-entry-PROJ-1.1");
+    expect(within(child).getByTestId("level-S")).toBeInTheDocument();
+  });
+
+  it("depth-2 entry renders 'I' badge (Issue)", () => {
+    render(
+      <ContextChain
+        chain={mockChain}
+        currentNodeId="PROJ-1.1.2"
+        onNavigate={vi.fn()}
+      />,
+    );
+    const leaf = screen.getByTestId("chain-entry-PROJ-1.1.2");
+    expect(within(leaf).getByTestId("level-I")).toBeInTheDocument();
   });
 });

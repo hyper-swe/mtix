@@ -14,7 +14,12 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
-// TestDocGen_ProducesAll11Files verifies all 11 doc files are generated.
+// TestDocGen_ProducesAll11Files verifies all 11 top-level doc files plus
+// the BYO PG reference workflow docs from MTIX-14.4 are generated.
+//
+// The total surface is 11 top-level + len(WorkflowDocFiles()) workflow
+// docs. Asserting against WorkflowDocFiles() rather than a hardcoded 14
+// keeps this test stable as new reference workflows are added.
 func TestDocGen_ProducesAll11Files(t *testing.T) {
 	tmpDir := t.TempDir()
 	outDir := filepath.Join(tmpDir, "docs")
@@ -24,7 +29,10 @@ func TestDocGen_ProducesAll11Files(t *testing.T) {
 
 	results, err := gen.Generate(false)
 	require.NoError(t, err)
-	assert.Len(t, results, 11, "should produce 11 files")
+
+	expectedTotal := len(AllDocFiles()) + len(WorkflowDocFiles())
+	assert.Len(t, results, expectedTotal,
+		"should produce 11 top-level docs + workflow reference docs")
 
 	for _, r := range results {
 		assert.Equal(t, "generated", r.Action, "file %s should be generated", r.File)

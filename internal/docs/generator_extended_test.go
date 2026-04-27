@@ -23,7 +23,8 @@ func TestGenerator_RenderTemplate_CreatesFile(t *testing.T) {
 	// Try to render a simple template.
 	results, err := gen.Generate(false)
 	require.NoError(t, err)
-	require.Len(t, results, 11)
+	// 11 top-level docs + workflow reference docs from MTIX-14.4.
+	require.Len(t, results, len(AllDocFiles())+len(WorkflowDocFiles()))
 
 	// Verify at least one file was actually created on disk.
 	for _, result := range results {

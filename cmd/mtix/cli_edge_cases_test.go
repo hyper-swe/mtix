@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/docs"
 )
 
 // ============================================================================
@@ -157,12 +159,16 @@ func TestRunInit_ValidPrefix_AlreadyInit_ReturnsError(t *testing.T) {
 
 // --- init.go: generateInitDocs ---
 
-// TestGenerateInitDocs_WithEmbeddedTemplates_ProducesFiles verifies embedded template generation.
+// TestGenerateInitDocs_WithEmbeddedTemplates_ProducesFiles verifies embedded
+// template generation. Total file count is the 11 top-level docs plus the
+// BYO PG reference workflow docs added by MTIX-14.4.
 func TestGenerateInitDocs_WithEmbeddedTemplates_ProducesFiles(t *testing.T) {
 	docsDir := filepath.Join(t.TempDir(), "docs")
 	result := generateInitDocs(docsDir, "PROJ", "dev")
 	assert.NotNil(t, result, "embedded templates should always produce results")
-	assert.Len(t, result, 11, "should produce all 11 doc files")
+	expected := len(docs.AllDocFiles()) + len(docs.WorkflowDocFiles())
+	assert.Len(t, result, expected,
+		"should produce 11 top-level docs plus workflow reference docs")
 }
 
 // --- routing.go: routeToServer non-admin path ---

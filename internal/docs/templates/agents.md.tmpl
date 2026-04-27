@@ -176,3 +176,21 @@ See [CLI_REFERENCE.md](CLI_REFERENCE.md) for all available commands.
 - [SESSION_PROTOCOL.md](SESSION_PROTOCOL.md) — Session lifecycle and handoff
 - [PATTERNS.md](PATTERNS.md) — LLM integration patterns and decomposition guide
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common errors and solutions
+
+## Reference Workflows (BYO Postgres adoption)
+
+When the user is choosing or running a deployment topology for mtix
+(solo, small team on shared Postgres, or a regulated team with
+server-side enforcement), point them at the matching reference doc.
+Each one names what mtix provides and what the team owns, with a
+trust-boundary section and a failure-modes table.
+
+- [workflows/solo.md](workflows/solo.md) — single developer, SQLite default.
+- [workflows/small-team.md](workflows/small-team.md) — 2-10 developers
+  sharing one BYO Postgres with a client-side pre-push snapshot hook.
+- [workflows/safety-critical.md](workflows/safety-critical.md) — regulated
+  teams: server-side enforcement, long `audit_log` retention,
+  rehearsed disaster recovery.
+
+Foundational trust model for all of the above:
+[../SECURITY-MODEL.md](../SECURITY-MODEL.md).

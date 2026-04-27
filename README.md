@@ -351,6 +351,7 @@ Manage via CLI: `mtix config set auto_claim true`
 
 - **[User Manual](USERMANUAL.md)** — Comprehensive guide covering every feature: hierarchy, state machine, dependencies, prompt steering, agent management, REST/gRPC/MCP APIs, backup/export/import, and more.
 - **[MCP Setup Guide](docs/MCP-SETUP.md)** — Configure mtix as an MCP server for Claude Desktop, Claude Code, Cursor, and Windsurf. Includes multi-project setup and context chain usage.
+- **[Security Model](docs/SECURITY-MODEL.md)** — Trust model and threat model for mtix. **Required reading before adopting BYO Postgres mode** for team collaboration. Documents what mtix protects against, what it does not, and the security checklist for adopters.
 
 ## License
 

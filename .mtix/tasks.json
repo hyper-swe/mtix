@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-04-27T08:25:49Z",
+  "exported_at": "2026-04-27T08:41:25Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1010,7 +1010,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0,
+      "progress": 0.1111111111111111,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1177,15 +1177,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "dev",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "72f3e955979095f095c35bbe00ba298793bf5f66bc5a9a33c6fa019775b59d0e",
       "created_at": "2026-04-27T07:53:47Z",
-      "updated_at": "2026-04-27T07:57:36Z"
+      "updated_at": "2026-04-27T08:41:25Z",
+      "closed_at": "2026-04-27T08:41:25Z"
     },
     {
       "id": "MTIX-14.8",
@@ -2500,11 +2501,11 @@
       "agent_id": "dev",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-13",
+      "current_node_id": "MTIX-14.7",
       "last_heartbeat": "2026-03-30T02:58:55Z"
     }
   ],
   "sessions": null,
   "node_count": 100,
-  "checksum": "8c7284bb9b4780720f1e835ad63cf11677abe619f62838f0b690ecbc7c1cd54f"
+  "checksum": "9ec7fbcde46ec2d1fa5bcd73e28cd026270faff798e154ce1590f93df6a12d36"
 }

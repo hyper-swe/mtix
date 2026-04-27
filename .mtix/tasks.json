@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-04-27T09:53:09Z",
+  "exported_at": "2026-04-27T10:24:17Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1236,8 +1236,32 @@
       "weight": 1,
       "content_hash": "e1303c91f1330f3e443b61702a352af2269215f0825a4f68485add8df4a447c9",
       "created_at": "2026-04-27T08:04:51Z",
-      "updated_at": "2026-04-27T09:53:09Z",
-      "closed_at": "2026-04-27T09:53:09Z"
+      "updated_at": "2026-04-27T10:24:17Z",
+      "closed_at": "2026-04-27T10:24:17Z"
+    },
+    {
+      "id": "MTIX-14.9.2",
+      "parent_id": "MTIX-14.9",
+      "depth": 2,
+      "seq": 2,
+      "project": "MTIX",
+      "title": "Fill in PG contract test bodies (deferred from 14.9)",
+      "description": "MTIX-14.9 shipped the test harness scaffolding (providers, secret redaction, CI integration, quirks tests). The 10 contract test bodies in e2e/postgres/contract_test.go are stubs that only call Ping; the full assertions promised by the test names (CRUD, multi-value filters, concurrent mutations, advisory-lock single-flight, audit log triggers, audit-log atomicity, node_type canonicalization, SQL injection resistance, TLS verify-full, statement timeout) require the PG store driver (14.1) and audit_log schema (14.2) to exist first. This ticket fills in the actual assertions once those land. Blocked by 14.1 and 14.2.",
+      "prompt": "SCOPE\n\nFill in the 10 contract test bodies in e2e/postgres/contract_test.go that were left as Ping-only stubs in MTIX-14.9. Once 14.1 (PG store driver) and 14.2 (audit_log table) land, the contract surface exists and meaningful assertions can be written.\n\nPRECONDITION\n\nThis ticket is BLOCKED until both:\n- MTIX-14.1: PG store driver registered via RegisterPGStore\n- MTIX-14.2: audit_log table schema available via store migrations\n\nDELIVERABLES\n\nFor each of the 10 contract tests in e2e/postgres/contract_test.go, replace the Ping-only body with assertions that exercise the behavior described in the test name:\n\n1. TestStore_CRUDContract\n   - Create a Node, GetNode, UpdateNode (title/status), DeleteNode (soft)\n   - Verify each transition leaves the store in the documented state\n   - Round-trip content_hash matches\n\n2. TestStore_ListNodes_AllFilters (FR-17.1)\n   - Insert nodes with varied status/under/assignee/node_type/priority/labels\n   - Query with each multi-value filter combination\n   - Verify OR within field, AND across fields\n\n3. TestStore_ConcurrentMutations\n   - 2 goroutines mutating different nodes against one store\n   - No deadlock; both succeed; race detector clean\n\n4. TestStore_ConcurrentSchemaMigration\n   - 2 goroutines both call schema migration\n   - PG advisory lock single-flights; one runs, other waits then sees result\n   - Skipped on providers without advisory lock support (pgbouncer transaction mode)\n\n5. TestStore_TLSVerifyFull\n   - sslmode=verify-full succeeds\n   - sslmode=verify-ca, prefer, disable rejected by mtix connection-string validator\n   - Skipped on Docker (loopback)\n\n6. TestStore_StatementTimeout\n   - Issue long query (SELECT pg_sleep beyond timeout)\n   - Verify abort within configured timeout\n\n7. TestStore_AuditLogTriggers\n   - Insert via mutation; verify audit_log row inserted\n   - Attempt UPDATE on audit_log row -\u003e raises exception\n   - Attempt DELETE on audit_log row -\u003e raises exception\n\n8. TestStore_AuditLogAtomicWithMutation\n   - Chaos: simulate transaction abort at various points\n   - Verify no committed mutation lacks an audit row\n   - Verify no orphaned audit row without a mutation\n\n9. TestStore_NodeTypeCanonicalization (MTIX-7, MTIX-12)\n   - Insert via raw SQL with intentionally wrong node_type for the depth (e.g., depth 0 stored as story)\n   - Export via the store; verify normalized to canonical (depth 0 -\u003e epic)\n   - Round-trip: export -\u003e import -\u003e export produces byte-identical result\n\n10. TestStore_SQLInjectionResistance (MTIX-9.1 pattern)\n    - For each filter (under, status, type, assignee, priority, labels)\n    - Pass malicious payloads (DROP TABLE, OR 1=1, etc.)\n    - Verify table still exists, no rows returned, no error escalation\n\nINTERFACE WIDENING\n\nPGStore interface in e2e/postgres/contract_test.go currently only has Ping/Close/Exec. Widen to mirror the relevant subset of internal/store.Store needed for the assertions above. Likely additions:\n- CreateNode, GetNode, UpdateNode, DeleteNode\n- ListNodes(filter, opts)\n- Export, Import (for round-trip canonicalization test)\n- Possibly: schema migration trigger (for the migration concurrency test)\n\nOr import the real internal/store package once 14.1 lands and the circular-dependency concern from 14.9 is resolved.\n\nACCEPTANCE\n1. All 10 contract tests have meaningful assertions matching their names.\n2. All run against Docker provider when available (no longer skip on ErrPGStoreNotReady once 14.1 registers).\n3. All test names align with their assertions (no misleading naming).\n4. Tests pass against Docker provider in CI.\n5. Provider-conditional tests (TLS, advisory lock) skip cleanly on incompatible providers.\n6. Coverage on contract tests \u003e= 90%.\n7. golangci-lint clean.\n8. Race detector clean (`go test -tags=e2e -race ./e2e/postgres/`).",
+      "acceptance": "1. 10 contract tests have real assertions matching names. 2. Pass against Docker in CI (no longer skip via ErrPGStoreNotReady). 3. Names align with assertions. 4. Provider-conditional tests skip cleanly. 5. \u003e=90% coverage. 6. Lint clean. 7. Race-detector clean.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "92c3bcc38d674629038c612207c1c7c5193d44b451cb14d129d30b115984a289",
+      "created_at": "2026-04-27T10:20:17Z",
+      "updated_at": "2026-04-27T10:24:17Z"
     },
     {
       "id": "MTIX-2",
@@ -2469,6 +2493,18 @@
   ],
   "dependencies": [
     {
+      "from_id": "MTIX-14.1",
+      "to_id": "MTIX-14.9.2",
+      "dep_type": "blocks",
+      "created_at": "2026-04-27T10:24:17Z"
+    },
+    {
+      "from_id": "MTIX-14.2",
+      "to_id": "MTIX-14.9.2",
+      "dep_type": "blocks",
+      "created_at": "2026-04-27T10:24:17Z"
+    },
+    {
       "from_id": "MTIX-14.9",
       "to_id": "MTIX-14.1",
       "dep_type": "blocks",
@@ -2509,6 +2545,6 @@
     }
   ],
   "sessions": null,
-  "node_count": 100,
-  "checksum": "3da4551820a7073135a2b98390fd2719bac270e3380f7a7ffece2b7f7597f1de"
+  "node_count": 101,
+  "checksum": "c4230e8d2ed19a3d7ecb3ec60eb56ca3817ea0df0aee2825feb44363c9c1ae10"
 }

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-04-27T17:31:22Z",
+  "exported_at": "2026-04-27T17:51:58Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1284,7 +1284,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0,
+      "progress": 0.07692307692307693,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1307,15 +1307,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-opus-4-7",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "86c4781b65a9c37ab235559d6fdf8089aaf6de664dcc677509efe82a6963524b",
       "created_at": "2026-04-27T13:01:34Z",
-      "updated_at": "2026-04-27T13:28:50Z"
+      "updated_at": "2026-04-27T17:51:58Z",
+      "closed_at": "2026-04-27T17:51:58Z"
     },
     {
       "id": "MTIX-15.10",
@@ -3035,6 +3036,19 @@
   ],
   "agents": [
     {
+      "agent_id": "MTIX",
+      "project": "MTIX",
+      "state": "idle",
+      "last_heartbeat": "2026-04-27T17:37:12Z"
+    },
+    {
+      "agent_id": "claude-opus-4-7",
+      "project": "MTIX",
+      "state": "working",
+      "current_node_id": "MTIX-15.1",
+      "last_heartbeat": "2026-04-27T17:37:12Z"
+    },
+    {
       "agent_id": "dev",
       "project": "MTIX",
       "state": "working",
@@ -3042,7 +3056,15 @@
       "last_heartbeat": "2026-03-30T02:58:55Z"
     }
   ],
-  "sessions": null,
+  "sessions": [
+    {
+      "id": "01KQ808FBAED4PDV5AVH1QPJN3",
+      "agent_id": "MTIX",
+      "project": "MTIX",
+      "started_at": "2026-04-27T17:37:12Z",
+      "status": "active"
+    }
+  ],
   "node_count": 115,
-  "checksum": "a3afd7e76a41e51171e57ac0ddc4f1138dbeb7b93513a3b6fb4ebe9b5d0458c6"
+  "checksum": "e278d62206382e13e6db7778765ac1ccdc17643e4fffe0741e1012edce78a681"
 }

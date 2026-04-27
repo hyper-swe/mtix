@@ -336,6 +336,55 @@ All checks must pass. Do not submit PRs with failing tests or linter warnings.
 
 ---
 
+## E2E Postgres Test Harness (MTIX-14.9)
+
+If your change touches the BYO Postgres path (`internal/store/...`,
+migrations, audit log, anything in MTIX-14.x), run the Postgres contract
+suite locally before pushing.
+
+The suite is **gated by build tag `e2e`** so it does not slow down the
+default unit-test build.
+
+### Make targets
+
+```bash
+# Local: run against an ephemeral docker postgres:16-alpine container.
+# Requires a running docker daemon; auto-skips if docker is unavailable.
+make test-pg-docker
+
+# Local: run against managed Supabase (set DSN first; use the :5432 direct port).
+export MTIX_TEST_SUPABASE_DSN='postgres://...:5432/postgres?sslmode=verify-full'
+make test-pg-supabase
+
+# Local: run against Neon serverless (set DSN first).
+export MTIX_TEST_NEON_DSN='postgres://...neon.tech/db?sslmode=require'
+make test-pg-neon
+
+# Run every provider whose credentials are present.
+make test-pg-all
+
+# Drop orphaned mtix_test_* schemas from a managed DB (dry-run by default).
+make cleanup-test-schemas DSN="$MTIX_TEST_SUPABASE_DSN" OLDER_THAN=24h
+make cleanup-test-schemas DSN="$MTIX_TEST_SUPABASE_DSN" OLDER_THAN=24h DRY_RUN=false
+```
+
+### Secret hygiene
+
+DSNs are credentials. **Never** paste a DSN in PR comments, commit
+messages, screenshots, or chat. The harness installs a redacting writer
+on `os.Stderr` to catch accidental leaks; CI workflows pass DSNs only
+through `env:` (never through `run:` arguments). See
+`e2e/postgres/README.md` for the complete secret-handling protocol and
+provider-specific quirks.
+
+### CI
+
+- Every PR runs `test-pg-docker` (hermetic, no secrets).
+- Every release tag (`v*.*.*`) runs `test-pg-supabase` and
+  `test-pg-neon` in matrix; failure blocks the release.
+
+---
+
 ## License
 
 By contributing to mtix, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).

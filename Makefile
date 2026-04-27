@@ -29,7 +29,9 @@ TASKS_DB     := .mtix/data/mtix.db
         security-scan security-audit bench fuzz e2e proto-gen docs-gen \
         release-artifacts clean verify preflight help \
         setup tasks-export tasks-import tasks-sync \
-        generate-plugin-skills agent-kit
+        generate-plugin-skills agent-kit \
+        test-pg-docker test-pg-supabase test-pg-neon test-pg-all \
+        cleanup-test-schemas
 
 # ─── Default target ───
 all: build
@@ -172,6 +174,48 @@ fuzz:
 ## e2e: Run end-to-end tests
 e2e:
 	go test ./e2e/... -v -count=1
+
+## ─── E2E Postgres harness (MTIX-14.9) ───
+## test-pg-docker: Run Postgres contract suite against ephemeral docker container.
+## Requires: docker daemon running locally.
+test-pg-docker:
+	go test ./e2e/postgres/ -tags=e2e -provider=docker -count=1 -v
+
+## test-pg-supabase: Run Postgres contract suite against Supabase.
+## Requires: MTIX_TEST_SUPABASE_DSN env var (use the :5432 direct port for full coverage).
+test-pg-supabase:
+	@if [ -z "$$MTIX_TEST_SUPABASE_DSN" ]; then \
+		echo "MTIX_TEST_SUPABASE_DSN not set; skipping supabase tests."; \
+		exit 0; \
+	fi
+	go test ./e2e/postgres/ -tags=e2e -provider=supabase -count=1 -v
+
+## test-pg-neon: Run Postgres contract suite against Neon serverless.
+## Requires: MTIX_TEST_NEON_DSN env var.
+test-pg-neon:
+	@if [ -z "$$MTIX_TEST_NEON_DSN" ]; then \
+		echo "MTIX_TEST_NEON_DSN not set; skipping neon tests."; \
+		exit 0; \
+	fi
+	go test ./e2e/postgres/ -tags=e2e -provider=neon -count=1 -v
+
+## test-pg-all: Run every Postgres provider whose credentials are present.
+## Always runs docker (if available); cloud providers run only when DSN env vars are set.
+test-pg-all: test-pg-docker
+	@$(MAKE) test-pg-supabase
+	@$(MAKE) test-pg-neon
+
+## cleanup-test-schemas: Drop orphaned mtix_test_* schemas from a Postgres database.
+## Defaults to dry-run. Pass DRY_RUN=false to actually drop.
+##   make cleanup-test-schemas DSN="$$MTIX_TEST_SUPABASE_DSN" OLDER_THAN=24h
+DRY_RUN     ?= true
+OLDER_THAN  ?= 24h
+DSN         ?= $$MTIX_CLEANUP_DSN
+cleanup-test-schemas:
+	go run -tags=cleanup ./tools/cleanup-test-schemas.go \
+		-dsn "$(DSN)" \
+		-older-than $(OLDER_THAN) \
+		-dry-run=$(DRY_RUN)
 
 ## ─── Code generation ───
 

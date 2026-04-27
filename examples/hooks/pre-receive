@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# mtix pre-receive hook (server-side, self-hosted git)
+#
+# Role
+#   Runs on the git server when a client pushes. Regenerates a fresh
+#   `.mtix/tasks.json` snapshot from Postgres and rejects the push if the
+#   snapshot inside the pushed tree disagrees with what PG produces *now*.
+#
+#   This is the only real enforcement gate — client-side hooks can be
+#   bypassed with `--no-verify`. Use this when your team needs the audit
+#   trail to be airtight (regulated environments, post-mortem-friendly
+#   workflows, etc.).
+#
+# Mode
+#   Server-side: runs in the bare repo on the git server. Stdin format
+#   is `<old-sha> <new-sha> <ref>` per `man githooks(5)`. We loop over
+#   every ref-update in the push and validate any update that touches
+#   `.mtix/tasks.json`.
+#
+# Trade-offs
+#   * Hard fail (this script): rejects the push entirely on mismatch.
+#     The developer must regenerate the snapshot locally and re-push.
+#   * Warn-and-stage (alternative): accept the push but open an issue.
+#     Not implemented here because the whole reason to deploy this hook
+#     is enforcement; if you want soft enforcement use the GH Action.
+#
+# Required environment
+#   * `mtix` CLI installed on the git server, on PATH.
+#   * `MTIX_PG_DSN` exported with a *read-only* PG role (least privilege).
+#     The DSN should NOT have write access — this hook only reads.
+#   * `MTIX_BIN` may be set to an absolute path to override resolution.
+#
+# Security posture (audit references mirror pre-push)
+#   T1: every variable double-quoted; no `eval`.
+#   T2: `mtix` resolved once, exported as MTIX_BIN.
+#   T4: never echoes task content.
+#   S2: snapshot bounded by `--timeout`.
+# ---------------------------------------------------------------------------
+
+set -euo pipefail
+
+# --- T2: resolve mtix once, then absolute path -----------------------------
+if [ -z "${MTIX_BIN:-}" ]; then
+  if ! MTIX_BIN="$(command -v mtix)"; then
+    printf 'mtix pre-receive: mtix CLI missing on git server; rejecting push\n' >&2
+    exit 1
+  fi
+fi
+export MTIX_BIN
+
+# --- Pre-flight: must have a DSN ------------------------------------------
+if [ -z "${MTIX_PG_DSN:-}" ]; then
+  printf 'mtix pre-receive: MTIX_PG_DSN not set on git server; rejecting push\n' >&2
+  exit 1
+fi
+
+# Prepare a working tree where we can checkout the pushed snapshot.
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf -- "${WORK_DIR}"' EXIT
+
+# Read each ref-update from stdin per githooks(5).
+RC=0
+while read -r OLD_SHA NEW_SHA REF_NAME; do
+  # Deletes carry NEW_SHA = 40 zeros — nothing to validate.
+  if [ "${NEW_SHA}" = "0000000000000000000000000000000000000000" ]; then
+    continue
+  fi
+
+  # Skip refs that are not branches (tags, notes, etc.).
+  case "${REF_NAME}" in
+    refs/heads/*) ;;
+    *) continue ;;
+  esac
+
+  # Does the pushed tree even contain `.mtix/tasks.json`? If not, this is
+  # a project that does not use mtix or the file is gitignored — accept.
+  if ! git cat-file -e "${NEW_SHA}:.mtix/tasks.json" 2>/dev/null; then
+    continue
+  fi
+
+  # Extract the pushed tasks.json into the work dir.
+  PUSHED_FILE="${WORK_DIR}/pushed-tasks.json"
+  git cat-file -p "${NEW_SHA}:.mtix/tasks.json" > "${PUSHED_FILE}"
+
+  # Generate a fresh snapshot from PG to compare against.
+  FRESH_FILE="${WORK_DIR}/fresh-tasks.json"
+  SNAPSHOT_TIMEOUT="${MTIX_HOOK_TIMEOUT:-30s}"
+  if ! "${MTIX_BIN}" snapshot --timeout "${SNAPSHOT_TIMEOUT}" --output "${FRESH_FILE}"; then
+    printf 'mtix pre-receive: snapshot failed (PG unreachable from git server); rejecting %s\n' "${REF_NAME}" >&2
+    RC=1
+    continue
+  fi
+
+  # Compare hashes. We use git's content-addressed hash so whitespace and
+  # line endings are normalised by git for the comparison.
+  PUSHED_HASH="$(git hash-object -- "${PUSHED_FILE}")"
+  FRESH_HASH="$(git hash-object -- "${FRESH_FILE}")"
+
+  if [ "${PUSHED_HASH}" != "${FRESH_HASH}" ]; then
+    # T4: do NOT cat the diff to stderr (task titles could contain shell
+    # metacharacters that confuse downstream log shippers). Print a fixed
+    # remediation message and the ref name only.
+    printf 'mtix pre-receive: snapshot drift on %s\n' "${REF_NAME}" >&2
+    printf 'mtix pre-receive: regenerate locally with `mtix snapshot` and push again\n' >&2
+    RC=1
+  fi
+
+  # Old SHA is unused for content validation; keep the loop variable
+  # explicit so shellcheck does not flag it as unused.
+  : "${OLD_SHA}"
+done
+
+exit "${RC}"

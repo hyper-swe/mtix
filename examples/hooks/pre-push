@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# mtix pre-push hook (client-side)
+#
+# Role
+#   Before each `git push`, regenerate `.mtix/tasks.json` from the canonical
+#   Postgres store and commit any drift so the snapshot you push matches what
+#   teammates will see when they pull.
+#
+# Mode
+#   This is a *client-side* hook: developers can bypass it with `--no-verify`
+#   or by editing their own `.git/hooks/pre-push`. For environments where the
+#   snapshot must be enforced, also install `pre-receive` (self-hosted git)
+#   or `github-action.yml` (GitHub.com). See `examples/hooks/README.md` and
+#   `docs/SECURITY-MODEL.md` for the full trust model.
+#
+# Trade-offs (documented for reviewers, not negotiable defaults)
+#   * Default mode creates a *separate* "chore(snapshot)" commit so the
+#     audit trail is unambiguous: the developer's commit is theirs, the
+#     snapshot commit is the tool's. This is safer than amending because
+#     it cannot accidentally rewrite signed commits or change a commit
+#     that has already been pushed elsewhere.
+#   * Set `MTIX_HOOK_AMEND=1` to amend the snapshot into the developer's
+#     last commit instead. Use this if your team prefers a flat history
+#     and accepts that signature/co-author metadata will be re-applied.
+#   * If `mtix snapshot` fails (e.g. PG is unreachable), the hook *warns
+#     and skips* — it does NOT block the push. Blocking would couple your
+#     ability to push code to PG availability, which is the wrong default
+#     for a primitives-not-policy tool.
+#
+# Security posture (audit references in the ticket prompt)
+#   T1: every variable is double-quoted; no `eval`; no unquoted command
+#       substitution into shell commands.
+#   T2: `mtix` is resolved once via `command -v` and then invoked via the
+#       absolute path stored in `MTIX_BIN`, which is `export`ed so any
+#       subprocess uses the same binary. This prevents a malicious cwd
+#       from shadowing `mtix` via a poisoned `./mtix`.
+#   T3: separate "chore(snapshot)" commit is the default; amend is opt-in.
+#   T4: never echoes task content; only structural messages (counts, file
+#       paths under `.mtix/`, exit status).
+#   S1: snapshot failure is non-fatal to the push.
+#   S2: snapshot is invoked with `--timeout 30s` so a hung PG cannot stall
+#       the push indefinitely.
+#
+# Install
+#   cp examples/hooks/pre-push .git/hooks/pre-push
+#   chmod +x .git/hooks/pre-push
+#
+# Required environment
+#   The mtix CLI must be on PATH at install time so the resolution call
+#   below succeeds. Override by exporting MTIX_BIN to an absolute path
+#   before running git push.
+# ---------------------------------------------------------------------------
+
+set -euo pipefail
+
+# --- T2: resolve mtix once, then use absolute path everywhere --------------
+# We accept a pre-set MTIX_BIN so CI / pinned-binary setups can override.
+if [ -z "${MTIX_BIN:-}" ]; then
+  if ! MTIX_BIN="$(command -v mtix)"; then
+    printf 'mtix pre-push: mtix CLI not found on PATH; skipping snapshot\n' >&2
+    exit 0
+  fi
+fi
+export MTIX_BIN
+
+# --- Pre-flight --------------------------------------------------------------
+# We only run inside a git repo with a `.mtix/` directory. If `.mtix/` is
+# missing the project is not using mtix here — silently no-op.
+if [ ! -d ".mtix" ]; then
+  exit 0
+fi
+
+# Capture the pre-snapshot hash of tasks.json so we can detect drift after
+# the snapshot. If the file does not yet exist, treat that as "all new".
+TASKS_FILE=".mtix/tasks.json"
+PRE_HASH=""
+if [ -f "${TASKS_FILE}" ]; then
+  PRE_HASH="$(git hash-object "${TASKS_FILE}")"
+fi
+
+# --- S1/S2: bounded snapshot, warn-and-skip on failure ---------------------
+# `mtix snapshot` is the canonical command (see MTIX-14.3). It connects to
+# the configured store and rewrites .mtix/tasks.json deterministically.
+# We pass an explicit `--timeout` so an unreachable PG does not stall the
+# push for longer than the timeout window.
+SNAPSHOT_TIMEOUT="${MTIX_HOOK_TIMEOUT:-30s}"
+if ! "${MTIX_BIN}" snapshot --timeout "${SNAPSHOT_TIMEOUT}"; then
+  printf 'mtix pre-push: snapshot failed (PG unreachable?); skipping commit, push continues\n' >&2
+  exit 0
+fi
+
+# --- Did snapshot change anything? ------------------------------------------
+POST_HASH=""
+if [ -f "${TASKS_FILE}" ]; then
+  POST_HASH="$(git hash-object "${TASKS_FILE}")"
+fi
+
+if [ "${PRE_HASH}" = "${POST_HASH}" ]; then
+  # No drift; nothing to commit.
+  exit 0
+fi
+
+# --- Stage the change --------------------------------------------------------
+# We only stage the snapshot file. Anything else the developer has staged
+# is left alone. We never `git add -A` here (audit T1: avoid sweeping in
+# unrelated files that may contain secrets).
+git add -- "${TASKS_FILE}"
+
+# --- T3: commit-vs-amend ----------------------------------------------------
+# Default: separate commit. Set MTIX_HOOK_AMEND=1 to amend.
+TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+COMMIT_MSG="chore(snapshot): tasks.json from PG @ ${TIMESTAMP}"
+
+if [ "${MTIX_HOOK_AMEND:-0}" = "1" ]; then
+  # Amend mode: fold the snapshot into the developer's last commit. We
+  # keep the original message via `--no-edit` so the amend is invisible
+  # in `git log --oneline`.
+  git commit --amend --no-edit --no-verify --quiet
+else
+  # Default: separate audit-clear commit. We disable hooks (`--no-verify`)
+  # only for *this* internal commit so we don't recurse into ourselves.
+  git commit --quiet --no-verify -m "${COMMIT_MSG}"
+fi
+
+# --- T4: structural-only message --------------------------------------------
+# Print the file path and the new short hash so the developer can correlate
+# the snapshot commit with the upcoming push. Do NOT print task content.
+NEW_SHA="$(git rev-parse --short HEAD)"
+printf 'mtix pre-push: snapshot committed (%s) %s\n' "${NEW_SHA}" "${TASKS_FILE}" >&2
+
+exit 0

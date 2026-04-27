@@ -1,0 +1,95 @@
+# -----------------------------------------------------------------------------
+# mtix snapshot-freshness check (GitHub Actions)
+#
+# Role
+#   GitHub.com equivalent of the self-hosted `pre-receive` hook. Runs on every
+#   push (and pull request) to a protected branch. Regenerates the snapshot
+#   from Postgres and fails the workflow if the committed `.mtix/tasks.json`
+#   does not match.
+#
+#   Combine with a branch protection rule that requires this check to pass
+#   before merging — that is the actual enforcement gate (the workflow alone
+#   only reports; branch protection is what blocks the merge).
+#
+# Trade-offs
+#   * Same hard-fail semantics as `pre-receive`, just enforced by GitHub
+#     instead of a self-hosted git server.
+#   * Requires the runner to be able to reach your Postgres instance
+#     (network ACL or self-hosted runner).
+#
+# Secrets
+#   Define `MTIX_PG_DSN` as an Actions secret. The DSN should be read-only
+#   (no write privileges). Never inline the DSN in this file — the regression
+#   test `TestExampleHooks_GithubAction_YAMLValid` rejects literal DSNs.
+#
+# Security posture
+#   T2: mtix is resolved once and exported as MTIX_BIN.
+#   T4: never prints tasks.json content; only file paths and the diff line
+#       count if there is drift.
+#   S2: snapshot bounded by --timeout.
+# -----------------------------------------------------------------------------
+name: mtix-snapshot-freshness
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Permissions: read-only by default. We only need contents:read to checkout
+# and to compare the committed snapshot.
+permissions:
+  contents: read
+
+jobs:
+  verify-snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Shallow clone is fine; we only need the tip to read .mtix/tasks.json.
+          fetch-depth: 1
+
+      - name: Install mtix
+        # In a real workflow you would `go install` a pinned version or
+        # download the release artifact. We use the canonical install path
+        # and resolve the binary once, exporting MTIX_BIN for later steps.
+        env:
+          MTIX_VERSION: v0.2.0
+        run: |
+          set -euo pipefail
+          go install "github.com/hyper-swe/mtix/cmd/mtix@${MTIX_VERSION}"
+          MTIX_BIN="$(command -v mtix)"
+          export MTIX_BIN
+          printf 'MTIX_BIN=%s\n' "${MTIX_BIN}" >> "${GITHUB_ENV}"
+
+      - name: Verify snapshot freshness
+        env:
+          # DSN comes from secrets — never inlined here.
+          MTIX_PG_DSN: ${{ secrets.MTIX_PG_DSN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MTIX_BIN:-}" ]; then
+            printf 'MTIX_BIN missing — install step did not export it\n' >&2
+            exit 1
+          fi
+
+          FRESH="$(mktemp)"
+          "${MTIX_BIN}" snapshot --timeout 30s --output "${FRESH}"
+
+          PUSHED_HASH="$(git hash-object -- .mtix/tasks.json)"
+          FRESH_HASH="$(git hash-object -- "${FRESH}")"
+
+          if [ "${PUSHED_HASH}" != "${FRESH_HASH}" ]; then
+            # T4: do not cat task content; report file path + line counts only.
+            PUSHED_LINES="$(wc -l < .mtix/tasks.json)"
+            FRESH_LINES="$(wc -l < "${FRESH}")"
+            printf 'mtix: snapshot drift on .mtix/tasks.json\n' >&2
+            printf 'mtix: pushed=%s lines, fresh=%s lines\n' "${PUSHED_LINES}" "${FRESH_LINES}" >&2
+            printf 'mtix: regenerate locally with `mtix snapshot` and push again\n' >&2
+            exit 1
+          fi
+
+          printf 'mtix: snapshot is fresh\n'

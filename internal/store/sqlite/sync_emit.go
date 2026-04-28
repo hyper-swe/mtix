@@ -50,8 +50,13 @@ type emitParams struct {
 // MUST be called from inside an open *sql.Tx — the atomic-with-mutation
 // property hinges on it. Returns model.ErrInvalidInput on validation
 // failure (callers should not hide these — a buggy emitter is worse than
-// a missing event).
+// a missing event). Returns model.ErrSyncQueueFull if the local queue
+// has reached the configured cap.
 func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
+	if err := enforceQueueLimit(ctx, tx); err != nil {
+		return err
+	}
+
 	authorID := sanitizeAuthorID(p.Author)
 	projectPrefix := projectPrefixFromNodeID(p.NodeID)
 	if projectPrefix == "" && p.ProjectCode != "" {
@@ -234,6 +239,46 @@ func bumpAndPersistVectorClock(ctx context.Context, tx *sql.Tx, authorID string)
 		out[k] = v
 	}
 	return out, nil
+}
+
+// enforceQueueLimit reads sync.max_queue_size from meta. If non-zero
+// and the count of pending sync_events has reached the cap, returns
+// a wrapped model.ErrSyncQueueFull with the documented one-line guide.
+//
+// The check runs inside the caller's tx so the read-then-insert race
+// is closed (the SQLite write lock prevents another tx from inserting
+// between the count and the eventual emit).
+func enforceQueueLimit(ctx context.Context, tx *sql.Tx) error {
+	var capRaw string
+	err := tx.QueryRowContext(ctx,
+		`SELECT value FROM meta WHERE key = 'sync.max_queue_size'`,
+	).Scan(&capRaw)
+	if err != nil {
+		return fmt.Errorf("read sync.max_queue_size: %w", err)
+	}
+	cap64, err := strconv.ParseInt(capRaw, 10, 64)
+	if err != nil {
+		return fmt.Errorf("parse sync.max_queue_size %q: %w", capRaw, err)
+	}
+	if cap64 <= 0 {
+		return nil // 0 == unlimited per FR-18 / SYNC-DESIGN
+	}
+
+	var pending int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sync_events WHERE sync_status = 'pending'`,
+	).Scan(&pending); err != nil {
+		return fmt.Errorf("count pending sync_events: %w", err)
+	}
+
+	if pending >= cap64 {
+		return fmt.Errorf(
+			"%w: %d events pending (cap=%d). "+
+				"Run: mtix sync push --force, or set sync.max_queue_size to 0",
+			model.ErrSyncQueueFull, pending, cap64,
+		)
+	}
+	return nil
 }
 
 // readOrComputeMachineHash returns the cached machine_hash from meta;

@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"strconv"
@@ -345,6 +346,114 @@ func TestEmitEvent_CorruptedVectorClockMetaValueSurfacesError(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "parse vector_clock")
+}
+
+func TestEmitEvent_QueueLimit_UnlimitedAcceptsMany(t *testing.T) {
+	s, raw := emitTestStore(t)
+	ctx := context.Background()
+
+	// Default sync.max_queue_size is 0 (unlimited). 50 emits succeed.
+	for i := 0; i < 50; i++ {
+		require.NoError(t, s.WithTx(ctx, func(tx *sql.Tx) error {
+			return emitEvent(ctx, tx, emitParams{
+				NodeID:      "MTIX-1",
+				ProjectCode: "MTIX",
+				OpType:      model.OpComment,
+				Author:      "alice",
+				Payload:     json.RawMessage(`{}`),
+			})
+		}))
+	}
+	var n int
+	require.NoError(t, raw.QueryRow(`SELECT COUNT(*) FROM sync_events`).Scan(&n))
+	require.Equal(t, 50, n)
+}
+
+func TestEmitEvent_QueueLimit_RejectsAtCap(t *testing.T) {
+	s, raw := emitTestStore(t)
+	ctx := context.Background()
+
+	_, err := raw.Exec(`UPDATE meta SET value = '5' WHERE key = 'sync.max_queue_size'`)
+	require.NoError(t, err)
+
+	// First 5 emits succeed.
+	for i := 0; i < 5; i++ {
+		require.NoError(t, s.WithTx(ctx, func(tx *sql.Tx) error {
+			return emitEvent(ctx, tx, emitParams{
+				NodeID:      "MTIX-1",
+				ProjectCode: "MTIX",
+				OpType:      model.OpComment,
+				Author:      "alice",
+				Payload:     json.RawMessage(`{}`),
+			})
+		}))
+	}
+
+	// 6th hits the cap and returns ErrSyncQueueFull.
+	err = s.WithTx(ctx, func(tx *sql.Tx) error {
+		return emitEvent(ctx, tx, emitParams{
+			NodeID:      "MTIX-1",
+			ProjectCode: "MTIX",
+			OpType:      model.OpComment,
+			Author:      "alice",
+			Payload:     json.RawMessage(`{}`),
+		})
+	})
+	require.Error(t, err)
+	require.True(t, errors.Is(err, model.ErrSyncQueueFull),
+		"caller must be able to errors.Is(ErrSyncQueueFull)")
+	require.Contains(t, err.Error(), "5 events pending (cap=5)")
+	require.Contains(t, err.Error(), "mtix sync push --force")
+}
+
+func TestEmitEvent_QueueLimit_FreedAfterPush(t *testing.T) {
+	s, raw := emitTestStore(t)
+	ctx := context.Background()
+
+	_, err := raw.Exec(`UPDATE meta SET value = '3' WHERE key = 'sync.max_queue_size'`)
+	require.NoError(t, err)
+
+	emit := func() error {
+		return s.WithTx(ctx, func(tx *sql.Tx) error {
+			return emitEvent(ctx, tx, emitParams{
+				NodeID:      "MTIX-1",
+				ProjectCode: "MTIX",
+				OpType:      model.OpComment,
+				Author:      "alice",
+				Payload:     json.RawMessage(`{}`),
+			})
+		})
+	}
+	require.NoError(t, emit())
+	require.NoError(t, emit())
+	require.NoError(t, emit())
+	require.ErrorIs(t, emit(), model.ErrSyncQueueFull, "fourth at cap")
+
+	// Simulate the push: mark all as pushed.
+	_, err = raw.Exec(`UPDATE sync_events SET sync_status = 'pushed' WHERE sync_status = 'pending'`)
+	require.NoError(t, err)
+
+	require.NoError(t, emit(), "after push, pending count is 0; cap is no longer hit")
+}
+
+func TestEmitEvent_QueueLimit_CorruptedCapValueSurfacesError(t *testing.T) {
+	s, raw := emitTestStore(t)
+	ctx := context.Background()
+
+	_, err := raw.Exec(`UPDATE meta SET value = 'not-an-int' WHERE key = 'sync.max_queue_size'`)
+	require.NoError(t, err)
+
+	err = s.WithTx(ctx, func(tx *sql.Tx) error {
+		return emitEvent(ctx, tx, emitParams{
+			NodeID:      "MTIX-1",
+			ProjectCode: "MTIX",
+			OpType:      model.OpComment,
+			Author:      "alice",
+			Payload:     json.RawMessage(`{}`),
+		})
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parse sync.max_queue_size")
 }
 
 func TestEmitEvent_FallsBackToProjectCodeWhenNodeIDPrefixInvalid(t *testing.T) {

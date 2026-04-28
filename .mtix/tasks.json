@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-04-28T11:34:01Z",
+  "exported_at": "2026-04-28T11:46:57Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1986,6 +1986,78 @@
       "updated_at": "2026-04-27T17:30:21Z"
     },
     {
+      "id": "MTIX-15.6.1",
+      "parent_id": "MTIX-15.6",
+      "depth": 2,
+      "seq": 1,
+      "project": "MTIX",
+      "title": "Divergent history detection + local sync_projects schema + first_event_hash computation",
+      "description": "Foundational: local sync_projects table mirroring the hub schema; deterministic first_event_hash function over the canonical first event; DetectDivergentHistory API returning structured error when local and hub disagree on the first_event_hash for the same prefix.",
+      "prompt": "TDD: tests first.\n\nSCHEMA: add local sync_projects table mirroring hub schema (003_sync_projects.sql):\n- project_prefix TEXT PRIMARY KEY\n- first_event_hash TEXT NOT NULL\n- created_at TEXT NOT NULL\n- schema_version INTEGER DEFAULT 1\n- last_seen_cli_version TEXT\n\nAdd via additive CREATE TABLE IF NOT EXISTS — same approach as 15.5.1's sync_conflicts.\n\nFIRST EVENT HASH:\n- ComputeFirstEventHash(event *model.SyncEvent) string — SHA-256 over canonical serialization of:\n  - project_prefix\n  - node_id\n  - op_type (string form)\n  - payload (canonical JSON: keys sorted)\n  - lamport_clock (decimal string)\n  - vector_clock (canonical JSON via VectorClock.MarshalJSON which is deterministic per 15.2.1)\n  - author_id\n  - author_machine_hash\n- Returns hex-encoded 64-char string.\n- DOES NOT include wall_clock_ts (varies across replicas) or event_id (unique per emit).\n- Determinism: two replicas computing the hash for the same event get the same string.\n\nDETECTION API:\n- DetectDivergentHistory(localPrefix, localHash, hubPrefix, hubHash string) error\n  - If hubPrefix != localPrefix or hubHash == \"\": no conflict (different project or hub fresh)\n  - If localHash == hubHash: no conflict (same project, matching history)\n  - Otherwise: return wrapped model.ErrSyncDivergentHistory with the four-option summary text\n- New sentinel: model.ErrSyncDivergentHistory in internal/model/errors.go\n\nLOCAL FIRST_EVENT_HASH STORAGE:\n- New helper getOrComputeLocalFirstEventHash(ctx, store) (prefix, hash string, err error):\n  - Read meta.sync.first_event_hash if cached (already computed once)\n  - Else: SELECT first event from sync_events ORDER BY lamport_clock LIMIT 1\n  - Compute hash via ComputeFirstEventHash, cache in meta, return\n- Add 'meta.sync.first_event_hash' INSERT OR IGNORE to schemaSQL (default empty)\n- Add 'meta.sync.project_prefix' too — derived from the first node's id when first event lands\n\nTESTS (PG-free):\n- TestComputeFirstEventHash_DeterministicAcrossInstances: build same event twice with different in-memory vc maps inserted in different orders, hash matches.\n- TestComputeFirstEventHash_DiffersOnAnyFieldChange: per-field mutation matrix.\n- TestComputeFirstEventHash_IgnoresWallClockAndEventID: change wall_clock_ts or event_id, hash unchanged.\n- TestDetectDivergentHistory_HappyPathSamePrefixSameHash: returns nil.\n- TestDetectDivergentHistory_DifferentPrefix: returns nil (different projects).\n- TestDetectDivergentHistory_HubFresh: hub hash empty, returns nil.\n- TestDetectDivergentHistory_Mismatch: returns wrapped ErrSyncDivergentHistory + four-option summary in error message.\n- TestSchema_LocalSyncProjectsTable: fresh DB has the table with expected columns.\n- TestGetOrComputeLocalFirstEventHash_FirstCallComputesAndCaches: writes to meta.sync.first_event_hash.\n- TestGetOrComputeLocalFirstEventHash_SubsequentCallsReadFromCache: doesn't re-scan sync_events.\n\nACCEPTANCE:\n- ComputeFirstEventHash deterministic + ignores wall_clock_ts/event_id\n- DetectDivergentHistory returns structured error with the four-option summary\n- Local sync_projects table present\n- meta.sync.first_event_hash sentinel populated\n- 90% coverage",
+      "acceptance": "Detection API + local sync_projects + deterministic hash function; tests cover all detection branches + hash determinism.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "393bd57b2e53e64357b321f17ff87a1d08b02e0cb8d1446389e55ee177f91e4b",
+      "created_at": "2026-04-28T11:45:21Z",
+      "updated_at": "2026-04-28T11:45:21Z"
+    },
+    {
+      "id": "MTIX-15.6.2",
+      "parent_id": "MTIX-15.6",
+      "depth": 2,
+      "seq": 2,
+      "project": "MTIX",
+      "title": "Reconciliation execution: DiscardLocal + RenameTo + ImportAs + audit trail + id-rename-map.json",
+      "description": "Three executable resolution paths in the data layer. Each runs in a single tx with full rollback on error. Audit events emitted (RECONCILE_START, RENAME_NODE, RECONCILE_DONE). .mtix/id-rename-map.json persisted on success; partial=true on failure for resume support.",
+      "prompt": "TDD: tests first.\n\nNEW PACKAGE internal/sync/reconcile (or directly in internal/store/sqlite/sync_reconcile.go — pick the cleaner location).\n\nAPI:\n- DiscardLocal(ctx, store, mtixDir) error — drops nodes table contents + sync_events + sync_conflicts + applied_events; resets meta.sync.* sentinels.\n- RenameTo(ctx, store, mtixDir, newPrefix string) (renamedCount int, err error) — rewrites every node id from \u003coldprefix\u003e-N to \u003cnewprefix\u003e-N atomically; updates parent_id references; updates sync_events.node_id; updates dependencies.from_id and to_id.\n- ImportAs(ctx, store, mtixDir, parentID string) (renamedCount int, err error) — re-parents all root nodes under parentID; renumbers local node IDs into parentID's namespace.\n\nATOMICITY: each function uses store.WithTx(...) so a panic or error mid-flight rolls back the entire change.\n\nAUDIT EVENTS: emit via existing store.AppendActivity equivalent OR a new internal/sync/reconcile/audit.go that writes to .mtix/reconcile.audit.log (one JSON line per event):\n- RECONCILE_START {path, prefix?, parent_id?, node_count, started_at}\n- RENAME_NODE {old_id, new_id}  — one per renamed node\n- RECONCILE_DONE {final_node_count, duration_ms}\n\nID RENAME MAP:\n- WriteIDRenameMap(mtixDir string, mapping map[string]string, partial bool) error\n- Path: .mtix/id-rename-map.json\n- Format: {\"renamed_at\": \"...\", \"partial\": false, \"map\": {\"OLD-1\": \"NEW-1\", ...}}\n- On error: write with partial=true so a follow-up cleanup can detect the partial state.\n\nTESTS:\n- TestDiscardLocal_ClearsAllStateAndResetsSentinels: populate store with nodes + events + conflicts; DiscardLocal; verify all empty + sentinels reset to '0'.\n- TestDiscardLocal_AtomicityOnFailure: inject failure mid-DROP via a chaos hook; verify no partial state (use store.WithTx error to simulate).\n- TestRenameTo_HappyPath_RewritesAllIDs: create a 3-level tree with 5 nodes under MTIX prefix; RenameTo(\"DEMO\"); verify every node id, parent_id, and sync_events.node_id rewritten.\n- TestRenameTo_PreservesContent: titles, descriptions, etc unchanged.\n- TestRenameTo_UpdatesDependencies: nodes with deps get from_id and to_id rewritten.\n- TestRenameTo_RollbackOnError: inject UPDATE failure; verify rollback (no partial rename).\n- TestImportAs_HappyPath: create 3 root nodes; ImportAs(\"PROJ-7\"); verify all become children of PROJ-7 with new IDs PROJ-7.1, PROJ-7.2, PROJ-7.3.\n- TestImportAs_PreservesSubtreeStructure: nested children retain their relative depth and ordering.\n- TestAuditEvents_AppendedToReconcileLog: after DiscardLocal/RenameTo/ImportAs, .mtix/reconcile.audit.log has the expected JSON lines.\n- TestIDRenameMap_WrittenOnSuccess: after RenameTo, .mtix/id-rename-map.json has the full map with partial=false.\n- TestIDRenameMap_WrittenAsPartialOnFailure: inject failure; map written with partial=true.\n\nACCEPTANCE:\n- Three resolution paths work end-to-end in tests.\n- Atomicity verified per path.\n- Audit events emitted.\n- Rename map persisted with partial flag on failure.\n- 90% coverage on reconcile package.",
+      "acceptance": "DiscardLocal/RenameTo/ImportAs implemented atomic + audited + rename-map persisted; 90% coverage.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "78b4e4e87667ed4f928f6eb67e506f398c1517612188bc6b4600ff842fb20ff8",
+      "created_at": "2026-04-28T11:45:50Z",
+      "updated_at": "2026-04-28T11:46:56Z"
+    },
+    {
+      "id": "MTIX-15.6.3",
+      "parent_id": "MTIX-15.6",
+      "depth": 2,
+      "seq": 3,
+      "project": "MTIX",
+      "title": "Dry-run plan + atomicity injection tests + prefix collision check",
+      "description": "Three pieces: DryRun returns the plan without side effects; chaos-style atomicity tests inject mid-flight failures per resolution path; PrefixCollision check refuses --rename-to NEWPREFIX before any local mutation if hub already owns NEWPREFIX.",
+      "prompt": "TDD: tests first.\n\nDRY-RUN API:\n- DryRunDiscardLocal(ctx, store) (Plan, error)\n- DryRunRenameTo(ctx, store, newPrefix string) (Plan, error)\n- DryRunImportAs(ctx, store, parentID string) (Plan, error)\n- type Plan struct { Path, Prefix, ParentID string; NodeCount int; Renames []Rename; EstimatedDurationMs int64 }\n- type Rename struct { OldID, NewID string }\n\nDryRun MUST return the same plan that the corresponding executable function would produce — verifiable by diff-testing the plan vs the actually-executed RENAME_NODE audit events.\n\nPREFIX COLLISION:\n- CheckPrefixCollision(ctx, hubProjects map[string]string, newPrefix string) error — returns wrapped model.ErrSyncReconcilePrefixCollision if hubProjects[newPrefix] is non-empty (hub already has the prefix with a first_event_hash).\n- New sentinel model.ErrSyncReconcilePrefixCollision in errors.go.\n\nATOMICITY INJECTION TESTS:\n- For each resolution path, write a test that injects a failure on the Nth UPDATE/INSERT/DELETE and verifies clean rollback.\n- For SQLite: easiest approach is to wrap WithTx with a counter that fails after N statements. A test helper TestStore_WithFailureAfterN(n int) builds the store with that hook installed.\n- TestRenameTo_AtomicityFailureAtRowN: build 10-node tree, fail after 5 renames, verify NO renames persisted.\n- TestImportAs_AtomicityFailureAtRowN: same shape, fail mid-renumber.\n- TestDiscardLocal_AtomicityFailureMidDrop: fail after first DROP, verify the surviving table is fully restored.\n\nDRY-RUN EQUIVALENCE TEST:\n- TestDryRun_PlanMatchesExecutedAuditEvents: for each resolution path:\n  1. Run DryRun, capture the Plan.\n  2. Run the executable function on a fresh copy of the same input store.\n  3. Read .mtix/reconcile.audit.log for the RENAME_NODE events.\n  4. Assert: plan.Renames == audit RENAME_NODE list (modulo timestamp ordering).\n\nACCEPTANCE:\n- DryRun implemented for all 3 paths.\n- Plan-equivalence test passes for all 3.\n- Atomicity injection passes for all 3.\n- Prefix collision detection works.\n- 90% coverage.",
+      "acceptance": "Dry-run + atomicity + prefix-collision implemented and tested for all 3 resolution paths.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "aee4c426e9ec85a14e88bb0d0f1668b83c6d558bfdf5ebf3ef96763f32de6b25",
+      "created_at": "2026-04-28T11:46:05Z",
+      "updated_at": "2026-04-28T11:46:57Z"
+    },
+    {
       "id": "MTIX-15.7",
       "parent_id": "MTIX-15",
       "depth": 1,
@@ -3545,6 +3617,18 @@
       "created_at": "2026-04-27T13:13:55Z"
     },
     {
+      "from_id": "MTIX-15.6.1",
+      "to_id": "MTIX-15.6.2",
+      "dep_type": "blocks",
+      "created_at": "2026-04-28T11:46:56Z"
+    },
+    {
+      "from_id": "MTIX-15.6.2",
+      "to_id": "MTIX-15.6.3",
+      "dep_type": "blocks",
+      "created_at": "2026-04-28T11:46:57Z"
+    },
+    {
       "from_id": "MTIX-15.7",
       "to_id": "MTIX-15.8",
       "dep_type": "blocks",
@@ -3615,6 +3699,6 @@
       "status": "active"
     }
   ],
-  "node_count": 134,
-  "checksum": "7d55d6e3c52b95328df77ecee761ac7b6409c40a973b1ead80234dcce407dbad"
+  "node_count": 137,
+  "checksum": "0ed26a05db381e587d12884f2e4108d188ba279601344493b6a3409ce3243549"
 }

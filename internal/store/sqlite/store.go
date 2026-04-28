@@ -128,37 +128,94 @@ func openDB(ctx context.Context, path string, isWriter bool) (*sql.DB, error) {
 	return db, nil
 }
 
-// init creates the database schema if it doesn't exist.
-// Checks schema version and refuses to start if the database
-// was created by a newer version per NFR-2.6.
+// init creates the database schema if it doesn't exist and runs any
+// needed forward migrations. Refuses to start if the database was created
+// by a newer schema version per NFR-2.6.
+//
+// Dispatch order (within one transaction per migration step so a crash
+// leaves the DB at a known version, never half-migrated):
+//  1. Read existing meta.schema_version (0 = fresh DB / no meta table yet).
+//  2. If existing == 1: run migrateV1ToV2SQL (drops legacy sync_events).
+//  3. Run schemaSQL (idempotent CREATE IF NOT EXISTS for every table;
+//     INSERT OR IGNORE for every meta key).
+//  4. UPDATE meta.schema_version to current schemaVersion if it had been
+//     at an older version. INSERT OR IGNORE in step 3 only sets the row
+//     for fresh DBs; an existing v1 row needs an explicit bump.
+//  5. Refuse if existing > schemaVersion.
 func (s *Store) init(ctx context.Context) error {
-	// Create schema (IF NOT EXISTS ensures idempotency).
+	existingVersion, err := s.readExistingSchemaVersion(ctx)
+	if err != nil {
+		return err
+	}
+
+	if existingVersion > schemaVersion {
+		return fmt.Errorf(
+			"database schema version %d is newer than supported version %d: %w",
+			existingVersion, schemaVersion, model.ErrConflict,
+		)
+	}
+
+	if existingVersion == 1 {
+		if _, err := s.writeDB.ExecContext(ctx, migrateV1ToV2SQL); err != nil {
+			return fmt.Errorf("migrate v1 -> v2 (drop legacy sync_events): %w", err)
+		}
+		s.logger.Info("schema_migrated",
+			"event", "schema_migrated",
+			"from_version", 1,
+			"to_version", 2,
+			"dropped_tables", "sync_events_v1",
+		)
+	}
+
 	if _, err := s.writeDB.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("create schema: %w", err)
 	}
 
-	// Check schema version for forward migration per NFR-2.6.
-	var versionStr string
+	if existingVersion > 0 && existingVersion < schemaVersion {
+		_, err := s.writeDB.ExecContext(ctx,
+			`UPDATE meta SET value = ? WHERE key = 'schema_version'`,
+			fmt.Sprintf("%d", schemaVersion),
+		)
+		if err != nil {
+			return fmt.Errorf("update schema_version after migration: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// readExistingSchemaVersion returns the meta.schema_version recorded in
+// the DB before init runs. Returns 0 if the meta table or the row is
+// absent (fresh DB).
+func (s *Store) readExistingSchemaVersion(ctx context.Context) (int, error) {
+	// Probe for the meta table first; querying a missing table errors.
+	var tableName string
 	err := s.readDB.QueryRowContext(ctx,
-		"SELECT value FROM meta WHERE key = ?", "schema_version",
-	).Scan(&versionStr)
+		`SELECT name FROM sqlite_master WHERE type='table' AND name='meta'`,
+	).Scan(&tableName)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
 	if err != nil {
-		return fmt.Errorf("read schema version: %w", err)
+		return 0, fmt.Errorf("probe meta table: %w", err)
+	}
+
+	var versionStr string
+	err = s.readDB.QueryRowContext(ctx,
+		`SELECT value FROM meta WHERE key = 'schema_version'`,
+	).Scan(&versionStr)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read schema version: %w", err)
 	}
 
 	var version int
 	if _, err := fmt.Sscanf(versionStr, "%d", &version); err != nil {
-		return fmt.Errorf("parse schema version %q: %w", versionStr, err)
+		return 0, fmt.Errorf("parse schema version %q: %w", versionStr, err)
 	}
-
-	if version > schemaVersion {
-		return fmt.Errorf(
-			"database schema version %d is newer than supported version %d: %w",
-			version, schemaVersion, model.ErrConflict,
-		)
-	}
-
-	return nil
+	return version, nil
 }
 
 // SetClock overrides the clock function used by the store.

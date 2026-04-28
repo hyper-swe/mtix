@@ -208,7 +208,7 @@ func TestSchema_SchemaVersionStored(t *testing.T) {
 		"SELECT value FROM meta WHERE key = ?", "schema_version",
 	).Scan(&version)
 	require.NoError(t, err)
-	assert.Equal(t, "1", version)
+	assert.Equal(t, "2", version, "fresh DB ships at the current schema version (FR-18)")
 }
 
 // TestSchema_ForeignKeysEnforced verifies FK constraints are active.

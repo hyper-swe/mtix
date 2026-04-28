@@ -5,10 +5,20 @@ package sqlite
 
 // schemaVersion is the current database schema version.
 // Increment when making backwards-incompatible schema changes per NFR-2.6.
-const schemaVersion = 1
+//
+// Version history:
+//   - v1 (v0.1.x): original schema; sync_events was a placeholder per NFR-3.2.
+//   - v2 (v0.2.x): sync_events rewritten to FR-18.6 / SYNC-DESIGN section 3.1
+//     shape; applied_events added; meta.sync.* sentinels populated.
+const schemaVersion = 2
 
-// schemaSQL defines the complete database schema per NFR-2.2.
+// schemaSQL defines the complete v2 database schema per NFR-2.2 and FR-18.
 // All tables, indexes, triggers, and initial metadata.
+//
+// Every CREATE is IF NOT EXISTS so this SQL is safe to re-run on every
+// startup. Migration from v1 (which has the OLD sync_events shape) drops
+// the legacy table BEFORE running this SQL — see migrateV1ToV2SQL and
+// the dispatch in store.init.
 const schemaSQL = `
 -- Core node storage (one row per task/micro task) per NFR-2.2
 CREATE TABLE IF NOT EXISTS nodes (
@@ -97,25 +107,45 @@ CREATE TABLE IF NOT EXISTS dependencies (
 
 CREATE INDEX IF NOT EXISTS idx_deps_to ON dependencies(to_id, dep_type);
 
--- Sync event log per NFR-3.2
--- Events are append-only; pushed marks successful cloud sync.
+-- Sync event log per FR-18.6 / SYNC-DESIGN section 3.1.
+-- Append-only mirror of events emitted by every node mutation.
+-- The hub stores the canonical replica; this is the local outbox/cache.
+-- retained_until is reserved for v2 compaction (FR-18.26 / MTIX v3 ticket).
 CREATE TABLE IF NOT EXISTS sync_events (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    node_id      TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-    operation    TEXT NOT NULL,
-    field        TEXT,
-    old_value    TEXT,
-    new_value    TEXT,
-    timestamp    TEXT NOT NULL,
-    author       TEXT,
-    vector_clock TEXT,
-    pushed       INTEGER DEFAULT 0
+    event_id            TEXT PRIMARY KEY,
+    project_prefix      TEXT NOT NULL,
+    node_id             TEXT NOT NULL,
+    op_type             TEXT NOT NULL CHECK (op_type IN (
+        'create_node','update_field','transition_status',
+        'claim','unclaim','defer',
+        'comment','link_dep','unlink_dep',
+        'delete','set_acceptance','set_prompt'
+    )),
+    payload             TEXT NOT NULL,
+    wall_clock_ts       INTEGER NOT NULL,
+    lamport_clock       INTEGER NOT NULL,
+    vector_clock        TEXT NOT NULL,
+    author_id           TEXT NOT NULL,
+    author_machine_hash TEXT NOT NULL,
+    sync_status         TEXT NOT NULL DEFAULT 'pending' CHECK (sync_status IN (
+        'pending','pushed','conflicted','applied'
+    )),
+    created_at          TEXT NOT NULL,
+    retained_until      TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_sync_events_unpushed
-    ON sync_events(pushed) WHERE pushed = 0;
-CREATE INDEX IF NOT EXISTS idx_sync_events_node
-    ON sync_events(node_id);
+CREATE INDEX IF NOT EXISTS idx_sync_events_status_lamport
+    ON sync_events(sync_status, lamport_clock) WHERE sync_status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_sync_events_node    ON sync_events(node_id);
+CREATE INDEX IF NOT EXISTS idx_sync_events_lamport ON sync_events(lamport_clock);
+
+-- Idempotent dedupe per FR-18.9.
+-- IdempotentApply (MTIX-15.4) checks this table before applying any pulled event.
+CREATE TABLE IF NOT EXISTS applied_events (
+    event_id           TEXT PRIMARY KEY,
+    applied_at         TEXT NOT NULL,
+    applied_by_lamport INTEGER NOT NULL
+);
 
 -- Agent state per FR-10
 CREATE TABLE IF NOT EXISTS agents (
@@ -179,6 +209,34 @@ BEGIN
     VALUES (new.rowid, new.title, new.description, new.prompt);
 END;
 
--- Initial metadata
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '1');
+-- Initial metadata. INSERT OR IGNORE so existing values survive re-init.
+-- For v1 -> v2 migration, schema_version is updated explicitly by the
+-- migration step in store.init.
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '2');
+
+-- Sync sentinels per FR-18 / SYNC-DESIGN sections 3.1 and 8.1.
+-- Default values:
+--   meta.sync.lamport         — local Lamport counter; bumped on every emit.
+--   meta.sync.last_pulled_clock — high-water Lamport pulled from the hub.
+--   meta.sync.machine_hash    — populated on first emit by sync/clock.MachineHash.
+--   sync.max_queue_size       — 0 means unlimited (FR-18; enforced in MTIX-15.2.4).
+--   hub.events_retention_days — 0 means forever; reserved for v2 compaction.
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.lamport', '0');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.last_pulled_clock', '0');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.machine_hash', '');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('sync.max_queue_size', '0');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('hub.events_retention_days', '0');
+`
+
+// migrateV1ToV2SQL drops the v0.1.x sync_events placeholder so the v2
+// CREATE TABLE in schemaSQL can run without colliding on the table name.
+//
+// The legacy placeholder had no production callers (confirmed by grep
+// across internal/* and cmd/* before MTIX-15.2.1 landed) so dropping it
+// loses no real data. Pre-existing meta keys, nodes, dependencies, and
+// every other v1 table survive untouched.
+const migrateV1ToV2SQL = `
+DROP INDEX IF EXISTS idx_sync_events_unpushed;
+DROP INDEX IF EXISTS idx_sync_events_node;
+DROP TABLE IF EXISTS sync_events;
 `

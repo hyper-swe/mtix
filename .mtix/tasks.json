@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-04-28T07:55:02Z",
+  "exported_at": "2026-04-28T09:16:51Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1661,6 +1661,102 @@
       "updated_at": "2026-04-27T17:29:00Z"
     },
     {
+      "id": "MTIX-15.3.1",
+      "parent_id": "MTIX-15.3",
+      "depth": 2,
+      "seq": 1,
+      "project": "MTIX",
+      "title": "PG transport: pgxpool + DSN sourcing + TLS + schema migration + chaos test",
+      "description": "Foundational PG connection layer for the hub transport. Establishes pgxpool with sane defaults, DSN sourcing (env or .mtix/secrets), TLS verify-full default, SSLROOTCERT support, and the schema migration runner that executes the 15.2.5 SQL files inside a single PG transaction guarded by pg_advisory_xact_lock.",
+      "prompt": "TDD: tests first, then implementation.\n\nDEPENDENCIES:\n- pgx v5 (github.com/jackc/pgx/v5) added as direct dependency.\n- All PG-touching tests skip when env MTIX_PG_TEST_DSN is unset (so local laptops without PG and CI without PG service still pass).\n\nNEW PACKAGE internal/store/postgres/transport with:\n\n1. CONNECTION + POOL\n- New(ctx, dsn, opts) (*Pool, error) — parses DSN, enforces TLS posture, opens pgxpool.\n- Pool.Close() — closes the pool.\n- Pool.HealthCheck(ctx) error — pings PG.\n- Defaults: max_conns=8, conn_lifetime=30m, statement_timeout=10s, healthcheck_period=1m.\n\n2. DSN SOURCING (Source function in same package)\n- DSN MUST come from MTIX_SYNC_DSN env var OR .mtix/secrets file (mode 0600 enforced; gitignore check is best-effort).\n- Refuse if .mtix/config.yaml or any tracked YAML/JSON contains 'sync.dsn'/'pg.dsn' key — return MTIX_SYNC_DSN_IN_TRACKED_FILE structured error.\n- Return wrapped model.ErrInvalidInput with 'no DSN configured: set MTIX_SYNC_DSN or .mtix/secrets' if neither source provides one.\n\n3. TLS POSTURE\n- Default sslmode=verify-full when DSN omits sslmode.\n- Refuse weaker (verify-ca, prefer, allow, disable) UNLESS opts.InsecureTLS=true AND host resolves to loopback (127.0.0.1, ::1, localhost).\n- Honor MTIX_SYNC_SSLROOTCERT env var: if set, applies as sslrootcert= in DSN.\n\n4. SCHEMA MIGRATION RUNNER\n- Migrate(ctx) error — opens a tx, calls SELECT pg_advisory_xact_lock(hashtext('mtix_sync_migration')), runs all migrations from internal/store/postgres/migrations.Files() in order via Read(). Commits.\n- Idempotent: running Migrate twice on the same hub is a no-op (CREATE TABLE IF NOT EXISTS handles it).\n- Single-flight: 10 concurrent Migrate calls produce exactly one runner; others wait for the advisory lock and observe the committed result.\n\nTESTS (all skip if MTIX_PG_TEST_DSN unset):\n- TestPool_OpenAndClose: open pool, healthcheck succeeds, close cleanly.\n- TestPool_DefaultsApplied: connect, query SHOW statement_timeout, assert it's 10s.\n- TestDSNSource_FromEnv: set env var, Source returns it.\n- TestDSNSource_FromSecretsFile: write .mtix/secrets mode 0600, Source returns it.\n- TestDSNSource_RefusesWrongMode: write .mtix/secrets mode 0644, Source returns mode-error.\n- TestDSNSource_RefusesEmpty: no env, no secrets, Source returns wrapped ErrInvalidInput.\n- TestDSNSource_RefusesTrackedConfig: write sync.dsn into .mtix/config.yaml, Source returns MTIX_SYNC_DSN_IN_TRACKED_FILE.\n- TestTLS_DefaultsToVerifyFull: DSN without sslmode, parsed result has sslmode=verify-full.\n- TestTLS_RefusesWeakerWithoutInsecureFlag: DSN with sslmode=disable, opts.InsecureTLS=false, refused.\n- TestTLS_AllowsWeakerWithInsecureFlagOnLoopback: DSN with sslmode=disable, opts.InsecureTLS=true, host=127.0.0.1, accepted.\n- TestTLS_RefusesWeakerOnRemoteHostEvenWithInsecureFlag: opts.InsecureTLS=true, host=db.example.com, sslmode=disable, refused.\n- TestTLS_HonorsSSLROOTCERTEnv: env set, parsed DSN includes sslrootcert.\n- TestMigrate_FreshHubAppliesAllSchema: empty PG, Migrate runs, all 7 SQL files apply, expected tables present.\n- TestMigrate_Idempotent: run Migrate twice, no errors, schema still v1 (sync_projects.schema_version), trigger functions exist exactly once.\n- TestMigrate_ConcurrentSingleFlight: 10 goroutines call Migrate, exactly one runs (assert via PG transaction count or by inserting a marker in the migration), rest wait, all see committed result.\n- TestMigrate_AdvisoryLockReleasedOnCommit: after Migrate completes, pg_advisory_xact_lock has been released (next caller succeeds immediately).\n- TestMigrate_PartialMigrationRecovery: chaos test — kill the goroutine mid-migration (between two Read+Exec pairs), verify next Migrate runs cleanly without leftover schema.\n\nACCEPTANCE:\n- All tests pass (or skip if no test PG available).\n- DSN never appears in any error message or log line emitted from this package.\n- Schema migration single-flight tested with 10 concurrent calls.\n- 90% coverage on the transport package (with PG tests running).",
+      "acceptance": "pgxpool wrapper opens with TLS verify-full default; DSN refused from tracked config; schema migrations apply under PG advisory lock; concurrent migration single-flight tested; partial-migration recovery test green; 90% coverage.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "b8c03874288a9e52a13c0ecd6da8b6271ab3b89a44e0b286894dc1ce2e769b74",
+      "created_at": "2026-04-28T09:15:40Z",
+      "updated_at": "2026-04-28T09:15:40Z"
+    },
+    {
+      "id": "MTIX-15.3.2",
+      "parent_id": "MTIX-15.3",
+      "depth": 2,
+      "seq": 2,
+      "project": "MTIX",
+      "title": "FR-18.7 event validator + Go native fuzz targets",
+      "description": "Pure library: validates an event against the FR-18.7 schema (size limits, timestamp bounds, vector clock overflow, regex). Plus Go native fuzz targets per FR-18.27.",
+      "prompt": "TDD: tests first.\n\nNEW FILE internal/store/postgres/transport/validator.go (or inline in transport package):\n- Validate(*model.SyncEvent, now time.Time) error\n- Wraps model.SyncEvent.Validate (which already enforces non-empty fields, regexes, sign).\n- Adds the size and timestamp rules:\n  - Payload \u003c= 64*1024 bytes serialized -\u003e MTIX_SYNC_PAYLOAD_TOO_LARGE\n  - Payload JSON nesting depth \u003c= 10 -\u003e MTIX_SYNC_PAYLOAD_TOO_NESTED\n  - WallClockTS \u003c= now+24h -\u003e MTIX_SYNC_TIMESTAMP_FUTURE\n  - WallClockTS \u003c now-30d -\u003e log warning but accept\n  - LamportClock \u003c 2^53 -\u003e MTIX_SYNC_LAMPORT_OVERFLOW (model already enforces this on VC entries; lamport gets the same cap here)\n  - VectorClock.Validate() (model already enforces \u003c=100 entries, each \u003c2^53)\n- ValidateBatch(events []*model.SyncEvent, now time.Time) error — first failing event aborts the whole batch with structured error wrapping.\n\nNEW FUZZ TARGETS in internal/store/postgres/transport (fuzz_test.go):\n- FuzzEventDecode: random bytes -\u003e json.Unmarshal into model.SyncEvent. Must NEVER panic. Errors are fine.\n- FuzzVectorClockMerge: random pairs of vector clocks; assert merge(a,b) == merge(b,a).\n- FuzzPushEventsValidation: random Event constructions through Validate(). Must EITHER accept OR reject with structured error — never panic, never partially apply.\n\nConfigure CI to run go test -fuzz for at least 10 minutes on a dedicated job (this ticket only sets the targets up; CI wiring is a 15.10/15.13 concern).\n\nUNIT TESTS:\n- TestValidator_HappyPath\n- TestValidator_RejectsOversizedPayload\n- TestValidator_RejectsTooDeepPayload (construct nested JSON like {a:{a:{a...}}} 11 levels)\n- TestValidator_RejectsFutureTimestamp_25h_30d_1y\n- TestValidator_AcceptsBackwardsTimestamp_31d_with_warning\n- TestValidator_RejectsLamportOverflow_at_and_above_2_53\n- TestValidator_AcceptsLamport_just_below_2_53\n- TestValidator_BatchAbortsOnFirstFailure\n- TestFuzz seed corpus: at least 5 hand-crafted bad inputs each per fuzz target\n\nACCEPTANCE:\n- All unit tests pass.\n- Fuzz targets compile and run for 30s in the test loop without panic (10m in CI).\n- 95% coverage on validator.go.",
+      "acceptance": "Validator enforces all 6 FR-18.7 rules; 3 fuzz targets compile and exit clean for 30s; batch fail-atomic; 95% coverage.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "d65713fc9dfe13aa7c9f625b33ce8d8675c933f4dbc796844ea5160b40ca8c84",
+      "created_at": "2026-04-28T09:15:58Z",
+      "updated_at": "2026-04-28T09:15:58Z"
+    },
+    {
+      "id": "MTIX-15.3.3",
+      "parent_id": "MTIX-15.3",
+      "depth": 2,
+      "seq": 3,
+      "project": "MTIX",
+      "title": "PushEvents + PullEvents API + retry/backoff",
+      "description": "The hub-side push/pull endpoints. Validates events via 15.3.2, runs them in a tx via the 15.3.1 pool, returns accepted_ids and conflict descriptors.",
+      "prompt": "TDD: tests first.\n\nAPI:\n- type ConflictDescriptor struct { EventID, ConflictingEventID, NodeID, FieldName string }\n- (p *Pool) PushEvents(ctx, events []*model.SyncEvent) (acceptedIDs []string, conflicts []ConflictDescriptor, err error)\n- (p *Pool) PullEvents(ctx, sinceLamport int64, limit int) (events []*model.SyncEvent, hasMore bool, err error)\n\nPUSH semantics:\n- Validate the entire batch first (via 15.3.2 ValidateBatch); on any failure, reject the whole batch with structured error MTIX_SYNC_EVENT_INVALID and the failing event_id+field.\n- INSERT all valid events into sync_events using a single tx with ON CONFLICT (event_id) DO NOTHING (idempotent re-push).\n- Conflict detection: for each event, compare against existing events on (node_id, field_name) with overlapping vector clocks. If concurrent (per VectorClock.Concurrent), append a ConflictDescriptor. (Full LWW resolution is a 15.5 concern; this ticket just IDs conflicts.)\n- Return accepted_ids = the events that landed (deduplicated against ON CONFLICT).\n\nPULL semantics:\n- SELECT * FROM sync_events WHERE lamport_clock \u003e ? ORDER BY lamport_clock LIMIT ?+1.\n- If returned count \u003e limit, hasMore = true and trim.\n- Return events in lamport order.\n\nRETRY:\n- Wrap PG calls in retryWithBackoff(maxAttempts=5, base=200ms, factor=2, max=10s).\n- Retry only transient errors: pgx.ErrTxClosed, network errors, statement_timeout.\n- Permanent errors (auth, schema mismatch, validation) fail immediately.\n\nTESTS (skip if MTIX_PG_TEST_DSN unset):\n- TestPushEvents_HappyPath: 5 valid events, all accepted.\n- TestPushEvents_RejectsEntireBatchOnInvalid: 4 valid + 1 invalid, all rejected.\n- TestPushEvents_IdempotentOnRepush: push 3, push same 3 again, accepted_ids on second push is empty.\n- TestPushEvents_DetectsConcurrentEdits: push event A from author1, push event B from author2 with concurrent VC for same field, conflict descriptor returned.\n- TestPullEvents_FromZero: pull from lamport=0, get all.\n- TestPullEvents_FromHighWaterMark: push 10, pull from lamport=5, get 5.\n- TestPullEvents_HasMoreFlag: push 20, pull with limit=10, hasMore=true.\n- TestPullEvents_OrderedByLamport: push out-of-order events, pull, returned in lamport order.\n- TestRetry_RetriesTransientThenSucceeds: inject transient error (pgx network), assert retry kicks in.\n- TestRetry_FailsImmediatelyOnPermanent: inject auth error, assert no retry.\n- TestRetry_BackoffBoundsRespected: simulate failures, assert delays ~ 200ms, 400ms, 800ms, 1600ms, 3200ms (with jitter tolerance).\n\nACCEPTANCE:\n- PushEvents idempotent under repush.\n- PullEvents respects lamport order and hasMore.\n- Retry only on transient.\n- Conflict descriptors returned (full resolution in 15.5).\n- 90% coverage.",
+      "acceptance": "PushEvents/PullEvents work end-to-end against test PG; idempotent repush; retry-only-on-transient; conflict descriptors returned; 90% coverage.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "3c81971d0df0157de78ec364e36bcdd92844fe8095cc0c786ae970700708d860",
+      "created_at": "2026-04-28T09:16:26Z",
+      "updated_at": "2026-04-28T09:16:51Z"
+    },
+    {
+      "id": "MTIX-15.3.4",
+      "parent_id": "MTIX-15.3",
+      "depth": 2,
+      "seq": 4,
+      "project": "MTIX",
+      "title": "SQL injection regression + DSN hygiene sweep + panic-message redaction",
+      "description": "Cross-cutting security: SQL injection regression test ported from MTIX-9.1; sweep that proves DSN never appears in any observable output; top-level defer-recover that runs panic values through RedactDSN.",
+      "prompt": "TDD: tests first.\n\nPART A — SQL INJECTION REGRESSION:\n- Port MTIX-9.1 attack patterns (e.g., ');DROP TABLE--, ' OR '1'='1) to PushEvents inputs.\n- For each attack pattern, populate event fields (NodeID, AuthorID, Payload) with the pattern, push, verify:\n  1. Either rejected by the validator (via regex), or\n  2. Accepted as a literal string and stored verbatim with no SQL side-effect (e.g., target table still queryable).\n- Test passes when no attack pattern causes data loss or unauthorized state change.\n\nPART B — DSN HYGIENE SWEEP:\n- New test TestDSN_NeverInObservableOutput: inject a synthetic DSN with a unique sentinel password ('PASSWORD_LEAK_SENTINEL_xyz123'), exercise the full transport surface (open pool, push events, pull events, force errors via bad SQL), and grep stdout, stderr, log buffer, MCP tool output for the sentinel string. Test fails if the sentinel appears anywhere.\n\nPART C — PANIC-MESSAGE REDACTION:\n- Extend internal/sync/clock or add internal/sync/redact package with RedactDSN(s string) string that masks postgres://, jdbc:postgresql://, and similar DSN-shaped substrings.\n- Add a top-level defer-recover wrapper helper RecoverWithRedaction(logger) that callers can use in goroutine entry points. Logs the redacted panic value at ERROR.\n- Test: deliberately panic with a real DSN in the panic value; verify the printed/logged output contains the redacted form, NOT the original DSN.\n\nPART D — STATIC LINT FOR RAW SQL CONCAT:\n- Add a pre-commit grep or golangci config rule that fails the build if any .go file under internal/store/postgres/ contains string concatenation into an SQL keyword (heuristic: '+' adjacent to 'SELECT'/'INSERT'/'UPDATE'/'DELETE'/'WHERE' inside a string).\n- This is best-effort; the real protection is bound parameters, but this catches regressions early.\n\nTESTS:\n- TestSQLInjection_PortedFromMTIX91 (table-driven, 6+ patterns)\n- TestDSN_NeverInLogs\n- TestDSN_NeverInErrors\n- TestDSN_NeverInPanic\n- TestRedactDSN_HandlesAllSchemes (postgres://, postgresql://, jdbc:postgresql://, raw user:pass@host)\n- TestRecoverWithRedaction_LogsRedacted\n\nACCEPTANCE:\n- All SQL injection attack patterns either rejected or stored as literals.\n- DSN sentinel grep returns zero matches across all observable outputs.\n- Panic with DSN produces redacted output.\n- 90% coverage on redact package.\n\nDEPENDS ON: 15.3.1, 15.3.2, 15.3.3 (uses the full transport surface for the sweeps).",
+      "acceptance": "SQL injection regression green; DSN sentinel never appears in any observable output; panic-message redaction works; lint for raw SQL concat in place.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "7b24c8ae329f4e444404e29d4910ddc1db9eb1a2a6c48a5f0086fd2b6b433f7a",
+      "created_at": "2026-04-28T09:16:51Z",
+      "updated_at": "2026-04-28T09:16:51Z"
+    },
+    {
       "id": "MTIX-15.4",
       "parent_id": "MTIX-15",
       "depth": 1,
@@ -3232,6 +3328,24 @@
       "created_at": "2026-04-27T13:13:55Z"
     },
     {
+      "from_id": "MTIX-15.3.1",
+      "to_id": "MTIX-15.3.3",
+      "dep_type": "blocks",
+      "created_at": "2026-04-28T09:16:51Z"
+    },
+    {
+      "from_id": "MTIX-15.3.2",
+      "to_id": "MTIX-15.3.3",
+      "dep_type": "blocks",
+      "created_at": "2026-04-28T09:16:51Z"
+    },
+    {
+      "from_id": "MTIX-15.3.3",
+      "to_id": "MTIX-15.3.4",
+      "dep_type": "blocks",
+      "created_at": "2026-04-28T09:16:51Z"
+    },
+    {
       "from_id": "MTIX-15.4",
       "to_id": "MTIX-15.5",
       "dep_type": "blocks",
@@ -3320,6 +3434,6 @@
       "status": "active"
     }
   ],
-  "node_count": 124,
-  "checksum": "f3ae45cc0177b169dd088034af60e8ffcc392e7c2443e554d99272885c605b85"
+  "node_count": 128,
+  "checksum": "dc1517066dc34a15113370455f23aef5de1796986fac2ed50a9ae2312d7f691a"
 }

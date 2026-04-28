@@ -1306,6 +1306,8 @@ After bulk data operations that may bypass row-level triggers (e.g., `mtix impor
 
 ### NFR-3: Cloud Sync
 
+> **Status: SUPERSEDED by [FR-18: Local-First Team Sync (BYO Postgres Hub)](#fr-18-local-first-team-sync-byo-postgres-hub).** The original NFR-3 sketched a cloud-sync model at a high level. FR-18 is the normative replacement: it specifies the protocol, threat model, schema, and resolution rules in full. The text below is retained for historical context only; do not implement against it. The canonical design lives in [docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md).
+
 **NFR-3.1** Architecture: local-first. All operations MUST work offline. Sync is optional.
 
 **NFR-3.2** Each write MUST generate a sync event with: node ID, operation, field, old/new values, timestamp, author, and vector clock.

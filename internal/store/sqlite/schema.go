@@ -147,6 +147,23 @@ CREATE TABLE IF NOT EXISTS applied_events (
     applied_by_lamport INTEGER NOT NULL
 );
 
+-- Local conflict log per FR-18.12 / MTIX-15.5.
+-- Mirrors the hub-side sync_conflicts table (see internal/store/postgres/migrations/002_sync_conflicts.sql).
+-- Local rows are written by the apply engine when LWW resolution drops a value;
+-- they let mtix sync conflicts list (MTIX-15.7) surface conflicts even when the hub is unreachable.
+CREATE TABLE IF NOT EXISTS sync_conflicts (
+    conflict_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id_winner TEXT NOT NULL,
+    event_id_loser  TEXT NOT NULL,
+    node_id         TEXT NOT NULL,
+    field_name      TEXT,
+    resolution      TEXT NOT NULL CHECK (resolution IN ('lww','tombstone','manual')),
+    resolved_at     TEXT NOT NULL,
+    resolved_by     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_sync_conflicts_node ON sync_conflicts(node_id);
+CREATE INDEX IF NOT EXISTS idx_sync_conflicts_resolved_at ON sync_conflicts(resolved_at);
+
 -- Agent state per FR-10
 CREATE TABLE IF NOT EXISTS agents (
     agent_id         TEXT PRIMARY KEY,

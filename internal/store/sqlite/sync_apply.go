@@ -7,13 +7,190 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
+
+// LWW resolution per FR-18.11 / SYNC-DESIGN section 8.2 applies to
+// these op_types only — they share the field-level conflict semantics
+// where two concurrent events touching the same logical field need a
+// deterministic winner. Other op_types have their own semantics
+// (delete is monotonic; comments are append-only; deps are idempotent;
+// claim and transition_status use most-recent-applied-wins).
+//
+// fieldKeyForLWW returns the (op_type-prefixed) field identifier used
+// to scope LWW lookups, or "" if this op is not LWW-eligible.
+func fieldKeyForLWW(e *model.SyncEvent) string {
+	switch e.OpType {
+	case model.OpUpdateField:
+		var p model.UpdateFieldPayload
+		if err := json.Unmarshal(e.Payload, &p); err != nil {
+			return ""
+		}
+		return "update_field:" + p.FieldName
+	case model.OpSetAcceptance:
+		return "set_acceptance:acceptance"
+	case model.OpSetPrompt:
+		return "set_prompt:prompt"
+	default:
+		return ""
+	}
+}
+
+// lwwOutcome is the result of comparing an incoming event against
+// the highest-lamport prior event for the same (node, field).
+type lwwOutcome struct {
+	HasPrior        bool   // true iff there's a prior event for the same field
+	PriorEventID    string // empty when HasPrior is false
+	IncomingWins    bool   // true iff the incoming event beats the prior on (lamport, ts, hash)
+	FieldName       string // for the conflict log
+}
+
+// detectLWWOutcome looks up the highest-lamport prior event matching
+// this event's (node_id, field_key) in sync_events and computes the
+// LWW outcome. Returns HasPrior=false when no prior exists; in that
+// case the caller proceeds with the apply unconditionally.
+func detectLWWOutcome(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (lwwOutcome, error) {
+	key := fieldKeyForLWW(e)
+	if key == "" {
+		return lwwOutcome{}, nil
+	}
+	fieldName := strings.TrimPrefix(strings.SplitN(key, ":", 2)[1], "")
+
+	// Match prior events on the same (node, op_type, field). For
+	// update_field we also need to filter by payload->>'field_name';
+	// for set_acceptance / set_prompt the op_type alone is sufficient.
+	var query string
+	args := []any{e.NodeID, string(e.OpType), e.EventID}
+	switch e.OpType {
+	case model.OpUpdateField:
+		query = `SELECT event_id, lamport_clock, wall_clock_ts, author_machine_hash
+		         FROM sync_events
+		         WHERE node_id = ? AND op_type = ? AND event_id <> ?
+		           AND json_extract(payload, '$.field_name') = ?
+		         ORDER BY lamport_clock DESC, wall_clock_ts DESC, author_machine_hash ASC
+		         LIMIT 1`
+		args = append(args, fieldName)
+	default:
+		query = `SELECT event_id, lamport_clock, wall_clock_ts, author_machine_hash
+		         FROM sync_events
+		         WHERE node_id = ? AND op_type = ? AND event_id <> ?
+		         ORDER BY lamport_clock DESC, wall_clock_ts DESC, author_machine_hash ASC
+		         LIMIT 1`
+	}
+
+	var (
+		priorID   string
+		priorLamp int64
+		priorTS   int64
+		priorHash string
+	)
+	err := tx.QueryRowContext(ctx, query, args...).Scan(&priorID, &priorLamp, &priorTS, &priorHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return lwwOutcome{FieldName: fieldName}, nil
+	}
+	if err != nil {
+		return lwwOutcome{}, fmt.Errorf("LWW lookup: %w", err)
+	}
+	return lwwOutcome{
+		HasPrior:     true,
+		PriorEventID: priorID,
+		IncomingWins: incomingBeats(e, priorLamp, priorTS, priorHash),
+		FieldName:    fieldName,
+	}, nil
+}
+
+// incomingBeats encodes the FR-18.11 / SYNC-DESIGN section 8.2 LWW
+// total ordering: higher lamport wins; tie-break by higher
+// wall_clock_ts; final tie-break by lower author_machine_hash
+// (lex compare). Equal on all three is considered NOT a win for the
+// incoming (the prior is already applied; no need to re-apply).
+func incomingBeats(e *model.SyncEvent, priorLamp, priorTS int64, priorHash string) bool {
+	if e.LamportClock != priorLamp {
+		return e.LamportClock > priorLamp
+	}
+	if e.WallClockTS != priorTS {
+		return e.WallClockTS > priorTS
+	}
+	return e.AuthorMachineHash < priorHash
+}
+
+// mirrorIncomingEvent records a pulled event into the local
+// sync_events table with sync_status='applied'. ON CONFLICT DO NOTHING
+// makes the call safe even when the same event was previously emitted
+// locally (we'd then have it as 'pending' or 'pushed'; the mirror
+// attempt is a no-op).
+func mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+	vcJSON, err := json.Marshal(e.VectorClock)
+	if err != nil {
+		return fmt.Errorf("mirror %s: marshal VC: %w", e.EventID, err)
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT OR IGNORE INTO sync_events
+		  (event_id, project_prefix, node_id, op_type, payload,
+		   wall_clock_ts, lamport_clock, vector_clock,
+		   author_id, author_machine_hash, sync_status, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.EventID, e.ProjectPrefix, e.NodeID, string(e.OpType), string(e.Payload),
+		e.WallClockTS, e.LamportClock, string(vcJSON),
+		e.AuthorID, e.AuthorMachineHash, string(model.SyncStatusApplied),
+		time.Now().UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
+
+// dispatchWithLWW runs the LWW resolution pipeline: detect outcome,
+// either skip the apply (loser branch) or run dispatchApply (winner
+// or no-prior branch), and record the conflict row when applicable.
+//
+// Extracted from IdempotentApply to keep cyclomatic complexity below
+// the package's lint threshold.
+func dispatchWithLWW(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
+	outcome, err := detectLWWOutcome(ctx, tx, event)
+	if err != nil {
+		return fmt.Errorf("apply %s: LWW: %w", event.EventID, err)
+	}
+
+	if outcome.HasPrior && !outcome.IncomingWins {
+		if err := recordLocalConflict(ctx, tx,
+			outcome.PriorEventID, event.EventID, event.NodeID, outcome.FieldName,
+		); err != nil {
+			return fmt.Errorf("apply %s: record loser conflict: %w", event.EventID, err)
+		}
+		return nil
+	}
+
+	if err := dispatchApply(ctx, tx, event); err != nil {
+		return err
+	}
+	if outcome.HasPrior && outcome.IncomingWins {
+		if err := recordLocalConflict(ctx, tx,
+			event.EventID, outcome.PriorEventID, event.NodeID, outcome.FieldName,
+		); err != nil {
+			return fmt.Errorf("apply %s: record winner conflict: %w", event.EventID, err)
+		}
+	}
+	return nil
+}
+
+// recordLocalConflict persists a row to the local sync_conflicts
+// table for surfacing via mtix sync conflicts list (MTIX-15.7).
+func recordLocalConflict(ctx context.Context, tx *sql.Tx, winnerID, loserID, nodeID, fieldName string) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO sync_conflicts
+		  (event_id_winner, event_id_loser, node_id, field_name, resolution, resolved_at)
+		VALUES (?, ?, ?, ?, 'lww', ?)`,
+		winnerID, loserID, nodeID, nullableString(fieldName),
+		time.Now().UTC().Format(time.RFC3339Nano),
+	)
+	return err
+}
 
 // IdempotentApply applies a single sync event to the local nodes table
 // per FR-18.9 / SYNC-DESIGN section 8. Symmetric to emitEvent: emit
@@ -50,7 +227,15 @@ func IdempotentApply(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) er
 		return nil
 	}
 
-	if err := dispatchApply(ctx, tx, event); err != nil {
+	// Mirror the event into the local sync_events log so subsequent
+	// LWW lookups find it. A locally-emitted event already exists
+	// (sync_status='pending' or 'pushed'); ON CONFLICT DO NOTHING
+	// makes this a no-op for those.
+	if mirrorErr := mirrorIncomingEvent(ctx, tx, event); mirrorErr != nil {
+		return fmt.Errorf("apply %s: mirror: %w", event.EventID, mirrorErr)
+	}
+
+	if err := dispatchWithLWW(ctx, tx, event); err != nil {
 		return err
 	}
 

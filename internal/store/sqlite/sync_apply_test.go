@@ -110,12 +110,37 @@ func TestApply_RejectsInvalidEvent(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestApply_NoSyncEventEmittedByApply(t *testing.T) {
+func TestApply_MirrorsIncomingEventAsApplied(t *testing.T) {
 	s, raw := applyTestStore(t)
-	require.NoError(t, applyOnce(t, s, makeApplyEvent(t, model.OpCreateNode, "MTIX-1", "alice", 1,
-		&model.CreateNodePayload{Title: "x"})))
-	require.Equal(t, 0, countEvents(t, raw),
-		"apply MUST NOT emit a sync_event (would loop forever)")
+	e := makeApplyEvent(t, model.OpCreateNode, "MTIX-1", "alice", 1,
+		&model.CreateNodePayload{Title: "x"})
+	require.NoError(t, applyOnce(t, s, e))
+
+	// MTIX-15.5.1: apply mirrors the pulled event into the local
+	// sync_events log with sync_status='applied' so subsequent LWW
+	// lookups can see it. The event_id matches the source — this is
+	// NOT an emit-loop because re-pulling the same event_id is a
+	// no-op via applied_events dedupe.
+	var status string
+	require.NoError(t, raw.QueryRow(
+		`SELECT sync_status FROM sync_events WHERE event_id = ?`, e.EventID,
+	).Scan(&status))
+	require.Equal(t, string(model.SyncStatusApplied), status)
+	require.Equal(t, 1, countEvents(t, raw),
+		"apply mirrors the source event exactly once; no new event_id is fabricated")
+}
+
+func TestApply_NoEmitLoop_ReapplyingMirroredEventIsNoop(t *testing.T) {
+	s, raw := applyTestStore(t)
+	e := makeApplyEvent(t, model.OpCreateNode, "MTIX-1", "alice", 1,
+		&model.CreateNodePayload{Title: "x"})
+	require.NoError(t, applyOnce(t, s, e))
+	require.NoError(t, applyOnce(t, s, e))
+	require.NoError(t, applyOnce(t, s, e))
+	// The applied_events dedupe ensures no work happens on re-apply,
+	// so the mirror is never duplicated either.
+	require.Equal(t, 1, countEvents(t, raw))
+	require.Equal(t, 1, countApplied(t, raw))
 }
 
 func TestApply_DuplicateEventIDIsNoop(t *testing.T) {

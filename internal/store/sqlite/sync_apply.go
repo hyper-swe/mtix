@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -429,11 +430,23 @@ func applyComment(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 			return fmt.Errorf("decode annotations: %w", err)
 		}
 	}
+	// Use the event's wall_clock_ts so two replicas applying the same
+	// event in different orders produce byte-identical annotation
+	// rows. Apply-time wall clock would diverge across replicas.
 	annotations = append(annotations, model.Annotation{
 		ID:        e.EventID,
 		Author:    p.AuthorID,
 		Text:      p.Body,
-		CreatedAt: time.Now().UTC(),
+		CreatedAt: time.UnixMilli(e.WallClockTS).UTC(),
+	})
+	// Sort by (CreatedAt, ID) so the on-disk list order is independent
+	// of apply order. Two replicas converging on the same set of
+	// comments produce byte-identical annotations columns.
+	sort.SliceStable(annotations, func(i, j int) bool {
+		if annotations[i].CreatedAt.Equal(annotations[j].CreatedAt) {
+			return annotations[i].ID < annotations[j].ID
+		}
+		return annotations[i].CreatedAt.Before(annotations[j].CreatedAt)
 	})
 	encoded, err := json.Marshal(annotations)
 	if err != nil {
@@ -441,7 +454,7 @@ func applyComment(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	}
 	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET annotations = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
-		string(encoded), time.Now().UTC().Format(time.RFC3339), e.NodeID,
+		string(encoded), time.UnixMilli(e.WallClockTS).UTC().Format(time.RFC3339), e.NodeID,
 	)
 	return err
 }

@@ -81,16 +81,39 @@ func TestVectorClock_DominatesAndConcurrent(t *testing.T) {
 }
 
 func TestVectorClock_MarshalDeterministic(t *testing.T) {
+	const want = `{"alice":1,"bob":2,"zara":3}`
+
+	// Repeated marshals of the SAME instance must all produce identical
+	// bytes. This catches an implementation that toggles sort order
+	// between calls (a bug the prior 2-marshal test would miss).
 	vc := model.VectorClock{"zara": 3, "alice": 1, "bob": 2}
-	b1, err := json.Marshal(vc)
-	require.NoError(t, err)
-	b2, err := json.Marshal(vc)
-	require.NoError(t, err)
-	require.Equal(t, b1, b2, "deterministic byte output for hash stability")
-	require.Equal(t,
-		`{"alice":1,"bob":2,"zara":3}`,
-		string(b1),
-		"keys MUST appear in lexical order")
+	for i := 0; i < 16; i++ {
+		b, err := json.Marshal(vc)
+		require.NoError(t, err)
+		require.Equal(t, want, string(b),
+			"marshal call %d must produce canonical lexical order", i)
+	}
+
+	// Logically equivalent VCs constructed with different key insertion
+	// orders must marshal to identical bytes. Go map iteration order is
+	// already randomized, but constructing fresh maps with each ordering
+	// guarantees we exercise distinct internal hash bucket layouts.
+	orderings := [][][2]any{
+		{{"alice", int64(1)}, {"bob", int64(2)}, {"zara", int64(3)}},
+		{{"zara", int64(3)}, {"bob", int64(2)}, {"alice", int64(1)}},
+		{{"bob", int64(2)}, {"alice", int64(1)}, {"zara", int64(3)}},
+		{{"zara", int64(3)}, {"alice", int64(1)}, {"bob", int64(2)}},
+	}
+	for i, ordering := range orderings {
+		built := model.VectorClock{}
+		for _, kv := range ordering {
+			built[kv[0].(string)] = kv[1].(int64)
+		}
+		b, err := json.Marshal(built)
+		require.NoError(t, err)
+		require.Equal(t, want, string(b),
+			"insertion ordering %d produced non-canonical output", i)
+	}
 }
 
 func TestVectorClock_MarshalUnmarshalRoundTrip(t *testing.T) {

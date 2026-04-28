@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-04-28T10:31:55Z",
+  "exported_at": "2026-04-28T10:39:23Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1886,6 +1886,78 @@
       "updated_at": "2026-04-27T17:30:14Z"
     },
     {
+      "id": "MTIX-15.5.1",
+      "parent_id": "MTIX-15.5",
+      "depth": 2,
+      "seq": 1,
+      "project": "MTIX",
+      "title": "LWW at apply time + local sync_conflicts table + .mtix/conflicts.log",
+      "description": "Make IdempotentApply LWW-aware. Currently last-applied wins by ORDER, not by lamport. With LWW, the apply engine compares the incoming event against the highest-lamport prior event for the same (node_id, field) and skips the SQL update if the incoming loses. Loser writes a row to a new local sync_conflicts table and appends a JSON line to .mtix/conflicts.log.",
+      "prompt": "TDD: tests first.\n\nSCHEMA CHANGES (additive — no migration needed since v2 just landed):\n- Add sync_conflicts table to LOCAL SQLite (mirrors the hub schema in 15.2.5):\n    conflict_id INTEGER PRIMARY KEY AUTOINCREMENT,\n    event_id_winner TEXT NOT NULL,\n    event_id_loser  TEXT NOT NULL,\n    node_id TEXT NOT NULL,\n    field_name TEXT,\n    resolution TEXT NOT NULL CHECK (resolution IN ('lww','tombstone','manual')),\n    resolved_at TEXT NOT NULL,\n    resolved_by TEXT\n  Indexes: (node_id), (resolved_at).\n- Add column hint to sync_events: nothing new; existing columns suffice.\n\nBEHAVIOR:\n1. When applying update_field / set_acceptance / set_prompt:\n   - Look up highest-lamport prior event for the same (node_id, field) in sync_events local mirror (rows with sync_status IN ('pushed','applied')).\n   - 'field' for update_field comes from payload.field_name; for set_acceptance/set_prompt, the op_type IS the field.\n   - Compare lamport_clock; tie-break by wall_clock_ts; final tie-break by author_machine_hash (lower wins, lex compare).\n   - If incoming WINS: apply normally + record conflict (when applicable).\n   - If incoming LOSES: skip the SQL update, record conflict, do NOT bump applied_events (the event was 'observed' but its mutation was overridden).\n2. Pulled events that we apply MUST be mirrored into local sync_events with sync_status='applied' so LWW lookups work. (This is the MTIX-15.7 pull loop's job, but the schema and helper APIs land here.)\n3. .mtix/conflicts.log JSON lines: {timestamp, conflict_id, winner, loser, node_id, field, resolution}.\n\nNEW HELPERS in sync_apply.go:\n- detectAndResolveLWW(ctx, tx, e) (winnerEventID string, loser bool, err error) — returns the winning event_id and whether the incoming event lost.\n- recordLocalConflict(ctx, tx, winner, loser *model.SyncEvent, field string) — INSERT into sync_conflicts.\n- appendConflictsLog(mtixDir, line conflictsLogLine) — append JSON line to .mtix/conflicts.log.\n- mirrorIncomingEvent(ctx, tx, e) — INSERT INTO sync_events ... ON CONFLICT DO NOTHING.\n\nDELETE VS UPDATE: already handled via 'WHERE deleted_at IS NULL' in applyUpdateField etc. After a tombstone applies, subsequent updates silently fail with ErrNotFound. Document this in code as the intended behavior; don't change.\n\nTESTS:\n- TestApplyLWW_SameFieldHigherLamportWins: e1{lamport=5} applied; e2{lamport=10} applies and overwrites; conflict recorded.\n- TestApplyLWW_SameFieldLowerLamportLoses: e1{lamport=10} applied; e2{lamport=5} arrives; SQL not updated; conflict recorded with loser=e2.\n- TestApplyLWW_SameLamportTieBreakByWallClockTS: e1{lamport=5, ts=100}, e2{lamport=5, ts=200} -\u003e e2 wins.\n- TestApplyLWW_SameLamportSameTSTieBreakByMachineHash: e1{lamport=5, ts=100, hash='zzz...'}, e2{lamport=5, ts=100, hash='aaa...'} -\u003e e2 wins (lower hash).\n- TestApplyLWW_DisjointFieldsNoConflict: e1 updates title; e2 updates description; both apply, no conflict.\n- TestApplyLWW_DeleteThenUpdateLosesSilently: delete event applied; subsequent update event arrives -\u003e ErrNotFound, no conflict row (delete+update is asymmetric and tombstone monotonicity covers it).\n- TestApplyLWW_ConflictsLogAppended: after a conflict, .mtix/conflicts.log has the JSON line.\n- TestApplyLWW_PulledEventMirroredToSyncEvents: helper test for mirrorIncomingEvent.\n\nACCEPTANCE:\n- LWW deterministic across replay orders (TestApplyLWW_OrderInvariant: apply (e1, e2) then (e2, e1); same final state + same set of conflict rows).\n- sync_conflicts table populated.\n- .mtix/conflicts.log appended on conflict.\n- 90% coverage on the new code.\n- The existing replay-determinism property test (15.4.2) still passes — disjoint-field generation already avoids conflicts.",
+      "acceptance": "LWW resolution by (lamport, wall_clock_ts, machine_hash); local sync_conflicts populated; .mtix/conflicts.log appended; tests cover all 4 tie-break levels + disjoint + delete-vs-update; 90% coverage.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "b7930181e61f1709740adfd5979ef72dad8864e5f5272522a8e987b465bb8e50",
+      "created_at": "2026-04-28T10:38:45Z",
+      "updated_at": "2026-04-28T10:38:45Z"
+    },
+    {
+      "id": "MTIX-15.5.2",
+      "parent_id": "MTIX-15.5",
+      "depth": 2,
+      "seq": 2,
+      "project": "MTIX",
+      "title": "Hub-side conflict persistence in PushEvents (sync_conflicts INSERT)",
+      "description": "PushEvents already detects conflicts via detectConflicts and returns ConflictDescriptor. Now also persist each conflict to hub.sync_conflicts inside the same tx. The append-only triggers from 15.2.5 prevent UPDATE/DELETE.",
+      "prompt": "TDD: tests first.\n\nCHANGE in internal/store/postgres/transport/push_pull.go:\n- After detectConflicts returns descriptors, INSERT each one into sync_conflicts with resolution='lww'.\n- Done in the same tx so commit is atomic with the event INSERTs.\n- The hub conflict_id is BIGSERIAL — let PG assign.\n\nINTEGRATION TEST (skip without MTIX_PG_TEST_DSN):\n- TestPushEvents_ConflictPersistedToHub: push two concurrent events, verify ConflictDescriptor returned AND a row exists in sync_conflicts with the right (event_id_winner, event_id_loser, node_id, field_name).\n- TestPushEvents_ConflictsTriggerRefusesUpdate: attempt UPDATE on a sync_conflicts row, verify the trigger raises an exception (FR-18.5 append-only).\n\nACCEPTANCE:\n- Hub sync_conflicts populated atomically with the event INSERTs.\n- Trigger from 006_triggers.sql blocks UPDATE on sync_conflicts (already in place; verify via test).\n- Existing PushEvents tests still pass.",
+      "acceptance": "Hub sync_conflicts INSERT in same tx as events; trigger enforced; 1+ new integration test.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "7771848f2c5d9395b61db805b9650cd78eaacb62bfdb3a4eb4cdebd65fa52680",
+      "created_at": "2026-04-28T10:39:03Z",
+      "updated_at": "2026-04-28T10:39:23Z"
+    },
+    {
+      "id": "MTIX-15.5.3",
+      "parent_id": "MTIX-15.5",
+      "depth": 2,
+      "seq": 3,
+      "project": "MTIX",
+      "title": "Cross-machine convergence property test (two simulated CLIs + in-memory broker)",
+      "description": "Two ephemeral SQLite stores (storeA, storeB) emit events for overlapping nodes/fields concurrently. An in-memory broker accepts events from both and serves them as pulls back. Both stores apply the broker's full event log (in any causal-respecting order) and converge to byte-identical state via LWW resolution. 50 seeds default, 1000 in CI.",
+      "prompt": "TDD: this ticket IS the test. Builds on the 15.4.2 generator infrastructure but adds intentional cross-author conflicts on the same field.\n\nNEW FILE internal/store/sqlite/sync_lww_property_test.go:\n- TestApplyLWW_CrossMachineConvergence(t):\n  - For each seed:\n    1. Create storeA + storeB (fresh empty stores).\n    2. Generate K events; SOME from authorA, SOME from authorB; ALL targeting the SAME small set of fields (intentional conflicts).\n    3. Each event has a deterministic lamport per author (causal-respecting).\n    4. Build the broker's event log (just the union, ordered by lamport).\n    5. Apply the full log to BOTH storeA and storeB in shuffled-causal-respecting order.\n    6. Snapshot both stores' nodes (excluding timestamps) and assert byte-identical.\n\nGENERATOR DETAILS:\n- 2 authors (alice, bob) — keep simple.\n- Each event picks a random (node_id, field) pair from a small set (3 nodes × 3 fields).\n- Per-author lamport monotonic.\n\nKEY DIFFERENCE from 15.4.2:\n- 15.4.2 uses field PARTITIONS so events don't conflict.\n- 15.5.3 INTENTIONALLY makes events conflict on the same field. Convergence depends on LWW (15.5.1) being deterministic.\n\nACCEPTANCE:\n- 50 seeds in -short, default 50, 1000 via env var override.\n- A failure prints the seed for reproducibility.\n- The conflicts.log on both stores has the same set of conflict entries (sorted).",
+      "acceptance": "Two-CLI convergence test passes 50 seeds in -short and 1000 in CI; conflict logs match across stores.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "0c0b43326f1f316260aa9d68261bc0573b2f534528959bfbca39926758810c79",
+      "created_at": "2026-04-28T10:39:23Z",
+      "updated_at": "2026-04-28T10:39:23Z"
+    },
+    {
       "id": "MTIX-15.6",
       "parent_id": "MTIX-15",
       "depth": 1,
@@ -3451,6 +3523,18 @@
       "created_at": "2026-04-27T13:13:55Z"
     },
     {
+      "from_id": "MTIX-15.5.1",
+      "to_id": "MTIX-15.5.2",
+      "dep_type": "blocks",
+      "created_at": "2026-04-28T10:39:23Z"
+    },
+    {
+      "from_id": "MTIX-15.5.2",
+      "to_id": "MTIX-15.5.3",
+      "dep_type": "blocks",
+      "created_at": "2026-04-28T10:39:23Z"
+    },
+    {
       "from_id": "MTIX-15.6",
       "to_id": "MTIX-15.7",
       "dep_type": "blocks",
@@ -3527,6 +3611,6 @@
       "status": "active"
     }
   ],
-  "node_count": 131,
-  "checksum": "019c16e49e9aedc2d732bfc07d8bc7d784fb0bad8cbbb1fc44ca62bf8b4cae3e"
+  "node_count": 134,
+  "checksum": "fd634e4ee2090bbd5f5dcaac1e19158cac7e65277dc9fe1c043ea8f012e4fc14"
 }

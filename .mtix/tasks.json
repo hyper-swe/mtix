@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-04-28T10:04:15Z",
+  "exported_at": "2026-04-28T10:06:41Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1786,6 +1786,78 @@
       "updated_at": "2026-04-27T17:29:22Z"
     },
     {
+      "id": "MTIX-15.4.1",
+      "parent_id": "MTIX-15.4",
+      "depth": 2,
+      "seq": 1,
+      "project": "MTIX",
+      "title": "Apply engine: IdempotentApply core + 12 per-op functions + NodeTypeForDepth canonicalization",
+      "description": "Core event-apply engine. IdempotentApply takes one event, checks applied_events for duplicates, dispatches to a per-op_type apply function that writes directly to the nodes table (bypassing Store mutations to avoid emit loops), updates meta.sync.lamport and meta.sync.vector_clock, and records the event in applied_events. All 12 op_types covered.",
+      "prompt": "TDD: tests first.\n\nNEW FILE internal/store/sqlite/sync_apply.go:\n- IdempotentApply(ctx, tx, event) error — main entry point.\n- Helpers per op_type: applyCreateNode, applyUpdateField, applyTransitionStatus, applyClaim, applyUnclaim, applyDefer, applyComment, applyLinkDep, applyUnlinkDep, applyDelete, applySetAcceptance, applySetPrompt.\n- Helpers for clock/vc: advanceLamportTo(tx, observedLamport), mergeVectorClock(tx, observedVC).\n- recordApplied(tx, event) — INSERT into applied_events.\n\nCONTRACT:\n- IdempotentApply MUST be called inside an open *sql.Tx (caller's responsibility).\n- Reject duplicate event_id silently — return nil, log debug.\n- DO NOT emit a sync_event (apply MUST NOT loop).\n- For create_node: enforce NodeTypeForDepth(node.depth) — IGNORE any non-canonical node_type in the payload (FR-18.10 / MTIX-7/12 contract).\n- For delete on non-existent node: no-op (no phantom tombstone).\n- For update_field on non-existent node: error wrap model.ErrNotFound.\n- After applying, ALWAYS bump local Lamport to max(local, event.lamport_clock) and merge VC entry for event.author_id.\n\n12 OP_TYPES with corresponding payload struct + SQL UPDATE/INSERT/DELETE statement.\n\nUNIT TESTS (per-op_type):\n- TestApply_CreateNode_HappyPath\n- TestApply_CreateNode_CanonicalizesNodeType (synthetic event with depth=0 + node_type='story' applies as 'epic')\n- TestApply_UpdateField_Title (and a few representative fields)\n- TestApply_UpdateField_OnMissingNode (returns ErrNotFound wrap)\n- TestApply_TransitionStatus\n- TestApply_Claim, Unclaim, ClaimWithForcedTrue\n- TestApply_Delete (sets deleted_at)\n- TestApply_Delete_OnNonExistentNode_Noop (no phantom tombstone)\n- TestApply_LinkDep + UnlinkDep\n- TestApply_Comment (appends to annotations)\n- TestApply_SetAcceptance + SetPrompt\n- TestApply_Idempotent (apply same event twice; second is no-op; applied_events has 1 row)\n- TestApply_LamportAdvances (event.lamport=5 + local.lamport=2 -\u003e local.lamport=5)\n- TestApply_LamportNeverGoesBackwards (event.lamport=2 + local.lamport=5 -\u003e local.lamport=5)\n- TestApply_VectorClockMerges (per-author entry max-merged)\n- TestApply_RejectsInvalidEvent (validator runs first; bad event surfaces ErrInvalidInput)\n- TestApply_NoSyncEventEmitted (after apply, sync_events table is empty)\n\nACCEPTANCE:\n- All 12 op_types apply correctly + idempotent.\n- NodeTypeForDepth canonicalization regression test.\n- No sync_event emitted by apply (verify by counting sync_events rows).\n- 90% coverage on sync_apply.go.",
+      "acceptance": "All 12 op_types apply via per-op functions; idempotent on duplicate; NodeTypeForDepth canonicalization preserved; no emit loop; 90% coverage.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "f3b63e4376e265b3a7609aa980141b08779da0b49f767afd2fe2b3b4a969c811",
+      "created_at": "2026-04-28T10:06:16Z",
+      "updated_at": "2026-04-28T10:06:16Z"
+    },
+    {
+      "id": "MTIX-15.4.2",
+      "parent_id": "MTIX-15.4",
+      "depth": 2,
+      "seq": 2,
+      "project": "MTIX",
+      "title": "Apply engine: replay determinism property test (1000 seeds)",
+      "description": "Property-based test per FR-18.9 / SYNC-DESIGN section 8: generate random sequences of events; apply in order A; apply the same sequence shuffled (preserving causal order); assert final state byte-identical via content_hash. 1000 random seeds in CI.",
+      "prompt": "TDD: this ticket IS the test.\n\nNEW FILE internal/store/sqlite/sync_apply_property_test.go:\n- TestApply_ReplayDeterminismProperty(t *testing.T):\n  - For each of N seeds (N=1000 in CI; N=50 in fast local runs via -short flag):\n    1. Generate a random sequence of K events (K=100 in CI, K=20 in -short) across M nodes (M=10).\n    2. Each event has a random op_type, payload, and lamport_clock that respects causal ordering (lamport monotonic per author).\n    3. Open store A, apply events in original order, snapshot all node content_hashes.\n    4. Open store B, apply events in shuffled order (preserving per-author lamport sequence — i.e. only swap events from different authors).\n    5. Assert SELECT id, content_hash FROM nodes ORDER BY id is byte-identical between A and B.\n\nGENERATOR DETAILS:\n- Use math/rand with a deterministic seed derived from the test iteration index so failures are reproducible.\n- Op_type distribution: weighted toward update_field/transition_status (most common); a handful of creates per node, a few deletes.\n- Author pool: 3 simulated authors (alice, bob, carol).\n- Lamport allocation: each author maintains its own counter; any event from author X has lamport \u003e all prior events from X.\n\nSHUFFLE CONSTRAINT:\n- Two events e1, e2 from the same author MUST appear in lamport order.\n- Two events from different authors are reorderable.\n- Implementation: bucket events by author, then interleave the buckets randomly.\n\nACCEPTANCE:\n- Test passes 50 iterations in -short mode (default).\n- Test passes 1000 iterations in CI.\n- On failure: print the seed, the original order, the shuffled order, and the diverging node IDs for reproducibility.",
+      "acceptance": "Property test green for 1000 seeds in CI; reproducible-on-failure via seed.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "7a74a427f7182a0eb101c75ef26e336db1c8ff6c039ad92b8e66e4760afad6c7",
+      "created_at": "2026-04-28T10:06:28Z",
+      "updated_at": "2026-04-28T10:06:41Z"
+    },
+    {
+      "id": "MTIX-15.4.3",
+      "parent_id": "MTIX-15.4",
+      "depth": 2,
+      "seq": 3,
+      "project": "MTIX",
+      "title": "Apply engine: chaos test (kill-9 mid-apply) + edge cases",
+      "description": "Subprocess SIGKILL chaos test parameterized across timing windows; plus edge cases for the apply engine: delete on non-existent node (no phantom tombstone), replay against empty DB, and a few more boundary scenarios that fall out of the property test.",
+      "prompt": "Pattern after sync_chaos_test.go (MTIX-15.2.3).\n\nNEW FILE internal/store/sqlite/sync_apply_chaos_test.go:\n- TestApply_AtomicityUnderKill: spawn child process that opens DB, calls IdempotentApply on a known event, parent SIGKILLs at parameterized delays (0-100ms in 5ms steps for 30+ iterations). After kill, parent re-opens DB and asserts: either (a) event in applied_events AND mutation persisted, OR (b) event absent AND mutation absent. Never partial.\n- TestApply_AtomicityUnderInProcessRollback: companion in-process test with synthetic apply failure forcing tx rollback. 20 iterations.\n\nEDGE CASES (separate file or appended to sync_apply_test.go):\n- TestApply_DeleteOnNonExistentNode_NoPhantomTombstone: apply delete event for node that never existed; no row created; subsequent create event for same ID succeeds.\n- TestApply_ReplayAgainstEmptyDB: apply 10 events against fresh DB with no prior nodes (some create, some update). Update on missing node surfaces ErrNotFound (not silently dropped).\n- TestApply_DuplicateEventIDIsAlwaysNoop: apply 1, apply same 1, apply same 1 again. Final state identical to single apply; applied_events has 1 row.\n- TestApply_OutOfOrderEventsConverge: simple 4-event sequence applied in 2 different orders, both produce identical state (lighter version of the property test).\n\nACCEPTANCE:\n- All chaos iterations green (no orphan rows ever).\n- Edge case tests pass.\n- 90% coverage maintained on sync_apply.go.",
+      "acceptance": "Chaos test passes 30+ iterations clean; edge cases all green; coverage maintained.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "blocked",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "322fcfa8966c5d56c311699b337fd5e4124481557dac8fdfd05d05e18d9e4402",
+      "created_at": "2026-04-28T10:06:40Z",
+      "updated_at": "2026-04-28T10:06:41Z"
+    },
+    {
       "id": "MTIX-15.5",
       "parent_id": "MTIX-15",
       "depth": 1,
@@ -3357,6 +3429,18 @@
       "created_at": "2026-04-27T13:13:55Z"
     },
     {
+      "from_id": "MTIX-15.4.1",
+      "to_id": "MTIX-15.4.2",
+      "dep_type": "blocks",
+      "created_at": "2026-04-28T10:06:41Z"
+    },
+    {
+      "from_id": "MTIX-15.4.2",
+      "to_id": "MTIX-15.4.3",
+      "dep_type": "blocks",
+      "created_at": "2026-04-28T10:06:41Z"
+    },
+    {
       "from_id": "MTIX-15.5",
       "to_id": "MTIX-15.7",
       "dep_type": "blocks",
@@ -3439,6 +3523,6 @@
       "status": "active"
     }
   ],
-  "node_count": 128,
-  "checksum": "caafe896ac63dfc07842d5ece2690b6dc9efbc64c4cfe748453c1f2318b8da19"
+  "node_count": 131,
+  "checksum": "16ab806e072c7661ee19d30c31611877050adaac892bf93f0ef8919ddc220364"
 }

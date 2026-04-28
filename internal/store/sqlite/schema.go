@@ -147,6 +147,17 @@ CREATE TABLE IF NOT EXISTS applied_events (
     applied_by_lamport INTEGER NOT NULL
 );
 
+-- Local sync_projects mirror per FR-18.13 / MTIX-15.6.
+-- Mirrors the hub-side sync_projects table from internal/store/postgres/migrations/003_sync_projects.sql.
+-- One row per project the local CLI has cloned-from or pushed-to.
+CREATE TABLE IF NOT EXISTS sync_projects (
+    project_prefix         TEXT PRIMARY KEY,
+    first_event_hash       TEXT NOT NULL,
+    created_at             TEXT NOT NULL,
+    schema_version         INTEGER NOT NULL DEFAULT 1,
+    last_seen_cli_version  TEXT
+);
+
 -- Local conflict log per FR-18.12 / MTIX-15.5.
 -- Mirrors the hub-side sync_conflicts table (see internal/store/postgres/migrations/002_sync_conflicts.sql).
 -- Local rows are written by the apply engine when LWW resolution drops a value;
@@ -242,6 +253,8 @@ INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.lamport', '0');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.last_pulled_clock', '0');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.machine_hash', '');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.vector_clock', '{}');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.first_event_hash', '');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.project_prefix', '');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('sync.max_queue_size', '0');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('hub.events_retention_days', '0');
 `

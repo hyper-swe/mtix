@@ -57,4 +57,17 @@ var (
 	// Callers MUST surface a one-line guide such as: "mtix sync push --force,
 	// or set sync.max_queue_size to 0".
 	ErrSyncQueueFull = errors.New("sync queue full")
+
+	// ErrSyncDivergentHistory indicates the local first_event_hash for a
+	// project does not match the hub's first_event_hash for the same
+	// prefix per FR-18.13 / SYNC-DESIGN section 10. Callers MUST refuse
+	// to proceed and surface the four resolution paths to the user
+	// (--discard-local, --rename-to, --import-as, --dry-run).
+	ErrSyncDivergentHistory = errors.New("sync history divergent")
+
+	// ErrSyncReconcilePrefixCollision indicates --rename-to NEWPREFIX
+	// was attempted but the hub already owns NEWPREFIX with a different
+	// first_event_hash per FR-18.13. The check happens BEFORE any local
+	// mutation so the user can pick another prefix without rollback.
+	ErrSyncReconcilePrefixCollision = errors.New("sync reconcile: prefix collision on hub")
 )

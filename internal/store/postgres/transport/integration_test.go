@@ -448,5 +448,97 @@ func TestPushEvents_DetectsConcurrentEdits(t *testing.T) {
 	require.Equal(t, "title", conflicts[0].FieldName)
 }
 
+// MTIX-15.5.2: hub-side conflict persistence. After PushEvents
+// detects a conflict, the row is recorded in sync_conflicts atomically
+// with the event INSERT. Triggers from 006_triggers.sql then prevent
+// any UPDATE/DELETE on that row.
+
+func TestPushEvents_ConflictPersistedToHub(t *testing.T) {
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	first := &model.SyncEvent{
+		EventID:           "0193fa00-0000-7000-8000-000000000301",
+		ProjectPrefix:     "MTIX",
+		NodeID:            "MTIX-1",
+		OpType:            model.OpUpdateField,
+		Payload:           json.RawMessage(`{"field_name":"title","new_value":"\"alice-title\""}`),
+		WallClockTS:       time.Now().UnixMilli(),
+		LamportClock:      1,
+		VectorClock:       model.VectorClock{"alice": 1},
+		AuthorID:          "alice",
+		AuthorMachineHash: "0123456789abcdef",
+	}
+	_, _, err := pool.PushEvents(context.Background(), []*model.SyncEvent{first})
+	require.NoError(t, err)
+
+	concurrent := &model.SyncEvent{
+		EventID:           "0193fa00-0000-7000-8000-000000000302",
+		ProjectPrefix:     "MTIX",
+		NodeID:            "MTIX-1",
+		OpType:            model.OpUpdateField,
+		Payload:           json.RawMessage(`{"field_name":"title","new_value":"\"bob-title\""}`),
+		WallClockTS:       time.Now().UnixMilli(),
+		LamportClock:      1,
+		VectorClock:       model.VectorClock{"bob": 1},
+		AuthorID:          "bob",
+		AuthorMachineHash: "fedcba9876543210",
+	}
+	_, conflicts, err := pool.PushEvents(context.Background(), []*model.SyncEvent{concurrent})
+	require.NoError(t, err)
+	require.Len(t, conflicts, 1)
+
+	// Conflict persisted to hub.sync_conflicts atomically with the event INSERT.
+	var stored struct {
+		EventA, EventB, NodeID, Field, Resolution string
+	}
+	require.NoError(t, pool.Inner().QueryRow(context.Background(), `
+		SELECT event_id_a, event_id_b, node_id, field_name, resolution
+		FROM sync_conflicts WHERE event_id_a = $1`,
+		concurrent.EventID,
+	).Scan(&stored.EventA, &stored.EventB, &stored.NodeID, &stored.Field, &stored.Resolution))
+	require.Equal(t, concurrent.EventID, stored.EventA)
+	require.Equal(t, first.EventID, stored.EventB)
+	require.Equal(t, "MTIX-1", stored.NodeID)
+	require.Equal(t, "title", stored.Field)
+	require.Equal(t, "lww", stored.Resolution)
+}
+
+func TestPushEvents_ConflictsTriggerRefusesUpdate(t *testing.T) {
+	// FR-18.5: sync_conflicts is append-only. The trigger from
+	// 006_triggers.sql raises an exception on UPDATE/DELETE.
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	// Manually insert a conflict row (bypassing PushEvents to keep the
+	// test focused on the trigger behavior).
+	_, err := pool.Inner().Exec(context.Background(), `
+		INSERT INTO sync_events
+		  (event_id, project_prefix, node_id, op_type, payload,
+		   wall_clock_ts, lamport_clock, vector_clock,
+		   author_id, author_machine_hash)
+		VALUES
+		  ('e-a', 'MTIX', 'MTIX-1', 'update_field', '{"field_name":"title","new_value":"\"x\""}',
+		   1, 1, '{"alice":1}', 'alice', '0123456789abcdef'),
+		  ('e-b', 'MTIX', 'MTIX-1', 'update_field', '{"field_name":"title","new_value":"\"y\""}',
+		   2, 2, '{"bob":1}', 'bob', 'fedcba9876543210')`)
+	require.NoError(t, err)
+	_, err = pool.Inner().Exec(context.Background(), `
+		INSERT INTO sync_conflicts (event_id_a, event_id_b, node_id, field_name, resolution)
+		VALUES ('e-a', 'e-b', 'MTIX-1', 'title', 'lww')`)
+	require.NoError(t, err)
+
+	_, err = pool.Inner().Exec(context.Background(),
+		`UPDATE sync_conflicts SET resolution = 'manual' WHERE event_id_a = 'e-a'`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "append-only",
+		"trigger MUST raise FR-18.5 append-only exception")
+
+	_, err = pool.Inner().Exec(context.Background(),
+		`DELETE FROM sync_conflicts WHERE event_id_a = 'e-a'`)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "append-only")
+}
+
 // Keep fmt referenced (used by helpers).
 var _ = fmt.Sprintf

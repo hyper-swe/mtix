@@ -109,6 +109,25 @@ func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
 		if tag.RowsAffected() == 1 {
 			accepted = append(accepted, e.EventID)
 		}
+
+		// MTIX-15.5.2: persist each detected conflict to the hub's
+		// sync_conflicts table inside the same tx. Resolution is set
+		// to 'lww' here; manual overrides via mtix sync conflicts
+		// resolve (15.7) UPDATE the resolved_by column — but UPDATE
+		// is forbidden by the trigger from 15.2.5/006_triggers.sql,
+		// so manual resolution actually INSERTs a new conflict row
+		// with resolution='manual' that supersedes the lww row.
+		for _, c := range conf {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO sync_conflicts
+				  (event_id_a, event_id_b, node_id, field_name, resolution)
+				VALUES ($1, $2, $3, $4, 'lww')`,
+				c.NewEventID, c.ConflictingEventID, c.NodeID, c.FieldName,
+			); err != nil {
+				return nil, nil, fmt.Errorf("persist conflict %s vs %s: %w",
+					c.NewEventID, c.ConflictingEventID, err)
+			}
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

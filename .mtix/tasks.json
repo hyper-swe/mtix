@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-04-28T10:06:41Z",
+  "exported_at": "2026-04-28T10:15:04Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1356,7 +1356,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.23076923076923078,
+      "progress": 0.25641025641025644,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1776,7 +1776,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "blocked",
-      "progress": 0,
+      "progress": 0.3333333333333333,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1799,15 +1799,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-opus-4-7",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "f3b63e4376e265b3a7609aa980141b08779da0b49f767afd2fe2b3b4a969c811",
       "created_at": "2026-04-28T10:06:16Z",
-      "updated_at": "2026-04-28T10:06:16Z"
+      "updated_at": "2026-04-28T10:15:04Z",
+      "closed_at": "2026-04-28T10:15:04Z"
     },
     {
       "id": "MTIX-15.4.2",
@@ -3494,7 +3495,7 @@
       "agent_id": "claude-opus-4-7",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-15.3",
+      "current_node_id": "MTIX-15.4.1",
       "last_heartbeat": "2026-04-27T17:37:12Z"
     },
     {
@@ -3524,5 +3525,5 @@
     }
   ],
   "node_count": 131,
-  "checksum": "16ab806e072c7661ee19d30c31611877050adaac892bf93f0ef8919ddc220364"
+  "checksum": "b28fede9b80f7f3ddfd3766ae6dab39599512a0d19b4a8d35b966a0a6a1f9bb6"
 }

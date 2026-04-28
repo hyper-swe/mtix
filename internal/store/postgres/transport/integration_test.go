@@ -5,6 +5,7 @@ package transport_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
@@ -252,6 +254,199 @@ func TestSource_AcceptsTestDSNViaEnv(t *testing.T) {
 	require.Equal(t, dsn, got)
 }
 
-// Sanity: ensure 'fmt' import isn't dropped by formatter when this
-// test file's only fmt usage gets refactored later.
+// --- PushEvents / PullEvents ---
+
+func makeEvent(id, nodeID, author string, lamport int64) *model.SyncEvent {
+	return &model.SyncEvent{
+		EventID:           id,
+		ProjectPrefix:     "MTIX",
+		NodeID:            nodeID,
+		OpType:            model.OpCreateNode,
+		Payload:           json.RawMessage(`{"title":"x"}`),
+		WallClockTS:       time.Now().UnixMilli(),
+		LamportClock:      lamport,
+		VectorClock:       model.VectorClock{author: lamport},
+		AuthorID:          author,
+		AuthorMachineHash: "0123456789abcdef",
+	}
+}
+
+func TestPushEvents_HappyPath(t *testing.T) {
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	events := []*model.SyncEvent{
+		makeEvent("0193fa00-0000-7000-8000-000000000001", "MTIX-1", "alice", 1),
+		makeEvent("0193fa00-0000-7000-8000-000000000002", "MTIX-2", "alice", 2),
+		makeEvent("0193fa00-0000-7000-8000-000000000003", "MTIX-3", "alice", 3),
+	}
+	ids, conflicts, err := pool.PushEvents(context.Background(), events)
+	require.NoError(t, err)
+	require.Len(t, ids, 3)
+	require.Empty(t, conflicts)
+}
+
+func TestPushEvents_RejectsBatchOnInvalidEvent(t *testing.T) {
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	events := []*model.SyncEvent{
+		makeEvent("0193fa00-0000-7000-8000-000000000001", "MTIX-1", "alice", 1),
+		// Future timestamp — invalid.
+		func() *model.SyncEvent {
+			e := makeEvent("0193fa00-0000-7000-8000-000000000002", "MTIX-2", "alice", 2)
+			e.WallClockTS = time.Now().Add(48 * time.Hour).UnixMilli()
+			return e
+		}(),
+		makeEvent("0193fa00-0000-7000-8000-000000000003", "MTIX-3", "alice", 3),
+	}
+	_, _, err := pool.PushEvents(context.Background(), events)
+	require.Error(t, err)
+
+	// Verify NO partial writes — sync_events is empty.
+	var n int
+	require.NoError(t, pool.Inner().QueryRow(context.Background(),
+		`SELECT count(*) FROM sync_events`).Scan(&n))
+	require.Equal(t, 0, n, "invalid batch must not partially apply")
+}
+
+func TestPushEvents_IdempotentOnRepush(t *testing.T) {
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	events := []*model.SyncEvent{
+		makeEvent("0193fa00-0000-7000-8000-000000000001", "MTIX-1", "alice", 1),
+		makeEvent("0193fa00-0000-7000-8000-000000000002", "MTIX-2", "alice", 2),
+	}
+	ids, _, err := pool.PushEvents(context.Background(), events)
+	require.NoError(t, err)
+	require.Len(t, ids, 2)
+
+	ids2, _, err := pool.PushEvents(context.Background(), events)
+	require.NoError(t, err)
+	require.Empty(t, ids2, "re-push of same events accepts none (ON CONFLICT DO NOTHING)")
+}
+
+func TestPullEvents_FromZero(t *testing.T) {
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	events := []*model.SyncEvent{
+		makeEvent("0193fa00-0000-7000-8000-000000000001", "MTIX-1", "alice", 1),
+		makeEvent("0193fa00-0000-7000-8000-000000000002", "MTIX-2", "alice", 2),
+		makeEvent("0193fa00-0000-7000-8000-000000000003", "MTIX-3", "alice", 3),
+	}
+	_, _, err := pool.PushEvents(context.Background(), events)
+	require.NoError(t, err)
+
+	got, hasMore, err := pool.PullEvents(context.Background(), 0, 100)
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	require.False(t, hasMore)
+}
+
+func TestPullEvents_FromHighWaterMark(t *testing.T) {
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	events := make([]*model.SyncEvent, 5)
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("0193fa00-0000-7000-8000-00000000000%d", i+1)
+		events[i] = makeEvent(id, fmt.Sprintf("MTIX-%d", i+1), "alice", int64(i+1))
+	}
+	_, _, err := pool.PushEvents(context.Background(), events)
+	require.NoError(t, err)
+
+	got, hasMore, err := pool.PullEvents(context.Background(), 2, 100)
+	require.NoError(t, err)
+	require.Len(t, got, 3, "lamport > 2: events 3, 4, 5")
+	require.False(t, hasMore)
+	for _, e := range got {
+		require.Greater(t, e.LamportClock, int64(2))
+	}
+}
+
+func TestPullEvents_HasMoreFlag(t *testing.T) {
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	events := make([]*model.SyncEvent, 5)
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("0193fa00-0000-7000-8000-00000000000%d", i+1)
+		events[i] = makeEvent(id, fmt.Sprintf("MTIX-%d", i+1), "alice", int64(i+1))
+	}
+	_, _, err := pool.PushEvents(context.Background(), events)
+	require.NoError(t, err)
+
+	got, hasMore, err := pool.PullEvents(context.Background(), 0, 3)
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	require.True(t, hasMore, "5 events on hub, limit 3 -> hasMore=true")
+}
+
+func TestPullEvents_OrderedByLamport(t *testing.T) {
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	// Push out-of-order lamports.
+	events := []*model.SyncEvent{
+		makeEvent("0193fa00-0000-7000-8000-000000000001", "MTIX-1", "alice", 5),
+		makeEvent("0193fa00-0000-7000-8000-000000000002", "MTIX-2", "alice", 1),
+		makeEvent("0193fa00-0000-7000-8000-000000000003", "MTIX-3", "alice", 3),
+	}
+	_, _, err := pool.PushEvents(context.Background(), events)
+	require.NoError(t, err)
+
+	got, _, err := pool.PullEvents(context.Background(), 0, 100)
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	require.Equal(t, int64(1), got[0].LamportClock)
+	require.Equal(t, int64(3), got[1].LamportClock)
+	require.Equal(t, int64(5), got[2].LamportClock)
+}
+
+func TestPushEvents_DetectsConcurrentEdits(t *testing.T) {
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	// First event from alice for MTIX-1 / title.
+	first := &model.SyncEvent{
+		EventID:           "0193fa00-0000-7000-8000-000000000001",
+		ProjectPrefix:     "MTIX",
+		NodeID:            "MTIX-1",
+		OpType:            model.OpUpdateField,
+		Payload:           json.RawMessage(`{"field_name":"title","new_value":"\"alice-title\""}`),
+		WallClockTS:       time.Now().UnixMilli(),
+		LamportClock:      1,
+		VectorClock:       model.VectorClock{"alice": 1},
+		AuthorID:          "alice",
+		AuthorMachineHash: "0123456789abcdef",
+	}
+	_, _, err := pool.PushEvents(context.Background(), []*model.SyncEvent{first})
+	require.NoError(t, err)
+
+	// Concurrent event from bob for the same node — VC has bob:1 only,
+	// so VectorClock.Concurrent(alice's VC) returns true.
+	concurrent := &model.SyncEvent{
+		EventID:           "0193fa00-0000-7000-8000-000000000002",
+		ProjectPrefix:     "MTIX",
+		NodeID:            "MTIX-1",
+		OpType:            model.OpUpdateField,
+		Payload:           json.RawMessage(`{"field_name":"title","new_value":"\"bob-title\""}`),
+		WallClockTS:       time.Now().UnixMilli(),
+		LamportClock:      1,
+		VectorClock:       model.VectorClock{"bob": 1},
+		AuthorID:          "bob",
+		AuthorMachineHash: "fedcba9876543210",
+	}
+	_, conflicts, err := pool.PushEvents(context.Background(), []*model.SyncEvent{concurrent})
+	require.NoError(t, err)
+	require.Len(t, conflicts, 1, "concurrent edit detected")
+	require.Equal(t, "0193fa00-0000-7000-8000-000000000002", conflicts[0].NewEventID)
+	require.Equal(t, "0193fa00-0000-7000-8000-000000000001", conflicts[0].ConflictingEventID)
+	require.Equal(t, "MTIX-1", conflicts[0].NodeID)
+	require.Equal(t, "title", conflicts[0].FieldName)
+}
+
+// Keep fmt referenced (used by helpers).
 var _ = fmt.Sprintf

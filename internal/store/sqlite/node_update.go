@@ -51,7 +51,88 @@ func executeUpdateTx(ctx context.Context, tx *sql.Tx, id string, updates *store.
 		args = append(args, hash)
 	}
 
-	return execUpdateQuery(ctx, tx, id, setClauses, args)
+	if err := execUpdateQuery(ctx, tx, id, setClauses, args); err != nil {
+		return err
+	}
+
+	return emitUpdateEvents(ctx, tx, id, updates)
+}
+
+// emitUpdateEvents emits one sync event per changed field. Maps the
+// canonical Acceptance and Prompt fields onto their dedicated op_types
+// (set_acceptance, set_prompt) and treats every other field as
+// update_field per SYNC-DESIGN section 3.3.
+//
+// OldValue capture is deferred — the field is optional in the payload
+// and conflict resolution uses lamport_clock first; richer surfacing
+// (which needs the prior value) lands in MTIX-15.5.
+func emitUpdateEvents(ctx context.Context, tx *sql.Tx, id string, u *store.NodeUpdate) error {
+	project := projectPrefixFromNodeID(id)
+	emit := func(op model.OpType, payload json.RawMessage) error {
+		return emitEvent(ctx, tx, emitParams{
+			NodeID:      id,
+			ProjectCode: project,
+			OpType:      op,
+			Author:      authorIDFallback,
+			Payload:     payload,
+		})
+	}
+
+	if u.Acceptance != nil {
+		p, _ := model.EncodePayload(&model.SetAcceptancePayload{AcceptanceText: *u.Acceptance})
+		if err := emit(model.OpSetAcceptance, p); err != nil {
+			return err
+		}
+	}
+	if u.Prompt != nil {
+		p, _ := model.EncodePayload(&model.SetPromptPayload{PromptText: *u.Prompt})
+		if err := emit(model.OpSetPrompt, p); err != nil {
+			return err
+		}
+	}
+
+	type fieldEmit struct {
+		name string
+		val  any
+	}
+	plain := make([]fieldEmit, 0, 8)
+	if u.Title != nil {
+		plain = append(plain, fieldEmit{"title", *u.Title})
+	}
+	if u.Description != nil {
+		plain = append(plain, fieldEmit{"description", *u.Description})
+	}
+	if u.Status != nil {
+		plain = append(plain, fieldEmit{"status", string(*u.Status)})
+	}
+	if u.Priority != nil {
+		plain = append(plain, fieldEmit{"priority", int(*u.Priority)})
+	}
+	if u.Labels != nil {
+		plain = append(plain, fieldEmit{"labels", u.Labels})
+	}
+	if u.Assignee != nil {
+		plain = append(plain, fieldEmit{"assignee", *u.Assignee})
+	}
+	if u.AgentState != nil {
+		plain = append(plain, fieldEmit{"agent_state", string(*u.AgentState)})
+	}
+
+	for _, f := range plain {
+		newJSON, err := json.Marshal(f.val)
+		if err != nil {
+			return fmt.Errorf("marshal new value for %s: %w", f.name, err)
+		}
+		p, _ := model.EncodePayload(&model.UpdateFieldPayload{
+			FieldName: f.name,
+			NewValue:  newJSON,
+		})
+		if err := emit(model.OpUpdateField, p); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // verifyNodeExists checks that a node exists and is not soft-deleted.

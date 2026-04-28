@@ -138,7 +138,7 @@ The hub MUST reject any event that fails validation, with structured error `MTIX
 | `vector_clock` | Flat map; entries `<= 100`; each value `< 2^53` | `VECTOR_CLOCK_INVALID` / `VECTOR_CLOCK_OVERFLOW` |
 | `author_id` | Matches `^[a-z0-9_-]{1,64}$` | `AUTHOR_ID_INVALID` |
 | `node_id` | Matches the dot-notation grammar from FR-2 | `NODE_ID_INVALID` |
-| `project_prefix` | Matches `^[A-Z][A-Z0-9]{0,15}$` | `PROJECT_PREFIX_INVALID` |
+| `project_prefix` | Matches `^[A-Z][A-Z0-9_]{0,15}$` | `PROJECT_PREFIX_INVALID` |
 
 ### 5.2 Hub event log retention (deferred, with rationale)
 - Default retention: **forever** (`hub.events_retention_days = 0`).

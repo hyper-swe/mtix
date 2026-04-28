@@ -131,6 +131,13 @@ func TestSyncEvent_JSONRoundTripsPerOpType(t *testing.T) {
 	}
 }
 
+func TestSyncEvent_Validate_AcceptsUnderscoreInProjectPrefix(t *testing.T) {
+	e := validEvent()
+	e.ProjectPrefix = "DEP_ADD"
+	require.NoError(t, e.Validate(),
+		"underscore in project_prefix is valid (existing mtix convention)")
+}
+
 func TestSyncEvent_JSONOmitsEmptyOptionals(t *testing.T) {
 	e := validEvent()
 	e.SyncStatus = ""

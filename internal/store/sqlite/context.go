@@ -5,6 +5,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 
@@ -81,6 +82,12 @@ func (s *Store) GetSiblings(ctx context.Context, nodeID string) ([]*model.Node, 
 
 // SetAnnotations replaces all annotations on a node per FR-3.4.
 // The annotations are stored as a JSON array.
+//
+// MTIX-15.2.3 wraps this in WithTx so the comment sync_event commits
+// atomically with the annotations row. The emitted op_type is comment
+// (SYNC-DESIGN section 3.3); when the new annotations slice grew by
+// exactly one entry, the new entry's body is captured in the payload.
+// Otherwise (replace, clear) the payload notes the size delta.
 func (s *Store) SetAnnotations(ctx context.Context, nodeID string, annotations []model.Annotation) error {
 	var annotJSON string
 	if len(annotations) > 0 {
@@ -91,15 +98,59 @@ func (s *Store) SetAnnotations(ctx context.Context, nodeID string, annotations [
 		annotJSON = string(data)
 	}
 
-	_, err := s.writeDB.ExecContext(ctx,
-		`UPDATE nodes SET annotations = ? WHERE id = ? AND deleted_at IS NULL`,
-		nullableString(annotJSON), nodeID,
-	)
-	if err != nil {
-		return fmt.Errorf("set annotations for %s: %w", nodeID, err)
-	}
+	return s.WithTx(ctx, func(tx *sql.Tx) error {
+		var prevJSON sql.NullString
+		_ = tx.QueryRowContext(ctx,
+			`SELECT annotations FROM nodes WHERE id = ? AND deleted_at IS NULL`,
+			nodeID,
+		).Scan(&prevJSON)
 
-	return nil
+		result, err := tx.ExecContext(ctx,
+			`UPDATE nodes SET annotations = ? WHERE id = ? AND deleted_at IS NULL`,
+			nullableString(annotJSON), nodeID,
+		)
+		if err != nil {
+			return fmt.Errorf("set annotations for %s: %w", nodeID, err)
+		}
+
+		// Preserve the v0.1.x silent no-op semantics: if the UPDATE
+		// affected zero rows (node missing or soft-deleted) no actual
+		// mutation occurred — skip emission so the event log mirrors
+		// the data layer faithfully.
+		affected, _ := result.RowsAffected()
+		if affected == 0 {
+			return nil
+		}
+
+		commentBody, commentAuthor := newCommentForSyncEvent(prevJSON.String, annotations)
+		payload, _ := model.EncodePayload(&model.CommentPayload{
+			AuthorID: commentAuthor,
+			Body:     commentBody,
+		})
+		return emitEvent(ctx, tx, emitParams{
+			NodeID:      nodeID,
+			ProjectCode: projectPrefixFromNodeID(nodeID),
+			OpType:      model.OpComment,
+			Author:      commentAuthor,
+			Payload:     payload,
+		})
+	})
+}
+
+// newCommentForSyncEvent identifies the new annotation when the caller
+// appended exactly one. Returns the new entry's body and author when
+// detectable; otherwise returns a placeholder noting the bulk change so
+// the event log carries a meaningful trace.
+func newCommentForSyncEvent(prevJSON string, next []model.Annotation) (body, author string) {
+	var prev []model.Annotation
+	if prevJSON != "" {
+		_ = json.Unmarshal([]byte(prevJSON), &prev)
+	}
+	if len(next) == len(prev)+1 {
+		latest := next[len(next)-1]
+		return latest.Text, latest.Author
+	}
+	return fmt.Sprintf("annotations bulk update: %d -> %d entries", len(prev), len(next)), authorIDFallback
 }
 
 // reverseNodes reverses a slice of nodes in place.

@@ -36,6 +36,20 @@ func (s *Store) CreateNode(ctx context.Context, node *model.Node) error {
 			return err
 		}
 
+		payload, err := buildCreateNodePayload(node)
+		if err != nil {
+			return fmt.Errorf("build sync payload for %s: %w", node.ID, err)
+		}
+		if err := emitEvent(ctx, tx, emitParams{
+			NodeID:      node.ID,
+			ProjectCode: node.Project,
+			OpType:      model.OpCreateNode,
+			Author:      node.Creator,
+			Payload:     payload,
+		}); err != nil {
+			return err
+		}
+
 		if node.ParentID != "" {
 			if err := recalculateProgress(ctx, tx, node.ParentID); err != nil {
 				return fmt.Errorf("recalculate progress after create: %w", err)
@@ -43,6 +57,23 @@ func (s *Store) CreateNode(ctx context.Context, node *model.Node) error {
 		}
 
 		return nil
+	})
+}
+
+// buildCreateNodePayload serializes the create_node payload per
+// model.CreateNodePayload (FR-18 / SYNC-DESIGN section 3.3).
+func buildCreateNodePayload(node *model.Node) (json.RawMessage, error) {
+	return model.EncodePayload(&model.CreateNodePayload{
+		Title:       node.Title,
+		ParentID:    node.ParentID,
+		NodeType:    node.NodeType,
+		Description: node.Description,
+		Prompt:      node.Prompt,
+		Acceptance:  node.Acceptance,
+		Priority:    node.Priority,
+		Labels:      node.Labels,
+		Assignee:    node.Assignee,
+		Creator:     node.Creator,
 	})
 }
 

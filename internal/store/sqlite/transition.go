@@ -64,6 +64,21 @@ func executeTransitionTx(ctx context.Context, tx *sql.Tx, id string, toStatus mo
 		return fmt.Errorf("record activity for %s: %w", id, err)
 	}
 
+	payload, _ := model.EncodePayload(&model.TransitionStatusPayload{
+		From:   fromStatus,
+		To:     toStatus,
+		Reason: reason,
+	})
+	if err := emitEvent(ctx, tx, emitParams{
+		NodeID:      id,
+		ProjectCode: projectPrefixFromNodeID(id),
+		OpType:      model.OpTransitionStatus,
+		Author:      author,
+		Payload:     payload,
+	}); err != nil {
+		return err
+	}
+
 	if parentID != "" {
 		if err := recalculateProgress(ctx, tx, parentID); err != nil {
 			return fmt.Errorf("recalculate progress after transition: %w", err)

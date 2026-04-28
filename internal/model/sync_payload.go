@@ -27,7 +27,7 @@ type CreateNodePayload struct {
 	Description string   `json:"description,omitempty"`
 	Prompt      string   `json:"prompt,omitempty"`
 	Acceptance  string   `json:"acceptance,omitempty"`
-	Priority    int      `json:"priority,omitempty"`
+	Priority    Priority `json:"priority,omitempty"`
 	Labels      []string `json:"labels,omitempty"`
 	Assignee    string   `json:"assignee,omitempty"`
 	Creator     string   `json:"creator,omitempty"`

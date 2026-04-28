@@ -21,7 +21,7 @@ func TestPayload_RoundTrip(t *testing.T) {
 		out  any
 	}{
 		{"create_node",
-			&model.CreateNodePayload{Title: "x", NodeType: model.NodeTypeIssue, Priority: 2, Labels: []string{"a", "b"}},
+			&model.CreateNodePayload{Title: "x", NodeType: model.NodeTypeIssue, Priority: model.Priority(2), Labels: []string{"a", "b"}},
 			&model.CreateNodePayload{}},
 		{"update_field",
 			&model.UpdateFieldPayload{FieldName: "title", NewValue: json.RawMessage(`"new"`), OldValue: json.RawMessage(`"old"`)},

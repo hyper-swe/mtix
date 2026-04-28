@@ -45,12 +45,23 @@ func (s *Store) ClaimNode(ctx context.Context, id, agentID string) error {
 		}
 
 		// Record claim activity.
-		return appendActivityEntry(ctx, tx, id, model.ActivityEntry{
+		if err := appendActivityEntry(ctx, tx, id, model.ActivityEntry{
 			ID:        fmt.Sprintf("act-%d", now.UnixNano()),
 			Type:      model.ActivityTypeClaim,
 			Author:    agentID,
 			Text:      fmt.Sprintf("Claimed by %s", agentID),
 			CreatedAt: now,
+		}); err != nil {
+			return err
+		}
+
+		payload, _ := model.EncodePayload(&model.ClaimPayload{AgentID: agentID})
+		return emitEvent(ctx, tx, emitParams{
+			NodeID:      id,
+			ProjectCode: projectPrefixFromNodeID(id),
+			OpType:      model.OpClaim,
+			Author:      agentID,
+			Payload:     payload,
 		})
 	})
 }
@@ -160,12 +171,23 @@ func (s *Store) UnclaimNode(ctx context.Context, id, reason, author string) erro
 			}
 		}
 
-		return appendActivityEntry(ctx, tx, id, model.ActivityEntry{
+		if err := appendActivityEntry(ctx, tx, id, model.ActivityEntry{
 			ID:        fmt.Sprintf("act-%d", now.UnixNano()),
 			Type:      model.ActivityTypeUnclaim,
 			Author:    author,
 			Text:      reason,
 			CreatedAt: now,
+		}); err != nil {
+			return err
+		}
+
+		payload, _ := model.EncodePayload(&model.UnclaimPayload{})
+		return emitEvent(ctx, tx, emitParams{
+			NodeID:      id,
+			ProjectCode: projectPrefixFromNodeID(id),
+			OpType:      model.OpUnclaim,
+			Author:      author,
+			Payload:     payload,
 		})
 	})
 }
@@ -200,12 +222,23 @@ func (s *Store) ForceReclaimNode(ctx context.Context, id, agentID string, staleT
 			return err
 		}
 
-		return appendActivityEntry(ctx, tx, id, model.ActivityEntry{
+		if err := appendActivityEntry(ctx, tx, id, model.ActivityEntry{
 			ID:        fmt.Sprintf("act-%d", now.UnixNano()),
 			Type:      model.ActivityTypeClaim,
 			Author:    agentID,
 			Text:      fmt.Sprintf("Force-reclaimed from %s", currentAssignee),
 			CreatedAt: now,
+		}); err != nil {
+			return err
+		}
+
+		payload, _ := model.EncodePayload(&model.ClaimPayload{AgentID: agentID, Forced: true})
+		return emitEvent(ctx, tx, emitParams{
+			NodeID:      id,
+			ProjectCode: projectPrefixFromNodeID(id),
+			OpType:      model.OpClaim,
+			Author:      agentID,
+			Payload:     payload,
 		})
 	})
 }

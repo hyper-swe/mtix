@@ -224,6 +224,7 @@ INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '2');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.lamport', '0');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.last_pulled_clock', '0');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.machine_hash', '');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.vector_clock', '{}');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('sync.max_queue_size', '0');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('hub.events_retention_days', '0');
 `

@@ -89,7 +89,9 @@ func (s SyncStatus) IsValid() bool {
 var authorIDPattern = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 
 // projectPrefixPattern enforces the SYNC-DESIGN §5.1 project_prefix grammar.
-var projectPrefixPattern = regexp.MustCompile(`^[A-Z][A-Z0-9]{0,15}$`)
+// Underscore is permitted to match existing mtix project naming conventions
+// (e.g. "DEP_ADD" used in tests; user projects may also contain underscores).
+var projectPrefixPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,15}$`)
 
 // machineHashPattern enforces the 16-hex shape produced by sync/clock.MachineHash.
 var machineHashPattern = regexp.MustCompile(`^[a-f0-9]{16}$`)

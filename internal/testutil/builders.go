@@ -4,11 +4,21 @@
 package testutil
 
 import (
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
+
+// defaultNodeIDCounter feeds nextDefaultNodeID. Atomic so concurrent
+// MakeNode calls in parallel tests cannot collide on the PRIMARY KEY.
+var defaultNodeIDCounter atomic.Int64
+
+func nextDefaultNodeID() string {
+	return fmt.Sprintf("TEST-%d", defaultNodeIDCounter.Add(1))
+}
 
 // NodeOption is a functional option for configuring test nodes.
 type NodeOption func(*model.Node)
@@ -86,8 +96,12 @@ func MakeNode(t *testing.T, opts ...NodeOption) *model.Node {
 	now := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
 
 	node := &model.Node{
-		Title:     "Test Node",
+		// Default ID derived from a per-test counter so concurrent
+		// tests do not collide on PK and the sync emitter (MTIX-15.2.3)
+		// has a non-empty NodeID to validate.
+		ID:        nextDefaultNodeID(),
 		Project:   "TEST",
+		Title:     "Test Node",
 		Status:    model.StatusOpen,
 		Priority:  model.PriorityMedium,
 		NodeType:  model.NodeTypeAuto,

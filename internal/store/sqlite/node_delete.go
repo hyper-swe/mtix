@@ -52,6 +52,17 @@ func (s *Store) DeleteNode(ctx context.Context, id string, cascade bool, deleted
 			}
 		}
 
+		payload, _ := model.EncodePayload(&model.DeletePayload{})
+		if err := emitEvent(ctx, tx, emitParams{
+			NodeID:      id,
+			ProjectCode: projectPrefixFromNodeID(id),
+			OpType:      model.OpDelete,
+			Author:      deletedBy,
+			Payload:     payload,
+		}); err != nil {
+			return err
+		}
+
 		// FR-5.7: Recalculate parent progress.
 		if parentID.Valid && parentID.String != "" {
 			if err := recalculateProgress(ctx, tx, parentID.String); err != nil {
@@ -82,6 +93,12 @@ func cascadeDelete(ctx context.Context, tx *sql.Tx, parentID, deletedBy, now str
 
 // UndeleteNode restores a soft-deleted node and its descendants per FR-3.3.
 // Clears deleted_at and deleted_by. Recalculates parent progress.
+//
+// Sync note (MTIX-15.2.3): UndeleteNode does NOT emit a sync_events row.
+// Tombstones are monotonic per SYNC-DESIGN section 8.3 — a delete event
+// once applied stays applied. Local restore is a single-CLI convenience
+// (the row is recovered from the same DB it never left); cross-CLI
+// restore must be done by a fresh create_node event under a new ID.
 //
 // Returns ErrNotFound if the node does not exist or is not deleted.
 func (s *Store) UndeleteNode(ctx context.Context, id string) error {

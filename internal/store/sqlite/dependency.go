@@ -57,7 +57,17 @@ func (s *Store) AddDependency(ctx context.Context, dep *model.Dependency) error 
 			}
 		}
 
-		return nil
+		payload, _ := model.EncodePayload(&model.LinkDepPayload{
+			DependsOnNodeID: dep.ToID,
+			DepType:         string(dep.DepType),
+		})
+		return emitEvent(ctx, tx, emitParams{
+			NodeID:      dep.FromID,
+			ProjectCode: projectPrefixFromNodeID(dep.FromID),
+			OpType:      model.OpLinkDep,
+			Author:      dep.CreatedBy,
+			Payload:     payload,
+		})
 	})
 }
 
@@ -91,7 +101,17 @@ func (s *Store) RemoveDependency(ctx context.Context, fromID, toID string, depTy
 			}
 		}
 
-		return nil
+		payload, _ := model.EncodePayload(&model.UnlinkDepPayload{
+			DependsOnNodeID: toID,
+			DepType:         string(depType),
+		})
+		return emitEvent(ctx, tx, emitParams{
+			NodeID:      fromID,
+			ProjectCode: projectPrefixFromNodeID(fromID),
+			OpType:      model.OpUnlinkDep,
+			Author:      authorIDFallback,
+			Payload:     payload,
+		})
 	})
 }
 

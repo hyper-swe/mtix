@@ -47,6 +47,21 @@ func executeCancelTx(ctx context.Context, tx *sql.Tx, id, reason, author string,
 		return err
 	}
 
+	payload, _ := model.EncodePayload(&model.TransitionStatusPayload{
+		From:   fromStatus,
+		To:     model.StatusCancelled,
+		Reason: reason,
+	})
+	if err := emitEvent(ctx, tx, emitParams{
+		NodeID:      id,
+		ProjectCode: projectPrefixFromNodeID(id),
+		OpType:      model.OpTransitionStatus,
+		Author:      author,
+		Payload:     payload,
+	}); err != nil {
+		return err
+	}
+
 	if cascade {
 		if err := cascadeCancel(ctx, tx, id, reason, author, nowStr); err != nil {
 			return fmt.Errorf("cascade cancel from %s: %w", id, err)

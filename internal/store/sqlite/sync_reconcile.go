@@ -352,6 +352,15 @@ func applyRenameLoop(
 			return count, fmt.Errorf("audit rename %s: %w", oldID, err)
 		}
 		count++
+		// Chaos hook for atomicity tests (15.6.3). Production runs
+		// leave this nil; the test sets it to inject a failure after
+		// the Nth successful rename so the surrounding WithTx rolls
+		// back.
+		if reconcileFailAfterN != nil {
+			if injectErr := reconcileFailAfterN(count); injectErr != nil {
+				return count, fmt.Errorf("chaos: %w", injectErr)
+			}
+		}
 	}
 	return count, nil
 }

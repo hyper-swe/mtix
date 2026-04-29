@@ -89,6 +89,7 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			`UPDATE meta SET value = '{}' WHERE key = 'meta.sync.vector_clock'`,
 			`UPDATE meta SET value = '' WHERE key = 'meta.sync.first_event_hash'`,
 			`UPDATE meta SET value = '' WHERE key = 'meta.sync.project_prefix'`,
+			`UPDATE meta SET value = '' WHERE key = 'meta.sync.machine_hash'`,
 			`DELETE FROM sync_projects`,
 		} {
 			if _, txErr := tx.ExecContext(ctx, stmt); txErr != nil {
@@ -424,11 +425,10 @@ func buildRenameMapping(ctx context.Context, s *Store, newPrefix string) (map[st
 		if scanErr := rows.Scan(&id); scanErr != nil {
 			return nil, fmt.Errorf("scan id: %w", scanErr)
 		}
-		oldPrefix, rest := splitProjectPrefix(id)
-		if oldPrefix == "" {
-			continue // skip malformed
+		_, rest := splitProjectPrefix(id)
+		if rest == "" {
+			continue // skip malformed (no prefix or empty tail)
 		}
-		_ = oldPrefix
 		newID := newPrefix + "-" + rest
 		mapping[id] = newID
 	}

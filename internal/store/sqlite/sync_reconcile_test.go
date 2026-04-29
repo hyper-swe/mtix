@@ -159,6 +159,7 @@ func TestDiscardLocal_ResetsSentinels(t *testing.T) {
 		{"meta.sync.vector_clock", "{}"},
 		{"meta.sync.first_event_hash", ""},
 		{"meta.sync.project_prefix", ""},
+		{"meta.sync.machine_hash", ""},
 	} {
 		t.Run(kv.key, func(t *testing.T) {
 			var got string

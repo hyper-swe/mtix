@@ -255,6 +255,7 @@ INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.machine_hash', '');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.vector_clock', '{}');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.first_event_hash', '');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.project_prefix', '');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.clone.checkpoint', '0');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('sync.max_queue_size', '0');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('hub.events_retention_days', '0');
 `

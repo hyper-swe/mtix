@@ -19,9 +19,13 @@ func newSyncCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "sync",
-		Short: "Check or fix sync between SQLite and tasks.json",
-		Long: `Compare the SQLite database with .mtix/tasks.json and report any drift.
-Use --fix to re-export the database to tasks.json, resolving any discrepancies.`,
+		Short: "Check or fix sync between SQLite and tasks.json (FR-15)",
+		Long: `Without subcommand: compare the SQLite database with .mtix/tasks.json and
+report any drift. Use --fix to re-export the database to tasks.json,
+resolving any discrepancies.
+
+With subcommand (FR-18 / MTIX-15): manage the BYO Postgres sync hub.
+See 'mtix sync init --help' and 'mtix sync clone --help'.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSync(cmd, fix)
 		},
@@ -29,6 +33,13 @@ Use --fix to re-export the database to tasks.json, resolving any discrepancies.`
 
 	cmd.Flags().BoolVar(&fix, "fix", false,
 		"Re-export database to tasks.json to resolve drift")
+
+	// FR-18 subcommands. Each is a thin cobra wrapper around the
+	// transport + reconcile data layer that landed in MTIX-15.3-15.6.
+	cmd.AddCommand(
+		newSyncInitCmd(),
+		newSyncCloneCmd(),
+	)
 
 	return cmd
 }

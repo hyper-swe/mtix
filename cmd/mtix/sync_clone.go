@@ -182,11 +182,19 @@ func applyBatch(ctx context.Context, store *sqlite.Store, events []*model.SyncEv
 }
 
 // localHasEvents returns true if sync_events has at least one row.
+//
+// We only check sync_events (not nodes / dependencies / applied_events)
+// because sync_events is the canonical replication log for this project:
+// every mutation that lands locally writes a sync_events row in the
+// same tx (FR-18.3). If sync_events is empty, the local store has no
+// project-shaped state from this CLI's perspective; clone is safe.
+//
+// Uses readDB directly (NOT store.WithTx) per the MTIX-15.7.1 audit:
+// WithTx opens a write tx, which would unnecessarily lock the DB for
+// a read-only check.
 func localHasEvents(ctx context.Context, store *sqlite.Store) (bool, error) {
 	var n int
-	err := store.WithTx(ctx, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_events`).Scan(&n)
-	})
+	err := store.QueryRow(ctx, `SELECT COUNT(*) FROM sync_events`).Scan(&n)
 	if err != nil {
 		return false, err
 	}
@@ -195,16 +203,18 @@ func localHasEvents(ctx context.Context, store *sqlite.Store) (bool, error) {
 
 // readCloneCheckpoint returns the last-pulled lamport. When --resume
 // is set, reads from meta.sync.clone.checkpoint; otherwise returns 0.
+//
+// Validates non-negative — a corrupted negative checkpoint would
+// cause PullEvents(since=-1) to return ALL events from lamport 0,
+// silently re-applying the entire log. Refuse instead.
 func readCloneCheckpoint(ctx context.Context, store *sqlite.Store, resume bool) (int64, error) {
 	if !resume {
 		return 0, nil
 	}
 	var raw string
-	err := store.WithTx(ctx, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx,
-			`SELECT value FROM meta WHERE key = 'meta.sync.clone.checkpoint'`,
-		).Scan(&raw)
-	})
+	err := store.QueryRow(ctx,
+		`SELECT value FROM meta WHERE key = 'meta.sync.clone.checkpoint'`,
+	).Scan(&raw)
 	if err != nil {
 		return 0, err
 	}
@@ -212,11 +222,19 @@ func readCloneCheckpoint(ctx context.Context, store *sqlite.Store, resume bool) 
 	if _, err := fmt.Sscanf(raw, "%d", &v); err != nil {
 		return 0, fmt.Errorf("parse checkpoint %q: %w", raw, err)
 	}
+	if v < 0 {
+		return 0, fmt.Errorf("checkpoint %q is negative; corrupted state — "+
+			"either restore a backup or run 'mtix sync reconcile --discard-local'", raw)
+	}
 	return v, nil
 }
 
 // writeCloneCheckpoint persists the current cursor so --resume can
 // pick up from this point after an interruption.
+//
+// Uses WithTx (write tx) because this is a write — needed for SQLite
+// WAL durability. The corresponding read in readCloneCheckpoint goes
+// through readDB directly (audit fix).
 func writeCloneCheckpoint(ctx context.Context, store *sqlite.Store, cursor int64) error {
 	return store.WithTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx,

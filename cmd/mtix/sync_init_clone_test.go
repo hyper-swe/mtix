@@ -135,9 +135,12 @@ func TestIsTransientSyncErr(t *testing.T) {
 	}{
 		{nil, false},
 		{errors.New("connection refused"), true},
+		{errors.New("connection reset by peer"), true}, // mirrors transport/retry.go
 		{errors.New("no route to host"), true},
 		{errors.New("i/o timeout"), true},
+		{errors.New("TLS handshake timeout"), true},
 		{errors.New("BROKEN PIPE"), true},
+		{errors.New("read tcp 1.2.3.4:5432: unexpected EOF"), true},
 		{transport.ErrDSNNotConfigured, false},
 		{transport.ErrSecretsFileMode, false},
 		{transport.ErrDSNInTrackedFile, false},

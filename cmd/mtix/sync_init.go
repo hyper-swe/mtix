@@ -123,15 +123,47 @@ func runSyncInit(ctx context.Context, stdout, stderr io.Writer, args []string, o
 		return wrapSyncErr(stderr, "divergence", err)
 	}
 
+	// Hub-side registration: INSERT into sync_projects when the hub
+	// has no row for this prefix. Without this, joiner CLIs running
+	// `mtix sync init` see an empty hub row and never trigger
+	// divergence detection. This is the explicit "I claim this
+	// prefix" handshake per FR-18.13 / SYNC-DESIGN section 10.1.
+	if hubPrefix == "" {
+		if err := registerProjectOnHub(connectCtx, pool, prefix, hash); err != nil {
+			return wrapSyncErr(stderr, "register project on hub", err)
+		}
+		fmt.Fprintf(stdout,
+			"hub schema migrated; local project %s registered on hub (first_event_hash=%s)\n",
+			prefix, shortHashForCLI(hash))
+		return nil
+	}
+
 	fmt.Fprintf(stdout,
-		"hub schema migrated; local project %s registered (first_event_hash=%s)\n",
+		"hub schema migrated; local project %s confirmed against hub (first_event_hash=%s)\n",
 		prefix, shortHashForCLI(hash))
 	return nil
 }
 
+// registerProjectOnHub INSERTs the local project's first_event_hash
+// into hub.sync_projects. Idempotent via ON CONFLICT DO NOTHING so a
+// race between two CLIs running init concurrently is safe (whichever
+// commits first wins; the other's INSERT is a no-op, after which
+// DetectDivergentHistory will catch any actual mismatch).
+func registerProjectOnHub(ctx context.Context, pool *transport.Pool, prefix, hash string) error {
+	_, err := pool.Inner().Exec(ctx, `
+		INSERT INTO sync_projects (project_prefix, first_event_hash)
+		VALUES ($1, $2)
+		ON CONFLICT (project_prefix) DO NOTHING`,
+		prefix, hash,
+	)
+	return err
+}
+
 // readHubFirstEventHash queries hub.sync_projects for the prefix.
-// Returns ("", "", nil) when the hub has no row yet (fresh hub for
-// this project — caller can proceed without a divergence check).
+// Returns ("", "", nil) when the hub has no row yet OR has a row with
+// an empty first_event_hash (degenerate state from manual SQL meddling).
+// Either case is treated as "fresh hub" so init can proceed without a
+// false-positive divergence error.
 func readHubFirstEventHash(ctx context.Context, pool *transport.Pool, prefix string) (string, string, error) {
 	rows, err := pool.Inner().Query(ctx,
 		`SELECT project_prefix, first_event_hash FROM sync_projects WHERE project_prefix = $1`, prefix)
@@ -143,10 +175,18 @@ func readHubFirstEventHash(ctx context.Context, pool *transport.Pool, prefix str
 		return "", "", nil
 	}
 	var p, h string
-	if err := rows.Scan(&p, &h); err != nil {
-		return "", "", err
+	if scanErr := rows.Scan(&p, &h); scanErr != nil {
+		return "", "", scanErr
 	}
-	return p, h, rows.Err()
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return "", "", rowsErr
+	}
+	if h == "" {
+		// Degenerate: row exists but hash is empty. Treat as fresh
+		// hub; the next register call will populate it.
+		return "", "", nil
+	}
+	return p, h, nil
 }
 
 // resolveSyncDSN returns the DSN per FR-18.16: positional arg if
@@ -200,7 +240,19 @@ func isTransientSyncErr(err error) bool {
 		return false
 	}
 	msg := err.Error()
-	for _, sub := range []string{"connection refused", "no route to host", "i/o timeout", "broken pipe"} {
+	// Mirrors transport/retry.go isTransient string fallbacks per
+	// audit finding (MTIX-15.7.1 review). Any new string added there
+	// MUST be added here too — both layers must agree on transience
+	// or hook mode will mis-classify.
+	for _, sub := range []string{
+		"connection refused",
+		"connection reset",
+		"no route to host",
+		"i/o timeout",
+		"tls handshake timeout",
+		"broken pipe",
+		"unexpected eof",
+	} {
 		if containsCI(msg, sub) {
 			return true
 		}

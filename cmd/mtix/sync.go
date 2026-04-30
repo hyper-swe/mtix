@@ -39,6 +39,8 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.`,
 	cmd.AddCommand(
 		newSyncInitCmd(),
 		newSyncCloneCmd(),
+		newSyncPushCmd(),
+		newSyncPullCmd(),
 	)
 
 	return cmd

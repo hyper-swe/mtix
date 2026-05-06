@@ -45,6 +45,8 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.`,
 		newSyncDoctorCmd(),
 		newSyncConflictsCmd(),
 		newSyncReconcileCmd(),
+		newSyncDaemonCmd(),
+		newSyncBackupCmd(),
 	)
 
 	return cmd

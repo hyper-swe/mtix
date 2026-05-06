@@ -32,6 +32,12 @@ type DoctorReport struct {
 	Checks      []DoctorCheck `json:"checks"`
 }
 
+// errDoctorChecksFailed is returned by runSyncDoctor when one or more
+// health checks fail. The cobra wrapper translates this into exit
+// code 2 (distinguishing failed-checks from invalid-arguments). Tests
+// observe the sentinel without the process being killed.
+var errDoctorChecksFailed = errors.New("doctor checks failed")
+
 // newSyncDoctorCmd creates `mtix sync doctor`. Exits 0 if every check
 // passes, exits 2 if any fails. --json output for machine consumption.
 func newSyncDoctorCmd() *cobra.Command {
@@ -51,8 +57,18 @@ Exit code: 0 on all-pass, 2 if any check fails. --json output for
 agents and CI consumption.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSyncDoctor(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
+			err := runSyncDoctor(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS})
+			if errors.Is(err, errDoctorChecksFailed) {
+				// Distinguish failed health checks (exit 2) from
+				// invalid arguments / IO errors (exit 1, via main).
+				// We've already printed the report; suppress cobra's
+				// "Error:" prefix.
+				cmd.SilenceErrors = true
+				cmd.SilenceUsage = true
+				os.Exit(2)
+			}
+			return err
 		},
 	}
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
@@ -117,11 +133,8 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	}
 
 	if !report.OverallPass {
-		// Cobra default: returning a non-nil error exits 1; we want
-		// exit 2 to distinguish doctor-failed-checks from
-		// invalid-arguments. os.Exit bypasses cobra's error handling.
 		_ = stderr // already wrote details above
-		os.Exit(2)
+		return errDoctorChecksFailed
 	}
 	return nil
 }

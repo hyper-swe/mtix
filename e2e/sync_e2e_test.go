@@ -141,11 +141,11 @@ func newFakeCLI(t *testing.T, name, machineHash string) *fakeCLI {
 func (c *fakeCLI) createNode(t *testing.T, id, title string) {
 	t.Helper()
 	now := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
-	parts := strings.Split(id, "-")
-	require.Len(t, parts, 2, "id %q must be PROJ-N format", id)
+	dash := strings.Index(id, "-")
+	require.NotEqual(t, -1, dash, "id %q must contain '-'", id)
 	node := &model.Node{
 		ID:        id,
-		Project:   parts[0],
+		Project:   id[:dash],
 		Title:     title,
 		Status:    model.StatusOpen,
 		Priority:  model.PriorityMedium,
@@ -536,4 +536,167 @@ func TestE2E_RepeatedPushPull_NoDuplication(t *testing.T) {
 		"node set must not change under repeated idempotent pushes/pulls")
 	require.Equal(t, titleBefore, b.titleOf(t, "PRJ-1"),
 		"title must not drift")
+}
+
+// --- edge scenarios ---
+
+// TestE2E_AgentSurge_NoQueueLoss simulates 9 concurrent agents
+// emitting create-node events on the SAME local store. SQLite's
+// BEGIN IMMEDIATE serializes the writes; the test asserts all 9
+// nodes survive into sync_events and round-trip through the hub
+// after a single push.
+//
+// This is the canary for goroutine-safety in the emit path:
+// concurrent emitters must not lose events, must not collide on
+// EventID (UUID v7 generation), and must not produce duplicate
+// node IDs.
+func TestE2E_AgentSurge_NoQueueLoss(t *testing.T) {
+	pool := openHub(t)
+	ctx := context.Background()
+
+	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa")
+
+	// 9 concurrent emit goroutines; each creates a distinct node.
+	const n = 9
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			id := "PRJ-" + strconv.Itoa(i+1)
+			a.createNode(t, id, "surge "+strconv.Itoa(i+1))
+		}()
+	}
+	wg.Wait()
+
+	// All 9 events should be in sync_events as pending.
+	var pending int
+	require.NoError(t, a.store.QueryRow(ctx,
+		`SELECT count(*) FROM sync_events WHERE sync_status = 'pending'`,
+	).Scan(&pending))
+	require.Equal(t, n, pending, "all 9 events should be queued")
+
+	// Drain via a single push; round-trip via a fresh CLI's pull.
+	pushed, _ := a.pushAll(ctx, t, pool)
+	require.Equal(t, n, pushed)
+
+	b := newFakeCLI(t, "B", "bbbbbbbbbbbbbbbb")
+	require.Equal(t, n, b.pullAll(ctx, t, pool))
+	require.Len(t, b.listNodeIDs(t), n, "B sees all 9 surge events after pull")
+}
+
+// TestE2E_LostLaptop_FreshCloneSkipsUnpushedEvents documents the
+// design choice: un-pushed events on a lost machine are NOT durable.
+//
+// Scenario:
+//  1. A, B, C all initialized and converged.
+//  2. A emits 3 events but does NOT push (laptop "lost" before push).
+//  3. B and C continue to mutate + push + pull; they converge with
+//     each other, but A's 3 unpushed events are NOT on the hub.
+//  4. A new fresh CLI D clones from scratch — D ends up at B/C's
+//     state, NOT including A's lost events.
+//
+// This is intentional: the local sync_events queue is local-only
+// until pushed. Operators who need durability across machine loss
+// must push frequently or run the daemon. The failure mode is
+// surfaced by 'mtix sync status' (pending count > 0) and by the
+// hub-unreachable detector in MTIX-15.8.
+func TestE2E_LostLaptop_FreshCloneSkipsUnpushedEvents(t *testing.T) {
+	pool := openHub(t)
+	ctx := context.Background()
+
+	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa")
+	b := newFakeCLI(t, "B", "bbbbbbbbbbbbbbbb")
+	c := newFakeCLI(t, "C", "cccccccccccccccc")
+
+	// All three converged on a baseline.
+	a.createNode(t, "PRJ-1", "shared")
+	a.pushAll(ctx, t, pool)
+	b.pullAll(ctx, t, pool)
+	c.pullAll(ctx, t, pool)
+
+	// A emits 3 events but does NOT push.
+	a.createNode(t, "PRJ-LOST-1", "A's lost #1")
+	a.createNode(t, "PRJ-LOST-2", "A's lost #2")
+	a.createNode(t, "PRJ-LOST-3", "A's lost #3")
+
+	// B and C continue normal flow.
+	b.createNode(t, "PRJ-2", "B's add")
+	c.createNode(t, "PRJ-3", "C's add")
+	b.pushAll(ctx, t, pool)
+	c.pushAll(ctx, t, pool)
+	b.pullAll(ctx, t, pool)
+	c.pullAll(ctx, t, pool)
+
+	// A's lost events MUST NOT be on the hub.
+	for _, lostID := range []string{"PRJ-LOST-1", "PRJ-LOST-2", "PRJ-LOST-3"} {
+		var found int
+		require.NoError(t, pool.Inner().QueryRow(ctx,
+			`SELECT count(*) FROM sync_events WHERE node_id = $1`, lostID,
+		).Scan(&found))
+		require.Equal(t, 0, found,
+			"lost-laptop event %s leaked to hub before push", lostID)
+	}
+
+	// Fresh CLI D clones — sees B/C's state but not A's lost events.
+	d := newFakeCLI(t, "D", "dddddddddddddddd")
+	d.pullAll(ctx, t, pool)
+	dIDs := d.listNodeIDs(t)
+	require.Contains(t, dIDs, "PRJ-1", "shared baseline visible")
+	require.Contains(t, dIDs, "PRJ-2", "B's add visible")
+	require.Contains(t, dIDs, "PRJ-3", "C's add visible")
+	for _, lostID := range []string{"PRJ-LOST-1", "PRJ-LOST-2", "PRJ-LOST-3"} {
+		require.NotContains(t, dIDs, lostID,
+			"un-pushed event %s should NOT survive machine loss", lostID)
+	}
+}
+
+// TestE2E_QueueFull_RefuseSurfacesError exercises the
+// sync.max_queue_size cap. With cap=5, the 6th emit must fail
+// with ErrSyncQueueFull. Draining the queue (push) restores
+// capacity for subsequent emits.
+func TestE2E_QueueFull_RefuseSurfacesError(t *testing.T) {
+	pool := openHub(t)
+	ctx := context.Background()
+
+	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa")
+
+	// Set a tiny cap.
+	_, err := a.store.WriteDB().ExecContext(ctx,
+		`UPDATE meta SET value = '5' WHERE key = 'sync.max_queue_size'`)
+	require.NoError(t, err)
+
+	// 5 emits succeed.
+	for i := 0; i < 5; i++ {
+		a.createNode(t, "PRJ-"+strconv.Itoa(i+1), "fill "+strconv.Itoa(i+1))
+	}
+
+	// 6th emit must fail with ErrSyncQueueFull. Use the lower-level
+	// CreateNode call directly so the test can capture the error;
+	// the harness's createNode helper require.NoError's the failure.
+	now := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	overflow := &model.Node{
+		ID: "PRJ-6", Project: "PRJ", Title: "overflow",
+		Status: model.StatusOpen, Priority: model.PriorityMedium,
+		NodeType: model.NodeTypeAuto, Weight: 1.0, Creator: "e2e",
+		CreatedAt: now, UpdatedAt: now,
+	}
+	err = a.store.CreateNode(ctx, overflow)
+	require.Error(t, err)
+	require.ErrorIs(t, err, model.ErrSyncQueueFull,
+		"6th emit must wrap ErrSyncQueueFull; got %v", err)
+
+	// Queue size is still 5 (overflow rejected).
+	var pending int
+	require.NoError(t, a.store.QueryRow(ctx,
+		`SELECT count(*) FROM sync_events WHERE sync_status = 'pending'`,
+	).Scan(&pending))
+	require.Equal(t, 5, pending, "overflow event must not have been queued")
+
+	// Drain via push, then more emits succeed.
+	a.pushAll(ctx, t, pool)
+	for i := 0; i < 5; i++ {
+		a.createNode(t, "PRJ-DRAIN-"+strconv.Itoa(i+1), "after drain")
+	}
 }

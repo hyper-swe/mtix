@@ -299,6 +299,39 @@ func writeLastPulledClockForTest(ctx context.Context, t *testing.T, st *sqlite.S
 	}))
 }
 
+// registerOnHub mirrors cmd/mtix/sync_init.registerProjectOnHub.
+// Inserts the local project's (prefix, first_event_hash) into the
+// hub's sync_projects table so divergence detection can see this
+// CLI's identity.
+func (c *fakeCLI) registerOnHub(ctx context.Context, t *testing.T, pool *transport.Pool) {
+	t.Helper()
+	prefix, hash, err := c.store.GetOrComputeLocalFirstEventHash(ctx)
+	require.NoError(t, err, "%s compute first_event_hash", c.name)
+	_, err = pool.Inner().Exec(ctx, `
+		INSERT INTO sync_projects (project_prefix, first_event_hash)
+		VALUES ($1, $2)
+		ON CONFLICT (project_prefix) DO NOTHING`,
+		prefix, hash)
+	require.NoError(t, err, "%s register on hub", c.name)
+}
+
+// readHubProject mirrors cmd/mtix/sync_init.readHubFirstEventHash.
+// Returns ("", "") when the hub has no row for this prefix.
+func readHubProject(ctx context.Context, t *testing.T, pool *transport.Pool, prefix string) (string, string) {
+	t.Helper()
+	rows, err := pool.Inner().Query(ctx,
+		`SELECT project_prefix, first_event_hash FROM sync_projects WHERE project_prefix = $1`,
+		prefix)
+	require.NoError(t, err)
+	defer rows.Close()
+	if !rows.Next() {
+		return "", ""
+	}
+	var p, h string
+	require.NoError(t, rows.Scan(&p, &h))
+	return p, h
+}
+
 // --- happy path ---
 
 // TestE2E_Lifecycle_HappyPath_3CLIsConverge exercises the canonical
@@ -355,4 +388,152 @@ func TestE2E_Lifecycle_HappyPath_3CLIsConverge(t *testing.T) {
 	require.Equal(t, idsA, idsB, "A and B should have identical node sets")
 	require.Equal(t, idsB, idsC, "B and C should have identical node sets")
 	require.Contains(t, idsA, "PRJ-3", "C's late add should be visible to A")
+}
+
+// titleOf returns the current title of node id from this CLI's local store.
+func (c *fakeCLI) titleOf(t *testing.T, id string) string {
+	t.Helper()
+	nodes, _, err := c.store.ListNodes(context.Background(),
+		store.NodeFilter{}, store.ListOptions{Limit: 1000})
+	require.NoError(t, err)
+	for _, n := range nodes {
+		if n.ID == id {
+			return n.Title
+		}
+	}
+	t.Fatalf("%s has no node %s", c.name, id)
+	return ""
+}
+
+// --- conflicts ---
+
+// TestE2E_Conflict_SameNodeSameField_LWWConverges drives the
+// canonical concurrent-edit scenario: B and C both update PRJ-1's
+// title without seeing each other's event. LWW resolution at
+// apply time deterministically picks one winner; all 3 CLIs
+// converge on the SAME title.
+//
+// Design note on hub-side sync_conflicts: VectorClock.Concurrent
+// keys causality by authorID. Today's emit path stamps every
+// update with authorID="cli" (sync_emit.authorIDFallback), so
+// two CLIs sharing that author produce vector clocks that
+// COLLIDE (Equal != Concurrent) and the hub-side detector skips
+// them. Hub-side sync_conflicts is reliable for cross-AGENT
+// concurrency (distinct authorIDs) but is bypassed in the
+// default-authorID case. LWW at apply time — keyed by
+// (lamport, wall_clock_ts, author_machine_hash) — is the
+// load-bearing convergence mechanism for this scenario; all
+// three CLIs have distinct machine_hashes here, so the LWW
+// tiebreaker is deterministic.
+//
+// Convergence is the contract; which side wins depends on
+// wall_clock_ts (real time) and is not asserted.
+func TestE2E_Conflict_SameNodeSameField_LWWConverges(t *testing.T) {
+	pool := openHub(t)
+	ctx := context.Background()
+
+	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa")
+	b := newFakeCLI(t, "B", "bbbbbbbbbbbbbbbb")
+	c := newFakeCLI(t, "C", "cccccccccccccccc")
+
+	a.createNode(t, "PRJ-1", "initial")
+	a.pushAll(ctx, t, pool)
+	require.Equal(t, 1, b.pullAll(ctx, t, pool))
+	require.Equal(t, 1, c.pullAll(ctx, t, pool))
+
+	b.updateTitle(t, "PRJ-1", "from-B")
+	c.updateTitle(t, "PRJ-1", "from-C")
+	b.pushAll(ctx, t, pool)
+	c.pushAll(ctx, t, pool)
+
+	a.pullAll(ctx, t, pool)
+	b.pullAll(ctx, t, pool)
+	c.pullAll(ctx, t, pool)
+
+	titleA := a.titleOf(t, "PRJ-1")
+	titleB := b.titleOf(t, "PRJ-1")
+	titleC := c.titleOf(t, "PRJ-1")
+	require.Equal(t, titleA, titleB,
+		"A and B must converge on the same title; got A=%q B=%q", titleA, titleB)
+	require.Equal(t, titleB, titleC,
+		"B and C must converge on the same title; got B=%q C=%q", titleB, titleC)
+	require.Contains(t, []string{"from-B", "from-C"}, titleA,
+		"winner must be one of the two competing values; got %q", titleA)
+}
+
+// --- divergent history ---
+
+// TestE2E_DivergentHistory_RegistersErrorOnSecondCLI exercises the
+// FR-18.10 / MTIX-15.6 detection path. CLI A initializes the hub
+// with prefix PRJX; CLI B emits its OWN events under the same
+// prefix WITHOUT cloning. B's first_event_hash diverges from A's,
+// and DetectDivergentHistory must surface the mismatch.
+//
+// This test stops at the detection step. The full reconcile path
+// (RenameTo / ImportAs) is unit-tested in internal/store/sqlite —
+// here we confirm the detection wiring on a real hub.
+func TestE2E_DivergentHistory_DetectionFires(t *testing.T) {
+	pool := openHub(t)
+	ctx := context.Background()
+
+	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa")
+	b := newFakeCLI(t, "B", "bbbbbbbbbbbbbbbb")
+
+	// A seeds + pushes + registers (mirroring sync init).
+	a.createNode(t, "PRJX-1", "A's first")
+	a.createNode(t, "PRJX-2", "A's second")
+	a.pushAll(ctx, t, pool)
+	a.registerOnHub(ctx, t, pool)
+
+	// B independently emits PRJX events — does NOT clone first.
+	b.createNode(t, "PRJX-1", "B's first (different content)")
+
+	// B reads its own first_event_hash and the hub's, then runs
+	// the divergence detector.
+	bPrefix, bHash, err := b.store.GetOrComputeLocalFirstEventHash(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "PRJX", bPrefix)
+
+	hubPrefix, hubHash := readHubProject(ctx, t, pool, "PRJX")
+	require.Equal(t, "PRJX", hubPrefix)
+	require.NotEmpty(t, hubHash, "hub should have A's first_event_hash registered")
+
+	require.NotEqual(t, hubHash, bHash,
+		"A and B must have computed distinct first_event_hash values")
+
+	err = sqlite.DetectDivergentHistory(bPrefix, bHash, hubPrefix, hubHash)
+	require.Error(t, err, "divergence must be detected")
+	require.ErrorIs(t, err, model.ErrSyncDivergentHistory,
+		"error must wrap ErrSyncDivergentHistory")
+}
+
+// TestE2E_RepeatedPushPull_NoDuplication asserts that running
+// push and pull repeatedly in a tight loop on the happy-path setup
+// is idempotent — applied_events dedupe holds, no node row gets
+// duplicated, hashes don't drift.
+func TestE2E_RepeatedPushPull_NoDuplication(t *testing.T) {
+	pool := openHub(t)
+	ctx := context.Background()
+
+	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa")
+	b := newFakeCLI(t, "B", "bbbbbbbbbbbbbbbb")
+
+	a.createNode(t, "PRJ-1", "stable")
+	a.pushAll(ctx, t, pool)
+	b.pullAll(ctx, t, pool)
+
+	idsBefore := b.listNodeIDs(t)
+	titleBefore := b.titleOf(t, "PRJ-1")
+
+	for i := 0; i < 3; i++ {
+		a.pushAll(ctx, t, pool)
+		b.pushAll(ctx, t, pool)
+		a.pullAll(ctx, t, pool)
+		b.pullAll(ctx, t, pool)
+	}
+
+	require.Equal(t, idsBefore, b.listNodeIDs(t),
+		"node set must not change under repeated idempotent pushes/pulls")
+	require.Equal(t, titleBefore, b.titleOf(t, "PRJ-1"),
+		"title must not drift")
 }

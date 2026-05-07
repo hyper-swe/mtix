@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-05-07T13:39:34Z",
+  "exported_at": "2026-05-07T13:54:11Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1356,7 +1356,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.6410256410256411,
+      "progress": 0.6666666666666666,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -2326,7 +2326,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.3333333333333333,
+      "progress": 0.6666666666666666,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -2374,15 +2374,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[\"MTIX-15\",\"fr-18\",\"e2e\"]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "vimal",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "7c731da6a5bd42b285862469dd1d7b2591d0811d585678a85538354c43bf9639",
       "created_at": "2026-05-07T12:49:29Z",
-      "updated_at": "2026-05-07T12:49:29Z"
+      "updated_at": "2026-05-07T13:54:11Z",
+      "closed_at": "2026-05-07T13:54:11Z"
     },
     {
       "id": "MTIX-15.9.3",
@@ -3975,7 +3976,7 @@
       "agent_id": "vimal",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-15.9.1",
+      "current_node_id": "MTIX-15.9.2",
       "last_heartbeat": "2026-05-06T14:14:36Z"
     }
   ],
@@ -3998,5 +3999,5 @@
     }
   ],
   "node_count": 148,
-  "checksum": "ab192635bed0aec475c79ac9a3201e67715e92f664afccc938d65beb2cf29e17"
+  "checksum": "9d5c523993ccf1a3c58da7ec1b336f15d132cb57677d6882b1fcc74c1979171a"
 }

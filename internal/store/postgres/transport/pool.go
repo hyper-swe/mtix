@@ -31,9 +31,15 @@ type PoolDefaults struct {
 // DefaultPoolDefaults is the canonical configuration callers MUST pass
 // unless an integration test deliberately diverges (see the TLS-only
 // integration tests that opt out of statement_timeout).
+//
+// MaxConns=5 is the FR-18 / MTIX-15.10 ceiling: at 10 active
+// developers per hub × 5 conns/CLI = 50 connections, well within
+// the 100-conn limits of common managed PG providers. Push and pull
+// each use one connection at a time; the headroom covers the
+// daemon's health check + a transient overlap.
 func DefaultPoolDefaults() PoolDefaults {
 	return PoolDefaults{
-		MaxConns:          8,
+		MaxConns:          5,
 		ConnLifetime:      30 * time.Minute,
 		StatementTimeout:  10 * time.Second,
 		HealthCheckPeriod: 1 * time.Minute,

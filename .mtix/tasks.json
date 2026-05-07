@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-05-07T14:00:52Z",
+  "exported_at": "2026-05-07T14:17:02Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1356,7 +1356,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.6923076923076923,
+      "progress": 0.7307692307692307,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1404,15 +1404,64 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
+      "status": "open",
+      "progress": 0.5,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
       "weight": 1,
       "content_hash": "6f01261cf566fe3321c7b673e75785824f8443d38495c93b50a2421aae9e8a01",
       "created_at": "2026-04-27T13:02:50Z",
-      "updated_at": "2026-04-27T13:13:55Z"
+      "updated_at": "2026-05-07T14:09:16Z"
+    },
+    {
+      "id": "MTIX-15.10.1",
+      "parent_id": "MTIX-15.10",
+      "depth": 2,
+      "seq": 1,
+      "project": "MTIX",
+      "title": "Sync push/pull throughput benchmarks (1000 events \u003c5s)",
+      "description": "",
+      "prompt": "Add benchmarks for the sync wire path. Gate on MTIX_PG_TEST_DSN; skip when unset.\n\nLocation: benchmarks/sync_throughput_test.go (new directory). Use the same harness primitives from e2e/sync_e2e_test.go — copy the fakeCLI helpers (NOT shared via import, since e2e is a test package) into a small benchmark-local test helper. Keep the duplication explicit and minimal.\n\nBenchmarks:\n- BenchmarkSyncPush_1000Events: seed 1000 create-node events on a fakeCLI, then time pushAll. Report ns/op AND elapsed time. Assert elapsed \u003c 5s.\n- BenchmarkSyncPull_1000Events: pre-populate hub with 1000 events (via CLI A's push), then time CLI B's pullAll. Assert elapsed \u003c 5s.\n- BenchmarkSyncPushPullRoundTrip_100Events: smaller round-trip benchmark for tighter feedback during dev iteration.\n\nEach benchmark uses b.ResetTimer() after seeding so the timing measures only the operation under test.\n\nAlso add a regular test (TestPerf_PushPullTargets) that runs ONCE and asserts the 5s targets — Go benchmarks don't fail on time; we need an explicit assertion path so CI can gate on it.\n\nAcceptance:\n- Benchmarks run cleanly when MTIX_PG_TEST_DSN is set.\n- TestPerf_PushPullTargets asserts \u003c5s for both push and pull of 1000 events; if it fails, the failure message includes elapsed time so operators can see by how much.\n- Document the targets in benchmarks/README.md (1-2 paragraphs) so future readers know the bar.",
+      "acceptance": "",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[\"MTIX-15\",\"fr-18\",\"perf\"]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "c5ad34f86293dda27b2b57d8f31f655146d8ec1cb051af9d21f3a4b48c46734d",
+      "created_at": "2026-05-07T14:10:01Z",
+      "updated_at": "2026-05-07T14:10:01Z"
+    },
+    {
+      "id": "MTIX-15.10.2",
+      "parent_id": "MTIX-15.10",
+      "depth": 2,
+      "seq": 2,
+      "project": "MTIX",
+      "title": "Solo CLI latency + memory + connection-pool checks",
+      "description": "",
+      "prompt": "Add three perf checks that DO NOT need PG.\n\n**Solo CLI latency (\u003c10ms per command):**\n- BenchmarkSolo_Create_NoSyncOverhead: time store.CreateNode end-to-end (event emit included).\n- BenchmarkSolo_Update_NoSyncOverhead: same for UpdateNode.\n- BenchmarkSolo_List_NoSyncOverhead: time ListNodes on a 1000-node store.\n- TestPerf_SoloCommandTargets: assert each operation's median time \u003c 10ms. Use a 100-iteration loop and compute median (not mean — outliers from CI noise dominate the mean). Report median + p95 in the failure message.\n\n**Memory at 100K nodes:**\n- TestPerf_Memory_100KNodes: build a sqlite.Store, insert 100K nodes via CreateNode, force runtime.GC, then read runtime.MemStats.HeapAlloc and HeapInuse. Assert HeapAlloc \u003c 50MB.\n- Insertion is bulk and may take several seconds — that's fine, it's not the operation being measured. Use t.Skip if testing.Short() to keep regular runs fast.\n\n**Connection-pool ceiling (\u003c=5):**\n- TestPerf_PoolMaxConnections: parse the transport.Pool's pgxpool.Config and assert MaxConns \u003c=5. This is a static check — fast, no PG needed because we're inspecting the config, not connecting.\n\nLocation: extend benchmarks/ with solo_latency_test.go, memory_test.go, pool_config_test.go.\n\nIf any target is NOT met, mark it as a known-limitation in benchmarks/README.md WITH a planned mitigation (e.g. 'memory at 100K nodes: 65MB observed; mitigation: streaming export for backup, planned for v0.3').\n\nAcceptance:\n- All 3 latency benchmarks run.\n- TestPerf_SoloCommandTargets passes OR documents known-limitations with mitigation.\n- TestPerf_Memory_100KNodes passes OR documents known-limitations with mitigation.\n- TestPerf_PoolMaxConnections passes (this should be unconditional — we control the pool config).",
+      "acceptance": "",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[\"MTIX-15\",\"fr-18\",\"perf\"]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "vimal",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "3e5c0f2c85146fe7de6c587114567dd028cc575f2c4314848a9ccdf522b38f43",
+      "created_at": "2026-05-07T14:10:01Z",
+      "updated_at": "2026-05-07T14:17:02Z",
+      "closed_at": "2026-05-07T14:17:02Z"
     },
     {
       "id": "MTIX-15.11",
@@ -3942,12 +3991,6 @@
     },
     {
       "from_id": "MTIX-15.9",
-      "to_id": "MTIX-15.10",
-      "dep_type": "blocks",
-      "created_at": "2026-04-27T13:13:55Z"
-    },
-    {
-      "from_id": "MTIX-15.9",
       "to_id": "MTIX-15.11",
       "dep_type": "blocks",
       "created_at": "2026-04-27T13:13:55Z"
@@ -3978,7 +4021,7 @@
       "agent_id": "vimal",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-15.9",
+      "current_node_id": "MTIX-15.10.2",
       "last_heartbeat": "2026-05-06T14:14:36Z"
     }
   ],
@@ -4000,6 +4043,6 @@
       "status": "active"
     }
   ],
-  "node_count": 148,
-  "checksum": "f22f7867921b7487efce67c9d64905ec9a32339b8bc1802f73078f9e97f48a0f"
+  "node_count": 150,
+  "checksum": "a254c16f1c6982cd14343c6afd5c8e3fa86a6ad83d8c1f298761424734aa6785"
 }

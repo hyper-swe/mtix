@@ -65,7 +65,8 @@ func TestPool_NewWithWeakerSSLModeOnRemoteRefused(t *testing.T) {
 
 func TestDefaultPoolDefaults(t *testing.T) {
 	d := transport.DefaultPoolDefaults()
-	require.Equal(t, int32(8), d.MaxConns)
+	// MaxConns is the FR-18 / MTIX-15.10 ceiling per CLI.
+	require.Equal(t, int32(5), d.MaxConns)
 	require.NotZero(t, d.ConnLifetime)
 	require.NotZero(t, d.StatementTimeout)
 	require.NotZero(t, d.HealthCheckPeriod)

@@ -101,14 +101,17 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 
 	pool, err := transport.New(connectCtx, dsn, opts)
 	if err != nil {
+		noteSyncResult(ctx, app.store, false)
 		return wrapSyncErr(stderr, "connect", err)
 	}
 	defer pool.Close()
 
 	pushed, batches, conflicts, err := pushLoop(ctx, stderr, pool, app.store)
 	if err != nil {
+		noteSyncResult(ctx, app.store, false)
 		return wrapSyncErr(stderr, "push loop", err)
 	}
+	noteSyncResult(ctx, app.store, true)
 
 	fmt.Fprintf(stdout,
 		"push complete: %d events pushed across %d batches; %d conflicts surfaced\n",

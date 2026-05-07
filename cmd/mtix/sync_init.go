@@ -199,6 +199,32 @@ func resolveSyncDSN(args []string) (string, error) {
 	return transport.Source(app.mtixDir)
 }
 
+// noteSyncResult bumps or clears meta.sync.consecutive_errors based
+// on operation outcome. Best-effort: a failure to update the counter
+// is swallowed since the surrounding push/pull error already
+// carries the load-bearing signal. The counter feeds the
+// mtix_sync_workflow MCP tool's hub-unreachable detection per
+// MTIX-15.8 / FR-18.
+//
+// ok=true clears the counter (resets to 0); ok=false increments by 1.
+func noteSyncResult(ctx context.Context, st *sqlite.Store, ok bool) {
+	if st == nil {
+		return
+	}
+	db := st.WriteDB()
+	if db == nil {
+		return
+	}
+	if ok {
+		_, _ = db.ExecContext(ctx,
+			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.consecutive_errors'`)
+		return
+	}
+	_, _ = db.ExecContext(ctx,
+		`UPDATE meta SET value = CAST((CAST(value AS INTEGER) + 1) AS TEXT)
+		 WHERE key = 'meta.sync.consecutive_errors'`)
+}
+
 // wrapSyncErr formats CLI-side errors with consistent prefix +
 // honors hook mode (MTIX_SYNC_HOOK=1) for transient errors per FR-18.19.
 //

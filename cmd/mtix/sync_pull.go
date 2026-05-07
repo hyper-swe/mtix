@@ -84,6 +84,7 @@ func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 
 	pool, err := transport.New(connectCtx, dsn, opts)
 	if err != nil {
+		noteSyncResult(ctx, app.store, false)
 		return wrapSyncErr(stderr, "connect", err)
 	}
 	defer pool.Close()
@@ -95,8 +96,10 @@ func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 
 	pulled, batches, err := pullLoop(ctx, stderr, pool, app.store, since, limit)
 	if err != nil {
+		noteSyncResult(ctx, app.store, false)
 		return wrapSyncErr(stderr, "pull loop", err)
 	}
+	noteSyncResult(ctx, app.store, true)
 
 	fmt.Fprintf(stdout,
 		"pull complete: %d events applied across %d batches\n", pulled, batches)

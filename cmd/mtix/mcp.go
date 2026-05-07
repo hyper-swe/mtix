@@ -94,6 +94,7 @@ func runMCP() error {
 	mcp.RegisterSessionTools(reg, app.sessionSvc, app.agentSvc)
 	mcp.RegisterAnalyticsTools(reg, app.store, app.agentSvc, app.configSvc)
 	mcp.RegisterDocsTools(reg)
+	mcp.RegisterSyncWorkflowTool(reg, app.store.ReadDB(), app.mtixDir)
 
 	logger.Info("mtix MCP server starting",
 		"version", version,

@@ -26,3 +26,10 @@ func (s *Store) Query(ctx context.Context, query string, args ...any) (*sql.Rows
 func (s *Store) WriteDB() *sql.DB {
 	return s.writeDB
 }
+
+// ReadDB returns the read database pool. Exposed for read-only
+// callers that need *sql.DB's QueryRowContext / QueryContext methods
+// directly (e.g., the workflow state detector in MTIX-15.8).
+func (s *Store) ReadDB() *sql.DB {
+	return s.readDB
+}

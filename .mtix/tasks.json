@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-05-07T14:27:55Z",
+  "exported_at": "2026-05-07T15:26:48Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1356,7 +1356,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.7692307692307693,
+      "progress": 0.7948717948717949,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1479,15 +1479,88 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
+      "status": "open",
+      "progress": 0.3333333333333333,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
       "weight": 1,
       "content_hash": "601cc406c00f3ab814a43ee62f7327a8ecb92814584463cd9c9e6954f644ee8c",
       "created_at": "2026-04-27T13:02:50Z",
-      "updated_at": "2026-04-27T17:31:22Z"
+      "updated_at": "2026-05-07T15:11:51Z"
+    },
+    {
+      "id": "MTIX-15.11.1",
+      "parent_id": "MTIX-15.11",
+      "depth": 2,
+      "seq": 1,
+      "project": "MTIX",
+      "title": "Audit re-verification: 12 items mapped to existing tests",
+      "description": "",
+      "prompt": "Walk the 12 design-audit items from 15.0 (per the 15.11 description) and find the existing test that proves each. Build a structured evidence table: item → test file:line → assertion summary → PASS/FAIL/MISSING.\n\nAudit items (verbatim from 15.11 prompt):\n1. Malformed events rejected (15.3 schema validator).\n2. Replay attacks idempotent (15.4 applied_events dedupe).\n3. LWW manipulation deterministic (15.5 lamport + author hash tie-break).\n4. DSN never appears in any log/error/MCP/panic — regression sweep.\n5. TLS verify-full enforced (15.3 TLS test).\n6. audit_log atomic with mutations (chaos test from 15.2).\n7. node_type canonicalization at apply (15.4 regression).\n8. Map iteration determinism (carry-over from MTIX-9 audit).\n9. Schema migration single-flight via PG advisory lock (15.3 concurrent test).\n10. SQL injection regression (15.3 port of MTIX-9.1 patterns).\n11. Singleton pusher under agent surge (15.2 chaos test with 9 concurrent agents).\n12. Reconciliation atomicity (15.6 failure injection tests).\n\nDeliverable: docs/audit/MTIX-15-audit-pass2.md (new file). One markdown table with columns: item#, description, test file:line, test name, assertion summary, status. For any MISSING: write a one-paragraph justification why a new test is needed and add a TODO marker — those become 15.11.2's scope (the new tests).\n\nTo find tests, grep across e2e/, internal/, cmd/ for keywords like 'idempot', 'replay', 'LWW', 'DSN', 'TLS', 'audit_log', 'canonicaliz', 'advisory lock', 'injection', 'pushlock', 'reconcile', 'chaos'. Don't invent test names — only cite tests that actually exist.\n\nAlso: grep for test files that exercise map iteration (TestMap*, range over map, sort.Strings checks before assertions) to verify item 8 is covered.\n\nAcceptance:\n- The markdown file exists and lists all 12 items with file:line citations OR explicit MISSING markers.\n- Every PASS row has a test name that, run on its own (`go test -run NAME`), passes.\n- MISSING items have a one-paragraph justification.\n- This sub-ticket does NOT add new tests; that's 15.11.2's scope.",
+      "acceptance": "",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[\"MTIX-15\",\"fr-18\",\"security\"]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "vimal",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "3cf64bf99acd5bb94a4ee5837fb882c7c508c26a9c330e9410a5927e5c3e913b",
+      "created_at": "2026-05-07T15:12:50Z",
+      "updated_at": "2026-05-07T15:26:48Z",
+      "closed_at": "2026-05-07T15:26:48Z"
+    },
+    {
+      "id": "MTIX-15.11.2",
+      "parent_id": "MTIX-15.11",
+      "depth": 2,
+      "seq": 2,
+      "project": "MTIX",
+      "title": "3 new security requirements: fuzz + VC overflow + panic sanitization",
+      "description": "",
+      "prompt": "Implement the three NEW security requirements from the 15.11 prompt. Plus close any MISSING gaps from 15.11.1's audit.\n\n**1. Fuzz targets for transport (Go native fuzz, gated by -fuzz):**\n- FuzzEventDecode (in internal/sync/validator/ or internal/store/postgres/transport/): feed random bytes into the event JSON decoder; assert never panic (Go's fuzz harness does this automatically — any panic fails the corpus).\n- FuzzVectorClockMerge (in internal/model/): feed two random vector clocks; assert merge(a,b) equals merge(b,a) (commutativity).\n- FuzzPushEventsValidation (in internal/sync/validator/): feed random Event JSON; assert validator either accepts cleanly or rejects with a structured error — no panic, no partial.\n- Each fuzz target must have a seed corpus (5-10 hand-crafted edge cases). The targets compile under default `go test`; only `-fuzz=Fuzz...` actually fuzzes.\n- Document in docs/audit/MTIX-15-audit-pass2.md how to run them in CI: `go test -fuzz=FuzzEventDecode -fuzztime=10m ./internal/sync/validator/...`.\n\n**2. Vector clock overflow test (regular test, runs every CI):**\n- TestVectorClockOverflow_BoundaryAtMaxSafeInt: place in internal/sync/validator/ (where the \u003c2^53 cap is enforced).\n- Construct VC with one entry at exactly 2^53 (MaxVectorClockEntryValue per FR-18.7 / sync_clock.go). Validate. Expected: structured error (ErrInvalidInput-wrapped).\n- Construct VC with one entry at 2^53 - 1 (boundary safe). Validate. Expected: PASS.\n- Construct VC with one entry at 2^53 + 1 (overflow). Validate. Expected: structured error.\n- Run pool.PushEvents with a synthetic event carrying VC at 2^53; assert it rejects pre-flight via the validator (does NOT reach PG).\n\n**3. Panic message sanitization (HIGH):**\n- redact.Recover already exists per MTIX-15.3.4. Verify it strips DSN-shaped strings from a panic value across postgres://, postgresql://, jdbc:postgresql:// schemes.\n- TestRecover_StripsDSNFromPanicValue: trigger a panic with a real-looking DSN in the message; capture the recovered value; assert sentinel absent.\n- TestRecover_StripsDSNFromPanicError: same but the panic value is an error wrapping a DSN.\n- TestRecover_AllSchemes: postgres://, postgresql://, jdbc:postgresql://.\n- Audit one main-loop entry point in cmd/mtix to confirm Recover() is wired in (or wire it in if it's not — that's the load-bearing change).\n\n**Plus close any MISSING items from 15.11.1's audit.**\n\nAcceptance:\n- 3 fuzz targets compile + have seed corpora + are runnable.\n- VC overflow test passes (3 boundary cases).\n- Panic sanitization test passes (3 schemes + error-typed panics).\n- Any MISSING audit items from 15.11.1 now have passing tests.\n- go test -race -count=1 ./... green; golangci-lint 0 issues.",
+      "acceptance": "",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[\"MTIX-15\",\"fr-18\",\"security\"]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "f134ff36c8ad93f54b02c75a5ad624e437ed63039ad14eb1e6c9f26f624f10d2",
+      "created_at": "2026-05-07T15:12:50Z",
+      "updated_at": "2026-05-07T15:12:50Z"
+    },
+    {
+      "id": "MTIX-15.11.3",
+      "parent_id": "MTIX-15.11",
+      "depth": 2,
+      "seq": 3,
+      "project": "MTIX",
+      "title": "Sign-off: audit table + git SHA + govulncheck/CodeQL",
+      "description": "",
+      "prompt": "Final sign-off for MTIX-15.11.\n\n**Compile the audit evidence table** in docs/audit/MTIX-15-audit-pass2.md, now combining:\n- 12 original items with test file:line + test names from 15.11.1.\n- 3 new items (fuzz, VC overflow, panic sanitization) from 15.11.2.\n\nFormat: one table, 15 rows, columns: # / Description / Test path:line / Test name / Status. Status MUST be PASS for sign-off.\n\n**Tooling sweep:**\n- Run `govulncheck ./...` and capture output. If clean, paste the summary line. If there are findings, list them.\n- CodeQL is GitHub-side; we don't run it locally. Note in the sign-off: 'CodeQL is enforced via .github/workflows; this audit ran the local-runnable checks (govulncheck, race, lint).' If CodeQL config exists, link to it.\n- Run go test -race -count=1 ./... and confirm green.\n- Run golangci-lint run ./... and confirm 0 issues.\n\n**Sign-off comment on MTIX-15.11:**\n- The audited git SHA (HEAD before this commit).\n- The 15-row table summary OR a link to docs/audit/MTIX-15-audit-pass2.md.\n- Verdict: PASS — proceed to 15.12; or FAIL — list blocking sub-tickets.\n\n**Acceptance:**\n- docs/audit/MTIX-15-audit-pass2.md is complete with all 15 rows PASS.\n- govulncheck output captured.\n- Sign-off comment on MTIX-15.11 with git SHA.\n- 15.11 parent ready to close.",
+      "acceptance": "",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[\"MTIX-15\",\"fr-18\",\"security\"]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "3fb50d75b8e5c65ec329b4ced76cd0eaf505c49fcbe114c189b6101d2d797c41",
+      "created_at": "2026-05-07T15:12:50Z",
+      "updated_at": "2026-05-07T15:12:50Z"
     },
     {
       "id": "MTIX-15.12",
@@ -3830,12 +3903,6 @@
       "created_at": "2026-04-27T13:13:55Z"
     },
     {
-      "from_id": "MTIX-15.10",
-      "to_id": "MTIX-15.11",
-      "dep_type": "blocks",
-      "created_at": "2026-04-27T13:13:55Z"
-    },
-    {
       "from_id": "MTIX-15.11",
       "to_id": "MTIX-15.13",
       "dep_type": "blocks",
@@ -4023,7 +4090,7 @@
       "agent_id": "vimal",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-15.10",
+      "current_node_id": "MTIX-15.11.1",
       "last_heartbeat": "2026-05-06T14:14:36Z"
     }
   ],
@@ -4045,6 +4112,6 @@
       "status": "active"
     }
   ],
-  "node_count": 150,
-  "checksum": "b2a662f572968ae50baa4c93eb3bb385fbf92efb953649e2b843153ad7bf516e"
+  "node_count": 153,
+  "checksum": "769b53b53e6003a033ab3b9cd0e6e78f0c16614c5b36d410fba4e6be6e8a5cae"
 }

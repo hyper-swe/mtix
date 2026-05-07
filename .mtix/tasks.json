@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-05-07T11:49:16Z",
+  "exported_at": "2026-05-07T13:39:34Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1356,7 +1356,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.6153846153846154,
+      "progress": 0.6410256410256411,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -2325,15 +2325,88 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
+      "status": "open",
+      "progress": 0.3333333333333333,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
       "weight": 1,
       "content_hash": "18a69612b370c81519c7f3ba90370a3497b3f351618c74a6508487f3a2d24a88",
       "created_at": "2026-04-27T13:02:26Z",
-      "updated_at": "2026-04-27T13:13:55Z"
+      "updated_at": "2026-05-07T12:47:54Z"
+    },
+    {
+      "id": "MTIX-15.9.1",
+      "parent_id": "MTIX-15.9",
+      "depth": 2,
+      "seq": 1,
+      "project": "MTIX",
+      "title": "3-CLI E2E harness + happy-path lifecycle",
+      "description": "",
+      "prompt": "Build the E2E harness used by 15.9.2 and 15.9.3. Then exercise the happy path: init by A, clone by B and C, concurrent mutations on different nodes, all 3 converge.\n\nLocation: e2e/sync_e2e_test.go (new package). Gate on MTIX_PG_TEST_DSN; skip when unset.\n\nHarness primitives (must be reusable by the next two sub-tickets):\n- type fakeCLI struct with: SQLite store (sqlite.Store via t.TempDir for the dbPath), DSN string, machine_hash override (so 3 different 'machines' don't collide), and Push/Pull/Apply convenience methods that wrap the production transport + sync_apply codepaths directly (NO subprocess invocation — that's overengineering for this scope; we want fast, race-detector-clean, deterministic tests).\n- newFakeCLI(t, dsn, machineHash) constructor; t.Cleanup closes the store.\n- freshHub(t, dsn) drops + re-migrates the mtix-owned tables (mirror the helper in transport/integration_test.go but exported through this package's test scope).\n- emitNode(cli, op, payload) helper that calls into store/sqlite emit functions to seed events without going through cobra.\n\nHappy-path lifecycle test (TestE2E_Lifecycle_HappyPath_3CLIsConverge):\n1. CLI A inits hub (pool.Migrate, hub.sync_projects INSERT, push initial create-node events for two roots A1 and A2).\n2. CLI B clones (pull all events; replicate state).\n3. CLI C clones (same).\n4. Concurrent mutations on different nodes: A updates A1, B updates A2, C updates A1's child. No same-field collision.\n5. All 3 push, all 3 pull. Assert: identical (id, content_hash) sets across all 3 SQLite stores. Assert: hub sync_events table has all 3 authors' events; hub sync_conflicts is empty.\n6. Final assertion: ListNodes on all 3 returns identical sorted ID slice.\n\nAcceptance:\n- Test passes against a real PG (skip when MTIX_PG_TEST_DSN unset).\n- Race detector clean (t.Parallel where independent; explicit serialization where push/pull must be ordered).\n- Harness is reusable: 15.9.2 and 15.9.3 import the same primitives.\n- DSN never in test output (one quick assert: failure messages run through redact.DSN).",
+      "acceptance": "",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[\"MTIX-15\",\"fr-18\",\"e2e\"]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "vimal",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "239eda38eb0f9510d51d763711a160e5f5e5045e1da42707364b01d0215a69b7",
+      "created_at": "2026-05-07T12:49:29Z",
+      "updated_at": "2026-05-07T13:39:34Z",
+      "closed_at": "2026-05-07T13:39:34Z"
+    },
+    {
+      "id": "MTIX-15.9.2",
+      "parent_id": "MTIX-15.9",
+      "depth": 2,
+      "seq": 2,
+      "project": "MTIX",
+      "title": "E2E conflict + divergence scenarios",
+      "description": "",
+      "prompt": "Build on the harness from 15.9.1. Two flavors of cross-CLI divergence.\n\n**LWW conflicts (TestE2E_Conflict_SameNodeSameField_LWWConverges):**\n1. CLI A inits + pushes node N=A1 with title='before'.\n2. B and C clone.\n3. B updates N.title='from-B' at lamport=10.\n4. C updates N.title='from-C' at lamport=10 (tie).\n5. Both push. Assert hub sync_conflicts has exactly 1 row.\n6. A pulls. Assert A's local N.title matches the LWW winner — deterministic by author_machine_hash (lower wins on lamport+wall_clock_ts tie).\n7. B and C pull. Assert all 3 CLIs converge on the same value (the winner). Assert local sync_conflicts logs are present on the loser side (best-effort logging from MTIX-15.5).\n\n**Divergent history (TestE2E_DivergentHistory_ReconcileImportAs):**\n1. CLI A inits hub with prefix=PROJX, pushes events.\n2. CLI B does NOT clone. Instead B initializes a separate local mtix project with the SAME prefix=PROJX and emits its own events. (Simulates the prefix-collision-after-the-fact scenario.)\n3. B attempts mtix sync push → should fail with ErrSyncDivergentHistory (DetectDivergentHistory comparing first_event_hash mismatches).\n4. B runs reconcile with --import-as=PROJX-B (rename then push). Assert: B's nodes are now under PROJX-B-* prefix locally; B can push successfully; A pulls and sees the renamed nodes alongside its own.\n5. Final convergence check: A and B agree on the unioned node set.\n\n**Re-runnable convergence:**\n- TestE2E_RepeatedPushPull_NoDuplication: Run push×3, pull×3 in a tight loop on the happy-path setup; assert applied_events idempotency holds (no duplicate node rows or hash changes).\n\nAcceptance:\n- All 3 tests pass against real PG.\n- LWW winner is asserted deterministically (no flake on author hash ordering).\n- Divergent history reproduces the actual error path; the import-as code path that lands in 15.6 is exercised end-to-end.\n- Race detector clean.",
+      "acceptance": "",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[\"MTIX-15\",\"fr-18\",\"e2e\"]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "7c731da6a5bd42b285862469dd1d7b2591d0811d585678a85538354c43bf9639",
+      "created_at": "2026-05-07T12:49:29Z",
+      "updated_at": "2026-05-07T12:49:29Z"
+    },
+    {
+      "id": "MTIX-15.9.3",
+      "parent_id": "MTIX-15.9",
+      "depth": 2,
+      "seq": 3,
+      "project": "MTIX",
+      "title": "E2E edge scenarios — surge, lost-laptop, queue-full",
+      "description": "",
+      "prompt": "Three edge cases on the harness from 15.9.1.\n\n**9-agent surge on one machine (TestE2E_AgentSurge_SinglePusher_NoQueueLoss):**\n9 goroutines on the same fakeCLI emit create-node events concurrently. Then a single push goroutine drains. Assert:\n- All 9 nodes are visible in sync_events (no events lost).\n- Singleton pushlock prevents 2 pushes running concurrently from the same .mtix dir; second push attempt while first holds the lock skips with ErrLockHeld and the queue is drained by the first.\n- Final hub sync_events count == 9.\n- Race detector clean across the 9-emitter goroutines.\n\n**Lost-laptop recovery (TestE2E_LostLaptop_OtherCLIsConverge_FreshCloneSucceeds):**\n1. A, B, C all initialized and converged.\n2. CLI A emits 3 events but does NOT push (simulating laptop loss before push).\n3. B and C continue mutating + pushing. Assert: B and C converge with each other (their events flow through hub), but A's 3 unpushed events are NOT on the hub.\n4. A new fresh CLI D is created (newFakeCLI from scratch) and clones. Assert: D ends up at the B/C state (NOT including A's lost events). This documents the design choice — un-pushed events are local-only and lost on machine loss.\n5. Document this in a short comment block in the test: 'expected behavior — un-pushed events are not durable across machine loss; operators must push frequently or use the daemon for durability'.\n\n**Queue-full handling (TestE2E_QueueFull_RefuseNewSurfacesError):**\n1. CLI A initialized.\n2. Set sync.max_queue_size meta key = 5.\n3. Emit 5 events successfully.\n4. Emit a 6th event. Assert: emit returns an error mentioning 'queue full' or similar; the 6th event is NOT in sync_events (queue size remains 5).\n5. Push to drain. Then emit 5 more. Assert: emit succeeds again.\n\nAcceptance:\n- All 3 tests pass against real PG.\n- The surge test is race-detector-clean (this is the canary that the emit path is goroutine-safe).\n- Queue-full test asserts the error is the ErrQueueFull sentinel (or its wrapped form — use errors.Is).\n- Document the lost-laptop test with the 'design choice' comment so future readers know it's intentional.",
+      "acceptance": "",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[\"MTIX-15\",\"fr-18\",\"e2e\"]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "dfb72d49176f4dde0841142997115364dd9b349d8fd77acdc0dd2ca4c1a14427",
+      "created_at": "2026-05-07T12:49:29Z",
+      "updated_at": "2026-05-07T12:49:29Z"
     },
     {
       "id": "MTIX-16",
@@ -3865,12 +3938,6 @@
       "created_at": "2026-04-29T06:21:23Z"
     },
     {
-      "from_id": "MTIX-15.8",
-      "to_id": "MTIX-15.9",
-      "dep_type": "blocks",
-      "created_at": "2026-04-27T13:13:55Z"
-    },
-    {
       "from_id": "MTIX-15.9",
       "to_id": "MTIX-15.10",
       "dep_type": "blocks",
@@ -3908,7 +3975,7 @@
       "agent_id": "vimal",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-15.8",
+      "current_node_id": "MTIX-15.9.1",
       "last_heartbeat": "2026-05-06T14:14:36Z"
     }
   ],
@@ -3930,6 +3997,6 @@
       "status": "active"
     }
   ],
-  "node_count": 145,
-  "checksum": "4b947476326d8df4588fb3adbb86446f556b3752794a2393159469c326b6061a"
+  "node_count": 148,
+  "checksum": "ab192635bed0aec475c79ac9a3201e67715e92f664afccc938d65beb2cf29e17"
 }

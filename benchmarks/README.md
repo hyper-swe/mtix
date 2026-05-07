@@ -10,8 +10,8 @@ layer plus the underlying solo CLI path.
 | Solo CLI command latency < 10ms (median) | FR-18 / 15.10 | `solo_latency_test.go` | met |
 | 100K-node project memory < 50MB heap | FR-18 / 15.10 | `memory_test.go` | met |
 | Pool MaxConns per CLI ≤ 5 | FR-18 / 15.10 | `pool_config_test.go` | met (lowered from 8 → 5) |
-| Sync push of 1000 events < 5s | FR-18 / 15.10 | `sync_throughput_test.go` (15.10.1) | see below |
-| Sync pull of 1000 events < 5s | FR-18 / 15.10 | `sync_throughput_test.go` (15.10.1) | see below |
+| Sync push of 1000 events < 5s | FR-18 / 15.10 | `sync_throughput_test.go` | met (~470 ms observed) |
+| Sync pull of 1000 events < 5s | FR-18 / 15.10 | `sync_throughput_test.go` | met (~520 ms observed) |
 
 ## Running
 
@@ -47,6 +47,18 @@ to the ceiling; future regressions there should be flagged.
 
 100K-node steady-state memory (after `runtime.GC` × 2): typically
 20–30 MB heap allocated. The 50MB ceiling has comfortable headroom.
+
+Sync throughput (postgres:16 in Docker, local network):
+
+```
+push 1000 events ~ 470 ms (target 5s)
+pull 1000 events ~ 520 ms (target 5s)
+BenchmarkSyncPushPullRoundTrip_100Events ~ 35 ms/op
+```
+
+10× headroom on the throughput targets. Real-world hub latency
+(managed PG, cross-region) will dominate in production; the
+laptop-Docker numbers establish the lower bound.
 
 ## Failure mode
 

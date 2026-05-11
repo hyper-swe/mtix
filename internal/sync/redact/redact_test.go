@@ -159,3 +159,60 @@ func TestSecretSentinel_StableForCrossPackageGrep(t *testing.T) {
 	require.True(t, strings.HasPrefix(SecretSentinel, "PASSWORD_LEAK_SENTINEL_"))
 	require.True(t, len(SecretSentinel) >= 24)
 }
+
+// MTIX-15.11.2: Recover must redact across every DSN scheme.
+// Existing TestRecover_RedactsAndRepanicsWithDSN above only covers
+// postgres://. This sweep covers all three.
+func TestRecover_AllSchemes(t *testing.T) {
+	cases := []struct {
+		name string
+		dsn  string
+	}{
+		{"postgres", "postgres://u:" + SecretSentinel + "@h/d"},
+		{"postgresql", "postgresql://u:" + SecretSentinel + "@h/d"},
+		{"jdbc_postgresql", "jdbc:postgresql://u:" + SecretSentinel + "@h:5432/d"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := &bytes.Buffer{}
+			logger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelError}))
+
+			defer func() {
+				r := recover()
+				require.NotNil(t, r, "Recover must re-panic")
+				redacted, ok := r.(string)
+				require.Truef(t, ok, "re-panic value should be a string after redaction; got %T", r)
+				require.NotContainsf(t, redacted, SecretSentinel,
+					"%s scheme leaked sentinel after Recover: %q", tc.name, redacted)
+			}()
+
+			defer redact.Recover(logger)
+			panic("boom: " + tc.dsn)
+		})
+	}
+}
+
+// MTIX-15.11.2: Recover must redact even when the panic value is an
+// error-typed value (the most common shape from production code that
+// panics on a wrapped error). The DSN sentinel inside the error
+// message must still be masked in the re-panic.
+func TestRecover_StripsDSNFromPanicError(t *testing.T) {
+	defer func() {
+		r := recover()
+		require.NotNil(t, r)
+		redacted, ok := r.(string)
+		require.Truef(t, ok, "re-panic value should be a redacted string; got %T", r)
+		require.NotContains(t, redacted, SecretSentinel,
+			"error-typed panic value must have its DSN redacted")
+	}()
+	defer redact.Recover(nil)
+
+	err := errorWithDSN("connection failed: postgres://u:" + SecretSentinel + "@h/d")
+	panic(err)
+}
+
+// errorWithDSN is a tiny test-local error type so the panic value is
+// not just a string literal.
+type errorWithDSN string
+
+func (e errorWithDSN) Error() string { return string(e) }

@@ -8,6 +8,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/hyper-swe/mtix/internal/sync/redact"
 )
 
 // Version information set by ldflags at build time.
@@ -18,9 +20,17 @@ var (
 )
 
 func main() {
+	// Per FR-18.17 / MTIX-15.11.2: wrap the entry point so that any
+	// panic with a DSN in scope (transport, sync, daemon code paths)
+	// is redacted before it reaches the runtime printer. Recover
+	// re-panics with the redacted value so the runtime stack trace
+	// still surfaces — the user gets diagnostic visibility without
+	// the password leaking to the terminal or a CI log.
+	defer redact.Recover(nil)
+
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic // intentional: errors flow here without panic; defer covers the panic path
 	}
 }
 

@@ -83,6 +83,34 @@ func TestPushEvents_FutureTimestampRejectedBeforePG(t *testing.T) {
 		"future-timestamp rejection must wrap the validator sentinel")
 }
 
+// TestPushEvents_VectorClockOverflowRejectedBeforePG closes the
+// MTIX-15.11.2 N2 audit gap: an event whose VectorClock entry has
+// overflowed past 2^53 must be rejected by ValidateBatch before
+// any PG round-trip. The boundary check at exactly 2^53 covers the
+// off-by-one and confirms the validator is wired into PushEvents.
+func TestPushEvents_VectorClockOverflowRejectedBeforePG(t *testing.T) {
+	p := &transport.Pool{}
+	e := &model.SyncEvent{
+		EventID:       "0193fa00-0000-7000-8000-000000000001",
+		ProjectPrefix: "MTIX",
+		NodeID:        "MTIX-1",
+		OpType:        model.OpCreateNode,
+		Payload:       json.RawMessage(`{}`),
+		WallClockTS:   time.Now().UnixMilli(),
+		LamportClock:  1,
+		VectorClock: model.VectorClock{
+			// Exactly at the cap — the validator rejects v >= 2^53.
+			"alice": int64(1) << 53,
+		},
+		AuthorID:          "alice",
+		AuthorMachineHash: "0123456789abcdef",
+	}
+	_, _, err := p.PushEvents(context.Background(), []*model.SyncEvent{e})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "2^53",
+		"VC overflow rejection must surface the cap; got %v", err)
+}
+
 func TestPullEvents_NilPool(t *testing.T) {
 	var p *transport.Pool
 	_, _, err := p.PullEvents(context.Background(), 0, 10)

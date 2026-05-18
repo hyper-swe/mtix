@@ -25,21 +25,29 @@ var expectedWorkflowDocs = []string{
 // trustBannerSubstrings are the load-bearing fragments of the mandatory
 // trust banner. They are checked as substrings (not exact-equal) so docs
 // can reflow whitespace without breaking the test.
+//
+// MTIX-15.12 rewrote the trust framing from "BYO PG canonical store" to
+// "sync hub replication mechanism". The banner fragments now reflect
+// the post-15 design: the hub is shared but not a tenancy boundary,
+// and DSN possession equals full hub access.
 var trustBannerSubstrings = []string{
-	"BYO PG = trusted team sharing one database",
-	"NOT a multi-tenant boundary",
-	"Anyone with PG write access can read/modify all task data",
+	"sync hub is a replication mechanism",
+	"not a tenancy boundary",
+	"Anyone with the hub DSN can read",
 }
 
 // minimumFailureModeRows lists the failure modes that MUST appear in the
 // failure-modes table of every workflow doc per the ticket requirements.
+//
+// MTIX-15.12 rewrote the failure surface from PG-as-canonical-store to
+// sync-hub-as-replication. Row names follow the new design.
 var minimumFailureModeRows = []string{
-	"PG unreachable",
-	"hook bypassed",
-	"schema mismatch",
-	"audit_log full",
-	"two devs push simultaneously",
-	"network partition",
+	"Hub unreachable",
+	"Hook bypassed",
+	"Schema mismatch",
+	"Queue full",
+	"Lost laptop",
+	"Divergent history",
 }
 
 // TestWorkflowDocs_AllThreePresent verifies the generator emits all three
@@ -258,7 +266,7 @@ func TestWorkflowDocs_CodeSnippetsExecutable(t *testing.T) {
 //     appear anywhere — that would be a leaked credential in tracked docs.
 //   - dsn: yaml fields (which would imply storing DSN in tracked config)
 //     must not appear.
-//   - Any PG-using doc must reference MTIX_PG_DSN as the DSN source.
+//   - Any sync-using doc must reference MTIX_SYNC_DSN as the DSN source.
 func TestWorkflowDocs_NoInsecureExamples(t *testing.T) {
 	tmpDir := t.TempDir()
 	outDir := filepath.Join(tmpDir, "docs")
@@ -314,11 +322,12 @@ func TestWorkflowDocs_NoInsecureExamples(t *testing.T) {
 				"workflow doc %s mentions sslmode but never sets verify-full", name)
 		}
 
-		// MTIX_PG_DSN env var must be the DSN source in any PG-using doc.
+		// MTIX_SYNC_DSN env var must be the DSN source in any sync-using
+		// doc (MTIX-15 renamed MTIX_PG_DSN → MTIX_SYNC_DSN).
 		if strings.Contains(lower, "postgres") &&
 			!strings.HasPrefix(name, "solo") {
-			assert.Contains(t, text, "MTIX_PG_DSN",
-				"workflow doc %s must reference MTIX_PG_DSN env var, not a hardcoded DSN", name)
+			assert.Contains(t, text, "MTIX_SYNC_DSN",
+				"workflow doc %s must reference MTIX_SYNC_DSN env var, not a hardcoded DSN", name)
 		}
 
 		assert.False(t, credRE.MatchString(text),

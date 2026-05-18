@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-05-18T14:07:11Z",
+  "exported_at": "2026-05-18T15:30:52Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1356,7 +1356,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.9230769230769231,
+      "progress": 1,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1679,15 +1679,40 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "blocked",
-      "progress": 0,
+      "status": "open",
+      "progress": 1,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
       "weight": 1,
       "content_hash": "0379492d54e78f6ebbdb167d84c119c2702ea84ba8706b823bc512d3de218db0",
       "created_at": "2026-04-27T13:02:50Z",
-      "updated_at": "2026-04-27T13:13:55Z"
+      "updated_at": "2026-05-18T14:42:47Z"
+    },
+    {
+      "id": "MTIX-15.13.1",
+      "parent_id": "MTIX-15.13",
+      "depth": 2,
+      "seq": 1,
+      "project": "MTIX",
+      "title": "Backfill v0.1.x→v0.2.0 — synthesize sync_events from existing nodes",
+      "description": "v0.1.x users upgrading to v0.2.0-beta have nodes in their local SQLite but no sync_events rows. mtix sync init + push results in an empty hub and teammate clones see zero tickets. Add a 'mtix sync backfill' subcommand that walks the canonical nodes/annotations/dependencies tables and emits sync_events rows for each, so the next push populates the hub with the full history. See /tmp/15.13.0-backfill-plan.md for the full audit-reviewed plan.",
+      "prompt": "Implement 'mtix sync backfill' per the audit-reviewed plan in /tmp/15.13.0-backfill-plan.md. TDD: write all 24 tests RED first, then implement, then verify GREEN. The 13 negative/recovery test cases (N1-N13) cover SQLite failure mid-walk, partial push recovery, double backfill refusal, --force duplication, empty project, concurrent push (must acquire pushlock), corrupt nodes table refusal (verify-first), discard-local re-backfill recovery. Plus property test (1000 random setups for convergence) and 3 E2E tests against real PG. Acquire pushlock at backfill start to prevent race with daemon. Refuse with --verify hint if nodes table fails invariant check. Update USERMANUAL upgrade section, SECURITY-MODEL pointer, MCP recommendation in workflow package. Independent re-audit before commit.",
+      "acceptance": "",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "vimal",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "3f36b8e0e06658943b15340558cc08449aa247944ee1e90ca9a7dc5daf841b87",
+      "created_at": "2026-05-18T14:57:42Z",
+      "updated_at": "2026-05-18T15:30:52Z",
+      "closed_at": "2026-05-18T15:30:52Z"
     },
     {
       "id": "MTIX-15.2",
@@ -3988,12 +4013,6 @@
       "created_at": "2026-04-27T13:13:55Z"
     },
     {
-      "from_id": "MTIX-15.12",
-      "to_id": "MTIX-15.13",
-      "dep_type": "blocks",
-      "created_at": "2026-04-27T13:13:55Z"
-    },
-    {
       "from_id": "MTIX-15.2",
       "to_id": "MTIX-15.4",
       "dep_type": "blocks",
@@ -4169,7 +4188,7 @@
       "agent_id": "vimal",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-15.12",
+      "current_node_id": "MTIX-15.13.1",
       "last_heartbeat": "2026-05-06T14:14:36Z"
     }
   ],
@@ -4191,6 +4210,6 @@
       "status": "active"
     }
   ],
-  "node_count": 156,
-  "checksum": "c17330f5c213bccb25d7b16e7b94cc812e45565d300d34d6fc6cd9b3dbef9c76"
+  "node_count": 157,
+  "checksum": "a86af0ec6166c4c92c987df04eb74110cab10c06a3020393a06620dc7c90f3f7"
 }

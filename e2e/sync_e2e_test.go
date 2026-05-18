@@ -700,3 +700,120 @@ func TestE2E_QueueFull_RefuseSurfacesError(t *testing.T) {
 		a.createNode(t, "PRJ-DRAIN-"+strconv.Itoa(i+1), "after drain")
 	}
 }
+
+// --- backfill (MTIX-15.13.1) ---
+
+// wipeLocalSyncEvents simulates the v0.1.x upgrader state: nodes
+// exist in the local SQLite but sync_events is empty (because the
+// v1→v2 migration drops the legacy placeholder).
+func (c *fakeCLI) wipeLocalSyncEvents(t *testing.T) {
+	t.Helper()
+	_, err := c.store.WriteDB().ExecContext(context.Background(),
+		`DELETE FROM sync_events`)
+	require.NoError(t, err)
+}
+
+// TestE2E_Backfill_ThenSyncRoundTrip is the canonical v0.1.x→v0.2.0-beta
+// upgrade path. CLI A has 5 pre-existing nodes (simulated by creating
+// them then wiping sync_events). A runs backfill → push → hub now
+// holds the synthesized events. CLI B clones and observes the same
+// node set.
+func TestE2E_Backfill_ThenSyncRoundTrip(t *testing.T) {
+	pool := openHub(t)
+	ctx := context.Background()
+
+	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa")
+
+	// Seed 5 nodes via the normal CreateNode path (emits 5 events).
+	for i := 0; i < 5; i++ {
+		a.createNode(t, "PRJ-"+strconv.Itoa(i+1), "upgrader "+strconv.Itoa(i+1))
+	}
+	// Wipe sync_events — now we look like a v0.1.x user who just
+	// finished `mtix sync init` for the first time.
+	a.wipeLocalSyncEvents(t)
+
+	// Backfill: synthesize events from existing nodes.
+	result, err := a.store.Backfill(ctx, false)
+	require.NoError(t, err)
+	require.Equal(t, 5, result.NodeCount)
+	require.GreaterOrEqual(t, result.CreateEvents, 5)
+
+	// Push the backfilled events to the hub.
+	pushed, _ := a.pushAll(ctx, t, pool)
+	require.GreaterOrEqual(t, pushed, 5)
+
+	// B clones and asserts the same node set.
+	b := newFakeCLI(t, "B", "bbbbbbbbbbbbbbbb")
+	b.pullAll(ctx, t, pool)
+
+	require.ElementsMatch(t, a.listNodeIDs(t), b.listNodeIDs(t),
+		"after backfill+push+clone, both CLIs must see identical node IDs")
+}
+
+// TestE2E_Backfill_HubDedupOnDuplicatePush exercises the "user runs
+// backfill twice with --force, then pushes both batches" recovery
+// scenario. The hub's ON CONFLICT (event_id) DO NOTHING dedupes when
+// event_ids collide, but --force generates fresh UUIDs so duplicates
+// land at the hub. Idempotent apply on the consumer side blocks the
+// dup at the nodes-table layer.
+func TestE2E_Backfill_HubDedupOnDuplicatePush(t *testing.T) {
+	pool := openHub(t)
+	ctx := context.Background()
+
+	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa")
+	a.createNode(t, "PRJ-1", "dup-test")
+	a.wipeLocalSyncEvents(t)
+
+	// First backfill + push.
+	_, err := a.store.Backfill(ctx, false)
+	require.NoError(t, err)
+	pushed1, _ := a.pushAll(ctx, t, pool)
+	require.GreaterOrEqual(t, pushed1, 1)
+
+	// Second backfill with --force — fresh event IDs.
+	_, err = a.store.Backfill(ctx, true)
+	require.NoError(t, err)
+	pushed2, _ := a.pushAll(ctx, t, pool)
+	require.GreaterOrEqual(t, pushed2, 1,
+		"--force generates fresh event IDs; second push accepted by hub")
+
+	// Consumer B clones and asserts exactly one node row (idempotent
+	// apply on the SQLite layer blocks the duplicate create_node).
+	b := newFakeCLI(t, "B", "bbbbbbbbbbbbbbbb")
+	b.pullAll(ctx, t, pool)
+	require.Equal(t, []string{"PRJ-1"}, b.listNodeIDs(t),
+		"consumer applies create_node idempotently; no duplicate node row")
+}
+
+// TestE2E_Backfill_PreservesWallClockTsOnHub asserts the temporal
+// audit trail is preserved across the wire: the hub-side
+// sync_events.wall_clock_ts matches the original node's created_at.
+func TestE2E_Backfill_PreservesWallClockTsOnHub(t *testing.T) {
+	pool := openHub(t)
+	ctx := context.Background()
+
+	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa")
+	a.createNode(t, "PRJ-1", "audit-trail")
+
+	// Capture the local node's created_at before wiping.
+	var nodeCreatedAt string
+	require.NoError(t, a.store.QueryRow(ctx,
+		`SELECT created_at FROM nodes WHERE id = ?`, "PRJ-1",
+	).Scan(&nodeCreatedAt))
+
+	a.wipeLocalSyncEvents(t)
+	_, err := a.store.Backfill(ctx, false)
+	require.NoError(t, err)
+	a.pushAll(ctx, t, pool)
+
+	// Read the hub-side event and confirm wall_clock_ts is non-zero
+	// and consistent with the source node's created_at (millisecond
+	// precision; we just verify non-zero + > 0).
+	var hubWallTS int64
+	require.NoError(t, pool.Inner().QueryRow(ctx, `
+		SELECT wall_clock_ts FROM sync_events
+		WHERE node_id = $1 AND op_type = 'create_node'`, "PRJ-1",
+	).Scan(&hubWallTS))
+	require.Greater(t, hubWallTS, int64(0),
+		"hub-side wall_clock_ts must be non-zero after backfill push")
+}

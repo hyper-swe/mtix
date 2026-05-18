@@ -75,6 +75,13 @@ func TestDSN_NeverInAnyFR18CommandOutput(t *testing.T) {
 		{"backup", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
 			_ = runSyncBackup(ctx, stdout, stderr, nil, "/tmp/__nonexistent_path_for_test")
 		}},
+		{"backfill", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
+			// Backfill is local-only; it does not open a PG connection and
+			// thus cannot leak the DSN. Run it in the sweep anyway so a
+			// future refactor that accidentally opens PG from this code
+			// path is caught.
+			_ = runSyncBackfill(ctx, stdout, stderr, true /*dryRun*/, false)
+		}},
 	}
 
 	for _, tc := range cases {

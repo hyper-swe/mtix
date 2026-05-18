@@ -58,7 +58,7 @@ func RecommendForState(r Report) []Recommendation {
 	case StateSolo:
 		return recommendSolo()
 	case StateSyncConfiguredNoHub:
-		return recommendSyncConfiguredNoHub()
+		return recommendSyncConfiguredNoHub(r)
 	case StateSyncActive:
 		return recommendSyncActive(r)
 	case StateDivergentPending:
@@ -86,8 +86,8 @@ func recommendSolo() []Recommendation {
 	}
 }
 
-func recommendSyncConfiguredNoHub() []Recommendation {
-	return []Recommendation{
+func recommendSyncConfiguredNoHub(r Report) []Recommendation {
+	out := []Recommendation{
 		{
 			Action:    "Run 'mtix sync init' to bootstrap a fresh hub",
 			Rationale: "Use this if you control the Postgres hub. The init command pushes local history with project-prefix collision checks.",
@@ -101,6 +101,18 @@ func recommendSyncConfiguredNoHub() []Recommendation {
 			Severity:  SeverityInfo,
 		},
 	}
+	// MTIX-15.13.1 upgrader detection: nodes exist but no events were
+	// ever emitted. This is the v0.1.x → v0.2.0-beta migration shape.
+	// Recommend backfill so existing history flows to the hub.
+	if r.LocalNodeCount > 0 && r.LocalEventCount == 0 {
+		out = append(out, Recommendation{
+			Action:    "Run 'mtix sync backfill' to synthesize sync_events from existing nodes",
+			Rationale: "This project has nodes but no sync events — typical of an upgrade from v0.1.x to v0.2.0-beta. Backfill walks the canonical tables and emits create/update/transition events so the next push populates the hub with your full history.",
+			DocLink:   "docs/SYNC-DESIGN.md#bootstrap",
+			Severity:  SeverityWarn,
+		})
+	}
+	return out
 }
 
 func recommendSyncActive(r Report) []Recommendation {

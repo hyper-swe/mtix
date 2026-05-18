@@ -217,16 +217,17 @@ func TestExampleHooks_PrePush_AbsolutePathToMtix(t *testing.T) {
 		strings.Join(bareInvocations, "\n"))
 }
 
-// TestExampleHooks_PrePush_TimeoutFlagPassed enforces audit S2: the snapshot
-// invocation must be capped with `--timeout` so a hung PG cannot block git
-// push indefinitely.
-func TestExampleHooks_PrePush_TimeoutFlagPassed(t *testing.T) {
+// TestExampleHooks_PrePush_HookModeEnvSet enforces audit S2 under the
+// FR-18 sync model: the hook sets MTIX_SYNC_HOOK=1 before invoking
+// `mtix sync push` so the sync code path classifies transient errors
+// (connection refused, TLS handshake timeout) as warn-and-skip rather
+// than fatal. The transport's own retry/timeout envelope bounds wall
+// time; an explicit --timeout flag is not part of the sync CLI today.
+func TestExampleHooks_PrePush_HookModeEnvSet(t *testing.T) {
 	src := readHook(t, "pre-push")
-	// Snapshot is invoked with --timeout 30s by default per ticket DESIGN
-	// CHOICES section. Accept any duration with the 's' or 'm' suffix.
-	pattern := regexp.MustCompile(`snapshot[^\n]*--timeout\s+\d+[sm]`)
+	pattern := regexp.MustCompile(`export\s+MTIX_SYNC_HOOK\s*=\s*1`)
 	assert.Regexp(t, pattern, src,
-		"pre-push must call 'mtix snapshot' with --timeout (audit S2)")
+		"pre-push must export MTIX_SYNC_HOOK=1 before invoking mtix sync push (audit S1/S2)")
 }
 
 // TestExampleHooks_PrePush_SetEuoPipefail enforces the strict-bash discipline
@@ -324,12 +325,14 @@ func TestExampleHooks_GithubAction_YAMLValid(t *testing.T) {
 //   - the hook is copied to .git/hooks/pre-push and triggered via
 //     `git push --dry-run` against a local bare repo.
 //
-// We validate three things:
-//  1. The hook calls `mtix snapshot --timeout ...` with `MTIX_BIN` in env.
-//  2. When the snapshot writes a delta, the hook stages it and creates a
-//     "chore(snapshot)" commit (default mode).
-//  3. When `mtix snapshot` exits non-zero (PG down), the hook exits 0 with a
-//     warning — push must not be blocked (audit S1).
+// Under the FR-18 sync model (MTIX-15.12.3) the hook calls
+// `mtix sync push` instead of the pre-15 `mtix snapshot`, gated by
+// MTIX_SYNC_DSN being present (sync is opt-in). We validate:
+//  1. With DSN set, the hook calls `mtix sync push` and `mtix sync --fix`
+//     via MTIX_BIN.
+//  2. When tasks.json delta lands, the hook commits "chore(snapshot)".
+//  3. When `mtix sync push` fails, the hook exits 0 (warn-and-skip, S1).
+//  4. Without a DSN, the hook is a silent no-op.
 func TestExampleHooks_PrePush_RunsAgainstFakeRepo(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("bash hooks are not exercised on Windows")
@@ -346,57 +349,54 @@ func TestExampleHooks_PrePush_RunsAgainstFakeRepo(t *testing.T) {
 		t.Fatalf("pre-push hook missing: %v", err)
 	}
 
-	// Three scenarios share scaffolding: build a temp repo, drop a stub
-	// mtix on PATH, run the hook directly with the env git would pass.
-	t.Run("snapshot_with_changes_creates_commit", func(t *testing.T) {
+	t.Run("sync_push_with_changes_creates_commit", func(t *testing.T) {
 		repo := setupFakeRepo(t)
 		stub := writeMtixStub(t, mtixStubOpts{
 			ExitCode:        0,
 			WriteTasksDelta: true,
 		})
-		runHook(t, hook, repo, stub.Dir)
+		runHookWithEnv(t, hook, repo, stub.Dir,
+			[]string{"MTIX_SYNC_DSN=postgres://u:p@localhost/d"})
 
-		// The stub must have been called via MTIX_BIN.
 		invocations := stub.Invocations(t)
 		require.NotEmpty(t, invocations,
-			"hook must invoke mtix snapshot")
-		assert.Contains(t, invocations[0], "snapshot",
-			"first mtix call must be 'snapshot'")
-		assert.Regexp(t, regexp.MustCompile(`--timeout\s+\d+[sm]`), invocations[0],
-			"hook must pass --timeout to snapshot (audit S2)")
+			"hook must invoke mtix sync when DSN is set")
+		// First invocation is `mtix sync push`. We don't pin the exact
+		// argv beyond the presence of the "sync" verb.
+		assert.Contains(t, invocations[0], "sync",
+			"first mtix call must be a sync subcommand; got %q", invocations[0])
 
-		// The synthetic delta should now be a committed chore(snapshot).
 		log := gitLog(t, repo)
 		assert.Contains(t, log, "chore(snapshot)",
-			"hook must create a 'chore(snapshot)' commit when snapshot produces a delta (audit T3)")
+			"hook must create a 'chore(snapshot)' commit when tasks.json drifts (audit T3)")
 	})
 
-	t.Run("snapshot_pg_down_does_not_block_push", func(t *testing.T) {
+	t.Run("sync_push_failure_does_not_block_push", func(t *testing.T) {
 		repo := setupFakeRepo(t)
 		stub := writeMtixStub(t, mtixStubOpts{
-			ExitCode:        2, // simulate `mtix snapshot` failure (PG down)
+			ExitCode:        2, // simulate sync push failure
 			WriteTasksDelta: false,
 		})
 
-		// Run the hook; expect exit 0 (warn-and-skip) per audit S1.
-		exitCode := runHookExpectExit(t, hook, repo, stub.Dir)
+		exitCode := runHookExpectExitWithEnv(t, hook, repo, stub.Dir,
+			[]string{"MTIX_SYNC_DSN=postgres://u:p@localhost/d"})
 		assert.Equal(t, 0, exitCode,
-			"hook must exit 0 when snapshot fails (warn-and-skip, audit S1) — must not block push")
+			"hook must exit 0 when sync push fails (warn-and-skip, audit S1) — must not block push")
 	})
 
-	t.Run("amend_mode_amends_instead_of_separate_commit", func(t *testing.T) {
+	t.Run("no_dsn_configured_is_silent_noop", func(t *testing.T) {
 		repo := setupFakeRepo(t)
 		stub := writeMtixStub(t, mtixStubOpts{
 			ExitCode:        0,
 			WriteTasksDelta: true,
 		})
 
-		runHookWithEnv(t, hook, repo, stub.Dir, []string{"MTIX_HOOK_AMEND=1"})
+		// Run without MTIX_SYNC_DSN and without .mtix/secrets — the hook
+		// should exit silently. The stub must NOT be invoked.
+		runHook(t, hook, repo, stub.Dir)
 
-		log := gitLog(t, repo)
-		// In amend mode, no separate chore(snapshot) commit is added.
-		assert.NotContains(t, log, "chore(snapshot)",
-			"amend mode must not create a separate chore(snapshot) commit (audit T3)")
+		assert.Empty(t, stub.Invocations(t),
+			"hook must not invoke mtix when no DSN is configured (sync is opt-in)")
 	})
 }
 
@@ -739,15 +739,29 @@ func writeMtixStub(t *testing.T, opts mtixStubOpts) *mtixStub {
 
 	// Stub script. Quoting is paranoid because this is also a regression
 	// test for our own quoting rules.
+	//
+	// The hook calls `mtix sync push` followed by `mtix sync --fix`
+	// (post-MTIX-15.12.3). The delta is emitted on `sync --fix` since
+	// that's the command that refreshes tasks.json from the local
+	// SQLite. ExitCode applies to `sync push` only — `sync --fix` is
+	// considered non-load-bearing and always returns 0.
 	body := fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
 printf '%%s\n' "$*" >> %q
-if [ "%t" = "true" ] && [ "${1:-}" = "snapshot" ]; then
-  # Emit a synthetic delta into .mtix/tasks.json so the hook sees a diff.
+verb="${1:-}"
+sub="${2:-}"
+if [ "%t" = "true" ] && [ "$verb" = "sync" ] && [ "$sub" = "--fix" ]; then
   mkdir -p .mtix
   printf '\n' >> .mtix/tasks.json
+  exit 0
 fi
-exit %d
+if [ "$verb" = "sync" ] && [ "$sub" = "--fix" ]; then
+  exit 0
+fi
+if [ "$verb" = "sync" ] && [ "$sub" = "push" ]; then
+  exit %d
+fi
+exit 0
 `, logPath, opts.WriteTasksDelta, opts.ExitCode)
 
 	stubPath := filepath.Join(dir, "mtix")

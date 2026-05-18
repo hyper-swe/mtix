@@ -168,22 +168,7 @@ func TestPgDumpBin_OverrideViaEnv(t *testing.T) {
 	require.Equal(t, "/usr/local/bin/pg_dump-15", pgDumpBin())
 }
 
-// --- final command registration check ---
-
-func TestSyncCmd_AllTenFR18CommandsRegistered(t *testing.T) {
-	cmd := newSyncCmd()
-	subs := map[string]bool{}
-	for _, c := range cmd.Commands() {
-		subs[c.Name()] = true
-	}
-	expected := []string{
-		"init", "clone", "push", "pull", "status", "doctor",
-		"conflicts", "reconcile", "daemon", "backup",
-	}
-	for _, name := range expected {
-		require.Truef(t, subs[name], "%s subcommand registered", name)
-	}
-	require.Equal(t, len(expected), len(cmd.Commands()),
-		"exactly the FR-18 command set is registered (no extras)")
-}
+// The final command-registration check moved to sync_backfill_test.go
+// as TestSyncCmd_AllElevenFR18CommandsRegistered when MTIX-15.13.1
+// added the 11th subcommand.
 

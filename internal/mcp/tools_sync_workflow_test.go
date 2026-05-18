@@ -175,6 +175,42 @@ func TestSyncWorkflowTool_NeverLeaksDSN(t *testing.T) {
 		"hostname should never appear in tool output")
 }
 
+// TestSyncWorkflowTool_RecommendsBackfillForUpgrader covers the
+// MTIX-15.13.1 case where the local project has nodes (canonical
+// `nodes` table is non-empty) but no sync events have ever been
+// emitted. The tool must recommend `mtix sync backfill` so the
+// upgrader's history flows to the hub on the next push.
+func TestSyncWorkflowTool_RecommendsBackfillForUpgrader(t *testing.T) {
+	t.Setenv("MTIX_SYNC_DSN", "postgres://u:p@h/d")
+
+	reg := NewToolRegistry()
+	db := newSyncWorkflowTestDB(t)
+	// The test DB does not have a `nodes` table by default — the
+	// workflow.DetectState helper degrades to LocalNodeCount=0 when
+	// the table is missing. Create a minimal nodes table and seed it
+	// so the upgrader recommendation fires.
+	_, err := db.ExecContext(context.Background(), `
+		CREATE TABLE nodes (
+			id TEXT PRIMARY KEY,
+			deleted_at TEXT
+		);
+		INSERT INTO nodes (id) VALUES ('PROJ-1');
+		INSERT INTO nodes (id) VALUES ('PROJ-2');`)
+	require.NoError(t, err)
+
+	RegisterSyncWorkflowTool(reg, db, t.TempDir())
+
+	result, err := reg.Call(context.Background(), "mtix_sync_workflow", nil)
+	require.NoError(t, err)
+	require.False(t, result.IsError)
+
+	text := result.Content[0].Text
+	require.Contains(t, text, "mtix sync backfill",
+		"upgrader case must recommend backfill; got:\n%s", text)
+	require.Contains(t, text, "v0.1.x",
+		"recommendation rationale must reference the v0.1.x upgrade path")
+}
+
 func TestSyncWorkflowTool_OutputBoundedTo4KB(t *testing.T) {
 	reg := NewToolRegistry()
 	db := newSyncWorkflowTestDB(t)

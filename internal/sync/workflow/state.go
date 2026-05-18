@@ -76,6 +76,12 @@ type Report struct {
 	LocalEventCount        int   `json:"local_event_count"`
 	AppliedEventCount      int   `json:"applied_event_count"`
 	ConsecutiveErrors      int   `json:"consecutive_errors"`
+	// LocalNodeCount carries the count of rows in the canonical `nodes`
+	// table. Used by the recommendation engine to detect the
+	// v0.1.x → v0.2.0-beta upgrader case (LocalNodeCount > 0 but
+	// LocalEventCount == 0) and surface the `mtix sync backfill`
+	// hint per MTIX-15.13.1.
+	LocalNodeCount int `json:"local_node_count"`
 }
 
 // stateReader is the minimal database surface DetectState needs.
@@ -125,6 +131,11 @@ func DetectState(ctx context.Context, db stateReader, mtixDir string) (Report, e
 	if err != nil {
 		return Report{}, fmt.Errorf("count unresolved conflicts: %w", err)
 	}
+	// Best-effort node count for the upgrader-detection heuristic.
+	// The `nodes` table may not exist in test environments that use a
+	// hand-rolled schema (e.g. internal/sync/workflow tests). Failures
+	// degrade to 0 — the recommendation just doesn't fire.
+	localNodeCount, _ := scanCount(ctx, db, `SELECT COUNT(*) FROM nodes WHERE deleted_at IS NULL`)
 
 	r := Report{
 		HasDSN:                 hasDSN,
@@ -132,6 +143,7 @@ func DetectState(ctx context.Context, db stateReader, mtixDir string) (Report, e
 		LocalEventCount:        localEventCount,
 		AppliedEventCount:      appliedEventCount,
 		ConsecutiveErrors:      consecutiveErrors,
+		LocalNodeCount:         localNodeCount,
 	}
 	r.State = classify(r, machineHash)
 	r.StateName = r.State.String()

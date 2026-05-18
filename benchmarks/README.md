@@ -16,8 +16,11 @@ layer plus the underlying solo CLI path.
 ## Running
 
 ```bash
-# All non-PG perf tests (default suite, runs on every PR)
+# Default suite (skips slow 100K-node test by default)
 go test ./benchmarks/...
+
+# Include the 100K-node memory test — set MTIX_PERF_LONG=1
+MTIX_PERF_LONG=1 go test ./benchmarks/...
 
 # PG-bound throughput tests — set MTIX_PG_TEST_DSN
 MTIX_PG_TEST_DSN='postgres://...?sslmode=disable' go test ./benchmarks/...
@@ -29,8 +32,11 @@ go test -short ./benchmarks/...
 go test -bench . -run=^$ ./benchmarks/...
 ```
 
-Tests gate slow paths on `testing.Short()`. The 100K-node memory test
-takes ~20s; CI runs it on the perf job, not on every PR.
+The 100K-node memory test is gated behind `MTIX_PERF_LONG=1` so CI
+runs with `-race` don't hit the 10-min timeout (race-detector
+overhead pushes insertion past the limit on GitHub-hosted runners).
+A dedicated perf CI job that sets the env var is the right home for
+this check; the regular PR CI sweep stays fast.
 
 ## Observed numbers (Apple M5, postgres:16 in Docker)
 

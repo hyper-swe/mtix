@@ -5,6 +5,7 @@ package benchmarks
 
 import (
 	"context"
+	"os"
 	"runtime"
 	"strconv"
 	"testing"
@@ -16,15 +17,26 @@ import (
 // after a 100K-node project is loaded into the SQLite store.
 const memoryTarget100K = 50 * 1024 * 1024 // 50MB
 
+// envPerfLong gates the slow 100K-node tests. Set
+// MTIX_PERF_LONG=1 to enable. Default-skip is the only way to keep
+// CI under the 10-min timeout when running with `-race` — on a
+// GitHub-hosted runner the 100K insertion + race-detector overhead
+// blows past the timeout. Developers can opt in locally.
+const envPerfLong = "MTIX_PERF_LONG"
+
 // TestPerf_Memory_100KNodes inserts 100K nodes via the production
 // CreateNode path and asserts HeapAlloc stays under 50MB after a
 // forced GC. Insertion can take multiple seconds; the assertion
 // covers steady-state memory, not insert throughput.
 //
-// Skipped under -short (insert is too slow for the regular suite).
+// Default-skip — set MTIX_PERF_LONG=1 to enable. Also skipped
+// under -short for the same reason.
 func TestPerf_Memory_100KNodes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("100K-node memory test skipped under -short")
+	}
+	if os.Getenv(envPerfLong) != "1" {
+		t.Skipf("100K-node memory test gated behind %s=1 (slow under -race)", envPerfLong)
 	}
 
 	st := newSoloStore(t)

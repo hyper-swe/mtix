@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-05-18T17:42:14Z",
+  "exported_at": "2026-05-18T17:51:57Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1356,7 +1356,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 1,
+      "progress": 0.9743589743589743,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1680,7 +1680,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 1,
+      "progress": 0.6666666666666666,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -1738,6 +1738,30 @@
       "created_at": "2026-05-18T16:44:48Z",
       "updated_at": "2026-05-18T17:42:13Z",
       "closed_at": "2026-05-18T17:42:13Z"
+    },
+    {
+      "id": "MTIX-15.13.3",
+      "parent_id": "MTIX-15.13",
+      "depth": 2,
+      "seq": 3,
+      "project": "MTIX",
+      "title": "Tag v0.2.0-beta + final verification",
+      "description": "Final release step: verify HEAD is clean and all gates green, create annotated git tag, push to origin. GitHub release creation + homebrew formula + Supabase smoke test are operator follow-ups.",
+      "prompt": "Local steps: (1) git status clean; (2) go test -count=1 -short ./... green; (3) golangci-lint 0 issues; (4) govulncheck clean; (5) git tag -a v0.2.0-beta -m 'v0.2.0-beta — BYO Postgres sync hub (FR-18)'; (6) git push origin v0.2.0-beta. PAUSE for user confirmation before step 6 (irreversible public action).",
+      "acceptance": "",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "vimal",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "4f51f2ff3e104182c17149a61db08a04d26ca55356ad6a04defdb8ba90d1b256",
+      "created_at": "2026-05-18T17:51:57Z",
+      "updated_at": "2026-05-18T17:51:57Z"
     },
     {
       "id": "MTIX-15.2",
@@ -4238,7 +4262,7 @@
       "agent_id": "vimal",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-15.13.2",
+      "current_node_id": "MTIX-15.13.3",
       "last_heartbeat": "2026-05-06T14:14:36Z"
     }
   ],
@@ -4260,6 +4284,6 @@
       "status": "active"
     }
   ],
-  "node_count": 159,
-  "checksum": "48c042bbe9436bf5b301d94636e3018d24629124791766d0348e57e564b9bd9e"
+  "node_count": 160,
+  "checksum": "4816f56630985cf51dacfaa4f9d7315c9b684f7278b9c266034d23113be5a420"
 }

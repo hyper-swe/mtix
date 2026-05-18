@@ -34,6 +34,7 @@ mtix (micro-tix) is a hierarchical task management system where multiple LLM cod
 - **Single binary** — Pure Go, no CGO, embedded SQLite (WAL mode), embedded web UI.
 - **Export/Import** — JSON export with checksums, merge and replace import modes.
 - **Content integrity** — SHA256 content hashes on every node, full-project verification.
+- **Team sync (BYO Postgres hub)** — Optional event-sourced replication across teammates with LWW convergence, conflict log, hub-unreachable detection, and a `mtix sync daemon` for periodic auto-pull. Local SQLite remains the canonical store on every CLI.
 
 ## Why Dot-Notation? The Context Chain
 
@@ -175,6 +176,35 @@ mtix show PROJ-1 --json
 mtix create "Fix bug" --under PROJ-1 --json
 ```
 
+### Team sync (optional, FR-18)
+
+For teams of 2–10 developers, an optional **BYO Postgres sync hub**
+replicates events across CLIs. Every CLI keeps its own local SQLite
+as the canonical store; the hub is a mailroom for events.
+
+```bash
+# Configure the hub DSN (env var preferred over .mtix/secrets)
+export MTIX_SYNC_DSN="postgresql://mtix_sync@hub.example.com:5432/mtix_hub?sslmode=verify-full"
+
+# One teammate initializes the hub (runs schema migration + registers project)
+mtix sync init
+
+# Everyone else clones (idempotent)
+mtix sync clone
+
+# Daily flow
+mtix sync pull && # ... work ... && mtix sync push
+```
+
+Conflicts resolve deterministically by Last-Write-Wins
+(`lamport_clock` → `wall_clock_ts` → `author_machine_hash`).
+`mtix sync conflicts list` and `mtix sync reconcile` cover audit
+visibility and divergence recovery. For durability across machine
+loss, run `mtix sync daemon` as a systemd / launchd service. See
+[USERMANUAL.md → Team collaboration with sync](USERMANUAL.md#team-collaboration-with-sync-fr-18)
+and [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md) for the trust
+model.
+
 ## Companion Projects
 
 ### mgit — Surgical rollback for LLM coding agents
@@ -284,6 +314,20 @@ mtix serve [--port P]               Start HTTP/WebSocket server
 mtix mcp [--project DIR]            Run as MCP server (stdio transport)
 mtix docs generate [--force]        Regenerate agent documentation
 mtix config get|set|delete <key>    Manage configuration
+
+# Team sync (FR-18) — optional, opt-in via MTIX_SYNC_DSN
+mtix sync init [DSN]                Provision hub schema + register project
+mtix sync clone [DSN]               Pull all events; idempotent rebuild
+mtix sync push                      Drain local pending queue to hub
+mtix sync pull                      Apply new hub events to local SQLite
+mtix sync status                    Show queue + last push/pull + machine_hash
+mtix sync doctor                    5 health checks; exit 2 if any fail
+mtix sync conflicts list            Show contested edits (post-LWW)
+mtix sync conflicts resolve <id>    Override LWW for a specific conflict
+mtix sync reconcile --discard-local|--rename-to|--import-as
+                                    Whole-project divergence escape hatches
+mtix sync daemon [--interval SEC]   Run periodic pull as a long-lived process
+mtix sync backup --output FILE      Wrap pg_dump on the 5 mtix-owned tables
 ```
 
 ## Development

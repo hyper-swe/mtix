@@ -385,6 +385,68 @@ provider-specific quirks.
 
 ---
 
+## Testing sync changes (MTIX-15 / FR-18)
+
+If your change touches the sync hub path (`internal/sync/...`,
+`internal/store/postgres/transport/...`, `cmd/mtix/sync_*.go`,
+`internal/store/sqlite/sync_*.go`, or `internal/mcp/tools_sync_workflow.go`),
+spin up a local Postgres and run the sync E2E + benchmark suites.
+
+```bash
+# Spin up postgres:16 locally
+docker run -d --name mtix-test-pg \
+  -e POSTGRES_PASSWORD=test -e POSTGRES_DB=mtix_test \
+  -p 55432:5432 postgres:16
+
+# Point the e2e and benchmark suites at it
+export MTIX_PG_TEST_DSN="postgres://postgres:test@localhost:55432/mtix_test?sslmode=disable"
+
+# Run sync E2E (3-CLI harness against the local hub)
+go test -race -count=1 ./e2e/... -run TestE2E_
+
+# Run sync throughput benchmarks (1000-event push/pull <5s targets)
+go test -count=1 ./benchmarks/... -run TestPerf_PushPullTargets
+go test -bench=BenchmarkSync -benchtime=3x -run=^$ ./benchmarks/...
+
+# Cleanup
+docker stop mtix-test-pg && docker rm mtix-test-pg
+```
+
+The suites skip cleanly when `MTIX_PG_TEST_DSN` is unset so the
+default `go test ./...` always passes on a laptop without Postgres.
+
+### Fuzz targets
+
+Sync code paths have Go-native fuzz targets in
+`internal/sync/validator/fuzz_test.go`. Run them when touching the
+validator or vector-clock code:
+
+```bash
+go test -fuzz=FuzzEventDecode -fuzztime=10m ./internal/sync/validator/...
+go test -fuzz=FuzzVectorClockMerge -fuzztime=10m ./internal/sync/validator/...
+go test -fuzz=FuzzPushEventsValidation -fuzztime=10m ./internal/sync/validator/...
+```
+
+The seed corpora run as regular tests under `go test`; the
+`-fuzz=` mode generates new inputs.
+
+### DSN hygiene
+
+If your change touches anything that prints to stderr or surfaces
+errors to the user, run the DSN regression sweep:
+
+```bash
+go test -count=1 -run 'TestDSN_NeverInAnyFR18CommandOutput|TestSyncWorkflowTool_NeverLeaksDSN' \
+  ./cmd/mtix/... ./internal/mcp/...
+```
+
+Any new sync subcommand MUST be added to the sweep table in
+`cmd/mtix/sync_dsn_hygiene_test.go`. See
+`docs/audit/MTIX-15-audit-pass2.md` for the full audit evidence
+table.
+
+---
+
 ## License
 
 By contributing to mtix, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).

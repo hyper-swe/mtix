@@ -25,7 +25,8 @@ A complete guide to using mtix for hierarchical task management.
 17. [MCP Tools](#mcp-tools)
 18. [Backup, Export, and Import](#backup-export-and-import)
 19. [Content Integrity](#content-integrity)
-20. [Troubleshooting](#troubleshooting)
+20. [Team collaboration with sync (FR-18)](#team-collaboration-with-sync-fr-18)
+21. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -1080,6 +1081,176 @@ mtix verify --json
   "mismatches": []
 }
 ```
+
+---
+
+## Team collaboration with sync (FR-18)
+
+mtix is solo-first by default — one developer, one machine, one local
+SQLite store. When your team grows past one collaborator, the BYO
+Postgres **sync hub** replicates events across CLIs without changing
+the canonical-store model: every CLI keeps its own local SQLite as
+the source of truth; the hub is a mailroom for events.
+
+### When to use sync vs solo
+
+| You are... | Use |
+|---|---|
+| One developer, one or two machines | Solo. Sync between machines via git-tracked `.mtix/tasks.json`. |
+| 2–10 trusted developers | Sync mode with BYO Postgres hub (Supabase, Neon, RDS, or self-hosted). |
+| Regulated team (medical, finance, aerospace) | Sync mode + the [safety-critical workflow](docs/audit/MTIX-15-audit-pass2.md) (immutable backups, daemon-as-service, server-side enforcement). |
+| Multiple unrelated tenants | Wait for the planned HyperSWE hosted SaaS. The sync hub is not a tenancy boundary. |
+
+### Setup (one teammate, once)
+
+```bash
+# Provision a Postgres hub (Supabase / Neon / RDS / self-hosted).
+# Configure TLS with a trusted CA. Create a least-privilege role.
+
+# Store the DSN — env var preferred, .mtix/secrets fallback (mode 0600).
+export MTIX_SYNC_DSN="postgresql://mtix_sync@hub.example.com:5432/mtix_hub?sslmode=verify-full"
+
+# Initialize the hub (runs migration + registers your project)
+mtix sync init
+```
+
+**Never commit the DSN to a tracked yaml.** `mtix sync init` scans
+`.mtix/config.{yaml,yml,json}` for DSN-shaped keys and refuses to
+proceed if any are present (fail-closed).
+
+### Setup (every other teammate)
+
+```bash
+git clone <repo>
+cd <repo>
+export MTIX_SYNC_DSN="..."   # same DSN
+mtix sync clone              # idempotent
+```
+
+`mtix sync clone` pulls the full event log from the hub and replays
+it into the local SQLite. Re-running clone is a no-op (per
+`applied_events` dedupe).
+
+### Daily flow
+
+```bash
+mtix sync pull               # pull teammate events
+# ... normal work via mtix create / update / done ...
+mtix sync push               # ship your queue to the hub
+mtix sync status             # check pending queue + last push time
+```
+
+Install the pre-push hook (`examples/hooks/pre-push`) to automate
+`mtix sync push` before `git push`:
+
+```bash
+cp examples/hooks/pre-push .git/hooks/pre-push
+chmod +x .git/hooks/pre-push
+```
+
+### Daemon mode (for durability)
+
+Un-pushed events on a lost machine are **not recoverable**. If your
+safety profile cannot tolerate that, run the daemon as a systemd or
+launchd service:
+
+```bash
+mtix sync daemon --install | sudo tee /etc/systemd/system/mtix-sync.service
+sudo systemctl enable --now mtix-sync
+```
+
+The daemon runs `mtix sync pull` every 30 seconds by default. Pair
+with the pre-push hook (which handles push) for both inbound and
+outbound auto-sync.
+
+### Conflict handling
+
+When two teammates edit the same field concurrently, Last-Write-Wins
+at apply time deterministically picks a winner (keyed by
+`lamport_clock` → `wall_clock_ts` → `author_machine_hash`). Replicas
+always converge.
+
+The hub also records contested edits in `sync_conflicts` for audit
+visibility:
+
+```bash
+mtix sync conflicts list              # inspect what is contested
+mtix sync conflicts resolve <id> --keep-local
+mtix sync conflicts resolve <id> --keep-remote
+```
+
+For whole-project escapes (many conflicts, divergent history):
+
+```bash
+mtix sync reconcile --dry-run
+mtix sync reconcile --discard-local            # accept hub state
+mtix sync reconcile --rename-to NEWPREFIX      # republish under fresh prefix
+mtix sync reconcile --import-as PARENT-ID      # graft local nodes under a hub node
+```
+
+**Audit-trail note:** when two CLIs share `authorID="cli"` (the
+default), their concurrent edits produce vector clocks that are
+`Equal()` rather than `Concurrent()`. LWW still resolves the
+contention deterministically, but the hub does NOT record a
+`sync_conflicts` row in this case. If audit-trail completeness
+matters for your compliance profile, set distinct authorIDs per
+agent. See [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md) for the
+full tradeoff.
+
+### Hub health checks
+
+```bash
+mtix sync doctor             # 5 health checks: PG reachable, schema current,
+                             #   queue draining, no orphan applied,
+                             #   secrets file mode
+```
+
+Exit code 0 on all-pass; exit code 2 if any check fails (operators
+can gate CI / monitoring on this).
+
+### Backup and restore
+
+```bash
+mtix sync backup --output /tmp/hub.sql      # wraps pg_dump on 5 mtix tables
+psql "$DSN" < /tmp/hub.sql                  # restore
+```
+
+For compliance-grade durability, schedule the backup to immutable
+cold storage (S3 Object Lock, GCS retention, Azure Immutable). See
+the [safety-critical
+workflow](docs/audit/MTIX-15-audit-pass2.md) for the full procedure.
+
+### Lost-laptop recovery
+
+Procedure when a CLI machine is lost:
+
+1. On every surviving CLI, run `mtix sync status`. Pending count of 0
+   means all in-flight events are on the hub.
+2. The lost machine's pending events (if any) are unrecoverable.
+3. Provision the replacement machine. Run `mtix sync clone DSN` to
+   rebuild local state from the hub event log. Replay is idempotent.
+
+The `mtix_sync_workflow` MCP tool surfaces hub-unreachable conditions
+(`meta.sync.consecutive_errors ≥ 3`) so agents notice before the
+operator does.
+
+### Troubleshooting sync
+
+| Symptom | Diagnosis | Action |
+|---|---|---|
+| `mtix sync push` errors with "connection refused" | Hub unreachable | Retry; check `mtix sync doctor` |
+| `mtix sync push` errors with "tls handshake timeout" | TLS misconfiguration | Verify `MTIX_SYNC_SSLROOTCERT` if managed-PG requires it |
+| `ErrSyncDivergentHistory` on `mtix sync init` | Hub already has a different lineage for this prefix | Run `mtix sync clone` to join, OR `mtix sync reconcile --import-as PARENT-ID` |
+| `ErrSyncQueueFull` from `mtix create` / `update` | Local pending queue at the cap | `mtix sync push --force`, or raise `sync.max_queue_size` |
+| `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
+
+### MCP integration
+
+The `mtix_sync_workflow` MCP tool exposes structured sync-state
+recommendations to LLM agents. State buckets: `solo`,
+`sync-configured-no-hub`, `sync-active`, `divergent-state-pending`,
+`hub-unreachable`. Output is bounded to 4 KB. The DSN is never
+returned. See [docs/MCP-SETUP.md](docs/MCP-SETUP.md).
 
 ---
 

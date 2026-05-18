@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-05-18T15:30:52Z",
+  "exported_at": "2026-05-18T16:26:21Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -1679,7 +1679,7 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
+      "status": "blocked",
       "progress": 1,
       "assignee": "",
       "creator": "cli",
@@ -1687,7 +1687,7 @@
       "weight": 1,
       "content_hash": "0379492d54e78f6ebbdb167d84c119c2702ea84ba8706b823bc512d3de218db0",
       "created_at": "2026-04-27T13:02:50Z",
-      "updated_at": "2026-05-18T14:42:47Z"
+      "updated_at": "2026-05-18T16:16:59Z"
     },
     {
       "id": "MTIX-15.13.1",
@@ -2662,6 +2662,31 @@
       "content_hash": "098a589ad761fba85e5b73d0b43a106635dbde12b02b37f3649cd6738dbcdf80",
       "created_at": "2026-04-27T18:14:17Z",
       "updated_at": "2026-04-27T18:14:17Z"
+    },
+    {
+      "id": "MTIX-17",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 17,
+      "project": "MTIX",
+      "title": "Auto-unblock dependents when blocker is marked done/cancelled (FR-3.8 gap)",
+      "description": "Reported by external user (Rahul). When a node B blocks node A (via 'mtix dep add A B --type blocks') and B is marked done, A stays in 'blocked' status. Expected: A auto-restores to its previous_status (open or in_progress).\n\nRoot cause: internal/store/sqlite/transition.go:30 executeTransitionTx updates the transitioning node's status + parent progress, but never walks reverse 'blocks' dependencies. autoUnblockNode at dependency.go:194 exists and works correctly, but is only invoked from RemoveDependency (dependency.go:99) — not from the status transition path.\n\nFix: after the UPDATE in executeTransitionTx, if toStatus is a 'resolving' status (done / cancelled / invalidated), SELECT from_id FROM dependencies WHERE to_id = ? AND dep_type = 'blocks', then call autoUnblockNode on each from_id. Inside the same tx so atomicity is preserved.\n\nSymptom mirrors what an external user reported: 'when an mtix id is marked complete it does not automatic unblock mtix tickets blocked by the done ticket.'",
+      "prompt": "TDD. Write tests first:\n\n1. TestTransitionStatus_Done_AutoUnblocksDependents: create A and B; mtix dep add A B --type blocks (A now auto-blocked); transition B to done; assert A status is now 'open' (or previous_status if it was in_progress before getting blocked).\n2. TestTransitionStatus_Cancelled_AutoUnblocksDependents: same shape but B → cancelled.\n3. TestTransitionStatus_Invalidated_AutoUnblocksDependents: same shape but B → invalidated.\n4. TestTransitionStatus_MultipleBlockers_OnlyUnblocksWhenAllResolved: B1 and B2 both block A. Mark B1 done → A stays blocked (B2 still open). Mark B2 done → A unblocks.\n5. TestTransitionStatus_NonResolvingTransition_DoesNotUnblock: B → in_progress doesn't unblock A.\n6. TestTransitionStatus_Done_PropagatesEventEmit: assert a 'transition_status' event for the dependent unblock also lands in sync_events (so teammates pulling see the unblock too).\n7. TestTransitionStatus_Done_AtomicWithDependentUpdate: if the auto-unblock fails for any dependent (e.g. validate transition fails), the whole tx rolls back — including the original transition.\n\nThen implement: extend executeTransitionTx after the UPDATE. Inside the same tx. autoUnblockNode already handles previous_status restoration and the FR-3.8a invalidated-takes-precedence rule.\n\nUpdate REQUIREMENTS.md FR-3.8 description if needed to make this explicit (currently the dep add/remove path is documented but the transition path isn't).\n\nAcceptance:\n- All 7 tests pass.\n- Existing tests still pass (go test -race ./... clean).\n- golangci-lint 0 issues.\n- Independent audit verifies the cycle: if A blocks B and B blocks A (cycle prevented by dep validation, but defensively): no infinite loop.\n- The fix lands BEFORE v0.2.0-beta tag.",
+      "acceptance": "",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "vimal",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "c49546023638dba40c83742895f12248d543fe7f1ee5082870b274034ab45b06",
+      "created_at": "2026-05-18T16:16:20Z",
+      "updated_at": "2026-05-18T16:26:21Z",
+      "closed_at": "2026-05-18T16:26:21Z"
     },
     {
       "id": "MTIX-2",
@@ -4161,6 +4186,12 @@
       "to_id": "MTIX-15.11",
       "dep_type": "blocks",
       "created_at": "2026-04-27T13:13:55Z"
+    },
+    {
+      "from_id": "MTIX-17",
+      "to_id": "MTIX-15.13",
+      "dep_type": "blocks",
+      "created_at": "2026-05-18T16:16:59Z"
     }
   ],
   "agents": [
@@ -4188,7 +4219,7 @@
       "agent_id": "vimal",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-15.13.1",
+      "current_node_id": "MTIX-17",
       "last_heartbeat": "2026-05-06T14:14:36Z"
     }
   ],
@@ -4210,6 +4241,6 @@
       "status": "active"
     }
   ],
-  "node_count": 157,
-  "checksum": "a86af0ec6166c4c92c987df04eb74110cab10c06a3020393a06620dc7c90f3f7"
+  "node_count": 158,
+  "checksum": "cefa61dfad0309e21e97a5047afc3614124c42e8bb1693f6b28d15b585bbfa0a"
 }

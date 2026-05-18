@@ -245,6 +245,28 @@ func autoUnblockNode(ctx context.Context, tx *sql.Tx, nodeID string) error {
 		return fmt.Errorf("auto-unblock node %s: %w", nodeID, err)
 	}
 
+	// MTIX-17 / FR-3.8: emit a sync event so teammates pulling from
+	// the hub see the dependent's unblock. Without this emit, the
+	// dependent's status drifts locally but its restoration never
+	// reaches the hub — a sync invariant violation. Applies to both
+	// the transition-driven and dep-remove-driven unblock paths.
+	payload, encErr := model.EncodePayload(&model.TransitionStatusPayload{
+		From: model.StatusBlocked,
+		To:   restoreTo,
+	})
+	if encErr != nil {
+		return fmt.Errorf("encode auto-unblock payload for %s: %w", nodeID, encErr)
+	}
+	if emitErr := emitEvent(ctx, tx, emitParams{
+		NodeID:      nodeID,
+		ProjectCode: projectPrefixFromNodeID(nodeID),
+		OpType:      model.OpTransitionStatus,
+		Author:      authorIDFallback,
+		Payload:     payload,
+	}); emitErr != nil {
+		return fmt.Errorf("emit auto-unblock event for %s: %w", nodeID, emitErr)
+	}
+
 	return nil
 }
 

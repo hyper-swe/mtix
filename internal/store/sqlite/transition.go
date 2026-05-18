@@ -85,6 +85,72 @@ func executeTransitionTx(ctx context.Context, tx *sql.Tx, id string, toStatus mo
 		}
 	}
 
+	// MTIX-17 / FR-3.8: when a node is marked done / cancelled /
+	// invalidated, walk the reverse `blocks` dependencies and
+	// auto-unblock any node that has this one as its last unresolved
+	// blocker. Runs inside the same tx so the transition + unblock
+	// are atomic. Skipped for non-resolving transitions (e.g.,
+	// open → in_progress) since the dependent is still validly
+	// blocked.
+	if isResolvingStatus(toStatus) {
+		if err := unblockDependents(ctx, tx, id, author); err != nil {
+			return fmt.Errorf("auto-unblock dependents of %s: %w", id, err)
+		}
+	}
+
+	return nil
+}
+
+// isResolvingStatus reports whether a transition target is one of the
+// statuses that resolves a `blocks` dependency: done, cancelled, or
+// invalidated. The dependent of a resolving blocker is eligible for
+// auto-unblock.
+func isResolvingStatus(s model.Status) bool {
+	return s == model.StatusDone ||
+		s == model.StatusCancelled ||
+		s == model.StatusInvalidated
+}
+
+// unblockDependents walks every node X that resolvedID blocks (i.e.,
+// dep rows where from_id=resolvedID, to_id=X, dep_type='blocks') and
+// calls autoUnblockNode(X). The unblock helper itself handles the
+// multi-blocker case (only restores when the last blocker resolves)
+// and the FR-3.8a invalidated-takes-precedence rule.
+//
+// _ = author is reserved for a future enhancement that records the
+// auto-unblock author in the activity stream; today the activity
+// entry is written by autoUnblockNode without an explicit author.
+func unblockDependents(ctx context.Context, tx *sql.Tx, resolvedID, author string) error {
+	_ = author
+	rows, err := tx.QueryContext(ctx,
+		`SELECT to_id FROM dependencies
+		 WHERE from_id = ? AND dep_type = ?`,
+		resolvedID, string(model.DepTypeBlocks))
+	if err != nil {
+		return fmt.Errorf("read forward blocks deps: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var dependentIDs []string
+	for rows.Next() {
+		var toID string
+		if scanErr := rows.Scan(&toID); scanErr != nil {
+			return fmt.Errorf("scan forward dep: %w", scanErr)
+		}
+		dependentIDs = append(dependentIDs, toID)
+	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return fmt.Errorf("iter forward deps: %w", iterErr)
+	}
+	if closeErr := rows.Close(); closeErr != nil {
+		return fmt.Errorf("close forward deps: %w", closeErr)
+	}
+
+	for _, dependentID := range dependentIDs {
+		if err := autoUnblockNode(ctx, tx, dependentID); err != nil {
+			return fmt.Errorf("unblock %s: %w", dependentID, err)
+		}
+	}
 	return nil
 }
 

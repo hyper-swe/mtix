@@ -74,6 +74,14 @@ func executeCancelTx(ctx context.Context, tx *sql.Tx, id, reason, author string,
 		}
 	}
 
+	// MTIX-17 / FR-3.8: cancellation resolves any `blocks` deps where
+	// this node is the blocker. Auto-unblock dependents. Mirrors the
+	// hook in executeTransitionTx so the cancel path produces the
+	// same unblock semantics as a done transition.
+	if err := unblockDependents(ctx, tx, id, author); err != nil {
+		return fmt.Errorf("auto-unblock dependents of cancelled %s: %w", id, err)
+	}
+
 	return nil
 }
 

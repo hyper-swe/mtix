@@ -1,194 +1,134 @@
 # mtix git hooks (examples)
 
-Reference implementations of git hooks and a GitHub Actions workflow that
-keep `.mtix/tasks.json` in sync with the canonical Postgres store in
-**BYO Postgres mode** (MTIX-14). Copy the one(s) you need into your repo
-or your git server's hook directory.
+Reference implementations of git hooks and a GitHub Actions workflow
+that complement mtix's **sync mode** (FR-18 / MTIX-15). Copy the one(s)
+you need into your repo or your git server's hook directory.
 
 > **Read first:** [`docs/SECURITY-MODEL.md`](../../docs/SECURITY-MODEL.md).
-> The hooks below are *security-relevant*. The trust model in that document
-> tells you which one is appropriate for your environment.
+> The hooks below are *security-relevant*. The trust model in that
+> document tells you which one is appropriate for your environment.
 
 ---
 
-## What's in here
+## What's in here (v0.2.0-beta status)
 
-| File | Where it runs | Purpose | Bypassable? |
+| File | Where it runs | Purpose | Status in v0.2.0-beta |
 |---|---|---|---|
-| `pre-push` | Each developer's machine | Refresh and commit `.mtix/tasks.json` snapshot before push | Yes (`git push --no-verify`) |
-| `pre-receive` | Self-hosted git server | Reject pushes whose snapshot disagrees with PG | No (server enforced) |
-| `github-action.yml` | GitHub.com runner | Same as `pre-receive`, but for GitHub-hosted repos | No, when paired with branch protection |
+| `pre-push` | Each developer's machine | Drains the local `sync_events` queue to the hub via `mtix sync push` before `git push`; refreshes `.mtix/tasks.json` if the local SQLite is ahead. | **Active.** Bypassable with `git push --no-verify`. |
+| `pre-receive` | Self-hosted git server | Was: regenerate snapshot from PG and reject drift. | **Deferred to v0.2.1.** Ships as a no-op stub. The v0.1.x model assumed PG was the canonical store; v0.2.0-beta's FR-18 sync model has SQLite canonical and PG as a replication hub, so the server-side validation needs a redesign. |
+| `github-action.yml` | GitHub.com runner | Was: same role as `pre-receive`, GitHub-hosted. | **Deferred to v0.2.1.** Ships as a no-op informational workflow. |
 
 ---
 
-## Trade-off 1: client-side vs server-side enforcement
+## What works today (v0.2.0-beta)
 
-These hooks form a continuum, not alternatives:
-
-* **Client-side only (`pre-push`)** — convenience layer. Catches honest
-  mistakes ("I forgot to regenerate the snapshot") without any server
-  infrastructure. Good for a small trusted team where everyone is
-  cooperating in good faith. *Anyone with `--no-verify` can bypass it.*
-  This is the right default for solo and small-team workflows.
-
-* **Server-side (`pre-receive` or `github-action.yml`)** — enforcement
-  gate. Required when the audit trail must be airtight (regulated
-  environments, post-mortem requirements, anything where "I forgot the
-  hook" is not an acceptable answer). Costs more to operate (DSN on
-  the runner, network reachability to PG).
-
-Most teams should install **both**: `pre-push` locally for fast feedback,
-`pre-receive` (or the GH Action) on the server for the hard guarantee.
-That's the pattern documented in the safety-critical workflow guide.
-
----
-
-## Trade-off 2: separate commit vs amend (`pre-push` only)
-
-When `pre-push` detects drift in `.mtix/tasks.json`, it has two ways to
-record the regenerated snapshot:
-
-* **Default — separate `chore(snapshot)` commit.** The developer's
-  commit is theirs; the snapshot commit is the tool's. Audit-friendly,
-  cannot accidentally rewrite a signed commit, cannot mutate a commit
-  that was already pushed elsewhere. The downside is a slightly noisier
-  history.
-
-* **Opt-in — amend (`MTIX_HOOK_AMEND=1`).** Folds the snapshot into the
-  developer's last commit. Cleaner history. The downsides are real: it
-  re-applies signatures, drops co-author trailers, and rewrites a
-  commit you're about to push, which can confuse anyone who has the
-  pre-amend SHA in another worktree.
-
-Pick one and document the choice in your contributing guide. The hook
-defaults to the safer option (separate commit).
-
----
-
-## Trade-off 3: warn-and-skip vs hard-fail on PG outage (`pre-push` only)
-
-`pre-push` defaults to **warn-and-skip**: if `mtix snapshot` fails
-because PG is unreachable, the hook prints a warning to stderr and
-exits 0, allowing the push to proceed.
-
-This is deliberate. mtix is a primitive, not a workflow opinion. The
-ability to push your code should not be coupled to the availability of
-your task store. The next person who pushes after PG comes back up
-will regenerate the snapshot and pick up the drift.
-
-If your team needs hard-fail behaviour locally, wrap the hook in a
-shell snippet that re-exits non-zero, or rely on `pre-receive` /
-`github-action.yml` for enforcement (those *do* hard-fail).
-
----
-
-## Installing each hook
-
-### `pre-push` (client-side)
+### Client-side: install `pre-push`
 
 ```bash
-# From the project root:
 cp examples/hooks/pre-push .git/hooks/pre-push
 chmod +x .git/hooks/pre-push
 ```
 
-Override defaults via environment variables (set in your shell rc, in
-`direnv`, or in CI):
+The hook calls `mtix sync push` with `MTIX_SYNC_HOOK=1` so transient
+hub errors (connection refused, TLS handshake timeout) are warn-and-skip
+rather than blocking `git push`. Schema mismatch and authentication
+errors still fail the push — those are operator misconfigurations, not
+transient.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `MTIX_BIN` | `$(command -v mtix)` | Pin to an absolute path; skips PATH search at run time |
-| `MTIX_HOOK_AMEND` | unset | Set to `1` to amend instead of separate commit |
-| `MTIX_HOOK_TIMEOUT` | `30s` | Snapshot timeout; passed to `mtix snapshot --timeout` |
+After a successful push, the hook also refreshes `.mtix/tasks.json` via
+`mtix sync --fix` and commits the diff under
+`chore(snapshot): tasks.json refresh @ <timestamp>` so the git history
+shows what the hub saw at that point.
 
-### `pre-receive` (self-hosted git server)
+**Required environment:**
+- `mtix` on PATH (or `MTIX_BIN` set to an absolute path).
+- `MTIX_SYNC_DSN` set OR `.mtix/secrets` exists (mode 0600). Sync is
+  opt-in — if no DSN is configured the hook exits silently.
 
-On the git server, in the bare repo directory:
+**Optional:**
+- `MTIX_HOOK_AMEND=1` to fold the snapshot into the developer's last
+  commit instead of a separate `chore(snapshot)` commit.
 
-```bash
-cp /path/to/mtix/examples/hooks/pre-receive hooks/pre-receive
-chmod +x hooks/pre-receive
-```
+### Daemon-as-service (recommended for durability)
 
-Required environment on the git server:
-
-* `mtix` CLI installed and on `PATH` (or `MTIX_BIN` set).
-* `MTIX_PG_DSN` exported, with a **read-only** PG role.
-
-Restart the git server (or its post-receive supervisor) so the new
-environment is picked up.
-
-### `github-action.yml`
+For compliance-grade durability across machine loss, run the daemon
+on every developer's machine as a systemd / launchd service. The
+daemon prints the unit file for you:
 
 ```bash
-mkdir -p .github/workflows
-cp examples/hooks/github-action.yml .github/workflows/mtix-snapshot.yml
+# Linux
+mtix sync daemon --install | sudo tee /etc/systemd/system/mtix-sync.service
+sudo systemctl enable --now mtix-sync
+
+# macOS — launchd plist is also emitted by --install (operator places it)
+mtix sync daemon --install
 ```
 
-Add the secret in your GitHub repo:
+The daemon polls `mtix sync pull` every 30 seconds (configurable via
+`--interval SEC`). Pair with the pre-push hook (which handles push)
+for inbound + outbound auto-sync.
 
-* Settings → Secrets and variables → Actions → New repository secret
-* Name: `MTIX_PG_DSN`
-* Value: a read-only DSN to your task store
+### CI hub-health gate
 
-Pair with a branch protection rule that *requires* the
-`mtix-snapshot-freshness / verify-snapshot` check to pass on the
-target branch.
+Even without server-side snapshot enforcement, you can gate merges on
+hub reachability via a CI job that runs `mtix sync doctor --json`. The
+doctor command exits 2 if any of its 5 health checks fail (PG
+reachable, schema current, queue draining, no orphan applied, secrets
+file mode). Add it as a required check in your branch protection rule.
+
+```yaml
+# .github/workflows/mtix-hub-health.yml
+name: mtix-hub-health
+on: [pull_request]
+jobs:
+  doctor:
+    runs-on: ubuntu-latest
+    env:
+      MTIX_SYNC_DSN: ${{ secrets.MTIX_SYNC_DSN }}  # read-only role
+    steps:
+      - uses: actions/checkout@v4
+      - run: go install github.com/hyper-swe/mtix/cmd/mtix@latest
+      - run: mtix sync doctor --json
+```
 
 ---
 
-## Security caveats
+## What's coming in v0.2.1
 
-* **Client-side hooks are bypassable.** `git push --no-verify` skips
-  every client hook. If you require enforcement, the only honest option
-  is server-side (`pre-receive` or branch-protected GH Action).
-* **`MTIX_PG_DSN` is a credential.** Treat it like a secret: never put
-  it in tracked config, only in env vars or `.mtix/secrets` (gitignored,
-  mode `0600`). The GitHub Action uses Actions secrets; the
-  `pre-receive` server-side role should be read-only.
-* **Hooks must use `MTIX_BIN`, not bare `mtix`.** A poisoned working
-  directory can shadow `mtix` via a malicious `./mtix` if PATH includes
-  `.`. The hooks here resolve `mtix` once at the top via `command -v`
-  and then use the absolute path everywhere; the regression test
-  `TestExampleHooks_PrePush_AbsolutePathToMtix` guards this.
-* **No task content is echoed.** Task titles and prompts can contain
-  shell metacharacters and ANSI escapes. The hooks only print file
-  paths and counts.
-* **Snapshot is bounded.** All snapshot calls pass `--timeout`. A hung
-  PG cannot stall your push beyond that window.
+Server-side enforcement of pushed-state freshness in the FR-18 model.
+Likely shape: a hook (and equivalent CI workflow) that connects to the
+hub, derives the canonical state, and rejects pushes whose
+`.mtix/tasks.json` does not match. The challenge is that the canonical
+state in v0.2.0-beta is per-CLI local SQLite — the server has no
+SQLite of its own, only the hub. Design tracked under MTIX-15 follow-ups.
 
-For the full trust model (who is trusted, what BYO PG protects against,
-what it does *not* protect against), see
-[`docs/SECURITY-MODEL.md`](../../docs/SECURITY-MODEL.md).
+If your safety profile cannot wait, the workarounds above (daemon +
+`pre-push` + CI doctor) cover the same ground at lower confidence. Reach
+out via GitHub Issues if you need server-side enforcement before v0.2.1.
 
 ---
 
-## Testing the hooks locally
+## Test references
 
-The repo's Go test suite includes regression tests for these hooks under
-the `mtix` package (file `example_hooks_test.go`):
+All hooks ship with regression tests in `example_hooks_test.go`:
 
-```bash
-go test -run TestExampleHooks ./...
-```
-
-Tests covered:
-
-* `TestExampleHooks_PrePush_ShellLinted` — `shellcheck` clean (skipped if shellcheck is not installed)
-* `TestExampleHooks_PreReceive_ShellLinted`
-* `TestExampleHooks_PrePush_NoUnquotedVariables` — every `$VAR` is double-quoted
-* `TestExampleHooks_PrePush_AbsolutePathToMtix` — `MTIX_BIN` discipline
-* `TestExampleHooks_PrePush_TimeoutFlagPassed` — `--timeout` is always passed to `mtix snapshot`
-* `TestExampleHooks_GithubAction_YAMLValid` — structural sanity for the workflow file
-* `TestExampleHooks_PrePush_RunsAgainstFakeRepo` — integration test using a stub `mtix` binary
-
-To run the integration test you need `git` and `bash` on your PATH. To
-run the lint test you need `shellcheck` (`brew install shellcheck`).
+* `TestExampleHooks_PrePush_*` — covers the active `pre-push` hook end
+  to end (fake repo, stub `mtix`, with and without DSN configured).
+* `TestExampleHooks_PreReceive_*` — covers the stub (existence,
+  executability, shell hygiene). The integration test was removed when
+  the hook became a no-op; it will return in v0.2.1.
+* `TestExampleHooks_GithubAction_YAMLValid` — covers the workflow's
+  YAML shape.
 
 ---
 
 ## See also
 
-* [`docs/SECURITY-MODEL.md`](../../docs/SECURITY-MODEL.md) — trust and threat model
-* [`docs/WORKFLOWS.md`](../../docs/WORKFLOWS.md) — solo / small-team / safety-critical setups
-* MTIX-14 (BYO Postgres epic) and MTIX-14.5 (this directory) for design rationale
+* [`docs/SECURITY-MODEL.md`](../../docs/SECURITY-MODEL.md) — full trust
+  and threat model (v1.1; covers the FR-18 sync hub trust boundary).
+* [`docs/SYNC-DESIGN.md`](../../docs/SYNC-DESIGN.md) — architectural
+  overview of the event-sourced sync layer.
+* [`docs/SYNC-PROTOCOL.md`](../../docs/SYNC-PROTOCOL.md) — protocol-level
+  details for contributors and auditors.
+* [`CHANGELOG.md`](../../CHANGELOG.md) — v0.2.0-beta entry covers the
+  full release and the upgrade path for v0.1.x users.

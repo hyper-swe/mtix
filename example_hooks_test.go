@@ -121,23 +121,31 @@ func TestExampleHooks_GithubAction_Exists(t *testing.T) {
 }
 
 // TestExampleHooks_README_Exists verifies the README ships and links to the
-// security model and the workflow docs (acceptance #5).
+// security model. The v0.2.0-beta rewrite (MTIX-15.13) reframed the README
+// for the FR-18 sync model: server-side enforcement is deferred to v0.2.1
+// so the commit-vs-amend trade-off discussion was simplified (now lives in
+// the pre-push hook itself via MTIX_HOOK_AMEND). Test assertions follow
+// the v0.2.0-beta surface.
 func TestExampleHooks_README_Exists(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join(hooksDir(t), "README.md"))
 	require.NoError(t, err, "examples/hooks/README.md should exist")
 
 	body := string(content)
-	// Trade-off discussion required by acceptance criteria.
-	assert.Contains(t, body, "commit", "README should discuss commit-vs-amend trade-off")
-	assert.Contains(t, body, "amend", "README should discuss commit-vs-amend trade-off")
-	assert.Contains(t, body, "client", "README should discuss client-vs-server trade-off")
-	assert.Contains(t, body, "server", "README should discuss client-vs-server trade-off")
+	// Active hook (pre-push) and deferred server-side variants must
+	// be documented so users understand which to use.
+	assert.Contains(t, body, "pre-push", "README should document the active pre-push hook")
+	assert.Contains(t, body, "pre-receive", "README should document pre-receive status")
+	assert.Contains(t, body, "Deferred",
+		"README should explain that server-side hooks are deferred to v0.2.1")
 	// Security caveat: client hooks are bypassable.
 	assert.Contains(t, strings.ToLower(body), "bypass",
 		"README should warn that client hooks are bypassable")
 	// Cross-link to the trust model.
 	assert.Contains(t, body, "SECURITY-MODEL.md",
 		"README should link to docs/SECURITY-MODEL.md")
+	// MTIX-15 / FR-18 reference per the new sync model.
+	assert.Contains(t, body, "FR-18",
+		"README should reference the FR-18 sync model after the v0.2.0-beta pivot")
 }
 
 // TestExampleHooks_PrePush_ShellLinted runs shellcheck against the pre-push
@@ -281,18 +289,18 @@ func TestExampleHooks_PrePush_NoTaskContentEcho(t *testing.T) {
 	}
 }
 
-// TestExampleHooks_GithubAction_YAMLValid parses the GH Action template as
-// YAML so a typo in the template breaks the test, not someone's CI run.
-//
-// We keep the parser dependency-free by using gopkg.in/yaml indirectly via
-// goccy/go-yaml which is already in go.mod (used by the docs pipeline).
+// TestExampleHooks_GithubAction_YAMLValid parses the GH Action template
+// for structural correctness. The v0.2.0-beta rewrite (MTIX-15.13) turned
+// the workflow into a no-op deferral stub because the v0.1.x
+// snapshot-from-PG model does not map to the FR-18 sync architecture.
+// The full secrets-driven freshness check returns in v0.2.1; until then
+// the YAML must still parse and declare the required top-level keys so
+// existing branch-protection rules pointing at it continue to accept
+// pushes cleanly.
 func TestExampleHooks_GithubAction_YAMLValid(t *testing.T) {
 	content, err := os.ReadFile(filepath.Join(hooksDir(t), "github-action.yml"))
 	require.NoError(t, err, "github-action.yml must exist")
 
-	// Minimal lint: parseable + must contain the expected top-level keys.
-	// We avoid pulling in a new dep — the structural assertions below are
-	// enough to catch ~all real authoring mistakes.
 	body := string(content)
 	assert.Contains(t, body, "name:", "GH Action must declare 'name:'")
 	assert.Contains(t, body, "on:", "GH Action must declare 'on:' triggers")
@@ -300,17 +308,18 @@ func TestExampleHooks_GithubAction_YAMLValid(t *testing.T) {
 	assert.Contains(t, body, "runs-on:", "GH Action job must set 'runs-on:'")
 	assert.Contains(t, body, "steps:", "GH Action job must declare 'steps:'")
 
-	// Must use secrets, not inline DSN (per security model).
-	assert.Contains(t, body, "secrets.",
-		"GH Action must read DSN from GitHub Actions secrets, not inline")
+	// Deferral notice must be present so operators understand the v0.2.0-beta
+	// status without having to read the README.
+	assert.Contains(t, body, "deferred",
+		"GH Action must announce v0.2.0-beta deferral to v0.2.1")
 
-	// Must NOT contain a bare DSN literal — guard against accidental commit.
+	// Must NOT contain a bare DSN literal — guard against accidental commit
+	// even in the no-op stub.
 	assert.NotRegexp(t, regexp.MustCompile(`postgres(ql)?://[^$\s'"]*:[^@\s'"]+@`), body,
 		"GH Action must not contain a literal DSN (credentials in template)")
 
-	// Indentation sanity: tabs are illegal in YAML, must use spaces only.
+	// Indentation sanity: tabs are illegal in YAML.
 	for i, line := range strings.Split(body, "\n") {
-		// Line numbers are 1-based in editors.
 		if strings.HasPrefix(line, "\t") {
 			t.Errorf("github-action.yml line %d uses a tab for indentation; YAML requires spaces", i+1)
 		}

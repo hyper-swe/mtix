@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-05-19T12:45:57Z",
+  "exported_at": "2026-05-19T13:18:15Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -2741,6 +2741,31 @@
       "closed_at": "2026-05-18T16:26:21Z"
     },
     {
+      "id": "MTIX-18",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 18,
+      "project": "MTIX",
+      "title": "Doc gap: add mtix_sync_workflow to MCP-SETUP.md + USERMANUAL MCP Tools category list",
+      "description": "Post-release user feedback flagged that the FR-18 sync work is not visible in MCP-facing docs. README.md and USERMANUAL chapter 20 cover the CLI surface but the MCP-SETUP.md tool inventory and the USERMANUAL MCP Tools categories list still show only the pre-FR-18 36 tools. Add the new mtix_sync_workflow tool to both with the same level of detail as other tools.",
+      "prompt": "",
+      "acceptance": "",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "vimal",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "9575cf1d2cb465752f8696aa5c8fdc17354a207494e210ad47ed599ce9cb9a8b",
+      "created_at": "2026-05-19T13:16:01Z",
+      "updated_at": "2026-05-19T13:18:15Z",
+      "closed_at": "2026-05-19T13:18:15Z"
+    },
+    {
       "id": "MTIX-2",
       "parent_id": "",
       "depth": 0,
@@ -4265,7 +4290,7 @@
       "agent_id": "vimal",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-15",
+      "current_node_id": "MTIX-18",
       "last_heartbeat": "2026-05-06T14:14:36Z"
     }
   ],
@@ -4287,6 +4312,6 @@
       "status": "active"
     }
   ],
-  "node_count": 160,
-  "checksum": "748250f7b8a906569be09366b5e7f9dff5687fe7ac000f2253385a9913e8aefe"
+  "node_count": 161,
+  "checksum": "6cef5c6f58709a57ea8db4110cef182ab811e0eaa208d927d768ef0f3d232106"
 }

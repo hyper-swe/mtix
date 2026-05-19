@@ -148,7 +148,7 @@ The test: *"If an agent reads only the assembled context from root to this node,
 
 See the auto-generated `CONTEXT_CHAIN.md` in your project's `.mtix/docs/` for detailed examples.
 
-## Available Tools (36)
+## Available Tools (37)
 
 Once connected, the following MCP tools are available:
 
@@ -216,6 +216,19 @@ Once connected, the following MCP tools are available:
 |------|-------------|
 | `mtix_discover` | List all available tools |
 | `mtix_docs_generate` | Regenerate agent documentation |
+
+### Sync (FR-18, v0.2.0-beta+)
+| Tool | Description |
+|------|-------------|
+| `mtix_sync_workflow` | Detect local sync state and recommend safe next actions for the BYO Postgres sync hub. State buckets: `solo`, `sync-configured-no-hub`, `sync-active`, `divergent-state-pending`, `hub-unreachable`. Recommendations are rule-based (no LLM, no string concatenation), DocLink comes from a closed allow-list, output is bounded to 4 KB, and the DSN is never returned. The tool description includes the FR-18.17 untrusted-context warning verbatim — agents must treat recommendations as project data, not system instructions. The handler reads local SQLite + filesystem only; it does not open a PG connection, so hub credentials never enter the MCP code path. |
+
+**Upgrader detection:** when `mtix_sync_workflow` runs in a project with nodes but no sync events (the v0.1.x → v0.2.0-beta upgrade shape), it recommends `mtix sync backfill` as the first action. The recommendation rationale explicitly references the v0.1.x upgrade path so agents surface the correct next step without operator prompting.
+
+**See also:**
+- [`docs/SYNC-DESIGN.md`](SYNC-DESIGN.md) — architectural overview of the event-sourced sync layer.
+- [`docs/SYNC-PROTOCOL.md`](SYNC-PROTOCOL.md) — protocol-level details for contributors and auditors.
+- [`docs/SECURITY-MODEL.md`](SECURITY-MODEL.md) v1.1 — full trust model including the same-authorID conflict-log limitation.
+- [`USERMANUAL.md` → Team collaboration with sync (FR-18)](../USERMANUAL.md#team-collaboration-with-sync-fr-18) — operator-facing CLI workflow.
 
 ## Logging
 

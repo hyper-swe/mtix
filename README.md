@@ -275,7 +275,7 @@ All mutations require `X-Requested-With: mtix` header (CSRF protection).
 
 ### MCP Tools
 
-mtix runs as an MCP server via `mtix mcp`, exposing 36 tools for LLM agents: `mtix_create`, `mtix_context`, `mtix_claim`, `mtix_done`, `mtix_decompose`, `mtix_search`, and more. The most important tool is `mtix_context` — it assembles the full context chain from root to the target node, giving the agent its complete briefing.
+mtix runs as an MCP server via `mtix mcp`, exposing 37 tools for LLM agents: `mtix_create`, `mtix_context`, `mtix_claim`, `mtix_done`, `mtix_decompose`, `mtix_search`, `mtix_sync_workflow` (for the FR-18 sync hub state-detection + safe-recommendations surface), and more. The most important tool is `mtix_context` — it assembles the full context chain from root to the target node, giving the agent its complete briefing.
 
 See [MCP Setup Guide](docs/MCP-SETUP.md) for client configuration (Claude Desktop, Claude Code, Cursor, Windsurf).
 

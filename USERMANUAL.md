@@ -994,6 +994,8 @@ mtix registers as an MCP (Model Context Protocol) tool provider for LLM agent fr
 
 **Analytics:** `mtix_stats`, `mtix_progress`, `mtix_stale`, `mtix_orphans`
 
+**Sync (FR-18):** `mtix_sync_workflow` — detects local sync state (solo / sync-configured-no-hub / sync-active / divergent-state-pending / hub-unreachable) and returns rule-based recommendations with severity and doc links. Output is bounded to 4 KB; the DSN is never returned. Includes an upgrader-detection branch that recommends `mtix sync backfill` when local nodes exist but no sync events have been emitted. See [Team collaboration with sync (FR-18)](#team-collaboration-with-sync-fr-18) for the corresponding CLI workflow.
+
 ---
 
 ## Backup, Export, and Import

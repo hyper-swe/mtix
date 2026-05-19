@@ -22,8 +22,10 @@ go test ./benchmarks/...
 # Include the 100K-node memory test — set MTIX_PERF_LONG=1
 MTIX_PERF_LONG=1 go test ./benchmarks/...
 
-# PG-bound throughput tests — set MTIX_PG_TEST_DSN
-MTIX_PG_TEST_DSN='postgres://...?sslmode=disable' go test ./benchmarks/...
+# PG-bound throughput tests — need BOTH a DSN AND MTIX_PERF_LONG=1
+MTIX_PG_TEST_DSN='postgres://...?sslmode=disable' \
+  MTIX_PERF_LONG=1 \
+  go test ./benchmarks/...
 
 # Skip slow tests during dev iteration
 go test -short ./benchmarks/...
@@ -32,11 +34,23 @@ go test -short ./benchmarks/...
 go test -bench . -run=^$ ./benchmarks/...
 ```
 
-The 100K-node memory test is gated behind `MTIX_PERF_LONG=1` so CI
-runs with `-race` don't hit the 10-min timeout (race-detector
-overhead pushes insertion past the limit on GitHub-hosted runners).
-A dedicated perf CI job that sets the env var is the right home for
-this check; the regular PR CI sweep stays fast.
+All three `TestPerf_*` threshold tests are gated behind
+`MTIX_PERF_LONG=1`:
+
+- `TestPerf_Memory_100KNodes` — 100K-node insertion + race detector
+  blows the 10-min timeout on GitHub-hosted runners.
+- `TestPerf_SoloCommandTargets` — race overhead makes the list
+  median ~10× slower; the 10ms target false-fails.
+- `TestPerf_PushPullTargets` — race overhead makes the 1000-event
+  pull take ~6s on CI vs ~0.5s un-instrumented; the 5s target
+  false-fails.
+
+The underlying perf is fine on both dev boxes and CI; the gate just
+keeps the threshold assertions out of the default race sweep. A
+dedicated perf CI job that sets the env var (and runs without
+`-race`) is the right home for the threshold checks. The
+`BenchmarkSync*` and `BenchmarkSolo*` functions still emit ns/op
+without the gate so trend tracking continues.
 
 ## Observed numbers (Apple M5, postgres:16 in Docker)
 

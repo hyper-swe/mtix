@@ -12,6 +12,27 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: read
+    # MTIX-15.13.3: spin up Postgres so the PG-gated tests in
+    # internal/store/postgres/transport, internal/integration,
+    # e2e/sync_e2e_test.go, and benchmarks/sync_throughput_test.go
+    # execute and contribute to coverage. Without this, those code
+    # paths report ~10-19% coverage when their real coverage via the
+    # gated tests is much higher; the overall gate then false-fails.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: mtix_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MTIX_PG_TEST_DSN: "postgres://postgres:ci@localhost:5432/mtix_ci?sslmode=disable"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -30,11 +51,27 @@ jobs:
         run: go mod verify
 
       - name: Run Go tests with race detector
-        run: go test $(go list ./... | grep -v node_modules) -race -count=1
+        # -p 1: serialize package execution. The PG-gated tests in
+        # e2e/, benchmarks/, and cmd/mtix/ all DROP and re-migrate
+        # the shared MTIX_PG_TEST_DSN database; running them in
+        # parallel races on table existence and intermittently
+        # fails. Serializing packages costs ~30s of CI time and
+        # gives deterministic results.
+        run: go test $(go list ./... | grep -v node_modules) -race -count=1 -p 1
 
       - name: Run Go tests with coverage
         run: |
-          go test $(go list ./... | grep -v node_modules) -coverprofile=coverage.out -count=1
+          go test $(go list ./... | grep -v node_modules) -coverprofile=coverage.out.raw -count=1 -p 1
+          # QUALITY-STANDARDS §2.3: exclude documented categories from
+          # the coverage gate. The raw profile is preserved (uploaded
+          # as artifact below) for diagnostics; the filtered file is
+          # what the gate evaluates.
+          # Excluded:
+          #   - cmd/mtix/main.go entry point (minimal bootstrap;
+          #     covered implicitly by every integration test)
+          #   - *.pb.go (auto-generated protobuf; none today, rule
+          #     kept in case the gRPC surface adds generated code)
+          grep -v -E 'cmd/mtix/main\.go|\.pb\.go' coverage.out.raw > coverage.out
           go tool cover -func=coverage.out | tail -1
 
       - name: Enforce coverage gate

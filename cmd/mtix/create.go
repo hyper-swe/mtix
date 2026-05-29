@@ -129,20 +129,56 @@ func runCreate(title, under, nodeType string, priority int,
 		return err
 	}
 
+	// Warn on stderr if the task is missing fields the context chain depends on.
+	// stderr keeps the warning out of --json stdout so programmatic consumers
+	// see the JSON node and humans still see the warning.
+	if warning := contextWarning(node.ID, prompt, acceptance); warning != "" {
+		fmt.Fprint(os.Stderr, warning)
+	}
+
 	out := NewOutputWriter(app.jsonOutput)
 	if app.jsonOutput {
 		return out.WriteJSON(node)
 	}
 	out.WriteHuman("○ Created %s: %s\n", node.ID, node.Title)
+	return nil
+}
 
-	// Warn if the task lacks context fields needed for agent pickup.
-	if description == "" && prompt == "" && acceptance == "" {
-		fmt.Fprintf(os.Stderr,
-			"\n⚠ Warning: task %s has no description, prompt, or acceptance criteria.\n"+
-				"  Agents cannot pick up tasks without context. Populate with:\n"+
-				"    mtix update %s --description \"...\" --prompt \"...\" --acceptance \"...\"\n",
-			node.ID, node.ID)
+// contextWarning returns the stderr warning text for a newly created node when
+// prompt or acceptance is empty. Returns "" when both fields are populated.
+//
+// Warn-only by design: blocking on missing fields would break legitimate
+// corner cases (drafting, intentional empty placeholders during decomposition).
+func contextWarning(nodeID, prompt, acceptance string) string {
+	missingPrompt := prompt == ""
+	missingAcceptance := acceptance == ""
+	if !missingPrompt && !missingAcceptance {
+		return ""
 	}
 
-	return nil
+	var b strings.Builder
+	b.WriteString("\n⚠ Task ")
+	b.WriteString(nodeID)
+	b.WriteString(" is missing context fields needed for autonomous agent pickup:\n")
+	if missingPrompt {
+		b.WriteString("    --prompt:     capture the originating conversation — user's ask,\n")
+		b.WriteString("                  file paths/symbols already discussed, constraints,\n")
+		b.WriteString("                  pointers to project skills (CLAUDE.md / AGENTS.md)\n")
+	}
+	if missingAcceptance {
+		b.WriteString("    --acceptance: testable criteria that define \"done\"\n")
+	}
+	b.WriteString("\n  Completeness test: can a different agent, with zero conversation\n")
+	b.WriteString("  history, execute this task using ONLY what's in the ticket?\n\n")
+	b.WriteString("  Populate with:\n")
+	b.WriteString("    mtix update ")
+	b.WriteString(nodeID)
+	if missingPrompt {
+		b.WriteString(" --prompt \"...\"")
+	}
+	if missingAcceptance {
+		b.WriteString(" --acceptance \"...\"")
+	}
+	b.WriteString("\n")
+	return b.String()
 }

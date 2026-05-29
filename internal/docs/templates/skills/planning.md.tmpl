@@ -18,13 +18,32 @@ allowed-tools:
 
 Every leaf task MUST have these fields populated before it is considered ready for agent pickup:
 - **description** — scope, constraints, and why this task exists
-- **prompt** — exact instructions: file paths, function names, API contracts, edge cases, test scenarios
+- **prompt** — exact instructions AND the originating conversation context (see below)
 - **acceptance** — testable criteria that define "done"
 - **tests** — specific test function names and scenarios to write
 
 **A task with only a title is not a task — it is an unfinished thought.** The dot-notation hierarchy exists so agents traverse parent→child and accumulate full context. Empty nodes break this contract.
 
 **The completeness test:** *"Can an agent execute this task using ONLY the assembled context from root to this node?"* If no, add the missing details.
+
+## NON-NEGOTIABLE: Capture the Originating Context in `prompt`
+
+The `prompt` field is where the *originating conversation* belongs. A future agent picking up this ticket will not have your conversation history with the user. The `prompt` field MUST include:
+
+- **The user's verbatim ask** (or faithful paraphrase, attributed) — what they originally said, what problem they reported, what outcome they wanted.
+- **File paths, function names, and symbols** already surfaced in the conversation — every concrete anchor you discussed.
+- **Constraints, decisions, and edge cases** discussed before the ticket was filed — rejected approaches, performance bounds, security/compliance requirements.
+- **Pointers to project skills** referenced in the project's `CLAUDE.md` or `AGENTS.md` (e.g., skills for ticket workflows, commit messages, review). Reference them by the names the project documents — do not invent skill names.
+
+**Lazy-creation failure mode:** decomposing into children with only a title and a one-line description, leaving `prompt`/`acceptance` empty. The CLI warns when `--prompt` or `--acceptance` is missing — act on the warning by populating the field, not by suppressing it.
+
+## NON-NEGOTIABLE: Parent Selection — Read Before You Nest
+
+Before nesting under an existing node — whether on initial create or when decomposing — call `mcp__mtix__mtix_context` on the candidate parent and read its description, prompt, and acceptance. **Pattern-matching on the parent's title is the canonical parent-selection failure.** A parent titled "LLM agent integration" may actually be scoped to *packaging the agent kit for release*, not to *the substance of agent guidance*. Nest only when the new work substantively fits the parent's scope.
+
+If the candidate parent is the wrong scope, **create a new top-level story** with `mcp__mtix__mtix_create` (no `parent_id`) and link the lineage to any related node with `mcp__mtix__mtix_dep_add --type related`. A new story is not failure — it is the right move when the new work is its own concern.
+
+**Strongly avoid nesting under a `done`, `closed`, or `cancelled` parent.** Adding a child to a node whose progress is 1.0 drops the parent below 1.0, reopens its rollup, and cascades re-verification onto every previously completed sibling — muddy audit trail, re-run CI, reviewers re-checking completed work. This is a strong warning, not a hard block: corner cases exist where reopening is deliberate (e.g., a discovered defect inside a closed initiative). Default to a new top-level story.
 
 ## Before Decomposing
 

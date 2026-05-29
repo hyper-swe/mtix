@@ -59,6 +59,23 @@ The dot-notation task hierarchy (e.g., `PROJ-1.3.2`) is a context chain:
 
 **NEVER write code without a corresponding mtix task.** If no task exists, create one first with `mcp__mtix__mtix_create` — every task must have `description`, `prompt`, and `acceptance` populated with enough detail that a different agent can execute it independently using only the assembled context chain. Apply the completeness test: *"Can an agent with zero conversation history execute this task from the assembled prompt alone?"* This applies to features, bug fixes, refactors, and even one-line changes.
 
+## NON-NEGOTIABLE: Capture the Originating Context
+
+The `prompt` field is where the originating conversation belongs. A future agent picking up the ticket has only the assembled context chain — not your conversation, IDE state, or chat with the user. The `prompt` field MUST include:
+
+- the user's verbatim ask (or faithful paraphrase, attributed),
+- every file path, function name, and symbol already discussed in the conversation,
+- constraints, edge cases, and rejected approaches surfaced before the ticket was filed,
+- pointers to any project skills referenced in the project's `CLAUDE.md` or `AGENTS.md` (e.g., skills for ticket workflows, commit messages, review) — by their documented names; do not invent skill names.
+
+**Lazy-creation failure:** creating a ticket with only `description` and leaving `prompt`, `acceptance`, and `labels` empty. The next agent inherits a title and a sentence — the context chain breaks at the first hop. Populate the originating context before claiming or marking the ticket ready.
+
+## NON-NEGOTIABLE: Parent Selection — Read Before You Nest
+
+Before nesting a ticket under an existing node, call `mcp__mtix__mtix_context` on the candidate parent and scan its description, prompt, and acceptance — not just the title. Title pattern-matching is the canonical parent-selection failure. If the new work does not substantively fit, create a new top-level story instead and link the lineage with `mcp__mtix__mtix_dep_add --type related`.
+
+**Strongly avoid nesting under a `done`, `closed`, or `cancelled` parent.** It drops the parent's progress below 1.0, reopens its rollup, and cascades re-verification onto every completed sibling. This is a warning, not a hard block — corner cases justify deliberate reopening. Default to a new top-level story.
+
 ## Execution Workflow
 
 1. **Start session:** `mcp__mtix__mtix_session_start`

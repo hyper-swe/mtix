@@ -106,3 +106,79 @@ If any answer is "no," add the missing context to the child's prompt.
 6. **Vague decomposition** — Writing child prompts like "implement the thing" wastes the context chain; be specific
 7. **Context duplication** — Don't repeat parent prompts verbatim in children; add new information
 8. **Empty task shells** — Creating tasks with only a title and no description, prompt, or acceptance criteria. The CLI warns about this — act on the warning. A task without context cannot be picked up by another agent
+
+## Anti-Pattern: Lazy Ticket Creation
+
+The most common failure when an LLM agent files a ticket on behalf of a user: capture only what fits on the title line and a `--description` blurb. The user's actual ask, the files already named in the conversation, the constraints they mentioned, the project skills they expect to be invoked — all of it stays in the agent's conversation context and never makes it into the ticket.
+
+### BAD — the lazy form
+
+```
+mtix create "Add rate limiting to login" \
+  --description "Add rate limiting to the login endpoint"
+```
+
+No `--prompt`. No `--acceptance`. No `--labels`. No dependencies. The next agent to claim this ticket sees:
+
+- a title,
+- a sentence that restates the title,
+- no file paths,
+- no rate-limit algorithm choice,
+- no thresholds,
+- no error contract,
+- no test scenarios,
+- no idea which related work this came out of.
+
+They have to either (a) guess, (b) ask the human (who may be unavailable), or (c) reverse-engineer the originating conversation from chat logs that probably no longer exist. All three are unacceptable for autonomous agent execution.
+
+### GOOD — the populated form
+
+```
+mtix create "Add rate limiting to POST /api/v1/auth/login" \
+  --under PROJ-3.2 \
+  --type feature \
+  --priority 2 \
+  --description "Anonymous brute-force attempts against /auth/login are unbounded. Add per-IP sliding-window rate limiting on the handler. Surfaced during the post-incident review of the credential-stuffing burst flagged on 2026-04-12." \
+  --prompt "User asked: 'add rate limiting to login, we're seeing credential stuffing in logs.' Files already discussed in this conversation: internal/api/http/handlers_auth.go (handleLogin), internal/ratelimit/window.go (existing sliding-window helper, used elsewhere for /api/v1/search). Constraint: must use the existing Redis client at internal/cache/redis.go — no new Redis connection. Threshold agreed with user: 10 attempts per 5 minutes per IP, return 429 with body {\"error\":\"rate_limited\",\"retry_after\":<seconds>}. Edge cases discussed: behind reverse proxy, use X-Forwarded-For first non-private hop (helper at internal/http/realip.go); on Redis unavailability, fail-OPEN with a structured warn log (security review accepted this trade-off). If the project's CLAUDE.md or AGENTS.md references a skill for ticket workflows, commit messages, or review, invoke it as documented in that file." \
+  --acceptance "POST /auth/login returns 429 on the 11th attempt within 5min from the same IP. 429 body matches contract. X-Forwarded-For honored behind proxy. Redis unavailable -> request allowed + structured warn log. Tests: TestLogin_RateLimit_11thAttempt_Returns429, TestLogin_RateLimit_XForwardedFor, TestLogin_RateLimit_RedisDown_FailsOpenWithWarnLog." \
+  --labels security,rate-limit,auth
+```
+
+The `--prompt` carries the originating conversation: the user's words, the files already on the table, the constraints, the rejected alternatives, the explicit security trade-off, and a pointer to project skills (referenced by their *project-documented* names, not invented ones). A future agent can execute without your conversation history.
+
+### The completeness test
+
+If the next agent — one who has never met the user, never read your chat, never seen your IDE — would need to ask a question to execute the ticket, the prompt is incomplete. Populate it from your current conversation before claiming the ticket or marking it ready.
+
+## Anti-Pattern: Lazy Parent Selection
+
+When you file a new ticket, the most tempting failure is to pattern-match on the title of an existing parent and slot the new work in without verifying the parent's actual scope. This is exactly how unrelated concerns end up buried under release-infrastructure epics and how completed parents get reopened by accidental children.
+
+### BAD — title pattern-match
+
+You're filing a ticket about *the substance of how agents create tickets*. You skim the tree, see a parent titled "LLM agent integration", and create your ticket under it without calling `mtix_context`. The parent is actually scoped to *packaging the agent kit as a release artifact* — its children are about GoReleaser, Homebrew, plugin manifests. The substance does not fit.
+
+Worse: that parent's other children are all `done`. Adding your open child drops the parent from progress 1.0 back to <1.0, reopens its rollup, and the next progress-report sweep flags the parent as "regressed" — every prior reviewer's sign-off now looks like it was on incomplete work.
+
+### GOOD — read parent context before nesting
+
+```
+1. mtix_context PROJ-1
+   → assembled prompt shows the parent is scoped to release infrastructure
+   → your new work is about agent guidance substance, not packaging
+   → DO NOT nest here
+
+2. Search for a fitting parent across the tree
+   → no existing parent has the right scope
+
+3. Create a new top-level story
+   → mtix create "Agent ticket-creation discipline" (no --under)
+   → mtix_dep_add --from <new-story> --to PROJ-1 --type related
+     so the lineage is preserved in the graph
+```
+
+### The closed-parent trap
+
+A particular case of lazy parent selection: nesting under a `done`, `closed`, or `cancelled` parent. Even when the substance arguably fits, adding a new child drops the parent's progress below 1.0, reopens its rollup, and cascades re-verification onto every completed sibling. Reviewers re-check work they already signed off on; CI re-runs; the audit trail shows a closed-then-reopened parent that needs to be re-justified.
+
+This is a strong warning, not a hard block. There are corner cases where reopening is correct — a discovered defect inside a closed initiative, for example. But the default is: create a new top-level story and link it with `mtix_dep_add --type related`. Reopen only when you can articulate why the existing parent is genuinely the right home.

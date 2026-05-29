@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-05-19T13:18:15Z",
+  "exported_at": "2026-05-19T18:08:47Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -20,7 +20,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.8888888888888888,
+      "progress": 1,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -910,7 +910,7 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[\"docs\",\"llm-agent-kit\",\"cli\"]",
-      "status": "open",
+      "status": "cancelled",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -918,7 +918,8 @@
       "weight": 1,
       "content_hash": "99191f85ab8fb2289d99ce1af15e6e562f6320d495b797c72175eba14529548c",
       "created_at": "2026-04-28T07:54:41Z",
-      "updated_at": "2026-04-28T07:54:41Z"
+      "updated_at": "2026-05-19T18:03:17Z",
+      "closed_at": "2026-05-19T18:03:17Z"
     },
     {
       "id": "MTIX-1.9.1",
@@ -934,7 +935,7 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[\"docs\",\"llm-agent-kit\"]",
-      "status": "open",
+      "status": "cancelled",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -942,7 +943,8 @@
       "weight": 1,
       "content_hash": "322d4e60b23b7ba9f97159db78f17642010baf7c9b9a84398bbd0725ff02ba87",
       "created_at": "2026-04-28T07:54:55Z",
-      "updated_at": "2026-04-28T07:54:55Z"
+      "updated_at": "2026-05-19T18:03:17Z",
+      "closed_at": "2026-05-19T18:03:17Z"
     },
     {
       "id": "MTIX-1.9.2",
@@ -958,7 +960,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[\"cli\",\"llm-agent-kit\"]",
-      "status": "open",
+      "status": "cancelled",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -966,7 +968,8 @@
       "weight": 1,
       "content_hash": "81cd0e0ded0233a66aa43f6c14e0e6efa1f033d546fb22d80f9a314f13e67839",
       "created_at": "2026-04-28T07:55:02Z",
-      "updated_at": "2026-04-28T07:55:02Z"
+      "updated_at": "2026-05-19T18:03:17Z",
+      "closed_at": "2026-05-19T18:03:17Z"
     },
     {
       "id": "MTIX-10",
@@ -2766,6 +2769,78 @@
       "closed_at": "2026-05-19T13:18:15Z"
     },
     {
+      "id": "MTIX-19",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 19,
+      "project": "MTIX",
+      "title": "Agent ticket-creation discipline and prompt-quality enforcement",
+      "description": "LLM agents using mtix consistently create tickets with only a one-line --description, leaving --prompt, --acceptance, --labels, and dependencies empty. This breaks mtix's context chain: a downstream agent reading the assembled prompt receives no real briefing, only a title and a vague description. Observed in real user setups where the agent had ample conversation context but never propagated it into the ticket. This story groups the work to harden the docs that ship to those agents, add CLI/MCP warnings at the tool boundary, and (over time) build prompt-quality enforcement so the failure mode becomes self-correcting.",
+      "prompt": "Scope: all hardening focused on making LLM agents create context-rich tickets and select correct parents when nesting. Current known children: (1) Capture-Originating-Context rule in agent-facing templates + Lazy Ticket Creation and Lazy Parent Selection anti-patterns; (2) Widen mtix create CLI warning to fire when --prompt OR --acceptance is missing. Future siblings expected: MCP-side warnings on mtix_create, ticket-quality audit command, prompt-completeness scoring, optional create-under-closed-parent warning, evaluation harness scoring agent-created tickets against the completeness test. All rules in this story must be WARN, not ENFORCE — corner cases exist where deliberate violation is correct (e.g., temporarily empty prompt while drafting, intentional reopen of closed parent). Generic phrasing throughout — no skill names or terminology from any user-shared transcript.",
+      "acceptance": "Story complete when: (a) agent-facing templates instruct agents to capture the originating conversation into --prompt and to scan parent context before nesting; (b) mtix create warns at the tool boundary when --prompt or --acceptance is missing; (c) PATTERNS.md has both anti-patterns documented with fabricated examples; (d) rendered docs/*.md samples stay in sync with templates; (e) no enforcement that blocks legitimate corner cases — all checks are warn-only.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[\"docs\",\"llm-agent-kit\",\"cli\",\"agent-discipline\"]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "0c43c54f39ac240edb8f1ed586aa76b7dfa7d80f664fba442085562607442cee",
+      "created_at": "2026-05-19T18:06:10Z",
+      "updated_at": "2026-05-19T18:06:10Z"
+    },
+    {
+      "id": "MTIX-19.1",
+      "parent_id": "MTIX-19",
+      "depth": 1,
+      "seq": 1,
+      "project": "MTIX",
+      "title": "Capture-Originating-Context + Parent Selection rules in agent-facing templates",
+      "description": "Add three new sections to mtix's agent-facing template docs: (1) Capture the Originating Context — the --prompt field MUST contain the user's verbatim ask, file paths/symbols already discussed, constraints surfaced in conversation, and a pointer to any project skills referenced in CLAUDE.md/AGENTS.md. (2) Parent Selection — Read Before You Nest — agents must call mtix_context on a candidate parent and scan its substance, not just title-match; strongly avoid nesting under done/closed/canceled parents because adding a child reopens completed work. (3) Two anti-patterns in PATTERNS.md — Lazy Ticket Creation (only --description) and Lazy Parent Selection (title pattern-match). All phrasing warns rather than enforces — corner cases may justify deliberate violation.",
+      "prompt": "Files to edit: internal/docs/templates/agents.md.tmpl, internal/docs/templates/skill.md.tmpl, internal/docs/templates/skills/planning.md.tmpl, internal/docs/templates/patterns.md.tmpl. Insert the two new sections under the existing 'No Code Without a Task' section. Capture-Originating-Context body must state: --prompt MUST include (a) the user's verbatim ask or paraphrased intent, (b) file paths and function/symbol names already surfaced in the conversation, (c) constraints, edge cases, and decisions made before the ticket was filed, (d) a pointer to any project skills listed in the project's CLAUDE.md or AGENTS.md that the executing agent should invoke. Parent Selection body must state: read parent context via mtix_context before nesting; pattern-matching on title alone is the canonical failure; nesting under a done/closed parent reopens it and cascades re-verification onto completed siblings (this is a warning, not a hard block — corner cases exist). PATTERNS.md gets two anti-patterns with fabricated examples (e.g., generic auth or rate-limit task for Lazy Creation; generic 'pipeline' parent example for Lazy Parent Selection). Regenerate docs/AGENTS.md, docs/SKILL.md, docs/PATTERNS.md from templates so committed samples stay in sync. NO references to 'ticketwork', 'commitmsg', or any other names from user-shared transcripts.",
+      "acceptance": "All four templates contain the new sections/anti-patterns. docs/AGENTS.md, docs/SKILL.md, docs/PATTERNS.md regenerated. grep -r 'ticketwork\\|commitmsg' across changed files returns zero. Phrasing is warn-not-enforce: words like 'strongly avoid' and 'unless deliberate' instead of 'never' or 'must not'. The rule references 'skills referenced in your CLAUDE.md or AGENTS.md' (generic) — no specific skill names.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[\"docs\",\"llm-agent-kit\"]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "a377902338794ad23c60ec1580b41c842f59576d4360e293bde86377d82a924a",
+      "created_at": "2026-05-19T18:08:45Z",
+      "updated_at": "2026-05-19T18:08:45Z"
+    },
+    {
+      "id": "MTIX-19.2",
+      "parent_id": "MTIX-19",
+      "depth": 1,
+      "seq": 2,
+      "project": "MTIX",
+      "title": "CLI guardrail: widen mtix create warning to fire when --prompt or --acceptance is missing",
+      "description": "The existing warning in cmd/mtix/create.go runCreate() only fires when description, prompt, AND acceptance are all empty. Widen it to fire when --prompt OR --acceptance is missing, since a task with only --description is the canonical lazy-creation pattern that breaks the context chain. Warn only — do not refuse the create. JSON output must remain unchanged so JSON consumers are unaffected.",
+      "prompt": "Edit cmd/mtix/create.go: in runCreate(), replace the 'description == \"\" \u0026\u0026 prompt == \"\" \u0026\u0026 acceptance == \"\"' check with a check that fires when prompt == \"\" OR acceptance == \"\". Update the warning message to reference the completeness test ('can a different agent execute this task with no conversation history?') and to suggest mtix update with the missing flag(s) specifically named in the message. Keep warning on stderr only — JSON consumers must be unaffected. Add tests covering: (a) warning emitted on stderr when --prompt missing, (b) warning emitted when --acceptance missing, (c) no warning when both --prompt and --acceptance are non-empty, (d) --json output stream contains no warning content. Use the existing test harness in cmd/mtix/cmd_execute_test.go for stderr capture; if that file is the wrong fit, create cmd/mtix/create_test.go.",
+      "acceptance": "Warning fires on stderr when prompt OR acceptance is empty. No warning when both populated. JSON output unchanged in all cases. New tests pass. Existing tests still pass. golangci-lint clean. cmd/mtix coverage does not regress.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[\"cli\",\"llm-agent-kit\"]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "822396894e92234bdd3afb6ed2de8e3d9b5363f0bf796c9722db0e903e33585a",
+      "created_at": "2026-05-19T18:08:47Z",
+      "updated_at": "2026-05-19T18:08:47Z"
+    },
+    {
       "id": "MTIX-2",
       "parent_id": "",
       "depth": 0,
@@ -4312,6 +4387,6 @@
       "status": "active"
     }
   ],
-  "node_count": 161,
-  "checksum": "6cef5c6f58709a57ea8db4110cef182ab811e0eaa208d927d768ef0f3d232106"
+  "node_count": 164,
+  "checksum": "64dad6b85365d28d076d56739d72aa4348d8f5a0a3e3f15f183a8a8dc3d842d9"
 }

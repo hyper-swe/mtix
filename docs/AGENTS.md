@@ -29,6 +29,27 @@ If the assembled context is insufficient to execute independently, **STOP and es
 
 Every task must pass the completeness test: *"Can a different agent, with zero conversation history, execute this task using ONLY the assembled context chain from root to this node?"* If not, add file paths, function names, inputs/outputs, edge cases, and test scenarios. A title-only or vaguely-described task is not actionable — it forces the executing agent to guess, which is unacceptable in safety-critical systems.
 
+## Capture the Originating Context
+
+When you create a ticket, the `--prompt` field is where the *originating conversation* belongs. A future agent picking up this ticket will not have your conversation history, IDE state, or chat with the user. They have only what you wrote into the assembled context chain. If the prompt does not let another agent reach the same understanding you reached, you have broken the chain.
+
+The `--prompt` field MUST capture:
+
+- **The user's verbatim ask** (or a faithful paraphrase, attributed). What they originally said, what problem they reported, what outcome they wanted.
+- **Files, functions, and symbols already surfaced.** Every path, function name, or identifier you and the user discussed should appear in the prompt. Future agents need anchors, not titles.
+- **Constraints, decisions, and edge cases discussed before the ticket was filed.** Rejected approaches, performance bounds, security/compliance requirements, edge cases the user flagged.
+- **Pointers to project skills** referenced in the project's `CLAUDE.md`, `AGENTS.md`, or equivalent. If the project defines skills for ticket workflows, commit messages, test scaffolding, or review — name them as the project documents them so the executing agent knows to invoke them. Do not invent skill names; reference only what the project itself declares.
+
+**The canonical lazy-creation failure:** `mtix create "Build X" --description "build the X feature"`. No `--prompt`. No `--acceptance`. No `--labels`. The next agent inherits a title and a one-sentence description — exactly what the context chain was designed to *prevent*. If you would not hand a colleague a sticky note with these contents and expect them to ship the feature, the ticket is incomplete. Populate `--prompt`, `--acceptance`, and `--labels` from your current conversation before claiming the ticket or marking it ready.
+
+## Parent Selection — Read Before You Nest
+
+Before nesting a new ticket under an existing node, call `mtix_context` on the candidate parent and read its description, prompt, and acceptance criteria — *not* just the title. Pattern-matching on a parent's title is the canonical parent-selection failure: a parent titled "LLM agent integration" may actually be scoped to *packaging the agent kit for release*, not to *the substance of agent guidance*. Nest only when the new work substantively fits the parent's scope.
+
+If the candidate parent is the wrong scope, create a new top-level story. A new story is not failure — it is the right move when the new work is its own concern. Link the lineage to the related node with `mtix_dep_add --type related` so the connection survives in the graph.
+
+**Strongly avoid nesting under a `done`, `closed`, or `cancelled` parent.** Adding a child to a node whose progress is 1.0 drops the parent below 1.0, reopens its rollup, and cascades re-verification onto every previously completed sibling — muddy audit trail, re-run CI, reviewers re-checking completed work. This is a strong warning, not a hard block: corner cases exist where reopening is the deliberate move (e.g., a discovered defect inside a closed initiative). Default to a new top-level story; reopen only when you can articulate why the existing parent is genuinely the right home.
+
 ## Agent Workflow
 
 ### 1. Start Session

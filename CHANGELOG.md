@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Disk-full safety (NFR-2.8, MTIX-26):** free-space pre-flight before every write transaction and backup (`MTIX_MIN_FREE_BYTES`, default 8 MiB floor); fail-stop latch on fatal storage errors (disk full, I/O error, detected corruption) — mtix refuses further writes instead of continuing into undefined state; database-open failures on packed volumes now name disk pressure instead of a bare `SQLITE_CANTOPEN`.
+- **Integrity check on open (NFR-2.6a, MTIX-26.4):** truncated database files (in-header page count exceeding file size with no WAL to replay) are refused *before* the first connection opens, preserving recovery evidence; `PRAGMA quick_check` runs before any write on every open. `MTIX_SKIP_INTEGRITY_CHECK=1` is the documented recovery-tooling escape hatch.
+- **Mirror parity for long-running interfaces (FR-15.3, MTIX-26.1):** mutations made through the MCP server and `mtix serve` now update the `.mtix/tasks.json` mirror via a debounced store on-commit hook — previously only CLI commands exported, leaving agent-driven projects without the redundancy layer.
+- **Fault-injection conformance suite (MTIX-26.7):** `e2e/faultinject` drives the real binary through disk-full writes, genuine ENOSPC, kill -9 mid-write, and the 2026-05-19 field-incident signature on a dedicated tiny volume; runs on every CI build (`test-fault-injection` job). Local harness: `scripts/faultfs.sh`.
+
+### Changed
+- Write connections now set `PRAGMA synchronous = FULL` and `PRAGMA wal_autocheckpoint = 1000` explicitly instead of relying on driver defaults (MTIX-26.3); ADR-001's stale `synchronous=NORMAL` reference corrected.
+
 ### Pending
 - v0.2.0-beta release — see entry below.
 

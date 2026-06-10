@@ -143,12 +143,13 @@ The following scenarios MUST have dedicated test coverage:
 2. **Concurrent Access:** Multiple goroutines performing simultaneous writes
 3. **Progress Rollup Determinism:** Same inputs always produce same outputs regardless of order
 4. **Backup/Export Integrity:** Verify checksum and node count on every export/import cycle
-5. **Startup Integrity Check:** Corrupt database correctly detected and rejected
+5. **Startup Integrity Check:** Corrupt database correctly detected and rejected — header truncation validation before open plus `PRAGMA quick_check` before any write (NFR-2.6a; covered by `internal/store/sqlite/durability_test.go` and `e2e/faultinject`)
 6. **Idempotent Operations:** Duplicate requests produce identical results
 7. **Soft-Delete Safety Chain:** Invalidate-before-delete ordering verified
 8. **Circular Dependency Detection:** All graph topologies tested
 9. **FTS Consistency:** Search index matches node table after all operation types
 10. **Graceful Shutdown:** In-flight requests complete, WAL checkpointed
+11. **Disk-Full Fault Injection (NFR-2.8):** On a volume driven to capacity, writes are refused or fail-stop with actionable errors; the database is never silently torn; the tasks.json mirror survives; kill -9 mid-write on a tight disk never corrupts. Evidence: `e2e/faultinject` (build tag `faultinject`), run on every CI build via the `test-fault-injection` job, including a reproduction of the 2026-05-19 field-incident signature (in-header page count exceeding file size)
 
 ### 3.7 Performance Benchmarks (NFR Validation)
 

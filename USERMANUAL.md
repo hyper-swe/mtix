@@ -1275,6 +1275,23 @@ Progress rolls up automatically when child states change. Check that child nodes
 **Cannot create child under done/cancelled node**
 Terminal states (`done`, `cancelled`, `invalidated`) block child creation. Reopen the parent first with `mtix reopen <id>`.
 
+### Disk full and corruption recovery
+
+mtix refuses work it cannot finish safely (NFR-2.8). On a nearly full volume you will see errors like `refusing write: only N bytes free…` — **this is deliberate**: a write that fails halfway through a checkpoint can tear the database. Reads keep working. Free disk space and retry; the floor is 8 MiB by default and can be tuned with the `MTIX_MIN_FREE_BYTES` environment variable (`0` disables the check — not recommended).
+
+If a write fails at the filesystem level anyway (`disk is full`, `disk I/O error`), mtix latches into **fail-stop** for that process: all further writes are refused so a bad situation cannot get worse. Free space (or fix the disk) and start fresh.
+
+If mtix reports `database … is truncated` or `integrity check … failed` at startup:
+
+1. **Stop. Do not delete anything** — especially not `mtix.db-wal` or `mtix.db-shm`; the WAL may be the only intact copy of your latest commits.
+2. Copy the entire `.mtix/data/` directory to another volume as evidence.
+3. Restore from your newest good copy, in order of preference:
+   - a `mtix backup` snapshot (verified at creation time);
+   - the `.mtix/tasks.json` mirror via `mtix import --mode replace .mtix/tasks.json` into a fresh `mtix init` project — the mirror is updated after every mutation on every interface (CLI, MCP, serve), so it is normally seconds-fresh.
+4. `MTIX_SKIP_INTEGRITY_CHECK=1` bypasses the open-time quick_check for recovery tooling that must read a damaged file. Never use it to keep writing.
+
+To make machine-loss recovery trivial, commit `.mtix/tasks.json` to git — it is deterministic, human-readable, and importable.
+
 ### Garbage Collection
 
 Clean up expired soft-deleted nodes:

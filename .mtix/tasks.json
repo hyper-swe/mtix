@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-10T16:57:41Z",
+  "exported_at": "2026-06-10T17:37:31Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -3398,7 +3398,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0,
+      "progress": 0.5555555555555556,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -3421,15 +3421,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-dev",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "8ed78a39c5216af5572ec89ab8c9d84b9366737290c848a75511e25470908967",
       "created_at": "2026-06-10T16:57:09Z",
-      "updated_at": "2026-06-10T16:57:09Z"
+      "updated_at": "2026-06-10T17:37:31Z",
+      "closed_at": "2026-06-10T17:37:31Z"
     },
     {
       "id": "MTIX-26.2",
@@ -3445,15 +3446,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-dev",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "2164b25b62db94abcf00829c07380c0cab749fc25e5975d712494a48efc945fc",
       "created_at": "2026-06-10T16:57:09Z",
-      "updated_at": "2026-06-10T16:57:09Z"
+      "updated_at": "2026-06-10T17:37:31Z",
+      "closed_at": "2026-06-10T17:37:31Z"
     },
     {
       "id": "MTIX-26.3",
@@ -3469,15 +3471,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-dev",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "c73717cb7b9437e3275062bb6a28e9071129084baf4c33547214c9d4b399e2f0",
       "created_at": "2026-06-10T16:57:09Z",
-      "updated_at": "2026-06-10T16:57:09Z"
+      "updated_at": "2026-06-10T17:37:31Z",
+      "closed_at": "2026-06-10T17:37:31Z"
     },
     {
       "id": "MTIX-26.4",
@@ -3493,15 +3496,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-dev",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "43b580b15644cbaaff131e82aa54dc300cf7ae8c5ed7db16d76b377f9e10dafa",
       "created_at": "2026-06-10T16:57:09Z",
-      "updated_at": "2026-06-10T16:57:09Z"
+      "updated_at": "2026-06-10T17:37:31Z",
+      "closed_at": "2026-06-10T17:37:31Z"
     },
     {
       "id": "MTIX-26.5",
@@ -3565,15 +3569,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-dev",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "a8005ff55611cda5cdc2990cb4483ae85725e272e058f4a8c1ae9fdca7180860",
       "created_at": "2026-06-10T16:57:41Z",
-      "updated_at": "2026-06-10T16:57:41Z"
+      "updated_at": "2026-06-10T17:37:31Z",
+      "closed_at": "2026-06-10T17:37:31Z"
     },
     {
       "id": "MTIX-26.8",
@@ -4757,6 +4762,13 @@
       "last_heartbeat": "2026-05-29T06:00:42Z"
     },
     {
+      "agent_id": "claude-dev",
+      "project": "MTIX",
+      "state": "working",
+      "current_node_id": "MTIX-26.7",
+      "last_heartbeat": "2026-06-10T17:37:31Z"
+    },
+    {
       "agent_id": "claude-opus-4-7",
       "project": "MTIX",
       "state": "working",
@@ -4797,5 +4809,5 @@
     }
   ],
   "node_count": 180,
-  "checksum": "55084d2097ca99a4d74626a1e5ca6d8cabebaa970f97665ac0235e4a4ea50bbf"
+  "checksum": "a6a552547e82a19009387f450e85da7b2cd9b45da9c66b8f4728e5735b287030"
 }

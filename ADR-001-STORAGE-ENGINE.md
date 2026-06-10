@@ -18,7 +18,9 @@ Every claim below is grounded in a specific mtix requirement. No hand-waving.
 
 **BadgerDB:** LSM-tree architecture is optimized for writes. A single key-value put in BadgerDB completes in ~1-3ms. Creating a node requires writing the node JSON (`n:` key) plus 3-5 index keys (`c:`, `s:`, `p:`, `a:`, `cseq:`), all in one transaction. Comfortably under 10ms.
 
-**SQLite (WAL mode, pure Go driver):** A single INSERT with indexes updates completes in ~2-5ms. The pure Go driver (modernc.org/sqlite) is ~75% as fast as the CGO-based driver. With WAL mode and `synchronous=NORMAL`, SQLite handles 70k-100k write transactions/second. A node creation is one INSERT plus automatic index updates — comfortably under 10ms.
+**SQLite (WAL mode, pure Go driver):** A single INSERT with indexes updates completes in ~2-5ms. The pure Go driver (modernc.org/sqlite) is ~75% as fast as the CGO-based driver. SQLite in WAL mode handles tens of thousands of write transactions/second even with full durability. A node creation is one INSERT plus automatic index updates — comfortably under 10ms.
+
+> **Durability note (NFR-2.8, post-incident):** mtix pins `synchronous=FULL` explicitly — every commit fsyncs the WAL. An earlier revision of this document cited `synchronous=NORMAL` throughput figures while the implementation ran the driver default (FULL); that drift is exactly how a silent durability downgrade happens, so the pragma is now explicit in code (`internal/store/sqlite/store.go`) and normative here. Do not relax it for performance: mtix's write rate is agent-scale, not OLTP-scale, and the canonical store's durability is the product.
 
 **Verdict:** Both pass. BadgerDB has a slight edge on raw write latency, but the difference is negligible at mtix's scale (agents create nodes per minute, not per millisecond).
 

@@ -95,6 +95,18 @@ func runMtix(dir string, extraEnv []string, args ...string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
+// containsAny reports whether data contains at least one of the keywords,
+// case-insensitively.
+func containsAny(data []byte, keywords ...string) bool {
+	low := bytes.ToLower(data)
+	for _, kw := range keywords {
+		if bytes.Contains(low, []byte(kw)) {
+			return true
+		}
+	}
+	return false
+}
+
 // fillDisk writes ballast into dir until the volume returns ENOSPC,
 // returning a cleanup func that frees the space. Chunks shrink from 1 MiB
 // to 4 KiB so the volume ends up packed tight.
@@ -182,8 +194,7 @@ func TestDiskFull_PreflightRefusesWrites(t *testing.T) {
 	if err == nil {
 		t.Fatalf("create on a full disk must fail loudly, got success:\n%s", out)
 	}
-	if !bytes.Contains(out, []byte("free")) && !bytes.Contains(out, []byte("full")) &&
-		!bytes.Contains(out, []byte("space")) {
+	if !containsAny(out, "free", "full", "space") {
 		t.Fatalf("disk-full refusal must say so; got:\n%s", out)
 	}
 
@@ -223,10 +234,7 @@ func TestDiskFull_RealENOSPC(t *testing.T) {
 		if err == nil {
 			continue // tiny writes can still fit — fine
 		}
-		low := bytes.ToLower(out)
-		if !bytes.Contains(low, []byte("full")) && !bytes.Contains(low, []byte("space")) &&
-			!bytes.Contains(low, []byte("i/o")) && !bytes.Contains(low, []byte("disk")) &&
-			!bytes.Contains(low, []byte("stop")) {
+		if !containsAny(out, "full", "space", "i/o", "disk", "stop") {
 			t.Fatalf("ENOSPC failure must be reported as a storage error; got:\n%s", out)
 		}
 	}
@@ -312,7 +320,7 @@ func TestTruncatedDB_RefusedWithoutTouchingFiles(t *testing.T) {
 	if err == nil {
 		t.Fatalf("opening a truncated DB must fail, got success:\n%s", out)
 	}
-	if !bytes.Contains(out, []byte("truncated")) && !bytes.Contains(out, []byte("corrupt")) {
+	if !containsAny(out, "truncated", "corrupt") {
 		t.Fatalf("refusal must name the corruption; got:\n%s", out)
 	}
 
@@ -334,8 +342,7 @@ func TestDiskFull_MirrorSurvives(t *testing.T) {
 		t.Fatalf("create: %v\n%s", err, out)
 	}
 	tasksPath := filepath.Join(proj, ".mtix", "tasks.json")
-	goodMirror, err := os.ReadFile(tasksPath)
-	if err != nil {
+	if _, err := os.Stat(tasksPath); err != nil {
 		t.Fatalf("mirror missing after CLI mutation: %v", err)
 	}
 
@@ -352,7 +359,6 @@ func TestDiskFull_MirrorSurvives(t *testing.T) {
 	if !bytes.Contains(after, []byte("mirrored node")) {
 		t.Fatalf("mirror no longer contains pre-incident data:\n%.300s", after)
 	}
-	_ = goodMirror
 }
 
 func hashFile(t *testing.T, path string) [32]byte {

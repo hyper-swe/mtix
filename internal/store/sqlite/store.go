@@ -140,7 +140,8 @@ func openDB(ctx context.Context, path string, isWriter bool) (*sql.DB, error) {
 	// PRAGMA foreign_keys = ON and busy_timeout on ALL connections
 	// (NFR-2.1); busy_timeout prevents immediate SQLITE_BUSY failures
 	// during concurrent access from multiple processes or agents.
-	pragmas := []struct{ stmt, what string }{
+	type pragma struct{ stmt, what string }
+	pragmas := []pragma{
 		{"PRAGMA foreign_keys = ON", "enable foreign keys"},
 		{"PRAGMA busy_timeout = 5000", "set busy_timeout"},
 	}
@@ -151,18 +152,18 @@ func openDB(ctx context.Context, path string, isWriter bool) (*sql.DB, error) {
 
 		pragmas = append(pragmas,
 			// WAL mode for concurrent readers (NFR-2.1).
-			struct{ stmt, what string }{"PRAGMA journal_mode = WAL", "enable WAL"},
+			pragma{"PRAGMA journal_mode = WAL", "enable WAL"},
 			// synchronous = FULL, set EXPLICITLY per NFR-2.8 / ADR-001 §9.
 			// modernc.org/sqlite happens to default to FULL, but the
 			// durability posture of the canonical store must never depend
 			// on a driver default. FULL fsyncs the WAL on every commit;
 			// NORMAL would trade that for speed and may lose the most
 			// recent commits on power failure.
-			struct{ stmt, what string }{"PRAGMA synchronous = FULL", "set synchronous"},
+			pragma{"PRAGMA synchronous = FULL", "set synchronous"},
 			// Explicit autocheckpoint threshold (the SQLite default,
 			// pinned per NFR-2.8 so backfill volume — and therefore the
 			// free-space pre-flight floor — is a known quantity).
-			struct{ stmt, what string }{"PRAGMA wal_autocheckpoint = 1000", "set wal_autocheckpoint"},
+			pragma{"PRAGMA wal_autocheckpoint = 1000", "set wal_autocheckpoint"},
 		)
 	}
 

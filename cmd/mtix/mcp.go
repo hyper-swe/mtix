@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hyper-swe/mtix/internal/mcp"
-	"github.com/hyper-swe/mtix/internal/service"
 )
 
 // newMCPCmd creates the mtix mcp command per FR-14.1a.
@@ -84,21 +83,9 @@ func runMCP() error {
 		return fmt.Errorf("create log file: %w", err)
 	}
 
-	// Mirror parity per FR-15.3 / MTIX-26.1: the MCP server is long-lived,
-	// so the CLI's PostRun auto-export never fires while it serves. Wire
-	// the store's on-commit hook to a debounced export so every mutation
-	// an agent makes reaches the tasks.json mirror without a process exit.
-	// Close() on shutdown flushes the final pending export.
-	if app.syncSvc != nil && app.mtixDir != "" {
-		exporter := service.NewExportDebouncer(
-			func(ctx context.Context) error {
-				return app.syncSvc.AutoExport(ctx, app.mtixDir)
-			},
-			logger, 0, 0,
-		)
-		app.store.SetOnCommit(exporter.Trigger)
-		defer exporter.Close()
-	}
+	// Mirror parity per FR-15.3 / MTIX-26.1: every agent mutation reaches
+	// the tasks.json mirror without a process exit.
+	defer wireMirrorExporter(logger)()
 
 	srv := mcp.NewServer(os.Stdin, os.Stdout, logger, version)
 	reg := srv.Registry()

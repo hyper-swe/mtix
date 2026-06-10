@@ -68,18 +68,16 @@ func (d *ExportDebouncer) Trigger() {
 		d.firstDirty = now
 	}
 
-	delay := d.quietPeriod
-	if remaining := d.maxDelay - now.Sub(d.firstDirty); remaining < delay {
-		delay = remaining
-	}
-	if delay < 0 {
-		delay = 0
-	}
+	// Trailing edge after quietPeriod, but never later than maxDelay
+	// after the first pending trigger.
+	delay := min(d.quietPeriod, max(0, d.maxDelay-now.Sub(d.firstDirty)))
 
-	if d.timer != nil {
-		d.timer.Stop()
+	if d.timer == nil {
+		d.timer = time.AfterFunc(delay, d.fire)
+		return
 	}
-	d.timer = time.AfterFunc(delay, d.fire)
+	d.timer.Stop()
+	d.timer.Reset(delay)
 }
 
 // Flush exports immediately if a trigger is pending. Blocks until the
@@ -92,8 +90,7 @@ func (d *ExportDebouncer) Flush() {
 		return
 	}
 	if d.timer != nil {
-		d.timer.Stop()
-		d.timer = nil
+		d.timer.Stop() // keep the timer object for Reset-reuse in Trigger
 	}
 	d.firstDirty = time.Time{}
 	d.mu.Unlock()
@@ -110,9 +107,14 @@ func (d *ExportDebouncer) Close() {
 }
 
 // fire is the timer callback: clears pending state and runs the export.
+// The timer object is kept for Reset-reuse in Trigger.
 func (d *ExportDebouncer) fire() {
 	d.mu.Lock()
-	d.timer = nil
+	if d.firstDirty.IsZero() {
+		// Flush already handled this pending window; nothing to export.
+		d.mu.Unlock()
+		return
+	}
 	d.firstDirty = time.Time{}
 	d.mu.Unlock()
 

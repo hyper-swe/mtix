@@ -71,17 +71,23 @@ func (s *Store) Backup(ctx context.Context, destPath string) (*BackupResult, err
 	}, nil
 }
 
-// verifyDatabase opens a database read-only and runs PRAGMA quick_check.
-// Returns true if the database passes verification.
+// verifyDatabase opens a database read-only and runs the shared
+// quick_check. The NFR-2.6a truncation validation runs first so a torn
+// backup is reported diagnostically ("truncated") instead of as an opaque
+// quick_check failure.
 func verifyDatabase(ctx context.Context, path string) (bool, error) {
+	if err := validateDBFile(path); err != nil {
+		return false, err
+	}
+
 	db, err := sql.Open("sqlite", path+"?mode=ro")
 	if err != nil {
 		return false, fmt.Errorf("open for verify: %w", err)
 	}
 	defer func() { _ = db.Close() }()
 
-	var result string
-	if err := db.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&result); err != nil {
+	result, err := quickCheck(ctx, db)
+	if err != nil {
 		return false, fmt.Errorf("quick_check: %w", err)
 	}
 

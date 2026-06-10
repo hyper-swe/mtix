@@ -9,11 +9,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+
+	sqlite3 "modernc.org/sqlite"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
@@ -137,17 +140,26 @@ func validateDBFile(path string) error {
 		path, pageCount, pageSize, pageCount*pageSize, size, recoveryGuidance, model.ErrCorrupted)
 }
 
-// integrityCheckOnOpen runs PRAGMA quick_check on the freshly opened write
-// connection, before init or any mutation. quick_check skips index-content
-// verification so it stays fast for CLI-scale databases; structural damage
-// (torn pages, broken b-trees) is exactly what it catches.
+// quickCheck runs PRAGMA quick_check(1) and returns its first result row.
+// quick_check skips index-content verification so it stays fast for
+// CLI-scale databases; structural damage (torn pages, broken b-trees) is
+// exactly what it catches. Shared by open-time validation and backup
+// verification.
+func quickCheck(ctx context.Context, db *sql.DB) (string, error) {
+	var result string
+	err := db.QueryRowContext(ctx, "PRAGMA quick_check(1)").Scan(&result)
+	return result, err
+}
+
+// integrityCheckOnOpen runs quickCheck on the freshly opened write
+// connection, before init or any mutation.
 func integrityCheckOnOpen(ctx context.Context, db *sql.DB, path string) error {
 	if os.Getenv(skipIntegrityCheckEnv) == "1" {
 		return nil
 	}
 
-	var result string
-	if err := db.QueryRowContext(ctx, "PRAGMA quick_check(1)").Scan(&result); err != nil {
+	result, err := quickCheck(ctx, db)
+	if err != nil {
 		return fmt.Errorf("integrity check on %s could not run; %s: %w (%v)",
 			path, recoveryGuidance, model.ErrCorrupted, err)
 	}
@@ -170,10 +182,7 @@ func explainOpenError(err error, dbPath string) error {
 	// Enrich whenever the volume is below the floor — or nearly empty in
 	// absolute terms, so a disabled floor (MTIX_MIN_FREE_BYTES=0) still
 	// gets a truthful diagnosis.
-	threshold := minFreeBytes()
-	if threshold < 1<<20 {
-		threshold = 1 << 20
-	}
+	threshold := max(minFreeBytes(), 1<<20)
 	free, statErr := freeDiskSpace(filepath.Dir(dbPath))
 	if statErr == nil && free < threshold {
 		return fmt.Errorf(
@@ -230,8 +239,8 @@ func (s *Store) preflightBackup(destPath string) error {
 	for _, p := range []string{filepath.Join(s.dbDir, "mtix.db"), filepath.Join(s.dbDir, "mtix.db-wal")} {
 		if info, err := os.Stat(p); err == nil {
 			size := uint64(info.Size()) //nolint:gosec // file sizes are never negative
-			if need > ^uint64(0)-size { // saturate instead of wrapping
-				need = ^uint64(0)
+			if size > math.MaxUint64-need { // saturate instead of wrapping
+				need = math.MaxUint64
 				break
 			}
 			need += size
@@ -285,19 +294,31 @@ func (s *Store) classifyWriteError(err error) error {
 	return fmt.Errorf("fatal storage error — mtix stops writing to avoid corrupting the database (fail-stop): %w", err)
 }
 
+// SQLite primary result codes that mean the filesystem failed under us.
+const (
+	sqliteIOErr   = 10 // SQLITE_IOERR
+	sqliteCorrupt = 11 // SQLITE_CORRUPT
+	sqliteFull    = 13 // SQLITE_FULL
+)
+
 // isFatalIOError reports whether err indicates the filesystem failed under
-// SQLite (ENOSPC / EIO / detected corruption). String matching mirrors
-// wrapBusyError: modernc.org/sqlite surfaces SQLite result codes as text.
-//
-//	SQLITE_FULL (13)    -> "database or disk is full"
-//	SQLITE_IOERR (10)   -> "disk I/O error"
-//	SQLITE_CORRUPT (11) -> "database disk image is malformed"
+// SQLite (ENOSPC / EIO / detected corruption). The driver's typed error
+// code is authoritative; string matching remains as a fallback for errors
+// that cross layers as plain text (mirroring wrapBusyError).
 func isFatalIOError(err error) bool {
 	if err == nil {
 		return false
 	}
 	if errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EIO) {
 		return true
+	}
+	var sqErr *sqlite3.Error
+	if errors.As(err, &sqErr) {
+		// Extended codes carry the primary code in the low byte.
+		switch sqErr.Code() & 0xFF {
+		case sqliteIOErr, sqliteCorrupt, sqliteFull:
+			return true
+		}
 	}
 	msg := err.Error()
 	for _, marker := range []string{

@@ -100,6 +100,12 @@ func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 	}
 	defer removeDaemonPID(app.mtixDir)
 
+	// Mirror parity per FR-15.3 / MTIX-26.1: pulled events mutate the
+	// local store, so the daemon needs the same on-commit export wiring
+	// as the MCP server and serve — its mutations must reach tasks.json
+	// without a process exit.
+	defer wireMirrorExporter(app.logger)()
+
 	fmt.Fprintf(stdout, "mtix sync daemon: started (PID %d, interval %ds)\n",
 		os.Getpid(), intervalSec)
 

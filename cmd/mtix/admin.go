@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	mtixhttp "github.com/hyper-swe/mtix/internal/api/http"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -290,6 +291,21 @@ func newServeCmd() *cobra.Command {
 func runServe(addr string, port int) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
+	}
+
+	// Mirror parity per FR-15.3 / MTIX-26.1: serve is long-lived, so the
+	// CLI's PostRun auto-export never fires while it runs. Same wiring as
+	// the MCP server — debounced export on every committed transaction,
+	// flushed on shutdown.
+	if app.syncSvc != nil && app.mtixDir != "" {
+		exporter := service.NewExportDebouncer(
+			func(ctx context.Context) error {
+				return app.syncSvc.AutoExport(ctx, app.mtixDir)
+			},
+			app.logger, 0, 0,
+		)
+		app.store.SetOnCommit(exporter.Trigger)
+		defer exporter.Close()
 	}
 
 	clock := func() time.Time { return time.Now().UTC() }

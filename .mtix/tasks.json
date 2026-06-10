@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-10T06:43:04Z",
+  "exported_at": "2026-06-10T06:49:59Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -3252,6 +3252,30 @@
       "closed_at": "2026-06-10T06:43:04Z"
     },
     {
+      "id": "MTIX-21",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 21,
+      "project": "MTIX",
+      "title": "Cloud e2e coverage: backup-via-pooler, daemon sustained run, conflicts resolve, reconcile paths",
+      "description": "Residual gap from the v0.2.0-beta post-release verification (MTIX-20 closed the main edge-case matrix). Four FR-18 surfaces have never been exercised against real cloud providers (Supabase session pooler + Neon serverless): (1) mtix sync backup — pg_dump through a connection pooler is a known-tricky combination (version mismatches, COPY protocol through pgbouncer-style poolers, server_version negotiation); (2) mtix sync daemon — sustained periodic-pull operation over minutes against a serverless provider that cold-starts (Neon suspends compute; first pull after suspend exercises the retry/backoff path); (3) mtix sync conflicts resolve — the manual-resolution INSERT path against the hub's append-only trigger; (4) mtix sync reconcile --discard-local / --rename-to / --import-as against a populated cloud hub.",
+      "prompt": "Extend the cloud e2e surface to the four untested paths. Build on scripts/cloud-e2e.sh and the .env.test.local credentials (see MTIX-20).\n\nSCOPE:\n\n1. BACKUP VIA POOLER (highest risk): add TestE2E_CloudBackup_PgDumpThroughPooler gated on MTIX_PG_TEST_DSN + pg_dump on PATH. Push events to the hub, run runSyncBackup (or the mtix binary) with --output, assert the SQL file contains the 5 mtix-owned tables and the pushed event rows. Document the known failure modes if hit: pg_dump server_version mismatch (needs PG16 client tools), COPY through Supabase session pooler. If the pooler fundamentally cannot support pg_dump, document the workaround (direct IPv6 endpoint or Supabase CLI backup) in USERMANUAL + workflow templates and make mtix sync backup emit a helpful error for pooler DSNs.\n\n2. DAEMON SUSTAINED RUN: add a script-level check (not a Go test — wall-clock minutes) to scripts/cloud-e2e.sh behind a --daemon flag: start mtix sync daemon --interval 10 against the cloud DSN, run for ~90s, assert \u003e=2 pull cycles logged, kill, assert PID file cleaned up. For Neon specifically: suspend tolerance — the first pull after Neon's compute autosuspend (~5 min idle) must succeed via the retry path, not crash the daemon. (Optional follow-up if 90s window can't capture suspend; document as known-untested if skipped.)\n\n3. CONFLICTS RESOLVE: extend the e2e suite with TestE2E_CloudConflictResolve: create a same-field conflict with DISTINCT authorIDs (so the hub records a sync_conflicts row — avoid the same-authorID bypass documented in SECURITY-MODEL), then run runSyncConflictsResolve keep-local, assert a resolution='manual' row is INSERTed (append-only: original lww row still present).\n\n4. RECONCILE PATHS: TestE2E_CloudReconcile_DiscardLocal + _ImportAs against a populated cloud hub: build divergent local state, run the reconcile data-layer functions, assert hub + local converge after the follow-up push/pull.\n\nACCEPTANCE:\n- All new tests join the RUN_PATTERN in scripts/cloud-e2e.sh (or a new pattern group behind a flag for the slow daemon check).\n- Green against both providers OR each blocked path documented as a known limitation with operator workaround in USERMANUAL.\n- No DSN in any test output (extend the existing redaction asserts).\n- golangci-lint 0 issues; tests skip cleanly without MTIX_PG_TEST_DSN.\n- Sign-off comment lists per-provider results for all four surfaces.",
+      "acceptance": "",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "6b2eb6d19f75e6698ebd4cdac5e71c4b9776bf1594a475ab17783e2b6cee0df9",
+      "created_at": "2026-06-10T06:49:59Z",
+      "updated_at": "2026-06-10T06:49:59Z"
+    },
+    {
       "id": "MTIX-3",
       "parent_id": "",
       "depth": 0,
@@ -4421,6 +4445,6 @@
       "status": "active"
     }
   ],
-  "node_count": 165,
-  "checksum": "4e409dbad723dc6f42f20ca1b8971ec8939dd430a9ebb9eaaac333afbfeb8ed0"
+  "node_count": 166,
+  "checksum": "8ac2fcb5c4a6f916ec6d7929b4ea931e5e3017197b2e1da928fa27d84f93d9ba"
 }

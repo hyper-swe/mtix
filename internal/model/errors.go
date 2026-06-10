@@ -70,4 +70,16 @@ var (
 	// first_event_hash per FR-18.13. The check happens BEFORE any local
 	// mutation so the user can pick another prefix without rollback.
 	ErrSyncReconcilePrefixCollision = errors.New("sync reconcile: prefix collision on hub")
+
+	// ErrCorrupted indicates the database failed a structural integrity
+	// check per NFR-2.8. Callers MUST refuse writes and surface recovery
+	// guidance; continuing to write into a damaged database converts a
+	// recoverable incident into permanent data loss.
+	ErrCorrupted = errors.New("database corrupted")
+
+	// ErrDiskFull indicates a write was refused (pre-flight) or failed
+	// (ENOSPC) because the volume is out of space per NFR-2.8. The safe
+	// actions are read, export, and backup-to-another-volume — never
+	// further writes.
+	ErrDiskFull = errors.New("disk full")
 )

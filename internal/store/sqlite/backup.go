@@ -26,6 +26,14 @@ func (s *Store) Backup(ctx context.Context, destPath string) (*BackupResult, err
 		return nil, fmt.Errorf("destination path is required")
 	}
 
+	// Pre-flight per NFR-2.8: VACUUM INTO writes a full copy of the
+	// database, so the destination volume must hold the current DB plus
+	// WAL plus the configured floor. Refusing up front beats failing
+	// halfway on a full disk.
+	if err := s.preflightBackup(destPath); err != nil {
+		return nil, err
+	}
+
 	// VACUUM INTO creates an atomic, consistent copy of the database.
 	// This is the recommended approach for SQLite backup per FR-6.3a.
 	// Uses parameterized query — destPath is a string literal here because

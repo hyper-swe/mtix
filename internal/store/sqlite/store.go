@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	// Pure Go SQLite driver — no CGO (NFR-4.7).
@@ -38,18 +39,57 @@ type Store struct {
 	readDB  *sql.DB
 	logger  *slog.Logger
 	clock   func() time.Time
+
+	// Durability state per NFR-2.8.
+	dbDir        string     // directory holding the DB, for free-space checks
+	minFreeBytes uint64     // write pre-flight floor; 0 disables
+	failMu       sync.Mutex // guards failCause
+	failCause    error      // first fatal storage error; latches fail-stop
+
+	// onCommit, when set, runs after every successfully committed write
+	// transaction. It is the single choke point that lets long-running
+	// interfaces (MCP server, HTTP serve) keep the tasks.json mirror
+	// current per FR-15.3 — the CLI's PostRun export never fires inside
+	// a long-lived process. Set once during wiring, before any traffic.
+	onCommit func()
+}
+
+// SetOnCommit registers fn to run after every committed write transaction.
+// Must be called during process wiring, before concurrent use. Every NEW
+// long-running interface (anything that mutates without exiting) MUST wire
+// this to the auto-export path, or its users lose the FR-15.3 mirror —
+// the gap behind the 2026-05-19 data-loss incident.
+func (s *Store) SetOnCommit(fn func()) {
+	s.onCommit = fn
 }
 
 // New creates a new Store with the given database path.
 // If dbPath is a directory, the database file is created as mtix.db inside it.
 // It opens separate read and write connections, enables WAL mode,
 // foreign keys, and sets busy timeout per NFR-2.1.
+//
+// Per NFR-2.8 the file is validated for truncation BEFORE the first
+// connection is opened (opening a torn database can reset the WAL that
+// would otherwise repair it), and quick_check runs before any write.
 func New(dbPath string, logger *slog.Logger) (*Store, error) {
 	dbPath = resolveDBPath(dbPath)
 	ctx := context.Background()
+
+	if err := validateDBFile(dbPath); err != nil {
+		return nil, err
+	}
+
 	writeDB, err := openDB(ctx, dbPath, true)
 	if err != nil {
-		return nil, fmt.Errorf("open write db %s: %w", dbPath, err)
+		return nil, explainOpenError(fmt.Errorf("open write db %s: %w", dbPath, err), dbPath)
+	}
+
+	if checkErr := integrityCheckOnOpen(ctx, writeDB, dbPath); checkErr != nil {
+		if closeErr := writeDB.Close(); closeErr != nil {
+			logger.Error("failed to close write db after integrity failure",
+				slog.Any("error", closeErr))
+		}
+		return nil, checkErr
 	}
 
 	readDB, err := openDB(ctx, dbPath, false)
@@ -62,10 +102,12 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 	}
 
 	s := &Store{
-		writeDB: writeDB,
-		readDB:  readDB,
-		logger:  logger,
-		clock:   func() time.Time { return time.Now().UTC() },
+		writeDB:      writeDB,
+		readDB:       readDB,
+		logger:       logger,
+		clock:        func() time.Time { return time.Now().UTC() },
+		dbDir:        filepath.Dir(dbPath),
+		minFreeBytes: minFreeBytes(),
 	}
 
 	if err := s.init(context.Background()); err != nil {
@@ -95,33 +137,41 @@ func openDB(ctx context.Context, path string, isWriter bool) (*sql.DB, error) {
 		return nil, fmt.Errorf("sql.Open: %w", err)
 	}
 
-	// PRAGMA foreign_keys = ON — required on ALL connections (NFR-2.1).
-	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
-		if closeErr := db.Close(); closeErr != nil {
-			return nil, fmt.Errorf("close after pragma failure: %w", closeErr)
-		}
-		return nil, fmt.Errorf("enable foreign keys: %w", err)
-	}
-
-	// Busy timeout on ALL connections — prevents immediate SQLITE_BUSY failures
+	// PRAGMA foreign_keys = ON and busy_timeout on ALL connections
+	// (NFR-2.1); busy_timeout prevents immediate SQLITE_BUSY failures
 	// during concurrent access from multiple processes or agents.
-	if _, err := db.ExecContext(ctx, "PRAGMA busy_timeout = 5000"); err != nil {
-		if closeErr := db.Close(); closeErr != nil {
-			return nil, fmt.Errorf("close after busy_timeout failure: %w", closeErr)
-		}
-		return nil, fmt.Errorf("set busy_timeout: %w", err)
+	pragmas := []struct{ stmt, what string }{
+		{"PRAGMA foreign_keys = ON", "enable foreign keys"},
+		{"PRAGMA busy_timeout = 5000", "set busy_timeout"},
 	}
 
 	if isWriter {
 		// Serialized writes — one connection (NFR-2.1).
 		db.SetMaxOpenConns(1)
 
-		// WAL mode for concurrent readers (NFR-2.1).
-		if _, err := db.ExecContext(ctx, "PRAGMA journal_mode = WAL"); err != nil {
+		pragmas = append(pragmas,
+			// WAL mode for concurrent readers (NFR-2.1).
+			struct{ stmt, what string }{"PRAGMA journal_mode = WAL", "enable WAL"},
+			// synchronous = FULL, set EXPLICITLY per NFR-2.8 / ADR-001 §9.
+			// modernc.org/sqlite happens to default to FULL, but the
+			// durability posture of the canonical store must never depend
+			// on a driver default. FULL fsyncs the WAL on every commit;
+			// NORMAL would trade that for speed and may lose the most
+			// recent commits on power failure.
+			struct{ stmt, what string }{"PRAGMA synchronous = FULL", "set synchronous"},
+			// Explicit autocheckpoint threshold (the SQLite default,
+			// pinned per NFR-2.8 so backfill volume — and therefore the
+			// free-space pre-flight floor — is a known quantity).
+			struct{ stmt, what string }{"PRAGMA wal_autocheckpoint = 1000", "set wal_autocheckpoint"},
+		)
+	}
+
+	for _, p := range pragmas {
+		if _, err := db.ExecContext(ctx, p.stmt); err != nil {
 			if closeErr := db.Close(); closeErr != nil {
-				return nil, fmt.Errorf("close after wal failure: %w", closeErr)
+				return nil, fmt.Errorf("close after pragma failure: %w", closeErr)
 			}
-			return nil, fmt.Errorf("enable WAL: %w", err)
+			return nil, fmt.Errorf("%s: %w", p.what, err)
 		}
 	}
 

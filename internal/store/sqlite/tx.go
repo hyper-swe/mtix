@@ -17,10 +17,19 @@ import (
 //
 // All write operations MUST use this helper to ensure atomicity.
 // Progress rollup MUST happen in the same transaction as the triggering change (FR-5.7).
+//
+// Per NFR-2.8, every transaction is preceded by a free-space pre-flight
+// (a commit can trigger a WAL autocheckpoint, and a checkpoint on a full
+// disk is exactly the failure that tears the main file), and any fatal
+// I/O error latches the store into fail-stop.
 func (s *Store) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) (err error) {
+	if pfErr := s.preflightWrite(); pfErr != nil {
+		return pfErr
+	}
+
 	tx, err := s.writeDB.BeginTx(ctx, nil)
 	if err != nil {
-		return wrapBusyError(fmt.Errorf("begin transaction: %w", err))
+		return s.classifyWriteError(wrapBusyError(fmt.Errorf("begin transaction: %w", err)))
 	}
 
 	defer func() {
@@ -39,13 +48,17 @@ func (s *Store) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) (err erro
 	if err = fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			// Both the original error and rollback error matter.
-			return fmt.Errorf("rollback failed (%v) after error: %w", rbErr, err)
+			return s.classifyWriteError(fmt.Errorf("rollback failed (%v) after error: %w", rbErr, err))
 		}
-		return err
+		return s.classifyWriteError(err)
 	}
 
 	if err = tx.Commit(); err != nil {
-		return wrapBusyError(fmt.Errorf("commit transaction: %w", err))
+		return s.classifyWriteError(wrapBusyError(fmt.Errorf("commit transaction: %w", err)))
+	}
+
+	if s.onCommit != nil {
+		s.onCommit()
 	}
 
 	return nil

@@ -415,6 +415,33 @@ docker stop mtix-test-pg && docker rm mtix-test-pg
 The suites skip cleanly when `MTIX_PG_TEST_DSN` is unset so the
 default `go test ./...` always passes on a laptop without Postgres.
 
+### Running the sync e2e suite against real cloud hubs
+
+For pre-release verification against Supabase + Neon (the full
+edge-case matrix: conflicts, divergence, surge, lost-laptop,
+queue-full, backfill), use the runner script:
+
+```bash
+make test-cloud-sync                 # both providers
+make test-cloud-sync PROVIDER=neon   # one provider
+```
+
+Requires `.env.test.local` at the repo root (gitignored) — see the
+header of `scripts/cloud-e2e.sh` for the expected variables and the
+provider quirks the script absorbs. Notably:
+
+- **Supabase's direct endpoint is IPv6-only**; use the session pooler
+  (`aws-N-<region>.pooler.supabase.com:5432`, user
+  `postgres.<project-ref>`). Never the transaction pooler on 6543 —
+  it breaks our advisory locks.
+- **Supabase signs pooler certs with its own CA.** The e2e harness's
+  `freshHub()` parses the DSN with `pgxpool.ParseConfig` directly,
+  bypassing the `MTIX_SYNC_SSLROOTCERT` env handling — so the
+  `sslrootcert` must be inline in the DSN. The script does this for
+  you.
+- **The suite DROPS the mtix-owned tables on the target hub.** Point
+  it only at throwaway projects.
+
 ### Fuzz targets
 
 Sync code paths have Go-native fuzz targets in

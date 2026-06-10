@@ -205,6 +205,15 @@ test-pg-all: test-pg-docker
 	@$(MAKE) test-pg-supabase
 	@$(MAKE) test-pg-neon
 
+## test-cloud-sync: Run the FR-18 sync e2e suite (conflicts, divergence,
+## surge, lost-laptop, queue-full, backfill) against real cloud hubs.
+## Requires .env.test.local at repo root — see scripts/cloud-e2e.sh header.
+##   make test-cloud-sync                 # both providers
+##   make test-cloud-sync PROVIDER=neon   # one provider
+PROVIDER ?= all
+test-cloud-sync:
+	./scripts/cloud-e2e.sh $(PROVIDER)
+
 ## cleanup-test-schemas: Drop orphaned mtix_test_* schemas from a Postgres database.
 ## Defaults to dry-run. Pass DRY_RUN=false to actually drop.
 ##   make cleanup-test-schemas DSN="$$MTIX_TEST_SUPABASE_DSN" OLDER_THAN=24h

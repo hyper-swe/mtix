@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-05-19T18:08:47Z",
+  "exported_at": "2026-06-10T06:30:31Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -2783,7 +2783,7 @@
       "priority": 2,
       "labels": "[\"docs\",\"llm-agent-kit\",\"cli\",\"agent-discipline\"]",
       "status": "open",
-      "progress": 0,
+      "progress": 1,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -2806,15 +2806,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[\"docs\",\"llm-agent-kit\"]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-code",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "a377902338794ad23c60ec1580b41c842f59576d4360e293bde86377d82a924a",
       "created_at": "2026-05-19T18:08:45Z",
-      "updated_at": "2026-05-19T18:08:45Z"
+      "updated_at": "2026-05-29T06:00:42Z",
+      "closed_at": "2026-05-29T06:00:42Z"
     },
     {
       "id": "MTIX-19.2",
@@ -2830,15 +2831,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[\"cli\",\"llm-agent-kit\"]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-code",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "822396894e92234bdd3afb6ed2de8e3d9b5363f0bf796c9722db0e903e33585a",
       "created_at": "2026-05-19T18:08:47Z",
-      "updated_at": "2026-05-19T18:08:47Z"
+      "updated_at": "2026-05-29T06:00:42Z",
+      "closed_at": "2026-05-29T06:00:42Z"
     },
     {
       "id": "MTIX-2",
@@ -3223,6 +3225,30 @@
       "content_hash": "34dc386f213d8edc3d3c50722bc1de855a1820f296b02c2c6225b8223b642da4",
       "created_at": "2026-03-29T18:12:47Z",
       "updated_at": "2026-03-29T18:12:47Z"
+    },
+    {
+      "id": "MTIX-20",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 20,
+      "project": "MTIX",
+      "title": "Cloud e2e runner script (Supabase + Neon, full FR-18 edge-case suite)",
+      "description": "Post-release smoke testing (v0.2.0-beta) found that running the FR-18 sync e2e suite against real cloud providers requires provider-specific incantations: Supabase needs the session-pooler hostname + inline sslrootcert because the e2e harness parses the DSN directly (bypassing MTIX_SYNC_SSLROOTCERT); Neon needs sslmode upgraded to verify-full. Script it once so future runs are one command.",
+      "prompt": "Add scripts/cloud-e2e.sh: sources .env.test.local (clear error if missing), accepts provider arg (supabase|neon|all, default all), builds the Supabase DSN with inline sslmode=verify-full + sslrootcert=.supabase-ca.crt, runs go test -run 'TestE2E_*' ./e2e/... per provider with -timeout 20m, prints a per-provider pass/fail summary. shellcheck clean, set -euo pipefail, all vars quoted, never echoes the DSN (print provider name + host only). Add make target test-cloud-sync. Document in CONTRIBUTING 'Testing sync changes' section including the harness sslrootcert quirk.",
+      "acceptance": "",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "vimal",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "83d0bb36d2741731f7981fd0de3e14a7a0bc17fada30d93a9760b6e7f28c1779",
+      "created_at": "2026-06-10T06:30:31Z",
+      "updated_at": "2026-06-10T06:30:31Z"
     },
     {
       "id": "MTIX-3",
@@ -4348,6 +4374,13 @@
       "last_heartbeat": "2026-04-27T17:37:12Z"
     },
     {
+      "agent_id": "claude-code",
+      "project": "MTIX",
+      "state": "working",
+      "current_node_id": "MTIX-19.2",
+      "last_heartbeat": "2026-05-29T06:00:42Z"
+    },
+    {
       "agent_id": "claude-opus-4-7",
       "project": "MTIX",
       "state": "working",
@@ -4365,7 +4398,7 @@
       "agent_id": "vimal",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-18",
+      "current_node_id": "MTIX-20",
       "last_heartbeat": "2026-05-06T14:14:36Z"
     }
   ],
@@ -4387,6 +4420,6 @@
       "status": "active"
     }
   ],
-  "node_count": 164,
-  "checksum": "64dad6b85365d28d076d56739d72aa4348d8f5a0a3e3f15f183a8a8dc3d842d9"
+  "node_count": 165,
+  "checksum": "54a8b691c43ae6ad582a1e305836120214ef35ecd2f5b16c3ab04f5864cd60fa"
 }

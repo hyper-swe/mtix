@@ -77,3 +77,8 @@ screenshots/playwright/
 .mtix/id_mapping.json
 .mtix/tasks.json.tmp
 # .mtix/config.yaml and .mtix/tasks.json ARE tracked (source of truth)
+
+# Local test credentials (cloud-PG smoke-test DSNs — NEVER track)
+.env.test.local
+.mtix/secrets
+.supabase-ca.crt

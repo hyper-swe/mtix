@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -69,14 +70,43 @@ func runRecover() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("marshal recovered export: %w", err)
 	}
-	outPath := filepath.Join(mtixDir,
-		fmt.Sprintf("recovered-%s.json", time.Now().UTC().Format("20060102-150405")))
-	if err := os.WriteFile(outPath, raw, 0o644); err != nil {
-		return "", fmt.Errorf("write recovered export: %w", err)
+	outPath, err := writeSalvageFile(mtixDir, raw)
+	if err != nil {
+		return "", err
 	}
 
 	printRecoverReport(res, outPath)
 	return outPath, nil
+}
+
+// writeSalvageFile writes the export to .mtix/recovered-<ts>.json with
+// O_EXCL plus a counter suffix on collision — a salvage attempt must
+// never silently overwrite an earlier one.
+func writeSalvageFile(mtixDir string, raw []byte) (string, error) {
+	stamp := time.Now().UTC().Format("20060102-150405")
+	for i := 0; i < 100; i++ {
+		name := fmt.Sprintf("recovered-%s.json", stamp)
+		if i > 0 {
+			name = fmt.Sprintf("recovered-%s-%d.json", stamp, i)
+		}
+		outPath := filepath.Join(mtixDir, name)
+		f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("create recovered export: %w", err)
+		}
+		if _, err := f.Write(raw); err != nil {
+			_ = f.Close()
+			return "", fmt.Errorf("write recovered export: %w", err)
+		}
+		if err := f.Close(); err != nil {
+			return "", fmt.Errorf("close recovered export: %w", err)
+		}
+		return outPath, nil
+	}
+	return "", fmt.Errorf("could not find a free salvage filename in %s", mtixDir)
 }
 
 // printRecoverReport renders the salvage report for humans and agents.

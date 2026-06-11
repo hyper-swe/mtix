@@ -111,3 +111,19 @@ func TestMaybeAutoBackup_AfterMutation_CreatesRollingBackup(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, matches, 1)
 }
+
+// TestRunRecover_TwiceWithinASecond_DoesNotOverwrite: consecutive salvage
+// runs must never silently overwrite an earlier salvage file.
+func TestRunRecover_TwiceWithinASecond_DoesNotOverwrite(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, runCreate("collision fixture", "", "", 3, "", "", "", "", ""))
+
+	first, err := runRecover()
+	require.NoError(t, err)
+	second, err := runRecover()
+	require.NoError(t, err)
+
+	assert.NotEqual(t, first, second, "salvage outputs must get distinct names")
+	assert.FileExists(t, first)
+	assert.FileExists(t, second)
+}

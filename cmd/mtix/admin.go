@@ -239,8 +239,8 @@ func runImport(filePath, mode string, force, recomputeChecksum bool) error {
 		// content, not the original. Be loud about it.
 		fmt.Fprintln(os.Stderr,
 			"WARNING: --recompute-checksum replaces the file's integrity checksum; the import attests to the reconstructed content, not the original")
-		if err := sqlite.RecomputeExportChecksum(&exportData); err != nil {
-			return fmt.Errorf("recompute checksum: %w", err)
+		if recompErr := sqlite.RecomputeExportChecksum(&exportData); recompErr != nil {
+			return fmt.Errorf("recompute checksum: %w", recompErr)
 		}
 	}
 

@@ -108,3 +108,31 @@ func TestMaybeBackup_FailureKeepsOldBackups(t *testing.T) {
 	assert.Equal(t, good, listBackups(t, dir),
 		"a failed backup must never disturb existing good backups")
 }
+
+// TestMaybeBackup_ForeignFileInBackupsDir_DoesNotBreakGateOrRotation:
+// a user-created file matching the glob but not the timestamp pattern
+// must neither hold the interval gate open (backup-per-mutation) nor be
+// deleted by rotation.
+func TestMaybeBackup_ForeignFileInBackupsDir_DoesNotBreakGateOrRotation(t *testing.T) {
+	sched, dir, now := newBackupFixture(t, 1)
+	ctx := context.Background()
+
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	foreign := filepath.Join(dir, "mtix-keep-me.db")
+	require.NoError(t, os.WriteFile(foreign, []byte("user data"), 0o644))
+
+	created, err := sched.MaybeBackup(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, created)
+
+	// Gate must hold on the REAL newest backup, not fall open.
+	created, err = sched.MaybeBackup(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, created, "a foreign file must not defeat the interval gate")
+
+	// Rotation (retain=1) must never touch the foreign file.
+	*now = now.Add(2 * time.Hour)
+	_, err = sched.MaybeBackup(ctx)
+	require.NoError(t, err)
+	assert.FileExists(t, foreign, "rotation must never delete files mtix did not create")
+}

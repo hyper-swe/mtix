@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -89,7 +91,7 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger
 	}
 
 	// IDs the database knew about but neither source could produce.
-	res.LostIDs = subtract(res.LostIDs, keys(nodes))
+	res.LostIDs = subtract(res.LostIDs, slices.Collect(maps.Keys(nodes)))
 
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf(
@@ -104,7 +106,7 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger
 		SchemaVersion: SchemaVersionV1,
 		MtixVersion:   mtixVersion,
 		Project:       firstProject(nodes),
-		Nodes:         values(nodes),
+		Nodes:         slices.Collect(maps.Values(nodes)),
 		Dependencies:  dedupDeps(deps, nodes),
 		Agents:        agents,
 		Sessions:      sessions,
@@ -223,41 +225,52 @@ func salvageDeps(ctx context.Context, db *sql.DB, res *RecoverResult) []exportDe
 
 // salvageAgentsSessions bulk-reads agents and sessions, tolerating loss.
 func salvageAgentsSessions(ctx context.Context, db *sql.DB, res *RecoverResult) ([]exportAgent, []exportSession) {
-	var agents []exportAgent
+	return salvageAgents(ctx, db, res), salvageSessions(ctx, db, res)
+}
+
+// salvageAgents bulk-reads agents, tolerating total or partial loss.
+func salvageAgents(ctx context.Context, db *sql.DB, res *RecoverResult) []exportAgent {
 	rows, err := db.QueryContext(ctx,
 		`SELECT agent_id, project, COALESCE(state,'idle'),
 		        COALESCE(current_node_id,''), COALESCE(last_heartbeat,'') FROM agents`)
-	if err == nil {
-		for rows.Next() {
-			var a exportAgent
-			if rows.Scan(&a.AgentID, &a.Project, &a.State, &a.CurrentNodeID, &a.LastHeartbeat) != nil {
-				break
-			}
-			agents = append(agents, a)
-		}
-		_ = rows.Close()
-	} else {
+	if err != nil {
 		res.Notes = append(res.Notes, fmt.Sprintf("agents unreadable: %v", err))
+		return nil
 	}
+	defer func() { _ = rows.Close() }()
 
-	var sessions []exportSession
-	rows, err = db.QueryContext(ctx,
+	var agents []exportAgent
+	for rows.Next() {
+		var a exportAgent
+		if rows.Scan(&a.AgentID, &a.Project, &a.State, &a.CurrentNodeID, &a.LastHeartbeat) != nil {
+			break
+		}
+		agents = append(agents, a)
+	}
+	return agents
+}
+
+// salvageSessions bulk-reads sessions, tolerating total or partial loss.
+func salvageSessions(ctx context.Context, db *sql.DB, res *RecoverResult) []exportSession {
+	rows, err := db.QueryContext(ctx,
 		`SELECT id, agent_id, project, started_at, COALESCE(ended_at,''),
 		        COALESCE(status,'active'), COALESCE(summary,'') FROM sessions`)
-	if err == nil {
-		for rows.Next() {
-			var sess exportSession
-			if rows.Scan(&sess.ID, &sess.AgentID, &sess.Project,
-				&sess.StartedAt, &sess.EndedAt, &sess.Status, &sess.Summary) != nil {
-				break
-			}
-			sessions = append(sessions, sess)
-		}
-		_ = rows.Close()
-	} else {
+	if err != nil {
 		res.Notes = append(res.Notes, fmt.Sprintf("sessions unreadable: %v", err))
+		return nil
 	}
-	return agents, sessions
+	defer func() { _ = rows.Close() }()
+
+	var sessions []exportSession
+	for rows.Next() {
+		var sess exportSession
+		if rows.Scan(&sess.ID, &sess.AgentID, &sess.Project,
+			&sess.StartedAt, &sess.EndedAt, &sess.Status, &sess.Summary) != nil {
+			break
+		}
+		sessions = append(sessions, sess)
+	}
+	return sessions
 }
 
 // readMirror loads a tasks.json-format export.
@@ -284,7 +297,7 @@ func readMirror(path string) (*ExportData, error) {
 func synthesizePlaceholderParents(nodes map[string]exportNode) []string {
 	var created []string
 	// Iterate over a snapshot: the map grows while we walk parent chains.
-	pending := values(nodes)
+	pending := slices.Collect(maps.Values(nodes))
 	for len(pending) > 0 {
 		n := pending[len(pending)-1]
 		pending = pending[:len(pending)-1]
@@ -373,24 +386,6 @@ func dedupDeps(deps []exportDep, nodes map[string]exportNode) []exportDep {
 	return out
 }
 
-// keys returns the map's keys.
-func keys(m map[string]exportNode) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
-}
-
-// values returns the map's values.
-func values(m map[string]exportNode) []exportNode {
-	out := make([]exportNode, 0, len(m))
-	for _, v := range m {
-		out = append(out, v)
-	}
-	return out
-}
-
 // subtract returns ids minus the present set.
 func subtract(ids, present []string) []string {
 	set := map[string]bool{}
@@ -409,7 +404,7 @@ func subtract(ids, present []string) []string {
 // firstProject picks the project of the lexicographically first node so
 // the export header is deterministic.
 func firstProject(nodes map[string]exportNode) string {
-	ks := keys(nodes)
+	ks := slices.Collect(maps.Keys(nodes))
 	sort.Strings(ks)
 	if len(ks) == 0 {
 		return ""

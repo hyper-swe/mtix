@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"sync"
@@ -112,7 +113,8 @@ func (b *BackupScheduler) MaybeBackup(ctx context.Context) (string, error) {
 	defer b.mu.Unlock()
 
 	now := b.clock()
-	if newest, ok := b.newestBackupTime(); ok && now.Sub(newest) < b.interval {
+	existing := b.sortedBackups()
+	if newest, ok := newestBackupTime(existing); ok && now.Sub(newest) < b.interval {
 		return "", nil
 	}
 
@@ -125,15 +127,20 @@ func (b *BackupScheduler) MaybeBackup(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("automatic backup: %w", err)
 	}
 
-	b.rotate()
+	b.rotate(append(existing, filepath.Base(dest)))
 	b.logger.Info("auto_backup_completed", "event", "auto_backup_completed", "path", dest)
 	return dest, nil
 }
 
-// newestBackupTime returns the timestamp of the most recent backup, by
-// the sortable filename (filesystem mtimes survive copies less reliably).
-func (b *BackupScheduler) newestBackupTime() (time.Time, bool) {
-	names := b.sortedBackups()
+// backupNameRE matches ONLY filenames this scheduler creates. Anything
+// else in the directory — a user's hand-copied database, a foreign file —
+// is invisible to gating and untouchable by rotation. A file we did not
+// create must never hold the interval gate open or be deleted.
+var backupNameRE = regexp.MustCompile(`^mtix-\d{8}-\d{6}\.db$`)
+
+// newestBackupTime returns the timestamp of the most recent backup from
+// its sortable filename (filesystem mtimes survive copies less reliably).
+func newestBackupTime(names []string) (time.Time, bool) {
 	if len(names) == 0 {
 		return time.Time{}, false
 	}
@@ -146,10 +153,10 @@ func (b *BackupScheduler) newestBackupTime() (time.Time, bool) {
 	return ts, true
 }
 
-// rotate deletes the oldest backups beyond retain. Best effort: an
-// undeletable old backup is logged, never fatal.
-func (b *BackupScheduler) rotate() {
-	names := b.sortedBackups()
+// rotate deletes the oldest scheduler-created backups beyond retain.
+// Best effort: an undeletable old backup is logged, never fatal.
+func (b *BackupScheduler) rotate(names []string) {
+	sort.Strings(names)
 	for len(names) > b.retain {
 		victim := filepath.Join(b.dir, names[0])
 		if err := os.Remove(victim); err != nil {
@@ -157,11 +164,12 @@ func (b *BackupScheduler) rotate() {
 				"path", victim, "error", err)
 			return
 		}
+		b.logger.Info("auto_backup_rotated_out", "event", "auto_backup_rotated_out", "path", victim)
 		names = names[1:]
 	}
 }
 
-// sortedBackups lists backup filenames oldest-first.
+// sortedBackups lists scheduler-created backup filenames oldest-first.
 func (b *BackupScheduler) sortedBackups() []string {
 	matches, err := filepath.Glob(filepath.Join(b.dir, "mtix-*.db"))
 	if err != nil {
@@ -169,7 +177,9 @@ func (b *BackupScheduler) sortedBackups() []string {
 	}
 	names := make([]string, 0, len(matches))
 	for _, m := range matches {
-		names = append(names, filepath.Base(m))
+		if name := filepath.Base(m); backupNameRE.MatchString(name) {
+			names = append(names, name)
+		}
 	}
 	sort.Strings(names) // timestamp layout is lexicographically sortable
 	return names

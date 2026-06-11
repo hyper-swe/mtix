@@ -387,3 +387,31 @@ func TestQuickCheckOnOpen_Latency(t *testing.T) {
 	assert.Less(t, elapsed, 2*time.Second,
 		"open including quick_check must stay interactive (got %v)", elapsed)
 }
+
+// TestClose_CheckpointsAndRemovesWAL covers QUALITY-STANDARDS §3.6
+// scenario 10 (graceful shutdown, storage half): closing the last
+// connection checkpoints the WAL into the main file and removes it, and
+// every committed row survives reopen.
+func TestClose_CheckpointsAndRemovesWAL(t *testing.T) {
+	s, dbPath := newDurabilityTestStore(t)
+	seedRows(t, s)
+
+	walInfo, err := os.Stat(dbPath + "-wal")
+	require.NoError(t, err)
+	require.Positive(t, walInfo.Size(), "fixture must have a non-empty WAL before close")
+
+	require.NoError(t, s.Close())
+
+	if info, statErr := os.Stat(dbPath + "-wal"); statErr == nil {
+		assert.Zero(t, info.Size(),
+			"after a graceful close the WAL must be fully checkpointed (empty or removed)")
+	}
+
+	s2, err := New(dbPath, slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = s2.Close() }()
+	var n int
+	require.NoError(t, s2.readDB.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM meta WHERE key LIKE 'durability_test_filler_%'`).Scan(&n))
+	assert.Equal(t, 50, n, "all committed rows must survive the checkpoint")
+}

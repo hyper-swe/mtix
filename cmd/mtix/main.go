@@ -30,7 +30,9 @@ func main() {
 
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1) //nolint:gocritic // intentional: errors flow here without panic; defer covers the panic path
+		// Structured exit codes per MTIX-26.8 (3 = disk full,
+		// 4 = corrupted, 1 = generic).
+		os.Exit(exitCodeForError(err)) //nolint:gocritic // intentional: errors flow here without panic; defer covers the panic path
 	}
 }
 

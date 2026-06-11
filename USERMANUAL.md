@@ -1258,6 +1258,17 @@ returned. See [docs/MCP-SETUP.md](docs/MCP-SETUP.md).
 
 ## Troubleshooting
 
+### Exit codes
+
+mtix exits with structured codes so scripts and agents can react without parsing error text:
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Generic error |
+| 3 | Disk full — a write or backup was refused or failed because the volume is out of space; free space and retry |
+| 4 | Database corrupted — an integrity gate failed at open; see "Disk full and corruption recovery" |
+
 ### Common Issues
 
 **"not in an mtix project"**

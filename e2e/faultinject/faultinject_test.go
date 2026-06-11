@@ -23,6 +23,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -105,6 +106,24 @@ func containsAny(data []byte, keywords ...string) bool {
 		}
 	}
 	return false
+}
+
+// Exit codes from the MTIX-26.8 CLI contract (cmd/mtix/exitcode.go).
+const (
+	exitDiskFull  = 3
+	exitCorrupted = 4
+)
+
+// exitCode extracts the process exit code from runMtix's error.
+func exitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return -1
 }
 
 // fillDisk writes ballast into dir until the volume returns ENOSPC,
@@ -193,6 +212,10 @@ func TestDiskFull_PreflightRefusesWrites(t *testing.T) {
 	out, err := runMtix(proj, nil, "create", "during disk full")
 	if err == nil {
 		t.Fatalf("create on a full disk must fail loudly, got success:\n%s", out)
+	}
+	if code := exitCode(err); code != exitDiskFull {
+		t.Fatalf("disk-full refusal must exit %d (MTIX-26.8 contract), got %d:\n%s",
+			exitDiskFull, code, out)
 	}
 	if !containsAny(out, "free", "full", "space") {
 		t.Fatalf("disk-full refusal must say so; got:\n%s", out)
@@ -319,6 +342,10 @@ func TestTruncatedDB_RefusedWithoutTouchingFiles(t *testing.T) {
 	out, err := runMtix(proj, nil, "list")
 	if err == nil {
 		t.Fatalf("opening a truncated DB must fail, got success:\n%s", out)
+	}
+	if code := exitCode(err); code != exitCorrupted {
+		t.Fatalf("corruption refusal must exit %d (MTIX-26.8 contract), got %d:\n%s",
+			exitCorrupted, code, out)
 	}
 	if !containsAny(out, "truncated", "corrupt") {
 		t.Fatalf("refusal must name the corruption; got:\n%s", out)

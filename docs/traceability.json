@@ -1,0 +1,101 @@
+[
+  {
+    "scenario": 1,
+    "title": "State Machine Exhaustive Testing",
+    "tests": [
+      "TestStateMachine_AllValidTransitions_NoError",
+      "TestStateMachine_AllInvalidTransitions_ReturnsError",
+      "TestStateMachine_InvalidatedToDone_IsInvalid",
+      "TestStateMachine_DoneToOpen_RequiresReopen"
+    ]
+  },
+  {
+    "scenario": 2,
+    "title": "Concurrent Access",
+    "tests": [
+      "TestProgress_ConcurrentSiblingCompletion_Correct",
+      "TestNextSequence_ConcurrentCalls_NoCollisions",
+      "TestEmitEvent_ConcurrentEmittersAreSerialized"
+    ]
+  },
+  {
+    "scenario": 3,
+    "title": "Progress Rollup Determinism",
+    "tests": [
+      "TestProgress_Parent_DoneOverTotal",
+      "TestProgress_PropagesToRoot_InSameTransaction",
+      "TestProgress_CancelledExcluded",
+      "TestProgress_InvalidatedExcluded"
+    ]
+  },
+  {
+    "scenario": 4,
+    "title": "Backup/Export Integrity",
+    "tests": [
+      "TestBackup_CreatesValidCopy",
+      "TestBackup_VerificationPasses",
+      "TestExport_ChecksumIsCorrect",
+      "TestExport_NodeCountMatchesArray"
+    ]
+  },
+  {
+    "scenario": 5,
+    "title": "Startup Integrity Check",
+    "tests": [
+      "TestValidateDBFile_TruncatedNoWAL",
+      "TestNew_QuickCheckCatchesMidFileCorruption",
+      "TestValidateDBFile_SubHeaderFile",
+      "TestNew_SkipEnvBypassesIntegrityGates"
+    ]
+  },
+  {
+    "scenario": 6,
+    "title": "Idempotent Operations",
+    "tests": [
+      "TestStateMachine_IdempotentTransition_NoError",
+      "TestApply_DuplicateEventIDIsNoop"
+    ]
+  },
+  {
+    "scenario": 7,
+    "title": "Soft-Delete Safety Chain",
+    "tests": [
+      "TestRerun_DeleteStrategy_InvalidatesBeforeSoftDelete",
+      "TestNodeService_DeleteNode_SoftDeletes",
+      "TestBackgroundScan_SoftDeletedNotExpired_NotCleaned"
+    ]
+  },
+  {
+    "scenario": 8,
+    "title": "Circular Dependency Detection",
+    "tests": [
+      "TestAddDependency_CycleDetected"
+    ]
+  },
+  {
+    "scenario": 9,
+    "title": "FTS Consistency",
+    "tests": [
+      "TestVerify_FTSConsistent_AfterOperations"
+    ]
+  },
+  {
+    "scenario": 10,
+    "title": "Graceful Shutdown",
+    "tests": [
+      "TestClose_CheckpointsAndRemovesWAL"
+    ]
+  },
+  {
+    "scenario": 11,
+    "title": "Disk-Full Fault Injection (NFR-2.8)",
+    "tests": [
+      "TestDiskFull_PreflightRefusesWrites",
+      "TestDiskFull_RealENOSPC",
+      "TestKill9DuringWrites_OnTightDisk",
+      "TestTruncatedDB_RefusedWithoutTouchingFiles",
+      "TestDiskFull_MirrorSurvives",
+      "TestRecover_TruncatedDB_SalvagesViaMirror"
+    ]
+  }
+]

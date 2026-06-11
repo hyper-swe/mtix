@@ -137,7 +137,10 @@ func TestValidatePrefix(t *testing.T) {
 
 ### 3.6 Safety-Critical Test Scenarios
 
-The following scenarios MUST have dedicated test coverage:
+The following scenarios MUST have dedicated test coverage. The mapping
+from each scenario to its test functions lives in `docs/traceability.json`
+and is ENFORCED on every build by `traceability_test.go` (MTIX-26.8): a
+scenario declared here without a linked, existing test fails CI.
 
 1. **State Machine Exhaustive Testing:** Every valid transition and every invalid transition must be tested
 2. **Concurrent Access:** Multiple goroutines performing simultaneous writes

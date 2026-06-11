@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-11T13:36:07Z",
+  "exported_at": "2026-06-11T15:27:35Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -3710,6 +3710,30 @@
       "closed_at": "2026-06-11T09:08:25Z"
     },
     {
+      "id": "MTIX-27",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 27,
+      "project": "MTIX",
+      "title": "Agent integrations: Codex and pi plugin targets (issue #15)",
+      "description": "Public issue #15 asks for mtix usable from OpenAI Codex and pi (pi.dev) with the same interface as other agents. Findings: (a) Codex has first-class MCP via ~/.codex/config.toml [mcp_servers.*] tables (also 'codex mcp add' and project-scoped .codex/config.toml) and natively consumes AGENTS.md, which mtix already generates — support means adding a 'codex' target to 'mtix plugin install' (write/print the config.toml stanza, install AGENTS.md + checklists), a docs/mcp-config/codex.toml snippet, and an MCP-SETUP.md section; docs/codex/AGENTS.md seed already exists. (b) pi deliberately ships NO built-in MCP; it loads AGENTS.md hierarchically (works with ours today) and integrates via TypeScript extensions or the community pi-mcp-adapter extension which proxies MCP servers through a single tool. Tier-1 pi support = documented pi-mcp-adapter setup + AGENTS.md (docs-only). Tier-2 = a native pi TypeScript extension wrapping the mtix CLI (new language surface to maintain — evaluate before committing).",
+      "prompt": "",
+      "acceptance": "Codex: mtix plugin install codex works end-to-end against a real Codex CLI; MCP-SETUP documents it. pi: tier-1 documented setup verified against pi + pi-mcp-adapter; tier-2 decision recorded (build, defer, or invite community contribution).",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "7615881d98c6696981f97fbe3cd11092ac75a4cc2b6d8ac7131a8688fcfcb55b",
+      "created_at": "2026-06-11T15:27:35Z",
+      "updated_at": "2026-06-11T15:27:35Z"
+    },
+    {
       "id": "MTIX-3",
       "parent_id": "",
       "depth": 0,
@@ -4889,6 +4913,6 @@
       "status": "active"
     }
   ],
-  "node_count": 183,
-  "checksum": "91c6a2f1b64d3445b9fd693022e15dc3b65dbadd2a4dcabb312b0e9dc5b157cc"
+  "node_count": 184,
+  "checksum": "5ddb3a7e338d7ddeebf745d483568daf8dcf6fc1c2c62288263d01bc4bbfff22"
 }

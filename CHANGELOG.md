@@ -13,6 +13,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet._
+
+---
+
+## [v0.3.0-beta] — 2026-06-11
+
+**Headline: storage durability hardening (NFR-2.8) — refuse, mirror, back up, recover.**
+Driven by a field incident in which a database was torn by a WAL
+checkpoint on a 99%-full disk and the data was unrecoverable. mtix now
+refuses work it cannot finish safely, keeps the tasks.json mirror current
+on every interface, takes automatic verified backups, and ships a
+first-class salvage path — with a fault-injection suite proving all of it
+on every CI build. No schema migration: the database schema version is
+unchanged; v0.2.0-beta projects open directly.
+
+**Notable behavior changes:**
+- Writes are refused below an 8 MiB free-disk floor (`MTIX_MIN_FREE_BYTES`
+  to tune, `0` disables); reads keep working.
+- Automatic rolling backups are ON by default (daily, keep 7, under
+  `.mtix/data/backups/`); disable with `MTIX_BACKUP_INTERVAL=0`.
+- Corrupted databases are refused at open with recovery guidance and
+  exit code 4; disk-full failures exit 3.
+
 ### Added
 - **Disk-full safety (NFR-2.8, MTIX-26):** free-space pre-flight before every write transaction and backup (`MTIX_MIN_FREE_BYTES`, default 8 MiB floor); fail-stop latch on fatal storage errors (disk full, I/O error, detected corruption) — mtix refuses further writes instead of continuing into undefined state; database-open failures on packed volumes now name disk pressure instead of a bare `SQLITE_CANTOPEN`.
 - **Integrity check on open (NFR-2.6a, MTIX-26.4):** truncated database files (in-header page count exceeding file size with no WAL to replay) are refused *before* the first connection opens, preserving recovery evidence; `PRAGMA quick_check` runs before any write on every open. `MTIX_SKIP_INTEGRITY_CHECK=1` is the documented recovery-tooling escape hatch (bypasses both gates, with a DANGER log).
@@ -24,11 +47,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fault-injection conformance suite (MTIX-26.7):** `e2e/faultinject` drives the real binary through disk-full writes, genuine ENOSPC, kill -9 mid-write, the 2026-05-19 field-incident signature, and a full recover round trip, on a dedicated tiny volume; runs on every CI build (`test-fault-injection` job). Local harness: `scripts/faultfs.sh`.
 - **ADR-002 (MTIX-26.9):** records the decision to not add a local event journal or content-addressed bodies now, with revisit triggers.
 
+- **Release process (MTIX-22):** `docs/RELEASE-CHECKLIST.md` run before every tag; all four deferred post-MTIX-15 audit findings dispositioned (`docs/audit/MTIX-22-deferred-dispositions.md`); auto-generated CLI reference regenerated.
+
 ### Changed
 - Write connections now set `PRAGMA synchronous = FULL` and `PRAGMA wal_autocheckpoint = 1000` explicitly instead of relying on driver defaults (MTIX-26.3); ADR-001's stale `synchronous=NORMAL` reference corrected.
 
-### Pending
-- v0.2.0-beta release — see entry below.
+### Security
+- Go toolchain pinned to go1.26.4: fixes two reachable standard-library issues (net/textproto error escaping via the MCP stdio reader; crypto/x509 hostname-parsing inefficiency on the HTTPS serve path). `govulncheck`: 0 reachable vulnerabilities.
+- Web dev-dependency advisories resolved (`npm audit`: 0 vulnerabilities).
 
 ---
 

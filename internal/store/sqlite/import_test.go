@@ -70,7 +70,7 @@ func TestImport_ReplaceMode_MidFailure_RollsBack(t *testing.T) {
 	))
 
 	// Recalculate checksum to pass validation.
-	data.Checksum = sqlite.RecomputeExportChecksum(t, data)
+	data.Checksum = sqlite.RecomputeChecksumForTest(t, data)
 
 	// Import should fail due to FK constraint.
 	_, err = dstStore.Import(ctx, data, sqlite.ImportModeReplace, false)

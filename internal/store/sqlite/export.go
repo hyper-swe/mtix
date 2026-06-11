@@ -145,10 +145,10 @@ func (s *Store) Export(ctx context.Context, project, mtixVersion string) (*Expor
 	}, nil
 }
 
-// exportNodes reads all nodes (including soft-deleted) for export.
-func (s *Store) exportNodes(ctx context.Context) ([]exportNode, error) {
-	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT id, COALESCE(parent_id,''), depth, seq, project,
+// exportNodeSelectSQL is the canonical node projection shared by bulk
+// export and the per-row salvage path in recover.go. Column order MUST
+// stay in sync with scanExportNode.
+const exportNodeSelectSQL = `SELECT id, COALESCE(parent_id,''), depth, seq, project,
 		        title, COALESCE(description,''), COALESCE(prompt,''),
 		        COALESCE(acceptance,''), COALESCE(node_type,'auto'),
 		        COALESCE(issue_type,''), priority, COALESCE(labels,'[]'),
@@ -156,7 +156,28 @@ func (s *Store) exportNodes(ctx context.Context) ([]exportNode, error) {
 		        COALESCE(agent_state,''), weight, COALESCE(content_hash,''),
 		        created_at, updated_at, COALESCE(closed_at,''),
 		        COALESCE(defer_until,''), COALESCE(deleted_at,'')
-		 FROM nodes ORDER BY id`)
+		 FROM nodes`
+
+// rowScanner is satisfied by both *sql.Row and *sql.Rows.
+type rowScanner interface{ Scan(dest ...any) error }
+
+// scanExportNode reads one exportNode from a row produced by
+// exportNodeSelectSQL.
+func scanExportNode(row rowScanner) (exportNode, error) {
+	var n exportNode
+	err := row.Scan(
+		&n.ID, &n.ParentID, &n.Depth, &n.Seq, &n.Project,
+		&n.Title, &n.Description, &n.Prompt, &n.Acceptance, &n.NodeType,
+		&n.IssueType, &n.Priority, &n.Labels, &n.Status, &n.Progress,
+		&n.Assignee, &n.Creator, &n.AgentState, &n.Weight, &n.ContentHash,
+		&n.CreatedAt, &n.UpdatedAt, &n.ClosedAt, &n.DeferUntil, &n.DeletedAt,
+	)
+	return n, err
+}
+
+// exportNodes reads all nodes (including soft-deleted) for export.
+func (s *Store) exportNodes(ctx context.Context) ([]exportNode, error) {
+	rows, err := s.readDB.QueryContext(ctx, exportNodeSelectSQL+" ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("query nodes: %w", err)
 	}
@@ -168,14 +189,8 @@ func (s *Store) exportNodes(ctx context.Context) ([]exportNode, error) {
 
 	var nodes []exportNode
 	for rows.Next() {
-		var n exportNode
-		if err := rows.Scan(
-			&n.ID, &n.ParentID, &n.Depth, &n.Seq, &n.Project,
-			&n.Title, &n.Description, &n.Prompt, &n.Acceptance, &n.NodeType,
-			&n.IssueType, &n.Priority, &n.Labels, &n.Status, &n.Progress,
-			&n.Assignee, &n.Creator, &n.AgentState, &n.Weight, &n.ContentHash,
-			&n.CreatedAt, &n.UpdatedAt, &n.ClosedAt, &n.DeferUntil, &n.DeletedAt,
-		); err != nil {
+		n, err := scanExportNode(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scan export node: %w", err)
 		}
 		// node_type is canonical = depth-derived. Override any stored value
@@ -289,6 +304,35 @@ func computeExportChecksum(nodes []exportNode, deps []exportDep) (string, error)
 
 	hash := sha256.Sum256(data)
 	return fmt.Sprintf("%x", hash), nil
+}
+
+// RecomputeExportChecksum canonicalizes an export in place — sorts nodes
+// and dependencies, fixes node_count — and stores a freshly computed
+// checksum. It exists for the recovery path (MTIX-26.5): salvaged or
+// hand-reconstructed exports carry stale checksums that would otherwise
+// be rejected by import's integrity verification. Callers MUST surface
+// loudly that integrity now attests to the reconstructed content, not
+// the original.
+func RecomputeExportChecksum(export *ExportData) error {
+	if export == nil {
+		return fmt.Errorf("nil export data: %w", model.ErrInvalidInput)
+	}
+
+	sort.Slice(export.Nodes, func(i, j int) bool { return export.Nodes[i].ID < export.Nodes[j].ID })
+	sort.Slice(export.Dependencies, func(i, j int) bool {
+		if export.Dependencies[i].FromID != export.Dependencies[j].FromID {
+			return export.Dependencies[i].FromID < export.Dependencies[j].FromID
+		}
+		return export.Dependencies[i].ToID < export.Dependencies[j].ToID
+	})
+	export.NodeCount = len(export.Nodes)
+
+	checksum, err := computeExportChecksum(export.Nodes, export.Dependencies)
+	if err != nil {
+		return fmt.Errorf("compute checksum: %w", err)
+	}
+	export.Checksum = checksum
+	return nil
 }
 
 // VerifyExportChecksum validates an export's checksum matches its content.

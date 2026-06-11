@@ -19,8 +19,10 @@ func MakeExportDep(fromID, toID, depType, createdAt string) exportDep {
 	}
 }
 
-// RecomputeExportChecksum recomputes checksum for modified export data in tests.
-func RecomputeExportChecksum(t *testing.T, data *ExportData) string {
+// RecomputeChecksumForTest recomputes and returns the checksum for
+// modified export data in tests. Production code uses the exported
+// RecomputeExportChecksum (export.go), which also stores the result.
+func RecomputeChecksumForTest(t *testing.T, data *ExportData) string {
 	t.Helper()
 	checksum, err := computeExportChecksum(data.Nodes, data.Dependencies)
 	require.NoError(t, err)

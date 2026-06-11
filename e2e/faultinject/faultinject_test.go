@@ -346,6 +346,63 @@ func TestTruncatedDB_RefusedWithoutTouchingFiles(t *testing.T) {
 	}
 }
 
+// TestRecover_TruncatedDB_SalvagesViaMirror is the full incident-recovery
+// round trip (MTIX-26.5): the database is torn beyond what SQLite can
+// open, mtix recover salvages from the tasks.json mirror, and the result
+// imports into a fresh project through the standard validated path.
+func TestRecover_TruncatedDB_SalvagesViaMirror(t *testing.T) {
+	proj := newProject(t, t.TempDir())
+
+	for i := 0; i < 5; i++ {
+		if out, err := runMtix(proj, nil, "create", fmt.Sprintf("salvage victim %d", i)); err != nil {
+			t.Fatalf("create: %v\n%s", err, out)
+		}
+	}
+
+	dbPath := filepath.Join(proj, ".mtix", "data", "mtix.db")
+	_ = os.Remove(dbPath + "-wal")
+	_ = os.Remove(dbPath + "-shm")
+	f, err := os.OpenFile(dbPath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	header := make([]byte, 100)
+	if _, err := f.ReadAt(header, 0); err != nil {
+		t.Fatalf("read header: %v", err)
+	}
+	binary.BigEndian.PutUint32(header[28:32], 1<<20)
+	copy(header[92:96], header[24:28])
+	if _, err := f.WriteAt(header, 0); err != nil {
+		t.Fatalf("write header: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	out, err := runMtix(proj, nil, "recover")
+	if err != nil {
+		t.Fatalf("mtix recover failed: %v\n%s", err, out)
+	}
+	matches, err := filepath.Glob(filepath.Join(proj, ".mtix", "recovered-*.json"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("expected exactly one recovered export, got %v (%v)\n%s", matches, err, out)
+	}
+
+	fresh := newProject(t, t.TempDir())
+	if out, err := runMtix(fresh, nil, "import", "--mode", "replace", matches[0]); err != nil {
+		t.Fatalf("import of recovered export failed: %v\n%s", err, out)
+	}
+	listOut, err := runMtix(fresh, nil, "list")
+	if err != nil {
+		t.Fatalf("list after recovery import: %v\n%s", err, listOut)
+	}
+	for i := 0; i < 5; i++ {
+		if !bytes.Contains(listOut, []byte(fmt.Sprintf("salvage victim %d", i))) {
+			t.Fatalf("node %d missing after recovery round trip:\n%s", i, listOut)
+		}
+	}
+}
+
 // TestDiskFull_MirrorSurvives: the tasks.json written before the volume
 // filled must remain intact afterwards — the atomic temp+rename export
 // must never destroy the last good mirror.

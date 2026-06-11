@@ -129,6 +129,7 @@ prompt chain propagation, and multi-agent orchestration.`,
 		newBackupCmd(),
 		newExportCmd(),
 		newImportCmd(),
+		newRecoverCmd(),
 		newMigrateCmd(),
 		newServeCmd(),
 		newMCPCmd(),
@@ -143,8 +144,9 @@ prompt chain propagation, and multi-agent orchestration.`,
 // persistentPreRun handles the PersistentPreRunE logic for the root command.
 // Extracted from newRootCmd to reduce cognitive complexity.
 func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error {
-	// Skip store init for commands that don't need it.
-	if cmd.Name() == "version" || cmd.Name() == "help" {
+	// Skip store init for commands that don't need it. recover (MTIX-26.5)
+	// must run when the database is too damaged for the store to open.
+	if cmd.Name() == "version" || cmd.Name() == "help" || cmd.Name() == "recover" {
 		return nil
 	}
 

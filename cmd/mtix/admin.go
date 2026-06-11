@@ -200,23 +200,26 @@ func runExport(format string) error {
 func newImportCmd() *cobra.Command {
 	var mode string
 	var force bool
+	var recomputeChecksum bool
 
 	cmd := &cobra.Command{
 		Use:   "import <file>",
 		Short: "Import nodes from JSON export",
 		Args:  cobra.ExactArgs(1),
 		RunE: withAutoExport(func(_ *cobra.Command, args []string) error {
-			return runImport(args[0], mode, force)
+			return runImport(args[0], mode, force, recomputeChecksum)
 		}),
 	}
 
 	cmd.Flags().StringVar(&mode, "mode", "merge", "Import mode: replace or merge")
 	cmd.Flags().BoolVar(&force, "force", false, "Allow importing zero nodes into a non-empty database")
+	cmd.Flags().BoolVar(&recomputeChecksum, "recompute-checksum", false,
+		"Recovery only (MTIX-26.5): replace the file's checksum with one computed over its current content, accepting hand-reconstructed exports")
 
 	return cmd
 }
 
-func runImport(filePath, mode string, force bool) error {
+func runImport(filePath, mode string, force, recomputeChecksum bool) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -229,6 +232,16 @@ func runImport(filePath, mode string, force bool) error {
 	var exportData sqlite.ExportData
 	if unmarshalErr := json.Unmarshal(data, &exportData); unmarshalErr != nil {
 		return fmt.Errorf("parse import file: %w", unmarshalErr)
+	}
+
+	if recomputeChecksum {
+		// Recovery path: integrity now attests to the reconstructed
+		// content, not the original. Be loud about it.
+		fmt.Fprintln(os.Stderr,
+			"WARNING: --recompute-checksum replaces the file's integrity checksum; the import attests to the reconstructed content, not the original")
+		if err := sqlite.RecomputeExportChecksum(&exportData); err != nil {
+			return fmt.Errorf("recompute checksum: %w", err)
+		}
 	}
 
 	importMode := sqlite.ImportModeMerge

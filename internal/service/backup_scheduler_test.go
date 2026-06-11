@@ -136,3 +136,32 @@ func TestMaybeBackup_ForeignFileInBackupsDir_DoesNotBreakGateOrRotation(t *testi
 	require.NoError(t, err)
 	assert.FileExists(t, foreign, "rotation must never delete files mtix did not create")
 }
+
+// TestNewBackupSchedulerFromEnv_AppliesOverrides covers the env-override
+// parsing branches (MTIX_BACKUP_INTERVAL / MTIX_BACKUP_RETAIN).
+func TestNewBackupSchedulerFromEnv_AppliesOverrides(t *testing.T) {
+	_, store, dir := newTestSyncService(t)
+	backupsDir := filepath.Join(dir, ".mtix", "data", "backups")
+
+	t.Run("valid overrides", func(t *testing.T) {
+		t.Setenv("MTIX_BACKUP_INTERVAL", "6h")
+		t.Setenv("MTIX_BACKUP_RETAIN", "3")
+		s := service.NewBackupSchedulerFromEnv(store, backupsDir, slog.Default())
+		assert.Equal(t, 6*time.Hour, s.Interval())
+		assert.Equal(t, 3, s.Retain())
+	})
+
+	t.Run("zero interval disables", func(t *testing.T) {
+		t.Setenv("MTIX_BACKUP_INTERVAL", "0")
+		s := service.NewBackupSchedulerFromEnv(store, backupsDir, slog.Default())
+		assert.Equal(t, time.Duration(0), s.Interval())
+	})
+
+	t.Run("garbage falls back to defaults", func(t *testing.T) {
+		t.Setenv("MTIX_BACKUP_INTERVAL", "not-a-duration")
+		t.Setenv("MTIX_BACKUP_RETAIN", "-5")
+		s := service.NewBackupSchedulerFromEnv(store, backupsDir, slog.Default())
+		assert.Equal(t, service.DefaultBackupInterval, s.Interval())
+		assert.Equal(t, service.DefaultBackupRetain, s.Retain())
+	})
+}

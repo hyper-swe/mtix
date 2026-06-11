@@ -81,6 +81,12 @@ func NewBackupScheduler(
 	}
 }
 
+// Interval returns the configured backup interval (0 = disabled).
+func (b *BackupScheduler) Interval() time.Duration { return b.interval }
+
+// Retain returns the configured number of backups to keep.
+func (b *BackupScheduler) Retain() int { return b.retain }
+
 // NewBackupSchedulerFromEnv builds a scheduler with the documented env
 // overrides applied (MTIX_BACKUP_INTERVAL, MTIX_BACKUP_RETAIN).
 func NewBackupSchedulerFromEnv(store *sqlite.Store, dir string, logger *slog.Logger) *BackupScheduler {

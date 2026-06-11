@@ -1,6 +1,6 @@
 # RCA: Unrecoverable SQLite corruption on full disk (2026-05-19)
 
-**Status:** Root cause established; P0 remediations and CI fault-injection gate shipped 2026-06-10 (MTIX-26.1/2/3/4/7 — see CHANGELOG \[Unreleased\] and NFR-2.8). The affected user restored from a manual backup.
+**Status:** CLOSED. Full remediation epic MTIX-26 (9 children) shipped 2026-06-10/11 — durability hardening, mirror parity across all interfaces, integrity gates, `mtix recover`, automated rolling backups, structured exit codes, a claims-to-test traceability gate, and a CI fault-injection suite that reproduces this incident's signature on every build. Security-reviewed clean. The affected user restored from a manual backup. See CHANGELOG \[Unreleased\], NFR-2.8, and ADR-002.
 **Severity:** Critical — permanent loss of user data; contradicts our published robustness claims
 **Affected version:** v0.1.5-beta (commit b9b402c). Current head shares the vulnerable storage code.
 **Remediation epic:** MTIX-26

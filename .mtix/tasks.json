@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-10T17:37:31Z",
+  "exported_at": "2026-06-11T08:43:32Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -3587,7 +3587,7 @@
       "seq": 8,
       "project": "MTIX",
       "title": "Claims-to-test traceability: every declared safety scenario maps to a test in CI",
-      "description": "Audit-gap fix. QUALITY-STANDARDS declares 10 safety-critical scenarios; #5 (startup integrity check) and #10 (graceful shutdown WAL checkpoint) had no implementation or test, and nothing detects such drift. ADR-001 contradicted code on synchronous mode. REQUIREMENTS FR-15.3b (auto-export survives disk full) was never tested. Build a traceability matrix (scenario/requirement -\u003e test IDs) checked in CI: a declared scenario without a linked passing test fails the build. Re-audit existing declared scenarios against the matrix. Until the matrix is green, soften public robustness wording.",
+      "description": "Audit-gap fix. QUALITY-STANDARDS declares 10 safety-critical scenarios; #5 (startup integrity check) and #10 (graceful shutdown WAL checkpoint) had no implementation or test, and nothing detects such drift. ADR-001 contradicted code on synchronous mode. REQUIREMENTS FR-15.3b (auto-export survives disk full) was never tested. Build a traceability matrix (scenario/requirement -\u003e test IDs) checked in CI: a declared scenario without a linked passing test fails the build. Re-audit existing declared scenarios against the matrix. Until the matrix is green, soften public robustness wording.\n\nUpdate 2026-06-11: scenarios #5 and #11 now exist with tests (NFR-2.8 shipped; e2e/faultinject gates every build) — wire them into the matrix when it lands. Folded in from the pre-push code review: the fault-injection e2e suite currently asserts on error-message keywords (containsAny 'free'/'full'/'truncated' in e2e/faultinject/faultinject_test.go), which is brittle coupling to wording. As part of this ticket, add structured failure signaling — distinct exit codes for ErrDiskFull / ErrCorrupted (and/or --json error output with a machine-readable code field) — and migrate the fault-injection assertions to it. That also gives agents and scripts a stable contract for storage failures.",
       "prompt": "",
       "acceptance": "CI fails when a declared scenario lacks a linked test; all 10 current scenarios mapped or wording amended; ADR/code conformance check added.",
       "node_type": "story",
@@ -3600,9 +3600,9 @@
       "creator": "cli",
       "agent_state": "",
       "weight": 1,
-      "content_hash": "c78fbd62eda8cb6a064cc349fe5e492dbfa9cd29f4e17e77da65efaa7b96bfef",
+      "content_hash": "abad05408b8588add6d9b9fb73e5f574936789bb99e8ac3c18bdbd6c9d0708d3",
       "created_at": "2026-06-10T16:57:41Z",
-      "updated_at": "2026-06-10T16:57:41Z"
+      "updated_at": "2026-06-11T08:43:32Z"
     },
     {
       "id": "MTIX-26.9",
@@ -4809,5 +4809,5 @@
     }
   ],
   "node_count": 180,
-  "checksum": "a6a552547e82a19009387f450e85da7b2cd9b45da9c66b8f4728e5735b287030"
+  "checksum": "2e63e8d108656b0cc5d961d8271c859fa3b3a74c477d70c3ae41706c850a6bef"
 }

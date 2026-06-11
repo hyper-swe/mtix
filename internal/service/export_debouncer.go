@@ -30,6 +30,7 @@ type ExportDebouncer struct {
 	timer      *time.Timer
 	firstDirty time.Time // zero when nothing is pending
 	closed     bool
+	inFlight   sync.WaitGroup // tracks running exports so Close can wait
 }
 
 // NewExportDebouncer wraps exportFn (normally SyncService.AutoExport bound
@@ -93,17 +94,23 @@ func (d *ExportDebouncer) Flush() {
 		d.timer.Stop() // keep the timer object for Reset-reuse in Trigger
 	}
 	d.firstDirty = time.Time{}
+	d.inFlight.Add(1)
 	d.mu.Unlock()
 
+	defer d.inFlight.Done()
 	d.runExport()
 }
 
-// Close flushes any pending export and stops the debouncer permanently.
+// Close flushes any pending export, waits for any export still running on
+// the timer goroutine, and stops the debouncer permanently. Callers may
+// rely on the mirror being current when Close returns — a process exiting
+// right after Close must not truncate a write in progress.
 func (d *ExportDebouncer) Close() {
 	d.mu.Lock()
 	d.closed = true
 	d.mu.Unlock()
 	d.Flush()
+	d.inFlight.Wait()
 }
 
 // fire is the timer callback: clears pending state and runs the export.
@@ -116,8 +123,10 @@ func (d *ExportDebouncer) fire() {
 		return
 	}
 	d.firstDirty = time.Time{}
+	d.inFlight.Add(1)
 	d.mu.Unlock()
 
+	defer d.inFlight.Done()
 	d.runExport()
 }
 

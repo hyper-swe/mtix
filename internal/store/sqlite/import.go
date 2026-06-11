@@ -344,12 +344,18 @@ func (s *Store) rebuildSequences(ctx context.Context) error {
 
 // rebuildFTS rebuilds the FTS5 search index per FR-7.8.
 // Drops and recreates the FTS content to ensure consistency after bulk import.
+// Runs outside WithTx and can be large after a bulk import, so it carries
+// its own NFR-2.8 guards.
 func (s *Store) rebuildFTS(ctx context.Context) error {
+	if err := s.preflightWrite(); err != nil {
+		return err
+	}
+
 	// Rebuild the FTS5 index from the content table.
 	_, err := s.writeDB.ExecContext(ctx,
 		"INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')")
 	if err != nil {
-		return fmt.Errorf("rebuild FTS: %w", err)
+		return s.classifyWriteError(fmt.Errorf("rebuild FTS: %w", err))
 	}
 	return nil
 }

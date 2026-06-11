@@ -1288,7 +1288,7 @@ If mtix reports `database … is truncated` or `integrity check … failed` at s
 3. Restore from your newest good copy, in order of preference:
    - a `mtix backup` snapshot (verified at creation time);
    - the `.mtix/tasks.json` mirror via `mtix import --mode replace .mtix/tasks.json` into a fresh `mtix init` project — the mirror is updated after every mutation on every interface (CLI, MCP, serve), so it is normally seconds-fresh.
-4. `MTIX_SKIP_INTEGRITY_CHECK=1` bypasses the open-time quick_check for recovery tooling that must read a damaged file. Never use it to keep writing.
+4. `MTIX_SKIP_INTEGRITY_CHECK=1` bypasses the open-time integrity gates (both the truncation check and quick_check) so `mtix verify`, `mtix backup`, and `mtix export` can reach a damaged file during recovery. mtix logs a loud DANGER line while it is set. Never use it to keep writing. Note: a file truncated below its recorded page count may still be unopenable by SQLite itself — for that class, keep the copied evidence and use `sqlite3 .recover` (a first-class `mtix recover` command is planned).
 
 To make machine-loss recovery trivial, commit `.mtix/tasks.json` to git — it is deterministic, human-readable, and importable.
 

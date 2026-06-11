@@ -46,9 +46,12 @@ const (
 	// Setting it to 0 disables the pre-flight check.
 	minFreeBytesEnv = "MTIX_MIN_FREE_BYTES"
 
-	// skipIntegrityCheckEnv disables the open-time quick_check when set
-	// to "1". Escape hatch for recovery tooling that must open a
-	// known-damaged database; documented in USERMANUAL troubleshooting.
+	// skipIntegrityCheckEnv disables BOTH open-time integrity gates (the
+	// pre-open truncation validation and the quick_check) when set to
+	// "1". Escape hatch so recovery commands — verify, backup, export —
+	// can still reach a known-damaged database; without it, a corrupted
+	// file would lock users out of the very tools the recovery runbook
+	// tells them to use. Documented in USERMANUAL troubleshooting.
 	skipIntegrityCheckEnv = "MTIX_SKIP_INTEGRITY_CHECK"
 
 	// recoveryGuidance is appended to corruption errors so the failure
@@ -57,6 +60,11 @@ const (
 		"Restore from a backup (mtix backup snapshots or .mtix/tasks.json via " +
 		"'mtix import'), and see USERMANUAL 'Corruption recovery' before deleting any file"
 )
+
+// integrityChecksSkipped reports whether the recovery escape hatch is on.
+func integrityChecksSkipped() bool {
+	return os.Getenv(skipIntegrityCheckEnv) == "1"
+}
 
 // minFreeBytes resolves the free-space floor, honoring the env override.
 func minFreeBytes() uint64 {
@@ -154,7 +162,7 @@ func quickCheck(ctx context.Context, db *sql.DB) (string, error) {
 // integrityCheckOnOpen runs quickCheck on the freshly opened write
 // connection, before init or any mutation.
 func integrityCheckOnOpen(ctx context.Context, db *sql.DB, path string) error {
-	if os.Getenv(skipIntegrityCheckEnv) == "1" {
+	if integrityChecksSkipped() {
 		return nil
 	}
 

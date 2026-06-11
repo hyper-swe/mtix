@@ -101,6 +101,31 @@ func TestExportDebouncer_CloseFlushesAndStops(t *testing.T) {
 	assert.Equal(t, int64(1), count.Load(), "closed debouncer must ignore triggers")
 }
 
+// TestExportDebouncer_CloseWaitsForInFlightExport: a process exiting right
+// after Close must not truncate an export the timer goroutine already
+// started — Close blocks until it completes.
+func TestExportDebouncer_CloseWaitsForInFlightExport(t *testing.T) {
+	started := make(chan struct{}, 1)
+	var finished atomic.Bool
+	d := service.NewExportDebouncer(
+		func(context.Context) error {
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+			time.Sleep(150 * time.Millisecond)
+			finished.Store(true)
+			return nil
+		},
+		slog.Default(), 10*time.Millisecond, time.Second)
+
+	d.Trigger()
+	<-started // the timer goroutine is now mid-export
+	d.Close()
+	assert.True(t, finished.Load(),
+		"Close returned while an export was still running")
+}
+
 // TestExportDebouncer_ExportFailureDoesNotPanic: mirror trouble is logged,
 // never fatal to the interface.
 func TestExportDebouncer_ExportFailureDoesNotPanic(t *testing.T) {

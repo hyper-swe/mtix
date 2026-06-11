@@ -330,6 +330,20 @@ func TestTruncatedDB_RefusedWithoutTouchingFiles(t *testing.T) {
 	if _, err := os.Stat(dbPath + "-wal"); !os.IsNotExist(err) {
 		t.Fatal("mtix created a WAL on a damaged database it refused to open")
 	}
+
+	// Recovery path: with the documented escape hatch, salvage commands
+	// must get PAST the truncation refusal — a recovery runbook that
+	// dead-ends at "cannot open" is no runbook. verify may well report
+	// corruption (that is its job); it must not be refused at open.
+	hatch := []string{"MTIX_SKIP_INTEGRITY_CHECK=1"}
+	out, _ = runMtix(proj, hatch, "verify")
+	if containsAny(out, "is truncated") {
+		t.Fatalf("escape hatch did not bypass the truncation refusal for verify:\n%s", out)
+	}
+	out, _ = runMtix(proj, hatch, "export")
+	if containsAny(out, "is truncated") {
+		t.Fatalf("escape hatch did not bypass the truncation refusal for export:\n%s", out)
+	}
 }
 
 // TestDiskFull_MirrorSurvives: the tasks.json written before the volume

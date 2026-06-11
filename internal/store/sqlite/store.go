@@ -75,7 +75,13 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 	dbPath = resolveDBPath(dbPath)
 	ctx := context.Background()
 
-	if err := validateDBFile(dbPath); err != nil {
+	if integrityChecksSkipped() {
+		// Recovery escape hatch: verify/backup/export must be able to
+		// reach a damaged database, or the recovery runbook is a dead
+		// end. Loud by design — this must never run unnoticed.
+		logger.Error("DANGER: open-time integrity checks bypassed (" +
+			skipIntegrityCheckEnv + "=1); recovery use only — data correctness is not guaranteed")
+	} else if err := validateDBFile(dbPath); err != nil {
 		return nil, err
 	}
 
@@ -296,7 +302,14 @@ func (s *Store) Close() error {
 // Uses INSERT ... ON CONFLICT DO UPDATE SET value = value + 1 RETURNING value
 // for atomic, collision-free sequence generation.
 // Key format: '{project}:{parent_dotpath}' (e.g., 'PROJ:', 'PROJ:PROJ-42.1').
+//
+// This write runs outside WithTx, so it carries its own NFR-2.8 guards:
+// free-space pre-flight before, fail-stop classification after.
 func (s *Store) NextSequence(ctx context.Context, key string) (int, error) {
+	if err := s.preflightWrite(); err != nil {
+		return 0, err
+	}
+
 	var value int
 
 	// Atomic upsert per FR-2.7 — parameterized query, no string concatenation.
@@ -307,7 +320,7 @@ func (s *Store) NextSequence(ctx context.Context, key string) (int, error) {
 		key,
 	).Scan(&value)
 	if err != nil {
-		return 0, fmt.Errorf("next sequence for %s: %w", key, err)
+		return 0, s.classifyWriteError(fmt.Errorf("next sequence for %s: %w", key, err))
 	}
 
 	return value, nil

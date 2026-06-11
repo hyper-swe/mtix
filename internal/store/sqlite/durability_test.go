@@ -199,6 +199,74 @@ func TestIntegrityCheckOnOpen_SkipEnv(t *testing.T) {
 	require.NoError(t, integrityCheckOnOpen(context.Background(), db, "any.db"))
 }
 
+// TestNew_SkipEnvBypassesIntegrityGates: the escape hatch must let
+// recovery commands reach damage that SQLite itself can still open
+// (quick_check-class corruption) — otherwise the recovery runbook dead-
+// ends at "cannot open". Truncation-class damage stays unopenable because
+// SQLite's own WAL machinery rejects it; salvage for that class is
+// mtix recover (MTIX-26.5).
+func TestNew_SkipEnvBypassesIntegrityGates(t *testing.T) {
+	s, dbPath := newDurabilityTestStore(t)
+	seedRows(t, s)
+	require.NoError(t, s.Close())
+	_ = os.Remove(dbPath + "-wal")
+	_ = os.Remove(dbPath + "-shm")
+
+	// Shred an interior page: header stays valid, quick_check fails.
+	f, err := os.OpenFile(dbPath, os.O_RDWR, 0)
+	require.NoError(t, err)
+	garbage := make([]byte, 4096)
+	for i := range garbage {
+		garbage[i] = 0xFF
+	}
+	_, err = f.WriteAt(garbage, 2*4096)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	// Default posture: refused at open.
+	_, err = New(dbPath, slog.Default())
+	require.ErrorIs(t, err, model.ErrCorrupted)
+
+	// Escape hatch: the open must succeed so salvage tooling (verify,
+	// export, backup) can read what remains.
+	t.Setenv(skipIntegrityCheckEnv, "1")
+	s2, err := New(dbPath, slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, s2.Close())
+}
+
+// TestNew_SkipEnvOnTruncatedDB: on truncation-class damage the hatch
+// bypasses OUR refusal, and the open then fails inside SQLite itself —
+// the pre-existing behavior, with no evidence destroyed. There must be no
+// "is truncated" refusal in that path.
+func TestNew_SkipEnvOnTruncatedDB(t *testing.T) {
+	s, dbPath := newDurabilityTestStore(t)
+	seedRows(t, s)
+	require.NoError(t, s.Close())
+
+	doctorHeaderPageCount(t, dbPath, 1<<20)
+	_ = os.Remove(dbPath + "-wal")
+	_ = os.Remove(dbPath + "-shm")
+
+	t.Setenv(skipIntegrityCheckEnv, "1")
+	_, err := New(dbPath, slog.Default())
+	require.Error(t, err, "SQLite itself cannot open a file truncated this deeply")
+	assert.NotContains(t, err.Error(), "is truncated",
+		"the hatch must bypass mtix's own refusal")
+	assert.NotErrorIs(t, err, model.ErrCorrupted)
+}
+
+// TestNextSequence_GuardedByPreflight: NextSequence writes outside WithTx
+// and must still honor the free-space floor (NFR-2.8).
+func TestNextSequence_GuardedByPreflight(t *testing.T) {
+	t.Setenv(minFreeBytesEnv, "18446744073709551615")
+	s, _ := newDurabilityTestStore(t)
+
+	_, err := s.NextSequence(context.Background(), "T:")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, model.ErrDiskFull)
+}
+
 // TestWithTx_PreflightRefusesBelowFloor: with the floor raised above any
 // real volume's free space, writes are refused with ErrDiskFull before a
 // transaction begins; reads keep working.

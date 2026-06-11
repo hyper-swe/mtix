@@ -71,11 +71,14 @@ prompt chain propagation, and multi-agent orchestration.`,
 			return persistentPreRun(cmd, args, logLevel)
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
-			// Auto-export after mutation commands per FR-15.3.
+			// Auto-export after mutation commands per FR-15.3, with the
+			// interval-gated rolling backup riding the same trigger
+			// (FR-26.6).
 			if app.syncSvc != nil && app.mtixDir != "" && isMutationCommand(cmd.Name()) {
 				if err := app.syncSvc.AutoExport(cmd.Context(), app.mtixDir); err != nil {
 					app.logger.Warn("auto-export failed", "error", err)
 				}
+				maybeAutoBackup()
 			}
 			return closeApp()
 		},

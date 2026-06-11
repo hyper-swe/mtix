@@ -1292,6 +1292,8 @@ If mtix reports `database … is truncated` or `integrity check … failed` at s
 
 To make machine-loss recovery trivial, commit `.mtix/tasks.json` to git — it is deterministic, human-readable, and importable.
 
+**Automatic rolling backups.** mtix also keeps verified snapshots under `.mtix/data/backups/` without any setup: after mutations, if the newest backup is older than 24 hours, a new one is taken and the newest 7 are kept. Tune with `MTIX_BACKUP_INTERVAL` (Go duration, `0` disables) and `MTIX_BACKUP_RETAIN`. Restore one with `mtix import` after exporting it, or by copying it over `data/mtix.db` while no mtix process runs.
+
 ### Garbage Collection
 
 Clean up expired soft-deleted nodes:

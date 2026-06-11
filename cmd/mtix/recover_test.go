@@ -92,3 +92,22 @@ func writeStaleChecksumExport(t *testing.T) string {
 	require.NoError(t, os.WriteFile(path, raw, 0o644))
 	return path
 }
+
+// TestMaybeAutoBackup_AfterMutation_CreatesRollingBackup verifies the
+// post-mutation trigger for FR-26.6 automated backups.
+func TestMaybeAutoBackup_AfterMutation_CreatesRollingBackup(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, runCreate("auto backup fixture", "", "", 3, "", "", "", "", ""))
+
+	maybeAutoBackup()
+
+	matches, err := filepath.Glob(filepath.Join(app.mtixDir, "data", "backups", "mtix-*.db"))
+	require.NoError(t, err)
+	assert.Len(t, matches, 1, "a mutation must produce a rolling backup")
+
+	// Gated: an immediate second trigger takes no new backup.
+	maybeAutoBackup()
+	matches, err = filepath.Glob(filepath.Join(app.mtixDir, "data", "backups", "mtix-*.db"))
+	require.NoError(t, err)
+	assert.Len(t, matches, 1)
+}

@@ -258,6 +258,22 @@ For two concurrent events touching the same field of the same node, the winner i
 ### 8.3 Resolution classes
 - **Disjoint fields.** Two concurrent events touching different fields of the same node both apply; no conflict logged.
 - **Same field.** LWW per §8.2. Loser is logged to `sync_conflicts` (hub) and `.mtix/conflicts.log` (local).
+
+> **Known visibility limitation — shared author IDs (intentional).** Vector
+> clocks are keyed by `author_id` (the unit of causal isolation is the
+> agent, not the machine). Two CLIs that both run with the default
+> `author_id = "cli"` (`authorIDFallback` in
+> `internal/store/sqlite/sync_emit.go`) emit events whose vector clocks can
+> be *equal*; `VectorClock.Concurrent` returns false for equal clocks, so
+> hub-side `sync_conflicts` is never populated for those pairs.
+> **Convergence is unaffected** — LWW at apply time still orders them by
+> `lamport_clock`, `wall_clock_ts`, `author_machine_hash` (§8.2) and all
+> replicas converge. The cost is audit-trail completeness only: such
+> resolutions are not recorded as conflicts. Do NOT "fix" this by keying
+> vector clocks by `author_machine_hash` — that silently changes the
+> causal-isolation unit and the LWW semantics this section defines. Teams
+> needing complete conflict audit trails should give each CLI a distinct
+> author ID (see MTIX-24 for surfacing `--author-id`).
 - **Delete vs update.** Tombstone always wins. Once `op_type=delete` is applied, every subsequent non-delete event for that node is a no-op (apply engine returns nil; logs at debug). Tombstones are monotonic: the deletion record itself stays, but updates that arrive after a delete are dropped.
 - **Delete on non-existent node.** No-op. Does not create a phantom tombstone.
 

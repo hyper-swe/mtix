@@ -108,6 +108,10 @@ func seedNodes(t testing.TB, st *sqlite.Store, n int) {
 // Mirrors e2e/sync_e2e_test.fakeCLI.pushAll.
 func pushAllPerf(ctx context.Context, t testing.TB, st *sqlite.Store, pool *transport.Pool) int {
 	t.Helper()
+	// Deliberately larger than production's pushBatchSize=100
+	// (cmd/mtix/sync_push.go): the benchmark measures hub throughput
+	// ceilings, not CLI batching policy. If push-timeout regressions are
+	// suspected, rerun with batchSize=100 to mirror production.
 	const batchSize = 500
 	total := 0
 	for {
@@ -115,8 +119,11 @@ func pushAllPerf(ctx context.Context, t testing.TB, st *sqlite.Store, pool *tran
 		if len(events) == 0 {
 			return total
 		}
-		acceptedIDs, _, err := pool.PushEvents(ctx, events)
+		acceptedIDs, conflicts, err := pool.PushEvents(ctx, events)
 		require.NoError(t, err)
+		// Synthetic single-author data must never produce hub conflicts;
+		// a nonzero count means the harness or hub semantics drifted.
+		require.Empty(t, conflicts, "unexpected hub conflicts in benchmark push")
 		require.NoError(t, st.WithTx(ctx, func(tx *sql.Tx) error {
 			for _, id := range acceptedIDs {
 				if _, err := tx.ExecContext(ctx,

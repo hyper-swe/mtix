@@ -383,6 +383,14 @@ provider-specific quirks.
 - Every release tag (`v*.*.*`) runs `test-pg-supabase` and
   `test-pg-neon` in matrix; failure blocks the release.
 
+### Releasing
+
+Before pushing any release tag, run
+[docs/RELEASE-CHECKLIST.md](docs/RELEASE-CHECKLIST.md) top to bottom —
+it covers the process steps automation cannot check (deferred-finding
+review, docs-coverage sweep) around the automated gates
+(`make preflight`, fault injection, traceability).
+
 ---
 
 ## Testing sync changes (MTIX-15 / FR-18)

@@ -21,9 +21,9 @@ func newPluginCmd() *cobra.Command {
 		Use:   "plugin",
 		Short: "Install mtix as a plugin for AI coding agents",
 		Long: `Install skill files, reference checklists, and MCP configuration
-for IDE-specific AI agent integrations.
+for AI agent integrations.
 
-Supported targets: claude-code (default), cursor, windsurf.`,
+Supported targets: claude-code (default), codex, pi.`,
 	}
 
 	cmd.AddCommand(newPluginInstallCmd())
@@ -39,21 +39,30 @@ func newPluginInstallCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install skill files and MCP configuration",
-		Long: `Install 5 skill files and 4 compliance reference checklists for the
-target IDE's AI agent. Skills include safety-critical operating procedures
-as baseline (not optional) — context chain traversal, independent verification,
-traceability, and anomaly reporting.
+		Long: `Install agent integration files for the target AI coding agent.
 
-For Claude Code: writes to .claude/skills/ (or ~/.claude/skills/ with --global).`,
+claude-code: 5 skill files + 4 compliance reference checklists into
+.claude/skills/ (or ~/.claude/skills/ with --global). Skills include
+safety-critical operating procedures as baseline — context chain
+traversal, independent verification, traceability, anomaly reporting.
+
+codex: AGENTS.md (Codex's native instruction file) at the project root
+and an MCP server entry in .codex/config.toml (or ~/.codex/ with
+--global). Existing files are never modified — if config.toml exists,
+the stanza to add is printed instead.
+
+pi: AGENTS.md at the project root (or ~/.pi/agent/ with --global); pi
+loads it natively. pi has no built-in MCP — setup guidance for the
+community pi-mcp-adapter extension is printed.`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runPluginInstall(target, global)
 		},
 	}
 
 	cmd.Flags().StringVar(&target, "target", "claude-code",
-		"Target IDE: claude-code, cursor, windsurf")
+		"Target agent: claude-code, codex, pi")
 	cmd.Flags().BoolVar(&global, "global", false,
-		"Install to global skill directory (~/.claude/skills/)")
+		"Install to the agent's global directories instead of project-local")
 
 	return cmd
 }
@@ -96,11 +105,18 @@ func runPluginInstall(target string, global bool) error {
 		return enc.Encode(results)
 	}
 
-	fmt.Printf("Installed %d files for %s:\n\n", len(results), target)
+	fmt.Printf("Installed %d items for %s:\n\n", len(results), target)
 	for _, r := range results {
 		fmt.Printf("  %-12s %s\n", r.Action+":", r.File)
 	}
-	fmt.Printf("\nSkills are ready. Safety-critical operating procedures are baked in.\n")
+	// Manual/skipped guidance must reach the user — silently dropped
+	// notes are how integrations end up half-configured.
+	for _, r := range results {
+		if r.Note != "" {
+			fmt.Printf("\n%s (%s):\n%s\n", r.File, r.Action, r.Note)
+		}
+	}
+	fmt.Printf("\nDone. See docs/MCP-SETUP.md for agent-specific details.\n")
 
 	return nil
 }

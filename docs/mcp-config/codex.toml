@@ -1,0 +1,9 @@
+# mtix MCP server entry for OpenAI Codex.
+# Add to ~/.codex/config.toml (global) or .codex/config.toml
+# (project-scoped, trusted projects) — or run:
+#   mtix plugin install --target codex
+[mcp_servers.mtix]
+command = "mtix"
+args = ["mcp"]
+# For a fixed project regardless of working directory:
+# args = ["mcp", "--project", "/path/to/your/project"]

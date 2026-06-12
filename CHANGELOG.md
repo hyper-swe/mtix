@@ -13,7 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- **Codex and pi plugin targets (MTIX-27, issue #15):** `mtix plugin install --target codex` writes the project's AGENTS.md briefing and a `[mcp_servers.mtix]` entry in `.codex/config.toml` (`--global` for `~/.codex/`); existing files are never modified — the stanza to add is printed instead. `--target pi` installs AGENTS.md (which pi loads natively; `--global` for `~/.pi/agent/`) and prints pi-mcp-adapter setup guidance, since pi has no built-in MCP by design. New `docs/mcp-config/codex.toml` snippet; MCP-SETUP sections for both agents.
+
+### Changed
+- `mtix plugin install` help no longer advertises cursor/windsurf targets that were never implemented (manual MCP config for those remains documented in MCP-SETUP).
 
 ---
 

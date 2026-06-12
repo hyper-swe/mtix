@@ -59,10 +59,12 @@ func NewPluginInstaller(projectDir string, data *TemplateData, logger *slog.Logg
 		logger = slog.Default()
 	}
 
-	// Parse skill templates from embedded FS.
+	// Parse skill templates plus AGENTS.md (used by the codex and pi
+	// targets, MTIX-27) from the embedded FS.
 	tmpl, err := template.ParseFS(embeddedTemplates,
 		"templates/skills/*.tmpl",
 		"templates/skills/references/*.tmpl",
+		"templates/agents.md.tmpl",
 	)
 	if err != nil {
 		// Log error but don't fail construction — Install will fail later.
@@ -81,18 +83,24 @@ func NewPluginInstaller(projectDir string, data *TemplateData, logger *slog.Logg
 type InstallResult struct {
 	File   string `json:"file"`
 	Path   string `json:"path"`
-	Action string `json:"action"` // "installed", "updated"
+	Action string `json:"action"`         // "installed", "updated", "skipped", "manual"
+	Note   string `json:"note,omitempty"` // guidance for "manual"/"skipped" actions
 }
 
-// Install writes skill files and configuration for the specified target IDE.
-// Supported targets: "claude-code", "cursor", "windsurf".
-// If global is true, writes to ~/.claude/skills/ instead of project-local.
+// Install writes skill files and configuration for the specified target
+// agent. Supported targets: "claude-code", "codex", "pi" (MTIX-27).
+// If global is true, writes to the agent's home-directory locations
+// instead of project-local ones.
 func (p *PluginInstaller) Install(target string, global bool) ([]InstallResult, error) {
 	switch target {
 	case "claude-code":
 		return p.installClaudeCode(global)
+	case "codex":
+		return p.installCodex(global)
+	case "pi":
+		return p.installPi(global)
 	default:
-		return nil, fmt.Errorf("unsupported target: %s (supported: claude-code, cursor, windsurf)", target)
+		return nil, fmt.Errorf("unsupported target: %s (supported: claude-code, codex, pi)", target)
 	}
 }
 

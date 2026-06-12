@@ -107,6 +107,54 @@ Edit `~/.codeium/windsurf/mcp_config.json`:
 }
 ```
 
+### OpenAI Codex
+
+Quickest path — the installer writes both the MCP config and the
+AGENTS.md briefing (Codex's native instruction file):
+
+```bash
+mtix plugin install --target codex            # project-scoped .codex/config.toml + AGENTS.md
+mtix plugin install --target codex --global   # ~/.codex/config.toml + ~/.codex/AGENTS.md
+```
+
+Existing files are never modified: if a `config.toml` already exists,
+the installer prints the exact stanza to add instead (also available at
+`docs/mcp-config/codex.toml`):
+
+```toml
+[mcp_servers.mtix]
+command = "mtix"
+args = ["mcp"]
+```
+
+Equivalently, use Codex's own CLI: `codex mcp add mtix -- mtix mcp`.
+Project-scoped `.codex/config.toml` applies in trusted projects; the
+global file is `~/.codex/config.toml`. The Codex CLI and IDE extension
+share the same configuration.
+
+### pi
+
+pi has **no built-in MCP support** (a deliberate design choice) but
+integrates with mtix two ways:
+
+1. **AGENTS.md (works out of the box).** pi loads `AGENTS.md`
+   hierarchically from the home directory, parent directories, and the
+   project. Install mtix's agent briefing with:
+
+   ```bash
+   mtix plugin install --target pi             # ./AGENTS.md
+   mtix plugin install --target pi --global    # ~/.pi/agent/AGENTS.md
+   ```
+
+   With the briefing loaded, pi drives the mtix CLI directly through
+   its shell tool — every command in this manual works.
+
+2. **MCP tools via pi-mcp-adapter (optional).** The community
+   [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter)
+   extension proxies MCP servers through a single token-efficient tool.
+   Install it per its README and register the mtix server command:
+   `mtix mcp` (add `--project /path/to/project` for multi-project use).
+
 ## The Context Chain — How Agents Get Their Briefing
 
 The dot-notation hierarchy (e.g., `PROJ-1.3.2`) is more than an ID scheme — it's a **context chain**. Each level adds a layer of context:

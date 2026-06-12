@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-11T15:27:35Z",
+  "exported_at": "2026-06-12T04:24:20Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -3723,15 +3723,66 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-dev",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "7615881d98c6696981f97fbe3cd11092ac75a4cc2b6d8ac7131a8688fcfcb55b",
       "created_at": "2026-06-11T15:27:35Z",
-      "updated_at": "2026-06-11T15:27:35Z"
+      "updated_at": "2026-06-12T04:24:20Z",
+      "closed_at": "2026-06-12T04:24:20Z"
+    },
+    {
+      "id": "MTIX-27.1",
+      "parent_id": "MTIX-27",
+      "depth": 1,
+      "seq": 1,
+      "project": "MTIX",
+      "title": "Codex plugin target: mtix plugin install codex",
+      "description": "Add 'codex' to mtix plugin install targets. Behavior per existing target conventions: install agent docs (AGENTS.md — Codex's native instruction standard) and provide MCP wiring for ~/.codex/config.toml [mcp_servers.mtix] (project-scoped .codex/config.toml in trusted projects). Never clobber an existing config.toml: write when absent, otherwise print the exact stanza to add. Ship docs/mcp-config/codex.toml snippet and an MCP-SETUP.md section. TDD per TDD-WORKFLOW.",
+      "prompt": "",
+      "acceptance": "RED-first tests; mtix plugin install codex produces working config + AGENTS.md; existing-config case never overwrites; MCP-SETUP documents it; coverage on new code \u003e=90%.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-dev",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "e1ef6a829ed35be8b5021efc3306d09e97fc1c520d009c7c11a1e0b474260b3f",
+      "created_at": "2026-06-12T04:14:54Z",
+      "updated_at": "2026-06-12T04:24:20Z",
+      "closed_at": "2026-06-12T04:24:20Z"
+    },
+    {
+      "id": "MTIX-27.2",
+      "parent_id": "MTIX-27",
+      "depth": 1,
+      "seq": 2,
+      "project": "MTIX",
+      "title": "pi integration tier 1: documented setup via AGENTS.md + pi-mcp-adapter",
+      "description": "pi has no built-in MCP by design but loads AGENTS.md hierarchically and supports MCP via the community pi-mcp-adapter extension. Tier 1: add a 'pi' plugin install target that installs the agent docs (AGENTS.md works with pi today) and prints the pi-mcp-adapter setup steps; add MCP-SETUP.md section. Tier-2 native TypeScript extension explicitly out of scope (recorded on MTIX-27).",
+      "prompt": "",
+      "acceptance": "RED-first tests; mtix plugin install pi installs docs and prints adapter guidance; MCP-SETUP documents the pi path.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-dev",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "fbc0722b3c089f685de796821a0a105ef7da1751eb3fabe3c63279c4d8933d3c",
+      "created_at": "2026-06-12T04:14:54Z",
+      "updated_at": "2026-06-12T04:24:20Z",
+      "closed_at": "2026-06-12T04:24:20Z"
     },
     {
       "id": "MTIX-3",
@@ -4870,7 +4921,7 @@
       "agent_id": "claude-dev",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-22",
+      "current_node_id": "MTIX-27",
       "last_heartbeat": "2026-06-10T17:37:31Z"
     },
     {
@@ -4913,6 +4964,6 @@
       "status": "active"
     }
   ],
-  "node_count": 184,
-  "checksum": "5ddb3a7e338d7ddeebf745d483568daf8dcf6fc1c2c62288263d01bc4bbfff22"
+  "node_count": 186,
+  "checksum": "2be93166898d797f24f7b943211555e23385147799698702c179a8392b209955"
 }

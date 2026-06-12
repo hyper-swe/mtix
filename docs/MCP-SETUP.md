@@ -196,7 +196,7 @@ The test: *"If an agent reads only the assembled context from root to this node,
 
 See the auto-generated `CONTEXT_CHAIN.md` in your project's `.mtix/docs/` for detailed examples.
 
-## Available Tools (37)
+## Available Tools (38)
 
 Once connected, the following MCP tools are available:
 

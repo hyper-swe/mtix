@@ -980,6 +980,8 @@ The gRPC service mirrors the REST API with strongly-typed request/response messa
 
 mtix registers as an MCP (Model Context Protocol) tool provider for LLM agent frameworks. When running as a server, agents can discover and invoke tools programmatically.
 
+Client setup for Claude Desktop, Claude Code, Cursor, Windsurf, OpenAI Codex, and pi is covered in [docs/MCP-SETUP.md](docs/MCP-SETUP.md). For Claude Code, Codex, and pi, `mtix plugin install --target <agent>` performs the setup (skills for Claude Code; AGENTS.md briefing plus MCP config for Codex; AGENTS.md plus pi-mcp-adapter guidance for pi). Installs are non-destructive: existing files are never modified.
+
 ### Tool Categories
 
 **Node Management:** `mtix_create`, `mtix_show`, `mtix_list`, `mtix_update`, `mtix_delete`, `mtix_undelete`, `mtix_decompose`

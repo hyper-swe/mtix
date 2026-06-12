@@ -77,9 +77,21 @@ go install github.com/hyper-swe/mtix/cmd/mtix@latest
 /plugin install mtix
 ```
 
-### OpenAI Codex Plugin
+### OpenAI Codex
 
-See [docs/codex/AGENTS.md](docs/codex/AGENTS.md) for Codex agent setup.
+```bash
+mtix plugin install --target codex   # AGENTS.md briefing + MCP server in .codex/config.toml
+```
+
+Existing files are never modified — add `--global` for `~/.codex/`. Details: [MCP Setup Guide](docs/MCP-SETUP.md).
+
+### pi
+
+```bash
+mtix plugin install --target pi      # AGENTS.md briefing (pi loads it natively)
+```
+
+pi drives the mtix CLI through its shell tool; for MCP tools the install prints [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter) setup guidance. Details: [MCP Setup Guide](docs/MCP-SETUP.md).
 
 ## Quick Start
 
@@ -275,9 +287,9 @@ All mutations require `X-Requested-With: mtix` header (CSRF protection).
 
 ### MCP Tools
 
-mtix runs as an MCP server via `mtix mcp`, exposing 37 tools for LLM agents: `mtix_create`, `mtix_context`, `mtix_claim`, `mtix_done`, `mtix_decompose`, `mtix_search`, `mtix_sync_workflow` (for the FR-18 sync hub state-detection + safe-recommendations surface), and more. The most important tool is `mtix_context` — it assembles the full context chain from root to the target node, giving the agent its complete briefing.
+mtix runs as an MCP server via `mtix mcp`, exposing 38 tools for LLM agents: `mtix_create`, `mtix_context`, `mtix_claim`, `mtix_done`, `mtix_decompose`, `mtix_search`, `mtix_sync_workflow` (for the FR-18 sync hub state-detection + safe-recommendations surface), and more. The most important tool is `mtix_context` — it assembles the full context chain from root to the target node, giving the agent its complete briefing.
 
-See [MCP Setup Guide](docs/MCP-SETUP.md) for client configuration (Claude Desktop, Claude Code, Cursor, Windsurf).
+See [MCP Setup Guide](docs/MCP-SETUP.md) for client configuration (Claude Desktop, Claude Code, Cursor, Windsurf, OpenAI Codex, pi).
 
 ## CLI Reference
 
@@ -394,7 +406,7 @@ Manage via CLI: `mtix config set auto_claim true`
 ## Documentation
 
 - **[User Manual](USERMANUAL.md)** — Comprehensive guide covering every feature: hierarchy, state machine, dependencies, prompt steering, agent management, REST/gRPC/MCP APIs, backup/export/import, and more.
-- **[MCP Setup Guide](docs/MCP-SETUP.md)** — Configure mtix as an MCP server for Claude Desktop, Claude Code, Cursor, and Windsurf. Includes multi-project setup and context chain usage.
+- **[MCP Setup Guide](docs/MCP-SETUP.md)** — Configure mtix as an MCP server for Claude Desktop, Claude Code, Cursor, Windsurf, OpenAI Codex, and pi. Includes multi-project setup and context chain usage.
 - **[Security Model](docs/SECURITY-MODEL.md)** — Trust model and threat model for mtix. **Required reading before adopting BYO Postgres mode** for team collaboration. Documents what mtix protects against, what it does not, and the security checklist for adopters.
 
 ## License

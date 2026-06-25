@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-12T04:24:20Z",
+  "exported_at": "2026-06-25T06:40:30Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -3785,6 +3785,30 @@
       "closed_at": "2026-06-12T04:24:20Z"
     },
     {
+      "id": "MTIX-28",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 28,
+      "project": "MTIX",
+      "title": "Sync: concurrent create-under-same-parent collides; one ticket silently lost",
+      "description": "Distributed ID-collision data loss in the FR-18 sync hub. IDs are assigned from the LOCAL sequences table (node_service.go:215 -\u003e store.go:308); the hub assigns no IDs (SYNC-DESIGN s2). Two CLIs that have not yet pulled each other both compute the same next seq under a shared parent and mint the same dot-notation ID (e.g. PRJX-1.4) with different content. At sync: both create_node events carry the same node_id but distinct UUIDv7 event_ids, so the hub stores both (push dedups on event_id only, push_pull.go:63); detectConflicts skips create_node (push_pull.go:148-152) so NO conflict is logged; applyCreateNode does INSERT OR IGNORE INTO nodes (sync_apply.go:393) so the first create_node applied wins and the second is silently dropped. Because the hub gives a total order, all replicas drop the SAME one (convergence holds) but one real ticket's content vanishes with no surfaced conflict. Secondary harms: (a) the losing user's later field-edit events keyed on the same node_id land on the surviving user's node; (b) applying remote creates does not advance the local sequences counter (no sequences write in the apply/pull path), so collisions can RECUR after sync. Scope: concurrent creates under the same parent before either pulls (offline / parallel agents on different machines); single-store parallelism is safe (atomic NextSequence). First deliverable: an e2e reproduction against a real PG hub (also runnable verbatim against Neon). Remediation tiers proposed: (1) stop silent loss - detect node_id collision with a different originating event_id in applyCreateNode, surface as a sync_conflicts row + quarantine instead of INSERT OR IGNORE, wiring into the existing both-renumbered manual action (SYNC-DESIGN line 282); (2) auto keep-both - renumber the incoming node to the next free seq and remap its event stream; (3) advance the local sequences counter on remote-create apply to stop recurrence. Recommend 1+3 first.",
+      "prompt": "",
+      "acceptance": "e2e repro demonstrates the loss on a real hub (green characterization test, CI-safe, gated on MTIX_PG_TEST_DSN); fix turns silent loss into a surfaced, non-recurring, resolvable conflict; regression test flips to assert both tickets preserved/surfaced.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "8f22e45ac026a440fdccb707300c243e1e758d9f4320023b11998c77f0ba009b",
+      "created_at": "2026-06-25T06:36:43Z",
+      "updated_at": "2026-06-25T06:36:43Z"
+    },
+    {
       "id": "MTIX-3",
       "parent_id": "",
       "depth": 0,
@@ -4964,6 +4988,6 @@
       "status": "active"
     }
   ],
-  "node_count": 186,
-  "checksum": "2be93166898d797f24f7b943211555e23385147799698702c179a8392b209955"
+  "node_count": 187,
+  "checksum": "89bd9053f46fab628356090849e17a8c1fd582c07e27a61a538e8b447516418f"
 }

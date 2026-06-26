@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-26T15:02:55Z",
+  "exported_at": "2026-06-26T16:13:56Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -4072,7 +4072,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.35714285714285715,
+      "progress": 0.3333333333333333,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -4227,6 +4227,30 @@
       "created_at": "2026-06-26T13:43:54Z",
       "updated_at": "2026-06-26T14:22:10Z",
       "closed_at": "2026-06-26T14:22:10Z"
+    },
+    {
+      "id": "MTIX-30.15",
+      "parent_id": "MTIX-30",
+      "depth": 1,
+      "seq": 15,
+      "project": "MTIX",
+      "title": "Hub registry must be UID-aware (idempotent on re-create) — fixes force-backfill false-collision",
+      "description": "REGRESSION shipped in MTIX-30.4, found integrating 30.6. The hub registry (partial unique index on (project_prefix, node_id) WHERE op_type='create_node') flags ANY second create_node at the same display_path with a different event_id as renumber-required — but a --force backfill legitimately re-creates the SAME logical node with a fresh event_id, so it's a FALSE collision. Combined with pushAll not draining renumber outcomes, two e2e tests hang and are currently SKIPPED: TestE2E_Collision_ConcurrentCreateUnderSameParent (also needs 30.7) and TestE2E_Backfill_HubDedupOnDuplicatePush. FIX: make the registry idempotent on the node UID (now that 30.6 carries uid on events) — a re-create with the SAME uid is a no-op, not a renumber; only a DIFFERENT uid at the same display_path is a real collision. Requires backfill/emit to preserve a node's existing uid on re-create rather than self-anchoring to a fresh event_id. Un-skip both e2e tests when done. DEV RULES (CONTRIBUTING-LLM, TDD-WORKFLOW, QUALITY-STANDARDS, SECURITY-MODEL, ADR-003): TDD red-green-refactor — write failing tests FIRST, confirm RED, add the minimum code to GREEN, then refactor while green. Coverage gate \u003e=90% (storage \u003e=95%) AND scenario coverage: explicitly enumerate and test happy + error + corner + edge cases, never only the best case. Parameterized SQL; all writes transactional; honor the NFR-2.8 fail-stop/disk-full/integrity guards. Godoc on every exported symbol; reference the ADR-003 section/NFR each unit implements. Run /simplify on BOTH the implementation AND the tests and apply the findings. Security+safety: align with the SECURITY-MODEL trust model and the ADR-003 Section 14 audit; run /security-review and the e2e/faultinject suite for any storage/sync change. Commit tests and code together per repo commit rules.",
+      "prompt": "",
+      "acceptance": "Registry keys idempotency on uid; force-backfill re-push of an existing node is accepted (no false renumber); genuine distinct-uid collision still renumber-required; both skipped e2e tests un-skipped and green; scenario coverage incl. force-backfill, genuine collision, idempotent same-event re-push.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "03397bc950bac97d6dade87a18337d4bcf149829dfcf5e1a7dd2daee1dfcb3a8",
+      "created_at": "2026-06-26T16:13:56Z",
+      "updated_at": "2026-06-26T16:13:56Z"
     },
     {
       "id": "MTIX-30.2",
@@ -5398,6 +5422,6 @@
       "status": "active"
     }
   ],
-  "node_count": 203,
-  "checksum": "0864df5a9e097696a2b50923fd1f1d1f72431bd0427a5834bd84574e777c15be"
+  "node_count": 204,
+  "checksum": "95afc3a18f0c7313698a3ef4c786b2d4935f7b29d573d6bdb793487dd643dde5"
 }

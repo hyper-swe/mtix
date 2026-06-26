@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-26T14:22:27Z",
+  "exported_at": "2026-06-26T14:55:52Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -4072,7 +4072,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.21428571428571427,
+      "progress": 0.2857142857142857,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -4168,15 +4168,15 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "claude-wave3-mgit",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "1396834df823aff81acc71093150660363b02915db1b91fca93d5742803c0639",
       "created_at": "2026-06-26T10:51:15Z",
-      "updated_at": "2026-06-26T10:51:15Z"
+      "updated_at": "2026-06-26T14:41:17Z"
     },
     {
       "id": "MTIX-30.13",
@@ -4290,15 +4290,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-wave3-mgit",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "caa2b8d12681370f8877fd6dcc25001a717d1417a341cd8ea03b3ace6da62b12",
       "created_at": "2026-06-26T10:51:15Z",
-      "updated_at": "2026-06-26T10:51:15Z"
+      "updated_at": "2026-06-26T14:55:52Z",
+      "closed_at": "2026-06-26T14:55:52Z"
     },
     {
       "id": "MTIX-30.5",
@@ -5357,6 +5358,13 @@
       "last_heartbeat": "2026-06-26T14:05:55Z"
     },
     {
+      "agent_id": "claude-wave3-mgit",
+      "project": "MTIX",
+      "state": "working",
+      "current_node_id": "MTIX-30.12",
+      "last_heartbeat": "2026-06-26T14:41:17Z"
+    },
+    {
       "agent_id": "dev",
       "project": "MTIX",
       "state": "working",
@@ -5390,5 +5398,5 @@
     }
   ],
   "node_count": 203,
-  "checksum": "9df29df9549ea643cf3d2822d678da93c9411cb25221ec4aa3e69e9e80fc5e98"
+  "checksum": "eaa90bcc2644cdc71fa109b5d068aac4a7ba60780f217476bb2efbfbfbc01e36"
 }

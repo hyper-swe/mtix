@@ -82,3 +82,6 @@ screenshots/playwright/
 .env.test.local
 .mtix/secrets
 .supabase-ca.crt
+
+# mgit local store (never commit)
+.mgit/

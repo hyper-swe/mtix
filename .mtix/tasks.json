@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-26T14:55:52Z",
+  "exported_at": "2026-06-26T15:02:55Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -4072,7 +4072,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.2857142857142857,
+      "progress": 0.35714285714285715,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -4168,15 +4168,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-wave3-mgit",
       "creator": "cli",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "1396834df823aff81acc71093150660363b02915db1b91fca93d5742803c0639",
       "created_at": "2026-06-26T10:51:15Z",
-      "updated_at": "2026-06-26T14:41:17Z"
+      "updated_at": "2026-06-26T15:02:55Z",
+      "closed_at": "2026-06-26T15:02:55Z"
     },
     {
       "id": "MTIX-30.13",
@@ -5398,5 +5399,5 @@
     }
   ],
   "node_count": 203,
-  "checksum": "eaa90bcc2644cdc71fa109b5d068aac4a7ba60780f217476bb2efbfbfbc01e36"
+  "checksum": "0864df5a9e097696a2b50923fd1f1d1f72431bd0427a5834bd84574e777c15be"
 }

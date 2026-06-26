@@ -30,6 +30,13 @@ type ConflictDescriptor struct {
 // IDs that landed (after ON CONFLICT DO NOTHING dedupe) plus any
 // concurrency conflicts detected against pre-existing events.
 //
+// This is the field-level-conflict view kept for callers that predate
+// the node registry. It DISCARDS the renumber-required outcomes; callers
+// that need them (the claim flow per ADR-003 §6) MUST use
+// PushEventsWithRenumbers. A renumber-required create is simply not
+// listed in acceptedIDs here — no node is lost, but the caller is not
+// told to retry the number.
+//
 // Atomicity: all events are inserted in a single PG transaction.
 // Validation happens BEFORE the transaction opens; an invalid batch
 // returns immediately with no PG side effects.
@@ -39,62 +46,107 @@ type ConflictDescriptor struct {
 func (p *Pool) PushEvents(ctx context.Context, events []*model.SyncEvent) (
 	acceptedIDs []string, conflicts []ConflictDescriptor, err error,
 ) {
+	acceptedIDs, conflicts, _, err = p.PushEventsWithRenumbers(ctx, events)
+	return acceptedIDs, conflicts, err
+}
+
+// PushEventsWithRenumbers is PushEvents plus the structured
+// renumber-required outcomes from the node registry (ADR-003 §6).
+//
+// An incoming create_node whose (project_prefix, display_path) is already
+// registered (by a DIFFERENT create event — first-writer-wins) is NOT
+// inserted and is returned in renumbers so the claimer can retry the next
+// free number. Re-pushing the SAME create event (same event_id) is an
+// idempotent no-op, never a renumber.
+//
+// A renumber-required result NEVER loses a node: the rejected node stays
+// in the pusher's canonical local store; only its display number must
+// move. Per ADR-003 §9 the registry is liveness, not a security boundary.
+//
+// Block scope (ADR-003 §6.1/F-1): one node's collision does NOT wedge the
+// batch — every other event in the same push still lands.
+//
+// Atomicity and idempotency match PushEvents.
+func (p *Pool) PushEventsWithRenumbers(ctx context.Context, events []*model.SyncEvent) (
+	acceptedIDs []string, conflicts []ConflictDescriptor, renumbers []RenumberRequired, err error,
+) {
 	if len(events) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	// Validate before touching the pool: caller-side bugs surface even
 	// when the pool is misconfigured.
 	if vErr := validator.ValidateBatch(events, time.Now().UTC(), nil); vErr != nil {
-		return nil, nil, fmt.Errorf("PushEvents validate: %w", vErr)
+		return nil, nil, nil, fmt.Errorf("PushEvents validate: %w", vErr)
 	}
 	if p == nil || p.p == nil {
-		return nil, nil, fmt.Errorf("PushEvents: pool not open")
+		return nil, nil, nil, fmt.Errorf("PushEvents: pool not open")
 	}
 
 	cfg := DefaultRetryConfig()
 	err = retryWithBackoff(ctx, cfg, func(ctx context.Context) error {
-		ids, conf, opErr := p.pushEventsOnce(ctx, events)
+		ids, conf, ren, opErr := p.pushEventsOnce(ctx, events)
 		if opErr != nil {
 			return opErr
 		}
 		acceptedIDs = ids
 		conflicts = conf
+		renumbers = ren
 		return nil
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("PushEvents: %w", err)
+		return nil, nil, nil, fmt.Errorf("PushEvents: %w", err)
 	}
-	return acceptedIDs, conflicts, nil
+	return acceptedIDs, conflicts, renumbers, nil
 }
 
 // pushEventsOnce runs one PG transaction's worth of pushes. Wrapped
 // by retryWithBackoff in PushEvents.
 func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
-	[]string, []ConflictDescriptor, error,
+	[]string, []ConflictDescriptor, []RenumberRequired, error,
 ) {
 	tx, err := p.p.Begin(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("begin: %w", err)
+		return nil, nil, nil, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	accepted := make([]string, 0, len(events))
 	conflicts := make([]ConflictDescriptor, 0)
+	renumbers := make([]RenumberRequired, 0)
 	// Track distinct project prefixes so the version-gate client row
 	// (ADR-003 §7 Phase 1.5/3) is upserted once per project in this
 	// batch, inside the same tx as the events it covers.
 	seenPrefixes := make(map[string]struct{}, 1)
+	// Track create_node numbers claimed earlier in THIS batch. The
+	// partial unique index only sees committed rows, so two creates for
+	// the same number within one push must be serialized here: the first
+	// claims the key, later ones get a renumber outcome (ADR-003 §6.1/F-1).
+	batchClaims := make(map[registryKey]string, len(events))
 
 	for _, e := range events {
+		// Registry check (ADR-003 §6): a second create_node for an
+		// already-registered (project, display_path) is held for
+		// renumber rather than inserted. First-writer-wins; no node is
+		// lost (ADR-003 §9). A nil renumber means the number is free.
+		renumber, err := registryRenumber(ctx, tx, e, batchClaims)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("registry check for %s: %w", e.EventID, err)
+		}
+		if renumber != nil {
+			renumbers = append(renumbers, *renumber)
+			seenPrefixes[e.ProjectPrefix] = struct{}{}
+			continue
+		}
+
 		conf, err := detectConflicts(ctx, tx, e)
 		if err != nil {
-			return nil, nil, fmt.Errorf("detect conflicts for %s: %w", e.EventID, err)
+			return nil, nil, nil, fmt.Errorf("detect conflicts for %s: %w", e.EventID, err)
 		}
 		conflicts = append(conflicts, conf...)
 
 		vcJSON, err := json.Marshal(e.VectorClock)
 		if err != nil {
-			return nil, nil, fmt.Errorf("marshal VC for %s: %w", e.EventID, err)
+			return nil, nil, nil, fmt.Errorf("marshal VC for %s: %w", e.EventID, err)
 		}
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO sync_events
@@ -108,30 +160,15 @@ func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
 			e.AuthorID, e.AuthorMachineHash,
 		)
 		if err != nil {
-			return nil, nil, fmt.Errorf("insert %s: %w", e.EventID, err)
+			return nil, nil, nil, fmt.Errorf("insert %s: %w", e.EventID, err)
 		}
 		if tag.RowsAffected() == 1 {
 			accepted = append(accepted, e.EventID)
 		}
 		seenPrefixes[e.ProjectPrefix] = struct{}{}
 
-		// MTIX-15.5.2: persist each detected conflict to the hub's
-		// sync_conflicts table inside the same tx. Resolution is set
-		// to 'lww' here; manual overrides via mtix sync conflicts
-		// resolve (15.7) UPDATE the resolved_by column — but UPDATE
-		// is forbidden by the trigger from 15.2.5/006_triggers.sql,
-		// so manual resolution actually INSERTs a new conflict row
-		// with resolution='manual' that supersedes the lww row.
-		for _, c := range conf {
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO sync_conflicts
-				  (event_id_a, event_id_b, node_id, field_name, resolution)
-				VALUES ($1, $2, $3, $4, 'lww')`,
-				c.NewEventID, c.ConflictingEventID, c.NodeID, c.FieldName,
-			); err != nil {
-				return nil, nil, fmt.Errorf("persist conflict %s vs %s: %w",
-					c.NewEventID, c.ConflictingEventID, err)
-			}
+		if err := persistConflicts(ctx, tx, conf); err != nil {
+			return nil, nil, nil, err
 		}
 	}
 
@@ -140,14 +177,35 @@ func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
 	// when no client identity is set (SetClientIdentity not called).
 	for prefix := range seenPrefixes {
 		if err := p.recordClientOnPush(ctx, tx, prefix); err != nil {
-			return nil, nil, fmt.Errorf("record client for %s: %w", prefix, err)
+			return nil, nil, nil, fmt.Errorf("record client for %s: %w", prefix, err)
 		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return nil, nil, fmt.Errorf("commit: %w", err)
+		return nil, nil, nil, fmt.Errorf("commit: %w", err)
 	}
-	return accepted, conflicts, nil
+	return accepted, conflicts, renumbers, nil
+}
+
+// persistConflicts writes each detected field-level conflict to the
+// hub's sync_conflicts table inside the push transaction (MTIX-15.5.2).
+// Resolution is recorded as 'lww'; a manual override via mtix sync
+// conflicts resolve (15.7) INSERTs a new resolution='manual' row that
+// supersedes the lww row, because the 006_triggers.sql trigger forbids
+// UPDATE on sync_conflicts. Parameterized SQL only.
+func persistConflicts(ctx context.Context, tx pgx.Tx, conf []ConflictDescriptor) error {
+	for _, c := range conf {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO sync_conflicts
+			  (event_id_a, event_id_b, node_id, field_name, resolution)
+			VALUES ($1, $2, $3, $4, 'lww')`,
+			c.NewEventID, c.ConflictingEventID, c.NodeID, c.FieldName,
+		); err != nil {
+			return fmt.Errorf("persist conflict %s vs %s: %w",
+				c.NewEventID, c.ConflictingEventID, err)
+		}
+	}
+	return nil
 }
 
 // detectConflicts looks for prior events on the same node that are

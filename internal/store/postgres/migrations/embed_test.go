@@ -24,6 +24,7 @@ func TestMigrations_FilesPresent(t *testing.T) {
 		"006_triggers.sql",
 		"007_advisory_lock.sql",
 		"008_sync_project_clients.sql",
+		"009_node_registry_index.sql",
 	}
 	require.Equal(t, want, got, "all hub-schema files must be embedded in lex order")
 }
@@ -100,6 +101,26 @@ func TestMigrations_TriggersFileEnforcesAppendOnly(t *testing.T) {
 	require.Contains(t, body, "sync_conflicts_no_delete")
 	require.Contains(t, body, "RAISE EXCEPTION")
 	require.Contains(t, body, "FR-18.5")
+}
+
+// TestMigrations_RegistryIndexIsPartialUnique asserts the MTIX-30.4
+// registry (ADR-003 §6) is a DERIVED partial unique index over the
+// append-only log — keyed on (project_prefix, node_id) and scoped to
+// create_node rows — not a separate authoritative table. The WHERE
+// clause is load-bearing: a non-partial unique index would reject
+// legitimate non-create events that repeat a node_id (update_field,
+// transition_status, etc.).
+func TestMigrations_RegistryIndexIsPartialUnique(t *testing.T) {
+	body, err := migrations.Read("009_node_registry_index.sql")
+	require.NoError(t, err)
+	require.Contains(t, body, "CREATE UNIQUE INDEX",
+		"registry must be a UNIQUE index")
+	require.Contains(t, body, "(project_prefix, node_id)",
+		"registry is keyed on (project_prefix, node_id) per ADR-003 §6")
+	require.Contains(t, body, "WHERE op_type = 'create_node'",
+		"registry must be PARTIAL (create_node rows only) per ADR-003 §6")
+	require.Contains(t, body, "ADR-003",
+		"registry migration must reference its design rationale")
 }
 
 // TestMigrations_OpTypeCheckMatchesModel ensures the SQL CHECK constraint

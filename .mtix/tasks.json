@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-25T13:22:18Z",
+  "exported_at": "2026-06-26T10:26:06Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -3809,6 +3809,30 @@
       "updated_at": "2026-06-25T06:36:43Z"
     },
     {
+      "id": "MTIX-29",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 29,
+      "project": "MTIX",
+      "title": "Security: plugin install follows dangling symlinks (CWE-59 file creation)",
+      "description": "MTIX-27 plugin install (internal/docs/plugin_agents.go + shared fileExists in internal/docs/generator.go). fileExists() uses os.Stat, which returns false for a DANGLING symlink (target absent). The write-if-absent paths (installAgentsFile os.Create; installConfigIfAbsent os.WriteFile; also the pre-existing claude-code renderToFile) then proceed and FOLLOW the symlink, creating the file at the symlink's target (proven by direct test: WriteFile through a dangling symlink whose target-parent exists returns nil and creates the victim file). Attack: a cloned/shared repo carries a committed symlink at e.g. .codex/config.toml or AGENTS.md pointing at a user-writable path whose parent exists (git checks out symlinks on macOS/Linux); victim runs 'mtix plugin install --target codex|pi' and a file is created OUTSIDE the project as the victim user = privilege crossing (write-to-repo -\u003e create-file-elsewhere). BOUNDED: (1) cannot OVERWRITE existing files — a symlink to an existing target makes fileExists true and the code skips; only NEW files (target absent) are created. (2) content is NOT attacker-controlled — fixed codexMCPStanza / validated AGENTS.md template — so no RCE/credential injection; impact is unwanted file creation/planting. Severity MEDIUM. NOT in v0.3.0-beta (MTIX-27 merged after the tag). Fix: fileExists should use os.Lstat (a symlink, dangling or not, counts as present -\u003e code skips/manual, never writes through); optionally add O_EXCL on the create as defense-in-depth. The fix is in the shared helper so it hardens the claude-code path too. Add a regression test (dangling symlink at target -\u003e no write-through).",
+      "prompt": "",
+      "acceptance": "fileExists treats symlinks as present; plugin install never writes through a symlink; regression test with a dangling symlink proves no out-of-dir write; claude-code path covered by the same fix.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "5a416067b3b4950e30f656158137c27fee3a94481e72cf44187f548996cf19e4",
+      "created_at": "2026-06-25T13:37:28Z",
+      "updated_at": "2026-06-25T13:37:28Z"
+    },
+    {
       "id": "MTIX-3",
       "parent_id": "",
       "depth": 0,
@@ -4988,6 +5012,6 @@
       "status": "active"
     }
   ],
-  "node_count": 187,
-  "checksum": "89bd9053f46fab628356090849e17a8c1fd582c07e27a61a538e8b447516418f"
+  "node_count": 188,
+  "checksum": "887ca7272cbf8056baa54f1dcd8d6bffe11a6fb7228097e833d2b6f9230bc462"
 }

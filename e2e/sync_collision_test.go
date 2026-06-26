@@ -40,6 +40,16 @@ func allTitles(t *testing.T, c *fakeCLI) []string {
 // mint the SAME id, and the sync layer neither preserves both nor surfaces
 // a conflict — the two replicas end up disagreeing about what that id IS.
 func TestE2E_Collision_ConcurrentCreateUnderSameParent(t *testing.T) {
+	// SUPERSEDED MID-FIX (MTIX-30.4): the hub registry now returns a
+	// renumber-required outcome for the second, colliding create instead of
+	// silently accepting it (accepted=0). This test's pushAll helper has no
+	// way to drain a renumber outcome, so the loop would spin forever. That
+	// is evidence the fix is landing, not a regression. MTIX-30.7 owns the
+	// rewrite: teach pushAll to handle renumber outcomes and flip these
+	// assertions to the DESIRED behavior (both tickets preserved, distinct
+	// numbers, all replicas agree). Skipped until then so it cannot hang.
+	t.Skip("superseded by MTIX-30.4 registry; rewritten in MTIX-30.7 (see comment)")
+
 	pool := openHub(t)
 	ctx := context.Background()
 

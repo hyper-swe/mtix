@@ -91,7 +91,10 @@ func runShow(id string) error {
 	}
 
 	ctx := context.Background()
-	node, err := app.nodeSvc.GetNode(ctx, id)
+	// Resolve display_path -> uid -> node so a reference survives a renumber
+	// (ADR-003 §5): a plain display id is the common case, but a reference held
+	// as a durable uid still resolves to the node's current path.
+	node, err := resolveNodeRef(ctx, app.store, id)
 	if err != nil {
 		return err
 	}
@@ -213,10 +216,14 @@ func runTree(id string, maxDepth int) error {
 	}
 
 	ctx := context.Background()
-	node, err := app.nodeSvc.GetNode(ctx, id)
+	// Resolve display_path -> uid -> node so a uid-borne reference still
+	// resolves to the node's current path (ADR-003 §5); the tree is then walked
+	// from the resolved (current) display id.
+	node, err := resolveNodeRef(ctx, app.store, id)
 	if err != nil {
 		return err
 	}
+	id = node.ID
 
 	out := NewOutputWriter(app.jsonOutput)
 

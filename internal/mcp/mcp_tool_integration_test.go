@@ -95,6 +95,12 @@ func (m *dbMockStore) CreateNode(_ context.Context, _ *model.Node) error   { ret
 func (m *dbMockStore) GetNode(_ context.Context, id string) (*model.Node, error) {
 	return &model.Node{ID: id, Title: "mock", Status: model.StatusOpen}, nil
 }
+func (m *dbMockStore) ResolveUIDByDisplayPath(_ context.Context, _ string) (string, error) {
+	return "mock-uid", nil
+}
+func (m *dbMockStore) ResolveDisplayPathByUID(_ context.Context, _ string) (string, error) {
+	return "MOCK-1", nil
+}
 func (m *dbMockStore) UpdateNode(_ context.Context, _ string, _ *store.NodeUpdate) error { return nil }
 func (m *dbMockStore) DeleteNode(_ context.Context, _ string, _ bool, _ string) error    { return nil }
 func (m *dbMockStore) UndeleteNode(_ context.Context, _ string) error                    { return nil }

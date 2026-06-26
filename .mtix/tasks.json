@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-26T16:14:14Z",
+  "exported_at": "2026-06-26T17:53:52Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -4072,7 +4072,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.4,
+      "progress": 0.4666666666666667,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -4242,15 +4242,15 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "claude-wave-v2",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "03397bc950bac97d6dade87a18337d4bcf149829dfcf5e1a7dd2daee1dfcb3a8",
       "created_at": "2026-06-26T16:13:56Z",
-      "updated_at": "2026-06-26T16:13:56Z"
+      "updated_at": "2026-06-26T17:33:30Z"
     },
     {
       "id": "MTIX-30.2",
@@ -4340,15 +4340,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-wave-v2",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "d2644a92d2d7c6a0f8de9a7f9bba6376a4552763b3930ee80559c6be30ab1e78",
       "created_at": "2026-06-26T10:51:15Z",
-      "updated_at": "2026-06-26T10:51:15Z"
+      "updated_at": "2026-06-26T17:53:52Z",
+      "closed_at": "2026-06-26T17:53:52Z"
     },
     {
       "id": "MTIX-30.6",
@@ -5384,6 +5385,13 @@
       "last_heartbeat": "2026-06-26T16:14:14Z"
     },
     {
+      "agent_id": "claude-wave-v2",
+      "project": "MTIX",
+      "state": "working",
+      "current_node_id": "MTIX-30.5",
+      "last_heartbeat": "2026-06-26T17:33:30Z"
+    },
+    {
       "agent_id": "claude-wave2",
       "project": "MTIX",
       "state": "working",
@@ -5431,5 +5439,5 @@
     }
   ],
   "node_count": 204,
-  "checksum": "c92401d104dc331ae4321dac747af2aa651790a9dd027ad5022628fe6a5ff758"
+  "checksum": "fba007a929d6e0155bdda1d697a85055559aa58be7cb122a2a196b1646f100ff"
 }

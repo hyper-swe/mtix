@@ -23,8 +23,9 @@ func TestMigrations_FilesPresent(t *testing.T) {
 		"005_audit_log.sql",
 		"006_triggers.sql",
 		"007_advisory_lock.sql",
+		"008_sync_project_clients.sql",
 	}
-	require.Equal(t, want, got, "all 7 hub-schema files must be embedded in lex order")
+	require.Equal(t, want, got, "all hub-schema files must be embedded in lex order")
 }
 
 func TestMigrations_OrderingIsLexical(t *testing.T) {
@@ -45,7 +46,9 @@ func TestMigrations_ReadEachFile(t *testing.T) {
 			body, err := migrations.Read(f)
 			require.NoError(t, err)
 			require.NotEmpty(t, body, "%s must not be empty", f)
-			require.Contains(t, body, "MTIX-15.2 hub schema",
+			// Every migration carries a canonical "<ticket> hub schema"
+			// header so an unattributed SQL file trips this test.
+			require.Contains(t, body, "hub schema",
 				"%s missing canonical comment header", f)
 		})
 	}
@@ -64,9 +67,10 @@ func TestMigrations_ContainExpectedTables(t *testing.T) {
 	want := map[string]int{
 		"sync_events":     0,
 		"sync_conflicts":  0,
-		"sync_projects":   0,
-		"applied_events":  0,
-		"audit_log":       0,
+		"sync_projects":        0,
+		"applied_events":       0,
+		"audit_log":            0,
+		"sync_project_clients": 0,
 	}
 	files, err := migrations.Files()
 	require.NoError(t, err)

@@ -106,6 +106,12 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 	}
 	defer pool.Close()
 
+	// Report this CLI's build version into each push so the
+	// version-negotiation gate (ADR-003 §7 Phase 1.5/3) sees the latest
+	// version of every active client. No-op when the machine hash can't
+	// be computed (treated as "no identity"; the gate stays closed).
+	pool.SetClientIdentity(clientMachineHash(), version)
+
 	pushed, batches, conflicts, err := pushLoop(ctx, stderr, pool, app.store)
 	if err != nil {
 		noteSyncResult(ctx, app.store, false)

@@ -80,6 +80,10 @@ func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
 
 	accepted := make([]string, 0, len(events))
 	conflicts := make([]ConflictDescriptor, 0)
+	// Track distinct project prefixes so the version-gate client row
+	// (ADR-003 §7 Phase 1.5/3) is upserted once per project in this
+	// batch, inside the same tx as the events it covers.
+	seenPrefixes := make(map[string]struct{}, 1)
 
 	for _, e := range events {
 		conf, err := detectConflicts(ctx, tx, e)
@@ -109,6 +113,7 @@ func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
 		if tag.RowsAffected() == 1 {
 			accepted = append(accepted, e.EventID)
 		}
+		seenPrefixes[e.ProjectPrefix] = struct{}{}
 
 		// MTIX-15.5.2: persist each detected conflict to the hub's
 		// sync_conflicts table inside the same tx. Resolution is set
@@ -127,6 +132,15 @@ func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
 				return nil, nil, fmt.Errorf("persist conflict %s vs %s: %w",
 					c.NewEventID, c.ConflictingEventID, err)
 			}
+		}
+	}
+
+	// Record the calling CLI's version for each project touched, in the
+	// same tx, so the gate's view reflects this push atomically. No-op
+	// when no client identity is set (SetClientIdentity not called).
+	for prefix := range seenPrefixes {
+		if err := p.recordClientOnPush(ctx, tx, prefix); err != nil {
+			return nil, nil, fmt.Errorf("record client for %s: %w", prefix, err)
 		}
 	}
 

@@ -52,6 +52,17 @@
 #   .mtix/secrets (mode 0600). If neither is set, the hook warns and
 #   exits 0 — sync is opt-in.
 # ---------------------------------------------------------------------------
+#
+# Provisional-id externalization guardrail (ADR-003 §8)
+#   A node display_path that still carries a uid segment is *provisional*:
+#   valid and resolvable now, but its number is not yet settled and WILL
+#   change. Embedding a provisional id in an immutable artifact (a commit
+#   message, here) leaves a dangling reference once it settles. Before the
+#   push goes out we scan the outgoing commit messages for provisional ids,
+#   detectable from the id SHAPE alone (a `.u<hex>` segment), and warn.
+#   Default is warn-and-continue (primitives, not policy). Export
+#   MTIX_BLOCK_PROVISIONAL=1 to escalate the warning into a hard refusal.
+# ---------------------------------------------------------------------------
 
 set -euo pipefail
 
@@ -68,6 +79,64 @@ export MTIX_BIN
 # Only run inside a project that uses mtix.
 if [ ! -d ".mtix" ]; then
   exit 0
+fi
+
+# --- Provisional-id externalization guardrail (ADR-003 §8) ------------------
+# Read the ref updates git feeds on stdin ("<localref> <localsha>
+# <remoteref> <remotesha>") and scan the outgoing commit messages for a
+# provisional id shape. Shape-only detection, consistent with
+# model.IsProvisional: a node id whose dot-path carries a uid segment
+# (the marker 'u' followed by lowercase hex), e.g. PRJX-1.u0a1b2c3d4e5 or
+# PRJX-1.2.u0a1b2c3d4e5.4. A fully-numeric id (PRJX-1.4) is settled and
+# safe to externalize, so it never matches.
+PROVISIONAL_RE='[A-Za-z][A-Za-z0-9-]*-[0-9]+(\.[0-9a-z]+)*\.u[0-9a-f]+'
+ZERO_SHA='0000000000000000000000000000000000000000'
+
+scan_range_for_provisional() {
+  # Args ($@) = git rev-list revision selectors. Prints offending
+  # "<sha> <subject> [<ids>]" lines (one per commit that embeds a
+  # provisional id) to stdout. Each selector is passed as its own argv
+  # word so multi-token ranges (e.g. "<sha> --not --remotes") are not
+  # collapsed into a single malformed revision.
+  git rev-list "$@" 2>/dev/null | while IFS= read -r sha; do
+    msg="$(git log -1 --format='%B' "${sha}" 2>/dev/null || true)"
+    hit="$(printf '%s' "${msg}" | grep -Eo "${PROVISIONAL_RE}" || true)"
+    if [ -n "${hit}" ]; then
+      subject="$(git log -1 --format='%s' "${sha}" 2>/dev/null || true)"
+      printf '%s %s [%s]\n' "${sha}" "${subject}" \
+        "$(printf '%s' "${hit}" | tr '\n' ',' | sed 's/,$//')"
+    fi
+  done
+}
+
+PROVISIONAL_FOUND=0
+while read -r _localref localsha _remoteref remotesha; do
+  [ -z "${localsha:-}" ] && continue
+  # A branch deletion (local sha all zeros) externalizes nothing.
+  [ "${localsha}" = "${ZERO_SHA}" ] && continue
+  if [ "${remotesha:-${ZERO_SHA}}" = "${ZERO_SHA}" ]; then
+    # New ref on the remote: scan every commit reachable from the local sha
+    # that is not already on any other remote-tracking branch.
+    offenders="$(scan_range_for_provisional "${localsha}" --not --remotes)"
+  else
+    # Updating an existing ref: scan only the newly-pushed commits.
+    offenders="$(scan_range_for_provisional "${remotesha}..${localsha}")"
+  fi
+  if [ -n "${offenders}" ]; then
+    PROVISIONAL_FOUND=1
+    printf 'mtix pre-push: provisional id(s) found in outgoing commit messages (ADR-003 §8):\n' >&2
+    printf '%s\n' "${offenders}" >&2
+  fi
+done
+
+if [ "${PROVISIONAL_FOUND}" = "1" ]; then
+  printf 'mtix pre-push: provisional ids are not yet settled and their numbers WILL change;\n' >&2
+  printf '  re-resolve via mtix and use the settled (fully-numeric) id before externalizing.\n' >&2
+  if [ "${MTIX_BLOCK_PROVISIONAL:-0}" = "1" ]; then
+    printf 'mtix pre-push: MTIX_BLOCK_PROVISIONAL=1 set — refusing the push.\n' >&2
+    exit 1
+  fi
+  printf 'mtix pre-push: continuing (warn-only); set MTIX_BLOCK_PROVISIONAL=1 to refuse.\n' >&2
 fi
 
 # Sync is opt-in. If no DSN is configured, skip silently.

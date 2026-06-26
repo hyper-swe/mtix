@@ -42,6 +42,23 @@ The `--prompt` field MUST capture:
 
 **The canonical lazy-creation failure:** `mtix create "Build X" --description "build the X feature"`. No `--prompt`. No `--acceptance`. No `--labels`. The next agent inherits a title and a one-sentence description — exactly what the context chain was designed to *prevent*. If you would not hand a colleague a sticky note with these contents and expect them to ship the feature, the ticket is incomplete. Populate `--prompt`, `--acceptance`, and `--labels` from your current conversation before claiming the ticket or marking it ready.
 
+## Node ID semantics
+
+Reference every node by its **dot-path id** (e.g. `{{ .ProjectPrefix }}-1.4`) — never by anything else. The dot-path is the only identifier you need to read, write, or pass to a tool.
+
+A dot-path comes in two forms, and the difference is **visible in the id itself**:
+
+- **Settled** — every segment after the project prefix is a plain number, e.g. `{{ .ProjectPrefix }}-1.4` or `{{ .ProjectPrefix }}-1.2.3`. A settled id is stable and **safe to externalize**: put it in commit messages, PR bodies, code comments, changelogs, or any other lasting artifact.
+- **Provisional** — at least one segment is not a number (it carries a short id token rather than a sequence number), e.g. `{{ .ProjectPrefix }}-1.<token>` or `{{ .ProjectPrefix }}-1.<token>.2`. A provisional id is **valid and resolvable right now**, but its number is not final: when it settles, the number **will change**.
+
+Rules:
+
+1. **Never embed a provisional id in a commit, PR, or any external/immutable artifact.** It will go stale the moment the id settles, leaving a dangling reference. Tooling surfaces a `(provisional)` marker wherever such an id is shown, and the guardrail in `examples/hooks/pre-push` will warn/refuse if you try to push one — heed it.
+2. **Only externalize settled (fully-numeric) ids.** If you need to reference a node in a commit or PR and its id is still provisional, finish/settle it first or re-resolve to its settled id.
+3. **Re-resolve before relying on a recorded id.** Renumbers are rare, but a previously-recorded dot-path may have moved. If you persisted a reference, re-resolve it via `mtix` rather than assuming it is permanent — the system resolves the underlying node correctly regardless.
+
+You never generate, store, or reason about the internal token mechanics — you only need to recognize the two shapes above and treat provisional ids as not-yet-externalizable.
+
 ## Parent Selection — Read Before You Nest
 
 Before nesting a new ticket under an existing node, call `mtix_context` on the candidate parent and read its description, prompt, and acceptance criteria — *not* just the title. Pattern-matching on a parent's title is the canonical parent-selection failure: a parent titled "LLM agent integration" may actually be scoped to *packaging the agent kit for release*, not to *the substance of agent guidance*. Nest only when the new work substantively fits the parent's scope.

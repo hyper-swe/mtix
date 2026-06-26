@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/hyper-swe/mtix/internal/format"
 )
 
 // isTerminal returns true if the given file descriptor is a terminal.
@@ -232,7 +234,10 @@ func Truncate(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
-// FormatNodeRow returns a formatted table row for a node.
+// FormatNodeRow returns a formatted table row for a node. A provisional id
+// (one still bearing a uid segment) is marked via format.AnnotateID so the
+// reader sees its number is not yet settled and must not be externalized
+// (ADR-003 §8).
 func FormatNodeRow(id, status string, priority int, title string, progress float64, useColor bool) []string {
 	icon := StatusIcon(status)
 	statusStr := fmt.Sprintf("%s %s", icon, status)
@@ -241,11 +246,14 @@ func FormatNodeRow(id, status string, priority int, title string, progress float
 		statusStr = colorize(statusStr, clr, true)
 	}
 	progressStr := fmt.Sprintf("%.0f%%", progress*100)
-	return []string{id, statusStr, fmt.Sprintf("%d", priority), progressStr, Truncate(title, 50)}
+	return []string{format.AnnotateID(id), statusStr, fmt.Sprintf("%d", priority), progressStr, Truncate(title, 50)}
 }
 
-// TreeLine renders a single line of an ASCII tree.
+// TreeLine renders a single line of an ASCII tree. A provisional id (one still
+// bearing a uid segment) is marked via format.AnnotateID so the reader sees its
+// number is not yet settled and must not be externalized (ADR-003 §8).
 func TreeLine(id, status, title string, progress float64, prefix string, isLast bool, depth int, useColor bool) string {
+	id = format.AnnotateID(id)
 	icon := StatusIcon(status)
 	statusStr := fmt.Sprintf("%s %s", icon, status)
 	if useColor {

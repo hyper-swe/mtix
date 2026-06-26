@@ -876,3 +876,138 @@ func gitLog(t *testing.T, repo string) string {
 	require.NoError(t, err, "git log: %s", out)
 	return string(out)
 }
+
+// ===========================================================================
+// MTIX-30.12 — provisional-id externalization guardrail (ADR-003 §8)
+// ===========================================================================
+
+// commitWithMessage creates an empty commit carrying msg and returns its sha.
+func commitWithMessage(t *testing.T, repo, msg string) string {
+	t.Helper()
+	c := exec.Command("git", "-C", repo, "commit", "-q", "--allow-empty", "-m", msg)
+	c.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null")
+	require.NoError(t, c.Run(), "git commit --allow-empty")
+	out, err := exec.Command("git", "-C", repo, "rev-parse", "HEAD").CombinedOutput()
+	require.NoError(t, err, "git rev-parse: %s", out)
+	return strings.TrimSpace(string(out))
+}
+
+// runHookPushRange runs the hook feeding it a real push range on stdin
+// (refs/heads/main <localSHA> ...), returns exit code, stdout, stderr.
+func runHookPushRange(t *testing.T, hookPath, repo, stubDir, localSHA string, extraEnv []string) (int, string, string) {
+	t.Helper()
+	cmd := exec.Command("bash", hookPath, "origin", "git@example.invalid:fake.git")
+	cmd.Dir = repo
+	env := append([]string{}, os.Environ()...)
+	env = append(env, "PATH="+stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	env = append(env, "GIT_CONFIG_GLOBAL=/dev/null")
+	env = append(env, extraEnv...)
+	cmd.Env = env
+	cmd.Stdin = strings.NewReader(
+		"refs/heads/main " + localSHA +
+			" refs/heads/main 0000000000000000000000000000000000000000\n")
+	var stdout, stderr strings.Builder
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	t.Logf("hook stdout: %s", stdout.String())
+	t.Logf("hook stderr: %s", stderr.String())
+	if err == nil {
+		return 0, stdout.String(), stderr.String()
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode(), stdout.String(), stderr.String()
+	}
+	t.Fatalf("running hook: %v", err)
+	return -1, "", ""
+}
+
+// TestExampleHooks_PrePush_ProvisionalGuardrail_Documented checks the hook
+// header documents the provisional-id guardrail (ADR-003 §8).
+func TestExampleHooks_PrePush_ProvisionalGuardrail_Documented(t *testing.T) {
+	src := readHook(t, "pre-push")
+	assert.Contains(t, src, "provisional",
+		"pre-push must document the provisional-id externalization guardrail")
+	assert.Contains(t, src, "MTIX_BLOCK_PROVISIONAL",
+		"pre-push must expose MTIX_BLOCK_PROVISIONAL to escalate warn->refuse")
+}
+
+// TestExampleHooks_PrePush_ProvisionalGuardrail_WarnsOnProvisional verifies the
+// guardrail warns when a pushed commit message embeds a provisional id — CORNER:
+// provisional id flagged before externalization (ADR-003 §8).
+func TestExampleHooks_PrePush_ProvisionalGuardrail_WarnsOnProvisional(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash hooks are not exercised on Windows")
+	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not on PATH")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	hook := filepath.Join(hooksDir(t), "pre-push")
+
+	repo := setupFakeRepo(t)
+	stub := writeMtixStub(t, mtixStubOpts{ExitCode: 0})
+	sha := commitWithMessage(t, repo, "feat(PRJX-1.u0a1b2c3d4e5): wire up thing")
+
+	// Default mode: warn but do not block (exit 0).
+	code, _, stderr := runHookPushRange(t, hook, repo, stub.Dir, sha, nil)
+	assert.Equal(t, 0, code, "default guardrail must warn, not block the push")
+	assert.Contains(t, stderr, "PRJX-1.u0a1b2c3d4e5",
+		"guardrail must name the offending provisional id")
+	assert.Contains(t, strings.ToLower(stderr), "provisional",
+		"guardrail warning must mention 'provisional'")
+}
+
+// TestExampleHooks_PrePush_ProvisionalGuardrail_BlocksWhenEnabled verifies the
+// guardrail refuses the push when MTIX_BLOCK_PROVISIONAL=1 — provisional id
+// refused before externalization (ADR-003 §8).
+func TestExampleHooks_PrePush_ProvisionalGuardrail_BlocksWhenEnabled(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash hooks are not exercised on Windows")
+	}
+	for _, bin := range []string{"bash", "git"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not on PATH", bin)
+		}
+	}
+	hook := filepath.Join(hooksDir(t), "pre-push")
+
+	repo := setupFakeRepo(t)
+	stub := writeMtixStub(t, mtixStubOpts{ExitCode: 0})
+	sha := commitWithMessage(t, repo, "fix(PRJX-1.2.u0a1b2c3d4e5.4): deeply nested provisional")
+
+	code, _, stderr := runHookPushRange(t, hook, repo, stub.Dir, sha,
+		[]string{"MTIX_BLOCK_PROVISIONAL=1"})
+	assert.NotEqual(t, 0, code,
+		"MTIX_BLOCK_PROVISIONAL=1 must refuse a push that externalizes a provisional id")
+	assert.Contains(t, stderr, "PRJX-1.2.u0a1b2c3d4e5.4",
+		"guardrail must name the deeply-nested provisional id")
+}
+
+// TestExampleHooks_PrePush_ProvisionalGuardrail_SettledPasses verifies a settled
+// id in a commit message passes the guardrail cleanly — CORNER: settled id
+// passes the guardrail (ADR-003 §8).
+func TestExampleHooks_PrePush_ProvisionalGuardrail_SettledPasses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash hooks are not exercised on Windows")
+	}
+	for _, bin := range []string{"bash", "git"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not on PATH", bin)
+		}
+	}
+	hook := filepath.Join(hooksDir(t), "pre-push")
+
+	repo := setupFakeRepo(t)
+	stub := writeMtixStub(t, mtixStubOpts{ExitCode: 0})
+	sha := commitWithMessage(t, repo, "feat(PRJX-1.4): settled id is safe to externalize")
+
+	// Even with blocking enabled, a settled id must not trip the guardrail.
+	code, _, stderr := runHookPushRange(t, hook, repo, stub.Dir, sha,
+		[]string{"MTIX_BLOCK_PROVISIONAL=1"})
+	assert.Equal(t, 0, code, "a settled id must pass the guardrail")
+	assert.NotContains(t, strings.ToLower(stderr), "provisional id",
+		"settled id must not produce a provisional warning")
+}

@@ -103,7 +103,9 @@ func runShow(id string) error {
 	}
 
 	icon := StatusIcon(string(node.Status))
-	out.WriteHuman("ID:       %s\n", node.ID)
+	// A provisional id is flagged so the reader knows its number is not yet
+	// settled and must not be externalized (ADR-003 §8).
+	out.WriteHuman("ID:       %s\n", format.AnnotateID(node.ID))
 	out.WriteHuman("Title:    %s\n", node.Title)
 	out.WriteHuman("Status:   %s %s\n", icon, node.Status)
 	out.WriteHuman("Priority: %d\n", node.Priority)

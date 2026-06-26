@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-26T13:43:54Z",
+  "exported_at": "2026-06-26T14:22:27Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -4072,7 +4072,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0,
+      "progress": 0.21428571428571427,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -4095,15 +4095,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-main",
       "creator": "cli",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "8bf6fb044586e1ac5d6e99e0ee156ad5b5b814fcf2e0cbaedb349cda6add58cc",
       "created_at": "2026-06-26T10:51:15Z",
-      "updated_at": "2026-06-26T13:38:04Z"
+      "updated_at": "2026-06-26T14:22:27Z",
+      "closed_at": "2026-06-26T14:22:27Z"
     },
     {
       "id": "MTIX-30.10",
@@ -4215,15 +4216,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-wave2",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "6964f88a27ccb1bddd89dc77cb10ab92d7e711f521ee91a9e39813c751e99fff",
       "created_at": "2026-06-26T13:43:54Z",
-      "updated_at": "2026-06-26T13:43:54Z"
+      "updated_at": "2026-06-26T14:22:10Z",
+      "closed_at": "2026-06-26T14:22:10Z"
     },
     {
       "id": "MTIX-30.2",
@@ -4239,15 +4241,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-wave2",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "b5d2784e3911fdb82069b7ddef6bebd9c6045bb38e335e1798feb4f0e9abaae7",
       "created_at": "2026-06-26T10:51:15Z",
-      "updated_at": "2026-06-26T10:51:15Z"
+      "updated_at": "2026-06-26T14:16:06Z",
+      "closed_at": "2026-06-26T14:16:06Z"
     },
     {
       "id": "MTIX-30.3",
@@ -5347,6 +5350,13 @@
       "last_heartbeat": "2026-04-27T17:37:12Z"
     },
     {
+      "agent_id": "claude-wave2",
+      "project": "MTIX",
+      "state": "working",
+      "current_node_id": "MTIX-30.14",
+      "last_heartbeat": "2026-06-26T14:05:55Z"
+    },
+    {
       "agent_id": "dev",
       "project": "MTIX",
       "state": "working",
@@ -5380,5 +5390,5 @@
     }
   ],
   "node_count": 203,
-  "checksum": "7598de3dfd1c41ddd362c59c0ee8b76e9c9cfe6a3a1f2647fa5806de5b9af9d2"
+  "checksum": "9df29df9549ea643cf3d2822d678da93c9411cb25221ec4aa3e69e9e80fc5e98"
 }

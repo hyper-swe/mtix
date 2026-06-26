@@ -13,7 +13,11 @@ package sqlite
 //   - v3 (v0.3.x): nodes.uid added — durable internal identity
 //     (= create_node event id) per ADR-003 §2 / MTIX-30.1; backfilled
 //     deterministically on upgrade by BackfillUIDs.
-const schemaVersion = 3
+//   - v4 (v0.3.x): sync_events.uid added (MTIX-30.6 / ADR-003 §3, §7
+//     Phase 3) — events carry the target node's durable uid alongside
+//     node_id (dual-carry transition) so a future renumber rewrites a
+//     display attribute and touches ZERO events.
+const schemaVersion = 4
 
 // schemaSQL defines the complete v2 database schema per NFR-2.2 and FR-18.
 // All tables, indexes, triggers, and initial metadata.
@@ -139,13 +143,24 @@ CREATE TABLE IF NOT EXISTS sync_events (
         'pending','pushed','conflicted','applied'
     )),
     created_at          TEXT NOT NULL,
-    retained_until      TEXT
+    retained_until      TEXT,
+
+    -- Durable internal node identity (ADR-003 §3, §7 Phase 3 / MTIX-30.6)
+    -- carried alongside node_id during the dual-carry transition. For a
+    -- create_node event this equals the event's own event_id (self-anchor:
+    -- uid == event_id); for every other op it is the target node's uid.
+    -- Apply PREFERS uid when present and falls back to node_id, so old CLIs
+    -- (which never set it) keep working. Renumber rewrites node_id only and
+    -- never touches uid, which is why it touches zero events.
+    uid                 TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sync_events_status_lamport
     ON sync_events(sync_status, lamport_clock) WHERE sync_status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_sync_events_node    ON sync_events(node_id);
 CREATE INDEX IF NOT EXISTS idx_sync_events_lamport ON sync_events(lamport_clock);
+CREATE INDEX IF NOT EXISTS idx_sync_events_uid     ON sync_events(uid)
+    WHERE uid IS NOT NULL AND uid <> '';
 
 -- Idempotent dedupe per FR-18.9.
 -- IdempotentApply (MTIX-15.4) checks this table before applying any pulled event.
@@ -248,7 +263,7 @@ END;
 -- Initial metadata. INSERT OR IGNORE so existing values survive re-init.
 -- For v1 -> v2 migration, schema_version is updated explicitly by the
 -- migration step in store.init.
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '3');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '4');
 
 -- Sync sentinels per FR-18 / SYNC-DESIGN sections 3.1 and 8.1.
 -- Default values:
@@ -279,6 +294,16 @@ INSERT OR IGNORE INTO meta (key, value) VALUES ('hub.events_retention_days', '0'
 // BackfillUIDs. A "duplicate column" error on re-run after an interrupted
 // migration is tolerated by the dispatch in store.init.
 const migrateV2ToV3SQL = `ALTER TABLE nodes ADD COLUMN uid TEXT;`
+
+// migrateV3ToV4SQL adds the uid column to an existing sync_events table
+// (MTIX-30.6 / ADR-003 §3, §7 Phase 3). Fresh DBs already have the column
+// from schemaSQL; this only runs for pre-v4 databases. The deterministic
+// backfill of uid onto existing rows is NOT performed here: legacy rows
+// keep uid NULL and apply falls back to node_id for them (dual-carry), so
+// no data motion is required. The follow-on index is created by schemaSQL.
+// A "duplicate column" error on re-run after an interrupted migration is
+// tolerated by the dispatch in store.init, mirroring the v2->v3 pattern.
+const migrateV3ToV4SQL = `ALTER TABLE sync_events ADD COLUMN uid TEXT;`
 
 // migrateV1ToV2SQL drops the v0.1.x sync_events placeholder so the v2
 // CREATE TABLE in schemaSQL can run without colliding on the table name.

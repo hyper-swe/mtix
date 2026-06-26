@@ -148,14 +148,19 @@ func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("marshal VC for %s: %w", e.EventID, err)
 		}
+		// uid is dual-carried alongside node_id (ADR-003 §3, §7 Phase 3).
+		// NULL when the pusher (an old CLI) does not set it; apply then
+		// falls back to node_id. NULLIF keeps the omitempty contract on the
+		// hub: an empty string lands as SQL NULL, so the column matches the
+		// wire shape and pulls back empty.
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO sync_events
-			  (event_id, project_prefix, node_id, op_type, payload,
+			  (event_id, project_prefix, node_id, uid, op_type, payload,
 			   wall_clock_ts, lamport_clock, vector_clock,
 			   author_id, author_machine_hash)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, $9, $10, $11)
 			ON CONFLICT (event_id) DO NOTHING`,
-			e.EventID, e.ProjectPrefix, e.NodeID, string(e.OpType), string(e.Payload),
+			e.EventID, e.ProjectPrefix, e.NodeID, e.UID, string(e.OpType), string(e.Payload),
 			e.WallClockTS, e.LamportClock, string(vcJSON),
 			e.AuthorID, e.AuthorMachineHash,
 		)
@@ -310,7 +315,7 @@ func (p *Pool) pullEventsOnce(ctx context.Context, sinceLamport int64, limit int
 	[]*model.SyncEvent, bool, error,
 ) {
 	rows, err := p.p.Query(ctx, `
-		SELECT event_id, project_prefix, node_id, op_type, payload,
+		SELECT event_id, project_prefix, node_id, uid, op_type, payload,
 		       wall_clock_ts, lamport_clock, vector_clock,
 		       author_id, author_machine_hash, created_at
 		FROM sync_events
@@ -328,13 +333,17 @@ func (p *Pool) pullEventsOnce(ctx context.Context, sinceLamport int64, limit int
 	for rows.Next() {
 		var e model.SyncEvent
 		var opType, payload, vc string
+		var uid *string // NULL for uid-less (old-CLI) events (ADR-003 §7 Phase 3)
 		var createdAt time.Time
 		if err := rows.Scan(
-			&e.EventID, &e.ProjectPrefix, &e.NodeID, &opType, &payload,
+			&e.EventID, &e.ProjectPrefix, &e.NodeID, &uid, &opType, &payload,
 			&e.WallClockTS, &e.LamportClock, &vc,
 			&e.AuthorID, &e.AuthorMachineHash, &createdAt,
 		); err != nil {
 			return nil, false, err
+		}
+		if uid != nil {
+			e.UID = *uid
 		}
 		e.OpType = model.OpType(opType)
 		e.Payload = json.RawMessage(payload)

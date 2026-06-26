@@ -101,10 +101,16 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 		payload = json.RawMessage("null")
 	}
 
+	uid, err := emitUIDFor(ctx, tx, p, eventID)
+	if err != nil {
+		return fmt.Errorf("emit %s: resolve uid: %w", p.OpType, err)
+	}
+
 	event := &model.SyncEvent{
 		EventID:           eventID,
 		ProjectPrefix:     projectPrefix,
 		NodeID:            p.NodeID,
+		UID:               uid,
 		OpType:            p.OpType,
 		Payload:           payload,
 		WallClockTS:       wallTS,
@@ -126,11 +132,12 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO sync_events
-		  (event_id, project_prefix, node_id, op_type, payload,
+		  (event_id, project_prefix, node_id, uid, op_type, payload,
 		   wall_clock_ts, lamport_clock, vector_clock,
 		   author_id, author_machine_hash, sync_status, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		event.EventID, event.ProjectPrefix, event.NodeID, string(event.OpType), string(event.Payload),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		event.EventID, event.ProjectPrefix, event.NodeID, nullableString(event.UID),
+		string(event.OpType), string(event.Payload),
 		event.WallClockTS, event.LamportClock, string(vcJSON),
 		event.AuthorID, event.AuthorMachineHash, string(event.SyncStatus),
 		event.CreatedAt.Format(time.RFC3339Nano),
@@ -139,6 +146,40 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 		return fmt.Errorf("emit %s: insert sync_events: %w", p.OpType, err)
 	}
 	return nil
+}
+
+// emitUIDFor computes the durable node uid to dual-carry on an event
+// (ADR-003 §3, §7 Phase 3). For create_node the uid IS the event's own id
+// (self-anchor: uid == event_id, ADR-003 §2). For every other op it is the
+// target node's uid resolved from nodes.uid; if the row has no uid yet
+// (a pre-30.1 row not backfilled) the uid stays empty and apply falls back
+// to node_id — the transition never forces a value it cannot find.
+func emitUIDFor(ctx context.Context, tx *sql.Tx, p emitParams, eventID string) (string, error) {
+	if p.OpType == model.OpCreateNode {
+		return eventID, nil
+	}
+	return resolveEmitUID(ctx, tx, p.NodeID)
+}
+
+// resolveEmitUID returns the durable uid of the node identified by nodeID
+// (its dot-path display id), read from nodes.uid (ADR-003 §3). Used by the
+// emitter to dual-carry the uid on every NON-create event. Returns "" (no
+// error) when the node row carries no uid yet — apply then falls back to
+// node_id, preserving correctness during the transition.
+func resolveEmitUID(ctx context.Context, tx *sql.Tx, nodeID string) (string, error) {
+	var uid sql.NullString
+	err := tx.QueryRowContext(ctx,
+		`SELECT uid FROM nodes WHERE id = ?`, nodeID).Scan(&uid)
+	if err == sql.ErrNoRows {
+		// No local row for this display path (e.g. a dependency target that
+		// lives only on another replica). Leave uid empty; apply keys on
+		// node_id. Not an error — the caller still emits the event.
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return uid.String, nil
 }
 
 // sanitizeAuthorID enforces the FR-18.7 grammar on caller-supplied author

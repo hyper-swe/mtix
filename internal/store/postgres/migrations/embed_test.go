@@ -25,6 +25,7 @@ func TestMigrations_FilesPresent(t *testing.T) {
 		"007_advisory_lock.sql",
 		"008_sync_project_clients.sql",
 		"009_node_registry_index.sql",
+		"010_sync_events_uid.sql",
 	}
 	require.Equal(t, want, got, "all hub-schema files must be embedded in lex order")
 }
@@ -121,6 +122,21 @@ func TestMigrations_RegistryIndexIsPartialUnique(t *testing.T) {
 		"registry must be PARTIAL (create_node rows only) per ADR-003 §6")
 	require.Contains(t, body, "ADR-003",
 		"registry migration must reference its design rationale")
+}
+
+// TestMigrations_SyncEventsUIDColumn asserts the MTIX-30.6 migration adds
+// the dual-carry uid column to the hub sync_events log (ADR-003 §3, §7
+// Phase 3): a nullable, idempotently-added TEXT column with a partial
+// lookup index, and no destructive backfill.
+func TestMigrations_SyncEventsUIDColumn(t *testing.T) {
+	body, err := migrations.Read("010_sync_events_uid.sql")
+	require.NoError(t, err)
+	require.Contains(t, body, "ADD COLUMN IF NOT EXISTS uid TEXT",
+		"010 must add a nullable uid column idempotently")
+	require.Contains(t, body, "CREATE INDEX IF NOT EXISTS idx_sync_events_uid",
+		"010 must add the uid lookup index")
+	require.Contains(t, body, "ADR-003",
+		"010 must reference its design rationale")
 }
 
 // TestMigrations_OpTypeCheckMatchesModel ensures the SQL CHECK constraint

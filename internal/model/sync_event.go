@@ -101,9 +101,21 @@ var machineHashPattern = regexp.MustCompile(`^[a-f0-9]{16}$`)
 // Field ordering matches the SQLite table definition for cache-friendly
 // scanning. JSON tags use snake_case to align with the wire protocol.
 type SyncEvent struct {
-	EventID           string          `json:"event_id"`
-	ProjectPrefix     string          `json:"project_prefix"`
-	NodeID            string          `json:"node_id"`
+	EventID       string `json:"event_id"`
+	ProjectPrefix string `json:"project_prefix"`
+	NodeID        string `json:"node_id"`
+	// UID is the node's durable internal identity (ADR-003 §2/§3): the
+	// node's create_node event id. Events reference the node by UID
+	// internally so a future renumber rewrites a display attribute and
+	// touches ZERO events (ADR-003 §3, §7 Phase 3, §10).
+	//
+	// `omitempty` is load-bearing for the dual-carry transition (ADR-003
+	// §7 Phase 3): an old CLI that does not know this field unmarshals a
+	// uid-bearing event with NO error and silently drops the unknown key
+	// (Go json), continuing to key apply on NodeID. The transition rides
+	// the envelope, not a new op_type — so this field MUST stay optional
+	// until every client is at/above sync.UIDKeyedMinVersion.
+	UID               string          `json:"uid,omitempty"`
 	OpType            OpType          `json:"op_type"`
 	Payload           json.RawMessage `json:"payload"`
 	WallClockTS       int64           `json:"wall_clock_ts"`

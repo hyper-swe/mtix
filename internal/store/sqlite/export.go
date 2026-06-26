@@ -61,6 +61,9 @@ type exportNode struct {
 	ClosedAt    string  `json:"closed_at,omitempty"`
 	DeferUntil  string  `json:"defer_until,omitempty"`
 	DeletedAt   string  `json:"deleted_at,omitempty"`
+	// UID carries the node's durable internal identity (ADR-003 §2, §7)
+	// so re-import stays consistent. omitempty for pre-v3 exports.
+	UID string `json:"uid,omitempty"`
 }
 
 // exportDep is the JSON representation of a dependency in the export.
@@ -155,7 +158,8 @@ const exportNodeSelectSQL = `SELECT id, COALESCE(parent_id,''), depth, seq, proj
 		        status, progress, COALESCE(assignee,''), COALESCE(creator,''),
 		        COALESCE(agent_state,''), weight, COALESCE(content_hash,''),
 		        created_at, updated_at, COALESCE(closed_at,''),
-		        COALESCE(defer_until,''), COALESCE(deleted_at,'')
+		        COALESCE(defer_until,''), COALESCE(deleted_at,''),
+		        COALESCE(uid,'')
 		 FROM nodes`
 
 // rowScanner is satisfied by both *sql.Row and *sql.Rows.
@@ -171,6 +175,7 @@ func scanExportNode(row rowScanner) (exportNode, error) {
 		&n.IssueType, &n.Priority, &n.Labels, &n.Status, &n.Progress,
 		&n.Assignee, &n.Creator, &n.AgentState, &n.Weight, &n.ContentHash,
 		&n.CreatedAt, &n.UpdatedAt, &n.ClosedAt, &n.DeferUntil, &n.DeletedAt,
+		&n.UID,
 	)
 	return n, err
 }

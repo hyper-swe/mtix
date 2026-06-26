@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-26T10:51:16Z",
+  "exported_at": "2026-06-26T13:43:54Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -4095,15 +4095,15 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "claude-main",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "8bf6fb044586e1ac5d6e99e0ee156ad5b5b814fcf2e0cbaedb349cda6add58cc",
       "created_at": "2026-06-26T10:51:15Z",
-      "updated_at": "2026-06-26T10:51:15Z"
+      "updated_at": "2026-06-26T13:38:04Z"
     },
     {
       "id": "MTIX-30.10",
@@ -4200,6 +4200,30 @@
       "content_hash": "4d2cdb9f689976ab3bdc4b77943e7eec3129d7a953a87766d25f139eee4fec86",
       "created_at": "2026-06-26T10:51:16Z",
       "updated_at": "2026-06-26T10:51:16Z"
+    },
+    {
+      "id": "MTIX-30.14",
+      "parent_id": "MTIX-30",
+      "depth": 1,
+      "seq": 14,
+      "project": "MTIX",
+      "title": "Sync protocol version-negotiation gate (per-client version table) — prerequisite for 30.6/30.10",
+      "description": "DISCOVERED by the 30.6/30.10 build-plan spike. ADR-003 Phase 1.5 and Phase 3 gate on 'all CLIs at or above a min version' via sync_projects.last_seen_cli_version — but that column is declared in schema (003_sync_projects.sql / schema.go) and NEVER written or read by any non-test code, AND a single last-writer column cannot express 'EVERY CLI is compatible'. Build the real gate: (a) a per-client table sync_project_clients(project_prefix, machine_hash, cli_version, last_seen_at) written on sync init and on every push; (b) a hub query computing min(cli_version) across active clients; (c) a SyncProtocolVersion + UIDKeyedMinVersion constant (internal/sync/protocol.go) threaded from cmd/mtix/main.go version. This is a hard prerequisite: MTIX-30.6 (events-key-on-uid cutover) and MTIX-30.10 (Phase 1.5 index gate, Phase 3 cutover) cannot be gated safely without it. DEV RULES (CONTRIBUTING-LLM, TDD-WORKFLOW, QUALITY-STANDARDS, SECURITY-MODEL, ADR-003): TDD red-green-refactor — write failing tests FIRST, confirm RED, add the minimum code to GREEN, then refactor while green. Coverage gate \u003e=90% (storage \u003e=95%) AND scenario coverage: explicitly enumerate and test happy + error + corner + edge cases, never only the best case. Parameterized SQL; all writes transactional; honor the NFR-2.8 fail-stop/disk-full/integrity guards. Godoc on every exported symbol; reference the ADR-003 section/NFR each unit implements. Run /simplify on BOTH the implementation AND the tests and apply the findings. Security+safety: align with the SECURITY-MODEL trust model and the ADR-003 Section 14 audit; run /security-review and the e2e/faultinject suite for any storage/sync change. Commit tests and code together per repo commit rules.",
+      "prompt": "",
+      "acceptance": "Per-client version table written on init+push; min-version gate query implemented and unit+pg-e2e tested; cutover/index gates consume it; scenario coverage incl. mixed-version (gate stays closed), all-upgraded (gate opens), stale client re-appears (gate re-closes), corner: clock-skew on last_seen, no-clients edge.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "6964f88a27ccb1bddd89dc77cb10ab92d7e711f521ee91a9e39813c751e99fff",
+      "created_at": "2026-06-26T13:43:54Z",
+      "updated_at": "2026-06-26T13:43:54Z"
     },
     {
       "id": "MTIX-30.2",
@@ -5309,6 +5333,13 @@
       "last_heartbeat": "2026-06-10T17:37:31Z"
     },
     {
+      "agent_id": "claude-main",
+      "project": "MTIX",
+      "state": "working",
+      "current_node_id": "MTIX-30.1",
+      "last_heartbeat": "2026-06-26T13:38:04Z"
+    },
+    {
       "agent_id": "claude-opus-4-7",
       "project": "MTIX",
       "state": "working",
@@ -5348,6 +5379,6 @@
       "status": "active"
     }
   ],
-  "node_count": 202,
-  "checksum": "aff48ab0332599b873747d4fba7174d6a359c363f2f07fc0e62e25c1b60b2bf0"
+  "node_count": 203,
+  "checksum": "7598de3dfd1c41ddd362c59c0ee8b76e9c9cfe6a3a1f2647fa5806de5b9af9d2"
 }

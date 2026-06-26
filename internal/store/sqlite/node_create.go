@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/sync/clock"
 )
 
 // CreateNode persists a new node per FR-2.7.
@@ -23,6 +24,19 @@ import (
 func (s *Store) CreateNode(ctx context.Context, node *model.Node) error {
 	if err := node.Validate(); err != nil {
 		return fmt.Errorf("create node validate: %w", err)
+	}
+
+	// A node's durable UID is its create_node event id (ADR-003 §2 /
+	// MTIX-30.1). Generate that id up front so it can be stamped on the
+	// node row and reused as the create event's id — keeping the
+	// invariant uid == create-event-id true atomically, with no second
+	// write. If the caller already set a UID (e.g. import), keep it.
+	if node.UID == "" {
+		eventID, err := clock.NewEventID()
+		if err != nil {
+			return fmt.Errorf("create node %s: new uid: %w", node.ID, err)
+		}
+		node.UID = eventID
 	}
 
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
@@ -46,6 +60,7 @@ func (s *Store) CreateNode(ctx context.Context, node *model.Node) error {
 			OpType:      model.OpCreateNode,
 			Author:      node.Creator,
 			Payload:     payload,
+			EventID:     node.UID, // uid == create-event id (ADR-003 §2)
 		}); err != nil {
 			return err
 		}
@@ -145,7 +160,8 @@ func insertNode(ctx context.Context, tx *sql.Tx, node *model.Node) error {
 			annotations, invalidated_at, invalidated_by, invalidation_reason,
 			activity,
 			deleted_at, deleted_by,
-			metadata, session_id
+			metadata, session_id,
+			uid
 		) VALUES (
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?,
@@ -157,7 +173,8 @@ func insertNode(ctx context.Context, tx *sql.Tx, node *model.Node) error {
 			?, ?, ?, ?,
 			?,
 			?, ?,
-			?, ?
+			?, ?,
+			?
 		)`,
 		node.ID, nullableString(node.ParentID), node.Depth, node.Seq, node.Project,
 		node.Title, nullableString(node.Description), nullableString(node.Prompt), nullableString(node.Acceptance),
@@ -173,6 +190,7 @@ func insertNode(ctx context.Context, tx *sql.Tx, node *model.Node) error {
 		fields.activity,
 		nullableTime(node.DeletedAt), nullableString(node.DeletedBy),
 		fields.metadata, nullableString(node.SessionID),
+		nullableString(node.UID),
 	)
 	if err != nil {
 		if isUniqueConstraintError(err) {

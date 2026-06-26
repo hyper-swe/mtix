@@ -10,7 +10,10 @@ package sqlite
 //   - v1 (v0.1.x): original schema; sync_events was a placeholder per NFR-3.2.
 //   - v2 (v0.2.x): sync_events rewritten to FR-18.6 / SYNC-DESIGN section 3.1
 //     shape; applied_events added; meta.sync.* sentinels populated.
-const schemaVersion = 2
+//   - v3 (v0.3.x): nodes.uid added — durable internal identity
+//     (= create_node event id) per ADR-003 §2 / MTIX-30.1; backfilled
+//     deterministically on upgrade by BackfillUIDs.
+const schemaVersion = 3
 
 // schemaSQL defines the complete v2 database schema per NFR-2.2 and FR-18.
 // All tables, indexes, triggers, and initial metadata.
@@ -81,11 +84,16 @@ CREATE TABLE IF NOT EXISTS nodes (
     metadata        TEXT,
     session_id      TEXT,
 
+    -- Durable internal identity (ADR-003 §2 / MTIX-30.1) = the node's
+    -- create_node event id. Never surfaced; the dot-path id is.
+    uid             TEXT,
+
     FOREIGN KEY (parent_id) REFERENCES nodes(id) ON DELETE SET NULL
 );
 
 -- Indexes for query performance per NFR-2.2
 CREATE INDEX IF NOT EXISTS idx_nodes_parent   ON nodes(parent_id);
+CREATE INDEX IF NOT EXISTS idx_nodes_uid      ON nodes(uid) WHERE uid IS NOT NULL AND uid <> '';
 CREATE INDEX IF NOT EXISTS idx_nodes_status   ON nodes(project, status) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_nodes_priority ON nodes(project, priority) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_nodes_assignee ON nodes(project, assignee) WHERE deleted_at IS NULL;
@@ -240,7 +248,7 @@ END;
 -- Initial metadata. INSERT OR IGNORE so existing values survive re-init.
 -- For v1 -> v2 migration, schema_version is updated explicitly by the
 -- migration step in store.init.
-INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '2');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '3');
 
 -- Sync sentinels per FR-18 / SYNC-DESIGN sections 3.1 and 8.1.
 -- Default values:
@@ -263,6 +271,14 @@ INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.consecutive_errors', 
 INSERT OR IGNORE INTO meta (key, value) VALUES ('sync.max_queue_size', '0');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('hub.events_retention_days', '0');
 `
+
+// migrateV2ToV3SQL adds the uid column to an existing nodes table
+// (MTIX-30.1 / ADR-003 §2, §7 Phase 0). Fresh DBs already have the column
+// from schemaSQL; this only runs for pre-v3 databases. The deterministic
+// backfill (uid = create_node event id) is performed in Go by
+// BackfillUIDs. A "duplicate column" error on re-run after an interrupted
+// migration is tolerated by the dispatch in store.init.
+const migrateV2ToV3SQL = `ALTER TABLE nodes ADD COLUMN uid TEXT;`
 
 // migrateV1ToV2SQL drops the v0.1.x sync_events placeholder so the v2
 // CREATE TABLE in schemaSQL can run without colliding on the table name.

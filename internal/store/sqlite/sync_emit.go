@@ -38,12 +38,17 @@ var authorIDSafePattern = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 // emitParams collects what every mutation must pass to emitEvent.
 // Project and Author come from the mutation; OpType + Payload are op-specific.
 type emitParams struct {
-	NodeID       string
-	ProjectCode  string
-	OpType       model.OpType
-	Author       string
-	Payload      json.RawMessage
-	WallClockTS  int64
+	NodeID      string
+	ProjectCode string
+	OpType      model.OpType
+	Author      string
+	Payload     json.RawMessage
+	WallClockTS int64
+	// EventID, when set, is used as the event id instead of generating a
+	// fresh one. create_node passes the id it pre-generated so the node's
+	// uid can equal its create-event id (ADR-003 §2 / MTIX-30.1). Empty
+	// for all other ops, which generate their own.
+	EventID string
 }
 
 // emitEvent inserts one sync_events row inside the caller's transaction.
@@ -83,9 +88,12 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 		wallTS = time.Now().UTC().UnixMilli()
 	}
 
-	eventID, err := clock.NewEventID()
-	if err != nil {
-		return fmt.Errorf("emit %s: new event id: %w", p.OpType, err)
+	eventID := p.EventID
+	if eventID == "" {
+		eventID, err = clock.NewEventID()
+		if err != nil {
+			return fmt.Errorf("emit %s: new event id: %w", p.OpType, err)
+		}
 	}
 
 	payload := p.Payload

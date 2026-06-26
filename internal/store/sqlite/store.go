@@ -224,8 +224,20 @@ func (s *Store) init(ctx context.Context) error {
 		)
 	}
 
+	// v2 -> v3 (MTIX-30.1 / ADR-003 §2, §7 Phase 0): add nodes.uid to an
+	// existing table BEFORE schemaSQL creates idx_nodes_uid on it.
+	if err := s.addUIDColumnPreV3(ctx, existingVersion); err != nil {
+		return err
+	}
+
 	if _, err := s.writeDB.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("create schema: %w", err)
+	}
+
+	// Deterministic UID backfill for pre-v3 rows (after schemaSQL so the
+	// uid index exists; idempotent — only fills empty uids).
+	if err := s.backfillUIDsPreV3(ctx, existingVersion); err != nil {
+		return err
 	}
 
 	if existingVersion > 0 && existingVersion < schemaVersion {
@@ -238,6 +250,36 @@ func (s *Store) init(ctx context.Context) error {
 		}
 	}
 
+	return nil
+}
+
+// addUIDColumnPreV3 adds nodes.uid to a pre-v3 database (MTIX-30.1).
+// No-op on fresh DBs (schemaSQL already has the column) and on v3+. A
+// "duplicate column" error from a re-run after an interrupted migration
+// is tolerated.
+func (s *Store) addUIDColumnPreV3(ctx context.Context, existingVersion int) error {
+	if existingVersion == 0 || existingVersion >= 3 {
+		return nil
+	}
+	if _, err := s.writeDB.ExecContext(ctx, migrateV2ToV3SQL); err != nil &&
+		!containsString(err.Error(), "duplicate column name") {
+		return fmt.Errorf("migrate v2 -> v3 (add nodes.uid): %w", err)
+	}
+	return nil
+}
+
+// backfillUIDsPreV3 runs the deterministic UID backfill for a pre-v3
+// database (MTIX-30.1 / ADR-003 §7 Phase 0). No-op on fresh DBs and v3+.
+func (s *Store) backfillUIDsPreV3(ctx context.Context, existingVersion int) error {
+	if existingVersion == 0 || existingVersion >= 3 {
+		return nil
+	}
+	if err := s.BackfillUIDs(ctx); err != nil {
+		return fmt.Errorf("migrate v2 -> v3 (backfill uids): %w", err)
+	}
+	s.logger.Info("schema_migrated",
+		"event", "schema_migrated", "from_version", existingVersion, "to_version", 3,
+		"added", "nodes.uid")
 	return nil
 }
 

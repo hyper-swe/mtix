@@ -271,6 +271,89 @@ func TestApply_LinkDep_FollowsRenumberByUID(t *testing.T) {
 	require.Equal(t, 1, n, "link_dep must attach to the renumbered from-node's current id")
 }
 
+// TestEmit_CreateNode_ForceBackfill_PreservesExistingUID is the MTIX-30.15
+// emit-side fix (ADR-003 §2/§9): a create_node emitted for a node that
+// ALREADY has a uid (nodes.uid non-empty) must carry that EXISTING uid, not
+// a fresh self-anchor. This is what keeps a node's uid STABLE across a
+// --force re-backfill: the re-emitted create_node names the same logical
+// node, so the hub registry can treat it as a no-op instead of a false
+// collision. A genuinely new node (no uid yet) still self-anchors.
+func TestEmit_CreateNode_ForceBackfill_PreservesExistingUID(t *testing.T) {
+	s, raw := emitTestStore(t)
+	ctx := context.Background()
+
+	node := newUIDTestNode("MTIX-1")
+	require.NoError(t, s.CreateNode(ctx, node))
+	originalUID := node.UID
+	require.NotEmpty(t, originalUID)
+
+	// Wipe the event log (the v0.1.x-upgrader / re-backfill precondition);
+	// nodes.uid survives because it lives on the nodes row.
+	_, err := s.WriteDB().ExecContext(ctx, `DELETE FROM sync_events`)
+	require.NoError(t, err)
+	require.Equal(t, originalUID, readNodeUID(t, raw, "MTIX-1"),
+		"nodes.uid must survive a sync_events wipe")
+
+	// Re-emit a create_node for the SAME node WITHOUT supplying an EventID
+	// (exactly what Backfill does). A fresh event_id is minted, but the
+	// event's uid must be the node's EXISTING uid, not the fresh event_id.
+	createPayload, err := buildCreateNodePayload(node)
+	require.NoError(t, err)
+	var freshEventID string
+	require.NoError(t, s.WithTx(ctx, func(tx *sql.Tx) error {
+		if emitErr := emitEvent(ctx, tx, emitParams{
+			NodeID: "MTIX-1", ProjectCode: "MTIX",
+			OpType: model.OpCreateNode, Author: "alice", Payload: createPayload,
+		}); emitErr != nil {
+			return emitErr
+		}
+		return tx.QueryRowContext(ctx,
+			`SELECT event_id FROM sync_events WHERE op_type = 'create_node'
+			 ORDER BY lamport_clock DESC LIMIT 1`).Scan(&freshEventID)
+	}))
+
+	require.NotEqual(t, originalUID, freshEventID,
+		"the re-backfilled create_node must get a FRESH event_id")
+	require.Equal(t, originalUID, readEventUID(t, raw, freshEventID),
+		"a re-backfilled create_node for an existing node must carry the node's EXISTING uid (stable across --force backfill)")
+}
+
+// TestEmit_CreateNode_NewNode_StillSelfAnchors is the corner case that
+// guards the fix: a genuinely NEW node — one whose nodes.uid is empty at
+// emit time — must still self-anchor uid = its own event_id (ADR-003 §2).
+// Only an EXISTING uid is preserved; a missing one is minted.
+func TestEmit_CreateNode_NewNode_StillSelfAnchors(t *testing.T) {
+	s, raw := emitTestStore(t)
+	ctx := context.Background()
+
+	// Insert a node row with an EMPTY uid (a pre-30.1 / not-yet-anchored
+	// node), then emit its create_node directly through the emitter.
+	node := newUIDTestNode("MTIX-2")
+	require.NoError(t, s.WithTx(ctx, func(tx *sql.Tx) error {
+		return insertNode(ctx, tx, node)
+	}))
+	_, err := s.WriteDB().ExecContext(ctx, `UPDATE nodes SET uid = '' WHERE id = 'MTIX-2'`)
+	require.NoError(t, err)
+
+	payload, err := buildCreateNodePayload(node)
+	require.NoError(t, err)
+	var eventID string
+	require.NoError(t, s.WithTx(ctx, func(tx *sql.Tx) error {
+		if emitErr := emitEvent(ctx, tx, emitParams{
+			NodeID: "MTIX-2", ProjectCode: "MTIX",
+			OpType: model.OpCreateNode, Author: "alice", Payload: payload,
+		}); emitErr != nil {
+			return emitErr
+		}
+		return tx.QueryRowContext(ctx,
+			`SELECT event_id FROM sync_events WHERE op_type = 'create_node'
+			 ORDER BY lamport_clock DESC LIMIT 1`).Scan(&eventID)
+	}))
+
+	require.Equal(t, eventID, readEventUID(t, raw, eventID),
+		"a genuinely new node (empty nodes.uid) must self-anchor uid = event_id")
+}
+
 // jsonString is a tiny helper for update_field NewValue payloads.
 func jsonString(t *testing.T, s string) []byte {
 	t.Helper()

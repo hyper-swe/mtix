@@ -110,69 +110,18 @@ func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	accepted := make([]string, 0, len(events))
-	conflicts := make([]ConflictDescriptor, 0)
-	renumbers := make([]RenumberRequired, 0)
-	// Track distinct project prefixes so the version-gate client row
-	// (ADR-003 §7 Phase 1.5/3) is upserted once per project in this
-	// batch, inside the same tx as the events it covers.
-	seenPrefixes := make(map[string]struct{}, 1)
-	// Track create_node numbers claimed earlier in THIS batch. The
-	// partial unique index only sees committed rows, so two creates for
-	// the same number within one push must be serialized here: the first
-	// claims the key, later ones get a renumber outcome (ADR-003 §6.1/F-1).
-	batchClaims := make(map[registryKey]string, len(events))
+	acc := &pushAccum{
+		seenPrefixes: make(map[string]struct{}, 1),
+		// Track create_node numbers claimed earlier in THIS batch. The
+		// partial unique index only sees committed rows, so two creates for
+		// the same number within one push must be serialized here: the first
+		// claims the key, later ones resolve against it — same uid is a no-op,
+		// a distinct uid renumbers (ADR-003 §6.1/F-1).
+		batchClaims: make(map[registryKey]batchClaim, len(events)),
+	}
 
 	for _, e := range events {
-		// Registry check (ADR-003 §6): a second create_node for an
-		// already-registered (project, display_path) is held for
-		// renumber rather than inserted. First-writer-wins; no node is
-		// lost (ADR-003 §9). A nil renumber means the number is free.
-		renumber, err := registryRenumber(ctx, tx, e, batchClaims)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("registry check for %s: %w", e.EventID, err)
-		}
-		if renumber != nil {
-			renumbers = append(renumbers, *renumber)
-			seenPrefixes[e.ProjectPrefix] = struct{}{}
-			continue
-		}
-
-		conf, err := detectConflicts(ctx, tx, e)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("detect conflicts for %s: %w", e.EventID, err)
-		}
-		conflicts = append(conflicts, conf...)
-
-		vcJSON, err := json.Marshal(e.VectorClock)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("marshal VC for %s: %w", e.EventID, err)
-		}
-		// uid is dual-carried alongside node_id (ADR-003 §3, §7 Phase 3).
-		// NULL when the pusher (an old CLI) does not set it; apply then
-		// falls back to node_id. NULLIF keeps the omitempty contract on the
-		// hub: an empty string lands as SQL NULL, so the column matches the
-		// wire shape and pulls back empty.
-		tag, err := tx.Exec(ctx, `
-			INSERT INTO sync_events
-			  (event_id, project_prefix, node_id, uid, op_type, payload,
-			   wall_clock_ts, lamport_clock, vector_clock,
-			   author_id, author_machine_hash)
-			VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, $9, $10, $11)
-			ON CONFLICT (event_id) DO NOTHING`,
-			e.EventID, e.ProjectPrefix, e.NodeID, e.UID, string(e.OpType), string(e.Payload),
-			e.WallClockTS, e.LamportClock, string(vcJSON),
-			e.AuthorID, e.AuthorMachineHash,
-		)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("insert %s: %w", e.EventID, err)
-		}
-		if tag.RowsAffected() == 1 {
-			accepted = append(accepted, e.EventID)
-		}
-		seenPrefixes[e.ProjectPrefix] = struct{}{}
-
-		if err := persistConflicts(ctx, tx, conf); err != nil {
+		if err := p.pushOneEvent(ctx, tx, e, acc); err != nil {
 			return nil, nil, nil, err
 		}
 	}
@@ -180,7 +129,7 @@ func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
 	// Record the calling CLI's version for each project touched, in the
 	// same tx, so the gate's view reflects this push atomically. No-op
 	// when no client identity is set (SetClientIdentity not called).
-	for prefix := range seenPrefixes {
+	for prefix := range acc.seenPrefixes {
 		if err := p.recordClientOnPush(ctx, tx, prefix); err != nil {
 			return nil, nil, nil, fmt.Errorf("record client for %s: %w", prefix, err)
 		}
@@ -189,7 +138,91 @@ func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
 	if err := tx.Commit(ctx); err != nil {
 		return nil, nil, nil, fmt.Errorf("commit: %w", err)
 	}
-	return accepted, conflicts, renumbers, nil
+	return acc.accepted, acc.conflicts, acc.renumbers, nil
+}
+
+// pushAccum accumulates one push transaction's outcomes across events so
+// pushEventsOnce stays a thin loop and per-event handling lives in
+// pushOneEvent. seenPrefixes and batchClaims are the cross-event state
+// (version-gate projects and intra-batch number claims, ADR-003 §6.1/F-1).
+type pushAccum struct {
+	accepted     []string
+	conflicts    []ConflictDescriptor
+	renumbers    []RenumberRequired
+	seenPrefixes map[string]struct{}
+	batchClaims  map[registryKey]batchClaim
+}
+
+// pushOneEvent runs the registry check, conflict detection, and insert for a
+// single event, folding the results into acc. It short-circuits a create
+// that the registry resolves to a renumber or a no-op (ADR-003 §6/§9) before
+// any insert.
+func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, acc *pushAccum) error {
+	// Registry check (ADR-003 §6/§9), keyed on the node's stable uid
+	// (ADR-003 §2): a create_node for an already-held (project,
+	// display_path) is either the SAME logical node (a no-op — e.g. a
+	// --force re-backfill, MTIX-30.15) or a DIFFERENT one (renumber-
+	// required; first-writer-wins, no node lost). The zero outcome means
+	// the number is free and we insert it below.
+	outcome, err := registryDecide(ctx, tx, e, acc.batchClaims)
+	if err != nil {
+		return fmt.Errorf("registry check for %s: %w", e.EventID, err)
+	}
+	if outcome.renumber != nil {
+		acc.renumbers = append(acc.renumbers, *outcome.renumber)
+		acc.seenPrefixes[e.ProjectPrefix] = struct{}{}
+		return nil
+	}
+	if outcome.noop {
+		// Same logical node re-pushed (stable uid): nothing to insert and
+		// NOT a renumber. The registry already holds this node; the partial
+		// UNIQUE index would reject a second create_node row anyway, so we
+		// short-circuit before the insert (MTIX-30.15).
+		//
+		// It IS reported accepted so the pusher marks it pushed and stops
+		// re-sending — the hub has absorbed it. Without this, a --force
+		// re-backfill would loop forever re-pushing a never-acknowledged
+		// event (the hang this ticket fixes).
+		acc.accepted = append(acc.accepted, e.EventID)
+		acc.seenPrefixes[e.ProjectPrefix] = struct{}{}
+		return nil
+	}
+
+	conf, err := detectConflicts(ctx, tx, e)
+	if err != nil {
+		return fmt.Errorf("detect conflicts for %s: %w", e.EventID, err)
+	}
+	acc.conflicts = append(acc.conflicts, conf...)
+
+	vcJSON, err := json.Marshal(e.VectorClock)
+	if err != nil {
+		return fmt.Errorf("marshal VC for %s: %w", e.EventID, err)
+	}
+	// uid is dual-carried alongside node_id (ADR-003 §3, §7 Phase 3).
+	// NULL when the pusher (an old CLI) does not set it; apply then falls
+	// back to node_id. NULLIF keeps the omitempty contract on the hub: an
+	// empty string lands as SQL NULL, so the column matches the wire shape
+	// and pulls back empty.
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO sync_events
+		  (event_id, project_prefix, node_id, uid, op_type, payload,
+		   wall_clock_ts, lamport_clock, vector_clock,
+		   author_id, author_machine_hash)
+		VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, $9, $10, $11)
+		ON CONFLICT (event_id) DO NOTHING`,
+		e.EventID, e.ProjectPrefix, e.NodeID, e.UID, string(e.OpType), string(e.Payload),
+		e.WallClockTS, e.LamportClock, string(vcJSON),
+		e.AuthorID, e.AuthorMachineHash,
+	)
+	if err != nil {
+		return fmt.Errorf("insert %s: %w", e.EventID, err)
+	}
+	if tag.RowsAffected() == 1 {
+		acc.accepted = append(acc.accepted, e.EventID)
+	}
+	acc.seenPrefixes[e.ProjectPrefix] = struct{}{}
+
+	return persistConflicts(ctx, tx, conf)
 }
 
 // persistConflicts writes each detected field-level conflict to the
@@ -363,4 +396,3 @@ func (p *Pool) pullEventsOnce(ctx context.Context, sinceLamport int64, limit int
 	}
 	return out, hasMore, nil
 }
-

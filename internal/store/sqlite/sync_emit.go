@@ -149,13 +149,31 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 }
 
 // emitUIDFor computes the durable node uid to dual-carry on an event
-// (ADR-003 §3, §7 Phase 3). For create_node the uid IS the event's own id
-// (self-anchor: uid == event_id, ADR-003 §2). For every other op it is the
-// target node's uid resolved from nodes.uid; if the row has no uid yet
-// (a pre-30.1 row not backfilled) the uid stays empty and apply falls back
-// to node_id — the transition never forces a value it cannot find.
+// (ADR-003 §3, §7 Phase 3).
+//
+// For create_node the uid is the node's STABLE identity: a genuinely new
+// node self-anchors uid = its own event_id (ADR-003 §2), but a create_node
+// re-emitted for a node that ALREADY has a uid (nodes.uid non-empty — e.g.
+// a --force re-backfill) carries that EXISTING uid instead of the fresh
+// event_id. Keeping the uid stable across re-create is what lets the hub
+// registry treat the re-push as the SAME logical node (a no-op) rather than
+// a false collision (ADR-003 §6/§9, MTIX-30.15). Only a node with no uid
+// yet self-anchors to the fresh event_id.
+//
+// For every other op the uid is the target node's uid resolved from
+// nodes.uid; if the row has no uid yet (a pre-30.1 row not backfilled) the
+// uid stays empty and apply falls back to node_id — the transition never
+// forces a value it cannot find.
 func emitUIDFor(ctx context.Context, tx *sql.Tx, p emitParams, eventID string) (string, error) {
 	if p.OpType == model.OpCreateNode {
+		existing, err := resolveEmitUID(ctx, tx, p.NodeID)
+		if err != nil {
+			return "", err
+		}
+		if existing != "" {
+			return existing, nil
+		}
+		// Genuinely new node (no uid yet): self-anchor (ADR-003 §2).
 		return eventID, nil
 	}
 	return resolveEmitUID(ctx, tx, p.NodeID)

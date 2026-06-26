@@ -115,9 +115,9 @@ func TestRegistry_RejectNeverDeletesAnyNode(t *testing.T) {
 	require.NoError(t, err)
 
 	batch := []*model.SyncEvent{
-		makeEvent("0193fa00-0000-7000-8000-0000000005b1", "MTIX-1.5", "bob", 2),   // fresh, lands
-		makeEvent("0193fa00-0000-7000-8000-0000000005b2", "MTIX-1.4", "bob", 3),   // collides, renumber
-		makeEvent("0193fa00-0000-7000-8000-0000000005b3", "MTIX-1.6", "bob", 4),   // fresh, lands
+		makeEvent("0193fa00-0000-7000-8000-0000000005b1", "MTIX-1.5", "bob", 2), // fresh, lands
+		makeEvent("0193fa00-0000-7000-8000-0000000005b2", "MTIX-1.4", "bob", 3), // collides, renumber
+		makeEvent("0193fa00-0000-7000-8000-0000000005b3", "MTIX-1.6", "bob", 4), // fresh, lands
 	}
 	accepted, _, renumbers, err := pool.PushEventsWithRenumbers(context.Background(), batch)
 	require.NoError(t, err)
@@ -246,6 +246,146 @@ func TestRegistry_ConcurrentPushesSameNumber(t *testing.T) {
 		"the partial unique index admits exactly one create_node for the number")
 	require.Equal(t, 1, totalAccepted, "exactly one pusher's create landed")
 	require.Equal(t, n-1, totalRenumber, "every other pusher got renumber-required; no node lost")
+}
+
+// --- MTIX-30.15: UID-aware registry idempotency (ADR-003 §6/§9) ---
+//
+// 30.6 makes events carry the node's stable uid. The registry must key
+// idempotency on that uid: a second create_node at the same (project,
+// display_path) whose uid EQUALS the registered create is the SAME logical
+// node (e.g. a --force re-backfill that re-mints a fresh event_id) and is a
+// NO-OP, NOT a renumber. Only a create whose uid DIFFERS at the same path
+// is a genuine collision → renumber-required (preserving 30.4 behavior).
+
+// TestRegistry_SameUIDRecreate_IsNoOp_NotRenumber is the core MTIX-30.15
+// corner case: a create_node re-pushed with the SAME uid but a FRESH
+// event_id (the --force backfill shape) must be ACCEPTED as a no-op, never
+// flagged renumber-required. This is the false-collision the hub used to
+// raise.
+func TestRegistry_SameUIDRecreate_IsNoOp_NotRenumber(t *testing.T) {
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	stableUID := "0193fa00-0000-7000-8000-00000000ba01"
+	first := makeEvent("0193fa00-0000-7000-8000-00000000ba01", "MTIX-1.4", "alice", 1)
+	first.UID = stableUID
+	_, _, ren1, err := pool.PushEventsWithRenumbers(context.Background(),
+		[]*model.SyncEvent{first})
+	require.NoError(t, err)
+	require.Empty(t, ren1)
+
+	// --force re-backfill: same logical node (same uid), fresh event_id.
+	repush := makeEvent("0193fa00-0000-7000-8000-00000000ba02", "MTIX-1.4", "alice", 2)
+	repush.UID = stableUID
+	accepted, conflicts, renumbers, err := pool.PushEventsWithRenumbers(
+		context.Background(), []*model.SyncEvent{repush})
+	require.NoError(t, err)
+
+	require.Empty(t, renumbers,
+		"a re-create with the SAME uid is the same logical node — never a renumber")
+	require.Empty(t, conflicts)
+	require.Equal(t, []string{repush.EventID}, accepted,
+		"the same-uid re-create is reported accepted (absorbed no-op) so the pusher stops retrying")
+
+	// The registry still holds exactly one create for the number — the
+	// no-op must NOT insert a second create_node row (the partial UNIQUE
+	// index would reject it anyway; the registry short-circuits first).
+	require.Equal(t, 1, countCreateForNode(t, pool, "MTIX", "MTIX-1.4"))
+}
+
+// TestRegistry_DistinctUIDSamePath_StillRenumber pins the PRESERVED 30.4
+// genuine-collision behavior: two creates at the same (project,
+// display_path) with DIFFERENT uids are distinct logical nodes and the
+// second MUST still return renumber-required. UID-awareness must not blunt
+// the real collision signal (ADR-003 §6).
+func TestRegistry_DistinctUIDSamePath_StillRenumber(t *testing.T) {
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	first := makeEvent("0193fa00-0000-7000-8000-00000000bb01", "MTIX-2.4", "alice", 1)
+	first.UID = "0193fa00-0000-7000-8000-00000000bb01"
+	_, _, _, err := pool.PushEventsWithRenumbers(context.Background(),
+		[]*model.SyncEvent{first})
+	require.NoError(t, err)
+
+	// A DIFFERENT logical node minted the same number offline (MTIX-28).
+	second := makeEvent("0193fa00-0000-7000-8000-00000000bb02", "MTIX-2.4", "bob", 2)
+	second.UID = "0193fa00-0000-7000-8000-00000000bb02" // distinct uid
+	accepted, _, renumbers, err := pool.PushEventsWithRenumbers(
+		context.Background(), []*model.SyncEvent{second})
+	require.NoError(t, err)
+
+	require.Empty(t, accepted, "the genuinely-colliding create must NOT land")
+	require.Len(t, renumbers, 1, "a DISTINCT uid at the same path is a real collision")
+	require.Equal(t, second.EventID, renumbers[0].EventID)
+	require.Equal(t, first.EventID, renumbers[0].RegisteredEventID)
+	require.Equal(t, 1, countCreateForNode(t, pool, "MTIX", "MTIX-2.4"))
+}
+
+// TestRegistry_UIDlessEvents_FallBackToEventID guards the dual-carry
+// transition (ADR-003 §7): events from an OLD CLI carry no uid. Their
+// effective identity falls back to the event_id, so two uid-less distinct
+// creates at the same path are still distinct (renumber), and re-pushing the
+// SAME uid-less event is still a no-op. UID-awareness must degrade exactly
+// to the 30.4 behavior when uid is absent.
+func TestRegistry_UIDlessEvents_FallBackToEventID(t *testing.T) {
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	// No UID set on either (old-CLI shape).
+	first := makeEvent("0193fa00-0000-7000-8000-00000000bc01", "MTIX-3.4", "alice", 1)
+	_, _, _, err := pool.PushEventsWithRenumbers(context.Background(),
+		[]*model.SyncEvent{first})
+	require.NoError(t, err)
+
+	// Distinct uid-less create at the same path → still a renumber.
+	second := makeEvent("0193fa00-0000-7000-8000-00000000bc02", "MTIX-3.4", "bob", 2)
+	_, _, renumbers, err := pool.PushEventsWithRenumbers(
+		context.Background(), []*model.SyncEvent{second})
+	require.NoError(t, err)
+	require.Len(t, renumbers, 1,
+		"two distinct uid-less creates at the same path stay a collision (fallback to event_id)")
+
+	// Re-pushing the SAME uid-less event is still an idempotent no-op.
+	_, _, renumbers2, err := pool.PushEventsWithRenumbers(
+		context.Background(), []*model.SyncEvent{first})
+	require.NoError(t, err)
+	require.Empty(t, renumbers2, "re-push of the same uid-less event is a no-op")
+}
+
+// TestRegistry_SameUIDRecreateInOneBatch covers the intra-batch no-op: two
+// create events for the same (path, uid) in a SINGLE push. The first claims
+// the number; the second — same uid — is a no-op, NOT a renumber (the batch
+// claim must be uid-aware too, not just the committed-index lookup).
+func TestRegistry_SameUIDRecreateInOneBatch(t *testing.T) {
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	uid := "0193fa00-0000-7000-8000-00000000bd00"
+	batch := []*model.SyncEvent{
+		func() *model.SyncEvent {
+			e := makeEvent("0193fa00-0000-7000-8000-00000000bd01", "MTIX-4.4", "alice", 1)
+			e.UID = uid
+			return e
+		}(),
+		func() *model.SyncEvent {
+			e := makeEvent("0193fa00-0000-7000-8000-00000000bd02", "MTIX-4.4", "alice", 2)
+			e.UID = uid // same logical node, fresh event_id
+			return e
+		}(),
+	}
+	accepted, _, renumbers, err := pool.PushEventsWithRenumbers(context.Background(), batch)
+	require.NoError(t, err)
+
+	require.Empty(t, renumbers,
+		"the same-uid sibling in the batch is a no-op, not a renumber")
+	// The first create lands a row; the same-uid sibling is an absorbed
+	// no-op — both are reported accepted so the pusher marks both pushed.
+	require.ElementsMatch(t,
+		[]string{"0193fa00-0000-7000-8000-00000000bd01", "0193fa00-0000-7000-8000-00000000bd02"},
+		accepted, "first create lands; same-uid sibling is an absorbed no-op")
+	require.Equal(t, 1, countCreateForNode(t, pool, "MTIX", "MTIX-4.4"),
+		"only ONE create_node row exists despite two accepted IDs")
 }
 
 // TestRegistry_PartialIndexRejectsPreexistingDuplicates documents the

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-27T05:12:42Z",
+  "exported_at": "2026-06-27T05:48:57Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -4072,7 +4072,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.6,
+      "progress": 0.6666666666666666,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -4120,15 +4120,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-wave-v2",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "ea0b7bcd973f44359fe1ee0e79a12046ae3ecc837f9ed8ae13ad6d81e2afe782",
       "created_at": "2026-06-26T10:51:15Z",
-      "updated_at": "2026-06-26T10:51:15Z"
+      "updated_at": "2026-06-27T05:48:57Z",
+      "closed_at": "2026-06-27T05:48:57Z"
     },
     {
       "id": "MTIX-30.11",
@@ -4392,15 +4393,15 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "claude-wave-v2",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "8841843b789179320c45138f7f79f92f522c6989c0fe093fafcc77d4f5ade9ee",
       "created_at": "2026-06-26T10:51:15Z",
-      "updated_at": "2026-06-26T10:51:15Z"
+      "updated_at": "2026-06-27T05:18:48Z"
     },
     {
       "id": "MTIX-30.8",
@@ -5390,7 +5391,7 @@
       "agent_id": "claude-wave-v2",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-30.8",
+      "current_node_id": "MTIX-30.10",
       "last_heartbeat": "2026-06-26T17:33:30Z"
     },
     {
@@ -5441,5 +5442,5 @@
     }
   ],
   "node_count": 204,
-  "checksum": "a98cf56d82a58bfac4cf3afdd4e1bb113622adb3ec0e41a8963b295d237348a2"
+  "checksum": "afc48e25c205a30eea9905b8c0afd72c3b5f823b0d00bbbfe16c45d9af50676d"
 }

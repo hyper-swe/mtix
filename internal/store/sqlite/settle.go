@@ -123,6 +123,63 @@ func sequenceKey(project, parentID string) string {
 	return project + ":" + parentID
 }
 
+// RenumberForHubRejection resolves a hub renumber-required outcome locally
+// (ADR-003 §6, MTIX-30.7). The hub rejected this node's create_node because
+// the number is already held by a different node (first-writer-wins); the
+// outcome's event id IS the node's durable uid (uid == create-event id,
+// ADR-003 §2). It re-claims the next free sibling number under the node's
+// parent, renumbers the node's whole subtree to it (RenumberSubtree, ADR-003
+// §5 — display path only, emits no sync events), then re-stamps the create
+// event with the new display_path and resets it to 'pending' so the next push
+// carries the distinct number. Returns the node's new display_path.
+//
+// A claimed number can be taken in the LOCAL store (the colliding id minted
+// at create time, or a sibling claimed earlier), so it claims strictly
+// increasing numbers until RenumberSubtree finds a free local namespace — the
+// local mirror of the registry's retry-on-taken (ADR-003 §6, §12 sc.9),
+// bounded so a corrupt counter can never spin forever.
+func (s *Store) RenumberForHubRejection(ctx context.Context, uid string) (string, error) {
+	target, err := s.loadSettleTarget(ctx, uid)
+	if err != nil {
+		return "", err
+	}
+
+	const maxAttempts = 10000
+	newID := ""
+	for attempt := 0; newID == ""; attempt++ {
+		if attempt >= maxAttempts {
+			return "", fmt.Errorf(
+				"renumber %s for hub rejection: no free sibling after %d attempts",
+				target.id, maxAttempts)
+		}
+		seq, claimErr := s.ClaimNextSeq(ctx, target.project, target.parentID)
+		if claimErr != nil {
+			return "", fmt.Errorf("claim next seq for %s: %w", target.id, claimErr)
+		}
+		switch renErr := s.RenumberSubtree(ctx, target.id, seq); {
+		case renErr == nil:
+			newID = model.BuildID(target.project, target.parentID, seq)
+		case errors.Is(renErr, model.ErrAlreadyExists):
+			continue // number taken locally; claim the next one
+		default:
+			return "", fmt.Errorf("renumber %s -> seq %d: %w", target.id, seq, renErr)
+		}
+	}
+
+	// RenumberSubtree touches no sync events; re-stamp the create event with
+	// the new display path and re-queue it for the next push.
+	if err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		_, execErr := tx.ExecContext(ctx,
+			`UPDATE sync_events SET node_id = ?, sync_status = 'pending'
+			 WHERE event_id = ? AND op_type = 'create_node'`,
+			newID, uid)
+		return execErr
+	}); err != nil {
+		return "", fmt.Errorf("re-queue renumbered create %s: %w", uid, err)
+	}
+	return newID, nil
+}
+
 // settleTarget holds the columns SettleNode needs about the node being settled.
 type settleTarget struct {
 	uid      string

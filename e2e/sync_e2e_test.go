@@ -143,9 +143,18 @@ func (c *fakeCLI) createNode(t *testing.T, id, title string) {
 	now := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	dash := strings.Index(id, "-")
 	require.NotEqual(t, -1, dash, "id %q must contain '-'", id)
+	// Derive the tree-position attributes (parent_id, depth, seq) from the
+	// dot-path so a child node is stored with a real parent link. The
+	// renumber path (ADR-003 §5) recomputes a subtree off parent_id, so an
+	// empty parent_id on a child would mis-renumber it to a root number.
+	parentID := model.ParseIDParent(id)
+	seq := deriveSeqForTest(t, id)
 	node := &model.Node{
 		ID:        id,
 		Project:   id[:dash],
+		ParentID:  parentID,
+		Depth:     model.ParseIDDepth(id),
+		Seq:       seq,
 		Title:     title,
 		Status:    model.StatusOpen,
 		Priority:  model.PriorityMedium,
@@ -159,6 +168,16 @@ func (c *fakeCLI) createNode(t *testing.T, id, title string) {
 		"createNode %s on %s", id, c.name)
 }
 
+// deriveSeqForTest extracts the trailing sibling number from a dot-path id
+// ('PRJX-1.2' -> 2, 'PRJX-3' -> 3) so the fixture stores a correct seq.
+func deriveSeqForTest(t *testing.T, id string) int {
+	t.Helper()
+	tail := id[strings.LastIndexAny(id, ".-")+1:]
+	seq, err := strconv.Atoi(tail)
+	require.NoError(t, err, "id %q must have a numeric trailing segment", id)
+	return seq
+}
+
 // updateTitle emits an update-node event by changing the node's title.
 func (c *fakeCLI) updateTitle(t *testing.T, id, newTitle string) {
 	t.Helper()
@@ -170,6 +189,18 @@ func (c *fakeCLI) updateTitle(t *testing.T, id, newTitle string) {
 // pushAll drains the local pending queue to the hub. Mirrors the
 // production pushLoop but inlined — we cannot import cmd/mtix.
 // Returns counts for assertions.
+//
+// Renumber-required draining (ADR-003 §6, MTIX-30.7): the hub registry
+// rejects a create_node whose (project, display_path) is already held by
+// a DIFFERENT node (first-writer-wins) and returns a renumber-required
+// outcome instead of accepting it. pushAll resolves each such outcome
+// locally — it re-claims the next free sibling number under the node's
+// parent (the same atomic counter normal id generation uses) and
+// renumbers the node's whole subtree to it — then re-pushes the now
+// distinct create. Both nodes are preserved with distinct numbers; no
+// split-brain, no silent loss. Without this drain the helper would spin
+// forever re-pushing a create the registry will never accept (the hang
+// root-caused in MTIX-30.4/30.15).
 func (c *fakeCLI) pushAll(ctx context.Context, t *testing.T, pool *transport.Pool) (totalPushed, totalConflicts int) {
 	t.Helper()
 	const batchSize = 100
@@ -178,7 +209,7 @@ func (c *fakeCLI) pushAll(ctx context.Context, t *testing.T, pool *transport.Poo
 		if len(events) == 0 {
 			return totalPushed, totalConflicts
 		}
-		acceptedIDs, conflicts, err := pool.PushEvents(ctx, events)
+		acceptedIDs, conflicts, renumbers, err := pool.PushEventsWithRenumbers(ctx, events)
 		require.NoError(t, err, "%s push", c.name)
 
 		require.NoError(t, c.store.WithTx(ctx, func(tx *sql.Tx) error {
@@ -194,7 +225,83 @@ func (c *fakeCLI) pushAll(ctx context.Context, t *testing.T, pool *transport.Poo
 
 		totalPushed += len(acceptedIDs)
 		totalConflicts += len(conflicts)
+
+		// Resolve every renumber-required outcome locally, then loop to
+		// re-push the renumbered creates (ADR-003 §6).
+		for _, r := range renumbers {
+			c.resolveRenumber(ctx, t, r)
+		}
+		if len(renumbers) == 0 && len(acceptedIDs) == 0 {
+			// Neither accepted nor renumbered: nothing more we can do this
+			// pass (e.g. a pure-conflict batch). Avoid an infinite loop.
+			return totalPushed, totalConflicts
+		}
 	}
+}
+
+// resolveRenumber applies one hub renumber-required outcome to the local
+// store and re-queues the affected create for push (ADR-003 §6, MTIX-30.7).
+//
+// The outcome's EventID is the rejected create event id, which IS the
+// node's durable uid (uid == create-event id, ADR-003 §2). We resolve the
+// node by that uid, re-claim the next free sibling number under its parent
+// via the same atomic counter normal creation uses (ClaimNextSeq), and
+// renumber the node's whole subtree to the clean candidate in a single
+// transaction (RenumberSubtree, ADR-003 §5). RenumberSubtree rewrites the
+// display path only and emits no sync events, so we then stamp the pending
+// create event with the node's NEW display_path and reset it to pending so
+// the next push carries the distinct number to the hub.
+//
+// A claimed number can already be taken in the LOCAL store (the colliding
+// id minted at create time, or a sibling claimed earlier this pass), so we
+// claim strictly-increasing numbers until RenumberSubtree finds a free
+// local namespace — the local mirror of the registry's retry-on-taken
+// (ADR-003 §6, §12 sc.9). The next push re-validates against the hub, so a
+// locally-free-but-hub-taken number still drains on the following pass.
+func (c *fakeCLI) resolveRenumber(ctx context.Context, t *testing.T, r transport.RenumberRequired) {
+	t.Helper()
+
+	uid := r.EventID // uid == create-event id (ADR-003 §2)
+	oldID, project, parentID := c.nodeByUID(ctx, t, uid)
+	require.Equal(t, r.DisplayPath, oldID,
+		"%s: renumber outcome must target this node's current display path", c.name)
+
+	var seq int
+	for {
+		s, err := c.store.ClaimNextSeq(ctx, project, parentID)
+		require.NoError(t, err, "%s claim next seq under %q", c.name, parentID)
+		err = c.store.RenumberSubtree(ctx, oldID, s)
+		if err == nil {
+			seq = s
+			break
+		}
+		require.ErrorIs(t, err, model.ErrAlreadyExists,
+			"%s renumber %s -> seq %d", c.name, oldID, s)
+		// Number taken locally; claim the next one (retry-on-taken).
+	}
+	newID := model.BuildID(project, parentID, seq)
+
+	// RenumberSubtree touches no sync events; re-stamp the create event with
+	// the new display path and re-queue it for push.
+	require.NoError(t, c.store.WithTx(ctx, func(tx *sql.Tx) error {
+		_, execErr := tx.ExecContext(ctx,
+			`UPDATE sync_events SET node_id = ?, sync_status = 'pending'
+			 WHERE event_id = ? AND op_type = 'create_node'`,
+			newID, uid)
+		return execErr
+	}), "%s re-queue renumbered create", c.name)
+}
+
+// nodeByUID returns the (id, project, parent_id) of the live node carrying
+// uid — used to map a hub renumber outcome back to the local node to renumber.
+func (c *fakeCLI) nodeByUID(ctx context.Context, t *testing.T, uid string) (id, project, parentID string) {
+	t.Helper()
+	var parent sql.NullString
+	require.NoError(t, c.store.QueryRow(ctx,
+		`SELECT id, project, parent_id FROM nodes WHERE uid = ? AND deleted_at IS NULL`,
+		uid).Scan(&id, &project, &parent),
+		"%s lookup node by uid %s", c.name, uid)
+	return id, project, parent.String
 }
 
 // pullAll drains the hub into the local store. Mirrors pullLoop;

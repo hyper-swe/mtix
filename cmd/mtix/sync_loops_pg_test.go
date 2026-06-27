@@ -43,9 +43,11 @@ func freshCmdHub(t *testing.T, dsn string) {
 	require.NoError(t, err)
 	defer pool.Close()
 	for _, stmt := range []string{
+		`DROP TABLE IF EXISTS node_renumber_remaps CASCADE`,
 		`DROP TABLE IF EXISTS sync_conflicts CASCADE`,
 		`DROP TABLE IF EXISTS applied_events CASCADE`,
 		`DROP TABLE IF EXISTS sync_events CASCADE`,
+		`DROP TABLE IF EXISTS sync_project_clients CASCADE`,
 		`DROP TABLE IF EXISTS sync_projects CASCADE`,
 		`DROP TABLE IF EXISTS audit_log CASCADE`,
 		`DROP FUNCTION IF EXISTS audit_log_immutable() CASCADE`,

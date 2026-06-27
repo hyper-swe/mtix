@@ -38,12 +38,14 @@ func TestSyncCmd_AllElevenFR18CommandsRegistered(t *testing.T) {
 	expected := []string{
 		"init", "clone", "push", "pull", "status", "doctor",
 		"conflicts", "reconcile", "daemon", "backup", "backfill",
+		// MTIX-30.10: the ADR-003 §7 node-identity migration driver.
+		"migrate",
 	}
 	for _, name := range expected {
 		require.Truef(t, subs[name], "%s subcommand registered", name)
 	}
 	require.Equal(t, len(expected), len(cmd.Commands()),
-		"exactly the 11 FR-18 commands are registered (no extras)")
+		"exactly the FR-18 + ADR-003 §7 sync commands are registered (no extras)")
 }
 
 // --- Refusal paths ---

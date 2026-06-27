@@ -51,6 +51,7 @@ func freshSchema(t *testing.T, dsn string) {
 	defer pool.Close()
 
 	for _, stmt := range []string{
+		`DROP TABLE IF EXISTS node_renumber_remaps CASCADE`,
 		`DROP TABLE IF EXISTS sync_conflicts CASCADE`,
 		`DROP TABLE IF EXISTS applied_events CASCADE`,
 		`DROP TABLE IF EXISTS sync_events CASCADE`,

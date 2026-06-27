@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-26T17:56:05Z",
+  "exported_at": "2026-06-27T05:12:42Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -4072,7 +4072,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.5333333333333333,
+      "progress": 0.6,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -4292,15 +4292,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-wave-v2",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "d47081bcd962de2f1bccf5298d5c2cae52acdbbea6c6110c68d5060d3505a817",
       "created_at": "2026-06-26T10:51:15Z",
-      "updated_at": "2026-06-26T10:51:15Z"
+      "updated_at": "2026-06-27T05:12:42Z",
+      "closed_at": "2026-06-27T05:12:42Z"
     },
     {
       "id": "MTIX-30.4",
@@ -4415,15 +4416,15 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "claude-wave-v2",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "636900ca93d2501bea9a06befd884a1c732cd51f40b237bb6f9649ad814d3928",
       "created_at": "2026-06-26T10:51:15Z",
-      "updated_at": "2026-06-26T10:51:15Z"
+      "updated_at": "2026-06-26T17:57:43Z"
     },
     {
       "id": "MTIX-30.9",
@@ -5389,7 +5390,7 @@
       "agent_id": "claude-wave-v2",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-30.5",
+      "current_node_id": "MTIX-30.8",
       "last_heartbeat": "2026-06-26T17:33:30Z"
     },
     {
@@ -5440,5 +5441,5 @@
     }
   ],
   "node_count": 204,
-  "checksum": "acb2e4dd88bcb5ae747ffd849cf016559cc88116135f1d748767a0fa6783893e"
+  "checksum": "a98cf56d82a58bfac4cf3afdd4e1bb113622adb3ec0e41a8963b295d237348a2"
 }

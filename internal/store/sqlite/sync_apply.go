@@ -63,16 +63,29 @@ func detectLWWOutcome(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (lwwO
 	}
 	fieldName := strings.TrimPrefix(strings.SplitN(key, ":", 2)[1], "")
 
+	// Scope the LWW history by uid when the event carries one (ADR-003 §3,
+	// §10): a node's pre- and post-renumber events share a stable uid but
+	// DIFFERENT node_ids, so keying on node_id would split one node's
+	// history across a renumber and let a stale-path event spuriously win.
+	// Keying on uid keeps it ONE history. Uid-less (old-CLI) events fall
+	// back to node_id, matching the legacy behavior exactly.
+	scopeCol, scopeVal := "node_id", e.NodeID
+	if e.UID != "" {
+		scopeCol, scopeVal = "uid", e.UID
+	}
+
 	// Match prior events on the same (node, op_type, field). For
 	// update_field we also need to filter by payload->>'field_name';
 	// for set_acceptance / set_prompt the op_type alone is sufficient.
+	// The scope column is a fixed identifier (never user input); the value
+	// is always a bound parameter.
 	var query string
-	args := []any{e.NodeID, string(e.OpType), e.EventID}
+	args := []any{scopeVal, string(e.OpType), e.EventID}
 	switch e.OpType {
 	case model.OpUpdateField:
 		query = `SELECT event_id, lamport_clock, wall_clock_ts, author_machine_hash
 		         FROM sync_events
-		         WHERE node_id = ? AND op_type = ? AND event_id <> ?
+		         WHERE ` + scopeCol + ` = ? AND op_type = ? AND event_id <> ?
 		           AND json_extract(payload, '$.field_name') = ?
 		         ORDER BY lamport_clock DESC, wall_clock_ts DESC, author_machine_hash ASC
 		         LIMIT 1`
@@ -80,7 +93,7 @@ func detectLWWOutcome(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (lwwO
 	default:
 		query = `SELECT event_id, lamport_clock, wall_clock_ts, author_machine_hash
 		         FROM sync_events
-		         WHERE node_id = ? AND op_type = ? AND event_id <> ?
+		         WHERE ` + scopeCol + ` = ? AND op_type = ? AND event_id <> ?
 		         ORDER BY lamport_clock DESC, wall_clock_ts DESC, author_machine_hash ASC
 		         LIMIT 1`
 	}
@@ -133,11 +146,11 @@ func mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) er
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT OR IGNORE INTO sync_events
-		  (event_id, project_prefix, node_id, op_type, payload,
+		  (event_id, project_prefix, node_id, uid, op_type, payload,
 		   wall_clock_ts, lamport_clock, vector_clock,
 		   author_id, author_machine_hash, sync_status, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.EventID, e.ProjectPrefix, e.NodeID, string(e.OpType), string(e.Payload),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.EventID, e.ProjectPrefix, e.NodeID, nullableString(e.UID), string(e.OpType), string(e.Payload),
 		e.WallClockTS, e.LamportClock, string(vcJSON),
 		e.AuthorID, e.AuthorMachineHash, string(model.SyncStatusApplied),
 		time.Now().UTC().Format(time.RFC3339Nano),
@@ -390,9 +403,29 @@ func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error 
 		labelsJSON = string(b)
 	}
 
+	// The node's durable uid is the create event's own id (ADR-003 §2
+	// self-anchor). Dual-carry: prefer the carried UID, but tolerate a
+	// uid-less old-CLI create by self-anchoring to the event id here too.
+	uid := e.UID
+	if uid == "" {
+		uid = e.EventID
+	}
+
+	// Idempotency no longer rides "OR IGNORE": a re-applied SAME create is
+	// already short-circuited by the applied_events event_id check in
+	// IdempotentApply BEFORE dispatch (FR-18.9). So the only thing that can
+	// reach a row-level conflict here is a SECOND, DISTINCT create event
+	// (different event_id/uid) that wants the same display_path — the
+	// MTIX-28 split-brain. ADR-003 §6 resolves that by renumbering, which
+	// is MTIX-30.7's job. Until then this keeps the documented residual
+	// first-writer-wins behavior (e2e/sync_collision_test.go pins it), but
+	// expresses it explicitly as a conflict on the id PK rather than as a
+	// blanket OR IGNORE that also masked re-applies. It must NOT hard-error
+	// (that would wedge the apply pipeline for the whole batch); the
+	// surfacing/renumber is layered on top by 30.7.
 	_, err := tx.ExecContext(ctx, `
-		INSERT OR IGNORE INTO nodes
-		  (id, parent_id, depth, seq, project,
+		INSERT INTO nodes
+		  (id, uid, parent_id, depth, seq, project,
 		   title, description, prompt, acceptance,
 		   node_type, priority, labels,
 		   status, progress,
@@ -400,15 +433,16 @@ func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error 
 		   created_at, updated_at,
 		   weight,
 		   activity, annotations)
-		VALUES (?, ?, ?, ?, ?,
+		VALUES (?, ?, ?, ?, ?, ?,
 		        ?, ?, ?, ?,
 		        ?, ?, ?,
 		        ?, ?,
 		        ?, ?,
 		        ?, ?,
 		        ?,
-		        '[]', '[]')`,
-		e.NodeID, nullableString(p.ParentID), depth, deriveSeq(e.NodeID), e.ProjectPrefix,
+		        '[]', '[]')
+		ON CONFLICT (id) DO NOTHING`,
+		e.NodeID, uid, nullableString(p.ParentID), depth, deriveSeq(e.NodeID), e.ProjectPrefix,
 		p.Title, nullableString(p.Description), nullableString(p.Prompt), nullableString(p.Acceptance),
 		string(canonical), int(p.Priority), labelsJSON,
 		string(model.StatusOpen), 0.0,
@@ -416,7 +450,10 @@ func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error 
 		now, now,
 		1.0,
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("apply create_node %s: insert node %s: %w", e.EventID, e.NodeID, err)
+	}
+	return nil
 }
 
 // computeDepth returns the depth of a node given its parent ID. Depth 0
@@ -482,7 +519,8 @@ func applyUpdateField(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error
 		return fmt.Errorf("apply update_field %s: field %q not in whitelist: %w",
 			e.EventID, p.FieldName, model.ErrInvalidInput)
 	}
-	if err := requireNodeExists(ctx, tx, e.NodeID); err != nil {
+	id, err := resolveNodeRef(ctx, tx, e)
+	if err != nil {
 		return err
 	}
 	value, err := decodeNewValueForColumn(p.FieldName, p.NewValue)
@@ -493,7 +531,7 @@ func applyUpdateField(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error
 	// SQL is constructed from a whitelisted column name; the value is
 	// always a bound parameter.
 	stmt := "UPDATE nodes SET " + p.FieldName + " = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL"
-	_, err = tx.ExecContext(ctx, stmt, value, now, e.NodeID)
+	_, err = tx.ExecContext(ctx, stmt, value, now, id)
 	return err
 }
 
@@ -528,7 +566,8 @@ func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) 
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply transition_status %s: decode payload: %w", e.EventID, err)
 	}
-	if err := requireNodeExists(ctx, tx, e.NodeID); err != nil {
+	id, err := resolveNodeRef(ctx, tx, e)
+	if err != nil {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -536,9 +575,9 @@ func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) 
 	if p.To.IsTerminal() {
 		closedAt = sql.NullString{String: now, Valid: true}
 	}
-	_, err := tx.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET status = ?, closed_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
-		string(p.To), closedAt, now, e.NodeID,
+		string(p.To), closedAt, now, id,
 	)
 	return err
 }
@@ -548,27 +587,29 @@ func applyClaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply claim %s: decode payload: %w", e.EventID, err)
 	}
-	if err := requireNodeExists(ctx, tx, e.NodeID); err != nil {
+	id, err := resolveNodeRef(ctx, tx, e)
+	if err != nil {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := tx.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET status = ?, assignee = ?, agent_state = ?, updated_at = ?
 		 WHERE id = ? AND deleted_at IS NULL`,
-		string(model.StatusInProgress), p.AgentID, string(model.AgentStateWorking), now, e.NodeID,
+		string(model.StatusInProgress), p.AgentID, string(model.AgentStateWorking), now, id,
 	)
 	return err
 }
 
 func applyUnclaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	if err := requireNodeExists(ctx, tx, e.NodeID); err != nil {
+	id, err := resolveNodeRef(ctx, tx, e)
+	if err != nil {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := tx.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET status = ?, assignee = NULL, agent_state = NULL, updated_at = ?
 		 WHERE id = ? AND deleted_at IS NULL`,
-		string(model.StatusOpen), now, e.NodeID,
+		string(model.StatusOpen), now, id,
 	)
 	return err
 }
@@ -578,7 +619,8 @@ func applyDefer(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply defer %s: decode payload: %w", e.EventID, err)
 	}
-	if err := requireNodeExists(ctx, tx, e.NodeID); err != nil {
+	id, err := resolveNodeRef(ctx, tx, e)
+	if err != nil {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -586,10 +628,10 @@ func applyDefer(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	if p.Until != nil {
 		deferUntil = sql.NullString{String: p.Until.UTC().Format(time.RFC3339), Valid: true}
 	}
-	_, err := tx.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET status = ?, defer_until = ?, updated_at = ?
 		 WHERE id = ? AND deleted_at IS NULL`,
-		string(model.StatusDeferred), deferUntil, now, e.NodeID,
+		string(model.StatusDeferred), deferUntil, now, id,
 	)
 	return err
 }
@@ -599,20 +641,21 @@ func applyComment(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply comment %s: decode payload: %w", e.EventID, err)
 	}
-	if err := requireNodeExists(ctx, tx, e.NodeID); err != nil {
+	id, err := resolveNodeRef(ctx, tx, e)
+	if err != nil {
 		return err
 	}
 	// Read existing annotations, append the new comment, write back.
 	var raw sql.NullString
-	if err := tx.QueryRowContext(ctx,
-		`SELECT annotations FROM nodes WHERE id = ? AND deleted_at IS NULL`, e.NodeID,
-	).Scan(&raw); err != nil {
-		return err
+	if scanErr := tx.QueryRowContext(ctx,
+		`SELECT annotations FROM nodes WHERE id = ? AND deleted_at IS NULL`, id,
+	).Scan(&raw); scanErr != nil {
+		return scanErr
 	}
 	annotations := []model.Annotation{}
 	if raw.Valid && raw.String != "" {
-		if err := json.Unmarshal([]byte(raw.String), &annotations); err != nil {
-			return fmt.Errorf("decode annotations: %w", err)
+		if decErr := json.Unmarshal([]byte(raw.String), &annotations); decErr != nil {
+			return fmt.Errorf("decode annotations: %w", decErr)
 		}
 	}
 	// Use the event's wall_clock_ts so two replicas applying the same
@@ -639,7 +682,7 @@ func applyComment(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	}
 	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET annotations = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
-		string(encoded), time.UnixMilli(e.WallClockTS).UTC().Format(time.RFC3339), e.NodeID,
+		string(encoded), time.UnixMilli(e.WallClockTS).UTC().Format(time.RFC3339), id,
 	)
 	return err
 }
@@ -650,10 +693,14 @@ func applyLinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 		return fmt.Errorf("apply link_dep %s: decode payload: %w", e.EventID, err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	// Route the edge's source node through the uid-aware ref so a dep
+	// survives a renumber of the from-node (ADR-003 §3). The dependencies
+	// FK to nodes(id) is satisfied by the resolved current display path.
+	fromID := fromIDForDepEdge(ctx, tx, e)
 	_, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO dependencies (from_id, to_id, dep_type, created_at, created_by)
 		 VALUES (?, ?, ?, ?, ?)`,
-		e.NodeID, p.DependsOnNodeID, p.DepType, now, e.AuthorID,
+		fromID, p.DependsOnNodeID, p.DepType, now, e.AuthorID,
 	)
 	return err
 }
@@ -667,11 +714,25 @@ func applyUnlinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	if depType == "" {
 		depType = string(model.DepTypeBlocks)
 	}
+	fromID := fromIDForDepEdge(ctx, tx, e)
 	_, err := tx.ExecContext(ctx,
 		`DELETE FROM dependencies WHERE from_id = ? AND to_id = ? AND dep_type = ?`,
-		e.NodeID, p.DependsOnNodeID, depType,
+		fromID, p.DependsOnNodeID, depType,
 	)
 	return err
+}
+
+// fromIDForDepEdge resolves the source node of a dependency edge through
+// the uid-aware ref (ADR-003 §3) so an edge survives a renumber of the
+// from-node. Dependency ops are idempotent and key on the (from,to,type)
+// tuple, not on node existence (the FK already guards a missing node), so
+// a NotFound from resolveNodeRef is tolerated by falling back to the
+// event's node_id — preserving the pre-30.6 behavior for uid-less events.
+func fromIDForDepEdge(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) string {
+	if id, err := resolveNodeRef(ctx, tx, e); err == nil {
+		return id
+	}
+	return e.NodeID
 }
 
 // applyDelete is a tombstone. SYNC-DESIGN section 8.3: delete on a
@@ -679,11 +740,22 @@ func applyUnlinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 // get deleted_at set; this does NOT cascade — any descendants must
 // have their own delete events.
 func applyDelete(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+	// Resolve the target through the uid-aware ref so a delete still finds
+	// a renumbered node by uid. SYNC-DESIGN §8.3: delete on a non-existent
+	// (or already-deleted) node is a no-op — NOT an error — so we swallow
+	// ErrNotFound here rather than surfacing it.
+	id, err := resolveNodeRef(ctx, tx, e)
+	if errors.Is(err, model.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := tx.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET deleted_at = ?, deleted_by = ?, updated_at = ?
 		 WHERE id = ? AND deleted_at IS NULL`,
-		now, e.AuthorID, now, e.NodeID,
+		now, e.AuthorID, now, id,
 	)
 	return err
 }
@@ -693,13 +765,14 @@ func applySetAcceptance(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) err
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply set_acceptance %s: decode payload: %w", e.EventID, err)
 	}
-	if err := requireNodeExists(ctx, tx, e.NodeID); err != nil {
+	id, err := resolveNodeRef(ctx, tx, e)
+	if err != nil {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := tx.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET acceptance = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
-		p.AcceptanceText, now, e.NodeID,
+		p.AcceptanceText, now, id,
 	)
 	return err
 }
@@ -709,27 +782,53 @@ func applySetPrompt(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply set_prompt %s: decode payload: %w", e.EventID, err)
 	}
-	if err := requireNodeExists(ctx, tx, e.NodeID); err != nil {
+	id, err := resolveNodeRef(ctx, tx, e)
+	if err != nil {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := tx.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET prompt = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
-		p.PromptText, now, e.NodeID,
+		p.PromptText, now, id,
 	)
 	return err
 }
 
-// requireNodeExists returns model.ErrNotFound (wrapped) if the node
-// does not exist or is soft-deleted. Apply functions that target an
-// existing row call this before mutating.
-func requireNodeExists(ctx context.Context, tx *sql.Tx, nodeID string) error {
-	var n int
-	err := tx.QueryRowContext(ctx,
-		`SELECT 1 FROM nodes WHERE id = ? AND deleted_at IS NULL`, nodeID,
-	).Scan(&n)
-	if err == sql.ErrNoRows {
-		return fmt.Errorf("node %s: %w", nodeID, model.ErrNotFound)
+// resolveNodeRef returns the dot-path id of the live node an event acts on
+// (ADR-003 §3, §7 Phase 3 — the single keying choke point for apply).
+//
+// Keying rule (dual-carry transition):
+//   - When the event carries a uid, the node is looked up by uid
+//     (uid-AUTHORITATIVE). This is what makes a renumber touch ZERO
+//     events: the display path (node_id) may have moved, but the uid is
+//     stable, so the event still finds the node. The returned id is the
+//     node's CURRENT display path, which the caller binds into its
+//     UPDATE/SELECT — never trusting the possibly-stale e.NodeID.
+//   - When the event carries NO uid (an old CLI's event, ADR-003 §7
+//     Phase 3), apply falls back to node_id exactly as before.
+//
+// Returns model.ErrNotFound (wrapped) if no live node matches — including
+// HAZARD (c): an event whose node's create_node has not yet applied
+// (causal order) surfaces ErrNotFound rather than silently mis-applying.
+// All applyXxx functions that target an existing row route through this so
+// the fallback is not duplicated at ~12 sites.
+func resolveNodeRef(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (string, error) {
+	var (
+		id    string
+		err   error
+		query = `SELECT id FROM nodes WHERE id = ? AND deleted_at IS NULL`
+		arg   = e.NodeID
+	)
+	if e.UID != "" {
+		query = `SELECT id FROM nodes WHERE uid = ? AND deleted_at IS NULL`
+		arg = e.UID
 	}
-	return err
+	err = tx.QueryRowContext(ctx, query, arg).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("node %s (uid=%q): %w", e.NodeID, e.UID, model.ErrNotFound)
+	}
+	if err != nil {
+		return "", err
+	}
+	return id, nil
 }

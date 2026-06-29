@@ -19,7 +19,7 @@ import (
 // RegisterNodeTools registers node management MCP tools per MTIX-6.2.1 / FR-17.7.
 func RegisterNodeTools(reg *ToolRegistry, nodeSvc *service.NodeService, st store.Store) {
 	registerCreateTool(reg, nodeSvc)
-	registerShowTool(reg, nodeSvc)
+	registerShowTool(reg, st)
 	registerListTool(reg, st)
 	registerBriefingTool(reg, st)
 	registerDeleteTool(reg, nodeSvc)
@@ -83,7 +83,7 @@ func registerCreateTool(reg *ToolRegistry, svc *service.NodeService) {
 	})
 }
 
-func registerShowTool(reg *ToolRegistry, svc *service.NodeService) {
+func registerShowTool(reg *ToolRegistry, st store.Store) {
 	reg.Register(ToolDef{
 		Name:        "mtix_show",
 		Description: "Show full details of a node",
@@ -100,14 +100,38 @@ func registerShowTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, fmt.Errorf("parse show args: %w", err)
 		}
 
-		node, err := svc.GetNode(ctx, p.ID)
+		// Resolve display_path -> uid -> node so a reference survives a
+		// renumber (ADR-003 §5): a plain display id is the common case, but a
+		// reference held as a durable uid still resolves to the current node.
+		node, err := resolveNodeRef(ctx, st, p.ID)
 		if err != nil {
 			return nil, err
 		}
 
-		data, _ := json.MarshalIndent(node, "", "  ")
-		return SuccessResult(string(data)), nil
+		return SuccessResult(showResultJSON(node)), nil
 	})
+}
+
+// showResultJSON marshals a node for the mtix_show tool, additively flagging a
+// provisional id (one still bearing a uid segment) with "provisional": true so
+// an agent knows its number is not yet settled and must not be externalized
+// (ADR-003 §8). Detection is shape-only via model.IsProvisional. The flag is
+// only added — every existing field is preserved verbatim — so the change is
+// non-breaking for consumers that ignore it. A settled id is emitted unchanged.
+func showResultJSON(node *model.Node) string {
+	data, _ := json.MarshalIndent(node, "", "  ")
+	if !model.IsProvisional(node.ID) {
+		return string(data)
+	}
+	// Round-trip through a generic map so the flag is purely additive: every
+	// existing field is preserved verbatim. Both conversions are infallible
+	// here — data came from marshaling node, and m came from that data — so,
+	// matching this file's convention, the JSON errors are ignored.
+	var m map[string]any
+	_ = json.Unmarshal(data, &m)
+	m["provisional"] = true
+	flagged, _ := json.MarshalIndent(m, "", "  ")
+	return string(flagged)
 }
 
 func registerListTool(reg *ToolRegistry, st store.Store) {

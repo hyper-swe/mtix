@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
+	"github.com/hyper-swe/mtix/internal/sync/clock"
 )
 
 // CreateNodeRequest contains the parameters for creating a new node.
@@ -37,6 +39,14 @@ type NodeService struct {
 	config      ConfigProvider
 	logger      *slog.Logger
 	clock       func() time.Time
+
+	// settlement, when set, settles provisional nodes against the hub in the
+	// background (ADR-003 §4 / MTIX-30.3). It is optional: nil means no hub is
+	// configured, so creation keeps clean local numbers and never goes
+	// provisional. settleWG tracks in-flight background settlements so
+	// FlushSettlement can drain them on shutdown.
+	settlement *SettlementService
+	settleWG   sync.WaitGroup
 }
 
 // NewNodeService creates a NodeService with all required dependencies.
@@ -72,9 +82,40 @@ func NewNodeService(
 	}
 }
 
+// SetSettlement attaches the background settlement engine for distributed node
+// identity (ADR-003 §4 / MTIX-30.3). It is wired once during process setup,
+// before concurrent use. When unset (the single-user / no-hub case) creation
+// keeps clean local numbers and never produces provisional ids.
+func (svc *NodeService) SetSettlement(settlement *SettlementService) {
+	svc.settlement = settlement
+}
+
+// FlushSettlement drains all in-flight background settlements and then runs one
+// final synchronous settlement pass, so pending provisional nodes are settled
+// before shutdown (ADR-003 §4 flush-on-shutdown). It is a safe no-op when no
+// settlement engine is configured. It is the caller's join point on the
+// background settlements CreateNode spawns.
+func (svc *NodeService) FlushSettlement(ctx context.Context) {
+	svc.settleWG.Wait()
+	if svc.settlement.Enabled() {
+		if _, _, err := svc.settlement.SettlePending(ctx); err != nil {
+			svc.logger.Warn("settlement_flush_failed",
+				"event", "settlement_flush_failed", "error", err)
+		}
+	}
+}
+
 // CreateNode creates a new node with validation, ID generation, and event broadcast.
 // Implements FR-3.1 (field validation), FR-3.9 (terminal parent rejection),
 // FR-11.2a (auto-claim), and FR-2.7 (atomic sequence for ID generation).
+//
+// Distributed identity (ADR-003 §4 / MTIX-30.3): the trailing number is claimed
+// eagerly and LOCALLY (never blocking on the network). When a hub is configured
+// and reachable, the node is born with a clean number and its claim is confirmed
+// against the hub by a BACKGROUND settlement (off this goroutine). When the hub
+// is unreachable at create time, a child is born PROVISIONAL (a uid-bearing id)
+// and re-settles on the next sync. The create call returns immediately either
+// way — it never waits on the hub.
 func (svc *NodeService) CreateNode(ctx context.Context, req *CreateNodeRequest) (*model.Node, error) {
 	if err := svc.validateCreateRequest(req); err != nil {
 		return nil, err
@@ -97,7 +138,30 @@ func (svc *NodeService) CreateNode(ctx context.Context, req *CreateNodeRequest) 
 
 	svc.broadcastEvent(ctx, EventNodeCreated, node.ID, req.Creator, nil)
 
+	// Eagerly settle against the hub in the BACKGROUND (ADR-003 §4): the create
+	// call must not block on the network. An offline node simply stays
+	// provisional and re-settles on the next sync.
+	svc.scheduleSettlement()
+
 	return node, nil
+}
+
+// scheduleSettlement kicks off one background settlement pass when a reachable
+// hub is configured (ADR-003 §4 eager background settlement). It runs off the
+// request goroutine so the create call never blocks on the hub; settleWG lets
+// FlushSettlement join it on shutdown.
+func (svc *NodeService) scheduleSettlement() {
+	if !svc.settlement.Reachable() {
+		return
+	}
+	svc.settleWG.Add(1)
+	go func() {
+		defer svc.settleWG.Done()
+		if _, _, err := svc.settlement.SettlePending(context.Background()); err != nil {
+			svc.logger.Warn("background_settlement_failed",
+				"event", "background_settlement_failed", "error", err)
+		}
+	}()
 }
 
 // GetNode retrieves a node by ID, delegating to the store.
@@ -217,7 +281,19 @@ func (svc *NodeService) buildNode(
 		return nil, fmt.Errorf("generate sequence: %w", err)
 	}
 
-	id := model.BuildID(req.Project, parentID, seq)
+	// Distributed identity (ADR-003 §4): the seq is the eager LOCAL claim. The
+	// node is born with a clean numeric id unless a hub is configured but
+	// unreachable AND the node has a parent — then it is born PROVISIONAL (a
+	// uid-bearing id) and re-settles on the next sync. A project root is always
+	// settled in ADR-003's model, so only a child can be provisional.
+	uid, err := clock.NewEventID()
+	if err != nil {
+		return nil, fmt.Errorf("generate uid: %w", err)
+	}
+	id, err := svc.chooseDisplayID(req.Project, parentID, seq, uid)
+	if err != nil {
+		return nil, err
+	}
 
 	priority := req.Priority
 	if priority == 0 {
@@ -242,6 +318,7 @@ func (svc *NodeService) buildNode(
 		CreatedAt:   now,
 		UpdatedAt:   now,
 		DeferUntil:  req.DeferUntil,
+		UID:         uid, // uid == create-event id (ADR-003 §2)
 	}
 
 	node.NodeType = model.NodeTypeForDepth(depth)
@@ -254,6 +331,24 @@ func (svc *NodeService) buildNode(
 	}
 
 	return node, nil
+}
+
+// chooseDisplayID returns the display_path a new node is born with (ADR-003 §4).
+// It returns the clean numeric id (model.BuildID) in the normal case, and a
+// PROVISIONAL uid-bearing id (model.BuildProvisionalID) only when a hub is
+// configured but unreachable AND the node has a parent — a project root is always
+// settled, so it can never be provisional. The provisional node re-settles via
+// the background settlement engine on the next sync (ADR-003 §4 offline
+// fallback).
+func (svc *NodeService) chooseDisplayID(project, parentID string, seq int, uid string) (string, error) {
+	if parentID != "" && svc.settlement.Enabled() && !svc.settlement.Reachable() {
+		id, err := model.BuildProvisionalID(parentID, uid)
+		if err != nil {
+			return "", fmt.Errorf("build provisional id: %w", err)
+		}
+		return id, nil
+	}
+	return model.BuildID(project, parentID, seq), nil
 }
 
 // maybeAutoClaim implements FR-11.2a: auto-claim child when configured

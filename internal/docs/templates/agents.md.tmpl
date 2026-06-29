@@ -42,6 +42,30 @@ The `--prompt` field MUST capture:
 
 **The canonical lazy-creation failure:** `mtix create "Build X" --description "build the X feature"`. No `--prompt`. No `--acceptance`. No `--labels`. The next agent inherits a title and a one-sentence description — exactly what the context chain was designed to *prevent*. If you would not hand a colleague a sticky note with these contents and expect them to ship the feature, the ticket is incomplete. Populate `--prompt`, `--acceptance`, and `--labels` from your current conversation before claiming the ticket or marking it ready.
 
+## Node ID semantics
+
+Reference every node by its **dot-path id** (e.g. `{{ .ProjectPrefix }}-1.4`) — never by anything else. The dot-path is the only identifier you need to read, write, or pass to a tool.
+
+A dot-path comes in two forms, and the difference is **visible in the id itself**:
+
+- **Settled** — every segment after the project prefix is a plain number, e.g. `{{ .ProjectPrefix }}-1.4` or `{{ .ProjectPrefix }}-1.2.3`. A settled id is stable and **safe to externalize**: put it in commit messages, PR bodies, code comments, changelogs, or any other lasting artifact.
+- **Provisional** — at least one segment is not a number (it carries a short id token rather than a sequence number), e.g. `{{ .ProjectPrefix }}-1.<token>` or `{{ .ProjectPrefix }}-1.<token>.2`. A provisional id is **valid and resolvable right now**, but its number is not final: when it settles, the number **will change**.
+
+Rules:
+
+1. **Never embed a provisional id in a commit, PR, or any external/immutable artifact.** It will go stale the moment the id settles, leaving a dangling reference. Tooling surfaces a `(provisional)` marker wherever such an id is shown, and the guardrail in `examples/hooks/pre-push` will warn/refuse if you try to push one — heed it.
+2. **Only externalize settled (fully-numeric) ids.** If you need to reference a node in a commit or PR and its id is still provisional, finish/settle it first or re-resolve to its settled id.
+3. **Re-resolve before relying on a recorded id.** Renumbers are rare, but a previously-recorded dot-path may have moved. If you persisted a reference, re-resolve it via `mtix` rather than assuming it is permanent — the system resolves the underlying node correctly regardless.
+
+You never generate, store, or reason about the internal token mechanics — you only need to recognize the two shapes above and treat provisional ids as not-yet-externalizable.
+
+**Where provisional ids and renumbers come from (both are normal and self-healing):**
+
+- You get a **provisional** id when you create a ticket while the sync hub is unreachable (offline). It is born provisional and **settles automatically on the next sync** — no action from you. Work with it locally; just don't externalize it until it settles.
+- A settled number can **change once** if two agents concurrently created the same sibling number against a shared hub: the hub keeps both tickets and **auto-renumbers** one on sync (the other keeps the contested number). This is exactly why rule 3 (re-resolve) exists — a number you recorded earlier may have moved, but the underlying node still resolves.
+
+You never fix either of these by hand; the system converges on its own.
+
 ## Parent Selection — Read Before You Nest
 
 Before nesting a new ticket under an existing node, call `mtix_context` on the candidate parent and read its description, prompt, and acceptance criteria — *not* just the title. Pattern-matching on a parent's title is the canonical parent-selection failure: a parent titled "LLM agent integration" may actually be scoped to *packaging the agent kit for release*, not to *the substance of agent guidance*. Nest only when the new work substantively fits the parent's scope.
@@ -215,3 +239,11 @@ trust-boundary section and a failure-modes table.
 
 Foundational trust model for all of the above:
 [../SECURITY-MODEL.md](../SECURITY-MODEL.md).
+
+## Sync recovery (operator tasks — recognize, don't force)
+
+These are **operator/admin** actions, not part of the normal agent loop. Recognize them so you *surface* the situations that need them instead of working around them:
+
+- After the shared hub is **restored from a backup**, the operator runs `mtix sync mark-restored` (a restore-runbook step). It opens the window in which a re-granted number can be detected as a genuine collision rather than silently renumbered.
+- A restore can leave **two real, already-settled tickets claiming one number** (a settled-vs-settled collision). mtix **fails loud and blocks only that one ticket** — every other ticket keeps syncing. An admin resolves it with `mtix sync collisions list` and `mtix sync collisions resolve <id> --winner held|incoming`; the loser renumbers (via the atomic renumber path) and **no ticket is ever lost**. If you encounter a ticket blocked on a collision, **surface it to the operator — do not try to work around it.**
+- `mtix sync migrate` runs the one-time distributed-identity migration (operator-driven, single-flight, idempotent). Agents do not run it.

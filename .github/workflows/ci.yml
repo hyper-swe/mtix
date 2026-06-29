@@ -82,8 +82,43 @@ jobs:
           MTIX_FAULTFS_DIR: /mnt/mtix-faultfs
         run: go test ./e2e/faultinject/ -tags=faultinject -count=1 -timeout=12m -v
 
+  test-sync-chaos-postgres:
+    # MTIX-30.11: distributed-identity fault-injection + chaos e2e against a
+    # real Postgres hub — crash-resumability of RenumberSubtree / the Phase-1
+    # dedup SweepDuplicates / the push renumber-drain (ADR-003 §5/§6/§7), and
+    # the restore-collision Option B discriminator (ADR-003 §6.1/§15: a
+    # cross-epoch re-grant blocks; same-epoch / no-restore near-misses
+    # renumber). The whole e2e sync suite is MTIX_PG_TEST_DSN-gated and SKIPS
+    # in test-go (no DSN there), so this job is what actually exercises it.
+    # Run with -race for the concurrent sweep/renumber coverage. A red run here
+    # is an identity/sync regression and must never be merged around.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mtixchaos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: "1.25"
+      - name: Run identity/sync chaos + restore e2e suite
+        env:
+          MTIX_PG_TEST_DSN: postgres://postgres:postgres@127.0.0.1:5432/mtixchaos?sslmode=disable
+        run: go test ./e2e/ -race -count=1 -timeout=12m -v
+
   build:
-    needs: [test-go, test-web, lint, test-go-postgres-docker, test-fault-injection]
+    needs: [test-go, test-web, lint, test-go-postgres-docker, test-fault-injection, test-sync-chaos-postgres]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3

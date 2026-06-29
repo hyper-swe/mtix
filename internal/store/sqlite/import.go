@@ -24,11 +24,11 @@ const (
 
 // ImportResult holds the outcome of an import operation per FR-7.8.
 type ImportResult struct {
-	NodesCreated  int `json:"nodes_created"`
-	NodesUpdated  int `json:"nodes_updated"`
-	NodesSkipped  int `json:"nodes_skipped"`
-	DepsImported  int `json:"deps_imported"`
-	FTSRebuilt    bool `json:"fts_rebuilt"`
+	NodesCreated int  `json:"nodes_created"`
+	NodesUpdated int  `json:"nodes_updated"`
+	NodesSkipped int  `json:"nodes_skipped"`
+	DepsImported int  `json:"deps_imported"`
+	FTSRebuilt   bool `json:"fts_rebuilt"`
 }
 
 // Import loads data from an ExportData structure per FR-7.8.
@@ -227,7 +227,9 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode) (importActi
 
 // insertExportNode inserts a node from export data.
 // node_type is derived from depth (not trusted from the file) for
-// tamper resistance and cross-version compatibility.
+// tamper resistance and cross-version compatibility. The durable uid
+// is persisted so re-import stays idempotent and import-boundary uid
+// validation can run (ADR-003 §6, §7; audit F-3).
 func insertExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
 	n.NodeType = string(model.NodeTypeForDepth(n.Depth))
 	_, err := tx.ExecContext(ctx,
@@ -235,8 +237,8 @@ func insertExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
 		  title, description, prompt, acceptance, node_type,
 		  issue_type, priority, labels, status, progress,
 		  assignee, creator, agent_state, weight, content_hash,
-		  created_at, updated_at, closed_at, defer_until, deleted_at)
-		 VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?)`,
+		  created_at, updated_at, closed_at, defer_until, deleted_at, uid)
+		 VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?)`,
 		n.ID, nullStr(n.ParentID), n.Depth, n.Seq, n.Project,
 		n.Title, nullStr(n.Description), nullStr(n.Prompt),
 		nullStr(n.Acceptance), n.NodeType,
@@ -244,13 +246,15 @@ func insertExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
 		nullStr(n.Assignee), nullStr(n.Creator), nullStr(n.AgentState),
 		n.Weight, nullStr(n.ContentHash),
 		n.CreatedAt, n.UpdatedAt, nullStr(n.ClosedAt),
-		nullStr(n.DeferUntil), nullStr(n.DeletedAt),
+		nullStr(n.DeferUntil), nullStr(n.DeletedAt), nullStr(n.UID),
 	)
 	return err
 }
 
 // updateExportNode updates an existing node from export data.
-// node_type is derived from depth for consistency.
+// node_type is derived from depth for consistency. The durable uid is
+// preserved only when the export carries one: a pre-v3 export (empty uid)
+// must not blank an already-backfilled local uid (ADR-003 §6, §7).
 func updateExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
 	n.NodeType = string(model.NodeTypeForDepth(n.Depth))
 	_, err := tx.ExecContext(ctx,
@@ -259,7 +263,8 @@ func updateExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
 		  title=?, description=?, prompt=?, acceptance=?, node_type=?,
 		  issue_type=?, priority=?, labels=?, status=?, progress=?,
 		  assignee=?, creator=?, agent_state=?, weight=?, content_hash=?,
-		  created_at=?, updated_at=?, closed_at=?, defer_until=?, deleted_at=?
+		  created_at=?, updated_at=?, closed_at=?, defer_until=?, deleted_at=?,
+		  uid=COALESCE(?, uid)
 		 WHERE id=?`,
 		nullStr(n.ParentID), n.Depth, n.Seq, n.Project,
 		n.Title, nullStr(n.Description), nullStr(n.Prompt),
@@ -268,7 +273,7 @@ func updateExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
 		nullStr(n.Assignee), nullStr(n.Creator), nullStr(n.AgentState),
 		n.Weight, nullStr(n.ContentHash),
 		n.CreatedAt, n.UpdatedAt, nullStr(n.ClosedAt),
-		nullStr(n.DeferUntil), nullStr(n.DeletedAt),
+		nullStr(n.DeferUntil), nullStr(n.DeletedAt), nullStr(n.UID),
 		n.ID,
 	)
 	return err
@@ -367,4 +372,3 @@ func nullStr(s string) any {
 	}
 	return s
 }
-

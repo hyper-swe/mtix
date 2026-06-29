@@ -30,6 +30,13 @@ type ConflictDescriptor struct {
 // IDs that landed (after ON CONFLICT DO NOTHING dedupe) plus any
 // concurrency conflicts detected against pre-existing events.
 //
+// This is the field-level-conflict view kept for callers that predate
+// the node registry. It DISCARDS the renumber-required outcomes; callers
+// that need them (the claim flow per ADR-003 §6) MUST use
+// PushEventsWithRenumbers. A renumber-required create is simply not
+// listed in acceptedIDs here — no node is lost, but the caller is not
+// told to retry the number.
+//
 // Atomicity: all events are inserted in a single PG transaction.
 // Validation happens BEFORE the transaction opens; an invalid batch
 // returns immediately with no PG side effects.
@@ -39,101 +46,261 @@ type ConflictDescriptor struct {
 func (p *Pool) PushEvents(ctx context.Context, events []*model.SyncEvent) (
 	acceptedIDs []string, conflicts []ConflictDescriptor, err error,
 ) {
+	acceptedIDs, conflicts, _, _, err = p.PushEventsWithCollisions(ctx, events)
+	return acceptedIDs, conflicts, err
+}
+
+// PushEventsWithRenumbers is PushEvents plus the structured
+// renumber-required outcomes from the node registry (ADR-003 §6).
+//
+// An incoming create_node whose (project_prefix, display_path) is already
+// registered (by a DIFFERENT create event — first-writer-wins) is NOT
+// inserted and is returned in renumbers so the claimer can retry the next
+// free number. Re-pushing the SAME create event (same event_id) is an
+// idempotent no-op, never a renumber.
+//
+// A renumber-required result NEVER loses a node: the rejected node stays
+// in the pusher's canonical local store; only its display number must
+// move. Per ADR-003 §9 the registry is liveness, not a security boundary.
+//
+// Block scope (ADR-003 §6.1/F-1): one node's collision does NOT wedge the
+// batch — every other event in the same push still lands.
+//
+// Atomicity and idempotency match PushEvents.
+func (p *Pool) PushEventsWithRenumbers(ctx context.Context, events []*model.SyncEvent) (
+	acceptedIDs []string, conflicts []ConflictDescriptor, renumbers []RenumberRequired, err error,
+) {
+	acceptedIDs, conflicts, renumbers, _, err = p.PushEventsWithCollisions(ctx, events)
+	return acceptedIDs, conflicts, renumbers, err
+}
+
+// PushEventsWithCollisions is PushEventsWithRenumbers plus the structured
+// RESTORE-collision outcomes (ADR-003 §6.1, Addendum A §15).
+//
+// An incoming create_node that collides with a held create stamped in an
+// EARLIER restore_epoch than the current one is a cross-epoch re-grant: it is
+// BLOCKED (recorded in sync_node_collisions for admin resolution) rather than
+// renumbered, and returned in collisions. This is reachable ONLY inside a
+// restore window (the operator advanced the epoch via MarkRestored); in normal
+// operation every collision is same-epoch and returns a RenumberRequired
+// instead (§15). Block scope is per-node (audit F-1): the blocked create is the
+// ONLY event withheld; every other event in the same push still lands.
+//
+// No node is lost: a blocked create stays in the pusher's canonical local
+// store (ADR-003 §9). Atomicity and idempotency match PushEvents.
+func (p *Pool) PushEventsWithCollisions(ctx context.Context, events []*model.SyncEvent) (
+	acceptedIDs []string, conflicts []ConflictDescriptor,
+	renumbers []RenumberRequired, collisions []RestoreCollision, err error,
+) {
 	if len(events) == 0 {
-		return nil, nil, nil
+		return nil, nil, nil, nil, nil
 	}
 	// Validate before touching the pool: caller-side bugs surface even
 	// when the pool is misconfigured.
 	if vErr := validator.ValidateBatch(events, time.Now().UTC(), nil); vErr != nil {
-		return nil, nil, fmt.Errorf("PushEvents validate: %w", vErr)
+		return nil, nil, nil, nil, fmt.Errorf("PushEvents validate: %w", vErr)
 	}
 	if p == nil || p.p == nil {
-		return nil, nil, fmt.Errorf("PushEvents: pool not open")
+		return nil, nil, nil, nil, fmt.Errorf("PushEvents: pool not open")
 	}
 
 	cfg := DefaultRetryConfig()
 	err = retryWithBackoff(ctx, cfg, func(ctx context.Context) error {
-		ids, conf, opErr := p.pushEventsOnce(ctx, events)
+		ids, conf, ren, col, opErr := p.pushEventsOnce(ctx, events)
 		if opErr != nil {
 			return opErr
 		}
 		acceptedIDs = ids
 		conflicts = conf
+		renumbers = ren
+		collisions = col
 		return nil
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("PushEvents: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("PushEvents: %w", err)
 	}
-	return acceptedIDs, conflicts, nil
+	return acceptedIDs, conflicts, renumbers, collisions, nil
 }
 
 // pushEventsOnce runs one PG transaction's worth of pushes. Wrapped
 // by retryWithBackoff in PushEvents.
 func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
-	[]string, []ConflictDescriptor, error,
+	[]string, []ConflictDescriptor, []RenumberRequired, []RestoreCollision, error,
 ) {
 	tx, err := p.p.Begin(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("begin: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	accepted := make([]string, 0, len(events))
-	conflicts := make([]ConflictDescriptor, 0)
+	// Read the hub restore_epoch ONCE for this tx (ADR-003 §15). Every create
+	// is stamped with it at acceptance, and the detector compares it against
+	// each held create's stamp. Reading it inside the tx gives a snapshot
+	// consistent with the rows this push inserts.
+	currentEpoch, err := readRestoreEpoch(ctx, tx)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	acc := &pushAccum{
+		seenPrefixes: make(map[string]struct{}, 1),
+		currentEpoch: currentEpoch,
+		// Track create_node numbers claimed earlier in THIS batch. The
+		// partial unique index only sees committed rows, so two creates for
+		// the same number within one push must be serialized here: the first
+		// claims the key, later ones resolve against it — same uid is a no-op,
+		// a distinct uid renumbers (ADR-003 §6.1/F-1).
+		batchClaims: make(map[registryKey]batchClaim, len(events)),
+	}
 
 	for _, e := range events {
-		conf, err := detectConflicts(ctx, tx, e)
-		if err != nil {
-			return nil, nil, fmt.Errorf("detect conflicts for %s: %w", e.EventID, err)
+		if err := p.pushOneEvent(ctx, tx, e, acc); err != nil {
+			return nil, nil, nil, nil, err
 		}
-		conflicts = append(conflicts, conf...)
+	}
 
-		vcJSON, err := json.Marshal(e.VectorClock)
-		if err != nil {
-			return nil, nil, fmt.Errorf("marshal VC for %s: %w", e.EventID, err)
-		}
-		tag, err := tx.Exec(ctx, `
-			INSERT INTO sync_events
-			  (event_id, project_prefix, node_id, op_type, payload,
-			   wall_clock_ts, lamport_clock, vector_clock,
-			   author_id, author_machine_hash)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-			ON CONFLICT (event_id) DO NOTHING`,
-			e.EventID, e.ProjectPrefix, e.NodeID, string(e.OpType), string(e.Payload),
-			e.WallClockTS, e.LamportClock, string(vcJSON),
-			e.AuthorID, e.AuthorMachineHash,
-		)
-		if err != nil {
-			return nil, nil, fmt.Errorf("insert %s: %w", e.EventID, err)
-		}
-		if tag.RowsAffected() == 1 {
-			accepted = append(accepted, e.EventID)
-		}
-
-		// MTIX-15.5.2: persist each detected conflict to the hub's
-		// sync_conflicts table inside the same tx. Resolution is set
-		// to 'lww' here; manual overrides via mtix sync conflicts
-		// resolve (15.7) UPDATE the resolved_by column — but UPDATE
-		// is forbidden by the trigger from 15.2.5/006_triggers.sql,
-		// so manual resolution actually INSERTs a new conflict row
-		// with resolution='manual' that supersedes the lww row.
-		for _, c := range conf {
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO sync_conflicts
-				  (event_id_a, event_id_b, node_id, field_name, resolution)
-				VALUES ($1, $2, $3, $4, 'lww')`,
-				c.NewEventID, c.ConflictingEventID, c.NodeID, c.FieldName,
-			); err != nil {
-				return nil, nil, fmt.Errorf("persist conflict %s vs %s: %w",
-					c.NewEventID, c.ConflictingEventID, err)
-			}
+	// Record the calling CLI's version for each project touched, in the
+	// same tx, so the gate's view reflects this push atomically. No-op
+	// when no client identity is set (SetClientIdentity not called).
+	for prefix := range acc.seenPrefixes {
+		if err := p.recordClientOnPush(ctx, tx, prefix); err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("record client for %s: %w", prefix, err)
 		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return nil, nil, fmt.Errorf("commit: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("commit: %w", err)
 	}
-	return accepted, conflicts, nil
+	return acc.accepted, acc.conflicts, acc.renumbers, acc.collisions, nil
+}
+
+// pushAccum accumulates one push transaction's outcomes across events so
+// pushEventsOnce stays a thin loop and per-event handling lives in
+// pushOneEvent. seenPrefixes and batchClaims are the cross-event state
+// (version-gate projects and intra-batch number claims, ADR-003 §6.1/F-1).
+type pushAccum struct {
+	accepted     []string
+	conflicts    []ConflictDescriptor
+	renumbers    []RenumberRequired
+	collisions   []RestoreCollision
+	seenPrefixes map[string]struct{}
+	batchClaims  map[registryKey]batchClaim
+	// currentEpoch is the hub restore_epoch for this push tx (ADR-003 §15):
+	// the value stamped onto each inserted event and the threshold the
+	// detector compares each held create's stamp against.
+	currentEpoch int64
+}
+
+// pushOneEvent runs the registry check, conflict detection, and insert for a
+// single event, folding the results into acc. It short-circuits a create
+// that the registry resolves to a renumber or a no-op (ADR-003 §6/§9) before
+// any insert.
+func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, acc *pushAccum) error {
+	// Registry check (ADR-003 §6/§9), keyed on the node's stable uid
+	// (ADR-003 §2): a create_node for an already-held (project,
+	// display_path) is either the SAME logical node (a no-op — e.g. a
+	// --force re-backfill, MTIX-30.15) or a DIFFERENT one (renumber-
+	// required; first-writer-wins, no node lost). The zero outcome means
+	// the number is free and we insert it below.
+	outcome, err := registryDecide(ctx, tx, e, acc.batchClaims, acc.currentEpoch)
+	if err != nil {
+		return fmt.Errorf("registry check for %s: %w", e.EventID, err)
+	}
+	if outcome.restoreCollision != nil {
+		// RESTORE collision (ADR-003 §6.1/§15, Option B): the number is held
+		// by a create from an EARLIER epoch — a cross-epoch re-grant. BLOCK
+		// only this create (record it for admin resolution, do NOT insert and
+		// do NOT renumber); per F-1 every other event in the batch still
+		// lands. No node is lost — the blocked create stays in the pusher's
+		// local store.
+		if recErr := recordCollision(ctx, tx, outcome.restoreCollision,
+			effectiveUID(e), e.WallClockTS); recErr != nil {
+			return recErr
+		}
+		acc.collisions = append(acc.collisions, *outcome.restoreCollision)
+		acc.seenPrefixes[e.ProjectPrefix] = struct{}{}
+		return nil
+	}
+	if outcome.renumber != nil {
+		acc.renumbers = append(acc.renumbers, *outcome.renumber)
+		acc.seenPrefixes[e.ProjectPrefix] = struct{}{}
+		return nil
+	}
+	if outcome.noop {
+		// Same logical node re-pushed (stable uid): nothing to insert and
+		// NOT a renumber. The registry already holds this node; the partial
+		// UNIQUE index would reject a second create_node row anyway, so we
+		// short-circuit before the insert (MTIX-30.15).
+		//
+		// It IS reported accepted so the pusher marks it pushed and stops
+		// re-sending — the hub has absorbed it. Without this, a --force
+		// re-backfill would loop forever re-pushing a never-acknowledged
+		// event (the hang this ticket fixes).
+		acc.accepted = append(acc.accepted, e.EventID)
+		acc.seenPrefixes[e.ProjectPrefix] = struct{}{}
+		return nil
+	}
+
+	conf, err := detectConflicts(ctx, tx, e)
+	if err != nil {
+		return fmt.Errorf("detect conflicts for %s: %w", e.EventID, err)
+	}
+	acc.conflicts = append(acc.conflicts, conf...)
+
+	vcJSON, err := json.Marshal(e.VectorClock)
+	if err != nil {
+		return fmt.Errorf("marshal VC for %s: %w", e.EventID, err)
+	}
+	// uid is dual-carried alongside node_id (ADR-003 §3, §7 Phase 3).
+	// NULL when the pusher (an old CLI) does not set it; apply then falls
+	// back to node_id. NULLIF keeps the omitempty contract on the hub: an
+	// empty string lands as SQL NULL, so the column matches the wire shape
+	// and pulls back empty.
+	// restore_epoch is hub-stamped here, at acceptance, with the epoch read
+	// for this tx — NEVER client-asserted (ADR-003 §15). It is the durable
+	// fingerprint the detector uses to tell a cross-epoch re-grant (Option B)
+	// from a same-epoch race (renumber).
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO sync_events
+		  (event_id, project_prefix, node_id, uid, op_type, payload,
+		   wall_clock_ts, lamport_clock, vector_clock,
+		   author_id, author_machine_hash, restore_epoch)
+		VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, $9, $10, $11, $12)
+		ON CONFLICT (event_id) DO NOTHING`,
+		e.EventID, e.ProjectPrefix, e.NodeID, e.UID, string(e.OpType), string(e.Payload),
+		e.WallClockTS, e.LamportClock, string(vcJSON),
+		e.AuthorID, e.AuthorMachineHash, acc.currentEpoch,
+	)
+	if err != nil {
+		return fmt.Errorf("insert %s: %w", e.EventID, err)
+	}
+	if tag.RowsAffected() == 1 {
+		acc.accepted = append(acc.accepted, e.EventID)
+	}
+	acc.seenPrefixes[e.ProjectPrefix] = struct{}{}
+
+	return persistConflicts(ctx, tx, conf)
+}
+
+// persistConflicts writes each detected field-level conflict to the
+// hub's sync_conflicts table inside the push transaction (MTIX-15.5.2).
+// Resolution is recorded as 'lww'; a manual override via mtix sync
+// conflicts resolve (15.7) INSERTs a new resolution='manual' row that
+// supersedes the lww row, because the 006_triggers.sql trigger forbids
+// UPDATE on sync_conflicts. Parameterized SQL only.
+func persistConflicts(ctx context.Context, tx pgx.Tx, conf []ConflictDescriptor) error {
+	for _, c := range conf {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO sync_conflicts
+			  (event_id_a, event_id_b, node_id, field_name, resolution)
+			VALUES ($1, $2, $3, $4, 'lww')`,
+			c.NewEventID, c.ConflictingEventID, c.NodeID, c.FieldName,
+		); err != nil {
+			return fmt.Errorf("persist conflict %s vs %s: %w",
+				c.NewEventID, c.ConflictingEventID, err)
+		}
+	}
+	return nil
 }
 
 // detectConflicts looks for prior events on the same node that are
@@ -238,7 +405,7 @@ func (p *Pool) pullEventsOnce(ctx context.Context, sinceLamport int64, limit int
 	[]*model.SyncEvent, bool, error,
 ) {
 	rows, err := p.p.Query(ctx, `
-		SELECT event_id, project_prefix, node_id, op_type, payload,
+		SELECT event_id, project_prefix, node_id, uid, op_type, payload,
 		       wall_clock_ts, lamport_clock, vector_clock,
 		       author_id, author_machine_hash, created_at
 		FROM sync_events
@@ -256,13 +423,17 @@ func (p *Pool) pullEventsOnce(ctx context.Context, sinceLamport int64, limit int
 	for rows.Next() {
 		var e model.SyncEvent
 		var opType, payload, vc string
+		var uid *string // NULL for uid-less (old-CLI) events (ADR-003 §7 Phase 3)
 		var createdAt time.Time
 		if err := rows.Scan(
-			&e.EventID, &e.ProjectPrefix, &e.NodeID, &opType, &payload,
+			&e.EventID, &e.ProjectPrefix, &e.NodeID, &uid, &opType, &payload,
 			&e.WallClockTS, &e.LamportClock, &vc,
 			&e.AuthorID, &e.AuthorMachineHash, &createdAt,
 		); err != nil {
 			return nil, false, err
+		}
+		if uid != nil {
+			e.UID = *uid
 		}
 		e.OpType = model.OpType(opType)
 		e.Payload = json.RawMessage(payload)
@@ -282,4 +453,3 @@ func (p *Pool) pullEventsOnce(ctx context.Context, sinceLamport int64, limit int
 	}
 	return out, hasMore, nil
 }
-

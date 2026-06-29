@@ -437,6 +437,12 @@ func (m *mcpMockStore) CreateNode(_ context.Context, _ *model.Node) error   { re
 func (m *mcpMockStore) GetNode(_ context.Context, _ string) (*model.Node, error) {
 	return &model.Node{ID: "TEST-1", Title: "mock", Status: model.StatusOpen}, nil
 }
+func (m *mcpMockStore) ResolveUIDByDisplayPath(_ context.Context, _ string) (string, error) {
+	return "mock-uid", nil
+}
+func (m *mcpMockStore) ResolveDisplayPathByUID(_ context.Context, _ string) (string, error) {
+	return "TEST-1", nil
+}
 func (m *mcpMockStore) UpdateNode(_ context.Context, _ string, _ *store.NodeUpdate) error {
 	return nil
 }

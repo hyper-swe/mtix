@@ -5,15 +5,22 @@ All notable changes to mtix are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> **Pre-1.0 note:** mtix is in beta. Minor versions may introduce
-> breaking schema changes; the migration path is documented in the
-> Migration section of each release.
+> **Pre-1.0 note:** mtix is GA-quality and production-ready, but still
+> pre-1.0. Minor versions may introduce breaking schema changes until
+> 1.0; each ships a documented migration path in its Migration section.
 
 ---
 
-## [Unreleased]
+## [0.4.0] - 2026-06-29
 
 ### Added
+- **Distributed node identity & team sync (MTIX-30, ADR-003):** dot-path IDs now stay clean under concurrent and offline creation. Each node has a stable internal `uid` (its create-event id) so a renumber moves a display number without breaking references; the surface still shows only the dot-path.
+  - Offline-created nodes get a provisional ID (a uid-shaped segment) and auto-settle into a clean number on the next sync (MTIX-30.3). mtix warns before a provisional ID is externalized into a commit or PR.
+  - Concurrent creates of the same number auto-resolve: the hub registry (a derived partial-unique index) accepts the first and tells the second to renumber. Both nodes survive — this fixes MTIX-28 (concurrent create silently losing one node) (MTIX-30.4 / 30.7).
+  - Subtree renumber is atomic: one transaction rewrites the node and all descendants, so no read sees a torn subtree (MTIX-30.5).
+  - Restore-from-backup safety: the rare settled-vs-settled collision is never auto-picked. `mtix sync mark-restored` (operator-only) opens a restore window; `mtix sync collisions list` and `mtix sync collisions resolve <id> --winner held|incoming` let an admin choose which node keeps the number while the other renumbers. No node is ever lost, and only the affected node is blocked — the rest of the team keeps syncing (MTIX-30.8).
+  - `mtix sync migrate` drives the one-time migration (uid backfill, hub dedup sweep, version-gated registry index); idempotent and a no-op once complete (MTIX-30.9, 30.10, 30.14).
+  - New safety scenarios 12–18 in `docs/traceability.json` (restore Option B, same-epoch no-false-positive, atomic renumber, import uid validation, crash-resilience, ENOSPC on a sync write, online concurrent-create) are gated by `traceability_test.go`. Design and audit rationale in [ADR-003](ADR-003-DISTRIBUTED-NODE-IDENTITY.md); operator docs in the USERMANUAL "Distributed identity & team sync" section; trust model in `docs/SECURITY-MODEL.md`.
 - **Codex and pi plugin targets (MTIX-27, issue #15):** `mtix plugin install --target codex` writes the project's AGENTS.md briefing and a `[mcp_servers.mtix]` entry in `.codex/config.toml` (`--global` for `~/.codex/`); existing files are never modified — the stanza to add is printed instead. `--target pi` installs AGENTS.md (which pi loads natively; `--global` for `~/.pi/agent/`) and prints pi-mcp-adapter setup guidance, since pi has no built-in MCP by design. New `docs/mcp-config/codex.toml` snippet; MCP-SETUP sections for both agents.
 
 ### Changed

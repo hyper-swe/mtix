@@ -23,8 +23,16 @@ func TestMigrations_FilesPresent(t *testing.T) {
 		"005_audit_log.sql",
 		"006_triggers.sql",
 		"007_advisory_lock.sql",
+		"008_sync_project_clients.sql",
+		"009_node_registry_index.sql",
+		"010_sync_events_uid.sql",
+		// 011 is MTIX-30.8's restore-collision queue; 012 is MTIX-30.10's
+		// Phase 1 renumber-remap ledger; 013 is MTIX-30.8's hub restore-epoch.
+		"011_sync_node_collisions.sql",
+		"012_node_renumber_remaps.sql",
+		"013_hub_restore_epoch.sql",
 	}
-	require.Equal(t, want, got, "all 7 hub-schema files must be embedded in lex order")
+	require.Equal(t, want, got, "all hub-schema files must be embedded in lex order")
 }
 
 func TestMigrations_OrderingIsLexical(t *testing.T) {
@@ -45,7 +53,9 @@ func TestMigrations_ReadEachFile(t *testing.T) {
 			body, err := migrations.Read(f)
 			require.NoError(t, err)
 			require.NotEmpty(t, body, "%s must not be empty", f)
-			require.Contains(t, body, "MTIX-15.2 hub schema",
+			// Every migration carries a canonical "<ticket> hub schema"
+			// header so an unattributed SQL file trips this test.
+			require.Contains(t, body, "hub schema",
 				"%s missing canonical comment header", f)
 		})
 	}
@@ -64,9 +74,10 @@ func TestMigrations_ContainExpectedTables(t *testing.T) {
 	want := map[string]int{
 		"sync_events":     0,
 		"sync_conflicts":  0,
-		"sync_projects":   0,
-		"applied_events":  0,
-		"audit_log":       0,
+		"sync_projects":        0,
+		"applied_events":       0,
+		"audit_log":            0,
+		"sync_project_clients": 0,
 	}
 	files, err := migrations.Files()
 	require.NoError(t, err)
@@ -96,6 +107,41 @@ func TestMigrations_TriggersFileEnforcesAppendOnly(t *testing.T) {
 	require.Contains(t, body, "sync_conflicts_no_delete")
 	require.Contains(t, body, "RAISE EXCEPTION")
 	require.Contains(t, body, "FR-18.5")
+}
+
+// TestMigrations_RegistryIndexIsPartialUnique asserts the MTIX-30.4
+// registry (ADR-003 §6) is a DERIVED partial unique index over the
+// append-only log — keyed on (project_prefix, node_id) and scoped to
+// create_node rows — not a separate authoritative table. The WHERE
+// clause is load-bearing: a non-partial unique index would reject
+// legitimate non-create events that repeat a node_id (update_field,
+// transition_status, etc.).
+func TestMigrations_RegistryIndexIsPartialUnique(t *testing.T) {
+	body, err := migrations.Read("009_node_registry_index.sql")
+	require.NoError(t, err)
+	require.Contains(t, body, "CREATE UNIQUE INDEX",
+		"registry must be a UNIQUE index")
+	require.Contains(t, body, "(project_prefix, node_id)",
+		"registry is keyed on (project_prefix, node_id) per ADR-003 §6")
+	require.Contains(t, body, "WHERE op_type = 'create_node'",
+		"registry must be PARTIAL (create_node rows only) per ADR-003 §6")
+	require.Contains(t, body, "ADR-003",
+		"registry migration must reference its design rationale")
+}
+
+// TestMigrations_SyncEventsUIDColumn asserts the MTIX-30.6 migration adds
+// the dual-carry uid column to the hub sync_events log (ADR-003 §3, §7
+// Phase 3): a nullable, idempotently-added TEXT column with a partial
+// lookup index, and no destructive backfill.
+func TestMigrations_SyncEventsUIDColumn(t *testing.T) {
+	body, err := migrations.Read("010_sync_events_uid.sql")
+	require.NoError(t, err)
+	require.Contains(t, body, "ADD COLUMN IF NOT EXISTS uid TEXT",
+		"010 must add a nullable uid column idempotently")
+	require.Contains(t, body, "CREATE INDEX IF NOT EXISTS idx_sync_events_uid",
+		"010 must add the uid lookup index")
+	require.Contains(t, body, "ADR-003",
+		"010 must reference its design rationale")
 }
 
 // TestMigrations_OpTypeCheckMatchesModel ensures the SQL CHECK constraint

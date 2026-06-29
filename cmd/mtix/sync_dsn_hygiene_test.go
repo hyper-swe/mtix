@@ -82,6 +82,10 @@ func TestDSN_NeverInAnyFR18CommandOutput(t *testing.T) {
 			// path is caught.
 			_ = runSyncBackfill(ctx, stdout, stderr, true /*dryRun*/, false)
 		}},
+		{"migrate", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
+			_ = runSyncMigrate(ctx, stdout, stderr, nil,
+				transport.Options{InsecureTLS: true}, "MTIX", false)
+		}},
 	}
 
 	for _, tc := range cases {

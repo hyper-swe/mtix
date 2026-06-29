@@ -82,3 +82,12 @@ screenshots/playwright/
 .env.test.local
 .mtix/secrets
 .supabase-ca.crt
+
+# mgit local store (never commit)
+.mgit/
+
+# mgit-sandbox generated scaffolding that can leak via squash patches
+# (the real agent guide is generated from internal/docs/templates)
+/.envrc
+/AGENTS.md
+.cursor/

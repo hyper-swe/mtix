@@ -133,3 +133,22 @@ Red-teamed against `docs/SECURITY-MODEL.md` (mutually-trusted team; adversarial 
 | F-6 | An externalized provisional id leaks a creation timestamp (UUIDv7) | LOW (hygiene) | §8 (don't externalize) + §13 (short-form render) |
 
 **Verdict:** no HIGH security exposure under mtix's trusted-team contract; the design resolves the prior serious findings; the remaining items are bounded MEDIUM/LOW spec clarifications, now incorporated. Design is lock-ready pending implementation.
+
+## 15. Addendum A — restore-collision discriminator (supersedes the §6.1 trigger)
+
+The §6.1 restore-collision (Option B) needs a way to tell a genuine restore re-grant from an ordinary concurrent-create race (which §6 / MTIX-30.7 already auto-resolves by renumbering the loser). The first implementation (MTIX-30.8, rejected in review) used **UID age** (older incoming claim ⇒ restore). That is invalid: in a normal race the loser is older ~50% of the time, so it mis-classified ordinary collisions as restores (it regressed `TestRegistry_ConcurrentPushesSameNumber`). UID-age cannot distinguish the two.
+
+A **client "previously-settled" flag** was considered and rejected on a security review (raised by the maintainer): it puts a **forgeable, client-asserted signal on the trigger of a safety-critical path**. A compromised client (even under the trusted-team model, this is poor hygiene) could set it to fabricate restore-collisions — escalating ordinary creates into the admin-resolution queue (availability nuisance, blocked nodes) and, at worst, social-engineering an admin into renumbering a legitimate ticket (recoverable — uid is stable, no data lost — but it breaks external refs and wastes trust). Bounded by Option B's human gate (no auto-pick, F-5), but avoidable.
+
+**Decision: a hub restore-epoch, advanced only by the operator.**
+- The hub keeps a monotonic `restore_epoch` (starts 0), advanced ONLY by an explicit out-of-band operator action — `mtix sync mark-restored`, a documented step in the restore-from-backup runbook. Clients cannot advance it.
+- Each `create_node`, when the hub registry accepts it, is hub-stamped with the current `restore_epoch` (hub-side, at acceptance — never client-asserted).
+- A settled-vs-settled collision is classified as a RESTORE collision (→ Option B, §6.1) **only within a restore window** — the contested number is held by a create stamped in the current epoch while the incoming belongs to an earlier era. Outside a restore window (normal operation, no operator bump) every collision takes the ordinary renumber path (§6, MTIX-30.7); Option B is not reachable.
+
+**Why this is the trust-minimizing choice:**
+- The un-forgeable element is the **operator's epoch bump** — a deliberate, supervised action a client cannot manufacture. A compromised client therefore **cannot trigger Option B during normal operation**: with no restore, there is no epoch advance and the Option-B path is closed. The attack window shrinks to the operator-supervised post-restore interval.
+- It **eliminates the normal-race false-positive by construction**: same-epoch concurrent creates always renumber; only cross-epoch (post-restore re-grant) collisions reach Option B — what the rejected UID-age trigger could not do.
+
+**Unchanged:** resolution stays Option B — human-gated, no auto-pick, the older-claim default ADVISORY only (F-5); the loser renumbers via `Store.RenumberSubtree` (§5); no create event is ever deleted, so no node is lost. Block scope stays per-node (F-1).
+
+**Scope (MTIX-30.8 v1): full** — epoch-gated detection PLUS the admin-resolve CLI (list open collisions, pick the winner, renumber the loser). The renumber primitive (§5) already exists, so the CLI is thin.

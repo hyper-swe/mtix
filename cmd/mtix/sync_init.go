@@ -16,8 +16,23 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/sync/clock"
 	"github.com/hyper-swe/mtix/internal/sync/redact"
 )
+
+// clientMachineHash returns this machine's stable hash for the
+// version-negotiation gate (ADR-003 §7 Phase 1.5/3). It is the same
+// value used as author_machine_hash in sync events, so a client's gate
+// row keys on the same identity its events carry. Returns "" on error;
+// the caller treats an empty hash as "no identity" and skips the gate
+// upsert (the gate then stays closed for that project, the safe default).
+func clientMachineHash() string {
+	h, err := clock.MachineHash()
+	if err != nil {
+		return ""
+	}
+	return h
+}
 
 // newSyncInitCmd creates the `mtix sync init` command per FR-18 /
 // MTIX-15.7.1. The first user runs this to migrate the hub schema
@@ -121,6 +136,19 @@ func runSyncInit(ctx context.Context, stdout, stderr io.Writer, args []string, o
 	}
 	if err := sqlite.DetectDivergentHistory(prefix, hash, hubPrefix, hubHash); err != nil {
 		return wrapSyncErr(stderr, "divergence", err)
+	}
+
+	// Register this CLI's build version for the version-negotiation gate
+	// (ADR-003 §7 Phase 1.5/3). Done on init so a joining CLI's version
+	// is recorded even before its first push — both the fresh-project and
+	// already-registered branches below reach here. Best-effort: a failed
+	// upsert must not block init (the gate just lacks this client's row
+	// until its next push refreshes it).
+	if mh := clientMachineHash(); mh != "" {
+		if upErr := pool.UpsertProjectClient(connectCtx, prefix, mh, version); upErr != nil {
+			fmt.Fprintf(stderr, "WARN: version-gate client upsert skipped: %s\n",
+				redact.DSN(upErr.Error()))
+		}
 	}
 
 	// Hub-side registration: INSERT into sync_projects when the hub
@@ -237,7 +265,19 @@ func wrapSyncErr(stderr io.Writer, stage string, err error) error {
 			stage, redact.DSN(err.Error()))
 		return nil
 	}
-	return fmt.Errorf("mtix sync %s: %s", stage, redact.DSN(err.Error()))
+	msg := fmt.Sprintf("mtix sync %s: %s", stage, redact.DSN(err.Error()))
+	// Preserve the NFR-2.8 exit-code sentinels (MTIX-32) so the CLI exit-code
+	// contract (exitCodeForError) holds for sync writes, not just `mtix create`.
+	// The redaction above already stripped any DSN, and these sentinels carry
+	// none, so wrapping with %w cannot leak credentials.
+	switch {
+	case errors.Is(err, model.ErrDiskFull):
+		return fmt.Errorf("%s: %w", msg, model.ErrDiskFull)
+	case errors.Is(err, model.ErrCorrupted):
+		return fmt.Errorf("%s: %w", msg, model.ErrCorrupted)
+	default:
+		return errors.New(msg)
+	}
 }
 
 // isHookMode reports whether MTIX_SYNC_HOOK=1 is set per FR-18.19.

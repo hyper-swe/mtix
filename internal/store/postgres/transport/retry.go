@@ -122,6 +122,18 @@ func isTransient(err error) bool {
 			return true
 		case "40001", "40P01": // serialization_failure, deadlock_detected
 			return true
+		case "23505": // unique_violation
+			// The node registry (ADR-003 §6) is a partial unique index
+			// over the append-only log. Two concurrent pushers can both
+			// pass the in-tx pre-check for the same number before either
+			// commits; the index then aborts the second committer with
+			// 23505. Retrying is correct and convergent: on the next
+			// attempt the in-tx pre-check sees the now-committed winner
+			// and converts the loser to a renumber-required outcome (no
+			// node lost). Every other unique key on the push path
+			// (event_id PK) is handled by ON CONFLICT DO NOTHING and so
+			// never surfaces 23505 here.
+			return true
 		default:
 			return false
 		}

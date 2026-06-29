@@ -15,6 +15,30 @@ import (
 // open time per FR-18 / SYNC-DESIGN section 5. Use New to construct.
 type Pool struct {
 	p *pgxpool.Pool
+
+	// clientMachineHash and clientCLIVersion identify the calling CLI
+	// for the version-negotiation gate (ADR-003 §7 Phase 1.5/3). They
+	// are empty until SetClientIdentity is called; while empty, push
+	// does not record a client row (see UpsertProjectClient).
+	clientMachineHash string
+	clientCLIVersion  string
+}
+
+// SetClientIdentity records the calling CLI's machine hash and build
+// version so subsequent pushes upsert a sync_project_clients row for the
+// version gate (ADR-003 §7 Phase 1.5/3). Callers that omit this (e.g. a
+// read-only tool) simply never register a client; the gate stays closed
+// for that project, which is the safe default.
+//
+// Not safe for concurrent use with PushEvents on the same Pool; set the
+// identity once right after New, before any push. Empty strings are
+// treated as "no identity".
+func (p *Pool) SetClientIdentity(machineHash, cliVersion string) {
+	if p == nil {
+		return
+	}
+	p.clientMachineHash = machineHash
+	p.clientCLIVersion = cliVersion
 }
 
 // PoolDefaults are the mtix-tested values for connection pooling per

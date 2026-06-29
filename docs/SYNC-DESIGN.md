@@ -432,7 +432,138 @@ The actual event transport (NATS? Postgres LISTEN/NOTIFY on the existing hub? Fi
 **Considered alternative:** Mandatory client-side hook installation as part of `mtix sync init`.
 **Why:** Client-side hooks are trivially bypassed (`git push --no-verify`, missing on a new clone). Pretending they are enforcement gives a false sense of security. The workflows/safety-critical.md doc explicitly walks adopters through server-side enforcement as the only real gate.
 
-## 14. Cross-references
+## 14. Distributed node identity (MTIX-30 / ADR-003)
+
+This section summarizes how mtix keeps clean dot-path IDs under concurrent
+and offline creation. It is a map, not a restatement: the normative design,
+the full restore-collision analysis, and the security/safety audit live in
+[ADR-003](../ADR-003-DISTRIBUTED-NODE-IDENTITY.md), including its
+**Addendum A** (the restore-collision discriminator). Read ADR-003 for depth;
+read this for where each piece sits in the sync protocol.
+
+### 14.1 Two identifiers per node
+
+- **`display_path`** — the dot-path (`PRJX-1.4`). The only identifier on the
+  surface (humans, agents, CLI/MCP/REST, git, CI). Encodes tree position.
+  Mutable only under a controlled renumber (§14.3).
+- **`uid`** — the node's `create_node` `event_id` (UUIDv7). Internal only:
+  node-to-node links, idempotent apply, and the provisional path segment.
+  Never surfaced for a settled node.
+
+Defining `uid` as the create-event id makes it globally unique with no new
+constraint (the event log's `event_id` PK) and identical across replicas
+without coordination. The migration depends on this (ADR-003 §2, §7).
+
+### 14.2 Provisional vs settled
+
+- **Settled:** fully numeric `display_path`; the trailing number is hub-granted
+  via the registry (§14.4). A node is settled once it and all ancestors hold
+  a hub-confirmed number.
+- **Provisional:** created offline or before claim confirmation. The trailing
+  segment is the uid (hyphenless), e.g. `PRJX-1.1.<uid>`. Collision-free by
+  construction and visibly provisional. On each sync the node re-attempts its
+  claim and settles into a clean number (MTIX-30.3). One claim mechanism,
+  two latencies (online ≈ 1 hub-RTT; offline retries on reconnect).
+
+### 14.3 Reference resolution and atomic renumber
+
+Surface reads resolve `display_path → uid → node`. Internal links are stored
+as `uid`, so they survive any renumber. A clean (fully numeric) path is stable
+in normal operation; it moves only if an ancestor renumbers.
+
+Renumber is **atomic over the whole subtree** (audit F-2, ADR-003 §5): one
+transaction rewrites the node's `display_path` and recomputes every descendant.
+No external read can observe a parent's new number with a child's old number.
+Because events key on `uid`, renumber rewrites a display attribute and touches
+zero events — no cross-replica event remap.
+
+### 14.4 Hub registry and renumber-required (the MTIX-28 fix)
+
+The registry is a **derived partial unique index**
+`UNIQUE(project_prefix, display_path) WHERE op_type='create_node'` over the
+append-only event log — not a separate authoritative table. First `create_node`
+for a number wins. A second is rejected at push with a **renumber-required**
+outcome; the claimer renumbers to the next free number and re-pushes
+(MTIX-30.4 / 30.7). Both nodes survive. This is the fix for MTIX-28
+(concurrent create under the same parent silently lost one node).
+
+It is a **liveness mechanism, not a security boundary**: a broken hub can at
+worst force a renumber; it cannot lose or corrupt a node, since each CLI keeps
+its canonical local store (ADR-003 §9).
+
+### 14.5 Restore-epoch and Option B (settled-vs-settled)
+
+Two *settled* nodes can share a number only via a hub restore that forgot a
+grant (ADR-003 §6.1). To tell a genuine restore re-grant from an ordinary
+concurrent-create race, the hub keeps a monotonic **`restore_epoch`** advanced
+**only by the operator** via `mtix sync mark-restored` (ADR-003 Addendum A).
+Every accepted `create_node` is hub-stamped with the current epoch at
+acceptance — never client-asserted.
+
+- **Outside a restore window** (no epoch advance): every collision takes the
+  ordinary renumber path (§14.4). Option B is not reachable.
+- **Inside a restore window** (the held number was granted in the current epoch
+  and the incoming claim belongs to an earlier era): the collision is a
+  **restore collision** → Option B.
+
+Option B: detect, fail loud, **block only the affected node** (its push returns
+a structured `collision/option-b` error while every other node keeps syncing —
+audit F-1), and require admin resolution. The system never auto-picks. The
+older-claim default is **advisory only** (audit F-5): claim timestamps are
+client-asserted and partly lost on restore. The admin chooses via
+`mtix sync collisions resolve`; the loser renumbers via `Store.RenumberSubtree`
+(§14.3). No create event is ever deleted, so no node is lost. The earlier
+UID-age and client "previously-settled" triggers were both rejected in review;
+see Addendum A and [SECURITY-MODEL.md](./SECURITY-MODEL.md).
+
+### 14.6 Offline export/import (no arbiter)
+
+Off the hub path, uid uniqueness is **not** guaranteed by construction. At
+import, mtix validates each incoming `uid` against the local store (audit F-3,
+ADR-003 §6): identical uid+display_path is an idempotent no-op; a uid that
+duplicates an existing node with a *different* path is rejected (or re-stamped
+under `--force-rename`) and reported loudly. Incoming provisionals are
+renumbered deterministically with a uid-keyed remap file, applied to a live
+store only with explicit confirmation (MTIX-30.9).
+
+### 14.7 Migration phases
+
+Driven by `mtix sync migrate` (MTIX-30.10), idempotent, a no-op once complete:
+
+- **Phase 0 — uid backfill (local).** `uid = create_node event_id` for every
+  node — replica-consistent, so the same node gets the same uid on every
+  machine. Runs after the open-time integrity gates and the automatic backup.
+- **Phase 1 — hub dedup sweep.** Resolve any pre-existing duplicate
+  `(prefix, display_path)` creates (projects already bitten by MTIX-28) under
+  the hub's advisory-lock single-flight; renumber losers, emit uid-keyed
+  remaps, surface via `sync_conflicts`.
+- **Phase 1.5 — version-gate the index (audit F-4).** Add the partial unique
+  index only once every `sync_projects.last_seen_cli_version` is remap-aware
+  (MTIX-30.14). Until then renumbers are emitted as `node_renumbered` remap
+  events that older CLIs ignore gracefully.
+- **Phase 2 — dual resolution.** CLIs resolve references by both
+  `display_path` and `uid`; pre-upgrade dot-path references keep working.
+- **Phase 3 — events key on uid.** Protocol-major cutover, gated on every CLI
+  reporting a compatible version; the hub refuses cutover until then.
+
+### 14.8 Where this binds in the protocol
+
+| Concern | ADR-003 | Implementation ticket | Verification |
+|---|---|---|---|
+| uid = create-event id, resolver, Phase 0 backfill | §2, §7 | MTIX-30.1 | `sync_uid_test.go`, `settle_test.go` |
+| Provisional/settled, claim + settlement | §4 | MTIX-30.2, 30.3 | `settle_test.go` |
+| Hub registry + renumber-required | §6 | MTIX-30.4, 30.7 | `registry_test.go`, `renumber_rejection_test.go` |
+| Atomic subtree renumber (F-2) | §5 | MTIX-30.5 | `node_renumber_test.go` |
+| Restore epoch + Option B (F-1, F-5) | §6.1, Addendum A | MTIX-30.8 | `restore_collision_test.go`, `e2e/sync_restore_collision_test.go` |
+| Import uid validation (F-3) | §6 | MTIX-30.9 | `import_uid_test.go` |
+| Migration orchestration + version gate (F-4) | §7 | MTIX-30.10, 30.14 | `sweep_test.go`, `sync_migrate_test.go` |
+| Crash-resilience (renumber/sweep/drain), ENOSPC on sync | §5, §6 | MTIX-30.11 | `e2e/sync_chaos_test.go`, `e2e/faultinject` |
+
+The safety scenarios above map to their tests in
+[traceability.json](./traceability.json) (scenarios 12–18), gated by
+`traceability_test.go`.
+
+## 15. Cross-references
 
 | Section | Implementation ticket | Verification ticket |
 |---|---|---|
@@ -447,11 +578,13 @@ The actual event transport (NATS? Postgres LISTEN/NOTIFY on the existing hub? Fi
 | §10 Reconciliation | MTIX-15.6 | MTIX-15.6 (atomicity), 15.11 |
 | §11 Conflict storm UX | MTIX-15.5 (logic), 15.7 (CLI), 15.8 (MCP) | MTIX-15.9 (E2E) |
 | §12 mgit integration | event contract only in v0.2 | n/a |
+| §14 Distributed node identity | MTIX-30.1–30.14 | ADR-003 §12, traceability.json 12–18 |
 
-## 15. Document version
+## 16. Document version
 
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-04-27 | Initial design lock-in (MTIX-15.1). Covers protocol versioning, validation, retention deferral, scale envelope, threat catalogue, conflict resolution, reconciliation, decision log. |
+| 1.1 | 2026-06 | §14 distributed node identity (MTIX-30 / ADR-003): uid anchor, provisional/settled, hub registry + renumber-required, atomic subtree renumber, restore-epoch + Option B, import uid validation, migration phases. Cross-reference and document-version sections renumbered to §15/§16. |
 
 Future changes to this document MUST bump this version, update the changelog row, and reference the corresponding implementation ticket. If a code change conflicts with this document, the document MUST be updated in the same change.

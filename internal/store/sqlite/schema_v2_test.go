@@ -66,7 +66,7 @@ func TestSchema_FreshDBIsV2(t *testing.T) {
 
 	v, ok := metaValue(t, db, "schema_version")
 	require.True(t, ok, "schema_version meta key must exist after init")
-	require.Equal(t, "2", v, "fresh DB must report schema v2")
+	require.Equal(t, "4", v, "fresh DB must report current schema version")
 }
 
 func TestSchema_FreshDBHasNewSyncEventsShape(t *testing.T) {
@@ -79,9 +79,12 @@ func TestSchema_FreshDBHasNewSyncEventsShape(t *testing.T) {
 		"payload", "wall_clock_ts", "lamport_clock", "vector_clock",
 		"author_id", "author_machine_hash", "sync_status",
 		"created_at", "retained_until",
+		// MTIX-30.6 / ADR-003 §3, §7 Phase 3: durable node identity carried
+		// alongside node_id during the dual-carry transition.
+		"uid",
 	}
 	require.Equal(t, want, cols,
-		"FR-18.6 column set must match SYNC-DESIGN section 3.1 exactly")
+		"FR-18.6 column set + MTIX-30.6 uid must match the schema exactly")
 }
 
 func TestSchema_FreshDBHasAppliedEvents(t *testing.T) {
@@ -285,9 +288,10 @@ func TestSchema_V1ToV2Migration(t *testing.T) {
 	// Run the migration via production init.
 	_, db := schemaTestEnv(t, dbPath)
 
-	// Schema version bumped.
+	// Schema version bumped to current (init runs all forward steps;
+	// since v3/MTIX-30.1 a v1 DB migrates straight through to 3).
 	v, _ := metaValue(t, db, "schema_version")
-	require.Equal(t, "2", v, "v1 -> v2 migration must update schema_version")
+	require.Equal(t, "4", v, "v1 migration must update schema_version to current")
 
 	// New shape replaces old.
 	cols := columnsOf(t, db, "sync_events")
@@ -348,7 +352,7 @@ func TestSchema_MigrationIdempotent(t *testing.T) {
 	t.Cleanup(func() { _ = raw.Close() })
 
 	v, _ := metaValue(t, raw, "schema_version")
-	require.Equal(t, "2", v, "still v2 after re-open")
+	require.Equal(t, "4", v, "still at current version after re-open")
 }
 
 func TestSchema_NoMetaTableTreatedAsFreshDB(t *testing.T) {
@@ -361,7 +365,7 @@ func TestSchema_NoMetaTableTreatedAsFreshDB(t *testing.T) {
 
 	_, db := schemaTestEnv(t, dbPath)
 	v, _ := metaValue(t, db, "schema_version")
-	require.Equal(t, "2", v, "no-meta-table DB must be initialized at v2")
+	require.Equal(t, "4", v, "no-meta-table DB must be initialized at current version")
 }
 
 func TestSchema_MetaTableButNoSchemaVersionRowTreatedAsFresh(t *testing.T) {
@@ -376,7 +380,7 @@ func TestSchema_MetaTableButNoSchemaVersionRowTreatedAsFresh(t *testing.T) {
 
 	_, db := schemaTestEnv(t, dbPath)
 	v, _ := metaValue(t, db, "schema_version")
-	require.Equal(t, "2", v, "missing version row must be treated as fresh")
+	require.Equal(t, "4", v, "missing version row must be treated as fresh (current version)")
 }
 
 func TestSchema_MalformedVersionStringRejected(t *testing.T) {

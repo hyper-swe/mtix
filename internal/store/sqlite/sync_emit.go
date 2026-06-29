@@ -38,12 +38,17 @@ var authorIDSafePattern = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 // emitParams collects what every mutation must pass to emitEvent.
 // Project and Author come from the mutation; OpType + Payload are op-specific.
 type emitParams struct {
-	NodeID       string
-	ProjectCode  string
-	OpType       model.OpType
-	Author       string
-	Payload      json.RawMessage
-	WallClockTS  int64
+	NodeID      string
+	ProjectCode string
+	OpType      model.OpType
+	Author      string
+	Payload     json.RawMessage
+	WallClockTS int64
+	// EventID, when set, is used as the event id instead of generating a
+	// fresh one. create_node passes the id it pre-generated so the node's
+	// uid can equal its create-event id (ADR-003 §2 / MTIX-30.1). Empty
+	// for all other ops, which generate their own.
+	EventID string
 }
 
 // emitEvent inserts one sync_events row inside the caller's transaction.
@@ -83,9 +88,12 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 		wallTS = time.Now().UTC().UnixMilli()
 	}
 
-	eventID, err := clock.NewEventID()
-	if err != nil {
-		return fmt.Errorf("emit %s: new event id: %w", p.OpType, err)
+	eventID := p.EventID
+	if eventID == "" {
+		eventID, err = clock.NewEventID()
+		if err != nil {
+			return fmt.Errorf("emit %s: new event id: %w", p.OpType, err)
+		}
 	}
 
 	payload := p.Payload
@@ -93,10 +101,16 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 		payload = json.RawMessage("null")
 	}
 
+	uid, err := emitUIDFor(ctx, tx, p, eventID)
+	if err != nil {
+		return fmt.Errorf("emit %s: resolve uid: %w", p.OpType, err)
+	}
+
 	event := &model.SyncEvent{
 		EventID:           eventID,
 		ProjectPrefix:     projectPrefix,
 		NodeID:            p.NodeID,
+		UID:               uid,
 		OpType:            p.OpType,
 		Payload:           payload,
 		WallClockTS:       wallTS,
@@ -118,11 +132,12 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO sync_events
-		  (event_id, project_prefix, node_id, op_type, payload,
+		  (event_id, project_prefix, node_id, uid, op_type, payload,
 		   wall_clock_ts, lamport_clock, vector_clock,
 		   author_id, author_machine_hash, sync_status, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		event.EventID, event.ProjectPrefix, event.NodeID, string(event.OpType), string(event.Payload),
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		event.EventID, event.ProjectPrefix, event.NodeID, nullableString(event.UID),
+		string(event.OpType), string(event.Payload),
 		event.WallClockTS, event.LamportClock, string(vcJSON),
 		event.AuthorID, event.AuthorMachineHash, string(event.SyncStatus),
 		event.CreatedAt.Format(time.RFC3339Nano),
@@ -131,6 +146,58 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 		return fmt.Errorf("emit %s: insert sync_events: %w", p.OpType, err)
 	}
 	return nil
+}
+
+// emitUIDFor computes the durable node uid to dual-carry on an event
+// (ADR-003 §3, §7 Phase 3).
+//
+// For create_node the uid is the node's STABLE identity: a genuinely new
+// node self-anchors uid = its own event_id (ADR-003 §2), but a create_node
+// re-emitted for a node that ALREADY has a uid (nodes.uid non-empty — e.g.
+// a --force re-backfill) carries that EXISTING uid instead of the fresh
+// event_id. Keeping the uid stable across re-create is what lets the hub
+// registry treat the re-push as the SAME logical node (a no-op) rather than
+// a false collision (ADR-003 §6/§9, MTIX-30.15). Only a node with no uid
+// yet self-anchors to the fresh event_id.
+//
+// For every other op the uid is the target node's uid resolved from
+// nodes.uid; if the row has no uid yet (a pre-30.1 row not backfilled) the
+// uid stays empty and apply falls back to node_id — the transition never
+// forces a value it cannot find.
+func emitUIDFor(ctx context.Context, tx *sql.Tx, p emitParams, eventID string) (string, error) {
+	if p.OpType == model.OpCreateNode {
+		existing, err := resolveEmitUID(ctx, tx, p.NodeID)
+		if err != nil {
+			return "", err
+		}
+		if existing != "" {
+			return existing, nil
+		}
+		// Genuinely new node (no uid yet): self-anchor (ADR-003 §2).
+		return eventID, nil
+	}
+	return resolveEmitUID(ctx, tx, p.NodeID)
+}
+
+// resolveEmitUID returns the durable uid of the node identified by nodeID
+// (its dot-path display id), read from nodes.uid (ADR-003 §3). Used by the
+// emitter to dual-carry the uid on every NON-create event. Returns "" (no
+// error) when the node row carries no uid yet — apply then falls back to
+// node_id, preserving correctness during the transition.
+func resolveEmitUID(ctx context.Context, tx *sql.Tx, nodeID string) (string, error) {
+	var uid sql.NullString
+	err := tx.QueryRowContext(ctx,
+		`SELECT uid FROM nodes WHERE id = ?`, nodeID).Scan(&uid)
+	if err == sql.ErrNoRows {
+		// No local row for this display path (e.g. a dependency target that
+		// lives only on another replica). Leave uid empty; apply keys on
+		// node_id. Not an error — the caller still emits the event.
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return uid.String, nil
 }
 
 // sanitizeAuthorID enforces the FR-18.7 grammar on caller-supplied author

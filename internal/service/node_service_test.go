@@ -492,6 +492,12 @@ func (m *mockStore) CreateNode(_ context.Context, _ *model.Node) error { return 
 func (m *mockStore) GetNode(_ context.Context, _ string) (*model.Node, error) {
 	return nil, model.ErrNotFound
 }
+func (m *mockStore) ResolveUIDByDisplayPath(_ context.Context, _ string) (string, error) {
+	return "", model.ErrNotFound
+}
+func (m *mockStore) ResolveDisplayPathByUID(_ context.Context, _ string) (string, error) {
+	return "", model.ErrNotFound
+}
 func (m *mockStore) UpdateNode(_ context.Context, _ string, _ *store.NodeUpdate) error { return nil }
 func (m *mockStore) DeleteNode(_ context.Context, _ string, _ bool, _ string) error   { return nil }
 func (m *mockStore) UndeleteNode(_ context.Context, _ string) error                    { return nil }

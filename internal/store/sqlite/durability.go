@@ -299,7 +299,36 @@ func (s *Store) classifyWriteError(err error) error {
 		return err
 	}
 	s.markFailStop(err)
-	return fmt.Errorf("fatal storage error — mtix stops writing to avoid corrupting the database (fail-stop): %w", err)
+	// Attach the NFR-2.8 exit-code sentinel (MTIX-32) alongside the raw cause
+	// (multi-%w) so exitCodeForError maps the fail-stop to its contract code
+	// (disk-full=3 / corrupted=4) on every write path — not only the pre-flight
+	// floor. The raw error stays in the chain for diagnostics.
+	return fmt.Errorf(
+		"fatal storage error — mtix stops writing to avoid corrupting the database (fail-stop): %w (%w)",
+		err, fatalIOSentinel(err))
+}
+
+// fatalIOSentinel maps a fatal storage error to its exit-code contract
+// sentinel: detected corruption -> model.ErrCorrupted, otherwise (disk full /
+// ENOSPC / generic fatal I/O) -> model.ErrDiskFull. Caller must have already
+// confirmed isFatalIOError(err).
+func fatalIOSentinel(err error) error {
+	if isCorruptionError(err) {
+		return model.ErrCorrupted
+	}
+	return model.ErrDiskFull
+}
+
+// isCorruptionError reports whether a fatal storage error is a corruption
+// (SQLITE_CORRUPT / malformed image) rather than a disk-space/I/O failure.
+func isCorruptionError(err error) bool {
+	var sqErr *sqlite3.Error
+	if errors.As(err, &sqErr) && sqErr.Code()&0xFF == sqliteCorrupt {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "database disk image is malformed") ||
+		strings.Contains(msg, "SQLITE_CORRUPT")
 }
 
 // SQLite primary result codes that mean the filesystem failed under us.

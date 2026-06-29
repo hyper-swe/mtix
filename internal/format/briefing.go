@@ -36,7 +36,7 @@ type briefingField struct {
 // defaultBriefingFields defines the default fields and their order per FR-17.4.
 // This order is fixed across releases — new fields are appended at the end.
 var defaultBriefingFields = []briefingField{
-	{"ID", "id", func(n *model.Node) string { return n.ID }, false},
+	{"ID", "id", func(n *model.Node) string { return AnnotateID(n.ID) }, false},
 	{"TITLE", "title", func(n *model.Node) string { return n.Title }, false},
 	{"NODE_TYPE", "node_type", func(n *model.Node) string { return string(n.NodeType) }, false},
 	{"STATUS", "status", func(n *model.Node) string { return string(n.Status) }, false},

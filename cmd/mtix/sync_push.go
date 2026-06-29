@@ -106,7 +106,13 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 	}
 	defer pool.Close()
 
-	pushed, batches, conflicts, err := pushLoop(ctx, stderr, pool, app.store)
+	// Report this CLI's build version into each push so the
+	// version-negotiation gate (ADR-003 §7 Phase 1.5/3) sees the latest
+	// version of every active client. No-op when the machine hash can't
+	// be computed (treated as "no identity"; the gate stays closed).
+	pool.SetClientIdentity(clientMachineHash(), version)
+
+	pushed, batches, conflicts, renumbered, err := pushLoop(ctx, stderr, pool, app.store)
 	if err != nil {
 		noteSyncResult(ctx, app.store, false)
 		return wrapSyncErr(stderr, "push loop", err)
@@ -114,8 +120,8 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 	noteSyncResult(ctx, app.store, true)
 
 	fmt.Fprintf(stdout,
-		"push complete: %d events pushed across %d batches; %d conflicts surfaced\n",
-		pushed, batches, conflicts)
+		"push complete: %d events pushed across %d batches; %d renumbered, %d conflicts surfaced\n",
+		pushed, batches, renumbered, conflicts)
 	return nil
 }
 
@@ -126,30 +132,47 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 // state (still pending; the next push retries).
 func pushLoop(ctx context.Context, stderr io.Writer,
 	pool *transport.Pool, store *sqlite.Store,
-) (totalPushed, batches, totalConflicts int, err error) {
+) (totalPushed, batches, totalConflicts, totalRenumbered int, err error) {
 	for {
 		events, err := readPendingBatch(ctx, store, pushBatchSize)
 		if err != nil {
-			return totalPushed, batches, totalConflicts,
+			return totalPushed, batches, totalConflicts, totalRenumbered,
 				fmt.Errorf("read pending batch %d: %w", batches+1, err)
 		}
 		if len(events) == 0 {
-			return totalPushed, batches, totalConflicts, nil
+			return totalPushed, batches, totalConflicts, totalRenumbered, nil
 		}
-		acceptedIDs, conflicts, pushErr := pool.PushEvents(ctx, events)
+		acceptedIDs, conflicts, renumbers, pushErr := pool.PushEventsWithRenumbers(ctx, events)
 		if pushErr != nil {
-			return totalPushed, batches, totalConflicts,
+			return totalPushed, batches, totalConflicts, totalRenumbered,
 				fmt.Errorf("push batch %d: %w", batches+1, pushErr)
 		}
 		if err := markPushed(ctx, store, acceptedIDs); err != nil {
-			return totalPushed, batches, totalConflicts,
+			return totalPushed, batches, totalConflicts, totalRenumbered,
 				fmt.Errorf("mark pushed batch %d: %w", batches+1, err)
+		}
+		// Drain renumber-required (ADR-003 §6, MTIX-30.7): the hub rejected
+		// these creates because their number is already held; re-claim the
+		// next free sibling, renumber the node locally, and re-queue the
+		// create (now 'pending') so the next batch carries a distinct number.
+		for _, r := range renumbers {
+			if _, err := store.RenumberForHubRejection(ctx, r.EventID); err != nil {
+				return totalPushed, batches, totalConflicts, totalRenumbered,
+					fmt.Errorf("resolve renumber for %s (batch %d): %w", r.EventID, batches+1, err)
+			}
 		}
 		totalPushed += len(acceptedIDs)
 		totalConflicts += len(conflicts)
+		totalRenumbered += len(renumbers)
 		batches++
-		fmt.Fprintf(stderr, "push progress: batch %d (%d sent, %d accepted, %d conflicts)\n",
-			batches, len(events), len(acceptedIDs), len(conflicts))
+		fmt.Fprintf(stderr, "push progress: batch %d (%d sent, %d accepted, %d renumbered, %d conflicts)\n",
+			batches, len(events), len(acceptedIDs), len(renumbers), len(conflicts))
+		// No-progress guard: a batch that neither accepted nor renumbered any
+		// event (e.g. pure conflicts) makes no headway — stop so the loop can
+		// never spin forever.
+		if len(acceptedIDs) == 0 && len(renumbers) == 0 {
+			return totalPushed, batches, totalConflicts, totalRenumbered, nil
+		}
 	}
 }
 

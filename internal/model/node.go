@@ -39,6 +39,14 @@ type Node struct {
 	Depth    int    `json:"depth"`
 	Seq      int    `json:"seq"`
 
+	// UID is the node's durable internal identity (ADR-003 §2): the
+	// node's create_node event id — globally unique by the event-log PK
+	// and identical on every replica by construction. Never shown on the
+	// surface (the dot-path ID is); it lets references and internal links
+	// survive a display-path renumber. Empty only on pre-migration rows
+	// until BackfillUIDs runs.
+	UID string `json:"uid,omitempty"`
+
 	// Content
 	Title       string `json:"title"`
 	Description string `json:"description,omitempty"`
@@ -78,10 +86,10 @@ type Node struct {
 	CommitRefs []string  `json:"commit_refs,omitempty"`
 
 	// Prompt Steering
-	Annotations      []Annotation `json:"annotations,omitempty"`
-	InvalidatedAt    *time.Time   `json:"invalidated_at,omitempty"`
-	InvalidatedBy    string       `json:"invalidated_by,omitempty"`
-	InvalidationReason string     `json:"invalidation_reason,omitempty"`
+	Annotations        []Annotation `json:"annotations,omitempty"`
+	InvalidatedAt      *time.Time   `json:"invalidated_at,omitempty"`
+	InvalidatedBy      string       `json:"invalidated_by,omitempty"`
+	InvalidationReason string       `json:"invalidation_reason,omitempty"`
 
 	// Soft-Delete
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`

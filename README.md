@@ -1,8 +1,18 @@
 # mtix
 
-**Multi-agent micro issue manager for code-generating LLMs.**
+**Task infrastructure for parallel AI coding agents.**
 
-mtix (micro-tix) is a hierarchical task management system where multiple LLM coding agents decompose, claim, and execute work concurrently. Work breaks down into infinitely nested micro issues using dot-notation IDs (`PROJ-42.1.3.2.1`), where the hierarchy itself becomes the agent's briefing — each level adds context that flows down to the executing agent. Every operation is available through CLI, REST, gRPC, MCP, and a real-time web UI — agents and humans use whichever interface fits.
+An AI coding agent is only as good as the context behind its task. As a plan breaks into smaller pieces, that context scatters. The goal, the constraints, and the reasoning end up spread across issues, chat threads, and memory. Agents drift. They redo finished work. They stall for clarification.
+
+mtix fixes this with a **context chain**. Every task inherits the full briefing of its parents. When an agent claims a task, it gets one assembled prompt: the why, the scope, and the exact step to run. Each task briefs itself. So **many agents can run one plan in parallel**, each with the context its piece needs. No collisions. No re-explaining.
+
+The same context chain works across a team. One shared hub keeps everyone's agents on the same plan and the same context. It is local-first. A **remote team** keeps working offline, then syncs on reconnect.
+
+mtix ships as a single binary. It speaks MCP, so Claude Code uses it natively. Every agent, claim, and state change is tracked, so parallel work stays consistent and auditable.
+
+---
+
+mtix (micro-ticks) is a hierarchical task management system where multiple LLM coding agents decompose, claim, and execute work concurrently. Work breaks down into infinitely nested micro issues using dot-notation IDs (`PROJ-42.1.3.2.1`), where the hierarchy itself becomes the agent's briefing — each level adds context that flows down to the executing agent. Every operation is available through CLI, REST, gRPC, MCP, and a real-time web UI — agents and humans use whichever interface fits.
 
 ## Why mtix
 
@@ -219,9 +229,11 @@ model.
 
 ## Companion Projects
 
-### mgit — Surgical rollback for LLM coding agents
+### mgit — Sandboxed version control for autonomous coding agents
 
-[mgit](https://github.com/hyper-swe/mgit) provides task-tagged micro-commits, surgical rollback, and auto-squash for LLM agents. When paired with mtix, agents micro-commit during each task, rollback wrong decisions without losing correct work, and auto-squash on `mtix done`. mtix handles *what to do*; mgit handles *how to safely do it*.
+[mgit](https://github.com/hyper-swe/mgit) gives a coding agent a safe place to work. It runs the agent's untrusted code (dependency installs, builds, tests) in a disposable per-task microVM with default-deny networking. A compromised package is contained to a throwaway VM, never your host. The agent's work is recorded in an isolated, append-only store separate from your git, and only the reviewed, squashed result is landed. You can roll back or fork from any step.
+
+Paired with mtix, the loop is clean. mtix says *what to do* and carries the context. mgit runs it *safely* and records *what was done*, task-tagged from start to finish. Many agents can work different tasks at once, each in its own sandboxed worktree, without stepping on each other.
 
 ```bash
 brew install hyper-swe/tap/mgit

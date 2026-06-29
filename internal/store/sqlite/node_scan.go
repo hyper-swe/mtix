@@ -24,7 +24,8 @@ const nodeColumns = `id, parent_id, depth, seq, project,
     annotations, invalidated_at, invalidated_by, invalidation_reason,
     activity,
     deleted_at, deleted_by,
-    metadata, session_id`
+    metadata, session_id,
+    uid`
 
 // scanDest holds the intermediate scan destinations for a node row.
 type scanDest struct {
@@ -40,6 +41,7 @@ type scanDest struct {
 	labelsJSON, codeRefsJSON, commitRefsJSON  sql.NullString
 	annotationsJSON, activityJSON             sql.NullString
 	metadataJSON                              sql.NullString
+	uid                                       sql.NullString
 	estimateMin, actualMin                    sql.NullInt64
 	createdAtStr, updatedAtStr                string
 	nodeTypeStr, statusStr                    string
@@ -63,6 +65,7 @@ func scanNode(scanner interface{ Scan(dest ...any) error }) (*model.Node, error)
 		&d.activityJSON,
 		&d.deletedAt, &d.deletedBy,
 		&d.metadataJSON, &d.sessionID,
+		&d.uid,
 	)
 	if err == sql.ErrNoRows {
 		return nil, err
@@ -104,6 +107,7 @@ func assignScannedStrings(n *model.Node, d *scanDest) {
 	n.InvalidationReason = d.invalidationReason.String
 	n.DeletedBy = d.deletedBy.String
 	n.SessionID = d.sessionID.String
+	n.UID = d.uid.String
 }
 
 // parseScannedTimestamps parses timestamp strings from scan destinations.

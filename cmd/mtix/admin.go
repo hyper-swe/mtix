@@ -196,30 +196,48 @@ func runExport(format string) error {
 	return nil
 }
 
+// importFlags collects the import command's options (FR-6.3, FR-7.8;
+// ADR-003 §6 reconciliation flags).
+type importFlags struct {
+	mode              string
+	force             bool
+	recomputeChecksum bool
+	forceRename       bool
+	confirm           bool
+	remapFile         string
+}
+
 // newImportCmd creates the mtix import command per FR-6.3 and FR-7.8.
+// Imports run through offline/export-import reconciliation (ADR-003 §6):
+// incoming provisional nodes are renumbered to clean local numbers and every
+// incoming uid is validated at the import boundary (audit F-3).
 func newImportCmd() *cobra.Command {
-	var mode string
-	var force bool
-	var recomputeChecksum bool
+	var f importFlags
 
 	cmd := &cobra.Command{
 		Use:   "import <file>",
 		Short: "Import nodes from JSON export",
 		Args:  cobra.ExactArgs(1),
 		RunE: withAutoExport(func(_ *cobra.Command, args []string) error {
-			return runImport(args[0], mode, force, recomputeChecksum)
+			return runImport(args[0], f)
 		}),
 	}
 
-	cmd.Flags().StringVar(&mode, "mode", "merge", "Import mode: replace or merge")
-	cmd.Flags().BoolVar(&force, "force", false, "Allow importing zero nodes into a non-empty database")
-	cmd.Flags().BoolVar(&recomputeChecksum, "recompute-checksum", false,
+	cmd.Flags().StringVar(&f.mode, "mode", "merge", "Import mode: replace or merge")
+	cmd.Flags().BoolVar(&f.force, "force", false, "Allow importing zero nodes into a non-empty database")
+	cmd.Flags().BoolVar(&f.recomputeChecksum, "recompute-checksum", false,
 		"Recovery only (MTIX-26.5): replace the file's checksum with one computed over its current content, accepting hand-reconstructed exports")
+	cmd.Flags().BoolVar(&f.confirm, "confirm", false,
+		"Confirm applying provisional renumbering to a non-empty live store (ADR-003 §6); without it such an import is reported but not applied")
+	cmd.Flags().BoolVar(&f.forceRename, "force-rename", false,
+		"On an incoming uid that collides with a different local node, re-stamp the import node with a fresh local uid instead of rejecting (ADR-003 §6)")
+	cmd.Flags().StringVar(&f.remapFile, "remap-file", "",
+		"Write the uid-keyed remap (uid -> new display_path) to this JSON file (ADR-003 §6)")
 
 	return cmd
 }
 
-func runImport(filePath, mode string, force, recomputeChecksum bool) error {
+func runImport(filePath string, f importFlags) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -234,7 +252,7 @@ func runImport(filePath, mode string, force, recomputeChecksum bool) error {
 		return fmt.Errorf("parse import file: %w", unmarshalErr)
 	}
 
-	if recomputeChecksum {
+	if f.recomputeChecksum {
 		// Recovery path: integrity now attests to the reconstructed
 		// content, not the original. Be loud about it.
 		fmt.Fprintln(os.Stderr,
@@ -245,12 +263,26 @@ func runImport(filePath, mode string, force, recomputeChecksum bool) error {
 	}
 
 	importMode := sqlite.ImportModeMerge
-	if mode == "replace" {
+	if f.mode == "replace" {
 		importMode = sqlite.ImportModeReplace
 	}
 
 	ctx := context.Background()
-	result, err := app.store.Import(ctx, &exportData, importMode, force)
+	report, result, err := app.store.ImportReconcile(ctx, &exportData, sqlite.ImportReconcileOptions{
+		Mode:        importMode,
+		Force:       f.force,
+		ForceRename: f.forceRename,
+		Confirm:     f.confirm,
+	})
+
+	// The report is loud whether or not the import applied (ADR-003 §6): always
+	// surface it, and persist the uid-keyed remap when one was produced.
+	if report != nil {
+		fmt.Fprint(os.Stderr, report.String())
+		if writeErr := writeRemapFile(f.remapFile, report); writeErr != nil {
+			return writeErr
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("import failed: %w", err)
 	}
@@ -262,6 +294,27 @@ func runImport(filePath, mode string, force, recomputeChecksum bool) error {
 		fmt.Printf("Import complete: %d created, %d updated, %d skipped, %d deps\n",
 			result.NodesCreated, result.NodesUpdated,
 			result.NodesSkipped, result.DepsImported)
+	}
+	return nil
+}
+
+// writeRemapFile persists the uid-keyed remap (uid -> new display_path) produced
+// by reconciliation to path, when path is non-empty and a remap exists
+// (ADR-003 §6 — the remap file external references reconcile against).
+func writeRemapFile(path string, report *sqlite.ImportReconcileReport) error {
+	if path == "" || len(report.Remaps) == 0 {
+		return nil
+	}
+	remap := make(map[string]string, len(report.Remaps))
+	for _, m := range report.Remaps {
+		remap[m.UID] = m.NewPath
+	}
+	out, err := json.MarshalIndent(remap, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode remap file: %w", err)
+	}
+	if writeErr := os.WriteFile(path, out, 0o600); writeErr != nil {
+		return fmt.Errorf("write remap file %s: %w", path, writeErr)
 	}
 	return nil
 }

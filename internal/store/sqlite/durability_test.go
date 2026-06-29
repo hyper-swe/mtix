@@ -367,6 +367,42 @@ func TestBackup_PreflightRefusesBelowFloor(t *testing.T) {
 	assert.ErrorIs(t, err, model.ErrDiskFull)
 }
 
+// TestClassifyWriteError_AttachesContractSentinel: a fatal mid-write storage
+// error must carry the NFR-2.8 exit-code sentinel (MTIX-32) so exitCodeForError
+// maps it to its contract code on EVERY write path, not just the pre-flight
+// floor. A genuine mid-write ENOSPC (large writes pass the floor then exhaust
+// the disk) previously latched fail-stop but carried no sentinel, so the CLI
+// exited 1 instead of 3.
+func TestClassifyWriteError_AttachesContractSentinel(t *testing.T) {
+	t.Run("disk full -> ErrDiskFull", func(t *testing.T) {
+		s, _ := newDurabilityTestStore(t)
+		err := s.classifyWriteError(errors.New("database or disk is full (13)"))
+		require.Error(t, err)
+		assert.ErrorIs(t, err, model.ErrDiskFull)
+		assert.NotErrorIs(t, err, model.ErrCorrupted)
+		assert.Contains(t, err.Error(), "fail-stop")
+	})
+	t.Run("enospc -> ErrDiskFull", func(t *testing.T) {
+		s, _ := newDurabilityTestStore(t)
+		err := s.classifyWriteError(fmt.Errorf("write: %w", syscall.ENOSPC))
+		assert.ErrorIs(t, err, model.ErrDiskFull)
+	})
+	t.Run("corruption -> ErrCorrupted", func(t *testing.T) {
+		s, _ := newDurabilityTestStore(t)
+		err := s.classifyWriteError(errors.New("database disk image is malformed (11)"))
+		require.Error(t, err)
+		assert.ErrorIs(t, err, model.ErrCorrupted)
+		assert.NotErrorIs(t, err, model.ErrDiskFull)
+	})
+	t.Run("non-fatal passes through with no sentinel", func(t *testing.T) {
+		s, _ := newDurabilityTestStore(t)
+		err := s.classifyWriteError(fmt.Errorf("x: %w", model.ErrNotFound))
+		assert.ErrorIs(t, err, model.ErrNotFound)
+		assert.NotErrorIs(t, err, model.ErrDiskFull)
+		assert.NotErrorIs(t, err, model.ErrCorrupted)
+	})
+}
+
 // TestQuickCheckOnOpen_Latency keeps the open-time integrity check honest
 // about its cost: it must stay well under interactive budgets at a
 // CLI-realistic database size.

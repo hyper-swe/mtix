@@ -47,6 +47,19 @@ type Store interface {
 	// Returns ErrNotFound if the node does not exist or is soft-deleted.
 	GetNode(ctx context.Context, id string) (*model.Node, error)
 
+	// ResolveUIDByDisplayPath returns a node's durable uid given its
+	// dot-path id (ADR-003 §5). The uid is stable across a renumber, so
+	// callers that need a reference to survive renumbering resolve a
+	// display path to a uid once and re-resolve later.
+	// Returns ErrNotFound if no live node has that id.
+	ResolveUIDByDisplayPath(ctx context.Context, displayPath string) (string, error)
+
+	// ResolveDisplayPathByUID returns a node's current dot-path id given its
+	// durable uid (ADR-003 §5). This is the resolution external references
+	// rely on so they survive a renumber.
+	// Returns ErrNotFound if no live node carries that uid.
+	ResolveDisplayPathByUID(ctx context.Context, uid string) (string, error)
+
 	// UpdateNode applies partial updates to a node.
 	// Returns ErrNotFound if the node does not exist.
 	UpdateNode(ctx context.Context, id string, updates *NodeUpdate) error

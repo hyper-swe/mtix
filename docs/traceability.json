@@ -97,5 +97,97 @@
       "TestDiskFull_MirrorSurvives",
       "TestRecover_TruncatedDB_SalvagesViaMirror"
     ]
+  },
+  {
+    "scenario": 12,
+    "title": "Restore Collision Option B (detect / scoped block / resolve) (ADR-003 6.1, 15)",
+    "tests": [
+      "TestRestoreEpoch_DefaultsToZeroAndIsOperatorOnly",
+      "TestRestore_StampsCreatesWithCurrentEpoch",
+      "TestRestore_CrossEpochCollision_TriggersOptionB",
+      "TestRestore_ScopedBlock_OtherEventsLand",
+      "TestRestore_ListAndResolveCollision",
+      "TestE2E_Restore_CrossEpoch_TriggersOptionB",
+      "TestE2E_Restore_CrossEpoch_BlockScope_OneNodeOnly",
+      "TestCLI_MarkRestored_AdvancesEpoch",
+      "TestCLI_CollisionsList_ShowsBothNodes",
+      "TestCLI_CollisionsResolve_RenumbersLoser_NoNodeLost",
+      "TestCLI_CollisionsResolve_RejectsBadWinner"
+    ]
+  },
+  {
+    "scenario": 13,
+    "title": "Restore Near-Miss: same-epoch and provisional collisions renumber, never Option B (no false positive)",
+    "tests": [
+      "TestRestore_SameEpochCollision_RenumbersNotOptionB",
+      "TestRestore_SameEpochAfterRestore_StillRenumbers",
+      "TestRestore_TwoOfflineProvisionals_NoCollision",
+      "TestRegistry_ConcurrentPushesSameNumber",
+      "TestE2E_Restore_NearMiss_NoRestoreEver_Renumbers",
+      "TestE2E_Restore_NearMiss_SameEpochWithinWindow_Renumbers",
+      "TestE2E_Restore_NearMiss_TwoOfflineProvisionals_Renumbers"
+    ]
+  },
+  {
+    "scenario": 14,
+    "title": "Atomic Subtree Renumber (audit F-2, ADR-003 5)",
+    "tests": [
+      "TestRenumberSubtree_HappyPath_RewritesNodeAndAllDescendants",
+      "TestRenumberSubtree_FixesParentIDsAndSeqAndDepth",
+      "TestRenumberSubtree_ConcurrentReaderSeesAllOldOrAllNew",
+      "TestRenumberSubtree_PreservesStableUIDs",
+      "TestRenumberSubtree_ReferenceSurvivesViaUID",
+      "TestRenumberSubtree_EmitsNoSyncEvents",
+      "TestRenumberSubtree_RewritesDependencyRefs",
+      "TestResolveNodeRef_ByUID_SurvivesRenumber",
+      "TestE2E_Chaos_RenumberSubtree_AtomicNoTornSubtree"
+    ]
+  },
+  {
+    "scenario": 15,
+    "title": "Import-Boundary UID Validation (audit F-3, ADR-003 6)",
+    "tests": [
+      "TestImportReconcile_IdempotentReimport",
+      "TestImportReconcile_LocalUIDCollisionRejected",
+      "TestImportReconcile_CraftedDuplicateUIDRejected",
+      "TestImportReconcile_ForceRenameRestampsColliding",
+      "TestImportReconcile_ProvisionalRenumbered",
+      "TestImportReconcile_TwoProvisionalsGetDistinctNumbers",
+      "TestImportReconcile_LiveStoreRequiresConfirmation"
+    ]
+  },
+  {
+    "scenario": 16,
+    "title": "Sync Crash-Resilience: renumber / dedup sweep / push-drain resume converges",
+    "tests": [
+      "TestE2E_Chaos_RenumberSubtree_AtomicNoTornSubtree",
+      "TestE2E_Chaos_SweepDuplicates_IdempotentSingleFlight",
+      "TestE2E_Chaos_PushRenumberDrain_ResumableConverges",
+      "TestSweep_IdempotentReRun",
+      "TestSweep_ConcurrentSingleFlight",
+      "TestPushLoop_DrainsRenumberRequired"
+    ]
+  },
+  {
+    "scenario": 17,
+    "title": "ENOSPC Fail-Stop on a Sync Write (NFR-2.8 on the sync path)",
+    "tests": [
+      "TestDiskFull_SyncBackfill_FailStops",
+      "TestKill9DuringSyncBackfill_OnTightDisk"
+    ]
+  },
+  {
+    "scenario": 18,
+    "title": "Online Concurrent-Create Resolution (the MTIX-28 fix, ADR-003 6)",
+    "tests": [
+      "TestRegistry_TwoCreatesSameNumber_OneAcceptedOtherRenumber",
+      "TestRegistry_RejectNeverDeletesAnyNode",
+      "TestRegistry_TwoCreatesSameNumberInOneBatch",
+      "TestRegistry_ConcurrentPushesSameNumber",
+      "TestRenumberForHubRejection_RenumbersAndRequeues",
+      "TestPushLoop_DrainsRenumberRequired",
+      "TestE2E_Collision_ConcurrentCreateUnderSameParent",
+      "TestE2E_Collision_NWayConcurrentCreate"
+    ]
   }
 ]

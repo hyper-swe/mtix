@@ -43,10 +43,14 @@ func freshCmdHub(t *testing.T, dsn string) {
 	require.NoError(t, err)
 	defer pool.Close()
 	for _, stmt := range []string{
+		`DROP TABLE IF EXISTS sync_node_collisions CASCADE`,
+		`DROP TABLE IF EXISTS node_renumber_remaps CASCADE`,
 		`DROP TABLE IF EXISTS sync_conflicts CASCADE`,
 		`DROP TABLE IF EXISTS applied_events CASCADE`,
 		`DROP TABLE IF EXISTS sync_events CASCADE`,
+		`DROP TABLE IF EXISTS sync_project_clients CASCADE`,
 		`DROP TABLE IF EXISTS sync_projects CASCADE`,
+		`DROP TABLE IF EXISTS sync_hub_state CASCADE`,
 		`DROP TABLE IF EXISTS audit_log CASCADE`,
 		`DROP FUNCTION IF EXISTS audit_log_immutable() CASCADE`,
 	} {
@@ -75,7 +79,7 @@ func TestPushLoop_EmptyQueueIsNoop(t *testing.T) {
 	initTestApp(t)
 
 	var stderr bytes.Buffer
-	pushed, batches, conflicts, err := pushLoop(context.Background(), &stderr,
+	pushed, batches, conflicts, _, err := pushLoop(context.Background(), &stderr,
 		pool, app.store)
 	require.NoError(t, err)
 	require.Equal(t, 0, pushed)
@@ -94,7 +98,7 @@ func TestPushLoop_DrainsPendingEvents(t *testing.T) {
 	}
 
 	var stderr bytes.Buffer
-	pushed, batches, _, err := pushLoop(context.Background(), &stderr,
+	pushed, batches, _, _, err := pushLoop(context.Background(), &stderr,
 		pool, app.store)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, pushed, 3,
@@ -124,7 +128,7 @@ func TestPullLoop_AppliesHubEvents(t *testing.T) {
 	// Seed and push from this CLI.
 	require.NoError(t, runCreate("seed", "", "", 3, "", "", "", "", ""))
 	var stderr bytes.Buffer
-	_, _, _, err := pushLoop(context.Background(), &stderr, pool, app.store)
+	_, _, _, _, err := pushLoop(context.Background(), &stderr, pool, app.store)
 	require.NoError(t, err)
 
 	// Wipe local applied_events + events so pullLoop has work to do
@@ -164,7 +168,7 @@ func TestCloneLoop_AppliesAndCheckpoints(t *testing.T) {
 
 	require.NoError(t, runCreate("seed", "", "", 3, "", "", "", "", ""))
 	var stderr bytes.Buffer
-	_, _, _, err := pushLoop(context.Background(), &stderr, pool, app.store)
+	_, _, _, _, err := pushLoop(context.Background(), &stderr, pool, app.store)
 	require.NoError(t, err)
 
 	// Wipe local state to simulate a fresh clone target.

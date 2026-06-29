@@ -459,6 +459,113 @@ func TestDiskFull_MirrorSurvives(t *testing.T) {
 	}
 }
 
+// TestDiskFull_SyncBackfill_FailStops drives the DISTRIBUTED-IDENTITY local
+// write path under ENOSPC (MTIX-30.11, ADR-003 §7 Phase 0): `mtix sync backfill`
+// synthesizes uid-keyed create events into the local sync_events queue (the
+// Phase 0 UID-backfill the migration depends on). On a packed volume that write
+// must FAIL-STOP per NFR-2.8 — a loud storage error, never a silently corrupt
+// or half-written queue — and the pre-existing data and mirror must survive.
+func TestDiskFull_SyncBackfill_FailStops(t *testing.T) {
+	proj := newProject(t, faultFSDir(t))
+
+	// Seed nodes (and thus sync_events) on a healthy disk.
+	for i := 0; i < 5; i++ {
+		if out, err := runMtix(proj, nil, "create", fmt.Sprintf("identity node %d", i)); err != nil {
+			t.Fatalf("seed create %d: %v\n%s", i, err, out)
+		}
+	}
+
+	cleanup := fillDisk(t, proj)
+	defer cleanup()
+
+	// --force re-synthesizes the uid-keyed events even though sync_events is
+	// non-empty — the exact write the Phase 0 migration performs. On a full
+	// volume it must fail loudly, not corrupt the store.
+	out, err := runMtix(proj, nil, "sync", "backfill", "--force")
+	if err == nil {
+		t.Fatalf("sync backfill on a full disk must fail-stop, got success:\n%s", out)
+	}
+	// Either the pre-flight floor refuses (exit disk-full) or a genuine ENOSPC
+	// surfaces as a storage error — both are fail-stop, neither is silent.
+	if code := exitCode(err); code != exitDiskFull &&
+		!containsAny(out, "full", "space", "disk", "i/o", "stop", "no space") {
+		t.Fatalf("backfill ENOSPC must surface as a storage fail-stop (exit %d or a storage message); got exit %d:\n%s",
+			exitDiskFull, code, out)
+	}
+
+	cleanup()
+	assertDBStructurallySound(t, proj)
+
+	// The pre-incident nodes must still be intact — the failed backfill must
+	// not have torn the canonical store.
+	listOut, err := runMtix(proj, nil, "list")
+	if err != nil {
+		t.Fatalf("list after backfill fail-stop: %v\n%s", err, listOut)
+	}
+	for i := 0; i < 5; i++ {
+		if !bytes.Contains(listOut, []byte(fmt.Sprintf("identity node %d", i))) {
+			t.Fatalf("identity node %d lost after a failed backfill:\n%s", i, listOut)
+		}
+	}
+}
+
+// TestKill9DuringSyncBackfill_OnTightDisk is the literal kill -9 mid-operation
+// crash test for a distributed-identity write (MTIX-30.11, ADR-003 §7 Phase 0):
+// SIGKILL `mtix sync backfill` repeatedly, at varying phases, on a volume close
+// to capacity. The CLI documents single-tx (SIGKILL-safe) atomicity for the
+// event synthesis; after every kill the database must stay openable and
+// structurally sound, and a final clean backfill must RESUME and converge.
+func TestKill9DuringSyncBackfill_OnTightDisk(t *testing.T) {
+	proj := newProject(t, faultFSDir(t))
+	for i := 0; i < 5; i++ {
+		if out, err := runMtix(proj, nil, "create", fmt.Sprintf("kill backfill seed %d", i)); err != nil {
+			t.Fatalf("seed create %d: %v\n%s", i, err, out)
+		}
+	}
+
+	// Leave the volume tight (but with headroom) so checkpoints run near the
+	// edge while the kill lands.
+	ballast := bytes.Repeat([]byte{0xCD}, 1<<20)
+	for i := 0; i < 4; i++ {
+		if err := os.WriteFile(filepath.Join(proj, fmt.Sprintf("ballast-%d", i)), ballast, 0o644); err != nil {
+			break
+		}
+	}
+
+	for round := 0; round < 12; round++ {
+		cmd := exec.Command(mtixBin, "sync", "backfill", "--force")
+		cmd.Dir = proj
+		cmd.Env = os.Environ()
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start backfill round %d: %v", round, err)
+		}
+		// Vary the kill point across rounds to land in different phases
+		// (pushlock acquire, event walk, insert, commit).
+		time.Sleep(time.Duration(round*5) * time.Millisecond)
+		_ = cmd.Process.Signal(syscall.SIGKILL)
+		_, _ = cmd.Process.Wait()
+
+		// flock is released by the kernel on process death, so the next
+		// backfill is never wedged by a stale lock.
+		assertDBStructurallySound(t, proj)
+	}
+
+	// Resume converges: a clean backfill now succeeds and every seed node is
+	// still present (no loss across the kill storm).
+	if out, err := runMtix(proj, nil, "sync", "backfill", "--force"); err != nil {
+		t.Fatalf("backfill must resume cleanly after the kill storm: %v\n%s", err, out)
+	}
+	listOut, err := runMtix(proj, nil, "list")
+	if err != nil {
+		t.Fatalf("list after resume: %v\n%s", err, listOut)
+	}
+	for i := 0; i < 5; i++ {
+		if !bytes.Contains(listOut, []byte(fmt.Sprintf("kill backfill seed %d", i))) {
+			t.Fatalf("seed node %d lost across the kill storm:\n%s", i, listOut)
+		}
+	}
+}
+
 func hashFile(t *testing.T, path string) [32]byte {
 	t.Helper()
 	data, err := os.ReadFile(path)

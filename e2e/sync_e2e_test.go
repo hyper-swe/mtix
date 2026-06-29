@@ -65,6 +65,16 @@ func freshHub(t *testing.T, dsn string) {
 	defer pool.Close()
 
 	for _, stmt := range []string{
+		// Distributed-identity tables (ADR-003 §6.1/§7/§15) must be dropped
+		// too: they FK sync_events and carry per-test state (open collisions,
+		// the remap ledger, the restore_epoch singleton). Dropping only
+		// sync_events CASCADE would silently strip their FKs and leave their
+		// rows behind, leaking state across tests. Drop them explicitly so
+		// every openHub starts from a pristine, fully-migrated schema.
+		`DROP TABLE IF EXISTS sync_node_collisions CASCADE`,
+		`DROP TABLE IF EXISTS node_renumber_remaps CASCADE`,
+		`DROP TABLE IF EXISTS sync_hub_state CASCADE`,
+		`DROP TABLE IF EXISTS sync_project_clients CASCADE`,
 		`DROP TABLE IF EXISTS sync_conflicts CASCADE`,
 		`DROP TABLE IF EXISTS applied_events CASCADE`,
 		`DROP TABLE IF EXISTS sync_events CASCADE`,

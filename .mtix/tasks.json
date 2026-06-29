@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-29T13:24:15Z",
+  "exported_at": "2026-06-29T13:32:20Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -4712,6 +4712,32 @@
       "uid": "019f1385-fc60-78c2-9836-801ccdd8c954"
     },
     {
+      "id": "MTIX-34",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 34,
+      "project": "MTIX",
+      "title": "README: refresh mgit companion section to its current sandboxed-VC positioning",
+      "description": "The README mgit blurb described only the old framing (surgical rollback / task-tagged micro-commits / auto-squash). mgit has repositioned to lead with sandboxed containment (untrusted agent code in per-task microVMs + default-deny networking + verified land-back) plus the checkpointed-substrate pillar. Updated the section from ../mgit-dev/README.md: new tagline (Sandboxed version control for autonomous coding agents), the two pillars, and the mtix\u003c-\u003emgit loop + parallel sandboxed worktrees. Kept it concise and in the README's light style; omitted mgit's 'independent trial' quote (that trial was our own feedback to the mgit team).",
+      "prompt": "",
+      "acceptance": "",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-readme",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "a95904ca1718f224a63c4d9b8c0739c8f5994fd477e35709775eddeebc64d4e2",
+      "created_at": "2026-06-29T13:31:39Z",
+      "updated_at": "2026-06-29T13:32:20Z",
+      "closed_at": "2026-06-29T13:32:20Z",
+      "uid": "019f1394-13c5-7785-b0fd-3d4e555de0e4"
+    },
+    {
       "id": "MTIX-4",
       "parent_id": "",
       "depth": 0,
@@ -5676,7 +5702,7 @@
       "agent_id": "claude-readme",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-31",
+      "current_node_id": "MTIX-34",
       "last_heartbeat": "2026-06-29T13:09:15Z"
     },
     {
@@ -5740,6 +5766,6 @@
       "status": "active"
     }
   ],
-  "node_count": 207,
-  "checksum": "2ebf12148a94b1c34ae87a0da104af4d35346506c82543834841fbd6200132be"
+  "node_count": 208,
+  "checksum": "788b80dcb9e70510c32288c1d55c8269b407f97ddfde38dab495f93ada0c89a7"
 }

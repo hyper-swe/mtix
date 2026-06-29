@@ -26,7 +26,8 @@ A complete guide to using mtix for hierarchical task management.
 18. [Backup, Export, and Import](#backup-export-and-import)
 19. [Content Integrity](#content-integrity)
 20. [Team collaboration with sync (FR-18)](#team-collaboration-with-sync-fr-18)
-21. [Troubleshooting](#troubleshooting)
+21. [Distributed identity & team sync](#distributed-identity--team-sync)
+22. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -1255,6 +1256,112 @@ recommendations to LLM agents. State buckets: `solo`,
 `sync-configured-no-hub`, `sync-active`, `divergent-state-pending`,
 `hub-unreachable`. Output is bounded to 4 KB. The DSN is never
 returned. See [docs/MCP-SETUP.md](docs/MCP-SETUP.md).
+
+---
+
+## Distributed identity & team sync
+
+mtix IDs are dot-paths (`PRJX-1.4`, `PRJX-1.4.3`). They stay clean and
+human-readable even when a team creates nodes concurrently or offline.
+This works because each node also has a stable internal identity (its
+`uid`) that the surface never shows. You only ever type and read the
+dot-path. For the full design see
+[ADR-003](../ADR-003-DISTRIBUTED-NODE-IDENTITY.md) and
+[docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md).
+
+### Provisional vs settled IDs
+
+A **settled** ID is fully numeric, like `PRJX-1.4`. It is safe to put in
+a commit, a PR, or any external reference.
+
+A **provisional** ID carries a long uid-shaped segment, like
+`PRJX-1.1.0193fa8c...`. It means the node was created offline or before
+the hub confirmed its number. It is valid and resolvable, but its final
+number will differ.
+
+Rules of thumb:
+
+- Read and reference nodes by dot-path. You never need the uid.
+- Do not paste a provisional ID into a commit or PR. mtix warns you when
+  you are about to externalize one.
+- A fully numeric ID is safe to externalize.
+
+### Offline creation auto-settles
+
+Create nodes with no network. They get a provisional ID. On your next
+`mtix sync push`/`pull` they claim a clean number from the hub and settle
+automatically. No command to run. If the claim still cannot reach the
+hub, the node stays provisional and retries on the next sync.
+
+### Concurrent creates auto-renumber
+
+If two teammates both create `PRJX-1.4` at the same time, the hub accepts
+the first to arrive and tells the second to renumber. The second node
+becomes `PRJX-1.5` on its own. Both nodes survive; nothing is lost; you
+do not have to do anything. This is normal operation and needs no admin.
+
+### New sync commands
+
+```bash
+mtix sync mark-restored          # operator: open a restore window (see runbook)
+mtix sync collisions list        # list restore collisions awaiting a decision
+mtix sync collisions resolve <id> --winner held|incoming
+mtix sync migrate                # drive the node-identity migration phases
+```
+
+`mtix sync migrate` runs the one-time migration to the distributed-identity
+model (uid backfill, hub dedup sweep, version-gated registry index). It is
+idempotent and a no-op once complete. Phase 1 only moves numbers when the
+hub already has duplicates, and only with `--yes`; without `--yes` it
+previews and changes nothing.
+
+### Restore-from-backup runbook
+
+Restoring the hub from a backup can, in rare cases, hand the same number
+to two already-settled nodes (one number granted after the backup, then
+lost by the restore). mtix never auto-picks a winner, because the node
+that should keep the number may have external references. That is a human
+call, so mtix blocks just the affected node and asks an admin.
+
+Run this after every hub restore:
+
+```bash
+# 1. Restore the hub from your backup.
+psql "$DSN" < /path/to/hub-backup.sql
+
+# 2. Open a restore window. Run this EXACTLY ONCE, right after the restore.
+#    This is the only way to arm restore-collision detection. Clients
+#    cannot do it; only the operator can.
+mtix sync mark-restored
+
+# 3. Let teammates reconnect and push as normal.
+
+# 4. Check for settled-vs-settled collisions.
+mtix sync collisions list
+```
+
+If `collisions list` is empty, you are done — the team's normal sync
+self-healed everything. If it shows a collision, each row surfaces both
+contesting nodes and their signals (uids, claim timestamps). The older
+claim is shown as a hint only; it is client-asserted and partly lost on a
+restore, so mtix never acts on it for you.
+
+Resolve each one:
+
+```bash
+mtix sync collisions resolve <id> --winner held       # keep the node already on the hub
+# or
+mtix sync collisions resolve <id> --winner incoming   # keep the blocked (queued) node
+```
+
+The loser renumbers to the next free number. No node is ever deleted. The
+moved node may have external references (a commit, a PR) that need
+updating — `collisions resolve` reports the old and new number so you can
+fix them.
+
+While a collision is open, only that one node is blocked. Every other
+node keeps syncing normally; one unresolved collision never wedges the
+team's sync stream.
 
 ---
 

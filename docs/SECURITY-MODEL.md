@@ -1,6 +1,6 @@
 # mtix Security Model
 
-> **Document version:** 1.1
+> **Document version:** 1.2
 > **Applies to:** mtix v0.2.x (SQLite local store + optional BYO Postgres sync hub, FR-18)
 
 This document is the security and trust contract for mtix. It tells you what mtix protects against and — equally important — what it does not. Read it before adopting mtix in any environment beyond a single developer's laptop.
@@ -123,6 +123,46 @@ This is an intentional design tradeoff:
 
 If your safety profile requires complete hub-side audit of every contested edit, set unique `authorID` per agent process; the CLI does not yet expose a flag to override (planned). For now, document the tradeoff in the team's runbook.
 
+### Restore-epoch trust model (MTIX-30 / ADR-003)
+
+The distributed-identity feature adds one safety-critical trigger: the
+settled-vs-settled restore collision (ADR-003 §6.1, "Option B"). Reaching it
+blocks a node and pulls an admin into a resolution queue, so what is allowed to
+arm it matters.
+
+**The trigger is the operator's epoch bump, and only that.** The hub keeps a
+monotonic `restore_epoch`, advanced *only* by an explicit operator action
+(`mtix sync mark-restored`). No client or push path can advance it. Each
+accepted `create_node` is hub-stamped with the current epoch at acceptance —
+hub-side, never client-asserted. A restore collision is detected only when a
+held create in the current epoch contests an incoming claim from an earlier era
+(ADR-003 Addendum A).
+
+**A client "previously-settled" flag was considered and rejected** on security
+review. It would put a forgeable, client-asserted signal on the trigger of a
+safety-critical path. A compromised client (poor hygiene even under the
+trusted-team contract) could set it to fabricate restore collisions —
+escalating ordinary creates into the admin queue (an availability nuisance of
+blocked nodes) and, at worst, social-engineering an admin into renumbering a
+legitimate ticket. That is recoverable (the uid is stable, no node is lost) but
+it breaks external references and wastes trust. The operator epoch bump avoids
+it: it is a deliberate, supervised action a client cannot manufacture.
+
+**Calibration:** under the trusted-team contract, a compromised client
+**cannot trigger Option B during normal operation**. With no restore there is
+no epoch advance, so the Option-B path is closed and every collision takes the
+ordinary auto-renumber path (a liveness event, no admin). The attack window
+shrinks to the operator-supervised interval right after a restore. Within that
+window resolution stays human-gated: no auto-pick, the older-claim default is
+advisory only (audit F-5), and the loser renumbers via `Store.RenumberSubtree`
+without deleting any create event — so no node is ever lost.
+
+The registry referee itself is **liveness, not a security boundary**: a broken
+or hostile hub can at worst force a renumber; it cannot lose or corrupt a node,
+because each CLI keeps its canonical local SQLite (ADR-003 §9). A `uid` is an
+identifier, not a secret or capability; nothing treats knowing it as
+authorization.
+
 ## Lost-laptop recovery
 
 Un-pushed events are **local-only and not durable across machine loss**. The local sync_events queue carries `sync_status='pending'` rows until `mtix sync push` drains them.
@@ -198,5 +238,6 @@ mtix is a pre-funding open-source project. Triage is best-effort. Critical issue
 |---|---|---|
 | 1.0 | unreleased | Drafted alongside MTIX-14 BYO Postgres rollout (canonical-store framing; never shipped) |
 | 1.1 | 2026-05 | MTIX-15 sync hub trust model: hub is replication, not canonical; DSN handling via redact + Recover; LWW convergence; same-authorID audit-trail tradeoff documented; lost-laptop and queue-full procedures |
+| 1.2 | 2026-06 | MTIX-30 / ADR-003 restore-epoch trust model: operator-gated epoch is the un-forgeable Option-B discriminator; client "previously-settled" flag rejected as a forgeable signal on a safety-critical trigger; calibration that a compromised client cannot reach Option B in normal operation |
 
 Changes that alter the trust model (adding/removing a guarantee, adding a new threat) require a documented version bump and a corresponding `CHANGELOG.md` security note.

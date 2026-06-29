@@ -90,3 +90,4 @@ screenshots/playwright/
 # (the real agent guide is generated from internal/docs/templates)
 /.envrc
 /AGENTS.md
+.cursor/

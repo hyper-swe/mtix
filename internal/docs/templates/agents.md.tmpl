@@ -59,6 +59,13 @@ Rules:
 
 You never generate, store, or reason about the internal token mechanics — you only need to recognize the two shapes above and treat provisional ids as not-yet-externalizable.
 
+**Where provisional ids and renumbers come from (both are normal and self-healing):**
+
+- You get a **provisional** id when you create a ticket while the sync hub is unreachable (offline). It is born provisional and **settles automatically on the next sync** — no action from you. Work with it locally; just don't externalize it until it settles.
+- A settled number can **change once** if two agents concurrently created the same sibling number against a shared hub: the hub keeps both tickets and **auto-renumbers** one on sync (the other keeps the contested number). This is exactly why rule 3 (re-resolve) exists — a number you recorded earlier may have moved, but the underlying node still resolves.
+
+You never fix either of these by hand; the system converges on its own.
+
 ## Parent Selection — Read Before You Nest
 
 Before nesting a new ticket under an existing node, call `mtix_context` on the candidate parent and read its description, prompt, and acceptance criteria — *not* just the title. Pattern-matching on a parent's title is the canonical parent-selection failure: a parent titled "LLM agent integration" may actually be scoped to *packaging the agent kit for release*, not to *the substance of agent guidance*. Nest only when the new work substantively fits the parent's scope.
@@ -232,3 +239,11 @@ trust-boundary section and a failure-modes table.
 
 Foundational trust model for all of the above:
 [../SECURITY-MODEL.md](../SECURITY-MODEL.md).
+
+## Sync recovery (operator tasks — recognize, don't force)
+
+These are **operator/admin** actions, not part of the normal agent loop. Recognize them so you *surface* the situations that need them instead of working around them:
+
+- After the shared hub is **restored from a backup**, the operator runs `mtix sync mark-restored` (a restore-runbook step). It opens the window in which a re-granted number can be detected as a genuine collision rather than silently renumbered.
+- A restore can leave **two real, already-settled tickets claiming one number** (a settled-vs-settled collision). mtix **fails loud and blocks only that one ticket** — every other ticket keeps syncing. An admin resolves it with `mtix sync collisions list` and `mtix sync collisions resolve <id> --winner held|incoming`; the loser renumbers (via the atomic renumber path) and **no ticket is ever lost**. If you encounter a ticket blocked on a collision, **surface it to the operator — do not try to work around it.**
+- `mtix sync migrate` runs the one-time distributed-identity migration (operator-driven, single-flight, idempotent). Agents do not run it.

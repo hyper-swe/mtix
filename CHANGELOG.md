@@ -5,13 +5,13 @@ All notable changes to mtix are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-> **Pre-1.0 note:** mtix is in beta. Minor versions may introduce
-> breaking schema changes; the migration path is documented in the
-> Migration section of each release.
+> **Pre-1.0 note:** mtix is GA-quality and production-ready, but still
+> pre-1.0. Minor versions may introduce breaking schema changes until
+> 1.0; each ships a documented migration path in its Migration section.
 
 ---
 
-## [Unreleased]
+## [0.4.0] - 2026-06-29
 
 ### Added
 - **Distributed node identity & team sync (MTIX-30, ADR-003):** dot-path IDs now stay clean under concurrent and offline creation. Each node has a stable internal `uid` (its create-event id) so a renumber moves a display number without breaking references; the surface still shows only the dot-path.

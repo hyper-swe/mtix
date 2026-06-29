@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-29T08:29:33Z",
+  "exported_at": "2026-06-29T12:44:26Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -28,7 +28,8 @@
       "content_hash": "92b133209bbfc0002c3aec999069d03a6a3ce46c5e6c643452228c62227c62bc",
       "created_at": "2026-03-29T18:07:04Z",
       "updated_at": "2026-06-10T06:59:52Z",
-      "closed_at": "2026-06-10T06:59:52Z"
+      "closed_at": "2026-06-10T06:59:52Z",
+      "uid": "019f134d-b2e8-74e9-b4b7-0af4c5b72563"
     },
     {
       "id": "MTIX-1.1",
@@ -53,7 +54,8 @@
       "content_hash": "7dc81910ebfbc797f10895d2575b33dfb8b2e817f6a5691f1ccbcc548f8aa4e4",
       "created_at": "2026-03-29T18:08:10Z",
       "updated_at": "2026-06-10T06:59:25Z",
-      "closed_at": "2026-06-10T06:59:25Z"
+      "closed_at": "2026-06-10T06:59:25Z",
+      "uid": "019f134d-b2e8-769f-85dd-59ecde4d67c8"
     },
     {
       "id": "MTIX-1.1.1",
@@ -78,7 +80,8 @@
       "content_hash": "c178343b5812c0e2df1186fdef86b4f90f07fcb61889b9d9f34fa263dd61c2fa",
       "created_at": "2026-03-29T18:08:59Z",
       "updated_at": "2026-03-30T04:54:08Z",
-      "closed_at": "2026-03-30T04:54:08Z"
+      "closed_at": "2026-03-30T04:54:08Z",
+      "uid": "019f134d-b2e9-754f-8e1e-0dd784d28b66"
     },
     {
       "id": "MTIX-1.1.2",
@@ -103,7 +106,8 @@
       "content_hash": "be1b905f8f26ba04939df3c8f2da49e47e8cfe37dc8dcdceb06f8ab1163c52d7",
       "created_at": "2026-03-29T18:08:59Z",
       "updated_at": "2026-03-30T05:07:15Z",
-      "closed_at": "2026-03-30T05:07:15Z"
+      "closed_at": "2026-03-30T05:07:15Z",
+      "uid": "019f134d-b2e9-76d6-b7ba-c4ead7f28cfc"
     },
     {
       "id": "MTIX-1.1.3",
@@ -128,7 +132,8 @@
       "content_hash": "3640f75194fa47ff439a12e7e185c8288d95fde7b441c6f89aedbab542549588",
       "created_at": "2026-03-29T18:08:59Z",
       "updated_at": "2026-03-30T05:10:54Z",
-      "closed_at": "2026-03-30T05:10:54Z"
+      "closed_at": "2026-03-30T05:10:54Z",
+      "uid": "019f134d-b2e9-786c-b677-cc4ffad83950"
     },
     {
       "id": "MTIX-1.1.4",
@@ -153,7 +158,8 @@
       "content_hash": "191fc1e16959f55b4b544ff12daace785bba1ae64792a7b2910caece86bf7c03",
       "created_at": "2026-03-29T18:08:59Z",
       "updated_at": "2026-03-30T05:11:27Z",
-      "closed_at": "2026-03-30T05:11:27Z"
+      "closed_at": "2026-03-30T05:11:27Z",
+      "uid": "019f134d-b2e9-79d7-9bea-1e1d8233a501"
     },
     {
       "id": "MTIX-1.1.5",
@@ -178,7 +184,8 @@
       "content_hash": "bda8d5e49acc9c60ca89088061c32e626ef1194e2c8face04e9b9d6b7de3f2ab",
       "created_at": "2026-03-29T18:08:59Z",
       "updated_at": "2026-03-30T05:13:50Z",
-      "closed_at": "2026-03-30T05:13:50Z"
+      "closed_at": "2026-03-30T05:13:50Z",
+      "uid": "019f134d-b2e9-7b5a-b134-3a8d42858416"
     },
     {
       "id": "MTIX-1.1.6",
@@ -203,7 +210,8 @@
       "content_hash": "fb2636faffc33666210416c25ab303a8e24d7b02e5cc87dc9d1f089b4a0ab546",
       "created_at": "2026-03-30T04:52:02Z",
       "updated_at": "2026-03-30T04:54:08Z",
-      "closed_at": "2026-03-30T04:54:08Z"
+      "closed_at": "2026-03-30T04:54:08Z",
+      "uid": "019f134d-b2ed-753b-96e5-19868c60698c"
     },
     {
       "id": "MTIX-1.2",
@@ -228,7 +236,8 @@
       "content_hash": "1c13119735285077061dd8ccb511675362ba9f49cd41887b0972303ea71d45a3",
       "created_at": "2026-03-29T18:08:10Z",
       "updated_at": "2026-06-10T06:59:25Z",
-      "closed_at": "2026-06-10T06:59:25Z"
+      "closed_at": "2026-06-10T06:59:25Z",
+      "uid": "019f134d-b2e8-7816-98b2-5555ae92c8e0"
     },
     {
       "id": "MTIX-1.2.1",
@@ -253,7 +262,8 @@
       "content_hash": "d9b6bf53700a28288856efa29034599efbe98476a05abe91ca794de1c81401d6",
       "created_at": "2026-03-29T18:09:36Z",
       "updated_at": "2026-03-30T05:18:08Z",
-      "closed_at": "2026-03-30T05:18:08Z"
+      "closed_at": "2026-03-30T05:18:08Z",
+      "uid": "019f134d-b2e9-7cc5-8da3-fb9ee2531af8"
     },
     {
       "id": "MTIX-1.2.2",
@@ -278,7 +288,8 @@
       "content_hash": "815bd1b7d6e308671b625a6c6bd6c4c58bfe6c74cb02bfb8b8eb4ccae14b69a8",
       "created_at": "2026-03-29T18:09:36Z",
       "updated_at": "2026-03-30T05:18:08Z",
-      "closed_at": "2026-03-30T05:18:08Z"
+      "closed_at": "2026-03-30T05:18:08Z",
+      "uid": "019f134d-b2ea-7000-899b-54caa5cf4909"
     },
     {
       "id": "MTIX-1.2.3",
@@ -303,7 +314,8 @@
       "content_hash": "35d2c38058e6d066a84e9dfd5d69fda1cd17e56ea7153c405fba22e8d4502d4d",
       "created_at": "2026-03-29T18:09:36Z",
       "updated_at": "2026-03-30T05:18:08Z",
-      "closed_at": "2026-03-30T05:18:08Z"
+      "closed_at": "2026-03-30T05:18:08Z",
+      "uid": "019f134d-b2ea-7182-bce0-a90a6714dd78"
     },
     {
       "id": "MTIX-1.3",
@@ -328,7 +340,8 @@
       "content_hash": "aa60398e150c4b4c921d7d4de2d57d902d81e7665561c3576ac8474c23efe378",
       "created_at": "2026-03-29T18:08:10Z",
       "updated_at": "2026-06-10T06:59:25Z",
-      "closed_at": "2026-06-10T06:59:25Z"
+      "closed_at": "2026-06-10T06:59:25Z",
+      "uid": "019f134d-b2e8-7989-841e-596f8f650112"
     },
     {
       "id": "MTIX-1.3.1",
@@ -353,7 +366,8 @@
       "content_hash": "9034bf1d6b60c3d6189d08503f69880e3a25ff2c5369b2491a00522741b7c073",
       "created_at": "2026-03-29T18:09:58Z",
       "updated_at": "2026-03-30T05:22:38Z",
-      "closed_at": "2026-03-30T05:22:38Z"
+      "closed_at": "2026-03-30T05:22:38Z",
+      "uid": "019f134d-b2ea-72f5-89ab-2603f99f8e1f"
     },
     {
       "id": "MTIX-1.3.2",
@@ -378,7 +392,8 @@
       "content_hash": "9d24bc66b4f38502515065595f3290047f2c9a6b93b764af6b21d384daa761a3",
       "created_at": "2026-03-29T18:09:58Z",
       "updated_at": "2026-03-30T05:24:04Z",
-      "closed_at": "2026-03-30T05:24:04Z"
+      "closed_at": "2026-03-30T05:24:04Z",
+      "uid": "019f134d-b2ea-7470-ab85-3538cd225d8a"
     },
     {
       "id": "MTIX-1.3.3",
@@ -403,7 +418,8 @@
       "content_hash": "8890f26dcdde607fae8d8e907d063589653a370597d4aa6f2ef287f977f8decc",
       "created_at": "2026-03-29T18:09:58Z",
       "updated_at": "2026-03-30T05:24:04Z",
-      "closed_at": "2026-03-30T05:24:04Z"
+      "closed_at": "2026-03-30T05:24:04Z",
+      "uid": "019f134d-b2ea-75f3-9a75-024df89c409d"
     },
     {
       "id": "MTIX-1.3.4",
@@ -428,7 +444,8 @@
       "content_hash": "be5040d2bcfbb7650b27c7da46a78af02398164b492f53fe2cd566b4bb480841",
       "created_at": "2026-03-30T05:29:35Z",
       "updated_at": "2026-03-30T06:49:16Z",
-      "closed_at": "2026-03-30T06:49:16Z"
+      "closed_at": "2026-03-30T06:49:16Z",
+      "uid": "019f134d-b2ed-76b6-bf5d-59b772573b1f"
     },
     {
       "id": "MTIX-1.4",
@@ -453,7 +470,8 @@
       "content_hash": "05810a13334676849ad1c192b97d2ac0dfc2b4e439505b8e67834e3f6cfae187",
       "created_at": "2026-03-29T18:08:10Z",
       "updated_at": "2026-06-10T06:59:25Z",
-      "closed_at": "2026-06-10T06:59:25Z"
+      "closed_at": "2026-06-10T06:59:25Z",
+      "uid": "019f134d-b2e8-7af0-b6c3-083930e293dd"
     },
     {
       "id": "MTIX-1.4.1",
@@ -478,7 +496,8 @@
       "content_hash": "7f9f257e2274155beeebe4b9dcc737cc999444aeb287b295ed46d193e505d3c9",
       "created_at": "2026-03-29T18:10:18Z",
       "updated_at": "2026-03-30T08:40:30Z",
-      "closed_at": "2026-03-30T08:40:30Z"
+      "closed_at": "2026-03-30T08:40:30Z",
+      "uid": "019f134d-b2ea-7776-9e2f-a5100d027be5"
     },
     {
       "id": "MTIX-1.4.2",
@@ -503,7 +522,8 @@
       "content_hash": "7852279a2e7e7dc0ed8758e6ab0925c861fe2825b68e8863439bf14e3bf9aeff",
       "created_at": "2026-03-29T18:10:18Z",
       "updated_at": "2026-03-30T08:42:00Z",
-      "closed_at": "2026-03-30T08:42:00Z"
+      "closed_at": "2026-03-30T08:42:00Z",
+      "uid": "019f134d-b2ea-78ed-9aa2-6601def68f8d"
     },
     {
       "id": "MTIX-1.4.3",
@@ -528,7 +548,8 @@
       "content_hash": "49c2e6f16602a06aa675a11e44b24391696e1df40155be42ca5ff5ccc3829a2e",
       "created_at": "2026-03-29T18:10:18Z",
       "updated_at": "2026-03-30T08:42:00Z",
-      "closed_at": "2026-03-30T08:42:00Z"
+      "closed_at": "2026-03-30T08:42:00Z",
+      "uid": "019f134d-b2ea-7a83-b486-f8ad1db9f6de"
     },
     {
       "id": "MTIX-1.5",
@@ -553,7 +574,8 @@
       "content_hash": "994dba6f096dae37e4ef508b164b0daf323d5a3ebea93f337ac3713da88a6425",
       "created_at": "2026-03-29T18:08:10Z",
       "updated_at": "2026-06-10T06:59:25Z",
-      "closed_at": "2026-06-10T06:59:25Z"
+      "closed_at": "2026-06-10T06:59:25Z",
+      "uid": "019f134d-b2e8-7dac-986b-6741935c68d6"
     },
     {
       "id": "MTIX-1.5.1",
@@ -578,7 +600,8 @@
       "content_hash": "729f7719e5524fbd100c9579aa64cbe6a374b1979a3c66ed2ef66bbfd8f8a6d4",
       "created_at": "2026-03-29T18:10:40Z",
       "updated_at": "2026-03-30T09:15:12Z",
-      "closed_at": "2026-03-30T09:15:12Z"
+      "closed_at": "2026-03-30T09:15:12Z",
+      "uid": "019f134d-b2ea-7bf6-a6c2-77d6182fe036"
     },
     {
       "id": "MTIX-1.5.2",
@@ -603,7 +626,8 @@
       "content_hash": "da2da68882ed2976d4f3066648badbe3c364f1c45f121056b0e72ad02692a652",
       "created_at": "2026-03-29T18:10:40Z",
       "updated_at": "2026-03-30T09:15:12Z",
-      "closed_at": "2026-03-30T09:15:12Z"
+      "closed_at": "2026-03-30T09:15:12Z",
+      "uid": "019f134d-b2ea-7d7d-b9d2-b0ebab94f859"
     },
     {
       "id": "MTIX-1.6",
@@ -628,7 +652,8 @@
       "content_hash": "9bb5df026c05443ef7645598ac656ed7b2a6d41c1a4091f894d610408de02551",
       "created_at": "2026-03-29T18:08:10Z",
       "updated_at": "2026-06-10T06:59:25Z",
-      "closed_at": "2026-06-10T06:59:25Z"
+      "closed_at": "2026-06-10T06:59:25Z",
+      "uid": "019f134d-b2e8-7f1b-9298-27f070adb5b6"
     },
     {
       "id": "MTIX-1.6.1",
@@ -653,7 +678,8 @@
       "content_hash": "4aabe5df7fc39743ad896af039db7fd7b524f2a95211540926bb640c328fe7b6",
       "created_at": "2026-03-29T18:11:48Z",
       "updated_at": "2026-03-30T08:44:22Z",
-      "closed_at": "2026-03-30T08:44:22Z"
+      "closed_at": "2026-03-30T08:44:22Z",
+      "uid": "019f134d-b2ea-7f17-95c1-30bbdabf65f4"
     },
     {
       "id": "MTIX-1.6.2",
@@ -678,7 +704,8 @@
       "content_hash": "e541af6c455989b8f08b64cd0baefe356fedd9826ff7493da5a4d5b260fc9276",
       "created_at": "2026-03-29T18:11:48Z",
       "updated_at": "2026-03-30T08:44:22Z",
-      "closed_at": "2026-03-30T08:44:22Z"
+      "closed_at": "2026-03-30T08:44:22Z",
+      "uid": "019f134d-b2eb-714f-98c4-e4efbff3355b"
     },
     {
       "id": "MTIX-1.7",
@@ -703,7 +730,8 @@
       "content_hash": "38bc13cabf69e4e7eef6c54cf64527dd159c8a9b02bc2f20404a0a300fdf6c4f",
       "created_at": "2026-03-29T18:08:10Z",
       "updated_at": "2026-06-10T06:59:25Z",
-      "closed_at": "2026-06-10T06:59:25Z"
+      "closed_at": "2026-06-10T06:59:25Z",
+      "uid": "019f134d-b2e9-713c-a42a-0dded7a2312f"
     },
     {
       "id": "MTIX-1.7.1",
@@ -728,7 +756,8 @@
       "content_hash": "6e7e235deb9e3fc9e9803908a93e14bdd4cc25b5022f3b85edadf036aadd5142",
       "created_at": "2026-03-29T18:11:48Z",
       "updated_at": "2026-03-30T09:01:06Z",
-      "closed_at": "2026-03-30T09:01:06Z"
+      "closed_at": "2026-03-30T09:01:06Z",
+      "uid": "019f134d-b2eb-72e2-ba93-05514f76925a"
     },
     {
       "id": "MTIX-1.7.2",
@@ -753,7 +782,8 @@
       "content_hash": "af45e61d40dd9fbd0fd2de2922e9dccd32beab282abecdcd4e9cdc5033149edb",
       "created_at": "2026-03-29T18:11:48Z",
       "updated_at": "2026-03-30T09:01:06Z",
-      "closed_at": "2026-03-30T09:01:06Z"
+      "closed_at": "2026-03-30T09:01:06Z",
+      "uid": "019f134d-b2eb-7461-a64a-d0352b1df04b"
     },
     {
       "id": "MTIX-1.7.3",
@@ -778,7 +808,8 @@
       "content_hash": "42aa9114b671e93e07271690d889373f85a2045f040ff3e051c3a3fd37b96016",
       "created_at": "2026-03-29T18:11:48Z",
       "updated_at": "2026-03-30T09:01:06Z",
-      "closed_at": "2026-03-30T09:01:06Z"
+      "closed_at": "2026-03-30T09:01:06Z",
+      "uid": "019f134d-b2eb-75dc-a154-579ce61b1283"
     },
     {
       "id": "MTIX-1.7.4",
@@ -803,7 +834,8 @@
       "content_hash": "396a70eb6733dc7c7800d566bed8aa64d299eaecc9613c49051afb385b312607",
       "created_at": "2026-03-29T18:11:48Z",
       "updated_at": "2026-03-30T09:01:06Z",
-      "closed_at": "2026-03-30T09:01:06Z"
+      "closed_at": "2026-03-30T09:01:06Z",
+      "uid": "019f134d-b2eb-7756-a3d5-33b0ef0eb9da"
     },
     {
       "id": "MTIX-1.7.5",
@@ -828,7 +860,8 @@
       "content_hash": "9c28202a91ec1efbab6656468b23d78d81e01eea21d50fd8c998adfae2037939",
       "created_at": "2026-03-29T18:11:48Z",
       "updated_at": "2026-03-30T09:01:06Z",
-      "closed_at": "2026-03-30T09:01:06Z"
+      "closed_at": "2026-03-30T09:01:06Z",
+      "uid": "019f134d-b2eb-78d5-95a5-14b4292e7fd0"
     },
     {
       "id": "MTIX-1.7.6",
@@ -853,7 +886,8 @@
       "content_hash": "2aa1b754c129b4220f3e6f11bd508183cd29f8a1723f1d1d6a027b558e6309a9",
       "created_at": "2026-03-29T18:11:48Z",
       "updated_at": "2026-03-30T09:01:06Z",
-      "closed_at": "2026-03-30T09:01:06Z"
+      "closed_at": "2026-03-30T09:01:06Z",
+      "uid": "019f134d-b2eb-7a4c-be01-32f895ed2f26"
     },
     {
       "id": "MTIX-1.8",
@@ -878,7 +912,8 @@
       "content_hash": "7ffea4e9225aa3d07126c02b647831a34c708d373143b54b1d6e731a4ef1b26a",
       "created_at": "2026-03-29T18:08:10Z",
       "updated_at": "2026-06-10T06:59:25Z",
-      "closed_at": "2026-06-10T06:59:25Z"
+      "closed_at": "2026-06-10T06:59:25Z",
+      "uid": "019f134d-b2e9-72a7-ad9a-7025c119b816"
     },
     {
       "id": "MTIX-1.8.1",
@@ -903,7 +938,8 @@
       "content_hash": "1404f4db44c77ab3394a80e15ec5cfecbb986d378d54b05301be0ade5796f8a9",
       "created_at": "2026-03-29T18:11:48Z",
       "updated_at": "2026-03-30T09:02:25Z",
-      "closed_at": "2026-03-30T09:02:25Z"
+      "closed_at": "2026-03-30T09:02:25Z",
+      "uid": "019f134d-b2eb-7bcf-8815-32e394aca799"
     },
     {
       "id": "MTIX-1.9",
@@ -928,7 +964,8 @@
       "content_hash": "99191f85ab8fb2289d99ce1af15e6e562f6320d495b797c72175eba14529548c",
       "created_at": "2026-04-28T07:54:41Z",
       "updated_at": "2026-05-19T18:03:17Z",
-      "closed_at": "2026-05-19T18:03:17Z"
+      "closed_at": "2026-05-19T18:03:17Z",
+      "uid": "019f134d-b2f4-7626-a86a-538f76a5394b"
     },
     {
       "id": "MTIX-1.9.1",
@@ -953,7 +990,8 @@
       "content_hash": "322d4e60b23b7ba9f97159db78f17642010baf7c9b9a84398bbd0725ff02ba87",
       "created_at": "2026-04-28T07:54:55Z",
       "updated_at": "2026-05-19T18:03:17Z",
-      "closed_at": "2026-05-19T18:03:17Z"
+      "closed_at": "2026-05-19T18:03:17Z",
+      "uid": "019f134d-b2f4-77e7-8f7b-3e2486b06e5e"
     },
     {
       "id": "MTIX-1.9.2",
@@ -978,7 +1016,8 @@
       "content_hash": "81cd0e0ded0233a66aa43f6c14e0e6efa1f033d546fb22d80f9a314f13e67839",
       "created_at": "2026-04-28T07:55:02Z",
       "updated_at": "2026-05-19T18:03:17Z",
-      "closed_at": "2026-05-19T18:03:17Z"
+      "closed_at": "2026-05-19T18:03:17Z",
+      "uid": "019f134d-b2f4-7966-ad0c-fd99fa7303a2"
     },
     {
       "id": "MTIX-10",
@@ -1002,7 +1041,8 @@
       "weight": 1,
       "content_hash": "531a8c6f66a3ff8e7b4b731248e15d90224c1043ef909e60c3d7973a4d4e956a",
       "created_at": "2026-04-25T14:23:24Z",
-      "updated_at": "2026-04-25T14:24:14Z"
+      "updated_at": "2026-04-25T14:24:14Z",
+      "uid": "019f134d-b2f1-74da-8510-14ebe913fa4b"
     },
     {
       "id": "MTIX-11",
@@ -1027,7 +1067,8 @@
       "content_hash": "9254ac17908e119d0df986bab17648af45ccd851afc387edcd72ee3e12bd9dab",
       "created_at": "2026-04-25T14:45:00Z",
       "updated_at": "2026-04-25T15:18:31Z",
-      "closed_at": "2026-04-25T15:18:31Z"
+      "closed_at": "2026-04-25T15:18:31Z",
+      "uid": "019f134d-b2f1-7635-a2e8-b30c375f0035"
     },
     {
       "id": "MTIX-12",
@@ -1052,7 +1093,8 @@
       "content_hash": "841904f270f9b79781bafe7fb36fa5efc395537863c5a55bc65481a0e970174f",
       "created_at": "2026-04-25T14:48:05Z",
       "updated_at": "2026-04-25T17:48:17Z",
-      "closed_at": "2026-04-25T17:48:17Z"
+      "closed_at": "2026-04-25T17:48:17Z",
+      "uid": "019f134d-b2f1-77c8-a30a-584ccc2e7cd5"
     },
     {
       "id": "MTIX-13",
@@ -1077,7 +1119,8 @@
       "content_hash": "1aea643aed028c4d370f977d9012fcfe5cd5d8598c88465d36a9000a6abbebec",
       "created_at": "2026-04-26T02:02:30Z",
       "updated_at": "2026-04-26T02:14:07Z",
-      "closed_at": "2026-04-26T02:14:07Z"
+      "closed_at": "2026-04-26T02:14:07Z",
+      "uid": "019f134d-b2f1-7943-a7b7-46d7fa44286b"
     },
     {
       "id": "MTIX-14",
@@ -1102,7 +1145,8 @@
       "content_hash": "41309f44d42235709ff7d1afb28f641ac5732204511dfd136058e64a5c6b5776",
       "created_at": "2026-04-27T05:27:12Z",
       "updated_at": "2026-06-10T07:00:21Z",
-      "closed_at": "2026-06-10T07:00:21Z"
+      "closed_at": "2026-06-10T07:00:21Z",
+      "uid": "019f134d-b2f1-7b3e-b458-c5cdc65d9f75"
     },
     {
       "id": "MTIX-14.1",
@@ -1127,7 +1171,8 @@
       "content_hash": "6e3d7defba64756e9cd3a16575961e4fe3cedb74ddd12993acb460d7e82e25d5",
       "created_at": "2026-04-27T05:28:00Z",
       "updated_at": "2026-04-27T12:59:28Z",
-      "closed_at": "2026-04-27T12:59:28Z"
+      "closed_at": "2026-04-27T12:59:28Z",
+      "uid": "019f134d-b2f1-7c92-8363-043284d1f0fe"
     },
     {
       "id": "MTIX-14.2",
@@ -1152,7 +1197,8 @@
       "content_hash": "32bcf9449a6274e778ce87e8f8b0419543fcec485aff8c7a185911787ae81640",
       "created_at": "2026-04-27T05:28:00Z",
       "updated_at": "2026-04-27T12:59:28Z",
-      "closed_at": "2026-04-27T12:59:28Z"
+      "closed_at": "2026-04-27T12:59:28Z",
+      "uid": "019f134d-b2f1-7dcf-970e-4a4040135227"
     },
     {
       "id": "MTIX-14.3",
@@ -1177,7 +1223,8 @@
       "content_hash": "d21cfa2a8ca29b63086fa78a696ec76a1c8282a6d2056e5fc55fa39a2b58f697",
       "created_at": "2026-04-27T05:28:00Z",
       "updated_at": "2026-04-27T12:59:28Z",
-      "closed_at": "2026-04-27T12:59:28Z"
+      "closed_at": "2026-04-27T12:59:28Z",
+      "uid": "019f134d-b2f1-7efb-bd1b-56d9f924188b"
     },
     {
       "id": "MTIX-14.4",
@@ -1202,7 +1249,8 @@
       "content_hash": "fa5b4fbd1df860d4f5f5465bb5acc901f074ad78d17a0846fe3bc1dd86dcf08d",
       "created_at": "2026-04-27T05:28:32Z",
       "updated_at": "2026-04-27T09:53:09Z",
-      "closed_at": "2026-04-27T09:53:09Z"
+      "closed_at": "2026-04-27T09:53:09Z",
+      "uid": "019f134d-b2f2-70fd-833b-a09cd3f2c0c4"
     },
     {
       "id": "MTIX-14.5",
@@ -1227,7 +1275,8 @@
       "content_hash": "84f03673e9b6ca0027e400df697264d83102d88b1ab1b3fbf55e36706ba66d46",
       "created_at": "2026-04-27T05:28:32Z",
       "updated_at": "2026-04-27T09:53:09Z",
-      "closed_at": "2026-04-27T09:53:09Z"
+      "closed_at": "2026-04-27T09:53:09Z",
+      "uid": "019f134d-b2f2-7236-8429-402a821121f5"
     },
     {
       "id": "MTIX-14.6",
@@ -1252,7 +1301,8 @@
       "content_hash": "f3478e84998b3cdad476d09b3433a5eae2cd3278897102c66a62272be9d33a53",
       "created_at": "2026-04-27T05:28:32Z",
       "updated_at": "2026-04-27T12:59:28Z",
-      "closed_at": "2026-04-27T12:59:28Z"
+      "closed_at": "2026-04-27T12:59:28Z",
+      "uid": "019f134d-b2f2-7357-9a49-4fed4a81271a"
     },
     {
       "id": "MTIX-14.7",
@@ -1277,7 +1327,8 @@
       "content_hash": "72f3e955979095f095c35bbe00ba298793bf5f66bc5a9a33c6fa019775b59d0e",
       "created_at": "2026-04-27T07:53:47Z",
       "updated_at": "2026-04-27T08:41:25Z",
-      "closed_at": "2026-04-27T08:41:25Z"
+      "closed_at": "2026-04-27T08:41:25Z",
+      "uid": "019f134d-b2f2-7480-b10a-0bf501fc1ce4"
     },
     {
       "id": "MTIX-14.8",
@@ -1302,7 +1353,8 @@
       "content_hash": "4ce79f563479925c33642a18e24419ad79c05bf5dbe55f4b58f8ba2347a3bc42",
       "created_at": "2026-04-27T07:53:47Z",
       "updated_at": "2026-04-27T12:59:28Z",
-      "closed_at": "2026-04-27T12:59:28Z"
+      "closed_at": "2026-04-27T12:59:28Z",
+      "uid": "019f134d-b2f2-75e3-b516-c5444b93f778"
     },
     {
       "id": "MTIX-14.9",
@@ -1327,7 +1379,8 @@
       "content_hash": "e1303c91f1330f3e443b61702a352af2269215f0825a4f68485add8df4a447c9",
       "created_at": "2026-04-27T08:04:51Z",
       "updated_at": "2026-04-27T10:24:17Z",
-      "closed_at": "2026-04-27T10:24:17Z"
+      "closed_at": "2026-04-27T10:24:17Z",
+      "uid": "019f134d-b2f2-7704-b963-18131eb7dc25"
     },
     {
       "id": "MTIX-14.9.2",
@@ -1352,7 +1405,8 @@
       "content_hash": "92c3bcc38d674629038c612207c1c7c5193d44b451cb14d129d30b115984a289",
       "created_at": "2026-04-27T10:20:17Z",
       "updated_at": "2026-04-27T12:59:28Z",
-      "closed_at": "2026-04-27T12:59:28Z"
+      "closed_at": "2026-04-27T12:59:28Z",
+      "uid": "019f134d-b2f2-7874-8dcd-3dc311a711cf"
     },
     {
       "id": "MTIX-15",
@@ -1377,7 +1431,8 @@
       "content_hash": "d08e096fab0a8dbfbe6f87c03500946912e86e3974e80ee91e1d924451c462cc",
       "created_at": "2026-04-27T12:59:55Z",
       "updated_at": "2026-05-18T18:46:19Z",
-      "closed_at": "2026-05-18T18:46:19Z"
+      "closed_at": "2026-05-18T18:46:19Z",
+      "uid": "019f134d-b2f2-79a4-9e02-21e5b8e6ee8f"
     },
     {
       "id": "MTIX-15.1",
@@ -1402,7 +1457,8 @@
       "content_hash": "86c4781b65a9c37ab235559d6fdf8089aaf6de664dcc677509efe82a6963524b",
       "created_at": "2026-04-27T13:01:34Z",
       "updated_at": "2026-04-27T17:51:58Z",
-      "closed_at": "2026-04-27T17:51:58Z"
+      "closed_at": "2026-04-27T17:51:58Z",
+      "uid": "019f134d-b2f2-7af8-83d3-e18a7693187f"
     },
     {
       "id": "MTIX-15.10",
@@ -1427,7 +1483,8 @@
       "content_hash": "6f01261cf566fe3321c7b673e75785824f8443d38495c93b50a2421aae9e8a01",
       "created_at": "2026-04-27T13:02:50Z",
       "updated_at": "2026-05-07T14:27:55Z",
-      "closed_at": "2026-05-07T14:27:55Z"
+      "closed_at": "2026-05-07T14:27:55Z",
+      "uid": "019f134d-b2f3-77a8-a2c5-d3932366452b"
     },
     {
       "id": "MTIX-15.10.1",
@@ -1452,7 +1509,8 @@
       "content_hash": "c5ad34f86293dda27b2b57d8f31f655146d8ec1cb051af9d21f3a4b48c46734d",
       "created_at": "2026-05-07T14:10:01Z",
       "updated_at": "2026-05-07T14:25:52Z",
-      "closed_at": "2026-05-07T14:25:52Z"
+      "closed_at": "2026-05-07T14:25:52Z",
+      "uid": "019f134d-b2f6-7d46-a8ef-5555abd67009"
     },
     {
       "id": "MTIX-15.10.2",
@@ -1477,7 +1535,8 @@
       "content_hash": "3e5c0f2c85146fe7de6c587114567dd028cc575f2c4314848a9ccdf522b38f43",
       "created_at": "2026-05-07T14:10:01Z",
       "updated_at": "2026-05-07T14:17:02Z",
-      "closed_at": "2026-05-07T14:17:02Z"
+      "closed_at": "2026-05-07T14:17:02Z",
+      "uid": "019f134d-b2f6-7e96-88a8-235374dfc4fe"
     },
     {
       "id": "MTIX-15.11",
@@ -1502,7 +1561,8 @@
       "content_hash": "601cc406c00f3ab814a43ee62f7327a8ecb92814584463cd9c9e6954f644ee8c",
       "created_at": "2026-04-27T13:02:50Z",
       "updated_at": "2026-05-18T12:00:54Z",
-      "closed_at": "2026-05-18T12:00:54Z"
+      "closed_at": "2026-05-18T12:00:54Z",
+      "uid": "019f134d-b2f3-78ed-a374-99bf4f1bd10e"
     },
     {
       "id": "MTIX-15.11.1",
@@ -1527,7 +1587,8 @@
       "content_hash": "3cf64bf99acd5bb94a4ee5837fb882c7c508c26a9c330e9410a5927e5c3e913b",
       "created_at": "2026-05-07T15:12:50Z",
       "updated_at": "2026-05-07T15:26:48Z",
-      "closed_at": "2026-05-07T15:26:48Z"
+      "closed_at": "2026-05-07T15:26:48Z",
+      "uid": "019f134d-b2f7-70a4-96e0-0db4ba2f4977"
     },
     {
       "id": "MTIX-15.11.2",
@@ -1552,7 +1613,8 @@
       "content_hash": "f134ff36c8ad93f54b02c75a5ad624e437ed63039ad14eb1e6c9f26f624f10d2",
       "created_at": "2026-05-07T15:12:50Z",
       "updated_at": "2026-05-07T21:33:30Z",
-      "closed_at": "2026-05-07T21:33:30Z"
+      "closed_at": "2026-05-07T21:33:30Z",
+      "uid": "019f134d-b2f7-71fb-9e66-a8f90603c906"
     },
     {
       "id": "MTIX-15.11.3",
@@ -1577,7 +1639,8 @@
       "content_hash": "3fb50d75b8e5c65ec329b4ced76cd0eaf505c49fcbe114c189b6101d2d797c41",
       "created_at": "2026-05-07T15:12:50Z",
       "updated_at": "2026-05-18T11:52:58Z",
-      "closed_at": "2026-05-18T11:52:58Z"
+      "closed_at": "2026-05-18T11:52:58Z",
+      "uid": "019f134d-b2f7-733c-9948-e6bbec160b3e"
     },
     {
       "id": "MTIX-15.12",
@@ -1602,7 +1665,8 @@
       "content_hash": "258bd6e751f224b99eadf2aaea5937178a74975b54f553fd63b0cb068c51fd6e",
       "created_at": "2026-04-27T13:02:50Z",
       "updated_at": "2026-05-18T14:07:10Z",
-      "closed_at": "2026-05-18T14:07:10Z"
+      "closed_at": "2026-05-18T14:07:10Z",
+      "uid": "019f134d-b2f3-7a35-b566-7385e72baf7c"
     },
     {
       "id": "MTIX-15.12.1",
@@ -1627,7 +1691,8 @@
       "content_hash": "8911e2aea656b9549fc93084d56514a6c2fba5980116b04ba463d1036bd94d63",
       "created_at": "2026-05-18T12:10:11Z",
       "updated_at": "2026-05-18T12:13:29Z",
-      "closed_at": "2026-05-18T12:13:29Z"
+      "closed_at": "2026-05-18T12:13:29Z",
+      "uid": "019f134d-b2f7-74c6-911f-b5c090ffb49d"
     },
     {
       "id": "MTIX-15.12.2",
@@ -1652,7 +1717,8 @@
       "content_hash": "651be1ea651483363fda3bb48949fc98fa9bd7d720512f8340113af69fed7724",
       "created_at": "2026-05-18T12:10:11Z",
       "updated_at": "2026-05-18T12:58:14Z",
-      "closed_at": "2026-05-18T12:58:14Z"
+      "closed_at": "2026-05-18T12:58:14Z",
+      "uid": "019f134d-b2f7-7612-9c14-d2bc66488708"
     },
     {
       "id": "MTIX-15.12.3",
@@ -1677,7 +1743,8 @@
       "content_hash": "5d81068c5237a383178727d4ea77e42ee7e92a5e9d25f447892b0d4d1ae1d0be",
       "created_at": "2026-05-18T12:10:11Z",
       "updated_at": "2026-05-18T14:05:45Z",
-      "closed_at": "2026-05-18T14:05:45Z"
+      "closed_at": "2026-05-18T14:05:45Z",
+      "uid": "019f134d-b2f7-7753-8584-b295be46020f"
     },
     {
       "id": "MTIX-15.13",
@@ -1702,7 +1769,8 @@
       "content_hash": "0379492d54e78f6ebbdb167d84c119c2702ea84ba8706b823bc512d3de218db0",
       "created_at": "2026-04-27T13:02:50Z",
       "updated_at": "2026-05-18T18:41:54Z",
-      "closed_at": "2026-05-18T18:41:54Z"
+      "closed_at": "2026-05-18T18:41:54Z",
+      "uid": "019f134d-b2f3-7ba4-889c-7e2934d0c720"
     },
     {
       "id": "MTIX-15.13.1",
@@ -1727,7 +1795,8 @@
       "content_hash": "3f36b8e0e06658943b15340558cc08449aa247944ee1e90ca9a7dc5daf841b87",
       "created_at": "2026-05-18T14:57:42Z",
       "updated_at": "2026-05-18T15:30:52Z",
-      "closed_at": "2026-05-18T15:30:52Z"
+      "closed_at": "2026-05-18T15:30:52Z",
+      "uid": "019f134d-b2f7-78b2-8f69-4ffe9230d6d6"
     },
     {
       "id": "MTIX-15.13.2",
@@ -1752,7 +1821,8 @@
       "content_hash": "0ce407b44b178b571f2f88ccc637829372d1d9ece897146266648661ff1b9728",
       "created_at": "2026-05-18T16:44:48Z",
       "updated_at": "2026-05-18T17:42:13Z",
-      "closed_at": "2026-05-18T17:42:13Z"
+      "closed_at": "2026-05-18T17:42:13Z",
+      "uid": "019e3bf9-d36f-7781-bec8-84b830310fdc"
     },
     {
       "id": "MTIX-15.13.3",
@@ -1777,7 +1847,8 @@
       "content_hash": "4f51f2ff3e104182c17149a61db08a04d26ca55356ad6a04defdb8ba90d1b256",
       "created_at": "2026-05-18T17:51:57Z",
       "updated_at": "2026-05-18T18:41:16Z",
-      "closed_at": "2026-05-18T18:41:16Z"
+      "closed_at": "2026-05-18T18:41:16Z",
+      "uid": "019e3c37-4dab-7cbd-ada9-51b31d93af3b"
     },
     {
       "id": "MTIX-15.2",
@@ -1802,7 +1873,8 @@
       "content_hash": "b1fb2486fdec82c31bea2bb848a7faf1122ce0f9cd0b7da723c71166bef0fd40",
       "created_at": "2026-04-27T13:01:34Z",
       "updated_at": "2026-04-28T07:54:34Z",
-      "closed_at": "2026-04-28T07:54:34Z"
+      "closed_at": "2026-04-28T07:54:34Z",
+      "uid": "019f134d-b2f2-7c35-a85b-4a2b56d2a4e0"
     },
     {
       "id": "MTIX-15.2.1",
@@ -1827,7 +1899,8 @@
       "content_hash": "8cd4f7b2d2ab89444a6382ce32f8e0c92f7111b3f86584dd0a250be5380e87c8",
       "created_at": "2026-04-28T04:01:10Z",
       "updated_at": "2026-04-28T04:20:12Z",
-      "closed_at": "2026-04-28T04:20:12Z"
+      "closed_at": "2026-04-28T04:20:12Z",
+      "uid": "019f134d-b2f3-7ead-9b18-76c61e7f1935"
     },
     {
       "id": "MTIX-15.2.2",
@@ -1852,7 +1925,8 @@
       "content_hash": "1fadfa82581c9ab867bd4c434082339768b50da89869213f52f48c927200cf7d",
       "created_at": "2026-04-28T04:01:47Z",
       "updated_at": "2026-04-28T05:44:48Z",
-      "closed_at": "2026-04-28T05:44:48Z"
+      "closed_at": "2026-04-28T05:44:48Z",
+      "uid": "019f134d-b2f4-70c7-a7f2-78ee9f9bb748"
     },
     {
       "id": "MTIX-15.2.3",
@@ -1877,7 +1951,8 @@
       "content_hash": "86766e4631af594c6cc4f7ead3713e7e4cbc28b8c01d6a97ae9b6eaac9df3aa8",
       "created_at": "2026-04-28T04:02:16Z",
       "updated_at": "2026-04-28T07:30:06Z",
-      "closed_at": "2026-04-28T07:30:06Z"
+      "closed_at": "2026-04-28T07:30:06Z",
+      "uid": "019f134d-b2f4-720f-97a0-7b860123217c"
     },
     {
       "id": "MTIX-15.2.4",
@@ -1902,7 +1977,8 @@
       "content_hash": "4351ccbd8919093807d107f1106c5ab0e229576d837ac2782afe7207f2e2b604",
       "created_at": "2026-04-28T04:02:46Z",
       "updated_at": "2026-04-28T07:41:26Z",
-      "closed_at": "2026-04-28T07:41:26Z"
+      "closed_at": "2026-04-28T07:41:26Z",
+      "uid": "019f134d-b2f4-737a-a28e-56c33bcb6b66"
     },
     {
       "id": "MTIX-15.2.5",
@@ -1927,7 +2003,8 @@
       "content_hash": "11e996d4ea4fcb9d321038ca249a2b062ffdd1f06539d9161235e495f26e9107",
       "created_at": "2026-04-28T04:03:16Z",
       "updated_at": "2026-04-28T07:53:20Z",
-      "closed_at": "2026-04-28T07:53:20Z"
+      "closed_at": "2026-04-28T07:53:20Z",
+      "uid": "019f134d-b2f4-74b3-9476-dceb0930d5e4"
     },
     {
       "id": "MTIX-15.3",
@@ -1952,7 +2029,8 @@
       "content_hash": "c595989e908f882ea52ab9ff532f4a5d927d53d929487511875b98adffdf2b29",
       "created_at": "2026-04-27T13:01:34Z",
       "updated_at": "2026-04-28T10:04:15Z",
-      "closed_at": "2026-04-28T10:04:15Z"
+      "closed_at": "2026-04-28T10:04:15Z",
+      "uid": "019f134d-b2f2-7d7d-b830-e2480118d28c"
     },
     {
       "id": "MTIX-15.3.1",
@@ -1977,7 +2055,8 @@
       "content_hash": "b8c03874288a9e52a13c0ecd6da8b6271ab3b89a44e0b286894dc1ce2e769b74",
       "created_at": "2026-04-28T09:15:40Z",
       "updated_at": "2026-04-28T09:49:19Z",
-      "closed_at": "2026-04-28T09:49:19Z"
+      "closed_at": "2026-04-28T09:49:19Z",
+      "uid": "019f134d-b2f4-7b08-b162-d68c5a7d6665"
     },
     {
       "id": "MTIX-15.3.2",
@@ -2002,7 +2081,8 @@
       "content_hash": "d65713fc9dfe13aa7c9f625b33ce8d8675c933f4dbc796844ea5160b40ca8c84",
       "created_at": "2026-04-28T09:15:58Z",
       "updated_at": "2026-04-28T09:36:38Z",
-      "closed_at": "2026-04-28T09:36:38Z"
+      "closed_at": "2026-04-28T09:36:38Z",
+      "uid": "019f134d-b2f4-7c83-8784-ad8e3e055cba"
     },
     {
       "id": "MTIX-15.3.3",
@@ -2027,7 +2107,8 @@
       "content_hash": "3c81971d0df0157de78ec364e36bcdd92844fe8095cc0c786ae970700708d860",
       "created_at": "2026-04-28T09:16:26Z",
       "updated_at": "2026-04-28T09:56:53Z",
-      "closed_at": "2026-04-28T09:56:53Z"
+      "closed_at": "2026-04-28T09:56:53Z",
+      "uid": "019f134d-b2f4-7dc3-86fc-df0693c23f50"
     },
     {
       "id": "MTIX-15.3.4",
@@ -2052,7 +2133,8 @@
       "content_hash": "7b24c8ae329f4e444404e29d4910ddc1db9eb1a2a6c48a5f0086fd2b6b433f7a",
       "created_at": "2026-04-28T09:16:51Z",
       "updated_at": "2026-04-28T10:00:56Z",
-      "closed_at": "2026-04-28T10:00:56Z"
+      "closed_at": "2026-04-28T10:00:56Z",
+      "uid": "019f134d-b2f4-7eff-b1e0-b907adc7a6ea"
     },
     {
       "id": "MTIX-15.4",
@@ -2077,7 +2159,8 @@
       "content_hash": "4bf5723bc987d223d5ddaad7949c16483731c87b26b250e97872ef392ac372e7",
       "created_at": "2026-04-27T13:01:57Z",
       "updated_at": "2026-04-28T10:31:55Z",
-      "closed_at": "2026-04-28T10:31:55Z"
+      "closed_at": "2026-04-28T10:31:55Z",
+      "uid": "019f134d-b2f2-7eb5-ade7-86c7c7cfd817"
     },
     {
       "id": "MTIX-15.4.1",
@@ -2102,7 +2185,8 @@
       "content_hash": "f3b63e4376e265b3a7609aa980141b08779da0b49f767afd2fe2b3b4a969c811",
       "created_at": "2026-04-28T10:06:16Z",
       "updated_at": "2026-04-28T10:15:04Z",
-      "closed_at": "2026-04-28T10:15:04Z"
+      "closed_at": "2026-04-28T10:15:04Z",
+      "uid": "019f134d-b2f5-70f6-a78d-423d17851ef3"
     },
     {
       "id": "MTIX-15.4.2",
@@ -2127,7 +2211,8 @@
       "content_hash": "7a74a427f7182a0eb101c75ef26e336db1c8ff6c039ad92b8e66e4760afad6c7",
       "created_at": "2026-04-28T10:06:28Z",
       "updated_at": "2026-04-28T10:24:22Z",
-      "closed_at": "2026-04-28T10:24:22Z"
+      "closed_at": "2026-04-28T10:24:22Z",
+      "uid": "019f134d-b2f5-7242-9b1a-68f9b1248740"
     },
     {
       "id": "MTIX-15.4.3",
@@ -2152,7 +2237,8 @@
       "content_hash": "322fcfa8966c5d56c311699b337fd5e4124481557dac8fdfd05d05e18d9e4402",
       "created_at": "2026-04-28T10:06:40Z",
       "updated_at": "2026-04-28T10:27:31Z",
-      "closed_at": "2026-04-28T10:27:31Z"
+      "closed_at": "2026-04-28T10:27:31Z",
+      "uid": "019f134d-b2f5-738e-b7f1-1cc23a4518a0"
     },
     {
       "id": "MTIX-15.5",
@@ -2177,7 +2263,8 @@
       "content_hash": "ac6ac55d761b0b6681071b15c3832b578841437344cde2a12f1f7083f5806699",
       "created_at": "2026-04-27T13:01:57Z",
       "updated_at": "2026-04-28T11:34:01Z",
-      "closed_at": "2026-04-28T11:34:01Z"
+      "closed_at": "2026-04-28T11:34:01Z",
+      "uid": "019f134d-b2f3-70a7-9bfb-7eb1399aaf62"
     },
     {
       "id": "MTIX-15.5.1",
@@ -2202,7 +2289,8 @@
       "content_hash": "b7930181e61f1709740adfd5979ef72dad8864e5f5272522a8e987b465bb8e50",
       "created_at": "2026-04-28T10:38:45Z",
       "updated_at": "2026-04-28T10:53:21Z",
-      "closed_at": "2026-04-28T10:53:21Z"
+      "closed_at": "2026-04-28T10:53:21Z",
+      "uid": "019f134d-b2f5-74ed-832f-27b1ea85310a"
     },
     {
       "id": "MTIX-15.5.2",
@@ -2227,7 +2315,8 @@
       "content_hash": "7771848f2c5d9395b61db805b9650cd78eaacb62bfdb3a4eb4cdebd65fa52680",
       "created_at": "2026-04-28T10:39:03Z",
       "updated_at": "2026-04-28T11:05:13Z",
-      "closed_at": "2026-04-28T11:05:13Z"
+      "closed_at": "2026-04-28T11:05:13Z",
+      "uid": "019f134d-b2f5-7635-aecf-46c1327b207b"
     },
     {
       "id": "MTIX-15.5.3",
@@ -2252,7 +2341,8 @@
       "content_hash": "0c0b43326f1f316260aa9d68261bc0573b2f534528959bfbca39926758810c79",
       "created_at": "2026-04-28T10:39:23Z",
       "updated_at": "2026-04-28T11:25:18Z",
-      "closed_at": "2026-04-28T11:25:18Z"
+      "closed_at": "2026-04-28T11:25:18Z",
+      "uid": "019f134d-b2f5-7822-b7bd-017e888050b3"
     },
     {
       "id": "MTIX-15.6",
@@ -2277,7 +2367,8 @@
       "content_hash": "d2e4eab7951a046ea014dcd02288bcc79f6863311951a53c0d8c0bffbf8b4e53",
       "created_at": "2026-04-27T13:01:57Z",
       "updated_at": "2026-04-28T15:33:20Z",
-      "closed_at": "2026-04-28T15:33:20Z"
+      "closed_at": "2026-04-28T15:33:20Z",
+      "uid": "019f134d-b2f3-71fb-a113-951fe426eb71"
     },
     {
       "id": "MTIX-15.6.1",
@@ -2302,7 +2393,8 @@
       "content_hash": "393bd57b2e53e64357b321f17ff87a1d08b02e0cb8d1446389e55ee177f91e4b",
       "created_at": "2026-04-28T11:45:21Z",
       "updated_at": "2026-04-28T11:53:48Z",
-      "closed_at": "2026-04-28T11:53:48Z"
+      "closed_at": "2026-04-28T11:53:48Z",
+      "uid": "019f134d-b2f5-796a-8d15-46cd4b7b917e"
     },
     {
       "id": "MTIX-15.6.2",
@@ -2327,7 +2419,8 @@
       "content_hash": "78b4e4e87667ed4f928f6eb67e506f398c1517612188bc6b4600ff842fb20ff8",
       "created_at": "2026-04-28T11:45:50Z",
       "updated_at": "2026-04-28T12:35:38Z",
-      "closed_at": "2026-04-28T12:35:38Z"
+      "closed_at": "2026-04-28T12:35:38Z",
+      "uid": "019f134d-b2f5-7aa6-8022-84f1731e6b04"
     },
     {
       "id": "MTIX-15.6.3",
@@ -2352,7 +2445,8 @@
       "content_hash": "aee4c426e9ec85a14e88bb0d0f1668b83c6d558bfdf5ebf3ef96763f32de6b25",
       "created_at": "2026-04-28T11:46:05Z",
       "updated_at": "2026-04-28T15:24:35Z",
-      "closed_at": "2026-04-28T15:24:35Z"
+      "closed_at": "2026-04-28T15:24:35Z",
+      "uid": "019f134d-b2f5-7be2-b9cc-18b317e78efe"
     },
     {
       "id": "MTIX-15.7",
@@ -2377,7 +2471,8 @@
       "content_hash": "a453ff03cc9b4e0a4947a270f4639f7aaf5655a824be89c5e83816eb49fe223b",
       "created_at": "2026-04-27T13:02:26Z",
       "updated_at": "2026-05-06T14:14:36Z",
-      "closed_at": "2026-05-06T14:14:36Z"
+      "closed_at": "2026-05-06T14:14:36Z",
+      "uid": "019f134d-b2f3-733c-a117-7ef580ebfcfe"
     },
     {
       "id": "MTIX-15.7.1",
@@ -2402,7 +2497,8 @@
       "content_hash": "8e5b35c36bcc834d5e1c28f04afea441d495947cdc58077291fc94c311478be3",
       "created_at": "2026-04-29T06:17:17Z",
       "updated_at": "2026-04-29T06:29:02Z",
-      "closed_at": "2026-04-29T06:29:02Z"
+      "closed_at": "2026-04-29T06:29:02Z",
+      "uid": "019f134d-b2f5-7d3e-9a24-b6e68edfc61b"
     },
     {
       "id": "MTIX-15.7.2",
@@ -2427,7 +2523,8 @@
       "content_hash": "68d52f38a975c67b534d6306f85f1ead72b92cf9bcece2c785f196e3a54961fe",
       "created_at": "2026-04-29T06:17:24Z",
       "updated_at": "2026-04-30T13:03:33Z",
-      "closed_at": "2026-04-30T13:03:33Z"
+      "closed_at": "2026-04-30T13:03:33Z",
+      "uid": "019f134d-b2f5-7e92-b830-9cccc239b26a"
     },
     {
       "id": "MTIX-15.7.3",
@@ -2452,7 +2549,8 @@
       "content_hash": "d6feda07fe349c873ad72846fbdbc26727f027e9fbd6093236bba311572903d9",
       "created_at": "2026-04-29T06:17:31Z",
       "updated_at": "2026-04-30T13:06:39Z",
-      "closed_at": "2026-04-30T13:06:39Z"
+      "closed_at": "2026-04-30T13:06:39Z",
+      "uid": "019f134d-b2f6-70c3-8c55-4150dc4e2167"
     },
     {
       "id": "MTIX-15.7.4",
@@ -2477,7 +2575,8 @@
       "content_hash": "31f1207c60352f2c954140881b1b8879ec8b8f00887cb143ef68416a95ecaeaa",
       "created_at": "2026-04-29T06:17:37Z",
       "updated_at": "2026-05-06T06:18:04Z",
-      "closed_at": "2026-05-06T06:18:04Z"
+      "closed_at": "2026-05-06T06:18:04Z",
+      "uid": "019f134d-b2f6-7255-8a59-6c2d6eb07cd5"
     },
     {
       "id": "MTIX-15.7.5",
@@ -2502,7 +2601,8 @@
       "content_hash": "5199f51c3437d98349db4910d8a61bb23ac3cc947a81b861493ac1f5021d543e",
       "created_at": "2026-04-29T06:17:44Z",
       "updated_at": "2026-05-06T13:18:00Z",
-      "closed_at": "2026-05-06T13:18:00Z"
+      "closed_at": "2026-05-06T13:18:00Z",
+      "uid": "019f134d-b2f6-7399-9bc6-a6f5534ff2a0"
     },
     {
       "id": "MTIX-15.8",
@@ -2527,7 +2627,8 @@
       "content_hash": "cf9067f179b1879be8b53b4cb218c22fb09282ce1e5c162d8491adb780906b9e",
       "created_at": "2026-04-27T13:02:26Z",
       "updated_at": "2026-05-07T11:49:16Z",
-      "closed_at": "2026-05-07T11:49:16Z"
+      "closed_at": "2026-05-07T11:49:16Z",
+      "uid": "019f134d-b2f3-7480-afdd-5be22c025066"
     },
     {
       "id": "MTIX-15.8.1",
@@ -2552,7 +2653,8 @@
       "content_hash": "034ced4f0d69b1fc7f6f83b3412f31de73c6c4cb8c2db58ba7012ff2a6ea2f03",
       "created_at": "2026-05-06T17:09:25Z",
       "updated_at": "2026-05-06T17:13:26Z",
-      "closed_at": "2026-05-06T17:13:26Z"
+      "closed_at": "2026-05-06T17:13:26Z",
+      "uid": "019f134d-b2f6-7510-91b2-1fe110b3534c"
     },
     {
       "id": "MTIX-15.8.2",
@@ -2577,7 +2679,8 @@
       "content_hash": "f279facd631d1d7ba38f8a46f896de7da1968a736ad73c00d3f8d9404f7d6b86",
       "created_at": "2026-05-06T17:09:25Z",
       "updated_at": "2026-05-07T07:17:39Z",
-      "closed_at": "2026-05-07T07:17:39Z"
+      "closed_at": "2026-05-07T07:17:39Z",
+      "uid": "019f134d-b2f6-7664-bfd6-fbec83961ac7"
     },
     {
       "id": "MTIX-15.8.3",
@@ -2602,7 +2705,8 @@
       "content_hash": "28e1589ad2a101c578b4665e08094a8d41777b8ddbfa12ba10dc0625d4c3da99",
       "created_at": "2026-05-06T17:09:25Z",
       "updated_at": "2026-05-07T11:48:25Z",
-      "closed_at": "2026-05-07T11:48:25Z"
+      "closed_at": "2026-05-07T11:48:25Z",
+      "uid": "019f134d-b2f6-77fe-bf6d-c40ee14dc68a"
     },
     {
       "id": "MTIX-15.9",
@@ -2627,7 +2731,8 @@
       "content_hash": "18a69612b370c81519c7f3ba90370a3497b3f351618c74a6508487f3a2d24a88",
       "created_at": "2026-04-27T13:02:26Z",
       "updated_at": "2026-05-07T14:00:52Z",
-      "closed_at": "2026-05-07T14:00:52Z"
+      "closed_at": "2026-05-07T14:00:52Z",
+      "uid": "019f134d-b2f3-762a-b31d-c713f7d58a19"
     },
     {
       "id": "MTIX-15.9.1",
@@ -2652,7 +2757,8 @@
       "content_hash": "239eda38eb0f9510d51d763711a160e5f5e5045e1da42707364b01d0215a69b7",
       "created_at": "2026-05-07T12:49:29Z",
       "updated_at": "2026-05-07T13:39:34Z",
-      "closed_at": "2026-05-07T13:39:34Z"
+      "closed_at": "2026-05-07T13:39:34Z",
+      "uid": "019f134d-b2f6-7947-ba25-f528fbba6ea8"
     },
     {
       "id": "MTIX-15.9.2",
@@ -2677,7 +2783,8 @@
       "content_hash": "7c731da6a5bd42b285862469dd1d7b2591d0811d585678a85538354c43bf9639",
       "created_at": "2026-05-07T12:49:29Z",
       "updated_at": "2026-05-07T13:54:11Z",
-      "closed_at": "2026-05-07T13:54:11Z"
+      "closed_at": "2026-05-07T13:54:11Z",
+      "uid": "019f134d-b2f6-7a8b-bc18-e9d6789e3575"
     },
     {
       "id": "MTIX-15.9.3",
@@ -2702,7 +2809,8 @@
       "content_hash": "dfb72d49176f4dde0841142997115364dd9b349d8fd77acdc0dd2ca4c1a14427",
       "created_at": "2026-05-07T12:49:29Z",
       "updated_at": "2026-05-07T13:59:59Z",
-      "closed_at": "2026-05-07T13:59:59Z"
+      "closed_at": "2026-05-07T13:59:59Z",
+      "uid": "019f134d-b2f6-7c11-b516-e81c8e6609a6"
     },
     {
       "id": "MTIX-16",
@@ -2727,7 +2835,8 @@
       "content_hash": "098a589ad761fba85e5b73d0b43a106635dbde12b02b37f3649cd6738dbcdf80",
       "created_at": "2026-04-27T18:14:17Z",
       "updated_at": "2026-06-10T07:00:37Z",
-      "closed_at": "2026-06-10T07:00:37Z"
+      "closed_at": "2026-06-10T07:00:37Z",
+      "uid": "019f134d-b2f3-7d2f-a431-8fffe7df2c6e"
     },
     {
       "id": "MTIX-17",
@@ -2752,7 +2861,8 @@
       "content_hash": "c49546023638dba40c83742895f12248d543fe7f1ee5082870b274034ab45b06",
       "created_at": "2026-05-18T16:16:20Z",
       "updated_at": "2026-05-18T16:26:21Z",
-      "closed_at": "2026-05-18T16:26:21Z"
+      "closed_at": "2026-05-18T16:26:21Z",
+      "uid": "019f134d-b2f7-79f2-8767-c2b27cc4c3c5"
     },
     {
       "id": "MTIX-18",
@@ -2777,7 +2887,8 @@
       "content_hash": "9575cf1d2cb465752f8696aa5c8fdc17354a207494e210ad47ed599ce9cb9a8b",
       "created_at": "2026-05-19T13:16:01Z",
       "updated_at": "2026-05-19T13:18:15Z",
-      "closed_at": "2026-05-19T13:18:15Z"
+      "closed_at": "2026-05-19T13:18:15Z",
+      "uid": "019e4061-08e4-75ad-854d-d83fe7a6282a"
     },
     {
       "id": "MTIX-19",
@@ -2802,7 +2913,8 @@
       "content_hash": "0c43c54f39ac240edb8f1ed586aa76b7dfa7d80f664fba442085562607442cee",
       "created_at": "2026-05-19T18:06:10Z",
       "updated_at": "2026-06-10T07:05:15Z",
-      "closed_at": "2026-06-10T07:05:15Z"
+      "closed_at": "2026-06-10T07:05:15Z",
+      "uid": "019e416a-aa8e-7a58-b7ea-54b95f1f8a16"
     },
     {
       "id": "MTIX-19.1",
@@ -2827,7 +2939,8 @@
       "content_hash": "a377902338794ad23c60ec1580b41c842f59576d4360e293bde86377d82a924a",
       "created_at": "2026-05-19T18:08:45Z",
       "updated_at": "2026-05-29T06:00:42Z",
-      "closed_at": "2026-05-29T06:00:42Z"
+      "closed_at": "2026-05-29T06:00:42Z",
+      "uid": "019e416d-08be-7c6f-aed7-d1fa855f1558"
     },
     {
       "id": "MTIX-19.2",
@@ -2852,7 +2965,8 @@
       "content_hash": "822396894e92234bdd3afb6ed2de8e3d9b5363f0bf796c9722db0e903e33585a",
       "created_at": "2026-05-19T18:08:47Z",
       "updated_at": "2026-05-29T06:00:42Z",
-      "closed_at": "2026-05-29T06:00:42Z"
+      "closed_at": "2026-05-29T06:00:42Z",
+      "uid": "019e416d-119b-7b4e-8379-f14b9091d777"
     },
     {
       "id": "MTIX-2",
@@ -2876,7 +2990,8 @@
       "weight": 1,
       "content_hash": "096f170ec8b9e8ee9d72f8237615e643cf59518a0d56c89366eec6eba3c5ff2f",
       "created_at": "2026-03-29T18:12:46Z",
-      "updated_at": "2026-03-29T18:12:46Z"
+      "updated_at": "2026-03-29T18:12:46Z",
+      "uid": "019f134d-b2eb-7d2f-af40-7c29df47ca1c"
     },
     {
       "id": "MTIX-2.1",
@@ -2900,7 +3015,8 @@
       "weight": 1,
       "content_hash": "8f67fa53ca37c344c742a4e5cd46a24503edf34a0bcaf87e450f37a82e618431",
       "created_at": "2026-03-29T18:12:46Z",
-      "updated_at": "2026-03-29T18:12:46Z"
+      "updated_at": "2026-03-29T18:12:46Z",
+      "uid": "019f134d-b2eb-7ea9-9e5c-35a66c42cc46"
     },
     {
       "id": "MTIX-2.1.1",
@@ -2924,7 +3040,8 @@
       "weight": 1,
       "content_hash": "e770b3913743f4b6f13136d33a7b07ef459f709157e3a6d91c926a30dde9397a",
       "created_at": "2026-03-29T18:12:46Z",
-      "updated_at": "2026-03-29T18:12:46Z"
+      "updated_at": "2026-03-29T18:12:46Z",
+      "uid": "019f134d-b2ec-70ea-a7b7-25739710eab7"
     },
     {
       "id": "MTIX-2.1.2",
@@ -2948,7 +3065,8 @@
       "weight": 1,
       "content_hash": "ef982751e7db9286d92b90ebab8ed2e63d5498ea8efd384c0c76f6c20c23d920",
       "created_at": "2026-03-29T18:12:46Z",
-      "updated_at": "2026-03-29T18:12:46Z"
+      "updated_at": "2026-03-29T18:12:46Z",
+      "uid": "019f134d-b2ec-724d-8a49-789455805b75"
     },
     {
       "id": "MTIX-2.1.3",
@@ -2972,7 +3090,8 @@
       "weight": 1,
       "content_hash": "54ae151571d690dbf6e3289aa5d27f43209e4044363054ce8dee6ed7ba32d10b",
       "created_at": "2026-03-29T18:12:46Z",
-      "updated_at": "2026-03-29T18:12:46Z"
+      "updated_at": "2026-03-29T18:12:46Z",
+      "uid": "019f134d-b2ec-73b1-a253-27a346651d12"
     },
     {
       "id": "MTIX-2.2",
@@ -2996,7 +3115,8 @@
       "weight": 1,
       "content_hash": "0b7c2a7130c4ce572f9b5c9ef32e4a7dc83d899a3fad4fa9c1354e902dd7fcd4",
       "created_at": "2026-03-29T18:12:46Z",
-      "updated_at": "2026-03-29T18:12:46Z"
+      "updated_at": "2026-03-29T18:12:46Z",
+      "uid": "019f134d-b2ec-7520-b06e-f34103062620"
     },
     {
       "id": "MTIX-2.2.1",
@@ -3020,7 +3140,8 @@
       "weight": 1,
       "content_hash": "6a22eafcfd0827979be64f4114ce2cbaba3d8244fd486b3fb9adca77d313aca9",
       "created_at": "2026-03-29T18:12:46Z",
-      "updated_at": "2026-03-29T18:12:46Z"
+      "updated_at": "2026-03-29T18:12:46Z",
+      "uid": "019f134d-b2ec-768b-b85d-98e4f896e4b6"
     },
     {
       "id": "MTIX-2.2.2",
@@ -3044,7 +3165,8 @@
       "weight": 1,
       "content_hash": "8bd49f2ae31fd508cba5be389c74a5e255f208ad1833a7fc27f7a4fcb7529feb",
       "created_at": "2026-03-29T18:12:47Z",
-      "updated_at": "2026-03-29T18:12:47Z"
+      "updated_at": "2026-03-29T18:12:47Z",
+      "uid": "019f134d-b2ec-77f3-9312-56a660e09d20"
     },
     {
       "id": "MTIX-2.2.3",
@@ -3068,7 +3190,8 @@
       "weight": 1,
       "content_hash": "8be0834cc53bc2404f94700f71d06d5e027b70226f8b4ce116b59493a808f6c4",
       "created_at": "2026-03-29T18:12:47Z",
-      "updated_at": "2026-03-29T18:12:47Z"
+      "updated_at": "2026-03-29T18:12:47Z",
+      "uid": "019f134d-b2ec-7952-bf53-17edcfe2b76a"
     },
     {
       "id": "MTIX-2.2.4",
@@ -3092,7 +3215,8 @@
       "weight": 1,
       "content_hash": "971202754d33aa7104da0fc35dce0941597801366b03213878e7f0bc7899335b",
       "created_at": "2026-03-29T18:12:47Z",
-      "updated_at": "2026-03-29T18:12:47Z"
+      "updated_at": "2026-03-29T18:12:47Z",
+      "uid": "019f134d-b2ec-7abe-9b63-18e6a8723ada"
     },
     {
       "id": "MTIX-2.3",
@@ -3116,7 +3240,8 @@
       "weight": 1,
       "content_hash": "39aea2ad4caaac099c1b85613bf871aa77a09c0d58b6f76d3c304868b11fbcd4",
       "created_at": "2026-03-29T18:12:47Z",
-      "updated_at": "2026-03-29T18:12:47Z"
+      "updated_at": "2026-03-29T18:12:47Z",
+      "uid": "019f134d-b2ec-7c35-834d-73599225e5d6"
     },
     {
       "id": "MTIX-2.3.1",
@@ -3140,7 +3265,8 @@
       "weight": 1,
       "content_hash": "fc8cdbf0e783c8a6799d5b6371846cd1c9ad8fc316d91e9790df0ea1e02e91b2",
       "created_at": "2026-03-29T18:12:47Z",
-      "updated_at": "2026-03-29T18:12:47Z"
+      "updated_at": "2026-03-29T18:12:47Z",
+      "uid": "019f134d-b2ec-7d9c-ae7e-de189f286f07"
     },
     {
       "id": "MTIX-2.4",
@@ -3164,7 +3290,8 @@
       "weight": 1,
       "content_hash": "261d8fbe3171b6aebad558e6b7c022a18c3b049f847fe992573b34843f5774c1",
       "created_at": "2026-03-29T18:12:47Z",
-      "updated_at": "2026-03-29T18:12:47Z"
+      "updated_at": "2026-03-29T18:12:47Z",
+      "uid": "019f134d-b2ec-7eff-8636-5c91943a7f0e"
     },
     {
       "id": "MTIX-2.4.1",
@@ -3188,7 +3315,8 @@
       "weight": 1,
       "content_hash": "e64286e2eb7eda64caf971d23154d07493c4b3a9c0f719bead88fc3271ca1141",
       "created_at": "2026-03-29T18:12:47Z",
-      "updated_at": "2026-03-29T18:12:47Z"
+      "updated_at": "2026-03-29T18:12:47Z",
+      "uid": "019f134d-b2ed-7121-84c0-58b8924eb670"
     },
     {
       "id": "MTIX-2.4.2",
@@ -3212,7 +3340,8 @@
       "weight": 1,
       "content_hash": "f9c056b41ec994fc158ee202fa37697c5ef9297c024ad0577d4d25922e6a5a74",
       "created_at": "2026-03-29T18:12:47Z",
-      "updated_at": "2026-03-29T18:12:47Z"
+      "updated_at": "2026-03-29T18:12:47Z",
+      "uid": "019f134d-b2ed-728c-bdb5-be7654aa029e"
     },
     {
       "id": "MTIX-2.4.3",
@@ -3236,7 +3365,8 @@
       "weight": 1,
       "content_hash": "34dc386f213d8edc3d3c50722bc1de855a1820f296b02c2c6225b8223b642da4",
       "created_at": "2026-03-29T18:12:47Z",
-      "updated_at": "2026-03-29T18:12:47Z"
+      "updated_at": "2026-03-29T18:12:47Z",
+      "uid": "019f134d-b2ed-73cc-a949-ccda36cc2499"
     },
     {
       "id": "MTIX-20",
@@ -3261,7 +3391,8 @@
       "content_hash": "83d0bb36d2741731f7981fd0de3e14a7a0bc17fada30d93a9760b6e7f28c1779",
       "created_at": "2026-06-10T06:30:31Z",
       "updated_at": "2026-06-10T06:43:04Z",
-      "closed_at": "2026-06-10T06:43:04Z"
+      "closed_at": "2026-06-10T06:43:04Z",
+      "uid": "019eb039-b2dd-7bbb-90fd-376e44a4c0fa"
     },
     {
       "id": "MTIX-21",
@@ -3285,7 +3416,8 @@
       "weight": 1,
       "content_hash": "6b2eb6d19f75e6698ebd4cdac5e71c4b9776bf1594a475ab17783e2b6cee0df9",
       "created_at": "2026-06-10T06:49:59Z",
-      "updated_at": "2026-06-10T06:49:59Z"
+      "updated_at": "2026-06-10T06:49:59Z",
+      "uid": "019eb04b-8202-7ec1-8b9c-018ce74ded57"
     },
     {
       "id": "MTIX-22",
@@ -3310,7 +3442,8 @@
       "content_hash": "7fe1629f128a69761d43f731e70746e2df8ec7a0fd10f7bcd813562cd29a30b9",
       "created_at": "2026-06-10T07:01:42Z",
       "updated_at": "2026-06-11T13:36:07Z",
-      "closed_at": "2026-06-11T13:36:07Z"
+      "closed_at": "2026-06-11T13:36:07Z",
+      "uid": "019eb056-3db0-7966-9104-9c1ae79b3580"
     },
     {
       "id": "MTIX-22.1",
@@ -3335,7 +3468,8 @@
       "content_hash": "59db5311cf8830001fbc89bfed7e39c02c7823e7e415bcee005089e7a1b29d1d",
       "created_at": "2026-06-11T13:28:30Z",
       "updated_at": "2026-06-11T13:36:06Z",
-      "closed_at": "2026-06-11T13:36:06Z"
+      "closed_at": "2026-06-11T13:36:06Z",
+      "uid": "019eb6de-b96c-7338-aa68-ae3d9eedf94f"
     },
     {
       "id": "MTIX-22.2",
@@ -3360,7 +3494,8 @@
       "content_hash": "9d9056c60d0cbb63ce8f7376814c6834143d4c4453bc9ca49c9334205a60303b",
       "created_at": "2026-06-11T13:28:30Z",
       "updated_at": "2026-06-11T13:36:06Z",
-      "closed_at": "2026-06-11T13:36:06Z"
+      "closed_at": "2026-06-11T13:36:06Z",
+      "uid": "019eb6de-b988-7186-b8c5-da18c2646d0b"
     },
     {
       "id": "MTIX-22.3",
@@ -3385,7 +3520,8 @@
       "content_hash": "e29bcb27a489c5d1c6ab1bcbb70747c607431a8c5e6692024fdff5d063e695ad",
       "created_at": "2026-06-11T13:28:30Z",
       "updated_at": "2026-06-11T13:36:06Z",
-      "closed_at": "2026-06-11T13:36:06Z"
+      "closed_at": "2026-06-11T13:36:06Z",
+      "uid": "019eb6de-b99c-7c15-a451-8550b8c2c902"
     },
     {
       "id": "MTIX-23",
@@ -3409,7 +3545,8 @@
       "weight": 1,
       "content_hash": "4dc5d29f1f451148a0d37313035241889eaa467b47e808543f1a3d5835d51049",
       "created_at": "2026-06-10T07:02:05Z",
-      "updated_at": "2026-06-10T07:02:05Z"
+      "updated_at": "2026-06-10T07:02:05Z",
+      "uid": "019eb056-98c8-7dc7-99e7-540080ed6d45"
     },
     {
       "id": "MTIX-24",
@@ -3433,7 +3570,8 @@
       "weight": 1,
       "content_hash": "af788e4afb9951bfae934c466291d1d39e49b12372714944cd614ba83e1f0f18",
       "created_at": "2026-06-10T07:03:09Z",
-      "updated_at": "2026-06-10T07:03:09Z"
+      "updated_at": "2026-06-10T07:03:09Z",
+      "uid": "019eb057-92d5-7747-a51e-769babaa684b"
     },
     {
       "id": "MTIX-25",
@@ -3457,7 +3595,8 @@
       "weight": 1,
       "content_hash": "e87600ce507382cbeee3a483471d7021ca16f7f30f8b7a7836faa4847b3584b7",
       "created_at": "2026-06-10T07:03:57Z",
-      "updated_at": "2026-06-10T07:03:57Z"
+      "updated_at": "2026-06-10T07:03:57Z",
+      "uid": "019eb058-4c73-7a58-a726-9cfdb8076407"
     },
     {
       "id": "MTIX-26",
@@ -3482,7 +3621,8 @@
       "content_hash": "8cb51d7f98f6f315e42a203f957af206bd170ab22c1e6b110b7ff82613d7d863",
       "created_at": "2026-06-10T16:56:27Z",
       "updated_at": "2026-06-11T11:33:36Z",
-      "closed_at": "2026-06-11T11:33:36Z"
+      "closed_at": "2026-06-11T11:33:36Z",
+      "uid": "019eb276-c0e2-7f17-8ed1-90ee4d9c4f29"
     },
     {
       "id": "MTIX-26.1",
@@ -3507,7 +3647,8 @@
       "content_hash": "8ed78a39c5216af5572ec89ab8c9d84b9366737290c848a75511e25470908967",
       "created_at": "2026-06-10T16:57:09Z",
       "updated_at": "2026-06-10T17:37:31Z",
-      "closed_at": "2026-06-10T17:37:31Z"
+      "closed_at": "2026-06-10T17:37:31Z",
+      "uid": "019eb277-658b-796e-8257-49bd641ce245"
     },
     {
       "id": "MTIX-26.2",
@@ -3532,7 +3673,8 @@
       "content_hash": "2164b25b62db94abcf00829c07380c0cab749fc25e5975d712494a48efc945fc",
       "created_at": "2026-06-10T16:57:09Z",
       "updated_at": "2026-06-10T17:37:31Z",
-      "closed_at": "2026-06-10T17:37:31Z"
+      "closed_at": "2026-06-10T17:37:31Z",
+      "uid": "019eb277-65a0-7887-871c-40f03a8fd3b0"
     },
     {
       "id": "MTIX-26.3",
@@ -3557,7 +3699,8 @@
       "content_hash": "c73717cb7b9437e3275062bb6a28e9071129084baf4c33547214c9d4b399e2f0",
       "created_at": "2026-06-10T16:57:09Z",
       "updated_at": "2026-06-10T17:37:31Z",
-      "closed_at": "2026-06-10T17:37:31Z"
+      "closed_at": "2026-06-10T17:37:31Z",
+      "uid": "019eb277-65b5-7704-9457-1bd2afc66c71"
     },
     {
       "id": "MTIX-26.4",
@@ -3582,7 +3725,8 @@
       "content_hash": "43b580b15644cbaaff131e82aa54dc300cf7ae8c5ed7db16d76b377f9e10dafa",
       "created_at": "2026-06-10T16:57:09Z",
       "updated_at": "2026-06-10T17:37:31Z",
-      "closed_at": "2026-06-10T17:37:31Z"
+      "closed_at": "2026-06-10T17:37:31Z",
+      "uid": "019eb277-65c9-7756-95e2-5d0a2a200afc"
     },
     {
       "id": "MTIX-26.5",
@@ -3607,7 +3751,8 @@
       "content_hash": "e854b6bdd5a52a8b052cb9692310f4d455d4f0b07001544b123ffca2acf941d4",
       "created_at": "2026-06-10T16:57:41Z",
       "updated_at": "2026-06-11T08:59:11Z",
-      "closed_at": "2026-06-11T08:59:11Z"
+      "closed_at": "2026-06-11T08:59:11Z",
+      "uid": "019eb277-e0eb-7a77-a37f-c144d9328684"
     },
     {
       "id": "MTIX-26.6",
@@ -3632,7 +3777,8 @@
       "content_hash": "929a7a79ac144eb49032fff8f0dd12b9b5c1f94134bccee4894b40cc1afeda59",
       "created_at": "2026-06-10T16:57:41Z",
       "updated_at": "2026-06-11T09:02:31Z",
-      "closed_at": "2026-06-11T09:02:31Z"
+      "closed_at": "2026-06-11T09:02:31Z",
+      "uid": "019eb277-e105-7284-862b-59fd97c20b7a"
     },
     {
       "id": "MTIX-26.7",
@@ -3657,7 +3803,8 @@
       "content_hash": "a8005ff55611cda5cdc2990cb4483ae85725e272e058f4a8c1ae9fdca7180860",
       "created_at": "2026-06-10T16:57:41Z",
       "updated_at": "2026-06-10T17:37:31Z",
-      "closed_at": "2026-06-10T17:37:31Z"
+      "closed_at": "2026-06-10T17:37:31Z",
+      "uid": "019eb277-e119-71e8-b610-d7180837f11c"
     },
     {
       "id": "MTIX-26.8",
@@ -3682,7 +3829,8 @@
       "content_hash": "abad05408b8588add6d9b9fb73e5f574936789bb99e8ac3c18bdbd6c9d0708d3",
       "created_at": "2026-06-10T16:57:41Z",
       "updated_at": "2026-06-11T09:07:21Z",
-      "closed_at": "2026-06-11T09:07:21Z"
+      "closed_at": "2026-06-11T09:07:21Z",
+      "uid": "019eb277-e12d-7cf0-9319-588bfd643b7a"
     },
     {
       "id": "MTIX-26.9",
@@ -3707,7 +3855,8 @@
       "content_hash": "bf40ed1e2be5e513966fe4bb8d3b13c188e45a113125e57f1072d550c7dffd81",
       "created_at": "2026-06-10T16:57:41Z",
       "updated_at": "2026-06-11T09:08:25Z",
-      "closed_at": "2026-06-11T09:08:25Z"
+      "closed_at": "2026-06-11T09:08:25Z",
+      "uid": "019eb277-e142-7dac-9e1d-888e0d1be3c4"
     },
     {
       "id": "MTIX-27",
@@ -3732,7 +3881,8 @@
       "content_hash": "7615881d98c6696981f97fbe3cd11092ac75a4cc2b6d8ac7131a8688fcfcb55b",
       "created_at": "2026-06-11T15:27:35Z",
       "updated_at": "2026-06-12T04:24:20Z",
-      "closed_at": "2026-06-12T04:24:20Z"
+      "closed_at": "2026-06-12T04:24:20Z",
+      "uid": "019eb74b-c0a6-7ae5-9489-dd4aadcd66cf"
     },
     {
       "id": "MTIX-27.1",
@@ -3757,7 +3907,8 @@
       "content_hash": "e1ef6a829ed35be8b5021efc3306d09e97fc1c520d009c7c11a1e0b474260b3f",
       "created_at": "2026-06-12T04:14:54Z",
       "updated_at": "2026-06-12T04:24:20Z",
-      "closed_at": "2026-06-12T04:24:20Z"
+      "closed_at": "2026-06-12T04:24:20Z",
+      "uid": "019eba0a-3fe3-7119-ac7f-63744d8e16af"
     },
     {
       "id": "MTIX-27.2",
@@ -3782,7 +3933,8 @@
       "content_hash": "fbc0722b3c089f685de796821a0a105ef7da1751eb3fabe3c63279c4d8933d3c",
       "created_at": "2026-06-12T04:14:54Z",
       "updated_at": "2026-06-12T04:24:20Z",
-      "closed_at": "2026-06-12T04:24:20Z"
+      "closed_at": "2026-06-12T04:24:20Z",
+      "uid": "019eba0a-3fff-7e82-be59-963fb9ee4b04"
     },
     {
       "id": "MTIX-28",
@@ -3806,7 +3958,8 @@
       "weight": 1,
       "content_hash": "8f22e45ac026a440fdccb707300c243e1e758d9f4320023b11998c77f0ba009b",
       "created_at": "2026-06-25T06:36:43Z",
-      "updated_at": "2026-06-25T06:36:43Z"
+      "updated_at": "2026-06-25T06:36:43Z",
+      "uid": "019efd7e-c3da-7a6f-81c6-346dc9448ca0"
     },
     {
       "id": "MTIX-29",
@@ -3830,7 +3983,8 @@
       "weight": 1,
       "content_hash": "5a416067b3b4950e30f656158137c27fee3a94481e72cf44187f548996cf19e4",
       "created_at": "2026-06-25T13:37:28Z",
-      "updated_at": "2026-06-25T13:37:28Z"
+      "updated_at": "2026-06-25T13:37:28Z",
+      "uid": "019efeff-f6b2-72bb-b565-0cfd0f29b660"
     },
     {
       "id": "MTIX-3",
@@ -3855,7 +4009,8 @@
       "content_hash": "1b675a0fd1e684683959cb17573e53c4816a7936fe29225ce302350246e08465",
       "created_at": "2026-03-30T17:07:34Z",
       "updated_at": "2026-06-10T06:59:52Z",
-      "closed_at": "2026-06-10T06:59:52Z"
+      "closed_at": "2026-06-10T06:59:52Z",
+      "uid": "019f134d-b2ed-7835-a4f0-8881c2a7225e"
     },
     {
       "id": "MTIX-3.1",
@@ -3880,7 +4035,8 @@
       "content_hash": "9e79827f23adea24a5c9fa369e01049d0defe23588c773b1339a2740eea3f3c1",
       "created_at": "2026-03-30T17:07:34Z",
       "updated_at": "2026-03-30T17:09:20Z",
-      "closed_at": "2026-03-30T17:09:20Z"
+      "closed_at": "2026-03-30T17:09:20Z",
+      "uid": "019f134d-b2ed-79c0-8bbd-220a06de9607"
     },
     {
       "id": "MTIX-3.2",
@@ -3905,7 +4061,8 @@
       "content_hash": "593ca92f89f8bf3f4a8ed639a867d18572f632a66823337e5adde946339eeab5",
       "created_at": "2026-03-30T17:07:34Z",
       "updated_at": "2026-03-30T17:10:16Z",
-      "closed_at": "2026-03-30T17:10:16Z"
+      "closed_at": "2026-03-30T17:10:16Z",
+      "uid": "019f134d-b2ed-7b46-8067-da1ad5ef09af"
     },
     {
       "id": "MTIX-3.3",
@@ -3930,7 +4087,8 @@
       "content_hash": "dd640d8a4218f86c7ab5b81f5daf119392d3d18a52a235d3bc03222894dac850",
       "created_at": "2026-03-30T17:07:34Z",
       "updated_at": "2026-03-30T17:12:15Z",
-      "closed_at": "2026-03-30T17:12:15Z"
+      "closed_at": "2026-03-30T17:12:15Z",
+      "uid": "019f134d-b2ed-7cd9-9ecc-1cc2f0d7ff46"
     },
     {
       "id": "MTIX-3.4",
@@ -3955,7 +4113,8 @@
       "content_hash": "6211099b33968fae8c59643b19230db915c8de90b122771e63352919a1796e20",
       "created_at": "2026-03-30T17:07:34Z",
       "updated_at": "2026-03-30T17:17:05Z",
-      "closed_at": "2026-03-30T17:17:05Z"
+      "closed_at": "2026-03-30T17:17:05Z",
+      "uid": "019f134d-b2ed-7e6b-98e0-cef42bb81a70"
     },
     {
       "id": "MTIX-3.5",
@@ -3980,7 +4139,8 @@
       "content_hash": "0e663a3eb95f6f80b14a5751084c6d55dc591de3c68c94e03244410878f4de34",
       "created_at": "2026-03-30T17:07:34Z",
       "updated_at": "2026-03-30T17:56:54Z",
-      "closed_at": "2026-03-30T17:56:54Z"
+      "closed_at": "2026-03-30T17:56:54Z",
+      "uid": "019f134d-b2ee-7105-ac38-38409b166019"
     },
     {
       "id": "MTIX-3.6",
@@ -4005,7 +4165,8 @@
       "content_hash": "be61682d1689db3207c2dd4e4a8a6d8ec366a0f570a96729052090f6da388176",
       "created_at": "2026-03-30T17:07:34Z",
       "updated_at": "2026-03-30T18:12:49Z",
-      "closed_at": "2026-03-30T18:12:49Z"
+      "closed_at": "2026-03-30T18:12:49Z",
+      "uid": "019f134d-b2ee-729b-936a-507b3e603cfd"
     },
     {
       "id": "MTIX-3.7",
@@ -4030,7 +4191,8 @@
       "content_hash": "0e3a60fff9858001f43c6bc1bcdfe3219827269022ca267fbb38e7402b73dbec",
       "created_at": "2026-03-30T17:07:34Z",
       "updated_at": "2026-03-30T18:12:49Z",
-      "closed_at": "2026-03-30T18:12:49Z"
+      "closed_at": "2026-03-30T18:12:49Z",
+      "uid": "019f134d-b2ee-742a-a3de-4a3f059885c4"
     },
     {
       "id": "MTIX-3.8",
@@ -4055,7 +4217,8 @@
       "content_hash": "cb2b58a122771423edcd44c2765ef6308120644772ef12608e0e7fbfc6239c35",
       "created_at": "2026-03-30T17:07:34Z",
       "updated_at": "2026-03-30T18:12:49Z",
-      "closed_at": "2026-03-30T18:12:49Z"
+      "closed_at": "2026-03-30T18:12:49Z",
+      "uid": "019f134d-b2ee-75cc-b886-db22eab2a0ef"
     },
     {
       "id": "MTIX-30",
@@ -4072,14 +4235,15 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.8666666666666667,
+      "progress": 0.9333333333333333,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
       "weight": 1,
       "content_hash": "f52471addcd957fbb5c31b5f6d7c65b553b1e18037a1e0a2b5c87ecc99bc7167",
       "created_at": "2026-06-26T10:50:12Z",
-      "updated_at": "2026-06-26T10:50:12Z"
+      "updated_at": "2026-06-26T10:50:12Z",
+      "uid": "019f038d-2f6d-7027-8cb9-1d975488a784"
     },
     {
       "id": "MTIX-30.1",
@@ -4104,7 +4268,8 @@
       "content_hash": "8bf6fb044586e1ac5d6e99e0ee156ad5b5b814fcf2e0cbaedb349cda6add58cc",
       "created_at": "2026-06-26T10:51:15Z",
       "updated_at": "2026-06-26T14:22:27Z",
-      "closed_at": "2026-06-26T14:22:27Z"
+      "closed_at": "2026-06-26T14:22:27Z",
+      "uid": "019f038e-272b-7e15-8ae7-465644c271cd"
     },
     {
       "id": "MTIX-30.10",
@@ -4129,7 +4294,8 @@
       "content_hash": "ea0b7bcd973f44359fe1ee0e79a12046ae3ecc837f9ed8ae13ad6d81e2afe782",
       "created_at": "2026-06-26T10:51:15Z",
       "updated_at": "2026-06-27T05:48:57Z",
-      "closed_at": "2026-06-27T05:48:57Z"
+      "closed_at": "2026-06-27T05:48:57Z",
+      "uid": "019f038e-2848-7985-9517-7ed2e7954c86"
     },
     {
       "id": "MTIX-30.11",
@@ -4145,15 +4311,17 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-wave-v2",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "39499051047cc2d321b3588ac6220c0b006f7229dd86dc6411e119e6a5dd1488",
       "created_at": "2026-06-26T10:51:15Z",
-      "updated_at": "2026-06-26T10:51:15Z"
+      "updated_at": "2026-06-29T12:44:26Z",
+      "closed_at": "2026-06-29T12:44:26Z",
+      "uid": "019f038e-2867-79eb-8e87-2abf27ef3fb1"
     },
     {
       "id": "MTIX-30.12",
@@ -4178,7 +4346,8 @@
       "content_hash": "1396834df823aff81acc71093150660363b02915db1b91fca93d5742803c0639",
       "created_at": "2026-06-26T10:51:15Z",
       "updated_at": "2026-06-26T15:02:55Z",
-      "closed_at": "2026-06-26T15:02:55Z"
+      "closed_at": "2026-06-26T15:02:55Z",
+      "uid": "019f038e-2887-7094-aebe-348e88abffef"
     },
     {
       "id": "MTIX-30.13",
@@ -4202,7 +4371,8 @@
       "weight": 1,
       "content_hash": "4d2cdb9f689976ab3bdc4b77943e7eec3129d7a953a87766d25f139eee4fec86",
       "created_at": "2026-06-26T10:51:16Z",
-      "updated_at": "2026-06-26T10:51:16Z"
+      "updated_at": "2026-06-26T10:51:16Z",
+      "uid": "019f038e-28a5-75ff-8b5c-d7385bd4d277"
     },
     {
       "id": "MTIX-30.14",
@@ -4227,7 +4397,8 @@
       "content_hash": "6964f88a27ccb1bddd89dc77cb10ab92d7e711f521ee91a9e39813c751e99fff",
       "created_at": "2026-06-26T13:43:54Z",
       "updated_at": "2026-06-26T14:22:10Z",
-      "closed_at": "2026-06-26T14:22:10Z"
+      "closed_at": "2026-06-26T14:22:10Z",
+      "uid": "019f042c-3642-7392-8b12-6cac8d14bfaf"
     },
     {
       "id": "MTIX-30.15",
@@ -4252,7 +4423,8 @@
       "content_hash": "03397bc950bac97d6dade87a18337d4bcf149829dfcf5e1a7dd2daee1dfcb3a8",
       "created_at": "2026-06-26T16:13:56Z",
       "updated_at": "2026-06-26T17:56:05Z",
-      "closed_at": "2026-06-26T17:56:05Z"
+      "closed_at": "2026-06-26T17:56:05Z",
+      "uid": "019f04b5-920c-7caa-a875-e369954ace5d"
     },
     {
       "id": "MTIX-30.2",
@@ -4277,7 +4449,8 @@
       "content_hash": "b5d2784e3911fdb82069b7ddef6bebd9c6045bb38e335e1798feb4f0e9abaae7",
       "created_at": "2026-06-26T10:51:15Z",
       "updated_at": "2026-06-26T14:16:06Z",
-      "closed_at": "2026-06-26T14:16:06Z"
+      "closed_at": "2026-06-26T14:16:06Z",
+      "uid": "019f038e-274e-7a19-861d-28370c57fb77"
     },
     {
       "id": "MTIX-30.3",
@@ -4302,7 +4475,8 @@
       "content_hash": "d47081bcd962de2f1bccf5298d5c2cae52acdbbea6c6110c68d5060d3505a817",
       "created_at": "2026-06-26T10:51:15Z",
       "updated_at": "2026-06-27T05:12:42Z",
-      "closed_at": "2026-06-27T05:12:42Z"
+      "closed_at": "2026-06-27T05:12:42Z",
+      "uid": "019f038e-276d-7259-a2b7-8a9f97904672"
     },
     {
       "id": "MTIX-30.4",
@@ -4327,7 +4501,8 @@
       "content_hash": "caa2b8d12681370f8877fd6dcc25001a717d1417a341cd8ea03b3ace6da62b12",
       "created_at": "2026-06-26T10:51:15Z",
       "updated_at": "2026-06-26T14:55:52Z",
-      "closed_at": "2026-06-26T14:55:52Z"
+      "closed_at": "2026-06-26T14:55:52Z",
+      "uid": "019f038e-278e-7046-a2e9-4272b9c2f606"
     },
     {
       "id": "MTIX-30.5",
@@ -4352,7 +4527,8 @@
       "content_hash": "d2644a92d2d7c6a0f8de9a7f9bba6376a4552763b3930ee80559c6be30ab1e78",
       "created_at": "2026-06-26T10:51:15Z",
       "updated_at": "2026-06-26T17:53:52Z",
-      "closed_at": "2026-06-26T17:53:52Z"
+      "closed_at": "2026-06-26T17:53:52Z",
+      "uid": "019f038e-27ad-7ae1-8def-f83963a44b45"
     },
     {
       "id": "MTIX-30.6",
@@ -4377,7 +4553,8 @@
       "content_hash": "ab67a3fee5d4c2efd9d686fd74d350392a5b8c6aab427081d0f119b7796b1388",
       "created_at": "2026-06-26T10:51:15Z",
       "updated_at": "2026-06-26T16:14:14Z",
-      "closed_at": "2026-06-26T16:14:14Z"
+      "closed_at": "2026-06-26T16:14:14Z",
+      "uid": "019f038e-27cc-787b-b47f-224efb843fe1"
     },
     {
       "id": "MTIX-30.7",
@@ -4402,7 +4579,8 @@
       "content_hash": "8841843b789179320c45138f7f79f92f522c6989c0fe093fafcc77d4f5ade9ee",
       "created_at": "2026-06-26T10:51:15Z",
       "updated_at": "2026-06-27T14:49:19Z",
-      "closed_at": "2026-06-27T14:49:19Z"
+      "closed_at": "2026-06-27T14:49:19Z",
+      "uid": "019f038e-27eb-719a-9c1a-fdbd1db09e0e"
     },
     {
       "id": "MTIX-30.8",
@@ -4427,7 +4605,8 @@
       "content_hash": "636900ca93d2501bea9a06befd884a1c732cd51f40b237bb6f9649ad814d3928",
       "created_at": "2026-06-26T10:51:15Z",
       "updated_at": "2026-06-29T08:29:33Z",
-      "closed_at": "2026-06-29T08:29:33Z"
+      "closed_at": "2026-06-29T08:29:33Z",
+      "uid": "019f038e-280a-78a6-b040-0721d5650012"
     },
     {
       "id": "MTIX-30.9",
@@ -4452,7 +4631,58 @@
       "content_hash": "71f9860bd2c36ae79cb67a2134e9d93309bd83da9655cfb498826873a1e912dc",
       "created_at": "2026-06-26T10:51:15Z",
       "updated_at": "2026-06-29T05:11:14Z",
-      "closed_at": "2026-06-29T05:11:14Z"
+      "closed_at": "2026-06-29T05:11:14Z",
+      "uid": "019f038e-2828-7c21-9d53-2bd64222fa01"
+    },
+    {
+      "id": "MTIX-31",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 31,
+      "project": "MTIX",
+      "title": "README: marketing elevator pitch for LLM/Claude-Code developers",
+      "description": "Add a low-cognitive, ad-style elevator pitch at the top of the README (after the tagline) for developers building with LLMs, especially Claude Code: lead with the pain (agent drift / context loss / re-explaining), present the context-chain as the fix, name Claude Code + MCP, end with a try-it CTA. Draft for founder voice approval before going live.",
+      "prompt": "",
+      "acceptance": "",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "a99d34d2afb6ed672928e83c33162f5f8980baaff2e7072984a349e4622c7b9d",
+      "created_at": "2026-06-29T12:24:57Z",
+      "updated_at": "2026-06-29T12:24:57Z",
+      "uid": "019f1357-053e-773b-8236-d39edcd573ff"
+    },
+    {
+      "id": "MTIX-32",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 32,
+      "project": "MTIX",
+      "title": "mtix sync backfill exits 1 on disk-full instead of exit-code-3 (NFR-2.8 contract)",
+      "description": "Found by MTIX-30.11 chaos tests: on a full volume, 'mtix sync backfill' fail-stops correctly but exits 1, whereas the NFR-2.8/MTIX-26 CLI contract is exit code 3 for disk-full (which 'mtix create' honors). Behavior is safe (clear fail-stop, DB sound, data preserved) but the exit code is inconsistent, which breaks scripts keying on code 3. Align the backfill (and audit other sync write commands) to the disk-full exit-code mapping in cmd/mtix/exitcode.go.",
+      "prompt": "",
+      "acceptance": "sync backfill (and peer sync write cmds) return exit 3 on disk-full/ENOSPC; a fault-injection test asserts the code; USERMANUAL exit-code table consistent.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "7df03bc9773398882e7f720a3e9ffea48be481fdecc0c669bc3355eb8217a938",
+      "created_at": "2026-06-29T12:44:26Z",
+      "updated_at": "2026-06-29T12:44:26Z",
+      "uid": "019f1368-d875-706d-bd6f-8c50ae9ce6cf"
     },
     {
       "id": "MTIX-4",
@@ -4477,7 +4707,8 @@
       "content_hash": "4ef17c0f8da2d4cec203452e03f877d0b9f88ca3ddea19493fb07455608cb5e6",
       "created_at": "2026-03-31T04:00:46Z",
       "updated_at": "2026-06-10T06:59:52Z",
-      "closed_at": "2026-06-10T06:59:52Z"
+      "closed_at": "2026-06-10T06:59:52Z",
+      "uid": "019f134d-b2ee-775a-84b4-cd8fed1aa05d"
     },
     {
       "id": "MTIX-4.1",
@@ -4502,7 +4733,8 @@
       "content_hash": "9fd99ca29e8c2a023e227fff21ce3ccb08342f2e21163d3f5ad113a8c3ac3985",
       "created_at": "2026-03-31T04:00:46Z",
       "updated_at": "2026-03-31T04:39:54Z",
-      "closed_at": "2026-03-31T04:39:54Z"
+      "closed_at": "2026-03-31T04:39:54Z",
+      "uid": "019f134d-b2ee-78d5-9dfb-60428fde7781"
     },
     {
       "id": "MTIX-4.2",
@@ -4527,7 +4759,8 @@
       "content_hash": "4fa436c80e1c56c8f45cf0f392f4ea66012d30b4e996cdbb85f6d11ad07f50cb",
       "created_at": "2026-03-31T04:00:46Z",
       "updated_at": "2026-03-31T04:39:54Z",
-      "closed_at": "2026-03-31T04:39:54Z"
+      "closed_at": "2026-03-31T04:39:54Z",
+      "uid": "019f134d-b2ee-7a5c-bb3f-4a751143c70e"
     },
     {
       "id": "MTIX-4.3",
@@ -4552,7 +4785,8 @@
       "content_hash": "901b65fdc08828e52e3d91611b57ff7ccbc84dd11741f290fa5fdf7c7ae9f708",
       "created_at": "2026-03-31T04:00:46Z",
       "updated_at": "2026-03-31T04:39:54Z",
-      "closed_at": "2026-03-31T04:39:54Z"
+      "closed_at": "2026-03-31T04:39:54Z",
+      "uid": "019f134d-b2ee-7bd3-88d9-9b5465a3e741"
     },
     {
       "id": "MTIX-4.4",
@@ -4577,7 +4811,8 @@
       "content_hash": "6fe9fcff36b560a75d6c0d594c2f362bd36a4ad67e997e3caa171f569a86bed6",
       "created_at": "2026-03-31T04:00:46Z",
       "updated_at": "2026-03-31T04:39:54Z",
-      "closed_at": "2026-03-31T04:39:54Z"
+      "closed_at": "2026-03-31T04:39:54Z",
+      "uid": "019f134d-b2ee-7d61-b54e-38d4d7d8616b"
     },
     {
       "id": "MTIX-5",
@@ -4602,7 +4837,8 @@
       "content_hash": "f5ecf592d1c57a3bad94400d3950d49a0654a30323b429179631eafc4c4b8aa4",
       "created_at": "2026-03-31T07:52:45Z",
       "updated_at": "2026-06-10T06:59:52Z",
-      "closed_at": "2026-06-10T06:59:52Z"
+      "closed_at": "2026-06-10T06:59:52Z",
+      "uid": "019f134d-b2ee-7edc-8eb9-7ef89bed5813"
     },
     {
       "id": "MTIX-5.1",
@@ -4627,7 +4863,8 @@
       "content_hash": "0ca9f177737843b8865eb598fe9517ebe2251d0cf00d0299b143a7d8d122b42a",
       "created_at": "2026-03-31T07:52:45Z",
       "updated_at": "2026-03-31T09:49:15Z",
-      "closed_at": "2026-03-31T09:49:15Z"
+      "closed_at": "2026-03-31T09:49:15Z",
+      "uid": "019f134d-b2ef-713c-9b43-1873b1537cf6"
     },
     {
       "id": "MTIX-5.2",
@@ -4652,7 +4889,8 @@
       "content_hash": "63439ac593eb772971d98f746dcfecf070bcb6fa9a778717b9965d1c88134822",
       "created_at": "2026-03-31T07:52:45Z",
       "updated_at": "2026-03-31T08:13:26Z",
-      "closed_at": "2026-03-31T08:13:26Z"
+      "closed_at": "2026-03-31T08:13:26Z",
+      "uid": "019f134d-b2ef-72da-8b28-1240fd4edd89"
     },
     {
       "id": "MTIX-5.3",
@@ -4677,7 +4915,8 @@
       "content_hash": "b361755c7a4276ee11c77a604afa8c4a8065982307df74a660a9dd659ac44e35",
       "created_at": "2026-03-31T07:52:45Z",
       "updated_at": "2026-03-31T08:22:57Z",
-      "closed_at": "2026-03-31T08:22:57Z"
+      "closed_at": "2026-03-31T08:22:57Z",
+      "uid": "019f134d-b2ef-7747-a0a7-4fef6ef2da12"
     },
     {
       "id": "MTIX-5.4",
@@ -4702,7 +4941,8 @@
       "content_hash": "1c5bd611aae04498ac0247fd551ddc31aad0357f3dfdcae7eda72f40ac1a2fcc",
       "created_at": "2026-03-31T07:52:45Z",
       "updated_at": "2026-03-31T08:28:39Z",
-      "closed_at": "2026-03-31T08:28:39Z"
+      "closed_at": "2026-03-31T08:28:39Z",
+      "uid": "019f134d-b2ef-78e1-8e0d-e6c687a0ab0e"
     },
     {
       "id": "MTIX-5.5",
@@ -4727,7 +4967,8 @@
       "content_hash": "b6316951082f3d02d85a0e6e3596d7e09ccbe92c0a24ed7205e0bb200d04d6d3",
       "created_at": "2026-03-31T07:52:45Z",
       "updated_at": "2026-03-31T08:28:39Z",
-      "closed_at": "2026-03-31T08:28:39Z"
+      "closed_at": "2026-03-31T08:28:39Z",
+      "uid": "019f134d-b2ef-7a7f-ab57-33c8508f29c7"
     },
     {
       "id": "MTIX-5.6",
@@ -4752,7 +4993,8 @@
       "content_hash": "de93464432e3efc07d2797b2f12b4a2b0eec800856d03683add9b10b98f89c23",
       "created_at": "2026-03-31T09:01:06Z",
       "updated_at": "2026-03-31T09:04:35Z",
-      "closed_at": "2026-03-31T09:04:35Z"
+      "closed_at": "2026-03-31T09:04:35Z",
+      "uid": "019f134d-b2ef-7c25-bbf9-0fa8b7a23695"
     },
     {
       "id": "MTIX-6",
@@ -4776,7 +5018,8 @@
       "weight": 1,
       "content_hash": "7aeebcf60e22a081e1f5decc9b7dd46c5613fcfb5039a55517d476af221cf3f6",
       "created_at": "2026-04-06T06:04:59Z",
-      "updated_at": "2026-04-06T06:04:59Z"
+      "updated_at": "2026-04-06T06:04:59Z",
+      "uid": "019f134d-b2ef-7df6-852f-1b5dda6b6b3d"
     },
     {
       "id": "MTIX-6.1",
@@ -4800,7 +5043,8 @@
       "weight": 1,
       "content_hash": "a68d4b165feb38dbd1bad54e8e9cb2aaba093f5216258ab1b213479ea90558e5",
       "created_at": "2026-04-06T06:04:59Z",
-      "updated_at": "2026-04-06T06:04:59Z"
+      "updated_at": "2026-04-06T06:04:59Z",
+      "uid": "019f134d-b2f0-7032-97f1-578e8289b2f9"
     },
     {
       "id": "MTIX-6.2",
@@ -4824,7 +5068,8 @@
       "weight": 1,
       "content_hash": "690ad3794a2570d266ac7187b8810aa820287061e83db304a830b686472de684",
       "created_at": "2026-04-06T06:04:59Z",
-      "updated_at": "2026-04-06T06:04:59Z"
+      "updated_at": "2026-04-06T06:04:59Z",
+      "uid": "019f134d-b2f0-71b9-a0bc-d6ac9bcb568d"
     },
     {
       "id": "MTIX-7",
@@ -4849,7 +5094,8 @@
       "content_hash": "8f4233e0f22eb1be16ca7f7546cdc8abd38d652082b2b377ee6aa78eb238f557",
       "created_at": "2026-04-07T16:29:42Z",
       "updated_at": "2026-04-07T17:45:54Z",
-      "closed_at": "2026-04-07T17:45:54Z"
+      "closed_at": "2026-04-07T17:45:54Z",
+      "uid": "019f134d-b2f0-734f-8389-2a10af7a54de"
     },
     {
       "id": "MTIX-8",
@@ -4874,7 +5120,8 @@
       "content_hash": "a81e74fbf7b9269970e786522ee914cb5d9f5c040d0e11231ca7a039cabe1fbc",
       "created_at": "2026-04-08T17:59:08Z",
       "updated_at": "2026-04-09T07:03:22Z",
-      "closed_at": "2026-04-09T07:03:22Z"
+      "closed_at": "2026-04-09T07:03:22Z",
+      "uid": "019f134d-b2f0-74e2-9856-bb7c5514ee21"
     },
     {
       "id": "MTIX-9",
@@ -4899,7 +5146,8 @@
       "content_hash": "c3bf2c53bed0edb37cc1e691d033a61d4bb649ae23b1f6f47a4969ede7b58d6e",
       "created_at": "2026-04-11T14:00:05Z",
       "updated_at": "2026-04-13T12:06:38Z",
-      "closed_at": "2026-04-13T12:06:38Z"
+      "closed_at": "2026-04-13T12:06:38Z",
+      "uid": "019f134d-b2f0-768b-a664-5b8fe26c896a"
     },
     {
       "id": "MTIX-9.1",
@@ -4924,7 +5172,8 @@
       "content_hash": "0ef755698f6dde728c76787d782d8aeae9a10460247b06a61c3789b2c075974a",
       "created_at": "2026-04-11T14:00:16Z",
       "updated_at": "2026-04-11T14:50:13Z",
-      "closed_at": "2026-04-11T14:50:13Z"
+      "closed_at": "2026-04-11T14:50:13Z",
+      "uid": "019f134d-b2f0-785c-8d18-403bd0d04808"
     },
     {
       "id": "MTIX-9.2",
@@ -4949,7 +5198,8 @@
       "content_hash": "44121126ee1448c9ce114f3160b246420a4f5d4b8ed5b5198bd26cf013266efd",
       "created_at": "2026-04-11T14:01:45Z",
       "updated_at": "2026-04-12T07:35:42Z",
-      "closed_at": "2026-04-12T07:35:42Z"
+      "closed_at": "2026-04-12T07:35:42Z",
+      "uid": "019f134d-b2f0-7a83-8169-533f66a05453"
     },
     {
       "id": "MTIX-9.3",
@@ -4974,7 +5224,8 @@
       "content_hash": "e74dfd6d195f3c8b6625b056081ab68f4035d1c0345f55b805ceaa107950c4e7",
       "created_at": "2026-04-11T14:01:45Z",
       "updated_at": "2026-04-12T09:18:21Z",
-      "closed_at": "2026-04-12T09:18:21Z"
+      "closed_at": "2026-04-12T09:18:21Z",
+      "uid": "019f134d-b2f0-7c48-b6ee-e3906a450a25"
     },
     {
       "id": "MTIX-9.4",
@@ -4999,7 +5250,8 @@
       "content_hash": "18580f514896ac9f01f3c2c8c943e9446bc1d178bf7ba370312f1c78829ea52a",
       "created_at": "2026-04-11T14:01:45Z",
       "updated_at": "2026-04-12T09:42:04Z",
-      "closed_at": "2026-04-12T09:42:04Z"
+      "closed_at": "2026-04-12T09:42:04Z",
+      "uid": "019f134d-b2f0-7dda-bccf-7146c3e127ff"
     },
     {
       "id": "MTIX-9.5",
@@ -5024,7 +5276,8 @@
       "content_hash": "505718e4cec59bc22090c8955ff40c06c0b91ae327a4a476ef4f2d7b1ae972a9",
       "created_at": "2026-04-11T14:01:57Z",
       "updated_at": "2026-04-13T08:15:40Z",
-      "closed_at": "2026-04-13T08:15:40Z"
+      "closed_at": "2026-04-13T08:15:40Z",
+      "uid": "019f134d-b2f1-7032-ada0-6738c1bf6bd5"
     },
     {
       "id": "MTIX-9.6",
@@ -5048,7 +5301,8 @@
       "weight": 1,
       "content_hash": "bc4c32d850730452cda934c732b00bf377d61fcc0cbbdb26459e9183149ba5a6",
       "created_at": "2026-04-11T14:01:57Z",
-      "updated_at": "2026-04-13T09:42:08Z"
+      "updated_at": "2026-04-13T09:42:08Z",
+      "uid": "019f134d-b2f1-71a9-a66a-ff63b9785d31"
     },
     {
       "id": "MTIX-9.7",
@@ -5073,7 +5327,8 @@
       "content_hash": "8c2a092bd22aec7379f30c7e575c6e58eff213e6fff9fa068aff20fe565446b4",
       "created_at": "2026-04-11T14:01:57Z",
       "updated_at": "2026-04-13T11:43:46Z",
-      "closed_at": "2026-04-13T11:43:46Z"
+      "closed_at": "2026-04-13T11:43:46Z",
+      "uid": "019f134d-b2f1-7347-840f-457bf40a3f60"
     }
   ],
   "dependencies": [
@@ -5394,7 +5649,7 @@
       "agent_id": "claude-wave-v2",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-30.9",
+      "current_node_id": "MTIX-30.11",
       "last_heartbeat": "2026-06-26T17:33:30Z"
     },
     {
@@ -5444,6 +5699,6 @@
       "status": "active"
     }
   ],
-  "node_count": 204,
-  "checksum": "f82ed7db0257f723344c4e52fe0caa5c766c3a78aee8ba339e27be684752214f"
+  "node_count": 206,
+  "checksum": "803a6cb3a4831c4f5cb432f0fa4092b7f03b3b6628cbe3eddb1a1687ee932cc9"
 }

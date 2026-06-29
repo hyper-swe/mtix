@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-29T13:09:15Z",
+  "exported_at": "2026-06-29T13:24:15Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -4235,7 +4235,7 @@
       "priority": 1,
       "labels": "[]",
       "status": "open",
-      "progress": 0.9333333333333333,
+      "progress": 1,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -4363,15 +4363,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-ga",
       "creator": "cli",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "4d2cdb9f689976ab3bdc4b77943e7eec3129d7a953a87766d25f139eee4fec86",
       "created_at": "2026-06-26T10:51:16Z",
-      "updated_at": "2026-06-29T13:08:11Z",
+      "updated_at": "2026-06-29T13:24:15Z",
+      "closed_at": "2026-06-29T13:24:15Z",
       "uid": "019f038e-28a5-75ff-8b5c-d7385bd4d277"
     },
     {
@@ -4684,6 +4685,31 @@
       "created_at": "2026-06-29T12:44:26Z",
       "updated_at": "2026-06-29T12:44:26Z",
       "uid": "019f1368-d875-706d-bd6f-8c50ae9ce6cf"
+    },
+    {
+      "id": "MTIX-33",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 33,
+      "project": "MTIX",
+      "title": "RenumberSubtree LIKE patterns don't escape _ and % (cross-prefix id corruption risk)",
+      "description": "Found by the MTIX-30.13 GA security review (sub-threshold for security, real data-integrity bug). internal/store/sqlite/node_renumber.go builds subtree LIKE patterns as oldID+'.%' / newID+'.%' with ESCAPE '\\\\' but never escapes '_' or '%'. Project prefixes legitimately allow '_' (projectPrefixPattern), and '_' is a single-char LIKE wildcard. So RenumberSubtree / assertTargetNamespaceFree for a node like DEP_ADD-1 could match an unrelated same-length prefix such as DEPXADD-1.5 when both projects share one local store -\u003e cross-prefix id corruption during renumber. Trigger is a coincidence (same-length prefixes differing exactly at the underscore position, one DB) and only via trusted/operator flows (hub renumber, settle, collision-resolve), so it's not a security vuln under the trusted-team model, but it is real. FIX: escape '_' and '%' (and '\\\\') in the id prefix before the LIKE, via a small helper, since ESCAPE '\\\\' is already declared. Add a test with two prefixes differing at an underscore position in one store.",
+      "prompt": "",
+      "acceptance": "RenumberSubtree/assertTargetNamespaceFree escape LIKE metacharacters in the prefix; a regression test with DEP_ADD-1 vs DEPXADD-1.* in one store proves no cross-prefix match; full renumber suite green.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "204c58230f2484b888d454c1be3f585115644460054d2f4172370a11b0f5fff1",
+      "created_at": "2026-06-29T13:16:15Z",
+      "updated_at": "2026-06-29T13:16:15Z",
+      "uid": "019f1385-fc60-78c2-9836-801ccdd8c954"
     },
     {
       "id": "MTIX-4",
@@ -5714,6 +5740,6 @@
       "status": "active"
     }
   ],
-  "node_count": 206,
-  "checksum": "e116b7d9e6bc217c9f526af3937422e8dee9408e37a6f459e2bf044d1fe9acd6"
+  "node_count": 207,
+  "checksum": "2ebf12148a94b1c34ae87a0da104af4d35346506c82543834841fbd6200132be"
 }

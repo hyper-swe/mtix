@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-29T13:08:10Z",
+  "exported_at": "2026-06-29T13:09:15Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -4363,15 +4363,15 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "claude-ga",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "4d2cdb9f689976ab3bdc4b77943e7eec3129d7a953a87766d25f139eee4fec86",
       "created_at": "2026-06-26T10:51:16Z",
-      "updated_at": "2026-06-26T10:51:16Z",
+      "updated_at": "2026-06-29T13:08:11Z",
       "uid": "019f038e-28a5-75ff-8b5c-d7385bd4d277"
     },
     {
@@ -4648,15 +4648,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-readme",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "a99d34d2afb6ed672928e83c33162f5f8980baaff2e7072984a349e4622c7b9d",
       "created_at": "2026-06-29T12:24:57Z",
-      "updated_at": "2026-06-29T12:24:57Z",
+      "updated_at": "2026-06-29T13:09:15Z",
+      "closed_at": "2026-06-29T13:09:15Z",
       "uid": "019f1357-053e-773b-8236-d39edcd573ff"
     },
     {
@@ -5625,6 +5626,13 @@
       "last_heartbeat": "2026-06-10T17:37:31Z"
     },
     {
+      "agent_id": "claude-ga",
+      "project": "MTIX",
+      "state": "working",
+      "current_node_id": "MTIX-30.13",
+      "last_heartbeat": "2026-06-29T13:08:11Z"
+    },
+    {
       "agent_id": "claude-main",
       "project": "MTIX",
       "state": "working",
@@ -5637,6 +5645,13 @@
       "state": "working",
       "current_node_id": "MTIX-15.7.5",
       "last_heartbeat": "2026-04-27T17:37:12Z"
+    },
+    {
+      "agent_id": "claude-readme",
+      "project": "MTIX",
+      "state": "working",
+      "current_node_id": "MTIX-31",
+      "last_heartbeat": "2026-06-29T13:09:15Z"
     },
     {
       "agent_id": "claude-wave-mgit",
@@ -5700,5 +5715,5 @@
     }
   ],
   "node_count": 206,
-  "checksum": "803a6cb3a4831c4f5cb432f0fa4092b7f03b3b6628cbe3eddb1a1687ee932cc9"
+  "checksum": "e116b7d9e6bc217c9f526af3937422e8dee9408e37a6f459e2bf044d1fe9acd6"
 }

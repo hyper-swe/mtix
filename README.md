@@ -229,9 +229,11 @@ model.
 
 ## Companion Projects
 
-### mgit — Surgical rollback for LLM coding agents
+### mgit — Sandboxed version control for autonomous coding agents
 
-[mgit](https://github.com/hyper-swe/mgit) provides task-tagged micro-commits, surgical rollback, and auto-squash for LLM agents. When paired with mtix, agents micro-commit during each task, rollback wrong decisions without losing correct work, and auto-squash on `mtix done`. mtix handles *what to do*; mgit handles *how to safely do it*.
+[mgit](https://github.com/hyper-swe/mgit) gives a coding agent a safe place to work. It runs the agent's untrusted code (dependency installs, builds, tests) in a disposable per-task microVM with default-deny networking. A compromised package is contained to a throwaway VM, never your host. The agent's work is recorded in an isolated, append-only store separate from your git, and only the reviewed, squashed result is landed. You can roll back or fork from any step.
+
+Paired with mtix, the loop is clean. mtix says *what to do* and carries the context. mgit runs it *safely* and records *what was done*, task-tagged from start to finish. Many agents can work different tasks at once, each in its own sandboxed worktree, without stepping on each other.
 
 ```bash
 brew install hyper-swe/tap/mgit

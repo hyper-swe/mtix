@@ -7,9 +7,21 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
+
+// likeEscaper escapes the LIKE metacharacters (\, %, _) so an id prefix
+// matches LITERALLY under `ESCAPE '\'`. Project prefixes may legally contain
+// '_' (a LIKE single-char wildcard); without escaping, a pattern like
+// 'DEP_ADD-1.%' would cross-match an unrelated same-length prefix such as
+// 'DEPXADD-1.2' and corrupt it during a renumber (MTIX-33). Apply this to the
+// id PREFIX only — the trailing ".%" descendant wildcard stays unescaped.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// escapeLIKEPrefix returns s with LIKE metacharacters backslash-escaped.
+func escapeLIKEPrefix(s string) string { return likeEscaper.Replace(s) }
 
 // RenumberSubtree atomically changes node id's trailing sibling number to
 // newSeq and recomputes the display path of the ENTIRE subtree — all
@@ -113,7 +125,7 @@ func assertTargetNamespaceFree(ctx context.Context, tx *sql.Tx, newID string) er
 	var existing string
 	err := tx.QueryRowContext(ctx,
 		`SELECT id FROM nodes WHERE id = ? OR id LIKE ? ESCAPE '\' LIMIT 1`,
-		newID, newID+".%").Scan(&existing)
+		newID, escapeLIKEPrefix(newID)+".%").Scan(&existing)
 	if err == nil {
 		return fmt.Errorf("renumber target %s is already taken by %s: %w",
 			newID, existing, model.ErrAlreadyExists)
@@ -132,7 +144,7 @@ func assertTargetNamespaceFree(ctx context.Context, tx *sql.Tx, newID string) er
 func rewriteSubtreeIDs(ctx context.Context, tx *sql.Tx, oldID, newID string, newSeq int) error {
 	// Descendants: id and parent_id both begin with oldID + "." so substituting
 	// the oldID prefix with newID rewrites both consistently. SUBSTR is 1-based.
-	descLike := oldID + ".%"
+	descLike := escapeLIKEPrefix(oldID) + ".%"
 	prefixLen := len(oldID)
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE nodes
@@ -159,7 +171,7 @@ func rewriteSubtreeIDs(ctx context.Context, tx *sql.Tx, oldID, newID string, new
 // prefix substitution used for the nodes table.
 func rewriteDependencyRefs(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
 	prefixLen := len(oldID)
-	like := oldID + ".%"
+	like := escapeLIKEPrefix(oldID) + ".%"
 	for _, col := range []string{"from_id", "to_id"} {
 		// Column names are package-internal constants, not user input, so the
 		// fmt.Sprintf only interpolates a fixed identifier; all values are

@@ -60,7 +60,7 @@ func TestRunImport_StaleChecksum_RejectedWithoutFlag(t *testing.T) {
 	require.NoError(t, runCreate("import checksum fixture", "", "", 3, "", "", "", "", ""))
 
 	path := writeStaleChecksumExport(t)
-	err := runImport(path, "replace", false, false)
+	err := runImport(path, importFlags{mode: "replace"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "checksum")
 }
@@ -72,7 +72,7 @@ func TestRunImport_RecomputeChecksum_AcceptsReconstructedFile(t *testing.T) {
 	require.NoError(t, runCreate("import recompute fixture", "", "", 3, "", "", "", "", ""))
 
 	path := writeStaleChecksumExport(t)
-	err := runImport(path, "replace", false, true)
+	err := runImport(path, importFlags{mode: "replace", recomputeChecksum: true})
 	require.NoError(t, err)
 }
 

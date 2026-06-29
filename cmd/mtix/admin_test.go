@@ -6,13 +6,18 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/sync/clock"
 )
 
 // ============================================================================
@@ -148,7 +153,7 @@ func TestRunImport_NoStore_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runImport("data.json", "merge", false, false)
+	err := runImport("data.json", importFlags{mode: "merge"})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }
@@ -157,7 +162,7 @@ func TestRunImport_NoStore_ReturnsError(t *testing.T) {
 func TestRunImport_NonexistentFile_ReturnsError(t *testing.T) {
 	initTestApp(t)
 
-	err := runImport("/nonexistent/file.json", "merge", false, false)
+	err := runImport("/nonexistent/file.json", importFlags{mode: "merge"})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "read import file")
 }
@@ -169,7 +174,7 @@ func TestRunImport_InvalidJSON_ReturnsError(t *testing.T) {
 	badFile := filepath.Join(t.TempDir(), "bad.json")
 	require.NoError(t, os.WriteFile(badFile, []byte("{not json}"), 0o644))
 
-	err := runImport(badFile, "merge", false, false)
+	err := runImport(badFile, importFlags{mode: "merge"})
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "parse import file")
 }
@@ -194,7 +199,7 @@ func TestRunImport_ExportThenImport_Roundtrip(t *testing.T) {
 	require.NoError(t, os.WriteFile(exportFile, data, 0o644))
 
 	// Import in merge mode.
-	err = runImport(exportFile, "merge", false, false)
+	err = runImport(exportFile, importFlags{mode: "merge"})
 	assert.NoError(t, err)
 }
 
@@ -214,7 +219,7 @@ func TestRunImport_JSONMode_Succeeds(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(exportFile, data, 0o644))
 
-	err = runImport(exportFile, "merge", false, false)
+	err = runImport(exportFile, importFlags{mode: "merge"})
 	assert.NoError(t, err)
 }
 
@@ -233,7 +238,7 @@ func TestRunImport_ReplaceMode_Succeeds(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(exportFile, data, 0o644))
 
-	err = runImport(exportFile, "replace", false, false)
+	err = runImport(exportFile, importFlags{mode: "replace"})
 	assert.NoError(t, err)
 }
 
@@ -250,4 +255,104 @@ func TestNewImportCmd_HasModeFlag(t *testing.T) {
 	modeFlag := cmd.Flags().Lookup("mode")
 	require.NotNil(t, modeFlag)
 	assert.Equal(t, "merge", modeFlag.DefValue)
+}
+
+// TestNewImportCmd_HasReconcileFlags verifies the ADR-003 §6 reconciliation
+// flags are wired onto the import command.
+func TestNewImportCmd_HasReconcileFlags(t *testing.T) {
+	cmd := newImportCmd()
+	for _, name := range []string{"confirm", "force-rename", "remap-file"} {
+		require.NotNil(t, cmd.Flags().Lookup(name), "missing flag --%s", name)
+	}
+}
+
+// writeProvisionalImportFile builds an export file under prefix TEST containing a
+// settled root and a provisional (uid-bearing) child whose clean number clashes
+// with an existing local child, returning the file path and the child's uid.
+func writeProvisionalImportFile(t *testing.T, provUID string) string {
+	t.Helper()
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	src, err := sqlite.New(filepath.Join(t.TempDir(), "src.db"), slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = src.Close() })
+
+	require.NoError(t, src.CreateNode(ctx, &model.Node{
+		ID: "TEST-1", Project: "TEST", Depth: 0, Seq: 1, Title: "Root",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeEpic, ContentHash: "r1", UID: mustUID(t),
+		CreatedAt: now, UpdatedAt: now,
+	}))
+	provID, err := model.BuildProvisionalID("TEST-1", provUID)
+	require.NoError(t, err)
+	require.NoError(t, src.CreateNode(ctx, &model.Node{
+		ID: provID, ParentID: "TEST-1", Project: "TEST", Depth: 1, Seq: 1,
+		Title: "Provisional child", Status: model.StatusOpen,
+		Priority: model.PriorityMedium, Weight: 1.0, NodeType: model.NodeTypeStory,
+		ContentHash: "p1", UID: provUID, CreatedAt: now, UpdatedAt: now,
+	}))
+
+	data, err := src.Export(ctx, "TEST", "test")
+	require.NoError(t, err)
+	raw, err := json.MarshalIndent(data, "", "  ")
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "import.json")
+	require.NoError(t, os.WriteFile(path, raw, 0o600))
+	return path
+}
+
+func mustUID(t *testing.T) string {
+	t.Helper()
+	uid, err := clock.NewEventID()
+	require.NoError(t, err)
+	return uid
+}
+
+// TestRunImport_LiveStoreWithoutConfirm_Rejected verifies a renumbering import
+// into a non-empty live store is withheld without --confirm (ADR-003 §6).
+func TestRunImport_LiveStoreWithoutConfirm_Rejected(t *testing.T) {
+	initTestApp(t)
+	// Local store already owns TEST-1 and TEST-1.1, so the incoming provisional
+	// child cannot take clean number 1 and must be renumbered.
+	require.NoError(t, runCreate("Local root", "", "epic", 3, "", "", "", "", ""))
+	require.NoError(t, runCreate("Local child", "TEST-1", "", 3, "", "", "", "", ""))
+
+	provUID := mustUID(t)
+	path := writeProvisionalImportFile(t, provUID)
+
+	err := runImport(path, importFlags{mode: "merge"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, sqlite.ErrImportConfirmationRequired)
+
+	// The provisional node must NOT have been applied.
+	_, resErr := app.store.ResolveDisplayPathByUID(t.Context(), provUID)
+	assert.ErrorIs(t, resErr, model.ErrNotFound)
+}
+
+// TestRunImport_ConfirmAppliesAndWritesRemap verifies that --confirm applies the
+// renumber and --remap-file persists the uid-keyed remap (ADR-003 §6).
+func TestRunImport_ConfirmAppliesAndWritesRemap(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, runCreate("Local root", "", "epic", 3, "", "", "", "", ""))
+	require.NoError(t, runCreate("Local child", "TEST-1", "", 3, "", "", "", "", ""))
+
+	provUID := mustUID(t)
+	path := writeProvisionalImportFile(t, provUID)
+	remapPath := filepath.Join(t.TempDir(), "remap.json")
+
+	err := runImport(path, importFlags{mode: "merge", confirm: true, remapFile: remapPath})
+	require.NoError(t, err)
+
+	// Renumbered to the next free clean number and resolvable via uid.
+	resolved, resErr := app.store.ResolveDisplayPathByUID(t.Context(), provUID)
+	require.NoError(t, resErr)
+	assert.Equal(t, "TEST-1.2", resolved)
+
+	// The remap file records uid -> new clean display_path.
+	remapRaw, readErr := os.ReadFile(remapPath)
+	require.NoError(t, readErr)
+	var remap map[string]string
+	require.NoError(t, json.Unmarshal(remapRaw, &remap))
+	assert.Equal(t, "TEST-1.2", remap[provUID])
 }

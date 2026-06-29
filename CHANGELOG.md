@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.4.0] - 2026-06-29
+## [0.4.0-beta] - 2026-06-29
 
 ### Added
 - **Distributed node identity & team sync (MTIX-30, ADR-003):** dot-path IDs now stay clean under concurrent and offline creation. Each node has a stable internal `uid` (its create-event id) so a renumber moves a display number without breaking references; the surface still shows only the dot-path.

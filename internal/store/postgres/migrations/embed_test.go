@@ -26,9 +26,11 @@ func TestMigrations_FilesPresent(t *testing.T) {
 		"008_sync_project_clients.sql",
 		"009_node_registry_index.sql",
 		"010_sync_events_uid.sql",
-		// 011 is reserved for MTIX-30.8 (restore-collision) on another
-		// branch; 012 is MTIX-30.10's Phase 1 renumber-remap ledger.
+		// 011 is MTIX-30.8's restore-collision queue; 012 is MTIX-30.10's
+		// Phase 1 renumber-remap ledger; 013 is MTIX-30.8's hub restore-epoch.
+		"011_sync_node_collisions.sql",
 		"012_node_renumber_remaps.sql",
+		"013_hub_restore_epoch.sql",
 	}
 	require.Equal(t, want, got, "all hub-schema files must be embedded in lex order")
 }

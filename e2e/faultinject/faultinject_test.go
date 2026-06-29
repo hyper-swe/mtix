@@ -485,11 +485,12 @@ func TestDiskFull_SyncBackfill_FailStops(t *testing.T) {
 	if err == nil {
 		t.Fatalf("sync backfill on a full disk must fail-stop, got success:\n%s", out)
 	}
-	// Either the pre-flight floor refuses (exit disk-full) or a genuine ENOSPC
-	// surfaces as a storage error — both are fail-stop, neither is silent.
-	if code := exitCode(err); code != exitDiskFull &&
-		!containsAny(out, "full", "space", "disk", "i/o", "stop", "no space") {
-		t.Fatalf("backfill ENOSPC must surface as a storage fail-stop (exit %d or a storage message); got exit %d:\n%s",
+	// Disk-full on a sync write must honor the NFR-2.8 exit-code contract
+	// (MTIX-32): exit disk-full, same as `mtix create`. (Previously this
+	// accepted exit 1 + a storage message because wrapSyncErr stringified the
+	// error and broke the errors.Is chain; that is fixed.)
+	if code := exitCode(err); code != exitDiskFull {
+		t.Fatalf("backfill ENOSPC must exit %d (NFR-2.8/MTIX-32); got exit %d:\n%s",
 			exitDiskFull, code, out)
 	}
 

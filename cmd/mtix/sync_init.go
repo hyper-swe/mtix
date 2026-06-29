@@ -265,7 +265,19 @@ func wrapSyncErr(stderr io.Writer, stage string, err error) error {
 			stage, redact.DSN(err.Error()))
 		return nil
 	}
-	return fmt.Errorf("mtix sync %s: %s", stage, redact.DSN(err.Error()))
+	msg := fmt.Sprintf("mtix sync %s: %s", stage, redact.DSN(err.Error()))
+	// Preserve the NFR-2.8 exit-code sentinels (MTIX-32) so the CLI exit-code
+	// contract (exitCodeForError) holds for sync writes, not just `mtix create`.
+	// The redaction above already stripped any DSN, and these sentinels carry
+	// none, so wrapping with %w cannot leak credentials.
+	switch {
+	case errors.Is(err, model.ErrDiskFull):
+		return fmt.Errorf("%s: %w", msg, model.ErrDiskFull)
+	case errors.Is(err, model.ErrCorrupted):
+		return fmt.Errorf("%s: %w", msg, model.ErrCorrupted)
+	default:
+		return errors.New(msg)
+	}
 }
 
 // isHookMode reports whether MTIX_SYNC_HOOK=1 is set per FR-18.19.

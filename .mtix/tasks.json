@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-29T14:53:52Z",
+  "exported_at": "2026-06-29T18:44:21Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -4742,6 +4742,32 @@
       "uid": "019f1394-13c5-7785-b0fd-3d4e555de0e4"
     },
     {
+      "id": "MTIX-35",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 35,
+      "project": "MTIX",
+      "title": "Web UI npm audit: HIGH advisories block the release preflight (form-data/esbuild/babel)",
+      "description": "The release preflight 'Run npm audit' (cd web \u0026\u0026 npm audit --audit-level=high) fails on HIGH advisories that landed since v0.3.0-beta: form-data 4.0.0-4.0.5 (CRLF injection, GHSA-hmw2-7cc7-3qxx), esbuild \u003c=0.28.0 (arbitrary file read on Windows dev server, GHSA-g7r4-m6w7-qqqr), @babel/core \u003c=7.29.0 (arbitrary file read via sourceMappingURL, GHSA-4x5r-pxfx-6jf8). All have fixes via npm audit fix. These are dev/build deps of the web UI. Blocks BOTH v0.4.0-beta and v0.4.0 GA. Fix: npm audit fix (no --force if semver-compatible), rebuild + re-embed internal/web/dist, verify web build, re-cut the release.",
+      "prompt": "",
+      "acceptance": "",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-ga",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "73aa3d06bebc123a09138623e595cfb2817766e589a0b78972e15064f480d8e7",
+      "created_at": "2026-06-29T18:40:29Z",
+      "updated_at": "2026-06-29T18:44:21Z",
+      "closed_at": "2026-06-29T18:44:21Z",
+      "uid": "019f14ae-d281-740b-95dd-ad6bfda0b5cc"
+    },
+    {
       "id": "MTIX-4",
       "parent_id": "",
       "depth": 0,
@@ -5685,7 +5711,7 @@
       "agent_id": "claude-ga",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-28",
+      "current_node_id": "MTIX-35",
       "last_heartbeat": "2026-06-29T13:08:11Z"
     },
     {
@@ -5770,6 +5796,6 @@
       "status": "active"
     }
   ],
-  "node_count": 208,
-  "checksum": "71829a18ea1aea6749ff5f858cb6fd809a80dbf3550ef8167ec6eaead91b2897"
+  "node_count": 209,
+  "checksum": "6710f4f679fe0822389abf5d6ffa9c65a32f2e16fea973469f068a8e7d7fe825"
 }

@@ -90,9 +90,16 @@ func runMCP() error {
 	srv := mcp.NewServer(os.Stdin, os.Stdout, logger, version)
 	reg := srv.Registry()
 
-	// Register all MCP tool categories.
-	mcp.RegisterNodeTools(reg, app.nodeSvc, app.store)
-	mcp.RegisterWorkflowTools(reg, app.nodeSvc, app.store, app.bgSvc)
+	// Register all MCP tool categories. Pass the configured primary project so
+	// omitted-project queries/creates default to it (MTIX-37.5, MP-12/13).
+	primary := "PROJ"
+	if app.configSvc != nil {
+		if v, err := app.configSvc.Get("prefix"); err == nil && v != "" {
+			primary = v
+		}
+	}
+	mcp.RegisterNodeTools(reg, app.nodeSvc, app.store, mcp.WithPrimaryProject(primary))
+	mcp.RegisterWorkflowTools(reg, app.nodeSvc, app.store, app.bgSvc, mcp.WithPrimaryProject(primary))
 	mcp.RegisterContextTools(reg, app.ctxSvc, app.promptSvc)
 	mcp.RegisterDepTools(reg, app.store)
 	mcp.RegisterSessionTools(reg, app.sessionSvc, app.agentSvc)

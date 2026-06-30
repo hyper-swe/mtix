@@ -14,7 +14,8 @@ import (
 )
 
 // RegisterWorkflowTools registers workflow MCP tools per MTIX-6.2.2.
-func RegisterWorkflowTools(reg *ToolRegistry, nodeSvc *service.NodeService, st store.Store, bgSvc *service.BackgroundService) {
+func RegisterWorkflowTools(reg *ToolRegistry, nodeSvc *service.NodeService, st store.Store, bgSvc *service.BackgroundService, opts ...ToolOption) {
+	cfg := applyToolOptions(opts)
 	registerClaimTool(reg, st)
 	registerUnclaimTool(reg, st)
 	registerDoneTool(reg, nodeSvc)
@@ -23,7 +24,7 @@ func RegisterWorkflowTools(reg *ToolRegistry, nodeSvc *service.NodeService, st s
 	registerReopenTool(reg, nodeSvc)
 	registerReadyTool(reg, bgSvc)
 	registerBlockedTool(reg, st)
-	registerSearchTool(reg, st)
+	registerSearchTool(reg, st, cfg.primaryProject)
 	registerRerunTool(reg, nodeSvc)
 }
 
@@ -248,7 +249,7 @@ func registerBlockedTool(reg *ToolRegistry, st store.Store) {
 	})
 }
 
-func registerSearchTool(reg *ToolRegistry, st store.Store) {
+func registerSearchTool(reg *ToolRegistry, st store.Store, primaryProject string) {
 	reg.Register(ToolDef{
 		Name:        "mtix_search",
 		Description: "Search nodes with filters",
@@ -258,6 +259,7 @@ func registerSearchTool(reg *ToolRegistry, st store.Store) {
 				"status":   {Type: "string", Description: "Filter by status"},
 				"assignee": {Type: "string", Description: "Filter by assignee"},
 				"under":    {Type: "string", Description: "Filter by subtree"},
+				"project":  {Type: "string", Description: "Scope to a project prefix; omit for the primary project, 'all' to span every project"},
 				"limit":    {Type: "number", Description: "Max results (default 50)"},
 			},
 		},
@@ -266,6 +268,7 @@ func registerSearchTool(reg *ToolRegistry, st store.Store) {
 			Status   string `json:"status"`
 			Assignee string `json:"assignee"`
 			Under    string `json:"under"`
+			Project  string `json:"project"`
 			Limit    int    `json:"limit"`
 		}
 		if args != nil {
@@ -275,7 +278,7 @@ func registerSearchTool(reg *ToolRegistry, st store.Store) {
 			p.Limit = 50
 		}
 
-		filter := store.NodeFilter{}
+		filter := store.NodeFilter{Project: resolveScopeProject(p.Project, primaryProject)}
 		if p.Under != "" {
 			filter.Under = []string{p.Under}
 		}

@@ -189,5 +189,17 @@
       "TestE2E_Collision_ConcurrentCreateUnderSameParent",
       "TestE2E_Collision_NWayConcurrentCreate"
     ]
+  },
+  {
+    "scenario": 19,
+    "title": "Multi-Project Isolation (FR-MULTI-PROJECT MP-3/MP-5/MP-7)",
+    "tests": [
+      "TestMultiProject_AC2_OrphansDefaultPrimaryOnly",
+      "TestMultiProject_AC2_OrphansProjectFlag",
+      "TestMultiProject_AC2_OrphansAllProjects",
+      "TestMultiProject_AC1_CreateRootsInheritAndMismatch",
+      "TestRenumberSubtree_MultiHyphenPrefix_PrefixIntact",
+      "TestRenumberSubtree_MultiHyphenPrefix_NoCrossPrefixMatch"
+    ]
   }
 ]

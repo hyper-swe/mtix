@@ -18,16 +18,17 @@ A complete guide to using mtix for hierarchical task management.
 10. [Annotations and Comments](#annotations-and-comments)
 11. [Agent and Session Management](#agent-and-session-management)
 12. [Search and Queries](#search-and-queries)
-13. [Configuration](#configuration)
-14. [Web UI](#web-ui)
-15. [REST API](#rest-api)
-16. [gRPC API](#grpc-api)
-17. [MCP Tools](#mcp-tools)
-18. [Backup, Export, and Import](#backup-export-and-import)
-19. [Content Integrity](#content-integrity)
-20. [Team collaboration with sync (FR-18)](#team-collaboration-with-sync-fr-18)
-21. [Distributed identity & team sync](#distributed-identity--team-sync)
-22. [Troubleshooting](#troubleshooting)
+13. [Working with multiple projects](#working-with-multiple-projects)
+14. [Configuration](#configuration)
+15. [Web UI](#web-ui)
+16. [REST API](#rest-api)
+17. [gRPC API](#grpc-api)
+18. [MCP Tools](#mcp-tools)
+19. [Backup, Export, and Import](#backup-export-and-import)
+20. [Content Integrity](#content-integrity)
+21. [Team collaboration with sync (FR-18)](#team-collaboration-with-sync-fr-18)
+22. [Distributed identity & team sync](#distributed-identity--team-sync)
+23. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -725,6 +726,137 @@ Project Statistics:
     cancelled:    2
   Overall progress: 43%
 ```
+
+---
+
+## Working with multiple projects
+
+A single mtix database can track more than one **project prefix**. On a large
+effort you might keep your primary `PROJ` tickets next to a `PROJ-DEV-OPS`
+project for house-keeping and ops work — all in the same `.mtix` directory,
+behind the same hub, with no second install. This is opt-in: if you only ever
+use one project, nothing below changes how mtix behaves (see
+[Backward compatibility](#backward-compatibility) at the end of this section).
+
+### The primary project
+
+The `prefix` you set at `mtix init` is your **primary project**. It is the
+default scope for every list-style command and the default project for a new
+root node. Other projects are always addressed explicitly. You never have to
+register a project up front — a project comes into existence the moment you
+create its first root (projects are derived from your data, not a config list).
+
+### Creating a node in another project
+
+`mtix create --project <PREFIX>` files a **root** node into a different project,
+overriding the primary:
+
+```bash
+# A root in the primary project (no flag needed)
+mtix create "Ship the release"
+
+# A root in a second project
+mtix create "Rotate the signing keys" --project PROJ-DEV-OPS
+```
+
+If `--project` names a prefix that does **not** yet exist in the database, the
+CLI confirms before creating it, so a typo cannot silently spawn a junk
+project:
+
+```text
+$ mtix create "Rotate the signing keys" --project PROJ-DEV-OPS
+Create new project PROJ-DEV-OPS? [y/N] y
+○ Created PROJ-DEV-OPS-1: Rotate the signing keys
+```
+
+Pass `--yes` to skip the confirmation (useful in scripts):
+
+```bash
+mtix create "Rotate the signing keys" --project PROJ-DEV-OPS --yes
+```
+
+**Children inherit their parent's project.** When you create a node `--under` a
+parent, it is always filed into the parent's project — you never pass
+`--project` for a child. If you do pass one, it must match the parent's
+project, otherwise the create errors (a node can never live in a different
+project than its parent):
+
+```bash
+# Inherits PROJ-DEV-OPS from the parent — no --project needed
+mtix create "Generate the new keypair" --under PROJ-DEV-OPS-1
+
+# Errors: a child cannot be filed into a different project than its parent
+mtix create "Wrong" --under PROJ-DEV-OPS-1 --project PROJ
+```
+
+### Scoping list-style commands
+
+The list-style commands — `list`, `search`, `query`, `orphans`, `blocked`,
+`ready`, `stale` — default to the **primary** project. Two flags change the
+scope:
+
+- `--project <PREFIX>` — show only that project.
+- `--all-projects` — span every project in the database.
+
+```bash
+# Default: only the primary project
+mtix list
+
+# Only the ops project
+mtix list --project PROJ-DEV-OPS
+
+# Every project at once
+mtix list --all-projects
+
+# Same flags work on the other list-style commands
+mtix ready --project PROJ-DEV-OPS
+mtix orphans --all-projects
+```
+
+`--project` and `--all-projects` are mutually exclusive. ID-addressed commands
+(`show <id>`, `tree <id>`) need no scope flag — the ID already carries its
+project, including multi-hyphen prefixes like `PROJ-DEV-OPS-1.2`.
+
+### Listing the projects in a database
+
+`mtix projects` lists every project present, with its node count, and marks the
+primary with a `*`:
+
+```bash
+mtix projects
+```
+
+```text
+PROJECT          NODES   PRIMARY
+PROJ                42   *
+PROJ-DEV-OPS         7
+```
+
+Add `--json` for a machine-readable list (`prefix`, `count`, `is_primary`).
+
+### Sync carries every project in the database
+
+Sync is **project-agnostic by design**: `mtix sync push`, `pull`, and `clone`
+carry **all** projects in your local database to and from the hub — there is no
+per-project sync flag or cursor. One database maps to one hub, and that hub
+holds every project in the database. A teammate who clones the hub reconstructs
+*all* of those projects, not just the primary.
+
+This is intentional (FR-MULTI-PROJECT MP-20): the hub is already namespaced per
+project internally (each project has its own number registry, version gate, and
+settlement), so carrying several projects over one connection is free, while
+per-project routing would add coordination with no benefit for the single-team,
+single-hub model mtix targets. If you genuinely need two projects to live on
+different hubs, give them two separate `.mtix` databases. See
+[docs/SYNC-DESIGN.md §6.4](docs/SYNC-DESIGN.md) for the design rationale.
+
+### Backward compatibility
+
+If your database holds a single project, mtix behaves exactly as it always has:
+the primary is the default everywhere, no command requires `--project`, no
+confirmation prompt ever appears, and `mtix projects` simply lists the one
+project. Every multi-project affordance is opt-in and only matters once a second
+project exists or you pass `--project` / `--all-projects`.
 
 ---
 

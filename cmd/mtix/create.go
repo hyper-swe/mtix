@@ -190,21 +190,24 @@ func resolveCreateProject(ctx context.Context, under, projectFlag string, yes bo
 	}
 
 	// ROOT: --project overrides the configured primary.
+	primary := "PROJ"
+	if app.configSvc != nil {
+		if v, err := app.configSvc.Get("prefix"); err == nil && v != "" {
+			primary = v
+		}
+	}
 	project := projectFlag
 	if project == "" {
-		project = "PROJ"
-		if app.configSvc != nil {
-			if v, err := app.configSvc.Get("prefix"); err == nil {
-				project = v
-			}
-		}
+		project = primary
 	}
 	if err := model.ValidatePrefix(project); err != nil {
 		return "", err
 	}
 
-	// MP-6 guardrail: confirm an unknown project unless --yes.
-	if !yes {
+	// MP-6 guardrail: confirm an unknown NON-primary project unless --yes. The
+	// configured primary is always a known project (MTIX-40: it must not prompt
+	// on a fresh repo where it has no nodes yet).
+	if !yes && project != primary {
 		known, err := projectExists(ctx, project)
 		if err != nil {
 			return "", err

@@ -225,29 +225,20 @@ func TestMultiProject_AC7_SingleProjectNoFlagsNoPrompts(t *testing.T) {
 	assert.True(t, payload.Projects[0].IsPrimary)
 }
 
-// TestMultiProject_AC7_PrimaryFirstCreate_PromptIsKnownEdge pins the CURRENT
-// behavior of the new-project guardrail on a brand-new EMPTY database: the
-// configured primary is not yet present in the (empty) project set, so the very
-// first default `mtix create` triggers the "Create new project <PRIMARY>?"
-// confirmation. Pre-feature there was no such prompt, so this is a backward-
-// compat deviation for the empty-DB first-create only (every later create, and
-// any populated single-project DB, is prompt-free — see the test above).
-//
-// This test pins reality rather than asserting it is desirable; the configured
-// primary arguably should be exempt from the guardrail. Tracked as MTIX-40.
-// Once fixed, flip this assertion to require.NoError on the first create.
+// TestMultiProject_AC7_PrimaryFirstCreate_PromptIsKnownEdge is the REGRESSION
+// GUARD for MTIX-40: the configured primary is always treated as a known project
+// by the new-project guardrail, so the very first default `mtix create` on a
+// brand-new EMPTY database creates the primary root WITHOUT a "Create new
+// project?" prompt — identical to pre-feature behavior (AC-7). The guardrail
+// still fires only for a genuinely new, non-primary prefix.
 func TestMultiProject_AC7_PrimaryFirstCreate_PromptIsKnownEdge(t *testing.T) {
 	initTestApp(t)
 
-	// Empty DB, default command (no --project, yes=false), reader answers "n".
+	// Empty DB, default command (no --project, yes=false). Even with "n" queued,
+	// the primary is exempt from the guardrail, so the create succeeds unprompted.
 	withCreateInput(t, "n\n")
-	err := runCreateWithProject("first", "", "", 3, "", "", "", "", "", "", false)
-	require.Error(t, err, "current behavior: first create on an empty DB prompts for the primary")
-	assert.Contains(t, err.Error(), "TEST")
-
-	// With --yes the guardrail is skipped and the create succeeds — the
-	// non-interactive escape hatch is unaffected.
-	require.NoError(t, runCreateWithProject("first", "", "", 3, "", "", "", "", "", "", true))
+	require.NoError(t, runCreateWithProject("first", "", "", 3, "", "", "", "", "", "", false),
+		"MTIX-40 fixed: the primary first-create on an empty DB must not prompt")
 	_, getErr := app.nodeSvc.GetNode(context.Background(), "TEST-1")
 	require.NoError(t, getErr)
 }

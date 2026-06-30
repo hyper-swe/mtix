@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-06-29T18:44:21Z",
+  "exported_at": "2026-06-30T06:15:35Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -4768,6 +4768,32 @@
       "uid": "019f14ae-d281-740b-95dd-ad6bfda0b5cc"
     },
     {
+      "id": "MTIX-36",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 36,
+      "project": "MTIX",
+      "title": "release.yml Homebrew dispatch missing 'project' field (tap update fails)",
+      "description": "mtix release.yml 'Trigger Homebrew tap update' sends client_payload {tag} only. hyper-swe/homebrew-tap update-formula.yml became project-aware 2026-06-26 and requires client_payload.project (mtix|mgit); empty -\u003e 'Validate inputs' fails (unknown project ''), formula not bumped. v0.3.0-beta predates it; v0.4.0-beta first to hit it (tap run 28398231619 failed). FIX: add project:mtix to client_payload. Immediate: workflow_dispatch the tap update-formula with project=mtix,tag.",
+      "prompt": "",
+      "acceptance": "",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-ga",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "736b18dc813e4105f44202347149841dcbc69b006a2b28e1cd77256a314acf55",
+      "created_at": "2026-06-30T06:15:02Z",
+      "updated_at": "2026-06-30T06:15:35Z",
+      "closed_at": "2026-06-30T06:15:35Z",
+      "uid": "019f172a-b387-7cd5-bbcb-bf2b9431de7a"
+    },
+    {
       "id": "MTIX-4",
       "parent_id": "",
       "depth": 0,
@@ -5711,7 +5737,7 @@
       "agent_id": "claude-ga",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-35",
+      "current_node_id": "MTIX-36",
       "last_heartbeat": "2026-06-29T13:08:11Z"
     },
     {
@@ -5796,6 +5822,6 @@
       "status": "active"
     }
   ],
-  "node_count": 209,
-  "checksum": "6710f4f679fe0822389abf5d6ffa9c65a32f2e16fea973469f068a8e7d7fe825"
+  "node_count": 210,
+  "checksum": "013a4bddf1dc772b68d4e80e3db04342d98f4e25b34fbc24bfbf0105c3649027"
 }

@@ -221,22 +221,21 @@ func sanitizeAuthorID(author string) string {
 	return authorIDFallback
 }
 
-// projectPrefixFromNodeID extracts the prefix from a dot-notation node ID.
-// "MTIX-1.2.3" -> "MTIX". Returns "" if the ID does not match the
-// expected shape; callers fall back to the explicit ProjectCode.
+// projectPrefixFromNodeID extracts the prefix from a dot-notation node ID via
+// the canonical model.ParseIDProject (split at the LAST dash before the first
+// dot), so a multi-hyphen prefix is preserved: "MTIX-DEV-OPS-1.2" ->
+// "MTIX-DEV-OPS" (MTIX-39 — cutting at the first dash corrupted the hub
+// project_prefix). Returns "" if the ID does not match the expected shape;
+// callers fall back to the explicit ProjectCode.
 //
-// Allowed prefix chars: uppercase A-Z, digits, underscore. Matches
+// Allowed prefix chars: uppercase A-Z, digits, underscore, dash. Matches
 // model.projectPrefixPattern; kept in sync via the unit tests.
 func projectPrefixFromNodeID(nodeID string) string {
-	idx := strings.IndexByte(nodeID, '-')
-	if idx <= 0 {
-		return ""
-	}
-	prefix := nodeID[:idx]
+	prefix := model.ParseIDProject(nodeID)
 	for _, r := range prefix {
 		isUpper := r >= 'A' && r <= 'Z'
 		isDigit := r >= '0' && r <= '9'
-		if !isUpper && !isDigit && r != '_' {
+		if !isUpper && !isDigit && r != '_' && r != '-' {
 			return ""
 		}
 	}

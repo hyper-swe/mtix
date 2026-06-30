@@ -77,7 +77,7 @@ func TestSyncEvent_Validate_RejectsEachField(t *testing.T) {
 		{"unknown sync_status", func(e *model.SyncEvent) { e.SyncStatus = "stuck" }, "sync_status"},
 		{"empty node_id", func(e *model.SyncEvent) { e.NodeID = "" }, "node_id required"},
 		{"lowercase project_prefix", func(e *model.SyncEvent) { e.ProjectPrefix = "mtix" }, "project_prefix"},
-		{"too long project_prefix", func(e *model.SyncEvent) { e.ProjectPrefix = "ABCDEFGHIJKLMNOPQ" }, "project_prefix"},
+		{"too long project_prefix", func(e *model.SyncEvent) { e.ProjectPrefix = "ABCDEFGHIJKLMNOPQRSTU" }, "project_prefix"},
 		{"empty project_prefix", func(e *model.SyncEvent) { e.ProjectPrefix = "" }, "project_prefix"},
 		{"uppercase author_id", func(e *model.SyncEvent) { e.AuthorID = "Alice" }, "author_id"},
 		{"too long author_id", func(e *model.SyncEvent) {
@@ -136,6 +136,13 @@ func TestSyncEvent_Validate_AcceptsUnderscoreInProjectPrefix(t *testing.T) {
 	e.ProjectPrefix = "DEP_ADD"
 	require.NoError(t, e.Validate(),
 		"underscore in project_prefix is valid (existing mtix convention)")
+}
+
+func TestSyncEvent_Validate_AcceptsDashInProjectPrefix(t *testing.T) {
+	e := validEvent()
+	e.ProjectPrefix = "MTIX-DEV-OPS"
+	require.NoError(t, e.Validate(),
+		"multi-segment dash prefix is valid (FR-2.1a grammar; MTIX-39)")
 }
 
 func TestSyncEvent_JSONOmitsEmptyOptionals(t *testing.T) {

@@ -91,30 +91,21 @@ func TestMultiProject_AC5_SyncCarriesAllProjects(t *testing.T) {
 	assert.Equal(t, "TEST", primaryRoot.Project)
 }
 
-// TestMultiProject_AC5_MultiHyphenProjectColumn_Bug is a CHARACTERIZATION test
-// that pins a real, currently-shipping defect uncovered by AC-5 against a live
-// hub: the local sync emitter derives an event's project_prefix from the node
-// id by cutting at the FIRST dash (internal/store/sqlite/sync_emit.go
-// projectPrefixFromNodeID), so a multi-hyphen project like MTIX-DEV-OPS emits
-// its events under project_prefix "MTIX". After a clone the reconstructed
-// node's project column is therefore "MTIX", not "MTIX-DEV-OPS" — and the hub
-// namespaces that project's registry/version-gate/settlement under the wrong
-// prefix, violating the FR-2.1a "last dash before the first dot" prefix rule
-// and FR-MULTI-PROJECT MP-21.
-//
-// This contradicts AC-4/AC-5 ("multi-hyphen prefix round-trips, converges").
-// The renumber path is correct (it uses the stored project column — see
-// internal/store/sqlite TestRenumberSubtree_MultiHyphenPrefix_*); only the sync
-// emit path mis-parses. Production code is out of scope for MTIX-37.7, so the
-// defect is PINNED here and tracked as MTIX-39. When fixed, both assertions
-// flip to "MTIX-DEV-OPS" and this test becomes the regression guard.
+// TestMultiProject_AC5_MultiHyphenProjectColumn_Bug is the REGRESSION GUARD for
+// MTIX-39: the local sync emitter derives an event's project_prefix via
+// model.ParseIDProject (last dash before the first dot), so a multi-hyphen
+// project like MTIX-DEV-OPS round-trips through push+clone with its project
+// column intact (FR-2.1a / FR-MULTI-PROJECT MP-21). It previously cut at the
+// FIRST dash, corrupting the column to "MTIX"; this test pinned that defect and
+// now asserts the fixed behavior. The renumber path was always correct (it uses
+// the stored project column — see TestRenumberSubtree_MultiHyphenPrefix_*).
 func TestMultiProject_AC5_MultiHyphenProjectColumn_Bug(t *testing.T) {
 	_, ctx := seedTwoProjectsAndPushThenWipe(t)
 
 	opsRoot, err := app.store.GetNode(ctx, "MTIX-DEV-OPS-1")
 	require.NoError(t, err)
-	assert.Equal(t, "MTIX", opsRoot.Project,
-		"KNOWN BUG (MTIX-39): multi-hyphen project column corrupted to first segment on sync; flip to MTIX-DEV-OPS when projectPrefixFromNodeID is fixed")
+	assert.Equal(t, "MTIX-DEV-OPS", opsRoot.Project,
+		"MTIX-39 fixed: the multi-hyphen project column survives a sync round-trip")
 
 	projects, err := app.store.DistinctProjects(ctx)
 	require.NoError(t, err)
@@ -122,9 +113,9 @@ func TestMultiProject_AC5_MultiHyphenProjectColumn_Bug(t *testing.T) {
 	for _, p := range projects {
 		seen[p.Prefix] = p.Count
 	}
-	assert.Equal(t, 2, seen["MTIX"],
-		"KNOWN BUG: ops root+child land under the wrong 'MTIX' project after clone")
-	assert.Equal(t, 0, seen[mpSecondProject],
-		"KNOWN BUG: the true MTIX-DEV-OPS prefix is absent after sync round-trip")
+	assert.Equal(t, 0, seen["MTIX"],
+		"MTIX-39 fixed: no spurious 'MTIX' project from a mis-derived prefix")
+	assert.Equal(t, 2, seen[mpSecondProject],
+		"MTIX-39 fixed: the MTIX-DEV-OPS root+child land under the correct prefix")
 	assert.Equal(t, 1, seen["TEST"], "the single-hyphen primary is unaffected")
 }

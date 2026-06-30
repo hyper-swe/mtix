@@ -37,13 +37,17 @@ func BuildID(project, parentID string, seq int) string {
 }
 
 // ParseIDProject extracts the project prefix from a dot-notation ID.
-// E.g., 'PROJ-42.1.3' → 'PROJ'
+// E.g., 'PROJ-42.1.3' → 'PROJ', 'MY-PROJECT-42.1' → 'MY-PROJECT'. A prefix may
+// itself contain dashes, so split at the LAST dash before the first dot
+// (mirrors splitID); cutting at the first dash mis-derived multi-hyphen
+// prefixes (MTIX-39).
 func ParseIDProject(id string) string {
-	dashIdx := strings.Index(id, "-")
-	if dashIdx < 0 {
+	head, _, _ := strings.Cut(id, ".")
+	dashIdx := strings.LastIndex(head, "-")
+	if dashIdx <= 0 {
 		return ""
 	}
-	return id[:dashIdx]
+	return head[:dashIdx]
 }
 
 // ParseIDParent extracts the parent ID from a dot-notation ID.

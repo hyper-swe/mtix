@@ -42,6 +42,8 @@ func newListCmd() *cobra.Command {
 		maxFieldChars int
 		showEmpty     bool
 		limit         int
+		project       string
+		allProjects   bool
 	)
 
 	cmd := &cobra.Command{
@@ -49,7 +51,7 @@ func newListCmd() *cobra.Command {
 		Short: "List nodes with filters",
 		Aliases: []string{"ls"},
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runList(status, under, assignee, nodeType, priority, fields, outputFormat, maxFieldChars, showEmpty, limit)
+			return runList(status, under, assignee, nodeType, priority, fields, outputFormat, maxFieldChars, showEmpty, limit, project, allProjects)
 		},
 	}
 
@@ -63,6 +65,7 @@ func newListCmd() *cobra.Command {
 	cmd.Flags().IntVar(&maxFieldChars, "max-field-chars", 0, "Truncate field values (briefing format)")
 	cmd.Flags().BoolVar(&showEmpty, "show-empty", false, "Include empty fields (briefing format)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum results")
+	addProjectScopeFlags(cmd, &project, &allProjects)
 
 	return cmd
 }
@@ -131,7 +134,7 @@ func runShow(id string) error {
 // Filter values are comma-separated strings parsed via splitCSV per FR-17.1.
 // The fields parameter restricts output to the specified fields per FR-17.3.
 // The outputFormat parameter selects "briefing" format per FR-17.4.
-func runList(status, under, assignee, nodeType, priority, fields, outputFormat string, maxFieldChars int, showEmpty bool, limit int) error {
+func runList(status, under, assignee, nodeType, priority, fields, outputFormat string, maxFieldChars int, showEmpty bool, limit int, project string, allProjects bool) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -141,12 +144,18 @@ func runList(status, under, assignee, nodeType, priority, fields, outputFormat s
 		return fmt.Errorf("invalid --priority value: %w: %w", err, model.ErrInvalidInput)
 	}
 
+	scope, err := resolveProjectScope(project, allProjects)
+	if err != nil {
+		return err
+	}
+
 	ctx := context.Background()
 	filter := store.NodeFilter{
 		Under:    splitCSV(under),
 		Assignee: splitCSV(assignee),
 		NodeType: splitCSV(nodeType),
 		Priority: priorities,
+		Project:  scope,
 	}
 	for _, s := range splitCSV(status) {
 		filter.Status = append(filter.Status, model.Status(s))

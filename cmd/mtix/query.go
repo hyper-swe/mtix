@@ -14,24 +14,62 @@ import (
 	"github.com/hyper-swe/mtix/internal/store"
 )
 
+// addProjectScopeFlags registers the shared multi-project scope flags on a
+// list-style command per FR-MULTI-PROJECT MP-7: --project scopes to one
+// project, --all-projects spans all. With neither, the command defaults to
+// the primary project (see resolveProjectScope).
+func addProjectScopeFlags(cmd *cobra.Command, project *string, allProjects *bool) {
+	cmd.Flags().StringVar(project, "project", "", "Scope to a single project prefix (default: primary)")
+	cmd.Flags().BoolVar(allProjects, "all-projects", false, "Span all projects")
+}
+
+// resolveProjectScope maps the --project/--all-projects flags to a
+// store.NodeFilter.Project value per FR-MULTI-PROJECT MP-7. The store treats
+// an empty Project as "all projects"; the policy of defaulting a scope-less
+// query to the primary project lives here in the CLI, not in the store:
+//   - --all-projects        -> "" (span all)
+//   - --project X           -> X
+//   - neither flag          -> the primary project (config "prefix")
+//
+// The two flags are mutually exclusive.
+func resolveProjectScope(project string, allProjects bool) (string, error) {
+	if allProjects && project != "" {
+		return "", fmt.Errorf("--project and --all-projects are mutually exclusive: %w", model.ErrInvalidInput)
+	}
+	if allProjects {
+		return "", nil
+	}
+	if project != "" {
+		return project, nil
+	}
+	// Neither flag: default to the primary project. When config is unavailable
+	// (e.g. an uninitialized project), fall back to spanning all.
+	if app.configSvc == nil {
+		return "", nil
+	}
+	return app.configSvc.Get("prefix")
+}
+
 // newSearchCmd creates the mtix search command per FR-6.3 / FR-17.1.
 // All filter flags accept comma-separated multiple values.
 func newSearchCmd() *cobra.Command {
 	var (
-		status   string
-		assignee string
-		nodeType string
-		under    string
-		priority string
-		fields   string
-		limit    int
+		status      string
+		assignee    string
+		nodeType    string
+		under       string
+		priority    string
+		fields      string
+		limit       int
+		project     string
+		allProjects bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "search",
 		Short: "Search nodes with advanced filters",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runSearch(status, assignee, nodeType, under, priority, fields, limit)
+			return runSearch(status, assignee, nodeType, under, priority, fields, limit, project, allProjects)
 		},
 	}
 
@@ -42,11 +80,12 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&priority, "priority", "", "Filter by priority (comma-separated, 1-5)")
 	cmd.Flags().StringVar(&fields, "fields", "", "Restrict JSON output to these fields (comma-separated)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum results")
+	addProjectScopeFlags(cmd, &project, &allProjects)
 
 	return cmd
 }
 
-func runSearch(status, assignee, nodeType, under, priority, fields string, limit int) error {
+func runSearch(status, assignee, nodeType, under, priority, fields string, limit int, project string, allProjects bool) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -56,11 +95,17 @@ func runSearch(status, assignee, nodeType, under, priority, fields string, limit
 		return fmt.Errorf("invalid --priority value: %w: %w", err, model.ErrInvalidInput)
 	}
 
+	scope, err := resolveProjectScope(project, allProjects)
+	if err != nil {
+		return err
+	}
+
 	filter := store.NodeFilter{
 		Assignee: splitCSV(assignee),
 		NodeType: splitCSV(nodeType),
 		Under:    splitCSV(under),
 		Priority: priorities,
+		Project:  scope,
 	}
 	for _, s := range splitCSV(status) {
 		filter.Status = append(filter.Status, model.Status(s))
@@ -77,18 +122,29 @@ func runSearch(status, assignee, nodeType, under, priority, fields string, limit
 
 // newReadyCmd creates the mtix ready command per FR-6.3.
 func newReadyCmd() *cobra.Command {
-	return &cobra.Command{
+	var (
+		project     string
+		allProjects bool
+	)
+	cmd := &cobra.Command{
 		Use:   "ready",
 		Short: "List nodes ready for work (unblocked, unassigned)",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runReady()
+			return runReady(project, allProjects)
 		},
 	}
+	addProjectScopeFlags(cmd, &project, &allProjects)
+	return cmd
 }
 
-func runReady() error {
+func runReady(project string, allProjects bool) error {
 	if app.bgSvc == nil {
 		return fmt.Errorf("not in an mtix project")
+	}
+
+	scope, err := resolveProjectScope(project, allProjects)
+	if err != nil {
+		return err
 	}
 
 	ctx := context.Background()
@@ -97,27 +153,56 @@ func runReady() error {
 		return err
 	}
 
+	// GetReadyNodes spans all projects; scope the result in the CLI per MP-7.
+	nodes = filterNodesByProject(nodes, scope)
 	return printNodeList(nodes, len(nodes), nil)
+}
+
+// filterNodesByProject keeps only nodes in the given project. An empty scope
+// means "all projects" and returns the input unchanged (FR-MULTI-PROJECT MP-7).
+func filterNodesByProject(nodes []*model.Node, scope string) []*model.Node {
+	if scope == "" {
+		return nodes
+	}
+	filtered := make([]*model.Node, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Project == scope {
+			filtered = append(filtered, n)
+		}
+	}
+	return filtered
 }
 
 // newBlockedCmd creates the mtix blocked command per FR-6.3.
 func newBlockedCmd() *cobra.Command {
-	return &cobra.Command{
+	var (
+		project     string
+		allProjects bool
+	)
+	cmd := &cobra.Command{
 		Use:   "blocked",
 		Short: "List nodes blocked by dependencies",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runBlocked()
+			return runBlocked(project, allProjects)
 		},
 	}
+	addProjectScopeFlags(cmd, &project, &allProjects)
+	return cmd
 }
 
-func runBlocked() error {
+func runBlocked(project string, allProjects bool) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
 
+	scope, err := resolveProjectScope(project, allProjects)
+	if err != nil {
+		return err
+	}
+
 	filter := store.NodeFilter{
-		Status: []model.Status{model.StatusBlocked},
+		Status:  []model.Status{model.StatusBlocked},
+		Project: scope,
 	}
 
 	ctx := context.Background()
@@ -131,18 +216,31 @@ func runBlocked() error {
 
 // newStaleCmd creates the mtix stale command per FR-6.3.
 func newStaleCmd() *cobra.Command {
-	return &cobra.Command{
+	var (
+		project     string
+		allProjects bool
+	)
+	cmd := &cobra.Command{
 		Use:   "stale",
 		Short: "List nodes with stale agent assignments",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runStale()
+			return runStale(project, allProjects)
 		},
 	}
+	addProjectScopeFlags(cmd, &project, &allProjects)
+	return cmd
 }
 
-func runStale() error {
+func runStale(project string, allProjects bool) error {
 	if app.agentSvc == nil || app.configSvc == nil {
 		return fmt.Errorf("not in an mtix project")
+	}
+
+	// Validate the scope flags for symmetry with the other list-style commands
+	// (MP-7). Agent heartbeat staleness is project-agnostic — an agent is not
+	// tied to a project — so the resolved scope does not filter the agent list.
+	if _, err := resolveProjectScope(project, allProjects); err != nil {
+		return err
 	}
 
 	threshold := app.configSvc.AgentStaleThreshold()
@@ -171,22 +269,33 @@ func runStale() error {
 
 // newOrphansCmd creates the mtix orphans command per FR-6.3.
 func newOrphansCmd() *cobra.Command {
-	return &cobra.Command{
+	var (
+		project     string
+		allProjects bool
+	)
+	cmd := &cobra.Command{
 		Use:   "orphans",
 		Short: "List root-level nodes (no parent)",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runOrphans()
+			return runOrphans(project, allProjects)
 		},
 	}
+	addProjectScopeFlags(cmd, &project, &allProjects)
+	return cmd
 }
 
-func runOrphans() error {
+func runOrphans(project string, allProjects bool) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
 
+	scope, err := resolveProjectScope(project, allProjects)
+	if err != nil {
+		return err
+	}
+
 	// Root nodes have no parent — list with empty under filter.
-	filter := store.NodeFilter{}
+	filter := store.NodeFilter{Project: scope}
 	ctx := context.Background()
 	nodes, total, err := app.store.ListNodes(ctx, filter, store.ListOptions{Limit: 100})
 	if err != nil {

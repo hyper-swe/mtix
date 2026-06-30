@@ -40,9 +40,12 @@ describe("Layout", () => {
     expect(screen.getAllByText("Disconnected").length).toBeGreaterThan(0);
   });
 
-  it("renders top bar with project selector", () => {
+  it("renders top bar with the mtix logo and project scope slot", () => {
     render(<App />);
-    expect(screen.getByText("Select Project")).toBeInTheDocument();
+    // The legacy "Select Project" placeholder is gone — replaced by the
+    // ProjectSelector, which is unobtrusive (no chrome) until >1 project loads.
+    expect(screen.getByText("mtix")).toBeInTheDocument();
+    expect(screen.queryByText("Select Project")).not.toBeInTheDocument();
   });
 
   it("renders top bar with search trigger", () => {

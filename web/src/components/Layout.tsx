@@ -6,6 +6,7 @@ import { Breadcrumb } from "./Breadcrumb";
 import { CommandPalette } from "./CommandPalette";
 import { CreateNodeModal } from "./CreateNodeModal";
 import { useNavigation } from "../contexts/NavigationContext";
+import { useProjectOptional } from "../contexts/ProjectContext";
 import { useNodeStore } from "../hooks/useNodeStore";
 
 /** Minimum sidebar width in pixels. */
@@ -60,12 +61,16 @@ export function Layout() {
   const isResizing = useRef(false);
 
   const { selectNode } = useNavigation();
+  const project = useProjectOptional();
+  const scope = project?.activeScope;
   const nodeStore = useNodeStore();
 
-  // Load root nodes on mount.
+  // Load root nodes on mount and whenever the active project scope changes
+  // (MP-16). The scope threads into the tree via the /orphans project param.
   useEffect(() => {
-    nodeStore.loadRoots();
-  }, []);
+    nodeStore.loadRoots(scope);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
 
   // Track viewport size for mobile breakpoint.
   useEffect(() => {
@@ -170,10 +175,10 @@ export function Layout() {
 
   const handleNodeCreated = useCallback(
     (node: { id: string; title: string }) => {
-      nodeStore.loadRoots();
+      nodeStore.loadRoots(scope);
       selectNode(node.id);
     },
-    [nodeStore, selectNode],
+    [nodeStore, selectNode, scope],
   );
 
   return (

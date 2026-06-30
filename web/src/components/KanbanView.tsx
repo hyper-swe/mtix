@@ -7,7 +7,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../api";
 import { useWebSocket } from "../contexts/WebSocketContext";
+import { useProjectOptional } from "../contexts/ProjectContext";
 import { NodeDetailView } from "./NodeDetailView";
+import { NodeID } from "./NodeID";
 import type { useNodeStore } from "../hooks/useNodeStore";
 import type { Node, Status } from "../types/node";
 
@@ -63,19 +65,20 @@ export function KanbanView({ nodeStore }: KanbanViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const boardRef = useRef<HTMLDivElement>(null);
   const { subscribe } = useWebSocket();
+  const scope = useProjectOptional()?.activeScope;
 
   const loadNodes = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const result = await api.listNodes({ limit: 500 });
+      const result = await api.listNodes({ limit: 500, project: scope });
       setNodes(result.nodes ?? []);
     } catch {
       setError("Failed to load board data");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [scope]);
 
   useEffect(() => {
     loadNodes();
@@ -223,12 +226,11 @@ export function KanbanView({ nodeStore }: KanbanViewProps) {
               borderBottom: "1px solid var(--color-border)",
             }}
           >
-            <span
+            <NodeID
+              id={selectedId}
               className="text-xs font-mono"
               style={{ color: "var(--color-text-secondary)" }}
-            >
-              {selectedId}
-            </span>
+            />
             <button
               className="p-1 rounded cursor-pointer"
               style={{ color: "var(--color-text-tertiary)" }}
@@ -376,12 +378,11 @@ function KanbanCard({
     >
       {/* ID and priority row */}
       <div className="flex items-center justify-between mb-1">
-        <span
+        <NodeID
+          id={node.id}
           className="text-[11px] font-mono"
           style={{ color: "var(--color-text-tertiary)" }}
-        >
-          {node.id}
-        </span>
+        />
         <span
           className="w-2 h-2 rounded-full shrink-0"
           style={{ backgroundColor: PRIORITY_COLORS[node.priority] ?? PRIORITY_COLORS[3] }}

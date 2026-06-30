@@ -22,6 +22,7 @@ import { PromptEditor } from "./PromptEditor";
 import { ChildrenList } from "./ChildrenList";
 import { ContextChain } from "./ContextChain";
 import { ActivityStream } from "./ActivityStream";
+import { NodeID } from "./NodeID";
 import { PriorityLabel } from "../types/node";
 
 /** Available tabs in the detail panel. */
@@ -164,13 +165,12 @@ export function NodeDetail({
         style={{ borderColor: "var(--color-border)" }}
       >
         {/* Node ID */}
-        <span
+        <NodeID
+          id={node.id}
+          testId="node-id"
           className="text-xs font-mono"
           style={{ color: "var(--color-text-secondary)" }}
-          data-testid="node-id"
-        >
-          {node.id}
-        </span>
+        />
 
         {/* Title — inline editable */}
         <div className="mt-1">

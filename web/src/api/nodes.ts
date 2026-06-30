@@ -14,6 +14,31 @@ export interface ListOptions {
   under?: string;
   limit?: number;
   offset?: number;
+  /**
+   * Project scope per FR-MULTI-PROJECT (MP-9). A prefix scopes to one
+   * project; "all" spans every project; omitted defaults to the primary.
+   */
+  project?: string;
+}
+
+/** A project in the database per FR-MULTI-PROJECT (MP-10). */
+export interface Project {
+  prefix: string;
+  count: number;
+  isPrimary: boolean;
+}
+
+/**
+ * Append the project scope to a params object when it is meaningful.
+ * Omits an empty/undefined scope so the server applies its primary default.
+ */
+function applyProject(params: URLSearchParams, project?: string): void {
+  if (project) params.set("project", project);
+}
+
+/** List the distinct projects in the DB via GET /projects (MP-10). */
+export function getProjects(): Promise<Project[]> {
+  return get<Project[]>("/projects");
 }
 
 /** Get a node by ID. */
@@ -29,6 +54,7 @@ export function listNodes(options?: ListOptions): Promise<{ nodes: Node[]; total
   if (options?.under) params.set("under", options.under);
   if (options?.limit) params.set("limit", String(options.limit));
   if (options?.offset) params.set("offset", String(options.offset));
+  applyProject(params, options?.project);
 
   const qs = params.toString();
   return get<{ nodes: Node[]; total: number; has_more: boolean }>(`/search${qs ? `?${qs}` : ""}`);
@@ -42,8 +68,12 @@ export function getChildren(parentId: string): Promise<Node[]> {
 }
 
 /** Get root-level nodes via GET /orphans. */
-export function getRootNodes(limit = 200): Promise<{ nodes: Node[]; total: number }> {
+export function getRootNodes(
+  limit = 200,
+  project?: string,
+): Promise<{ nodes: Node[]; total: number }> {
   const params = new URLSearchParams({ limit: String(limit) });
+  applyProject(params, project);
   return get<{ nodes: Node[]; total: number }>(`/orphans?${params.toString()}`);
 }
 
@@ -70,13 +100,14 @@ export function deleteNode(id: string): Promise<void> {
 /** Search nodes via GET /search with filters. */
 export function searchNodes(
   query: string,
-  options?: { limit?: number; offset?: number },
+  options?: { limit?: number; offset?: number; project?: string },
 ): Promise<Node[]> {
   // Use the search endpoint with under filter for prefix matching.
   const params = new URLSearchParams();
   if (query) params.set("under", query);
   if (options?.limit) params.set("limit", String(options.limit));
   if (options?.offset) params.set("offset", String(options.offset));
+  applyProject(params, options?.project);
   return get<{ nodes: Node[] }>(`/search?${params.toString()}`).then((r) => r.nodes ?? []);
 }
 
@@ -94,11 +125,24 @@ export function getTree(
 }
 
 /** Get aggregate stats. */
-export function getStats(scopeId?: string): Promise<Stats> {
+export function getStats(scopeId?: string, project?: string): Promise<Stats> {
   const params = new URLSearchParams();
   if (scopeId) params.set("scope", scopeId);
+  applyProject(params, project);
   const qs = params.toString();
   return get<Stats>(`/stats${qs ? `?${qs}` : ""}`);
+}
+
+/** Get aggregate stats scoped to a project, returning the dashboard shape. */
+export function getDashboardStats(
+  project?: string,
+): Promise<{ total: number; counts: Record<string, number> }> {
+  const params = new URLSearchParams();
+  applyProject(params, project);
+  const qs = params.toString();
+  return get<{ total: number; counts: Record<string, number> }>(
+    `/stats${qs ? `?${qs}` : ""}`,
+  );
 }
 
 /** Get context for a node via GET /context/:id. */
@@ -200,9 +244,11 @@ export function getDependencies(
 /** Get stale entries via GET /stale. Returns stale agent IDs. */
 export function getStaleEntries(
   hours?: number,
+  project?: string,
 ): Promise<{ agents: string[]; total: number }> {
   const params = new URLSearchParams();
   if (hours) params.set("hours", String(hours));
+  applyProject(params, project);
   const qs = params.toString();
   return get<{ agents: string[]; total: number }>(`/stale${qs ? `?${qs}` : ""}`);
 }

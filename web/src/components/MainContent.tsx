@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useNavigation } from "../contexts/NavigationContext";
+import { useProjectOptional } from "../contexts/ProjectContext";
 import { NodeDetailView } from "./NodeDetailView";
 import { NodeListView } from "./NodeListView";
 import { DashboardView } from "./DashboardView";
@@ -49,14 +50,15 @@ export function MainContent({ nodeStore }: MainContentProps) {
 function StaleView(_props: { onNavigate: (nodeId: string) => void }) {
   const [staleAgents, setStaleAgents] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const scope = useProjectOptional()?.activeScope;
 
   useEffect(() => {
     setLoading(true);
-    api.getStaleEntries()
+    api.getStaleEntries(undefined, scope)
       .then((data) => setStaleAgents(data.agents ?? []))
       .catch(() => setStaleAgents([]))
       .finally(() => setLoading(false));
-  }, []);
+  }, [scope]);
 
   return (
     <div className="p-6" data-testid="stale-view">
@@ -125,12 +127,13 @@ function StaleView(_props: { onNavigate: (nodeId: string) => void }) {
 function AgentsView({ onNavigate }: { onNavigate: (nodeId: string) => void }) {
   const [agents, setAgents] = useState<{ id: string; node_id: string; node_title: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const scope = useProjectOptional()?.activeScope;
 
   const loadAgents = useCallback(async () => {
     setLoading(true);
     try {
       // Fetch in_progress nodes to show active agent work.
-      const result = await api.listNodes({ status: "in_progress", limit: 50 });
+      const result = await api.listNodes({ status: "in_progress", limit: 50, project: scope });
       const nodes = result.nodes ?? [];
       const agentMap = new Map<string, { id: string; node_id: string; node_title: string }>();
       for (const node of nodes) {
@@ -148,7 +151,7 @@ function AgentsView({ onNavigate }: { onNavigate: (nodeId: string) => void }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [scope]);
 
   useEffect(() => {
     loadAgents();

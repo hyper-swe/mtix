@@ -43,6 +43,7 @@ func (s *Server) registerWorkflowRoutes(rg *gin.RouterGroup) {
 // registerQueryRoutes mounts query and search endpoints per FR-7.2.
 func (s *Server) registerQueryRoutes(rg *gin.RouterGroup) {
 	rg.GET("/search", s.searchNodes)
+	rg.GET("/projects", s.listProjects)
 	rg.GET("/ready", s.readyNodes)
 	rg.GET("/blocked", s.blockedNodes)
 	rg.GET("/stale", s.staleNodes)

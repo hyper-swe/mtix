@@ -50,6 +50,7 @@ func (s *Server) searchNodes(c *gin.Context) {
 		Under:    csvQueryParam(c, "under"),
 		Assignee: csvQueryParam(c, "assignee"),
 		NodeType: csvQueryParam(c, "type"),
+		Project:  s.resolveProjectScope(c),
 	}
 	for _, st := range csvQueryParam(c, "status") {
 		filter.Status = append(filter.Status, model.Status(st))
@@ -96,7 +97,10 @@ func (s *Server) blockedNodes(c *gin.Context) {
 	limit := clampLimit(parseIntParam(c, "limit", 50))
 	offset := parseIntParam(c, "offset", 0)
 
-	filter := store.NodeFilter{Status: []model.Status{model.StatusBlocked}}
+	filter := store.NodeFilter{
+		Status:  []model.Status{model.StatusBlocked},
+		Project: s.resolveProjectScope(c),
+	}
 	nodes, total, err := s.store.ListNodes(c.Request.Context(), filter, store.ListOptions{
 		Limit:  limit,
 		Offset: offset,
@@ -116,7 +120,9 @@ func (s *Server) blockedNodes(c *gin.Context) {
 }
 
 // staleNodes handles GET /api/v1/stale per FR-7.2.
-// Supports ?hours=N to override the default stale threshold.
+// Supports ?hours=N to override the default stale threshold. The ?project
+// param is accepted for API consistency (FR-MULTI-PROJECT MP-9), but stale
+// agents are global rather than project-scoped, so it does not narrow results.
 func (s *Server) staleNodes(c *gin.Context) {
 	threshold := s.configSvc.AgentStaleThreshold()
 	if hours := c.Query("hours"); hours != "" {
@@ -143,7 +149,9 @@ func (s *Server) orphanNodes(c *gin.Context) {
 	offset := parseIntParam(c, "offset", 0)
 
 	// Fetch all nodes to ensure we find every root regardless of child count.
-	nodes, _, err := s.store.ListNodes(c.Request.Context(), store.NodeFilter{}, store.ListOptions{
+	nodes, _, err := s.store.ListNodes(c.Request.Context(), store.NodeFilter{
+		Project: s.resolveProjectScope(c),
+	}, store.ListOptions{
 		Limit:  100000,
 		Offset: 0,
 	})
@@ -188,11 +196,13 @@ func (s *Server) projectStats(c *gin.Context) {
 		model.StatusBlocked, model.StatusDeferred, model.StatusCancelled,
 	}
 
+	project := s.resolveProjectScope(c)
 	counts := make(map[string]int)
 	totalNodes := 0
 	for _, st := range statuses {
 		_, count, err := s.store.ListNodes(c.Request.Context(), store.NodeFilter{
-			Status: []model.Status{st},
+			Status:  []model.Status{st},
+			Project: project,
 		}, store.ListOptions{Limit: 0})
 		if err != nil {
 			HandleError(c, err)

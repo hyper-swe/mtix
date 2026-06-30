@@ -386,7 +386,7 @@ func TestAPI_ListNodes_WithFilters(t *testing.T) {
 	createTestNode(t, s, "Filter Test 2", "TEST")
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?status=open&limit=10", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?status=open&limit=10&project=all", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -604,7 +604,7 @@ func TestAPI_Pagination_HasMore(t *testing.T) {
 
 	// Request with limit=2.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?limit=2&offset=0", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?limit=2&offset=0&project=all", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)

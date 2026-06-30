@@ -107,6 +107,9 @@ func (m *dbMockStore) UndeleteNode(_ context.Context, _ string) error           
 func (m *dbMockStore) ListNodes(_ context.Context, _ store.NodeFilter, _ store.ListOptions) ([]*model.Node, int, error) {
 	return nil, 0, nil
 }
+func (m *dbMockStore) DistinctProjects(_ context.Context) ([]store.ProjectInfo, error) {
+	return nil, nil
+}
 func (m *dbMockStore) SearchNodes(_ context.Context, _ string, _ store.NodeFilter, _ store.ListOptions) ([]*model.Node, int, error) {
 	return nil, 0, nil
 }

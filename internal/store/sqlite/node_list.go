@@ -108,6 +108,13 @@ func buildFilterClausesWithPrefix(filter store.NodeFilter, prefix string) ([]str
 			fmt.Sprintf("%s%s IN (%s)", prefix, col, strings.Join(placeholders, ",")))
 	}
 
+	// Project filter (FR-MULTI-PROJECT MP-3): restrict to one project prefix.
+	// Empty means no filter — results span all projects (current behavior).
+	if filter.Project != "" {
+		clauses = append(clauses, fmt.Sprintf("%sproject = ?", prefix))
+		args = append(args, filter.Project)
+	}
+
 	// Status filter: IN clause with parameterized placeholders.
 	addInClause("status", len(filter.Status), func(i int) any { return string(filter.Status[i]) })
 

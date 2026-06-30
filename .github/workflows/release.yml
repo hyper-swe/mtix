@@ -257,4 +257,4 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${{ secrets.HOMEBREW_TAP_TOKEN }}" \
             https://api.github.com/repos/hyper-swe/homebrew-tap/dispatches \
-            -d '{"event_type":"release-published","client_payload":{"tag":"${{ github.ref_name }}"}}'
+            -d '{"event_type":"release-published","client_payload":{"project":"mtix","tag":"${{ github.ref_name }}"}}'

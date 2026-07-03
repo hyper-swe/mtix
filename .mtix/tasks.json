@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-03T17:56:17Z",
+  "exported_at": "2026-07-03T19:54:57Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5308,6 +5308,56 @@
       "uid": "019f291f-cda0-76fd-a6f7-803fc83026dc"
     },
     {
+      "id": "MTIX-45",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 45,
+      "project": "MTIX",
+      "title": "Sync-apply link_dep/unlink_dep skip blocked recompute (MTIX-44 robustness)",
+      "description": "applyLinkDep/applyUnlinkDep (internal/store/sqlite/sync_apply.go ~708/726) do bare INSERT/DELETE of the dependency row without the block recompute the local AddDependency(autoBlockNode)/RemoveDependency(autoUnblockNode) run — a blocker added/removed via sync leaves the dependent's blocked status stale (same class as the transition_status gap fixed under MTIX-44). Also audit every dispatchApply handler for other missing derived-state recomputes. Being fixed by a background agent on mgit (worktree off fix/MTIX-44, task MTIX-4501); integrates into the MTIX-44 robust fix.",
+      "prompt": "",
+      "acceptance": "link_dep auto-blocks the dependent; unlink_dep auto-unblocks (last blocker); all dispatchApply handlers audited + gaps closed; sqlite build/test/lint green.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "f26b888c3746d769c25ae940a95c57378a496de0d1f6a97c3292ba3bedca0dff",
+      "created_at": "2026-07-03T19:45:11Z",
+      "updated_at": "2026-07-03T19:45:11Z",
+      "uid": "019f2983-7f6d-7cf0-973b-f68b810c82ca"
+    },
+    {
+      "id": "MTIX-46",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 46,
+      "project": "MTIX",
+      "title": "Sync-apply skips content_hash maintenance (stale/NULL hash on synced content edits)",
+      "description": "Found during the MTIX-44 sync_apply audit. applyUpdateField/applySetAcceptance/applySetPrompt (internal/store/sqlite/sync_apply.go) skip the content_hash recompute that local UpdateNode runs, so a content edit synced into a replica leaves a stale content_hash (byte-divergent from the emitting replica). Related: applyCreateNode omits content_hash entirely (synced-created nodes get NULL hash) — so the apply path already treats content_hash as apply-derived/non-replicated. content_hash is NOT consumed by sync LWW/convergence, only by import-merge (FR-7.8) and export, so this is not a convergence bug, but it is an inconsistency. DECISION NEEDED: either maintain content_hash consistently across apply (backfill on create + recompute on content updates) OR explicitly document it as apply-derived and recompute lazily on export/import. Contained to internal/store/sqlite/.",
+      "prompt": "",
+      "acceptance": "content_hash is either consistently maintained by the apply path (create + content updates) with a test proving a synced content edit yields the same hash as the emitter, OR documented as apply-derived with export/import recomputing it; decision recorded.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "b070a54d661705e3ae60f1ba27e943c3ffb410e4155a2502d65414c5b63e37fc",
+      "created_at": "2026-07-03T19:54:57Z",
+      "updated_at": "2026-07-03T19:54:57Z",
+      "uid": "019f298c-6ede-71d4-a249-5e984d6cde53"
+    },
+    {
       "id": "MTIX-5",
       "parent_id": "",
       "depth": 0,
@@ -6206,6 +6256,6 @@
       "status": "active"
     }
   ],
-  "node_count": 225,
-  "checksum": "ab280bf68d8903067fabdfa3f75eca9cf4a676fc1252b2267e11eb18881acc78"
+  "node_count": 227,
+  "checksum": "4b4cbc6669c9709cc6158de1e0c43754c78e6e539da6011ebecbe4aee583ab62"
 }

@@ -6,6 +6,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -165,6 +166,14 @@ func autoBlockNode(ctx context.Context, tx *sql.Tx, nodeID string) error {
 		`SELECT status FROM nodes WHERE id = ? AND deleted_at IS NULL`,
 		nodeID,
 	).Scan(&currentStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Dependent is missing or soft-deleted. Local callers always have a
+		// live node, but the sync-apply path can auto-block a dependent
+		// whose create_node has not yet applied (causal order) or that was
+		// soft-deleted concurrently. No live row to block — treat as a no-op
+		// rather than wedging the apply batch.
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("read status for auto-block: %w", err)
 	}
@@ -198,6 +207,13 @@ func autoUnblockNode(ctx context.Context, tx *sql.Tx, nodeID string) error {
 		 WHERE id = ? AND deleted_at IS NULL`,
 		nodeID,
 	).Scan(&currentStatus, &previousStatus)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Dependent is missing or soft-deleted (see autoBlockNode). No live
+		// row to restore — no-op rather than failing the caller. This also
+		// hardens the local unblockDependents walk against a soft-deleted
+		// dependent left behind in the dependencies table.
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("read status for auto-unblock: %w", err)
 	}

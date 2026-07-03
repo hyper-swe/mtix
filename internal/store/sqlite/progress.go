@@ -6,6 +6,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -64,6 +65,15 @@ func recalculateProgress(ctx context.Context, tx *sql.Tx, nodeID string) error {
 		`SELECT parent_id FROM nodes WHERE id = ?`,
 		nodeID,
 	).Scan(&parentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// The node itself does not exist yet. This never happens on the
+		// local paths (the node is always live), but the sync-apply path
+		// can recompute a parent whose create_node has not yet applied
+		// (causal order, HAZARD (c)). Treat as "no rollup target" rather
+		// than an error so a single out-of-order event cannot wedge the
+		// whole apply batch.
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("get parent of %s: %w", nodeID, err)
 	}

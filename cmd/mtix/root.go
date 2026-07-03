@@ -107,6 +107,7 @@ prompt chain propagation, and multi-agent orchestration.`,
 		newDeferCmd(),
 		newCancelCmd(),
 		newReopenCmd(),
+		newUnblockCmd(),
 		newDecomposeCmd(),
 		newCommentCmd(),
 		newDepCmd(),
@@ -323,7 +324,7 @@ func withAutoExport(fn func(cmd *cobra.Command, args []string) error) func(cmd *
 func isMutationCommand(cmdName string) bool {
 	switch cmdName {
 	case "create", "update", "done", "cancel", "decompose", "reopen",
-		"delete", "undelete", "claim", "unclaim", "defer", "rerun",
+		"unblock", "delete", "undelete", "claim", "unclaim", "defer", "rerun",
 		"restore", "import", "prompt", "annotate", "resolve-annotation",
 		"comment", "dep", "micro", "gc", "register":
 		return true

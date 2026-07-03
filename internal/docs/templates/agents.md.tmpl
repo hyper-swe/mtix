@@ -66,6 +66,20 @@ You never generate, store, or reason about the internal token mechanics — you 
 
 You never fix either of these by hand; the system converges on its own.
 
+## Blocked status is auto-managed — trust it, don't fight it
+
+`blocked` is a **system-managed** state, not one you set. mtix auto-blocks a node
+when a `blocks` dependency is added, and **auto-restores** it to its previous
+status (`open`/`in_progress`) the moment its last blocker resolves.
+
+- Do **not** try to transition a node `blocked → done`, and do **not** claim a
+  blocked node — both are (correctly) disallowed. Resolve the blockers instead;
+  the node clears itself.
+- The status column **is** reliable. If a node is stuck `blocked` even though
+  `mtix deps <id>` shows every blocker resolved, that is a recompute glitch, not
+  "unreliable status" — run **`mtix unblock <id>`** to force the re-derivation.
+  It never overrides a genuine block (a no-op if a real blocker remains).
+
 ## Parent Selection — Read Before You Nest
 
 Before nesting a new ticket under an existing node, call `mtix_context` on the candidate parent and read its description, prompt, and acceptance criteria — *not* just the title. Pattern-matching on a parent's title is the canonical parent-selection failure: a parent titled "LLM agent integration" may actually be scoped to *packaging the agent kit for release*, not to *the substance of agent guidance*. Nest only when the new work substantively fits the parent's scope.

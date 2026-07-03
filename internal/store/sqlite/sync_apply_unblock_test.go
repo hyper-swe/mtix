@@ -78,3 +78,54 @@ func TestApplyTransitionStatus_ResolvingBlocker_AutoUnblocksDependents(t *testin
 	require.NotEqual(t, model.StatusBlocked, b2.Status,
 		"MTIX-44: a sync-applied blocker resolution must auto-unblock its dependents")
 }
+
+// TestRefreshBlocked_RecoversStickyBlockedNode: the manual escape hatch clears a
+// node left sticky-blocked (its blocker resolved without a recompute).
+func TestRefreshBlocked_RecoversStickyBlockedNode(t *testing.T) {
+	s, err := New(t.TempDir(), slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateNode(ctx, mkUnblockRoot("PROJ-1", "PROJ", "Blocker", now)))
+	require.NoError(t, s.CreateNode(ctx, mkUnblockRoot("PROJ-2", "PROJ", "Dependent", now)))
+	require.NoError(t, s.AddDependency(ctx, &model.Dependency{
+		FromID: "PROJ-1", ToID: "PROJ-2", DepType: model.DepTypeBlocks, CreatedAt: now, CreatedBy: "pm",
+	}))
+
+	// Simulate the pre-fix drift: resolve the blocker's status directly,
+	// bypassing the auto-unblock, so PROJ-2 is left sticky-blocked.
+	require.NoError(t, s.WithTx(ctx, func(tx *sql.Tx) error {
+		_, e := tx.ExecContext(ctx, `UPDATE nodes SET status = 'done' WHERE id = 'PROJ-1'`)
+		return e
+	}))
+	stuck, err := s.GetNode(ctx, "PROJ-2")
+	require.NoError(t, err)
+	require.Equal(t, model.StatusBlocked, stuck.Status, "precondition: PROJ-2 sticky-blocked")
+
+	require.NoError(t, s.RefreshBlocked(ctx, "PROJ-2"))
+	got, err := s.GetNode(ctx, "PROJ-2")
+	require.NoError(t, err)
+	require.NotEqual(t, model.StatusBlocked, got.Status, "RefreshBlocked must clear a resolved sticky block")
+}
+
+// TestRefreshBlocked_NoopWhenBlockerUnresolved: it never overrides a genuine block.
+func TestRefreshBlocked_NoopWhenBlockerUnresolved(t *testing.T) {
+	s, err := New(t.TempDir(), slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	require.NoError(t, s.CreateNode(ctx, mkUnblockRoot("PROJ-1", "PROJ", "Blocker", now)))
+	require.NoError(t, s.CreateNode(ctx, mkUnblockRoot("PROJ-2", "PROJ", "Dependent", now)))
+	require.NoError(t, s.AddDependency(ctx, &model.Dependency{
+		FromID: "PROJ-1", ToID: "PROJ-2", DepType: model.DepTypeBlocks, CreatedAt: now, CreatedBy: "pm",
+	}))
+	// PROJ-1 is still open (unresolved). RefreshBlocked must leave PROJ-2 blocked.
+	require.NoError(t, s.RefreshBlocked(ctx, "PROJ-2"))
+	got, err := s.GetNode(ctx, "PROJ-2")
+	require.NoError(t, err)
+	require.Equal(t, model.StatusBlocked, got.Status, "RefreshBlocked must not override a genuine block")
+}

@@ -575,11 +575,29 @@ func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) 
 	if p.To.IsTerminal() {
 		closedAt = sql.NullString{String: now, Valid: true}
 	}
-	_, err = tx.ExecContext(ctx,
+	if _, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET status = ?, closed_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
 		string(p.To), closedAt, now, id,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	// MTIX-44: mirror the local transition path's derived-state recompute
+	// (transition.go). A sync-applied resolution updates only its own status;
+	// without this, a blocker resolved on another client and synced in leaves
+	// local dependents sticky-blocked and parent progress stale. Runs in the
+	// same tx so the applied status and the recompute are atomic.
+	if parentID := model.ParseIDParent(id); parentID != "" {
+		if err := recalculateProgress(ctx, tx, parentID); err != nil {
+			return fmt.Errorf("apply transition_status %s: recalc progress: %w", e.EventID, err)
+		}
+	}
+	if isResolvingStatus(p.To) {
+		if err := unblockDependents(ctx, tx, id, e.AuthorID); err != nil {
+			return fmt.Errorf("apply transition_status %s: auto-unblock dependents: %w", e.EventID, err)
+		}
+	}
+	return nil
 }
 
 func applyClaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {

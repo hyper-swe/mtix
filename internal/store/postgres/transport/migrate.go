@@ -6,6 +6,7 @@ package transport
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/hyper-swe/mtix/internal/store/postgres/migrations"
 )
@@ -50,20 +51,42 @@ func (p *Pool) Migrate(ctx context.Context) error {
 		_ = tx.Rollback(ctx) // no-op after Commit; releases the advisory lock on error
 	}()
 
+	// Migration is a known long-running, single-flight operation: a waiter can
+	// legitimately block on the advisory lock while another node runs the full
+	// schema migration, and over cloud network latency that easily exceeds the
+	// default per-statement timeout the pool applies to normal ops (MTIX-48).
+	// Disable statement_timeout for THIS transaction only (SET LOCAL reverts at
+	// commit/rollback, leaving the pooled connection's default intact); the
+	// caller's context deadline still bounds the whole operation, since pgx
+	// cancels on ctx regardless of statement_timeout.
+	if _, err := tx.Exec(ctx, `SET LOCAL statement_timeout = 0`); err != nil {
+		return fmt.Errorf("migrate: relax statement_timeout: %w", err)
+	}
+
 	if _, err := tx.Exec(ctx,
 		`SELECT pg_advisory_xact_lock(hashtext($1))`, AdvisoryLockKey,
 	); err != nil {
 		return fmt.Errorf("migrate: acquire advisory lock: %w", err)
 	}
 
+	// Apply all migration files in a SINGLE round-trip. Every file is
+	// idempotent (IF NOT EXISTS), so re-running the whole set is always correct
+	// — even after an out-of-band schema change, where a version table would
+	// desync and silently skip recreating a dropped object. Collapsing ~13
+	// round-trips into one keeps a re-run fast, which is what lets concurrent
+	// callers that serialize on the single-flight lock finish within a sane
+	// deadline over cloud network latency (MTIX-48).
+	var combined strings.Builder
 	for _, name := range files {
 		body, err := migrations.Read(name)
 		if err != nil {
 			return fmt.Errorf("migrate: read %s: %w", name, err)
 		}
-		if _, err := tx.Exec(ctx, body); err != nil {
-			return fmt.Errorf("migrate: exec %s: %w", name, err)
-		}
+		combined.WriteString(body)
+		combined.WriteString("\n;\n")
+	}
+	if _, err := tx.Exec(ctx, combined.String()); err != nil {
+		return fmt.Errorf("migrate: apply schema: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {

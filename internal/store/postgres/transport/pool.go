@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -104,11 +105,22 @@ func NewWithDefaults(ctx context.Context, dsn string, opts Options, defs PoolDef
 	cfg.MaxConnLifetime = defs.ConnLifetime
 	cfg.HealthCheckPeriod = defs.HealthCheckPeriod
 	if defs.StatementTimeout > 0 {
-		if cfg.ConnConfig.RuntimeParams == nil {
-			cfg.ConnConfig.RuntimeParams = map[string]string{}
+		// Apply statement_timeout via SET after connect, NOT as a startup
+		// RuntimeParam. Managed Postgres proxies/poolers (Neon, Supabase)
+		// silently drop unknown startup parameters, so the RuntimeParam
+		// no-ops and the query cap is never enforced on cloud (Neon returns
+		// "0", Supabase its own default). A SET is ordinary SQL the proxy
+		// passes through — verified against Neon (direct + pooler) and the
+		// Supabase session pooler. Runs on every new pooled connection. The
+		// value is an integer we control, so the formatted SQL carries no
+		// injection surface.
+		stmtTimeoutMS := defs.StatementTimeout.Milliseconds()
+		cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+			if _, execErr := conn.Exec(ctx, fmt.Sprintf("SET statement_timeout = %d", stmtTimeoutMS)); execErr != nil {
+				return fmt.Errorf("apply statement_timeout: %w", execErr)
+			}
+			return nil
 		}
-		cfg.ConnConfig.RuntimeParams["statement_timeout"] =
-			fmt.Sprintf("%d", defs.StatementTimeout.Milliseconds())
 	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)

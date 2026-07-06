@@ -275,6 +275,12 @@ The system automatically manages these transitions:
 - **Unblocking:** When all blockers are resolved, the node returns to its previous state (`open` or `in_progress`)
 - **Invalidation:** When a parent's prompt changes, descendants move to `invalidated`
 
+`blocked` is system-managed: you cannot set or clear it directly, and
+`blocked → done` (or claiming a blocked node) is disallowed by design — resolve
+the blockers instead. If a node is stuck `blocked` even though its blockers are
+resolved, run `mtix unblock <id>` to re-derive its status from the current
+blockers (a no-op if a genuine blocker remains).
+
 ---
 
 ## Workflow Commands

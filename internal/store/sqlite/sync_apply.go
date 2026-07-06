@@ -453,6 +453,19 @@ func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error 
 	if err != nil {
 		return fmt.Errorf("apply create_node %s: insert node %s: %w", e.EventID, e.NodeID, err)
 	}
+
+	// MTIX-44: mirror the local CreateNode parent-progress rollup
+	// (node_create.go, FR-5.7). A new leaf enters at progress 0.0 / weight
+	// 1.0, which lowers the parent's weighted average; without recomputing,
+	// a child created on another client and synced in leaves the local
+	// parent's progress stale (and divergent from the emitting replica).
+	// recalculateProgress tolerates a parent whose own create_node has not
+	// yet applied (causal order).
+	if p.ParentID != "" {
+		if err := recalculateProgress(ctx, tx, p.ParentID); err != nil {
+			return fmt.Errorf("apply create_node %s: recalc progress: %w", e.EventID, err)
+		}
+	}
 	return nil
 }
 
@@ -575,11 +588,29 @@ func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) 
 	if p.To.IsTerminal() {
 		closedAt = sql.NullString{String: now, Valid: true}
 	}
-	_, err = tx.ExecContext(ctx,
+	if _, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET status = ?, closed_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
 		string(p.To), closedAt, now, id,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	// MTIX-44: mirror the local transition path's derived-state recompute
+	// (transition.go). A sync-applied resolution updates only its own status;
+	// without this, a blocker resolved on another client and synced in leaves
+	// local dependents sticky-blocked and parent progress stale. Runs in the
+	// same tx so the applied status and the recompute are atomic.
+	if parentID := model.ParseIDParent(id); parentID != "" {
+		if err := recalculateProgress(ctx, tx, parentID); err != nil {
+			return fmt.Errorf("apply transition_status %s: recalc progress: %w", e.EventID, err)
+		}
+	}
+	if isResolvingStatus(p.To) {
+		if err := unblockDependents(ctx, tx, id, e.AuthorID); err != nil {
+			return fmt.Errorf("apply transition_status %s: auto-unblock dependents: %w", e.EventID, err)
+		}
+	}
+	return nil
 }
 
 func applyClaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
@@ -697,12 +728,27 @@ func applyLinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	// survives a renumber of the from-node (ADR-003 §3). The dependencies
 	// FK to nodes(id) is satisfied by the resolved current display path.
 	fromID := fromIDForDepEdge(ctx, tx, e)
-	_, err := tx.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO dependencies (from_id, to_id, dep_type, created_at, created_by)
 		 VALUES (?, ?, ?, ?, ?)`,
 		fromID, p.DependsOnNodeID, p.DepType, now, e.AuthorID,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	// MTIX-44: mirror the local AddDependency derived-state recompute
+	// (dependency.go). A synced `blocks` edge must auto-block its dependent,
+	// exactly as the local path does via autoBlockNode; without this a
+	// dependency created on another client and synced in leaves the local
+	// dependent un-blocked. The dependent is the edge's to_id — i.e.
+	// p.DependsOnNodeID, which AddDependency passes to autoBlockNode as
+	// dep.ToID (LinkDepPayload.DependsOnNodeID is set from dep.ToID at emit).
+	if p.DepType == string(model.DepTypeBlocks) {
+		if err := autoBlockNode(ctx, tx, p.DependsOnNodeID); err != nil {
+			return fmt.Errorf("apply link_dep %s: auto-block %s: %w", e.EventID, p.DependsOnNodeID, err)
+		}
+	}
+	return nil
 }
 
 func applyUnlinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
@@ -715,11 +761,25 @@ func applyUnlinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 		depType = string(model.DepTypeBlocks)
 	}
 	fromID := fromIDForDepEdge(ctx, tx, e)
-	_, err := tx.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM dependencies WHERE from_id = ? AND to_id = ? AND dep_type = ?`,
 		fromID, p.DependsOnNodeID, depType,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	// MTIX-44: mirror the local RemoveDependency derived-state recompute
+	// (dependency.go). Removing a `blocks` edge must auto-unblock the
+	// dependent when it was its last unresolved blocker, exactly as the local
+	// path does via autoUnblockNode. The dependent is the removed edge's
+	// to_id (p.DependsOnNodeID); autoUnblockNode re-counts remaining blockers,
+	// so it is a safe no-op when others remain.
+	if depType == string(model.DepTypeBlocks) {
+		if err := autoUnblockNode(ctx, tx, p.DependsOnNodeID); err != nil {
+			return fmt.Errorf("apply unlink_dep %s: auto-unblock %s: %w", e.EventID, p.DependsOnNodeID, err)
+		}
+	}
+	return nil
 }
 
 // fromIDForDepEdge resolves the source node of a dependency edge through
@@ -752,12 +812,27 @@ func applyDelete(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = tx.ExecContext(ctx,
+	if _, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET deleted_at = ?, deleted_by = ?, updated_at = ?
 		 WHERE id = ? AND deleted_at IS NULL`,
 		now, e.AuthorID, now, id,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+
+	// MTIX-44: mirror the local DeleteNode parent-progress rollup
+	// (node_delete.go, FR-5.7). A deleted child is excluded from the parent's
+	// denominator, so the parent's progress must be recomputed; without this
+	// a delete synced in from another client leaves the local parent's
+	// progress stale and divergent. Uses the resolved (current) id so a
+	// renumber is honored. Sync deletes do NOT cascade (each descendant
+	// carries its own delete event), matching applyDelete's contract.
+	if parentID := model.ParseIDParent(id); parentID != "" {
+		if err := recalculateProgress(ctx, tx, parentID); err != nil {
+			return fmt.Errorf("apply delete %s: recalc progress: %w", e.EventID, err)
+		}
+	}
+	return nil
 }
 
 func applySetAcceptance(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {

@@ -486,21 +486,21 @@ func initTestApp(t *testing.T) {
 // TestRunList_EmptyProject_ReturnsNoRows verifies list with no nodes.
 func TestRunList_EmptyProject_ReturnsNoRows(t *testing.T) {
 	initTestApp(t)
-	err := runList("", "", "", "", "", "", "", 0, false, 50)
+	err := runList("", "", "", "", "", "", "", 0, false, 50, "", false)
 	assert.NoError(t, err)
 }
 
 // TestRunList_WithStatusFilter_ReturnsNoRows verifies list with status filter.
 func TestRunList_WithStatusFilter_ReturnsNoRows(t *testing.T) {
 	initTestApp(t)
-	err := runList("open", "", "", "", "", "", "", 0, false, 50)
+	err := runList("open", "", "", "", "", "", "", 0, false, 50, "", false)
 	assert.NoError(t, err)
 }
 
 // TestRunList_WithPriorityFilter_ReturnsNoRows verifies list with priority filter.
 func TestRunList_WithPriorityFilter_ReturnsNoRows(t *testing.T) {
 	initTestApp(t)
-	err := runList("", "", "", "", "1", "", "", 0, false, 50)
+	err := runList("", "", "", "", "1", "", "", 0, false, 50, "", false)
 	assert.NoError(t, err)
 }
 
@@ -508,28 +508,28 @@ func TestRunList_WithPriorityFilter_ReturnsNoRows(t *testing.T) {
 func TestRunList_JSONMode_ReturnsJSON(t *testing.T) {
 	initTestApp(t)
 	app.jsonOutput = true
-	err := runList("", "", "", "", "", "", "", 0, false, 50)
+	err := runList("", "", "", "", "", "", "", 0, false, 50, "", false)
 	assert.NoError(t, err)
 }
 
 // TestRunSearch_EmptyProject_ReturnsNoRows verifies search with no nodes.
 func TestRunSearch_EmptyProject_ReturnsNoRows(t *testing.T) {
 	initTestApp(t)
-	err := runSearch("", "", "", "", "", "", 50)
+	err := runSearch("", "", "", "", "", "", 50, "", false)
 	assert.NoError(t, err)
 }
 
 // TestRunBlocked_EmptyProject_ReturnsNoRows verifies blocked with no nodes.
 func TestRunBlocked_EmptyProject_ReturnsNoRows(t *testing.T) {
 	initTestApp(t)
-	err := runBlocked()
+	err := runBlocked("", false)
 	assert.NoError(t, err)
 }
 
 // TestRunOrphans_EmptyProject_ReturnsNoRows verifies orphans with no nodes.
 func TestRunOrphans_EmptyProject_ReturnsNoRows(t *testing.T) {
 	initTestApp(t)
-	err := runOrphans()
+	err := runOrphans("", false)
 	assert.NoError(t, err)
 }
 
@@ -627,7 +627,7 @@ func TestRunGC_JSONMode_Succeeds(t *testing.T) {
 // TestRunReady_EmptyProject_Succeeds verifies ready with no nodes.
 func TestRunReady_EmptyProject_Succeeds(t *testing.T) {
 	initTestApp(t)
-	err := runReady()
+	err := runReady("", false)
 	assert.NoError(t, err)
 }
 
@@ -793,7 +793,7 @@ func TestRunSessionSummary_NoSession_ReturnsError(t *testing.T) {
 // TestRunStale_EmptyProject_Succeeds verifies stale with no agents.
 func TestRunStale_EmptyProject_Succeeds(t *testing.T) {
 	initTestApp(t)
-	err := runStale()
+	err := runStale("", false)
 	assert.NoError(t, err)
 }
 
@@ -801,7 +801,7 @@ func TestRunStale_EmptyProject_Succeeds(t *testing.T) {
 func TestRunStale_JSONMode_Succeeds(t *testing.T) {
 	initTestApp(t)
 	app.jsonOutput = true
-	err := runStale()
+	err := runStale("", false)
 	assert.NoError(t, err)
 }
 

@@ -66,6 +66,42 @@ func (s *Store) GetStats(
 	return stats, nil
 }
 
+// DistinctProjects returns the distinct projects present in the DB with
+// per-project live-node counts, ordered by prefix per FR-MULTI-PROJECT MP-4.
+// Excludes soft-deleted nodes (deleted_at IS NULL), consistent with how
+// ListNodes counts, so a project with only deleted nodes does not appear.
+// Does NOT mark a primary project — that is a caller (config) concern.
+func (s *Store) DistinctProjects(ctx context.Context) ([]store.ProjectInfo, error) {
+	const query = `SELECT project, COUNT(*) FROM nodes
+		WHERE deleted_at IS NULL
+		GROUP BY project
+		ORDER BY project`
+
+	rows, err := s.readDB.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query distinct projects: %w", err)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			s.logger.Error("failed to close distinct projects rows", "error", closeErr)
+		}
+	}()
+
+	var projects []store.ProjectInfo
+	for rows.Next() {
+		var p store.ProjectInfo
+		if err := rows.Scan(&p.Prefix, &p.Count); err != nil {
+			return nil, fmt.Errorf("scan project info: %w", err)
+		}
+		projects = append(projects, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate distinct projects: %w", err)
+	}
+
+	return projects, nil
+}
+
 // aggregateBy runs a GROUP BY query for the given column and populates the result map.
 // Uses parameterized queries exclusively.
 func (s *Store) aggregateBy(

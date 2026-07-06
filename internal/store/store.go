@@ -30,6 +30,13 @@ type NodeFilter struct {
 	NodeType []string       `json:"node_type,omitempty"`
 	Priority []int          `json:"priority,omitempty"`
 	Labels   []string       `json:"labels,omitempty"`
+
+	// Project restricts results to a single project prefix (FR-MULTI-PROJECT
+	// MP-3). Empty means NO project filter — results span all projects. A
+	// non-empty value restricts results to that exact project prefix. The
+	// store is deliberately dumb here: the policy of defaulting to the
+	// primary project lives in the callers (CLI/API), not in the store.
+	Project string `json:"project,omitempty"`
 }
 
 // Store defines the data access contract for mtix.
@@ -91,6 +98,13 @@ type Store interface {
 	// GetStats returns aggregate statistics for a given scope.
 	// If scopeID is empty, returns global statistics.
 	GetStats(ctx context.Context, scopeID string) (*Stats, error)
+
+	// DistinctProjects returns the distinct projects present in the DB with
+	// per-project live-node counts, ordered by prefix (FR-MULTI-PROJECT MP-4).
+	// "Live" means non-soft-deleted, consistent with how ListNodes counts.
+	// The store does NOT mark a primary project — that is a caller concern
+	// (config), so callers overlay the primary flag themselves.
+	DistinctProjects(ctx context.Context) ([]ProjectInfo, error)
 
 	// Sequence operations
 
@@ -181,6 +195,15 @@ type Store interface {
 	// Close closes the store and releases all resources.
 	// Implements io.Closer.
 	Close() error
+}
+
+// ProjectInfo describes a single project present in the DB, used by
+// DistinctProjects to back `mtix projects` and `GET /projects` per
+// FR-MULTI-PROJECT MP-4. It carries no "primary" flag: identifying the
+// primary project is a caller concern (config), overlaid on this data.
+type ProjectInfo struct {
+	Prefix string `json:"prefix"`
+	Count  int    `json:"count"`
 }
 
 // Stats holds aggregate statistics per FR-2.7.5.

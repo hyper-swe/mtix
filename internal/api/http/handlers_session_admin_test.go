@@ -914,7 +914,7 @@ func TestOrphanNodes_ManyChildren_AllRootsReturned(t *testing.T) {
 
 	// Request orphans with default limit (50). All 3 roots must be returned.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orphans?limit=50", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/orphans?limit=50&project=all", nil)
 	s.Router().ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)

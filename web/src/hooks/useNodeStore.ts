@@ -77,11 +77,15 @@ export function useNodeStore() {
   // Use ref for loadedChildren to avoid stale closures.
   const loadedChildrenRef = useRef<Set<string>>(new Set());
 
-  /** Load root-level nodes via /orphans endpoint. */
-  const loadRoots = useCallback(async () => {
+  /**
+   * Load root-level nodes via /orphans endpoint. Accepts an optional project
+   * scope (a prefix or "all") per FR-MULTI-PROJECT (MP-16). Roots are replaced
+   * so switching scope does not leave stale cross-project roots behind.
+   */
+  const loadRoots = useCallback(async (project?: string) => {
     setState((prev) => ({ ...prev, loading: true }));
     try {
-      const result = await api.getRootNodes(200);
+      const result = await api.getRootNodes(200, project);
       const nodes = result.nodes ?? [];
       setState((prev) => {
         const newNodes = new Map(prev.nodes);

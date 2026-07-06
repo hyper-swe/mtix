@@ -6,6 +6,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Node } from "../types";
 import { StatusIcon } from "./StatusIcon";
+import { NodeID } from "./NodeID";
+import { useProjectOptional } from "../contexts/ProjectContext";
 import * as api from "../api";
 
 interface NodeListViewProps {
@@ -28,6 +30,7 @@ export function NodeListView({ onSelectNode }: NodeListViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const scope = useProjectOptional()?.activeScope;
 
   const loadNodes = useCallback(async () => {
     setLoading(true);
@@ -36,6 +39,7 @@ export function NodeListView({ onSelectNode }: NodeListViewProps) {
       const result = await api.listNodes({
         status: statusFilter || undefined,
         limit: 100,
+        project: scope,
       });
       setNodes(result.nodes ?? []);
     } catch (err) {
@@ -44,7 +48,7 @@ export function NodeListView({ onSelectNode }: NodeListViewProps) {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter]);
+  }, [statusFilter, scope]);
 
   useEffect(() => {
     loadNodes();
@@ -200,12 +204,11 @@ export function NodeListView({ onSelectNode }: NodeListViewProps) {
                     <StatusIcon status={node.status} size={14} />
                   </td>
                   <td className="px-2 py-1.5">
-                    <span
+                    <NodeID
+                      id={node.id}
                       className="font-mono text-xs"
                       style={{ color: "var(--color-text-tertiary)" }}
-                    >
-                      {node.id}
-                    </span>
+                    />
                   </td>
                   <td className="px-2 py-1.5">
                     <span

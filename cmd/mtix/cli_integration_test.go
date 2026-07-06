@@ -734,7 +734,7 @@ func TestRunSearch_WithResults_HumanOutput(t *testing.T) {
 	err := runCreate("Searchable Node", "", "", 3, "", "", "", "", "")
 	require.NoError(t, err)
 
-	err = runSearch("", "", "", "", "", "", 50)
+	err = runSearch("", "", "", "", "", "", 50, "", false)
 	assert.NoError(t, err)
 }
 
@@ -746,7 +746,7 @@ func TestRunSearch_WithResults_JSONOutput(t *testing.T) {
 	err := runCreate("Search JSON Node", "", "", 3, "", "", "", "", "")
 	require.NoError(t, err)
 
-	err = runSearch("", "", "", "", "", "", 50)
+	err = runSearch("", "", "", "", "", "", 50, "", false)
 	assert.NoError(t, err)
 }
 
@@ -757,7 +757,7 @@ func TestRunSearch_WithStatusFilter_HasResults(t *testing.T) {
 	err := runCreate("Open Node", "", "", 3, "", "", "", "", "")
 	require.NoError(t, err)
 
-	err = runSearch("open", "", "", "", "", "", 50)
+	err = runSearch("open", "", "", "", "", "", 50, "", false)
 	assert.NoError(t, err)
 }
 
@@ -766,7 +766,7 @@ func TestRunBlocked_WithResults_JSONOutput(t *testing.T) {
 	initTestApp(t)
 	app.jsonOutput = true
 
-	err := runBlocked()
+	err := runBlocked("", false)
 	assert.NoError(t, err)
 }
 
@@ -777,7 +777,7 @@ func TestRunOrphans_WithNodes_HumanOutput(t *testing.T) {
 	err := runCreate("Orphan Node", "", "", 3, "", "", "", "", "")
 	require.NoError(t, err)
 
-	err = runOrphans()
+	err = runOrphans("", false)
 	assert.NoError(t, err)
 }
 
@@ -789,7 +789,7 @@ func TestRunOrphans_WithNodes_JSONOutput(t *testing.T) {
 	err := runCreate("Orphan JSON", "", "", 3, "", "", "", "", "")
 	require.NoError(t, err)
 
-	err = runOrphans()
+	err = runOrphans("", false)
 	assert.NoError(t, err)
 }
 
@@ -798,7 +798,7 @@ func TestRunStale_WithRegisteredAgent_HumanOutput(t *testing.T) {
 	initTestApp(t)
 	registerTestAgent(t, "stale-test-agent")
 
-	err := runStale()
+	err := runStale("", false)
 	assert.NoError(t, err)
 }
 
@@ -812,7 +812,7 @@ func TestPrintNodeList_WithNodes_HumanOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	// Get nodes from store to pass to printNodeList.
-	err = runList("", "", "", "", "", "", "", 0, false, 50)
+	err = runList("", "", "", "", "", "", "", 0, false, 50, "", false)
 	assert.NoError(t, err)
 }
 
@@ -838,7 +838,7 @@ func TestRunList_WithUnderFilter_HumanOutput(t *testing.T) {
 	err = runDecompose("TEST-1", []string{"Under Child"})
 	require.NoError(t, err)
 
-	err = runList("", "TEST-1", "", "", "", "", "", 0, false, 50)
+	err = runList("", "TEST-1", "", "", "", "", "", 0, false, 50, "", false)
 	assert.NoError(t, err)
 }
 
@@ -1065,7 +1065,7 @@ func TestRunList_WithPagination_ShowsCountHint(t *testing.T) {
 	}
 
 	// List with limit 1 to trigger pagination hint.
-	err := runList("", "", "", "", "", "", "", 0, false, 1)
+	err := runList("", "", "", "", "", "", "", 0, false, 1, "", false)
 	assert.NoError(t, err)
 }
 
@@ -1076,6 +1076,6 @@ func TestRunList_WithAssigneeFilter_Succeeds(t *testing.T) {
 	err := runCreate("Assigned Node", "", "", 3, "", "", "", "", "agent-filter")
 	require.NoError(t, err)
 
-	err = runList("", "", "agent-filter", "", "", "", "", 0, false, 50)
+	err = runList("", "", "agent-filter", "", "", "", "", 0, false, 50, "", false)
 	assert.NoError(t, err)
 }

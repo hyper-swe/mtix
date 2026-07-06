@@ -1,6 +1,7 @@
 import { useCallback, useRef, useEffect, useState } from "react";
 import type { TreeItem } from "../hooks/useNodeStore";
 import { StatusIcon } from "./StatusIcon";
+import { NodeID } from "./NodeID";
 import { useTheme } from "../contexts/ThemeContext";
 
 interface TreeViewProps {
@@ -246,13 +247,15 @@ function TreeRow({
       </span>
 
       {/* Node ID (short) */}
-      <span
-        className="text-[10px] font-mono mr-1.5 flex-shrink-0"
-        style={{
-          color: isSelected ? "var(--color-accent)" : "var(--color-text-tertiary)",
-        }}
-      >
-        {shortId(node.id)}
+      <span className="mr-1.5 flex-shrink-0">
+        <NodeID
+          id={node.id}
+          short
+          className="text-[10px] font-mono"
+          style={{
+            color: isSelected ? "var(--color-accent)" : "var(--color-text-tertiary)",
+          }}
+        />
       </span>
 
       {/* Title */}
@@ -284,13 +287,6 @@ function TreeRow({
       )}
     </div>
   );
-}
-
-/** Extract short form of dot-notation ID (last segment). */
-function shortId(id: string): string {
-  const parts = id.split(".");
-  if (parts.length <= 2) return id;
-  return "." + parts.slice(-1)[0];
 }
 
 function ChevronIcon({ expanded }: { expanded: boolean }) {

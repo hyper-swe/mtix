@@ -177,6 +177,36 @@ What fails outside the envelope:
 - `mtix sync doctor` warns when local version `< last_seen_cli_version - 1 minor`.
 - The check is **advisory**, never blocking. Mixed-minor teams stay productive; the warning nudges everyone forward.
 
+### 6.4 Multi-project sync scope (FR-MULTI-PROJECT MP-20/MP-21)
+
+A single local database may hold **more than one project prefix** (e.g. a
+primary `PROJ` alongside a `PROJ-DEV-OPS` project — see USERMANUAL "Working with
+multiple projects"). Sync is deliberately **project-agnostic**: `push`, `pull`,
+and `clone` carry **every** project in the local database to and from the hub.
+There is no per-project sync flag, filter, or cursor.
+
+- **One DB ↔ one hub, all projects.** The transport drains the local
+  `sync_events` queue and applies hub events by **uid** and Lamport order
+  (§3, §8); neither side branches on a node's project. A push ships events for
+  all projects in the queue; a clone reconstructs every project the hub holds,
+  not just the primary. The pull/clone cursors are **hub-global** (a single
+  `last_pulled_clock` / clone checkpoint), not per-project.
+- **The hub is already per-project namespaced.** Carrying several projects over
+  one connection is free precisely because the hub mechanics that matter are
+  keyed by `project_prefix`: the number registry and renumber-required path
+  (§14.4), the version gate (`sync_projects.last_seen_cli_version`, §6.3), and
+  settlement (§14.2–14.4) all operate per project. The `sync_projects` table
+  already carries one row per project. **No change to those mechanics is made
+  by multi-project** (MP-21): the operator-gated restore-epoch (§14.5) and
+  Option B settled-vs-settled detection continue to apply uniformly across
+  every project in the hub.
+- **No per-project cursors — by design (MP-20).** Per-project routing (sending
+  a project to a subset of clients) or per-project cursors would add multi-CLI
+  coordination state with no payoff for the single-team, single-hub model mtix
+  targets (§1.2 non-goals). Teams that genuinely need two projects isolated on
+  different hubs use two separate `.mtix` databases — the natural boundary —
+  rather than a per-project sync filter. See decision **D15**.
+
 ## 7. Trust and threat model
 
 ### 7.1 Who is trusted (extends SECURITY-MODEL.md §3)
@@ -432,6 +462,11 @@ The actual event transport (NATS? Postgres LISTEN/NOTIFY on the existing hub? Fi
 **Considered alternative:** Mandatory client-side hook installation as part of `mtix sync init`.
 **Why:** Client-side hooks are trivially bypassed (`git push --no-verify`, missing on a new clone). Pretending they are enforcement gives a false sense of security. The workflows/safety-critical.md doc explicitly walks adopters through server-side enforcement as the only real gate.
 
+### D15. Sync carries all projects in a DB (no per-project cursors)
+**Decision:** Push/pull/clone are project-agnostic — one local DB syncs **every** project it holds to one hub, with hub-global cursors. The hub stays per-project namespaced internally (registry, version gate, settlement, `sync_projects`), but the transport never filters or routes by project (FR-MULTI-PROJECT MP-20/MP-21; see §6.4).
+**Considered alternative:** Per-project sync filtering / cursors, so a project could be routed to a subset of clients.
+**Why:** mtix targets a single team behind a single hub. Per-project routing adds multi-CLI coordination state (which client wants which project, per-project checkpoints, partial-clone reconciliation) for a use case the product explicitly defers (§1.2). The natural isolation boundary already exists: two projects that must not share a hub live in two separate `.mtix` databases. Because the hub is already namespaced by `project_prefix`, carrying N projects over one connection costs nothing extra and keeps the clone/restore story trivially correct.
+
 ## 14. Distributed node identity (MTIX-30 / ADR-003)
 
 This section summarizes how mtix keeps clean dot-path IDs under concurrent
@@ -572,6 +607,7 @@ The safety scenarios above map to their tests in
 | §5 Hub-side validation | MTIX-15.3 | MTIX-15.11 (fuzz) |
 | §5.2 Retention reservation | MTIX-15.2 | MTIX-15.11 |
 | §6 Operating envelope | MTIX-15.10 (perf), 15.12 (docs) | MTIX-15.11 |
+| §6.4 Multi-project sync scope | MTIX-37 (FR-MULTI-PROJECT MP-20/MP-21) | MTIX-37.7 (AC-5, DSN-gated) |
 | §7 Threat model | every 15.x | MTIX-15.11 |
 | §8 Conflict resolution | MTIX-15.5 | MTIX-15.4 (property), 15.11 |
 | §9 Timestamp validation | MTIX-15.3 | MTIX-15.11 |
@@ -586,5 +622,6 @@ The safety scenarios above map to their tests in
 |---|---|---|
 | 1.0 | 2026-04-27 | Initial design lock-in (MTIX-15.1). Covers protocol versioning, validation, retention deferral, scale envelope, threat catalogue, conflict resolution, reconciliation, decision log. |
 | 1.1 | 2026-06 | §14 distributed node identity (MTIX-30 / ADR-003): uid anchor, provisional/settled, hub registry + renumber-required, atomic subtree renumber, restore-epoch + Option B, import uid validation, migration phases. Cross-reference and document-version sections renumbered to §15/§16. |
+| 1.2 | 2026-06 | §6.4 + decision D15 (FR-MULTI-PROJECT MP-20/MP-21): sync carries all projects in a DB to one hub with hub-global cursors; the hub stays per-project namespaced; no per-project cursors or routing by design. |
 
 Future changes to this document MUST bump this version, update the changelog row, and reference the corresponding implementation ticket. If a code change conflicts with this document, the document MUST be updated in the same change.

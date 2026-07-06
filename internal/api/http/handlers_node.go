@@ -32,12 +32,10 @@ func (s *Server) createNode(c *gin.Context) {
 		return
 	}
 
+	// MP-11: default to the primary project when omitted; a non-empty value
+	// creates directly into that project (no server-side confirmation prompt).
 	if req.Project == "" {
-		if v, err := s.configSvc.Get("prefix"); err == nil {
-			req.Project = v
-		} else {
-			req.Project = "PROJ"
-		}
+		req.Project = s.primaryProject()
 	}
 
 	node, err := s.nodeSvc.CreateNode(c.Request.Context(), &service.CreateNodeRequest{

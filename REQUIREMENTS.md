@@ -464,7 +464,7 @@ PROJ-42 (Story) ─────────────────────�
 
 **FR-7.3b** The `GET /health` endpoint MUST return `{"status": "ok", "uptime_seconds": N, "version": "1.0.0"}`. It MUST NOT require the `X-Requested-With` header (so simple HTTP probes and CLI auto-routing detection work). When `api.bind` is non-localhost, the health response MUST NOT include project details — only `status`, `uptime_seconds`, and `version`.
 
-**FR-7.3a** mtix uses a **single-project-per-directory** model (like git). Projects are created via `mtix init`, not via the API. The `/project` endpoint returns info about the current directory's project. Multi-project support (multiple projects in a single mtix instance) is deferred to a future phase.
+**FR-7.3a** mtix supports **multiple projects in a single database** (see [FR-MULTI-PROJECT.md](FR-MULTI-PROJECT.md)). The config `prefix` is the **primary** project and the default scope everywhere; additional projects are created implicitly (`mtix create --project <PREFIX>`), addressed via `--project`/`--all-projects` on list-style commands, and discovered via `mtix projects`. Single-project-per-directory remains the default, backward-compatible behavior (a single-project DB behaves exactly as before). The `/project` endpoint returns the primary project; `GET /projects` lists all projects in the DB. _(This supersedes the prior "multi-project deferred" note.)_
 
 **FR-7.4** All endpoints MUST return JSON responses with appropriate HTTP status codes.
 

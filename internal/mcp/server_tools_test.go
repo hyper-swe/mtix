@@ -451,6 +451,9 @@ func (m *mcpMockStore) UndeleteNode(_ context.Context, _ string) error          
 func (m *mcpMockStore) ListNodes(_ context.Context, _ store.NodeFilter, _ store.ListOptions) ([]*model.Node, int, error) {
 	return nil, 0, nil
 }
+func (m *mcpMockStore) DistinctProjects(_ context.Context) ([]store.ProjectInfo, error) {
+	return nil, nil
+}
 func (m *mcpMockStore) SearchNodes(_ context.Context, _ string, _ store.NodeFilter, _ store.ListOptions) ([]*model.Node, int, error) {
 	return nil, 0, nil
 }
@@ -1512,7 +1515,7 @@ func TestBriefingTool_WithValidArgs_ReturnsBriefingText(t *testing.T) {
 				Description: "Test description", Prompt: "Test prompt"},
 		},
 	}
-	registerBriefingTool(reg, mockStore)
+	registerBriefingTool(reg, mockStore, "")
 
 	args := json.RawMessage(`{"status":"open","limit":10}`)
 	result, err := reg.Call(context.Background(), "mtix_briefing", args)
@@ -1534,7 +1537,7 @@ func TestBriefingTool_WithFields_RestrictsOutput(t *testing.T) {
 				NodeType: model.NodeTypeEpic, Priority: 2, Prompt: "Build it"},
 		},
 	}
-	registerBriefingTool(reg, mockStore)
+	registerBriefingTool(reg, mockStore, "")
 
 	args := json.RawMessage(`{"fields":"id,title,prompt"}`)
 	result, err := reg.Call(context.Background(), "mtix_briefing", args)
@@ -1548,7 +1551,7 @@ func TestBriefingTool_WithFields_RestrictsOutput(t *testing.T) {
 // TestBriefingTool_WithNilArgs_UsesDefaults verifies nil args.
 func TestBriefingTool_WithNilArgs_UsesDefaults(t *testing.T) {
 	reg := NewToolRegistry()
-	registerBriefingTool(reg, &briefingMockStore{})
+	registerBriefingTool(reg, &briefingMockStore{}, "")
 
 	result, err := reg.Call(context.Background(), "mtix_briefing", nil)
 	require.NoError(t, err)
@@ -1558,7 +1561,7 @@ func TestBriefingTool_WithNilArgs_UsesDefaults(t *testing.T) {
 // TestBriefingTool_WithInvalidJSON_ReturnsError verifies parse error.
 func TestBriefingTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 	reg := NewToolRegistry()
-	registerBriefingTool(reg, &briefingMockStore{})
+	registerBriefingTool(reg, &briefingMockStore{}, "")
 
 	args := json.RawMessage(`{bad}`)
 	_, err := reg.Call(context.Background(), "mtix_briefing", args)
@@ -1569,7 +1572,7 @@ func TestBriefingTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 // untrusted-context warning per FR-17.7 / T6 mitigation.
 func TestBriefingTool_DescriptionContainsUntrustedWarning(t *testing.T) {
 	reg := NewToolRegistry()
-	registerBriefingTool(reg, &briefingMockStore{})
+	registerBriefingTool(reg, &briefingMockStore{}, "")
 
 	tools := reg.List()
 	var briefingTool *ToolDef

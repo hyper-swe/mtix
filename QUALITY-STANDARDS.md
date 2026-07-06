@@ -160,6 +160,7 @@ scenario declared here without a linked, existing test fails CI.
 16. **Sync Crash-Resilience:** A crash mid-renumber, mid-dedup-sweep, or mid-push-renumber-drain leaves a consistent, resumable state; re-run is idempotent and converges; the single-flight dedup sweep strands no advisory lock
 17. **Disk-Full on a Sync Write (NFR-2.8):** ENOSPC and kill -9 during a sync-identity write (e.g. the uid backfill) fail-stop cleanly with the database sound and data preserved; re-run converges
 18. **Online Concurrent-Create Resolution (MTIX-28 fix):** Concurrent creates of the same number under one parent settle to distinct numbers with both nodes preserved and all replicas converged; the hub registry never deletes a node; the production push loop drains renumber-required end-to-end
+19. **Multi-Project Isolation (FR-MULTI-PROJECT MP-3/MP-5/MP-7):** Project scoping never leaks nodes across prefixes — a scoped list/search returns only its project and the primary is the default scope; renumber respects prefix boundaries, so renumbering a node in one project (including a multi-hyphen prefix like `PROJ-DEV-OPS`) never cross-matches or rewrites a look-alike prefix's subtree; a child can never be filed into a different project than its parent
 
 ### 3.7 Performance Benchmarks (NFR Validation)
 

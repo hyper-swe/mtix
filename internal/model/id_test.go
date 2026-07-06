@@ -39,7 +39,8 @@ func TestParseID_ExtractsProject(t *testing.T) {
 	}{
 		{"root", "PROJ-42", "PROJ"},
 		{"child", "PROJ-42.1.3", "PROJ"},
-		{"hyphenated_prefix", "MY-PROJECT-1.2", "MY"},
+		{"hyphenated_prefix", "MY-PROJECT-1.2", "MY-PROJECT"},
+		{"deep_hyphenated_prefix", "MTIX-DEV-OPS-1.2.3", "MTIX-DEV-OPS"},
 		{"no_dash", "INVALID", ""},
 	}
 

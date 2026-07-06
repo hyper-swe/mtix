@@ -44,7 +44,7 @@ func TestRunList_NoStore_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runList("", "", "", "", "", "", "", 0, false, 50)
+	err := runList("", "", "", "", "", "", "", 0, false, 50, "", false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }
@@ -212,7 +212,7 @@ func TestRunSearch_NoStore_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runSearch("", "", "", "", "", "", 50)
+	err := runSearch("", "", "", "", "", "", 50, "", false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }
@@ -223,7 +223,7 @@ func TestRunReady_NoBgSvc_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runReady()
+	err := runReady("", false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }
@@ -234,7 +234,7 @@ func TestRunBlocked_NoStore_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runBlocked()
+	err := runBlocked("", false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }
@@ -245,7 +245,7 @@ func TestRunStale_NoAgentSvc_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runStale()
+	err := runStale("", false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }
@@ -256,7 +256,7 @@ func TestRunOrphans_NoStore_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runOrphans()
+	err := runOrphans("", false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }

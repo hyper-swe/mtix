@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useWebSocket } from "../contexts/WebSocketContext";
 import { useTheme } from "../contexts/ThemeContext";
+import { ProjectSelector } from "./ProjectSelector";
 
 interface TopBarProps {
   onToggleSidebar: () => void;
@@ -43,19 +44,8 @@ export function TopBar({ onToggleSidebar, sidebarCollapsed, onOpenPalette, onCre
         mtix
       </span>
 
-      {/* Project selector */}
-      <button
-        className="text-xs px-2 py-1 rounded mr-auto cursor-pointer"
-        style={{
-          color: "var(--color-text-secondary)",
-          border: "1px solid var(--color-border)",
-          borderRadius: "var(--radius-md)",
-        }}
-        onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--color-hover)")}
-        onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
-      >
-        Select Project
-      </button>
+      {/* Project scope selector (MP-15) */}
+      <ProjectSelector />
 
       {/* Create button */}
       {onCreateNode && (

@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from "react";
 import * as api from "../api";
+import { useProjectOptional } from "../contexts/ProjectContext";
 import { ProgressBar } from "./ProgressBar";
 import { StatusIcon } from "./StatusIcon";
 import type { Status } from "../types";
@@ -27,10 +28,11 @@ export function DashboardView({ onNavigate: _onNavigate }: DashboardViewProps) {
   const [stats, setStats] = useState<{ total: number; counts: Record<string, number> } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const scope = useProjectOptional()?.activeScope;
 
   useEffect(() => {
     setLoading(true);
-    api.get<{ total: number; counts: Record<string, number> }>("/stats")
+    api.getDashboardStats(scope)
       .then((data) => {
         setStats(data);
         setError(null);
@@ -39,7 +41,7 @@ export function DashboardView({ onNavigate: _onNavigate }: DashboardViewProps) {
         setError(err instanceof Error ? err.message : "Failed to load stats");
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [scope]);
 
   if (loading) {
     return (

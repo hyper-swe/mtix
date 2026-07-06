@@ -88,10 +88,13 @@ func (s SyncStatus) IsValid() bool {
 // authorIDPattern enforces the FR-18.7 author_id grammar.
 var authorIDPattern = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 
-// projectPrefixPattern enforces the SYNC-DESIGN §5.1 project_prefix grammar.
-// Underscore is permitted to match existing mtix project naming conventions
-// (e.g. "DEP_ADD" used in tests; user projects may also contain underscores).
-var projectPrefixPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,15}$`)
+// projectPrefixPattern enforces the SYNC-DESIGN §5.1 project_prefix grammar,
+// aligned with the FR-2.1a id grammar (projectPrefixRegex in id.go): a prefix
+// may contain dashes (multi-segment prefixes like "MTIX-DEV-OPS", MTIX-39) and
+// underscores ("DEP_ADD"), up to 20 chars. Deriving the prefix at the first
+// dash previously masked the missing-dash gap by emitting a truncated
+// single-segment prefix; both are fixed together.
+var projectPrefixPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_-]{0,19}$`)
 
 // machineHashPattern enforces the 16-hex shape produced by sync/clock.MachineHash.
 var machineHashPattern = regexp.MustCompile(`^[a-f0-9]{16}$`)
@@ -148,7 +151,7 @@ func (e *SyncEvent) Validate() error {
 		return fmt.Errorf("node_id required: %w", ErrInvalidInput)
 	}
 	if !projectPrefixPattern.MatchString(e.ProjectPrefix) {
-		return fmt.Errorf("project_prefix %q does not match ^[A-Z][A-Z0-9]{0,15}$: %w",
+		return fmt.Errorf("project_prefix %q does not match ^[A-Z][A-Z0-9_-]{0,19}$: %w",
 			e.ProjectPrefix, ErrInvalidInput)
 	}
 	if !authorIDPattern.MatchString(e.AuthorID) {

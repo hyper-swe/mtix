@@ -1395,7 +1395,7 @@ func TestBlockedNodes_WithBlockedNode_ReturnsNode(t *testing.T) {
 
 	// Query blocked nodes.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/blocked", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/blocked?project=all", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)

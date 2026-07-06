@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"os"
 	"strings"
@@ -112,6 +113,110 @@ func TestRunCreate_BothPromptAndAcceptance_NoWarning(t *testing.T) {
 		require.NoError(t, err)
 	})
 	assert.NotContains(t, stderr, "missing context fields")
+}
+
+// --project + new-project guardrail tests (FR-MULTI-PROJECT MP-5/MP-6).
+// These exercise runCreateWithProject directly: the create command's RunE is a
+// thin wrapper over it. The configured primary in initTestApp is "TEST".
+
+// withCreateInput swaps the package confirmation reader for the duration of fn.
+func withCreateInput(t *testing.T, in string) {
+	t.Helper()
+	orig := createInput
+	createInput = strings.NewReader(in)
+	t.Cleanup(func() { createInput = orig })
+}
+
+func TestRunCreate_RootDefaultsToPrimaryProject(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, runCreateWithProject(
+		"Root", "", "", 3, "", "", "", "", "", "", true))
+
+	node, err := app.nodeSvc.GetNode(context.Background(), "TEST-1")
+	require.NoError(t, err)
+	assert.Equal(t, "TEST", node.Project)
+}
+
+func TestRunCreate_RootProjectExisting_NoPrompt(t *testing.T) {
+	initTestApp(t)
+	// Seed an existing TEST project root so TEST is a known project.
+	require.NoError(t, runCreateWithProject(
+		"Seed", "", "", 3, "", "", "", "", "", "TEST", true))
+
+	// A reader that would ABORT if a prompt were shown ("n"). Since TEST is
+	// already present, no prompt fires and the create succeeds.
+	withCreateInput(t, "n\n")
+	require.NoError(t, runCreateWithProject(
+		"Second", "", "", 3, "", "", "", "", "", "TEST", false))
+
+	node, err := app.nodeSvc.GetNode(context.Background(), "TEST-2")
+	require.NoError(t, err)
+	assert.Equal(t, "TEST", node.Project)
+}
+
+func TestRunCreate_RootNewProjectWithYes_Creates(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, runCreateWithProject(
+		"Ops root", "", "", 3, "", "", "", "", "", "OPS", true))
+
+	node, err := app.nodeSvc.GetNode(context.Background(), "OPS-1")
+	require.NoError(t, err)
+	assert.Equal(t, "OPS", node.Project)
+}
+
+func TestRunCreate_RootNewProjectConfirmYes_Creates(t *testing.T) {
+	initTestApp(t)
+	withCreateInput(t, "y\n")
+	require.NoError(t, runCreateWithProject(
+		"Ops root", "", "", 3, "", "", "", "", "", "OPS", false))
+
+	node, err := app.nodeSvc.GetNode(context.Background(), "OPS-1")
+	require.NoError(t, err)
+	assert.Equal(t, "OPS", node.Project)
+}
+
+func TestRunCreate_RootNewProjectDeclined_Aborts(t *testing.T) {
+	initTestApp(t)
+	withCreateInput(t, "n\n")
+	err := runCreateWithProject(
+		"Ops root", "", "", 3, "", "", "", "", "", "OPS", false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "OPS")
+
+	// Nothing was created.
+	_, getErr := app.nodeSvc.GetNode(context.Background(), "OPS-1")
+	assert.Error(t, getErr)
+}
+
+func TestRunCreate_ChildInheritsParentProject(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, runCreateWithProject(
+		"Ops root", "", "", 3, "", "", "", "", "", "OPS", true))
+	// Child with no --project inherits OPS (NOT the TEST primary).
+	require.NoError(t, runCreateWithProject(
+		"Ops child", "OPS-1", "", 3, "", "", "", "", "", "", true))
+
+	node, err := app.nodeSvc.GetNode(context.Background(), "OPS-1.1")
+	require.NoError(t, err)
+	assert.Equal(t, "OPS", node.Project)
+}
+
+func TestRunCreate_ChildProjectMismatch_Errors(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, runCreateWithProject(
+		"Root", "", "", 3, "", "", "", "", "", "TEST", true))
+	err := runCreateWithProject(
+		"Child", "TEST-1", "", 3, "", "", "", "", "", "OTHER", true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "OTHER")
+}
+
+func TestRunCreate_InvalidPrefix_Errors(t *testing.T) {
+	initTestApp(t)
+	err := runCreateWithProject(
+		"Root", "", "", 3, "", "", "", "", "", "lower-case", true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "prefix")
 }
 
 func TestRunCreate_JSONMode_WarningOnStderrNotStdout(t *testing.T) {

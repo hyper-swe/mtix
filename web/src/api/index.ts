@@ -10,6 +10,8 @@ export {
   searchNodes,
   getTree,
   getStats,
+  getDashboardStats,
+  getProjects,
   getContext,
   claimNode,
   transitionNode,
@@ -23,4 +25,4 @@ export {
   getReadyNodes,
   getBlockedNodes,
 } from "./nodes";
-export type { ListOptions, RerunStrategy } from "./nodes";
+export type { ListOptions, RerunStrategy, Project } from "./nodes";

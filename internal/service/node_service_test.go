@@ -504,6 +504,9 @@ func (m *mockStore) UndeleteNode(_ context.Context, _ string) error             
 func (m *mockStore) ListNodes(_ context.Context, _ store.NodeFilter, _ store.ListOptions) ([]*model.Node, int, error) {
 	return nil, 0, nil
 }
+func (m *mockStore) DistinctProjects(_ context.Context) ([]store.ProjectInfo, error) {
+	return nil, nil
+}
 func (m *mockStore) NextSequence(_ context.Context, _ string) (int, error) { return 1, nil }
 func (m *mockStore) AddDependency(_ context.Context, _ *model.Dependency) error {
 	return nil

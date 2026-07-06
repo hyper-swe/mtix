@@ -16,19 +16,76 @@ import (
 	"github.com/hyper-swe/mtix/internal/store"
 )
 
+// toolConfig holds cross-cutting settings for the MCP tools, currently the
+// primary project — the configured default scope per FR-MULTI-PROJECT (D1).
+// It is populated by ToolOptions so the registration entry points stay
+// backward-compatible (existing call sites pass no options).
+type toolConfig struct {
+	// primaryProject is the configured primary project (the config `prefix`).
+	// It is the default scope for the query tools and the default project for
+	// mtix_create when the caller omits one (MP-12, MP-13). An empty value
+	// means no primary was wired: query tools then default to spanning all
+	// projects, which is identical to scoping in a single-project DB.
+	primaryProject string
+}
+
+// ToolOption configures cross-cutting MCP tool behavior at registration time.
+// It is the wiring seam for the primary project: the command layer passes
+// WithPrimaryProject(prefix); other call sites (tests, integrations) may omit
+// it. Kept variadic so adding it never breaks an existing RegisterXTools call.
+type ToolOption func(*toolConfig)
+
+// WithPrimaryProject sets the primary project (the configured `prefix`) used as
+// the default scope for the multi-project MCP tools per FR-MULTI-PROJECT
+// (MP-12/MP-13).
+func WithPrimaryProject(prefix string) ToolOption {
+	return func(c *toolConfig) { c.primaryProject = prefix }
+}
+
+// applyToolOptions folds the given options into a toolConfig.
+func applyToolOptions(opts []ToolOption) toolConfig {
+	var c toolConfig
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&c)
+		}
+	}
+	return c
+}
+
+// resolveScopeProject maps the optional `project` argument of a list-style tool
+// to a store.NodeFilter.Project value per FR-MULTI-PROJECT MP-12:
+//   - "" (omitted) -> the primary project (the configured default scope)
+//   - "all"        -> "" (span every project in the DB)
+//   - otherwise    -> the given prefix (scope to exactly that project)
+//
+// In a single-project DB the primary equals the only project, so an omitted
+// argument and "all" yield identical results — preserving pre-feature behavior.
+func resolveScopeProject(arg, primary string) string {
+	switch arg {
+	case "":
+		return primary
+	case "all":
+		return ""
+	default:
+		return arg
+	}
+}
+
 // RegisterNodeTools registers node management MCP tools per MTIX-6.2.1 / FR-17.7.
-func RegisterNodeTools(reg *ToolRegistry, nodeSvc *service.NodeService, st store.Store) {
-	registerCreateTool(reg, nodeSvc)
+func RegisterNodeTools(reg *ToolRegistry, nodeSvc *service.NodeService, st store.Store, opts ...ToolOption) {
+	cfg := applyToolOptions(opts)
+	registerCreateTool(reg, nodeSvc, cfg.primaryProject)
 	registerShowTool(reg, st)
-	registerListTool(reg, st)
-	registerBriefingTool(reg, st)
+	registerListTool(reg, st, cfg.primaryProject)
+	registerBriefingTool(reg, st, cfg.primaryProject)
 	registerDeleteTool(reg, nodeSvc)
 	registerUndeleteTool(reg, nodeSvc)
 	registerDecomposeTool(reg, nodeSvc)
 	registerUpdateTool(reg, nodeSvc)
 }
 
-func registerCreateTool(reg *ToolRegistry, svc *service.NodeService) {
+func registerCreateTool(reg *ToolRegistry, svc *service.NodeService, primaryProject string) {
 	reg.Register(ToolDef{
 		Name:        "mtix_create",
 		Description: "Create a new node in the task hierarchy",
@@ -37,13 +94,13 @@ func registerCreateTool(reg *ToolRegistry, svc *service.NodeService) {
 			Properties: map[string]SchemaProp{
 				"title":       {Type: "string", Description: "Node title (required)"},
 				"parent_id":   {Type: "string", Description: "Parent node ID (empty for root)"},
-				"project":     {Type: "string", Description: "Project prefix"},
+				"project":     {Type: "string", Description: "Project prefix (optional; defaults to the primary project)"},
 				"description": {Type: "string", Description: "Node description"},
 				"prompt":      {Type: "string", Description: "Prompt text for LLM agents"},
 				"acceptance":  {Type: "string", Description: "Acceptance criteria"},
 				"priority":    {Type: "number", Description: "Priority 1-5 (1=critical)"},
 			},
-			Required: []string{"title", "project"},
+			Required: []string{"title"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
 		var p struct {
@@ -59,9 +116,18 @@ func registerCreateTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, fmt.Errorf("parse create args: %w", err)
 		}
 
+		// MP-13: project is optional — default to the configured primary when
+		// omitted so simple agents stay simple, while multi-project agents may
+		// still target a project explicitly. For a child, the service inherits
+		// the parent's project, so this default only matters for a root.
+		project := p.Project
+		if project == "" {
+			project = primaryProject
+		}
+
 		req := &service.CreateNodeRequest{
 			ParentID:    p.ParentID,
-			Project:     p.Project,
+			Project:     project,
 			Title:       p.Title,
 			Description: p.Description,
 			Prompt:      p.Prompt,
@@ -134,7 +200,7 @@ func showResultJSON(node *model.Node) string {
 	return string(flagged)
 }
 
-func registerListTool(reg *ToolRegistry, st store.Store) {
+func registerListTool(reg *ToolRegistry, st store.Store, primaryProject string) {
 	reg.Register(ToolDef{
 		Name:        "mtix_list",
 		Description: "List nodes with filtering and pagination",
@@ -144,6 +210,7 @@ func registerListTool(reg *ToolRegistry, st store.Store) {
 				"status":   {Type: "string", Description: "Filter by status"},
 				"under":    {Type: "string", Description: "Filter by parent subtree"},
 				"assignee": {Type: "string", Description: "Filter by assignee"},
+				"project":  {Type: "string", Description: "Scope to a project prefix; omit for the primary project, 'all' to span every project"},
 				"limit":    {Type: "number", Description: "Max results (default 50)"},
 				"offset":   {Type: "number", Description: "Pagination offset"},
 			},
@@ -153,6 +220,7 @@ func registerListTool(reg *ToolRegistry, st store.Store) {
 			Status   string `json:"status"`
 			Under    string `json:"under"`
 			Assignee string `json:"assignee"`
+			Project  string `json:"project"`
 			Limit    int    `json:"limit"`
 			Offset   int    `json:"offset"`
 		}
@@ -166,7 +234,7 @@ func registerListTool(reg *ToolRegistry, st store.Store) {
 			p.Limit = 50
 		}
 
-		filter := store.NodeFilter{}
+		filter := store.NodeFilter{Project: resolveScopeProject(p.Project, primaryProject)}
 		if p.Under != "" {
 			filter.Under = []string{p.Under}
 		}
@@ -326,7 +394,7 @@ func registerUpdateTool(reg *ToolRegistry, svc *service.NodeService) {
 // registerBriefingTool registers the mtix_briefing MCP tool per FR-17.7.
 // Returns briefing-formatted plain text directly — agents can paste it
 // into their context window without parsing JSON.
-func registerBriefingTool(reg *ToolRegistry, st store.Store) {
+func registerBriefingTool(reg *ToolRegistry, st store.Store, primaryProject string) {
 	reg.Register(ToolDef{
 		Name: "mtix_briefing",
 		Description: "List nodes in briefing format — labeled text blocks ready for LLM context. " +
@@ -340,6 +408,7 @@ func registerBriefingTool(reg *ToolRegistry, st store.Store) {
 				"type":            {Type: "string", Description: "Filter by node type (comma-separated)"},
 				"assignee":        {Type: "string", Description: "Filter by assignee (comma-separated)"},
 				"priority":        {Type: "string", Description: "Filter by priority (comma-separated integers)"},
+				"project":         {Type: "string", Description: "Scope to a project prefix; omit for the primary project, 'all' to span every project"},
 				"fields":          {Type: "string", Description: "Restrict to these fields (comma-separated)"},
 				"max_field_chars": {Type: "number", Description: "Truncate field values to this many characters"},
 				"limit":           {Type: "number", Description: "Max results (default 50)"},
@@ -352,6 +421,7 @@ func registerBriefingTool(reg *ToolRegistry, st store.Store) {
 			NodeType      string `json:"type"`
 			Assignee      string `json:"assignee"`
 			Priority      string `json:"priority"`
+			Project       string `json:"project"`
 			Fields        string `json:"fields"`
 			MaxFieldChars int    `json:"max_field_chars"`
 			Limit         int    `json:"limit"`
@@ -366,7 +436,7 @@ func registerBriefingTool(reg *ToolRegistry, st store.Store) {
 			p.Limit = 50
 		}
 
-		filter := store.NodeFilter{}
+		filter := store.NodeFilter{Project: resolveScopeProject(p.Project, primaryProject)}
 		if p.Under != "" {
 			filter.Under = splitCSVParam(p.Under)
 		}

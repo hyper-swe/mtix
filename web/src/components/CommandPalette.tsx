@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Node } from "../types";
 import * as api from "../api";
 import { StatusIcon } from "./StatusIcon";
+import { NodeID } from "./NodeID";
+import { useProjectOptional } from "../contexts/ProjectContext";
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -42,6 +44,7 @@ export function CommandPalette({
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scope = useProjectOptional()?.activeScope;
 
   // Load recent items from storage.
   const [recentIds] = useState<string[]>(() => {
@@ -78,7 +81,7 @@ export function CommandPalette({
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const nodes = await api.searchNodes(query, { limit: 10 });
+        const nodes = await api.searchNodes(query, { limit: 10, project: scope });
         setResults(nodes);
         setSelectedIndex(0);
       } catch {
@@ -93,7 +96,7 @@ export function CommandPalette({
         clearTimeout(debounceRef.current);
       }
     };
-  }, [query]);
+  }, [query, scope]);
 
   // Keyboard navigation within palette.
   const handleKeyDown = useCallback(
@@ -218,13 +221,12 @@ export function CommandPalette({
                   }}
                 >
                   <StatusIcon status={node.status} size={12} />
-                  <span
-                    className="text-xs font-mono mr-2 flex-shrink-0"
+                  <NodeID
+                    id={node.id}
+                    className="text-xs font-mono"
                     style={{ color: "var(--color-text-tertiary)" }}
-                  >
-                    {node.id}
-                  </span>
-                  <span className="text-sm truncate">{node.title}</span>
+                  />
+                  <span className="text-sm truncate ml-2">{node.title}</span>
                 </PaletteItem>
               ))
             ) : (
@@ -250,7 +252,7 @@ export function CommandPalette({
                         onClose();
                       }}
                     >
-                      <span className="text-sm font-mono">{id}</span>
+                      <NodeID id={id} className="text-sm font-mono" />
                     </PaletteItem>
                   ))}
                 </>

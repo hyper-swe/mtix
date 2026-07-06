@@ -108,32 +108,16 @@ jobs:
           path: coverage.out
 
   test-go-postgres-cloud:
-    # MTIX-14.9: cloud-PG contract suite. Runs only on tag pushes because
-    # it consumes managed resources (Supabase + Neon free tiers). A
-    # failure here BLOCKS the release. Each provider runs in its own
-    # matrix shard so a Supabase outage does not mask a Neon regression.
+    # MTIX-42: real cloud-PG contract gate (see .github/workflows/cloud-contract.yml).
+    # Runs the ACTUAL MTIX_PG_TEST_DSN-gated suites (transport + e2e sync +
+    # multi-project) against Neon + Supabase and FAILS CLOSED on an empty DSN —
+    # replacing the prior e2e/postgres scaffold, which the real suites do not
+    # read and which therefore skipped silently (false green). A failure here
+    # BLOCKS the release. Each provider runs in its own shard so a Supabase
+    # outage does not mask a Neon regression.
     needs: preflight
-    runs-on: ubuntu-22.04
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        provider: [supabase, neon]
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version: "1.25"
-      - name: Run e2e postgres contract suite (${{ matrix.provider }} provider)
-        # DSNs are passed via env (NOT via -dsn flag) so they never appear
-        # in the GitHub Actions command log. GH Actions' built-in secret
-        # masking redacts them in any text written to the runner's stdout.
-        env:
-          MTIX_TEST_SUPABASE_DSN: ${{ secrets.MTIX_TEST_SUPABASE_DSN }}
-          MTIX_TEST_NEON_DSN: ${{ secrets.MTIX_TEST_NEON_DSN }}
-        run: go test ./e2e/postgres/ -tags=e2e -provider=${{ matrix.provider }} -count=1 -timeout=15m
+    uses: ./.github/workflows/cloud-contract.yml
+    secrets: inherit
 
   release:
     needs: [preflight, test-go-postgres-cloud]

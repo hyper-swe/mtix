@@ -1,0 +1,89 @@
+name: cloud-contract
+
+# MTIX-42: the real cloud-Postgres contract gate.
+#
+# Runs the ACTUAL MTIX_PG_TEST_DSN-gated suites (transport + e2e sync +
+# multi-project) against managed Postgres — one provider per shard — and FAILS
+# CLOSED on an empty or misconfigured DSN. The previous release gate ran the
+# e2e/postgres scaffold with MTIX_TEST_*_DSN, which the real suites do not read,
+# so it skipped silently and reported green without ever connecting. This gate
+# reads MTIX_PG_TEST_DSN (what the suites actually gate on) and a canary proves
+# a live connection before the contract suites run, so a missing secret can
+# never masquerade as a pass.
+#
+# Callable on demand (workflow_dispatch) and as a release gate (workflow_call).
+#
+# Required repository secrets:
+#   MTIX_TEST_NEON_DSN      Neon DIRECT endpoint (no "-pooler"), sslmode=verify-full
+#   MTIX_TEST_SUPABASE_DSN  Supabase SESSION pooler (port 5432), sslmode=verify-full
+#   MTIX_TEST_SUPABASE_CA   PEM of Supabase's CA chain (private CA; verify-full needs it)
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  cloud-contract:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [neon, supabase]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.25"
+
+      - name: Resolve DSN + CA (fail closed if unset)
+        env:
+          NEON_DSN: ${{ secrets.MTIX_TEST_NEON_DSN }}
+          SUPABASE_DSN: ${{ secrets.MTIX_TEST_SUPABASE_DSN }}
+          SUPABASE_CA: ${{ secrets.MTIX_TEST_SUPABASE_CA }}
+        run: |
+          set -euo pipefail
+          case "${{ matrix.provider }}" in
+            neon)     DSN="${NEON_DSN}" ;;
+            supabase) DSN="${SUPABASE_DSN}" ;;
+            *)        echo "::error::unknown provider ${{ matrix.provider }}"; exit 1 ;;
+          esac
+          if [ -z "${DSN}" ]; then
+            echo "::error::MTIX_TEST_${{ matrix.provider }}_DSN is empty — the cloud gate fails closed (MTIX-42); a missing secret must not skip silently."
+            exit 1
+          fi
+          # Never echo the DSN; write it straight to the job env for later steps.
+          echo "MTIX_PG_TEST_DSN=${DSN}" >> "${GITHUB_ENV}"
+          if [ "${{ matrix.provider }}" = "supabase" ]; then
+            if [ -z "${SUPABASE_CA}" ]; then
+              echo "::error::MTIX_TEST_SUPABASE_CA is empty — Supabase chains to a private CA and verify-full needs it (MTIX-42)."
+              exit 1
+            fi
+            printf '%s' "${SUPABASE_CA}" > "${RUNNER_TEMP}/supabase-ca.crt"
+            echo "MTIX_SYNC_SSLROOTCERT=${RUNNER_TEMP}/supabase-ca.crt" >> "${GITHUB_ENV}"
+          fi
+
+      - name: Canary — DSN actually connects (guards against a silent skip)
+        run: |
+          set -euo pipefail
+          # This test SKIPS when MTIX_PG_TEST_DSN is unset and PASSES only on a
+          # real connection — so a skip here means the DSN is not reaching the
+          # suite, i.e. the gate would be a false green.
+          out="$(go test ./internal/store/postgres/transport/ -run TestSource_AcceptsTestDSNViaEnv -count=1 -v 2>&1)"
+          echo "${out}"
+          echo "${out}" | grep -q -- "--- PASS: TestSource_AcceptsTestDSNViaEnv" || {
+            echo "::error::cloud DSN canary did not PASS (skipped or failed) — refusing to report a false green (MTIX-42)."
+            exit 1
+          }
+
+      - name: Transport contract suite (${{ matrix.provider }})
+        run: go test ./internal/store/postgres/transport/ -p 1 -count=1 -timeout 20m
+
+      - name: E2E sync suite (${{ matrix.provider }})
+        run: go test ./e2e/ -run 'TestE2E|TestSync' -p 1 -count=1 -timeout 20m
+
+      - name: Multi-project sync (${{ matrix.provider }})
+        run: go test ./cmd/mtix/ -run TestMultiProject -count=1

@@ -44,22 +44,39 @@ jobs:
           version: v2.11.4
 
   test-go-postgres-docker:
-    # MTIX-14.9: shared contract suite against ephemeral postgres:16-alpine.
-    # Hermetic — no external secrets needed. The job auto-skips contract
-    # bodies until MTIX-14.1 (the actual PG store driver) lands; until
-    # then this stage proves only that the harness compiles, the
-    # docker provider can launch a container, and DSN redaction works.
+    # MTIX-42: real Postgres contract suite against an ephemeral postgres:16
+    # service. Runs the ACTUAL MTIX_PG_TEST_DSN-gated transport + multi-project
+    # suites — the whole point being that these are exercised on every push, not
+    # skipped. Replaces the e2e/postgres scaffold, which t.Skip'd every contract
+    # body (a false green: it only proved the harness compiled). The e2e sync
+    # suite has its own real-PG job (test-sync-chaos-postgres). Hermetic — no
+    # external secrets. A red run here is a PG-store regression.
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mtixcontract
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: "1.25"
-      - name: Pre-pull postgres image
-        run: docker pull postgres:16-alpine
-      - name: Run e2e postgres contract suite (docker provider)
-        run: go test ./e2e/postgres/ -tags=e2e -provider=docker -count=1 -timeout=8m
+      - name: Run transport + multi-project contract suites
+        env:
+          MTIX_PG_TEST_DSN: postgres://postgres:postgres@127.0.0.1:5432/mtixcontract?sslmode=disable
+        run: |
+          go test ./internal/store/postgres/transport/ -p 1 -count=1 -timeout 8m
+          go test ./cmd/mtix/ -run TestMultiProject -count=1
 
   test-fault-injection:
     # NFR-2.8 conformance (MTIX-26.7): storage must survive disk-full and

@@ -6,8 +6,11 @@ package transport
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -104,22 +107,117 @@ func NewWithDefaults(ctx context.Context, dsn string, opts Options, defs PoolDef
 	cfg.MaxConnLifetime = defs.ConnLifetime
 	cfg.HealthCheckPeriod = defs.HealthCheckPeriod
 	if defs.StatementTimeout > 0 {
-		if cfg.ConnConfig.RuntimeParams == nil {
-			cfg.ConnConfig.RuntimeParams = map[string]string{}
+		// Apply statement_timeout via SET after connect, NOT as a startup
+		// RuntimeParam. Managed Postgres proxies/poolers (Neon, Supabase)
+		// silently drop unknown startup parameters, so the RuntimeParam
+		// no-ops and the query cap is never enforced on cloud (Neon returns
+		// "0", Supabase its own default). A SET is ordinary SQL the proxy
+		// passes through — verified against Neon (direct + pooler) and the
+		// Supabase session pooler. Runs on every new pooled connection. The
+		// value is an integer we control, so the formatted SQL carries no
+		// injection surface.
+		stmtTimeoutMS := defs.StatementTimeout.Milliseconds()
+		cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+			if _, execErr := conn.Exec(ctx, fmt.Sprintf("SET statement_timeout = %d", stmtTimeoutMS)); execErr != nil {
+				return fmt.Errorf("apply statement_timeout: %w", execErr)
+			}
+			return nil
 		}
-		cfg.ConnConfig.RuntimeParams["statement_timeout"] =
-			fmt.Sprintf("%d", defs.StatementTimeout.Milliseconds())
 	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("pgxpool open: %w", err)
+		return nil, hintTLSTrust(enforced, fmt.Errorf("pgxpool open: %w", err))
 	}
-	if err := pool.Ping(ctx); err != nil {
+	if err := pingWithRetry(ctx, pool); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("initial ping: %w", err)
+		return nil, hintTLSTrust(enforced, fmt.Errorf("initial ping: %w", err))
 	}
 	return &Pool{p: pool}, nil
+}
+
+// pingWithRetry runs the initial healthcheck, retrying a few times with
+// exponential backoff on TRANSIENT network errors — a provider that briefly
+// refuses (e.g. a Neon compute waking from scale-to-zero) or a momentary blip
+// then succeeds instead of hard-failing the whole open (MTIX-48). Permanent
+// errors (auth, TLS trust, missing database) are not retryable and fail fast.
+// The whole loop is bounded by ctx.
+func pingWithRetry(ctx context.Context, pool *pgxpool.Pool) error {
+	const maxAttempts = 4
+	backoff := 500 * time.Millisecond
+	var err error
+	for attempt := 1; ; attempt++ {
+		if err = pool.Ping(ctx); err == nil {
+			return nil
+		}
+		if attempt >= maxAttempts || !isRetryableConnErr(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
+}
+
+// isRetryableConnErr reports whether a connection error is a transient
+// network-level failure worth retrying. It deliberately matches only
+// network-transport symptoms, never TLS-verification or authentication
+// failures (those are permanent and must surface immediately).
+func isRetryableConnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	// Never retry a cert/auth failure even if wrapped alongside other text.
+	if strings.Contains(msg, "verify certificate") ||
+		strings.Contains(msg, "x509") ||
+		strings.Contains(msg, "authentication failed") {
+		return false
+	}
+	for _, s := range []string{
+		"connection refused",
+		"connection reset",
+		"no route to host",
+		"i/o timeout",
+		"server closed the connection",
+	} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// hintTLSTrust augments a connection error with actionable guidance when it is
+// a TLS certificate-verification failure and no CA was supplied. Managed
+// Postgres providers (notably Supabase) serve certificates that chain to a
+// PRIVATE CA absent from the system trust store; Go's raw x509 error
+// ("certificate is not standards compliant" / "failed to verify certificate")
+// gives the operator no clue that the fix is a one-line sslrootcert. Non-cert
+// errors, and cases where a CA was already supplied, pass through unchanged.
+func hintTLSTrust(enforcedDSN string, err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	certFailure := strings.Contains(msg, "failed to verify certificate") ||
+		strings.Contains(msg, "x509:") ||
+		strings.Contains(msg, "unknown authority")
+	if !certFailure {
+		return err
+	}
+	// A CA was already supplied — this is a different TLS problem; don't mislead.
+	if strings.Contains(enforcedDSN, "sslrootcert=") || os.Getenv(EnvSSLRootCert) != "" {
+		return err
+	}
+	return fmt.Errorf("%w\n\nhint: TLS verification failed because the server's "+
+		"certificate chains to a private CA not in the system trust store "+
+		"(common with Supabase and some managed Postgres). Download your "+
+		"provider's CA certificate and add sslrootcert=<path> to the DSN, or "+
+		"export %s=<path>, then retry", err, EnvSSLRootCert)
 }
 
 // HealthCheck pings the underlying pool. Returns nil on success.

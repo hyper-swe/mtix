@@ -91,3 +91,8 @@ screenshots/playwright/
 /.envrc
 /AGENTS.md
 .cursor/
+
+# Local cloud-DB credentials for testing (never commit)
+.env
+.env.cloud
+.env.local

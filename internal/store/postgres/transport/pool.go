@@ -6,6 +6,8 @@ package transport
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -125,13 +127,42 @@ func NewWithDefaults(ctx context.Context, dsn string, opts Options, defs PoolDef
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("pgxpool open: %w", err)
+		return nil, hintTLSTrust(enforced, fmt.Errorf("pgxpool open: %w", err))
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("initial ping: %w", err)
+		return nil, hintTLSTrust(enforced, fmt.Errorf("initial ping: %w", err))
 	}
 	return &Pool{p: pool}, nil
+}
+
+// hintTLSTrust augments a connection error with actionable guidance when it is
+// a TLS certificate-verification failure and no CA was supplied. Managed
+// Postgres providers (notably Supabase) serve certificates that chain to a
+// PRIVATE CA absent from the system trust store; Go's raw x509 error
+// ("certificate is not standards compliant" / "failed to verify certificate")
+// gives the operator no clue that the fix is a one-line sslrootcert. Non-cert
+// errors, and cases where a CA was already supplied, pass through unchanged.
+func hintTLSTrust(enforcedDSN string, err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	certFailure := strings.Contains(msg, "failed to verify certificate") ||
+		strings.Contains(msg, "x509:") ||
+		strings.Contains(msg, "unknown authority")
+	if !certFailure {
+		return err
+	}
+	// A CA was already supplied — this is a different TLS problem; don't mislead.
+	if strings.Contains(enforcedDSN, "sslrootcert=") || os.Getenv(EnvSSLRootCert) != "" {
+		return err
+	}
+	return fmt.Errorf("%w\n\nhint: TLS verification failed because the server's "+
+		"certificate chains to a private CA not in the system trust store "+
+		"(common with Supabase and some managed Postgres). Download your "+
+		"provider's CA certificate and add sslrootcert=<path> to the DSN, or "+
+		"export %s=<path>, then retry", err, EnvSSLRootCert)
 }
 
 // HealthCheck pings the underlying pool. Returns nil on success.

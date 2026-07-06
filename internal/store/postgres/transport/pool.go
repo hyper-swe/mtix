@@ -129,11 +129,66 @@ func NewWithDefaults(ctx context.Context, dsn string, opts Options, defs PoolDef
 	if err != nil {
 		return nil, hintTLSTrust(enforced, fmt.Errorf("pgxpool open: %w", err))
 	}
-	if err := pool.Ping(ctx); err != nil {
+	if err := pingWithRetry(ctx, pool); err != nil {
 		pool.Close()
 		return nil, hintTLSTrust(enforced, fmt.Errorf("initial ping: %w", err))
 	}
 	return &Pool{p: pool}, nil
+}
+
+// pingWithRetry runs the initial healthcheck, retrying a few times with
+// exponential backoff on TRANSIENT network errors — a provider that briefly
+// refuses (e.g. a Neon compute waking from scale-to-zero) or a momentary blip
+// then succeeds instead of hard-failing the whole open (MTIX-48). Permanent
+// errors (auth, TLS trust, missing database) are not retryable and fail fast.
+// The whole loop is bounded by ctx.
+func pingWithRetry(ctx context.Context, pool *pgxpool.Pool) error {
+	const maxAttempts = 4
+	backoff := 500 * time.Millisecond
+	var err error
+	for attempt := 1; ; attempt++ {
+		if err = pool.Ping(ctx); err == nil {
+			return nil
+		}
+		if attempt >= maxAttempts || !isRetryableConnErr(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
+}
+
+// isRetryableConnErr reports whether a connection error is a transient
+// network-level failure worth retrying. It deliberately matches only
+// network-transport symptoms, never TLS-verification or authentication
+// failures (those are permanent and must surface immediately).
+func isRetryableConnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	// Never retry a cert/auth failure even if wrapped alongside other text.
+	if strings.Contains(msg, "verify certificate") ||
+		strings.Contains(msg, "x509") ||
+		strings.Contains(msg, "authentication failed") {
+		return false
+	}
+	for _, s := range []string{
+		"connection refused",
+		"connection reset",
+		"no route to host",
+		"i/o timeout",
+		"server closed the connection",
+	} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // hintTLSTrust augments a connection error with actionable guidance when it is

@@ -1123,6 +1123,43 @@ mtix sync init
 `.mtix/config.{yaml,yml,json}` for DSN-shaped keys and refuses to
 proceed if any are present (fail-closed).
 
+### Cloud Postgres providers (Neon, Supabase, RDS)
+
+mtix connects over TLS with `sslmode=verify-full` and needs a **session-mode**
+connection for the migration path. The two most popular serverless providers
+each need one setting; both are verified end-to-end.
+
+**Neon** — use the **direct** endpoint (drop `-pooler` from the host). Neon's
+pooled endpoint is transaction-mode, which breaks the session semantics the
+migration single-flight relies on. Neon's cert is publicly trusted — no CA
+setup needed.
+
+```bash
+# direct endpoint (no "-pooler" in the host)
+export MTIX_SYNC_DSN="postgresql://<user>:<pw>@ep-xxxx.<region>.aws.neon.tech/<db>?sslmode=verify-full"
+```
+
+Neon scales computes to zero after inactivity, and the direct endpoint may
+refuse the first connection while suspended. Wake it once (run any query in the
+Neon SQL editor, or connect via the pooled endpoint) before `mtix sync init`,
+or keep the compute active.
+
+**Supabase** — use the **session pooler** (port **5432**, not the transaction
+pooler on 6543). Supabase's certificate chains to its own **private CA**, so
+`verify-full` needs that CA: download it from the Supabase dashboard
+(Database → SSL) and point `sslrootcert` at it. Skip it and mtix's error tells
+you exactly what to set.
+
+```bash
+export MTIX_SYNC_SSLROOTCERT="/path/to/supabase-ca.crt"   # or add &sslrootcert=... to the DSN
+export MTIX_SYNC_DSN="postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=verify-full"
+```
+
+**Any provider** — `statement_timeout` is applied per connection via SQL (not a
+startup parameter), so it is honored even behind proxies/poolers that drop
+startup parameters. `sslmode=require` is rejected for non-loopback hosts; use
+`verify-full`, with `sslrootcert` if the provider uses a private CA.
+
 ### Setup (every other teammate)
 
 ```bash

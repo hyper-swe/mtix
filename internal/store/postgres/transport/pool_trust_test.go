@@ -51,3 +51,29 @@ func TestHintTLSTrust(t *testing.T) {
 		}
 	})
 }
+
+// TestIsRetryableConnErr: only transient network symptoms retry; TLS and auth
+// failures fail fast (MTIX-48.3).
+func TestIsRetryableConnErr(t *testing.T) {
+	cases := []struct {
+		name  string
+		err   error
+		retry bool
+	}{
+		{"nil", nil, false},
+		{"connection refused", errors.New("failed to connect to `host`: dial tcp 1.2.3.4:5432: connect: connection refused"), true},
+		{"connection reset", errors.New("read tcp: connection reset by peer"), true},
+		{"i/o timeout", errors.New("dial tcp: i/o timeout"), true},
+		{"server closed", errors.New("unexpected EOF: server closed the connection unexpectedly"), true},
+		{"cert failure not retried", errors.New("failed to connect: tls: failed to verify certificate: x509: not standards compliant"), false},
+		{"auth failure not retried", errors.New("failed to connect: FATAL: password authentication failed for user"), false},
+		{"unknown db not retried", errors.New(`database "x" does not exist (SQLSTATE 3D000)`), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isRetryableConnErr(tc.err); got != tc.retry {
+				t.Fatalf("isRetryableConnErr(%q) = %v, want %v", tc.err, got, tc.retry)
+			}
+		})
+	}
+}

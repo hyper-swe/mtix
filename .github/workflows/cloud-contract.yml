@@ -55,16 +55,26 @@ jobs:
             echo "::error::MTIX_TEST_${{ matrix.provider }}_DSN is empty — the cloud gate fails closed (MTIX-42); a missing secret must not skip silently."
             exit 1
           fi
-          # Never echo the DSN; write it straight to the job env for later steps.
-          echo "MTIX_PG_TEST_DSN=${DSN}" >> "${GITHUB_ENV}"
+          # Supabase serves a private-CA cert. Put the CA IN THE DSN (not only the
+          # MTIX_SYNC_SSLROOTCERT env) so BOTH the production path (transport.New /
+          # EnforceTLSPosture) AND the raw pgxpool test helpers — which bypass
+          # EnforceTLSPosture and therefore never read the env — verify against it.
+          # The env is set too, for production-path parity.
           if [ "${{ matrix.provider }}" = "supabase" ]; then
             if [ -z "${SUPABASE_CA}" ]; then
               echo "::error::MTIX_TEST_SUPABASE_CA is empty — Supabase chains to a private CA and verify-full needs it (MTIX-42)."
               exit 1
             fi
-            printf '%s' "${SUPABASE_CA}" > "${RUNNER_TEMP}/supabase-ca.crt"
-            echo "MTIX_SYNC_SSLROOTCERT=${RUNNER_TEMP}/supabase-ca.crt" >> "${GITHUB_ENV}"
+            CA_PATH="${RUNNER_TEMP}/supabase-ca.crt"
+            printf '%s' "${SUPABASE_CA}" > "${CA_PATH}"
+            case "${DSN}" in
+              *\?*) DSN="${DSN}&sslrootcert=${CA_PATH}" ;;
+              *)    DSN="${DSN}?sslrootcert=${CA_PATH}" ;;
+            esac
+            echo "MTIX_SYNC_SSLROOTCERT=${CA_PATH}" >> "${GITHUB_ENV}"
           fi
+          # Never echo the DSN; write it straight to the job env for later steps.
+          echo "MTIX_PG_TEST_DSN=${DSN}" >> "${GITHUB_ENV}"
 
       - name: Canary — DSN actually connects (guards against a silent skip)
         run: |

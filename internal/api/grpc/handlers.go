@@ -194,7 +194,7 @@ func (s *Server) HandleBlock(ctx context.Context, id, agent string) (*model.Node
 
 // HandleComment implements the Comment RPC per FR-8.2.
 func (s *Server) HandleComment(ctx context.Context, nodeID, text, author string) error {
-	return mapError(s.promptSvc.AddAnnotation(ctx, nodeID, text, author))
+	return mapError(s.promptSvc.AddAnnotation(ctx, nodeID, text, author, ""))
 }
 
 // --- Query Handlers ---

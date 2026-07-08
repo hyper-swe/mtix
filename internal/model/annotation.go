@@ -21,4 +21,10 @@ type Annotation struct {
 
 	// Resolved indicates whether the annotation has been addressed.
 	Resolved bool `json:"resolved"`
+
+	// Addressee is the agent id this comment is directed at (FR-19.1), set via
+	// `mtix comment --to <agent>` or an @<agent> token. Empty for an ordinary
+	// comment. Carried onto the emitted comment event's payload so the
+	// addressee's inbox (a query over the journal) surfaces it.
+	Addressee string `json:"addressee,omitempty"`
 }

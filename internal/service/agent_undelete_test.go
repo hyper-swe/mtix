@@ -300,7 +300,7 @@ func TestPromptService_BroadcastError_DoesNotFailOperation(t *testing.T) {
 	assert.NoError(t, err)
 
 	// AddAnnotation should succeed.
-	err = promptSvc.AddAnnotation(ctx, node.ID, "An annotation", "reviewer")
+	err = promptSvc.AddAnnotation(ctx, node.ID, "An annotation", "reviewer", "")
 	assert.NoError(t, err)
 }
 
@@ -814,9 +814,9 @@ func TestNodeService_CreateNode_DefaultPriority(t *testing.T) {
 	ctx := context.Background()
 
 	req := &service.CreateNodeRequest{
-		Project: "PROJ",
-		Title:   "No Priority",
-		Creator: "admin",
+		Project:  "PROJ",
+		Title:    "No Priority",
+		Creator:  "admin",
 		Priority: 0, // No priority specified.
 	}
 

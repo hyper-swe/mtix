@@ -62,7 +62,7 @@ func runAnnotate(id, text string) error {
 	}
 
 	ctx := context.Background()
-	if err := app.promptSvc.AddAnnotation(ctx, id, text, "cli"); err != nil {
+	if err := app.promptSvc.AddAnnotation(ctx, id, text, "cli", ""); err != nil {
 		return err
 	}
 

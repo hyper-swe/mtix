@@ -118,7 +118,7 @@ func TestAddAnnotation_GeneratesULID(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = promptSvc.AddAnnotation(ctx, node.ID, "Review this section", "reviewer@test.com")
+	err = promptSvc.AddAnnotation(ctx, node.ID, "Review this section", "reviewer@test.com", "")
 	require.NoError(t, err)
 
 	got, err := s.GetNode(ctx, node.ID)
@@ -140,10 +140,10 @@ func TestAddAnnotation_AppendsToArray(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = promptSvc.AddAnnotation(ctx, node.ID, "First annotation", "reviewer1@test.com")
+	err = promptSvc.AddAnnotation(ctx, node.ID, "First annotation", "reviewer1@test.com", "")
 	require.NoError(t, err)
 
-	err = promptSvc.AddAnnotation(ctx, node.ID, "Second annotation", "reviewer2@test.com")
+	err = promptSvc.AddAnnotation(ctx, node.ID, "Second annotation", "reviewer2@test.com", "")
 	require.NoError(t, err)
 
 	got, err := s.GetNode(ctx, node.ID)
@@ -163,7 +163,7 @@ func TestResolveAnnotation_SetsResolvedTrue(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = promptSvc.AddAnnotation(ctx, node.ID, "Needs review", "reviewer@test.com")
+	err = promptSvc.AddAnnotation(ctx, node.ID, "Needs review", "reviewer@test.com", "")
 	require.NoError(t, err)
 
 	// Get annotation ID.
@@ -190,7 +190,7 @@ func TestResolveAnnotation_UnresolveSetsResolvedFalse(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = promptSvc.AddAnnotation(ctx, node.ID, "Needs review", "reviewer@test.com")
+	err = promptSvc.AddAnnotation(ctx, node.ID, "Needs review", "reviewer@test.com", "")
 	require.NoError(t, err)
 
 	got, err := s.GetNode(ctx, node.ID)
@@ -235,7 +235,7 @@ func TestAddAnnotation_NonExistentNode_ReturnsError(t *testing.T) {
 	promptSvc, _, _, _ := newTestPromptService(t)
 	ctx := context.Background()
 
-	err := promptSvc.AddAnnotation(ctx, "NONEXISTENT", "note", "author")
+	err := promptSvc.AddAnnotation(ctx, "NONEXISTENT", "note", "author", "")
 	assert.Error(t, err)
 	assert.ErrorIs(t, err, model.ErrNotFound)
 }

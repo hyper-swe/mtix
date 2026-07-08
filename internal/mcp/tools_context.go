@@ -105,7 +105,7 @@ func registerAnnotateTool(reg *ToolRegistry, svc *service.PromptService) {
 			return nil, fmt.Errorf("parse annotate args: %w", err)
 		}
 
-		if err := svc.AddAnnotation(ctx, p.ID, p.Text, p.Author); err != nil {
+		if err := svc.AddAnnotation(ctx, p.ID, p.Text, p.Author, ""); err != nil {
 			return nil, err
 		}
 

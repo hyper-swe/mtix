@@ -87,7 +87,7 @@ func (svc *PromptService) UpdatePrompt(ctx context.Context, nodeID, text, author
 
 // AddAnnotation appends an annotation to a node's annotations array per FR-3.4.
 // Generates a ULID for sortability per FR-3.4.
-func (svc *PromptService) AddAnnotation(ctx context.Context, nodeID, text, author string) error {
+func (svc *PromptService) AddAnnotation(ctx context.Context, nodeID, text, author, addressee string) error {
 	node, err := svc.store.GetNode(ctx, nodeID)
 	if err != nil {
 		return fmt.Errorf("get node %s for annotation: %w", nodeID, err)
@@ -105,6 +105,7 @@ func (svc *PromptService) AddAnnotation(ctx context.Context, nodeID, text, autho
 		Text:      text,
 		CreatedAt: now,
 		Resolved:  false,
+		Addressee: addressee,
 	}
 
 	annotations := make([]model.Annotation, 0, len(node.Annotations)+1)

@@ -81,6 +81,11 @@ type DeferPayload struct {
 type CommentPayload struct {
 	AuthorID string `json:"author_id"`
 	Body     string `json:"body"`
+	// To is the addressee agent id when the comment is directed at a specific
+	// agent (FR-19.1). Empty for an ordinary comment. It rides the payload so it
+	// syncs with the comment and so the per-agent inbox — a query over the event
+	// journal — can filter on it without a new op_type.
+	To string `json:"to,omitempty"`
 }
 
 // LinkDepPayload captures a dependency creation.

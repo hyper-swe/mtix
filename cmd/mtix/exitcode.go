@@ -24,6 +24,13 @@ const (
 	// exitCodeCorrupted: the database failed an integrity gate
 	// (NFR-2.6a); recovery guidance was printed.
 	exitCodeCorrupted = 4
+
+	// exitCodeInboxEmpty: `mtix inbox --wait` timed out with no events, so a
+	// worker's poll loop can tell "woke with work" (0) from "nothing yet, loop
+	// again" without parsing output (FR-19.4). Deliberately NOT 3 — the FR
+	// proposed 3, but that is exitCodeDiskFull here, and a storage error must
+	// never be mistaken for a merely-empty inbox.
+	exitCodeInboxEmpty = 5
 )
 
 // exitCodeForError maps an error to its contract exit code.
@@ -35,6 +42,8 @@ func exitCodeForError(err error) int {
 		return exitCodeDiskFull
 	case errors.Is(err, model.ErrCorrupted):
 		return exitCodeCorrupted
+	case errors.Is(err, errInboxWaitEmpty):
+		return exitCodeInboxEmpty
 	default:
 		return exitCodeGeneric
 	}

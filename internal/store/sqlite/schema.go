@@ -170,6 +170,24 @@ CREATE TABLE IF NOT EXISTS applied_events (
     applied_by_lamport INTEGER NOT NULL
 );
 
+-- Per-agent inbox read cursor (FR-19.4 / MTIX-47.1). The inbox itself is a
+-- QUERY over sync_events (events addressed to the agent); this table holds only
+-- the watermark: the highest sync_events.rowid the agent has acked. rowid is a
+-- monotonic LOCAL insert order, so a late-arriving synced event always sorts
+-- ABOVE the cursor and is never silently skipped (a lamport watermark could be).
+CREATE TABLE IF NOT EXISTS agent_inbox_cursor (
+    agent_id TEXT PRIMARY KEY,
+    cursor   INTEGER NOT NULL DEFAULT 0
+);
+
+-- Narrow the inbox scan to comment events. The addressee itself lives in the
+-- JSON payload and is filtered at query time (guarded by json_valid); an
+-- expression index on json_extract(payload) is deliberately avoided — it would
+-- evaluate on every comment INSERT and reject a malformed payload before the
+-- apply layer's own decode check can report it. Denormalizing the addressee to
+-- a real indexed column is a future optimization if inbox volume warrants it.
+CREATE INDEX IF NOT EXISTS idx_sync_events_op_type ON sync_events(op_type);
+
 -- Local sync_projects mirror per FR-18.13 / MTIX-15.6.
 -- Mirrors the hub-side sync_projects table from internal/store/postgres/migrations/003_sync_projects.sql.
 -- One row per project the local CLI has cloned-from or pushed-to.

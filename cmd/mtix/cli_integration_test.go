@@ -365,7 +365,7 @@ func TestRunComment_HappyPath_HumanOutput(t *testing.T) {
 	err := runCreate("Comment Target", "", "", 3, "", "", "", "", "")
 	require.NoError(t, err)
 
-	err = runComment("TEST-1", "This is a comment")
+	err = runComment("TEST-1", "This is a comment", "")
 	assert.NoError(t, err)
 }
 
@@ -377,7 +377,7 @@ func TestRunComment_HappyPath_JSONOutput(t *testing.T) {
 	err := runCreate("Comment JSON", "", "", 3, "", "", "", "", "")
 	require.NoError(t, err)
 
-	err = runComment("TEST-1", "JSON comment")
+	err = runComment("TEST-1", "JSON comment", "")
 	assert.NoError(t, err)
 }
 

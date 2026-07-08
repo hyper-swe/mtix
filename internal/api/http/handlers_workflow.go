@@ -11,6 +11,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 )
 
 // claimNode handles POST /api/v1/nodes/:id/claim per FR-10.4.
@@ -225,6 +226,7 @@ func (s *Server) commentNode(c *gin.Context) {
 	var req struct {
 		Text string `json:"text" binding:"required"`
 		Type string `json:"type"`
+		To   string `json:"to"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		HandleValidationError(c, "text is required")
@@ -242,11 +244,19 @@ func (s *Server) commentNode(c *gin.Context) {
 		author = "api"
 	}
 
+	// An explicit `to` addresses the comment at an agent's inbox (FR-19.1);
+	// otherwise an @<agent> token in the text sets the addressee.
+	addressee := req.To
+	if addressee == "" {
+		addressee = service.ParseAddressee(req.Text)
+	}
+
 	ann := model.Annotation{
 		ID:        ulid.Make().String(),
 		Text:      req.Text,
 		Author:    author,
 		CreatedAt: s.clock(),
+		Addressee: addressee,
 	}
 	annotations := make([]model.Annotation, 0, len(node.Annotations)+1)
 	annotations = append(annotations, node.Annotations...)

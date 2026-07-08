@@ -591,6 +591,44 @@ func TestCommentNode_NoAgentID_UsesDefault(t *testing.T) {
 	assert.Equal(t, "api", annotation["author"])
 }
 
+// TestCommentNode_ToParam_DeliversToInbox verifies the `to` field addresses the
+// comment at an agent's inbox (FR-19.1).
+func TestCommentNode_ToParam_DeliversToInbox(t *testing.T) {
+	s := testServer(t)
+	nodeID := createTestNode(t, s, "Comment To Test", "TEST")
+
+	w := httptest.NewRecorder()
+	body := `{"text":"ruling: proceed","to":"worker-7"}`
+	req := apiRequest(http.MethodPost, "/api/v1/nodes/"+nodeID+"/comment", body)
+	req.Header.Set("X-Agent-ID", "reviewer")
+	s.Router().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	inbox, err := s.store.InboxList(context.Background(), "worker-7")
+	require.NoError(t, err)
+	require.Len(t, inbox, 1)
+	assert.Equal(t, "ruling: proceed", inbox[0].Body)
+}
+
+// TestCommentNode_AtToken_DeliversToInbox verifies an @<agent> token in the
+// text sets the addressee when no `to` field is given (FR-19.1).
+func TestCommentNode_AtToken_DeliversToInbox(t *testing.T) {
+	s := testServer(t)
+	nodeID := createTestNode(t, s, "Comment Mention Test", "TEST")
+
+	w := httptest.NewRecorder()
+	body := `{"text":"heads up @worker-9 please look"}`
+	req := apiRequest(http.MethodPost, "/api/v1/nodes/"+nodeID+"/comment", body)
+	s.Router().ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	inbox, err := s.store.InboxList(context.Background(), "worker-9")
+	require.NoError(t, err)
+	require.Len(t, inbox, 1)
+}
+
 // TestCommentNode_InvalidNode_Returns404 verifies error handling.
 func TestCommentNode_InvalidNode_Returns404(t *testing.T) {
 	s := testServer(t)

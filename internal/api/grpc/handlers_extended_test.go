@@ -241,8 +241,25 @@ func TestHandleComment_Success(t *testing.T) {
 
 	created := createTestNode(t, s, "Comment Node", "COMMENT")
 
-	err := s.HandleComment(ctx, created.ID, "This is a comment", "agent-1")
+	err := s.HandleComment(ctx, created.ID, "This is a comment", "agent-1", "")
 	require.NoError(t, err)
+}
+
+// TestHandleComment_Addressee routes a comment to an agent's inbox via the `to`
+// param (FR-19.1).
+func TestHandleComment_Addressee(t *testing.T) {
+	s := testGRPCServer(t)
+	ctx := context.Background()
+
+	created := createTestNode(t, s, "Comment Addressed", "COMMENT_TO")
+
+	err := s.HandleComment(ctx, created.ID, "ruling: proceed", "reviewer", "worker-7")
+	require.NoError(t, err)
+
+	inbox, err := s.store.InboxList(ctx, "worker-7")
+	require.NoError(t, err)
+	require.Len(t, inbox, 1)
+	assert.Equal(t, "ruling: proceed", inbox[0].Body)
 }
 
 // TestHandleComment_NotFound verifies error for nonexistent node.
@@ -250,7 +267,7 @@ func TestHandleComment_NotFound(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	err := s.HandleComment(ctx, "NONEXISTENT-999", "comment", "agent-1")
+	err := s.HandleComment(ctx, "NONEXISTENT-999", "comment", "agent-1", "")
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)
@@ -264,7 +281,7 @@ func TestHandleComment_EmptyText(t *testing.T) {
 
 	created := createTestNode(t, s, "Comment Empty", "COMMENT_EMPTY")
 
-	err := s.HandleComment(ctx, created.ID, "", "agent-1")
+	err := s.HandleComment(ctx, created.ID, "", "agent-1", "")
 	require.NoError(t, err)
 }
 

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -85,9 +86,36 @@ func (svc *PromptService) UpdatePrompt(ctx context.Context, nodeID, text, author
 	return nil
 }
 
+// mentionPattern matches the first @<agent> mention token in comment text
+// (FR-19.1). The captured agent id follows the FR-18.7 author_id grammar
+// (^[a-z0-9_-]{1,64}$, matching model.authorIDPattern). The @ must sit at a
+// token boundary — preceded by start-of-text or a non-word, non-@ character —
+// so an email-like "foo@bar" is not misread as a mention.
+var mentionPattern = regexp.MustCompile(`(?:^|[^\w@])@([a-z0-9_-]{1,64})`)
+
+// ParseAddressee extracts the addressee agent id from the FIRST @<agent> token
+// in comment text per FR-19.1, or "" when the text carries no mention. The
+// token is NOT stripped — it stays visible in the stored text and merely also
+// sets the addressee. Only the first mention is honored: the addressee is
+// single-valued because the inbox keys on one `to`.
+func ParseAddressee(text string) string {
+	m := mentionPattern.FindStringSubmatch(text)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
 // AddAnnotation appends an annotation to a node's annotations array per FR-3.4.
 // Generates a ULID for sortability per FR-3.4.
+//
+// When addressee is empty, the first @<agent> token in text is used as the
+// addressee (FR-19.1); an explicit addressee arg takes precedence over a token.
 func (svc *PromptService) AddAnnotation(ctx context.Context, nodeID, text, author, addressee string) error {
+	if addressee == "" {
+		addressee = ParseAddressee(text)
+	}
+
 	node, err := svc.store.GetNode(ctx, nodeID)
 	if err != nil {
 		return fmt.Errorf("get node %s for annotation: %w", nodeID, err)

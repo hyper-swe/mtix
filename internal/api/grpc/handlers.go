@@ -192,9 +192,12 @@ func (s *Server) HandleBlock(ctx context.Context, id, agent string) (*model.Node
 	return s.nodeSvc.GetNode(ctx, id)
 }
 
-// HandleComment implements the Comment RPC per FR-8.2.
-func (s *Server) HandleComment(ctx context.Context, nodeID, text, author string) error {
-	return mapError(s.promptSvc.AddAnnotation(ctx, nodeID, text, author, ""))
+// HandleComment implements the Comment RPC per FR-8.2. The addressee (from the
+// CommentRequest `to` field) directs the comment at an agent's inbox (FR-19.1);
+// pass "" for an ordinary comment. An empty addressee still falls back to an
+// @<agent> token in text inside AddAnnotation.
+func (s *Server) HandleComment(ctx context.Context, nodeID, text, author, addressee string) error {
+	return mapError(s.promptSvc.AddAnnotation(ctx, nodeID, text, author, addressee))
 }
 
 // --- Query Handlers ---

@@ -220,6 +220,10 @@ message CommentRequest {
   string id     = 1;
   string text   = 2;
   string author = 3;
+  // to addresses the comment at an agent: it lands in that agent's inbox
+  // (FR-19.1). Empty for an ordinary comment; an @<agent> token in text is
+  // used as a fallback addressee when this is empty.
+  string to     = 4;
 }
 
 message CommentResponse {

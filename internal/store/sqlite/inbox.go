@@ -32,14 +32,26 @@ func (s *Store) InboxList(ctx context.Context, agentID string) ([]InboxEvent, er
 	if agentID == "" {
 		return nil, fmt.Errorf("inbox list: agent id required: %w", model.ErrInvalidInput)
 	}
+	// The inbox is the UNION of two sources past the agent's ack cursor:
+	// (1) comment events addressed to the agent (addressee in the payload), and
+	// (2) events a hook delivered to this agent's inbox (inbox_deliveries).
+	// UNION (not UNION ALL) dedupes the rare event that is both.
 	rows, err := s.readDB.QueryContext(ctx, `
-		SELECT e.rowid, e.event_id, e.node_id, e.author_id, e.payload, e.created_at
-		  FROM sync_events e
-		 WHERE e.op_type = 'comment'
-		   AND json_valid(e.payload)
-		   AND json_extract(e.payload, '$.to') = ?
-		   AND e.rowid > COALESCE((SELECT cursor FROM agent_inbox_cursor WHERE agent_id = ?), 0)
-		 ORDER BY e.rowid ASC`, agentID, agentID)
+		SELECT seq, event_id, node_id, author_id, payload, created_at FROM (
+			SELECT e.rowid AS seq, e.event_id, e.node_id, e.author_id, e.payload, e.created_at
+			  FROM sync_events e
+			 WHERE e.op_type = 'comment'
+			   AND json_valid(e.payload)
+			   AND json_extract(e.payload, '$.to') = ?
+			   AND e.rowid > COALESCE((SELECT cursor FROM agent_inbox_cursor WHERE agent_id = ?), 0)
+			UNION
+			SELECT e.rowid AS seq, e.event_id, e.node_id, e.author_id, e.payload, e.created_at
+			  FROM sync_events e
+			  JOIN inbox_deliveries d ON d.event_seq = e.rowid
+			 WHERE d.agent_id = ?
+			   AND e.rowid > COALESCE((SELECT cursor FROM agent_inbox_cursor WHERE agent_id = ?), 0)
+		)
+		ORDER BY seq ASC`, agentID, agentID, agentID, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("inbox list %q: %w", agentID, err)
 	}

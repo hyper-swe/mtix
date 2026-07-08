@@ -180,6 +180,27 @@ CREATE TABLE IF NOT EXISTS agent_inbox_cursor (
     cursor   INTEGER NOT NULL DEFAULT 0
 );
 
+-- Single-row watermark of the highest sync_events.rowid the hook dispatcher has
+-- processed (FR-19.3 / MTIX-47.3). The dispatcher fires hooks for events past
+-- this cursor, then advances it — so a mutation's hooks fire at-least-once and
+-- a restart resumes where it left off.
+CREATE TABLE IF NOT EXISTS hook_dispatch_cursor (
+    id     INTEGER PRIMARY KEY CHECK (id = 1),
+    cursor INTEGER NOT NULL DEFAULT 0
+);
+
+-- Hook-driven inbox deliveries (FR-19.4): when a hook with an inbox delivery
+-- matches an event, it records that the event (event_seq = sync_events.rowid) is
+-- delivered to agent_id. The inbox is then the UNION of comment events addressed
+-- to the agent AND these hook deliveries, both past the agent's ack cursor.
+CREATE TABLE IF NOT EXISTS inbox_deliveries (
+    agent_id     TEXT    NOT NULL,
+    event_seq    INTEGER NOT NULL,
+    hook_name    TEXT    NOT NULL,
+    delivered_at TEXT    NOT NULL,
+    PRIMARY KEY (agent_id, event_seq)
+);
+
 -- Narrow the inbox scan to comment events. The addressee itself lives in the
 -- JSON payload and is filtered at query time (guarded by json_valid); an
 -- expression index on json_extract(payload) is deliberately avoided — it would

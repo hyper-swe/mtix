@@ -44,6 +44,7 @@ type appContext struct {
 	bgSvc      *service.BackgroundService
 	configSvc  *service.ConfigService
 	syncSvc    *service.SyncService
+	hooksDisp  *service.HooksDispatcher
 	logger     *slog.Logger
 	jsonOutput bool
 	mtixDir    string // Path to .mtix directory, set during initApp.
@@ -79,6 +80,11 @@ prompt chain propagation, and multi-agent orchestration.`,
 					app.logger.Warn("auto-export failed", "error", err)
 				}
 				maybeAutoBackup()
+				// FR-19.3: fire hooks for events this command journaled. Runs
+				// post-commit — never blocks or fails the mutation; adapter
+				// errors are logged inside Dispatch. Events from a command that
+				// errored (skipping this path) are picked up by the next one.
+				app.hooksDisp.Dispatch(cmd.Context())
 			}
 			return closeApp()
 		},
@@ -243,6 +249,7 @@ func initApp(_ *cobra.Command, logLevel string) error {
 	app.sessionSvc = service.NewSessionService(app.store, app.configSvc, app.logger, clock)
 	app.bgSvc = service.NewBackgroundService(app.store, app.configSvc, app.logger, clock)
 	app.syncSvc = service.NewSyncService(app.store, app.logger, clock)
+	app.hooksDisp = service.NewHooksDispatcher(app.store, mtixDir, app.logger)
 	app.mtixDir = mtixDir
 
 	return nil

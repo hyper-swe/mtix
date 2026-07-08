@@ -15,7 +15,11 @@ func (h Hook) Matches(e Event) bool {
 	if len(m.Events) > 0 && !contains(m.Events, e.Name) {
 		return false
 	}
-	if m.ToAgent != "" && m.ToAgent != e.ToAgent {
+	// to-agent filters comment.addressed events by their addressee. For events
+	// with no addressee (status.changed, node.created) it is NOT a filter — it
+	// is the inbox delivery target — so a "wake opus on a status change" hook
+	// still matches. Use `under`/`status-to` to scope those events.
+	if m.ToAgent != "" && e.Name == EventCommentAddressed && m.ToAgent != e.ToAgent {
 		return false
 	}
 	if m.FromAgentNot != "" && m.FromAgentNot == e.Author {

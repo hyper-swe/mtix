@@ -77,6 +77,9 @@ type AppendFileConfig struct {
 // against. It is derived from a sync_events row (op_type + payload) by
 // NormalizeEvent, so the matcher never touches storage or wire formats.
 type Event struct {
+	// Seq is the journal rowid — the event's local identity, used by the inbox
+	// adapter to record a delivery. Zero for a synthetic event (e.g. a dry-run).
+	Seq int64
 	// Name is a canonical hook event (EventCommentAddressed, etc.).
 	Name string
 	// NodeID is the affected node's dot-path id (drives the `under` subtree filter).

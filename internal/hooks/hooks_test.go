@@ -16,23 +16,29 @@ func TestMatches_AndComposedFilters(t *testing.T) {
 		Name: "wake-worker",
 		Match: Match{
 			Events:       []string{EventStatusChanged},
-			ToAgent:      "opus",
 			FromAgentNot: "opus",
 			Under:        "HP-1",
 			StatusTo:     []string{"done", "blocked"},
 		},
 		Deliver: []string{AdapterInbox},
 	}
-	base := Event{Name: EventStatusChanged, NodeID: "HP-1.2", Author: "worker", ToAgent: "opus", StatusTo: "done"}
+	base := Event{Name: EventStatusChanged, NodeID: "HP-1.2", Author: "worker", StatusTo: "done"}
 
 	require.True(t, h.Matches(base), "all filters satisfied")
 	require.False(t, h.Matches(mut(base, func(e *Event) { e.Name = EventNodeCreated })), "wrong event")
-	require.False(t, h.Matches(mut(base, func(e *Event) { e.ToAgent = "sonnet" })), "wrong addressee")
 	require.False(t, h.Matches(mut(base, func(e *Event) { e.Author = "opus" })), "from-agent-not excludes self")
 	require.False(t, h.Matches(mut(base, func(e *Event) { e.NodeID = "HP-2.1" })), "outside subtree")
 	require.False(t, h.Matches(mut(base, func(e *Event) { e.StatusTo = "open" })), "status not in set")
 	require.False(t, h.Matches(mut(base, func(e *Event) { e.Synced = true })), "synced without include-synced")
 	require.True(t, h.Matches(mut(base, func(e *Event) { e.NodeID = "HP-1" })), "ancestor itself is in-subtree")
+}
+
+func TestMatches_ToAgentFiltersOnlyAddressedComments(t *testing.T) {
+	h := Hook{Match: Match{Events: []string{EventCommentAddressed, EventStatusChanged}, ToAgent: "opus"}, Deliver: []string{AdapterInbox}}
+	require.True(t, h.Matches(Event{Name: EventCommentAddressed, ToAgent: "opus"}), "addressed to opus")
+	require.False(t, h.Matches(Event{Name: EventCommentAddressed, ToAgent: "sonnet"}), "addressed to someone else")
+	// status.changed has no addressee — to-agent is the delivery target, not a filter.
+	require.True(t, h.Matches(Event{Name: EventStatusChanged, NodeID: "X-1"}), "status change matches; to-agent is the target")
 }
 
 func TestMatches_EmptyFiltersAreWildcards(t *testing.T) {

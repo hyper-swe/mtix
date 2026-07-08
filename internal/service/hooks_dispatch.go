@@ -35,11 +35,14 @@ func NewHooksDispatcher(store *sqlite.Store, mtixDir string, logger *slog.Logger
 	}
 	// append-file paths resolve under the PROJECT root (the parent of .mtix), so
 	// a hook can write a human-readable audit trail like FRONTIER-INBOX.md at the
-	// project top level (FR-19.3); the adapter clamps traversal to that base.
+	// project top level (FR-19.3); the adapter clamps traversal to that base. The
+	// exec adapter is registered but gated per-Dispatch by the content-hash trust
+	// (fire() skips it unless the operator has trusted the current hooks.yaml).
 	reg := hooks.NewRegistry(
 		&inboxAdapter{store: store},
 		hooks.NewWebhookAdapter(nil),
 		hooks.NewAppendFileAdapter(filepath.Dir(mtixDir)),
+		hooks.NewExecAdapter(),
 	)
 	return &HooksDispatcher{store: store, registry: reg, mtixDir: mtixDir, logger: logger}
 }
@@ -68,6 +71,11 @@ func (d *HooksDispatcher) Dispatch(ctx context.Context) {
 		return
 	}
 
+	// exec runs only for a hooks.yaml the operator has trusted by content hash
+	// (47.5). Evaluated once per dispatch; a config change since the last trust
+	// silently disables exec (fire() logs the skip).
+	execTrusted := hooks.ExecTrusted(d.mtixDir)
+
 	maxSeq := cursor
 	for _, je := range events {
 		if je.Seq > maxSeq {
@@ -81,7 +89,7 @@ func (d *HooksDispatcher) Dispatch(ctx context.Context) {
 			continue // op_type is not a hook trigger (e.g. an unaddressed comment)
 		}
 		for _, h := range cfg.MatchingHooks(evt) {
-			d.fire(ctx, h, evt, je)
+			d.fire(ctx, h, evt, je, execTrusted)
 		}
 	}
 	if maxSeq > cursor {
@@ -93,7 +101,7 @@ func (d *HooksDispatcher) Dispatch(ctx context.Context) {
 
 // fire delivers one matched event to each adapter the hook names. Adapter
 // errors are logged and never propagated (FR-19.3).
-func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent) {
+func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent, execTrusted bool) {
 	eventJSON, _ := json.Marshal(map[string]any{
 		"seq": je.Seq, "event": evt.Name, "node_id": evt.NodeID,
 		"author": evt.Author, "to": evt.ToAgent, "status": evt.StatusTo,
@@ -101,6 +109,11 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 	})
 	del := hooks.Delivery{Hook: h, Event: evt, EventJSON: eventJSON}
 	for _, name := range h.Deliver {
+		if name == hooks.AdapterExec && !execTrusted {
+			d.logger.Warn("hook dispatch: exec skipped — hooks.yaml is not trusted; review it and run 'mtix hooks trust'",
+				"hook", h.Name)
+			continue
+		}
 		adapter, ok := d.registry.Lookup(name)
 		if !ok {
 			d.logger.Warn("hook dispatch: unknown adapter", "hook", h.Name, "adapter", name)

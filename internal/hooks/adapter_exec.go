@@ -49,7 +49,11 @@ func (a *ExecAdapter) Deliver(ctx context.Context, d Delivery) error {
 	// (47.5) and run WITHOUT a shell. Event data reaches the process only via
 	// env/stdin, never the command line, so it cannot inject arguments.
 	cmd := exec.CommandContext(runCtx, cfg.Command[0], cfg.Command[1:]...)
-	cmd.Env = append(cmd.Environ(), "MTIX_EVENT="+string(d.EventJSON))
+	// MTIX_HOOK_ORIGIN lets any mtix mutation the command runs stamp its events
+	// with this hook's name, so they never re-trigger it (loop prevention, 47.7).
+	cmd.Env = append(cmd.Environ(),
+		"MTIX_EVENT="+string(d.EventJSON),
+		"MTIX_HOOK_ORIGIN="+d.Hook.Name)
 	cmd.Stdin = bytes.NewReader(d.EventJSON)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out

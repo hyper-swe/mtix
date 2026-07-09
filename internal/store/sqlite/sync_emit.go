@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -68,17 +69,7 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 		projectPrefix = p.ProjectCode
 	}
 
-	machineHash, err := readOrComputeMachineHash(ctx, tx)
-	if err != nil {
-		return fmt.Errorf("emit %s: %w", p.OpType, err)
-	}
-
-	lamport, err := bumpLamport(ctx, tx)
-	if err != nil {
-		return fmt.Errorf("emit %s: %w", p.OpType, err)
-	}
-
-	vc, err := bumpAndPersistVectorClock(ctx, tx, authorID)
+	machineHash, lamport, vc, err := emitClocks(ctx, tx, authorID)
 	if err != nil {
 		return fmt.Errorf("emit %s: %w", p.OpType, err)
 	}
@@ -144,6 +135,45 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 	)
 	if err != nil {
 		return fmt.Errorf("emit %s: insert sync_events: %w", p.OpType, err)
+	}
+
+	if err := maybeRecordHookOrigin(ctx, tx, event.EventID); err != nil {
+		return fmt.Errorf("emit %s: %w", p.OpType, err)
+	}
+	return nil
+}
+
+// emitClocks bumps and reads the per-event ordering metadata inside the caller's
+// tx: the machine hash, the Lamport clock, and the author's vector clock.
+func emitClocks(ctx context.Context, tx *sql.Tx, authorID string) (string, int64, model.VectorClock, error) {
+	machineHash, err := readOrComputeMachineHash(ctx, tx)
+	if err != nil {
+		return "", 0, nil, err
+	}
+	lamport, err := bumpLamport(ctx, tx)
+	if err != nil {
+		return "", 0, nil, err
+	}
+	vc, err := bumpAndPersistVectorClock(ctx, tx, authorID)
+	if err != nil {
+		return "", 0, nil, err
+	}
+	return machineHash, lamport, vc, nil
+}
+
+// maybeRecordHookOrigin records loop-prevention provenance (FR-19.6): if this
+// mutation was journaled by an exec hook's command (MTIX_HOOK_ORIGIN set in that
+// process's env), the producing hook is stored so the event never re-triggers
+// that same hook. A no-op for ordinary mutations.
+func maybeRecordHookOrigin(ctx context.Context, tx *sql.Tx, eventID string) error {
+	via := os.Getenv("MTIX_HOOK_ORIGIN")
+	if via == "" {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO hook_event_origin (event_id, via_hook) VALUES (?, ?)
+		 ON CONFLICT(event_id) DO NOTHING`, eventID, via); err != nil {
+		return fmt.Errorf("record hook origin: %w", err)
 	}
 	return nil
 }

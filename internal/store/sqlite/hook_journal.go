@@ -25,6 +25,10 @@ type JournalEvent struct {
 	Payload   []byte
 	Synced    bool
 	CreatedAt string
+	// ViaHook names the hook whose exec command journaled this event (empty for
+	// an ordinary mutation). A via-hook event never re-triggers the same hook
+	// (loop prevention, FR-19.6).
+	ViaHook string
 }
 
 // ReadJournalSince returns journaled events with rowid greater than cursor,
@@ -37,9 +41,11 @@ func (s *Store) ReadJournalSince(ctx context.Context, cursor int64, limit int) (
 	}
 	rows, err := s.readDB.QueryContext(ctx, `
 		SELECT e.rowid, e.event_id, e.op_type, e.node_id, e.author_id, e.payload,
-		       e.created_at, (a.event_id IS NOT NULL) AS synced
+		       e.created_at, (a.event_id IS NOT NULL) AS synced,
+		       COALESCE(o.via_hook, '') AS via_hook
 		  FROM sync_events e
 		  LEFT JOIN applied_events a ON a.event_id = e.event_id
+		  LEFT JOIN hook_event_origin o ON o.event_id = e.event_id
 		 WHERE e.rowid > ?
 		 ORDER BY e.rowid ASC
 		 LIMIT ?`, cursor, limit)
@@ -55,7 +61,7 @@ func (s *Store) ReadJournalSince(ctx context.Context, cursor int64, limit int) (
 			payload string
 		)
 		if scanErr := rows.Scan(&ev.Seq, &ev.EventID, &ev.OpType, &ev.NodeID,
-			&ev.Author, &payload, &ev.CreatedAt, &ev.Synced); scanErr != nil {
+			&ev.Author, &payload, &ev.CreatedAt, &ev.Synced, &ev.ViaHook); scanErr != nil {
 			return nil, fmt.Errorf("scan journal event: %w", scanErr)
 		}
 		ev.Payload = []byte(payload)
@@ -108,4 +114,64 @@ func (s *Store) RecordInboxDelivery(ctx context.Context, agentID string, eventSe
 			agentID, eventSeq, hookName, time.Now().UTC().Format(time.RFC3339))
 		return err
 	})
+}
+
+// HookLogEntry is one row of the hook-firing audit log (FR-19.7).
+type HookLogEntry struct {
+	Hook    string
+	NodeID  string
+	Event   string
+	Adapter string
+	Outcome string
+	Detail  string
+	FiredAt string
+}
+
+// WriteHookLog appends a hook-firing outcome to the audit log (stamped now).
+func (s *Store) WriteHookLog(ctx context.Context, e HookLogEntry) error {
+	return s.WithTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO hook_log (hook_name, node_id, event_name, adapter, outcome, detail, fired_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			e.Hook, e.NodeID, e.Event, e.Adapter, e.Outcome, e.Detail,
+			time.Now().UTC().Format(time.RFC3339))
+		return err
+	})
+}
+
+// ReadHookLog returns the most recent hook-firing entries, newest first.
+func (s *Store) ReadHookLog(ctx context.Context, limit int) ([]HookLogEntry, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.readDB.QueryContext(ctx, `
+		SELECT hook_name, node_id, event_name, adapter, outcome, COALESCE(detail, ''), fired_at
+		  FROM hook_log ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("read hook log: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []HookLogEntry
+	for rows.Next() {
+		var e HookLogEntry
+		if scanErr := rows.Scan(&e.Hook, &e.NodeID, &e.Event, &e.Adapter, &e.Outcome, &e.Detail, &e.FiredAt); scanErr != nil {
+			return nil, fmt.Errorf("scan hook log: %w", scanErr)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// HookFiringCount counts DELIVERED firings of hookName on nodeID at or after the
+// RFC3339 timestamp since — the input to the per-node rate limit (FR-19.6).
+func (s *Store) HookFiringCount(ctx context.Context, hookName, nodeID, since string) (int, error) {
+	var n int
+	err := s.readDB.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM hook_log
+		 WHERE hook_name = ? AND node_id = ? AND fired_at >= ? AND outcome = 'delivered'`,
+		hookName, nodeID, since).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("hook firing count: %w", err)
+	}
+	return n, nil
 }

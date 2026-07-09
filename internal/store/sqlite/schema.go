@@ -201,6 +201,30 @@ CREATE TABLE IF NOT EXISTS inbox_deliveries (
     PRIMARY KEY (agent_id, event_seq)
 );
 
+-- Audit log of hook firings (FR-19.7): the dispatcher writes one row per
+-- (hook, adapter) outcome; 'mtix hooks log' reads it. The (hook, node, time)
+-- index also backs the per-node rate limit (FR-19.6).
+CREATE TABLE IF NOT EXISTS hook_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    hook_name  TEXT NOT NULL,
+    node_id    TEXT NOT NULL,
+    event_name TEXT NOT NULL,
+    adapter    TEXT NOT NULL,
+    outcome    TEXT NOT NULL,   -- delivered | error | skipped-untrusted
+    detail     TEXT,
+    fired_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_hook_log_hook_node_time
+    ON hook_log(hook_name, node_id, fired_at);
+
+-- Event provenance for loop prevention (FR-19.6): when an event is journaled by
+-- an exec hook's command (MTIX_HOOK_ORIGIN set), the producing hook is recorded
+-- here so that event never re-triggers the same hook.
+CREATE TABLE IF NOT EXISTS hook_event_origin (
+    event_id TEXT PRIMARY KEY,
+    via_hook TEXT NOT NULL
+);
+
 -- Narrow the inbox scan to comment events. The addressee itself lives in the
 -- JSON payload and is filtered at query time (guarded by json_valid); an
 -- expression index on json_extract(payload) is deliberately avoided — it would

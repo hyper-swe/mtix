@@ -88,3 +88,10 @@ hooks:
 }
 
 func mut(e Event, f func(*Event)) Event { f(&e); return e }
+
+func TestMatches_ViaHookNeverRetriggersSameHook(t *testing.T) {
+	h := Hook{Name: "h", Match: Match{Events: []string{EventStatusChanged}}, Deliver: []string{AdapterInbox}}
+	require.True(t, h.Matches(Event{Name: EventStatusChanged}), "an ordinary event matches")
+	require.False(t, h.Matches(Event{Name: EventStatusChanged, ViaHook: "h"}), "the hook's own exec output does not re-trigger it")
+	require.True(t, h.Matches(Event{Name: EventStatusChanged, ViaHook: "other"}), "another hook's output still matches")
+}

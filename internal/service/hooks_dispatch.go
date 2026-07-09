@@ -9,10 +9,15 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"time"
 
 	"github.com/hyper-swe/mtix/internal/hooks"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
+
+// maxHookFiringsPerNodePerHour caps how often one hook may fire on one node — a
+// runaway-loop backstop (FR-19.6). Firings past the cap are skipped and logged.
+const maxHookFiringsPerNodePerHour = 20
 
 // HooksDispatcher fires the delivery adapters of hooks that match journaled
 // events (FR-19.3 / MTIX-47.3). It runs AFTER a mutation commits — post-command
@@ -89,6 +94,9 @@ func (d *HooksDispatcher) Dispatch(ctx context.Context) {
 			continue // op_type is not a hook trigger (e.g. an unaddressed comment)
 		}
 		for _, h := range cfg.MatchingHooks(evt) {
+			if d.rateLimited(ctx, h, evt) {
+				continue
+			}
 			d.fire(ctx, h, evt, je, execTrusted)
 		}
 	}
@@ -112,16 +120,50 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 		if name == hooks.AdapterExec && !execTrusted {
 			d.logger.Warn("hook dispatch: exec skipped — hooks.yaml is not trusted; review it and run 'mtix hooks trust'",
 				"hook", h.Name)
+			d.logFiring(ctx, h, evt, name, "skipped-untrusted", "")
 			continue
 		}
 		adapter, ok := d.registry.Lookup(name)
 		if !ok {
 			d.logger.Warn("hook dispatch: unknown adapter", "hook", h.Name, "adapter", name)
+			d.logFiring(ctx, h, evt, name, "error", "unknown adapter")
 			continue
 		}
 		if err := adapter.Deliver(ctx, del); err != nil {
 			d.logger.Warn("hook dispatch: adapter failed", "hook", h.Name, "adapter", name, "error", err)
+			d.logFiring(ctx, h, evt, name, "error", err.Error())
+			continue
 		}
+		d.logFiring(ctx, h, evt, name, "delivered", "")
+	}
+}
+
+// rateLimited reports whether hook h has already fired the FR-19.6 cap of times
+// on this event's node within the last hour, logging the skip if so. On a count
+// error it fails OPEN (fires) rather than silently dropping events.
+func (d *HooksDispatcher) rateLimited(ctx context.Context, h hooks.Hook, evt hooks.Event) bool {
+	since := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	n, err := d.store.HookFiringCount(ctx, h.Name, evt.NodeID, since)
+	if err != nil {
+		d.logger.Error("hook dispatch: rate-limit check", "hook", h.Name, "error", err)
+		return false
+	}
+	if n >= maxHookFiringsPerNodePerHour {
+		d.logger.Warn("hook dispatch: RATE LIMITED — hook fired too often on this node",
+			"hook", h.Name, "node", evt.NodeID, "count", n, "limit", maxHookFiringsPerNodePerHour)
+		return true
+	}
+	return false
+}
+
+// logFiring records a hook-firing outcome to the audit log (FR-19.7); a log
+// write failure is itself only logged, never propagated.
+func (d *HooksDispatcher) logFiring(ctx context.Context, h hooks.Hook, evt hooks.Event, adapter, outcome, detail string) {
+	if err := d.store.WriteHookLog(ctx, sqlite.HookLogEntry{
+		Hook: h.Name, NodeID: evt.NodeID, Event: evt.Name,
+		Adapter: adapter, Outcome: outcome, Detail: detail,
+	}); err != nil {
+		d.logger.Error("hook dispatch: write hook log", "error", err)
 	}
 }
 
@@ -129,7 +171,7 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 // Event (Name == "") when the op_type is not a hook trigger. The comment
 // addressee and the transition's new status both live at payload key "to".
 func NormalizeEvent(je sqlite.JournalEvent) hooks.Event {
-	e := hooks.Event{Seq: je.Seq, NodeID: je.NodeID, Author: je.Author, Synced: je.Synced}
+	e := hooks.Event{Seq: je.Seq, NodeID: je.NodeID, Author: je.Author, Synced: je.Synced, ViaHook: je.ViaHook}
 	switch je.OpType {
 	case "comment":
 		var p struct {

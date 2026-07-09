@@ -11,7 +11,20 @@ import "strings"
 // per-node rate limit are applied by the dispatcher (loop prevention, 47.7),
 // not here — Matches is a pure predicate over the declared config filters.
 func (h Hook) Matches(e Event) bool {
-	m := h.Match
+	// Loop prevention (FR-19.6): an event produced by THIS hook's own exec
+	// command never re-triggers it, regardless of the other filters.
+	if e.ViaHook != "" && e.ViaHook == h.Name {
+		return false
+	}
+	// A synced event fires only for a hook that explicitly opts in (FR-19 §3).
+	if e.Synced && !h.IncludeSynced {
+		return false
+	}
+	return h.Match.matches(e)
+}
+
+// matches applies the declared config filters (AND-composed) to e.
+func (m Match) matches(e Event) bool {
 	if len(m.Events) > 0 && !contains(m.Events, e.Name) {
 		return false
 	}
@@ -29,10 +42,6 @@ func (h Hook) Matches(e Event) bool {
 		return false
 	}
 	if len(m.StatusTo) > 0 && !contains(m.StatusTo, e.StatusTo) {
-		return false
-	}
-	// A synced event fires only for a hook that explicitly opts in (FR-19 §3).
-	if e.Synced && !h.IncludeSynced {
 		return false
 	}
 	return true

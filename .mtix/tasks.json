@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-08T20:10:02Z",
+  "exported_at": "2026-07-09T05:48:04Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5377,7 +5377,7 @@
       "priority": 2,
       "labels": "[]",
       "status": "open",
-      "progress": 0.75,
+      "progress": 1,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
@@ -5557,15 +5557,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-fr19",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "da1f2ba0e683dba349a4b70e794b8a5a55bc64403da81a52902cee049bbd34ba",
       "created_at": "2026-07-04T10:23:57Z",
-      "updated_at": "2026-07-04T10:23:57Z",
+      "updated_at": "2026-07-09T05:48:04Z",
+      "closed_at": "2026-07-09T05:48:04Z",
       "uid": "019f2ca8-06a8-7c5f-bd5c-7fc72b5a051e"
     },
     {
@@ -5582,15 +5583,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-fr19",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "156587567e335730a3f4dc7fcbfad448498fc6a88af4135516343816f4a7a5c6",
       "created_at": "2026-07-04T10:23:57Z",
-      "updated_at": "2026-07-04T10:23:57Z",
+      "updated_at": "2026-07-09T05:48:04Z",
+      "closed_at": "2026-07-09T05:48:04Z",
       "uid": "019f2ca8-06c5-79df-b5ef-38f67940c019"
     },
     {
@@ -6571,7 +6573,7 @@
       "agent_id": "claude-fr19",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-47.4",
+      "current_node_id": "MTIX-47.8",
       "last_heartbeat": "2026-07-08T13:50:26Z"
     },
     {
@@ -6664,5 +6666,5 @@
     }
   ],
   "node_count": 242,
-  "checksum": "35d19d3cd3de0fac476e60225d3bd377acfb806d4d0bb69a3f5327449e5e6d5e"
+  "checksum": "3f7addef886fed69d8da403cc8bc3b1d26826c583982f668df2c55ff761cd909"
 }

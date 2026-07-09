@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"slices"
@@ -35,8 +36,52 @@ func newHooksCmd() *cobra.Command {
 		Use:   "hooks",
 		Short: "Inspect and test FR-19 event hooks (.mtix/hooks.yaml)",
 	}
-	cmd.AddCommand(newHooksListCmd(), newHooksFireCmd(), newHooksTrustCmd())
+	cmd.AddCommand(newHooksListCmd(), newHooksFireCmd(), newHooksTrustCmd(), newHooksLogCmd())
 	return cmd
+}
+
+// newHooksLogCmd creates `mtix hooks log` (FR-19.7): the audit trail of hook
+// firings — event id, hook, adapter, and outcome (delivered / error /
+// skipped-untrusted) — newest first.
+func newHooksLogCmd() *cobra.Command {
+	var limit int
+	cmd := &cobra.Command{
+		Use:   "log",
+		Short: "Show recent hook firings (audit trail, newest first)",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runHooksLog(limit)
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 50, "Max entries to show")
+	return cmd
+}
+
+func runHooksLog(limit int) error {
+	if app.store == nil {
+		return fmt.Errorf("not in an mtix project")
+	}
+	entries, err := app.store.ReadHookLog(context.Background(), limit)
+	if err != nil {
+		return err
+	}
+	out := NewOutputWriter(app.jsonOutput)
+	if app.jsonOutput {
+		return out.WriteJSON(entries)
+	}
+	if len(entries) == 0 {
+		out.WriteHuman("(no hook firings recorded)\n")
+		return nil
+	}
+	for _, e := range entries {
+		detail := ""
+		if e.Detail != "" {
+			detail = "  (" + e.Detail + ")"
+		}
+		out.WriteHuman("%s  %s  %s  %s → %s  [%s]%s\n",
+			e.FiredAt, e.Hook, e.NodeID, e.Event, e.Adapter, e.Outcome, detail)
+	}
+	return nil
 }
 
 // newHooksTrustCmd creates `mtix hooks trust` (MTIX-47.5): record the current

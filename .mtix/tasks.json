@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-10T11:11:34Z",
+  "exported_at": "2026-07-10T11:37:56Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5986,6 +5986,56 @@
       "uid": "019f134d-b2ef-7c25-bbf9-0fa8b7a23695"
     },
     {
+      "id": "MTIX-50",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 50,
+      "project": "MTIX",
+      "title": "inbox --wait empty-park exit code: field report of exit 0 (seq 209); verify contract + add regression test",
+      "description": "",
+      "prompt": "Field report (seq 209, FR-19 requestor, preview build): 'mtix inbox --agent X --wait' on a FIRST park with an empty inbox returned exit 0 with an empty JSON [] instead of the documented exit 5 (exitCodeInboxEmpty). INVESTIGATION so far: the exit-5 contract IS implemented and correct -- runInbox (cmd/mtix/inbox.go:107-110) returns errInboxWaitEmpty when 'wait \u0026\u0026 len(events)==0'; exitcode.go:45 maps it to 5; main.go:34 silences its message. Reproduced GREEN (exit 5) on both preview binaries (a393687 and the requestor's 1fe0547) and on current main, for every empty-park variant tried: --timeout 0, -1, 1; JSON and human output; first park after a fresh init. Could NOT reproduce exit 0. HYPOTHESIS: the observed exit 0 is an artifact of the Claude harness reaping a long background CLI park (see the sibling ticket), so the exit code the agent captured was the harness wrapper's, not the CLI's -- not a CLI contract bug. To close: (1) get the EXACT seq-209 invocation (flags, timeout, whether run as a harness background task) and try to reproduce; (2) regardless, add a regression test that pins the contract at the cmd level -- assert 'inbox --wait --timeout 1 --json' on an empty inbox exits 5 and prints [] -- so it cannot silently regress; a store-level InboxWait timeout test already implies it but the cmd exit-code mapping is untested. Files: cmd/mtix/inbox.go, cmd/mtix/exitcode.go, cmd/mtix/main.go.",
+      "acceptance": "A cmd-level regression test asserts exit 5 + empty JSON [] for 'inbox --wait' on an empty timeout, in both --json and human modes. If the exact seq-209 invocation reproduces a real exit-0 path, it is fixed and covered by that test; otherwise the ticket documents that the CLI contract is correct and the exit-0 was a harness-reaping artifact (cross-linked to the MCP-wake docs ticket).",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "f4fb7a53cafd539279178acb0b8fc124f53411935a7ceb1acf42ecd0733f3418",
+      "created_at": "2026-07-10T11:37:29Z",
+      "updated_at": "2026-07-10T11:37:56Z",
+      "uid": "019f4bd1-81d5-7e77-a71d-e74eedf65f28"
+    },
+    {
+      "id": "MTIX-51",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 51,
+      "project": "MTIX",
+      "title": "FR-19 docs: Claude-agent durable wake path is MCP mtix_inbox_wait, not a backgrounded CLI park (harness reaps parks)",
+      "description": "",
+      "prompt": "Environment finding from the FR-19 field trial (seq 209): a long-running 'mtix inbox --wait --timeout 300' parked as a background process gets REAPED by the Claude harness, so a Claude-based agent cannot rely on a backgrounded CLI park as its durable wake primitive. This is exactly the 'agent that can't hold a socket' case FR-19.5 was designed for: the durable, harness-safe wake path for Claude agents is the MCP tools -- mtix_inbox_wait (long-poll, capped ~60s, RE-INVOKE on empty return), mtix_inbox (list), mtix_inbox_ack -- invoked as ordinary tool calls, not a held process. The CLI --wait primitive remains correct for agents that CAN hold a process (e.g. a shell-loop worker, the aarch64 sandbox). ACTION: document this guidance prominently. Update dist/FR-19-PREVIEW.md (the wake-loop section currently leads with 'mtix inbox --wait' for the worker loop -- add that Claude/harness agents should use mtix_inbox_wait and re-invoke on empty, and that a backgrounded CLI park may be reaped) and the FR-19 feature docs / FR-19.5 section. No code change required unless we also want a doc note in the inbox --wait --help text pointing Claude agents at the MCP tool.",
+      "acceptance": "FR-19-PREVIEW.md and the FR-19.5 docs state clearly: Claude/harness-hosted agents should use the MCP mtix_inbox_wait tool (re-invoke on empty) as the durable wake path because a backgrounded CLI --wait park can be reaped; CLI --wait stays documented for agents that can hold a process. No behavioral regression to the CLI.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "90ceb7ef70c9f251ed8175658359522d8c74cab5d33afa71cf7523ba8353df54",
+      "created_at": "2026-07-10T11:37:29Z",
+      "updated_at": "2026-07-10T11:37:56Z",
+      "uid": "019f4bd1-81f7-7537-b22d-42f402ba204b"
+    },
+    {
       "id": "MTIX-6",
       "parent_id": "",
       "depth": 0,
@@ -6717,6 +6767,6 @@
       "status": "active"
     }
   ],
-  "node_count": 244,
-  "checksum": "6ac044a001595a9ed8ea6837e1f26c9d745162c92f30575eddc27f6942548986"
+  "node_count": 246,
+  "checksum": "2bc0b07331761e96254c4b040c7d802f15d20266608c0a444a7c30dd7972f9a9"
 }

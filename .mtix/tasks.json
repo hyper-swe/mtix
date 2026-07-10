@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-10T19:43:29Z",
+  "exported_at": "2026-07-10T20:00:55Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6116,6 +6116,31 @@
       "uid": "019f4d83-88ab-793f-9aa9-48c8c0b9fde7"
     },
     {
+      "id": "MTIX-53",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 53,
+      "project": "MTIX",
+      "title": "MCP server does not dispatch hooks on mutations — wire Dispatch into the on-commit path (host-side exec cold-start)",
+      "description": "",
+      "prompt": "GAP: hook dispatch (service.HooksDispatcher.Dispatch) is invoked in exactly two places — the CLI post-command path (cmd/mtix/root.go PersistentPostRunE) and the sync daemon's designated synced-dispatch (cmd/mtix/sync_daemon.go, MTIX-52). The long-running MCP server (cmd/mtix/mcp.go runMCP) NEVER dispatches hooks: its only on-commit wiring is wireMirrorExporter (store.SetOnCommit -\u003e tasks.json export + rolling backup), not hooks. CONSEQUENCE: when an agent drives mtix through the MCP server (e.g. a desktop-app local connector running host-side), its mutations commit and mirror, but NO hooks fire — so an exec hook cannot cold-start a worker on the host. This blocks the 'run the mtix MCP server host-side so exec fires there' path (the connector alternative to daemon-driven dispatch, MTIX-52). FIX: dispatch hooks after each committed MCP mutation. The clean seam is the same store.SetOnCommit used by the mirror exporter — register a second on-commit callback that runs app.hooksDisp.Dispatch(ctx) (the LOCAL path: MCP mutations are local events on the server host, so Dispatch, not DispatchSynced). Wire it in runMCP alongside wireMirrorExporter. This gives IMMEDIATE host-side firing (better than the daemon's poll). exec still requires local content-hash trust on the server host (MTIX-49), the per-node rate limit and via-hook guard still apply, and Dispatch never blocks/fails a mutation. Consider whether the same wiring belongs in  (the HTTP/gRPC server) for parity. DESIGN NOTE / posture: this makes a persistent server auto-fire exec on agent mutations — acceptable because exec is off unless locally trusted, but call it out in docs. Files: cmd/mtix/mcp.go, cmd/mtix/mirror_wiring.go (or a sibling), possibly cmd/mtix/serve.go.",
+      "acceptance": "A committed mutation made through the MCP server fires matching LOCAL hooks (inbox/webhook/append-file/exec subject to local trust), verified by a test that drives an MCP tool mutation and asserts the hook delivered (e.g. inbox delivery recorded / exec-trusted hook ran). Hook dispatch never blocks or fails an MCP tool call. Rate-limit, via-hook, and exec-trust guards all still apply. tasks.json mirror + backup behavior unchanged. No hooks fire twice for one mutation. Docs note that a host-side MCP server fires local hooks (incl. exec when trusted).",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "cd80d1cf435dc2ac21fdfeb46e30c80a3226fb81e313fa10f67306b5bd41d035",
+      "created_at": "2026-07-10T20:00:30Z",
+      "updated_at": "2026-07-10T20:00:54Z",
+      "uid": "019f4d9e-0b13-776e-8bed-ed206ffc8099"
+    },
+    {
       "id": "MTIX-6",
       "parent_id": "",
       "depth": 0,
@@ -6847,6 +6872,6 @@
       "status": "active"
     }
   ],
-  "node_count": 249,
-  "checksum": "d4ab3621450c2ea0f2747be570894868933a97b5d368e54a08b8b6450d920215"
+  "node_count": 250,
+  "checksum": "71c9cec352ff60bfa95d62aabbe0fe39247659074f11b939c3cf47e3f65e6a82"
 }

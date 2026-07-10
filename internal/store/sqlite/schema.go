@@ -189,6 +189,17 @@ CREATE TABLE IF NOT EXISTS hook_dispatch_cursor (
     cursor INTEGER NOT NULL DEFAULT 0
 );
 
+-- Separate watermark for the DESIGNATED-host synced-dispatch path (MTIX-52).
+-- Local (CLI post-command) dispatch fires only local events and advances
+-- hook_dispatch_cursor past everything, including synced events it skips. The
+-- designated host's daemon fires include-synced hooks on synced events and must
+-- not lose them to that advance, so it tracks its own cursor here. Local-only,
+-- never synced -- like the other FR-19 dispatch tables.
+CREATE TABLE IF NOT EXISTS hook_synced_cursor (
+    id     INTEGER PRIMARY KEY CHECK (id = 1),
+    cursor INTEGER NOT NULL DEFAULT 0
+);
+
 -- Hook-driven inbox deliveries (FR-19.4): when a hook with an inbox delivery
 -- matches an event, it records that the event (event_seq = sync_events.rowid) is
 -- delivered to agent_id. The inbox is then the UNION of comment events addressed

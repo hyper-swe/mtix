@@ -1343,6 +1343,62 @@ The daemon runs `mtix sync pull` every 30 seconds by default. Pair
 with the pre-push hook (which handles push) for both inbound and
 outbound auto-sync.
 
+### Designated hook dispatch (multi-machine wake)
+
+Event hooks (`.mtix/hooks.yaml`) fire on the machine where the
+triggering command ran. For a **local** event that is exactly right —
+the wake action runs next to the worker. But an event that arrived
+from **another machine** (a synced event) is skipped by default, so a
+hook whose action must run on a specific host — e.g. an `exec` that
+launches a worker — would never fire for work posted elsewhere.
+
+Designate **one** host to act on synced events by running its daemon
+with `--dispatch-hooks`:
+
+```bash
+mtix sync daemon --dispatch-hooks
+```
+
+After each pull, that host fires hooks marked `include-synced: true`
+on the events it just received:
+
+```yaml
+hooks:
+  - name: wake-worker-on-done
+    match: { events: [status.changed], status-to: [done], to-agent: opus }
+    include-synced: true      # act on events from other machines too
+    deliver: [exec]
+```
+
+Run `--dispatch-hooks` on exactly **one** host so a synced event fires
+once team-wide (a separate cursor makes it exactly-once even across
+daemon restarts). Every other host — and all normal CLI commands —
+still fire hooks only for their own local events, so there is no
+duplicate firing. `exec` trust is local, so trust `hooks.yaml` on the
+designated host (`mtix hooks trust`).
+
+**Cold-starting a dormant agent.** A pull-based wait (`mtix inbox
+--wait`, or the `mtix_inbox_wait` MCP tool) can only surface work to a
+process that is *already running*. It cannot wake an agent that has no
+process — e.g. a harness-hosted LLM agent between turns. The only thing
+that starts a dormant worker is a **push**: an `exec` hook whose script
+launches a fresh worker session. Point that hook at the designated
+dispatch host so it fires where the worker should run, not on whichever
+machine happened to post the event:
+
+```yaml
+hooks:
+  - name: cold-start-worker
+    match: { events: [comment.addressed], to-agent: worker-1 }
+    include-synced: true
+    deliver: [exec]
+    exec: { command: ["/path/to/wake-worker.sh"] }   # launches a new session
+```
+
+With `mtix sync daemon --dispatch-hooks` on that host, a comment
+addressed to `worker-1` from any machine lands, syncs, and cold-starts
+the worker — no human poke, no polling.
+
 ### Conflict handling
 
 When two teammates edit the same field concurrently, Last-Write-Wins
@@ -1552,7 +1608,7 @@ mtix exits with structured codes so scripts and agents can react without parsing
 | 1 | Generic error |
 | 3 | Disk full — a write or backup was refused or failed because the volume is out of space; free space and retry |
 | 4 | Database corrupted — an integrity gate failed at open; see "Disk full and corruption recovery" |
-| 5 | Inbox empty — `mtix inbox --wait` timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Harness-hosted (Claude) agents should park via the `mtix_inbox_wait` MCP tool instead of a backgrounded CLI `--wait` |
+| 5 | Inbox empty — `mtix inbox --wait` timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Note: a harness-hosted (Claude) agent cannot stay parked *between* turns — a dormant session runs no poller, so `mtix_inbox_wait` only watches the inbox *within* a live turn. To wake a dormant agent when work lands, cold-start it with a designated-host exec hook (see "Designated hook dispatch"), or poll at each turn boundary |
 
 ### Common Issues
 

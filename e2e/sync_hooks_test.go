@@ -157,3 +157,60 @@ hooks:
 		  AND json_extract(e.payload, '$.to') = 'done'`).Scan(&syncedDone))
 	require.Equal(t, 1, syncedDone, "the done transition replicated to B and is marked synced")
 }
+
+// TestE2E_FR19_DesignatedHost_SyncedDispatch_FiresIncludeSyncedOnce is the
+// MTIX-52 acceptance: an include-synced hook is delivered on the DESIGNATED host
+// for an event that originated elsewhere, exactly once, and only via the synced
+// dispatch path — the multi-machine wake path (e.g. exec fires where the workers
+// live, not on whichever machine posted the event).
+func TestE2E_FR19_DesignatedHost_SyncedDispatch_FiresIncludeSyncedOnce(t *testing.T) {
+	pool := openHub(t)
+	ctx := context.Background()
+
+	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa") // origin (e.g. the poster's sandbox)
+	b := newFakeCLI(t, "B", "bbbbbbbbbbbbbbbb") // designated dispatch host (e.g. the Mac)
+
+	// The designated host carries an include-synced hook: it WANTS to act on
+	// events that originated on other machines.
+	hookYAML := `
+hooks:
+  - name: wake-on-synced-done
+    match:
+      events: [status.changed]
+      status-to: [done]
+      to-agent: opus
+    include-synced: true
+    deliver: [inbox]
+`
+	require.NoError(t, os.WriteFile(filepath.Join(b.mtixDir, "hooks.yaml"), []byte(hookYAML), 0o600))
+
+	// A creates the node and drives it to done, then it replicates to B.
+	a.createNode(t, "HOOK-3", "task")
+	require.NoError(t, a.store.TransitionStatus(ctx, "HOOK-3", model.StatusInProgress, "", "worker"))
+	require.NoError(t, a.store.TransitionStatus(ctx, "HOOK-3", model.StatusDone, "", "worker"))
+	a.pushAll(ctx, t, pool)
+	b.pullAll(ctx, t, pool)
+
+	disp := service.NewHooksDispatcher(b.store, b.mtixDir, e2eLogger())
+
+	// Local dispatch on the designated host must NOT fire the synced event — the
+	// local path owns local events only.
+	disp.Dispatch(ctx)
+	afterLocal, err := b.store.InboxList(ctx, "opus")
+	require.NoError(t, err)
+	require.Empty(t, afterLocal, "local dispatch never fires a synced event")
+
+	// The designated synced-dispatch path fires the include-synced hook once.
+	disp.DispatchSynced(ctx)
+	afterSynced, err := b.store.InboxList(ctx, "opus")
+	require.NoError(t, err)
+	require.Len(t, afterSynced, 1, "the designated host fires the include-synced hook on the synced event")
+	require.Equal(t, "HOOK-3", afterSynced[0].NodeID)
+
+	// A second synced dispatch does not re-fire — the separate cursor advanced,
+	// so it is exactly-once even if the daemon ticks again.
+	disp.DispatchSynced(ctx)
+	afterSecond, err := b.store.InboxList(ctx, "opus")
+	require.NoError(t, err)
+	require.Len(t, afterSecond, 1, "synced dispatch is exactly-once; a second pass does not re-fire")
+}

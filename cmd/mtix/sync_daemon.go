@@ -39,9 +39,10 @@ const daemonDefaultIntervalSec = 30
 // message. The file is removed on graceful shutdown (SIGTERM).
 func newSyncDaemonCmd() *cobra.Command {
 	var (
-		insecureTLS  bool
-		intervalSec  int
-		install      bool
+		insecureTLS   bool
+		intervalSec   int
+		install       bool
+		dispatchHooks bool
 	)
 	cmd := &cobra.Command{
 		Use:   "daemon [DSN]",
@@ -62,7 +63,7 @@ Use --install to print a systemd unit (linux) or launchd plist
 				return printDaemonInstallStub(cmd.OutOrStdout())
 			}
 			return runSyncDaemon(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
-				args, transport.Options{InsecureTLS: insecureTLS}, intervalSec)
+				args, transport.Options{InsecureTLS: insecureTLS}, intervalSec, dispatchHooks)
 		},
 	}
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
@@ -71,11 +72,15 @@ Use --install to print a systemd unit (linux) or launchd plist
 		"Pull interval in seconds")
 	cmd.Flags().BoolVar(&install, "install", false,
 		"Print a systemd unit / launchd plist for supervised install")
+	cmd.Flags().BoolVar(&dispatchHooks, "dispatch-hooks", false,
+		"Make THIS host the designated hook dispatcher (MTIX-52): after each pull, "+
+			"fire include-synced hooks on events that arrived from other machines. "+
+			"Run on exactly ONE host so a synced event fires once team-wide")
 	return cmd
 }
 
 func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
-	args []string, opts transport.Options, intervalSec int,
+	args []string, opts transport.Options, intervalSec int, dispatchHooks bool,
 ) error {
 	if app.mtixDir == "" {
 		return fmt.Errorf("mtix sync daemon: not in an mtix project")
@@ -106,15 +111,30 @@ func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 	// without a process exit.
 	defer wireMirrorExporter(app.logger)()
 
+	if dispatchHooks {
+		fmt.Fprintf(stdout, "mtix sync daemon: designated hook dispatcher — "+
+			"include-synced hooks fire on this host after each pull\n")
+	}
 	fmt.Fprintf(stdout, "mtix sync daemon: started (PID %d, interval %ds)\n",
 		os.Getpid(), intervalSec)
 
 	tick := time.NewTicker(time.Duration(intervalSec) * time.Second)
 	defer tick.Stop()
 
+	// pullThenDispatch runs one pull and, on the designated host, fires
+	// include-synced hooks on the events that pull just brought in (MTIX-52).
+	// Dispatch runs AFTER the pull so the synced events are already in the
+	// local journal; it never blocks or fails the loop.
+	pullThenDispatch := func() {
+		runOneDaemonPull(ctx, stderr, args, opts)
+		if dispatchHooks && app.hooksDisp != nil {
+			app.hooksDisp.DispatchSynced(ctx)
+		}
+	}
+
 	// Run one immediate pull before settling into the timer cadence
 	// so the user sees state move within seconds, not minutes.
-	runOneDaemonPull(ctx, stderr, args, opts)
+	pullThenDispatch()
 
 	for {
 		select {
@@ -122,7 +142,7 @@ func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 			fmt.Fprintln(stdout, "mtix sync daemon: shutting down")
 			return nil
 		case <-tick.C:
-			runOneDaemonPull(ctx, stderr, args, opts)
+			pullThenDispatch()
 		}
 	}
 }

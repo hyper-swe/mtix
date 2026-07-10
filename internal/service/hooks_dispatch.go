@@ -52,12 +52,43 @@ func NewHooksDispatcher(store *sqlite.Store, mtixDir string, logger *slog.Logger
 	return &HooksDispatcher{store: store, registry: reg, mtixDir: mtixDir, logger: logger}
 }
 
-// Dispatch processes journal events past the hook cursor, firing matching
-// hooks. It ALWAYS advances the cursor over the events it read — even when no
-// hook matches or none are configured — so a hook added later fires only on
-// FUTURE events, never a backlog. Never returns an error: a caller on the
-// mutation path must not be blocked or failed.
+// Dispatch is the LOCAL dispatch path — the CLI post-command path, run on every
+// host. It fires matching hooks for LOCAL (origin) events only and NEVER for a
+// synced event, even an include-synced one: a synced event fires exactly once,
+// on the designated host's DispatchSynced path, so it is not re-delivered by
+// every machine that pulled it (MTIX-52). It ALWAYS advances the local cursor
+// over the events it read — even the synced ones it skips, and even when no hook
+// matches — so a hook added later fires only on FUTURE events, never a backlog.
+// Never returns an error: a caller on the mutation path must not be blocked.
 func (d *HooksDispatcher) Dispatch(ctx context.Context) {
+	d.run(ctx, d.store.HookCursor, d.store.AdvanceHookCursor, func(je sqlite.JournalEvent) bool {
+		return !je.Synced
+	})
+}
+
+// DispatchSynced is the DESIGNATED-host dispatch path (MTIX-52). It fires
+// include-synced hooks on SYNCED events (those that arrived via the hub from
+// another machine), using a SEPARATE cursor so the local path's advance cannot
+// hide them. Only ONE host — the designated dispatcher, typically its sync
+// daemon — runs this, so a synced event fires exactly once team-wide. Local
+// events are ignored here; the local path owns them. The include-synced opt-in
+// still gates matching (a synced event fires only for a hook that asked for it).
+func (d *HooksDispatcher) DispatchSynced(ctx context.Context) {
+	d.run(ctx, d.store.HookSyncedCursor, d.store.AdvanceHookSyncedCursor, func(je sqlite.JournalEvent) bool {
+		return je.Synced
+	})
+}
+
+// run is the shared dispatch loop: it reads journal events past the cursor read
+// by readCursor, fires matching hooks for events accept() selects, and advances
+// the cursor (via advanceCursor) over EVERY event read — including those accept
+// skips — so skipped events never form a backlog.
+func (d *HooksDispatcher) run(
+	ctx context.Context,
+	readCursor func(context.Context) (int64, error),
+	advanceCursor func(context.Context, int64) error,
+	accept func(sqlite.JournalEvent) bool,
+) {
 	if d == nil || d.store == nil {
 		return
 	}
@@ -65,7 +96,7 @@ func (d *HooksDispatcher) Dispatch(ctx context.Context) {
 	for _, w := range warns {
 		d.logger.Warn("hooks.yaml", "warning", w)
 	}
-	cursor, err := d.store.HookCursor(ctx)
+	cursor, err := readCursor(ctx)
 	if err != nil {
 		d.logger.Error("hook dispatch: read cursor", "error", err)
 		return
@@ -78,7 +109,8 @@ func (d *HooksDispatcher) Dispatch(ctx context.Context) {
 
 	// exec runs only for a hooks.yaml the operator has trusted by content hash
 	// (47.5). Evaluated once per dispatch; a config change since the last trust
-	// silently disables exec (fire() logs the skip).
+	// silently disables exec (fire() logs the skip). On the designated host this
+	// is that host's local trust — the multi-machine trust anchor (MTIX-49/52).
 	execTrusted := hooks.ExecTrusted(d.mtixDir)
 
 	maxSeq := cursor
@@ -86,24 +118,30 @@ func (d *HooksDispatcher) Dispatch(ctx context.Context) {
 		if je.Seq > maxSeq {
 			maxSeq = je.Seq
 		}
-		if len(cfg.Hooks) == 0 {
+		if len(cfg.Hooks) == 0 || !accept(je) {
 			continue
 		}
-		evt := NormalizeEvent(je)
-		if evt.Name == "" {
-			continue // op_type is not a hook trigger (e.g. an unaddressed comment)
-		}
-		for _, h := range cfg.MatchingHooks(evt) {
-			if d.rateLimited(ctx, h, evt) {
-				continue
-			}
-			d.fire(ctx, h, evt, je, execTrusted)
-		}
+		d.fireMatching(ctx, cfg, je, execTrusted)
 	}
 	if maxSeq > cursor {
-		if err := d.store.AdvanceHookCursor(ctx, maxSeq); err != nil {
+		if err := advanceCursor(ctx, maxSeq); err != nil {
 			d.logger.Error("hook dispatch: advance cursor", "error", err)
 		}
+	}
+}
+
+// fireMatching normalizes one journal event and fires every configured hook it
+// matches (subject to the rate limit). A non-trigger op_type is a no-op.
+func (d *HooksDispatcher) fireMatching(ctx context.Context, cfg hooks.Config, je sqlite.JournalEvent, execTrusted bool) {
+	evt := NormalizeEvent(je)
+	if evt.Name == "" {
+		return // op_type is not a hook trigger (e.g. an unaddressed comment)
+	}
+	for _, h := range cfg.MatchingHooks(evt) {
+		if d.rateLimited(ctx, h, evt) {
+			continue
+		}
+		d.fire(ctx, h, evt, je, execTrusted)
 	}
 }
 

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-10T19:42:52Z",
+  "exported_at": "2026-07-10T19:43:29Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6049,9 +6049,9 @@
       "acceptance": "A designated host can run hook exec dispatch: exec fires on that host for matching events regardless of which machine posted them, with include-synced hooks acting exactly once (the designated host), not once per puller. Synced-guard, local exec-trust, and rate-limit interactions are specified and tested. Single-machine CLI-local dispatch is unchanged and remains the default. No exec fires on a non-designated host when daemon dispatch is configured.",
       "node_type": "epic",
       "issue_type": "",
-      "priority": 3,
+      "priority": 1,
       "labels": "[]",
-      "status": "in_progress",
+      "status": "done",
       "progress": 1,
       "assignee": "claude-fr19",
       "creator": "cli",
@@ -6059,7 +6059,8 @@
       "weight": 1,
       "content_hash": "162e388af168207f783dc06a3c00c16916e1242d466a12917268588e53133747",
       "created_at": "2026-07-10T12:22:43Z",
-      "updated_at": "2026-07-10T19:28:11Z",
+      "updated_at": "2026-07-10T19:43:29Z",
+      "closed_at": "2026-07-10T19:43:15Z",
       "uid": "019f4bfa-eb06-775e-a72d-da993ad2a3bd"
     },
     {
@@ -6847,5 +6848,5 @@
     }
   ],
   "node_count": 249,
-  "checksum": "e4c83b8dc65aa5241b67ea12590f9d491eec19f015085b833c8f21d3181f2a56"
+  "checksum": "d4ab3621450c2ea0f2747be570894868933a97b5d368e54a08b8b6450d920215"
 }

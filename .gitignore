@@ -100,3 +100,4 @@ screenshots/playwright/
 # FR-19 preview build + local exec-trust records (never commit)
 dist/mtix-fr19-preview
 .mtix/hooks.trust
+dist/mtix-fr19-preview-linux-arm64

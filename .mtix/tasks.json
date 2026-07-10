@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-10T10:41:04Z",
+  "exported_at": "2026-07-10T11:11:34Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5779,6 +5779,31 @@
       "uid": "019f2cec-e28e-7981-9efb-1ffbaeb84ada"
     },
     {
+      "id": "MTIX-49",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 49,
+      "project": "MTIX",
+      "title": "Exec-trust: pin the exec target script's content, not just hooks.yaml (trust-on-divergence)",
+      "description": "",
+      "prompt": "The content-hash exec-trust model (internal/hooks/trust.go, ConfigHash) pins ONLY the SHA-256 of hooks.yaml. But the exec adapter (internal/hooks/adapter_exec.go) runs cfg.Command[0] with args, where Command[0] is typically an external script (e.g. wake-frontier.sh). That script's CONTENT is outside the trust pin, so editing the pointed-to script runs new code on the operator's machine with NO re-consent -- an approve-then-swap-the-payload escalation that mirrors the approve-then-edit-the-config gap the hooks.yaml pin already closes. Safe for a single-operator repo (only trusted writers touch the tree); matters for the team story where hooks.yaml + scripts are committed/shared and a teammate could alter the script post-trust. Fix options: (a) additionally pin the SHA-256 of each exec Command[0] file at trust time and void trust on divergence; (b) trust-on-first-divergence (re-prompt when a target's hash changes); (c) restrict exec targets to an in-repo, hash-pinned allowlist. Keep exec off-by-default and local-only trust unchanged. Files: internal/hooks/trust.go, internal/hooks/adapter_exec.go, cmd/mtix/hooks.go (trust subcommand).",
+      "acceptance": "Editing a script referenced by an exec hook's command voids the local trust (exec no longer fires until re-trusted), verified by a test. hooks.yaml-only edits still void trust as today. Non-exec hooks and the off-by-default posture are unchanged. Trust records remain local + gitignored, never sourced from synced config.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "0f01d796b25487ea80a6f9ede59bbfa4301f0c9774148c8d3bf1b37399c24b59",
+      "created_at": "2026-07-10T11:11:17Z",
+      "updated_at": "2026-07-10T11:11:34Z",
+      "uid": "019f4bb9-8651-7635-a082-bcd68512120a"
+    },
+    {
       "id": "MTIX-5",
       "parent_id": "",
       "depth": 0,
@@ -6692,6 +6717,6 @@
       "status": "active"
     }
   ],
-  "node_count": 243,
-  "checksum": "b32aaa41640f1ee7b85366607c8c1f25b3f70a6826e045847cb9190cd4f3339d"
+  "node_count": 244,
+  "checksum": "6ac044a001595a9ed8ea6837e1f26c9d745162c92f30575eddc27f6942548986"
 }

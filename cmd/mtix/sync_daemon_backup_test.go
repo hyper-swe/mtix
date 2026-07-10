@@ -45,7 +45,7 @@ func TestRunSyncDaemon_RefusesOutsideMtixProject(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := runSyncDaemon(context.Background(), &stdout, &stderr,
-		[]string{"postgres://u:p@h/d"}, transport.Options{InsecureTLS: true}, 30)
+		[]string{"postgres://u:p@h/d"}, transport.Options{InsecureTLS: true}, 30, false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not in an mtix project")
 }

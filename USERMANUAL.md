@@ -1343,6 +1343,40 @@ The daemon runs `mtix sync pull` every 30 seconds by default. Pair
 with the pre-push hook (which handles push) for both inbound and
 outbound auto-sync.
 
+### Designated hook dispatch (multi-machine wake)
+
+Event hooks (`.mtix/hooks.yaml`) fire on the machine where the
+triggering command ran. For a **local** event that is exactly right —
+the wake action runs next to the worker. But an event that arrived
+from **another machine** (a synced event) is skipped by default, so a
+hook whose action must run on a specific host — e.g. an `exec` that
+launches a worker — would never fire for work posted elsewhere.
+
+Designate **one** host to act on synced events by running its daemon
+with `--dispatch-hooks`:
+
+```bash
+mtix sync daemon --dispatch-hooks
+```
+
+After each pull, that host fires hooks marked `include-synced: true`
+on the events it just received:
+
+```yaml
+hooks:
+  - name: wake-worker-on-done
+    match: { events: [status.changed], status-to: [done], to-agent: opus }
+    include-synced: true      # act on events from other machines too
+    deliver: [exec]
+```
+
+Run `--dispatch-hooks` on exactly **one** host so a synced event fires
+once team-wide (a separate cursor makes it exactly-once even across
+daemon restarts). Every other host — and all normal CLI commands —
+still fire hooks only for their own local events, so there is no
+duplicate firing. `exec` trust is local, so trust `hooks.yaml` on the
+designated host (`mtix hooks trust`).
+
 ### Conflict handling
 
 When two teammates edit the same field concurrently, Last-Write-Wins

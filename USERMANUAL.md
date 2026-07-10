@@ -1552,6 +1552,7 @@ mtix exits with structured codes so scripts and agents can react without parsing
 | 1 | Generic error |
 | 3 | Disk full — a write or backup was refused or failed because the volume is out of space; free space and retry |
 | 4 | Database corrupted — an integrity gate failed at open; see "Disk full and corruption recovery" |
+| 5 | Inbox empty — `mtix inbox --wait` timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Harness-hosted (Claude) agents should park via the `mtix_inbox_wait` MCP tool instead of a backgrounded CLI `--wait` |
 
 ### Common Issues
 

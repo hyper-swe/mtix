@@ -17,6 +17,18 @@ import (
 // caller re-invokes on an empty return to keep parking (FR-19.5).
 const maxInboxWaitSeconds = 60
 
+// clampInboxWaitSeconds bounds a requested long-poll to the ceiling. A single
+// mtix_inbox_wait call cannot block indefinitely — a harness-hosted agent
+// re-invokes on an empty return to keep parking (FR-19.5) — so an unset
+// (<= 0) or over-cap request collapses to maxInboxWaitSeconds; an in-range
+// request passes through.
+func clampInboxWaitSeconds(secs int) int {
+	if secs <= 0 || secs > maxInboxWaitSeconds {
+		return maxInboxWaitSeconds
+	}
+	return secs
+}
+
 // InboxStore is the minimal store surface the inbox tools need. It is satisfied
 // by *sqlite.Store; the mcp package depends only on these three methods so the
 // per-agent inbox (FR-19.4) reaches the durable event journal without widening
@@ -89,10 +101,7 @@ func registerInboxWaitTool(reg *ToolRegistry, st InboxStore) {
 			return nil, fmt.Errorf("parse inbox_wait args: %w", err)
 		}
 
-		secs := p.TimeoutSeconds
-		if secs <= 0 || secs > maxInboxWaitSeconds {
-			secs = maxInboxWaitSeconds
-		}
+		secs := clampInboxWaitSeconds(p.TimeoutSeconds)
 
 		events, err := st.InboxWait(ctx, p.Agent, time.Duration(secs)*time.Second)
 		if err != nil {

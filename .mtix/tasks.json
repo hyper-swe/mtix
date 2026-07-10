@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-10T11:37:56Z",
+  "exported_at": "2026-07-10T11:47:42Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5999,15 +5999,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-fr19",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "f4fb7a53cafd539279178acb0b8fc124f53411935a7ceb1acf42ecd0733f3418",
       "created_at": "2026-07-10T11:37:29Z",
-      "updated_at": "2026-07-10T11:37:56Z",
+      "updated_at": "2026-07-10T11:47:42Z",
+      "closed_at": "2026-07-10T11:47:42Z",
       "uid": "019f4bd1-81d5-7e77-a71d-e74eedf65f28"
     },
     {
@@ -6024,15 +6025,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-fr19",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "90ceb7ef70c9f251ed8175658359522d8c74cab5d33afa71cf7523ba8353df54",
       "created_at": "2026-07-10T11:37:29Z",
-      "updated_at": "2026-07-10T11:37:56Z",
+      "updated_at": "2026-07-10T11:47:42Z",
+      "closed_at": "2026-07-10T11:47:42Z",
       "uid": "019f4bd1-81f7-7537-b22d-42f402ba204b"
     },
     {
@@ -6675,7 +6677,7 @@
       "agent_id": "claude-fr19",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-47",
+      "current_node_id": "MTIX-51",
       "last_heartbeat": "2026-07-08T13:50:26Z"
     },
     {
@@ -6768,5 +6770,5 @@
     }
   ],
   "node_count": 246,
-  "checksum": "2bc0b07331761e96254c4b040c7d802f15d20266608c0a444a7c30dd7972f9a9"
+  "checksum": "67e14e36e181bd1647bd033c1a8429a5a5e186ca480690e55805fd8ce60242a4"
 }

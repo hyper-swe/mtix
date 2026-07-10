@@ -28,6 +28,8 @@ func TestExitCodeForError(t *testing.T) {
 		{"wrapped disk full", fmt.Errorf("refusing write: %w", model.ErrDiskFull), exitCodeDiskFull},
 		{"corrupted", model.ErrCorrupted, exitCodeCorrupted},
 		{"wrapped corrupted", fmt.Errorf("integrity check: %w", model.ErrCorrupted), exitCodeCorrupted},
+		{"inbox wait empty", errInboxWaitEmpty, exitCodeInboxEmpty},
+		{"wrapped inbox wait empty", fmt.Errorf("park loop: %w", errInboxWaitEmpty), exitCodeInboxEmpty},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -41,4 +43,10 @@ func TestExitCodeForError(t *testing.T) {
 func TestExitCodes_AreDistinctAndDocumentedValues(t *testing.T) {
 	assert.Equal(t, 3, exitCodeDiskFull)
 	assert.Equal(t, 4, exitCodeCorrupted)
+	// FR-19.4: 5 = inbox --wait empty timeout. A worker's poll loop branches on
+	// this to tell "woke with work" (0) from "nothing yet, loop again" (5), so
+	// it must stay distinct from the storage-failure codes and never collide
+	// with the FR's originally-proposed 3 (which is disk-full here).
+	assert.Equal(t, 5, exitCodeInboxEmpty)
+	assert.NotEqual(t, exitCodeDiskFull, exitCodeInboxEmpty, "an empty inbox must never look like disk-full")
 }

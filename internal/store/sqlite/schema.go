@@ -170,6 +170,69 @@ CREATE TABLE IF NOT EXISTS applied_events (
     applied_by_lamport INTEGER NOT NULL
 );
 
+-- Per-agent inbox read cursor (FR-19.4 / MTIX-47.1). The inbox itself is a
+-- QUERY over sync_events (events addressed to the agent); this table holds only
+-- the watermark: the highest sync_events.rowid the agent has acked. rowid is a
+-- monotonic LOCAL insert order, so a late-arriving synced event always sorts
+-- ABOVE the cursor and is never silently skipped (a lamport watermark could be).
+CREATE TABLE IF NOT EXISTS agent_inbox_cursor (
+    agent_id TEXT PRIMARY KEY,
+    cursor   INTEGER NOT NULL DEFAULT 0
+);
+
+-- Single-row watermark of the highest sync_events.rowid the hook dispatcher has
+-- processed (FR-19.3 / MTIX-47.3). The dispatcher fires hooks for events past
+-- this cursor, then advances it — so a mutation's hooks fire at-least-once and
+-- a restart resumes where it left off.
+CREATE TABLE IF NOT EXISTS hook_dispatch_cursor (
+    id     INTEGER PRIMARY KEY CHECK (id = 1),
+    cursor INTEGER NOT NULL DEFAULT 0
+);
+
+-- Hook-driven inbox deliveries (FR-19.4): when a hook with an inbox delivery
+-- matches an event, it records that the event (event_seq = sync_events.rowid) is
+-- delivered to agent_id. The inbox is then the UNION of comment events addressed
+-- to the agent AND these hook deliveries, both past the agent's ack cursor.
+CREATE TABLE IF NOT EXISTS inbox_deliveries (
+    agent_id     TEXT    NOT NULL,
+    event_seq    INTEGER NOT NULL,
+    hook_name    TEXT    NOT NULL,
+    delivered_at TEXT    NOT NULL,
+    PRIMARY KEY (agent_id, event_seq)
+);
+
+-- Audit log of hook firings (FR-19.7): the dispatcher writes one row per
+-- (hook, adapter) outcome; 'mtix hooks log' reads it. The (hook, node, time)
+-- index also backs the per-node rate limit (FR-19.6).
+CREATE TABLE IF NOT EXISTS hook_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    hook_name  TEXT NOT NULL,
+    node_id    TEXT NOT NULL,
+    event_name TEXT NOT NULL,
+    adapter    TEXT NOT NULL,
+    outcome    TEXT NOT NULL,   -- delivered | error | skipped-untrusted
+    detail     TEXT,
+    fired_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_hook_log_hook_node_time
+    ON hook_log(hook_name, node_id, fired_at);
+
+-- Event provenance for loop prevention (FR-19.6): when an event is journaled by
+-- an exec hook's command (MTIX_HOOK_ORIGIN set), the producing hook is recorded
+-- here so that event never re-triggers the same hook.
+CREATE TABLE IF NOT EXISTS hook_event_origin (
+    event_id TEXT PRIMARY KEY,
+    via_hook TEXT NOT NULL
+);
+
+-- Narrow the inbox scan to comment events. The addressee itself lives in the
+-- JSON payload and is filtered at query time (guarded by json_valid); an
+-- expression index on json_extract(payload) is deliberately avoided — it would
+-- evaluate on every comment INSERT and reject a malformed payload before the
+-- apply layer's own decode check can report it. Denormalizing the addressee to
+-- a real indexed column is a future optimization if inbox volume warrants it.
+CREATE INDEX IF NOT EXISTS idx_sync_events_op_type ON sync_events(op_type);
+
 -- Local sync_projects mirror per FR-18.13 / MTIX-15.6.
 -- Mirrors the hub-side sync_projects table from internal/store/postgres/migrations/003_sync_projects.sql.
 -- One row per project the local CLI has cloned-from or pushed-to.

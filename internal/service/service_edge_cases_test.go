@@ -708,12 +708,12 @@ func TestConfigService_ConfigProvider_Methods(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test all ConfigProvider methods.
-	assert.True(t, cs.AutoClaim())                               // Default is "true".
-	assert.Equal(t, 30*24*time.Hour, cs.SoftDeleteRetention())   // 30d.
-	assert.Equal(t, 24*time.Hour, cs.AgentStaleThreshold())      // 24h.
-	assert.Equal(t, 50, cs.MaxRecommendedDepth())                // Not configurable, hardcoded in this impl.
-	assert.Equal(t, time.Duration(0), cs.AgentStuckTimeout())    // Default empty = 0.
-	assert.Equal(t, 4*time.Hour, cs.SessionTimeout())            // 4h.
+	assert.True(t, cs.AutoClaim())                             // Default is "true".
+	assert.Equal(t, 30*24*time.Hour, cs.SoftDeleteRetention()) // 30d.
+	assert.Equal(t, 24*time.Hour, cs.AgentStaleThreshold())    // 24h.
+	assert.Equal(t, 50, cs.MaxRecommendedDepth())              // Not configurable, hardcoded in this impl.
+	assert.Equal(t, time.Duration(0), cs.AgentStuckTimeout())  // Default empty = 0.
+	assert.Equal(t, 4*time.Hour, cs.SessionTimeout())          // 4h.
 }
 
 // ---------------------------------------------------------------------------
@@ -946,8 +946,8 @@ func TestAddAnnotation_MultipleAnnotations_AllPersisted(t *testing.T) {
 	require.NoError(t, err)
 
 	for i := 0; i < 5; i++ {
-		err = promptSvc.AddAnnotation(ctx, node.ID,
-			fmt.Sprintf("Annotation %d", i), fmt.Sprintf("reviewer-%d@test.com", i))
+		err = promptSvc.AddAnnotation(ctx, node.ID, fmt.Sprintf("Annotation %d", i), fmt.Sprintf("reviewer-%d@test.com", i), "")
+
 		require.NoError(t, err)
 	}
 

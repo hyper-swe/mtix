@@ -388,7 +388,7 @@ func TestRunComment_NoPromptSvc_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runComment("PROJ-1", "some comment")
+	err := runComment("PROJ-1", "some comment", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }

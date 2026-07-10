@@ -85,13 +85,14 @@ func registerPromptTool(reg *ToolRegistry, svc *service.PromptService) {
 func registerAnnotateTool(reg *ToolRegistry, svc *service.PromptService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_annotate",
-		Description: "Add an annotation to a node's prompt",
+		Description: "Add a comment annotation to a node's prompt. Set 'to' to address it at an agent, which delivers it to that agent's inbox (see mtix_inbox).",
 		InputSchema: SchemaObj{
 			Type: "object",
 			Properties: map[string]SchemaProp{
 				"id":     {Type: "string", Description: "Node ID"},
 				"text":   {Type: "string", Description: "Annotation text"},
 				"author": {Type: "string", Description: "Author of the annotation"},
+				"to":     {Type: "string", Description: "Address the comment at an agent; delivers to its inbox (empty for an ordinary comment)"},
 			},
 			Required: []string{"id", "text", "author"},
 		},
@@ -100,16 +101,21 @@ func registerAnnotateTool(reg *ToolRegistry, svc *service.PromptService) {
 			ID     string `json:"id"`
 			Text   string `json:"text"`
 			Author string `json:"author"`
+			To     string `json:"to"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse annotate args: %w", err)
 		}
 
-		if err := svc.AddAnnotation(ctx, p.ID, p.Text, p.Author); err != nil {
+		if err := svc.AddAnnotation(ctx, p.ID, p.Text, p.Author, p.To); err != nil {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Annotation added to %s", p.ID)), nil
+		msg := fmt.Sprintf("Annotation added to %s", p.ID)
+		if p.To != "" {
+			msg = fmt.Sprintf("Annotation added to %s (→ %s inbox)", p.ID, p.To)
+		}
+		return SuccessResult(msg), nil
 	})
 }
 

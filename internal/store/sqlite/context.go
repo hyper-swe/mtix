@@ -122,10 +122,11 @@ func (s *Store) SetAnnotations(ctx context.Context, nodeID string, annotations [
 			return nil
 		}
 
-		commentBody, commentAuthor := newCommentForSyncEvent(prevJSON.String, annotations)
+		commentBody, commentAuthor, commentTo := newCommentForSyncEvent(prevJSON.String, annotations)
 		payload, _ := model.EncodePayload(&model.CommentPayload{
 			AuthorID: commentAuthor,
 			Body:     commentBody,
+			To:       commentTo,
 		})
 		return emitEvent(ctx, tx, emitParams{
 			NodeID:      nodeID,
@@ -141,16 +142,16 @@ func (s *Store) SetAnnotations(ctx context.Context, nodeID string, annotations [
 // appended exactly one. Returns the new entry's body and author when
 // detectable; otherwise returns a placeholder noting the bulk change so
 // the event log carries a meaningful trace.
-func newCommentForSyncEvent(prevJSON string, next []model.Annotation) (body, author string) {
+func newCommentForSyncEvent(prevJSON string, next []model.Annotation) (body, author, addressee string) {
 	var prev []model.Annotation
 	if prevJSON != "" {
 		_ = json.Unmarshal([]byte(prevJSON), &prev)
 	}
 	if len(next) == len(prev)+1 {
 		latest := next[len(next)-1]
-		return latest.Text, latest.Author
+		return latest.Text, latest.Author, latest.Addressee
 	}
-	return fmt.Sprintf("annotations bulk update: %d -> %d entries", len(prev), len(next)), authorIDFallback
+	return fmt.Sprintf("annotations bulk update: %d -> %d entries", len(prev), len(next)), authorIDFallback, ""
 }
 
 // reverseNodes reverses a slice of nodes in place.

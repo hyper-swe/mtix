@@ -844,7 +844,7 @@ func TestRunAnnotate_NonExistent_ReturnsError(t *testing.T) {
 // TestRunComment_NonExistent_ReturnsError verifies comment for missing node.
 func TestRunComment_NonExistent_ReturnsError(t *testing.T) {
 	initTestApp(t)
-	err := runComment("NONEXIST-1", "comment text")
+	err := runComment("NONEXIST-1", "comment text", "")
 	assert.Error(t, err)
 }
 

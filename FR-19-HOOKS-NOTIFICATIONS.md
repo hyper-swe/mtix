@@ -85,7 +85,8 @@ substrate — the durable journal is.
   past its ack cursor, oldest first.
 - `mtix inbox --agent <name> --wait [--timeout <sec>]` — long-poll: return
   immediately if the query is non-empty, else block until a new matching event
-  is journaled or timeout (exit 0 with events / exit 3 on timeout, empty).
+  is journaled or timeout (exit 0 with events / exit 5 on an empty timeout —
+  NOT 3, which is disk-full in mtix's exit-code contract).
   This is the primitive a worker's outer loop parks on between tasks.
 - `mtix inbox ack <sequence>... --agent <name>` — advance the ack cursor.
 - At-least-once BY CONSTRUCTION (re-query returns everything past the cursor);

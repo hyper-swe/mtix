@@ -6,6 +6,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -29,9 +30,13 @@ func main() {
 	defer redact.Recover(nil)
 
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		// An empty `inbox --wait` timeout is an expected non-zero outcome, not a
+		// failure — surface it via the exit code only, no scary "error:" line.
+		if !errors.Is(err, errInboxWaitEmpty) {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		}
 		// Structured exit codes per MTIX-26.8 (3 = disk full,
-		// 4 = corrupted, 1 = generic).
+		// 4 = corrupted, 5 = inbox-empty, 1 = generic).
 		os.Exit(exitCodeForError(err)) //nolint:gocritic // intentional: errors flow here without panic; defer covers the panic path
 	}
 }

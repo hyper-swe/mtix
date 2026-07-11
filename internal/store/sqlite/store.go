@@ -46,21 +46,39 @@ type Store struct {
 	failMu       sync.Mutex // guards failCause
 	failCause    error      // first fatal storage error; latches fail-stop
 
-	// onCommit, when set, runs after every successfully committed write
-	// transaction. It is the single choke point that lets long-running
-	// interfaces (MCP server, HTTP serve) keep the tasks.json mirror
-	// current per FR-15.3 — the CLI's PostRun export never fires inside
-	// a long-lived process. Set once during wiring, before any traffic.
-	onCommit func()
+	// onCommit callbacks run, in registration order, after every successfully
+	// committed write transaction. It is the choke point that lets long-running
+	// interfaces (MCP server, HTTP serve) keep the tasks.json mirror current per
+	// FR-15.3 — the CLI's PostRun export never fires inside a long-lived process
+	// — and (MTIX-53) dispatch hooks host-side. Registered once during wiring,
+	// before any traffic, so the slice needs no lock.
+	onCommit []func()
 }
 
-// SetOnCommit registers fn to run after every committed write transaction.
-// Must be called during process wiring, before concurrent use. Every NEW
-// long-running interface (anything that mutates without exiting) MUST wire
-// this to the auto-export path, or its users lose the FR-15.3 mirror —
-// the gap behind the 2026-05-19 data-loss incident.
+// SetOnCommit registers fn as the FIRST post-commit callback, replacing any
+// previously set via SetOnCommit but preserving callbacks added with
+// AddOnCommit. Must be called during process wiring, before concurrent use.
+// Every long-running interface (anything that mutates without exiting) MUST
+// wire the auto-export path here, or its users lose the FR-15.3 mirror — the
+// gap behind the 2026-05-19 data-loss incident.
 func (s *Store) SetOnCommit(fn func()) {
-	s.onCommit = fn
+	if len(s.onCommit) == 0 {
+		s.onCommit = []func(){fn}
+		return
+	}
+	s.onCommit[0] = fn
+}
+
+// AddOnCommit appends fn to the post-commit callbacks (MTIX-53), so a server can
+// wire hook dispatch alongside the mirror exporter without one replacing the
+// other. Must be called during wiring, before concurrent use.
+func (s *Store) AddOnCommit(fn func()) {
+	if len(s.onCommit) == 0 {
+		// Reserve slot 0 for SetOnCommit so a later SetOnCommit does not
+		// displace this callback.
+		s.onCommit = []func(){nil}
+	}
+	s.onCommit = append(s.onCommit, fn)
 }
 
 // New creates a new Store with the given database path.

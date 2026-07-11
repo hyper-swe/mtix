@@ -39,6 +39,21 @@ func wireMirrorExporter(logger *slog.Logger) (cleanup func()) {
 	return exporter.Close
 }
 
+// wireHookDispatch registers hook dispatch as a post-commit callback (MTIX-53)
+// so a long-running server (the MCP server) fires hooks on every agent mutation
+// host-side — the exec cold-start path — with no per-command PostRunE. It rides
+// the same on-commit choke point as wireMirrorExporter via AddOnCommit; call it
+// AFTER wireMirrorExporter so the mirror keeps its slot. The dispatch is
+// re-entrancy-guarded inside OnCommitDispatch. Returns a no-op cleanup for
+// symmetry with the other wiring helpers.
+func wireHookDispatch() (cleanup func()) {
+	if app.hooksDisp == nil || app.store == nil {
+		return func() {}
+	}
+	app.store.AddOnCommit(app.hooksDisp.OnCommitDispatch())
+	return func() {}
+}
+
 // newAutoBackupScheduler builds the rolling-backup scheduler for the
 // current project (FR-26.6), honoring MTIX_BACKUP_INTERVAL / _RETAIN.
 func newAutoBackupScheduler(logger *slog.Logger) *service.BackupScheduler {

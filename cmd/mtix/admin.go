@@ -362,6 +362,11 @@ func runServe(addr string, port int) error {
 	// tasks.json mirror without a process exit.
 	defer wireMirrorExporter(app.logger)()
 
+	// MTIX-53: dispatch hooks on every mutation host-side, same as the CLI and
+	// MCP server, so a REST/gRPC mutation can fire an exec cold-start. After the
+	// mirror wiring so it keeps on-commit slot 0.
+	defer wireHookDispatch()()
+
 	clock := func() time.Time { return time.Now().UTC() }
 
 	srv := mtixhttp.NewServer(

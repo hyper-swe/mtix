@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-10T20:15:07Z",
+  "exported_at": "2026-07-11T02:35:03Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6129,15 +6129,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-fr19",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "cd80d1cf435dc2ac21fdfeb46e30c80a3226fb81e313fa10f67306b5bd41d035",
       "created_at": "2026-07-10T20:00:30Z",
-      "updated_at": "2026-07-10T20:00:54Z",
+      "updated_at": "2026-07-11T02:35:03Z",
+      "closed_at": "2026-07-11T02:35:03Z",
       "uid": "019f4d9e-0b13-776e-8bed-ed206ffc8099"
     },
     {
@@ -6780,7 +6781,7 @@
       "agent_id": "claude-fr19",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-52.2",
+      "current_node_id": "MTIX-53",
       "last_heartbeat": "2026-07-08T13:50:26Z"
     },
     {
@@ -6873,5 +6874,5 @@
     }
   ],
   "node_count": 250,
-  "checksum": "71c9cec352ff60bfa95d62aabbe0fe39247659074f11b939c3cf47e3f65e6a82"
+  "checksum": "80814f294a554ad4b67a8f00f229d78d8f29ce31fd50edd5d327f8d121d63ce8"
 }

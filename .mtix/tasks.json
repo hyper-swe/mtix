@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-10T20:15:07Z",
+  "exported_at": "2026-07-11T08:59:56Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6141,6 +6141,31 @@
       "uid": "019f4d9e-0b13-776e-8bed-ed206ffc8099"
     },
     {
+      "id": "MTIX-54",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 54,
+      "project": "MTIX",
+      "title": "Filesystem-safety preflight: detect unsafe (FUSE/network/virtualized) filesystems and prevent WAL/shm corruption",
+      "description": "",
+      "prompt": "From the 2026-07-11 RCA (docs/incidents/2026-07-11-fuse-wal-shm-corruption-rca.md). Root cause: the .mtix SQLite DB was on a FUSE-passthrough shared folder (host-local APFS surfaced into agent sandboxes) and hit by concurrent multi-process access; SQLite WAL mode needs true shared-memory mmap of the -shm wal-index + faithful POSIX locking/fsync, which FUSE passthrough does not provide, so processes ran on divergent wal-index views -\u003e runtime 'database disk image is malformed'/lost writes. Fingerprint: 15 orphaned .fuse_hidden -shm files. mtix forces journal_mode=WAL unconditionally in internal/store/sqlite/store.go openDB() with NO filesystem-type detection (statfs is used only for free space in diskspace_unix.go). DELIVERABLES: P0 filesystem-safety preflight in Store.New: statfs the DB dir and classify FS type (macOS f_fstypename in {fuse,macfuse,osxfuse,nfs,smbfs,webdav,...}; Linux f_type magic {FUSE_SUPER_MAGIC 0x65735546, NFS 0x6969, SMB/CIFS 0xFF534D42, 9p 0x01021997, ...}); on unsafe FS, refuse to open by default with an actionable message naming the FS type and pointing to the sync-hub topology, overridable by an explicit env (e.g. MTIX_ALLOW_UNSAFE_FS=1) or flag. P1 safe-mode fallback when overridden: journal_mode=DELETE/TRUNCATE + locking_mode=EXCLUSIVE + enforce single-process via the existing PID/advisory lock; never WAL on unsafe FS. P2 runtime shm probe: detect SQLITE_IOERR_SHM* at open and refuse WAL. P3 observability: log corruption detection + every recover/restore at WARN/ERROR with DB path + FS type; one-line unsafe-FS warning on every open when detected. P4 docs: SECURITY-MODEL/USERMANUAL — never host .mtix on shared/network/virtualized (FUSE) folders; for sandboxed multi-agent, one local .mtix per sandbox + sync via the Postgres hub (FR-18). Files: internal/store/sqlite/store.go (openDB/New), new internal/store/sqlite/fsdetect_{unix,linux,darwin}.go, internal/store/sqlite/diskspace_unix.go (reuse statfs), cmd/mtix docs. TDD red-first. Coverage \u003e= 90% on new code. Cross-platform build tags for the statfs field differences (Linux f_type vs BSD/darwin f_fstypename).",
+      "acceptance": "1. Opening a .mtix on a FUSE/network/virtualized FS is refused by default with a clear, actionable error naming the FS type (test via a fake/injected FS classifier). 2. MTIX_ALLOW_UNSAFE_FS override opens in safe single-process mode (journal_mode != WAL, locking_mode=EXCLUSIVE) — asserted by PRAGMA. 3. Local disk (APFS/ext4/etc.) opens in WAL exactly as today — no regression. 4. Corruption/recover events are logged with DB path + FS type. 5. Docs updated with the topology guidance. 6. Cross-platform: builds and tests pass on darwin + linux (statfs field differences handled via build tags). 7. \u003e= 90% coverage on new code; full suite + cloud gate green.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "661f05cc195e88b0438ac74e8d235bb70ef31a4cff1057e7f8eed09a22ab110c",
+      "created_at": "2026-07-11T08:58:21Z",
+      "updated_at": "2026-07-11T08:59:56Z",
+      "uid": "019f5066-2f45-7d79-97d4-17287b2c7860"
+    },
+    {
       "id": "MTIX-6",
       "parent_id": "",
       "depth": 0,
@@ -6872,6 +6897,6 @@
       "status": "active"
     }
   ],
-  "node_count": 250,
-  "checksum": "71c9cec352ff60bfa95d62aabbe0fe39247659074f11b939c3cf47e3f65e6a82"
+  "node_count": 251,
+  "checksum": "90cb46d07769351fa33036fb12be549896990732f13caec937a9fc0772369b7d"
 }

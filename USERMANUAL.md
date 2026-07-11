@@ -1399,6 +1399,14 @@ With `mtix sync daemon --dispatch-hooks` on that host, a comment
 addressed to `worker-1` from any machine lands, syncs, and cold-starts
 the worker — no human poke, no polling.
 
+**Hooks fire on server mutations too.** The long-running servers — the
+MCP server (`mtix mcp`) and `mtix serve` — dispatch hooks on every
+mutation, exactly like a CLI command does. So if an agent drives mtix
+through a **host-side MCP connector**, its mutations fire the host's
+hooks directly (no daemon needed): a comment it posts can cold-start a
+worker on that host immediately. `exec` still requires local trust
+(`mtix hooks trust`) on the server host.
+
 ### Conflict handling
 
 When two teammates edit the same field concurrently, Last-Write-Wins

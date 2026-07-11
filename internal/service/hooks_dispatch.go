@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/hooks"
@@ -77,6 +78,31 @@ func (d *HooksDispatcher) DispatchSynced(ctx context.Context) {
 	d.run(ctx, d.store.HookSyncedCursor, d.store.AdvanceHookSyncedCursor, func(je sqlite.JournalEvent) bool {
 		return je.Synced
 	})
+}
+
+// OnCommitDispatch returns a post-commit callback that runs Dispatch (the LOCAL
+// path), for a long-running server to wire via store.AddOnCommit so an agent's
+// mutation dispatches hooks host-side with no per-command PostRun (MTIX-53) —
+// the immediate, in-process sibling of the daemon's designated dispatch.
+//
+// It is guarded against RE-ENTRANCY: Dispatch itself commits writes (inbox
+// delivery, cursor, hook log), and those commits re-invoke on-commit callbacks;
+// without the guard the callback would recurse until the stack blows. The guard
+// makes a mutation's dispatch run exactly once — nested re-entries are dropped,
+// and the events this pass advanced past are handled by the next mutation's
+// dispatch. Safe on a nil dispatcher (returns a no-op).
+func (d *HooksDispatcher) OnCommitDispatch() func() {
+	if d == nil {
+		return func() {}
+	}
+	var running atomic.Bool
+	return func() {
+		if !running.CompareAndSwap(false, true) {
+			return // a dispatch is already in flight; its own writes must not recurse
+		}
+		defer running.Store(false)
+		d.Dispatch(context.Background())
+	}
 }
 
 // run is the shared dispatch loop: it reads journal events past the cursor read

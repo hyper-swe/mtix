@@ -87,6 +87,10 @@ func runMCP() error {
 	// the tasks.json mirror without a process exit.
 	defer wireMirrorExporter(logger)()
 
+	// MTIX-53: fire hooks on every mutation host-side (exec cold-start path).
+	// After wireMirrorExporter so the mirror keeps on-commit slot 0.
+	defer wireHookDispatch()()
+
 	srv := mcp.NewServer(os.Stdin, os.Stdout, logger, version)
 	reg := srv.Registry()
 

@@ -214,3 +214,56 @@ hooks:
 	require.NoError(t, err)
 	require.Len(t, afterSecond, 1, "synced dispatch is exactly-once; a second pass does not re-fire")
 }
+
+// TestE2E_FR19_ServerOnCommitDispatch_FiresLocalButSkipsSyncedApply is the
+// MTIX-53 cloud-correctness proof: when a long-running server wires
+// OnCommitDispatch (so mutations dispatch hooks host-side), a LOCAL mutation
+// fires its hook, but applying a SYNCED event pulled from the hub does NOT fire
+// it — even though the apply commit also triggers the on-commit callback. This
+// is what keeps server-side dispatch from re-firing every teammate's events in
+// a cloud/sync setup (the local path owns local events; the designated synced
+// path, MTIX-52, owns synced ones).
+func TestE2E_FR19_ServerOnCommitDispatch_FiresLocalButSkipsSyncedApply(t *testing.T) {
+	pool := openHub(t)
+	ctx := context.Background()
+
+	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa") // another machine posting work
+	b := newFakeCLI(t, "B", "bbbbbbbbbbbbbbbb") // the server host (MCP/serve) with hook dispatch wired
+
+	hookYAML := `
+hooks:
+  - name: wake-opus-on-done
+    match: { events: [status.changed], status-to: [done], to-agent: opus }
+    deliver: [inbox]
+`
+	require.NoError(t, os.WriteFile(filepath.Join(b.mtixDir, "hooks.yaml"), []byte(hookYAML), 0o600))
+
+	// Wire hook dispatch on B's store exactly as runMCP/runServe do — a
+	// post-commit callback that runs the local Dispatch, re-entrancy-guarded.
+	disp := service.NewHooksDispatcher(b.store, b.mtixDir, e2eLogger())
+	b.store.AddOnCommit(disp.OnCommitDispatch())
+
+	// LOCAL mutation on the server host: the on-commit dispatch fires the hook.
+	b.createNode(t, "HOOK-4", "local task")
+	require.NoError(t, b.store.TransitionStatus(ctx, "HOOK-4", model.StatusInProgress, "", "worker"))
+	require.NoError(t, b.store.TransitionStatus(ctx, "HOOK-4", model.StatusDone, "", "worker"))
+
+	afterLocal, err := b.store.InboxList(ctx, "opus")
+	require.NoError(t, err)
+	require.Len(t, afterLocal, 1, "a local mutation on the server host fires the hook via on-commit dispatch")
+	require.Equal(t, "HOOK-4", afterLocal[0].NodeID)
+
+	// A posts equivalent work that replicates to B. Applying those SYNCED events
+	// on B triggers the same on-commit callback — but the local path skips synced
+	// events, so the hook does NOT fire again.
+	a.createNode(t, "HOOK-5", "remote task")
+	require.NoError(t, a.store.TransitionStatus(ctx, "HOOK-5", model.StatusInProgress, "", "worker"))
+	require.NoError(t, a.store.TransitionStatus(ctx, "HOOK-5", model.StatusDone, "", "worker"))
+	a.pushAll(ctx, t, pool)
+	b.pullAll(ctx, t, pool) // apply commit fires B's on-commit dispatch over the synced events
+
+	afterSync, err := b.store.InboxList(ctx, "opus")
+	require.NoError(t, err)
+	require.Len(t, afterSync, 1, "applying a synced event must NOT fire the local hook — no team-wide duplicate firing")
+	require.Equal(t, "HOOK-4", afterSync[0].NodeID, "still only the local event fired")
+}

@@ -53,16 +53,29 @@ when events are returned; exit 5 on an empty timeout (so a loop can distinguish
 }
 
 func newInboxAckCmd() *cobra.Command {
-	var agent string
+	var (
+		agent   string
+		through bool
+	)
 	cmd := &cobra.Command{
 		Use:   "ack <seq>...",
-		Short: "Acknowledge inbox events up to the highest given sequence",
-		Args:  cobra.MinimumNArgs(1),
+		Short: "Acknowledge specific inbox events (selective); --through acks everything up to a seq",
+		Long: `Acknowledge inbox events. By default this is SELECTIVE: only the
+given sequence(s) are marked seen, so acking a higher seq never drops
+lower, still-unprocessed events — an event you do not ack simply
+reappears on the next list (defer by not acking).
+
+Use --through to acknowledge everything up to and including a single
+sequence at once (a watermark), for a worker that processes strictly
+in order.`,
+		Args: cobra.MinimumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runInboxAck(agent, args)
+			return runInboxAck(agent, args, through)
 		},
 	}
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent id (required)")
+	cmd.Flags().BoolVar(&through, "through", false,
+		"Acknowledge every event up to and including the given seq (watermark), not just that seq")
 	_ = cmd.MarkFlagRequired("agent")
 	return cmd
 }
@@ -111,29 +124,46 @@ func runInbox(agent string, wait bool, timeout int) error {
 	return nil
 }
 
-func runInboxAck(agent string, seqs []string) error {
+func runInboxAck(agent string, seqs []string, through bool) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project (run 'mtix init' first)")
 	}
-	// Ack is a watermark: advance to the highest sequence supplied.
+	parsed := make([]int64, 0, len(seqs))
 	var maxSeq int64
 	for _, s := range seqs {
 		n, parseErr := strconv.ParseInt(s, 10, 64)
 		if parseErr != nil {
 			return fmt.Errorf("invalid sequence %q: %w", s, parseErr)
 		}
+		parsed = append(parsed, n)
 		if n > maxSeq {
 			maxSeq = n
 		}
 	}
-	if err := app.store.InboxAck(context.Background(), agent, maxSeq); err != nil {
-		return err
+	ctx := context.Background()
+	out := NewOutputWriter(app.jsonOutput)
+
+	if through {
+		// Cumulative: mark everything up to the highest given seq as seen.
+		if err := app.store.InboxAckThrough(ctx, agent, maxSeq); err != nil {
+			return err
+		}
+		if app.jsonOutput {
+			return out.WriteJSON(map[string]any{"agent": agent, "acked_through": maxSeq})
+		}
+		out.WriteHuman("✓ %s acked through %d\n", agent, maxSeq)
+		return nil
 	}
 
-	out := NewOutputWriter(app.jsonOutput)
-	if app.jsonOutput {
-		return out.WriteJSON(map[string]any{"agent": agent, "acked_through": maxSeq})
+	// Selective (default): ack exactly the given seq(s); unacked events resurface.
+	for _, n := range parsed {
+		if err := app.store.InboxAck(ctx, agent, n); err != nil {
+			return err
+		}
 	}
-	out.WriteHuman("✓ %s acked through %d\n", agent, maxSeq)
+	if app.jsonOutput {
+		return out.WriteJSON(map[string]any{"agent": agent, "acked": parsed})
+	}
+	out.WriteHuman("✓ %s acked %v\n", agent, parsed)
 	return nil
 }

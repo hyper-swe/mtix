@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-11T02:35:03Z",
+  "exported_at": "2026-07-11T11:54:40Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6142,6 +6142,31 @@
       "uid": "019f4d9e-0b13-776e-8bed-ed206ffc8099"
     },
     {
+      "id": "MTIX-54",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 54,
+      "project": "MTIX",
+      "title": "Filesystem-safety preflight: detect unsafe (FUSE/network/virtualized) filesystems and prevent WAL/shm corruption",
+      "description": "",
+      "prompt": "From the 2026-07-11 RCA (preserved in internal-docs/). Root cause: a .mtix SQLite DB accessed over a FUSE-passthrough shared folder by concurrent multi-process access corrupts at runtime — SQLite WAL needs true shared-memory mmap of the -shm wal-index plus faithful POSIX locking/fsync, which FUSE/network filesystems do not provide, so processes run on divergent wal-index views (malformed/lost writes). mtix forces journal_mode=WAL unconditionally in internal/store/sqlite/store.go openDB() with NO filesystem-type detection (statfs is used only for free space in diskspace_unix.go). DELIVERABLES: P0 filesystem-safety preflight in Store.New — statfs the DB dir and classify FS type (macOS f_fstypename in {fuse,macfuse,osxfuse,nfs,smbfs,webdav}; Linux f_type magic {FUSE 0x65735546, NFS 0x6969, SMB/CIFS 0xFF534D42, 9p 0x01021997}); on an unsafe FS refuse to open by default with an actionable message naming the FS type and the sync-hub topology, overridable by env MTIX_ALLOW_UNSAFE_FS=1. P1 safe-mode fallback when overridden: journal_mode=DELETE/TRUNCATE + locking_mode=EXCLUSIVE + enforce single-process; never WAL on an unsafe FS. P2 runtime shm probe: detect SQLITE_IOERR_SHM* at open and refuse WAL. P3 observability: log corruption detection and every recover/restore with DB path + FS type. P4 docs: never host .mtix on shared/network/virtualized folders; one local .mtix per sandbox synced via the Postgres hub (FR-18). Files: internal/store/sqlite/store.go, new fsdetect_{linux,darwin}.go, diskspace_unix.go. TDD red-first, \u003e=90% coverage, cross-platform build tags (Linux f_type vs darwin f_fstypename).",
+      "acceptance": "1. Opening .mtix on a FUSE/network/virtualized FS is refused by default with a clear error naming the FS type (test via an injected FS classifier). 2. MTIX_ALLOW_UNSAFE_FS opens in safe single-process mode (journal_mode != WAL, locking_mode=EXCLUSIVE), asserted by PRAGMA. 3. Local disk opens in WAL as today (no regression). 4. Corruption/recover events logged with DB path + FS type. 5. Docs updated with topology guidance. 6. Builds+tests pass on darwin + linux. 7. \u003e=90% coverage on new code; full suite + cloud gate green.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "a18091f8ad94d5445b07e6e9d6e1d405187cd95bf807a4fe634b72938827b357",
+      "created_at": "2026-07-11T11:54:22Z",
+      "updated_at": "2026-07-11T11:54:40Z",
+      "uid": "019f5107-52c8-7537-990f-f837ba122e6d"
+    },
+    {
       "id": "MTIX-6",
       "parent_id": "",
       "depth": 0,
@@ -6873,6 +6898,6 @@
       "status": "active"
     }
   ],
-  "node_count": 250,
-  "checksum": "80814f294a554ad4b67a8f00f229d78d8f29ce31fd50edd5d327f8d121d63ce8"
+  "node_count": 251,
+  "checksum": "7b400ffc35882fa58427e7b2c23d88af15e5ba39cc80252a5dd2ccb043c7f3af"
 }

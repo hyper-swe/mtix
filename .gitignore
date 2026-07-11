@@ -101,3 +101,6 @@ screenshots/playwright/
 dist/mtix-fr19-preview
 .mtix/hooks.trust
 dist/mtix-fr19-preview-linux-arm64
+
+# Internal design/incident artifacts — never publish (may name internal projects/agents)
+internal-docs/

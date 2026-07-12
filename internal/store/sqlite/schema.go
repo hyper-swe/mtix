@@ -194,21 +194,45 @@ CREATE TABLE IF NOT EXISTS agent_inbox_ack (
     PRIMARY KEY (agent_id, event_seq)
 );
 
--- Single-row watermark of the highest sync_events.rowid the hook dispatcher has
--- processed (FR-19.3 / MTIX-47.3). The dispatcher fires hooks for events past
--- this cursor, then advances it — so a mutation's hooks fire at-least-once and
--- a restart resumes where it left off.
+-- The dispatch SCAN FLOOR (FR-20 / MTIX-56.1; formerly the FR-19.3 dispatch
+-- watermark, whose value seeds the floor on upgrade with no migration step).
+-- Everything at or below the floor is fully dispatched; the tail scan reads
+-- past it. It advances on EVERY pass — even with zero hooks configured — which
+-- is what keeps "a hook added later fires only on FUTURE events" true, and it
+-- never advances past a 'claimed' ledger row (a crashed trigger's event must
+-- stay in the scan window). The ledger below is the source of truth; this
+-- floor is only a scan optimization and the pruning boundary.
 CREATE TABLE IF NOT EXISTS hook_dispatch_cursor (
     id     INTEGER PRIMARY KEY CHECK (id = 1),
     cursor INTEGER NOT NULL DEFAULT 0
 );
 
--- Separate watermark for the DESIGNATED-host synced-dispatch path (MTIX-52).
--- Local (CLI post-command) dispatch fires only local events and advances
--- hook_dispatch_cursor past everything, including synced events it skips. The
--- designated host's daemon fires include-synced hooks on synced events and must
--- not lose them to that advance, so it tracks its own cursor here. Local-only,
--- never synced -- like the other FR-19 dispatch tables.
+-- Per-(hook,event) dispatch ledger (FR-20 / MTIX-56.1) — the exactly-once-per-
+-- host primitive. A row's existence means the pair is CLAIMED by some trigger
+-- (daemon tick, on-commit, CLI post-command — all race on this PK; one wins).
+-- outcome records how the fire ended:
+--   claimed            in flight — reclaimable after a lease timeout if the
+--                      trigger crashed before firing (at-least-once; a lost
+--                      wake is worse than a double wake)
+--   delivered          every adapter succeeded
+--   error              the fire RAN and failed — terminal, never auto-retried
+--   skipped-untrusted  exec skipped (hooks.yaml not trusted, MTIX-49)
+--   rate-limited       per-node cap hit (FR-19.6)
+-- Unlike a watermark it cannot skip an event that arrives out of order — the
+-- same failure mode the MTIX-55 inbox ack ledger fixed, same pattern.
+-- Local-only, never synced.
+CREATE TABLE IF NOT EXISTS hook_dispatch_ledger (
+    hook_name  TEXT    NOT NULL,
+    event_seq  INTEGER NOT NULL,
+    fired_at   TEXT    NOT NULL,
+    outcome    TEXT    NOT NULL,
+    PRIMARY KEY (hook_name, event_seq)
+);
+
+-- RETIRED (FR-20): the MTIX-52 designated-host synced-dispatch watermark. The
+-- ledger dispatcher treats every origin identically, so this cursor is no
+-- longer read or advanced; the table stays so downgrade/upgrade round-trips
+-- are inert rather than a migration hazard.
 CREATE TABLE IF NOT EXISTS hook_synced_cursor (
     id     INTEGER PRIMARY KEY CHECK (id = 1),
     cursor INTEGER NOT NULL DEFAULT 0

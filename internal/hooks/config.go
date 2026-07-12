@@ -41,8 +41,10 @@ type Hook struct {
 	Webhook    *WebhookConfig    `yaml:"webhook,omitempty"`
 	AppendFile *AppendFileConfig `yaml:"append-file,omitempty"`
 
-	// IncludeSynced opts this hook into firing on events that arrived via hub
-	// replication, not just local ones (FR-19 §3 team-sync). Default false.
+	// IncludeSynced is DEPRECATED and a no-op (FR-20): dispatch is
+	// origin-independent, so every hook fires on sync-arrived events (deduped
+	// per host by the dispatch ledger). The field stays so existing configs
+	// parse unchanged; fleet-level "who fires this" is hook placement (§5).
 	IncludeSynced bool `yaml:"include-synced,omitempty"`
 }
 

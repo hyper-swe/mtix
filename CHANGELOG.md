@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Origin-independent hook dispatch (FR-20 / MTIX-56.1):** hooks now fire for a journaled event based only on the event being in the journal and the hook not yet having fired for it on this host — never on who wrote the event or how it arrived (local CLI, MCP, sync-arrival from the hub, another process). A durable per-`(hook, event)` **dispatch ledger** replaces the local/synced dual-cursor split: exactly-once per host across restarts, concurrent triggers and out-of-order arrival (the same ledger pattern as the MTIX-55 inbox ack fix). Crash recovery is at-least-once via a claim lease — a trigger that dies between claim and fire is re-fired, never lost; a fire that ran and failed is recorded and never auto-retried. Wake `exec` scripts should be idempotent (check the inbox before launching).
+- Fresh clones and first pulls into an empty store initialize the dispatch floor at the journal tail, so bootstrapped history never fires a hook backlog storm.
+
+### Changed
+- **`include-synced` is deprecated and now a no-op** (accepted for config compat). This is a behavior change: hooks that previously fired only on local events now also fire on sync-arrived events, deduped per host by the ledger. Fleet-level control is hook **placement**: a hook configured on N hosts fires on N hosts, once each — put a wake hook only on the host that should run it. `mtix sync daemon --dispatch-hooks` now dispatches events of every origin (no more "designated synced dispatcher").
+
+---
+
 ## [0.4.0-beta] - 2026-06-29
 
 ### Added

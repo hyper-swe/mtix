@@ -16,10 +16,10 @@ func (h Hook) Matches(e Event) bool {
 	if e.ViaHook != "" && e.ViaHook == h.Name {
 		return false
 	}
-	// A synced event fires only for a hook that explicitly opts in (FR-19 §3).
-	if e.Synced && !h.IncludeSynced {
-		return false
-	}
+	// Origin is deliberately NOT a filter (FR-20 G1): a synced event matches
+	// exactly like a local one. Which hosts fire a hook is governed by where
+	// the hook is configured (placement, FR-20 §5) plus the per-host dispatch
+	// ledger — h.IncludeSynced is a deprecated no-op kept for config compat.
 	return h.Match.matches(e)
 }
 

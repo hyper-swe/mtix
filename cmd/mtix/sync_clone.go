@@ -122,6 +122,13 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 		return wrapSyncErr(stderr, "clone loop", err)
 	}
 
+	// A clone bootstraps a store with HISTORY: initialize the hook scan floor
+	// at the journal tail so hooks never treat cloned history as a backlog of
+	// fresh events to fire on (FR-20 §8 — no wake storm on a new machine).
+	if err := app.store.InitHookScanFloorAtTail(ctx); err != nil {
+		fmt.Fprintf(stderr, "mtix sync clone: hook floor init: %s\n", err)
+	}
+
 	fmt.Fprintf(stdout,
 		"clone complete: %d events applied across %d batches\n", pulled, batches)
 	return nil

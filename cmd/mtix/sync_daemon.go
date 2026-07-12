@@ -73,9 +73,9 @@ Use --install to print a systemd unit (linux) or launchd plist
 	cmd.Flags().BoolVar(&install, "install", false,
 		"Print a systemd unit / launchd plist for supervised install")
 	cmd.Flags().BoolVar(&dispatchHooks, "dispatch-hooks", false,
-		"Make THIS host the designated hook dispatcher (MTIX-52): after each pull, "+
-			"fire include-synced hooks on events that arrived from other machines. "+
-			"Run on exactly ONE host so a synced event fires once team-wide")
+		"After each pull, fire this host's hooks for undispatched events of ANY "+
+			"origin (FR-20, deduped per host by the dispatch ledger). A hook fires "+
+			"on every host whose hooks.yaml configures it — placement is designation")
 	return cmd
 }
 
@@ -112,8 +112,8 @@ func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 	defer wireMirrorExporter(app.logger)()
 
 	if dispatchHooks {
-		fmt.Fprintf(stdout, "mtix sync daemon: designated hook dispatcher — "+
-			"include-synced hooks fire on this host after each pull\n")
+		fmt.Fprintf(stdout, "mtix sync daemon: hook dispatcher — "+
+			"this host's hooks fire for events of any origin after each pull\n")
 	}
 	fmt.Fprintf(stdout, "mtix sync daemon: started (PID %d, interval %ds)\n",
 		os.Getpid(), intervalSec)
@@ -121,14 +121,16 @@ func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 	tick := time.NewTicker(time.Duration(intervalSec) * time.Second)
 	defer tick.Stop()
 
-	// pullThenDispatch runs one pull and, on the designated host, fires
-	// include-synced hooks on the events that pull just brought in (MTIX-52).
-	// Dispatch runs AFTER the pull so the synced events are already in the
-	// local journal; it never blocks or fails the loop.
+	// pullThenDispatch runs one pull then one ledger dispatch pass (FR-20):
+	// hooks configured on THIS host fire for the events the pull just brought
+	// in — and any other undispatched events, whatever their origin — deduped
+	// per (hook,event) by the dispatch ledger. Dispatch runs AFTER the pull so
+	// the synced events are already in the local journal; it never blocks or
+	// fails the loop.
 	pullThenDispatch := func() {
 		runOneDaemonPull(ctx, stderr, args, opts)
 		if dispatchHooks && app.hooksDisp != nil {
-			app.hooksDisp.DispatchSynced(ctx)
+			app.hooksDisp.Dispatch(ctx)
 		}
 	}
 

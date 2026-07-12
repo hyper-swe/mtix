@@ -34,11 +34,12 @@ responses are written to stdout.
 This command is designed to be invoked by MCP clients such as
 Claude Desktop, Cursor, Claude Code, or any MCP-compatible agent.
 
-Use --project to specify the project directory. This allows a single
-mtix binary to serve multiple projects without relying on cwd:
+Use the global -C/--project-dir to specify the project directory. This
+allows a single mtix binary to serve multiple projects without relying
+on cwd (the mcp-local --project spelling is a deprecated alias):
 
-  mtix mcp --project /path/to/project-a
-  mtix mcp --project /path/to/project-b
+  mtix mcp -C /path/to/project-a
+  mtix mcp --project-dir /path/to/project-b
 
 All logs are redirected to .mtix/logs/mtix.log to prevent
 contamination of the protocol stream.
@@ -49,7 +50,7 @@ Example MCP client configuration:
     "mcpServers": {
       "mtix": {
         "command": "mtix",
-        "args": ["mcp", "--project", "/path/to/your/project"]
+        "args": ["mcp", "-C", "/path/to/your/project"]
       }
     }
   }`,
@@ -64,8 +65,13 @@ Example MCP client configuration:
 		},
 	}
 
-	cmd.Flags().StringVarP(&projectDir, "project", "C", "",
+	// Deprecated alias (MTIX-56.4): the directory flag went global as
+	// -C/--project-dir so every command can target a project. The old local
+	// spelling keeps working for one release; its -C shorthand moved to the
+	// global flag with identical semantics, so `mtix mcp -C dir` is unchanged.
+	cmd.Flags().StringVar(&projectDir, "project", "",
 		"Project directory containing .mtix/ (overrides cwd)")
+	_ = cmd.Flags().MarkDeprecated("project", "use the global -C/--project-dir")
 
 	return cmd
 }

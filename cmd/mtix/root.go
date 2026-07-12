@@ -57,7 +57,10 @@ var app appContext
 // Persistent flags: --json, --log-level.
 // Build-time variables injected via ldflags: version, commit, date.
 func newRootCmd() *cobra.Command {
-	var logLevel string
+	var (
+		logLevel   string
+		projectDir string
+	)
 
 	rootCmd := &cobra.Command{
 		Use:   "mtix",
@@ -69,6 +72,16 @@ It provides micro issue tracking with infinite-depth decomposition,
 prompt chain propagation, and multi-agent orchestration.`,
 		Version: fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Global -C/--project-dir (FR-20 / MTIX-56.4): git -C semantics —
+			// an effective working-directory change applied before ANYTHING
+			// resolves .mtix (store init, recover, plugin install), so a
+			// polyglot agent can target any project without cd and relative
+			// paths in hook configs resolve against the target project.
+			if projectDir != "" {
+				if err := os.Chdir(projectDir); err != nil {
+					return fmt.Errorf("--project-dir: %w", err)
+				}
+			}
 			return persistentPreRun(cmd, args, logLevel)
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
@@ -96,6 +109,8 @@ prompt chain propagation, and multi-agent orchestration.`,
 		"Output in JSON format")
 	rootCmd.PersistentFlags().StringVar(&logLevel, "log-level", "",
 		"Override logging level (debug, info, warn, error)")
+	rootCmd.PersistentFlags().StringVarP(&projectDir, "project-dir", "C", "",
+		"Run as if mtix was started in <dir> (the project containing .mtix/), like git -C")
 
 	// Register all subcommands.
 	rootCmd.AddCommand(

@@ -202,6 +202,7 @@ Default cap is `0` (unlimited). Set explicitly via the `sync.max_queue_size` met
 - **Forged author identity** — `author_id` is a logical identifier from the CLI. PG-level user accounts are the real authentication boundary.
 - **Bypassed git hooks** — `git push --no-verify` or absence of installed hooks defeats the pre-push sync. Use server-side enforcement for safety-critical teams.
 - **Same-authorID audit-trail completeness** — see "Known audit-trail limitation: same-authorID conflicts" above.
+- **Prompt injection over the inbox (FR-20)** — with origin-independent dispatch, an addressed comment written by ANY hub participant can cold-start a worker (exec wake) or be pushed into a live agent session (channel push), landing verbatim in that agent's context. Addressed comments are prompt input: only federate the hub with agents and humans you trust with that authority — the DSN is effectively the right to speak into every agent's prompt. Mitigations already in place: `exec` runs only for a locally trusted `hooks.yaml` (content hash, per host — placement is designation), commands are argv-only with event data confined to env/stdin, per-node rate limits and via-hook loop guards bound runaway firing, and a fire that errors is never auto-retried.
 
 ---
 
@@ -239,5 +240,6 @@ mtix is a pre-funding open-source project. Triage is best-effort. Critical issue
 | 1.0 | unreleased | Drafted alongside MTIX-14 BYO Postgres rollout (canonical-store framing; never shipped) |
 | 1.1 | 2026-05 | MTIX-15 sync hub trust model: hub is replication, not canonical; DSN handling via redact + Recover; LWW convergence; same-authorID audit-trail tradeoff documented; lost-laptop and queue-full procedures |
 | 1.2 | 2026-06 | MTIX-30 / ADR-003 restore-epoch trust model: operator-gated epoch is the un-forgeable Option-B discriminator; client "previously-settled" flag rejected as a forgeable signal on a safety-critical trigger; calibration that a compromised client cannot reach Option B in normal operation |
+| 1.3 | 2026-07 | FR-20 origin-independent dispatch: hooks fire for events of any origin on hosts that configure them (placement is designation); inbox content is prompt input for exec-wake and channel-push delivery; hub write access now implies prompt-injection reach into federated agents |
 
 Changes that alter the trust model (adding/removing a guarantee, adding a new threat) require a documented version bump and a corresponding `CHANGELOG.md` security note.

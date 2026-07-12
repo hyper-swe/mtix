@@ -1343,69 +1343,137 @@ The daemon runs `mtix sync pull` every 30 seconds by default. Pair
 with the pre-push hook (which handles push) for both inbound and
 outbound auto-sync.
 
-### Designated hook dispatch (multi-machine wake)
+### Event dispatch & the daemon (FR-20)
 
-Event hooks (`.mtix/hooks.yaml`) fire on the machine where the
-triggering command ran. For a **local** event that is exactly right —
-the wake action runs next to the worker. But an event that arrived
-from **another machine** (a synced event) is skipped by default, so a
-hook whose action must run on a specific host — e.g. an `exec` that
-launches a worker — would never fire for work posted elsewhere.
+Hook dispatch is **origin-independent**: a hook fires for a journaled
+event based only on (a) the event being in the journal and (b) the hook
+not yet having fired for it on this host — never on who wrote the event
+or how it arrived (local CLI, MCP server, sync-arrival from the hub, or
+another process writing the same `.mtix`). A durable per-`(hook, event)`
+**dispatch ledger** makes firing exactly-once per host across restarts,
+concurrent triggers, and out-of-order arrival.
 
-Designate **one** host to act on synced events by running its daemon
-with `--dispatch-hooks`:
+**Placement is designation.** A hook fires on every host whose
+`hooks.yaml` configures it — once per host. Put a wake `exec` only in
+the `hooks.yaml` of the host where the worker should run; hosts without
+the hook never fire it, no matter who posted the event. (The old
+`include-synced` flag is a deprecated no-op; existing configs parse
+unchanged, but hooks now fire for sync-arrived events by default — a
+hook configured on N hosts fires on N hosts.)
+
+Three triggers share the ledger, so nothing double-fires:
+
+| Trigger | Latency | Covers |
+|---|---|---|
+| CLI post-command | immediate | your own command's events |
+| Server on-commit (`mtix mcp`, `mtix serve`) | immediate | any agent mutation through that server |
+| **`mtix daemon`** | ~one tick (5s default) | **everything** — sync-arrived, cross-process, and anything the others missed |
 
 ```bash
-mtix sync daemon --dispatch-hooks
+mtix daemon                 # pull from the hub (if configured) + dispatch, every 5s
+mtix daemon --interval 10   # slower cadence
+mtix daemon /path/or/DSN    # explicit hub DSN
 ```
 
-After each pull, that host fires hooks marked `include-synced: true`
-on the events it just received:
+With no hub configured the daemon still runs, tailing the local journal
+(cross-process writes into the same `.mtix` keep dispatching). A second
+instance exits cleanly (PID lock, shared with the deprecated
+`mtix sync daemon` spelling).
+
+**Crash semantics: at-least-once, never a lost wake.** A trigger that
+dies between claiming an event and firing it is re-fired after a short
+lease. A double wake is possible and harmless — wake scripts must be
+idempotent (the shipped template checks the inbox before launching); a
+fire that ran and *failed* is recorded and never auto-retried (check
+`mtix hooks log`).
+
+### Running the daemon as a service
+
+The daemon is infrastructure — install it as an OS service so it starts
+on boot and restarts on crash:
+
+```bash
+mtix daemon install     # launchd (macOS) / systemd --user (Linux) / Task Scheduler (Windows)
+mtix daemon status
+mtix daemon stop / start
+mtix daemon uninstall
+```
+
+One service per project (re-running `install` refreshes it). Logs land
+under `.mtix/logs/`.
+
+### Topology: one local `.mtix` per machine + the hub
+
+Each machine keeps its **own local `.mtix`**; events replicate through
+the Postgres hub. **Never share one `.mtix` across machines or sandboxes
+via a network/FUSE mount** — SQLite's WAL shared memory cannot be
+coordinated across hosts and the store *will* corrupt (mtix refuses
+such filesystems at open). Origin-independent dispatch is exactly what
+makes the shared mount unnecessary: post anywhere, sync, and the worker
+host's daemon fires the wake locally.
+
+### Waking agents: delivery that terminates in the prompt
+
+LLM agents act only on what is in their context — a queue an agent must
+remember to poll will not get checked. Every delivery rung therefore
+ends with event content in the agent's prompt:
+
+| Rung | Mechanism | Covers |
+|---|---|---|
+| 1. **Cold-start wake** | `exec` hook runs a wake script that launches the harness CLI **with the inbox as the prompt** (`mtix inbox --agent X --format prompt`) | agent not running — works for any runtime |
+| 2. **Context injection** | a harness hook (session-start / prompt-submit) shells `mtix inbox --agent X --format context` | interactive sessions, next human prompt |
+| 3. **Background watcher** | the agent arms `mtix inbox --wait --timeout 3600` as a harness background task; its exit re-invokes the agent, which handles, acks, re-arms | idle-but-alive session, no push mechanism |
+| 4. **Channel push** | `mtix mcp --channel-agent X` (Claude Code channels, research preview) pushes events into the running session | idle or busy live session |
+
+Rung 1 is the guaranteed backstop; rungs 2–4 are latency optimizations
+and are allowed to fail — the durable inbox plus the daemon's exec wake
+covers every gap. The reference wake script is
+`examples/hooks/wake-agent.sh`:
 
 ```yaml
 hooks:
-  - name: wake-worker-on-done
-    match: { events: [status.changed], status-to: [done], to-agent: opus }
-    include-synced: true      # act on events from other machines too
+  - name: wake-developer
+    match: { events: [comment.addressed], to-agent: developer }
     deliver: [exec]
+    exec:
+      command: ["/path/to/wake-agent.sh", "developer"]
+      timeout-seconds: 30
 ```
 
-Run `--dispatch-hooks` on exactly **one** host so a synced event fires
-once team-wide (a separate cursor makes it exactly-once even across
-daemon restarts). Every other host — and all normal CLI commands —
-still fire hooks only for their own local events, so there is no
-duplicate firing. `exec` trust is local, so trust `hooks.yaml` on the
-designated host (`mtix hooks trust`).
+Review and trust the config on that host (`mtix hooks trust`). The
+script exits without launching when the inbox is empty (the idempotency
+check under at-least-once dispatch) and otherwise launches the harness
+CLI with the payload — `claude -p "$PAYLOAD"`, `codex exec "$PAYLOAD"`,
+`agent -p "$PAYLOAD"` (Cursor), or any runtime that takes a prompt.
 
-**Cold-starting a dormant agent.** A pull-based wait (`mtix inbox
---wait`, or the `mtix_inbox_wait` MCP tool) can only surface work to a
-process that is *already running*. It cannot wake an agent that has no
-process — e.g. a harness-hosted LLM agent between turns. The only thing
-that starts a dormant worker is a **push**: an `exec` hook whose script
-launches a fresh worker session. Point that hook at the designated
-dispatch host so it fires where the worker should run, not on whichever
-machine happened to post the event:
+Per-harness support today:
 
-```yaml
-hooks:
-  - name: cold-start-worker
-    match: { events: [comment.addressed], to-agent: worker-1 }
-    include-synced: true
-    deliver: [exec]
-    exec: { command: ["/path/to/wake-worker.sh"] }   # launches a new session
-```
+| Harness | Cold-start (rung 1) | MCP tools | Context injection (rung 2) | Push (rung 4) |
+|---|---|---|---|---|
+| Claude Code | `claude -p` | ✅ | ✅ hooks | ✅ channels (preview) |
+| OpenAI Codex CLI | `codex exec` | ✅ | AGENTS.md convention | ✗ (no push mechanism yet) |
+| Cursor CLI | `agent -p` | ✅ | ✅ hooks | ✗ |
+| any prompt-taking CLI | ✅ | if MCP-capable | varies | ✗ |
 
-With `mtix sync daemon --dispatch-hooks` on that host, a comment
-addressed to `worker-1` from any machine lands, syncs, and cold-starts
-the worker — no human poke, no polling.
+**Channel mode (Claude Code, research preview).** `mtix mcp
+--channel-agent developer` makes the same MCP server that serves the
+mtix tools also push the developer's new inbox events into the running
+session as `<channel source="mtix">` events; the agent handles, acks
+(`mtix_inbox_ack`), and replies (`mtix_annotate` with `to`) through the
+very same server. Launch the session with `--channels` (during the
+preview, a custom channel needs `--dangerously-load-development-channels`
+or an org allowlist; requires Anthropic auth and Claude Code ≥ 2.1.80).
+The channel server also holds an mtix session for the agent while it
+runs, so wake scripts can prefer pushing to a live session over
+cold-starting a duplicate.
 
-**Hooks fire on server mutations too.** The long-running servers — the
-MCP server (`mtix mcp`) and `mtix serve` — dispatch hooks on every
-mutation, exactly like a CLI command does. So if an agent drives mtix
-through a **host-side MCP connector**, its mutations fire the host's
-hooks directly (no daemon needed): a comment it posts can cold-start a
-worker on that host immediately. `exec` still requires local trust
-(`mtix hooks trust`) on the server host.
+**Security notes.** `exec` runs only for a `hooks.yaml` the local
+operator trusted by content hash (`mtix hooks trust`) — a synced or
+edited config never runs code unbidden. Addressed comments are **prompt
+input**: with push and cold-start wakes, any agent that can write to
+your hub puts text directly into another agent's context — only
+federate the hub with agents and humans you trust, exactly as you would
+a shared terminal.
 
 ### Conflict handling
 
@@ -1616,7 +1684,7 @@ mtix exits with structured codes so scripts and agents can react without parsing
 | 1 | Generic error |
 | 3 | Disk full — a write or backup was refused or failed because the volume is out of space; free space and retry |
 | 4 | Database corrupted — an integrity gate failed at open; see "Disk full and corruption recovery" |
-| 5 | Inbox empty — `mtix inbox --wait` timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Note: a harness-hosted (Claude) agent cannot stay parked *between* turns — a dormant session runs no poller, so `mtix_inbox_wait` only watches the inbox *within* a live turn. To wake a dormant agent when work lands, cold-start it with a designated-host exec hook (see "Designated hook dispatch"), or poll at each turn boundary |
+| 5 | Inbox empty — `mtix inbox --wait` timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Note: a harness-hosted (Claude) agent cannot stay parked *between* turns — a dormant session runs no poller, so `mtix_inbox_wait` only watches the inbox *within* a live turn. To wake a dormant agent when work lands, cold-start it with an exec wake hook on the worker host (see "Waking agents: delivery that terminates in the prompt"), or use channel push / a background watcher for a live session |
 
 ### Common Issues
 

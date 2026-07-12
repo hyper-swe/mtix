@@ -5,14 +5,17 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/hooks"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 )
@@ -213,6 +216,105 @@ hooks:
 	afterSecond, err := b.store.InboxList(ctx, "opus")
 	require.NoError(t, err)
 	require.Len(t, afterSecond, 1, "dispatch is exactly-once per host; a second pass does not re-fire")
+}
+
+// TestE2E_FR20_ReleaseChain_ExecWake is the FR-20 §10 RELEASE GATE: a poster
+// on machine A addresses a worker; the worker host B's dispatcher fires the
+// wake EXEC exactly once for A's event; A never fires it; a restart re-fires
+// nothing; a trigger that crashed between claim and fire re-fires (a double
+// wake is acceptable, a lost wake is not). Green = the cold-start fabric
+// works headless, cross-machine, zero human touches.
+func TestE2E_FR20_ReleaseChain_ExecWake(t *testing.T) {
+	pool := openHub(t)
+	ctx := context.Background()
+
+	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa") // poster's machine
+	b := newFakeCLI(t, "B", "bbbbbbbbbbbbbbbb") // worker host
+
+	// The wake exec records each invocation — the observable stand-in for
+	// launching the worker's harness CLI with the inbox as its prompt.
+	recDir := t.TempDir()
+	wakes := filepath.Join(recDir, "worker.wakes")
+	script := filepath.Join(recDir, "wake.sh")
+	require.NoError(t, os.WriteFile(script,
+		[]byte("#!/bin/sh\nprintf '%s\\n' \"$MTIX_EVENT\" >> \""+wakes+"\"\n"), 0o700)) //nolint:gosec
+
+	hookYAML := fmt.Sprintf(`
+hooks:
+  - name: wake-worker
+    match:
+      events: [comment.addressed]
+      to-agent: worker
+    deliver: [exec]
+    exec:
+      command: [%q]
+      timeout-seconds: 10
+`, script)
+	require.NoError(t, os.WriteFile(filepath.Join(b.mtixDir, "hooks.yaml"), []byte(hookYAML), 0o600))
+	require.NoError(t, hooks.SaveTrust(b.mtixDir, hooks.ConfigHash(b.mtixDir)))
+
+	// Shared node, then the cross-machine handoff. Comments ride a cumulative
+	// annotation thread (SetAnnotations replaces the list; only a NEW entry
+	// journals an addressed comment event).
+	a.createNode(t, "GATE-1", "work for the worker")
+	a.pushAll(ctx, t, pool)
+	b.pullAll(ctx, t, pool)
+	thread := &commentThread{cli: a, nodeID: "GATE-1"}
+	thread.post(t, "poster", "worker", "begin: acceptance chain")
+	a.pushAll(ctx, t, pool)
+	b.pullAll(ctx, t, pool)
+
+	// A configures no hook and fires nothing, whatever it dispatches.
+	service.NewHooksDispatcher(a.store, a.mtixDir, e2eLogger()).Dispatch(ctx)
+	requireWakeLines(t, wakes, 0, "the poster's machine never runs the wake exec")
+
+	// B's dispatcher (what its daemon runs every tick) fires it exactly once.
+	disp := service.NewHooksDispatcher(b.store, b.mtixDir, e2eLogger())
+	disp.Dispatch(ctx)
+	requireWakeLines(t, wakes, 1, "the worker host fires the wake exec for the cross-machine event")
+	disp.Dispatch(ctx)
+	requireWakeLines(t, wakes, 1, "a second tick re-fires nothing (ledger)")
+
+	// Restart: a brand-new dispatcher over the same store re-fires nothing.
+	service.NewHooksDispatcher(b.store, b.mtixDir, e2eLogger()).Dispatch(ctx)
+	requireWakeLines(t, wakes, 1, "restart-safe")
+
+	// Crash injection: a second handoff is claimed by a trigger that dies
+	// before firing; the stale claim is reclaimed and fired — never lost.
+	thread.post(t, "poster", "worker", "round two")
+	a.pushAll(ctx, t, pool)
+	b.pullAll(ctx, t, pool)
+	tail, err := b.store.JournalTail(ctx)
+	require.NoError(t, err)
+	won, err := b.store.ClaimHookDispatch(ctx, "wake-worker", tail, time.Minute)
+	require.NoError(t, err)
+	require.True(t, won)
+	stale := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	_, err = b.store.WriteDB().Exec(
+		`UPDATE hook_dispatch_ledger SET fired_at = ? WHERE hook_name = 'wake-worker' AND event_seq = ?`,
+		stale, tail)
+	require.NoError(t, err)
+
+	disp.Dispatch(ctx)
+	requireWakeLines(t, wakes, 2, "the crashed trigger's wake is re-fired, not lost (at-least-once)")
+}
+
+// requireWakeLines asserts the wake record file holds exactly n lines (one
+// line per exec invocation; a missing file is zero invocations).
+func requireWakeLines(t *testing.T, path string, n int, msg string) {
+	t.Helper()
+	body, err := os.ReadFile(path) //nolint:gosec // test-owned temp path
+	if os.IsNotExist(err) {
+		require.Zero(t, n, msg)
+		return
+	}
+	require.NoError(t, err)
+	trimmed := strings.TrimSpace(string(body))
+	var lines []string
+	if trimmed != "" {
+		lines = strings.Split(trimmed, "\n")
+	}
+	require.Len(t, lines, n, msg)
 }
 
 // TestE2E_FR20_ServerOnCommitDispatch_CoversEveryOrigin: when a long-running

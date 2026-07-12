@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-12T03:20:49Z",
+  "exported_at": "2026-07-12T09:42:40Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6194,6 +6194,31 @@
       "uid": "019f5281-bf6d-7090-b668-a5a81e28f104"
     },
     {
+      "id": "MTIX-56",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 56,
+      "project": "MTIX",
+      "title": "FR-20: Origin-independent hook dispatch (journal-tail dispatcher + daemon-as-service)",
+      "description": "",
+      "prompt": "Full requirement: internal-docs/FR-20-ORIGIN-INDEPENDENT-DISPATCH.md. Make hook dispatch ORIGIN-INDEPENDENT: a hook fires for a journaled event based only on the event being in the journal and the hook not yet having fired for it on this host — never on who wrote it (local CLI, MCP, REST/gRPC, sync-arrived, or another process). Core: replace the local/synced dual-cursor split with a durable per-(hook,event) DISPATCH LEDGER (exactly-once per host, survives restarts/concurrency/out-of-order — same ledger pattern as MTIX-55 selective ack). One journal-tail dispatch path shared by the daemon (continuous pull-then-tail) and the on-commit trigger (MTIX-53, low-latency local). Fleet exactly-once = hook PLACEMENT (an exec hook lives on the worker host only); include-synced becomes a deprecated no-op. Ship the daemon as an OS-agnostic SERVICE (launchd/systemd/Task Scheduler) via 'mtix daemon install'. Add a global --project/-C \u003cdir\u003e flag on ALL commands. Topology: origin-independence is delivered over the SYNC HUB (each host its own local .mtix), NOT a shared mount (which MTIX-54 refuses as corruption-prone) — the feature must not require a shared filesystem. Crash semantics: at-least-once exec with reclaimable leases (no lost wake; idempotent wake scripts). New-hook backfill guard (intro-floor) so a newly added hook fires only on future events. Claude Code channels: support both — the fabric works channel-free (exec cold-start is the baseline release test); an optional mtix-channel push adapter is an additive follow-up, never a dependency. Release test: a sandboxed poster's addressed comment → the worker host's daemon fires the wake exec → worker cold-starts, zero human touches. Child breakdown + edge/corner cases + scenario tests are in the FR doc §11-14. Build generic (no codenames in code/public docs). To be built by a fable-5 agent, then reviewed.",
+      "acceptance": "The release chain works headless on the hub topology: an addressed comment posted on host A fires the wake exec EXACTLY ONCE on the designated worker host B (via B's daemon), does not fire on A, does not re-fire on B restart, and re-fires (not lost) after a crash between claim and fire. include-synced still parses (no-op). Global --project works on non-mcp commands. Daemon installs as an OS service and survives reboot. Filesystem safety (MTIX-54) intact — no shared-mount requirement. Full suite + cloud gate green; \u003e=90% coverage on new code.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "6e02e146876daf8112fed1ee0d5825733b5ff545d9010774b9fc2cf929af4ea4",
+      "created_at": "2026-07-12T09:40:12Z",
+      "updated_at": "2026-07-12T09:42:40Z",
+      "uid": "019f55b2-db9f-7ed4-94f5-0935a1546b77"
+    },
+    {
       "id": "MTIX-6",
       "parent_id": "",
       "depth": 0,
@@ -6925,6 +6950,6 @@
       "status": "active"
     }
   ],
-  "node_count": 252,
-  "checksum": "5a6bb54ea693b6e797625cd7086cecc95959584859cfc3869536f4fe613a34c2"
+  "node_count": 253,
+  "checksum": "383f543e57f05b1ef87d5c9675b610ea7ebd3cd28c43e96775bbbafe9882c956"
 }

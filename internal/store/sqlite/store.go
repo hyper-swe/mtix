@@ -93,6 +93,14 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 	dbPath = resolveDBPath(dbPath)
 	ctx := context.Background()
 
+	// Filesystem-safety preflight (MTIX-54): refuse to open on a FUSE/network
+	// filesystem where SQLite WAL corrupts, unless the operator opts into a
+	// non-WAL safe mode. Runs before any connection is opened.
+	safeMode, fsErr := preflightFilesystem(dbPath, logger)
+	if fsErr != nil {
+		return nil, fsErr
+	}
+
 	if integrityChecksSkipped() {
 		// Recovery escape hatch: verify/backup/export must be able to
 		// reach a damaged database, or the recovery runbook is a dead
@@ -103,7 +111,7 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 		return nil, err
 	}
 
-	writeDB, err := openDB(ctx, dbPath, true)
+	writeDB, err := openDB(ctx, dbPath, true, safeMode)
 	if err != nil {
 		return nil, explainOpenError(fmt.Errorf("open write db %s: %w", dbPath, err), dbPath)
 	}
@@ -116,7 +124,7 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 		return nil, checkErr
 	}
 
-	readDB, err := openDB(ctx, dbPath, false)
+	readDB, err := openDB(ctx, dbPath, false, safeMode)
 	if err != nil {
 		if closeErr := writeDB.Close(); closeErr != nil {
 			logger.Error("failed to close write db after read db open failure",
@@ -150,7 +158,7 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 // ensuring busy_timeout is always applied (BEGIN DEFERRED bypasses it on
 // lock upgrade). Both read and write connections set busy_timeout = 5000ms
 // to prevent immediate failures during concurrent access.
-func openDB(ctx context.Context, path string, isWriter bool) (*sql.DB, error) {
+func openDB(ctx context.Context, path string, isWriter, safeMode bool) (*sql.DB, error) {
 	dsn := path
 	if isWriter {
 		dsn = path + "?_txlock=immediate"
@@ -174,21 +182,34 @@ func openDB(ctx context.Context, path string, isWriter bool) (*sql.DB, error) {
 		// Serialized writes — one connection (NFR-2.1).
 		db.SetMaxOpenConns(1)
 
-		pragmas = append(pragmas,
-			// WAL mode for concurrent readers (NFR-2.1).
-			pragma{"PRAGMA journal_mode = WAL", "enable WAL"},
-			// synchronous = FULL, set EXPLICITLY per NFR-2.8 / ADR-001 §9.
-			// modernc.org/sqlite happens to default to FULL, but the
-			// durability posture of the canonical store must never depend
-			// on a driver default. FULL fsyncs the WAL on every commit;
-			// NORMAL would trade that for speed and may lose the most
-			// recent commits on power failure.
-			pragma{"PRAGMA synchronous = FULL", "set synchronous"},
-			// Explicit autocheckpoint threshold (the SQLite default,
-			// pinned per NFR-2.8 so backfill volume — and therefore the
-			// free-space pre-flight floor — is a known quantity).
-			pragma{"PRAGMA wal_autocheckpoint = 1000", "set wal_autocheckpoint"},
-		)
+		if safeMode {
+			// Unsafe filesystem, operator-overridden (MTIX-54): use a rollback
+			// journal, NOT WAL. This removes the -shm shared-memory dependency
+			// that FUSE/network mounts cannot honor — the corruption vector. It
+			// trades WAL's concurrent-reader throughput for integrity. journal_mode
+			// is set EXPLICITLY to DELETE to convert away from any persisted WAL
+			// header the file may already carry.
+			pragmas = append(pragmas,
+				pragma{"PRAGMA journal_mode = DELETE", "use rollback journal (unsafe-FS safe mode)"},
+				pragma{"PRAGMA synchronous = FULL", "set synchronous"},
+			)
+		} else {
+			pragmas = append(pragmas,
+				// WAL mode for concurrent readers (NFR-2.1).
+				pragma{"PRAGMA journal_mode = WAL", "enable WAL"},
+				// synchronous = FULL, set EXPLICITLY per NFR-2.8 / ADR-001 §9.
+				// modernc.org/sqlite happens to default to FULL, but the
+				// durability posture of the canonical store must never depend
+				// on a driver default. FULL fsyncs the WAL on every commit;
+				// NORMAL would trade that for speed and may lose the most
+				// recent commits on power failure.
+				pragma{"PRAGMA synchronous = FULL", "set synchronous"},
+				// Explicit autocheckpoint threshold (the SQLite default,
+				// pinned per NFR-2.8 so backfill volume — and therefore the
+				// free-space pre-flight floor — is a known quantity).
+				pragma{"PRAGMA wal_autocheckpoint = 1000", "set wal_autocheckpoint"},
+			)
+		}
 	}
 
 	for _, p := range pragmas {

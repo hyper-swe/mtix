@@ -1635,6 +1635,39 @@ Progress rolls up automatically when child states change. Check that child nodes
 **Cannot create child under done/cancelled node**
 Terminal states (`done`, `cancelled`, `invalidated`) block child creation. Reopen the parent first with `mtix reopen <id>`.
 
+### Filesystem requirements (local disk only)
+
+**`.mtix` must live on a real local disk.** mtix's SQLite store uses WAL mode,
+which requires true shared-memory (the `-shm` wal-index) and faithful POSIX file
+locking across every process that opens the database. **FUSE-passthrough and
+network filesystems do not provide these** — even when they report success — so
+concurrent access from multiple processes/agents can silently corrupt the
+database. This is the failure mode behind the 2026-07-11 incident.
+
+At startup mtix classifies the filesystem holding `.mtix` and **refuses to open**
+on a positively-identified FUSE or network mount (NFS, SMB/CIFS, 9p, sshfs,
+rclone, gocryptfs, s3fs, …):
+
+```
+error: mtix database is on a filesystem unsafe for SQLite WAL: …/.mtix/data/mtix.db
+is on a FUSE filesystem ("macfuse"). … Move .mtix onto a local disk … To override
+at your own risk … set MTIX_ALLOW_UNSAFE_FS=1
+```
+
+What to do:
+
+- **Move `.mtix` to a local disk.** The most common trap is a container/VM shared
+  folder (Docker Desktop, virtiofs, gVisor) that surfaces a host directory into a
+  sandbox over FUSE. Put `.mtix` on the sandbox's own local filesystem instead.
+- **Sandboxed multi-agent setup?** Give **each machine/sandbox its own local
+  `.mtix`** and share state through the sync hub (`mtix sync`, FR-18). That is the
+  supported multi-writer topology — not one SQLite file on a shared folder.
+- **Must use such a mount anyway?** Set `MTIX_ALLOW_UNSAFE_FS=1` to override. mtix
+  then opens in a **non-WAL, rollback-journal mode** (no `-shm`), which removes
+  the specific shared-memory corruption vector at the cost of WAL's concurrency —
+  keep access single-process. Corruption risk from unreliable locking still
+  remains; a local disk is strongly preferred.
+
 ### Disk full and corruption recovery
 
 mtix refuses work it cannot finish safely (NFR-2.8). On a nearly full volume you will see errors like `refusing write: only N bytes free…` — **this is deliberate**: a write that fails halfway through a checkpoint can tear the database. Reads keep working. Free disk space and retry; the floor is 8 MiB by default and can be tuned with the `MTIX_MIN_FREE_BYTES` environment variable (`0` disables the check — not recommended).

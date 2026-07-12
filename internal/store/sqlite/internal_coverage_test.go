@@ -95,7 +95,7 @@ func TestChildCount_ExcludesDeleted(t *testing.T) {
 
 // TestOpenDB_InvalidPath_ReturnsError verifies error on invalid path.
 func TestOpenDB_InvalidPath_ReturnsError(t *testing.T) {
-	_, err := openDB(context.Background(), "/nonexistent/deep/path/test.db", true)
+	_, err := openDB(context.Background(), "/nonexistent/deep/path/test.db", true, false)
 	assert.Error(t, err)
 }
 
@@ -103,12 +103,12 @@ func TestOpenDB_InvalidPath_ReturnsError(t *testing.T) {
 func TestOpenDB_ReaderMode_NoWAL(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "reader.db")
 	// Create the database first.
-	wdb, err := openDB(context.Background(), dbPath, true)
+	wdb, err := openDB(context.Background(), dbPath, true, false)
 	require.NoError(t, err)
 	require.NoError(t, wdb.Close())
 
 	// Open as reader.
-	rdb, err := openDB(context.Background(), dbPath, false)
+	rdb, err := openDB(context.Background(), dbPath, false, false)
 	require.NoError(t, err)
 	defer func() { _ = rdb.Close() }()
 

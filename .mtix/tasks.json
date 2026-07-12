@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-12T16:29:49Z",
+  "exported_at": "2026-07-12T16:37:15Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6282,15 +6282,15 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "fable",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "b9dc6b142490327f46511086321b768bb250ce71ec8f52a30fa2b50e40a6c7c6",
       "created_at": "2026-07-12T12:50:51Z",
-      "updated_at": "2026-07-12T12:50:51Z",
+      "updated_at": "2026-07-12T16:37:15Z",
       "uid": "019f5661-664f-76ab-9afe-95012b15fc13"
     },
     {
@@ -7153,7 +7153,7 @@
       "agent_id": "fable",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-56.5",
+      "current_node_id": "MTIX-56.3",
       "last_heartbeat": "2026-07-12T13:27:45Z"
     },
     {
@@ -7183,5 +7183,5 @@
     }
   ],
   "node_count": 262,
-  "checksum": "f0d08a6872494a10b3c6f3bdaf3d8dcb8838a816cd6b7098113d8a9657d9fdd0"
+  "checksum": "9e7147d444bbf578f9430eb3422f175bc057591469376f0494a4540cf75c12bd"
 }

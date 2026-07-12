@@ -62,7 +62,9 @@ together. Transient pull errors are logged and retried, never fatal.`,
 	cmd.Flags().IntVar(&intervalSec, "interval", daemonDispatchDefaultIntervalSec,
 		"Pull-then-dispatch interval in seconds")
 	cmd.Flags().BoolVar(&install, "install", false,
-		"Print a systemd unit / launchd plist for supervised install")
+		"Print a systemd unit / launchd plist stub (deprecated: use 'mtix daemon install')")
+	_ = cmd.Flags().MarkDeprecated("install", "use 'mtix daemon install' (registers the OS service)")
+	cmd.AddCommand(newDaemonServiceCmds()...)
 	return cmd
 }
 

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-12T09:42:40Z",
+  "exported_at": "2026-07-12T11:01:34Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6219,6 +6219,31 @@
       "uid": "019f55b2-db9f-7ed4-94f5-0935a1546b77"
     },
     {
+      "id": "MTIX-57",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 57,
+      "project": "MTIX",
+      "title": "Corruption hardening: enforce one-local-.mtix-per-context; detect cross-context/shared-mount access even when local FS looks safe",
+      "description": "",
+      "prompt": "RCA: internal-docs/2026-07-12-recurring-multiagent-corruption-rca.md. Recurring structural corruption under multi-agent load: multiple execution contexts share ONE .mtix SQLite DB over a FUSE passthrough (sandbox-\u003ehost) and write concurrently; WAL -shm shared memory + locking are incoherent across contexts -\u003e orphaned-page corruption. Fingerprint: 17 orphaned .fuse_hidden -shm files + 605KB uncheckpointed WAL. Fleet runs a pre-MTIX-54 build (no preflight). Data fully recovered via mtix recover (45 nodes). ROOT CAUSE is a topology flaw, not a code bug: SQLite is single-host/single-local-FS; sharing one file across contexts cannot be made safe by detection alone. CURE is FR-20 hub-per-host (each context its own local .mtix; share via the Postgres hub). This ticket is DEFENSE-IN-DEPTH so a shared-file setup fails LOUD instead of corrupting: (1) verify MTIX-54 preflight ships to all consumers; refusal message must name the hub topology. (2) Multi-opener/cross-context detector: at open + periodically, detect that another context uses this DB even when the local FS looks local -- e.g. .fuse_hidden -shm orphans in the DB dir, or a -shm/WAL from an unreachable owner -- and warn/refuse. (3) Optional lightweight single-writer write-lease sentinel in the DB dir so a second writing context is refused (belt-and-suspenders over SQLite locking that FUSE subverts). (4) Docs: 'one local .mtix per machine/sandbox + hub; never a shared mount' as a first-line adoption rule. TDD; generic (no codenames). Cross-links FR-20 (MTIX-56, the structural cure) and MTIX-54 (the guard).",
+      "acceptance": "1. A shared/FUSE .mtix is refused with an actionable, hub-pointing message (extends MTIX-54). 2. Cross-context concurrent access is detected even when the local FS reports local (test via injected .fuse_hidden/-shm signals). 3. Recover + mirror path documented as the always-available data-safety net. 4. Docs promote one-local-.mtix-per-context + hub as the adoption default. 5. Full suite + cloud gate green; \u003e=90% coverage on new code.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "c700678746b002eb4b249d694a6a0d6b50bc905415809850aab88774a4722105",
+      "created_at": "2026-07-12T11:01:34Z",
+      "updated_at": "2026-07-12T11:01:34Z",
+      "uid": "019f55fd-59f3-7a7b-8c99-9d2ef3145d13"
+    },
+    {
       "id": "MTIX-6",
       "parent_id": "",
       "depth": 0,
@@ -6950,6 +6975,6 @@
       "status": "active"
     }
   ],
-  "node_count": 253,
-  "checksum": "383f543e57f05b1ef87d5c9675b610ea7ebd3cd28c43e96775bbbafe9882c956"
+  "node_count": 254,
+  "checksum": "eceee1a7cd7792d3c80f0b416f7405a90e96a4ff805256e535f8327d1f732f05"
 }

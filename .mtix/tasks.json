@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-11T18:45:35Z",
+  "exported_at": "2026-07-12T03:20:49Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6163,9 +6163,35 @@
       "weight": 1,
       "content_hash": "a18091f8ad94d5445b07e6e9d6e1d405187cd95bf807a4fe634b72938827b357",
       "created_at": "2026-07-11T11:54:22Z",
-      "updated_at": "2026-07-11T18:45:35Z",
-      "closed_at": "2026-07-11T18:45:35Z",
+      "updated_at": "2026-07-12T03:20:49Z",
+      "closed_at": "2026-07-12T03:20:49Z",
       "uid": "019f5107-52c8-7537-990f-f837ba122e6d"
+    },
+    {
+      "id": "MTIX-55",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 55,
+      "project": "MTIX",
+      "title": "Inbox selective ack (per-event ledger): cumulative watermark drops unacked events on out-of-order processing",
+      "description": "",
+      "prompt": "RCA: the per-agent inbox ack is a CUMULATIVE WATERMARK. InboxAck (internal/store/sqlite/inbox.go) does 'cursor = MAX(cursor, seq)' on agent_inbox_cursor, and InboxList returns events with rowid \u003e cursor. So if an agent processes OUT OF ORDER and acks a higher seq while lower seqs are still unprocessed, the watermark jumps past them and InboxList never returns them again — silent, permanent loss. The at-least-once promise only holds for strictly in-order, contiguous acking; any out-of-order or partial processing drops events. There is also no defer path (an agent cannot mark an event 'seen but not done, redeliver later'). FIX (selective ack via a per-event ledger): add table agent_inbox_ack(agent_id TEXT, event_seq INTEGER, acked_at TEXT, PRIMARY KEY(agent_id,event_seq)). Change InboxAck(agent, seq) to record THAT specific seq in the ledger (idempotent), not advance a watermark. InboxList excludes an event when rowid \u003c= watermark OR rowid is in the ledger (keeps the existing agent_inbox_cursor watermark as a backward-compatible floor + a compaction target). Add InboxAckThrough(agent, seq) for the explicit BULK 'ack everything up to N' case (advances the watermark and prunes ledger rows \u003c= N, bounding ledger growth). Defer = simply not acking (the event resurfaces on the next InboxList). Wire CLI 'mtix inbox ack \u003cseq\u003e [\u003cseq\u003e...]' to selective (multiple seqs), add '--through' for the cumulative case; wire MCP mtix_inbox_ack to selective. Files: internal/store/sqlite/inbox.go, schema.go, cmd/mtix/inbox.go, internal/mcp/tools_inbox.go. TDD red-first; the key test reproduces the drop (ack C selectively, assert A and B still delivered).",
+      "acceptance": "1. Acking a higher seq does NOT drop lower unacked events — InboxList still returns them (regression test reproduces the old drop). 2. InboxAck is idempotent and selective (acks exactly the given seq(s)). 3. Existing agent_inbox_cursor watermarks still hide events at/below them (backward compat). 4. InboxAckThrough advances the watermark and prunes the ledger. 5. CLI 'inbox ack' accepts multiple seqs (selective) + '--through'; MCP mtix_inbox_ack is selective. 6. \u003e=90% coverage on new code; full suite + cloud gate green.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-fr19",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "89d79d225f1bad1e58e9865a96d90cdb4628373013a52aeb5c8599f68688d812",
+      "created_at": "2026-07-11T18:47:42Z",
+      "updated_at": "2026-07-11T18:55:28Z",
+      "closed_at": "2026-07-11T18:55:28Z",
+      "uid": "019f5281-bf6d-7090-b668-a5a81e28f104"
     },
     {
       "id": "MTIX-6",
@@ -6899,6 +6925,6 @@
       "status": "active"
     }
   ],
-  "node_count": 251,
-  "checksum": "a6d07bb575569b4d1b67f7baf7dcc5e5f3c7fb88328d8a138514e53cccba11be"
+  "node_count": 252,
+  "checksum": "5a6bb54ea693b6e797625cd7086cecc95959584859cfc3869536f4fe613a34c2"
 }

@@ -180,6 +180,20 @@ CREATE TABLE IF NOT EXISTS agent_inbox_cursor (
     cursor   INTEGER NOT NULL DEFAULT 0
 );
 
+-- Per-event ack ledger (MTIX-55). The cursor above is a cumulative watermark:
+-- acking a higher seq while lower events are unprocessed would silently drop
+-- them, breaking at-least-once for out-of-order processing. This ledger records
+-- individually-acked (agent, event) pairs so InboxList excludes exactly the
+-- acked events and unacked ones always resurface. The watermark remains a
+-- compaction floor (ack-through prunes ledger rows at/below it). Local-only,
+-- never synced -- like the other FR-19 inbox tables.
+CREATE TABLE IF NOT EXISTS agent_inbox_ack (
+    agent_id  TEXT    NOT NULL,
+    event_seq INTEGER NOT NULL,
+    acked_at  TEXT    NOT NULL,
+    PRIMARY KEY (agent_id, event_seq)
+);
+
 -- Single-row watermark of the highest sync_events.rowid the hook dispatcher has
 -- processed (FR-19.3 / MTIX-47.3). The dispatcher fires hooks for events past
 -- this cursor, then advances it — so a mutation's hooks fire at-least-once and

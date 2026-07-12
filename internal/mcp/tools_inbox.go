@@ -119,12 +119,12 @@ func registerInboxWaitTool(reg *ToolRegistry, st InboxStore) {
 func registerInboxAckTool(reg *ToolRegistry, st InboxStore) {
 	reg.Register(ToolDef{
 		Name:        "mtix_inbox_ack",
-		Description: "Advance an agent's inbox cursor to a seq: every event with seq <= this is marked seen. Idempotent and monotonic (a lower seq never rewinds).",
+		Description: "Acknowledge ONE inbox event by its seq (selective): only that event is marked seen, so you can safely process out of order — any event you do not ack reappears on the next mtix_inbox (defer by not acking). Idempotent.",
 		InputSchema: SchemaObj{
 			Type: "object",
 			Properties: map[string]SchemaProp{
-				"agent": {Type: "string", Description: "Agent ID whose cursor to advance"},
-				"seq":   {Type: "number", Description: "Sequence watermark to ack up to (from an inbox event's seq)"},
+				"agent": {Type: "string", Description: "Agent ID whose inbox to ack"},
+				"seq":   {Type: "number", Description: "The seq of the specific inbox event you have handled"},
 			},
 			Required: []string{"agent", "seq"},
 		},
@@ -141,6 +141,6 @@ func registerInboxAckTool(reg *ToolRegistry, st InboxStore) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Inbox cursor for %s advanced to %d", p.Agent, p.Seq)), nil
+		return SuccessResult(fmt.Sprintf("Acked inbox event %d for %s", p.Seq, p.Agent)), nil
 	})
 }

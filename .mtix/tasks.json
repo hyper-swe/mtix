@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-12T12:50:51Z",
+  "exported_at": "2026-07-12T15:52:34Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6232,15 +6232,15 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "fable",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "2d70db4895981de6f04a6e00efa69c522501144039bd94d0816820f7e85bc0df",
       "created_at": "2026-07-12T12:50:51Z",
-      "updated_at": "2026-07-12T12:50:51Z",
+      "updated_at": "2026-07-12T13:27:45Z",
       "uid": "019f5661-65f0-7aba-aac4-cc1318121b04"
     },
     {
@@ -6257,15 +6257,15 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "fable",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "26e67a052fe9ee1f92df6cf86246934528bab061f5e454854770ffc7d7fccb59",
       "created_at": "2026-07-12T12:50:51Z",
-      "updated_at": "2026-07-12T12:50:51Z",
+      "updated_at": "2026-07-12T15:52:34Z",
       "uid": "019f5661-661c-7708-9c5b-08fc0734315a"
     },
     {
@@ -7150,6 +7150,13 @@
       "last_heartbeat": "2026-03-30T02:58:55Z"
     },
     {
+      "agent_id": "fable",
+      "project": "MTIX",
+      "state": "working",
+      "current_node_id": "MTIX-56.2",
+      "last_heartbeat": "2026-07-12T13:27:45Z"
+    },
+    {
       "agent_id": "vimal",
       "project": "MTIX",
       "state": "working",
@@ -7176,5 +7183,5 @@
     }
   ],
   "node_count": 262,
-  "checksum": "967b809c0322493bac028b60612765f58e840df232d029a43c3a51daf4f2138d"
+  "checksum": "77f10ae65cb899ad2dbad324988958aa210e6c122384b6632c74216ed1bb9fad"
 }

@@ -148,6 +148,7 @@ prompt chain propagation, and multi-agent orchestration.`,
 		newDocsCmd(),
 		newPluginCmd(),
 		newSyncCmd(),
+		newDaemonCmd(),
 		newHooksCmd(),
 	)
 

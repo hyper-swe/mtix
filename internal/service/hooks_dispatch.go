@@ -266,6 +266,8 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 			anyError = true
 			continue
 		}
+		d.logger.Info("hook dispatch: delivered",
+			"hook", h.Name, "adapter", name, "event", evt.Name, "node", evt.NodeID, "seq", je.Seq)
 		d.logFiring(ctx, h, evt, name, "delivered", "")
 	}
 	switch {

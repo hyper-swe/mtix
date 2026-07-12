@@ -47,7 +47,11 @@ func newSyncDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon [DSN]",
 		Short: "Run a background pull loop (FR-18, opt-in)",
-		Long: `Run a foreground process that pulls events from the BYO Postgres
+		Long: `DEPRECATED: use 'mtix daemon' — the first-class dispatcher loop
+(FR-20) that pulls AND fires hooks by default at a seconds cadence.
+This spelling is kept as an alias for one release.
+
+Run a foreground process that pulls events from the BYO Postgres
 hub every N seconds (default 30) until killed. Intended for systemd
 or launchd supervision; this command does NOT fork itself.
 

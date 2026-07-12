@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/channel"
 	"github.com/hyper-swe/mtix/internal/mcp"
 )
 
@@ -22,7 +23,10 @@ import (
 // Logs are written to .mtix/logs/mtix.log — never to stdout — to avoid
 // corrupting the JSON-RPC protocol stream.
 func newMCPCmd() *cobra.Command {
-	var projectDir string
+	var (
+		projectDir   string
+		channelAgent string
+	)
 
 	cmd := &cobra.Command{
 		Use:   "mcp",
@@ -61,7 +65,7 @@ Example MCP client configuration:
 			return nil
 		},
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runMCP()
+			return runMCP(channelAgent)
 		},
 	}
 
@@ -72,13 +76,18 @@ Example MCP client configuration:
 	cmd.Flags().StringVar(&projectDir, "project", "",
 		"Project directory containing .mtix/ (overrides cwd)")
 	_ = cmd.Flags().MarkDeprecated("project", "use the global -C/--project-dir")
+	cmd.Flags().StringVar(&channelAgent, "channel-agent", "",
+		"Also act as a Claude Code channel (research preview) for this agent id: "+
+			"push its new inbox events into the running session (FR-20 \u00a79 rung 4). "+
+			"Requires the session to be launched with --channels (or the development "+
+			"flag while the preview allowlist applies)")
 
 	return cmd
 }
 
 // runMCP starts the MCP stdio server with all tools registered.
 // Per MTIX-6.1.1: logs go to file, protocol goes to stdout.
-func runMCP() error {
+func runMCP(channelAgent string) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project (run 'mtix init' first)")
 	}
@@ -125,6 +134,30 @@ func runMCP() error {
 	ctx, cancel := signal.NotifyContext(context.Background(),
 		syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	// MTIX-56.7: channel mode — the same server that exposes the mtix tools
+	// also pushes the agent's inbox into the session (two-way for free: the
+	// instructions route handling through mtix_show/mtix_inbox_ack/
+	// mtix_annotate). Presence: hold an mtix session for the agent while the
+	// pump runs, so wake scripts can arbitrate hot-session vs cold-start; the
+	// session-timeout reaper cleans up after a crash.
+	if channelAgent != "" {
+		srv.DeclareExperimental(channel.ClaudeCapabilityKey, channel.ClaudeInstructions(channelAgent))
+		if app.sessionSvc != nil {
+			if _, err := app.sessionSvc.SessionStart(ctx, channelAgent, primary); err != nil {
+				logger.Warn("channel: presence session start failed", "agent", channelAgent, "error", err)
+			} else {
+				defer func() {
+					if err := app.sessionSvc.SessionEnd(context.Background(), channelAgent); err != nil {
+						logger.Warn("channel: presence session end failed", "agent", channelAgent, "error", err)
+					}
+				}()
+			}
+		}
+		go channel.Pump(ctx, channel.NewInboxSource(app.store, channelAgent),
+			channel.NewClaudeCode(srv.SendNotification), logger)
+		logger.Info("channel mode enabled", "agent", channelAgent)
+	}
 
 	return srv.Serve(ctx)
 }

@@ -85,17 +85,23 @@ type ClientInfo struct {
 	Version string `json:"version,omitempty"`
 }
 
-// InitializeResult is returned in response to initialize.
+// InitializeResult is returned in response to initialize. Instructions is the
+// standard MCP field a client adds to the model's system prompt — the channel
+// adapter uses it to teach the handle→ack→reply loop (MTIX-56.7).
 type InitializeResult struct {
 	ProtocolVersion string     `json:"protocolVersion"`
 	Capabilities    ServerCaps `json:"capabilities"`
 	ServerInfo      ServerInfo `json:"serverInfo"`
+	Instructions    string     `json:"instructions,omitempty"`
 }
 
-// ServerCaps describes server capabilities.
+// ServerCaps describes server capabilities. Experimental carries client-
+// specific extension keys (e.g. the Claude Code channel capability,
+// MTIX-56.7).
 type ServerCaps struct {
 	Tools         *ToolsCap         `json:"tools,omitempty"`
 	Notifications *NotificationsCap `json:"notifications,omitempty"`
+	Experimental  map[string]any    `json:"experimental,omitempty"`
 }
 
 // ToolsCap describes tool capabilities.

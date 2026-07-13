@@ -1427,6 +1427,14 @@ mtix daemon uninstall
 One service per project (re-running `install` refreshes it). Logs land
 under `.mtix/logs/`.
 
+**Upgrading the binary.** Replace it with unlink-then-copy — `install -m
+0755 new-mtix <path>`, `rm` + `cp`, or `mv` — **never `cp` over the
+existing file**: on macOS an in-place overwrite invalidates the cached
+code signature and every exec is killed (`Killed: 9`), which the
+service's crash-restart then respawns in a loop. The running daemon
+keeps the old binary until restarted; finish the upgrade with
+`mtix daemon start`.
+
 ### Topology: one local `.mtix` per machine + the hub
 
 Each machine keeps its **own local `.mtix`**; events replicate through

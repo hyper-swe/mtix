@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-13T05:09:17Z",
+  "exported_at": "2026-07-13T12:07:08Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6269,6 +6269,31 @@
       "uid": "019f59e0-e4e8-76d2-a543-402ec05ab8bf"
     },
     {
+      "id": "MTIX-56.11",
+      "parent_id": "MTIX-56",
+      "depth": 1,
+      "seq": 11,
+      "project": "MTIX",
+      "title": "Safe binary upgrade path: macOS kills in-place-overwritten binaries (SIGKILL/AMFI); daemon KeepAlive amplifies to crash loop",
+      "description": "",
+      "prompt": "Field-hit during FR-20 fleet testing: on Apple Silicon, overwriting an existing mtix binary in place (cp over the file) invalidates the kernel's cached ad-hoc code signature for that inode; every exec is killed with SIGKILL before main (even --version). With 'mtix daemon install' (launchd KeepAlive) the killed binary is respawned forever - a crash loop. Homebrew and go install are safe (new inode/rename); the GitHub-Releases binary-download path has no upgrade guidance. Fix in build+deploy: (1) 'make install' target using install(1) semantics (unlink-then-copy, PREFIX overridable) so the documented path is safe by construction; (2) README Binary Download section: upgrade-safe commands (install -m 0755 / rm-then-cp; never cp over an existing binary on macOS) + note to run 'mtix daemon start' after upgrading so the service picks up the new binary; (3) USERMANUAL 'Upgrading' note under daemon-as-service; (4) RELEASE-CHECKLIST post-release smoke includes the macOS overwrite-upgrade path; (5) 'mtix daemon install' output reminds how to upgrade.",
+      "acceptance": "make install PREFIX=\u003ctmp\u003e installs a runnable binary and is repeat-safe over an existing one on macOS; docs updated in all four places; suite+lint green.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "fable",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "9c32b7056c925276a26bb656a737087697a1d952c91c6143fb8caeeda45f6851",
+      "created_at": "2026-07-13T12:07:07Z",
+      "updated_at": "2026-07-13T12:07:08Z",
+      "uid": "019f5b5f-b9cd-7c19-a447-263558e8d3af"
+    },
+    {
       "id": "MTIX-56.2",
       "parent_id": "MTIX-56",
       "depth": 1,
@@ -7203,7 +7228,7 @@
       "agent_id": "fable",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-56.10",
+      "current_node_id": "MTIX-56.11",
       "last_heartbeat": "2026-07-12T13:27:45Z"
     },
     {
@@ -7232,6 +7257,6 @@
       "status": "active"
     }
   ],
-  "node_count": 264,
-  "checksum": "0dbb247276c573c29dfc6efe0478e7564f95ede1695170cd02eeac7cbb2ab04a"
+  "node_count": 265,
+  "checksum": "2fa3aa7d6f210b19c58aa752c7b6d90c52940383ea299fa1f70121f28c37e4e3"
 }

@@ -172,6 +172,7 @@ func newDaemonInstallCmd() *cobra.Command {
 				return fmt.Errorf("mtix daemon install: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "installed %s — boot-start + crash-restart active\n", spec.Label)
+			fmt.Fprintln(cmd.OutOrStdout(), "upgrading later? replace the binary with unlink-then-copy (install/rm+cp/mv, never cp over it), then 'mtix daemon start'")
 			return nil
 		},
 	}

@@ -345,7 +345,12 @@ mtix import <file> [--mode M]       Import from JSON
 mtix gc                             Run garbage collection
 mtix context <id>                   Assemble context chain (root → node)
 mtix serve [--port P]               Start HTTP/WebSocket server
-mtix mcp [--project DIR]            Run as MCP server (stdio transport)
+mtix mcp [-C DIR]                   Run as MCP server (stdio transport)
+mtix mcp --channel-agent <id>      MCP server + Claude Code channel push (preview)
+mtix daemon                        Origin-independent hook dispatcher (pull + dispatch)
+mtix daemon install|status|start|stop|uninstall   Manage the daemon OS service
+mtix hooks exec-dispatch [mode]    Host-local exec dispatch policy (any|daemon|off)
+mtix -C <dir> <command>            Run any command against another project (git -C)
 mtix docs generate [--force]        Regenerate agent documentation
 mtix config get|set|delete <key>    Manage configuration
 

@@ -6,4 +6,4 @@
 command = "mtix"
 args = ["mcp"]
 # For a fixed project regardless of working directory:
-# args = ["mcp", "--project", "/path/to/your/project"]
+# args = ["mcp", "-C", "/path/to/your/project"]

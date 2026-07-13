@@ -1331,17 +1331,18 @@ chmod +x .git/hooks/pre-push
 ### Daemon mode (for durability)
 
 Un-pushed events on a lost machine are **not recoverable**. If your
-safety profile cannot tolerate that, run the daemon as a systemd or
-launchd service:
+safety profile cannot tolerate that, run the daemon as an OS service so
+it pulls continuously (and dispatches this host's hooks — see "Event
+dispatch & the daemon"):
 
 ```bash
-mtix sync daemon --install | sudo tee /etc/systemd/system/mtix-sync.service
-sudo systemctl enable --now mtix-sync
+mtix daemon install     # launchd (macOS) / systemd --user (Linux) / Task Scheduler (Windows)
 ```
 
-The daemon runs `mtix sync pull` every 30 seconds by default. Pair
-with the pre-push hook (which handles push) for both inbound and
-outbound auto-sync.
+The daemon pulls-then-dispatches every 5 seconds. Pair with the
+pre-push hook (which handles push) for both inbound and outbound
+auto-sync. (`mtix sync daemon` remains as a deprecated alias for one
+release.)
 
 ### Event dispatch & the daemon (FR-20)
 

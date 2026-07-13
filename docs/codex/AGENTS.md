@@ -78,7 +78,7 @@ mtix export  # Export task state to .mtix/tasks.json
 mtix includes an MCP server for direct tool access:
 
 ```bash
-mtix mcp --project /path/to/project
+mtix mcp -C /path/to/project
 ```
 
 This provides 36+ tools for task management, agent coordination,

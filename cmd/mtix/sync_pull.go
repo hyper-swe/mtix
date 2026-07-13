@@ -94,12 +94,24 @@ func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 		return wrapSyncErr(stderr, "read cursor", err)
 	}
 
+	// A pull into an EMPTY journal is a bootstrap: the events it brings in are
+	// history, not fresh work. Detect it before the loop so the hook scan
+	// floor can be initialized at the tail afterwards (FR-20 §8 — hooks never
+	// fire a backlog storm on a store's first fill).
+	preTail, tailErr := app.store.JournalTail(ctx)
+
 	pulled, batches, err := pullLoop(ctx, stderr, pool, app.store, since, limit)
 	if err != nil {
 		noteSyncResult(ctx, app.store, false)
 		return wrapSyncErr(stderr, "pull loop", err)
 	}
 	noteSyncResult(ctx, app.store, true)
+
+	if tailErr == nil && preTail == 0 && pulled > 0 {
+		if err := app.store.InitHookScanFloorAtTail(ctx); err != nil {
+			fmt.Fprintf(stderr, "mtix sync pull: hook floor init: %s\n", err)
+		}
+	}
 
 	fmt.Fprintf(stdout,
 		"pull complete: %d events applied across %d batches\n", pulled, batches)

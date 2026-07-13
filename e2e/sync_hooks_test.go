@@ -5,14 +5,17 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/hooks"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 )
@@ -25,12 +28,13 @@ import (
 //  1. The inbox is a QUERY over the replicated sync_events journal, so an
 //     addressed comment made on machine A appears in machine B's inbox after a
 //     normal push/pull — no separate mailbox, no extra delivery step.
-//  2. Hooks fire on the ORIGIN only. A status change made on A fires A's hook
-//     once; when the same event replicates to B it is marked synced (present in
-//     applied_events), and the `Synced && !IncludeSynced` guard (match.go:20)
-//     keeps B's hook from re-firing. Without this, every teammate that pulled a
-//     status change would re-deliver it — a team-wide duplicate-notification
-//     storm. This is the guardrail against exactly that.
+//  2. Hook dispatch is ORIGIN-INDEPENDENT with per-host exactly-once (FR-20):
+//     an event fires the hooks CONFIGURED ON A HOST no matter where the event
+//     was written, deduped per (hook,event) by that host's dispatch ledger.
+//     Fleet-level "who fires what" is hook PLACEMENT: a hook present on N
+//     hosts fires on N hosts, once each; a host without the hook never fires
+//     it. That is how a wake exec runs where the workers live, not on
+//     whichever machine posted the event.
 //
 // Gated on MTIX_PG_TEST_DSN via openHub (skips when unset), like the other
 // e2e sync tests.
@@ -92,12 +96,12 @@ func TestE2E_FR19_AddressedComment_ReplicatesToReceiverInbox(t *testing.T) {
 	require.Empty(t, other, "opus's comment is not visible to a different addressee")
 }
 
-// TestE2E_FR19_SyncedStatusChange_FiresHookOnOriginOnly: a status change made
-// on A fires A's status.changed hook exactly once; when the same event
-// replicates to B it is synced, so B's identical hook does NOT re-fire. This is
-// the end-to-end proof of the synced-event guardrail against team-wide
-// duplicate firing.
-func TestE2E_FR19_SyncedStatusChange_FiresHookOnOriginOnly(t *testing.T) {
+// TestE2E_FR20_SharedHook_FiresOncePerConfiguredHost: both machines carry the
+// same hook (committed hooks.yaml — the shared-config case). A status change
+// made on A fires A's hook once; after replication B's hook fires once on B
+// too — placement is designation (FR-20 §5), and the per-host ledger keeps
+// each host at exactly-once. Repeat dispatch on either host never re-fires.
+func TestE2E_FR20_SharedHook_FiresOncePerConfiguredHost(t *testing.T) {
 	pool := openHub(t)
 	ctx := context.Background()
 
@@ -105,7 +109,7 @@ func TestE2E_FR19_SyncedStatusChange_FiresHookOnOriginOnly(t *testing.T) {
 	b := newFakeCLI(t, "B", "bbbbbbbbbbbbbbbb")
 
 	// Both machines carry the SAME hook config — the realistic team case where
-	// hooks.yaml is committed and shared. Only the origin should fire.
+	// hooks.yaml is committed and shared. Each configured host fires once.
 	hookYAML := `
 hooks:
   - name: wake-on-done
@@ -136,50 +140,51 @@ hooks:
 	require.Len(t, originInbox, 1, "the hook fires once on the origin machine")
 	require.Equal(t, "HOOK-2", originInbox[0].NodeID)
 
-	// Replicate the transitions to B, then dispatch on B. On B the done event is
-	// present in applied_events -> synced -> the guard keeps the hook from firing.
+	// Replicate the transitions to B, then dispatch on B. B carries the same
+	// hook, so B fires it for the synced event — once, on B's own ledger.
 	a.pushAll(ctx, t, pool)
 	b.pullAll(ctx, t, pool)
-	service.NewHooksDispatcher(b.store, b.mtixDir, e2eLogger()).Dispatch(ctx)
+	bDisp := service.NewHooksDispatcher(b.store, b.mtixDir, e2eLogger())
+	bDisp.Dispatch(ctx)
 
 	replicaInbox, err := b.store.InboxList(ctx, "opus")
 	require.NoError(t, err)
-	require.Empty(t, replicaInbox, "the synced status change does NOT re-fire the hook on the replica")
+	require.Len(t, replicaInbox, 1, "B configured the hook too, so B fires it for the synced event — placement is designation")
+	require.Equal(t, "HOOK-2", replicaInbox[0].NodeID)
 
-	// Guard the guardrail: confirm the done event really did replicate to B (so
-	// the empty inbox is the synced-skip, not a missing event). B's journal must
-	// carry the transition, marked synced.
-	var syncedDone int
-	require.NoError(t, b.store.ReadDB().QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM sync_events e
-		JOIN applied_events a ON a.event_id = e.event_id
-		WHERE e.node_id = 'HOOK-2' AND e.op_type = 'transition_status'
-		  AND json_extract(e.payload, '$.to') = 'done'`).Scan(&syncedDone))
-	require.Equal(t, 1, syncedDone, "the done transition replicated to B and is marked synced")
+	// Exactly-once per host: repeat passes on both machines change nothing.
+	service.NewHooksDispatcher(a.store, a.mtixDir, e2eLogger()).Dispatch(ctx)
+	bDisp.Dispatch(ctx)
+	originAgain, err := a.store.InboxList(ctx, "opus")
+	require.NoError(t, err)
+	require.Len(t, originAgain, 1, "no re-fire on the origin")
+	replicaAgain, err := b.store.InboxList(ctx, "opus")
+	require.NoError(t, err)
+	require.Len(t, replicaAgain, 1, "no re-fire on the replica")
 }
 
-// TestE2E_FR19_DesignatedHost_SyncedDispatch_FiresIncludeSyncedOnce is the
-// MTIX-52 acceptance: an include-synced hook is delivered on the DESIGNATED host
-// for an event that originated elsewhere, exactly once, and only via the synced
-// dispatch path — the multi-machine wake path (e.g. exec fires where the workers
-// live, not on whichever machine posted the event).
-func TestE2E_FR19_DesignatedHost_SyncedDispatch_FiresIncludeSyncedOnce(t *testing.T) {
+// TestE2E_FR20_HookPlacement_FiresOnWorkerHostOnly is the FR-20 §10 acceptance
+// core: a hook placed ONLY on the worker host fires there — exactly once — for
+// an event that originated on another machine, with no opt-in flag and no
+// special dispatch path; the poster's host, which does not configure the hook,
+// never fires it. This is the multi-machine wake chain (exec fires where the
+// workers live, not on whichever machine posted the event).
+func TestE2E_FR20_HookPlacement_FiresOnWorkerHostOnly(t *testing.T) {
 	pool := openHub(t)
 	ctx := context.Background()
 
-	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa") // origin (e.g. the poster's sandbox)
-	b := newFakeCLI(t, "B", "bbbbbbbbbbbbbbbb") // designated dispatch host (e.g. the Mac)
+	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa") // origin (the poster's machine)
+	b := newFakeCLI(t, "B", "bbbbbbbbbbbbbbbb") // worker host (the hook lives here)
 
-	// The designated host carries an include-synced hook: it WANTS to act on
-	// events that originated on other machines.
+	// A plain hook — no include-synced, no designation. Placement on B is the
+	// whole configuration.
 	hookYAML := `
 hooks:
-  - name: wake-on-synced-done
+  - name: wake-on-done
     match:
       events: [status.changed]
       status-to: [done]
       to-agent: opus
-    include-synced: true
     deliver: [inbox]
 `
 	require.NoError(t, os.WriteFile(filepath.Join(b.mtixDir, "hooks.yaml"), []byte(hookYAML), 0o600))
@@ -191,39 +196,140 @@ hooks:
 	a.pushAll(ctx, t, pool)
 	b.pullAll(ctx, t, pool)
 
+	// A has no hook configured, so dispatch on A fires nothing.
+	service.NewHooksDispatcher(a.store, a.mtixDir, e2eLogger()).Dispatch(ctx)
+	onOrigin, err := a.store.InboxList(ctx, "opus")
+	require.NoError(t, err)
+	require.Empty(t, onOrigin, "the poster's host does not configure the hook and never fires it")
+
+	// One ordinary dispatch pass on B fires the hook for A's event: origin is
+	// irrelevant, placement decides.
 	disp := service.NewHooksDispatcher(b.store, b.mtixDir, e2eLogger())
-
-	// Local dispatch on the designated host must NOT fire the synced event — the
-	// local path owns local events only.
 	disp.Dispatch(ctx)
-	afterLocal, err := b.store.InboxList(ctx, "opus")
+	afterDispatch, err := b.store.InboxList(ctx, "opus")
 	require.NoError(t, err)
-	require.Empty(t, afterLocal, "local dispatch never fires a synced event")
+	require.Len(t, afterDispatch, 1, "the worker host fires its hook for the cross-machine event")
+	require.Equal(t, "HOOK-3", afterDispatch[0].NodeID)
 
-	// The designated synced-dispatch path fires the include-synced hook once.
-	disp.DispatchSynced(ctx)
-	afterSynced, err := b.store.InboxList(ctx, "opus")
-	require.NoError(t, err)
-	require.Len(t, afterSynced, 1, "the designated host fires the include-synced hook on the synced event")
-	require.Equal(t, "HOOK-3", afterSynced[0].NodeID)
-
-	// A second synced dispatch does not re-fire — the separate cursor advanced,
-	// so it is exactly-once even if the daemon ticks again.
-	disp.DispatchSynced(ctx)
+	// A second pass does not re-fire — the ledger holds the (hook,event) claim.
+	disp.Dispatch(ctx)
 	afterSecond, err := b.store.InboxList(ctx, "opus")
 	require.NoError(t, err)
-	require.Len(t, afterSecond, 1, "synced dispatch is exactly-once; a second pass does not re-fire")
+	require.Len(t, afterSecond, 1, "dispatch is exactly-once per host; a second pass does not re-fire")
 }
 
-// TestE2E_FR19_ServerOnCommitDispatch_FiresLocalButSkipsSyncedApply is the
-// MTIX-53 cloud-correctness proof: when a long-running server wires
-// OnCommitDispatch (so mutations dispatch hooks host-side), a LOCAL mutation
-// fires its hook, but applying a SYNCED event pulled from the hub does NOT fire
-// it — even though the apply commit also triggers the on-commit callback. This
-// is what keeps server-side dispatch from re-firing every teammate's events in
-// a cloud/sync setup (the local path owns local events; the designated synced
-// path, MTIX-52, owns synced ones).
-func TestE2E_FR19_ServerOnCommitDispatch_FiresLocalButSkipsSyncedApply(t *testing.T) {
+// TestE2E_FR20_ReleaseChain_ExecWake is the FR-20 §10 RELEASE GATE: a poster
+// on machine A addresses a worker; the worker host B's dispatcher fires the
+// wake EXEC exactly once for A's event; A never fires it; a restart re-fires
+// nothing; a trigger that crashed between claim and fire re-fires (a double
+// wake is acceptable, a lost wake is not). Green = the cold-start fabric
+// works headless, cross-machine, zero human touches.
+func TestE2E_FR20_ReleaseChain_ExecWake(t *testing.T) {
+	pool := openHub(t)
+	ctx := context.Background()
+
+	a := newFakeCLI(t, "A", "aaaaaaaaaaaaaaaa") // poster's machine
+	b := newFakeCLI(t, "B", "bbbbbbbbbbbbbbbb") // worker host
+
+	// The wake exec records each invocation — the observable stand-in for
+	// launching the worker's harness CLI with the inbox as its prompt.
+	recDir := t.TempDir()
+	wakes := filepath.Join(recDir, "worker.wakes")
+	script := filepath.Join(recDir, "wake.sh")
+	require.NoError(t, os.WriteFile(script,
+		[]byte("#!/bin/sh\nprintf '%s\\n' \"$MTIX_EVENT\" >> \""+wakes+"\"\n"), 0o700)) //nolint:gosec
+
+	hookYAML := fmt.Sprintf(`
+hooks:
+  - name: wake-worker
+    match:
+      events: [comment.addressed]
+      to-agent: worker
+    deliver: [exec]
+    exec:
+      command: [%q]
+      timeout-seconds: 10
+`, script)
+	require.NoError(t, os.WriteFile(filepath.Join(b.mtixDir, "hooks.yaml"), []byte(hookYAML), 0o600))
+	require.NoError(t, hooks.SaveTrust(b.mtixDir, hooks.ConfigHash(b.mtixDir)))
+
+	// Shared node, then the cross-machine handoff. Comments ride a cumulative
+	// annotation thread (SetAnnotations replaces the list; only a NEW entry
+	// journals an addressed comment event).
+	a.createNode(t, "GATE-1", "work for the worker")
+	a.pushAll(ctx, t, pool)
+	b.pullAll(ctx, t, pool)
+	thread := &commentThread{cli: a, nodeID: "GATE-1"}
+	thread.post(t, "poster", "worker", "begin: acceptance chain")
+	a.pushAll(ctx, t, pool)
+	b.pullAll(ctx, t, pool)
+
+	// A configures no hook and fires nothing, whatever it dispatches.
+	service.NewHooksDispatcher(a.store, a.mtixDir, e2eLogger()).Dispatch(ctx)
+	requireWakeLines(t, wakes, 0, "the poster's machine never runs the wake exec")
+
+	// B's dispatcher (what its daemon runs every tick) fires it exactly once.
+	disp := service.NewHooksDispatcher(b.store, b.mtixDir, e2eLogger())
+	disp.Dispatch(ctx)
+	requireWakeLines(t, wakes, 1, "the worker host fires the wake exec for the cross-machine event")
+	disp.Dispatch(ctx)
+	requireWakeLines(t, wakes, 1, "a second tick re-fires nothing (ledger)")
+
+	// Restart: a brand-new dispatcher over the same store re-fires nothing.
+	service.NewHooksDispatcher(b.store, b.mtixDir, e2eLogger()).Dispatch(ctx)
+	requireWakeLines(t, wakes, 1, "restart-safe")
+
+	// Crash injection: a second handoff is claimed by a trigger that dies
+	// before firing; the stale claim is reclaimed and fired — never lost.
+	thread.post(t, "poster", "worker", "round two")
+	a.pushAll(ctx, t, pool)
+	b.pullAll(ctx, t, pool)
+	tail, err := b.store.JournalTail(ctx)
+	require.NoError(t, err)
+	won, err := b.store.ClaimHookDispatch(ctx, "wake-worker", tail, time.Minute)
+	require.NoError(t, err)
+	require.True(t, won)
+	stale := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	_, err = b.store.WriteDB().Exec(
+		`UPDATE hook_dispatch_ledger SET fired_at = ? WHERE hook_name = 'wake-worker' AND event_seq = ?`,
+		stale, tail)
+	require.NoError(t, err)
+
+	disp.Dispatch(ctx)
+	requireWakeLines(t, wakes, 2, "the crashed trigger's wake is re-fired, not lost (at-least-once)")
+}
+
+// requireWakeLines asserts the wake record file settles at exactly n lines
+// (one line per exec invocation; a missing file is zero). The exec spawn is
+// DETACHED (MTIX-56.9), so reaching n is awaited, then re-checked after a
+// short settle so an over-fire cannot hide.
+func requireWakeLines(t *testing.T, path string, n int, msg string) {
+	t.Helper()
+	count := func() int {
+		body, err := os.ReadFile(path) //nolint:gosec // test-owned temp path
+		if err != nil {
+			return 0
+		}
+		trimmed := strings.TrimSpace(string(body))
+		if trimmed == "" {
+			return 0
+		}
+		return len(strings.Split(trimmed, "\n"))
+	}
+	require.Eventually(t, func() bool { return count() == n },
+		10*time.Second, 25*time.Millisecond, msg)
+	time.Sleep(200 * time.Millisecond)
+	require.Equal(t, n, count(), msg)
+}
+
+// TestE2E_FR20_ServerOnCommitDispatch_CoversEveryOrigin: when a long-running
+// server wires OnCommitDispatch (MTIX-53), a LOCAL mutation fires its hook
+// immediately — and applying SYNCED events pulled from the hub fires the hook
+// too, through the very same on-commit trigger (FR-20: one dispatch path, any
+// origin, no daemon required on a serve-only host). Each fires exactly once —
+// the ledger dedupes; there is no team-wide duplicate because only hosts that
+// CONFIGURE a hook fire it (placement, §5).
+func TestE2E_FR20_ServerOnCommitDispatch_CoversEveryOrigin(t *testing.T) {
 	pool := openHub(t)
 	ctx := context.Background()
 
@@ -253,9 +359,10 @@ hooks:
 	require.Len(t, afterLocal, 1, "a local mutation on the server host fires the hook via on-commit dispatch")
 	require.Equal(t, "HOOK-4", afterLocal[0].NodeID)
 
-	// A posts equivalent work that replicates to B. Applying those SYNCED events
-	// on B triggers the same on-commit callback — but the local path skips synced
-	// events, so the hook does NOT fire again.
+	// A posts equivalent work that replicates to B. Applying those SYNCED
+	// events on B triggers the same on-commit callback, and under FR-20 the
+	// hook fires for them too — cross-machine work wakes the worker host even
+	// with no daemon running, exactly once per event.
 	a.createNode(t, "HOOK-5", "remote task")
 	require.NoError(t, a.store.TransitionStatus(ctx, "HOOK-5", model.StatusInProgress, "", "worker"))
 	require.NoError(t, a.store.TransitionStatus(ctx, "HOOK-5", model.StatusDone, "", "worker"))
@@ -264,6 +371,7 @@ hooks:
 
 	afterSync, err := b.store.InboxList(ctx, "opus")
 	require.NoError(t, err)
-	require.Len(t, afterSync, 1, "applying a synced event must NOT fire the local hook — no team-wide duplicate firing")
-	require.Equal(t, "HOOK-4", afterSync[0].NodeID, "still only the local event fired")
+	require.Len(t, afterSync, 2, "the sync-arrived done event fires the hook via on-commit — origin-independent, no daemon needed")
+	nodes := []string{afterSync[0].NodeID, afterSync[1].NodeID}
+	require.ElementsMatch(t, []string{"HOOK-4", "HOOK-5"}, nodes, "both the local and the cross-machine event fired, once each")
 }

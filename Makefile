@@ -24,7 +24,7 @@ TASKS_EXPORT := .mtix/tasks.json
 TASKS_DB     := .mtix/data/mtix.db
 
 # ─── Phony targets ───
-.PHONY: all build build-go build-web install-web test test-go test-web \
+.PHONY: all build build-go build-web install install-web test test-go test-web \
         test-race test-cover test-all lint lint-go lint-web \
         security-scan security-audit bench fuzz e2e proto-gen docs-gen \
         release-artifacts clean verify preflight help \
@@ -50,6 +50,18 @@ build-web: install-web
 	cd $(WEB_DIR) && npm run build
 	rm -rf $(EMBED_DIR)
 	cp -r $(WEB_DIR)/dist $(EMBED_DIR)
+
+## install: Build and install the mtix binary to PREFIX/bin (default /usr/local).
+## Uses install(1) — unlink-then-copy — because on macOS (Apple Silicon)
+## overwriting an existing binary IN PLACE invalidates the kernel's cached
+## code signature for that inode and every exec is then SIGKILLed. Never
+## `cp` over an installed mtix; use this target, or `rm` first, or `mv`.
+PREFIX ?= /usr/local
+install: build-go
+	install -d $(PREFIX)/bin
+	install -m 0755 $(BINARY) $(PREFIX)/bin/mtix
+	@echo "installed $(PREFIX)/bin/mtix ($(VERSION))"
+	@echo "if 'mtix daemon' runs as a service here: run 'mtix daemon start' to restart it onto this binary"
 
 ## install-web: Install web dependencies if needed
 install-web:

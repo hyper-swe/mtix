@@ -72,7 +72,17 @@ brew install hyper-swe/tap/mtix
 
 ### Binary Download
 
-Download pre-built binaries from [GitHub Releases](https://github.com/hyper-swe/mtix/releases).
+Download pre-built binaries from [GitHub Releases](https://github.com/hyper-swe/mtix/releases), then install (and upgrade) with an unlink-then-copy — **never `cp` over an existing binary**:
+
+```bash
+install -m 0755 mtix /usr/local/bin/mtix     # or: rm -f target && cp mtix target
+```
+
+On macOS, overwriting a binary in place invalidates its cached code
+signature and every run is killed (`Killed: 9`) — `install(1)`, `rm`+`cp`,
+and `mv` are all safe; Homebrew and `go install` handle this for you. If
+`mtix daemon` runs as a service on the machine, run `mtix daemon start`
+after upgrading so the service restarts onto the new binary.
 
 ### Go Install
 
@@ -335,7 +345,12 @@ mtix import <file> [--mode M]       Import from JSON
 mtix gc                             Run garbage collection
 mtix context <id>                   Assemble context chain (root → node)
 mtix serve [--port P]               Start HTTP/WebSocket server
-mtix mcp [--project DIR]            Run as MCP server (stdio transport)
+mtix mcp [-C DIR]                   Run as MCP server (stdio transport)
+mtix mcp --channel-agent <id>      MCP server + Claude Code channel push (preview)
+mtix daemon                        Origin-independent hook dispatcher (pull + dispatch)
+mtix daemon install|status|start|stop|uninstall   Manage the daemon OS service
+mtix hooks exec-dispatch [mode]    Host-local exec dispatch policy (any|daemon|off)
+mtix -C <dir> <command>            Run any command against another project (git -C)
 mtix docs generate [--force]        Regenerate agent documentation
 mtix config get|set|delete <key>    Manage configuration
 

@@ -11,7 +11,7 @@ mtix runs as a Model Context Protocol (MCP) server, allowing LLM agents to manag
 
 ```bash
 # Test that MCP server starts correctly
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"test","version":"1.0"}}}' | mtix mcp --project /path/to/project
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","clientInfo":{"name":"test","version":"1.0"}}}' | mtix mcp -C /path/to/project
 ```
 
 ## Multi-Project Support
@@ -23,15 +23,15 @@ Use `--project` (or `-C`) to point mtix at any project directory. Each project h
   "mcpServers": {
     "mtix-webapp": {
       "command": "mtix",
-      "args": ["mcp", "--project", "/home/user/webapp"]
+      "args": ["mcp", "-C", "/home/user/webapp"]
     },
     "mtix-api": {
       "command": "mtix",
-      "args": ["mcp", "--project", "/home/user/api-service"]
+      "args": ["mcp", "-C", "/home/user/api-service"]
     },
     "mtix-infra": {
       "command": "mtix",
-      "args": ["mcp", "--project", "/home/user/infrastructure"]
+      "args": ["mcp", "-C", "/home/user/infrastructure"]
     }
   }
 }
@@ -50,7 +50,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
   "mcpServers": {
     "mtix": {
       "command": "mtix",
-      "args": ["mcp", "--project", "/path/to/your/project"]
+      "args": ["mcp", "-C", "/path/to/your/project"]
     }
   }
 }
@@ -61,7 +61,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 Use the CLI:
 
 ```bash
-claude mcp add mtix -- mtix mcp --project /path/to/your/project
+claude mcp add mtix -- mtix mcp -C /path/to/your/project
 ```
 
 Or manually edit `.claude/settings.json`:
@@ -71,7 +71,7 @@ Or manually edit `.claude/settings.json`:
   "mcpServers": {
     "mtix": {
       "command": "mtix",
-      "args": ["mcp", "--project", "/path/to/your/project"]
+      "args": ["mcp", "-C", "/path/to/your/project"]
     }
   }
 }
@@ -86,7 +86,7 @@ Edit `.cursor/mcp.json` in your project root:
   "mcpServers": {
     "mtix": {
       "command": "mtix",
-      "args": ["mcp", "--project", "/path/to/your/project"]
+      "args": ["mcp", "-C", "/path/to/your/project"]
     }
   }
 }
@@ -101,7 +101,7 @@ Edit `~/.codeium/windsurf/mcp_config.json`:
   "mcpServers": {
     "mtix": {
       "command": "mtix",
-      "args": ["mcp", "--project", "/path/to/your/project"]
+      "args": ["mcp", "-C", "/path/to/your/project"]
     }
   }
 }
@@ -153,7 +153,7 @@ integrates with mtix two ways:
    [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter)
    extension proxies MCP servers through a single token-efficient tool.
    Install it per its README and register the mtix server command:
-   `mtix mcp` (add `--project /path/to/project` for multi-project use).
+   `mtix mcp` (add `-C /path/to/project` for multi-project use; `--project` is a deprecated alias).
 
 ## The Context Chain — How Agents Get Their Briefing
 
@@ -284,10 +284,21 @@ MCP server logs are written to `<project>/.mtix/logs/mtix.log` (never to stdout,
 
 ## Troubleshooting
 
-**"not in an mtix project"** — Run `mtix init --prefix PROJ` in the project directory first, or check that `--project` points to the correct path.
+**"not in an mtix project"** — Run `mtix init --prefix PROJ` in the project directory first, or check that `-C` points to the correct path.
 
-**No tools showing up** — Ensure `--project` points to a directory containing a `.mtix/` folder (or a parent directory that does).
+**No tools showing up** — Ensure `-C` points to a directory containing a `.mtix/` folder (or a parent directory that does).
 
 **Connection drops** — Check `.mtix/logs/mtix.log` for errors. Common causes: database locked, permissions issues.
 
 **Multiple projects** — Each project needs its own MCP server entry with a unique name (e.g., `mtix-webapp`, `mtix-api`). Each runs as a separate process with its own database.
+
+## Push mode: channels (Claude Code, research preview)
+
+`mtix mcp --channel-agent <id>` runs the same MCP server **and** pushes
+that agent's new inbox events into a running Claude Code session, so a
+live agent reacts to addressed work without polling. Launch Claude Code
+with `--channels` (during the preview a custom channel needs
+`--dangerously-load-development-channels`, Anthropic auth, and Claude
+Code ≥ 2.1.80). See the USERMANUAL "Waking agents" section for the full
+delivery model; channels are an optional latency optimization — the
+inbox and the exec cold-start wake work without them.

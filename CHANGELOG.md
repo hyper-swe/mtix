@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Origin-independent hook dispatch (FR-20 / MTIX-56.1):** hooks now fire for a journaled event based only on the event being in the journal and the hook not yet having fired for it on this host — never on who wrote the event or how it arrived (local CLI, MCP, sync-arrival from the hub, another process). A durable per-`(hook, event)` **dispatch ledger** replaces the local/synced dual-cursor split: exactly-once per host across restarts, concurrent triggers and out-of-order arrival (the same ledger pattern as the MTIX-55 inbox ack fix). Crash recovery is at-least-once via a claim lease — a trigger that dies between claim and fire is re-fired, never lost; a fire that ran and failed is recorded and never auto-retried. Wake `exec` scripts should be idempotent (check the inbox before launching).
+- Fresh clones and first pulls into an empty store initialize the dispatch floor at the journal tail, so bootstrapped history never fires a hook backlog storm.
+- **`mtix daemon` (MTIX-56.2/56.3):** the host's first-class event dispatcher — pull-then-dispatch every 5s; fully functional with no hub (local-tail mode for cross-process writes); `mtix daemon install|status|start|stop|uninstall` registers it as an OS service (launchd / systemd --user / Task Scheduler) with boot-start and crash-restart, one service per project.
+- **Global `-C, --project-dir <dir>` (MTIX-56.4):** every command can target a named project like `git -C`, applied before store init; `mcp --project` becomes a deprecated alias (`mtix mcp -C dir` unchanged).
+- **Prompt-terminated delivery (MTIX-56.8):** `mtix inbox --format prompt|context` emits agent-ready text (events + ack/reply contract; empty inbox → empty output, the wake-script idempotency check); reference wake script at `examples/hooks/wake-agent.sh` launches any harness CLI with the inbox as the prompt.
+- **Channel adapter (MTIX-56.7, experimental):** `mtix mcp --channel-agent <id>` also acts as a Claude Code channel (research preview) — pushes the agent's new inbox events into the running session, with ack/reply through the same server's tools, and holds an mtix presence session while serving. Requires launching Claude Code with `--channels` (or the development flag during the preview).
+- Three-agent scenario regression test (planner→developer→tester) and the FR-20 cross-host release-gate e2e (exec wake exactly-once, restart-safe, crash-injection re-fire) (MTIX-56.5).
+
+### Changed
+- **Safe install/upgrade path (MTIX-56.11):** new `make install` (unlink-then-copy via `install(1)`, `PREFIX` overridable) and documented upgrade commands for the binary-download path — on macOS an in-place `cp` over an existing binary invalidates its cached code signature and every run is killed (`Killed: 9`); with the daemon installed as a service this becomes a crash loop. `mtix daemon install` output and the manual now carry the upgrade steps.
+- **Exec hooks are detached spawns (MTIX-56.9):** dispatch returns at spawn and never blocks a CLI command or agent tool call. "Delivered" now means *spawned*; a script's non-zero exit is the script's own to report (best-effort logged), the inbox ack is the success signal, and `timeout-seconds` is enforced best-effort by the spawning process. Spawn failures stay terminal errors, never auto-retried.
+- **Host-local exec dispatch policy (MTIX-56.10):** `mtix hooks exec-dispatch any|daemon|off` — `daemon` routes every wake through the supervised `mtix daemon` (CLI/server triggers defer entirely); `off` makes a host never launch anything while other adapters still deliver. Stored beside the trust hash, never synced.
+- **`include-synced` is deprecated and now a no-op** (accepted for config compat). This is a behavior change: hooks that previously fired only on local events now also fire on sync-arrived events, deduped per host by the ledger. Fleet-level control is hook **placement**: a hook configured on N hosts fires on N hosts, once each — put a wake hook only on the host that should run it. `mtix sync daemon --dispatch-hooks` now dispatches events of every origin (no more "designated synced dispatcher").
+
+---
+
 ## [0.4.0-beta] - 2026-06-29
 
 ### Added

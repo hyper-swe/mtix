@@ -187,6 +187,11 @@ hooks:
 
 	service.NewHooksDispatcher(store, mtixDir, slog.Default()).Dispatch(ctx)
 
+	// MTIX-56.9: the exec is a detached spawn — await its output.
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(outFile)
+		return statErr == nil
+	}, 10*time.Second, 25*time.Millisecond, "the trusted exec hook runs after dispatch")
 	data, readErr := os.ReadFile(outFile)
 	require.NoError(t, readErr, "exec must run once the config is trusted")
 

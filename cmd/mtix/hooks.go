@@ -36,7 +36,7 @@ func newHooksCmd() *cobra.Command {
 		Use:   "hooks",
 		Short: "Inspect and test FR-19 event hooks (.mtix/hooks.yaml)",
 	}
-	cmd.AddCommand(newHooksListCmd(), newHooksFireCmd(), newHooksTrustCmd(), newHooksLogCmd())
+	cmd.AddCommand(newHooksListCmd(), newHooksFireCmd(), newHooksTrustCmd(), newHooksLogCmd(), newHooksExecDispatchCmd())
 	return cmd
 }
 

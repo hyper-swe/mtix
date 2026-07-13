@@ -59,6 +59,7 @@ Diff the surface area since the last tag and verify each item is documented:
 - [ ] Release workflow green end to end (goreleaser artifacts, cloud-PG
       tag suites, binary DSN-string sweep).
 - [ ] Post-release smoke: install the published artifact (brew/binary)
+- [ ] Upgrade smoke on macOS: replace a previously installed binary via the documented unlink-then-copy (`install -m 0755` / `rm`+`cp`) and confirm it runs — an in-place `cp` overwrite is SIGKILLed by the kernel (cached code signature); with `mtix daemon install` active also confirm `mtix daemon start` picks up the new binary
       in a clean directory; `mtix init`, `mtix create`, `mtix list`,
       `mtix recover` help, `mtix mcp` handshake.
 

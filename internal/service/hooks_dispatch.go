@@ -20,21 +20,45 @@ import (
 // runaway-loop backstop (FR-19.6). Firings past the cap are skipped and logged.
 const maxHookFiringsPerNodePerHour = 20
 
+// hookClaimLease bounds how long a 'claimed' ledger row is trusted to be in
+// flight. A claim older than this belongs to a trigger that crashed between
+// claim and fire, and is reclaimed and re-fired (at-least-once, FR-20 §7 — a
+// lost wake is worse than a double wake; wake execs must be idempotent).
+const hookClaimLease = 60 * time.Second
+
 // HooksDispatcher fires the delivery adapters of hooks that match journaled
-// events (FR-19.3 / MTIX-47.3). It runs AFTER a mutation commits — post-command
-// in the CLI and periodically in the daemon — so it never blocks or fails the
-// mutation; adapter errors are logged, never propagated. A local rowid cursor
-// makes re-dispatch safe (at-least-once) and lets a restart resume.
+// events (FR-19.3, FR-20/MTIX-56.1). There is ONE dispatch path shared by every
+// trigger — the CLI post-command hook, the server on-commit callback (MTIX-53)
+// and the daemon tick — and it is origin-independent: a hook fires for an event
+// based only on the event being in the journal and the (hook,event) pair not
+// yet being in the dispatch ledger on this host, never on who wrote the event
+// or how it arrived (local CLI, MCP, sync-arrival, another process). The ledger
+// PK serializes concurrent triggers to exactly-once per host in the non-crash
+// path; crash recovery is at-least-once via the claim lease. Dispatch runs
+// AFTER a mutation commits, never blocks or fails the mutation; adapter errors
+// are logged, never propagated.
 type HooksDispatcher struct {
 	store    *sqlite.Store
 	registry *hooks.Registry
 	mtixDir  string
 	logger   *slog.Logger
+
+	// isDaemon marks this dispatcher as the daemon trigger — the only trigger
+	// allowed to run passes on a host whose local exec-dispatch policy is
+	// "daemon" (MTIX-56.10).
+	isDaemon bool
+}
+
+// MarkDaemon flags this dispatcher as the daemon trigger for the
+// exec-dispatch policy. The daemon process calls it once at startup.
+func (d *HooksDispatcher) MarkDaemon() {
+	if d != nil {
+		d.isDaemon = true
+	}
 }
 
 // NewHooksDispatcher assembles the adapter registry (inbox + webhook +
-// append-file; the exec adapter is added once the content-hash trust gate lands
-// in 47.5) and returns a dispatcher rooted at mtixDir.
+// append-file + exec) and returns a dispatcher rooted at mtixDir.
 func NewHooksDispatcher(store *sqlite.Store, mtixDir string, logger *slog.Logger) *HooksDispatcher {
 	if logger == nil {
 		logger = slog.Default()
@@ -53,44 +77,107 @@ func NewHooksDispatcher(store *sqlite.Store, mtixDir string, logger *slog.Logger
 	return &HooksDispatcher{store: store, registry: reg, mtixDir: mtixDir, logger: logger}
 }
 
-// Dispatch is the LOCAL dispatch path — the CLI post-command path, run on every
-// host. It fires matching hooks for LOCAL (origin) events only and NEVER for a
-// synced event, even an include-synced one: a synced event fires exactly once,
-// on the designated host's DispatchSynced path, so it is not re-delivered by
-// every machine that pulled it (MTIX-52). It ALWAYS advances the local cursor
-// over the events it read — even the synced ones it skips, and even when no hook
-// matches — so a hook added later fires only on FUTURE events, never a backlog.
-// Never returns an error: a caller on the mutation path must not be blocked.
+// Dispatch runs one pass of the journal-tail dispatcher (FR-20 §4.2): re-fire
+// stale claims left by crashed triggers, then scan events past the scan floor
+// — any origin — claiming each matching (hook,event) in the ledger before
+// firing it, and finally advance the floor (clamped below open claims) and
+// prune terminal ledger rows beneath it.
+//
+// The floor advances over every event read — including ones no hook matches
+// and passes with no hooks configured at all — which is what keeps "a hook
+// added later fires only on FUTURE events" true (MTIX-47.3 preserved, FR-20
+// §8). Never returns an error: a caller on the mutation path must not be
+// blocked.
 func (d *HooksDispatcher) Dispatch(ctx context.Context) {
-	d.run(ctx, d.store.HookCursor, d.store.AdvanceHookCursor, func(je sqlite.JournalEvent) bool {
-		return !je.Synced
-	})
+	if d == nil || d.store == nil {
+		return
+	}
+	cfg, warns := hooks.Load(d.mtixDir)
+	for _, w := range warns {
+		d.logger.Warn("hooks.yaml", "warning", w)
+	}
+
+	// Host-local exec-dispatch policy (MTIX-56.10). Under "daemon", a
+	// non-daemon trigger no-ops ENTIRELY — claiming nothing and advancing
+	// nothing — so it can never consume a (hook,event) pair the daemon should
+	// fire, and the shared scan floor stays the daemon's to move.
+	execMode := hooks.ExecDispatchMode(d.mtixDir)
+	if execMode == hooks.ExecDispatchDaemon && !d.isDaemon {
+		d.logger.Debug("hook dispatch: exec-dispatch policy is 'daemon'; deferring this pass to the daemon")
+		return
+	}
+
+	// exec runs only for a hooks.yaml the operator has trusted by content hash
+	// (MTIX-49). Evaluated once per pass; a config change since the last trust
+	// silently disables exec (fire() logs the skip). Placement of a hook on a
+	// host plus that host's trust is the fleet-level designation (FR-20 §5).
+	execTrusted := hooks.ExecTrusted(d.mtixDir)
+
+	d.refireStaleClaims(ctx, cfg, execTrusted, execMode)
+
+	floor, err := d.store.HookCursor(ctx)
+	if err != nil {
+		d.logger.Error("hook dispatch: read scan floor", "error", err)
+		return
+	}
+	events, err := d.store.ReadJournalSince(ctx, floor, 500)
+	if err != nil {
+		d.logger.Error("hook dispatch: read journal", "error", err)
+		return
+	}
+
+	maxSeq := floor
+	for _, je := range events {
+		if je.Seq > maxSeq {
+			maxSeq = je.Seq
+		}
+		d.claimAndFireMatching(ctx, cfg, je, execTrusted, execMode)
+	}
+	if maxSeq > floor {
+		if err := d.store.AdvanceHookScanFloorClamped(ctx, maxSeq); err != nil {
+			d.logger.Error("hook dispatch: advance scan floor", "error", err)
+		}
+	}
+	if err := d.store.PruneHookDispatchLedger(ctx); err != nil {
+		d.logger.Error("hook dispatch: prune ledger", "error", err)
+	}
 }
 
-// DispatchSynced is the DESIGNATED-host dispatch path (MTIX-52). It fires
-// include-synced hooks on SYNCED events (those that arrived via the hub from
-// another machine), using a SEPARATE cursor so the local path's advance cannot
-// hide them. Only ONE host — the designated dispatcher, typically its sync
-// daemon — runs this, so a synced event fires exactly once team-wide. Local
-// events are ignored here; the local path owns them. The include-synced opt-in
-// still gates matching (a synced event fires only for a hook that asked for it).
-func (d *HooksDispatcher) DispatchSynced(ctx context.Context) {
-	d.run(ctx, d.store.HookSyncedCursor, d.store.AdvanceHookSyncedCursor, func(je sqlite.JournalEvent) bool {
-		return je.Synced
-	})
+// claimAndFireMatching normalizes one journal event and, for every configured
+// hook it matches, races the ledger claim and fires on a win.
+func (d *HooksDispatcher) claimAndFireMatching(ctx context.Context, cfg hooks.Config, je sqlite.JournalEvent, execTrusted bool, execMode string) {
+	if len(cfg.Hooks) == 0 {
+		return
+	}
+	evt := NormalizeEvent(je)
+	if evt.Name == "" {
+		return // op_type is not a hook trigger (e.g. an unaddressed comment)
+	}
+	for _, h := range cfg.MatchingHooks(evt) {
+		won, err := d.store.ClaimHookDispatch(ctx, h.Name, je.Seq, hookClaimLease)
+		if err != nil {
+			d.logger.Error("hook dispatch: claim", "hook", h.Name, "seq", je.Seq, "error", err)
+			continue
+		}
+		if !won {
+			continue // another trigger owns or already fired this (hook,event)
+		}
+		d.finishClaim(ctx, h, evt, je, execTrusted, execMode)
+	}
 }
 
-// OnCommitDispatch returns a post-commit callback that runs Dispatch (the LOCAL
-// path), for a long-running server to wire via store.AddOnCommit so an agent's
-// mutation dispatches hooks host-side with no per-command PostRun (MTIX-53) —
-// the immediate, in-process sibling of the daemon's designated dispatch.
+// OnCommitDispatch returns a post-commit callback that runs Dispatch, for a
+// long-running server to wire via store.AddOnCommit so an agent's mutation
+// dispatches hooks host-side with no per-command PostRun (MTIX-53) — the
+// immediate, in-process sibling of the daemon tick, deduped by the ledger.
 //
 // It is guarded against RE-ENTRANCY: Dispatch itself commits writes (inbox
-// delivery, cursor, hook log), and those commits re-invoke on-commit callbacks;
-// without the guard the callback would recurse until the stack blows. The guard
-// makes a mutation's dispatch run exactly once — nested re-entries are dropped,
-// and the events this pass advanced past are handled by the next mutation's
-// dispatch. Safe on a nil dispatcher (returns a no-op).
+// delivery, ledger, floor, hook log), and those commits re-invoke on-commit
+// callbacks; without the guard the callback would recurse until the stack
+// blows. The guard makes a mutation's dispatch run exactly once — nested
+// re-entries are dropped, and the events this pass advanced past are handled
+// by the next mutation's dispatch or the daemon tick. Safe on a nil
+// dispatcher (returns a no-op).
 func (d *HooksDispatcher) OnCommitDispatch() func() {
 	if d == nil {
 		return func() {}
@@ -105,100 +192,126 @@ func (d *HooksDispatcher) OnCommitDispatch() func() {
 	}
 }
 
-// run is the shared dispatch loop: it reads journal events past the cursor read
-// by readCursor, fires matching hooks for events accept() selects, and advances
-// the cursor (via advanceCursor) over EVERY event read — including those accept
-// skips — so skipped events never form a backlog.
-func (d *HooksDispatcher) run(
-	ctx context.Context,
-	readCursor func(context.Context) (int64, error),
-	advanceCursor func(context.Context, int64) error,
-	accept func(sqlite.JournalEvent) bool,
-) {
-	if d == nil || d.store == nil {
-		return
-	}
-	cfg, warns := hooks.Load(d.mtixDir)
-	for _, w := range warns {
-		d.logger.Warn("hooks.yaml", "warning", w)
-	}
-	cursor, err := readCursor(ctx)
+// refireStaleClaims is the crash-recovery leg (FR-20 §7): every 'claimed'
+// ledger row older than the lease is a trigger that died between claim and
+// fire. Deliberately floor-independent — a claim can slip below the floor in a
+// narrow advance race, and this scan is what still finds it. A stale claim
+// whose event or hook no longer exists is closed as an error (with the reason
+// in the audit log) so it cannot park the scan floor forever.
+func (d *HooksDispatcher) refireStaleClaims(ctx context.Context, cfg hooks.Config, execTrusted bool, execMode string) {
+	claims, err := d.store.StaleHookClaims(ctx, hookClaimLease)
 	if err != nil {
-		d.logger.Error("hook dispatch: read cursor", "error", err)
+		d.logger.Error("hook dispatch: stale-claim scan", "error", err)
 		return
 	}
-	events, err := d.store.ReadJournalSince(ctx, cursor, 500)
-	if err != nil {
-		d.logger.Error("hook dispatch: read journal", "error", err)
-		return
-	}
-
-	// exec runs only for a hooks.yaml the operator has trusted by content hash
-	// (47.5). Evaluated once per dispatch; a config change since the last trust
-	// silently disables exec (fire() logs the skip). On the designated host this
-	// is that host's local trust — the multi-machine trust anchor (MTIX-49/52).
-	execTrusted := hooks.ExecTrusted(d.mtixDir)
-
-	maxSeq := cursor
-	for _, je := range events {
-		if je.Seq > maxSeq {
-			maxSeq = je.Seq
-		}
-		if len(cfg.Hooks) == 0 || !accept(je) {
+	for _, c := range claims {
+		won, err := d.store.ClaimHookDispatch(ctx, c.Hook, c.Seq, hookClaimLease)
+		if err != nil {
+			d.logger.Error("hook dispatch: reclaim", "hook", c.Hook, "seq", c.Seq, "error", err)
 			continue
 		}
-		d.fireMatching(ctx, cfg, je, execTrusted)
-	}
-	if maxSeq > cursor {
-		if err := advanceCursor(ctx, maxSeq); err != nil {
-			d.logger.Error("hook dispatch: advance cursor", "error", err)
+		if !won {
+			continue // another trigger reclaimed it first
 		}
+		h, found := hookByName(cfg, c.Hook)
+		je, ok, err := d.store.ReadJournalEventAt(ctx, c.Seq)
+		evt := NormalizeEvent(je)
+		if err != nil || !ok || !found || evt.Name == "" {
+			d.logger.Warn("hook dispatch: abandoning stale claim — hook or event no longer resolvable",
+				"hook", c.Hook, "seq", c.Seq, "error", err)
+			d.recordOutcome(ctx, c.Hook, c.Seq, sqlite.OutcomeError)
+			d.logFiring(ctx, hooks.Hook{Name: c.Hook}, evt, "", sqlite.OutcomeError, "stale claim abandoned")
+			continue
+		}
+		d.logger.Info("hook dispatch: re-firing stale claim (crashed trigger)", "hook", c.Hook, "seq", c.Seq)
+		d.finishClaim(ctx, h, evt, je, execTrusted, execMode)
 	}
 }
 
-// fireMatching normalizes one journal event and fires every configured hook it
-// matches (subject to the rate limit). A non-trigger op_type is a no-op.
-func (d *HooksDispatcher) fireMatching(ctx context.Context, cfg hooks.Config, je sqlite.JournalEvent, execTrusted bool) {
-	evt := NormalizeEvent(je)
-	if evt.Name == "" {
-		return // op_type is not a hook trigger (e.g. an unaddressed comment)
+// finishClaim completes a claim the caller just won: apply the rate limit,
+// fire the adapters, and finalize the ledger row with the aggregate outcome.
+func (d *HooksDispatcher) finishClaim(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent, execTrusted bool, execMode string) {
+	outcome := sqlite.OutcomeRateLimited
+	if !d.rateLimited(ctx, h, evt) {
+		outcome = d.fire(ctx, h, evt, je, execTrusted, execMode)
 	}
-	for _, h := range cfg.MatchingHooks(evt) {
-		if d.rateLimited(ctx, h, evt) {
-			continue
-		}
-		d.fire(ctx, h, evt, je, execTrusted)
+	d.recordOutcome(ctx, h.Name, je.Seq, outcome)
+}
+
+func (d *HooksDispatcher) recordOutcome(ctx context.Context, hook string, seq int64, outcome string) {
+	if err := d.store.RecordHookDispatchOutcome(ctx, hook, seq, outcome); err != nil {
+		d.logger.Error("hook dispatch: record outcome", "hook", hook, "seq", seq, "error", err)
 	}
 }
 
-// fire delivers one matched event to each adapter the hook names. Adapter
-// errors are logged and never propagated (FR-19.3).
-func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent, execTrusted bool) {
+// hookByName finds a configured hook by its (unique, load-validated) name.
+func hookByName(cfg hooks.Config, name string) (hooks.Hook, bool) {
+	for _, h := range cfg.Hooks {
+		if h.Name == name {
+			return h, true
+		}
+	}
+	return hooks.Hook{}, false
+}
+
+// fire delivers one matched event to each adapter the hook names and returns
+// the aggregate ledger outcome: error if any adapter failed, else a skip
+// outcome if exec was gated (untrusted config or exec-dispatch policy "off"),
+// else delivered. For exec, "delivered" means SPAWNED (MTIX-56.9): dispatch
+// never waits on the command; its exit code is the script's own to report and
+// the fabric's success signal is the inbox ack. Per-adapter outcomes go to
+// the audit log; adapter errors are logged and never propagated (FR-19.3).
+// The outcome is terminal either way — a fire that ran and failed is never
+// auto-retried (FR-20 §14.3).
+func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent, execTrusted bool, execMode string) string {
 	eventJSON, _ := json.Marshal(map[string]any{
 		"seq": je.Seq, "event": evt.Name, "node_id": evt.NodeID,
 		"author": evt.Author, "to": evt.ToAgent, "status": evt.StatusTo,
 		"synced": evt.Synced, "hook": h.Name,
 	})
 	del := hooks.Delivery{Hook: h, Event: evt, EventJSON: eventJSON}
+	var anyError, anySkipped, anySkippedPolicy bool
 	for _, name := range h.Deliver {
+		if name == hooks.AdapterExec && execMode == hooks.ExecDispatchOff {
+			d.logger.Info("hook dispatch: exec skipped — this host's exec-dispatch policy is 'off'",
+				"hook", h.Name)
+			d.logFiring(ctx, h, evt, name, sqlite.OutcomeSkippedPolicy, "")
+			anySkippedPolicy = true
+			continue
+		}
 		if name == hooks.AdapterExec && !execTrusted {
 			d.logger.Warn("hook dispatch: exec skipped — hooks.yaml is not trusted; review it and run 'mtix hooks trust'",
 				"hook", h.Name)
 			d.logFiring(ctx, h, evt, name, "skipped-untrusted", "")
+			anySkipped = true
 			continue
 		}
 		adapter, ok := d.registry.Lookup(name)
 		if !ok {
 			d.logger.Warn("hook dispatch: unknown adapter", "hook", h.Name, "adapter", name)
 			d.logFiring(ctx, h, evt, name, "error", "unknown adapter")
+			anyError = true
 			continue
 		}
 		if err := adapter.Deliver(ctx, del); err != nil {
 			d.logger.Warn("hook dispatch: adapter failed", "hook", h.Name, "adapter", name, "error", err)
 			d.logFiring(ctx, h, evt, name, "error", err.Error())
+			anyError = true
 			continue
 		}
+		d.logger.Info("hook dispatch: delivered",
+			"hook", h.Name, "adapter", name, "event", evt.Name, "node", evt.NodeID, "seq", je.Seq)
 		d.logFiring(ctx, h, evt, name, "delivered", "")
+	}
+	switch {
+	case anyError:
+		return sqlite.OutcomeError
+	case anySkipped:
+		return sqlite.OutcomeSkippedUntrusted
+	case anySkippedPolicy:
+		return sqlite.OutcomeSkippedPolicy
+	default:
+		return sqlite.OutcomeDelivered
 	}
 }
 

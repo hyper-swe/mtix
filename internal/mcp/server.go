@@ -28,6 +28,26 @@ type Server struct {
 
 	// version is the server version string.
 	version string
+
+	// experimentalCaps and instructions are announced at initialize when set
+	// (MTIX-56.7): the channel adapter declares its client-specific capability
+	// key here and teaches the model the handle→ack→reply loop.
+	experimentalCaps map[string]any
+	instructions     string
+}
+
+// DeclareExperimental announces an experimental capability key at initialize
+// and appends instr to the server's initialize instructions. Call before
+// Serve.
+func (s *Server) DeclareExperimental(key string, instr string) {
+	if s.experimentalCaps == nil {
+		s.experimentalCaps = map[string]any{}
+	}
+	s.experimentalCaps[key] = struct{}{}
+	if s.instructions != "" {
+		s.instructions += "\n"
+	}
+	s.instructions += instr
 }
 
 // NewServer creates a new MCP server with the given I/O streams.
@@ -147,12 +167,14 @@ func (s *Server) handleInitialize(_ context.Context, req *Request) error {
 	result := InitializeResult{
 		ProtocolVersion: "2024-11-05",
 		Capabilities: ServerCaps{
-			Tools: &ToolsCap{ListChanged: false},
+			Tools:        &ToolsCap{ListChanged: false},
+			Experimental: s.experimentalCaps,
 		},
 		ServerInfo: ServerInfo{
 			Name:    "mtix",
 			Version: s.version,
 		},
+		Instructions: s.instructions,
 	}
 
 	return s.sendResult(req.ID, result)

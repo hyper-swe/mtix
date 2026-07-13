@@ -99,34 +99,6 @@ func (s *Store) AdvanceHookCursor(ctx context.Context, seq int64) error {
 	})
 }
 
-// HookSyncedCursor returns the highest sync_events.rowid the DESIGNATED-host
-// synced-dispatch path has processed (MTIX-52). It is independent of
-// HookCursor so the local dispatch advancing past synced events does not hide
-// them from the synced path.
-func (s *Store) HookSyncedCursor(ctx context.Context) (int64, error) {
-	var c int64
-	err := s.readDB.QueryRowContext(ctx,
-		`SELECT cursor FROM hook_synced_cursor WHERE id = 1`).Scan(&c)
-	if err == sql.ErrNoRows {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, fmt.Errorf("read hook synced cursor: %w", err)
-	}
-	return c, nil
-}
-
-// AdvanceHookSyncedCursor moves the synced-dispatch watermark forward to seq
-// (monotonic; a lower seq never rewinds it).
-func (s *Store) AdvanceHookSyncedCursor(ctx context.Context, seq int64) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO hook_synced_cursor (id, cursor) VALUES (1, ?)
-			ON CONFLICT(id) DO UPDATE SET cursor = MAX(cursor, excluded.cursor)`, seq)
-		return err
-	})
-}
-
 // RecordInboxDelivery records that the event at eventSeq is delivered to
 // agentID's inbox by hook hookName (FR-19.4). Idempotent per (agent, event), so
 // re-dispatch of the same event never double-delivers.

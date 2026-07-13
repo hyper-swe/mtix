@@ -29,7 +29,7 @@ func TestMatches_AndComposedFilters(t *testing.T) {
 	require.False(t, h.Matches(mut(base, func(e *Event) { e.Author = "opus" })), "from-agent-not excludes self")
 	require.False(t, h.Matches(mut(base, func(e *Event) { e.NodeID = "HP-2.1" })), "outside subtree")
 	require.False(t, h.Matches(mut(base, func(e *Event) { e.StatusTo = "open" })), "status not in set")
-	require.False(t, h.Matches(mut(base, func(e *Event) { e.Synced = true })), "synced without include-synced")
+	require.True(t, h.Matches(mut(base, func(e *Event) { e.Synced = true })), "origin is not a filter (FR-20): a synced event matches like a local one")
 	require.True(t, h.Matches(mut(base, func(e *Event) { e.NodeID = "HP-1" })), "ancestor itself is in-subtree")
 }
 

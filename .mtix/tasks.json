@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-12T16:40:42Z",
+  "exported_at": "2026-07-13T05:09:17Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6244,6 +6244,31 @@
       "uid": "019f5661-65f0-7aba-aac4-cc1318121b04"
     },
     {
+      "id": "MTIX-56.10",
+      "parent_id": "MTIX-56",
+      "depth": 1,
+      "seq": 10,
+      "project": "MTIX",
+      "title": "Exec dispatch-host policy: local knob (any|daemon|off) so exec fires only where designated",
+      "description": "",
+      "prompt": "Fleet requirement: a host-local, never-synced knob controlling WHERE exec hooks fire. Modes: any (default, current behavior), daemon (only a daemon-marked dispatcher runs dispatch passes on this host - CLI/server triggers no-op entirely so they can never claim-and-consume a pair the daemon should fire; floor untouched), off (dispatch runs but the exec adapter is skipped with terminal outcome skipped-policy; other adapters unaffected). Stored in a local file next to the trust hash (.mtix/, untracked), set via 'mtix hooks exec-dispatch [mode]'. Complements per-host trust (skipped-untrusted is terminal per host - an untrusted host never execs), giving explicit intent instead of implicit-by-not-trusting.",
+      "acceptance": "daemon mode: non-daemon Dispatch is a no-op (no ledger rows, floor unchanged); daemon dispatcher fires everything. off: exec skipped-policy terminal, inbox/webhook still deliver. CLI get/set round-trips. Docs updated. Suite green.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "fable",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "0a897ba89072fd45439fda7a775d430fa0e82e9de4d1819e0231c448fab1f37e",
+      "created_at": "2026-07-13T05:08:58Z",
+      "updated_at": "2026-07-13T05:09:17Z",
+      "uid": "019f59e0-e4e8-76d2-a543-402ec05ab8bf"
+    },
+    {
       "id": "MTIX-56.2",
       "parent_id": "MTIX-56",
       "depth": 1,
@@ -6417,6 +6442,31 @@
       "created_at": "2026-07-12T12:50:51Z",
       "updated_at": "2026-07-12T16:17:48Z",
       "uid": "019f5661-6746-715b-a549-39e7d6672ae1"
+    },
+    {
+      "id": "MTIX-56.9",
+      "parent_id": "MTIX-56",
+      "depth": 1,
+      "seq": 9,
+      "project": "MTIX",
+      "title": "Async exec dispatch: mutation path must not block on hook commands (FR-19 contract fix)",
+      "description": "",
+      "prompt": "Field finding (fleet acceptance run): ExecAdapter.Deliver uses cmd.Run(), which WAITS for the hook command to finish (up to timeout-seconds, default 30s). The CLI post-command trigger and the server on-commit trigger therefore block the mutation path for the duration of a wake script — violating FR-19's 'dispatch runs after commit and never blocks the mutation' contract. Interim field fix: self-detaching wake scripts. Upstream fix (decide before build): spawn the exec DETACHED (Setsid, no wait) and record ledger outcome=delivered on successful SPAWN; the exit code becomes the script's own responsibility (a wake's true success signal is the inbox getting acked, which the fabric already tracks). Rationale: waiting in a goroutine instead breaks in ephemeral CLI processes (parent exits -\u003e outcome stays claimed -\u003e lease re-fire -\u003e systematic double wake). Keep claim-then-spawn ordering so crash-before-spawn still reclaims (at-least-once). hook_log records spawn success/failure; docs + CHANGELOG note that non-zero script exits are no longer visible in hook_log (script should report its own failures). Update the §7 crash-semantics doc and the wake-script template note.",
+      "acceptance": "1. A slow exec hook (sleep 5) adds \u003c100ms to the mutating CLI command and to an MCP tool call. 2. Claim-then-spawn: crash before spawn still re-fires via lease; successful spawn is terminal delivered. 3. Spawn failure (missing script) records outcome=error, never auto-retried. 4. e2e scenario + release-gate tests stay green. 5. Docs/CHANGELOG updated.",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "in_progress",
+      "progress": 0,
+      "assignee": "fable",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "cde801b0ff4e483e2c2afec043f02573b8d75e2afee4922b5d4a56a9b0c0c276",
+      "created_at": "2026-07-13T05:01:29Z",
+      "updated_at": "2026-07-13T05:09:17Z",
+      "uid": "019f59da-0ac7-74c2-9e1a-fa3f7d284aee"
     },
     {
       "id": "MTIX-57",
@@ -7153,7 +7203,7 @@
       "agent_id": "fable",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-56.6",
+      "current_node_id": "MTIX-56.10",
       "last_heartbeat": "2026-07-12T13:27:45Z"
     },
     {
@@ -7182,6 +7232,6 @@
       "status": "active"
     }
   ],
-  "node_count": 262,
-  "checksum": "a3792c383b3eb990fb5640ee096fdbe581d847a687ce21205a704314038db7e8"
+  "node_count": 264,
+  "checksum": "0dbb247276c573c29dfc6efe0478e7564f95ede1695170cd02eeac7cbb2ab04a"
 }

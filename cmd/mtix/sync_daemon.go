@@ -131,6 +131,9 @@ func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 	// per (hook,event) by the dispatch ledger. Dispatch runs AFTER the pull so
 	// the synced events are already in the local journal; it never blocks or
 	// fails the loop.
+	if dispatchHooks {
+		app.hooksDisp.MarkDaemon() // daemon trigger under the exec-dispatch policy
+	}
 	pullThenDispatch := func() {
 		runOneDaemonPull(ctx, stderr, args, opts)
 		if dispatchHooks && app.hooksDisp != nil {

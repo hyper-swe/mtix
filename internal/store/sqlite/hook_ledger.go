@@ -26,6 +26,7 @@ const (
 	OutcomeDelivered        = "delivered"
 	OutcomeError            = "error"
 	OutcomeSkippedUntrusted = "skipped-untrusted"
+	OutcomeSkippedPolicy    = "skipped-policy"
 	OutcomeRateLimited      = "rate-limited"
 )
 

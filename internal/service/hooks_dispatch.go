@@ -42,6 +42,19 @@ type HooksDispatcher struct {
 	registry *hooks.Registry
 	mtixDir  string
 	logger   *slog.Logger
+
+	// isDaemon marks this dispatcher as the daemon trigger — the only trigger
+	// allowed to run passes on a host whose local exec-dispatch policy is
+	// "daemon" (MTIX-56.10).
+	isDaemon bool
+}
+
+// MarkDaemon flags this dispatcher as the daemon trigger for the
+// exec-dispatch policy. The daemon process calls it once at startup.
+func (d *HooksDispatcher) MarkDaemon() {
+	if d != nil {
+		d.isDaemon = true
+	}
 }
 
 // NewHooksDispatcher assembles the adapter registry (inbox + webhook +
@@ -84,13 +97,23 @@ func (d *HooksDispatcher) Dispatch(ctx context.Context) {
 		d.logger.Warn("hooks.yaml", "warning", w)
 	}
 
+	// Host-local exec-dispatch policy (MTIX-56.10). Under "daemon", a
+	// non-daemon trigger no-ops ENTIRELY — claiming nothing and advancing
+	// nothing — so it can never consume a (hook,event) pair the daemon should
+	// fire, and the shared scan floor stays the daemon's to move.
+	execMode := hooks.ExecDispatchMode(d.mtixDir)
+	if execMode == hooks.ExecDispatchDaemon && !d.isDaemon {
+		d.logger.Debug("hook dispatch: exec-dispatch policy is 'daemon'; deferring this pass to the daemon")
+		return
+	}
+
 	// exec runs only for a hooks.yaml the operator has trusted by content hash
 	// (MTIX-49). Evaluated once per pass; a config change since the last trust
 	// silently disables exec (fire() logs the skip). Placement of a hook on a
 	// host plus that host's trust is the fleet-level designation (FR-20 §5).
 	execTrusted := hooks.ExecTrusted(d.mtixDir)
 
-	d.refireStaleClaims(ctx, cfg, execTrusted)
+	d.refireStaleClaims(ctx, cfg, execTrusted, execMode)
 
 	floor, err := d.store.HookCursor(ctx)
 	if err != nil {
@@ -108,7 +131,7 @@ func (d *HooksDispatcher) Dispatch(ctx context.Context) {
 		if je.Seq > maxSeq {
 			maxSeq = je.Seq
 		}
-		d.claimAndFireMatching(ctx, cfg, je, execTrusted)
+		d.claimAndFireMatching(ctx, cfg, je, execTrusted, execMode)
 	}
 	if maxSeq > floor {
 		if err := d.store.AdvanceHookScanFloorClamped(ctx, maxSeq); err != nil {
@@ -122,7 +145,7 @@ func (d *HooksDispatcher) Dispatch(ctx context.Context) {
 
 // claimAndFireMatching normalizes one journal event and, for every configured
 // hook it matches, races the ledger claim and fires on a win.
-func (d *HooksDispatcher) claimAndFireMatching(ctx context.Context, cfg hooks.Config, je sqlite.JournalEvent, execTrusted bool) {
+func (d *HooksDispatcher) claimAndFireMatching(ctx context.Context, cfg hooks.Config, je sqlite.JournalEvent, execTrusted bool, execMode string) {
 	if len(cfg.Hooks) == 0 {
 		return
 	}
@@ -139,7 +162,7 @@ func (d *HooksDispatcher) claimAndFireMatching(ctx context.Context, cfg hooks.Co
 		if !won {
 			continue // another trigger owns or already fired this (hook,event)
 		}
-		d.finishClaim(ctx, h, evt, je, execTrusted)
+		d.finishClaim(ctx, h, evt, je, execTrusted, execMode)
 	}
 }
 
@@ -175,7 +198,7 @@ func (d *HooksDispatcher) OnCommitDispatch() func() {
 // narrow advance race, and this scan is what still finds it. A stale claim
 // whose event or hook no longer exists is closed as an error (with the reason
 // in the audit log) so it cannot park the scan floor forever.
-func (d *HooksDispatcher) refireStaleClaims(ctx context.Context, cfg hooks.Config, execTrusted bool) {
+func (d *HooksDispatcher) refireStaleClaims(ctx context.Context, cfg hooks.Config, execTrusted bool, execMode string) {
 	claims, err := d.store.StaleHookClaims(ctx, hookClaimLease)
 	if err != nil {
 		d.logger.Error("hook dispatch: stale-claim scan", "error", err)
@@ -201,16 +224,16 @@ func (d *HooksDispatcher) refireStaleClaims(ctx context.Context, cfg hooks.Confi
 			continue
 		}
 		d.logger.Info("hook dispatch: re-firing stale claim (crashed trigger)", "hook", c.Hook, "seq", c.Seq)
-		d.finishClaim(ctx, h, evt, je, execTrusted)
+		d.finishClaim(ctx, h, evt, je, execTrusted, execMode)
 	}
 }
 
 // finishClaim completes a claim the caller just won: apply the rate limit,
 // fire the adapters, and finalize the ledger row with the aggregate outcome.
-func (d *HooksDispatcher) finishClaim(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent, execTrusted bool) {
+func (d *HooksDispatcher) finishClaim(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent, execTrusted bool, execMode string) {
 	outcome := sqlite.OutcomeRateLimited
 	if !d.rateLimited(ctx, h, evt) {
-		outcome = d.fire(ctx, h, evt, je, execTrusted)
+		outcome = d.fire(ctx, h, evt, je, execTrusted, execMode)
 	}
 	d.recordOutcome(ctx, h.Name, je.Seq, outcome)
 }
@@ -232,20 +255,30 @@ func hookByName(cfg hooks.Config, name string) (hooks.Hook, bool) {
 }
 
 // fire delivers one matched event to each adapter the hook names and returns
-// the aggregate ledger outcome: error if any adapter failed, else
-// skipped-untrusted if exec was gated, else delivered. Per-adapter outcomes go
-// to the audit log; adapter errors are logged and never propagated (FR-19.3).
+// the aggregate ledger outcome: error if any adapter failed, else a skip
+// outcome if exec was gated (untrusted config or exec-dispatch policy "off"),
+// else delivered. For exec, "delivered" means SPAWNED (MTIX-56.9): dispatch
+// never waits on the command; its exit code is the script's own to report and
+// the fabric's success signal is the inbox ack. Per-adapter outcomes go to
+// the audit log; adapter errors are logged and never propagated (FR-19.3).
 // The outcome is terminal either way — a fire that ran and failed is never
 // auto-retried (FR-20 §14.3).
-func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent, execTrusted bool) string {
+func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent, execTrusted bool, execMode string) string {
 	eventJSON, _ := json.Marshal(map[string]any{
 		"seq": je.Seq, "event": evt.Name, "node_id": evt.NodeID,
 		"author": evt.Author, "to": evt.ToAgent, "status": evt.StatusTo,
 		"synced": evt.Synced, "hook": h.Name,
 	})
 	del := hooks.Delivery{Hook: h, Event: evt, EventJSON: eventJSON}
-	var anyError, anySkipped bool
+	var anyError, anySkipped, anySkippedPolicy bool
 	for _, name := range h.Deliver {
+		if name == hooks.AdapterExec && execMode == hooks.ExecDispatchOff {
+			d.logger.Info("hook dispatch: exec skipped — this host's exec-dispatch policy is 'off'",
+				"hook", h.Name)
+			d.logFiring(ctx, h, evt, name, sqlite.OutcomeSkippedPolicy, "")
+			anySkippedPolicy = true
+			continue
+		}
 		if name == hooks.AdapterExec && !execTrusted {
 			d.logger.Warn("hook dispatch: exec skipped — hooks.yaml is not trusted; review it and run 'mtix hooks trust'",
 				"hook", h.Name)
@@ -275,6 +308,8 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 		return sqlite.OutcomeError
 	case anySkipped:
 		return sqlite.OutcomeSkippedUntrusted
+	case anySkippedPolicy:
+		return sqlite.OutcomeSkippedPolicy
 	default:
 		return sqlite.OutcomeDelivered
 	}

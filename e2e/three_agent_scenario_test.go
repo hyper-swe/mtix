@@ -82,6 +82,16 @@ func countEmpty(body string) int {
 	return 0
 }
 
+// requireWakes waits for the DETACHED wake exec (MTIX-56.9) to reach exactly n
+// firings, then settles briefly and re-checks so an over-fire cannot hide.
+func requireWakes(t *testing.T, path string, n int, msg string) {
+	t.Helper()
+	require.Eventually(t, func() bool { return wakeCount(t, path) == n },
+		10*time.Second, 25*time.Millisecond, msg)
+	time.Sleep(200 * time.Millisecond)
+	require.Equal(t, n, wakeCount(t, path), msg)
+}
+
 func TestScenario_PlannerDeveloperTester_HandoffChain(t *testing.T) {
 	host := newFakeCLI(t, "planner", "cccccccccccccccc")
 	ctx := context.Background()
@@ -124,8 +134,8 @@ hooks:
 	// ---- hop 1: planner → developer -------------------------------------
 	thread.post(t, "planner", "developer", "Start on FLOW-1. Plan context attached.")
 	disp.Dispatch(ctx)
-	require.Equal(t, 1, wakeCount(t, devWakes), "the developer wake exec fired for the handoff")
-	require.Equal(t, 0, wakeCount(t, testerWakes), "nothing addressed the tester yet")
+	requireWakes(t, devWakes, 1, "the developer wake exec fired for the handoff")
+	requireWakes(t, testerWakes, 0, "nothing addressed the tester yet")
 
 	// A live developer session's channel source sees the event exactly once.
 	devSrc := channel.NewInboxSource(host.store, "developer")
@@ -148,8 +158,8 @@ hooks:
 	// ---- hop 2: developer → tester --------------------------------------
 	thread.post(t, "developer", "tester", "FLOW-1 ready for verification.")
 	disp.Dispatch(ctx)
-	require.Equal(t, 1, wakeCount(t, testerWakes), "the tester wake exec fired for the handoff")
-	require.Equal(t, 1, wakeCount(t, devWakes), "the developer hook did not re-fire")
+	requireWakes(t, testerWakes, 1, "the tester wake exec fired for the handoff")
+	requireWakes(t, devWakes, 1, "the developer hook did not re-fire")
 
 	testerSrc := channel.NewInboxSource(host.store, "tester")
 	tPushed, err := testerSrc.Next(ctx, 10*time.Millisecond)
@@ -163,13 +173,13 @@ hooks:
 	plannerInbox, err := host.store.InboxList(ctx, "planner")
 	require.NoError(t, err)
 	require.Len(t, plannerInbox, 1, "the planner sees the verification report")
-	require.Equal(t, 1, wakeCount(t, devWakes), "no stray developer wake")
-	require.Equal(t, 1, wakeCount(t, testerWakes), "no stray tester wake")
+	requireWakes(t, devWakes, 1, "no stray developer wake")
+	requireWakes(t, testerWakes, 1, "no stray tester wake")
 
 	// ---- restart: a fresh dispatcher re-fires nothing --------------------
 	service.NewHooksDispatcher(host.store, host.mtixDir, e2eLogger()).Dispatch(ctx)
-	require.Equal(t, 1, wakeCount(t, devWakes))
-	require.Equal(t, 1, wakeCount(t, testerWakes))
+	requireWakes(t, devWakes, 1, "no re-fire")
+	requireWakes(t, testerWakes, 1, "no re-fire")
 
 	// ---- crash injection: claim-then-die is re-fired, never lost ---------
 	thread.post(t, "planner", "developer", "Round two: address review notes.")
@@ -185,7 +195,7 @@ hooks:
 	require.NoError(t, err) // ...and died before firing, past the lease
 
 	disp.Dispatch(ctx)
-	require.Equal(t, 2, wakeCount(t, devWakes),
+	requireWakes(t, devWakes, 2,
 		"the crashed trigger's wake is re-fired — a lost wake is the failure this fabric exists to kill")
-	require.Equal(t, 1, wakeCount(t, testerWakes))
+	requireWakes(t, testerWakes, 1, "no re-fire")
 }

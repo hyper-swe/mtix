@@ -119,6 +119,10 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 			"dispatching the local journal tail every %ds\n", os.Getpid(), intervalSec)
 	}
 
+	// This process IS the daemon trigger: allowed to dispatch even on hosts
+	// whose exec-dispatch policy is "daemon" (MTIX-56.10).
+	app.hooksDisp.MarkDaemon()
+
 	pass := func() {
 		if hub {
 			runOneDaemonPull(ctx, stderr, args, opts)

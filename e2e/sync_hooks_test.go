@@ -299,22 +299,27 @@ hooks:
 	requireWakeLines(t, wakes, 2, "the crashed trigger's wake is re-fired, not lost (at-least-once)")
 }
 
-// requireWakeLines asserts the wake record file holds exactly n lines (one
-// line per exec invocation; a missing file is zero invocations).
+// requireWakeLines asserts the wake record file settles at exactly n lines
+// (one line per exec invocation; a missing file is zero). The exec spawn is
+// DETACHED (MTIX-56.9), so reaching n is awaited, then re-checked after a
+// short settle so an over-fire cannot hide.
 func requireWakeLines(t *testing.T, path string, n int, msg string) {
 	t.Helper()
-	body, err := os.ReadFile(path) //nolint:gosec // test-owned temp path
-	if os.IsNotExist(err) {
-		require.Zero(t, n, msg)
-		return
+	count := func() int {
+		body, err := os.ReadFile(path) //nolint:gosec // test-owned temp path
+		if err != nil {
+			return 0
+		}
+		trimmed := strings.TrimSpace(string(body))
+		if trimmed == "" {
+			return 0
+		}
+		return len(strings.Split(trimmed, "\n"))
 	}
-	require.NoError(t, err)
-	trimmed := strings.TrimSpace(string(body))
-	var lines []string
-	if trimmed != "" {
-		lines = strings.Split(trimmed, "\n")
-	}
-	require.Len(t, lines, n, msg)
+	require.Eventually(t, func() bool { return count() == n },
+		10*time.Second, 25*time.Millisecond, msg)
+	time.Sleep(200 * time.Millisecond)
+	require.Equal(t, n, count(), msg)
 }
 
 // TestE2E_FR20_ServerOnCommitDispatch_CoversEveryOrigin: when a long-running

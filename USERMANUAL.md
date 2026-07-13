@@ -1383,9 +1383,34 @@ instance exits cleanly (PID lock, shared with the deprecated
 **Crash semantics: at-least-once, never a lost wake.** A trigger that
 dies between claiming an event and firing it is re-fired after a short
 lease. A double wake is possible and harmless — wake scripts must be
-idempotent (the shipped template checks the inbox before launching); a
-fire that ran and *failed* is recorded and never auto-retried (check
-`mtix hooks log`).
+idempotent (the shipped template checks the inbox before launching).
+
+**Exec is a detached spawn.** Dispatch returns the moment the command
+has *started* — it never blocks a CLI command or an agent's tool call
+(the FR-19 async contract). "Delivered" therefore means *spawned*: a
+spawn that cannot start (missing script) is a terminal `error`, never
+auto-retried; the command's own exit code is the script's to report,
+and the fabric's true success signal is the inbox getting acked.
+`timeout-seconds` is enforced best-effort by the spawning process —
+long-lived daemons enforce it, an ephemeral CLI that exits first
+cannot — so scripts should self-bound.
+
+**Exec dispatch policy (host-local, never synced).** Control which
+trigger on a host may run exec hooks:
+
+```bash
+mtix hooks exec-dispatch            # show: any (default)
+mtix hooks exec-dispatch daemon     # only 'mtix daemon' dispatches here —
+                                    # every wake goes through the one supervised process
+mtix hooks exec-dispatch off        # this host never launches anything
+                                    # (inbox/webhook still deliver) — for posting-only
+                                    # hosts like an agent sandbox
+```
+
+Under `daemon`, CLI and server triggers defer *entirely* (they claim
+nothing), so they can never consume a wake the daemon should fire. Like
+trust, the mode is stored beside `hooks.yaml` in a local file that never
+syncs — placement decisions bind to a machine.
 
 ### Running the daemon as a service
 

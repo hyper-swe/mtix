@@ -38,8 +38,9 @@ ENV_FILE="${REPO_ROOT}/.env.test.local"
 PROVIDER="${1:-all}"
 TIMEOUT="${MTIX_CLOUD_E2E_TIMEOUT:-20m}"
 
-# The full FR-18 edge-case matrix. Update when new TestE2E_* scenarios land.
-RUN_PATTERN='TestE2E_Lifecycle|TestE2E_Conflict|TestE2E_Divergent|TestE2E_Repeated|TestE2E_AgentSurge|TestE2E_LostLaptop|TestE2E_QueueFull|TestE2E_Backfill'
+# The full FR-18 edge-case matrix + the FR-20 origin-independent dispatch
+# release gate. Update when new TestE2E_* scenarios land.
+RUN_PATTERN='TestE2E_Lifecycle|TestE2E_Conflict|TestE2E_Divergent|TestE2E_Repeated|TestE2E_AgentSurge|TestE2E_LostLaptop|TestE2E_QueueFull|TestE2E_Backfill|TestE2E_FR20'
 
 if [ ! -f "${ENV_FILE}" ]; then
   printf 'cloud-e2e: %s not found.\n' "${ENV_FILE}" >&2

@@ -144,6 +144,33 @@ WantedBy=default.target
 	return nil, fmt.Errorf("mtix daemon: unsupported platform %q", goos)
 }
 
+// stableExecutablePath maps a Homebrew Cellar path to the formula's stable
+// `opt` symlink (MTIX-56.11). A Cellar path is VERSION-SCOPED —
+// /opt/homebrew/Cellar/mtix/1.2.3/bin/mtix — and `brew cleanup` deletes it
+// after an upgrade, leaving a service registered against it silently dead
+// (crash-restart respawning a missing file). Brew's /opt/<formula> symlink is
+// guaranteed stable across upgrades. Invoking mtix via the usual
+// /opt/homebrew/bin symlink already yields a stable path (os.Executable does
+// not resolve symlinks); this guards the direct-Cellar invocation.
+func stableExecutablePath(exe string) string {
+	const marker = "/Cellar/"
+	i := strings.Index(exe, marker)
+	if i < 0 {
+		return exe
+	}
+	prefix := exe[:i]                     // e.g. /opt/homebrew
+	rest := exe[i+len(marker):]           // mtix/1.2.3/bin/mtix
+	parts := strings.SplitN(rest, "/", 3) // [formula, version, bin/mtix]
+	if len(parts) != 3 {
+		return exe
+	}
+	stable := filepath.Join(prefix, "opt", parts[0], parts[2])
+	if _, err := os.Stat(stable); err != nil {
+		return exe // not a real brew layout — keep what we were given
+	}
+	return stable
+}
+
 // projectSlug derives a short, stable, filename-safe id for a project root.
 func projectSlug(projectRoot string) string {
 	sum := sha256.Sum256([]byte(projectRoot))
@@ -251,6 +278,7 @@ func currentServiceSpec(intervalSec int) (*serviceSpec, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mtix daemon: resolve executable: %w", err)
 	}
+	exe = stableExecutablePath(exe)
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("mtix daemon: resolve home: %w", err)

@@ -1435,6 +1435,12 @@ service's crash-restart then respawns in a loop. The running daemon
 keeps the old binary until restarted; finish the upgrade with
 `mtix daemon start`.
 
+Homebrew upgrades are inode-safe (`brew upgrade` installs a new Cellar
+directory and re-points the `bin/mtix` symlink), and `mtix daemon
+install` registers the upgrade-stable symlink path rather than a
+version-scoped Cellar path — so after `brew upgrade mtix`, just run
+`mtix daemon start` to restart the service onto the new version.
+
 ### Topology: one local `.mtix` per machine + the hub
 
 Each machine keeps its **own local `.mtix`**; events replicate through

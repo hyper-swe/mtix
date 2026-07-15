@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-13T17:25:23Z",
+  "exported_at": "2026-07-15T15:08:02Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6531,6 +6531,31 @@
       "uid": "019f55fd-59f3-7a7b-8c99-9d2ef3145d13"
     },
     {
+      "id": "MTIX-58",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 58,
+      "project": "MTIX",
+      "title": "Filesystem preflight: HARD-refuse WRITES on unsafe FS (retire the MTIX_ALLOW_UNSAFE_FS write override); allow read-only for recovery",
+      "description": "",
+      "prompt": "Field evidence: BOTH real corruptions were override-enabled WRITES on a FUSE mount (MTIX_ALLOW_UNSAFE_FS=1). A warning-with-override is a scheduled incident. Change the MTIX-54 policy: on a positively-identified unsafe filesystem (FUSE/network/virtualized), HARD-REFUSE all WRITE transactions with NO override — there is no safe way to write SQLite there (the non-WAL 'safe mode' still relies on FUSE locking, which the field disproved). Keep READ-ONLY access permitted so recovery/query/export still work: 'mtix recover', 'mtix export', read-only queries, and the integrity-bypass recovery path must all still open the DB read-only on an unsafe FS. Repurpose/rename MTIX_ALLOW_UNSAFE_FS so at most it enables READ-ONLY on an unsafe FS (e.g. MTIX_UNSAFE_FS_READONLY) — it must NEVER enable writes. Implementation: in Store.New / the write path, if the FS is unsafe, mark the store write-refusing (every WithTx returns a clear 'writes refused: \u003c.mtix\u003e is on an unsafe filesystem \u003ctype\u003e; move it to a local disk / use the hub' error wrapping a sentinel); readers open normally. Remove the non-WAL safe-mode write path added for the old override. Files: internal/store/sqlite/fssafety.go, store.go (openDB/New/WithTx), fspreflight tests. TDD: unsafe FS + write -\u003e refused (no env override re-enables it); unsafe FS + read-only recover/export -\u003e allowed; local FS unaffected. Cross-links MTIX-54 (preflight) and MTIX-57 (cross-context detection). ADR-004 §4.2 (refuse loudly) reinforces this.",
+      "acceptance": "1. On an unsafe (FUSE/network) FS, a WRITE is refused with an actionable sentinel error and NO environment variable re-enables writing (test proves MTIX_ALLOW_UNSAFE_FS no longer opens a write path). 2. Read-only ops on an unsafe FS still work: recover, export, and read queries open the DB (test). 3. Local FS: reads+writes unchanged (no regression). 4. The old non-WAL 'safe mode' write path is removed. 5. Docs updated: unsafe FS = read-only-for-recovery-only; writes require a local disk + hub. 6. Full suite + cloud gate green; \u003e=90% coverage on changed code.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "15ad9f72534d5d3ff24c54c3528eee2b210c2c254de57c7620740aac0d92e147",
+      "created_at": "2026-07-15T15:08:02Z",
+      "updated_at": "2026-07-15T15:08:02Z",
+      "uid": "019f6652-1174-7d27-8366-3bb81ab2b4c7"
+    },
+    {
       "id": "MTIX-6",
       "parent_id": "",
       "depth": 0,
@@ -7269,6 +7294,6 @@
       "status": "active"
     }
   ],
-  "node_count": 265,
-  "checksum": "20a8616dc66e2d2ad6772684dfffb3d835a20c3cd99190ab15873c0a3a9b9143"
+  "node_count": 266,
+  "checksum": "ab957be6828afa8dd39bb4cb76ccb9a9b99db5e27e910a9700069b86f8fa24a4"
 }

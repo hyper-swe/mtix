@@ -28,40 +28,10 @@ func journalMode(t *testing.T, s *Store) string {
 	return strings.ToLower(mode)
 }
 
-// TestStoreNew_RefusesUnsafeFilesystem: on a FUSE filesystem with no override,
-// New refuses to open — the corruption is prevented, not risked (MTIX-54 P0).
-func TestStoreNew_RefusesUnsafeFilesystem(t *testing.T) {
-	injectFS(t, "macfuse", fsFuse)
-	t.Setenv(allowUnsafeFSEnv, "") // not allowed
-
-	_, err := New(t.TempDir(), slog.New(slog.NewTextHandler(logSink{}, nil)))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, errUnsafeFilesystem)
-	assert.Contains(t, err.Error(), "macfuse")
-}
-
-// TestStoreNew_RefusesNetworkFilesystem: same for a network mount.
-func TestStoreNew_RefusesNetworkFilesystem(t *testing.T) {
-	injectFS(t, "nfs", fsNetwork)
-	t.Setenv(allowUnsafeFSEnv, "")
-
-	_, err := New(t.TempDir(), slog.New(slog.NewTextHandler(logSink{}, nil)))
-	require.ErrorIs(t, err, errUnsafeFilesystem)
-}
-
-// TestStoreNew_UnsafeFS_OverrideOpensNonWAL: with the explicit opt-in, New opens
-// but in a non-WAL rollback-journal mode — no -shm, so the FUSE corruption
-// vector is removed (MTIX-54 P1).
-func TestStoreNew_UnsafeFS_OverrideOpensNonWAL(t *testing.T) {
-	injectFS(t, "fuse", fsFuse)
-	t.Setenv(allowUnsafeFSEnv, "1")
-
-	s, err := New(t.TempDir(), slog.New(slog.NewTextHandler(logSink{}, nil)))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
-
-	assert.NotEqual(t, "wal", journalMode(t, s), "unsafe-FS override must NOT use WAL")
-}
+// MTIX-58 changed the unsafe-FS contract: New no longer refuses to open (it
+// opens READ-ONLY) and there is no write override. Those behaviors are now
+// covered by fs_write_refuse_test.go. The remaining tests here pin the
+// unaffected paths (local FS uses WAL; a classify error fails open).
 
 // TestStoreNew_LocalFilesystem_UsesWAL: on a normal local filesystem, New opens
 // in WAL exactly as before — no regression, no false positive.

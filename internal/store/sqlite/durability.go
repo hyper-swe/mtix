@@ -203,6 +203,11 @@ func explainOpenError(err error, dbPath string) error {
 // preflightWrite refuses a write before it starts when the store has
 // latched fail-stop or the volume is too full to finish safely.
 func (s *Store) preflightWrite() error {
+	// MTIX-58: an unsafe-filesystem store is read-only — refuse every write with
+	// no override, before touching the DB.
+	if s.writeRefused {
+		return writeRefusedError(s.dbPath, s.fsType)
+	}
 	if cause := s.failStopCause(); cause != nil {
 		return fmt.Errorf("store is in fail-stop after a fatal storage error and refuses further writes (restart after freeing disk space / restoring): %w", cause)
 	}
@@ -246,7 +251,7 @@ func (s *Store) preflightBackup(destPath string) error {
 	need := floor
 	for _, p := range []string{filepath.Join(s.dbDir, "mtix.db"), filepath.Join(s.dbDir, "mtix.db-wal")} {
 		if info, err := os.Stat(p); err == nil {
-			size := uint64(info.Size()) //nolint:gosec // file sizes are never negative
+			size := uint64(info.Size())     //nolint:gosec // file sizes are never negative
 			if size > math.MaxUint64-need { // saturate instead of wrapping
 				need = math.MaxUint64
 				break

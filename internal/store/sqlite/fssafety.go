@@ -16,13 +16,21 @@ import (
 // can inject an unsafe classification without a real FUSE/network mount.
 var fsDetector = detectFS
 
-// preflightFilesystem is the MTIX-54 open-time gate. It classifies the database
-// filesystem and either (a) returns nil,nil on a safe FS, (b) refuses with a
-// wrapped errUnsafeFilesystem on an unsafe FS the operator has not opted into,
-// or (c) returns safeMode=true (open non-WAL) on an unsafe FS the operator has
-// explicitly allowed. A classification error fails OPEN (proceed in WAL) so the
-// preflight itself never blocks opening on a transient statfs failure.
-func preflightFilesystem(dbPath string, logger *slog.Logger) (safeMode bool, err error) {
+// Filesystem-safety preflight (MTIX-54, hardened by MTIX-58). SQLite WAL keeps
+// its wal-index in a shared-memory (-shm) file mmap'd into every accessing
+// process and relies on faithful POSIX locking + fsync. FUSE-passthrough and
+// network filesystems provide neither reliably (while reporting success), so
+// concurrent WRITERS corrupt the database — the 2026-07-11/12 incidents, BOTH
+// via the old MTIX_ALLOW_UNSAFE_FS write override. That override is retired:
+// on an unsafe filesystem the store opens READ-ONLY (so recover/query/export
+// still work) and every WRITE is refused, with no way to override it.
+
+// preflightFilesystem classifies the database filesystem and reports whether
+// WRITES must be refused. On a positively-identified unsafe (FUSE/network)
+// filesystem it returns writeRefused=true (the store opens read-only). A safe FS
+// — or a classification error (fail open) — returns false (normal read+write in
+// WAL). It never blocks the OPEN itself; reads are always permitted.
+func preflightFilesystem(dbPath string, logger *slog.Logger) (writeRefused bool, fsType string) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -31,36 +39,37 @@ func preflightFilesystem(dbPath string, logger *slog.Logger) (safeMode bool, err
 	if derr != nil {
 		logger.Warn("filesystem-safety preflight: could not classify filesystem; proceeding in WAL mode",
 			"dir", dir, "error", derr)
-		return false, nil
+		return false, ""
 	}
 	if !class.unsafe() {
-		return false, nil
+		return false, fsType
 	}
-	if serr := filesystemSafetyError(dbPath, fsType, class, allowUnsafeFS()); serr != nil {
-		return false, serr
-	}
-	logger.Warn("mtix database is on an UNSAFE filesystem; opening in non-WAL safe mode ("+
-		allowUnsafeFSEnv+" set). Corruption risk remains — prefer a local disk or the sync hub.",
+	logger.Warn("mtix database is on an UNSAFE filesystem — opening READ-ONLY; WRITES are refused. "+
+		"Move .mtix to a local disk, or give each machine its own local .mtix and sync via the hub.",
 		"fs", fsType, "class", class.String(), "path", dbPath)
-	return true, nil
+	if _, set := os.LookupEnv(allowUnsafeFSEnv); set {
+		logger.Warn("deprecated: " + allowUnsafeFSEnv + " no longer enables writes on an unsafe " +
+			"filesystem (retired after two override-write corruptions) — it is ignored.")
+	}
+	return true, fsType
 }
 
-// Filesystem-safety preflight (MTIX-54). SQLite WAL mode keeps its wal-index in
-// a shared-memory (-shm) file mmap'd into every accessing process, and relies on
-// faithful POSIX byte-range locking + fsync. FUSE-passthrough and network
-// filesystems do not provide true cross-process shared memory or reliable
-// locking (while often reporting success), so concurrent processes run on
-// divergent wal-index views and corrupt the database — the 2026-07-11 incident.
-// The preflight refuses to open on a positively-identified unsafe filesystem
-// unless the operator opts in, in which case the store opens in a non-WAL mode.
-
-// allowUnsafeFSEnv opts into opening on an unsafe filesystem (in non-WAL safe
-// mode). Deliberately explicit and per-operator — never inferred.
+// allowUnsafeFSEnv is the RETIRED write override. Recognized only to emit a
+// deprecation warning; it never enables a write on an unsafe filesystem (MTIX-58).
 const allowUnsafeFSEnv = "MTIX_ALLOW_UNSAFE_FS"
 
-// errUnsafeFilesystem is the sentinel wrapped by the refuse-to-open error, so
+// errUnsafeFilesystem is the sentinel wrapped by the write-refusal error, so
 // callers/tests can match it without parsing the message.
-var errUnsafeFilesystem = errors.New("mtix database is on a filesystem unsafe for SQLite WAL")
+var errUnsafeFilesystem = errors.New("writes refused: mtix database is on a filesystem unsafe for SQLite")
+
+// writeRefusedError is returned for every write attempt on an unsafe filesystem.
+func writeRefusedError(dbPath, fsType string) error {
+	return fmt.Errorf("%w (%q, at %s) — SQLite cannot write there safely; WAL shared-memory and "+
+		"POSIX locking are unreliable on FUSE/network mounts, which risks corruption. Reads, "+
+		"'mtix recover', and 'mtix export' still work; to WRITE, move .mtix to a local disk or use "+
+		"the sync hub. No environment override enables writes here",
+		errUnsafeFilesystem, fsType, dbPath)
+}
 
 // fsClass categorizes the filesystem holding the database.
 type fsClass int
@@ -159,25 +168,6 @@ func linuxFSMagicName(magic int64) string {
 	}
 }
 
-// allowUnsafeFS reports whether the operator has opted into opening on an unsafe
-// filesystem (non-WAL safe mode).
-func allowUnsafeFS() bool {
-	v := strings.TrimSpace(os.Getenv(allowUnsafeFSEnv))
-	return v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
-}
-
-// filesystemSafetyError returns an actionable, wrapped error when the database
-// filesystem is unsafe for WAL and the operator has not opted in; nil otherwise.
-func filesystemSafetyError(dbPath, fsType string, class fsClass, allowUnsafe bool) error {
-	if !class.unsafe() || allowUnsafe {
-		return nil
-	}
-	return fmt.Errorf(
-		"%w: %s is on a %s filesystem (%q). SQLite cannot guarantee integrity there — "+
-			"WAL shared-memory and POSIX locking are unreliable on FUSE/network mounts, "+
-			"which risks database corruption. Move .mtix onto a local disk; for a "+
-			"sandboxed or multi-agent setup, give each machine its own local .mtix and "+
-			"share state via the sync hub. To override at your own risk (opens in a "+
-			"slower, non-WAL single-writer mode), set %s=1",
-		errUnsafeFilesystem, dbPath, class, fsType, allowUnsafeFSEnv)
-}
+// (allowUnsafeFS and filesystemSafetyError were retired in MTIX-58: the write
+// override is gone, so there is no "allow" path and no open-refusal error —
+// unsafe filesystems open read-only and refuse writes via writeRefusedError.)

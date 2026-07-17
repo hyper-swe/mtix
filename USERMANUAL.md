@@ -1745,22 +1745,30 @@ Terminal states (`done`, `cancelled`, `invalidated`) block child creation. Reope
 
 ### Filesystem requirements (local disk only)
 
-**`.mtix` must live on a real local disk.** mtix's SQLite store uses WAL mode,
-which requires true shared-memory (the `-shm` wal-index) and faithful POSIX file
-locking across every process that opens the database. **FUSE-passthrough and
-network filesystems do not provide these** — even when they report success — so
-concurrent access from multiple processes/agents can silently corrupt the
-database. This is the failure mode behind the 2026-07-11 incident.
+**`.mtix` must live on a real local disk to be WRITABLE.** mtix's SQLite store
+uses WAL mode, which requires true shared-memory (the `-shm` wal-index) and
+faithful POSIX file locking across every process that writes the database.
+**FUSE-passthrough and network filesystems do not provide these** — even when
+they report success — so concurrent *writes* from multiple processes/agents can
+silently corrupt the database. This was the failure mode behind the 2026-07-11
+and 2026-07-12 incidents (both were writes on a FUSE mount).
 
-At startup mtix classifies the filesystem holding `.mtix` and **refuses to open**
-on a positively-identified FUSE or network mount (NFS, SMB/CIFS, 9p, sshfs,
-rclone, gocryptfs, s3fs, …):
+At startup mtix classifies the filesystem holding `.mtix`. On a
+positively-identified FUSE or network mount (NFS, SMB/CIFS, 9p, sshfs, rclone,
+gocryptfs, s3fs, …) it **opens READ-ONLY and refuses every write — with no
+override.** Reads, `mtix recover`, and `mtix export` still work; a write returns:
 
 ```
-error: mtix database is on a filesystem unsafe for SQLite WAL: …/.mtix/data/mtix.db
-is on a FUSE filesystem ("macfuse"). … Move .mtix onto a local disk … To override
-at your own risk … set MTIX_ALLOW_UNSAFE_FS=1
+error: writes refused: mtix database is on a filesystem unsafe for SQLite
+("macfuse", at …/.mtix/data/mtix.db) — SQLite cannot write there safely …
+to WRITE, move .mtix to a local disk or use the sync hub. No environment
+override enables writes here
 ```
+
+A warning that could be overridden turned out to be a scheduled incident (both
+corruptions were `MTIX_ALLOW_UNSAFE_FS` override writes), so **the write override
+is retired**: `MTIX_ALLOW_UNSAFE_FS` is now ignored (with a deprecation warning)
+and never enables a write.
 
 What to do:
 
@@ -1770,11 +1778,8 @@ What to do:
 - **Sandboxed multi-agent setup?** Give **each machine/sandbox its own local
   `.mtix`** and share state through the sync hub (`mtix sync`, FR-18). That is the
   supported multi-writer topology — not one SQLite file on a shared folder.
-- **Must use such a mount anyway?** Set `MTIX_ALLOW_UNSAFE_FS=1` to override. mtix
-  then opens in a **non-WAL, rollback-journal mode** (no `-shm`), which removes
-  the specific shared-memory corruption vector at the cost of WAL's concurrency —
-  keep access single-process. Corruption risk from unreliable locking still
-  remains; a local disk is strongly preferred.
+- **Need the data off an unsafe mount?** It's still readable: `mtix recover` /
+  `mtix export` open read-only, so you can salvage or migrate it to a local disk.
 
 ### Disk full and corruption recovery
 

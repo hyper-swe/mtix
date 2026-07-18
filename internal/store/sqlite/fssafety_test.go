@@ -89,31 +89,14 @@ func TestLinuxFSMagicName(t *testing.T) {
 	assert.False(t, classifyFSName("").unsafe())
 }
 
-func TestFilesystemSafetyError(t *testing.T) {
-	// Safe FS: never an error, regardless of the allow flag.
-	require.NoError(t, filesystemSafetyError("/x/.mtix/data/mtix.db", "apfs", fsLocal, false))
-	require.NoError(t, filesystemSafetyError("/x/.mtix/data/mtix.db", "apfs", fsLocal, true))
-
-	// Unsafe FS, not allowed: a descriptive, wrapped error.
-	err := filesystemSafetyError("/x/.mtix/data/mtix.db", "macfuse", fsFuse, false)
+// TestWriteRefusedError: the write-refusal error wraps the sentinel, names the
+// filesystem, and makes clear no override enables writes (MTIX-58).
+func TestWriteRefusedError(t *testing.T) {
+	err := writeRefusedError("/x/.mtix/data/mtix.db", "macfuse")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, errUnsafeFilesystem)
 	assert.Contains(t, err.Error(), "macfuse", "names the filesystem type")
-	assert.Contains(t, err.Error(), allowUnsafeFSEnv, "tells the operator how to override")
-
-	// Unsafe FS, explicitly allowed: no error (opens in safe mode).
-	require.NoError(t, filesystemSafetyError("/x/.mtix/data/mtix.db", "macfuse", fsFuse, true))
-}
-
-func TestAllowUnsafeFS(t *testing.T) {
-	t.Setenv(allowUnsafeFSEnv, "")
-	assert.False(t, allowUnsafeFS())
-	for _, v := range []string{"1", "true", "TRUE", "yes"} {
-		t.Setenv(allowUnsafeFSEnv, v)
-		assert.True(t, allowUnsafeFS(), "%q enables override", v)
-	}
-	t.Setenv(allowUnsafeFSEnv, "0")
-	assert.False(t, allowUnsafeFS())
+	assert.Contains(t, err.Error(), "No environment override", "makes clear there is no write override")
 }
 
 // sanity: the errors package is used (keeps import if assertions change)

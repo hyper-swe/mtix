@@ -46,6 +46,13 @@ type Store struct {
 	failMu       sync.Mutex // guards failCause
 	failCause    error      // first fatal storage error; latches fail-stop
 
+	// Filesystem-safety posture (MTIX-58). On an unsafe (FUSE/network) FS the
+	// store opens READ-ONLY: writeRefused makes every write return
+	// writeRefusedError, and writeDB/readDB share one read-only connection.
+	writeRefused bool
+	fsType       string
+	dbPath       string
+
 	// onCommit callbacks run, in registration order, after every successfully
 	// committed write transaction. It is the choke point that lets long-running
 	// interfaces (MCP server, HTTP serve) keep the tasks.json mirror current per
@@ -93,13 +100,10 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 	dbPath = resolveDBPath(dbPath)
 	ctx := context.Background()
 
-	// Filesystem-safety preflight (MTIX-54): refuse to open on a FUSE/network
-	// filesystem where SQLite WAL corrupts, unless the operator opts into a
-	// non-WAL safe mode. Runs before any connection is opened.
-	safeMode, fsErr := preflightFilesystem(dbPath, logger)
-	if fsErr != nil {
-		return nil, fsErr
-	}
+	// Filesystem-safety preflight (MTIX-54/58): on a FUSE/network filesystem
+	// where SQLite WAL corrupts, open READ-ONLY and refuse every write — no
+	// override. Reads / recover / export still work. Runs before any connection.
+	writeRefused, fsType := preflightFilesystem(dbPath, logger)
 
 	if integrityChecksSkipped() {
 		// Recovery escape hatch: verify/backup/export must be able to
@@ -111,7 +115,35 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 		return nil, err
 	}
 
-	writeDB, err := openDB(ctx, dbPath, true, safeMode)
+	if writeRefused {
+		// Read-only store on an unsafe filesystem (MTIX-58): reads/recover/query
+		// work; every write returns writeRefusedError (via preflightWrite). One
+		// shared read-only connection serves both roles. No init — init writes
+		// schema, and creating a store on an unsafe FS is correctly impossible.
+		roDB, err := openDB(ctx, dbPath, false, true)
+		if err != nil {
+			return nil, explainOpenError(fmt.Errorf("open read-only db %s: %w", dbPath, err), dbPath)
+		}
+		if checkErr := integrityCheckOnOpen(ctx, roDB, dbPath); checkErr != nil {
+			if closeErr := roDB.Close(); closeErr != nil {
+				logger.Error("failed to close read-only db after integrity failure", slog.Any("error", closeErr))
+			}
+			return nil, checkErr
+		}
+		return &Store{
+			writeDB:      roDB,
+			readDB:       roDB,
+			logger:       logger,
+			clock:        func() time.Time { return time.Now().UTC() },
+			dbDir:        filepath.Dir(dbPath),
+			minFreeBytes: minFreeBytes(),
+			writeRefused: true,
+			fsType:       fsType,
+			dbPath:       dbPath,
+		}, nil
+	}
+
+	writeDB, err := openDB(ctx, dbPath, true, false)
 	if err != nil {
 		return nil, explainOpenError(fmt.Errorf("open write db %s: %w", dbPath, err), dbPath)
 	}
@@ -124,7 +156,7 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 		return nil, checkErr
 	}
 
-	readDB, err := openDB(ctx, dbPath, false, safeMode)
+	readDB, err := openDB(ctx, dbPath, false, false)
 	if err != nil {
 		if closeErr := writeDB.Close(); closeErr != nil {
 			logger.Error("failed to close write db after read db open failure",
@@ -140,6 +172,8 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 		clock:        func() time.Time { return time.Now().UTC() },
 		dbDir:        filepath.Dir(dbPath),
 		minFreeBytes: minFreeBytes(),
+		dbPath:       dbPath,
+		fsType:       fsType,
 	}
 
 	if err := s.init(context.Background()); err != nil {
@@ -158,9 +192,16 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 // ensuring busy_timeout is always applied (BEGIN DEFERRED bypasses it on
 // lock upgrade). Both read and write connections set busy_timeout = 5000ms
 // to prevent immediate failures during concurrent access.
-func openDB(ctx context.Context, path string, isWriter, safeMode bool) (*sql.DB, error) {
+func openDB(ctx context.Context, path string, isWriter, readOnly bool) (*sql.DB, error) {
 	dsn := path
-	if isWriter {
+	switch {
+	case readOnly:
+		// MTIX-58: read-only open for the unsafe-FS store. query_only(1) is applied
+		// to EVERY pooled connection by modernc, so any write on this handle is
+		// rejected ("attempt to write a readonly database") — the belt-and-suspenders
+		// under preflightWrite's refusal, covering direct writeDB.Exec paths too.
+		dsn = path + "?_pragma=query_only(1)"
+	case isWriter:
 		dsn = path + "?_txlock=immediate"
 	}
 
@@ -178,38 +219,31 @@ func openDB(ctx context.Context, path string, isWriter, safeMode bool) (*sql.DB,
 		{"PRAGMA busy_timeout = 5000", "set busy_timeout"},
 	}
 
-	if isWriter {
+	if readOnly {
+		// Single connection keeps the ExecContext pragmas consistent; query_only
+		// (set in the DSN, above) already blocks writes on every connection.
+		db.SetMaxOpenConns(1)
+	}
+
+	if isWriter && !readOnly {
 		// Serialized writes — one connection (NFR-2.1).
 		db.SetMaxOpenConns(1)
 
-		if safeMode {
-			// Unsafe filesystem, operator-overridden (MTIX-54): use a rollback
-			// journal, NOT WAL. This removes the -shm shared-memory dependency
-			// that FUSE/network mounts cannot honor — the corruption vector. It
-			// trades WAL's concurrent-reader throughput for integrity. journal_mode
-			// is set EXPLICITLY to DELETE to convert away from any persisted WAL
-			// header the file may already carry.
-			pragmas = append(pragmas,
-				pragma{"PRAGMA journal_mode = DELETE", "use rollback journal (unsafe-FS safe mode)"},
-				pragma{"PRAGMA synchronous = FULL", "set synchronous"},
-			)
-		} else {
-			pragmas = append(pragmas,
-				// WAL mode for concurrent readers (NFR-2.1).
-				pragma{"PRAGMA journal_mode = WAL", "enable WAL"},
-				// synchronous = FULL, set EXPLICITLY per NFR-2.8 / ADR-001 §9.
-				// modernc.org/sqlite happens to default to FULL, but the
-				// durability posture of the canonical store must never depend
-				// on a driver default. FULL fsyncs the WAL on every commit;
-				// NORMAL would trade that for speed and may lose the most
-				// recent commits on power failure.
-				pragma{"PRAGMA synchronous = FULL", "set synchronous"},
-				// Explicit autocheckpoint threshold (the SQLite default,
-				// pinned per NFR-2.8 so backfill volume — and therefore the
-				// free-space pre-flight floor — is a known quantity).
-				pragma{"PRAGMA wal_autocheckpoint = 1000", "set wal_autocheckpoint"},
-			)
-		}
+		pragmas = append(pragmas,
+			// WAL mode for concurrent readers (NFR-2.1).
+			pragma{"PRAGMA journal_mode = WAL", "enable WAL"},
+			// synchronous = FULL, set EXPLICITLY per NFR-2.8 / ADR-001 §9.
+			// modernc.org/sqlite happens to default to FULL, but the
+			// durability posture of the canonical store must never depend
+			// on a driver default. FULL fsyncs the WAL on every commit;
+			// NORMAL would trade that for speed and may lose the most
+			// recent commits on power failure.
+			pragma{"PRAGMA synchronous = FULL", "set synchronous"},
+			// Explicit autocheckpoint threshold (the SQLite default,
+			// pinned per NFR-2.8 so backfill volume — and therefore the
+			// free-space pre-flight floor — is a known quantity).
+			pragma{"PRAGMA wal_autocheckpoint = 1000", "set wal_autocheckpoint"},
+		)
 	}
 
 	for _, p := range pragmas {
@@ -401,9 +435,13 @@ func (s *Store) Close() error {
 		firstErr = fmt.Errorf("close write db: %w", err)
 	}
 
-	if err := s.readDB.Close(); err != nil {
-		if firstErr == nil {
-			firstErr = fmt.Errorf("close read db: %w", err)
+	// A read-only store (MTIX-58) shares one connection for both roles; don't
+	// double-close it.
+	if s.readDB != s.writeDB {
+		if err := s.readDB.Close(); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("close read db: %w", err)
+			}
 		}
 	}
 

@@ -11,9 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.5.0-beta] - 2026-07-20
+
+The agent-to-agent coordination release: the FR-19 hooks/inbox foundation and FR-20 origin-independent dispatch together let agents wake and hand off work with no human message-bus — plus corruption hardening for multi-agent filesystems, multi-project support, cloud-Postgres compatibility, and two security fixes.
 
 ### Added
+- **FR-19 event hooks & agent notifications (MTIX-47):** the foundation the coordination fabric is built on. A per-agent **inbox** derived from the event journal (no separate mailbox), addressed comments (`mtix comment --to <agent>`), and a **hooks engine** (`.mtix/hooks.yaml`) whose matcher fires delivery adapters — `inbox`, `webhook`, `append-file`, and `exec` — on journaled events. Includes MCP inbox tools, the `mtix hooks list|fire|log|trust` CLI, and loop prevention (via-hook guard + per-node rate limit). Kills the human-as-message-bus between agents.
 - **Origin-independent hook dispatch (FR-20 / MTIX-56.1):** hooks now fire for a journaled event based only on the event being in the journal and the hook not yet having fired for it on this host — never on who wrote the event or how it arrived (local CLI, MCP, sync-arrival from the hub, another process). A durable per-`(hook, event)` **dispatch ledger** replaces the local/synced dual-cursor split: exactly-once per host across restarts, concurrent triggers and out-of-order arrival (the same ledger pattern as the MTIX-55 inbox ack fix). Crash recovery is at-least-once via a claim lease — a trigger that dies between claim and fire is re-fired, never lost; a fire that ran and failed is recorded and never auto-retried. Wake `exec` scripts should be idempotent (check the inbox before launching).
 - Fresh clones and first pulls into an empty store initialize the dispatch floor at the journal tail, so bootstrapped history never fires a hook backlog storm.
 - **`mtix daemon` (MTIX-56.2/56.3):** the host's first-class event dispatcher — pull-then-dispatch every 5s; fully functional with no hub (local-tail mode for cross-process writes); `mtix daemon install|status|start|stop|uninstall` registers it as an OS service (launchd / systemd --user / Task Scheduler) with boot-start and crash-restart, one service per project.
@@ -21,12 +24,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Prompt-terminated delivery (MTIX-56.8):** `mtix inbox --format prompt|context` emits agent-ready text (events + ack/reply contract; empty inbox → empty output, the wake-script idempotency check); reference wake script at `examples/hooks/wake-agent.sh` launches any harness CLI with the inbox as the prompt.
 - **Channel adapter (MTIX-56.7, experimental):** `mtix mcp --channel-agent <id>` also acts as a Claude Code channel (research preview) — pushes the agent's new inbox events into the running session, with ack/reply through the same server's tools, and holds an mtix presence session while serving. Requires launching Claude Code with `--channels` (or the development flag during the preview).
 - Three-agent scenario regression test (planner→developer→tester) and the FR-20 cross-host release-gate e2e (exec wake exactly-once, restart-safe, crash-injection re-fire) (MTIX-56.5).
+- **Multi-project in one database (MTIX-37, FR-MULTI-PROJECT):** `--project` / `--all-projects` scope on query commands, `mtix projects`, project-aware create defaulting to the primary prefix, a project argument on the MCP query tools, and a multi-project web UI (scope selector, project-aware create, NodeID badges).
+- **Cloud Postgres out of the box (MTIX-48):** Neon and Supabase work as sync hubs without special configuration; connect-retry on transient errors; provider setup docs.
+- **`mtix unblock <id>` recovery command (MTIX-44):** recompute a node's blocked state on demand, with blocked-lifecycle docs.
 
 ### Changed
 - **Safe install/upgrade path (MTIX-56.11):** new `make install` (unlink-then-copy via `install(1)`, `PREFIX` overridable) and documented upgrade commands for the binary-download path — on macOS an in-place `cp` over an existing binary invalidates its cached code signature and every run is killed (`Killed: 9`); with the daemon installed as a service this becomes a crash loop. `mtix daemon install` output and the manual now carry the upgrade steps.
 - **Exec hooks are detached spawns (MTIX-56.9):** dispatch returns at spawn and never blocks a CLI command or agent tool call. "Delivered" now means *spawned*; a script's non-zero exit is the script's own to report (best-effort logged), the inbox ack is the success signal, and `timeout-seconds` is enforced best-effort by the spawning process. Spawn failures stay terminal errors, never auto-retried.
 - **Host-local exec dispatch policy (MTIX-56.10):** `mtix hooks exec-dispatch any|daemon|off` — `daemon` routes every wake through the supervised `mtix daemon` (CLI/server triggers defer entirely); `off` makes a host never launch anything while other adapters still deliver. Stored beside the trust hash, never synced.
 - **`include-synced` is deprecated and now a no-op** (accepted for config compat). This is a behavior change: hooks that previously fired only on local events now also fire on sync-arrived events, deduped per host by the ledger. Fleet-level control is hook **placement**: a hook configured on N hosts fires on N hosts, once each — put a wake hook only on the host that should run it. `mtix sync daemon --dispatch-hooks` now dispatches events of every origin (no more "designated synced dispatcher").
+- **Unsafe filesystems now hard-refuse writes (MTIX-54/57/58).** On a positively-identified unsafe (FUSE/network) filesystem, or when cross-context FUSE access is detected (`.fuse_hidden` orphans present even if the local FS looks safe), the store opens **read-only** — reads, `mtix recover`, and `mtix export` still work, but every write is refused at a single choke point. Both recurring field corruptions came through the old write override, so `MTIX_ALLOW_UNSAFE_FS` is **retired** (ignored with a deprecation warning). See Migration.
+
+### Security
+- **Exec trust now pins the wake-script content, not just `hooks.yaml` (MTIX-49).** The content-hash trust folded in only `hooks.yaml`, so editing a script an exec hook runs (approve, then swap the payload) executed new code with no re-consent. `mtix hooks trust` now pins the content of every local file an exec command runs; editing `hooks.yaml` *or* any referenced wake-script voids trust until re-run. Closes the approve-then-swap escalation.
+- **`mtix plugin install` no longer writes through dangling symlinks — CWE-59 (MTIX-29).** The write-if-absent install paths used `os.Stat`, which reports a dangling symlink as absent, so a committed symlink in a shared repo could redirect a plugin-install write to an attacker-chosen path outside the project. The absence check now uses `os.Lstat`, so any symlink counts as present and the guard skips it.
+- **Unsafe-filesystem write refusal (MTIX-58)** removes the corruption class that a shared/FUSE `.mtix` created; the override that enabled it is gone (see Changed).
+
+### Fixed
+- **Sticky `blocked` status in team setups (MTIX-44):** sync-applied status changes skipped the derived-state recompute (`unblockDependents`), so a node stayed `blocked` after its dependency closed on another machine. Sync-apply now recomputes derived state.
+- **Multi-hyphen project prefixes corrupted on clone (MTIX-39):** the sync emit path mis-parsed a multi-hyphen prefix, corrupting the project column. Derivation + grammar fixed; covered by a cloud-contract case (MTIX-41).
+- **Cloud-Postgres contract gate was a false-green (MTIX-42):** provider tests skipped silently when the Supabase/Neon DSN secrets were unset. The gate now runs against real cloud Postgres.
+
+### Migration
+- **Shared-filesystem `.mtix` users must move to one local `.mtix` per machine + a sync hub.** With `MTIX_ALLOW_UNSAFE_FS` retired (MTIX-58), a `.mtix` on a FUSE/network mount now opens read-only and refuses writes — the setup that caused the field corruptions. Migrate each context to its own local store and replicate through the Postgres hub (this is exactly the FR-20 hub-per-host topology). Reads and `mtix recover` still work on the old store to get data out.
+- **Re-run `mtix hooks trust` after editing any wake-script (MTIX-49),** not just after editing `hooks.yaml` — exec is now skipped until the new script content is trusted.
+- **Wake `exec` hooks are now detached and their exit codes are no longer in `mtix hooks log` (MTIX-56.9);** scripts should self-report failures. **Hooks now fire on sync-arrived events (MTIX-56.4 `include-synced` no-op);** place a wake hook only on the host that should run it.
 
 ---
 

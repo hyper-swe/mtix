@@ -293,7 +293,13 @@ func AllDocFiles() []DocFile {
 	return result
 }
 
+// fileExists reports whether anything exists at path — using os.Lstat, which
+// does NOT follow symlinks. A dangling symlink (os.Stat would miss it) therefore
+// counts as existing, so the write-if-absent install paths skip it instead of
+// creating a file THROUGH the symlink at an attacker-chosen target (MTIX-29,
+// CWE-59). An install target should never be a symlink; treating any symlink as
+// "already there" is both safe and correct for write-if-absent.
 func fileExists(path string) bool {
-	_, err := os.Stat(path)
+	_, err := os.Lstat(path)
 	return err == nil
 }

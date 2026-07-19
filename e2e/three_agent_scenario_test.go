@@ -96,14 +96,19 @@ func TestScenario_PlannerDeveloperTester_HandoffChain(t *testing.T) {
 	host := newFakeCLI(t, "planner", "cccccccccccccccc")
 	ctx := context.Background()
 
-	// Wake exec: appends the event JSON to a per-agent record file — the
-	// observable stand-in for "cold-start the agent's harness CLI".
+	// Wake exec: appends the event JSON to a per-hook record file — the
+	// observable stand-in for "cold-start the agent's harness CLI". The record
+	// path is derived from the firing hook ($MTIX_HOOK_ORIGIN) and baked into
+	// the script, NOT passed as a command argument: exec trust (MTIX-49) folds
+	// any command element that resolves to a local file into the trust hash, so
+	// a mutable file ARGUMENT would void trust the moment the first wake writes
+	// to it. Real wake scripts take the agent id as their arg, never a file.
 	recDir := t.TempDir()
-	devWakes := filepath.Join(recDir, "developer.wakes")
-	testerWakes := filepath.Join(recDir, "tester.wakes")
+	devWakes := filepath.Join(recDir, "wake-developer.wakes")
+	testerWakes := filepath.Join(recDir, "wake-tester.wakes")
 	script := filepath.Join(recDir, "wake.sh")
 	require.NoError(t, os.WriteFile(script,
-		[]byte("#!/bin/sh\nprintf '%s\\n' \"$MTIX_EVENT\" >> \"$1\"\n"), 0o700)) //nolint:gosec
+		[]byte("#!/bin/sh\nprintf '%s\\n' \"$MTIX_EVENT\" >> \""+recDir+"/$MTIX_HOOK_ORIGIN.wakes\"\n"), 0o700)) //nolint:gosec
 
 	require.NoError(t, os.WriteFile(filepath.Join(host.mtixDir, "hooks.yaml"), []byte(fmt.Sprintf(`
 hooks:
@@ -113,7 +118,7 @@ hooks:
       to-agent: developer
     deliver: [exec]
     exec:
-      command: [%q, %q]
+      command: [%q]
       timeout-seconds: 10
   - name: wake-tester
     match:
@@ -121,9 +126,9 @@ hooks:
       to-agent: tester
     deliver: [exec]
     exec:
-      command: [%q, %q]
+      command: [%q]
       timeout-seconds: 10
-`, script, devWakes, script, testerWakes)), 0o600))
+`, script, script)), 0o600))
 	// The operator reviews and trusts the config on this host (MTIX-49).
 	require.NoError(t, hooks.SaveTrust(host.mtixDir, hooks.ConfigHash(host.mtixDir)))
 

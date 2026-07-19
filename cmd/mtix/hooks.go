@@ -94,7 +94,14 @@ func newHooksTrustCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "trust",
 		Short: "Trust the current .mtix/hooks.yaml to run exec hooks (content-hash pinned, local)",
-		Args:  cobra.NoArgs,
+		Long: `Record the current .mtix/hooks.yaml as trusted to run its exec hooks.
+
+The trust pin covers hooks.yaml AND the content of every local script an
+exec hook runs (MTIX-49). Editing either the config or a wake-script voids
+trust — exec is skipped until you review and re-run 'mtix hooks trust' —
+so an approve-then-swap-the-payload change cannot ride a stale approval.
+The pin is local, gitignored, and never synced.`,
+		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runHooksTrust(status)
 		},

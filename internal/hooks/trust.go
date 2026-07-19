@@ -17,16 +17,59 @@ import (
 // or committed config can never carry its own approval (FR-19 §3 security).
 const trustFileName = "hooks.trust"
 
-// ConfigHash returns the SHA-256 (hex) of the raw hooks.yaml bytes at mtixDir,
-// or "" when the file is absent. Trust binds to the bytes, not the path: any
-// edit — local or arriving via sync — changes the hash and voids trust.
+// ConfigHash returns the SHA-256 (hex) of hooks.yaml AND the content of every
+// local file an exec hook runs, at mtixDir; "" when hooks.yaml is absent. Trust
+// binds to the bytes of BOTH the config and the code it invokes (MTIX-49): any
+// edit — to hooks.yaml or to a referenced wake-script, local or arriving via
+// sync — changes the hash and voids trust. This closes the approve-then-swap-
+// the-payload escalation where the pin covered the config but not the script.
 func ConfigHash(mtixDir string) string {
 	data, err := os.ReadFile(filepath.Join(mtixDir, "hooks.yaml"))
 	if err != nil {
 		return ""
 	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	h := sha256.New()
+	h.Write(data)
+
+	// Fold in the content of each exec command element that resolves to a local
+	// regular file (the wake-script), in config + command order for determinism.
+	// exec runs with cwd = the project root (the parent of .mtix), so relative
+	// commands resolve there; PATH binaries / flags are not files and are skipped.
+	cfg, _ := Load(mtixDir)
+	projectRoot := filepath.Dir(mtixDir)
+	for _, hook := range cfg.Hooks {
+		if hook.Exec == nil {
+			continue
+		}
+		for _, arg := range hook.Exec.Command {
+			if content, ok := readTrustedScript(projectRoot, arg); ok {
+				h.Write([]byte{0})
+				h.Write([]byte(arg))
+				h.Write([]byte{0})
+				h.Write(content)
+			}
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// readTrustedScript reads a command element's content if it resolves to a local
+// regular file (relative to root, or absolute); ok=false for PATH binaries,
+// flags, or missing paths.
+func readTrustedScript(root, arg string) ([]byte, bool) {
+	p := arg
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(root, arg)
+	}
+	info, err := os.Stat(p)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, false
+	}
+	data, err := os.ReadFile(p) //nolint:gosec // hashing an operator-controlled hook script to pin its trust
+	if err != nil {
+		return nil, false
+	}
+	return data, true
 }
 
 // TrustedHash returns the hooks.yaml hash the local operator has trusted, or "".

@@ -42,6 +42,19 @@ func preflightFilesystem(dbPath string, logger *slog.Logger) (writeRefused bool,
 		return false, ""
 	}
 	if !class.unsafe() {
+		// MTIX-57: the FS TYPE reports local, but libfuse orphans in the DB dir
+		// prove another execution context is mounting this directory over FUSE —
+		// the host-side blind spot behind the recurring corruption. Refuse writes
+		// on that signal too, even though statfs said local.
+		if n, detected := detectCrossContextFUSE(dir); detected {
+			logger.Warn("mtix database directory shows CROSS-CONTEXT FUSE access "+
+				"(.fuse_hidden orphans) — opening READ-ONLY; WRITES are refused. Another "+
+				"machine/sandbox is mounting this .mtix over FUSE. Give each context its own "+
+				"local .mtix and sync via the hub; if you have already moved off the shared "+
+				"mount, remove the stale .fuse_hidden files in the DB directory.",
+				"orphans", n, "dir", dir)
+			return true, fmt.Sprintf("cross-context FUSE access (%d orphaned .fuse_hidden files)", n)
+		}
 		return false, fsType
 	}
 	logger.Warn("mtix database is on an UNSAFE filesystem — opening READ-ONLY; WRITES are refused. "+
@@ -52,6 +65,20 @@ func preflightFilesystem(dbPath string, logger *slog.Logger) (writeRefused bool,
 			"filesystem (retired after two override-write corruptions) — it is ignored.")
 	}
 	return true, fsType
+}
+
+// detectCrossContextFUSE reports the number of libfuse orphans (.fuse_hidden*)
+// in the database directory and whether any exist (MTIX-57). libfuse creates
+// these only when it unlinks a still-open file, so their presence is proof that
+// another execution context is mounting this directory over FUSE — even when
+// statfs on THIS host reports a local filesystem. A glob error yields (0,false)
+// (fail open — never block on a scan failure).
+func detectCrossContextFUSE(dbDir string) (int, bool) {
+	matches, err := filepath.Glob(filepath.Join(dbDir, ".fuse_hidden*"))
+	if err != nil {
+		return 0, false
+	}
+	return len(matches), len(matches) > 0
 }
 
 // allowUnsafeFSEnv is the RETIRED write override. Recognized only to emit a

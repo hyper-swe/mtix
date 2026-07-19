@@ -1765,6 +1765,13 @@ to WRITE, move .mtix to a local disk or use the sync hub. No environment
 override enables writes here
 ```
 
+mtix also catches the **host-side blind spot**: a directory can report *local* to
+the host while a sandbox mounts it over FUSE. libfuse leaves `.fuse_hidden*`
+orphans in the directory when it unlinks an open file, so mtix treats their
+presence as cross-context FUSE access and **refuses writes too** — even though
+the filesystem type looks local. If you have genuinely moved off a shared mount,
+remove the stale `.mtix/data/.fuse_hidden*` files.
+
 A warning that could be overridden turned out to be a scheduled incident (both
 corruptions were `MTIX_ALLOW_UNSAFE_FS` override writes), so **the write override
 is retired**: `MTIX_ALLOW_UNSAFE_FS` is now ignored (with a deprecation warning)

@@ -466,6 +466,15 @@ func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error 
 			return fmt.Errorf("apply create_node %s: recalc progress: %w", e.EventID, err)
 		}
 	}
+
+	// MTIX-46: backfill content_hash for the synced-created node. The INSERT
+	// above does not set content_hash (local CreateNode computes it separately),
+	// so without this a synced-created node carries a NULL hash — breaking export
+	// and import-merge identity checks (FR-7.8). Deterministic over content, so it
+	// matches the emitting replica's hash.
+	if err := recomputeContentHashRow(ctx, tx, e.NodeID); err != nil {
+		return fmt.Errorf("apply create_node %s: %w", e.EventID, err)
+	}
 	return nil
 }
 
@@ -544,8 +553,28 @@ func applyUpdateField(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error
 	// SQL is constructed from a whitelisted column name; the value is
 	// always a bound parameter.
 	stmt := "UPDATE nodes SET " + p.FieldName + " = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL"
-	_, err = tx.ExecContext(ctx, stmt, value, now, id)
-	return err
+	if _, err = tx.ExecContext(ctx, stmt, value, now, id); err != nil {
+		return err
+	}
+	// MTIX-46: maintain content_hash when a content-relevant field changes, so a
+	// synced edit converges on the same hash the emitting replica stored. A
+	// state-only field (status/priority/assignee/agent_state) leaves content
+	// unchanged, so skip the recompute.
+	if contentHashFields[p.FieldName] {
+		return recomputeContentHashRow(ctx, tx, id)
+	}
+	return nil
+}
+
+// contentHashFields is the subset of allowedUpdateFields that feed
+// ComputeContentHash (FR-3.7). A change to any of these must recompute
+// content_hash on apply (MTIX-46).
+var contentHashFields = map[string]bool{
+	"title":       true,
+	"description": true,
+	"prompt":      true,
+	"acceptance":  true,
+	"labels":      true,
 }
 
 // decodeNewValueForColumn unmarshals the JSON-encoded new value into
@@ -845,11 +874,13 @@ func applySetAcceptance(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) err
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = tx.ExecContext(ctx,
+	if _, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET acceptance = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
 		p.AcceptanceText, now, id,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	return recomputeContentHashRow(ctx, tx, id)
 }
 
 func applySetPrompt(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
@@ -862,11 +893,54 @@ func applySetPrompt(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = tx.ExecContext(ctx,
+	if _, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET prompt = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
 		p.PromptText, now, id,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	return recomputeContentHashRow(ctx, tx, id)
+}
+
+// recomputeContentHashRow recomputes and stores content_hash from a node's
+// CURRENT (already-mutated) content fields. Sync-apply handlers call this after
+// a content mutation so a synced edit maintains content_hash exactly like local
+// UpdateNode does (FR-3.7) — the local write path recomputes it (node_update.go)
+// but the apply path historically skipped it, leaving a stale hash on synced
+// content edits and NULL on synced-created nodes (MTIX-46). ComputeContentHash
+// is deterministic over content, so a replica converges on the SAME content_hash
+// the emitting replica stored, keeping export bytes and import-merge identity
+// detection (FR-7.8) consistent across replicas. It does NOT touch updated_at
+// (the caller's mutation owns that) and is a no-op for a missing/soft-deleted
+// row (the mutation's WHERE guard matched no row, so there is nothing to hash).
+func recomputeContentHashRow(ctx context.Context, tx *sql.Tx, id string) error {
+	var title, description, prompt, acceptance, labelsJSON sql.NullString
+	err := tx.QueryRowContext(ctx,
+		`SELECT title, description, prompt, acceptance, labels
+		 FROM nodes WHERE id = ? AND deleted_at IS NULL`,
+		id,
+	).Scan(&title, &description, &prompt, &acceptance, &labelsJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("recompute content_hash: read content fields for %s: %w", id, err)
+	}
+
+	var labels []string
+	if labelsJSON.Valid && labelsJSON.String != "" {
+		if err := json.Unmarshal([]byte(labelsJSON.String), &labels); err != nil {
+			return fmt.Errorf("recompute content_hash: unmarshal labels for %s: %w", id, err)
+		}
+	}
+
+	hash := model.ComputeContentHash(title.String, description.String, prompt.String, acceptance.String, labels)
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE nodes SET content_hash = ? WHERE id = ?`, hash, id,
+	); err != nil {
+		return fmt.Errorf("recompute content_hash: store for %s: %w", id, err)
+	}
+	return nil
 }
 
 // resolveNodeRef returns the dot-path id of the live node an event acts on

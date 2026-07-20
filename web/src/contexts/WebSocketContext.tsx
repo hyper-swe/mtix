@@ -51,6 +51,9 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const wsRef = useRef<WebSocket | null>(null);
   const backoffRef = useRef(INITIAL_BACKOFF_MS);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Holds the latest connect() so scheduleReconnect can call it without a
+  // circular useCallback dependency (kept current by an effect below).
+  const connectRef = useRef<() => void>(() => {});
 
   // Subscriber maps: eventType -> Set of callbacks.
   const subscribersRef = useRef<Map<EventType, Set<EventCallback>>>(new Map());
@@ -93,6 +96,23 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const scheduleReconnect = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+    }
+
+    const delay = backoffRef.current;
+    backoffRef.current = Math.min(delay * 2, MAX_BACKOFF_MS);
+
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      // connectRef is kept current by the effect below; calling it here (rather
+      // than connect directly) breaks the connect<->scheduleReconnect cycle so
+      // each callback can declare its real dependencies.
+      connectRef.current();
+    }, delay);
+  }, []);
+
   const connect = useCallback(() => {
     // Clean up any existing connection.
     if (wsRef.current) {
@@ -131,20 +151,12 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       setStatus("reconnecting");
       scheduleReconnect();
     }
-  }, [dispatch]);
+  }, [dispatch, scheduleReconnect]);
 
-  const scheduleReconnect = useCallback(() => {
-    if (reconnectTimerRef.current) {
-      clearTimeout(reconnectTimerRef.current);
-    }
-
-    const delay = backoffRef.current;
-    backoffRef.current = Math.min(delay * 2, MAX_BACKOFF_MS);
-
-    reconnectTimerRef.current = setTimeout(() => {
-      reconnectTimerRef.current = null;
-      connect();
-    }, delay);
+  // Keep connectRef pointing at the latest connect so scheduleReconnect can
+  // call it without a circular dependency.
+  useEffect(() => {
+    connectRef.current = connect;
   }, [connect]);
 
   // Connect on mount, clean up on unmount.
@@ -165,10 +177,12 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
   const subscribe = useCallback(
     (eventType: EventType, callback: EventCallback): (() => void) => {
-      if (!subscribersRef.current.has(eventType)) {
-        subscribersRef.current.set(eventType, new Set());
+      let handlers = subscribersRef.current.get(eventType);
+      if (!handlers) {
+        handlers = new Set();
+        subscribersRef.current.set(eventType, handlers);
       }
-      subscribersRef.current.get(eventType)!.add(callback);
+      handlers.add(callback);
 
       return () => {
         subscribersRef.current.get(eventType)?.delete(callback);
@@ -195,6 +209,9 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 }
 
 /** Hook to access WebSocket context. Throws if used outside WebSocketProvider. */
+// Intentional Provider+hook colocation (idiomatic React context pattern);
+// react-refresh is dev-HMR-only. See NavigationContext for the full rationale.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useWebSocket(): WebSocketContextValue {
   const ctx = useContext(WebSocketContext);
   if (!ctx) {

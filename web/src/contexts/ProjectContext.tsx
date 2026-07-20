@@ -141,6 +141,9 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 }
 
 /** Access the project context. Throws if used outside ProjectProvider. */
+// Intentional Provider+hook colocation (idiomatic React context pattern);
+// react-refresh is dev-HMR-only. See NavigationContext for the full rationale.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useProject(): ProjectContextValue {
   const ctx = useContext(ProjectContext);
   if (!ctx) {
@@ -154,6 +157,7 @@ export function useProject(): ProjectContextValue {
  * rendered outside a ProjectProvider, so shared widgets (e.g. <NodeID>) degrade
  * gracefully to single-project behavior in isolation/tests.
  */
+// eslint-disable-next-line react-refresh/only-export-components -- see useProject above
 export function useProjectOptional(): ProjectContextValue | null {
   return useContext(ProjectContext);
 }

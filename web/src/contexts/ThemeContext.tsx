@@ -171,6 +171,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 }
 
 /** Hook to access theme context. Throws if used outside ThemeProvider. */
+// Intentional Provider+hook colocation (idiomatic React context pattern);
+// react-refresh is dev-HMR-only. See NavigationContext for the full rationale.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useTheme(): ThemeContextValue {
   const ctx = useContext(ThemeContext);
   if (!ctx) {

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
-import { ContextChain, levelIndicator } from "../ContextChain";
+import { ContextChain } from "../ContextChain";
+import { levelIndicator } from "../contextChain.utils";
 import type { ContextEntry } from "../../types";
 
 /**

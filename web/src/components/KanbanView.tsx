@@ -103,13 +103,12 @@ export function KanbanView({ nodeStore }: KanbanViewProps) {
       grouped[col] = [];
     }
     for (const node of nodes) {
-      if (node.status === "invalidated") {
-        // Invalidated shown in open column with badge per FR-UI-21b.
-        grouped["open"]!.push(node);
-      } else {
-        const col = grouped[node.status];
-        if (col) col.push(node);
-      }
+      // Invalidated shown in open column with badge per FR-UI-21b.
+      const col =
+        node.status === "invalidated"
+          ? grouped["open"]
+          : grouped[node.status];
+      if (col) col.push(node);
     }
     return grouped;
   }, [nodes]);

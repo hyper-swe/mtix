@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-19T18:57:29Z",
+  "exported_at": "2026-07-20T10:32:51Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -5016,15 +5016,16 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "claude-fr19",
       "creator": "cli",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "e7fa57179a16f889db400d3254c89696f64523fee60a53d50898317c3a2aac87",
       "created_at": "2026-06-30T10:05:19Z",
-      "updated_at": "2026-07-19T06:44:35Z",
+      "updated_at": "2026-07-20T10:32:51Z",
+      "closed_at": "2026-07-20T10:32:51Z",
       "uid": "019f17fd-8934-7386-a7b1-89fdb9d43aa6"
     },
     {
@@ -7301,5 +7302,5 @@
     }
   ],
   "node_count": 266,
-  "checksum": "7a0a2f8fd686547121c89956e8c23365d4952418493738fb8ee52adc840ff2c8"
+  "checksum": "95d95fa9a4ef0a690d79c506b2e9761383160b4331c17be3dd8a261f6c59e67e"
 }

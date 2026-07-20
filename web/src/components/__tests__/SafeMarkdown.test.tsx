@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { SafeMarkdown, sanitizeHTML, markdownToHTML } from "../SafeMarkdown";
+import { SafeMarkdown } from "../SafeMarkdown";
+import { sanitizeHTML, markdownToHTML } from "../safeMarkdown.utils";
 
 /**
  * SafeMarkdown tests per MTIX-9.5.2.

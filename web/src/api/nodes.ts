@@ -93,8 +93,8 @@ export function updateNode(
 }
 
 /** Delete (soft-delete) a node. */
-export function deleteNode(id: string): Promise<void> {
-  return del<void>(`/nodes/${encodeURIComponent(id)}`);
+export async function deleteNode(id: string): Promise<void> {
+  await del(`/nodes/${encodeURIComponent(id)}`);
 }
 
 /** Search nodes via GET /search with filters. */
@@ -161,12 +161,12 @@ export function claimNode(
 }
 
 /** Transition node status. */
-export function transitionNode(
+export async function transitionNode(
   id: string,
   action: string,
   body?: Record<string, unknown>,
 ): Promise<void> {
-  return post<void>(`/nodes/${encodeURIComponent(id)}/${action}`, body ?? {});
+  await post(`/nodes/${encodeURIComponent(id)}/${action}`, body ?? {});
 }
 
 /** Update node prompt per FR-UI-4. */
@@ -207,14 +207,11 @@ export function resolveAnnotation(
 export type RerunStrategy = "all" | "open_only" | "delete" | "review";
 
 /** Trigger rerun of children per FR-UI-5. */
-export function rerunChildren(
+export async function rerunChildren(
   id: string,
   strategy: RerunStrategy,
 ): Promise<void> {
-  return post<void>(
-    `/nodes/${encodeURIComponent(id)}/rerun`,
-    { strategy },
-  );
+  await post(`/nodes/${encodeURIComponent(id)}/rerun`, { strategy });
 }
 
 /** Get activity log for a node per FR-3.6. */

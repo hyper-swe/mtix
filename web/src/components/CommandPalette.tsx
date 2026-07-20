@@ -98,30 +98,6 @@ export function CommandPalette({
     };
   }, [query, scope]);
 
-  // Keyboard navigation within palette.
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      const totalItems = query.trim()
-        ? results.length
-        : recentIds.length + PALETTE_ACTIONS.length;
-
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setSelectedIndex((prev) => Math.min(prev + 1, totalItems - 1));
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setSelectedIndex((prev) => Math.max(prev - 1, 0));
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        selectCurrent();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    },
-    [query, results, recentIds, selectedIndex],
-  );
-
   const selectCurrent = useCallback(() => {
     if (query.trim() && results[selectedIndex]) {
       const node = results[selectedIndex];
@@ -147,6 +123,30 @@ export function CommandPalette({
       }
     }
   }, [query, results, recentIds, selectedIndex, onSelectNode, onAction, onClose]);
+
+  // Keyboard navigation within palette.
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      const totalItems = query.trim()
+        ? results.length
+        : recentIds.length + PALETTE_ACTIONS.length;
+
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedIndex((prev) => Math.min(prev + 1, totalItems - 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedIndex((prev) => Math.max(prev - 1, 0));
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        selectCurrent();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    },
+    [query, results, recentIds, selectCurrent, onClose],
+  );
 
   // Close on backdrop click.
   const handleBackdropClick = useCallback(

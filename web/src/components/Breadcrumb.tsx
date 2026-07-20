@@ -1,4 +1,5 @@
 import { useWebSocket } from "../contexts/WebSocketContext";
+import type { ConnectionStatus } from "../contexts/WebSocketContext";
 import { useNavigation } from "../contexts/NavigationContext";
 
 /**
@@ -17,13 +18,16 @@ export function Breadcrumb() {
     agents: "Agent Activity",
   };
 
-  const statusConfig: Record<string, { label: string; color: string }> = {
+  const statusConfig: Record<
+    ConnectionStatus,
+    { label: string; color: string }
+  > = {
     connected: { label: "Connected", color: "var(--color-status-done)" },
     reconnecting: { label: "Reconnecting...", color: "var(--color-status-invalidated)" },
     disconnected: { label: "Disconnected", color: "var(--color-status-blocked)" },
   };
 
-  const s = statusConfig[status] ?? statusConfig["disconnected"]!;
+  const s = statusConfig[status];
 
   return (
     <footer
@@ -40,9 +44,9 @@ export function Breadcrumb() {
       <div className="flex items-center gap-1.5">
         <div
           className="w-1.5 h-1.5 rounded-full"
-          style={{ backgroundColor: s!.color }}
+          style={{ backgroundColor: s.color }}
         />
-        <span>{s!.label}</span>
+        <span>{s.label}</span>
       </div>
     </footer>
   );

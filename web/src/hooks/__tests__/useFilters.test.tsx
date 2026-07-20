@@ -159,8 +159,10 @@ describe("useFilters", () => {
     });
     expect(result.current.hasActiveFilters).toBe(false);
 
+    const preset = presets[0];
+    if (!preset) throw new Error("expected a saved preset");
     act(() => {
-      result.current.loadPreset(presets[0]!);
+      result.current.loadPreset(preset);
     });
     expect(result.current.filters.statuses.has("open")).toBe(true);
     expect(result.current.filters.priorities.has(1)).toBe(true);

@@ -81,6 +81,14 @@ export function Layout() {
     return () => window.removeEventListener("resize", handler);
   }, []);
 
+  const toggleSidebar = useCallback(() => {
+    setCollapsed((prev) => {
+      const next = !prev;
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
+      return next;
+    });
+  }, []);
+
   // Keyboard shortcuts.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -110,15 +118,7 @@ export function Layout() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
-
-  const toggleSidebar = useCallback(() => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
-      return next;
-    });
-  }, []);
+  }, [toggleSidebar]);
 
   // Drag handle for resizing sidebar.
   const startResize = useCallback(

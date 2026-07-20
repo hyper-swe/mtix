@@ -8,23 +8,7 @@
 
 import { useState, useCallback } from "react";
 import type { ContextEntry } from "../types";
-
-/**
- * Map depth to canonical tier letter, matching Go's NodeTypeForDepth
- * post-MTIX-7 (v0.1.1-beta) Agile convention:
- *   depth 0 -> E (Epic)
- *   depth 1 -> S (Story)
- *   depth 2 -> I (Issue)
- *   depth 3+ -> M (Micro)
- *
- * Exported for testing — see ContextChain.test.tsx.
- */
-export function levelIndicator(depth: number): string {
-  if (depth === 0) return "E";
-  if (depth === 1) return "S";
-  if (depth === 2) return "I";
-  return "M";
-}
+import { levelIndicator } from "./contextChain.utils";
 
 /** Determine source attribution for a prompt. */
 function sourceAttribution(prompt: string): "human" | "llm" {

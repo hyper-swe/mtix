@@ -51,6 +51,11 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
   );
 }
 
+// Intentional Provider+hook colocation (idiomatic React context pattern).
+// react-refresh is a dev-HMR-only rule with no runtime/correctness impact;
+// splitting the hook into its own module would fragment every consumer's
+// imports for no benefit. Scoped disable rather than a blanket one.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useNavigation(): NavigationState {
   const ctx = useContext(NavigationContext);
   if (!ctx) throw new Error("useNavigation must be used within NavigationProvider");

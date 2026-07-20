@@ -231,8 +231,9 @@ describe("TreeView", () => {
       />,
     );
 
-    const target = screen.getByText("Target").closest("[role='treeitem']")!;
-    const source = screen.getByText("Draggable").closest("[role='treeitem']")!;
+    const target = screen.getByText("Target").closest("[role='treeitem']");
+    const source = screen.getByText("Draggable").closest("[role='treeitem']");
+    if (!target || !source) throw new Error("expected treeitem ancestors");
 
     // Simulate drag-and-drop.
     const dataTransfer = {

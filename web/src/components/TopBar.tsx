@@ -119,27 +119,30 @@ function ConnectionIndicator({
 }: {
   status: "connected" | "reconnecting" | "disconnected";
 }) {
-  const config: Record<string, { color: string; label: string; pulse: boolean }> = {
+  const config: Record<
+    "connected" | "reconnecting" | "disconnected",
+    { color: string; label: string; pulse: boolean }
+  > = {
     connected: { color: "var(--color-status-done)", label: "Connected", pulse: false },
     reconnecting: { color: "var(--color-status-invalidated)", label: "Reconnecting", pulse: true },
     disconnected: { color: "var(--color-status-blocked)", label: "Disconnected", pulse: false },
   };
-  const c = config[status] ?? config["disconnected"]!;
+  const c = config[status];
 
   return (
     <div className="flex items-center gap-1.5" title={`WebSocket: ${status}`}>
       <div
         className="w-1.5 h-1.5 rounded-full"
         style={{
-          backgroundColor: c!.color,
-          animation: c!.pulse ? "pulse-dot 2s ease-in-out infinite" : "none",
+          backgroundColor: c.color,
+          animation: c.pulse ? "pulse-dot 2s ease-in-out infinite" : "none",
         }}
       />
       <span
         className="text-xs hidden sm:inline"
         style={{ color: "var(--color-text-tertiary)" }}
       >
-        {c!.label}
+        {c.label}
       </span>
     </div>
   );

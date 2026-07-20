@@ -175,7 +175,8 @@ describe("useKeyboardShortcuts", () => {
       </>,
     );
 
-    const input = container.querySelector("input")!;
+    const input = container.querySelector("input");
+    if (!input) throw new Error("expected an input element");
     input.focus();
 
     act(() => {

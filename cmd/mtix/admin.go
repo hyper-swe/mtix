@@ -242,14 +242,19 @@ func runImport(filePath string, f importFlags) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	data, err := os.ReadFile(filePath)
+	// MTIX-2.3.1: stream-decode the export straight off the file via
+	// sqlite.DecodeExportData (json.Decoder) rather than os.ReadFile +
+	// json.Unmarshal, so a large export is not held as both raw bytes and a
+	// parsed tree at peak.
+	file, err := os.Open(filePath) //nolint:gosec // filePath is an operator-supplied import path
 	if err != nil {
 		return fmt.Errorf("read import file %s: %w", filePath, err)
 	}
+	defer func() { _ = file.Close() }()
 
-	var exportData sqlite.ExportData
-	if unmarshalErr := json.Unmarshal(data, &exportData); unmarshalErr != nil {
-		return fmt.Errorf("parse import file: %w", unmarshalErr)
+	exportData, err := sqlite.DecodeExportData(file)
+	if err != nil {
+		return fmt.Errorf("parse import file: %w", err)
 	}
 
 	if f.recomputeChecksum {
@@ -257,7 +262,7 @@ func runImport(filePath string, f importFlags) error {
 		// content, not the original. Be loud about it.
 		fmt.Fprintln(os.Stderr,
 			"WARNING: --recompute-checksum replaces the file's integrity checksum; the import attests to the reconstructed content, not the original")
-		if recompErr := sqlite.RecomputeExportChecksum(&exportData); recompErr != nil {
+		if recompErr := sqlite.RecomputeExportChecksum(exportData); recompErr != nil {
 			return fmt.Errorf("recompute checksum: %w", recompErr)
 		}
 	}
@@ -268,7 +273,7 @@ func runImport(filePath string, f importFlags) error {
 	}
 
 	ctx := context.Background()
-	report, result, err := app.store.ImportReconcile(ctx, &exportData, sqlite.ImportReconcileOptions{
+	report, result, err := app.store.ImportReconcile(ctx, exportData, sqlite.ImportReconcileOptions{
 		Mode:        importMode,
 		Force:       f.force,
 		ForceRename: f.forceRename,

@@ -4,12 +4,45 @@
 package sqlite
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
+
+// DecodeExportData streams an ExportData from r using a json.Decoder rather than
+// reading the whole file into a byte slice and json.Unmarshal-ing it (MTIX-2.3.1).
+// The decoder pulls from the reader incrementally, so a large export is not held
+// as both raw bytes AND a parsed tree at peak — it removes the redundant
+// whole-file copy the ReadFile+Unmarshal path kept alive during parsing.
+//
+// It preserves json.Unmarshal's strictness: content after the top-level JSON
+// value (other than trailing whitespace) is rejected, so a truncated or
+// concatenated file does not silently import its first object and ignore the
+// rest.
+func DecodeExportData(r io.Reader) (*ExportData, error) {
+	dec := json.NewDecoder(bufio.NewReader(r))
+	var data ExportData
+	if err := dec.Decode(&data); err != nil {
+		return nil, fmt.Errorf("parse export data: %w", err)
+	}
+	// Reject trailing non-whitespace, matching json.Unmarshal. Token() skips
+	// whitespace and returns io.EOF when only whitespace remains; anything else
+	// (another value, a stray token, a syntax error) means the file is not a
+	// single clean export object.
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return nil, fmt.Errorf("parse export data: trailing content after export object: %w", err)
+		}
+		return nil, fmt.Errorf("unexpected trailing content after export object: %w", model.ErrInvalidInput)
+	}
+	return &data, nil
+}
 
 // ImportMode controls how import handles existing data per FR-7.8.
 type ImportMode string

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-22T19:05:20Z",
+  "exported_at": "2026-07-22T19:11:26Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -3267,6 +3267,31 @@
       "created_at": "2026-03-29T18:12:47Z",
       "updated_at": "2026-03-29T18:12:47Z",
       "uid": "019f134d-b2ec-7d9c-ae7e-de189f286f07"
+    },
+    {
+      "id": "MTIX-2.3.2",
+      "parent_id": "MTIX-2.3",
+      "depth": 2,
+      "seq": 2,
+      "project": "MTIX",
+      "title": "Bounded-memory (JSONL) import: stream nodes without materializing the full set",
+      "description": "",
+      "prompt": "Follow-up to MTIX-2.3.1, which switched import to json.Decoder streaming (drops the whole-file []byte copy) but still materializes ExportData.Nodes fully — peak memory is still O(nodes). True bounded-memory import is blocked by two designs that need the full set: (1) FR-7.8 checksum = computeExportChecksum(Nodes, Dependencies) over all nodes; (2) ImportReconcile's cross-node uid-collision/renumber pass. To stream node-by-node (e.g. a JSONL export variant + token-streaming the nodes array into batched inserts), rework the checksum to be streamable (hash the canonical node stream incrementally) and make reconcile operate incrementally or in a bounded window. Larger change touching export format + FR-7.8 semantics; only needed for very large projects.",
+      "acceptance": "Importing an export far larger than available RAM succeeds with bounded peak memory (nodes not all resident at once). Checksum (FR-7.8) and uid reconcile (ADR-003 6) still verified. A JSONL export variant is defined or the nodes array is token-streamed. Benchmarked memory ceiling documented.",
+      "node_type": "issue",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "54a591598758c442d130ab3f1931449958cbcbebbb3b391f25090d4c04343d3d",
+      "created_at": "2026-07-22T19:11:14Z",
+      "updated_at": "2026-07-22T19:11:14Z",
+      "uid": "019f8b3d-3dc0-7e53-9ec0-a6c600437f95"
     },
     {
       "id": "MTIX-2.4",
@@ -7328,6 +7353,6 @@
       "status": "active"
     }
   ],
-  "node_count": 267,
-  "checksum": "372e6b751ff1ace2cde8efb5684d7cfe95dfcdbf1625a36556ecc3ec0d906ed9"
+  "node_count": 268,
+  "checksum": "760437145c0616efdc43447b60e7f51d74578319ba0bc7027ec56d1427b960dc"
 }

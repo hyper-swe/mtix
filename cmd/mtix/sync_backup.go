@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -90,6 +91,20 @@ func runSyncBackup(ctx context.Context, stdout, stderr io.Writer,
 
 	cmd := exec.CommandContext(ctx, pgDumpBin(), argv...) //nolint:gosec // pgDumpBin overridable for tests
 	cmd.Stderr = stderr
+
+	// MTIX-59: when the DSN asks pg_dump to verify the server cert but names no
+	// trust root, libpq defaults to ~/.postgresql/root.crt and aborts when it is
+	// absent — a routine failure for cloud hubs (Neon/Supabase DSNs are usually
+	// verify-full). Fill that gap ONLY when nothing else is configured, defaulting
+	// to the OS trust store so public-CA providers back up out of the box.
+	if root := backupSSLRootCertEnv(dsn); root != "" {
+		cmd.Env = append(os.Environ(), "PGSSLROOTCERT="+root)
+		fmt.Fprintf(stderr, "mtix sync backup: DSN requests TLS verification but names no "+
+			"sslrootcert and no ~/.postgresql/root.crt exists — using the system trust store "+
+			"(PGSSLROOTCERT=system). A private-CA hub (e.g. Supabase) needs an explicit "+
+			"sslrootcert=<ca.pem> in the DSN.\n")
+	}
+
 	if err := cmd.Run(); err != nil {
 		// pg_dump's stderr already captured; surface a wrapped message
 		// for the caller. Redact DSN in the wrapped form.
@@ -99,4 +114,31 @@ func runSyncBackup(ctx context.Context, stdout, stderr io.Writer,
 	fmt.Fprintf(stdout, "backup written to %s (tables: %s)\n",
 		output, strings.Join(backupTables, ", "))
 	return nil
+}
+
+// backupSSLRootCertEnv returns the PGSSLROOTCERT value pg_dump should use, or ""
+// for no override. It defaults to "system" (the OS trust store) ONLY when the
+// DSN requests certificate verification (sslmode=verify-ca/verify-full) yet the
+// operator has configured no trust root at all — no sslrootcert in the DSN, no
+// PGSSLROOTCERT in the environment, and no ~/.postgresql/root.crt on disk. In
+// every other case it returns "" so an explicit operator choice is never
+// overridden. "system" requires libpq >= 16, which any pg_dump new enough to
+// dump a modern managed server already is (MTIX-59).
+func backupSSLRootCertEnv(dsn string) string {
+	low := strings.ToLower(dsn)
+	if !strings.Contains(low, "sslmode=verify") {
+		return "" // no verification requested → libpq needs no trust root
+	}
+	if strings.Contains(low, "sslrootcert=") {
+		return "" // operator named a cert explicitly
+	}
+	if os.Getenv("PGSSLROOTCERT") != "" {
+		return "" // operator configured one via the environment
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if _, statErr := os.Stat(filepath.Join(home, ".postgresql", "root.crt")); statErr == nil {
+			return "" // libpq's default trust root exists; respect it
+		}
+	}
+	return "system"
 }

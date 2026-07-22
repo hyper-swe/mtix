@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -352,29 +351,6 @@ func TestCloudPath_Reconcile_ImportAs_ReparentsUnderHubParent(t *testing.T) {
 
 var pgMajorRE = regexp.MustCompile(`(\d+)`)
 
-// pgDumpTrustDSN returns a DSN pg_dump can use non-interactively. When the
-// operator's DSN requests certificate verification (sslmode=verify-ca/
-// verify-full) but names no sslrootcert, libpq's pg_dump looks for
-// ~/.postgresql/root.crt and aborts when it is absent. We point it at the OS
-// trust store (sslrootcert=system, libpq >= 16) so a public-CA provider like
-// Neon verifies; a private-CA provider like Supabase supplies its own
-// sslrootcert inline upstream (the MTIX-42 gate builds it that way), which this
-// leaves untouched. This mirrors correct operator DSN configuration — mtix sync
-// backup passes the DSN to pg_dump verbatim, so the SSL trust root is the
-// operator's to supply (see MTIX-21 notes: candidate follow-up to have backup
-// default this).
-func pgDumpTrustDSN(dsn string) string {
-	low := strings.ToLower(dsn)
-	if !strings.Contains(low, "sslmode=verify") || strings.Contains(low, "sslrootcert=") {
-		return dsn
-	}
-	sep := "?"
-	if strings.Contains(dsn, "?") {
-		sep = "&"
-	}
-	return dsn + sep + "sslrootcert=system"
-}
-
 // serverMajor returns the hub's PostgreSQL major version. InsecureSkipVerify so
 // it works for providers (Supabase pooler) that serve a private/non-standard
 // cert, matching the transport path the other cloud tests use.
@@ -450,7 +426,10 @@ func TestCloudPath_Backup_DumpsHubTablesThroughDSN(t *testing.T) {
 
 	out := filepath.Join(t.TempDir(), "hub-backup.sql")
 	var stdout, stderr bytes.Buffer
-	require.NoError(t, runSyncBackup(ctx, &stdout, &stderr, []string{pgDumpTrustDSN(dsn)}, out),
+	// Pass the DSN verbatim: MTIX-59 makes runSyncBackup default PGSSLROOTCERT to
+	// the system trust store when a verify-full DSN names no cert, so a public-CA
+	// hub backs up without a test-side workaround.
+	require.NoError(t, runSyncBackup(ctx, &stdout, &stderr, []string{dsn}, out),
 		"backup: %s", stderr.String())
 	require.Contains(t, stdout.String(), "backup written to")
 

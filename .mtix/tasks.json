@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-20T10:32:51Z",
+  "exported_at": "2026-07-22T18:51:46Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -3408,15 +3408,15 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "claude-fr19",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "6b2eb6d19f75e6698ebd4cdac5e71c4b9776bf1594a475ab17783e2b6cee0df9",
       "created_at": "2026-06-10T06:49:59Z",
-      "updated_at": "2026-06-10T06:49:59Z",
+      "updated_at": "2026-07-22T18:12:40Z",
       "uid": "019eb04b-8202-7ec1-8b9c-018ce74ded57"
     },
     {
@@ -6563,6 +6563,31 @@
       "uid": "019f6652-1174-7d27-8366-3bb81ab2b4c7"
     },
     {
+      "id": "MTIX-59",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 59,
+      "project": "MTIX",
+      "title": "sync backup: verify-full DSN without sslrootcert fails in pg_dump",
+      "description": "",
+      "prompt": "Found during MTIX-21 cloud e2e. 'mtix sync backup' passes the DSN verbatim to pg_dump. When the DSN uses sslmode=verify-full/verify-ca but names no sslrootcert, libpq's pg_dump looks for ~/.postgresql/root.crt and aborts ('root certificate file does not exist'). Standard libpq behaviour, but a rough edge for cloud hubs (Neon/Supabase DSNs are commonly verify-full). Candidate fix: when the backup DSN requests verification and specifies no sslrootcert, default sslrootcert=system (OS trust store, libpq\u003e=16) for public-CA providers, or emit a clear hint pointing at sslrootcert=system / the provider CA. MTIX-21's cloud test works around this with a test-side helper (pgDumpTrustDSN); the product itself does not yet. Decide: auto-default vs. hint-only vs. docs.",
+      "acceptance": "A verify-full/verify-ca hub DSN with no sslrootcert either (a) backs up successfully by defaulting sslrootcert=system for public-CA providers, or (b) fails with a clear mtix-level hint naming sslrootcert=system / the provider CA — not a raw pg_dump root.crt error. Decision (auto-default vs hint vs docs) recorded. Covered by a cmd/mtix test.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "1fea4c65450e93f18c04903c8fd4ed6d04c410bf75c4e3cf57f821a956133c6b",
+      "created_at": "2026-07-22T18:51:26Z",
+      "updated_at": "2026-07-22T18:51:46Z",
+      "uid": "019f8b2b-1d3d-7576-8b5a-a1c2e5f7e80a"
+    },
+    {
       "id": "MTIX-6",
       "parent_id": "",
       "depth": 0,
@@ -7202,7 +7227,7 @@
       "agent_id": "claude-fr19",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-46",
+      "current_node_id": "MTIX-21",
       "last_heartbeat": "2026-07-08T13:50:26Z"
     },
     {
@@ -7301,6 +7326,6 @@
       "status": "active"
     }
   ],
-  "node_count": 266,
-  "checksum": "95d95fa9a4ef0a690d79c506b2e9761383160b4331c17be3dd8a261f6c59e67e"
+  "node_count": 267,
+  "checksum": "fc6c8eaa38f08695bee26c3398cac8d1136d71fb4e1e33604db59e94e7069a50"
 }

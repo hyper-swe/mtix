@@ -63,8 +63,20 @@ run_provider() {
   local dsn="$2"
 
   printf '\n=== %s (%s) ===\n' "${name}" "$(host_of "${dsn}")"
-  if MTIX_PG_TEST_DSN="${dsn}" go test -count=1 -timeout "${TIMEOUT}" \
+  local ok=1
+  if ! MTIX_PG_TEST_DSN="${dsn}" go test -count=1 -timeout "${TIMEOUT}" \
       -run "${RUN_PATTERN}" "${REPO_ROOT}/e2e/..."; then
+    ok=0
+  fi
+  # MTIX-21: the FR-18 CLI cloud paths (backup / daemon / conflicts / reconcile)
+  # live in cmd/mtix, not e2e/. -p 1 serializes the package's shared app state.
+  # The backup test self-skips when pg_dump is absent or older than the server;
+  # set MTIX_PG_DUMP to a matching client to include it.
+  if ! MTIX_PG_TEST_DSN="${dsn}" go test -count=1 -timeout "${TIMEOUT}" -p 1 \
+      -run 'TestCloudPath' "${REPO_ROOT}/cmd/mtix/"; then
+    ok=0
+  fi
+  if [ "${ok}" -eq 1 ]; then
     RESULTS+=("${name}: PASS")
   else
     RESULTS+=("${name}: FAIL")

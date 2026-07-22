@@ -39,6 +39,24 @@ jobs:
         with:
           go-version: "1.25"
 
+      - name: Install pg_dump matching the managed servers (MTIX-21)
+        # `mtix sync backup` shells out to pg_dump, which refuses to dump a
+        # server newer than itself. The managed providers run Postgres 17/18,
+        # while ubuntu-22.04 ships the v14 client — so install the PGDG client
+        # and point mtix at it. Without this the TestCloudPath backup test skips
+        # (version-guarded), which on the cloud gate would be a silent coverage
+        # hole for the pg_dump-through-pooler path this ticket exists to cover.
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+            -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-18
+          echo "MTIX_PG_DUMP=/usr/lib/postgresql/18/bin/pg_dump" >> "$GITHUB_ENV"
+
       - name: Resolve DSN + CA (fail closed if unset)
         env:
           NEON_DSN: ${{ secrets.MTIX_TEST_NEON_DSN }}
@@ -97,3 +115,9 @@ jobs:
 
       - name: Multi-project sync (${{ matrix.provider }})
         run: go test ./cmd/mtix/ -run TestMultiProject -count=1
+
+      - name: CLI cloud paths — backup / daemon / conflicts / reconcile (${{ matrix.provider }})
+        # MTIX-21: the four FR-18 CLI paths that previously had only unit/SQLite
+        # coverage, now exercised end-to-end against this provider. -p 1 keeps the
+        # cmd/mtix package's shared global app state serialized across tests.
+        run: go test ./cmd/mtix/ -run TestCloudPath -p 1 -count=1 -timeout 20m

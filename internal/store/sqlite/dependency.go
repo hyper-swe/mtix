@@ -110,7 +110,7 @@ func (s *Store) RemoveDependency(ctx context.Context, fromID, toID string, depTy
 			NodeID:      fromID,
 			ProjectCode: projectPrefixFromNodeID(fromID),
 			OpType:      model.OpUnlinkDep,
-			Author:      authorIDFallback,
+			Author:      "", // MTIX-24: emit resolves the default author (env/meta/'cli')
 			Payload:     payload,
 		})
 	})
@@ -277,7 +277,7 @@ func autoUnblockNode(ctx context.Context, tx *sql.Tx, nodeID string) error {
 		NodeID:      nodeID,
 		ProjectCode: projectPrefixFromNodeID(nodeID),
 		OpType:      model.OpTransitionStatus,
-		Author:      authorIDFallback,
+		Author:      "", // MTIX-24: emit resolves the default author (env/meta/'cli')
 		Payload:     payload,
 	}); emitErr != nil {
 		return fmt.Errorf("emit auto-unblock event for %s: %w", nodeID, emitErr)

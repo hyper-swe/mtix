@@ -147,7 +147,10 @@ func runCreateWithProject(title, under, nodeType string, priority int,
 	}
 
 	if req.Creator == "" {
-		req.Creator = "cli"
+		// MTIX-24: default the creator to this process's resolved author
+		// (MTIX_AUTHOR_ID > author_id config > "cli") so same-machine agents
+		// are distinguishable.
+		req.Creator = app.authorID
 	}
 
 	_ = nodeType // IssueType handled in future refinement.

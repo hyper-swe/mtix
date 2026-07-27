@@ -387,6 +387,10 @@ INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '4');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.lamport', '0');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.last_pulled_clock', '0');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.machine_hash', '');
+-- meta.sync.author_id — the persisted default author for emitted events (MTIX-24),
+-- set from config author_id at app init; empty means fall back to MTIX_AUTHOR_ID
+-- env then 'cli'. Distinguishes same-machine agents so the hub logs conflicts.
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.author_id', '');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.vector_clock', '{}');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.first_event_hash', '');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.project_prefix', '');

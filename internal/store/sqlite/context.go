@@ -151,7 +151,8 @@ func newCommentForSyncEvent(prevJSON string, next []model.Annotation) (body, aut
 		latest := next[len(next)-1]
 		return latest.Text, latest.Author, latest.Addressee
 	}
-	return fmt.Sprintf("annotations bulk update: %d -> %d entries", len(prev), len(next)), authorIDFallback, ""
+	// MTIX-24: empty author → emit resolves the default (env/meta/'cli').
+	return fmt.Sprintf("annotations bulk update: %d -> %d entries", len(prev), len(next)), "", ""
 }
 
 // reverseNodes reverses a slice of nodes in place.

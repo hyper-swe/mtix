@@ -112,24 +112,28 @@ Pick the variant that matches your hosting:
 This prevents `git push --no-verify` from bypassing the local
 `pre-push` hook.
 
-### 6. Consider distinct authorIDs per agent
+### 6. Give each agent a distinct authorID
 
 If your audit requirements include hub-side traceability of every
-contested edit (not just the LWW-resolved outcome), set distinct
-`authorID` values per agent process. Two CLIs that share
-`authorID="cli"` produce vector clocks that are `Equal()` rather
-than `Concurrent()`; same-authorID concurrent edits are resolved by
-LWW but do NOT produce a `sync_conflicts` row on the hub.
+contested edit (not just the LWW-resolved outcome), set a distinct
+author identity per agent process. Two CLIs that share
+`authorID="cli"` (the default) produce vector clocks that are
+`Equal()` rather than `Concurrent()`; their concurrent edits are
+resolved by LWW but do NOT produce a `sync_conflicts` row on the hub.
 
-This is the audit-trail tradeoff documented in
+Set `MTIX_AUTHOR_ID` in each agent's bootstrap environment (one
+distinct value per CI runner / agent process) so that all contested
+edits land in `sync_conflicts`:
+
+```
+export MTIX_AUTHOR_ID=agent-ci-runner-3   # ^[a-z0-9_-]{1,64}$
+```
+
+For a per-project default, set the `author_id` key in
+`.mtix/config.yaml` instead; the env var takes precedence per
+process. Both are validated and rejected loudly if invalid. This is
+the audit-trail tradeoff documented in
 [docs/SECURITY-MODEL.md](../SECURITY-MODEL.md#known-audit-trail-limitation-same-authorid-conflicts).
-For safety-critical adopters, the runbook recommendation is to
-configure each CI runner / agent with a distinct authorID so that
-all contested edits land in `sync_conflicts`.
-
-(The CLI does not yet expose a flag to override the authorID; until
-it does, the workaround is to set it via direct meta UPDATE during
-agent bootstrap.)
 
 ### 7. Rehearse the DR procedure
 

@@ -121,7 +121,7 @@ This is an intentional design tradeoff:
 - **Audit-trail visibility is reduced.** Operators relying on `sync_conflicts` for traceability of contested edits will not see same-authorID conflicts.
 - **The unit of causal isolation is the agent, not the machine.** Two agents on the same machine that share `authorID="cli"` are causally indistinguishable by design. To recover hub-side conflict logging, set distinct authorIDs per agent.
 
-If your safety profile requires complete hub-side audit of every contested edit, set unique `authorID` per agent process; the CLI does not yet expose a flag to override (planned). For now, document the tradeoff in the team's runbook.
+If your safety profile requires complete hub-side audit of every contested edit, give each agent process a distinct identity (MTIX-24): set `MTIX_AUTHOR_ID` in the agent's bootstrap environment — recommended, set once per process — or the `author_id` key in `.mtix/config.yaml` for a per-project default. Both are validated against the FR-18.7 grammar (`^[a-z0-9_-]{1,64}$`; an explicitly-set invalid value is rejected loudly) and take precedence over the `"cli"` fallback, so distinct-identity agents' concurrent edits are `Concurrent()` and are recorded in `sync_conflicts`. The env var wins per process, so it distinguishes agents even if they were pointed at one `.mtix`.
 
 ### Restore-epoch trust model (MTIX-30 / ADR-003)
 

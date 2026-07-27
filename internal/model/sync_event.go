@@ -88,6 +88,14 @@ func (s SyncStatus) IsValid() bool {
 // authorIDPattern enforces the FR-18.7 author_id grammar.
 var authorIDPattern = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 
+// IsValidAuthorID reports whether s satisfies the FR-18.7 author_id grammar
+// (^[a-z0-9_-]{1,64}$). Callers that let an operator set an identity (MTIX-24's
+// MTIX_AUTHOR_ID env / author_id config) use this to reject an invalid value
+// loudly instead of silently normalizing it.
+func IsValidAuthorID(s string) bool {
+	return authorIDPattern.MatchString(s)
+}
+
 // projectPrefixPattern enforces the SYNC-DESIGN §5.1 project_prefix grammar,
 // aligned with the FR-2.1a id grammar (projectPrefixRegex in id.go): a prefix
 // may contain dashes (multi-segment prefixes like "MTIX-DEV-OPS", MTIX-39) and

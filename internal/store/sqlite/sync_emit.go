@@ -31,6 +31,13 @@ import (
 // fallback keeps us inside that contract.
 const authorIDFallback = "cli"
 
+// AuthorIDEnv is the per-process author identity override (MTIX-24). Set once in
+// an agent's bootstrap, it gives each same-machine agent a distinct author so
+// their concurrent edits are vector-clock-Concurrent and the hub records a
+// sync_conflicts row. Read per emit (like MTIX_HOOK_ORIGIN) so the override
+// holds per process even if two agents were pointed at one .mtix.
+const AuthorIDEnv = "MTIX_AUTHOR_ID"
+
 // authorIDSafePattern is the FR-18.7 grammar duplicated locally to avoid
 // a model package round-trip per emit. Kept in sync with
 // model.authorIDPattern; the unit tests assert equivalence.
@@ -63,7 +70,7 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 		return err
 	}
 
-	authorID := sanitizeAuthorID(p.Author)
+	authorID := sanitizeAuthorID(resolveEmitAuthor(ctx, tx, p.Author))
 	projectPrefix := projectPrefixFromNodeID(p.NodeID)
 	if projectPrefix == "" && p.ProjectCode != "" {
 		projectPrefix = p.ProjectCode
@@ -375,6 +382,48 @@ func enforceQueueLimit(ctx context.Context, tx *sql.Tx) error {
 		)
 	}
 	return nil
+}
+
+// SetDefaultAuthor persists the project-default author identity into
+// meta.sync.author_id (MTIX-24). It is the emit fallback used when a mutation
+// carries no explicit author and MTIX_AUTHOR_ID is unset. Called at app init
+// from the author_id config key; a no-op-equivalent empty value leaves emits
+// defaulting to 'cli'. On a read-only store the write is refused; callers treat
+// that as non-fatal.
+func (s *Store) SetDefaultAuthor(ctx context.Context, author string) error {
+	_, err := s.writeDB.ExecContext(ctx,
+		`UPDATE meta SET value = ? WHERE key = 'meta.sync.author_id'`, author)
+	if err != nil {
+		return fmt.Errorf("persist default author: %w", err)
+	}
+	return nil
+}
+
+// resolveEmitAuthor selects the author identity for an emitted event (MTIX-24),
+// used as the input to sanitizeAuthorID. Precedence:
+//  1. an explicit non-empty author from the mutation (e.g. claim's agentID) —
+//     the actor is known, so honor it;
+//  2. the MTIX_AUTHOR_ID env — the per-process override an agent sets in its
+//     bootstrap (the realistic same-machine-agents deployment);
+//  3. meta.sync.author_id — the persisted project default (from config
+//     author_id), if the app wrote one;
+//  4. authorIDFallback ('cli').
+// This replaces the old blanket 'cli' default that made every CLI process share
+// one author (VC-Equal, so the hub never logged their concurrent edits).
+func resolveEmitAuthor(ctx context.Context, tx *sql.Tx, explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if v := os.Getenv(AuthorIDEnv); v != "" {
+		return v
+	}
+	var stored string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT value FROM meta WHERE key = 'meta.sync.author_id'`,
+	).Scan(&stored); err == nil && stored != "" {
+		return stored
+	}
+	return authorIDFallback
 }
 
 // readOrComputeMachineHash returns the cached machine_hash from meta;

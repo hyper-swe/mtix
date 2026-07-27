@@ -1545,9 +1545,14 @@ default), their concurrent edits produce vector clocks that are
 `Equal()` rather than `Concurrent()`. LWW still resolves the
 contention deterministically, but the hub does NOT record a
 `sync_conflicts` row in this case. If audit-trail completeness
-matters for your compliance profile, set distinct authorIDs per
-agent. See [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md) for the
-full tradeoff.
+matters for your compliance profile, give each agent a distinct
+identity: set `MTIX_AUTHOR_ID` in the agent's environment (set once
+per process — `export MTIX_AUTHOR_ID=agent-2`), or the `author_id`
+key in `.mtix/config.yaml` for a per-project default (the env var
+wins). Both must match `^[a-z0-9_-]{1,64}$`. With distinct
+identities, concurrent edits are `Concurrent()` and are recorded in
+`sync_conflicts`. See [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md)
+for the full tradeoff.
 
 ### Hub health checks
 

@@ -73,7 +73,7 @@ func emitUpdateEvents(ctx context.Context, tx *sql.Tx, id string, u *store.NodeU
 			NodeID:      id,
 			ProjectCode: project,
 			OpType:      op,
-			Author:      authorIDFallback,
+			Author:      "", // MTIX-24: emit resolves the default author (env/meta/'cli')
 			Payload:     payload,
 		})
 	}

@@ -275,7 +275,7 @@ Once connected, the following MCP tools are available:
 **See also:**
 - [`docs/SYNC-DESIGN.md`](SYNC-DESIGN.md) — architectural overview of the event-sourced sync layer.
 - [`docs/SYNC-PROTOCOL.md`](SYNC-PROTOCOL.md) — protocol-level details for contributors and auditors.
-- [`docs/SECURITY-MODEL.md`](SECURITY-MODEL.md) v1.1 — full trust model including the same-authorID conflict-log limitation.
+- [`docs/SECURITY-MODEL.md`](SECURITY-MODEL.md) v1.1 — full trust model, including the same-authorID conflict-log note. When running mtix under an MCP agent, set a distinct `MTIX_AUTHOR_ID` per agent process (or the `author_id` config key) so its edits are attributable in the hub `sync_conflicts` log (MTIX-24).
 - [`USERMANUAL.md` → Team collaboration with sync (FR-18)](../USERMANUAL.md#team-collaboration-with-sync-fr-18) — operator-facing CLI workflow.
 
 ## Logging

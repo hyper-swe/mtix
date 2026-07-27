@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -48,6 +49,7 @@ type appContext struct {
 	logger     *slog.Logger
 	jsonOutput bool
 	mtixDir    string // Path to .mtix directory, set during initApp.
+	authorID   string // Resolved author identity for this process (MTIX-24): MTIX_AUTHOR_ID > author_id config > "cli".
 }
 
 // global app context set during PersistentPreRunE.
@@ -254,6 +256,22 @@ func initApp(_ *cobra.Command, logLevel string) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 
+	// Resolve this process's author identity (MTIX-24): MTIX_AUTHOR_ID env >
+	// author_id config > "cli". An explicitly-set-but-invalid value is rejected
+	// loudly. The config-derived default is persisted into the store's meta so
+	// emits default to it; the env override is applied per-emit in the store.
+	appAuthor, metaAuthor, authErr := resolveProcessAuthor(app.configSvc.AuthorID())
+	if authErr != nil {
+		return authErr
+	}
+	app.authorID = appAuthor
+	if metaAuthor != "" {
+		if setErr := app.store.SetDefaultAuthor(context.Background(), metaAuthor); setErr != nil {
+			app.logger.Warn("could not persist author_id to the store; emits use it only via env",
+				"error", setErr)
+		}
+	}
+
 	// Create broadcaster.
 	broadcaster := service.NewHub(app.logger)
 	clock := func() time.Time { return time.Now().UTC() }
@@ -270,6 +288,31 @@ func initApp(_ *cobra.Command, logLevel string) error {
 	app.mtixDir = mtixDir
 
 	return nil
+}
+
+// resolveProcessAuthor resolves this process's author identity (MTIX-24).
+// appAuthor is never empty (used for CLI-layer defaults such as a node's
+// creator): MTIX_AUTHOR_ID env > author_id config > "cli". metaAuthor is the
+// config-derived value to persist as the store's emit default ("" when config
+// sets none — emits then fall back to the env or "cli"). An explicitly-set env
+// or config value that violates the FR-18.7 grammar is a loud error rather than
+// being silently normalized.
+func resolveProcessAuthor(configAuthor string) (appAuthor, metaAuthor string, err error) {
+	if configAuthor != "" && !model.IsValidAuthorID(configAuthor) {
+		return "", "", fmt.Errorf("config author_id %q is invalid: must match ^[a-z0-9_-]{1,64}$", configAuthor)
+	}
+	metaAuthor = configAuthor // may be ""
+
+	if env, ok := os.LookupEnv(sqlite.AuthorIDEnv); ok && env != "" {
+		if !model.IsValidAuthorID(env) {
+			return "", "", fmt.Errorf("%s %q is invalid: must match ^[a-z0-9_-]{1,64}$", sqlite.AuthorIDEnv, env)
+		}
+		return env, metaAuthor, nil
+	}
+	if configAuthor != "" {
+		return configAuthor, metaAuthor, nil
+	}
+	return "cli", metaAuthor, nil
 }
 
 // closeApp releases resources when the command completes.

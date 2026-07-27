@@ -14,9 +14,10 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
-// validConfigKeys lists all 27 allowed config keys per FR-11.2.
+// validConfigKeys lists all 28 allowed config keys per FR-11.2.
 var validConfigKeys = map[string]bool{
 	"prefix":                   true,
+	"author_id":                true,
 	"api.bind":                 true,
 	"api.http_port":            true,
 	"api.grpc_port":            true,
@@ -57,9 +58,10 @@ var serverRestartKeys = map[string]bool{
 	"logging.level": true,
 }
 
-// configDefaults contains default values for all 27 keys per FR-11.2.
+// configDefaults contains default values for all 28 keys per FR-11.2.
 var configDefaults = map[string]string{
 	"prefix":                     "PROJ",
+	"author_id":                  "",
 	"api.bind":                   "127.0.0.1",
 	"api.http_port":              "6849",
 	"api.grpc_port":              "6850",
@@ -181,6 +183,14 @@ func (cs *ConfigService) Delete(key string) error {
 func (cs *ConfigService) AutoClaim() bool {
 	v, _ := cs.Get("agent.auto_claim")
 	return v == "true"
+}
+
+// AuthorID returns the configured default author identity for emitted sync
+// events (MTIX-24), or "" when unset. The MTIX_AUTHOR_ID env overrides this
+// per-process; see resolveEmitAuthor in the sqlite store.
+func (cs *ConfigService) AuthorID() string {
+	v, _ := cs.Get("author_id")
+	return v
 }
 
 // SoftDeleteRetention implements ConfigProvider.SoftDeleteRetention per FR-3.3.

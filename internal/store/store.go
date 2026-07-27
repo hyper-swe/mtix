@@ -37,6 +37,12 @@ type NodeFilter struct {
 	// store is deliberately dumb here: the policy of defaulting to the
 	// primary project lives in the callers (CLI/API), not in the store.
 	Project string `json:"project,omitempty"`
+
+	// ChangedSince, when non-zero, restricts results to nodes whose updated_at
+	// is strictly after it (MTIX-6.1) — the "what changed since my last check?"
+	// poll for sync agents. The zero Time means no filter. Compared against the
+	// stored RFC3339 updated_at, so it is applied at UTC-second granularity.
+	ChangedSince time.Time `json:"changed_since,omitempty"`
 }
 
 // Store defines the data access contract for mtix.

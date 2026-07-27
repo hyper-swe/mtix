@@ -206,7 +206,7 @@ func TestMultiProject_AC7_SingleProjectNoFlagsNoPrompts(t *testing.T) {
 	app.jsonOutput = true
 	t.Cleanup(func() { app.jsonOutput = false })
 	out := captureStdout(t, func() {
-		require.NoError(t, runList("", "", "", "", "", "", "", 0, false, 50, "", false))
+		require.NoError(t, runList("", "", "", "", "", "", "", "", 0, false, 50, "", false))
 	})
 	got := nodeProjectsOf(t, out)
 	assert.Equal(t, map[string]int{"TEST": 3}, got, "single-project list shows only TEST")

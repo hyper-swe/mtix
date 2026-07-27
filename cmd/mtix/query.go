@@ -6,6 +6,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -13,6 +15,32 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
 )
+
+// parseChangedSince interprets a --changed-since value (MTIX-6.1). It accepts
+// either a relative Go duration ("5m", "1h", "24h" → since now minus that) or an
+// absolute timestamp (RFC3339 "2026-04-06T10:00:00Z", or a bare date/datetime
+// interpreted as UTC). An empty string returns the zero Time (no filter).
+// Duration is tried first so "24h" is a window, not a parse error.
+func parseChangedSince(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, nil
+	}
+	if d, err := time.ParseDuration(s); err == nil {
+		if d <= 0 {
+			return time.Time{}, fmt.Errorf("--changed-since duration must be positive: %q: %w", s, model.ErrInvalidInput)
+		}
+		return time.Now().Add(-d), nil
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05", "2006-01-02"} {
+		if ts, err := time.Parse(layout, s); err == nil {
+			return ts, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf(
+		"invalid --changed-since %q: want an RFC3339 timestamp (2026-04-06T10:00:00Z) or a duration (1h, 30m): %w",
+		s, model.ErrInvalidInput)
+}
 
 // addProjectScopeFlags registers the shared multi-project scope flags on a
 // list-style command per FR-MULTI-PROJECT MP-7: --project scopes to one
@@ -54,22 +82,23 @@ func resolveProjectScope(project string, allProjects bool) (string, error) {
 // All filter flags accept comma-separated multiple values.
 func newSearchCmd() *cobra.Command {
 	var (
-		status      string
-		assignee    string
-		nodeType    string
-		under       string
-		priority    string
-		fields      string
-		limit       int
-		project     string
-		allProjects bool
+		status       string
+		assignee     string
+		nodeType     string
+		under        string
+		priority     string
+		fields       string
+		changedSince string
+		limit        int
+		project      string
+		allProjects  bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "search",
 		Short: "Search nodes with advanced filters",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runSearch(status, assignee, nodeType, under, priority, fields, limit, project, allProjects)
+			return runSearch(status, assignee, nodeType, under, priority, fields, changedSince, limit, project, allProjects)
 		},
 	}
 
@@ -79,13 +108,14 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVar(&under, "under", "", "Filter by parent subtree (comma-separated for multiple)")
 	cmd.Flags().StringVar(&priority, "priority", "", "Filter by priority (comma-separated, 1-5)")
 	cmd.Flags().StringVar(&fields, "fields", "", "Restrict JSON output to these fields (comma-separated)")
+	cmd.Flags().StringVar(&changedSince, "changed-since", "", "Only nodes updated after this RFC3339 time or relative duration (e.g. 1h, 30m)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum results")
 	addProjectScopeFlags(cmd, &project, &allProjects)
 
 	return cmd
 }
 
-func runSearch(status, assignee, nodeType, under, priority, fields string, limit int, project string, allProjects bool) error {
+func runSearch(status, assignee, nodeType, under, priority, fields, changedSince string, limit int, project string, allProjects bool) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -95,17 +125,23 @@ func runSearch(status, assignee, nodeType, under, priority, fields string, limit
 		return fmt.Errorf("invalid --priority value: %w: %w", err, model.ErrInvalidInput)
 	}
 
+	since, err := parseChangedSince(changedSince)
+	if err != nil {
+		return err
+	}
+
 	scope, err := resolveProjectScope(project, allProjects)
 	if err != nil {
 		return err
 	}
 
 	filter := store.NodeFilter{
-		Assignee: splitCSV(assignee),
-		NodeType: splitCSV(nodeType),
-		Under:    splitCSV(under),
-		Priority: priorities,
-		Project:  scope,
+		Assignee:     splitCSV(assignee),
+		NodeType:     splitCSV(nodeType),
+		Under:        splitCSV(under),
+		Priority:     priorities,
+		Project:      scope,
+		ChangedSince: since,
 	}
 	for _, s := range splitCSV(status) {
 		filter.Status = append(filter.Status, model.Status(s))

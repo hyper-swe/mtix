@@ -44,7 +44,7 @@ func TestRunList_NoStore_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runList("", "", "", "", "", "", "", 0, false, 50, "", false)
+	err := runList("", "", "", "", "", "", "", "", 0, false, 50, "", false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }
@@ -212,7 +212,7 @@ func TestRunSearch_NoStore_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runSearch("", "", "", "", "", "", 50, "", false)
+	err := runSearch("", "", "", "", "", "", "", 50, "", false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }

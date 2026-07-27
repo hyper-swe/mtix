@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
@@ -142,6 +143,15 @@ func buildFilterClausesWithPrefix(filter store.NodeFilter, prefix string) ([]str
 		clauses = append(clauses,
 			fmt.Sprintf("EXISTS (SELECT 1 FROM json_each(%slabels) WHERE json_each.value = ?)", prefix))
 		args = append(args, label)
+	}
+
+	// ChangedSince filter (MTIX-6.1): nodes updated strictly after the given
+	// instant. updated_at is stored as UTC RFC3339, so the bound parameter is
+	// formatted identically and the comparison is a correct lexical/chronological
+	// order (idx_nodes_updated covers this). The value is always parameterized.
+	if !filter.ChangedSince.IsZero() {
+		clauses = append(clauses, fmt.Sprintf("%supdated_at > ?", prefix))
+		args = append(args, filter.ChangedSince.UTC().Format(time.RFC3339))
 	}
 
 	return clauses, args

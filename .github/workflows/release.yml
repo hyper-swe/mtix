@@ -116,6 +116,12 @@ jobs:
     # BLOCKS the release. Each provider runs in its own shard so a Supabase
     # outage does not mask a Neon regression.
     needs: preflight
+    # MTIX-62: a reusable-workflow call cannot receive more permission than the
+    # caller job grants. The workflow-level default is `permissions: {}`, so this
+    # job must grant the `contents: read` that cloud-contract.yml declares — else
+    # the whole run startup_failures at parse time on a tag push.
+    permissions:
+      contents: read
     uses: ./.github/workflows/cloud-contract.yml
     secrets: inherit
 

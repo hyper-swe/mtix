@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-07-28T13:01:01Z",
+  "exported_at": "2026-07-28T14:32:30Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6720,6 +6720,32 @@
       "uid": "019fa8d0-4fe9-7dd3-b90c-814468d17ea2"
     },
     {
+      "id": "MTIX-61",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 61,
+      "project": "MTIX",
+      "title": "sync backup: pg_dump mis-parses DSNs pgx accepts (special-char password)",
+      "description": "",
+      "prompt": "Found by MTIX-21's TestCloudPath_Backup on Supabase. mtix sync backup passes the DSN string verbatim as pg_dump's connection arg. pg_dump's libpq URI parser is stricter than Go's pgx: a Supabase pooler DSN whose password contains an unencoded special char (e.g. '@') makes pg_dump mis-split it — 'could not translate host name 123@\u003chost\u003e' — while pgx (used by transport/daemon/conflicts/reconcile) connects fine, so only backup fails. A real user backing up a Supabase/cloud hub with such a password hits this. Fix: parse the DSN once with pgconn.ParseConfig (pgx, which tolerates it) and hand pg_dump the connection via PG* env vars (PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE/PGSSLMODE/PGSSLROOTCERT), invoking pg_dump with NO dsn arg — env values are literal, so no parsing/quoting ambiguity for any password. Extract sslmode/sslrootcert from the DSN query string (after the first '?', so the password span is untouched); fold in the MTIX-59 PGSSLROOTCERT=system default when verify-mode names no trust root.",
+      "acceptance": "1. mtix sync backup connects via PG* env vars, not a DSN positional arg. 2. A DSN with a special-char password backs up (pgDumpConnParams extracts host/port/user/password/database/sslmode/sslrootcert correctly). 3. MTIX-59 sslrootcert=system default preserved. 4. TestCloudPath_Backup green on BOTH Neon and Supabase in the cloud gate. 5. Unit test for the param extraction.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "claude-fr19",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "8a1007244f6d16b0b969359796bf4941eff01b64be2826f461e255722c1f5e6b",
+      "created_at": "2026-07-28T14:28:31Z",
+      "updated_at": "2026-07-28T14:32:30Z",
+      "closed_at": "2026-07-28T14:32:30Z",
+      "uid": "019fa920-9123-7ad9-be8e-9aabd43a03ba"
+    },
+    {
       "id": "MTIX-7",
       "parent_id": "",
       "depth": 0,
@@ -7283,7 +7309,7 @@
       "agent_id": "claude-fr19",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-60",
+      "current_node_id": "MTIX-61",
       "last_heartbeat": "2026-07-08T13:50:26Z"
     },
     {
@@ -7382,6 +7408,6 @@
       "status": "active"
     }
   ],
-  "node_count": 269,
-  "checksum": "0953309b762c105a5f76e1bd10c77c63401c3546ab8b460e0be284d103ed792f"
+  "node_count": 270,
+  "checksum": "c0570cc23ec40116d05d0cddfa074c2271f9f021e98f49d01926303205cf03e3"
 }

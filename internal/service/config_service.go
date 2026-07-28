@@ -14,10 +14,11 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
-// validConfigKeys lists all 28 allowed config keys per FR-11.2.
+// validConfigKeys lists all 29 allowed config keys per FR-11.2.
 var validConfigKeys = map[string]bool{
 	"prefix":                   true,
 	"author_id":                true,
+	"mcp.read_only":            true,
 	"api.bind":                 true,
 	"api.http_port":            true,
 	"api.grpc_port":            true,
@@ -58,10 +59,11 @@ var serverRestartKeys = map[string]bool{
 	"logging.level": true,
 }
 
-// configDefaults contains default values for all 28 keys per FR-11.2.
+// configDefaults contains default values for all 29 keys per FR-11.2.
 var configDefaults = map[string]string{
 	"prefix":                     "PROJ",
 	"author_id":                  "",
+	"mcp.read_only":              "false",
 	"api.bind":                   "127.0.0.1",
 	"api.http_port":              "6849",
 	"api.grpc_port":              "6850",
@@ -191,6 +193,14 @@ func (cs *ConfigService) AutoClaim() bool {
 func (cs *ConfigService) AuthorID() string {
 	v, _ := cs.Get("author_id")
 	return v
+}
+
+// MCPReadOnly reports whether the MCP server should run in read-only mode
+// (MTIX-2.1.3), refusing mutation tools. The `mtix mcp --read-only` flag
+// overrides this per invocation.
+func (cs *ConfigService) MCPReadOnly() bool {
+	v, _ := cs.Get("mcp.read_only")
+	return v == "true"
 }
 
 // SoftDeleteRetention implements ConfigProvider.SoftDeleteRetention per FR-3.3.

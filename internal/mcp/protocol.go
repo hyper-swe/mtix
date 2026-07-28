@@ -128,6 +128,12 @@ type ToolDef struct {
 	Name        string     `json:"name"`
 	Description string     `json:"description"`
 	InputSchema SchemaObj  `json:"inputSchema"`
+
+	// Scope is the access class this tool needs (MTIX-2.1.3): read, write, or
+	// admin. It is a server-side concept (json:"-": not sent on the wire) used
+	// to gate a read-only client. Left empty at registration, it is filled in
+	// from the tool's name by the registry.
+	Scope ToolScope `json:"-"`
 }
 
 // SchemaObj is a JSON Schema object for tool input validation.

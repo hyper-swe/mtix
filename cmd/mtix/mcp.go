@@ -26,6 +26,7 @@ func newMCPCmd() *cobra.Command {
 	var (
 		projectDir   string
 		channelAgent string
+		readOnly     bool
 	)
 
 	cmd := &cobra.Command{
@@ -64,8 +65,13 @@ Example MCP client configuration:
 			}
 			return nil
 		},
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runMCP(channelAgent)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			// --read-only overrides the mcp.read_only config only when passed.
+			ro := readOnly
+			if !cmd.Flags().Changed("read-only") && app.configSvc != nil {
+				ro = app.configSvc.MCPReadOnly()
+			}
+			return runMCP(channelAgent, ro)
 		},
 	}
 
@@ -81,13 +87,16 @@ Example MCP client configuration:
 			"push its new inbox events into the running session (FR-20 \u00a79 rung 4). "+
 			"Requires the session to be launched with --channels (or the development "+
 			"flag while the preview allowlist applies)")
+	cmd.Flags().BoolVar(&readOnly, "read-only", false,
+		"Serve only read/query tools; refuse mutations (MTIX-2.1.3). Overrides the "+
+			"mcp.read_only config key. Use for untrusted or observer MCP clients.")
 
 	return cmd
 }
 
 // runMCP starts the MCP stdio server with all tools registered.
 // Per MTIX-6.1.1: logs go to file, protocol goes to stdout.
-func runMCP(channelAgent string) error {
+func runMCP(channelAgent string, readOnly bool) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project (run 'mtix init' first)")
 	}
@@ -127,8 +136,12 @@ func runMCP(channelAgent string) error {
 	mcp.RegisterDocsTools(reg)
 	mcp.RegisterSyncWorkflowTool(reg, app.store.ReadDB(), app.mtixDir)
 
+	// MTIX-2.1.3: apply read-only AFTER registration so List/Call gate on scope.
+	reg.SetReadOnly(readOnly)
+
 	logger.Info("mtix MCP server starting",
 		"version", version,
+		"read_only", readOnly,
 		"tools", len(reg.List()))
 
 	ctx, cancel := signal.NotifyContext(context.Background(),

@@ -155,6 +155,29 @@ integrates with mtix two ways:
    Install it per its README and register the mtix server command:
    `mtix mcp` (add `-C /path/to/project` for multi-project use; `--project` is a deprecated alias).
 
+## Read-only clients (MTIX-2.1.3)
+
+Every MCP tool has an access scope — `read` (queries), `write` (mutations like
+create/update/claim), or `admin` (destructive/system ops like delete/rerun/docs
+generation). Run the server read-only to expose **only** the query tools and
+refuse every mutation — useful for an untrusted or observer agent:
+
+```
+mtix mcp --read-only
+```
+
+A read-only server does not even list the write/admin tools (a well-behaved
+client never sees them), and refuses them defensively if called anyway. For a
+per-project default without the flag, set the config key:
+
+```
+mtix config set mcp.read_only true
+```
+
+The `--read-only` flag overrides the config for that invocation. Scope is
+per-client: launch one server with the flag for the observer and another without
+it for the agent that needs to write.
+
 ## The Context Chain — How Agents Get Their Briefing
 
 The dot-notation hierarchy (e.g., `PROJ-1.3.2`) is more than an ID scheme — it's a **context chain**. Each level adds a layer of context:

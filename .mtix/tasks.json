@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-08-21T16:40:56Z",
+  "exported_at": "2026-08-21T17:11:25Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -6863,7 +6863,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -6871,7 +6871,7 @@
       "weight": 1,
       "content_hash": "200245ebbba5bf23c6f060bb4376f845ffb849fbbf19a59c4804dafc88432b52",
       "created_at": "2026-08-21T08:59:22Z",
-      "updated_at": "2026-08-21T16:38:38Z",
+      "updated_at": "2026-08-21T17:11:25Z",
       "uid": "01a0238b-d7b3-774f-a23e-f0408a6f0385"
     },
     {
@@ -6888,7 +6888,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -6896,7 +6896,7 @@
       "weight": 1,
       "content_hash": "fba1eb0bd431ce6fa010763414ef2c17702e80ee047ec2b9e14775bd9234f564",
       "created_at": "2026-08-21T08:59:22Z",
-      "updated_at": "2026-08-21T16:38:38Z",
+      "updated_at": "2026-08-21T17:11:25Z",
       "uid": "01a0238b-d7d5-77cc-95c6-98a472ed7803"
     },
     {
@@ -6988,7 +6988,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -6996,7 +6996,7 @@
       "weight": 1,
       "content_hash": "e185e2be83cfebc8eb1b9214d4d0bc01919ce83fa5244be9ccb4f012cbdf5f69",
       "created_at": "2026-08-21T08:59:22Z",
-      "updated_at": "2026-08-21T16:38:38Z",
+      "updated_at": "2026-08-21T17:11:25Z",
       "uid": "01a0238b-d84c-7dd6-b35d-8cae47599b93"
     },
     {
@@ -7013,7 +7013,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "blocked",
+      "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -7021,7 +7021,7 @@
       "weight": 1,
       "content_hash": "ebffd26c8c1b08431ec70fdaeb60c4c4786dc2e48996a74b2958367e1ee29f0c",
       "created_at": "2026-08-21T08:59:22Z",
-      "updated_at": "2026-08-21T16:38:38Z",
+      "updated_at": "2026-08-21T17:11:25Z",
       "uid": "01a0238b-d86b-7943-b3a7-6a9443dca178"
     },
     {
@@ -7038,7 +7038,7 @@
       "issue_type": "",
       "priority": 3,
       "labels": "[]",
-      "status": "open",
+      "status": "blocked",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
@@ -7046,7 +7046,7 @@
       "weight": 1,
       "content_hash": "02db5c01a4f858dfffc54015af1b0dcfbd065428ef203a7a52233dcea0fd437f",
       "created_at": "2026-08-21T08:59:22Z",
-      "updated_at": "2026-08-21T16:38:38Z",
+      "updated_at": "2026-08-21T17:11:25Z",
       "uid": "01a0238b-d8a1-7576-b87b-fad5c84e4511"
     },
     {
@@ -7656,64 +7656,64 @@
       "created_at": "2026-04-27T13:13:55Z"
     },
     {
-      "from_id": "MTIX-64.4",
-      "to_id": "MTIX-64.3",
+      "from_id": "MTIX-64.2",
+      "to_id": "MTIX-64.6",
       "dep_type": "blocks",
-      "created_at": "2026-08-21T16:38:38Z"
+      "created_at": "2026-08-21T17:11:25Z"
+    },
+    {
+      "from_id": "MTIX-64.3",
+      "to_id": "MTIX-64.4",
+      "dep_type": "blocks",
+      "created_at": "2026-08-21T17:11:25Z"
+    },
+    {
+      "from_id": "MTIX-64.3",
+      "to_id": "MTIX-64.5",
+      "dep_type": "blocks",
+      "created_at": "2026-08-21T17:11:25Z"
+    },
+    {
+      "from_id": "MTIX-64.3",
+      "to_id": "MTIX-64.9",
+      "dep_type": "blocks",
+      "created_at": "2026-08-21T17:11:25Z"
+    },
+    {
+      "from_id": "MTIX-64.4",
+      "to_id": "MTIX-64.9",
+      "dep_type": "blocks",
+      "created_at": "2026-08-21T17:11:25Z"
     },
     {
       "from_id": "MTIX-64.5",
-      "to_id": "MTIX-64.3",
-      "dep_type": "blocks",
-      "created_at": "2026-08-21T16:38:38Z"
-    },
-    {
-      "from_id": "MTIX-64.6",
-      "to_id": "MTIX-64.2",
-      "dep_type": "blocks",
-      "created_at": "2026-08-21T16:38:38Z"
-    },
-    {
-      "from_id": "MTIX-64.6",
-      "to_id": "MTIX-64.5",
-      "dep_type": "blocks",
-      "created_at": "2026-08-21T16:38:38Z"
-    },
-    {
-      "from_id": "MTIX-64.9",
-      "to_id": "MTIX-64.3",
-      "dep_type": "blocks",
-      "created_at": "2026-08-21T16:38:38Z"
-    },
-    {
-      "from_id": "MTIX-64.9",
-      "to_id": "MTIX-64.4",
-      "dep_type": "blocks",
-      "created_at": "2026-08-21T16:38:38Z"
-    },
-    {
-      "from_id": "MTIX-64.9",
-      "to_id": "MTIX-64.5",
-      "dep_type": "blocks",
-      "created_at": "2026-08-21T16:38:38Z"
-    },
-    {
-      "from_id": "MTIX-64.9",
       "to_id": "MTIX-64.6",
       "dep_type": "blocks",
-      "created_at": "2026-08-21T16:38:38Z"
+      "created_at": "2026-08-21T17:11:25Z"
     },
     {
-      "from_id": "MTIX-64.9",
-      "to_id": "MTIX-64.7",
+      "from_id": "MTIX-64.5",
+      "to_id": "MTIX-64.9",
       "dep_type": "blocks",
-      "created_at": "2026-08-21T16:38:38Z"
+      "created_at": "2026-08-21T17:11:25Z"
     },
     {
-      "from_id": "MTIX-64.9",
-      "to_id": "MTIX-64.8",
+      "from_id": "MTIX-64.6",
+      "to_id": "MTIX-64.9",
       "dep_type": "blocks",
-      "created_at": "2026-08-21T16:38:38Z"
+      "created_at": "2026-08-21T17:11:25Z"
+    },
+    {
+      "from_id": "MTIX-64.7",
+      "to_id": "MTIX-64.9",
+      "dep_type": "blocks",
+      "created_at": "2026-08-21T17:11:25Z"
+    },
+    {
+      "from_id": "MTIX-64.8",
+      "to_id": "MTIX-64.9",
+      "dep_type": "blocks",
+      "created_at": "2026-08-21T17:11:25Z"
     }
   ],
   "agents": [
@@ -7855,5 +7855,5 @@
     }
   ],
   "node_count": 285,
-  "checksum": "8cdf66d5bb967029910feb7b8be2ff5f21cb619a19eddb9fd78fd9fcb211c2f4"
+  "checksum": "9f546c14f394fa254342352ced173f965fd28571e228068554de63ec0f1b2680"
 }

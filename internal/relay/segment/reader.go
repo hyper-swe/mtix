@@ -37,6 +37,19 @@ type ScanOptions struct {
 	// Key is the fleet MAC key, nil in unauthenticated mode.
 	Key []byte
 
+	// TolerateTornTail applies the active-segment tail rule to a
+	// sealed segment, yielding its clean prefix and Truncated instead
+	// of a corruption verdict.
+	//
+	// It exists for one purpose: the FR-21 §5.5 reconciliation, where a
+	// caller needs the clean prefix in hand before it can test whether
+	// the successor segment explains the torn tail. It pronounces
+	// nothing — a torn tail the successor does not explain is still
+	// RELAY_SEGMENT_CORRUPT, and ExplainsTornSeal is what decides.
+	// Setting it anywhere else silently disables the §5.4 guarantee
+	// that damage in immutable bytes is loud.
+	TolerateTornTail bool
+
 	// ExpectPeerID, when set, requires the header to name this peer.
 	// A segment filed under one peer that claims another has either
 	// been relocated or was written by something that is not this
@@ -76,6 +89,7 @@ type Scanner struct {
 	header    Header
 	key       []byte
 	sealed    bool
+	tolerate  bool
 	buf       []byte
 	rec       Record
 	next      uint64 // relay sequence the next record must carry
@@ -122,6 +136,7 @@ func NewScanner(r io.Reader, opts ScanOptions) (*Scanner, error) {
 		header:    h,
 		key:       opts.Key,
 		sealed:    opts.Sealed,
+		tolerate:  opts.TolerateTornTail,
 		buf:       make([]byte, RecordHeaderSize),
 		next:      h.FirstRS,
 		delivered: h.FirstRS - 1,
@@ -207,7 +222,7 @@ func (s *Scanner) stopShort(err error) bool {
 // valid data: at the tail of the active segment it is an append the
 // reader has not seen finish, and in a sealed segment it is damage.
 func (s *Scanner) stopDamaged(err error) bool {
-	if !s.sealed {
+	if !s.sealed || s.tolerate {
 		s.truncated = true
 		s.done = true
 		return false
@@ -273,6 +288,39 @@ func ScanFile(path string, opts ScanOptions) (Result, error) {
 	}
 	defer func() { _ = f.Close() }()
 	return ScanAll(f, opts)
+}
+
+// ExplainsTornSeal reports whether successor accounts for the torn tail
+// of a sealed segment, which is the one case FR-21 §5.5 exempts from
+// RELAY_SEGMENT_CORRUPT.
+//
+// sealed must come from a scan with TolerateTornTail set, so it carries
+// the clean prefix and the fact that the tail is torn. The successor
+// explains it when it is the very next segment of the same peer in the
+// same publisher epoch and starts at or before the position after the
+// sealed segment's last whole record — meaning nothing was lost between
+// the two. A publisher recovering from its durable cursor may re-emit
+// records the sealed segment already holds; that overlap is explained
+// too, and the duplicates are absorbed downstream.
+//
+// The successor's declared first relay sequence is not taken on trust:
+// its first record carries that position inside its MAC, so a header
+// edited to claim an earlier start fails the scanner's contiguity check
+// as soon as that record is read.
+//
+// Everything else stands: a successor that skips a position, belongs to
+// another peer, arrives in another epoch, or is not the immediate next
+// segment leaves a hole that this exemption must never paper over.
+func ExplainsTornSeal(sealed Result, successor Header) bool {
+	if !sealed.Truncated {
+		// A segment that is not torn has nothing to excuse, and an
+		// intact one must never be waved through on this path.
+		return false
+	}
+	return successor.PeerID == sealed.Header.PeerID &&
+		successor.PubEpoch == sealed.Header.PubEpoch &&
+		successor.SegmentNo == sealed.Header.SegmentNo+1 &&
+		successor.FirstRS <= sealed.Cursor.RS+1
 }
 
 // CheckContinuity reports whether the segment described by h may be

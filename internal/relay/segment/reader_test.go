@@ -17,7 +17,7 @@ import (
 
 // buildSegment frames a whole segment: header plus one record per
 // payload, at consecutive relay sequences from h.FirstRS.
-func buildSegment(t *testing.T, h segment.Header, key []byte, payloads ...string) []byte {
+func buildSegment(t testing.TB, h segment.Header, key []byte, payloads ...string) []byte {
 	t.Helper()
 	b, err := h.MarshalBinary()
 	require.NoError(t, err)

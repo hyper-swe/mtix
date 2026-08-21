@@ -37,7 +37,12 @@ func runComment(id, text, to string) error {
 	}
 
 	ctx := context.Background()
-	if err := app.promptSvc.AddAnnotation(ctx, id, text, "cli", to); err != nil {
+	// Use the process's resolved identity (MTIX-24: MTIX_AUTHOR_ID env >
+	// author_id config > "cli"), not a hardcoded "cli": the annotation's
+	// displayed author is what the addressee's inbox shows as the sender, so
+	// hardcoding made every agent's addressed comment unattributable and
+	// broke reply-routing (relay-epic prerequisite fix; see FR-21 §12.4).
+	if err := app.promptSvc.AddAnnotation(ctx, id, text, app.authorID, to); err != nil {
 		return err
 	}
 

@@ -131,16 +131,29 @@ func registerInboxAckTool(reg *ToolRegistry, st InboxStore) {
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
 		var p struct {
 			Agent string `json:"agent"`
-			Seq   int64  `json:"seq"`
+			Seq   *int64 `json:"seq"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse inbox_ack args: %w", err)
 		}
+		// Required-arg validation (relay-epic prerequisite fix; FR-21 §12.4):
+		// a missing seq used to default to 0 and report SUCCESS while acking
+		// nothing — the caller believed the event was handled, the inbox kept
+		// resurfacing it, and under a wake-hook setup that meant a wake loop.
+		if p.Agent == "" {
+			return ErrorResult("inbox_ack: 'agent' is required"), nil
+		}
+		if p.Seq == nil {
+			return ErrorResult("inbox_ack: 'seq' is required — the seq of the specific inbox event you handled (from mtix_inbox)"), nil
+		}
+		if *p.Seq < 1 {
+			return ErrorResult(fmt.Sprintf("inbox_ack: seq %d is not a valid inbox seq (seqs start at 1)", *p.Seq)), nil
+		}
 
-		if err := st.InboxAck(ctx, p.Agent, p.Seq); err != nil {
+		if err := st.InboxAck(ctx, p.Agent, *p.Seq); err != nil {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Acked inbox event %d for %s", p.Seq, p.Agent)), nil
+		return SuccessResult(fmt.Sprintf("Acked inbox event %d for %s", *p.Seq, p.Agent)), nil
 	})
 }

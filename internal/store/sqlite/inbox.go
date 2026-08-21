@@ -85,18 +85,43 @@ func (s *Store) InboxList(ctx context.Context, agentID string) ([]InboxEvent, er
 	return out, nil
 }
 
+// journalTail returns the current highest sync_events rowid (0 for an empty
+// journal) — the upper bound of ackable inbox seqs, read inside the caller's
+// transaction so the bound and the ack are consistent.
+func journalTail(ctx context.Context, tx *sql.Tx) (int64, error) {
+	var tail int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(rowid), 0) FROM sync_events`).Scan(&tail); err != nil {
+		return 0, fmt.Errorf("inbox ack: read journal tail: %w", err)
+	}
+	return tail, nil
+}
+
 // InboxAck marks the SINGLE event seq as seen for agentID (MTIX-55): a
 // SELECTIVE ack recorded in the per-event ledger, NOT a cumulative watermark.
 // Acking a higher seq therefore never drops a lower, still-unprocessed event —
 // unacked events always resurface in InboxList (at-least-once holds under
 // out-of-order processing). Idempotent per (agent, seq). To defer an event,
 // simply do not ack it; it reappears on the next InboxList.
+//
+// The seq must reference the existing journal (1..tail): acking a seq that
+// does not exist yet would pre-acknowledge a FUTURE event — a message the
+// agent has never seen would arrive already-seen and be silently dropped
+// from the inbox (relay-epic prerequisite fix; see FR-21 §12.4).
 func (s *Store) InboxAck(ctx context.Context, agentID string, seq int64) error {
 	if agentID == "" {
 		return fmt.Errorf("inbox ack: agent id required: %w", model.ErrInvalidInput)
 	}
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
+		tail, err := journalTail(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if seq < 1 || seq > tail {
+			return fmt.Errorf("inbox ack: seq %d is outside the journal (tail is %d); acking beyond the tail would silently pre-acknowledge future events: %w",
+				seq, tail, model.ErrInvalidInput)
+		}
+		_, err = tx.ExecContext(ctx, `
 			INSERT OR IGNORE INTO agent_inbox_ack (agent_id, event_seq, acked_at)
 			VALUES (?, ?, ?)`,
 			agentID, seq, s.clock().Format(time.RFC3339Nano))
@@ -108,12 +133,26 @@ func (s *Store) InboxAck(ctx context.Context, agentID string, seq int64) error {
 // in order: it advances agentID's watermark so every event with rowid <= seq is
 // marked seen, and prunes now-redundant ledger rows at/below the watermark to
 // keep the ledger bounded. Monotonic; a lower seq never rewinds the watermark.
+//
+// A seq outside the existing journal (seq < 1 or seq > tail) is REJECTED —
+// not clamped, not partially applied: an accepted out-of-journal cursor would
+// pre-acknowledge every future event up to seq, so the agent's inbox would
+// silently swallow messages it never saw (relay-epic prerequisite fix; see
+// FR-21 §12.4). The caller acks what exists, or the call fails loudly.
 func (s *Store) InboxAckThrough(ctx context.Context, agentID string, seq int64) error {
 	if agentID == "" {
 		return fmt.Errorf("inbox ack: agent id required: %w", model.ErrInvalidInput)
 	}
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `
+		tail, err := journalTail(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if seq < 1 || seq > tail {
+			return fmt.Errorf("inbox ack: --through %d is outside the journal (tail is %d); acking beyond the tail would silently pre-acknowledge future events: %w",
+				seq, tail, model.ErrInvalidInput)
+		}
+		if _, err = tx.ExecContext(ctx, `
 			INSERT INTO agent_inbox_cursor (agent_id, cursor) VALUES (?, ?)
 			ON CONFLICT(agent_id) DO UPDATE SET cursor = MAX(cursor, excluded.cursor)`,
 			agentID, seq); err != nil {
@@ -121,7 +160,7 @@ func (s *Store) InboxAckThrough(ctx context.Context, agentID string, seq int64) 
 		}
 		// Compact: ledger entries at/below the (possibly advanced) watermark are
 		// now redundant — the watermark hides them.
-		_, err := tx.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, `
 			DELETE FROM agent_inbox_ack
 			 WHERE agent_id = ?
 			   AND event_seq <= (SELECT cursor FROM agent_inbox_cursor WHERE agent_id = ?)`,

@@ -304,6 +304,23 @@ func AppendRecord(dst []byte, h Header, rs uint64, payload, key []byte) ([]byte,
 	return dst, nil
 }
 
+// framePayloadLen validates a record frame's fixed header and returns
+// its payload length. It is the one place a length prefix from the
+// medium is admitted, and it admits nothing above the cap: FR-21 §5.3
+// treats a larger prefix as corruption, so no caller ever sizes a read
+// or an allocation from an unvalidated number.
+func framePayloadLen(fixed []byte) (int, error) {
+	if string(fixed[0:4]) != MagicRecord {
+		return 0, fmt.Errorf("%w: want %q at the head of the record", ErrBadMagic, MagicRecord)
+	}
+	payloadLen := byteOrder.Uint32(fixed[4:8])
+	if payloadLen > MaxPayloadBytes {
+		return 0, fmt.Errorf("%w: length prefix %d, cap is %d",
+			ErrPayloadTooLarge, payloadLen, MaxPayloadBytes)
+	}
+	return int(payloadLen), nil
+}
+
 // ParseRecord decodes one record frame from the front of b in the
 // context of h, returning the record and the number of bytes consumed.
 //
@@ -328,17 +345,11 @@ func ParseRecord(b []byte, h Header, key []byte) (Record, int, error) {
 		return Record{}, 0, fmt.Errorf("%w: record header needs %d bytes, have %d",
 			ErrIncomplete, RecordHeaderSize, len(b))
 	}
-	if string(b[0:4]) != MagicRecord {
-		return Record{}, 0, fmt.Errorf("%w: want %q at the head of the record", ErrBadMagic, MagicRecord)
+	payloadLen, err := framePayloadLen(b[:RecordHeaderSize])
+	if err != nil {
+		return Record{}, 0, err
 	}
-	payloadLen := byteOrder.Uint32(b[4:8])
-	if payloadLen > MaxPayloadBytes {
-		// Refused before it can size anything: an unvalidated length
-		// prefix from a shared medium is never an allocation.
-		return Record{}, 0, fmt.Errorf("%w: length prefix %d, cap is %d",
-			ErrPayloadTooLarge, payloadLen, MaxPayloadBytes)
-	}
-	total := RecordHeaderSize + int(payloadLen)
+	total := RecordHeaderSize + payloadLen
 	if len(b) < total {
 		return Record{}, 0, fmt.Errorf("%w: record needs %d bytes, have %d",
 			ErrIncomplete, total, len(b))

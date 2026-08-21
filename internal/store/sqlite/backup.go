@@ -75,12 +75,33 @@ func (s *Store) Backup(ctx context.Context, destPath string) (*BackupResult, err
 // quick_check. The NFR-2.6a truncation validation runs first so a torn
 // backup is reported diagnostically ("truncated") instead of as an opaque
 // quick_check failure.
+//
+// The verification subject must already EXIST and be non-empty (MTIX-65):
+// verify is asked about an artifact — a backup — not a store that may
+// legitimately be fresh, so validateDBFile's missing-file-is-a-fresh-DB
+// leniency does not apply here. The old path composed two individually
+// correct decisions into a false-pass: validateDBFile returned nil for a
+// missing file, and the DSN `path+"?mode=ro"` carried no `file:` URI scheme,
+// so mode=ro was not honored — SQLite CREATED a 0-byte file and quick_check
+// on an empty database legitimately answered "ok". A nonexistent backup
+// verified as good and the verifier manufactured the artifact that made it
+// look present. A verification that cannot run must never read as a
+// verification that passed.
 func verifyDatabase(ctx context.Context, path string) (bool, error) {
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		return false, fmt.Errorf("verify %s: backup does not exist: %w", path, statErr)
+	}
+	if info.Size() == 0 {
+		return false, fmt.Errorf("verify %s: backup is 0 bytes — not a database", path)
+	}
 	if err := validateDBFile(path); err != nil {
 		return false, err
 	}
 
-	db, err := sql.Open("sqlite", path+"?mode=ro")
+	// file: URI scheme so mode=ro is honored — verification must never
+	// write, let alone create, its subject.
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
 	if err != nil {
 		return false, fmt.Errorf("open for verify: %w", err)
 	}

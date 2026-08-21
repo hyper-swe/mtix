@@ -134,10 +134,11 @@ func (s *Store) InboxAck(ctx context.Context, agentID string, seq int64) error {
 // marked seen, and prunes now-redundant ledger rows at/below the watermark to
 // keep the ledger bounded. Monotonic; a lower seq never rewinds the watermark.
 //
-// The watermark is clamped to the existing journal (seq <= tail): an
-// unclamped cursor would pre-acknowledge every future event up to seq — the
-// agent's inbox would silently swallow messages it never saw (relay-epic
-// prerequisite fix; see FR-21 §12.4).
+// A seq outside the existing journal (seq < 1 or seq > tail) is REJECTED —
+// not clamped, not partially applied: an accepted out-of-journal cursor would
+// pre-acknowledge every future event up to seq, so the agent's inbox would
+// silently swallow messages it never saw (relay-epic prerequisite fix; see
+// FR-21 §12.4). The caller acks what exists, or the call fails loudly.
 func (s *Store) InboxAckThrough(ctx context.Context, agentID string, seq int64) error {
 	if agentID == "" {
 		return fmt.Errorf("inbox ack: agent id required: %w", model.ErrInvalidInput)

@@ -38,12 +38,14 @@ func TestInbox_AddressedComment_ListAck(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, other)
 
-	// Ack clears it; a lower/equal seq is idempotent.
+	// Ack clears it.
 	require.NoError(t, s.InboxAck(ctx, "opus-4-8", got[0].Seq))
 	after, err := s.InboxList(ctx, "opus-4-8")
 	require.NoError(t, err)
 	require.Empty(t, after)
-	require.NoError(t, s.InboxAck(ctx, "opus-4-8", 0)) // must not rewind
+	// Seq 0 is rejected as outside the journal (FR-21 §12.4 tail clamp) —
+	// previously a silent no-op; either way the ack state must not rewind.
+	require.ErrorIs(t, s.InboxAck(ctx, "opus-4-8", 0), model.ErrInvalidInput)
 	stillEmpty, err := s.InboxList(ctx, "opus-4-8")
 	require.NoError(t, err)
 	require.Empty(t, stillEmpty)

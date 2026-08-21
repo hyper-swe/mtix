@@ -62,7 +62,8 @@ func runAnnotate(id, text string) error {
 	}
 
 	ctx := context.Background()
-	if err := app.promptSvc.AddAnnotation(ctx, id, text, "cli", ""); err != nil {
+	// MTIX-24 process identity, not hardcoded "cli" (see runComment).
+	if err := app.promptSvc.AddAnnotation(ctx, id, text, app.authorID, ""); err != nil {
 		return err
 	}
 

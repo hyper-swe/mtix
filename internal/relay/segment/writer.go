@@ -80,6 +80,7 @@ type Writer struct {
 	nextRS    uint64
 	records   int64
 	recovered bool
+	failed    error
 }
 
 // NewWriter opens a peer's publisher, resuming its own stream from the
@@ -308,9 +309,11 @@ func (w *Writer) RecoveredFromTornTail() bool { return w.recovered }
 // The whole frame goes out in a single write, so a torn append can only
 // ever truncate one frame — never interleave two — which is the
 // condition the reader's tail rule is written against.
+//
+// A publish that fails partway stops this writer for good (see fail).
 func (w *Writer) Append(payload []byte) (uint64, error) {
-	if w.f == nil {
-		return 0, errors.New("relay writer: closed")
+	if err := w.usable(); err != nil {
+		return 0, err
 	}
 	if len(payload) > MaxPayloadBytes {
 		// Refused before anything is written and before a relay
@@ -335,7 +338,9 @@ func (w *Writer) Append(payload []byte) (uint64, error) {
 	n, err := w.f.Write(frame)
 	w.size += int64(n)
 	if err != nil {
-		return 0, fmt.Errorf("append to segment %d: %w", w.header.SegmentNo, err)
+		// A partial frame may now be on the medium. Nothing may be
+		// appended after it, so this writer stops here.
+		return 0, w.fail(fmt.Errorf("append to segment %d: %w", w.header.SegmentNo, err))
 	}
 	rs := w.nextRS
 	w.nextRS++
@@ -348,14 +353,47 @@ func (w *Writer) Append(payload []byte) (uint64, error) {
 // becomes immutable by virtue of a successor existing, with nothing
 // rewritten and no rename to trust.
 func (w *Writer) Rotate() error {
+	if err := w.usable(); err != nil {
+		return err
+	}
+	f := w.f
+	w.f = nil
+	if err := f.Close(); err != nil {
+		return w.fail(fmt.Errorf("close segment %d: %w", w.header.SegmentNo, err))
+	}
+	if err := w.openNew(w.header.SegmentNo+1, w.nextRS); err != nil {
+		return w.fail(err)
+	}
+	return nil
+}
+
+// usable reports whether this writer may still publish.
+func (w *Writer) usable() error {
+	if w.failed != nil {
+		return w.failed
+	}
 	if w.f == nil {
 		return errors.New("relay writer: closed")
 	}
-	if err := w.f.Close(); err != nil {
-		return fmt.Errorf("close segment %d: %w", w.header.SegmentNo, err)
+	return nil
+}
+
+// fail stops this writer permanently and returns the reason.
+//
+// Once a publish has gone wrong the writer no longer knows what its own
+// segment holds — a partial frame may be on the medium, and FR-21 §5.5
+// forbids repairing one in place. Appending past it would bury a good
+// record behind a frame no reader can parse, which is a permanent stall
+// on a segment that looks healthy from this side. Recovery is a new
+// writer: it runs the §5.5 tail check, seals the damage by rotating
+// past it, and republishes from the caller's durable cursor.
+func (w *Writer) fail(cause error) error {
+	if w.f != nil {
+		_ = w.f.Close()
+		w.f = nil
 	}
-	w.f = nil
-	return w.openNew(w.header.SegmentNo+1, w.nextRS)
+	w.failed = fmt.Errorf("%w (reopen the writer to recover)", cause)
+	return w.failed
 }
 
 // Close releases the active segment. It is idempotent, and it flushes

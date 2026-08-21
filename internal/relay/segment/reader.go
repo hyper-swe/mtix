@@ -147,6 +147,10 @@ func NewScanner(r io.Reader, opts ScanOptions) (*Scanner, error) {
 func (s *Scanner) Header() Header { return s.header }
 
 // Record returns the record the last Next call delivered.
+//
+// Its payload aliases the scanner's buffer and is invalidated by the
+// next call to Next. Callers that keep a record past that point must
+// copy the payload; ScanAll already does.
 func (s *Scanner) Record() Record { return s.rec }
 
 // Err returns the verdict that stopped the scan, or nil if it stopped

@@ -544,3 +544,55 @@ func TestWriter_AppendSurfacesARotationFailure(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, uint64(2), w.NextRS(), "a failed publish consumes no relay sequence")
 }
+
+// TestWriter_FailedPublishPoisonsTheWriter is the recovery contract for
+// a publish that goes wrong mid-flight.
+//
+// A partial write leaves bytes on the medium the writer can no longer
+// reason about, and §5.5 forbids repairing them in place. Continuing to
+// append past them would bury a good record behind a frame no reader
+// can parse — a permanent stall on a segment that looks healthy from
+// the writer's side. So a failed publish stops this writer for good:
+// the caller must open a new one, which runs the §5.5 tail check and
+// rotates past the damage.
+func TestWriter_FailedPublishPoisonsTheWriter(t *testing.T) {
+	dir := t.TempDir()
+	cfg := writerConfig(dir)
+	cfg.MaxSegmentBytes = segment.HeaderSize + 1
+	w, err := segment.NewWriter(cfg)
+	require.NoError(t, err)
+
+	_, err = w.Append([]byte("one"))
+	require.NoError(t, err)
+
+	// Block the rotation the next append needs.
+	squatter := filepath.Join(dir, segment.FileName(2))
+	require.NoError(t, os.WriteFile(squatter, []byte("squatter"), 0o600))
+
+	_, err = w.Append([]byte("two"))
+	require.Error(t, err)
+
+	// Every later attempt refuses, and says why, rather than writing
+	// into a segment whose state is no longer known.
+	for i := 0; i < 2; i++ {
+		_, err := w.Append([]byte("three"))
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "reopen")
+	}
+	require.Error(t, w.Rotate())
+	require.Equal(t, uint64(2), w.NextRS(), "no relay sequence is consumed by a refusal")
+	require.NoError(t, w.Close(), "Close still releases what it holds")
+
+	// A fresh writer recovers: the obstruction is gone, the intact tail
+	// is found, and publishing continues where it left off.
+	require.NoError(t, os.Remove(squatter))
+	w2, err := segment.NewWriter(cfg)
+	require.NoError(t, err)
+	rs, err := w2.Append([]byte("two"))
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), rs)
+	require.NoError(t, w2.Close())
+
+	payloads, _ := readSegments(t, dir, testKey)
+	require.Equal(t, []string{"one", "two"}, payloads)
+}

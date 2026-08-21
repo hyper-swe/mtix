@@ -90,7 +90,7 @@ func (s State) Terminal() bool {
 // removed out from under a reader mid-append. Pruned and corrupt are
 // terminal; both recoveries create new segments instead.
 func (s State) CanTransitionTo(to State) bool {
-	if !s.Valid() || !to.Valid() {
+	if !to.Valid() {
 		return false
 	}
 	switch s {
@@ -101,6 +101,7 @@ func (s State) CanTransitionTo(to State) bool {
 	case StatePruned, StateCorrupt:
 		return false
 	default:
+		// An undefined source state has no edges either.
 		return false
 	}
 }

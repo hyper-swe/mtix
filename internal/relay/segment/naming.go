@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
-	"strings"
 )
 
 // FileExt is the segment file extension (FR-21 §5.2).
@@ -56,7 +55,7 @@ func ParseFileName(name string) (uint64, error) {
 	if m == nil {
 		return 0, fmt.Errorf("%w: segment file %q", ErrForeignEntry, name)
 	}
-	no, err := strconv.ParseUint(strings.TrimLeft(m[1], "0"), 10, 64)
+	no, err := strconv.ParseUint(m[1], 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("%w: segment file %q: %v", ErrForeignEntry, name, err)
 	}

@@ -35,7 +35,8 @@
       "TestBackup_CreatesValidCopy",
       "TestBackup_VerificationPasses",
       "TestExport_ChecksumIsCorrect",
-      "TestExport_NodeCountMatchesArray"
+      "TestExport_NodeCountMatchesArray",
+      "TestVerifyDatabase_MissingFile_FailsVerification"
     ]
   },
   {
@@ -200,6 +201,50 @@
       "TestMultiProject_AC1_CreateRootsInheritAndMismatch",
       "TestRenumberSubtree_MultiHyphenPrefix_PrefixIntact",
       "TestRenumberSubtree_MultiHyphenPrefix_NoCrossPrefixMatch"
+    ]
+  },
+  {
+    "scenario": 20,
+    "title": "Relay Wire Integrity: Every Byte Validated, Every Truncation Clean or Loud (FR-21 \u00a75.3/\u00a75.4, ADR-005)",
+    "tests": [
+      "TestProperty_EveryBytePrefixIsACleanPrefixOrALoudVerdict",
+      "TestProperty_AnySingleBitFlipIsCaughtOrHarmless",
+      "TestProperty_TruncatingTheActiveTailNeverLosesHistory",
+      "TestVectors_CorruptionClassesGetTheirRegistryVerdict",
+      "TestVectors_EncoderReproducesPinnedBytes"
+    ]
+  },
+  {
+    "scenario": 21,
+    "title": "Relay Torn-Seal Crash Reconciliation (FR-21 \u00a75.5 \u2014 ordinary publisher crash never strands a reader)",
+    "tests": [
+      "TestTornSeal_TolerationCoversEveryCrashOffset",
+      "TestTornSeal_IsCorruptionUntilTheSuccessorExplainsIt",
+      "TestTornSeal_MidStreamDamageIsNotExplainedAway",
+      "TestExplainsTornSeal_RefusesEverythingElse",
+      "TestVectors_TornSealReconciliation",
+      "TestWriter_FailedPublishPoisonsTheWriter"
+    ]
+  },
+  {
+    "scenario": 22,
+    "title": "Relay Key Rotation Provable From Frames (FR-21 D-R10 \u2014 old key valid vs wrong key forged)",
+    "tests": [
+      "TestRotation_OldKeyValidVersusWrongKeyForged",
+      "TestRotation_BothEpochsLiveReadsTheWholeStream",
+      "TestRotation_RecordsDoNotTravelAcrossTheEpochBoundary",
+      "TestRotation_PublisherWritesUnderTheCurrentEpoch",
+      "TestWriter_EpochBumpsOpenAFreshSegment"
+    ]
+  },
+  {
+    "scenario": 23,
+    "title": "Relay Single-Writer Discipline and Medium Hygiene (FR-21 \u00a75.1/\u00a75.2, ADR-005 \u2014 no locks, no symlinks, no clobber)",
+    "tests": [
+      "TestWriter_RefusesASymlinkInItsOwnDirectory",
+      "TestWriter_RefusesToClobberAnExistingSegment",
+      "TestWriter_RefusesADamagedHeader",
+      "TestWriter_NeverSplitsARecordAcrossSegments"
     ]
   }
 ]

@@ -231,27 +231,36 @@ func CRC32C(payload []byte) uint32 {
 // ComputeMAC returns the FR-21 §5.3 record MAC:
 //
 //	HMAC-SHA256(key[key_epoch],
-//	    format_version ‖ peer_id ‖ segment_no ‖ key_epoch ‖ pub_epoch ‖
-//	    rs ‖ crc32c ‖ payload)
+//	    format_version ‖ flags ‖ peer_id ‖ segment_no ‖ key_epoch ‖
+//	    pub_epoch ‖ rs ‖ crc32c ‖ payload)
 //
 // Binding the position and both epochs into the tag is what makes a
 // record non-relocatable: a genuine record replayed into another
 // position, file, peer, or epoch fails authentication. In
 // unauthenticated mode the tag is all zeroes.
+//
+// flags is bound too. The attach-time mode configuration stays the
+// primary guard against a flipped authenticated bit — either direction
+// yields a loud mode-mismatch refusal — so this is defense in depth,
+// and it extends to flag bits not yet defined.
+//
+// first_rs is deliberately not bound: a forged value is caught
+// structurally, because the first record's MAC-bound rs must equal it.
 func ComputeMAC(h Header, rs uint64, crc uint32, payload, key []byte) [MACSize]byte {
 	var out [MACSize]byte
 	if !h.Authenticated() {
 		return out
 	}
 	m := hmac.New(sha256.New, key)
-	var fixed [2 + peerIDFieldSize + 8 + 2 + 2 + 8 + 4]byte
+	var fixed [2 + 2 + peerIDFieldSize + 8 + 2 + 2 + 8 + 4]byte
 	byteOrder.PutUint16(fixed[0:2], h.FormatVersion)
-	copy(fixed[2:2+peerIDFieldSize], h.PeerID)
-	byteOrder.PutUint64(fixed[66:74], h.SegmentNo)
-	byteOrder.PutUint16(fixed[74:76], h.KeyEpoch)
-	byteOrder.PutUint16(fixed[76:78], h.PubEpoch)
-	byteOrder.PutUint64(fixed[78:86], rs)
-	byteOrder.PutUint32(fixed[86:90], crc)
+	byteOrder.PutUint16(fixed[2:4], h.Flags)
+	copy(fixed[4:4+peerIDFieldSize], h.PeerID)
+	byteOrder.PutUint64(fixed[68:76], h.SegmentNo)
+	byteOrder.PutUint16(fixed[76:78], h.KeyEpoch)
+	byteOrder.PutUint16(fixed[78:80], h.PubEpoch)
+	byteOrder.PutUint64(fixed[80:88], rs)
+	byteOrder.PutUint32(fixed[88:92], crc)
 	m.Write(fixed[:])
 	m.Write(payload)
 	m.Sum(out[:0])

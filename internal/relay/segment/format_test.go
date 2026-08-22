@@ -35,13 +35,18 @@ func testHeader() segment.Header {
 
 // wantMAC recomputes the FR-21 §5.3 MAC independently of the
 // implementation, straight from the spec's concatenation order:
-// format_version ‖ peer_id ‖ segment_no ‖ key_epoch ‖ pub_epoch ‖ rs ‖
-// crc32c ‖ payload, every integer big-endian and peer_id in its
+// format_version ‖ flags ‖ peer_id ‖ segment_no ‖ key_epoch ‖ pub_epoch
+// ‖ rs ‖ crc32c ‖ payload, every integer big-endian and peer_id in its
 // 64-byte NUL-padded field form.
+//
+// first_rs is absent by design: §5.3 leaves it unbound because the
+// first record's MAC-bound rs must equal it, which catches a forged
+// value structurally.
 func wantMAC(t *testing.T, h segment.Header, rs uint64, crc uint32, payload, key []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	require.NoError(t, binary.Write(&buf, binary.BigEndian, h.FormatVersion))
+	require.NoError(t, binary.Write(&buf, binary.BigEndian, h.Flags))
 	peer := make([]byte, 64)
 	copy(peer, h.PeerID)
 	buf.Write(peer)
@@ -432,6 +437,11 @@ func TestRecordMAC_BindsPositionAndEpochs(t *testing.T) {
 		}},
 		{"read under a different format version", func(h *segment.Header, _ *[]byte) {
 			h.FormatVersion = 0x0101
+		}},
+		{"read under a different flag word", func(h *segment.Header, _ *[]byte) {
+			// Still authenticated, so this exercises the flags binding
+			// itself rather than the mode-mismatch refusal.
+			h.Flags = segment.FlagAuthenticated | 0x8000
 		}},
 	}
 	for _, tt := range tests {

@@ -71,9 +71,21 @@ func NewPluginInstaller(projectDir string, data *TemplateData, logger *slog.Logg
 		logger.Error("parse skill templates", "error", err)
 	}
 
+	// Plugin targets render AGENTS.md at the project root (or a global
+	// agent dir), NOT inside .mtix/docs/ — cross-doc links must carry the
+	// .mtix/docs/ prefix or they dangle (user-reported: every "Additional
+	// Documentation" link in an installed AGENTS.md was broken). Copy the
+	// data so the caller's generator view (DocsPath "") is untouched.
+	pdata := data
+	if pdata != nil {
+		installData := *pdata
+		installData.DocsPath = ".mtix/docs/"
+		pdata = &installData
+	}
+
 	return &PluginInstaller{
 		projectDir: projectDir,
-		data:       data,
+		data:       pdata,
 		logger:     logger,
 		templates:  tmpl,
 	}

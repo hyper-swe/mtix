@@ -246,5 +246,15 @@
       "TestWriter_RefusesADamagedHeader",
       "TestWriter_NeverSplitsARecordAcrossSegments"
     ]
+  },
+  {
+    "scenario": 24,
+    "title": "Relay Publisher Restore Never Silently Loses Post-Restore Work (FR-21 \u00a75.7, G1 \u2014 the named scenario, not a discovered one)",
+    "tests": [
+      "TestPublisherRestore_TailVerifyRefusesDivergence",
+      "TestPublisherRestore_ResetPeerBumpsEpochAndRepublishes",
+      "TestPublisherRestore_ReadersDeliverEveryPostRestoreEvent",
+      "TestPublisherRestore_IdenticalRepublishIsAbsorbedNotRefused"
+    ]
   }
 ]

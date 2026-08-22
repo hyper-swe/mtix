@@ -89,6 +89,14 @@ func header(segNo, firstRS uint64, authenticated bool) segment.Header {
 	return h
 }
 
+// restoreHeader is header() with an explicit publisher epoch, for the
+// FR-21 §5.7 restore cases.
+func restoreHeader(segNo, firstRS uint64, pubEpoch uint16) segment.Header {
+	h := header(segNo, firstRS, true)
+	h.PubEpoch = pubEpoch
+	return h
+}
+
 // build writes a segment with payloads starting at firstRS.
 func build(h segment.Header, key []byte, payloads ...string) []byte {
 	raw, err := h.MarshalBinary()
@@ -163,6 +171,23 @@ func main() {
 	// header offset 6..8 (big-endian u16).
 	flagCleared := append([]byte(nil), valid3...)
 	flagCleared[6], flagCleared[7] = 0, 0
+
+	// FR-21 §5.7 publisher restore. reset-peer bumps pub_epoch and
+	// restarts relay sequences at a declared base, in FRESH segments —
+	// so a post-restore segment carries a low rs under a HIGH epoch,
+	// which is legitimate forward progress rather than the replay it
+	// would be within one epoch.
+	restoreEpoch2 := build(restoreHeader(4, 1, 2), fleetKey,
+		`{"event_id":"corpus-post-1","op_type":"comment"}`,
+		`{"event_id":"corpus-post-2","op_type":"comment"}`)
+
+	// The same authentic pre-restore record read under the post-restore
+	// header. The epoch is inside the MAC, so the boundary is not a
+	// place an attacker — or a confused reader — can splice at.
+	restoreHdr := restoreHeader(4, 1, 2)
+	restoreRaw, errR := restoreHdr.MarshalBinary()
+	must(errR)
+	epochSpliced := append(restoreRaw, valid3[segment.HeaderSize:]...)
 
 	hu := header(1, 1, false)
 	unauth := build(hu, nil,
@@ -244,6 +269,17 @@ func main() {
 				Scans: []scan{
 					{Sealed: true, Key: "fleet", Expect: expect{Code: "RELAY_SEGMENT_CORRUPT"}},
 					{Sealed: false, Key: "fleet", Expect: expect{Code: "RELAY_SEGMENT_CORRUPT"}},
+				}},
+			{Name: "restore_epoch_bump", Description: "§5.7: post-restore segment — low rs under a new pub_epoch is valid, not a replay",
+				SegmentHex: hex.EncodeToString(restoreEpoch2),
+				Scans: []scan{
+					{Sealed: true, Key: "fleet", Expect: expect{Records: 2}},
+					{Sealed: false, Key: "fleet", Expect: expect{Records: 2}},
+				}},
+			{Name: "restore_epoch_splice", Description: "§5.7: pre-restore record replayed under the post-restore epoch — the epoch is MAC-bound",
+				SegmentHex: hex.EncodeToString(epochSpliced),
+				Scans: []scan{
+					{Sealed: true, Key: "fleet", Expect: expect{Records: 0, Code: "RELAY_SEGMENT_CORRUPT"}},
 				}},
 			{Name: "short_header", Description: "segment observed mid-creation: active retries, sealed condemns",
 				SegmentHex: hex.EncodeToString(valid3[:10]),

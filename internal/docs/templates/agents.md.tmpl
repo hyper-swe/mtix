@@ -221,20 +221,20 @@ If a node is blocked by a dependency that is itself blocked:
 
 ## Status Reference
 
-See [STATUS_MACHINE.md](STATUS_MACHINE.md) for the full state machine diagram.
+See [STATUS_MACHINE.md]({{ .DocsPath }}STATUS_MACHINE.md) for the full state machine diagram.
 
 ## CLI Reference
 
-See [CLI_REFERENCE.md](CLI_REFERENCE.md) for all available commands.
+See [CLI_REFERENCE.md]({{ .DocsPath }}CLI_REFERENCE.md) for all available commands.
 
 ## Additional Documentation
 
-- [WORKFLOWS.md](WORKFLOWS.md) — Decompose-claim-done workflow patterns
-- [CONTEXT_CHAIN.md](CONTEXT_CHAIN.md) — Context assembly, token budget, and writing effective prompts
-- [BLOCKED_HANDLING.md](BLOCKED_HANDLING.md) — External dependency placeholders
-- [SESSION_PROTOCOL.md](SESSION_PROTOCOL.md) — Session lifecycle and handoff
-- [PATTERNS.md](PATTERNS.md) — LLM integration patterns and decomposition guide
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — Common errors and solutions
+- [WORKFLOWS.md]({{ .DocsPath }}WORKFLOWS.md) — Decompose-claim-done workflow patterns
+- [CONTEXT_CHAIN.md]({{ .DocsPath }}CONTEXT_CHAIN.md) — Context assembly, token budget, and writing effective prompts
+- [BLOCKED_HANDLING.md]({{ .DocsPath }}BLOCKED_HANDLING.md) — External dependency placeholders
+- [SESSION_PROTOCOL.md]({{ .DocsPath }}SESSION_PROTOCOL.md) — Session lifecycle and handoff
+- [PATTERNS.md]({{ .DocsPath }}PATTERNS.md) — LLM integration patterns and decomposition guide
+- [TROUBLESHOOTING.md]({{ .DocsPath }}TROUBLESHOOTING.md) — Common errors and solutions
 
 ## Reference Workflows (BYO Postgres adoption)
 
@@ -244,10 +244,10 @@ server-side enforcement), point them at the matching reference doc.
 Each one names what mtix provides and what the team owns, with a
 trust-boundary section and a failure-modes table.
 
-- [workflows/solo.md](workflows/solo.md) — single developer, SQLite default.
-- [workflows/small-team.md](workflows/small-team.md) — 2-10 developers
+- [workflows/solo.md]({{ .DocsPath }}workflows/solo.md) — single developer, SQLite default.
+- [workflows/small-team.md]({{ .DocsPath }}workflows/small-team.md) — 2-10 developers
   sharing one BYO Postgres with a client-side pre-push snapshot hook.
-- [workflows/safety-critical.md](workflows/safety-critical.md) — regulated
+- [workflows/safety-critical.md]({{ .DocsPath }}workflows/safety-critical.md) — regulated
   teams: server-side enforcement, long `audit_log` retention,
   rehearsed disaster recovery.
 

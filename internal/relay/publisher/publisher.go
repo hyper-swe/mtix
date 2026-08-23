@@ -269,6 +269,22 @@ func (p *Publisher) bank(ctx context.Context, rows []sqlite.RelayJournalEvent, a
 // have already consumed, which their monotonic watermark would silently
 // discard. That is the outcome this check exists to prevent, so the
 // refusal is loud and names its recovery.
+//
+// The comparison is ordered MEMBERSHIP, not position. A positional
+// comparison against the push cursor is rejected by FR-21 §5.7: in the
+// ordinary §6.2 crash window the medium is legitimately ahead of the
+// cursor, so the positional reading would turn every ordinary crash
+// into an operator ticket — and operators trained to reflexively reset
+// a peer are their own safety hazard.
+//
+// ASSUMPTION, carried here because the design depends on it: the relay
+// push cursor lives in the SAME STORE as the journal, so a restore
+// rewinds cursor and journal together, atomically. That — together with
+// the tail window ending exactly at the resume boundary, the only place
+// new divergence can be emitted — is what makes ordered membership
+// sound without a cursor anchor. If the relay cursors ever move out of
+// the store, this argument breaks and the semantics must be revisited
+// in the spec before the code.
 func (p *Publisher) verifyTail(ctx context.Context) error {
 	if p.verified {
 		return nil

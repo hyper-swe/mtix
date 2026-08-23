@@ -229,6 +229,51 @@ CREATE TABLE IF NOT EXISTS hook_dispatch_ledger (
     PRIMARY KEY (hook_name, event_seq)
 );
 
+-- The FR-21 relay PUBLISH position (§6.2). cursor is the highest
+-- sync_events.rowid this peer has framed and appended to its own relay
+-- segment directory. It advances only AFTER the append call returns, so
+-- a crash in between republishes rather than skips — the duplicate is
+-- absorbed downstream by applied_events, and a skip would be a silent
+-- hole no reader could detect.
+--
+-- The relay is a SECOND transport beside the hub, so it keeps its own
+-- position rather than consuming sync_status: that column is a
+-- single-transport mechanism, and sharing it would make either
+-- transport's progress erase the other's.
+--
+-- pub_epoch and next_rs are this publisher's identity in the frame
+-- (§5.7). Ordinary publishing advances next_rs and never touches
+-- pub_epoch; only the operator-gated reset after a restore bumps the
+-- epoch, and that is the one operation permitted to move cursor
+-- backwards. Local-only, never synced.
+CREATE TABLE IF NOT EXISTS relay_push_cursor (
+    id        INTEGER PRIMARY KEY CHECK (id = 1),
+    cursor    INTEGER NOT NULL DEFAULT 0,
+    pub_epoch INTEGER NOT NULL DEFAULT 1,
+    next_rs   INTEGER NOT NULL DEFAULT 1
+);
+
+-- The FR-21 relay INGEST position, per peer (§6.3). A reader tracks
+-- each publisher separately because relay sequences are per-peer; one
+-- shared number could not say where it had reached in each stream.
+--
+-- It advances only after the store transaction that applied the records
+-- commits, and never past a segment the reader condemned — a sealed
+-- segment can deliver a clean prefix and THEN be judged corrupt, and
+-- banking that prefix would step over whatever the damage hid.
+--
+-- Ordering is keyed on (pub_epoch, rs), never rs alone: within an epoch
+-- the position is a monotonic watermark that refuses replay from below,
+-- while a higher epoch restarts sequences at a declared base, so a
+-- lower rs under a newer epoch is legitimate progress. An older epoch
+-- is a rollback splice and is refused. Local-only, never synced.
+CREATE TABLE IF NOT EXISTS relay_ingest_cursor (
+    peer_id    TEXT    PRIMARY KEY,
+    segment_no INTEGER NOT NULL DEFAULT 0,
+    rs         INTEGER NOT NULL DEFAULT 0,
+    pub_epoch  INTEGER NOT NULL DEFAULT 0
+);
+
 -- RETIRED (FR-20): the MTIX-52 designated-host synced-dispatch watermark. The
 -- ledger dispatcher treats every origin identically, so this cursor is no
 -- longer read or advanced; the table stays so downgrade/upgrade round-trips

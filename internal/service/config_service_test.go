@@ -264,11 +264,14 @@ func TestConfig_SessionTimeout_WithCustomValue(t *testing.T) {
 	assert.Equal(t, 8*time.Hour, timeout)
 }
 
-// TestConfig_ValidConfigKeys_Returns29Keys verifies FR-13.2 documentation introspection.
-func TestConfig_ValidConfigKeys_Returns29Keys(t *testing.T) {
+// TestConfig_ValidConfigKeys_Returns35Keys verifies FR-13.2 documentation introspection.
+// The count moved from 29 to 35 when the FR-21 relay transport added its
+// six sync.relay.* keys; the number is asserted so a key can never be
+// added without the FR-11.2 allowlist being updated deliberately.
+func TestConfig_ValidConfigKeys_Returns35Keys(t *testing.T) {
 	keys := service.ValidConfigKeys()
 
-	assert.Len(t, keys, 29, "should return exactly 29 valid config keys")
+	assert.Len(t, keys, 35, "should return exactly 35 valid config keys")
 
 	// Verify sorted order.
 	for i := 1; i < len(keys); i++ {

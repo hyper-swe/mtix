@@ -14,52 +14,63 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
-// validConfigKeys lists all 29 allowed config keys per FR-11.2.
+// validConfigKeys lists all 35 allowed config keys per FR-11.2.
+//
+// The sync.relay.* family configures the FR-21 file transport. It is a
+// second transport beside the hub, so its cadence and thresholds are
+// its own settings rather than the hub's: the daemon's tick and a
+// shared medium's propagation are unrelated concerns (D-R12).
 var validConfigKeys = map[string]bool{
-	"prefix":                   true,
-	"author_id":                true,
-	"mcp.read_only":            true,
-	"api.bind":                 true,
-	"api.http_port":            true,
-	"api.grpc_port":            true,
-	"api.rate_limit":           true,
-	"mcp.enabled":              true,
-	"mcp.transport":            true,
-	"data.dir":                 true,
-	"data.soft_delete_retention": true,
-	"sync.enabled":             true,
-	"sync.endpoint":            true,
-	"sync.team_id":             true,
-	"sync.auto_sync":           true,
-	"sync.interval":            true,
-	"agent.heartbeat_interval": true,
-	"agent.stale_threshold":    true,
-	"agent.session_timeout":    true,
-	"agent.stuck_timeout":      true,
-	"agent.id_pattern":         true,
-	"agent.auto_claim":         true,
-	"context.token_estimator":  true,
-	"logging.file":             true,
-	"logging.level":            true,
-	"progress.weighted":        true,
-	"ui.default_depth":         true,
-	"ui.collapse_done":         true,
-	"ui.theme":                 true,
+	"prefix":                       true,
+	"author_id":                    true,
+	"mcp.read_only":                true,
+	"api.bind":                     true,
+	"api.http_port":                true,
+	"api.grpc_port":                true,
+	"api.rate_limit":               true,
+	"mcp.enabled":                  true,
+	"mcp.transport":                true,
+	"data.dir":                     true,
+	"data.soft_delete_retention":   true,
+	"sync.enabled":                 true,
+	"sync.endpoint":                true,
+	"sync.team_id":                 true,
+	"sync.auto_sync":               true,
+	"sync.interval":                true,
+	"sync.relay.dir":               true,
+	"sync.relay.poll_interval":     true,
+	"sync.relay.retention_days":    true,
+	"sync.relay.silent_peer_days":  true,
+	"sync.relay.max_segment_bytes": true,
+	"sync.relay.require_auth":      true,
+	"agent.heartbeat_interval":     true,
+	"agent.stale_threshold":        true,
+	"agent.session_timeout":        true,
+	"agent.stuck_timeout":          true,
+	"agent.id_pattern":             true,
+	"agent.auto_claim":             true,
+	"context.token_estimator":      true,
+	"logging.file":                 true,
+	"logging.level":                true,
+	"progress.weighted":            true,
+	"ui.default_depth":             true,
+	"ui.collapse_done":             true,
+	"ui.theme":                     true,
 }
 
 // serverRestartKeys are keys that affect a running server and require restart.
 var serverRestartKeys = map[string]bool{
-	"api.bind":      true,
-	"api.http_port": true,
-	"api.grpc_port": true,
+	"api.bind":       true,
+	"api.http_port":  true,
+	"api.grpc_port":  true,
 	"api.rate_limit": true,
-	"mcp.enabled":   true,
-	"mcp.transport": true,
-	"logging.file":  true,
-	"logging.level": true,
+	"mcp.enabled":    true,
+	"mcp.transport":  true,
+	"logging.file":   true,
+	"logging.level":  true,
 }
 
-// configDefaults contains default values for all 29 keys per FR-11.2.
+// configDefaults contains default values for all 35 keys per FR-11.2.
 var configDefaults = map[string]string{
 	"prefix":                     "PROJ",
 	"author_id":                  "",
@@ -77,19 +88,37 @@ var configDefaults = map[string]string{
 	"sync.team_id":               "",
 	"sync.auto_sync":             "true",
 	"sync.interval":              "30s",
-	"agent.heartbeat_interval":   "60s",
-	"agent.stale_threshold":      "24h",
-	"agent.session_timeout":      "4h",
-	"agent.stuck_timeout":        "",
-	"agent.id_pattern":           "agent-*",
-	"agent.auto_claim":           "true",
-	"context.token_estimator":    "chars4",
-	"logging.file":               ".mtix/logs/mtix.log",
-	"logging.level":              "info",
-	"progress.weighted":          "false",
-	"ui.default_depth":           "3",
-	"ui.collapse_done":           "false",
-	"ui.theme":                   "system",
+	// An empty relay directory means no relay is configured; every
+	// relay phase is then a no-op rather than an error.
+	"sync.relay.dir": "",
+	// Poll cadence is the relay's own, not the daemon's (D-R12). "0"
+	// is legal and declares a tick-only peer (§6.6) — a turn-driven
+	// agent seat, a cron-locked appliance, a sneakernet courier — which
+	// is a deployment, not a misconfiguration.
+	"sync.relay.poll_interval": "5s",
+	// The prune safety window, and the silence threshold that prompts
+	// retirement at twice it (§6.7).
+	"sync.relay.retention_days":   "7",
+	"sync.relay.silent_peer_days": "14",
+	// Rotation threshold (§5.3).
+	"sync.relay.max_segment_bytes": "4194304",
+	// Authenticated by default: the relay medium is a less trusted
+	// channel than the hub, so running without MACs is an explicit,
+	// logged opt-out rather than something a peer drifts into (§8.3).
+	"sync.relay.require_auth":  "true",
+	"agent.heartbeat_interval": "60s",
+	"agent.stale_threshold":    "24h",
+	"agent.session_timeout":    "4h",
+	"agent.stuck_timeout":      "",
+	"agent.id_pattern":         "agent-*",
+	"agent.auto_claim":         "true",
+	"context.token_estimator":  "chars4",
+	"logging.file":             ".mtix/logs/mtix.log",
+	"logging.level":            "info",
+	"progress.weighted":        "false",
+	"ui.default_depth":         "3",
+	"ui.collapse_done":         "false",
+	"ui.theme":                 "system",
 }
 
 // ConfigService manages mtix configuration per FR-11.1 and FR-11.2.

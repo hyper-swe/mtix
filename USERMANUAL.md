@@ -1512,10 +1512,15 @@ being minted fresh, because a peer that re-mints its identity every
 session appears as a new member each time, and each abandoned one holds
 history open for everyone until an operator retires it.
 
-*How* those two values persist is a property of your deployment, not of
+Set `sync.relay.peer_id` to an identity the deployment owns, and the
+peer keeps it however often its workspace is rebuilt. Left unset, the
+identity derives from the machine — which is the right default whenever
+the machine is the thing that persists.
+
+*How* those values persist is a property of your deployment, not of
 mtix: a mounted configuration file, an injected secret, whatever your
 runtime already provides. mtix's requirement is only that they arrive
-that way.
+that way, never that they be re-minted.
 
 The session lifecycle:
 
@@ -1548,31 +1553,28 @@ because no process was sitting there to be woken.
 <!-- The block below is ONE worked example, not a specification. mtix
      does not require this shape, ship it, or read these files. -->
 
-> **A worked example (non-normative).** One way to deliver what must
-> persist, shown once so each deployment does not have to invent it:
+> **A worked example (non-normative).** One way to deliver the three
+> values, shown once so each deployment does not have to invent it:
 > mount a small directory the runtime restores each session, and read
 > it at session start.
 >
 > ```bash
 > # session-start script
-> #   /persistent/relay-key  — the relay key, restored by the runtime
-> #   /persistent/relay-dir  — a file holding the shared directory path
-> mtix config set sync.relay.dir "$(cat /persistent/relay-dir)"
+> #   /persistent/relay-id   — this peer's identity, e.g. 0123456789abcdef-desk
+> #   /persistent/relay-dir  — the shared directory path
+> #   /persistent/relay-key  — the relay key
+> mtix config set sync.relay.peer_id "$(cat /persistent/relay-id)"
+> mtix config set sync.relay.dir     "$(cat /persistent/relay-dir)"
 > install -m 600 /persistent/relay-key .mtix/relay/keys/1
+>
 > mtix sync relay attach "$(cat /persistent/relay-dir)"
 > mtix sync relay clone      # the workspace is empty; catch up
 > ```
 >
-> Any mechanism that delivers the same values works as well. The point
-> is only that they are *delivered*, never re-minted.
->
-> **Current limitation.** A peer's identity is derived from the machine
-> it runs on. A workspace rebuilt on the *same* machine keeps the same
-> identity; one rebuilt somewhere else does not, and will join as a new
-> member. Until an identity can be assigned by configuration, check
-> `mtix sync relay status` for members you do not recognise and retire
-> the ones that are gone — `mtix sync doctor` flags them once they have
-> been silent long enough.
+> Any mechanism that delivers the same three values works as well — an
+> injected secret, a mounted config file, whatever the runtime already
+> provides. The point is only that they are *delivered*, never
+> re-minted.
 
 ### Waking agents: delivery that terminates in the prompt
 

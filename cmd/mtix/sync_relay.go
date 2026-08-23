@@ -16,6 +16,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/relay/keyring"
 	"github.com/hyper-swe/mtix/internal/relay/lifecycle"
 	"github.com/hyper-swe/mtix/internal/relay/metadata"
+	"github.com/hyper-swe/mtix/internal/relay/segment"
 	"github.com/hyper-swe/mtix/internal/relay/tick"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/clock"
@@ -103,10 +104,26 @@ func relayRequireAuth() bool {
 
 // relayPeerID returns this peer's identity under peers/.
 //
-// It is the machine hash truncated to the §5.2 grammar. An
-// operator-assigned identity for seats whose environment churns (§7.1)
-// is a separate setting and is not resolved here.
+// An operator-assigned id wins when configured. That is what a peer
+// whose workspace is rebuilt somewhere else between sessions needs: a
+// machine-derived id would change with the machine, and the peer would
+// rejoin as a new member each time — leaving the abandoned one holding
+// everyone's retention window open until someone retired it (FR-21
+// §7.1).
+//
+// Unset, the id derives from the machine, which is right whenever the
+// machine is the thing that persists.
 func relayPeerID() (string, error) {
+	if app.configSvc != nil {
+		if configured, err := app.configSvc.Get("sync.relay.peer_id"); err == nil && configured != "" {
+			// Already validated at `config set`; re-checked here because
+			// a config file can also be edited by hand.
+			if err := segment.ValidatePeerID(configured); err != nil {
+				return "", fmt.Errorf("sync.relay.peer_id %q is malformed: %w", configured, err)
+			}
+			return configured, nil
+		}
+	}
 	hash, err := clock.MachineHash()
 	if err != nil {
 		return "", fmt.Errorf("resolve relay peer id: %w", err)

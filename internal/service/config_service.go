@@ -12,9 +12,10 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/relay/segment"
 )
 
-// validConfigKeys lists all 35 allowed config keys per FR-11.2.
+// validConfigKeys lists all 36 allowed config keys per FR-11.2.
 //
 // The sync.relay.* family configures the FR-21 file transport. It is a
 // second transport beside the hub, so its cadence and thresholds are
@@ -38,6 +39,7 @@ var validConfigKeys = map[string]bool{
 	"sync.auto_sync":               true,
 	"sync.interval":                true,
 	"sync.relay.dir":               true,
+	"sync.relay.peer_id":           true,
 	"sync.relay.poll_interval":     true,
 	"sync.relay.retention_days":    true,
 	"sync.relay.silent_peer_days":  true,
@@ -58,6 +60,29 @@ var validConfigKeys = map[string]bool{
 	"ui.theme":                     true,
 }
 
+// valueValidators check a value before it is stored, for keys where a
+// malformed one fails somewhere far from the command that set it.
+//
+// The check belongs here so an operator learns at the moment they type
+// it rather than at the next tick, when the message would arrive
+// detached from the action that caused it.
+var valueValidators = map[string]func(string) error{
+	// FR-21 §5.2 identity grammar. Empty means "derive from this
+	// machine", which is the default. The grammar is reused from the
+	// relay's own frame layer rather than restated — a second copy of
+	// an identity rule is a second thing to disagree.
+	"sync.relay.peer_id": func(v string) error {
+		if v == "" {
+			return nil
+		}
+		if err := segment.ValidatePeerID(v); err != nil {
+			return fmt.Errorf("sync.relay.peer_id %q is malformed "+
+				"(16 hex characters, optionally -label): %w", v, model.ErrInvalidInput)
+		}
+		return nil
+	},
+}
+
 // serverRestartKeys are keys that affect a running server and require restart.
 var serverRestartKeys = map[string]bool{
 	"api.bind":       true,
@@ -70,7 +95,7 @@ var serverRestartKeys = map[string]bool{
 	"logging.level":  true,
 }
 
-// configDefaults contains default values for all 35 keys per FR-11.2.
+// configDefaults contains default values for all 36 keys per FR-11.2.
 var configDefaults = map[string]string{
 	"prefix":                     "PROJ",
 	"author_id":                  "",
@@ -91,6 +116,11 @@ var configDefaults = map[string]string{
 	// An empty relay directory means no relay is configured; every
 	// relay phase is then a no-op rather than an error.
 	"sync.relay.dir": "",
+	// An operator-assigned relay identity, for peers whose workspace is
+	// rebuilt somewhere else between sessions. Empty derives it from
+	// the machine, which is right whenever the machine is the thing
+	// that persists.
+	"sync.relay.peer_id": "",
 	// Poll cadence is the relay's own, not the daemon's (D-R12). "0"
 	// is legal and declares a tick-only peer (§6.6) — a turn-driven
 	// agent seat, a cron-locked appliance, a sneakernet courier — which
@@ -178,6 +208,11 @@ func (cs *ConfigService) Set(key, value string) (string, error) {
 			"unknown config key %q; valid keys: %s: %w",
 			key, validKeyList(), model.ErrInvalidConfigKey,
 		)
+	}
+	if validate := valueValidators[key]; validate != nil {
+		if err := validate(value); err != nil {
+			return "", err
+		}
 	}
 
 	cs.values[key] = value

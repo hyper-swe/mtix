@@ -1452,6 +1452,128 @@ such filesystems at open). Origin-independent dispatch is exactly what
 makes the shared mount unnecessary: post anywhere, sync, and the worker
 host's daemon fires the wake locally.
 
+### Topology: sync through a shared directory (FR-21)
+
+Some machines cannot open a database connection at all. A sandboxed
+agent runtime may share a folder with its host and have no network. An
+isolated network may forbid a database reachable from every zone while
+still permitting controlled file movement — a filer between zones, or
+removable media across an air gap. A two-person team may not want to
+provision Postgres for two people.
+
+For these, mtix can carry the same events through a **shared directory**
+instead of a hub. It is a second transport, not a second product: the
+same events, the same convergence, the same hooks firing on arrival.
+
+```bash
+# One peer creates the relay, on the shared path both machines can see:
+mtix sync relay init /mnt/shared/team-relay
+mtix config set sync.relay.dir /mnt/shared/team-relay
+
+# Copy the printed key file to every other peer, out of band —
+# not through the relay directory itself. Then, on each peer:
+mtix config set sync.relay.dir /mnt/shared/team-relay
+mtix sync relay attach /mnt/shared/team-relay
+
+# From here the daemon carries it, exactly as with a hub:
+mtix daemon
+```
+
+Each machine still keeps its **own local `.mtix`**. The shared directory
+carries *events*, never the database — the warning above about never
+sharing one `.mtix` across machines applies with full force here, and
+mtix refuses such filesystems at open regardless.
+
+Useful to know:
+
+- **A relay and a hub can both be configured.** A peer with both becomes
+  a gateway between them at no extra cost: events cross in each
+  direction and arriving twice is harmless.
+- **Latency is not promised.** Worst case is roughly your poll interval,
+  plus however long the medium takes to make a file visible on the other
+  side — seconds for a mounted folder, a human walk for removable media.
+  Correctness never depends on it being fast.
+- **Problems are loud on purpose.** If a peer meets damaged bytes or a
+  missing record, it stops and says so rather than skipping ahead.
+  `mtix sync doctor` names the recovery for each case.
+
+Read the security tradeoffs before putting one on shared infrastructure:
+the key authenticates the fleet rather than the individual peer, and
+records are authenticated but not encrypted. See
+[docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md).
+
+### Peers whose workspace does not survive between sessions
+
+Some agent runtimes hand out a fresh, empty workspace every session. A
+peer like that can take part fully — its *store* is disposable, but its
+*membership* is not. What has to survive is identity: the peer's id and
+its relay key. Both arrive from configuration and secrets rather than
+being minted fresh, because a peer that re-mints its identity every
+session appears as a new member each time, and each abandoned one holds
+history open for everyone until an operator retires it.
+
+*How* those two values persist is a property of your deployment, not of
+mtix: a mounted configuration file, an injected secret, whatever your
+runtime already provides. mtix's requirement is only that they arrive
+that way.
+
+The session lifecycle:
+
+```bash
+# 1. Session start — join the relay and catch up.
+mtix sync relay attach /mnt/shared/team-relay
+mtix sync relay clone            # only if the peer has no store yet
+
+# 2. During the session — one pass whenever you want to exchange work.
+mtix sync relay tick             # publish, ingest, then fire any hooks
+
+# 3. Session end — one final pass so the work leaves the machine.
+mtix sync relay tick
+```
+
+A peer that works this way is **not** a degraded one. `mtix sync relay
+tick` runs exactly one pass and exits, which is all a turn-driven agent,
+a scheduled appliance, or a laptop carried between isolated networks
+needs; set `sync.relay.poll_interval` to `0` to declare that no daemon
+will poll. Convergence is a property of the pass, not of a process
+staying resident: whatever was published while the peer was away arrives
+on its next tick.
+
+The delivery rungs such a peer lacks are **absent, not broken**. There
+is no resident process to wake, so the cold-start and push rungs simply
+do not apply; addressed work still lands in the peer's inbox and is
+waiting at the start of its next turn. Nothing reports an error merely
+because no process was sitting there to be woken.
+
+<!-- The block below is ONE worked example, not a specification. mtix
+     does not require this shape, ship it, or read these files. -->
+
+> **A worked example (non-normative).** One way to deliver what must
+> persist, shown once so each deployment does not have to invent it:
+> mount a small directory the runtime restores each session, and read
+> it at session start.
+>
+> ```bash
+> # session-start script
+> #   /persistent/relay-key  — the relay key, restored by the runtime
+> #   /persistent/relay-dir  — a file holding the shared directory path
+> mtix config set sync.relay.dir "$(cat /persistent/relay-dir)"
+> install -m 600 /persistent/relay-key .mtix/relay/keys/1
+> mtix sync relay attach "$(cat /persistent/relay-dir)"
+> mtix sync relay clone      # the workspace is empty; catch up
+> ```
+>
+> Any mechanism that delivers the same values works as well. The point
+> is only that they are *delivered*, never re-minted.
+>
+> **Current limitation.** A peer's identity is derived from the machine
+> it runs on. A workspace rebuilt on the *same* machine keeps the same
+> identity; one rebuilt somewhere else does not, and will join as a new
+> member. Until an identity can be assigned by configuration, check
+> `mtix sync relay status` for members you do not recognise and retire
+> the ones that are gone — `mtix sync doctor` flags them once they have
+> been silent long enough.
+
 ### Waking agents: delivery that terminates in the prompt
 
 LLM agents act only on what is in their context — a queue an agent must

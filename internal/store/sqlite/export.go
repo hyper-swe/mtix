@@ -136,15 +136,24 @@ func (s *Store) Export(ctx context.Context, project, mtixVersion string) (*Expor
 	return &ExportData{
 		Version:       1,
 		SchemaVersion: SchemaVersionV1,
-		ExportedAt:    time.Now().UTC().Format(time.RFC3339),
-		MtixVersion:   mtixVersion,
-		Project:       project,
-		Nodes:         nodes,
-		Dependencies:  deps,
-		Agents:        agents,
-		Sessions:      sessions,
-		NodeCount:     len(nodes),
-		Checksum:      checksum,
+		// The store's injected clock, NOT time.Now(): CODING-STYLE §10
+		// forbids a direct wall-clock read in production code, and the
+		// mechanism was already here — this site simply bypassed it.
+		// Export bytes feed file_hash logging and replica comparison, so
+		// two exports of unchanged state must be byte-identical; reading
+		// the wall clock here made that false across a second boundary
+		// (MTIX-70). Production behavior is unchanged: the default
+		// clock IS the wall clock, so the tasks.json re-export diff is
+		// still there by design.
+		ExportedAt:   s.clock().UTC().Format(time.RFC3339),
+		MtixVersion:  mtixVersion,
+		Project:      project,
+		Nodes:        nodes,
+		Dependencies: deps,
+		Agents:       agents,
+		Sessions:     sessions,
+		NodeCount:    len(nodes),
+		Checksum:     checksum,
 	}, nil
 }
 

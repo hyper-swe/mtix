@@ -36,6 +36,11 @@ func newTestSyncService(t *testing.T) (*service.SyncService, *sqlite.Store, stri
 	t.Cleanup(func() { store.Close() })
 
 	clock := func() time.Time { return time.Date(2026, 3, 14, 12, 0, 0, 0, time.UTC) }
+	// The STORE's clock too, not just the service's. Export stamps
+	// exported_at from the store, so leaving it on the wall clock made
+	// two exports differ across a second boundary — which read as
+	// non-determinism and failed only on loaded CI runners (MTIX-70).
+	store.SetClock(clock)
 	svc := service.NewSyncService(store, logger, clock)
 	return svc, store, dir
 }
@@ -626,6 +631,12 @@ func TestAutoExport_Deterministic_SameContent(t *testing.T) {
 	require.NoError(t, err)
 
 	// Content and hashes should be identical (deterministic export).
+	//
+	// This is a full-strength byte comparison on purpose. Export bytes
+	// feed the file_hash logging and the replica comparison, so
+	// comparing "modulo the timestamp" would be a weaker claim wearing
+	// the same name — a check that cannot fail. The clock is pinned in
+	// the fixture instead (MTIX-70).
 	assert.Equal(t, firstContent, secondContent)
 	assert.Equal(t, firstHash, secondHash)
 }
@@ -800,7 +811,7 @@ func TestAutoExport_ThenAutoImport_RoundTrips(t *testing.T) {
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
 		NodeType: model.NodeTypeIssue, ContentHash: "rt1",
 		Description: "Test description for roundtrip",
-		CreatedAt: now, UpdatedAt: now,
+		CreatedAt:   now, UpdatedAt: now,
 	}))
 
 	// Export.

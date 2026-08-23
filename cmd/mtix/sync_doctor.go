@@ -125,6 +125,11 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	modeOK, detail := checkSecretsFileMode(app.mtixDir)
 	report = appendCheck(report, "secrets file mode", modeOK, detail)
 
+	// FR-21 §9: the relay transport's checks. A store with no relay
+	// configured reports one passing row and nothing else — not
+	// configured is not unhealthy.
+	report = appendRelayChecks(ctx, report)
+
 	if app.jsonOutput {
 		body, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(stdout, string(body))

@@ -123,10 +123,15 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 	// whose exec-dispatch policy is "daemon" (MTIX-56.10).
 	app.hooksDisp.MarkDaemon()
 
+	// FR-21 §6.6: publish → ingest → dispatch. The relay phase sits
+	// between the hub pull and dispatch so a single tick can carry an
+	// event from another machine all the way to a local wake — and
+	// dispatch needs no knowledge that a relay exists.
 	pass := func() {
 		if hub {
 			runOneDaemonPull(ctx, stderr, args, opts)
 		}
+		maybeRunRelayPhase(ctx, stderr)
 		if app.hooksDisp != nil {
 			app.hooksDisp.Dispatch(ctx)
 		}

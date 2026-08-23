@@ -29,7 +29,7 @@ func TestSyncBackfillCmd_Construction(t *testing.T) {
 		"--force must be hidden so casual users don't reach for it")
 }
 
-func TestSyncCmd_AllElevenFR18CommandsRegistered(t *testing.T) {
+func TestSyncCmd_AllSyncCommandsRegistered(t *testing.T) {
 	cmd := newSyncCmd()
 	subs := map[string]bool{}
 	for _, c := range cmd.Commands() {
@@ -42,12 +42,34 @@ func TestSyncCmd_AllElevenFR18CommandsRegistered(t *testing.T) {
 		"migrate",
 		// MTIX-30.8: restore-collision (ADR-003 §6.1/§15) operator commands.
 		"mark-restored", "collisions",
+		// MTIX-64.8: the FR-21 file relay transport's command group.
+		"relay",
 	}
 	for _, name := range expected {
 		require.Truef(t, subs[name], "%s subcommand registered", name)
 	}
 	require.Equal(t, len(expected), len(cmd.Commands()),
-		"exactly the FR-18 + ADR-003 §7 + §6.1 sync commands are registered (no extras)")
+		"exactly the FR-18 + ADR-003 §7 + §6.1 + FR-21 sync commands are registered (no extras)")
+}
+
+// TestSyncRelayCmd_AllVerbsRegistered gives the FR-21 group the same
+// no-extras guard the parent has. A verb that appears without being
+// named here is surface nobody reviewed.
+func TestSyncRelayCmd_AllVerbsRegistered(t *testing.T) {
+	cmd := newSyncRelayCmd()
+	subs := map[string]bool{}
+	for _, c := range cmd.Commands() {
+		subs[c.Name()] = true
+	}
+	expected := []string{
+		"init", "attach", "status", "tick",
+		"rotate-key", "reset-peer", "retire-peer", "clone", "republish",
+	}
+	for _, name := range expected {
+		require.Truef(t, subs[name], "relay %s subcommand registered", name)
+	}
+	require.Equal(t, len(expected), len(cmd.Commands()),
+		"exactly the FR-21 §12.6 relay verbs are registered (no extras)")
 }
 
 // --- Refusal paths ---

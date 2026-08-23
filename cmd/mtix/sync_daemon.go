@@ -134,8 +134,12 @@ func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 	if dispatchHooks {
 		app.hooksDisp.MarkDaemon() // daemon trigger under the exec-dispatch policy
 	}
+	// Same FR-21 §6.6 ordering as `mtix daemon`: publish → ingest →
+	// dispatch, so a hub-and-relay peer converges on both transports in
+	// one pass.
 	pullThenDispatch := func() {
 		runOneDaemonPull(ctx, stderr, args, opts)
+		maybeRunRelayPhase(ctx, stderr)
 		if dispatchHooks && app.hooksDisp != nil {
 			app.hooksDisp.Dispatch(ctx)
 		}

@@ -389,6 +389,8 @@ mtix and mgit are sibling projects in the HyperSWE stack. The integration contra
 ### 12.3 Transport (deferred)
 The actual event transport (NATS? Postgres LISTEN/NOTIFY on the existing hub? File-based outbox?) is **not** decided in v0.2. v0.2 ships the events as a stable contract; the transport ticket lands in v0.3. This keeps mtix shippable without blocking on cross-repo coordination.
 
+**Note (FR-21).** The file-based outbox option no longer needs building from scratch. FR-21 ships a sync transport that carries the ordinary event stream through a shared directory — append-only, self-delimiting, checksummed and authenticated records, with single-writer-per-directory so no cross-host coordination is required. Anything that can deliver events into that directory can ride it, so the outbox option here reduces to writing the same records rather than designing a transport. The decision is still deferred; what changed is its cost.
+
 ## 13. Decision log
 
 ### D1. Sync hub vs BYO Postgres canonical store

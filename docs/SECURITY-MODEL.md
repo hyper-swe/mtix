@@ -101,6 +101,84 @@ Every error string that may contain a DSN passes through `redact.DSN` before rea
 
 Writes to the hub authenticate via PG-level user accounts. The pre-flight validator (`internal/sync/validator`) enforces schema, payload size, JSON depth, lamport overflow, vector-clock cap, and timestamp grace **before any PG round-trip**. Malformed or oversized events never reach the hub.
 
+## Relay transport trust model (FR-21)
+
+The relay is a second sync transport: the same events, carried through a
+shared directory instead of a database connection. Everything below is a
+*delta* to the hub model above — the event model, convergence and audit
+invariants are unchanged.
+
+### The trust boundary moves
+
+On the hub, a server the team controls authenticates writers and
+validates events before they land. A shared directory authenticates
+nobody. Anything that can write the folder can write bytes that look
+like events, so the reader must assume the medium is hostile and check
+everything itself:
+
+- Every record carries its own length, CRC32C and MAC, and is verified
+  at read time. A reader never needs the medium's cooperation — or the
+  file's completeness — to know what is true.
+- The MAC binds the record's position and epochs, so a genuine record
+  replayed into a different position, file, peer or key epoch fails
+  authentication. That closes reorder, replay and rollback in one check.
+- Every rule the hub's server-side validator applies runs locally
+  before a record is applied. On a relay there is no server, so the
+  reader is the validator.
+- Paths are resolved without following symlinks, and any symlink under
+  the relay directory is refused rather than followed.
+
+### The shared key authenticates the fleet, not the peer
+
+The relay's authentication uses one key shared by every peer. Stated
+plainly, because it is easy to assume otherwise: **that key
+authenticates the fleet, not the individual peer.** Any key-holder can
+publish under any peer's identity. What it stops is everything outside
+the fleet — and on a folder that other software can write, that is the
+threat worth stopping. Per-peer asymmetric identity is the designated
+next step and is reserved in the record format; it is not in this
+version.
+
+The practical consequence: treat the relay key exactly as you treat a
+database password. It lives outside the shared directory, readable only
+by its owner, and it travels between machines out of band. A leaked key
+is remediated the same way a leaked connection string is — rotate it.
+Rotation re-keys forward from a chosen point and records the boundary,
+so history published under the old key stays verifiable while new work
+uses the new one; keep the old key installed until retention has passed
+the boundary, or a reader will read valid history as forged.
+
+### Integrity is defensible here; availability is not
+
+Anyone who can write the directory can also delete or truncate it. That
+is not defended against, and pretending otherwise would be worse than
+saying so: the design makes such damage **loud and recoverable** rather
+than silent. A reader that meets a gap or damaged bytes stops and says
+so instead of skipping past — a stalled peer is strictly better than a
+peer that quietly dropped an event nobody can name. And every file in
+the relay is a projection: the events themselves live in each peer's own
+store, so a wiped directory costs delivery time, never data.
+
+The same reasoning applies to the relay's own bookkeeping. A peer's
+published read position is advisory: if it is damaged, that peer
+re-derives its true position locally and rewrites it, and the only cost
+is that other peers keep history slightly longer than they needed to.
+Nothing on the medium is trusted to be authoritative about anything.
+
+### Content is authenticated, not encrypted
+
+Relay records carry the team's full event content — titles, comments,
+prompts — signed but in the clear. A relay placed inside a
+third-party-synced folder therefore ships that content to that provider.
+`mtix sync doctor` warns when the relay path looks like one. If you need
+confidentiality at rest, put the relay on an encrypted volume; that is
+the boundary where it belongs, and mtix does not attempt it in the
+record format.
+
+A bootstrap snapshot — the file a joining peer imports to catch up — is
+a full plaintext copy of a store. It is removed once every peer has read
+past it, and doctor flags one left behind.
+
 ### Convergence (LWW)
 
 Replicas converge deterministically by `(lamport_clock, wall_clock_ts, author_machine_hash)` — lowest machine_hash wins on a tie. Apply-time LWW (`internal/store/sqlite/sync_apply.go`) keeps every CLI on the same state regardless of push/pull order.
@@ -192,6 +270,8 @@ Default cap is `0` (unlimited). Set explicitly via the `sync.max_queue_size` met
 - **Replay of pushed events** — `applied_events.event_id` is the dedupe key. Replay is a no-op.
 - **Migration race** — `pg_advisory_xact_lock` single-flights schema work across concurrent CLIs.
 - **Silent data loss in the queue** — queue-full returns `ErrSyncQueueFull`; events never silently dropped.
+- **Forged, altered or relocated relay records** — every record is MAC'd over its own position and epochs; a tampered, replayed or moved record fails authentication and the reader stops rather than applying it.
+- **Silent gaps in a relay stream** — records are strictly sequential per peer; a missing or repeated position stalls the reader loudly instead of being skipped.
 
 ## What sync mode does NOT protect against
 
@@ -202,6 +282,9 @@ Default cap is `0` (unlimited). Set explicitly via the `sync.max_queue_size` met
 - **Forged author identity** — `author_id` is a logical identifier from the CLI. PG-level user accounts are the real authentication boundary.
 - **Bypassed git hooks** — `git push --no-verify` or absence of installed hooks defeats the pre-push sync. Use server-side enforcement for safety-critical teams.
 - **Same-authorID audit-trail completeness** — see "Known audit-trail limitation: same-authorID conflicts" above.
+- **Peer impersonation within a relay fleet** — the shared relay key authenticates the fleet, not the peer; any key-holder can publish under any peer's identity. See "Relay transport trust model" above.
+- **Deletion or truncation of relay files** — anyone who can write the shared directory can destroy its contents. The damage is loud and recoverable (every relay file is re-derivable from a peer's own store), but it is not prevented.
+- **Confidentiality of relay content** — records are authenticated, not encrypted. A relay inside a third-party-synced folder ships the team's event content to that provider.
 - **Prompt injection over the inbox (FR-20)** — with origin-independent dispatch, an addressed comment written by ANY hub participant can cold-start a worker (exec wake) or be pushed into a live agent session (channel push), landing verbatim in that agent's context. Addressed comments are prompt input: only federate the hub with agents and humans you trust with that authority — the DSN is effectively the right to speak into every agent's prompt. Mitigations already in place: `exec` runs only for a locally trusted `hooks.yaml` (content hash, per host — placement is designation), commands are argv-only with event data confined to env/stdin, per-node rate limits and via-hook loop guards bound runaway firing, and a fire that errors is never auto-retried.
 
 ---

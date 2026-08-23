@@ -256,5 +256,17 @@
       "TestPublisherRestore_ReadersDeliverEveryPostRestoreEvent",
       "TestPublisherRestore_IdenticalRepublishIsAbsorbedNotRefused"
     ]
+  },
+  {
+    "scenario": 27,
+    "title": "Relay Ingest: Origin-Independent Dispatch and Exactly-Once Apply (FR-21 \u00a76.3/\u00a76.4, G3)",
+    "tests": [
+      "TestRelayIngest_HooksFireOnRelayArrivalViaTheLedger",
+      "TestRelayIngest_BootstrapFloorPreventsWakeStorm",
+      "TestRelayIngest_HubAndRelayDoubleArrivalAppliesOnce",
+      "TestRelayIngest_QuarantineSkipsAuthenticatedGarbageLoudly",
+      "TestRelayIngest_UnauthenticatedGarbageStallsHard",
+      "TestRelayIngest_CursorNeverAdvancesPastACondemnedSegment"
+    ]
   }
 ]

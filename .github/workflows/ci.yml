@@ -21,7 +21,16 @@ jobs:
         with:
           go-version: "1.25"
       - run: go mod verify
-      - run: go test $(go list ./... | grep -v node_modules) -race -count=1
+      # MTIX-72: an explicit budget, chosen rather than inherited. This is
+      # the heaviest invocation in CI and was the only one on Go's 10m
+      # default while the others carry 8m/12m. internal/store/sqlite alone
+      # runs ~312s here under -race (~104s locally), so a 2x runner blip
+      # killed the job with no test having failed — a timeout that reads
+      # as a test failure in the summary, and trains people to re-run
+      # instead of read. 20m keeps ~4x headroom over the observed cost
+      # while still killing a genuine hang: the package completes, so
+      # this is duration, not deadlock.
+      - run: go test $(go list ./... | grep -v node_modules) -race -count=1 -timeout 20m
 
   test-web:
     runs-on: ubuntu-22.04

@@ -77,6 +77,7 @@ type Journal interface {
 	ResetRelayPublisher(ctx context.Context, floorSeq int64, baseRS uint64) error
 	ReadRelayJournalSince(ctx context.Context, seq int64, limit int) ([]sqlite.RelayJournalEvent, error)
 	LookupRelayJournalSeqs(ctx context.Context, eventIDs []string) (map[string]int64, error)
+	RepublishRelayFrom(ctx context.Context, floorSeq int64) error
 }
 
 // Config configures a publisher for one peer's own segment directory.
@@ -128,6 +129,12 @@ type Publisher struct {
 	published int64
 	failures  int64
 	lastErr   string
+
+	// forceRotate makes the next pass open a fresh segment before it
+	// appends. Gap repair sets it: §6.8 re-emits into fresh segments and
+	// never touches a file that already exists, so a reader's view of
+	// every sealed segment stays byte-identical across a repair.
+	forceRotate bool
 }
 
 // New builds a publisher, refusing a configuration that could not
@@ -215,6 +222,12 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 	// and rotates past whatever damage was left behind.
 	defer func() { _ = w.Close() }()
 
+	if p.forceRotate {
+		if rotateErr := w.Rotate(); rotateErr != nil {
+			return 0, rotateErr
+		}
+		p.forceRotate = false
+	}
 	if w.RecoveredFromTornTail() {
 		p.log.Warn("relay publisher sealed a torn segment tail and rotated past it",
 			slog.String("peer", p.cfg.PeerID), slog.Uint64("segment", w.SegmentNo()))

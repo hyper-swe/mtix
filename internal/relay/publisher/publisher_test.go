@@ -634,15 +634,16 @@ func TestResetPeer_RefusesAnInvalidBase(t *testing.T) {
 // interface exists precisely so these can be exercised without a
 // half-broken database.
 type fakeJournal struct {
-	pos        sqlite.RelayPushPosition
-	rows       []sqlite.RelayJournalEvent
-	seqs       map[string]int64
-	errCursor  error
-	errRead    error
-	errAdvance error
-	errReset   error
-	errLookup  error
-	advances   int
+	pos          sqlite.RelayPushPosition
+	rows         []sqlite.RelayJournalEvent
+	seqs         map[string]int64
+	errCursor    error
+	errRead      error
+	errAdvance   error
+	errReset     error
+	errLookup    error
+	errRepublish error
+	advances     int
 }
 
 func (f *fakeJournal) RelayPushCursor(context.Context) (sqlite.RelayPushPosition, error) {
@@ -659,6 +660,14 @@ func (f *fakeJournal) AdvanceRelayPushCursor(_ context.Context, seq int64, nextR
 }
 
 func (f *fakeJournal) ResetRelayPublisher(context.Context, int64, uint64) error { return f.errReset }
+
+func (f *fakeJournal) RepublishRelayFrom(_ context.Context, floorSeq int64) error {
+	if f.errRepublish != nil {
+		return f.errRepublish
+	}
+	f.pos.Seq = floorSeq
+	return nil
+}
 
 func (f *fakeJournal) ReadRelayJournalSince(_ context.Context, seq int64, limit int) ([]sqlite.RelayJournalEvent, error) {
 	if f.errRead != nil {

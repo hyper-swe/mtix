@@ -315,3 +315,36 @@ func (s *Store) LookupRelayJournalSeqs(ctx context.Context, eventIDs []string) (
 	}
 	return out, nil
 }
+
+// RepublishRelayFrom rewinds the publish cursor to a floor so the
+// events after it are framed again, keeping the publisher epoch and the
+// relay sequence where they are (FR-21 §6.8).
+//
+// This is gap repair, not restore, and the difference is the whole
+// reason it is a separate operation from ResetRelayPublisher. The
+// events being re-emitted are the SAME events; they simply need to
+// reach a reader that lost them to a condemned segment. So they go out
+// under fresh relay sequences in fresh segments — never reusing
+// positions, never touching a file that already exists — and the
+// duplicates are absorbed by applied_events. Bumping the epoch here
+// would tell readers a restore had happened when none had.
+func (s *Store) RepublishRelayFrom(ctx context.Context, floorSeq int64) error {
+	if floorSeq < 0 {
+		return fmt.Errorf("republish relay: floor must not be negative: %w", model.ErrInvalidInput)
+	}
+	res, err := s.writeDB.ExecContext(ctx,
+		`UPDATE relay_push_cursor SET cursor = ? WHERE id = 1`, floorSeq)
+	if err != nil {
+		return fmt.Errorf("republish relay: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("republish relay: %w", err)
+	}
+	if n == 0 {
+		// Nothing has ever been published, so everything in the journal
+		// is already ahead of the cursor and there is nothing to repair.
+		return nil
+	}
+	return nil
+}

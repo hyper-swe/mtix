@@ -473,3 +473,46 @@ func TestLookupRelayJournalSeqs(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+
+// TestRepublishRelayFrom_RewindsWithoutBumpingTheEpoch is the FR-21 §6.8
+// gap repair. The events re-emitted are the SAME events reaching a
+// reader that lost them, so they go out under fresh relay sequences in
+// fresh segments and dedupe on arrival. Bumping the epoch here would
+// tell every reader a restore had happened when none had.
+func TestRepublishRelayFrom_RewindsWithoutBumpingTheEpoch(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.AdvanceRelayPushCursor(ctx, 100, 40))
+
+	require.NoError(t, s.RepublishRelayFrom(ctx, 20))
+	pos, err := s.RelayPushCursor(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(20), pos.Seq, "the cursor rewinds to the repair floor")
+	require.Equal(t, uint16(1), pos.PubEpoch, "the epoch does NOT move — this is not a restore")
+	require.Equal(t, uint64(40), pos.NextRS,
+		"relay sequences continue forward, so nothing reuses a consumed position")
+}
+
+// TestRepublishRelayFrom_OnAPeerThatNeverPublished is a no-op: the whole
+// journal is already ahead of the cursor.
+func TestRepublishRelayFrom_OnAPeerThatNeverPublished(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.RepublishRelayFrom(ctx, 5))
+
+	pos, err := s.RelayPushCursor(ctx)
+	require.NoError(t, err)
+	require.Zero(t, pos.Seq)
+}
+
+// TestRepublishRelayFrom_Refusals keeps the floor inside the journal and
+// reports a medium failure as itself.
+func TestRepublishRelayFrom_Refusals(t *testing.T) {
+	s := newTestStore(t)
+	require.Error(t, s.RepublishRelayFrom(context.Background(), -1))
+
+	closed, err := sqlite.New(filepath.Join(t.TempDir(), "closed.db"), slog.Default())
+	require.NoError(t, err)
+	require.NoError(t, closed.Close())
+	require.Error(t, closed.RepublishRelayFrom(context.Background(), 1))
+}

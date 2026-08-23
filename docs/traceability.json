@@ -258,6 +258,16 @@
     ]
   },
   {
+    "scenario": 25,
+    "title": "Relay Ghost-Peer Retirement and Prune Safety (FR-21 \u00a76.7 \u2014 a lagging peer blocks pruning, a vanished peer cannot forever)",
+    "tests": [
+      "TestPrune_LaggingPeerBlocksPruning",
+      "TestPrune_RetentionFloorHoldsEvenWhenAllAcked",
+      "TestRetirePeer_LeavesTheQuorumAndDoctorWarnedFirst",
+      "TestRelayClone_RejoinAfterPruneClearsRetirement"
+    ]
+  },
+  {
     "scenario": 27,
     "title": "Relay Ingest: Origin-Independent Dispatch and Exactly-Once Apply (FR-21 \u00a76.3/\u00a76.4, G3)",
     "tests": [

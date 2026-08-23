@@ -10,6 +10,13 @@
 // everyone's pruning. Every other field is fixed at creation, and
 // Rewrite refuses a document whose fixed part has moved.
 //
+// The two grow differently, deliberately. key_epochs is history — it
+// records where a rotation boundary fell, and an entry that moved would
+// relocate a line readers have already crossed — so it is strictly
+// append-only. retired_peers is a live roster: an operator retires a
+// vanished peer, and that peer clears its own entry when it rejoins
+// through bootstrap (§6.7), so entries may leave as well as arrive.
+//
 // That asymmetry is the point: a relay has no server to arbitrate, so
 // the only thing a joining peer can check its assumptions against is
 // this record. A file that could be rewritten could quietly re-point a
@@ -387,12 +394,14 @@ func (r *Relay) checkAppendOnly(next *Relay) error {
 			return fmt.Errorf("%w: key_epochs entry %d", ErrRelayImmutable, i)
 		}
 	}
-	if len(next.RetiredPeers) < len(r.RetiredPeers) {
-		return fmt.Errorf("%w: retired_peers may only grow", ErrRelayImmutable)
-	}
-	for i, p := range r.RetiredPeers {
-		if next.RetiredPeers[i] != p {
-			return fmt.Errorf("%w: retired_peers entry %d", ErrRelayImmutable, i)
+	// retired_peers is a live ROSTER, not history: retire-peer adds to
+	// it and a peer rejoining through bootstrap clears its own entry
+	// (FR-21 §6.7), so both directions are permitted. key_epochs above
+	// is the opposite — it records where a rotation boundary fell, and
+	// moving one would relocate a line readers have already crossed.
+	for _, p := range next.RetiredPeers {
+		if !peerIDPattern.MatchString(p) {
+			return fmt.Errorf("%w: retired_peers names %q", ErrRelayImmutable, p)
 		}
 	}
 	return nil

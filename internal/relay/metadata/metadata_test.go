@@ -520,16 +520,24 @@ func TestRewrite_AcceptsAGrowingRetiredRoster(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{peerB}, got.RetiredPeers)
 
-	t.Run("but not a shrinking one", func(t *testing.T) {
-		shrunk, err := metadata.Read(dir)
+	t.Run("and a shrinking one, because a peer clears its own entry when it rejoins", func(t *testing.T) {
+		// FR-21 §6.7: a retired peer that returns re-enters through
+		// bootstrap, which clears its retirement. retired_peers is a
+		// live roster, unlike key_epochs, which records where a
+		// rotation boundary fell and may never move.
+		rejoined, err := metadata.Read(dir)
 		require.NoError(t, err)
-		shrunk.RetiredPeers = nil
-		require.ErrorIs(t, metadata.Rewrite(dir, shrunk), metadata.ErrRelayImmutable)
+		rejoined.RetiredPeers = nil
+		require.NoError(t, metadata.Rewrite(dir, rejoined))
+
+		after, err := metadata.Read(dir)
+		require.NoError(t, err)
+		require.Empty(t, after.RetiredPeers)
 	})
-	t.Run("and not a rewritten one", func(t *testing.T) {
+	t.Run("but never a malformed peer id", func(t *testing.T) {
 		edited, err := metadata.Read(dir)
 		require.NoError(t, err)
-		edited.RetiredPeers[0] = peerA
+		edited.RetiredPeers = []string{"NOT A PEER"}
 		require.ErrorIs(t, metadata.Rewrite(dir, edited), metadata.ErrRelayImmutable)
 	})
 }

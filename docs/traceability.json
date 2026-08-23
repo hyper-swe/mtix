@@ -268,6 +268,15 @@
     ]
   },
   {
+    "scenario": 26,
+    "title": "Relay No-Daemon Peer Is First-Class (FR-21 \u00a76.6 \u2014 tick-only convergence; wake rungs absent, not broken)",
+    "tests": [
+      "TestRelayTick_TickOnlyPeerConvergesOnNextTick",
+      "TestRelayTick_InboxDeliveryNeedsNoDaemon",
+      "TestRelayTick_ExecWakeAbsenceIsNotAnError"
+    ]
+  },
+  {
     "scenario": 27,
     "title": "Relay Ingest: Origin-Independent Dispatch and Exactly-Once Apply (FR-21 \u00a76.3/\u00a76.4, G3)",
     "tests": [

@@ -39,9 +39,20 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.25"
+      # MTIX-71: `config verify` fetches its JSON schema from
+      # golangci-lint.run, so any blip on that host reds every commit —
+      # a gate that cries wolf trains people to ignore red, which is
+      # worse than no gate. It did exactly that alongside a real test
+      # failure, which nearly got dismissed as "the usual lint flake".
+      # The linters themselves need no network: `run` is what gates the
+      # code, and it still does. The trade-off recorded deliberately:
+      # we lose the config-shape check, and a malformed .golangci.yml
+      # now surfaces as `run` failing to start rather than as a schema
+      # error.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.11.4
+          verify: false
 
   test-go-postgres-docker:
     # MTIX-42: real Postgres contract suite against an ephemeral postgres:16

@@ -17,6 +17,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # MTIX-74: the bookkeeping gate reads git history to find which
+          # tickets had work land. A shallow checkout would leave it
+          # seeing one commit and passing without checking anything, so
+          # the gate hard-fails on a shallow clone rather than skipping —
+          # this is what keeps it honest.
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.25"

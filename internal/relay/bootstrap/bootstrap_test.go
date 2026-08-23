@@ -247,6 +247,13 @@ func TestPruneSnapshots_FlagsStaleOnesWithoutRemovingThem(t *testing.T) {
 	old, err := bootstrap.ExportSnapshot(context.Background(), exportReq(relayDir, st))
 	require.NoError(t, err)
 
+	// Age comes from the file's own mtime — the medium's timestamp is the
+	// only age signal a snapshot has. So the fixture must control BOTH
+	// sides of the comparison: an injected Now against an mtime left at
+	// the real wall clock made this test pass before midday UTC and fail
+	// after it (MTIX-75).
+	require.NoError(t, os.Chtimes(old.Path, fixedTime, fixedTime))
+
 	stale, err := bootstrap.StaleSnapshots(relayDir, bootstrap.StaleRequest{
 		Now:           fixedTime.AddDate(0, 0, 30),
 		RetentionDays: 7,

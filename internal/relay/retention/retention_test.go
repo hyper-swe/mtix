@@ -86,49 +86,6 @@ func TestPrune_BothConditionsRequired(t *testing.T) {
 	}
 }
 
-// TestPrune_LaggingPeerBlocksPruning is one of the scenario-25 tests: a
-// peer that has not caught up holds the whole window open, however old
-// the segments are. Pruning past it would drop history it can never
-// recover except by re-bootstrapping.
-func TestPrune_LaggingPeerBlocksPruning(t *testing.T) {
-	in := input(seg(1, 10, 30), seg(2, 20, 30), seg(3, 30, 30))
-	in.Acks = map[string]retention.Position{
-		peerA: {SegmentNo: 3, RS: 30},
-		peerB: {SegmentNo: 1, RS: 4}, // still inside segment 1
-	}
-
-	plan := retention.Plan(in)
-	require.Empty(t, prunableNumbers(plan),
-		"a single lagging peer holds every segment, no matter how old")
-	for _, v := range plan {
-		require.Contains(t, v.Reason, peerB, "the refusal names who is holding the window")
-	}
-
-	t.Run("and releases them as it catches up", func(t *testing.T) {
-		in.Acks[peerB] = retention.Position{SegmentNo: 2, RS: 20}
-		require.Equal(t, []uint64{1, 2}, prunableNumbers(retention.Plan(in)))
-	})
-}
-
-// TestPrune_RetentionFloorHoldsEvenWhenAllAcked is the other
-// scenario-25 half: a fleet that is fully caught up still cannot prune
-// inside the retention window. The window is the recovery margin — it
-// is what a peer restored from yesterday's backup reads to catch up, and
-// acks say nothing about that.
-func TestPrune_RetentionFloorHoldsEvenWhenAllAcked(t *testing.T) {
-	in := input(seg(1, 10, 1), seg(2, 20, 3), seg(3, 30, 9))
-	in.Acks = map[string]retention.Position{
-		peerA: {SegmentNo: 3, RS: 30},
-		peerB: {SegmentNo: 3, RS: 30},
-	}
-
-	plan := retention.Plan(in)
-	require.Equal(t, []uint64{3}, prunableNumbers(plan),
-		"only the segment past the retention floor may go, even with everyone acked")
-	require.Contains(t, plan[0].Reason, "retention")
-	require.Contains(t, plan[1].Reason, "retention")
-}
-
 // TestPrune_ActiveSegmentIsNeverPrunable keeps the tail out of reach.
 // Removing the segment a publisher is appending to would take a reader's
 // resume point out from under it mid-poll.

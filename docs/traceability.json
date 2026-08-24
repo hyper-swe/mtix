@@ -287,5 +287,17 @@
       "TestRelayIngest_UnauthenticatedGarbageStallsHard",
       "TestRelayIngest_CursorNeverAdvancesPastACondemnedSegment"
     ]
+  },
+  {
+    "scenario": 28,
+    "title": "Local-State Reset Never Strands Journal-Keyed Bookkeeping (MTIX-66/76/77 \u2014 every cursor into sync_events is rewound in the same transaction as the wipe)",
+    "tests": [
+      "TestDiscardLocal_StaleCursorDoesNotSwallowNewEvents",
+      "TestDiscardLocal_StaleAckLedgerDoesNotPreAckNewEvents",
+      "TestDiscardLocal_StaleHookFloorDoesNotHideNewEvents",
+      "TestDiscardLocal_ThenBootstrapPull_SeedsFloorAtNewTail",
+      "TestDiscardLocal_RewindsRelayPushCursorPreservingFrameIdentity",
+      "TestDiscardLocal_RelayPublisherSeesEveryPostDiscardEvent"
+    ]
   }
 ]

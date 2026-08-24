@@ -56,9 +56,9 @@ type auditEvent struct {
 }
 
 // DiscardLocal drops the local mutable state (nodes, dependencies,
-// sync_events, sync_conflicts, applied_events), the inbox and hook
-// dispatch bookkeeping that indexes into the journal, and resets the
-// meta.sync.* sentinels.
+// sync_events, sync_conflicts, applied_events), rewinds every cursor
+// that indexes into the journal (inbox, hook dispatch, relay publish),
+// and resets the meta.sync.* sentinels.
 // The DB schema and meta keys remain — only the data is cleared. Use
 // when the user wants to take the hub's state as the new ground truth.
 //
@@ -106,6 +106,27 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			// does not arrive as a backlog storm.
 			`DELETE FROM hook_dispatch_cursor`,
 			`DELETE FROM hook_dispatch_ledger`,
+			// The relay publish position, same reset (MTIX-77). FR-21
+			// §5.7 grounds the soundness of ordered-membership
+			// tail-verify on this cursor and the journal living in one
+			// store, so that a restore "rewinds cursor and journal
+			// together, atomically"; the clause anticipated the cursor
+			// leaving the store, not the journal moving without it.
+			// Rewinding here in the same tx is what keeps that
+			// invariant true. A publisher that already ran its
+			// once-per-run tail-verify would otherwise resume from the
+			// stale position and never frame the events beneath it —
+			// the silent hole §6.2's advance-after-append ordering
+			// exists to prevent.
+			//
+			// UPDATE, never DELETE: this row also carries pub_epoch and
+			// next_rs, the publisher's identity in every frame. A
+			// missing row reports as epoch 1 / next_rs 1, which would
+			// rewind that identity and let a peer past epoch 1 collide
+			// with its own published history. Preserving both is the
+			// §6.8 republish shape — the same events re-emitted under
+			// FRESH relay sequences, deduped downstream.
+			`UPDATE relay_push_cursor SET cursor = 0 WHERE id = 1`,
 			`DELETE FROM dependencies`,
 			`DELETE FROM nodes`,
 			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.lamport'`,

@@ -56,10 +56,10 @@ type auditEvent struct {
 }
 
 // DiscardLocal drops the local mutable state (nodes, dependencies,
-// sync_events, sync_conflicts, applied_events) and resets the
-// meta.sync.* sentinels. The DB schema and meta keys remain — only
-// the data is cleared. Use when the user wants to take the hub's
-// state as the new ground truth.
+// sync_events, sync_conflicts, applied_events), the inbox bookkeeping
+// that indexes into the journal, and resets the meta.sync.* sentinels.
+// The DB schema and meta keys remain — only the data is cleared. Use
+// when the user wants to take the hub's state as the new ground truth.
 //
 // Atomicity: single tx wrapping every DELETE; rollback on error
 // leaves the local store unchanged.
@@ -82,6 +82,17 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			`DELETE FROM sync_conflicts`,
 			`DELETE FROM applied_events`,
 			`DELETE FROM sync_events`,
+			// The inbox bookkeeping is keyed to sync_events.rowid, and
+			// sync_events has no AUTOINCREMENT: once the journal is
+			// wiped the next insert takes rowid 1 again, so any
+			// surviving watermark or ack row sits ABOVE the entire new
+			// journal and InboxList hides real, post-discard messages
+			// until the journal grows back past the old tail (MTIX-66).
+			// Cleared in the SAME tx as the wipe — a rollback that left
+			// these dropped would strand the inbox the other way.
+			`DELETE FROM agent_inbox_cursor`,
+			`DELETE FROM agent_inbox_ack`,
+			`DELETE FROM inbox_deliveries`,
 			`DELETE FROM dependencies`,
 			`DELETE FROM nodes`,
 			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.lamport'`,

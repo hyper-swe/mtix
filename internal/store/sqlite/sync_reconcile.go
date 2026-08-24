@@ -56,8 +56,9 @@ type auditEvent struct {
 }
 
 // DiscardLocal drops the local mutable state (nodes, dependencies,
-// sync_events, sync_conflicts, applied_events), the inbox bookkeeping
-// that indexes into the journal, and resets the meta.sync.* sentinels.
+// sync_events, sync_conflicts, applied_events), the inbox and hook
+// dispatch bookkeeping that indexes into the journal, and resets the
+// meta.sync.* sentinels.
 // The DB schema and meta keys remain — only the data is cleared. Use
 // when the user wants to take the hub's state as the new ground truth.
 //
@@ -93,6 +94,18 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			`DELETE FROM agent_inbox_cursor`,
 			`DELETE FROM agent_inbox_ack`,
 			`DELETE FROM inbox_deliveries`,
+			// Same reset, the dispatcher's side of it (MTIX-76). The
+			// scan floor is worse than the inbox watermark: every floor
+			// advance is monotonic (MAX), so a floor left above the new
+			// tail can never come back down and NO hook fires again
+			// until the journal grows past it. Clearing the row restores
+			// the default floor of 0, which is the honest position for
+			// an empty journal — and a pull straight after the discard
+			// still sees preTail == 0 and re-seeds the floor at the tail
+			// through the existing bootstrap path, so pulled history
+			// does not arrive as a backlog storm.
+			`DELETE FROM hook_dispatch_cursor`,
+			`DELETE FROM hook_dispatch_ledger`,
 			`DELETE FROM dependencies`,
 			`DELETE FROM nodes`,
 			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.lamport'`,

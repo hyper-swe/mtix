@@ -254,7 +254,17 @@
       "TestPublisherRestore_TailVerifyRefusesDivergence",
       "TestPublisherRestore_ResetPeerBumpsEpochAndRepublishes",
       "TestPublisherRestore_ReadersDeliverEveryPostRestoreEvent",
-      "TestPublisherRestore_IdenticalRepublishIsAbsorbedNotRefused"
+      "TestPublisherRestore_IdenticalRepublishIsAbsorbedNotRefused",
+      "TestPublisher_AttestationSurvivesOrdinaryJournalGrowth",
+      "TestPublisher_AttestationVoidedByJournalGenerationChange",
+      "TestPublisher_AttestationVoidedByTailRegressionAlone",
+      "TestPublisher_NeverPublishedIsNotDivergedByADiscard",
+      "TestPublisher_UnreadableWitnessIsNotTreatedAsUnchanged",
+      "TestJournalGeneration_MonotonicAcrossDiscards",
+      "TestJournalGeneration_UnchangedByOrdinaryWrites",
+      "TestPublisher_ResetPeerFailsBeforeMutatingWhenWitnessUnreadable",
+      "TestJournalGeneration_CorruptValueIsRefusedNotGuessed",
+      "TestJournalGeneration_QueryFailureIsReportedNotZero"
     ]
   },
   {

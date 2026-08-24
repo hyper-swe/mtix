@@ -127,6 +127,18 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			// §6.8 republish shape — the same events re-emitted under
 			// FRESH relay sequences, deduped downstream.
 			`UPDATE relay_push_cursor SET cursor = 0 WHERE id = 1`,
+			// Witness that the journal's rowid space restarted
+			// (MTIX-79, FR-21 §5.7 v1.3.6). Cursors above can be
+			// rewound because this function knows about them; a
+			// verification ATTESTATION held in another process's memory
+			// cannot be, so the publisher is given something to notice
+			// with instead. Monotonic and never reset: a
+			// discard/restore/discard cycle must never return to an
+			// earlier generation, or an attestation taken during the
+			// first would validate against the third. Self-seeding, so
+			// a store predating this key needs no migration step.
+			`INSERT INTO meta (key, value) VALUES ('meta.sync.journal_generation', '1')
+			 ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)`,
 			`DELETE FROM dependencies`,
 			`DELETE FROM nodes`,
 			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.lamport'`,

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"strconv"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
@@ -347,4 +348,40 @@ func (s *Store) RepublishRelayFrom(ctx context.Context, floorSeq int64) error {
 		return nil
 	}
 	return nil
+}
+
+// journalGenerationKey witnesses resets of the journal's rowid space
+// (FR-21 §5.7 v1.3.6). DiscardLocal increments it inside the same
+// transaction as the wipe; nothing else may.
+const journalGenerationKey = "meta.sync.journal_generation"
+
+// JournalGeneration returns how many times the journal's rowid space has
+// been reset. A store that has never been discarded reports 0.
+//
+// It exists because sync_events has no AUTOINCREMENT: after a full wipe
+// the next insert takes rowid 1 again, so rowid-keyed state captured
+// before the wipe silently addresses unrelated rows after it. Positions
+// held in the store are rewound by DiscardLocal directly; this counter
+// is for state it cannot reach — chiefly the publisher's tail-verify
+// attestation, which lives in another process's memory and must be able
+// to notice that the journal it attested to is gone.
+//
+// Callers MUST treat a read error as "changed", never as "unchanged":
+// the whole value of the witness is that doubt costs a re-verification
+// rather than a false attestation.
+func (s *Store) JournalGeneration(ctx context.Context) (int64, error) {
+	var raw string
+	err := s.readDB.QueryRowContext(ctx,
+		`SELECT value FROM meta WHERE key = ?`, journalGenerationKey).Scan(&raw)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, nil
+	case err != nil:
+		return 0, fmt.Errorf("read journal generation: %w", err)
+	}
+	gen, convErr := strconv.ParseInt(raw, 10, 64)
+	if convErr != nil {
+		return 0, fmt.Errorf("journal generation %q is not an integer: %w", raw, model.ErrInvalidInput)
+	}
+	return gen, nil
 }

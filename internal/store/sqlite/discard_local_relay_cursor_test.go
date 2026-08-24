@@ -96,3 +96,52 @@ func TestDiscardLocal_RelayPublisherSeesEveryPostDiscardEvent(t *testing.T) {
 		"every event in the post-discard journal must be publishable; a stale cursor drops the ones beneath it with no error and no log")
 	require.Equal(t, int64(1), rows[0].Seq, "the read must start at the very head of the new journal")
 }
+
+// TestJournalGeneration_MonotonicAcrossDiscards: the witness the publisher's
+// attestation is bound to (FR-21 §5.7 v1.3.6). It must be self-seeding, so a
+// store predating the key needs no migration, and it must never return to an
+// earlier value — a discard/restore/discard cycle that reused a generation
+// would let an attestation taken during the first validate against the third.
+func TestJournalGeneration_MonotonicAcrossDiscards(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	mtixDir := discardMtixDir(t)
+
+	gen, err := s.JournalGeneration(ctx)
+	require.NoError(t, err)
+	require.Zero(t, gen, "a store that has never been discarded reports generation 0")
+
+	seen := map[int64]bool{gen: true}
+	prev := gen
+	for i := 0; i < 3; i++ {
+		addressTo(t, s, "opus", "PROJ-"+string(rune('A'+i)))
+		require.NoError(t, sqlite.DiscardLocal(ctx, s, mtixDir))
+
+		gen, err = s.JournalGeneration(ctx)
+		require.NoError(t, err)
+		require.Greater(t, gen, prev, "each reset of the rowid space must advance the generation")
+		require.False(t, seen[gen], "a generation must never be reused")
+		seen[gen] = true
+		prev = gen
+	}
+}
+
+// TestJournalGeneration_UnchangedByOrdinaryWrites: the generation witnesses a
+// RESET of the rowid space, not activity. If ordinary journaling moved it,
+// every publish would re-verify and the attestation cache would be pointless.
+func TestJournalGeneration_UnchangedByOrdinaryWrites(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	addressThree(t, s, "opus")
+	before, err := s.JournalGeneration(ctx)
+	require.NoError(t, err)
+
+	addressTo(t, s, "opus", "PROJ-A")
+	addressTo(t, s, "opus", "PROJ-B")
+
+	after, err := s.JournalGeneration(ctx)
+	require.NoError(t, err)
+	require.Equal(t, before, after, "journaling events is growth, not a reset")
+}
+

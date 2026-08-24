@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-08-24T07:05:09Z",
+  "exported_at": "2026-08-24T07:21:13Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7096,15 +7096,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "vimal",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "3438a32d0ce39b55025bf99705eea66bed825a82b15e137cdae1f8640ccaa57c",
       "created_at": "2026-08-21T16:38:38Z",
-      "updated_at": "2026-08-21T16:38:38Z",
+      "updated_at": "2026-08-24T07:21:13Z",
+      "closed_at": "2026-08-24T07:21:13Z",
       "uid": "01a02530-5238-7b13-b634-c5c50287d47d"
     },
     {
@@ -7364,6 +7365,56 @@
       "updated_at": "2026-08-23T14:03:51Z",
       "closed_at": "2026-08-23T14:03:51Z",
       "uid": "01a02eec-8567-75f7-9e18-4cdb6dadd5b8"
+    },
+    {
+      "id": "MTIX-76",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 76,
+      "project": "MTIX",
+      "title": "DiscardLocal strands hook_dispatch_cursor and hook_dispatch_ledger above the wiped journal",
+      "description": "",
+      "prompt": "Found while fixing MTIX-66 (same function, same defect class, same transaction).\n\nDiscardLocal (internal/store/sqlite/sync_reconcile.go) wipes sync_events but leaves every table keyed to sync_events.rowid. MTIX-66 fixed the three inbox tables. The hook dispatch pair has the identical shape and is NOT yet fixed.\n\nVERIFIED EMPIRICALLY, not inferred. A probe test seeded each candidate table, ran DiscardLocal, and counted surviving rows. Result: agent_inbox_cursor, agent_inbox_ack, inbox_deliveries, hook_dispatch_cursor, hook_dispatch_ledger and relay_push_cursor all STRANDED (rows survived); relay_ingest_cursor cleared (it tracks per-peer remote relay sequences, not local rowids, so it is correctly untouched). Journal tail after discard = 0.\n\nWHY IT BITES. sync_events declares event_id TEXT PRIMARY KEY -- no INTEGER PRIMARY KEY AUTOINCREMENT -- so there is no sqlite_sequence entry and rowids are NOT monotonic across a full DELETE. After the wipe the next insert takes rowid 1 again. Every surviving cursor/ledger row therefore sits above the entire new journal.\n\nCONSEQUENCE, hook side:\n- hook_dispatch_cursor is the scan floor: \"everything at or below the floor is fully dispatched\". Left at the old tail, the tail scan starts past the whole new journal, so NO hook fires for anything journaled after a discard-local until the journal grows back past the old tail. Silent: no error, no log, hooks simply never fire. This is the wake-agent path -- a coordination stall with no symptom.\n- hook_dispatch_ledger rows pre-mark (hook, seq) pairs as already dispatched, so even a correct floor would skip the unrelated new events that reuse those rowids.\n\nFIX SHAPE. Add DELETE FROM hook_dispatch_cursor and DELETE FROM hook_dispatch_ledger to the same statement list in the same tx as the journal wipe, immediately after the inbox deletes MTIX-66 added. Note that deleting the hook_dispatch_cursor row restores the DEFAULT floor of 0 on next write (single id=1 row), which is the correct post-discard floor: the journal is empty, so everything in it is genuinely undispatched. Confirm that reading an absent row yields floor 0 rather than an error before choosing DELETE over UPDATE ... SET cursor = 0.\n\nCAUTION worth checking: \"a hook added later fires only on FUTURE events\" is kept true by the floor advancing on every pass. After a discard the journal is empty, so a floor of 0 cannot replay history -- there is no history. Verify that a bootstrap/pull immediately after the discard does not then fire a hook backlog storm for the freshly pulled events; the 0.5.0-beta CHANGELOG records that fresh clones initialize the dispatch floor at the journal tail specifically to prevent that. A discard-then-pull may need the same floor seeding, which would make this UPDATE-to-tail rather than DELETE.\n\nTEST. Mirror internal/store/sqlite/discard_local_inbox_tail_test.go (MTIX-66): journal events, advance the floor / write ledger rows, DiscardLocal, journal a new event, assert the dispatcher sees it. Red-first, and verify the red.\n\nRELATED: relay_push_cursor is stranded by the same wipe but needs a ruling on pub_epoch before it can be fixed -- filed separately.",
+      "acceptance": "After DiscardLocal, an event journaled next is visible to the hook dispatcher and fires matching hooks; hook_dispatch_cursor and hook_dispatch_ledger never reference a seq above the journal tail; a discard immediately followed by a pull does not fire a backlog storm for the pulled events. Regression test observed failing against the pre-fix code. make lint-go clean; internal/store/sqlite and internal/hooks suites green.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "244e03389205f1281bbd309df5ced455e1ea22bc6c2821312a18b09b158bb02d",
+      "created_at": "2026-08-24T07:19:47Z",
+      "updated_at": "2026-08-24T07:19:47Z",
+      "uid": "01a032a3-c189-7a12-b413-6f169b0b8b95"
+    },
+    {
+      "id": "MTIX-77",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 77,
+      "project": "MTIX",
+      "title": "DiscardLocal strands relay_push_cursor above the wiped journal -- needs a pub_epoch ruling",
+      "description": "",
+      "prompt": "Found while fixing MTIX-66. Same wipe, same rowid-keyed-table defect class, but this one needs a RULING before it can be implemented -- do not fix it blind.\n\nVERIFIED EMPIRICALLY. A probe seeded relay_push_cursor (id=1, cursor=8, pub_epoch=1, next_rs=5), ran DiscardLocal, and the row survived intact while the journal tail went to 0. Sibling finding: relay_ingest_cursor is correctly untouched -- it tracks per-peer REMOTE relay sequences, not local rowids, so a local wipe has no bearing on where this reader had reached in someone else's stream.\n\nWHY IT BITES. relay_push_cursor.cursor is \"the highest sync_events.rowid this peer has framed and appended to its own relay segment directory\". sync_events has no AUTOINCREMENT, so after DiscardLocal the next insert takes rowid 1 again and the surviving cursor sits above the whole new journal. The publisher then frames NOTHING until the journal grows back past the old tail. The schema comment says the cursor advances only after the append returns so \"a crash in between republishes rather than skips -- a skip would be a silent hole no reader could detect\". A stale cursor produces exactly that undetectable hole, by construction, for every event written after a discard-local.\n\nWHY IT IS NOT A ONE-LINE DELETE. The other stranded tables are pure position; this row also carries the publisher's IDENTITY IN THE FRAME (FR-21 5.7): pub_epoch and next_rs. Zeroing cursor alone would make the publisher re-emit relay sequence numbers it has ALREADY published under the same pub_epoch. Downstream readers key on (peer, epoch, rs); reusing an rs within an epoch means two different records claim the same coordinate. Deleting the whole row is worse -- it resets pub_epoch to the DEFAULT 1, which for a peer already past epoch 1 rewinds its identity and collides with its own history.\n\nTHE RULING NEEDED (Vimal). Which is correct for discard-local:\n  (a) cursor = 0, pub_epoch = pub_epoch + 1, next_rs = 1 -- a discard is a new publishing incarnation, so take a fresh epoch. Readers see an epoch bump, which is the mechanism already built for exactly this \"the publisher's history restarted\" situation. Costs an epoch per discard.\n  (b) cursor = 0, keep epoch and next_rs, let rs continue climbing -- no coordinate reuse because next_rs never rewinds, and no epoch churn. Needs confirmation that readers tolerate an rs gap/restart within an epoch and that nothing derives position from cursor alone.\n  (c) leave relay_push_cursor alone and document that discard-local requires a relay re-bootstrap.\nRecommendation is (a) if and only if epoch bumping is cheap for readers -- it is the only option that cannot produce a duplicate coordinate -- but this is FR-21 5.7 frame identity, which is exactly the \"do not make this load-bearing without a ruling\" category, and the answer depends on reader behaviour I have not traced. STOP AND ASK.\n\nSCOPE NOTE. Whatever is chosen must land in the SAME transaction as the journal wipe in DiscardLocal, alongside the MTIX-66 inbox deletes and the MTIX-76 hook deletes, so a rollback cannot leave the journal and the publish position disagreeing.\n\nTEST. Red-first regression: publish some events, DiscardLocal, journal new events, assert the publisher frames them and that no (epoch, rs) coordinate is reused across the discard.",
+      "acceptance": "Ruling recorded on the ticket. After DiscardLocal, events journaled next are framed and appended by the publisher; no (pub_epoch, rs) coordinate is ever reused across a discard; the chosen behaviour lands in the same transaction as the journal wipe. Regression test observed failing against the pre-fix code.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "65010c20bffc7060984b0d50b6e7293ef3055d81e8e773d4e6a496b6209edeb7",
+      "created_at": "2026-08-24T07:20:14Z",
+      "updated_at": "2026-08-24T07:20:14Z",
+      "uid": "01a032a4-299f-716b-b7e2-a7eeb36424aa"
     },
     {
       "id": "MTIX-8",
@@ -8089,7 +8140,7 @@
       "agent_id": "vimal",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-73",
+      "current_node_id": "MTIX-66",
       "last_heartbeat": "2026-05-06T14:14:36Z"
     }
   ],
@@ -8111,6 +8162,6 @@
       "status": "active"
     }
   ],
-  "node_count": 293,
-  "checksum": "2f20126b369067b4ddac4a67e69ea62838fd119099eccd17d370dd5619ff71a5"
+  "node_count": 295,
+  "checksum": "b4da01b57fd81bd4f2f657e67c7674c99853db969e3190a04cbbb6b8e6276dd9"
 }

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-08-24T13:42:52Z",
+  "exported_at": "2026-08-24T13:56:57Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7496,6 +7496,31 @@
       "uid": "019f134d-b2f0-74e2-9856-bb7c5514ee21"
     },
     {
+      "id": "MTIX-80",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 80,
+      "project": "MTIX",
+      "title": "Wall-clock relay latency gate runs under -race on shared runners and fails on runner variance",
+      "description": "",
+      "prompt": "CI run 32734342738 failed on test-go (macos-latest) with:\n\n  --- FAIL: TestRelayPublish_MeetsTheLatencyTarget\n      \"1.451752ms\" is not less than or equal to \"1ms\"\n\nThis was NOT a code regression. Measured both sides on the same machine, -race, three runs each:\n  pre-change  (8ca5703): 116.4, 118.2, 117.4 us/event  (mean ~117.3)\n  post-change (d1e0f32): 118.2, 119.1, 116.8 us/event  (mean ~118.0)\nDelta ~0.6%, inside run-to-run noise. The macOS runner measured 1451 us/event -- about 12x a healthy local machine -- so the runner was slow, not the code.\n\nTHE DEFECT is the gate's design, not the number.\n\n1. It asserts WALL-CLOCK LATENCY inside the main test-go job, which runs with -race on shared GitHub runners. Wall-clock assertions on shared, unpinned, virtualised runners under a race detector measure the runner at least as much as the code. macos-latest in particular is a noisy-neighbour environment with no CPU guarantee.\n\n2. The budget is admitted to be uncalibrated. The file's own CALIBRATION NOTE says relayPublishBudget is \"a deliberately loose local-development ceiling, not the 9 number... Until that calibration runs, this guards against order-of-magnitude regressions only -- a publish path that quietly became 50x slower would still be caught, a 20% drift would not.\" Local headroom is only about 8.5x (117 us against a 1 ms ceiling), so a runner 9x slower than the developer's machine fails the build while the stated intent is to catch 50x regressions. The threshold does not implement the intent the note describes.\n\n3. WHY THIS MATTERS BEYOND ANNOYANCE. A gate that fails for reasons unrelated to the change under test teaches everyone to re-run it, and a gate people reflexively re-run is one that no longer gates. That is the same failure class this project has now fixed three times in a different guise (a control that is present but not effective) -- and here it degrades a real perf signal into noise. It also cost a false-positive investigation on an unrelated ticket.\n\nOPTIONS, pick one:\n(a) Move the wall-clock assertions out of the -race job into a dedicated perf job, no -race, and calibrate the constant on that rig. This is what MTIX-25 already specifies for the MTIX_PERF_LONG-gated tests (\"NO -race\"); this test is the same kind of assertion running in the wrong place, so the two should be decided together. MTIX-25 is the natural home and this may simply widen its scope.\n(b) Keep it in the main job but make the ceiling honour the stated intent -- if it is meant to catch order-of-magnitude regressions, set it there (e.g. 10x measured local p50) so it cannot fire on runner variance.\n(c) Gate it on a machine-class signal, skipping where no CPU guarantee exists. Least attractive: a check that skips on the platform where it most often fails is close to no check.\n\nRECOMMENDATION: (a), folded into MTIX-25, with (b) applied to whatever remains in the main job so nothing wall-clock-sensitive runs under -race on a shared runner. Whatever is chosen, record the calibration basis next to the constant so the next person does not have to re-derive whether a failure is real.\n\nDO NOT simply raise the number without recording why.",
+      "acceptance": "The relay publish/ingest wall-clock assertions no longer fail a build because of CI runner variance: either moved to a dedicated perf job without -race and calibrated there, or given a ceiling that matches the order-of-magnitude intent stated in the calibration note. The basis for the chosen threshold is recorded beside the constant. Decided together with MTIX-25 rather than in isolation.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "600e1a62990b6b97ee5c2ad6c2f08255d4c1abd37982d20af407049368f46902",
+      "created_at": "2026-08-24T13:56:49Z",
+      "updated_at": "2026-08-24T13:56:49Z",
+      "uid": "01a0340f-3e4d-7ed8-a4c4-08597c8a1f17"
+    },
+    {
       "id": "MTIX-9",
       "parent_id": "",
       "depth": 0,
@@ -8215,6 +8240,6 @@
       "status": "active"
     }
   ],
-  "node_count": 297,
-  "checksum": "5d9f369d24599e8b19773c6030eba122abcb96092a5ae4c9afbe70e4f67165ca"
+  "node_count": 298,
+  "checksum": "1f9ede59c933c594d67811cf8f171226fba1f40570cd6512db960411fd4e32ef"
 }

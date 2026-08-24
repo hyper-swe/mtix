@@ -59,12 +59,15 @@ func NewPluginInstaller(projectDir string, data *TemplateData, logger *slog.Logg
 		logger = slog.Default()
 	}
 
-	// Parse skill templates plus AGENTS.md (used by the codex and pi
-	// targets, MTIX-27) from the embedded FS.
+	// Parse skill templates plus the two root-doc templates from the
+	// embedded FS: AGENTS.md (codex and pi targets, MTIX-27) and CLAUDE.md
+	// (claude-code target). Both render OUTSIDE .mtix/docs/, which is what
+	// makes the DocsPath copy below necessary.
 	tmpl, err := template.ParseFS(embeddedTemplates,
 		"templates/skills/*.tmpl",
 		"templates/skills/references/*.tmpl",
 		"templates/agents.md.tmpl",
+		"templates/claude.md.tmpl",
 	)
 	if err != nil {
 		// Log error but don't fail construction — Install will fail later.
@@ -132,6 +135,19 @@ func (p *PluginInstaller) installClaudeCode(global bool) ([]InstallResult, error
 	}
 
 	var results []InstallResult
+
+	// Claude Code reads a CLAUDE.md at the project root, so that is where
+	// this target installs one — the skill files alone never gave the agent
+	// a top-level briefing. Project-local only: a global CLAUDE.md would
+	// have no project .mtix/docs/ for its links to point at, and picking a
+	// placement for that case is a separate question.
+	if !global {
+		claudeResult, err := p.installRootDocIfAbsent(p.projectDir, "CLAUDE.md", "claude.md.tmpl")
+		if err != nil {
+			return results, fmt.Errorf("install CLAUDE.md: %w", err)
+		}
+		results = append(results, claudeResult)
+	}
 
 	// Write skill files.
 	for _, doc := range skillDocFiles {

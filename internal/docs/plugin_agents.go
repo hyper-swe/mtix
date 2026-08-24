@@ -98,17 +98,30 @@ func (p *PluginInstaller) installPi(global bool) ([]InstallResult, error) {
 // installAgentsFile renders AGENTS.md into dir, write-if-absent: an
 // existing file is the user's and is never modified.
 func (p *PluginInstaller) installAgentsFile(dir string) (InstallResult, error) {
+	return p.installRootDocIfAbsent(dir, "AGENTS.md", "agents.md.tmpl")
+}
+
+// installRootDocIfAbsent renders templateName to dir/name, write-if-absent.
+// AGENTS.md and CLAUDE.md land outside .mtix/docs/, in territory the user
+// owns and hand-edits, so an existing file is never touched: the install
+// reports action "skipped" with a note naming the .mtix/docs/ copy that
+// mtix does keep current, so the user knows what to merge from and that
+// nothing was silently dropped. Both root docs share this one path so the
+// clobber policy cannot drift between them.
+func (p *PluginInstaller) installRootDocIfAbsent(dir, name, templateName string) (InstallResult, error) {
 	if p.templates == nil {
 		return InstallResult{}, fmt.Errorf("templates not loaded")
 	}
 
-	outPath := filepath.Join(dir, "AGENTS.md")
+	outPath := filepath.Join(dir, name)
 	if fileExists(outPath) {
 		return InstallResult{
-			File:   "AGENTS.md",
+			File:   name,
 			Path:   outPath,
 			Action: "skipped",
-			Note:   "existing AGENTS.md preserved; regenerate the mtix briefing with 'mtix docs generate' (.mtix/docs/AGENTS.md) and merge what you need",
+			Note: fmt.Sprintf(
+				"existing %s preserved; regenerate the mtix briefing with 'mtix docs generate' (.mtix/docs/%s) and merge what you need",
+				name, name),
 		}, nil
 	}
 
@@ -122,12 +135,12 @@ func (p *PluginInstaller) installAgentsFile(dir string) (InstallResult, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	if err := p.templates.ExecuteTemplate(f, "agents.md.tmpl", p.data); err != nil {
-		return InstallResult{}, fmt.Errorf("render AGENTS.md: %w", err)
+	if err := p.templates.ExecuteTemplate(f, templateName, p.data); err != nil {
+		return InstallResult{}, fmt.Errorf("render %s: %w", name, err)
 	}
 
-	p.logger.Info("plugin install", "file", "AGENTS.md", "action", "installed", "path", outPath)
-	return InstallResult{File: "AGENTS.md", Path: outPath, Action: "installed"}, nil
+	p.logger.Info("plugin install", "file", name, "action", "installed", "path", outPath)
+	return InstallResult{File: name, Path: outPath, Action: "installed"}, nil
 }
 
 // installConfigIfAbsent writes content to path when no file exists; an

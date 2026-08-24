@@ -45,6 +45,10 @@ claude-code: 5 skill files + 4 compliance reference checklists into
 .claude/skills/ (or ~/.claude/skills/ with --global). Skills include
 safety-critical operating procedures as baseline — context chain
 traversal, independent verification, traceability, anomaly reporting.
+Project-local installs also write CLAUDE.md at the project root, the
+top-level briefing Claude Code reads; an existing CLAUDE.md is never
+modified — the install reports a skip naming .mtix/docs/CLAUDE.md as
+the copy to merge from.
 
 codex: AGENTS.md (Codex's native instruction file) at the project root
 and an MCP server entry in .codex/config.toml (or ~/.codex/ with

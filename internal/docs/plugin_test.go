@@ -70,8 +70,8 @@ func TestPluginInstaller_ClaudeCode_Writes5Skills(t *testing.T) {
 	results, err := installer.Install("claude-code", false)
 	require.NoError(t, err)
 
-	// Should have 5 skill files + 4 reference files = 9 total.
-	assert.Len(t, results, 9)
+	// Root CLAUDE.md + 5 skill files + 4 reference files = 10 total.
+	assert.Len(t, results, 10)
 
 	// Verify skill files exist in .claude/skills/.
 	skillDir := filepath.Join(projectDir, ".claude", "skills")

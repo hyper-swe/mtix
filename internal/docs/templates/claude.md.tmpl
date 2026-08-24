@@ -5,7 +5,9 @@
 
 ## Instructions for Claude
 
-You are working on the **{{ .ProjectPrefix }}** project managed by mtix. Read [AGENTS.md](AGENTS.md) for the full operating guide.
+You are working on the **{{ .ProjectPrefix }}** project managed by mtix. Read [AGENTS.md]({{ .DocsPath }}AGENTS.md) for the full operating guide.
+
+The mtix briefing lives at `.mtix/docs/AGENTS.md` and is refreshed by `mtix docs generate`. If this project also has an `AGENTS.md` at its root — the `codex` and `pi` plugin targets install one there — the link above still points at the `.mtix/docs/` copy on purpose: that is the copy mtix owns and keeps current, and it resolves no matter which targets you installed or in what order.
 
 ## First-Time Setup
 
@@ -57,4 +59,4 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 
 ## Error Handling
 
-If you encounter an error, check [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common solutions. If blocked, use `mtix_defer` with a reason rather than abandoning the task. Always document anomalies with `mtix_comment`.
+If you encounter an error, check [TROUBLESHOOTING.md]({{ .DocsPath }}TROUBLESHOOTING.md) for common solutions. If blocked, use `mtix_defer` with a reason rather than abandoning the task. Always document anomalies with `mtix_comment`.

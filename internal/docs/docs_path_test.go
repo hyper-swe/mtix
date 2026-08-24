@@ -80,3 +80,105 @@ func TestGenerator_AgentsMD_KeepsSiblingLinks(t *testing.T) {
 			"in-docs AGENTS.md must not double-path %s", name)
 	}
 }
+
+// claudeRefDocs are the cross-doc references claude.md.tmpl links to.
+var claudeRefDocs = []string{"AGENTS.md", "TROUBLESHOOTING.md"}
+
+// TestPluginInstall_ClaudeMD_LinksReferenceDotMtixDocs: CLAUDE.md is the
+// second dual-placement template. The claude-code target installs it at the
+// PROJECT ROOT, where a bare sibling link points at nothing — the generated
+// docs it references live under .mtix/docs/. AGENTS.md resolves to
+// .mtix/docs/AGENTS.md unconditionally: that is the copy mtix owns and
+// regenerates, and the only target that does not depend on whether the user
+// also installed the codex or pi target (which write a ROOT AGENTS.md) or in
+// what order — install order would otherwise decide a link rendered once.
+func TestPluginInstall_ClaudeMD_LinksReferenceDotMtixDocs(t *testing.T) {
+	projectDir := filepath.Join(t.TempDir(), "project")
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+
+	installer := NewPluginInstaller(projectDir, minimalTemplateData(), nil)
+	results, err := installer.Install("claude-code", false)
+	require.NoError(t, err)
+
+	claudePath := filepath.Join(projectDir, "CLAUDE.md")
+	require.FileExists(t, claudePath, "claude-code target must install a root CLAUDE.md")
+
+	var reported *InstallResult
+	for i := range results {
+		if results[i].File == "CLAUDE.md" {
+			reported = &results[i]
+		}
+	}
+	require.NotNil(t, reported, "install must report the CLAUDE.md it wrote")
+	assert.Equal(t, "installed", reported.Action)
+	assert.Equal(t, claudePath, reported.Path)
+
+	content, err := os.ReadFile(claudePath)
+	require.NoError(t, err)
+	s := string(content)
+
+	for _, name := range claudeRefDocs {
+		if !assert.Contains(t, s, "](.mtix/docs/"+name+")",
+			"root-installed CLAUDE.md must link %s through .mtix/docs/", name) {
+			continue
+		}
+		assert.NotRegexp(t, bareLinkRe(name), s,
+			"root-installed CLAUDE.md must not carry a bare dangling link to %s", name)
+	}
+}
+
+// TestGenerator_ClaudeMD_KeepsSiblingLinks: the copy generated INTO
+// .mtix/docs/ must keep bare sibling links. That placement was always
+// correct, so the prefix must come from DocsPath, not be hardcoded.
+func TestGenerator_ClaudeMD_KeepsSiblingLinks(t *testing.T) {
+	outDir := t.TempDir()
+	g, err := NewGenerator("templates", outDir, minimalTemplateData(), nil)
+	require.NoError(t, err)
+	_, err = g.Generate(true)
+	require.NoError(t, err)
+
+	content, err := os.ReadFile(filepath.Join(outDir, "CLAUDE.md"))
+	require.NoError(t, err)
+	s := string(content)
+
+	for _, name := range claudeRefDocs {
+		assert.Regexp(t, bareLinkRe(name), s,
+			"in-docs CLAUDE.md must keep the bare sibling link to %s", name)
+		assert.NotContains(t, s, "](.mtix/docs/"+name+")",
+			"in-docs CLAUDE.md must not double-path %s", name)
+	}
+}
+
+// TestPluginInstall_ClaudeMD_NeverClobbersExisting: CLAUDE.md is more likely
+// than AGENTS.md to already exist and be heavily hand-edited. Write-if-absent,
+// exactly as installAgentsFile — an existing file is the user's, is never
+// modified, and the skip note must name the always-current copy to merge from.
+func TestPluginInstall_ClaudeMD_NeverClobbersExisting(t *testing.T) {
+	projectDir := filepath.Join(t.TempDir(), "project")
+	require.NoError(t, os.MkdirAll(projectDir, 0o755))
+
+	claudePath := filepath.Join(projectDir, "CLAUDE.md")
+	const handEdited = "# my own CLAUDE.md\n\nhand-written, do not touch\n"
+	require.NoError(t, os.WriteFile(claudePath, []byte(handEdited), 0o644))
+
+	installer := NewPluginInstaller(projectDir, minimalTemplateData(), nil)
+	results, err := installer.Install("claude-code", false)
+	require.NoError(t, err)
+
+	after, err := os.ReadFile(claudePath)
+	require.NoError(t, err)
+	assert.Equal(t, handEdited, string(after), "an existing CLAUDE.md must never be modified")
+
+	var reported *InstallResult
+	for i := range results {
+		if results[i].File == "CLAUDE.md" {
+			reported = &results[i]
+		}
+	}
+	require.NotNil(t, reported, "a silent skip is indistinguishable from a write — report it")
+	assert.Equal(t, "skipped", reported.Action)
+	assert.Contains(t, reported.Note, ".mtix/docs/CLAUDE.md",
+		"the skip note must name the always-current copy to merge from")
+	assert.Contains(t, reported.Note, "mtix docs generate",
+		"the skip note must name the command that refreshes that copy")
+}

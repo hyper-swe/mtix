@@ -644,6 +644,29 @@ type fakeJournal struct {
 	errLookup    error
 	errRepublish error
 	advances     int
+
+	// gen/errGen and errTail drive the §5.7 v1.3.6 attestation
+	// witnesses, including the fail-secure path where one is unreadable.
+	gen     int64
+	errGen  error
+	errTail error
+}
+
+func (f *fakeJournal) JournalGeneration(context.Context) (int64, error) {
+	return f.gen, f.errGen
+}
+
+func (f *fakeJournal) JournalTail(context.Context) (int64, error) {
+	if f.errTail != nil {
+		return 0, f.errTail
+	}
+	var tail int64
+	for _, r := range f.rows {
+		if r.Seq > tail {
+			tail = r.Seq
+		}
+	}
+	return tail, nil
 }
 
 func (f *fakeJournal) RelayPushCursor(context.Context) (sqlite.RelayPushPosition, error) {

@@ -78,6 +78,15 @@ type Journal interface {
 	ReadRelayJournalSince(ctx context.Context, seq int64, limit int) ([]sqlite.RelayJournalEvent, error)
 	LookupRelayJournalSeqs(ctx context.Context, eventIDs []string) (map[string]int64, error)
 	RepublishRelayFrom(ctx context.Context, floorSeq int64) error
+
+	// JournalGeneration and JournalTail are the two witnesses that bound
+	// an attestation's validity (§5.7 v1.3.6). The generation is exact but
+	// depends on every future author of a rowid-space reset bumping it;
+	// the tail needs no cooperation from any writer but has a narrow hole
+	// where a reset regrows past the old tail before the next publish.
+	// Neither hole is reachable through both.
+	JournalGeneration(ctx context.Context) (int64, error)
+	JournalTail(ctx context.Context) (int64, error)
 }
 
 // Config configures a publisher for one peer's own segment directory.
@@ -124,7 +133,13 @@ type Publisher struct {
 	log      *slog.Logger
 	verified bool
 	diverged bool
-	inFlight atomic.Bool
+
+	// verifiedGen and verifiedTail are the journal the attestation was
+	// taken against. The attestation is honored only while both still
+	// hold; see verifyTail.
+	verifiedGen  int64
+	verifiedTail int64
+	inFlight     atomic.Bool
 
 	published int64
 	failures  int64
@@ -299,15 +314,32 @@ func (p *Publisher) bank(ctx context.Context, rows []sqlite.RelayJournalEvent, a
 // the store, this argument breaks and the semantics must be revisited
 // in the spec before the code.
 func (p *Publisher) verifyTail(ctx context.Context) error {
+	gen, tail, err := p.journalWitness(ctx)
+	if err != nil {
+		// Fail-secure: doubt must never be resolved into a valid
+		// attestation. Returning the error halts this pass as an
+		// ordinary store failure — reported, counted, retried next
+		// tick — rather than granting or revoking anything.
+		return err
+	}
 	if p.verified {
-		return nil
+		if gen == p.verifiedGen && tail >= p.verifiedTail {
+			return nil
+		}
+		// An integrity control that re-arms silently cannot be audited
+		// (§5.7 v1.3.6): say which witness moved and how.
+		p.log.Warn("relay publisher attestation voided: the journal was reset beneath it, re-verifying",
+			slog.String("peer", p.cfg.PeerID),
+			slog.Int64("generation_attested", p.verifiedGen), slog.Int64("generation_now", gen),
+			slog.Int64("tail_attested", p.verifiedTail), slog.Int64("tail_now", tail))
+		p.verified = false
 	}
 	ids, err := p.publishedTailIDs()
 	if err != nil {
 		return err
 	}
 	if len(ids) == 0 {
-		p.verified = true
+		p.attest(gen, tail)
 		return nil
 	}
 	seqs, err := p.cfg.Journal.LookupRelayJournalSeqs(ctx, ids)
@@ -328,8 +360,28 @@ func (p *Publisher) verifyTail(ctx context.Context) error {
 		}
 		prev = seq
 	}
-	p.verified = true
+	p.attest(gen, tail)
 	return nil
+}
+
+// journalWitness reads the two facts an attestation is bound to.
+func (p *Publisher) journalWitness(ctx context.Context) (gen, tail int64, err error) {
+	if gen, err = p.cfg.Journal.JournalGeneration(ctx); err != nil {
+		return 0, 0, err
+	}
+	if tail, err = p.cfg.Journal.JournalTail(ctx); err != nil {
+		return 0, 0, err
+	}
+	return gen, tail, nil
+}
+
+// attest records that the tail-verify passed against this journal. The
+// witness is stored WITH the verdict, never separately: an attestation
+// that does not say what it attested to is the defect this closes.
+func (p *Publisher) attest(gen, tail int64) {
+	p.verified = true
+	p.verifiedGen = gen
+	p.verifiedTail = tail
 }
 
 // publishedTailIDs returns the event ids of the last records this peer
@@ -387,11 +439,23 @@ func (p *Publisher) divergedError(detail string) error {
 // arrive at a (pub_epoch, rs) nobody has consumed — so nothing is
 // silently dropped and nothing is auto-picked.
 func (p *Publisher) ResetPeer(ctx context.Context, floorSeq int64, baseRS uint64) error {
+	// Read the witness BEFORE mutating anything: a reset that succeeded
+	// but could not be attested would re-verify on the next publish,
+	// find the pre-reset history absent, and diverge again — making the
+	// operator's recovery a no-op. Failing first leaves the peer exactly
+	// as it was, still refusing, still recoverable.
+	gen, tail, err := p.journalWitness(ctx)
+	if err != nil {
+		return err
+	}
 	if err := p.cfg.Journal.ResetRelayPublisher(ctx, floorSeq, baseRS); err != nil {
 		return err
 	}
 	p.diverged = false
-	p.verified = true // the medium is deliberately ahead of the journal now
+	// The medium is deliberately ahead of the journal now, so this
+	// attestation is granted rather than derived — bound to the same
+	// witness so an ordinary reset afterwards still voids it.
+	p.attest(gen, tail)
 	p.log.Warn("relay publisher reset after a restore; republishing under a new epoch",
 		slog.String("peer", p.cfg.PeerID), slog.Int64("floor", floorSeq), slog.Uint64("base_rs", baseRS))
 	return nil

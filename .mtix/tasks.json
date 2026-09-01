@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-01T18:09:59Z",
+  "exported_at": "2026-09-01T18:33:45Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7646,6 +7646,31 @@
       "uid": "01a05e29-9d0c-723a-95bd-8fddb5bf3bbb"
     },
     {
+      "id": "MTIX-86",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 86,
+      "project": "MTIX",
+      "title": "cloud-gate canary claims to verify connectivity but never connects — passed while every test failed to connect",
+      "description": "",
+      "prompt": "In release run 33542273579 the cloud gate's canary step reported PASS on both providers, and then every test in the transport suite immediately failed to connect. The canary is a false green.\n\nThe step is named 'Canary — DSN actually connects (guards against a silent skip)' and its inline comment states it 'PASSES only on a real connection'. Both claims are false. It runs TestSource_AcceptsTestDSNViaEnv, which is:\n\n    dsn := requireTestDSN(t)\n    dir := withMTIXDir(t)\n    t.Setenv(transport.EnvDSN, dsn)\n    got, err := transport.Source(dir)\n    require.NoError(t, err)\n    require.Equal(t, dsn, got)\n\nIt asserts only that Source() echoes back the DSN string it was handed. It performs no I/O and opens no connection, so it passes whenever the secret is merely PRESENT — regardless of whether the database is reachable, awake, or still exists.\n\nMTIX-42 added this canary to stop the gate reporting a false green when a secret was missing. It does cover that case. It does not cover an unreachable or deleted database, which is the failure that actually occurred:\n  supabase: FATAL (ENOTFOUND) tenant/user postgres.\u003credacted\u003e not found (SQLSTATE XX000) via aws-1-us-west-2.pooler.supabase.com\n  neon:     connection refused, after a 10s timeout\n\nThis is the third instance in one release cycle of a check that cannot fail the way its name promises — see MTIX-81 (the preflight embed gate that a preceding build silently repaired) and MTIX-85 (a timeout raised in ci.yml but not release.yml). Same class: the gate's label asserts more than its implementation checks.\n\nFix direction: the canary must open a real connection and round-trip something trivial (SELECT 1, or a Ping through the same transport path the suite uses, via the pooler host the suite actually targets — the direct-port DSN would not have caught this either). Keep failing closed on an unset secret.",
+      "acceptance": "1. The canary opens a real connection to the same endpoint the suite uses and fails when the database is unreachable, suspended, or deleted.\n2. Verified red: with a DSN pointing at a valid-format but unreachable endpoint, the canary FAILS. It must not pass merely because the secret is set.\n3. Still fails closed when the secret is unset or empty (the MTIX-42 behaviour is preserved, not replaced).\n4. The step name and its inline comment describe exactly what is asserted, so the label cannot outrun the implementation again.\n5. Consider auditing the other gates for the same pattern: a named check whose implementation cannot fail the way the name implies.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "993eb5654655eb70cd08703860af119271a571241a020f09f0d83af6ec701daa",
+      "created_at": "2026-09-01T18:33:26Z",
+      "updated_at": "2026-09-01T18:33:45Z",
+      "uid": "01a05e3f-5d72-7683-8d6f-b68acd00e329"
+    },
+    {
       "id": "MTIX-9",
       "parent_id": "",
       "depth": 0,
@@ -8365,6 +8390,6 @@
       "status": "active"
     }
   ],
-  "node_count": 303,
-  "checksum": "10a18d8a94fe3908d692eb510bab584c90a232e8f9314c64464e09170a03e3b2"
+  "node_count": 304,
+  "checksum": "bc97960fd6eea98051cee6cd7f130f59e1286696dcf69f980469015e7db68e38"
 }

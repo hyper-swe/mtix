@@ -29,8 +29,11 @@ vendor/
 # Marketing (internal planning — not public)
 marketing/
 
-# GoReleaser
-dist/
+# GoReleaser (repo-root only — an unanchored "dist/" also matched
+# internal/web/dist/, silently ignoring the tracked //go:embed UI baseline so
+# freshly-built assets could never be `git add`ed and a stale UI shipped;
+# see MTIX-81. web/dist/ stays ignored via its own rule below.)
+/dist/
 
 # Release build artifacts (generated during CI release workflow)
 BUILD-ENVIRONMENT.json

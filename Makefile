@@ -268,8 +268,30 @@ clean:
 
 ## ─── Verification ───
 
+## embed-check: Fail if the tracked embed baseline has drifted from web/src.
+## The binary serves $(EMBED_DIR) via //go:embed, and only build-web refreshes
+## it — `make build-go` alone silently ships whatever baseline is on disk. That
+## has regressed repeatedly (1686749, 721f62f, 7f6d2f9, MTIX-81), each time
+## stranding shipped UI work. Rebuilds the SPA and diffs; it never copies, so
+## drift is reported instead of papered over. Fix with `make build-web`.
+embed-check: install-web
+	@cd $(WEB_DIR) && npm run build > /dev/null
+	@if [ ! -d "$(EMBED_DIR)" ]; then \
+		echo "embed-check: FAIL — $(EMBED_DIR) is missing; run 'make build-web'"; \
+		exit 1; \
+	fi
+	@if diff -r -q $(WEB_DIR)/dist $(EMBED_DIR) > /dev/null 2>&1; then \
+		echo "embed-check: OK — $(EMBED_DIR) matches a fresh build of $(WEB_DIR)/src"; \
+	else \
+		echo "embed-check: FAIL — $(EMBED_DIR) has drifted from $(WEB_DIR)/src:"; \
+		diff -r -q $(WEB_DIR)/dist $(EMBED_DIR) 2>&1 | sed 's/^/    /'; \
+		echo "  The binary embeds $(EMBED_DIR), so a stale baseline ships an old UI."; \
+		echo "  Fix: make build-web && git add $(EMBED_DIR)"; \
+		exit 1; \
+	fi
+
 ## verify: Full verification checklist (pre-commit / pre-release)
-verify: test-race test-web lint
+verify: test-race test-web lint embed-check
 	go test $(GO_PKGS) -coverprofile=$(COVERFILE) -count=1
 	@echo ""
 	@echo "=== Coverage report ==="
@@ -366,6 +388,15 @@ preflight:
 		echo "  ✓ PASS: Binary builds successfully"; PASS=$$((PASS+1)); \
 	else \
 		echo "  ✗ FAIL: Build failed"; FAIL=$$((FAIL+1)); \
+	fi; \
+	echo ""; \
+	\
+	echo "⑦b Embedded UI baseline..."; \
+	if $(MAKE) -C "$$PROJDIR" embed-check > /dev/null 2>&1; then \
+		echo "  ✓ PASS: $(EMBED_DIR) matches a fresh build of $(WEB_DIR)/src"; PASS=$$((PASS+1)); \
+	else \
+		echo "  ✗ FAIL: $(EMBED_DIR) is stale — the binary would ship an old UI"; FAIL=$$((FAIL+1)); \
+		$(MAKE) -C "$$PROJDIR" embed-check 2>&1 | tail -6 | sed 's/^/    /'; \
 	fi; \
 	echo ""; \
 	\

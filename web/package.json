@@ -36,11 +36,5 @@
     "typescript-eslint": "^8.64.0",
     "vite": "^7.3.1",
     "vitest": "^4.0.18"
-  },
-  "comments": {
-    "overrides": "MTIX-63: force brace-expansion to the patched 5.0.8 (GHSA-mh99-v99m-4gvg / GHSA-3jxr-9vmj-r5cp); the vulnerable copies are eslint-only transitive deps that never touch the shipped bundle, and the expand() API is stable across majors."
-  },
-  "overrides": {
-    "brace-expansion": "5.0.8"
   }
 }

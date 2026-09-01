@@ -146,7 +146,15 @@ jobs:
         with:
           node-version: "22"
       - name: Build web UI
-        run: cd web && npm ci && npm run build && cp -r dist ../internal/web/dist
+        # rm before cp: internal/web/dist is tracked, so a bare
+        # `cp -r dist ../internal/web/dist` nests the fresh build at
+        # internal/web/dist/dist/ and leaves the committed files in place —
+        # the //go:embed then ships the OLD bundle (MTIX-81). Mirrors the
+        # Makefile's build-web target.
+        run: |
+          cd web && npm ci && npm run build
+          rm -rf ../internal/web/dist
+          cp -r dist ../internal/web/dist
       - name: Build binary
         env:
           CGO_ENABLED: "0"

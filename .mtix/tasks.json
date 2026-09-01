@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-01T17:02:10Z",
+  "exported_at": "2026-09-01T17:32:59Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7596,6 +7596,31 @@
       "uid": "01a05deb-875a-7db3-be24-5a04298144ec"
     },
     {
+      "id": "MTIX-84",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 84,
+      "project": "MTIX",
+      "title": "npm audit gate: new browserslist advisory (GHSA-c83g-rgw3-j3cx, GHSA-73wf-gq98-2v4g) failed the v0.5.1-beta release",
+      "description": "",
+      "prompt": "The v0.5.1-beta release run (33536607605) failed at preflight step 'Run npm audit' with a NEW advisory against browserslist:\n  GHSA-c83g-rgw3-j3cx  unbounded memory growth (no cache eviction) -\u003e eventual OOM\n  GHSA-73wf-gq98-2v4g  uncaught crash / prototype write via untrusted browserslist-stats.json (normalizeStats)\nAffected range \u003c=4.28.6; the tree resolved 4.28.1, latest published is 4.28.8.\n\nNot a regression from MTIX-82 and not an environment difference: the advisory was published between local verification and the CI run roughly twenty minutes later, and it now reproduces locally too. Everything MTIX-82 fixed stayed fixed; this is a different package.\n\nWhat DID pass in that run, which is worth recording: clean working tree, go mod verify, Go tests with the race detector, Go tests with coverage, the coverage gate (\u003e=85 for a -beta tag, WITH the Postgres service — the gate local runs cannot reproduce), and the web build plus the 267 vitest tests. The run never reached lint, test-go-postgres-cloud, release, or update-homebrew, so the Neon/Supabase cloud contract gate is still unverified for this tree.\n\nbrowserslist is a transitive devDependency (autoprefixer/postcss/vite target resolution). It is not in the shipped bundle, but it DOES influence build output: autoprefixer emits vendor prefixes according to browserslist's caniuse data, so a bump can legitimately change the emitted CSS. Verify whether internal/web/dist changes and regenerate it if so.\n\nBroader issue: this is the third time an npm advisory has blocked a release (MTIX-63, MTIX-82, now this). The advisory database is live, so any release can go red between local verification and CI through no code change at all. Worth deciding a policy — for example running the audit with --omit=dev, since every advisory so far has been in build/lint tooling that never reaches the binary, while runtime deps (react, react-dom) have stayed clean throughout.",
+      "acceptance": "1. npm audit reports zero vulnerabilities; both 'npm audit --audit-level=high' (CI gate) and plain 'npm audit' (preflight) exit 0.\n2. browserslist resolves above 4.28.6.\n3. No semver-major bumps and no dependency range changed in web/package.json.\n4. Lint, typecheck, build, and the 267 web tests pass.\n5. The rebuilt bundle is compared against the committed one; if autoprefixer output changed, internal/web/dist is regenerated so 'make embed-check' is green, and the CSS delta is reviewed rather than assumed cosmetic.\n6. The release run reaches and passes the cloud-Postgres contract gate, which the failed run never got to.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "e39e413420bf08c011f15336a13284b42ca45c7e7a1406c1fe21ed6956e60e09",
+      "created_at": "2026-09-01T17:32:40Z",
+      "updated_at": "2026-09-01T17:32:59Z",
+      "uid": "01a05e07-bd9e-7eec-864d-94aefe78a7aa"
+    },
+    {
       "id": "MTIX-9",
       "parent_id": "",
       "depth": 0,
@@ -8315,6 +8340,6 @@
       "status": "active"
     }
   ],
-  "node_count": 301,
-  "checksum": "a5b6c6e1051df376ecd569c1fcc4b6721f78192336fbba86e68897f35b450fea"
+  "node_count": 302,
+  "checksum": "cfcbad1ba21a87865d99e498849647875ca2111fac4c3b3c515b90ce4577b49f"
 }

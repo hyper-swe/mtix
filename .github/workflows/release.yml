@@ -65,11 +65,16 @@ jobs:
         # parallel races on table existence and intermittently
         # fails. Serializing packages costs ~30s of CI time and
         # gives deterministic results.
-        run: go test $(go list ./... | grep -v node_modules) -race -count=1 -p 1
+        # -timeout 20m matches ci.yml. Go's default is 10m PER TEST BINARY,
+        # and internal/store/sqlite under -race has reached 600s on a slow
+        # runner and been killed mid-fsync (MTIX-85), failing a release on
+        # a byte-identical tree that passed minutes earlier. MTIX-72 raised
+        # this limit in ci.yml only, leaving the release path on the default.
+        run: go test $(go list ./... | grep -v node_modules) -race -count=1 -p 1 -timeout 20m
 
       - name: Run Go tests with coverage
         run: |
-          go test $(go list ./... | grep -v node_modules) -coverprofile=coverage.out.raw -count=1 -p 1
+          go test $(go list ./... | grep -v node_modules) -coverprofile=coverage.out.raw -count=1 -p 1 -timeout 20m
           # QUALITY-STANDARDS §2.3: exclude documented categories from
           # the coverage gate. The raw profile is preserved (uploaded
           # as artifact below) for diagnostics; the filtered file is

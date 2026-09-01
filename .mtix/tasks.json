@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-01T17:32:59Z",
+  "exported_at": "2026-09-01T18:09:59Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7621,6 +7621,31 @@
       "uid": "01a05e07-bd9e-7eec-864d-94aefe78a7aa"
     },
     {
+      "id": "MTIX-85",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 85,
+      "project": "MTIX",
+      "title": "release.yml race step lacks the -timeout MTIX-72 added to ci.yml; sqlite package hit the 10m default",
+      "description": "",
+      "prompt": "Release run 33539116279 (v0.5.1-beta) failed at preflight step 'Run Go tests with race detector':\n\n    panic: test timed out after 10m0s\n      running tests:\n        TestInitHookScanFloorAtTail (0s)\n    FAIL github.com/hyper-swe/mtix/internal/store/sqlite  600.061s\n\nNot a functional failure and not a hang. The named test had just started (0s); the package as a whole reached Go's default 10-minute per-binary timeout. The goroutine dump shows the work in progress was an ordinary fsync through modernc sqlite (_unixSync -\u003e Xfsync -\u003e syscall), i.e. the runner was simply slow, not deadlocked.\n\nRoot cause is a workflow asymmetry. MTIX-72 (commit 0460cde) added an explicit timeout to the race invocation, but only in ci.yml:\n    ci.yml:40       go test ./... -race -count=1 -timeout 20m\n    release.yml:68  go test ./... -race -count=1 -p 1          \u003c-- no -timeout, so the default 10m applies\nrelease.yml:72 (the coverage invocation, same package set, also -p 1) likewise has no -timeout.\n\nThis is the same shape as MTIX-81: a fix applied in one place and not the parallel one, so the release path kept the weaker behaviour while CI looked green.\n\nEvidence it is variance against a too-tight limit rather than a regression: the immediately preceding run (33536607605) on a byte-identical Go tree passed the same step in 12m47s total for ALL packages. This run, internal/store/sqlite alone consumed 600s before being killed. Roughly a 2x slower runner turned a pass into a fail. Note also -p 1 serializes packages, so the wall clock is the sum, but -timeout applies per test binary, so the limit that matters is the single slowest package.\n\nNeither release attempt for v0.5.1-beta has yet reached test-go-postgres-cloud, so the Neon/Supabase cloud contract gate remains unverified for this tree.",
+      "acceptance": "1. release.yml's race invocation carries an explicit -timeout matching ci.yml (20m), and the coverage invocation carries one too.\n2. A release run reaches and passes the race and coverage steps without a timeout panic.\n3. The two workflows' shared test invocations are consistent, so a timeout change in one cannot silently leave the other behind — ideally checked or factored rather than duplicated by hand.\n4. No test logic changes: this is a CI limit fix, not a fix for slow tests. If internal/store/sqlite genuinely needs ~10m under -race, size the budget from measured data and record it.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "6a6e18d37b56e3cfd0ed7de14f9128be93277471d353e0fce38dca7bb44f2f97",
+      "created_at": "2026-09-01T18:09:40Z",
+      "updated_at": "2026-09-01T18:09:59Z",
+      "uid": "01a05e29-9d0c-723a-95bd-8fddb5bf3bbb"
+    },
+    {
       "id": "MTIX-9",
       "parent_id": "",
       "depth": 0,
@@ -8340,6 +8365,6 @@
       "status": "active"
     }
   ],
-  "node_count": 302,
-  "checksum": "cfcbad1ba21a87865d99e498849647875ca2111fac4c3b3c515b90ce4577b49f"
+  "node_count": 303,
+  "checksum": "10a18d8a94fe3908d692eb510bab584c90a232e8f9314c64464e09170a03e3b2"
 }

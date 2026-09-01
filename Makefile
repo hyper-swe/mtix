@@ -27,7 +27,7 @@ TASKS_DB     := .mtix/data/mtix.db
 .PHONY: all build build-go build-web install install-web test test-go test-web \
         test-race test-cover test-all lint lint-go lint-web \
         security-scan security-audit bench fuzz e2e proto-gen docs-gen \
-        release-artifacts clean verify preflight help \
+        release-artifacts clean verify preflight embed-check help \
         setup tasks-export tasks-import tasks-sync \
         generate-plugin-skills agent-kit \
         test-pg-docker test-pg-supabase test-pg-neon test-pg-all \
@@ -268,26 +268,43 @@ clean:
 
 ## ─── Verification ───
 
-## embed-check: Fail if the tracked embed baseline has drifted from web/src.
+## embed-check: Fail if the embedded UI baseline has drifted from web/src.
 ## The binary serves $(EMBED_DIR) via //go:embed, and only build-web refreshes
 ## it — `make build-go` alone silently ships whatever baseline is on disk. That
 ## has regressed repeatedly (1686749, 721f62f, 7f6d2f9, MTIX-81), each time
-## stranding shipped UI work. Rebuilds the SPA and diffs; it never copies, so
-## drift is reported instead of papered over. Fix with `make build-web`.
+## stranding shipped UI work. Fix drift with `make build-web`, then commit.
+##
+## Two independent assertions, because either alone can be defeated:
+##   (1) working tree vs a fresh SPA build — catches a baseline nobody rebuilt;
+##   (2) working tree vs HEAD — catches a baseline a preceding `build`/`build-web`
+##       silently repaired, which would otherwise turn (1) into a guaranteed pass
+##       (exactly what made the preflight gate a no-op). This makes the check
+##       order-independent: it fails whether it runs before or after a build.
+## (2) needs a git repo; outside one it is skipped LOUDLY, never silently.
 embed-check: install-web
 	@cd $(WEB_DIR) && npm run build > /dev/null
 	@if [ ! -d "$(EMBED_DIR)" ]; then \
 		echo "embed-check: FAIL — $(EMBED_DIR) is missing; run 'make build-web'"; \
 		exit 1; \
 	fi
-	@if diff -r -q $(WEB_DIR)/dist $(EMBED_DIR) > /dev/null 2>&1; then \
-		echo "embed-check: OK — $(EMBED_DIR) matches a fresh build of $(WEB_DIR)/src"; \
-	else \
+	@if ! diff -r -q $(WEB_DIR)/dist $(EMBED_DIR) > /dev/null 2>&1; then \
 		echo "embed-check: FAIL — $(EMBED_DIR) has drifted from $(WEB_DIR)/src:"; \
 		diff -r -q $(WEB_DIR)/dist $(EMBED_DIR) 2>&1 | sed 's/^/    /'; \
 		echo "  The binary embeds $(EMBED_DIR), so a stale baseline ships an old UI."; \
 		echo "  Fix: make build-web && git add $(EMBED_DIR)"; \
 		exit 1; \
+	fi
+	@if ! git rev-parse --git-dir > /dev/null 2>&1; then \
+		echo "embed-check: PARTIAL — matches a fresh build, but this is not a git"; \
+		echo "  checkout, so the committed baseline could not be verified."; \
+	elif ! git diff --quiet -- $(EMBED_DIR) 2>/dev/null; then \
+		echo "embed-check: FAIL — $(EMBED_DIR) matches the source but differs from HEAD:"; \
+		git diff --stat -- $(EMBED_DIR) | sed 's/^/    /'; \
+		echo "  The committed baseline is stale; a release built from HEAD ships an old UI."; \
+		echo "  Fix: git add $(EMBED_DIR)"; \
+		exit 1; \
+	else \
+		echo "embed-check: OK — $(EMBED_DIR) matches both $(WEB_DIR)/src and HEAD"; \
 	fi
 
 ## verify: Full verification checklist (pre-commit / pre-release)

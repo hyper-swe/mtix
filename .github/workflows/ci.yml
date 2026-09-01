@@ -173,7 +173,25 @@ jobs:
         with:
           node-version: "22"
       - name: Build web UI
-        run: cd web && npm ci && npm run build && cp -r dist ../internal/web/dist
+        # rm before cp: internal/web/dist is tracked, so a bare
+        # `cp -r dist ../internal/web/dist` nests the fresh build at
+        # internal/web/dist/dist/ and leaves the committed files in place —
+        # the //go:embed then ships the OLD bundle (MTIX-81). Mirrors the
+        # Makefile's build-web target.
+        #
+        # Each command is its own statement, and the paths are workspace-
+        # relative rather than ../ from web/. Under the default `bash -e`,
+        # a failure inside a `cd x && ...` chain does NOT abort the script,
+        # so the earlier one-line form could have reached `rm -rf ../...`
+        # with the cwd still at the workspace root — resolving outside the
+        # checkout. A bare `cd` on its own line does abort.
+        run: |
+          cd web
+          npm ci
+          npm run build
+          cd "$GITHUB_WORKSPACE"
+          rm -rf internal/web/dist
+          cp -r web/dist internal/web/dist
       - name: Build binary
         env:
           CGO_ENABLED: "0"

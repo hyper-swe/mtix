@@ -30,7 +30,13 @@ vendor/
 marketing/
 
 # GoReleaser
+# The bare pattern also matches internal/web/dist/, which silently ignored the
+# tracked //go:embed UI baseline: the SPA build emits content-hashed filenames,
+# so freshly-built assets could never be `git add`ed and a stale UI shipped
+# (MTIX-81). Re-include that one directory rather than anchoring to /dist/,
+# which would stop ignoring sdk/python/dist/ and any future nested build output.
 dist/
+!internal/web/dist/
 
 # Release build artifacts (generated during CI release workflow)
 BUILD-ENVIRONMENT.json

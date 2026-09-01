@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.1-beta] - 2026-09-01
+
+A patch release: the web project switcher was missing from the shipped binary, and the build toolchain's npm advisories are cleared. No schema, API, or CLI changes, and no Go code changed at all — upgrading is a drop-in binary replacement.
+
+### Security
+- **Cleared the npm advisories blocking the release gate (MTIX-82).** v0.5.0-beta carried an `overrides` entry hard-pinning `brace-expansion` to exactly `5.0.8`, added to clear two advisories at the time. A later advisory covers `4.0.0 - 5.0.8`, so the pinned version became vulnerable itself — and because the pin named an exact version, `npm audit fix` could not reach the patched `5.0.9`. The pin was blocking its own remedy. It is removed rather than re-pinned, so patch releases now flow in on their own; upstream has caught up and the tree resolves to a fixed version unaided. `npm audit` reports zero vulnerabilities. Every affected package was a devDependency of the build/lint toolchain — the runtime dependencies (`react`, `react-dom`) were never affected and nothing vulnerable was ever inside the binary. No semver-major bumps: eslint stays on 9.x, and the eleven changed packages move by patch level only. The rebuilt SPA bundle is byte-identical to v0.5.1-beta's, so the shipped artifact is unchanged.
+
+### Fixed
+- **The project scope selector was absent at runtime (MTIX-81).** In v0.5.0-beta the multi-project web UI shipped its backend but not its frontend: the top bar showed a legacy "Select Project" button that did nothing on click (it carried only hover handlers and no `onClick`), and there was no way to view or switch to a non-primary project. The SPA source was correct throughout — `internal/web/dist/`, the tree the binary serves via `//go:embed`, had not been regenerated since before the multi-project UI landed, so every binary built after it embedded the older bundle. The baseline is now rebuilt from the same source the release ships. Users on v0.5.0-beta who need a workaround before upgrading can scope through the API directly (`GET /api/v1/search?project=<prefix>`, or `?project=all`), which was never affected.
+- **The embed baseline could not be committed, which is why the drift persisted (MTIX-81).** The GoReleaser ignore rule was an unanchored `dist/`, which also matched `internal/web/dist/`. Its files stayed tracked only because tracked files override `.gitignore`, but the SPA build emits content-hashed filenames, so each rebuild produced new names that git silently refused to add — a regenerated bundle could be built and never land in a commit. The rule is now anchored to `/dist/`; `web/dist/` keeps its own rule.
+- **The release pipeline's UI rebuild never overwrote anything (MTIX-81).** Both the CI and release workflows ran `cp -r dist ../internal/web/dist`, but that destination is tracked and already exists, so the copy nested the fresh build at `internal/web/dist/dist/` and left the committed files untouched — the embed kept serving the old bundle. This is why a stale UI survived a pipeline that appeared to rebuild it on every run. Both workflows now remove the directory first, matching the Makefile.
+- **Nothing verified that the embedded UI matched its source.** A new `make embed-check` builds the SPA and diffs it against the tracked baseline, failing on drift instead of silently refreshing it, and runs as part of `make verify` and the pre-flight gate.
+
+---
+
 ## [0.5.0-beta] - 2026-07-28
 
 The agent-to-agent coordination release: the FR-19 hooks/inbox foundation and FR-20 origin-independent dispatch together let agents wake and hand off work with no human message-bus — plus corruption hardening for multi-agent filesystems, multi-project support, cloud-Postgres compatibility, per-agent conflict auditability, an MCP read-only mode, and supply-chain/security fixes.

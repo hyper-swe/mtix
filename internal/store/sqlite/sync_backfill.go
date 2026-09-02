@@ -4,6 +4,7 @@
 package sqlite
 
 import (
+	"container/heap"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -17,8 +18,8 @@ import (
 // BackfillResult reports what mtix sync backfill emitted (or would
 // emit, under --dry-run).
 type BackfillResult struct {
-	NodeCount       int `json:"node_count"`        // walked
-	CreateEvents    int `json:"create_events"`     // create_node emitted
+	NodeCount         int `json:"node_count"`    // walked
+	CreateEvents      int `json:"create_events"` // create_node emitted
 	UpdateFieldEvents int `json:"update_field_events"`
 	TransitionEvents  int `json:"transition_events"`
 	AnnotateEvents    int `json:"annotate_events"`
@@ -79,8 +80,12 @@ func (s *Store) BackfillDryRun(ctx context.Context) (BackfillResult, error) {
 //     force=true to override; --force is an intentional opt-in).
 //   - Refusal if the nodes table fails an invariant check (parent_id
 //     dangling). Caller is pointed at `mtix verify`.
-//   - Lamport is monotonic in walk order (correct per the sync
-//     invariants — lamport is causal, not wall-clock).
+//   - Walk order is topological (parent before child), not created_at:
+//     reparenting leaves a child row older than its current parent, and
+//     lamport is assigned monotonically in walk order, so a created_at
+//     walk emits a child ahead of its parent and any consumer applying
+//     in lamport order fails the parent_id FOREIGN KEY (MTIX-88).
+//   - Lamport is monotonic in walk order (causal, not wall-clock).
 //   - wall_clock_ts is set to the source row's created_at so the
 //     temporal audit trail is preserved.
 //
@@ -148,8 +153,9 @@ func (s *Store) runBackfillInTx(ctx context.Context, tx *sql.Tx) (BackfillResult
 	return result, nil
 }
 
-// collectBackfillNodes walks the canonical `nodes` table in
-// created_at order and returns the materialized rows. Pulled out for
+// collectBackfillNodes walks the canonical `nodes` table in created_at
+// order, then reorders the rows topologically so a parent always
+// precedes its children (see topoOrderBackfillNodes). Pulled out for
 // cognitive-complexity hygiene; runBackfillInTx then iterates and
 // emits.
 func collectBackfillNodes(ctx context.Context, tx *sql.Tx) ([]backfillNodeRow, error) {
@@ -180,7 +186,105 @@ func collectBackfillNodes(ctx context.Context, tx *sql.Tx) ([]backfillNodeRow, e
 	if closeErr := rows.Close(); closeErr != nil {
 		return nil, fmt.Errorf("close nodes rows: %w", closeErr)
 	}
-	return collected, nil
+	return topoOrderBackfillNodes(collected), nil
+}
+
+// topoOrderBackfillNodes reorders rows so a parent always precedes its
+// children, keeping created_at order between nodes that are not
+// ancestor-related.
+//
+// created_at is wall-clock and does NOT imply topology: reparenting and
+// renumbering leave a child row whose created_at predates the parent it
+// now hangs under. Backfill assigns lamport monotonically in walk order,
+// so emitting in created_at order gives such a child a LOWER lamport
+// than its parent. nodes.parent_id is a FOREIGN KEY, so a consumer
+// applying in lamport order (mtix sync clone) fails on the child insert
+// with "FOREIGN KEY constraint failed" — deterministically, every time
+// (MTIX-88).
+//
+// The sort is STABLE with respect to the incoming created_at order: a
+// node is emitted as soon as its parent has been, and among nodes whose
+// parents are already emitted the earliest original position wins. So an
+// input that is already topological comes back byte-identical, and a
+// violating input moves only the nodes that have to move. (A plain BFS
+// would emit every root before any child and churn the ordering of
+// streams that were already correct.)
+//
+// A node whose parent is absent from the set is treated as a root — that
+// covers a live child under a soft-deleted parent, which the query's
+// deleted_at filter excludes. Anything left unemitted (only reachable via
+// a parent_id cycle, which the schema should make impossible) is appended
+// in the original order rather than dropped: losing an event would be far
+// worse than emitting one out of order.
+func topoOrderBackfillNodes(rows []backfillNodeRow) []backfillNodeRow {
+	if len(rows) < 2 {
+		return rows
+	}
+
+	index := make(map[string]int, len(rows))
+	for i, r := range rows {
+		index[r.node.ID] = i
+	}
+
+	children := make(map[string][]int, len(rows))
+	ready := &intHeap{}
+	for i, r := range rows {
+		parent := r.node.ParentID
+		if parent == "" {
+			*ready = append(*ready, i)
+			continue
+		}
+		if _, ok := index[parent]; !ok {
+			// Parent not in this set (e.g. soft-deleted): treat as a root.
+			*ready = append(*ready, i)
+			continue
+		}
+		children[parent] = append(children[parent], i)
+	}
+	heap.Init(ready)
+
+	ordered := make([]backfillNodeRow, 0, len(rows))
+	emitted := make([]bool, len(rows))
+	for ready.Len() > 0 {
+		i, ok := heap.Pop(ready).(int)
+		if !ok || emitted[i] {
+			continue
+		}
+		emitted[i] = true
+		ordered = append(ordered, rows[i])
+		for _, c := range children[rows[i].node.ID] {
+			heap.Push(ready, c)
+		}
+	}
+
+	for i, done := range emitted {
+		if !done {
+			ordered = append(ordered, rows[i])
+		}
+	}
+	return ordered
+}
+
+// intHeap is a min-heap of original row positions, so the stable
+// topological sort always emits the earliest still-eligible node.
+type intHeap []int
+
+func (h intHeap) Len() int           { return len(h) }
+func (h intHeap) Less(i, j int) bool { return h[i] < h[j] }
+func (h intHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *intHeap) Push(x any) {
+	// Only ever pushed ints from this file; comma-ok keeps errcheck happy
+	// without a panic path.
+	if v, ok := x.(int); ok {
+		*h = append(*h, v)
+	}
+}
+func (h *intHeap) Pop() any {
+	old := *h
+	n := len(old)
+	v := old[n-1]
+	*h = old[:n-1]
+	return v
 }
 
 // scanBackfillNode pulls one nodes row out of *sql.Rows and assembles

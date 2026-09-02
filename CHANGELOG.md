@@ -11,6 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.2-beta] - 2026-09-02
+
+A correctness patch for `mtix sync backfill`. Anyone who has reparented or renumbered a node should upgrade before backfilling; a stream produced by 0.5.1-beta or earlier can fail to apply on a fresh replica.
+
+### Fixed
+- **Backfill emitted a reparented child before its parent, breaking `sync clone` (MTIX-88).** `mtix sync backfill` synthesized `create_node` events by walking the `nodes` table in `created_at` order, and lamport is assigned monotonically in walk order. But `created_at` is wall-clock and says nothing about hierarchy: reparenting and renumbering leave a child row whose timestamp predates the parent it now hangs under, so that child was emitted with a *lower* lamport than its parent. Since `nodes.parent_id` is a `FOREIGN KEY` and `foreign_keys` is on for every connection, a consumer applying the stream in lamport order — `mtix sync clone` — failed the child insert with `FOREIGN KEY constraint failed`, deterministically, every time. The reporter saw 8 such violations across two subtrees. Backfill now orders nodes topologically, so a parent always precedes its children. The sort is *stable*: a stream that was already correctly ordered comes back in exactly its previous `created_at` order, so upgrading does not churn event streams that were fine. A child whose parent is absent from the set (a soft-deleted parent, which the walk excludes) is treated as a root rather than dropped.
+
+### Upgrading
+- Existing hubs are unaffected — this changes only how a *new* backfill stream is generated, and backfill is already refused by default when `sync_events` is non-empty. If a previous backfill produced an unapplyable stream, re-run `mtix sync backfill --force` on 0.5.2-beta and re-push.
+
+---
+
 ## [0.5.1-beta] - 2026-09-01
 
 A patch release: the web project switcher was missing from the shipped binary, and the build toolchain's npm advisories are cleared. No schema, API, or CLI changes, and no Go code changed at all — upgrading is a drop-in binary replacement.

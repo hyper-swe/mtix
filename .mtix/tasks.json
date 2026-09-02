@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-01T18:33:45Z",
+  "exported_at": "2026-09-02T12:22:03Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7534,15 +7534,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "vimal",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "be63989b60deae775080bd778bf1fc472d945411039bb8e4df5a16671a4948c5",
       "created_at": "2026-09-01T15:02:54Z",
-      "updated_at": "2026-09-01T15:03:09Z",
+      "updated_at": "2026-09-02T12:22:03Z",
+      "closed_at": "2026-09-02T12:22:03Z",
       "uid": "01a05d7e-9dc7-70c7-b29d-aec03bda8402"
     },
     {
@@ -7559,15 +7560,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "vimal",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "0066b2a0f7eba50f698ca8b8d5b011d80ddb9f6dc6f5cb7400c9bfc3e143c656",
       "created_at": "2026-09-01T16:49:07Z",
-      "updated_at": "2026-09-01T16:49:44Z",
+      "updated_at": "2026-09-02T12:22:03Z",
+      "closed_at": "2026-09-02T12:22:03Z",
       "uid": "01a05ddf-dc9d-7284-83ac-7fcea47d0541"
     },
     {
@@ -7609,15 +7611,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "vimal",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "e39e413420bf08c011f15336a13284b42ca45c7e7a1406c1fe21ed6956e60e09",
       "created_at": "2026-09-01T17:32:40Z",
-      "updated_at": "2026-09-01T17:32:59Z",
+      "updated_at": "2026-09-02T12:22:03Z",
+      "closed_at": "2026-09-02T12:22:03Z",
       "uid": "01a05e07-bd9e-7eec-864d-94aefe78a7aa"
     },
     {
@@ -7634,15 +7637,16 @@
       "issue_type": "",
       "priority": 2,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "vimal",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "6a6e18d37b56e3cfd0ed7de14f9128be93277471d353e0fce38dca7bb44f2f97",
       "created_at": "2026-09-01T18:09:40Z",
-      "updated_at": "2026-09-01T18:09:59Z",
+      "updated_at": "2026-09-02T12:22:03Z",
+      "closed_at": "2026-09-02T12:22:03Z",
       "uid": "01a05e29-9d0c-723a-95bd-8fddb5bf3bbb"
     },
     {
@@ -7669,6 +7673,31 @@
       "created_at": "2026-09-01T18:33:26Z",
       "updated_at": "2026-09-01T18:33:45Z",
       "uid": "01a05e3f-5d72-7683-8d6f-b68acd00e329"
+    },
+    {
+      "id": "MTIX-87",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 87,
+      "project": "MTIX",
+      "title": "DSN rejects passwords containing / ? # % or space; users must percent-encode by hand",
+      "description": "",
+      "prompt": "A user connecting mtix to an AWS RDS sync hub had to percent-encode their database password by hand before mtix would accept the DSN:\n\n    export ENC_PGPASSWORD=$(python3 -c \"import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=''))\" \"$PGPASSWORD\")\n    export MTIX_SYNC_DSN=\"postgres://mtixhub:${ENC_PGPASSWORD}@${RDSHOST}:5432/postgres?sslmode=verify-full\u0026sslrootcert=...\"\n\nThat extra step should not be necessary. The password came from AWS Secrets Manager, which generates characters that break URI parsing.\n\nRoot cause: internal/store/postgres/transport/dsn.go parseDSN() accepts only the postgres:// URL form and hands it to Go's net/url.Parse. Measured behaviour of url.Parse on postgres://user:\u003cpw\u003e@host:5432/db:\n\n    @      OK    (Go splits userinfo on the LAST @)\n    :      OK\n    /      FAIL  invalid port \":p\" after host\n    ?      FAIL  invalid port \":p\" after host\n    #      FAIL  invalid port \":p\" after host\n    %      FAIL  invalid URL escape \"%ss\"\n    space  FAIL  net/url: invalid userinfo\n\nSo @ and : already work — the reported break is /, ?, #, % or space. Note % is especially common in generated passwords, and its failure message (invalid URL escape) gives the user no hint that encoding is the fix.\n\nSecond defect in the same function: its doc comment claims a fallback that does not exist —\n    // parseDSN parses a postgres:// or postgresql:// URL form. Falls back\n    // to wrapping a key=value form into URL form so url.Parse can handle\n    // it; rejects anything else.\nThe body has no key=value branch at all; it returns an error for anything not prefixed postgres://. There is no test covering key=value input. This is the same label-outruns-implementation pattern as MTIX-81, MTIX-85 and MTIX-86.\n\nWhy this is NOT a trivial patch, and was deliberately kept out of v0.5.1-beta:\n  - The only caller is EnforceTLSPosture (dsn.go:167), the single choke point that enforces sslmode=verify-full, performs the loopback check for weak TLS, injects sslrootcert from MTIX_SYNC_SSLROOTCERT, and re-serialises via parsed.String(). Changing the parser changes how TLS posture is enforced, so it is security-relevant, not cosmetic.\n  - Percent-encoding heuristics on the URL form are genuinely ambiguous: in postgres://u:p/ss@host/db it is undecidable whether the password is p or p/ss. Do not guess.\n  - v0.5.1-beta deliberately contains ZERO Go changes, which is what lets its coverage and cloud-Postgres gate results carry over unchanged from v0.5.0-beta. Adding Go there would have invalidated that argument mid-release.\n\nPreferred design: accept the libpq key=value form (host=... user=... password=... sslmode=...), which has no escaping ambiguity and needs no encoding for any character. pgx already parses both forms natively — pool.go:102 calls pgxpool.ParseConfig, which accepts key=value today. The work is to stop routing TLS posture through net/url: parse with pgx.ParseConfig, read and set sslmode/sslrootcert and read the host off the resulting *pgx.ConnConfig, and return something pgxpool can consume, rather than doing string surgery on a URL.\n\nAlso worth adding as a zero-ambiguity escape hatch: an MTIX_SYNC_PASSWORD env var supplying the password out-of-band. That is the same shape MTIX-61 already adopted for backup, which hands pg_dump PG* environment variables precisely to dodge URI parsing.\n\nWhatever lands, the error message for a genuinely unparseable DSN must say that a special character in the password needs encoding, or point at the key=value form. Today it surfaces a raw net/url error.",
+      "acceptance": "1. A DSN whose password contains / ? # % space @ : is accepted without manual percent-encoding, via the libpq key=value form at minimum.\n2. Table-driven tests cover each of those characters in both the URL form and the key=value form, asserting the password reaches pgx intact — the password recovered from the parsed config must equal the input byte-for-byte.\n3. TLS posture is unchanged and still enforced for every accepted form: sslmode defaults to verify-full, weak sslmode still requires --insecure-tls AND a loopback host, and sslrootcert injection still works. Existing EnforceTLSPosture tests pass untouched.\n4. The parseDSN doc comment matches the implementation — either implement the key=value fallback it describes or delete the claim. A test covers whichever is true.\n5. An unparseable DSN produces an actionable error naming the likely cause (special character in the password) instead of a raw net/url message; the error never leaks the credential.\n6. Redaction still holds: RedactDSN handles every newly accepted form, verified by test.\n7. Not shipped in v0.5.1-beta. Lands in its own release with a full gate run, including the cloud-Postgres contract gate against a real hub.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "3fb181022f6d6b76eea2e6270dcfd3ebb6ab7b89f4a078a2b024904045f2a188",
+      "created_at": "2026-09-02T08:04:03Z",
+      "updated_at": "2026-09-02T08:04:32Z",
+      "uid": "01a06125-8332-734f-acda-991ea7cfdff6"
     },
     {
       "id": "MTIX-9",
@@ -8368,7 +8397,7 @@
       "agent_id": "vimal",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-79",
+      "current_node_id": "MTIX-85",
       "last_heartbeat": "2026-05-06T14:14:36Z"
     }
   ],
@@ -8390,6 +8419,6 @@
       "status": "active"
     }
   ],
-  "node_count": 304,
-  "checksum": "bc97960fd6eea98051cee6cd7f130f59e1286696dcf69f980469015e7db68e38"
+  "node_count": 305,
+  "checksum": "e4716af84cfa2397a7abfd4107a7d4ca96a60c5b02d09e19c34843722a5225a6"
 }

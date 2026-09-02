@@ -329,7 +329,7 @@ For two concurrent events touching the same field of the same node, the winner i
   - **Row exists, hash differs:** refuse with structured error `MTIX_SYNC_DIVERGENT_HISTORY` and four-option summary.
 
 ### 10.2 Four resolution paths
-1. **`--discard-local`** — drop local nodes, clear sync_events, run a fresh clone. Unrecoverable; requires `--yes` to skip the y/N prompt.
+1. **`--discard-local`** — **destroys every ticket in the local store.** Runs `DELETE FROM nodes` plus a wipe of `sync_events`, `sync_conflicts`, `applied_events` and the inbox/hook bookkeeping, then takes hub state. Unrecoverable without a prior `mtix backup`. There is **no y/N prompt**: without `--yes` the command dry-runs and prints a plan; with `--yes` it executes immediately. Adding an unbypassable typed confirmation is MTIX-90. Never recommend this as a routine remedy — it is a divergent-history resolution path, not a way to reset the journal.
 2. **`--rename-to NEWPREFIX`** — atomically rewrite all local node IDs from `<old>-N` to `<new>-N`; register `NEWPREFIX` as a new project on the hub; push. Both prefixes coexist.
 3. **`--import-as PARENT-ID`** — re-parent the entire local tree under `PARENT-ID`; renumber local IDs into the new namespace; push as additions.
 4. **`--dry-run`** — preview only. Output identical to the actual run's audit events, minus side effects. Diff-tested against the actual run in MTIX-15.6.
@@ -356,7 +356,7 @@ When unresolved conflicts exceed 50 for one project:
 - `mtix sync status` surfaces a banner: `X conflicts grouped across Y nodes. Use mtix sync conflicts resolve --batch <node_id> to accept LWW for all fields of one node.`
 - `mtix sync conflicts list` groups by `node_id` and shows counts per node.
 - `--batch <node_id>` accepts LWW for all fields of one node.
-- `--batch-all` accepts LWW for everything across all conflicts. Requires a confirmation prompt with the count of values that will be dropped; cannot be bypassed without `--yes`.
+- `--batch-all` accepts LWW for everything across all conflicts. Not yet implemented. When built it must follow MTIX-90: a confirmation stating the count of values that will be dropped, requiring a **typed** response that no flag can supply — `--yes` must NOT bypass it — and refusing outright on non-TTY stdin so automation fails closed.
 
 ### 11.1 Agent surface
 When `mtix context <node_id>` is called on a node with unresolved conflicts, the rendered context appends a `CONFLICT` block:

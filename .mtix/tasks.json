@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-02T14:38:37Z",
+  "exported_at": "2026-09-02T14:48:27Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7971,15 +7971,15 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
+      "status": "in_progress",
       "progress": 0,
-      "assignee": "",
+      "assignee": "vimal",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "76987b2e0835de251554cf05f2a71b7c1f3be3c5f0b4b627d0d2ced1d80821d3",
       "created_at": "2026-09-02T14:15:19Z",
-      "updated_at": "2026-09-02T14:15:52Z",
+      "updated_at": "2026-09-02T14:47:20Z",
       "uid": "01a06279-6931-7795-8ac9-e3546829952e"
     },
     {
@@ -7996,16 +7996,42 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
+      "status": "done",
+      "progress": 1,
+      "assignee": "vimal",
+      "creator": "cli",
+      "agent_state": "working",
+      "weight": 1,
+      "content_hash": "866acb30e8e6b192078010c861c8b8c7a738760c480c50940f8ba1db7f845d9a",
+      "created_at": "2026-09-02T14:38:10Z",
+      "updated_at": "2026-09-02T14:48:27Z",
+      "closed_at": "2026-09-02T14:48:27Z",
+      "uid": "01a0628e-564c-71a9-94f7-c1fc18cf220d"
+    },
+    {
+      "id": "MTIX-92",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 92,
+      "project": "MTIX",
+      "title": "hub uid repair: stamp existing hub create rows with their node uid so re-push no-ops instead of colliding",
+      "description": "",
+      "prompt": "Follow-up to MTIX-91. That fix makes the CLIENT send uid, but every event pushed by any release to date sits on the hub with uid NULL. The hub resolves a registered create's effective uid as 'stored uid, or event_id when NULL' (transport/registry.go), so a fixed client sending the correct uid still mismatches against those old rows and the collision persists. Verified: nulling the uid column on a hub and re-pushing with the fixed binary reproduces the failure identically.\n\nSo every existing deployment needs a one-time repair before regenerate + re-push works.\n\nThe repair is non-destructive and already prototyped end to end. For each local node with a uid, stamp the hub's create row where the uid is still NULL, matched on (project_prefix, node_id):\n\n    UPDATE sync_events SET uid = $1\n     WHERE project_prefix = $2 AND node_id = $3\n       AND op_type = 'create_node' AND uid IS NULL\n\nNothing is deleted and no populated uid is overwritten. After running it against a hub whose rows had been nulled, the same re-push that had just failed reported '2 accepted, 0 renumbered, 0 conflicts'.\n\nThis matters beyond convenience: it lets MTIX-89 drop its multi-prefix DELETE-based hub reset. Regenerate + re-push becomes a clean no-op, so remediation is a local regenerate plus this repair — no destructive operation on a shared hub at all. That directly serves MTIX-90, which wants irreversible bulk deletes gated or eliminated.\n\nDesign notes: the client is the only party that knows the mapping, since the hub never received the uid, so this has to run from a CLI with the local store. It is idempotent (the uid IS NULL guard). Scope it per project prefix and report a count. Consider whether it belongs under 'mtix sync doctor' as a repair action rather than a standalone destructive-sounding command.",
+      "acceptance": "1. A supported command performs the repair from a client that holds the local store, idempotently, scoped by project prefix, reporting how many hub rows it stamped.\n2. It never deletes a row and never overwrites a non-NULL uid.\n3. A dry-run reports what WOULD be stamped without mutating.\n4. After the repair, regenerate + re-push against a previously-pushed project is a no-op: 0 renumbered, 0 conflicts. Covered by an e2e test against a real Postgres hub, proven red before the repair runs.\n5. Nodes present on the hub but absent locally are reported rather than silently skipped, so a partial repair is visible.\n6. Documented as the upgrade step for anyone who pushed with a pre-MTIX-91 client, with the reason stated plainly.\n7. MTIX-89 re-scoped once this lands: if remediation no longer needs a hub reset, remove that from its acceptance criteria rather than leaving a destructive path specified.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
       "status": "open",
       "progress": 0,
       "assignee": "",
       "creator": "cli",
       "agent_state": "",
       "weight": 1,
-      "content_hash": "866acb30e8e6b192078010c861c8b8c7a738760c480c50940f8ba1db7f845d9a",
-      "created_at": "2026-09-02T14:38:10Z",
-      "updated_at": "2026-09-02T14:38:37Z",
-      "uid": "01a0628e-564c-71a9-94f7-c1fc18cf220d"
+      "content_hash": "f0c11ecddb6348d790f82267f7faf98e4e00bc935511b276126ab364e50af274",
+      "created_at": "2026-09-02T14:48:02Z",
+      "updated_at": "2026-09-02T14:48:02Z",
+      "uid": "01a06297-6079-78be-a0d0-c431735d47e2"
     }
   ],
   "dependencies": [
@@ -8498,7 +8524,7 @@
       "agent_id": "vimal",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-88",
+      "current_node_id": "MTIX-91",
       "last_heartbeat": "2026-05-06T14:14:36Z"
     }
   ],
@@ -8520,6 +8546,6 @@
       "status": "active"
     }
   ],
-  "node_count": 309,
-  "checksum": "76624bcd86ecb891ecbe3636226caa40c45d93e5988c68179ec1a243ffc9133b"
+  "node_count": 310,
+  "checksum": "8af6d389a1c42e6a224b4dde5a4e3ebd56bbe0e7c14762442c7b1c4421f14d5a"
 }

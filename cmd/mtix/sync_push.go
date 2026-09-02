@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -176,40 +175,15 @@ func pushLoop(ctx context.Context, stderr io.Writer,
 	}
 }
 
-// readPendingBatch returns up to limit events from sync_events in
-// lamport order. Reads via readDB (no write tx needed).
+// readPendingBatch returns up to limit events awaiting push.
+//
+// Delegates to the store so there is one pending-queue projection shared
+// with the e2e harness. The projection previously lived here and omitted
+// uid, which silently defeated the hub's same-logical-node no-op
+// (MTIX-91); the e2e "mirror" of this function had uid, so tests passed
+// while the CLI failed. Do not re-inline it.
 func readPendingBatch(ctx context.Context, store *sqlite.Store, limit int) ([]*model.SyncEvent, error) {
-	rows, err := store.Query(ctx, `
-		SELECT event_id, project_prefix, node_id, op_type, payload,
-		       wall_clock_ts, lamport_clock, vector_clock,
-		       author_id, author_machine_hash
-		FROM sync_events
-		WHERE sync_status = 'pending'
-		ORDER BY lamport_clock ASC
-		LIMIT ?`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	out := make([]*model.SyncEvent, 0, limit)
-	for rows.Next() {
-		var e model.SyncEvent
-		var opType, payload, vc string
-		if scanErr := rows.Scan(
-			&e.EventID, &e.ProjectPrefix, &e.NodeID, &opType, &payload,
-			&e.WallClockTS, &e.LamportClock, &vc,
-			&e.AuthorID, &e.AuthorMachineHash,
-		); scanErr != nil {
-			return nil, scanErr
-		}
-		e.OpType = model.OpType(opType)
-		e.Payload = json.RawMessage(payload)
-		if err := json.Unmarshal([]byte(vc), &e.VectorClock); err != nil {
-			return nil, fmt.Errorf("decode VC for %s: %w", e.EventID, err)
-		}
-		out = append(out, &e)
-	}
-	return out, rows.Err()
+	return store.ReadPendingEvents(ctx, limit)
 }
 
 // markPushed updates sync_status from 'pending' to 'pushed' for every

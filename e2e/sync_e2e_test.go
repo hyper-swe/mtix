@@ -17,7 +17,6 @@ package e2e
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"log/slog"
 	"os"
 	"sort"
@@ -363,38 +362,18 @@ func (c *fakeCLI) listNodeIDs(t *testing.T) []string {
 	return ids
 }
 
-// readPendingForTest mirrors cmd/mtix/sync_push.readPendingBatch.
-// Inlined here so e2e doesn't import cmd/mtix.
+// readPendingForTest calls the SAME store method the CLI uses.
+//
+// It used to be a hand-maintained copy of cmd/mtix's projection, and it
+// had drifted: this copy selected uid, production did not. The harness was
+// more correct than the shipping code, so e2e proved a path the CLI never
+// took and MTIX-91 passed every test while failing in the field. Delegate
+// instead of mirroring — a missing column can no longer pass e2e.
 func readPendingForTest(ctx context.Context, t *testing.T, st *sqlite.Store, limit int) []*model.SyncEvent {
 	t.Helper()
-	rows, err := st.Query(ctx, `
-		SELECT event_id, project_prefix, node_id, uid, op_type, payload,
-		       wall_clock_ts, lamport_clock, vector_clock,
-		       author_id, author_machine_hash
-		FROM sync_events
-		WHERE sync_status = 'pending'
-		ORDER BY lamport_clock ASC
-		LIMIT ?`, limit)
+	events, err := st.ReadPendingEvents(ctx, limit)
 	require.NoError(t, err)
-	defer func() { _ = rows.Close() }()
-	out := make([]*model.SyncEvent, 0, limit)
-	for rows.Next() {
-		var e model.SyncEvent
-		var opType, payload, vc string
-		var uid sql.NullString
-		require.NoError(t, rows.Scan(
-			&e.EventID, &e.ProjectPrefix, &e.NodeID, &uid, &opType, &payload,
-			&e.WallClockTS, &e.LamportClock, &vc,
-			&e.AuthorID, &e.AuthorMachineHash,
-		))
-		e.UID = uid.String
-		e.OpType = model.OpType(opType)
-		e.Payload = json.RawMessage(payload)
-		require.NoError(t, json.Unmarshal([]byte(vc), &e.VectorClock))
-		out = append(out, &e)
-	}
-	require.NoError(t, rows.Err())
-	return out
+	return events
 }
 
 func readLastPulledClockForTest(ctx context.Context, t *testing.T, st *sqlite.Store) int64 {

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-02T14:22:36Z",
+  "exported_at": "2026-09-02T14:38:37Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7981,6 +7981,31 @@
       "created_at": "2026-09-02T14:15:19Z",
       "updated_at": "2026-09-02T14:15:52Z",
       "uid": "01a06279-6931-7795-8ac9-e3546829952e"
+    },
+    {
+      "id": "MTIX-91",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 91,
+      "project": "MTIX",
+      "title": "sync push never sends uid to the hub, so the same-logical-node no-op can never fire",
+      "description": "",
+      "prompt": "Found while answering whether MTIX-89's remediation depends on nodes.uid being populated. It does not — the uid is populated and correctly carried on the local event. The client simply never SENDS it.\n\ncmd/mtix/sync_push.go:183 reads the pending queue with:\n    SELECT event_id, project_prefix, node_id, op_type, payload,\n           wall_clock_ts, lamport_clock, vector_clock,\n           author_id, author_machine_hash\n    FROM sync_events WHERE sync_status = 'pending'\nThere is no uid column in that projection, so every pushed event reaches the hub with uid unset. Verified against a real Postgres hub: after a normal 'mtix sync push', every row on the hub had uid = NULL, while the corresponding local sync_events rows carried the correct node uid.\n\ninternal/store/sqlite/sync_divergence.go:240 has the same projection and the same omission.\n\nConsequence — this defeats the MTIX-30.15 false-collision fix entirely. lookupRegisteredCreate (registry.go:82) resolves a registered row's EFFECTIVE uid as 'its stored uid, or its event_id when uid is NULL'. Because the stored uid is always NULL, the effective uid is always the event_id. So when a re-emitted create arrives carrying the node's real uid, it can never match the registered effective uid, registryDecide takes the DISTINCT-node branch, and the hub demands a renumber. The 'same logical node -\u003e noop' case documented at registry.go:138 is unreachable for any pushed create.\n\nThat is the actual mechanism behind the MTIX-89 collision, and it is NOT fixed by migrating old deployments: the uid exists locally on every current store, it is just dropped in transit.\n\nReproduced end to end on a throwaway Neon branch:\n  local nodes:   U-2 uid=01a0628b-c68d-...\n  local event:   event_id=01a0628c-93b4-792f-...  uid=01a0628b-c68d-...   (correct)\n  hub row:       event_id=01a0628b-c6fc-748c-...  uid=\u003cNULL\u003e              (uid lost)\n  re-push:       error: resolve renumber for 01a0628c-93b4-792f-...:\n                        settle uid 01a0628c-93b4-792f-...: not found\nNote the identifier in that error is an EVENT_ID, not a uid, so the message is doubly misleading — it sent this investigation down the wrong path twice.\n\nWhy our tests missed it: the e2e helper readPendingForTest (e2e/sync_e2e_test.go:371) DOES select uid. The harness is more correct than production, so e2e exercises a code path the CLI never takes. My own new test in e2e/sync_backfill_reparent_test.go passed for exactly this reason while the CLI failed on identical input. Any fix must close that divergence or the harness will keep hiding regressions.",
+      "acceptance": "1. The push projection in cmd/mtix/sync_push.go includes uid, and the value reaches the hub. Verified by asserting a non-NULL uid on the hub row after a push.\n2. The same omission in internal/store/sqlite/sync_divergence.go:240 is fixed, or documented as deliberate with a reason.\n3. Re-pushing a re-emitted create for an existing node is a NO-OP, not a renumber: registryDecide's same-uid branch is reachable and covered by a test at the transport layer.\n4. The e2e harness stops diverging from production — readPendingForTest either calls the production reader or the projection is shared, so a missing column cannot pass e2e again.\n5. 'settle uid \u003cid\u003e: not found' names the right identifier and says what actually happened (this node is already registered on the hub under a different event id).\n6. Regression test proven red against current behaviour: today the hub stores uid NULL and the re-push renumbers.\n7. Re-evaluate MTIX-89 after this lands. If a re-push becomes a clean no-op, the multi-prefix hub reset may be unnecessary and MTIX-89 shrinks to a local regenerate path.\n8. Assess whether existing hubs need a backfill of the uid column, since every event pushed to date has uid NULL.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "866acb30e8e6b192078010c861c8b8c7a738760c480c50940f8ba1db7f845d9a",
+      "created_at": "2026-09-02T14:38:10Z",
+      "updated_at": "2026-09-02T14:38:37Z",
+      "uid": "01a0628e-564c-71a9-94f7-c1fc18cf220d"
     }
   ],
   "dependencies": [
@@ -8495,6 +8520,6 @@
       "status": "active"
     }
   ],
-  "node_count": 308,
-  "checksum": "0d8f304d7f9cfb3cb37c65967506a7ac2d30b063961121f514d7dcc4fd16cadb"
+  "node_count": 309,
+  "checksum": "76624bcd86ecb891ecbe3636226caa40c45d93e5988c68179ec1a243ffc9133b"
 }

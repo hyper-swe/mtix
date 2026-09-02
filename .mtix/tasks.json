@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-02T13:36:20Z",
+  "exported_at": "2026-09-02T14:22:36Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7734,7 +7734,7 @@
       "title": "no supported way to regenerate a backfill stream: --force appends, --discard-local destroys nodes",
       "description": "",
       "prompt": "Fixing MTIX-88 exposed that there is no supported, non-destructive way to regenerate a backfill stream. A user who backfilled on 0.5.1-beta or earlier has a badly-ordered stream and no safe command to replace it.\n\nMeasured behaviour of the two candidates:\n\n1. 'mtix sync backfill --force' APPENDS, it does not regenerate. Verified: a project with 2 create_node events had 4 after --force, and the original 2 event_ids were still present. Replaying the combined stream in lamport order still fails on the FOREIGN KEY, because the old badly-ordered events survive ahead of the new correct ones:\n     after 0.5.1 backfill:  SQP-1(l3) -\u003e SQP-2(l4)\n     after 0.5.2 --force:   SQP-1(l3) -\u003e SQP-2(l4) -\u003e SQP-2(l5) -\u003e SQP-1(l6)   \u003c- still violates\n   Worse, push dedupes on event_id with ON CONFLICT DO NOTHING and --force mints FRESH ids, so the duplicates are accepted by the hub rather than deduped. sync_backfill.go:34 already warns about exactly this, so the behaviour is known — it is the absence of an alternative that is the gap.\n\n2. 'mtix sync reconcile --discard-local' is destructive to the canonical data. The help says 'drop local nodes/events and take hub state' and that is accurate: DELETE FROM nodes at sync_reconcile.go:143. Verified: after --discard-local the journal was empty AND all nodes were gone. It also adopts hub state, which is precisely wrong when the hub is what holds the bad stream. Note sync_backfill.go:34 currently POINTS AT this command as the way to 're-backfill from scratch', which will cost someone their local data.\n\nThe only working procedure today is raw SQL: back up, DELETE FROM sync_events against .mtix/data/mtix.db, then 'mtix sync backfill'. Verified end to end — clean topological stream, nodes preserved, no duplicates. That is not something to put in release notes.\n\nThere is also no hub-side purge. If the bad stream was pushed, those rows must be deleted from the hub's sync_events directly or both orderings coexist and the clone keeps failing. 'mtix sync relay reset-peer' is unrelated.\n\nThis is the same class as MTIX-86 and MTIX-81: the documented remedy does not do what its description implies.",
-      "acceptance": "1. A supported command regenerates a project's local sync journal WITHOUT touching the nodes table — e.g. 'mtix sync backfill --regenerate', or --force changed to wipe-then-emit rather than append.\n2. If --force keeps append semantics, it refuses with an actionable message when sync_events is non-empty and points at the regenerate path, instead of silently doubling the history.\n3. The stale guidance in sync_backfill.go:34 no longer sends operators to --discard-local, which destroys local nodes.\n4. A documented path exists for removing a project's events from the hub, so a bad stream can be replaced rather than layered — with a dry-run and a required confirmation, given it is destructive on a shared hub.\n5. Regression tests: --force (or its successor) leaves exactly one create_node event per node, and the resulting stream replays into an FK-enforced schema without error.\n6. Verified red first against the current behaviour, which appends.",
+      "acceptance": "1. A supported command regenerates a project's local sync journal WITHOUT touching the nodes table — e.g. 'mtix sync backfill --regenerate', or --force changed to wipe-then-emit rather than append.\n2. If --force keeps append semantics, it refuses with an actionable message when sync_events is non-empty and points at the regenerate path, instead of silently doubling the history.\n3. The stale guidance in sync_backfill.go:34 no longer sends operators to 'reconcile --discard-local', which destroys the local nodes table. See MTIX-90 — no doc, error message or release note may point at an irreversible command as a routine remedy.\n4. A documented, MULTI-PREFIX hub reset exists. It must clear every project_prefix the local store will regenerate, not just the primary: a single leftover prefix aborts the whole push (verified). Scoped by project_prefix so unrelated projects on a shared hub survive.\n5. The reset enforces the ORDER: hub cleanup before local regeneration. If a caller regenerates first, the tool must reset sync_status from 'pushed' back to 'pending', or the hub is left permanently missing those events (verified).\n6. Push reports a diagnosable error when a regenerated create collides with an already-registered node, instead of 'settle uid \u003cuuid\u003e: not found'.\n7. 'mtix sync init \u003cdsn\u003e' either persists the DSN or says plainly that MTIX_SYNC_DSN must be set for subsequent commands; 'sync clone' documents that the target must be 'mtix init'-ed first.\n8. An e2e regression test covers the whole loop against a real Postgres hub — bad stream pushed, hub reset, regenerate, push, clone — asserting the clone applies with no FK error and the reparented hierarchy is intact. It must FAIL against today's behaviour.\n9. Any destructive step obeys MTIX-90's confirmation rule.",
       "node_type": "epic",
       "issue_type": "",
       "priority": 2,
@@ -7745,9 +7745,9 @@
       "creator": "cli",
       "agent_state": "",
       "weight": 1,
-      "content_hash": "adfdfd26d3bdeb1249fb8e8d0fa8ff7a2c856aa4e4bb3d2073dc76740587dde6",
+      "content_hash": "68ad6cf6c806c9729c2b3a0586c8362fab6c270297f70b05ca2ec4a91ad6a7d3",
       "created_at": "2026-09-02T13:35:58Z",
-      "updated_at": "2026-09-02T13:36:20Z",
+      "updated_at": "2026-09-02T14:15:19Z",
       "uid": "01a06255-645c-78a2-9662-9f3f52c8526e"
     },
     {
@@ -7956,6 +7956,31 @@
       "updated_at": "2026-04-13T11:43:46Z",
       "closed_at": "2026-04-13T11:43:46Z",
       "uid": "019f134d-b2f1-7347-840f-457bf40a3f60"
+    },
+    {
+      "id": "MTIX-90",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 90,
+      "project": "MTIX",
+      "title": "bulk-delete and irreversible commands need an unbypassable confirmation; --discard-local can silently destroy a deployment",
+      "description": "",
+      "prompt": "Product requirement from the founder, prompted by the MTIX-88/89 investigation: an irreversible command that wipes tickets can get mtix thrown out of a deployment. Losing a team's ticket history once is unrecoverable trust damage. No flag may be able to skip the warning.\n\nConcrete danger found while investigating MTIX-89:\n  'mtix sync reconcile --discard-local --yes' runs DELETE FROM nodes (sync_reconcile.go:143) plus DELETE FROM sync_events, sync_conflicts, applied_events and the inbox/hook bookkeeping. It destroys the local canonical data and adopts hub state. Verified on a throwaway store: after the command, nodes = 0.\n  Today --yes alone is enough. There is no typed confirmation, no snapshot, no warning naming how many tickets are about to be destroyed.\n  Worse, sync_backfill.go:34 actively RECOMMENDS this command as the way to 're-backfill from scratch'. An operator following our own error text to fix an ordering bug would lose every local ticket. That is the exact scenario this ticket exists to prevent.\n\nAlso note the CLI help for reconcile says 'drop local nodes/events and take hub state'. That is accurate, but it reads like journal maintenance rather than 'this deletes every ticket in this store'. The wording does not carry the weight of the operation.\n\nRequirement: any command that bulk-deletes tickets, or is otherwise irreversible, must show a warning that states plainly what will be destroyed and how many rows, and must require a confirmation that CANNOT be satisfied by a flag. --yes / --force must not bypass it.\n\nDesign tension to resolve deliberately, not by accident: mtix is agent-native and runs in CI and in automation. A prompt that no flag can satisfy makes these commands unusable non-interactively — which is arguably correct for 'delete every ticket', but it must be a decided position, not a regression. Suggested shape, following the kubectl/terraform precedent: require the operator to TYPE a value that proves intent and cannot be guessed by a script author on autopilot — e.g. the project prefix, or the exact node count. A flag cannot supply it; a human at a terminal can. When stdin is not a TTY the command REFUSES with instructions rather than proceeding, so automation fails closed instead of silently wiping a store. cmd/mtix/create.go already has the interactive-confirm precedent (confirmNewProject, reading from createInput), so the plumbing exists.\n\nCommands to audit, not only reconcile: anything reaching DELETE FROM nodes, bulk status transitions, 'mtix sync migrate --yes', GC/prune paths, and any future hub-side reset from MTIX-89 (which deletes rows on a SHARED hub, so it is even less forgiving).",
+      "acceptance": "1. Every command that bulk-deletes tickets or is otherwise irreversible requires a typed confirmation that no flag can satisfy. --yes and --force explicitly do NOT bypass it.\n2. The warning names the operation, the exact scope (project prefix / hub), and the COUNT of tickets and events to be destroyed, before the prompt.\n3. Non-TTY stdin makes the command REFUSE with instructions, never proceed. Automation fails closed. Covered by a test that pipes stdin.\n4. An inventory of affected commands exists and each is either gated or explicitly documented as safe, so the audit is not silently partial.\n5. No error message, doc, help text or release note recommends an irreversible command as a routine remedy. Specifically: sync_backfill.go:34 stops pointing at --discard-local.\n6. The reconcile help text states plainly that --discard-local deletes every ticket in the local store, rather than the softer 'drop local nodes/events'.\n7. Consider taking an automatic snapshot ('mtix backup') before any destructive path, so a mistake is recoverable rather than terminal. Decide and record the position either way.\n8. Tests: a piped-stdin run refuses; a wrong typed value aborts with no mutation; the correct value proceeds. Verified red against today's behaviour, where --yes alone wipes the store.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "76987b2e0835de251554cf05f2a71b7c1f3be3c5f0b4b627d0d2ced1d80821d3",
+      "created_at": "2026-09-02T14:15:19Z",
+      "updated_at": "2026-09-02T14:15:52Z",
+      "uid": "01a06279-6931-7795-8ac9-e3546829952e"
     }
   ],
   "dependencies": [
@@ -8470,6 +8495,6 @@
       "status": "active"
     }
   ],
-  "node_count": 307,
-  "checksum": "d1cf98b8b69a414ae2249e71b12a363b14021600ad2a3ee2b526aecee60620c0"
+  "node_count": 308,
+  "checksum": "0d8f304d7f9cfb3cb37c65967506a7ac2d30b063961121f514d7dcc4fd16cadb"
 }

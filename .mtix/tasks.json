@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-02T12:22:03Z",
+  "exported_at": "2026-09-02T12:41:20Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7700,6 +7700,31 @@
       "uid": "01a06125-8332-734f-acda-991ea7cfdff6"
     },
     {
+      "id": "MTIX-88",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 88,
+      "project": "MTIX",
+      "title": "sync backfill orders synthesized create_node events by created_at, not topologically — clone hits FOREIGN KEY on reparented children",
+      "description": "",
+      "prompt": "Reported against 0.5.1-beta: 'mtix sync backfill' synthesizes create_node events in created_at order rather than topologically, so any consumer applying in lamport order (e.g. mtix sync clone) hits FOREIGN KEY constraint failed on the child — deterministically. Reporter saw 8 violations across the SQP-6 and SQP-7 subtrees, e.g. SQP-7.1 at lamport 233 under parent SQP-7 at lamport 1818.\n\nCONFIRMED and root-caused.\n\ninternal/store/sqlite/sync_backfill.go collectBackfillNodes() walked the table with\n\n    ORDER BY created_at ASC, id ASC\n\nand runBackfillInTx assigns lamport monotonically in walk order. created_at is wall-clock and carries no topological meaning: reparenting and renumbering leave a child row whose created_at predates the parent it now hangs under (see assignParentToFormerRoots in sync_reconcile.go:344, the --import-as path, which sets parent_id on existing former roots). Such a child gets a LOWER lamport than its parent.\n\nThe consequence chain is fully verified:\n  - schema.go:95   FOREIGN KEY (parent_id) REFERENCES nodes(id)\n  - store.go:213   PRAGMA foreign_keys = ON on all connections\n  - inserting a child before its parent under that FK =\u003e 'FOREIGN KEY constraint failed'\n\nReproduced on the released 0.5.1-beta binary: create child, wait, create parent, reparent child under it, run backfill -\u003e child emitted at lamport 3, parent at lamport 4, 1 topological violation. Replaying the emitted stream in lamport order into a fresh FK-enforced schema fails exactly as reported.\n\nNote the pre-existing doc comment on Backfill asserted 'Lamport is monotonic in walk order (correct per the sync invariants — lamport is causal, not wall-clock)' while the walk order was in fact wall-clock, so the comment claimed a causality the ordering did not provide. Corrected as part of the fix.\n\nAdjacent hole spotted, NOT fixed here: verifyNodesInvariants checks the parent row EXISTS but does not filter it by deleted_at, while collectBackfillNodes excludes deleted rows. A live child under a soft-deleted parent therefore passes the invariant check yet has no parent in the emitted set. The new ordering treats that child as a root so backfill still succeeds, but a consumer would have nothing to attach it to. Worth its own ticket.",
+      "acceptance": "1. Backfill emits a parent before its children regardless of created_at. DONE.\n2. Ordering is STABLE: a stream that was already topological comes back in the same created_at order, so the fix does not churn correct event streams. DONE — a plain BFS was rejected for exactly this reason after the preservation test caught it.\n3. Regression tests proven red against the unfixed code, then green. DONE — TestBackfill_EmitsParentBeforeReparentedChild and TestBackfill_TopologicalAcrossDeepSubtree both fail without the fix; TestBackfill_PreservesCreatedAtOrderWhenAlreadyTopological guards the stability property.\n4. A child whose parent is absent from the set (soft-deleted parent) is treated as a root rather than dropped or erroring. DONE.\n5. No event is ever lost, including on a hypothetical parent_id cycle: unemitted rows are appended rather than dropped. DONE.\n6. Full Go suite, go vet and golangci-lint clean. DONE.\n7. Ship in the next release with a changelog entry; needs a full gate run since this is a Go change.",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 1,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "cli",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "196b551172be30c03ff65d9a4dbbbc24a9ad1f5703c51f644379bb85b7190233",
+      "created_at": "2026-09-02T12:35:26Z",
+      "updated_at": "2026-09-02T12:41:20Z",
+      "uid": "01a0621d-f6fc-75a1-adff-30805bf26e31"
+    },
+    {
       "id": "MTIX-9",
       "parent_id": "",
       "depth": 0,
@@ -8419,6 +8444,6 @@
       "status": "active"
     }
   ],
-  "node_count": 305,
-  "checksum": "e4716af84cfa2397a7abfd4107a7d4ca96a60c5b02d09e19c34843722a5225a6"
+  "node_count": 306,
+  "checksum": "1d2e97058fc91d4841723f46f7f336665c417afe6e4aef316ebddf70f9f6f550"
 }

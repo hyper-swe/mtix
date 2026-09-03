@@ -157,19 +157,17 @@ func TestE2E_Backfill_ForceAppendsRatherThanRegenerating(t *testing.T) {
 			"ON CONFLICT (event_id) dedupe will not collapse the duplicate")
 }
 
-// NOTE on re-pushing a regenerated stream (MTIX-89): a third test was
-// written here asserting that regenerate + re-push onto a populated hub
-// must collide. It was REMOVED because it does not hold. In this fixture
-// the push succeeds cleanly and the hub keeps exactly one create per node:
-// emitUIDFor carries the node's EXISTING nodes.uid across a re-emit
-// (sync_emit.go), so the hub registry recognises the same logical node and
-// no-ops rather than demanding a renumber. That is the design working.
+// NOTE on re-pushing a regenerated stream (MTIX-89): in this fixture
+// regenerate + re-push succeeds cleanly and the hub keeps exactly one
+// create per node, because emitUIDFor carries the node's EXISTING uid
+// across a re-emit and the hub registry recognises the same logical node.
 //
-// A CLI reproduction against a real hub nevertheless failed with
-// "resolve renumber ...: settle uid <id>: not found", and the uid in that
-// error was a fresh event_id rather than the node's uid — i.e. the create
-// self-anchored, which only happens when nodes.uid is empty. Which
-// condition produces that (an older store, a specific op ordering, or the
-// second project prefix) is not yet pinned down, so no assertion is made
-// here. MTIX-89 carries the open question; a test should land with the
-// answer, not ahead of it.
+// The CLI reproduction that failed with "settle uid <id>: not found" was
+// a different mechanism, pinned down by MTIX-91: the CLI's pending-queue
+// projection did not SELECT uid, so every pushed create reached the hub
+// with uid NULL and registered under its event_id, which a re-emitted
+// create can never match. This harness always selected uid, which is why
+// it passed while the CLI failed; it now calls the production reader. The
+// one-time repair for hubs holding such rows is MTIX-92, covered by
+// sync_uid_repair_test.go, which asserts the collision before the repair
+// and the no-op after it.

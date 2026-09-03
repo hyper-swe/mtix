@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`mtix sync repair-uids`: one-time hub repair for events pushed without a uid (MTIX-92).** Every client up to v0.5.3-beta pushed events with `uid` NULL (MTIX-91 fixed the client), so the hub registers each of those creates under its event id. A create that reached the hub through `mtix sync backfill` carries the node's uid under a fresh event id, so once a fixed client re-emits it — a regenerated backfill, a `--force` re-backfill — the hub sees a different node claiming a taken number and the push fails on a renumber it cannot settle. The new command stamps each hub create row whose uid is NULL with the matching local node's uid, matched on (project, node id): nothing is deleted, a populated uid is never overwritten, re-running stamps nothing, `--dry-run` reports without writing, and hub rows for nodes the local store does not hold are listed rather than skipped. After the repair, regenerate + re-push is a clean no-op (`0 renumbered, 0 conflicts`), verified end to end against a real Postgres hub. This also removes the need for the hub-side DELETE that MTIX-89 had specified.
+
+### Upgrading
+- If any client older than v0.5.4-beta ever pushed to your hub, run `mtix sync repair-uids --dry-run` and then `mtix sync repair-uids` once from a client holding the project. See USERMANUAL.md, "Upgrade step: repair hub uids".
+
 ### Changed
 - **Commands that delete every ticket now require a typed confirmation that no flag can satisfy (MTIX-90).** `mtix sync reconcile --discard-local` runs `DELETE FROM nodes` and `mtix import --mode replace` does the same before inserting the file, and until now `--yes` alone was enough to run either. Both now print the exact scope and counts (projects, tickets, journal events) and require the operator to type the ticket count at an interactive terminal; `--yes` and `--force` do not bypass it, and when stdin is not a terminal the command refuses with instructions so CI and agent automation fail closed rather than silently wiping a store. A verified snapshot is written to `.mtix/data/backups/pre-<operation>-<time>.db` before the first delete, and a snapshot that cannot be written aborts the command. `docs/DESTRUCTIVE-COMMANDS.md` inventories every bulk-delete path and records the position on each one that is not gated. The reconcile help text now says plainly that `--discard-local` deletes every ticket in the local store.
 

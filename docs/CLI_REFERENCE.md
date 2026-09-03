@@ -1091,6 +1091,7 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.
 - `push [DSN]` — Push pending events to the sync hub (FR-18)
 - `reconcile` — Resolve divergent history (FR-18.13)
 - `relay` — Manage the file-based sync relay (FR-21)
+- `repair-uids [DSN]` — Stamp hub create rows with their node uid (upgrade step for pre-MTIX-91 pushes)
 - `status` — Show local sync state (counts + sentinels)
 ---
 
@@ -1655,6 +1656,48 @@ One pass and exit — for peers that cannot host a daemon:
 a turn-driven agent seat, a cron-locked appliance, a courier laptop.
 Such a peer converges on its next tick; it is a deployment, not a
 degraded daemon.
+---
+
+## repair-uids
+
+**Usage:** `repair-uids [DSN]`
+
+Stamp hub create rows with their node uid (upgrade step for pre-MTIX-91 pushes)
+
+Stamp every create_node row on the hub whose uid is NULL with the uid of
+the matching local node, matched on (project, node id).
+
+Run this ONCE per project, from a client that holds the local store, if
+any push to the hub was made by a client older than the MTIX-91 fix
+(v0.5.3-beta and earlier). Until then the hub knows those nodes only by
+their original event id, and a fixed client that re-emits a create for
+one of them — a regenerated backfill, a --force re-backfill — collides
+with its own node and the push fails on a renumber it cannot settle.
+
+Safety properties:
+  * Nothing is deleted and a populated uid is never overwritten: the
+    UPDATE is guarded by uid IS NULL. Re-running stamps nothing.
+  * --dry-run reports what would be stamped and writes nothing.
+  * Every project in the local store is repaired unless --project
+    narrows it. Each project is reported separately.
+  * Create rows on the hub for nodes this store does not hold are
+    listed, not skipped silently: they stay unrepaired until the
+    command runs from a client that has them.
+  * A hub uid that is populated but DIFFERENT from the local one is
+    listed as a mismatch and left alone — the hub and this store
+    disagree about which logical node holds that number.
+
+Local node uids are backfilled first (the same idempotent step as
+'mtix sync migrate' Phase 0), so a store predating uids can still
+repair its hub.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--dry-run` |  | Report what would be stamped without writing to the hub | false |
+| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--project` |  | Repair only this project prefix (default: every project in the local store) |  |
 ---
 
 ## status

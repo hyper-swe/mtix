@@ -1699,6 +1699,39 @@ mtix sync doctor             # 5 health checks: PG reachable, schema current,
 Exit code 0 on all-pass; exit code 2 if any check fails (operators
 can gate CI / monitoring on this).
 
+### Upgrade step: repair hub uids after pushes from an older client
+
+Every client up to and including v0.5.3-beta pushed events without the
+node `uid`, so every row those clients wrote sits on the hub with `uid`
+NULL. The hub then knows each node only by the event id of its create
+row. That is harmless for a node created with `mtix create` (its uid is
+its create event id), but a create that reached the hub through
+`mtix sync backfill` carries the node's uid under a fresh event id, and
+once a fixed client re-emits that create (a regenerated backfill, a
+`--force` re-backfill) the hub sees a different node claiming a taken
+number and the push fails on a renumber it cannot settle:
+
+```
+error: mtix sync push loop: resolve renumber for <event-id> ...
+```
+
+Run this once per hub, from any client that holds the project's nodes,
+after upgrading:
+
+```bash
+mtix sync repair-uids --dry-run    # what would be stamped, per project
+mtix sync repair-uids              # stamp; nothing deleted, nothing overwritten
+```
+
+The repair sets `uid` on each hub create row whose uid is NULL to the
+matching local node's uid, matched on (project, node id). A populated
+uid is never overwritten, no row is deleted, and re-running stamps
+nothing. Hub rows for nodes this store does not hold are listed on
+stderr and stay unrepaired until the command runs from a client that
+has them, so a partial repair is visible. Use `--project PREFIX` to
+narrow it. After the repair, regenerate + re-push is a clean no-op:
+`0 renumbered, 0 conflicts`.
+
 ### Backup and restore
 
 ```bash

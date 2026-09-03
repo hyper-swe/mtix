@@ -42,6 +42,8 @@ func TestSyncCmd_AllSyncCommandsRegistered(t *testing.T) {
 		"migrate",
 		// MTIX-30.8: restore-collision (ADR-003 §6.1/§15) operator commands.
 		"mark-restored", "collisions",
+		// MTIX-92: one-time hub uid repair after pushes from a pre-MTIX-91 client.
+		"repair-uids",
 		// MTIX-64.8: the FR-21 file relay transport's command group.
 		"relay",
 	}

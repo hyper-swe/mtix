@@ -50,6 +50,7 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.`,
 		newSyncBackfillCmd(),
 		newSyncMigrateCmd(),
 		newSyncMarkRestoredCmd(),
+		newSyncRepairUIDsCmd(),
 		newSyncCollisionsCmd(),
 		newSyncRelayCmd(),
 	)

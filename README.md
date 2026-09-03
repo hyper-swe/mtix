@@ -365,6 +365,10 @@ mtix sync conflicts list            Show contested edits (post-LWW)
 mtix sync conflicts resolve <id>    Override LWW for a specific conflict
 mtix sync reconcile --discard-local|--rename-to|--import-as
                                     Whole-project divergence escape hatches
+                                    (--discard-local deletes every local ticket;
+                                    typed confirmation, refuses off a terminal)
+mtix sync repair-uids [--dry-run]   One-time hub repair after pushes from a
+                                    client older than v0.5.4-beta (MTIX-92)
 mtix sync daemon [--interval SEC]   Run periodic pull as a long-lived process
 mtix sync backup --output FILE      Wrap pg_dump on the 5 mtix-owned tables
 ```

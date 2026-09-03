@@ -35,7 +35,9 @@ func newSyncReconcileCmd() *cobra.Command {
 		Short: "Resolve divergent history (FR-18.13)",
 		Long: `Resolve a divergent-history error by choosing one of the four paths:
 
-  --discard-local            drop local nodes/events and take hub state
+  --discard-local            DELETE EVERY TICKET in the local store (all
+                             projects), its sync journal and bookkeeping,
+                             then take hub state. Irreversible.
   --rename-to NEWPREFIX      rewrite local IDs to a new prefix
   --import-as PARENT-ID      re-parent local tree under PARENT-ID
   --dry-run                  preview the chosen path without mutating
@@ -43,6 +45,14 @@ func newSyncReconcileCmd() *cobra.Command {
 Exactly one path flag must be set. --dry-run is implicit unless --yes
 is also set; without --yes the command prints the Plan (renames,
 node count) and exits without mutation. With --yes, executes the path.
+
+--discard-local additionally requires a typed confirmation at an
+interactive terminal: the command prints how many tickets and journal
+events it is about to destroy and you must type that ticket count. No
+flag satisfies it (--yes does not), and when stdin is not a terminal the
+command refuses, so automation fails closed. A verified snapshot of the
+database is written to .mtix/data/backups/pre-discard-local-<time>.db
+before anything is deleted (MTIX-90).
 
 See 'mtix sync init' for divergent-history detection.`,
 		Args: cobra.NoArgs,
@@ -57,11 +67,13 @@ See 'mtix sync init' for divergent-history detection.`,
 				})
 		},
 	}
-	cmd.Flags().BoolVar(&discardLocal, "discard-local", false, "Drop local state, take hub state")
+	cmd.Flags().BoolVar(&discardLocal, "discard-local", false,
+		"DELETE every ticket in the local store and take hub state (irreversible; typed confirmation required)")
 	cmd.Flags().StringVar(&renameTo, "rename-to", "", "Rewrite local IDs to NEWPREFIX")
 	cmd.Flags().StringVar(&importAs, "import-as", "", "Re-parent local tree under PARENT-ID")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the plan without mutation")
-	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm destructive action; required for non-dry-run")
+	cmd.Flags().BoolVar(&yes, "yes", false,
+		"Execute instead of previewing; does NOT bypass the typed confirmation --discard-local requires")
 	return cmd
 }
 
@@ -142,6 +154,16 @@ func computePlan(ctx context.Context, store *sqlite.Store, f reconcileFlags) (sq
 func runReconcileExecute(ctx context.Context, stdout, stderr io.Writer, f reconcileFlags) error {
 	switch {
 	case f.discardLocal:
+		// MTIX-90: warn with the exact counts, require the typed ticket
+		// count at a terminal, snapshot — all before the first DELETE.
+		// --yes only got us here from the preview; it cannot answer.
+		op, err := discardLocalOp(ctx)
+		if err != nil {
+			return wrapSyncErr(stderr, "discard-local", err)
+		}
+		if _, err := guardDestructive(ctx, stderr, op); err != nil {
+			return err
+		}
 		if err := sqlite.DiscardLocal(ctx, app.store, app.mtixDir); err != nil {
 			return wrapSyncErr(stderr, "discard-local", err)
 		}
@@ -187,4 +209,28 @@ func printReconcilePlan(w io.Writer, plan sqlite.Plan, autoDryRun bool) {
 	for _, r := range plan.Renames {
 		fmt.Fprintf(w, "  %s -> %s\n", r.OldID, r.NewID)
 	}
+}
+
+// discardLocalOp describes what --discard-local is about to destroy, with
+// the counts read from the live store so the warning is exact.
+func discardLocalOp(ctx context.Context) (destructiveOp, error) {
+	nodes, err := countRows(ctx, "nodes")
+	if err != nil {
+		return destructiveOp{}, err
+	}
+	events, err := countRows(ctx, "sync_events")
+	if err != nil {
+		return destructiveOp{}, err
+	}
+	return destructiveOp{
+		Command: "mtix sync reconcile --discard-local",
+		Scope:   localScope(ctx),
+		Destroys: []destroyCount{
+			{Label: "tickets (every node, every project, including soft-deleted)", N: nodes},
+			{Label: "journal events", N: events},
+		},
+		Consequence: "the local store holds no tickets; the next 'mtix sync clone' adopts hub state. " +
+			"Tickets that never reached the hub are gone for good",
+		SnapshotTag: "discard-local",
+	}, nil
 }

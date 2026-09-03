@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **Commands that delete every ticket now require a typed confirmation that no flag can satisfy (MTIX-90).** `mtix sync reconcile --discard-local` runs `DELETE FROM nodes` and `mtix import --mode replace` does the same before inserting the file, and until now `--yes` alone was enough to run either. Both now print the exact scope and counts (projects, tickets, journal events) and require the operator to type the ticket count at an interactive terminal; `--yes` and `--force` do not bypass it, and when stdin is not a terminal the command refuses with instructions so CI and agent automation fail closed rather than silently wiping a store. A verified snapshot is written to `.mtix/data/backups/pre-<operation>-<time>.db` before the first delete, and a snapshot that cannot be written aborts the command. `docs/DESTRUCTIVE-COMMANDS.md` inventories every bulk-delete path and records the position on each one that is not gated. The reconcile help text now says plainly that `--discard-local` deletes every ticket in the local store.
+
+---
+
 ## [0.5.3-beta] - 2026-09-03
 
 A security patch. Upgrading is a drop-in binary replacement — no schema, API or CLI changes.

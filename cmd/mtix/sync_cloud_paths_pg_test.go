@@ -286,6 +286,7 @@ func TestCloudPath_Reconcile_DiscardLocal_TakesHubState(t *testing.T) {
 	seedLocal(t, "local-only-divergent") // TEST-2, never pushed
 	require.Equal(t, 2, liveNodeCount(t))
 
+	typeTicketCount(t) // MTIX-90: --yes selects execution; the count must still be typed
 	var out, errb bytes.Buffer
 	require.NoError(t, runSyncReconcile(ctx, &out, &errb,
 		reconcileFlags{discardLocal: true, yes: true}))

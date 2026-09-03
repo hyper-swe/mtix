@@ -238,6 +238,7 @@ func TestRunImport_ReplaceMode_Succeeds(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(exportFile, data, 0o644))
 
+	typeTicketCount(t) // MTIX-90: replace mode requires the typed count
 	err = runImport(exportFile, importFlags{mode: "replace"})
 	assert.NoError(t, err)
 }

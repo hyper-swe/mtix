@@ -38,6 +38,8 @@ func TestRunReconcileExecute_DiscardLocal(t *testing.T) {
 	_, err := app.nodeSvc.CreateNode(ctx, &service.CreateNodeRequest{Project: "TEST", Title: "n", Creator: "u"})
 	require.NoError(t, err)
 
+	typeTicketCount(t) // MTIX-90: --yes alone no longer executes a discard
+
 	var stdout, stderr bytes.Buffer
 	require.NoError(t, runReconcileExecute(ctx, &stdout, &stderr, reconcileFlags{discardLocal: true, yes: true}))
 	assert.Contains(t, stdout.String(), "discard-local complete")

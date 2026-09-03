@@ -60,6 +60,7 @@ func TestRunImport_StaleChecksum_RejectedWithoutFlag(t *testing.T) {
 	require.NoError(t, runCreate("import checksum fixture", "", "", 3, "", "", "", "", ""))
 
 	path := writeStaleChecksumExport(t)
+	answerDestructive(t, "", false) // MTIX-90: a rejected file must never reach the prompt
 	err := runImport(path, importFlags{mode: "replace"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "checksum")
@@ -72,6 +73,7 @@ func TestRunImport_RecomputeChecksum_AcceptsReconstructedFile(t *testing.T) {
 	require.NoError(t, runCreate("import recompute fixture", "", "", 3, "", "", "", "", ""))
 
 	path := writeStaleChecksumExport(t)
+	typeTicketCount(t) // MTIX-90
 	err := runImport(path, importFlags{mode: "replace", recomputeChecksum: true})
 	require.NoError(t, err)
 }

@@ -41,8 +41,16 @@ func main() {
 	}
 }
 
-func run() error {
+func run() error { return runArgs(nil) }
+
+// runArgs executes the CLI with args in place of os.Args[1:] when args is
+// non-nil. The in-process piped-stdin test drives the real entry point
+// through it, so the stdin check it exercises is the production one.
+func runArgs(args []string) error {
 	rootCmd := newRootCmd()
+	if args != nil {
+		rootCmd.SetArgs(args)
+	}
 	// Ensure store cleanup runs even if Cobra skips PersistentPostRunE
 	// (which happens when RunE returns an error). closeApp is idempotent.
 	defer func() {

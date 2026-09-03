@@ -1659,10 +1659,20 @@ For whole-project escapes (many conflicts, divergent history):
 
 ```bash
 mtix sync reconcile --dry-run
-mtix sync reconcile --discard-local            # accept hub state
+mtix sync reconcile --discard-local            # DELETES every local ticket, then accepts hub state
 mtix sync reconcile --rename-to NEWPREFIX      # republish under fresh prefix
 mtix sync reconcile --import-as PARENT-ID      # graft local nodes under a hub node
 ```
+
+`--discard-local` deletes every ticket in the local store, across all
+projects, along with the sync journal. With `--yes` it prints how many
+tickets and journal events it is about to destroy and requires you to
+type that ticket count at an interactive terminal. No flag can answer
+the prompt, and a piped or CI stdin is refused, so automation fails
+closed instead of wiping a store. A verified snapshot is written to
+`.mtix/data/backups/pre-discard-local-<time>.db` before anything is
+deleted. The same rule applies to `mtix import --mode replace`. See
+`docs/DESTRUCTIVE-COMMANDS.md` for the full inventory.
 
 **Audit-trail note:** when two CLIs share `authorID="cli"` (the
 default), their concurrent edits produce vector clocks that are

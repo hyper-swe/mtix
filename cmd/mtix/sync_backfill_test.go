@@ -94,9 +94,14 @@ func TestRunSyncBackfill_RefusesWhenSyncEventsNonEmpty(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := runSyncBackfill(context.Background(), &stdout, &stderr, false, false)
 	require.Error(t, err)
-	// Helpful recovery hint is part of the contract.
-	require.Contains(t, err.Error(), "reconcile --discard-local",
-		"refusal message must point at the recovery path")
+	// MTIX-90: the refusal must NOT send the operator to the command that
+	// deletes every ticket. It may name it only to warn against it.
+	require.NotContains(t, err.Error(), "run 'mtix sync reconcile --discard-local'",
+		"refusal message must not recommend --discard-local")
+	require.Contains(t, err.Error(), "DELETES EVERY TICKET",
+		"refusal message must say what --discard-local actually does")
+	require.Contains(t, err.Error(), "mtix backup",
+		"refusal message must point at the safe first step")
 }
 
 // --- Dry-run ---

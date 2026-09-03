@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	mtixhttp "github.com/hyper-swe/mtix/internal/api/http"
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -223,7 +224,8 @@ func newImportCmd() *cobra.Command {
 		}),
 	}
 
-	cmd.Flags().StringVar(&f.mode, "mode", "merge", "Import mode: replace or merge")
+	cmd.Flags().StringVar(&f.mode, "mode", "merge",
+		"Import mode: merge, or replace (DELETES every existing ticket first; typed confirmation required)")
 	cmd.Flags().BoolVar(&f.force, "force", false, "Allow importing zero nodes into a non-empty database")
 	cmd.Flags().BoolVar(&f.recomputeChecksum, "recompute-checksum", false,
 		"Recovery only (MTIX-26.5): replace the file's checksum with one computed over its current content, accepting hand-reconstructed exports")
@@ -267,12 +269,15 @@ func runImport(filePath string, f importFlags) error {
 		}
 	}
 
+	ctx := context.Background()
 	importMode := sqlite.ImportModeMerge
 	if f.mode == "replace" {
 		importMode = sqlite.ImportModeReplace
+		if gErr := guardImportReplace(ctx, exportData); gErr != nil {
+			return gErr
+		}
 	}
 
-	ctx := context.Background()
 	report, result, err := app.store.ImportReconcile(ctx, exportData, sqlite.ImportReconcileOptions{
 		Mode:        importMode,
 		Force:       f.force,
@@ -391,4 +396,44 @@ func runServe(addr string, port int) error {
 
 	fmt.Printf("Starting mtix server at %s:%d\n", addr, port)
 	return srv.ListenAndServeWithGracefulShutdown()
+}
+
+// importReplaceOp describes what 'mtix import --mode replace' destroys:
+// every existing node, replaced by the file's nodes.
+func importReplaceOp(ctx context.Context, incoming int) (destructiveOp, error) {
+	nodes, err := countRows(ctx, "nodes")
+	if err != nil {
+		return destructiveOp{}, err
+	}
+	return destructiveOp{
+		Command: "mtix import --mode replace",
+		Scope:   localScope(ctx),
+		Destroys: []destroyCount{
+			{Label: "existing tickets (every node, every project, including soft-deleted)", N: nodes},
+		},
+		Consequence: fmt.Sprintf("the store holds exactly the %d node(s) in the import file; "+
+			"any ticket not in that file is gone", incoming),
+		SnapshotTag: "import-replace",
+	}, nil
+}
+
+// guardImportReplace runs the MTIX-90 gate for replace mode, which runs
+// DELETE FROM nodes before it inserts the file's content, so every ticket
+// not in the file is lost. A file the import will reject must not ask
+// anyone to confirm a delete first, so the checksum is verified before
+// the prompt (the store verifies it again on import).
+func guardImportReplace(ctx context.Context, exportData *sqlite.ExportData) error {
+	valid, err := sqlite.VerifyExportChecksum(exportData)
+	if err != nil {
+		return fmt.Errorf("import failed: verify checksum: %w", err)
+	}
+	if !valid {
+		return fmt.Errorf("import failed: checksum verification failed: %w", model.ErrInvalidInput)
+	}
+	op, err := importReplaceOp(ctx, len(exportData.Nodes))
+	if err != nil {
+		return err
+	}
+	_, err = guardDestructive(ctx, os.Stderr, op)
+	return err
 }

@@ -100,7 +100,10 @@ tasks-export:
 	fi
 
 ## tasks-import: Rebuild task database from git-tracked export
-## Use after pulling changes that include task updates.
+## Use after pulling changes that include task updates. Replace mode
+## deletes every existing ticket first, so on a non-empty database it
+## prints the count and asks you to type it (MTIX-90); it will not run
+## from a pipe or CI.
 tasks-import: build
 	@if [ -f $(TASKS_EXPORT) ]; then \
 		if [ ! -f $(TASKS_DB) ]; then \

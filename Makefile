@@ -389,14 +389,14 @@ preflight:
 	echo ""; \
 	\
 	echo "⑥ Go vulnerability scan..."; \
-	if command -v govulncheck > /dev/null 2>&1; then \
-		if govulncheck $(GO_PKGS) 2>&1 | grep -q "No vulnerabilities found"; then \
-			echo "  ✓ PASS: No Go vulnerabilities"; PASS=$$((PASS+1)); \
-		else \
-			echo "  ⚠ WARN: govulncheck findings — review output"; WARN=$$((WARN+1)); \
-		fi; \
+	if ! command -v govulncheck > /dev/null 2>&1; then \
+		echo "  ✗ FAIL: govulncheck not installed — the scan cannot be skipped"; FAIL=$$((FAIL+1)); \
+		echo "    go install golang.org/x/vuln/cmd/govulncheck@latest"; \
+	elif govulncheck $(GO_PKGS) 2>&1 | grep -q "No vulnerabilities found"; then \
+		echo "  ✓ PASS: No Go vulnerabilities"; PASS=$$((PASS+1)); \
 	else \
-		echo "  ⚠ WARN: govulncheck not installed (go install golang.org/x/vuln/cmd/govulncheck@latest)"; WARN=$$((WARN+1)); \
+		echo "  ✗ FAIL: govulncheck findings"; FAIL=$$((FAIL+1)); \
+		govulncheck $(GO_PKGS) 2>&1 | tail -12 | sed 's/^/    /'; \
 	fi; \
 	echo ""; \
 	\

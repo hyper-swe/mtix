@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-03T03:24:44Z",
+  "exported_at": "2026-09-03T03:44:14Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7972,15 +7972,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "in_progress",
-      "progress": 0,
+      "status": "done",
+      "progress": 1,
       "assignee": "vimal",
       "creator": "cli",
       "agent_state": "working",
       "weight": 1,
       "content_hash": "76987b2e0835de251554cf05f2a71b7c1f3be3c5f0b4b627d0d2ced1d80821d3",
       "created_at": "2026-09-02T14:15:19Z",
-      "updated_at": "2026-09-02T14:47:20Z",
+      "updated_at": "2026-09-03T03:44:14Z",
+      "closed_at": "2026-09-03T03:44:14Z",
       "uid": "01a06279-6931-7795-8ac9-e3546829952e"
     },
     {
@@ -8548,5 +8549,5 @@
     }
   ],
   "node_count": 310,
-  "checksum": "8da72493931c65074c5547274f3ea0c05337e822ada5fa7b6086f9995123cc68"
+  "checksum": "7f84009fc88232a5459476c80eb5edb6012a038630ea831442c45c83db3d9cb4"
 }

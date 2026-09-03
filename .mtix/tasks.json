@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema_version": "1.0.0",
-  "exported_at": "2026-09-03T03:44:14Z",
+  "exported_at": "2026-09-03T04:38:45Z",
   "mtix_version": "",
   "project": "",
   "nodes": [
@@ -7735,7 +7735,7 @@
       "title": "no supported way to regenerate a backfill stream: --force appends, --discard-local destroys nodes",
       "description": "",
       "prompt": "Fixing MTIX-88 exposed that there is no supported, non-destructive way to regenerate a backfill stream. A user who backfilled on 0.5.1-beta or earlier has a badly-ordered stream and no safe command to replace it.\n\nMeasured behaviour of the two candidates:\n\n1. 'mtix sync backfill --force' APPENDS, it does not regenerate. Verified: a project with 2 create_node events had 4 after --force, and the original 2 event_ids were still present. Replaying the combined stream in lamport order still fails on the FOREIGN KEY, because the old badly-ordered events survive ahead of the new correct ones:\n     after 0.5.1 backfill:  SQP-1(l3) -\u003e SQP-2(l4)\n     after 0.5.2 --force:   SQP-1(l3) -\u003e SQP-2(l4) -\u003e SQP-2(l5) -\u003e SQP-1(l6)   \u003c- still violates\n   Worse, push dedupes on event_id with ON CONFLICT DO NOTHING and --force mints FRESH ids, so the duplicates are accepted by the hub rather than deduped. sync_backfill.go:34 already warns about exactly this, so the behaviour is known — it is the absence of an alternative that is the gap.\n\n2. 'mtix sync reconcile --discard-local' is destructive to the canonical data. The help says 'drop local nodes/events and take hub state' and that is accurate: DELETE FROM nodes at sync_reconcile.go:143. Verified: after --discard-local the journal was empty AND all nodes were gone. It also adopts hub state, which is precisely wrong when the hub is what holds the bad stream. Note sync_backfill.go:34 currently POINTS AT this command as the way to 're-backfill from scratch', which will cost someone their local data.\n\nThe only working procedure today is raw SQL: back up, DELETE FROM sync_events against .mtix/data/mtix.db, then 'mtix sync backfill'. Verified end to end — clean topological stream, nodes preserved, no duplicates. That is not something to put in release notes.\n\nThere is also no hub-side purge. If the bad stream was pushed, those rows must be deleted from the hub's sync_events directly or both orderings coexist and the clone keeps failing. 'mtix sync relay reset-peer' is unrelated.\n\nThis is the same class as MTIX-86 and MTIX-81: the documented remedy does not do what its description implies.",
-      "acceptance": "1. A supported command regenerates a project's local sync journal WITHOUT touching the nodes table — e.g. 'mtix sync backfill --regenerate', or --force changed to wipe-then-emit rather than append.\n2. If --force keeps append semantics, it refuses with an actionable message when sync_events is non-empty and points at the regenerate path, instead of silently doubling the history.\n3. The stale guidance in sync_backfill.go:34 no longer sends operators to 'reconcile --discard-local', which destroys the local nodes table. See MTIX-90 — no doc, error message or release note may point at an irreversible command as a routine remedy.\n4. A documented, MULTI-PREFIX hub reset exists. It must clear every project_prefix the local store will regenerate, not just the primary: a single leftover prefix aborts the whole push (verified). Scoped by project_prefix so unrelated projects on a shared hub survive.\n5. The reset enforces the ORDER: hub cleanup before local regeneration. If a caller regenerates first, the tool must reset sync_status from 'pushed' back to 'pending', or the hub is left permanently missing those events (verified).\n6. Push reports a diagnosable error when a regenerated create collides with an already-registered node, instead of 'settle uid \u003cuuid\u003e: not found'.\n7. 'mtix sync init \u003cdsn\u003e' either persists the DSN or says plainly that MTIX_SYNC_DSN must be set for subsequent commands; 'sync clone' documents that the target must be 'mtix init'-ed first.\n8. An e2e regression test covers the whole loop against a real Postgres hub — bad stream pushed, hub reset, regenerate, push, clone — asserting the clone applies with no FK error and the reparented hierarchy is intact. It must FAIL against today's behaviour.\n9. Any destructive step obeys MTIX-90's confirmation rule.",
+      "acceptance": "1. A supported command regenerates a project's local sync journal WITHOUT touching the nodes table — e.g. 'mtix sync backfill --regenerate', or --force changed to wipe-then-emit rather than append. It must not run DELETE FROM nodes, and must not be gated by the MTIX-90 typed confirmation unless it also destroys tickets (it should not).\n2. If --force keeps append semantics, it refuses with an actionable message when sync_events is non-empty and points at the regenerate path, instead of silently doubling the history.\n3. (DONE under MTIX-90) The guidance in sync_backfill.go no longer sends operators to 'reconcile --discard-local'. No doc, error message or release note may point at an irreversible command as a routine remedy.\n4. (REMOVED — superseded by MTIX-92) No hub-side reset. The multi-prefix DELETE FROM sync_events on a shared hub is out of scope and must not be built: after 'mtix sync repair-uids' a regenerated stream re-pushes as a same-logical-node no-op, so remediation is local regenerate + (once, for hubs pushed by a pre-MTIX-91 client) the uid repair. Any future proposal for a hub-side delete must obey docs/DESTRUCTIVE-COMMANDS.md.\n5. (RE-SCOPED) Ordering is still enforced, but locally: regenerating marks the fresh events 'pending', so nothing depends on a hub cleanup step. The regenerate command must document that events it emits carry the node's existing uid (emitUIDFor), which is what makes the re-push a no-op.\n6. (DONE under MTIX-91) Push reports a diagnosable error when a regenerated create collides with an already-registered node.\n7. 'mtix sync init \u003cdsn\u003e' either persists the DSN or says plainly that MTIX_SYNC_DSN must be set for subsequent commands; 'sync clone' documents that the target must be 'mtix init'-ed first.\n8. An e2e regression test covers the whole loop against a real Postgres hub — bad stream pushed, local regenerate, (uid repair when the hub was pushed by an old client), push, clone — asserting the clone applies with no FK error and the reparented hierarchy is intact. e2e/sync_uid_repair_test.go already covers the repair half; the regenerate command's test extends it. It must FAIL against today's behaviour (no regenerate command exists).\n9. Any destructive step obeys MTIX-90's confirmation rule (docs/DESTRUCTIVE-COMMANDS.md). Given criterion 4, there should be none.",
       "node_type": "epic",
       "issue_type": "",
       "priority": 2,
@@ -7746,9 +7746,9 @@
       "creator": "cli",
       "agent_state": "",
       "weight": 1,
-      "content_hash": "68ad6cf6c806c9729c2b3a0586c8362fab6c270297f70b05ca2ec4a91ad6a7d3",
+      "content_hash": "001017de46f34024d7c4afdc7f7743bef89e5e5b84a1343ceb7da6f08151cc0e",
       "created_at": "2026-09-02T13:35:58Z",
-      "updated_at": "2026-09-02T14:15:19Z",
+      "updated_at": "2026-09-03T04:38:45Z",
       "uid": "01a06255-645c-78a2-9662-9f3f52c8526e"
     },
     {
@@ -8024,15 +8024,16 @@
       "issue_type": "",
       "priority": 1,
       "labels": "[]",
-      "status": "open",
-      "progress": 0,
-      "assignee": "",
+      "status": "done",
+      "progress": 1,
+      "assignee": "vimal",
       "creator": "cli",
-      "agent_state": "",
+      "agent_state": "working",
       "weight": 1,
       "content_hash": "f0c11ecddb6348d790f82267f7faf98e4e00bc935511b276126ab364e50af274",
       "created_at": "2026-09-02T14:48:02Z",
-      "updated_at": "2026-09-02T14:48:02Z",
+      "updated_at": "2026-09-03T04:38:45Z",
+      "closed_at": "2026-09-03T04:38:45Z",
       "uid": "01a06297-6079-78be-a0d0-c431735d47e2"
     }
   ],
@@ -8526,7 +8527,7 @@
       "agent_id": "vimal",
       "project": "MTIX",
       "state": "working",
-      "current_node_id": "MTIX-83",
+      "current_node_id": "MTIX-92",
       "last_heartbeat": "2026-05-06T14:14:36Z"
     }
   ],
@@ -8549,5 +8550,5 @@
     }
   ],
   "node_count": 310,
-  "checksum": "7f84009fc88232a5459476c80eb5edb6012a038630ea831442c45c83db3d9cb4"
+  "checksum": "7352592513e8d40f3f57e7b1ccdff990667ccb82fdc17b90639109a5094ee673"
 }

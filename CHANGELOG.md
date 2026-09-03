@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.3-beta] - 2026-09-03
+
+A security patch. Upgrading is a drop-in binary replacement — no schema, API or CLI changes.
+
+### Security
+- **Cleared 11 reachable vulnerabilities (MTIX-83).** `govulncheck` reported eleven vulnerabilities that this code actually calls: seven in the Go standard library — including `crypto/tls`, `net/http`, `net/url`, `html/template`, `encoding/xml` and `encoding/asn1` — plus `google.golang.org/grpc`, `golang.org/x/text`, `golang.org/x/net` and `github.com/quic-go/quic-go`. Reachability was not theoretical: `mtix serve` is an HTTP server, `crypto/tls` carries every connection to a Postgres hub, and the scanner traced a path from the webhook adapter into `http.Client.Do`. The toolchain moves to go1.26.6 and the four modules to their fixed releases; `govulncheck` now reports zero. These were present in v0.5.2-beta and earlier.
+- **The vulnerability scan is now a gate rather than a suggestion.** It ran nowhere in CI, and the pre-flight check only ever WARNed — and only when the tool happened to be installed, so on a machine without it the step silently passed. That is why eleven advisories accumulated unnoticed. `govulncheck` now runs as a hard gate in the release workflow, and pre-flight FAILS both on findings and on the tool being absent.
+
+---
+
 ## [0.5.2-beta] - 2026-09-02
 
 A correctness patch for `mtix sync backfill`. Anyone who has reparented or renumbered a node should upgrade before backfilling; a stream produced by 0.5.1-beta or earlier can fail to apply on a fresh replica.

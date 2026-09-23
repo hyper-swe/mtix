@@ -9,7 +9,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -28,14 +27,24 @@ const showLongHelp = `Show a node's details and annotations as labeled lines, in
   Priority     priority (1 = critical ... 5 = backlog)
   Type         node type
   Assignee     current assignee (only when set)
-  Desc         full description (only when set)
-  Annotations  every annotation, oldest first: its ISO-8601 UTC timestamp,
-               author, addressee and resolved marker when present, then
-               the text, with further lines indented; "Annotations: none"
-               when the node has none
-  Prompt       first 100 characters of the prompt (only when set)
+  Desc         full description (only when it has printable text),
+               further lines indented
+  Annotations  every annotation, oldest first: its ISO-8601 UTC timestamp
+               ("unknown time" when none was recorded), author, addressee
+               and resolved marker when present, then the text, with
+               further lines indented and "(empty)" for an empty text;
+               "Annotations: none" when the node has none
+  Prompt       the prompt, cut to 100 characters ending in "..." when
+               longer (only when it has printable text), further lines
+               indented
   Progress     progress bar
   Created      creation time
+
+Annotation text, author and addressee, the description and the prompt are
+normalized for the terminal: control characters other than newline and tab
+are removed (so CRLF becomes LF), and leading blank lines and trailing
+whitespace are trimmed, so that text cannot overwrite or restyle what is
+shown. Other fields print as stored.
 
 Other fields (acceptance criteria, labels, dependencies, activity and the
 full prompt) are not printed. Use --json for the complete node record,
@@ -148,12 +157,15 @@ func runShow(id string) error {
 	if node.Assignee != "" {
 		out.WriteHuman("Assignee: %s\n", node.Assignee)
 	}
-	if node.Description != "" {
-		out.WriteHuman("Desc:     %s\n", node.Description)
+	// Description and prompt are normalized and their continuation lines
+	// indented, so no stored line can pass for a label; one that normalizes
+	// to nothing is omitted like an unset one (MTIX-100.1).
+	if desc := displayText(node.Description); desc != "" {
+		out.WriteHuman("Desc:     %s\n", indentContinuation(desc, showValueIndent))
 	}
 	writeAnnotations(out, node.Annotations)
-	if node.Prompt != "" {
-		out.WriteHuman("Prompt:   %s\n", Truncate(node.Prompt, 100))
+	if prompt := displayText(node.Prompt); prompt != "" {
+		out.WriteHuman("Prompt:   %s\n", indentContinuation(truncateChars(prompt, 100), showValueIndent))
 	}
 	out.WriteHuman("Progress: %s\n", ProgressBar(node.Progress, 15))
 	out.WriteHuman("Created:  %s\n", node.CreatedAt.Format("2006-01-02 15:04"))
@@ -163,7 +175,11 @@ func runShow(id string) error {
 // writeAnnotations prints every annotation of a node for `mtix show`, oldest
 // first, each headed by its UTC timestamp and author (FR-3.4, MTIX-98).
 // Absence is stated as "Annotations: none", never left silent, so a reader can
-// tell "no verdict" from "verdict not shown".
+// tell "no verdict" from "verdict not shown". Text is normalized first
+// (MTIX-100.1): control characters removed, CRLF normalized, leading blank
+// lines and trailing whitespace trimmed, an empty body shown as "(empty)", a
+// missing timestamp as "unknown time", and continuation lines indented under
+// the header.
 func writeAnnotations(out OutputWriter, annotations []model.Annotation) {
 	if len(annotations) == 0 {
 		out.WriteHuman("Annotations: none\n")
@@ -171,20 +187,21 @@ func writeAnnotations(out OutputWriter, annotations []model.Annotation) {
 	}
 	out.WriteHuman("Annotations:\n")
 	for _, a := range sortedAnnotations(annotations) {
-		lines := strings.Split(a.Text, "\n")
-		out.WriteHuman("  [%s] %s: %s\n", a.CreatedAt.UTC().Format(time.RFC3339), annotationByline(a), lines[0])
+		lines := strings.Split(indentContinuation(annotationText(a.Text), annotationTextIndent), "\n")
+		out.WriteHuman("  [%s] %s: %s\n", annotationTime(a.CreatedAt), annotationByline(a), lines[0])
 		for _, line := range lines[1:] {
-			out.WriteHuman("      %s\n", line)
+			out.WriteHuman("%s\n", line)
 		}
 	}
 }
 
 // annotationByline renders the author, the addressee when the annotation is
-// directed at an agent, and a resolved marker.
+// directed at an agent, and a resolved marker. Author and addressee are
+// single-line fields: a newline in either cannot start a line of its own.
 func annotationByline(a model.Annotation) string {
-	byline := a.Author
-	if a.Addressee != "" {
-		byline += " → " + a.Addressee
+	byline := singleLine(a.Author)
+	if addressee := singleLine(a.Addressee); addressee != "" {
+		byline += " → " + addressee
 	}
 	if a.Resolved {
 		byline += " (resolved)"

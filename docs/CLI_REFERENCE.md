@@ -1042,14 +1042,24 @@ Show a node's details and annotations as labeled lines, in this order:
   Priority     priority (1 = critical ... 5 = backlog)
   Type         node type
   Assignee     current assignee (only when set)
-  Desc         full description (only when set)
-  Annotations  every annotation, oldest first: its ISO-8601 UTC timestamp,
-               author, addressee and resolved marker when present, then
-               the text, with further lines indented; "Annotations: none"
-               when the node has none
-  Prompt       first 100 characters of the prompt (only when set)
+  Desc         full description (only when it has printable text),
+               further lines indented
+  Annotations  every annotation, oldest first: its ISO-8601 UTC timestamp
+               ("unknown time" when none was recorded), author, addressee
+               and resolved marker when present, then the text, with
+               further lines indented and "(empty)" for an empty text;
+               "Annotations: none" when the node has none
+  Prompt       the prompt, cut to 100 characters ending in "..." when
+               longer (only when it has printable text), further lines
+               indented
   Progress     progress bar
   Created      creation time
+
+Annotation text, author and addressee, the description and the prompt are
+normalized for the terminal: control characters other than newline and tab
+are removed (so CRLF becomes LF), and leading blank lines and trailing
+whitespace are trimmed, so that text cannot overwrite or restyle what is
+shown. Other fields print as stored.
 
 Other fields (acceptance criteria, labels, dependencies, activity and the
 full prompt) are not printed. Use --json for the complete node record,

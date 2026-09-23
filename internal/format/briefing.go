@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"unicode"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
@@ -181,12 +180,10 @@ func resolveBriefingFields(fieldNames []string) ([]briefingField, error) {
 
 // sanitizeControlChars replaces control characters with U+FFFD per
 // FR-17.5 / FR-17 audit T10. Preserves tab (\x09) and newline (\x0a).
+// Which runes count is defined once, in isUnsafeControl.
 func sanitizeControlChars(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r == '\t' || r == '\n' {
-			return r
-		}
-		if unicode.IsControl(r) {
+		if isUnsafeControl(r) {
 			return '\uFFFD'
 		}
 		return r

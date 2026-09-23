@@ -125,6 +125,35 @@ func TestEnforceTLSPosture_NonLoopbackEffectiveHost_ReturnsErrTLSWeakNonLoopback
 	}
 }
 
+func TestEnforceTLSPosture_NonLoopbackHost_MessageNamesPositionNotHost(t *testing.T) {
+	cases := []struct {
+		hostCase
+		hostText string
+		position string
+	}{
+		{hostCase{name: "second entry of an authority list",
+			dsn: "postgres://u:pw@localhost:12,secret:34/x@h/db"}, "secret", "host 2 of 2 "},
+		{hostCase{name: "second entry of a host parameter list",
+			dsn: "postgres://u:pw@/hub?host=localhost,db.example.com"}, "db.example.com", "host 2 of 2 "},
+		{hostCase{name: "third entry of a host parameter list",
+			dsn: "postgres://u:pw@/hub?host=localhost,/tmp,db.example.com"}, "db.example.com", "host 3 of 3 "},
+		{hostCase{name: "PGHOST", dsn: "postgres://u:pw@/hub",
+			env: map[string]string{"PGHOST": "env-host.example.com"}}, "env-host.example.com", "host 1 of 1 "},
+		{hostCase{name: "service file", dsn: "postgres://u:pw@/hub?service=hub",
+			serviceHost: "svc-host.example.com"}, "svc-host.example.com", "host 1 of 1 "},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dsn := withSSLMode(applyHostCase(t, tc.hostCase), "disable")
+			_, err := transport.EnforceTLSPosture(dsn, transport.Options{InsecureTLS: true})
+			require.Error(t, err)
+			require.True(t, errors.Is(err, transport.ErrTLSWeakNonLoopback))
+			require.NotContains(t, err.Error(), tc.hostText, "message must not echo host text")
+			require.Contains(t, err.Error(), tc.position)
+		})
+	}
+}
+
 func TestEnforceTLSPosture_LocalEffectiveHosts_AcceptsWeakMode(t *testing.T) {
 	cases := []hostCase{
 		{name: "localhost", dsn: "postgres://u:pw@localhost:5432/hub"},
@@ -225,6 +254,7 @@ func TestEnforceTLSPosture_DSNTheDriverCannotParse_ReturnsFixedMessage(t *testin
 			require.True(t, errors.Is(err, transport.ErrTLSWeakNonLoopback),
 				"want ErrTLSWeakNonLoopback, got %v", err)
 			msg := err.Error()
+			require.Contains(t, msg, "connection settings could not be parsed")
 			for _, forbidden := range []string{user, secret, "localhost", "db.example.com", "postgres://", "absent"} {
 				require.NotContains(t, msg, forbidden, "message must name no host or credential")
 			}

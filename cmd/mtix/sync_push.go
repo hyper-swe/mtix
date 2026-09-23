@@ -59,7 +59,7 @@ so git pre-push hooks never block code pushes.`,
 		},
 	}
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
-		"Allow weaker TLS modes on loopback hosts (development only)")
+		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"Bypass the singleton pusher lock (debugging only)")
 	return cmd

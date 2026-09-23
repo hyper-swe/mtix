@@ -54,7 +54,7 @@ Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.`,
 		},
 	}
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
-		"Allow weaker TLS modes on loopback hosts (development only)")
+		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	cmd.Flags().IntVar(&limit, "limit", pullDefaultBatchSize,
 		"Number of events to pull per batch")
 	return cmd

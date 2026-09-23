@@ -291,7 +291,7 @@ together. Transient pull errors are logged and retried, never fatal.
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--install` |  | Print a systemd unit / launchd plist stub (deprecated: use 'mtix daemon install') | false |
 | `--interval` |  | Pull-then-dispatch interval in seconds | 5 |
 
@@ -1155,7 +1155,7 @@ checkpoint (.mtix data sentinel meta.sync.clone.checkpoint).
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--batch-size` |  | Number of events to pull per batch (FR-18.20) | 1000 |
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--resume` |  | Resume an interrupted clone from the last checkpoint | false |
 ---
 
@@ -1194,7 +1194,7 @@ automatically (audit F-5). --json for agent/CI consumption.
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--project` |  | Project prefix (defaults to the local project) |  |
 ---
 
@@ -1218,7 +1218,7 @@ moved node may have external references that need updating.
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--winner` |  | Which node keeps the number: held | incoming |  |
 ---
 
@@ -1304,7 +1304,7 @@ Use --install to print a systemd unit (linux) or launchd plist
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--dispatch-hooks` |  | After each pull, fire this host's hooks for undispatched events of ANY origin (FR-20, deduped per host by the dispatch ledger). A hook fires on every host whose hooks.yaml configures it — placement is designation | false |
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--install` |  | Print a systemd unit / launchd plist for supervised install | false |
 | `--interval` |  | Pull interval in seconds | 30 |
 ---
@@ -1330,7 +1330,7 @@ agents and CI consumption.
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 ---
 
 ## init
@@ -1348,14 +1348,14 @@ DSN sources (FR-18.16):
   3. Secrets file:       .mtix/secrets (mode 0600, gitignored)
 
 The DSN is refused if found in any tracked .mtix/config.* file. The
-default sslmode is verify-full; --insecure-tls is accepted only for
-loopback hosts.
+default sslmode is verify-full; --insecure-tls is accepted only when
+every host the connection may use is loopback or a local socket.
 
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 ---
 
 ## mark-restored
@@ -1379,7 +1379,7 @@ This is an OPERATOR action — no client or push can advance the epoch.
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 ---
 
 ## migrate
@@ -1404,7 +1404,7 @@ Phase 1 MOVES display numbers on the hub when duplicates exist. Without
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--project` |  | Project prefix to migrate (defaults to the local project) |  |
 | `--yes` |  | Apply the Phase 1 renumber remaps to the live hub (required to mutate) | false |
 ---
@@ -1428,7 +1428,7 @@ Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--limit` |  | Number of events to pull per batch | 1000 |
 ---
 
@@ -1455,7 +1455,7 @@ so git pre-push hooks never block code pushes.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--force` |  | Bypass the singleton pusher lock (debugging only) | false |
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 ---
 
 ## reconcile

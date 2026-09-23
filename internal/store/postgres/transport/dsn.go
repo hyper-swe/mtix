@@ -172,6 +172,8 @@ func refuseDSNInTrackedConfig(mtixDir string) error {
 // variables or a service file. A host is local when it is loopback
 // (see isLoopback) or a Unix-domain socket directory, which the driver
 // never wraps in TLS. A DSN whose hosts cannot be resolved is refused.
+// A refusal names the host by its position in the resolved list, never
+// by its text.
 //
 // Returns the (possibly modified) DSN with sslmode populated and
 // MTIX_SYNC_SSLROOTCERT honored. The returned DSN is ready for
@@ -196,9 +198,10 @@ func EnforceTLSPosture(dsn string, opts Options) (string, error) {
 		if resolveErr != nil {
 			return "", fmt.Errorf("sslmode=%s: %w", mode, resolveErr)
 		}
-		for _, h := range hosts {
+		for i, h := range hosts {
 			if network, _ := pgconn.NetworkAddress(h.Host, h.Port); network != "unix" && !isLoopback(h.Host) {
-				return "", fmt.Errorf("sslmode=%s on host %q: %w", mode, h.Host, ErrTLSWeakNonLoopback)
+				return "", fmt.Errorf("sslmode=%s: host %d of %d is not loopback or a local socket: %w",
+					mode, i+1, len(hosts), ErrTLSWeakNonLoopback)
 			}
 		}
 	}
@@ -243,7 +246,8 @@ func dsnPrefix(dsn string) string {
 // load). u and q are not modified.
 //
 // The parser's own error quotes the connection string, so it is
-// replaced by a fixed message that names no host or credential.
+// replaced by a fixed message that names only the categories of
+// setting that can fail to parse, never a value.
 func resolveHosts(u *url.URL, q url.Values) ([]*pgconn.FallbackConfig, error) {
 	probeQuery := make(url.Values, len(q)+2)
 	for k, v := range q {
@@ -257,7 +261,9 @@ func resolveHosts(u *url.URL, q url.Values) ([]*pgconn.FallbackConfig, error) {
 	cfg, err := pgconn.ParseConfig(probe.String())
 	if err != nil {
 		// Deliberately not wrapped: err quotes the connection string.
-		return nil, fmt.Errorf("hosts could not be resolved from the DSN: %w", ErrTLSWeakNonLoopback)
+		return nil, fmt.Errorf(
+			"connection settings could not be parsed (check port, connect_timeout, target_session_attrs, service): %w",
+			ErrTLSWeakNonLoopback)
 	}
 	hosts := make([]*pgconn.FallbackConfig, 0, 1+len(cfg.Fallbacks))
 	hosts = append(hosts, &pgconn.FallbackConfig{Host: cfg.Host, Port: cfg.Port})

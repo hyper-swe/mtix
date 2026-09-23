@@ -69,7 +69,7 @@ automatically (audit F-5). --json for agent/CI consumption.`,
 	cmd.Flags().StringVar(&project, "project", "",
 		"Project prefix (defaults to the local project)")
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
-		"Allow weaker TLS modes on loopback hosts (development only)")
+		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	return cmd
 }
 
@@ -102,7 +102,7 @@ moved node may have external references that need updating.`,
 		panic(err) // unreachable: the flag is declared just above
 	}
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
-		"Allow weaker TLS modes on loopback hosts (development only)")
+		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	return cmd
 }
 

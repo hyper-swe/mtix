@@ -71,7 +71,7 @@ Use --install to print a systemd unit (linux) or launchd plist
 		},
 	}
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
-		"Allow weaker TLS modes on loopback hosts (development only)")
+		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	cmd.Flags().IntVar(&intervalSec, "interval", daemonDefaultIntervalSec,
 		"Pull interval in seconds")
 	cmd.Flags().BoolVar(&install, "install", false,

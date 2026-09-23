@@ -119,6 +119,25 @@ CREATE TABLE IF NOT EXISTS dependencies (
 
 CREATE INDEX IF NOT EXISTS idx_deps_to ON dependencies(to_id, dep_type);
 
+-- Cascade-delete provenance (MTIX-95.18, review F-61). One row per node that
+-- DeleteNode soft-deleted, naming the delete that removed it: root_id is the
+-- node DeleteNode was called on, so that node's own row names itself and
+-- every descendant its cascade removed names it too. UndeleteNode restores
+-- only the descendants whose row names the same root, so a child deleted on
+-- its own before its parent's cascade stays deleted. Additive and created
+-- IF NOT EXISTS: no schema_version bump, so an older 0.5.x binary still opens
+-- the database and simply ignores the table. Both columns follow nodes(id)
+-- through a renumber or reconcile rename (ON UPDATE CASCADE), and a hard
+-- delete of a node (retention purge, reconcile discard) removes the rows
+-- that name it (ON DELETE CASCADE). Local-only, never synced.
+CREATE TABLE IF NOT EXISTS cascade_deletes (
+    node_id TEXT PRIMARY KEY
+        REFERENCES nodes(id) ON DELETE CASCADE ON UPDATE CASCADE,
+    root_id TEXT NOT NULL
+        REFERENCES nodes(id) ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_cascade_deletes_root ON cascade_deletes(root_id);
+
 -- Sync event log per FR-18.6 / SYNC-DESIGN section 3.1.
 -- Append-only mirror of events emitted by every node mutation.
 -- The hub stores the canonical replica; this is the local outbox/cache.

@@ -171,6 +171,12 @@ mtix delete PROJ-1 --cascade
 mtix undelete PROJ-1.2
 ```
 
+`mtix undelete` restores the node and only the descendants that the same delete removed. A descendant that was deleted separately before a cascade delete, on its own or by its own cascade, stays deleted when you undelete the cascade's node, even if both deletes happened in the same second. Restore it with its own `mtix undelete`. If you undelete a node that an ancestor's cascade removed, mtix restores that node and the descendants the same cascade removed, and the ancestor stays deleted. The progress of the parent of each restored node is recomputed.
+
+Earlier mtix versions did not record which delete removed each descendant, and a delete that arrives through sync or an import carries no such record either. When you undelete such a node, mtix restores the descendants without a record that were deleted in the same second by the same author. That can include a descendant that was deleted separately in that second.
+
+Undelete is local: it emits no sync event. Other replicas keep the node deleted.
+
 Soft-deleted nodes are automatically purged after the retention period (default 30 days, configurable via `data.soft_delete_retention`).
 
 ---

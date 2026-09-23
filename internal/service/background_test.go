@@ -363,6 +363,43 @@ func TestBackgroundScan_MultipleExpiredNodes_AllCleaned(t *testing.T) {
 	}
 }
 
+// TestBackgroundScan_ExpiredCascade_RemovesCascadeMarkers verifies that the
+// FR-3.3a hard delete also removes the cascade-delete markers of the purged
+// nodes (MTIX-95.18), through the cascade_deletes foreign keys, and that the
+// purge itself is not blocked by them.
+func TestBackgroundScan_ExpiredCascade_RemovesCascadeMarkers(t *testing.T) {
+	now := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	bg, s := newTestBackgroundService(t, fixedClock(now))
+	ctx := context.Background()
+
+	createTestNode(t, s, "PROJ-1", "PROJ", "Expired root", now.Add(-40*24*time.Hour))
+	child := &model.Node{
+		ID: "PROJ-1.1", ParentID: "PROJ-1", Depth: 1, Seq: 1, Project: "PROJ",
+		Title: "Expired child", Status: model.StatusOpen, Priority: model.PriorityMedium,
+		Weight: 1.0, CreatedAt: now.Add(-40 * 24 * time.Hour), UpdatedAt: now.Add(-40 * 24 * time.Hour),
+	}
+	child.ContentHash = child.ComputeHash()
+	require.NoError(t, s.CreateNode(ctx, child))
+	require.NoError(t, s.DeleteNode(ctx, "PROJ-1", true, "admin"))
+
+	countOf := func(query string) int {
+		var n int
+		require.NoError(t, s.QueryRow(ctx, query).Scan(&n))
+		return n
+	}
+	require.Equal(t, 2, countOf(`SELECT COUNT(*) FROM cascade_deletes`), "precondition: markers recorded")
+
+	deletedAt := now.Add(-31 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	_, err := s.WriteDB().ExecContext(ctx,
+		`UPDATE nodes SET deleted_at = ? WHERE id IN ('PROJ-1', 'PROJ-1.1')`, deletedAt)
+	require.NoError(t, err)
+
+	require.NoError(t, bg.RunScan(ctx))
+
+	assert.Equal(t, 0, countOf(`SELECT COUNT(*) FROM nodes`), "expired nodes purged")
+	assert.Equal(t, 0, countOf(`SELECT COUNT(*) FROM cascade_deletes`), "their markers purged with them")
+}
+
 // TestBackgroundScan_MultipleDeferredNodes_AllWoken verifies batch deferred wake.
 func TestBackgroundScan_MultipleDeferredNodes_AllWoken(t *testing.T) {
 	now := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)

@@ -119,9 +119,78 @@ for the same-authorID tradeoff.
 - `update_field:<field_name>` for `update_field` events
 - `set_acceptance:acceptance` for `set_acceptance`
 - `set_prompt:prompt` for `set_prompt`
-- `""` for ops not eligible for LWW (claim, transition, delete, etc.)
+- `""` for every other op
 
-Non-LWW ops have single-row outcomes and don't need a per-field tiebreaker.
+Workflow events have their own last-writer-wins rule, described next.
+The remaining ops have their own semantics: delete is monotonic,
+comments are append-only and dependency edges are idempotent.
+
+### Workflow events: last-writer-wins at ingest
+
+`claim`, `unclaim`, `transition_status` and `defer` all write one piece
+of per-node state, the node's workflow state (status, and the assignee,
+agent state, `closed_at` and related columns that go with it). They are
+resolved per node, not per field:
+
+```
+key(e)  = (lamport_clock, event_id)
+held    = the workflow event with the highest key in the local
+          sync_events log for the same node (own events and mirrored
+          foreign events, winners and losers), excluding e
+e wins  iff there is no held event, or key(e) > key(held):
+          the higher lamport_clock wins;
+          on a tie, the higher event_id wins (byte-string compare)
+```
+
+The node is matched by `uid` when the event carries one, else by
+`node_id`, exactly as field LWW scopes its history. Event ids are
+unique, so the order is total: every replica that holds the same
+workflow events for a node ends on the same winner, whatever order
+they arrived in. This covers every way an old workflow event can reach
+a replica after a newer one: a replayed own event (even one the
+own-event rule below cannot recognize, such as after restoring the
+local store from a backup), a late or out-of-order delivery, and a
+teammate's concurrent claim or status change.
+
+- **A winning event** writes exactly the columns its local mutation
+  writes, with values taken from the event. The single table of those
+  columns is `workflowWinnerTable` in
+  `internal/store/sqlite/sync_workflow_winner.go`. `closed_at` is
+  written by every row: for a terminal status (`done`, `cancelled`,
+  `invalidated`) it is the winning event's `wall_clock_ts` as RFC 3339
+  in whole seconds (milliseconds truncated), never the apply time;
+  for any other status it is cleared.
+- **A losing event** is still mirrored into `sync_events`, its clocks
+  are merged and it is recorded in `applied_events`, so a re-pull is a
+  no-op. It changes no node column and writes **no** `sync_conflicts`
+  row: workflow state is not a user-authored field, and a conflict row
+  for every lost claim race or late replay would be noise.
+- **Local mutations** need no check. Their Lamport clock is above
+  every event the replica holds, so they are the winner when they are
+  written.
+
+Known residual in 0.5.x:
+
+- Columns other than status and `closed_at` (assignee, agent state,
+  `previous_status`, progress, `defer_until`) are written only by the
+  events that write them locally. When events arrive out of order, an
+  event that won when it arrived may leave such a column set, and the
+  final winner may not overwrite it. Example: a claim applies, then a
+  `done` with a higher key arrives; the assignee stays set. A replica
+  that received the `done` first rejects the claim and keeps the
+  assignee it had. Status and `closed_at` always converge.
+- `defer_until` is not cleared by a winning claim, unclaim or
+  transition at ingest, although a local claim clears it.
+- `update_field` on `status`, `assignee` or `agent_state` keeps its
+  per-field register above and is not compared with workflow events.
+- The originating store stamps `closed_at` from its own clock when the
+  mutation runs, and replicas stamp the event's `wall_clock_ts`; the
+  two are read separately, so they can differ within that second. A
+  replica also stamps `closed_at` for `invalidated`, which the local
+  transition leaves unchanged.
+- Local writes that emit no event (an auto-block when a dependency is
+  added, the descendants of a cascade cancel) are invisible to the
+  winner check.
 
 ## Hub-side conflict detection
 
@@ -185,7 +254,10 @@ if event_id already in local sync_events (any sync_status):
     advance lamport, merge VC, INSERT OR IGNORE into applied_events
     return nil (no dispatch, no conflict row, no new sync_events row)
 mirror into sync_events (sync_status = 'applied')
-dispatch to applyCreateNode / applyUpdateField / ... per op_type
+if op_type is a workflow op and the event loses its node's workflow
+    state (see "Workflow events" above):
+    skip the dispatch (no node column, no conflict row)
+else dispatch to applyCreateNode / applyUpdateField / ... per op_type
     (with LWW resolution and conflict logging for field ops)
 advance lamport, merge VC, INSERT into applied_events
 ```
@@ -201,9 +273,14 @@ never applies it again. Applying it again would log a spurious LWW
 conflict for every field update whose field has any other event in the
 local log, earlier or newer (the same pair twice when the field was
 written twice), and a replayed
-`claim`, `unclaim`, `defer` or `transition_status`, which apply
-unconditionally, would overwrite newer local state: claim, push, done,
+`claim`, `unclaim`, `defer` or `transition_status`, which applied
+unconditionally before workflow events were resolved by
+last-writer-wins, would overwrite newer local state: claim, push, done,
 pull would leave the node `in_progress` with `closed_at` still set.
+The workflow rule above now rejects such a replay on its own as well,
+so a replayed own workflow event that the own-event rule misses (for
+example after the local store was restored from a backup) still
+cannot revert newer local state.
 
 Events from other CLIs are not in the local log until apply mirrors
 them, so they keep the LWW resolution and conflict logging described in

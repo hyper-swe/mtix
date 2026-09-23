@@ -63,6 +63,7 @@ Heartbeats prove agent liveness. Without them, the system assumes the agent has 
 - **No double-claiming.** If you try to claim an already-claimed node, you get `ErrAlreadyClaimed`
 - **Check before claiming:** Use `mcp__mtix__mtix_show` to verify a node is unclaimed before attempting to claim it
 - **Force-reclaim:** Only available when the current agent is stale (heartbeat expired). Never force-reclaim an active agent's work
+- **Synced machines:** Agents on different machines can each claim the same node between syncs. After `mtix sync pull`, the most recent claim or status change (highest Lamport clock, ties broken by event id) holds on every machine and older ones change nothing; the losing claim is not reported as a conflict. After every pull, check the assignee with `mcp__mtix__mtix_show`; if another agent now holds your node, stop work on it and pick other work
 
 ## Handoff Protocol
 

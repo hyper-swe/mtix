@@ -22,7 +22,8 @@ import (
 // where two concurrent events touching the same logical field need a
 // deterministic winner. Other op_types have their own semantics
 // (delete is monotonic; comments are append-only; deps are idempotent;
-// claim and transition_status use most-recent-applied-wins).
+// claim, unclaim, transition_status and defer use the per-node workflow
+// winner rule in sync_workflow_winner.go, MTIX-95.10).
 //
 // fieldKeyForLWW returns the (op_type-prefixed) field identifier used
 // to scope LWW lookups, or "" if this op is not LWW-eligible.
@@ -46,10 +47,10 @@ func fieldKeyForLWW(e *model.SyncEvent) string {
 // lwwOutcome is the result of comparing an incoming event against
 // the highest-lamport prior event for the same (node, field).
 type lwwOutcome struct {
-	HasPrior        bool   // true iff there's a prior event for the same field
-	PriorEventID    string // empty when HasPrior is false
-	IncomingWins    bool   // true iff the incoming event beats the prior on (lamport, ts, hash)
-	FieldName       string // for the conflict log
+	HasPrior     bool   // true iff there's a prior event for the same field
+	PriorEventID string // empty when HasPrior is false
+	IncomingWins bool   // true iff the incoming event beats the prior on (lamport, ts, hash)
+	FieldName    string // for the conflict log
 }
 
 // detectLWWOutcome looks up the highest-lamport prior event matching
@@ -163,9 +164,30 @@ func mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) er
 // either skip the apply (loser branch) or run dispatchApply (winner
 // or no-prior branch), and record the conflict row when applicable.
 //
+// Workflow events (claim, unclaim, transition_status, defer) resolve by
+// last-writer-wins over their node's workflow state (MTIX-95.10; rule and
+// column table in sync_workflow_winner.go): the event applies only if its
+// (lamport_clock, event_id) beats every workflow event already held for the
+// node. A losing workflow event returns here having written nothing; the
+// caller has already mirrored it and still records it in applied_events. No
+// sync_conflicts row is written for a workflow event, winner or loser.
+//
 // Extracted from IdempotentApply to keep cyclomatic complexity below
 // the package's lint threshold.
 func dispatchWithLWW(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
+	if isWorkflowOp(event.OpType) {
+		wins, err := workflowEventWins(ctx, tx, event)
+		if err != nil {
+			return fmt.Errorf("apply %s: workflow winner: %w", event.EventID, err)
+		}
+		if !wins {
+			// Loser: mirrored and recorded as applied by the caller; it
+			// changes no node column and logs no conflict (MTIX-95.10).
+			return nil
+		}
+		return dispatchApply(ctx, tx, event)
+	}
+
 	outcome, err := detectLWWOutcome(ctx, tx, event)
 	if err != nil {
 		return fmt.Errorf("apply %s: LWW: %w", event.EventID, err)
@@ -226,6 +248,11 @@ func recordLocalConflict(ctx context.Context, tx *sql.Tx, winnerID, loserID, nod
 //     no dispatch, no mirror row, no conflict (MTIX-95.2, see
 //     acknowledgeHeldEvent).
 //   - Dispatches on op_type to a per-op apply function.
+//   - A workflow event (claim, unclaim, transition_status, defer) applies
+//     only if its (lamport_clock, event_id) beats every workflow event
+//     already held for its node; a losing one is mirrored and recorded as
+//     applied but changes no node column and logs no conflict (MTIX-95.10,
+//     sync_workflow_winner.go).
 //   - DOES NOT emit a sync_event (apply MUST NOT loop).
 //   - Always advances local Lamport to max(local, event.lamport) and
 //     merges event.author_id into the local vector clock.
@@ -619,19 +646,16 @@ func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) 
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply transition_status %s: decode payload: %w", e.EventID, err)
 	}
-	id, err := resolveNodeRef(ctx, tx, e)
-	if err != nil {
-		return err
-	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	closedAt := sql.NullString{}
-	if p.To.IsTerminal() {
-		closedAt = sql.NullString{String: now, Valid: true}
-	}
-	if _, err = tx.ExecContext(ctx,
-		`UPDATE nodes SET status = ?, closed_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
-		string(p.To), closedAt, now, id,
-	); err != nil {
+	// A winner writes exactly its row of the workflow winner table
+	// (MTIX-95.10). A terminal closed_at is this event's wall_clock_ts in
+	// whole seconds, never the apply time, so every replica stamps the same
+	// value whatever order the node's workflow events arrived in.
+	id, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
+		op: e.OpType, from: p.From, to: p.To,
+		wallClockTS: e.WallClockTS, updatedAt: now,
+	})
+	if err != nil {
 		return err
 	}
 
@@ -653,57 +677,41 @@ func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) 
 	return nil
 }
 
+// applyClaim applies a winning claim: its row of the workflow winner table
+// (sync_workflow_winner.go, MTIX-95.10).
 func applyClaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.ClaimPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply claim %s: decode payload: %w", e.EventID, err)
 	}
-	id, err := resolveNodeRef(ctx, tx, e)
-	if err != nil {
-		return err
-	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = tx.ExecContext(ctx,
-		`UPDATE nodes SET status = ?, assignee = ?, agent_state = ?, updated_at = ?
-		 WHERE id = ? AND deleted_at IS NULL`,
-		string(model.StatusInProgress), p.AgentID, string(model.AgentStateWorking), now, id,
-	)
+	_, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
+		op: e.OpType, agentID: p.AgentID, wallClockTS: e.WallClockTS, updatedAt: now,
+	})
 	return err
 }
 
+// applyUnclaim applies a winning unclaim: its row of the workflow winner
+// table (sync_workflow_winner.go, MTIX-95.10).
 func applyUnclaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	id, err := resolveNodeRef(ctx, tx, e)
-	if err != nil {
-		return err
-	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = tx.ExecContext(ctx,
-		`UPDATE nodes SET status = ?, assignee = NULL, agent_state = NULL, updated_at = ?
-		 WHERE id = ? AND deleted_at IS NULL`,
-		string(model.StatusOpen), now, id,
-	)
+	_, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
+		op: e.OpType, wallClockTS: e.WallClockTS, updatedAt: now,
+	})
 	return err
 }
 
+// applyDefer applies a winning defer: its row of the workflow winner table
+// (sync_workflow_winner.go, MTIX-95.10).
 func applyDefer(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.DeferPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply defer %s: decode payload: %w", e.EventID, err)
 	}
-	id, err := resolveNodeRef(ctx, tx, e)
-	if err != nil {
-		return err
-	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	deferUntil := sql.NullString{}
-	if p.Until != nil {
-		deferUntil = sql.NullString{String: p.Until.UTC().Format(time.RFC3339), Valid: true}
-	}
-	_, err = tx.ExecContext(ctx,
-		`UPDATE nodes SET status = ?, defer_until = ?, updated_at = ?
-		 WHERE id = ? AND deleted_at IS NULL`,
-		string(model.StatusDeferred), deferUntil, now, id,
-	)
+	_, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
+		op: e.OpType, deferUntil: p.Until, wallClockTS: e.WallClockTS, updatedAt: now,
+	})
 	return err
 }
 

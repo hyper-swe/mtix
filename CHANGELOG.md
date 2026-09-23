@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **Cleared two gRPC advisories that failed the release vulnerability gate, GO-2026-6443 and GO-2026-6348 (MTIX-95.23).** The source-mode `govulncheck` scan that the release gate runs reached both in `google.golang.org/grpc` v1.82.1, but only through the `internal/api/grpc` package, which no mtix binary links. Released binaries, including v0.5.3-beta, were not affected. GO-2026-6348 is heap exhaustion from fragmented HTTP/2 DATA frames. GO-2026-6443 is a panic on a request that carries neither an `:authority` nor a `Host` header, and it occurs only on servers that use xDS routing, which mtix does not. `google.golang.org/grpc` moves to v1.83.2, and the modules it requires move with it (`golang.org/x/net`, `golang.org/x/sys`, `golang.org/x/sync`, `golang.org/x/crypto`, `golang.org/x/text` and `google.golang.org/genproto/googleapis/rpc`; `google.golang.org/protobuf` is unchanged). The scan now reports no reachable vulnerabilities, so the gate passes.
 
 ### Fixed
 

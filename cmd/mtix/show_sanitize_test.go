@@ -141,6 +141,16 @@ func TestWriteAnnotations_UnsafeOrMessyText_PrintedSafely(t *testing.T) {
 			ann:      model.Annotation{Author: "rev", Text: "para one\n\npara two", CreatedAt: at},
 			contains: []string{"rev: para one\n\n      para two\n"},
 		},
+		{
+			name:     "whitespace-only line inside text printed empty",
+			ann:      model.Annotation{Author: "rev", Text: "a\n \t \nb", CreatedAt: at},
+			contains: []string{"rev: a\n\n      b\n"},
+		},
+		{
+			name:     "non-UTC created_at converted to UTC",
+			ann:      model.Annotation{Author: "rev", Text: "ok", CreatedAt: time.Date(2026, 9, 1, 15, 0, 0, 0, time.FixedZone("X", 5*3600+30*60))},
+			contains: []string{"[2026-09-01T09:30:00Z] rev: ok\n"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -164,7 +174,7 @@ func TestRunShow_MultilineDescriptionAndPrompt_ContinuationLinesIndented(t *test
 	node, err := app.nodeSvc.CreateNode(context.Background(), &service.CreateNodeRequest{
 		Project:     "TEST",
 		Title:       "Layout target",
-		Description: "\n  \nfirst line\nAnnotations: none\r\n\x1b[2Jcleared?",
+		Description: "\n  \nfirst line\n \t \nAnnotations: none\r\n\x1b[2Jcleared?",
 		Prompt:      "p1\r\nID:       FAKE-1\x1b[31m red\rZ",
 		Creator:     "tester",
 	})
@@ -176,7 +186,8 @@ func TestRunShow_MultilineDescriptionAndPrompt_ContinuationLinesIndented(t *test
 	assertSafeLayout(t, out)
 	assert.NotRegexp(t, `(?m)^Annotations: none$`, out, "a description line must not pass for the marker")
 	assert.NotRegexp(t, `(?m)^ID:\s+FAKE-1`, out, "a prompt line must not pass for a label")
-	assert.Contains(t, out, "Desc:     first line\n", "leading blank lines are trimmed")
+	assert.Contains(t, out, "Desc:     first line\n\n"+showValueIndent+"Annotations: none\n",
+		"leading blank lines are trimmed; a whitespace-only line prints empty")
 	assert.Contains(t, out, "[2Jcleared?")
 	assert.Contains(t, out, "Prompt:   p1\n"+showValueIndent+"ID:       FAKE-1[31m redZ\n")
 }

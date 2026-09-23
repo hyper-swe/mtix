@@ -127,17 +127,20 @@ func applyCancelUpdate(ctx context.Context, tx *sql.Tx, id string, fromStatus mo
 	return nil
 }
 
-// cascadeCancel cancels all non-terminal descendants of a node.
+// cascadeCancel cancels all non-terminal descendants of a node per FR-6.3.
 // Uses LIKE pattern on dot-notation IDs for efficient subtree selection.
+// The parent ID is escaped (escapeLIKEPrefix) so a '_' in its project prefix
+// matches literally and never reaches another project (MTIX-95.17).
 func cascadeCancel(ctx context.Context, tx *sql.Tx, parentID, _, _, nowStr string) error {
-	// Cancel only non-terminal descendants.
+	// Cancel only non-terminal descendants: every id that starts with the
+	// literal "<parentID>." (escaped prefix, parameterized, ESCAPE '\').
 	_, err := tx.ExecContext(ctx,
 		`UPDATE nodes SET status = ?, closed_at = ?, updated_at = ?
 		 WHERE id LIKE ? ESCAPE '\'
 		   AND deleted_at IS NULL
 		   AND status NOT IN (?, ?, ?)`,
 		string(model.StatusCancelled), nowStr, nowStr,
-		parentID+".%",
+		escapeLIKEPrefix(parentID)+".%",
 		string(model.StatusDone), string(model.StatusCancelled), string(model.StatusInvalidated),
 	)
 	if err != nil {

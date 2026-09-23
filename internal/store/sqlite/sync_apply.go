@@ -22,7 +22,7 @@ import (
 // where two concurrent events touching the same logical field need a
 // deterministic winner. Other op_types have their own semantics
 // (delete is monotonic; comments are append-only; deps are idempotent;
-// claim and transition_status use most-recent-applied-wins).
+// workflow ops use the winner rule in sync_workflow_winner.go).
 //
 // fieldKeyForLWW returns the (op_type-prefixed) field identifier used
 // to scope LWW lookups, or "" if this op is not LWW-eligible.
@@ -46,10 +46,10 @@ func fieldKeyForLWW(e *model.SyncEvent) string {
 // lwwOutcome is the result of comparing an incoming event against
 // the highest-lamport prior event for the same (node, field).
 type lwwOutcome struct {
-	HasPrior        bool   // true iff there's a prior event for the same field
-	PriorEventID    string // empty when HasPrior is false
-	IncomingWins    bool   // true iff the incoming event beats the prior on (lamport, ts, hash)
-	FieldName       string // for the conflict log
+	HasPrior     bool   // true iff there's a prior event for the same field
+	PriorEventID string // empty when HasPrior is false
+	IncomingWins bool   // true iff the incoming event beats the prior on (lamport, ts, hash)
+	FieldName    string // for the conflict log
 }
 
 // detectLWWOutcome looks up the highest-lamport prior event matching
@@ -159,13 +159,24 @@ func mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) er
 	return err
 }
 
-// dispatchWithLWW runs the LWW resolution pipeline: detect outcome,
-// either skip the apply (loser branch) or run dispatchApply (winner
-// or no-prior branch), and record the conflict row when applicable.
+// dispatchWithLWW runs the LWW resolution pipeline (workflow ops: see
+// sync_workflow_winner.go): skip the apply for a loser, else run
+// dispatchApply, and record a field conflict row when applicable.
 //
 // Extracted from IdempotentApply to keep cyclomatic complexity below
 // the package's lint threshold.
 func dispatchWithLWW(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
+	if isWorkflowOp(event.OpType) {
+		wins, err := workflowEventWins(ctx, tx, event)
+		if err != nil {
+			return fmt.Errorf("apply %s: workflow winner: %w", event.EventID, err)
+		}
+		if !wins {
+			return nil
+		}
+		return dispatchApply(ctx, tx, event)
+	}
+
 	outcome, err := detectLWWOutcome(ctx, tx, event)
 	if err != nil {
 		return fmt.Errorf("apply %s: LWW: %w", event.EventID, err)
@@ -615,23 +626,16 @@ func decodeNewValueForColumn(field string, raw json.RawMessage) (any, error) {
 }
 
 func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	var p model.TransitionStatusPayload
-	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		return fmt.Errorf("apply transition_status %s: decode payload: %w", e.EventID, err)
-	}
-	id, err := resolveNodeRef(ctx, tx, e)
-	if err != nil {
-		return err
+	p, ok := decodeTransitionForApply(e)
+	if !ok {
+		return nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	closedAt := sql.NullString{}
-	if p.To.IsTerminal() {
-		closedAt = sql.NullString{String: now, Valid: true}
-	}
-	if _, err = tx.ExecContext(ctx,
-		`UPDATE nodes SET status = ?, closed_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
-		string(p.To), closedAt, now, id,
-	); err != nil {
+	id, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
+		op: e.OpType, from: p.From, to: p.To,
+		wallClockTS: e.WallClockTS, updatedAt: now,
+	})
+	if err != nil {
 		return err
 	}
 
@@ -658,30 +662,18 @@ func applyClaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply claim %s: decode payload: %w", e.EventID, err)
 	}
-	id, err := resolveNodeRef(ctx, tx, e)
-	if err != nil {
-		return err
-	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = tx.ExecContext(ctx,
-		`UPDATE nodes SET status = ?, assignee = ?, agent_state = ?, updated_at = ?
-		 WHERE id = ? AND deleted_at IS NULL`,
-		string(model.StatusInProgress), p.AgentID, string(model.AgentStateWorking), now, id,
-	)
+	_, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
+		op: e.OpType, agentID: p.AgentID, wallClockTS: e.WallClockTS, updatedAt: now,
+	})
 	return err
 }
 
 func applyUnclaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	id, err := resolveNodeRef(ctx, tx, e)
-	if err != nil {
-		return err
-	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = tx.ExecContext(ctx,
-		`UPDATE nodes SET status = ?, assignee = NULL, agent_state = NULL, updated_at = ?
-		 WHERE id = ? AND deleted_at IS NULL`,
-		string(model.StatusOpen), now, id,
-	)
+	_, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
+		op: e.OpType, wallClockTS: e.WallClockTS, updatedAt: now,
+	})
 	return err
 }
 
@@ -690,20 +682,10 @@ func applyDefer(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply defer %s: decode payload: %w", e.EventID, err)
 	}
-	id, err := resolveNodeRef(ctx, tx, e)
-	if err != nil {
-		return err
-	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	deferUntil := sql.NullString{}
-	if p.Until != nil {
-		deferUntil = sql.NullString{String: p.Until.UTC().Format(time.RFC3339), Valid: true}
-	}
-	_, err = tx.ExecContext(ctx,
-		`UPDATE nodes SET status = ?, defer_until = ?, updated_at = ?
-		 WHERE id = ? AND deleted_at IS NULL`,
-		string(model.StatusDeferred), deferUntil, now, id,
-	)
+	_, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
+		op: e.OpType, deferUntil: p.Until, wallClockTS: e.WallClockTS, updatedAt: now,
+	})
 	return err
 }
 

@@ -32,7 +32,8 @@ import (
 // applied_events) keeps its meaning.
 //
 // Returns held=false, having written nothing, for an event this replica does
-// not hold; the caller then applies it through the unchanged LWW path.
+// not hold; the caller then applies it through dispatchWithLWW (field LWW,
+// or the workflow winner rule for workflow events, MTIX-95.10).
 func acknowledgeHeldEvent(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) (bool, error) {
 	held, err := isHeldEvent(ctx, tx, event.EventID)
 	if err != nil {

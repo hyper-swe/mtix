@@ -117,13 +117,14 @@ func TestWorkflowWinnerTable_EveryStatusAndOp_HasARow(t *testing.T) {
 	}
 }
 
-func TestResolveWorkflowWrite_NoRule_ReturnsInvalidInput(t *testing.T) {
-	_, err := resolveWorkflowWrite(workflowInput{
+func TestResolveWorkflowWrite_NoRule_WritesStatusOnly(t *testing.T) {
+	w, known := resolveWorkflowWrite(workflowInput{
 		op: model.OpTransitionStatus, from: model.StatusOpen, to: "bogus",
+		wallClockTS: 1_000, updatedAt: "2026-09-24T00:00:00Z",
 	})
-	require.Error(t, err)
-	require.True(t, errors.Is(err, model.ErrInvalidInput))
-	require.Contains(t, err.Error(), "no workflow winner rule")
+	require.False(t, known)
+	require.Equal(t, workflowWrite{status: "bogus", updatedAt: "2026-09-24T00:00:00Z"}, w,
+		"status and updated_at only; no other column is written")
 }
 
 func TestClosedAtFromWallClock_RangeAndPrecision_FormatsOrFallsBack(t *testing.T) {
@@ -185,21 +186,6 @@ func TestApply_WorkflowWinnerOnMissingNode_ReturnsNotFound(t *testing.T) {
 		&model.ClaimPayload{AgentID: "agent-b"}, 2))
 	require.Error(t, err)
 	require.True(t, errors.Is(err, model.ErrNotFound))
-}
-
-func TestApply_TransitionToUnknownStatus_ReturnsInvalidInput(t *testing.T) {
-	s, raw := applyTestStore(t)
-	createNodeFor(t, s, "MTIX-1")
-	e := winnerTestEvent(t, "move-1", model.OpTransitionStatus, &model.TransitionStatusPayload{
-		From: model.StatusOpen, To: "bogus",
-	}, 2)
-
-	err := applyOnce(t, s, e)
-
-	require.Error(t, err)
-	require.True(t, errors.Is(err, model.ErrInvalidInput))
-	require.Contains(t, err.Error(), e.EventID)
-	require.Equal(t, string(model.StatusOpen), readNodeColumn(t, raw, "MTIX-1", "status"))
 }
 
 func TestDispatchWithLWW_WorkflowLookupFails_ReturnsWrappedError(t *testing.T) {

@@ -181,8 +181,10 @@ Known residual in 0.5.x:
   assignee it had. Likewise, after a claim race in which the agent
   whose claim lost marks the node done before pulling, both replicas
   show `done`, each with its own agent as assignee. Status converges
-  on every replica; `closed_at` converges among replicas that received
-  the events by sync (the originator exceptions follow).
+  on every replica for claims and status changes that travel as events
+  (local writes that emit none are covered below); `closed_at`
+  converges among replicas that received the events by sync (the
+  originator exceptions follow).
 - `defer_until` is not cleared by a winning claim, unclaim or
   transition at ingest, although a local claim clears it.
 - `update_field` on `status`, `assignee` or `agent_state` keeps its
@@ -202,7 +204,19 @@ Known residual in 0.5.x:
   readable but its `closed_at` differs from the other replicas'.
 - Local writes that emit no event (an auto-block when a dependency is
   added, the descendants of a cascade cancel) are invisible to the
-  winner check.
+  winner check, so status can still differ there. Example: replica A
+  claims a node while replica B adds a dependency that blocks it; B's
+  auto-block emits no event, so after both pull A shows `blocked` and
+  B `in_progress`. Descendants cancelled by a cascade cancel can differ
+  the same way.
+- A `transition_status` to a status this build does not know (for
+  example one added by a newer client) writes the status column (and
+  `updated_at`) alone and logs a warning naming the event and the
+  status. A `transition_status` whose payload cannot be decoded or has
+  no to-status (missing, null or empty) changes no node column, is
+  recorded as applied, and logs a warning naming the event. Neither
+  fails the event: a failed event fails its whole pull batch, and the
+  pull cursor never moves past it.
 
 ## Hub-side conflict detection
 

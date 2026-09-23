@@ -1527,9 +1527,15 @@ Claims and status changes (`mtix claim`, `unclaim`, `done`, `cancel`,
 the same way: after a sync, every machine shows the status set by the
 most recent claim or status change (highest `lamport_clock`, ties
 broken by event id), and an older one that arrives later changes
-nothing. Only the status is guaranteed to agree. The assignee and the
-other fields that go with it can still differ between machines when
-changes arrive out of order: if two agents claim the same task between
+nothing. This holds for claims and status changes, which travel as
+events. Two automatic changes do not travel as events, so status can
+still differ there: if one machine claims a task while another adds a
+dependency that blocks it, the task can end up blocked on one machine
+and in progress on the other, and tasks cancelled as descendants of a
+cascade cancel can differ the same way. Beyond status nothing is
+guaranteed to agree. The assignee and the other fields that go with it
+can still differ between machines when changes arrive out of order: if
+two agents claim the same task between
 syncs and the agent whose claim lost marks it done before pulling,
 both machines show the task done, each with its own agent as the
 assignee. After `mtix sync pull`, check the task with `mtix show <id>`

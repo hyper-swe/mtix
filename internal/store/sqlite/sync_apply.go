@@ -626,9 +626,9 @@ func decodeNewValueForColumn(field string, raw json.RawMessage) (any, error) {
 }
 
 func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	var p model.TransitionStatusPayload
-	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		return fmt.Errorf("apply transition_status %s: decode payload: %w", e.EventID, err)
+	p, ok := decodeTransitionForApply(e)
+	if !ok {
+		return nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	id, err := applyWorkflowWinner(ctx, tx, e, workflowInput{

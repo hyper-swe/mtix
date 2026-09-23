@@ -6,8 +6,10 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -70,10 +72,12 @@ import (
 //     that received the done first rejects the claim and keeps the assignee
 //     it had. Likewise, after a claim race in which the losing agent marks the
 //     node done before pulling, both replicas show done, each with its own
-//     agent as assignee. Status converges on every replica; closed_at
-//     converges among replicas that received the events by sync (the
-//     originator exceptions follow). Full convergence arrives with the
-//     phase-4 projector's composite workflow register (ADR-006 §4.4).
+//     agent as assignee. Status converges on every replica for claims and
+//     status changes that travel as events (local writes that emit none are
+//     the last item below); closed_at converges among replicas that received
+//     the events by sync (the originator exceptions follow). Full convergence
+//     arrives with the phase-4 projector's composite workflow register
+//     (ADR-006 §4.4).
 //   - defer_until. The ADR-006 §4.4 register clears defer_until on claim,
 //     unclaim and transition, and a local claim clears it too. Ingest does
 //     not: that is out of scope for phase 0 (defer --until is MTIX-95.22).
@@ -95,7 +99,20 @@ import (
 //     the node stays readable but its closed_at differs from the others'.
 //   - updated_at stays the apply time, and ingest writes no activity entry.
 //   - Local writes that emit no event (auto-block on a new dependency, the
-//     descendants of a cascade cancel) are invisible to the winner check.
+//     descendants of a cascade cancel) are invisible to the winner check, so
+//     status can still differ there. Example: replica A claims a node while
+//     replica B adds a dependency that blocks it; B's auto-block emits no
+//     event, so after both pull A shows blocked and B in_progress.
+//     Descendants cancelled by a cascade cancel can differ the same way.
+//   - Unknown to-status. A transition_status to a status this build does not
+//     know (for example one a newer client added) writes the status column
+//     (and updated_at) alone, as apply did before MTIX-95.10, and logs a
+//     warning naming the event and the status (resolveWorkflowWrite).
+//   - Missing to-status. A transition_status whose payload cannot be decoded
+//     or has no to-status (missing, null or empty) changes no node column; it
+//     is recorded as applied and a warning names the event
+//     (decodeTransitionForApply). Neither case fails the event: a failed
+//     event fails its whole pull batch, and the cursor never moves past it.
 
 // workflowAction is what a winning workflow event does to one nodes column.
 type workflowAction uint8
@@ -316,13 +333,17 @@ type workflowWrite struct {
 // values from the event (MTIX-95.10). A terminal closed_at is the event's
 // wall_clock_ts in whole seconds, not the apply time, so every replica stamps
 // the same value; closedAtFromWallClock covers a wall_clock_ts RFC3339 cannot
-// represent. Returns ErrInvalidInput when no row matches (an unknown or empty
-// to-status).
-func resolveWorkflowWrite(in workflowInput) (workflowWrite, error) {
+// represent.
+//
+// known is false when no row matches: a transition_status to a status this
+// build does not know (for example one a newer client added). The write then
+// sets the status column (and updated_at) alone, as apply did before
+// MTIX-95.10, instead of failing: a failed event fails its whole pull batch,
+// and the pull cursor never moves past it.
+func resolveWorkflowWrite(in workflowInput) (w workflowWrite, known bool) {
 	rule, ok := lookupWorkflowRule(in.op, in.from, in.to)
 	if !ok {
-		return workflowWrite{}, fmt.Errorf("no workflow winner rule for %s %q -> %q: %w",
-			in.op, in.from, in.to, model.ErrInvalidInput)
+		return workflowWrite{status: in.to, updatedAt: in.updatedAt}, false
 	}
 	var until any
 	if in.deferUntil != nil {
@@ -337,7 +358,7 @@ func resolveWorkflowWrite(in workflowInput) (workflowWrite, error) {
 		closedAt:       resolveColumn(rule.closedAt, closedAtFromWallClock(in.wallClockTS, in.updatedAt)),
 		progress:       resolveColumn(rule.progress, 1.0),
 		deferUntil:     resolveColumn(rule.deferUntil, until),
-	}, nil
+	}, true
 }
 
 // resolveColumn applies one table action: wfSet writes v, wfClear writes
@@ -416,12 +437,35 @@ func applyWorkflowWinner(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, in
 	if err != nil {
 		return "", err
 	}
-	w, err := resolveWorkflowWrite(in)
-	if err != nil {
-		return "", fmt.Errorf("apply %s %s: %w", e.OpType, e.EventID, err)
+	w, known := resolveWorkflowWrite(in)
+	if !known {
+		slog.Default().Warn("sync apply: unknown status in transition_status; wrote the status column only",
+			"event_id", e.EventID, "status", string(in.to))
 	}
 	if err := writeWorkflowColumns(ctx, tx, id, w); err != nil {
 		return "", fmt.Errorf("apply %s %s: %w", e.OpType, e.EventID, err)
 	}
 	return id, nil
+}
+
+// decodeTransitionForApply decodes a winning transition_status payload
+// (MTIX-95.10). It reports ok=false, after logging a warning that names the
+// event, when the payload cannot be decoded or carries no to-status (missing,
+// null or empty). The caller then changes no node column and returns nil, so
+// the event is still recorded as applied and the rest of the pull batch
+// applies: failing it would fail the batch on every later pull too, because
+// the pull cursor advances only when a batch commits.
+func decodeTransitionForApply(e *model.SyncEvent) (model.TransitionStatusPayload, bool) {
+	var p model.TransitionStatusPayload
+	if err := json.Unmarshal(e.Payload, &p); err != nil {
+		slog.Default().Warn("sync apply: undecodable transition_status payload; node left unchanged",
+			"event_id", e.EventID, "error", err)
+		return p, false
+	}
+	if p.To == "" {
+		slog.Default().Warn("sync apply: transition_status without a to-status; node left unchanged",
+			"event_id", e.EventID)
+		return p, false
+	}
+	return p, true
 }

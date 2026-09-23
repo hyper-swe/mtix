@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- **Cleared two reachable gRPC vulnerabilities, GO-2026-6443 and GO-2026-6348 (MTIX-95.23).** `govulncheck` traced both from the gRPC API server's `Start` and `GracefulStop` into `google.golang.org/grpc` v1.82.1: GO-2026-6443 is a server panic on a request that carries neither an `:authority` nor a `Host` header, and GO-2026-6348 is heap exhaustion from fragmented HTTP/2 DATA frames. `google.golang.org/grpc` moves to v1.83.2, and the modules it requires move with it (`golang.org/x/net`, `golang.org/x/sys`, `golang.org/x/sync`, `golang.org/x/crypto`, `golang.org/x/text` and `google.golang.org/genproto/googleapis/rpc`; `google.golang.org/protobuf` is unchanged). `govulncheck` now reports no reachable vulnerabilities, which the release gate requires. One behaviour change: the gRPC server now answers a request missing both headers with HTTP 400 and status `Internal` instead of panicking. Standard gRPC clients always send `:authority`, so they are unaffected. Both advisories were present in v0.5.3-beta and earlier.
 
 ### Fixed
 

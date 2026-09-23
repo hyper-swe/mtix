@@ -37,7 +37,7 @@ func newSyncPullCmd() *cobra.Command {
 		limit       int
 	)
 	cmd := &cobra.Command{
-		Use:   "pull [DSN]",
+		Use:   "pull",
 		Short: "Pull events from the sync hub and apply locally (FR-18)",
 		Long: `Pull events from the BYO Postgres sync hub starting at the local
 last_pulled_clock cursor; apply each event via the FR-18.9 idempotent

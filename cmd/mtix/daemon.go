@@ -31,7 +31,7 @@ func newDaemonCmd() *cobra.Command {
 		install     bool
 	)
 	cmd := &cobra.Command{
-		Use:   "daemon [DSN]",
+		Use:   "daemon",
 		Short: "Run this host's event dispatcher: pull from the hub (if configured), then fire hooks — continuously (FR-20)",
 		Long: `Run the origin-independent dispatch loop: every interval (default 5s),
 pull new events from the BYO Postgres hub (when one is configured) and
@@ -82,6 +82,19 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 		intervalSec = daemonDispatchDefaultIntervalSec
 	}
 
+	// Hub detection: ErrDSNNotConfigured means solo/local-only — a supported
+	// mode, not an error. Any OTHER failure (a DSN on the command line,
+	// fail-closed tracked-config refusal, bad secrets-file permissions) must
+	// abort loudly, before the daemon takes its PID file, rather than
+	// silently degrade to a daemon that never pulls (FR-18.16, MTIX-95.15).
+	hub := true
+	if _, err := resolveSyncDSN(args); err != nil {
+		if !errors.Is(err, transport.ErrDSNNotConfigured) {
+			return fmt.Errorf("mtix daemon: hub DSN: %w", err)
+		}
+		hub = false
+	}
+
 	if held, holderPID, err := daemonPIDFileLive(app.mtixDir); err != nil {
 		return fmt.Errorf("mtix daemon: pid file: %w", err)
 	} else if held {
@@ -98,18 +111,6 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 	// store, so the daemon needs the same on-commit export wiring as the MCP
 	// server and serve.
 	defer wireMirrorExporter(app.logger)()
-
-	// Hub detection: ErrDSNNotConfigured means solo/local-only — a supported
-	// mode, not an error. Any OTHER failure (fail-closed tracked-config
-	// refusal, bad secrets-file permissions) must abort loudly rather than
-	// silently degrade to a daemon that never pulls.
-	hub := true
-	if _, err := resolveSyncDSN(args); err != nil {
-		if !errors.Is(err, transport.ErrDSNNotConfigured) {
-			return fmt.Errorf("mtix daemon: hub DSN: %w", err)
-		}
-		hub = false
-	}
 
 	if hub {
 		fmt.Fprintf(stdout, "mtix daemon: started (PID %d) — pull + dispatch every %ds\n",

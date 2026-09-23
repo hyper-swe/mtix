@@ -16,6 +16,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/spf13/cobra"
+
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
 // pgDumpBin is the executable invoked by mtix sync backup. Override
@@ -44,7 +46,7 @@ var backupTables = []string{
 func newSyncBackupCmd() *cobra.Command {
 	var output string
 	cmd := &cobra.Command{
-		Use:   "backup [DSN]",
+		Use:   "backup",
 		Short: "Dump the mtix-owned hub tables to a portable SQL file (FR-18.21)",
 		Long: `Invoke pg_dump to write a portable SQL dump of the mtix-owned
 tables on the BYO Postgres hub: sync_events, sync_conflicts,
@@ -151,7 +153,9 @@ func pgDumpConnParams(dsn string) (pgDumpConn, error) {
 	}
 	cfg, err := pgconn.ParseConfig(credDSN)
 	if err != nil {
-		return pgDumpConn{}, fmt.Errorf("parse backup dsn: %w", err)
+		// Deliberately not wrapped: err can quote user-info text such as
+		// an invalid escape (FR-18.17, MTIX-95.15).
+		return pgDumpConn{}, fmt.Errorf("parse backup dsn: %w", transport.ErrDSNMalformed)
 	}
 	c.host = cfg.Host
 	c.port = strconv.Itoa(int(cfg.Port))

@@ -17,7 +17,7 @@ import (
 
 func TestSyncPushCmd_Construction(t *testing.T) {
 	cmd := newSyncPushCmd()
-	require.Equal(t, "push [DSN]", cmd.Use)
+	require.Equal(t, "push", cmd.Use)
 	require.NotEmpty(t, cmd.Long)
 	require.NotNil(t, cmd.Flags().Lookup("insecure-tls"))
 	require.NotNil(t, cmd.Flags().Lookup("force"))
@@ -25,7 +25,7 @@ func TestSyncPushCmd_Construction(t *testing.T) {
 
 func TestSyncPullCmd_Construction(t *testing.T) {
 	cmd := newSyncPullCmd()
-	require.Equal(t, "pull [DSN]", cmd.Use)
+	require.Equal(t, "pull", cmd.Use)
 	require.NotEmpty(t, cmd.Long)
 	require.NotNil(t, cmd.Flags().Lookup("insecure-tls"))
 	require.NotNil(t, cmd.Flags().Lookup("limit"))

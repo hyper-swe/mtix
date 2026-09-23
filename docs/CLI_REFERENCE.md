@@ -27,7 +27,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `config` — Manage mtix configuration
 - `context <id>` — Show assembled context chain for a node
 - `create <title>` — Create a new node
-- `daemon [DSN]` — Run this host's event dispatcher: pull from the hub (if configured), then fire hooks — continuously (FR-20)
+- `daemon` — Run this host's event dispatcher: pull from the hub (if configured), then fire hooks — continuously (FR-20)
 - `decompose <parent-id> [title1 title2...]` — Create multiple children under a node atomically
 - `defer <id>` — Defer a node until a specified time
 - `delete <id>` — Soft-delete a node
@@ -267,7 +267,7 @@ Create a new node. Use --under to create a child node.
 
 ## daemon
 
-**Usage:** `daemon [DSN]`
+**Usage:** `daemon`
 
 Run this host's event dispatcher: pull from the hub (if configured), then fire hooks — continuously (FR-20)
 
@@ -1063,17 +1063,17 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.
 ### Subcommands
 
 - `backfill` — Synthesize sync_events from existing nodes (v0.1.x → v0.2.0-beta upgraders)
-- `backup [DSN]` — Dump the mtix-owned hub tables to a portable SQL file (FR-18.21)
-- `clone [DSN]` — Clone the sync hub into a fresh local store (FR-18)
+- `backup` — Dump the mtix-owned hub tables to a portable SQL file (FR-18.21)
+- `clone` — Clone the sync hub into a fresh local store (FR-18)
 - `collisions` — List or resolve restore collisions (ADR-003 §6.1, Option B)
 - `conflicts` — List or resolve unresolved sync conflicts (FR-18.12)
-- `daemon [DSN]` — Run a background pull loop (FR-18, opt-in)
-- `doctor [DSN]` — Run sync health checks (FR-18)
-- `init [DSN]` — Initialize the sync hub for this project (FR-18)
-- `mark-restored [DSN]` — Operator: advance the hub restore-epoch after a backup restore (ADR-003 §15)
-- `migrate [DSN]` — Drive the ADR-003 §7 node-identity migration phases
-- `pull [DSN]` — Pull events from the sync hub and apply locally (FR-18)
-- `push [DSN]` — Push pending events to the sync hub (FR-18)
+- `daemon` — Run a background pull loop (FR-18, opt-in)
+- `doctor` — Run sync health checks (FR-18)
+- `init` — Initialize the sync hub for this project (FR-18)
+- `mark-restored` — Operator: advance the hub restore-epoch after a backup restore (ADR-003 §15)
+- `migrate` — Drive the ADR-003 §7 node-identity migration phases
+- `pull` — Pull events from the sync hub and apply locally (FR-18)
+- `push` — Push pending events to the sync hub (FR-18)
 - `reconcile` — Resolve divergent history (FR-18.13)
 - `status` — Show local sync state (counts + sentinels)
 ---
@@ -1116,7 +1116,7 @@ After backfill: run 'mtix sync push' to ship events to the hub.
 
 ## backup
 
-**Usage:** `backup [DSN]`
+**Usage:** `backup`
 
 Dump the mtix-owned hub tables to a portable SQL file (FR-18.21)
 
@@ -1140,7 +1140,7 @@ the operator's responsibility.
 
 ## clone
 
-**Usage:** `clone [DSN]`
+**Usage:** `clone`
 
 Clone the sync hub into a fresh local store (FR-18)
 
@@ -1174,13 +1174,13 @@ the loser renumbers to the next free number under its parent.
 
 ### Subcommands
 
-- `list [DSN]` — List open restore collisions awaiting resolution
-- `resolve <collision_id> [DSN]` — Resolve a restore collision by choosing the winner
+- `list` — List open restore collisions awaiting resolution
+- `resolve <collision_id>` — Resolve a restore collision by choosing the winner
 ---
 
 ## list
 
-**Usage:** `list [DSN]`
+**Usage:** `list`
 
 List open restore collisions awaiting resolution
 
@@ -1200,7 +1200,7 @@ automatically (audit F-5). --json for agent/CI consumption.
 
 ## resolve
 
-**Usage:** `resolve <collision_id> [DSN]`
+**Usage:** `resolve <collision_id>`
 
 Resolve a restore collision by choosing the winner
 
@@ -1280,7 +1280,7 @@ is preserved and a follow-up tool can replay the choices.
 
 ## daemon
 
-**Usage:** `daemon [DSN]`
+**Usage:** `daemon`
 
 Run a background pull loop (FR-18, opt-in)
 
@@ -1311,7 +1311,7 @@ Use --install to print a systemd unit (linux) or launchd plist
 
 ## doctor
 
-**Usage:** `doctor [DSN]`
+**Usage:** `doctor`
 
 Run sync health checks (FR-18)
 
@@ -1335,7 +1335,7 @@ agents and CI consumption.
 
 ## init
 
-**Usage:** `init [DSN]`
+**Usage:** `init`
 
 Initialize the sync hub for this project (FR-18)
 
@@ -1343,13 +1343,14 @@ Initialize the BYO Postgres sync hub for this project. Runs the schema
 migration under a PG advisory lock so concurrent first-connects are safe.
 
 DSN sources (FR-18.16):
-  1. Argument:           mtix sync init postgres://...
-  2. Environment:        MTIX_SYNC_DSN=postgres://... mtix sync init
-  3. Secrets file:       .mtix/secrets (mode 0600, gitignored)
+  1. Environment:        MTIX_SYNC_DSN
+  2. Secrets file:       .mtix/secrets (mode 0600, gitignored)
 
-The DSN is refused if found in any tracked .mtix/config.* file. The
-default sslmode is verify-full; --insecure-tls is accepted only when
-every host the connection may use is loopback or a local socket.
+Positional DSN arguments are no longer accepted; set MTIX_SYNC_DSN or
+.mtix/secrets. The DSN is refused if found in any tracked
+.mtix/config.* file. The default sslmode is verify-full; --insecure-tls
+is accepted only when every host the connection may use is loopback or
+a local socket.
 
 ### Flags
 
@@ -1360,7 +1361,7 @@ every host the connection may use is loopback or a local socket.
 
 ## mark-restored
 
-**Usage:** `mark-restored [DSN]`
+**Usage:** `mark-restored`
 
 Operator: advance the hub restore-epoch after a backup restore (ADR-003 §15)
 
@@ -1384,7 +1385,7 @@ This is an OPERATOR action — no client or push can advance the epoch.
 
 ## migrate
 
-**Usage:** `migrate [DSN]`
+**Usage:** `migrate`
 
 Drive the ADR-003 §7 node-identity migration phases
 
@@ -1411,7 +1412,7 @@ Phase 1 MOVES display numbers on the hub when duplicates exist. Without
 
 ## pull
 
-**Usage:** `pull [DSN]`
+**Usage:** `pull`
 
 Pull events from the sync hub and apply locally (FR-18)
 
@@ -1434,7 +1435,7 @@ Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.
 
 ## push
 
-**Usage:** `push [DSN]`
+**Usage:** `push`
 
 Push pending events to the sync hub (FR-18)
 

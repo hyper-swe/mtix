@@ -47,7 +47,8 @@ REVOKE CREATE ON SCHEMA public FROM mtix_sync;
 
 ### 3. Store the DSN
 
-Two sources, in order of preference:
+Two sources, in order of preference. Positional DSN arguments are no
+longer accepted; set `MTIX_SYNC_DSN` or `.mtix/secrets`.
 
 ```bash
 # Preferred (production): env var

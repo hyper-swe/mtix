@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -33,10 +34,10 @@ type ConflictRow struct {
 // validResolveActions are the FR-18.12 / SYNC-DESIGN section 11
 // manual override choices.
 var validResolveActions = map[string]bool{
-	"keep-local":       true,
-	"keep-remote":      true,
-	"both-renumbered":  true,
-	"acknowledge":      true,
+	"keep-local":      true,
+	"keep-remote":     true,
+	"both-renumbered": true,
+	"acknowledge":     true,
 }
 
 // newSyncConflictsCmd creates the `mtix sync conflicts` command group
@@ -64,7 +65,7 @@ human-readable table; --json for agent and CI consumption.
 When unresolved conflicts exceed 50, a banner is printed pointing
 at --batch <node_id> for batch resolution. --batch <node_id> filters
 output to the named node.`,
-		Args: cobra.NoArgs,
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if batch != "" {
 				nodeFilter = batch
@@ -91,7 +92,7 @@ resolution='manual' since the original row is append-only per
 FR-18.5). Actual state mutation (e.g. reverting a winner field) is
 DEFERRED to a future ticket; v1 records the decision so audit history
 is preserved and a follow-up tool can replay the choices.`,
-		Args: cobra.ExactArgs(1),
+		Args: syncExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncConflictsResolve(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args[0], action)
@@ -141,7 +142,10 @@ func runSyncConflictsResolve(ctx context.Context, stdout, stderr io.Writer,
 	}
 	conflictID, err := strconv.ParseInt(conflictIDArg, 10, 64)
 	if err != nil {
-		return fmt.Errorf("mtix sync conflicts resolve: conflict_id must be an integer: %w", err)
+		// Deliberately not wrapped: err quotes the argument, which may be
+		// a DSN typed in the wrong place (FR-18.17, MTIX-95.15).
+		return fmt.Errorf("mtix sync conflicts resolve: conflict_id must be an integer: %w",
+			model.ErrInvalidInput)
 	}
 	if app.mtixDir == "" {
 		return fmt.Errorf("mtix sync conflicts resolve: not in an mtix project")

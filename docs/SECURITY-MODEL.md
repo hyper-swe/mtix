@@ -88,8 +88,9 @@ The sync hub is a replication mechanism, not a canonical store. Events flow CLI 
 1. **`MTIX_SYNC_DSN` env var** — production-preferred path. Lives in the environment, never on disk.
 2. **`.mtix/secrets`** — file-mode 0600 is enforced; `Source()` refuses looser modes. Auto-gitignored by `mtix sync init`.
 3. **Tracked config files** (`.mtix/config.{yaml,yml,json}`) — `Source()` scans for DSN-shaped keys and **refuses to proceed** if any are present. Fail-closed at the earliest detectable misconfiguration.
+4. **Command line** — positional DSN arguments are no longer accepted; set `MTIX_SYNC_DSN` or `.mtix/secrets`.
 
-Every error string that may contain a DSN passes through `redact.DSN` before reaching stderr, MCP output, or panic traces. `cmd/mtix/main.go` wraps `main()` with `defer redact.Recover(nil)` so panics with a DSN in scope are redacted before the runtime printer sees them.
+Every error string that may contain a DSN passes through `redact.DSN` before reaching stderr, MCP output, or panic traces. Sync command errors, `mtix sync doctor` details (text and `--json`) and the CLI's final error line also pass through one scrubber that removes the configured DSN and its password, whether or not the DSN parses, and a DSN that cannot be parsed is reported with a fixed message that quotes none of it. `cmd/mtix/main.go` wraps `main()` with `defer redact.Recover(nil)` so panics with a DSN in scope are redacted before the runtime printer sees them.
 
 ### TLS posture
 
@@ -171,7 +172,7 @@ Procedure when a CLI machine is lost:
 
 1. On every surviving CLI, run `mtix sync status` — pending count of 0 means all your in-flight events are already on the hub.
 2. The lost machine's pending events (if any) are unrecoverable.
-3. Provision the replacement machine. Run `mtix sync clone DSN` to rebuild local state from the hub event log. Replay is idempotent (per `applied_events` dedupe).
+3. Provision the replacement machine. Set `MTIX_SYNC_DSN` (or `.mtix/secrets`) and run `mtix sync clone` to rebuild local state from the hub event log. Replay is idempotent (per `applied_events` dedupe).
 
 The hub-unreachable detector (`internal/sync/workflow`) surfaces this risk: when `meta.sync.consecutive_errors ≥ 3`, the `mtix_sync_workflow` MCP tool reports state `hub-unreachable` and recommends `mtix sync doctor`. Operators who care about durability across machine loss must push frequently OR run `mtix sync daemon` for periodic auto-push.
 
@@ -217,7 +218,7 @@ Before going live with sync mode, verify each of these:
 - [ ] PG role used by the hub is **least privilege**: SELECT/INSERT on `sync_events`, `sync_conflicts`, `sync_projects`, `applied_events`, `audit_log` only. Not SUPERUSER, not CREATEDB, not REPLICATION.
 - [ ] `audit_log` and `sync_conflicts` triggers are in place (test: `UPDATE audit_log SET ...` raises exception).
 - [ ] Backup procedure for the hub is in place AND has been tested to restore (use `mtix sync backup --output FILE` for the mtix-owned tables).
-- [ ] DR runbook tested: rebuild a CLI from a fresh `mtix sync clone DSN`.
+- [ ] DR runbook tested: rebuild a CLI from a fresh `mtix sync clone` (DSN from `MTIX_SYNC_DSN` or `.mtix/secrets`).
 - [ ] At least one of: client-side pre-push hook installed across all team machines (`examples/hooks/pre-push` calls `mtix sync push`), OR server-side enforcement.
 - [ ] If durability across machine loss matters: `mtix sync daemon` is running as a systemd/launchd service on each developer's machine (push interval ≤ 30s recommended).
 - [ ] All team members have read this document and understand the trust model and the same-authorID limitation.

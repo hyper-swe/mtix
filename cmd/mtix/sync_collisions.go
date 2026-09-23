@@ -53,7 +53,7 @@ func newSyncCollisionsListCmd() *cobra.Command {
 		project     string
 	)
 	cmd := &cobra.Command{
-		Use:   "list [DSN]",
+		Use:   "list",
 		Short: "List open restore collisions awaiting resolution",
 		Long: `List unresolved restore collisions for the project. Each row surfaces
 BOTH contesting nodes and their available signals (uids, epochs, claim
@@ -79,7 +79,7 @@ func newSyncCollisionsResolveCmd() *cobra.Command {
 		winner      string
 	)
 	cmd := &cobra.Command{
-		Use:   "resolve <collision_id> [DSN]",
+		Use:   "resolve <collision_id>",
 		Short: "Resolve a restore collision by choosing the winner",
 		Long: `Resolve one restore collision (Option B). --winner selects which node
 keeps the contested number:
@@ -150,7 +150,9 @@ func runSyncCollisionsResolve(ctx context.Context, stdout, stderr io.Writer,
 	}
 	collisionID, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil {
-		return fmt.Errorf("mtix sync collisions resolve: collision_id must be an integer: %w", err)
+		// Deliberately not wrapped: err quotes the argument, which may be
+		// a DSN typed in the wrong place (FR-18.17, MTIX-95.15).
+		return fmt.Errorf("mtix sync collisions resolve: collision_id must be an integer: %w", model.ErrInvalidInput)
 	}
 	if app.mtixDir == "" || app.store == nil {
 		return fmt.Errorf("mtix sync collisions resolve: not in an mtix project (run 'mtix init' first)")

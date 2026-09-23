@@ -76,6 +76,17 @@ var (
 	// ErrTLSWeakWithoutFlag is returned when the parsed DSN has a weak
 	// sslmode but --insecure-tls was not set.
 	ErrTLSWeakWithoutFlag = errors.New("weak sslmode requires --insecure-tls")
+
+	// ErrDSNMalformed is wrapped by every error for a DSN that cannot be
+	// parsed. The messages that wrap it are fixed and quote no part of
+	// the DSN (FR-18.17, MTIX-95.15).
+	ErrDSNMalformed = errors.New("DSN could not be parsed")
+
+	// ErrPositionalDSN is returned when a DSN is given as a command-line
+	// argument. The hub DSN comes only from MTIX_SYNC_DSN or
+	// .mtix/secrets; the message is fixed and never repeats the argument
+	// (FR-18.16, MTIX-95.15).
+	ErrPositionalDSN = errors.New("a DSN on the command line is refused: set MTIX_SYNC_DSN or .mtix/secrets")
 )
 
 // Options control non-DSN behavior of the transport.
@@ -214,24 +225,22 @@ func EnforceTLSPosture(dsn string, opts Options) (string, error) {
 	return parsed.String(), nil
 }
 
-// parseDSN parses a postgres:// or postgresql:// URL form. Falls back
-// to wrapping a key=value form into URL form so url.Parse can handle
-// it; rejects anything else.
+// parseDSN parses a postgres:// or postgresql:// URL form and rejects
+// anything else (FR-18.15). Every failure is a fixed message wrapping
+// ErrDSNMalformed that quotes no part of the DSN: the parser's own
+// error is discarded because it quotes the input, including user-info
+// text such as an invalid escape (FR-18.17, MTIX-95.15).
 func parseDSN(dsn string) (*url.URL, error) {
-	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
-		return url.Parse(dsn)
+	if !strings.HasPrefix(dsn, "postgres://") && !strings.HasPrefix(dsn, "postgresql://") {
+		return nil, fmt.Errorf("%w: it must start with postgres:// or postgresql://", ErrDSNMalformed)
 	}
-	return nil, fmt.Errorf("DSN must start with postgres:// or postgresql://: got prefix %q", dsnPrefix(dsn))
-}
-
-// dsnPrefix returns at most the first 16 chars of the DSN for safe
-// inclusion in error messages — never the credentials.
-func dsnPrefix(dsn string) string {
-	const limit = 16
-	if len(dsn) <= limit {
-		return dsn
+	u, err := url.Parse(dsn)
+	if err != nil {
+		// Deliberately not wrapped: err quotes the DSN.
+		return nil, fmt.Errorf(
+			"%w: percent-encode reserved characters in the user name and password", ErrDSNMalformed)
 	}
-	return dsn[:limit] + "..."
+	return u, nil
 }
 
 // resolveHosts returns every host the driver may dial for the DSN u

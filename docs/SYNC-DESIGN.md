@@ -259,6 +259,7 @@ There is no per-project sync flag, filter, or cursor.
 | `.mtix/secrets` file (mode 0600, gitignored) | Yes | Persists across shells; gitignore rule auto-installed by `mtix sync init` |
 | Any tracked YAML/JSON config (`.mtix/config.yaml`, etc.) | **NO** | Refused with `MTIX_SYNC_DSN_IN_TRACKED_FILE` at config load. Test: place DSN in `.mtix/config.yaml`, expect refusal. |
 | CLI flag `--dsn` | **NO** | Process listings expose flags; refused at flag parse |
+| Positional DSN argument (`mtix sync <command> <DSN>`, `mtix daemon <DSN>`) | **NO** | Positional DSN arguments are no longer accepted; set `MTIX_SYNC_DSN` or `.mtix/secrets` |
 
 ### 7.6 Stolen DSN (HIGH)
 - A stolen DSN gives the holder full read+write on the hub. This is documented as a known residual risk.

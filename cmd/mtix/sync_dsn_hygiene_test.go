@@ -6,99 +6,189 @@ package main
 import (
 	"bytes"
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/sync/redact"
-	"github.com/stretchr/testify/require"
 )
 
-// TestDSN_NeverInAnyFR18CommandOutput is the FR-18.17 / MTIX-15.7.5
-// regression sweep. For each FR-18 sync command, run with a
-// deliberately-leaking DSN containing redact.SecretSentinel and
-// assert the sentinel does NOT appear in stdout or stderr.
+// sweepCommand is one CLI entry point in the FR-18.17 output sweep.
+type sweepCommand struct {
+	name string
+	// argv is the command line under mtix; pos is the positional DSN,
+	// if any, placed where a positional argument would go.
+	argv func(pos []string) []string
+	// reached is output that proves a DSN from the environment or the
+	// secrets file reached the command's DSN path. Empty for commands
+	// that never read a DSN.
+	reached string
+	// timeout bounds a long-running command (the daemons).
+	timeout time.Duration
+}
+
+// cmdLine joins a command path, positional arguments and flags.
+func cmdLine(path []string, pos []string, flags ...string) []string {
+	out := append([]string{}, path...)
+	out = append(out, pos...)
+	return append(out, flags...)
+}
+
+// sweepCommands lists every sync command and both daemons, except
+// doctor: its cobra wrapper exits the process on failed checks, so the
+// sweep runs it through runSyncDoctor instead.
+func sweepCommands(backupOut string) []sweepCommand {
+	const daemonTimeout = 500 * time.Millisecond
+	const connect = "mtix sync connect:"
+	const pullErr = "pull error (will retry)"
+	at := func(path ...string) func(pos []string) []string {
+		return func(pos []string) []string { return cmdLine(path, pos) }
+	}
+	return []sweepCommand{
+		{name: "sync init", argv: at("sync", "init"), reached: connect},
+		{name: "sync clone", argv: at("sync", "clone"), reached: connect},
+		{name: "sync push", argv: at("sync", "push"), reached: connect},
+		{name: "sync pull", argv: at("sync", "pull"), reached: connect},
+		{name: "sync mark-restored", argv: at("sync", "mark-restored"), reached: connect},
+		{name: "sync migrate", argv: func(pos []string) []string {
+			return cmdLine([]string{"sync", "migrate"}, pos, "--project", "TEST")
+		}, reached: connect},
+		{name: "sync collisions list", argv: func(pos []string) []string {
+			return cmdLine([]string{"sync", "collisions", "list"}, pos, "--project", "TEST")
+		}, reached: connect},
+		{name: "sync collisions resolve", argv: func(pos []string) []string {
+			return cmdLine([]string{"sync", "collisions", "resolve", "1"}, pos, "--winner", "held")
+		}, reached: connect},
+		{name: "sync backup", argv: func(pos []string) []string {
+			return cmdLine([]string{"sync", "backup"}, pos, "--output", backupOut)
+		}, reached: "mtix sync "},
+		{name: "sync daemon", argv: func(pos []string) []string {
+			return cmdLine([]string{"sync", "daemon"}, pos, "--interval", "3600")
+		}, reached: pullErr, timeout: daemonTimeout},
+		{name: "daemon", argv: func(pos []string) []string {
+			return cmdLine([]string{"daemon"}, pos, "--interval", "3600")
+		}, reached: pullErr, timeout: daemonTimeout},
+		{name: "sync status", argv: at("sync", "status")},
+		{name: "sync conflicts list", argv: at("sync", "conflicts", "list")},
+		{name: "sync conflicts resolve", argv: func(pos []string) []string {
+			return cmdLine([]string{"sync", "conflicts", "resolve", "1"}, pos, "--action", "acknowledge")
+		}},
+		{name: "sync reconcile", argv: func(pos []string) []string {
+			return cmdLine([]string{"sync", "reconcile"}, pos, "--discard-local")
+		}},
+		{name: "sync backfill", argv: func(pos []string) []string {
+			return cmdLine([]string{"sync", "backfill"}, pos, "--dry-run")
+		}},
+	}
+}
+
+// execSyncCLI runs argv under a root configured like production's
+// (cobra's own error and usage printing silenced, so the returned error
+// is the only error text) with the sync and daemon trees attached.
+func execSyncCLI(ctx context.Context, argv []string) (string, string, error) {
+	root := &cobra.Command{Use: "mtix", SilenceErrors: true, SilenceUsage: true}
+	root.AddCommand(newSyncCmd(), newDaemonCmd())
+	var stdout, stderr bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs(argv)
+	err := root.ExecuteContext(ctx)
+	return stdout.String(), stderr.String(), err
+}
+
+// runSweepCommand runs one sweep command with its timeout and returns
+// everything it made observable: stdout, stderr and the returned error.
+func runSweepCommand(t *testing.T, c sweepCommand, pos []string) string {
+	t.Helper()
+	timeout := c.timeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	stdout, stderr, err := execSyncCLI(ctx, c.argv(pos))
+	return errorsAsText(err, stdout, stderr)
+}
+
+// requireDSNPathReached fails when a command stopped before its DSN
+// path, which would make the leak check for it vacuous.
+func requireDSNPathReached(t *testing.T, label, text, reached string) {
+	t.Helper()
+	for _, early := range []string{"no DSN configured", "not in an mtix project", "local store not initialized"} {
+		require.NotContainsf(t, text, early, "%s stopped before its DSN path:\n%s", label, text)
+	}
+	require.Containsf(t, text, reached, "%s did not reach its DSN path:\n%s", label, text)
+}
+
+// TestDSN_NeverInAnyFR18CommandOutput is the FR-18.17 regression sweep
+// (MTIX-15.7.5, extended by MTIX-95.15). Every sync command and both
+// daemons run against a real local store with a synthetic DSN in each
+// form (well-formed, malformed, scheme-less) and from each source (the
+// environment, the secrets file, the command line). No part of the
+// password, and never the DSN itself, may appear in stdout, stderr or
+// the returned error.
 //
-// Commands run in error mode (no real PG behind them); the test
-// exercises the "DSN flowed into an error message" code paths since
-// those are the most likely leak vectors. The successful-execution
-// paths require a live PG and are exercised by the integration tests
-// when MTIX_PG_TEST_DSN is set.
-//
-// The sentinel string is defined in internal/sync/redact and is
-// known across the sync packages; the same value used in 15.3.4's
-// transport security tests.
+// No hub is reachable (the host is under .invalid), so each command runs
+// its failure path. For environment and secrets-file DSNs the sweep also
+// checks that each DSN-reading command reached its DSN path, so a
+// command that stops early cannot pass vacuously.
 func TestDSN_NeverInAnyFR18CommandOutput(t *testing.T) {
-	saved := app.mtixDir
-	dir := t.TempDir()
-	app.mtixDir = dir
-	t.Cleanup(func() { app.mtixDir = saved })
-
-	leakyDSN := "postgres://user:" + redact.SecretSentinel + "@hub.example.com:5432/mtix"
-	t.Setenv("MTIX_SYNC_DSN", leakyDSN)
 	t.Setenv("MTIX_SYNC_HOOK", "")
+	t.Setenv("MTIX_PG_DUMP", filepath.Join(t.TempDir(), "absent-pg_dump"))
+	for _, d := range syntheticDSNs() {
+		for _, source := range []string{sourceEnv, sourceSecrets, sourcePositional} {
+			t.Run(d.name+"/"+source, func(t *testing.T) {
+				initTestApp(t)
+				pos := configureSyncDSN(t, app.mtixDir, source, d.dsn)
+				backupOut := filepath.Join(t.TempDir(), "hub.sql")
+				for _, c := range sweepCommands(backupOut) {
+					text := runSweepCommand(t, c, pos)
+					requireNoSecret(t, c.name, text, d)
+					if source != sourcePositional && c.reached != "" {
+						requireDSNPathReached(t, c.name, text, c.reached)
+					}
+				}
 
-	// Each invocation captures its own buffers and asserts the sentinel
-	// is absent regardless of whether the command succeeded or errored.
-	type cmdRunner func(ctx context.Context, stdout, stderr *bytes.Buffer)
-	cases := []struct {
-		name string
-		run  cmdRunner
-	}{
-		{"init", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
-			_ = runSyncInit(ctx, stdout, stderr, nil, transport.Options{InsecureTLS: true})
-		}},
-		{"clone", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
-			_ = runSyncClone(ctx, stdout, stderr, nil, transport.Options{InsecureTLS: true}, false, 1000)
-		}},
-		{"push", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
-			_ = runSyncPush(ctx, stdout, stderr, nil, transport.Options{InsecureTLS: true}, true)
-		}},
-		{"pull", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
-			_ = runSyncPull(ctx, stdout, stderr, nil, transport.Options{InsecureTLS: true}, 1000)
-		}},
-		{"status", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
-			_ = runSyncStatus(ctx, stdout, stderr)
-		}},
-		{"doctor", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
-			_ = runSyncDoctor(ctx, stdout, stderr, nil, transport.Options{InsecureTLS: true})
-		}},
-		{"conflicts list", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
-			_ = runSyncConflictsList(ctx, stdout, stderr, "")
-		}},
-		{"conflicts resolve", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
-			_ = runSyncConflictsResolve(ctx, stdout, stderr, "1", "keep-local")
-		}},
-		{"reconcile", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
-			_ = runSyncReconcile(ctx, stdout, stderr, reconcileFlags{discardLocal: true})
-		}},
-		{"backup", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
-			_ = runSyncBackup(ctx, stdout, stderr, nil, "/tmp/__nonexistent_path_for_test")
-		}},
-		{"backfill", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
-			// Backfill is local-only; it does not open a PG connection and
-			// thus cannot leak the DSN. Run it in the sweep anyway so a
-			// future refactor that accidentally opens PG from this code
-			// path is caught.
-			_ = runSyncBackfill(ctx, stdout, stderr, true /*dryRun*/, false)
-		}},
-		{"migrate", func(ctx context.Context, stdout, stderr *bytes.Buffer) {
-			_ = runSyncMigrate(ctx, stdout, stderr, nil,
-				transport.Options{InsecureTLS: true}, "MTIX", false)
-		}},
+				var stdout, stderr bytes.Buffer
+				err := runSyncDoctor(context.Background(), &stdout, &stderr,
+					pos, transport.Options{})
+				text := errorsAsText(err, stdout.String(), stderr.String())
+				requireNoSecret(t, "sync doctor", text, d)
+				if source != sourcePositional {
+					requireDSNPathReached(t, "sync doctor", text, "PG reachable")
+				}
+			})
+		}
 	}
+}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			tc.run(context.Background(), &stdout, &stderr)
-
-			out := stdout.String() + stderr.String()
-			require.NotContainsf(t, out, redact.SecretSentinel,
-				"%s leaked DSN sentinel into observable output:\n%s",
-				tc.name, out)
-		})
+// TestDSNSweep_CoversEverySyncCommand: every runnable command under
+// mtix sync, and mtix daemon, is in the output sweep, so a new command
+// cannot ship outside it (FR-18.17, MTIX-95.15).
+func TestDSNSweep_CoversEverySyncCommand(t *testing.T) {
+	swept := map[string]bool{"sync doctor": true}
+	for _, c := range sweepCommands("") {
+		swept[c.name] = true
 	}
+	root := &cobra.Command{Use: "mtix"}
+	root.AddCommand(newSyncCmd(), newDaemonCmd())
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+		path := strings.TrimPrefix(c.CommandPath(), "mtix ")
+		if c == root || !c.Runnable() || path == "sync" || strings.HasPrefix(path, "daemon ") {
+			return // the root, groups, the FR-15 file check, and the OS-service helpers
+		}
+		require.Truef(t, swept[path], "%q is missing from the FR-18.17 output sweep", path)
+	}
+	walk(root)
 }
 
 func TestDSN_RedactDSNCatchesAllSchemes(t *testing.T) {

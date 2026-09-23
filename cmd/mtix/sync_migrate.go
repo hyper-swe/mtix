@@ -50,7 +50,7 @@ func newSyncMigrateCmd() *cobra.Command {
 	var yes, insecureTLS bool
 	var project string
 	cmd := &cobra.Command{
-		Use:   "migrate [DSN]",
+		Use:   "migrate",
 		Short: "Drive the ADR-003 §7 node-identity migration phases",
 		Long: `Orchestrate the distributed node-identity migration (ADR-003 §7):
 

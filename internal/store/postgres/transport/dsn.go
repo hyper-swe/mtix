@@ -71,7 +71,7 @@ var (
 	// ErrTLSWeakNonLoopback is returned when --insecure-tls is requested
 	// but a host the connection may use is not loopback or a local
 	// Unix-domain socket, or the hosts cannot be resolved.
-	ErrTLSWeakNonLoopback = errors.New("weak TLS only allowed on loopback hosts")
+	ErrTLSWeakNonLoopback = errors.New("weak TLS only allowed on loopback hosts or local sockets")
 
 	// ErrTLSWeakWithoutFlag is returned when the parsed DSN has a weak
 	// sslmode but --insecure-tls was not set.
@@ -172,8 +172,8 @@ func refuseDSNInTrackedConfig(mtixDir string) error {
 // variables or a service file. A host is local when it is loopback
 // (see isLoopback) or a Unix-domain socket directory, which the driver
 // never wraps in TLS. A DSN whose hosts cannot be resolved is refused.
-// A refusal names the host by its position in the resolved list, never
-// by its text.
+// No refusal quotes host text: a refused host is named by its position
+// in the resolved list.
 //
 // Returns the (possibly modified) DSN with sslmode populated and
 // MTIX_SYNC_SSLROOTCERT honored. The returned DSN is ready for
@@ -192,7 +192,7 @@ func EnforceTLSPosture(dsn string, opts Options) (string, error) {
 	}
 	if mode != "verify-full" {
 		if !opts.InsecureTLS {
-			return "", fmt.Errorf("sslmode=%s on host %q: %w", mode, parsed.Hostname(), ErrTLSWeakWithoutFlag)
+			return "", fmt.Errorf("sslmode=%s: %w", mode, ErrTLSWeakWithoutFlag)
 		}
 		hosts, resolveErr := resolveHosts(parsed, q)
 		if resolveErr != nil {
@@ -246,8 +246,7 @@ func dsnPrefix(dsn string) string {
 // load). u and q are not modified.
 //
 // The parser's own error quotes the connection string, so it is
-// replaced by a fixed message that names only the categories of
-// setting that can fail to parse, never a value.
+// replaced by a fixed message that names no setting value.
 func resolveHosts(u *url.URL, q url.Values) ([]*pgconn.FallbackConfig, error) {
 	probeQuery := make(url.Values, len(q)+2)
 	for k, v := range q {
@@ -262,7 +261,7 @@ func resolveHosts(u *url.URL, q url.Values) ([]*pgconn.FallbackConfig, error) {
 	if err != nil {
 		// Deliberately not wrapped: err quotes the connection string.
 		return nil, fmt.Errorf(
-			"connection settings could not be parsed (check port, connect_timeout, target_session_attrs, service): %w",
+			"connection settings could not be parsed; check the DSN's connection parameters: %w",
 			ErrTLSWeakNonLoopback)
 	}
 	hosts := make([]*pgconn.FallbackConfig, 0, 1+len(cfg.Fallbacks))

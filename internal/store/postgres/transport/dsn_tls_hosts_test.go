@@ -154,6 +154,32 @@ func TestEnforceTLSPosture_NonLoopbackHost_MessageNamesPositionNotHost(t *testin
 	}
 }
 
+func TestEnforceTLSPosture_WeakModeWithoutFlag_MessageNamesNoHost(t *testing.T) {
+	tests := []struct {
+		name     string
+		dsn      string
+		hostText string
+	}{
+		{"password fragment read as host", "postgres://u:p@ss:1/x@h/db?sslmode=disable", `"ss"`},
+		{"password fragment in a host list", "postgres://u:pw@localhost:12,secret:34/x@h/db?sslmode=disable", "secret"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pinPGEnv(t)
+			_, err := transport.EnforceTLSPosture(tt.dsn, transport.Options{})
+			require.Error(t, err)
+			require.True(t, errors.Is(err, transport.ErrTLSWeakWithoutFlag))
+			require.NotContains(t, err.Error(), tt.hostText, "message must not echo host text")
+			require.NotContains(t, err.Error(), "host", "message must not name a host")
+		})
+	}
+}
+
+func TestErrTLSWeakNonLoopback_Text_NamesLoopbackAndLocalSockets(t *testing.T) {
+	require.Equal(t, "weak TLS only allowed on loopback hosts or local sockets",
+		transport.ErrTLSWeakNonLoopback.Error())
+}
+
 func TestEnforceTLSPosture_LocalEffectiveHosts_AcceptsWeakMode(t *testing.T) {
 	cases := []hostCase{
 		{name: "localhost", dsn: "postgres://u:pw@localhost:5432/hub"},
@@ -242,6 +268,14 @@ func TestEnforceTLSPosture_DSNTheDriverCannotParse_ReturnsFixedMessage(t *testin
 			"postgres://" + user + ":" + secret + "@localhost/hub?target_session_attrs=bogus"},
 		{"service that does not exist",
 			"postgres://" + user + ":" + secret + "@localhost/hub?service=absent"},
+		{"unknown channel_binding",
+			"postgres://" + user + ":" + secret + "@localhost/hub?channel_binding=bogus"},
+		{"invalid min_protocol_version",
+			"postgres://" + user + ":" + secret + "@localhost/hub?min_protocol_version=bogus"},
+		{"invalid max_protocol_version",
+			"postgres://" + user + ":" + secret + "@localhost/hub?max_protocol_version=bogus"},
+		{"host list the driver cannot split",
+			"postgres://" + user + ":" + secret + "@a:b:5432/hub"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -254,7 +288,7 @@ func TestEnforceTLSPosture_DSNTheDriverCannotParse_ReturnsFixedMessage(t *testin
 			require.True(t, errors.Is(err, transport.ErrTLSWeakNonLoopback),
 				"want ErrTLSWeakNonLoopback, got %v", err)
 			msg := err.Error()
-			require.Contains(t, msg, "connection settings could not be parsed")
+			require.Contains(t, msg, "connection settings could not be parsed; check the DSN's connection parameters")
 			for _, forbidden := range []string{user, secret, "localhost", "db.example.com", "postgres://", "absent"} {
 				require.NotContains(t, msg, forbidden, "message must name no host or credential")
 			}

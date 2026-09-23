@@ -148,6 +148,7 @@ func TestEnforceTLS_RefusesWeakerWithoutInsecureFlag(t *testing.T) {
 }
 
 func TestEnforceTLS_AllowsWeakerWithInsecureFlagOnLoopback(t *testing.T) {
+	pinPGEnv(t)
 	// IPv6 literals take brackets in a URL; without them the driver
 	// reads "::1:5432" as a single address.
 	cases := []string{"127.0.0.1", "localhost", "[::1]"}
@@ -162,6 +163,7 @@ func TestEnforceTLS_AllowsWeakerWithInsecureFlagOnLoopback(t *testing.T) {
 }
 
 func TestEnforceTLS_RefusesWeakerOnRemoteHostEvenWithInsecureFlag(t *testing.T) {
+	pinPGEnv(t)
 	_, err := transport.EnforceTLSPosture(
 		"postgres://user:pass@db.example.com/db?sslmode=disable",
 		transport.Options{InsecureTLS: true},

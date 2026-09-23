@@ -19,8 +19,10 @@ import (
 // When cascade is true (default), all descendants are also soft-deleted.
 // In the same transaction it records which delete removed each node
 // (MTIX-95.18): the target gets a cascade_deletes row naming itself, and
-// cascadeDelete gives every descendant it removes a row naming the target, so
-// UndeleteNode can restore exactly what this delete removed.
+// cascadeDelete gives every descendant it removes a row naming the target.
+// Each row is stamped with the node's deleted_at and deleted_by, so
+// UndeleteNode can restore exactly what this delete removed, and can tell
+// when a row no longer describes the node's current delete.
 // Recalculates parent progress excluding the deleted subtree per FR-5.7.
 //
 // Returns ErrNotFound if the node does not exist or is already deleted.
@@ -44,7 +46,7 @@ func (s *Store) DeleteNode(ctx context.Context, id string, cascade bool, deleted
 		}
 
 		// MTIX-95.18: the target was removed by its own delete.
-		if err := recordCascadeRoot(ctx, tx, id, id); err != nil {
+		if err := recordCascadeRoot(ctx, tx, id, deletedBy, now); err != nil {
 			return err
 		}
 
@@ -97,19 +99,22 @@ func loadDeleteTarget(ctx context.Context, tx *sql.Tx, id string) (sql.NullStrin
 	return parentID, nil
 }
 
-// recordCascadeRoot records, in the caller's transaction, that the delete
-// whose target was rootID removed nodeID (MTIX-95.18). An existing row for
-// nodeID is overwritten: a node being deleted is live, so any row it still
-// carries is stale, left by a restore that did not clear it (an older
-// binary's undelete, an import).
-func recordCascadeRoot(ctx context.Context, tx *sql.Tx, nodeID, rootID string) error {
-	// Upsert the provenance row of one node.
+// recordCascadeRoot records, in the caller's transaction, that the delete of
+// id removed id itself: its cascade_deletes row names id as the root and is
+// stamped with the deleted_at and deleted_by the delete just wrote
+// (MTIX-95.18). An existing row for id is overwritten, root and stamp: a node
+// being deleted is live, so any row it still carries is stale, left by a
+// restore that did not clear it (an older binary's undelete, an import).
+func recordCascadeRoot(ctx context.Context, tx *sql.Tx, id, deletedBy, now string) error {
+	// Upsert the stamped provenance row of the delete target.
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO cascade_deletes (node_id, root_id) VALUES (?, ?)
-		 ON CONFLICT(node_id) DO UPDATE SET root_id = excluded.root_id`,
-		nodeID, rootID,
+		`INSERT INTO cascade_deletes (node_id, root_id, deleted_at, deleted_by)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(node_id) DO UPDATE SET root_id = excluded.root_id,
+		     deleted_at = excluded.deleted_at, deleted_by = excluded.deleted_by`,
+		id, id, now, deletedBy,
 	); err != nil {
-		return fmt.Errorf("record cascade root of %s: %w", nodeID, err)
+		return fmt.Errorf("record cascade root of %s: %w", id, err)
 	}
 	return nil
 }
@@ -120,23 +125,24 @@ func recordCascadeRoot(ctx context.Context, tx *sql.Tx, nodeID, rootID string) e
 // matches literally and never reaches another project (MTIX-95.17).
 //
 // Before the rows change it records, in the same transaction, that this
-// delete (the cascade root parentID) removed each live descendant
-// (MTIX-95.18). A descendant that is already deleted was removed by an
-// earlier delete; it keeps that delete's row and is not restored when
-// parentID is undeleted.
+// delete (the cascade root parentID) removed each live descendant, stamped
+// with the deleted_at and deleted_by it is about to write (MTIX-95.18). A
+// descendant that is already deleted was removed by an earlier delete; it
+// keeps that delete's row and is not restored when parentID is undeleted.
 func cascadeDelete(ctx context.Context, tx *sql.Tx, parentID, deletedBy, now string) error {
 	descendants := escapeLIKEPrefix(parentID) + ".%"
 
-	// Record the cascade root of every live descendant (escaped prefix,
-	// parameterized, ESCAPE '\'). Stale rows on live nodes are overwritten.
-	// The WHERE clause also keeps SQLite from reading ON CONFLICT as a join
-	// constraint of the SELECT.
+	// Record the stamped cascade root of every live descendant (escaped
+	// prefix, parameterized, ESCAPE '\'). Stale rows on live nodes are
+	// overwritten, root and stamp. The WHERE clause also keeps SQLite from
+	// reading ON CONFLICT as a join constraint of the SELECT.
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO cascade_deletes (node_id, root_id)
-		 SELECT id, ? FROM nodes
+		`INSERT INTO cascade_deletes (node_id, root_id, deleted_at, deleted_by)
+		 SELECT id, ?, ?, ? FROM nodes
 		  WHERE id LIKE ? ESCAPE '\' AND deleted_at IS NULL
-		 ON CONFLICT(node_id) DO UPDATE SET root_id = excluded.root_id`,
-		parentID, descendants,
+		 ON CONFLICT(node_id) DO UPDATE SET root_id = excluded.root_id,
+		     deleted_at = excluded.deleted_at, deleted_by = excluded.deleted_by`,
+		parentID, now, deletedBy, descendants,
 	); err != nil {
 		return fmt.Errorf("record cascade of %s: %w", parentID, err)
 	}
@@ -160,7 +166,12 @@ func cascadeDelete(ctx context.Context, tx *sql.Tx, parentID, deletedBy, now str
 // deleted_by, stamping updated_at from the store's injected clock.
 //
 // The cascade_deletes row of id names the delete that removed it (its
-// cascade root), and decides which descendants come back:
+// cascade root), and decides which descendants come back. A row is trusted
+// only while its deleted_at and deleted_by stamp equals the node's current
+// deleted_at and deleted_by. An older 0.5.x binary restores without clearing
+// rows and deletes without writing them, and an import or a sync-applied
+// delete leaves rows untouched, so a row whose stamp no longer matches
+// describes an earlier delete and the node is treated as having no row:
 //   - Undeleting a cascade root restores every descendant its cascade
 //     removed. A descendant deleted on its own before the cascade, alone or
 //     by its own cascade, names that other delete and stays deleted, even
@@ -168,21 +179,21 @@ func cascadeDelete(ctx context.Context, tx *sql.Tx, parentID, deletedBy, now str
 //   - Undeleting a node X that a still-deleted ancestor's cascade removed
 //     restores X and the descendants of X that the same delete removed. The
 //     ancestor and its other descendants stay deleted until it is undeleted.
-//   - Fallback for a node with no row: it was deleted before cascade rows
-//     were recorded (MTIX-95.18), or by a path that records none (a delete
-//     applied by sync, an import). The descendants that have no row either
-//     and whose deleted_at and deleted_by equal the node's own are restored,
-//     which is how an older binary's cascade looks. It cannot tell apart a
-//     descendant deleted on its own in the same second by the same author. A
-//     descendant with a row is never restored by the fallback.
+//   - Fallback for a node with no trusted row: it was deleted before cascade
+//     rows were recorded (MTIX-95.18), by an older binary, or by a path that
+//     records none (a delete applied by sync, an import). The descendants
+//     that have no trusted row either and whose deleted_at and deleted_by
+//     equal the node's own are restored, which is how an older binary's
+//     cascade looks. It cannot tell apart a descendant deleted on its own in
+//     the same second by the same author. A descendant with a trusted row is
+//     never restored by the fallback.
 //
 // Restored nodes lose their rows. The parent of every restored node, the
 // parent of id included, has its progress recomputed (FR-5.7); restored
 // leaves keep their own progress.
 //
 // Sync note (MTIX-15.2.3; ADR-006 census D10): UndeleteNode still does NOT
-// emit a sync_events row, so other replicas keep the node and the restored
-// descendants deleted. Tombstones are monotonic per SYNC-DESIGN section 8.3 —
+// emit a sync_events row, so other replicas keep the node deleted. Tombstones are monotonic per SYNC-DESIGN section 8.3 —
 // a delete event once applied stays applied. Local restore is a single-CLI
 // convenience (the row is recovered from the same DB it never left);
 // cross-CLI restore must be done by a fresh create_node event under a new ID.
@@ -241,17 +252,21 @@ type restoredNode struct {
 }
 
 // loadUndeleteTarget reads the deleted node id and the cascade_deletes row
-// naming the delete that removed it (MTIX-95.18).
+// naming the delete that removed it, if that row is trusted: its stamp must
+// equal the node's current deleted_at and deleted_by (MTIX-95.18).
 //
 // Returns ErrNotFound if the node does not exist or is not deleted.
 func loadUndeleteTarget(ctx context.Context, tx *sql.Tx, id string) (undeleteTarget, error) {
 	target := undeleteTarget{id: id}
 	var parentID sql.NullString
-	// The deleted node, LEFT JOINed to its provenance row: root_id is NULL
-	// when the delete that removed it recorded none.
+	// The deleted node, LEFT JOINed to its provenance row when the row's
+	// stamp matches the node's current delete: root_id is NULL when the
+	// delete that removed it recorded no row or the row is stale.
 	err := tx.QueryRowContext(ctx,
 		`SELECT n.parent_id, n.deleted_at, n.deleted_by, c.root_id
-		   FROM nodes n LEFT JOIN cascade_deletes c ON c.node_id = n.id
+		   FROM nodes n LEFT JOIN cascade_deletes c
+		     ON c.node_id = n.id
+		    AND c.deleted_at = n.deleted_at AND c.deleted_by IS n.deleted_by
 		  WHERE n.id = ? AND n.deleted_at IS NOT NULL`,
 		id,
 	).Scan(&parentID, &target.deletedAt, &target.deletedBy, &target.rootID)
@@ -265,15 +280,20 @@ func loadUndeleteTarget(ctx context.Context, tx *sql.Tx, id string) (undeleteTar
 	return target, nil
 }
 
-// selectRecordedCascade returns the deleted descendants of id whose
+// selectRecordedCascade returns the deleted descendants of id whose trusted
 // cascade_deletes row names rootID, the delete that removed id (MTIX-95.18).
+// A row is trusted while its stamp equals the descendant's current
+// deleted_at and deleted_by.
 // The subtree pattern escapes id (escapeLIKEPrefix) so a '_' in its project
 // prefix cannot reach another project's nodes (MTIX-95.17).
 func selectRecordedCascade(ctx context.Context, tx *sql.Tx, id, rootID string) ([]restoredNode, error) {
-	// Deleted descendants of id removed by the delete rooted at rootID.
+	// Deleted descendants of id whose current delete is the one rooted at
+	// rootID (row stamp equal to the node's deleted_at and deleted_by).
 	nodes, err := queryRestoreSet(ctx, tx,
 		`SELECT n.id, COALESCE(n.parent_id, '')
-		   FROM nodes n JOIN cascade_deletes c ON c.node_id = n.id
+		   FROM nodes n JOIN cascade_deletes c
+		     ON c.node_id = n.id
+		    AND c.deleted_at = n.deleted_at AND c.deleted_by IS n.deleted_by
 		  WHERE n.id LIKE ? ESCAPE '\' AND n.deleted_at IS NOT NULL
 		    AND c.root_id = ?`,
 		escapeLIKEPrefix(id)+".%", rootID,
@@ -285,19 +305,24 @@ func selectRecordedCascade(ctx context.Context, tx *sql.Tx, id, rootID string) (
 }
 
 // selectUnrecordedCascade is the documented fallback for a target with no
-// cascade_deletes row (MTIX-95.18): the deleted descendants that have no row
-// either and whose deleted_at and deleted_by equal the target's own, the
-// signature of a cascade made before rows were recorded. deleted_by is
+// trusted cascade_deletes row (MTIX-95.18): the deleted descendants that have
+// no trusted row either (none, or one whose stamp no longer equals their
+// current deleted_at and deleted_by) and whose deleted_at and deleted_by
+// equal the target's own, the signature of a cascade made before rows were
+// recorded or by an older binary. deleted_by is
 // compared with IS so a NULL author matches only NULL. The subtree pattern is
 // escaped (escapeLIKEPrefix, MTIX-95.17).
 func selectUnrecordedCascade(ctx context.Context, tx *sql.Tx, target undeleteTarget) ([]restoredNode, error) {
-	// Unrecorded descendants deleted in the same second by the same author.
+	// Descendants with no trusted row, deleted in the same second by the
+	// same author.
 	nodes, err := queryRestoreSet(ctx, tx,
 		`SELECT n.id, COALESCE(n.parent_id, '')
 		   FROM nodes n
 		  WHERE n.id LIKE ? ESCAPE '\'
 		    AND n.deleted_at = ? AND n.deleted_by IS ?
-		    AND NOT EXISTS (SELECT 1 FROM cascade_deletes c WHERE c.node_id = n.id)`,
+		    AND NOT EXISTS (SELECT 1 FROM cascade_deletes c
+		                     WHERE c.node_id = n.id AND c.deleted_at = n.deleted_at
+		                       AND c.deleted_by IS n.deleted_by)`,
 		escapeLIKEPrefix(target.id)+".%", target.deletedAt, target.deletedBy,
 	)
 	if err != nil {

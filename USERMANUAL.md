@@ -173,7 +173,9 @@ mtix undelete PROJ-1.2
 
 `mtix undelete` restores the node and only the descendants that the same delete removed. A descendant that was deleted separately before a cascade delete, on its own or by its own cascade, stays deleted when you undelete the cascade's node, even if both deletes happened in the same second. Restore it with its own `mtix undelete`. If you undelete a node that an ancestor's cascade removed, mtix restores that node and the descendants the same cascade removed, and the ancestor stays deleted. The progress of the parent of each restored node is recomputed.
 
-Earlier mtix versions did not record which delete removed each descendant, and a delete that arrives through sync or an import carries no such record either. When you undelete such a node, mtix restores the descendants without a record that were deleted in the same second by the same author. That can include a descendant that was deleted separately in that second.
+Each record also carries the node's deletion time and author, and mtix uses it only while they still match the node. Earlier mtix versions did not record which delete removed each descendant. An earlier 0.5.x binary that opens the same database restores without clearing records and deletes without writing them. A delete that arrives through sync or an import carries no record either. When you undelete a node without a usable record, mtix restores the descendants without a usable record that were deleted in the same second by the same author. That can include a descendant that was deleted separately in that second.
+
+After `mtix rerun --strategy delete`, undelete restores one node at a time, because rerun deletes each descendant separately. To bring the subtree back, undelete each node, starting from the top.
 
 Undelete is local: it emits no sync event. Other replicas keep the node deleted.
 
@@ -363,6 +365,8 @@ Available strategies:
 - `open_only` — only reopen open/in-progress descendants
 - `delete` — soft-delete descendants for fresh start
 - `review` — mark for manual review
+
+`--strategy delete` invalidates each descendant and then deletes it separately, so `mtix undelete` restores one node at a time: undeleting a child leaves its own children deleted. To bring the subtree back, undelete each node, starting from the top, then use `mtix restore` to return each one from `invalidated` to its previous status.
 
 ### Restore (After Invalidation)
 

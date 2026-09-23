@@ -137,6 +137,16 @@ func markerCount(t *testing.T, s *sqlite.Store) int {
 	return n
 }
 
+// markerStamp returns the deleted_at and deleted_by stamped on id's
+// cascade_deletes row.
+func markerStamp(t *testing.T, s *sqlite.Store, id string) (deletedAt, deletedBy sql.NullString) {
+	t.Helper()
+	err := s.QueryRow(context.Background(),
+		"SELECT deleted_at, deleted_by FROM cascade_deletes WHERE node_id = ?", id).Scan(&deletedAt, &deletedBy)
+	require.NoError(t, err, "read cascade stamp of %s", id)
+	return deletedAt, deletedBy
+}
+
 // progressOf reads the raw stored progress of id.
 func progressOf(t *testing.T, s *sqlite.Store, id string) float64 {
 	t.Helper()
@@ -330,9 +340,14 @@ func TestUndeleteNode_DescendantOfStillDeletedCascade_RestoresSameDeleteOnly(t *
 	}
 }
 
-// legacyDelete soft-deletes ids the way a binary without cascade markers did:
-// deleted_at and deleted_by only, no cascade_deletes row.
-func legacyDelete(t *testing.T, s *sqlite.Store, at time.Time, by string, ids ...string) {
+// byAuthor is a non-NULL deleted_by value.
+func byAuthor(name string) sql.NullString { return sql.NullString{String: name, Valid: true} }
+
+// legacyDelete soft-deletes ids the way a binary without cascade markers did
+// (an older 0.5.x binary, which still opens the database): deleted_at and
+// deleted_by only, no cascade_deletes row written or changed. A NULL by is
+// what an import of a deleted node leaves.
+func legacyDelete(t *testing.T, s *sqlite.Store, at time.Time, by sql.NullString, ids ...string) {
 	t.Helper()
 	stamp := at.UTC().Format(time.RFC3339)
 	for _, id := range ids {
@@ -355,21 +370,31 @@ func legacyDelete(t *testing.T, s *sqlite.Store, at time.Time, by string, ids ..
 func TestUndeleteNode_UnmarkedPreUpgradeCascade_FallsBackToDeletedAtAndBy(t *testing.T) {
 	tests := []struct {
 		name        string
+		legacyBy    sql.NullString // author of the pre-upgrade deletes
 		undelete    string
 		wantLive    []string
 		wantDeleted []string
 	}{
 		{
 			name:        "pre-upgrade cascade root",
+			legacyBy:    byAuthor(undelAuthor),
 			undelete:    "A_B-1",
 			wantLive:    []string{"A_B-1", "A_B-1.1", "A_B-1.1.1"},
 			wantDeleted: []string{"A_B-1.2", "A_B-1.3", "A_B-1.4", "AXB-1.1"},
 		},
 		{
 			name:        "descendant removed by a pre-upgrade cascade",
+			legacyBy:    byAuthor(undelAuthor),
 			undelete:    "A_B-1.1",
 			wantLive:    []string{"A_B-1.1", "A_B-1.1.1"},
 			wantDeleted: []string{"A_B-1", "A_B-1.2", "A_B-1.3", "A_B-1.4", "AXB-1.1"},
+		},
+		{
+			name:        "pre-upgrade cascade with a NULL deleted_by, as an import leaves it",
+			legacyBy:    sql.NullString{},
+			undelete:    "A_B-1",
+			wantLive:    []string{"A_B-1", "A_B-1.1", "A_B-1.1.1"},
+			wantDeleted: []string{"A_B-1.2", "A_B-1.3", "A_B-1.4", "AXB-1.1"},
 		},
 	}
 	for _, tt := range tests {
@@ -381,9 +406,9 @@ func TestUndeleteNode_UnmarkedPreUpgradeCascade_FallsBackToDeletedAtAndBy(t *tes
 			require.NoError(t, s.DeleteNode(ctx, "A_B-1.4", false, undelAuthor))
 			// Unmarked, pre-upgrade: the cascade itself, an earlier delete,
 			// a same-second delete by another author, a look-alike project.
-			legacyDelete(t, s, undelDeleteTime, undelAuthor, "A_B-1", "A_B-1.1", "A_B-1.1.1", "AXB-1.1")
-			legacyDelete(t, s, undelDeleteTime.Add(-time.Hour), undelAuthor, "A_B-1.2")
-			legacyDelete(t, s, undelDeleteTime, "another-agent", "A_B-1.3")
+			legacyDelete(t, s, undelDeleteTime, tt.legacyBy, "A_B-1", "A_B-1.1", "A_B-1.1.1", "AXB-1.1")
+			legacyDelete(t, s, undelDeleteTime.Add(-time.Hour), tt.legacyBy, "A_B-1.2")
+			legacyDelete(t, s, undelDeleteTime, byAuthor("another-agent"), "A_B-1.3")
 			_, marked := markerRoot(t, s, tt.undelete)
 			require.False(t, marked, "precondition: the undelete target has no marker")
 
@@ -406,11 +431,15 @@ func TestCascadeDelete_RecordsCascadeRoot_PerRemovedNode(t *testing.T) {
 	s.SetClock(func() time.Time { return undelDeleteTime })
 	require.NoError(t, s.CreateNode(ctx, undelNode(undelSpec{id: "A_B-1.2"})))
 	require.NoError(t, s.CreateNode(ctx, undelNode(undelSpec{id: "A_B-10.1"})))
-	// A stale marker on a live node (left by an older binary's undelete) is
-	// overwritten by the delete that actually removes the node.
-	_, err := s.WriteDB().ExecContext(ctx,
-		"INSERT INTO cascade_deletes (node_id, root_id) VALUES (?, ?)", likeGrandchild, likeSibling)
-	require.NoError(t, err)
+	// Stale rows on live nodes (left by an older binary's undelete) on the
+	// delete target itself and on a descendant its cascade removes: each is
+	// overwritten, root and stamp, by the delete that actually removes it.
+	for _, id := range []string{likeRoot, likeGrandchild} {
+		_, err := s.WriteDB().ExecContext(ctx,
+			`INSERT INTO cascade_deletes (node_id, root_id, deleted_at, deleted_by)
+			 VALUES (?, ?, '2026-01-01T00:00:00Z', 'old-binary')`, id, likeSibling)
+		require.NoError(t, err)
+	}
 
 	require.NoError(t, s.DeleteNode(ctx, "A_B-1.2", false, undelAuthor))
 	require.NoError(t, s.DeleteNode(ctx, likeSibling, false, undelAuthor))
@@ -434,6 +463,16 @@ func TestCascadeDelete_RecordsCascadeRoot_PerRemovedNode(t *testing.T) {
 			root, ok := markerRoot(t, s, tt.id)
 			assert.Equal(t, tt.wantRoot != "", ok, "marker presence")
 			assert.Equal(t, tt.wantRoot, root)
+			if !ok {
+				return
+			}
+			// The row carries the node's own deleted_at and deleted_by.
+			rowAt, rowBy := markerStamp(t, s, tt.id)
+			nodeAt, nodeBy := deleteMarks(t, s, tt.id)
+			assert.Equal(t, nodeAt, rowAt, "row stamped with the node's deleted_at")
+			assert.Equal(t, nodeBy, rowBy, "row stamped with the node's deleted_by")
+			assert.Equal(t, undelDeleteTime.Format(time.RFC3339), rowAt.String)
+			assert.Equal(t, undelAuthor, rowBy.String)
 		})
 	}
 }
@@ -618,4 +657,151 @@ func TestCascadeProvenance_WriteFailure_RollsBackWholeOperation(t *testing.T) {
 			assert.Equal(t, tt.wantMarkers, markerCount(t, s), "markers unchanged by the failed operation")
 		})
 	}
+}
+
+// oldBinaryUndelete clears deleted_at and deleted_by on each id the way an
+// older 0.5.x binary's undelete did, leaving every cascade_deletes row in
+// place.
+func oldBinaryUndelete(t *testing.T, s *sqlite.Store, ids ...string) {
+	t.Helper()
+	for _, id := range ids {
+		_, err := s.WriteDB().ExecContext(context.Background(),
+			"UPDATE nodes SET deleted_at = NULL, deleted_by = NULL WHERE id = ?", id)
+		require.NoError(t, err, "old-binary undelete %s", id)
+	}
+}
+
+// TestUndeleteNode_RowLeftByOlderBinary_NotTrusted verifies that a
+// cascade_deletes row is trusted only while the node's current deleted_at and
+// deleted_by equal the row's stamp. An older 0.5.x binary still opens the
+// database; it restores without clearing rows and deletes without writing
+// them, so once it has restored and deleted a node again the row describes an
+// earlier delete. Such a node is treated as unrecorded (MTIX-95.18 round 2).
+func TestUndeleteNode_RowLeftByOlderBinary_NotTrusted(t *testing.T) {
+	ctx := context.Background()
+	cli := byAuthor(undelAuthor)
+	later := undelDeleteTime.Add(time.Hour)
+	tests := []struct {
+		name        string
+		nodes       []string
+		history     func(t *testing.T, s *sqlite.Store)
+		wantLive    []string
+		wantDeleted []string
+	}{
+		{
+			name:  "old binary deleted a child alone, then cascaded the root: the child stays deleted",
+			nodes: []string{"PROJ-1", "PROJ-1.1", "PROJ-1.2"},
+			history: func(t *testing.T, s *sqlite.Store) {
+				require.NoError(t, s.DeleteNode(ctx, "PROJ-1", true, undelAuthor))
+				oldBinaryUndelete(t, s, "PROJ-1", "PROJ-1.1", "PROJ-1.2")
+				legacyDelete(t, s, undelDeleteTime.Add(time.Minute), cli, "PROJ-1.2")
+				legacyDelete(t, s, later, cli, "PROJ-1", "PROJ-1.1")
+			},
+			wantLive:    []string{"PROJ-1", "PROJ-1.1"},
+			wantDeleted: []string{"PROJ-1.2"},
+		},
+		{
+			name:  "old binary cascaded over nodes that hold rows from an earlier cascade: all come back",
+			nodes: []string{"PROJ-1", "PROJ-1.1", "PROJ-1.1.1"},
+			history: func(t *testing.T, s *sqlite.Store) {
+				require.NoError(t, s.DeleteNode(ctx, "PROJ-1.1", true, undelAuthor))
+				oldBinaryUndelete(t, s, "PROJ-1.1", "PROJ-1.1.1")
+				legacyDelete(t, s, later, cli, "PROJ-1", "PROJ-1.1", "PROJ-1.1.1")
+			},
+			wantLive: []string{"PROJ-1", "PROJ-1.1", "PROJ-1.1.1"},
+		},
+		{
+			name:  "old binary restored and re-deleted a child while its cascade root stayed deleted",
+			nodes: []string{"PROJ-1", "PROJ-1.1", "PROJ-1.2"},
+			history: func(t *testing.T, s *sqlite.Store) {
+				require.NoError(t, s.DeleteNode(ctx, "PROJ-1", true, undelAuthor))
+				oldBinaryUndelete(t, s, "PROJ-1.2")
+				legacyDelete(t, s, later, cli, "PROJ-1.2")
+			},
+			wantLive:    []string{"PROJ-1", "PROJ-1.1"},
+			wantDeleted: []string{"PROJ-1.2"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := seedUndeleteTree(t, openSpecs(tt.nodes...)...)
+			tt.history(t, s)
+
+			require.NoError(t, s.UndeleteNode(ctx, "PROJ-1"))
+
+			assertLiveAndDeleted(t, s, tt.wantLive, tt.wantDeleted)
+		})
+	}
+}
+
+// updatedAtOf reads the raw updated_at of id.
+func updatedAtOf(t *testing.T, s *sqlite.Store, id string) string {
+	t.Helper()
+	var at string
+	require.NoError(t, s.QueryRow(context.Background(),
+		"SELECT updated_at FROM nodes WHERE id = ?", id).Scan(&at), "read updated_at of %s", id)
+	return at
+}
+
+// TestDeleteNode_InjectedClock_StampsDeletionTimes verifies that DeleteNode
+// and UndeleteNode take their timestamps from the store's injected clock, not
+// the wall clock (MTIX-95.18): deleted_at, updated_at and the cascade row
+// stamp of every node the delete removes, and updated_at of every node the
+// undelete restores.
+func TestDeleteNode_InjectedClock_StampsDeletionTimes(t *testing.T) {
+	deleteTime := time.Date(2031, 1, 2, 3, 4, 5, 0, time.UTC)
+	undeleteTime := deleteTime.Add(48 * time.Hour)
+	deleteAt, undeleteAt := deleteTime.Format(time.RFC3339), undeleteTime.Format(time.RFC3339)
+	s := seedUndeleteTree(t, openSpecs("PROJ-1", "PROJ-1.1")...)
+	ctx := context.Background()
+
+	s.SetClock(func() time.Time { return deleteTime })
+	require.NoError(t, s.DeleteNode(ctx, "PROJ-1", true, undelAuthor))
+	for _, id := range []string{"PROJ-1", "PROJ-1.1"} {
+		at, _ := deleteMarks(t, s, id)
+		rowAt, _ := markerStamp(t, s, id)
+		assert.Equal(t, deleteAt, at.String, "deleted_at of %s", id)
+		assert.Equal(t, deleteAt, updatedAtOf(t, s, id), "updated_at of %s after delete", id)
+		assert.Equal(t, deleteAt, rowAt.String, "cascade row stamp of %s", id)
+	}
+
+	s.SetClock(func() time.Time { return undeleteTime })
+	require.NoError(t, s.UndeleteNode(ctx, "PROJ-1"))
+	for _, id := range []string{"PROJ-1", "PROJ-1.1"} {
+		assert.Equal(t, undeleteAt, updatedAtOf(t, s, id), "updated_at of %s after undelete", id)
+	}
+}
+
+// TestCascadeMarkers_HardDelete_RemovesRowsOfPurgedNodes verifies that a hard
+// delete of a node (the retention purge's statement) removes the node's own
+// cascade_deletes row through node_id's ON DELETE CASCADE, even when a
+// descendant is purged before its cascade root, and that purging a root also
+// removes the rows that name it (MTIX-95.18).
+func TestCascadeMarkers_HardDelete_RemovesRowsOfPurgedNodes(t *testing.T) {
+	s := seedMarkedCascade(t)
+	ctx := context.Background()
+	steps := []struct {
+		purge       string
+		wantGone    []string
+		wantPresent []string
+	}{
+		{purge: "PROJ-1.1.1", wantGone: []string{"PROJ-1.1.1"}, wantPresent: []string{"PROJ-1.1", "PROJ-1.1.2"}},
+		{purge: "PROJ-1.1", wantGone: []string{"PROJ-1.1"}, wantPresent: []string{"PROJ-1.1.2"}},
+		{purge: "PROJ-1.1.2", wantGone: []string{"PROJ-1.1.2"}},
+	}
+	// The steps run in order against one store: descendant first, then root.
+	for _, step := range steps {
+		_, err := s.WriteDB().ExecContext(ctx,
+			`DELETE FROM nodes WHERE id = ? AND deleted_at IS NOT NULL`, step.purge)
+		require.NoError(t, err, "purge %s", step.purge)
+		for _, id := range step.wantGone {
+			_, ok := markerRoot(t, s, id)
+			assert.False(t, ok, "row of purged %s removed", id)
+		}
+		for _, id := range step.wantPresent {
+			_, ok := markerRoot(t, s, id)
+			assert.True(t, ok, "row of still-deleted %s kept", id)
+		}
+	}
+	assert.Equal(t, 0, markerCount(t, s))
 }

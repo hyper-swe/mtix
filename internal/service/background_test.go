@@ -363,6 +363,63 @@ func TestBackgroundScan_MultipleExpiredNodes_AllCleaned(t *testing.T) {
 	}
 }
 
+// TestBackgroundScan_ExpiredCascade_RemovesCascadeMarkers verifies that the
+// FR-3.3a hard delete also removes the cascade-delete markers of the purged
+// nodes (MTIX-95.18), through the cascade_deletes foreign keys, and that the
+// purge itself is not blocked by them. When only a descendant has expired it
+// is purged before its cascade root, and its own row goes with it.
+func TestBackgroundScan_ExpiredCascade_RemovesCascadeMarkers(t *testing.T) {
+	tests := []struct {
+		name        string
+		expire      []string
+		wantNodes   int
+		wantMarkers int
+	}{
+		{name: "whole cascade expired", expire: []string{"PROJ-1", "PROJ-1.1"}},
+		{name: "only the descendant expired, purged before its root",
+			expire: []string{"PROJ-1.1"}, wantNodes: 1, wantMarkers: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+			bg, s := newTestBackgroundService(t, fixedClock(now))
+			ctx := context.Background()
+
+			createTestNode(t, s, "PROJ-1", "PROJ", "Expired root", now.Add(-40*24*time.Hour))
+			child := &model.Node{
+				ID: "PROJ-1.1", ParentID: "PROJ-1", Depth: 1, Seq: 1, Project: "PROJ",
+				Title: "Expired child", Status: model.StatusOpen, Priority: model.PriorityMedium,
+				Weight: 1.0, CreatedAt: now.Add(-40 * 24 * time.Hour), UpdatedAt: now.Add(-40 * 24 * time.Hour),
+			}
+			child.ContentHash = child.ComputeHash()
+			require.NoError(t, s.CreateNode(ctx, child))
+			require.NoError(t, s.DeleteNode(ctx, "PROJ-1", true, "admin"))
+
+			countOf := func(query string, args ...any) int {
+				var n int
+				require.NoError(t, s.QueryRow(ctx, query, args...).Scan(&n))
+				return n
+			}
+			require.Equal(t, 2, countOf(`SELECT COUNT(*) FROM cascade_deletes`), "precondition: markers recorded")
+
+			deletedAt := now.Add(-31 * 24 * time.Hour).UTC().Format(time.RFC3339)
+			for _, id := range tt.expire {
+				_, err := s.WriteDB().ExecContext(ctx,
+					`UPDATE nodes SET deleted_at = ? WHERE id = ?`, deletedAt, id)
+				require.NoError(t, err)
+			}
+
+			require.NoError(t, bg.RunScan(ctx))
+
+			assert.Equal(t, tt.wantNodes, countOf(`SELECT COUNT(*) FROM nodes`), "expired nodes purged")
+			assert.Equal(t, tt.wantMarkers, countOf(`SELECT COUNT(*) FROM cascade_deletes`),
+				"markers of purged nodes purged with them")
+			assert.Equal(t, 0, countOf(`SELECT COUNT(*) FROM cascade_deletes WHERE node_id = ?`, "PROJ-1.1"),
+				"the purged descendant's own row is gone")
+		})
+	}
+}
+
 // TestBackgroundScan_MultipleDeferredNodes_AllWoken verifies batch deferred wake.
 func TestBackgroundScan_MultipleDeferredNodes_AllWoken(t *testing.T) {
 	now := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)

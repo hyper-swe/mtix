@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -67,7 +69,8 @@ var (
 	ErrDSNInTrackedFile = errors.New("DSN found in tracked config file (FR-18.16 forbidden)")
 
 	// ErrTLSWeakNonLoopback is returned when --insecure-tls is requested
-	// but the host is not loopback.
+	// but a host the connection may use is not loopback or a local
+	// Unix-domain socket, or the hosts cannot be resolved.
 	ErrTLSWeakNonLoopback = errors.New("weak TLS only allowed on loopback hosts")
 
 	// ErrTLSWeakWithoutFlag is returned when the parsed DSN has a weak
@@ -77,8 +80,9 @@ var (
 
 // Options control non-DSN behavior of the transport.
 type Options struct {
-	// InsecureTLS allows sslmode weaker than verify-full ONLY when the
-	// host is a loopback address. Default false.
+	// InsecureTLS allows sslmode weaker than verify-full ONLY when every
+	// host the connection may use is loopback or a local Unix-domain
+	// socket (FR-18.15). Default false.
 	InsecureTLS bool
 }
 
@@ -159,7 +163,15 @@ func refuseDSNInTrackedConfig(mtixDir string) error {
 
 // EnforceTLSPosture parses the DSN, defaults sslmode to verify-full
 // when omitted, and refuses weaker sslmodes unless opts.InsecureTLS is
-// set AND the host is a loopback address.
+// set AND every host the connection may use is local (FR-18.15,
+// MTIX-95.20).
+//
+// The hosts are resolved by the driver's own parser, pgconn.ParseConfig,
+// so the primary host and every fallback count, whether they come from
+// the DSN host list, its connection parameters, PG* environment
+// variables or a service file. A host is local when it is loopback
+// (see isLoopback) or a Unix-domain socket directory, which the driver
+// never wraps in TLS. A DSN whose hosts cannot be resolved is refused.
 //
 // Returns the (possibly modified) DSN with sslmode populated and
 // MTIX_SYNC_SSLROOTCERT honored. The returned DSN is ready for
@@ -177,12 +189,17 @@ func EnforceTLSPosture(dsn string, opts Options) (string, error) {
 		q.Set("sslmode", mode)
 	}
 	if mode != "verify-full" {
-		host := parsed.Hostname()
 		if !opts.InsecureTLS {
-			return "", fmt.Errorf("sslmode=%s on host %q: %w", mode, host, ErrTLSWeakWithoutFlag)
+			return "", fmt.Errorf("sslmode=%s on host %q: %w", mode, parsed.Hostname(), ErrTLSWeakWithoutFlag)
 		}
-		if !isLoopback(host) {
-			return "", fmt.Errorf("sslmode=%s on host %q: %w", mode, host, ErrTLSWeakNonLoopback)
+		hosts, resolveErr := resolveHosts(parsed, q)
+		if resolveErr != nil {
+			return "", fmt.Errorf("sslmode=%s: %w", mode, resolveErr)
+		}
+		for _, h := range hosts {
+			if network, _ := pgconn.NetworkAddress(h.Host, h.Port); network != "unix" && !isLoopback(h.Host) {
+				return "", fmt.Errorf("sslmode=%s on host %q: %w", mode, h.Host, ErrTLSWeakNonLoopback)
+			}
 		}
 	}
 
@@ -214,16 +231,48 @@ func dsnPrefix(dsn string) string {
 	return dsn[:limit] + "..."
 }
 
-// isLoopback reports whether host resolves to a loopback address.
-// Accepts the literal strings "localhost", "127.0.0.1", "::1" without
-// DNS resolution; anything else is checked against net.ParseIP.
+// resolveHosts returns every host the driver may dial for the DSN u
+// with query q: the primary host first, then each fallback, exactly as
+// pgconn.ParseConfig resolves them after merging the DSN with PG*
+// environment variables and any service file (FR-18.15, MTIX-95.20).
+//
+// The copy handed to the parser carries sslmode=disable and an empty
+// sslrootcert. Neither changes the host list, and together they stop
+// the parser from loading certificate and key files, which is the
+// pool's job (pgDumpConnParams in cmd/mtix avoids the same eager
+// load). u and q are not modified.
+//
+// The parser's own error quotes the connection string, so it is
+// replaced by a fixed message that names no host or credential.
+func resolveHosts(u *url.URL, q url.Values) ([]*pgconn.FallbackConfig, error) {
+	probeQuery := make(url.Values, len(q)+2)
+	for k, v := range q {
+		probeQuery[k] = append([]string(nil), v...)
+	}
+	probeQuery.Set("sslmode", "disable")
+	probeQuery.Set("sslrootcert", "")
+	probe := *u
+	probe.RawQuery = probeQuery.Encode()
+
+	cfg, err := pgconn.ParseConfig(probe.String())
+	if err != nil {
+		// Deliberately not wrapped: err quotes the connection string.
+		return nil, fmt.Errorf("hosts could not be resolved from the DSN: %w", ErrTLSWeakNonLoopback)
+	}
+	hosts := make([]*pgconn.FallbackConfig, 0, 1+len(cfg.Fallbacks))
+	hosts = append(hosts, &pgconn.FallbackConfig{Host: cfg.Host, Port: cfg.Port})
+	return append(hosts, cfg.Fallbacks...), nil
+}
+
+// isLoopback reports whether host is a loopback host: the name
+// "localhost" (any case) or an IP address in 127.0.0.0/8 or ::1
+// (FR-18.15). No DNS lookup is made. An empty host, any other name
+// and a Unix-domain socket path all report false; the caller decides
+// separately whether a socket path is local (MTIX-95.20).
 func isLoopback(host string) bool {
-	switch strings.ToLower(host) {
-	case "localhost", "127.0.0.1", "::1", "":
+	if strings.EqualFold(host, "localhost") {
 		return true
 	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback()
-	}
-	return false
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

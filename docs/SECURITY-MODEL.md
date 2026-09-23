@@ -67,7 +67,7 @@ If the hub is wiped, every CLI keeps its local SQLite intact. If a CLI's SQLite 
 | # | Threat | What mtix does about it | Residual risk | What you do |
 |---|---|---|---|---|
 | 1 | **Credentials in git** (DSN committed by accident) | mtix refuses to load DSN from any tracked config file. DSN must come from `MTIX_SYNC_DSN` env var or `.mtix/secrets` (gitignore-enforced, mode 0600). | Low — fail-closed at config load | Use a secrets manager or env var; never paste DSN into a yaml that gets committed |
-| 2 | **MitM on PG connection** (network adversary reads/modifies traffic) | mtix defaults to `sslmode=verify-full` and refuses `sslmode=disable` unless explicit `--insecure-tls` flag is set AND host is localhost. | Low if `verify-full` is honored end-to-end | Use a managed PG provider that enforces TLS; verify the root CA matches |
+| 2 | **MitM on PG connection** (network adversary reads/modifies traffic) | mtix defaults to `sslmode=verify-full` and refuses `sslmode=disable` unless explicit `--insecure-tls` flag is set AND every host the connection may use is loopback or a local Unix-domain socket. | Low if `verify-full` is honored end-to-end | Use a managed PG provider that enforces TLS; verify the root CA matches |
 | 3 | **SQL injection** (malicious filter values) | All store and transport SQL uses bound parameters. Audited in MTIX-9.1 (FR-17.1) for the SQLite driver and MTIX-15.3 / MTIX-15.11 audit pass 2 for the PG transport (`TestSQLInjection_AttackPatternsHandledSafely`). | Very low — depends on no future regression | Run the parameterization regression tests on every change |
 | 4 | **Insider mutation tampering** (compromised team member edits/deletes data via mtix) | Append-only `audit_log` table records every mutation atomically. PG triggers prevent `UPDATE`/`DELETE` on audit rows. | Medium — superuser can disable triggers; insider with write access can still create or modify nodes | Use least-privilege PG roles; archive `audit_log` to immutable cold storage for true tamper evidence |
 | 5 | **Audit log tampering** (DBA edits or deletes audit rows) | Triggers raise exception on `UPDATE`/`DELETE`. WAL archival recommended for safety-critical adopters. | Medium — PG superuser bypasses triggers | For tamper evidence, ship `audit_log` to an external append-only store (S3 with object lock, immudb, etc.) |
@@ -94,7 +94,7 @@ Every error string that may contain a DSN passes through `redact.DSN` before rea
 ### TLS posture
 
 - `verify-full` is the default. `EnforceTLSPosture` defaults the DSN's sslmode to verify-full when omitted.
-- Weaker `sslmode` is allowed **only** on loopback hosts (`localhost`, `127.0.0.1`, `::1`) and **only** when `--insecure-tls` is set explicitly.
+- Weaker `sslmode` is allowed **only** when `--insecure-tls` is set explicitly **and** every host the connection may use, fallback hosts included, is loopback (`localhost`, `127.0.0.0/8`, `::1`) or a local Unix-domain socket.
 - `MTIX_SYNC_SSLROOTCERT` populates `sslrootcert` for managed-PG providers that require a CA bundle.
 
 ### Hub trust boundary

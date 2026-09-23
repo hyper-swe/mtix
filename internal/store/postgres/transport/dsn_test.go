@@ -148,7 +148,9 @@ func TestEnforceTLS_RefusesWeakerWithoutInsecureFlag(t *testing.T) {
 }
 
 func TestEnforceTLS_AllowsWeakerWithInsecureFlagOnLoopback(t *testing.T) {
-	cases := []string{"127.0.0.1", "localhost", "::1"}
+	// IPv6 literals take brackets in a URL; without them the driver
+	// reads "::1:5432" as a single address.
+	cases := []string{"127.0.0.1", "localhost", "[::1]"}
 	for _, host := range cases {
 		t.Run(host, func(t *testing.T) {
 			dsn := "postgres://user:pass@" + host + ":5432/db?sslmode=disable"

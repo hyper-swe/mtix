@@ -1295,8 +1295,10 @@ export MTIX_SYNC_DSN="postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.sup
 
 **Any provider** — `statement_timeout` is applied per connection via SQL (not a
 startup parameter), so it is honored even behind proxies/poolers that drop
-startup parameters. `sslmode=require` is rejected for non-loopback hosts; use
-`verify-full`, with `sslrootcert` if the provider uses a private CA.
+startup parameters. `sslmode=require` is accepted only with `--insecure-tls`
+and only when every host the connection may use is loopback or a local
+Unix-domain socket; use `verify-full`, with `sslrootcert` if the provider uses
+a private CA.
 
 ### Setup (every other teammate)
 

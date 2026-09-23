@@ -227,9 +227,10 @@ func TestUndelete_IndependentlyDeletedChildStaysDeleted(t *testing.T) {
 
 // TestUndelete_CascadeDeletedChildrenRestored verifies that undeleting a
 // cascade root restores every descendant, at every depth, that the cascade
-// removed; that done leaves keep their own progress; that the restored
-// subtree's rollup and the parent's progress are recomputed (FR-5.7); and that
-// the markers of the restored nodes are cleared (MTIX-95.18 story 3).
+// removed; that done leaves keep their own progress; that the parent of every
+// restored node, the undeleted node's parent included, has its progress
+// recomputed (FR-5.7); and that the markers of the restored nodes are cleared
+// (MTIX-95.18 story 3).
 // Red-first: the old undelete also resurrected PROJ-1.1.3, which was deleted
 // on its own before the cascade.
 func TestUndelete_CascadeDeletedChildrenRestored(t *testing.T) {
@@ -677,9 +678,13 @@ func oldBinaryUndelete(t *testing.T, s *sqlite.Store, ids ...string) {
 // database; it restores without clearing rows and deletes without writing
 // them, so once it has restored and deleted a node again the row describes an
 // earlier delete. Such a node is treated as unrecorded (MTIX-95.18 round 2).
+// Both halves of the stamp count: the "other author" rows re-delete in the
+// SAME second as the row's stamp, so only deleted_by tells the row is stale,
+// for the undelete target, for a descendant and for the fallback.
 func TestUndeleteNode_RowLeftByOlderBinary_NotTrusted(t *testing.T) {
 	ctx := context.Background()
 	cli := byAuthor(undelAuthor)
+	other := byAuthor("other-agent")
 	later := undelDeleteTime.Add(time.Hour)
 	tests := []struct {
 		name        string
@@ -720,6 +725,37 @@ func TestUndeleteNode_RowLeftByOlderBinary_NotTrusted(t *testing.T) {
 			},
 			wantLive:    []string{"PROJ-1", "PROJ-1.1"},
 			wantDeleted: []string{"PROJ-1.2"},
+		},
+		{
+			name:  "same second, other author: the target's stale row is not trusted",
+			nodes: []string{"PROJ-1", "PROJ-1.1"},
+			history: func(t *testing.T, s *sqlite.Store) {
+				require.NoError(t, s.DeleteNode(ctx, "PROJ-1", true, undelAuthor))
+				oldBinaryUndelete(t, s, "PROJ-1", "PROJ-1.1")
+				legacyDelete(t, s, undelDeleteTime, other, "PROJ-1", "PROJ-1.1")
+			},
+			wantLive: []string{"PROJ-1", "PROJ-1.1"},
+		},
+		{
+			name:  "same second, other author: a descendant's stale row is not trusted",
+			nodes: []string{"PROJ-1", "PROJ-1.1", "PROJ-1.2"},
+			history: func(t *testing.T, s *sqlite.Store) {
+				require.NoError(t, s.DeleteNode(ctx, "PROJ-1", true, undelAuthor))
+				oldBinaryUndelete(t, s, "PROJ-1.2")
+				legacyDelete(t, s, undelDeleteTime, other, "PROJ-1.2")
+			},
+			wantLive:    []string{"PROJ-1", "PROJ-1.1"},
+			wantDeleted: []string{"PROJ-1.2"},
+		},
+		{
+			name:  "same second, other author: the fallback does not count a stale row",
+			nodes: []string{"PROJ-1", "PROJ-1.1", "PROJ-1.1.1"},
+			history: func(t *testing.T, s *sqlite.Store) {
+				require.NoError(t, s.DeleteNode(ctx, "PROJ-1.1", true, undelAuthor))
+				oldBinaryUndelete(t, s, "PROJ-1.1", "PROJ-1.1.1")
+				legacyDelete(t, s, undelDeleteTime, other, "PROJ-1", "PROJ-1.1", "PROJ-1.1.1")
+			},
+			wantLive: []string{"PROJ-1", "PROJ-1.1", "PROJ-1.1.1"},
 		},
 	}
 	for _, tt := range tests {

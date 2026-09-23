@@ -16,6 +16,8 @@
 
 **Solution:** Verify the ID with `mtix show <id>`. If soft-deleted, use `mtix undelete <id>`.
 
+`mtix undelete` restores only what the same delete removed: descendants deleted separately stay deleted. After `mtix rerun --strategy delete`, undelete each node, starting from the top.
+
 ### ErrInvalidTransition
 
 **Cause:** The requested status change is not allowed by the state machine.

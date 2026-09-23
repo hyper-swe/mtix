@@ -1042,18 +1042,32 @@ Show a node's details and annotations as labeled lines, in this order:
   Priority     priority (1 = critical ... 5 = backlog)
   Type         node type
   Assignee     current assignee (only when set)
-  Desc         full description (only when set)
-  Annotations  every annotation, oldest first: its ISO-8601 UTC timestamp,
-               author, addressee and resolved marker when present, then
-               the text, with further lines indented; "Annotations: none"
-               when the node has none
-  Prompt       first 100 characters of the prompt (only when set)
+  Desc         full description (only when set; omitted when it holds only
+               whitespace or control characters), further lines indented
+  Annotations  every annotation, oldest first: its ISO-8601 UTC timestamp
+               ("unknown time" when none was recorded), author, addressee
+               and resolved marker when present, then the text, with
+               further lines indented and "(empty)" for an empty text;
+               "Annotations: none" when the node has none
+  Prompt       the prompt, cut to 100 characters ending in "..." when
+               longer (only when set; omitted when it holds only
+               whitespace or control characters), further lines indented
   Progress     progress bar
   Created      creation time
 
-Other fields (acceptance criteria, labels, dependencies, activity and the
-full prompt) are not printed. Use --json for the complete node record,
-including every annotation.
+Annotation text, author and addressee, the description and the prompt are
+normalized for the terminal: control characters other than newline and tab
+are removed (so CRLF becomes LF), and leading blank lines and trailing
+whitespace are trimmed, so a stored carriage return or escape sequence
+cannot overwrite a line or restyle the terminal. Title and assignee still
+print as stored, control characters and newlines included. Invisible
+Unicode formatting characters, such as bidirectional overrides, are not
+removed yet, so text can still display in a misleading order; quote exact
+text from --json.
+
+Acceptance criteria, labels, dependencies, activity and the full prompt are
+not printed. Use --json for the complete node record, including every
+annotation.
 ---
 
 ## stale

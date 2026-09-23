@@ -140,12 +140,16 @@ func (s *Store) aggregateBy(
 	return rows.Err()
 }
 
-// buildScopeClause returns a WHERE clause fragment and args for scoping.
+// buildScopeClause returns a WHERE clause fragment and args for scoping
+// stats to a subtree per FR-2.7.5.
 // If scopeID is empty, returns empty clause for global scope.
-// Uses parameterized queries for the scope filter.
+// Uses parameterized queries for the scope filter. The descendant pattern
+// escapes scopeID (escapeLIKEPrefix) so a '_' in its project prefix matches
+// literally and never counts another project's nodes (MTIX-95.17).
 func buildScopeClause(scopeID string) (string, []any) {
 	if scopeID == "" {
 		return "", nil
 	}
-	return " AND (id = ? OR id LIKE ? ESCAPE '\\')", []any{scopeID, scopeID + ".%"}
+	return " AND (id = ? OR id LIKE ? ESCAPE '\\')",
+		[]any{scopeID, escapeLIKEPrefix(scopeID) + ".%"}
 }

@@ -96,12 +96,20 @@ func IsValidAuthorID(s string) bool {
 	return authorIDPattern.MatchString(s)
 }
 
-// projectPrefixPattern enforces the SYNC-DESIGN §5.1 project_prefix grammar,
-// aligned with the FR-2.1a id grammar (projectPrefixRegex in id.go): a prefix
-// may contain dashes (multi-segment prefixes like "MTIX-DEV-OPS", MTIX-39) and
-// underscores ("DEP_ADD"), up to 20 chars. Deriving the prefix at the first
-// dash previously masked the missing-dash gap by emitting a truncated
-// single-segment prefix; both are fixed together.
+// projectPrefixPattern enforces the SYNC-DESIGN §5.1 project_prefix grammar:
+// a prefix may contain dashes (multi-segment prefixes like "MTIX-DEV-OPS",
+// MTIX-39) and underscores ("DEP_ADD"), up to 20 chars. Deriving the prefix at
+// the first dash previously masked the missing-dash gap by emitting a
+// truncated single-segment prefix; both are fixed together.
+//
+// This grammar is NOT the FR-2.1a id grammar (projectPrefixRegex in id.go,
+// ^[A-Z][A-Z0-9-]{0,19}$): it also admits '_', which SQL LIKE reads as a
+// single-character wildcard. The difference is deliberate and kept
+// (MTIX-95.17): tightening this grammar would reject events that 0.5.x hubs
+// may already hold, and FR-2.1a stays strict for locally created prefixes.
+// As a result a node ID applied from sync can contain '_', so every store
+// query that selects a subtree with LIKE escapes the ID prefix
+// (escapeLIKEPrefix in internal/store/sqlite).
 var projectPrefixPattern = regexp.MustCompile(`^[A-Z][A-Z0-9_-]{0,19}$`)
 
 // machineHashPattern enforces the 16-hex shape produced by sync/clock.MachineHash.
@@ -143,6 +151,9 @@ type SyncEvent struct {
 // that do not require the hub to evaluate (size limits and JSON depth are
 // hub-side, applied in MTIX-15.3 before persistence).
 //
+// The project_prefix check uses the sync grammar (projectPrefixPattern),
+// which is deliberately looser than FR-2.1a: it admits '_' (MTIX-95.17).
+//
 // Returns a wrapped ErrInvalidInput with the failing field named so the
 // caller can surface a structured error.
 func (e *SyncEvent) Validate() error {
@@ -158,6 +169,10 @@ func (e *SyncEvent) Validate() error {
 	if e.NodeID == "" {
 		return fmt.Errorf("node_id required: %w", ErrInvalidInput)
 	}
+	// Sync grammar, NOT FR-2.1a: '_' is accepted here although
+	// model.ValidatePrefix rejects it. Do not tighten this check to match
+	// FR-2.1a; 0.5.x hubs may already hold events with such prefixes
+	// (MTIX-95.17). The store escapes every subtree LIKE pattern instead.
 	if !projectPrefixPattern.MatchString(e.ProjectPrefix) {
 		return fmt.Errorf("project_prefix %q does not match ^[A-Z][A-Z0-9_-]{0,19}$: %w",
 			e.ProjectPrefix, ErrInvalidInput)

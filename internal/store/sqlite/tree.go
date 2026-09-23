@@ -40,6 +40,9 @@ func (s *Store) GetTree(
 
 	// Select root + descendants using LIKE on materialized path.
 	// Filter by depth <= root.Depth + maxDepth and exclude soft-deleted.
+	// The root ID is escaped (escapeLIKEPrefix) so a '_' in its project
+	// prefix matches literally and never pulls in another project's nodes
+	// (MTIX-95.17).
 	query := fmt.Sprintf(
 		`SELECT %s FROM nodes
 		 WHERE (id = ? OR id LIKE ? ESCAPE '\')
@@ -47,7 +50,8 @@ func (s *Store) GetTree(
 		   AND depth <= ?
 		 ORDER BY depth ASC, seq ASC`, nodeColumns)
 
-	rows, err := s.readDB.QueryContext(ctx, query, rootID, rootID+".%", maxAbsDepth)
+	rows, err := s.readDB.QueryContext(ctx, query,
+		rootID, escapeLIKEPrefix(rootID)+".%", maxAbsDepth)
 	if err != nil {
 		return nil, fmt.Errorf("query tree: %w", err)
 	}

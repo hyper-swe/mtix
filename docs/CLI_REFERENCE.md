@@ -1034,7 +1034,7 @@ Show summary of most recent session
 
 Show a node's details and annotations
 
-Show a node's details and annotations as labelled lines, in this order:
+Show a node's details and annotations as labeled lines, in this order:
 
   ID           node id, marked when the id is still provisional
   Title        title

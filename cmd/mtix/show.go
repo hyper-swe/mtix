@@ -20,7 +20,7 @@ import (
 
 // showLongHelp lists exactly the lines `mtix show` prints (MTIX-98). Keep it in
 // step with runShow: a test fails when a printed label is missing here.
-const showLongHelp = `Show a node's details and annotations as labelled lines, in this order:
+const showLongHelp = `Show a node's details and annotations as labeled lines, in this order:
 
   ID           node id, marked when the id is still provisional
   Title        title

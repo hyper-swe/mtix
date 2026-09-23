@@ -75,7 +75,7 @@ Positional DSN arguments are no longer accepted; set MTIX_SYNC_DSN or
 .mtix/config.* file. The default sslmode is verify-full; --insecure-tls
 is accepted only when every host the connection may use is loopback or
 a local socket.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncInit(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS})
@@ -220,14 +220,26 @@ func readHubFirstEventHash(ctx context.Context, pool *transport.Pool, prefix str
 
 // resolveSyncDSN returns the hub DSN per FR-18.16 from transport.Source,
 // which reads MTIX_SYNC_DSN or .mtix/secrets and refuses tracked-config
-// DSNs. Any positional argument is refused with
+// DSNs. Any positional argument is refused by refuseDSNArgs with
 // transport.ErrPositionalDSN, whose fixed message names both sources
 // and never repeats the argument (MTIX-95.15).
 func resolveSyncDSN(args []string) (string, error) {
-	if len(args) > 0 {
-		return "", transport.ErrPositionalDSN
+	if err := refuseDSNArgs(args); err != nil {
+		return "", err
 	}
 	return transport.Source(app.mtixDir)
+}
+
+// refuseDSNArgs is the one positional-DSN rule (FR-18.16, MTIX-95.15):
+// any argument where a DSN could be given is refused with
+// transport.ErrPositionalDSN. resolveSyncDSN applies it, and so does
+// syncExactArgs, which every sync and daemon command uses to refuse the
+// argument before the command runs.
+func refuseDSNArgs(args []string) error {
+	if len(args) > 0 {
+		return transport.ErrPositionalDSN
+	}
+	return nil
 }
 
 // noteSyncResult bumps or clears meta.sync.consecutive_errors based

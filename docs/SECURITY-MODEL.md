@@ -90,7 +90,7 @@ The sync hub is a replication mechanism, not a canonical store. Events flow CLI 
 3. **Tracked config files** (`.mtix/config.{yaml,yml,json}`) — `Source()` scans for DSN-shaped keys and **refuses to proceed** if any are present. Fail-closed at the earliest detectable misconfiguration.
 4. **Command line** — positional DSN arguments are no longer accepted; set `MTIX_SYNC_DSN` or `.mtix/secrets`.
 
-Every error string that may contain a DSN passes through `redact.DSN` before reaching stderr, MCP output, or panic traces. Sync command errors, `mtix sync doctor` details (text and `--json`) and the CLI's final error line also pass through one scrubber that removes the configured DSN and its password, whether or not the DSN parses, and a DSN that cannot be parsed is reported with a fixed message that quotes none of it. `cmd/mtix/main.go` wraps `main()` with `defer redact.Recover(nil)` so panics with a DSN in scope are redacted before the runtime printer sees them.
+Every error string that may contain a DSN passes through `redact.DSN` before reaching stderr, MCP output, or panic traces. A DSN that is not a valid `postgres://` or `postgresql://` URL is reported with a fixed message that quotes none of it. When the driver rejects a DSN, its error is shown with the configured DSN and its password removed, in sync command errors and in `mtix sync doctor` details (text and `--json`). The CLI's final error line is scrubbed the same way, also for flag and argument errors inside a project, before the project is opened. `cmd/mtix/main.go` wraps `main()` with `defer redact.Recover(nil)` so panics with a DSN in scope are redacted before the runtime printer sees them.
 
 ### TLS posture
 

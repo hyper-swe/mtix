@@ -57,7 +57,7 @@ Refuses if the local store already has events unless --resume is set.
 
 Use --resume to pick up an interrupted clone from the last batch
 checkpoint (.mtix data sentinel meta.sync.clone.checkpoint).`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncClone(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, resume, batchSize)
@@ -127,7 +127,7 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 	// at the journal tail so hooks never treat cloned history as a backlog of
 	// fresh events to fire on (FR-20 §8 — no wake storm on a new machine).
 	if err := app.store.InitHookScanFloorAtTail(ctx); err != nil {
-		fmt.Fprintf(stderr, "mtix sync clone: hook floor init: %s\n", err)
+		fmt.Fprintf(stderr, "mtix sync clone: hook floor init: %s\n", scrubSyncText(err.Error()))
 	}
 
 	fmt.Fprintf(stdout,

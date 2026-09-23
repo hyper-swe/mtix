@@ -18,50 +18,84 @@ const knownMask = "REDACTED"
 // (password=v, password = 'quoted v'). Group 1 is the raw value.
 var passwordSetting = regexp.MustCompile(`(?i)(?:^|[?&\s])password\s*=\s*('(?:[^'\\]|\\.)*'|[^&\s]+)`)
 
+// minBarePassword is the length from which Known removes a password
+// wherever it appears. A shorter password is removed only where it
+// stands as a password, so ordinary words in the output stay readable
+// (MTIX-95.15).
+const minBarePassword = 6
+
 // Known returns s with every trace of the known DSNs removed, then with
 // every remaining DSN-shaped substring masked by DSN (FR-18.17,
 // MTIX-95.15).
 //
 // For each known DSN it removes the exact value (surrounding whitespace
-// trimmed) and every password it may carry. The
+// trimmed) everywhere, and every password the DSN may carry: wherever it
+// appears when it has at least minBarePassword characters, otherwise
+// only where it stands as a password (see maskAsPassword). The
 // passwords are found without parsing the DSN, so a DSN that does not
 // parse (no scheme, invalid escapes, unescaped reserved characters) is
 // covered too; see knownPasswords. Longer values are removed first, so
 // a password is never left partly visible behind a shorter candidate.
-// Blank known values are ignored.
+// Every occurrence is removed. Blank known values are ignored.
 func Known(s string, dsns ...string) string {
-	for _, secret := range knownSecrets(dsns) {
+	bare, short := knownSecrets(dsns)
+	for _, secret := range bare {
 		s = strings.ReplaceAll(s, secret, knownMask)
+	}
+	for _, pw := range short {
+		s = maskAsPassword(s, pw)
 	}
 	return DSN(s)
 }
 
 // knownSecrets returns the distinct non-empty values Known removes for
-// dsns, longest first (MTIX-95.15). Each DSN is taken with surrounding
-// whitespace trimmed, as a secrets file is read.
-func knownSecrets(dsns []string) []string {
+// dsns (MTIX-95.15). bare holds each DSN (surrounding whitespace
+// trimmed, as a secrets file is read) and every password form of at
+// least minBarePassword characters, longest first; short holds the
+// shorter password forms, whose masks (see maskAsPassword) are anchored
+// on both sides, so their order does not matter.
+func knownSecrets(dsns []string) (bare, short []string) {
 	seen := map[string]bool{}
-	var out []string
-	add := func(v string) {
-		if v != "" && !seen[v] {
-			seen[v] = true
-			out = append(out, v)
-		}
-	}
 	for _, dsn := range dsns {
 		trimmed := strings.TrimSpace(dsn)
-		if trimmed == "" {
+		if trimmed == "" || seen[trimmed] {
 			continue
 		}
-		add(trimmed)
+		seen[trimmed] = true
+		bare = append(bare, trimmed)
 		for _, pw := range knownPasswords(trimmed) {
 			for _, form := range passwordForms(pw) {
-				add(form)
+				if form == "" || seen[form] {
+					continue
+				}
+				seen[form] = true
+				if len(form) >= minBarePassword {
+					bare = append(bare, form)
+				} else {
+					short = append(short, form)
+				}
 			}
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return len(out[i]) > len(out[j]) })
-	return out
+	longestFirst(bare)
+	return bare, short
+}
+
+// longestFirst sorts values by descending length, keeping the order of
+// equal lengths.
+func longestFirst(values []string) {
+	sort.SliceStable(values, func(i, j int) bool { return len(values[i]) > len(values[j]) })
+}
+
+// maskAsPassword returns s with pw removed only where it stands as a
+// password (MTIX-95.15): in user info (":pw@") and as the whole value of
+// a password setting (password=pw or password = 'pw', ended by '&',
+// whitespace or the end of s).
+func maskAsPassword(s, pw string) string {
+	s = strings.ReplaceAll(s, ":"+pw+"@", ":"+knownMask+"@")
+	quoted := regexp.QuoteMeta(pw)
+	setting := regexp.MustCompile(`(?i)(password\s*=\s*)(?:'` + quoted + `'|` + quoted + `)([&\s]|$)`)
+	return setting.ReplaceAllString(s, "${1}"+knownMask+"${2}")
 }
 
 // knownPasswords returns every password candidate in dsn without

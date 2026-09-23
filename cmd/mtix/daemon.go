@@ -48,7 +48,7 @@ Foreground process; intended for launchd/systemd supervision (see
 --install). Idempotent start: .mtix/sync.daemon.pid marks the running
 instance — shared with 'mtix sync daemon', so the two never run
 together. Transient pull errors are logged and retried, never fatal.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if install {
 				return printDaemonInstallStub(cmd.OutOrStdout())

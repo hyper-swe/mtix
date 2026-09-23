@@ -52,7 +52,7 @@ queue). Use --force to bypass the lock (debugging only).
 
 Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors
 so git pre-push hooks never block code pushes.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncPush(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, force)

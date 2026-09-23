@@ -35,7 +35,7 @@ func TestKnown_RemovesExactDSNAndPassword_EvenWhenUnparseable(t *testing.T) {
 			[]string{"Kq8v%zzZ3xW"}},
 		{"unescaped at-sign in password",
 			"postgres://u:Kq8v@Z3xW@hub.invalid/mtix",
-			[]string{"Kq8v@Z3xW", "Kq8v"}},
+			[]string{"Kq8v@Z3xW"}},
 		{"unescaped slash in password",
 			"postgres://u:Kq8v/Z3xW@hub.invalid/mtix",
 			[]string{"Kq8v/Z3xW"}},
@@ -136,4 +136,67 @@ func TestKnown_NoSecret_TextUnchanged(t *testing.T) {
 		"a user name alone is not a secret")
 	require.Equal(t, "text", redact.Known("text", "host=h password='"),
 		"a lone quote as the password value is not a quoted value")
+}
+
+// TestKnown_EveryOccurrenceRemoved: a secret that appears more than once
+// is removed everywhere, not only its first occurrence (MTIX-95.15).
+func TestKnown_EveryOccurrenceRemoved(t *testing.T) {
+	dsn := "u:" + knownSecret + "@hub.invalid/mtix" // no URL shape to mask
+	in := dsn + " | " + knownSecret + " | " + dsn + " | " + knownSecret
+	require.Equal(t, "REDACTED | REDACTED | REDACTED | REDACTED", redact.Known(in, dsn))
+
+	short := "postgres://u:onn@hub.invalid/mtix"
+	in = "a u:onn@h b u:onn@h c password=onn d password=onn"
+	require.Equal(t, "a u:REDACTED@h b u:REDACTED@h c password=REDACTED d password=REDACTED",
+		redact.Known(in, short))
+}
+
+// TestKnown_ShortPassword_MaskedOnlyWhereItStandsAsPassword pins the
+// length policy (MTIX-95.15): the full DSN is removed everywhere; a
+// password of at least 6 characters is removed everywhere; a shorter
+// one only where it stands as a password, in user info (":pw@") or a
+// password setting, so ordinary words in the output stay readable.
+func TestKnown_ShortPassword_MaskedOnlyWhereItStandsAsPassword(t *testing.T) {
+	tests := []struct {
+		name string
+		dsn  string
+		in   string
+		want string
+	}{
+		{"full DSN removed although its password is short",
+			"postgres://u:onn@hub.invalid:6543/mtix", "at postgres://u:onn@hub.invalid:6543/mtix.",
+			"at REDACTED."},
+		{"short password left in ordinary words",
+			"postgres://u:onn@hub.invalid/mtix", "connection refused",
+			"connection refused"},
+		{"short password removed in user info",
+			"postgres://u:onn@hub.invalid/mtix", "dial u:onn@hub.invalid",
+			"dial u:REDACTED@hub.invalid"},
+		{"short password removed in a password setting",
+			"postgres://u:onn@hub.invalid/mtix", "password=onn&sslmode=verify-full",
+			"password=REDACTED&sslmode=verify-full"},
+		{"short password removed in a quoted, spaced setting",
+			"host=hub.invalid password=onn", "PASSWORD = 'onn' dbname=mtix",
+			"PASSWORD = REDACTED dbname=mtix"},
+		{"short password removed at the end of a setting",
+			"postgres://u@hub.invalid/mtix?password=onn", "... password=onn",
+			"... password=REDACTED"},
+		{"a longer setting value is not the password",
+			"postgres://u:onn@hub.invalid/mtix", "password=onnx",
+			"password=onnx"},
+		{"short fragment before an unescaped at-sign kept in words",
+			"postgres://u:Kq8v@Z3xW9mRt@hub.invalid/mtix", "Kq8v alone; u:Kq8v@x",
+			"Kq8v alone; u:REDACTED@x"},
+		{"six characters: removed everywhere",
+			"postgres://u:abcdef@hub.invalid/mtix", "xabcdefx",
+			"xREDACTEDx"},
+		{"five characters: only where it stands as a password",
+			"postgres://u:abcde@hub.invalid/mtix", "xabcdex u:abcde@h",
+			"xabcdex u:REDACTED@h"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, redact.Known(tt.in, tt.dsn))
+		})
+	}
 }

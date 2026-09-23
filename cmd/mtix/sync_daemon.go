@@ -61,7 +61,7 @@ non-error message. The PID file is removed on graceful shutdown.
 
 Use --install to print a systemd unit (linux) or launchd plist
 (darwin) ready to be installed by the user.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if install {
 				return printDaemonInstallStub(cmd.OutOrStdout())

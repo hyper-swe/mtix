@@ -4,7 +4,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"path/filepath"
 	"strings"
@@ -15,21 +14,24 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
+	"github.com/hyper-swe/mtix/internal/sync/pushlock"
 )
 
 // positionalRefusal is the fixed message for a DSN on the command line
 // (FR-18.16, MTIX-95.15).
 const positionalRefusal = "a DSN on the command line is refused: set MTIX_SYNC_DSN or .mtix/secrets"
 
-// TestSyncCommands_PositionalDSN_Refused: every sync command, mtix sync
-// daemon and mtix daemon refuse a DSN given as a positional argument
-// with one fixed message that names MTIX_SYNC_DSN and .mtix/secrets and
-// never repeats the argument (FR-18.16, MTIX-95.15). A hub DSN is also
-// configured in the environment, so the refusal cannot be mistaken for
-// the "no DSN configured" error, which names the same two sources.
+// TestSyncCommands_PositionalDSN_Refused: every sync command (the
+// parent included), mtix sync daemon and mtix daemon (also with
+// --install) and the daemon service verbs refuse a DSN given as a
+// positional argument, before doing anything else, with one fixed
+// message that names MTIX_SYNC_DSN and .mtix/secrets and never repeats
+// the argument (FR-18.16, MTIX-95.15). A hub DSN is also configured in
+// the environment, so the refusal cannot be mistaken for the "no DSN
+// configured" error, which names the same two sources.
 func TestSyncCommands_PositionalDSN_Refused(t *testing.T) {
 	t.Setenv("MTIX_SYNC_HOOK", "")
-	positional := []syntheticDSN{wellFormedDSN(), malformedDSNs()[0], malformedDSNs()[3]}
+	positional := []syntheticDSN{wellFormedDSN(), keywordDSN(), malformedDSNs()[0], malformedDSNs()[3]}
 	for _, d := range positional {
 		t.Run(d.name, func(t *testing.T) {
 			initTestApp(t)
@@ -49,19 +51,70 @@ func TestSyncCommands_PositionalDSN_Refused(t *testing.T) {
 					require.Error(t, err, "a DSN on the command line is refused")
 					require.Contains(t, err.Error(), positionalRefusal)
 					requireNoSecret(t, c.name, errorsAsText(err, stdout, stderr), d)
-					require.NotContains(t, stdout, "started", "a refused daemon never starts")
+					// cobra's own notice for the deprecated --install flag
+					// is printed while flags are parsed, before the rule.
+					out := strings.ReplaceAll(stdout, "Flag --install has been deprecated, "+
+						"use 'mtix daemon install' (registers the OS service)\n", "")
+					require.Empty(t, out, "a refused command does nothing, prints nothing")
 				})
 			}
 
-			var stdout, stderr bytes.Buffer
-			err := runSyncDoctor(context.Background(), &stdout, &stderr,
-				[]string{d.dsn}, transport.Options{})
-			require.ErrorIs(t, err, errDoctorChecksFailed)
-			require.Contains(t, stdout.String(), positionalRefusal,
-				"doctor reports the refusal in its PG check")
-			requireNoSecret(t, "sync doctor", errorsAsText(err, stdout.String(), stderr.String()), d)
+			// mtix sync doctor refuses the argument as an argument error
+			// (exit 1) before any check runs. The rule is checked on its
+			// own first: were it missing, the cobra wrapper would exit the
+			// test process with the failed-checks code.
+			err := newSyncDoctorCmd().ValidateArgs([]string{d.dsn})
+			require.Error(t, err, "doctor refuses a DSN on the command line")
+			require.Contains(t, err.Error(), positionalRefusal)
+			stdout, stderr, err := execSyncCLI(context.Background(), []string{"sync", "doctor", d.dsn})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), positionalRefusal)
+			require.Equal(t, exitCodeGeneric, exitCodeForError(err))
+			require.Empty(t, stdout, "no check ran")
+			requireNoSecret(t, "sync doctor", errorsAsText(err, stdout, stderr), d)
 		})
 	}
+}
+
+// TestSyncPush_PositionalDSN_RefusedBeforePushLock: mtix sync push
+// refuses a DSN on the command line before it looks at the push lock,
+// so a held lock does not turn the refusal into a quiet skip
+// (FR-18.16, MTIX-95.15).
+func TestSyncPush_PositionalDSN_RefusedBeforePushLock(t *testing.T) {
+	initTestApp(t)
+	t.Setenv("MTIX_SYNC_HOOK", "")
+	lock, err := pushlock.Acquire(app.mtixDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = lock.Release() })
+
+	d := wellFormedDSN()
+	stdout, stderr, err := execSyncCLI(context.Background(), []string{"sync", "push", d.dsn})
+	require.Error(t, err, "the refusal is not skipped because another push holds the lock")
+	require.Contains(t, err.Error(), positionalRefusal)
+	require.NotContains(t, stderr, "another process is pushing")
+	requireNoSecret(t, "sync push", errorsAsText(err, stdout, stderr), d)
+}
+
+// TestSyncMigrate_PositionalDSN_RefusedBeforeLocalBackfill: mtix sync
+// migrate refuses a DSN on the command line before its local Phase 0
+// uid backfill touches the store (FR-18.16, MTIX-95.15).
+func TestSyncMigrate_PositionalDSN_RefusedBeforeLocalBackfill(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, runCreate("needs a uid", "", "", 3, "", "", "", "", ""))
+	ctx := context.Background()
+	_, err := app.store.WriteDB().ExecContext(ctx, `UPDATE nodes SET uid = ''`)
+	require.NoError(t, err)
+
+	d := wellFormedDSN()
+	stdout, stderr, err := execSyncCLI(ctx, []string{"sync", "migrate", d.dsn, "--project", "TEST"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), positionalRefusal)
+	requireNoSecret(t, "sync migrate", errorsAsText(err, stdout, stderr), d)
+
+	var missing int
+	require.NoError(t, app.store.QueryRow(ctx,
+		`SELECT COUNT(*) FROM nodes WHERE uid IS NULL OR uid = ''`).Scan(&missing))
+	require.Equal(t, 1, missing, "the refused migrate left the store untouched")
 }
 
 // TestResolveSyncDSN_PositionalArg_Refused: resolveSyncDSN refuses any

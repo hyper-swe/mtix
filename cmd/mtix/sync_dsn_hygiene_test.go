@@ -30,6 +30,11 @@ type sweepCommand struct {
 	reached string
 	// timeout bounds a long-running command (the daemons).
 	timeout time.Duration
+	// argsOnly marks a command that never reads a DSN and acts outside
+	// the test (OS service registration, the FR-15 file check on the
+	// real stdout). The sweep runs it only with a positional argument,
+	// which its argument rule refuses before the command runs.
+	argsOnly bool
 }
 
 // cmdLine joins a command path, positional arguments and flags.
@@ -39,9 +44,10 @@ func cmdLine(path []string, pos []string, flags ...string) []string {
 	return append(out, flags...)
 }
 
-// sweepCommands lists every sync command and both daemons, except
-// doctor: its cobra wrapper exits the process on failed checks, so the
-// sweep runs it through runSyncDoctor instead.
+// sweepCommands lists every sync command, both daemons (also with
+// --install) and the daemon service verbs, except doctor: its cobra
+// wrapper exits the process on failed checks, so the sweep runs it
+// through sweepDoctor instead.
 func sweepCommands(backupOut string) []sweepCommand {
 	const daemonTimeout = 500 * time.Millisecond
 	const connect = "mtix sync connect:"
@@ -84,7 +90,33 @@ func sweepCommands(backupOut string) []sweepCommand {
 		{name: "sync backfill", argv: func(pos []string) []string {
 			return cmdLine([]string{"sync", "backfill"}, pos, "--dry-run")
 		}},
+		{name: "sync", argv: at("sync"), argsOnly: true},
+		{name: "sync daemon --install", argv: func(pos []string) []string {
+			return cmdLine([]string{"sync", "daemon"}, pos, "--install")
+		}},
+		{name: "daemon --install", argv: func(pos []string) []string {
+			return cmdLine([]string{"daemon"}, pos, "--install")
+		}},
+		{name: "daemon install", argv: at("daemon", "install"), argsOnly: true},
+		{name: "daemon uninstall", argv: at("daemon", "uninstall"), argsOnly: true},
+		{name: "daemon start", argv: at("daemon", "start"), argsOnly: true},
+		{name: "daemon stop", argv: at("daemon", "stop"), argsOnly: true},
+		{name: "daemon status", argv: at("daemon", "status"), argsOnly: true},
 	}
+}
+
+// sweepDoctor runs mtix sync doctor for the sweep and returns everything
+// it made observable. A positional argument meets the command's argument
+// rule first, as on the command line; the checks themselves run through
+// runSyncDoctor, because the cobra wrapper exits the process when a
+// check fails.
+func sweepDoctor(pos []string) string {
+	if err := newSyncDoctorCmd().ValidateArgs(pos); err != nil {
+		return errorsAsText(err)
+	}
+	var stdout, stderr bytes.Buffer
+	err := runSyncDoctor(context.Background(), &stdout, &stderr, pos, transport.Options{})
+	return errorsAsText(err, stdout.String(), stderr.String())
 }
 
 // execSyncCLI runs argv under a root configured like production's
@@ -126,12 +158,12 @@ func requireDSNPathReached(t *testing.T, label, text, reached string) {
 }
 
 // TestDSN_NeverInAnyFR18CommandOutput is the FR-18.17 regression sweep
-// (MTIX-15.7.5, extended by MTIX-95.15). Every sync command and both
-// daemons run against a real local store with a synthetic DSN in each
-// form (well-formed, malformed, scheme-less) and from each source (the
-// environment, the secrets file, the command line). No part of the
-// password, and never the DSN itself, may appear in stdout, stderr or
-// the returned error.
+// (MTIX-15.7.5, extended by MTIX-95.15). Every sync command, both
+// daemons and the daemon service verbs run against a real local store
+// with a synthetic DSN in each form (well-formed, keyword/value,
+// malformed, scheme-less) and from each source (the environment, the
+// secrets file, the command line). No part of the password, and never
+// the DSN itself, may appear in stdout, stderr or the returned error.
 //
 // No hub is reachable (the host is under .invalid), so each command runs
 // its failure path. For environment and secrets-file DSNs the sweep also
@@ -147,6 +179,9 @@ func TestDSN_NeverInAnyFR18CommandOutput(t *testing.T) {
 				pos := configureSyncDSN(t, app.mtixDir, source, d.dsn)
 				backupOut := filepath.Join(t.TempDir(), "hub.sql")
 				for _, c := range sweepCommands(backupOut) {
+					if c.argsOnly && source != sourcePositional {
+						continue
+					}
 					text := runSweepCommand(t, c, pos)
 					requireNoSecret(t, c.name, text, d)
 					if source != sourcePositional && c.reached != "" {
@@ -154,10 +189,7 @@ func TestDSN_NeverInAnyFR18CommandOutput(t *testing.T) {
 					}
 				}
 
-				var stdout, stderr bytes.Buffer
-				err := runSyncDoctor(context.Background(), &stdout, &stderr,
-					pos, transport.Options{})
-				text := errorsAsText(err, stdout.String(), stderr.String())
+				text := sweepDoctor(pos)
 				requireNoSecret(t, "sync doctor", text, d)
 				if source != sourcePositional {
 					requireDSNPathReached(t, "sync doctor", text, "PG reachable")
@@ -168,8 +200,8 @@ func TestDSN_NeverInAnyFR18CommandOutput(t *testing.T) {
 }
 
 // TestDSNSweep_CoversEverySyncCommand: every runnable command under
-// mtix sync, and mtix daemon, is in the output sweep, so a new command
-// cannot ship outside it (FR-18.17, MTIX-95.15).
+// mtix sync and mtix daemon, the two parents included, is in the output
+// sweep, so a new command cannot ship outside it (FR-18.17, MTIX-95.15).
 func TestDSNSweep_CoversEverySyncCommand(t *testing.T) {
 	swept := map[string]bool{"sync doctor": true}
 	for _, c := range sweepCommands("") {
@@ -183,8 +215,8 @@ func TestDSNSweep_CoversEverySyncCommand(t *testing.T) {
 			walk(sub)
 		}
 		path := strings.TrimPrefix(c.CommandPath(), "mtix ")
-		if c == root || !c.Runnable() || path == "sync" || strings.HasPrefix(path, "daemon ") {
-			return // the root, groups, the FR-15 file check, and the OS-service helpers
+		if c == root || !c.Runnable() {
+			return // the test root and command groups without a RunE
 		}
 		require.Truef(t, swept[path], "%q is missing from the FR-18.17 output sweep", path)
 	}

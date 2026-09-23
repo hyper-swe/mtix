@@ -26,6 +26,7 @@ resolving any discrepancies.
 
 With subcommand (FR-18 / MTIX-15): manage the BYO Postgres sync hub.
 See 'mtix sync init --help' and 'mtix sync clone --help'.`,
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSync(cmd, fix)
 		},

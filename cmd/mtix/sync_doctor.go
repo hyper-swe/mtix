@@ -55,7 +55,7 @@ func newSyncDoctorCmd() *cobra.Command {
 
 Exit code: 0 on all-pass, 2 if any check fails. --json output for
 agents and CI consumption.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			err := runSyncDoctor(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS})

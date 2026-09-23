@@ -63,7 +63,7 @@ func newSyncMigrateCmd() *cobra.Command {
 Phase 1 MOVES display numbers on the hub when duplicates exist. Without
 --yes the command PREVIEWS the renumbers and applies nothing. Re-run with
 --yes to record the remaps to the live store.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncMigrate(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, project, yes)

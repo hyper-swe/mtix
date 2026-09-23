@@ -60,7 +60,7 @@ BOTH contesting nodes and their available signals (uids, epochs, claim
 timestamps). The older-claim timestamp is ADVISORY only — it is
 client-asserted and partly lost on restore, so it is shown, never acted on
 automatically (audit F-5). --json for agent/CI consumption.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncCollisionsList(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, project)
@@ -90,7 +90,7 @@ keeps the contested number:
 The LOSER renumbers to the next free number under its parent via
 Store.RenumberSubtree (no create event is deleted, no node is lost). The
 moved node may have external references that need updating.`,
-		Args: cobra.RangeArgs(1, 2),
+		Args: syncExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncCollisionsResolve(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, winner)

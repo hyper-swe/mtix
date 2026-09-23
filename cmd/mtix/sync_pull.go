@@ -47,7 +47,7 @@ Lock-free: multiple processes pulling concurrently is safe because
 applied_events dedupes on event_id.
 
 Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncPull(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, limit)
@@ -109,7 +109,7 @@ func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 
 	if tailErr == nil && preTail == 0 && pulled > 0 {
 		if err := app.store.InitHookScanFloorAtTail(ctx); err != nil {
-			fmt.Fprintf(stderr, "mtix sync pull: hook floor init: %s\n", err)
+			fmt.Fprintf(stderr, "mtix sync pull: hook floor init: %s\n", scrubSyncText(err.Error()))
 		}
 	}
 

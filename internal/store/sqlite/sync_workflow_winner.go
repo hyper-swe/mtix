@@ -48,12 +48,15 @@ import (
 // no check: its Lamport clock is above every event this replica holds, so it
 // is the winner when it is written.
 //
-// A losing event is still mirrored into sync_events, its clocks are merged
-// and it is recorded in applied_events, so a re-pull is a no-op and later
-// comparisons see it. It changes no node column and writes no sync_conflicts
-// row: workflow state is not a user-authored field, and a conflict row for
-// every lost claim race or late replay would be noise. (Surfacing lost claims
-// to the losing agent is ADR-006 §4.6, phase 4.)
+// dispatchWithLWW (sync_apply.go) checks every workflow event with
+// workflowEventWins before any dispatch. A losing event returns there
+// without dispatch; IdempotentApply has already mirrored it into
+// sync_events, and it still merges its clocks and records it in
+// applied_events, so a re-pull is a no-op and later comparisons see it. It
+// changes no node column and writes no sync_conflicts row: workflow state is
+// not a user-authored field, and a conflict row for every lost claim race or
+// late replay would be noise. (Surfacing lost claims to the losing agent is
+// ADR-006 §4.6, phase 4.)
 //
 // # Known residual (phase 0)
 //
@@ -65,20 +68,31 @@ import (
 //     replay and between replicas. Example: a claim by agent-a applies, then
 //     a done with a higher key arrives; the assignee stays agent-a. A replica
 //     that received the done first rejects the claim and keeps the assignee
-//     it had. status and closed_at always converge. Full convergence arrives
-//     with the phase-4 projector's composite workflow register (ADR-006 §4.4).
+//     it had. Likewise, after a claim race in which the losing agent marks the
+//     node done before pulling, both replicas show done, each with its own
+//     agent as assignee. Status converges on every replica; closed_at
+//     converges among replicas that received the events by sync (the
+//     originator exceptions follow). Full convergence arrives with the
+//     phase-4 projector's composite workflow register (ADR-006 §4.4).
 //   - defer_until. The ADR-006 §4.4 register clears defer_until on claim,
 //     unclaim and transition, and a local claim clears it too. Ingest does
 //     not: that is out of scope for phase 0 (defer --until is MTIX-95.22).
 //   - update_field on status, assignee or agent_state keeps its own per-field
 //     register and is not compared with workflow events.
-//   - closed_at. The originating store stamps its own clock when the local
-//     mutation runs (transition.go, cancel.go); replicas stamp the winning
-//     event's wall_clock_ts, truncated to whole seconds. The emitter reads
-//     the clock separately from the mutation, so the originator and replicas
-//     can differ within that second. invalidated stamps closed_at on replicas
-//     (as apply did before MTIX-95.10), while the local transition leaves it
-//     as it was.
+//   - closed_at on the originator. The originating store stamps its own
+//     clock when the local mutation runs (transition.go, cancel.go), while
+//     replicas stamp the winning event's wall_clock_ts truncated to whole
+//     seconds. The emitter reads the clock separately from the mutation, so
+//     the originator and replicas can differ within that second. Two local
+//     transitions also write closed_at differently from the table: an
+//     invalidation leaves the originator's closed_at as it was (NULL for an
+//     open node) while replicas stamp it, since invalidated is terminal here
+//     as in apply before MTIX-95.10; and a restore from invalidated keeps the
+//     originator's closed_at while replicas clear it.
+//   - closed_at range. When the winner's wall_clock_ts is outside years
+//     1..9999 (RFC3339 cannot represent it; validation rejects only
+//     negatives), closed_at falls back to the apply time on that replica, so
+//     the node stays readable but its closed_at differs from the others'.
 //   - updated_at stays the apply time, and ingest writes no activity entry.
 //   - Local writes that emit no event (auto-block on a new dependency, the
 //     descendants of a cascade cancel) are invisible to the winner check.
@@ -300,9 +314,10 @@ type workflowWrite struct {
 
 // resolveWorkflowWrite looks up the table row for in and resolves its column
 // values from the event (MTIX-95.10). A terminal closed_at is the event's
-// wall_clock_ts in whole seconds, never the apply time, so every replica
-// stamps the same value. Returns ErrInvalidInput when no row matches (an
-// unknown or empty to-status).
+// wall_clock_ts in whole seconds, not the apply time, so every replica stamps
+// the same value; closedAtFromWallClock covers a wall_clock_ts RFC3339 cannot
+// represent. Returns ErrInvalidInput when no row matches (an unknown or empty
+// to-status).
 func resolveWorkflowWrite(in workflowInput) (workflowWrite, error) {
 	rule, ok := lookupWorkflowRule(in.op, in.from, in.to)
 	if !ok {
@@ -319,7 +334,7 @@ func resolveWorkflowWrite(in workflowInput) (workflowWrite, error) {
 		assignee:       resolveColumn(rule.assignee, in.agentID),
 		agentState:     resolveColumn(rule.agentState, string(model.AgentStateWorking)),
 		previousStatus: resolveColumn(rule.previousStatus, string(in.from)),
-		closedAt:       resolveColumn(rule.closedAt, wallClockSeconds(in.wallClockTS)),
+		closedAt:       resolveColumn(rule.closedAt, closedAtFromWallClock(in.wallClockTS, in.updatedAt)),
 		progress:       resolveColumn(rule.progress, 1.0),
 		deferUntil:     resolveColumn(rule.deferUntil, until),
 	}, nil
@@ -338,11 +353,22 @@ func resolveColumn(a workflowAction, v any) workflowColumn {
 	}
 }
 
-// wallClockSeconds formats an event's wall_clock_ts (Unix ms) as RFC3339 UTC
-// in whole seconds, the precision closed_at is stored in. The RFC3339 layout
-// has no fractional part, so formatting truncates the milliseconds.
-func wallClockSeconds(ms int64) string {
-	return time.UnixMilli(ms).UTC().Format(time.RFC3339)
+// closedAtFromWallClock formats an event's wall_clock_ts (Unix ms) as RFC3339
+// UTC in whole seconds, the precision closed_at is stored in; the RFC3339
+// layout has no fractional part, so formatting truncates the milliseconds.
+//
+// RFC3339 has four-digit years, and envelope validation rejects only a
+// negative wall_clock_ts. A value outside years 1..9999 would format to a
+// string no reader can parse, so GetNode and ListNodes would fail on every
+// replica. For such a value closedAtFromWallClock returns fallback (the apply
+// time, the value closed_at had before MTIX-95.10), so the event still applies
+// and the node stays readable (MTIX-95.10, review round 1).
+func closedAtFromWallClock(ms int64, fallback string) string {
+	t := time.UnixMilli(ms).UTC()
+	if y := t.Year(); y < 1 || y > 9999 {
+		return fallback
+	}
+	return t.Format(time.RFC3339)
 }
 
 // writeWorkflowColumns writes a resolved table row onto node id (MTIX-95.10).
@@ -379,7 +405,12 @@ func writeWorkflowColumns(ctx context.Context, tx *sql.Tx, id string, w workflow
 
 // applyWorkflowWinner writes a winning workflow event's table row onto the
 // node the event addresses and returns that node's current id (MTIX-95.10).
-// Callers reach it only for an event that won (dispatchWithLWW).
+// applyTransitionStatus, applyClaim, applyUnclaim and applyDefer
+// (sync_apply.go) call it after decoding their payload, and are reached only
+// for an event that won (dispatchWithLWW). They pass the event's
+// wall_clock_ts, so a terminal closed_at is the same on every replica
+// whatever order the node's workflow events arrived in, and their apply time
+// as updated_at.
 func applyWorkflowWinner(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, in workflowInput) (string, error) {
 	id, err := resolveNodeRef(ctx, tx, e)
 	if err != nil {

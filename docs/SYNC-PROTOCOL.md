@@ -178,16 +178,28 @@ Known residual in 0.5.x:
   final winner may not overwrite it. Example: a claim applies, then a
   `done` with a higher key arrives; the assignee stays set. A replica
   that received the `done` first rejects the claim and keeps the
-  assignee it had. Status and `closed_at` always converge.
+  assignee it had. Likewise, after a claim race in which the agent
+  whose claim lost marks the node done before pulling, both replicas
+  show `done`, each with its own agent as assignee. Status converges
+  on every replica; `closed_at` converges among replicas that received
+  the events by sync (the originator exceptions follow).
 - `defer_until` is not cleared by a winning claim, unclaim or
   transition at ingest, although a local claim clears it.
 - `update_field` on `status`, `assignee` or `agent_state` keeps its
   per-field register above and is not compared with workflow events.
-- The originating store stamps `closed_at` from its own clock when the
-  mutation runs, and replicas stamp the event's `wall_clock_ts`; the
-  two are read separately, so they can differ within that second. A
-  replica also stamps `closed_at` for `invalidated`, which the local
-  transition leaves unchanged.
+- `closed_at` on the originating store can differ from the replicas':
+  - it stamps its own clock when the mutation runs, while replicas
+    stamp the event's `wall_clock_ts`; the two are read separately, so
+    they can differ within that second;
+  - an invalidation leaves its `closed_at` as it was (NULL for an open
+    node), while replicas stamp it (`invalidated` is terminal here);
+  - a restore from `invalidated` keeps its `closed_at`, while replicas
+    clear it.
+- `closed_at` range: RFC 3339 has four-digit years and envelope
+  validation rejects only a negative `wall_clock_ts`. When the
+  winner's `wall_clock_ts` is outside years 1 to 9999, `closed_at`
+  falls back to the apply time on that replica, so the node stays
+  readable but its `closed_at` differs from the other replicas'.
 - Local writes that emit no event (an auto-block when a dependency is
   added, the descendants of a cascade cancel) are invisible to the
   winner check.

@@ -86,7 +86,9 @@ func TestLookupWorkflowRule_TransitionTargets_MatchesSpecificRowsFirst(t *testin
 // invariant that makes closed_at converge: every row writes closed_at, from
 // the wall clock for a terminal status and NULL otherwise.
 func TestWorkflowWinnerTable_EveryRow_WritesClosedAtByTerminality(t *testing.T) {
-	for _, r := range workflowWinnerTable() {
+	rows := workflowWinnerTable()
+	require.Len(t, rows, 12, "the documented table has twelve rows")
+	for _, r := range rows {
 		want := wfClear
 		if r.to.IsTerminal() {
 			want = wfSet
@@ -94,6 +96,24 @@ func TestWorkflowWinnerTable_EveryRow_WritesClosedAtByTerminality(t *testing.T) 
 		require.Equal(t, want, r.closedAt, "row %s %q -> %q", r.op, r.from, r.to)
 		require.True(t, isWorkflowOp(r.op), "row op %s is a workflow op", r.op)
 		require.True(t, r.to.IsValid(), "row status %q is valid", r.to)
+	}
+}
+
+// TestWorkflowWinnerTable_EveryStatusAndOp_HasARow checks that every workflow
+// op, and a transition_status to every status, finds a row, so no winner is
+// refused for want of one.
+func TestWorkflowWinnerTable_EveryStatusAndOp_HasARow(t *testing.T) {
+	for _, to := range model.AllStatuses() {
+		rule, found := lookupWorkflowRule(model.OpTransitionStatus, model.StatusOpen, to)
+		require.True(t, found, "transition_status to %s has a row", to)
+		require.Equal(t, to, rule.to)
+	}
+	for op, to := range map[model.OpType]model.Status{
+		model.OpClaim: model.StatusInProgress, model.OpUnclaim: model.StatusOpen, model.OpDefer: model.StatusDeferred,
+	} {
+		rule, found := lookupWorkflowRule(op, "", "")
+		require.True(t, found, "%s has a row", op)
+		require.Equal(t, to, rule.to, "%s writes %s", op, to)
 	}
 }
 
@@ -106,10 +126,27 @@ func TestResolveWorkflowWrite_NoRule_ReturnsInvalidInput(t *testing.T) {
 	require.Contains(t, err.Error(), "no workflow winner rule")
 }
 
-func TestWallClockSeconds_Milliseconds_TruncatedToWholeSecondsUTC(t *testing.T) {
-	ts := time.Date(2026, 9, 1, 12, 0, 59, 999_000_000, time.FixedZone("x", 3600)).UnixMilli()
-	require.Equal(t, "2026-09-01T11:00:59Z", wallClockSeconds(ts))
-	require.Equal(t, "1970-01-01T00:00:00Z", wallClockSeconds(0))
+func TestClosedAtFromWallClock_RangeAndPrecision_FormatsOrFallsBack(t *testing.T) {
+	const fallback = "2026-09-24T00:00:00Z"
+	tests := []struct {
+		name string
+		ms   int64
+		want string
+	}{
+		{"milliseconds truncate, UTC", time.Date(2026, 9, 1, 12, 0, 59, 999_000_000,
+			time.FixedZone("x", 3600)).UnixMilli(), "2026-09-01T11:00:59Z"},
+		{"Unix epoch", 0, "1970-01-01T00:00:00Z"},
+		{"first second of year 1", time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), "0001-01-01T00:00:00Z"},
+		{"year 0 falls back", time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli() - 1, fallback},
+		{"last millisecond of year 9999", time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli() - 1,
+			"9999-12-31T23:59:59Z"},
+		{"year 10000 falls back", time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), fallback},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, closedAtFromWallClock(tt.ms, fallback))
+		})
+	}
 }
 
 // winnerTestEvent builds a foreign workflow event for the white-box tests.

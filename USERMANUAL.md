@@ -1524,14 +1524,18 @@ always converge.
 
 Claims and status changes (`mtix claim`, `unclaim`, `done`, `cancel`,
 `defer`, `reopen` and the other transitions) are resolved per task
-the same way: after a sync, the most recent one (highest
-`lamport_clock`, ties broken by event id) holds on every machine, and
-an older one that arrives later changes nothing. If two agents claim
-the same task on different machines between syncs, only one keeps it
-after both have pulled, so check the assignee with `mtix show <id>`
-after `mtix sync pull` before carrying on with claimed work. These
-contests are resolved silently: they are not listed by
-`mtix sync conflicts list`.
+the same way: after a sync, every machine shows the status set by the
+most recent claim or status change (highest `lamport_clock`, ties
+broken by event id), and an older one that arrives later changes
+nothing. Only the status is guaranteed to agree. The assignee and the
+other fields that go with it can still differ between machines when
+changes arrive out of order: if two agents claim the same task between
+syncs and the agent whose claim lost marks it done before pulling,
+both machines show the task done, each with its own agent as the
+assignee. After `mtix sync pull`, check the task with `mtix show <id>`
+before carrying on with claimed work, and stop if it is no longer in
+progress under your name. These contests are resolved silently: they
+are not listed by `mtix sync conflicts list`.
 
 The hub also records contested edits in `sync_conflicts` for audit
 visibility:

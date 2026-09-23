@@ -159,6 +159,20 @@ LWW is deterministic — every CLI ends up at the same final state
 regardless of the order in which they pull. Conflicts are recorded
 for auditability, not because the system is uncertain.
 
+Claims and status changes (`mtix claim`, `unclaim`, `done`, `cancel`,
+`defer`, `reopen` and the other transitions) are resolved per task by
+last-writer-wins when they are pulled: every machine shows the status
+set by the most recent claim or status change (highest
+`lamport_clock`, ties broken by event id), and an older one that
+arrives later changes nothing. These contests are resolved silently
+and are not listed by `mtix sync conflicts list`. Only the status is
+guaranteed to agree: the assignee can still differ between machines
+when changes arrive out of order (if two agents claim a task between
+syncs and the one whose claim lost marks it done before pulling, both
+machines show it done, each with its own agent as the assignee). After
+`mtix sync pull`, check a claimed task with `mtix show <id>` and stop
+if it is no longer in progress under your name.
+
 **Note:** When two CLIs share `authorID="cli"` (the default), their
 concurrent events produce vector clocks that are `Equal()` rather
 than `Concurrent()`, so the hub does NOT log a `sync_conflicts` row

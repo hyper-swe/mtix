@@ -172,6 +172,27 @@ func TestApply_LateForeignClaimCarryingUID_ScopedByUID_StatusStaysDone(t *testin
 		"the uid-addressed late claim loses to the node's done")
 }
 
+// TestApply_UIDScopedLamportTie_HigherEventIDHolds checks the tie-break on
+// the uid-scoped lookup: three claims addressed by uid share one Lamport
+// clock, and the one with the highest event_id holds whatever order the
+// other two arrive in.
+func TestApply_UIDScopedLamportTie_HigherEventIDHolds(t *testing.T) {
+	s, raw := replicaWithNode(t)
+	uid := nodeRow(t, raw, "MTIX-1")["uid"]
+	claim := func(agent, id string) *model.SyncEvent {
+		e := foreignWorkflowEvent(t, "MTIX-1", model.OpClaim, &model.ClaimPayload{AgentID: agent}, 5, id)
+		e.UID = uid
+		return e
+	}
+	// The highest id first, then the lowest, then one in between: the middle
+	// claim must lose to the highest, not beat the lowest.
+	pullEvents(t, s, []*model.SyncEvent{
+		claim("agent-high", "evt-c"), claim("agent-low", "evt-a"), claim("agent-mid", "evt-b"),
+	})
+
+	require.Equal(t, "agent-high", nodeRow(t, raw, "MTIX-1")["assignee"])
+}
+
 // TestApply_NewerForeignClaimAfterDone_Applies guards the other side of the
 // rule: done is not sticky. A foreign claim whose key beats the local done
 // applies, exactly like before MTIX-95.10.

@@ -174,18 +174,54 @@ first_event_hash for `PROJ`, init refuses and points the operator at
 
 ## Idempotent apply
 
-`applied_events.event_id` is the dedupe key. On apply:
+A replica applies each event at most once. `event_id` is the dedupe
+key, checked against two local tables. On apply:
 
 ```
 if event_id already in applied_events:
     return nil (already applied, no-op)
+if event_id already in local sync_events (any sync_status):
+    # own-event rule: this replica already holds the event
+    advance lamport, merge VC, INSERT OR IGNORE into applied_events
+    return nil (no dispatch, no conflict row, no new sync_events row)
+mirror into sync_events (sync_status = 'applied')
 dispatch to applyCreateNode / applyUpdateField / ... per op_type
+    (with LWW resolution and conflict logging for field ops)
 advance lamport, merge VC, INSERT into applied_events
 ```
 
-Replay of any pushed event is a no-op. The same event may flow through
+**Own-event rule.** A pull returns every hub event past the cursor,
+including the events this CLI pushed itself. A locally emitted event
+never passes through apply when it is emitted, so it is not in
+`applied_events` when it first comes back; it is already in the local
+`sync_events` log (`pending`, `pushed` or `conflicted`). Apply therefore
+treats any event whose `event_id` is already in `sync_events` as held:
+it merges the event's clocks and records it in `applied_events`, but
+never applies it again. Applying it again would log a spurious LWW
+conflict for every field update whose field has an earlier event (the
+same pair twice when the field was written twice), and a replayed
+`claim`, `unclaim`, `defer` or `transition_status`, which apply
+unconditionally, would overwrite newer local state: claim, push, done,
+pull would leave the node `in_progress` with `closed_at` still set.
+
+Events from other CLIs are not in the local log until apply mirrors
+them, so they keep the LWW resolution and conflict logging described in
+[LWW resolution](#lww-resolution-apply-time), unchanged.
+
+Replay of any event is a no-op. The same event may flow through
 multiple CLIs (push → hub → pull on another CLI → re-pull on the
-originator) and the originator's `applied_events` row blocks re-apply.
+originator). A re-pull of a foreign event stops at its `applied_events`
+row. The originator's own event stops at its `sync_events` row the
+first time it returns, and at its `applied_events` row after that.
+Earlier revisions of this document said the originator's
+`applied_events` row alone blocked the re-apply; it did not, because
+an emitted event has no such row until a pull records one.
+
+Hooks are unaffected. The own-event rule adds no `sync_events` row, so
+hook dispatch and inbox delivery still see each event exactly once. The
+hook journal's `Synced` flag keeps its semantics: it is still derived
+from `applied_events`, and an own event returned by a pull is recorded
+there, as it was before this rule.
 
 ## Migration single-flight
 

@@ -219,6 +219,11 @@ func recordLocalConflict(ctx context.Context, tx *sql.Tx, winnerID, loserID, nod
 //   - Duplicate event_id: silent no-op (FR-18.9 idempotency).
 //   - Validates the event before any mutation; invalid events surface
 //     ErrInvalidInput.
+//   - An event already in the local sync_events log (any sync_status;
+//     typically this replica's own event returned by a pull) is
+//     acknowledged, not applied: clocks merged, applied_events recorded,
+//     no dispatch, no mirror row, no conflict (MTIX-95.2, see
+//     acknowledgeHeldEvent).
 //   - Dispatches on op_type to a per-op apply function.
 //   - DOES NOT emit a sync_event (apply MUST NOT loop).
 //   - Always advances local Lamport to max(local, event.lamport) and
@@ -240,10 +245,15 @@ func IdempotentApply(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) er
 		return nil
 	}
 
+	// Own-event rule (MTIX-95.2): an event this replica already holds is
+	// acknowledged and never re-applied. Foreign events fall through.
+	if held, heldErr := acknowledgeHeldEvent(ctx, tx, event); heldErr != nil || held {
+		return heldErr
+	}
+
 	// Mirror the event into the local sync_events log so subsequent
-	// LWW lookups find it. A locally-emitted event already exists
-	// (sync_status='pending' or 'pushed'); ON CONFLICT DO NOTHING
-	// makes this a no-op for those.
+	// LWW lookups find it. Only a foreign event reaches this point: an
+	// event already in the log returned above.
 	if mirrorErr := mirrorIncomingEvent(ctx, tx, event); mirrorErr != nil {
 		return fmt.Errorf("apply %s: mirror: %w", event.EventID, mirrorErr)
 	}

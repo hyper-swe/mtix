@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 ### Fixed
+- **`mtix sync pull` re-applied this client's own pushed events (MTIX-95.2).** A pull returns every hub event past the cursor, including the events this client pushed itself, and apply deduplicated only against events received from other clients. Each own event was therefore applied a second time. A field update whose field had any earlier event logged a spurious conflict, and the same pair was logged twice when the field had been written twice. A replayed claim, unclaim, defer or status change overwrote newer local state: claim, push, `mtix done`, pull left the node `in_progress` with `closed_at` still set. An event that is already in the local event log is now recorded as applied and its clocks are merged, but it is not applied again and logs no conflict. Events from other clients are resolved exactly as before, and hooks and inbox delivery still fire once per event. Conflict rows and statuses written by earlier pulls are not changed by upgrading.
 
 ### Changed
 

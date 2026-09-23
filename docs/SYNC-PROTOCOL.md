@@ -198,8 +198,9 @@ never passes through apply when it is emitted, so it is not in
 treats any event whose `event_id` is already in `sync_events` as held:
 it merges the event's clocks and records it in `applied_events`, but
 never applies it again. Applying it again would log a spurious LWW
-conflict for every field update whose field has an earlier event (the
-same pair twice when the field was written twice), and a replayed
+conflict for every field update whose field has any other event in the
+local log, earlier or newer (the same pair twice when the field was
+written twice), and a replayed
 `claim`, `unclaim`, `defer` or `transition_status`, which apply
 unconditionally, would overwrite newer local state: claim, push, done,
 pull would leave the node `in_progress` with `closed_at` still set.

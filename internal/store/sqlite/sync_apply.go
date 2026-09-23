@@ -135,10 +135,11 @@ func incomingBeats(e *model.SyncEvent, priorLamp, priorTS int64, priorHash strin
 }
 
 // mirrorIncomingEvent records a pulled event into the local
-// sync_events table with sync_status='applied'. ON CONFLICT DO NOTHING
-// makes the call safe even when the same event was previously emitted
-// locally (we'd then have it as 'pending' or 'pushed'; the mirror
-// attempt is a no-op).
+// sync_events table with sync_status='applied'. INSERT OR IGNORE is
+// defensive idempotency only: an event already in sync_events (any
+// sync_status, including this replica's own emitted events) never
+// reaches this call, because the own-event rule in acknowledgeHeldEvent
+// returns first (MTIX-95.2).
 func mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	vcJSON, err := json.Marshal(e.VectorClock)
 	if err != nil {

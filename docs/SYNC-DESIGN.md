@@ -227,7 +227,7 @@ There is no per-project sync flag, filter, or cursor.
 | # | Threat | Mitigation in v1 | Residual risk |
 |---|---|---|---|
 | T1 | Credentials in git | DSN refused from any tracked file; only `MTIX_SYNC_DSN` env var or `.mtix/secrets` (mode 0600, gitignored). Refusal is fail-closed at config load. | Low — fail-closed |
-| T2 | MitM on the PG connection | `sslmode=verify-full` default; weaker modes refused unless `--insecure-tls` AND host is loopback | Low if the operator picks a managed PG with proper certs |
+| T2 | MitM on the PG connection | `sslmode=verify-full` default; weaker modes refused unless `--insecure-tls` AND every host the connection may use is loopback or a local Unix-domain socket | Low if the operator picks a managed PG with proper certs |
 | T3 | SQL injection from malicious filter values or event payloads | Bound parameters at every PG call; MTIX-9.1 attack-pattern test ported to the PG transport | Very low — depends on no future regression |
 | T4 | Insider mutation tampering (compromised team member edits/deletes via mtix) | Append-only `audit_log` written atomically with every mutation; PG triggers prevent UPDATE/DELETE on audit rows | Medium — PG superuser bypasses triggers; insider with write access can still create or modify nodes |
 | T5 | Audit log tampering (DBA edits or deletes audit rows) | Triggers raise on UPDATE/DELETE | Medium — PG superuser bypasses; safety-critical adopters ship audit_log to immutable cold storage |
@@ -248,7 +248,7 @@ There is no per-project sync flag, filter, or cursor.
 | T20 | Reconciliation aborts mid-flight, leaving local DB in a half-state | Reconciliation atomicity tests with synthetic failure injection per resolution path (MTIX-15.6) | Very low |
 
 ### 7.4 TLS posture
-- Default: `sslmode=verify-full`. Refuse `verify-ca`, `prefer`, `disable` unless `--insecure-tls` AND host resolves to loopback.
+- Default: `sslmode=verify-full`. Refuse `verify-ca`, `prefer`, `disable` unless `--insecure-tls` AND every host the connection may use is loopback or a local Unix-domain socket.
 - `MTIX_SYNC_SSLROOTCERT` env var and DSN `sslrootcert=` parameter honored. Managed PG providers (Supabase, Neon, RDS) commonly require this; the docs in workflows/* explain how to fetch the provider's CA bundle.
 - pgbouncer in **session mode** is supported. Transaction mode breaks prepared statements and advisory locks; `mtix sync doctor` detects transaction mode via `SHOW pool_mode` and warns.
 

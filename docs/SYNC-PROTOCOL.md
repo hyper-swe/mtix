@@ -203,7 +203,8 @@ cleanly. See `internal/store/postgres/transport/migrate.go` and
 
 - TLS posture is enforced in `EnforceTLSPosture` (`transport/dsn.go`).
   Default sslmode is `verify-full`; weaker modes refused unless
-  `--insecure-tls` is set AND the host is loopback.
+  `--insecure-tls` is set AND every host the connection may use is
+  loopback or a local Unix-domain socket.
 - `MTIX_SYNC_SSLROOTCERT` populates `sslrootcert` for managed-PG
   providers that require a CA bundle.
 - DSN sourcing (`Source()`) order: `MTIX_SYNC_DSN` env → `.mtix/secrets`

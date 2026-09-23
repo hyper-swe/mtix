@@ -64,7 +64,7 @@ checkpoint (.mtix data sentinel meta.sync.clone.checkpoint).`,
 	}
 
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
-		"Allow weaker TLS modes on loopback hosts (development only)")
+		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	cmd.Flags().BoolVar(&resume, "resume", false,
 		"Resume an interrupted clone from the last checkpoint")
 	cmd.Flags().IntVar(&batchSize, "batch-size", 1000,

@@ -180,7 +180,7 @@ tradeoff discussion.
 | **Hook bypassed** (`git push --no-verify`) | Local queue retains pending events; hub stays at the older state until next push. | If freshness matters, graduate to the safety-critical workflow's server-side enforcement OR run the daemon. |
 | **Schema mismatch** (developer running an older mtix binary) | `mtix sync init` / `clone` refuses with a structured error mentioning the schema version. | Upgrade the local binary (`go install github.com/hyper-swe/mtix/cmd/mtix@latest`). |
 | **Divergent history** (you initialized a hub but a teammate already initialized one with the same project prefix) | `mtix sync init` refuses with `ErrSyncDivergentHistory`. | Either join the existing hub via `mtix sync clone`, or run `mtix sync reconcile --import-as PARENT-ID` to graft your local nodes under a new parent. |
-| **Wrong sslmode** in DSN (e.g. `sslmode=disable`) | mtix refuses to connect unless `--insecure-tls` is set AND host is loopback. | Fix the DSN to `sslmode=verify-full`. |
+| **Wrong sslmode** in DSN (e.g. `sslmode=disable`) | mtix refuses to connect unless `--insecure-tls` is set AND every host the connection may use is loopback or a local Unix-domain socket. | Fix the DSN to `sslmode=verify-full`. |
 | **DSN in a tracked file** | mtix refuses to load DSN from any tracked config; fail-closed at `Source()`. | Move it to `MTIX_SYNC_DSN` env var or `.mtix/secrets` (mode 0600). |
 | **Lost laptop with un-pushed events** | The local pending queue dies with the machine; hub never saw those events. | See "Disaster recovery" below — explicit procedure. Recovery is to clone from hub onto a fresh machine. |
 

@@ -72,8 +72,8 @@ DSN sources (FR-18.16):
   3. Secrets file:       .mtix/secrets (mode 0600, gitignored)
 
 The DSN is refused if found in any tracked .mtix/config.* file. The
-default sslmode is verify-full; --insecure-tls is accepted only for
-loopback hosts.`,
+default sslmode is verify-full; --insecure-tls is accepted only when
+every host the connection may use is loopback or a local socket.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncInit(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
@@ -82,7 +82,7 @@ loopback hosts.`,
 	}
 
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
-		"Allow weaker TLS modes on loopback hosts (development only)")
+		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	return cmd
 }
 

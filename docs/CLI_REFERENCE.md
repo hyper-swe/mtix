@@ -58,7 +58,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `search` — Search nodes with advanced filters
 - `serve` — Start the mtix HTTP/WebSocket/gRPC server
 - `session` — Manage agent sessions
-- `show <id>` — Show full details of a node
+- `show <id>` — Show a node's details and annotations
 - `stale` — List nodes with stale agent assignments
 - `stats` — Show project statistics
 - `sync` — Check or fix sync between SQLite and tasks.json (FR-15)
@@ -1032,7 +1032,28 @@ Show summary of most recent session
 
 **Usage:** `show <id>`
 
-Show full details of a node
+Show a node's details and annotations
+
+Show a node's details and annotations as labelled lines, in this order:
+
+  ID           node id, marked when the id is still provisional
+  Title        title
+  Status       status with its icon
+  Priority     priority (1 = critical ... 5 = backlog)
+  Type         node type
+  Assignee     current assignee (only when set)
+  Desc         full description (only when set)
+  Annotations  every annotation, oldest first: its ISO-8601 UTC timestamp,
+               author, addressee and resolved marker when present, then
+               the text, with further lines indented; "Annotations: none"
+               when the node has none
+  Prompt       first 100 characters of the prompt (only when set)
+  Progress     progress bar
+  Created      creation time
+
+Other fields (acceptance criteria, labels, dependencies, activity and the
+full prompt) are not printed. Use --json for the complete node record,
+including every annotation.
 ---
 
 ## stale

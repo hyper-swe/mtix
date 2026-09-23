@@ -74,15 +74,17 @@ func (s *Store) DeleteNode(ctx context.Context, id string, cascade bool, deleted
 	})
 }
 
-// cascadeDelete soft-deletes all descendants of a node using a recursive approach.
-// Uses iterative descent through the hierarchy via LIKE pattern on dot-notation IDs.
+// cascadeDelete soft-deletes all descendants of a node per FR-3.3.
+// Selects the subtree with a LIKE pattern on the dot-notation IDs. The
+// parent ID is escaped (escapeLIKEPrefix) so a '_' in its project prefix
+// matches literally and never reaches another project (MTIX-95.17).
 func cascadeDelete(ctx context.Context, tx *sql.Tx, parentID, deletedBy, now string) error {
-	// Soft-delete all descendants using parameterized LIKE with ESCAPE.
-	// Dot-notation means all descendants have the parent ID as a prefix.
+	// Soft-delete all live descendants: every id that starts with the
+	// literal "<parentID>." (escaped prefix, parameterized, ESCAPE '\').
 	_, err := tx.ExecContext(ctx,
 		`UPDATE nodes SET deleted_at = ?, deleted_by = ?, updated_at = ?
 		 WHERE id LIKE ? ESCAPE '\' AND deleted_at IS NULL`,
-		now, deletedBy, now, parentID+".%",
+		now, deletedBy, now, escapeLIKEPrefix(parentID)+".%",
 	)
 	if err != nil {
 		return fmt.Errorf("cascade delete descendants of %s: %w", parentID, err)
@@ -128,11 +130,13 @@ func (s *Store) UndeleteNode(ctx context.Context, id string) error {
 			return fmt.Errorf("undelete node %s: %w", id, err)
 		}
 
-		// Restore all descendants.
+		// Restore all descendants: every id that starts with the literal
+		// "<id>." (escaped prefix, so a '_' in the project prefix cannot
+		// restore another project's nodes, MTIX-95.17).
 		_, err = tx.ExecContext(ctx,
 			`UPDATE nodes SET deleted_at = NULL, deleted_by = NULL, updated_at = ?
 			 WHERE id LIKE ? ESCAPE '\'`,
-			now, id+".%",
+			now, escapeLIKEPrefix(id)+".%",
 		)
 		if err != nil {
 			return fmt.Errorf("undelete descendants of %s: %w", id, err)

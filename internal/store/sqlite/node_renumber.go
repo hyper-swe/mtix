@@ -7,21 +7,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
-
-// likeEscaper escapes the LIKE metacharacters (\, %, _) so an id prefix
-// matches LITERALLY under `ESCAPE '\'`. Project prefixes may legally contain
-// '_' (a LIKE single-char wildcard); without escaping, a pattern like
-// 'DEP_ADD-1.%' would cross-match an unrelated same-length prefix such as
-// 'DEPXADD-1.2' and corrupt it during a renumber (MTIX-33). Apply this to the
-// id PREFIX only — the trailing ".%" descendant wildcard stays unescaped.
-var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
-
-// escapeLIKEPrefix returns s with LIKE metacharacters backslash-escaped.
-func escapeLIKEPrefix(s string) string { return likeEscaper.Replace(s) }
 
 // RenumberSubtree atomically changes node id's trailing sibling number to
 // newSeq and recomputes the display path of the ENTIRE subtree — all

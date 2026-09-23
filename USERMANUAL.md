@@ -1648,6 +1648,27 @@ at apply time deterministically picks a winner (keyed by
 `lamport_clock` → `wall_clock_ts` → `author_machine_hash`). Replicas
 always converge.
 
+Claims and status changes (`mtix claim`, `unclaim`, `done`, `cancel`,
+`defer`, `reopen` and the other transitions) are resolved per task
+the same way: after a sync, every machine shows the status set by the
+most recent claim or status change (highest `lamport_clock`, ties
+broken by event id), and an older one that arrives later changes
+nothing. This holds for claims and status changes, which travel as
+events. Two automatic changes do not travel as events, so status can
+still differ there: if one machine claims a task while another adds a
+dependency that blocks it, the task can end up blocked on one machine
+and in progress on the other, and tasks cancelled as descendants of a
+cascade cancel can differ the same way. Beyond status nothing is
+guaranteed to agree. The assignee and the other fields that go with it
+can still differ between machines when changes arrive out of order: if
+two agents claim the same task between
+syncs and the agent whose claim lost marks it done before pulling,
+both machines show the task done, each with its own agent as the
+assignee. After `mtix sync pull`, check the task with `mtix show <id>`
+before carrying on with claimed work, and stop if it is no longer in
+progress under your name. These contests are resolved silently: they
+are not listed by `mtix sync conflicts list`.
+
 The hub also records contested edits in `sync_conflicts` for audit
 visibility:
 

@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Security
+
+### Fixed
+
+### Changed
+
 ## [0.5.3-beta] - 2026-09-03
 
 A security patch. Upgrading is a drop-in binary replacement — no schema, API or CLI changes.

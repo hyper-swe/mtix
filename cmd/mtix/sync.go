@@ -51,6 +51,8 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.`,
 		newSyncMigrateCmd(),
 		newSyncMarkRestoredCmd(),
 		newSyncCollisionsCmd(),
+		// MTIX-95.6: re-derive workflow state from the local event log.
+		newSyncRepairCmd(),
 	)
 
 	return cmd

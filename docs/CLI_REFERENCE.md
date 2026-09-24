@@ -1142,6 +1142,7 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.
 - `pull [DSN]` — Pull events from the sync hub and apply locally (FR-18)
 - `push [DSN]` — Push pending events to the sync hub (FR-18)
 - `reconcile` — Resolve divergent history (FR-18.13)
+- `repair` — Repair local state from the local sync event log (--status)
 - `status` — Show local sync state (counts + sentinels)
 ---
 
@@ -1562,6 +1563,62 @@ See 'mtix sync init' for divergent-history detection.
 | `--import-as` |  | Re-parent local tree under PARENT-ID |  |
 | `--rename-to` |  | Rewrite local IDs to NEWPREFIX |  |
 | `--yes` |  | Confirm destructive action; required for non-dry-run | false |
+---
+
+## repair
+
+**Usage:** `repair`
+
+Repair local state from the local sync event log (--status)
+
+Re-derive state from this machine's local sync event log and list, or
+repair, every node whose stored state differs. --status is required; it is
+the only repair so far.
+
+--status re-derives each node's workflow state from its newest well-formed
+claim, unclaim, defer or status-change event, with the rule a pull
+applies. It compares status, assignee, agent_state, whether closed_at is
+set, and the progress of a node without children, to heal nodes that an
+older mtix left reverted when a pull replayed an older event. A node
+without such events is never listed or changed. State that a change
+outside the event log may have set is never repaired by --apply alone: a
+block while a blocker is unresolved and a node cancelled with an ancestor
+by cancel --cascade are left alone, and a difference only in the assignee
+or agent_state (mtix update --assignee leaves no trace) is flagged.
+
+Each listed node shows its winning event, when it was made, whether this
+machine or another machine made it, and a reason. A replay (the stored
+state is the row of an older event, as a replayed pull leaves it) and a
+derived fix (the status matches; closed_at or progress does not) are
+repaired by --apply. Anything else, for example newer state that arrived
+by importing .mtix/tasks.json, is FLAGGED "not a replay; review" and is
+repaired only with --apply --force, after review. Clocks that differ
+between machines can mislead the check both ways: a genuine replay can be
+flagged, and when this machine's clock is ahead, a teammate's newer state
+can look like a replay, which --apply would revert. Check each replay's
+winner time and origin before --apply.
+
+Without --apply the command is a dry run: it lists the differences and
+writes nothing. --json prints them as JSON.
+
+With --apply it first writes a verified backup of the database to
+.mtix/data/backups/pre-repair-status-<UTC time>.db, and stops if it cannot.
+Then it repairs each node in its own transaction: it writes the derived
+state, records an activity entry and recomputes the parent's progress.
+When the status changes it also emits one status-change event (reason
+"sync repair", stamped with the winning event's time, or with the current
+time if that is in the future), which other machines apply at their next
+pull and which fires status.changed hooks, and it unblocks dependents; a
+repair that leaves the status alone emits nothing. A second run lists
+nothing. Run 'mtix sync push' afterwards to send the events.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--apply` |  | Back up the database, then repair every listed node that is not flagged (default: dry run) | false |
+| `--force` |  | With --apply, also repair nodes flagged for review (not a replay) | false |
+| `--status` |  | Re-derive workflow state (status, assignee, agent_state, closed_at, leaf progress) from the local event log | false |
 ---
 
 ## status

@@ -133,6 +133,15 @@ when a check fails:
   session's `started_at`) must not be empty; the others may be. The error
   names the record and the field.
 
+A refused `mtix import` also leaves `.mtix/tasks.json` and its stored hash
+as they were: only an import that wrote something re-exports the board.
+
+The automatic import of a changed `.mtix/tasks.json` first exports the
+local store to check it for changes the file lacks. If the store cannot be
+exported (for example a JSON cell that does not parse), the import is
+refused and nothing changes; the message names the node, the field and
+`mtix recover`, which salvages everything readable.
+
 **Replace mode** (`mtix import --mode replace`, and the automatic import of
 a changed `.mtix/tasks.json`) deletes every node, dependency, agent and
 session, then writes the file's content, every field included. An export
@@ -141,13 +150,18 @@ followed by a replace import leaves the store as it was.
 **Merge mode** (`mtix import`, the default):
 
 - A node the store does not hold is created as exported.
-- For a node the store holds, annotations merge as a union by annotation
-  id. No local annotation is dropped, so a file without annotations keeps
-  the local ones. For an id both sides hold, the local copy wins, unless
-  the incoming copy is resolved and the local one is not: a resolution
-  never regresses. When anything is added, the list is ordered by time,
-  then id. The activity stream merges the same way (an entry both sides
-  hold is kept once).
+- For a node the store holds, annotations merge as a union keyed by
+  annotation id alone. No local annotation is dropped, so a file without
+  annotations keeps the local ones. For an id both sides hold, the local
+  copy wins, unless the incoming copy is resolved and the local one is
+  not: a resolution never regresses. When anything is added, the list is
+  ordered by time, then id.
+- The activity stream merges as a union of distinct entries. An entry is
+  identified by its id, type, author, text and time together (activity ids
+  are derived from a timestamp and can repeat across machines), so two
+  different entries that share an id are both kept, and an entry both
+  sides hold is kept once. When anything is added, the list is ordered by
+  time, then id.
 - When the node's `content_hash` differs, the file's values replace the
   other fields. When it is the same, the other fields keep their local
   values.

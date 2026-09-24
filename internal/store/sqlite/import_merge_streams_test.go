@@ -140,3 +140,33 @@ func TestMergeActivity_EqualTimes_ConvergeInBothOrders(t *testing.T) {
 	assert.Equal(t, []string{"act-a:a", "act-b:b"}, activityTexts(ab))
 	assert.Equal(t, activityTexts(ab), activityTexts(ba), "both merge orders must converge")
 }
+
+// TestMergeActivity_EntriesDifferingInOneField_BothKept verifies that an
+// activity entry is identified by its id, type, author, text and time
+// together: two entries with the same id that differ in any one of the
+// other fields are both kept (MTIX-95.31.1).
+func TestMergeActivity_EntriesDifferingInOneField_BothKept(t *testing.T) {
+	ts := streamTestTime()
+	base := model.ActivityEntry{ID: "act-1", Type: model.ActivityTypeComment, Author: "a", Text: "text", CreatedAt: ts}
+	tests := []struct {
+		name  string
+		other func(e model.ActivityEntry) model.ActivityEntry
+	}{
+		{"text only", func(e model.ActivityEntry) model.ActivityEntry { e.Text = "other text"; return e }},
+		{"author only", func(e model.ActivityEntry) model.ActivityEntry { e.Author = "b"; return e }},
+		{"type only", func(e model.ActivityEntry) model.ActivityEntry { e.Type = model.ActivityTypeNote; return e }},
+		{"created_at only", func(e model.ActivityEntry) model.ActivityEntry { e.CreatedAt = ts.Add(time.Second); return e }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			other := tt.other(base)
+			merged, changed := mergeActivity([]model.ActivityEntry{base}, []model.ActivityEntry{other})
+			assert.True(t, changed, "an entry that differs is new")
+			assert.Len(t, merged, 2)
+
+			same, changedAgain := mergeActivity(merged, []model.ActivityEntry{base, other})
+			assert.False(t, changedAgain, "both are held now")
+			assert.Len(t, same, 2)
+		})
+	}
+}

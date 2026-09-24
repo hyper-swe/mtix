@@ -171,6 +171,7 @@ func TestExport_UnreadableAnnotationsColumn_FailsNamingNodeAndColumn(t *testing.
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ANN-1")
 	assert.Contains(t, err.Error(), "annotations")
+	assert.Contains(t, err.Error(), "mtix recover", "the error must name the remedy (MTIX-95.31.1 round 3)")
 }
 
 // legacyV100Export is a schema 1.0.0 export in the exact shape mtix 0.5.3

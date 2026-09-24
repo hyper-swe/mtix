@@ -152,22 +152,22 @@ type exportSession struct {
 func (s *Store) Export(ctx context.Context, project, mtixVersion string) (*ExportData, error) {
 	nodes, err := s.exportNodes(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("export nodes: %w", err)
+		return nil, exportReadError("export nodes", err)
 	}
 
 	deps, err := s.exportDependencies(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("export dependencies: %w", err)
+		return nil, exportReadError("export dependencies", err)
 	}
 
 	agents, err := s.exportAgents(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("export agents: %w", err)
+		return nil, exportReadError("export agents", err)
 	}
 
 	sessions, err := s.exportSessions(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("export sessions: %w", err)
+		return nil, exportReadError("export sessions", err)
 	}
 
 	// Sort nodes by ID for canonical checksum.
@@ -198,6 +198,14 @@ func (s *Store) Export(ctx context.Context, project, mtixVersion string) (*Expor
 		NodeCount:     len(nodes),
 		Checksum:      checksum,
 	}, nil
+}
+
+// exportReadError wraps a failure to read the store for an export with the
+// remedy (MTIX-95.31.1): an export that cannot read a row or a column (for
+// example a JSON cell that does not parse, named in err) cannot be written,
+// and mtix recover salvages everything that is readable.
+func exportReadError(what string, err error) error {
+	return fmt.Errorf("%s: %w (run 'mtix recover' to salvage everything readable)", what, err)
 }
 
 // exportNodeSelectSQL is the canonical node projection shared by bulk

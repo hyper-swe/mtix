@@ -44,6 +44,12 @@ func DecodeExportData(r io.Reader) (*ExportData, error) {
 	return &data, nil
 }
 
+// ErrImportIncomplete marks an import error raised after the import's
+// transaction committed, while rebuilding the sequence counters or the
+// search index (MTIX-95.31.1). Every other import error leaves the store
+// unchanged.
+var ErrImportIncomplete = errors.New("import applied, but rebuilding its indexes failed")
+
 // ImportMode controls how import handles existing data per FR-7.8.
 type ImportMode string
 
@@ -125,12 +131,12 @@ func (s *Store) Import(
 
 	// Rebuild sequences from imported data per FR-7.8.x.
 	if err := s.rebuildSequences(ctx); err != nil {
-		return nil, fmt.Errorf("rebuild sequences: %w", err)
+		return nil, fmt.Errorf("rebuild sequences: %w: %w", ErrImportIncomplete, err)
 	}
 
 	// Rebuild FTS index after bulk import per FR-7.8.
 	if err := s.rebuildFTS(ctx); err != nil {
-		return nil, fmt.Errorf("rebuild FTS: %w", err)
+		return nil, fmt.Errorf("rebuild FTS: %w: %w", ErrImportIncomplete, err)
 	}
 	result.FTSRebuilt = true
 

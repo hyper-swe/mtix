@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -239,38 +240,12 @@ func newImportCmd() *cobra.Command {
 
 func runImport(filePath string, f importFlags) error {
 	if app.store == nil {
-		return fmt.Errorf("not in an mtix project")
+		return nothingWritten(fmt.Errorf("not in an mtix project"))
 	}
 
-	// MTIX-2.3.1: stream-decode the export straight off the file via
-	// sqlite.DecodeExportData (json.Decoder) rather than os.ReadFile +
-	// json.Unmarshal, so a large export is not held as both raw bytes and a
-	// parsed tree at peak.
-	file, err := os.Open(filePath) //nolint:gosec // filePath is an operator-supplied import path
+	exportData, err := readImportFile(filePath, f)
 	if err != nil {
-		return fmt.Errorf("read import file %s: %w", filePath, err)
-	}
-	defer func() { _ = file.Close() }()
-
-	exportData, err := sqlite.DecodeExportData(file)
-	if err != nil {
-		return fmt.Errorf("parse import file: %w", err)
-	}
-
-	// FR-15.2g (MTIX-95.31.1): refuse a file from a newer major schema
-	// version before anything else, exactly as auto-import does.
-	if schemaErr := checkImportSchemaVersion(exportData); schemaErr != nil {
-		return schemaErr
-	}
-
-	if f.recomputeChecksum {
-		// Recovery path: integrity now attests to the reconstructed
-		// content, not the original. Be loud about it.
-		fmt.Fprintln(os.Stderr,
-			"WARNING: --recompute-checksum replaces the file's integrity checksum; the import attests to the reconstructed content, not the original")
-		if recompErr := sqlite.RecomputeExportChecksum(exportData); recompErr != nil {
-			return fmt.Errorf("recompute checksum: %w", recompErr)
-		}
+		return nothingWritten(err)
 	}
 
 	importMode := sqlite.ImportModeMerge
@@ -291,11 +266,19 @@ func runImport(filePath string, f importFlags) error {
 	if report != nil {
 		fmt.Fprint(os.Stderr, report.String())
 		if writeErr := writeRemapFile(f.remapFile, report); writeErr != nil {
+			if !report.Applied {
+				return nothingWritten(writeErr)
+			}
 			return writeErr
 		}
 	}
 	if err != nil {
-		return fmt.Errorf("import failed: %w", err)
+		// Every import error but ErrImportIncomplete leaves the store
+		// unchanged (MTIX-95.31.1), so the auto-export is skipped for it.
+		if errors.Is(err, sqlite.ErrImportIncomplete) {
+			return fmt.Errorf("import failed: %w", err)
+		}
+		return nothingWritten(fmt.Errorf("import failed: %w", err))
 	}
 
 	if app.jsonOutput {

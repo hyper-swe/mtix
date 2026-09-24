@@ -1263,7 +1263,7 @@ mtix import project-data.json --mode replace
 
 **Merge mode**:
 - A node the store does not have is created as exported.
-- For a node the store has, annotations merge as a union by annotation id: no local annotation is dropped, so a file without annotations keeps the local ones. For an id both sides hold, the local copy wins unless the incoming copy is resolved and the local one is not, so a resolution never regresses. The activity stream merges the same way.
+- For a node the store has, annotations merge as a union by annotation id: no local annotation is dropped, so a file without annotations keeps the local ones. Annotations are keyed by id alone: for an id both sides hold, the local copy wins unless the incoming copy is resolved and the local one is not, so a resolution never regresses. The activity stream merges as a union of distinct entries: an entry is identified by its id, type, author, text and time together, so two different entries that share an id are both kept, and an entry both sides hold is kept once.
 - When the node's content hash differs, the file's values replace its other fields; when it is the same, they keep their local values. A file written before 0.5.4 never changes the fields it does not carry (annotations, activity, `previous_status`, the invalidation fields and the others listed in docs/EXPORT-FORMAT.md).
 - A merge never removes an annotation or activity entry. To make the store match a file exactly, use replace mode.
 
@@ -1272,6 +1272,8 @@ Import validates, before it writes anything (a failed check writes nothing):
 - Node count matches the `node_count` field
 - SHA-256 checksum over canonical JSON. A file written by mtix always verifies, including one holding text that is not valid UTF-8. One exception: a file written by 0.5.3 or earlier that held both invalid UTF-8 and a genuine U+FFFD replacement character still fails; check it, then import it with `mtix import --recompute-checksum`
 - Every time value (node timestamps, annotation and activity times, dependency, agent and session times) is RFC 3339 with a UTC year from 1 to 9999, and the required ones (a node's `created_at` and `updated_at`, a dependency's `created_at`, a session's `started_at`) are not empty; the error names the record and the field
+
+A refused import leaves `.mtix/tasks.json` and its stored hash as they were. The automatic import of a changed `.mtix/tasks.json` also refuses, and changes nothing, when the local store cannot be exported (for example a stored annotations or activity value that does not parse): it cannot rule out local changes the file lacks. `mtix export` fails the same way. Both messages name the node, the field and `mtix recover`, which salvages everything readable (see "Disk full and corruption recovery").
 
 After an import:
 - FTS5 index is rebuilt

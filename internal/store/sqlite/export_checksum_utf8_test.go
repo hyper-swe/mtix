@@ -4,10 +4,10 @@
 // Tests for MTIX-107.39, folded into MTIX-95.31.1 (FR-7.8, FR-15.2): a
 // tasks.json written by mtix always verifies on import, including a copy
 // restored from git. Root cause: a stored text holding invalid UTF-8.
-// encoding/json writes each invalid byte as the escape \ufffd, a reader
-// decodes that escape to U+FFFD, and U+FFFD encodes as the raw character,
-// so the checksum computed over the stored bytes described JSON no reader
-// could reproduce. Written red-first.
+// 0.5.3 hashed the first JSON encoding of the export, in which each invalid
+// byte appears as the escape \ufffd. A reader decodes that escape to U+FFFD
+// and re-encodes U+FFFD as the raw character, so its encoding differed from
+// the one hashed and the checksum never matched. Written red-first.
 package sqlite_test
 
 import (
@@ -84,8 +84,9 @@ func TestExport_InvalidUTF8Text_WrittenFileVerifiesAndImports(t *testing.T) {
 
 // writtenBy053WithInvalidUTF8 is a tasks.json that the 0.5.3 code wrote for
 // a scratch board whose SCR-1 title and SCR-2 prompt were given invalid
-// UTF-8 (the MTIX-107.39 reproduction). Its checksum was computed over the
-// stored bytes, so no 0.5.3 reader could verify it.
+// UTF-8 (the MTIX-107.39 reproduction). 0.5.3 hashed its first encoding,
+// with each invalid byte as the escape \ufffd; a reader re-encodes the
+// decoded U+FFFD differently, so no 0.5.3 reader could verify the file.
 const writtenBy053WithInvalidUTF8 = `{
   "version": 1,
   "schema_version": "1.0.0",

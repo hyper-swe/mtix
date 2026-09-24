@@ -4,19 +4,29 @@
 package sqlite
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // SchemaVersionV1 is the current export schema version per FR-15.2g.
 // Auto-import rejects files with a higher major version.
-const SchemaVersionV1 = "1.0.0"
+//
+// History:
+//   - 1.0.0: nodes without annotations, the activity stream and the other
+//     columns listed as added in 1.1.0 above exportNode.
+//   - 1.1.0 (MTIX-95.31.1): every nodes column is exported. The added keys
+//     are omitted when empty, so a node without them encodes and hashes as
+//     it did in 1.0.0; a merge import reads their absence from a 1.0.0 file
+//     as "not carried", never as "cleared".
+const SchemaVersionV1 = "1.1.0"
 
 // ExportData represents the complete export format per FR-7.8, FR-15.1.
 // The schema_version field (FR-15.2g) enables auto-import compatibility checks.
@@ -34,7 +44,30 @@ type ExportData struct {
 	Checksum      string          `json:"checksum"`
 }
 
-// exportNode is the JSON representation of a node in the export.
+// exportNode is the JSON representation of a node in the export (FR-7.8,
+// FR-15.1). Column audit (MTIX-95.31.1): it carries every column of the
+// nodes table, each under the column's own name.
+//
+//   - Exported since 1.0.0: id, parent_id, depth, seq, project, title,
+//     description, prompt, acceptance, node_type, issue_type, priority,
+//     labels, status, progress, assignee, creator, agent_state, weight,
+//     content_hash, created_at, updated_at, closed_at, defer_until,
+//     deleted_at, uid.
+//   - Added in 1.1.0: previous_status, estimate_min, actual_min, code_refs,
+//     commit_refs, annotations, invalidated_at, invalidated_by,
+//     invalidation_reason, activity, deleted_by, metadata, session_id.
+//     annotations, code_refs and commit_refs carry the structure mtix show
+//     --json returns, activity the entries mtix show lists; metadata
+//     carries the column's JSON text, as labels does.
+//   - Deliberately excluded: none. The derived columns are exported too:
+//     node_type is re-derived from depth on export and on import, and
+//     progress and content_hash are written back as exported. SQLite's
+//     implicit rowid is not a declared column: it is a local storage key,
+//     and import rebuilds the full-text index (nodes_fts) from the rows it
+//     writes.
+//
+// Every 1.1.0 field is omitempty, so a node without them encodes, and
+// hashes, exactly as it did in a 1.0.0 file.
 type exportNode struct {
 	ID          string  `json:"id"`
 	ParentID    string  `json:"parent_id"`
@@ -64,6 +97,21 @@ type exportNode struct {
 	// UID carries the node's durable internal identity (ADR-003 §2, §7)
 	// so re-import stays consistent. omitempty for pre-v3 exports.
 	UID string `json:"uid,omitempty"`
+
+	// Columns added in schema 1.1.0 (MTIX-95.31.1); see the audit above.
+	PreviousStatus     string                `json:"previous_status,omitempty"`
+	EstimateMin        *int                  `json:"estimate_min,omitempty"`
+	ActualMin          *int                  `json:"actual_min,omitempty"`
+	CodeRefs           []model.CodeRef       `json:"code_refs,omitempty"`
+	CommitRefs         []string              `json:"commit_refs,omitempty"`
+	Annotations        []model.Annotation    `json:"annotations,omitempty"`
+	InvalidatedAt      string                `json:"invalidated_at,omitempty"`
+	InvalidatedBy      string                `json:"invalidated_by,omitempty"`
+	InvalidationReason string                `json:"invalidation_reason,omitempty"`
+	Activity           []model.ActivityEntry `json:"activity,omitempty"`
+	DeletedBy          string                `json:"deleted_by,omitempty"`
+	Metadata           string                `json:"metadata,omitempty"`
+	SessionID          string                `json:"session_id,omitempty"`
 }
 
 // exportDep is the JSON representation of a dependency in the export.
@@ -149,8 +197,9 @@ func (s *Store) Export(ctx context.Context, project, mtixVersion string) (*Expor
 }
 
 // exportNodeSelectSQL is the canonical node projection shared by bulk
-// export and the per-row salvage path in recover.go. Column order MUST
-// stay in sync with scanExportNode.
+// export, merge import (the local copy of a node) and the per-row salvage
+// path in recover.go. It reads every nodes column (MTIX-95.31.1). Column
+// order MUST stay in sync with scanExportNode.
 const exportNodeSelectSQL = `SELECT id, COALESCE(parent_id,''), depth, seq, project,
 		        title, COALESCE(description,''), COALESCE(prompt,''),
 		        COALESCE(acceptance,''), COALESCE(node_type,'auto'),
@@ -159,25 +208,41 @@ const exportNodeSelectSQL = `SELECT id, COALESCE(parent_id,''), depth, seq, proj
 		        COALESCE(agent_state,''), weight, COALESCE(content_hash,''),
 		        created_at, updated_at, COALESCE(closed_at,''),
 		        COALESCE(defer_until,''), COALESCE(deleted_at,''),
-		        COALESCE(uid,'')
+		        COALESCE(uid,''), COALESCE(previous_status,''),
+		        estimate_min, actual_min, code_refs, commit_refs, annotations,
+		        COALESCE(invalidated_at,''), COALESCE(invalidated_by,''),
+		        COALESCE(invalidation_reason,''), activity,
+		        COALESCE(deleted_by,''), COALESCE(metadata,''),
+		        COALESCE(session_id,'')
 		 FROM nodes`
 
 // rowScanner is satisfied by both *sql.Row and *sql.Rows.
 type rowScanner interface{ Scan(dest ...any) error }
 
 // scanExportNode reads one exportNode from a row produced by
-// exportNodeSelectSQL.
+// exportNodeSelectSQL, decoding the JSON columns into the structure mtix
+// show --json returns (MTIX-95.31.1). A JSON column that does not parse is
+// left empty and reported with errUnreadableNodeColumn; the rest of the
+// node is still returned.
 func scanExportNode(row rowScanner) (exportNode, error) {
 	var n exportNode
+	var j exportNodeJSON
 	err := row.Scan(
 		&n.ID, &n.ParentID, &n.Depth, &n.Seq, &n.Project,
 		&n.Title, &n.Description, &n.Prompt, &n.Acceptance, &n.NodeType,
 		&n.IssueType, &n.Priority, &n.Labels, &n.Status, &n.Progress,
 		&n.Assignee, &n.Creator, &n.AgentState, &n.Weight, &n.ContentHash,
 		&n.CreatedAt, &n.UpdatedAt, &n.ClosedAt, &n.DeferUntil, &n.DeletedAt,
-		&n.UID,
+		&n.UID, &n.PreviousStatus, &j.estimateMin, &j.actualMin,
+		&j.codeRefs, &j.commitRefs, &j.annotations,
+		&n.InvalidatedAt, &n.InvalidatedBy, &n.InvalidationReason, &j.activity,
+		&n.DeletedBy, &n.Metadata, &n.SessionID,
 	)
-	return n, err
+	if err != nil {
+		return n, err
+	}
+	decodeErr := j.decodeInto(&n)
+	return n, decodeErr
 }
 
 // exportNodes reads all nodes (including soft-deleted) for export.
@@ -293,21 +358,63 @@ func (s *Store) exportSessions(ctx context.Context) ([]exportSession, error) {
 	return sessions, rows.Err()
 }
 
-// computeExportChecksum computes SHA-256 checksum of canonical JSON per FR-7.8.
-// The checksum covers sorted nodes and dependencies for reproducibility.
-func computeExportChecksum(nodes []exportNode, deps []exportDep) (string, error) {
-	// Marshal to canonical JSON (sorted by primary key).
-	canonical := struct {
-		Nodes []exportNode `json:"nodes"`
-		Deps  []exportDep  `json:"deps"`
-	}{Nodes: nodes, Deps: deps}
+// exportChecksumDoc is the canonical document the export checksum hashes:
+// the nodes and dependencies, sorted by primary key (FR-7.8).
+type exportChecksumDoc struct {
+	Nodes []exportNode `json:"nodes"`
+	Deps  []exportDep  `json:"deps"`
+}
 
-	data, err := json.Marshal(canonical)
+// computeExportChecksum computes the SHA-256 checksum of the canonical JSON
+// of the sorted nodes and dependencies per FR-7.8, annotations and every
+// other exported column included (MTIX-95.31.1).
+//
+// It hashes the export as every reader decodes it (MTIX-107.39).
+// encoding/json cannot write invalid UTF-8: it writes each such byte as the
+// escape \ufffd, a reader decodes that escape to U+FFFD, and U+FFFD encodes
+// as the raw character. Hashing the first encoding described bytes no
+// reader could reproduce, so a tasks.json whose text held invalid UTF-8
+// never verified, not even the copy mtix had just written. The canonical
+// JSON is therefore encoded, decoded and encoded again, so the writer and
+// every reader hash the same bytes. For valid UTF-8 the second encoding
+// equals the first, so the checksum of every other export is unchanged.
+func computeExportChecksum(nodes []exportNode, deps []exportDep) (string, error) {
+	first, err := json.Marshal(exportChecksumDoc{Nodes: nodes, Deps: deps})
 	if err != nil {
 		return "", fmt.Errorf("marshal for checksum: %w", err)
 	}
+	var decoded exportChecksumDoc
+	if decodeErr := json.Unmarshal(first, &decoded); decodeErr != nil {
+		return "", fmt.Errorf("decode for checksum: %w", decodeErr)
+	}
+	canonical, err := json.Marshal(decoded)
+	if err != nil {
+		return "", fmt.Errorf("re-encode for checksum: %w", err)
+	}
 
-	hash := sha256.Sum256(data)
+	hash := sha256.Sum256(canonical)
+	return fmt.Sprintf("%x", hash), nil
+}
+
+// legacyReplacementChecksum returns the checksum mtix 0.5.3 and earlier
+// wrote for this content when its text held invalid UTF-8 (MTIX-107.39), or
+// "" when the content holds no U+FFFD and so has no such alternative. Those
+// versions hashed the first encoding, in which each invalid byte appeared
+// as the six-character escape \ufffd, and a reader decodes each escape to
+// U+FFFD. Spelling every U+FFFD of the canonical JSON as that escape
+// restores the bytes they hashed, provided the stored text held no genuine
+// U+FFFD; a file holding both still fails verification.
+func legacyReplacementChecksum(nodes []exportNode, deps []exportDep) (string, error) {
+	canonical, err := json.Marshal(exportChecksumDoc{Nodes: nodes, Deps: deps})
+	if err != nil {
+		return "", fmt.Errorf("marshal for legacy checksum: %w", err)
+	}
+	replacement := []byte(string(utf8.RuneError))
+	if !bytes.Contains(canonical, replacement) {
+		return "", nil
+	}
+	spelled := bytes.ReplaceAll(canonical, replacement, []byte(`\ufffd`))
+	hash := sha256.Sum256(spelled)
 	return fmt.Sprintf("%x", hash), nil
 }
 
@@ -341,7 +448,11 @@ func RecomputeExportChecksum(export *ExportData) error {
 }
 
 // VerifyExportChecksum validates an export's checksum matches its content.
-// Used during import to verify data integrity per FR-7.8.
+// Used during import to verify data integrity per FR-7.8. It also accepts
+// the checksum mtix 0.5.3 and earlier wrote for text holding invalid UTF-8
+// (MTIX-107.39): the same decoded content under the spelling those
+// versions hashed (legacyReplacementChecksum). Any edit to the content
+// fails both.
 func VerifyExportChecksum(export *ExportData) (bool, error) {
 	if export == nil {
 		return false, fmt.Errorf("nil export data: %w", model.ErrInvalidInput)
@@ -351,6 +462,13 @@ func VerifyExportChecksum(export *ExportData) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("compute checksum: %w", err)
 	}
+	if computed == export.Checksum {
+		return true, nil
+	}
 
-	return computed == export.Checksum, nil
+	legacy, err := legacyReplacementChecksum(export.Nodes, export.Dependencies)
+	if err != nil {
+		return false, fmt.Errorf("compute legacy checksum: %w", err)
+	}
+	return legacy != "" && legacy == export.Checksum, nil
 }

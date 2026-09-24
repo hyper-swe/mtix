@@ -77,7 +77,15 @@ Solo DR is git-driven and intentionally minimal:
 2. Run `mtix init` if `.mtix/data/mtix.db` is missing.
 3. Run `mtix import .mtix/tasks.json` to rebuild the SQLite store from
    the last committed snapshot.
-4. Verify with `mtix list --status open`.
+4. Verify with `mtix list --status open`, and `mtix show <id>` on a task
+   you know has comments.
+
+From mtix 0.5.4 the snapshot carries every field of every task, comments
+(annotations) and the activity stream included, so the restore brings
+them back. A snapshot committed by an earlier version has no comments,
+and a restore from it has none either. Every machine that shares the
+snapshot must run 0.5.4 or later: an earlier version refuses a snapshot
+0.5.4 wrote (`checksum verification failed`) and keeps its own store.
 
 For richer DR (sync hub backup + immutable cold storage), see the
 [safety-critical workflow](safety-critical.md), which uses the BYO

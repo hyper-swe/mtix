@@ -31,11 +31,13 @@ Backup creates a timestamped copy of the SQLite database. Store backups in a saf
 Call `mcp__mtix__mtix_export` to create a JSON snapshot of all project data.
 
 The export includes:
-- All nodes with full field data
+- All nodes with every field, including each node's annotations (comments, review verdicts, close receipts) and activity stream
 - All dependencies
 - All agent records
 - All session records
-- SHA-256 checksum for integrity verification
+- SHA-256 checksum for integrity verification; it covers the nodes, annotations included, and the dependencies
+
+`.mtix/tasks.json` is the same document (`schema_version` 1.1.0 from mtix 0.5.4). An mtix client older than 0.5.4 refuses a file written by 0.5.4 (its import reports `checksum verification failed` and leaves its store unchanged), so every agent and teammate sharing a board must run 0.5.4 or later.
 
 **After export:** Verify the checksum field is present. Store exports alongside backups for disaster recovery.
 
@@ -43,8 +45,10 @@ The export includes:
 
 Call `mcp__mtix__mtix_import` with the export file path and mode:
 
-- **merge** — adds new data without overwriting existing nodes
-- **replace** — replaces all project data with the import file
+- **merge** — creates nodes the store lacks; for a node it has, annotations and activity merge as a union (no local annotation is ever dropped, and a resolved annotation stays resolved), and the other fields take the file's values only when the node's content hash differs
+- **replace** — replaces all project data with the import file, annotations and activity included; a file written before mtix 0.5.4 carries no annotations, so a replace import of it leaves every node without them
+
+Import writes nothing when the node count, the checksum or any time value (RFC 3339, UTC year 1 to 9999) fails its check; the error names what failed.
 
 **Import protocol:**
 1. Run `mcp__mtix__mtix_backup` first

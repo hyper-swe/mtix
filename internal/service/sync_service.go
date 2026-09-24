@@ -27,8 +27,10 @@ import (
 // DefaultMaxImportSize is the default maximum file size for auto-import (50 MB).
 const DefaultMaxImportSize = 50 * 1024 * 1024
 
-// supportedSchemaVersion is the maximum major version this build supports.
-const supportedSchemaVersion = "1.0.0"
+// supportedSchemaVersion is the export schema version this build writes and
+// the maximum major version it reads (FR-15.2g). 1.1.0 (MTIX-95.31.1) added
+// annotations and the other node columns; a 1.0.0 file still imports.
+const supportedSchemaVersion = sqlite.SchemaVersionV1
 
 // SyncService manages automatic import/export of .mtix/tasks.json per FR-15.
 // It reads the export file exactly once into memory, computes its SHA-256 hash,

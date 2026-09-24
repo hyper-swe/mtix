@@ -652,13 +652,13 @@ func TestMissingLocalEventIDs_HeldInEitherTable_NotMissing(t *testing.T) {
 		`INSERT INTO applied_events (event_id, applied_at, applied_by_lamport) VALUES (?, ?, 0)`,
 		events[1].EventID, "2026-09-24T00:00:00Z")
 	require.NoError(t, err)
-	require.Zero(t, countRows(t, `SELECT COUNT(*) FROM sync_events WHERE event_id = ?`, events[1].EventID),
+	require.Zero(t, countTestRows(t, `SELECT COUNT(*) FROM sync_events WHERE event_id = ?`, events[1].EventID),
 		"precondition: held in applied_events only")
 	require.NoError(t, runCreate("own node", "", "", 3, "", "", "", "", ""))
 	own, err := readPendingBatch(ctx, app.store, 10)
 	require.NoError(t, err)
 	require.Len(t, own, 1)
-	require.Zero(t, countRows(t, `SELECT COUNT(*) FROM applied_events WHERE event_id = ?`, own[0].EventID),
+	require.Zero(t, countTestRows(t, `SELECT COUNT(*) FROM applied_events WHERE event_id = ?`, own[0].EventID),
 		"precondition: own event held in sync_events only")
 
 	got, err := missingLocalEventIDs(ctx, app.store, []string{"zz-not-held", events[2].EventID,
@@ -671,8 +671,8 @@ func TestMissingLocalEventIDs_HeldInEitherTable_NotMissing(t *testing.T) {
 	require.Empty(t, none)
 }
 
-// countRows runs a COUNT query on the peer store.
-func countRows(t *testing.T, query string, args ...any) int {
+// countTestRows runs a COUNT query on the peer store.
+func countTestRows(t *testing.T, query string, args ...any) int {
 	t.Helper()
 	var n int
 	require.NoError(t, app.store.QueryRow(context.Background(), query, args...).Scan(&n))

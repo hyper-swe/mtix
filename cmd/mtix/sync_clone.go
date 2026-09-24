@@ -116,6 +116,11 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 	if err != nil {
 		return wrapSyncErr(stderr, "checkpoint", err)
 	}
+	// A clone rebuilds the store from the hub: the next pull's late-event
+	// sweep diffs the full hub history from the first id (MTIX-95.5).
+	if resetErr := resetLateEventSweep(ctx, app.store); resetErr != nil {
+		return wrapSyncErr(stderr, "reset late-event sweep", resetErr)
+	}
 
 	pulled, batches, err := cloneLoop(ctx, stderr, pool, app.store, since, batchSize)
 	if err != nil {

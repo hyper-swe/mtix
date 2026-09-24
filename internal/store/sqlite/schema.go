@@ -197,6 +197,20 @@ CREATE TABLE IF NOT EXISTS applied_events (
     applied_by_lamport INTEGER NOT NULL
 );
 
+-- Late-event sweep staging (MTIX-95.5). The sweep of sync pull lists hub
+-- event ids page by page and stages here each id this store does not hold,
+-- with its Lamport clock; once the listing is complete it reads the staged
+-- ids in (lamport_clock, event_id) order, a chunk at a time, fetches and
+-- applies each chunk, and removes each id in its apply's transaction. Rows
+-- survive an interrupted pull, so the next pull resumes. Created with
+-- IF NOT EXISTS; no schema version change.
+CREATE TABLE IF NOT EXISTS sync_sweep_pending (
+    event_id      TEXT PRIMARY KEY,
+    lamport_clock INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_sync_sweep_pending_lamport
+    ON sync_sweep_pending(lamport_clock, event_id);
+
 -- Per-agent inbox read cursor (FR-19.4 / MTIX-47.1). The inbox itself is a
 -- QUERY over sync_events (events addressed to the agent); this table holds only
 -- the watermark: the highest sync_events.rowid the agent has acked. rowid is a
@@ -422,6 +436,19 @@ INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.vector_clock', '{}');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.first_event_hash', '');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.project_prefix', '');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.clone.checkpoint', '0');
+-- meta.sync.last_sweep_at: the hub's clock (RFC 3339, UTC) at the start of
+-- the last late-event sweep of sync pull (MTIX-95.5). The next sweep lists
+-- hub events created since this time minus a 15-minute overlap. Empty means
+-- never swept: the next pull diffs the full hub id history once.
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.last_sweep_at', '');
+-- meta.sync.sweep_after_id / _after_created_at / _started_at: progress
+-- of an interrupted full diff (MTIX-95.5): the last listed hub event id whose
+-- page was applied, its hub created_at, and the hub time read before the
+-- diff's first page. The next pull resumes after that position. Empty means
+-- no full diff is part-way done.
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.sweep_after_id', '');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.sweep_after_created_at', '');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.sweep_started_at', '');
 -- meta.sync.consecutive_errors — bumped on push/pull errors, cleared on
 -- success; the workflow state-detector trips StateHubUnreachable at >=3
 -- per FR-18 / MTIX-15.8.1.

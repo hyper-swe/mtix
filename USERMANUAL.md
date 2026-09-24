@@ -1372,6 +1372,55 @@ cp examples/hooks/pre-push .git/hooks/pre-push
 chmod +x .git/hooks/pre-push
 ```
 
+### Late changes from offline teammates
+
+Each `mtix sync pull` first fetches the events past its cursor, then
+sweeps the hub for **late events**: changes a teammate pushed after
+working offline. Their events carry the lower clock values of their
+machine, so the cursor alone skips them. The sweep lists the hub events
+created since the previous sweep (with a 15-minute overlap) and notes
+the ones your machine does not have; when the listing is done it
+fetches them and applies them the usual way, oldest first by the sync
+clock, so a task's creation applies before its edits. If the regular
+fetch meets an edit of a task whose creation it has not received (the
+creation was pushed late with an older clock), pull runs the sweep at
+once, which brings the creation, and retries the regular fetch one
+time. A recovered claim or status change that is older than the task's
+current one changes nothing; it is only recorded as received.
+
+- **First pull after upgrading.** It compares the full hub event history
+  once and prints `late-event sweep (first run, full hub history): N
+  late events recovered`. Changes missed before the upgrade arrive
+  then. Later pulls print `late-event sweep: N late events recovered`
+  only when they recover something.
+- **Interrupted sweeps resume.** On a large hub the full comparison can
+  take longer than one pull may run (a daemon pull stops after 60
+  seconds). The sweep saves its place after each page it lists, and
+  keeps the changes it has noted but not yet applied, so the next pull
+  continues where the last one stopped instead of starting over. Until
+  it finishes, `mtix sync status` shows `last sweep` as `never (full
+  hub comparison in progress)`.
+- **Clock.** The sweep uses the hub's clock only, so a wrong clock on
+  your machine has no effect.
+- **Status.** `mtix sync status` shows `last sweep`, the hub time of the
+  last completed sweep (`last_sweep_at` in `--json`), or `never`
+  (`full_sweep_in_progress` in `--json` says whether the first full
+  comparison is part-way done, and `sweep_pending_events` counts the
+  changes noted but not yet applied).
+- **Cost.** In the common case (nothing missing, and at most `--limit`
+  changes since the last sweep) one extra hub query per pull, and only
+  during a pull. A larger window adds a query per further `--limit`
+  changes, recovered changes add a fetch per `--limit` of them, and a
+  retried fetch adds one pass. The sweep adds no timer, so an idle hub
+  that scales to zero stays idle (a daemon that pulls on an interval
+  sweeps on each of its pulls).
+- **Hub owner, after upgrading.** Run `mtix sync init` once with the
+  hub owner's DSN. It adds an index on the hub (`idx_sync_events_created_at`)
+  so each sweep reads only recent events. Until then pulls work as
+  before, but each page the sweep lists scans the hub's whole event
+  table: once per pull for the usual window, and once per page of the
+  one-time full comparison, spread across pulls.
+
 ### Daemon mode (for durability)
 
 Un-pushed events on a lost machine are **not recoverable**. If your
@@ -1665,6 +1714,7 @@ operator does.
 | `ErrSyncDivergentHistory` on `mtix sync init` | Hub already has a different lineage for this prefix | Run `mtix sync clone` to join, OR `mtix sync reconcile --import-as PARENT-ID` |
 | `ErrSyncQueueFull` from `mtix create` / `update` | Local pending queue at the cap | `mtix sync push --force`, or raise `sync.max_queue_size` |
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
+| A teammate's change is missing after `mtix sync pull` | They have not pushed yet, or the late-event sweep failed (the pull reports the error) | Ask them to run `mtix sync push`, then pull again; `mtix sync status` shows `last sweep` |
 
 ### MCP integration
 

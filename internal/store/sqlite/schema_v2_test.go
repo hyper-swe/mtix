@@ -98,6 +98,26 @@ func TestSchema_FreshDBHasAppliedEvents(t *testing.T) {
 		"applied_events powers FR-18.9 idempotent dedupe")
 }
 
+// TestSchema_FreshDBHasSyncSweepPending: the late-event sweep of sync pull
+// stages the hub event ids it has listed but not yet applied in
+// sync_sweep_pending (MTIX-95.5), keyed by event id, with each event's
+// Lamport clock so the apply phase can read them in Lamport order, a chunk
+// at a time.
+func TestSchema_FreshDBHasSyncSweepPending(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "fresh.db")
+	_, db := schemaTestEnv(t, dbPath)
+
+	require.Equal(t, []string{"event_id", "lamport_clock"}, columnsOf(t, db, "sync_sweep_pending"))
+	var indexes int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'index' AND name = 'idx_sync_sweep_pending_lamport'`).Scan(&indexes))
+	require.Equal(t, 1, indexes, "the apply phase reads by (lamport_clock, event_id)")
+	_, err := db.Exec(`INSERT INTO sync_sweep_pending (event_id) VALUES ('e1')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO sync_sweep_pending (event_id) VALUES ('e1')`)
+	require.Error(t, err, "event_id is the primary key")
+}
+
 func TestSchema_SyncSentinelsPopulated(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "fresh.db")
 	_, db := schemaTestEnv(t, dbPath)
@@ -106,6 +126,13 @@ func TestSchema_SyncSentinelsPopulated(t *testing.T) {
 		{"meta.sync.lamport", "0"},
 		{"meta.sync.last_pulled_clock", "0"},
 		{"meta.sync.machine_hash", ""},
+		// Empty means the store has never run the late-event sweep, so its
+		// first pull diffs the full hub id history (MTIX-95.5).
+		{"meta.sync.last_sweep_at", ""},
+		// Progress of an interrupted full diff: empty means none (MTIX-95.5).
+		{"meta.sync.sweep_after_id", ""},
+		{"meta.sync.sweep_after_created_at", ""},
+		{"meta.sync.sweep_started_at", ""},
 		{"sync.max_queue_size", "0"},
 		{"hub.events_retention_days", "0"},
 	}
@@ -318,6 +345,10 @@ func TestSchema_V1ToV2Migration(t *testing.T) {
 		"meta.sync.lamport",
 		"meta.sync.last_pulled_clock",
 		"meta.sync.machine_hash",
+		"meta.sync.last_sweep_at",
+		"meta.sync.sweep_after_id",
+		"meta.sync.sweep_after_created_at",
+		"meta.sync.sweep_started_at",
 		"sync.max_queue_size",
 		"hub.events_retention_days",
 	} {

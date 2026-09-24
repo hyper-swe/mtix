@@ -52,13 +52,15 @@ winner time and origin before --apply.
 
 Run 'mtix sync pull' before listing, and again just before --apply. A
 repair event carries this machine's newest clock, so on a log that lacks a
-teammate's newer change it wins over that change, and every machine that
-pulls it reverts the teammate's change. After pulling, list again and
-apply only what is still listed.
+teammate's newer change it can win over that change (whenever this
+machine's Lamport clock is ahead of it), and every machine that pulls it
+then reverts the teammate's change. After pulling, list again and apply
+only what is still listed.
 
 Without --apply the command is a dry run: it lists the differences and
-writes nothing, and ends with a reminder to pull first. --json prints them
-as JSON, with the reminder in a "reminder" field.
+writes nothing. When it lists differences, it ends with a reminder to pull
+first. --json prints them as JSON, with that reminder in a "reminder"
+field, which is omitted when there is no reminder.
 
 With --apply it first writes a verified backup of the database to
 .mtix/data/backups/pre-repair-status-<UTC time>.db, and stops if it cannot.
@@ -157,8 +159,9 @@ const syncRepairPullFirst = "Run 'mtix sync pull' first and list again before --
 // pullFirstReminder returns the pull-first reminder for a dry run that lists
 // differences, and "" otherwise: nothing to repair, or --apply (MTIX-95.35).
 // A repair event carries this machine's newest Lamport clock, so on a log
-// that lacks a teammate's newer change it wins over that change and reverts
-// it on every machine that pulls it.
+// that lacks a teammate's newer change it can win over that change (whenever
+// this machine's Lamport clock is ahead of it) and revert it on every machine
+// that pulls it.
 func pullFirstReminder(r *service.StatusRepairReport) string {
 	if r.Apply || len(r.Differences) == 0 {
 		return ""

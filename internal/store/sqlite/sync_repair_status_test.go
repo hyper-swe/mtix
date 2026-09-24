@@ -779,6 +779,7 @@ func TestRepairNodeStatus_RepairEvent_PassesThePushValidator(t *testing.T) {
 		keepsWall bool             // the repair event carries the winner's wall clock
 	}{
 		{"winner made just before the pull", func() time.Time { return time.Now().UTC() }, true},
+		{"winner stamped 1 minute ahead", func() time.Time { return time.Now().UTC().Add(time.Minute) }, false},
 		{"winner stamped 2 hours ahead", func() time.Time { return time.Now().UTC().Add(2 * time.Hour) }, false},
 		{"winner stamped 72 hours ahead", func() time.Time { return time.Now().UTC().Add(72 * time.Hour) }, false},
 		{"winner stamped in year 10000", func() time.Time { return time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC) }, false},

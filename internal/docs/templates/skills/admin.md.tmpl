@@ -105,7 +105,7 @@ Before mtix 0.5.4, `mtix sync pull` could re-apply events this machine had alrea
 
 **Recognize:** a node's status, assignee or agent_state is older than its own activity says (a later status change is recorded), typically after a pull on a client older than 0.5.4.
 
-**Pull first, always.** Run `mtix sync pull` before listing and again just before `--apply`. A repair that changes the status emits an event stamped with this machine's newest Lamport clock; on a log that lacks a teammate's newer, unpulled change, that event wins over the change and reverts it on every machine that pulls it. A 0.5.4 pull no longer replays this machine's own events, so pulling is safe.
+**Pull first, always.** Run `mtix sync pull` before listing and again just before `--apply`. A repair that changes the status emits an event stamped with this machine's newest Lamport clock; on a log that lacks a teammate's newer, unpulled change, that event can win over the change (whenever this machine's Lamport clock is ahead of it) and revert it on every machine that pulls it. A 0.5.4 pull no longer replays this machine's own events, so pulling is safe.
 
 **List (a dry run, safe at any time):**
 
@@ -115,7 +115,7 @@ mtix sync repair --status          # list the nodes that differ; writes nothing
 mtix sync repair --status --json   # the same list as JSON
 ```
 
-The dry run ends with a reminder to pull first (`reminder` in `--json`).
+When it lists differences, the dry run ends with a reminder to pull first (the `reminder` field in `--json`, omitted when there is no reminder).
 
 Each listed node names its winning event (its newest well-formed claim, unclaim, defer or status-change event, chosen by the rule a pull applies), when it was made, whether this machine or another machine made it, and a reason, then, per differing field, the stored and the derived value. The fields compared are status, assignee, agent_state, whether `closed_at` is set, and the progress of a node without children. The reasons:
 - `replay`: the stored state is what an older event of the node writes (shown as the replayed event), which is what an older pull left. `--apply` repairs it.

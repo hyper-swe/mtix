@@ -1788,11 +1788,13 @@ mtix sync push                             # send the repair events
 listing and again just before `--apply`, and apply only what the list
 still shows after that pull. A repair that changes the status emits an
 event stamped with this machine's newest Lamport clock. On a local log
-that lacks a teammate's newer, unpulled change, that event wins over the
-change, and every machine that pulls it reverts the teammate's change.
-(A 0.5.4 pull no longer replays this machine's own events, so pulling is
-safe.) The dry run ends with a reminder to pull first; with `--json` the
-reminder is the `reminder` field.
+that lacks a teammate's newer, unpulled change, that event can win over
+the change (whenever this machine's Lamport clock is ahead of it), and
+every machine that pulls it then reverts the teammate's change. (A 0.5.4
+pull no longer replays this machine's own events, so pulling is safe.)
+When the dry run lists differences, it ends with a reminder to pull
+first; with `--json` the reminder is the `reminder` field, which is
+omitted when there is no reminder.
 
 **What is compared.** For each node the winner is its newest
 well-formed claim, unclaim, defer or status-change event: the highest

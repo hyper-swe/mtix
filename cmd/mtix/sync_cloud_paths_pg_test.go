@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,20 +59,53 @@ func pushLocal(t *testing.T, dsn string) {
 		[]string{dsn}, cloudOpts, false), "push to hub: %s", stderr.String())
 }
 
-// resetLocalForFreshPull wipes the local applied-event ledger, nodes, and pull
-// cursor so a subsequent pull must fetch + re-apply every hub event — modelling
-// a fresh consumer / clone target.
+// resetLocalForFreshPull turns this store into a fresh consumer of the hub, so
+// the next pull must fetch and apply every hub event. It deletes the local
+// event log (sync_events), the applied-event ledger and the nodes, rewinds the
+// pull cursor, and then checks all four.
+//
+// Fixture, not product (MTIX-95.28). This reset used to keep sync_events. The
+// own-event rule (MTIX-95.2; ADR-006 I4: "have it" means the event_id is in
+// the local log) acknowledges a pulled event that the log already holds
+// instead of applying it. So a pull after that reset rebuilt no node, and the
+// daemon tests failed. The rule is right and stays unchanged; the half-wiped
+// store was not a fresh consumer. The product's fresh-consumer paths never
+// keep the log while dropping its effects: `sync reconcile --discard-local`
+// deletes the log together with the nodes, `sync clone` refuses a non-empty
+// log, and a local backup copies the whole database file. Any other gap
+// between the log and the nodes is projection drift, repaired from the log
+// (ADR-006 I1, section 5.3), not by pull. Applying held events again on pull
+// would bring back the echo the rule removed: spurious conflicts, and replayed
+// workflow events reverting newer status (ADR-006 D1-D3). Changing the rule
+// needs an ADR-level decision. The reset now clears the log as well, like the
+// fresh-clone fixtures TestRunSyncClone_HappyPath and
+// seedTwoProjectsAndPushThenWipe.
 func resetLocalForFreshPull(t *testing.T) {
 	t.Helper()
+	ctx := context.Background()
 	db := app.store.WriteDB()
 	for _, stmt := range []string{
+		`DELETE FROM sync_events`,
 		`DELETE FROM applied_events`,
 		`DELETE FROM nodes`,
 		`UPDATE meta SET value = '0' WHERE key = 'meta.sync.last_pulled_clock'`,
 	} {
-		_, err := db.ExecContext(context.Background(), stmt)
+		_, err := db.ExecContext(ctx, stmt)
 		require.NoErrorf(t, err, "reset: %s", stmt)
 	}
+	// Each wiped table must now be empty.
+	for _, check := range []struct{ table, query string }{
+		{"sync_events", `SELECT count(*) FROM sync_events`},
+		{"applied_events", `SELECT count(*) FROM applied_events`},
+		{"nodes", `SELECT count(*) FROM nodes`},
+	} {
+		var n int
+		require.NoError(t, db.QueryRowContext(ctx, check.query).Scan(&n))
+		require.Zerof(t, n, "reset must leave %s empty", check.table)
+	}
+	cursor, err := readLastPulledClock(ctx, app.store)
+	require.NoError(t, err)
+	require.Zero(t, cursor, "reset must rewind the pull cursor")
 }
 
 // liveNodeCount returns the number of non-deleted local nodes.
@@ -81,6 +115,78 @@ func liveNodeCount(t *testing.T) int {
 	require.NoError(t, app.store.QueryRow(context.Background(),
 		`SELECT count(*) FROM nodes WHERE deleted_at IS NULL`).Scan(&n))
 	return n
+}
+
+// queryLiveNodeTitles maps every non-deleted local node id to its title, so a
+// test asserts WHAT a pull or clone applied, not only how many rows exist
+// (MTIX-95.28). It returns errors instead of failing the test, so it is safe
+// to call from a polling condition while a daemon goroutine is running.
+func queryLiveNodeTitles(ctx context.Context) (titles map[string]string, err error) {
+	// Every live node's display id and title; soft-deleted nodes are excluded.
+	rows, err := app.store.Query(ctx,
+		`SELECT id, title FROM nodes WHERE deleted_at IS NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("query live nodes: %w", err)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			titles, err = nil, fmt.Errorf("close live nodes: %w", closeErr)
+		}
+	}()
+	titles = map[string]string{}
+	for rows.Next() {
+		var id, title string
+		if scanErr := rows.Scan(&id, &title); scanErr != nil {
+			return nil, fmt.Errorf("scan live node: %w", scanErr)
+		}
+		titles[id] = title
+	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return nil, fmt.Errorf("iterate live nodes: %w", iterErr)
+	}
+	return titles, nil
+}
+
+// liveNodeTitles is queryLiveNodeTitles for the test goroutine: it fails the
+// test on a query error.
+func liveNodeTitles(t *testing.T) map[string]string {
+	t.Helper()
+	titles, err := queryLiveNodeTitles(context.Background())
+	require.NoError(t, err)
+	return titles
+}
+
+// countAppliedEvent returns how many local applied_events rows record
+// eventID: 1 once a pull has applied (or acknowledged) it, 0 before. Like
+// queryLiveNodeTitles it never fails the test itself.
+func countAppliedEvent(ctx context.Context, eventID string) (int, error) {
+	var n int
+	// Primary-key lookup on applied_events.event_id.
+	err := app.store.QueryRow(ctx,
+		`SELECT count(*) FROM applied_events WHERE event_id = ?`, eventID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count applied event %s: %w", eventID, err)
+	}
+	return n, nil
+}
+
+// pollUntil evaluates cond every 50ms until it holds or timeout elapses and
+// reports whether it held. It never fails the test, so a caller that is
+// running a daemon goroutine can stop the daemon before it asserts.
+func pollUntil(timeout time.Duration, cond func() bool) bool {
+	deadline := time.After(timeout)
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if cond() {
+			return true
+		}
+		select {
+		case <-deadline:
+			return cond()
+		case <-tick.C:
+		}
+	}
 }
 
 // TestCloudPath_Daemon_PullTickAppliesHubEvents proves one daemon pull tick
@@ -103,14 +209,20 @@ func TestCloudPath_Daemon_PullTickAppliesHubEvents(t *testing.T) {
 
 	require.Equal(t, 2, liveNodeCount(t),
 		"one daemon pull tick must re-apply both hub creates (stderr: %s)", stderr.String())
+	require.Equal(t, map[string]string{"TEST-1": "daemon-alpha", "TEST-2": "daemon-beta"},
+		liveNodeTitles(t), "the tick must re-apply the hub creates' content, not only their count")
 }
 
 // TestCloudPath_Daemon_SustainedLoopPicksUpLaterEvents proves the sustained
-// ticker keeps pulling: events pushed to the hub AFTER the loop starts arrive on
-// a later tick — the "sync daemon runs for minutes and stays current" guarantee.
+// ticker keeps pulling: an event pushed to the hub AFTER the daemon's first pull
+// arrives on a later tick — the "sync daemon runs for minutes and stays current"
+// guarantee. The later event is a create authored by ANOTHER identity and pushed
+// straight to the hub, so the node exists locally only if a tick applied it; a
+// locally authored create would be present whether or not the daemon ever
+// pulled again (MTIX-95.28). Disabling the ticker turns this test red.
 func TestCloudPath_Daemon_SustainedLoopPicksUpLaterEvents(t *testing.T) {
 	dsn := requireCmdPG(t)
-	_ = openCmdHub(t)
+	pool := openCmdHub(t)
 	initTestApp(t)
 
 	// One node on the hub before the loop starts.
@@ -119,7 +231,8 @@ func TestCloudPath_Daemon_SustainedLoopPicksUpLaterEvents(t *testing.T) {
 	ctx := context.Background()
 	resetLocalForFreshPull(t)
 
-	loopCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	// A safety bound only: the test cancels the daemon once it has observed it.
+	loopCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	var stdout, stderr bytes.Buffer
 	done := make(chan error, 1)
@@ -127,12 +240,8 @@ func TestCloudPath_Daemon_SustainedLoopPicksUpLaterEvents(t *testing.T) {
 		done <- runSyncDaemon(loopCtx, &stdout, &stderr, []string{dsn}, cloudOpts, 1, false)
 	}()
 
-	// After the immediate pull has had time to land the first node, push a
-	// second node so a LATER tick must pick it up.
-	time.Sleep(1500 * time.Millisecond)
-	seedLocal(t, "after-loop-start")
-	pushLocal(t, dsn)
-
+	seen := observeSustainedLoop(ctx, pool)
+	cancel()
 	select {
 	case err := <-done:
 		require.NoError(t, err)
@@ -140,8 +249,13 @@ func TestCloudPath_Daemon_SustainedLoopPicksUpLaterEvents(t *testing.T) {
 		t.Fatal("daemon did not shut down after ctx cancel")
 	}
 
-	require.Equal(t, 2, liveNodeCount(t),
-		"sustained daemon must have pulled both the pre-loop and mid-loop nodes (stderr: %s)", stderr.String())
+	require.True(t, seen.firstPullLanded,
+		"the daemon's first pull must land the pre-loop node (stderr: %s)", stderr.String())
+	require.NoError(t, seen.pushErr, "another identity's create must reach the hub")
+	require.True(t, seen.laterTickApplied,
+		"a later tick must apply the create pushed after the first pull (stderr: %s)", stderr.String())
+	require.Equal(t, map[string]string{"TEST-1": "before-loop", "TEST-2": "after-loop-start"},
+		liveNodeTitles(t), "the daemon must hold both the pre-loop and the mid-loop node")
 	require.Contains(t, stdout.String(), "started")
 	require.Contains(t, stdout.String(), "shutting down")
 
@@ -196,6 +310,89 @@ func pushRemoteTitleUpdate(t *testing.T, pool *transport.Pool, nodeID, newTitle 
 	accepted, _, err := pool.PushEvents(context.Background(), []*model.SyncEvent{ev})
 	require.NoError(t, err)
 	require.Len(t, accepted, 1, "hub must accept the remote update event")
+}
+
+// pushRemoteCreate crafts a well-formed create_node event for a root node,
+// authored by a DIFFERENT identity, and pushes it straight to the hub via the
+// transport pool, bypassing the local store (the pushRemoteTitleUpdate
+// pattern). Its event_id is never in the local event log, so the own-event
+// rule (MTIX-95.2) does not hold it back: the node exists locally only once a
+// pull has applied it. Its Lamport clock is far above any cursor these tests
+// reach, so the next pull returns it. It returns errors instead of failing the
+// test, so it is safe to call while a daemon goroutine runs (MTIX-95.28).
+func pushRemoteCreate(ctx context.Context, pool *transport.Pool, nodeID, title string) (string, error) {
+	eid, err := clock.NewEventID()
+	if err != nil {
+		return "", fmt.Errorf("remote create event id: %w", err)
+	}
+	payload, err := model.EncodePayload(model.CreateNodePayload{
+		Title:    title,
+		NodeType: model.NodeTypeForDepth(0),
+		Priority: model.PriorityMedium,
+		Creator:  "remote-author",
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode remote create payload: %w", err)
+	}
+	now := time.Now().UTC()
+	ev := &model.SyncEvent{
+		EventID:           eid,
+		ProjectPrefix:     "TEST",
+		NodeID:            nodeID,
+		UID:               eid, // a create anchors its node's uid to its own id (ADR-003 §2)
+		OpType:            model.OpCreateNode,
+		Payload:           payload,
+		WallClockTS:       now.UnixMilli(),
+		LamportClock:      1_000_000, // above every cursor these tests reach
+		VectorClock:       model.VectorClock{"remote-author": 1},
+		AuthorID:          "remote-author",
+		AuthorMachineHash: "ffffffffffffffff",
+		CreatedAt:         now,
+	}
+	accepted, _, err := pool.PushEvents(ctx, []*model.SyncEvent{ev})
+	if err != nil {
+		return "", fmt.Errorf("push remote create %s: %w", nodeID, err)
+	}
+	if len(accepted) != 1 {
+		return "", fmt.Errorf("hub accepted %d of 1 remote create events for %s", len(accepted), nodeID)
+	}
+	return eid, nil
+}
+
+// sustainedLoopObservation records what
+// TestCloudPath_Daemon_SustainedLoopPicksUpLaterEvents saw while its daemon ran.
+type sustainedLoopObservation struct {
+	firstPullLanded  bool   // the daemon's first pull applied the pre-loop node
+	pushErr          error  // non-nil when the hub refused the mid-loop create
+	laterTickApplied bool   // a later tick recorded the mid-loop create as applied
+	remoteEventID    string // the mid-loop create's event id
+}
+
+// observeSustainedLoop runs while a daemon pulls every second (MTIX-95.28). It
+// waits for the daemon's first pull to apply the pre-loop node, then has
+// another identity push a create to the hub and waits for a later tick to
+// apply it. The create is pushed only after the first pull's batch has
+// committed; that pull fetched a single page (hasMore=false) and makes no
+// further fetch, so only a tick can bring the create in. It never fails the
+// test itself: the caller stops the daemon first and asserts afterwards.
+func observeSustainedLoop(ctx context.Context, pool *transport.Pool) sustainedLoopObservation {
+	var seen sustainedLoopObservation
+	seen.firstPullLanded = pollUntil(10*time.Second, func() bool {
+		titles, err := queryLiveNodeTitles(ctx)
+		return err == nil && titles["TEST-1"] == "before-loop"
+	})
+	if !seen.firstPullLanded {
+		return seen
+	}
+	seen.remoteEventID, seen.pushErr = pushRemoteCreate(ctx, pool, "TEST-2", "after-loop-start")
+	if seen.pushErr != nil {
+		return seen
+	}
+	seen.laterTickApplied = pollUntil(10*time.Second, func() bool {
+		n, err := countAppliedEvent(ctx, seen.remoteEventID)
+		return err == nil && n == 1
+	})
+	return seen
 }
 
 // conflictRowCount returns how many sync_conflicts rows for nodeID carry the

@@ -37,6 +37,8 @@ func originCases() []originCase {
 		{"other ipv4 loopback address", "http://127.0.0.2:8080", true},
 		{"ipv6 loopback", "http://[::1]:8377", true},
 		{"ipv6 loopback over https", "https://[::1]", true},
+		{"ipv6 loopback without brackets", "http://::1:8377", false},
+		{"ipv6 loopback without brackets or port", "http://::1", false},
 		{"localhost as a subdomain label", "http://localhost.example.net", false},
 		{"loopback ip as a subdomain label", "http://127.0.0.1.example.net", false},
 		{"host that starts with localhost", "http://localhostx.example:8080", false},

@@ -4,20 +4,26 @@
 package http
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store"
 )
 
 // TestServer_HostHeader_AcceptsOnlyAllowlistedHosts verifies the Host
 // allowlist (MTIX-95.14): localhost and loopback IPs on any port are
 // always accepted, a non-loopback bind also accepts exactly its bind
-// host, and every other Host is refused with 403 on every route.
+// host, and every other Host is refused with 403 on every route. A
+// refused request stops at the allowlist: a POST creates no node.
 func TestServer_HostHeader_AcceptsOnlyAllowlistedHosts(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -77,6 +83,25 @@ func TestServer_HostHeader_AcceptsOnlyAllowlistedHosts(t *testing.T) {
 				assert.Equal(t, http.StatusForbidden, w.Code, path)
 				assert.Contains(t, w.Body.String(), "HOST_NOT_ALLOWED", path)
 			}
+
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/nodes",
+				strings.NewReader(`{"title":"Host check","project":"TEST"}`))
+			req.Host = tt.host
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Requested-With", "mtix")
+			s.Router().ServeHTTP(w, req)
+
+			_, nodes, err := s.store.ListNodes(context.Background(), store.NodeFilter{}, store.ListOptions{})
+			require.NoError(t, err)
+			if tt.accept {
+				assert.Equal(t, http.StatusCreated, w.Code)
+				assert.Equal(t, 1, nodes)
+				return
+			}
+			assert.Equal(t, http.StatusForbidden, w.Code)
+			assert.NotContains(t, w.Body.String(), "Host check")
+			assert.Equal(t, 0, nodes, "a refused request creates no node")
 		})
 	}
 }
@@ -97,7 +122,7 @@ func TestHostAllowlistMiddleware_EmptyBind_AcceptsLoopbackOnly(t *testing.T) {
 	}
 	router := setupTestRouter()
 	router.Use(HostAllowlistMiddleware(""))
-	router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+	router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"reached": true}) })
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -108,10 +133,12 @@ func TestHostAllowlistMiddleware_EmptyBind_AcceptsLoopbackOnly(t *testing.T) {
 
 			if tt.accept {
 				assert.Equal(t, http.StatusOK, w.Code)
+				assert.Contains(t, w.Body.String(), "reached")
 				return
 			}
 			assert.Equal(t, http.StatusForbidden, w.Code)
 			assert.Contains(t, w.Body.String(), "HOST_NOT_ALLOWED")
+			assert.NotContains(t, w.Body.String(), "reached", "a refused request stops before the handler")
 		})
 	}
 }

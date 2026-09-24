@@ -50,6 +50,7 @@ func bindOriginCases() []bindOriginCase {
 		{"hostname bind: name as a subdomain label", "mtix.example.net", "8377", "http://mtix.example.net.other.example:8377", false},
 		{"ipv6 network bind: own origin", "fd00::10", "8377", "http://[fd00::10]:8377", true},
 		{"ipv6 network bind: neighbouring address", "fd00::10", "8377", "http://[fd00::11]:8377", false},
+		{"ipv6 network bind: own address without brackets", "fd00::10", "8377", "http://fd00::10:8377", false},
 		{"ipv4 wildcard bind: its own address", "0.0.0.0", "8377", "http://0.0.0.0:8377", false},
 		{"ipv4 wildcard bind: network address", "0.0.0.0", "8377", "http://192.0.2.10:8377", false},
 		{"ipv4 wildcard bind: local origin", "0.0.0.0", "8377", "http://localhost:8377", true},

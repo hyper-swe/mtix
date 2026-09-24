@@ -32,9 +32,9 @@ func bindNamesServer(bind string) bool {
 // request's Origin header; CORSMiddleware and the WebSocket upgrade both
 // use it (FR-9.1, MTIX-95.14). An empty Origin comes from a non-browser
 // client and is accepted. Any other Origin must be exactly
-// scheme://host[:port] and either be http or https on a loopback host
-// (isLoopbackHost), on any port, or be the server's own origin
-// (isOwnOrigin).
+// scheme://host[:port], with an IPv6 host in brackets, and either be http
+// or https on a loopback host (isLoopbackHost), on any port, or be the
+// server's own origin (isOwnOrigin).
 func allowedOrigin(origin, bind, port string) bool {
 	if origin == "" {
 		return true
@@ -46,6 +46,10 @@ func allowedOrigin(origin, bind, port string) bool {
 	// An origin is scheme and authority only: no user info, path, query
 	// or fragment.
 	if origin != u.Scheme+"://"+u.Host {
+		return false
+	}
+	// An IPv6 host is written in brackets, as browsers send it.
+	if strings.Contains(u.Hostname(), ":") && !strings.HasPrefix(u.Host, "[") {
 		return false
 	}
 	return isLoopbackHost(u.Hostname()) || isOwnOrigin(u, bind, port)

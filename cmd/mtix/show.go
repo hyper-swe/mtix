@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -15,11 +17,49 @@ import (
 	"github.com/hyper-swe/mtix/internal/store"
 )
 
+// showLongHelp lists exactly the lines `mtix show` prints (MTIX-98). Keep it in
+// step with runShow: a test fails when a printed label is missing here.
+const showLongHelp = `Show a node's details and annotations as labeled lines, in this order:
+
+  ID           node id, marked when the id is still provisional
+  Title        title
+  Status       status with its icon
+  Priority     priority (1 = critical ... 5 = backlog)
+  Type         node type
+  Assignee     current assignee (only when set)
+  Desc         full description (only when set; omitted when it holds only
+               whitespace or control characters), further lines indented
+  Annotations  every annotation, oldest first: its ISO-8601 UTC timestamp
+               ("unknown time" when none was recorded), author, addressee
+               and resolved marker when present, then the text, with
+               further lines indented and "(empty)" for an empty text;
+               "Annotations: none" when the node has none
+  Prompt       the prompt, cut to 100 characters ending in "..." when
+               longer (only when set; omitted when it holds only
+               whitespace or control characters), further lines indented
+  Progress     progress bar
+  Created      creation time
+
+Annotation text, author and addressee, the description and the prompt are
+normalized for the terminal: control characters other than newline and tab
+are removed (so CRLF becomes LF), and leading blank lines and trailing
+whitespace are trimmed, so a stored carriage return or escape sequence
+cannot overwrite a line or restyle the terminal. Title and assignee still
+print as stored, control characters and newlines included. Invisible
+Unicode formatting characters, such as bidirectional overrides, are not
+removed yet, so text can still display in a misleading order; quote exact
+text from --json.
+
+Acceptance criteria, labels, dependencies, activity and the full prompt are
+not printed. Use --json for the complete node record, including every
+annotation.`
+
 // newShowCmd creates the mtix show command per FR-6.3.
 func newShowCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show <id>",
-		Short: "Show full details of a node",
+		Short: "Show a node's details and annotations",
+		Long:  showLongHelp,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runShow(args[0])
@@ -121,15 +161,68 @@ func runShow(id string) error {
 	if node.Assignee != "" {
 		out.WriteHuman("Assignee: %s\n", node.Assignee)
 	}
-	if node.Description != "" {
-		out.WriteHuman("Desc:     %s\n", node.Description)
+	// Description and prompt are normalized and their continuation lines
+	// indented, so no stored line can pass for a label; one that normalizes
+	// to nothing is omitted like an unset one (MTIX-100.1).
+	if desc := displayText(node.Description); desc != "" {
+		out.WriteHuman("Desc:     %s\n", indentContinuation(desc, showValueIndent))
 	}
-	if node.Prompt != "" {
-		out.WriteHuman("Prompt:   %s\n", Truncate(node.Prompt, 100))
+	writeAnnotations(out, node.Annotations)
+	if prompt := displayText(node.Prompt); prompt != "" {
+		out.WriteHuman("Prompt:   %s\n", indentContinuation(truncateChars(prompt, 100), showValueIndent))
 	}
 	out.WriteHuman("Progress: %s\n", ProgressBar(node.Progress, 15))
 	out.WriteHuman("Created:  %s\n", node.CreatedAt.Format("2006-01-02 15:04"))
 	return nil
+}
+
+// writeAnnotations prints every annotation of a node for `mtix show`, oldest
+// first, each headed by its UTC timestamp and author (FR-3.4, MTIX-98).
+// Absence is stated as "Annotations: none", never left silent, so a reader can
+// tell "no verdict" from "verdict not shown". Text is normalized first
+// (MTIX-100.1): control characters removed, CRLF normalized, leading blank
+// lines and trailing whitespace trimmed, an empty body shown as "(empty)", a
+// missing timestamp as "unknown time", and continuation lines indented under
+// the header.
+func writeAnnotations(out OutputWriter, annotations []model.Annotation) {
+	if len(annotations) == 0 {
+		out.WriteHuman("Annotations: none\n")
+		return
+	}
+	out.WriteHuman("Annotations:\n")
+	for _, a := range sortedAnnotations(annotations) {
+		lines := strings.Split(indentContinuation(annotationText(a.Text), annotationTextIndent), "\n")
+		out.WriteHuman("  [%s] %s: %s\n", annotationTime(a.CreatedAt), annotationByline(a), lines[0])
+		for _, line := range lines[1:] {
+			out.WriteHuman("%s\n", line)
+		}
+	}
+}
+
+// annotationByline renders the author, the addressee when the annotation is
+// directed at an agent, and a resolved marker. Author and addressee are
+// single-line fields: a newline in either cannot start a line of its own.
+func annotationByline(a model.Annotation) string {
+	byline := singleLine(a.Author)
+	if addressee := singleLine(a.Addressee); addressee != "" {
+		byline += " → " + addressee
+	}
+	if a.Resolved {
+		byline += " (resolved)"
+	}
+	return byline
+}
+
+// sortedAnnotations returns a copy ordered oldest first. The sort is stable,
+// so annotations with equal timestamps keep their stored order, which is the
+// order they were added in.
+func sortedAnnotations(annotations []model.Annotation) []model.Annotation {
+	sorted := make([]model.Annotation, len(annotations))
+	copy(sorted, annotations)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
+	})
+	return sorted
 }
 
 // runList displays nodes with status icons and aligned columns.

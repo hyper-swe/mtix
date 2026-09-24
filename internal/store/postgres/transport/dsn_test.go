@@ -173,25 +173,31 @@ func TestEnforceTLS_RefusesWeakerOnRemoteHostEvenWithInsecureFlag(t *testing.T) 
 }
 
 func TestEnforceTLS_HonorsSSLROOTCERTEnv(t *testing.T) {
-	t.Setenv(transport.EnvSSLRootCert, "/path/to/ca.pem")
+	pinPGEnv(t)
+	// The check loads the CA file, so the variable names a real one.
+	caPath, _ := writeTestCA(t)
+	t.Setenv(transport.EnvSSLRootCert, caPath)
 	out, err := transport.EnforceTLSPosture(
 		"postgres://user:pass@example.com/db",
 		transport.Options{},
 	)
 	require.NoError(t, err)
 	u, _ := url.Parse(out)
-	require.Equal(t, "/path/to/ca.pem", u.Query().Get("sslrootcert"))
+	require.Equal(t, caPath, u.Query().Get("sslrootcert"))
 }
 
 func TestEnforceTLS_DoesNotOverrideExplicitSSLROOTCERT(t *testing.T) {
-	t.Setenv(transport.EnvSSLRootCert, "/path/to/ca.pem")
+	pinPGEnv(t)
+	envCA, _ := writeTestCA(t)
+	explicitCA, _ := writeTestCA(t)
+	t.Setenv(transport.EnvSSLRootCert, envCA)
 	out, err := transport.EnforceTLSPosture(
-		"postgres://user:pass@example.com/db?sslrootcert=/explicit.pem",
+		"postgres://user:pass@example.com/db?sslrootcert="+url.QueryEscape(explicitCA),
 		transport.Options{},
 	)
 	require.NoError(t, err)
 	u, _ := url.Parse(out)
-	require.Equal(t, "/explicit.pem", u.Query().Get("sslrootcert"),
+	require.Equal(t, explicitCA, u.Query().Get("sslrootcert"),
 		"explicit DSN value beats env var")
 }
 

@@ -628,3 +628,102 @@ func TestHarden_Maintain_PG17(t *testing.T) {
 	require.Contains(t, out, "REVOKE pg_maintain FROM "+maint)
 	require.Contains(t, out, viaSu+" ", "MAINTAIN inherited from a role that is not checked")
 }
+
+// TestHarden_EscalationRoles_Reported: a role that can act as a superuser
+// through a membership (SET ROLE; MEMBER before PostgreSQL 16), or that is
+// a member of pg_execute_server_program, pg_read_server_files or
+// pg_write_server_files in any way, is reported: each can reach the sync
+// tables without a privilege on them. A member that only inherits a
+// superuser's grants gains no superuser power and is not reported as one
+// (MTIX-95.1).
+func TestHarden_EscalationRoles_Reported(t *testing.T) {
+	initTestApp(t)
+	f := newHardenFixture(t)
+	owner := f.ownerRole()
+	su := f.role("su")
+	setSu, inhSu := f.role("setsu"), f.role("inhsu")
+	execer, reader := f.role("execer"), f.role("filereader")
+	f.migrateAs(owner)
+	f.ddl(`ALTER ROLE %I SUPERUSER`, su)
+	f.ddl(`GRANT %I TO %I WITH INHERIT FALSE, SET TRUE`, su, setSu)
+	f.ddl(`GRANT %I TO %I WITH INHERIT TRUE, SET FALSE`, su, inhSu)
+	f.ddl(`GRANT pg_execute_server_program TO %I`, execer)
+	f.ddl(`GRANT pg_read_server_files TO %I WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`, reader)
+	app.jsonOutput = true
+
+	out, err := f.harden(owner)
+	require.Equal(t, 2, exitCodeForError(err), out)
+	var result struct {
+		Before struct {
+			Findings []struct{ Role, Object, Kind, Via string } `json:"findings"`
+		} `json:"before"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &result), out)
+	got := map[string]string{}
+	for _, fd := range result.Before.Findings {
+		got[fd.Role+" "+fd.Object] = fd.Via
+	}
+	require.Equal(t, "superuser_membership", got[setSu+" "+su], "SET ROLE to a superuser")
+	require.Equal(t, "membership", got[execer+" pg_execute_server_program"])
+	require.Equal(t, "membership", got[reader+" pg_read_server_files"], "ADMIN OPTION alone")
+	require.NotContains(t, got, inhSu+" "+su, "inheriting a superuser's grants gives no superuser power")
+}
+
+// TestHarden_RepairsGuards: --apply restores a dropped TRUNCATE guard,
+// enables a disabled one and turns one enabled for replication sessions
+// only back to always firing: every guard ends with tgenabled 'O'
+// (MTIX-95.1).
+func TestHarden_RepairsGuards(t *testing.T) {
+	initTestApp(t)
+	f := newHardenFixture(t)
+	owner := f.ownerRole()
+	f.migrateAs(owner)
+	f.exec(`DROP TRIGGER audit_log_no_truncate ON audit_log`)
+	f.exec(`ALTER TABLE sync_conflicts DISABLE TRIGGER sync_conflicts_no_truncate`)
+	f.exec(`ALTER TABLE sync_events ENABLE REPLICA TRIGGER sync_events_no_truncate`)
+	guards := `SELECT c.relname || ' ' || t.tgname || ' ' || t.tgenabled::text
+		FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+		WHERE t.tgname LIKE '%\_no\_truncate' ORDER BY 1`
+	require.Equal(t, []string{
+		"sync_conflicts sync_conflicts_no_truncate D", "sync_events sync_events_no_truncate R",
+	}, f.strings(guards))
+
+	out, err := f.harden(owner)
+	require.Equal(t, 2, exitCodeForError(err), out)
+	for _, want := range []string{
+		"audit_log_no_truncate on public.audit_log", "sync_conflicts_no_truncate on public.sync_conflicts",
+		"sync_events_no_truncate on public.sync_events",
+	} {
+		require.Contains(t, out, want)
+	}
+
+	out, err = f.harden(owner, "--apply")
+	require.NoError(t, err, "every guard repaired: %s", out)
+	require.Equal(t, []string{
+		"audit_log audit_log_no_truncate O",
+		"sync_conflicts sync_conflicts_no_truncate O",
+		"sync_events sync_events_no_truncate O",
+	}, f.strings(guards))
+}
+
+// TestHarden_CallerScope: the connecting role is checked unless it owns
+// the sync tables or is a superuser, and the report says which. A member
+// of the owner role that runs harden is reported like any member
+// (MTIX-95.1).
+func TestHarden_CallerScope(t *testing.T) {
+	initTestApp(t)
+	f := newHardenFixture(t)
+	owner, admin := f.ownerRole(), f.role("admin")
+	f.migrateAs(owner)
+	f.ddl(`GRANT %I TO %I`, owner, admin)
+
+	out, err := f.harden(owner)
+	require.Equal(t, 2, exitCodeForError(err), "the member of the owner role is reported: %s", out)
+	require.Contains(t, out, "Connecting role "+owner+": not checked, it owns the sync tables.")
+
+	out, err = f.harden(admin)
+	require.Equal(t, 2, exitCodeForError(err), out)
+	require.Contains(t, out, "Connecting role "+admin+": checked.")
+	require.Contains(t, out, admin+" ")
+	require.Contains(t, out, "owner_membership")
+}

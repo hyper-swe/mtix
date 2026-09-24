@@ -30,7 +30,8 @@ const (
 // a role other than the sync tables' owner that owns an mtix function or
 // sequence; grantor is a kept role's privilege granted by a role other
 // than the owner, which --apply grants again from the owner; createrole is
-// a CREATEROLE role before PostgreSQL 16.
+// a CREATEROLE role before PostgreSQL 16; superuser_membership is a role
+// that can SET ROLE to a superuser.
 const (
 	FindingViaGrant           = "grant"
 	FindingViaGrantOption     = "grant_option"
@@ -42,11 +43,22 @@ const (
 	FindingViaObjectOwner     = "object_owner"
 	FindingViaGrantor         = "grantor"
 	FindingViaCreateRole      = "createrole"
+	FindingViaSuperuser       = "superuser_membership"
 )
 
 // ScopeClusterWide marks a change that applies to every database on the
 // server: a role membership (MTIX-95.1).
 const ScopeClusterWide = "cluster-wide"
+
+// Caller scopes: whether verification checked the connecting role
+// (MTIX-95.1). It is checked unless it owns the sync tables, is a superuser
+// or is kept.
+const (
+	CallerOwner     = "owner"
+	CallerSuperuser = "superuser"
+	CallerKept      = "kept"
+	CallerChecked   = "checked"
+)
 
 var (
 	// ErrHardenNotOwner refuses hub hardening by a role that does not own
@@ -85,14 +97,17 @@ type PrivilegeFinding struct {
 // PrivilegeReport is the result of verifying the hub's privileges
 // (MTIX-95.1). Findings fail verification; Info items do not (another
 // creator's default privileges). Statements lists, in order, what
-// `mtix sync harden --apply` would run.
+// `mtix sync harden --apply` would run. CallerScope says whether the
+// connecting role, Caller, was checked.
 type PrivilegeReport struct {
-	Schema     string             `json:"schema"`
-	Owners     []string           `json:"owners"`
-	KeptRoles  []string           `json:"kept_roles"`
-	Findings   []PrivilegeFinding `json:"findings"`
-	Info       []PrivilegeFinding `json:"info,omitempty"`
-	Statements []string           `json:"statements,omitempty"`
+	Schema      string             `json:"schema"`
+	Owners      []string           `json:"owners"`
+	Caller      string             `json:"caller"`
+	CallerScope string             `json:"caller_scope"`
+	KeptRoles   []string           `json:"kept_roles"`
+	Findings    []PrivilegeFinding `json:"findings"`
+	Info        []PrivilegeFinding `json:"info,omitempty"`
+	Statements  []string           `json:"statements,omitempty"`
 }
 
 // Clean reports whether verification passed: no findings.
@@ -289,6 +304,7 @@ func buildReport(ctx context.Context, tx pgx.Tx, kept []string, requireOwner boo
 	}
 	findings, info := computeFindings(cat, keptSet)
 	report := &PrivilegeReport{Schema: cat.schema, Owners: cat.ownerNames(),
+		Caller: cat.roleName(cat.current), CallerScope: cat.callerScope(keptSet),
 		KeptRoles: append([]string{}, kept...), Findings: []PrivilegeFinding{}}
 	if report.Findings, err = renderFindings(ctx, tx, findings); err != nil {
 		return nil, nil, err

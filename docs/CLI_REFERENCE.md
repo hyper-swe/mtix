@@ -1316,16 +1316,26 @@ Use --install to print a systemd unit (linux) or launchd plist
 
 Run sync health checks (FR-18)
 
-Run 5 health checks against the local store and the BYO Postgres hub:
+Run health checks against the local store and the BYO Postgres hub:
 
-  1. PG reachable           — opens pool + Ping
-  2. Schema current         — sync_projects table exists with expected columns
-  3. Queue draining         — no events older than 1h still in pending
-  4. No orphan applied      — every applied_event has a matching node OR tombstone
-  5. DSN secrets file mode  — .mtix/secrets is mode 0600 (when present)
+  PG reachable           - opens pool + Ping
+  Schema current         - sync_projects table exists with expected columns
+  Queue draining         - no events older than 1h still in pending
+  No orphan applied      - every applied_event has a matching node OR tombstone
+  DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
+  Hub privileges         - which roles other than the table owner can use the
+                           sync tables, and whether every TRUNCATE guard is in
+                           place (the check mtix sync harden runs)
 
-Exit code: 0 on all-pass, 2 if any check fails. --json output for
-agents and CI consumption.
+Hub privileges is a WARN by default: roles other than the owner may use
+the sync tables, which can be fine when the database is reachable only
+from a private network; mtix sync harden restricts them. It fails only in
+strict mode, when the sync.keep_roles config key is set and a role not in
+it can use the sync tables or a TRUNCATE guard is missing or disabled.
+The check contacts the hub only while the doctor runs.
+
+Exit code: 0 on all-pass, including checks that pass with a WARN; 2 if
+any check fails. --json output for agents and CI consumption.
 
 ### Flags
 

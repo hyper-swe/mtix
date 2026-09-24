@@ -61,6 +61,12 @@ harden may not change is printed with the statement a database administrator
 runs. EXECUTE on the mtix trigger functions is information only, so a freshly
 migrated hub verifies clean.
 
+`mtix sync doctor` runs the same verification as its `hub-privileges` check: a
+WARN (exit 0) by default when other roles can use the sync tables, which may be
+fine on a private network and blocks nothing; a FAIL (exit 2) only in strict
+mode, when `sync.keep_roles` is set. `mtix sync init` changes no privileges and
+`mtix sync push` issues no DDL.
+
 Never pass `--apply` without a human approving the dry run's role list. Never
 run `mtix sync harden` from a hook, a push or the daemon.
 

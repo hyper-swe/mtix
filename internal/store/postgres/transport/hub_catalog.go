@@ -126,6 +126,7 @@ type hubCatalog struct {
 	edges         []roleEdge
 	usage         map[[2]uint32]bool // [member, role]: member inherits role's privileges
 	member        map[[2]uint32]bool // [member, role]: any membership: inherit, SET or ADMIN only
+	canSet        map[[2]uint32]bool // [member, role]: member can SET ROLE to role (MEMBER before PG16)
 	effective     []effPriv
 	guards        []guardState
 }
@@ -151,6 +152,22 @@ func (c *hubCatalog) roleName(oid uint32) string {
 	return fmt.Sprintf("role %d", oid)
 }
 
+// callerScope says whether verification checks the connecting role
+// (MTIX-95.1): it does unless the role owns the sync tables, is a superuser
+// or is kept.
+func (c *hubCatalog) callerScope(kept map[string]bool) string {
+	switch {
+	case c.owners[c.current]:
+		return CallerOwner
+	case c.super:
+		return CallerSuperuser
+	case kept[c.roles[c.current].name]:
+		return CallerKept
+	default:
+		return CallerChecked
+	}
+}
+
 // ownerNames returns the names of the sync tables' owners, sorted.
 func (c *hubCatalog) ownerNames() []string {
 	out := make([]string, 0, len(c.owners))
@@ -170,7 +187,8 @@ func loadCatalog(ctx context.Context, tx pgx.Tx, kept []string, requireOwner boo
 	if err != nil {
 		return nil, fmt.Errorf("sync table list: %w", err)
 	}
-	c := &hubCatalog{owners: map[uint32]bool{}, usage: map[[2]uint32]bool{}, member: map[[2]uint32]bool{}}
+	c := &hubCatalog{owners: map[uint32]bool{}, usage: map[[2]uint32]bool{},
+		member: map[[2]uint32]bool{}, canSet: map[[2]uint32]bool{}}
 	if err := c.loadTables(ctx, tx, tables); err != nil {
 		return nil, err
 	}

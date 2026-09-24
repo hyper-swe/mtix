@@ -256,8 +256,8 @@ func printHardenDryRun(w io.Writer, rep *transport.PrivilegeReport) {
 		return
 	}
 	printHardenRoles(w, rep)
-	printHardenFindings(w, "Changes --apply would make:", rep, true)
-	printHardenFindings(w, "Access --apply cannot remove (an administrator must act):", rep, false)
+	printHardenFindings(w, "Changes --apply would make:", rep, withFix, false)
+	printHardenFindings(w, "Access --apply cannot remove (an administrator must act):", rep, withoutFix, false)
 	printHardenInfo(w, rep)
 	if len(rep.Statements) > 0 {
 		fmt.Fprintln(w, "\nStatements --apply would run, in order:")
@@ -285,7 +285,7 @@ func printHardenApply(w io.Writer, r *transport.HardenResult, hint string) {
 		fmt.Fprintln(w, verificationPassed)
 	} else {
 		fmt.Fprintln(w, "verification failed: access remains.")
-		printHardenFindings(w, "Access that remains:", after, false)
+		printHardenFindings(w, "Findings that remain:", after, anyFinding, true)
 	}
 	printHardenInfo(w, after)
 	if hint != "" {
@@ -339,7 +339,25 @@ func distinctSorted(in []string) []string {
 	return out
 }
 
-// printHardenScope writes the schema, owners and kept roles.
+// callerScopeText says whether, and why not, the connecting role was
+// checked (MTIX-95.1); "" for an unknown scope.
+func callerScopeText(scope string) string {
+	switch scope {
+	case transport.CallerOwner:
+		return "not checked, it owns the sync tables"
+	case transport.CallerSuperuser:
+		return "not checked, it is a superuser"
+	case transport.CallerKept:
+		return "not checked, it is a kept role"
+	case transport.CallerChecked:
+		return "checked"
+	default:
+		return ""
+	}
+}
+
+// printHardenScope writes the schema, owners and kept roles, and whether
+// the connecting role was checked.
 func printHardenScope(w io.Writer, rep *transport.PrivilegeReport) {
 	kept := "none"
 	if len(rep.KeptRoles) > 0 {
@@ -347,17 +365,35 @@ func printHardenScope(w io.Writer, rep *transport.PrivilegeReport) {
 	}
 	fmt.Fprintf(w, "Sync tables in schema %s, owned by %s. Kept roles: %s.\n",
 		safeText(rep.Schema), safeText(strings.Join(rep.Owners, ", ")), kept)
+	if scope := callerScopeText(rep.CallerScope); scope != "" {
+		fmt.Fprintf(w, "Connecting role %s: %s.\n", safeText(rep.Caller), scope)
+	}
 }
 
-// printHardenFindings writes the findings that have a fix (fixable) or
-// that do not, under title; nothing when there are none.
-func printHardenFindings(w io.Writer, title string, rep *transport.PrivilegeReport, fixable bool) {
+// withFix selects the findings --apply fixes.
+func withFix(f transport.PrivilegeFinding) bool { return f.Fix != "" }
+
+// withoutFix selects the findings --apply cannot fix.
+func withoutFix(f transport.PrivilegeFinding) bool { return f.Fix == "" }
+
+// anyFinding selects every finding.
+func anyFinding(transport.PrivilegeFinding) bool { return true }
+
+// printHardenFindings writes the findings keep selects under title, each
+// with the administrator's statement and its note, and with showFix the
+// statement --apply runs for it; nothing when there are none.
+func printHardenFindings(w io.Writer, title string, rep *transport.PrivilegeReport,
+	keep func(transport.PrivilegeFinding) bool, showFix bool,
+) {
 	var lines []string
 	for _, f := range rep.Findings {
-		if (f.Fix != "") != fixable {
+		if !keep(f) {
 			continue
 		}
 		lines = append(lines, "  "+findingLine(f))
+		if f.Fix != "" && showFix {
+			lines = append(lines, "      --apply runs: "+safeText(f.Fix))
+		}
 		if f.Manual != "" {
 			lines = append(lines, "      an administrator runs: "+safeText(f.Manual))
 		}

@@ -902,7 +902,7 @@ mtix config delete auto_claim
 | `agent.stuck_timeout` | `0` (disabled) | Auto-unclaim stuck agents after this duration |
 | `session.timeout` | `4h` | Max session duration before auto-end |
 | `data.soft_delete_retention` | `720h` (30 days) | Time before soft-deleted nodes are purged |
-| `sync.keep_roles` | (none) | Comma-separated hub roles that `mtix sync harden` leaves with their access (see "Hub privileges"); PUBLIC, data-API and `pg_` roles are refused |
+| `sync.keep_roles` | (none) | Comma-separated hub roles that `mtix sync harden` leaves with their access (see "Hub privileges"); PUBLIC, data-API and `pg_` roles are refused. Setting it turns on strict mode: the doctor's `hub-privileges` check then fails, instead of warning, when any other role can use the sync tables |
 | `progress.weighted` | `false` | Use weight field in progress calculation |
 
 ---
@@ -1605,13 +1605,27 @@ for the full tradeoff.
 ### Hub health checks
 
 ```bash
-mtix sync doctor             # 5 health checks: PG reachable, schema current,
+mtix sync doctor             # health checks: PG reachable, schema current,
                              #   queue draining, no orphan applied,
-                             #   secrets file mode
+                             #   secrets file mode, hub privileges
 ```
 
-Exit code 0 on all-pass; exit code 2 if any check fails (operators
-can gate CI / monitoring on this).
+Exit code 0 on all-pass, including a check that passes with a WARN; exit
+code 2 if any check fails (operators can gate CI / monitoring on this).
+
+The `hub-privileges` check runs the verification `mtix sync harden` runs
+(see "Hub privileges" below), as whichever role the DSN names. It is a
+**WARN** by default when roles other than the table owner can use the sync
+tables, or a TRUNCATE guard is missing or disabled: the doctor still exits
+0 and nothing is blocked, since that can be fine when the database is
+reachable only from a private network. The detail names those roles and
+says how to restrict them. It is a **FAIL** (exit 2) only in strict mode,
+when `sync.keep_roles` is set and a role not in it can use the sync
+tables, or a guard is missing or disabled. A clean hub passes. With
+`--json` the check carries `name`, `pass`, `warn` (only when set),
+`detail`, `fix` (`mtix sync harden`) and `findings` (the same findings as
+`mtix sync harden --json`). The check contacts the hub only while the
+doctor runs; there is no timer.
 
 ### Hub privileges
 
@@ -1631,7 +1645,10 @@ mtix sync harden --json                         # the report for agents and CI
 Run it as the role that owns the sync tables, the one that ran
 `mtix sync init`; a superuser or a member of the owner role may run it
 too. Any other role is refused with "the connecting role does not own
-every sync table" and nothing changes.
+every sync table" and nothing changes. The report says whether the
+connecting role was checked: it is, unless it owns the sync tables, is a
+superuser or is kept, so a member of the owner role that runs harden is
+reported like any other member.
 
 The dry run starts with the roles `--apply` would affect: the roles that
 lose their access, the kept roles that keep their access but can no longer
@@ -1663,7 +1680,8 @@ With `--apply`, in one transaction, harden:
   ADMIN OPTION, when the owner may: it holds ADMIN on the role, and the
   membership was granted by the owner or by a role whose privileges it
   has. The change is cluster-wide, so the dry run marks it;
-- restores a missing TRUNCATE guard and enables a disabled one.
+- restores a missing TRUNCATE guard, and enables a disabled one or one
+  set to fire only in replication sessions, so every guard ends enabled.
 
 Harden takes the hub's migration lock and waits at most 5 seconds for any
 lock, so it fails fast rather than hold up pushes and pulls. A statement
@@ -1678,7 +1696,13 @@ privileges), so access through PUBLIC, role membership and the predefined
 read-all roles is found too. A role that is a member of the owner role or
 of a read-all role in any way, by inheriting it, by SET ROLE or by ADMIN
 OPTION alone (with which it can grant the role to itself), is reported as
-well, and so is a CREATEROLE role before PostgreSQL 16.
+well, and so is a CREATEROLE role before PostgreSQL 16. So is a role that
+can SET ROLE to a superuser (`superuser_membership`), or that is a member
+of `pg_execute_server_program`, `pg_read_server_files` or
+`pg_write_server_files`: each can reach every table without a privilege on
+it. Harden reports these memberships and never changes them. After
+`--apply`, every finding that remains is listed, with the statement that
+fixes it or the one an administrator runs.
 
 Access harden may not change is reported, not changed: a read-all
 membership that another role granted (the report prints the statement a
@@ -1697,7 +1721,8 @@ that records the kept roles; it never writes the config itself.
 The append-only tables `audit_log`, `sync_conflicts` and `sync_events`
 refuse TRUNCATE, alone or with CASCADE, as they refuse UPDATE and DELETE.
 `mtix sync init` adds these guards automatically, only when they are
-missing. Harden never enables row-level security.
+missing, and changes no privilege. `mtix sync push` issues no DDL. Harden
+never enables row-level security.
 
 Verification passes when, apart from the table owner, superusers, and the
 kept roles and their members, no role holds a privilege on the sync
@@ -1710,12 +1735,13 @@ database over the network.
 Exit code: 0 when verification passes, 2 when changes are pending (dry run)
 or access remains (after `--apply`), 1 on an error or a refusal. With
 `--json` the report has `applied`, `before` and `after` (each with
-`schema`, `owners`, `kept_roles`, `findings`, `info` and `statements`),
+`schema`, `owners`, `caller`, `caller_scope` (`owner`, `superuser`, `kept`
+or `checked`), `kept_roles`, `findings`, `info` and `statements`),
 `executed` and `keep_roles_hint`. Each finding has `role`, `object`,
 `kind` (`table`, `sequence`, `function`, `default_acl`, `role` or
 `trigger`), `privileges`, `via` (`grant`, `grant_option`, `membership`,
-`owner_membership`, `default_acl`, `object_owner`, `grantor`,
-`createrole`, `missing` or `disabled`), `scope`
+`owner_membership`, `superuser_membership`, `default_acl`,
+`object_owner`, `grantor`, `createrole`, `missing` or `disabled`), `scope`
 (`cluster-wide` for a membership), and `fix` (the statement `--apply`
 runs) or, when harden cannot fix it, `manual` (the statement an
 administrator runs) or `note` (why).
@@ -1757,6 +1783,8 @@ operator does.
 | `ErrSyncDivergentHistory` on `mtix sync init` | Hub already has a different lineage for this prefix | Run `mtix sync clone` to join, OR `mtix sync reconcile --import-as PARENT-ID` |
 | `ErrSyncQueueFull` from `mtix create` / `update` | Local pending queue at the cap | `mtix sync push --force`, or raise `sync.max_queue_size` |
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
+| `mtix sync doctor` shows `[WARN] hub-privileges` | Roles other than the table owner can use the sync tables, or a TRUNCATE guard is missing or disabled. Nothing is blocked, and this may be fine on a private network | To restrict access, the table owner runs `mtix sync harden` (a dry run), then, after reviewing its role list, `mtix sync harden --apply --keep-role <role>`; see "Hub privileges" |
+| `mtix sync doctor` shows `[FAIL] hub-privileges` | Strict mode (`sync.keep_roles` set): a role not in it can use the sync tables, or a guard is missing or disabled | Add the role to `sync.keep_roles` if it should keep access, or run `mtix sync harden` and then `--apply` as the table owner |
 
 ### MCP integration
 

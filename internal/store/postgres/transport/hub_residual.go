@@ -33,7 +33,7 @@ func newAccessIndex(c *hubCatalog, kept map[string]bool, checked map[uint32]bool
 	for _, e := range c.acl {
 		x.acl[privKey{e.obj, e.grantee, e.privilege}] = true
 		r := c.roles[e.grantee]
-		if e.grantee != publicOID && !c.owners[e.grantee] && !r.super && e.grantee != c.current && !kept[r.name] {
+		if e.grantee != publicOID && !c.owners[e.grantee] && !r.super && !kept[r.name] {
 			x.findingRole[e.grantee] = true
 		}
 	}

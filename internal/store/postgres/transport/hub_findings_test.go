@@ -73,6 +73,7 @@ func baseCatalog() *hubCatalog {
 		},
 		usage:  map[[2]uint32]bool{},
 		member: map[[2]uint32]bool{},
+		canSet: map[[2]uint32]bool{},
 		guards: []guardState{
 			{table: "audit_log", trigger: "audit_log_no_truncate", enabled: "O", function: guardFunction},
 		},
@@ -171,13 +172,17 @@ func TestComputeFindings_Grants_RevokeNonKeptRoles(t *testing.T) {
 			want: []string{"team|table|public.audit_log|grant_option|SELECT|revoke-grant-option TABLE public audit_log team"},
 		},
 		{
-			name: "superuser, owner and caller entries are not findings",
+			name: "superuser and owner entries are not findings",
 			acl: []aclEntry{
 				{obj: keyTable, grantee: tSuper, privilege: "SELECT"},
 				{obj: keyTable, grantee: tOwner, privilege: "SELECT", grantable: true},
-				{obj: keyTable, grantee: tCaller, privilege: "SELECT"},
 			},
 			want: nil,
+		},
+		{
+			name: "the connecting role is checked like any role",
+			acl:  []aclEntry{{obj: keyTable, grantee: tCaller, privilege: "SELECT"}},
+			want: []string{"caller|table|public.audit_log|grant|SELECT|revoke TABLE public audit_log caller"},
 		},
 		{
 			name: "role name outside the identifier form is exposure",
@@ -349,17 +354,22 @@ func TestComputeFindings_EffectivePrivileges(t *testing.T) {
 		findings, _ := computeFindings(cat, keptTeam())
 		require.Equal(t, []string{"unrel|table|public.audit_log|membership|INSERT,SELECT|-"}, summaries(findings))
 	})
-	t.Run("predefined, superuser, owner, caller and kept roles are not checked", func(t *testing.T) {
+	t.Run("predefined, superuser, owner and kept roles are not checked", func(t *testing.T) {
 		cat := baseCatalog()
 		cat.effective = []effPriv{
 			{role: tReadAll, obj: keyTable, privilege: "SELECT"},
 			{role: tSuper, obj: keyTable, privilege: "SELECT"},
 			{role: tOwner, obj: keyTable, privilege: "SELECT"},
-			{role: tCaller, obj: keyTable, privilege: "SELECT"},
 			{role: tTeam, obj: keyTable, privilege: "SELECT"},
 		}
 		findings, _ := computeFindings(cat, keptTeam())
 		require.Empty(t, findings)
+	})
+	t.Run("the connecting role is checked", func(t *testing.T) {
+		cat := baseCatalog()
+		cat.effective = []effPriv{{role: tCaller, obj: keyTable, privilege: "SELECT"}}
+		findings, _ := computeFindings(cat, keptTeam())
+		require.Equal(t, []string{"caller|table|public.audit_log|membership|SELECT|-"}, summaries(findings))
 	})
 }
 
@@ -631,5 +641,52 @@ func TestComputeFindings_RegrantSkipsObjectOwnedByAnotherRole(t *testing.T) {
 	findings, _ := computeFindings(cat, keptTeam())
 	for _, f := range findings {
 		require.NotEqual(t, FindingViaGrantor, f.Via, "%+v", f.PrivilegeFinding)
+	}
+}
+
+// TestComputeFindings_EscalationRoles_Reported: a checked role that can
+// SET ROLE to a superuser, or that is a member of a server-file or
+// server-program role in any way, is reported; one that only inherits a
+// superuser's grants is not reported as a superuser (MTIX-95.1).
+func TestComputeFindings_EscalationRoles_Reported(t *testing.T) {
+	const tSuper2, tExec, tReadFiles uint32 = 20050, 4571, 4569
+	cat := baseCatalog()
+	cat.roles[tSuper2] = roleInfo{oid: tSuper2, name: "admin_su", super: true}
+	cat.roles[tExec] = roleInfo{oid: tExec, name: "pg_execute_server_program"}
+	cat.roles[tReadFiles] = roleInfo{oid: tReadFiles, name: "pg_read_server_files"}
+	cat.canSet[[2]uint32{tUnrel, tSuper2}] = true
+	cat.member[[2]uint32{tUnrel, tSuper2}] = true
+	cat.member[[2]uint32{tBob, tSuper2}] = true // inherits only: no SET
+	cat.usage[[2]uint32{tBob, tSuper2}] = true
+	cat.member[[2]uint32{tReader, tExec}] = true
+	cat.member[[2]uint32{tAlice, tReadFiles}] = true // ADMIN only
+	findings, _ := computeFindings(cat, keptTeam())
+	require.Equal(t, []string{
+		"alice|role|pg_read_server_files|membership||-",
+		"reader|role|pg_execute_server_program|membership||-",
+		"unrel|role|admin_su|superuser_membership||-",
+	}, summaries(findings))
+}
+
+// TestCallerScope_Roles_SaysWhetherChecked: the report states whether the
+// connecting role was checked (MTIX-95.1).
+func TestCallerScope_Roles_SaysWhetherChecked(t *testing.T) {
+	tests := []struct {
+		name   string
+		caller uint32
+		want   string
+	}{
+		{"owner", tOwner, CallerOwner},
+		{"superuser", tSuper, CallerSuperuser},
+		{"kept", tTeam, CallerKept},
+		{"any other role", tCaller, CallerChecked},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cat := baseCatalog()
+			cat.current = tt.caller
+			cat.super = cat.roles[tt.caller].super
+			require.Equal(t, tt.want, cat.callerScope(keptTeam()))
+		})
 	}
 }

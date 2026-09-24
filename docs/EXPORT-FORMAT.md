@@ -106,16 +106,20 @@ fails; check it, then import it with `mtix import --recompute-checksum`.
   Every write re-exports `.mtix/tasks.json` from that store, which lacks
   everything the client skipped and every annotation, and records the file
   as in sync. Committing that file reverts every change made upstream since
-  the client stopped importing. Until every teammate runs 0.5.4 or later,
-  do not run writing commands on an older client, and do not commit its
+  the client stopped importing. On such a client even an `mtix import`
+  that fails rewrites `.mtix/tasks.json` the same way. Until every
+  teammate runs 0.5.4 or later, do not run writing commands or
+  `mtix import` on an older client, and do not commit its
   `.mtix/tasks.json`. If such a file was committed, restore
   `.mtix/tasks.json` from the last good commit in git history, or restore
-  the store of a machine that imported it from
-  `.mtix/data/pre-sync-backup.db` (the copy taken before the last automatic
-  import; copy it over `.mtix/data/mtix.db` while no mtix process runs). A
-  0.5.4 store is protected from such a file by the auto-import guard
-  (MTIX-95.31.2), which refuses a replace import that would drop
-  annotations or nodes the store holds.
+  the store of a machine that imported it from the backup taken before
+  that import: `.mtix/data/backups/pre-sync-<time>.db` (0.5.4 and later,
+  newest 5 kept) or `.mtix/data/pre-sync-backup.db` (0.5.3 and earlier).
+  Copy it over `.mtix/data/mtix.db` while no mtix process runs. A 0.5.4
+  store is protected from such a file by the auto-import guard
+  (MTIX-95.31.2): the file carries no annotations or activity, so its
+  automatic import is refused and nothing changes (see "Automatic import"
+  below).
 
 ## Import
 
@@ -145,7 +149,73 @@ refused and nothing changes; the message names the node, the field and
 **Replace mode** (`mtix import --mode replace`, and the automatic import of
 a changed `.mtix/tasks.json`) deletes every node, dependency, agent and
 session, then writes the file's content, every field included. An export
-followed by a replace import leaves the store as it was.
+followed by a replace import leaves the store as it was. The automatic
+import refuses a replace that would delete local data (below); the
+explicit `mtix import --mode replace` does not.
+
+**Automatic import** (FR-15.2, MTIX-95.31.2). Before it replaces the
+store with a changed `.mtix/tasks.json`, the automatic import runs every
+check above, then compares the node and dependency data of the store with
+the file, node by node (agents and sessions are runtime state and are
+replaced without comparison). These are always a loss when the file lacks
+them:
+
+- a node (by id);
+- an annotation (by id), or the resolution of one: resolved locally, open
+  in the file;
+- an activity entry (by the merge key: id, type, author, text and time);
+- a dependency (from, to, type);
+- the whole local node, when the file gives its id to a different task:
+  both carry a `uid` and the uids differ (listed as "a different task
+  under this id", with both titles).
+
+A non-empty field value that the file leaves empty or leaves out (an empty
+string, list or object, `null`, or, for `labels` and `metadata`, the text
+`[]`, `{}` or `null`) is a loss unless the file's copy of the node is
+current: the file carries activity (`schema_version` 2.0.0 or later), its
+copy holds every local activity entry of the node, and its `updated_at` is
+not older than the local one. Activity is append-only, and the writes that
+record none (`mtix update`, `mtix delete`) still move `updated_at`, so a
+current copy has seen the local changes and a field it cleared (unclaim,
+reopen, undefer, undelete, a later update) was cleared on purpose. A 1.x
+file is never current, nor is a copy whose `updated_at` cannot be read;
+clock skew that makes a current copy look older refuses. Numbers are never
+empty, and `node_type` is exempt because import derives it from `depth`. A
+stale copy that changes a non-empty value, rather than clearing it, is
+applied (a checkout of an older board does this on purpose); the backup
+keeps the state before. The rule fails open in one direction: a copy with
+a later `updated_at` that missed a local update or delete (neither records
+activity), after a concurrent edit or with a clock that runs ahead, counts
+as current, so a field it leaves empty is applied as cleared.
+
+On a loss the import is refused and nothing changes: no import, no
+backup, the stored hash kept, so it refuses again on every command. The
+refusal names the loss node by node and three ways to proceed, each of
+which resolves it: `mtix import .mtix/tasks.json --mode merge` (keeps all
+local data; for a node whose `content_hash` is unchanged the local field
+values win; a local node whose id the file gives to a different task, one
+with another `uid`, is renumbered with its subtree to the next number free
+in both, keeping its `uid`, and applied only with `--confirm`),
+`mtix sync --fix` (rewrite the file from the store) and
+`mtix import .mtix/tasks.json --mode replace`. The replace re-checks, in
+its own transaction, that the store is unchanged since the comparison; if
+it changed, nothing is written and the next command compares again. A file that only adds or
+changes data is imported, after a verified backup to
+`.mtix/data/backups/pre-sync-<UTC time>.db` (the newest 5 are kept; a new
+one for every applied import, reused only by a retry of a failed import
+while the store is unchanged), and one line on stderr says how many nodes
+and dependencies it added, updated and removed. A file that fails its
+checks is recorded as a pending refusal too. `sync.auto_sync: false` turns
+the automatic import off, except for a store that holds no nodes.
+`mtix sync` reports the switch and the last refusal.
+
+**Auto-export never overwrites a pulled board** (FR-15.3e). Every writer,
+the CLI and `mtix mcp`, `mtix serve` and the daemon alike, exports to
+`.mtix/tasks.json` only when the file on disk is the one mtix last wrote or
+imported. Otherwise it runs the automatic import first; when that does not
+import the file, the file is kept, the refusal is recorded as pending and
+one line names the way out for its kind (a newer schema needs an upgrade,
+never `mtix sync --fix`).
 
 **Merge mode** (`mtix import`, the default):
 

@@ -106,6 +106,11 @@ type ImportReconcileReport struct {
 	// Renamed are import nodes re-stamped with a fresh local uid under
 	// --force-rename (their OldPath uid is the colliding one).
 	Renamed []ImportRemapEntry
+	// LocalRenumbers are local tasks, with their subtrees, that a merge
+	// renumbers because the file holds a different task (another uid)
+	// under their id, keyed by uid (MTIX-95.31.4). The file's task keeps
+	// the id; the local one moves to the next number free in both.
+	LocalRenumbers []ImportRemapEntry
 	// Idempotent counts incoming nodes that were an exact uid+display_path
 	// no-op against the local store (ADR-003 §6).
 	Idempotent int
@@ -137,6 +142,16 @@ func (r *ImportReconcileReport) String() string {
 		fmt.Fprintf(&b, "  force-renamed (re-stamped) nodes: %d\n", len(r.Renamed))
 		for _, m := range r.Renamed {
 			fmt.Fprintf(&b, "    - %s re-stamped (was uid=%s)\n", m.NewPath, m.UID)
+		}
+	}
+	if len(r.LocalRenumbers) > 0 {
+		fmt.Fprintf(&b, "  local tasks renumbered, the file holds a different task under their id: %d\n",
+			len(r.LocalRenumbers))
+		for _, m := range r.LocalRenumbers {
+			fmt.Fprintf(&b, "    - uid=%s %s -> %s\n", m.UID, m.OldPath, m.NewPath)
+		}
+		if !r.Applied {
+			b.WriteString("  not applied: review the renumbering above, then rerun the import with --confirm\n")
 		}
 	}
 	return b.String()
@@ -175,41 +190,35 @@ func (s *Store) ImportReconcile(
 
 	report := &ImportReconcileReport{}
 
-	// Step 1: detect duplicate uids within the export itself (crafted/buggy
-	// export). These can never be safely applied, so fail before touching the
-	// store (ADR-003 §6, F-3).
-	report.Conflicts = append(report.Conflicts, exportDuplicateUIDConflicts(data)...)
-
-	// Step 2: validate each incoming uid against the local store, classifying
-	// idempotent no-ops, local collisions, and (when ForceRename) re-stamps.
-	if err := s.classifyAgainstLocal(ctx, data, opts, report); err != nil {
+	// Steps 1-2: validate every incoming uid, within the export and against
+	// the local store (ADR-003 §6, F-3).
+	if err := s.validateImportUIDs(ctx, data, opts, report); err != nil {
 		return report, nil, err
 	}
-	if len(report.Conflicts) > 0 {
-		return report, nil, fmt.Errorf(
-			"import rejected: %d uid conflict(s): %w", len(report.Conflicts), model.ErrConflict)
+
+	// Step 3a (MTIX-95.31.4): a merge never overwrites a local task that is
+	// a different task than the file's under the same id: plan to renumber
+	// the local task and its subtree to the next number free in the store
+	// and the file. Planned first, so the provisional renumbers avoid its
+	// numbers (taken).
+	taken := make(map[string]map[int]bool)
+	moves, planErr := s.planLocalRenumbers(ctx, data, opts.Mode, report, taken)
+	if planErr != nil {
+		return report, nil, planErr
 	}
 
-	// Step 3: plan deterministic renumbers for incoming provisional nodes so
-	// they settle into clean local numbers (ADR-003 §6). The plan rewrites the
-	// in-memory export; nothing is written to the store yet.
-	if err := s.planProvisionalRemaps(ctx, data, report); err != nil {
+	// Step 3b: plan deterministic renumbers for incoming provisional nodes
+	// so they settle into clean local numbers (ADR-003 §6). The plan
+	// rewrites the in-memory export; nothing is written to the store yet.
+	if err := s.planProvisionalRemaps(ctx, data, report, taken); err != nil {
 		return report, nil, err
 	}
 
 	// Step 4: live-store safety. Renumbering touches an existing store's
-	// namespace, so require confirmation unless the store is empty (ADR-003 §6).
-	if len(report.Remaps) > 0 && !opts.Confirm {
-		empty, err := s.storeIsEmpty(ctx)
-		if err != nil {
-			return report, nil, err
-		}
-		if !empty {
-			return report, nil, fmt.Errorf(
-				"%d provisional node(s) would be renumbered in a live store; "+
-					"re-run with confirmation: %w",
-				len(report.Remaps), ErrImportConfirmationRequired)
-		}
+	// namespace, so require confirmation unless the store is empty (ADR-003
+	// §6); renumbering a local task always does (MTIX-95.31.4).
+	if err := s.requireConfirmation(ctx, report, opts.Confirm); err != nil {
+		return report, nil, err
 	}
 
 	// Step 5: the reconcile rewrote node ids/uids/seqs in place, so the
@@ -222,8 +231,9 @@ func (s *Store) ImportReconcile(
 		}
 	}
 
-	// Step 6: apply the (validated, rewritten) import via the existing path.
-	result, err := s.Import(ctx, data, opts.Mode, opts.Force)
+	// Step 6: apply the (validated, rewritten) import via the existing
+	// path, which first moves the planned local tasks (MTIX-95.31.4).
+	result, err := s.Import(ctx, data, opts.Mode, opts.Force, renumberLocalFirst(moves))
 	if err != nil {
 		return report, nil, err
 	}
@@ -325,12 +335,13 @@ func (s *Store) planProvisionalRemaps(
 	ctx context.Context,
 	data *ExportData,
 	report *ImportReconcileReport,
+	taken map[string]map[int]bool,
 ) error {
-	order := provisionalNodeOrder(data)
+	order := shallowestFirst(data, func(n *exportNode) bool { return model.IsProvisional(n.ID) })
 	// taken tracks sibling sequences already claimed under each parent during
-	// this plan, so two incoming provisionals under one parent get distinct
-	// numbers even before either is written.
-	taken := make(map[string]map[int]bool)
+	// this plan (the local renumbers of a merge included, MTIX-95.31.4), so
+	// two nodes under one parent get distinct numbers even before either is
+	// written.
 	// rebase maps an old (provisional) display_path prefix to its new clean
 	// path so descendants of a renumbered node follow their ancestor.
 	rebase := make(map[string]string)
@@ -365,13 +376,14 @@ func (s *Store) planProvisionalRemaps(
 	return nil
 }
 
-// provisionalNodeOrder returns the indices of provisional incoming nodes,
+// shallowestFirst returns the indices of the incoming nodes keep accepts,
 // shallowest-first (then by id for determinism), so a renumbered parent is
-// processed before its children (ADR-003 §6).
-func provisionalNodeOrder(data *ExportData) []int {
+// processed before its children (ADR-003 §6; the provisional nodes, and
+// for MTIX-95.31.4 every node).
+func shallowestFirst(data *ExportData, keep func(*exportNode) bool) []int {
 	var order []int
 	for i := range data.Nodes {
-		if model.IsProvisional(data.Nodes[i].ID) {
+		if keep(&data.Nodes[i]) {
 			order = append(order, i)
 		}
 	}

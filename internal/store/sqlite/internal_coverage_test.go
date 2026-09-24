@@ -2482,11 +2482,13 @@ func TestImport_MergeMode_UpdatesExistingNodes(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	// Create a node.
+	// Create a node. Both stores hold the same task, so both carry its uid
+	// (MTIX-95.31.4: another uid is a different task).
+	const uid = "01a0d56f-0000-7000-8000-00000000a001"
 	require.NoError(t, s.CreateNode(ctx, &model.Node{
 		ID: "MRG-1", Project: "MRG", Depth: 0, Seq: 1, Title: "Original title",
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
-		NodeType: model.NodeTypeIssue, ContentHash: "hash-v1", CreatedAt: now, UpdatedAt: now,
+		NodeType: model.NodeTypeIssue, ContentHash: "hash-v1", UID: uid, CreatedAt: now, UpdatedAt: now,
 	}))
 
 	// Export, modify the title, re-import in merge mode.
@@ -2494,7 +2496,7 @@ func TestImport_MergeMode_UpdatesExistingNodes(t *testing.T) {
 	require.NoError(t, srcStore.CreateNode(ctx, &model.Node{
 		ID: "MRG-1", Project: "MRG", Depth: 0, Seq: 1, Title: "Updated title",
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
-		NodeType: model.NodeTypeIssue, ContentHash: "hash-v2", CreatedAt: now, UpdatedAt: now,
+		NodeType: model.NodeTypeIssue, ContentHash: "hash-v2", UID: uid, CreatedAt: now, UpdatedAt: now,
 	}))
 	exportData, err := srcStore.Export(ctx, "MRG", "0.1.0")
 	require.NoError(t, err)

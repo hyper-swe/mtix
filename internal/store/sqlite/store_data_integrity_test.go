@@ -347,7 +347,9 @@ func TestImport_MergeMode_UpdatesChanged(t *testing.T) {
 	require.NoError(t, err)
 
 	s2 := newTestStore(t)
-	require.NoError(t, s2.CreateNode(ctx, makeRootNode("MU-1", "MU", "Original", now)))
+	older := makeRootNode("MU-1", "MU", "Original", now)
+	older.UID = data.Nodes[0].UID // the same task (MTIX-95.31.4: another uid is a different task)
+	require.NoError(t, s2.CreateNode(ctx, older))
 
 	result, err := s2.Import(ctx, data, sqlite.ImportModeMerge, false)
 	require.NoError(t, err)

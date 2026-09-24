@@ -638,7 +638,7 @@ Import nodes from JSON export
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--confirm` |  | Confirm applying provisional renumbering to a non-empty live store (ADR-003 §6); without it such an import is reported but not applied | false |
+| `--confirm` |  | Confirm renumbering in a non-empty live store (ADR-003 §6): incoming provisional nodes, and local tasks whose id the file gives to a different task; without it such an import is reported but not applied | false |
 | `--force` |  | Allow importing zero nodes into a non-empty database | false |
 | `--force-rename` |  | On an incoming uid that collides with a different local node, re-stamp the import node with a fresh local uid instead of rejecting (ADR-003 §6) | false |
 | `--mode` |  | Import mode: replace or merge | merge |
@@ -1116,7 +1116,9 @@ Check or fix sync between SQLite and tasks.json (FR-15)
 
 Without subcommand: compare the SQLite database with .mtix/tasks.json and
 report any drift. Use --fix to re-export the database to tasks.json,
-resolving any discrepancies.
+resolving any discrepancies. The report also shows whether the automatic
+import of a changed tasks.json is enabled (sync.auto_sync) and the last
+automatic import mtix refused, with its reason.
 
 With subcommand (FR-18 / MTIX-15): manage the BYO Postgres sync hub.
 See 'mtix sync init --help' and 'mtix sync clone --help'.

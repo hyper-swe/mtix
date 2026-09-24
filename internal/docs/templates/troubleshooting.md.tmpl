@@ -48,6 +48,30 @@
 
 **Solution:** Start a session first: `mtix session start --agent <id>`.
 
+## Automatic import of `.mtix/tasks.json`
+
+### Auto-import of .mtix/tasks.json refused
+
+**Cause:** After a `git pull` or checkout, `.mtix/tasks.json` lacks local node or dependency data that the automatic (replace) import would delete: a task, a comment (annotation), a comment's resolution, an activity entry or a dependency, or a field value the file leaves empty in a copy of a task that is not current (it lacks some of the task's local activity or its `updated_at` is older: a stale board, or one re-exported by an mtix client older than 0.5.4, which writes no comments or activity). A field a teammate cleared on purpose (unclaim, reopen, undefer, undelete, a later update) is not a loss and applies. A dependency a teammate removed on purpose is still refused. Nothing was imported and nothing changed; the refusal repeats, printed once, on every command until you choose, and writing commands save to the local store but leave `.mtix/tasks.json` as it is.
+
+**Solution:** Read the list the refusal prints, then run one of these from the project root:
+
+- `mtix import .mtix/tasks.json --mode merge` keeps every local task, comment, activity entry and dependency and adds the file's. For a task whose content is unchanged, the local field values win, so a teammate's status or assignee change to it is not applied and the board you commit next reverts it. A task listed as `a different task under this id` is renumbered, with its subtree, to the next number free in both the store and the file (it keeps its uid; the file's task keeps the id); the merge prints the renumbering and applies it only when you rerun it with `--confirm`.
+- `mtix sync --fix` keeps the local store and rewrites `.mtix/tasks.json` from it; every change in the file is dropped.
+- `mtix import .mtix/tasks.json --mode replace` makes the file win and deletes what the refusal listed. Take a copy first with `mtix backup <file>`.
+
+Each of them resolves the refusal. `mtix sync` shows the last refusal, its kind, its reason and whether it is pending (`--json`: `auto_import.last_refusal`). Every automatic import that does apply prints one line saying what changed, and keeps a backup of the database before it in `.mtix/data/backups/pre-sync-<time>.db` (the newest 5 are kept; a file that fails a check or is refused takes no backup).
+
+### .mtix/tasks.json was not rewritten
+
+**Cause:** A write found `.mtix/tasks.json` changed on disk since mtix last wrote or imported it, and the automatic import did not import it. mtix never overwrites such a board, from the CLI or from `mtix mcp`, `mtix serve` or the daemon; the write is saved in the local store.
+
+**Solution:** Follow the way out the line names for the kind of refusal (`mtix sync` shows it): a lossy file, the three commands above; a conflict (both changed), `mtix import .mtix/tasks.json --mode merge`, `mtix sync --fix` or `--mode replace` (when the replace would also delete local data, the conflict is printed as a refusal that lists it); a newer schema, upgrade mtix (do not rewrite the board from this older version); a file that fails its checks (for example merged by hand), repair and check it, then `mtix import .mtix/tasks.json --recompute-checksum`, or `mtix sync --fix` to keep the local board (it works even when the file does not parse); automatic import off, `mtix import .mtix/tasks.json --mode merge` or `mtix sync --fix`.
+
+### `sync.auto_sync`
+
+`sync.auto_sync` (default `true`) controls only the automatic import of a changed `.mtix/tasks.json`. `mtix config set sync.auto_sync false` turns it off; `mtix config set` accepts only true or false. A value written by hand that is neither leaves automatic import on, with a one-line warning; fix it with `mtix config set sync.auto_sync true` or `false`. `.mtix/config.yaml` is tracked in git, so the switch applies to every clone, but a store that holds no tasks (a fresh clone) is always imported. With the switch off, writes keep exporting the store, but a pulled board is not overwritten: it stays until you import it with `mtix import .mtix/tasks.json --mode merge` or keep your board with `mtix sync --fix`. It does not affect hub sync (`mtix sync push`, `mtix sync pull`). `mtix sync` shows the configured value.
+
 ## Configuration Keys
 
 <!-- AUTO-GENERATED: CONFIG_KEYS -->

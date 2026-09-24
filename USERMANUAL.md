@@ -977,6 +977,7 @@ mtix config delete auto_claim
 | `session.timeout` | `4h` | Max session duration before auto-end |
 | `data.soft_delete_retention` | `720h` (30 days) | Time before soft-deleted nodes are purged |
 | `progress.weighted` | `false` | Use weight field in progress calculation |
+| `sync.auto_sync` | `true` | Automatic import of a changed `.mtix/tasks.json` (after `git pull`); `false` turns it off, except for a store that holds no tasks. `mtix config set` accepts only true or false. Tracked in git with `.mtix/config.yaml`, so it applies to every clone. Writes keep exporting, but never over a pulled board that was not imported. See "Automatic import of `.mtix/tasks.json`" |
 
 ---
 
@@ -1245,7 +1246,7 @@ mtix export > project-data.json
 
 The export includes every node with every stored field, dependencies, agents, sessions, and a SHA-256 checksum for integrity verification. `.mtix/tasks.json`, the git-tracked board, is the same document. Each node carries its annotations (comments, review verdicts, close receipts) in the structure `mtix show --json` returns, its activity stream, its invalidation fields and every other column; soft-deleted nodes are included. The checksum covers the nodes, annotations included, and the dependencies. No node field is left out. The format (`schema_version` 2.0.0 since 0.5.4; 0.5.3 and earlier wrote 1.0.0), every field and the checksum rule are described in [docs/EXPORT-FORMAT.md](docs/EXPORT-FORMAT.md).
 
-**Mixed versions on one board.** A client older than 0.5.4 supports only `schema_version` 1.x, so its automatic import skips a file written by 0.5.4 and logs `tasks.json schema version is newer than supported — upgrade mtix`; its `mtix import` of the file fails with `checksum verification failed`. That protects its store only until its next writing command: every write re-exports `.mtix/tasks.json` from that store, which lacks everything the client skipped and every annotation, and committing that file reverts every change made upstream. Until every teammate who shares a board runs 0.5.4 or later, do not run writing commands on an older client and do not commit its `.mtix/tasks.json`. If such a file was committed, restore `.mtix/tasks.json` from the last good commit in git history, or restore the store of a machine that imported it from `.mtix/data/pre-sync-backup.db` (copy it over `.mtix/data/mtix.db` while no mtix process runs). A 0.5.4 store is protected from such a file by the auto-import guard (MTIX-95.31.2), which refuses a replace import that would drop annotations or nodes the store holds. 0.5.4 reads files written by older clients.
+**Mixed versions on one board.** A client older than 0.5.4 supports only `schema_version` 1.x, so its automatic import skips a file written by 0.5.4 and logs `tasks.json schema version is newer than supported — upgrade mtix`; its `mtix import` of the file fails with `checksum verification failed`. That protects its store only until its next writing command: every write re-exports `.mtix/tasks.json` from that store, which lacks everything the client skipped and every annotation, and committing that file reverts every change made upstream. On a client older than 0.5.4, even an `mtix import` that fails rewrites `.mtix/tasks.json` from that client's store, so `mtix import .mtix/tasks.json` is no remedy there either. Until every teammate who shares a board runs 0.5.4 or later, do not run writing commands or `mtix import` on an older client and do not commit its `.mtix/tasks.json`. If such a file was committed, restore `.mtix/tasks.json` from the last good commit in git history, or restore the store of a machine that imported it from the backup taken before that import: `.mtix/data/backups/pre-sync-<time>.db` (0.5.4 and later) or `.mtix/data/pre-sync-backup.db` (0.5.3 and earlier); copy it over `.mtix/data/mtix.db` while no mtix process runs. A 0.5.4 store is protected from such a file by the auto-import guard (MTIX-95.31.2): the file carries no annotations or activity, so the automatic import is refused and nothing changes (see "Automatic import of `.mtix/tasks.json`" below). 0.5.4 reads files written by older clients.
 
 ### Import
 
@@ -1259,12 +1260,13 @@ mtix import project-data.json
 mtix import project-data.json --mode replace
 ```
 
-**Replace mode** deletes every node, dependency, agent and session, then writes the file's content with every field, annotations and activity included. An export followed by a replace import leaves the store as it was. The automatic import of a changed `.mtix/tasks.json` (after a `git pull` or checkout) is a replace import. A file written before 0.5.4 (`schema_version` 1.0.0) carries no annotations or activity, so a replace import of it leaves every node without them.
+**Replace mode** deletes every node, dependency, agent and session, then writes the file's content with every field, annotations and activity included. An export followed by a replace import leaves the store as it was. The automatic import of a changed `.mtix/tasks.json` (after a `git pull` or checkout) is a replace import, but it is refused when it would delete local data (see "Automatic import of `.mtix/tasks.json`" below); `mtix import --mode replace` is not guarded. A file written before 0.5.4 (`schema_version` 1.0.0) carries no annotations or activity, so a replace import of it leaves every node without them.
 
 **Merge mode**:
 - A node the store does not have is created as exported.
 - For a node the store has, annotations merge as a union by annotation id: no local annotation is dropped, so a file without annotations keeps the local ones. Annotations are keyed by id alone: for an id both sides hold, the local copy wins unless the incoming copy is resolved and the local one is not, so a resolution never regresses. The activity stream merges as a union of distinct entries: an entry is identified by its id, type, author, text and time together, so two different entries that share an id are both kept, and an entry both sides hold is kept once.
 - When the node's content hash differs, the file's values replace its other fields; when it is the same, they keep their local values. A file written before 0.5.4 never changes the fields it does not carry (annotations, activity, `previous_status`, the invalidation fields and the others listed in docs/EXPORT-FORMAT.md).
+- A node the store holds as a different task, one with another uid (for example when two clones each created `PROJ-3`), is never overwritten. The local task and its subtree are renumbered to the next number free in both the store and the file under the same parent (the number after the highest either holds, so no earlier number is reused), keeping their uids, annotations, activity and dependencies, and the file's task takes the id: the published board keeps its numbers, and later creates continue after the new number. The import prints the renumbering (uid, old id, new id; `--remap-file <path>` writes it as JSON) and applies it only with `--confirm`; without it, nothing is written. A node without a uid on either side (a file written before uids existed) is merged into the local one as before.
 - A merge never removes an annotation or activity entry. To make the store match a file exactly, use replace mode.
 
 Import validates, before it writes anything (a failed check writes nothing):
@@ -1278,6 +1280,71 @@ A refused import leaves `.mtix/tasks.json` and its stored hash as they were. The
 After an import:
 - FTS5 index is rebuilt
 - Sequence counters are reconstructed
+
+### Automatic import of `.mtix/tasks.json`
+
+`.mtix/tasks.json` is the git-tracked board. When a `git pull`, checkout or branch switch changes it, the next mtix command imports it before running. The import is a replace import: the store then matches the file. It checks the file against the store first (below), and the replace re-checks, inside its own transaction, that the store is still the one it compared: a write that lands in between, from another process or the MCP server, is kept, nothing is imported, and the next command checks the file again. Writing commands export the store back to the file afterwards, but never over a board that changed on disk and was not imported (see "Writes never overwrite a pulled board" below).
+
+These commands never import automatically, matched by their full command path: `mtix init`, `mtix export`, `mtix import`, `mtix migrate`, `mtix recover`, `mtix help`, `mtix version`, `mtix sync` without a subcommand, `mtix plugin install`, and every command routed to a running `mtix serve` (it runs in the server). Every other command imports a changed board first, the `mtix sync` subcommands included (`mtix sync init`, `mtix sync migrate`, `mtix sync push` and the rest). `mtix mcp`, `mtix serve` and the daemon import when they start, and after that whenever one of their exports finds the board changed on disk (below). A command in the list above that writes still exports afterwards, and that export imports a changed board first: `mtix import` of another file, for example, is followed by the automatic import of a changed `.mtix/tasks.json`, with its notice or refusal.
+
+**Notice.** Every automatic import that applies a changed file prints one line on stderr:
+
+```
+mtix: imported the changed .mtix/tasks.json: nodes 1 added, 2 updated, 0 removed; dependencies 1 added, 0 removed (local database backed up to .mtix/data/backups/pre-sync-20260924-101500.db)
+```
+
+It also refreshes the conflict baseline, so a second pull before any write is imported too, not reported as a conflict.
+
+**Backup.** mtix first checks the whole file: its format and schema version, its node count, checksum and time values, whether the local store can be read, and whether anything would be lost (below). Only a file that passes every check is backed up and imported. The backup is a verified copy of the local database (`VACUUM INTO`, then `PRAGMA quick_check`) at `.mtix/data/backups/pre-sync-<UTC time>.db`, with a `-2`, `-3`, ... suffix for further imports in the same second. Every import that applies takes a new backup of the store as it is then, even of a file imported before (a board checked out again after local writes). The one exception is a retry: when an import fails while writing, its retries reuse that backup as long as the store has not changed since. mtix keeps the newest 5 and deletes older `pre-sync-*` files only; the rolling `mtix-*.db` backups and any other file in the directory are left alone, so failing or refused imports never rotate good backups away. If the backup cannot be written, the import is skipped with a warning. To return to the state before an import, stop every mtix process (the MCP server included) and copy the backup over `.mtix/data/mtix.db`. mtix 0.5.3 and earlier kept one overwritten copy, `.mtix/data/pre-sync-backup.db`; 0.5.4 no longer writes it and leaves an existing one in place. `.mtix/data/` is local state: keep it out of git.
+
+**What counts as a loss.** The automatic import compares the node and dependency data of the store with the file, node by node. Agents and sessions are runtime state and are always replaced. These are always a loss when the file lacks them: a task, a comment (annotation), the resolution of a comment, an activity entry, and a dependency. A field value the file leaves empty (an assignee, a description, a closed time, a wake time, a deletion) is a loss unless the file's copy of the task is current: it holds every activity entry the local copy holds, and its `updated_at` is not older than the local one. Activity only grows, and the writes that record no activity (`mtix update`, `mtix delete`) still move `updated_at`, so a current copy has seen your latest change, and a field it cleared was cleared on purpose: a teammate's `mtix unclaim`, `mtix reopen`, undeferral, `mtix undelete` or later `mtix update` applies. A copy that lacks one of your entries or is older is stale, and a file written by a client older than 0.5.4 carries no activity at all, so the fields such files leave empty are losses. A task whose id the file gives to a different task is a loss of the whole task: both copies carry a uid and the uids differ, as when you and a teammate each created `PROJ-3`, or you created a task while a refusal was pending and it took an id the pulled board already uses. It is listed as `PROJ-3: a different task under this id (local "<your title>", file "<their title>")`. Clocks that disagree between machines can make a current copy look older; that refuses, the safe side. Three things this comparison does not treat as a loss. A stale copy can still change a non-empty value back (an older title, say), as checking out an older board does on purpose; the backup keeps the state before. A teammate's copy with a later `updated_at` counts as current even when it missed your `mtix update` or `mtix delete`, which record no activity (after you both edited the same task, or when the teammate's clock runs ahead), so a field that copy leaves empty is applied as cleared; the backup keeps the state before. And a dependency a teammate removed on purpose still counts as a loss, so their `mtix dep remove` is refused until you choose.
+
+**Refusal.** When the file would lose anything, mtix refuses the automatic import. Nothing is imported, no backup is taken, and the stored hash is not updated, so the refusal repeats, printed once, on every command until you choose. The refusal lists what would be lost, task by task, for example:
+
+```
+mtix: auto-import of .mtix/tasks.json refused: a replace import of the changed file would delete local data the file lacks:
+  PROJ-1: 2 annotations (01J9..., 01J9...), 1 activity entry
+  PROJ-2: 1 activity entry, fields agent_state, assignee
+Nothing was imported. Until you choose, mtix refuses again on every command, and writing commands save to the local store but leave .mtix/tasks.json as it is.
+Choose one, run from the project root (/path/to/project):
+  mtix import .mtix/tasks.json --mode merge    keep the data listed above and add the file's; ...
+  mtix sync --fix                              keep the local store and rewrite .mtix/tasks.json from it; every change in the file is dropped
+  mtix import .mtix/tasks.json --mode replace  make the file win and delete the local data listed above (take a copy first: mtix backup <file>)
+```
+
+Run the command you choose from the project root. `mtix import` and `mtix sync` do not auto-import, so they run despite the refusal, and each of the three resolves it: `.mtix/tasks.json` is rewritten from the store afterwards.
+
+| Command | Keeps | Loses |
+|---------|-------|-------|
+| `mtix import .mtix/tasks.json --mode merge` | Every local task, comment, activity entry and dependency, plus the file's new ones. A task listed as a different task under its id is renumbered to the next number free in both the store and the file, keeping its uid, and the file's task keeps the id; the import lists the renumbering and applies it only when you rerun it with `--confirm` | Some of the teammate's field changes: for a task whose content (title, description, prompt, acceptance) is unchanged, the local field values win, so a teammate's status, assignee or wake-time change to it is not applied, and the board you then commit reverts it upstream. For a task whose content changed, the file's values win (see "Merge mode") |
+| `mtix sync --fix` | The local store exactly | Every change in the file: `.mtix/tasks.json` is rewritten from the store |
+| `mtix import .mtix/tasks.json --mode replace` | The file exactly | Everything the refusal listed. Take a copy first with `mtix backup <file>` |
+
+To choose: when the file came from a client older than 0.5.4, use `mtix sync --fix` or merge, and ask the teammate to upgrade. When a teammate's board is stale, find out which changes are newer (for example with `git log -p .mtix/tasks.json`); merge keeps all your data but can undo the teammate's field changes, and replace keeps theirs but deletes what the refusal listed. If you cannot tell, ask before choosing.
+
+**Writes never overwrite a pulled board.** A write exports the store to `.mtix/tasks.json` only when the file on disk is the one mtix last wrote or imported. When it changed on disk and was not imported (a pull while `mtix mcp`, `mtix serve` or the daemon runs, a pull with automatic import off, or a board mtix refused), the export first runs the automatic import. If that imports the board, the export goes ahead. Otherwise the board is left as it is, the write stays in the local store, the refusal is recorded as pending, and one line says so, with the way out for that kind of refusal:
+
+| Kind (`mtix sync --json`) | Cause | Way out |
+|------|-------|---------|
+| `lossy` | The file would delete local data | The three commands above |
+| `conflict` | Both the file and the local store changed since the last sync | Combine them with `mtix import .mtix/tasks.json --mode merge`, keep the local store with `mtix sync --fix`, or keep the file with `--mode replace`. When the replace would also delete local data, the conflict is printed as a refusal that lists it, and the line names what the replace deletes |
+| `newer_schema` | A newer mtix wrote the file | Upgrade mtix, then run any command. Do not rewrite it from the local store, which would downgrade it to the older format |
+| `invalid_file` | The file fails its checks (it is not an mtix export, does not parse, or its node count, checksum or times are wrong, for example after a merge by hand) | Repair and check the file, then `mtix import .mtix/tasks.json --recompute-checksum`; to keep the local board, `mtix sync --fix`, which works even when the file does not parse (`mtix sync` without `--fix` then reports the parse error) |
+| `unreadable_store` | The local store cannot be exported | `mtix recover`, then import the file |
+| `backup_failed` | The backup before the import could not be written | Free disk space; the next command retries |
+| `not_imported` | The file changed on disk and was not imported, for example with automatic import off | `mtix import .mtix/tasks.json --mode merge`, or keep the local board with `mtix sync --fix` |
+
+**Turning it off.** `sync.auto_sync: false` (`mtix config set sync.auto_sync false`) turns automatic import off. `mtix config set` accepts only true or false (in any form Go's `strconv.ParseBool` reads, such as `true`, `1`, `false`, `0`) and rejects anything else. A value written by hand that is neither true nor false leaves automatic import on, the default, with a one-line warning. `.mtix/config.yaml` is tracked in git, so the switch applies to every clone of the project. A store that holds no tasks, such as a fresh clone's, is always imported whatever the switch says, since nothing in it can be lost. With the switch off, writes keep exporting the store as long as `.mtix/tasks.json` is the file mtix last wrote; after a pull, the file is not overwritten (kind `not_imported`) until you import it with `mtix import .mtix/tasks.json --mode merge` or keep your board with `mtix sync --fix`.
+
+**State.** `mtix sync` shows the `sync.auto_sync` value as configured, whether automatic import is on, and the last automatic import mtix refused or skipped for you to decide, with its time, its reason and whether it is pending, resolved or no longer pending:
+
+```
+In sync: 12 nodes in both SQLite and tasks.json
+Auto-import: enabled (sync.auto_sync: true)
+Last auto-import refusal: 2026-09-24T10:15:00Z (pending): a replace import would delete local data the file lacks: PROJ-1: 2 annotations (...)
+```
+
+`mtix sync --json` reports the same under `auto_import`: `enabled`, `setting`, `setting_error`, and `last_refusal` with `refused_at`, `file_hash`, `kind`, `reason`, `loss` (what a replace of the file would delete, when known), `resolved_at` and `pending`. The record is kept in `.mtix/data/auto-import-refusal.json`, next to the other local sync state.
 
 ---
 

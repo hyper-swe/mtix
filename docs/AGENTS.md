@@ -130,6 +130,9 @@ Call `mtix done <id>` or `mtix_done`. Progress automatically rolls up to parent 
 ### 9. End Session
 Call `mtix session end` or `mtix_session_end` when all work is complete.
 
+### Before Committing `.mtix/tasks.json`
+Run `mtix sync` before you commit or push `.mtix/tasks.json`. MCP tool results do not show the auto-import notices or refusals, so a write through MCP can succeed while the board on disk is a pulled one that mtix has not imported. Commit or push the board only when `Last auto-import refusal` does not read `pending`; otherwise follow "Auto-import of .mtix/tasks.json Refused" below first.
+
 ## Blocked/Deferred Protocol
 
 **Never abandon a task silently.**
@@ -192,6 +195,13 @@ If a node is blocked by a dependency that is itself blocked:
 2. Find the root blocker
 3. Document the loop via `mtix_comment` on all affected nodes
 4. Escalate if the root blocker cannot be resolved
+
+### Auto-import of .mtix/tasks.json Refused
+If an mtix command prints `mtix: auto-import of .mtix/tasks.json refused`, a pulled `.mtix/tasks.json` lacks data this store holds, and nothing was imported; until it is resolved, writes stay in the local store and `.mtix/tasks.json` is not rewritten:
+1. Do NOT run `mtix import .mtix/tasks.json --mode replace` to make the message go away: it deletes the comments, activity entries, tasks, dependencies and field values the refusal lists.
+2. If the list names comments (annotations), activity entries or tasks, `mtix import .mtix/tasks.json --mode merge` from the project root keeps all of them, but for a task whose content is unchanged it keeps your field values over the teammate's (a status or assignee change of theirs is undone). A task listed as `a different task under this id` is renumbered by the merge to the next free number (it keeps its uid; the teammate's task keeps the id): read the renumbering the merge prints, then rerun it with `--confirm`, which applies it. If you cannot tell whose changes are newer, escalate to the human operator with the list.
+3. If a write prints `.mtix/tasks.json was not rewritten`, follow the way out it names. If it says a newer mtix wrote the file, upgrade mtix; never rewrite that board with `mtix sync --fix`.
+4. Confirm with `mtix sync`: `Last auto-import refusal` must no longer read `pending`.
 
 ### Stale Agent Recovery
 1. Run `mtix_stale` to identify unresponsive agents

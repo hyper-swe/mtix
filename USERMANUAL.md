@@ -1775,10 +1775,11 @@ nodes that differ. It reads and writes only the local database and
 never contacts the hub.
 
 ```bash
-mtix sync repair --status           # dry run: list the differences, write nothing
-mtix sync repair --status --json    # the same list as JSON
-mtix sync repair --status --apply   # back up, then repair every listed node
-mtix sync push                      # send the repair events
+mtix sync repair --status                  # dry run: list the differences, write nothing
+mtix sync repair --status --json           # the same list as JSON
+mtix sync repair --status --apply          # back up, then repair every node not flagged
+mtix sync repair --status --apply --force  # also repair flagged nodes, after review
+mtix sync push                             # send the repair events
 ```
 
 **What is compared.** For each node the winner is its newest
@@ -1788,43 +1789,69 @@ event never counts. The derived state is what that event writes when a
 pull applies it. The command compares status, assignee, agent_state,
 whether `closed_at` is set, and, for a node without children, progress
 (a done node without children has progress 1.0), each only where the
-winning event writes it. Each listed node shows the winning event and,
-per field, the stored and the derived value.
+winning event writes it. For an event this machine made, `closed_at`
+follows this machine's own history: its last `done` or `cancel` sets
+it and a reopen clears it.
+
+**Replay, derived fix or flagged.** Each listed node shows its winning
+event, when it was made and on which machine, and one of three
+reasons:
+
+- *replay*: the stored state is what an older event of the node
+  writes, which is what a replayed pull left, and nothing recorded
+  after the winning event explains it. The older event is shown as the
+  replayed event. `--apply` repairs it.
+- *derived fields*: the status matches the winning event, and only
+  `closed_at` or the progress of a node without children is out of
+  date. `--apply` repairs it.
+- *FLAGGED, not a replay; review*: any other difference. The stored
+  state is what no older event writes, or the node's activity records
+  a status change after the winning event that explains it, or the
+  node is cancelled under a cancelled ancestor and may have been
+  cancelled with it. Such a state can be newer than the event log, for
+  example after importing a teammate's `.mtix/tasks.json`, and
+  repairing it would revert the teammate's change on every machine.
+  `--apply` skips it; `--apply --force` repairs it. Check the node
+  with `mtix show <id>` first.
+
+A difference in clocks between machines can make a genuine replay look
+newer than its winning event, so it is flagged; review it, then use
+`--force`.
 
 **What is left alone:**
 
 - a node without claim, unclaim, defer or status-change events;
-- a block added by a new dependency, and a descendant cancelled by
-  `mtix cancel --cascade`: neither is synced as an event;
+- a blocked node that still has an unresolved blocker, since a block
+  added by a new dependency is not synced as an event;
+- a node cancelled by `mtix cancel --cascade` on an ancestor, which has
+  no cancel event of its own;
 - an assignee set after the winning event with `mtix update
   --assignee`;
 - the wake time of this machine's own deferral (`mtix defer --until`),
   which the event does not carry;
-- the exact `closed_at` time: the machine that made a change stamps its
-  own clock, and an invalidation or a restore keeps its `closed_at`, so
-  only whether it is set is compared, and only where the local command
-  sets or clears it.
+- `closed_at` after this machine invalidated or restored the node,
+  which leaves `closed_at` as it was;
+- the exact `closed_at` time: only whether it is set is compared.
 
-Review the list before `--apply`. A node whose state came from
-importing `.mtix/tasks.json` (git-based sharing) rather than from
-events is listed too, and applying would return it to the state its
-events give.
+**What `--apply` does.** When there is something to repair, it first
+writes a verified copy of the database to
+`.mtix/data/backups/pre-repair-status-<UTC time>.db` (for example
+`pre-repair-status-20260925T101500Z.db`, with a `-2`, `-3` suffix when
+that name is taken) and stops without changing anything if it cannot,
+for example on a full disk. Then, for each node in its own
+transaction, it re-checks the node, writes the derived state, adds an
+activity entry with the text `sync repair` that names the winning
+event, and recomputes the parent's progress. When the status changes
+it also emits one status-change event with the reason `sync repair`
+and unblocks dependents; a repair that leaves the status alone (only
+`closed_at`, progress, the assignee or agent_state) emits nothing.
+`.mtix/tasks.json` is re-exported when a node was repaired. A second
+run lists nothing.
 
-**What `--apply` does.** It first writes a verified copy of the
-database to `.mtix/data/backups/pre-repair-status-<UTC time>.db` (for
-example `pre-repair-status-20260925T101500Z.db`) and stops without
-changing anything if it cannot, for example on a full disk. Nothing is
-backed up when there is nothing to repair. Then, for each node in its
-own transaction, it re-checks the node, writes the derived state, adds
-a `status_change` activity entry with the text `sync repair` that names
-the winning event, emits one status-change event with the reason
-`sync repair`, recomputes the parent's progress and unblocks
-dependents. `.mtix/tasks.json` is re-exported afterwards. A second run
-lists nothing.
-
-Other machines apply the repair events at their next pull. There a
-repaired `done` or `cancelled` node takes the time of the repair as its
-`closed_at`, because the repair is a new status change.
+The repair event carries the time of the winning event, so a machine
+that applies it at its next pull stamps the same `closed_at` it already
+had. Like any status change, it fires `status.changed` hooks on this
+machine and on every machine that pulls it.
 
 **Undoing a repair.** Before `mtix sync push`, stop every mtix process
 and copy the backup over `.mtix/data/mtix.db`. After the push a restore
@@ -1841,7 +1868,7 @@ change the node's status with the normal commands instead.
 | `ErrSyncQueueFull` from `mtix create` / `update` | Local pending queue at the cap | `mtix sync push --force`, or raise `sync.max_queue_size` |
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
 | A teammate's change is missing after `mtix sync pull` | They have not pushed yet, or the late-event sweep failed (the pull reports the error) | Ask them to run `mtix sync push`, then pull again; `mtix sync status` shows `last sweep` |
-| A node shows an older state than its history after a pull on a client older than 0.5.4 (for example `in_progress` after `mtix done`) | That pull replayed an older event of this machine | Upgrade, run `mtix sync repair --status`, review the list, then `mtix sync repair --status --apply` and `mtix sync push` (see above) |
+| A node shows an older state than its history after a pull on a client older than 0.5.4 (for example `in_progress` after `mtix done`) | That pull replayed an older event of this machine | Upgrade, run `mtix sync repair --status`, review the list, then `mtix sync repair --status --apply` and `mtix sync push`; a flagged node needs review and `--force` (see above) |
 
 ### MCP integration
 

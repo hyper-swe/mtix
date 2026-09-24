@@ -39,7 +39,8 @@ mtix plugin install     # Install IDE skill files
 ## Sync Recovery
 
 ```bash
-mtix sync repair --status          # List nodes an older pull left reverted (dry run)
-mtix sync repair --status --apply  # Back up, then repair them (a human's go-ahead first)
-mtix sync push                     # Send the repair events
+mtix sync repair --status                  # List nodes an older pull left reverted (dry run)
+mtix sync repair --status --apply          # Back up, then repair all but flagged nodes (a human's go-ahead first)
+mtix sync repair --status --apply --force  # Also repair flagged nodes, after a human reviews each one
+mtix sync push                             # Send the repair events
 ```

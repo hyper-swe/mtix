@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,17 +27,25 @@ import (
 // not heal a node that was already reverted. Status repair re-derives each
 // node's workflow state from its local event log with the ingest winner rule
 // (sync_workflow_winner.go) and reports, or repairs, every difference. The
-// damaged rows are seeded directly with the statement the pre-MTIX-95.2 pull
-// ran, because the current pull no longer produces them.
+// damaged rows are seeded with the statements the pre-MTIX-95.2 pull ran,
+// stamped with a pull time after the winner, because the current pull no
+// longer produces them.
 
-// repairTime is the store clock every repair test injects, so the repair's
-// own timestamps are known.
+// repairTime is the store clock the repair tests inject, so the repair's own
+// timestamps are known. It is in the past, so every activity entry it stamps
+// is older than the events the tests emit.
 func repairTime() time.Time {
 	return time.Date(2026, 9, 20, 8, 30, 0, 0, time.UTC)
 }
 
 // repairText returns a pointer to s, for StatusRepairColumn values.
 func repairText(s string) *string { return &s }
+
+// replayStamp is the time a pre-MTIX-95.2 pull stamped: the pull ran after the
+// winner was emitted, so it is later than the winner's wall clock.
+func replayStamp() string {
+	return time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+}
 
 // markEventsPushed marks every pending event pushed, as a push does.
 func markEventsPushed(t *testing.T, raw *sql.DB) {
@@ -54,17 +63,26 @@ func replayClaimAsBefore952(t *testing.T, raw *sql.DB, id, agent string) {
 	// The pre-MTIX-95.2 applyClaim UPDATE, verbatim.
 	_, err := raw.Exec(`UPDATE nodes SET status = ?, assignee = ?, agent_state = ?, updated_at = ?
 		 WHERE id = ? AND deleted_at IS NULL`,
-		string(model.StatusInProgress), agent, string(model.AgentStateWorking), "2026-09-01T00:00:00Z", id)
+		string(model.StatusInProgress), agent, string(model.AgentStateWorking), replayStamp(), id)
+	require.NoError(t, err)
+}
+
+// replayUnclaimAsBefore952 writes the v0.5.0-beta applyUnclaim statement.
+func replayUnclaimAsBefore952(t *testing.T, raw *sql.DB, id string) {
+	t.Helper()
+	// The pre-MTIX-95.2 applyUnclaim UPDATE, verbatim.
+	_, err := raw.Exec(`UPDATE nodes SET status = ?, assignee = NULL, agent_state = NULL, updated_at = ?
+		 WHERE id = ? AND deleted_at IS NULL`, string(model.StatusOpen), replayStamp(), id)
 	require.NoError(t, err)
 }
 
 // replayTransitionAsBefore952 writes what a pull before MTIX-95.2 wrote when
 // it replayed this replica's own transition to status to: the v0.5.0-beta
-// applyTransitionStatus statement, which stamped closed_at for a terminal
-// status and cleared it otherwise.
-func replayTransitionAsBefore952(t *testing.T, raw *sql.DB, id string, to model.Status) {
+// applyTransitionStatus statement, which stamped closed_at with the pull time
+// for a terminal status and cleared it otherwise. It returns that closed_at.
+func replayTransitionAsBefore952(t *testing.T, raw *sql.DB, id string, to model.Status) sql.NullString {
 	t.Helper()
-	now := "2026-09-01T00:00:00Z"
+	now := replayStamp()
 	closedAt := sql.NullString{}
 	if to.IsTerminal() {
 		closedAt = sql.NullString{String: now, Valid: true}
@@ -73,6 +91,7 @@ func replayTransitionAsBefore952(t *testing.T, raw *sql.DB, id string, to model.
 	_, err := raw.Exec(`UPDATE nodes SET status = ?, closed_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
 		string(to), closedAt, now, id)
 	require.NoError(t, err)
+	return closedAt
 }
 
 // s7ReplayRevert builds ADR-006 scenario S7 as a pre-MTIX-95.2 pull left it:
@@ -97,13 +116,13 @@ func s7Store(t *testing.T) (*sqlite.Store, *sql.DB) {
 	return s, raw
 }
 
-// eventIDOf returns the id of the only event of op for node id.
+// eventIDOf returns the id of the newest event of op for node id.
 func eventIDOf(t *testing.T, raw *sql.DB, id string, op model.OpType) string {
 	t.Helper()
 	var eventID string
-	// The single event of one op for one node.
-	require.NoError(t, raw.QueryRow(
-		`SELECT event_id FROM sync_events WHERE node_id = ? AND op_type = ?`, id, string(op)).Scan(&eventID))
+	// The node's newest event of one op.
+	require.NoError(t, raw.QueryRow(`SELECT event_id FROM sync_events WHERE node_id = ? AND op_type = ?
+		ORDER BY lamport_clock DESC LIMIT 1`, id, string(op)).Scan(&eventID))
 	return eventID
 }
 
@@ -113,15 +132,27 @@ func eventCount(t *testing.T, raw *sql.DB) int {
 	return countRows(t, raw, `SELECT COUNT(*) FROM sync_events`)
 }
 
-// wallClockClosedAt is closed_at as the table stamps it from event id's
+// eventWallClock returns an event's wall_clock_ts, in Unix ms.
+func eventWallClock(t *testing.T, raw *sql.DB, eventID string) int64 {
+	t.Helper()
+	var ms int64
+	// The wall clock the event was stamped with.
+	require.NoError(t, raw.QueryRow(
+		`SELECT wall_clock_ts FROM sync_events WHERE event_id = ?`, eventID).Scan(&ms))
+	return ms
+}
+
+// wallClockClosedAt is closed_at as the table stamps it from an event's
 // wall_clock_ts: RFC 3339 UTC in whole seconds.
 func wallClockClosedAt(t *testing.T, raw *sql.DB, eventID string) string {
 	t.Helper()
-	var ms int64
-	// The wall clock the event was stamped with, in Unix ms.
-	require.NoError(t, raw.QueryRow(
-		`SELECT wall_clock_ts FROM sync_events WHERE event_id = ?`, eventID).Scan(&ms))
-	return time.UnixMilli(ms).UTC().Format(time.RFC3339)
+	return time.UnixMilli(eventWallClock(t, raw, eventID)).UTC().Format(time.RFC3339)
+}
+
+// wallClockText is a winner's wall clock as the report prints it.
+func wallClockText(t *testing.T, raw *sql.DB, eventID string) string {
+	t.Helper()
+	return time.UnixMilli(eventWallClock(t, raw, eventID)).UTC().Format("2006-01-02T15:04:05.000Z07:00")
 }
 
 // repairEvents returns the payloads of the transition_status events for id
@@ -132,7 +163,7 @@ func repairEvents(t *testing.T, raw *sql.DB, id string) []model.TransitionStatus
 	rows, err := raw.Query(`SELECT payload FROM sync_events
 		WHERE node_id = ? AND op_type = ? ORDER BY lamport_clock`, id, string(model.OpTransitionStatus))
 	require.NoError(t, err)
-	defer func() { _ = rows.Close() }()
+	defer func() { require.NoError(t, rows.Close()) }()
 	var out []model.TransitionStatusPayload
 	for rows.Next() {
 		var payload string
@@ -147,31 +178,45 @@ func repairEvents(t *testing.T, raw *sql.DB, id string) []model.TransitionStatus
 	return out
 }
 
-// seedColumns overwrites columns of node id, as a damaged or imported row.
+// seedColumns overwrites columns of node id, as an imported row.
 func seedColumns(t *testing.T, raw *sql.DB, id, status string, closedAt sql.NullString, progress float64) {
 	t.Helper()
-	// A damaged row, written directly.
+	// A row written without an event.
 	_, err := raw.Exec(`UPDATE nodes SET status = ?, closed_at = ?, progress = ? WHERE id = ?`,
 		status, closedAt, progress, id)
 	require.NoError(t, err)
 }
 
+// lastActivity returns node id's newest activity entry.
+func lastActivity(t *testing.T, raw *sql.DB, id string) model.ActivityEntry {
+	t.Helper()
+	var activity []model.ActivityEntry
+	require.NoError(t, json.Unmarshal([]byte(nodeRow(t, raw, id)["activity"]), &activity))
+	require.NotEmpty(t, activity)
+	return activity[len(activity)-1]
+}
+
 // TestStatusRepairDiffs_S7ReplayRevert_ListsOneStatusDifference is the
 // dry-run half of the S7 regression: the only difference is the reverted
-// status, and listing it writes nothing.
+// status, the stored state is the row of the older claim (a replay), and
+// listing it writes nothing.
 func TestStatusRepairDiffs_S7ReplayRevert_ListsOneStatusDifference(t *testing.T) {
 	s, raw := s7Store(t)
 	before, events := nodeRow(t, raw, "MTIX-1"), eventCount(t, raw)
 	require.NotEqual(t, nullColumn, before["closed_at"], "the S7 revert leaves closed_at set")
+	winner := eventIDOf(t, raw, "MTIX-1", model.OpTransitionStatus)
 
 	diffs, err := s.StatusRepairDiffs(context.Background())
 
 	require.NoError(t, err)
 	require.Equal(t, []sqlite.StatusRepairDiff{{
-		NodeID:        "MTIX-1",
-		WinnerEventID: eventIDOf(t, raw, "MTIX-1", model.OpTransitionStatus),
-		WinnerOp:      model.OpTransitionStatus,
-		WinnerLocal:   true,
+		NodeID:          "MTIX-1",
+		WinnerEventID:   winner,
+		WinnerOp:        model.OpTransitionStatus,
+		WinnerLocal:     true,
+		WinnerWallClock: wallClockText(t, raw, winner),
+		MatchedEventID:  eventIDOf(t, raw, "MTIX-1", model.OpClaim),
+		Reason:          "replay: the stored state is the row of an older event",
 		Columns: []sqlite.StatusRepairColumn{
 			{Column: "status", Current: repairText("in_progress"), Expected: repairText("done")},
 		},
@@ -206,16 +251,18 @@ func repairFixture(t *testing.T) (*sqlite.Store, *sql.DB) {
 // TestRepairNodeStatus_S7ReplayRevert_RestoresDoneAndClosedAt is the apply
 // half: the node is done again with closed_at set, one transition_status
 // event from the stored to the derived status carries the reason "sync
-// repair", an activity entry names the winner, the parent's progress is
-// recomputed and the dependent is unblocked, all in one transaction.
+// repair" and the winner's wall clock, an activity entry names the winner,
+// the parent's progress is recomputed and the dependent is unblocked, all in
+// one transaction.
 func TestRepairNodeStatus_S7ReplayRevert_RestoresDoneAndClosedAt(t *testing.T) {
 	s, raw := repairFixture(t)
 	winner := eventIDOf(t, raw, "MTIX-1.1", model.OpTransitionStatus)
 	events := eventCount(t, raw)
 
-	repaired, err := s.RepairNodeStatus(context.Background(), "MTIX-1.1", "repairer")
+	repaired, applied, err := s.RepairNodeStatus(context.Background(), "MTIX-1.1", "repairer", false)
 
 	require.NoError(t, err)
+	require.True(t, applied)
 	require.NotNil(t, repaired)
 	require.Equal(t, "MTIX-1.1", repaired.NodeID)
 	require.Equal(t, winner, repaired.WinnerEventID)
@@ -228,13 +275,14 @@ func TestRepairNodeStatus_S7ReplayRevert_RestoresDoneAndClosedAt(t *testing.T) {
 
 	require.Equal(t, []model.TransitionStatusPayload{{From: model.StatusInProgress, To: model.StatusDone, Reason: "sync repair"}},
 		repairEvents(t, raw, "MTIX-1.1"), "one repair event, from the stored to the derived status")
+	repairEvent := eventIDOf(t, raw, "MTIX-1.1", model.OpTransitionStatus)
+	require.Equal(t, eventWallClock(t, raw, winner), eventWallClock(t, raw, repairEvent),
+		"the repair event carries the winner's wall clock, so every replica stamps the same closed_at")
 	require.Equal(t, 1, countRows(t, raw, `SELECT COUNT(*) FROM sync_events
 		WHERE node_id = 'MTIX-1.1' AND sync_status = 'pending' AND author_id = 'repairer'`))
 	require.Equal(t, events+2, eventCount(t, raw), "the repair event and the dependent's unblock")
 
-	var activity []model.ActivityEntry
-	require.NoError(t, json.Unmarshal([]byte(row["activity"]), &activity))
-	last := activity[len(activity)-1]
+	last := lastActivity(t, raw, "MTIX-1.1")
 	require.Equal(t, model.ActivityTypeStatusChange, last.Type)
 	require.Equal(t, "sync repair", last.Text)
 	require.Equal(t, "repairer", last.Author)
@@ -255,7 +303,7 @@ func TestRepairNodeStatus_S7ReplayRevert_RestoresDoneAndClosedAt(t *testing.T) {
 func TestStatusRepairDiffs_AfterRepair_ReportsNothing(t *testing.T) {
 	ctx := context.Background()
 	s, raw := repairFixture(t)
-	_, err := s.RepairNodeStatus(ctx, "MTIX-1.1", "repairer")
+	_, _, err := s.RepairNodeStatus(ctx, "MTIX-1.1", "repairer", false)
 	require.NoError(t, err)
 	after, events := nodeRow(t, raw, "MTIX-1.1"), eventCount(t, raw)
 
@@ -263,16 +311,17 @@ func TestStatusRepairDiffs_AfterRepair_ReportsNothing(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, diffs)
 
-	again, err := s.RepairNodeStatus(ctx, "MTIX-1.1", "repairer")
+	again, applied, err := s.RepairNodeStatus(ctx, "MTIX-1.1", "repairer", true)
 	require.NoError(t, err)
 	require.Nil(t, again, "nothing left to repair")
+	require.False(t, applied)
 	require.Equal(t, after, nodeRow(t, raw, "MTIX-1.1"))
 	require.Equal(t, events, eventCount(t, raw))
 }
 
 // TestStatusRepair_NodeWithoutWorkflowEvents_Untouched: a node whose log
 // holds no workflow event (only its creation and a title edit) is never
-// listed or changed, whatever its row says.
+// listed or changed, whatever its row says, even with force.
 func TestStatusRepair_NodeWithoutWorkflowEvents_Untouched(t *testing.T) {
 	ctx := context.Background()
 	s, raw := mutationTestStore(t)
@@ -286,36 +335,46 @@ func TestStatusRepair_NodeWithoutWorkflowEvents_Untouched(t *testing.T) {
 	diffs, err := s.StatusRepairDiffs(ctx)
 	require.NoError(t, err)
 	require.Empty(t, diffs)
-	repaired, err := s.RepairNodeStatus(ctx, "MTIX-1", "repairer")
+	repaired, applied, err := s.RepairNodeStatus(ctx, "MTIX-1", "repairer", true)
 	require.NoError(t, err)
 	require.Nil(t, repaired)
+	require.False(t, applied)
 	require.Equal(t, before, nodeRow(t, raw, "MTIX-1"))
 	require.Equal(t, events, eventCount(t, raw))
 }
 
-// TestStatusRepair_DoneLeafProgress_SetToOne: a done leaf whose progress is
-// not 1.0 (a done applied by sync before MTIX-95.10 never set it) is listed
-// and repaired to 1.0; a done node with children keeps its rollup.
-func TestStatusRepair_DoneLeafProgress_SetToOne(t *testing.T) {
+// TestStatusRepair_DoneLeafProgress_SetToOneWithoutAnEvent: a done leaf whose
+// progress is not 1.0 (a done applied by sync before MTIX-95.10 never set
+// it) is listed as a derived-field fix and repaired to 1.0. The status does
+// not change, so no event is emitted (other replicas keep their closed_at);
+// a system activity entry records the repair. A node with a live child keeps
+// its rollup; a soft-deleted child does not count.
+func TestStatusRepair_DoneLeafProgress_SetToOneWithoutAnEvent(t *testing.T) {
 	tests := []struct {
-		name      string
-		withChild bool
-		want      []sqlite.StatusRepairColumn
+		name  string
+		child string // "", "live" or "deleted"
+		want  []sqlite.StatusRepairColumn
 	}{
-		{"leaf", false, []sqlite.StatusRepairColumn{
+		{"leaf", "", []sqlite.StatusRepairColumn{
 			{Column: "progress", Current: repairText("0.25"), Expected: repairText("1")}}},
-		{"node with a child", true, nil},
+		{"node with a live child", "live", nil},
+		{"node whose only child is soft-deleted", "deleted", []sqlite.StatusRepairColumn{
+			{Column: "progress", Current: repairText("0.25"), Expected: repairText("1")}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			s, raw := mutationTestStore(t)
+			s.SetClock(repairTime)
 			mustCreateNode(t, s, "MTIX-1", "")
-			if tt.withChild {
+			if tt.child != "" {
 				mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
 			}
 			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
+			if tt.child == "deleted" {
+				require.NoError(t, s.DeleteNode(ctx, "MTIX-1.1", false, "agent-a"))
+			}
 			_, err := raw.Exec(`UPDATE nodes SET progress = 0.25 WHERE id = 'MTIX-1'`)
 			require.NoError(t, err)
 
@@ -327,9 +386,17 @@ func TestStatusRepair_DoneLeafProgress_SetToOne(t *testing.T) {
 			}
 			require.Len(t, diffs, 1)
 			require.Equal(t, tt.want, diffs[0].Columns)
-			_, err = s.RepairNodeStatus(ctx, "MTIX-1", "repairer")
+			require.False(t, diffs[0].Flagged)
+			require.Equal(t, "derived fields: the stored status matches the winning event", diffs[0].Reason)
+			events := eventCount(t, raw)
+			_, applied, err := s.RepairNodeStatus(ctx, "MTIX-1", "repairer", false)
 			require.NoError(t, err)
+			require.True(t, applied)
 			require.Equal(t, "1", nodeRow(t, raw, "MTIX-1")["progress"])
+			require.Equal(t, events, eventCount(t, raw), "the status did not change, so no event")
+			last := lastActivity(t, raw, "MTIX-1")
+			require.Equal(t, model.ActivityTypeSystem, last.Type)
+			require.Equal(t, "sync repair", last.Text)
 		})
 	}
 }
@@ -337,26 +404,34 @@ func TestStatusRepair_DoneLeafProgress_SetToOne(t *testing.T) {
 // TestRepairNodeStatus_DeferralWinner_DeferUntil covers the wake-time rule
 // from the MTIX-95.22 review. A local defer stores its wake time beside a
 // transition_status event that carries none, so when the winner is this
-// replica's own deferral, repair keeps the stored defer_until instead of
-// clearing it as the table row does. Every other winner's row clears it: a
-// deferral received through sync carries no wake time, and a claim leaves
-// deferred, so repair clears a stale one, as ingest does.
+// replica's own deferral, pending or pushed, repair keeps the stored
+// defer_until instead of clearing it as the table row does. Every other
+// winner's row clears it: a deferral received through sync carries no wake
+// time, and a claim leaves deferred, so repair clears a stale one, as ingest
+// does.
 func TestRepairNodeStatus_DeferralWinner_DeferUntil(t *testing.T) {
 	wake := time.Date(2031, 1, 2, 3, 4, 5, 0, time.UTC)
+	ownDeferral := func(pushed bool) func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
+		return func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
+			ctx := context.Background()
+			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			markEventsPushed(t, raw)
+			require.NoError(t, s.UnclaimNode(ctx, "MTIX-1", "later", "agent-a"))
+			require.NoError(t, s.DeferNode(ctx, "MTIX-1", &wake, "later", "agent-a"))
+			if pushed {
+				markEventsPushed(t, raw)
+			}
+			replayClaimAsBefore952(t, raw, "MTIX-1", "agent-a")
+		}
+	}
 	tests := []struct {
 		name   string
 		setup  func(t *testing.T, s *sqlite.Store, raw *sql.DB)
 		status string
 		want   string
 	}{
-		{"own deferral keeps the local wake time", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
-			ctx := context.Background()
-			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
-			markEventsPushed(t, raw)
-			require.NoError(t, s.UnclaimNode(ctx, "MTIX-1", "later", "agent-a"))
-			require.NoError(t, s.DeferNode(ctx, "MTIX-1", &wake, "later", "agent-a"))
-			replayClaimAsBefore952(t, raw, "MTIX-1", "agent-a")
-		}, "deferred", wake.Format(time.RFC3339)},
+		{"own pending deferral keeps the local wake time", ownDeferral(false), "deferred", wake.Format(time.RFC3339)},
+		{"own pushed deferral keeps the local wake time", ownDeferral(true), "deferred", wake.Format(time.RFC3339)},
 		{"own claim after a deferral clears a stale wake time", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
 			ctx := context.Background()
 			past := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -369,10 +444,16 @@ func TestRepairNodeStatus_DeferralWinner_DeferUntil(t *testing.T) {
 			require.NoError(t, err)
 		}, "in_progress", nullColumn},
 		{"foreign deferral clears a stale wake time", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
-			pullEvents(t, s, []*model.SyncEvent{foreignWorkflowEvent(t, "MTIX-1", model.OpTransitionStatus,
-				transition(model.StatusOpen, model.StatusDeferred), 5, "")})
-			_, err := raw.Exec(`UPDATE nodes SET status = 'open', defer_until = ? WHERE id = 'MTIX-1'`,
-				wake.Format(time.RFC3339))
+			ctx := context.Background()
+			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			require.NoError(t, s.UnclaimNode(ctx, "MTIX-1", "later", "agent-a"))
+			markEventsPushed(t, raw)
+			deferral := foreignWorkflowEvent(t, "MTIX-1", model.OpTransitionStatus,
+				transition(model.StatusOpen, model.StatusDeferred), latestLamport(t, raw, model.OpUnclaim)+5, "")
+			deferral.WallClockTS = time.Now().UTC().Add(time.Minute).UnixMilli() // made after the unclaim
+			pullEvents(t, s, []*model.SyncEvent{deferral})
+			replayUnclaimAsBefore952(t, raw, "MTIX-1")
+			_, err := raw.Exec(`UPDATE nodes SET defer_until = ? WHERE id = 'MTIX-1'`, wake.Format(time.RFC3339))
 			require.NoError(t, err)
 		}, "deferred", nullColumn},
 	}
@@ -383,10 +464,11 @@ func TestRepairNodeStatus_DeferralWinner_DeferUntil(t *testing.T) {
 			tt.setup(t, s, raw)
 			require.NotEqual(t, tt.status, nodeRow(t, raw, "MTIX-1")["status"], "the fixture is damaged")
 
-			repaired, err := s.RepairNodeStatus(ctx, "MTIX-1", "repairer")
+			repaired, applied, err := s.RepairNodeStatus(ctx, "MTIX-1", "repairer", false)
 
 			require.NoError(t, err)
 			require.NotNil(t, repaired)
+			require.True(t, applied, "a replay is repaired without force: %s", repaired.Reason)
 			row := nodeRow(t, raw, "MTIX-1")
 			require.Equal(t, tt.status, row["status"])
 			require.Equal(t, tt.want, row["defer_until"])
@@ -412,6 +494,7 @@ func TestStatusRepairDiffs_MalformedWorkflowEvents_ExcludedAsAtIngest(t *testing
 			s, raw := s7Store(t)
 			mustCreateNode(t, s, "MTIX-2", "")
 			done := eventIDOf(t, raw, "MTIX-1", model.OpTransitionStatus)
+			claim := eventIDOf(t, raw, "MTIX-1", model.OpClaim)
 			pullEvents(t, s, []*model.SyncEvent{
 				malformedEvent(t, "MTIX-1", c, 1000), malformedEvent(t, "MTIX-2", c, 1001),
 			})
@@ -423,6 +506,8 @@ func TestStatusRepairDiffs_MalformedWorkflowEvents_ExcludedAsAtIngest(t *testing
 			require.Len(t, diffs, 1, "MTIX-2 has no well-formed workflow event")
 			require.Equal(t, "MTIX-1", diffs[0].NodeID)
 			require.Equal(t, done, diffs[0].WinnerEventID, "the malformed event is never the winner")
+			require.Equal(t, claim, diffs[0].MatchedEventID,
+				"a malformed event is never the matched older event either")
 			require.Equal(t, []sqlite.StatusRepairColumn{
 				{Column: "status", Current: repairText("in_progress"), Expected: repairText("done")},
 			}, diffs[0].Columns)
@@ -431,17 +516,18 @@ func TestStatusRepairDiffs_MalformedWorkflowEvents_ExcludedAsAtIngest(t *testing
 }
 
 // TestRepairNodeStatus_ClosedAt_FromWallClockAsAtIngest: the repaired
-// closed_at is closedAtFromWallClock of the winner: its wall clock in whole
-// seconds, or, for a wall clock outside years 1..9999, the repair time, as
-// ingest falls back to the apply time. closed_at is compared set against
+// closed_at of a foreign winner is closedAtFromWallClock of its wall clock:
+// whole seconds, or, for a wall clock outside years 1..9999, the repair time,
+// as ingest falls back to the apply time. closed_at is compared set against
 // NULL, so the repaired node is stable either way.
 func TestRepairNodeStatus_ClosedAt_FromWallClockAsAtIngest(t *testing.T) {
+	later := time.UnixMilli(time.Now().UTC().Add(time.Minute).UnixMilli() + 500).UTC() // made after the local start
 	tests := []struct {
 		name string
 		wall time.Time
 		want string
 	}{
-		{"wall clock in range", foreignWallClock(), foreignClosedAt},
+		{"wall clock in range", later, later.Format(time.RFC3339)},
 		{"wall clock after year 9999", time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC),
 			repairTime().Format(time.RFC3339)},
 	}
@@ -449,16 +535,19 @@ func TestRepairNodeStatus_ClosedAt_FromWallClockAsAtIngest(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			s, raw := replicaWithNode(t)
+			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusInProgress, "start", "agent-a"))
+			markEventsPushed(t, raw)
 			done := foreignWorkflowEvent(t, "MTIX-1", model.OpTransitionStatus,
-				transition(model.StatusInProgress, model.StatusDone), 5, "")
+				transition(model.StatusInProgress, model.StatusDone), latestLamport(t, raw, model.OpTransitionStatus)+5, "")
 			done.WallClockTS = tt.wall.UnixMilli()
 			pullEvents(t, s, []*model.SyncEvent{done})
-			seedColumns(t, raw, "MTIX-1", "in_progress", sql.NullString{}, 1)
+			replayTransitionAsBefore952(t, raw, "MTIX-1", model.StatusInProgress)
 			s.SetClock(repairTime)
 
-			_, err := s.RepairNodeStatus(ctx, "MTIX-1", "repairer")
+			_, applied, err := s.RepairNodeStatus(ctx, "MTIX-1", "repairer", false)
 
 			require.NoError(t, err)
+			require.True(t, applied)
 			row := nodeRow(t, raw, "MTIX-1")
 			require.Equal(t, "done", row["status"])
 			require.Equal(t, tt.want, row["closed_at"])
@@ -469,194 +558,157 @@ func TestRepairNodeStatus_ClosedAt_FromWallClockAsAtIngest(t *testing.T) {
 	}
 }
 
-// TestStatusRepairDiffs_WinnerRuleResiduals_NotDifferences: the residuals
-// documented for MTIX-95.10 are not differences. Each case is a healthy
-// local history whose row differs from the winner's table row only where a
-// residual says it may: a later update_field on a workflow column, closed_at
-// on the originator, and local writes that emit no event.
-func TestStatusRepairDiffs_WinnerRuleResiduals_NotDifferences(t *testing.T) {
-	ctx := context.Background()
-	blocks := func(from, to string) *model.Dependency {
-		return &model.Dependency{FromID: from, ToID: to, DepType: model.DepTypeBlocks, CreatedAt: time.Now().UTC()}
-	}
-	tests := []struct {
-		name  string
-		setup func(t *testing.T, s *sqlite.Store)
-	}{
-		{"auto-blocked after its claim", func(t *testing.T, s *sqlite.Store) {
-			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
-			mustCreateNode(t, s, "MTIX-2", "")
-			require.NoError(t, s.AddDependency(ctx, blocks("MTIX-2", "MTIX-1")))
-		}},
-		{"descendant cancelled by a cascade", func(t *testing.T, s *sqlite.Store) {
-			mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
-			require.NoError(t, s.ClaimNode(ctx, "MTIX-1.1", "agent-a"))
-			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", true))
-		}},
-		{"cancelled by a cascade under a done parent", func(t *testing.T, s *sqlite.Store) {
-			mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
-			mustCreateNode(t, s, "MTIX-1.1.1", "MTIX-1.1")
-			require.NoError(t, s.ClaimNode(ctx, "MTIX-1.1", "agent-a"))
-			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1.1", model.StatusDone, "finished", "agent-a"))
-			require.NoError(t, s.ClaimNode(ctx, "MTIX-1.1.1", "agent-a"))
-			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", true))
-		}},
-		{"status and agent_state set by update_field after the claim", func(t *testing.T, s *sqlite.Store) {
-			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
-			done, stuck := model.StatusDone, model.AgentStateStuck
-			require.NoError(t, s.UpdateNode(ctx, "MTIX-1", &store.NodeUpdate{Status: &done, AgentState: &stuck}))
-		}},
-		{"assignee changed after the claim", func(t *testing.T, s *sqlite.Store) {
-			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
-			bob := "bob"
-			require.NoError(t, s.UpdateNode(ctx, "MTIX-1", &store.NodeUpdate{Assignee: &bob}))
-		}},
-		{"own invalidation of an open node", func(t *testing.T, s *sqlite.Store) {
-			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusInvalidated, "rerun", "agent-a"))
-		}},
-		{"own restore of an invalidated closed node, then a claim", func(t *testing.T, s *sqlite.Store) {
-			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
-			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
-			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusInvalidated, "rerun", "agent-a"))
-			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "restore", "agent-a"))
-			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-b"))
-		}},
-		{"local lifecycle and synced events", func(t *testing.T, s *sqlite.Store) {
-			wake := time.Date(2031, 1, 2, 3, 4, 5, 0, time.UTC)
-			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
-			require.NoError(t, s.UnclaimNode(ctx, "MTIX-1", "handoff", "agent-a"))
-			require.NoError(t, s.DeferNode(ctx, "MTIX-1", &wake, "later", "agent-a"))
-			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "now", "agent-a"))
-			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
-			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
-			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
-			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", false))
-			mustCreateNode(t, s, "MTIX-3", "")
-			pullEvents(t, s, []*model.SyncEvent{
-				foreignWorkflowEvent(t, "MTIX-3", model.OpClaim, &model.ClaimPayload{AgentID: "agent-b"}, 900, ""),
-				foreignWorkflowEvent(t, "MTIX-3", model.OpTransitionStatus,
-					transition(model.StatusInProgress, model.StatusDone), 901, ""),
-			})
-		}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s, _ := replicaWithNode(t)
-			tt.setup(t, s)
-
-			diffs, err := s.StatusRepairDiffs(ctx)
-
-			require.NoError(t, err)
-			require.Empty(t, diffs)
-		})
-	}
-}
-
-// TestRepairNodeStatus_LaterAssigneeUpdate_KeptWhenStatusRepaired: a column
-// whose newest writer is an update_field that beats the winner is left as it
-// is when repair writes the winner's row for another column.
-func TestRepairNodeStatus_LaterAssigneeUpdate_KeptWhenStatusRepaired(t *testing.T) {
-	ctx := context.Background()
-	s, raw := replicaWithNode(t)
-	require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
-	bob := "bob"
-	require.NoError(t, s.UpdateNode(ctx, "MTIX-1", &store.NodeUpdate{Assignee: &bob}))
-	// A reverted status, as an older replayed unclaim left it.
-	_, err := raw.Exec(`UPDATE nodes SET status = 'open', agent_state = NULL WHERE id = 'MTIX-1'`)
-	require.NoError(t, err)
-
-	diffs, err := s.StatusRepairDiffs(ctx)
-	require.NoError(t, err)
-	require.Len(t, diffs, 1)
-	require.Equal(t, []sqlite.StatusRepairColumn{
-		{Column: "status", Current: repairText("open"), Expected: repairText("in_progress")},
-		{Column: "agent_state", Current: nil, Expected: repairText("working")},
-	}, diffs[0].Columns)
-
-	_, err = s.RepairNodeStatus(ctx, "MTIX-1", "repairer")
-	require.NoError(t, err)
-	row := nodeRow(t, raw, "MTIX-1")
-	require.Equal(t, "in_progress", row["status"])
-	require.Equal(t, "working", row["agent_state"])
-	require.Equal(t, "bob", row["assignee"], "the later update_field owns the assignee")
-}
-
-// TestRepairNodeStatus_MissingNode_ReturnsNotFound: a node that does not
-// exist, or is soft-deleted, is not repaired.
-func TestRepairNodeStatus_MissingNode_ReturnsNotFound(t *testing.T) {
-	s, _ := mutationTestStore(t)
-	_, err := s.RepairNodeStatus(context.Background(), "MTIX-9", "repairer")
-	require.ErrorIs(t, err, model.ErrNotFound)
-}
-
 // TestRepairNodeStatus_OwnEventReplays_RestoreTheWinner covers the other
-// replays a pre-MTIX-95.2 pull performed on this replica's own events: each
-// reverted a column the winner's row writes, and repair restores exactly
-// those columns.
+// replays a pre-MTIX-95.2 pull performed on this replica's own events. Each
+// left the row of an older event, so each is a replay and is repaired
+// without force; closed_at of a local winner follows the local event chain.
+// An event is emitted only when the status changes.
 func TestRepairNodeStatus_OwnEventReplays_RestoreTheWinner(t *testing.T) {
 	ctx := context.Background()
 	tests := []struct {
-		name  string
-		setup func(t *testing.T, s *sqlite.Store, raw *sql.DB)
-		want  []sqlite.StatusRepairColumn
-		row   map[string]string
+		name      string
+		setup     func(t *testing.T, s *sqlite.Store, raw *sql.DB) sql.NullString
+		matched   model.OpType
+		want      []string // column: stored -> expected, "<replay>" is the replay's stamp, "<wall>" the winner's closed_at
+		row       map[string]string
+		wantEvent bool
 	}{
-		{"a replayed start cleared closed_at of a done node", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
+		{"a replayed start cleared closed_at of a done node", func(t *testing.T, s *sqlite.Store, raw *sql.DB) sql.NullString {
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusInProgress, "start", "agent-a"))
 			markEventsPushed(t, raw)
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
-			replayTransitionAsBefore952(t, raw, "MTIX-1", model.StatusInProgress)
-		}, []sqlite.StatusRepairColumn{
-			{Column: "status", Current: repairText("in_progress"), Expected: repairText("done")},
-			{Column: "closed_at", Current: nil, Expected: repairText("<wall>")},
-		}, map[string]string{"status": "done", "progress": "1"}},
-		{"a replayed cancel after a reopen", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
+			return replayTransitionAsBefore952(t, raw, "MTIX-1", model.StatusInProgress)
+		}, model.OpTransitionStatus, []string{"status: in_progress -> done", "closed_at: NULL -> <wall>"},
+			map[string]string{"status": "done", "progress": "1"}, true},
+		{"a replayed cancel after a reopen", func(t *testing.T, s *sqlite.Store, raw *sql.DB) sql.NullString {
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", false))
 			markEventsPushed(t, raw)
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
-			replayTransitionAsBefore952(t, raw, "MTIX-1", model.StatusCancelled)
-		}, []sqlite.StatusRepairColumn{
-			{Column: "status", Current: repairText("cancelled"), Expected: repairText("open")},
-			{Column: "closed_at", Current: repairText("2026-09-01T00:00:00Z"), Expected: nil},
-		}, map[string]string{"status": "open", "closed_at": nullColumn}},
-		{"a replayed claim by another agent", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
+			return replayTransitionAsBefore952(t, raw, "MTIX-1", model.StatusCancelled)
+		}, model.OpTransitionStatus, []string{"status: cancelled -> open", "closed_at: <replay> -> NULL"},
+			map[string]string{"status": "open", "closed_at": nullColumn}, true},
+		{"a replayed done after a reopen and a new claim", func(t *testing.T, s *sqlite.Store, raw *sql.DB) sql.NullString {
+			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
+			markEventsPushed(t, raw)
+			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
+			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			return replayTransitionAsBefore952(t, raw, "MTIX-1", model.StatusDone)
+		}, model.OpTransitionStatus, []string{"status: done -> in_progress", "closed_at: <replay> -> NULL"},
+			map[string]string{"status": "in_progress", "closed_at": nullColumn, "assignee": "agent-a"}, true},
+		{"a replayed done after a teammate's reopen and a local claim", func(t *testing.T, s *sqlite.Store, raw *sql.DB) sql.NullString {
+			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
+			markEventsPushed(t, raw)
+			reopen := foreignWorkflowEvent(t, "MTIX-1", model.OpTransitionStatus,
+				transition(model.StatusDone, model.StatusOpen), latestLamport(t, raw, model.OpTransitionStatus)+5, "")
+			reopen.WallClockTS = time.Now().UTC().Add(time.Minute).UnixMilli()
+			pullEvents(t, s, []*model.SyncEvent{reopen})
+			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			return replayTransitionAsBefore952(t, raw, "MTIX-1", model.StatusDone)
+		}, model.OpTransitionStatus, []string{"status: done -> in_progress", "closed_at: <replay> -> NULL"},
+			map[string]string{"status": "in_progress", "closed_at": nullColumn}, true},
+		{"a replayed unclaim above a late foreign done that lost", func(t *testing.T, s *sqlite.Store, raw *sql.DB) sql.NullString {
+			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			markEventsPushed(t, raw)
+			require.NoError(t, s.UnclaimNode(ctx, "MTIX-1", "handoff", "agent-a"))
+			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			// A teammate's done stamped below the local claim: it loses at ingest.
+			late := foreignWorkflowEvent(t, "MTIX-1", model.OpTransitionStatus,
+				transition(model.StatusInProgress, model.StatusDone), latestLamport(t, raw, model.OpClaim)-1, lowEventID)
+			pullEvents(t, s, []*model.SyncEvent{late})
+			require.Equal(t, "in_progress", nodeRow(t, raw, "MTIX-1")["status"], "the late done lost")
+			replayUnclaimAsBefore952(t, raw, "MTIX-1")
+			return sql.NullString{}
+		}, model.OpUnclaim, []string{"status: open -> in_progress", "assignee: NULL -> agent-a", "agent_state: NULL -> working"},
+			map[string]string{"status": "in_progress", "closed_at": nullColumn, "assignee": "agent-a"}, true},
+		{"a replayed cancel after a restore from invalidated", func(t *testing.T, s *sqlite.Store, raw *sql.DB) sql.NullString {
+			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", false))
+			markEventsPushed(t, raw)
+			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
+			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusInvalidated, "rerun", "agent-a"))
+			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "restore", "agent-a"))
+			return replayTransitionAsBefore952(t, raw, "MTIX-1", model.StatusCancelled)
+		}, model.OpTransitionStatus, []string{"status: cancelled -> open", "closed_at: <replay> -> NULL"},
+			map[string]string{"status": "open", "closed_at": nullColumn}, true},
+		{"a replayed claim by another agent", func(t *testing.T, s *sqlite.Store, raw *sql.DB) sql.NullString {
 			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
 			markEventsPushed(t, raw)
 			require.NoError(t, s.UnclaimNode(ctx, "MTIX-1", "handoff", "agent-a"))
 			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-b"))
 			replayClaimAsBefore952(t, raw, "MTIX-1", "agent-a")
-		}, []sqlite.StatusRepairColumn{
-			{Column: "assignee", Current: repairText("agent-a"), Expected: repairText("agent-b")},
-		}, map[string]string{"status": "in_progress", "assignee": "agent-b", "agent_state": "working"}},
+			return sql.NullString{}
+		}, model.OpClaim, []string{"assignee: agent-a -> agent-b"},
+			map[string]string{"status": "in_progress", "assignee": "agent-b", "agent_state": "working"}, false},
+		{"a replayed manual block after an unblock", func(t *testing.T, s *sqlite.Store, raw *sql.DB) sql.NullString {
+			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusBlocked, "waiting", "agent-a"))
+			markEventsPushed(t, raw)
+			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "unblocked", "agent-a"))
+			return replayTransitionAsBefore952(t, raw, "MTIX-1", model.StatusBlocked)
+		}, model.OpTransitionStatus, []string{"status: blocked -> open"},
+			map[string]string{"status": "open"}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s, raw := replicaWithNode(t)
-			tt.setup(t, s, raw)
+			replayed := tt.setup(t, s, raw)
 			winner := latestLocalWorkflowEvent(t, raw, "MTIX-1")
 
 			diffs, err := s.StatusRepairDiffs(ctx)
 			require.NoError(t, err)
 			require.Len(t, diffs, 1)
-			require.Equal(t, winner, diffs[0].WinnerEventID)
-			for i := range tt.want {
-				if tt.want[i].Expected != nil && *tt.want[i].Expected == "<wall>" {
-					tt.want[i].Expected = repairText(wallClockClosedAt(t, raw, winner))
-				}
+			d := diffs[0]
+			require.Equal(t, winner, d.WinnerEventID)
+			require.False(t, d.Flagged, d.Reason)
+			require.NotEmpty(t, d.MatchedEventID)
+			require.Equal(t, string(tt.matched), matchedOp(t, raw, d.MatchedEventID))
+			var got []string
+			for _, c := range d.Columns {
+				got = append(got, c.Column+": "+columnValue(c.Current)+" -> "+columnValue(c.Expected))
 			}
-			require.Equal(t, tt.want, diffs[0].Columns)
+			var want []string
+			for _, w := range tt.want {
+				w = strings.ReplaceAll(w, "<replay>", replayed.String)
+				w = strings.ReplaceAll(w, "<wall>", wallClockClosedAt(t, raw, winner))
+				want = append(want, w)
+			}
+			require.Equal(t, want, got)
 
-			_, err = s.RepairNodeStatus(ctx, "MTIX-1", "repairer")
+			events := eventCount(t, raw)
+			_, applied, err := s.RepairNodeStatus(ctx, "MTIX-1", "repairer", false)
 			require.NoError(t, err)
+			require.True(t, applied)
 			row := nodeRow(t, raw, "MTIX-1")
-			for col, want := range tt.row {
-				require.Equal(t, want, row[col], "column %s", col)
+			for col, v := range tt.row {
+				require.Equal(t, v, row[col], "column %s", col)
+			}
+			if tt.wantEvent {
+				require.Len(t, repairEvents(t, raw, "MTIX-1"), 1)
+			} else {
+				require.Equal(t, events, eventCount(t, raw), "the status did not change, so no event")
 			}
 			again, err := s.StatusRepairDiffs(ctx)
 			require.NoError(t, err)
 			require.Empty(t, again)
 		})
 	}
+}
+
+// columnValue renders a nullable column value for comparison.
+func columnValue(v *string) string {
+	if v == nil {
+		return "NULL"
+	}
+	return *v
+}
+
+// matchedOp returns the op_type of event id.
+func matchedOp(t *testing.T, raw *sql.DB, id string) string {
+	t.Helper()
+	var op string
+	// The op of one event by primary key.
+	require.NoError(t, raw.QueryRow(`SELECT op_type FROM sync_events WHERE event_id = ?`, id).Scan(&op))
+	return op
 }
 
 // latestLocalWorkflowEvent returns the id of node id's newest workflow event.
@@ -670,24 +722,54 @@ func latestLocalWorkflowEvent(t *testing.T, raw *sql.DB, id string) string {
 	return eventID
 }
 
-// TestStatusRepairDiffs_OlderAssigneeUpdate_DoesNotOwnTheColumn: an
-// update_field older than the winner does not own the column, so the
-// winner's assignee is compared and repaired.
-func TestStatusRepairDiffs_OlderAssigneeUpdate_DoesNotOwnTheColumn(t *testing.T) {
+// TestStatusRepair_SoftDeletedNode_NotListedNorRepaired: a soft-deleted node
+// is not live, so it is neither listed nor repaired, whatever its events say.
+func TestStatusRepair_SoftDeletedNode_NotListedNorRepaired(t *testing.T) {
 	ctx := context.Background()
-	s, raw := replicaWithNode(t)
-	bob := "bob"
-	require.NoError(t, s.UpdateNode(ctx, "MTIX-1", &store.NodeUpdate{Assignee: &bob}))
-	require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
-	// The assignee reverted to the older update's value.
-	_, err := raw.Exec(`UPDATE nodes SET assignee = 'bob' WHERE id = 'MTIX-1'`)
-	require.NoError(t, err)
+	s, raw := s7Store(t)
+	require.NoError(t, s.DeleteNode(ctx, "MTIX-1", false, "agent-a"))
 
 	diffs, err := s.StatusRepairDiffs(ctx)
+	require.NoError(t, err)
+	require.Empty(t, diffs)
+	_, _, err = s.RepairNodeStatus(ctx, "MTIX-1", "repairer", true)
+	require.ErrorIs(t, err, model.ErrNotFound)
+	require.Equal(t, "in_progress", nodeRow(t, raw, "MTIX-1")["status"])
+}
+
+// TestRepairNodeStatus_MissingNode_ReturnsNotFound: a node that does not
+// exist is not repaired.
+func TestRepairNodeStatus_MissingNode_ReturnsNotFound(t *testing.T) {
+	s, _ := mutationTestStore(t)
+	_, _, err := s.RepairNodeStatus(context.Background(), "MTIX-9", "repairer", true)
+	require.ErrorIs(t, err, model.ErrNotFound)
+}
+
+// TestRepairNodeStatus_StatusUnchanged_DoesNotUnblockDependents: a repair
+// that leaves the status alone (here the progress of a done leaf) emits no
+// event and does not run the unblock a status change runs, so a dependent
+// left blocked keeps its state for mtix unblock.
+func TestRepairNodeStatus_StatusUnchanged_DoesNotUnblockDependents(t *testing.T) {
+	ctx := context.Background()
+	s, raw := replicaWithNode(t)
+	mustCreateNode(t, s, "MTIX-2", "")
+	require.NoError(t, s.AddDependency(ctx, &model.Dependency{
+		FromID: "MTIX-1", ToID: "MTIX-2", DepType: model.DepTypeBlocks, CreatedAt: time.Now().UTC(),
+	}))
+	require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
+	require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
+	// A stale leaf progress and a dependent left blocked.
+	_, err := raw.Exec(`UPDATE nodes SET progress = 0 WHERE id = 'MTIX-1'`)
+	require.NoError(t, err)
+	_, err = raw.Exec(`UPDATE nodes SET status = 'blocked', previous_status = 'open' WHERE id = 'MTIX-2'`)
+	require.NoError(t, err)
+	events := eventCount(t, raw)
+
+	_, applied, err := s.RepairNodeStatus(ctx, "MTIX-1", "repairer", false)
 
 	require.NoError(t, err)
-	require.Len(t, diffs, 1)
-	require.Equal(t, []sqlite.StatusRepairColumn{
-		{Column: "assignee", Current: repairText("bob"), Expected: repairText("agent-a")},
-	}, diffs[0].Columns)
+	require.True(t, applied)
+	require.Equal(t, "1", nodeRow(t, raw, "MTIX-1")["progress"])
+	require.Equal(t, "blocked", nodeRow(t, raw, "MTIX-2")["status"])
+	require.Equal(t, events, eventCount(t, raw))
 }

@@ -129,14 +129,24 @@ func (bg *BackgroundService) permanentlyDelete(ctx context.Context, id string) e
 	return nil
 }
 
-// wakeDeferredNodes transitions deferred nodes whose defer_until has passed
-// to open status per FR-3.8b.
+// wakeDeferredNodes reopens deferred nodes whose defer_until has passed per
+// FR-3.8b, and returns how many it woke. A wake time has passed when
+// defer_until <= now, the one rule ready and claim use too (MTIX-95.22). The
+// select below only proposes candidates: each node is woken by
+// Store.WakeDeferredNode, which re-checks it inside the waking transaction,
+// so a claim or re-defer that lands after the select is kept. Waking clears
+// defer_until, so a later deferral without a wake time, such as one received
+// through sync, is not woken by this one's.
 func (bg *BackgroundService) wakeDeferredNodes(ctx context.Context) (int, error) {
-	now := bg.clock().UTC().Format(time.RFC3339)
+	nowT := bg.clock()
+	now := nowT.UTC().Format(time.RFC3339)
 
+	// Deferred nodes whose wake time is at or before now. defer_until and now
+	// are both UTC RFC 3339 in whole seconds, so the text comparison orders
+	// them as times.
 	rows, err := bg.store.Query(ctx,
 		`SELECT id FROM nodes
-		 WHERE status = ? AND defer_until IS NOT NULL AND defer_until < ?
+		 WHERE status = ? AND defer_until IS NOT NULL AND defer_until <= ?
 		   AND deleted_at IS NULL`,
 		string(model.StatusDeferred), now,
 	)
@@ -161,32 +171,38 @@ func (bg *BackgroundService) wakeDeferredNodes(ctx context.Context) (int, error)
 		return 0, fmt.Errorf("iterate deferred nodes: %w", err)
 	}
 
-	// Transition each deferred node to open.
+	// Wake each candidate in its own re-checking transaction.
+	woken := 0
 	for _, id := range ids {
-		if err := bg.store.TransitionStatus(
-			ctx, id, model.StatusOpen,
-			"Auto-reopened: defer_until has passed", "system",
-		); err != nil {
-			bg.logger.Error("failed to wake deferred node",
-				"id", id, "error", err)
+		ok, err := bg.store.WakeDeferredNode(ctx, id, nowT)
+		if err != nil {
+			bg.logger.Error("failed to wake deferred node", "id", id, "error", err)
+			continue
+		}
+		if ok {
+			woken++
 		}
 	}
 
-	return len(ids), nil
+	return woken, nil
 }
 
 // GetReadyNodes returns nodes available for agent pickup including
-// past-due deferred nodes per FR-3.8b CLI behavior.
+// past-due deferred nodes per FR-3.8b CLI behavior. A deferred node is ready
+// when it has no wake time or its wake time has passed (defer_until <= now,
+// the rule claim and the wake pass use too, MTIX-95.22).
 func (bg *BackgroundService) GetReadyNodes(ctx context.Context) ([]*model.Node, error) {
 	now := bg.clock().UTC().Format(time.RFC3339)
 
+	// Unassigned open nodes, plus deferred nodes with no wake time or one at
+	// or before now (UTC RFC 3339 text compares as time).
 	rows, err := bg.store.Query(ctx,
 		`SELECT id FROM nodes
 		 WHERE deleted_at IS NULL
 		   AND assignee IS NULL
 		   AND (
 		     status = ?
-		     OR (status = ? AND (defer_until IS NULL OR defer_until < ?))
+		     OR (status = ? AND (defer_until IS NULL OR defer_until <= ?))
 		   )
 		 ORDER BY priority ASC, created_at ASC`,
 		string(model.StatusOpen), string(model.StatusDeferred), now,

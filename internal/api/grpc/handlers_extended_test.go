@@ -174,7 +174,7 @@ func TestHandleDefer_TransitionsStatus(t *testing.T) {
 
 	created := createTestNode(t, s, "Defer Node", "DEFER")
 
-	node, err := s.HandleDefer(ctx, created.ID, "agent-1")
+	node, err := s.HandleDefer(ctx, created.ID, "agent-1", nil)
 	require.NoError(t, err)
 	assert.Equal(t, model.StatusDeferred, node.Status)
 }
@@ -184,7 +184,7 @@ func TestHandleDefer_NotFound(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	_, err := s.HandleDefer(ctx, "NONEXISTENT-999", "agent-1")
+	_, err := s.HandleDefer(ctx, "NONEXISTENT-999", "agent-1", nil)
 	require.Error(t, err)
 	st, ok := status.FromError(err)
 	require.True(t, ok)

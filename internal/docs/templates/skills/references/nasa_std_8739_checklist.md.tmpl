@@ -41,7 +41,7 @@ For safety-critical tasks:
 Every anomaly discovered during development must be recorded:
 
 1. Use `mtix_comment` on the affected task to document the anomaly
-2. If the anomaly blocks work, use `mtix_defer` with root cause
+2. If the anomaly blocks work, record the root cause with `mtix_comment`, then call `mtix_defer` with an optional `until` wake time
 3. Create a new task for anomaly resolution if needed (linked via `mtix_dep_add`)
 4. Anomaly resolution must include regression test evidence
 

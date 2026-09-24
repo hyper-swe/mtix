@@ -135,7 +135,7 @@ Call `mtix session end` or `mtix_session_end` when all work is complete.
 **Never abandon a task silently.**
 
 - **Blocked:** Document the blocker with `mtix_comment`, check dependency status with `mtix_blocked`
-- **Deferred:** Call `mtix_defer` with root cause — what remains and why you're deferring
+- **Deferred:** Record the root cause with `mtix_comment` (what remains and why you're deferring), then call `mtix_defer` with an optional `until`. Pass `until` (RFC 3339 with a zone, e.g. `2026-04-01T00:00:00Z`) for a wake time: claims are refused before it, and from it on the task is ready again. Omitting `until` clears any earlier wake time. A deferred task with no wake time (deferred without `until`, or any deferral received through sync) is listed by `mtix_ready` and can be claimed at once. Hub sync does not carry the wake time; other machines that sync through the hub get only the deferral (a git-tracked `.mtix/tasks.json` does carry it)
 - **Anomaly:** Always record unexpected failures, inconsistent state, or missing context via `mtix_comment`
 
 ## Decomposition Rules

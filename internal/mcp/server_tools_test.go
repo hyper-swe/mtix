@@ -476,6 +476,12 @@ func (m *mcpMockStore) GetBlockers(_ context.Context, _ string) ([]*model.Depend
 func (m *mcpMockStore) TransitionStatus(_ context.Context, _ string, _ model.Status, _, _ string) error {
 	return nil
 }
+func (m *mcpMockStore) DeferNode(_ context.Context, _ string, _ *time.Time, _, _ string) error {
+	return nil
+}
+func (m *mcpMockStore) WakeDeferredNode(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (m *mcpMockStore) ClaimNode(_ context.Context, _, _ string) error      { return nil }
 func (m *mcpMockStore) UnclaimNode(_ context.Context, _, _, _ string) error { return nil }
 func (m *mcpMockStore) ForceReclaimNode(_ context.Context, _, _ string, _ time.Duration) error {

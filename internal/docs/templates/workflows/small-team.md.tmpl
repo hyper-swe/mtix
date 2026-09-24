@@ -203,6 +203,17 @@ machines show it done, each with its own agent as the assignee). After
 `mtix sync pull`, check a claimed task with `mtix show <id>` and stop
 if it is no longer in progress under your name.
 
+A deferral travels as a status change, but hub sync does not carry its
+wake time (`mtix defer <id> --until <time>`) in 0.5.x. On the other
+machines the task is deferred with no wake time
+(any wake time it held before is cleared): it is not reopened when the
+time passes, and a claim there is not refused. A deferred task with no
+wake time is listed by `mtix ready` and can be claimed at once. Every
+claim or status change, local or received through sync, clears the
+wake time as the task leaves deferred. Set the wake time on the machine
+that will pick the task up. A git-tracked `.mtix/tasks.json` does carry
+`defer_until`, so a machine that imports it gets the wake time.
+
 **Note:** When two CLIs share `authorID="cli"` (the default), their
 concurrent events produce vector clocks that are `Equal()` rather
 than `Concurrent()`, so the hub does NOT log a `sync_conflicts` row

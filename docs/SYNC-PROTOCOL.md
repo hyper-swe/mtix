@@ -172,8 +172,8 @@ teammate's concurrent claim or status change.
 
 Known residual in 0.5.x:
 
-- Columns other than status and `closed_at` (assignee, agent state,
-  `previous_status`, progress, `defer_until`) are written only by the
+- Columns other than status, `closed_at` and `defer_until` (assignee,
+  agent state, `previous_status`, progress) are written only by the
   events that write them locally. When events arrive out of order, an
   event that won when it arrived may leave such a column set, and the
   final winner may not overwrite it. Example: a claim applies, then a
@@ -189,8 +189,12 @@ Known residual in 0.5.x:
   events by sync, except as the item on the `closed_at` range
   describes; the originating store can differ (see the item on
   `closed_at` on the originating store).
-- `defer_until` is not cleared by a winning claim, unclaim or
-  transition at ingest, although a local claim clears it.
+- `defer_until` (the wake time of `mtix defer --until`) is cleared by
+  every winning claim, unclaim and `transition_status`, including a
+  transition into `deferred`, and only a `defer` event sets it. No 0.5.x
+  client emits a `defer` event: a local defer emits `transition_status`,
+  so the hub never carries the wake time. A `defer` event whose wake time
+  falls outside UTC years 1 to 9999 stores none.
 - `update_field` on `status`, `assignee` or `agent_state` keeps its
   per-field register above and is not compared with workflow events.
 - `closed_at` on the originating store can differ from the replicas':

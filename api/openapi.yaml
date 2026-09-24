@@ -387,19 +387,47 @@ paths:
       parameters:
         - $ref: "#/components/parameters/nodeId"
         - $ref: "#/components/parameters/csrfHeader"
+      description: >-
+        Moves the node to deferred and stores its wake time (defer_until) in
+        the same transaction. The body is optional: an empty body defers with
+        no wake time. Otherwise it must be a JSON object whose only key is
+        until; a literal null, an unknown key, a wrong type or data after the
+        object is rejected with 400. Before the wake time a claim is refused;
+        from it on the node is ready and claimable, and the next background
+        pass reopens it. Leaving deferred clears the wake time. In 0.5.x hub
+        sync does not carry the wake time: other machines receive the
+        deferral only. A git-tracked .mtix/tasks.json does carry it.
       requestBody:
+        required: false
         content:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               properties:
                 until:
                   type: string
                   format: date-time
-                  description: ISO-8601 date. Omit for indefinite deferral.
+                  description: >-
+                    Wake time, an RFC 3339 date-time with a zone (for example
+                    2026-04-01T00:00:00Z or 2026-04-01T09:00:00+05:30) whose
+                    UTC year is 1 to 9999. Stored in UTC, whole seconds. Omit,
+                    or send an empty string, for no wake time; this clears any
+                    earlier one.
       responses:
         "200":
           description: Node deferred
+        "400":
+          description: >-
+            INVALID_INPUT: the body is not empty or a JSON object whose only
+            key is until, or until is not an RFC 3339 date-time with a zone
+            whose UTC year is 1 to 9999. The node is not changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/nodes/{id}/cancel:
     post:

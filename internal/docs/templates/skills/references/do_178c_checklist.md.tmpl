@@ -43,4 +43,4 @@ To verify: Use `mtix_search` to find tasks referencing a specific requirement nu
 
 ## Problem Reporting (§8)
 
-Use `mtix_comment` to document problems discovered during implementation or verification. Use `mtix_defer` with root cause for blocked work. All anomalies are timestamped and attributed to the reporting agent.
+Use `mtix_comment` to document problems discovered during implementation or verification. For blocked work, record the root cause with `mtix_comment`, then call `mtix_defer` with an optional `until` wake time. All anomalies are timestamped and attributed to the reporting agent.

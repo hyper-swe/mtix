@@ -110,11 +110,16 @@ pull cursor. After fetching past its cursor, pull lists the hub events
 created since its previous sweep (with a 15-minute overlap, timed by
 the hub's clock), notes the ones you do not have, and then applies them
 the usual way, oldest first by the sync clock; an older recovered claim
-or status change never reverts a newer one. The first pull after
-upgrading compares the full hub history once and prints how many late
-events it recovered; if a pull stops part-way, the next one continues
-where it stopped. `mtix sync status` shows `last sweep`. The sweep
-costs one extra hub query per pull and has no timer of its own. After
+or status change never reverts a newer one. If the regular fetch meets
+an edit of a task whose creation arrived late, pull runs the sweep at
+once and retries the fetch one time, so the creation applies first.
+The first pull after upgrading compares the full hub history once and
+prints how many late events it recovered; if a pull stops part-way, the
+next one continues where it stopped. `mtix sync status` shows `last
+sweep`. In the common case (nothing missing, at most `--limit` changes
+since the last sweep) the sweep costs one extra hub query per pull,
+more for a larger window or recovered changes, and it has no timer of
+its own. After
 upgrading, the hub owner runs `mtix sync init` once with the owner's
 DSN to add the hub index the sweep reads by; until then each page the
 sweep lists scans the hub's event table: once per pull for the usual

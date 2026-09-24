@@ -16,20 +16,40 @@ import (
 // Apply phase of the late-event sweep of `mtix sync pull` (MTIX-95.5; see
 // sync_pull_sweep.go). It runs once the listing phase has staged every
 // missing hub event id in sync_sweep_pending, and applies the staged events
-// in Lamport order, which is causal, unlike the listing order.
+// in Lamport order, which is causal, unlike the listing order, one bounded
+// chunk at a time.
 
-// applyStagedLateEvents is the apply phase: it fetches every staged event
-// the store still lacks, sorts them all into pull order (Lamport clock, then
-// event id) and applies them in batches of limit, removing each id from
-// sync_sweep_pending in its apply's transaction. Staged ids the store now
-// holds (a concurrent pull applied them) or the hub no longer has are
-// removed without an apply. Returns how many events it applied.
+// applyStagedLateEvents is the apply phase. It reads the staged ids in
+// (lamport_clock, event_id) order, limit at a time, and for each chunk
+// fetches the events the store still lacks, applies them in pull order
+// (Lamport clock, then event id) and removes each id from sync_sweep_pending
+// in its apply's transaction. Every staged event has a Lamport clock at or
+// above the previous chunk's, so the order is global although memory and
+// each transaction are bounded by limit, and a pull stopped between chunks
+// resumes at the next one. Staged ids the store now holds (a concurrent pull
+// applied them) or the hub no longer has are removed without an apply.
+// Returns how many events it applied.
 func applyStagedLateEvents(ctx context.Context, hub lateEventHub, st *sqlite.Store, limit int) (int, error) {
-	staged, err := readStagedEventIDs(ctx, st)
-	if err != nil || len(staged) == 0 {
-		return 0, err
+	applied := 0
+	for {
+		chunk, err := readStagedChunk(ctx, st, limit)
+		if err != nil || len(chunk) == 0 {
+			return applied, err
+		}
+		n, err := applyStagedChunk(ctx, hub, st, chunk, limit)
+		applied += n
+		if err != nil {
+			return applied, err
+		}
 	}
-	missing, err := missingLocalEventIDs(ctx, st, staged)
+}
+
+// applyStagedChunk fetches and applies one chunk of staged ids and returns
+// how many events it applied.
+func applyStagedChunk(ctx context.Context, hub lateEventHub, st *sqlite.Store,
+	chunk []string, limit int,
+) (int, error) {
+	missing, err := missingLocalEventIDs(ctx, st, chunk)
 	if err != nil {
 		return 0, err
 	}
@@ -37,7 +57,7 @@ func applyStagedLateEvents(ctx context.Context, hub lateEventHub, st *sqlite.Sto
 	if err != nil {
 		return 0, err
 	}
-	if err := unstageLateEvents(ctx, st, idsNotApplied(staged, events)); err != nil {
+	if err := unstageLateEvents(ctx, st, idsNotApplied(chunk, events)); err != nil {
 		return 0, err
 	}
 	unstage := func(tx *sql.Tx, e *model.SyncEvent) error {
@@ -46,15 +66,10 @@ func applyStagedLateEvents(ctx context.Context, hub lateEventHub, st *sqlite.Sto
 			`DELETE FROM sync_sweep_pending WHERE event_id = ?`, e.EventID)
 		return execErr
 	}
-	applied := 0
-	for start := 0; start < len(events); start += limit {
-		batch := events[start:min(start+limit, len(events))]
-		if err := applyPullBatch(ctx, st, batch, unstage); err != nil {
-			return applied, fmt.Errorf("apply late events: %w", err)
-		}
-		applied += len(batch)
+	if err := applyPullBatch(ctx, st, events, unstage); err != nil {
+		return 0, fmt.Errorf("apply late events: %w", err)
 	}
-	return applied, nil
+	return len(events), nil
 }
 
 // idsNotApplied returns the staged ids that have no fetched event to apply.
@@ -72,10 +87,14 @@ func idsNotApplied(staged []string, events []*model.SyncEvent) []string {
 	return out
 }
 
-// readStagedEventIDs returns every id in sync_sweep_pending, in event id
-// order.
-func readStagedEventIDs(ctx context.Context, st *sqlite.Store) ([]string, error) {
-	rows, err := st.Query(ctx, `SELECT event_id FROM sync_sweep_pending ORDER BY event_id`)
+// readStagedChunk returns up to limit staged ids, lowest Lamport clock
+// first (then event id), served by idx_sync_sweep_pending_lamport.
+func readStagedChunk(ctx context.Context, st *sqlite.Store, limit int) ([]string, error) {
+	// The next chunk of the apply phase: the lowest staged Lamport clocks.
+	rows, err := st.Query(ctx, `
+		SELECT event_id FROM sync_sweep_pending
+		ORDER BY lamport_clock, event_id
+		LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("read staged late events: %w", err)
 	}

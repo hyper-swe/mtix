@@ -198,14 +198,18 @@ CREATE TABLE IF NOT EXISTS applied_events (
 );
 
 -- Late-event sweep staging (MTIX-95.5). The sweep of sync pull lists hub
--- event ids page by page and stages here each id this store does not hold;
--- once the listing is complete it fetches the staged events, applies them
--- in Lamport order and removes each id in its apply's transaction. Rows
+-- event ids page by page and stages here each id this store does not hold,
+-- with its Lamport clock; once the listing is complete it reads the staged
+-- ids in (lamport_clock, event_id) order, a chunk at a time, fetches and
+-- applies each chunk, and removes each id in its apply's transaction. Rows
 -- survive an interrupted pull, so the next pull resumes. Created with
 -- IF NOT EXISTS; no schema version change.
 CREATE TABLE IF NOT EXISTS sync_sweep_pending (
-    event_id TEXT PRIMARY KEY
+    event_id      TEXT PRIMARY KEY,
+    lamport_clock INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_sync_sweep_pending_lamport
+    ON sync_sweep_pending(lamport_clock, event_id);
 
 -- Per-agent inbox read cursor (FR-19.4 / MTIX-47.1). The inbox itself is a
 -- QUERY over sync_events (events addressed to the agent); this table holds only

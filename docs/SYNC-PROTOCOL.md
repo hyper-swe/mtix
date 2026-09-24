@@ -305,6 +305,21 @@ the hub. A teammate who worked offline pushes events stamped below the
 cursors of teammates who kept working, so the cursor pass never returns
 them.
 
+**Straddling pushes.** A late push can straddle the cursor: a node's
+create stamped below it and an edit of that node above it (one offline
+client made more events than the cursor gap, or a teammate who received
+the node edited it). The cursor pass then returns the edit without its
+create, and the apply fails because the node is missing
+(`model.ErrNotFound`). The failed batch rolls back; the cursor has
+advanced only over committed batches. On that failure, and only on it,
+pull runs the late-event sweep below, which delivers the create and
+applies everything it recovers in Lamport order, and then retries the
+cursor pass once from the saved cursor (stderr says `retrying the pull
+once`). If the retry fails again, or the sweep fails, the pull fails
+with that error, as before; it never loops. A pull whose cursor pass
+succeeds runs no extra query for this. Together with the sweep's Lamport
+order, this is how a node's create always applies before its edits.
+
 **Late-event sweep** (`cmd/mtix/sync_pull_sweep.go`,
 `cmd/mtix/sync_pull_sweep_apply.go`, `transport/late_events.go`). After
 the cursor pass, pull runs two phases.
@@ -317,18 +332,22 @@ the cursor pass, pull runs two phases.
    --discard-local`), it lists the full id history instead, once, from
    the zero position. It diffs each page against the ids this store holds
    in `sync_events` (its own events and every mirrored one) or
-   `applied_events`, and stages the missing ids in the local table
+   `applied_events`, and stages the missing ids, each with its Lamport
+   clock (the listing returns it), in the local table
    `sync_sweep_pending`. It applies nothing: the listing order is not
    causal. One client's push gives all its events the same `created_at`,
    so their order is event-id order, and an edit can carry a smaller
    event id than its node's create (after a clock step-back on that
    client); a create that had to be renumbered is pushed after edits it
    precedes.
-2. **Apply**, once the listing is complete. It fetches every staged
-   event by id, sorts all of them into pull order (Lamport clock, then
-   event id) and applies them in batches through the same
-   `IdempotentApply` path, removing each id from `sync_sweep_pending` in
-   its apply's transaction. Lamport order is causal: an event is always
+2. **Apply**, once the listing is complete. It reads the staged ids in
+   pull order (Lamport clock, then event id), `--limit` at a time; for
+   each chunk it fetches the events by id and applies them through the
+   same `IdempotentApply` path in one transaction, removing each id from
+   `sync_sweep_pending` in that transaction. Every chunk's clocks are at
+   or above the previous chunk's, so the order is global while memory and
+   each transaction stay bounded by `--limit`, and a pull stopped between
+   chunks resumes at the next one. Lamport order is causal: an event is always
    stamped above every event its client had applied when it was made, so
    a node's create applies before any edit of that node. Recovered events
    are late and low-Lamport by construction, so a recovered `claim`,
@@ -340,7 +359,9 @@ the cursor pass, pull runs two phases.
    that the hub no longer has, is removed without an apply.
 3. **Finish.** When nothing is left staged, it records the hub time read
    before its first page in `meta.sync.last_sweep_at` (RFC 3339, UTC)
-   and clears the listing progress.
+   and clears the listing progress. If a concurrent pull has staged ids
+   meanwhile, it records nothing and reports no error; a later pull
+   applies those ids and records the sweep.
 
 **Resumable.** On a large hub the one-time full diff can take longer
 than one pull may run (a daemon pull has a 60-second deadline), and so
@@ -395,8 +416,10 @@ version.
 
 **Cost.** In the common case, where nothing is missing and the window
 holds at most `--limit` ids, the sweep adds one hub query to each pull:
-the id listing, which also returns the hub clock. Late events add one
-fetch per `--limit` of them. The first sweep on a store pages through
+the id listing, which also returns the hub clock. A larger window adds
+one listing query per further `--limit` ids, and late events add one
+fetch per `--limit` of them. A straddling push adds one more cursor
+pass (the retry). The first sweep on a store pages through
 the full id history once, across as many pulls as it needs. The sweep
 runs only inside a pull and has no timer, so an idle hub that scales to
 zero stays idle; a daemon that pulls on an interval runs the sweep on

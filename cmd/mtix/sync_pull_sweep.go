@@ -154,8 +154,13 @@ func sweepLateEvents(ctx context.Context, stderr io.Writer, hub lateEventHub,
 	if err != nil {
 		return out, err
 	}
-	if err := finishLateEventSweep(ctx, st, listing.startedAt); err != nil {
+	recorded, err := finishLateEventSweep(ctx, st, listing.startedAt)
+	if err != nil {
 		return out, err
+	}
+	if !recorded {
+		fmt.Fprintln(stderr,
+			"late-event sweep: another pull staged events meanwhile; a later pull applies them and records the sweep")
 	}
 	return out, nil
 }
@@ -302,7 +307,8 @@ func listLateEvents(ctx context.Context, hub lateEventHub, st *sqlite.Store,
 			return listing, err
 		}
 		if len(missing) > 0 || page.More {
-			if err := stageLateEvents(ctx, st, missing, page.Next, listing.startedAt); err != nil {
+			staged := withLamports(missing, page)
+			if err := stageLateEvents(ctx, st, staged, page.Next, listing.startedAt); err != nil {
 				return listing, err
 			}
 		}
@@ -313,20 +319,45 @@ func listLateEvents(ctx context.Context, hub lateEventHub, st *sqlite.Store,
 	}
 }
 
+// stagedLateEvent is one missing hub event id with its Lamport clock, as
+// the listing staged it.
+type stagedLateEvent struct {
+	id      string
+	lamport int64
+}
+
+// withLamports pairs each missing id with the Lamport clock the listed page
+// carries for it.
+func withLamports(missing []string, page transport.EventIDPage) []stagedLateEvent {
+	clocks := make(map[string]int64, len(page.IDs))
+	for i, id := range page.IDs {
+		if i < len(page.Lamports) {
+			clocks[id] = page.Lamports[i]
+		}
+	}
+	out := make([]stagedLateEvent, 0, len(missing))
+	for _, id := range missing {
+		out = append(out, stagedLateEvent{id: id, lamport: clocks[id]})
+	}
+	return out
+}
+
 // stageLateEvents records, in one transaction, the missing ids of a listed
-// page in sync_sweep_pending and the listing position after that page with
-// the hub time read before the sweep's first page.
-func stageLateEvents(ctx context.Context, st *sqlite.Store, ids []string,
+// page with their Lamport clocks in sync_sweep_pending, and the listing
+// position after that page with the hub time read before the sweep's first
+// page.
+func stageLateEvents(ctx context.Context, st *sqlite.Store, staged []stagedLateEvent,
 	after transport.EventIDCursor, startedAt time.Time,
 ) error {
 	return st.WithTx(ctx, func(tx *sql.Tx) error {
-		for _, id := range ids {
-			// Stage one missing hub event id; an id staged by an earlier,
-			// interrupted pull is already there.
+		for _, e := range staged {
+			// Stage one missing hub event id with its Lamport clock; an id
+			// staged by an earlier, interrupted pull is already there.
 			if _, err := tx.ExecContext(ctx,
-				`INSERT OR IGNORE INTO sync_sweep_pending (event_id) VALUES (?)`, id,
+				`INSERT OR IGNORE INTO sync_sweep_pending (event_id, lamport_clock) VALUES (?, ?)`,
+				e.id, e.lamport,
 			); err != nil {
-				return fmt.Errorf("stage %s: %w", id, err)
+				return fmt.Errorf("stage %s: %w", e.id, err)
 			}
 		}
 		return upsertSweepMeta(ctx, tx, map[string]string{
@@ -377,9 +408,13 @@ func missingLocalEventIDs(ctx context.Context, st *sqlite.Store, ids []string) (
 // finishLateEventSweep records a completed sweep, in one transaction and
 // only when nothing is left staged: meta.sync.last_sweep_at becomes the hub
 // time read before its first page (RFC 3339, UTC), and the listing progress
-// is cleared.
-func finishLateEventSweep(ctx context.Context, st *sqlite.Store, startedAt time.Time) error {
-	return st.WithTx(ctx, func(tx *sql.Tx) error {
+// is cleared. When ids are still staged (another pull staged them after
+// this one's apply phase ended), it records nothing and returns false with
+// no error: the sweep is not complete, the progress stays, and the next
+// pull applies those ids and records the sweep.
+func finishLateEventSweep(ctx context.Context, st *sqlite.Store, startedAt time.Time) (bool, error) {
+	recorded := false
+	err := st.WithTx(ctx, func(tx *sql.Tx) error {
 		// Count the ids still staged: a sweep with unapplied events is not
 		// complete.
 		var staged int
@@ -388,8 +423,9 @@ func finishLateEventSweep(ctx context.Context, st *sqlite.Store, startedAt time.
 			return fmt.Errorf("count staged late events: %w", err)
 		}
 		if staged > 0 {
-			return fmt.Errorf("late-event sweep not finished: %d staged events not applied", staged)
+			return nil
 		}
+		recorded = true
 		return upsertSweepMeta(ctx, tx, map[string]string{
 			lastSweepAtKey:         startedAt.UTC().Format(time.RFC3339Nano),
 			sweepAfterIDKey:        "",
@@ -397,6 +433,10 @@ func finishLateEventSweep(ctx context.Context, st *sqlite.Store, startedAt time.
 			sweepStartedAtKey:      "",
 		})
 	})
+	if err != nil {
+		return false, err
+	}
+	return recorded, nil
 }
 
 // resetLateEventSweep clears the sweep state (meta.sync.last_sweep_at, the

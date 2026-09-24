@@ -150,6 +150,7 @@ func TestListEventIDsSince_FromZeroCursor_ListsWholeHistory(t *testing.T) {
 	require.Equal(t, []string{ids[3], ids[0], ids[1], ids[2], ids[4]}, got,
 		"the oldest created_at first, then event id order within one push")
 	require.Equal(t, 3, pages)
+	require.Equal(t, []int64{4, 1}, first.Lamports, "each listed id carries its Lamport clock")
 }
 
 // uidMixLamports are the Lamport clocks of pushUIDMix's events. The event

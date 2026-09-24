@@ -37,6 +37,9 @@ type fakeLateHub struct {
 	hubNows     []time.Time
 	calls       []transport.EventIDCursor
 	fetched     [][]string
+	pullEvents  []*model.SyncEvent
+	pullCalls   []int64
+	pullErr     error
 	listErr     error
 	failAtCall  int
 	fetchErr    error
@@ -71,9 +74,30 @@ func (h *fakeLateHub) ListEventIDsSince(_ context.Context, after transport.Event
 			break
 		}
 		pg.IDs = append(pg.IDs, e.EventID)
+		pg.Lamports = append(pg.Lamports, e.LamportClock)
 		pg.Next = transport.EventIDCursor{CreatedAt: e.CreatedAt, EventID: e.EventID}
 	}
 	return pg, nil
+}
+
+// PullEvents serves the cursor pass from pullEvents: the events above since,
+// in Lamport order, limit at a time. It records each since in pullCalls.
+func (h *fakeLateHub) PullEvents(_ context.Context, since int64, limit int) ([]*model.SyncEvent, bool, error) {
+	h.pullCalls = append(h.pullCalls, since)
+	if h.pullErr != nil {
+		return nil, false, h.pullErr
+	}
+	var out []*model.SyncEvent
+	for _, e := range h.pullEvents {
+		if e.LamportClock > since {
+			out = append(out, e)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].LamportClock < out[j].LamportClock })
+	if len(out) > limit {
+		return out[:limit], true, nil
+	}
+	return out, false, nil
 }
 
 func (h *fakeLateHub) FetchEventsByID(_ context.Context, ids []string) ([]*model.SyncEvent, error) {
@@ -378,6 +402,8 @@ func TestSweepLateEvents_ApplyInterrupted_ResumesWithRemainingStaged(t *testing.
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "apply late events")
 	require.Equal(t, lateEventSweep{Recovered: 1, FullDiff: true}, got, "the create applied first")
+	require.Equal(t, [][]string{{ids[0]}, {ids[1]}}, first.fetched,
+		"one bounded chunk (--limit 1) at a time, stopping at the failed chunk")
 	require.Equal(t, "", lastSweep(t))
 	require.Equal(t, []string{ids[1], ids[2]}, stagedIDs(t), "the failed event and the later one stay staged")
 	require.Equal(t, ids[2], sweepMeta(t, "meta.sync.sweep_after_id"), "the listing had finished")
@@ -418,6 +444,8 @@ func TestSweepLateEvents_OwnEditListedBeforeCreate_AppliesInLamportOrder(t *test
 	require.NoError(t, err)
 	require.Equal(t, events[2].EventID, hub.calls[1].EventID, "precondition: the last edit is listed first")
 	require.Equal(t, lateEventSweep{Recovered: 3, FullDiff: true}, got)
+	require.Equal(t, [][]string{{events[0].EventID}, {events[1].EventID}, {events[2].EventID}}, hub.fetched,
+		"the staged events are fetched in Lamport order, one --limit chunk at a time")
 	node, err := app.store.GetNode(context.Background(), "TEST-9")
 	require.NoError(t, err)
 	require.Equal(t, "second edit", node.Description)
@@ -504,10 +532,11 @@ func TestResetLateEventSweep_ClearsSweepState(t *testing.T) {
 	requireNoFullSweepProgress(t)
 }
 
-// TestFinishLateEventSweep_StagedEventsRemain_Refuses: a sweep is complete
-// only when nothing is left staged, so finishing with a staged id records
-// no sweep time and keeps the progress.
-func TestFinishLateEventSweep_StagedEventsRemain_Refuses(t *testing.T) {
+// TestFinishLateEventSweep_StagedEventsRemain_SkipsWithoutError: a sweep is
+// complete only when nothing is left staged. Ids another pull staged after
+// this one's apply phase ended are that pull's to apply, so finishing skips
+// recording the sweep time and keeps the progress, without an error.
+func TestFinishLateEventSweep_StagedEventsRemain_SkipsWithoutError(t *testing.T) {
 	initTestApp(t)
 	ctx := context.Background()
 	_, err := app.store.WriteDB().ExecContext(ctx,
@@ -517,12 +546,51 @@ func TestFinishLateEventSweep_StagedEventsRemain_Refuses(t *testing.T) {
 		`UPDATE meta SET value = 'after-id' WHERE key = 'meta.sync.sweep_after_id'`)
 	require.NoError(t, err)
 
-	err = finishLateEventSweep(ctx, app.store, sweepHubT1)
+	recorded, err := finishLateEventSweep(ctx, app.store, sweepHubT1)
 
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "1 staged events not applied")
+	require.NoError(t, err)
+	require.False(t, recorded)
 	require.Equal(t, "", lastSweep(t))
 	require.Equal(t, "after-id", sweepMeta(t, "meta.sync.sweep_after_id"))
+	require.Equal(t, []string{"staged-id"}, stagedIDs(t))
+
+	_, err = app.store.WriteDB().ExecContext(ctx, `DELETE FROM sync_sweep_pending`)
+	require.NoError(t, err)
+	recorded, err = finishLateEventSweep(ctx, app.store, sweepHubT1)
+	require.NoError(t, err)
+	require.True(t, recorded)
+	require.Equal(t, "2026-09-24T10:00:00.123456Z", lastSweep(t))
+	requireNoFullSweepProgress(t)
+}
+
+// TestSweepLateEvents_AllIDsHeld_ListingProgressSavedAndResumed: a listed
+// page with nothing to stage still saves the listing position when another
+// page follows, so a listing that fails on its third page resumes after the
+// second id rather than from the start.
+func TestSweepLateEvents_AllIDsHeld_ListingProgressSavedAndResumed(t *testing.T) {
+	initTestApp(t)
+	ctx := context.Background()
+	events := offlineEvents(t)
+	ids := eventIDs(events)
+	require.NoError(t, applyPullBatch(ctx, app.store, events))
+	first := &fakeLateHub{events: events, hubNows: []time.Time{sweepHubT1},
+		listErr: errors.New("listing timed out"), failAtCall: 3}
+
+	_, err := sweepLateEvents(ctx, &bytes.Buffer{}, first, app.store, 1)
+
+	require.Error(t, err)
+	require.Equal(t, ids[1], sweepMeta(t, "meta.sync.sweep_after_id"),
+		"the position after the second page is saved although nothing was staged")
+	require.Empty(t, stagedIDs(t))
+
+	resumed := &fakeLateHub{events: events, hubNows: []time.Time{sweepHubT2}}
+	_, err = sweepLateEvents(ctx, &bytes.Buffer{}, resumed, app.store, 1)
+
+	require.NoError(t, err)
+	require.Equal(t, transport.EventIDCursor{CreatedAt: events[1].CreatedAt, EventID: ids[1]},
+		resumed.calls[0], "the listing resumes after the second id")
+	require.Empty(t, resumed.fetched, "nothing was missing")
+	require.Equal(t, "2026-09-24T10:00:00.123456Z", lastSweep(t))
 }
 
 // TestSweepLateEvents_Failure_LeavesLastSweepUnchanged: a failed listing,

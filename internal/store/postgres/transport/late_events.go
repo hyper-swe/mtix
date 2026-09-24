@@ -34,19 +34,19 @@ import (
 // so the caller can time its sweep window by the hub's clock alone and
 // never by its own (created_at is the hub's transaction start time).
 
-// listEventIDsSinceSQL lists one page of hub event ids in (created_at,
-// event_id) order, strictly after the keyset position ($1, $2), with the
-// hub's clock. A first page passes the window start and an empty event id,
+// listEventIDsSinceSQL lists one page of hub event ids, each with its
+// Lamport clock, in (created_at, event_id) order, strictly after the keyset
+// position ($1, $2), with the hub's clock. A first page passes the window start and an empty event id,
 // so ids created exactly at the start are included. created_at >= $1 lets
 // the planner start the scan on idx_sync_events_created_at (migration 014).
 // The LEFT JOIN against a one-row relation returns the hub clock even when
 // the page is empty (event_id and created_at are then NULL). $3 is the
 // page size plus one, to detect a further page.
 const listEventIDsSinceSQL = `
-SELECT now(), page.event_id, page.created_at
+SELECT now(), page.event_id, page.created_at, page.lamport_clock
 FROM (SELECT 1) AS one
 LEFT JOIN (
-    SELECT event_id, created_at
+    SELECT event_id, created_at, lamport_clock
     FROM sync_events
     WHERE created_at >= $1
       AND (created_at, event_id) > ($1, $2)
@@ -82,6 +82,8 @@ type EventIDPage struct {
 	HubNow time.Time
 	// IDs are the listed event ids, in listing order.
 	IDs []string
+	// Lamports are the Lamport clocks of IDs, index for index.
+	Lamports []int64
 	// Next is the keyset position after the last id; pass it back to list
 	// the next page. It is the zero value when IDs is empty.
 	Next EventIDCursor
@@ -162,8 +164,8 @@ func (p *Pool) listEventIDs(ctx context.Context, after EventIDCursor, limit int)
 }
 
 // listEventIDsOnce runs one listing statement. Its rows are (now(),
-// event_id, created_at); a single row with a NULL event_id means an empty
-// page. A row past limit only sets More.
+// event_id, created_at, lamport_clock); a single row with a NULL event_id
+// means an empty page. A row past limit only sets More.
 func (p *Pool) listEventIDsOnce(ctx context.Context, after EventIDCursor, limit int) (EventIDPage, error) {
 	rows, err := p.p.Query(ctx, listEventIDsSinceSQL, after.CreatedAt, after.EventID, limit+1)
 	if err != nil {
@@ -175,10 +177,11 @@ func (p *Pool) listEventIDsOnce(ctx context.Context, after EventIDCursor, limit 
 	for rows.Next() {
 		var id *string
 		var createdAt *time.Time
-		if err := rows.Scan(&page.HubNow, &id, &createdAt); err != nil {
+		var lamport *int64
+		if err := rows.Scan(&page.HubNow, &id, &createdAt, &lamport); err != nil {
 			return EventIDPage{}, err
 		}
-		if id == nil || createdAt == nil {
+		if id == nil || createdAt == nil || lamport == nil {
 			continue
 		}
 		if len(page.IDs) == limit {
@@ -186,6 +189,7 @@ func (p *Pool) listEventIDsOnce(ctx context.Context, after EventIDCursor, limit 
 			continue
 		}
 		page.IDs = append(page.IDs, *id)
+		page.Lamports = append(page.Lamports, *lamport)
 		page.Next = EventIDCursor{CreatedAt: *createdAt, EventID: *id}
 	}
 	if err := rows.Err(); err != nil {

@@ -100,12 +100,18 @@ func TestSchema_FreshDBHasAppliedEvents(t *testing.T) {
 
 // TestSchema_FreshDBHasSyncSweepPending: the late-event sweep of sync pull
 // stages the hub event ids it has listed but not yet applied in
-// sync_sweep_pending (MTIX-95.5), keyed by event id.
+// sync_sweep_pending (MTIX-95.5), keyed by event id, with each event's
+// Lamport clock so the apply phase can read them in Lamport order, a chunk
+// at a time.
 func TestSchema_FreshDBHasSyncSweepPending(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "fresh.db")
 	_, db := schemaTestEnv(t, dbPath)
 
-	require.Equal(t, []string{"event_id"}, columnsOf(t, db, "sync_sweep_pending"))
+	require.Equal(t, []string{"event_id", "lamport_clock"}, columnsOf(t, db, "sync_sweep_pending"))
+	var indexes int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'index' AND name = 'idx_sync_sweep_pending_lamport'`).Scan(&indexes))
+	require.Equal(t, 1, indexes, "the apply phase reads by (lamport_clock, event_id)")
 	_, err := db.Exec(`INSERT INTO sync_sweep_pending (event_id) VALUES ('e1')`)
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO sync_sweep_pending (event_id) VALUES ('e1')`)

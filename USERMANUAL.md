@@ -1347,9 +1347,12 @@ machine, so the cursor alone skips them. The sweep lists the hub events
 created since the previous sweep (with a 15-minute overlap) and notes
 the ones your machine does not have; when the listing is done it
 fetches them and applies them the usual way, oldest first by the sync
-clock, so a task's creation always applies before its edits. A
-recovered claim or status change that is older than the task's current
-one changes nothing; it is only recorded as received.
+clock, so a task's creation applies before its edits. If the regular
+fetch meets an edit of a task whose creation it has not received (the
+creation was pushed late with an older clock), pull runs the sweep at
+once, which brings the creation, and retries the regular fetch one
+time. A recovered claim or status change that is older than the task's
+current one changes nothing; it is only recorded as received.
 
 - **First pull after upgrading.** It compares the full hub event history
   once and prints `late-event sweep (first run, full hub history): N
@@ -1370,9 +1373,13 @@ one changes nothing; it is only recorded as received.
   (`full_sweep_in_progress` in `--json` says whether the first full
   comparison is part-way done, and `sweep_pending_events` counts the
   changes noted but not yet applied).
-- **Cost.** One extra hub query per pull, and only during a pull. The
-  sweep adds no timer, so an idle hub that scales to zero stays idle
-  (a daemon that pulls on an interval sweeps on each of its pulls).
+- **Cost.** In the common case (nothing missing, and at most `--limit`
+  changes since the last sweep) one extra hub query per pull, and only
+  during a pull. A larger window adds a query per further `--limit`
+  changes, recovered changes add a fetch per `--limit` of them, and a
+  retried fetch adds one pass. The sweep adds no timer, so an idle hub
+  that scales to zero stays idle (a daemon that pulls on an interval
+  sweeps on each of its pulls).
 - **Hub owner, after upgrading.** Run `mtix sync init` once with the
   hub owner's DSN. It adds an index on the hub (`idx_sync_events_created_at`)
   so each sweep reads only recent events. Until then pulls work as

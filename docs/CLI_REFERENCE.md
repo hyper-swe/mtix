@@ -1424,7 +1424,9 @@ previous sweep (hub time, minus a 15-minute overlap), fetch the ones
 this store does not hold, and apply them the same way. This catches
 events a teammate pushed after working offline, whose Lamport clock is
 below the cursor. The first sweep on a store compares the full hub
-event history once and prints how many late events it recovered.
+event history once and prints how many late events it recovered. If
+the cursor pass stops on an edit of a node whose create it has not
+received, pull runs the sweep and then retries the cursor pass once.
 
 Lock-free: multiple processes pulling concurrently is safe because
 applied_events dedupes on event_id.

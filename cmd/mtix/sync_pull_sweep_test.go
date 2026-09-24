@@ -136,28 +136,45 @@ var (
 )
 
 // TestSweepLateEvents_FirstSweep_PagesFullHistoryAndRecordsFirstHubTime:
-// with no recorded sweep, the sweep pages the full id history, applies the
-// missing events in pull order although the hub returned them reversed and
-// across fetch chunks, and records the hub time of the FIRST listing page.
+// with no recorded sweep (an empty value, or no meta row at all), the sweep
+// pages the full id history without a warning, applies the missing events
+// in pull order although the hub returned them reversed and across fetch
+// chunks, reports the pages it compared, and records the hub time of the
+// FIRST listing page (writing the meta row back when it was missing).
 func TestSweepLateEvents_FirstSweep_PagesFullHistoryAndRecordsFirstHubTime(t *testing.T) {
-	initTestApp(t)
-	hub := &fakeLateHub{events: offlineEvents(t), hubNows: []time.Time{sweepHubT1, sweepHubT2}}
-	ids := eventIDs(hub.events)
-	sort.Strings(ids)
-	var stderr bytes.Buffer
+	tests := []struct {
+		name    string
+		neverAt string
+	}{
+		{"empty last_sweep_at", `UPDATE meta SET value = '' WHERE key = 'meta.sync.last_sweep_at'`},
+		{"last_sweep_at row missing", `DELETE FROM meta WHERE key = 'meta.sync.last_sweep_at'`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			initTestApp(t)
+			_, err := app.store.WriteDB().ExecContext(context.Background(), tt.neverAt)
+			require.NoError(t, err)
+			hub := &fakeLateHub{events: offlineEvents(t), hubNows: []time.Time{sweepHubT1, sweepHubT2}}
+			ids := eventIDs(hub.events)
+			sort.Strings(ids)
+			var stderr bytes.Buffer
 
-	got, err := sweepLateEvents(context.Background(), &stderr, hub, app.store, 2)
+			got, err := sweepLateEvents(context.Background(), &stderr, hub, app.store, 2)
 
-	require.NoError(t, err)
-	require.Equal(t, lateEventSweep{Recovered: 3, FullDiff: true}, got)
-	require.Empty(t, hub.sinceCalls, "a first sweep never lists a window")
-	require.Equal(t, []string{"", ids[1]}, hub.allCalls,
-		"three ids in pages of two: the second page starts after the second id")
-	node, err := app.store.GetNode(context.Background(), "TEST-9")
-	require.NoError(t, err)
-	require.Equal(t, "second edit", node.Description, "create, then both edits, in Lamport order")
-	require.Equal(t, "2026-09-24T10:00:00.123456Z", lastSweep(t))
-	require.Contains(t, stderr.String(), "comparing the full hub event history once")
+			require.NoError(t, err)
+			require.Equal(t, lateEventSweep{Recovered: 3, FullDiff: true}, got)
+			require.Empty(t, hub.sinceCalls, "a first sweep never lists a window")
+			require.Equal(t, []string{"", ids[1]}, hub.allCalls,
+				"three ids in pages of two: the second page starts after the second id")
+			node, err := app.store.GetNode(context.Background(), "TEST-9")
+			require.NoError(t, err)
+			require.Equal(t, "second edit", node.Description, "create, then both edits, in Lamport order")
+			require.Equal(t, "2026-09-24T10:00:00.123456Z", lastSweep(t))
+			require.Contains(t, stderr.String(), "comparing the full hub event history once")
+			require.Contains(t, stderr.String(), "late-event sweep: compared 3 hub event ids in 2 pages")
+			require.NotContains(t, stderr.String(), "WARN", "never having swept is not a warning")
+		})
+	}
 }
 
 // TestSweepLateEvents_RecordedSweep_ListsWindowFromHubTimeMinusOverlap: the

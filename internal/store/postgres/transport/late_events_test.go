@@ -160,20 +160,45 @@ func TestListAllEventIDs_PagesInEventIDOrder(t *testing.T) {
 	require.Equal(t, 3, pages)
 }
 
+// pushUIDMix pushes four create events, the second and fourth carrying a
+// uid and the others uid-less (as an old CLI pushes them), and returns
+// their ids and the uid each should read back with ("" for none).
+func pushUIDMix(t *testing.T, pool *transport.Pool) (ids, uids []string) {
+	t.Helper()
+	events := make([]*model.SyncEvent, 4)
+	for i := range events {
+		ids = append(ids, lateEventID(i+1))
+		events[i] = makeEvent(ids[i], fmt.Sprintf("MTIX-%d", i+1), "alice", int64(i+1))
+		uid := ""
+		if i%2 == 1 {
+			uid = lateEventID(100 + i)
+		}
+		events[i].UID = uid
+		uids = append(uids, uid)
+	}
+	accepted, _, err := pool.PushEvents(context.Background(), events)
+	require.NoError(t, err)
+	require.Len(t, accepted, len(events))
+	return ids, uids
+}
+
 // TestFetchEventsByID_ReturnsFullEvents: fetching by id returns the full
 // hub rows for the ids the hub holds, in Lamport order, and ignores ids it
-// does not hold.
+// does not hold. A uid round-trips, and a uid-less event reads back "".
 func TestFetchEventsByID_ReturnsFullEvents(t *testing.T) {
 	pool := openTestPool(t)
 	require.NoError(t, pool.Migrate(context.Background()))
-	ids := pushLateEvents(t, pool, 4)
+	ids, uids := pushUIDMix(t, pool)
 
 	got, err := pool.FetchEventsByID(context.Background(),
-		[]string{ids[3], "0193fb00-0000-7000-8000-999999999999", ids[1]})
+		[]string{ids[3], "0193fb00-0000-7000-8000-999999999999", ids[1], ids[2]})
 	require.NoError(t, err)
-	require.Len(t, got, 2)
-	require.Equal(t, ids[1], got[0].EventID)
-	require.Equal(t, ids[3], got[1].EventID)
+	require.Len(t, got, 3)
+	require.Equal(t, []string{ids[1], ids[2], ids[3]}, eventIDsOf(got))
+	require.Equal(t, uids[1], got[0].UID, "a uid round-trips")
+	require.NotEmpty(t, got[0].UID)
+	require.Equal(t, "", got[1].UID, "a uid-less event reads back an empty uid")
+	require.Equal(t, uids[3], got[2].UID)
 	require.Equal(t, int64(2), got[0].LamportClock)
 	require.Equal(t, "MTIX-2", got[0].NodeID)
 	require.Equal(t, model.OpCreateNode, got[0].OpType)
@@ -185,6 +210,32 @@ func TestFetchEventsByID_ReturnsFullEvents(t *testing.T) {
 	none, err := pool.FetchEventsByID(context.Background(), nil)
 	require.NoError(t, err)
 	require.Empty(t, none)
+}
+
+// TestFetchEventsByID_SameEventsAsPullEvents: the sweep's fetch and the
+// cursor pull decode hub rows identically, uid and created_at included, so
+// an event recovered by the sweep applies exactly as a pulled one would.
+func TestFetchEventsByID_SameEventsAsPullEvents(t *testing.T) {
+	pool := openTestPool(t)
+	require.NoError(t, pool.Migrate(context.Background()))
+	ids, _ := pushUIDMix(t, pool)
+
+	pulled, _, err := pool.PullEvents(context.Background(), 0, 100)
+	require.NoError(t, err)
+	fetched, err := pool.FetchEventsByID(context.Background(), ids)
+	require.NoError(t, err)
+
+	require.Len(t, pulled, len(ids))
+	require.Equal(t, pulled, fetched)
+}
+
+// eventIDsOf returns the ids of events in order.
+func eventIDsOf(events []*model.SyncEvent) []string {
+	out := make([]string, 0, len(events))
+	for _, e := range events {
+		out = append(out, e.EventID)
+	}
+	return out
 }
 
 // TestMigrate_CreatesSyncEventsCreatedAtIndex: migration 014 creates the

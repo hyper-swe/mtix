@@ -5,11 +5,8 @@ package transport
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
@@ -75,7 +72,9 @@ ORDER BY page.event_id`
 
 // fetchEventsByIDSQL returns the full hub rows for the ids in $1 (a text
 // array), in pull order (Lamport clock, then event id). Ids the hub does
-// not hold are simply absent. Served by the primary key.
+// not hold are simply absent. Served by the primary key. It selects the
+// same columns in the same order as pullEventsOnce, so both decode rows
+// with scanHubEvent.
 const fetchEventsByIDSQL = `
 SELECT event_id, project_prefix, node_id, uid, op_type, payload,
        wall_clock_ts, lamport_clock, vector_clock,
@@ -250,29 +249,4 @@ func (p *Pool) fetchEventsByIDOnce(ctx context.Context, ids []string) ([]*model.
 		return nil, err
 	}
 	return out, nil
-}
-
-// scanHubEvent decodes one sync_events row in fetchEventsByIDSQL's column
-// order into the shape PullEvents returns: a NULL uid (an event pushed by a
-// CLI older than ADR-003 §7 Phase 3) leaves UID empty.
-func scanHubEvent(rows pgx.Rows) (*model.SyncEvent, error) {
-	var e model.SyncEvent
-	var opType, payload, vc string
-	var uid *string
-	if err := rows.Scan(
-		&e.EventID, &e.ProjectPrefix, &e.NodeID, &uid, &opType, &payload,
-		&e.WallClockTS, &e.LamportClock, &vc,
-		&e.AuthorID, &e.AuthorMachineHash, &e.CreatedAt,
-	); err != nil {
-		return nil, err
-	}
-	if uid != nil {
-		e.UID = *uid
-	}
-	e.OpType = model.OpType(opType)
-	e.Payload = json.RawMessage(payload)
-	if err := json.Unmarshal([]byte(vc), &e.VectorClock); err != nil {
-		return nil, fmt.Errorf("decode VC for %s: %w", e.EventID, err)
-	}
-	return &e, nil
 }

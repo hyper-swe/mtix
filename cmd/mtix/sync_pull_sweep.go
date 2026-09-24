@@ -49,8 +49,12 @@ import (
 // lateEventSweepOverlap is how far before the previous sweep's hub time the
 // next window starts. created_at is the hub transaction's start time, so a
 // push that started before a sweep can commit after it with an earlier
-// created_at; the overlap must exceed the longest push transaction (each
-// statement is bounded by the 10s statement_timeout). 15 minutes is ample.
+// created_at. The overlap covers push transactions of normal length, which
+// take seconds. It is not a bound: the 10s statement_timeout limits each
+// statement, not the push transaction, so a stalled push transaction can
+// stay open longer than 15 minutes, and an event it then commits is missed
+// by later windowed sweeps. Bounding the push transaction is a separate
+// follow-up.
 const lateEventSweepOverlap = 15 * time.Minute
 
 // lateEventHub is the hub surface the sweep reads; *transport.Pool
@@ -77,6 +81,18 @@ type sweepWindow struct {
 	full  bool
 }
 
+// idDiff is the result of paging through a window's hub ids.
+type idDiff struct {
+	// missing are the listed ids this store does not hold, in listing order.
+	missing []string
+	// hubNow is the hub time read by the first listing statement: the value
+	// the next window is measured from.
+	hubNow time.Time
+	// compared is the number of hub ids listed; pages is the number of
+	// listing statements run.
+	compared, pages int
+}
+
 // sweepLateEvents runs one late-event sweep after the cursor loop
 // (MTIX-95.5). limit is the page size for listing ids, fetching events and
 // applying them. meta.sync.last_sweep_at advances only when every
@@ -93,16 +109,20 @@ func sweepLateEvents(ctx context.Context, stderr io.Writer, hub lateEventHub,
 		fmt.Fprintln(stderr,
 			"late-event sweep: first sweep on this store; comparing the full hub event history once")
 	}
-	missing, hubNow, err := listMissingEventIDs(ctx, hub, st, window, limit)
+	diff, err := listMissingEventIDs(ctx, hub, st, window, limit)
 	if err != nil {
 		return lateEventSweep{}, err
 	}
-	recovered, err := applyLateEvents(ctx, hub, st, missing, limit)
+	if window.full {
+		fmt.Fprintf(stderr, "late-event sweep: compared %d hub event ids in %d pages\n",
+			diff.compared, diff.pages)
+	}
+	recovered, err := applyLateEvents(ctx, hub, st, diff.missing, limit)
 	out := lateEventSweep{Recovered: recovered, FullDiff: window.full}
 	if err != nil {
 		return out, err
 	}
-	if err := writeLastSweepAt(ctx, st, hubNow); err != nil {
+	if err := writeLastSweepAt(ctx, st, diff.hubNow); err != nil {
 		return out, err
 	}
 	return out, nil
@@ -146,36 +166,38 @@ func readSweepWindow(ctx context.Context, stderr io.Writer, st *sqlite.Store) (s
 	return sweepWindow{start: last.Add(-lateEventSweepOverlap)}, nil
 }
 
-// listMissingEventIDs pages through the window's hub ids and returns the
-// ones this store does not hold, plus the hub time read by the first
-// listing statement (the value the next window is measured from).
+// listMissingEventIDs pages through the window's hub ids, limit ids per
+// listing statement, and returns the ones this store does not hold, the
+// hub time read by the first listing statement, and how many ids and
+// pages it compared.
 func listMissingEventIDs(ctx context.Context, hub lateEventHub, st *sqlite.Store,
 	window sweepWindow, limit int,
-) ([]string, time.Time, error) {
-	var missing []string
-	var hubNow time.Time
+) (idDiff, error) {
+	var diff idDiff
 	cursor := transport.EventIDCursor{CreatedAt: window.start}
 	for {
 		page, err := listEventIDPage(ctx, hub, window, cursor, limit)
 		if err != nil {
-			return nil, time.Time{}, fmt.Errorf("list hub event ids: %w", err)
+			return idDiff{}, fmt.Errorf("list hub event ids: %w", err)
 		}
-		if hubNow.IsZero() {
+		diff.pages++
+		diff.compared += len(page.IDs)
+		if diff.hubNow.IsZero() {
 			if page.HubNow.IsZero() {
-				return nil, time.Time{}, fmt.Errorf("list hub event ids: hub returned no clock reading")
+				return idDiff{}, fmt.Errorf("list hub event ids: hub returned no clock reading")
 			}
-			hubNow = page.HubNow
+			diff.hubNow = page.HubNow
 		}
 		pageMissing, err := missingLocalEventIDs(ctx, st, page.IDs)
 		if err != nil {
-			return nil, time.Time{}, err
+			return idDiff{}, err
 		}
-		missing = append(missing, pageMissing...)
+		diff.missing = append(diff.missing, pageMissing...)
 		if !page.More {
-			return missing, hubNow, nil
+			return diff, nil
 		}
 		if len(page.IDs) == 0 {
-			return nil, time.Time{}, fmt.Errorf("list hub event ids: hub reported more ids after an empty page")
+			return idDiff{}, fmt.Errorf("list hub event ids: hub reported more ids after an empty page")
 		}
 		cursor = page.Next
 	}

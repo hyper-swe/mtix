@@ -336,7 +336,10 @@ events recovered`, even when N is 0; after a windowed sweep it prints
 `late-event sweep: N late events recovered` only when N > 0. `mtix sync
 status` shows `last sweep` (`last_sweep_at` in `--json`; empty or
 `never` before the first sweep). A value that is not an RFC 3339 time
-is reported on stderr and replaced by a full-history diff.
+is reported on stderr and replaced by a full-history diff. A
+full-history diff also reports on stderr how many hub ids it compared
+in how many pages (`late-event sweep: compared N hub event ids in P
+pages`).
 
 **Hub clock only.** `created_at` is `DEFAULT now()` on the hub, the
 start time of the push transaction. Each listing statement also returns
@@ -345,11 +348,13 @@ computed from that value alone, never from this machine's clock, so a
 skewed client clock changes nothing. Because `created_at` is the
 transaction's start time, a push that started before a sweep can
 commit after it with an earlier `created_at`. The 15-minute overlap
-covers that, because each push statement is bounded by the 10-second
-`statement_timeout`. An event whose push transaction started more than
-15 minutes before a sweep and committed after it is missed by later
-windowed sweeps; the complete fix is a hub-assigned event order in a
-later protocol version.
+covers push transactions of normal length, which take seconds. It is
+not a bound: the 10-second `statement_timeout` limits each statement,
+not the push transaction, so a stalled push transaction can stay open
+longer than 15 minutes, and an event it then commits is missed by later
+windowed sweeps. Bounding the push transaction is a separate follow-up;
+the complete fix is a hub-assigned event order in a later protocol
+version.
 
 **Cost.** In the common case, where nothing is missing and the window
 holds at most `--limit` ids, the sweep adds one hub query to each pull:

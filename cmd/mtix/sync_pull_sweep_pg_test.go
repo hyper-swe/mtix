@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,11 +104,43 @@ func (f *sweepFixture) pushB(t *testing.T) []*model.SyncEvent {
 // pullPeer runs the real `mtix sync pull` on the peer and returns stdout.
 func (f *sweepFixture) pullPeer(t *testing.T, limit int) string {
 	t.Helper()
+	stdout, _ := f.pullPeerStreams(t, limit)
+	return stdout
+}
+
+// pullPeerStreams runs the real `mtix sync pull` on the peer, requires it to
+// succeed, and returns its stdout and stderr.
+func (f *sweepFixture) pullPeerStreams(t *testing.T, limit int) (string, string) {
+	t.Helper()
 	var stdout, stderr bytes.Buffer
-	err := runSyncPull(context.Background(), &stdout, &stderr,
-		[]string{f.dsn}, transport.Options{InsecureTLS: true}, limit)
+	err := f.runPeerPull(&stdout, &stderr, limit)
 	require.NoError(t, err, "peer pull: %s", stderr.String())
-	return stdout.String()
+	return stdout.String(), stderr.String()
+}
+
+// runPeerPull runs the real `mtix sync pull` on the peer and returns its
+// error.
+func (f *sweepFixture) runPeerPull(stdout, stderr *bytes.Buffer, limit int) error {
+	return runSyncPull(context.Background(), stdout, stderr,
+		[]string{f.dsn}, transport.Options{InsecureTLS: true}, limit)
+}
+
+// peerMeta returns one meta value of the peer store.
+func (f *sweepFixture) peerMeta(t *testing.T, key string) string {
+	t.Helper()
+	var v string
+	require.NoError(t, app.store.QueryRow(context.Background(),
+		`SELECT value FROM meta WHERE key = ?`, key).Scan(&v), "meta %s must exist", key)
+	return v
+}
+
+// hubEventCount returns the number of events on the hub.
+func (f *sweepFixture) hubEventCount(t *testing.T) int {
+	t.Helper()
+	var n int
+	require.NoError(t, f.pool.Inner().QueryRow(context.Background(),
+		`SELECT count(*) FROM sync_events`).Scan(&n))
+	return n
 }
 
 // peerCursor returns the peer's Lamport pull cursor.
@@ -156,6 +189,9 @@ func (f *sweepFixture) peerLastSweep(t *testing.T) time.Time {
 		"meta.sync.last_sweep_at must exist")
 	at, err := time.Parse(time.RFC3339Nano, raw)
 	require.NoError(t, err, "meta.sync.last_sweep_at %q must be an RFC3339 hub time", raw)
+	// pgx returns timestamptz in the local zone; the stored value is UTC.
+	require.Truef(t, strings.HasSuffix(raw, "Z"),
+		"meta.sync.last_sweep_at %q must be recorded in UTC", raw)
 	return at
 }
 
@@ -243,9 +279,11 @@ func TestPullSweep_RecoveredLateClaim_DoesNotRevertNewerDone(t *testing.T) {
 // never swept (meta.sync.last_sweep_at empty, as after an upgrade) diffs
 // the full hub id history once, in pages, and applies every event it is
 // missing, including events far older than any sweep window (MTIX-95.5
-// acceptance 3). A page size of 2 forces the history across many pages
-// and the recovered events across several apply batches, where B's
-// create must apply before B's edit of the same node.
+// acceptance 3). The pull's --limit of 2 is the sweep's page size: the
+// full diff reports on stderr that it compared every hub id in
+// ceil(ids / 2) pages, and the recovered events are fetched and applied
+// in several batches, where B's create must apply before B's edit of the
+// same node.
 func TestPullSweep_FirstRunFullScan_RecoversHistoricalGaps(t *testing.T) {
 	f := newSweepFixture(t)
 	ctx := context.Background()
@@ -271,9 +309,12 @@ func TestPullSweep_FirstRunFullScan_RecoversHistoricalGaps(t *testing.T) {
 		`UPDATE meta SET value = '' WHERE key = 'meta.sync.last_sweep_at'`)
 	require.NoError(t, err)
 
-	out := f.pullPeer(t, 2)
+	hubIDs := f.hubEventCount(t)
+	out, errOut := f.pullPeerStreams(t, 2)
 
 	require.Contains(t, out, "3 late events recovered")
+	require.Contains(t, errOut, fmt.Sprintf("late-event sweep: compared %d hub event ids in %d pages",
+		hubIDs, (hubIDs+1)/2), "the full diff pages by --limit")
 	for _, e := range late {
 		require.Truef(t, f.appliedOnPeer(t, e.EventID),
 			"historical event %s (%s) must be recovered", e.EventID, e.OpType)
@@ -327,6 +368,44 @@ func TestPullSweep_UsesHubClock(t *testing.T) {
 				"a skewed client clock must not hide a late event")
 		})
 	}
+}
+
+// TestRunSyncPull_SweepApplyFails_ReturnsErrorKeepsLastSweep: when a
+// recovered event cannot be applied, the pull fails with the late-event
+// sweep error, counts a sync error (meta.sync.consecutive_errors) and
+// leaves meta.sync.last_sweep_at as it was, so the next pull retries the
+// same window. The late event's hub payload is rewritten to name a field
+// that apply rejects; the test hub is a throwaway database.
+func TestRunSyncPull_SweepApplyFails_ReturnsErrorKeepsLastSweep(t *testing.T) {
+	f := newSweepFixture(t)
+	ctx := context.Background()
+	f.seedSharedNode(t)
+	f.editPeer(t, 5)
+	f.pushPeer(t)
+	f.pullPeer(t, 100)
+	lastSweep := f.peerMeta(t, "meta.sync.last_sweep_at")
+	require.Equal(t, "0", f.peerMeta(t, "meta.sync.consecutive_errors"))
+
+	title := "offline edit that cannot apply"
+	require.NoError(t, f.b.UpdateNode(ctx, "TEST-1", &store.NodeUpdate{Title: &title}))
+	late := f.pushB(t)
+	require.Len(t, late, 1)
+	_, err := f.pool.Inner().Exec(ctx,
+		`UPDATE sync_events SET payload = '{"field_name":"not_a_field","new_value":"x"}'::jsonb
+		 WHERE event_id = $1`, late[0].EventID)
+	require.NoError(t, err)
+
+	var stdout, stderr bytes.Buffer
+	err = f.runPeerPull(&stdout, &stderr, 100)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "mtix sync late-event sweep:")
+	require.Contains(t, err.Error(), late[0].EventID)
+	require.Equal(t, "1", f.peerMeta(t, "meta.sync.consecutive_errors"))
+	require.Equal(t, lastSweep, f.peerMeta(t, "meta.sync.last_sweep_at"),
+		"a failed sweep must not advance its window")
+	require.False(t, f.appliedOnPeer(t, late[0].EventID))
+	require.NotContains(t, stdout.String(), "pull complete")
 }
 
 // requireWithin asserts lo <= got <= hi.

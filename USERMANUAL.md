@@ -146,6 +146,8 @@ mtix show PROJ-1
 mtix show PROJ-1 --json
 ```
 
+`mtix show` prints the node's details as labeled lines, then every annotation (oldest first, with its UTC timestamp and author), then the prompt cut to 100 characters. Annotation text, author and addressee, the description and the prompt are normalized for the terminal: control characters other than newline and tab are removed, leading blank lines and trailing whitespace are trimmed, and continuation lines are indented, so stored text cannot overwrite a line, restyle the terminal or pass for a label. Title and assignee print as stored, and invisible Unicode formatting characters (such as bidirectional overrides) are not removed yet. When you need the exact stored text, for example to quote a review verdict, use `--json`: it prints the raw record, unchanged.
+
 ### Update a Node
 
 ```bash

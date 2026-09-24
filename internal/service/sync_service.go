@@ -16,8 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -26,9 +24,6 @@ import (
 
 // DefaultMaxImportSize is the default maximum file size for auto-import (50 MB).
 const DefaultMaxImportSize = 50 * 1024 * 1024
-
-// supportedSchemaVersion is the maximum major version this build supports.
-const supportedSchemaVersion = "1.0.0"
 
 // SyncService manages automatic import/export of .mtix/tasks.json per FR-15.
 // It reads the export file exactly once into memory, computes its SHA-256 hash,
@@ -198,14 +193,22 @@ func (s *SyncService) parseAndValidateExport(
 	if schemaVer == "" {
 		schemaVer = "1.0.0"
 	}
-	if !isSchemaCompatible(schemaVer) {
+	if schemaErr := CheckSchemaVersion(schemaVer); schemaErr != nil {
 		s.logger.Error("tasks.json schema version is newer than supported — upgrade mtix",
 			"file_version", schemaVer,
 			"supported_version", supportedSchemaVersion)
 		return nil, nil
 	}
 
-	if s.hasConflict(ctx, mtixDir) {
+	conflict, conflictErr := s.hasConflict(ctx, mtixDir)
+	if conflictErr != nil {
+		// Fail closed (MTIX-95.31.1): a store that cannot be exported may
+		// hold changes tasks.json lacks, and a replace import would lose them.
+		return nil, fmt.Errorf("auto-import refused, nothing was imported: "+
+			"the local store cannot be exported, so changes it holds that tasks.json lacks cannot be ruled out: %w",
+			conflictErr)
+	}
+	if conflict {
 		s.logger.Warn("conflict detected: both tasks.json and local database changed since last sync",
 			"resolution", "run 'mtix import --mode replace' or 'mtix export' to resolve")
 		return nil, nil
@@ -290,11 +293,12 @@ func (s *SyncService) AutoExport(ctx context.Context, mtixDir string) error {
 	}
 
 	// Step 5: Update DB hash for conflict detection per FR-15.2h.
-	dbHash := s.computeDBHash(ctx)
-	if dbHash != "" {
-		if err := os.WriteFile(dbHashPath, []byte(dbHash), 0644); err != nil {
-			return fmt.Errorf("write db hash: %w", err)
-		}
+	dbHash, hashErr := s.computeDBHash(ctx)
+	if hashErr != nil {
+		return fmt.Errorf("db hash after auto-export: %w", hashErr)
+	}
+	if err := os.WriteFile(dbHashPath, []byte(dbHash), 0644); err != nil {
+		return fmt.Errorf("write db hash: %w", err)
 	}
 
 	elapsed := time.Since(start)
@@ -348,52 +352,50 @@ func (s *SyncService) backupDB(mtixDir string) error {
 
 // hasConflict detects whether both the file and DB have changed since last
 // sync per FR-15.2h. If both changed, the user must resolve manually.
-func (s *SyncService) hasConflict(ctx context.Context, mtixDir string) bool {
-	dbHashPath := filepath.Join(mtixDir, "data", "sync-db.sha256")
-	storedDBHash, err := os.ReadFile(dbHashPath)
+// It fails closed (MTIX-95.31.1): the current DB hash is computed first,
+// with or without a stored baseline, and when the store cannot be exported
+// (for example a JSON cell that does not parse) the error is returned, so
+// auto-import refuses rather than replace a store whose local changes it
+// cannot see.
+func (s *SyncService) hasConflict(ctx context.Context, mtixDir string) (bool, error) {
+	currentDBHash, err := s.computeDBHash(ctx)
 	if err != nil {
+		return false, err
+	}
+
+	dbHashPath := filepath.Join(mtixDir, "data", "sync-db.sha256")
+	storedDBHash, readErr := os.ReadFile(dbHashPath)
+	if readErr != nil {
 		// No stored DB hash → first run or DB hash tracking not set up.
 		// No conflict possible without a baseline.
-		return false
-	}
-
-	// Compute current DB hash by exporting and hashing.
-	currentDBHash := s.computeDBHash(ctx)
-	if currentDBHash == "" {
-		return false
-	}
-
-	// If DB hash matches stored, DB hasn't changed → no conflict.
-	if currentDBHash == string(storedDBHash) {
-		return false
+		return false, nil
 	}
 
 	// DB hash differs AND file hash differs (we're in this code path because
 	// file hash already differed) → conflict.
-	return true
+	return currentDBHash != string(storedDBHash), nil
 }
 
-// computeDBHash exports the current DB state and computes its SHA-256 hash.
 // computeDBHash exports the current DB state and computes its SHA-256 hash.
 // The ExportedAt timestamp is zeroed before hashing so that the hash reflects
 // only data content, not when the export was generated. Without this, two
 // exports of identical data in different seconds produce different hashes,
-// causing false-positive conflict detection in hasConflict.
-func (s *SyncService) computeDBHash(ctx context.Context) string {
+// causing false-positive conflict detection in hasConflict. A store that
+// cannot be exported is an error, never an empty hash (MTIX-95.31.1).
+func (s *SyncService) computeDBHash(ctx context.Context) (string, error) {
 	data, err := s.store.Export(ctx, "", "")
 	if err != nil {
-		s.logger.Debug("failed to export DB for conflict detection", "error", err)
-		return ""
+		return "", fmt.Errorf("export the local store: %w", err)
 	}
 	// Zero envelope metadata that changes between calls but doesn't
 	// represent actual data changes.
 	data.ExportedAt = ""
 	jsonBytes, err := json.Marshal(data)
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("encode the local store: %w", err)
 	}
 	hash := sha256.Sum256(jsonBytes)
-	return fmt.Sprintf("%x", hash)
+	return fmt.Sprintf("%x", hash), nil
 }
 
 // SyncReport describes the result of comparing SQLite state with tasks.json.
@@ -484,26 +486,4 @@ func (s *SyncService) Compare(ctx context.Context, mtixDir string) (*SyncReport,
 
 	report.InSync = len(report.OnlyInFile) == 0 && len(report.OnlyInDB) == 0
 	return report, nil
-}
-
-// isSchemaCompatible checks if the file's schema version is compatible
-// with this build per FR-15.2g. Compatible if major versions match.
-func isSchemaCompatible(fileVersion string) bool {
-	fileMajor := parseMajorVersion(fileVersion)
-	supportedMajor := parseMajorVersion(supportedSchemaVersion)
-	return fileMajor <= supportedMajor
-}
-
-// parseMajorVersion extracts the major version number from a semver string.
-// Returns 1 for empty or unparsable versions (backward compatibility default).
-func parseMajorVersion(version string) int {
-	if version == "" {
-		return 1
-	}
-	parts := strings.SplitN(version, ".", 2)
-	major, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return 1
-	}
-	return major
 }

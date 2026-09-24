@@ -1243,24 +1243,40 @@ Export all project data to JSON:
 mtix export > project-data.json
 ```
 
-The export includes nodes, dependencies, agents, sessions, and a SHA-256 checksum for integrity verification.
+The export includes every node with every stored field, dependencies, agents, sessions, and a SHA-256 checksum for integrity verification. `.mtix/tasks.json`, the git-tracked board, is the same document. Each node carries its annotations (comments, review verdicts, close receipts) in the structure `mtix show --json` returns, its activity stream, its invalidation fields and every other column; soft-deleted nodes are included. The checksum covers the nodes, annotations included, and the dependencies. No node field is left out. The format (`schema_version` 2.0.0 since 0.5.4; 0.5.3 and earlier wrote 1.0.0), every field and the checksum rule are described in [docs/EXPORT-FORMAT.md](docs/EXPORT-FORMAT.md).
+
+**Mixed versions on one board.** A client older than 0.5.4 supports only `schema_version` 1.x, so its automatic import skips a file written by 0.5.4 and logs `tasks.json schema version is newer than supported — upgrade mtix`; its `mtix import` of the file fails with `checksum verification failed`. That protects its store only until its next writing command: every write re-exports `.mtix/tasks.json` from that store, which lacks everything the client skipped and every annotation, and committing that file reverts every change made upstream. Until every teammate who shares a board runs 0.5.4 or later, do not run writing commands on an older client and do not commit its `.mtix/tasks.json`. If such a file was committed, restore `.mtix/tasks.json` from the last good commit in git history, or restore the store of a machine that imported it from `.mtix/data/pre-sync-backup.db` (copy it over `.mtix/data/mtix.db` while no mtix process runs). A 0.5.4 store is protected from such a file by the auto-import guard (MTIX-95.31.2), which refuses a replace import that would drop annotations or nodes the store holds. 0.5.4 reads files written by older clients.
 
 ### Import
 
 Import data from a JSON export:
 
 ```bash
-# Merge mode (default) — skip unchanged nodes, update modified ones
+# Merge mode (default) — add what is new, never drop local annotations
 mtix import project-data.json
 
 # Replace mode — drop existing data and reimport
 mtix import project-data.json --mode replace
 ```
 
-Import validates:
+**Replace mode** deletes every node, dependency, agent and session, then writes the file's content with every field, annotations and activity included. An export followed by a replace import leaves the store as it was. The automatic import of a changed `.mtix/tasks.json` (after a `git pull` or checkout) is a replace import. A file written before 0.5.4 (`schema_version` 1.0.0) carries no annotations or activity, so a replace import of it leaves every node without them.
+
+**Merge mode**:
+- A node the store does not have is created as exported.
+- For a node the store has, annotations merge as a union by annotation id: no local annotation is dropped, so a file without annotations keeps the local ones. Annotations are keyed by id alone: for an id both sides hold, the local copy wins unless the incoming copy is resolved and the local one is not, so a resolution never regresses. The activity stream merges as a union of distinct entries: an entry is identified by its id, type, author, text and time together, so two different entries that share an id are both kept, and an entry both sides hold is kept once.
+- When the node's content hash differs, the file's values replace its other fields; when it is the same, they keep their local values. A file written before 0.5.4 never changes the fields it does not carry (annotations, activity, `previous_status`, the invalidation fields and the others listed in docs/EXPORT-FORMAT.md).
+- A merge never removes an annotation or activity entry. To make the store match a file exactly, use replace mode.
+
+Import validates, before it writes anything (a failed check writes nothing):
+- The major `schema_version` is not higher than the one this mtix writes; a newer file is refused with `newer than supported ... upgrade mtix` (the automatic import skips it with the same message)
 - Node count matches the `node_count` field
-- SHA-256 checksum over canonical JSON
-- FTS5 index is rebuilt after import
+- SHA-256 checksum over canonical JSON. A file written by mtix always verifies, including one holding text that is not valid UTF-8. One exception: a file written by 0.5.3 or earlier that held both invalid UTF-8 and a genuine U+FFFD replacement character still fails; check it, then import it with `mtix import --recompute-checksum`
+- Every time value (node timestamps, annotation and activity times, dependency, agent and session times) is RFC 3339 with a UTC year from 1 to 9999, and the required ones (a node's `created_at` and `updated_at`, a dependency's `created_at`, a session's `started_at`) are not empty; the error names the record and the field
+
+A refused import leaves `.mtix/tasks.json` and its stored hash as they were. The automatic import of a changed `.mtix/tasks.json` also refuses, and changes nothing, when the local store cannot be exported (for example a stored annotations or activity value that does not parse): it cannot rule out local changes the file lacks. `mtix export` fails the same way. Both messages name the node, the field and `mtix recover`, which salvages everything readable (see "Disk full and corruption recovery").
+
+After an import:
+- FTS5 index is rebuilt
 - Sequence counters are reconstructed
 
 ---

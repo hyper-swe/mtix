@@ -62,13 +62,15 @@ func TestExport_IncludesSchemaVersion(t *testing.T) {
 	data, err := s.Export(ctx, "EX", "0.1.0")
 	require.NoError(t, err)
 
-	// schema_version must be a semver string.
-	assert.Equal(t, "1.0.0", data.SchemaVersion, "export must include schema_version per FR-15.2g")
+	// schema_version must be a semver string. 2.0.0 (MTIX-95.31.1) added
+	// annotations and the other node columns 1.0.0 left out; the major bump
+	// makes an older client skip the file as newer than it supports.
+	assert.Equal(t, "2.0.0", data.SchemaVersion, "export must include schema_version per FR-15.2g")
 
 	// Verify it appears in serialized JSON.
 	jsonBytes, err := json.Marshal(data)
 	require.NoError(t, err)
-	assert.Contains(t, string(jsonBytes), `"schema_version":"1.0.0"`)
+	assert.Contains(t, string(jsonBytes), `"schema_version":"2.0.0"`)
 }
 
 // TestExport_ChecksumIsCorrect verifies checksum is reproducible and valid per FR-7.8.

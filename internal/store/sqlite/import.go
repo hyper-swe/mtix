@@ -44,6 +44,12 @@ func DecodeExportData(r io.Reader) (*ExportData, error) {
 	return &data, nil
 }
 
+// ErrImportIncomplete marks an import error raised after the import's
+// transaction committed, while rebuilding the sequence counters or the
+// search index (MTIX-95.31.1). Every other import error leaves the store
+// unchanged.
+var ErrImportIncomplete = errors.New("import applied, but rebuilding its indexes failed")
+
 // ImportMode controls how import handles existing data per FR-7.8.
 type ImportMode string
 
@@ -65,8 +71,9 @@ type ImportResult struct {
 }
 
 // Import loads data from an ExportData structure per FR-7.8.
-// Verifies node_count and checksum before importing. Supports replace
-// and merge modes. Rebuilds sequences and FTS index after bulk import.
+// Verifies node_count, checksum and every time value (MTIX-95.31.1) before
+// importing, so a rejected file writes nothing. Supports replace and merge
+// modes. Rebuilds sequences and FTS index after bulk import.
 // If force is false, importing zero nodes into a non-empty database is rejected.
 func (s *Store) Import(
 	ctx context.Context,
@@ -94,6 +101,13 @@ func (s *Store) Import(
 		return nil, fmt.Errorf("checksum verification failed: %w", model.ErrInvalidInput)
 	}
 
+	// Reject a time value no reader could parse back (not RFC 3339, or a
+	// UTC year outside 1..9999, model.IsStorableTime) before anything is
+	// written (MTIX-95.31.1).
+	if timeErr := validateExportTimes(data); timeErr != nil {
+		return nil, timeErr
+	}
+
 	// Reject zero-node imports into non-empty databases unless forced.
 	if len(data.Nodes) == 0 && !force {
 		var existingCount int
@@ -117,12 +131,12 @@ func (s *Store) Import(
 
 	// Rebuild sequences from imported data per FR-7.8.x.
 	if err := s.rebuildSequences(ctx); err != nil {
-		return nil, fmt.Errorf("rebuild sequences: %w", err)
+		return nil, fmt.Errorf("rebuild sequences: %w: %w", ErrImportIncomplete, err)
 	}
 
 	// Rebuild FTS index after bulk import per FR-7.8.
 	if err := s.rebuildFTS(ctx); err != nil {
-		return nil, fmt.Errorf("rebuild FTS: %w", err)
+		return nil, fmt.Errorf("rebuild FTS: %w: %w", ErrImportIncomplete, err)
 	}
 	result.FTSRebuilt = true
 
@@ -190,12 +204,15 @@ func insertAllExportData(ctx context.Context, tx *sql.Tx, data *ExportData) (Imp
 }
 
 // importMerge merges imported data with existing using content_hash per FR-7.8.
+// Whether the file carries the columns schema 2.0.0 added decides how their
+// absence is read (MTIX-95.31.1, carriesNodeColumns).
 func (s *Store) importMerge(ctx context.Context, data *ExportData) (ImportResult, error) {
 	var result ImportResult
+	fileCarriesAllColumns := carriesNodeColumns(data.SchemaVersion)
 
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
 		for i := range data.Nodes {
-			action, mergeErr := mergeImportNode(ctx, tx, &data.Nodes[i])
+			action, mergeErr := mergeImportNode(ctx, tx, &data.Nodes[i], fileCarriesAllColumns)
 			if mergeErr != nil {
 				return mergeErr
 			}
@@ -231,8 +248,15 @@ const (
 	importActionSkipped
 )
 
-// mergeImportNode handles the merge logic for a single imported node.
-func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode) (importAction, error) {
+// mergeImportNode merges one imported node into the store (FR-7.8). A node
+// new to the store is inserted as exported. For a node the store holds,
+// annotations and the activity stream merge as a union that never drops a
+// local entry (mergeNodeStreams, MTIX-95.31.1): an incoming node without
+// annotations keeps the local ones. The other columns take the incoming
+// values only when the content hash differs, and a file older than schema
+// 2.0.0 carries none of the 2.0.0 columns, so for those the local values
+// stand (keepLocalNodeColumns).
+func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarriesAllColumns bool) (importAction, error) {
 	var existingHash sql.NullString
 	err := tx.QueryRowContext(ctx,
 		"SELECT content_hash FROM nodes WHERE id = ?", n.ID,
@@ -248,30 +272,56 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode) (importActi
 		return 0, fmt.Errorf("check node %s: %w", n.ID, err)
 	}
 
+	local, err := scanExportNode(tx.QueryRowContext(ctx, exportNodeSelectSQL+" WHERE id = ?", n.ID))
+	if err != nil {
+		return 0, fmt.Errorf("read local node %s: %w", n.ID, err)
+	}
+	merged := *n // merge into a copy: the caller's export must still verify
+	if !fileCarriesAllColumns {
+		keepLocalNodeColumns(&merged, &local)
+	}
+	streamsChanged := mergeNodeStreams(&merged, &local)
+
 	if existingHash.Valid && existingHash.String == n.ContentHash {
-		return importActionSkipped, nil
+		if !streamsChanged {
+			return importActionSkipped, nil
+		}
+		if err := writeNodeStreams(ctx, tx, &merged); err != nil {
+			return 0, fmt.Errorf("merge annotations and activity of node %s: %w", n.ID, err)
+		}
+		return importActionUpdated, nil
 	}
 
-	if err := updateExportNode(ctx, tx, n); err != nil {
+	if err := updateExportNode(ctx, tx, &merged); err != nil {
 		return 0, fmt.Errorf("update node %s: %w", n.ID, err)
 	}
 	return importActionUpdated, nil
 }
 
-// insertExportNode inserts a node from export data.
+// insertExportNode inserts a node from export data, writing every exported
+// column, annotations and the activity stream included (MTIX-95.31.1), so
+// a replace import restores exactly the store the export was taken from.
 // node_type is derived from depth (not trusted from the file) for
 // tamper resistance and cross-version compatibility. The durable uid
 // is persisted so re-import stays idempotent and import-boundary uid
 // validation can run (ADR-003 §6, §7; audit F-3).
 func insertExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
 	n.NodeType = string(model.NodeTypeForDepth(n.Depth))
-	_, err := tx.ExecContext(ctx,
+	cols, err := encodeNodeColumns(n)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx,
 		`INSERT INTO nodes (id, parent_id, depth, seq, project,
 		  title, description, prompt, acceptance, node_type,
 		  issue_type, priority, labels, status, progress,
 		  assignee, creator, agent_state, weight, content_hash,
-		  created_at, updated_at, closed_at, defer_until, deleted_at, uid)
-		 VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?)`,
+		  created_at, updated_at, closed_at, defer_until, deleted_at,
+		  uid, previous_status, estimate_min, actual_min, code_refs,
+		  commit_refs, annotations, invalidated_at, invalidated_by, invalidation_reason,
+		  activity, deleted_by, metadata, session_id)
+		 VALUES (?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?,
+		         ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?)`,
 		n.ID, nullStr(n.ParentID), n.Depth, n.Seq, n.Project,
 		n.Title, nullStr(n.Description), nullStr(n.Prompt),
 		nullStr(n.Acceptance), n.NodeType,
@@ -279,25 +329,38 @@ func insertExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
 		nullStr(n.Assignee), nullStr(n.Creator), nullStr(n.AgentState),
 		n.Weight, nullStr(n.ContentHash),
 		n.CreatedAt, n.UpdatedAt, nullStr(n.ClosedAt),
-		nullStr(n.DeferUntil), nullStr(n.DeletedAt), nullStr(n.UID),
+		nullStr(n.DeferUntil), nullStr(n.DeletedAt),
+		nullStr(n.UID), nullStr(n.PreviousStatus), cols.estimateMin, cols.actualMin, cols.codeRefs,
+		cols.commitRefs, cols.annotations, nullStr(n.InvalidatedAt),
+		nullStr(n.InvalidatedBy), nullStr(n.InvalidationReason),
+		cols.activity, nullStr(n.DeletedBy), nullStr(n.Metadata), nullStr(n.SessionID),
 	)
 	return err
 }
 
-// updateExportNode updates an existing node from export data.
+// updateExportNode updates an existing node from export data, writing every
+// exported column (MTIX-95.31.1); merge import has already set n's
+// annotations and activity to their union with the local ones.
 // node_type is derived from depth for consistency. The durable uid is
 // preserved only when the export carries one: a pre-v3 export (empty uid)
 // must not blank an already-backfilled local uid (ADR-003 §6, §7).
 func updateExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
 	n.NodeType = string(model.NodeTypeForDepth(n.Depth))
-	_, err := tx.ExecContext(ctx,
+	cols, err := encodeNodeColumns(n)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET
 		  parent_id=?, depth=?, seq=?, project=?,
 		  title=?, description=?, prompt=?, acceptance=?, node_type=?,
 		  issue_type=?, priority=?, labels=?, status=?, progress=?,
 		  assignee=?, creator=?, agent_state=?, weight=?, content_hash=?,
 		  created_at=?, updated_at=?, closed_at=?, defer_until=?, deleted_at=?,
-		  uid=COALESCE(?, uid)
+		  uid=COALESCE(?, uid), previous_status=?, estimate_min=?, actual_min=?,
+		  code_refs=?, commit_refs=?, annotations=?, invalidated_at=?,
+		  invalidated_by=?, invalidation_reason=?, activity=?, deleted_by=?,
+		  metadata=?, session_id=?
 		 WHERE id=?`,
 		nullStr(n.ParentID), n.Depth, n.Seq, n.Project,
 		n.Title, nullStr(n.Description), nullStr(n.Prompt),
@@ -306,7 +369,11 @@ func updateExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
 		nullStr(n.Assignee), nullStr(n.Creator), nullStr(n.AgentState),
 		n.Weight, nullStr(n.ContentHash),
 		n.CreatedAt, n.UpdatedAt, nullStr(n.ClosedAt),
-		nullStr(n.DeferUntil), nullStr(n.DeletedAt), nullStr(n.UID),
+		nullStr(n.DeferUntil), nullStr(n.DeletedAt),
+		nullStr(n.UID), nullStr(n.PreviousStatus), cols.estimateMin, cols.actualMin,
+		cols.codeRefs, cols.commitRefs, cols.annotations, nullStr(n.InvalidatedAt),
+		nullStr(n.InvalidatedBy), nullStr(n.InvalidationReason), cols.activity, nullStr(n.DeletedBy),
+		nullStr(n.Metadata), nullStr(n.SessionID),
 		n.ID,
 	)
 	return err

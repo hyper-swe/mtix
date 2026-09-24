@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -163,6 +164,12 @@ func salvageFromDB(ctx context.Context, dbPath string, res *RecoverResult) (*dbS
 	out := &dbSalvage{nodes: map[string]exportNode{}}
 	for _, id := range ids {
 		n, err := scanExportNode(db.QueryRowContext(ctx, exportNodeSelectSQL+" WHERE id = ?", id))
+		if errors.Is(err, errUnreadableNodeColumn) {
+			// MTIX-95.31.1: the row is readable but a JSON column is not.
+			// Salvage the node without that column, and say so.
+			res.Notes = append(res.Notes, fmt.Sprintf("%v; the node is salvaged without that column", err))
+			err = nil
+		}
 		if err != nil {
 			res.LostIDs = append(res.LostIDs, id)
 			continue

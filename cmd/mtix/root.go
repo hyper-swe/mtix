@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -373,10 +374,17 @@ func shouldSkipAutoImport(cmdName string) bool {
 // execution, regardless of whether RunE returns an error. This is critical
 // because Cobra skips PersistentPostRunE when RunE errors — but the DB
 // mutation may have already committed. Per FR-15.3b, export failure must
-// not cause the primary command to fail.
+// not cause the primary command to fail. The one exception is an error the
+// command marked as raised before it wrote anything (nothingWrittenError,
+// MTIX-95.31.1): then the store is unchanged and the export is skipped, so
+// a refused command leaves .mtix/tasks.json and its hash as they were.
 func withAutoExport(fn func(cmd *cobra.Command, args []string) error) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		runErr := fn(cmd, args)
+		var unchanged *nothingWrittenError
+		if errors.As(runErr, &unchanged) {
+			return runErr
+		}
 		if app.syncSvc != nil && app.mtixDir != "" {
 			if exportErr := app.syncSvc.AutoExport(cmd.Context(), app.mtixDir); exportErr != nil {
 				if app.logger != nil {

@@ -42,8 +42,8 @@ of the owner role may run them too:
 ```bash
 mtix sync harden                          # Dry run: lists every role, default privilege and membership it would change; changes nothing
 mtix sync harden --apply --keep-role <r>  # After a human approves the role list: restrict the sync tables to the owner and the kept roles
-mtix config set sync.keep_roles <r>[,<r>] # Record the kept roles (harden prints this command; it never writes config)
-mtix sync harden --json                   # Report for agents: before/after findings, statements, keep_roles_hint
+mtix config set sync.keep_roles <r>[,<r>] # Record the kept roles; also turns on doctor strict mode (harden prints this; it never writes config)
+mtix sync harden --json                   # Report for agents: before/after caller, caller_scope, findings, statements; keep_roles_hint
 ```
 
 Exit code 0 means verification passed: apart from the table owner,
@@ -60,6 +60,14 @@ are out of scope. A server WARNING fails the run and nothing changes. Access
 harden may not change is printed with the statement a database administrator
 runs. EXECUTE on the mtix trigger functions is information only, so a freshly
 migrated hub verifies clean.
+
+`mtix sync doctor` runs the same verification as its `hub-privileges` check: a
+WARN (exit 0) by default when other roles can use the sync tables, which may be
+fine on a private network and blocks nothing; a FAIL (exit 2) only in strict
+mode, when `sync.keep_roles` is set, and then for every finding harden would
+report (kept roles' grant options and grants from other roles, mtix objects
+owned by another role, and memberships that reach every table included).
+`mtix sync init` changes no privileges and `mtix sync push` issues no DDL.
 
 Never pass `--apply` without a human approving the dry run's role list. Never
 run `mtix sync harden` from a hook, a push or the daemon.

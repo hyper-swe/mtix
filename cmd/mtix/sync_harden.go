@@ -63,16 +63,21 @@ them on; the owner first grants again anything a kept role holds by
 another role's grant. The owner's default privileges that would give
 those roles access to tables created later are revoked too. A membership
 in pg_read_all_data, pg_write_all_data or pg_maintain, even one with only
-ADMIN OPTION, is revoked when the owner may do so; it is cluster-wide. A missing TRUNCATE guard is restored and a
-disabled one enabled. A server WARNING fails the run and nothing changes.
-Access it cannot remove is reported with the statement an administrator
-runs. EXECUTE on the mtix trigger functions and other roles' default
-privileges are information and never fail verification.
+ADMIN OPTION, is revoked when the owner may do so; it is cluster-wide. A
+missing TRUNCATE guard is restored, and a disabled one, or one that fires
+only in replication sessions, is enabled. A server WARNING fails the run
+and nothing changes. Access it cannot remove is reported with the
+statement an administrator runs, and after --apply every finding that
+remains is listed. EXECUTE on the mtix trigger functions and other roles'
+default privileges are information and never fail verification.
 
 Run it as the role that owns the sync tables, or as a superuser or a
 member of the owner role; any other role is refused and nothing changes.
-Superusers are not checked. Review the dry run's role list before
---apply: a role you do not keep loses its access.
+Superusers are not checked. The connecting role is checked unless it owns
+the sync tables, is a superuser or is kept, so a member of the owner role
+reports its own membership: run as the owner, or keep the role, to verify
+clean. Review the dry run's role list before --apply: a role you do not
+keep loses its access.
 
 Exit code: 0 when verification passes, 2 when changes are pending (dry
 run) or access remains (--apply), 1 on an error or a refusal. --json
@@ -256,9 +261,10 @@ func printHardenDryRun(w io.Writer, rep *transport.PrivilegeReport) {
 		return
 	}
 	printHardenRoles(w, rep)
-	printHardenFindings(w, "Changes --apply would make:", rep, true)
-	printHardenFindings(w, "Access --apply cannot remove (an administrator must act):", rep, false)
+	printHardenFindings(w, "Changes --apply would make:", rep, withFix, false)
+	printHardenFindings(w, "Access --apply cannot remove (an administrator must act):", rep, withoutFix, false)
 	printHardenInfo(w, rep)
+	printCallerOwnerHint(w, rep)
 	if len(rep.Statements) > 0 {
 		fmt.Fprintln(w, "\nStatements --apply would run, in order:")
 		for _, s := range rep.Statements {
@@ -285,12 +291,32 @@ func printHardenApply(w io.Writer, r *transport.HardenResult, hint string) {
 		fmt.Fprintln(w, verificationPassed)
 	} else {
 		fmt.Fprintln(w, "verification failed: access remains.")
-		printHardenFindings(w, "Access that remains:", after, false)
+		printHardenFindings(w, "Findings that remain:", after, anyFinding, true)
+		printCallerOwnerHint(w, after)
 	}
 	printHardenInfo(w, after)
 	if hint != "" {
 		fmt.Fprintln(w, "\nTo keep the same roles in later runs, run: "+hint)
+		fmt.Fprintln(w, "Setting sync.keep_roles also turns on strict mode for mtix sync doctor: its hub-privileges")
+		fmt.Fprintln(w, "check then fails, instead of warning, when any other role can use the sync tables.")
 	}
+}
+
+// printCallerOwnerHint says how to verify clean when the only finding is
+// the connecting role's own membership in the owner role, which harden
+// never changes (MTIX-95.1).
+func printCallerOwnerHint(w io.Writer, rep *transport.PrivilegeReport) {
+	if len(rep.Findings) == 0 {
+		return
+	}
+	for _, f := range rep.Findings {
+		if f.Role != rep.Caller || f.Via != transport.FindingViaOwnerMembership {
+			return
+		}
+	}
+	fmt.Fprintf(w, "\nThe only finding is the connecting role's own membership in the owner role, which harden\n"+
+		"never changes. To verify clean, run mtix sync harden as the owner itself, or keep this role:\n"+
+		"--keep-role %s (or add it to sync.keep_roles).\n", safeText(rep.Caller))
 }
 
 // printHardenRoles lists, before any detail, the roles --apply would
@@ -339,7 +365,25 @@ func distinctSorted(in []string) []string {
 	return out
 }
 
-// printHardenScope writes the schema, owners and kept roles.
+// callerScopeText says whether, and why not, the connecting role was
+// checked (MTIX-95.1); "" for an unknown scope.
+func callerScopeText(scope string) string {
+	switch scope {
+	case transport.CallerOwner:
+		return "not checked, it owns the sync tables"
+	case transport.CallerSuperuser:
+		return "not checked, it is a superuser"
+	case transport.CallerKept:
+		return "not checked, it is a kept role"
+	case transport.CallerChecked:
+		return "checked"
+	default:
+		return ""
+	}
+}
+
+// printHardenScope writes the schema, owners and kept roles, and whether
+// the connecting role was checked.
 func printHardenScope(w io.Writer, rep *transport.PrivilegeReport) {
 	kept := "none"
 	if len(rep.KeptRoles) > 0 {
@@ -347,17 +391,35 @@ func printHardenScope(w io.Writer, rep *transport.PrivilegeReport) {
 	}
 	fmt.Fprintf(w, "Sync tables in schema %s, owned by %s. Kept roles: %s.\n",
 		safeText(rep.Schema), safeText(strings.Join(rep.Owners, ", ")), kept)
+	if scope := callerScopeText(rep.CallerScope); scope != "" {
+		fmt.Fprintf(w, "Connecting role %s: %s.\n", safeText(rep.Caller), scope)
+	}
 }
 
-// printHardenFindings writes the findings that have a fix (fixable) or
-// that do not, under title; nothing when there are none.
-func printHardenFindings(w io.Writer, title string, rep *transport.PrivilegeReport, fixable bool) {
+// withFix selects the findings --apply fixes.
+func withFix(f transport.PrivilegeFinding) bool { return f.Fix != "" }
+
+// withoutFix selects the findings --apply cannot fix.
+func withoutFix(f transport.PrivilegeFinding) bool { return f.Fix == "" }
+
+// anyFinding selects every finding.
+func anyFinding(transport.PrivilegeFinding) bool { return true }
+
+// printHardenFindings writes the findings keep selects under title, each
+// with the administrator's statement and its note, and with showFix the
+// statement --apply runs for it; nothing when there are none.
+func printHardenFindings(w io.Writer, title string, rep *transport.PrivilegeReport,
+	keep func(transport.PrivilegeFinding) bool, showFix bool,
+) {
 	var lines []string
 	for _, f := range rep.Findings {
-		if (f.Fix != "") != fixable {
+		if !keep(f) {
 			continue
 		}
 		lines = append(lines, "  "+findingLine(f))
+		if f.Fix != "" && showFix {
+			lines = append(lines, "      --apply runs: "+safeText(f.Fix))
+		}
 		if f.Manual != "" {
 			lines = append(lines, "      an administrator runs: "+safeText(f.Manual))
 		}

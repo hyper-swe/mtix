@@ -19,14 +19,21 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
-// DoctorCheck is one row in the doctor's report.
+// DoctorCheck is one row in the doctor's report. Warn marks a passing
+// check that needs attention: it is shown as WARN and keeps the doctor's
+// exit code 0 (MTIX-95.1). Fix is the command that addresses the check,
+// and Findings carries the hub-privileges check's findings. The three are
+// omitted when empty, so the other checks marshal as before.
 type DoctorCheck struct {
-	Name   string `json:"name"`
-	Pass   bool   `json:"pass"`
-	Detail string `json:"detail,omitempty"`
+	Name     string                       `json:"name"`
+	Pass     bool                         `json:"pass"`
+	Warn     bool                         `json:"warn,omitempty"`
+	Detail   string                       `json:"detail,omitempty"`
+	Fix      string                       `json:"fix,omitempty"`
+	Findings []transport.PrivilegeFinding `json:"findings,omitempty"`
 }
 
-// DoctorReport aggregates the 5 health checks per FR-18 / MTIX-15.7.3.
+// DoctorReport aggregates the health checks per FR-18 / MTIX-15.7.3.
 type DoctorReport struct {
 	OverallPass bool          `json:"pass"`
 	Checks      []DoctorCheck `json:"checks"`
@@ -45,16 +52,31 @@ func newSyncDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Run sync health checks (FR-18)",
-		Long: `Run 5 health checks against the local store and the BYO Postgres hub:
+		Long: `Run health checks against the local store and the BYO Postgres hub:
 
-  1. PG reachable           — opens pool + Ping
-  2. Schema current         — sync_projects table exists with expected columns
-  3. Queue draining         — no events older than 1h still in pending
-  4. No orphan applied      — every applied_event has a matching node OR tombstone
-  5. DSN secrets file mode  — .mtix/secrets is mode 0600 (when present)
+  PG reachable           - opens pool + Ping
+  Schema current         - sync_projects table exists with expected columns
+  Queue draining         - no events older than 1h still in pending
+  No orphan applied      - every applied_event has a matching node OR tombstone
+  DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
+  Hub privileges         - which roles other than the table owner can use the
+                           sync tables, and whether every TRUNCATE guard is in
+                           place (the check mtix sync harden runs)
 
-Exit code: 0 on all-pass, 2 if any check fails. --json output for
-agents and CI consumption.`,
+Hub privileges is a WARN by default: roles other than the owner may use
+the sync tables, which can be fine when the database is reachable only
+from a private network; mtix sync harden restricts them. It fails only in
+strict mode, when the sync.keep_roles config key is set: then it fails
+whenever mtix sync harden would report a finding, not only a role outside
+the list or a missing or disabled TRUNCATE guard, but also a kept role
+that can grant its access on or holds a privilege another role granted
+it, an mtix object owned by another role, and a membership through which
+a role can reach every table. If the check cannot run, it is a WARN by
+default and fails in strict mode. The check contacts the hub only while
+the doctor runs.
+
+Exit code: 0 on all-pass, including checks that pass with a WARN; 2 if
+any check fails. --json output for agents and CI consumption.`,
 		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			err := runSyncDoctor(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
@@ -104,6 +126,7 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	} else {
 		report = appendCheck(report, "schema current", false, "skipped (PG unreachable)")
 	}
+	hubReady := dsnErr == nil && lastCheckPassed(report)
 
 	// Check 3: queue draining (local only).
 	if app.store == nil {
@@ -125,6 +148,9 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	modeOK, detail := checkSecretsFileMode(app.mtixDir)
 	report = appendCheck(report, "secrets file mode", modeOK, detail)
 
+	// Check 6: hub privileges, the verification mtix sync harden runs (MTIX-95.1).
+	report = appendDoctorCheck(report, checkHubPrivileges(ctx, dsn, hubReady, opts))
+
 	// No detail may carry the DSN or its password (FR-18.17, MTIX-95.15).
 	report = scrubDoctorReport(report)
 
@@ -143,8 +169,14 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 }
 
 func appendCheck(r DoctorReport, name string, pass bool, detail string) DoctorReport {
-	r.Checks = append(r.Checks, DoctorCheck{Name: name, Pass: pass, Detail: detail})
-	if !pass {
+	return appendDoctorCheck(r, DoctorCheck{Name: name, Pass: pass, Detail: detail})
+}
+
+// appendDoctorCheck adds c to r. A failing check fails the report; a WARN,
+// which passes, does not (MTIX-95.1).
+func appendDoctorCheck(r DoctorReport, c DoctorCheck) DoctorReport {
+	r.Checks = append(r.Checks, c)
+	if !c.Pass {
 		r.OverallPass = false
 	}
 	return r
@@ -250,18 +282,30 @@ func checkSecretsFileMode(mtixDir string) (bool, string) {
 	return true, "ok"
 }
 
+// printDoctorTable writes one line per check, marked PASS, WARN or FAIL,
+// and a summary that counts warnings (MTIX-95.1).
 func printDoctorTable(w io.Writer, r DoctorReport) {
+	warnings := 0
 	for _, c := range r.Checks {
 		mark := "PASS"
-		if !c.Pass {
+		switch {
+		case !c.Pass:
 			mark = "FAIL"
+		case c.Warn:
+			mark = "WARN"
+			warnings++
 		}
 		fmt.Fprintf(w, "[%s] %-20s %s\n", mark, c.Name, c.Detail)
 	}
 	fmt.Fprintln(w)
-	if r.OverallPass {
+	switch {
+	case !r.OverallPass:
+		fmt.Fprintln(w, "one or more checks FAILED \u2014 see above")
+	case warnings == 1:
+		fmt.Fprintln(w, "all checks passed (1 warning)")
+	case warnings > 1:
+		fmt.Fprintf(w, "all checks passed (%d warnings)\n", warnings)
+	default:
 		fmt.Fprintln(w, "all checks passed")
-	} else {
-		fmt.Fprintln(w, "one or more checks FAILED — see above")
 	}
 }

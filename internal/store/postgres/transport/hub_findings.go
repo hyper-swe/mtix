@@ -38,8 +38,9 @@ const (
 
 // computeFindings verifies the catalog against the kept roles (MTIX-95.1)
 // and returns the findings, which fail verification, and the information
-// items, which do not. Only the owners, superusers, the caller and the
-// kept roles may hold access; a kept role may not pass its access on.
+// items, which do not. Only the owners, superusers and the kept roles may
+// hold access; a kept role may not pass its access on. The connecting role
+// is checked unless it is one of those.
 // Information items are EXECUTE on the mtix trigger functions and other
 // roles' default privileges.
 func computeFindings(c *hubCatalog, kept map[string]bool) (findings, info []finding) {
@@ -55,6 +56,7 @@ func computeFindings(c *hubCatalog, kept map[string]bool) (findings, info []find
 	findings = append(findings, objectOwnerFindings(c)...)
 	findings = append(findings, regrantFindings(c, kept)...)
 	findings = append(findings, createRoleFindings(c, checked)...)
+	findings = append(findings, escalationFindings(c, checked)...)
 	info = append(info, grantInfo...)
 	info = append(info, other...)
 	sortFindings(findings)
@@ -83,7 +85,7 @@ func grantFindings(c *hubCatalog, kept map[string]bool) (findings, info []findin
 		switch {
 		case e.grantee == publicOID:
 			privs[k] = append(privs[k], e)
-		case c.owners[e.grantee] || r.super || e.grantee == c.current:
+		case c.owners[e.grantee] || r.super:
 		case kept[r.name]:
 			if e.grantable {
 				options[k] = append(options[k], e)
@@ -196,7 +198,7 @@ func defaultFindings(c *hubCatalog, kept map[string]bool) (findings, info []find
 	privs := map[defaultKey][]string{}
 	for _, d := range c.defaults {
 		r := c.roles[d.grantee]
-		if d.grantee != publicOID && (c.owners[d.grantee] || r.super || d.grantee == c.current || kept[r.name]) {
+		if d.grantee != publicOID && (c.owners[d.grantee] || r.super || kept[r.name]) {
 			continue
 		}
 		k := defaultKey{d.creator, d.schema, d.objType, d.grantee}

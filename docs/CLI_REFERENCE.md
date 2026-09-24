@@ -1316,16 +1316,31 @@ Use --install to print a systemd unit (linux) or launchd plist
 
 Run sync health checks (FR-18)
 
-Run 5 health checks against the local store and the BYO Postgres hub:
+Run health checks against the local store and the BYO Postgres hub:
 
-  1. PG reachable           — opens pool + Ping
-  2. Schema current         — sync_projects table exists with expected columns
-  3. Queue draining         — no events older than 1h still in pending
-  4. No orphan applied      — every applied_event has a matching node OR tombstone
-  5. DSN secrets file mode  — .mtix/secrets is mode 0600 (when present)
+  PG reachable           - opens pool + Ping
+  Schema current         - sync_projects table exists with expected columns
+  Queue draining         - no events older than 1h still in pending
+  No orphan applied      - every applied_event has a matching node OR tombstone
+  DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
+  Hub privileges         - which roles other than the table owner can use the
+                           sync tables, and whether every TRUNCATE guard is in
+                           place (the check mtix sync harden runs)
 
-Exit code: 0 on all-pass, 2 if any check fails. --json output for
-agents and CI consumption.
+Hub privileges is a WARN by default: roles other than the owner may use
+the sync tables, which can be fine when the database is reachable only
+from a private network; mtix sync harden restricts them. It fails only in
+strict mode, when the sync.keep_roles config key is set: then it fails
+whenever mtix sync harden would report a finding, not only a role outside
+the list or a missing or disabled TRUNCATE guard, but also a kept role
+that can grant its access on or holds a privilege another role granted
+it, an mtix object owned by another role, and a membership through which
+a role can reach every table. If the check cannot run, it is a WARN by
+default and fails in strict mode. The check contacts the hub only while
+the doctor runs.
+
+Exit code: 0 on all-pass, including checks that pass with a WARN; 2 if
+any check fails. --json output for agents and CI consumption.
 
 ### Flags
 
@@ -1355,16 +1370,21 @@ them on; the owner first grants again anything a kept role holds by
 another role's grant. The owner's default privileges that would give
 those roles access to tables created later are revoked too. A membership
 in pg_read_all_data, pg_write_all_data or pg_maintain, even one with only
-ADMIN OPTION, is revoked when the owner may do so; it is cluster-wide. A missing TRUNCATE guard is restored and a
-disabled one enabled. A server WARNING fails the run and nothing changes.
-Access it cannot remove is reported with the statement an administrator
-runs. EXECUTE on the mtix trigger functions and other roles' default
-privileges are information and never fail verification.
+ADMIN OPTION, is revoked when the owner may do so; it is cluster-wide. A
+missing TRUNCATE guard is restored, and a disabled one, or one that fires
+only in replication sessions, is enabled. A server WARNING fails the run
+and nothing changes. Access it cannot remove is reported with the
+statement an administrator runs, and after --apply every finding that
+remains is listed. EXECUTE on the mtix trigger functions and other roles'
+default privileges are information and never fail verification.
 
 Run it as the role that owns the sync tables, or as a superuser or a
 member of the owner role; any other role is refused and nothing changes.
-Superusers are not checked. Review the dry run's role list before
---apply: a role you do not keep loses its access.
+Superusers are not checked. The connecting role is checked unless it owns
+the sync tables, is a superuser or is kept, so a member of the owner role
+reports its own membership: run as the owner, or keep the role, to verify
+clean. Review the dry run's role list before --apply: a role you do not
+keep loses its access.
 
 Exit code: 0 when verification passes, 2 when changes are pending (dry
 run) or access remains (--apply), 1 on an error or a refusal. --json

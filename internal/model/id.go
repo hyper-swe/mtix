@@ -11,7 +11,17 @@ import (
 
 // projectPrefixRegex validates the project prefix per FR-2.1a.
 // Uppercase alphanumeric and hyphens only, 1-20 characters, starting with a letter.
-// Prevents SQL LIKE wildcard characters (%, _) from appearing in IDs.
+// It keeps the SQL LIKE wildcards (%, _) out of the prefixes it validates.
+//
+// This grammar is deliberately STRICTER than the sync project_prefix grammar
+// (projectPrefixPattern in sync_event.go, ^[A-Z][A-Z0-9_-]{0,19}$), which also
+// admits '_'. FR-2.1a is checked only where a prefix is validated locally
+// (ValidatePrefix, ValidateNodeID); a sync event is checked against the sync
+// grammar instead, so a node ID applied from sync CAN contain '_'. Neither
+// grammar is changed to match the other (MTIX-95.17): tightening the sync
+// grammar would reject events that 0.5.x hubs may already hold. Store code
+// must therefore never rely on this regex for LIKE safety; every subtree LIKE
+// pattern escapes the ID prefix (escapeLIKEPrefix in internal/store/sqlite).
 var projectPrefixRegex = regexp.MustCompile(`^[A-Z][A-Z0-9-]{0,19}$`)
 
 // ValidatePrefix checks a project prefix against the FR-2.1a regex.

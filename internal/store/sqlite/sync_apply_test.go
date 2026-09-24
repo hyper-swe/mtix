@@ -430,7 +430,8 @@ func TestApply_MalformedPayloadPerOpType(t *testing.T) {
 	}{
 		{model.OpCreateNode, "create_node"},
 		{model.OpUpdateField, "update_field"},
-		{model.OpTransitionStatus, "transition_status"},
+		// transition_status is not here: an undecodable payload is recorded
+		// without failing the batch (sync_workflow_winner_unknown_status_test.go).
 		{model.OpClaim, "claim"},
 		{model.OpDefer, "defer"},
 		{model.OpComment, "comment"},

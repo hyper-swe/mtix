@@ -562,3 +562,55 @@ func TestRerun_InvalidStrategy_WithChildren_ReturnsError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown rerun strategy")
 }
+
+// TestRerun_DeleteStrategy_UndeleteRestoresOneNodeAtATime pins the documented
+// recovery after `mtix rerun --strategy delete` (MTIX-95.18). Rerun deletes
+// each descendant with its own non-cascading delete (so each emits its own
+// sync event), so undelete restores one node at a time: undeleting the child
+// leaves the grandchild deleted until it is undeleted too. Restored nodes are
+// still invalidated, and restore returns them to their previous status.
+func TestRerun_DeleteStrategy_UndeleteRestoresOneNodeAtATime(t *testing.T) {
+	svc, s, _ := newTestNodeService(t)
+	ctx := context.Background()
+
+	root, err := svc.CreateNode(ctx, &service.CreateNodeRequest{
+		Project: "PROJ", Title: "Root", Creator: "admin",
+	})
+	require.NoError(t, err)
+	child, err := svc.CreateNode(ctx, &service.CreateNodeRequest{
+		ParentID: root.ID, Project: "PROJ", Title: "Child", Creator: "admin",
+	})
+	require.NoError(t, err)
+	grandchild, err := svc.CreateNode(ctx, &service.CreateNodeRequest{
+		ParentID: child.ID, Project: "PROJ", Title: "Grandchild", Creator: "admin",
+	})
+	require.NoError(t, err)
+	require.NoError(t, svc.Rerun(ctx, root.ID, service.RerunDelete, "fresh start", "admin"))
+
+	steps := []struct {
+		undelete    string
+		wantLive    []string
+		wantDeleted []string
+	}{
+		{undelete: child.ID, wantLive: []string{child.ID}, wantDeleted: []string{grandchild.ID}},
+		{undelete: grandchild.ID, wantLive: []string{child.ID, grandchild.ID}},
+	}
+	// The steps run in order against one store, starting from the top.
+	for _, step := range steps {
+		require.NoError(t, svc.UndeleteNode(ctx, step.undelete))
+		for _, id := range step.wantLive {
+			got, getErr := s.GetNode(ctx, id)
+			require.NoError(t, getErr, "%s restored", id)
+			assert.Equal(t, model.StatusInvalidated, got.Status, "%s is still invalidated", id)
+		}
+		for _, id := range step.wantDeleted {
+			_, getErr := s.GetNode(ctx, id)
+			assert.ErrorIs(t, getErr, model.ErrNotFound, "%s stays deleted until undeleted itself", id)
+		}
+	}
+
+	require.NoError(t, svc.Restore(ctx, child.ID, "admin"))
+	got, err := s.GetNode(ctx, child.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusOpen, got.Status, "restore returns the node to its previous status")
+}

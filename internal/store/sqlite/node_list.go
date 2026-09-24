@@ -86,12 +86,15 @@ func buildFilterClauses(filter store.NodeFilter) ([]string, []any) {
 // query time. Multi-value fields use IN(?,?,?) or OR'd predicates per
 // FR-17.1.
 //
-// Security note (FR-17 audit T9): the Under filter uses LIKE ? || '%'
-// where the bound parameter is a literal node ID prefix. This is safe
-// against LIKE wildcard injection ONLY because FR-2.1a constrains project
-// prefixes to uppercase alphanumeric and hyphens, which excludes the
-// SQLite LIKE wildcards `%` and `_`. If FR-2.1a ever loosens, this code
-// MUST switch to ESCAPE-based wildcard escaping.
+// Security note (FR-17 audit T9, corrected by MTIX-95.17): the Under filter
+// binds escapeLIKEPrefix(value)+".%" and matches it with `LIKE ? ESCAPE '\'`,
+// so every value matches LITERALLY. The escaping is required, not
+// defense-in-depth: FR-2.1a (uppercase alphanumeric and hyphens) is not
+// enforced on every path that writes node IDs. IDs that arrive by sync follow
+// the looser sync project_prefix grammar, which admits the LIKE wildcard `_`
+// (see projectPrefixPattern in internal/model/sync_event.go). Without
+// escaping, Under "A_B-1" would also match "AXB-1.1" in another project.
+// Never bind an unescaped ID into a LIKE pattern here.
 func buildFilterClausesWithPrefix(filter store.NodeFilter, prefix string) ([]string, []any) {
 	var clauses []string
 	var args []any
@@ -120,14 +123,15 @@ func buildFilterClausesWithPrefix(filter store.NodeFilter, prefix string) ([]str
 	addInClause("status", len(filter.Status), func(i int) any { return string(filter.Status[i]) })
 
 	// Under filter: per-value (id = ? OR id LIKE ? ESCAPE '\') joined by OR.
-	// Each value contributes two bound parameters (exact match + descendant
-	// prefix match). The whole group is parenthesized so AND-combination
-	// with other clauses works correctly.
+	// Each value contributes two bound parameters (exact match + escaped
+	// descendant prefix match, see the security note above). The whole
+	// group is parenthesized so AND-combination with other clauses works
+	// correctly.
 	if len(filter.Under) > 0 {
 		predicates := make([]string, len(filter.Under))
 		for i, u := range filter.Under {
 			predicates[i] = fmt.Sprintf("(%sid = ? OR %sid LIKE ? ESCAPE '\\')", prefix, prefix)
-			args = append(args, u, u+".%")
+			args = append(args, u, escapeLIKEPrefix(u)+".%")
 		}
 		clauses = append(clauses, "("+strings.Join(predicates, " OR ")+")")
 	}

@@ -171,6 +171,14 @@ mtix delete PROJ-1 --cascade
 mtix undelete PROJ-1.2
 ```
 
+Each delete records which delete removed each node it soft-deletes, and `mtix undelete` uses that record: it restores the node and only the descendants that the same delete removed. A descendant that was deleted separately before a cascade delete, on its own or by its own cascade, stays deleted when you undelete the cascade's node, even if both deletes happened in the same second. Restore it with its own `mtix undelete`. If you undelete a node that an ancestor's cascade removed, mtix restores that node and the descendants the same cascade removed, and the ancestor stays deleted. The progress of the parent of each restored node is recomputed.
+
+That record also carries the node's deletion time and author, and mtix uses it only while they still match the node. Earlier mtix versions did not record which delete removed each descendant. An earlier 0.5.x binary that opens the same database restores without clearing records and deletes without writing them. A delete that arrives through sync or an import carries no record either. When you undelete a node without a usable record, mtix restores the descendants without a usable record that were deleted in the same second by the same author. That can include a descendant that was deleted separately in that second.
+
+After `mtix rerun --strategy delete`, undelete restores one node at a time, because rerun deletes each descendant separately. To bring the subtree back, undelete each node, starting from the top.
+
+Undelete is local: it emits no sync event. Other replicas keep the node deleted.
+
 Soft-deleted nodes are automatically purged after the retention period (default 30 days, configurable via `data.soft_delete_retention`).
 
 ---
@@ -357,6 +365,8 @@ Available strategies:
 - `open_only` — only reopen open/in-progress descendants
 - `delete` — soft-delete descendants for fresh start
 - `review` — mark for manual review
+
+`--strategy delete` invalidates each descendant and then deletes it separately, so `mtix undelete` restores one node at a time: undeleting a child leaves its own children deleted. To bring the subtree back, undelete each node, starting from the top, then use `mtix restore` to return each one from `invalidated` to its previous status.
 
 ### Restore (After Invalidation)
 
@@ -1527,6 +1537,27 @@ When two teammates edit the same field concurrently, Last-Write-Wins
 at apply time deterministically picks a winner (keyed by
 `lamport_clock` → `wall_clock_ts` → `author_machine_hash`). Replicas
 always converge.
+
+Claims and status changes (`mtix claim`, `unclaim`, `done`, `cancel`,
+`defer`, `reopen` and the other transitions) are resolved per task
+the same way: after a sync, every machine shows the status set by the
+most recent claim or status change (highest `lamport_clock`, ties
+broken by event id), and an older one that arrives later changes
+nothing. This holds for claims and status changes, which travel as
+events. Two automatic changes do not travel as events, so status can
+still differ there: if one machine claims a task while another adds a
+dependency that blocks it, the task can end up blocked on one machine
+and in progress on the other, and tasks cancelled as descendants of a
+cascade cancel can differ the same way. Beyond status nothing is
+guaranteed to agree. The assignee and the other fields that go with it
+can still differ between machines when changes arrive out of order: if
+two agents claim the same task between
+syncs and the agent whose claim lost marks it done before pulling,
+both machines show the task done, each with its own agent as the
+assignee. After `mtix sync pull`, check the task with `mtix show <id>`
+before carrying on with claimed work, and stop if it is no longer in
+progress under your name. These contests are resolved silently: they
+are not listed by `mtix sync conflicts list`.
 
 The hub also records contested edits in `sync_conflicts` for audit
 visibility:

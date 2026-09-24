@@ -364,6 +364,16 @@ cancelled. If other machines must see every descendant cancelled,
 cancel the descendants one at a time, deepest first, without
 `--cascade`.
 
+A cascade cancel made by an earlier version unblocked only the tasks
+the named node was blocking, and upgrading does not repair what it
+left. To release a task that is still `blocked` (see `mtix blocked`)
+although every blocker shown by `mtix dep show <id>` is resolved, run
+`mtix unblock <id>`: it
+re-derives the task's status from its current blockers and never
+overrides a blocker that is still unresolved. No command recomputes
+stale progress; a node's progress is recomputed the next time one of
+its children changes status.
+
 ### Reopen (Reverse Terminal State)
 
 ```bash

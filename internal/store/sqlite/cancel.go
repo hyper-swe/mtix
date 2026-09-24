@@ -215,6 +215,8 @@ func cancelDescendants(ctx context.Context, tx *sql.Tx, rootID, nowStr string) (
 		n.parentID = parentID.String
 		nodes = append(nodes, n)
 	}
+	// Defensive: the driver reports an aborted UPDATE ... RETURNING (a
+	// constraint or trigger failure) from QueryContext above, not here.
 	if iterErr := rows.Err(); iterErr != nil {
 		return nil, fmt.Errorf("cascade cancel descendants of %s: %w", rootID, iterErr)
 	}

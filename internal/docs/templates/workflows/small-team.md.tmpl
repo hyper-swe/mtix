@@ -170,8 +170,11 @@ for claims and status changes, which travel as events; two automatic
 changes do not, so status can still differ there (a task claimed on
 one machine while another adds a dependency that blocks it can end up
 blocked on one and in progress on the other, and descendants of a
-cascade cancel can differ the same way). Beyond status nothing is
-guaranteed to agree: the assignee can still differ between machines
+cascade cancel can differ the same way: they are not cancelled on
+other machines, yet a task the cascade unblocked shows unblocked there
+although its blocker is not cancelled; when other machines must see
+the descendants cancelled, cancel them one at a time, deepest first,
+without `--cascade`). Beyond status nothing is guaranteed to agree: the assignee can still differ between machines
 when changes arrive out of order (if two agents claim a task between
 syncs and the one whose claim lost marks it done before pulling, both
 machines show it done, each with its own agent as the assignee). After

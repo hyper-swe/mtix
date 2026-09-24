@@ -1794,8 +1794,8 @@ follows this machine's own history: its last `done` or `cancel` sets
 it and a reopen clears it.
 
 **Replay, derived fix or flagged.** Each listed node shows its winning
-event, when it was made and on which machine, and one of three
-reasons:
+event, when it was made, whether this machine or another machine made
+it, and one of three reasons:
 
 - *replay*: the stored state is what an older event of the node
   writes, which is what a replayed pull left, and nothing recorded
@@ -1805,18 +1805,26 @@ reasons:
   `closed_at` or the progress of a node without children is out of
   date. `--apply` repairs it.
 - *FLAGGED, not a replay; review*: any other difference. The stored
-  state is what no older event writes, or the node's activity records
-  a status change after the winning event that explains it, or the
-  node is cancelled under a cancelled ancestor and may have been
-  cancelled with it. Such a state can be newer than the event log, for
-  example after importing a teammate's `.mtix/tasks.json`, and
-  repairing it would revert the teammate's change on every machine.
-  `--apply` skips it; `--apply --force` repairs it. Check the node
-  with `mtix show <id>` first.
+  state is what no older event writes; or the node's activity records
+  a status change after the winning event that explains it; or only
+  the assignee or agent_state differs, which `mtix update --assignee`
+  can change without leaving any trace; or the node is cancelled and
+  an ancestor was cancelled after its winning event, so a cascade
+  cancel may have cancelled it. Such a state can be newer than the
+  event log, for example after importing a teammate's
+  `.mtix/tasks.json`, and repairing it would revert the teammate's
+  change on every machine. `--apply` skips it; `--apply --force`
+  repairs it. Check the node with `mtix show <id>` first.
 
-A difference in clocks between machines can make a genuine replay look
-newer than its winning event, so it is flagged; review it, then use
-`--force`.
+The check compares times recorded on different machines, so clocks
+that differ can mislead it in both directions. When this machine's
+clock is behind a teammate's, a genuine replay can be flagged; review
+it, then use `--force`. When this machine's clock is ahead, a
+teammate's newer state (for example imported from `.mtix/tasks.json`)
+can look older than this machine's events and be listed as a replay,
+and `--apply` would revert it. Before `--apply`, check each replay's
+winner time and whether this machine or another machine made it, and
+look at the node with `mtix show <id>` when in doubt.
 
 **What is left alone:**
 
@@ -1824,9 +1832,10 @@ newer than its winning event, so it is flagged; review it, then use
 - a blocked node that still has an unresolved blocker, since a block
   added by a new dependency is not synced as an event;
 - a node cancelled by `mtix cancel --cascade` on an ancestor, which has
-  no cancel event of its own;
+  no cancel event of its own (one that has is flagged, see above);
 - an assignee set after the winning event with `mtix update
-  --assignee`;
+  --assignee` (when it arrives by import, the difference is flagged,
+  so `--apply` without `--force` leaves it alone);
 - the wake time of this machine's own deferral (`mtix defer --until`),
   which the event does not carry;
 - `closed_at` after this machine invalidated or restored the node,
@@ -1843,15 +1852,19 @@ transaction, it re-checks the node, writes the derived state, adds an
 activity entry with the text `sync repair` that names the winning
 event, and recomputes the parent's progress. When the status changes
 it also emits one status-change event with the reason `sync repair`
-and unblocks dependents; a repair that leaves the status alone (only
-`closed_at`, progress, the assignee or agent_state) emits nothing.
+and unblocks dependents; a repair that leaves the status alone
+(`closed_at` or progress, or with `--force` the assignee or
+agent_state) emits nothing.
 `.mtix/tasks.json` is re-exported when a node was repaired. A second
 run lists nothing.
 
 The repair event carries the time of the winning event, so a machine
 that applies it at its next pull stamps the same `closed_at` it already
-had. Like any status change, it fires `status.changed` hooks on this
-machine and on every machine that pulls it.
+had. When that time is in the future (a clock that was ahead), the
+event carries the current time instead, because `mtix sync push`
+refuses an event stamped more than a day ahead, and a refused event
+would stop every later push. Like any status change, it fires `status.changed`
+hooks on this machine and on every machine that pulls it.
 
 **Undoing a repair.** Before `mtix sync push`, stop every mtix process
 and copy the backup over `.mtix/data/mtix.db`. After the push a restore

@@ -5,7 +5,9 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -39,27 +41,34 @@ const (
 	reasonNoOlderRow         = "not a replay; review: no older event left the stored state"
 	reasonNewerActivity      = "not a replay; review: a status change recorded after the winning event matches the stored state"
 	reasonUnreadableActivity = "not a replay; review: the node's activity cannot be read"
-	reasonCancelledAncestor  = "not a replay; review: cancelled under a cancelled ancestor, possibly by a cascade cancel"
+	reasonAncestorCancelled  = "not a replay; review: an ancestor was cancelled after the winning event, possibly by a cascade cancel"
+	reasonFieldOnly          = "not a replay; review: only the assignee or agent_state differs, which a field update can change without a trace"
 )
 
 // classifyStatusDiff classifies plan's differences (MTIX-95.6). closed_at and
 // leaf progress alone are derived from the status, so they are fixed when the
-// status, assignee and agent_state match. Otherwise the node is a replay when
-// its stored state is the row of an older event in chain and no newer status
-// activity matches it; a cancelled node under a live cancelled ancestor may
-// be a cascade cancel and is flagged, as is every other difference.
+// status, assignee and agent_state match. A difference in the assignee or
+// agent_state while the status matches is flagged: mtix update --assignee
+// writes no activity, so an imported reassignment cannot be told from a
+// replayed claim. A changed status is a replay when the stored state is the
+// row of an older event in chain and no newer status activity matches it; a
+// cancelled node whose ancestor was cancelled after the winner may be a
+// cascade cancel and is flagged, as is every other difference.
 func classifyStatusDiff(ctx context.Context, q workflowQueryer, plan statusPlan, chain []workflowWinner, kept keptColumns, now string) (repairVerdict, error) {
 	if onlyDerivedColumns(plan.diffs) {
 		return repairVerdict{reason: reasonDerived}, nil
 	}
 	row := plan.row
+	if plan.write.status == row.status {
+		return repairVerdict{flagged: true, reason: reasonFieldOnly}, nil
+	}
 	if row.status == model.StatusCancelled && !plan.write.status.IsTerminal() {
-		ancestor, err := hasCancelledAncestor(ctx, q, row.id)
+		ancestor, err := ancestorCancelledAfter(ctx, q, row.id, plan.winner)
 		if err != nil {
 			return repairVerdict{}, err
 		}
 		if ancestor {
-			return repairVerdict{flagged: true, reason: reasonCancelledAncestor}, nil
+			return repairVerdict{flagged: true, reason: reasonAncestorCancelled}, nil
 		}
 	}
 	newer, readable := newerStatusActivity(row, plan.winner.wallClockTS)
@@ -154,23 +163,74 @@ func recordedStatus(e model.ActivityEntry) (model.Status, bool) {
 	}
 }
 
-// hasCancelledAncestor reports whether a live ancestor of id, by dot-notation
-// id as a cascade cancel selects descendants, is cancelled.
-func hasCancelledAncestor(ctx context.Context, q workflowQueryer, id string) (bool, error) {
+// ancestorCancelledAfter reports whether any ancestor of id (by dot-notation
+// id, as a cascade cancel selects descendants) was cancelled after the
+// node's winner, whatever the ancestor's status is now, even soft-deleted
+// (MTIX-95.6): it holds a cancel event whose key beats the winner, or a
+// cancel activity entry made after the winner's wall clock (a cancel that
+// arrived by import, without an event). Such a cancel may have cascaded to
+// the node. An ancestor whose activity cannot be read counts, since it
+// cannot be ruled out.
+func ancestorCancelledAfter(ctx context.Context, q workflowQueryer, id string, winner workflowWinner) (bool, error) {
 	for anc := model.ParseIDParent(id); anc != ""; anc = model.ParseIDParent(anc) {
-		var n int
-		// Is this ancestor live and cancelled?
-		if err := q.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM nodes WHERE id = ? AND deleted_at IS NULL AND status = ?`,
-			anc, string(model.StatusCancelled),
-		).Scan(&n); err != nil {
-			return false, fmt.Errorf("read ancestor %s: %w", anc, err)
+		row, found, err := readAncestorRow(ctx, q, anc)
+		if err != nil {
+			return false, err
 		}
-		if n > 0 {
+		if !found {
+			continue
+		}
+		events, err := readNodeEvents(ctx, q, row)
+		if err != nil {
+			return false, fmt.Errorf("ancestor %s: %w", anc, err)
+		}
+		for _, e := range workflowChain(events) {
+			if e.op == model.OpTransitionStatus && e.payload.to == model.StatusCancelled &&
+				workflowKeyBeats(e.key.lamport, e.key.eventID, winner.key.lamport, winner.key.eventID) {
+				return true, nil
+			}
+		}
+		if cancelActivityAfter(row, winner.wallClockTS) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// readAncestorRow reads the uid and activity of node id, soft-deleted or
+// not. found is false when no row has the id.
+func readAncestorRow(ctx context.Context, q workflowQueryer, id string) (workflowRow, bool, error) {
+	row := workflowRow{id: id}
+	var uid sql.NullString
+	// One node's uid and activity, whatever its state: an ancestor deleted
+	// after a cascade still cancelled its descendants.
+	err := q.QueryRowContext(ctx, `SELECT uid, activity FROM nodes WHERE id = ?`, id).Scan(&uid, &row.activity)
+	if errors.Is(err, sql.ErrNoRows) {
+		return workflowRow{}, false, nil
+	}
+	if err != nil {
+		return workflowRow{}, false, fmt.Errorf("read ancestor %s: %w", id, err)
+	}
+	row.uid = uid.String
+	return row, true, nil
+}
+
+// cancelActivityAfter reports whether row's activity records a cancel made
+// after wallMS, or cannot be read.
+func cancelActivityAfter(row workflowRow, wallMS int64) bool {
+	if !row.activity.Valid || row.activity.String == "" {
+		return false
+	}
+	var entries []model.ActivityEntry
+	if err := json.Unmarshal([]byte(row.activity.String), &entries); err != nil {
+		return true
+	}
+	for _, e := range entries {
+		if status, ok := recordedStatus(e); ok && status == model.StatusCancelled && e.CreatedAt.UnixMilli() > wallMS {
+			return true
+		}
+	}
+	return false
 }
 
 // originatorClosedAt returns the closed_at to compare and write for a node

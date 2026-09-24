@@ -66,13 +66,16 @@ import (
 // # Replay, derived fix or flagged (sync_repair_status_classify.go)
 //
 // A pre-MTIX-95.2 replay always leaves the row of an older held workflow
-// event. A node whose status, assignee or agent_state differs is repaired
-// only when its stored state is such a row and no status change recorded
-// after the winner matches it. A node whose status matches the winner and
-// whose closed_at or leaf progress differs is a derived fix. Every other node
-// is flagged "not a replay; review" and is repaired only with force: newer
-// state can arrive without an event (a replace import of a teammate's
-// .mtix/tasks.json), and reverting it would revert the teammate everywhere.
+// event. A node whose status differs is repaired only when its stored state
+// is such a row and no status change recorded after the winner matches it;
+// a cancelled node whose ancestor was cancelled after the winner (a possible
+// cascade cancel) is flagged. A node whose status matches the winner and
+// whose closed_at or leaf progress differs is a derived fix; one whose
+// assignee or agent_state differs is flagged, because an update_field
+// writes no activity. Every other node is flagged "not a replay; review" and
+// is repaired only with force: newer state can arrive without an event (a
+// replace import of a teammate's .mtix/tasks.json), and reverting it would
+// revert the teammate everywhere.
 //
 // # Repair
 //
@@ -83,7 +86,8 @@ import (
 // columns a residual owns and records an activity entry naming the winner.
 // When the status changes it emits a transition_status event from the stored
 // status to the derived one, with the reason "sync repair" and the winner's
-// wall clock, so other replicas converge and derive the same closed_at, and
+// wall clock (never later than now, repairEventWallClock), so other replicas
+// converge and derive the same closed_at, and
 // it unblocks dependents; a repair that leaves the status alone emits
 // nothing. It then recomputes the parent's progress. The emitted event
 // becomes the node's winner and its row matches the repaired columns, so a
@@ -232,7 +236,7 @@ func (s *Store) RepairNodeStatus(ctx context.Context, id, author string, force b
 // applyStatusRepair writes plan onto its node in the caller's transaction
 // (MTIX-95.6). A status change is recorded as executeTransitionTx records
 // one: a status_change activity entry, a transition_status event (with the
-// winner's wall clock) and the dependents unblocked. A repair that leaves
+// winner's wall clock, repairEventWallClock) and the dependents unblocked. A repair that leaves
 // the status alone records a system activity entry and emits nothing. The
 // parent's progress is recomputed either way.
 func applyStatusRepair(ctx context.Context, tx *sql.Tx, plan statusPlan, author string, now time.Time) error {
@@ -250,7 +254,7 @@ func applyStatusRepair(ctx context.Context, tx *sql.Tx, plan statusPlan, author 
 		}
 		if err := emitEvent(ctx, tx, emitParams{
 			NodeID: id, ProjectCode: projectPrefixFromNodeID(id), OpType: model.OpTransitionStatus,
-			Author: author, Payload: payload, WallClockTS: plan.winner.wallClockTS,
+			Author: author, Payload: payload, WallClockTS: repairEventWallClock(plan.winner.wallClockTS, now),
 		}); err != nil {
 			return err
 		}
@@ -264,6 +268,20 @@ func applyStatusRepair(ctx context.Context, tx *sql.Tx, plan statusPlan, author 
 		}
 	}
 	return nil
+}
+
+// repairEventWallClock is the wall_clock_ts of a repair event (MTIX-95.6):
+// the winner's, so every replica that holds the winner derives the same
+// closed_at from the repair event, but never later than now. A winner stamped
+// by a clock that is ahead (or outside the years a timestamp can hold) would
+// otherwise give a pending event the push validator rejects (more than
+// validator.FutureTimestampGrace ahead), and a push never sends part of a
+// batch, so every later push would fail.
+func repairEventWallClock(winnerMS int64, now time.Time) int64 {
+	if nowMS := now.UnixMilli(); winnerMS > nowMS {
+		return nowMS
+	}
+	return winnerMS
 }
 
 // repairActivity is the activity entry of a repair (MTIX-95.6): a

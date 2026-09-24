@@ -32,17 +32,23 @@ claim, unclaim, defer or status-change event, with the rule a pull
 applies. It compares status, assignee, agent_state, whether closed_at is
 set, and the progress of a node without children, to heal nodes that an
 older mtix left reverted when a pull replayed an older event. A node
-without such events is never listed or changed. State set by a change
-that is not a workflow event is left as it is: a block while a blocker
-is unresolved, a node cancelled with its parent by cancel --cascade, and
-an assignee set later with mtix update --assignee.
+without such events is never listed or changed. State that a change
+outside the event log may have set is never repaired by --apply alone: a
+block while a blocker is unresolved and a node cancelled with an ancestor
+by cancel --cascade are left alone, and a difference only in the assignee
+or agent_state (mtix update --assignee leaves no trace) is flagged.
 
-Each listed node shows its winning event and when it was made, and a
-reason. A replay (the stored state is the row of an older event, as a
-replayed pull leaves it) and a derived fix (the status matches; closed_at
-or progress does not) are repaired by --apply. Anything else, for example
-newer state that arrived by importing .mtix/tasks.json, is FLAGGED "not a
-replay; review" and is repaired only with --apply --force, after review.
+Each listed node shows its winning event, when it was made, whether this
+machine or another machine made it, and a reason. A replay (the stored
+state is the row of an older event, as a replayed pull leaves it) and a
+derived fix (the status matches; closed_at or progress does not) are
+repaired by --apply. Anything else, for example newer state that arrived
+by importing .mtix/tasks.json, is FLAGGED "not a replay; review" and is
+repaired only with --apply --force, after review. Clocks that differ
+between machines can mislead the check both ways: a genuine replay can be
+flagged, and when this machine's clock is ahead, a teammate's newer state
+can look like a replay, which --apply would revert. Check each replay's
+winner time and origin before --apply.
 
 Without --apply the command is a dry run: it lists the differences and
 writes nothing. --json prints them as JSON.
@@ -52,11 +58,11 @@ With --apply it first writes a verified backup of the database to
 Then it repairs each node in its own transaction: it writes the derived
 state, records an activity entry and recomputes the parent's progress.
 When the status changes it also emits one status-change event (reason
-"sync repair", stamped with the winning event's time), which other
-machines apply at their next pull and which fires status.changed hooks,
-and it unblocks dependents; a repair that leaves the status alone emits
-nothing. A second run lists nothing. Run 'mtix sync push' afterwards to
-send the events.`
+"sync repair", stamped with the winning event's time, or with the current
+time if that is in the future), which other machines apply at their next
+pull and which fires status.changed hooks, and it unblocks dependents; a
+repair that leaves the status alone emits nothing. A second run lists
+nothing. Run 'mtix sync push' afterwards to send the events.`
 
 // newSyncRepairCmd creates `mtix sync repair --status` (MTIX-95.6; ADR-006
 // §5.3). It is a thin wrapper around SyncService.RepairStatus and reaches the
@@ -98,21 +104,31 @@ func runSyncRepair(ctx context.Context, w io.Writer, f syncRepairFlags) error {
 	if report != nil && len(report.Repaired) > 0 {
 		exportAfterRepair(ctx)
 	}
-	if err != nil {
-		if report != nil {
-			printStatusRepairReport(w, report)
+	if report != nil {
+		if printErr := writeStatusRepairReport(w, report); printErr != nil {
+			return printErr
 		}
+	}
+	if err != nil {
 		return fmt.Errorf("mtix sync repair --status: %w", err)
 	}
-	if app.jsonOutput {
-		data, marshalErr := json.MarshalIndent(report, "", "  ")
-		if marshalErr != nil {
-			return fmt.Errorf("marshal repair report: %w", marshalErr)
-		}
-		_, err = fmt.Fprintln(w, string(data))
-		return err
+	return nil
+}
+
+// writeStatusRepairReport prints the report, as JSON with --json, including
+// the partial report of a repair that failed part-way.
+func writeStatusRepairReport(w io.Writer, report *service.StatusRepairReport) error {
+	if !app.jsonOutput {
+		printStatusRepairReport(w, report)
+		return nil
 	}
-	printStatusRepairReport(w, report)
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal repair report: %w", err)
+	}
+	if _, err := fmt.Fprintln(w, string(data)); err != nil {
+		return fmt.Errorf("print repair report: %w", err)
+	}
 	return nil
 }
 

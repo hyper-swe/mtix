@@ -78,106 +78,230 @@ func TestStatusRepair_ImportedNewerState_FlaggedAndAppliedOnlyWithForce(t *testi
 }
 
 // TestStatusRepair_ImportedStateEqualToOlderEvent_FlaggedByNewerActivity: an
-// imported state can coincide with the row of an older event (B claims with
-// the agent of A's older claim). The imported activity records a status
-// change after the winner that matches the stored state, which a replay
-// never writes, so the node is still flagged.
+// imported state can coincide with the row of an older event of this
+// replica, so the replay signature matches. The imported activity records
+// the teammate's status change, made after the winner, which a replay never
+// writes, so the node is still flagged: for a claim, an unclaim, a cancel
+// and a defer.
 func TestStatusRepair_ImportedStateEqualToOlderEvent_FlaggedByNewerActivity(t *testing.T) {
 	ctx := context.Background()
-	a, rawA := replicaWithNode(t)
-	require.NoError(t, a.ClaimNode(ctx, "MTIX-1", "agent-a"))
-	require.NoError(t, a.UnclaimNode(ctx, "MTIX-1", "handoff", "agent-a"))
-	b, _ := mutationTestStore(t)
-	b.SetClock(func() time.Time { return time.Now().UTC().Add(time.Minute) })
-	replaceImport(t, b, a)
-	require.NoError(t, b.ClaimNode(ctx, "MTIX-1", "agent-a"))
-	replaceImport(t, a, b)
-
-	diffs, err := a.StatusRepairDiffs(ctx)
-
-	require.NoError(t, err)
-	require.Len(t, diffs, 1)
-	require.True(t, diffs[0].Flagged, diffs[0].Reason)
-	require.Equal(t, "not a replay; review: a status change recorded after the winning event matches the stored state",
-		diffs[0].Reason)
-	_, applied, err := a.RepairNodeStatus(ctx, "MTIX-1", "repairer", false)
-	require.NoError(t, err)
-	require.False(t, applied)
-	require.Equal(t, "in_progress", nodeRow(t, rawA, "MTIX-1")["status"])
-}
-
-// TestStatusRepairDiffs_ReplayedCancelUnderCancelledAncestor_Flagged: a
-// replayed own cancel is a replay, but while a live ancestor is cancelled it
-// may equally be a cascade cancel of a node cancelled before, so it is
-// flagged for review. A soft-deleted ancestor does not count.
-func TestStatusRepairDiffs_ReplayedCancelUnderCancelledAncestor_Flagged(t *testing.T) {
+	// backdateWinner moves this replica's newest event a minute back, so the
+	// teammate's change is plainly after it.
+	backdateWinner := func(t *testing.T, raw *sql.DB) {
+		t.Helper()
+		_, err := raw.Exec(`UPDATE sync_events SET wall_clock_ts = wall_clock_ts - 60000
+			WHERE lamport_clock = (SELECT MAX(lamport_clock) FROM sync_events)`)
+		require.NoError(t, err)
+	}
 	tests := []struct {
-		name          string
-		deleteParent  bool
-		wantFlagged   bool
-		wantReasonHas string
+		name     string
+		local    func(t *testing.T, a *sqlite.Store, raw *sql.DB)
+		teammate func(t *testing.T, b *sqlite.Store)
+		stored   string
 	}{
-		{"live cancelled parent", false, true, "cancelled ancestor"},
-		{"soft-deleted cancelled parent", true, false, "replay"},
+		{"a claim equal to an older claim", func(t *testing.T, a *sqlite.Store, raw *sql.DB) {
+			require.NoError(t, a.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			require.NoError(t, a.UnclaimNode(ctx, "MTIX-1", "handoff", "agent-a"))
+			backdateWinner(t, raw)
+		}, func(t *testing.T, b *sqlite.Store) {
+			require.NoError(t, b.ClaimNode(ctx, "MTIX-1", "agent-a"))
+		}, "in_progress"},
+		{"an unclaim equal to an older unclaim", func(t *testing.T, a *sqlite.Store, raw *sql.DB) {
+			require.NoError(t, a.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			require.NoError(t, a.UnclaimNode(ctx, "MTIX-1", "handoff", "agent-a"))
+			require.NoError(t, a.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			backdateWinner(t, raw)
+		}, func(t *testing.T, b *sqlite.Store) {
+			require.NoError(t, b.UnclaimNode(ctx, "MTIX-1", "handoff", "agent-a"))
+		}, "open"},
+		{"a cancel equal to an older cancel", func(t *testing.T, a *sqlite.Store, raw *sql.DB) {
+			require.NoError(t, a.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", false))
+			require.NoError(t, a.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
+			backdateWinner(t, raw)
+		}, func(t *testing.T, b *sqlite.Store) {
+			require.NoError(t, b.CancelNode(ctx, "MTIX-1", "dropped", "agent-b", false))
+		}, "cancelled"},
+		{"a defer equal to an older defer", func(t *testing.T, a *sqlite.Store, raw *sql.DB) {
+			require.NoError(t, a.DeferNode(ctx, "MTIX-1", nil, "later", "agent-a"))
+			require.NoError(t, a.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "now", "agent-a"))
+			backdateWinner(t, raw)
+		}, func(t *testing.T, b *sqlite.Store) {
+			require.NoError(t, b.DeferNode(ctx, "MTIX-1", nil, "later", "agent-b"))
+		}, "deferred"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := context.Background()
-			s, raw := replicaWithNode(t)
-			mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
-			require.NoError(t, s.CancelNode(ctx, "MTIX-1.1", "dropped", "agent-a", false))
-			markEventsPushed(t, raw)
-			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1.1", model.StatusOpen, "reopen", "agent-a"))
+			a, rawA := replicaWithNode(t)
+			tt.local(t, a, rawA)
+			b, _ := mutationTestStore(t)
+			b.SetClock(func() time.Time { return time.Now().UTC().Add(time.Minute) })
+			replaceImport(t, b, a)
+			tt.teammate(t, b)
+			replaceImport(t, a, b)
+			require.Equal(t, tt.stored, nodeRow(t, rawA, "MTIX-1")["status"])
+
+			diffs, err := a.StatusRepairDiffs(ctx)
+
+			require.NoError(t, err)
+			require.Len(t, diffs, 1)
+			require.True(t, diffs[0].Flagged, diffs[0].Reason)
+			require.Equal(t, "not a replay; review: a status change recorded after the winning event matches the stored state",
+				diffs[0].Reason)
+			_, applied, err := a.RepairNodeStatus(ctx, "MTIX-1", "repairer", false)
+			require.NoError(t, err)
+			require.False(t, applied)
+			require.Equal(t, tt.stored, nodeRow(t, rawA, "MTIX-1")["status"])
+		})
+	}
+}
+
+// TestStatusRepairDiffs_CancelledNodeWithNewerAncestorCancel_Flagged: a
+// cancelled node whose derived status is not terminal is flagged, never
+// applied without force, when any ancestor holds a cancel event newer than
+// the node's winner, whatever the ancestor's status is now: the node may
+// have been cancelled by that ancestor's cascade. An ancestor cancel older
+// than the winner does not count, so a replayed own cancel is repaired.
+func TestStatusRepairDiffs_CancelledNodeWithNewerAncestorCancel_Flagged(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name        string
+		ancestors   func(t *testing.T, s *sqlite.Store, raw *sql.DB) // after the node's cancel and reopen
+		node        string
+		wantFlagged bool
+	}{
+		{"a live cancelled parent", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", false))
 			replayTransitionAsBefore952(t, raw, "MTIX-1.1", model.StatusCancelled)
-			if tt.deleteParent {
-				// The parent soft-deleted on its own.
-				_, err := raw.Exec(`UPDATE nodes SET deleted_at = ? WHERE id = 'MTIX-1'`, replayStamp())
-				require.NoError(t, err)
+		}, "MTIX-1.1", true},
+		{"a soft-deleted cancelled parent", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
+			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", false))
+			replayTransitionAsBefore952(t, raw, "MTIX-1.1", model.StatusCancelled)
+			// The parent soft-deleted on its own.
+			_, err := raw.Exec(`UPDATE nodes SET deleted_at = ? WHERE id = 'MTIX-1'`, replayStamp())
+			require.NoError(t, err)
+		}, "MTIX-1.1", true},
+		{"a parent cascade, the parent reopened", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
+			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", true))
+			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
+		}, "MTIX-1.1", true},
+		{"a grandparent cascade over a done parent, reopened", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
+			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", true))
+			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
+		}, "MTIX-1.1.1", true},
+		{"a parent whose activity cannot be read", func(t *testing.T, _ *sqlite.Store, raw *sql.DB) {
+			replayTransitionAsBefore952(t, raw, "MTIX-1.1", model.StatusCancelled)
+			// An activity column that is not JSON.
+			_, err := raw.Exec(`UPDATE nodes SET activity = '<<<not-json' WHERE id = 'MTIX-1'`)
+			require.NoError(t, err)
+		}, "MTIX-1.1", true},
+		{"a teammate's parent cascade, imported without events", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
+			// The node's reopen was made a minute before the teammate's cascade.
+			_, err := raw.Exec(`UPDATE sync_events SET wall_clock_ts = wall_clock_ts - 60000
+				WHERE lamport_clock = (SELECT MAX(lamport_clock) FROM sync_events)`)
+			require.NoError(t, err)
+			b, _ := mutationTestStore(t)
+			replaceImport(t, b, s)
+			require.NoError(t, b.CancelNode(ctx, "MTIX-1", "dropped", "agent-b", true))
+			replaceImport(t, s, b)
+		}, "MTIX-1.1", true},
+		{"a parent cancel older than the node's winner", nil, "MTIX-1.1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, raw := replicaWithNode(t)
+			mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
+			mustCreateNode(t, s, "MTIX-1.1.1", "MTIX-1.1")
+			if tt.node == "MTIX-1.1.1" {
+				require.NoError(t, s.ClaimNode(ctx, "MTIX-1.1", "agent-a"))
+				require.NoError(t, s.TransitionStatus(ctx, "MTIX-1.1", model.StatusDone, "finished", "agent-a"))
 			}
+			if tt.ancestors == nil {
+				// The parent was cancelled and reopened before the node's history.
+				require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", false))
+				require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
+			}
+			require.NoError(t, s.CancelNode(ctx, tt.node, "dropped", "agent-a", false))
+			markEventsPushed(t, raw)
+			require.NoError(t, s.TransitionStatus(ctx, tt.node, model.StatusOpen, "reopen", "agent-a"))
+			if tt.ancestors != nil {
+				tt.ancestors(t, s, raw)
+			} else {
+				replayTransitionAsBefore952(t, raw, tt.node, model.StatusCancelled)
+			}
+			require.Equal(t, "cancelled", nodeRow(t, raw, tt.node)["status"])
 
 			diffs, err := s.StatusRepairDiffs(ctx)
 
 			require.NoError(t, err)
 			require.Len(t, diffs, 1)
-			require.Equal(t, "MTIX-1.1", diffs[0].NodeID)
-			require.Equal(t, tt.wantFlagged, diffs[0].Flagged)
-			require.Contains(t, diffs[0].Reason, tt.wantReasonHas)
+			require.Equal(t, tt.node, diffs[0].NodeID)
+			require.Equal(t, tt.wantFlagged, diffs[0].Flagged, diffs[0].Reason)
+			_, applied, err := s.RepairNodeStatus(ctx, tt.node, "repairer", false)
+			require.NoError(t, err)
+			require.Equal(t, !tt.wantFlagged, applied)
+			if tt.wantFlagged {
+				require.Equal(t, "not a replay; review: an ancestor was cancelled after the winning event, possibly by a cascade cancel",
+					diffs[0].Reason)
+				require.Equal(t, "cancelled", nodeRow(t, raw, tt.node)["status"], "a flagged node is not applied without force")
+			}
 		})
 	}
 }
 
-// TestStatusRepairDiffs_WinnerRuleResiduals_NotDifferences: the residuals
-// documented for MTIX-95.10 are not differences. Each case is a healthy
-// local history whose row differs from the winner's table row only where a
-// residual says it may: a later update_field on a workflow column, closed_at
-// on the originator (invalidation and restore), and local writes that emit
-// no event (an auto-block with its blocker unresolved, a cascade cancel).
-func TestStatusRepairDiffs_WinnerRuleResiduals_NotDifferences(t *testing.T) {
+// TestStatusRepairDiffs_WinnerRuleResiduals_NeverAppliedWithoutForce: the
+// residuals documented for MTIX-95.10 are not differences. Each case is a
+// healthy local history whose row differs from the winner's table row only
+// where a residual says it may: a later update_field on a workflow column,
+// closed_at on the originator (invalidation and restore, also of a foreign
+// invalidation), and local writes that emit no event (an auto-block with its
+// blocker unresolved, a cascade cancel). A cascade over a node that had
+// cancel events of its own is listed but flagged, so --apply without force
+// leaves it alone too.
+func TestStatusRepairDiffs_WinnerRuleResiduals_NeverAppliedWithoutForce(t *testing.T) {
 	ctx := context.Background()
 	blocks := func(from, to string) *model.Dependency {
 		return &model.Dependency{FromID: from, ToID: to, DepType: model.DepTypeBlocks, CreatedAt: time.Now().UTC()}
 	}
 	tests := []struct {
-		name  string
-		setup func(t *testing.T, s *sqlite.Store, raw *sql.DB)
+		name    string
+		setup   func(t *testing.T, s *sqlite.Store, raw *sql.DB)
+		flagged string // the node listed as flagged; "" when nothing is listed
 	}{
+		{"auto-blocked open node, blocker unresolved", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
+			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			require.NoError(t, s.UnclaimNode(ctx, "MTIX-1", "handoff", "agent-a"))
+			mustCreateNode(t, s, "MTIX-2", "")
+			require.NoError(t, s.AddDependency(ctx, blocks("MTIX-2", "MTIX-1")))
+		}, ""},
+		{"foreign invalidation restored locally", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
+			pullEvents(t, s, []*model.SyncEvent{foreignWorkflowEvent(t, "MTIX-1", model.OpTransitionStatus,
+				transition(model.StatusOpen, model.StatusInvalidated), latestLamport(t, raw, model.OpCreateNode)+5, "")})
+			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "restore", "agent-a"))
+			require.NotEqual(t, nullColumn, nodeRow(t, raw, "MTIX-1")["closed_at"], "the restore keeps closed_at")
+		}, ""},
+		{"cancelled and reopened, then a parent cascade, parent reopened", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
+			mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
+			require.NoError(t, s.CancelNode(ctx, "MTIX-1.1", "dropped", "agent-a", false))
+			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1.1", model.StatusOpen, "reopen", "agent-a"))
+			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", true))
+			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
+		}, "MTIX-1.1"},
 		{"auto-blocked after its claim, blocker unresolved", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
 			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
 			mustCreateNode(t, s, "MTIX-2", "")
 			require.NoError(t, s.AddDependency(ctx, blocks("MTIX-2", "MTIX-1")))
-		}},
+		}, ""},
 		{"descendant cancelled by a cascade", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
 			mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
 			require.NoError(t, s.ClaimNode(ctx, "MTIX-1.1", "agent-a"))
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", true))
-		}},
+		}, ""},
 		{"descendant cancelled by a cascade, ancestor reopened", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
 			mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
 			require.NoError(t, s.ClaimNode(ctx, "MTIX-1.1", "agent-a"))
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", true))
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
-		}},
+		}, ""},
 		{"cancelled by a cascade under a done parent", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
 			mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
 			mustCreateNode(t, s, "MTIX-1.1.1", "MTIX-1.1")
@@ -185,31 +309,31 @@ func TestStatusRepairDiffs_WinnerRuleResiduals_NotDifferences(t *testing.T) {
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1.1", model.StatusDone, "finished", "agent-a"))
 			require.NoError(t, s.ClaimNode(ctx, "MTIX-1.1.1", "agent-a"))
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", true))
-		}},
+		}, ""},
 		{"status and agent_state set by update_field after the claim", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
 			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
 			done, stuck := model.StatusDone, model.AgentStateStuck
 			require.NoError(t, s.UpdateNode(ctx, "MTIX-1", &store.NodeUpdate{Status: &done, AgentState: &stuck}))
-		}},
+		}, ""},
 		{"assignee changed after the claim", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
 			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
 			bob := "bob"
 			require.NoError(t, s.UpdateNode(ctx, "MTIX-1", &store.NodeUpdate{Assignee: &bob}))
-		}},
+		}, ""},
 		{"own invalidation of an open node", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusInvalidated, "rerun", "agent-a"))
-		}},
+		}, ""},
 		{"own pushed invalidation of an open node", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusInvalidated, "rerun", "agent-a"))
 			markEventsPushed(t, raw)
-		}},
+		}, ""},
 		{"own restore of an invalidated closed node, then a claim", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
 			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusInvalidated, "rerun", "agent-a"))
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "restore", "agent-a"))
 			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-b"))
-		}},
+		}, ""},
 		{"local lifecycle and synced events", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
 			wake := time.Date(2031, 1, 2, 3, 4, 5, 0, time.UTC)
 			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
@@ -226,7 +350,7 @@ func TestStatusRepairDiffs_WinnerRuleResiduals_NotDifferences(t *testing.T) {
 				foreignWorkflowEvent(t, "MTIX-3", model.OpTransitionStatus,
 					transition(model.StatusInProgress, model.StatusDone), 901, ""),
 			})
-		}},
+		}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -236,7 +360,18 @@ func TestStatusRepairDiffs_WinnerRuleResiduals_NotDifferences(t *testing.T) {
 			diffs, err := s.StatusRepairDiffs(ctx)
 
 			require.NoError(t, err)
-			require.Empty(t, diffs)
+			if tt.flagged == "" {
+				require.Empty(t, diffs)
+				return
+			}
+			require.Len(t, diffs, 1)
+			require.Equal(t, tt.flagged, diffs[0].NodeID)
+			require.True(t, diffs[0].Flagged, diffs[0].Reason)
+			before := nodeRow(t, raw, tt.flagged)
+			_, applied, err := s.RepairNodeStatus(ctx, tt.flagged, "repairer", false)
+			require.NoError(t, err)
+			require.False(t, applied)
+			require.Equal(t, before, nodeRow(t, raw, tt.flagged))
 		})
 	}
 }
@@ -325,24 +460,35 @@ func TestRepairNodeStatus_RepairEvent_OtherReplicaKeepsItsClosedAt(t *testing.T)
 }
 
 // TestStatusRepairDiffs_StoredAssigneeOfNoOlderClaim_Flagged: the stored
-// status is that of an older claim, but the stored assignee is not its
-// agent, so no older event left this state and the node is flagged.
+// status is that of an older claim, but the stored assignee or agent_state
+// is not what that claim wrote, so no older event left this state and the
+// node is flagged.
 func TestStatusRepairDiffs_StoredAssigneeOfNoOlderClaim_Flagged(t *testing.T) {
-	ctx := context.Background()
-	s, raw := replicaWithNode(t)
-	require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
-	require.NoError(t, s.UnclaimNode(ctx, "MTIX-1", "handoff", "agent-a"))
-	// In progress for an agent no claim names, written without an event.
-	_, err := raw.Exec(`UPDATE nodes SET status = 'in_progress', assignee = 'carol', agent_state = 'working'
-		WHERE id = 'MTIX-1'`)
-	require.NoError(t, err)
+	tests := []struct {
+		name, assignee, agentState string
+	}{
+		{"an assignee no claim names", "carol", "working"},
+		{"an agent_state no claim wrote", "agent-a", "stuck"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			s, raw := replicaWithNode(t)
+			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			require.NoError(t, s.UnclaimNode(ctx, "MTIX-1", "handoff", "agent-a"))
+			// In progress, written without an event.
+			_, err := raw.Exec(`UPDATE nodes SET status = 'in_progress', assignee = ?, agent_state = ?
+				WHERE id = 'MTIX-1'`, tt.assignee, tt.agentState)
+			require.NoError(t, err)
 
-	diffs, err := s.StatusRepairDiffs(ctx)
+			diffs, err := s.StatusRepairDiffs(ctx)
 
-	require.NoError(t, err)
-	require.Len(t, diffs, 1)
-	require.True(t, diffs[0].Flagged)
-	require.Equal(t, "not a replay; review: no older event left the stored state", diffs[0].Reason)
+			require.NoError(t, err)
+			require.Len(t, diffs, 1)
+			require.True(t, diffs[0].Flagged)
+			require.Equal(t, "not a replay; review: no older event left the stored state", diffs[0].Reason)
+		})
+	}
 }
 
 // TestStatusRepairDiffs_UnreadableActivity_Flagged: when the node's activity
@@ -386,4 +532,65 @@ func TestStatusRepairDiffs_BlockedOnlyByDeletedBlocker_Listed(t *testing.T) {
 	require.True(t, diffs[0].Flagged)
 	require.Equal(t, sqlite.StatusRepairColumn{Column: "status", Current: repairText("blocked"), Expected: repairText("in_progress")},
 		diffs[0].Columns[0])
+}
+
+// TestStatusRepair_AssigneeOnlyDifference_FlaggedAndAppliedOnlyWithForce: a
+// difference only in the assignee or agent_state, with the status matching
+// the winner, is flagged, never repaired as a replay: mtix update --assignee
+// writes no activity, so an imported reassignment cannot be told apart from
+// a replayed claim. With force the column is repaired and, the status being
+// unchanged, no event is emitted.
+func TestStatusRepair_AssigneeOnlyDifference_FlaggedAndAppliedOnlyWithForce(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, a *sqlite.Store, raw *sql.DB)
+	}{
+		{"a replayed claim by another agent", func(t *testing.T, a *sqlite.Store, raw *sql.DB) {
+			require.NoError(t, a.ClaimNode(ctx, "MTIX-1", "agent-x"))
+			markEventsPushed(t, raw)
+			require.NoError(t, a.UnclaimNode(ctx, "MTIX-1", "handoff", "agent-x"))
+			require.NoError(t, a.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			replayClaimAsBefore952(t, raw, "MTIX-1", "agent-x")
+		}},
+		{"an imported mtix update --assignee naming an older claimer", func(t *testing.T, a *sqlite.Store, _ *sql.DB) {
+			require.NoError(t, a.ClaimNode(ctx, "MTIX-1", "agent-x"))
+			require.NoError(t, a.UnclaimNode(ctx, "MTIX-1", "handoff", "agent-x"))
+			require.NoError(t, a.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			b, _ := mutationTestStore(t)
+			replaceImport(t, b, a)
+			agentX := "agent-x"
+			require.NoError(t, b.UpdateNode(ctx, "MTIX-1", &store.NodeUpdate{Assignee: &agentX}))
+			replaceImport(t, a, b)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a, raw := replicaWithNode(t)
+			tt.setup(t, a, raw)
+			before, events := nodeRow(t, raw, "MTIX-1"), eventCount(t, raw)
+			require.Equal(t, "agent-x", before["assignee"])
+
+			diffs, err := a.StatusRepairDiffs(ctx)
+			require.NoError(t, err)
+			require.Len(t, diffs, 1)
+			require.True(t, diffs[0].Flagged)
+			require.Equal(t, "not a replay; review: only the assignee or agent_state differs, which a field update can change without a trace",
+				diffs[0].Reason)
+			require.Equal(t, []sqlite.StatusRepairColumn{
+				{Column: "assignee", Current: repairText("agent-x"), Expected: repairText("agent-a")},
+			}, diffs[0].Columns)
+
+			_, applied, err := a.RepairNodeStatus(ctx, "MTIX-1", "repairer", false)
+			require.NoError(t, err)
+			require.False(t, applied)
+			require.Equal(t, before, nodeRow(t, raw, "MTIX-1"))
+
+			_, applied, err = a.RepairNodeStatus(ctx, "MTIX-1", "repairer", true)
+			require.NoError(t, err)
+			require.True(t, applied)
+			require.Equal(t, "agent-a", nodeRow(t, raw, "MTIX-1")["assignee"])
+			require.Equal(t, events, eventCount(t, raw), "the status did not change, so no event")
+		})
+	}
 }

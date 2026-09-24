@@ -97,6 +97,8 @@ func testNodeStatus(t *testing.T, id string) model.Status {
 func runRepairCmd(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	cmd := newSyncRepairCmd()
+	// As under the root command, which silences cobra's usage and error text.
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetArgs(args)
@@ -288,6 +290,28 @@ func TestSyncRepairCmd_ApplyFailsPartWay_ExportsAndReturnsError(t *testing.T) {
 	data, readErr := os.ReadFile(tasksPath)
 	require.NoError(t, readErr, "the nodes already repaired are exported")
 	require.Contains(t, string(data), `"status": "done"`)
+}
+
+// TestSyncRepairCmd_ApplyFailsPartWay_JSON_PrintsTheReport: with --json, a
+// repair that fails part-way still prints the report as JSON, so an agent
+// parsing stdout sees what was repaired, and the command returns the error.
+func TestSyncRepairCmd_ApplyFailsPartWay_JSON_PrintsTheReport(t *testing.T) {
+	setupRepairStatusRevert(t)
+	require.NoError(t, runCreate("second node", "", "", 3, "", "", "", "", ""))
+	revertNodeLikeS7(t, "TEST-2")
+	// Any write to TEST-2 now fails.
+	_, err := app.store.WriteDB().Exec(`CREATE TRIGGER fail_test2 BEFORE UPDATE ON nodes
+		WHEN NEW.id = 'TEST-2' BEGIN SELECT RAISE(ABORT, 'injected failure'); END`)
+	require.NoError(t, err)
+	app.jsonOutput = true
+
+	text, err := runRepairCmd(t, "--status", "--apply")
+
+	require.Error(t, err)
+	var report service.StatusRepairReport
+	require.NoError(t, json.Unmarshal([]byte(text), &report), "stdout is the JSON report: %s", text)
+	require.Len(t, report.Repaired, 1)
+	require.Equal(t, "TEST-1", report.Repaired[0].NodeID)
 }
 
 // TestSyncRepairCmd_ReachesStoreOnlyThroughService guards the architecture

@@ -120,32 +120,37 @@ func TestWorkflowWinnerTable_EveryStatusAndOp_HasARow(t *testing.T) {
 func TestResolveWorkflowWrite_NoRule_WritesStatusOnly(t *testing.T) {
 	w, known := resolveWorkflowWrite(workflowInput{
 		op: model.OpTransitionStatus, from: model.StatusOpen, to: "bogus",
-		wallClockTS: 1_000, updatedAt: "2026-09-24T00:00:00Z",
+		eventAt: time.Date(1970, 1, 1, 0, 0, 1, 0, time.UTC), updatedAt: "2026-09-24T00:00:00Z",
 	})
 	require.False(t, known)
 	require.Equal(t, workflowWrite{status: "bogus", updatedAt: "2026-09-24T00:00:00Z"}, w,
 		"status and updated_at only; no other column is written")
 }
 
-func TestClosedAtFromWallClock_RangeAndPrecision_FormatsOrFallsBack(t *testing.T) {
-	const fallback = "2026-09-24T00:00:00Z"
+// TestResolveWorkflowWrite_TerminalRow_ClosedAtIsEventTimeInWholeSeconds: a
+// terminal row stamps closed_at from the event's time (eventTime, range tested
+// in sync_event_time_test.go) as RFC3339 in UTC, truncated to whole seconds.
+func TestResolveWorkflowWrite_TerminalRow_ClosedAtIsEventTimeInWholeSeconds(t *testing.T) {
 	tests := []struct {
-		name string
-		ms   int64
-		want string
+		name    string
+		eventAt time.Time
+		want    string
 	}{
-		{"milliseconds truncate, UTC", time.Date(2026, 9, 1, 12, 0, 59, 999_000_000,
-			time.FixedZone("x", 3600)).UnixMilli(), "2026-09-01T11:00:59Z"},
-		{"Unix epoch", 0, "1970-01-01T00:00:00Z"},
-		{"first second of year 1", time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), "0001-01-01T00:00:00Z"},
-		{"year 0 falls back", time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli() - 1, fallback},
-		{"last millisecond of year 9999", time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli() - 1,
-			"9999-12-31T23:59:59Z"},
-		{"year 10000 falls back", time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli(), fallback},
+		{"milliseconds truncate, UTC",
+			time.Date(2026, 9, 1, 12, 0, 59, 999_000_000, time.FixedZone("x", 3600)), "2026-09-01T11:00:59Z"},
+		{"Unix epoch", time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC), "1970-01-01T00:00:00Z"},
+		{"first second of year 1", time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC), "0001-01-01T00:00:00Z"},
+		{"last millisecond of year 9999",
+			time.Date(9999, 12, 31, 23, 59, 59, 999_000_000, time.UTC), "9999-12-31T23:59:59Z"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, closedAtFromWallClock(tt.ms, fallback))
+			w, known := resolveWorkflowWrite(workflowInput{
+				op: model.OpTransitionStatus, from: model.StatusInProgress, to: model.StatusDone,
+				eventAt: tt.eventAt, updatedAt: "2026-09-24T00:00:00Z",
+			})
+			require.True(t, known)
+			require.Equal(t, workflowColumn{write: true, value: tt.want}, w.closedAt)
 		})
 	}
 }

@@ -101,7 +101,7 @@ func detectLWWOutcome(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (lwwO
 	var (
 		priorID   string
 		priorLamp int64
-		priorTS   int64
+		priorTS   int64 // wall_clock_ts: an integer tie-break key here, never a stored time (MTIX-95.26)
 		priorHash string
 	)
 	err := tx.QueryRowContext(ctx, query, args...).Scan(&priorID, &priorLamp, &priorTS, &priorHash)
@@ -630,10 +630,10 @@ func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) 
 	if !ok {
 		return nil
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	applyTime := time.Now().UTC()
 	id, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
 		op: e.OpType, from: p.From, to: p.To,
-		wallClockTS: e.WallClockTS, updatedAt: now,
+		eventAt: eventTime(e.WallClockTS, applyTime), updatedAt: applyTime.Format(time.RFC3339),
 	})
 	if err != nil {
 		return err
@@ -662,17 +662,18 @@ func applyClaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply claim %s: decode payload: %w", e.EventID, err)
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	applyTime := time.Now().UTC()
 	_, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
-		op: e.OpType, agentID: p.AgentID, wallClockTS: e.WallClockTS, updatedAt: now,
+		op: e.OpType, agentID: p.AgentID,
+		eventAt: eventTime(e.WallClockTS, applyTime), updatedAt: applyTime.Format(time.RFC3339),
 	})
 	return err
 }
 
 func applyUnclaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	now := time.Now().UTC().Format(time.RFC3339)
+	applyTime := time.Now().UTC()
 	_, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
-		op: e.OpType, wallClockTS: e.WallClockTS, updatedAt: now,
+		op: e.OpType, eventAt: eventTime(e.WallClockTS, applyTime), updatedAt: applyTime.Format(time.RFC3339),
 	})
 	return err
 }
@@ -682,9 +683,10 @@ func applyDefer(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply defer %s: decode payload: %w", e.EventID, err)
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	applyTime := time.Now().UTC()
 	_, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
-		op: e.OpType, deferUntil: p.Until, wallClockTS: e.WallClockTS, updatedAt: now,
+		op: e.OpType, deferUntil: p.Until,
+		eventAt: eventTime(e.WallClockTS, applyTime), updatedAt: applyTime.Format(time.RFC3339),
 	})
 	return err
 }
@@ -711,14 +713,11 @@ func applyComment(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 			return fmt.Errorf("decode annotations: %w", decErr)
 		}
 	}
-	// Use the event's wall_clock_ts so two replicas applying the same
-	// event in different orders produce byte-identical annotation
-	// rows. Apply-time wall clock would diverge across replicas.
+	// The event's own time (eventTime, MTIX-95.26), not the apply time, so two
+	// replicas applying the same events in any order write byte-identical rows.
+	at := eventTime(e.WallClockTS, time.Now().UTC())
 	annotations = append(annotations, model.Annotation{
-		ID:        e.EventID,
-		Author:    p.AuthorID,
-		Text:      p.Body,
-		CreatedAt: time.UnixMilli(e.WallClockTS).UTC(),
+		ID: e.EventID, Author: p.AuthorID, Text: p.Body, CreatedAt: at,
 	})
 	// Sort by (CreatedAt, ID) so the on-disk list order is independent
 	// of apply order. Two replicas converging on the same set of
@@ -735,7 +734,7 @@ func applyComment(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	}
 	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET annotations = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
-		string(encoded), time.UnixMilli(e.WallClockTS).UTC().Format(time.RFC3339), id,
+		string(encoded), at.Format(time.RFC3339), id,
 	)
 	return err
 }

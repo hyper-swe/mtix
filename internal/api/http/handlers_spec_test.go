@@ -17,7 +17,7 @@ import (
 func TestServer_OpenAPIYAML_ReturnsSpec(t *testing.T) {
 	s := testServer(t)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/openapi.yaml", nil)
+	req := newLocalRequest(http.MethodGet, "/api/openapi.yaml", nil)
 
 	s.Router().ServeHTTP(w, req)
 
@@ -39,7 +39,7 @@ func TestServer_OpenAPIYAML_NoCsrfRequired(t *testing.T) {
 	s := testServer(t)
 	w := httptest.NewRecorder()
 	// Deliberately no X-Requested-With header.
-	req := httptest.NewRequest(http.MethodGet, "/api/openapi.yaml", nil)
+	req := newLocalRequest(http.MethodGet, "/api/openapi.yaml", nil)
 
 	s.Router().ServeHTTP(w, req)
 
@@ -51,7 +51,7 @@ func TestServer_OpenAPIYAML_NoCsrfRequired(t *testing.T) {
 func TestServer_OpenAPIYAML_ContainsNodeEndpoints(t *testing.T) {
 	s := testServer(t)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/openapi.yaml", nil)
+	req := newLocalRequest(http.MethodGet, "/api/openapi.yaml", nil)
 
 	s.Router().ServeHTTP(w, req)
 
@@ -68,7 +68,7 @@ func TestServer_OpenAPIYAML_ContainsNodeEndpoints(t *testing.T) {
 func TestServer_OpenAPIYAML_ContainsSchemaComponents(t *testing.T) {
 	s := testServer(t)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/openapi.yaml", nil)
+	req := newLocalRequest(http.MethodGet, "/api/openapi.yaml", nil)
 
 	s.Router().ServeHTTP(w, req)
 
@@ -86,7 +86,7 @@ func TestServer_OpenAPIYAML_ContainsSchemaComponents(t *testing.T) {
 func TestServer_OpenAPIYAML_ContainsSpecHash(t *testing.T) {
 	s := testServer(t)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/openapi.yaml", nil)
+	req := newLocalRequest(http.MethodGet, "/api/openapi.yaml", nil)
 
 	s.Router().ServeHTTP(w, req)
 
@@ -102,7 +102,7 @@ func TestServer_OpenAPIYAML_ContainsSpecHash(t *testing.T) {
 func TestServer_OpenAPIJSON_ReturnsSpec(t *testing.T) {
 	s := testServer(t)
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/openapi.json", nil)
+	req := newLocalRequest(http.MethodGet, "/api/openapi.json", nil)
 
 	s.Router().ServeHTTP(w, req)
 

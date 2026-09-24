@@ -18,21 +18,6 @@ import (
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
-// wsUpgrader configures the WebSocket upgrade from HTTP.
-// This is a stateless configuration value, not mutable global state.
-var wsUpgrader = websocket.Upgrader{ //nolint:gochecknoglobals // stateless config
-	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		if origin == "" {
-			return true // Non-browser clients (CLI, Go, Python)
-		}
-		return strings.HasPrefix(origin, "http://localhost") ||
-			strings.HasPrefix(origin, "http://127.0.0.1")
-	},
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-}
-
 // subscriptionFilter defines client-side event filtering per FR-7.5a.
 type subscriptionFilter struct {
 	Under  string   `json:"under"`  // Only events under this node prefix
@@ -186,7 +171,10 @@ func matchesFilter(filter *subscriptionFilter, event service.Event) bool {
 	return true
 }
 
-// handleWebSocket handles WS /ws/events per FR-7.5.
+// handleWebSocket handles WS /ws/events per FR-7.5. The upgrade accepts
+// the same origins as HTTP requests (allowedOrigin): none, for a
+// non-browser client, or http/https on localhost or a loopback IP; any
+// other Origin is refused with 403 (MTIX-95.14).
 func (s *Server) handleWebSocket(c *gin.Context) {
 	if s.wsHub == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -195,7 +183,14 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 		return
 	}
 
-	conn, err := wsUpgrader.Upgrade(c.Writer, c.Request, nil)
+	upgrader := websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return allowedOrigin(r.Header.Get("Origin"))
+		},
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
+	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		s.logger.Error("websocket upgrade failed", "error", err)
 		return

@@ -9,6 +9,7 @@ package http
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -28,7 +29,8 @@ import (
 type ServerConfig struct {
 	Bind      string // Bind address (default 127.0.0.1 per NFR-5.2).
 	Port      string // HTTP port (default 6849).
-	RateLimit int    // Requests/second per agent (0=disabled per NFR-1.5).
+	RateLimit int    // Requests/second per client address (0=disabled per NFR-1.5).
+	Version   string // Build version reported by /health (default "dev" per FR-7.3b).
 }
 
 // Server is the main HTTP server for mtix per FR-7.1.
@@ -46,11 +48,14 @@ type Server struct {
 	sessionSvc *service.SessionService
 	agentSvc   *service.AgentService
 	configSvc  *service.ConfigService
+	warnOut    io.Writer // Destination of the network-exposure warning.
 }
 
 // NewServer creates a new HTTP server with all middleware configured.
 // Binds to localhost by default per NFR-5.2; non-localhost binding
 // requires explicit configuration and logs a security warning.
+// The client address that the request log and ClientIP report is the TCP
+// peer: forwarded-address headers are not consulted (MTIX-95.14).
 func NewServer(
 	store *sqlite.Store,
 	nodeSvc *service.NodeService,
@@ -68,12 +73,18 @@ func NewServer(
 	if config.Port == "" {
 		config.Port = "6849"
 	}
+	if config.Version == "" {
+		config.Version = "dev"
+	}
 	if clock == nil {
 		clock = time.Now
 	}
 
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
+	// Client address = TCP peer, never X-Forwarded-For or X-Real-IP
+	// (MTIX-95.14).
+	router.ForwardedByClientIP = false
 
 	hub := NewWSHub(logger)
 	go hub.Run()
@@ -91,6 +102,7 @@ func NewServer(
 		sessionSvc: sessionSvc,
 		agentSvc:   agentSvc,
 		configSvc:  configSvc,
+		warnOut:    os.Stderr,
 	}
 
 	s.setupMiddleware()
@@ -99,17 +111,20 @@ func NewServer(
 	return s
 }
 
-// setupMiddleware configures the middleware stack per NFR-5.x.
+// setupMiddleware configures the middleware stack per NFR-5.x. Panic
+// recovery logs no request headers, and every request must carry an
+// allowlisted Host header (MTIX-95.14).
 func (s *Server) setupMiddleware() {
-	s.router.Use(gin.Recovery())
+	s.router.Use(RecoveryMiddleware(s.logger))
 	s.router.Use(RequestIDMiddleware())
 	s.router.Use(LoggingMiddleware(s.logger))
 	s.router.Use(SecurityHeadersMiddleware())
 	s.router.Use(CacheControlMiddleware())
+	s.router.Use(HostAllowlistMiddleware(s.config.Bind))
 	s.router.Use(CORSMiddleware())
 
 	if s.config.RateLimit > 0 {
-		s.router.Use(RateLimitMiddleware(s.config.RateLimit))
+		s.router.Use(RateLimitMiddleware(s.config.RateLimit, rateLimitMaxKeys, s.clock))
 	}
 }
 
@@ -164,13 +179,15 @@ func (s *Server) Router() *gin.Engine {
 	return s.router
 }
 
-// Start starts the HTTP server and blocks until shutdown.
+// Start starts the HTTP server and blocks until shutdown. It warns about
+// network exposure when the bind address is not loopback: localhost, ::1
+// and the rest of 127.0.0.0/8 are loopback (NFR-5.2, MTIX-95.14).
 func (s *Server) Start() error {
 	addr := net.JoinHostPort(s.config.Bind, s.config.Port)
 
 	// Security warning for non-localhost binding per NFR-5.2.
-	if s.config.Bind != "127.0.0.1" && s.config.Bind != "localhost" {
-		fmt.Fprintf(os.Stderr, "\n"+
+	if !isLoopbackHost(s.config.Bind) {
+		fmt.Fprintf(s.warnOut, "\n"+
 			"WARNING: Binding to %s exposes the API to the network without authentication.\n"+
 			"All task data is readable and writable by anyone who can reach this address.\n"+
 			"This is intended for trusted networks only (e.g., local development, VPN).\n\n",
@@ -183,7 +200,7 @@ func (s *Server) Start() error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	s.logger.Info("starting HTTP server", "addr", addr)
+	s.logger.Info("starting HTTP server", "addr", addr, "version", s.config.Version)
 	return s.httpSrv.ListenAndServe()
 }
 
@@ -244,12 +261,13 @@ func (s *Server) ListenAndServeWithGracefulShutdown() error {
 	}
 }
 
-// handleHealth returns server health status per FR-7.3b.
+// handleHealth returns server health status per FR-7.3b, including the
+// build version from ServerConfig.Version (MTIX-95.14).
 func (s *Server) handleHealth(c *gin.Context) {
 	uptime := s.clock().Sub(s.startedAt).Seconds()
 	c.JSON(http.StatusOK, gin.H{
 		"status":         "ok",
-		"version":        "dev",
+		"version":        s.config.Version,
 		"uptime_seconds": int(uptime),
 	})
 }

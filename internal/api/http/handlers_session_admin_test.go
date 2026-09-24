@@ -78,7 +78,7 @@ func TestStartSession_InvalidJSON_DefaultsApplied(t *testing.T) {
 	ensureHTTPAgent(t, s, "agent-1", "TEST")
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/agent-1/sessions/start", strings.NewReader("{invalid}"))
+	req := newLocalRequest(http.MethodPost, "/api/v1/agents/agent-1/sessions/start", strings.NewReader("{invalid}"))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "mtix")
 	s.Router().ServeHTTP(w, req)
@@ -138,7 +138,7 @@ func TestSessionSummary_ValidAgent_Returns200(t *testing.T) {
 
 	// Get summary.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/agent-1/sessions/summary", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/agents/agent-1/sessions/summary", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -154,7 +154,7 @@ func TestSessionSummary_NoSession_ReturnsError(t *testing.T) {
 	ensureHTTPAgent(t, s, "agent-999", "TEST")
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/agent-999/sessions/summary", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/agents/agent-999/sessions/summary", nil)
 	s.Router().ServeHTTP(w, req)
 
 	// May return error code per service implementation.
@@ -169,7 +169,7 @@ func TestGetAgentState_ValidAgent_Returns200(t *testing.T) {
 	ensureHTTPAgent(t, s, "agent-1", "TEST")
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/agent-1/state", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/agents/agent-1/state", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -218,7 +218,7 @@ func TestSetAgentState_InvalidJSON_Returns400(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/agents/agent-1/state", strings.NewReader("{bad json}"))
+	req := newLocalRequest(http.MethodPatch, "/api/v1/agents/agent-1/state", strings.NewReader("{bad json}"))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "mtix")
 	s.Router().ServeHTTP(w, req)
@@ -233,7 +233,7 @@ func TestGetAgentWork_NoCurrentWork_Returns404(t *testing.T) {
 	ensureHTTPAgent(t, s, "agent-1", "TEST")
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/agent-1/work", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/agents/agent-1/work", nil)
 	s.Router().ServeHTTP(w, req)
 
 	// GetCurrentWork returns ErrNotFound when agent has no assigned work.
@@ -284,7 +284,7 @@ func TestSetConfig_InvalidJSON_Returns400(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/config", strings.NewReader("{invalid}"))
+	req := newLocalRequest(http.MethodPatch, "/api/v1/admin/config", strings.NewReader("{invalid}"))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "mtix")
 	s.Router().ServeHTTP(w, req)
@@ -297,7 +297,7 @@ func TestSetConfig_EmptyBody_Returns400(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/config", strings.NewReader(""))
+	req := newLocalRequest(http.MethodPatch, "/api/v1/admin/config", strings.NewReader(""))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "mtix")
 	s.Router().ServeHTTP(w, req)
@@ -362,7 +362,7 @@ func TestStaleNodes_Returns200(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stale", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/stale", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -378,7 +378,7 @@ func TestStaleNodes_WithCustomHours_Returns200(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stale?hours=24", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/stale?hours=24", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -393,7 +393,7 @@ func TestStaleNodes_InvalidHours_UsesDefault(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stale?hours=invalid", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/stale?hours=invalid", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -409,7 +409,7 @@ func TestNodeTree_ValidNode_Returns200(t *testing.T) {
 	nodeID := createTestNode(t, s, "Tree Test", "TEST")
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tree/"+nodeID, nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/tree/"+nodeID, nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -427,7 +427,7 @@ func TestNodeTree_WithDepthParam_Returns200(t *testing.T) {
 	nodeID := createTestNode(t, s, "Tree Depth Test", "TEST")
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tree/"+nodeID+"?depth=5", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/tree/"+nodeID+"?depth=5", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -442,7 +442,7 @@ func TestNodeTree_NonexistentNode_Returns404(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tree/NONEXISTENT", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/tree/NONEXISTENT", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -466,7 +466,7 @@ func TestNodeContext_ValidNode_Returns200(t *testing.T) {
 
 	// Get context.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/context/"+childID, nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/context/"+childID, nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -484,7 +484,7 @@ func TestNodeContext_NonexistentNode_Returns404(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/context/NONEXISTENT", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/context/NONEXISTENT", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -711,7 +711,7 @@ func TestBulkUpdateNodes_InvalidJSON_Returns400(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPatch, "/api/v1/bulk/nodes", strings.NewReader("{invalid}"))
+	req := newLocalRequest(http.MethodPatch, "/api/v1/bulk/nodes", strings.NewReader("{invalid}"))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "mtix")
 	s.Router().ServeHTTP(w, req)
@@ -911,7 +911,7 @@ func TestOrphanNodes_WithPagination_Returns200(t *testing.T) {
 	createTestNode(t, s, "Orphan 3", "TEST")
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orphans?limit=2&offset=0", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/orphans?limit=2&offset=0", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -943,7 +943,7 @@ func TestOrphanNodes_ManyChildren_AllRootsReturned(t *testing.T) {
 	for i := 0; i < 60; i++ {
 		w := httptest.NewRecorder()
 		body := `{"title":"Child ` + fmt.Sprintf("%d", i) + `","parent_id":"` + root1 + `","project":"TEST"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/nodes", strings.NewReader(body))
+		req := newLocalRequest(http.MethodPost, "/api/v1/nodes", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Requested-With", "mtix")
 		s.Router().ServeHTTP(w, req)
@@ -952,7 +952,7 @@ func TestOrphanNodes_ManyChildren_AllRootsReturned(t *testing.T) {
 
 	// Request orphans with default limit (50). All 3 roots must be returned.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orphans?limit=50&project=all", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/orphans?limit=50&project=all", nil)
 	s.Router().ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)

@@ -100,7 +100,7 @@ func TestPullThenSweep_Failures_RetryAtMostOnce(t *testing.T) {
 			cursor, err := readLastPulledClock(ctx, app.store)
 			require.NoError(t, err)
 			require.Zero(t, cursor, "a failed batch does not move the cursor")
-			require.Zero(t, countRows(t, `SELECT COUNT(*) FROM applied_events WHERE event_id = ?`,
+			require.Zero(t, countTestRows(t, `SELECT COUNT(*) FROM applied_events WHERE event_id = ?`,
 				events[2].EventID), "a failed batch is rolled back")
 		})
 	}

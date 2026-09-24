@@ -430,10 +430,9 @@ func TestApply_MalformedPayloadPerOpType(t *testing.T) {
 	}{
 		{model.OpCreateNode, "create_node"},
 		{model.OpUpdateField, "update_field"},
-		// transition_status is not here: an undecodable payload is recorded
-		// without failing the batch (sync_workflow_winner_unknown_status_test.go).
-		{model.OpClaim, "claim"},
-		{model.OpDefer, "defer"},
+		// transition_status, claim and defer are not here: an undecodable
+		// workflow payload is recorded without failing the batch (MTIX-95.27;
+		// sync_workflow_malformed_test.go).
 		{model.OpComment, "comment"},
 		{model.OpLinkDep, "link_dep"},
 		{model.OpUnlinkDep, "unlink_dep"},

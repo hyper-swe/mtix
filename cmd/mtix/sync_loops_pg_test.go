@@ -161,7 +161,9 @@ func TestCloneLoop_EmptyHubReturnsCleanly(t *testing.T) {
 }
 
 // TestCloneLoop_AppliesAndCheckpoints. Push from producer, clone on
-// fresh consumer, assert events applied AND checkpoint advanced.
+// fresh consumer, assert the pushed node is rebuilt with its content AND
+// the checkpoint advanced. The content assertions keep it from passing
+// vacuously when the wipe leaves the event log behind (MTIX-95.28).
 func TestCloneLoop_AppliesAndCheckpoints(t *testing.T) {
 	pool := openCmdHub(t)
 	initTestApp(t)
@@ -171,8 +173,18 @@ func TestCloneLoop_AppliesAndCheckpoints(t *testing.T) {
 	_, _, _, _, err := pushLoop(context.Background(), &stderr, pool, app.store)
 	require.NoError(t, err)
 
-	// Wipe local state to simulate a fresh clone target.
+	// The create event the hub now holds; the clone must rebuild TEST-1 from it.
 	ctx := context.Background()
+	var createID string
+	require.NoError(t, app.store.QueryRow(ctx,
+		`SELECT event_id FROM sync_events WHERE op_type = 'create_node' AND node_id = 'TEST-1'`,
+	).Scan(&createID))
+
+	// Wipe local state to simulate a fresh clone target. The event log goes
+	// too: the own-event rule acknowledges, and never applies, an event the
+	// log still holds (MTIX-95.2), so a kept log would rebuild nothing.
+	_, err = app.store.WriteDB().ExecContext(ctx, `DELETE FROM sync_events`)
+	require.NoError(t, err)
 	_, err = app.store.WriteDB().ExecContext(ctx, `DELETE FROM applied_events`)
 	require.NoError(t, err)
 	_, err = app.store.WriteDB().ExecContext(ctx, `DELETE FROM nodes`)
@@ -189,6 +201,16 @@ func TestCloneLoop_AppliesAndCheckpoints(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, cursor, int64(0),
 		"clone checkpoint must advance past initial 0 after pull")
+
+	// Counts and the checkpoint advance even when every event is only
+	// acknowledged, so assert what the clone rebuilt.
+	require.Equal(t, map[string]string{"TEST-1": "seed"}, liveNodeTitles(t),
+		"clone must rebuild the pushed node with its title")
+	require.Equal(t, createID, localNodeUID(t, app.store, "TEST-1"),
+		"the rebuilt node must be anchored to the hub's create event")
+	applied, err := countAppliedEvent(ctx, createID)
+	require.NoError(t, err)
+	require.Equal(t, 1, applied, "clone must record the create as applied")
 }
 
 // --- runSyncPush / runSyncPull / runSyncClone cobra RunE happy paths ---

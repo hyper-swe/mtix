@@ -1598,8 +1598,15 @@ flagged, and when this machine's clock is ahead, a teammate's newer state
 can look like a replay, which --apply would revert. Check each replay's
 winner time and origin before --apply.
 
+Run 'mtix sync pull' before listing, and again just before --apply. A
+repair event carries this machine's newest clock, so on a log that lacks a
+teammate's newer change it wins over that change, and every machine that
+pulls it reverts the teammate's change. After pulling, list again and
+apply only what is still listed.
+
 Without --apply the command is a dry run: it lists the differences and
-writes nothing. --json prints them as JSON.
+writes nothing, and ends with a reminder to pull first. --json prints them
+as JSON, with the reminder in a "reminder" field.
 
 With --apply it first writes a verified backup of the database to
 .mtix/data/backups/pre-repair-status-<UTC time>.db, and stops if it cannot.

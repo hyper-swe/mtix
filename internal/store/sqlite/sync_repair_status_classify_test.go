@@ -204,6 +204,13 @@ func TestStatusRepairDiffs_CancelledNodeWithNewerAncestorCancel_Flagged(t *testi
 			require.NoError(t, b.CancelNode(ctx, "MTIX-1", "dropped", "agent-b", true))
 			replaceImport(t, s, b)
 		}, "MTIX-1.1", true},
+		{"a pulled foreign parent cancel, with no cancel activity", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
+			pullEvents(t, s, []*model.SyncEvent{foreignWorkflowEvent(t, "MTIX-1", model.OpTransitionStatus,
+				transition(model.StatusOpen, model.StatusCancelled), latestLamport(t, raw, model.OpTransitionStatus)+5, "")})
+			require.Equal(t, "cancelled", nodeRow(t, raw, "MTIX-1")["status"])
+			require.NotContains(t, nodeRow(t, raw, "MTIX-1")["activity"], "cancelled", "ingest writes no activity")
+			replayTransitionAsBefore952(t, raw, "MTIX-1.1", model.StatusCancelled)
+		}, "MTIX-1.1", true},
 		{"a parent cancel older than the node's winner", nil, "MTIX-1.1", false},
 	}
 	for _, tt := range tests {

@@ -105,12 +105,17 @@ Before mtix 0.5.4, `mtix sync pull` could re-apply events this machine had alrea
 
 **Recognize:** a node's status, assignee or agent_state is older than its own activity says (a later status change is recorded), typically after a pull on a client older than 0.5.4.
 
+**Pull first, always.** Run `mtix sync pull` before listing and again just before `--apply`. A repair that changes the status emits an event stamped with this machine's newest Lamport clock; on a log that lacks a teammate's newer, unpulled change, that event wins over the change and reverts it on every machine that pulls it. A 0.5.4 pull no longer replays this machine's own events, so pulling is safe.
+
 **List (a dry run, safe at any time):**
 
 ```bash
+mtix sync pull                     # bring in every teammate's change first
 mtix sync repair --status          # list the nodes that differ; writes nothing
 mtix sync repair --status --json   # the same list as JSON
 ```
+
+The dry run ends with a reminder to pull first (`reminder` in `--json`).
 
 Each listed node names its winning event (its newest well-formed claim, unclaim, defer or status-change event, chosen by the rule a pull applies), when it was made, whether this machine or another machine made it, and a reason, then, per differing field, the stored and the derived value. The fields compared are status, assignee, agent_state, whether `closed_at` is set, and the progress of a node without children. The reasons:
 - `replay`: the stored state is what an older event of the node writes (shown as the replayed event), which is what an older pull left. `--apply` repairs it.
@@ -124,13 +129,15 @@ Left alone: nodes without claim, unclaim, defer or status-change events; a block
 **Apply (only with a human's explicit go-ahead):**
 
 ```bash
+mtix sync pull                     # again, just before applying
+mtix sync repair --status          # list again; apply only what is still listed
 mtix sync repair --status --apply
 mtix sync push
 ```
 
 `--apply` first writes a verified backup to `.mtix/data/backups/pre-repair-status-<UTC time>.db`; if it cannot, it stops without changing anything (free disk space and run it again). It then repairs each node that is not flagged, in its own transaction: it writes the derived state, adds an activity entry with the text `sync repair` naming the winning event, recomputes the parent's progress and re-exports `.mtix/tasks.json`. Only when the status changes does it emit a status-change event (reason `sync repair`, stamped with the winning event's time so other machines keep their `closed_at`, or with the current time if that time is in the future, since `mtix sync push` refuses an event more than a day ahead) and unblock dependents; that event fires `status.changed` hooks here and on every machine that pulls it.
 
-**Flagged nodes:** never pass `--force` on your own. Show each flagged node to the human (`mtix show <id>`, the reason, the stored and derived values); if they confirm that the stored state is the damage, run `mtix sync repair --status --apply --force`, which repairs the flagged nodes too.
+**Flagged nodes:** never pass `--force` on your own. Show each flagged node to the human (`mtix show <id>`, the reason, the stored and derived values); if they confirm that the stored state is the damage, run `mtix sync pull`, then `mtix sync repair --status --apply --force`, which repairs the flagged nodes too.
 
 **Verify:** `mtix sync repair --status` lists nothing (or only flagged nodes the human chose to keep), and `mtix sync status` counts the repair events as pending until `mtix sync push` sends them.
 

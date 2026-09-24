@@ -150,6 +150,10 @@ func TestDiscardLocal_ResetsSentinels(t *testing.T) {
 	// Bump the lamport sentinel so we can check it's reset.
 	_, err := raw.Exec(`UPDATE meta SET value = '99' WHERE key = 'meta.sync.lamport'`)
 	require.NoError(t, err)
+	// Record a late-event sweep so we can check the next pull diffs the
+	// full hub history again (MTIX-95.5).
+	_, err = raw.Exec(`UPDATE meta SET value = '2026-09-24T01:02:03Z' WHERE key = 'meta.sync.last_sweep_at'`)
+	require.NoError(t, err)
 
 	require.NoError(t, DiscardLocal(context.Background(), s, mtixDir))
 
@@ -160,6 +164,7 @@ func TestDiscardLocal_ResetsSentinels(t *testing.T) {
 		{"meta.sync.first_event_hash", ""},
 		{"meta.sync.project_prefix", ""},
 		{"meta.sync.machine_hash", ""},
+		{"meta.sync.last_sweep_at", ""},
 	} {
 		t.Run(kv.key, func(t *testing.T) {
 			var got string

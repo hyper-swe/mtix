@@ -422,6 +422,11 @@ INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.vector_clock', '{}');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.first_event_hash', '');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.project_prefix', '');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.clone.checkpoint', '0');
+-- meta.sync.last_sweep_at: the hub's clock (RFC 3339, UTC) at the start of
+-- the last late-event sweep of sync pull (MTIX-95.5). The next sweep lists
+-- hub events created since this time minus a 15-minute overlap. Empty means
+-- never swept: the next pull diffs the full hub id history once.
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.last_sweep_at', '');
 -- meta.sync.consecutive_errors — bumped on push/pull errors, cleared on
 -- success; the workflow state-detector trips StateHubUnreachable at >=3
 -- per FR-18 / MTIX-15.8.1.

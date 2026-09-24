@@ -104,6 +104,19 @@ mtix sync push
 mtix sync status
 ```
 
+`mtix sync pull` also recovers **late events**: changes a teammate
+pushed after working offline, which carry lower clock values than your
+pull cursor. After fetching past its cursor, pull lists the hub events
+created since its previous sweep (with a 15-minute overlap, timed by
+the hub's clock), fetches the ones you do not have and applies them the
+usual way; an older recovered claim or status change never reverts a
+newer one. The first pull after upgrading compares the full hub history
+once and prints how many late events it recovered. `mtix sync status`
+shows `last sweep`. The sweep costs one extra hub query per pull and
+has no timer of its own. After upgrading, the hub owner runs
+`mtix sync init` once with the owner's DSN to add the hub index the
+sweep reads by; until then each pull scans the hub's event table once.
+
 ### 7. Install the pre-push hook (recommended)
 
 ```bash

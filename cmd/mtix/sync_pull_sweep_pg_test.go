@@ -1,0 +1,375 @@
+// Copyright 2025-2026 HyperSWE
+// SPDX-License-Identifier: Apache-2.0
+
+package main
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"log/slog"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store"
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
+)
+
+// Real-Postgres tests for the late-event sweep of `mtix sync pull`
+// (MTIX-95.5; ADR-006 D5, review F-43). Pull asks the hub for
+// lamport_clock > cursor, so an event that an offline store pushes with a
+// Lamport clock below a busier peer's cursor is never returned by the
+// cursor loop. The sweep that follows the cursor loop lists the hub event
+// ids created since the previous sweep's hub time (minus a 15-minute
+// overlap), fetches the ones this store does not hold and applies them.
+//
+// Every test here is gated on MTIX_PG_TEST_DSN (requireCmdPG) and skips
+// without it. The peer is app.store (it pulls with the real runSyncPull);
+// the offline writer is a second real store that pushes with the real
+// pushLoop.
+
+// sweepFixture is one hub, the peer (app.store) and an offline store B.
+type sweepFixture struct {
+	dsn  string
+	pool *transport.Pool
+	b    *sqlite.Store
+}
+
+// newSweepFixture opens a fresh hub, initializes the peer as app.store and
+// opens the offline store B with its own author identity.
+func newSweepFixture(t *testing.T) *sweepFixture {
+	t.Helper()
+	dsn := requireCmdPG(t)
+	pool := openCmdHub(t)
+	initTestApp(t)
+	b, err := sqlite.New(filepath.Join(t.TempDir(), ".mtix"), slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = b.Close() })
+	_, err = b.WriteDB().ExecContext(context.Background(),
+		`UPDATE meta SET value = 'agent-b' WHERE key = 'meta.sync.author_id'`)
+	require.NoError(t, err)
+	return &sweepFixture{dsn: dsn, pool: pool, b: b}
+}
+
+// seedSharedNode creates TEST-1 on the peer, pushes it, and lets B pull it,
+// so both stores hold the node before B goes offline.
+func (f *sweepFixture) seedSharedNode(t *testing.T) {
+	t.Helper()
+	require.NoError(t, runCreate("shared", "", "", 3, "", "", "", "", ""))
+	f.pushPeer(t)
+	var stderr bytes.Buffer
+	_, _, err := pullLoop(context.Background(), &stderr, f.pool, f.b, 0, 100)
+	require.NoError(t, err, "B pulls the shared node: %s", stderr.String())
+	_, err = f.b.GetNode(context.Background(), "TEST-1")
+	require.NoError(t, err, "B must hold TEST-1 before going offline")
+}
+
+// editPeer makes n description edits on the peer, raising its Lamport clock
+// well above B's.
+func (f *sweepFixture) editPeer(t *testing.T, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		desc := fmt.Sprintf("peer edit %d", i)
+		require.NoError(t, app.store.UpdateNode(context.Background(), "TEST-1",
+			&store.NodeUpdate{Description: &desc}))
+	}
+}
+
+// pushPeer pushes the peer's pending events with the real pushLoop.
+func (f *sweepFixture) pushPeer(t *testing.T) {
+	t.Helper()
+	var stderr bytes.Buffer
+	_, _, _, _, err := pushLoop(context.Background(), &stderr, f.pool, app.store)
+	require.NoError(t, err, "peer push: %s", stderr.String())
+}
+
+// pushB pushes B's pending events and returns them as they were queued.
+func (f *sweepFixture) pushB(t *testing.T) []*model.SyncEvent {
+	t.Helper()
+	ctx := context.Background()
+	pending, err := readPendingBatch(ctx, f.b, 1000)
+	require.NoError(t, err)
+	var stderr bytes.Buffer
+	_, _, _, _, err = pushLoop(ctx, &stderr, f.pool, f.b)
+	require.NoError(t, err, "B push: %s", stderr.String())
+	return pending
+}
+
+// pullPeer runs the real `mtix sync pull` on the peer and returns stdout.
+func (f *sweepFixture) pullPeer(t *testing.T, limit int) string {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	err := runSyncPull(context.Background(), &stdout, &stderr,
+		[]string{f.dsn}, transport.Options{InsecureTLS: true}, limit)
+	require.NoError(t, err, "peer pull: %s", stderr.String())
+	return stdout.String()
+}
+
+// peerCursor returns the peer's Lamport pull cursor.
+func (f *sweepFixture) peerCursor(t *testing.T) int64 {
+	t.Helper()
+	c, err := readLastPulledClock(context.Background(), app.store)
+	require.NoError(t, err)
+	return c
+}
+
+// appliedOnPeer reports whether the peer recorded eventID in applied_events,
+// i.e. whether the peer received that event.
+func (f *sweepFixture) appliedOnPeer(t *testing.T, eventID string) bool {
+	t.Helper()
+	var n int
+	require.NoError(t, app.store.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM applied_events WHERE event_id = ?`, eventID).Scan(&n))
+	return n == 1
+}
+
+// hubNow reads the hub's clock.
+func (f *sweepFixture) hubNow(t *testing.T) time.Time {
+	t.Helper()
+	var now time.Time
+	require.NoError(t, f.pool.Inner().QueryRow(context.Background(),
+		`SELECT now()`).Scan(&now))
+	return now
+}
+
+// setHubCreatedAt rewrites one hub event's created_at, to place it relative
+// to a sweep window. The test hub is a throwaway database.
+func (f *sweepFixture) setHubCreatedAt(t *testing.T, eventIDs []string, at time.Time) {
+	t.Helper()
+	tag, err := f.pool.Inner().Exec(context.Background(),
+		`UPDATE sync_events SET created_at = $1 WHERE event_id = ANY($2)`, at, eventIDs)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(eventIDs)), tag.RowsAffected())
+}
+
+// peerLastSweep returns the peer's meta.sync.last_sweep_at, parsed.
+func (f *sweepFixture) peerLastSweep(t *testing.T) time.Time {
+	t.Helper()
+	var raw string
+	require.NoError(t, app.store.QueryRow(context.Background(),
+		`SELECT value FROM meta WHERE key = 'meta.sync.last_sweep_at'`).Scan(&raw),
+		"meta.sync.last_sweep_at must exist")
+	at, err := time.Parse(time.RFC3339Nano, raw)
+	require.NoError(t, err, "meta.sync.last_sweep_at %q must be an RFC3339 hub time", raw)
+	return at
+}
+
+// eventIDs returns the ids of events.
+func eventIDs(events []*model.SyncEvent) []string {
+	ids := make([]string, 0, len(events))
+	for _, e := range events {
+		ids = append(ids, e.EventID)
+	}
+	return ids
+}
+
+// TestPullSweep_LateLowLamportPush_IsPulled is ADR-006 S6 against a real
+// hub: B clones the node and goes offline, the peer's cursor moves past
+// B's clock, B pushes an edit stamped below the peer's cursor, and the
+// peer's next pull applies it (MTIX-95.5 acceptance 1).
+func TestPullSweep_LateLowLamportPush_IsPulled(t *testing.T) {
+	f := newSweepFixture(t)
+	ctx := context.Background()
+	f.seedSharedNode(t)
+	f.editPeer(t, 10)
+	f.pushPeer(t)
+	f.pullPeer(t, 100)
+	cursor := f.peerCursor(t)
+
+	title := "offline edit from B"
+	require.NoError(t, f.b.UpdateNode(ctx, "TEST-1", &store.NodeUpdate{Title: &title}))
+	late := f.pushB(t)
+	require.Len(t, late, 1)
+	require.Less(t, late[0].LamportClock, cursor,
+		"precondition: B's event is stamped below the peer's cursor")
+
+	out := f.pullPeer(t, 100)
+
+	got, err := app.store.GetNode(ctx, "TEST-1")
+	require.NoError(t, err)
+	require.Equal(t, title, got.Title, "the late edit must reach the peer")
+	require.True(t, f.appliedOnPeer(t, late[0].EventID),
+		"the late event must be recorded in applied_events")
+	require.Contains(t, out, "1 late events recovered")
+	require.Equal(t, cursor, f.peerCursor(t),
+		"the sweep must not move the Lamport cursor")
+}
+
+// TestPullSweep_RecoveredLateClaim_DoesNotRevertNewerDone: a claim that B
+// made offline, older than the peer's done, is recovered by the sweep. It
+// must go through the MTIX-95.10 winner rule: the node stays done with the
+// peer's assignee, and the claim is recorded as received (MTIX-95.5
+// acceptance 2, review F-43). Asserting the applied_events row is what
+// makes this test fail before the sweep: without it the claim is never
+// pulled and the node stays done anyway.
+func TestPullSweep_RecoveredLateClaim_DoesNotRevertNewerDone(t *testing.T) {
+	f := newSweepFixture(t)
+	ctx := context.Background()
+	f.seedSharedNode(t)
+	f.editPeer(t, 5)
+	require.NoError(t, app.store.ClaimNode(ctx, "TEST-1", "agent-a"))
+	require.NoError(t, app.store.TransitionStatus(ctx, "TEST-1",
+		model.StatusDone, "finished", "agent-a"))
+	f.pushPeer(t)
+	f.pullPeer(t, 100)
+	cursor := f.peerCursor(t)
+
+	require.NoError(t, f.b.ClaimNode(ctx, "TEST-1", "agent-b"))
+	late := f.pushB(t)
+	require.Len(t, late, 1)
+	require.Equal(t, model.OpClaim, late[0].OpType)
+	require.Less(t, late[0].LamportClock, cursor,
+		"precondition: B's claim is stamped below the peer's cursor")
+
+	out := f.pullPeer(t, 100)
+
+	require.True(t, f.appliedOnPeer(t, late[0].EventID),
+		"the late claim must be received (recorded in applied_events)")
+	require.Contains(t, out, "1 late events recovered")
+	got, err := app.store.GetNode(ctx, "TEST-1")
+	require.NoError(t, err)
+	require.Equal(t, model.StatusDone, got.Status,
+		"an older recovered claim must not revert the newer done")
+	require.Equal(t, "agent-a", got.Assignee,
+		"the losing claim must not change the assignee")
+}
+
+// TestPullSweep_FirstRunFullScan_RecoversHistoricalGaps: a store that has
+// never swept (meta.sync.last_sweep_at empty, as after an upgrade) diffs
+// the full hub id history once, in pages, and applies every event it is
+// missing, including events far older than any sweep window (MTIX-95.5
+// acceptance 3). A page size of 2 forces the history across many pages
+// and the recovered events across several apply batches, where B's
+// create must apply before B's edit of the same node.
+func TestPullSweep_FirstRunFullScan_RecoversHistoricalGaps(t *testing.T) {
+	f := newSweepFixture(t)
+	ctx := context.Background()
+	f.seedSharedNode(t)
+	f.editPeer(t, 10)
+	f.pushPeer(t)
+	f.pullPeer(t, 100)
+	cursor := f.peerCursor(t)
+
+	title := "historical edit from B"
+	require.NoError(t, f.b.UpdateNode(ctx, "TEST-1", &store.NodeUpdate{Title: &title}))
+	require.NoError(t, f.b.CreateNode(ctx, mkPGNode("TEST-2", "", 0, 2, "B's node")))
+	desc := "written by B while offline"
+	require.NoError(t, f.b.UpdateNode(ctx, "TEST-2", &store.NodeUpdate{Description: &desc}))
+	late := f.pushB(t)
+	require.Len(t, late, 3)
+	for _, e := range late {
+		require.Less(t, e.LamportClock, cursor,
+			"precondition: every B event is stamped below the peer's cursor")
+	}
+	f.setHubCreatedAt(t, eventIDs(late), f.hubNow(t).Add(-30*24*time.Hour))
+	_, err := app.store.WriteDB().ExecContext(ctx,
+		`UPDATE meta SET value = '' WHERE key = 'meta.sync.last_sweep_at'`)
+	require.NoError(t, err)
+
+	out := f.pullPeer(t, 2)
+
+	require.Contains(t, out, "3 late events recovered")
+	for _, e := range late {
+		require.Truef(t, f.appliedOnPeer(t, e.EventID),
+			"historical event %s (%s) must be recovered", e.EventID, e.OpType)
+	}
+	shared, err := app.store.GetNode(ctx, "TEST-1")
+	require.NoError(t, err)
+	require.Equal(t, title, shared.Title)
+	created, err := app.store.GetNode(ctx, "TEST-2")
+	require.NoError(t, err, "B's node must be recovered")
+	require.Equal(t, desc, created.Description)
+	require.False(t, f.peerLastSweep(t).IsZero(),
+		"the first sweep records its hub time")
+}
+
+// TestPullSweep_UsesHubClock: the sweep window and meta.sync.last_sweep_at
+// come from the hub's clock, so a skewed client clock changes nothing: the
+// recorded sweep time lies between two hub-clock readings taken around the
+// pull, and a late event is still recovered (MTIX-95.5 acceptance 4).
+func TestPullSweep_UsesHubClock(t *testing.T) {
+	tests := []struct {
+		name string
+		skew time.Duration
+	}{
+		{"client clock three hours ahead", 3 * time.Hour},
+		{"client clock three hours behind", -3 * time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newSweepFixture(t)
+			ctx := context.Background()
+			f.seedSharedNode(t)
+			f.editPeer(t, 5)
+			f.pushPeer(t)
+			app.store.SetClock(func() time.Time { return time.Now().UTC().Add(tt.skew) })
+
+			before := f.hubNow(t)
+			f.pullPeer(t, 100)
+			after := f.hubNow(t)
+			requireWithin(t, f.peerLastSweep(t), before, after)
+
+			title := "late edit under a skewed peer clock"
+			require.NoError(t, f.b.UpdateNode(ctx, "TEST-1", &store.NodeUpdate{Title: &title}))
+			late := f.pushB(t)
+			require.Len(t, late, 1)
+
+			before = f.hubNow(t)
+			f.pullPeer(t, 100)
+			after = f.hubNow(t)
+			requireWithin(t, f.peerLastSweep(t), before, after)
+			require.True(t, f.appliedOnPeer(t, late[0].EventID),
+				"a skewed client clock must not hide a late event")
+		})
+	}
+}
+
+// requireWithin asserts lo <= got <= hi.
+func requireWithin(t *testing.T, got, lo, hi time.Time) {
+	t.Helper()
+	require.Falsef(t, got.Before(lo), "last sweep %s is before hub time %s", got, lo)
+	require.Falsef(t, got.After(hi), "last sweep %s is after hub time %s", got, hi)
+}
+
+// TestPullSweep_Window_StartsFifteenMinutesBeforeLastSweep: the sweep lists
+// hub events created since the previous sweep's hub time minus a 15-minute
+// overlap. An event committed late by a push transaction that started 14
+// minutes before the previous sweep is recovered; one created 16 minutes
+// before it is outside the window (only the first sweep diffs the full
+// history) (MTIX-95.5 acceptance 1).
+func TestPullSweep_Window_StartsFifteenMinutesBeforeLastSweep(t *testing.T) {
+	tests := []struct {
+		name      string
+		before    time.Duration
+		recovered bool
+	}{
+		{"created 14 minutes before the last sweep", 14 * time.Minute, true},
+		{"created 16 minutes before the last sweep", 16 * time.Minute, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newSweepFixture(t)
+			ctx := context.Background()
+			f.seedSharedNode(t)
+			f.editPeer(t, 5)
+			f.pushPeer(t)
+			f.pullPeer(t, 100)
+			last := f.peerLastSweep(t)
+
+			title := "late edit near the window edge"
+			require.NoError(t, f.b.UpdateNode(ctx, "TEST-1", &store.NodeUpdate{Title: &title}))
+			late := f.pushB(t)
+			require.Len(t, late, 1)
+			f.setHubCreatedAt(t, eventIDs(late), last.Add(-tt.before))
+
+			f.pullPeer(t, 100)
+
+			require.Equal(t, tt.recovered, f.appliedOnPeer(t, late[0].EventID))
+		})
+	}
+}

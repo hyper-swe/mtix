@@ -86,6 +86,8 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			`DELETE FROM nodes`,
 			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.lamport'`,
 			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.last_pulled_clock'`,
+			// Never swept again: the next pull diffs the full hub history (MTIX-95.5).
+			`UPDATE meta SET value = '' WHERE key = 'meta.sync.last_sweep_at'`,
 			`UPDATE meta SET value = '{}' WHERE key = 'meta.sync.vector_clock'`,
 			`UPDATE meta SET value = '' WHERE key = 'meta.sync.first_event_hash'`,
 			`UPDATE meta SET value = '' WHERE key = 'meta.sync.project_prefix'`,
@@ -606,4 +608,3 @@ func writeIDRenameMap(mtixDir, path string, mapping map[string]string, partial b
 	}
 	_ = os.Rename(tmp, filepath.Join(mtixDir, IDRenameMapFilename))
 }
-

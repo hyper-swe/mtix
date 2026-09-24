@@ -106,6 +106,9 @@ func TestSchema_SyncSentinelsPopulated(t *testing.T) {
 		{"meta.sync.lamport", "0"},
 		{"meta.sync.last_pulled_clock", "0"},
 		{"meta.sync.machine_hash", ""},
+		// Empty means the store has never run the late-event sweep, so its
+		// first pull diffs the full hub id history (MTIX-95.5).
+		{"meta.sync.last_sweep_at", ""},
 		{"sync.max_queue_size", "0"},
 		{"hub.events_retention_days", "0"},
 	}
@@ -318,6 +321,7 @@ func TestSchema_V1ToV2Migration(t *testing.T) {
 		"meta.sync.lamport",
 		"meta.sync.last_pulled_clock",
 		"meta.sync.machine_hash",
+		"meta.sync.last_sweep_at",
 		"sync.max_queue_size",
 		"hub.events_retention_days",
 	} {

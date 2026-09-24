@@ -1419,6 +1419,13 @@ Pull events from the BYO Postgres sync hub starting at the local
 last_pulled_clock cursor; apply each event via the FR-18.9 idempotent
 apply engine; advance the cursor.
 
+Then sweep for late events: list the hub events created since the
+previous sweep (hub time, minus a 15-minute overlap), fetch the ones
+this store does not hold, and apply them the same way. This catches
+events a teammate pushed after working offline, whose Lamport clock is
+below the cursor. The first sweep on a store compares the full hub
+event history once and prints how many late events it recovered.
+
 Lock-free: multiple processes pulling concurrently is safe because
 applied_events dedupes on event_id.
 
@@ -1429,7 +1436,7 @@ Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
-| `--limit` |  | Number of events to pull per batch | 1000 |
+| `--limit` |  | Number of events to pull per batch (also the late-event sweep page size) | 1000 |
 ---
 
 ## push

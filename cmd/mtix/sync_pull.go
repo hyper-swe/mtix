@@ -25,7 +25,9 @@ const pullDefaultBatchSize = 1000
 // newSyncPullCmd creates the `mtix sync pull` command per FR-18 /
 // MTIX-15.7.2. Pulls events from the hub starting at
 // meta.sync.last_pulled_clock, applies them locally via
-// IdempotentApply, and advances the cursor sentinel.
+// IdempotentApply, and advances the cursor sentinel. It then runs the
+// MTIX-95.5 late-event sweep (sync_pull_sweep.go) for events stamped
+// below the cursor.
 //
 // Unlike clone, pull does NOT refuse a non-empty local store — it's
 // the routine command for ongoing sync. Pull is also lock-free
@@ -43,6 +45,13 @@ func newSyncPullCmd() *cobra.Command {
 last_pulled_clock cursor; apply each event via the FR-18.9 idempotent
 apply engine; advance the cursor.
 
+Then sweep for late events: list the hub events created since the
+previous sweep (hub time, minus a 15-minute overlap), fetch the ones
+this store does not hold, and apply them the same way. This catches
+events a teammate pushed after working offline, whose Lamport clock is
+below the cursor. The first sweep on a store compares the full hub
+event history once and prints how many late events it recovered.
+
 Lock-free: multiple processes pulling concurrently is safe because
 applied_events dedupes on event_id.
 
@@ -56,11 +65,13 @@ Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.`,
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
 		"Allow weaker TLS modes on loopback hosts (development only)")
 	cmd.Flags().IntVar(&limit, "limit", pullDefaultBatchSize,
-		"Number of events to pull per batch")
+		"Number of events to pull per batch (also the late-event sweep page size)")
 	return cmd
 }
 
-// runSyncPull executes the pull flow.
+// runSyncPull executes the pull flow: the Lamport-cursor loop, then the
+// late-event sweep for events stamped below the cursor (MTIX-95.5; ADR-006
+// D5), whose window and recorded time come only from the hub's clock.
 func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 	args []string, opts transport.Options, limit int,
 ) error {
@@ -105,6 +116,13 @@ func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 		noteSyncResult(ctx, app.store, false)
 		return wrapSyncErr(stderr, "pull loop", err)
 	}
+	// The cursor loop never returns an event stamped below the cursor, such
+	// as one pushed late by an offline teammate (ADR-006 D5): sweep for them.
+	sweep, err := sweepLateEvents(ctx, stderr, pool, app.store, limit)
+	if err != nil {
+		noteSyncResult(ctx, app.store, false)
+		return wrapSyncErr(stderr, "late-event sweep", err)
+	}
 	noteSyncResult(ctx, app.store, true)
 
 	if tailErr == nil && preTail == 0 && pulled > 0 {
@@ -115,6 +133,7 @@ func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 
 	fmt.Fprintf(stdout,
 		"pull complete: %d events applied across %d batches\n", pulled, batches)
+	printLateEventSweep(stdout, sweep)
 	return nil
 }
 

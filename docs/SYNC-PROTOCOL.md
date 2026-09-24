@@ -290,6 +290,87 @@ emitted events under prefix `PROJ` and the hub already has a different
 first_event_hash for `PROJ`, init refuses and points the operator at
 `mtix sync reconcile --import-as PARENT-ID` or `--rename-to`.
 
+## Pull
+
+`mtix sync pull` (and every pull the daemon runs) has two passes.
+
+**Cursor pass.** `PullEvents` returns the hub events with
+`lamport_clock > meta.sync.last_pulled_clock`, in Lamport order, in
+batches of `--limit` (default 1000). Each batch is applied through
+`IdempotentApply` (see [Idempotent apply](#idempotent-apply)) and the
+cursor advances to the highest Lamport clock applied.
+
+The Lamport clock is stamped by the client that wrote the event, not by
+the hub. A teammate who worked offline pushes events stamped below the
+cursors of teammates who kept working, so the cursor pass never returns
+them.
+
+**Late-event sweep** (`cmd/mtix/sync_pull_sweep.go`,
+`transport/late_events.go`). After the cursor pass, pull:
+
+1. Lists hub event ids. Normally that is the ids created since
+   `meta.sync.last_sweep_at` minus a 15-minute overlap, in
+   `(created_at, event_id)` keyset pages of `--limit`. When
+   `meta.sync.last_sweep_at` is empty (the first pull after upgrading,
+   after `mtix sync clone`, or after `mtix sync reconcile
+   --discard-local`), it lists the full id history instead, once, in
+   `event_id` keyset pages.
+2. Diffs each page against the ids this store holds in `sync_events`
+   (its own events and every mirrored one) or `applied_events`.
+3. Fetches the missing events by id in chunks of `--limit`, sorts them
+   into pull order (Lamport clock, then event id), and applies them in
+   batches through the same `IdempotentApply` path. Recovered events
+   are late and low-Lamport by construction, so a recovered `claim`,
+   `unclaim`, `defer` or `transition_status` goes through the workflow
+   winner rule (see [Workflow events](#workflow-events-last-writer-wins-at-ingest)):
+   one older than the node's newest held workflow event is recorded as
+   received and changes nothing.
+4. Records the hub time read by its first listing statement in
+   `meta.sync.last_sweep_at` (RFC 3339, UTC). The value advances only
+   after every recovered event has been applied, so a failed sweep is
+   retried from the same window by the next pull.
+
+The sweep does not move the Lamport cursor. After a full-history diff
+pull prints `late-event sweep (first run, full hub history): N late
+events recovered`, even when N is 0; after a windowed sweep it prints
+`late-event sweep: N late events recovered` only when N > 0. `mtix sync
+status` shows `last sweep` (`last_sweep_at` in `--json`; empty or
+`never` before the first sweep). A value that is not an RFC 3339 time
+is reported on stderr and replaced by a full-history diff.
+
+**Hub clock only.** `created_at` is `DEFAULT now()` on the hub, the
+start time of the push transaction. Each listing statement also returns
+the hub's `now()`, and the window and `meta.sync.last_sweep_at` are
+computed from that value alone, never from this machine's clock, so a
+skewed client clock changes nothing. Because `created_at` is the
+transaction's start time, a push that started before a sweep can
+commit after it with an earlier `created_at`. The 15-minute overlap
+covers that, because each push statement is bounded by the 10-second
+`statement_timeout`. An event whose push transaction started more than
+15 minutes before a sweep and committed after it is missed by later
+windowed sweeps; the complete fix is a hub-assigned event order in a
+later protocol version.
+
+**Cost.** In the common case, where nothing is missing and the window
+holds at most `--limit` ids, the sweep adds one hub query to each pull:
+the id listing, which also returns the hub clock. Late events add one
+fetch per `--limit` of them. The first sweep
+on a store pages through the full id history once. The sweep runs only
+inside a pull and has no timer, so an idle hub that scales to zero
+stays idle; a daemon that pulls on an interval runs the sweep on each
+of its pulls. Hub migration 014 adds `idx_sync_events_created_at` (an
+additive `CREATE INDEX IF NOT EXISTS`) so the listing reads only the
+window's rows. Migrations run in `mtix sync init` and need the hub
+owner, so an existing hub gets the index the next time its owner runs
+`mtix sync init`. Until then each windowed listing scans `sync_events`
+once per pull; the full-history listing and the fetch always use the
+primary key. `TestLateEventQueries_PlanUsesIndex_ServesSweepWithoutSeqScan`
+checks that the planner can serve each query from its index.
+
+**Failure.** Until recovered events can be quarantined, a recovered
+event that cannot be applied fails the pull, exactly as it would in
+the cursor pass; the next pull retries the same window.
+
 ## Idempotent apply
 
 A replica applies each event at most once. `event_id` is the dedupe
@@ -458,6 +539,8 @@ so the restore replays cleanly.
   - `internal/store/sqlite/sync_emit.go` — event emission
   - `internal/store/sqlite/sync_apply.go` — idempotent apply + LWW
   - `internal/store/postgres/transport/push_pull.go` — wire push/pull
+  - `internal/store/postgres/transport/late_events.go` and
+    `cmd/mtix/sync_pull_sweep.go` — late-event sweep of pull
   - `internal/store/postgres/transport/migrate.go` — single-flight
     migration
   - `internal/sync/redact/redact.go` — DSN scrubber + panic Recover

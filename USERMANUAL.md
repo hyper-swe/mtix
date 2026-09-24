@@ -1338,6 +1338,34 @@ cp examples/hooks/pre-push .git/hooks/pre-push
 chmod +x .git/hooks/pre-push
 ```
 
+### Late changes from offline teammates
+
+Each `mtix sync pull` first fetches the events past its cursor, then
+sweeps the hub for **late events**: changes a teammate pushed after
+working offline. Their events carry the lower clock values of their
+machine, so the cursor alone skips them. The sweep lists the hub events
+created since the previous sweep (with a 15-minute overlap), fetches
+the ones your machine does not have, and applies them the usual way.
+A recovered claim or status change that is older than the task's
+current one changes nothing; it is only recorded as received.
+
+- **First pull after upgrading.** It compares the full hub event history
+  once and prints `late-event sweep (first run, full hub history): N
+  late events recovered`. Changes missed before the upgrade arrive
+  then. Later pulls print `late-event sweep: N late events recovered`
+  only when they recover something.
+- **Clock.** The sweep uses the hub's clock only, so a wrong clock on
+  your machine has no effect.
+- **Status.** `mtix sync status` shows `last sweep`, the hub time of the
+  last sweep (`last_sweep_at` in `--json`), or `never`.
+- **Cost.** One extra hub query per pull, and only during a pull. The
+  sweep adds no timer, so an idle hub that scales to zero stays idle
+  (a daemon that pulls on an interval sweeps on each of its pulls).
+- **Hub owner, after upgrading.** Run `mtix sync init` once with the
+  hub owner's DSN. It adds an index on the hub (`idx_sync_events_created_at`)
+  so each sweep reads only recent events. Until then pulls work as
+  before, but each one scans the hub's whole event table once.
+
 ### Daemon mode (for durability)
 
 Un-pushed events on a lost machine are **not recoverable**. If your
@@ -1631,6 +1659,7 @@ operator does.
 | `ErrSyncDivergentHistory` on `mtix sync init` | Hub already has a different lineage for this prefix | Run `mtix sync clone` to join, OR `mtix sync reconcile --import-as PARENT-ID` |
 | `ErrSyncQueueFull` from `mtix create` / `update` | Local pending queue at the cap | `mtix sync push --force`, or raise `sync.max_queue_size` |
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
+| A teammate's change is missing after `mtix sync pull` | They have not pushed yet, or the late-event sweep failed (the pull reports the error) | Ask them to run `mtix sync push`, then pull again; `mtix sync status` shows `last sweep` |
 
 ### MCP integration
 

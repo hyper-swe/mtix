@@ -21,15 +21,19 @@ import (
 // other consumer needs it; if 15.8 MCP integration adds machine
 // access to status, the type can be lifted then.
 type SyncStatus struct {
-	Pending      int    `json:"pending"`
-	Pushed       int    `json:"pushed"`
-	Conflicted   int    `json:"conflicted"`
-	Applied      int    `json:"applied"`
-	Lamport      int64  `json:"lamport"`
-	LastPulled   int64  `json:"last_pulled_clock"`
-	MachineHash  string `json:"machine_hash,omitempty"`
+	Pending       int    `json:"pending"`
+	Pushed        int    `json:"pushed"`
+	Conflicted    int    `json:"conflicted"`
+	Applied       int    `json:"applied"`
+	Lamport       int64  `json:"lamport"`
+	LastPulled    int64  `json:"last_pulled_clock"`
+	MachineHash   string `json:"machine_hash,omitempty"`
 	ProjectPrefix string `json:"project_prefix,omitempty"`
-	OpenConflicts int   `json:"open_conflicts"`
+	OpenConflicts int    `json:"open_conflicts"`
+	// LastSweepAt is meta.sync.last_sweep_at: the hub's clock (RFC 3339,
+	// UTC) at the start of the last late-event sweep of sync pull
+	// (MTIX-95.5). Empty when this store has never swept.
+	LastSweepAt string `json:"last_sweep_at"`
 	// HighConflict is the FR-18.12 banner trigger: true when
 	// open_conflicts > 50 so the human-readable output adds a
 	// guidance banner.
@@ -77,7 +81,8 @@ func runSyncStatus(ctx context.Context, stdout, stderr io.Writer) error {
 }
 
 // readSyncStatus aggregates counts + sentinels into one struct via
-// readDB-only queries (no write tx).
+// readDB-only queries (no write tx), including the time of the last
+// late-event sweep (meta.sync.last_sweep_at, MTIX-95.5).
 func readSyncStatus(ctx context.Context, store *sqlite.Store) (SyncStatus, error) {
 	var st SyncStatus
 
@@ -112,6 +117,7 @@ func readSyncStatus(ctx context.Context, store *sqlite.Store) (SyncStatus, error
 		{"meta.sync.last_pulled_clock", &st.LastPulled},
 		{"meta.sync.machine_hash", &st.MachineHash},
 		{"meta.sync.project_prefix", &st.ProjectPrefix},
+		{"meta.sync.last_sweep_at", &st.LastSweepAt},
 	} {
 		var raw string
 		if err := store.QueryRow(ctx,
@@ -156,6 +162,7 @@ func printStatusTable(w io.Writer, st SyncStatus) error {
 		{"", ""},
 		{"local lamport", strconv.FormatInt(st.Lamport, 10)},
 		{"last pulled clock", strconv.FormatInt(st.LastPulled, 10)},
+		{"last sweep", lastSweepLabel(st.LastSweepAt)},
 	}
 	for _, r := range rows {
 		if r[0] == "" {
@@ -175,6 +182,16 @@ func printStatusTable(w io.Writer, st SyncStatus) error {
 			st.OpenConflicts)
 	}
 	return nil
+}
+
+// lastSweepLabel renders meta.sync.last_sweep_at for the status table:
+// the recorded hub time, or "never" before the first late-event sweep
+// (MTIX-95.5).
+func lastSweepLabel(v string) string {
+	if v == "" {
+		return "never"
+	}
+	return v
 }
 
 func emptyDash(s string) string {

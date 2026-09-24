@@ -142,5 +142,11 @@ func (n *Node) Validate() error {
 		)
 	}
 
+	// MTIX-95.22: a wake time outside years 1..9999 (UTC) cannot be stored
+	// as readable text.
+	if n.DeferUntil != nil && !IsStorableTime(*n.DeferUntil) {
+		return fmt.Errorf("defer_until year must be 1..9999 in UTC: %w", ErrInvalidInput)
+	}
+
 	return nil
 }

@@ -119,9 +119,10 @@ func readNodeForCancel(ctx context.Context, tx *sql.Tx, id string) (model.Status
 }
 
 // applyCancelUpdate sets the node to canceled and records the activity entry.
+// A cancelled node has no wake time, so defer_until is cleared (MTIX-95.22).
 func applyCancelUpdate(ctx context.Context, tx *sql.Tx, id string, fromStatus model.Status, reason, author string, now time.Time, nowStr string) error {
 	_, err := tx.ExecContext(ctx,
-		`UPDATE nodes SET status = ?, closed_at = ?, updated_at = ?
+		`UPDATE nodes SET status = ?, closed_at = ?, updated_at = ?, defer_until = NULL
 		 WHERE id = ? AND deleted_at IS NULL`,
 		string(model.StatusCancelled), nowStr, nowStr, id,
 	)
@@ -190,8 +191,9 @@ func cancelDescendants(ctx context.Context, tx *sql.Tx, rootID, nowStr string) (
 	// Cancel only non-terminal descendants: every id that starts with the
 	// literal "<rootID>." (escaped prefix, parameterized, ESCAPE '\'), and
 	// return each changed row so the caller can unblock and recompute for it.
+	// A cancelled descendant keeps no wake time (MTIX-95.22).
 	rows, err := tx.QueryContext(ctx,
-		`UPDATE nodes SET status = ?, closed_at = ?, updated_at = ?
+		`UPDATE nodes SET status = ?, closed_at = ?, updated_at = ?, defer_until = NULL
 		 WHERE id LIKE ? ESCAPE '\'
 		   AND deleted_at IS NULL
 		   AND status NOT IN (?, ?, ?)

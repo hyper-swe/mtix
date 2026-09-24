@@ -17,9 +17,10 @@ import (
 )
 
 // toolConfig holds cross-cutting settings for the MCP tools, currently the
-// primary project — the configured default scope per FR-MULTI-PROJECT (D1).
-// It is populated by ToolOptions so the registration entry points stay
-// backward-compatible (existing call sites pass no options).
+// primary project — the configured default scope per FR-MULTI-PROJECT (D1) —
+// and the process author (WithAuthor). It is populated by ToolOptions so the
+// registration entry points stay backward-compatible (existing call sites pass
+// no options).
 type toolConfig struct {
 	// primaryProject is the configured primary project (the config `prefix`).
 	// It is the default scope for the query tools and the default project for
@@ -27,6 +28,9 @@ type toolConfig struct {
 	// means no primary was wired: query tools then default to spanning all
 	// projects, which is identical to scoping in a single-project DB.
 	primaryProject string
+
+	// author is the server process identity (see WithAuthor); "" if unwired.
+	author string
 }
 
 // ToolOption configures cross-cutting MCP tool behavior at registration time.

@@ -16,6 +16,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/channel"
 	"github.com/hyper-swe/mtix/internal/mcp"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // newMCPCmd creates the mtix mcp command per FR-14.1a.
@@ -94,6 +95,46 @@ Example MCP client configuration:
 	return cmd
 }
 
+// registerMCPTools registers every MCP tool category on reg for runMCP and
+// returns the primary project it scoped them to. The configured primary
+// project is the default for omitted-project queries and creates
+// (MTIX-37.5, MP-12/13). The workflow tools get the process author identity
+// only when one is configured (mcpToolAuthor, MTIX-95.22).
+func registerMCPTools(reg *mcp.ToolRegistry) string {
+	primary := "PROJ"
+	if app.configSvc != nil {
+		if v, err := app.configSvc.Get("prefix"); err == nil && v != "" {
+			primary = v
+		}
+	}
+	mcp.RegisterNodeTools(reg, app.nodeSvc, app.store, mcp.WithPrimaryProject(primary))
+	mcp.RegisterWorkflowTools(reg, app.nodeSvc, app.store, app.bgSvc,
+		mcp.WithPrimaryProject(primary), mcp.WithAuthor(mcpToolAuthor()))
+	mcp.RegisterContextTools(reg, app.ctxSvc, app.promptSvc)
+	mcp.RegisterDepTools(reg, app.store)
+	mcp.RegisterInboxTools(reg, app.store)
+	mcp.RegisterSessionTools(reg, app.sessionSvc, app.agentSvc)
+	mcp.RegisterAnalyticsTools(reg, app.store, app.agentSvc, app.configSvc)
+	mcp.RegisterDocsTools(reg)
+	mcp.RegisterSyncWorkflowTool(reg, app.store.ReadDB(), app.mtixDir)
+	return primary
+}
+
+// mcpToolAuthor returns the author identity the MCP tools record for this
+// server (MTIX-95.22): the process identity (app.authorID, MTIX-24) when one
+// is configured through MTIX_AUTHOR_ID or the author_id config key, and ""
+// otherwise, so the tools keep their "mcp" default instead of the CLI's
+// "cli" fallback.
+func mcpToolAuthor() string {
+	if os.Getenv(sqlite.AuthorIDEnv) != "" {
+		return app.authorID
+	}
+	if app.configSvc != nil && app.configSvc.AuthorID() != "" {
+		return app.authorID
+	}
+	return ""
+}
+
 // runMCP starts the MCP stdio server with all tools registered.
 // Per MTIX-6.1.1: logs go to file, protocol goes to stdout.
 func runMCP(channelAgent string, readOnly bool) error {
@@ -117,24 +158,7 @@ func runMCP(channelAgent string, readOnly bool) error {
 
 	srv := mcp.NewServer(os.Stdin, os.Stdout, logger, version)
 	reg := srv.Registry()
-
-	// Register all MCP tool categories. Pass the configured primary project so
-	// omitted-project queries/creates default to it (MTIX-37.5, MP-12/13).
-	primary := "PROJ"
-	if app.configSvc != nil {
-		if v, err := app.configSvc.Get("prefix"); err == nil && v != "" {
-			primary = v
-		}
-	}
-	mcp.RegisterNodeTools(reg, app.nodeSvc, app.store, mcp.WithPrimaryProject(primary))
-	mcp.RegisterWorkflowTools(reg, app.nodeSvc, app.store, app.bgSvc, mcp.WithPrimaryProject(primary))
-	mcp.RegisterContextTools(reg, app.ctxSvc, app.promptSvc)
-	mcp.RegisterDepTools(reg, app.store)
-	mcp.RegisterInboxTools(reg, app.store)
-	mcp.RegisterSessionTools(reg, app.sessionSvc, app.agentSvc)
-	mcp.RegisterAnalyticsTools(reg, app.store, app.agentSvc, app.configSvc)
-	mcp.RegisterDocsTools(reg)
-	mcp.RegisterSyncWorkflowTool(reg, app.store.ReadDB(), app.mtixDir)
+	primary := registerMCPTools(reg)
 
 	// MTIX-2.1.3: apply read-only AFTER registration so List/Call gate on scope.
 	reg.SetReadOnly(readOnly)

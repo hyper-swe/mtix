@@ -323,14 +323,54 @@ Marks the node as `done`. Progress automatically rolls up to parent nodes.
 ### Defer (Postpone)
 
 ```bash
-# Defer indefinitely
+# Defer with no wake time
 mtix defer PROJ-1.3
 
-# Defer until a specific time
+# Defer until a specific time (RFC 3339, with a zone)
 mtix defer PROJ-1.3 --until "2026-04-01T00:00:00Z"
 ```
 
-When the `--until` time passes, the node becomes eligible for pickup again.
+`--until` sets the node's wake time. It must be an RFC 3339 timestamp with
+a zone (`2026-04-01T00:00:00Z`, `2026-04-01T09:00:00+05:30`) whose UTC year
+is 1 to 9999; anything else is rejected and the node is not deferred. The wake time is stored with the
+deferral, in UTC and whole seconds, as the `defer_until` field of
+`mtix show <id> --json`.
+
+- **Before the wake time, claims are refused** (`mtix claim` reports that
+  the node is still deferred).
+- **From the wake time on** (the wake time counts as passed once it is
+  equal to or earlier than now), `mtix ready` lists the node again and a
+  claim succeeds, and the next background pass (`mtix gc`, or
+  `POST /api/v1/admin/gc` on a running server) sets it back to `open`. The
+  pass re-checks each node as it reopens it, so a claim or a new deferral
+  made in the meantime is kept.
+- **Without `--until`** the node has no wake time, and any earlier wake
+  time is cleared.
+- **A deferred node with no wake time** (a defer without `--until`, or any
+  deferral received through sync) is listed by `mtix ready` and can be
+  claimed at once.
+- **Deferring a node that is already deferred** replaces its wake time
+  (or clears it, without `--until`); the change is recorded in the node's
+  activity.
+- **Leaving deferred clears the wake time:** the background pass, a reopen,
+  a claim and a cancel (including a cascade cancel) remove it in the same
+  change, so an old wake time can never wake a later deferral.
+
+The MCP tool `mtix_defer` takes the same wake time as `until`, and the REST
+API as `{"until": "..."}` in the body of `POST /api/v1/nodes/:id/defer`. The
+API answers `400` to a body that is not empty or a JSON object whose only
+key is `until`, and to an `until` that is not RFC 3339 or whose UTC year is
+outside 1 to 9999 (see also `api/openapi.yaml`).
+
+**Hub sync (0.5.x) does not carry the wake time.** Other machines that sync
+through the hub receive the deferral as a status change, but not the wake
+time. There the node is deferred with no wake time, and any wake time it
+held before is cleared: it is not reopened when the time passes, and a
+claim is not refused. Any other claim or status change received through
+sync also clears the wake time. Set the wake time on the machine that will
+pick the task up. A git-tracked `.mtix/tasks.json` is different: it
+exports `defer_until`, so a machine that imports the file gets the wake
+time, and claims there are refused until it passes.
 
 ### Cancel (Descope)
 

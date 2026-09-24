@@ -137,6 +137,22 @@ type Store interface {
 	// Returns ErrInvalidTransition if the transition is not allowed.
 	TransitionStatus(ctx context.Context, id string, toStatus model.Status, reason, author string) error
 
+	// DeferNode transitions a node to deferred and stores its wake time
+	// (defer_until) in the same transaction (FR-3.8, FR-3.8b, MTIX-95.22).
+	// A nil until stores NULL, clearing any earlier wake time. The sync event
+	// is the transition_status event TransitionStatus emits. Re-deferring an
+	// already-deferred node updates defer_until and records activity but
+	// emits no sync event; an unchanged wake time is a no-op (FR-7.7a).
+	// Returns ErrInvalidTransition or ErrNotFound as TransitionStatus does.
+	DeferNode(ctx context.Context, id string, until *time.Time, reason, author string) error
+
+	// WakeDeferredNode reopens a deferred node whose wake time has passed
+	// (FR-3.8b, MTIX-95.22). In one transaction it re-checks that the node is
+	// still deferred with defer_until <= now, and only then transitions it to
+	// open, which clears defer_until; otherwise it changes nothing and
+	// returns false.
+	WakeDeferredNode(ctx context.Context, id string, now time.Time) (bool, error)
+
 	// ClaimNode atomically claims a node for an agent per FR-10.4.
 	// Sets assignee and transitions to in_progress.
 	// Returns ErrAlreadyClaimed, ErrNodeBlocked, ErrStillDeferred, or ErrInvalidTransition.

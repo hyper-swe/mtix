@@ -132,6 +132,12 @@ func (m *dbMockStore) GetBlockers(_ context.Context, _ string) ([]*model.Depende
 func (m *dbMockStore) TransitionStatus(_ context.Context, _ string, _ model.Status, _, _ string) error {
 	return nil
 }
+func (m *dbMockStore) DeferNode(_ context.Context, _ string, _ *time.Time, _, _ string) error {
+	return nil
+}
+func (m *dbMockStore) WakeDeferredNode(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return false, nil
+}
 func (m *dbMockStore) ClaimNode(_ context.Context, _, _ string) error      { return nil }
 func (m *dbMockStore) UnclaimNode(_ context.Context, _, _, _ string) error { return nil }
 func (m *dbMockStore) ForceReclaimNode(_ context.Context, _, _ string, _ time.Duration) error {

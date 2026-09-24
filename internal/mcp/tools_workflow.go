@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
@@ -19,7 +20,7 @@ func RegisterWorkflowTools(reg *ToolRegistry, nodeSvc *service.NodeService, st s
 	registerClaimTool(reg, st)
 	registerUnclaimTool(reg, st)
 	registerDoneTool(reg, nodeSvc)
-	registerDeferTool(reg, nodeSvc)
+	registerDeferTool(reg, nodeSvc, cfg.author)
 	registerCancelTool(reg, st)
 	registerReopenTool(reg, nodeSvc)
 	registerReadyTool(reg, bgSvc)
@@ -111,15 +112,31 @@ func registerDoneTool(reg *ToolRegistry, svc *service.NodeService) {
 	})
 }
 
-func registerDeferTool(reg *ToolRegistry, svc *service.NodeService) {
+// WithAuthor sets the author identity the MCP tools record for this server
+// process (MTIX-95.22). `mtix mcp` passes its process identity (MTIX-24) only
+// when MTIX_AUTHOR_ID or the author_id config key sets one; an empty value
+// keeps the "mcp" default. Today mtix_defer records it.
+func WithAuthor(author string) ToolOption {
+	return func(c *toolConfig) { c.author = author }
+}
+
+// registerDeferTool registers mtix_defer (FR-3.8, FR-3.8b). An `until` is
+// parsed here at the boundary: an unparsable value is rejected as
+// ErrInvalidInput before anything changes, and a valid one is stored with the
+// transition by NodeService.DeferNode (MTIX-95.22). The author is the server
+// process identity when one is wired (WithAuthor), "mcp" otherwise.
+func registerDeferTool(reg *ToolRegistry, svc *service.NodeService, author string) {
+	if author == "" {
+		author = "mcp"
+	}
 	reg.Register(ToolDef{
 		Name:        "mtix_defer",
-		Description: "Defer a node",
+		Description: "Defer a node, optionally with a wake time (until). Claims are refused until the wake time passes; the next background pass reopens the node after it. Omitting until clears any earlier wake time.",
 		InputSchema: SchemaObj{
 			Type: "object",
 			Properties: map[string]SchemaProp{
 				"id":    {Type: "string", Description: "Node ID"},
-				"until": {Type: "string", Description: "Defer until (ISO-8601)"},
+				"until": {Type: "string", Description: "Wake time, RFC 3339 with a zone (e.g. 2026-04-01T00:00:00Z); omit for no wake time"},
 			},
 			Required: []string{"id"},
 		},
@@ -132,10 +149,17 @@ func registerDeferTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, fmt.Errorf("parse defer args: %w", err)
 		}
 
-		if err := svc.TransitionStatus(ctx, p.ID, model.StatusDeferred, "deferred", "mcp"); err != nil {
+		wake, err := service.ParseDeferUntil(p.Until)
+		if err != nil {
+			return nil, err
+		}
+		if err := svc.DeferNode(ctx, p.ID, wake, "deferred", author); err != nil {
 			return nil, err
 		}
 
+		if wake != nil {
+			return SuccessResult(fmt.Sprintf("Deferred %s until %s", p.ID, wake.Format(time.RFC3339))), nil
+		}
 		return SuccessResult(fmt.Sprintf("Deferred %s", p.ID)), nil
 	})
 }

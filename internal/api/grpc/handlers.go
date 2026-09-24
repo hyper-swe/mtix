@@ -160,9 +160,12 @@ func (s *Server) HandleDone(ctx context.Context, id, agent string) (*model.Node,
 	return s.nodeSvc.GetNode(ctx, id)
 }
 
-// HandleDefer implements the Defer RPC per FR-8.2. Idempotent per FR-7.7a.
-func (s *Server) HandleDefer(ctx context.Context, id, agent string) (*model.Node, error) {
-	if err := s.nodeSvc.TransitionStatus(ctx, id, model.StatusDeferred, "", agent); err != nil {
+// HandleDefer implements the Defer RPC per FR-8.2 and FR-3.8b. until is
+// DeferRequest.until: the wake time, stored in UTC with the transition by
+// NodeService.DeferNode; nil stores no wake time (MTIX-95.22). A repeated
+// defer with the same until is a no-op per FR-7.7a.
+func (s *Server) HandleDefer(ctx context.Context, id, agent string, until *time.Time) (*model.Node, error) {
+	if err := s.nodeSvc.DeferNode(ctx, id, until, "", agent); err != nil {
 		return nil, mapError(err)
 	}
 	return s.nodeSvc.GetNode(ctx, id)

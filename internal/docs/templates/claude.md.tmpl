@@ -57,4 +57,4 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 
 ## Error Handling
 
-If you encounter an error, check [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common solutions. If blocked, use `mtix_defer` with a reason rather than abandoning the task. Always document anomalies with `mtix_comment`.
+If you encounter an error, check [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common solutions. If blocked, record the reason with `mtix_comment`, then call `mtix_defer` (with an optional `until` wake time) rather than abandoning the task. Always document anomalies with `mtix_comment`.

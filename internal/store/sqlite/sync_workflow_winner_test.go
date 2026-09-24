@@ -448,10 +448,16 @@ func TestApply_WinningWorkflowEvent_WritesExactlyItsTableRow(t *testing.T) {
 		payload any
 		want    map[string]string // the written columns, besides updated_at
 	}{
+		// MTIX-95.22: every claim, unclaim and transition_status row clears
+		// defer_until. A transition into deferred carries no wake time in
+		// 0.5.x, and every other row moves the node out of deferred, so a
+		// wake time kept from before would wake the node wrongly later.
 		{"claim", model.StatusOpen, model.OpClaim, &model.ClaimPayload{AgentID: "agent-b"},
-			map[string]string{"status": "in_progress", "assignee": "agent-b", "agent_state": "working", "closed_at": nullColumn}},
+			map[string]string{"status": "in_progress", "assignee": "agent-b", "agent_state": "working", "closed_at": nullColumn, "defer_until": nullColumn}},
+		{"claim from deferred", model.StatusDeferred, model.OpClaim, &model.ClaimPayload{AgentID: "agent-b"},
+			map[string]string{"status": "in_progress", "assignee": "agent-b", "agent_state": "working", "closed_at": nullColumn, "defer_until": nullColumn}},
 		{"unclaim", model.StatusInProgress, model.OpUnclaim, &model.UnclaimPayload{},
-			map[string]string{"status": "open", "assignee": nullColumn, "agent_state": nullColumn, "closed_at": nullColumn}},
+			map[string]string{"status": "open", "assignee": nullColumn, "agent_state": nullColumn, "closed_at": nullColumn, "defer_until": nullColumn}},
 		{"defer with until", model.StatusOpen, model.OpDefer, &model.DeferPayload{Until: &until},
 			map[string]string{"status": "deferred", "defer_until": "2027-01-01T09:30:00Z", "closed_at": nullColumn}},
 		{"defer without until", model.StatusOpen, model.OpDefer, &model.DeferPayload{},
@@ -461,33 +467,44 @@ func TestApply_WinningWorkflowEvent_WritesExactlyItsTableRow(t *testing.T) {
 		{"defer with +05:30 until", model.StatusOpen, model.OpDefer,
 			json.RawMessage(`{"reason":"later","until":"2027-01-01T09:30:00+05:30"}`),
 			map[string]string{"status": "deferred", "defer_until": "2027-01-01T04:00:00Z", "closed_at": nullColumn}},
+		// MTIX-95.22 round 3: an until whose UTC year is past 9999 cannot be
+		// stored as readable RFC 3339 text, so the row stores no wake time.
+		{"defer with until past year 9999 in utc", model.StatusOpen, model.OpDefer,
+			json.RawMessage(`{"reason":"later","until":"9999-12-31T23:00:00-05:00"}`),
+			map[string]string{"status": "deferred", "defer_until": nullColumn, "closed_at": nullColumn}},
 		{"transition to done", model.StatusInProgress, model.OpTransitionStatus,
 			transition(model.StatusInProgress, model.StatusDone),
-			map[string]string{"status": "done", "closed_at": foreignClosedAt, "progress": "1"}},
+			map[string]string{"status": "done", "closed_at": foreignClosedAt, "progress": "1", "defer_until": nullColumn}},
 		{"transition to cancelled", model.StatusOpen, model.OpTransitionStatus,
 			transition(model.StatusOpen, model.StatusCancelled),
-			map[string]string{"status": "cancelled", "closed_at": foreignClosedAt}},
+			map[string]string{"status": "cancelled", "closed_at": foreignClosedAt, "defer_until": nullColumn}},
+		{"cancel from deferred", model.StatusDeferred, model.OpTransitionStatus,
+			transition(model.StatusDeferred, model.StatusCancelled),
+			map[string]string{"status": "cancelled", "closed_at": foreignClosedAt, "defer_until": nullColumn}},
 		{"transition to invalidated", model.StatusDone, model.OpTransitionStatus,
 			transition(model.StatusDone, model.StatusInvalidated),
-			map[string]string{"status": "invalidated", "previous_status": "done", "closed_at": foreignClosedAt}},
+			map[string]string{"status": "invalidated", "previous_status": "done", "closed_at": foreignClosedAt, "defer_until": nullColumn}},
 		{"transition to blocked", model.StatusInProgress, model.OpTransitionStatus,
 			transition(model.StatusInProgress, model.StatusBlocked),
-			map[string]string{"status": "blocked", "previous_status": "in_progress", "closed_at": nullColumn}},
+			map[string]string{"status": "blocked", "previous_status": "in_progress", "closed_at": nullColumn, "defer_until": nullColumn}},
 		{"auto-unblock to open", model.StatusBlocked, model.OpTransitionStatus,
 			transition(model.StatusBlocked, model.StatusOpen),
-			map[string]string{"status": "open", "previous_status": nullColumn, "closed_at": nullColumn}},
+			map[string]string{"status": "open", "previous_status": nullColumn, "closed_at": nullColumn, "defer_until": nullColumn}},
 		{"auto-unblock to in_progress", model.StatusBlocked, model.OpTransitionStatus,
 			transition(model.StatusBlocked, model.StatusInProgress),
-			map[string]string{"status": "in_progress", "previous_status": nullColumn, "closed_at": nullColumn}},
+			map[string]string{"status": "in_progress", "previous_status": nullColumn, "closed_at": nullColumn, "defer_until": nullColumn}},
 		{"reopen", model.StatusDone, model.OpTransitionStatus,
 			transition(model.StatusDone, model.StatusOpen),
-			map[string]string{"status": "open", "closed_at": nullColumn}},
+			map[string]string{"status": "open", "closed_at": nullColumn, "defer_until": nullColumn}},
+		{"wake from deferred", model.StatusDeferred, model.OpTransitionStatus,
+			transition(model.StatusDeferred, model.StatusOpen),
+			map[string]string{"status": "open", "closed_at": nullColumn, "defer_until": nullColumn}},
 		{"start", model.StatusOpen, model.OpTransitionStatus,
 			transition(model.StatusOpen, model.StatusInProgress),
-			map[string]string{"status": "in_progress", "closed_at": nullColumn}},
+			map[string]string{"status": "in_progress", "closed_at": nullColumn, "defer_until": nullColumn}},
 		{"transition to deferred", model.StatusInProgress, model.OpTransitionStatus,
 			transition(model.StatusInProgress, model.StatusDeferred),
-			map[string]string{"status": "deferred", "closed_at": nullColumn}},
+			map[string]string{"status": "deferred", "closed_at": nullColumn, "defer_until": nullColumn}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

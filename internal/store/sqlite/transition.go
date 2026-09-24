@@ -171,9 +171,15 @@ func readNodeStatus(ctx context.Context, tx *sql.Tx, id string) (model.Status, s
 }
 
 // buildTransitionClauses builds the SET clause and args for a status transition.
+// Leaving deferred clears defer_until (MTIX-95.22): a wake time kept after the
+// node left deferred would later wake a deferral that has none of its own.
 func buildTransitionClauses(fromStatus, toStatus model.Status, nowStr string) (string, []any) {
 	setClauses := "status = ?, updated_at = ?"
 	args := []any{string(toStatus), nowStr}
+
+	if fromStatus == model.StatusDeferred {
+		setClauses += ", defer_until = NULL"
+	}
 
 	if toStatus == model.StatusDone || toStatus == model.StatusCancelled {
 		setClauses += ", closed_at = ?"

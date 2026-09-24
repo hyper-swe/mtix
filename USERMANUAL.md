@@ -342,6 +342,28 @@ mtix cancel PROJ-1 --reason "Entire feature dropped" --cascade
 
 A reason is required.
 
+Cancelling a node unblocks each task it was blocking once that task has
+no other unresolved blocker; the task returns to the status it had
+before it was blocked. Progress is recomputed for the node's parent and
+every ancestor above it.
+
+With `--cascade`, every descendant that is not already `done`,
+`cancelled` or `invalidated` is cancelled too, in the same step, and
+each one is handled like a single cancel: the tasks it was blocking are
+unblocked, and the progress of every node above a cancelled descendant,
+up to the top of the tree, is recomputed. Descendants that are already
+`done` keep their status.
+
+With sync, a cascade cancel in this version sends other machines no
+event for the descendants it cancels: they receive the cancel of the
+node you named and the unblock of each task it released, nothing else.
+On other machines the descendants are therefore not cancelled and keep
+their previous status, and a task that the cascade unblocked shows as
+unblocked there even though the descendant that blocked it is not
+cancelled. If other machines must see every descendant cancelled,
+cancel the descendants one at a time, deepest first, without
+`--cascade`.
+
 ### Reopen (Reverse Terminal State)
 
 ```bash

@@ -208,7 +208,10 @@ Known residual in 0.5.x:
   claims a node while replica B adds a dependency that blocks it; B's
   auto-block emits no event, so after both pull A shows `blocked` and
   B `in_progress`. Descendants cancelled by a cascade cancel can differ
-  the same way.
+  the same way: other replicas keep them in their previous status. A
+  dependent that the cascade unblocked does travel, as its own
+  `transition_status`, so other replicas show it unblocked while the
+  descendant that blocked it is not cancelled there (MTIX-95.21).
 - A `transition_status` to a status this build does not know (for
   example one added by a newer client) writes the status column (and
   `updated_at`) alone and logs a warning naming the event and the

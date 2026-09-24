@@ -61,6 +61,9 @@ func sweepCommands(backupOut string) []sweepCommand {
 		{name: "sync push", argv: at("sync", "push"), reached: connect},
 		{name: "sync pull", argv: at("sync", "pull"), reached: connect},
 		{name: "sync mark-restored", argv: at("sync", "mark-restored"), reached: connect},
+		{name: "sync harden", argv: func(pos []string) []string {
+			return cmdLine([]string{"sync", "harden"}, pos, "--apply", "--keep-role", "mtix_team")
+		}, reached: "mtix sync harden connect:"},
 		{name: "sync migrate", argv: func(pos []string) []string {
 			return cmdLine([]string{"sync", "migrate"}, pos, "--project", "TEST")
 		}, reached: connect},

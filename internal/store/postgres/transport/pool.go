@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -97,7 +98,8 @@ func New(ctx context.Context, dsn string, opts Options) (*Pool, error) {
 // The pool is opened from the configuration ApproveDSN approved, the
 // same value its posture rule evaluated, so the hosts, ports and TLS
 // settings the pool dials are the approved ones; the DSN is not parsed
-// again (FR-18.15, MTIX-95.25).
+// again (FR-18.15, MTIX-95.25). When opts.OnNotice is set, every NOTICE
+// and WARNING a pool connection receives is passed to it (MTIX-95.1).
 func NewWithDefaults(ctx context.Context, dsn string, opts Options, defs PoolDefaults) (*Pool, error) {
 	approval, err := ApproveDSN(dsn, opts)
 	if err != nil {
@@ -105,6 +107,11 @@ func NewWithDefaults(ctx context.Context, dsn string, opts Options, defs PoolDef
 	}
 
 	cfg := poolConfig(approval, defs)
+	if onNotice := opts.OnNotice; onNotice != nil {
+		// Deliver server notices to the caller: a WARNING is not a driver
+		// error, and harden must fail on one (MTIX-95.1).
+		cfg.ConnConfig.OnNotice = func(_ *pgconn.PgConn, n *pgconn.Notice) { onNotice(n) }
+	}
 	pool, err := openPool(ctx, cfg)
 	if err != nil {
 		return nil, hintTLSTrust(approval.CASupplied, err)

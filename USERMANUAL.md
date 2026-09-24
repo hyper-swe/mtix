@@ -902,6 +902,7 @@ mtix config delete auto_claim
 | `agent.stuck_timeout` | `0` (disabled) | Auto-unclaim stuck agents after this duration |
 | `session.timeout` | `4h` | Max session duration before auto-end |
 | `data.soft_delete_retention` | `720h` (30 days) | Time before soft-deleted nodes are purged |
+| `sync.keep_roles` | (none) | Comma-separated hub roles that `mtix sync harden` leaves with their access (see "Hub privileges"); PUBLIC, data-API and `pg_` roles are refused |
 | `progress.weighted` | `false` | Use weight field in progress calculation |
 
 ---
@@ -1612,6 +1613,87 @@ mtix sync doctor             # 5 health checks: PG reachable, schema current,
 Exit code 0 on all-pass; exit code 2 if any check fails (operators
 can gate CI / monitoring on this).
 
+### Hub privileges
+
+Everyday use needs no role configuration. `mtix sync harden` is for a hub
+owner who wants the sync tables usable only by the owner and the roles the
+team chooses. It runs only when you ask for it, never from a hook, push,
+pull or the daemon. It contacts the hub only while it runs, so it does not
+keep a scale-to-zero database awake.
+
+```bash
+mtix sync harden                                # dry run: lists what --apply would change
+mtix sync harden --apply --keep-role mtix_team  # restrict to the owner and mtix_team
+mtix config set sync.keep_roles mtix_team       # keep mtix_team in later runs
+mtix sync harden --json                         # the report for agents and CI
+```
+
+Run it as the role that owns the sync tables, the one that ran
+`mtix sync init`. Any other role is refused with "the connecting role does
+not own every sync table" and nothing changes.
+
+The dry run starts with the roles `--apply` would affect: the roles that
+lose their access, the kept roles that keep their access but can no longer
+grant it to others, and the roles whose access it cannot remove. It then
+lists each privilege, default privilege, membership and guard it would
+change, and the statements `--apply` would run. Review that list before
+`--apply`: every role you do not keep loses its access. A role that other
+people or services use to sync must be kept with `--keep-role <role>`
+(repeatable), or listed in the `sync.keep_roles` config key; harden uses
+both. PUBLIC, the roles a data API uses for anonymous and signed-in
+callers, and `pg_` roles cannot be kept.
+
+With `--apply`, in one transaction, harden:
+
+- revokes every privilege on the sync tables, their sequences and the mtix
+  functions from PUBLIC, from the data-API roles and from every other role
+  except the table owner, superusers and the kept roles;
+- revokes a kept role's right to grant its privileges to others, and with
+  it whatever the kept role granted on;
+- revokes the owner's default privileges toward those roles, so tables the
+  owner creates later are not usable by them either;
+- revokes a membership in `pg_read_all_data` or `pg_write_all_data` when
+  the owner may: it holds ADMIN on the role, and the membership was granted
+  by the owner or by a role whose privileges it has. The change is
+  cluster-wide, so the dry run marks it;
+- restores a missing TRUNCATE guard and enables a disabled one.
+
+Harden takes the hub's migration lock and waits at most 5 seconds for any
+lock, so it fails fast rather than hold up pushes and pulls. A statement
+that raises a PostgreSQL WARNING fails the run, for example when an mtix
+function or sequence is owned by another role; the transaction is rolled
+back, so nothing changes, and the message names the object. It then checks
+again: for every role except the owner, superusers and the kept roles, it
+asks PostgreSQL which of SELECT, INSERT, UPDATE, DELETE, TRUNCATE,
+REFERENCES and TRIGGER the role holds on each sync table (and the sequence
+and function privileges), so access through PUBLIC, role membership and the
+predefined read-all roles is found too.
+
+Access harden may not change is reported, not changed: a read-all
+membership that another role granted (the report prints the statement a
+database administrator runs), membership in the owner role (which carries
+all of the owner's privileges), and other roles' default privileges, which
+do not apply to tables the owner creates. After `--apply` with
+`--keep-role`, harden prints the `mtix config set sync.keep_roles` command
+that records the kept roles; it never writes the config itself.
+
+The append-only tables `audit_log`, `sync_conflicts` and `sync_events`
+refuse TRUNCATE, alone or with CASCADE, as they refuse UPDATE and DELETE.
+`mtix sync init` adds these guards automatically, only when they are
+missing. Harden never enables row-level security.
+
+Exit code: 0 when verification passes, 2 when changes are pending (dry run)
+or access remains (after `--apply`), 1 on an error or a refusal. With
+`--json` the report has `applied`, `before` and `after` (each with
+`schema`, `owners`, `kept_roles`, `findings`, `info` and `statements`),
+`executed` and `keep_roles_hint`. Each finding has `role`, `object`,
+`kind` (`table`, `sequence`, `function`, `default_acl`, `role` or
+`trigger`), `privileges`, `via` (`grant`, `grant_option`, `membership`,
+`owner_membership`, `default_acl`, `missing` or `disabled`), `scope`
+(`cluster-wide` for a membership), and `fix` (the statement `--apply`
+runs) or, when harden cannot fix it, `manual` (the statement an
+administrator runs) or `note` (why).
+
 ### Backup and restore
 
 ```bash
@@ -1776,6 +1858,7 @@ mtix exits with structured codes so scripts and agents can react without parsing
 |---|---|
 | 0 | Success |
 | 1 | Generic error |
+| 2 | Attention needed — `mtix sync doctor` found a failing check, or `mtix sync harden` has changes to make (dry run) or access remains (after `--apply`); the report was printed |
 | 3 | Disk full — a write or backup was refused or failed because the volume is out of space; free space and retry |
 | 4 | Database corrupted — an integrity gate failed at open; see "Disk full and corruption recovery" |
 | 5 | Inbox empty — `mtix inbox --wait` timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Note: a harness-hosted (Claude) agent cannot stay parked *between* turns — a dormant session runs no poller, so `mtix_inbox_wait` only watches the inbox *within* a live turn. To wake a dormant agent when work lands, cold-start it with an exec wake hook on the worker host (see "Waking agents: delivery that terminates in the prompt"), or use channel push / a background watcher for a live session |

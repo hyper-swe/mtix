@@ -1069,6 +1069,7 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.
 - `conflicts` — List or resolve unresolved sync conflicts (FR-18.12)
 - `daemon` — Run a background pull loop (FR-18, opt-in)
 - `doctor` — Run sync health checks (FR-18)
+- `harden` — Owner only: restrict the hub's sync tables to the owner and the roles you keep
 - `init` — Initialize the sync hub for this project (FR-18)
 - `mark-restored` — Operator: advance the hub restore-epoch after a backup restore (ADR-003 §15)
 - `migrate` — Drive the ADR-003 §7 node-identity migration phases
@@ -1331,6 +1332,47 @@ agents and CI consumption.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
+---
+
+## harden
+
+**Usage:** `harden`
+
+Owner only: restrict the hub's sync tables to the owner and the roles you keep
+
+Check which roles can use the hub's sync tables, sequences and mtix
+functions, and with --apply restrict them to the owner and the roles you
+keep. Without --apply this is a dry run: it lists every role, default
+privilege and membership it would change, and changes nothing.
+
+With --apply, in one transaction, it revokes every privilege on those
+objects from PUBLIC, from the roles a data API uses for anonymous and
+signed-in callers, and from every other role except the table owner,
+superusers and the roles named with --keep-role or in the sync.keep_roles
+config key. A kept role keeps its privileges but loses any right to grant
+them on. The owner's default privileges that would give those roles
+access to tables created later are revoked too. A membership in
+pg_read_all_data or pg_write_all_data is revoked when the owner may do
+so; it is cluster-wide. A missing TRUNCATE guard is restored and a
+disabled one enabled. A server WARNING fails the run and nothing changes.
+Access it cannot remove is reported with the statement an administrator
+runs.
+
+Run it as the role that owns the sync tables; any other role is refused
+and nothing changes. Review the dry run's role list before --apply: a
+role you do not keep loses its access.
+
+Exit code: 0 when verification passes, 2 when changes are pending (dry
+run) or access remains (--apply), 1 on an error or a refusal. --json
+prints the report for agents and CI.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--apply` |  | Make the changes the dry run lists (without it nothing is changed) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
+| `--keep-role` |  | A role that keeps its access to the sync tables (repeatable; adds to sync.keep_roles) | [] |
 ---
 
 ## init

@@ -17,6 +17,11 @@ const (
 	// exitCodeGeneric is any failure without a more specific class.
 	exitCodeGeneric = 1
 
+	// exitCodeHardenPending: `mtix sync harden` has changes to make (dry
+	// run) or access remains after --apply (MTIX-95.1); the report was
+	// printed. The same code `mtix sync doctor` uses for failed checks.
+	exitCodeHardenPending = 2
+
 	// exitCodeDiskFull: a write or backup was refused (pre-flight) or
 	// failed (ENOSPC) because the volume is out of space (NFR-2.8).
 	exitCodeDiskFull = 3
@@ -44,6 +49,8 @@ func exitCodeForError(err error) int {
 		return exitCodeCorrupted
 	case errors.Is(err, errInboxWaitEmpty):
 		return exitCodeInboxEmpty
+	case errors.Is(err, errHardenPending):
+		return exitCodeHardenPending
 	default:
 		return exitCodeGeneric
 	}

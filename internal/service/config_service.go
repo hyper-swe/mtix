@@ -14,7 +14,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
-// validConfigKeys lists all 29 allowed config keys per FR-11.2.
+// validConfigKeys lists all 30 allowed config keys per FR-11.2.
 var validConfigKeys = map[string]bool{
 	"prefix":                   true,
 	"author_id":                true,
@@ -32,6 +32,7 @@ var validConfigKeys = map[string]bool{
 	"sync.team_id":             true,
 	"sync.auto_sync":           true,
 	"sync.interval":            true,
+	"sync.keep_roles":          true,
 	"agent.heartbeat_interval": true,
 	"agent.stale_threshold":    true,
 	"agent.session_timeout":    true,
@@ -59,7 +60,7 @@ var serverRestartKeys = map[string]bool{
 	"logging.level": true,
 }
 
-// configDefaults contains default values for all 29 keys per FR-11.2.
+// configDefaults contains default values for all 30 keys per FR-11.2.
 var configDefaults = map[string]string{
 	"prefix":                     "PROJ",
 	"author_id":                  "",
@@ -77,6 +78,7 @@ var configDefaults = map[string]string{
 	"sync.team_id":               "",
 	"sync.auto_sync":             "true",
 	"sync.interval":              "30s",
+	"sync.keep_roles":            "",
 	"agent.heartbeat_interval":   "60s",
 	"agent.stale_threshold":      "24h",
 	"agent.session_timeout":      "4h",
@@ -142,6 +144,9 @@ func (cs *ConfigService) Get(key string) (string, error) {
 
 // Set writes a config value for the given key.
 // Returns ErrInvalidConfigKey if the key is not recognized.
+// Returns ErrInvalidInput if the value is not valid for the key: a
+// sync.keep_roles value must be a list of roles that may be kept
+// (model.ParseKeepRoles, MTIX-95.1).
 // Returns a warning string if the key requires server restart.
 func (cs *ConfigService) Set(key, value string) (string, error) {
 	if !validConfigKeys[key] {
@@ -149,6 +154,11 @@ func (cs *ConfigService) Set(key, value string) (string, error) {
 			"unknown config key %q; valid keys: %s: %w",
 			key, validKeyList(), model.ErrInvalidConfigKey,
 		)
+	}
+	if key == "sync.keep_roles" {
+		if _, err := model.ParseKeepRoles(value); err != nil {
+			return "", fmt.Errorf("set %s: %w", key, err)
+		}
 	}
 
 	cs.values[key] = value

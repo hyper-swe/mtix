@@ -31,6 +31,9 @@ func TestMigrations_FilesPresent(t *testing.T) {
 		"011_sync_node_collisions.sql",
 		"012_node_renumber_remaps.sql",
 		"013_hub_restore_epoch.sql",
+		// 014 and 015 are reserved by other tickets (MTIX-95.5, MTIX-95.4);
+		// 016 is MTIX-95.1's append-only TRUNCATE guard.
+		"016_append_only_truncate_guard.sql",
 	}
 	require.Equal(t, want, got, "all hub-schema files must be embedded in lex order")
 }

@@ -42,6 +42,8 @@ func TestSyncCmd_AllElevenFR18CommandsRegistered(t *testing.T) {
 		"migrate",
 		// MTIX-30.8: restore-collision (ADR-003 §6.1/§15) operator commands.
 		"mark-restored", "collisions",
+		// MTIX-95.1: the owner's hub privilege command.
+		"harden",
 	}
 	for _, name := range expected {
 		require.Truef(t, subs[name], "%s subcommand registered", name)

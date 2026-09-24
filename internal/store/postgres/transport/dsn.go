@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -105,6 +107,12 @@ type Options struct {
 	// host the connection may use is loopback or a local Unix-domain
 	// socket (FR-18.15). Default false.
 	InsecureTLS bool
+
+	// OnNotice, when set, receives every NOTICE and WARNING the server
+	// sends on the pool's connections (MTIX-95.1). The driver returns no
+	// error for a WARNING, so `mtix sync harden` records them here and
+	// fails on one; WarningLog.Record fits this field.
+	OnNotice func(*pgconn.Notice)
 }
 
 // Source resolves the hub DSN from the FR-18.16 sources, in order:

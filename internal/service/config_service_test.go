@@ -264,11 +264,11 @@ func TestConfig_SessionTimeout_WithCustomValue(t *testing.T) {
 	assert.Equal(t, 8*time.Hour, timeout)
 }
 
-// TestConfig_ValidConfigKeys_Returns29Keys verifies FR-13.2 documentation introspection.
-func TestConfig_ValidConfigKeys_Returns29Keys(t *testing.T) {
+// TestConfig_ValidConfigKeys_Returns30Keys verifies FR-13.2 documentation introspection.
+func TestConfig_ValidConfigKeys_Returns30Keys(t *testing.T) {
 	keys := service.ValidConfigKeys()
 
-	assert.Len(t, keys, 29, "should return exactly 29 valid config keys")
+	assert.Len(t, keys, 30, "should return exactly 30 valid config keys")
 
 	// Verify sorted order.
 	for i := 1; i < len(keys); i++ {
@@ -283,6 +283,48 @@ func TestConfig_ValidConfigKeys_Returns29Keys(t *testing.T) {
 	assert.Contains(t, keys, "api.bind")
 	assert.Contains(t, keys, "agent.stuck_timeout")
 	assert.Contains(t, keys, "ui.theme")
+	assert.Contains(t, keys, "sync.keep_roles")
+}
+
+// TestConfig_SetKeepRoles_ValidatesRoleList verifies that sync.keep_roles
+// accepts only a list of valid role names that may be kept, and stores the
+// value unchanged when it is valid (MTIX-95.1).
+func TestConfig_SetKeepRoles_ValidatesRoleList(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{"one role", "mtix_team", false},
+		{"two roles", "mtix_team,mtix_ci", false},
+		{"empty clears", "", false},
+		{"public refused", "public", true},
+		{"data-API role refused", "mtix_team,anon", true},
+		{"invalid name refused", "Mtix-Team", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cs, err := service.NewConfigService(filepath.Join(dir, "config.yaml"))
+			require.NoError(t, err)
+
+			_, err = cs.Set("sync.keep_roles", tt.value)
+			if tt.wantErr {
+				require.ErrorIs(t, err, model.ErrInvalidInput)
+				got, getErr := cs.Get("sync.keep_roles")
+				require.NoError(t, getErr)
+				require.Empty(t, got, "a refused value is not stored")
+				return
+			}
+			require.NoError(t, err)
+
+			reloaded, err := service.NewConfigService(filepath.Join(dir, "config.yaml"))
+			require.NoError(t, err)
+			got, err := reloaded.Get("sync.keep_roles")
+			require.NoError(t, err)
+			require.Equal(t, tt.value, got)
+		})
+	}
 }
 
 // TestConfig_Get_InvalidKey_ReturnsErrInvalidConfigKey verifies key validation.

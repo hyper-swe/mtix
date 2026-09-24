@@ -120,6 +120,11 @@ import (
 //     counts as the held winner (latestHeldWorkflowKey), so it does not block
 //     an older event. Phase 0 records it as applied instead of quarantining
 //     it for retry (ADR-006 §4.7), so a later build does not re-apply it.
+//     Upgrade consequence: the held lookup re-decodes stored payloads with
+//     the running build's rule, so if a later build widens the rule, an
+//     event this build recorded as malformed (never applied) would count as
+//     held without its columns ever written. Any widening of
+//     decodeWorkflowPayload must ship with a re-apply or quarantine step.
 
 // workflowAction is what a winning workflow event does to one nodes column.
 type workflowAction uint8

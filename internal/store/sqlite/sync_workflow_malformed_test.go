@@ -36,7 +36,7 @@ type malformedCase struct {
 }
 
 // malformedTransitions are transition_status payloads without a usable
-// to-status.
+// to-status, or that fail to decode.
 func malformedTransitions() []malformedCase {
 	return []malformedCase{
 		{"transition without to", model.OpTransitionStatus, `{"from":"open"}`},
@@ -45,6 +45,9 @@ func malformedTransitions() []malformedCase {
 		{"transition with non-string to", model.OpTransitionStatus, `{"from":"open","to":5}`},
 		{"transition with null payload", model.OpTransitionStatus, `null`},
 		{"transition not JSON", model.OpTransitionStatus, `<<<not-json`},
+		// Decodable except for one field: the usable to-status must not save it.
+		{"transition with non-string from", model.OpTransitionStatus, `{"from":5,"to":"done"}`},
+		{"transition with non-string reason", model.OpTransitionStatus, `{"to":"done","reason":5}`},
 	}
 }
 

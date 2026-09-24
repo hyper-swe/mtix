@@ -35,6 +35,9 @@ func TestDecodeWorkflowPayload_PerOp_AcceptsUsableAndRejectsMalformed(t *testing
 		{"transition with non-string to", model.OpTransitionStatus, `{"to":5}`, workflowPayload{}, true},
 		{"transition with null payload", model.OpTransitionStatus, `null`, workflowPayload{}, true},
 		{"transition not JSON", model.OpTransitionStatus, `<<<`, workflowPayload{}, true},
+		// A usable to-status does not rescue a payload that fails to decode.
+		{"transition with non-string from", model.OpTransitionStatus, `{"from":5,"to":"done"}`, workflowPayload{}, true},
+		{"transition with non-string reason", model.OpTransitionStatus, `{"to":"done","reason":5}`, workflowPayload{}, true},
 		{"claim", model.OpClaim, `{"agent_id":"agent-a","ttl_seconds":60}`,
 			workflowPayload{agentID: "agent-a"}, false},
 		{"claim not JSON", model.OpClaim, `<<<`, workflowPayload{}, true},

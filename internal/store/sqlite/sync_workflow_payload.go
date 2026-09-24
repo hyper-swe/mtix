@@ -36,6 +36,10 @@ import (
 // winner (so it neither wins over nor blocks an older event, and status
 // converges whatever order it arrived in), and never fails its pull batch: a
 // failed event fails the whole batch, and the pull cursor never moves past it.
+//
+// Widening this rule changes which stored events count as held: ship any
+// widening with a re-apply or quarantine step (see the malformed events
+// residual in sync_workflow_winner.go).
 
 // workflowPayload is what the workflow payload rule reads from one event's
 // payload. Only the fields of the event's op are set.

@@ -233,6 +233,13 @@ Known residual in 0.5.x:
   `unclaim` is never malformed: its payload is not read. In 0.5.x a
   malformed event is recorded as applied, not quarantined for retry,
   so a later build that could read it does not apply it either.
+  Upgrade consequence: the winner check re-decodes stored payloads
+  with the running build's rule. If a later build widens the rule, an
+  event this build recorded as malformed (and never applied) would
+  count as held there although its columns were never written, and it
+  could block older events. Any widening of `decodeWorkflowPayload`
+  must therefore ship with a step that re-applies or quarantines the
+  events the old rule rejected.
 
 ## Hub-side conflict detection
 

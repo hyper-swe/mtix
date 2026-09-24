@@ -40,6 +40,9 @@ func TestCheckHostEntries_VerifyFull_AcceptsOnlyVerifyingNetworkEntries(t *testi
 		{"entry without a server name", []*pgconn.FallbackConfig{
 			verifiedEntry("a.example"), verifiedEntry("b.example"), {Host: hidden, Port: 5432, TLSConfig: &tls.Config{}}},
 			"host 3 of 3 "},
+		{"one host and port listed twice before an unverified host", []*pgconn.FallbackConfig{
+			verifiedEntry("a.example"), verifiedEntry("a.example"), {Host: hidden, Port: 5432}},
+			"host 2 of 2 "},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

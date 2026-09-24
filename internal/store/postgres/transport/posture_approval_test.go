@@ -505,6 +505,14 @@ func TestApproval_Printed_ShowsOnlyValueFreeSummary(t *testing.T) {
 	require.Equal(t, want, fmt.Sprintln(*a)[:len(want)])
 	require.Equal(t, "transport.Approval{sslmode=(unrecognized) hosts=0 ca_supplied=false}",
 		transport.Approval{SSLMode: secret}.String())
+
+	// Under prefer the driver tries each network host twice (with and
+	// without TLS); the summary counts hosts, not connection attempts.
+	prefer, err := transport.ApproveDSN("postgres://u:pw@/hub?host=localhost,127.0.0.1,/tmp&sslmode=prefer&"+noDefaultCA,
+		transport.Options{InsecureTLS: true})
+	require.NoError(t, err)
+	require.Len(t, entriesOf(&prefer.Config.ConnConfig.Config), 5, "two attempts per network host, one for the socket")
+	require.Equal(t, "transport.Approval{sslmode=prefer hosts=3 ca_supplied=false}", prefer.String())
 }
 
 func TestEnforceTLSPosture_ApprovedDSN_ReturnsApprovalDSN(t *testing.T) {

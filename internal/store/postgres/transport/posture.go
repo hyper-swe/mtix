@@ -45,8 +45,9 @@ type Approval struct {
 	// CASupplied reports whether a TLS host entry of Config carries a
 	// root CA pool, whatever its source: sslrootcert in the DSN,
 	// MTIX_SYNC_SSLROOTCERT, PGSSLROOTCERT, a service file, or the
-	// driver's default ~/.postgresql/root.crt, which it loads when that
-	// file exists and no other source names a CA file.
+	// driver's default root.crt in ~/.postgresql/ (%APPDATA%\postgresql\
+	// on Windows), which it loads when that file exists and no other
+	// source names a CA file.
 	CASupplied bool
 
 	// dsn is the normalized DSN Config was parsed from: sslmode

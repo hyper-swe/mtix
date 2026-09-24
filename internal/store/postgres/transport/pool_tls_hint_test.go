@@ -20,11 +20,17 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
+// sslRequestMessage is the 8-byte SSLRequest a client sends before a TLS
+// handshake: length 8, then the request code 80877103.
+const sslRequestMessage = "\x00\x00\x00\x08\x04\xd2\x16\x2f"
+
 // untrustedTLSServer listens on loopback, answers each connection's
 // SSLRequest with 'S' and then offers a self-signed certificate that no
-// test CA signed. It counts the TLS handshakes it starts and the ones
-// that complete; a client that verifies the certificate never completes
-// one. Any other server-side failure is recorded.
+// test CA signed. It counts the connections it accepts, the TLS
+// handshakes it starts and the ones that complete; a client that
+// verifies the certificate never completes one. A connection that opens
+// with anything but an SSLRequest (a plaintext attempt) and any other
+// server-side failure are recorded.
 type untrustedTLSServer struct {
 	port      string
 	ln        net.Listener
@@ -32,6 +38,7 @@ type untrustedTLSServer struct {
 	wg        sync.WaitGroup
 	stopOnce  sync.Once
 	stopErr   error
+	accepted  atomic.Int64
 	started   atomic.Int64
 	completed atomic.Int64
 	mu        sync.Mutex
@@ -68,6 +75,7 @@ func (s *untrustedTLSServer) serve() {
 			}
 			return
 		}
+		s.accepted.Add(1)
 		s.wg.Add(1)
 		go s.handle(conn)
 	}
@@ -84,9 +92,13 @@ func (s *untrustedTLSServer) handle(c net.Conn) {
 		s.fail("set deadline", err)
 		return
 	}
-	sslRequest := make([]byte, 8)
+	sslRequest := make([]byte, len(sslRequestMessage))
 	if _, err := io.ReadFull(c, sslRequest); err != nil {
 		s.fail("read SSLRequest", err)
+		return
+	}
+	if string(sslRequest) != sslRequestMessage {
+		s.fail("first message", errors.New("not an SSLRequest: the attempt did not use TLS"))
 		return
 	}
 	if _, err := c.Write([]byte{'S'}); err != nil {
@@ -118,15 +130,17 @@ func (s *untrustedTLSServer) stop() error {
 	return s.stopErr
 }
 
-// requireHandshakes stops s and checks that it started want handshakes,
-// completed none and recorded no other failure.
+// requireHandshakes stops s and checks each connection attempt: it
+// accepted want connections, every one opened with an SSLRequest and
+// started a TLS handshake, none completed one, and nothing else failed.
 func (s *untrustedTLSServer) requireHandshakes(t *testing.T, want int64) {
 	t.Helper()
 	require.NoError(t, s.stop())
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	require.Empty(t, s.failures, "server-side failures")
-	require.Equal(t, want, s.started.Load(), "handshakes started")
+	require.Equal(t, want, s.accepted.Load(), "connection attempts")
+	require.Equal(t, want, s.started.Load(), "attempts that started a TLS handshake")
 	require.Zero(t, s.completed.Load(), "a handshake completed: a connection attempt did not verify the certificate")
 }
 

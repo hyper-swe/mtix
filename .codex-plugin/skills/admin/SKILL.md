@@ -64,8 +64,10 @@ migrated hub verifies clean.
 `mtix sync doctor` runs the same verification as its `hub-privileges` check: a
 WARN (exit 0) by default when other roles can use the sync tables, which may be
 fine on a private network and blocks nothing; a FAIL (exit 2) only in strict
-mode, when `sync.keep_roles` is set. `mtix sync init` changes no privileges and
-`mtix sync push` issues no DDL.
+mode, when `sync.keep_roles` is set, and then for every finding harden would
+report (kept roles' grant options and grants from other roles, mtix objects
+owned by another role, and memberships that reach every table included).
+`mtix sync init` changes no privileges and `mtix sync push` issues no DDL.
 
 Never pass `--apply` without a human approving the dry run's role list. Never
 run `mtix sync harden` from a hook, a push or the daemon.

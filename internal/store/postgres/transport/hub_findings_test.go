@@ -74,6 +74,7 @@ func baseCatalog() *hubCatalog {
 		usage:  map[[2]uint32]bool{},
 		member: map[[2]uint32]bool{},
 		canSet: map[[2]uint32]bool{},
+		admin:  map[[2]uint32]bool{},
 		guards: []guardState{
 			{table: "audit_log", trigger: "audit_log_no_truncate", enabled: "O", function: guardFunction},
 		},
@@ -737,4 +738,21 @@ func TestComputeFindings_WriteServerFilesMember_Reported(t *testing.T) {
 	cat.member[[2]uint32{tUnrel, tWriteFiles}] = true
 	findings, _ := computeFindings(cat, keptTeam())
 	require.Equal(t, []string{"unrel|role|pg_write_server_files|membership||-"}, summaries(findings))
+}
+
+// TestComputeFindings_AdminOnSuperuserPath_Reported: a checked role with
+// ADMIN OPTION on a role that can SET ROLE to a superuser is reported; one
+// without ADMIN on it is not (MTIX-95.1).
+func TestComputeFindings_AdminOnSuperuserPath_Reported(t *testing.T) {
+	const tSuper2 uint32 = 20050
+	cat := baseCatalog()
+	cat.roles[tSuper2] = roleInfo{oid: tSuper2, name: "admin_su", super: true}
+	cat.superReach = map[uint32][]uint32{tTeam: {tSuper2}}
+	cat.admin[[2]uint32{tUnrel, tTeam}] = true
+	cat.member[[2]uint32{tUnrel, tTeam}] = true
+	cat.member[[2]uint32{tBob, tTeam}] = true // inherits only: no ADMIN
+	cat.usage[[2]uint32{tBob, tTeam}] = true
+	findings, _ := computeFindings(cat, keptTeam())
+	require.Equal(t, []string{"unrel|role|admin_su|superuser_membership||-"}, summaries(findings))
+	require.Contains(t, findings[0].Note, "team")
 }

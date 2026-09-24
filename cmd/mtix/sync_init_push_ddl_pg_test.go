@@ -56,11 +56,12 @@ func runInitAs(t *testing.T, f *hardenFixture, role string) {
 		transport.Options{InsecureTLS: true}), stderr.String())
 }
 
-// TestSyncInit_ChangesNoPrivileges: `mtix sync init` on a hub where other
+// TestSyncInit_HubWithOtherRoles_ChangesNoPrivileges: `mtix sync init` on a
+// hub where other
 // roles hold access changes no privilege and issues no GRANT, REVOKE or
 // ALTER DEFAULT PRIVILEGES; it restores a missing TRUNCATE guard, and on a
 // hub whose guards are in place it creates none (MTIX-95.1).
-func TestSyncInit_ChangesNoPrivileges(t *testing.T) {
+func TestSyncInit_HubWithOtherRoles_ChangesNoPrivileges(t *testing.T) {
 	h := newExposedHub(t, true)
 	f := h.f
 	f.exec(`DROP TRIGGER audit_log_no_truncate ON audit_log`)
@@ -92,10 +93,11 @@ func dropTriggerLines(snapshot []string) []string {
 	return out
 }
 
-// TestSyncPush_IssuesNoDDL: `mtix sync push` completes while an event
+// TestSyncPush_AllDDLRefused_Succeeds: `mtix sync push` completes while an
+// event
 // trigger refuses every DDL command, so a push never takes a DDL lock on
 // the hub (MTIX-95.1, F-44).
-func TestSyncPush_IssuesNoDDL(t *testing.T) {
+func TestSyncPush_AllDDLRefused_Succeeds(t *testing.T) {
 	initTestApp(t)
 	f := newHardenFixture(t)
 	owner := f.ownerRole()

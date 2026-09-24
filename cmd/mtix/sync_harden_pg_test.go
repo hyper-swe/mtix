@@ -776,3 +776,47 @@ func TestHarden_NonInheritingMemberOfKeptRole_AccessStillReported(t *testing.T) 
 	require.True(t, reported[setOnly], "a SET-only member of a kept role: %s", out)
 	require.True(t, reported[adminOnly], "an ADMIN-only member of a kept role: %s", out)
 }
+
+// TestHarden_AdminOnlyMemberOfSuperuserPath_Reported: a role holding only
+// ADMIN OPTION on a role (here a kept one) that can SET ROLE to a superuser
+// can grant itself that role with SET and so act as the superuser; it is
+// reported. A role that only inherits the kept role cannot, and is not
+// reported as a superuser path (MTIX-95.1).
+func TestHarden_AdminOnlyMemberOfSuperuserPath_Reported(t *testing.T) {
+	initTestApp(t)
+	f := newHardenFixture(t)
+	owner, team, su := f.ownerRole(), f.role("team"), f.role("su")
+	adminOnly, inherits := f.role("adminonly"), f.role("inherits")
+	bridge, viaBridge := f.role("bridge"), f.role("viabridge") // a role that is not kept
+	f.migrateAs(owner)
+	f.ddl(`ALTER ROLE %I SUPERUSER`, su)
+	f.ddl(`GRANT %I TO %I WITH INHERIT FALSE, SET TRUE`, su, team)
+	f.ddl(`GRANT %I TO %I WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`, team, adminOnly)
+	f.ddl(`GRANT %I TO %I WITH INHERIT TRUE, SET FALSE`, team, inherits)
+	f.ddl(`GRANT %I TO %I WITH INHERIT FALSE, SET TRUE`, su, bridge)
+	f.ddl(`GRANT %I TO %I WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`, bridge, viaBridge)
+	app.jsonOutput = true
+
+	out, err := f.harden(owner, "--keep-role", team)
+	require.Equal(t, 2, exitCodeForError(err), out)
+	var result struct {
+		Before struct {
+			Findings []struct{ Role, Object, Via, Note string } `json:"findings"`
+		} `json:"before"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &result), out)
+	var adminReported, inheritReported, bridgeReported bool
+	for _, fd := range result.Before.Findings {
+		if fd.Via == "superuser_membership" && fd.Object == su {
+			adminReported = adminReported || fd.Role == adminOnly
+			inheritReported = inheritReported || fd.Role == inherits
+			bridgeReported = bridgeReported || fd.Role == viaBridge
+			if fd.Role == adminOnly {
+				require.Contains(t, fd.Note, team)
+			}
+		}
+	}
+	require.True(t, adminReported, "an ADMIN-only member of a role that can become a superuser: %s", out)
+	require.False(t, inheritReported, "an inheriting member cannot SET ROLE onward")
+	require.True(t, bridgeReported, "ADMIN OPTION on a role that is not kept: %s", out)
+}

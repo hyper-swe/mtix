@@ -42,7 +42,8 @@ func (c *hubCatalog) keptOIDs(kept map[string]bool) []uint32 {
 // the owners, the kept roles, every grantee of a sync object, every member
 // of a read-all role, the read-all roles themselves, and the roles through
 // which a member reaches everything: superusers and the server-file and
-// server-program roles (MTIX-95.1).
+// server-program roles, and every role that can SET ROLE to a superuser,
+// which a holder of ADMIN OPTION on it can grant to itself (MTIX-95.1).
 func (c *hubCatalog) accessCandidates(kept map[string]bool) []uint32 {
 	set := map[uint32]bool{}
 	for oid := range c.owners {
@@ -52,6 +53,9 @@ func (c *hubCatalog) accessCandidates(kept map[string]bool) []uint32 {
 		if r.super || escalationRoles[r.name] {
 			set[oid] = true
 		}
+	}
+	for oid := range c.superReach {
+		set[oid] = true
 	}
 	for _, oid := range c.keptOIDs(kept) {
 		set[oid] = true
@@ -85,6 +89,9 @@ func (c *hubCatalog) loadAccess(ctx context.Context, tx pgx.Tx, kept []string) e
 	for oid := range c.checkedRoles(keptSet) {
 		checked = append(checked, oid)
 	}
+	if err := c.loadSuperReach(ctx, tx); err != nil {
+		return err
+	}
 	if err := c.loadUsage(ctx, tx, checked, c.accessCandidates(keptSet)); err != nil {
 		return err
 	}
@@ -92,21 +99,27 @@ func (c *hubCatalog) loadAccess(ctx context.Context, tx pgx.Tx, kept []string) e
 }
 
 // loadUsage records, for each (checked role, candidate) pair, whether the
-// checked role inherits the candidate's privileges (usage), whether it can
-// SET ROLE to it (canSet; MEMBER before PostgreSQL 16, where every member
-// can), and whether it is a member at all (member): by inheriting, by SET
-// ROLE, or by ADMIN OPTION alone, with which it can grant the candidate to
-// itself. MEMBER counts every kind of membership on every version.
+// checked role is a member at all (member: by inheriting, by SET ROLE, or
+// by ADMIN OPTION alone, with which it can grant the candidate to itself),
+// inherits the candidate's privileges (usage), can SET ROLE to it (canSet;
+// MEMBER before PostgreSQL 16, where every member can), and holds ADMIN
+// OPTION on it, directly or through any membership (admin). MEMBER counts
+// every kind of membership on every version.
 func (c *hubCatalog) loadUsage(ctx context.Context, tx pgx.Tx, checked, candidates []uint32) error {
-	// Which candidate roles each checked role is a member of, inherits and
-	// can SET ROLE to.
+	// Which candidate roles each checked role is a member of, inherits, can
+	// SET ROLE to, or can grant.
 	rows, err := tx.Query(ctx, `
-		SELECT r.oid, g.oid, COALESCE(pg_catalog.pg_has_role(r.oid, g.oid, 'USAGE'), false),
+		SELECT r.oid, g.oid,
+		       COALESCE(pg_catalog.pg_has_role(r.oid, g.oid, 'MEMBER'), false),
+		       COALESCE(pg_catalog.pg_has_role(r.oid, g.oid, 'USAGE'), false),
 		       COALESCE(pg_catalog.pg_has_role(r.oid, g.oid,
 		            CASE WHEN current_setting('server_version_num')::int >= 160000
-		                 THEN 'SET' ELSE 'MEMBER' END), false)
+		                 THEN 'SET' ELSE 'MEMBER' END), false),
+		       COALESCE(pg_catalog.pg_has_role(r.oid, g.oid, 'USAGE WITH ADMIN OPTION'), false)
 		FROM unnest($1::oid[]) AS r(oid) CROSS JOIN unnest($2::oid[]) AS g(oid)
-		WHERE r.oid <> g.oid AND COALESCE(pg_catalog.pg_has_role(r.oid, g.oid, 'MEMBER'), false)`,
+		WHERE r.oid <> g.oid
+		  AND (COALESCE(pg_catalog.pg_has_role(r.oid, g.oid, 'MEMBER'), false)
+		       OR COALESCE(pg_catalog.pg_has_role(r.oid, g.oid, 'USAGE WITH ADMIN OPTION'), false))`,
 		checked, candidates)
 	if err != nil {
 		return fmt.Errorf("read role memberships: %w", err)
@@ -114,17 +127,50 @@ func (c *hubCatalog) loadUsage(ctx context.Context, tx pgx.Tx, checked, candidat
 	defer rows.Close()
 	for rows.Next() {
 		var pair [2]uint32
-		var inherits, canSet bool
-		if err := rows.Scan(&pair[0], &pair[1], &inherits, &canSet); err != nil {
+		var member, inherits, canSet, admin bool
+		if err := rows.Scan(&pair[0], &pair[1], &member, &inherits, &canSet, &admin); err != nil {
 			return fmt.Errorf("read role memberships: %w", err)
 		}
-		c.member[pair] = true
-		if inherits {
-			c.usage[pair] = true
+		c.recordMembership(pair, member, inherits, canSet, admin)
+	}
+	return rows.Err()
+}
+
+// recordMembership stores the true facts about one membership pair.
+func (c *hubCatalog) recordMembership(pair [2]uint32, member, inherits, canSet, admin bool) {
+	for _, fact := range []struct {
+		set map[[2]uint32]bool
+		ok  bool
+	}{{c.member, member}, {c.usage, inherits}, {c.canSet, canSet}, {c.admin, admin}} {
+		if fact.ok {
+			fact.set[pair] = true
 		}
-		if canSet {
-			c.canSet[pair] = true
+	}
+}
+
+// loadSuperReach records every role that is not a superuser but can SET
+// ROLE to one (MEMBER before PostgreSQL 16), with the superusers it can
+// reach (MTIX-95.1). A role holding ADMIN OPTION on such a role can grant
+// it to itself with SET and so act as the superuser.
+func (c *hubCatalog) loadSuperReach(ctx context.Context, tx pgx.Tx) error {
+	// Non-superuser roles that can SET ROLE to a superuser.
+	rows, err := tx.Query(ctx, `
+		SELECT y.oid, s.oid
+		FROM pg_catalog.pg_roles y CROSS JOIN pg_catalog.pg_roles s
+		WHERE s.rolsuper AND NOT y.rolsuper AND y.oid <> s.oid
+		  AND COALESCE(pg_catalog.pg_has_role(y.oid, s.oid,
+		       CASE WHEN current_setting('server_version_num')::int >= 160000
+		            THEN 'SET' ELSE 'MEMBER' END), false)`)
+	if err != nil {
+		return fmt.Errorf("read superuser memberships: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var y, s uint32
+		if err := rows.Scan(&y, &s); err != nil {
+			return fmt.Errorf("read superuser memberships: %w", err)
 		}
+		c.superReach[y] = append(c.superReach[y], s)
 	}
 	return rows.Err()
 }

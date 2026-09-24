@@ -1620,8 +1620,12 @@ tables, or a TRUNCATE guard is missing or disabled: the doctor still exits
 0 and nothing is blocked, since that can be fine when the database is
 reachable only from a private network. The detail names those roles and
 says how to restrict them. It is a **FAIL** (exit 2) only in strict mode,
-when `sync.keep_roles` is set and a role not in it can use the sync
-tables, or a guard is missing or disabled. If the verification cannot run
+when `sync.keep_roles` is set: then it fails whenever `mtix sync harden`
+would report a finding, not only a role outside the list or a missing or
+disabled guard, but also a kept role that can grant its access on or
+holds a privilege another role granted it, an mtix object owned by
+another role, and a membership through which a role can reach every
+table. If the verification cannot run
 (the hub is unreachable, or a sync table is missing), the check is a WARN
 that says so and names the next step, or a FAIL in strict mode. A clean
 hub passes. With

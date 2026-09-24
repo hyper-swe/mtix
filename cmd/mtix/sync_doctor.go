@@ -66,9 +66,14 @@ func newSyncDoctorCmd() *cobra.Command {
 Hub privileges is a WARN by default: roles other than the owner may use
 the sync tables, which can be fine when the database is reachable only
 from a private network; mtix sync harden restricts them. It fails only in
-strict mode, when the sync.keep_roles config key is set and a role not in
-it can use the sync tables or a TRUNCATE guard is missing or disabled.
-The check contacts the hub only while the doctor runs.
+strict mode, when the sync.keep_roles config key is set: then it fails
+whenever mtix sync harden would report a finding, not only a role outside
+the list or a missing or disabled TRUNCATE guard, but also a kept role
+that can grant its access on or holds a privilege another role granted
+it, an mtix object owned by another role, and a membership through which
+a role can reach every table. If the check cannot run, it is a WARN by
+default and fails in strict mode. The check contacts the hub only while
+the doctor runs.
 
 Exit code: 0 on all-pass, including checks that pass with a WARN; 2 if
 any check fails. --json output for agents and CI consumption.`,

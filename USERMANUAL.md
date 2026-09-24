@@ -1344,10 +1344,12 @@ Each `mtix sync pull` first fetches the events past its cursor, then
 sweeps the hub for **late events**: changes a teammate pushed after
 working offline. Their events carry the lower clock values of their
 machine, so the cursor alone skips them. The sweep lists the hub events
-created since the previous sweep (with a 15-minute overlap), fetches
-the ones your machine does not have, and applies them the usual way.
-A recovered claim or status change that is older than the task's
-current one changes nothing; it is only recorded as received.
+created since the previous sweep (with a 15-minute overlap) and notes
+the ones your machine does not have; when the listing is done it
+fetches them and applies them the usual way, oldest first by the sync
+clock, so a task's creation always applies before its edits. A
+recovered claim or status change that is older than the task's current
+one changes nothing; it is only recorded as received.
 
 - **First pull after upgrading.** It compares the full hub event history
   once and prints `late-event sweep (first run, full hub history): N
@@ -1356,16 +1358,18 @@ current one changes nothing; it is only recorded as received.
   only when they recover something.
 - **Interrupted sweeps resume.** On a large hub the full comparison can
   take longer than one pull may run (a daemon pull stops after 60
-  seconds). The sweep saves its progress after each page it has
-  applied, so the next pull continues where the last one stopped
-  instead of starting over. Until it finishes, `mtix sync status`
-  shows `last sweep` as `never (full hub comparison in progress)`.
+  seconds). The sweep saves its place after each page it lists, and
+  keeps the changes it has noted but not yet applied, so the next pull
+  continues where the last one stopped instead of starting over. Until
+  it finishes, `mtix sync status` shows `last sweep` as `never (full
+  hub comparison in progress)`.
 - **Clock.** The sweep uses the hub's clock only, so a wrong clock on
   your machine has no effect.
 - **Status.** `mtix sync status` shows `last sweep`, the hub time of the
   last completed sweep (`last_sweep_at` in `--json`), or `never`
   (`full_sweep_in_progress` in `--json` says whether the first full
-  comparison is part-way done).
+  comparison is part-way done, and `sweep_pending_events` counts the
+  changes noted but not yet applied).
 - **Cost.** One extra hub query per pull, and only during a pull. The
   sweep adds no timer, so an idle hub that scales to zero stays idle
   (a daemon that pulls on an interval sweeps on each of its pulls).

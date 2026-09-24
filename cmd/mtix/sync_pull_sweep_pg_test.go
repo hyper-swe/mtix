@@ -370,14 +370,109 @@ func TestPullSweep_UsesHubClock(t *testing.T) {
 	}
 }
 
+// TestPullSweep_EditListedBeforeItsCreate_AppliesInLamportOrder: the sweep
+// lists hub ids in (created_at, event_id) order, which is not causal for
+// one client's own events: one push transaction gives them all the same
+// created_at, and after a clock step-back a later edit can carry a smaller
+// event id than the create it edits (a renumbered create can also be pushed
+// after its edits). Here B's edit of its own new node is listed one page
+// before the node's create, for --limit 1, 2 and 3. Listing only stages the
+// missing ids; the sweep applies them after the listing, in Lamport order,
+// so the create applies first and the pull recovers the node (MTIX-95.5).
+func TestPullSweep_EditListedBeforeItsCreate_AppliesInLamportOrder(t *testing.T) {
+	for _, limit := range []int{1, 2, 3} {
+		t.Run(fmt.Sprintf("limit %d", limit), func(t *testing.T) {
+			f := newSweepFixture(t)
+			ctx := context.Background()
+			f.seedSharedNode(t)
+			f.editPeer(t, 5)
+			f.pushPeer(t)
+			f.pullPeer(t, 100)
+			require.NoError(t, f.b.CreateNode(ctx, mkPGNode("TEST-2", "", 0, 2, "B's node")))
+			desc := "edited right after the create"
+			require.NoError(t, f.b.UpdateNode(ctx, "TEST-2", &store.NodeUpdate{Description: &desc}))
+			late := f.pushB(t) // one push transaction: one created_at for both
+			require.Len(t, late, 2)
+			create, edit := late[0], late[1]
+			require.Equal(t, model.OpCreateNode, create.OpType)
+			require.Less(t, create.LamportClock, edit.LamportClock)
+			f.listEditBeforeCreate(t, create, edit, limit)
+			_, err := app.store.WriteDB().ExecContext(ctx,
+				`UPDATE meta SET value = '' WHERE key = 'meta.sync.last_sweep_at'`)
+			require.NoError(t, err)
+
+			out := f.pullPeer(t, limit)
+
+			require.Contains(t, out, "2 late events recovered")
+			node, err := app.store.GetNode(ctx, "TEST-2")
+			require.NoError(t, err, "the create must apply before its edit")
+			require.Equal(t, desc, node.Description)
+			var pending int
+			require.NoError(t, app.store.QueryRow(ctx,
+				`SELECT COUNT(*) FROM sync_sweep_pending`).Scan(&pending))
+			require.Zero(t, pending, "every staged event was applied")
+		})
+	}
+}
+
+// listEditBeforeCreate rewrites the hub so the full diff lists edit as the
+// last id of its first page and create as the first id of the next page:
+// edit gets an event id that sorts before create's (as after a client clock
+// step-back), limit-1 of the peer's own events are listed first, and the
+// pair comes right after them with one created_at (one push). The test hub
+// is a throwaway database.
+func (f *sweepFixture) listEditBeforeCreate(t *testing.T, create, edit *model.SyncEvent, limit int) {
+	t.Helper()
+	ctx := context.Background()
+	stepBackID := "00" + edit.EventID[2:]
+	require.Less(t, stepBackID, create.EventID)
+	base := f.hubNow(t).Add(-24 * time.Hour)
+	var fillers []string
+	rows, err := f.pool.Inner().Query(ctx,
+		`SELECT event_id FROM sync_events WHERE event_id <> ALL($1) ORDER BY event_id LIMIT $2`,
+		[]string{create.EventID, edit.EventID}, limit-1)
+	require.NoError(t, err)
+	for rows.Next() {
+		var id string
+		require.NoError(t, rows.Scan(&id))
+		fillers = append(fillers, id)
+	}
+	require.NoError(t, rows.Err())
+	require.Len(t, fillers, limit-1)
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{`UPDATE sync_events SET event_id = $1 WHERE event_id = $2`, []any{stepBackID, edit.EventID}},
+		{`UPDATE sync_events SET created_at = $1 WHERE event_id = ANY($2)`, []any{base, fillers}},
+		{`UPDATE sync_events SET created_at = $1 WHERE event_id = ANY($2)`,
+			[]any{base.Add(time.Second), []string{stepBackID, create.EventID}}},
+	} {
+		_, err := f.pool.Inner().Exec(ctx, stmt.sql, stmt.args...)
+		require.NoError(t, err)
+	}
+	var first []string
+	rows, err = f.pool.Inner().Query(ctx,
+		`SELECT event_id FROM sync_events ORDER BY created_at, event_id LIMIT $1`, limit+1)
+	require.NoError(t, err)
+	for rows.Next() {
+		var id string
+		require.NoError(t, rows.Scan(&id))
+		first = append(first, id)
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, append(append([]string{}, fillers...), stepBackID, create.EventID), first,
+		"precondition: the edit ends page one and its create starts page two")
+}
+
 // TestPullSweep_FirstRunInterrupted_ResumesFromSavedProgress: a first full
-// diff that stops part-way (here: a late event that cannot be applied, as
-// a timeout would stop it) keeps the progress of the pages it applied. The
-// next pull resumes after the saved event id, compares only the ids after
-// it, completes, and records the FIRST pull's start time as
+// diff that stops part-way (here: in its apply phase, on a late event that
+// cannot be applied) keeps its listing progress and the staged ids it has
+// not applied. The next pull resumes after the saved listing position
+// (there is nothing left to list), applies the remaining staged event,
+// completes, and records the FIRST pull's start time as
 // meta.sync.last_sweep_at (MTIX-95.5). B's three late events were pushed
-// last, in one transaction, with ascending ids (one store), so they are
-// listed last and, with --limit 1, each is its own page.
+// last, in one transaction, so they are listed last.
 func TestPullSweep_FirstRunInterrupted_ResumesFromSavedProgress(t *testing.T) {
 	f := newSweepFixture(t)
 	ctx := context.Background()
@@ -410,8 +505,10 @@ func TestPullSweep_FirstRunInterrupted_ResumesFromSavedProgress(t *testing.T) {
 	after := f.hubNow(t)
 
 	require.Equal(t, "", f.peerMeta(t, "meta.sync.last_sweep_at"))
-	require.Equal(t, late[1].EventID, f.peerMeta(t, "meta.sync.sweep_after_id"),
-		"progress covers the pages applied before the failure")
+	require.Equal(t, late[2].EventID, f.peerMeta(t, "meta.sync.sweep_after_id"),
+		"the listing finished before the apply phase stopped")
+	require.Equal(t, []string{late[2].EventID}, f.stagedOnPeer(t),
+		"the event that failed stays staged")
 	started, err := time.Parse(time.RFC3339Nano, f.peerMeta(t, "meta.sync.sweep_started_at"))
 	require.NoError(t, err)
 	requireWithin(t, started, before, after)
@@ -423,9 +520,9 @@ func TestPullSweep_FirstRunInterrupted_ResumesFromSavedProgress(t *testing.T) {
 	require.NoError(t, err)
 	out, errOut := f.pullPeerStreams(t, 1)
 
-	require.Contains(t, errOut, "resuming the full hub event comparison after "+late[1].EventID)
-	require.Contains(t, errOut, "late-event sweep: compared 1 hub event ids in 1 pages",
-		"the resumed diff lists only the ids after the saved one")
+	require.Contains(t, errOut, "resuming the full hub event comparison after "+late[2].EventID)
+	require.Contains(t, errOut, "late-event sweep: compared 0 hub event ids in 1 pages",
+		"the resumed diff lists only the ids after the saved position")
 	require.Contains(t, out, "1 late events recovered")
 	require.Equal(t, f.peerMeta(t, "meta.sync.last_sweep_at"), started.UTC().Format(time.RFC3339Nano),
 		"the next window is measured from the first pull's start")
@@ -433,14 +530,33 @@ func TestPullSweep_FirstRunInterrupted_ResumesFromSavedProgress(t *testing.T) {
 		"meta.sync.sweep_after_created_at", "meta.sync.sweep_started_at"} {
 		require.Equalf(t, "", f.peerMeta(t, key), "%s is cleared on completion", key)
 	}
+	require.Empty(t, f.stagedOnPeer(t))
 	created, err := app.store.GetNode(ctx, "TEST-2")
 	require.NoError(t, err)
 	require.Equal(t, desc, created.Description)
 }
 
+// stagedOnPeer returns the event ids staged in the peer's sweep table.
+func (f *sweepFixture) stagedOnPeer(t *testing.T) []string {
+	t.Helper()
+	rows, err := app.store.Query(context.Background(),
+		`SELECT event_id FROM sync_sweep_pending ORDER BY event_id`)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var ids []string
+	for rows.Next() {
+		var id string
+		require.NoError(t, rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(t, rows.Err())
+	return ids
+}
+
 // TestRunSyncClone_ResetsLateEventSweepState: a clone rebuilds the store
-// from the hub, so it clears meta.sync.last_sweep_at and any saved
-// full-diff progress; the first pull after it diffs the full hub history.
+// from the hub, so it clears meta.sync.last_sweep_at, any saved sweep
+// progress and any staged ids; the first pull after it diffs the full hub
+// history.
 func TestRunSyncClone_ResetsLateEventSweepState(t *testing.T) {
 	dsn := requireCmdPG(t)
 	_ = openCmdHub(t)
@@ -452,6 +568,9 @@ func TestRunSyncClone_ResetsLateEventSweepState(t *testing.T) {
 			`INSERT INTO meta (key, value) VALUES (?, 'stale') ON CONFLICT(key) DO UPDATE SET value = 'stale'`, key)
 		require.NoError(t, err)
 	}
+	_, err := app.store.WriteDB().ExecContext(ctx,
+		`INSERT INTO sync_sweep_pending (event_id) VALUES ('stale-staged-id')`)
+	require.NoError(t, err)
 
 	var stdout, stderr bytes.Buffer
 	require.NoError(t, runSyncClone(ctx, &stdout, &stderr,
@@ -463,6 +582,9 @@ func TestRunSyncClone_ResetsLateEventSweepState(t *testing.T) {
 		require.NoError(t, app.store.QueryRow(ctx, `SELECT value FROM meta WHERE key = ?`, key).Scan(&v))
 		require.Equalf(t, "", v, "%s must be reset by clone", key)
 	}
+	var staged int
+	require.NoError(t, app.store.QueryRow(ctx, `SELECT COUNT(*) FROM sync_sweep_pending`).Scan(&staged))
+	require.Zero(t, staged, "clone clears the staged ids")
 }
 
 // TestRunSyncPull_SweepApplyFails_ReturnsErrorKeepsLastSweep: when a

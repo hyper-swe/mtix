@@ -25,9 +25,9 @@ import (
 //     from a start position. The sweep uses it on every pull, from the
 //     previous sweep's hub time minus an overlap, and once, from the zero
 //     time, for the full-history diff of a store that has never swept.
-//     created_at is the push transaction's start time on the hub, so this
-//     order puts an event's page no later than the page of any event
-//     pushed after it was received. Migration 014 indexes created_at.
+//     The order is a stable keyset, not a causal order (one push gives its
+//     events one created_at); the caller applies what it recovers in
+//     Lamport order. Migration 014 indexes created_at.
 //   - FetchEventsByID returns the full events for a set of ids.
 //
 // Every listing page carries the hub's now(), read in the same statement,

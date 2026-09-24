@@ -15,10 +15,12 @@
 --     WHERE created_at >= $1 AND (created_at, event_id) > ($1, $2)
 --     ORDER BY created_at, event_id
 --
--- This index serves that query from the window's start instead of scanning
--- the whole log on every pull. Until it exists (a hub whose owner has not
--- yet re-run `mtix sync init` after upgrading) the sweep still works, with
--- one sequential scan of sync_events per pull.
+-- This index serves that query from each page's start instead of scanning
+-- the whole log. Until it exists (a hub whose owner has not yet re-run
+-- `mtix sync init` after upgrading) the sweep still works, with one
+-- sequential scan of sync_events per listed page: once per pull for the
+-- usual window, and once per page, spread across pulls, for a store's
+-- one-time full-history comparison.
 --
 -- Additive and idempotent: IF NOT EXISTS makes a re-run a no-op, and no
 -- column, constraint or row is touched.

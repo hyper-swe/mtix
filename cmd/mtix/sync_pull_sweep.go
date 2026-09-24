@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -27,36 +26,40 @@ import (
 // returns them and replicas silently diverge. After the cursor loop, the
 // sweep therefore:
 //
-//  1. lists, in (created_at, event_id) keyset pages, the hub event ids
-//     created since the previous sweep's hub time minus
+//  1. Listing phase: lists, in (created_at, event_id) keyset pages, the hub
+//     event ids created since the previous sweep's hub time minus
 //     lateEventSweepOverlap (or, on a store that has never swept, the full
-//     hub id history once). created_at is the push transaction's start
-//     time on the hub, so an event's page is never after the page of an
-//     event pushed once it had been received (a node's create comes no
-//     later than its edits from other clients);
-//  2. diffs each page against the ids this store holds, in sync_events
-//     (its own events and every mirrored one) or applied_events;
-//  3. fetches the page's missing events by id and applies them in pull
-//     order through applyPullBatch, the cursor loop's ingest path, before
-//     it lists the next page. Recovered events are late and low-Lamport by
-//     construction, so a recovered claim, unclaim, defer or status change
-//     goes through the MTIX-95.10 workflow winner rule there and cannot
-//     revert newer status;
-//  4. records the hub time read before its first page in
-//     meta.sync.last_sweep_at.
+//     hub id history once), diffs each page against the ids this store
+//     holds (sync_events, its own events and every mirrored one, or
+//     applied_events), and stages the missing ids in the local
+//     sync_sweep_pending table. It applies nothing: the listing order is
+//     not causal (one client's push gives all its events one created_at,
+//     and after a clock step-back or a renumbered create an edit can be
+//     listed before its node's create).
+//  2. Apply phase, once the listing is complete: fetches every staged
+//     event by id, sorts them all into pull order (Lamport clock, then
+//     event id), which is causal, and applies them through applyPullBatch,
+//     the cursor loop's ingest path, removing each id from the staging
+//     table in its apply's transaction. Recovered events are late and
+//     low-Lamport by construction, so a recovered claim, unclaim, defer or
+//     status change goes through the MTIX-95.10 workflow winner rule there
+//     and cannot revert newer status.
+//  3. Records the hub time read before its first page in
+//     meta.sync.last_sweep_at once nothing is staged.
 //
 // A sweep is resumable, which matters most for the one-time full diff of a
-// large hub (a daemon pull has a 60s deadline). After a page's missing
-// events are applied, and another page follows, the sweep saves its
-// progress (the last listed event id with its created_at, and the hub time
-// read before its first page) in meta.sync.sweep_after_id,
-// meta.sync.sweep_after_created_at and meta.sync.sweep_started_at. A pull
-// that fails or times out part-way keeps that progress; the next pull
-// resumes after the saved position with the saved start time. On
-// completion the start time becomes meta.sync.last_sweep_at and the
-// progress is cleared. Events created while a sweep was interrupted are
-// covered by the next window, which starts 15 minutes before that start
-// time.
+// large hub (a daemon pull has a 60s deadline). With each page's staged ids
+// the listing saves its position (the last listed event id with its
+// created_at) and the hub time read before its first page in
+// meta.sync.sweep_after_id, meta.sync.sweep_after_created_at and
+// meta.sync.sweep_started_at. A pull that fails or times out in the
+// listing phase resumes listing after the saved position; one that stops
+// in the apply phase keeps the unapplied ids staged, and the next pull
+// applies them, still in Lamport order because the lower clocks went
+// first. On completion the start time becomes meta.sync.last_sweep_at and
+// the progress is cleared. Events created while a sweep was interrupted
+// are covered by the next window, which starts 15 minutes before that
+// start time.
 //
 // The window and the recorded time come only from the hub's clock (now()
 // in the listing statement), never from this machine's clock. The sweep
@@ -113,21 +116,23 @@ type sweepWindow struct {
 	startedAt time.Time
 }
 
-// sweepPass is the running result of one sweep's pages.
-type sweepPass struct {
+// sweepListing is the result of one sweep's listing phase.
+type sweepListing struct {
 	// startedAt is the hub time read before the first page (for a resumed
-	// full diff, the saved one): the value the next window is measured from.
+	// sweep, the saved one): the value the next window is measured from.
 	startedAt time.Time
-	// recovered counts the late events applied; compared and pages count
-	// the hub ids listed and the listing statements run by this pull.
-	recovered, compared, pages int
+	// compared and pages count the hub ids listed and the listing
+	// statements run by this pull.
+	compared, pages int
 }
 
 // sweepLateEvents runs one late-event sweep after the cursor loop
-// (MTIX-95.5). limit is the page size for listing ids, fetching events and
-// applying them. meta.sync.last_sweep_at advances only when the whole window
-// has been listed and every recovered event applied; a failed sweep resumes
-// from its saved progress on the next pull.
+// (MTIX-95.5): the listing phase stages the missing ids, then the apply
+// phase applies every staged event in Lamport order. limit is the page size
+// for listing ids, fetching events and applying them.
+// meta.sync.last_sweep_at advances only when the whole window has been
+// listed and nothing is left staged; a failed sweep resumes on the next
+// pull.
 func sweepLateEvents(ctx context.Context, stderr io.Writer, hub lateEventHub,
 	st *sqlite.Store, limit int,
 ) (lateEventSweep, error) {
@@ -136,16 +141,20 @@ func sweepLateEvents(ctx context.Context, stderr io.Writer, hub lateEventHub,
 		return lateEventSweep{}, err
 	}
 	announceSweep(stderr, window)
-	pass, err := sweepPages(ctx, hub, st, window, limit)
-	out := lateEventSweep{Recovered: pass.recovered, FullDiff: window.full}
+	listing, err := listLateEvents(ctx, hub, st, window, limit)
+	out := lateEventSweep{FullDiff: window.full}
 	if err != nil {
 		return out, err
 	}
 	if window.full {
 		fmt.Fprintf(stderr, "late-event sweep: compared %d hub event ids in %d pages\n",
-			pass.compared, pass.pages)
+			listing.compared, listing.pages)
 	}
-	if err := finishLateEventSweep(ctx, st, pass.startedAt); err != nil {
+	out.Recovered, err = applyStagedLateEvents(ctx, hub, st, limit)
+	if err != nil {
+		return out, err
+	}
+	if err := finishLateEventSweep(ctx, st, listing.startedAt); err != nil {
 		return out, err
 	}
 	return out, nil
@@ -252,57 +261,80 @@ func readSweepMeta(ctx context.Context, st *sqlite.Store, key string) (string, e
 	return v, nil
 }
 
-// sweepPages lists the window's hub ids one page (limit ids) at a time and,
-// before listing the next page, applies the page's missing events. When
-// another page follows, it then saves its progress (never before the apply),
-// so a pull stopped part-way resumes after the last page it applied; a
-// single-page sweep writes nothing until it finishes.
-func sweepPages(ctx context.Context, hub lateEventHub, st *sqlite.Store,
+// notePage counts one listed page and, on the sweep's first page, takes its
+// hub clock as the sweep's start time.
+func (l *sweepListing) notePage(page transport.EventIDPage) error {
+	if l.startedAt.IsZero() {
+		if page.HubNow.IsZero() {
+			return fmt.Errorf("list hub event ids: hub returned no clock reading")
+		}
+		l.startedAt = page.HubNow
+	}
+	l.pages++
+	l.compared += len(page.IDs)
+	return nil
+}
+
+// listLateEvents is the listing phase: it lists the window's hub ids one
+// page (limit ids) at a time and stages the ids this store does not hold.
+// It applies nothing. With a page's staged ids it saves the listing
+// position in the same transaction, so a pull stopped part-way resumes
+// after the last page it staged; a page with nothing to stage and no page
+// after it writes nothing.
+func listLateEvents(ctx context.Context, hub lateEventHub, st *sqlite.Store,
 	window sweepWindow, limit int,
-) (sweepPass, error) {
-	pass := sweepPass{startedAt: window.startedAt}
+) (sweepListing, error) {
+	listing := sweepListing{startedAt: window.startedAt}
 	cursor := window.from
 	for {
 		page, err := hub.ListEventIDsSince(ctx, cursor, limit)
 		if err != nil {
-			return pass, fmt.Errorf("list hub event ids: %w", err)
+			return listing, fmt.Errorf("list hub event ids: %w", err)
 		}
-		if pass.startedAt.IsZero() {
-			if page.HubNow.IsZero() {
-				return pass, fmt.Errorf("list hub event ids: hub returned no clock reading")
-			}
-			pass.startedAt = page.HubNow
+		if noteErr := listing.notePage(page); noteErr != nil {
+			return listing, noteErr
 		}
-		pass.pages++
-		pass.compared += len(page.IDs)
-		n, err := recoverPage(ctx, hub, st, page.IDs, limit)
-		pass.recovered += n
+		if page.More && len(page.IDs) == 0 {
+			return listing, fmt.Errorf("list hub event ids: hub reported more ids after an empty page")
+		}
+		missing, err := missingLocalEventIDs(ctx, st, page.IDs)
 		if err != nil {
-			return pass, err
+			return listing, err
+		}
+		if len(missing) > 0 || page.More {
+			if err := stageLateEvents(ctx, st, missing, page.Next, listing.startedAt); err != nil {
+				return listing, err
+			}
 		}
 		if !page.More {
-			return pass, nil
-		}
-		if len(page.IDs) == 0 {
-			return pass, fmt.Errorf("list hub event ids: hub reported more ids after an empty page")
-		}
-		if err := saveSweepProgress(ctx, st, page.Next, pass.startedAt); err != nil {
-			return pass, err
+			return listing, nil
 		}
 		cursor = page.Next
 	}
 }
 
-// recoverPage applies the events of one listed page that this store does
-// not hold and returns how many it applied.
-func recoverPage(ctx context.Context, hub lateEventHub, st *sqlite.Store,
-	ids []string, limit int,
-) (int, error) {
-	missing, err := missingLocalEventIDs(ctx, st, ids)
-	if err != nil {
-		return 0, err
-	}
-	return applyLateEvents(ctx, hub, st, missing, limit)
+// stageLateEvents records, in one transaction, the missing ids of a listed
+// page in sync_sweep_pending and the listing position after that page with
+// the hub time read before the sweep's first page.
+func stageLateEvents(ctx context.Context, st *sqlite.Store, ids []string,
+	after transport.EventIDCursor, startedAt time.Time,
+) error {
+	return st.WithTx(ctx, func(tx *sql.Tx) error {
+		for _, id := range ids {
+			// Stage one missing hub event id; an id staged by an earlier,
+			// interrupted pull is already there.
+			if _, err := tx.ExecContext(ctx,
+				`INSERT OR IGNORE INTO sync_sweep_pending (event_id) VALUES (?)`, id,
+			); err != nil {
+				return fmt.Errorf("stage %s: %w", id, err)
+			}
+		}
+		return upsertSweepMeta(ctx, tx, map[string]string{
+			sweepAfterIDKey:        after.EventID,
+			sweepAfterCreatedAtKey: after.CreatedAt.UTC().Format(time.RFC3339Nano),
+			sweepStartedAtKey:      startedAt.UTC().Format(time.RFC3339Nano),
+		})
+	})
 }
 
 // missingLocalEventIDs returns, in the given order, the ids this store
@@ -342,100 +374,62 @@ func missingLocalEventIDs(ctx context.Context, st *sqlite.Store, ids []string) (
 	return missing, nil
 }
 
-// applyLateEvents fetches the missing events and applies them in pull
-// order (Lamport clock, then event id), in batches of limit, through
-// applyPullBatch. Returns how many were applied before any error.
-func applyLateEvents(ctx context.Context, hub lateEventHub, st *sqlite.Store,
-	missing []string, limit int,
-) (int, error) {
-	events, err := fetchLateEvents(ctx, hub, missing, limit)
-	if err != nil {
-		return 0, err
-	}
-	applied := 0
-	for start := 0; start < len(events); start += limit {
-		batch := events[start:min(start+limit, len(events))]
-		if err := applyPullBatch(ctx, st, batch); err != nil {
-			return applied, fmt.Errorf("apply late events: %w", err)
-		}
-		applied += len(batch)
-	}
-	return applied, nil
-}
-
-// fetchLateEvents fetches ids from the hub in chunks of limit and returns
-// the events sorted into pull order across all chunks, so a recovered
-// create applies before a recovered edit of the same node.
-func fetchLateEvents(ctx context.Context, hub lateEventHub, ids []string, limit int) ([]*model.SyncEvent, error) {
-	var events []*model.SyncEvent
-	for start := 0; start < len(ids); start += limit {
-		chunk, err := hub.FetchEventsByID(ctx, ids[start:min(start+limit, len(ids))])
-		if err != nil {
-			return nil, fmt.Errorf("fetch late events: %w", err)
-		}
-		events = append(events, chunk...)
-	}
-	sort.SliceStable(events, func(i, j int) bool {
-		if events[i].LamportClock != events[j].LamportClock {
-			return events[i].LamportClock < events[j].LamportClock
-		}
-		return events[i].EventID < events[j].EventID
-	})
-	return events, nil
-}
-
-// saveSweepProgress records, after a page has been applied, the keyset
-// position of the last listed id and the hub time read before the sweep's
-// first page, in one transaction.
-func saveSweepProgress(ctx context.Context, st *sqlite.Store,
-	after transport.EventIDCursor, startedAt time.Time,
-) error {
-	return writeSweepMeta(ctx, st, map[string]string{
-		sweepAfterIDKey:        after.EventID,
-		sweepAfterCreatedAtKey: after.CreatedAt.UTC().Format(time.RFC3339Nano),
-		sweepStartedAtKey:      startedAt.UTC().Format(time.RFC3339Nano),
-	})
-}
-
-// finishLateEventSweep records a completed sweep: meta.sync.last_sweep_at
-// becomes the hub time read before its first page (RFC 3339, UTC), and any
-// saved progress is cleared, in one transaction.
+// finishLateEventSweep records a completed sweep, in one transaction and
+// only when nothing is left staged: meta.sync.last_sweep_at becomes the hub
+// time read before its first page (RFC 3339, UTC), and the listing progress
+// is cleared.
 func finishLateEventSweep(ctx context.Context, st *sqlite.Store, startedAt time.Time) error {
-	return writeSweepMeta(ctx, st, map[string]string{
-		lastSweepAtKey:         startedAt.UTC().Format(time.RFC3339Nano),
-		sweepAfterIDKey:        "",
-		sweepAfterCreatedAtKey: "",
-		sweepStartedAtKey:      "",
-	})
-}
-
-// resetLateEventSweep clears the sweep state (meta.sync.last_sweep_at and
-// any saved progress), so the next pull diffs the full hub history from the
-// zero position. sync clone calls it: a clone rebuilds the store from the
-// hub (MTIX-95.5).
-func resetLateEventSweep(ctx context.Context, st *sqlite.Store) error {
-	return writeSweepMeta(ctx, st, map[string]string{
-		lastSweepAtKey:         "",
-		sweepAfterIDKey:        "",
-		sweepAfterCreatedAtKey: "",
-		sweepStartedAtKey:      "",
-	})
-}
-
-// writeSweepMeta upserts the given meta values in one transaction, so a
-// store whose key rows are missing records them again.
-func writeSweepMeta(ctx context.Context, st *sqlite.Store, values map[string]string) error {
 	return st.WithTx(ctx, func(tx *sql.Tx) error {
-		for key, value := range values {
-			// Insert or replace one sentinel row keyed by meta.key.
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO meta (key, value) VALUES (?, ?)
-				ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-				key, value,
-			); err != nil {
-				return fmt.Errorf("write %s: %w", key, err)
-			}
+		// Count the ids still staged: a sweep with unapplied events is not
+		// complete.
+		var staged int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM sync_sweep_pending`).Scan(&staged); err != nil {
+			return fmt.Errorf("count staged late events: %w", err)
 		}
-		return nil
+		if staged > 0 {
+			return fmt.Errorf("late-event sweep not finished: %d staged events not applied", staged)
+		}
+		return upsertSweepMeta(ctx, tx, map[string]string{
+			lastSweepAtKey:         startedAt.UTC().Format(time.RFC3339Nano),
+			sweepAfterIDKey:        "",
+			sweepAfterCreatedAtKey: "",
+			sweepStartedAtKey:      "",
+		})
 	})
+}
+
+// resetLateEventSweep clears the sweep state (meta.sync.last_sweep_at, the
+// listing progress and every staged id), so the next pull diffs the full
+// hub history from the zero position. sync clone calls it: a clone rebuilds
+// the store from the hub (MTIX-95.5).
+func resetLateEventSweep(ctx context.Context, st *sqlite.Store) error {
+	return st.WithTx(ctx, func(tx *sql.Tx) error {
+		// Drop every staged id with the rest of the sweep state.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM sync_sweep_pending`); err != nil {
+			return fmt.Errorf("clear staged late events: %w", err)
+		}
+		return upsertSweepMeta(ctx, tx, map[string]string{
+			lastSweepAtKey:         "",
+			sweepAfterIDKey:        "",
+			sweepAfterCreatedAtKey: "",
+			sweepStartedAtKey:      "",
+		})
+	})
+}
+
+// upsertSweepMeta upserts the given meta values in the caller's
+// transaction, so a store whose key rows are missing records them again.
+func upsertSweepMeta(ctx context.Context, tx *sql.Tx, values map[string]string) error {
+	for key, value := range values {
+		// Insert or replace one sentinel row keyed by meta.key.
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO meta (key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+			key, value,
+		); err != nil {
+			return fmt.Errorf("write %s: %w", key, err)
+		}
+	}
+	return nil
 }

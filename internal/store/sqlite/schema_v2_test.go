@@ -98,6 +98,20 @@ func TestSchema_FreshDBHasAppliedEvents(t *testing.T) {
 		"applied_events powers FR-18.9 idempotent dedupe")
 }
 
+// TestSchema_FreshDBHasSyncSweepPending: the late-event sweep of sync pull
+// stages the hub event ids it has listed but not yet applied in
+// sync_sweep_pending (MTIX-95.5), keyed by event id.
+func TestSchema_FreshDBHasSyncSweepPending(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "fresh.db")
+	_, db := schemaTestEnv(t, dbPath)
+
+	require.Equal(t, []string{"event_id"}, columnsOf(t, db, "sync_sweep_pending"))
+	_, err := db.Exec(`INSERT INTO sync_sweep_pending (event_id) VALUES ('e1')`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO sync_sweep_pending (event_id) VALUES ('e1')`)
+	require.Error(t, err, "event_id is the primary key")
+}
+
 func TestSchema_SyncSentinelsPopulated(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "fresh.db")
 	_, db := schemaTestEnv(t, dbPath)

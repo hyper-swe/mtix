@@ -186,6 +186,22 @@ func TestDiscardLocal_ResetsSentinels(t *testing.T) {
 	}
 }
 
+// TestDiscardLocal_ClearsStagedLateEvents: the late-event sweep's staged ids
+// (sync_sweep_pending, MTIX-95.5) belong to the discarded history, so
+// DiscardLocal clears them with the rest of the sync state.
+func TestDiscardLocal_ClearsStagedLateEvents(t *testing.T) {
+	s, raw, mtixDir := reconcileTestStore(t)
+	seedTree(t, s)
+	_, err := raw.Exec(`INSERT INTO sync_sweep_pending (event_id) VALUES ('staged-1'), ('staged-2')`)
+	require.NoError(t, err)
+
+	require.NoError(t, DiscardLocal(context.Background(), s, mtixDir))
+
+	var n int
+	require.NoError(t, raw.QueryRow(`SELECT COUNT(*) FROM sync_sweep_pending`).Scan(&n))
+	require.Zero(t, n)
+}
+
 func TestDiscardLocal_AuditLogEmitted(t *testing.T) {
 	s, _, mtixDir := reconcileTestStore(t)
 	seedTree(t, s)

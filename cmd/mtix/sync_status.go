@@ -34,10 +34,14 @@ type SyncStatus struct {
 	// UTC) at the start of the last late-event sweep of sync pull
 	// (MTIX-95.5). Empty when no sweep has completed on this store.
 	LastSweepAt string `json:"last_sweep_at"`
-	// FullSweepInProgress is true while no sweep has completed and an
-	// interrupted full hub comparison has saved progress
-	// (meta.sync.sweep_after_id); the next pull resumes it (MTIX-95.5).
+	// FullSweepInProgress is true while no sweep has completed and the
+	// full hub comparison is part-way done: it has saved listing progress
+	// (meta.sync.sweep_after_id) or staged ids not yet applied. The next
+	// pull resumes it (MTIX-95.5).
 	FullSweepInProgress bool `json:"full_sweep_in_progress"`
+	// SweepPendingEvents counts the late events a sweep has listed and
+	// staged but not yet applied (sync_sweep_pending, MTIX-95.5).
+	SweepPendingEvents int `json:"sweep_pending_events"`
 	// HighConflict is the FR-18.12 banner trigger: true when
 	// open_conflicts > 50 so the human-readable output adds a
 	// guidance banner.
@@ -111,6 +115,12 @@ func readSyncStatus(ctx context.Context, store *sqlite.Store) (SyncStatus, error
 	).Scan(&st.OpenConflicts); err != nil {
 		return st, fmt.Errorf("count conflicts: %w", err)
 	}
+	// Late events a sweep has staged but not yet applied (MTIX-95.5).
+	if err := store.QueryRow(ctx,
+		`SELECT COUNT(*) FROM sync_sweep_pending`,
+	).Scan(&st.SweepPendingEvents); err != nil {
+		return st, fmt.Errorf("count staged late events: %w", err)
+	}
 	st.HighConflict = st.OpenConflicts > 50
 
 	if err := readStatusSentinels(ctx, store, &st); err != nil {
@@ -152,7 +162,7 @@ func readStatusSentinels(ctx context.Context, store *sqlite.Store, st *SyncStatu
 			*dst = raw
 		}
 	}
-	st.FullSweepInProgress = fullSweepAfterID != "" && st.LastSweepAt == ""
+	st.FullSweepInProgress = (fullSweepAfterID != "" || st.SweepPendingEvents > 0) && st.LastSweepAt == ""
 	return nil
 }
 

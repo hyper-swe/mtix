@@ -81,6 +81,7 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 		for _, stmt := range []string{
 			`DELETE FROM sync_conflicts`,
 			`DELETE FROM applied_events`,
+			`DELETE FROM sync_sweep_pending`,
 			`DELETE FROM sync_events`,
 			`DELETE FROM dependencies`,
 			`DELETE FROM nodes`,

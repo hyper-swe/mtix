@@ -179,11 +179,22 @@ func pullLoop(ctx context.Context, stderr io.Writer,
 // Identical to clone's applyBatch but kept separate so future
 // divergence (e.g. progress-reporting per event) doesn't require
 // touching clone code.
-func applyPullBatch(ctx context.Context, store *sqlite.Store, events []*model.SyncEvent) error {
+//
+// afterEach, when given, runs in the same transaction right after each
+// event is applied: the late-event sweep (MTIX-95.5) uses it to remove the
+// event's id from its staging table atomically with the apply.
+func applyPullBatch(ctx context.Context, store *sqlite.Store, events []*model.SyncEvent,
+	afterEach ...func(tx *sql.Tx, e *model.SyncEvent) error,
+) error {
 	return store.WithTx(ctx, func(tx *sql.Tx) error {
 		for _, e := range events {
 			if err := sqlite.IdempotentApply(ctx, tx, e); err != nil {
 				return fmt.Errorf("apply %s: %w", e.EventID, err)
+			}
+			for _, after := range afterEach {
+				if err := after(tx, e); err != nil {
+					return fmt.Errorf("after apply %s: %w", e.EventID, err)
+				}
 			}
 		}
 		return nil

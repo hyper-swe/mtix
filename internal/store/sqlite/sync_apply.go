@@ -625,16 +625,14 @@ func decodeNewValueForColumn(field string, raw json.RawMessage) (any, error) {
 	}
 }
 
+// applyTransitionStatus applies a winning transition_status (MTIX-95.10). A
+// malformed one changes nothing and does not fail (MTIX-95.27).
 func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	p, ok := decodeTransitionForApply(e)
+	in, ok := workflowInputForApply(e, time.Now().UTC().Format(time.RFC3339))
 	if !ok {
 		return nil
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	id, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
-		op: e.OpType, from: p.From, to: p.To,
-		wallClockTS: e.WallClockTS, updatedAt: now,
-	})
+	id, err := applyWorkflowWinner(ctx, tx, e, in)
 	if err != nil {
 		return err
 	}
@@ -649,7 +647,7 @@ func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) 
 			return fmt.Errorf("apply transition_status %s: recalc progress: %w", e.EventID, err)
 		}
 	}
-	if isResolvingStatus(p.To) {
+	if isResolvingStatus(in.to) {
 		if err := unblockDependents(ctx, tx, id, e.AuthorID); err != nil {
 			return fmt.Errorf("apply transition_status %s: auto-unblock dependents: %w", e.EventID, err)
 		}
@@ -657,35 +655,37 @@ func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) 
 	return nil
 }
 
+// applyClaim applies a winning claim (MTIX-95.10). A claim whose payload
+// cannot be decoded changes nothing and does not fail (MTIX-95.27).
 func applyClaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	var p model.ClaimPayload
-	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		return fmt.Errorf("apply claim %s: decode payload: %w", e.EventID, err)
+	in, ok := workflowInputForApply(e, time.Now().UTC().Format(time.RFC3339))
+	if !ok {
+		return nil
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
-		op: e.OpType, agentID: p.AgentID, wallClockTS: e.WallClockTS, updatedAt: now,
-	})
+	_, err := applyWorkflowWinner(ctx, tx, e, in)
 	return err
 }
 
+// applyUnclaim applies a winning unclaim (MTIX-95.10). The workflow payload
+// rule never rejects one (MTIX-95.27); the check keeps the four ops alike.
 func applyUnclaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
-		op: e.OpType, wallClockTS: e.WallClockTS, updatedAt: now,
-	})
+	in, ok := workflowInputForApply(e, time.Now().UTC().Format(time.RFC3339))
+	if !ok {
+		return nil
+	}
+	_, err := applyWorkflowWinner(ctx, tx, e, in)
 	return err
 }
 
+// applyDefer applies a winning defer (MTIX-95.10). A defer whose payload cannot
+// be decoded, including an unparseable until, changes nothing and does not
+// fail (MTIX-95.27); defer_until is stored in UTC (resolveWorkflowWrite).
 func applyDefer(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	var p model.DeferPayload
-	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		return fmt.Errorf("apply defer %s: decode payload: %w", e.EventID, err)
+	in, ok := workflowInputForApply(e, time.Now().UTC().Format(time.RFC3339))
+	if !ok {
+		return nil
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := applyWorkflowWinner(ctx, tx, e, workflowInput{
-		op: e.OpType, deferUntil: p.Until, wallClockTS: e.WallClockTS, updatedAt: now,
-	})
+	_, err := applyWorkflowWinner(ctx, tx, e, in)
 	return err
 }
 

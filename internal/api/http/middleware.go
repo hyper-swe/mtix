@@ -7,8 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
-	"sync"
+	"runtime/debug"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -93,18 +92,27 @@ func CSRFMiddleware() gin.HandlerFunc {
 	}
 }
 
-// CORSMiddleware adds CORS headers for the web UI per FR-9.1.
-// Only allows localhost origins to prevent cross-site data leakage.
-func CORSMiddleware() gin.HandlerFunc {
+// CORSMiddleware applies the browser origin rule for the web UI of a
+// server bound to bind:port (FR-9.1, MTIX-95.14). A request without an
+// Origin header comes from a non-browser client and passes. A request
+// whose Origin allowedOrigin accepts (http or https on localhost or a
+// loopback IP, any port, or the server's own origin on a bind address that
+// names it) gets that origin in Access-Control-Allow-Origin. Any other
+// Origin is refused with 403 and code ORIGIN_NOT_ALLOWED, preflight
+// included.
+func CORSMiddleware(bind, port string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
-		if origin == "" ||
-			strings.HasPrefix(origin, "http://localhost") ||
-			strings.HasPrefix(origin, "http://127.0.0.1") {
-			if origin == "" {
-				origin = "*"
-			}
+		if !allowedOrigin(origin, bind, port) {
+			c.AbortWithStatusJSON(http.StatusForbidden, ErrorResponse{Error: ErrorDetail{
+				Code:    "ORIGIN_NOT_ALLOWED",
+				Message: "browser requests are accepted only from local origins or this server's own origin",
+			}})
+			return
+		}
+		if origin != "" {
 			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin")
 		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "Content-Type, X-Requested-With, X-Agent-ID, X-Request-ID")
@@ -118,54 +126,63 @@ func CORSMiddleware() gin.HandlerFunc {
 	}
 }
 
-// rateBucket tracks per-agent request rate using token bucket algorithm.
-type rateBucket struct {
-	tokens    float64
-	lastRefill time.Time
-	mu        sync.Mutex
-}
-
-// RateLimitMiddleware implements per-agent rate limiting per NFR-1.5.
-// Uses token bucket algorithm with configurable rate (requests/second).
-// Agent identified by X-Agent-ID header. Returns 429 with Retry-After
-// header when limit is exceeded.
-func RateLimitMiddleware(ratePerSec int) gin.HandlerFunc {
-	buckets := &sync.Map{}
-	maxTokens := float64(ratePerSec)
-
+// HostAllowlistMiddleware refuses a request whose Host header does not
+// name this server (MTIX-95.14). localhost and loopback IPs are accepted
+// on any port; a server bound to a specific address also accepts exactly
+// its bind host, while a wildcard bind such as 0.0.0.0 adds no name
+// (allowedHost). A refused request gets 403 with code HOST_NOT_ALLOWED.
+func HostAllowlistMiddleware(bind string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		agentID := c.GetHeader("X-Agent-ID")
-		if agentID == "" {
-			agentID = c.ClientIP()
-		}
-
-		// Get or create bucket for this agent.
-		val, _ := buckets.LoadOrStore(agentID, &rateBucket{
-			tokens:    maxTokens,
-			lastRefill: time.Now(),
-		})
-		bucket, ok := val.(*rateBucket)
-		if !ok {
-			c.Next()
+		if !allowedHost(c.Request.Host, bind) {
+			c.AbortWithStatusJSON(http.StatusForbidden, ErrorResponse{Error: ErrorDetail{
+				Code:    "HOST_NOT_ALLOWED",
+				Message: "the request host is not accepted by this server",
+			}})
 			return
 		}
+		c.Next()
+	}
+}
 
-		bucket.mu.Lock()
-		defer bucket.mu.Unlock()
+// RecoveryMiddleware turns a handler panic into a 500 response with code
+// INTERNAL_ERROR (MTIX-95.14). It logs the panic value, method, path,
+// request id and stack, and no request headers.
+func RecoveryMiddleware(logger *slog.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			logger.Error("panic recovered",
+				"panic", fmt.Sprint(rec),
+				"method", c.Request.Method,
+				"path", c.Request.URL.Path,
+				"request_id", c.GetString("request_id"),
+				"stack", string(debug.Stack()),
+			)
+			c.AbortWithStatusJSON(http.StatusInternalServerError, ErrorResponse{Error: ErrorDetail{
+				Code:    "INTERNAL_ERROR",
+				Message: "an internal error occurred",
+			}})
+		}()
+		c.Next()
+	}
+}
 
-		// Refill tokens based on elapsed time.
-		now := time.Now()
-		elapsed := now.Sub(bucket.lastRefill).Seconds()
-		bucket.tokens += elapsed * float64(ratePerSec)
-		if bucket.tokens > maxTokens {
-			bucket.tokens = maxTokens
-		}
-		bucket.lastRefill = now
+// RateLimitMiddleware implements rate limiting per client per NFR-1.5: a
+// token bucket of ratePerSec requests per second for each TCP peer
+// address, keeping at most maxKeys buckets in a least-recently-used
+// list, timed by the injected clock (MTIX-95.14). The key is the TCP
+// peer, never a request header, so a client cannot choose its bucket.
+// Returns 429 with a Retry-After header when the limit is exceeded.
+func RateLimitMiddleware(ratePerSec, maxKeys int, clock func() time.Time) gin.HandlerFunc {
+	limiter := newRateLimiter(ratePerSec, maxKeys, clock)
+	retryAfter := fmt.Sprintf("%.1f", 1.0/float64(ratePerSec))
 
-		// Check if tokens available.
-		if bucket.tokens < 1 {
-			retryAfter := 1.0 / float64(ratePerSec)
-			c.Header("Retry-After", fmt.Sprintf("%.1f", retryAfter))
+	return func(c *gin.Context) {
+		if !limiter.allow(c.RemoteIP()) {
+			c.Header("Retry-After", retryAfter)
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error": gin.H{
 					"code":    "RATE_LIMITED",
@@ -174,8 +191,6 @@ func RateLimitMiddleware(ratePerSec int) gin.HandlerFunc {
 			})
 			return
 		}
-
-		bucket.tokens--
 		c.Next()
 	}
 }

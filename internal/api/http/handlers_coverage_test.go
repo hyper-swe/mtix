@@ -263,7 +263,7 @@ func TestGetDependencies_NonexistentNode_Returns200Empty(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/deps/NONEXISTENT-DEP", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/deps/NONEXISTENT-DEP", nil)
 	s.Router().ServeHTTP(w, req)
 
 	// GetBlockers may return empty list or error depending on store impl.
@@ -293,7 +293,7 @@ func TestBuildTree_WithChildren_ReturnsNestedStructure(t *testing.T) {
 
 	// Get tree.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tree/"+parentID, nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/tree/"+parentID, nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -318,7 +318,7 @@ func TestBuildTree_DepthZero_ReturnsNodeOnly(t *testing.T) {
 
 	// Get tree with depth=0.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tree/"+parentID+"?depth=0", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/tree/"+parentID+"?depth=0", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -357,7 +357,7 @@ func TestBuildTree_DeepNesting_RespectsMaxDepth(t *testing.T) {
 
 	// Request tree with depth=1 (should show L1 but not L2's children).
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tree/"+rootID+"?depth=1", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/tree/"+rootID+"?depth=1", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -377,7 +377,7 @@ func TestNodeTree_ViaNodesRoute_Returns200(t *testing.T) {
 	nodeID := createTestNode(t, s, "Alt Tree Route", "TEST")
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/nodes/"+nodeID+"/tree", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/nodes/"+nodeID+"/tree", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -396,7 +396,7 @@ func TestReadyNodes_WithOpenNodes_ReturnsList(t *testing.T) {
 	createTestNode(t, s, "Ready Node 2", "TEST")
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/ready", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/ready", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -413,7 +413,7 @@ func TestBlockedNodes_WithPagination_Returns200(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/blocked?limit=5&offset=0", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/blocked?limit=5&offset=0", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -432,7 +432,7 @@ func TestNodeProgress_NonexistentNode_Returns404(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/progress/NONEXISTENT", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/progress/NONEXISTENT", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -451,7 +451,7 @@ func TestNodeProgress_WithChildren_IncludesInvalidatedCount(t *testing.T) {
 	require.Equal(t, http.StatusCreated, cW.Code)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/progress/"+parentID, nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/progress/"+parentID, nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -468,7 +468,7 @@ func TestNodeAncestors_NonexistentNode_ReturnsError(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/nodes/NONEXISTENT/ancestors", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/nodes/NONEXISTENT/ancestors", nil)
 	s.Router().ServeHTTP(w, req)
 
 	// GetAncestorChain may return empty list or error.
@@ -492,7 +492,7 @@ func TestNodeAncestors_ChildNode_ReturnsParentChain(t *testing.T) {
 	childID := child["id"].(string)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/nodes/"+childID+"/ancestors", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/nodes/"+childID+"/ancestors", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -510,7 +510,7 @@ func TestGetChildren_NonexistentParent_ReturnsError(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/nodes/NONEXISTENT/children", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/nodes/NONEXISTENT/children", nil)
 	s.Router().ServeHTTP(w, req)
 
 	// GetDirectChildren may return empty or error.
@@ -744,7 +744,7 @@ func TestGetAgentState_NonexistentAgent_ReturnsError(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/unknown-agent-xyz/state", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/agents/unknown-agent-xyz/state", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -771,7 +771,7 @@ func TestSearchNodes_WithAssigneeFilter_Returns200(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?assignee=agent-1", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/search?assignee=agent-1", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -786,7 +786,7 @@ func TestSearchNodes_WithUnderFilter_Returns200(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?under=TEST-1", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/search?under=TEST-1", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -797,7 +797,7 @@ func TestSearchNodes_WithTypeFilter_Returns200(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?type=issue", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/search?type=issue", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -808,7 +808,7 @@ func TestSearchNodes_NegativeLimit_UsesDefault(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?limit=-5", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/search?limit=-5", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -826,7 +826,7 @@ func TestSearchNodes_InvalidLimitParam_UsesDefault(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?limit=abc", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/search?limit=abc", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -841,7 +841,7 @@ func TestSearchNodes_ZeroLimit_UsesClamped(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/search?limit=0", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/search?limit=0", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -858,7 +858,7 @@ func TestStaleNodes_ZeroHours_UsesDefault(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stale?hours=0", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/stale?hours=0", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -869,7 +869,7 @@ func TestStaleNodes_NegativeHours_UsesDefault(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stale?hours=-1", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/stale?hours=-1", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -988,7 +988,7 @@ func TestGetAgentWork_WithClaimedNode_ReturnsValidResponse(t *testing.T) {
 
 	// Get work - may return 200 or 404 depending on GetCurrentWork impl.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/worker-1/work", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/agents/worker-1/work", nil)
 	s.Router().ServeHTTP(w, req)
 
 	// Verify handler returns a valid HTTP response without panic.
@@ -1047,7 +1047,7 @@ func TestOrphanNodes_HighOffset_ReturnsEmpty(t *testing.T) {
 	createTestNode(t, s, "Orphan High Offset", "TEST")
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/orphans?offset=999&limit=10", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/orphans?offset=999&limit=10", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1079,7 +1079,7 @@ func TestProjectStats_MultipleStatuses_Returns200(t *testing.T) {
 
 	// Get stats.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/stats", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/stats", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1100,7 +1100,7 @@ func TestNewServer_NilClock_UsesTimeNow(t *testing.T) {
 	assert.NotNil(t, s.clock)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := newLocalRequest(http.MethodGet, "/health", nil)
 	s.Router().ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 }
@@ -1120,7 +1120,7 @@ func TestServer_WithRateLimit_Returns200(t *testing.T) {
 	// The testServer has RateLimit: 0 (disabled).
 	// Verify basic functionality.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := newLocalRequest(http.MethodGet, "/health", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1133,7 +1133,7 @@ func TestCreateNode_EmptyBody_Returns400(t *testing.T) {
 	s := testServer(t)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/nodes", strings.NewReader(""))
+	req := newLocalRequest(http.MethodPost, "/api/v1/nodes", strings.NewReader(""))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Requested-With", "mtix")
 	s.Router().ServeHTTP(w, req)
@@ -1174,7 +1174,7 @@ func TestNewServer_WithRateLimit_ConfiguresMiddleware(t *testing.T) {
 	)
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req := newLocalRequest(http.MethodGet, "/health", nil)
 	srv.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1272,7 +1272,7 @@ func TestSearchNodes_AllFilters_Returns200(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	url := "/api/v1/search?status=open&assignee=agent-1&under=TEST&type=issue&limit=10&offset=0"
-	req := httptest.NewRequest(http.MethodGet, url, nil)
+	req := newLocalRequest(http.MethodGet, url, nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1300,7 +1300,7 @@ func TestGetDependencies_WithExistingDeps_ReturnsBlockers(t *testing.T) {
 
 	// Get dependencies for the blocked node.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/deps/"+id2, nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/deps/"+id2, nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1320,7 +1320,7 @@ func TestGetChildren_NoChildren_ReturnsEmptyList(t *testing.T) {
 	nodeID := createTestNode(t, s, "Childless Node", "TEST")
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/nodes/"+nodeID+"/children", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/nodes/"+nodeID+"/children", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1395,7 +1395,7 @@ func TestBlockedNodes_WithBlockedNode_ReturnsNode(t *testing.T) {
 
 	// Query blocked nodes.
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/blocked?project=all", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/blocked?project=all", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1447,7 +1447,7 @@ func TestReadyNodes_AfterCreatingNodes_ReturnsNodes(t *testing.T) {
 	createTestNode(t, s, "Ready B", "TEST")
 
 	w := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/ready", nil)
+	req := newLocalRequest(http.MethodGet, "/api/v1/ready", nil)
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)

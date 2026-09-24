@@ -56,7 +56,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `resolve-annotation <node-id> <annotation-id>` — Resolve an annotation on a node
 - `restore <id>` — Restore an invalidated node to its previous status
 - `search` — Search nodes with advanced filters
-- `serve` — Start the mtix HTTP/WebSocket/gRPC server
+- `serve` — Start the mtix HTTP and WebSocket server
 - `session` — Manage agent sessions
 - `show <id>` — Show full details of a node
 - `stale` — List nodes with stale agent assignments
@@ -969,7 +969,7 @@ Search nodes with advanced filters
 
 **Usage:** `serve`
 
-Start the mtix HTTP/WebSocket/gRPC server
+Start the mtix HTTP and WebSocket server
 
 ### Flags
 

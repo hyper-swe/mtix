@@ -974,7 +974,17 @@ The UI connects to `/ws/events` via WebSocket for live updates. Connection statu
 | `--addr` | `127.0.0.1` | Bind address |
 | `--port` | `8377` | HTTP port |
 
-The server binds to localhost by default. To expose on the network, use `--addr 0.0.0.0` (requires authentication configuration).
+The server binds to localhost by default. To reach it from another machine, bind to the address that clients use, for example `--addr 192.168.1.20`. The API has no authentication, so do this only on a trusted network; the server prints a warning at startup for any bind address that is not loopback.
+
+### Accepted Requests
+
+`mtix serve` answers a request only when it is addressed to this server and, for a browser, comes from a local page:
+
+- **Host.** The `Host` header must name `localhost` or a loopback address (`127.0.0.1`, `::1` and the rest of the loopback range), on any port. When `--addr` is a specific address or host name, that exact address or name is accepted as well. A wildcard bind such as `--addr 0.0.0.0` or `--addr ::` adds no name, so it accepts loopback names only: bind to the specific address clients use. Other requests get `403` with error code `HOST_NOT_ALLOWED`.
+- **Browser origin.** A request that carries an `Origin` header is accepted when that origin is `http` or `https` on `localhost` or a loopback address, on any port (for example `http://localhost:5173` or `http://[::1]:8377`). When `--addr` is a specific address or host name, the server's own origin is accepted as well: `http`, that address or name, and the `--port` value (for example `http://192.168.1.20:8377` for `--addr 192.168.1.20 --port 8377`), so the web UI works when opened at that address. Any other origin gets `403`, with error code `ORIGIN_NOT_ALLOWED` for HTTP requests; the WebSocket upgrade at `/ws/events` applies the same rule. Clients that send no `Origin` header, such as the CLI, scripts and SDKs, are not affected.
+- **Client address.** The client address in the request log is the address of the TCP connection. Behind a reverse proxy, the log shows the proxy's address.
+
+`GET /health` reports the version of the running `mtix` binary in its `version` field.
 
 ---
 

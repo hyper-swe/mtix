@@ -29,7 +29,9 @@ type StatusRepairDiff = sqlite.StatusRepairDiff
 // backup taken before the first write (empty when nothing was to be
 // written), Repaired lists the nodes repaired, each with the differences it
 // had when it was repaired, and Skipped the flagged nodes left alone because
-// Force was not set.
+// Force was not set. Reminder is a line the caller shows after the report; it
+// is set by the CLI for a dry run that lists differences (MTIX-95.35) and is
+// left out of the JSON when empty.
 type StatusRepairReport struct {
 	Apply       bool               `json:"apply"`
 	Force       bool               `json:"force"`
@@ -37,6 +39,7 @@ type StatusRepairReport struct {
 	Backup      string             `json:"backup,omitempty"`
 	Repaired    []StatusRepairDiff `json:"repaired,omitempty"`
 	Skipped     []StatusRepairDiff `json:"skipped,omitempty"`
+	Reminder    string             `json:"reminder,omitempty"`
 }
 
 // StatusRepairOptions are the modes of SyncService.RepairStatus (MTIX-95.6).

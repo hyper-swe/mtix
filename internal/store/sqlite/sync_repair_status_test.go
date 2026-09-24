@@ -779,6 +779,8 @@ func TestRepairNodeStatus_RepairEvent_PassesThePushValidator(t *testing.T) {
 		keepsWall bool             // the repair event carries the winner's wall clock
 	}{
 		{"winner made just before the pull", func() time.Time { return time.Now().UTC() }, true},
+		{"winner stamped 1 minute ahead", func() time.Time { return time.Now().UTC().Add(time.Minute) }, false},
+		{"winner stamped 2 hours ahead", func() time.Time { return time.Now().UTC().Add(2 * time.Hour) }, false},
 		{"winner stamped 72 hours ahead", func() time.Time { return time.Now().UTC().Add(72 * time.Hour) }, false},
 		{"winner stamped in year 10000", func() time.Time { return time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC) }, false},
 	}
@@ -859,4 +861,74 @@ func TestRepairNodeStatus_ClosedAtOnlyDifference_DerivedFixWithoutEvent(t *testi
 	require.True(t, applied)
 	require.Equal(t, nullColumn, nodeRow(t, raw, "MTIX-1")["closed_at"])
 	require.Equal(t, events, eventCount(t, raw), "the status did not change, so no event")
+}
+
+// TestRepairNodeStatus_DerivedProgressFix_RecomputesTheParentRollup
+// (MTIX-95.35): a derived fix leaves the status alone, but it changes the
+// leaf's progress, so the parent's rollup is recomputed in the same
+// transaction too: a done leaf with a stale progress of 0 under a parent
+// rolled up to 0 ends with both at 1.
+func TestRepairNodeStatus_DerivedProgressFix_RecomputesTheParentRollup(t *testing.T) {
+	ctx := context.Background()
+	s, raw := replicaWithNode(t)
+	mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
+	require.NoError(t, s.ClaimNode(ctx, "MTIX-1.1", "agent-a"))
+	require.NoError(t, s.TransitionStatus(ctx, "MTIX-1.1", model.StatusDone, "finished", "agent-a"))
+	// A stale leaf progress, and the parent's rollup made from it.
+	_, err := raw.Exec(`UPDATE nodes SET progress = 0 WHERE id IN ('MTIX-1', 'MTIX-1.1')`)
+	require.NoError(t, err)
+	events := eventCount(t, raw)
+
+	repaired, applied, err := s.RepairNodeStatus(ctx, "MTIX-1.1", "repairer", false)
+
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Equal(t, "derived fields: the stored status matches the winning event", repaired.Reason)
+	require.Equal(t, "1", nodeRow(t, raw, "MTIX-1.1")["progress"])
+	require.Equal(t, "1", nodeRow(t, raw, "MTIX-1")["progress"], "the parent's rollup is recomputed")
+	require.Equal(t, events, eventCount(t, raw), "the status did not change, so no event")
+}
+
+// TestRepairNodeStatus_RepairToCancelledOrInvalidated_UnblocksTheDependent
+// (MTIX-95.35): cancelled and invalidated resolve a blocks dependency as
+// done does, so a repair that changes the status to either one unblocks the
+// dependent it was blocking, as the local transition does.
+func TestRepairNodeStatus_RepairToCancelledOrInvalidated_UnblocksTheDependent(t *testing.T) {
+	tests := []struct {
+		name    string
+		resolve func(ctx context.Context, s *sqlite.Store) error
+		status  string
+	}{
+		{"to cancelled", func(ctx context.Context, s *sqlite.Store) error {
+			return s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", false)
+		}, "cancelled"},
+		{"to invalidated", func(ctx context.Context, s *sqlite.Store) error {
+			return s.TransitionStatus(ctx, "MTIX-1", model.StatusInvalidated, "rerun", "agent-a")
+		}, "invalidated"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			s, raw := replicaWithNode(t)
+			mustCreateNode(t, s, "MTIX-2", "")
+			require.NoError(t, s.AddDependency(ctx, &model.Dependency{
+				FromID: "MTIX-1", ToID: "MTIX-2", DepType: model.DepTypeBlocks, CreatedAt: time.Now().UTC(),
+			}))
+			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			markEventsPushed(t, raw)
+			require.NoError(t, tt.resolve(ctx, s))
+			require.Equal(t, "open", nodeRow(t, raw, "MTIX-2")["status"], "the resolution unblocked the dependent")
+			// A replayed claim reopens the blocker; the dependent is blocked again.
+			replayClaimAsBefore952(t, raw, "MTIX-1", "agent-a")
+			_, err := raw.Exec(`UPDATE nodes SET status = 'blocked', previous_status = 'open' WHERE id = 'MTIX-2'`)
+			require.NoError(t, err)
+
+			_, applied, err := s.RepairNodeStatus(ctx, "MTIX-1", "repairer", false)
+
+			require.NoError(t, err)
+			require.True(t, applied)
+			require.Equal(t, tt.status, nodeRow(t, raw, "MTIX-1")["status"])
+			require.Equal(t, "open", nodeRow(t, raw, "MTIX-2")["status"], "the repair unblocks the dependent")
+		})
+	}
 }

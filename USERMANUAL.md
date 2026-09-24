@@ -1775,12 +1775,26 @@ nodes that differ. It reads and writes only the local database and
 never contacts the hub.
 
 ```bash
+mtix sync pull                             # first: bring in every teammate's change
 mtix sync repair --status                  # dry run: list the differences, write nothing
 mtix sync repair --status --json           # the same list as JSON
+mtix sync pull                             # again, just before applying
 mtix sync repair --status --apply          # back up, then repair every node not flagged
 mtix sync repair --status --apply --force  # also repair flagged nodes, after review
 mtix sync push                             # send the repair events
 ```
+
+**Pull first, and again before `--apply`.** Run `mtix sync pull` before
+listing and again just before `--apply`, and apply only what the list
+still shows after that pull. A repair that changes the status emits an
+event stamped with this machine's newest Lamport clock. On a local log
+that lacks a teammate's newer, unpulled change, that event can win over
+the change (whenever this machine's Lamport clock is ahead of it), and
+every machine that pulls it then reverts the teammate's change. (A 0.5.4
+pull no longer replays this machine's own events, so pulling is safe.)
+When the dry run lists differences, it ends with a reminder to pull
+first; with `--json` the reminder is the `reminder` field, which is
+omitted when there is no reminder.
 
 **What is compared.** For each node the winner is its newest
 well-formed claim, unclaim, defer or status-change event: the highest
@@ -1881,7 +1895,7 @@ change the node's status with the normal commands instead.
 | `ErrSyncQueueFull` from `mtix create` / `update` | Local pending queue at the cap | `mtix sync push --force`, or raise `sync.max_queue_size` |
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
 | A teammate's change is missing after `mtix sync pull` | They have not pushed yet, or the late-event sweep failed (the pull reports the error) | Ask them to run `mtix sync push`, then pull again; `mtix sync status` shows `last sweep` |
-| A node shows an older state than its history after a pull on a client older than 0.5.4 (for example `in_progress` after `mtix done`) | That pull replayed an older event of this machine | Upgrade, run `mtix sync repair --status`, review the list, then `mtix sync repair --status --apply` and `mtix sync push`; a flagged node needs review and `--force` (see above) |
+| A node shows an older state than its history after a pull on a client older than 0.5.4 (for example `in_progress` after `mtix done`) | That pull replayed an older event of this machine | Upgrade, run `mtix sync pull`, then `mtix sync repair --status` and review the list; run `mtix sync pull` again, then `mtix sync repair --status --apply` and `mtix sync push`; a flagged node needs review and `--force` (see above). Pulling first matters: a repair made on a stale log can revert a teammate's newer change on every machine |
 
 ### MCP integration
 

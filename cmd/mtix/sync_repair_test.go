@@ -314,6 +314,65 @@ func TestSyncRepairCmd_ApplyFailsPartWay_JSON_PrintsTheReport(t *testing.T) {
 	require.Equal(t, "TEST-1", report.Repaired[0].NodeID)
 }
 
+// TestSyncRepairCmd_PullFirstReminder_OnlyOnADryRunThatListsDifferences
+// (MTIX-95.35): a dry run that lists differences ends with a one-line
+// reminder to run mtix sync pull first, in text as its last line and in
+// --json as the "reminder" field. A repair made on a stale local log can
+// revert a teammate's newer, unpulled change on every machine. There is no
+// reminder when nothing differs, and none with --apply.
+func TestSyncRepairCmd_PullFirstReminder_OnlyOnADryRunThatListsDifferences(t *testing.T) {
+	tests := []struct {
+		name     string
+		damaged  bool
+		json     bool
+		args     []string
+		reminder bool
+	}{
+		{"dry run listing differences, text", true, false, []string{"--status"}, true},
+		{"dry run listing differences, json", true, true, []string{"--status"}, true},
+		{"dry run with nothing to list, text", false, false, []string{"--status"}, false},
+		{"dry run with nothing to list, json", false, true, []string{"--status"}, false},
+		{"apply, text", true, false, []string{"--status", "--apply"}, false},
+		{"apply, json", true, true, []string{"--status", "--apply"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.damaged {
+				setupRepairStatusRevert(t)
+			} else {
+				initTestApp(t)
+				cwd, err := os.Getwd()
+				require.NoError(t, err)
+				app.mtixDir = filepath.Join(cwd, ".mtix")
+				require.NoError(t, runCreate("healthy node", "", "", 3, "", "", "", "", ""))
+			}
+			app.jsonOutput = tt.json
+
+			text, err := runRepairCmd(t, tt.args...)
+
+			require.NoError(t, err)
+			if tt.json {
+				var report map[string]any
+				require.NoError(t, json.Unmarshal([]byte(text), &report), text)
+				reminder, present := report["reminder"]
+				require.Equal(t, tt.reminder, present, "the reminder field is present only on such a dry run")
+				if tt.reminder {
+					require.Contains(t, reminder, "mtix sync pull")
+				}
+				return
+			}
+			lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+			last := lines[len(lines)-1]
+			if tt.reminder {
+				require.Contains(t, last, "mtix sync pull", "the dry run ends with the pull-first reminder")
+				require.Contains(t, last, "teammate", "the reminder says why")
+			} else {
+				require.NotContains(t, text, "mtix sync pull")
+			}
+		})
+	}
+}
+
 // TestSyncRepairCmd_ReachesStoreOnlyThroughService guards the architecture
 // rule: the command file neither imports a store package nor touches
 // app.store; it calls the sync service.

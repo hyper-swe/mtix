@@ -50,8 +50,17 @@ flagged, and when this machine's clock is ahead, a teammate's newer state
 can look like a replay, which --apply would revert. Check each replay's
 winner time and origin before --apply.
 
+Run 'mtix sync pull' before listing, and again just before --apply. A
+repair event carries this machine's newest clock, so on a log that lacks a
+teammate's newer change it can win over that change (whenever this
+machine's Lamport clock is ahead of it), and every machine that pulls it
+then reverts the teammate's change. After pulling, list again and apply
+only what is still listed.
+
 Without --apply the command is a dry run: it lists the differences and
-writes nothing. --json prints them as JSON.
+writes nothing. When it lists differences, it ends with a reminder to pull
+first. --json prints them as JSON, with that reminder in a "reminder"
+field, which is omitted when there is no reminder.
 
 With --apply it first writes a verified backup of the database to
 .mtix/data/backups/pre-repair-status-<UTC time>.db, and stops if it cannot.
@@ -122,6 +131,7 @@ func writeStatusRepairReport(w io.Writer, report *service.StatusRepairReport) er
 		printStatusRepairReport(w, report)
 		return nil
 	}
+	report.Reminder = pullFirstReminder(report)
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal repair report: %w", err)
@@ -141,7 +151,26 @@ func exportAfterRepair(ctx context.Context) {
 	}
 }
 
-// printStatusRepairReport prints a status repair report for people.
+// syncRepairPullFirst is the reminder a dry run that lists differences ends
+// with (MTIX-95.35).
+const syncRepairPullFirst = "Run 'mtix sync pull' first and list again before --apply: a repair made on " +
+	"a stale local log can revert a teammate's newer change on every machine."
+
+// pullFirstReminder returns the pull-first reminder for a dry run that lists
+// differences, and "" otherwise: nothing to repair, or --apply (MTIX-95.35).
+// A repair event carries this machine's newest Lamport clock, so on a log
+// that lacks a teammate's newer change it can win over that change (whenever
+// this machine's Lamport clock is ahead of it) and revert it on every machine
+// that pulls it.
+func pullFirstReminder(r *service.StatusRepairReport) string {
+	if r.Apply || len(r.Differences) == 0 {
+		return ""
+	}
+	return syncRepairPullFirst
+}
+
+// printStatusRepairReport prints a status repair report for people. A dry run
+// that lists differences ends with the pull-first reminder (MTIX-95.35).
 func printStatusRepairReport(w io.Writer, r *service.StatusRepairReport) {
 	if len(r.Differences) == 0 {
 		fmt.Fprintln(w, "No differences: every node's workflow state matches its local sync events.")
@@ -152,6 +181,7 @@ func printStatusRepairReport(w io.Writer, r *service.StatusRepairReport) {
 			plural(len(r.Differences), "node"), countFlagged(r.Differences))
 		fmt.Fprintln(w, "Re-run with --apply to repair the others; a flagged node is repaired only with --apply --force, after review.")
 		printStatusRepairDiffs(w, r.Differences)
+		fmt.Fprintln(w, pullFirstReminder(r))
 		return
 	}
 	if r.Backup != "" {

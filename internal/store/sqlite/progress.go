@@ -28,6 +28,42 @@ func recalculateProgress(ctx context.Context, tx *sql.Tx, nodeID string) error {
 		return nil
 	}
 
+	if err := recomputeNodeProgress(ctx, tx, nodeID); err != nil {
+		return err
+	}
+
+	// Recurse to parent per FR-5.7.
+	var parentID sql.NullString
+	err := tx.QueryRowContext(ctx,
+		`SELECT parent_id FROM nodes WHERE id = ?`,
+		nodeID,
+	).Scan(&parentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// The node itself does not exist yet. This never happens on the
+		// local paths (the node is always live), but the sync-apply path
+		// can recompute a parent whose create_node has not yet applied
+		// (causal order, HAZARD (c)). Treat as "no rollup target" rather
+		// than an error so a single out-of-order event cannot wedge the
+		// whole apply batch.
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("get parent of %s: %w", nodeID, err)
+	}
+
+	if parentID.Valid && parentID.String != "" {
+		return recalculateProgress(ctx, tx, parentID.String)
+	}
+
+	return nil
+}
+
+// recomputeNodeProgress recomputes the progress of nodeID alone from its
+// direct children (FR-5.3, FR-5.4, FR-5.6, FR-5.6b, FR-5.8) and does not walk
+// up. recalculateProgress calls it once per level of its walk to the root; a
+// cascade cancel calls it once per ancestor inside the cancelled subtree,
+// deepest first (MTIX-95.21). A soft-deleted node is left unchanged.
+func recomputeNodeProgress(ctx context.Context, tx *sql.Tx, nodeID string) error {
 	// Compute weighted average progress from direct non-deleted,
 	// non-canceled, non-invalidated children per FR-5.3/5.4/5.6.
 	var totalWeight, weightedSum sql.NullFloat64
@@ -58,29 +94,5 @@ func recalculateProgress(ctx context.Context, tx *sql.Tx, nodeID string) error {
 	if err != nil {
 		return fmt.Errorf("update progress for %s: %w", nodeID, err)
 	}
-
-	// Recurse to parent per FR-5.7.
-	var parentID sql.NullString
-	err = tx.QueryRowContext(ctx,
-		`SELECT parent_id FROM nodes WHERE id = ?`,
-		nodeID,
-	).Scan(&parentID)
-	if errors.Is(err, sql.ErrNoRows) {
-		// The node itself does not exist yet. This never happens on the
-		// local paths (the node is always live), but the sync-apply path
-		// can recompute a parent whose create_node has not yet applied
-		// (causal order, HAZARD (c)). Treat as "no rollup target" rather
-		// than an error so a single out-of-order event cannot wedge the
-		// whole apply batch.
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("get parent of %s: %w", nodeID, err)
-	}
-
-	if parentID.Valid && parentID.String != "" {
-		return recalculateProgress(ctx, tx, parentID.String)
-	}
-
 	return nil
 }

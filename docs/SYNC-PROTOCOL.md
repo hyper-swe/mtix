@@ -211,7 +211,11 @@ Known residual in 0.5.x:
   winner check, so status can still differ there. Example: replica A
   claims a node while replica B adds a dependency that blocks it; B's
   auto-block emits no event, so after both pull A shows `blocked` and
-  B `in_progress`. Descendants cancelled by a cascade cancel can differ
+  B `in_progress`. A dependent that a cascade cancel unblocks does
+  travel, as its own `transition_status`, so other replicas show it
+  unblocked while the descendant that blocked it is not cancelled
+  there (MTIX-95.21). Descendants cancelled by a cascade cancel, which
+  other replicas keep in their previous status, can differ
   the same way.
 - Unknown to-status: a `transition_status` to a status this build
   does not know (for example one added by a newer client) writes the

@@ -29,7 +29,7 @@ func (c *hubCatalog) oidsOf(kind string) []uint32 {
 func (c *hubCatalog) loadSequences(ctx context.Context, tx pgx.Tx) error {
 	// Sequences owned by a sync table, plus sequences its column defaults use.
 	rows, err := tx.Query(ctx, `
-		SELECT s.oid, n.nspname::text, s.relname::text, s.relowner
+		SELECT s.oid, n.nspname::text, s.relname::text, s.relowner, false
 		FROM pg_catalog.pg_depend d
 		JOIN pg_catalog.pg_class s ON s.oid = d.objid AND s.relkind = 'S'
 		JOIN pg_catalog.pg_namespace n ON n.oid = s.relnamespace
@@ -37,7 +37,7 @@ func (c *hubCatalog) loadSequences(ctx context.Context, tx pgx.Tx) error {
 		  AND d.refclassid = 'pg_catalog.pg_class'::regclass
 		  AND d.refobjid = ANY($1::oid[]) AND d.deptype IN ('a', 'i')
 		UNION
-		SELECT s.oid, n.nspname::text, s.relname::text, s.relowner
+		SELECT s.oid, n.nspname::text, s.relname::text, s.relowner, false
 		FROM pg_catalog.pg_attrdef ad
 		JOIN pg_catalog.pg_depend d ON d.classid = 'pg_catalog.pg_attrdef'::regclass
 		     AND d.objid = ad.oid AND d.refclassid = 'pg_catalog.pg_class'::regclass
@@ -52,7 +52,8 @@ func (c *hubCatalog) loadSequences(ctx context.Context, tx pgx.Tx) error {
 }
 
 // loadFunctions finds the mtix functions, by the names the migrations
-// define, in the sync schema. Each takes no arguments.
+// define, in the sync schema, and whether each returns trigger. Each takes
+// no arguments.
 func (c *hubCatalog) loadFunctions(ctx context.Context, tx pgx.Tx) error {
 	names, err := migrations.Functions()
 	if err != nil {
@@ -60,7 +61,8 @@ func (c *hubCatalog) loadFunctions(ctx context.Context, tx pgx.Tx) error {
 	}
 	// The zero-argument mtix functions in the sync schema.
 	rows, err := tx.Query(ctx, `
-		SELECT p.oid, n.nspname::text, p.proname::text, p.proowner
+		SELECT p.oid, n.nspname::text, p.proname::text, p.proowner,
+		       p.prorettype = 'pg_catalog.trigger'::pg_catalog.regtype
 		FROM pg_catalog.pg_proc p
 		JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
 		WHERE p.proname = ANY($1::text[]) AND p.pronargs = 0 AND n.nspname = $2
@@ -71,12 +73,13 @@ func (c *hubCatalog) loadFunctions(ctx context.Context, tx pgx.Tx) error {
 	return c.appendObjects(rows, catFunction, FindingKindFunction)
 }
 
-// appendObjects scans (oid, schema, name, owner) rows into c.objects.
+// appendObjects scans (oid, schema, name, owner, returns trigger) rows
+// into c.objects.
 func (c *hubCatalog) appendObjects(rows pgx.Rows, cat byte, kind string) error {
 	defer rows.Close()
 	for rows.Next() {
 		o := hubObject{key: objKey{cat: cat}, kind: kind}
-		if err := rows.Scan(&o.key.oid, &o.schema, &o.name, &o.owner); err != nil {
+		if err := rows.Scan(&o.key.oid, &o.schema, &o.name, &o.owner, &o.trigger); err != nil {
 			return fmt.Errorf("read %s: %w", kind, err)
 		}
 		c.objects = append(c.objects, o)
@@ -87,24 +90,32 @@ func (c *hubCatalog) appendObjects(rows pgx.Rows, cat byte, kind string) error {
 	return nil
 }
 
-// loadACL reads every privilege on the sync objects. A NULL ACL stands for
-// the built-in defaults, which acldefault spells out: on a function they
+// loadACL reads every privilege on the sync objects, including privileges
+// granted on single columns of a sync table. A NULL ACL stands for the
+// built-in defaults, which acldefault spells out: on a function they
 // include EXECUTE for PUBLIC.
 func (c *hubCatalog) loadACL(ctx context.Context, tx pgx.Tx) error {
-	relations := append(c.oidsOf(FindingKindTable), c.oidsOf(FindingKindSequence)...)
-	// Explode the ACL of each sync table, sequence and mtix function.
+	tables := c.oidsOf(FindingKindTable)
+	relations := append(append([]uint32{}, tables...), c.oidsOf(FindingKindSequence)...)
+	// Explode the ACL of each sync table, sequence, mtix function and of
+	// each sync table column that has its own ACL.
 	rows, err := tx.Query(ctx, `
-		SELECT 'r', c.oid, a.grantee, a.privilege_type, a.is_grantable
+		SELECT 'r', c.oid, a.grantee, a.privilege_type, a.is_grantable, ''
 		FROM pg_catalog.pg_class c
 		CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(c.relacl, pg_catalog.acldefault(
 		     CASE WHEN c.relkind = 'S' THEN 's' ELSE 'r' END::"char", c.relowner))) a
 		WHERE c.oid = ANY($1::oid[])
 		UNION ALL
-		SELECT 'f', p.oid, a.grantee, a.privilege_type, a.is_grantable
+		SELECT 'r', att.attrelid, a.grantee, a.privilege_type, a.is_grantable, att.attname::text
+		FROM pg_catalog.pg_attribute att
+		CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
+		WHERE att.attrelid = ANY($3::oid[]) AND att.attacl IS NOT NULL AND NOT att.attisdropped
+		UNION ALL
+		SELECT 'f', p.oid, a.grantee, a.privilege_type, a.is_grantable, ''
 		FROM pg_catalog.pg_proc p
 		CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,
 		     pg_catalog.acldefault('f', p.proowner))) a
-		WHERE p.oid = ANY($2::oid[])`, relations, c.oidsOf(FindingKindFunction))
+		WHERE p.oid = ANY($2::oid[])`, relations, c.oidsOf(FindingKindFunction), tables)
 	if err != nil {
 		return fmt.Errorf("read sync privileges: %w", err)
 	}
@@ -112,7 +123,7 @@ func (c *hubCatalog) loadACL(ctx context.Context, tx pgx.Tx) error {
 	for rows.Next() {
 		var cat string
 		var e aclEntry
-		if err := rows.Scan(&cat, &e.obj.oid, &e.grantee, &e.privilege, &e.grantable); err != nil {
+		if err := rows.Scan(&cat, &e.obj.oid, &e.grantee, &e.privilege, &e.grantable, &e.column); err != nil {
 			return fmt.Errorf("read sync privileges: %w", err)
 		}
 		e.obj.cat = cat[0]

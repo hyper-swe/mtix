@@ -36,7 +36,8 @@ leaves with their access (default: none).
 
 Only for projects that sync through a Postgres hub. Everyday use needs no
 role configuration. Run these only when a human asks, as the role that owns
-the sync tables (the one that ran `mtix sync init`):
+the sync tables (the one that ran `mtix sync init`); a superuser or a member
+of the owner role may run them too:
 
 ```bash
 mtix sync harden                          # Dry run: lists every role, default privilege and membership it would change; changes nothing
@@ -47,10 +48,13 @@ mtix sync harden --json                   # Report for agents: before/after find
 
 Exit code 0 means verification passed (only the owner and the kept roles can
 use the sync tables, and every TRUNCATE guard is in place); 2 means changes
-are pending or access remains; 1 means an error or a refusal. Any role other
-than the table owner is refused and nothing changes. A server WARNING fails
-the run and nothing changes. Access harden may not change is printed with the
-statement a database administrator runs.
+are pending or access remains; 1 means an error or a refusal. A role that is
+not the table owner, a member of it or a superuser is refused and nothing
+changes. Members of a kept role keep their access through it; superusers are
+out of scope. A server WARNING fails the run and nothing changes. Access
+harden may not change is printed with the statement a database administrator
+runs. EXECUTE on the mtix trigger functions is information only, so a freshly
+migrated hub verifies clean.
 
 Never pass `--apply` without a human approving the dry run's role list. Never
 run `mtix sync harden` from a hook, a push or the daemon.

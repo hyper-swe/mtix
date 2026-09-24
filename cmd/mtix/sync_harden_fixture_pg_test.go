@@ -32,6 +32,7 @@ type hardenFixture struct {
 	admin     *pgxpool.Pool
 	prefix    string
 	superuser string
+	dbName    string
 	madeRoles []string // cluster-wide roles without the prefix, made here
 }
 
@@ -65,7 +66,7 @@ func newHardenFixture(t *testing.T) *hardenFixture {
 	}
 	dbName := "mtix_h_" + hardenRandomHex(t, 6)
 	hardenDDL(t, root, "", "CREATE DATABASE %I", dbName)
-	f.dbURL = *u
+	f.dbURL, f.dbName = *u, dbName
 	f.dbURL.Path = "/" + dbName
 	f.admin, err = pgxpool.New(ctx, f.dbURL.String())
 	require.NoError(t, err)
@@ -250,6 +251,11 @@ func (f *hardenFixture) snapshot() []string {
 		FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 		WHERE n.nspname = 'public'
 		UNION ALL
+		SELECT 'col ' || a.attrelid::regclass::text || '.' || a.attname::text || ' ' || a.attacl::text
+		FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+		JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = 'public' AND a.attacl IS NOT NULL
+		UNION ALL
 		SELECT 'fn ' || p.oid::regprocedure::text || ' ' || COALESCE(p.proacl::text, '-')
 		FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
 		WHERE n.nspname = 'public'
@@ -268,7 +274,8 @@ func (f *hardenFixture) snapshot() []string {
 }
 
 // privileges lists every privilege role holds on any sync table, sequence
-// or mtix function in the fixture database, as "object privilege".
+// or mtix function in the fixture database, as "object privilege"; a
+// privilege held on some columns only reads "object column privilege".
 func (f *hardenFixture) privileges(role string) []string {
 	f.t.Helper()
 	return f.strings(`
@@ -278,6 +285,14 @@ func (f *hardenFixture) privileges(role string) []string {
 		CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) AS p(priv)
 		WHERE n.nspname = 'public' AND c.relkind = 'r'
 		  AND pg_catalog.has_table_privilege($1::text, c.oid, p.priv)
+		UNION ALL
+		SELECT c.relname || ' column ' || p.priv
+		FROM pg_catalog.pg_class c
+		JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','REFERENCES']) AS p(priv)
+		WHERE n.nspname = 'public' AND c.relkind = 'r'
+		  AND NOT pg_catalog.has_table_privilege($1::text, c.oid, p.priv)
+		  AND pg_catalog.has_any_column_privilege($1::text, c.oid, p.priv)
 		UNION ALL
 		SELECT c.relname || ' ' || p.priv
 		FROM pg_catalog.pg_class c

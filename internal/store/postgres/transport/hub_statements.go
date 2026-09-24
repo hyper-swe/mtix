@@ -34,6 +34,8 @@ const (
 	sqlFmtRevokeMembership          = `SELECT format('REVOKE %I FROM %I GRANTED BY %I', $1::text, $2::text, $3::text)`
 	sqlFmtManualRevokeMembership    = `SELECT format('REVOKE %I FROM %I', $1::text, $2::text)`
 	sqlFmtEnableTrigger             = `SELECT format('ALTER TABLE %I.%I ENABLE TRIGGER %I', $1::text, $2::text, $3::text)`
+	sqlFmtManualOwnerFunction       = `SELECT format('ALTER FUNCTION %I.%I() OWNER TO %I', $1::text, $2::text, $3::text)`
+	sqlFmtManualOwnerSequence       = `SELECT format('ALTER SEQUENCE %I.%I OWNER TO %I', $1::text, $2::text, $3::text)`
 )
 
 // statementKeywords are the only values a template's %s may receive.
@@ -122,13 +124,22 @@ func (a *action) render(ctx context.Context, q queryRower) (string, error) {
 	return stmt, nil
 }
 
-// planActions returns the fixes of findings in the order --apply runs
-// them, one per distinct statement.
-func planActions(findings []finding) []*action {
+// planActions returns the fixes --apply runs, in order, one per distinct
+// statement. It plans nothing unless a finding has a fix; when one does,
+// the fixes of the information items run too.
+func planActions(findings, info []finding) []*action {
+	fixable := false
+	for i := range findings {
+		fixable = fixable || findings[i].fix != nil
+	}
+	if !fixable {
+		return nil
+	}
+	all := append(append([]finding{}, findings...), info...)
 	seen := map[string]bool{}
 	var out []*action
-	for i := range findings {
-		a := findings[i].fix
+	for i := range all {
+		a := all[i].fix
 		if a == nil || seen[a.shape()] {
 			continue
 		}

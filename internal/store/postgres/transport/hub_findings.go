@@ -5,6 +5,7 @@ package transport
 
 import (
 	"sort"
+	"strings"
 )
 
 // finding is a PrivilegeFinding with the action that fixes it, or the
@@ -15,26 +16,48 @@ type finding struct {
 	manual *action
 }
 
-// noteBadName explains exposure whose names mtix will not put in a
-// statement (SQL Rule 1a).
-const noteBadName = "a name is outside the identifier form mtix puts in statements; revoke it by hand"
+// Notes that explain a finding or information item.
+const (
+	// noteBadName explains exposure whose names mtix will not put in a
+	// statement (SQL Rule 1a).
+	noteBadName = "a name is outside the identifier form mtix puts in statements; revoke it by hand"
+
+	// noteTriggerFunction explains why EXECUTE on an mtix trigger function
+	// is information, not a finding.
+	noteTriggerFunction = "a trigger function cannot be called directly and triggers fire without EXECUTE; " +
+		"--apply revokes it when it makes other changes"
+
+	// noteOtherCreator explains why another role's default privileges are
+	// information, not a finding.
+	noteOtherCreator = "another role's default privileges do not apply to tables the owner creates"
+
+	// noteObjectOwner explains an mtix object owned by another role.
+	noteObjectOwner = "owned by a role other than the sync tables' owner, which can replace or alter it; " +
+		"an administrator returns it to the owner"
+)
 
 // computeFindings verifies the catalog against the kept roles (MTIX-95.1)
 // and returns the findings, which fail verification, and the information
 // items, which do not. Only the owners, superusers, the caller and the
 // kept roles may hold access; a kept role may not pass its access on.
+// Information items are EXECUTE on the mtix trigger functions and other
+// roles' default privileges.
 func computeFindings(c *hubCatalog, kept map[string]bool) (findings, info []finding) {
 	checked := c.checkedRoles(kept)
-	findings = append(findings, grantFindings(c, kept)...)
+	grants, grantInfo := grantFindings(c, kept)
+	findings = append(findings, grants...)
 	defaults, other := defaultFindings(c, kept)
 	findings = append(findings, defaults...)
 	findings = append(findings, edgeFindings(c, checked)...)
 	findings = append(findings, ownerMemberFindings(c, checked)...)
 	findings = append(findings, residualFindings(c, kept, checked)...)
 	findings = append(findings, guardFindings(c)...)
+	findings = append(findings, objectOwnerFindings(c)...)
+	info = append(info, grantInfo...)
+	info = append(info, other...)
 	sortFindings(findings)
-	sortFindings(other)
-	return findings, other
+	sortFindings(info)
+	return findings, info
 }
 
 // grantKey groups ACL entries by object and grantee.
@@ -43,11 +66,12 @@ type grantKey struct {
 	grantee uint32
 }
 
-// grantFindings reports every privilege on a sync object held by PUBLIC or
-// a non-kept role, and every grant option a kept role holds.
-func grantFindings(c *hubCatalog, kept map[string]bool) []finding {
-	privs := map[grantKey][]string{}
-	options := map[grantKey][]string{}
+// grantFindings reports every privilege on a sync object, or on one of its
+// columns, held by PUBLIC or a non-kept role, and every grant option a kept
+// role holds. Those on an mtix trigger function are information.
+func grantFindings(c *hubCatalog, kept map[string]bool) (findings, info []finding) {
+	privs := map[grantKey][]aclEntry{}
+	options := map[grantKey][]aclEntry{}
 	for _, e := range c.acl {
 		if c.object(e.obj) == nil {
 			continue
@@ -56,39 +80,71 @@ func grantFindings(c *hubCatalog, kept map[string]bool) []finding {
 		r := c.roles[e.grantee]
 		switch {
 		case e.grantee == publicOID:
-			privs[k] = append(privs[k], e.privilege)
+			privs[k] = append(privs[k], e)
 		case c.owners[e.grantee] || r.super || e.grantee == c.current:
 		case kept[r.name]:
 			if e.grantable {
-				options[k] = append(options[k], e.privilege)
+				options[k] = append(options[k], e)
 			}
 		default:
-			privs[k] = append(privs[k], e.privilege)
+			privs[k] = append(privs[k], e)
 		}
 	}
-	var out []finding
-	for k, p := range privs {
-		out = append(out, grantFinding(c, k, p, FindingViaGrant))
+	for _, group := range []struct {
+		entries map[grantKey][]aclEntry
+		via     string
+	}{{privs, FindingViaGrant}, {options, FindingViaGrantOption}} {
+		for k, es := range group.entries {
+			f := grantFinding(c, k, es, group.via)
+			if c.object(k.obj).trigger {
+				f.Note = strings.TrimSuffix(noteTriggerFunction+"; "+f.Note, "; ")
+				info = append(info, f)
+				continue
+			}
+			findings = append(findings, f)
+		}
 	}
-	for k, p := range options {
-		out = append(out, grantFinding(c, k, p, FindingViaGrantOption))
-	}
-	return out
+	return findings, info
 }
 
 // grantFinding builds the finding, and its revoke, for one grantee on one
-// object.
-func grantFinding(c *hubCatalog, k grantKey, privs []string, via string) finding {
+// object. REVOKE ALL on a table also removes its column privileges.
+func grantFinding(c *hubCatalog, k grantKey, es []aclEntry, via string) finding {
 	o := c.object(k.obj)
 	role := c.roleName(k.grantee)
 	f := finding{PrivilegeFinding: PrivilegeFinding{
-		Role: role, Object: o.label(), Kind: o.kind, Privileges: sortedUnique(privs), Via: via,
+		Role: role, Object: o.label(), Kind: o.kind, Privileges: privilegeLabels(es), Via: via,
 	}}
 	f.fix = revokeAction(o, k.grantee, role, via)
 	if f.fix == nil {
 		f.Note = noteBadName
 	}
 	return f
+}
+
+// privilegeLabels names the privileges of es, sorted: a privilege on the
+// whole object as itself, one held only on columns as "PRIV (col, ...)".
+func privilegeLabels(es []aclEntry) []string {
+	whole := map[string]bool{}
+	columns := map[string][]string{}
+	for _, e := range es {
+		if e.column == "" {
+			whole[e.privilege] = true
+		} else {
+			columns[e.privilege] = append(columns[e.privilege], e.column)
+		}
+	}
+	var out []string
+	for p := range whole {
+		out = append(out, p)
+	}
+	for p, cols := range columns {
+		if !whole[p] {
+			out = append(out, p+" ("+strings.Join(sortedUnique(cols), ", ")+")")
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // revokeAction returns the statement that removes grantee's access to o:
@@ -147,6 +203,7 @@ func defaultFindings(c *hubCatalog, kept map[string]bool) (findings, info []find
 	for k, p := range privs {
 		f := defaultFinding(c, k, p)
 		if !c.owners[k.creator] {
+			f.Note = noteOtherCreator
 			info = append(info, f)
 			continue
 		}
@@ -189,46 +246,96 @@ func defaultAction(c *hubCatalog, k defaultKey) *action {
 }
 
 // edgeFindings reports checked roles that are direct members of a read-all
-// role. The caller revokes the membership when it holds ADMIN on the role
+// role, and checked roles that inherit or can SET ROLE to such a member.
+// The caller revokes the direct membership when it holds ADMIN on the role
 // and the grantor's privileges; otherwise an administrator's statement is
-// given. Either way the change is cluster-wide.
+// given. A role that reaches it through the member shares that fix. Either
+// way the change is cluster-wide.
 func edgeFindings(c *hubCatalog, checked map[uint32]bool) []finding {
 	var out []finding
+	seen := map[[2]uint32]bool{}
 	for _, e := range c.edges {
 		if !checked[e.member] {
 			continue
 		}
-		role, member := c.roleName(e.role), c.roleName(e.member)
-		f := finding{PrivilegeFinding: PrivilegeFinding{
-			Role: member, Object: role, Kind: FindingKindRole, Via: FindingViaMembership, Scope: ScopeClusterWide,
-		}}
-		if e.revocable {
-			f.fix = newAction("revoke-membership", sqlFmtRevokeMembership, rankMembership, role, member, c.roleName(e.grantor))
+		seen[[2]uint32{e.member, e.role}] = true
+		out = append(out, edgeFinding(c, e, e.member))
+	}
+	for _, e := range c.edges {
+		if !checked[e.member] {
+			continue
 		}
-		if f.fix == nil {
-			f.manual = newAction("manual-revoke-membership", sqlFmtManualRevokeMembership, rankMembership, role, member)
+		for x := range checked {
+			key := [2]uint32{x, e.role}
+			if seen[key] || !c.member[[2]uint32{x, e.member}] {
+				continue
+			}
+			seen[key] = true
+			f := edgeFinding(c, e, x)
+			f.Note = strings.TrimSuffix("through "+c.roleName(e.member)+"; "+f.Note, "; ")
+			out = append(out, f)
 		}
-		if f.fix == nil && f.manual == nil {
-			f.Note = noteBadName
-		}
-		out = append(out, f)
 	}
 	return out
 }
 
-// ownerMemberFindings reports checked roles that have the privileges of a
-// table owner. Membership in the owner role is never changed, only
-// reported: removing it is the administrator's decision.
+// edgeFinding reports role's access through membership e, with e's fix.
+func edgeFinding(c *hubCatalog, e roleEdge, role uint32) finding {
+	target, member := c.roleName(e.role), c.roleName(e.member)
+	f := finding{PrivilegeFinding: PrivilegeFinding{
+		Role: c.roleName(role), Object: target, Kind: FindingKindRole, Via: FindingViaMembership, Scope: ScopeClusterWide,
+	}}
+	if e.revocable {
+		f.fix = newAction("revoke-membership", sqlFmtRevokeMembership, rankMembership, target, member, c.roleName(e.grantor))
+	}
+	if f.fix == nil {
+		f.manual = newAction("manual-revoke-membership", sqlFmtManualRevokeMembership, rankMembership, target, member)
+	}
+	if f.fix == nil && f.manual == nil {
+		f.Note = noteBadName
+	}
+	return f
+}
+
+// ownerMemberFindings reports checked roles that inherit a table owner's
+// privileges or can SET ROLE to it. Membership in the owner role is never
+// changed, only reported: removing it is the administrator's decision.
 func ownerMemberFindings(c *hubCatalog, checked map[uint32]bool) []finding {
 	var out []finding
 	for r := range checked {
 		for o := range c.owners {
-			if c.usage[[2]uint32{r, o}] {
+			if c.member[[2]uint32{r, o}] {
 				out = append(out, finding{PrivilegeFinding: PrivilegeFinding{
 					Role: c.roleName(r), Object: c.roleName(o), Kind: FindingKindRole, Via: FindingViaOwnerMembership,
 				}})
 			}
 		}
+	}
+	return out
+}
+
+// objectOwnerFindings reports an mtix function or sequence owned by a role
+// other than the sync tables' owners, with the statement an administrator
+// runs to return it. A superuser owner is out of scope. mtix never changes
+// ownership itself.
+func objectOwnerFindings(c *hubCatalog) []finding {
+	owners := c.ownerNames()
+	var out []finding
+	for i := range c.objects {
+		o := &c.objects[i]
+		if o.kind == FindingKindTable || c.owners[o.owner] || c.roles[o.owner].super || len(owners) == 0 {
+			continue
+		}
+		f := finding{PrivilegeFinding: PrivilegeFinding{
+			Role: c.roleName(o.owner), Object: o.label(), Kind: o.kind,
+			Via: FindingViaObjectOwner, Note: noteObjectOwner,
+		}}
+		if o.kind == FindingKindFunction {
+			f.manual = newAction("manual-owner-function", sqlFmtManualOwnerFunction, rankGuard, o.schema, o.name, owners[0])
+		} else {
+			f.manual = newAction("manual-owner-sequence", sqlFmtManualOwnerSequence, rankGuard, o.schema, o.name, owners[0])
+		}
+		out = append(out, f)
 	}
 	return out
 }

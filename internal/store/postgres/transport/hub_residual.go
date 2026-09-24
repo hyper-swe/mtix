@@ -80,12 +80,14 @@ func (x *accessIndex) explained(e effPriv) bool {
 // residualFindings reports privileges a checked role holds on a sync
 // object that nothing above explains: access through a membership that
 // is not otherwise reported (FindingViaMembership). Such access has no
-// fix here; it is remaining exposure an administrator resolves.
+// fix here; it is remaining exposure an administrator resolves. EXECUTE on
+// an mtix trigger function is not access: it cannot be called directly.
 func residualFindings(c *hubCatalog, kept map[string]bool, checked map[uint32]bool) []finding {
 	x := newAccessIndex(c, kept, checked)
 	privs := map[grantKey][]string{}
 	for _, e := range c.effective {
-		if !checked[e.role] || x.explained(e) || c.object(e.obj) == nil {
+		o := c.object(e.obj)
+		if !checked[e.role] || o == nil || o.trigger || x.explained(e) {
 			continue
 		}
 		k := grantKey{e.obj, e.role}

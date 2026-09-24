@@ -26,7 +26,9 @@ const (
 )
 
 // Finding sources: how a role holds the access a finding reports
-// (MTIX-95.1). A trigger finding uses missing or disabled.
+// (MTIX-95.1). A trigger finding uses missing or disabled; object_owner is
+// a role other than the sync tables' owner that owns an mtix function or
+// sequence.
 const (
 	FindingViaGrant           = "grant"
 	FindingViaGrantOption     = "grant_option"
@@ -35,6 +37,7 @@ const (
 	FindingViaDefaultACL      = "default_acl"
 	FindingViaMissing         = "missing"
 	FindingViaDisabled        = "disabled"
+	FindingViaObjectOwner     = "object_owner"
 )
 
 // ScopeClusterWide marks a change that applies to every database on the
@@ -190,13 +193,22 @@ func (p *Pool) Harden(ctx context.Context, req HardenRequest) (*HardenResult, er
 	return result, nil
 }
 
-// verify builds the privilege report in a READ ONLY transaction.
+// verify builds the privilege report in a READ ONLY transaction, which
+// cannot issue DDL; it checks that the server runs it read-only.
 func (p *Pool) verify(ctx context.Context, kept []string, requireOwner bool) (*PrivilegeReport, error) {
 	tx, err := p.p.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return nil, fmt.Errorf("begin read-only: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // read-only: nothing to keep
+	var readOnly string
+	// The server's view of this transaction's access mode.
+	if err = tx.QueryRow(ctx, `SELECT current_setting('transaction_read_only')`).Scan(&readOnly); err != nil {
+		return nil, fmt.Errorf("check read-only: %w", err)
+	}
+	if readOnly != "on" {
+		return nil, fmt.Errorf("verification transaction is not read-only")
+	}
 	report, _, err := buildReport(ctx, tx, kept, requireOwner)
 	return report, err
 }
@@ -282,7 +294,7 @@ func buildReport(ctx context.Context, tx pgx.Tx, kept []string, requireOwner boo
 			return nil, nil, err
 		}
 	}
-	actions := planActions(findings)
+	actions := planActions(findings, info)
 	for _, a := range actions {
 		stmt, err := a.render(ctx, tx)
 		if err != nil {

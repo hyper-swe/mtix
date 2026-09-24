@@ -46,21 +46,24 @@ keep. Without --apply this is a dry run: it lists every role, default
 privilege and membership it would change, and changes nothing.
 
 With --apply, in one transaction, it revokes every privilege on those
-objects from PUBLIC, from the roles a data API uses for anonymous and
-signed-in callers, and from every other role except the table owner,
-superusers and the roles named with --keep-role or in the sync.keep_roles
-config key. A kept role keeps its privileges but loses any right to grant
+objects, column privileges included, from PUBLIC, from the roles a data
+API uses for anonymous and signed-in callers, and from every other role
+except the table owner, superusers and the roles named with --keep-role
+or in the sync.keep_roles config key. A kept role keeps its privileges,
+and its members keep them through it, but it loses any right to grant
 them on. The owner's default privileges that would give those roles
 access to tables created later are revoked too. A membership in
 pg_read_all_data or pg_write_all_data is revoked when the owner may do
 so; it is cluster-wide. A missing TRUNCATE guard is restored and a
 disabled one enabled. A server WARNING fails the run and nothing changes.
 Access it cannot remove is reported with the statement an administrator
-runs.
+runs. EXECUTE on the mtix trigger functions and other roles' default
+privileges are information and never fail verification.
 
-Run it as the role that owns the sync tables; any other role is refused
-and nothing changes. Review the dry run's role list before --apply: a
-role you do not keep loses its access.
+Run it as the role that owns the sync tables, or as a superuser or a
+member of the owner role; any other role is refused and nothing changes.
+Superusers are not checked. Review the dry run's role list before
+--apply: a role you do not keep loses its access.
 
 Exit code: 0 when verification passes, 2 when changes are pending (dry
 run) or access remains (--apply), 1 on an error or a refusal. --json
@@ -127,16 +130,45 @@ func runSyncHarden(ctx context.Context, stdout, _ io.Writer,
 	return hardenOutcome(result)
 }
 
-// hardenErr formats a harden error through the central DSN scrubber. Unlike
-// wrapSyncErr it ignores hook mode: harden is never run from a hook, and
-// its failures must never be downgraded to a warning. An empty stage is
-// for errors from Pool.Harden, whose text already starts with "harden:".
+// hardenSentinels are the errors a harden failure keeps in its chain after
+// the DSN scrub, so callers can test them with errors.Is. None of them
+// carries a DSN.
+var hardenSentinels = []error{
+	transport.ErrHardenNotOwner, transport.ErrHubWarning,
+	transport.ErrSyncSchemaIncomplete, model.ErrInvalidInput,
+}
+
+// hardenError is a scrubbed harden failure that still unwraps to the
+// sentinel it came from.
+type hardenError struct {
+	msg      string
+	sentinel error
+}
+
+// Error returns the scrubbed message.
+func (e *hardenError) Error() string { return e.msg }
+
+// Unwrap returns the sentinel, or nil.
+func (e *hardenError) Unwrap() error { return e.sentinel }
+
+// hardenErr formats a harden error through the central DSN scrubber and
+// keeps a known sentinel in its chain, as wrapSyncErr does (MTIX-95.1).
+// Unlike wrapSyncErr it ignores hook mode: harden is never run from a
+// hook, and its failures must never be downgraded to a warning. An empty
+// stage is for errors from Pool.Harden, whose text starts with "harden:".
 func hardenErr(stage string, err error) error {
 	prefix := "mtix sync harden " + stage + ": "
 	if stage == "" {
 		prefix = "mtix sync "
 	}
-	return errors.New(prefix + scrubSyncText(err.Error()))
+	out := &hardenError{msg: prefix + scrubSyncText(err.Error())}
+	for _, sentinel := range hardenSentinels {
+		if errors.Is(err, sentinel) {
+			out.sentinel = sentinel
+			break
+		}
+	}
+	return out
 }
 
 // hardenOutcome maps the final verification to the exit contract: nil when
@@ -330,15 +362,19 @@ func printHardenFindings(w io.Writer, title string, rep *transport.PrivilegeRepo
 	fmt.Fprintln(w, strings.Join(lines, "\n"))
 }
 
-// printHardenInfo writes the information items: other creators' default
-// privileges, which harden does not change.
+// printHardenInfo writes the information items, which do not fail
+// verification: EXECUTE on the mtix trigger functions and other roles'
+// default privileges. Each carries a note that says why.
 func printHardenInfo(w io.Writer, rep *transport.PrivilegeReport) {
 	if len(rep.Info) == 0 {
 		return
 	}
-	fmt.Fprintln(w, "\nNot changed (default privileges of other roles; they do not apply to tables the owner creates):")
+	fmt.Fprintln(w, "\nInformation (does not fail verification):")
 	for _, f := range rep.Info {
 		fmt.Fprintln(w, "  "+findingLine(f))
+		if f.Note != "" {
+			fmt.Fprintln(w, "      "+safeText(f.Note))
+		}
 	}
 }
 

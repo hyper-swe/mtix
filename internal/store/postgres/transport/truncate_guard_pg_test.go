@@ -53,13 +53,13 @@ func countTableRows(t *testing.T, pool *transport.Pool, table string) int {
 const guardCreations = `SELECT identity FROM mtixt_audit.created_triggers
 	WHERE identity LIKE '%\_no\_truncate on %' ORDER BY identity`
 
-// TestTruncateGuard_BlocksOwnerTruncate: the owner's TRUNCATE on each
-// append-only table, alone and with CASCADE, raises and keeps every row,
-// and a second migrate creates no guard trigger (MTIX-95.1, F-44). Row
-// triggers never fire on TRUNCATE, so only the statement guards from
-// migration 016 stop it. sync_events is referenced by foreign keys, so
-// PostgreSQL itself refuses to truncate it alone; its cases name it first,
-// so its own guard is the one that raises (the message names the table).
+// TestTruncateGuard_BlocksOwnerTruncate: each append-only table also has a
+// statement-level TRUNCATE guard (migration 016). The owner's TRUNCATE on
+// each, alone and with CASCADE, raises and keeps every row, and a second
+// migrate creates no guard trigger (MTIX-95.1, F-44). sync_events is
+// referenced by foreign keys, so PostgreSQL itself refuses to truncate it
+// alone; its cases name it first, so its own guard is the one that raises
+// (the message names the table).
 func TestTruncateGuard_BlocksOwnerTruncate(t *testing.T) {
 	f := newHubFixture(t)
 	owner := f.ownerRole()

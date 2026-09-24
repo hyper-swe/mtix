@@ -1629,8 +1629,9 @@ mtix sync harden --json                         # the report for agents and CI
 ```
 
 Run it as the role that owns the sync tables, the one that ran
-`mtix sync init`. Any other role is refused with "the connecting role does
-not own every sync table" and nothing changes.
+`mtix sync init`; a superuser or a member of the owner role may run it
+too. Any other role is refused with "the connecting role does not own
+every sync table" and nothing changes.
 
 The dry run starts with the roles `--apply` would affect: the roles that
 lose their access, the kept roles that keep their access but can no longer
@@ -1640,14 +1641,17 @@ change, and the statements `--apply` would run. Review that list before
 `--apply`: every role you do not keep loses its access. A role that other
 people or services use to sync must be kept with `--keep-role <role>`
 (repeatable), or listed in the `sync.keep_roles` config key; harden uses
-both. PUBLIC, the roles a data API uses for anonymous and signed-in
-callers, and `pg_` roles cannot be kept.
+both. Members of a kept role keep their access through it. PUBLIC, the
+roles a data API uses for anonymous and signed-in callers, and `pg_` roles
+cannot be kept. Superusers are out of scope: harden neither checks nor
+changes them.
 
 With `--apply`, in one transaction, harden:
 
-- revokes every privilege on the sync tables, their sequences and the mtix
-  functions from PUBLIC, from the data-API roles and from every other role
-  except the table owner, superusers and the kept roles;
+- revokes every privilege on the sync tables (including privileges on
+  single columns), their sequences and the mtix functions from PUBLIC,
+  from the data-API roles and from every other role except the table
+  owner, superusers and the kept roles;
 - revokes a kept role's right to grant its privileges to others, and with
   it whatever the kept role granted on;
 - revokes the owner's default privileges toward those roles, so tables the
@@ -1665,15 +1669,23 @@ function or sequence is owned by another role; the transaction is rolled
 back, so nothing changes, and the message names the object. It then checks
 again: for every role except the owner, superusers and the kept roles, it
 asks PostgreSQL which of SELECT, INSERT, UPDATE, DELETE, TRUNCATE,
-REFERENCES and TRIGGER the role holds on each sync table (and the sequence
-and function privileges), so access through PUBLIC, role membership and the
-predefined read-all roles is found too.
+REFERENCES and TRIGGER the role holds on each sync table or any of its
+columns (and the sequence and function privileges), so access through
+PUBLIC, role membership and the predefined read-all roles is found too. A
+role that can switch to another role with SET ROLE, without inheriting
+it, is reported as well.
 
 Access harden may not change is reported, not changed: a read-all
 membership that another role granted (the report prints the statement a
 database administrator runs), membership in the owner role (which carries
-all of the owner's privileges), and other roles' default privileges, which
-do not apply to tables the owner creates. After `--apply` with
+all of the owner's privileges), and an mtix function or sequence owned by
+another role (the report prints the `ALTER ... OWNER TO` statement an
+administrator runs). Two things are information and never fail
+verification: other roles' default privileges, which do not apply to
+tables the owner creates, and EXECUTE on the mtix trigger functions, which
+cannot be called directly (a trigger fires without it; `--apply` revokes
+it when it makes other changes). A freshly migrated hub therefore
+verifies clean. After `--apply` with
 `--keep-role`, harden prints the `mtix config set sync.keep_roles` command
 that records the kept roles; it never writes the config itself.
 
@@ -1689,7 +1701,8 @@ or access remains (after `--apply`), 1 on an error or a refusal. With
 `executed` and `keep_roles_hint`. Each finding has `role`, `object`,
 `kind` (`table`, `sequence`, `function`, `default_acl`, `role` or
 `trigger`), `privileges`, `via` (`grant`, `grant_option`, `membership`,
-`owner_membership`, `default_acl`, `missing` or `disabled`), `scope`
+`owner_membership`, `default_acl`, `object_owner`, `missing` or
+`disabled`), `scope`
 (`cluster-wide` for a membership), and `fix` (the statement `--apply`
 runs) or, when harden cannot fix it, `manual` (the statement an
 administrator runs) or `note` (why).

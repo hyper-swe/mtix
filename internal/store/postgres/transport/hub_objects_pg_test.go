@@ -7,6 +7,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/store/postgres/migrations"
@@ -78,4 +80,25 @@ func TestMigrateAndHarden_NoRowLevelSecurity(t *testing.T) {
 		 JOIN pg_catalog.pg_class c ON c.oid = pg_catalog.to_regclass(t.name)
 		 WHERE c.relrowsecurity OR c.relforcerowsecurity`, tables),
 		"no sync table has row-level security enabled or forced")
+}
+
+// TestHarden_WarningBeforeStatements_FailsRun: a WARNING that arrives
+// before --apply runs its first statement (while the hub is read) fails
+// the run and names the read, and nothing changes (MTIX-95.1).
+func TestHarden_WarningBeforeStatements_FailsRun(t *testing.T) {
+	f := newHubFixture(t)
+	owner := f.ownerRole()
+	warnings := transport.NewWarningLog()
+	pool := f.openAs(owner, transport.Options{OnNotice: warnings.Record})
+	ctx := context.Background()
+	require.NoError(t, pool.Migrate(ctx))
+	f.exec(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO PUBLIC`)
+
+	warnings.Record(&pgconn.Notice{SeverityUnlocalized: "WARNING", Message: "early warning"})
+	_, err := pool.Harden(ctx, transport.HardenRequest{Apply: true, Warnings: warnings})
+	require.ErrorIs(t, err, transport.ErrHubWarning)
+	require.Contains(t, err.Error(), "reading the hub raised a server WARNING: early warning")
+	require.Equal(t, []string{"true"}, f.queryStrings(
+		`SELECT pg_catalog.has_table_privilege('public', 'public.audit_log', 'SELECT')::text`),
+		"the grant to PUBLIC is still there")
 }

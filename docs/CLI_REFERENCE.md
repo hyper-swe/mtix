@@ -1346,21 +1346,24 @@ keep. Without --apply this is a dry run: it lists every role, default
 privilege and membership it would change, and changes nothing.
 
 With --apply, in one transaction, it revokes every privilege on those
-objects from PUBLIC, from the roles a data API uses for anonymous and
-signed-in callers, and from every other role except the table owner,
-superusers and the roles named with --keep-role or in the sync.keep_roles
-config key. A kept role keeps its privileges but loses any right to grant
+objects, column privileges included, from PUBLIC, from the roles a data
+API uses for anonymous and signed-in callers, and from every other role
+except the table owner, superusers and the roles named with --keep-role
+or in the sync.keep_roles config key. A kept role keeps its privileges,
+and its members keep them through it, but it loses any right to grant
 them on. The owner's default privileges that would give those roles
 access to tables created later are revoked too. A membership in
 pg_read_all_data or pg_write_all_data is revoked when the owner may do
 so; it is cluster-wide. A missing TRUNCATE guard is restored and a
 disabled one enabled. A server WARNING fails the run and nothing changes.
 Access it cannot remove is reported with the statement an administrator
-runs.
+runs. EXECUTE on the mtix trigger functions and other roles' default
+privileges are information and never fail verification.
 
-Run it as the role that owns the sync tables; any other role is refused
-and nothing changes. Review the dry run's role list before --apply: a
-role you do not keep loses its access.
+Run it as the role that owns the sync tables, or as a superuser or a
+member of the owner role; any other role is refused and nothing changes.
+Superusers are not checked. Review the dry run's role list before
+--apply: a role you do not keep loses its access.
 
 Exit code: 0 when verification passes, 2 when changes are pending (dry
 run) or access remains (--apply), 1 on an error or a refusal. --json

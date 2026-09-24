@@ -4,10 +4,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
 // exposedHub builds the fixture hub the harden tests share: the owner has
@@ -113,6 +117,21 @@ func TestHarden_RevokesUnintendedAccess(t *testing.T) {
 
 	out, err = f.harden(h.owner, "--keep-role", h.team)
 	require.NoError(t, err, "a dry run on the hardened hub is clean: %s", out)
+
+	// Column privileges are privileges too: to a data-API role and to an
+	// unrelated role, on a hub that just verified clean.
+	f.ddl(`GRANT SELECT (event_id, payload), UPDATE (payload) ON sync_events TO %I`, h.anon)
+	f.ddl(`GRANT SELECT (actor) ON audit_log TO %I`, h.unrel)
+	require.Contains(t, f.privileges(h.anon), "sync_events column UPDATE")
+	out, err = f.harden(h.owner, "--keep-role", h.team)
+	require.Equal(t, 2, exitCodeForError(err), "column privileges fail verification: %s", out)
+	require.Contains(t, out, "SELECT (event_id, payload), UPDATE (payload)")
+	require.Contains(t, out, "REVOKE ALL ON TABLE public.sync_events FROM anon CASCADE")
+	require.Contains(t, out, "REVOKE ALL ON TABLE public.audit_log FROM "+h.unrel+" CASCADE")
+	out, err = f.harden(h.owner, "--apply", "--keep-role", h.team)
+	require.NoError(t, err, "column privileges are revoked: %s", out)
+	require.Empty(t, f.privileges(h.anon))
+	require.Empty(t, f.privileges(h.unrel))
 }
 
 // TestHarden_JSON_ReportsFindingFields: --json carries the finding fields
@@ -202,6 +221,7 @@ func TestHarden_NonOwner_RefusesWithoutChanges(t *testing.T) {
 				require.Equal(t, 1, exitCodeForError(err))
 				require.Contains(t, err.Error(),
 					"refused: the connecting role does not own every sync table")
+				require.ErrorIs(t, err, transport.ErrHardenNotOwner)
 				require.NotContains(t, out, "REVOKE", "a refusal lists no statements")
 				require.Equal(t, before, f.snapshot(), "args %v change nothing", args)
 			}
@@ -253,6 +273,7 @@ func TestHarden_RevokeWarningIsFailure(t *testing.T) {
 			require.Contains(t, err.Error(), "WARNING")
 			require.Contains(t, err.Error(), tt.warning, "the WARNING itself is cited")
 			require.Contains(t, err.Error(), tt.object, "the object is named")
+			require.ErrorIs(t, err, transport.ErrHubWarning)
 			require.Equal(t, before, h.f.snapshot(), "the failed run rolled back")
 		})
 	}
@@ -260,7 +281,8 @@ func TestHarden_RevokeWarningIsFailure(t *testing.T) {
 
 // TestHarden_CleanHub_NoDDL: `harden --apply` on a hub that already
 // verifies clean issues no DDL, which an event trigger that refuses every
-// DDL command proves, and exits 0 (MTIX-95.1, F-44).
+// DDL command proves, and exits 0 (MTIX-95.1, F-44). A freshly migrated hub
+// is such a hub.
 func TestHarden_CleanHub_NoDDL(t *testing.T) {
 	initTestApp(t)
 	f := newHardenFixture(t)
@@ -269,22 +291,193 @@ func TestHarden_CleanHub_NoDDL(t *testing.T) {
 	f.migrateAs(owner)
 	f.ddl(`GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO %I`, team)
 
-	out, err := f.harden(owner, "--apply", "--keep-role", team)
-	require.NoError(t, err, "the first --apply makes the hub clean: %s", out)
-
 	f.exec(`CREATE FUNCTION mtixt_refuse_ddl() RETURNS event_trigger LANGUAGE plpgsql AS $$
 		BEGIN RAISE EXCEPTION 'ddl refused: %', tg_tag; END $$`)
 	f.exec(`CREATE EVENT TRIGGER mtixt_refuse_ddl ON ddl_command_start EXECUTE FUNCTION mtixt_refuse_ddl()`)
-	err = f.tryAs(owner, `GRANT SELECT ON audit_log TO PUBLIC`)
+	err := f.tryAs(owner, `GRANT SELECT ON audit_log TO PUBLIC`)
 	require.Error(t, err, "the event trigger refuses the owner's DDL")
 	require.Contains(t, err.Error(), "ddl refused: GRANT")
 
-	out, err = f.harden(owner, "--apply", "--keep-role", team)
+	out, err := f.harden(owner, "--apply", "--keep-role", team)
 	require.NoError(t, err, "--apply on a clean hub issues no DDL and exits 0: %s", out)
 	require.Contains(t, out, "nothing to change")
 
 	out, err = f.harden(owner, "--keep-role", team)
 	require.NoError(t, err, "a dry run on a clean hub exits 0: %s", out)
+}
+
+// TestHarden_FreshHub_VerifiesClean: a freshly migrated hub, with no role
+// configured, verifies clean (exit 0). EXECUTE for PUBLIC on the mtix
+// trigger functions is reported as information: a trigger function cannot
+// be called directly, and triggers fire without EXECUTE (MTIX-95.1).
+func TestHarden_FreshHub_VerifiesClean(t *testing.T) {
+	initTestApp(t)
+	f := newHardenFixture(t)
+	owner := f.ownerRole()
+	f.migrateAs(owner)
+	app.jsonOutput = true
+
+	out, err := f.harden(owner)
+	require.NoError(t, err, "a fresh hub verifies clean: %s", out)
+	var result struct {
+		Before struct {
+			Findings   []json.RawMessage `json:"findings"`
+			Statements []string          `json:"statements"`
+			Info       []struct {
+				Role, Object, Kind, Fix, Note string
+			} `json:"info"`
+		} `json:"before"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &result), out)
+	require.Empty(t, result.Before.Findings)
+	require.Empty(t, result.Before.Statements, "--apply would run nothing")
+	objects := map[string]bool{}
+	for _, i := range result.Before.Info {
+		if i.Role == "PUBLIC" && i.Kind == "function" {
+			objects[i.Object] = true
+			require.Contains(t, i.Note, "trigger function")
+		}
+	}
+	require.Equal(t, map[string]bool{
+		"public.append_only_no_truncate()": true, "public.audit_log_immutable()": true,
+	}, objects)
+}
+
+// TestHarden_RoleMemberships_Reported: access held through a role is
+// reported: members of the owner role that inherit it or can SET ROLE to
+// it (never changed), a member of pg_read_all_data that can only SET ROLE
+// to it, a role that can SET ROLE to such a member, and table and column
+// privileges inherited from a role verification does not check
+// (MTIX-95.1).
+func TestHarden_RoleMemberships_Reported(t *testing.T) {
+	initTestApp(t)
+	f := newHardenFixture(t)
+	owner := f.ownerRole()
+	inh, setOnly := f.role("inh"), f.role("setonly")
+	setReader, grp, viaGrp := f.role("setreader"), f.role("grp"), f.role("viagrp")
+	su, viaSu := f.role("su"), f.role("viasu")
+	f.migrateAs(owner)
+
+	f.ddl(`GRANT %I TO %I`, owner, inh)
+	f.ddl(`GRANT %I TO %I WITH INHERIT FALSE`, owner, setOnly)
+	f.ddl(`GRANT pg_read_all_data TO %I WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`, owner)
+	f.ddl(`GRANT pg_read_all_data TO %I WITH INHERIT FALSE GRANTED BY %I`, setReader, owner)
+	f.ddl(`GRANT pg_read_all_data TO %I GRANTED BY %I`, grp, owner)
+	f.ddl(`GRANT %I TO %I WITH INHERIT FALSE`, grp, viaGrp)
+	f.ddl(`ALTER ROLE %I SUPERUSER`, su)
+	f.ddl(`GRANT REFERENCES, TRIGGER ON sync_events TO %I`, su)
+	f.ddl(`GRANT UPDATE (payload) ON sync_events TO %I`, su)
+	f.ddl(`GRANT %I TO %I WITH INHERIT TRUE, SET FALSE`, su, viaSu)
+	app.jsonOutput = true
+
+	type finding struct {
+		Role, Object, Kind, Via, Fix string
+		Privileges                   []string
+	}
+	// report runs harden and returns the last verification's findings,
+	// keyed by "role object".
+	report := func(args ...string) (map[string]finding, error) {
+		out, err := f.harden(owner, args...)
+		var raw struct {
+			Before struct{ Findings []finding }  `json:"before"`
+			After  *struct{ Findings []finding } `json:"after"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &raw), out)
+		fs := raw.Before.Findings
+		if raw.After != nil {
+			fs = raw.After.Findings
+		}
+		byRole := map[string]finding{}
+		for _, fd := range fs {
+			byRole[fd.Role+" "+fd.Object] = fd
+		}
+		return byRole, err
+	}
+
+	before, err := report()
+	require.Equal(t, 2, exitCodeForError(err))
+	require.Equal(t, "owner_membership", before[inh+" "+owner].Via, "an inheriting member of the owner")
+	require.Equal(t, "owner_membership", before[setOnly+" "+owner].Via, "a SET-only member of the owner")
+	require.NotEmpty(t, before[setReader+" pg_read_all_data"].Fix, "a SET-only read-all member is revoked")
+	require.NotEmpty(t, before[grp+" pg_read_all_data"].Fix)
+	require.NotEmpty(t, before[viaGrp+" pg_read_all_data"].Fix, "a role that can SET ROLE to a read-all member")
+	ref := before[viaSu+" public.sync_events"]
+	require.Equal(t, "membership", ref.Via)
+	require.Equal(t, []string{"REFERENCES", "TRIGGER", "UPDATE"}, ref.Privileges,
+		"inherited table and column privileges")
+
+	after, err := report("--apply")
+	require.Equal(t, 2, exitCodeForError(err), "owner members and inherited access remain")
+	require.Contains(t, after, inh+" "+owner)
+	require.Contains(t, after, setOnly+" "+owner)
+	require.Contains(t, after, viaSu+" public.sync_events")
+	require.NotContains(t, after, setReader+" pg_read_all_data")
+	require.NotContains(t, after, grp+" pg_read_all_data")
+	require.NotContains(t, after, viaGrp+" pg_read_all_data")
+	require.Contains(t, f.strings(`SELECT 1::text WHERE pg_catalog.pg_has_role($1::text, $2::text, 'MEMBER')`, setOnly, owner),
+		"1", "owner membership is never changed")
+}
+
+// TestHarden_ApplyWhileMigrationLockHeld_FailsFast: --apply takes the
+// migration advisory lock with a 5-second lock timeout, so while another
+// session holds the lock it fails within the timeout and changes nothing,
+// instead of queueing pushes and pulls behind it (MTIX-95.1, F-44). The dry
+// run takes no lock and still reports.
+func TestHarden_ApplyWhileMigrationLockHeld_FailsFast(t *testing.T) {
+	h := newExposedHub(t, true)
+	f := h.f
+	ctx := context.Background()
+	holder, err := f.admin.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = holder.Rollback(ctx) }()
+	_, err = holder.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, transport.AdvisoryLockKey)
+	require.NoError(t, err)
+	before := f.snapshot()
+
+	_, err = f.harden(h.owner, "--keep-role", h.team)
+	require.Equal(t, 2, exitCodeForError(err), "the dry run does not wait for the lock")
+
+	start := time.Now()
+	_, err = f.harden(h.owner, "--apply", "--keep-role", h.team)
+	elapsed := time.Since(start)
+	require.Error(t, err)
+	require.Equal(t, 1, exitCodeForError(err))
+	require.Contains(t, err.Error(), "lock timeout")
+	require.Less(t, elapsed, 9*time.Second, "fails at the 5-second lock timeout, before the statement timeout")
+	require.Equal(t, before, f.snapshot(), "nothing changed")
+}
+
+// TestHarden_IncompleteSchema_Refuses: harden refuses, with exit 1 and no
+// change, when a sync table is missing or the sync tables resolve to more
+// than one schema (MTIX-95.1).
+func TestHarden_IncompleteSchema_Refuses(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(h *exposedHub)
+		want  string
+	}{
+		{"missing table", func(h *exposedHub) { h.f.exec(`DROP TABLE sync_hub_state`) }, "sync_hub_state is missing"},
+		{"tables in two schemas", func(h *exposedHub) {
+			h.f.ddl(`CREATE SCHEMA mtixt_other AUTHORIZATION %I`, h.owner)
+			h.f.exec(`ALTER TABLE sync_hub_state SET SCHEMA mtixt_other`)
+			h.f.ddl(`ALTER DATABASE %I SET search_path = public, mtixt_other`, h.f.dbName)
+		}, "span schemas"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newExposedHub(t, true)
+			tt.setup(h)
+			before := h.f.snapshot()
+			for _, args := range [][]string{{}, {"--apply"}} {
+				_, err := h.f.harden(h.owner, append(args, "--keep-role", h.team)...)
+				require.Error(t, err)
+				require.Equal(t, 1, exitCodeForError(err))
+				require.ErrorIs(t, err, transport.ErrSyncSchemaIncomplete)
+				require.Contains(t, err.Error(), tt.want)
+				require.Equal(t, before, h.f.snapshot())
+			}
+		})
+	}
 }
 
 // TestHarden_UnknownKeptRole_Refuses: a kept role that does not exist is
@@ -300,4 +493,23 @@ func TestHarden_UnknownKeptRole_Refuses(t *testing.T) {
 		require.Contains(t, err.Error(), "does not exist")
 		require.Equal(t, before, h.f.snapshot(), "args %v change nothing", args)
 	}
+}
+
+// TestHarden_FunctionOwnedByAnotherRole_Reported: an mtix trigger function
+// owned by a role other than the sync tables' owner fails verification,
+// with the statement an administrator runs to return it, even when no
+// privilege needs revoking (MTIX-95.1).
+func TestHarden_FunctionOwnedByAnotherRole_Reported(t *testing.T) {
+	initTestApp(t)
+	f := newHardenFixture(t)
+	owner, unrel := f.ownerRole(), f.role("unrel")
+	f.migrateAs(owner)
+	f.ddl(`ALTER FUNCTION append_only_no_truncate() OWNER TO %I`, unrel)
+
+	out, err := f.harden(owner)
+	require.Equal(t, 2, exitCodeForError(err), out)
+	require.Contains(t, out, "object_owner")
+	require.Contains(t, out, "ALTER FUNCTION public.append_only_no_truncate() OWNER TO "+owner)
+	out, err = f.harden(owner, "--apply")
+	require.Equal(t, 2, exitCodeForError(err), "only an administrator can return it: %s", out)
 }

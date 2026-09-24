@@ -30,12 +30,16 @@ const (
 	tTable uint32 = 30001
 	tSeq   uint32 = 30002
 	tFunc  uint32 = 30003
+
+	tPlainFunc uint32 = 30004 // a function that does not return trigger
 )
 
 var (
 	keyTable = objKey{cat: catRelation, oid: tTable}
 	keySeq   = objKey{cat: catRelation, oid: tSeq}
 	keyFunc  = objKey{cat: catFunction, oid: tFunc}
+
+	keyPlainFunc = objKey{cat: catFunction, oid: tPlainFunc}
 )
 
 // baseCatalog is a clean hub: the owner's own grants, one kept team role
@@ -57,7 +61,8 @@ func baseCatalog() *hubCatalog {
 		objects: []hubObject{
 			{key: keyTable, kind: FindingKindTable, schema: "public", name: "audit_log", owner: tOwner},
 			{key: keySeq, kind: FindingKindSequence, schema: "public", name: "audit_log_audit_id_seq", owner: tOwner},
-			{key: keyFunc, kind: FindingKindFunction, schema: "public", name: "audit_log_immutable", owner: tOwner},
+			{key: keyFunc, kind: FindingKindFunction, schema: "public", name: "audit_log_immutable", owner: tOwner, trigger: true},
+			{key: keyPlainFunc, kind: FindingKindFunction, schema: "public", name: "plain_fn", owner: tOwner},
 		},
 		acl: []aclEntry{
 			{obj: keyTable, grantee: tOwner, privilege: "SELECT"},
@@ -65,7 +70,8 @@ func baseCatalog() *hubCatalog {
 			{obj: keyTable, grantee: tTeam, privilege: "INSERT"},
 			{obj: keySeq, grantee: tTeam, privilege: "USAGE"},
 		},
-		usage: map[[2]uint32]bool{},
+		usage:  map[[2]uint32]bool{},
+		member: map[[2]uint32]bool{},
 		guards: []guardState{
 			{table: "audit_log", trigger: "audit_log_no_truncate", enabled: "O", function: guardFunction},
 		},
@@ -132,9 +138,31 @@ func TestComputeFindings_Grants_RevokeNonKeptRoles(t *testing.T) {
 			want: []string{"unrel|sequence|public.audit_log_audit_id_seq|grant|USAGE|revoke SEQUENCE public audit_log_audit_id_seq unrel"},
 		},
 		{
-			name: "PUBLIC execute on a function",
-			acl:  []aclEntry{{obj: keyFunc, grantee: publicOID, privilege: "EXECUTE"}},
-			want: []string{"PUBLIC|function|public.audit_log_immutable()|grant|EXECUTE|revoke-public-function public audit_log_immutable"},
+			name: "PUBLIC execute on a function that is not a trigger function",
+			acl:  []aclEntry{{obj: keyPlainFunc, grantee: publicOID, privilege: "EXECUTE"}},
+			want: []string{"PUBLIC|function|public.plain_fn()|grant|EXECUTE|revoke-public-function public plain_fn"},
+		},
+		{
+			name: "column privileges of a non-kept role",
+			acl: []aclEntry{
+				{obj: keyTable, grantee: tAnon, privilege: "SELECT", column: "payload"},
+				{obj: keyTable, grantee: tAnon, privilege: "SELECT", column: "event_id"},
+				{obj: keyTable, grantee: tAnon, privilege: "UPDATE", column: "payload"},
+			},
+			want: []string{"anon|table|public.audit_log|grant|SELECT (event_id, payload),UPDATE (payload)|revoke TABLE public audit_log anon"},
+		},
+		{
+			name: "column and table privileges together",
+			acl: []aclEntry{
+				{obj: keyTable, grantee: tUnrel, privilege: "SELECT"},
+				{obj: keyTable, grantee: tUnrel, privilege: "UPDATE", column: "actor"},
+			},
+			want: []string{"unrel|table|public.audit_log|grant|SELECT,UPDATE (actor)|revoke TABLE public audit_log unrel"},
+		},
+		{
+			name: "kept role holding a column grant option",
+			acl:  []aclEntry{{obj: keyTable, grantee: tTeam, privilege: "SELECT", column: "payload", grantable: true}},
+			want: []string{"team|table|public.audit_log|grant_option|SELECT (payload)|revoke-grant-option TABLE public audit_log team"},
 		},
 		{
 			name: "kept role holding a grant option",
@@ -260,6 +288,7 @@ func TestComputeFindings_Memberships(t *testing.T) {
 	t.Run("member of the owner role is reported, never changed", func(t *testing.T) {
 		cat := baseCatalog()
 		cat.usage[[2]uint32{tCarol, tOwner}] = true
+		cat.member[[2]uint32{tCarol, tOwner}] = true
 		cat.effective = []effPriv{{role: tCarol, obj: keyTable, privilege: "DELETE"}}
 		findings, _ := computeFindings(cat, keptTeam())
 		require.Equal(t, []string{"carol|role|owner|owner_membership||-"}, summaries(findings))
@@ -382,7 +411,7 @@ func TestPlanActions_Order_RevokesGrantOptionsFirst(t *testing.T) {
 	findings, _ := computeFindings(cat, keptTeam())
 
 	var shapes []string
-	for _, a := range planActions(findings) {
+	for _, a := range planActions(findings, nil) {
 		shapes = append(shapes, a.shape())
 	}
 	require.Equal(t, []string{
@@ -412,4 +441,111 @@ func TestAction_Args_RejectsUnexpectedValues(t *testing.T) {
 		_, err := bad.args()
 		require.Error(t, err)
 	}
+}
+
+// TestComputeFindings_TriggerFunctionExecute_IsInformation: EXECUTE on an
+// mtix trigger function is information, not a finding: a trigger function
+// cannot be called directly and triggers fire without EXECUTE. A hub whose
+// only item is that verifies clean, and --apply plans nothing; when --apply
+// runs for other findings it revokes it too (MTIX-95.1).
+func TestComputeFindings_TriggerFunctionExecute_IsInformation(t *testing.T) {
+	cat := baseCatalog()
+	cat.acl = append(cat.acl,
+		aclEntry{obj: keyFunc, grantee: publicOID, privilege: "EXECUTE"},
+		aclEntry{obj: keyFunc, grantee: tAnon, privilege: "EXECUTE"},
+	)
+	cat.effective = []effPriv{{role: tUnrel, obj: keyFunc, privilege: "EXECUTE"}}
+	findings, info := computeFindings(cat, keptTeam())
+	require.Empty(t, findings, "trigger-function EXECUTE is not a finding")
+	require.Equal(t, []string{
+		"PUBLIC|function|public.audit_log_immutable()|grant|EXECUTE|revoke-public-function public audit_log_immutable",
+		"anon|function|public.audit_log_immutable()|grant|EXECUTE|revoke-function public audit_log_immutable anon",
+	}, summaries(info))
+	for _, f := range info {
+		require.Contains(t, f.Note, "trigger function")
+	}
+	require.Empty(t, planActions(findings, info), "nothing to apply when nothing fails")
+
+	cat.acl = append(cat.acl, aclEntry{obj: keyTable, grantee: tAnon, privilege: "SELECT"})
+	findings, info = computeFindings(cat, keptTeam())
+	var shapes []string
+	for _, a := range planActions(findings, info) {
+		shapes = append(shapes, a.shape())
+	}
+	require.Equal(t, []string{
+		"revoke TABLE public audit_log anon",
+		"revoke-function public audit_log_immutable anon",
+		"revoke-public-function public audit_log_immutable",
+	}, shapes, "with other changes, --apply also revokes trigger-function EXECUTE")
+}
+
+// TestComputeFindings_KeptMember_ExtraPrivilegeReported: membership of a
+// kept role explains only the privileges the kept role itself holds.
+func TestComputeFindings_KeptMember_ExtraPrivilegeReported(t *testing.T) {
+	cat := baseCatalog()
+	cat.usage[[2]uint32{tAlice, tTeam}] = true
+	cat.member[[2]uint32{tAlice, tTeam}] = true
+	cat.effective = []effPriv{
+		{role: tTeam, obj: keyTable, privilege: "SELECT"},
+		{role: tAlice, obj: keyTable, privilege: "SELECT"},
+		{role: tAlice, obj: keyTable, privilege: "DELETE"},
+	}
+	findings, _ := computeFindings(cat, keptTeam())
+	require.Equal(t, []string{"alice|table|public.audit_log|membership|DELETE|-"}, summaries(findings))
+}
+
+// TestComputeFindings_OwnerMembership_SetOnlyMemberReported: a member of
+// the owner role that can SET ROLE to it, without inheriting, holds the
+// owner's privileges on demand and is reported like an inheriting member.
+func TestComputeFindings_OwnerMembership_SetOnlyMemberReported(t *testing.T) {
+	cat := baseCatalog()
+	cat.member[[2]uint32{tCarol, tOwner}] = true // SET only: no usage pair
+	findings, _ := computeFindings(cat, keptTeam())
+	require.Equal(t, []string{"carol|role|owner|owner_membership||-"}, summaries(findings))
+}
+
+// TestComputeFindings_MemberOfReadAllMember_Reported: a role that inherits
+// or can SET ROLE to a direct member of a read-all role is reported too,
+// with the same fix as that member, which --apply runs once.
+func TestComputeFindings_MemberOfReadAllMember_Reported(t *testing.T) {
+	cat := baseCatalog()
+	cat.edges = []roleEdge{{role: tReadAll, member: tGroup, grantor: tOwner, revocable: true}}
+	cat.member[[2]uint32{tBob, tGroup}] = true // SET only
+	findings, _ := computeFindings(cat, keptTeam())
+	require.Equal(t, []string{
+		"bob|role|pg_read_all_data|membership||revoke-membership pg_read_all_data grp owner",
+		"grp|role|pg_read_all_data|membership||revoke-membership pg_read_all_data grp owner",
+	}, summaries(findings))
+	require.Contains(t, findings[0].Note, "through grp")
+	require.Len(t, planActions(findings, nil), 1, "one revoke covers both")
+}
+
+// TestComputeFindings_ObjectOwnedByAnotherRole_Reported: an mtix function
+// or sequence owned by a role other than the sync tables' owner is
+// reported with the administrator's statement that returns it: its owner
+// could replace a trigger function's body. A superuser owner is out of
+// scope (MTIX-95.1).
+func TestComputeFindings_ObjectOwnedByAnotherRole_Reported(t *testing.T) {
+	cat := baseCatalog()
+	cat.objects[2].owner = tUnrel // audit_log_immutable()
+	cat.objects[1].owner = tSuper // the sequence
+	findings, _ := computeFindings(cat, keptTeam())
+	require.Equal(t, []string{
+		"unrel|function|public.audit_log_immutable()|object_owner||-|manual:manual-owner-function public audit_log_immutable owner",
+	}, summaries(findings))
+	require.Contains(t, findings[0].Note, "owned by")
+}
+
+// TestComputeFindings_TriggerFunctionEffectiveExecute_NotReported: EXECUTE
+// on an mtix trigger function that a role holds through membership alone
+// is not access either (MTIX-95.1).
+func TestComputeFindings_TriggerFunctionEffectiveExecute_NotReported(t *testing.T) {
+	cat := baseCatalog()
+	cat.effective = []effPriv{
+		{role: tUnrel, obj: keyFunc, privilege: "EXECUTE"},
+		{role: tUnrel, obj: keyPlainFunc, privilege: "EXECUTE"},
+	}
+	findings, _ := computeFindings(cat, keptTeam())
+	require.Equal(t, []string{"unrel|function|public.plain_fn()|membership|EXECUTE|-"}, summaries(findings),
+		"only the function that is not a trigger function is reported")
 }

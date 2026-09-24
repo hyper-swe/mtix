@@ -42,11 +42,12 @@ type objKey struct {
 
 // hubObject is one sync table, sequence or mtix function.
 type hubObject struct {
-	key    objKey
-	kind   string // FindingKindTable, FindingKindSequence or FindingKindFunction
-	schema string
-	name   string
-	owner  uint32
+	key     objKey
+	kind    string // FindingKindTable, FindingKindSequence or FindingKindFunction
+	schema  string
+	name    string
+	owner   uint32
+	trigger bool // a function that returns trigger: callable only as a trigger
 }
 
 // label names the object as findings show it: schema.name, with () after
@@ -58,12 +59,14 @@ func (o *hubObject) label() string {
 	return o.schema + "." + o.name
 }
 
-// aclEntry is one privilege from an object's ACL (aclexplode).
+// aclEntry is one privilege from an object's ACL (aclexplode), or from a
+// column's ACL when column is set.
 type aclEntry struct {
 	obj       objKey
 	grantee   uint32 // publicOID for PUBLIC
 	privilege string
 	grantable bool
+	column    string // "" for a privilege on the whole object
 }
 
 // roleInfo is one row of pg_roles.
@@ -117,7 +120,8 @@ type hubCatalog struct {
 	acl       []aclEntry
 	defaults  []defaultACL
 	edges     []roleEdge
-	usage     map[[2]uint32]bool // [member, role]: member has role's privileges
+	usage     map[[2]uint32]bool // [member, role]: member inherits role's privileges
+	member    map[[2]uint32]bool // [member, role]: member inherits role or can SET ROLE to it
 	effective []effPriv
 	guards    []guardState
 }
@@ -162,7 +166,7 @@ func loadCatalog(ctx context.Context, tx pgx.Tx, kept []string, requireOwner boo
 	if err != nil {
 		return nil, fmt.Errorf("sync table list: %w", err)
 	}
-	c := &hubCatalog{owners: map[uint32]bool{}, usage: map[[2]uint32]bool{}}
+	c := &hubCatalog{owners: map[uint32]bool{}, usage: map[[2]uint32]bool{}, member: map[[2]uint32]bool{}}
 	if err := c.loadTables(ctx, tx, tables); err != nil {
 		return nil, err
 	}

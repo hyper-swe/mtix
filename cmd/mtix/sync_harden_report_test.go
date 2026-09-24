@@ -6,11 +6,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
@@ -37,7 +40,8 @@ func sampleReport() *transport.PrivilegeReport {
 		},
 		Info: []transport.PrivilegeFinding{
 			{Role: "anon", Object: "default privileges of postgres in all schemas on tables",
-				Kind: transport.FindingKindDefaultACL, Privileges: []string{"SELECT"}, Via: transport.FindingViaDefaultACL},
+				Kind: transport.FindingKindDefaultACL, Privileges: []string{"SELECT"}, Via: transport.FindingViaDefaultACL,
+				Note: "another role's default privileges do not apply to tables the owner creates"},
 		},
 		Statements: []string{
 			"REVOKE GRANT OPTION FOR ALL ON TABLE public.sync_projects FROM team CASCADE",
@@ -65,7 +69,8 @@ func TestPrintHardenResult_DryRun_ListsRolesBeforeDetail(t *testing.T) {
 		"Changes --apply would make:",
 		"Access --apply cannot remove (an administrator must act):",
 		"an administrator runs: REVOKE pg_read_all_data FROM reader",
-		"Not changed (default privileges of other roles",
+		"Information (does not fail verification):",
+		"another role's default privileges do not apply to tables the owner creates",
 		"Statements --apply would run, in order:",
 		"Then run: mtix sync harden --apply --keep-role team",
 	}
@@ -146,4 +151,23 @@ func TestSafeText_CatalogNames_QuotesUnprintable(t *testing.T) {
 	require.Equal(t, "mtix_team", safeText("mtix_team"))
 	require.Equal(t, `"evil\x1b[2J"`, safeText("evil\x1b[2J"))
 	require.Equal(t, `"t\u00e9am"`, safeText("t\u00e9am"))
+}
+
+// TestHardenErr_KnownSentinels_StayInChain: after the DSN scrub, the
+// refusal, WARNING, schema and invalid-input sentinels stay in the error
+// chain, so callers can test them with errors.Is; other errors keep only
+// their scrubbed text (MTIX-95.1).
+func TestHardenErr_KnownSentinels_StayInChain(t *testing.T) {
+	for _, sentinel := range []error{
+		transport.ErrHardenNotOwner, transport.ErrHubWarning,
+		transport.ErrSyncSchemaIncomplete, model.ErrInvalidInput,
+	} {
+		err := hardenErr("", fmt.Errorf("harden: %w", sentinel))
+		require.ErrorIs(t, err, sentinel)
+		require.Equal(t, "mtix sync harden: "+sentinel.Error(), err.Error(), "the text is not repeated")
+	}
+	other := errors.New("boom")
+	err := hardenErr("connect", fmt.Errorf("x: %w", other))
+	require.NotErrorIs(t, err, other)
+	require.Equal(t, "mtix sync harden connect: x: boom", err.Error())
 }

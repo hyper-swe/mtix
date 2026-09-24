@@ -3,16 +3,16 @@
 -- auto-applied in lexical order via migrations.Files(). DO NOT run manually.
 -- (014 and 015 are reserved by MTIX-95.5 and MTIX-95.4.)
 --
--- The append-only tables refuse TRUNCATE, as they refuse UPDATE and
--- DELETE (FR-18.5, 006). Row triggers never fire on TRUNCATE, so each
--- table gets a BEFORE TRUNCATE ... FOR EACH STATEMENT trigger that raises.
--- A TRUNCATE ... CASCADE fires the trigger of every table it would empty.
+-- Each append-only table also has a statement-level TRUNCATE guard: a
+-- BEFORE TRUNCATE ... FOR EACH STATEMENT trigger that raises, next to the
+-- row triggers of 006 that refuse UPDATE and DELETE (FR-18.5). A
+-- TRUNCATE ... CASCADE fires the guard of every table it would empty.
 --
 -- Each guard is created only when pg_trigger lacks it. CREATE TRIGGER
--- takes a lock that blocks every reader and writer of the table, so a
--- re-run must not take it again (F-44); unlike 006, nothing is dropped and
--- re-created. `mtix sync harden` checks that every guard exists and is
--- enabled, and restores a missing one by running this file.
+-- takes a lock that blocks every writer of the table, so a re-run must not
+-- take it again (F-44); nothing is dropped and re-created. `mtix sync
+-- harden` checks that every guard exists and is enabled, and restores a
+-- missing one by running this file.
 
 CREATE OR REPLACE FUNCTION append_only_no_truncate()
 RETURNS TRIGGER AS $$

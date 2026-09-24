@@ -23,11 +23,12 @@ import (
 //
 // Usage:
 //
-//	mtix sync clone <DSN>            # full clone, refuses non-empty local
-//	mtix sync clone <DSN> --resume   # pick up from .mtix data checkpoint
+//	mtix sync clone            # full clone, refuses non-empty local
+//	mtix sync clone --resume   # pick up from .mtix data checkpoint
 //
 // Behavior:
-//  1. Resolve DSN (positional > env > .mtix/secrets).
+//  1. Resolve DSN (MTIX_SYNC_DSN > .mtix/secrets; a DSN on the command
+//     line is refused, FR-18.16 / MTIX-95.15).
 //  2. Refuse if the local sync_events table has any rows AND --resume
 //     is not set. This protects against accidentally clobbering local
 //     work; the user must explicitly choose 'mtix sync reconcile
@@ -49,14 +50,14 @@ func newSyncCloneCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "clone [DSN]",
+		Use:   "clone",
 		Short: "Clone the sync hub into a fresh local store (FR-18)",
 		Long: `Clone all events from the BYO Postgres sync hub into the local SQLite.
 Refuses if the local store already has events unless --resume is set.
 
 Use --resume to pick up an interrupted clone from the last batch
 checkpoint (.mtix data sentinel meta.sync.clone.checkpoint).`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncClone(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, resume, batchSize)
@@ -126,7 +127,7 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 	// at the journal tail so hooks never treat cloned history as a backlog of
 	// fresh events to fire on (FR-20 §8 — no wake storm on a new machine).
 	if err := app.store.InitHookScanFloorAtTail(ctx); err != nil {
-		fmt.Fprintf(stderr, "mtix sync clone: hook floor init: %s\n", err)
+		warnSync(stderr, "mtix sync clone: hook floor init", err)
 	}
 
 	fmt.Fprintf(stdout,

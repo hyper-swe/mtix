@@ -33,7 +33,7 @@ import (
 func newSyncMarkRestoredCmd() *cobra.Command {
 	var insecureTLS bool
 	cmd := &cobra.Command{
-		Use:   "mark-restored [DSN]",
+		Use:   "mark-restored",
 		Short: "Operator: advance the hub restore-epoch after a backup restore (ADR-003 §15)",
 		Long: `Advance the hub restore-epoch by one. Run this EXACTLY ONCE immediately
 after restoring the hub from a backup.
@@ -45,7 +45,7 @@ collision (Option B) and queued for admin resolution via
 restore window every collision renumbers normally.
 
 This is an OPERATOR action — no client or push can advance the epoch.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncMarkRestored(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS})

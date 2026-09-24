@@ -1257,6 +1257,8 @@ export MTIX_SYNC_DSN="postgresql://mtix_sync@hub.example.com:5432/mtix_hub?sslmo
 mtix sync init
 ```
 
+Positional DSN arguments are no longer accepted; set `MTIX_SYNC_DSN` or `.mtix/secrets`.
+
 **Never commit the DSN to a tracked yaml.** `mtix sync init` scans
 `.mtix/config.{yaml,yml,json}` for DSN-shaped keys and refuses to
 proceed if any are present (fail-closed).
@@ -1375,8 +1377,10 @@ Three triggers share the ledger, so nothing double-fires:
 ```bash
 mtix daemon                 # pull from the hub (if configured) + dispatch, every 5s
 mtix daemon --interval 10   # slower cadence
-mtix daemon /path/or/DSN    # explicit hub DSN
 ```
+
+The daemon reads the hub DSN from `MTIX_SYNC_DSN` or `.mtix/secrets`.
+Positional DSN arguments are no longer accepted.
 
 With no hub configured the daemon still runs, tailing the local journal
 (cross-process writes into the same `.mtix` keep dispatching). A second
@@ -1586,8 +1590,9 @@ Procedure when a CLI machine is lost:
 1. On every surviving CLI, run `mtix sync status`. Pending count of 0
    means all in-flight events are on the hub.
 2. The lost machine's pending events (if any) are unrecoverable.
-3. Provision the replacement machine. Run `mtix sync clone DSN` to
-   rebuild local state from the hub event log. Replay is idempotent.
+3. Provision the replacement machine. Set `MTIX_SYNC_DSN` (or
+   `.mtix/secrets`) and run `mtix sync clone` to rebuild local state
+   from the hub event log. Replay is idempotent.
 
 The `mtix_sync_workflow` MCP tool surfaces hub-unreachable conditions
 (`meta.sync.consecutive_errors ≥ 3`) so agents notice before the

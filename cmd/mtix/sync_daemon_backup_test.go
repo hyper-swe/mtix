@@ -21,7 +21,7 @@ import (
 
 func TestSyncDaemonCmd_Construction(t *testing.T) {
 	cmd := newSyncDaemonCmd()
-	require.Equal(t, "daemon [DSN]", cmd.Use)
+	require.Equal(t, "daemon", cmd.Use)
 	for _, name := range []string{"insecure-tls", "interval", "install"} {
 		require.NotNilf(t, cmd.Flags().Lookup(name), "%s flag declared", name)
 	}
@@ -119,7 +119,7 @@ func TestRemoveDaemonPID_AbsentIsNoop(t *testing.T) {
 
 func TestSyncBackupCmd_Construction(t *testing.T) {
 	cmd := newSyncBackupCmd()
-	require.Equal(t, "backup [DSN]", cmd.Use)
+	require.Equal(t, "backup", cmd.Use)
 	require.NotNil(t, cmd.Flags().Lookup("output"))
 }
 
@@ -171,4 +171,3 @@ func TestPgDumpBin_OverrideViaEnv(t *testing.T) {
 // The final command-registration check moved to sync_backfill_test.go
 // as TestSyncCmd_AllElevenFR18CommandsRegistered when MTIX-15.13.1
 // added the 11th subcommand.
-

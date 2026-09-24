@@ -15,6 +15,7 @@ package transport
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -43,6 +44,10 @@ const SecretsFilename = "secrets"
 
 // SecretsRequiredMode is the FR-18.16 mode requirement.
 const SecretsRequiredMode os.FileMode = 0o600
+
+// MaxSecretsFileSize is the largest secrets file ReadSecretsFile reads
+// (MTIX-95.15).
+const MaxSecretsFileSize = 64 << 10
 
 // trackedConfigCandidates lists the file paths under .mtix/ that
 // MUST NOT contain a DSN. If a tracked YAML/JSON config holds a key
@@ -76,6 +81,23 @@ var (
 	// ErrTLSWeakWithoutFlag is returned when the parsed DSN has a weak
 	// sslmode but --insecure-tls was not set.
 	ErrTLSWeakWithoutFlag = errors.New("weak sslmode requires --insecure-tls")
+
+	// ErrDSNMalformed is wrapped by every error for a DSN that cannot be
+	// parsed. The messages that wrap it are fixed and quote no part of
+	// the DSN (FR-18.17, MTIX-95.15).
+	ErrDSNMalformed = errors.New("DSN could not be parsed")
+
+	// ErrPositionalDSN is returned for a positional argument where none
+	// is accepted, which includes a DSN given on the command line. The
+	// hub DSN comes only from MTIX_SYNC_DSN or .mtix/secrets; the message
+	// is fixed and never repeats the argument (FR-18.16, MTIX-95.15).
+	ErrPositionalDSN = errors.New("unexpected argument; a hub DSN is not accepted on the command line: " +
+		"set MTIX_SYNC_DSN or .mtix/secrets")
+
+	// ErrSecretsFileInvalid is returned when the secrets file, after
+	// following a symlink, is not a regular file or is larger than
+	// MaxSecretsFileSize (MTIX-95.15).
+	ErrSecretsFileInvalid = errors.New("secrets file must be a regular file of at most 64 KiB")
 )
 
 // Options control non-DSN behavior of the transport.
@@ -113,29 +135,55 @@ func Source(mtixDir string) (string, error) {
 		return v, nil
 	}
 
-	// Step 3: secrets file.
+	// Step 3: secrets file, read by the same reader the output scrubber
+	// uses, so the two always agree on the DSN (MTIX-95.15).
 	secretsPath := filepath.Join(mtixDir, SecretsFilename)
-	info, err := os.Stat(secretsPath)
+	body, mode, err := ReadSecretsFile(mtixDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return "", ErrDSNNotConfigured
 		}
-		return "", fmt.Errorf("stat %s: %w", secretsPath, err)
+		return "", err
 	}
-	mode := info.Mode().Perm()
 	if mode != SecretsRequiredMode {
 		return "", fmt.Errorf("%s: %w (want 0600, got %#o)",
 			secretsPath, ErrSecretsFileMode, mode)
 	}
-	body, err := os.ReadFile(secretsPath) //nolint:gosec // path is constructed from caller-supplied mtixDir
-	if err != nil {
-		return "", fmt.Errorf("read %s: %w", secretsPath, err)
-	}
-	dsn := strings.TrimSpace(string(body))
+	dsn := strings.TrimSpace(body)
 	if dsn == "" {
 		return "", ErrDSNNotConfigured
 	}
 	return dsn, nil
+}
+
+// ReadSecretsFile reads mtixDir's secrets file and returns its content
+// and permission bits (FR-18.16, MTIX-95.15). A symlink is followed; the
+// target must be a regular file of at most MaxSecretsFileSize bytes,
+// else the error wraps ErrSecretsFileInvalid. An absent file gives an
+// error wrapping os.ErrNotExist. Source and the output scrubber both
+// read the file through this function, so they always agree on it.
+func ReadSecretsFile(mtixDir string) (string, os.FileMode, error) {
+	path := filepath.Join(mtixDir, SecretsFilename)
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", 0, fmt.Errorf("stat %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", 0, fmt.Errorf("%s: %w", path, ErrSecretsFileInvalid)
+	}
+	f, err := os.Open(path) //nolint:gosec // path is mtixDir + the fixed secrets filename
+	if err != nil {
+		return "", 0, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer f.Close()
+	body, err := io.ReadAll(io.LimitReader(f, MaxSecretsFileSize+1))
+	if err != nil {
+		return "", 0, fmt.Errorf("read %s: %w", path, err)
+	}
+	if len(body) > MaxSecretsFileSize {
+		return "", 0, fmt.Errorf("%s: %w", path, ErrSecretsFileInvalid)
+	}
+	return string(body), info.Mode().Perm(), nil
 }
 
 // refuseDSNInTrackedConfig scans .mtix/config.{yaml,yml,json} for any
@@ -214,24 +262,21 @@ func EnforceTLSPosture(dsn string, opts Options) (string, error) {
 	return parsed.String(), nil
 }
 
-// parseDSN parses a postgres:// or postgresql:// URL form. Falls back
-// to wrapping a key=value form into URL form so url.Parse can handle
-// it; rejects anything else.
+// parseDSN parses a postgres:// or postgresql:// URL form and rejects
+// anything else (FR-18.15). Every failure is a fixed message wrapping
+// ErrDSNMalformed that quotes no part of the DSN; the parser's own
+// error is discarded, since it may quote the DSN (FR-18.17, MTIX-95.15).
 func parseDSN(dsn string) (*url.URL, error) {
-	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
-		return url.Parse(dsn)
+	if !strings.HasPrefix(dsn, "postgres://") && !strings.HasPrefix(dsn, "postgresql://") {
+		return nil, fmt.Errorf("%w: it must start with postgres:// or postgresql://", ErrDSNMalformed)
 	}
-	return nil, fmt.Errorf("DSN must start with postgres:// or postgresql://: got prefix %q", dsnPrefix(dsn))
-}
-
-// dsnPrefix returns at most the first 16 chars of the DSN for safe
-// inclusion in error messages — never the credentials.
-func dsnPrefix(dsn string) string {
-	const limit = 16
-	if len(dsn) <= limit {
-		return dsn
+	u, err := url.Parse(dsn)
+	if err != nil {
+		// Deliberately not wrapped: err may quote the DSN.
+		return nil, fmt.Errorf(
+			"%w: percent-encode reserved characters in the user name and password", ErrDSNMalformed)
 	}
-	return dsn[:limit] + "..."
+	return u, nil
 }
 
 // resolveHosts returns every host the driver may dial for the DSN u

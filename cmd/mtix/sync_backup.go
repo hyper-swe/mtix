@@ -16,6 +16,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/spf13/cobra"
+
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
 // pgDumpBin is the executable invoked by mtix sync backup. Override
@@ -44,7 +46,7 @@ var backupTables = []string{
 func newSyncBackupCmd() *cobra.Command {
 	var output string
 	cmd := &cobra.Command{
-		Use:   "backup [DSN]",
+		Use:   "backup",
 		Short: "Dump the mtix-owned hub tables to a portable SQL file (FR-18.21)",
 		Long: `Invoke pg_dump to write a portable SQL dump of the mtix-owned
 tables on the BYO Postgres hub: sync_events, sync_conflicts,
@@ -56,7 +58,7 @@ The output file is suitable for psql restore via:
 Requires pg_dump on PATH (override via MTIX_PG_DUMP env var). The
 DSN must point at the hub; rotation/retention of the backup file is
 the operator's responsibility.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncBackup(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, output)
@@ -101,7 +103,10 @@ func runSyncBackup(ctx context.Context, stdout, stderr io.Writer,
 	}
 
 	cmd := exec.CommandContext(ctx, pgDumpBin(), argv...) //nolint:gosec // pgDumpBin overridable for tests
-	cmd.Stderr = stderr
+	// pg_dump's own messages reach the terminal through the central
+	// scrubber (FR-18.17, MTIX-95.15).
+	pgStderr := newScrubWriter(stderr)
+	cmd.Stderr = pgStderr
 	cmd.Env = conn.pgEnv(os.Environ())
 	if conn.sslrootcert == "system" {
 		fmt.Fprintf(stderr, "mtix sync backup: DSN requests TLS verification but names no "+
@@ -110,10 +115,14 @@ func runSyncBackup(ctx context.Context, stdout, stderr io.Writer,
 			"sslrootcert=<ca.pem> in the DSN.\n")
 	}
 
-	if err := cmd.Run(); err != nil {
+	runErr := cmd.Run()
+	if err := pgStderr.Flush(); err != nil {
+		return fmt.Errorf("mtix sync backup: %w", err)
+	}
+	if runErr != nil {
 		// pg_dump's stderr already captured; surface a wrapped message
 		// for the caller. Redact DSN in the wrapped form.
-		return fmt.Errorf("mtix sync backup: pg_dump failed: %w", err)
+		return fmt.Errorf("mtix sync backup: pg_dump failed: %w", runErr)
 	}
 
 	fmt.Fprintf(stdout, "backup written to %s (tables: %s)\n",
@@ -151,7 +160,8 @@ func pgDumpConnParams(dsn string) (pgDumpConn, error) {
 	}
 	cfg, err := pgconn.ParseConfig(credDSN)
 	if err != nil {
-		return pgDumpConn{}, fmt.Errorf("parse backup dsn: %w", err)
+		// Deliberately not wrapped: err may quote the DSN (MTIX-95.15).
+		return pgDumpConn{}, fmt.Errorf("parse backup dsn: %w", transport.ErrDSNMalformed)
 	}
 	c.host = cfg.Host
 	c.port = strconv.Itoa(int(cfg.Port))

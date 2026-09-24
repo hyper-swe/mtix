@@ -101,7 +101,8 @@ func NewWithDefaults(ctx context.Context, dsn string, opts Options, defs PoolDef
 
 	cfg, err := pgxpool.ParseConfig(enforced)
 	if err != nil {
-		return nil, fmt.Errorf("pgxpool parse: %w", err)
+		// Deliberately not wrapped: err may quote the DSN (MTIX-95.15).
+		return nil, fmt.Errorf("pgxpool parse: %w: check the DSN's connection parameters", ErrDSNMalformed)
 	}
 	cfg.MaxConns = defs.MaxConns
 	cfg.MaxConnLifetime = defs.ConnLifetime

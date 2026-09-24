@@ -355,8 +355,10 @@ mtix docs generate [--force]        Regenerate agent documentation
 mtix config get|set|delete <key>    Manage configuration
 
 # Team sync (FR-18) — optional, opt-in via MTIX_SYNC_DSN
-mtix sync init [DSN]                Provision hub schema + register project
-mtix sync clone [DSN]               Pull all events; idempotent rebuild
+# The DSN comes from MTIX_SYNC_DSN or .mtix/secrets; positional DSN
+# arguments are no longer accepted.
+mtix sync init                      Provision hub schema + register project
+mtix sync clone                     Pull all events; idempotent rebuild
 mtix sync push                      Drain local pending queue to hub
 mtix sync pull                      Apply new hub events to local SQLite
 mtix sync status                    Show queue + last push/pull + machine_hash

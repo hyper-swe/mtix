@@ -43,7 +43,7 @@ var errDoctorChecksFailed = errors.New("doctor checks failed")
 func newSyncDoctorCmd() *cobra.Command {
 	var insecureTLS bool
 	cmd := &cobra.Command{
-		Use:   "doctor [DSN]",
+		Use:   "doctor",
 		Short: "Run sync health checks (FR-18)",
 		Long: `Run 5 health checks against the local store and the BYO Postgres hub:
 
@@ -55,7 +55,7 @@ func newSyncDoctorCmd() *cobra.Command {
 
 Exit code: 0 on all-pass, 2 if any check fails. --json output for
 agents and CI consumption.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			err := runSyncDoctor(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS})
@@ -124,6 +124,9 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	// Check 5: DSN secrets file mode.
 	modeOK, detail := checkSecretsFileMode(app.mtixDir)
 	report = appendCheck(report, "secrets file mode", modeOK, detail)
+
+	// No detail may carry the DSN or its password (FR-18.17, MTIX-95.15).
+	report = scrubDoctorReport(report)
 
 	if app.jsonOutput {
 		body, _ := json.MarshalIndent(report, "", "  ")

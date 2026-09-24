@@ -39,7 +39,7 @@ func newSyncPushCmd() *cobra.Command {
 		force       bool
 	)
 	cmd := &cobra.Command{
-		Use:   "push [DSN]",
+		Use:   "push",
 		Short: "Push pending events to the sync hub (FR-18)",
 		Long: `Push every event with sync_status='pending' to the BYO Postgres hub
 in batches. Marks pushed events as sync_status='pushed' so re-running
@@ -52,7 +52,7 @@ queue). Use --force to bypass the lock (debugging only).
 
 Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors
 so git pre-push hooks never block code pushes.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncPush(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, force)

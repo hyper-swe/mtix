@@ -27,7 +27,7 @@ import (
 
 func TestDaemonCmd_Construction(t *testing.T) {
 	cmd := newDaemonCmd()
-	require.Equal(t, "daemon [DSN]", cmd.Use)
+	require.Equal(t, "daemon", cmd.Use)
 	for _, name := range []string{"insecure-tls", "interval", "install"} {
 		require.NotNilf(t, cmd.Flags().Lookup(name), "%s flag declared", name)
 	}
@@ -40,7 +40,7 @@ func TestDaemonCmd_RegisteredOnRoot(t *testing.T) {
 	root := newRootCmd()
 	sub, _, err := root.Find([]string{"daemon"})
 	require.NoError(t, err)
-	require.Equal(t, "daemon [DSN]", sub.Use, "mtix daemon is a first-class root command, not a sync subcommand")
+	require.Equal(t, "daemon", sub.Use, "mtix daemon is a first-class root command, not a sync subcommand")
 }
 
 func TestRunDaemon_RefusesOutsideMtixProject(t *testing.T) {

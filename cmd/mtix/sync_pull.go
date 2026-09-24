@@ -37,7 +37,7 @@ func newSyncPullCmd() *cobra.Command {
 		limit       int
 	)
 	cmd := &cobra.Command{
-		Use:   "pull [DSN]",
+		Use:   "pull",
 		Short: "Pull events from the sync hub and apply locally (FR-18)",
 		Long: `Pull events from the BYO Postgres sync hub starting at the local
 last_pulled_clock cursor; apply each event via the FR-18.9 idempotent
@@ -47,7 +47,7 @@ Lock-free: multiple processes pulling concurrently is safe because
 applied_events dedupes on event_id.
 
 Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncPull(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, limit)
@@ -109,7 +109,7 @@ func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 
 	if tailErr == nil && preTail == 0 && pulled > 0 {
 		if err := app.store.InitHookScanFloorAtTail(ctx); err != nil {
-			fmt.Fprintf(stderr, "mtix sync pull: hook floor init: %s\n", err)
+			warnSync(stderr, "mtix sync pull: hook floor init", err)
 		}
 	}
 

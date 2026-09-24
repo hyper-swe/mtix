@@ -48,6 +48,7 @@ Safety properties:
     conflict logging caveat applies (see docs/SECURITY-MODEL.md).
 
 After backfill: run 'mtix sync push' to ship events to the hub.`,
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSyncBackfill(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				dryRun, force)

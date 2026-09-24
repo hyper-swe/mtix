@@ -23,7 +23,7 @@ func TestSyncStatusCmd_Construction(t *testing.T) {
 
 func TestSyncDoctorCmd_Construction(t *testing.T) {
 	cmd := newSyncDoctorCmd()
-	require.Equal(t, "doctor [DSN]", cmd.Use)
+	require.Equal(t, "doctor", cmd.Use)
 	require.NotEmpty(t, cmd.Long)
 	require.NotNil(t, cmd.Flags().Lookup("insecure-tls"))
 }

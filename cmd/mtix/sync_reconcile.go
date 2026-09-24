@@ -45,7 +45,7 @@ is also set; without --yes the command prints the Plan (renames,
 node count) and exits without mutation. With --yes, executes the path.
 
 See 'mtix sync init' for divergent-history detection.`,
-		Args: cobra.NoArgs,
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSyncReconcile(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				reconcileFlags{

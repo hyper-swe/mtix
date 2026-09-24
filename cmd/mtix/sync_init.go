@@ -17,7 +17,6 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/clock"
-	"github.com/hyper-swe/mtix/internal/sync/redact"
 )
 
 // clientMachineHash returns this machine's stable hash for the
@@ -40,8 +39,9 @@ func clientMachineHash() string {
 //
 // Usage:
 //
-//	mtix sync init <DSN>
 //	mtix sync init  # reads DSN from MTIX_SYNC_DSN env var or .mtix/secrets
+//
+// A DSN on the command line is refused (FR-18.16, MTIX-95.15).
 //
 // Behavior:
 //  1. Resolve the DSN via transport.Source (refuses tracked-config DSNs).
@@ -61,20 +61,21 @@ func newSyncInitCmd() *cobra.Command {
 	var insecureTLS bool
 
 	cmd := &cobra.Command{
-		Use:   "init [DSN]",
+		Use:   "init",
 		Short: "Initialize the sync hub for this project (FR-18)",
 		Long: `Initialize the BYO Postgres sync hub for this project. Runs the schema
 migration under a PG advisory lock so concurrent first-connects are safe.
 
 DSN sources (FR-18.16):
-  1. Argument:           mtix sync init postgres://...
-  2. Environment:        MTIX_SYNC_DSN=postgres://... mtix sync init
-  3. Secrets file:       .mtix/secrets (mode 0600, gitignored)
+  1. Environment:        MTIX_SYNC_DSN
+  2. Secrets file:       .mtix/secrets (mode 0600, gitignored)
 
-The DSN is refused if found in any tracked .mtix/config.* file. The
-default sslmode is verify-full; --insecure-tls is accepted only when
-every host the connection may use is loopback or a local socket.`,
-		Args: cobra.MaximumNArgs(1),
+Positional DSN arguments are no longer accepted; set MTIX_SYNC_DSN or
+.mtix/secrets. The DSN is refused if found in any tracked
+.mtix/config.* file. The default sslmode is verify-full; --insecure-tls
+is accepted only when every host the connection may use is loopback or
+a local socket.`,
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncInit(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS})
@@ -146,8 +147,7 @@ func runSyncInit(ctx context.Context, stdout, stderr io.Writer, args []string, o
 	// until its next push refreshes it).
 	if mh := clientMachineHash(); mh != "" {
 		if upErr := pool.UpsertProjectClient(connectCtx, prefix, mh, version); upErr != nil {
-			fmt.Fprintf(stderr, "WARN: version-gate client upsert skipped: %s\n",
-				redact.DSN(upErr.Error()))
+			warnSync(stderr, "WARN: version-gate client upsert skipped", upErr)
 		}
 	}
 
@@ -217,14 +217,28 @@ func readHubFirstEventHash(ctx context.Context, pool *transport.Pool, prefix str
 	return p, h, nil
 }
 
-// resolveSyncDSN returns the DSN per FR-18.16: positional arg if
-// supplied, else transport.Source which checks env + .mtix/secrets
-// and refuses tracked-config DSNs.
+// resolveSyncDSN returns the hub DSN per FR-18.16 from transport.Source,
+// which reads MTIX_SYNC_DSN or .mtix/secrets and refuses tracked-config
+// DSNs. Any positional argument is refused by refuseDSNArgs with
+// transport.ErrPositionalDSN, whose fixed message names both sources
+// and never repeats the argument (MTIX-95.15).
 func resolveSyncDSN(args []string) (string, error) {
-	if len(args) == 1 && args[0] != "" {
-		return args[0], nil
+	if err := refuseDSNArgs(args); err != nil {
+		return "", err
 	}
 	return transport.Source(app.mtixDir)
+}
+
+// refuseDSNArgs is the one positional-DSN rule (FR-18.16, MTIX-95.15):
+// any argument where a DSN could be given is refused with
+// transport.ErrPositionalDSN. resolveSyncDSN applies it, and so does
+// syncExactArgs, which every sync and daemon command uses to refuse the
+// argument before the command runs.
+func refuseDSNArgs(args []string) error {
+	if len(args) > 0 {
+		return transport.ErrPositionalDSN
+	}
+	return nil
 }
 
 // noteSyncResult bumps or clears meta.sync.consecutive_errors based
@@ -256,19 +270,22 @@ func noteSyncResult(ctx context.Context, st *sqlite.Store, ok bool) {
 // wrapSyncErr formats CLI-side errors with consistent prefix +
 // honors hook mode (MTIX_SYNC_HOOK=1) for transient errors per FR-18.19.
 //
-// All error messages flow through redact.DSN before any caller logs
-// them so a malformed DSN can't leak credentials to stderr.
+// Every message, the hook-mode warning and the returned error alike,
+// passes through the central scrubber scrubSyncText, which removes the
+// configured DSN and its password, even when the DSN cannot be parsed,
+// and masks any URL-shaped DSN (FR-18.17, MTIX-95.15).
 func wrapSyncErr(stderr io.Writer, stage string, err error) error {
+	text := scrubSyncText(err.Error())
 	if isHookMode() && isTransientSyncErr(err) {
 		fmt.Fprintf(stderr,
 			"WARN: mtix sync %s degraded: %s (continuing per MTIX_SYNC_HOOK=1)\n",
-			stage, redact.DSN(err.Error()))
+			stage, text)
 		return nil
 	}
-	msg := fmt.Sprintf("mtix sync %s: %s", stage, redact.DSN(err.Error()))
+	msg := fmt.Sprintf("mtix sync %s: %s", stage, text)
 	// Preserve the NFR-2.8 exit-code sentinels (MTIX-32) so the CLI exit-code
 	// contract (exitCodeForError) holds for sync writes, not just `mtix create`.
-	// The redaction above already stripped any DSN, and these sentinels carry
+	// The scrub above already stripped any DSN, and these sentinels carry
 	// none, so wrapping with %w cannot leak credentials.
 	switch {
 	case errors.Is(err, model.ErrDiskFull):

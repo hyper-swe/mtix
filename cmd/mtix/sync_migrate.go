@@ -50,7 +50,7 @@ func newSyncMigrateCmd() *cobra.Command {
 	var yes, insecureTLS bool
 	var project string
 	cmd := &cobra.Command{
-		Use:   "migrate [DSN]",
+		Use:   "migrate",
 		Short: "Drive the ADR-003 §7 node-identity migration phases",
 		Long: `Orchestrate the distributed node-identity migration (ADR-003 §7):
 
@@ -63,7 +63,7 @@ func newSyncMigrateCmd() *cobra.Command {
 Phase 1 MOVES display numbers on the hub when duplicates exist. Without
 --yes the command PREVIEWS the renumbers and applies nothing. Re-run with
 --yes to record the remaps to the live store.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncMigrate(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, project, yes)
@@ -218,7 +218,7 @@ func appendDualAndCutover(ctx context.Context, hub migrateHub, prefix string, ph
 	switch {
 	case err != nil:
 		phases = append(phases, PhaseReport{Phase: "3-cutover", Status: "deferred",
-			Detail: "cutover readiness unknown: " + err.Error()})
+			Detail: "cutover readiness unknown: " + scrubSyncText(err.Error())})
 	case ready:
 		phases = append(phases, PhaseReport{Phase: "3-cutover", Status: "ok",
 			Detail: "every active client is remap-aware — cutover to uid-keyed events is eligible"})

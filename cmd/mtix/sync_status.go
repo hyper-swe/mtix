@@ -21,15 +21,15 @@ import (
 // other consumer needs it; if 15.8 MCP integration adds machine
 // access to status, the type can be lifted then.
 type SyncStatus struct {
-	Pending      int    `json:"pending"`
-	Pushed       int    `json:"pushed"`
-	Conflicted   int    `json:"conflicted"`
-	Applied      int    `json:"applied"`
-	Lamport      int64  `json:"lamport"`
-	LastPulled   int64  `json:"last_pulled_clock"`
-	MachineHash  string `json:"machine_hash,omitempty"`
+	Pending       int    `json:"pending"`
+	Pushed        int    `json:"pushed"`
+	Conflicted    int    `json:"conflicted"`
+	Applied       int    `json:"applied"`
+	Lamport       int64  `json:"lamport"`
+	LastPulled    int64  `json:"last_pulled_clock"`
+	MachineHash   string `json:"machine_hash,omitempty"`
 	ProjectPrefix string `json:"project_prefix,omitempty"`
-	OpenConflicts int   `json:"open_conflicts"`
+	OpenConflicts int    `json:"open_conflicts"`
 	// HighConflict is the FR-18.12 banner trigger: true when
 	// open_conflicts > 50 so the human-readable output adds a
 	// guidance banner.
@@ -49,7 +49,7 @@ reachability and schema currency.
 
 When unresolved conflicts exceed 50, surfaces the FR-18.12 banner
 pointing at 'mtix sync conflicts list --batch'.`,
-		Args: cobra.NoArgs,
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSyncStatus(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},

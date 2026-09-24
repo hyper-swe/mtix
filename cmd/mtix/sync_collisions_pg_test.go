@@ -37,7 +37,7 @@ func localNodeUID(t *testing.T, store *sqlite.Store, id string) string {
 func TestCLI_MarkRestored_AdvancesEpoch(t *testing.T) {
 	pool := openCmdHub(t)
 	initTestApp(t)
-	dsn := requireCmdPG(t)
+	requireCmdPG(t) // routes the hub DSN through MTIX_SYNC_DSN
 	ctx := context.Background()
 
 	epoch, err := pool.CurrentRestoreEpoch(ctx)
@@ -46,7 +46,7 @@ func TestCLI_MarkRestored_AdvancesEpoch(t *testing.T) {
 
 	var out, errBuf bytes.Buffer
 	require.NoError(t, runSyncMarkRestored(ctx, &out, &errBuf,
-		[]string{dsn}, transport.Options{InsecureTLS: true}))
+		nil, transport.Options{InsecureTLS: true}))
 	assert.Contains(t, out.String(), "restore-epoch is now 1")
 
 	epoch, err = pool.CurrentRestoreEpoch(ctx)
@@ -58,11 +58,11 @@ func TestCLI_MarkRestored_AdvancesEpoch(t *testing.T) {
 func TestCLI_CollisionsList_Empty(t *testing.T) {
 	_ = openCmdHub(t)
 	initTestApp(t)
-	dsn := requireCmdPG(t)
+	requireCmdPG(t) // routes the hub DSN through MTIX_SYNC_DSN
 
 	var out, errBuf bytes.Buffer
 	require.NoError(t, runSyncCollisionsList(context.Background(), &out, &errBuf,
-		[]string{dsn}, transport.Options{InsecureTLS: true}, "TEST"))
+		nil, transport.Options{InsecureTLS: true}, "TEST"))
 	assert.Contains(t, out.String(), "no open restore collisions")
 }
 
@@ -77,7 +77,7 @@ func seedCrossEpochCollision(t *testing.T, pool *transport.Pool, dsn string) {
 	ctx := context.Background()
 
 	// Client A creates TEST-1 + TEST-1.1 locally and pushes them (epoch 0).
-	require.NoError(t, runCreate("A parent", "", "", 3, "", "", "", "", ""))   // TEST-1
+	require.NoError(t, runCreate("A parent", "", "", 3, "", "", "", "", ""))      // TEST-1
 	require.NoError(t, runCreate("A child", "TEST-1", "", 3, "", "", "", "", "")) // TEST-1.1
 	var stderr bytes.Buffer
 	_, _, _, _, err := pushLoop(ctx, &stderr, pool, app.store)
@@ -118,7 +118,7 @@ func TestCLI_CollisionsList_ShowsBothNodes(t *testing.T) {
 
 	var out, errBuf bytes.Buffer
 	require.NoError(t, runSyncCollisionsList(context.Background(), &out, &errBuf,
-		[]string{dsn}, transport.Options{InsecureTLS: true}, "TEST"))
+		nil, transport.Options{InsecureTLS: true}, "TEST"))
 	s := out.String()
 	assert.Contains(t, s, "TEST-1.1", "the contested number is shown")
 	assert.Contains(t, s, "held")
@@ -150,7 +150,7 @@ func TestCLI_CollisionsResolve_RenumbersLoser_NoNodeLost(t *testing.T) {
 	// loses and must renumber.
 	var out, errBuf bytes.Buffer
 	require.NoError(t, runSyncCollisionsResolve(ctx, &out, &errBuf,
-		[]string{strconv.FormatInt(collisionID, 10), dsn}, transport.Options{InsecureTLS: true}, "incoming"))
+		[]string{strconv.FormatInt(collisionID, 10)}, transport.Options{InsecureTLS: true}, "incoming"))
 	assert.Contains(t, out.String(), "renumbered to TEST-1.2")
 
 	// The loser moved off the contested number; no node lost.
@@ -170,7 +170,7 @@ func TestCLI_CollisionsResolve_RenumbersLoser_NoNodeLost(t *testing.T) {
 func TestCLI_CollisionsResolve_RejectsBadWinner(t *testing.T) {
 	initTestApp(t)
 	err := runSyncCollisionsResolve(context.Background(), &bytes.Buffer{}, &bytes.Buffer{},
-		[]string{"1", "ignored-dsn"}, transport.Options{}, "bogus")
+		[]string{"1"}, transport.Options{}, "bogus")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--winner must be one of")
 }

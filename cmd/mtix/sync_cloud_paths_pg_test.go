@@ -55,7 +55,7 @@ func pushLocal(t *testing.T, dsn string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	require.NoError(t, runSyncPush(context.Background(), &stdout, &stderr,
-		[]string{dsn}, cloudOpts, false), "push to hub: %s", stderr.String())
+		nil, cloudOpts, false), "push to hub: %s", stderr.String())
 }
 
 // resetLocalForFreshPull wipes the local applied-event ledger, nodes, and pull
@@ -99,7 +99,7 @@ func TestCloudPath_Daemon_PullTickAppliesHubEvents(t *testing.T) {
 	require.Equal(t, 0, liveNodeCount(t), "precondition: local wiped")
 
 	var stderr bytes.Buffer
-	runOneDaemonPull(ctx, &stderr, []string{dsn}, cloudOpts)
+	runOneDaemonPull(ctx, &stderr, nil, cloudOpts)
 
 	require.Equal(t, 2, liveNodeCount(t),
 		"one daemon pull tick must re-apply both hub creates (stderr: %s)", stderr.String())
@@ -124,7 +124,7 @@ func TestCloudPath_Daemon_SustainedLoopPicksUpLaterEvents(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	done := make(chan error, 1)
 	go func() {
-		done <- runSyncDaemon(loopCtx, &stdout, &stderr, []string{dsn}, cloudOpts, 1, false)
+		done <- runSyncDaemon(loopCtx, &stdout, &stderr, nil, cloudOpts, 1, false)
 	}()
 
 	// After the immediate pull has had time to land the first node, push a
@@ -156,9 +156,9 @@ func TestCloudPath_Daemon_SustainedLoopPicksUpLaterEvents(t *testing.T) {
 // unreachable DSN forces the error path deterministically.
 func TestCloudPath_Daemon_SurvivesPullError(t *testing.T) {
 	initTestApp(t)
+	t.Setenv(transport.EnvDSN, "postgres://u:p@127.0.0.1:1/db?sslmode=disable&connect_timeout=1")
 	var stderr bytes.Buffer
-	runOneDaemonPull(context.Background(), &stderr,
-		[]string{"postgres://u:p@127.0.0.1:1/db?sslmode=disable&connect_timeout=1"}, cloudOpts)
+	runOneDaemonPull(context.Background(), &stderr, nil, cloudOpts)
 	require.Contains(t, stderr.String(), "pull error",
 		"a failed pull must be logged (and swallowed) so the daemon keeps ticking")
 }
@@ -232,7 +232,7 @@ func TestCloudPath_ConflictsResolve_LWWRoundTripThenManualResolution(t *testing.
 
 	// Pull applies the remote edit; LWW sees our prior → records an 'lww' row.
 	var out, errb bytes.Buffer
-	require.NoError(t, runSyncPull(ctx, &out, &errb, []string{dsn}, cloudOpts, 100),
+	require.NoError(t, runSyncPull(ctx, &out, &errb, nil, cloudOpts, 100),
 		"pull: %s", errb.String())
 	require.Equal(t, 1, conflictRowCount(t, "TEST-1", "lww"),
 		"pull must have recorded exactly one LWW conflict for the contested title")
@@ -296,7 +296,7 @@ func TestCloudPath_Reconcile_DiscardLocal_TakesHubState(t *testing.T) {
 	// TEST-2 gone.
 	out.Reset()
 	errb.Reset()
-	require.NoError(t, runSyncClone(ctx, &out, &errb, []string{dsn}, cloudOpts, false, 100),
+	require.NoError(t, runSyncClone(ctx, &out, &errb, nil, cloudOpts, false, 100),
 		"clone after discard: %s", errb.String())
 	require.Equal(t, 1, liveNodeCount(t),
 		"after discard + clone the local store matches the hub")
@@ -429,7 +429,7 @@ func TestCloudPath_Backup_DumpsHubTablesThroughDSN(t *testing.T) {
 	// Pass the DSN verbatim: MTIX-59 makes runSyncBackup default PGSSLROOTCERT to
 	// the system trust store when a verify-full DSN names no cert, so a public-CA
 	// hub backs up without a test-side workaround.
-	require.NoError(t, runSyncBackup(ctx, &stdout, &stderr, []string{dsn}, out),
+	require.NoError(t, runSyncBackup(ctx, &stdout, &stderr, nil, out),
 		"backup: %s", stderr.String())
 	require.Contains(t, stdout.String(), "backup written to")
 

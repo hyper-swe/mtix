@@ -210,7 +210,8 @@ cleanly. See `internal/store/postgres/transport/migrate.go` and
 - DSN sourcing (`Source()`) order: `MTIX_SYNC_DSN` env → `.mtix/secrets`
   (mode 0600 enforced). `Source()` refuses to load if any tracked config
   file under `.mtix/` mentions a DSN-shaped key — fail-closed at the
-  earliest detectable misconfiguration.
+  earliest detectable misconfiguration. Positional DSN arguments are no
+  longer accepted; set `MTIX_SYNC_DSN` or `.mtix/secrets`.
 - Every error path passes through `redact.DSN`. `cmd/mtix/main.go`
   wraps with `defer redact.Recover` so panics with a DSN in scope are
   scrubbed before the runtime printer.

@@ -31,6 +31,8 @@ func TestMigrations_FilesPresent(t *testing.T) {
 		"011_sync_node_collisions.sql",
 		"012_node_renumber_remaps.sql",
 		"013_hub_restore_epoch.sql",
+		// 014 is MTIX-95.5's created_at index for the late-event sweep.
+		"014_sync_events_created_at.sql",
 	}
 	require.Equal(t, want, got, "all hub-schema files must be embedded in lex order")
 }
@@ -72,8 +74,8 @@ func TestMigrations_ReadMissingFile(t *testing.T) {
 // migration set.
 func TestMigrations_ContainExpectedTables(t *testing.T) {
 	want := map[string]int{
-		"sync_events":     0,
-		"sync_conflicts":  0,
+		"sync_events":          0,
+		"sync_conflicts":       0,
 		"sync_projects":        0,
 		"applied_events":       0,
 		"audit_log":            0,
@@ -142,6 +144,23 @@ func TestMigrations_SyncEventsUIDColumn(t *testing.T) {
 		"010 must add the uid lookup index")
 	require.Contains(t, body, "ADR-003",
 		"010 must reference its design rationale")
+}
+
+// TestMigrations_SyncEventsCreatedAtIndex asserts the MTIX-95.5 migration
+// adds the index the late-event sweep of `mtix sync pull` reads by
+// (created_at >= window start), created only when absent so re-running the
+// migration set stays a no-op. The migration is additive: no column,
+// constraint or data changes.
+func TestMigrations_SyncEventsCreatedAtIndex(t *testing.T) {
+	body, err := migrations.Read("014_sync_events_created_at.sql")
+	require.NoError(t, err)
+	require.Contains(t, body,
+		"CREATE INDEX IF NOT EXISTS idx_sync_events_created_at\n    ON sync_events (created_at);",
+		"014 must add the created_at index idempotently")
+	require.Contains(t, body, "MTIX-95.5", "014 must reference its ticket")
+	for _, forbidden := range []string{"ALTER TABLE", "DROP ", "UPDATE ", "DELETE "} {
+		require.NotContains(t, body, forbidden, "014 must be additive only")
+	}
 }
 
 // TestMigrations_OpTypeCheckMatchesModel ensures the SQL CHECK constraint

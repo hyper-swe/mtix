@@ -104,6 +104,28 @@ mtix sync push
 mtix sync status
 ```
 
+`mtix sync pull` also recovers **late events**: changes a teammate
+pushed after working offline, which carry lower clock values than your
+pull cursor. After fetching past its cursor, pull lists the hub events
+created since its previous sweep (with a 15-minute overlap, timed by
+the hub's clock), notes the ones you do not have, and then applies them
+the usual way, oldest first by the sync clock; an older recovered claim
+or status change never reverts a newer one. If the regular fetch meets
+an edit of a task whose creation arrived late, pull runs the sweep at
+once and retries the fetch one time, so the creation applies first.
+The first pull after upgrading compares the full hub history once and
+prints how many late events it recovered; if a pull stops part-way, the
+next one continues where it stopped. `mtix sync status` shows `last
+sweep`. In the common case (nothing missing, at most `--limit` changes
+since the last sweep) the sweep costs one extra hub query per pull,
+more for a larger window or recovered changes, and it has no timer of
+its own. After
+upgrading, the hub owner runs `mtix sync init` once with the owner's
+DSN to add the hub index the sweep reads by; until then each page the
+sweep lists scans the hub's event table: once per pull for the usual
+window, and once per page of the one-time full comparison, spread
+across pulls.
+
 ### 7. Install the pre-push hook (recommended)
 
 ```bash
@@ -170,13 +192,27 @@ for claims and status changes, which travel as events; two automatic
 changes do not, so status can still differ there (a task claimed on
 one machine while another adds a dependency that blocks it can end up
 blocked on one and in progress on the other, and descendants of a
-cascade cancel can differ the same way). Beyond status nothing is
-guaranteed to agree: the assignee can still differ between machines
+cascade cancel can differ the same way: they are not cancelled on
+other machines, yet a task the cascade unblocked shows unblocked there
+although its blocker is not cancelled; when other machines must see
+the descendants cancelled, cancel them one at a time, deepest first,
+without `--cascade`). Beyond status nothing is guaranteed to agree: the assignee can still differ between machines
 when changes arrive out of order (if two agents claim a task between
 syncs and the one whose claim lost marks it done before pulling, both
 machines show it done, each with its own agent as the assignee). After
 `mtix sync pull`, check a claimed task with `mtix show <id>` and stop
 if it is no longer in progress under your name.
+
+A deferral travels as a status change, but hub sync does not carry its
+wake time (`mtix defer <id> --until <time>`) in 0.5.x. On the other
+machines the task is deferred with no wake time
+(any wake time it held before is cleared): it is not reopened when the
+time passes, and a claim there is not refused. A deferred task with no
+wake time is listed by `mtix ready` and can be claimed at once. Every
+claim or status change, local or received through sync, clears the
+wake time as the task leaves deferred. Set the wake time on the machine
+that will pick the task up. A git-tracked `.mtix/tasks.json` does carry
+`defer_until`, so a machine that imports it gets the wake time.
 
 **Note:** When two CLIs share `authorID="cli"` (the default), their
 concurrent events produce vector clocks that are `Equal()` rather

@@ -98,7 +98,9 @@ func (s *Store) validateClaimStatus(ctx context.Context, tx *sql.Tx, id string) 
 }
 
 // checkDeferExpired returns nil if the defer period has expired, or
-// ErrStillDeferred if the node cannot be claimed yet per FR-10.4.
+// ErrStillDeferred if the node cannot be claimed yet per FR-10.4. The wake
+// time has passed when defer_until <= now, the rule ready and the wake pass
+// use too (MTIX-95.22): a claim is refused only while it is after now.
 func (s *Store) checkDeferExpired(id string, deferUntil sql.NullString) error {
 	if !deferUntil.Valid || deferUntil.String == "" {
 		return nil

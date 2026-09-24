@@ -4,8 +4,11 @@
 package http
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/oklog/ulid/v2"
@@ -96,21 +99,56 @@ func (s *Server) doneNode(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"id": nodeID, "status": "done"})
 }
 
-// deferNode handles POST /api/v1/nodes/:id/defer per FR-3.8.
-// Accepts optional {until} timestamp in body.
+// deferRequestBody is the optional JSON body of POST /api/v1/nodes/:id/defer.
+type deferRequestBody struct {
+	Until string `json:"until"`
+}
+
+// decodeDeferBody reads the optional defer body (MTIX-95.22). An empty or
+// blank body means no until. Anything else must be exactly one JSON object
+// whose only key is until: a literal null, an unknown key, a value of the
+// wrong type or data after the object is an error.
+func decodeDeferBody(body io.Reader) (string, error) {
+	if body == nil {
+		return "", nil
+	}
+	dec := json.NewDecoder(body)
+	dec.DisallowUnknownFields()
+	var req *deferRequestBody
+	if err := dec.Decode(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			return "", nil
+		}
+		return "", fmt.Errorf("decode defer body: %w", err)
+	}
+	if req == nil {
+		return "", errors.New("defer body is null")
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return "", errors.New("defer body has data after the JSON object")
+	}
+	return req.Until, nil
+}
+
+// deferNode handles POST /api/v1/nodes/:id/defer per FR-3.8 and FR-3.8b.
+// Accepts an optional {"until": "<RFC 3339>"} body; an empty body defers with
+// no wake time. A body decodeDeferBody rejects, or an until that is not an
+// RFC 3339 timestamp, is answered with 400 before anything changes. The wake
+// time is stored with the transition by NodeService.DeferNode (MTIX-95.22).
+// The author is the X-Agent-ID header, "api" without one.
 func (s *Server) deferNode(c *gin.Context) {
 	nodeID := c.Param("id")
 
-	var req struct {
-		Until string `json:"until"`
+	until, err := decodeDeferBody(c.Request.Body)
+	if err != nil {
+		HandleValidationError(c, "request body must be empty or a JSON object whose only key is until, such as {\"until\":\"2026-04-01T00:00:00Z\"}")
+		return
 	}
-	_ = c.ShouldBindJSON(&req)
 
-	if req.Until != "" {
-		if _, err := time.Parse(time.RFC3339, req.Until); err != nil {
-			HandleValidationError(c, "invalid until timestamp: must be ISO-8601")
-			return
-		}
+	wake, err := service.ParseDeferUntil(until)
+	if err != nil {
+		HandleValidationError(c, "invalid until timestamp: must be RFC 3339 with a zone, such as 2026-04-01T00:00:00Z")
+		return
 	}
 
 	agentID := c.GetHeader("X-Agent-ID")
@@ -118,8 +156,8 @@ func (s *Server) deferNode(c *gin.Context) {
 		agentID = "api"
 	}
 
-	if err := s.nodeSvc.TransitionStatus(
-		c.Request.Context(), nodeID, model.StatusDeferred, "deferred via API", agentID,
+	if err := s.nodeSvc.DeferNode(
+		c.Request.Context(), nodeID, wake, "deferred via API", agentID,
 	); err != nil {
 		HandleError(c, err)
 		return

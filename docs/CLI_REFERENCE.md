@@ -385,11 +385,32 @@ JSONL is preferred for LLM plan output:
 
 Defer a node until a specified time
 
+Move a node to deferred, optionally with a wake time.
+
+With --until, the wake time is stored with the deferral. It must be an
+RFC 3339 timestamp with a zone, such as 2026-04-01T00:00:00Z or
+2026-04-01T09:00:00+05:30, whose UTC year is 1 to 9999, and is stored in
+UTC in whole seconds. Before the wake time, a claim is refused. From the
+wake time on, mtix ready lists the node and a claim succeeds, and the next
+background pass (mtix gc, or POST /api/v1/admin/gc on a running server)
+reopens it.
+
+Without --until the node has no wake time, and any earlier wake time is
+cleared; mtix ready lists it and it can be claimed at once. Deferring a
+node that is already deferred replaces its wake time. Leaving deferred
+(the background pass, reopen, claim or cancel) clears the wake time.
+
+In 0.5.x hub sync does not carry the wake time: other machines receive the
+deferral as a status change without it. A git-tracked .mtix/tasks.json
+does carry it (defer_until), so a machine that imports that file gets it.
+
+The stored wake time is the defer_until field of mtix show <id> --json.
+
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--until` |  | Defer until (ISO-8601 timestamp) |  |
+| `--until` |  | Wake time, RFC 3339 with a zone (e.g. 2026-04-01T00:00:00Z); omit for no wake time |  |
 ---
 
 ## delete
@@ -1474,6 +1495,15 @@ Pull events from the BYO Postgres sync hub starting at the local
 last_pulled_clock cursor; apply each event via the FR-18.9 idempotent
 apply engine; advance the cursor.
 
+Then sweep for late events: list the hub events created since the
+previous sweep (hub time, minus a 15-minute overlap), fetch the ones
+this store does not hold, and apply them the same way. This catches
+events a teammate pushed after working offline, whose Lamport clock is
+below the cursor. The first sweep on a store compares the full hub
+event history once and prints how many late events it recovered. If
+the cursor pass stops on an edit of a node whose create it has not
+received, pull runs the sweep and then retries the cursor pass once.
+
 Lock-free: multiple processes pulling concurrently is safe because
 applied_events dedupes on event_id.
 
@@ -1484,7 +1514,7 @@ Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
-| `--limit` |  | Number of events to pull per batch | 1000 |
+| `--limit` |  | Number of events to pull per batch (also the late-event sweep page size) | 1000 |
 ---
 
 ## push

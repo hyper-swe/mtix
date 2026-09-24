@@ -150,6 +150,17 @@ func TestDiscardLocal_ResetsSentinels(t *testing.T) {
 	// Bump the lamport sentinel so we can check it's reset.
 	_, err := raw.Exec(`UPDATE meta SET value = '99' WHERE key = 'meta.sync.lamport'`)
 	require.NoError(t, err)
+	// Record a late-event sweep so we can check the next pull diffs the
+	// full hub history again (MTIX-95.5).
+	_, err = raw.Exec(`UPDATE meta SET value = '2026-09-24T01:02:03Z' WHERE key = 'meta.sync.last_sweep_at'`)
+	require.NoError(t, err)
+	// And an interrupted full diff's progress, which must not survive either.
+	_, err = raw.Exec(`UPDATE meta SET value = 'some-event-id' WHERE key = 'meta.sync.sweep_after_id'`)
+	require.NoError(t, err)
+	_, err = raw.Exec(`UPDATE meta SET value = '2026-09-24T00:59:00Z' WHERE key = 'meta.sync.sweep_after_created_at'`)
+	require.NoError(t, err)
+	_, err = raw.Exec(`UPDATE meta SET value = '2026-09-24T01:00:00Z' WHERE key = 'meta.sync.sweep_started_at'`)
+	require.NoError(t, err)
 
 	require.NoError(t, DiscardLocal(context.Background(), s, mtixDir))
 
@@ -160,6 +171,10 @@ func TestDiscardLocal_ResetsSentinels(t *testing.T) {
 		{"meta.sync.first_event_hash", ""},
 		{"meta.sync.project_prefix", ""},
 		{"meta.sync.machine_hash", ""},
+		{"meta.sync.last_sweep_at", ""},
+		{"meta.sync.sweep_after_id", ""},
+		{"meta.sync.sweep_after_created_at", ""},
+		{"meta.sync.sweep_started_at", ""},
 	} {
 		t.Run(kv.key, func(t *testing.T) {
 			var got string
@@ -169,6 +184,22 @@ func TestDiscardLocal_ResetsSentinels(t *testing.T) {
 			require.Equal(t, kv.want, got)
 		})
 	}
+}
+
+// TestDiscardLocal_ClearsStagedLateEvents: the late-event sweep's staged ids
+// (sync_sweep_pending, MTIX-95.5) belong to the discarded history, so
+// DiscardLocal clears them with the rest of the sync state.
+func TestDiscardLocal_ClearsStagedLateEvents(t *testing.T) {
+	s, raw, mtixDir := reconcileTestStore(t)
+	seedTree(t, s)
+	_, err := raw.Exec(`INSERT INTO sync_sweep_pending (event_id) VALUES ('staged-1'), ('staged-2')`)
+	require.NoError(t, err)
+
+	require.NoError(t, DiscardLocal(context.Background(), s, mtixDir))
+
+	var n int
+	require.NoError(t, raw.QueryRow(`SELECT COUNT(*) FROM sync_sweep_pending`).Scan(&n))
+	require.Zero(t, n)
 }
 
 func TestDiscardLocal_AuditLogEmitted(t *testing.T) {

@@ -80,9 +80,16 @@ import (
 //     originator can differ (see the item on closed_at on the originator).
 //     Full convergence arrives with the phase-4 projector's composite
 //     workflow register (ADR-006 §4.4).
-//   - defer_until. The ADR-006 §4.4 register clears defer_until on claim,
-//     unclaim and transition, and a local claim clears it too. Ingest does
-//     not: that is out of scope for phase 0 (defer --until is MTIX-95.22).
+//   - defer_until. Only a defer event carries a wake time, and no 0.5.x
+//     client emits one: a local defer emits transition_status (MTIX-95.22),
+//     so the hub never carries the wake time. Every other workflow
+//     row clears defer_until, as the ADR-006 §4.4 register does: a
+//     transition into deferred carries no wake time, and every other row
+//     moves the node out of deferred. Otherwise a wake time kept from an
+//     earlier deferral would wake a later one received through sync. A defer
+//     until outside UTC years 1..9999 is stored as NULL (storedDeferUntil).
+//     A future repair re-derivation from this table (MTIX-95.6) would clear
+//     a local wake time: the local defer's winning event carries none.
 //   - update_field on status, assignee or agent_state keeps its own per-field
 //     register and is not compared with workflow events.
 //   - closed_at on the originator. The originating store stamps its own
@@ -168,18 +175,18 @@ type workflowRule struct {
 // writes updated_at (the apply time).
 //
 //	op                 from → to              status       assignee  agent_state  previous_status  closed_at  progress  defer_until
-//	claim              (any)                  in_progress  agent_id  working      -                NULL       -         -
-//	unclaim            (any)                  open         NULL      NULL         -                NULL       -         -
+//	claim              (any)                  in_progress  agent_id  working      -                NULL       -         NULL
+//	unclaim            (any)                  open         NULL      NULL         -                NULL       -         NULL
 //	defer              (any)                  deferred     -         -            -                NULL       -         until
-//	transition_status  any → done             done         -         -            -                wall       1.0       -
-//	transition_status  any → cancelled        cancelled    -         -            -                wall       -         -
-//	transition_status  any → invalidated      invalidated  -         -            from             wall       -         -
-//	transition_status  any → blocked          blocked      -         -            from             NULL       -         -
-//	transition_status  blocked → open         open         -         -            NULL             NULL       -         -
-//	transition_status  blocked → in_progress  in_progress  -         -            NULL             NULL       -         -
-//	transition_status  any → open             open         -         -            -                NULL       -         -
-//	transition_status  any → in_progress      in_progress  -         -            -                NULL       -         -
-//	transition_status  any → deferred         deferred     -         -            -                NULL       -         -
+//	transition_status  any → done             done         -         -            -                wall       1.0       NULL
+//	transition_status  any → cancelled        cancelled    -         -            -                wall       -         NULL
+//	transition_status  any → invalidated      invalidated  -         -            from             wall       -         NULL
+//	transition_status  any → blocked          blocked      -         -            from             NULL       -         NULL
+//	transition_status  blocked → open         open         -         -            NULL             NULL       -         NULL
+//	transition_status  blocked → in_progress  in_progress  -         -            NULL             NULL       -         NULL
+//	transition_status  any → open             open         -         -            -                NULL       -         NULL
+//	transition_status  any → in_progress      in_progress  -         -            -                NULL       -         NULL
+//	transition_status  any → deferred         deferred     -         -            -                NULL       -         NULL
 //
 // Derivation. Each row writes the columns its local mutation writes, with the
 // values taken from the event: claim and unclaim from ClaimNode and
@@ -189,6 +196,10 @@ type workflowRule struct {
 // the blocked → open / in_progress rows from autoUnblockNode
 // (dependency.go), the only writer of those auto-only transitions, which
 // clears previous_status.
+//
+// defer_until follows MTIX-95.22: a local claim, cancel or transition out of
+// deferred clears it, and a synced transition into deferred carries no wake
+// time; only the defer row sets it.
 //
 // closed_at is the one column every row writes, so it behaves as a register:
 // the winner decides it alone, whatever arrived before (a winner that left it
@@ -200,20 +211,20 @@ type workflowRule struct {
 // closed node. The residual list above records where this differs.
 func workflowWinnerTable() []workflowRule {
 	return []workflowRule{
-		{op: model.OpClaim, to: model.StatusInProgress, assignee: wfSet, agentState: wfSet, closedAt: wfClear},
-		{op: model.OpUnclaim, to: model.StatusOpen, assignee: wfClear, agentState: wfClear, closedAt: wfClear},
+		{op: model.OpClaim, to: model.StatusInProgress, assignee: wfSet, agentState: wfSet, closedAt: wfClear, deferUntil: wfClear},
+		{op: model.OpUnclaim, to: model.StatusOpen, assignee: wfClear, agentState: wfClear, closedAt: wfClear, deferUntil: wfClear},
 		{op: model.OpDefer, to: model.StatusDeferred, deferUntil: wfSet, closedAt: wfClear},
-		{op: model.OpTransitionStatus, to: model.StatusDone, closedAt: wfSet, progress: wfSet},
-		{op: model.OpTransitionStatus, to: model.StatusCancelled, closedAt: wfSet},
-		{op: model.OpTransitionStatus, to: model.StatusInvalidated, previousStatus: wfSet, closedAt: wfSet},
-		{op: model.OpTransitionStatus, to: model.StatusBlocked, previousStatus: wfSet, closedAt: wfClear},
+		{op: model.OpTransitionStatus, to: model.StatusDone, closedAt: wfSet, progress: wfSet, deferUntil: wfClear},
+		{op: model.OpTransitionStatus, to: model.StatusCancelled, closedAt: wfSet, deferUntil: wfClear},
+		{op: model.OpTransitionStatus, to: model.StatusInvalidated, previousStatus: wfSet, closedAt: wfSet, deferUntil: wfClear},
+		{op: model.OpTransitionStatus, to: model.StatusBlocked, previousStatus: wfSet, closedAt: wfClear, deferUntil: wfClear},
 		{op: model.OpTransitionStatus, from: model.StatusBlocked, to: model.StatusOpen,
-			previousStatus: wfClear, closedAt: wfClear},
+			previousStatus: wfClear, closedAt: wfClear, deferUntil: wfClear},
 		{op: model.OpTransitionStatus, from: model.StatusBlocked, to: model.StatusInProgress,
-			previousStatus: wfClear, closedAt: wfClear},
-		{op: model.OpTransitionStatus, to: model.StatusOpen, closedAt: wfClear},
-		{op: model.OpTransitionStatus, to: model.StatusInProgress, closedAt: wfClear},
-		{op: model.OpTransitionStatus, to: model.StatusDeferred, closedAt: wfClear},
+			previousStatus: wfClear, closedAt: wfClear, deferUntil: wfClear},
+		{op: model.OpTransitionStatus, to: model.StatusOpen, closedAt: wfClear, deferUntil: wfClear},
+		{op: model.OpTransitionStatus, to: model.StatusInProgress, closedAt: wfClear, deferUntil: wfClear},
+		{op: model.OpTransitionStatus, to: model.StatusDeferred, closedAt: wfClear, deferUntil: wfClear},
 	}
 }
 
@@ -386,10 +397,7 @@ func resolveWorkflowWrite(in workflowInput) (w workflowWrite, known bool) {
 	if !ok {
 		return workflowWrite{status: in.to, updatedAt: in.updatedAt}, false
 	}
-	var until any
-	if in.deferUntil != nil {
-		until = in.deferUntil.UTC().Format(time.RFC3339)
-	}
+	until := storedDeferUntil(in.deferUntil)
 	return workflowWrite{
 		status:         rule.to,
 		updatedAt:      in.updatedAt,

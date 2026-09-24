@@ -421,27 +421,11 @@ func (p *Pool) pullEventsOnce(ctx context.Context, sinceLamport int64, limit int
 
 	out := make([]*model.SyncEvent, 0, limit)
 	for rows.Next() {
-		var e model.SyncEvent
-		var opType, payload, vc string
-		var uid *string // NULL for uid-less (old-CLI) events (ADR-003 §7 Phase 3)
-		var createdAt time.Time
-		if err := rows.Scan(
-			&e.EventID, &e.ProjectPrefix, &e.NodeID, &uid, &opType, &payload,
-			&e.WallClockTS, &e.LamportClock, &vc,
-			&e.AuthorID, &e.AuthorMachineHash, &createdAt,
-		); err != nil {
-			return nil, false, err
+		e, scanErr := scanHubEvent(rows)
+		if scanErr != nil {
+			return nil, false, scanErr
 		}
-		if uid != nil {
-			e.UID = *uid
-		}
-		e.OpType = model.OpType(opType)
-		e.Payload = json.RawMessage(payload)
-		e.CreatedAt = createdAt
-		if err := json.Unmarshal([]byte(vc), &e.VectorClock); err != nil {
-			return nil, false, fmt.Errorf("decode VC for %s: %w", e.EventID, err)
-		}
-		out = append(out, &e)
+		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, err
@@ -452,4 +436,31 @@ func (p *Pool) pullEventsOnce(ctx context.Context, sinceLamport int64, limit int
 		out = out[:limit]
 	}
 	return out, hasMore, nil
+}
+
+// scanHubEvent decodes one sync_events row into a model.SyncEvent. It is
+// the single row decoder for PullEvents (pullEventsOnce) and FetchEventsByID
+// (MTIX-95.5), whose queries select the same columns in the same order, so
+// a pulled event and a swept one cannot decode differently. A NULL uid (an
+// event pushed by a CLI older than ADR-003 §7 Phase 3) leaves UID empty.
+func scanHubEvent(rows pgx.Rows) (*model.SyncEvent, error) {
+	var e model.SyncEvent
+	var opType, payload, vc string
+	var uid *string
+	if err := rows.Scan(
+		&e.EventID, &e.ProjectPrefix, &e.NodeID, &uid, &opType, &payload,
+		&e.WallClockTS, &e.LamportClock, &vc,
+		&e.AuthorID, &e.AuthorMachineHash, &e.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+	if uid != nil {
+		e.UID = *uid
+	}
+	e.OpType = model.OpType(opType)
+	e.Payload = json.RawMessage(payload)
+	if err := json.Unmarshal([]byte(vc), &e.VectorClock); err != nil {
+		return nil, fmt.Errorf("decode VC for %s: %w", e.EventID, err)
+	}
+	return &e, nil
 }

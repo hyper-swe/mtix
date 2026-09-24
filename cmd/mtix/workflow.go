@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 )
 
 // newClaimCmd creates the mtix claim command per FR-10.4.
@@ -101,46 +102,79 @@ func newDoneCmd() *cobra.Command {
 	}
 }
 
-// newDeferCmd creates the mtix defer command per FR-3.8.
+// deferLongHelp describes what `mtix defer` stores and how the wake time
+// behaves (FR-3.8b, MTIX-95.22). Keep docs/CLI_REFERENCE.md in step with it.
+const deferLongHelp = `Move a node to deferred, optionally with a wake time.
+
+With --until, the wake time is stored with the deferral. It must be an
+RFC 3339 timestamp with a zone, such as 2026-04-01T00:00:00Z or
+2026-04-01T09:00:00+05:30, whose UTC year is 1 to 9999, and is stored in
+UTC in whole seconds. Before the wake time, a claim is refused. From the
+wake time on, mtix ready lists the node and a claim succeeds, and the next
+background pass (mtix gc, or POST /api/v1/admin/gc on a running server)
+reopens it.
+
+Without --until the node has no wake time, and any earlier wake time is
+cleared; mtix ready lists it and it can be claimed at once. Deferring a
+node that is already deferred replaces its wake time. Leaving deferred
+(the background pass, reopen, claim or cancel) clears the wake time.
+
+In 0.5.x hub sync does not carry the wake time: other machines receive the
+deferral as a status change without it. A git-tracked .mtix/tasks.json
+does carry it (defer_until), so a machine that imports that file gets it.
+
+The stored wake time is the defer_until field of mtix show <id> --json.`
+
+// newDeferCmd creates the mtix defer command per FR-3.8 and FR-3.8b.
 func newDeferCmd() *cobra.Command {
 	var until string
 
 	cmd := &cobra.Command{
 		Use:   "defer <id>",
 		Short: "Defer a node until a specified time",
+		Long:  deferLongHelp,
 		Args:  cobra.ExactArgs(1),
 		RunE: withAutoExport(func(_ *cobra.Command, args []string) error {
 			return runDefer(args[0], until)
 		}),
 	}
 
-	cmd.Flags().StringVar(&until, "until", "", "Defer until (ISO-8601 timestamp)")
+	cmd.Flags().StringVar(&until, "until", "",
+		"Wake time, RFC 3339 with a zone (e.g. 2026-04-01T00:00:00Z); omit for no wake time")
 
 	return cmd
 }
 
+// runDefer defers a node, storing the --until wake time in the same
+// transaction as the transition (FR-3.8b, MTIX-95.22). The timestamp is
+// parsed here at the boundary; the service stores it in UTC. The author is
+// the process identity (MTIX-24), never a hard-coded "cli".
 func runDefer(id, until string) error {
 	if app.nodeSvc == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	// Validate the until timestamp if provided.
-	if until != "" {
-		if _, err := time.Parse(time.RFC3339, until); err != nil {
-			return fmt.Errorf("invalid --until timestamp: %w", err)
-		}
+	wake, err := service.ParseDeferUntil(until)
+	if err != nil {
+		return fmt.Errorf("invalid --until timestamp: %w", err)
 	}
 
 	ctx := context.Background()
-	if err := app.nodeSvc.TransitionStatus(
-		ctx, id, model.StatusDeferred, "deferred via CLI", "cli",
-	); err != nil {
+	if err := app.nodeSvc.DeferNode(ctx, id, wake, "deferred via CLI", app.authorID); err != nil {
 		return err
 	}
 
 	out := NewOutputWriter(app.jsonOutput)
 	if app.jsonOutput {
-		return out.WriteJSON(map[string]string{"id": id, "status": "deferred"})
+		result := map[string]string{"id": id, "status": "deferred"}
+		if wake != nil {
+			result["defer_until"] = wake.Format(time.RFC3339)
+		}
+		return out.WriteJSON(result)
+	}
+	if wake != nil {
+		out.WriteHuman("⏸ Deferred %s until %s\n", id, wake.Format(time.RFC3339))
+		return nil
 	}
 	out.WriteHuman("⏸ Deferred %s\n", id)
 	return nil

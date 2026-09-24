@@ -172,8 +172,8 @@ teammate's concurrent claim or status change.
 
 Known residual in 0.5.x:
 
-- Columns other than status and `closed_at` (assignee, agent state,
-  `previous_status`, progress, `defer_until`) are written only by the
+- Columns other than status, `closed_at` and `defer_until` (assignee,
+  agent state, `previous_status`, progress) are written only by the
   events that write them locally. When events arrive out of order, an
   event that won when it arrived may leave such a column set, and the
   final winner may not overwrite it. Example: a claim applies, then a
@@ -189,8 +189,12 @@ Known residual in 0.5.x:
   events by sync, except as the item on the `closed_at` range
   describes; the originating store can differ (see the item on
   `closed_at` on the originating store).
-- `defer_until` is not cleared by a winning claim, unclaim or
-  transition at ingest, although a local claim clears it.
+- `defer_until` (the wake time of `mtix defer --until`) is cleared by
+  every winning claim, unclaim and `transition_status`, including a
+  transition into `deferred`, and only a `defer` event sets it. No 0.5.x
+  client emits a `defer` event: a local defer emits `transition_status`,
+  so the hub never carries the wake time. A `defer` event whose wake time
+  falls outside UTC years 1 to 9999 stores none.
 - `update_field` on `status`, `assignee` or `agent_state` keeps its
   per-field register above and is not compared with workflow events.
 - `closed_at` on the originating store can differ from the replicas':
@@ -211,7 +215,11 @@ Known residual in 0.5.x:
   winner check, so status can still differ there. Example: replica A
   claims a node while replica B adds a dependency that blocks it; B's
   auto-block emits no event, so after both pull A shows `blocked` and
-  B `in_progress`. Descendants cancelled by a cascade cancel can differ
+  B `in_progress`. A dependent that a cascade cancel unblocks does
+  travel, as its own `transition_status`, so other replicas show it
+  unblocked while the descendant that blocked it is not cancelled
+  there (MTIX-95.21). Descendants cancelled by a cascade cancel, which
+  other replicas keep in their previous status, can differ
   the same way.
 - Unknown to-status: a `transition_status` to a status this build
   does not know (for example one added by a newer client) writes the
@@ -289,6 +297,155 @@ return ErrSyncDivergentHistory
 emitted events under prefix `PROJ` and the hub already has a different
 first_event_hash for `PROJ`, init refuses and points the operator at
 `mtix sync reconcile --import-as PARENT-ID` or `--rename-to`.
+
+## Pull
+
+`mtix sync pull` (and every pull the daemon runs) has two passes.
+
+**Cursor pass.** `PullEvents` returns the hub events with
+`lamport_clock > meta.sync.last_pulled_clock`, in Lamport order, in
+batches of `--limit` (default 1000). Each batch is applied through
+`IdempotentApply` (see [Idempotent apply](#idempotent-apply)) and the
+cursor advances to the highest Lamport clock applied.
+
+The Lamport clock is stamped by the client that wrote the event, not by
+the hub. A teammate who worked offline pushes events stamped below the
+cursors of teammates who kept working, so the cursor pass never returns
+them.
+
+**Straddling pushes.** A late push can straddle the cursor: a node's
+create stamped below it and an edit of that node above it (one offline
+client made more events than the cursor gap, or a teammate who received
+the node edited it). The cursor pass then returns the edit without its
+create, and the apply fails because the node is missing
+(`model.ErrNotFound`). The failed batch rolls back; the cursor has
+advanced only over committed batches. On that failure, and only on it,
+pull runs the late-event sweep below, which delivers the create and
+applies everything it recovers in Lamport order, and then retries the
+cursor pass once from the saved cursor (stderr says `retrying the pull
+once`). If the retry fails again, or the sweep fails, the pull fails
+with that error, as before; it never loops. A pull whose cursor pass
+succeeds runs no extra query for this. Together with the sweep's Lamport
+order, this is how a node's create always applies before its edits.
+
+**Late-event sweep** (`cmd/mtix/sync_pull_sweep.go`,
+`cmd/mtix/sync_pull_sweep_apply.go`, `transport/late_events.go`). After
+the cursor pass, pull runs two phases.
+
+1. **Listing.** It lists hub event ids in `(created_at, event_id)` keyset
+   pages of `--limit`. Normally that is the ids created since
+   `meta.sync.last_sweep_at` minus a 15-minute overlap. When
+   `meta.sync.last_sweep_at` is empty (the first pull after upgrading,
+   after `mtix sync clone`, or after `mtix sync reconcile
+   --discard-local`), it lists the full id history instead, once, from
+   the zero position. It diffs each page against the ids this store holds
+   in `sync_events` (its own events and every mirrored one) or
+   `applied_events`, and stages the missing ids, each with its Lamport
+   clock (the listing returns it), in the local table
+   `sync_sweep_pending`. It applies nothing: the listing order is not
+   causal. One client's push gives all its events the same `created_at`,
+   so their order is event-id order, and an edit can carry a smaller
+   event id than its node's create (after a clock step-back on that
+   client); a create that had to be renumbered is pushed after edits it
+   precedes.
+2. **Apply**, once the listing is complete. It reads the staged ids in
+   pull order (Lamport clock, then event id), `--limit` at a time; for
+   each chunk it fetches the events by id and applies them through the
+   same `IdempotentApply` path in one transaction, removing each id from
+   `sync_sweep_pending` in that transaction. Every chunk's clocks are at
+   or above the previous chunk's, so the order is global while memory and
+   each transaction stay bounded by `--limit`, and a pull stopped between
+   chunks resumes at the next one. Lamport order is causal: an event is always
+   stamped above every event its client had applied when it was made, so
+   a node's create applies before any edit of that node. Recovered events
+   are late and low-Lamport by construction, so a recovered `claim`,
+   `unclaim`, `defer` or `transition_status` goes through the workflow
+   winner rule (see
+   [Workflow events](#workflow-events-last-writer-wins-at-ingest)): one
+   older than the node's newest held workflow event is recorded as
+   received and changes nothing. A staged id this store now holds, or
+   that the hub no longer has, is removed without an apply.
+3. **Finish.** When nothing is left staged, it records the hub time read
+   before its first page in `meta.sync.last_sweep_at` (RFC 3339, UTC)
+   and clears the listing progress. If a concurrent pull has staged ids
+   meanwhile, it records nothing and reports no error; a later pull
+   applies those ids and records the sweep.
+
+**Resumable.** On a large hub the one-time full diff can take longer
+than one pull may run (a daemon pull has a 60-second deadline), and so
+can a window after a long absence. With each page's staged ids, in the
+same local transaction, the listing saves its position in
+`meta.sync.sweep_after_id` and `meta.sync.sweep_after_created_at` (the
+last listed id) and the hub time read before its first page in
+`meta.sync.sweep_started_at` (RFC 3339 UTC). A last page with nothing
+to stage writes nothing. A pull that stops in either phase keeps its
+progress, its staged ids and the old `meta.sync.last_sweep_at`. The
+next pull resumes listing after the saved position with the saved start
+time (stderr says `late-event sweep: resuming the full hub event
+comparison after <id>`, or `late-event sweep: resuming after <id>` for
+a window), then applies every staged id, including those an earlier
+pull left, still in Lamport order because the lower clocks were applied
+first. Events created while a sweep was interrupted are covered by the
+next window, which starts 15 minutes before that start time. A saved
+time that is not an RFC 3339 time is reported and the listing restarts
+from its own start. `mtix sync reconcile --discard-local` and `mtix sync
+clone` clear the progress keys, the staged ids and
+`meta.sync.last_sweep_at`.
+
+The sweep does not move the Lamport cursor. After a full-history diff
+pull prints `late-event sweep (first run, full hub history): N late
+events recovered`, even when N is 0; after a windowed sweep it prints
+`late-event sweep: N late events recovered` only when N > 0; N counts
+the events this pull recovered. `mtix sync status` shows `last sweep`
+(`last_sweep_at` in `--json`; empty or `never` before the first sweep
+completes). While the full diff is part-way done (saved listing
+progress or staged ids), the table shows `never (full hub comparison in
+progress)` and `--json` sets `full_sweep_in_progress` to true;
+`sweep_pending_events` in `--json` counts the staged ids. A value that is not an RFC 3339 time
+is reported on stderr and replaced by a full-history diff. A
+full-history diff also reports on stderr how many hub ids this pull
+compared in how many pages (`late-event sweep: compared N hub event ids
+in P pages`).
+
+**Hub clock only.** `created_at` is `DEFAULT now()` on the hub, the
+start time of the push transaction. Each listing statement also returns
+the hub's `now()`, and the window and `meta.sync.last_sweep_at` are
+computed from that value alone, never from this machine's clock, so a
+skewed client clock changes nothing. Because `created_at` is the
+transaction's start time, a push that started before a sweep can
+commit after it with an earlier `created_at`. The 15-minute overlap
+covers push transactions of normal length, which take seconds. It is
+not a bound: the 10-second `statement_timeout` limits each statement,
+not the push transaction, so a stalled push transaction can stay open
+longer than 15 minutes, and an event it then commits is missed by later
+windowed sweeps. Bounding the push transaction is a separate follow-up;
+the complete fix is a hub-assigned event order in a later protocol
+version.
+
+**Cost.** In the common case, where nothing is missing and the window
+holds at most `--limit` ids, the sweep adds one hub query to each pull:
+the id listing, which also returns the hub clock. A larger window adds
+one listing query per further `--limit` ids, and late events add one
+fetch per `--limit` of them. A straddling push adds one more cursor
+pass (the retry). The first sweep on a store pages through
+the full id history once, across as many pulls as it needs. The sweep
+runs only inside a pull and has no timer, so an idle hub that scales to
+zero stays idle; a daemon that pulls on an interval runs the sweep on
+each of its pulls. Hub migration 014 adds `idx_sync_events_created_at`
+(an additive `CREATE INDEX IF NOT EXISTS`) so each listing page reads
+only its own rows. Migrations run in `mtix sync init` and need the hub
+owner, so an existing hub gets the index the next time its owner runs
+`mtix sync init`. Until then each listing page scans `sync_events`
+once: one scan per pull for a window, and one per page for the full
+diff, which the saved progress spreads across pulls. The fetch by id
+always uses the primary key.
+`TestLateEventQueries_PlanUsesIndex_ServesSweepWithoutSeqScan` checks
+that the planner can serve each query from its index.
+
+**Failure.** Until recovered events can be quarantined, a recovered
+event that cannot be applied fails the pull, exactly as it would in
+the cursor pass. It stays staged, and the next pull tries it again
+after the events with lower Lamport clocks.
 
 ## Idempotent apply
 
@@ -458,6 +615,8 @@ so the restore replays cleanly.
   - `internal/store/sqlite/sync_emit.go` — event emission
   - `internal/store/sqlite/sync_apply.go` — idempotent apply + LWW
   - `internal/store/postgres/transport/push_pull.go` — wire push/pull
+  - `internal/store/postgres/transport/late_events.go` and
+    `cmd/mtix/sync_pull_sweep.go` — late-event sweep of pull
   - `internal/store/postgres/transport/migrate.go` — single-flight
     migration
   - `internal/sync/redact/redact.go` — DSN scrubber + panic Recover

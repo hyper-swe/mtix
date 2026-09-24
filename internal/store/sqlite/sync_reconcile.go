@@ -82,6 +82,7 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 		for _, stmt := range []string{
 			`DELETE FROM sync_conflicts`,
 			`DELETE FROM applied_events`,
+			`DELETE FROM sync_sweep_pending`,
 			`DELETE FROM sync_events`,
 			// The inbox bookkeeping is keyed to sync_events.rowid, and
 			// sync_events has no AUTOINCREMENT: once the journal is
@@ -143,6 +144,12 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			`DELETE FROM nodes`,
 			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.lamport'`,
 			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.last_pulled_clock'`,
+			// Never swept again: the next pull diffs the full hub history from
+			// the first id, with no saved full-diff progress (MTIX-95.5).
+			`UPDATE meta SET value = '' WHERE key = 'meta.sync.last_sweep_at'`,
+			`UPDATE meta SET value = '' WHERE key = 'meta.sync.sweep_after_id'`,
+			`UPDATE meta SET value = '' WHERE key = 'meta.sync.sweep_after_created_at'`,
+			`UPDATE meta SET value = '' WHERE key = 'meta.sync.sweep_started_at'`,
 			`UPDATE meta SET value = '{}' WHERE key = 'meta.sync.vector_clock'`,
 			`UPDATE meta SET value = '' WHERE key = 'meta.sync.first_event_hash'`,
 			`UPDATE meta SET value = '' WHERE key = 'meta.sync.project_prefix'`,
@@ -663,4 +670,3 @@ func writeIDRenameMap(mtixDir, path string, mapping map[string]string, partial b
 	}
 	_ = os.Rename(tmp, filepath.Join(mtixDir, IDRenameMapFilename))
 }
-

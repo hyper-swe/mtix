@@ -75,7 +75,8 @@ func (f *hubFixture) cleanup(root *pgxpool.Pool, dbName string) {
 	// Roles this fixture created share its random prefix.
 	var stmt *string
 	require.NoError(f.t, root.QueryRow(ctx, `
-		SELECT format('DROP ROLE IF EXISTS %s', string_agg(quote_ident(r.rolname), ', '))
+		SELECT CASE WHEN count(*) > 0
+		       THEN format('DROP ROLE IF EXISTS %s', string_agg(quote_ident(r.rolname), ', ')) END
 		FROM pg_catalog.pg_roles r WHERE starts_with(r.rolname, $1)`, f.prefix+"_").Scan(&stmt))
 	if stmt != nil {
 		_, err := root.Exec(ctx, *stmt)

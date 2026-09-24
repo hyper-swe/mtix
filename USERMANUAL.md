@@ -1652,14 +1652,17 @@ With `--apply`, in one transaction, harden:
   single columns), their sequences and the mtix functions from PUBLIC,
   from the data-API roles and from every other role except the table
   owner, superusers and the kept roles;
+- first grants again, from the owner, every privilege a kept role holds by
+  another role's grant, so the revokes below cannot take it away;
 - revokes a kept role's right to grant its privileges to others, and with
   it whatever the kept role granted on;
 - revokes the owner's default privileges toward those roles, so tables the
   owner creates later are not usable by them either;
-- revokes a membership in `pg_read_all_data` or `pg_write_all_data` when
-  the owner may: it holds ADMIN on the role, and the membership was granted
-  by the owner or by a role whose privileges it has. The change is
-  cluster-wide, so the dry run marks it;
+- revokes a membership in `pg_read_all_data`, `pg_write_all_data` or
+  (from PostgreSQL 17) `pg_maintain`, including one that carries only
+  ADMIN OPTION, when the owner may: it holds ADMIN on the role, and the
+  membership was granted by the owner or by a role whose privileges it
+  has. The change is cluster-wide, so the dry run marks it;
 - restores a missing TRUNCATE guard and enables a disabled one.
 
 Harden takes the hub's migration lock and waits at most 5 seconds for any
@@ -1669,11 +1672,13 @@ function or sequence is owned by another role; the transaction is rolled
 back, so nothing changes, and the message names the object. It then checks
 again: for every role except the owner, superusers and the kept roles, it
 asks PostgreSQL which of SELECT, INSERT, UPDATE, DELETE, TRUNCATE,
-REFERENCES and TRIGGER the role holds on each sync table or any of its
-columns (and the sequence and function privileges), so access through
-PUBLIC, role membership and the predefined read-all roles is found too. A
-role that can switch to another role with SET ROLE, without inheriting
-it, is reported as well.
+REFERENCES and TRIGGER (and MAINTAIN from PostgreSQL 17) the role holds on
+each sync table or any of its columns (and the sequence and function
+privileges), so access through PUBLIC, role membership and the predefined
+read-all roles is found too. A role that is a member of the owner role or
+of a read-all role in any way, by inheriting it, by SET ROLE or by ADMIN
+OPTION alone (with which it can grant the role to itself), is reported as
+well, and so is a CREATEROLE role before PostgreSQL 16.
 
 Access harden may not change is reported, not changed: a read-all
 membership that another role granted (the report prints the statement a
@@ -1694,6 +1699,14 @@ refuse TRUNCATE, alone or with CASCADE, as they refuse UPDATE and DELETE.
 `mtix sync init` adds these guards automatically, only when they are
 missing. Harden never enables row-level security.
 
+Verification passes when, apart from the table owner, superusers, and the
+kept roles and their members, no role holds a privilege on the sync
+tables, their sequences or the mtix functions (EXECUTE on the trigger
+functions aside), or a role membership that leads to one; the owner's
+default privileges give such roles nothing; and every TRUNCATE guard is in
+place. It says nothing about superusers or about who can reach the
+database over the network.
+
 Exit code: 0 when verification passes, 2 when changes are pending (dry run)
 or access remains (after `--apply`), 1 on an error or a refusal. With
 `--json` the report has `applied`, `before` and `after` (each with
@@ -1701,8 +1714,8 @@ or access remains (after `--apply`), 1 on an error or a refusal. With
 `executed` and `keep_roles_hint`. Each finding has `role`, `object`,
 `kind` (`table`, `sequence`, `function`, `default_acl`, `role` or
 `trigger`), `privileges`, `via` (`grant`, `grant_option`, `membership`,
-`owner_membership`, `default_acl`, `object_owner`, `missing` or
-`disabled`), `scope`
+`owner_membership`, `default_acl`, `object_owner`, `grantor`,
+`createrole`, `missing` or `disabled`), `scope`
 (`cluster-wide` for a membership), and `fix` (the statement `--apply`
 runs) or, when harden cannot fix it, `manual` (the statement an
 administrator runs) or `note` (why).

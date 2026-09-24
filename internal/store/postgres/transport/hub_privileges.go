@@ -28,7 +28,9 @@ const (
 // Finding sources: how a role holds the access a finding reports
 // (MTIX-95.1). A trigger finding uses missing or disabled; object_owner is
 // a role other than the sync tables' owner that owns an mtix function or
-// sequence.
+// sequence; grantor is a kept role's privilege granted by a role other
+// than the owner, which --apply grants again from the owner; createrole is
+// a CREATEROLE role before PostgreSQL 16.
 const (
 	FindingViaGrant           = "grant"
 	FindingViaGrantOption     = "grant_option"
@@ -38,6 +40,8 @@ const (
 	FindingViaMissing         = "missing"
 	FindingViaDisabled        = "disabled"
 	FindingViaObjectOwner     = "object_owner"
+	FindingViaGrantor         = "grantor"
+	FindingViaCreateRole      = "createrole"
 )
 
 // ScopeClusterWide marks a change that applies to every database on the

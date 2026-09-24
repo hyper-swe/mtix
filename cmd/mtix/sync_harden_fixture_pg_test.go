@@ -87,7 +87,8 @@ func (f *hardenFixture) cleanup(root *pgxpool.Pool, dbName string) {
 	// Fixture roles share the random prefix; made data-API roles are listed.
 	var stmt *string
 	require.NoError(f.t, root.QueryRow(ctx, `
-		SELECT format('DROP ROLE IF EXISTS %s', string_agg(quote_ident(r.rolname), ', '))
+		SELECT CASE WHEN count(*) > 0
+		       THEN format('DROP ROLE IF EXISTS %s', string_agg(quote_ident(r.rolname), ', ')) END
 		FROM pg_catalog.pg_roles r
 		WHERE starts_with(r.rolname, $1) OR r.rolname = ANY($2::text[])`,
 		f.prefix+"_", f.madeRoles).Scan(&stmt))

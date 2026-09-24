@@ -24,6 +24,14 @@ import (
 // to exit code 2, distinct from an error or a refusal (1) (MTIX-95.1).
 var errHardenPending = errors.New("harden: changes are pending or access remains; see the report")
 
+// verificationPassed states exactly what a passing verification checked
+// (MTIX-95.1): superusers, and access through a kept role, are out of its
+// scope.
+const verificationPassed = "verification passed: apart from the table owner, superusers, and the kept roles " +
+	"and their members,\n  no role holds a privilege on the sync tables, their sequences or the mtix " +
+	"functions (EXECUTE on the\n  trigger functions aside), or a role membership, ADMIN OPTION included, " +
+	"that leads to one;\n  the owner's default privileges give such roles nothing; every TRUNCATE guard is in place."
+
 // hardenFlags are the flags of `mtix sync harden`.
 type hardenFlags struct {
 	apply     bool
@@ -51,10 +59,11 @@ API uses for anonymous and signed-in callers, and from every other role
 except the table owner, superusers and the roles named with --keep-role
 or in the sync.keep_roles config key. A kept role keeps its privileges,
 and its members keep them through it, but it loses any right to grant
-them on. The owner's default privileges that would give those roles
-access to tables created later are revoked too. A membership in
-pg_read_all_data or pg_write_all_data is revoked when the owner may do
-so; it is cluster-wide. A missing TRUNCATE guard is restored and a
+them on; the owner first grants again anything a kept role holds by
+another role's grant. The owner's default privileges that would give
+those roles access to tables created later are revoked too. A membership
+in pg_read_all_data, pg_write_all_data or pg_maintain, even one with only
+ADMIN OPTION, is revoked when the owner may do so; it is cluster-wide. A missing TRUNCATE guard is restored and a
 disabled one enabled. A server WARNING fails the run and nothing changes.
 Access it cannot remove is reported with the statement an administrator
 runs. EXECUTE on the mtix trigger functions and other roles' default
@@ -242,8 +251,7 @@ func printHardenDryRun(w io.Writer, rep *transport.PrivilegeReport) {
 	fmt.Fprintln(w, "mtix sync harden: dry run; nothing was changed.")
 	printHardenScope(w, rep)
 	if rep.Clean() {
-		fmt.Fprintln(w, "verification passed: only the owner and the kept roles can use the sync tables, "+
-			"and every TRUNCATE guard is in place.")
+		fmt.Fprintln(w, verificationPassed)
 		printHardenInfo(w, rep)
 		return
 	}
@@ -274,8 +282,7 @@ func printHardenApply(w io.Writer, r *transport.HardenResult, hint string) {
 	after := r.After
 	printHardenScope(w, after)
 	if after.Clean() {
-		fmt.Fprintln(w, "verification passed: only the owner and the kept roles can use the sync tables, "+
-			"and every TRUNCATE guard is in place.")
+		fmt.Fprintln(w, verificationPassed)
 	} else {
 		fmt.Fprintln(w, "verification failed: access remains.")
 		printHardenFindings(w, "Access that remains:", after, false)
@@ -289,7 +296,7 @@ func printHardenApply(w io.Writer, r *transport.HardenResult, hint string) {
 // printHardenRoles lists, before any detail, the roles --apply would
 // affect, so a legitimate role is never revoked by surprise.
 func printHardenRoles(w io.Writer, rep *transport.PrivilegeReport) {
-	var lose, grantOnly, cannot []string
+	var lose, grantOnly, regrant, cannot []string
 	for _, f := range rep.Findings {
 		switch {
 		case f.Role == "":
@@ -297,6 +304,8 @@ func printHardenRoles(w io.Writer, rep *transport.PrivilegeReport) {
 			cannot = append(cannot, f.Role)
 		case f.Via == transport.FindingViaGrantOption:
 			grantOnly = append(grantOnly, f.Role)
+		case f.Via == transport.FindingViaGrantor:
+			regrant = append(regrant, f.Role)
 		default:
 			lose = append(lose, f.Role)
 		}
@@ -307,6 +316,7 @@ func printHardenRoles(w io.Writer, rep *transport.PrivilegeReport) {
 	}{
 		{"Roles that lose their access with --apply", lose},
 		{"Kept roles that keep their access but can no longer grant it", grantOnly},
+		{"Kept roles whose privileges the owner grants again", regrant},
 		{"Roles whose access --apply cannot remove", cannot},
 	} {
 		if names := distinctSorted(row.roles); len(names) > 0 {

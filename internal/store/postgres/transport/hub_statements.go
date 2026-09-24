@@ -34,19 +34,26 @@ const (
 	sqlFmtRevokeMembership          = `SELECT format('REVOKE %I FROM %I GRANTED BY %I', $1::text, $2::text, $3::text)`
 	sqlFmtManualRevokeMembership    = `SELECT format('REVOKE %I FROM %I', $1::text, $2::text)`
 	sqlFmtEnableTrigger             = `SELECT format('ALTER TABLE %I.%I ENABLE TRIGGER %I', $1::text, $2::text, $3::text)`
+	sqlFmtGrantRelation             = `SELECT format('GRANT %s ON %s %I.%I TO %I', $1::text, $2::text, $3::text, $4::text, $5::text)`
+	sqlFmtGrantColumn               = `SELECT format('GRANT %s (%I) ON TABLE %I.%I TO %I', $1::text, $2::text, $3::text, $4::text, $5::text)`
 	sqlFmtManualOwnerFunction       = `SELECT format('ALTER FUNCTION %I.%I() OWNER TO %I', $1::text, $2::text, $3::text)`
 	sqlFmtManualOwnerSequence       = `SELECT format('ALTER SEQUENCE %I.%I OWNER TO %I', $1::text, $2::text, $3::text)`
 )
 
-// statementKeywords are the only values a template's %s may receive.
+// statementKeywords are the only values a template's %s may receive: object
+// classes and the privilege names a re-grant may carry.
 var statementKeywords = map[string]bool{
 	"TABLE": true, "SEQUENCE": true, "TABLES": true, "SEQUENCES": true, "FUNCTIONS": true,
+	"SELECT": true, "INSERT": true, "UPDATE": true, "DELETE": true, "TRUNCATE": true,
+	"REFERENCES": true, "TRIGGER": true, "USAGE": true, "MAINTAIN": true,
 }
 
-// Action ranks: the order --apply runs statements in. Grant options go
-// first, so their CASCADE removes every regrant made through them.
+// Action ranks: the order --apply runs statements in. The owner first grants
+// again what a kept role holds by another role's grant; then grant options
+// go, so their CASCADE removes every regrant made through them.
 const (
-	rankGrantOption = iota
+	rankRegrant = iota
+	rankGrantOption
 	rankRoleGrant
 	rankPublicGrant
 	rankDefaultACL

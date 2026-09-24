@@ -1351,10 +1351,11 @@ API uses for anonymous and signed-in callers, and from every other role
 except the table owner, superusers and the roles named with --keep-role
 or in the sync.keep_roles config key. A kept role keeps its privileges,
 and its members keep them through it, but it loses any right to grant
-them on. The owner's default privileges that would give those roles
-access to tables created later are revoked too. A membership in
-pg_read_all_data or pg_write_all_data is revoked when the owner may do
-so; it is cluster-wide. A missing TRUNCATE guard is restored and a
+them on; the owner first grants again anything a kept role holds by
+another role's grant. The owner's default privileges that would give
+those roles access to tables created later are revoked too. A membership
+in pg_read_all_data, pg_write_all_data or pg_maintain, even one with only
+ADMIN OPTION, is revoked when the owner may do so; it is cluster-wide. A missing TRUNCATE guard is restored and a
 disabled one enabled. A server WARNING fails the run and nothing changes.
 Access it cannot remove is reported with the statement an administrator
 runs. EXECUTE on the mtix trigger functions and other roles' default

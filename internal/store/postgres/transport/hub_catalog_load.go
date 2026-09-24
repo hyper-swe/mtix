@@ -100,18 +100,18 @@ func (c *hubCatalog) loadACL(ctx context.Context, tx pgx.Tx) error {
 	// Explode the ACL of each sync table, sequence, mtix function and of
 	// each sync table column that has its own ACL.
 	rows, err := tx.Query(ctx, `
-		SELECT 'r', c.oid, a.grantee, a.privilege_type, a.is_grantable, ''
+		SELECT 'r', c.oid, a.grantee, a.grantor, a.privilege_type, a.is_grantable, ''
 		FROM pg_catalog.pg_class c
 		CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(c.relacl, pg_catalog.acldefault(
 		     CASE WHEN c.relkind = 'S' THEN 's' ELSE 'r' END::"char", c.relowner))) a
 		WHERE c.oid = ANY($1::oid[])
 		UNION ALL
-		SELECT 'r', att.attrelid, a.grantee, a.privilege_type, a.is_grantable, att.attname::text
+		SELECT 'r', att.attrelid, a.grantee, a.grantor, a.privilege_type, a.is_grantable, att.attname::text
 		FROM pg_catalog.pg_attribute att
 		CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) a
 		WHERE att.attrelid = ANY($3::oid[]) AND att.attacl IS NOT NULL AND NOT att.attisdropped
 		UNION ALL
-		SELECT 'f', p.oid, a.grantee, a.privilege_type, a.is_grantable, ''
+		SELECT 'f', p.oid, a.grantee, a.grantor, a.privilege_type, a.is_grantable, ''
 		FROM pg_catalog.pg_proc p
 		CROSS JOIN LATERAL pg_catalog.aclexplode(COALESCE(p.proacl,
 		     pg_catalog.acldefault('f', p.proowner))) a
@@ -123,7 +123,7 @@ func (c *hubCatalog) loadACL(ctx context.Context, tx pgx.Tx) error {
 	for rows.Next() {
 		var cat string
 		var e aclEntry
-		if err := rows.Scan(&cat, &e.obj.oid, &e.grantee, &e.privilege, &e.grantable, &e.column); err != nil {
+		if err := rows.Scan(&cat, &e.obj.oid, &e.grantee, &e.grantor, &e.privilege, &e.grantable, &e.column); err != nil {
 			return fmt.Errorf("read sync privileges: %w", err)
 		}
 		e.obj.cat = cat[0]
@@ -159,25 +159,20 @@ func (c *hubCatalog) loadDefaults(ctx context.Context, tx pgx.Tx) error {
 	return rows.Err()
 }
 
-// loadEdges reads the direct members of the read-all predefined roles that
-// can use the role, by inheriting its privileges or by SET ROLE (before
-// PostgreSQL 16 every member can SET ROLE; an ADMIN-only membership in 16
-// grants neither). It also reads whether the caller may revoke each
-// membership: that needs ADMIN on the role and the privileges of the role
-// that granted it.
+// loadEdges reads every direct member of the read-all predefined roles,
+// whatever the membership carries: inheriting, SET ROLE, or only ADMIN
+// OPTION, with which a member can grant the role to itself. It also reads
+// whether the caller may revoke each membership: that needs ADMIN on the
+// role and the privileges of the role that granted it.
 func (c *hubCatalog) loadEdges(ctx context.Context, tx pgx.Tx) error {
-	// Usable direct memberships in pg_read_all_data and pg_write_all_data.
+	// Direct memberships in pg_read_all_data, pg_write_all_data, pg_maintain.
 	rows, err := tx.Query(ctx, `
 		SELECT m.roleid, m.member, m.grantor,
 		       COALESCE(pg_catalog.pg_has_role(current_user, m.roleid, 'USAGE WITH ADMIN OPTION')
 		            AND pg_catalog.pg_has_role(current_user, m.grantor, 'USAGE'), false)
 		FROM pg_catalog.pg_auth_members m
 		JOIN pg_catalog.pg_roles r ON r.oid = m.roleid
-		WHERE r.rolname = ANY($1::text[])
-		  AND COALESCE(pg_catalog.pg_has_role(m.member, m.roleid, 'USAGE')
-		       OR pg_catalog.pg_has_role(m.member, m.roleid,
-		            CASE WHEN current_setting('server_version_num')::int >= 160000
-		                 THEN 'SET' ELSE 'MEMBER' END), false)`, readAllRoles)
+		WHERE r.rolname = ANY($1::text[])`, readAllRoles)
 	if err != nil {
 		return fmt.Errorf("read role memberships: %w", err)
 	}

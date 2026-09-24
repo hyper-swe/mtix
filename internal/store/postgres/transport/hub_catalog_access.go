@@ -86,18 +86,15 @@ func (c *hubCatalog) loadAccess(ctx context.Context, tx pgx.Tx, kept []string) e
 
 // loadUsage records, for each (checked role, candidate) pair, whether the
 // checked role inherits the candidate's privileges (usage) and whether it
-// can use them at all, by inheriting or by SET ROLE (member). Before
-// PostgreSQL 16 every member can SET ROLE, so MEMBER stands for SET there.
+// is a member at all (member): by inheriting, by SET ROLE, or by ADMIN
+// OPTION alone, with which it can grant the candidate to itself. MEMBER
+// counts every kind of membership on every PostgreSQL version.
 func (c *hubCatalog) loadUsage(ctx context.Context, tx pgx.Tx, checked, candidates []uint32) error {
-	// Which candidate roles each checked role inherits, or can SET ROLE to.
+	// Which candidate roles each checked role is a member of, and inherits.
 	rows, err := tx.Query(ctx, `
 		SELECT r.oid, g.oid, COALESCE(pg_catalog.pg_has_role(r.oid, g.oid, 'USAGE'), false)
 		FROM unnest($1::oid[]) AS r(oid) CROSS JOIN unnest($2::oid[]) AS g(oid)
-		WHERE r.oid <> g.oid
-		  AND COALESCE(pg_catalog.pg_has_role(r.oid, g.oid, 'USAGE')
-		       OR pg_catalog.pg_has_role(r.oid, g.oid,
-		            CASE WHEN current_setting('server_version_num')::int >= 160000
-		                 THEN 'SET' ELSE 'MEMBER' END), false)`,
+		WHERE r.oid <> g.oid AND COALESCE(pg_catalog.pg_has_role(r.oid, g.oid, 'MEMBER'), false)`,
 		checked, candidates)
 	if err != nil {
 		return fmt.Errorf("read role memberships: %w", err)
@@ -118,15 +115,17 @@ func (c *hubCatalog) loadUsage(ctx context.Context, tx pgx.Tx, checked, candidat
 }
 
 // loadEffective records every privilege the given roles hold on the sync
-// tables (the seven table privileges; SELECT, INSERT, UPDATE and
-// REFERENCES also when held on any single column), sequences (USAGE,
-// SELECT, UPDATE) and mtix functions (EXECUTE).
+// tables (the seven table privileges, and MAINTAIN from PostgreSQL 17;
+// SELECT, INSERT, UPDATE and REFERENCES also when held on any single
+// column), sequences (USAGE, SELECT, UPDATE) and mtix functions (EXECUTE).
 func (c *hubCatalog) loadEffective(ctx context.Context, tx pgx.Tx, roles []uint32) error {
 	// Every privilege each role holds on each sync object, from any source.
 	rows, err := tx.Query(ctx, `
 		SELECT r.oid, 'r', o.oid, p.priv
 		FROM unnest($1::oid[]) AS r(oid) CROSS JOIN unnest($2::oid[]) AS o(oid)
-		CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) AS p(priv)
+		CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']
+		     || CASE WHEN current_setting('server_version_num')::int >= 170000
+		             THEN ARRAY['MAINTAIN'] ELSE ARRAY[]::text[] END) AS p(priv)
 		WHERE COALESCE(pg_catalog.has_table_privilege(r.oid, o.oid, p.priv), false)
 		   OR (p.priv IN ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES')
 		       AND COALESCE(pg_catalog.has_any_column_privilege(r.oid, o.oid, p.priv), false))

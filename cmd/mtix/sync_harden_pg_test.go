@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,6 +43,7 @@ func newExposedHub(t *testing.T, withAdmin bool) *exposedHub {
 	f.ddl(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO %I, %I`, h.anon, h.authenticated)
 	f.ddl(`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO %I`, h.anon)
 	f.ddl(`GRANT SELECT ON audit_log TO %I`, h.unrel)
+	f.exec(`GRANT SELECT ON audit_log TO pg_monitor`) // a predefined role
 
 	// The team role reads and writes; it also holds a grant option that
 	// it used to pass SELECT on to the unrelated role.
@@ -84,7 +86,7 @@ func TestHarden_RevokesUnintendedAccess(t *testing.T) {
 	require.Equal(t, 2, exitCodeForError(err))
 	require.Equal(t, before, f.snapshot(), "the dry run changes nothing")
 	require.Contains(t, out, "dry run")
-	for _, role := range []string{"PUBLIC", h.anon, h.authenticated, h.unrel, h.reader, h.team} {
+	for _, role := range []string{"PUBLIC", h.anon, h.authenticated, h.unrel, h.reader, h.team, "pg_monitor"} {
 		require.Contains(t, out, role, "the dry run lists %s", role)
 	}
 	require.Contains(t, out, "default privileges of "+h.owner+" in schema public on tables")
@@ -99,7 +101,7 @@ func TestHarden_RevokesUnintendedAccess(t *testing.T) {
 	require.Contains(t, out, "mtix config set sync.keep_roles "+h.team,
 		"the kept role is offered for the config, never written silently")
 
-	for _, role := range []string{"public", h.anon, h.authenticated, h.unrel, h.reader} {
+	for _, role := range []string{"public", h.anon, h.authenticated, h.unrel, h.reader, "pg_monitor"} {
 		require.Empty(t, f.privileges(role), "%s keeps no access", role)
 	}
 	require.Contains(t, f.privileges(h.team), "sync_events SELECT")
@@ -168,29 +170,48 @@ func TestHarden_JSON_ReportsFindingFields(t *testing.T) {
 		require.NotEmpty(t, fd.Fix, "every finding on this hub has a fix")
 		seen[fd.Role] = true
 	}
-	for _, role := range []string{"PUBLIC", h.anon, h.authenticated, h.unrel, h.reader} {
+	for _, role := range []string{"PUBLIC", h.anon, h.authenticated, h.unrel, h.reader, "pg_monitor"} {
 		require.True(t, seen[role], "findings name %s", role)
 	}
 }
 
 // TestHarden_ReadAllMemberWithoutAdmin_ReportsExposure: when the owner may
-// not revoke a pg_read_all_data membership, the dry run and --apply report
-// it with the administrator's statement, --apply exits 2, and the
-// membership is left as it was (MTIX-95.1).
+// not revoke a pg_read_all_data membership, because it lacks ADMIN on the
+// role or because a third role granted the membership, the dry run and
+// --apply report it with the administrator's statement, --apply exits 2
+// after the other changes, and the membership is left as it was
+// (MTIX-95.1).
 func TestHarden_ReadAllMemberWithoutAdmin_ReportsExposure(t *testing.T) {
-	h := newExposedHub(t, false)
-	f := h.f
+	tests := []struct {
+		name      string
+		withAdmin bool
+		setup     func(h *exposedHub)
+	}{
+		{"owner has no ADMIN", false, func(*exposedHub) {}},
+		{"owner has ADMIN; a third role granted the membership", true, func(h *exposedHub) {
+			h.f.ddl(`REVOKE pg_read_all_data FROM %I GRANTED BY %I`, h.reader, h.owner)
+			h.f.ddl(`GRANT pg_read_all_data TO %I`, h.reader) // granted by the superuser
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newExposedHub(t, tt.withAdmin)
+			tt.setup(h)
+			f := h.f
 
-	out, err := f.harden(h.owner, "--keep-role", h.team)
-	require.Equal(t, 2, exitCodeForError(err))
-	require.Contains(t, out, "REVOKE pg_read_all_data FROM "+h.reader)
+			out, err := f.harden(h.owner, "--keep-role", h.team)
+			require.Equal(t, 2, exitCodeForError(err))
+			require.Contains(t, out, "REVOKE pg_read_all_data FROM "+h.reader)
+			require.NotContains(t, out, "GRANTED BY", "no revoke the owner may not run is planned")
 
-	out, err = f.harden(h.owner, "--apply", "--keep-role", h.team)
-	require.Error(t, err)
-	require.Equal(t, 2, exitCodeForError(err), "exposure remains: %s", out)
-	require.Contains(t, out, "REVOKE pg_read_all_data FROM "+h.reader)
-	require.Contains(t, f.privileges(h.reader), "sync_events SELECT", "the membership was not changed")
-	require.Empty(t, f.privileges(h.anon), "everything else was revoked")
+			out, err = f.harden(h.owner, "--apply", "--keep-role", h.team)
+			require.Error(t, err)
+			require.Equal(t, 2, exitCodeForError(err), "exposure remains: %s", out)
+			require.Contains(t, out, "REVOKE pg_read_all_data FROM "+h.reader)
+			require.Contains(t, f.privileges(h.reader), "sync_events SELECT", "the membership was not changed")
+			require.Empty(t, f.privileges(h.anon), "everything else was revoked")
+		})
+	}
 }
 
 // TestHarden_NonOwner_RefusesWithoutChanges: a caller that does not own
@@ -307,7 +328,7 @@ func TestHarden_CleanHub_NoDDL(t *testing.T) {
 }
 
 // TestHarden_FreshHub_VerifiesClean: a freshly migrated hub, with no role
-// configured, verifies clean (exit 0). EXECUTE for PUBLIC on the mtix
+// configured and a second superuser present, verifies clean (exit 0). EXECUTE for PUBLIC on the mtix
 // trigger functions is reported as information: a trigger function cannot
 // be called directly, and triggers fire without EXECUTE (MTIX-95.1).
 func TestHarden_FreshHub_VerifiesClean(t *testing.T) {
@@ -315,6 +336,7 @@ func TestHarden_FreshHub_VerifiesClean(t *testing.T) {
 	f := newHardenFixture(t)
 	owner := f.ownerRole()
 	f.migrateAs(owner)
+	f.ddl(`ALTER ROLE %I SUPERUSER`, f.role("su2")) // superusers are out of scope
 	app.jsonOutput = true
 
 	out, err := f.harden(owner)
@@ -365,7 +387,7 @@ func TestHarden_RoleMemberships_Reported(t *testing.T) {
 	f.ddl(`GRANT pg_read_all_data TO %I GRANTED BY %I`, grp, owner)
 	f.ddl(`GRANT %I TO %I WITH INHERIT FALSE`, grp, viaGrp)
 	f.ddl(`ALTER ROLE %I SUPERUSER`, su)
-	f.ddl(`GRANT REFERENCES, TRIGGER ON sync_events TO %I`, su)
+	f.ddl(`GRANT REFERENCES, TRIGGER, TRUNCATE ON sync_events TO %I`, su)
 	f.ddl(`GRANT UPDATE (payload) ON sync_events TO %I`, su)
 	f.ddl(`GRANT %I TO %I WITH INHERIT TRUE, SET FALSE`, su, viaSu)
 	app.jsonOutput = true
@@ -403,7 +425,7 @@ func TestHarden_RoleMemberships_Reported(t *testing.T) {
 	require.NotEmpty(t, before[viaGrp+" pg_read_all_data"].Fix, "a role that can SET ROLE to a read-all member")
 	ref := before[viaSu+" public.sync_events"]
 	require.Equal(t, "membership", ref.Via)
-	require.Equal(t, []string{"REFERENCES", "TRIGGER", "UPDATE"}, ref.Privileges,
+	require.Equal(t, []string{"REFERENCES", "TRIGGER", "TRUNCATE", "UPDATE"}, ref.Privileges,
 		"inherited table and column privileges")
 
 	after, err := report("--apply")
@@ -512,4 +534,97 @@ func TestHarden_FunctionOwnedByAnotherRole_Reported(t *testing.T) {
 	require.Contains(t, out, "ALTER FUNCTION public.append_only_no_truncate() OWNER TO "+owner)
 	out, err = f.harden(owner, "--apply")
 	require.Equal(t, 2, exitCodeForError(err), "only an administrator can return it: %s", out)
+}
+
+// TestHarden_AdminOnlyMembers_Reported: a role that holds only ADMIN
+// OPTION on the owner role or on pg_read_all_data can grant that role to
+// itself, so it is reported like any member, and verification does not
+// pass (MTIX-95.1).
+func TestHarden_AdminOnlyMembers_Reported(t *testing.T) {
+	initTestApp(t)
+	f := newHardenFixture(t)
+	owner := f.ownerRole()
+	admOwner, admRead := f.role("admowner"), f.role("admread")
+	f.migrateAs(owner)
+	f.ddl(`GRANT %I TO %I WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`, owner, admOwner)
+	f.ddl(`GRANT pg_read_all_data TO %I WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`, admRead)
+
+	out, err := f.harden(owner)
+	require.Equal(t, 2, exitCodeForError(err), "ADMIN-only members fail verification: %s", out)
+	require.Contains(t, out, admOwner)
+	require.Contains(t, out, "owner_membership")
+	require.Contains(t, out, admRead)
+	require.Contains(t, out, "REVOKE pg_read_all_data FROM "+admRead)
+	require.NotContains(t, out, "verification passed")
+}
+
+// TestHarden_KeptRoleGrantedByOtherRole_KeepsAccess: a kept role whose
+// privileges were granted by a role that is not kept keeps them: --apply
+// grants them again from the owner before that role's CASCADE revoke, and
+// the dry run says so (MTIX-95.1).
+func TestHarden_KeptRoleGrantedByOtherRole_KeepsAccess(t *testing.T) {
+	initTestApp(t)
+	f := newHardenFixture(t)
+	owner, lead, team := f.ownerRole(), f.role("lead"), f.role("team")
+	f.migrateAs(owner)
+	f.ddlAs(owner, `GRANT SELECT, INSERT ON sync_events TO %I WITH GRANT OPTION`, lead)
+	f.ddlAs(owner, `GRANT UPDATE (payload) ON sync_events TO %I WITH GRANT OPTION`, lead)
+	f.ddlAs(lead, `GRANT SELECT, INSERT ON sync_events TO %I`, team)
+	f.ddlAs(lead, `GRANT UPDATE (payload) ON sync_events TO %I`, team)
+	onEvents := func(role string) []string { // privileges on sync_events only
+		var out []string
+		for _, p := range f.privileges(role) {
+			if strings.HasPrefix(p, "sync_events ") {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	before := onEvents(team)
+	require.Equal(t, []string{"sync_events INSERT", "sync_events SELECT", "sync_events column UPDATE"}, before)
+
+	out, err := f.harden(owner, "--keep-role", team)
+	require.Equal(t, 2, exitCodeForError(err), out)
+	require.Contains(t, out, "Kept roles whose privileges the owner grants again: "+team)
+	require.Contains(t, out, "GRANT SELECT ON TABLE public.sync_events TO "+team)
+	require.Contains(t, out, "GRANT UPDATE (payload) ON TABLE public.sync_events TO "+team)
+
+	out, err = f.harden(owner, "--apply", "--keep-role", team)
+	require.NoError(t, err, "verification passes: %s", out)
+	require.Equal(t, before, onEvents(team), "the kept role keeps every privilege")
+	require.Empty(t, onEvents(lead), "the role that granted them keeps nothing")
+	require.Equal(t, []string{owner}, f.strings(`
+		SELECT DISTINCT a.grantor::regrole::text
+		FROM pg_catalog.pg_class c CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) a
+		WHERE c.oid = 'public.sync_events'::regclass AND a.grantee = $1::text::regrole`, team),
+		"the owner is now the grantor")
+}
+
+// TestHarden_Maintain_PG17: from PostgreSQL 17, MAINTAIN on a sync table and
+// membership in pg_maintain are checked like the other privileges and
+// read-all roles (MTIX-95.1).
+func TestHarden_Maintain_PG17(t *testing.T) {
+	initTestApp(t)
+	f := newHardenFixture(t)
+	var version int
+	require.NoError(t, f.admin.QueryRow(context.Background(),
+		`SELECT current_setting('server_version_num')::int`).Scan(&version))
+	if version < 170000 {
+		t.Skipf("MAINTAIN and pg_maintain exist from PostgreSQL 17; this server is %d", version)
+	}
+	owner, unrel, maint := f.ownerRole(), f.role("unrel"), f.role("maint")
+	su, viaSu := f.role("su"), f.role("viasu")
+	f.migrateAs(owner)
+	f.ddl(`GRANT MAINTAIN ON sync_events TO %I`, unrel)
+	f.ddl(`GRANT pg_maintain TO %I`, maint)
+	f.ddl(`ALTER ROLE %I SUPERUSER`, su)
+	f.ddl(`GRANT MAINTAIN ON audit_log TO %I`, su)
+	f.ddl(`GRANT %I TO %I WITH INHERIT TRUE, SET FALSE`, su, viaSu)
+
+	out, err := f.harden(owner)
+	require.Equal(t, 2, exitCodeForError(err), out)
+	require.Contains(t, out, "MAINTAIN")
+	require.Contains(t, out, unrel)
+	require.Contains(t, out, "REVOKE pg_maintain FROM "+maint)
+	require.Contains(t, out, viaSu+" ", "MAINTAIN inherited from a role that is not checked")
 }

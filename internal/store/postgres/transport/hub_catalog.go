@@ -30,9 +30,10 @@ const firstNormalOID uint32 = 16384
 // guardFunction is the function every TRUNCATE guard calls.
 const guardFunction = "append_only_no_truncate"
 
-// readAllRoles are the predefined roles whose members may read or write
-// every table in the cluster (MTIX-95.1).
-var readAllRoles = []string{"pg_read_all_data", "pg_write_all_data"}
+// readAllRoles are the predefined roles whose members may read, write or
+// maintain every table in the cluster (MTIX-95.1). pg_maintain exists from
+// PostgreSQL 17; on earlier servers no role has that name.
+var readAllRoles = []string{"pg_read_all_data", "pg_write_all_data", "pg_maintain"}
 
 // objKey identifies a catalog object: its catalog and OID.
 type objKey struct {
@@ -64,6 +65,7 @@ func (o *hubObject) label() string {
 type aclEntry struct {
 	obj       objKey
 	grantee   uint32 // publicOID for PUBLIC
+	grantor   uint32
 	privilege string
 	grantable bool
 	column    string // "" for a privilege on the whole object
@@ -71,9 +73,10 @@ type aclEntry struct {
 
 // roleInfo is one row of pg_roles.
 type roleInfo struct {
-	oid   uint32
-	name  string
-	super bool
+	oid        uint32
+	name       string
+	super      bool
+	createRole bool
 }
 
 // defaultACL is one privilege of a default-privileges entry.
@@ -111,19 +114,20 @@ type guardState struct {
 // hubCatalog is everything the privilege verification reads, loaded in
 // one transaction (MTIX-95.1).
 type hubCatalog struct {
-	schema    string
-	current   uint32
-	super     bool // current_user is a superuser
-	owners    map[uint32]bool
-	roles     map[uint32]roleInfo
-	objects   []hubObject
-	acl       []aclEntry
-	defaults  []defaultACL
-	edges     []roleEdge
-	usage     map[[2]uint32]bool // [member, role]: member inherits role's privileges
-	member    map[[2]uint32]bool // [member, role]: member inherits role or can SET ROLE to it
-	effective []effPriv
-	guards    []guardState
+	schema        string
+	serverVersion int // server_version_num, such as 160004
+	current       uint32
+	super         bool // current_user is a superuser
+	owners        map[uint32]bool
+	roles         map[uint32]roleInfo
+	objects       []hubObject
+	acl           []aclEntry
+	defaults      []defaultACL
+	edges         []roleEdge
+	usage         map[[2]uint32]bool // [member, role]: member inherits role's privileges
+	member        map[[2]uint32]bool // [member, role]: any membership: inherit, SET or ADMIN only
+	effective     []effPriv
+	guards        []guardState
 }
 
 // object returns the object with key k, or nil.
@@ -227,12 +231,14 @@ func (c *hubCatalog) loadTables(ctx context.Context, tx pgx.Tx, tables []string)
 	return rows.Err()
 }
 
-// loadCaller records current_user's OID and superuser status.
+// loadCaller records current_user's OID and superuser status, and the
+// server version.
 func (c *hubCatalog) loadCaller(ctx context.Context, tx pgx.Tx) error {
-	// The calling role, as privilege checks see it.
+	// The calling role, as privilege checks see it, and the server version.
 	err := tx.QueryRow(ctx, `
-		SELECT r.oid, r.rolsuper FROM pg_catalog.pg_roles r WHERE r.rolname = current_user`,
-	).Scan(&c.current, &c.super)
+		SELECT r.oid, r.rolsuper, current_setting('server_version_num')::int
+		FROM pg_catalog.pg_roles r WHERE r.rolname = current_user`,
+	).Scan(&c.current, &c.super, &c.serverVersion)
 	if err != nil {
 		return fmt.Errorf("read calling role: %w", err)
 	}
@@ -267,7 +273,7 @@ func (c *hubCatalog) checkOwner(ctx context.Context, tx pgx.Tx) error {
 // loadRoles reads every role and checks that each kept role exists.
 func (c *hubCatalog) loadRoles(ctx context.Context, tx pgx.Tx, kept []string) error {
 	// Every role in the cluster; the set is small on any hub.
-	rows, err := tx.Query(ctx, `SELECT oid, rolname::text, rolsuper FROM pg_catalog.pg_roles`)
+	rows, err := tx.Query(ctx, `SELECT oid, rolname::text, rolsuper, rolcreaterole FROM pg_catalog.pg_roles`)
 	if err != nil {
 		return fmt.Errorf("read roles: %w", err)
 	}
@@ -276,7 +282,7 @@ func (c *hubCatalog) loadRoles(ctx context.Context, tx pgx.Tx, kept []string) er
 	byName := map[string]bool{}
 	for rows.Next() {
 		var r roleInfo
-		if err := rows.Scan(&r.oid, &r.name, &r.super); err != nil {
+		if err := rows.Scan(&r.oid, &r.name, &r.super, &r.createRole); err != nil {
 			return fmt.Errorf("read roles: %w", err)
 		}
 		c.roles[r.oid] = r

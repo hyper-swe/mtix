@@ -53,6 +53,8 @@ func computeFindings(c *hubCatalog, kept map[string]bool) (findings, info []find
 	findings = append(findings, residualFindings(c, kept, checked)...)
 	findings = append(findings, guardFindings(c)...)
 	findings = append(findings, objectOwnerFindings(c)...)
+	findings = append(findings, regrantFindings(c, kept)...)
+	findings = append(findings, createRoleFindings(c, checked)...)
 	info = append(info, grantInfo...)
 	info = append(info, other...)
 	sortFindings(findings)
@@ -246,7 +248,7 @@ func defaultAction(c *hubCatalog, k defaultKey) *action {
 }
 
 // edgeFindings reports checked roles that are direct members of a read-all
-// role, and checked roles that inherit or can SET ROLE to such a member.
+// role, and checked roles that are members of such a member in any way.
 // The caller revokes the direct membership when it holds ADMIN on the role
 // and the grantor's privileges; otherwise an administrator's statement is
 // given. A role that reaches it through the member shares that fix. Either
@@ -297,9 +299,11 @@ func edgeFinding(c *hubCatalog, e roleEdge, role uint32) finding {
 	return f
 }
 
-// ownerMemberFindings reports checked roles that inherit a table owner's
-// privileges or can SET ROLE to it. Membership in the owner role is never
-// changed, only reported: removing it is the administrator's decision.
+// ownerMemberFindings reports checked roles that are members of a table
+// owner in any way: inheriting it, able to SET ROLE to it, or holding only
+// ADMIN OPTION, with which they can grant it to themselves. Membership in
+// the owner role is never changed, only reported: removing it is the
+// administrator's decision.
 func ownerMemberFindings(c *hubCatalog, checked map[uint32]bool) []finding {
 	var out []finding
 	for r := range checked {
@@ -379,7 +383,10 @@ func sortFindings(fs []finding) {
 		if a.Object != b.Object {
 			return a.Object < b.Object
 		}
-		return a.Via < b.Via
+		if a.Via != b.Via {
+			return a.Via < b.Via
+		}
+		return strings.Join(a.Privileges, ",") < strings.Join(b.Privileges, ",")
 	})
 }
 

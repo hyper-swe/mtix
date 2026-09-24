@@ -46,12 +46,17 @@ mtix config set sync.keep_roles <r>[,<r>] # Record the kept roles (harden prints
 mtix sync harden --json                   # Report for agents: before/after findings, statements, keep_roles_hint
 ```
 
-Exit code 0 means verification passed (only the owner and the kept roles can
-use the sync tables, and every TRUNCATE guard is in place); 2 means changes
-are pending or access remains; 1 means an error or a refusal. A role that is
+Exit code 0 means verification passed: apart from the table owner,
+superusers, and the kept roles and their members, no role holds a privilege
+on the sync tables, their sequences or the mtix functions (EXECUTE on the
+trigger functions aside), or a role membership that leads to one, ADMIN
+OPTION included; the owner's default privileges give such roles nothing; and
+every TRUNCATE guard is in place. 2 means changes are pending or access
+remains; 1 means an error or a refusal. A role that is
 not the table owner, a member of it or a superuser is refused and nothing
-changes. Members of a kept role keep their access through it; superusers are
-out of scope. A server WARNING fails the run and nothing changes. Access
+changes. Members of a kept role keep their access through it, and the owner
+grants again anything a kept role holds by another role's grant; superusers
+are out of scope. A server WARNING fails the run and nothing changes. Access
 harden may not change is printed with the statement a database administrator
 runs. EXECUTE on the mtix trigger functions is information only, so a freshly
 migrated hub verifies clean.

@@ -46,9 +46,10 @@ var (
 // with plain grants, and intact guards.
 func baseCatalog() *hubCatalog {
 	return &hubCatalog{
-		schema:  "public",
-		current: tCaller,
-		owners:  map[uint32]bool{tOwner: true},
+		schema:        "public",
+		serverVersion: 160000,
+		current:       tCaller,
+		owners:        map[uint32]bool{tOwner: true},
 		roles: map[uint32]roleInfo{
 			tOwner: {oid: tOwner, name: "owner"}, tTeam: {oid: tTeam, name: "team"},
 			tAnon: {oid: tAnon, name: "anon"}, tUnrel: {oid: tUnrel, name: "unrel"},
@@ -65,10 +66,10 @@ func baseCatalog() *hubCatalog {
 			{key: keyPlainFunc, kind: FindingKindFunction, schema: "public", name: "plain_fn", owner: tOwner},
 		},
 		acl: []aclEntry{
-			{obj: keyTable, grantee: tOwner, privilege: "SELECT"},
-			{obj: keyTable, grantee: tTeam, privilege: "SELECT"},
-			{obj: keyTable, grantee: tTeam, privilege: "INSERT"},
-			{obj: keySeq, grantee: tTeam, privilege: "USAGE"},
+			{obj: keyTable, grantee: tOwner, grantor: tOwner, privilege: "SELECT"},
+			{obj: keyTable, grantee: tTeam, grantor: tOwner, privilege: "SELECT"},
+			{obj: keyTable, grantee: tTeam, grantor: tOwner, privilege: "INSERT"},
+			{obj: keySeq, grantee: tTeam, grantor: tOwner, privilege: "USAGE"},
 		},
 		usage:  map[[2]uint32]bool{},
 		member: map[[2]uint32]bool{},
@@ -161,12 +162,12 @@ func TestComputeFindings_Grants_RevokeNonKeptRoles(t *testing.T) {
 		},
 		{
 			name: "kept role holding a column grant option",
-			acl:  []aclEntry{{obj: keyTable, grantee: tTeam, privilege: "SELECT", column: "payload", grantable: true}},
+			acl:  []aclEntry{{obj: keyTable, grantee: tTeam, grantor: tOwner, privilege: "SELECT", column: "payload", grantable: true}},
 			want: []string{"team|table|public.audit_log|grant_option|SELECT (payload)|revoke-grant-option TABLE public audit_log team"},
 		},
 		{
 			name: "kept role holding a grant option",
-			acl:  []aclEntry{{obj: keyTable, grantee: tTeam, privilege: "SELECT", grantable: true}},
+			acl:  []aclEntry{{obj: keyTable, grantee: tTeam, grantor: tOwner, privilege: "SELECT", grantable: true}},
 			want: []string{"team|table|public.audit_log|grant_option|SELECT|revoke-grant-option TABLE public audit_log team"},
 		},
 		{
@@ -403,7 +404,7 @@ func TestPlanActions_Order_RevokesGrantOptionsFirst(t *testing.T) {
 	cat.acl = append(cat.acl,
 		aclEntry{obj: keyTable, grantee: tAnon, privilege: "SELECT"},
 		aclEntry{obj: keyTable, grantee: publicOID, privilege: "SELECT"},
-		aclEntry{obj: keyTable, grantee: tTeam, privilege: "UPDATE", grantable: true},
+		aclEntry{obj: keyTable, grantee: tTeam, grantor: tOwner, privilege: "UPDATE", grantable: true},
 	)
 	cat.defaults = []defaultACL{{creator: tOwner, schema: "public", objType: "r", grantee: tAnon, privilege: "SELECT"}}
 	cat.edges = []roleEdge{{role: tReadAll, member: tReader, grantor: tOwner, revocable: true}}
@@ -548,4 +549,87 @@ func TestComputeFindings_TriggerFunctionEffectiveExecute_NotReported(t *testing.
 	findings, _ := computeFindings(cat, keptTeam())
 	require.Equal(t, []string{"unrel|function|public.plain_fn()|membership|EXECUTE|-"}, summaries(findings),
 		"only the function that is not a trigger function is reported")
+}
+
+// TestComputeFindings_KeptRoleGrantedByOtherRole_Regranted: a kept role's
+// privilege granted by a role other than the owner would vanish with that
+// role's CASCADE revoke, so --apply grants it again from the owner first,
+// column privileges included (MTIX-95.1).
+func TestComputeFindings_KeptRoleGrantedByOtherRole_Regranted(t *testing.T) {
+	cat := baseCatalog()
+	cat.acl = append(cat.acl,
+		aclEntry{obj: keyTable, grantee: tUnrel, grantor: tOwner, privilege: "SELECT", grantable: true},
+		aclEntry{obj: keyTable, grantee: tTeam, grantor: tUnrel, privilege: "DELETE"},
+		aclEntry{obj: keyTable, grantee: tTeam, grantor: tUnrel, privilege: "UPDATE", column: "actor"},
+		aclEntry{obj: keySeq, grantee: tTeam, grantor: tOwner, privilege: "SELECT"},
+	)
+	findings, _ := computeFindings(cat, keptTeam())
+	require.Equal(t, []string{
+		"team|table|public.audit_log|grantor|DELETE|regrant DELETE TABLE public audit_log team",
+		"team|table|public.audit_log|grantor|UPDATE (actor)|regrant-column UPDATE actor public audit_log team",
+		"unrel|table|public.audit_log|grant|SELECT|revoke TABLE public audit_log unrel",
+	}, summaries(findings))
+	require.Contains(t, findings[0].Note, "granted by unrel")
+
+	var shapes []string
+	for _, a := range planActions(findings, nil) {
+		shapes = append(shapes, a.shape())
+	}
+	require.Equal(t, []string{
+		"regrant DELETE TABLE public audit_log team",
+		"regrant-column UPDATE actor public audit_log team",
+		"revoke TABLE public audit_log unrel",
+	}, shapes, "the owner grants again before the CASCADE revoke")
+}
+
+// TestComputeFindings_GrantToPredefinedRole_Reported: a grant to a
+// predefined role such as pg_monitor is revoked like any other role's
+// (MTIX-95.1).
+func TestComputeFindings_GrantToPredefinedRole_Reported(t *testing.T) {
+	cat := baseCatalog()
+	const tMonitor uint32 = 3373
+	cat.roles[tMonitor] = roleInfo{oid: tMonitor, name: "pg_monitor"}
+	cat.acl = append(cat.acl, aclEntry{obj: keyTable, grantee: tMonitor, privilege: "SELECT"})
+	findings, _ := computeFindings(cat, keptTeam())
+	require.Equal(t, []string{"pg_monitor|table|public.audit_log|grant|SELECT|revoke TABLE public audit_log pg_monitor"},
+		summaries(findings))
+}
+
+// TestComputeFindings_CreateRoleBeforePG16_Reported: before PostgreSQL 16 a
+// CREATEROLE role can grant itself any role that is not a superuser, the
+// owner included, so it is reported; from 16 on, the membership checks
+// cover what it can reach (MTIX-95.1).
+func TestComputeFindings_CreateRoleBeforePG16_Reported(t *testing.T) {
+	for _, tt := range []struct {
+		version int
+		want    []string
+	}{
+		{150000, []string{"unrel|role|CREATEROLE|createrole||-"}},
+		{160000, nil},
+	} {
+		cat := baseCatalog()
+		cat.serverVersion = tt.version
+		r := cat.roles[tUnrel]
+		r.createRole = true
+		cat.roles[tUnrel] = r
+		findings, _ := computeFindings(cat, keptTeam())
+		if tt.want == nil {
+			require.Empty(t, findings, "version %d", tt.version)
+			continue
+		}
+		require.Equal(t, tt.want, summaries(findings), "version %d", tt.version)
+	}
+}
+
+// TestComputeFindings_RegrantSkipsObjectOwnedByAnotherRole: the owner
+// cannot grant on an object another role owns, so no re-grant is planned
+// there; the object_owner finding reports it instead (MTIX-95.1).
+func TestComputeFindings_RegrantSkipsObjectOwnedByAnotherRole(t *testing.T) {
+	cat := baseCatalog()
+	cat.objects[1].owner = tUnrel // the sequence
+	cat.acl = append(cat.acl, aclEntry{obj: keySeq, grantee: tTeam, grantor: tUnrel, privilege: "SELECT"})
+	findings, _ := computeFindings(cat, keptTeam())
+	for _, f := range findings {
+		require.NotEqual(t, FindingViaGrantor, f.Via, "%+v", f.PrivilegeFinding)
+	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/migrations"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
@@ -101,4 +102,34 @@ func TestHarden_WarningBeforeStatements_FailsRun(t *testing.T) {
 	require.Equal(t, []string{"true"}, f.queryStrings(
 		`SELECT pg_catalog.has_table_privilege('public', 'public.audit_log', 'SELECT')::text`),
 		"the grant to PUBLIC is still there")
+}
+
+// TestVerifyHubPrivileges_NonOwner_GetsReport: VerifyHubPrivileges, which
+// sync doctor uses, reports to any calling role, while Harden refuses a
+// non-owner; an invalid kept role is refused (MTIX-95.1).
+func TestVerifyHubPrivileges_NonOwner_GetsReport(t *testing.T) {
+	f := newHubFixture(t)
+	owner := f.ownerRole()
+	team := f.role("team")
+	ownerPool := f.openAs(owner, transport.Options{})
+	ctx := context.Background()
+	require.NoError(t, ownerPool.Migrate(ctx))
+	f.exec(`GRANT SELECT ON audit_log TO PUBLIC`)
+	f.ddl(`GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO %I`, team)
+
+	pool := f.openAs(team, transport.Options{})
+	report, err := pool.VerifyHubPrivileges(ctx, nil)
+	require.NoError(t, err, "a non-owner gets a report")
+	require.Equal(t, []string{owner}, report.Owners)
+	require.False(t, report.Clean())
+	var public bool
+	for _, fd := range report.Findings {
+		public = public || (fd.Role == "PUBLIC" && fd.Object == "public.audit_log")
+	}
+	require.True(t, public, "the grant to PUBLIC is reported: %+v", report.Findings)
+
+	_, err = pool.Harden(ctx, transport.HardenRequest{})
+	require.ErrorIs(t, err, transport.ErrHardenNotOwner, "harden still refuses a non-owner")
+	_, err = pool.VerifyHubPrivileges(ctx, []string{"anon"})
+	require.ErrorIs(t, err, model.ErrInvalidInput)
 }

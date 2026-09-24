@@ -218,7 +218,7 @@ func appendDualAndCutover(ctx context.Context, hub migrateHub, prefix string, ph
 	switch {
 	case err != nil:
 		phases = append(phases, PhaseReport{Phase: "3-cutover", Status: "deferred",
-			Detail: "cutover readiness unknown: " + err.Error()})
+			Detail: "cutover readiness unknown: " + scrubSyncText(err.Error())})
 	case ready:
 		phases = append(phases, PhaseReport{Phase: "3-cutover", Status: "ok",
 			Detail: "every active client is remap-aware — cutover to uid-keyed events is eligible"})

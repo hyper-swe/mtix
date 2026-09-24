@@ -86,11 +86,11 @@ The sync hub is a replication mechanism, not a canonical store. Events flow CLI 
 ### DSN handling
 
 1. **`MTIX_SYNC_DSN` env var** — production-preferred path. Lives in the environment, never on disk.
-2. **`.mtix/secrets`** — file-mode 0600 is enforced; `Source()` refuses looser modes. Auto-gitignored by `mtix sync init`.
+2. **`.mtix/secrets`** — file-mode 0600 is enforced; `Source()` refuses looser modes. It must be a regular file (a symlink to one is followed) of at most 64 KiB. Auto-gitignored by `mtix sync init`.
 3. **Tracked config files** (`.mtix/config.{yaml,yml,json}`) — `Source()` scans for DSN-shaped keys and **refuses to proceed** if any are present. Fail-closed at the earliest detectable misconfiguration.
 4. **Command line** — positional DSN arguments are no longer accepted; set `MTIX_SYNC_DSN` or `.mtix/secrets`.
 
-Every error string that may contain a DSN passes through `redact.DSN` before reaching stderr, MCP output, or panic traces. A DSN that is not a valid `postgres://` or `postgresql://` URL is reported with a fixed message that quotes none of it. When the driver rejects a DSN, its error is shown with the configured DSN and its password removed, in sync command errors and in `mtix sync doctor` details (text and `--json`). The CLI's final error line is scrubbed the same way, also for flag and argument errors inside a project, before the project is opened. `cmd/mtix/main.go` wraps `main()` with `defer redact.Recover(nil)` so panics with a DSN in scope are redacted before the runtime printer sees them.
+Every error string that may contain a DSN passes through `redact.DSN` before reaching stderr, MCP output, or panic traces. A DSN that is not a valid `postgres://` or `postgresql://` URL, or whose connection settings the driver cannot parse, is reported with a fixed message that quotes none of it. Sync command errors and warnings, `mtix sync doctor` details (text and `--json`) and pg_dump's messages from `mtix sync backup` are shown with the configured DSN (from `MTIX_SYNC_DSN` or `.mtix/secrets`, read as `Source()` reads it) and its password removed; a password shorter than 6 characters is removed where it appears as a password (`:password@` or `password=`). The CLI's final error line is scrubbed the same way, also for flag and argument errors inside a project, before the project is opened. `cmd/mtix/main.go` wraps `main()` with `defer redact.Recover(nil)` so panics with a DSN in scope are redacted before the runtime printer sees them.
 
 ### TLS posture
 

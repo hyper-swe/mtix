@@ -8,17 +8,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/sync/redact"
 )
-
-// maxSecretsScrubSize is the largest .mtix/secrets file the scrubber
-// reads (MTIX-95.15).
-const maxSecretsScrubSize = 64 << 10
 
 // scrubSyncText is the central scrubber for sync command output
 // (FR-18.17, MTIX-95.15). Every sync error print, every doctor detail,
@@ -63,29 +58,28 @@ func scrubMtixDir() string {
 }
 
 // readSecretsForScrub returns the content of mtixDir's secrets file for
-// the scrubber, and whether there is one (MTIX-95.15). Only a regular
-// file of at most maxSecretsScrubSize bytes is read; a symlink, any
-// other file type, a larger file or a read error yields nothing, so an
-// error print never follows a link or reads without bound.
+// the scrubber, and whether there is one (MTIX-95.15). It reads through
+// transport.ReadSecretsFile, the reader transport.Source uses, so the
+// scrubber knows exactly the secrets-file DSN that resolution would use
+// (a symlink is followed; the target must be a regular file of at most
+// 64 KiB). The file's mode is not checked: a DSN in a file Source would
+// refuse is still removed. An absent or unreadable file gives nothing.
 func readSecretsForScrub(mtixDir string) (string, bool) {
 	if mtixDir == "" {
 		return "", false
 	}
-	path := filepath.Join(mtixDir, transport.SecretsFilename)
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return "", false
-	}
-	f, err := os.Open(path) //nolint:gosec // path is mtixDir + the fixed secrets filename
+	body, _, err := transport.ReadSecretsFile(mtixDir)
 	if err != nil {
 		return "", false
 	}
-	defer f.Close()
-	body, err := io.ReadAll(io.LimitReader(f, maxSecretsScrubSize+1))
-	if err != nil || len(body) > maxSecretsScrubSize {
-		return "", false
-	}
-	return string(body), true
+	return body, true
+}
+
+// warnSync writes one warning line, "prefix: error text", with the error
+// text passed through the central scrubber (FR-18.17, MTIX-95.15). The
+// sync warnings that do not stop a command use it.
+func warnSync(w io.Writer, prefix string, err error) {
+	fmt.Fprintf(w, "%s: %s\n", prefix, scrubSyncText(err.Error()))
 }
 
 // scrubDoctorReport returns r with every check detail passed through

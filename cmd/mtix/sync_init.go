@@ -147,8 +147,7 @@ func runSyncInit(ctx context.Context, stdout, stderr io.Writer, args []string, o
 	// until its next push refreshes it).
 	if mh := clientMachineHash(); mh != "" {
 		if upErr := pool.UpsertProjectClient(connectCtx, prefix, mh, version); upErr != nil {
-			fmt.Fprintf(stderr, "WARN: version-gate client upsert skipped: %s\n",
-				scrubSyncText(upErr.Error()))
+			warnSync(stderr, "WARN: version-gate client upsert skipped", upErr)
 		}
 	}
 

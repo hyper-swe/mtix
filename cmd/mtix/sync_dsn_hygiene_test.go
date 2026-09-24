@@ -162,7 +162,7 @@ func requireDSNPathReached(t *testing.T, label, text, reached string) {
 // daemons and the daemon service verbs run against a real local store
 // with a synthetic DSN in each form (well-formed, keyword/value,
 // malformed, scheme-less) and from each source (the environment, the
-// secrets file, the command line). No part of the password, and never
+// secrets file, a symlinked secrets file, the command line). No part of the password, and never
 // the DSN itself, may appear in stdout, stderr or the returned error.
 //
 // No hub is reachable (the host is under .invalid), so each command runs
@@ -173,7 +173,7 @@ func TestDSN_NeverInAnyFR18CommandOutput(t *testing.T) {
 	t.Setenv("MTIX_SYNC_HOOK", "")
 	t.Setenv("MTIX_PG_DUMP", filepath.Join(t.TempDir(), "absent-pg_dump"))
 	for _, d := range syntheticDSNs() {
-		for _, source := range []string{sourceEnv, sourceSecrets, sourcePositional} {
+		for _, source := range []string{sourceEnv, sourceSecrets, sourceSecretsLink, sourcePositional} {
 			t.Run(d.name+"/"+source, func(t *testing.T) {
 				initTestApp(t)
 				pos := configureSyncDSN(t, app.mtixDir, source, d.dsn)

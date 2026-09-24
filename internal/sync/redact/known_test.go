@@ -124,6 +124,12 @@ func TestKnown_LongestSecretRemovedFirst(t *testing.T) {
 	dsn := "postgres://u:Kq8v@Z3xW9mRt@hub.invalid/mtix"
 	got := redact.Known("auth failed for Kq8v@Z3xW9mRt.", dsn)
 	require.Equal(t, "auth failed for REDACTED.", got)
+
+	// Both candidates are long enough to be removed everywhere; the
+	// longer one must still go first.
+	dsn = "postgres://u:Kq8vZ3@xW9mRt@hub.invalid/mtix"
+	got = redact.Known("auth failed for Kq8vZ3@xW9mRt.", dsn)
+	require.Equal(t, "auth failed for REDACTED.", got)
 }
 
 // TestKnown_NoSecret_TextUnchanged: text with no secret and no DSN

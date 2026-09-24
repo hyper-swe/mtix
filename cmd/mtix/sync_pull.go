@@ -109,7 +109,7 @@ func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 
 	if tailErr == nil && preTail == 0 && pulled > 0 {
 		if err := app.store.InitHookScanFloorAtTail(ctx); err != nil {
-			fmt.Fprintf(stderr, "mtix sync pull: hook floor init: %s\n", scrubSyncText(err.Error()))
+			warnSync(stderr, "mtix sync pull: hook floor init", err)
 		}
 	}
 

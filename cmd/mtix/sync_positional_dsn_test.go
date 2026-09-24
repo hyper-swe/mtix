@@ -19,7 +19,8 @@ import (
 
 // positionalRefusal is the fixed message for a DSN on the command line
 // (FR-18.16, MTIX-95.15).
-const positionalRefusal = "a DSN on the command line is refused: set MTIX_SYNC_DSN or .mtix/secrets"
+const positionalRefusal = "unexpected argument; a hub DSN is not accepted on the command line: " +
+	"set MTIX_SYNC_DSN or .mtix/secrets"
 
 // TestSyncCommands_PositionalDSN_Refused: every sync command (the
 // parent included), mtix sync daemon and mtix daemon (also with

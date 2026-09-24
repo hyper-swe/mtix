@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -29,9 +30,10 @@ const (
 
 // DSN sources the output tests configure.
 const (
-	sourceEnv        = "env"
-	sourceSecrets    = "secrets file"
-	sourcePositional = "positional"
+	sourceEnv         = "env"
+	sourceSecrets     = "secrets file"
+	sourceSecretsLink = "symlinked secrets file"
+	sourcePositional  = "positional"
 )
 
 // syntheticDSN is one DSN form under test and the password it carries.
@@ -64,11 +66,11 @@ func malformedDSNs() []syntheticDSN {
 }
 
 // queryPasswordDSN parses as a URL, carries its password as a query
-// setting, and has a setting the driver rejects, so connecting fails
-// with the driver's own error text.
+// setting, and has a connection setting the driver cannot parse
+// (connect_timeout=10s), so opening the pool fails on its settings.
 func queryPasswordDSN() syntheticDSN {
 	return syntheticDSN{"query password",
-		"postgres://" + sweepUser + "@" + sweepHost + ":5432/mtix?password=" + sweepSecret + "&connect_timeout=bogus",
+		"postgres://" + sweepUser + "@" + sweepHost + ":5432/mtix?password=" + sweepSecret + "&connect_timeout=10s",
 		sweepSecret}
 }
 
@@ -99,6 +101,12 @@ func configureSyncDSN(t *testing.T, mtixDir, source, dsn string) []string {
 		t.Setenv(transport.EnvDSN, "")
 		require.NoError(t, os.WriteFile(filepath.Join(mtixDir, transport.SecretsFilename),
 			[]byte(dsn+"\n"), transport.SecretsRequiredMode))
+		return nil
+	case sourceSecretsLink:
+		t.Setenv(transport.EnvDSN, "")
+		target := filepath.Join(t.TempDir(), "hub-dsn")
+		require.NoError(t, os.WriteFile(target, []byte(dsn+"\n"), transport.SecretsRequiredMode))
+		require.NoError(t, os.Symlink(target, filepath.Join(mtixDir, transport.SecretsFilename)))
 		return nil
 	case sourcePositional:
 		t.Setenv(transport.EnvDSN, "")
@@ -169,11 +177,11 @@ func TestDoctorJSON_MalformedDSN_NoSecretInOutput(t *testing.T) {
 	}
 }
 
-// TestDoctor_DriverErrorText_NoSecretInOutput: when connecting fails
-// with the driver's own error text, mtix sync doctor reports that text
-// without the password, in text and --json form; the driver's text may
-// name the user and host (FR-18.17, MTIX-95.15).
-func TestDoctor_DriverErrorText_NoSecretInOutput(t *testing.T) {
+// TestDoctor_UnparsableConnectionSettings_NoSecretInOutput: when the
+// DSN's connection settings cannot be parsed, mtix sync doctor reports a
+// fixed message without the password, in text and --json form
+// (FR-18.17, MTIX-95.15).
+func TestDoctor_UnparsableConnectionSettings_NoSecretInOutput(t *testing.T) {
 	d := queryPasswordDSN()
 	for _, jsonOut := range []bool{true, false} {
 		t.Run(fmt.Sprintf("json=%v", jsonOut), func(t *testing.T) {
@@ -186,7 +194,7 @@ func TestDoctor_DriverErrorText_NoSecretInOutput(t *testing.T) {
 			err := runSyncDoctor(context.Background(), &stdout, &stderr, nil, transport.Options{})
 			require.ErrorIs(t, err, errDoctorChecksFailed)
 			out := stdout.String() + stderr.String()
-			require.Contains(t, out, "invalid connect_timeout", "the driver's error is still reported")
+			require.Contains(t, out, "check the DSN's connection parameters", "the fixed message is reported")
 			requireNoSecret(t, "doctor output", out, d)
 		})
 	}
@@ -343,10 +351,11 @@ func TestScrubSyncText_BeforeAppInit_FindsProjectSecrets(t *testing.T) {
 	require.Equal(t, "bad value REDACTED and REDACTED", got)
 }
 
-// TestScrubSyncText_SecretsFileNotRegularOrTooLarge_NotRead: the scrubber
-// reads .mtix/secrets only when it is a regular file of at most 64 KiB;
-// a symlink or an oversized file contributes nothing (MTIX-95.15).
-func TestScrubSyncText_SecretsFileNotRegularOrTooLarge_NotRead(t *testing.T) {
+// TestScrubSyncText_SecretsFile_ReadAsSourceReadsIt: the scrubber reads
+// .mtix/secrets exactly as DSN resolution does: a symlink is followed to
+// its target, a regular file of at most 64 KiB is read, and anything
+// else contributes nothing (FR-18.17, MTIX-95.15).
+func TestScrubSyncText_SecretsFile_ReadAsSourceReadsIt(t *testing.T) {
 	saveAndResetApp(t)
 	t.Setenv(transport.EnvDSN, "")
 	d := wellFormedDSN()
@@ -359,8 +368,14 @@ func TestScrubSyncText_SecretsFileNotRegularOrTooLarge_NotRead(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "elsewhere")
 	require.NoError(t, os.Rename(secrets, target))
 	require.NoError(t, os.Symlink(target, secrets))
-	require.Equal(t, text, scrubSyncText(text), "a symlink is not followed")
+	require.Equal(t, "value REDACTED", scrubSyncText(text), "a symlink is followed, as Source follows it")
+	got, err := transport.Source(mtixDir)
+	require.NoError(t, err)
+	require.Equal(t, d.dsn, got, "resolution uses the linked DSN the scrubber knows")
 
+	require.NoError(t, os.Remove(secrets))
+	require.NoError(t, os.Mkdir(secrets, 0o700))
+	require.Equal(t, text, scrubSyncText(text), "a directory is not read")
 	require.NoError(t, os.Remove(secrets))
 	big := append([]byte(d.dsn+"\n"), bytes.Repeat([]byte("#"), 64<<10)...)
 	require.NoError(t, os.WriteFile(secrets, big, transport.SecretsRequiredMode))
@@ -480,4 +495,86 @@ func TestScrubWriter_LinesScrubbedAcrossWrites(t *testing.T) {
 	require.NoError(t, err, "a partial line is only held")
 	require.ErrorIs(t, failing.Flush(), os.ErrClosed)
 	require.NoError(t, newScrubWriter(failingWriter{}).Flush(), "nothing held, nothing written")
+}
+
+// TestSyncMigrate_CutoverReadinessError_NoSecret: a cutover-readiness
+// error that quotes the configured DSN is reported in the migrate
+// report without it (FR-18.17, MTIX-95.15).
+func TestSyncMigrate_CutoverReadinessError_NoSecret(t *testing.T) {
+	saveAndResetApp(t)
+	app.mtixDir = t.TempDir()
+	d := malformedDSNs()[3] // scheme-less: no URL shape to mask
+	t.Setenv(transport.EnvDSN, d.dsn)
+	hub := &fakeHub{cutoverErr: fmt.Errorf("gate query via %s failed (%s)", d.dsn, d.password)}
+
+	phases := appendDualAndCutover(context.Background(), hub, "TEST", nil)
+	p, ok := phaseByName(MigrateReport{Phases: phases}, "3-cutover")
+	require.True(t, ok)
+	require.Equal(t, "deferred", p.Status)
+	require.Equal(t, "cutover readiness unknown: gate query via REDACTED failed (REDACTED)", p.Detail)
+	requireNoSecret(t, "cutover detail", p.Detail, d)
+}
+
+// TestRunSyncDaemon_PositionalArg_RefusedBeforeLoop: called directly
+// with a positional argument, runSyncDaemon refuses it before it takes
+// its PID file or starts its loop (FR-18.16, MTIX-95.15).
+func TestRunSyncDaemon_PositionalArg_RefusedBeforeLoop(t *testing.T) {
+	initTestApp(t)
+	t.Setenv(transport.EnvDSN, "")
+	t.Setenv("MTIX_SYNC_HOOK", "")
+	d := wellFormedDSN()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	var stdout, stderr bytes.Buffer
+	err := runSyncDaemon(ctx, &stdout, &stderr, []string{d.dsn}, transport.Options{}, 3600, false)
+	require.Error(t, err, "the refusal is returned, not retried by the loop")
+	require.Contains(t, err.Error(), positionalRefusal)
+	require.Empty(t, stdout.String(), "the daemon never started")
+	require.NoFileExists(t, filepath.Join(app.mtixDir, daemonPIDFilename))
+	requireNoSecret(t, "sync daemon", errorsAsText(err, stdout.String(), stderr.String()), d)
+}
+
+// TestDoctor_DetailQuotingSecret_Scrubbed: every doctor detail passes
+// through the central scrubber. Here the project path happens to
+// contain the configured password, and the secrets-file checks quote
+// that path; neither the text nor the --json report shows the password
+// (FR-18.17, MTIX-95.15).
+func TestDoctor_DetailQuotingSecret_Scrubbed(t *testing.T) {
+	d := wellFormedDSN()
+	for _, jsonOut := range []bool{true, false} {
+		t.Run(fmt.Sprintf("json=%v", jsonOut), func(t *testing.T) {
+			saveAndResetApp(t)
+			t.Setenv(transport.EnvDSN, "")
+			app.mtixDir = filepath.Join(t.TempDir(), "p-"+d.password, ".mtix")
+			app.jsonOutput = jsonOut
+			require.NoError(t, os.MkdirAll(app.mtixDir, 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(app.mtixDir, transport.SecretsFilename),
+				[]byte(d.dsn+"\n"), 0o644))
+
+			var stdout, stderr bytes.Buffer
+			err := runSyncDoctor(context.Background(), &stdout, &stderr, nil, transport.Options{})
+			require.ErrorIs(t, err, errDoctorChecksFailed)
+			out := stdout.String() + stderr.String()
+			require.Contains(t, out, "p-REDACTED", "the path is shown with the password removed")
+			requireNoSecret(t, "doctor output", out, d)
+		})
+	}
+}
+
+// TestWarnSync_ErrorQuotingDSN_Scrubbed: the helper behind the warnings
+// that do not stop a sync command (hook floor init after pull and
+// clone, the version-gate upsert in init) prints its prefix and the
+// error text with the configured DSN and password removed (FR-18.17,
+// MTIX-95.15). Those call sites run only after a live hub answers.
+func TestWarnSync_ErrorQuotingDSN_Scrubbed(t *testing.T) {
+	saveAndResetApp(t)
+	app.mtixDir = t.TempDir()
+	d := malformedDSNs()[3] // scheme-less: no URL shape to mask
+	t.Setenv(transport.EnvDSN, d.dsn)
+
+	var buf bytes.Buffer
+	warnSync(&buf, "mtix sync pull: hook floor init", fmt.Errorf("floor via %s (%s)", d.dsn, d.password))
+	require.Equal(t, "mtix sync pull: hook floor init: floor via REDACTED (REDACTED)\n", buf.String())
+	requireNoSecret(t, "warning", buf.String(), d)
 }

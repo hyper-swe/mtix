@@ -234,7 +234,11 @@ func TestAutoImport_SchemaVersionCheck(t *testing.T) {
 		{"v1.0.0 accepted", "1.0.0", false, true},
 		{"v1.1.0 accepted", "1.1.0", false, true},
 		{"v1.99.0 accepted", "1.99.0", false, true},
-		{"v2.0.0 rejected", "2.0.0", false, false},
+		// 2.0.0 is what 0.5.4 writes (MTIX-95.31.1); an older client, whose
+		// supported major is 1, skips it as newer than it supports.
+		{"v2.0.0 accepted", "2.0.0", false, true},
+		{"v2.7.0 accepted", "2.7.0", false, true},
+		{"v3.0.0 rejected", "3.0.0", false, false},
 		{"v3.1.2 rejected", "3.1.2", false, false},
 		{"empty treated as 1.0.0", "", false, true},
 	}

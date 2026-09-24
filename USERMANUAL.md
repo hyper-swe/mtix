@@ -1243,9 +1243,9 @@ Export all project data to JSON:
 mtix export > project-data.json
 ```
 
-The export includes every node with every stored field, dependencies, agents, sessions, and a SHA-256 checksum for integrity verification. `.mtix/tasks.json`, the git-tracked board, is the same document. Each node carries its annotations (comments, review verdicts, close receipts) in the structure `mtix show --json` returns, its activity stream, its invalidation fields and every other column; soft-deleted nodes are included. The checksum covers the nodes, annotations included, and the dependencies. No node field is left out. The format (`schema_version` 1.1.0 since 0.5.4), every field and the checksum rule are described in [docs/EXPORT-FORMAT.md](docs/EXPORT-FORMAT.md).
+The export includes every node with every stored field, dependencies, agents, sessions, and a SHA-256 checksum for integrity verification. `.mtix/tasks.json`, the git-tracked board, is the same document. Each node carries its annotations (comments, review verdicts, close receipts) in the structure `mtix show --json` returns, its activity stream, its invalidation fields and every other column; soft-deleted nodes are included. The checksum covers the nodes, annotations included, and the dependencies. No node field is left out. The format (`schema_version` 2.0.0 since 0.5.4; 0.5.3 and earlier wrote 1.0.0), every field and the checksum rule are described in [docs/EXPORT-FORMAT.md](docs/EXPORT-FORMAT.md).
 
-A client older than 0.5.4 cannot read a file written by 0.5.4: it drops the fields it does not know, the checksum no longer matches, and it refuses the file (its automatic import logs `auto-import failed: checksum verification failed` and leaves its store unchanged). Upgrade every teammate who shares a board. 0.5.4 reads files written by older clients.
+**Mixed versions on one board.** A client older than 0.5.4 supports only `schema_version` 1.x, so its automatic import skips a file written by 0.5.4 and logs `tasks.json schema version is newer than supported — upgrade mtix`; its `mtix import` of the file fails with `checksum verification failed`. That protects its store only until its next writing command: every write re-exports `.mtix/tasks.json` from that store, which lacks everything the client skipped and every annotation, and committing that file reverts every change made upstream. Until every teammate who shares a board runs 0.5.4 or later, do not run writing commands on an older client and do not commit its `.mtix/tasks.json`. If such a file was committed, restore `.mtix/tasks.json` from the last good commit in git history, or restore the store of a machine that imported it from `.mtix/data/pre-sync-backup.db` (copy it over `.mtix/data/mtix.db` while no mtix process runs). A 0.5.4 store is protected from such a file by the auto-import guard (MTIX-95.31.2), which refuses a replace import that would drop annotations or nodes the store holds. 0.5.4 reads files written by older clients.
 
 ### Import
 
@@ -1268,9 +1268,10 @@ mtix import project-data.json --mode replace
 - A merge never removes an annotation or activity entry. To make the store match a file exactly, use replace mode.
 
 Import validates, before it writes anything (a failed check writes nothing):
+- The major `schema_version` is not higher than the one this mtix writes; a newer file is refused with `newer than supported ... upgrade mtix` (the automatic import skips it with the same message)
 - Node count matches the `node_count` field
-- SHA-256 checksum over canonical JSON (a file written by mtix always verifies, including one holding text that is not valid UTF-8)
-- Every time value (node timestamps, annotation and activity times, dependency, agent and session times) is RFC 3339 with a UTC year from 1 to 9999; the error names the record and the field
+- SHA-256 checksum over canonical JSON. A file written by mtix always verifies, including one holding text that is not valid UTF-8. One exception: a file written by 0.5.3 or earlier that held both invalid UTF-8 and a genuine U+FFFD replacement character still fails; check it, then import it with `mtix import --recompute-checksum`
+- Every time value (node timestamps, annotation and activity times, dependency, agent and session times) is RFC 3339 with a UTC year from 1 to 9999, and the required ones (a node's `created_at` and `updated_at`, a dependency's `created_at`, a session's `started_at`) are not empty; the error names the record and the field
 
 After an import:
 - FTS5 index is rebuilt

@@ -56,7 +56,9 @@ func setNodeStreamTime(t *testing.T, doc map[string]any, id, stream, value strin
 // TestImport_UnstorableTime_RejectedAndWritesNothing verifies that every
 // time field of an export is checked before import writes anything, in
 // both modes: a value outside years 1..9999 in UTC (including one pushed
-// out of range by its zone offset) or not RFC 3339 is rejected with
+// out of range by its zone offset), a value that is not RFC 3339, and an
+// empty value in a required field (node created_at and updated_at,
+// dependency created_at, session started_at) are rejected with
 // ErrInvalidInput naming the field, and the store is left unchanged
 // (MTIX-95.31.1, model.IsStorableTime).
 func TestImport_UnstorableTime_RejectedAndWritesNothing(t *testing.T) {
@@ -101,6 +103,18 @@ func TestImport_UnstorableTime_RejectedAndWritesNothing(t *testing.T) {
 		{"session ended_at year 10000", "ended_at", func(t *testing.T, doc map[string]any) {
 			setDocField(t, doc, "sessions", "ended_at", "10000-01-01T00:00:00Z")
 		}},
+		{"node created_at empty", "created_at", func(t *testing.T, doc map[string]any) {
+			docNode(t, doc, "COL-2")["created_at"] = ""
+		}},
+		{"node updated_at empty", "updated_at", func(t *testing.T, doc map[string]any) {
+			docNode(t, doc, "COL-2")["updated_at"] = ""
+		}},
+		{"dependency created_at empty", "dependency", func(t *testing.T, doc map[string]any) {
+			setDocField(t, doc, "dependencies", "created_at", "")
+		}},
+		{"session started_at empty", "started_at", func(t *testing.T, doc map[string]any) {
+			setDocField(t, doc, "sessions", "started_at", "")
+		}},
 	}
 	data := seedTimeValidationSource(t)
 	for _, tt := range tests {
@@ -139,4 +153,26 @@ func TestImport_BoundaryTimes_Accepted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, node.CreatedAt.Year())
 	assert.Equal(t, 9999, node.UpdatedAt.Year())
+}
+
+// TestImport_EmptyOptionalTimes_Accepted verifies that the optional time
+// fields may be empty: a node's closed_at, defer_until, deleted_at and
+// invalidated_at, an agent's last_heartbeat and a session's ended_at
+// (MTIX-95.31.1).
+func TestImport_EmptyOptionalTimes_Accepted(t *testing.T) {
+	data := seedTimeValidationSource(t)
+	empty := editExportResealed(t, data, func(doc map[string]any) {
+		n := docNode(t, doc, "COL-1")
+		for _, key := range []string{"closed_at", "defer_until", "deleted_at", "invalidated_at"} {
+			n[key] = ""
+		}
+		setDocField(t, doc, "agents", "last_heartbeat", "")
+		setDocField(t, doc, "sessions", "ended_at", "")
+	})
+	for _, mode := range []sqlite.ImportMode{sqlite.ImportModeReplace, sqlite.ImportModeMerge} {
+		t.Run(string(mode), func(t *testing.T) {
+			_, err := newTestStore(t).Import(context.Background(), empty, mode, false)
+			require.NoError(t, err)
+		})
+	}
 }

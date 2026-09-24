@@ -16,25 +16,18 @@ import (
 )
 
 // carriesNodeColumns reports whether an export of the given schema_version
-// carries the node columns schema 1.1.0 added (MTIX-95.31.1). An empty or
+// carries the node columns schema 2.0.0 added (MTIX-95.31.1): major 2 and
+// later do. Every 1.x version was written before them; an empty or
 // unparsable version reads as 1.0.0, the safe reading: a merge then keeps
 // the local values of those columns.
 func carriesNodeColumns(version string) bool {
-	parts := strings.SplitN(version, ".", 3)
-	if len(parts) < 2 {
-		return false
-	}
-	major, majorErr := strconv.Atoi(parts[0])
-	minor, minorErr := strconv.Atoi(parts[1])
-	if majorErr != nil || minorErr != nil {
-		return false
-	}
-	return major > 1 || (major == 1 && minor >= 1)
+	major, err := strconv.Atoi(strings.SplitN(version, ".", 2)[0])
+	return err == nil && major >= 2
 }
 
 // keepLocalNodeColumns copies into n the local values of the columns schema
-// 1.1.0 added (MTIX-95.31.1). A 1.0.0 file carries none of them, so their
-// absence means "not carried", never "cleared"; before 1.1.0 a merge never
+// 2.0.0 added (MTIX-95.31.1). A 1.x file carries none of them, so their
+// absence means "not carried", never "cleared"; before 2.0.0 a merge never
 // wrote them either. Annotations and the activity stream are merged by
 // mergeNodeStreams instead.
 func keepLocalNodeColumns(n, local *exportNode) {

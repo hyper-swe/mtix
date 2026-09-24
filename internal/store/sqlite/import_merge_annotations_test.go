@@ -188,7 +188,7 @@ func TestImport_Merge_ActivityUnion(t *testing.T) {
 }
 
 // TestImport_MergeLegacyFile_KeepsLocalNodeColumns verifies that merging a
-// schema 1.0.0 file, which carries none of the 1.1.0 columns, leaves the
+// schema 1.0.0 file, which carries none of the 2.0.0 columns, leaves the
 // local values of those columns as they were, even when the node's content
 // changed upstream (MTIX-95.31.1).
 func TestImport_MergeLegacyFile_KeepsLocalNodeColumns(t *testing.T) {
@@ -224,8 +224,8 @@ func TestImport_MergeLegacyFile_KeepsLocalNodeColumns(t *testing.T) {
 }
 
 // TestImport_MergeCurrentFile_AppliesIncomingColumns verifies that a schema
-// 1.1.0 file whose node content changed upstream writes the incoming values
-// of the 1.1.0 columns, as it does for every other exported column
+// 2.0.0 file whose node content changed upstream writes the incoming values
+// of the 2.0.0 columns, as it does for every other exported column
 // (MTIX-95.31.1).
 func TestImport_MergeCurrentFile_AppliesIncomingColumns(t *testing.T) {
 	ctx := context.Background()
@@ -263,7 +263,49 @@ func TestImport_MergeCurrentFile_AppliesIncomingColumns(t *testing.T) {
 	require.NoError(t, err)
 	after := nodeColumnRows(t, s)[0]
 	for key, want := range upstream {
-		assert.Equal(t, want, after[key], "a 1.1.0 file must write nodes.%s", key)
+		assert.Equal(t, want, after[key], "a 2.0.0 file must write nodes.%s", key)
 	}
 	assert.Equal(t, []string{sumA, sumB}, annotationSummary(t, s, "M-1"))
+}
+
+// TestImport_Merge_NewActivityEntry_WrittenByOneImport verifies, on both
+// merge paths, that a single import writes an activity entry only the file
+// carries: the update path (content hash changed) and the path that writes
+// only the merged annotations and activity (content hash unchanged)
+// (MTIX-95.31.1).
+func TestImport_Merge_NewActivityEntry_WrittenByOneImport(t *testing.T) {
+	for _, changed := range []bool{true, false} {
+		name := "unchanged content hash"
+		if changed {
+			name = "changed content hash"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			s := newTestStore(t)
+			createAnnotatedNode(t, s, "M-1", 1)
+			data, err := s.Export(ctx, "", "")
+			require.NoError(t, err)
+			incoming := editExportResealed(t, data, func(doc map[string]any) {
+				n := docNode(t, doc, "M-1")
+				act, ok := n["activity"].([]any)
+				require.True(t, ok, "export carries no activity")
+				n["activity"] = append(act, map[string]any{
+					"id": "act-upstream", "type": "comment", "author": "teammate",
+					"text": "from upstream", "created_at": "2026-09-01T09:30:00Z",
+				})
+				if changed {
+					changeContent(t, doc, "M-1")
+				}
+			})
+
+			result, err := s.Import(ctx, incoming, sqlite.ImportModeMerge, false)
+			require.NoError(t, err)
+			assert.Equal(t, 1, result.NodesUpdated)
+			got, err := s.GetActivity(ctx, "M-1", 0, 0)
+			require.NoError(t, err)
+			require.Len(t, got, 3, "the local entries and the incoming one")
+			assert.Equal(t, "act-upstream", got[0].ID, "the oldest entry sorts first")
+			assert.Equal(t, "from upstream", got[0].Text)
+		})
+	}
 }

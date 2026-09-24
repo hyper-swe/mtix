@@ -16,17 +16,21 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
-// SchemaVersionV1 is the current export schema version per FR-15.2g.
-// Auto-import rejects files with a higher major version.
+// SchemaVersionV1 is the schema_version this build writes for export format
+// generation 1 (the envelope's version field) per FR-15.2g. Auto-import and
+// mtix import refuse a file with a higher major version.
 //
 // History:
-//   - 1.0.0: nodes without annotations, the activity stream and the other
-//     columns listed as added in 1.1.0 above exportNode.
-//   - 1.1.0 (MTIX-95.31.1): every nodes column is exported. The added keys
-//     are omitted when empty, so a node without them encodes and hashes as
-//     it did in 1.0.0; a merge import reads their absence from a 1.0.0 file
-//     as "not carried", never as "cleared".
-const SchemaVersionV1 = "1.1.0"
+//   - 1.0.0 (mtix 0.5.3 and earlier): nodes without annotations, the
+//     activity stream and the other columns listed as added in 2.0.0 above
+//     exportNode.
+//   - 2.0.0 (MTIX-95.31.1): every nodes column is exported. The major
+//     version rose because a 1.x reader would drop the added keys and then
+//     rewrite the file without them; it now skips the file as newer than it
+//     supports. The added keys are omitted when empty, so a node without
+//     them encodes and hashes as it did in 1.0.0, and a merge import reads
+//     their absence from a 1.x file as "not carried", never as "cleared".
+const SchemaVersionV1 = "2.0.0"
 
 // ExportData represents the complete export format per FR-7.8, FR-15.1.
 // The schema_version field (FR-15.2g) enables auto-import compatibility checks.
@@ -53,7 +57,7 @@ type ExportData struct {
 //     labels, status, progress, assignee, creator, agent_state, weight,
 //     content_hash, created_at, updated_at, closed_at, defer_until,
 //     deleted_at, uid.
-//   - Added in 1.1.0: previous_status, estimate_min, actual_min, code_refs,
+//   - Added in 2.0.0: previous_status, estimate_min, actual_min, code_refs,
 //     commit_refs, annotations, invalidated_at, invalidated_by,
 //     invalidation_reason, activity, deleted_by, metadata, session_id.
 //     annotations, code_refs and commit_refs carry the structure mtix show
@@ -66,7 +70,7 @@ type ExportData struct {
 //     and import rebuilds the full-text index (nodes_fts) from the rows it
 //     writes.
 //
-// Every 1.1.0 field is omitempty, so a node without them encodes, and
+// Every 2.0.0 field is omitempty, so a node without them encodes, and
 // hashes, exactly as it did in a 1.0.0 file.
 type exportNode struct {
 	ID          string  `json:"id"`
@@ -98,7 +102,7 @@ type exportNode struct {
 	// so re-import stays consistent. omitempty for pre-v3 exports.
 	UID string `json:"uid,omitempty"`
 
-	// Columns added in schema 1.1.0 (MTIX-95.31.1); see the audit above.
+	// Columns added in schema 2.0.0 (MTIX-95.31.1); see the audit above.
 	PreviousStatus     string                `json:"previous_status,omitempty"`
 	EstimateMin        *int                  `json:"estimate_min,omitempty"`
 	ActualMin          *int                  `json:"actual_min,omitempty"`

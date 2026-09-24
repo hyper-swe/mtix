@@ -164,7 +164,7 @@ func docAnnotations(t *testing.T, doc map[string]any, id string) []any {
 	return anns
 }
 
-// legacyColumnKeys are the node keys schema 1.1.0 added (MTIX-95.31.1). A
+// legacyColumnKeys are the node keys schema 2.0.0 added (MTIX-95.31.1). A
 // schema 1.0.0 file carries none of them.
 func legacyColumnKeys() []string {
 	return []string{
@@ -175,7 +175,7 @@ func legacyColumnKeys() []string {
 }
 
 // asLegacyV100 turns a decoded export document into what mtix 0.5.3 wrote:
-// schema_version 1.0.0 and none of the 1.1.0 node keys.
+// schema_version 1.0.0 and none of the 2.0.0 node keys.
 func asLegacyV100(t *testing.T, doc map[string]any) {
 	t.Helper()
 	doc["schema_version"] = "1.0.0"

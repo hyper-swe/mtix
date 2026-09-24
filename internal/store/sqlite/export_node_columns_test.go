@@ -175,7 +175,7 @@ func TestExport_UnreadableAnnotationsColumn_FailsNamingNodeAndColumn(t *testing.
 
 // legacyV100Export is a schema 1.0.0 export in the exact shape mtix 0.5.3
 // wrote, with the checksum 0.5.3 computed for it. It carries no
-// annotations and none of the other 1.1.0 columns.
+// annotations and none of the other 2.0.0 columns.
 const legacyV100Export = `{
   "version": 1,
   "schema_version": "1.0.0",
@@ -216,8 +216,8 @@ const legacyV100Export = `{
 }`
 
 // TestVerifyExportChecksum_SchemaV100File_VerifiesAndImports verifies that a
-// file written before schema 1.1.0 still verifies against the checksum its
-// writer computed, and imports in both modes (MTIX-95.31.1): the 1.1.0
+// file written before schema 2.0.0 still verifies against the checksum its
+// writer computed, and imports in both modes (MTIX-95.31.1): the 2.0.0
 // columns are omitted when empty, so an annotation-free node hashes exactly
 // as it did.
 func TestVerifyExportChecksum_SchemaV100File_VerifiesAndImports(t *testing.T) {
@@ -237,6 +237,40 @@ func TestVerifyExportChecksum_SchemaV100File_VerifiesAndImports(t *testing.T) {
 			assert.Equal(t, "Legacy story <with> & markup", node.Title)
 			assert.Equal(t, []string{"legacy", "v1"}, node.Labels)
 			assert.Empty(t, node.Annotations)
+		})
+	}
+}
+
+// TestVerifyExportChecksum_EmptyChecksum_ReturnsFalse verifies that a file
+// whose checksum is empty never verifies, whether its content is as mtix
+// wrote it or edited: an empty checksum must not match the empty result
+// that means "no alternative spelling" (MTIX-95.31.1, FR-7.8).
+func TestVerifyExportChecksum_EmptyChecksum_ReturnsFalse(t *testing.T) {
+	s := newTestStore(t)
+	createAnnotatedNode(t, s, "ANN-1", 1)
+	data, err := s.Export(context.Background(), "", "")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name string
+		edit func(doc map[string]any)
+	}{
+		{"content as written", func(map[string]any) {}},
+		{"content edited", func(doc map[string]any) { docNode(t, doc, "ANN-1")["title"] = "edited" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blank := editExport(t, data, func(doc map[string]any) {
+				tt.edit(doc)
+				doc["checksum"] = ""
+			})
+			require.Empty(t, blank.Checksum)
+			valid, verifyErr := sqlite.VerifyExportChecksum(blank)
+			require.NoError(t, verifyErr)
+			assert.False(t, valid, "an empty checksum must never verify")
+
+			_, importErr := newTestStore(t).Import(context.Background(), blank, sqlite.ImportModeReplace, false)
+			assert.ErrorIs(t, importErr, model.ErrInvalidInput)
 		})
 	}
 }

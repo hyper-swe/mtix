@@ -257,6 +257,12 @@ func runImport(filePath string, f importFlags) error {
 		return fmt.Errorf("parse import file: %w", err)
 	}
 
+	// FR-15.2g (MTIX-95.31.1): refuse a file from a newer major schema
+	// version before anything else, exactly as auto-import does.
+	if schemaErr := checkImportSchemaVersion(exportData); schemaErr != nil {
+		return schemaErr
+	}
+
 	if f.recomputeChecksum {
 		// Recovery path: integrity now attests to the reconstructed
 		// content, not the original. Be loud about it.

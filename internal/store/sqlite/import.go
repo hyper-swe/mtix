@@ -198,7 +198,7 @@ func insertAllExportData(ctx context.Context, tx *sql.Tx, data *ExportData) (Imp
 }
 
 // importMerge merges imported data with existing using content_hash per FR-7.8.
-// Whether the file carries the columns schema 1.1.0 added decides how their
+// Whether the file carries the columns schema 2.0.0 added decides how their
 // absence is read (MTIX-95.31.1, carriesNodeColumns).
 func (s *Store) importMerge(ctx context.Context, data *ExportData) (ImportResult, error) {
 	var result ImportResult
@@ -248,7 +248,7 @@ const (
 // local entry (mergeNodeStreams, MTIX-95.31.1): an incoming node without
 // annotations keeps the local ones. The other columns take the incoming
 // values only when the content hash differs, and a file older than schema
-// 1.1.0 carries none of the 1.1.0 columns, so for those the local values
+// 2.0.0 carries none of the 2.0.0 columns, so for those the local values
 // stand (keepLocalNodeColumns).
 func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarriesAllColumns bool) (importAction, error) {
 	var existingHash sql.NullString

@@ -28,8 +28,8 @@ import (
 const DefaultMaxImportSize = 50 * 1024 * 1024
 
 // supportedSchemaVersion is the export schema version this build writes and
-// the maximum major version it reads (FR-15.2g). 1.1.0 (MTIX-95.31.1) added
-// annotations and the other node columns; a 1.0.0 file still imports.
+// the maximum major version it reads (FR-15.2g). 2.0.0 (MTIX-95.31.1) added
+// annotations and the other node columns; 1.x files still import.
 const supportedSchemaVersion = sqlite.SchemaVersionV1
 
 // SyncService manages automatic import/export of .mtix/tasks.json per FR-15.
@@ -200,7 +200,7 @@ func (s *SyncService) parseAndValidateExport(
 	if schemaVer == "" {
 		schemaVer = "1.0.0"
 	}
-	if !isSchemaCompatible(schemaVer) {
+	if schemaErr := CheckSchemaVersion(schemaVer); schemaErr != nil {
 		s.logger.Error("tasks.json schema version is newer than supported — upgrade mtix",
 			"file_version", schemaVer,
 			"supported_version", supportedSchemaVersion)
@@ -486,6 +486,22 @@ func (s *SyncService) Compare(ctx context.Context, mtixDir string) (*SyncReport,
 
 	report.InSync = len(report.OnlyInFile) == 0 && len(report.OnlyInDB) == 0
 	return report, nil
+}
+
+// CheckSchemaVersion reports whether this build can read an export whose
+// schema_version is fileVersion (FR-15.2g): nil when its major version is
+// not higher than the one this build writes, an ErrInvalidInput error
+// naming both versions otherwise. An empty version reads as 1.0.0.
+// Auto-import and mtix import apply the same check (MTIX-95.31.1).
+func CheckSchemaVersion(fileVersion string) error {
+	if fileVersion == "" {
+		fileVersion = "1.0.0"
+	}
+	if isSchemaCompatible(fileVersion) {
+		return nil
+	}
+	return fmt.Errorf("schema version %s is newer than supported version %s \u2014 upgrade mtix: %w",
+		fileVersion, supportedSchemaVersion, model.ErrInvalidInput)
 }
 
 // isSchemaCompatible checks if the file's schema version is compatible

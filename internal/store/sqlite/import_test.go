@@ -162,7 +162,16 @@ func TestImport_MergeMode_ContentHashComparison(t *testing.T) {
 	// Create dest store with one overlapping node (same hash) and one different.
 	destStore := newTestStore(t)
 	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Second)
+	// The same node as IMP-1 in the export: same content hash and the same
+	// creation time, hence the same "created" activity entry. Since the
+	// export carries the activity stream (MTIX-95.31.1), a node created a
+	// second later would hold a different entry, and the merge would add
+	// the incoming one and count the node as updated; reading the clock
+	// again here made this test fail whenever a second boundary fell
+	// between the two creations (seen under load).
+	now, err := time.Parse(time.RFC3339, exportData.Nodes[0].CreatedAt)
+	require.NoError(t, err)
+	require.Equal(t, "IMP-1", exportData.Nodes[0].ID)
 
 	// Same hash as IMP-1 in export — should be skipped.
 	require.NoError(t, destStore.CreateNode(ctx, &model.Node{

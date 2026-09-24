@@ -37,7 +37,7 @@ The export includes:
 - All session records
 - SHA-256 checksum for integrity verification; it covers the nodes, annotations included, and the dependencies
 
-`.mtix/tasks.json` is the same document (`schema_version` 1.1.0 from mtix 0.5.4). An mtix client older than 0.5.4 refuses a file written by 0.5.4 (its import reports `checksum verification failed` and leaves its store unchanged), so every agent and teammate sharing a board must run 0.5.4 or later.
+`.mtix/tasks.json` is the same document (`schema_version` 2.0.0 from mtix 0.5.4). An mtix client older than 0.5.4 skips such a file as newer than it supports, but its next writing command re-exports `.mtix/tasks.json` from its own store, without the annotations and changes it skipped, and committing that file reverts them upstream. Until every agent and teammate sharing a board runs 0.5.4 or later, never run writing commands on an older client and never commit its `.mtix/tasks.json`. If one was committed, restore `.mtix/tasks.json` from the last good commit in git history, or restore the store from `.mtix/data/pre-sync-backup.db` (copied over `.mtix/data/mtix.db` while no mtix process runs). A 0.5.4 store is protected by the auto-import guard (MTIX-95.31.2), which refuses a replace import that would drop annotations or nodes the store holds.
 
 **After export:** Verify the checksum field is present. Store exports alongside backups for disaster recovery.
 
@@ -48,7 +48,7 @@ Call `mcp__mtix__mtix_import` with the export file path and mode:
 - **merge** — creates nodes the store lacks; for a node it has, annotations and activity merge as a union (no local annotation is ever dropped, and a resolved annotation stays resolved), and the other fields take the file's values only when the node's content hash differs
 - **replace** — replaces all project data with the import file, annotations and activity included; a file written before mtix 0.5.4 carries no annotations, so a replace import of it leaves every node without them
 
-Import writes nothing when the node count, the checksum or any time value (RFC 3339, UTC year 1 to 9999) fails its check; the error names what failed.
+Import writes nothing when the schema version (a higher major version than this mtix writes), the node count, the checksum or any time value (RFC 3339, UTC year 1 to 9999; the required ones not empty) fails its check; the error names what failed.
 
 **Import protocol:**
 1. Run `mcp__mtix__mtix_backup` first

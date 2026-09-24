@@ -235,7 +235,7 @@ func EnforceTLSPosture(dsn string, opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return approval.DSN, nil
+	return approval.dsn, nil
 }
 
 // parseDSN parses a postgres:// or postgresql:// URL form and rejects

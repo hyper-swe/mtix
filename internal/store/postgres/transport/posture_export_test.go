@@ -11,3 +11,7 @@ import "github.com/jackc/pgx/v5/pgxpool"
 func PoolConfigForTest(a *Approval, defs PoolDefaults) *pgxpool.Config {
 	return poolConfig(a, defs)
 }
+
+// DSNForTest returns the normalized DSN an Approval carries, which the
+// package keeps unexported (MTIX-95.25).
+func (a *Approval) DSNForTest() string { return a.dsn }

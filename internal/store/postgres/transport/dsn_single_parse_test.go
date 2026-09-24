@@ -280,7 +280,10 @@ func TestModuleSource_EnforceTLSPosture_HasNoNonTestCaller(t *testing.T) {
 		scanned++
 		inTransport := filepath.Dir(path) == transportDir
 		sawTransport = sawTransport || inTransport
-		rel, _ := filepath.Rel(root, path)
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
 		for _, owner := range enforceTLSPostureRefs(f, inTransport) {
 			callers = append(callers, rel+": "+owner)
 		}

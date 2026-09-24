@@ -6,6 +6,7 @@ package transport
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -28,8 +29,9 @@ var ErrTLSUnverified = errors.New("under verify-full every network host must ver
 // NewWithDefaults opens the pool from the same value, so the settings
 // the check evaluated are the settings the pool uses.
 //
-// Config and DSN hold the credentials, so never log them. Printing an
-// Approval itself shows only the value-free summary of String.
+// Config holds the credentials, so never log it. Printing an Approval
+// itself, with any fmt verb, shows only the value-free summary of
+// String.
 type Approval struct {
 	// Config is the parsed pool configuration the check evaluated. Every
 	// host entry (ConnConfig.Host and each of ConnConfig.Fallbacks)
@@ -42,12 +44,15 @@ type Approval struct {
 
 	// CASupplied reports whether a TLS host entry of Config carries a
 	// root CA pool, whatever its source: sslrootcert in the DSN,
-	// MTIX_SYNC_SSLROOTCERT, PGSSLROOTCERT or a service file.
+	// MTIX_SYNC_SSLROOTCERT, PGSSLROOTCERT, a service file, or the
+	// driver's default ~/.postgresql/root.crt, which it loads when that
+	// file exists and no other source names a CA file.
 	CASupplied bool
 
-	// DSN is the normalized DSN Config was parsed from: sslmode
-	// populated and MTIX_SYNC_SSLROOTCERT honored.
-	DSN string
+	// dsn is the normalized DSN Config was parsed from: sslmode
+	// populated and MTIX_SYNC_SSLROOTCERT honored. It holds the
+	// credentials and stays unexported; only EnforceTLSPosture reads it.
+	dsn string
 }
 
 // ApproveDSN applies the TLS posture to dsn and returns the approved
@@ -106,7 +111,7 @@ func approveParsed(cfg *pgxpool.Config, mode, normalized string) (*Approval, err
 	if err := checkHostEntries(mode, entries); err != nil {
 		return nil, err
 	}
-	return &Approval{Config: cfg, SSLMode: mode, CASupplied: caSupplied(entries), DSN: normalized}, nil
+	return &Approval{Config: cfg, SSLMode: mode, CASupplied: caSupplied(entries), dsn: normalized}, nil
 }
 
 // String returns a summary of a that names no host, path or credential,
@@ -123,6 +128,15 @@ func (a Approval) String() string {
 // GoString returns String, so the %#v verb is value-free as well
 // (MTIX-95.25).
 func (a Approval) GoString() string { return a.String() }
+
+// Format writes the String summary for every fmt verb and flag, so no
+// verb (%d, %t, %x and the rest) prints the fields of an Approval
+// (FR-18.17, MTIX-95.25).
+func (a Approval) Format(f fmt.State, _ rune) {
+	// Deliberately ignored: fmt.Formatter has no way to report a write
+	// error, and fmt records a failed write in its own output state.
+	_, _ = io.WriteString(f, a.String())
+}
 
 // unparsableSettings returns the one fixed error for connection settings
 // the driver cannot parse, a certificate or key file it cannot load

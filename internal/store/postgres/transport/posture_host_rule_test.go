@@ -163,7 +163,7 @@ func TestApproveParsed_ParsedConfig_AppliesHostRuleForMode(t *testing.T) {
 			require.NoError(t, err)
 			require.Same(t, tt.cfg, a.Config, "the approval carries the evaluated configuration itself")
 			require.Equal(t, tt.mode, a.SSLMode)
-			require.Equal(t, normalized, a.DSN)
+			require.Equal(t, normalized, a.dsn)
 			require.Equal(t, tt.wantCA, a.CASupplied)
 		})
 	}

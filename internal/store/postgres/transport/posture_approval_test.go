@@ -157,8 +157,24 @@ func weakForms() []postureForm {
 	return out
 }
 
+// noDefaultCA is an explicit empty sslrootcert. DSN settings override
+// the driver's defaults, so it keeps the driver's default CA file
+// (~/.postgresql/root.crt, loaded when it exists) out of the no-CA cases
+// on any machine. pinPGEnv cannot do this: an empty PGSSLROOTCERT is
+// ignored, and the default path comes from the OS account, not $HOME.
+const noDefaultCA = "sslrootcert="
+
+// withParam appends the query parameter kv to dsn.
+func withParam(dsn, kv string) string {
+	if strings.Contains(dsn, "?") {
+		return dsn + "&" + kv
+	}
+	return dsn + "?" + kv
+}
+
 // applyPostureForm pins the environment for f, substitutes caPath for
-// "{ca}" and returns the DSN and the options to approve it with.
+// "{ca}" and returns the DSN and the options to approve it with. A form
+// that expects no CA gets noDefaultCA.
 func applyPostureForm(t *testing.T, f postureForm, caPath string) (string, transport.Options) {
 	t.Helper()
 	tc := f.hostCase
@@ -168,6 +184,9 @@ func applyPostureForm(t *testing.T, f postureForm, caPath string) (string, trans
 	}
 	tc.env = env
 	dsn := strings.ReplaceAll(applyHostCase(t, tc), "{ca}", url.QueryEscape(caPath))
+	if !f.wantCA {
+		dsn = withParam(dsn, noDefaultCA)
+	}
 	if f.mode == "" {
 		return dsn, transport.Options{}
 	}
@@ -218,7 +237,7 @@ func TestApproveDSN_VerifyFull_EveryNetworkHostVerifiesCertificates(t *testing.T
 			}
 			requireRootCAs(t, entries, wantPool)
 			require.Equal(t, f.wantCA, a.CASupplied)
-			u, perr := url.Parse(a.DSN)
+			u, perr := url.Parse(a.DSNForTest())
 			require.NoError(t, perr)
 			require.Equal(t, "verify-full", u.Query().Get("sslmode"))
 		})
@@ -244,7 +263,7 @@ func TestApproveDSN_WeakMode_EveryHostIsLoopbackOrLocalSocket(t *testing.T) {
 				wantPool = caPool
 			}
 			requireRootCAs(t, entries, wantPool)
-			u, perr := url.Parse(a.DSN)
+			u, perr := url.Parse(a.DSNForTest())
 			require.NoError(t, perr)
 			require.Equal(t, f.mode, u.Query().Get("sslmode"), "caller's sslmode is kept")
 		})
@@ -260,7 +279,9 @@ func TestApproveDSN_CASupplied_ReportsWhetherTLSCarriesRootCA(t *testing.T) {
 		opts transport.Options
 		want bool
 	}{
-		{"no CA", "postgres://u:pw@db.example.com/hub", nil, transport.Options{}, false},
+		{"no CA", "postgres://u:pw@db.example.com/hub?" + noDefaultCA, nil, transport.Options{}, false},
+		{"explicit empty sslrootcert overrides PGSSLROOTCERT", "postgres://u:pw@db.example.com/hub?" + noDefaultCA,
+			map[string]string{"PGSSLROOTCERT": caPath}, transport.Options{}, false},
 		{"CA named in the DSN", "postgres://u:pw@db.example.com/hub?sslrootcert=" + url.QueryEscape(caPath),
 			nil, transport.Options{}, true},
 		{"CA from MTIX_SYNC_SSLROOTCERT", "postgres://u:pw@db.example.com/hub",
@@ -469,15 +490,19 @@ func TestApproval_Printed_ShowsOnlyValueFreeSummary(t *testing.T) {
 		url.QueryEscape(caPath), transport.Options{})
 	require.NoError(t, err)
 	const want = "transport.Approval{sslmode=verify-full hosts=2 ca_supplied=true}"
-	for _, verb := range []string{"%v", "%+v", "%s", "%#v"} {
+	verbs := []string{"%v", "%+v", "%s", "%#v", "%q", "%d", "%+d", "%t", "%x", "%X", "%o", "%e", "%g", "%c", "%U",
+		"%b", "%10v", "%-40s", "% x", "%#x", "%08d"}
+	for _, verb := range verbs {
 		for _, v := range []any{a, *a} {
 			got := fmt.Sprintf(verb, v)
 			require.Equal(t, want, got, "verb %s", verb)
+			for _, forbidden := range []string{user, secret, host, caPath, "postgres://"} {
+				require.NotContains(t, got, forbidden, "verb %s", verb)
+			}
 		}
 	}
-	for _, forbidden := range []string{user, secret, host, caPath, "postgres://"} {
-		require.NotContains(t, fmt.Sprintf("%q", a), forbidden)
-	}
+	require.Equal(t, want, fmt.Sprint(a))
+	require.Equal(t, want, fmt.Sprintln(*a)[:len(want)])
 	require.Equal(t, "transport.Approval{sslmode=(unrecognized) hosts=0 ca_supplied=false}",
 		transport.Approval{SSLMode: secret}.String())
 }
@@ -492,7 +517,7 @@ func TestEnforceTLSPosture_ApprovedDSN_ReturnsApprovalDSN(t *testing.T) {
 			require.NoError(t, err)
 			out, err := transport.EnforceTLSPosture(dsn, opts)
 			require.NoError(t, err)
-			require.Equal(t, a.DSN, out)
+			require.Equal(t, a.DSNForTest(), out)
 		})
 	}
 }

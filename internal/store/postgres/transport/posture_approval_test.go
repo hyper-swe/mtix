@@ -273,6 +273,10 @@ func TestApproveDSN_CASupplied_ReportsWhetherTLSCarriesRootCA(t *testing.T) {
 			map[string]string{transport.EnvSSLRootCert: caPath}, transport.Options{InsecureTLS: true}, false},
 		{"socket host only", "postgres://u:pw@/hub?host=/tmp", map[string]string{transport.EnvSSLRootCert: caPath},
 			transport.Options{}, false},
+		{"CA with allow on loopback: the first entry has no TLS", "postgres://u:pw@localhost/hub?sslmode=allow",
+			map[string]string{transport.EnvSSLRootCert: caPath}, transport.Options{InsecureTLS: true}, true},
+		{"socket primary host with a remote fallback and a CA", "postgres://u:pw@/hub?host=/tmp,db.example.com",
+			map[string]string{transport.EnvSSLRootCert: caPath}, transport.Options{}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -287,10 +291,10 @@ func TestApproveDSN_CASupplied_ReportsWhetherTLSCarriesRootCA(t *testing.T) {
 	}
 }
 
-// wantCertFileMessage is the fixed message for connection settings the
-// driver cannot parse under verify-full, a certificate file it cannot
-// load included (FR-18.17, MTIX-95.25).
-const wantCertFileMessage = "pgxpool parse: DSN could not be parsed: check the DSN's connection parameters"
+// wantUnparsableMessage is the one fixed message for connection settings
+// the driver cannot parse, a certificate file it cannot load included,
+// under every sslmode (FR-18.17, MTIX-95.25).
+const wantUnparsableMessage = "pgxpool parse: DSN could not be parsed: check the DSN's connection parameters"
 
 func TestApproveDSN_CertificateFileUnusable_ReturnsFixedMessage(t *testing.T) {
 	const user, secret, host = "certuser", "Wq7nR2xZ5kLp", "db.example.com"
@@ -321,7 +325,7 @@ func TestApproveDSN_CertificateFileUnusable_ReturnsFixedMessage(t *testing.T) {
 			a, err := transport.ApproveDSN(tt.dsn, transport.Options{})
 			require.Error(t, err)
 			require.Nil(t, a)
-			require.Equal(t, wantCertFileMessage, err.Error())
+			require.Equal(t, wantUnparsableMessage, err.Error())
 			require.ErrorIs(t, err, transport.ErrDSNMalformed)
 			for _, forbidden := range []string{user, secret, host, dir, "absent-file", "garbled-file", "client.pem"} {
 				require.NotContains(t, err.Error(), forbidden, "message must name no setting value")
@@ -333,23 +337,45 @@ func TestApproveDSN_CertificateFileUnusable_ReturnsFixedMessage(t *testing.T) {
 			pool, perr := transport.New(ctx, tt.dsn, transport.Options{})
 			require.Nil(t, pool)
 			require.Error(t, perr)
-			require.Equal(t, "tls posture: "+wantCertFileMessage, perr.Error())
+			require.Equal(t, "tls posture: "+wantUnparsableMessage, perr.Error())
 		})
 	}
 }
 
-func TestApproveDSN_CertificateFileUnusableUnderWeakMode_ReturnsHostRuleRefusal(t *testing.T) {
-	pinPGEnv(t)
-	missing := filepath.Join(t.TempDir(), "absent-file.pem")
-	t.Setenv(transport.EnvSSLRootCert, missing)
-	a, err := transport.ApproveDSN("postgres://u:pw@localhost/hub?sslmode=require", transport.Options{InsecureTLS: true})
-	require.Error(t, err)
-	require.Nil(t, a)
-	require.ErrorIs(t, err, transport.ErrTLSWeakNonLoopback)
-	require.ErrorIs(t, err, transport.ErrDSNMalformed)
-	require.Contains(t, err.Error(), "connection settings could not be parsed; check the DSN's connection parameters")
-	require.NotContains(t, err.Error(), "absent-file")
-	require.NotContains(t, err.Error(), "localhost")
+func TestApproveDSN_CertificateFileUnusableUnderWeakMode_ReturnsFixedParseMessage(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "absent-file.pem")
+	notPEM := filepath.Join(dir, "garbled-file.pem")
+	require.NoError(t, os.WriteFile(notPEM, []byte("no certificate here\n"), 0o600))
+	tests := []struct {
+		name string
+		dsn  string
+		env  map[string]string
+	}{
+		{"MTIX_SYNC_SSLROOTCERT names a missing file under require", "postgres://u:pw@localhost/hub?sslmode=require",
+			map[string]string{transport.EnvSSLRootCert: missing}},
+		{"stale PGSSLROOTCERT under disable", "postgres://u:pw@127.0.0.1/hub?sslmode=disable",
+			map[string]string{"PGSSLROOTCERT": missing}},
+		{"sslrootcert without certificates under prefer", "postgres://u:pw@/hub?host=/tmp,::1&sslmode=prefer&sslrootcert=" +
+			url.QueryEscape(notPEM), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pinPGEnv(t)
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			a, err := transport.ApproveDSN(tt.dsn, transport.Options{InsecureTLS: true})
+			require.Error(t, err)
+			require.Nil(t, a)
+			require.Equal(t, wantUnparsableMessage, err.Error(), "a parse failure has one fixed message")
+			require.ErrorIs(t, err, transport.ErrDSNMalformed)
+			require.NotErrorIs(t, err, transport.ErrTLSWeakNonLoopback, "a file that cannot be loaded is not a host refusal")
+			for _, forbidden := range []string{"absent-file", "garbled-file", dir, "localhost", "127.0.0.1", "loopback"} {
+				require.NotContains(t, err.Error(), forbidden)
+			}
+		})
+	}
 }
 
 func TestApproveDSN_Refusal_ReturnsNoApprovalAndTheEnforceTLSPostureError(t *testing.T) {
@@ -407,14 +433,18 @@ func TestApproveDSN_WeakModeRemoteFallback_MessageCountsEachHostOnce(t *testing.
 func TestApproveDSN_UnrecognizedSSLMode_MessageOmitsValue(t *testing.T) {
 	const value = "Zt6mB3qR9wXe"
 	tests := []struct {
-		name string
-		host string
-		opts transport.Options
-		want error
+		name    string
+		host    string
+		opts    transport.Options
+		want    error
+		wantMsg string
 	}{
-		{"without the flag", "db.example.com", transport.Options{}, transport.ErrTLSWeakWithoutFlag},
-		{"with the flag on loopback", "localhost", transport.Options{InsecureTLS: true}, transport.ErrDSNMalformed},
-		{"with the flag on a remote host", "db.example.com", transport.Options{InsecureTLS: true}, transport.ErrTLSWeakNonLoopback},
+		{"without the flag", "db.example.com", transport.Options{}, transport.ErrTLSWeakWithoutFlag,
+			"sslmode=(unrecognized): weak sslmode requires --insecure-tls"},
+		{"with the flag on loopback", "localhost", transport.Options{InsecureTLS: true}, transport.ErrDSNMalformed,
+			wantUnparsableMessage},
+		{"with the flag on a remote host", "db.example.com", transport.Options{InsecureTLS: true}, transport.ErrDSNMalformed,
+			wantUnparsableMessage},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -423,6 +453,7 @@ func TestApproveDSN_UnrecognizedSSLMode_MessageOmitsValue(t *testing.T) {
 			require.Error(t, err)
 			require.Nil(t, a)
 			require.ErrorIs(t, err, tt.want)
+			require.Equal(t, tt.wantMsg, err.Error())
 			for _, w := range secretWindows(strings.ToLower(value)) {
 				require.NotContainsf(t, strings.ToLower(err.Error()), w, "message repeats sslmode fragment %q", w)
 			}

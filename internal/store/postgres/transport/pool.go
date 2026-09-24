@@ -104,15 +104,27 @@ func NewWithDefaults(ctx context.Context, dsn string, opts Options, defs PoolDef
 		return nil, fmt.Errorf("tls posture: %w", err)
 	}
 
-	pool, err := pgxpool.NewWithConfig(ctx, poolConfig(approval, defs))
+	cfg := poolConfig(approval, defs)
+	pool, err := openPool(ctx, cfg)
 	if err != nil {
-		return nil, hintTLSTrust(approval.CASupplied, fmt.Errorf("pgxpool open: %w", err))
+		return nil, hintTLSTrust(approval.CASupplied, err)
+	}
+	return &Pool{p: pool}, nil
+}
+
+// openPool opens a pool from cfg and runs the initial healthcheck,
+// closing the pool if the healthcheck fails (FR-18, MTIX-48). cfg must
+// come from poolConfig, so it is the approved configuration.
+func openPool(ctx context.Context, cfg *pgxpool.Config) (*pgxpool.Pool, error) {
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("pgxpool open: %w", err)
 	}
 	if err := pingWithRetry(ctx, pool); err != nil {
 		pool.Close()
-		return nil, hintTLSTrust(approval.CASupplied, fmt.Errorf("initial ping: %w", err))
+		return nil, fmt.Errorf("initial ping: %w", err)
 	}
-	return &Pool{p: pool}, nil
+	return pool, nil
 }
 
 // poolConfig applies defs to the approved configuration and returns that

@@ -66,7 +66,7 @@ type Approval struct {
 //
 // Every refusal and parse failure is value-free: a refused host is named
 // by its position, and the driver's own error, which quotes the
-// connection string, is replaced by a fixed message wrapping
+// connection string, is replaced by one fixed message wrapping only
 // ErrDSNMalformed.
 func ApproveDSN(dsn string, opts Options) (*Approval, error) {
 	u, err := parseDSN(dsn)
@@ -91,8 +91,17 @@ func ApproveDSN(dsn string, opts Options) (*Approval, error) {
 	cfg, err := pgxpool.ParseConfig(normalized)
 	if err != nil {
 		// Deliberately not wrapped: err quotes the connection string.
-		return nil, unparsableSettings(mode)
+		return nil, unparsableSettings()
 	}
+	return approveParsed(cfg, mode, normalized)
+}
+
+// approveParsed applies the posture rule for mode to cfg, the parsed
+// form of the normalized DSN, and returns the Approval that carries cfg
+// itself (FR-18.15, MTIX-95.25). Under verify-full every network host
+// entry must verify the server certificate against its host name; under
+// a weaker sslmode every entry must be loopback or a local socket.
+func approveParsed(cfg *pgxpool.Config, mode, normalized string) (*Approval, error) {
 	entries := hostEntries(&cfg.ConnConfig.Config)
 	if err := checkHostEntries(mode, entries); err != nil {
 		return nil, err
@@ -115,18 +124,13 @@ func (a Approval) String() string {
 // (MTIX-95.25).
 func (a Approval) GoString() string { return a.String() }
 
-// unparsableSettings returns the fixed error for connection settings the
-// driver cannot parse, including a certificate or key file it cannot
-// load (FR-18.17, MTIX-95.15, MTIX-95.25). Under verify-full it is the
-// pool's parse message; under a weaker sslmode the hosts cannot be
-// proven local, so it is also the host rule's refusal. Both wrap
-// ErrDSNMalformed and name no setting value.
-func unparsableSettings(mode string) error {
-	if mode == sslModeVerifyFull {
-		return fmt.Errorf("pgxpool parse: %w: check the DSN's connection parameters", ErrDSNMalformed)
-	}
-	return fmt.Errorf("sslmode=%s: connection settings could not be parsed; "+
-		"check the DSN's connection parameters: %w (%w)", sslModeLabel(mode), ErrTLSWeakNonLoopback, ErrDSNMalformed)
+// unparsableSettings returns the one fixed error for connection settings
+// the driver cannot parse, a certificate or key file it cannot load
+// included, under every sslmode (FR-18.17, MTIX-95.15, MTIX-95.25). It
+// wraps only ErrDSNMalformed and names no setting value: no host was
+// evaluated, so it is not a host refusal.
+func unparsableSettings() error {
+	return fmt.Errorf("pgxpool parse: %w: check the DSN's connection parameters", ErrDSNMalformed)
 }
 
 // hostEntries lists every connection attempt of cfg in dial order: the

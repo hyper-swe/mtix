@@ -294,10 +294,12 @@ func TestEnforceTLSPosture_DSNTheDriverCannotParse_ReturnsFixedMessage(t *testin
 				transport.Options{InsecureTLS: true})
 			require.Error(t, err)
 			require.Empty(t, out)
-			require.True(t, errors.Is(err, transport.ErrTLSWeakNonLoopback),
-				"want ErrTLSWeakNonLoopback, got %v", err)
+			// The DSN is refused as unparsable, not as a host refusal: the
+			// one parse failed, so no host was evaluated (MTIX-95.25).
+			require.True(t, errors.Is(err, transport.ErrDSNMalformed), "want ErrDSNMalformed, got %v", err)
+			require.False(t, errors.Is(err, transport.ErrTLSWeakNonLoopback), "a parse failure is not a host refusal")
 			msg := err.Error()
-			require.Contains(t, msg, "connection settings could not be parsed; check the DSN's connection parameters")
+			require.Equal(t, wantUnparsableMessage, msg)
 			for _, forbidden := range []string{user, secret, "localhost", "db.example.com", "postgres://", "absent"} {
 				require.NotContains(t, msg, forbidden, "message must name no host or credential")
 			}

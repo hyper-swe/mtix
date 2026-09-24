@@ -5,10 +5,13 @@ package transport
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 )
 
@@ -110,6 +113,58 @@ func TestSSLModeLabel_KnownAndUnknownModes_NamesOnlyKnownModes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.mode, func(t *testing.T) {
 			require.Equal(t, tt.want, sslModeLabel(tt.mode))
+		})
+	}
+}
+
+// craftedConfig returns a pool configuration whose connection attempts
+// are primary followed by fallbacks, as if the driver had parsed them.
+func craftedConfig(primary *pgconn.FallbackConfig, fallbacks ...*pgconn.FallbackConfig) *pgxpool.Config {
+	cc := &pgx.ConnConfig{}
+	cc.Host, cc.Port, cc.TLSConfig = primary.Host, primary.Port, primary.TLSConfig
+	cc.Fallbacks = fallbacks
+	return &pgxpool.Config{ConnConfig: cc}
+}
+
+func TestApproveParsed_ParsedConfig_AppliesHostRuleForMode(t *testing.T) {
+	const normalized = "postgres://u:pw@a.example/hub?sslmode=verify-full"
+	withCA := verifiedEntry("b.example")
+	withCA.TLSConfig.RootCAs = x509.NewCertPool()
+	skipping := &pgconn.FallbackConfig{Host: "b.example", Port: 5432,
+		TLSConfig: &tls.Config{ServerName: "b.example", InsecureSkipVerify: true}}
+	tests := []struct {
+		name    string
+		mode    string
+		cfg     *pgxpool.Config
+		wantErr error
+		wantCA  bool
+	}{
+		{"verify-full with a fallback that skips verification", sslModeVerifyFull,
+			craftedConfig(verifiedEntry("a.example"), skipping), ErrTLSUnverified, false},
+		{"verify-full with a primary entry without TLS", sslModeVerifyFull,
+			craftedConfig(&pgconn.FallbackConfig{Host: "a.example", Port: 5432}), ErrTLSUnverified, false},
+		{"verify-full with every entry verifying", sslModeVerifyFull,
+			craftedConfig(verifiedEntry("a.example"), withCA), nil, true},
+		{"weak mode with a remote fallback", "disable",
+			craftedConfig(&pgconn.FallbackConfig{Host: "localhost", Port: 5432},
+				&pgconn.FallbackConfig{Host: "b.example", Port: 5432}), ErrTLSWeakNonLoopback, false},
+		{"weak mode with loopback and socket entries", "disable",
+			craftedConfig(&pgconn.FallbackConfig{Host: "localhost", Port: 5432},
+				&pgconn.FallbackConfig{Host: "/tmp", Port: 5432}), nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a, err := approveParsed(tt.cfg, tt.mode, normalized)
+			if tt.wantErr != nil {
+				require.Nil(t, a)
+				require.True(t, errors.Is(err, tt.wantErr), "want %v, got %v", tt.wantErr, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Same(t, tt.cfg, a.Config, "the approval carries the evaluated configuration itself")
+			require.Equal(t, tt.mode, a.SSLMode)
+			require.Equal(t, normalized, a.DSN)
+			require.Equal(t, tt.wantCA, a.CASupplied)
 		})
 	}
 }

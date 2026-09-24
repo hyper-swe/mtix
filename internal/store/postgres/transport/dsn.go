@@ -225,8 +225,11 @@ func refuseDSNInTrackedConfig(mtixDir string) error {
 // quotes host text: a refused host is named by its position in the
 // resolved list.
 //
-// NewWithDefaults does not re-parse this string: it opens the pool from
-// ApproveDSN's parsed configuration.
+// The returned string is for tests and diagnostics that inspect the
+// normalized DSN: no connection may be opened from it. Connections open
+// only from ApproveDSN's Config, as NewWithDefaults does, and
+// TestModuleSource_EnforceTLSPosture_HasNoNonTestCaller keeps any
+// non-test code from calling this function.
 func EnforceTLSPosture(dsn string, opts Options) (string, error) {
 	approval, err := ApproveDSN(dsn, opts)
 	if err != nil {

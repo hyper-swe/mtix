@@ -7,6 +7,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -163,4 +165,129 @@ func TestTransportSource_DSNParse_OnlyInApproveDSN(t *testing.T) {
 		"only %s may call %s", approvalFunc, urlParseFunc)
 	require.Equal(t, []string{urlParseFunc + ": url.Parse"}, refs["url"],
 		"only %s may parse the DSN as a URL", urlParseFunc)
+}
+
+// transportImportPath is the import path of this package.
+const transportImportPath = "github.com/hyper-swe/mtix/internal/store/postgres/transport"
+
+// moduleRoot returns the directory holding go.mod, walking up from the
+// package directory.
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.Abs(".")
+	require.NoError(t, err)
+	for {
+		if _, statErr := os.Stat(filepath.Join(dir, "go.mod")); statErr == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		require.NotEqual(t, dir, parent, "go.mod not found above the package directory")
+		dir = parent
+	}
+}
+
+// skipSourceDir reports whether the module walk skips the directory
+// name: hidden directories, vendored code, web dependencies and test
+// data hold no mtix non-test source.
+func skipSourceDir(name string) bool {
+	return strings.HasPrefix(name, ".") || name == "vendor" || name == "node_modules" || name == "testdata"
+}
+
+// transportImportNames returns every local name f gives this package
+// and whether f dot-imports it.
+func transportImportNames(f *ast.File) (map[string]bool, bool) {
+	locals := map[string]bool{}
+	dot := false
+	for _, spec := range f.Imports {
+		if path, err := strconv.Unquote(spec.Path.Value); err != nil || path != transportImportPath {
+			continue
+		}
+		switch {
+		case spec.Name == nil:
+			locals["transport"] = true
+		case spec.Name.Name == ".":
+			dot = true
+		default:
+			locals[spec.Name.Name] = true
+		}
+	}
+	return locals, dot
+}
+
+// enforceTLSPostureRefs returns every reference to EnforceTLSPosture in
+// the non-test file f: a selector on any local name the file gives this
+// package, or the bare name inside this package or under a dot import.
+func enforceTLSPostureRefs(f *ast.File, inTransport bool) []string {
+	locals, dot := transportImportNames(f)
+	bare := inTransport || dot
+	var refs []string
+	for _, decl := range f.Decls {
+		owner := "package level"
+		var root ast.Node = decl
+		if fd, ok := decl.(*ast.FuncDecl); ok {
+			owner = fd.Name.Name
+			if fd.Body == nil {
+				continue
+			}
+			root = fd.Body
+		}
+		ast.Inspect(root, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.SelectorExpr:
+				if pkg, ok := x.X.(*ast.Ident); ok && locals[pkg.Name] && x.Sel.Name == "EnforceTLSPosture" {
+					refs = append(refs, owner)
+					return false
+				}
+			case *ast.Ident:
+				if bare && x.Name == "EnforceTLSPosture" {
+					refs = append(refs, owner)
+				}
+			}
+			return true
+		})
+	}
+	return refs
+}
+
+// TestModuleSource_EnforceTLSPosture_HasNoNonTestCaller pins that no
+// non-test code in the module calls EnforceTLSPosture: a connection
+// opens only from the configuration ApproveDSN approved, never from a
+// DSN string (FR-18.15, MTIX-95.25).
+func TestModuleSource_EnforceTLSPosture_HasNoNonTestCaller(t *testing.T) {
+	root := moduleRoot(t)
+	transportDir, err := filepath.Abs(".")
+	require.NoError(t, err)
+	fset := token.NewFileSet()
+	var callers []string
+	scanned, sawTransport := 0, false
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if path != root && skipSourceDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		f, perr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
+		if perr != nil {
+			return perr
+		}
+		scanned++
+		inTransport := filepath.Dir(path) == transportDir
+		sawTransport = sawTransport || inTransport
+		rel, _ := filepath.Rel(root, path)
+		for _, owner := range enforceTLSPostureRefs(f, inTransport) {
+			callers = append(callers, rel+": "+owner)
+		}
+		return nil
+	})
+	require.NoError(t, walkErr)
+	require.True(t, sawTransport, "the walk must include the transport package")
+	require.Greater(t, scanned, 50, "the walk must cover the module's source")
+	require.Empty(t, callers, "connections must open only from ApproveDSN's Config")
 }

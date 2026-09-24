@@ -410,20 +410,21 @@ applied to the canonical tables.
 
 ## Backup
 
-`mtix sync backup --output FILE` wraps `pg_dump` for the 5 mtix-owned
-tables:
+`mtix sync backup --output FILE` wraps `pg_dump` with one `--table`
+for every table the hub migrations create (`migrations.Tables()`), plus
+`--no-owner --no-privileges`. The connection uses the same TLS settings
+as sync, and mtix creates FILE (mode 0600, refusing a path that exists)
+before `pg_dump` writes to it.
 
-```
---table=sync_events
---table=sync_conflicts
---table=sync_projects
---table=applied_events
---table=audit_log
---no-owner --no-privileges
-```
-
-Restore is `psql "$DSN" < FILE`. The append-only triggers permit INSERT,
-so the restore replays cleanly.
+The dump holds the tables and their data, not the mtix functions and
+triggers, so replaying it with `psql` cannot create the triggers. The
+restore runbook is: restore the dump into an empty database with `psql`,
+connected as the role that will own the sync tables; run `mtix sync
+init` as that role, which recreates every function and trigger the
+migrations define; confirm with the `hub-triggers` check of `mtix sync
+doctor`, which verifies the function and trigger sets and that every
+trigger is enabled (`tgenabled` `O`); then run `mtix sync
+mark-restored`. See the user manual, "Backup and restore".
 
 ## See also
 

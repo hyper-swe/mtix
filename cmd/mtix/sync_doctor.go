@@ -45,23 +45,31 @@ type DoctorReport struct {
 // observe the sentinel without the process being killed.
 var errDoctorChecksFailed = errors.New("doctor checks failed")
 
-// newSyncDoctorCmd creates `mtix sync doctor`. Exits 0 if every check
-// passes, exits 2 if any fails. --json output for machine consumption.
-func newSyncDoctorCmd() *cobra.Command {
-	var insecureTLS bool
-	cmd := &cobra.Command{
-		Use:   "doctor",
-		Short: "Run sync health checks (FR-18)",
-		Long: `Run health checks against the local store and the BYO Postgres hub:
+// syncDoctorLong is the help text of `mtix sync doctor`: every check, the
+// connect budget and when a check warns or fails (FR-18, MTIX-95.1,
+// MTIX-95.7).
+const syncDoctorLong = `Run health checks against the local store and the BYO Postgres hub:
 
   PG reachable           - opens pool + Ping
   Schema current         - sync_projects table exists with expected columns
   Queue draining         - no events older than 1h still in pending
   No orphan applied      - every applied_event has a matching node OR tombstone
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
+  Hub triggers           - every function and trigger the hub migrations
+                           define exists, and every trigger is enabled
+                           (tgenabled 'O')
   Hub privileges         - which roles other than the table owner can use the
                            sync tables, and whether every TRUNCATE guard is in
                            place (the check mtix sync harden runs)
+
+Each hub check allows 30 s to connect, the same budget as mtix sync init,
+clone, push and pull, so a hub that is resuming from idle passes.
+
+Hub triggers names each missing function or trigger and each trigger that
+is not enabled, with the fix, run as the table owner: mtix sync init for
+what is missing, and the ALTER TABLE ... ENABLE TRIGGER statement it
+prints for what is not enabled. Like hub privileges, it is a WARN by
+default and fails in strict mode.
 
 Hub privileges is a WARN by default: roles other than the owner may use
 the sync tables, which can be fine when the database is reachable only
@@ -76,8 +84,17 @@ default and fails in strict mode. The check contacts the hub only while
 the doctor runs.
 
 Exit code: 0 on all-pass, including checks that pass with a WARN; 2 if
-any check fails. --json output for agents and CI consumption.`,
-		Args: syncExactArgs(0),
+any check fails. --json output for agents and CI consumption.`
+
+// newSyncDoctorCmd creates `mtix sync doctor`. Exits 0 if every check
+// passes, exits 2 if any fails. --json output for machine consumption.
+func newSyncDoctorCmd() *cobra.Command {
+	var insecureTLS bool
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Run sync health checks (FR-18)",
+		Long:  syncDoctorLong,
+		Args:  syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			err := runSyncDoctor(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS})
@@ -98,6 +115,10 @@ any check fails. --json output for agents and CI consumption.`,
 	return cmd
 }
 
+// runSyncDoctor runs every health check and prints the report
+// (FR-18, MTIX-15.7.3). The hub checks connect within syncConnectBudget,
+// the budget sync itself uses (MTIX-95.7). Returns errDoctorChecksFailed
+// when a check fails.
 func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	args []string, opts transport.Options,
 ) error {
@@ -111,44 +132,17 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	// local checks still run.
 	dsn, dsnErr := resolveSyncDSN(args)
 
-	// Check 1: PG reachable.
-	if dsnErr != nil {
-		report = appendCheck(report, "PG reachable", false, "DSN: "+dsnErr.Error())
-	} else {
-		pgOK, detail := checkPGReachable(ctx, dsn, opts)
-		report = appendCheck(report, "PG reachable", pgOK, detail)
-	}
+	// Checks 1 and 2: PG reachable, schema current.
+	report, hubReady := appendHubReadyChecks(ctx, report, dsn, dsnErr, opts)
 
-	// Check 2: schema current (only meaningful if PG reachable).
-	if dsnErr == nil && lastCheckPassed(report) {
-		schemaOK, detail := checkSchemaCurrent(ctx, dsn, opts)
-		report = appendCheck(report, "schema current", schemaOK, detail)
-	} else {
-		report = appendCheck(report, "schema current", false, "skipped (PG unreachable)")
-	}
-	hubReady := dsnErr == nil && lastCheckPassed(report)
+	// Checks 3 to 5: queue draining, no orphan applied, secrets file mode.
+	report = appendLocalChecks(ctx, report)
 
-	// Check 3: queue draining (local only).
-	if app.store == nil {
-		report = appendCheck(report, "queue draining", false, "local store not initialized")
-	} else {
-		drainOK, detail := checkQueueDraining(ctx, app.store)
-		report = appendCheck(report, "queue draining", drainOK, detail)
-	}
+	// Check 6: every mtix function and trigger the migrations define is
+	// on the hub and enabled, as the restore runbook ends (MTIX-95.7).
+	report = appendDoctorCheck(report, checkHubObjects(ctx, dsn, hubReady, opts))
 
-	// Check 4: no orphan applied events (local only).
-	if app.store == nil {
-		report = appendCheck(report, "no orphan applied", false, "local store not initialized")
-	} else {
-		orphanOK, detail := checkNoOrphanApplied(ctx, app.store)
-		report = appendCheck(report, "no orphan applied", orphanOK, detail)
-	}
-
-	// Check 5: DSN secrets file mode.
-	modeOK, detail := checkSecretsFileMode(app.mtixDir)
-	report = appendCheck(report, "secrets file mode", modeOK, detail)
-
-	// Check 6: hub privileges, the verification mtix sync harden runs (MTIX-95.1).
+	// Check 7: hub privileges, the verification mtix sync harden runs (MTIX-95.1).
 	report = appendDoctorCheck(report, checkHubPrivileges(ctx, dsn, hubReady, opts))
 
 	// No detail may carry the DSN or its password (FR-18.17, MTIX-95.15).
@@ -166,6 +160,45 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 		return errDoctorChecksFailed
 	}
 	return nil
+}
+
+// appendHubReadyChecks adds the PG reachable and schema current checks
+// and reports whether both passed, so the checks that read the hub's
+// catalog can run.
+func appendHubReadyChecks(ctx context.Context, report DoctorReport, dsn string, dsnErr error,
+	opts transport.Options,
+) (DoctorReport, bool) {
+	if dsnErr != nil {
+		report = appendCheck(report, "PG reachable", false, "DSN: "+dsnErr.Error())
+	} else {
+		pgOK, detail := checkPGReachable(ctx, dsn, opts)
+		report = appendCheck(report, "PG reachable", pgOK, detail)
+	}
+
+	// Schema current is only meaningful if PG is reachable.
+	if dsnErr == nil && lastCheckPassed(report) {
+		schemaOK, detail := checkSchemaCurrent(ctx, dsn, opts)
+		report = appendCheck(report, "schema current", schemaOK, detail)
+	} else {
+		report = appendCheck(report, "schema current", false, "skipped (PG unreachable)")
+	}
+	return report, dsnErr == nil && lastCheckPassed(report)
+}
+
+// appendLocalChecks adds the checks that read only the local store and
+// the project directory.
+func appendLocalChecks(ctx context.Context, report DoctorReport) DoctorReport {
+	if app.store == nil {
+		report = appendCheck(report, "queue draining", false, "local store not initialized")
+		report = appendCheck(report, "no orphan applied", false, "local store not initialized")
+	} else {
+		drainOK, detail := checkQueueDraining(ctx, app.store)
+		report = appendCheck(report, "queue draining", drainOK, detail)
+		orphanOK, detail := checkNoOrphanApplied(ctx, app.store)
+		report = appendCheck(report, "no orphan applied", orphanOK, detail)
+	}
+	modeOK, detail := checkSecretsFileMode(app.mtixDir)
+	return appendCheck(report, "secrets file mode", modeOK, detail)
 }
 
 func appendCheck(r DoctorReport, name string, pass bool, detail string) DoctorReport {
@@ -189,8 +222,12 @@ func lastCheckPassed(r DoctorReport) bool {
 	return r.Checks[len(r.Checks)-1].Pass
 }
 
+// checkPGReachable opens a pool and pings the hub within
+// syncConnectBudget, the same connect budget as sync init, clone, push
+// and pull, so a hub resuming from idle passes whenever it would sync
+// (MTIX-95.7).
 func checkPGReachable(ctx context.Context, dsn string, opts transport.Options) (bool, string) {
-	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	cctx, cancel := context.WithTimeout(ctx, syncConnectBudget)
 	defer cancel()
 	pool, err := transport.New(cctx, dsn, opts)
 	if err != nil {
@@ -203,8 +240,10 @@ func checkPGReachable(ctx context.Context, dsn string, opts transport.Options) (
 	return true, "ok"
 }
 
+// checkSchemaCurrent checks, within syncConnectBudget, that the hub has
+// the sync_projects table (MTIX-95.7).
 func checkSchemaCurrent(ctx context.Context, dsn string, opts transport.Options) (bool, string) {
-	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	cctx, cancel := context.WithTimeout(ctx, syncConnectBudget)
 	defer cancel()
 	pool, err := transport.New(cctx, dsn, opts)
 	if err != nil {

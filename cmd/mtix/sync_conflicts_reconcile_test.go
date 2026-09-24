@@ -46,7 +46,7 @@ func TestRunSyncConflictsList_RefusesOutsideMtixProject(t *testing.T) {
 	t.Cleanup(func() { app.mtixDir = saved })
 
 	var stdout, stderr bytes.Buffer
-	err := runSyncConflictsList(context.Background(), &stdout, &stderr, "")
+	err := runSyncConflictsList(context.Background(), &stdout, &stderr, "", false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not in an mtix project")
 }
@@ -87,17 +87,17 @@ func TestValidResolveActions(t *testing.T) {
 
 func TestPrintConflictsTable_Empty(t *testing.T) {
 	var buf bytes.Buffer
-	require.NoError(t, printConflictsTable(&buf, nil))
+	require.NoError(t, printConflictsTable(&buf, nil, false))
 	require.Contains(t, buf.String(), "no unresolved conflicts")
 }
 
 func TestPrintConflictsTable_LowCountNoBanner(t *testing.T) {
 	rows := []ConflictRow{
-		{ConflictID: 1, NodeID: "MTIX-1", Resolution: "lww",
+		{ConflictID: 1, NodeID: "MTIX-1", Resolution: "lww", Unresolved: true,
 			EventIDWinner: "abc-winner", EventIDLoser: "def-loser"},
 	}
 	var buf bytes.Buffer
-	require.NoError(t, printConflictsTable(&buf, rows))
+	require.NoError(t, printConflictsTable(&buf, rows, false))
 	out := buf.String()
 	require.Contains(t, out, "[1] MTIX-1")
 	require.NotContains(t, out, "Use 'mtix sync conflicts list --batch")
@@ -106,10 +106,10 @@ func TestPrintConflictsTable_LowCountNoBanner(t *testing.T) {
 func TestPrintConflictsTable_HighCountBanner(t *testing.T) {
 	rows := make([]ConflictRow, 51)
 	for i := range rows {
-		rows[i] = ConflictRow{ConflictID: int64(i + 1), NodeID: "MTIX-1", Resolution: "lww"}
+		rows[i] = ConflictRow{ConflictID: int64(i + 1), NodeID: "MTIX-1", Resolution: "lww", Unresolved: true}
 	}
 	var buf bytes.Buffer
-	require.NoError(t, printConflictsTable(&buf, rows))
+	require.NoError(t, printConflictsTable(&buf, rows, false))
 	require.Contains(t, buf.String(), "51 unresolved conflicts")
 	require.Contains(t, buf.String(), "--batch <node-id>")
 }

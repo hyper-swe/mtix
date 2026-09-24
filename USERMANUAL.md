@@ -1345,6 +1345,19 @@ mtix sync push               # ship your queue to the hub
 mtix sync status             # check pending queue + last push time
 ```
 
+`mtix sync status` reads only the local store; it does not contact the
+hub. It shows the pending, pushed and applied event counts, the
+unresolved conflicts, and the local clocks. `--json` carries the same
+values (`pending`, `pushed`, `applied`, `open_conflicts`,
+`high_conflict`, `lamport`, `last_pulled_clock`, `machine_hash`,
+`project_prefix`). `open_conflicts` counts unresolved conflicts only: an
+lww conflict is unresolved until `mtix sync conflicts resolve` records a
+decision for its node and field, and a later conflict on the same node
+and field is unresolved again. Above 50 unresolved conflicts, status
+prints a banner that points at `mtix sync conflicts list --batch
+<node-id>`. There is no `conflicted` count: no sync path ever marks an
+event conflicted, so earlier versions always showed 0 there.
+
 Install the pre-push hook (`examples/hooks/pre-push`) to automate
 `mtix sync push` before `git push`:
 
@@ -1574,10 +1587,22 @@ The hub also records contested edits in `sync_conflicts` for audit
 visibility:
 
 ```bash
-mtix sync conflicts list              # inspect what is contested
-mtix sync conflicts resolve <id> --keep-local
-mtix sync conflicts resolve <id> --keep-remote
+mtix sync conflicts list                              # unresolved conflicts only
+mtix sync conflicts list --all                        # every row, marked unresolved=true|false
+mtix sync conflicts resolve <id> --action keep-local  # or keep-remote, both-renumbered, acknowledge
 ```
+
+`mtix sync conflicts resolve` records your decision and changes no node:
+it appends a `manual` row to `sync_conflicts` (the table is
+append-only), and its output says `decision recorded; node state not
+changed`. With `--json` it prints `conflict_id`, `node_id`, `field_name`,
+`action`, `decision_recorded`, `node_state_changed` (always `false`) and
+`message`. To apply the value you chose, edit the node with `mtix update`
+and push. The decision resolves the conflict and every earlier conflict on
+the same node and field; a later conflict on that node and field is
+unresolved again, and `mtix sync conflicts list` shows it. Passing the id
+of a `manual` row is refused as invalid input: resolve the conflict it
+answers instead (`--all` shows both).
 
 For whole-project escapes (many conflicts, divergent history):
 
@@ -1607,11 +1632,30 @@ for the full tradeoff.
 ```bash
 mtix sync doctor             # health checks: PG reachable, schema current,
                              #   queue draining, no orphan applied,
-                             #   secrets file mode, hub privileges
+                             #   secrets file mode, hub triggers,
+                             #   hub privileges
 ```
 
 Exit code 0 on all-pass, including a check that passes with a WARN; exit
 code 2 if any check fails (operators can gate CI / monitoring on this).
+
+Each hub check allows 30 s to connect, the same budget as `mtix sync
+init`, `clone`, `push` and `pull`, so a hub database that is resuming from
+idle passes the doctor whenever it would sync.
+
+The `hub-triggers` check compares the hub with the functions and triggers
+the mtix hub migrations define: every one must exist, and every trigger
+must be enabled for normal sessions (`tgenabled` is `O`). Without them the
+append-only tables (`audit_log`, `sync_conflicts`, `sync_events`) accept
+changes they should refuse. The detail names each missing function, each
+missing trigger and each trigger that is not enabled, and `fix` holds what
+to run as the table owner: `mtix sync init` for anything missing (it
+recreates every function and trigger), and for a trigger that is not
+enabled the exact `ALTER TABLE <schema>.<table> ENABLE TRIGGER <name>;`
+statement. Like `hub-privileges`, a gap is a **WARN** by default (exit 0)
+and a **FAIL** (exit 2) in strict mode (`sync.keep_roles` set); so is a
+check that cannot run. After a restore from backup this check is how you
+confirm the runbook finished (see "Backup and restore").
 
 The `hub-privileges` check runs the verification `mtix sync harden` runs
 (see "Hub privileges" below), as whichever role the DSN names. It is a
@@ -1760,13 +1804,50 @@ administrator runs) or `note` (why).
 ### Backup and restore
 
 ```bash
-mtix sync backup --output /tmp/hub.sql      # wraps pg_dump on 5 mtix tables
-psql "$DSN" < /tmp/hub.sql                  # restore
+mtix sync backup --output "hub-$(date -u +%Y%m%dT%H%M%SZ).sql"   # pg_dump of every mtix hub table
 ```
 
-For compliance-grade durability, schedule the backup to immutable
-cold storage (S3 Object Lock, GCS retention, Azure Immutable). See
-the [safety-critical
+`mtix sync backup` runs `pg_dump` for every table the mtix hub migrations
+create, with its data (`--no-owner --no-privileges`), and prints the table
+list. It needs `pg_dump` on `PATH` (or `MTIX_PG_DUMP`), a client at least
+as new as the hub's server. It contacts the hub only while it runs.
+
+- **Connection.** The backup connects with the settings the sync commands
+  use: `sslmode` is `verify-full` when the DSN names none, and a weaker
+  `sslmode` needs `--insecure-tls` and is allowed only when every host is
+  loopback or a local socket. `pg_dump` receives every host and port, the
+  CA file (`sslrootcert` in the DSN, or `MTIX_SYNC_SSLROOTCERT`) and
+  `target_session_attrs` through `PG*` environment variables; the DSN and
+  its password never appear on its command line. With no CA file
+  configured, `pg_dump` verifies the hub against the system trust store
+  and the backup says so; a hub whose certificate comes from a private CA
+  needs `sslrootcert=<ca.pem>` in the DSN or `MTIX_SYNC_SSLROOTCERT`.
+- **Output file.** mtix creates the file, readable and writable only by
+  you (mode 0600), before `pg_dump` writes to it. It never overwrites a
+  file: an existing path, or a symlink, is refused, so give each backup a
+  new name. A failed backup leaves no file.
+
+The dump holds the tables and their data, not the mtix functions and
+triggers. Restore it into an empty database as follows:
+
+1. Restore the dump with `psql`, connected to the empty database as the
+   role that will own the sync tables. Keep the password out of the
+   command line: set `PGHOST`, `PGPORT`, `PGUSER`, `PGDATABASE` and
+   `PGSSLMODE=verify-full`, with the password in a `~/.pgpass` file, then
+   run `psql -f hub-<date>.sql`. `psql` reports an error for each trigger
+   (its function does not exist yet); step 2 creates them.
+2. Run `mtix sync init` with the hub DSN naming that same role, the table
+   owner. It recreates every mtix function and trigger and keeps the
+   restored data, including the restore epoch.
+3. Run `mtix sync doctor`. Its `hub-triggers` check must pass: every mtix
+   function and trigger present and enabled. If it names a gap, run its
+   `fix` as the table owner and run the doctor again.
+4. Continue with the "Restore-from-backup runbook" below: `mtix sync
+   mark-restored`, then `mtix sync collisions list`.
+
+For compliance-grade durability, copy each backup to immutable cold
+storage: object storage with a retention lock that nobody, including the
+hub's administrators, can shorten. See the [safety-critical
 workflow](docs/audit/MTIX-15-audit-pass2.md) for the full procedure.
 
 ### Lost-laptop recovery
@@ -1796,6 +1877,9 @@ operator does.
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
 | `mtix sync doctor` shows `[WARN] hub-privileges` | Roles other than the table owner can use the sync tables, or a TRUNCATE guard is missing or disabled. Nothing is blocked, and this may be fine on a private network | To restrict access, the table owner runs `mtix sync harden` (a dry run), then, after reviewing its role list, `mtix sync harden --apply --keep-role <role>`; see "Hub privileges" |
 | `mtix sync doctor` shows `[FAIL] hub-privileges` | Strict mode (`sync.keep_roles` set): a role not in it can use the sync tables, or a guard is missing or disabled | Add the role to `sync.keep_roles` if it should keep access, or run `mtix sync harden` and then `--apply` as the table owner |
+| `mtix sync doctor` shows `[WARN] hub-triggers` (`[FAIL]` in strict mode) | An mtix function or trigger is missing, as after a restore from backup, or a trigger is not enabled | As the table owner, run the check's `fix`: `mtix sync init` for what is missing, the printed `ALTER TABLE ... ENABLE TRIGGER` statement for what is not enabled; then run `mtix sync doctor` again |
+| `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
+| `mtix sync conflicts resolve` fails with `is a manual resolution` | The id is a recorded decision, not a conflict | Run `mtix sync conflicts list --all` and resolve the conflict it answers |
 
 ### MCP integration
 
@@ -1874,8 +1958,12 @@ call, so mtix blocks just the affected node and asks an admin.
 Run this after every hub restore:
 
 ```bash
-# 1. Restore the hub from your backup.
-psql "$DSN" < /path/to/hub-backup.sql
+# 1. Restore the hub from your backup into an empty database, then run
+#    mtix sync init as the table owner and check mtix sync doctor's
+#    hub-triggers check (see "Backup and restore" above).
+psql -f /path/to/hub-backup.sql      # PG* variables name the empty database and the owner role
+mtix sync init
+mtix sync doctor
 
 # 2. Open a restore window. Run this EXACTLY ONCE, right after the restore.
 #    This is the only way to arm restore-collision detection. Clients

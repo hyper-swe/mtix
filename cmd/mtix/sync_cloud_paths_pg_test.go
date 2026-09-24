@@ -20,6 +20,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
+	"github.com/hyper-swe/mtix/internal/store/postgres/migrations"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/sync/clock"
 )
@@ -429,15 +430,17 @@ func TestCloudPath_Backup_DumpsHubTablesThroughDSN(t *testing.T) {
 	// Pass the DSN verbatim: MTIX-59 makes runSyncBackup default PGSSLROOTCERT to
 	// the system trust store when a verify-full DSN names no cert, so a public-CA
 	// hub backs up without a test-side workaround.
-	require.NoError(t, runSyncBackup(ctx, &stdout, &stderr, nil, out),
+	require.NoError(t, runSyncBackup(ctx, &stdout, &stderr, nil, out, cloudOpts),
 		"backup: %s", stderr.String())
 	require.Contains(t, stdout.String(), "backup written to")
 
 	body, err := os.ReadFile(out) //nolint:gosec // path from t.TempDir()
 	require.NoError(t, err)
 	dump := string(body)
-	for _, tbl := range backupTables {
-		require.Contains(t, dump, tbl, "dump must reference mtix-owned table %s", tbl)
+	tables, err := migrations.Tables()
+	require.NoError(t, err)
+	for _, tbl := range tables {
+		require.Contains(t, dump, tbl, "dump must reference hub table %s", tbl)
 	}
 	require.Contains(t, dump, "backup-node",
 		"dump must contain the seeded node's create-event payload (data, not just schema)")

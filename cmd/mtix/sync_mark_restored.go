@@ -18,7 +18,10 @@ import (
 // (ADR-003 §15, Addendum A).
 //
 // RUNBOOK (restore the hub from a backup):
-//  1. Restore the mtix-owned tables from a `mtix sync backup` dump.
+//  1. Restore the hub tables from a `mtix sync backup` dump into an empty
+//     database, run `mtix sync init` as the table owner (it recreates the
+//     mtix functions and triggers the dump does not hold) and check the
+//     hub-triggers check of `mtix sync doctor` (MTIX-95.7).
 //  2. Run `mtix sync mark-restored`. This advances the hub restore_epoch so
 //     every surviving create's stamp falls into an EARLIER epoch than every
 //     create accepted afterward — opening the restore window in which a

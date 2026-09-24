@@ -1,6 +1,6 @@
 ---
 name: admin
-description: Administrative operations for mtix projects. Backup, export, import, verification, statistics, and sync hub privileges.
+description: Administrative operations for mtix projects. Backup, export, import, verification, statistics, sync hub privileges, sync hub backup and restore, and sync conflicts.
 ---
 
 # mtix Administration
@@ -71,6 +71,37 @@ owned by another role, and memberships that reach every table included).
 
 Never pass `--apply` without a human approving the dry run's role list. Never
 run `mtix sync harden` from a hook, a push or the daemon.
+
+## Sync Hub Backup, Restore and Conflicts
+
+Only for projects that sync through a Postgres hub; run these only when a
+human asks. Never put the DSN or a password on a command line.
+
+```bash
+mtix sync backup --output hub-<date>.sql  # pg_dump of every hub table; creates the file 0600, never overwrites
+mtix sync doctor --json                   # hub-triggers: every mtix function and trigger present and enabled
+mtix sync conflicts list [--all]          # unresolved conflicts (every row, marked, with --all)
+mtix sync conflicts resolve <id> --action keep-local|keep-remote|both-renumbered|acknowledge
+```
+
+The backup connects with the settings sync uses (`sslmode` `verify-full`
+when the DSN names none; a weaker one needs `--insecure-tls`, loopback or a
+local socket only; the CA from `sslrootcert` or `MTIX_SYNC_SSLROOTCERT`).
+A failed backup leaves no file; an existing path is refused.
+
+Restore into an empty database: `psql -f <file>` as the role that will own
+the sync tables (psql reports errors for the triggers; their functions do
+not exist yet), then `mtix sync init` with the DSN naming that role, then
+`mtix sync doctor` until `hub-triggers` passes (its `fix` names
+`mtix sync init` or the `ALTER TABLE ... ENABLE TRIGGER` statement to run
+as the table owner; a gap is a WARN by default, a FAIL in strict mode),
+then `mtix sync mark-restored` once and `mtix sync collisions list`.
+
+`mtix sync status` counts unresolved conflicts only (`open_conflicts`); it
+has no `conflicted` count. `resolve` records the decision only and says
+`decision recorded; node state not changed`: apply the chosen value with
+`mtix update` and push. A later conflict on the same node and field is
+unresolved again; resolving a `manual` row is refused as invalid input.
 
 ## Documentation
 

@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -104,7 +103,7 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 		}
 	}
 
-	connectCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	connectCtx, cancel := context.WithTimeout(ctx, syncConnectBudget)
 	defer cancel()
 
 	pool, err := transport.New(connectCtx, dsn, opts)

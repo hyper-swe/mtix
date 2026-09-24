@@ -50,6 +50,19 @@ type Approval struct {
 	// source names a CA file.
 	CASupplied bool
 
+	// SSLRootCert is the CA file the normalized DSN names: its own
+	// sslrootcert, or MTIX_SYNC_SSLROOTCERT when it names none. It is
+	// empty when neither does; the driver then reads PGSSLROOTCERT, a
+	// service file or its default root.crt. The parsed Config keeps the
+	// loaded certificates but not the file, which a libpq client such as
+	// pg_dump needs to verify the server the same way (MTIX-95.7).
+	SSLRootCert string
+
+	// TargetSessionAttrs is the DSN's target_session_attrs, empty when it
+	// names none. The parsed Config keeps it only as a connect hook, so a
+	// libpq client reads it here (MTIX-95.7).
+	TargetSessionAttrs string
+
 	// dsn is the normalized DSN Config was parsed from: sslmode
 	// populated and MTIX_SYNC_SSLROOTCERT honored. It holds the
 	// credentials and stays unexported; only EnforceTLSPosture reads it.
@@ -69,6 +82,10 @@ type Approval struct {
 // under verify-full every network host entry verifies the server
 // certificate against its host name; under a weaker sslmode every host
 // entry is loopback or a local Unix-domain socket.
+//
+// The Approval also reports the CA file and target_session_attrs the
+// normalized DSN names, which a libpq client such as pg_dump needs to
+// connect with the same settings (MTIX-95.7).
 //
 // Every refusal and parse failure is value-free: a refused host is named
 // by its position, and the driver's own error, which quotes the
@@ -99,7 +116,13 @@ func ApproveDSN(dsn string, opts Options) (*Approval, error) {
 		// Deliberately not wrapped: err quotes the connection string.
 		return nil, unparsableSettings()
 	}
-	return approveParsed(cfg, mode, normalized)
+	approval, err := approveParsed(cfg, mode, normalized)
+	if err != nil {
+		return nil, err
+	}
+	approval.SSLRootCert = q.Get("sslrootcert")
+	approval.TargetSessionAttrs = q.Get("target_session_attrs")
+	return approval, nil
 }
 
 // approveParsed applies the posture rule for mode to cfg, the parsed

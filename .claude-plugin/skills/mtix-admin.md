@@ -1,5 +1,5 @@
 ---
-description: "Administer MTIX project using mtix. Use when backing up data, exporting/importing tasks, running garbage collection, managing configuration, verifying data integrity, or restricting who can use a sync hub's tables (mtix sync harden)."
+description: "Administer MTIX project using mtix. Use when backing up data, exporting/importing tasks, running garbage collection, managing configuration, verifying data integrity, restricting who can use a sync hub's tables (mtix sync harden), backing up or restoring a sync hub (mtix sync backup), or resolving sync conflicts."
 allowed-tools:
   - mcp__mtix__mtix_export
   - mcp__mtix__mtix_import
@@ -119,6 +119,37 @@ The append-only tables (`audit_log`, `sync_conflicts`, `sync_events`) refuse TRU
 - Never pass `--apply` without a human approving the dry run's role list.
 - Never run `mtix sync harden` from a hook, a push or the daemon.
 - Never read, print or paste the hub DSN to run it; it comes from `MTIX_SYNC_DSN` or `.mtix/secrets`.
+
+## Sync Hub Backup and Restore (Sync Hub Owners)
+
+Only for projects that sync through a Postgres hub. Run these only when a human asks. `mtix sync backup` contacts the hub only while it runs, so it does not keep a scale-to-zero database awake beyond the dump.
+
+**Back up:** `mtix sync backup --output hub-<date>.sql` runs `pg_dump` for every table the hub migrations create, with its data, and prints the table list. It needs a `pg_dump` at least as new as the hub's server, on `PATH` or named by `MTIX_PG_DUMP`. It connects with the settings sync uses: `sslmode` is `verify-full` when the DSN names none; a weaker `sslmode` needs `--insecure-tls` and works only when every host is loopback or a local socket; the CA file comes from `sslrootcert` in the DSN or from `MTIX_SYNC_SSLROOTCERT`, and with neither `pg_dump` verifies the hub against the system trust store (the backup says so). mtix creates the output file readable and writable only by its owner (mode 0600) and never overwrites one: give every backup a new path. A failed backup leaves no file.
+
+**Restore into an empty database (the runbook):**
+1. Restore the dump with `psql -f <file>`, connected to the empty database as the role that will own the sync tables. Put the connection in `PG*` variables and the password in `~/.pgpass`, never on the command line. psql reports an error for each trigger: the dump holds no trigger functions yet.
+2. Run `mtix sync init`, with the hub DSN naming that owner role. It recreates every mtix function and trigger and keeps the restored data, the restore epoch included.
+3. Run `mtix sync doctor` and check `hub-triggers` (below).
+4. Run `mtix sync mark-restored` exactly once, then `mtix sync collisions list`.
+
+**Verify:** in `mtix sync doctor --json`, the `hub-triggers` check has `pass: true` and no `warn`: every function and trigger the hub migrations define exists and every trigger is enabled (`tgenabled` `O`). A gap is a WARN (exit 0), or a FAIL (exit 2) in strict mode (`sync.keep_roles` set). Its `detail` names each missing function, missing trigger and trigger that is not enabled, and its `fix` is what the table owner runs: `mtix sync init` for anything missing, the printed `ALTER TABLE <schema>.<table> ENABLE TRIGGER <name>;` statement for a trigger that is not enabled. Then run the doctor again.
+
+**Troubleshooting:**
+- `already exists`: the output path exists (a file or a symlink); choose a new path.
+- `weak sslmode requires --insecure-tls`, or `not loopback or a local socket`: the DSN names an `sslmode` weaker than `verify-full`. Use `verify-full`; `--insecure-tls` is for a development hub on loopback or a local socket only.
+- A certificate error after `system trust store (PGSSLROOTCERT=system)`: the hub's certificate comes from a private CA; set `sslrootcert=<ca.pem>` in the DSN or `MTIX_SYNC_SSLROOTCERT`.
+- `server version mismatch` from `pg_dump`: install a `pg_dump` at least as new as the hub's server and point `MTIX_PG_DUMP` at it.
+
+## Sync Conflicts
+
+`mtix sync status` counts unresolved conflicts only (`open_conflicts` in `--json`): an lww conflict with no later manual resolution for the same node and field. It has no `conflicted` count; no sync path sets that status. `mtix sync conflicts list` shows the unresolved conflicts, and `--all` shows every row with `unresolved` true or false.
+
+`mtix sync conflicts resolve <id> --action keep-local|keep-remote|both-renumbered|acknowledge` records the decision only. Its output says `decision recorded; node state not changed` (`--json`: `decision_recorded: true`, `node_state_changed: false`). To apply the chosen value, edit the node with `mtix update` and push. The decision resolves the conflict and every earlier one on the same node and field; a later conflict on that node and field is unresolved again. An id that is itself a `manual` row is refused as invalid input: resolve the conflict it answers.
+
+**Never:**
+- Never read, print or paste the hub DSN or its password; it comes from `MTIX_SYNC_DSN` or `.mtix/secrets`.
+- Never put a password on the `psql` or `pg_dump` command line.
+- Never run `mtix sync mark-restored` more than once for one restore.
 
 ## Integrity Verification
 

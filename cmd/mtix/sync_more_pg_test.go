@@ -82,7 +82,7 @@ func TestRunSyncConflictsList_NoConflicts(t *testing.T) {
 	initTestApp(t)
 
 	var stdout, stderr bytes.Buffer
-	err := runSyncConflictsList(context.Background(), &stdout, &stderr, "")
+	err := runSyncConflictsList(context.Background(), &stdout, &stderr, "", false)
 	require.NoError(t, err)
 }
 
@@ -144,7 +144,7 @@ func TestReadSyncStatus_FreshStore(t *testing.T) {
 
 func TestReadConflicts_EmptyTable(t *testing.T) {
 	initTestApp(t)
-	conflicts, err := readConflicts(context.Background(), app.store, "")
+	conflicts, err := readConflicts(context.Background(), app.store, "", false)
 	require.NoError(t, err)
 	require.Empty(t, conflicts)
 }

@@ -20,16 +20,20 @@ import (
 // status --json`. Lives here (not in a separate package) because no
 // other consumer needs it; if 15.8 MCP integration adds machine
 // access to status, the type can be lifted then.
+//
+// It has no count of events in the 'conflicted' status: no sync path
+// sets that status, so the count was always 0 (MTIX-95.7).
 type SyncStatus struct {
 	Pending       int    `json:"pending"`
 	Pushed        int    `json:"pushed"`
-	Conflicted    int    `json:"conflicted"`
 	Applied       int    `json:"applied"`
 	Lamport       int64  `json:"lamport"`
 	LastPulled    int64  `json:"last_pulled_clock"`
 	MachineHash   string `json:"machine_hash,omitempty"`
 	ProjectPrefix string `json:"project_prefix,omitempty"`
-	OpenConflicts int    `json:"open_conflicts"`
+	// OpenConflicts counts the unresolved conflicts: lww rows without a
+	// later manual row for the same node and field (MTIX-95.7).
+	OpenConflicts int `json:"open_conflicts"`
 	// HighConflict is the FR-18.12 banner trigger: true when
 	// open_conflicts > 50 so the human-readable output adds a
 	// guidance banner.
@@ -47,8 +51,12 @@ func newSyncStatusCmd() *cobra.Command {
 read — does not touch the hub. Use 'mtix sync doctor' to verify hub
 reachability and schema currency.
 
-When unresolved conflicts exceed 50, surfaces the FR-18.12 banner
-pointing at 'mtix sync conflicts list --batch'.`,
+A conflict is unresolved until mtix sync conflicts resolve records a
+decision for its node and field; a later conflict on the same node and
+field is unresolved again. When unresolved conflicts exceed 50, surfaces
+the FR-18.12 banner pointing at 'mtix sync conflicts list --batch'.
+
+There is no 'conflicted' count: no sync path marks an event conflicted.`,
 		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSyncStatus(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr())
@@ -77,7 +85,9 @@ func runSyncStatus(ctx context.Context, stdout, stderr io.Writer) error {
 }
 
 // readSyncStatus aggregates counts + sentinels into one struct via
-// readDB-only queries (no write tx).
+// readDB-only queries (no write tx). The conflict count, and the >50
+// banner flag derived from it, count only unresolved conflicts: lww rows
+// without a later manual row for the same node and field (MTIX-95.7).
 func readSyncStatus(ctx context.Context, store *sqlite.Store) (SyncStatus, error) {
 	var st SyncStatus
 
@@ -87,7 +97,6 @@ func readSyncStatus(ctx context.Context, store *sqlite.Store) (SyncStatus, error
 	}{
 		{"pending", &st.Pending},
 		{"pushed", &st.Pushed},
-		{"conflicted", &st.Conflicted},
 		{"applied", &st.Applied},
 	} {
 		if err := store.QueryRow(ctx,
@@ -97,12 +106,12 @@ func readSyncStatus(ctx context.Context, store *sqlite.Store) (SyncStatus, error
 		}
 	}
 
-	if err := store.QueryRow(ctx,
-		`SELECT COUNT(*) FROM sync_conflicts`,
-	).Scan(&st.OpenConflicts); err != nil {
-		return st, fmt.Errorf("count conflicts: %w", err)
+	unresolved, err := readConflicts(ctx, store, "", false)
+	if err != nil {
+		return st, fmt.Errorf("count unresolved conflicts: %w", err)
 	}
-	st.HighConflict = st.OpenConflicts > 50
+	st.OpenConflicts = len(unresolved)
+	st.HighConflict = st.OpenConflicts > highConflictThreshold
 
 	for _, kv := range []struct {
 		key string
@@ -150,9 +159,8 @@ func printStatusTable(w io.Writer, st SyncStatus) error {
 		{"", ""},
 		{"pending", strconv.Itoa(st.Pending)},
 		{"pushed", strconv.Itoa(st.Pushed)},
-		{"conflicted", strconv.Itoa(st.Conflicted)},
 		{"applied", strconv.Itoa(st.Applied)},
-		{"open conflicts", strconv.Itoa(st.OpenConflicts)},
+		{"unresolved conflicts", strconv.Itoa(st.OpenConflicts)},
 		{"", ""},
 		{"local lamport", strconv.FormatInt(st.Lamport, 10)},
 		{"last pulled clock", strconv.FormatInt(st.LastPulled, 10)},

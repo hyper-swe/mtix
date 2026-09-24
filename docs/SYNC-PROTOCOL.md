@@ -134,9 +134,10 @@ resolved per node, not per field:
 
 ```
 key(e)  = (lamport_clock, event_id)
-held    = the workflow event with the highest key in the local
-          sync_events log for the same node (own events and mirrored
-          foreign events, winners and losers), excluding e
+held    = the well-formed workflow event with the highest key in the
+          local sync_events log for the same node (own events and
+          mirrored foreign events, winners and losers), excluding e
+          and every malformed event (see the residual list below)
 e wins  iff there is no held event, or key(e) > key(held):
           the higher lamport_clock wins;
           on a tie, the higher event_id wins (byte-string compare)
@@ -182,9 +183,12 @@ Known residual in 0.5.x:
   whose claim lost marks the node done before pulling, both replicas
   show `done`, each with its own agent as assignee. Status converges
   on every replica for claims and status changes that travel as events
-  (local writes that emit none are covered below); `closed_at`
-  converges among replicas that received the events by sync (the
-  originator exceptions follow).
+  (see the item on local writes that emit no event), also when a
+  malformed event is present (see the item on malformed workflow
+  events). `closed_at` converges among replicas that received the
+  events by sync, except as the item on the `closed_at` range
+  describes; the originating store can differ (see the item on
+  `closed_at` on the originating store).
 - `defer_until` is not cleared by a winning claim, unclaim or
   transition at ingest, although a local claim clears it.
 - `update_field` on `status`, `assignee` or `agent_state` keeps its
@@ -207,19 +211,39 @@ Known residual in 0.5.x:
   winner check, so status can still differ there. Example: replica A
   claims a node while replica B adds a dependency that blocks it; B's
   auto-block emits no event, so after both pull A shows `blocked` and
-  B `in_progress`. Descendants cancelled by a cascade cancel can differ
-  the same way: other replicas keep them in their previous status. A
-  dependent that the cascade unblocked does travel, as its own
-  `transition_status`, so other replicas show it unblocked while the
-  descendant that blocked it is not cancelled there (MTIX-95.21).
-- A `transition_status` to a status this build does not know (for
-  example one added by a newer client) writes the status column (and
-  `updated_at`) alone and logs a warning naming the event and the
-  status. A `transition_status` whose payload cannot be decoded or has
-  no to-status (missing, null or empty) changes no node column, is
-  recorded as applied, and logs a warning naming the event. Neither
-  fails the event: a failed event fails its whole pull batch, and the
-  pull cursor never moves past it.
+  B `in_progress`. A dependent that a cascade cancel unblocks does
+  travel, as its own `transition_status`, so other replicas show it
+  unblocked while the descendant that blocked it is not cancelled
+  there (MTIX-95.21). Descendants cancelled by a cascade cancel, which
+  other replicas keep in their previous status, can differ
+  the same way.
+- Unknown to-status: a `transition_status` to a status this build
+  does not know (for example one added by a newer client) writes the
+  status column (and `updated_at`) alone and logs a warning naming the
+  event and the status. It does not fail the event: a failed event
+  fails its whole pull batch, and the pull cursor never moves past it.
+- Malformed workflow events: a `transition_status` whose payload
+  cannot be decoded or has no to-status (missing, null or empty), and
+  a `claim` or `defer` whose payload cannot be decoded (including an
+  `until` that is not an RFC 3339 timestamp), are malformed. One Go
+  rule decides this (`decodeWorkflowPayload` in
+  `internal/store/sqlite/sync_workflow_payload.go`), and both the
+  apply path and the winner check use it. A malformed event changes no
+  node column, is recorded as applied, and never fails the event, so
+  it does not stop the pull. It never counts as the held event, so it
+  does not block an older workflow event, and the order in which a
+  replica receives it does not change the status it ends on. When it
+  beats every well-formed held event, apply logs a warning naming it.
+  `unclaim` is never malformed: its payload is not read. In 0.5.x a
+  malformed event is recorded as applied, not quarantined for retry,
+  so a later build that could read it does not apply it either.
+  Upgrade consequence: the winner check re-decodes stored payloads
+  with the running build's rule. If a later build widens the rule, an
+  event this build recorded as malformed (and never applied) would
+  count as held there although its columns were never written, and it
+  could block older events. Any widening of `decodeWorkflowPayload`
+  must therefore ship with a step that re-applies or quarantines the
+  events the old rule rejected.
 
 ## Hub-side conflict detection
 

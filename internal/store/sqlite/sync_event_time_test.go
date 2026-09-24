@@ -45,3 +45,39 @@ func TestEventTime_WallClockRange_EventTimeOrApplyTime(t *testing.T) {
 		})
 	}
 }
+
+// TestDeferWakeTime_UntilRange_UTCOrNoWakeTime pins the helper that turns a
+// defer payload's until into defer_until (MTIX-95.26): the until in UTC when
+// its UTC year lies within 1..9999, else nil (no wake time).
+func TestDeferWakeTime_UntilRange_UTCOrNoWakeTime(t *testing.T) {
+	minus5 := time.FixedZone("minus5", -5*3600)
+	plus1 := time.FixedZone("plus1", 3600)
+	at := func(v time.Time) *time.Time { return &v }
+	firstOfYear1 := time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
+	lastOf9999 := time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+	tests := []struct {
+		name  string
+		until *time.Time
+		want  *time.Time // nil: no wake time
+	}{
+		{"no until", nil, nil},
+		{"in range, in UTC", at(time.Date(2027, 1, 1, 9, 30, 0, 0, plus1)),
+			at(time.Date(2027, 1, 1, 8, 30, 0, 0, time.UTC))},
+		{"first second of year 1", at(firstOfYear1), at(firstOfYear1)},
+		{"UTC year 0", at(time.Date(1, 1, 1, 0, 30, 0, 0, plus1)), nil},
+		{"last second of year 9999", at(lastOf9999), at(lastOf9999)},
+		{"UTC year 10000", at(time.Date(9999, 12, 31, 23, 0, 0, 0, minus5)), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := deferWakeTime(tt.until)
+			if tt.want == nil {
+				require.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			require.True(t, tt.want.Equal(*got), "deferWakeTime = %s, want %s", *got, *tt.want)
+			require.Equal(t, time.UTC, got.Location(), "stored times are UTC")
+		})
+	}
+}

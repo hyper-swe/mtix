@@ -22,13 +22,30 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Event times at apply (MTIX-95.26).
+// Stored times at apply (MTIX-95.26).
 //
-// Every timestamp the apply code derives from an event's wall_clock_ts goes
-// through one helper, eventTime (sync_event_time.go): within years 1..9999 it
-// is the event's own time, and outside that range it is the apply time. Every
-// pulled event therefore applies, the rest of its pull batch applies with it,
-// and GetNode and ListNodes read every node afterwards.
+// The apply code turns an event's wall_clock_ts into a stored time only
+// through eventTime, and a defer payload's until only through deferWakeTime
+// (sync_event_time.go; both helpers have range tests in
+// sync_event_time_test.go). These tests pin, for pulled events, where "large"
+// means a wall_clock_ts of year 10000 or of MaxInt64:
+//   - a comment: the annotation's created_at and the node's updated_at are the
+//     event's time when in range (including the last millisecond of year
+//     9999) and the apply time when large, and the next event in the same pull
+//     batch applies;
+//   - a winning done, cancelled or invalidated: closed_at is the event's time
+//     in whole seconds when in range and the apply time when large, and
+//     updated_at is the apply time either way;
+//   - an update_field with a large wall_clock_ts: ordered by wall_clock_ts as
+//     an integer (detectLWWOutcome);
+//   - one event of each of the 12 op types with a large wall_clock_ts: it
+//     applies;
+//   - a defer: defer_until is its until in UTC when that lies within years
+//     1..9999 and no wake time (NULL) when its UTC year is 0 or 10000;
+//   - the package's non-test source: only eventTime converts Unix time to a
+//     time.Time.
+//
+// After each pulled event, GetNode and ListNodes read every node.
 
 // eventTimeWall is one wall_clock_ts outside years 1..9999.
 type eventTimeWall struct {
@@ -159,7 +176,8 @@ func TestApply_CommentEventTime_StoredWithinReadableRange(t *testing.T) {
 // TestApply_TerminalTransitionEventTime_ClosedAtWithinReadableRange: a
 // winning done, cancelled or invalidated stamps closed_at with the event's
 // time in whole seconds within years 1..9999, and with the apply time (the
-// same value as updated_at) outside it. The node stays readable.
+// same value as updated_at) outside it; updated_at is the apply time either
+// way. The node stays readable.
 func TestApply_TerminalTransitionEventTime_ClosedAtWithinReadableRange(t *testing.T) {
 	walls := []eventTimeWall{{"in range", foreignWallClock().UnixMilli()}}
 	walls = append(walls, wallsOutsideRange()...)
@@ -179,6 +197,8 @@ func TestApply_TerminalTransitionEventTime_ClosedAtWithinReadableRange(t *testin
 				require.NoError(t, err, "GetNode reads the node")
 				require.Equal(t, to, n.Status, "the event applies")
 				require.NotNil(t, n.ClosedAt)
+				require.False(t, n.UpdatedAt.Before(before), "updated_at %s stays the apply time", n.UpdatedAt)
+				require.False(t, n.UpdatedAt.After(after), "updated_at %s stays the apply time", n.UpdatedAt)
 				row := nodeRow(t, raw, "MTIX-1")
 				if w.ms == foreignWallClock().UnixMilli() {
 					require.Equal(t, foreignClosedAt, row["closed_at"], "the event's time in whole seconds")
@@ -190,6 +210,49 @@ func TestApply_TerminalTransitionEventTime_ClosedAtWithinReadableRange(t *testin
 				requireAllNodesReadable(t, s, raw)
 			})
 		}
+	}
+}
+
+// TestApply_DeferWakeTime_StoredWithinReadableRange: a pulled defer stores its
+// until as defer_until, in UTC, when that UTC time lies within years 1..9999,
+// and stores no wake time (NULL, as a defer without an until) otherwise. The
+// defer applies and GetNode and ListNodes read the node.
+func TestApply_DeferWakeTime_StoredWithinReadableRange(t *testing.T) {
+	minus5 := time.FixedZone("minus5", -5*3600)
+	plus1 := time.FixedZone("plus1", 3600)
+	tests := []struct {
+		name  string
+		until time.Time
+		want  string // defer_until as stored; nullColumn for NULL
+	}{
+		{"in range is stored in UTC", time.Date(2027, 1, 1, 9, 30, 0, 0, plus1), "2027-01-01T08:30:00Z"},
+		{"last second of year 9999 is kept", time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC),
+			"9999-12-31T23:59:59Z"},
+		{"UTC year 10000 stores no wake time", time.Date(9999, 12, 31, 23, 0, 0, 0, minus5), nullColumn},
+		{"UTC year 0 stores no wake time", time.Date(1, 1, 1, 0, 30, 0, 0, plus1), nullColumn},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			s, raw := replicaWithNode(t)
+			until := tt.until
+			ev := pulledEvent(t, model.OpDefer, "MTIX-1", &model.DeferPayload{Reason: "later", Until: &until},
+				2, foreignWallClock().UnixMilli())
+
+			require.NoError(t, applyEventsInTx(s, []*model.SyncEvent{ev}), "the defer applies")
+
+			n, err := s.GetNode(ctx, "MTIX-1")
+			require.NoError(t, err, "GetNode reads the node")
+			requireAllNodesReadable(t, s, raw)
+			require.Equal(t, model.StatusDeferred, n.Status)
+			require.Equal(t, tt.want, nodeRow(t, raw, "MTIX-1")["defer_until"])
+			if tt.want == nullColumn {
+				require.Nil(t, n.DeferUntil)
+			} else {
+				require.NotNil(t, n.DeferUntil)
+				require.Equal(t, tt.want, n.DeferUntil.UTC().Format(time.RFC3339))
+			}
+		})
 	}
 }
 

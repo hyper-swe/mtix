@@ -134,7 +134,8 @@ const (
 //	previous_status  the transition payload's from-status
 //	closed_at        the event's time (eventTime), RFC3339 in whole seconds (UTC)
 //	progress         1.0
-//	defer_until      the defer payload's until (NULL when absent)
+//	defer_until      the defer payload's until in UTC (deferWakeTime; NULL when
+//	                 absent or outside years 1..9999)
 type workflowRule struct {
 	op             model.OpType
 	from           model.Status // transition_status: the payload from-status this row requires; "" matches any
@@ -331,7 +332,8 @@ type workflowWrite struct {
 // resolveWorkflowWrite looks up the table row for in and resolves its column
 // values from the event (MTIX-95.10). A terminal closed_at is the event's time
 // (in.eventAt, from eventTime; MTIX-95.26) in whole seconds, not the apply
-// time, so every replica stamps the same value.
+// time, so every replica stamps the same value. A defer's until becomes
+// defer_until through deferWakeTime (MTIX-95.26).
 //
 // known is false when no row matches: a transition_status to a status this
 // build does not know (for example one a newer client added). The write then
@@ -344,8 +346,8 @@ func resolveWorkflowWrite(in workflowInput) (w workflowWrite, known bool) {
 		return workflowWrite{status: in.to, updatedAt: in.updatedAt}, false
 	}
 	var until any
-	if in.deferUntil != nil {
-		until = in.deferUntil.UTC().Format(time.RFC3339)
+	if wake := deferWakeTime(in.deferUntil); wake != nil {
+		until = wake.Format(time.RFC3339)
 	}
 	return workflowWrite{
 		status:         rule.to,

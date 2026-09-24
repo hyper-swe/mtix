@@ -6,6 +6,7 @@ package sqlite_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -455,6 +456,11 @@ func TestApply_WinningWorkflowEvent_WritesExactlyItsTableRow(t *testing.T) {
 			map[string]string{"status": "deferred", "defer_until": "2027-01-01T09:30:00Z", "closed_at": nullColumn}},
 		{"defer without until", model.StatusOpen, model.OpDefer, &model.DeferPayload{},
 			map[string]string{"status": "deferred", "defer_until": nullColumn, "closed_at": nullColumn}},
+		// MTIX-95.27 (95.10.4): an until with a UTC offset is stored as the
+		// UTC string, so the text comparison in wakeDeferredNodes sorts it.
+		{"defer with +05:30 until", model.StatusOpen, model.OpDefer,
+			json.RawMessage(`{"reason":"later","until":"2027-01-01T09:30:00+05:30"}`),
+			map[string]string{"status": "deferred", "defer_until": "2027-01-01T04:00:00Z", "closed_at": nullColumn}},
 		{"transition to done", model.StatusInProgress, model.OpTransitionStatus,
 			transition(model.StatusInProgress, model.StatusDone),
 			map[string]string{"status": "done", "closed_at": foreignClosedAt, "progress": "1"}},

@@ -6,8 +6,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -44,11 +42,13 @@ import (
 // history (ADR-003 §3).
 //
 // At ingest an incoming workflow event applies only if it beats every
-// workflow event already held in the local sync_events log for its node:
-// this replica's own events (pending, pushed or conflicted) and every
-// mirrored foreign event, winners and losers alike. A local mutation needs
-// no check: its Lamport clock is above every event this replica holds, so it
-// is the winner when it is written.
+// well-formed workflow event already held in the local sync_events log for
+// its node: this replica's own events (pending, pushed or conflicted) and
+// every mirrored foreign event, winners and losers alike. A malformed event
+// (the workflow payload rule, sync_workflow_payload.go) is held but never
+// counts (MTIX-95.27). A local mutation needs no check: its Lamport clock is
+// above every event this replica holds, so it is the winner when it is
+// written.
 //
 // dispatchWithLWW (sync_apply.go) checks every workflow event with
 // workflowEventWins before any dispatch. A losing event returns there
@@ -73,11 +73,13 @@ import (
 //     it had. Likewise, after a claim race in which the losing agent marks the
 //     node done before pulling, both replicas show done, each with its own
 //     agent as assignee. Status converges on every replica for claims and
-//     status changes that travel as events (local writes that emit none are
-//     the last item below); closed_at converges among replicas that received
-//     the events by sync (the originator exceptions follow). Full convergence
-//     arrives with the phase-4 projector's composite workflow register
-//     (ADR-006 §4.4).
+//     status changes that travel as events (see the item on local writes that
+//     emit no event), also when a malformed event is present (see the item on
+//     malformed events). closed_at converges among replicas that received the
+//     events by sync, except as the item on closed_at range describes; the
+//     originator can differ (see the item on closed_at on the originator).
+//     Full convergence arrives with the phase-4 projector's composite
+//     workflow register (ADR-006 §4.4).
 //   - defer_until. The ADR-006 §4.4 register clears defer_until on claim,
 //     unclaim and transition, and a local claim clears it too. Ingest does
 //     not: that is out of scope for phase 0 (defer --until is MTIX-95.22).
@@ -107,12 +109,22 @@ import (
 //   - Unknown to-status. A transition_status to a status this build does not
 //     know (for example one a newer client added) writes the status column
 //     (and updated_at) alone, as apply did before MTIX-95.10, and logs a
-//     warning naming the event and the status (resolveWorkflowWrite).
-//   - Missing to-status. A transition_status whose payload cannot be decoded
-//     or has no to-status (missing, null or empty) changes no node column; it
-//     is recorded as applied and a warning names the event
-//     (decodeTransitionForApply). Neither case fails the event: a failed
-//     event fails its whole pull batch, and the cursor never moves past it.
+//     warning naming the event and the status (resolveWorkflowWrite). It does
+//     not fail the event: a failed event fails its whole pull batch, and the
+//     cursor never moves past it.
+//   - Malformed events (MTIX-95.27). A transition_status without a usable
+//     to-status, or a claim or defer whose payload cannot be decoded
+//     (including an until that is not a timestamp), changes no node column,
+//     is recorded as applied and never fails its pull batch; when it wins its
+//     key comparison, a warning names it (workflowInputForApply). It never
+//     counts as the held winner (latestHeldWorkflowKey), so it does not block
+//     an older event. Phase 0 records it as applied instead of quarantining
+//     it for retry (ADR-006 §4.7), so a later build does not re-apply it.
+//     Upgrade consequence: the held lookup re-decodes stored payloads with
+//     the running build's rule, so if a later build widens the rule, an
+//     event this build recorded as malformed (never applied) would count as
+//     held without its columns ever written. Any widening of
+//     decodeWorkflowPayload must ship with a re-apply or quarantine step.
 
 // workflowAction is what a winning workflow event does to one nodes column.
 type workflowAction uint8
@@ -233,40 +245,69 @@ type workflowKey struct {
 	eventID string
 }
 
-// latestHeldWorkflowKey returns the key of the highest-keyed workflow event
-// held in sync_events for the node e addresses, excluding e itself (which the
-// caller has just mirrored). The node is matched by uid when e carries one,
-// else by node_id (MTIX-95.10). found is false when no workflow event is held.
-func latestHeldWorkflowKey(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (workflowKey, bool, error) {
-	// Highest-keyed workflow event already held for this node, in the winner
-	// order (lamport_clock, then event_id), excluding the incoming event.
-	// Served by idx_sync_events_node; the uid variant below by
-	// idx_sync_events_uid.
-	query := `SELECT lamport_clock, event_id FROM sync_events
-	           WHERE node_id = ? AND op_type IN (?, ?, ?, ?) AND event_id <> ?
-	           ORDER BY lamport_clock DESC, event_id DESC LIMIT 1`
-	scope := e.NodeID
-	if e.UID != "" {
-		// Same lookup scoped by the node's durable uid (ADR-003 §3), so a
-		// renumbered node keeps one workflow history.
-		query = `SELECT lamport_clock, event_id FROM sync_events
-		          WHERE uid = ? AND op_type IN (?, ?, ?, ?) AND event_id <> ?
-		          ORDER BY lamport_clock DESC, event_id DESC LIMIT 1`
-		scope = e.UID
-	}
-	var k workflowKey
-	err := tx.QueryRowContext(ctx, query, scope,
+// latestHeldWorkflowKey returns the key of the highest-keyed well-formed
+// workflow event held in sync_events for the node e addresses, excluding e
+// itself (which the caller has just mirrored). The node is matched by uid when
+// e carries one, else by node_id (MTIX-95.10). found is false when no
+// well-formed workflow event is held.
+//
+// It walks the held workflow events in winner order, highest key first, and
+// skips every event the workflow payload rule rejects (decodeWorkflowPayload,
+// MTIX-95.27): a malformed event changes no column when it applies, so it must
+// not count as the held winner either, or an older valid event would be
+// applied or rejected depending on whether it arrived before the malformed one.
+func latestHeldWorkflowKey(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (key workflowKey, found bool, err error) {
+	query, scope := heldWorkflowQuery(e)
+	rows, err := tx.QueryContext(ctx, query, scope,
 		string(model.OpClaim), string(model.OpUnclaim),
 		string(model.OpTransitionStatus), string(model.OpDefer),
 		e.EventID,
-	).Scan(&k.lamport, &k.eventID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return workflowKey{}, false, nil
-	}
+	)
 	if err != nil {
 		return workflowKey{}, false, fmt.Errorf("latest held workflow event: %w", err)
 	}
-	return k, true, nil
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			key, found, err = workflowKey{}, false, fmt.Errorf("latest held workflow event: close: %w", closeErr)
+		}
+	}()
+	for rows.Next() {
+		var (
+			k       workflowKey
+			op      string
+			payload []byte
+		)
+		if scanErr := rows.Scan(&k.lamport, &k.eventID, &op, &payload); scanErr != nil {
+			return workflowKey{}, false, fmt.Errorf("latest held workflow event: %w", scanErr)
+		}
+		if _, malformed := decodeWorkflowPayload(model.OpType(op), payload); malformed != nil {
+			continue // never the held winner (MTIX-95.27)
+		}
+		return k, true, nil
+	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return workflowKey{}, false, fmt.Errorf("latest held workflow event: %w", iterErr)
+	}
+	return workflowKey{}, false, nil
+}
+
+// heldWorkflowQuery returns the query latestHeldWorkflowKey walks and the
+// value that scopes it to e's node (MTIX-95.10, MTIX-95.27).
+func heldWorkflowQuery(e *model.SyncEvent) (query, scope string) {
+	// Every workflow event already held for this node, in the winner order
+	// (lamport_clock, then event_id), highest first, excluding the incoming
+	// event; the payload feeds the workflow payload rule. Served by
+	// idx_sync_events_node; the uid variant below by idx_sync_events_uid.
+	if e.UID == "" {
+		return `SELECT lamport_clock, event_id, op_type, payload FROM sync_events
+		         WHERE node_id = ? AND op_type IN (?, ?, ?, ?) AND event_id <> ?
+		         ORDER BY lamport_clock DESC, event_id DESC`, e.NodeID
+	}
+	// Same walk scoped by the node's durable uid (ADR-003 §3), so a renumbered
+	// node keeps one workflow history.
+	return `SELECT lamport_clock, event_id, op_type, payload FROM sync_events
+	         WHERE uid = ? AND op_type IN (?, ?, ?, ?) AND event_id <> ?
+	         ORDER BY lamport_clock DESC, event_id DESC`, e.UID
 }
 
 // workflowEventWins reports whether the workflow event e beats every workflow
@@ -446,26 +487,4 @@ func applyWorkflowWinner(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, in
 		return "", fmt.Errorf("apply %s %s: %w", e.OpType, e.EventID, err)
 	}
 	return id, nil
-}
-
-// decodeTransitionForApply decodes a winning transition_status payload
-// (MTIX-95.10). It reports ok=false, after logging a warning that names the
-// event, when the payload cannot be decoded or carries no to-status (missing,
-// null or empty). The caller then changes no node column and returns nil, so
-// the event is still recorded as applied and the rest of the pull batch
-// applies: failing it would fail the batch on every later pull too, because
-// the pull cursor advances only when a batch commits.
-func decodeTransitionForApply(e *model.SyncEvent) (model.TransitionStatusPayload, bool) {
-	var p model.TransitionStatusPayload
-	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		slog.Default().Warn("sync apply: undecodable transition_status payload; node left unchanged",
-			"event_id", e.EventID, "error", err)
-		return p, false
-	}
-	if p.To == "" {
-		slog.Default().Warn("sync apply: transition_status without a to-status; node left unchanged",
-			"event_id", e.EventID)
-		return p, false
-	}
-	return p, true
 }

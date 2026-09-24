@@ -370,6 +370,101 @@ func TestPullSweep_UsesHubClock(t *testing.T) {
 	}
 }
 
+// TestPullSweep_FirstRunInterrupted_ResumesFromSavedProgress: a first full
+// diff that stops part-way (here: a late event that cannot be applied, as
+// a timeout would stop it) keeps the progress of the pages it applied. The
+// next pull resumes after the saved event id, compares only the ids after
+// it, completes, and records the FIRST pull's start time as
+// meta.sync.last_sweep_at (MTIX-95.5). B's three late events were pushed
+// last, in one transaction, with ascending ids (one store), so they are
+// listed last and, with --limit 1, each is its own page.
+func TestPullSweep_FirstRunInterrupted_ResumesFromSavedProgress(t *testing.T) {
+	f := newSweepFixture(t)
+	ctx := context.Background()
+	f.seedSharedNode(t)
+	f.editPeer(t, 5)
+	f.pushPeer(t)
+	f.pullPeer(t, 100)
+	title := "historical edit from B"
+	require.NoError(t, f.b.UpdateNode(ctx, "TEST-1", &store.NodeUpdate{Title: &title}))
+	require.NoError(t, f.b.CreateNode(ctx, mkPGNode("TEST-2", "", 0, 2, "B's node")))
+	desc := "written by B while offline"
+	require.NoError(t, f.b.UpdateNode(ctx, "TEST-2", &store.NodeUpdate{Description: &desc}))
+	late := f.pushB(t)
+	require.Len(t, late, 3)
+	var lastHubID string
+	require.NoError(t, f.pool.Inner().QueryRow(ctx,
+		`SELECT event_id FROM sync_events ORDER BY created_at DESC, event_id DESC LIMIT 1`).Scan(&lastHubID))
+	require.Equal(t, late[2].EventID, lastHubID, "precondition: B's last event is listed last")
+	_, err := f.pool.Inner().Exec(ctx,
+		`UPDATE sync_events SET payload = '{"field_name":"not_a_field","new_value":"x"}'::jsonb
+		 WHERE event_id = $1`, late[2].EventID)
+	require.NoError(t, err)
+	_, err = app.store.WriteDB().ExecContext(ctx,
+		`UPDATE meta SET value = '' WHERE key = 'meta.sync.last_sweep_at'`)
+	require.NoError(t, err)
+
+	var stdout, stderr bytes.Buffer
+	before := f.hubNow(t)
+	require.Error(t, f.runPeerPull(&stdout, &stderr, 1), "the unappliable page stops the first full diff")
+	after := f.hubNow(t)
+
+	require.Equal(t, "", f.peerMeta(t, "meta.sync.last_sweep_at"))
+	require.Equal(t, late[1].EventID, f.peerMeta(t, "meta.sync.sweep_after_id"),
+		"progress covers the pages applied before the failure")
+	started, err := time.Parse(time.RFC3339Nano, f.peerMeta(t, "meta.sync.sweep_started_at"))
+	require.NoError(t, err)
+	requireWithin(t, started, before, after)
+	require.True(t, f.appliedOnPeer(t, late[0].EventID))
+	require.True(t, f.appliedOnPeer(t, late[1].EventID))
+
+	_, err = f.pool.Inner().Exec(ctx, `UPDATE sync_events SET payload = $1::jsonb WHERE event_id = $2`,
+		string(late[2].Payload), late[2].EventID)
+	require.NoError(t, err)
+	out, errOut := f.pullPeerStreams(t, 1)
+
+	require.Contains(t, errOut, "resuming the full hub event comparison after "+late[1].EventID)
+	require.Contains(t, errOut, "late-event sweep: compared 1 hub event ids in 1 pages",
+		"the resumed diff lists only the ids after the saved one")
+	require.Contains(t, out, "1 late events recovered")
+	require.Equal(t, f.peerMeta(t, "meta.sync.last_sweep_at"), started.UTC().Format(time.RFC3339Nano),
+		"the next window is measured from the first pull's start")
+	for _, key := range []string{"meta.sync.sweep_after_id",
+		"meta.sync.sweep_after_created_at", "meta.sync.sweep_started_at"} {
+		require.Equalf(t, "", f.peerMeta(t, key), "%s is cleared on completion", key)
+	}
+	created, err := app.store.GetNode(ctx, "TEST-2")
+	require.NoError(t, err)
+	require.Equal(t, desc, created.Description)
+}
+
+// TestRunSyncClone_ResetsLateEventSweepState: a clone rebuilds the store
+// from the hub, so it clears meta.sync.last_sweep_at and any saved
+// full-diff progress; the first pull after it diffs the full hub history.
+func TestRunSyncClone_ResetsLateEventSweepState(t *testing.T) {
+	dsn := requireCmdPG(t)
+	_ = openCmdHub(t)
+	initTestApp(t)
+	ctx := context.Background()
+	for _, key := range []string{"meta.sync.last_sweep_at", "meta.sync.sweep_after_id",
+		"meta.sync.sweep_after_created_at", "meta.sync.sweep_started_at"} {
+		_, err := app.store.WriteDB().ExecContext(ctx,
+			`INSERT INTO meta (key, value) VALUES (?, 'stale') ON CONFLICT(key) DO UPDATE SET value = 'stale'`, key)
+		require.NoError(t, err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	require.NoError(t, runSyncClone(ctx, &stdout, &stderr,
+		[]string{dsn}, transport.Options{InsecureTLS: true}, false, 100), stderr.String())
+
+	for _, key := range []string{"meta.sync.last_sweep_at", "meta.sync.sweep_after_id",
+		"meta.sync.sweep_after_created_at", "meta.sync.sweep_started_at"} {
+		var v string
+		require.NoError(t, app.store.QueryRow(ctx, `SELECT value FROM meta WHERE key = ?`, key).Scan(&v))
+		require.Equalf(t, "", v, "%s must be reset by clone", key)
+	}
+}
+
 // TestRunSyncPull_SweepApplyFails_ReturnsErrorKeepsLastSweep: when a
 // recovered event cannot be applied, the pull fails with the late-event
 // sweep error, counts a sync error (meta.sync.consecutive_errors) and

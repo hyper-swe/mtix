@@ -86,8 +86,12 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			`DELETE FROM nodes`,
 			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.lamport'`,
 			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.last_pulled_clock'`,
-			// Never swept again: the next pull diffs the full hub history (MTIX-95.5).
+			// Never swept again: the next pull diffs the full hub history from
+			// the first id, with no saved full-diff progress (MTIX-95.5).
 			`UPDATE meta SET value = '' WHERE key = 'meta.sync.last_sweep_at'`,
+			`UPDATE meta SET value = '' WHERE key = 'meta.sync.sweep_after_id'`,
+			`UPDATE meta SET value = '' WHERE key = 'meta.sync.sweep_after_created_at'`,
+			`UPDATE meta SET value = '' WHERE key = 'meta.sync.sweep_started_at'`,
 			`UPDATE meta SET value = '{}' WHERE key = 'meta.sync.vector_clock'`,
 			`UPDATE meta SET value = '' WHERE key = 'meta.sync.first_event_hash'`,
 			`UPDATE meta SET value = '' WHERE key = 'meta.sync.project_prefix'`,

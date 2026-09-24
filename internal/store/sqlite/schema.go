@@ -427,6 +427,14 @@ INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.clone.checkpoint', '0
 -- hub events created since this time minus a 15-minute overlap. Empty means
 -- never swept: the next pull diffs the full hub id history once.
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.last_sweep_at', '');
+-- meta.sync.sweep_after_id / _after_created_at / _started_at: progress
+-- of an interrupted full diff (MTIX-95.5): the last listed hub event id whose
+-- page was applied, its hub created_at, and the hub time read before the
+-- diff's first page. The next pull resumes after that position. Empty means
+-- no full diff is part-way done.
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.sweep_after_id', '');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.sweep_after_created_at', '');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.sweep_started_at', '');
 -- meta.sync.consecutive_errors — bumped on push/pull errors, cleared on
 -- success; the workflow state-detector trips StateHubUnreachable at >=3
 -- per FR-18 / MTIX-15.8.1.

@@ -131,44 +131,42 @@ func TestListEventIDsSince_PagesInCreatedAtOrder(t *testing.T) {
 	}
 }
 
-// TestListAllEventIDs_PagesInEventIDOrder: the full-history listing returns
-// every hub id in event_id order across pages, whatever their created_at.
-func TestListAllEventIDs_PagesInEventIDOrder(t *testing.T) {
+// TestListEventIDsSince_FromZeroCursor_ListsWholeHistory: the zero cursor
+// (the start of a store's full-history diff) lists every hub id, in
+// (created_at, event_id) order across pages, including an event created
+// long ago; the first page carries the hub clock.
+func TestListEventIDsSince_FromZeroCursor_ListsWholeHistory(t *testing.T) {
 	pool := openTestPool(t)
 	require.NoError(t, pool.Migrate(context.Background()))
 	ids := pushLateEvents(t, pool, 5)
 	setCreatedAt(t, pool, ids[3], hubClock(t, pool).Add(-400*24*time.Hour))
 
 	before := hubClock(t, pool)
-	var got []string
-	after := ""
-	pages := 0
-	for {
-		page, err := pool.ListAllEventIDs(context.Background(), after, 2)
-		require.NoError(t, err)
-		pages++
-		if pages == 1 {
-			require.False(t, page.HubNow.Before(before), "first page carries the hub clock")
-		}
-		got = append(got, page.IDs...)
-		if !page.More {
-			break
-		}
-		after = page.Next.EventID
-	}
-	require.Equal(t, ids, got)
+	first, err := pool.ListEventIDsSince(context.Background(), transport.EventIDCursor{}, 2)
+	require.NoError(t, err)
+	require.False(t, first.HubNow.Before(before), "the first page carries the hub clock")
+	got, pages := collectSince(t, pool, time.Time{}, 2)
+
+	require.Equal(t, []string{ids[3], ids[0], ids[1], ids[2], ids[4]}, got,
+		"the oldest created_at first, then event id order within one push")
 	require.Equal(t, 3, pages)
 }
 
+// uidMixLamports are the Lamport clocks of pushUIDMix's events. The event
+// with the LARGEST id has the SMALLEST clock, so a result in pull order
+// (Lamport clock, then event id) differs from event-id order.
+var uidMixLamports = []int64{2, 3, 4, 1}
+
 // pushUIDMix pushes four create events, the second and fourth carrying a
-// uid and the others uid-less (as an old CLI pushes them), and returns
-// their ids and the uid each should read back with ("" for none).
+// uid and the others uid-less (as an old CLI pushes them), with Lamport
+// clocks uidMixLamports, and returns their ids and the uid each should read
+// back with ("" for none).
 func pushUIDMix(t *testing.T, pool *transport.Pool) (ids, uids []string) {
 	t.Helper()
 	events := make([]*model.SyncEvent, 4)
 	for i := range events {
 		ids = append(ids, lateEventID(i+1))
-		events[i] = makeEvent(ids[i], fmt.Sprintf("MTIX-%d", i+1), "alice", int64(i+1))
+		events[i] = makeEvent(ids[i], fmt.Sprintf("MTIX-%d", i+1), "alice", uidMixLamports[i])
 		uid := ""
 		if i%2 == 1 {
 			uid = lateEventID(100 + i)
@@ -183,29 +181,32 @@ func pushUIDMix(t *testing.T, pool *transport.Pool) (ids, uids []string) {
 }
 
 // TestFetchEventsByID_ReturnsFullEvents: fetching by id returns the full
-// hub rows for the ids the hub holds, in Lamport order, and ignores ids it
-// does not hold. A uid round-trips, and a uid-less event reads back "".
+// hub rows for the ids the hub holds, in Lamport order (not event-id
+// order), and ignores ids it does not hold. A uid round-trips, and a
+// uid-less event reads back "".
 func TestFetchEventsByID_ReturnsFullEvents(t *testing.T) {
 	pool := openTestPool(t)
 	require.NoError(t, pool.Migrate(context.Background()))
 	ids, uids := pushUIDMix(t, pool)
 
 	got, err := pool.FetchEventsByID(context.Background(),
-		[]string{ids[3], "0193fb00-0000-7000-8000-999999999999", ids[1], ids[2]})
+		[]string{ids[2], "0193fb00-0000-7000-8000-999999999999", ids[1], ids[3]})
 	require.NoError(t, err)
 	require.Len(t, got, 3)
-	require.Equal(t, []string{ids[1], ids[2], ids[3]}, eventIDsOf(got))
-	require.Equal(t, uids[1], got[0].UID, "a uid round-trips")
+	require.Equal(t, []string{ids[3], ids[1], ids[2]}, eventIDsOf(got),
+		"pull order: Lamport 1, 3, 4, although ids[3] is the largest id")
+	require.Equal(t, uids[3], got[0].UID, "a uid round-trips")
 	require.NotEmpty(t, got[0].UID)
-	require.Equal(t, "", got[1].UID, "a uid-less event reads back an empty uid")
-	require.Equal(t, uids[3], got[2].UID)
-	require.Equal(t, int64(2), got[0].LamportClock)
-	require.Equal(t, "MTIX-2", got[0].NodeID)
-	require.Equal(t, model.OpCreateNode, got[0].OpType)
-	require.Equal(t, "alice", got[0].AuthorID)
-	require.Equal(t, model.VectorClock{"alice": 2}, got[0].VectorClock)
-	require.JSONEq(t, `{"title":"x"}`, string(got[0].Payload))
-	require.False(t, got[0].CreatedAt.IsZero(), "created_at is carried")
+	require.Equal(t, uids[1], got[1].UID)
+	require.NotEmpty(t, got[1].UID)
+	require.Equal(t, "", got[2].UID, "a uid-less event reads back an empty uid")
+	require.Equal(t, int64(3), got[1].LamportClock)
+	require.Equal(t, "MTIX-2", got[1].NodeID)
+	require.Equal(t, model.OpCreateNode, got[1].OpType)
+	require.Equal(t, "alice", got[1].AuthorID)
+	require.Equal(t, model.VectorClock{"alice": 3}, got[1].VectorClock)
+	require.JSONEq(t, `{"title":"x"}`, string(got[1].Payload))
+	require.False(t, got[1].CreatedAt.IsZero(), "created_at is carried")
 
 	none, err := pool.FetchEventsByID(context.Background(), nil)
 	require.NoError(t, err)
@@ -270,10 +271,6 @@ func TestLateEventReads_NilPoolAndBadLimit(t *testing.T) {
 			_, err := nilPool.ListEventIDsSince(ctx, transport.EventIDCursor{}, 10)
 			return err
 		}, "pool not open"},
-		{"all on nil pool", func() error {
-			_, err := nilPool.ListAllEventIDs(ctx, "", 10)
-			return err
-		}, "pool not open"},
 		{"fetch on nil pool", func() error {
 			_, err := nilPool.FetchEventsByID(ctx, []string{"x"})
 			return err
@@ -282,8 +279,8 @@ func TestLateEventReads_NilPoolAndBadLimit(t *testing.T) {
 			_, err := open.ListEventIDsSince(ctx, transport.EventIDCursor{}, 0)
 			return err
 		}, "limit must be > 0"},
-		{"all with negative limit", func() error {
-			_, err := open.ListAllEventIDs(ctx, "", -1)
+		{"since with negative limit", func() error {
+			_, err := open.ListEventIDsSince(ctx, transport.EventIDCursor{}, -1)
 			return err
 		}, "limit must be > 0"},
 	}

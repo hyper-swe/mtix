@@ -17,9 +17,10 @@ import (
 
 // Query-shape tests for the late-event sweep reads (MTIX-95.5 acceptance
 // 5). They EXPLAIN the exact SQL the sweep runs, against a migrated hub,
-// and assert the planner can serve each query from an index: the windowed
-// listing from migration 014's created_at index, the full-history listing
-// and the fetch by id from the primary key. On a small test table the
+// and assert the planner can serve each query from an index: the id
+// listing (a window, or the full history from the zero cursor) from
+// migration 014's created_at index, and the fetch by id from the primary
+// key. On a small test table the
 // planner prefers a sequential scan, so each EXPLAIN runs with
 // enable_seqscan off for its transaction only: the question is whether an
 // index CAN serve the query, which is what keeps a large hub's per-pull
@@ -61,7 +62,6 @@ func queryShapePool(t *testing.T) *Pool {
 // SQL the sweep runs; no value is ever placed in the SQL text.
 const (
 	explainListEventIDsSince = "EXPLAIN " + listEventIDsSinceSQL
-	explainListAllEventIDs   = "EXPLAIN " + listAllEventIDsSQL
 	explainFetchEventsByID   = "EXPLAIN " + fetchEventsByIDSQL
 )
 
@@ -88,8 +88,8 @@ func explainWithoutSeqScan(t *testing.T, pool *Pool, explain string, args ...any
 // an ORDER BY created_at can walk idx_sync_events_created_at from its
 // oldest entry and filter every row, which is a full scan in index order.
 // The plan must show the index scan followed by an Index Cond on the
-// predicate that bounds the scan (created_at >= window start, or the
-// event_id key).
+// predicate that bounds the scan (created_at >= the cursor's created_at,
+// or the event_id key).
 func TestLateEventQueries_PlanUsesIndex_ServesSweepWithoutSeqScan(t *testing.T) {
 	pool := queryShapePool(t)
 	windowStart := time.Now().Add(-15 * time.Minute)
@@ -102,9 +102,9 @@ func TestLateEventQueries_PlanUsesIndex_ServesSweepWithoutSeqScan(t *testing.T) 
 		{"window listing is bounded by the created_at index", explainListEventIDsSince,
 			[]any{windowStart, "", 1001},
 			regexp.MustCompile(`idx_sync_events_created_at[^\n]*\n\s+Index Cond: \(+created_at >= `)},
-		{"full-history listing is bounded by the primary key", explainListAllEventIDs,
-			[]any{"", 1001},
-			regexp.MustCompile(`sync_events_pkey[^\n]*\n\s+Index Cond: \(+event_id > `)},
+		{"full-history listing from the zero cursor is served by the created_at index",
+			explainListEventIDsSince, []any{time.Time{}, "", 1001},
+			regexp.MustCompile(`idx_sync_events_created_at[^\n]*\n\s+Index Cond: \(+created_at >= `)},
 		{"fetch by id is served by the primary key", explainFetchEventsByID,
 			[]any{[]string{"0193fb00-0000-7000-8000-000000000001"}},
 			regexp.MustCompile(`sync_events_pkey[^\n]*\n\s+Index Cond: \(+event_id = ANY `)},

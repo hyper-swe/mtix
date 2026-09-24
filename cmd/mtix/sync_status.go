@@ -32,8 +32,12 @@ type SyncStatus struct {
 	OpenConflicts int    `json:"open_conflicts"`
 	// LastSweepAt is meta.sync.last_sweep_at: the hub's clock (RFC 3339,
 	// UTC) at the start of the last late-event sweep of sync pull
-	// (MTIX-95.5). Empty when this store has never swept.
+	// (MTIX-95.5). Empty when no sweep has completed on this store.
 	LastSweepAt string `json:"last_sweep_at"`
+	// FullSweepInProgress is true while no sweep has completed and an
+	// interrupted full hub comparison has saved progress
+	// (meta.sync.sweep_after_id); the next pull resumes it (MTIX-95.5).
+	FullSweepInProgress bool `json:"full_sweep_in_progress"`
 	// HighConflict is the FR-18.12 banner trigger: true when
 	// open_conflicts > 50 so the human-readable output adds a
 	// guidance banner.
@@ -109,6 +113,17 @@ func readSyncStatus(ctx context.Context, store *sqlite.Store) (SyncStatus, error
 	}
 	st.HighConflict = st.OpenConflicts > 50
 
+	if err := readStatusSentinels(ctx, store, &st); err != nil {
+		return st, err
+	}
+	return st, nil
+}
+
+// readStatusSentinels fills st from the meta.sync.* sentinels, including
+// the late-event sweep's last sweep time and whether a full hub comparison
+// is part-way done (MTIX-95.5).
+func readStatusSentinels(ctx context.Context, store *sqlite.Store, st *SyncStatus) error {
+	var fullSweepAfterID string
 	for _, kv := range []struct {
 		key string
 		dst interface{}
@@ -118,25 +133,27 @@ func readSyncStatus(ctx context.Context, store *sqlite.Store) (SyncStatus, error
 		{"meta.sync.machine_hash", &st.MachineHash},
 		{"meta.sync.project_prefix", &st.ProjectPrefix},
 		{"meta.sync.last_sweep_at", &st.LastSweepAt},
+		{"meta.sync.sweep_after_id", &fullSweepAfterID},
 	} {
 		var raw string
 		if err := store.QueryRow(ctx,
 			`SELECT value FROM meta WHERE key = ?`, kv.key,
 		).Scan(&raw); err != nil {
-			return st, fmt.Errorf("read %s: %w", kv.key, err)
+			return fmt.Errorf("read %s: %w", kv.key, err)
 		}
 		switch dst := kv.dst.(type) {
 		case *int64:
 			v, parseErr := strconv.ParseInt(raw, 10, 64)
 			if parseErr != nil {
-				return st, fmt.Errorf("parse %s %q: %w", kv.key, raw, parseErr)
+				return fmt.Errorf("parse %s %q: %w", kv.key, raw, parseErr)
 			}
 			*dst = v
 		case *string:
 			*dst = raw
 		}
 	}
-	return st, nil
+	st.FullSweepInProgress = fullSweepAfterID != "" && st.LastSweepAt == ""
+	return nil
 }
 
 func printStatusJSON(w io.Writer, st SyncStatus) error {
@@ -162,7 +179,7 @@ func printStatusTable(w io.Writer, st SyncStatus) error {
 		{"", ""},
 		{"local lamport", strconv.FormatInt(st.Lamport, 10)},
 		{"last pulled clock", strconv.FormatInt(st.LastPulled, 10)},
-		{"last sweep", lastSweepLabel(st.LastSweepAt)},
+		{"last sweep", lastSweepLabel(st)},
 	}
 	for _, r := range rows {
 		if r[0] == "" {
@@ -185,13 +202,17 @@ func printStatusTable(w io.Writer, st SyncStatus) error {
 }
 
 // lastSweepLabel renders meta.sync.last_sweep_at for the status table:
-// the recorded hub time, or "never" before the first late-event sweep
-// (MTIX-95.5).
-func lastSweepLabel(v string) string {
-	if v == "" {
+// the recorded hub time, or "never" before the first late-event sweep has
+// completed, noting a full hub comparison that is part-way done (MTIX-95.5).
+func lastSweepLabel(st SyncStatus) string {
+	switch {
+	case st.LastSweepAt != "":
+		return st.LastSweepAt
+	case st.FullSweepInProgress:
+		return "never (full hub comparison in progress)"
+	default:
 		return "never"
 	}
-	return v
 }
 
 func emptyDash(s string) string {

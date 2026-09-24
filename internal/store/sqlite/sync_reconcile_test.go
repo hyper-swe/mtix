@@ -154,6 +154,13 @@ func TestDiscardLocal_ResetsSentinels(t *testing.T) {
 	// full hub history again (MTIX-95.5).
 	_, err = raw.Exec(`UPDATE meta SET value = '2026-09-24T01:02:03Z' WHERE key = 'meta.sync.last_sweep_at'`)
 	require.NoError(t, err)
+	// And an interrupted full diff's progress, which must not survive either.
+	_, err = raw.Exec(`UPDATE meta SET value = 'some-event-id' WHERE key = 'meta.sync.sweep_after_id'`)
+	require.NoError(t, err)
+	_, err = raw.Exec(`UPDATE meta SET value = '2026-09-24T00:59:00Z' WHERE key = 'meta.sync.sweep_after_created_at'`)
+	require.NoError(t, err)
+	_, err = raw.Exec(`UPDATE meta SET value = '2026-09-24T01:00:00Z' WHERE key = 'meta.sync.sweep_started_at'`)
+	require.NoError(t, err)
 
 	require.NoError(t, DiscardLocal(context.Background(), s, mtixDir))
 
@@ -165,6 +172,9 @@ func TestDiscardLocal_ResetsSentinels(t *testing.T) {
 		{"meta.sync.project_prefix", ""},
 		{"meta.sync.machine_hash", ""},
 		{"meta.sync.last_sweep_at", ""},
+		{"meta.sync.sweep_after_id", ""},
+		{"meta.sync.sweep_after_created_at", ""},
+		{"meta.sync.sweep_started_at", ""},
 	} {
 		t.Run(kv.key, func(t *testing.T) {
 			var got string

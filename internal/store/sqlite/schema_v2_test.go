@@ -109,6 +109,10 @@ func TestSchema_SyncSentinelsPopulated(t *testing.T) {
 		// Empty means the store has never run the late-event sweep, so its
 		// first pull diffs the full hub id history (MTIX-95.5).
 		{"meta.sync.last_sweep_at", ""},
+		// Progress of an interrupted full diff: empty means none (MTIX-95.5).
+		{"meta.sync.sweep_after_id", ""},
+		{"meta.sync.sweep_after_created_at", ""},
+		{"meta.sync.sweep_started_at", ""},
 		{"sync.max_queue_size", "0"},
 		{"hub.events_retention_days", "0"},
 	}
@@ -322,6 +326,9 @@ func TestSchema_V1ToV2Migration(t *testing.T) {
 		"meta.sync.last_pulled_clock",
 		"meta.sync.machine_hash",
 		"meta.sync.last_sweep_at",
+		"meta.sync.sweep_after_id",
+		"meta.sync.sweep_after_created_at",
+		"meta.sync.sweep_started_at",
 		"sync.max_queue_size",
 		"hub.events_retention_days",
 	} {

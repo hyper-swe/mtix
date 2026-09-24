@@ -1354,17 +1354,27 @@ current one changes nothing; it is only recorded as received.
   late events recovered`. Changes missed before the upgrade arrive
   then. Later pulls print `late-event sweep: N late events recovered`
   only when they recover something.
+- **Interrupted sweeps resume.** On a large hub the full comparison can
+  take longer than one pull may run (a daemon pull stops after 60
+  seconds). The sweep saves its progress after each page it has
+  applied, so the next pull continues where the last one stopped
+  instead of starting over. Until it finishes, `mtix sync status`
+  shows `last sweep` as `never (full hub comparison in progress)`.
 - **Clock.** The sweep uses the hub's clock only, so a wrong clock on
   your machine has no effect.
 - **Status.** `mtix sync status` shows `last sweep`, the hub time of the
-  last sweep (`last_sweep_at` in `--json`), or `never`.
+  last completed sweep (`last_sweep_at` in `--json`), or `never`
+  (`full_sweep_in_progress` in `--json` says whether the first full
+  comparison is part-way done).
 - **Cost.** One extra hub query per pull, and only during a pull. The
   sweep adds no timer, so an idle hub that scales to zero stays idle
   (a daemon that pulls on an interval sweeps on each of its pulls).
 - **Hub owner, after upgrading.** Run `mtix sync init` once with the
   hub owner's DSN. It adds an index on the hub (`idx_sync_events_created_at`)
   so each sweep reads only recent events. Until then pulls work as
-  before, but each one scans the hub's whole event table once.
+  before, but each page the sweep lists scans the hub's whole event
+  table: once per pull for the usual window, and once per page of the
+  one-time full comparison, spread across pulls.
 
 ### Daemon mode (for durability)
 

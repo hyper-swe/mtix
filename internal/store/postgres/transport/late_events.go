@@ -21,11 +21,13 @@ import (
 // event ids, diffs them against the ids it holds, and fetches the missing
 // events by id:
 //
-//   - ListEventIDsSince lists ids by created_at from a window start. The
-//     sweep uses it on every pull, from the previous sweep's hub time
-//     minus an overlap. Migration 014 indexes created_at for it.
-//   - ListAllEventIDs lists every id by event_id (the primary key). The
-//     sweep uses it once, on a store that has never swept.
+//   - ListEventIDsSince lists ids in (created_at, event_id) keyset order
+//     from a start position. The sweep uses it on every pull, from the
+//     previous sweep's hub time minus an overlap, and once, from the zero
+//     time, for the full-history diff of a store that has never swept.
+//     created_at is the push transaction's start time on the hub, so this
+//     order puts an event's page no later than the page of any event
+//     pushed after it was received. Migration 014 indexes created_at.
 //   - FetchEventsByID returns the full events for a set of ids.
 //
 // Every listing page carries the hub's now(), read in the same statement,
@@ -53,23 +55,6 @@ LEFT JOIN (
 ) AS page ON true
 ORDER BY page.created_at, page.event_id`
 
-// listAllEventIDsSQL lists one page of hub event ids in event_id order,
-// strictly after $1, with the hub's clock. The primary key serves it on
-// every hub, whether or not migration 014 has run. created_at is returned
-// only so both listings share one row shape. The LEFT JOIN returns the hub
-// clock even when the page is empty. $2 is the page size plus one.
-const listAllEventIDsSQL = `
-SELECT now(), page.event_id, page.created_at
-FROM (SELECT 1) AS one
-LEFT JOIN (
-    SELECT event_id, created_at
-    FROM sync_events
-    WHERE event_id > $1
-    ORDER BY event_id
-    LIMIT $2
-) AS page ON true
-ORDER BY page.event_id`
-
 // fetchEventsByIDSQL returns the full hub rows for the ids in $1 (a text
 // array), in pull order (Lamport clock, then event id). Ids the hub does
 // not hold are simply absent. Served by the primary key. It selects the
@@ -84,8 +69,8 @@ WHERE event_id = ANY($1)
 ORDER BY lamport_clock, event_id`
 
 // EventIDCursor is a keyset position in a hub event-id listing: the
-// created_at and event_id of the last id listed. ListAllEventIDs uses
-// EventID only.
+// created_at and event_id of the last id listed. The zero value lists the
+// whole history (created_at is never before year 1).
 type EventIDCursor struct {
 	CreatedAt time.Time
 	EventID   string
@@ -116,25 +101,9 @@ func (p *Pool) ListEventIDsSince(ctx context.Context, after EventIDCursor, limit
 	if err := p.checkLateEventRead(limit); err != nil {
 		return EventIDPage{}, fmt.Errorf("ListEventIDsSince: %w", err)
 	}
-	page, err := p.listEventIDs(ctx, limit, listEventIDsSinceSQL,
-		after.CreatedAt, after.EventID, limit+1)
+	page, err := p.listEventIDs(ctx, after, limit)
 	if err != nil {
 		return EventIDPage{}, fmt.Errorf("ListEventIDsSince: %w", err)
-	}
-	return page, nil
-}
-
-// ListAllEventIDs returns up to limit hub event ids greater than afterID,
-// in event_id order, whatever their created_at (MTIX-95.5). The full-
-// history diff of a store's first sweep pages through it, passing the
-// previous page's Next.EventID. The page always carries the hub's clock.
-func (p *Pool) ListAllEventIDs(ctx context.Context, afterID string, limit int) (EventIDPage, error) {
-	if err := p.checkLateEventRead(limit); err != nil {
-		return EventIDPage{}, fmt.Errorf("ListAllEventIDs: %w", err)
-	}
-	page, err := p.listEventIDs(ctx, limit, listAllEventIDsSQL, afterID, limit+1)
-	if err != nil {
-		return EventIDPage{}, fmt.Errorf("ListAllEventIDs: %w", err)
 	}
 	return page, nil
 }
@@ -177,13 +146,12 @@ func (p *Pool) checkLateEventRead(limit int) error {
 	return nil
 }
 
-// listEventIDs runs one id-listing statement (listEventIDsSinceSQL or
-// listAllEventIDsSQL) under the retry envelope and folds its rows into a
-// page of at most limit ids.
-func (p *Pool) listEventIDs(ctx context.Context, limit int, query string, args ...any) (EventIDPage, error) {
+// listEventIDs runs listEventIDsSinceSQL under the retry envelope and folds
+// its rows into a page of at most limit ids.
+func (p *Pool) listEventIDs(ctx context.Context, after EventIDCursor, limit int) (EventIDPage, error) {
 	var page EventIDPage
 	err := retryWithBackoff(ctx, DefaultRetryConfig(), func(ctx context.Context) error {
-		pg, opErr := p.listEventIDsOnce(ctx, limit, query, args...)
+		pg, opErr := p.listEventIDsOnce(ctx, after, limit)
 		if opErr != nil {
 			return opErr
 		}
@@ -196,8 +164,8 @@ func (p *Pool) listEventIDs(ctx context.Context, limit int, query string, args .
 // listEventIDsOnce runs one listing statement. Its rows are (now(),
 // event_id, created_at); a single row with a NULL event_id means an empty
 // page. A row past limit only sets More.
-func (p *Pool) listEventIDsOnce(ctx context.Context, limit int, query string, args ...any) (EventIDPage, error) {
-	rows, err := p.p.Query(ctx, query, args...)
+func (p *Pool) listEventIDsOnce(ctx context.Context, after EventIDCursor, limit int) (EventIDPage, error) {
+	rows, err := p.p.Query(ctx, listEventIDsSinceSQL, after.CreatedAt, after.EventID, limit+1)
 	if err != nil {
 		return EventIDPage{}, err
 	}

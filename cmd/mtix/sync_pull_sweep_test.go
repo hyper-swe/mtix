@@ -26,55 +26,53 @@ import (
 // applies in, and that no failure advances meta.sync.last_sweep_at. The
 // real-Postgres behaviour is in sync_pull_sweep_pg_test.go.
 
-// fakeLateHub serves a fixed hub log. It lists ids in event_id order
-// (whatever the window: the window arguments are recorded for assertions),
-// returns hubNows[i] on the i-th listing call (the last value repeats), and
-// returns fetched events in REVERSE pull order so the caller must sort.
+// fakeLateHub serves a fixed hub log. It lists ids in (created_at,
+// event_id) keyset order after the cursor it is given, as the hub does,
+// records every cursor in calls, returns hubNows[i] on the i-th listing call
+// (the last value repeats), and returns fetched events in REVERSE pull order
+// so the caller must sort. listErr fails every listing call, or only call
+// number failAtCall (1-based) when that is set.
 type fakeLateHub struct {
 	events      []*model.SyncEvent
 	hubNows     []time.Time
-	sinceCalls  []transport.EventIDCursor
-	allCalls    []string
+	calls       []transport.EventIDCursor
 	listErr     error
+	failAtCall  int
 	fetchErr    error
 	moreOnEmpty bool
 }
 
-func (h *fakeLateHub) page(afterID string, limit int) (transport.EventIDPage, error) {
-	if h.listErr != nil {
+func (h *fakeLateHub) ListEventIDsSince(_ context.Context, after transport.EventIDCursor, limit int) (transport.EventIDPage, error) {
+	h.calls = append(h.calls, after)
+	call := len(h.calls)
+	if h.listErr != nil && (h.failAtCall == 0 || h.failAtCall == call) {
 		return transport.EventIDPage{}, h.listErr
 	}
-	call := len(h.sinceCalls) + len(h.allCalls) - 1
-	pg := transport.EventIDPage{HubNow: h.hubNows[min(call, len(h.hubNows)-1)]}
+	pg := transport.EventIDPage{HubNow: h.hubNows[min(call, len(h.hubNows))-1]}
 	if h.moreOnEmpty {
 		pg.More = true
 		return pg, nil
 	}
-	ids := make([]string, 0, len(h.events))
-	for _, e := range h.events {
-		if e.EventID > afterID {
-			ids = append(ids, e.EventID)
+	sorted := append([]*model.SyncEvent(nil), h.events...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if !sorted[i].CreatedAt.Equal(sorted[j].CreatedAt) {
+			return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
 		}
-	}
-	sort.Strings(ids)
-	if len(ids) > limit {
-		ids, pg.More = ids[:limit], true
-	}
-	pg.IDs = ids
-	if len(ids) > 0 {
-		pg.Next = transport.EventIDCursor{EventID: ids[len(ids)-1]}
+		return sorted[i].EventID < sorted[j].EventID
+	})
+	for _, e := range sorted {
+		if !e.CreatedAt.After(after.CreatedAt) &&
+			(!e.CreatedAt.Equal(after.CreatedAt) || e.EventID <= after.EventID) {
+			continue
+		}
+		if len(pg.IDs) == limit {
+			pg.More = true
+			break
+		}
+		pg.IDs = append(pg.IDs, e.EventID)
+		pg.Next = transport.EventIDCursor{CreatedAt: e.CreatedAt, EventID: e.EventID}
 	}
 	return pg, nil
-}
-
-func (h *fakeLateHub) ListEventIDsSince(_ context.Context, after transport.EventIDCursor, limit int) (transport.EventIDPage, error) {
-	h.sinceCalls = append(h.sinceCalls, after)
-	return h.page(after.EventID, limit)
-}
-
-func (h *fakeLateHub) ListAllEventIDs(_ context.Context, afterID string, limit int) (transport.EventIDPage, error) {
-	h.allCalls = append(h.allCalls, afterID)
-	return h.page(afterID, limit)
 }
 
 func (h *fakeLateHub) FetchEventsByID(_ context.Context, ids []string) ([]*model.SyncEvent, error) {
@@ -94,8 +92,13 @@ func (h *fakeLateHub) FetchEventsByID(_ context.Context, ids []string) ([]*model
 	return out, nil
 }
 
+// offlineEventsPushedAt is the hub created_at of offlineEvents' first event;
+// the others follow one second apart.
+var offlineEventsPushedAt = time.Date(2026, 9, 24, 9, 0, 0, 0, time.UTC)
+
 // offlineEvents builds, on a separate store, a create of TEST-9 and two
-// later description edits, and returns those three events in pull order.
+// later description edits, and returns those three events in pull order,
+// with hub created_at values one second apart from offlineEventsPushedAt.
 func offlineEvents(t *testing.T) []*model.SyncEvent {
 	t.Helper()
 	ctx := context.Background()
@@ -110,6 +113,9 @@ func offlineEvents(t *testing.T) []*model.SyncEvent {
 	events, err := readPendingBatch(ctx, b, 100)
 	require.NoError(t, err)
 	require.Len(t, events, 3)
+	for i, e := range events {
+		e.CreatedAt = offlineEventsPushedAt.Add(time.Duration(i) * time.Second)
+	}
 	return events
 }
 
@@ -130,10 +136,33 @@ func lastSweep(t *testing.T) string {
 	return v
 }
 
+// The fake hub's clock readings are in a non-UTC zone (pgx returns
+// timestamptz in the local zone), so the expected "...Z" strings prove the
+// sweep converts to UTC even when the tests run with TZ=UTC. In UTC they are
+// 2026-09-24T10:00:00.123456Z and 2026-09-24T10:00:05Z.
 var (
-	sweepHubT1 = time.Date(2026, 9, 24, 10, 0, 0, 123456000, time.UTC)
-	sweepHubT2 = time.Date(2026, 9, 24, 10, 0, 5, 0, time.UTC)
+	sweepHubZone = time.FixedZone("hub+05:30", 5*3600+1800)
+	sweepHubT1   = time.Date(2026, 9, 24, 15, 30, 0, 123456000, sweepHubZone)
+	sweepHubT2   = time.Date(2026, 9, 24, 15, 30, 5, 0, sweepHubZone)
 )
+
+// sweepMeta reads one late-event sweep meta value from the peer store.
+func sweepMeta(t *testing.T, key string) string {
+	t.Helper()
+	var v string
+	require.NoError(t, app.store.QueryRow(context.Background(),
+		`SELECT value FROM meta WHERE key = ?`, key).Scan(&v), "meta %s must exist", key)
+	return v
+}
+
+// requireNoFullSweepProgress asserts no sweep progress is recorded.
+func requireNoFullSweepProgress(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"meta.sync.sweep_after_id",
+		"meta.sync.sweep_after_created_at", "meta.sync.sweep_started_at"} {
+		require.Equal(t, "", sweepMeta(t, key), key)
+	}
+}
 
 // TestSweepLateEvents_FirstSweep_PagesFullHistoryAndRecordsFirstHubTime:
 // with no recorded sweep (an empty value, or no meta row at all), the sweep
@@ -155,17 +184,15 @@ func TestSweepLateEvents_FirstSweep_PagesFullHistoryAndRecordsFirstHubTime(t *te
 			_, err := app.store.WriteDB().ExecContext(context.Background(), tt.neverAt)
 			require.NoError(t, err)
 			hub := &fakeLateHub{events: offlineEvents(t), hubNows: []time.Time{sweepHubT1, sweepHubT2}}
-			ids := eventIDs(hub.events)
-			sort.Strings(ids)
 			var stderr bytes.Buffer
 
 			got, err := sweepLateEvents(context.Background(), &stderr, hub, app.store, 2)
 
 			require.NoError(t, err)
 			require.Equal(t, lateEventSweep{Recovered: 3, FullDiff: true}, got)
-			require.Empty(t, hub.sinceCalls, "a first sweep never lists a window")
-			require.Equal(t, []string{"", ids[1]}, hub.allCalls,
-				"three ids in pages of two: the second page starts after the second id")
+			require.Equal(t, []transport.EventIDCursor{{},
+				{CreatedAt: hub.events[1].CreatedAt, EventID: hub.events[1].EventID}}, hub.calls,
+				"from the zero position, three ids in pages of two: the second page starts after the second id")
 			node, err := app.store.GetNode(context.Background(), "TEST-9")
 			require.NoError(t, err)
 			require.Equal(t, "second edit", node.Description, "create, then both edits, in Lamport order")
@@ -173,6 +200,7 @@ func TestSweepLateEvents_FirstSweep_PagesFullHistoryAndRecordsFirstHubTime(t *te
 			require.Contains(t, stderr.String(), "comparing the full hub event history once")
 			require.Contains(t, stderr.String(), "late-event sweep: compared 3 hub event ids in 2 pages")
 			require.NotContains(t, stderr.String(), "WARN", "never having swept is not a warning")
+			requireNoFullSweepProgress(t)
 		})
 	}
 }
@@ -191,28 +219,179 @@ func TestSweepLateEvents_RecordedSweep_ListsWindowFromHubTimeMinusOverlap(t *tes
 
 	require.NoError(t, err)
 	require.Equal(t, lateEventSweep{Recovered: 1}, got)
-	require.Empty(t, hub.allCalls, "a recorded sweep never diffs the full history")
 	require.Equal(t, []transport.EventIDCursor{{
 		CreatedAt: time.Date(2026, 9, 24, 8, 45, 0, 500000000, time.UTC),
-	}}, hub.sinceCalls)
+	}}, hub.calls, "one page from 15 minutes before the recorded time, never the full history")
 	require.Equal(t, "2026-09-24T10:00:00.123456Z", lastSweep(t))
 }
 
-// TestSweepLateEvents_UnreadableLastSweep_FallsBackToFullDiff: a recorded
-// value that is not a time is reported and replaced by a full diff.
-func TestSweepLateEvents_UnreadableLastSweep_FallsBackToFullDiff(t *testing.T) {
+// TestSweepLateEvents_UnreadableSweepState_FallsBackToFreshFullDiff: a
+// recorded sweep time, or a saved full-diff start time, that is not a time
+// is reported, and the sweep diffs the full history from the start.
+func TestSweepLateEvents_UnreadableSweepState_FallsBackToFreshFullDiff(t *testing.T) {
+	tests := []struct {
+		name     string
+		stmts    []string
+		wantWarn string
+	}{
+		{"last_sweep_at is not a time",
+			[]string{`UPDATE meta SET value = 'not-a-time' WHERE key = 'meta.sync.last_sweep_at'`},
+			`meta.sync.last_sweep_at "not-a-time" is not a time`},
+		{"saved full-diff start is not a time", []string{
+			`UPDATE meta SET value = 'some-id' WHERE key = 'meta.sync.sweep_after_id'`,
+			`UPDATE meta SET value = '2026-09-24T09:00:00Z' WHERE key = 'meta.sync.sweep_after_created_at'`,
+			`UPDATE meta SET value = 'garbage' WHERE key = 'meta.sync.sweep_started_at'`,
+		}, `meta.sync.sweep_started_at "garbage" is not a time`},
+		{"saved full-diff position is not a time", []string{
+			`UPDATE meta SET value = 'some-id' WHERE key = 'meta.sync.sweep_after_id'`,
+			`UPDATE meta SET value = 'garbage' WHERE key = 'meta.sync.sweep_after_created_at'`,
+			`UPDATE meta SET value = '2026-09-24T09:00:00Z' WHERE key = 'meta.sync.sweep_started_at'`,
+		}, `meta.sync.sweep_after_created_at "garbage" is not a time`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			initTestApp(t)
+			for _, stmt := range tt.stmts {
+				_, err := app.store.WriteDB().ExecContext(context.Background(), stmt)
+				require.NoError(t, err)
+			}
+			hub := &fakeLateHub{hubNows: []time.Time{sweepHubT1}}
+			var stderr bytes.Buffer
+
+			got, err := sweepLateEvents(context.Background(), &stderr, hub, app.store, 10)
+
+			require.NoError(t, err)
+			require.True(t, got.FullDiff)
+			require.Equal(t, []transport.EventIDCursor{{}}, hub.calls,
+				"a fresh full diff starts from the zero position")
+			require.Contains(t, stderr.String(), tt.wantWarn)
+			require.Equal(t, "2026-09-24T10:00:00.123456Z", lastSweep(t))
+			requireNoFullSweepProgress(t)
+		})
+	}
+}
+
+// TestSweepLateEvents_Interrupted_ResumesFromSavedProgress: a sweep that
+// fails part-way (the listing times out, or an event cannot be applied)
+// keeps the progress of every page it applied: the last listed position
+// and the hub time read before its first page, while
+// meta.sync.last_sweep_at keeps its value. The next sweep resumes listing
+// AFTER the saved position, not from the start, and on completion records
+// the FIRST start time as meta.sync.last_sweep_at and clears the progress.
+// This matters most for the one-time full diff of a large hub, and holds
+// for a windowed sweep too.
+func TestSweepLateEvents_Interrupted_ResumesFromSavedProgress(t *testing.T) {
+	listingTimesOut := func(ev []*model.SyncEvent) *fakeLateHub {
+		return &fakeLateHub{events: ev, hubNows: []time.Time{sweepHubT1},
+			listErr: errors.New("listing timed out"), failAtCall: 2}
+	}
+	secondPageUnappliable := func(ev []*model.SyncEvent) *fakeLateHub {
+		bad := *ev[1]
+		bad.OpType = model.OpType("not_an_op")
+		return &fakeLateHub{events: []*model.SyncEvent{ev[0], &bad, ev[2]},
+			hubNows: []time.Time{sweepHubT1}}
+	}
+	tests := []struct {
+		name       string
+		lastSweep  string
+		first      func(events []*model.SyncEvent) *fakeLateHub
+		wantErr    string
+		wantResume string
+	}{
+		{"full diff, listing fails on the second page", "", listingTimesOut,
+			"listing timed out", "resuming the full hub event comparison after "},
+		{"full diff, second page cannot be applied", "", secondPageUnappliable,
+			"apply late events", "resuming the full hub event comparison after "},
+		{"windowed sweep, listing fails on the second page", "2026-09-24T08:59:00Z", listingTimesOut,
+			"listing timed out", "late-event sweep: resuming after "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			initTestApp(t)
+			ctx := context.Background()
+			setLastSweep(t, tt.lastSweep)
+			full := tt.lastSweep == ""
+			events := offlineEvents(t)
+			ids := eventIDs(events)
+			sort.Strings(ids)
+			require.Equal(t, eventIDs(events), ids, "precondition: one store's ids ascend with its clock")
+			first := tt.first(events)
+
+			got, err := sweepLateEvents(ctx, &bytes.Buffer{}, first, app.store, 1)
+
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.wantErr)
+			require.Equal(t, lateEventSweep{Recovered: 1, FullDiff: full}, got, "page one was applied")
+			require.Equal(t, tt.lastSweep, lastSweep(t), "an unfinished sweep records no sweep time")
+			require.Equal(t, ids[0], sweepMeta(t, "meta.sync.sweep_after_id"),
+				"progress covers exactly the pages that were applied")
+			require.Equal(t, "2026-09-24T09:00:00Z", sweepMeta(t, "meta.sync.sweep_after_created_at"))
+			require.Equal(t, "2026-09-24T10:00:00.123456Z", sweepMeta(t, "meta.sync.sweep_started_at"))
+
+			resumed := &fakeLateHub{events: events, hubNows: []time.Time{sweepHubT2}}
+			var stderr bytes.Buffer
+			got, err = sweepLateEvents(ctx, &stderr, resumed, app.store, 1)
+
+			require.NoError(t, err)
+			require.Equal(t, lateEventSweep{Recovered: 2, FullDiff: full}, got)
+			require.Equal(t, []transport.EventIDCursor{
+				{CreatedAt: events[0].CreatedAt, EventID: ids[0]},
+				{CreatedAt: events[1].CreatedAt, EventID: ids[1]},
+			}, resumed.calls, "the listing resumes after the saved position, not from the start")
+			require.Contains(t, stderr.String(), tt.wantResume+ids[0])
+			require.Equal(t, "2026-09-24T10:00:00.123456Z", lastSweep(t),
+				"the next window is measured from the hub time before the FIRST page")
+			requireNoFullSweepProgress(t)
+			node, err := app.store.GetNode(ctx, "TEST-9")
+			require.NoError(t, err)
+			require.Equal(t, "second edit", node.Description)
+		})
+	}
+}
+
+// TestSweepLateEvents_ResumedFullDiff_ReportsPagesOfThisPull: a resumed full
+// diff reports the ids and pages this pull compared, and records the saved
+// start time. The interrupted pull had applied the first page.
+func TestSweepLateEvents_ResumedFullDiff_ReportsPagesOfThisPull(t *testing.T) {
 	initTestApp(t)
-	setLastSweep(t, "not-a-time")
-	hub := &fakeLateHub{hubNows: []time.Time{sweepHubT1}}
+	events := offlineEvents(t)
+	require.NoError(t, applyPullBatch(context.Background(), app.store, events[:1]))
+	for key, v := range map[string]string{
+		"meta.sync.sweep_after_id":         events[0].EventID,
+		"meta.sync.sweep_after_created_at": "2026-09-24T09:00:00Z",
+		"meta.sync.sweep_started_at":       "2026-09-24T08:00:00Z",
+	} {
+		_, err := app.store.WriteDB().ExecContext(context.Background(),
+			`UPDATE meta SET value = ? WHERE key = ?`, v, key)
+		require.NoError(t, err)
+	}
 	var stderr bytes.Buffer
 
-	got, err := sweepLateEvents(context.Background(), &stderr, hub, app.store, 10)
+	_, err := sweepLateEvents(context.Background(), &stderr,
+		&fakeLateHub{events: events, hubNows: []time.Time{sweepHubT2}}, app.store, 1)
 
 	require.NoError(t, err)
-	require.True(t, got.FullDiff)
-	require.Len(t, hub.allCalls, 1)
-	require.Contains(t, stderr.String(), `meta.sync.last_sweep_at "not-a-time" is not a time`)
-	require.Equal(t, "2026-09-24T10:00:00.123456Z", lastSweep(t))
+	require.Contains(t, stderr.String(), "late-event sweep: compared 2 hub event ids in 2 pages")
+	require.Equal(t, "2026-09-24T08:00:00Z", lastSweep(t))
+}
+
+// TestResetLateEventSweep_ClearsSweepState: resetting the sweep state (as
+// sync clone does) empties meta.sync.last_sweep_at and any saved progress,
+// so the next pull diffs the full hub history from the start.
+func TestResetLateEventSweep_ClearsSweepState(t *testing.T) {
+	initTestApp(t)
+	setLastSweep(t, "2026-09-24T09:00:00Z")
+	for _, key := range []string{"meta.sync.sweep_after_id",
+		"meta.sync.sweep_after_created_at", "meta.sync.sweep_started_at"} {
+		_, err := app.store.WriteDB().ExecContext(context.Background(),
+			`UPDATE meta SET value = 'set' WHERE key = ?`, key)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, resetLateEventSweep(context.Background(), app.store))
+
+	require.Equal(t, "", lastSweep(t))
+	requireNoFullSweepProgress(t)
 }
 
 // TestSweepLateEvents_Failure_LeavesLastSweepUnchanged: a failed listing,

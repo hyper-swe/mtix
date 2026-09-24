@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -163,4 +165,103 @@ func TestRateLimiter_Refill_UsesInjectedClock(t *testing.T) {
 	assert.True(t, limiter.allow(key))
 	assert.True(t, limiter.allow(key))
 	assert.False(t, limiter.allow(key), "refill stops at ratePerSec tokens")
+}
+
+// TestRateLimiter_ConcurrentUse_StaysWithinBounds verifies that the
+// limiter is safe for concurrent use (run with -race): goroutines taking
+// tokens for shared keys on a clock that does not move get exactly the
+// buckets' capacity between them, and goroutines cycling through more keys
+// than maxKeys leave at most maxKeys consistent buckets (NFR-1.5,
+// MTIX-95.14).
+func TestRateLimiter_ConcurrentUse_StaysWithinBounds(t *testing.T) {
+	tests := []struct {
+		name        string
+		rate        int
+		maxKeys     int
+		keys        int
+		wantAllowed int64 // -1: evicted buckets refill, so no exact total
+	}{
+		{"one shared key", 5, 4, 1, 5},
+		{"keys within capacity", 3, 4, 4, 12},
+		{"keys beyond capacity", 3, 8, 40, -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clock := &stepClock{now: time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)}
+			limiter := newRateLimiter(tt.rate, tt.maxKeys, clock.Now)
+
+			var allowed atomic.Int64
+			var wg sync.WaitGroup
+			for g := 0; g < 32; g++ {
+				wg.Add(1)
+				go func(g int) {
+					defer wg.Done()
+					for i := 0; i < 200; i++ {
+						if limiter.allow(fmt.Sprintf("198.51.100.%d", (g+i)%tt.keys)) {
+							allowed.Add(1)
+						}
+					}
+				}(g)
+			}
+			wg.Wait()
+
+			if tt.wantAllowed >= 0 {
+				assert.Equal(t, tt.wantAllowed, allowed.Load())
+			}
+			assert.LessOrEqual(t, limiter.order.Len(), tt.maxKeys)
+			assert.Len(t, limiter.buckets, limiter.order.Len())
+			for key, b := range limiter.buckets {
+				assert.Equal(t, key, b.key)
+				assert.Same(t, b, b.elem.Value)
+				assert.GreaterOrEqual(t, b.tokens, 0.0)
+				assert.LessOrEqual(t, b.tokens, float64(tt.rate))
+			}
+		})
+	}
+}
+
+// TestRateLimitMiddleware_ConcurrentPeers_AllowsAtMostCapacity verifies
+// the middleware under concurrent requests (run with -race): on a clock
+// that does not move, peers within capacity get exactly ratePerSec
+// requests each, and requests from more peers than maxKeys are all
+// answered with 200 or 429 (NFR-1.5, MTIX-95.14).
+func TestRateLimitMiddleware_ConcurrentPeers_AllowsAtMostCapacity(t *testing.T) {
+	tests := []struct {
+		name   string
+		peers  int
+		wantOK int64 // -1: evicted buckets refill, so no exact total
+	}{
+		{"peers within capacity", 4, 8},
+		{"peers beyond capacity", 12, -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clock := &stepClock{now: time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)}
+			router := rateLimitRouter(2, 4, clock.Now)
+
+			var ok, limited atomic.Int64
+			var wg sync.WaitGroup
+			for g := 0; g < 16; g++ {
+				wg.Add(1)
+				go func(g int) {
+					defer wg.Done()
+					for i := 0; i < 50; i++ {
+						peer := fmt.Sprintf("203.0.113.%d:%d", (g+i)%tt.peers, 1000+g)
+						switch sendFrom(router, peer, nil) {
+						case http.StatusOK:
+							ok.Add(1)
+						case http.StatusTooManyRequests:
+							limited.Add(1)
+						}
+					}
+				}(g)
+			}
+			wg.Wait()
+
+			assert.Equal(t, int64(16*50), ok.Load()+limited.Load())
+			if tt.wantOK >= 0 {
+				assert.Equal(t, tt.wantOK, ok.Load())
+			}
+		})
+	}
 }

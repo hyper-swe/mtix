@@ -57,10 +57,11 @@ func originCases() []originCase {
 	}
 }
 
-// corsTestRouter mounts CORSMiddleware in front of GET and POST handlers.
-func corsTestRouter() *gin.Engine {
+// corsTestRouter mounts CORSMiddleware for a server bound to bind:port in
+// front of GET and POST handlers.
+func corsTestRouter(bind, port string) *gin.Engine {
 	router := setupTestRouter()
-	router.Use(CORSMiddleware())
+	router.Use(CORSMiddleware(bind, port))
 	ok := func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"reached": true}) }
 	router.GET("/test", ok)
 	router.POST("/test", ok)
@@ -72,7 +73,7 @@ func corsTestRouter() *gin.Engine {
 // refuses every other Origin with 403, preflight included (FR-9.1,
 // MTIX-95.14).
 func TestCORSMiddleware_Origin_AcceptsOnlyLocalOrigins(t *testing.T) {
-	router := corsTestRouter()
+	router := corsTestRouter("127.0.0.1", "8377")
 	for _, tt := range originCases() {
 		for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodOptions} {
 			t.Run(tt.name+"/"+method, func(t *testing.T) {

@@ -172,9 +172,10 @@ func matchesFilter(filter *subscriptionFilter, event service.Event) bool {
 }
 
 // handleWebSocket handles WS /ws/events per FR-7.5. The upgrade accepts
-// the same origins as HTTP requests (allowedOrigin): none, for a
-// non-browser client, or http/https on localhost or a loopback IP; any
-// other Origin is refused with 403 (MTIX-95.14).
+// the same origins as HTTP requests (allowedOrigin with the server's bind
+// address and port): none, for a non-browser client; http/https on
+// localhost or a loopback IP; or the server's own origin on a bind address
+// that names it. Any other Origin is refused with 403 (MTIX-95.14).
 func (s *Server) handleWebSocket(c *gin.Context) {
 	if s.wsHub == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -185,7 +186,7 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			return allowedOrigin(r.Header.Get("Origin"))
+			return allowedOrigin(r.Header.Get("Origin"), s.config.Bind, s.config.Port)
 		},
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,

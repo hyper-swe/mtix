@@ -19,12 +19,23 @@ func isLoopbackHost(host string) bool {
 	return strings.EqualFold(host, "localhost") || net.ParseIP(host).IsLoopback()
 }
 
-// allowedOrigin reports whether the server accepts a request's Origin
-// header (FR-9.1, MTIX-95.14). An empty Origin comes from a non-browser
+// bindNamesServer reports whether a bind address is a name that clients
+// use to reach this server: not empty and not a wildcard (unspecified)
+// address such as 0.0.0.0 or ::, which listens on every interface but
+// names none of them (MTIX-95.14).
+func bindNamesServer(bind string) bool {
+	// ParseIP returns nil for a name, and a nil IP is not unspecified.
+	return bind != "" && !net.ParseIP(bind).IsUnspecified()
+}
+
+// allowedOrigin reports whether the server bound to bind:port accepts a
+// request's Origin header; CORSMiddleware and the WebSocket upgrade both
+// use it (FR-9.1, MTIX-95.14). An empty Origin comes from a non-browser
 // client and is accepted. Any other Origin must be exactly
-// scheme://host[:port] with scheme http or https and a loopback host
-// (isLoopbackHost), on any port.
-func allowedOrigin(origin string) bool {
+// scheme://host[:port] and either be http or https on a loopback host
+// (isLoopbackHost), on any port, or be the server's own origin
+// (isOwnOrigin).
+func allowedOrigin(origin, bind, port string) bool {
 	if origin == "" {
 		return true
 	}
@@ -37,18 +48,27 @@ func allowedOrigin(origin string) bool {
 	if origin != u.Scheme+"://"+u.Host {
 		return false
 	}
-	return isLoopbackHost(u.Hostname())
+	return isLoopbackHost(u.Hostname()) || isOwnOrigin(u, bind, port)
+}
+
+// isOwnOrigin reports whether u is the origin of pages this server serves
+// when it is bound to an address that names it (bindNamesServer): scheme
+// http, host equal to the bind host, and port equal to the configured
+// port, where an origin without a port means 80 (MTIX-95.14).
+func isOwnOrigin(u *url.URL, bind, port string) bool {
+	originPort := u.Port()
+	if originPort == "" {
+		originPort = "80"
+	}
+	return u.Scheme == "http" && bindNamesServer(bind) &&
+		strings.EqualFold(u.Hostname(), bind) && originPort == port
 }
 
 // allowedHost reports whether a request's Host header names this server
 // (MTIX-95.14): a loopback host (isLoopbackHost) on any port, or exactly
-// the configured bind host. The bind host adds a name only when it is not
-// loopback, since a loopback bind host is already accepted. An empty Host
-// is refused.
+// the bind host when the bind address names the server (bindNamesServer).
+// An empty Host is refused.
 func allowedHost(hostHeader, bind string) bool {
 	host := (&url.URL{Host: hostHeader}).Hostname()
-	if host == "" {
-		return false
-	}
-	return isLoopbackHost(host) || strings.EqualFold(host, bind)
+	return isLoopbackHost(host) || (bindNamesServer(bind) && strings.EqualFold(host, bind))
 }

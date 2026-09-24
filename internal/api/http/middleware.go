@@ -92,19 +92,21 @@ func CSRFMiddleware() gin.HandlerFunc {
 	}
 }
 
-// CORSMiddleware applies the browser origin rule for the web UI (FR-9.1,
-// MTIX-95.14). A request without an Origin header comes from a
-// non-browser client and passes. A request whose Origin allowedOrigin
-// accepts (http or https on localhost or a loopback IP, any port) gets
-// that origin in Access-Control-Allow-Origin. Any other Origin is refused
-// with 403 and code ORIGIN_NOT_ALLOWED, preflight included.
-func CORSMiddleware() gin.HandlerFunc {
+// CORSMiddleware applies the browser origin rule for the web UI of a
+// server bound to bind:port (FR-9.1, MTIX-95.14). A request without an
+// Origin header comes from a non-browser client and passes. A request
+// whose Origin allowedOrigin accepts (http or https on localhost or a
+// loopback IP, any port, or the server's own origin on a bind address that
+// names it) gets that origin in Access-Control-Allow-Origin. Any other
+// Origin is refused with 403 and code ORIGIN_NOT_ALLOWED, preflight
+// included.
+func CORSMiddleware(bind, port string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
-		if !allowedOrigin(origin) {
+		if !allowedOrigin(origin, bind, port) {
 			c.AbortWithStatusJSON(http.StatusForbidden, ErrorResponse{Error: ErrorDetail{
 				Code:    "ORIGIN_NOT_ALLOWED",
-				Message: "browser requests are accepted only from local origins",
+				Message: "browser requests are accepted only from local origins or this server's own origin",
 			}})
 			return
 		}
@@ -126,9 +128,9 @@ func CORSMiddleware() gin.HandlerFunc {
 
 // HostAllowlistMiddleware refuses a request whose Host header does not
 // name this server (MTIX-95.14). localhost and loopback IPs are accepted
-// on any port; a server bound to a non-loopback address also accepts
-// exactly its bind host (allowedHost). A refused request gets 403 with
-// code HOST_NOT_ALLOWED.
+// on any port; a server bound to a specific address also accepts exactly
+// its bind host, while a wildcard bind such as 0.0.0.0 adds no name
+// (allowedHost). A refused request gets 403 with code HOST_NOT_ALLOWED.
 func HostAllowlistMiddleware(bind string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !allowedHost(c.Request.Host, bind) {

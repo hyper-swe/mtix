@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestServer_PanicRecovery_LogsNoRequestHeaders verifies that a handler
@@ -63,6 +64,9 @@ func TestServer_PanicRecovery_LogsNoRequestHeaders(t *testing.T) {
 			logged := buf.String()
 			assert.Contains(t, logged, "panic recovered")
 			assert.Contains(t, logged, "path=/panics")
+			requestID := w.Header().Get("X-Request-ID")
+			require.NotEmpty(t, requestID)
+			assert.Contains(t, logged, "request_id="+requestID)
 			for name, value := range headers {
 				assert.NotContains(t, logged, value, "header %s value logged", name)
 				assert.NotContains(t, logged, name+":", "header %s logged", name)

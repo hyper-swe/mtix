@@ -208,7 +208,7 @@ func TestRateLimitMiddleware_ReturnsRetryAfter(t *testing.T) {
 // TestCORSMiddleware_PreflightRequest verifies CORS preflight returns 204.
 func TestCORSMiddleware_PreflightRequest(t *testing.T) {
 	router := setupTestRouter()
-	router.Use(CORSMiddleware())
+	router.Use(CORSMiddleware("127.0.0.1", "8377"))
 	router.OPTIONS("/test", func(c *gin.Context) {
 		// This should not be reached — CORSMiddleware handles OPTIONS.
 		c.Status(200)
@@ -244,7 +244,7 @@ func TestSecurityHeadersMiddleware_SetsAllHeaders(t *testing.T) {
 // are refused with 403 and no CORS grant (MTIX-95.14).
 func TestCORSMiddleware_ExternalOrigin_Rejected(t *testing.T) {
 	router := setupTestRouter()
-	router.Use(CORSMiddleware())
+	router.Use(CORSMiddleware("127.0.0.1", "8377"))
 	router.GET("/test", func(c *gin.Context) {
 		c.JSON(200, gin.H{"ok": true})
 	})

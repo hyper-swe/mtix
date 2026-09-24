@@ -1112,7 +1112,7 @@ mtix stores task data in a local SQLite database (`.mtix/data/mtix.db`). This da
 
 **NFR-1.4** The CLI MUST start and complete a simple command (e.g., `mtix show`) in <200ms including process startup.
 
-**NFR-1.5** The API server SHOULD support configurable rate limiting per agent ID. Default: 100 requests/second per agent. When exceeded, return HTTP `429 Too Many Requests` with a `Retry-After` header. A simple token-bucket per agent is sufficient for Phase 1. This protects against runaway agents flooding the system with create/heartbeat calls.
+**NFR-1.5** The API server SHOULD support configurable rate limiting per client address: the address of the TCP connection, never a key that a request header chooses. Default: 100 requests/second per client address. When exceeded, return HTTP `429 Too Many Requests` with a `Retry-After` header. A simple token-bucket per client address is sufficient for Phase 1; the number of buckets is bounded, and the least recently used bucket is evicted when the bound is reached. This protects against runaway agents flooding the system with create/heartbeat calls.
 
 **NFR-1.5a** Progress propagation at depth 50 MUST complete in <250ms.
 

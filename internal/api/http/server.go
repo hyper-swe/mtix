@@ -121,7 +121,7 @@ func (s *Server) setupMiddleware() {
 	s.router.Use(SecurityHeadersMiddleware())
 	s.router.Use(CacheControlMiddleware())
 	s.router.Use(HostAllowlistMiddleware(s.config.Bind))
-	s.router.Use(CORSMiddleware())
+	s.router.Use(CORSMiddleware(s.config.Bind, s.config.Port))
 
 	if s.config.RateLimit > 0 {
 		s.router.Use(RateLimitMiddleware(s.config.RateLimit, rateLimitMaxKeys, s.clock))

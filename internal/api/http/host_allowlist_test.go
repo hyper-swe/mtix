@@ -54,6 +54,9 @@ func TestServer_HostHeader_AcceptsOnlyAllowlistedHosts(t *testing.T) {
 		{"ipv6 network bind: neighbouring address", "fd00::10", "[fd00::11]:8377", false},
 		{"wildcard bind: localhost", "0.0.0.0", "localhost:8377", true},
 		{"wildcard bind: network address", "0.0.0.0", "192.0.2.10:8377", false},
+		{"wildcard bind: its own unspecified address", "0.0.0.0", "0.0.0.0:8377", false},
+		{"ipv6 wildcard bind: its own unspecified address", "::", "[::]:8377", false},
+		{"ipv6 wildcard bind: localhost", "::", "localhost:8377", true},
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

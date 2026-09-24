@@ -1142,6 +1142,7 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.
 - `pull [DSN]` — Pull events from the sync hub and apply locally (FR-18)
 - `push [DSN]` — Push pending events to the sync hub (FR-18)
 - `reconcile` — Resolve divergent history (FR-18.13)
+- `repair` — Repair local state from the local sync event log (--status)
 - `status` — Show local sync state (counts + sentinels)
 ---
 
@@ -1562,6 +1563,45 @@ See 'mtix sync init' for divergent-history detection.
 | `--import-as` |  | Re-parent local tree under PARENT-ID |  |
 | `--rename-to` |  | Rewrite local IDs to NEWPREFIX |  |
 | `--yes` |  | Confirm destructive action; required for non-dry-run | false |
+---
+
+## repair
+
+**Usage:** `repair`
+
+Repair local state from the local sync event log (--status)
+
+Re-derive state from this machine's local sync event log and list, or
+repair, every node whose stored state differs. --status is required; it is
+the only repair so far.
+
+--status re-derives each node's workflow state from its newest well-formed
+claim, unclaim, defer or status-change event, with the rule a pull
+applies. It compares status, assignee, agent_state, whether closed_at is
+set, and the progress of a node without children, and heals nodes that an
+older mtix left reverted when a pull replayed an older event. A node
+without such events is never listed or changed. State set by a change
+that is not a workflow event is left as it is: a block added by a new
+dependency, a descendant cancelled by cancel --cascade, and an assignee
+set later with mtix update --assignee.
+
+Without --apply the command is a dry run: it lists the differences and
+writes nothing. --json prints them as JSON.
+
+With --apply it first writes a verified backup of the database to
+.mtix/data/backups/pre-repair-status-<UTC time>.db, and stops if it cannot.
+Then it repairs each node in its own transaction: it writes the derived
+state, records a status_change activity entry, emits one status-change
+event (reason "sync repair") so other machines converge at their next
+pull, recomputes the parent's progress and unblocks dependents. A second
+run lists nothing. Run 'mtix sync push' afterwards to send the events.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--apply` |  | Back up the database, then repair every listed node (default: dry run) | false |
+| `--status` |  | Re-derive workflow state (status, assignee, agent_state, closed_at, leaf progress) from the local event log | false |
 ---
 
 ## status

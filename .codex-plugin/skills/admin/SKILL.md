@@ -35,3 +35,11 @@ mtix config set <k> <v> # Set config value
 mtix docs generate      # Regenerate agent documentation
 mtix plugin install     # Install IDE skill files
 ```
+
+## Sync Recovery
+
+```bash
+mtix sync repair --status          # List nodes an older pull left reverted (dry run)
+mtix sync repair --status --apply  # Back up, then repair them (a human's go-ahead first)
+mtix sync push                     # Send the repair events
+```

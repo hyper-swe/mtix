@@ -71,8 +71,9 @@ func pushLocal(t *testing.T, dsn string) {
 // daemon tests failed. The rule is right and stays unchanged; the half-wiped
 // store was not a fresh consumer. The product's fresh-consumer paths never
 // keep the log while dropping its effects: `sync reconcile --discard-local`
-// deletes the log together with the nodes, `sync clone` refuses a non-empty
-// log, and a local backup copies the whole database file. Any other gap
+// deletes the log together with the nodes, `sync clone` deletes nothing and,
+// unless --resume is given, refuses a non-empty log, and a local backup
+// copies the whole database file. Any other gap
 // between the log and the nodes is projection drift, repaired from the log
 // (ADR-006 I1, section 5.3), not by pull. Applying held events again on pull
 // would bring back the echo the rule removed: spurious conflicts, and replayed
@@ -194,13 +195,14 @@ func pollUntil(timeout time.Duration, cond func() bool) bool {
 // exercised over a real provider connection.
 func TestCloudPath_Daemon_PullTickAppliesHubEvents(t *testing.T) {
 	dsn := requireCmdPG(t)
-	_ = openCmdHub(t) // drop + migrate a pristine hub
+	pool := openCmdHub(t) // drop + migrate a pristine hub
 	initTestApp(t)
 
 	seedLocal(t, "daemon-alpha", "daemon-beta")
 	pushLocal(t, dsn)
 
 	ctx := context.Background()
+	pullBeforeReset(t, pool)
 	resetLocalForFreshPull(t)
 	require.Equal(t, 0, liveNodeCount(t), "precondition: local wiped")
 
@@ -211,6 +213,59 @@ func TestCloudPath_Daemon_PullTickAppliesHubEvents(t *testing.T) {
 		"one daemon pull tick must re-apply both hub creates (stderr: %s)", stderr.String())
 	require.Equal(t, map[string]string{"TEST-1": "daemon-alpha", "TEST-2": "daemon-beta"},
 		liveNodeTitles(t), "the tick must re-apply the hub creates' content, not only their count")
+	cursor, err := readLastPulledClock(ctx, app.store)
+	require.NoError(t, err)
+	require.Equal(t, hubMaxLamport(t, pool), cursor,
+		"the tick must advance the pull cursor to the hub's highest Lamport clock")
+}
+
+// pullBeforeReset pulls once, from the start of the hub log, so that the
+// applied-event ledger and the pull cursor resetLocalForFreshPull clears are
+// not already empty (MTIX-95.28). The hub returns this replica's own pushed
+// events; the own-event rule acknowledges them, which records them in
+// applied_events, and the pull advances the cursor. It pulls through the hub
+// pool rather than a DSN argument, and asserts both preconditions.
+func pullBeforeReset(t *testing.T, pool *transport.Pool) {
+	t.Helper()
+	ctx := context.Background()
+	var stderr bytes.Buffer
+	pulled, _, err := pullLoop(ctx, &stderr, pool, app.store, 0, pullDefaultBatchSize)
+	require.NoError(t, err, "pull before reset: %s", stderr.String())
+	require.Positive(t, pulled, "precondition: the hub returned this replica's pushed events")
+	require.Equal(t, pulled, appliedEventTotal(t),
+		"precondition: applied_events holds a row per pulled event for the reset to clear")
+	cursor, err := readLastPulledClock(ctx, app.store)
+	require.NoError(t, err)
+	require.Positive(t, cursor, "precondition: the pull cursor has advanced for the reset to rewind")
+}
+
+// appliedEventTotal returns the number of rows in the local applied_events
+// ledger.
+func appliedEventTotal(t *testing.T) int {
+	t.Helper()
+	var n int
+	// Every applied or acknowledged event id this replica has recorded.
+	require.NoError(t, app.store.QueryRow(context.Background(),
+		`SELECT count(*) FROM applied_events`).Scan(&n))
+	return n
+}
+
+// hubMaxLamport returns the highest Lamport clock among the hub's events, read
+// through the transport pool (MTIX-95.28). A pull that has consumed the whole
+// hub log leaves its cursor exactly here.
+func hubMaxLamport(t *testing.T, pool *transport.Pool) int64 {
+	t.Helper()
+	events, hasMore, err := pool.PullEvents(context.Background(), 0, pullDefaultBatchSize)
+	require.NoError(t, err)
+	require.False(t, hasMore, "the test hub log fits in one page")
+	var highest int64
+	for _, e := range events {
+		if e.LamportClock > highest {
+			highest = e.LamportClock
+		}
+	}
+	require.Positive(t, highest, "the hub holds events")
+	return highest
 }
 
 // TestCloudPath_Daemon_SustainedLoopPicksUpLaterEvents proves the sustained

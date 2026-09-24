@@ -117,9 +117,10 @@ func TestDoctorHubPrivileges_StrictMode_FailsOnUnlistedRole(t *testing.T) {
 	require.Contains(t, detail, "kept roles that can grant their access on, or hold it by another role's grant: "+h.team)
 }
 
-// TestDoctorHubPrivileges_Guards covers a TRUNCATE guard that is missing or
-// disabled: a WARN by default, a FAIL in strict mode (MTIX-95.1).
-func TestDoctorHubPrivileges_Guards(t *testing.T) {
+// TestDoctorHubPrivileges_GuardMissingOrDisabled_WarnsOrFailsStrict covers
+// a TRUNCATE guard that is missing or disabled: a WARN by default, a FAIL
+// in strict mode (MTIX-95.1).
+func TestDoctorHubPrivileges_GuardMissingOrDisabled_WarnsOrFailsStrict(t *testing.T) {
 	for _, strict := range []bool{false, true} {
 		name := map[bool]string{false: "default mode warns", true: "strict mode fails"}[strict]
 		t.Run(name, func(t *testing.T) {
@@ -172,4 +173,39 @@ func TestDoctorHubPrivileges_CleanHub_Passes(t *testing.T) {
 	pass, warn, _, _, _ = hubPrivilegesCheck(t, report)
 	require.True(t, pass)
 	require.False(t, warn)
+}
+
+// TestDoctorHubPrivileges_VerificationError_WarnsOrFailsStrict: when the
+// verification itself cannot run (here a sync table other than
+// sync_projects is missing, so "schema current" still passes), the check
+// is a WARN by default that says so and names the next step, and the
+// doctor exits 0; in strict mode it fails (MTIX-95.1).
+func TestDoctorHubPrivileges_VerificationError_WarnsOrFailsStrict(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		name := map[bool]string{false: "default mode warns", true: "strict mode fails"}[strict]
+		t.Run(name, func(t *testing.T) {
+			initTestApp(t)
+			f := newHardenFixture(t)
+			owner, team := f.ownerRole(), f.role("team")
+			f.migrateAs(owner)
+			f.exec(`DROP TABLE node_renumber_remaps`)
+			if strict {
+				setKeepRoles(t, team)
+			}
+			report, _, err := runDoctorAs(t, f, owner)
+			pass, warn, detail, _, _ := hubPrivilegesCheck(t, report)
+			require.Contains(t, detail, "could not verify hub privileges")
+			require.Contains(t, detail, "node_renumber_remaps is missing")
+			require.Contains(t, detail, "check the hub connection")
+			require.Contains(t, detail, "then run mtix sync doctor again")
+			if strict {
+				require.ErrorIs(t, err, errDoctorChecksFailed)
+				require.False(t, pass)
+				return
+			}
+			require.NoError(t, err, "never red by default")
+			require.True(t, pass)
+			require.True(t, warn)
+		})
+	}
 }

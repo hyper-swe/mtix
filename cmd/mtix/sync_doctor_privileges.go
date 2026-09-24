@@ -23,37 +23,43 @@ const hubPrivilegesFix = "mtix sync harden"
 
 // checkHubPrivileges runs the verification `mtix sync harden` runs, as any
 // connecting role, and turns it into the doctor's hub-privileges check
-// (MTIX-95.1). With sync.keep_roles unset, access by other roles or a
-// missing or disabled guard is a WARN: the check passes, so the doctor
-// still exits 0 and nothing that gates on it stops. With sync.keep_roles
-// set (strict mode) the same findings fail it. A clean hub passes. The hub
-// is contacted only here, while the doctor runs.
+// (MTIX-95.1). With sync.keep_roles unset, access by other roles, a missing
+// or disabled guard, or a verification that could not run is a WARN: the
+// check passes, so the doctor still exits 0 and nothing that gates on it
+// stops. With sync.keep_roles set (strict mode) the same cases fail it. A
+// clean hub passes. The hub is contacted only here, while the doctor runs.
 func checkHubPrivileges(ctx context.Context, dsn string, hubReady bool, opts transport.Options) DoctorCheck {
-	check := DoctorCheck{Name: hubPrivilegesName}
-	if !hubReady {
-		check.Detail = "skipped (hub unreachable or schema not current)"
-		return check
-	}
 	configured := ""
 	if app.configSvc != nil {
 		v, err := app.configSvc.Get("sync.keep_roles")
 		if err != nil {
-			check.Detail = err.Error()
-			return check
+			return DoctorCheck{Name: hubPrivilegesName, Detail: err.Error()}
 		}
 		configured = v
 	}
 	kept, err := model.ParseKeepRoles(configured)
 	if err != nil {
-		check.Detail = "sync.keep_roles in .mtix/config.yaml: " + err.Error()
-		return check
+		// A value is set, so strict mode was intended: fail.
+		return DoctorCheck{Name: hubPrivilegesName, Detail: "sync.keep_roles in .mtix/config.yaml: " + err.Error()}
+	}
+	strict := len(kept) > 0
+	if !hubReady {
+		return unverified(strict, "skipped (hub unreachable or schema not current); "+
+			"fix the checks above, then run mtix sync doctor again")
 	}
 	report, err := verifyHubPrivileges(ctx, dsn, opts, kept)
 	if err != nil {
-		check.Detail = err.Error()
-		return check
+		return unverified(strict, "could not verify hub privileges: "+err.Error()+
+			"; check the hub connection, run mtix sync init if the hub schema is incomplete, "+
+			"then run mtix sync doctor again")
 	}
-	return hubPrivilegesResult(report, len(kept) > 0)
+	return hubPrivilegesResult(report, strict)
+}
+
+// unverified reports a hub-privileges check that could not run: a WARN by
+// default, never red, and a failure in strict mode (MTIX-95.1).
+func unverified(strict bool, detail string) DoctorCheck {
+	return DoctorCheck{Name: hubPrivilegesName, Pass: !strict, Warn: !strict, Detail: detail}
 }
 
 // verifyHubPrivileges opens a pool and runs the verification.

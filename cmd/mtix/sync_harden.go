@@ -63,16 +63,21 @@ them on; the owner first grants again anything a kept role holds by
 another role's grant. The owner's default privileges that would give
 those roles access to tables created later are revoked too. A membership
 in pg_read_all_data, pg_write_all_data or pg_maintain, even one with only
-ADMIN OPTION, is revoked when the owner may do so; it is cluster-wide. A missing TRUNCATE guard is restored and a
-disabled one enabled. A server WARNING fails the run and nothing changes.
-Access it cannot remove is reported with the statement an administrator
-runs. EXECUTE on the mtix trigger functions and other roles' default
-privileges are information and never fail verification.
+ADMIN OPTION, is revoked when the owner may do so; it is cluster-wide. A
+missing TRUNCATE guard is restored, and a disabled one, or one that fires
+only in replication sessions, is enabled. A server WARNING fails the run
+and nothing changes. Access it cannot remove is reported with the
+statement an administrator runs, and after --apply every finding that
+remains is listed. EXECUTE on the mtix trigger functions and other roles'
+default privileges are information and never fail verification.
 
 Run it as the role that owns the sync tables, or as a superuser or a
 member of the owner role; any other role is refused and nothing changes.
-Superusers are not checked. Review the dry run's role list before
---apply: a role you do not keep loses its access.
+Superusers are not checked. The connecting role is checked unless it owns
+the sync tables, is a superuser or is kept, so a member of the owner role
+reports its own membership: run as the owner, or keep the role, to verify
+clean. Review the dry run's role list before --apply: a role you do not
+keep loses its access.
 
 Exit code: 0 when verification passes, 2 when changes are pending (dry
 run) or access remains (--apply), 1 on an error or a refusal. --json
@@ -259,6 +264,7 @@ func printHardenDryRun(w io.Writer, rep *transport.PrivilegeReport) {
 	printHardenFindings(w, "Changes --apply would make:", rep, withFix, false)
 	printHardenFindings(w, "Access --apply cannot remove (an administrator must act):", rep, withoutFix, false)
 	printHardenInfo(w, rep)
+	printCallerOwnerHint(w, rep)
 	if len(rep.Statements) > 0 {
 		fmt.Fprintln(w, "\nStatements --apply would run, in order:")
 		for _, s := range rep.Statements {
@@ -286,11 +292,31 @@ func printHardenApply(w io.Writer, r *transport.HardenResult, hint string) {
 	} else {
 		fmt.Fprintln(w, "verification failed: access remains.")
 		printHardenFindings(w, "Findings that remain:", after, anyFinding, true)
+		printCallerOwnerHint(w, after)
 	}
 	printHardenInfo(w, after)
 	if hint != "" {
 		fmt.Fprintln(w, "\nTo keep the same roles in later runs, run: "+hint)
+		fmt.Fprintln(w, "Setting sync.keep_roles also turns on strict mode for mtix sync doctor: its hub-privileges")
+		fmt.Fprintln(w, "check then fails, instead of warning, when any other role can use the sync tables.")
 	}
+}
+
+// printCallerOwnerHint says how to verify clean when the only finding is
+// the connecting role's own membership in the owner role, which harden
+// never changes (MTIX-95.1).
+func printCallerOwnerHint(w io.Writer, rep *transport.PrivilegeReport) {
+	if len(rep.Findings) == 0 {
+		return
+	}
+	for _, f := range rep.Findings {
+		if f.Role != rep.Caller || f.Via != transport.FindingViaOwnerMembership {
+			return
+		}
+	}
+	fmt.Fprintf(w, "\nThe only finding is the connecting role's own membership in the owner role, which harden\n"+
+		"never changes. To verify clean, run mtix sync harden as the owner itself, or keep this role:\n"+
+		"--keep-role %s (or add it to sync.keep_roles).\n", safeText(rep.Caller))
 }
 
 // printHardenRoles lists, before any detail, the roles --apply would

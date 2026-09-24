@@ -217,3 +217,54 @@ func TestPrintHardenScope_Caller_StatesWhetherChecked(t *testing.T) {
 		})
 	}
 }
+
+// TestPrintHardenResult_Apply_KeepRolesHintNamesStrictMode: the config
+// command harden offers also turns on strict mode for mtix sync doctor, and
+// the report says so (MTIX-95.1).
+func TestPrintHardenResult_Apply_KeepRolesHintNamesStrictMode(t *testing.T) {
+	saveAndResetApp(t)
+	clean := &transport.PrivilegeReport{Schema: "public", Owners: []string{"owner"}}
+	var out bytes.Buffer
+	require.NoError(t, printHardenResult(&out, &transport.HardenResult{Applied: true, Before: clean, After: clean},
+		true, "mtix config set sync.keep_roles team"))
+	require.Contains(t, out.String(), "mtix config set sync.keep_roles team")
+	require.Contains(t, out.String(), "also turns on strict mode for mtix sync doctor")
+}
+
+// TestPrintHardenResult_OnlyCallerOwnerMembership_Hint: when the only
+// finding left is the connecting role's own membership in the owner role,
+// the report says how to verify clean (MTIX-95.1).
+func TestPrintHardenResult_OnlyCallerOwnerMembership_Hint(t *testing.T) {
+	saveAndResetApp(t)
+	own := transport.PrivilegeFinding{Role: "admin", Object: "owner", Kind: transport.FindingKindRole,
+		Via: transport.FindingViaOwnerMembership}
+	other := transport.PrivilegeFinding{Role: "carol", Object: "owner", Kind: transport.FindingKindRole,
+		Via: transport.FindingViaOwnerMembership}
+	tests := []struct {
+		name     string
+		findings []transport.PrivilegeFinding
+		want     bool
+	}{
+		{"only the caller's membership", []transport.PrivilegeFinding{own}, true},
+		{"another member too", []transport.PrivilegeFinding{own, other}, false},
+		{"another role's membership", []transport.PrivilegeFinding{other}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rep := &transport.PrivilegeReport{Schema: "public", Owners: []string{"owner"}, Caller: "admin",
+				CallerScope: transport.CallerChecked, Findings: tt.findings}
+			for _, apply := range []bool{false, true} {
+				var out bytes.Buffer
+				require.NoError(t, printHardenResult(&out,
+					&transport.HardenResult{Applied: apply, Before: rep, After: rep}, apply, ""))
+				hint := "The only finding is the connecting role's own membership in the owner role"
+				if tt.want {
+					require.Contains(t, out.String(), hint)
+					require.Contains(t, out.String(), "--keep-role admin")
+				} else {
+					require.NotContains(t, out.String(), hint)
+				}
+			}
+		})
+	}
+}

@@ -5,6 +5,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -62,4 +63,24 @@ func TestPrintDoctorTable_Warn_ShowsWarnMark(t *testing.T) {
 	buf.Reset()
 	printDoctorTable(&buf, DoctorReport{OverallPass: true, Checks: []DoctorCheck{{Name: "a", Pass: true, Detail: "ok"}}})
 	require.Contains(t, buf.String(), "all checks passed\n", "without warnings the summary is unchanged")
+}
+
+// TestCheckHubPrivileges_HubNotReady_WarnsOrFailsStrict: when the hub is
+// unreachable or its schema is not current, the check is skipped: a WARN by
+// default, never red, and a failure in strict mode (MTIX-95.1).
+func TestCheckHubPrivileges_HubNotReady_WarnsOrFailsStrict(t *testing.T) {
+	initTestApp(t)
+	c := checkHubPrivileges(context.Background(), "", false, transport.Options{})
+	require.Equal(t, "hub-privileges", c.Name)
+	require.True(t, c.Pass)
+	require.True(t, c.Warn)
+	require.Contains(t, c.Detail, "skipped")
+	require.Contains(t, c.Detail, "then run mtix sync doctor again")
+
+	_, err := app.configSvc.Set("sync.keep_roles", "mtix_team")
+	require.NoError(t, err)
+	c = checkHubPrivileges(context.Background(), "", false, transport.Options{})
+	require.False(t, c.Pass)
+	require.False(t, c.Warn)
+	require.Contains(t, c.Detail, "skipped")
 }

@@ -119,8 +119,12 @@ func (c *hubCatalog) loadUsage(ctx context.Context, tx pgx.Tx, checked, candidat
 			return fmt.Errorf("read role memberships: %w", err)
 		}
 		c.member[pair] = true
-		c.usage[pair] = inherits
-		c.canSet[pair] = canSet
+		if inherits {
+			c.usage[pair] = true
+		}
+		if canSet {
+			c.canSet[pair] = true
+		}
 	}
 	return rows.Err()
 }

@@ -42,8 +42,8 @@ of the owner role may run them too:
 ```bash
 mtix sync harden                          # Dry run: lists every role, default privilege and membership it would change; changes nothing
 mtix sync harden --apply --keep-role <r>  # After a human approves the role list: restrict the sync tables to the owner and the kept roles
-mtix config set sync.keep_roles <r>[,<r>] # Record the kept roles (harden prints this command; it never writes config)
-mtix sync harden --json                   # Report for agents: before/after findings, statements, keep_roles_hint
+mtix config set sync.keep_roles <r>[,<r>] # Record the kept roles; also turns on doctor strict mode (harden prints this; it never writes config)
+mtix sync harden --json                   # Report for agents: before/after caller, caller_scope, findings, statements; keep_roles_hint
 ```
 
 Exit code 0 means verification passed: apart from the table owner,

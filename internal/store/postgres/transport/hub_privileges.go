@@ -151,8 +151,9 @@ type HardenResult struct {
 
 // VerifyHubPrivileges verifies the hub's privileges in a READ ONLY
 // transaction, which cannot change anything, for any calling role
-// (MTIX-95.1). Only the table owners, superusers, the caller and keepRoles
-// may use the sync objects; every TRUNCATE guard must exist and be enabled.
+// (MTIX-95.1). Only the table owners, superusers and keepRoles may use the
+// sync objects; the calling role is checked too unless it is one of them.
+// Every TRUNCATE guard must exist and be enabled.
 func (p *Pool) VerifyHubPrivileges(ctx context.Context, keepRoles []string) (*PrivilegeReport, error) {
 	if p == nil || p.p == nil {
 		return nil, fmt.Errorf("verify hub privileges: pool not open")

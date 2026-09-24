@@ -38,9 +38,9 @@ const (
 
 // computeFindings verifies the catalog against the kept roles (MTIX-95.1)
 // and returns the findings, which fail verification, and the information
-// items, which do not. Only the owners, superusers, the caller and the
-// kept roles may hold access; a kept role may not pass its access on. The
-// connecting role is checked unless it is one of those.
+// items, which do not. Only the owners, superusers and the kept roles may
+// hold access; a kept role may not pass its access on. The connecting role
+// is checked unless it is one of those.
 // Information items are EXECUTE on the mtix trigger functions and other
 // roles' default privileges.
 func computeFindings(c *hubCatalog, kept map[string]bool) (findings, info []finding) {

@@ -642,13 +642,14 @@ func TestHarden_EscalationRoles_Reported(t *testing.T) {
 	owner := f.ownerRole()
 	su := f.role("su")
 	setSu, inhSu := f.role("setsu"), f.role("inhsu")
-	execer, reader := f.role("execer"), f.role("filereader")
+	execer, reader, writer := f.role("execer"), f.role("filereader"), f.role("filewriter")
 	f.migrateAs(owner)
 	f.ddl(`ALTER ROLE %I SUPERUSER`, su)
 	f.ddl(`GRANT %I TO %I WITH INHERIT FALSE, SET TRUE`, su, setSu)
 	f.ddl(`GRANT %I TO %I WITH INHERIT TRUE, SET FALSE`, su, inhSu)
 	f.ddl(`GRANT pg_execute_server_program TO %I`, execer)
 	f.ddl(`GRANT pg_read_server_files TO %I WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`, reader)
+	f.ddl(`GRANT pg_write_server_files TO %I`, writer)
 	app.jsonOutput = true
 
 	out, err := f.harden(owner)
@@ -666,14 +667,16 @@ func TestHarden_EscalationRoles_Reported(t *testing.T) {
 	require.Equal(t, "superuser_membership", got[setSu+" "+su], "SET ROLE to a superuser")
 	require.Equal(t, "membership", got[execer+" pg_execute_server_program"])
 	require.Equal(t, "membership", got[reader+" pg_read_server_files"], "ADMIN OPTION alone")
+	require.Equal(t, "membership", got[writer+" pg_write_server_files"])
 	require.NotContains(t, got, inhSu+" "+su, "inheriting a superuser's grants gives no superuser power")
 }
 
-// TestHarden_RepairsGuards: --apply restores a dropped TRUNCATE guard,
+// TestHarden_GuardsDroppedDisabledOrReplica_AllEnabledAfterApply: --apply
+// restores a dropped TRUNCATE guard,
 // enables a disabled one and turns one enabled for replication sessions
 // only back to always firing: every guard ends with tgenabled 'O'
 // (MTIX-95.1).
-func TestHarden_RepairsGuards(t *testing.T) {
+func TestHarden_GuardsDroppedDisabledOrReplica_AllEnabledAfterApply(t *testing.T) {
 	initTestApp(t)
 	f := newHardenFixture(t)
 	owner := f.ownerRole()
@@ -706,11 +709,12 @@ func TestHarden_RepairsGuards(t *testing.T) {
 	}, f.strings(guards))
 }
 
-// TestHarden_CallerScope: the connecting role is checked unless it owns
-// the sync tables or is a superuser, and the report says which. A member
-// of the owner role that runs harden is reported like any member
-// (MTIX-95.1).
-func TestHarden_CallerScope(t *testing.T) {
+// TestHarden_ConnectingRoleNotOwner_IsChecked: the connecting role is
+// checked unless it owns the sync tables or is a superuser, and the report
+// says which. A member of the owner role that runs harden is reported like
+// any member, and when that is the only finding the report says how to
+// verify clean (MTIX-95.1).
+func TestHarden_ConnectingRoleNotOwner_IsChecked(t *testing.T) {
 	initTestApp(t)
 	f := newHardenFixture(t)
 	owner, admin := f.ownerRole(), f.role("admin")
@@ -721,9 +725,54 @@ func TestHarden_CallerScope(t *testing.T) {
 	require.Equal(t, 2, exitCodeForError(err), "the member of the owner role is reported: %s", out)
 	require.Contains(t, out, "Connecting role "+owner+": not checked, it owns the sync tables.")
 
-	out, err = f.harden(admin)
+	require.NotContains(t, out, "connecting role's own membership", "the owner has no such finding")
+
+	for _, args := range [][]string{{}, {"--apply"}} {
+		out, err = f.harden(admin, args...)
+		require.Equal(t, 2, exitCodeForError(err), out)
+		require.Contains(t, out, "Connecting role "+admin+": checked.")
+		require.Contains(t, out, admin+" ")
+		require.Contains(t, out, "owner_membership")
+		require.Contains(t, out, "The only finding is the connecting role's own membership in the owner role",
+			"args %v", args)
+	}
+}
+
+// TestHarden_NonInheritingMemberOfKeptRole_AccessStillReported: only an
+// inheriting member of a kept role has that role's privileges explained by
+// it. A member that can only SET ROLE to the kept role, or holds only
+// ADMIN OPTION on it, is reported for privileges it holds by another path
+// (here inherited from a role verification does not check) (MTIX-95.1).
+func TestHarden_NonInheritingMemberOfKeptRole_AccessStillReported(t *testing.T) {
+	initTestApp(t)
+	f := newHardenFixture(t)
+	owner, team, su := f.ownerRole(), f.role("team"), f.role("su")
+	setOnly, adminOnly := f.role("setonly"), f.role("adminonly")
+	f.migrateAs(owner)
+	f.ddl(`GRANT REFERENCES ON sync_events TO %I`, team)
+	f.ddl(`ALTER ROLE %I SUPERUSER`, su)
+	f.ddl(`GRANT REFERENCES ON sync_events TO %I`, su)
+	for _, m := range []string{setOnly, adminOnly} {
+		f.ddl(`GRANT %I TO %I WITH INHERIT TRUE, SET FALSE`, su, m)
+	}
+	f.ddl(`GRANT %I TO %I WITH INHERIT FALSE, SET TRUE`, team, setOnly)
+	f.ddl(`GRANT %I TO %I WITH ADMIN TRUE, INHERIT FALSE, SET FALSE`, team, adminOnly)
+	app.jsonOutput = true
+
+	out, err := f.harden(owner, "--keep-role", team)
 	require.Equal(t, 2, exitCodeForError(err), out)
-	require.Contains(t, out, "Connecting role "+admin+": checked.")
-	require.Contains(t, out, admin+" ")
-	require.Contains(t, out, "owner_membership")
+	var result struct {
+		Before struct {
+			Findings []struct{ Role, Object, Via string } `json:"findings"`
+		} `json:"before"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &result), out)
+	reported := map[string]bool{}
+	for _, fd := range result.Before.Findings {
+		if fd.Object == "public.sync_events" && fd.Via == "membership" {
+			reported[fd.Role] = true
+		}
+	}
+	require.True(t, reported[setOnly], "a SET-only member of a kept role: %s", out)
+	require.True(t, reported[adminOnly], "an ADMIN-only member of a kept role: %s", out)
 }

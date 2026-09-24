@@ -690,3 +690,51 @@ func TestCallerScope_Roles_SaysWhetherChecked(t *testing.T) {
 		})
 	}
 }
+
+// TestComputeFindings_NonInheritingMembership_ExplainsNothing: a usage
+// entry recorded as false (a membership that does not inherit) explains no
+// privilege, even through a kept role (MTIX-95.1).
+func TestComputeFindings_NonInheritingMembership_ExplainsNothing(t *testing.T) {
+	cat := baseCatalog()
+	cat.usage[[2]uint32{tAlice, tTeam}] = false
+	cat.member[[2]uint32{tAlice, tTeam}] = true
+	cat.effective = []effPriv{
+		{role: tTeam, obj: keyTable, privilege: "SELECT"},
+		{role: tAlice, obj: keyTable, privilege: "SELECT"},
+	}
+	findings, _ := computeFindings(cat, keptTeam())
+	require.Equal(t, []string{"alice|table|public.audit_log|membership|SELECT|-"}, summaries(findings))
+}
+
+// TestComputeFindings_ConnectingRole_DefaultPrivilegesAndMembersChecked:
+// the connecting role is checked like any role: a default privilege of the
+// owner toward it is a finding, and a role inheriting a grant made to it is
+// covered by that grant's finding rather than reported again (MTIX-95.1).
+func TestComputeFindings_ConnectingRole_DefaultPrivilegesAndMembersChecked(t *testing.T) {
+	cat := baseCatalog()
+	cat.defaults = []defaultACL{{creator: tOwner, schema: "public", objType: "r", grantee: tCaller, privilege: "SELECT"}}
+	cat.acl = append(cat.acl, aclEntry{obj: keyTable, grantee: tCaller, grantor: tOwner, privilege: "INSERT"})
+	cat.usage[[2]uint32{tBob, tCaller}] = true
+	cat.member[[2]uint32{tBob, tCaller}] = true
+	cat.effective = []effPriv{
+		{role: tCaller, obj: keyTable, privilege: "INSERT"},
+		{role: tBob, obj: keyTable, privilege: "INSERT"},
+	}
+	findings, _ := computeFindings(cat, keptTeam())
+	require.Equal(t, []string{
+		"caller|default_acl|default privileges of owner in schema public on tables|default_acl|SELECT|revoke-default-schema owner public TABLES caller",
+		"caller|table|public.audit_log|grant|INSERT|revoke TABLE public audit_log caller",
+	}, summaries(findings))
+}
+
+// TestComputeFindings_WriteServerFilesMember_Reported: a member of
+// pg_write_server_files is reported like the other server roles
+// (MTIX-95.1).
+func TestComputeFindings_WriteServerFilesMember_Reported(t *testing.T) {
+	const tWriteFiles uint32 = 4570
+	cat := baseCatalog()
+	cat.roles[tWriteFiles] = roleInfo{oid: tWriteFiles, name: "pg_write_server_files"}
+	cat.member[[2]uint32{tUnrel, tWriteFiles}] = true
+	findings, _ := computeFindings(cat, keptTeam())
+	require.Equal(t, []string{"unrel|role|pg_write_server_files|membership||-"}, summaries(findings))
+}

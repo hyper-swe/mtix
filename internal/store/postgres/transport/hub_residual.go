@@ -45,8 +45,10 @@ func newAccessIndex(c *hubCatalog, kept map[string]bool, checked map[uint32]bool
 			x.edgeMember[e.member] = true
 		}
 	}
-	for pair := range c.usage {
-		x.memberOf[pair[0]] = append(x.memberOf[pair[0]], pair[1])
+	for pair, inherits := range c.usage {
+		if inherits {
+			x.memberOf[pair[0]] = append(x.memberOf[pair[0]], pair[1])
+		}
 	}
 	return x
 }

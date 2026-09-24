@@ -1621,7 +1621,10 @@ tables, or a TRUNCATE guard is missing or disabled: the doctor still exits
 reachable only from a private network. The detail names those roles and
 says how to restrict them. It is a **FAIL** (exit 2) only in strict mode,
 when `sync.keep_roles` is set and a role not in it can use the sync
-tables, or a guard is missing or disabled. A clean hub passes. With
+tables, or a guard is missing or disabled. If the verification cannot run
+(the hub is unreachable, or a sync table is missing), the check is a WARN
+that says so and names the next step, or a FAIL in strict mode. A clean
+hub passes. With
 `--json` the check carries `name`, `pass`, `warn` (only when set),
 `detail`, `fix` (`mtix sync harden`) and `findings` (the same findings as
 `mtix sync harden --json`). The check contacts the hub only while the
@@ -1638,7 +1641,7 @@ keep a scale-to-zero database awake.
 ```bash
 mtix sync harden                                # dry run: lists what --apply would change
 mtix sync harden --apply --keep-role mtix_team  # restrict to the owner and mtix_team
-mtix config set sync.keep_roles mtix_team       # keep mtix_team in later runs
+mtix config set sync.keep_roles mtix_team       # keep mtix_team in later runs; also doctor strict mode
 mtix sync harden --json                         # the report for agents and CI
 ```
 
@@ -1648,7 +1651,11 @@ too. Any other role is refused with "the connecting role does not own
 every sync table" and nothing changes. The report says whether the
 connecting role was checked: it is, unless it owns the sync tables, is a
 superuser or is kept, so a member of the owner role that runs harden is
-reported like any other member.
+reported like any other member. When the connecting role's own
+membership is the only finding, the report says so: run harden as the
+owner itself, or keep that role, to verify clean. Setting
+`sync.keep_roles`, as the report after `--apply --keep-role` suggests,
+also turns on strict mode for `mtix sync doctor`.
 
 The dry run starts with the roles `--apply` would affect: the roles that
 lose their access, the kept roles that keep their access but can no longer

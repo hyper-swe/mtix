@@ -180,8 +180,10 @@ func TestErrTLSWeakNonLoopback_Text_NamesLoopbackAndLocalSockets(t *testing.T) {
 		transport.ErrTLSWeakNonLoopback.Error())
 }
 
-func TestEnforceTLSPosture_LocalEffectiveHosts_AcceptsWeakMode(t *testing.T) {
-	cases := []hostCase{
+// localHostCases lists the DSN forms whose every host is loopback or a
+// local socket, so each is accepted under every weak sslmode.
+func localHostCases() []hostCase {
+	return []hostCase{
 		{name: "localhost", dsn: "postgres://u:pw@localhost:5432/hub"},
 		{name: "localhost in mixed case", dsn: "postgres://u:pw@LocalHost/hub"},
 		{name: "IPv4 loopback", dsn: "postgres://u:pw@127.0.0.1:5432/hub"},
@@ -205,6 +207,10 @@ func TestEnforceTLSPosture_LocalEffectiveHosts_AcceptsWeakMode(t *testing.T) {
 			serviceHost: "localhost"},
 		{name: "driver default host", dsn: "postgres://u:pw@/hub"},
 	}
+}
+
+func TestEnforceTLSPosture_LocalEffectiveHosts_AcceptsWeakMode(t *testing.T) {
+	cases := localHostCases()
 	for _, tc := range cases {
 		for _, mode := range weakModes {
 			t.Run(tc.name+"/"+mode, func(t *testing.T) {
@@ -221,12 +227,15 @@ func TestEnforceTLSPosture_LocalEffectiveHosts_AcceptsWeakMode(t *testing.T) {
 
 func TestEnforceTLSPosture_LoopbackHostWithCertificateSettings_ReturnsDSNUnchanged(t *testing.T) {
 	pinPGEnv(t)
-	missing := filepath.Join(t.TempDir(), "absent.pem")
-	// Certificate files that do not exist must not stop the host check:
-	// the pool, not the posture check, loads them.
-	t.Setenv("PGSSLROOTCERT", missing)
-	t.Setenv("PGSSLCERT", missing)
-	t.Setenv("PGSSLKEY", missing)
+	// Certificate settings from the environment are loaded by the check's
+	// one parse, so they name real files; they never change the returned
+	// DSN (MTIX-95.25).
+	envCA, _ := writeTestCA(t)
+	explicitCA, _ := writeTestCA(t)
+	clientCert, clientKey := writeTestClientCert(t)
+	t.Setenv("PGSSLROOTCERT", envCA)
+	t.Setenv("PGSSLCERT", clientCert)
+	t.Setenv("PGSSLKEY", clientKey)
 
 	tests := []struct {
 		name         string
@@ -234,8 +243,8 @@ func TestEnforceTLSPosture_LoopbackHostWithCertificateSettings_ReturnsDSNUnchang
 		wantRootCert []string
 	}{
 		{"explicit sslrootcert is kept",
-			"postgres://u:pw@localhost/hub?sslmode=require&sslrootcert=" + url.QueryEscape(missing),
-			[]string{missing}},
+			"postgres://u:pw@localhost/hub?sslmode=require&sslrootcert=" + url.QueryEscape(explicitCA),
+			[]string{explicitCA}},
 		{"no sslrootcert is added",
 			"postgres://u:pw@localhost/hub?sslmode=require", nil},
 	}
@@ -285,10 +294,12 @@ func TestEnforceTLSPosture_DSNTheDriverCannotParse_ReturnsFixedMessage(t *testin
 				transport.Options{InsecureTLS: true})
 			require.Error(t, err)
 			require.Empty(t, out)
-			require.True(t, errors.Is(err, transport.ErrTLSWeakNonLoopback),
-				"want ErrTLSWeakNonLoopback, got %v", err)
+			// The DSN is refused as unparsable, not as a host refusal: the
+			// one parse failed, so no host was evaluated (MTIX-95.25).
+			require.True(t, errors.Is(err, transport.ErrDSNMalformed), "want ErrDSNMalformed, got %v", err)
+			require.False(t, errors.Is(err, transport.ErrTLSWeakNonLoopback), "a parse failure is not a host refusal")
 			msg := err.Error()
-			require.Contains(t, msg, "connection settings could not be parsed; check the DSN's connection parameters")
+			require.Equal(t, wantUnparsableMessage, msg)
 			for _, forbidden := range []string{user, secret, "localhost", "db.example.com", "postgres://", "absent"} {
 				require.NotContains(t, msg, forbidden, "message must name no host or credential")
 			}

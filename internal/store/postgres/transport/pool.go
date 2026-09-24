@@ -6,7 +6,6 @@ package transport
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -79,8 +78,9 @@ func DefaultPoolDefaults() PoolDefaults {
 //
 // dsn flow:
 //  1. Source() resolves the raw DSN from the env or .mtix/secrets.
-//  2. EnforceTLSPosture() defaults sslmode and honors SSLROOTCERT.
-//  3. pgxpool.ParseConfig + apply mtix defaults.
+//  2. ApproveDSN() defaults sslmode, honors SSLROOTCERT, parses the DSN
+//     once and approves the parsed configuration's hosts.
+//  3. poolConfig() applies the mtix defaults to that configuration.
 //  4. pgxpool.NewWithConfig opens the pool and runs an initial healthcheck.
 //
 // On any error returned from this function, the caller MUST log it
@@ -93,17 +93,45 @@ func New(ctx context.Context, dsn string, opts Options) (*Pool, error) {
 // NewWithDefaults is the test seam — pass PoolDefaults to override the
 // production defaults (e.g., to disable statement_timeout for a test
 // that intentionally runs a long query).
+//
+// The pool is opened from the configuration ApproveDSN approved, the
+// same value its posture rule evaluated, so the hosts, ports and TLS
+// settings the pool dials are the approved ones; the DSN is not parsed
+// again (FR-18.15, MTIX-95.25).
 func NewWithDefaults(ctx context.Context, dsn string, opts Options, defs PoolDefaults) (*Pool, error) {
-	enforced, err := EnforceTLSPosture(dsn, opts)
+	approval, err := ApproveDSN(dsn, opts)
 	if err != nil {
 		return nil, fmt.Errorf("tls posture: %w", err)
 	}
 
-	cfg, err := pgxpool.ParseConfig(enforced)
+	cfg := poolConfig(approval, defs)
+	pool, err := openPool(ctx, cfg)
 	if err != nil {
-		// Deliberately not wrapped: err may quote the DSN (MTIX-95.15).
-		return nil, fmt.Errorf("pgxpool parse: %w: check the DSN's connection parameters", ErrDSNMalformed)
+		return nil, hintTLSTrust(approval.CASupplied, err)
 	}
+	return &Pool{p: pool}, nil
+}
+
+// openPool opens a pool from cfg and runs the initial healthcheck,
+// closing the pool if the healthcheck fails (FR-18, MTIX-48). cfg must
+// come from poolConfig, so it is the approved configuration.
+func openPool(ctx context.Context, cfg *pgxpool.Config) (*pgxpool.Pool, error) {
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("pgxpool open: %w", err)
+	}
+	if err := pingWithRetry(ctx, pool); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("initial ping: %w", err)
+	}
+	return pool, nil
+}
+
+// poolConfig applies defs to the approved configuration and returns that
+// same configuration (FR-18, MTIX-95.25). Only pool settings change: the
+// hosts, ports and TLS settings stay exactly as ApproveDSN approved them.
+func poolConfig(a *Approval, defs PoolDefaults) *pgxpool.Config {
+	cfg := a.Config
 	cfg.MaxConns = defs.MaxConns
 	cfg.MaxConnLifetime = defs.ConnLifetime
 	cfg.HealthCheckPeriod = defs.HealthCheckPeriod
@@ -125,16 +153,7 @@ func NewWithDefaults(ctx context.Context, dsn string, opts Options, defs PoolDef
 			return nil
 		}
 	}
-
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		return nil, hintTLSTrust(enforced, fmt.Errorf("pgxpool open: %w", err))
-	}
-	if err := pingWithRetry(ctx, pool); err != nil {
-		pool.Close()
-		return nil, hintTLSTrust(enforced, fmt.Errorf("initial ping: %w", err))
-	}
-	return &Pool{p: pool}, nil
+	return cfg
 }
 
 // pingWithRetry runs the initial healthcheck, retrying a few times with
@@ -199,7 +218,10 @@ func isRetryableConnErr(err error) bool {
 // ("certificate is not standards compliant" / "failed to verify certificate")
 // gives the operator no clue that the fix is a one-line sslrootcert. Non-cert
 // errors, and cases where a CA was already supplied, pass through unchanged.
-func hintTLSTrust(enforcedDSN string, err error) error {
+//
+// caSupplied is Approval.CASupplied: whether the approved configuration
+// carries a root CA pool, whatever its source (MTIX-95.25).
+func hintTLSTrust(caSupplied bool, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -211,7 +233,7 @@ func hintTLSTrust(enforcedDSN string, err error) error {
 		return err
 	}
 	// A CA was already supplied — this is a different TLS problem; don't mislead.
-	if strings.Contains(enforcedDSN, "sslrootcert=") || os.Getenv(EnvSSLRootCert) != "" {
+	if caSupplied {
 		return err
 	}
 	return fmt.Errorf("%w\n\nhint: TLS verification failed because the server's "+

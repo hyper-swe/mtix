@@ -1,0 +1,173 @@
+// Copyright 2025-2026 HyperSWE
+// SPDX-License-Identifier: Apache-2.0
+
+package transport
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"testing"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/require"
+)
+
+// verifiedEntry is a connection attempt at host that verifies the
+// server certificate against host, as the driver builds it under
+// verify-full.
+func verifiedEntry(host string) *pgconn.FallbackConfig {
+	return &pgconn.FallbackConfig{Host: host, Port: 5432, TLSConfig: &tls.Config{ServerName: host}}
+}
+
+func TestCheckHostEntries_VerifyFull_AcceptsOnlyVerifyingNetworkEntries(t *testing.T) {
+	const hidden = "hidden-host.example"
+	tests := []struct {
+		name    string
+		entries []*pgconn.FallbackConfig
+		wantPos string
+	}{
+		{"every network entry verifies", []*pgconn.FallbackConfig{verifiedEntry("a.example"), verifiedEntry(hidden)}, ""},
+		{"local socket entry without TLS", []*pgconn.FallbackConfig{{Host: "/tmp", Port: 5432}, verifiedEntry(hidden)}, ""},
+		{"network entry without TLS", []*pgconn.FallbackConfig{verifiedEntry("a.example"), {Host: hidden, Port: 5432}},
+			"host 2 of 2 "},
+		{"entry that skips certificate verification", []*pgconn.FallbackConfig{
+			{Host: hidden, Port: 5432, TLSConfig: &tls.Config{ServerName: hidden, InsecureSkipVerify: true}}}, "host 1 of 1 "},
+		{"entry that verifies another name", []*pgconn.FallbackConfig{
+			{Host: hidden, Port: 5432, TLSConfig: &tls.Config{ServerName: "other.example"}}}, "host 1 of 1 "},
+		{"entry without a server name", []*pgconn.FallbackConfig{
+			verifiedEntry("a.example"), verifiedEntry("b.example"), {Host: hidden, Port: 5432, TLSConfig: &tls.Config{}}},
+			"host 3 of 3 "},
+		{"one host and port listed twice before an unverified host", []*pgconn.FallbackConfig{
+			verifiedEntry("a.example"), verifiedEntry("a.example"), {Host: hidden, Port: 5432}},
+			"host 2 of 2 "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkHostEntries(sslModeVerifyFull, tt.entries)
+			if tt.wantPos == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			require.True(t, errors.Is(err, ErrTLSUnverified), "want ErrTLSUnverified, got %v", err)
+			require.Contains(t, err.Error(), tt.wantPos)
+			require.NotContains(t, err.Error(), hidden, "message must not echo host text")
+			require.NotContains(t, err.Error(), "other.example", "message must not echo host text")
+		})
+	}
+}
+
+func TestCheckHostEntries_WeakMode_RefusesNonLocalEntryByHostPosition(t *testing.T) {
+	const hidden = "hidden-host.example"
+	// tlsOn models the TLS entry the driver builds under allow and prefer.
+	tlsOn := &tls.Config{InsecureSkipVerify: true}
+	tests := []struct {
+		name    string
+		mode    string
+		entries []*pgconn.FallbackConfig
+		wantPos string
+	}{
+		{"loopback and socket entries", "disable", []*pgconn.FallbackConfig{
+			{Host: "localhost", Port: 5432}, {Host: "::1", Port: 5432}, {Host: "/tmp", Port: 5432}}, ""},
+		{"remote entry", "disable", []*pgconn.FallbackConfig{{Host: "localhost", Port: 5432}, {Host: hidden, Port: 5432}},
+			"host 2 of 2 "},
+		{"prefer lists each host twice", "prefer", []*pgconn.FallbackConfig{
+			{Host: "localhost", Port: 5432, TLSConfig: tlsOn}, {Host: "localhost", Port: 5432},
+			{Host: hidden, Port: 5432, TLSConfig: tlsOn}, {Host: hidden, Port: 5432}}, "host 2 of 2 "},
+		{"allow lists each host twice", "allow", []*pgconn.FallbackConfig{
+			{Host: hidden, Port: 5432}, {Host: hidden, Port: 5432, TLSConfig: tlsOn},
+			{Host: "localhost", Port: 5432}, {Host: "localhost", Port: 5432, TLSConfig: tlsOn}}, "host 1 of 2 "},
+		{"same host on two ports", "disable", []*pgconn.FallbackConfig{
+			{Host: "localhost", Port: 5432}, {Host: hidden, Port: 5432}, {Host: hidden, Port: 5433}}, "host 2 of 3 "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkHostEntries(tt.mode, tt.entries)
+			if tt.wantPos == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			require.True(t, errors.Is(err, ErrTLSWeakNonLoopback), "want ErrTLSWeakNonLoopback, got %v", err)
+			require.Contains(t, err.Error(), tt.wantPos)
+			require.NotContains(t, err.Error(), hidden, "message must not echo host text")
+		})
+	}
+}
+
+func TestSSLModeLabel_KnownAndUnknownModes_NamesOnlyKnownModes(t *testing.T) {
+	tests := []struct {
+		mode string
+		want string
+	}{
+		{"disable", "disable"},
+		{"allow", "allow"},
+		{"prefer", "prefer"},
+		{"require", "require"},
+		{"verify-ca", "verify-ca"},
+		{"verify-full", "verify-full"},
+		{"", "(unrecognized)"},
+		{"s3cret", "(unrecognized)"},
+		{"verify-full ", "(unrecognized)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			require.Equal(t, tt.want, sslModeLabel(tt.mode))
+		})
+	}
+}
+
+// craftedConfig returns a pool configuration whose connection attempts
+// are primary followed by fallbacks, as if the driver had parsed them.
+func craftedConfig(primary *pgconn.FallbackConfig, fallbacks ...*pgconn.FallbackConfig) *pgxpool.Config {
+	cc := &pgx.ConnConfig{}
+	cc.Host, cc.Port, cc.TLSConfig = primary.Host, primary.Port, primary.TLSConfig
+	cc.Fallbacks = fallbacks
+	return &pgxpool.Config{ConnConfig: cc}
+}
+
+func TestApproveParsed_ParsedConfig_AppliesHostRuleForMode(t *testing.T) {
+	const normalized = "postgres://u:pw@a.example/hub?sslmode=verify-full"
+	withCA := verifiedEntry("b.example")
+	withCA.TLSConfig.RootCAs = x509.NewCertPool()
+	skipping := &pgconn.FallbackConfig{Host: "b.example", Port: 5432,
+		TLSConfig: &tls.Config{ServerName: "b.example", InsecureSkipVerify: true}}
+	tests := []struct {
+		name    string
+		mode    string
+		cfg     *pgxpool.Config
+		wantErr error
+		wantCA  bool
+	}{
+		{"verify-full with a fallback that skips verification", sslModeVerifyFull,
+			craftedConfig(verifiedEntry("a.example"), skipping), ErrTLSUnverified, false},
+		{"verify-full with a primary entry without TLS", sslModeVerifyFull,
+			craftedConfig(&pgconn.FallbackConfig{Host: "a.example", Port: 5432}), ErrTLSUnverified, false},
+		{"verify-full with every entry verifying", sslModeVerifyFull,
+			craftedConfig(verifiedEntry("a.example"), withCA), nil, true},
+		{"weak mode with a remote fallback", "disable",
+			craftedConfig(&pgconn.FallbackConfig{Host: "localhost", Port: 5432},
+				&pgconn.FallbackConfig{Host: "b.example", Port: 5432}), ErrTLSWeakNonLoopback, false},
+		{"weak mode with loopback and socket entries", "disable",
+			craftedConfig(&pgconn.FallbackConfig{Host: "localhost", Port: 5432},
+				&pgconn.FallbackConfig{Host: "/tmp", Port: 5432}), nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a, err := approveParsed(tt.cfg, tt.mode, normalized)
+			if tt.wantErr != nil {
+				require.Nil(t, a)
+				require.True(t, errors.Is(err, tt.wantErr), "want %v, got %v", tt.wantErr, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Same(t, tt.cfg, a.Config, "the approval carries the evaluated configuration itself")
+			require.Equal(t, tt.mode, a.SSLMode)
+			require.Equal(t, normalized, a.dsn)
+			require.Equal(t, tt.wantCA, a.CASupplied)
+		})
+	}
+}

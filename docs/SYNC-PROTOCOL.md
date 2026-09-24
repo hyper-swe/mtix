@@ -341,7 +341,9 @@ cleanly. See `internal/store/postgres/transport/migrate.go` and
 
 ## Transport security
 
-- TLS posture is enforced in `EnforceTLSPosture` (`transport/dsn.go`).
+- TLS posture is enforced by `ApproveDSN` (`transport/posture.go`),
+  which `EnforceTLSPosture` (`transport/dsn.go`) wraps. It parses the
+  DSN once, and the pool opens from the configuration it approves.
   Default sslmode is `verify-full`; weaker modes refused unless
   `--insecure-tls` is set AND every host the connection may use is
   loopback or a local Unix-domain socket.

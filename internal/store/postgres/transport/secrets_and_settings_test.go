@@ -16,8 +16,10 @@ import (
 )
 
 // wantSettingsMessage is the fixed message for connection settings the
-// driver cannot parse (FR-18.17, MTIX-95.15).
-const wantSettingsMessage = "pgxpool parse: DSN could not be parsed: check the DSN's connection parameters"
+// driver cannot parse (FR-18.17, MTIX-95.15). The one parse runs in the
+// TLS posture step, so New reports it under that step's prefix
+// (MTIX-95.25).
+const wantSettingsMessage = "tls posture: pgxpool parse: DSN could not be parsed: check the DSN's connection parameters"
 
 // TestNew_UnparsableConnectionSettings_FixedMessage: when the driver
 // cannot parse a DSN's connection settings, New reports one fixed

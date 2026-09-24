@@ -94,7 +94,9 @@ Every error string that may contain a DSN passes through `redact.DSN` before rea
 
 ### TLS posture
 
-- `verify-full` is the default. `EnforceTLSPosture` defaults the DSN's sslmode to verify-full when omitted.
+- `verify-full` is the default. `ApproveDSN` (which `EnforceTLSPosture` wraps) defaults the DSN's sslmode to verify-full when omitted.
+- The DSN is parsed once, by `ApproveDSN`, with PG* environment variables and any service file merged. The posture rule is checked on that parsed configuration, every host and fallback included, and the connection pool opens from the same configuration. Under `verify-full` every network host verifies the server certificate against its own name.
+- For each network host, that check also loads the certificate files the driver uses for a TLS connection: the CA file whenever `sslrootcert` names one (from the DSN, `MTIX_SYNC_SSLROOTCERT`, `PGSSLROOTCERT`, a service file, or the driver's default `root.crt` when that file exists and nothing else names a CA file), and the client certificate and key (`sslcert`, `sslkey`; by default `postgresql.crt` and `postgresql.key`, used only when both exist) whenever the sslmode is not `disable`. The driver's default directory is `~/.postgresql/` (`%APPDATA%\postgresql\` on Windows). A DSN whose hosts are all local Unix-domain sockets loads none of them. A file the check loads that cannot be read, or that holds no usable certificate or key, stops the command before any network contact, with a fixed message that quotes neither the path nor the DSN.
 - Weaker `sslmode` is allowed **only** when `--insecure-tls` is set explicitly **and** every host the connection may use, fallback hosts included, is loopback (`localhost`, `127.0.0.0/8`, `::1`) or a local Unix-domain socket.
 - `MTIX_SYNC_SSLROOTCERT` populates `sslrootcert` for managed-PG providers that require a CA bundle.
 

@@ -144,6 +144,10 @@ type pgDumpConn struct {
 // the first '?', so the password — which may contain URL-breaking characters —
 // is never in the parsed span). When verification is requested but no trust
 // root is configured, sslrootcert defaults to "system" (MTIX-59).
+//
+// Posture decision (MTIX-95.25): in 0.5.4 the backup connection gets the same
+// TLS posture as the sync transport (transport.ApproveDSN), delivered under
+// MTIX-95.7 (item e).
 func pgDumpConnParams(dsn string) (pgDumpConn, error) {
 	// Read ssl params from the query string ourselves, and strip it before
 	// pgconn.ParseConfig — otherwise pgconn eagerly loads the sslrootcert file

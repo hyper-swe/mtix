@@ -362,14 +362,19 @@ func TestCascadeCancel_RecomputesEachAncestorOnceDeepestFirst(t *testing.T) {
 	assert.Less(t, pos["PROJ-1.1"], pos["PROJ-1"], "the root is recomputed before its parent")
 }
 
-// TestCascadeCancel_FailureMidCascade_RollsBackWholeCancel: the unblock and
-// the progress recompute of the descendants run in the cancel's own
-// transaction, so a failure in either leaves nothing cancelled.
+// TestCascadeCancel_FailureMidCascade_RollsBackWholeCancel: the descendant
+// update, the unblock and the progress recompute of the descendants run in
+// the cancel's own transaction, so a failure in any of them leaves nothing
+// cancelled.
 func TestCascadeCancel_FailureMidCascade_RollsBackWholeCancel(t *testing.T) {
 	tests := []struct {
 		name    string
 		trigger string // constant test DDL that aborts one cascade step
 	}{
+		{"cancelling a descendant fails", `CREATE TRIGGER test_fail_step
+			BEFORE UPDATE OF status ON nodes
+			WHEN OLD.id = 'PROJ-1.1' AND NEW.status = 'cancelled'
+			BEGIN SELECT RAISE(ABORT, 'injected failure'); END`},
 		{"unblock of a descendant's dependent fails", `CREATE TRIGGER test_fail_step
 			BEFORE UPDATE OF status ON nodes
 			WHEN OLD.id = 'PROJ-2' AND OLD.status = 'blocked'
@@ -401,6 +406,37 @@ func TestCascadeCancel_FailureMidCascade_RollsBackWholeCancel(t *testing.T) {
 			assert.Equal(t, model.StatusBlocked, statusOf(t, s, ccOutside), "dependent rolled back")
 		})
 	}
+}
+
+// TestCascadeCancel_SoftDeletedDescendant_LeftUntouched: the cascade skips a
+// soft-deleted descendant (deleted_at IS NULL guard). It is not cancelled,
+// so its dependent is not released and its parent is not recomputed on its
+// account, and undeleting it brings it back with the status it had.
+func TestCascadeCancel_SoftDeletedDescendant_LeftUntouched(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedCascadeNodes(t, s,
+		ccNode(ccRoot, model.StatusOpen), ccNode(ccChild, model.StatusOpen),
+		ccNode(ccGrandchild, model.StatusOpen), ccNode(ccChild2, model.StatusOpen),
+		ccNode(ccOutside, model.StatusOpen))
+	addBlocker(ctx, t, s, ccGrandchild, ccOutside, cascadeTestTime)
+	require.NoError(t, s.DeleteNode(ctx, ccGrandchild, false, "pm-1"))
+	writes := recordProgressWrites(t, s)
+
+	require.NoError(t, s.CancelNode(ctx, ccRoot, "feature dropped", "pm-1", true))
+
+	assert.Equal(t, []string{ccRoot}, writes(),
+		"only the root is recomputed: the deleted grandchild's parent has no cancelled child")
+	assert.Equal(t, model.StatusBlocked, statusOf(t, s, ccOutside),
+		"the deleted grandchild's dependent is not released by the cascade")
+	assert.Equal(t, model.StatusCancelled, statusOf(t, s, ccChild))
+	assert.Equal(t, model.StatusCancelled, statusOf(t, s, ccChild2))
+
+	require.NoError(t, s.UndeleteNode(ctx, ccGrandchild))
+	got, err := s.GetNode(ctx, ccGrandchild)
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusOpen, got.Status, "the deleted grandchild keeps its status")
+	assert.Nil(t, got.ClosedAt, "the deleted grandchild was never closed")
 }
 
 // TestCascadeCancel_WithDescendants_EmitsNoPerDescendantEvents pins the

@@ -159,7 +159,9 @@ type cancelledNode struct {
 // cancelled (FR-3.8, MTIX-95.21), as a single-node cancel of each would. A
 // dependent blocked by several descendants therefore sees all of them
 // cancelled, and a dependent inside the subtree is cancelled by then and
-// stays so (autoUnblockNode restores only blocked nodes).
+// stays so (autoUnblockNode restores only blocked nodes). A failure at any
+// step, including the descendant update itself, rolls back the whole cancel
+// (TestCascadeCancel_FailureMidCascade_RollsBackWholeCancel).
 //
 // Sync (0.5.x): the cascade emits no per-descendant sync events (ADR-006
 // D10; per-descendant cancel events are OD-2, for v2). Other replicas

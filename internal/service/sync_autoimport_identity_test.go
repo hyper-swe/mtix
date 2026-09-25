@@ -197,6 +197,20 @@ func TestCompare_PendingImportOrOtherUID_NeverInSync(t *testing.T) {
 		assert.False(t, report.InSync)
 		assert.Equal(t, []string{"PROJ-2"}, report.DifferentUID)
 	})
+	t.Run("board without uids", func(t *testing.T) {
+		f := newGuardFixture(t)
+		board := f.teammateBoard(t, func(d *sqlite.ExportData) {
+			for i := range d.Nodes {
+				d.Nodes[i].UID = ""
+			}
+		})
+		f.pull(t, board)
+		writeStoredHash(t, filepath.Dir(f.mtixDir), hashBytes(board))
+		report, err := f.svc.Compare(context.Background(), f.mtixDir)
+		require.NoError(t, err)
+		assert.Empty(t, report.DifferentUID, "a node without a uid carries no other uid")
+		assert.True(t, report.InSync)
+	})
 	t.Run("in sync", func(t *testing.T) {
 		f := newGuardFixture(t)
 		report, err := f.svc.Compare(context.Background(), f.mtixDir)

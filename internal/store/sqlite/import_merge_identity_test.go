@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -81,6 +82,11 @@ func setUpdatedAt(t *testing.T, s *sqlite.Store, id string, at time.Time) {
 // the content hash matches the merged content.
 func TestImportReconcile_MergeOfStaleCopy_KeepsFieldTheCopyBlanks(t *testing.T) {
 	later := sameIDTime.Add(time.Hour)
+	retitle := func(t *testing.T, s *sqlite.Store) {
+		title := "Retitled by the teammate"
+		require.NoError(t, s.UpdateNode(context.Background(), "REC-1", &store.NodeUpdate{Title: &title}))
+		setUpdatedAt(t, s, "REC-1", sameIDTime.Add(30*time.Minute))
+	}
 	describe := func(t *testing.T, s *sqlite.Store) {
 		d := "Local description"
 		require.NoError(t, s.UpdateNode(context.Background(), "REC-1", &store.NodeUpdate{Description: &d}))
@@ -112,12 +118,35 @@ func TestImportReconcile_MergeOfStaleCopy_KeepsFieldTheCopyBlanks(t *testing.T) 
 			assert.Equal(t, model.StatusDone, n.Status, "the status the kept closed time belongs to stays")
 			assert.NotNil(t, n.ClosedAt)
 		}},
+		{"older copy leaves only the closed time empty", func(t *testing.T, s *sqlite.Store) {
+			_, err := s.WriteDB().ExecContext(context.Background(),
+				`UPDATE nodes SET status = 'done', closed_at = ?, progress = 1 WHERE id = 'REC-1'`,
+				later.Format(time.RFC3339))
+			require.NoError(t, err)
+			setUpdatedAt(t, s, "REC-1", later)
+		}, retitle, false, func(t *testing.T, n *model.Node) {
+			assert.Equal(t, "Retitled by the teammate", n.Title)
+			assert.Equal(t, model.StatusDone, n.Status, "the status stays with the kept closed time")
+			assert.NotNil(t, n.ClosedAt)
+		}},
+		{"stale copy defers a task claimed locally", func(t *testing.T, s *sqlite.Store) {
+			require.NoError(t, s.ClaimNode(context.Background(), "REC-1", "agent-a"))
+		}, func(t *testing.T, s *sqlite.Store) {
+			until := later.Add(48 * time.Hour)
+			require.NoError(t, s.DeferNode(context.Background(), "REC-1", &until, "later", "agent-b"))
+			retitle(t, s)
+		}, false, func(t *testing.T, n *model.Node) {
+			assert.Equal(t, "Retitled by the teammate", n.Title)
+			assert.Equal(t, model.StatusInProgress, n.Status, "the local status stays with the kept claim")
+			assert.Equal(t, "agent-a", n.Assignee)
+			assert.Nil(t, n.DeferUntil, "the copy's wake time does not join the local status")
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			local, teammate := newTestStore(t), newTestStore(t)
-			uid := newUID(t)
+			uid := taskUID(t)
 			createPlainTask(t, local, "REC-1", 1, uid, sameIDTime)
 			createPlainTask(t, teammate, "REC-1", 1, uid, sameIDTime)
 			if tt.teammate != nil {
@@ -144,7 +173,7 @@ func TestImportReconcile_MergeOfStaleCopy_KeepsFieldTheCopyBlanks(t *testing.T) 
 func TestImportReconcile_MergeOfCurrentCopy_AppliesItsClear(t *testing.T) {
 	ctx := context.Background()
 	local, teammate := newTestStore(t), newTestStore(t)
-	uid := newUID(t)
+	uid := taskUID(t)
 	createSameIDTask(t, local, "REC-1", "", 1, uid, "Shared task")
 	createSameIDTask(t, teammate, "REC-1", "", 1, uid, "Shared task")
 	cleared := ""
@@ -165,7 +194,7 @@ func TestImportReconcile_MergeOfCurrentCopy_AppliesItsClear(t *testing.T) {
 func TestImportReconcile_LocalUIDUnderAnotherID_MovesWithoutConfirm(t *testing.T) {
 	ctx := context.Background()
 	local, teammate := newTestStore(t), newTestStore(t)
-	shared, moved, child := newUID(t), newUID(t), newUID(t)
+	shared, moved, child := taskUID(t), taskUID(t), taskUID(t)
 	for _, s := range []*sqlite.Store{local, teammate} {
 		createSameIDTask(t, s, "REC-1", "", 1, shared, "Shared task")
 	}
@@ -174,7 +203,7 @@ func TestImportReconcile_LocalUIDUnderAnotherID_MovesWithoutConfirm(t *testing.T
 	require.NoError(t, local.AddDependency(ctx, &model.Dependency{
 		FromID: "REC-1", ToID: "REC-2", DepType: model.DepTypeBlocks, CreatedAt: sameIDTime,
 	}))
-	theirs := createSameIDTask(t, teammate, "REC-2", "", 2, newUID(t), "Teammate task")
+	theirs := createSameIDTask(t, teammate, "REC-2", "", 2, taskUID(t), "Teammate task")
 	createSameIDTask(t, teammate, "REC-3", "", 3, moved, "Moved task")
 	createSameIDTask(t, teammate, "REC-3.1", "REC-3", 1, child, "Its subtask")
 	require.NoError(t, teammate.AddDependency(ctx, &model.Dependency{
@@ -209,7 +238,7 @@ func TestImportReconcile_LocalUIDUnderAnotherID_MovesWithoutConfirm(t *testing.T
 func TestImportReconcile_UIDsSwappedBetweenIDs_MovesBoth(t *testing.T) {
 	ctx := context.Background()
 	local, teammate := newTestStore(t), newTestStore(t)
-	a, b := newUID(t), newUID(t)
+	a, b := taskUID(t), taskUID(t)
 	createSameIDTask(t, local, "REC-1", "", 1, a, "Task A")
 	createSameIDTask(t, local, "REC-2", "", 2, b, "Task B")
 	createSameIDTask(t, teammate, "REC-1", "", 1, b, "Task B")
@@ -224,32 +253,50 @@ func TestImportReconcile_UIDsSwappedBetweenIDs_MovesBoth(t *testing.T) {
 	}
 }
 
-// TestSameTaskAcrossBackfilledUIDs verifies the same id with the same
-// creation time is the same task although the uids differ (each clone
-// minted its own uid when it upgraded from before uids were shared): a
-// replace loses nothing, a merge needs no renumbering and adopts the
-// file's uid. A different creation time, or, when one is missing, a
-// different title, is a different task.
-func TestSameTaskAcrossBackfilledUIDs(t *testing.T) {
+// TestDiffReplace_SameIDOtherUID_ClassifiesByIdentity verifies when two
+// nodes under one id with different uids are one task: only with the same
+// creation time and a uid that was not minted when its task was created (a
+// uid a clone assigned when it upgraded from before uids were shared, or
+// one that is not a UUIDv7). Two tasks two clones created in the same
+// second, both uids minted then, are different tasks (MTIX-95.31.4).
+func TestDiffReplace_SameIDOtherUID_ClassifiesByIdentity(t *testing.T) {
+	minted := func(offset time.Duration) func(t *testing.T) string {
+		return func(t *testing.T) string { return uidMintedAt(t, sameIDTime.Add(offset)) }
+	}
+	notUUID := func(*testing.T) string { return "01J9NOTAUUIDV70000000000001" }
+	v4AtCreation := func(t *testing.T) string { // creation time in its first bits, but version 4
+		u := uuid.MustParse(taskUID(t))
+		u[6] = u[6]&0x0f | 0x40
+		return u.String()
+	}
 	tests := []struct {
 		name          string
+		localUID      func(t *testing.T) string
+		fileUID       func(t *testing.T) string
 		fileCreatedAt string // "" keeps the local creation time
-		fileTitle     string
 		different     bool
 	}{
-		{"same creation time", "", "Shared task", false},
-		{"same creation time, retitled", "", "Retitled", false},
-		{"different creation time", "2026-09-24T09:00:00Z", "Shared task", true},
-		{"no creation time, same title", "none", "Shared task", false},
-		{"no creation time, other title", "none", "Retitled", true},
+		{"both minted at creation in the same second", taskUID, taskUID, "", true},
+		{"file uid backfilled", taskUID, backfilledUID, "", false},
+		{"local uid backfilled", backfilledUID, taskUID, "", false},
+		{"both backfilled", backfilledUID, backfilledUID, "", false},
+		{"file uid not a UUID", taskUID, notUUID, "", false},
+		{"file uid a UUIDv4 with the creation time in its first bits", taskUID, v4AtCreation, "", false},
+		{"backfilled uid, other creation time", taskUID, backfilledUID, "2026-09-24T09:00:00Z", true},
+		{"minted at creation, other creation times", taskUID, minted(time.Hour), "2026-09-24T09:00:00Z", true},
+		{"minted 1 s before creation counts as at creation", taskUID, minted(-time.Second), "", true},
+		{"minted 2 s after creation counts as at creation", taskUID, minted(2 * time.Second), "", true},
+		{"minted 1.1 s before creation is backfilled", taskUID, minted(-1100 * time.Millisecond), "", false},
+		{"minted 2.1 s after creation is backfilled", taskUID, minted(2100 * time.Millisecond), "", false},
+		{"file without a creation time", taskUID, backfilledUID, "none", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			local := newTestStore(t)
-			createSameIDTask(t, local, "REC-1", "", 1, newUID(t), "Shared task")
+			createSameIDTask(t, local, "REC-1", "", 1, tt.localUID(t), "Local title")
 			localData := exportOf(t, local)
 			file := exportOf(t, local)
-			file.Nodes[0].UID, file.Nodes[0].Title = newUID(t), tt.fileTitle
+			file.Nodes[0].UID, file.Nodes[0].Title = tt.fileUID(t), "File title"
 			switch tt.fileCreatedAt {
 			case "":
 			case "none":
@@ -266,14 +313,41 @@ func TestSameTaskAcrossBackfilledUIDs(t *testing.T) {
 	}
 }
 
+// TestImportReconcile_SameSecondCreates_RenumberedOnlyWithConfirm verifies
+// the S0 case: two clones create REC-1 in the same second (both uids minted
+// then); the merge treats them as different tasks and renumbers the local
+// one only with confirmation.
+func TestImportReconcile_SameSecondCreates_RenumberedOnlyWithConfirm(t *testing.T) {
+	ctx := context.Background()
+	local, teammate := newTestStore(t), newTestStore(t)
+	mine := createSameIDTask(t, local, "REC-1", "", 1, taskUID(t), "Local task")
+	theirs := createSameIDTask(t, teammate, "REC-1", "", 1, taskUID(t), "Teammate task")
+	before := storeSnapshotJSON(t, local)
+
+	report, _, err := local.ImportReconcile(ctx, exportOf(t, teammate), sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge})
+	require.ErrorIs(t, err, sqlite.ErrImportConfirmationRequired)
+	assert.Equal(t, []sqlite.ImportRemapEntry{{UID: mine, OldPath: "REC-1", NewPath: "REC-2"}}, report.LocalRenumbers)
+	assert.Equal(t, before, storeSnapshotJSON(t, local))
+
+	_, _, err = local.ImportReconcile(ctx, exportOf(t, teammate), sqlite.ImportReconcileOptions{
+		Mode: sqlite.ImportModeMerge, Confirm: true,
+	})
+	require.NoError(t, err)
+	for uid, want := range map[string]string{mine: "REC-2", theirs: "REC-1"} {
+		path, err := local.ResolveDisplayPathByUID(ctx, uid)
+		require.NoError(t, err)
+		assert.Equal(t, want, path)
+	}
+}
+
 // TestImportReconcile_BackfilledUIDs_MergeAdoptsFileUID verifies the merge
 // of a board whose shared tasks carry other uids with the same creation
 // times renumbers nothing and adopts the file's uids, content unchanged.
 func TestImportReconcile_BackfilledUIDs_MergeAdoptsFileUID(t *testing.T) {
 	ctx := context.Background()
 	local, teammate := newTestStore(t), newTestStore(t)
-	createSameIDTask(t, local, "REC-1", "", 1, newUID(t), "Shared task")
-	fileUID := createSameIDTask(t, teammate, "REC-1", "", 1, newUID(t), "Shared task")
+	createSameIDTask(t, local, "REC-1", "", 1, backfilledUID(t), "Shared task")
+	fileUID := createSameIDTask(t, teammate, "REC-1", "", 1, backfilledUID(t), "Shared task")
 
 	report := mergeFile(t, local, exportOf(t, teammate))
 	assert.Empty(t, report.LocalRenumbers)
@@ -289,14 +363,14 @@ func TestImportReconcile_BackfilledUIDs_MergeAdoptsFileUID(t *testing.T) {
 func TestImportReconcile_TwoLocalTasksRenumbered_GetDistinctNumbers(t *testing.T) {
 	ctx := context.Background()
 	local, teammate := newTestStore(t), newTestStore(t)
-	shared := newUID(t)
+	shared := taskUID(t)
 	for _, s := range []*sqlite.Store{local, teammate} {
 		createSameIDTask(t, s, "REC-1", "", 1, shared, "Shared task")
 	}
-	two := createSameIDTask(t, local, "REC-2", "", 2, newUID(t), "Local two")
-	three := createSameIDTask(t, local, "REC-3", "", 3, newUID(t), "Local three")
-	createSameIDTask(t, teammate, "REC-2", "", 2, newUID(t), "Their two")
-	createSameIDTask(t, teammate, "REC-3", "", 3, newUID(t), "Their three")
+	two := createSameIDTask(t, local, "REC-2", "", 2, taskUID(t), "Local two")
+	three := createSameIDTask(t, local, "REC-3", "", 3, taskUID(t), "Local three")
+	createSameIDTask(t, teammate, "REC-2", "", 2, taskUID(t), "Their two")
+	createSameIDTask(t, teammate, "REC-3", "", 3, taskUID(t), "Their three")
 
 	report, _, err := local.ImportReconcile(ctx, exportOf(t, teammate), sqlite.ImportReconcileOptions{
 		Mode: sqlite.ImportModeMerge, Confirm: true,
@@ -321,21 +395,21 @@ func TestImportReconcile_RenumberNumbering_PrefixAndSoftDeleted(t *testing.T) {
 		want  []string                            // old -> new of the renumbered local tasks
 	}{
 		{"siblings REC-2 and REC-20", func(t *testing.T, s *sqlite.Store) {
-			createSameIDTask(t, s, "REC-20", "", 20, newUID(t), "Local twenty")
+			createSameIDTask(t, s, "REC-20", "", 20, taskUID(t), "Local twenty")
 		}, []string{"REC-20"}, []string{"REC-2 -> REC-21", "REC-20 -> REC-22"}},
 		{"soft-deleted highest sibling", func(t *testing.T, s *sqlite.Store) {
-			createSameIDTask(t, s, "REC-5", "", 5, newUID(t), "Deleted five")
+			createSameIDTask(t, s, "REC-5", "", 5, taskUID(t), "Deleted five")
 			require.NoError(t, s.DeleteNode(context.Background(), "REC-5", false, "agent-local"))
 		}, nil, []string{"REC-2 -> REC-6"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			local, teammate := newTestStore(t), newTestStore(t)
-			createSameIDTask(t, local, "REC-2", "", 2, newUID(t), "Local two")
+			createSameIDTask(t, local, "REC-2", "", 2, taskUID(t), "Local two")
 			tt.local(t, local)
-			createSameIDTask(t, teammate, "REC-2", "", 2, newUID(t), "Their two")
+			createSameIDTask(t, teammate, "REC-2", "", 2, taskUID(t), "Their two")
 			for _, id := range tt.file {
-				createSameIDTask(t, teammate, id, "", 20, newUID(t), "Their "+id)
+				createSameIDTask(t, teammate, id, "", 20, taskUID(t), "Their "+id)
 			}
 
 			report, _, err := local.ImportReconcile(context.Background(), exportOf(t, teammate),
@@ -356,9 +430,9 @@ func TestImportReconcile_RenumberNumbering_PrefixAndSoftDeleted(t *testing.T) {
 func TestImport_MergeOverDifferentTaskSameContentHash_Refused(t *testing.T) {
 	ctx := context.Background()
 	local := newTestStore(t)
-	createSameIDTask(t, local, "REC-1", "", 1, newUID(t), "Same title")
+	createSameIDTask(t, local, "REC-1", "", 1, taskUID(t), "Same title")
 	file := exportOf(t, local)
-	file.Nodes[0].UID, file.Nodes[0].CreatedAt = newUID(t), "2026-09-24T09:00:00Z"
+	file.Nodes[0].UID, file.Nodes[0].CreatedAt = taskUID(t), "2026-09-24T09:00:00Z"
 	require.NoError(t, sqlite.RecomputeExportChecksum(file))
 
 	_, err := local.Import(ctx, file, sqlite.ImportModeMerge, false)
@@ -368,8 +442,8 @@ func TestImport_MergeOverDifferentTaskSameContentHash_Refused(t *testing.T) {
 // TestImportReconcile_BeforeWrite_RunsOnlyBeforeAWrite verifies the step a
 // caller runs before the import writes (mtix import --mode merge backs up
 // there) runs once when the import writes, never when it writes nothing
-// (confirmation awaited, a file that fails its checks), and that its error
-// stops the import.
+// (confirmation awaited, a file that fails its checks, a merge that would
+// change nothing), and that its error stops the import.
 func TestImportReconcile_BeforeWrite_RunsOnlyBeforeAWrite(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -379,19 +453,31 @@ func TestImportReconcile_BeforeWrite_RunsOnlyBeforeAWrite(t *testing.T) {
 		wantErr   error
 	}{
 		{"the import writes", nil, nil, 1, nil},
+		{"the merge would change nothing", func(d *sqlite.ExportData) {
+			d.Nodes[0].Title, d.Nodes[0].ContentHash = "Local title", "h-Local title"
+			require.NoError(t, sqlite.RecomputeExportChecksum(d))
+		}, nil, 0, nil},
 		{"confirmation awaited", func(d *sqlite.ExportData) {
 			d.Nodes[0].UID, d.Nodes[0].CreatedAt = "01a0d56f-0000-7000-8000-00000000f001", "2026-09-23T08:00:00Z"
 			require.NoError(t, sqlite.RecomputeExportChecksum(d))
 		}, nil, 0, sqlite.ErrImportConfirmationRequired},
 		{"the file fails its checks", func(d *sqlite.ExportData) { d.Checksum = "stale" }, nil, 0, model.ErrInvalidInput},
 		{"the step fails", nil, model.ErrConflict, 1, model.ErrConflict},
+		{"a new node whose type the file does not derive from depth", func(d *sqlite.ExportData) {
+			added := d.Nodes[0]
+			added.ID, added.Seq, added.UID = "REC-2", 2, taskUID(t)
+			added.NodeType = "not-derived" // the checksum covers it: the dry run must not change it
+			d.Nodes = append(d.Nodes, added)
+			d.NodeCount = len(d.Nodes)
+			require.NoError(t, sqlite.RecomputeExportChecksum(d))
+		}, nil, 1, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			local := newTestStore(t)
-			createSameIDTask(t, local, "REC-1", "", 1, newUID(t), "Local title")
+			createSameIDTask(t, local, "REC-1", "", 1, taskUID(t), "Local title")
 			file := exportOf(t, local)
-			file.Nodes[0].Title = "Retitled"
+			file.Nodes[0].Title, file.Nodes[0].ContentHash = "Retitled", "h-Retitled"
 			require.NoError(t, sqlite.RecomputeExportChecksum(file))
 			if tt.edit != nil {
 				tt.edit(file)
@@ -424,8 +510,8 @@ func TestImportReconcile_RenumberSkipsANumberWithNodesUnderIt(t *testing.T) {
 		file  []sqlite.TestExportNode
 	}{
 		{"a local node under the number", func(t *testing.T, s *sqlite.Store) {
-			createSameIDTask(t, s, "REC-5", "", 5, newUID(t), "Parent gone")
-			createSameIDTask(t, s, "REC-5.1", "REC-5", 1, newUID(t), "Left behind")
+			createSameIDTask(t, s, "REC-5", "", 5, taskUID(t), "Parent gone")
+			createSameIDTask(t, s, "REC-5.1", "REC-5", 1, taskUID(t), "Left behind")
 			_, err := s.WriteDB().ExecContext(context.Background(), `DELETE FROM nodes WHERE id = 'REC-5'`)
 			require.NoError(t, err)
 		}, nil},
@@ -437,13 +523,13 @@ func TestImportReconcile_RenumberSkipsANumberWithNodesUnderIt(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			local := newTestStore(t)
-			createSameIDTask(t, local, "REC-2", "", 2, newUID(t), "Local two")
-			createSameIDTask(t, local, "REC-4", "", 4, newUID(t), "Local four")
+			createSameIDTask(t, local, "REC-2", "", 2, taskUID(t), "Local two")
+			createSameIDTask(t, local, "REC-4", "", 4, taskUID(t), "Local four")
 			if tt.local != nil {
 				tt.local(t, local)
 			}
 			nodes := append([]sqlite.TestExportNode{{ID: "REC-2", Project: "REC", Seq: 2, Title: "Their two",
-				ContentHash: "h-t", UID: newUID(t), CreatedAt: sameIDTime, UpdatedAt: sameIDTime}}, tt.file...)
+				ContentHash: "h-t", UID: taskUID(t), CreatedAt: sameIDTime, UpdatedAt: sameIDTime}}, tt.file...)
 			report, _, err := local.ImportReconcile(context.Background(), reconcileExport(t, "REC", nodes...),
 				sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge})
 			require.ErrorIs(t, err, sqlite.ErrImportConfirmationRequired)
@@ -455,11 +541,11 @@ func TestImportReconcile_RenumberSkipsANumberWithNodesUnderIt(t *testing.T) {
 
 // TestImportReconcile_MoveOntoAKeptTask_RejectedWritesNothing verifies a
 // task the file moves onto an id a local task the merge keeps also holds
-// (the same creation time under another uid) is rejected, writing nothing.
+// (the same task under a backfilled uid) is rejected, writing nothing.
 func TestImportReconcile_MoveOntoAKeptTask_RejectedWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	local := newTestStore(t)
-	kept, moved := newUID(t), newUID(t)
+	kept, moved := backfilledUID(t), taskUID(t)
 	createPlainTask(t, local, "REC-1", 1, kept, sameIDTime)
 	createPlainTask(t, local, "REC-2", 2, moved, sameIDTime)
 	before := storeSnapshotJSON(t, local)
@@ -479,15 +565,15 @@ func TestImportReconcile_MoveOntoAKeptTask_RejectedWritesNothing(t *testing.T) {
 func TestImportReconcile_NodeWhoseParentIsGone_KeepsItsID(t *testing.T) {
 	ctx := context.Background()
 	local := newTestStore(t)
-	shared := newUID(t)
+	shared := taskUID(t)
 	createSameIDTask(t, local, "REC-1", "", 1, shared, "Shared task")
-	createSameIDTask(t, local, "REC-5", "", 5, newUID(t), "Parent gone")
-	left := createSameIDTask(t, local, "REC-5.1", "REC-5", 1, newUID(t), "Left behind")
+	createSameIDTask(t, local, "REC-5", "", 5, taskUID(t), "Parent gone")
+	left := createSameIDTask(t, local, "REC-5.1", "REC-5", 1, taskUID(t), "Left behind")
 	_, err := local.WriteDB().ExecContext(ctx, `DELETE FROM nodes WHERE id = 'REC-5'`)
 	require.NoError(t, err)
 	file := reconcileExport(t, "REC", sqlite.TestExportNode{ID: "REC-1", Project: "REC", Seq: 1,
-		Title: "Shared task", ContentHash: "h", UID: shared, CreatedAt: createdAtFor("Shared task"),
-		UpdatedAt: createdAtFor("Shared task")})
+		Title: "Shared task", ContentHash: "h", UID: shared, CreatedAt: sameIDTime,
+		UpdatedAt: sameIDTime})
 
 	report := mergeFile(t, local, file)
 	assert.Empty(t, report.Moved)
@@ -495,4 +581,100 @@ func TestImportReconcile_NodeWhoseParentIsGone_KeepsItsID(t *testing.T) {
 	path, err := local.ResolveDisplayPathByUID(ctx, left)
 	require.NoError(t, err)
 	assert.Equal(t, "REC-5.1", path)
+}
+
+// TestImportReconcile_MergeOfUIDlessBoard_KeepsLocalUIDs verifies a merge of
+// a board without uids (written by mtix 0.3.x) whose content is unchanged
+// never writes an empty uid over the local ones.
+func TestImportReconcile_MergeOfUIDlessBoard_KeepsLocalUIDs(t *testing.T) {
+	ctx := context.Background()
+	local := newTestStore(t)
+	uid := createSameIDTask(t, local, "REC-1", "", 1, taskUID(t), "Shared task")
+	file := exportOf(t, local)
+	file.Nodes[0].UID = ""
+	require.NoError(t, sqlite.RecomputeExportChecksum(file))
+
+	mergeFile(t, local, file)
+	node, err := local.GetNode(ctx, "REC-1")
+	require.NoError(t, err)
+	assert.Equal(t, uid, node.UID, "an empty uid never replaces a local one")
+}
+
+// TestImportReconcile_ProvisionalAndMoveUnderOneParent_TakeDistinctNumbers
+// verifies an incoming provisional node never takes the number a local task
+// moves to under the same parent.
+func TestImportReconcile_ProvisionalAndMoveUnderOneParent_TakeDistinctNumbers(t *testing.T) {
+	ctx := context.Background()
+	local := newTestStore(t)
+	shared, moved, prov := taskUID(t), taskUID(t), taskUID(t)
+	createSameIDTask(t, local, "REC-1", "", 1, shared, "Shared task")
+	createSameIDTask(t, local, "REC-1.1", "REC-1", 1, moved, "Moved child")
+	data := reconcileExport(t, "REC",
+		sqlite.TestExportNode{ID: "REC-1", Project: "REC", Seq: 1, Title: "Shared task",
+			ContentHash: "h-Shared task", UID: shared, CreatedAt: sameIDTime, UpdatedAt: sameIDTime},
+		sqlite.TestExportNode{ID: "REC-1.2", ParentID: "REC-1", Project: "REC", Depth: 1, Seq: 2,
+			Title: "Moved child", ContentHash: "h-Moved child", UID: moved, CreatedAt: sameIDTime, UpdatedAt: sameIDTime},
+		sqlite.TestExportNode{ID: provisionalPath(t, "REC-1", prov), ParentID: "REC-1", Project: "REC",
+			Depth: 1, Seq: 1, Title: "Provisional child", ContentHash: "h-pc", UID: prov,
+			CreatedAt: sameIDTime, UpdatedAt: sameIDTime},
+	)
+
+	report, _, err := local.ImportReconcile(ctx, data, sqlite.ImportReconcileOptions{
+		Mode: sqlite.ImportModeMerge, Confirm: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []sqlite.ImportRemapEntry{{UID: moved, OldPath: "REC-1.1", NewPath: "REC-1.2"}}, report.Moved)
+	for uid, want := range map[string]string{moved: "REC-1.2", prov: "REC-1.3"} {
+		path, err := local.ResolveDisplayPathByUID(ctx, uid)
+		require.NoError(t, err)
+		assert.Equal(t, want, path)
+	}
+}
+
+// TestImportReconcile_MovedParentsChildCollides_RenumberedAfterSiblings
+// verifies a local child of a moved task, which collides with a different
+// task under the parent's new id, is renumbered after every sibling the
+// moved parent brings (REC-3.3, not its sibling's REC-3.2).
+func TestImportReconcile_MovedParentsChildCollides_RenumberedAfterSiblings(t *testing.T) {
+	ctx := context.Background()
+	local, teammate := newTestStore(t), newTestStore(t)
+	parent, first, second := taskUID(t), taskUID(t), taskUID(t)
+	createSameIDTask(t, local, "REC-2", "", 2, parent, "Moved parent")
+	createSameIDTask(t, local, "REC-2.1", "REC-2", 1, first, "Local first child")
+	createSameIDTask(t, local, "REC-2.2", "REC-2", 2, second, "Local second child")
+	createSameIDTask(t, teammate, "REC-2", "", 2, taskUID(t), "Teammate task")
+	createSameIDTask(t, teammate, "REC-3", "", 3, parent, "Moved parent")
+	createSameIDTask(t, teammate, "REC-3.1", "REC-3", 1, taskUID(t), "Teammate child")
+
+	report, _, err := local.ImportReconcile(ctx, exportOf(t, teammate), sqlite.ImportReconcileOptions{
+		Mode: sqlite.ImportModeMerge, Confirm: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []sqlite.ImportRemapEntry{{UID: first, OldPath: "REC-2.1", NewPath: "REC-3.3"}}, report.LocalRenumbers)
+	assert.Equal(t, []sqlite.ImportRemapEntry{
+		{UID: parent, OldPath: "REC-2", NewPath: "REC-3"},
+		{UID: second, OldPath: "REC-2.2", NewPath: "REC-3.2"},
+	}, report.Moved)
+}
+
+// TestDiffReplace_FileGivesIDToAnotherLocalTask_LocalTaskIsRemoved verifies
+// a local task whose id the file gives to another local task (which the
+// file moved there), and which the file lacks, is a whole-node loss, not a
+// different task under the id.
+func TestDiffReplace_FileGivesIDToAnotherLocalTask_LocalTaskIsRemoved(t *testing.T) {
+	local := newTestStore(t)
+	createSameIDTask(t, local, "REC-1", "", 1, taskUID(t), "Dropped task")
+	kept := createSameIDTask(t, local, "REC-2", "", 2, taskUID(t), "Kept task")
+	file := exportOf(t, local)
+	file.Nodes = file.Nodes[1:]
+	file.Nodes[0].ID, file.Nodes[0].Seq = "REC-1", 1
+	require.Equal(t, kept, file.Nodes[0].UID)
+
+	diff, err := sqlite.DiffReplace(exportOf(t, local), file)
+	require.NoError(t, err)
+	loss := lossOf(diff, "REC-1")
+	require.NotNil(t, loss)
+	assert.True(t, loss.WholeNode)
+	assert.False(t, loss.DifferentTask)
+	assert.Nil(t, lossOf(diff, "REC-2"), "the kept task only moved")
 }

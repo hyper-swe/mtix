@@ -38,10 +38,12 @@ func rejectConflicts(report *ImportReconcileReport) error {
 // prepareWrite readies a reconciled import for writing: it recomputes the
 // checksum over content the reconcile rewrote (ADR-003 §6) and, when the
 // caller set BeforeWrite, runs every check Import makes first (the file's
-// count, checksum and times, and the zero-node guard) and then BeforeWrite
-// (MTIX-95.31.4), so a file that would be refused costs no backup.
+// count, checksum and times, and the zero-node guard), then a dry run of
+// the import (countImportChanges), and runs BeforeWrite only when the
+// import will change something (MTIX-95.31.4). So a file that would be
+// refused, and an import that changes nothing, cost no backup.
 func (s *Store) prepareWrite(ctx context.Context, data *ExportData, opts ImportReconcileOptions,
-	report *ImportReconcileReport) error {
+	report *ImportReconcileReport, moves []localRenumber) error {
 	if len(report.Remaps) > 0 || len(report.Renamed) > 0 {
 		if err := RecomputeExportChecksum(data); err != nil {
 			return fmt.Errorf("recompute checksum after reconcile: %w", err)
@@ -54,6 +56,10 @@ func (s *Store) prepareWrite(ctx context.Context, data *ExportData, opts ImportR
 		return err
 	}
 	if err := s.refuseEmptyImport(ctx, data, opts.Force); err != nil {
+		return err
+	}
+	changes, err := s.countImportChanges(ctx, data, opts.Mode, moves)
+	if err != nil || changes == 0 {
 		return err
 	}
 	if err := opts.BeforeWrite(); err != nil {

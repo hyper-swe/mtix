@@ -15,10 +15,10 @@ package sqlite_test
 import (
 	"context"
 	"encoding/json"
-	"hash/fnv"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -31,10 +31,9 @@ import (
 var sameIDTime = time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
 
 // createSameIDTask creates task id, number seq, with the given uid and
-// title in s, as a root when parent is empty and as parent's child
-// otherwise, and returns the uid. Its creation time follows from its title
-// (createdAtFor), so tasks created on two stores with one title are the
-// same task, and tasks with different titles are not (MTIX-95.31.4).
+// title in s at sameIDTime, as a root when parent is empty and as parent's
+// child otherwise, and returns the uid. Tasks two stores create this way
+// share a creation second; their uids tell them apart (MTIX-95.31.4).
 func createSameIDTask(t *testing.T, s *sqlite.Store, id, parent string, seq int, uid, title string) string {
 	t.Helper()
 	depth := 0
@@ -45,17 +44,35 @@ func createSameIDTask(t *testing.T, s *sqlite.Store, id, parent string, seq int,
 		ID: id, ParentID: parent, Project: "REC", Depth: depth, Seq: seq, Title: title,
 		Description: "Description of " + title, Status: model.StatusOpen,
 		Priority: model.PriorityMedium, Weight: 1.0, NodeType: model.NodeTypeForDepth(depth),
-		ContentHash: "h-" + title, UID: uid, CreatedAt: createdAtFor(title), UpdatedAt: createdAtFor(title),
+		ContentHash: "h-" + title, UID: uid, CreatedAt: sameIDTime, UpdatedAt: sameIDTime,
 	}))
 	return uid
 }
 
-// createdAtFor returns a creation time derived from title, within a day
-// after sameIDTime.
-func createdAtFor(title string) time.Time {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(title))
-	return sameIDTime.Add(time.Duration(h.Sum32()%86400) * time.Second)
+// uidMintedAt returns a UUIDv7 whose embedded time is at: the uid CreateNode
+// mints for a task created at that time.
+func uidMintedAt(t *testing.T, at time.Time) string {
+	t.Helper()
+	u, err := uuid.NewV7()
+	require.NoError(t, err)
+	ms := uint64(at.UnixMilli()) //nolint:gosec // a positive test time
+	for i := 0; i < 6; i++ {
+		u[i] = byte(ms >> (40 - 8*i))
+	}
+	return u.String()
+}
+
+// taskUID returns the uid minted when a task is created at sameIDTime.
+func taskUID(t *testing.T) string {
+	t.Helper()
+	return uidMintedAt(t, sameIDTime)
+}
+
+// backfilledUID returns a uid minted long after sameIDTime, as BackfillUIDs
+// mints one for a task when a clone upgrades from before uids were shared.
+func backfilledUID(t *testing.T) string {
+	t.Helper()
+	return uidMintedAt(t, sameIDTime.Add(30*24*time.Hour))
 }
 
 // storeSnapshotJSON returns the store's export without its export time.
@@ -80,20 +97,20 @@ func sameIDStores(t *testing.T) (*sqlite.Store, func() *sqlite.ExportData, strin
 	t.Helper()
 	ctx := context.Background()
 	local, teammate := newTestStore(t), newTestStore(t)
-	shared := newUID(t)
+	shared := taskUID(t)
 	createSameIDTask(t, local, "REC-1", "", 1, shared, "Shared task")
 	createSameIDTask(t, teammate, "REC-1", "", 1, shared, "Shared task")
-	mine := createSameIDTask(t, local, "REC-2", "", 2, newUID(t), "Local task")
-	child := createSameIDTask(t, local, "REC-2.1", "REC-2", 1, newUID(t), "Local subtask")
+	mine := createSameIDTask(t, local, "REC-2", "", 2, taskUID(t), "Local task")
+	child := createSameIDTask(t, local, "REC-2.1", "REC-2", 1, taskUID(t), "Local subtask")
 	require.NoError(t, local.SetAnnotations(ctx, "REC-2", []model.Annotation{{
 		ID: "01J9SAMEID0000000000000001", Author: "reviewer", Text: "PASS", CreatedAt: sameIDTime,
 	}}))
 	require.NoError(t, local.AddDependency(ctx, &model.Dependency{
 		FromID: "REC-1", ToID: "REC-2.1", DepType: model.DepTypeBlocks, CreatedAt: sameIDTime,
 	}))
-	createSameIDTask(t, teammate, "REC-2", "", 2, newUID(t), "Teammate task")
-	createSameIDTask(t, teammate, "REC-2.1", "REC-2", 1, newUID(t), "Teammate subtask")
-	createSameIDTask(t, teammate, "REC-5", "", 5, newUID(t), "Teammate later task")
+	createSameIDTask(t, teammate, "REC-2", "", 2, taskUID(t), "Teammate task")
+	createSameIDTask(t, teammate, "REC-2.1", "REC-2", 1, taskUID(t), "Teammate subtask")
+	createSameIDTask(t, teammate, "REC-5", "", 5, taskUID(t), "Teammate later task")
 	file := func() *sqlite.ExportData {
 		data, err := teammate.Export(ctx, "", "")
 		require.NoError(t, err)
@@ -172,15 +189,15 @@ func TestImportReconcile_SameIDDifferentUID_RenumbersLocalSubtreeOnlyWithConfirm
 func TestImportReconcile_SameIDDifferentUID_ChildAndSoftDeleted(t *testing.T) {
 	ctx := context.Background()
 	local, teammate := newTestStore(t), newTestStore(t)
-	shared := newUID(t)
+	shared := taskUID(t)
 	createSameIDTask(t, local, "REC-1", "", 1, shared, "Shared task")
 	createSameIDTask(t, teammate, "REC-1", "", 1, shared, "Shared task")
-	localChild := createSameIDTask(t, local, "REC-1.1", "REC-1", 1, newUID(t), "Local child")
-	deleted := createSameIDTask(t, local, "REC-2", "", 2, newUID(t), "Deleted locally")
+	localChild := createSameIDTask(t, local, "REC-1.1", "REC-1", 1, taskUID(t), "Local child")
+	deleted := createSameIDTask(t, local, "REC-2", "", 2, taskUID(t), "Deleted locally")
 	require.NoError(t, local.DeleteNode(ctx, "REC-2", false, "agent-local"))
-	createSameIDTask(t, local, "REC-4", "", 4, newUID(t), "Local later task")
-	createSameIDTask(t, teammate, "REC-1.1", "REC-1", 1, newUID(t), "Teammate child")
-	createSameIDTask(t, teammate, "REC-2", "", 2, newUID(t), "Teammate REC-2")
+	createSameIDTask(t, local, "REC-4", "", 4, taskUID(t), "Local later task")
+	createSameIDTask(t, teammate, "REC-1.1", "REC-1", 1, taskUID(t), "Teammate child")
+	createSameIDTask(t, teammate, "REC-2", "", 2, taskUID(t), "Teammate REC-2")
 	data, err := teammate.Export(ctx, "", "")
 	require.NoError(t, err)
 
@@ -220,7 +237,7 @@ func TestImportReconcile_SameIDSameOrMissingUID_NoRenumber(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			local := newTestStore(t)
-			uid := createSameIDTask(t, local, "REC-1", "", 1, newUID(t), "Local title")
+			uid := createSameIDTask(t, local, "REC-1", "", 1, taskUID(t), "Local title")
 			data := reconcileExport(t, "REC", sqlite.TestExportNode{
 				ID: "REC-1", Project: "REC", Title: "Retitled", Seq: 1, ContentHash: "h-new",
 				UID: tt.fileUID(uid), CreatedAt: sameIDTime, UpdatedAt: sameIDTime.Add(time.Hour),
@@ -244,11 +261,11 @@ func TestImportReconcile_SameIDSameOrMissingUID_NoRenumber(t *testing.T) {
 func TestImport_MergeOverDifferentTask_RefusedWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	local := newTestStore(t)
-	createSameIDTask(t, local, "REC-1", "", 1, newUID(t), "Local title")
+	createSameIDTask(t, local, "REC-1", "", 1, taskUID(t), "Local title")
 	before := storeSnapshotJSON(t, local)
 	data := reconcileExport(t, "REC", sqlite.TestExportNode{
 		ID: "REC-1", Project: "REC", Title: "Another task", Seq: 1, ContentHash: "h-other",
-		UID: newUID(t), CreatedAt: sameIDTime, UpdatedAt: sameIDTime,
+		UID: taskUID(t), CreatedAt: sameIDTime, UpdatedAt: sameIDTime,
 	})
 
 	_, err := local.Import(ctx, data, sqlite.ImportModeMerge, false)
@@ -274,7 +291,7 @@ func TestDiffReplace_SameIDDifferentUID_ReportsDifferentTask(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			local := newTestStore(t)
-			uid := createSameIDTask(t, local, "REC-1", "", 1, newUID(t), "Local title")
+			uid := createSameIDTask(t, local, "REC-1", "", 1, taskUID(t), "Local title")
 			localData, err := local.Export(context.Background(), "", "")
 			require.NoError(t, err)
 			var file sqlite.ExportData
@@ -309,12 +326,12 @@ func TestDiffReplace_SameIDDifferentUID_ReportsDifferentTask(t *testing.T) {
 func TestImport_IfStoreUnchanged_WritesNothingAfterAChange(t *testing.T) {
 	ctx := context.Background()
 	local := newTestStore(t)
-	createSameIDTask(t, local, "REC-1", "", 1, newUID(t), "Local title")
+	createSameIDTask(t, local, "REC-1", "", 1, taskUID(t), "Local title")
 	checked, err := local.Export(ctx, "", "")
 	require.NoError(t, err)
 	file := reconcileExport(t, "REC", sqlite.TestExportNode{
 		ID: "REC-7", Project: "REC", Title: "From the file", Seq: 7, ContentHash: "h7",
-		UID: newUID(t), CreatedAt: sameIDTime, UpdatedAt: sameIDTime,
+		UID: taskUID(t), CreatedAt: sameIDTime, UpdatedAt: sameIDTime,
 	})
 
 	title := "Written after the check"
@@ -342,14 +359,14 @@ func TestImport_IfStoreUnchanged_WritesNothingAfterAChange(t *testing.T) {
 func TestImportReconcile_LocalRenumberAndProvisional_TakeDistinctNumbers(t *testing.T) {
 	ctx := context.Background()
 	local := newTestStore(t)
-	shared, provUID := newUID(t), newUID(t)
+	shared, provUID := taskUID(t), taskUID(t)
 	createSameIDTask(t, local, "REC-1", "", 1, shared, "Shared task")
-	mine := createSameIDTask(t, local, "REC-1.1", "REC-1", 1, newUID(t), "Local child")
+	mine := createSameIDTask(t, local, "REC-1.1", "REC-1", 1, taskUID(t), "Local child")
 	data := reconcileExport(t, "REC",
 		sqlite.TestExportNode{ID: "REC-1", Project: "REC", Seq: 1, Title: "Shared task",
 			ContentHash: "h-Shared task", UID: shared, CreatedAt: sameIDTime, UpdatedAt: sameIDTime},
 		sqlite.TestExportNode{ID: "REC-1.1", ParentID: "REC-1", Project: "REC", Depth: 1, Seq: 1,
-			Title: "Teammate child", ContentHash: "h-tc", UID: newUID(t), CreatedAt: sameIDTime, UpdatedAt: sameIDTime},
+			Title: "Teammate child", ContentHash: "h-tc", UID: taskUID(t), CreatedAt: sameIDTime, UpdatedAt: sameIDTime},
 		sqlite.TestExportNode{ID: provisionalPath(t, "REC-1", provUID), ParentID: "REC-1", Project: "REC",
 			Depth: 1, Seq: 1, Title: "Provisional child", ContentHash: "h-pc", UID: provUID,
 			CreatedAt: sameIDTime, UpdatedAt: sameIDTime},
@@ -375,8 +392,8 @@ func TestImportReconcile_LocalRenumberAndProvisional_TakeDistinctNumbers(t *test
 func TestImportReconcile_ReplaceMode_NoLocalRenumber(t *testing.T) {
 	ctx := context.Background()
 	local := newTestStore(t)
-	createSameIDTask(t, local, "REC-1", "", 1, newUID(t), "Local title")
-	theirs := newUID(t)
+	createSameIDTask(t, local, "REC-1", "", 1, taskUID(t), "Local title")
+	theirs := taskUID(t)
 	data := reconcileExport(t, "REC", sqlite.TestExportNode{
 		ID: "REC-1", Project: "REC", Title: "File title", Seq: 1, ContentHash: "h-file",
 		UID: theirs, CreatedAt: sameIDTime, UpdatedAt: sameIDTime,

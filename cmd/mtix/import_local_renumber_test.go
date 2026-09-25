@@ -136,3 +136,50 @@ func TestPrintSyncReport_PendingImportOrOtherUID_HeadlineSaysSo(t *testing.T) {
 		})
 	}
 }
+
+// TestRunImport_MergeChangesNothing_TakesNoBackup verifies a merge that
+// would change nothing (the same file again) takes no backup, so repeated
+// merges never rotate the automatic import's backups away.
+func TestRunImport_MergeChangesNothing_TakesNoBackup(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, runCreate("Local task", "", "epic", 3, "", "", "", "", ""))
+	path := writeOtherTaskImportFile(t)
+	require.NoError(t, runImport(path, importFlags{mode: "merge", confirm: true}))
+	require.Len(t, preSyncBackups(t), 1)
+
+	require.NoError(t, runImport(path, importFlags{mode: "merge", confirm: true}))
+	assert.Len(t, preSyncBackups(t), 1, "a merge that changes nothing takes no backup")
+}
+
+// TestRunImport_MergeMovesLocalTask_RemapFileRecordsTheMove verifies the
+// remap file records a local task the merge moves to the id the file holds
+// it under (another clone renumbered it).
+func TestRunImport_MergeMovesLocalTask_RemapFileRecordsTheMove(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, runCreate("Local task", "", "epic", 3, "", "", "", "", ""))
+	local, err := app.store.GetNode(t.Context(), "TEST-1")
+	require.NoError(t, err)
+	ctx := context.Background()
+	src, err := sqlite.New(filepath.Join(t.TempDir(), "src.db"), slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = src.Close() })
+	earlier := local.CreatedAt.Add(-time.Hour)
+	require.NoError(t, src.CreateNode(ctx, &model.Node{
+		ID: "TEST-1", Project: "TEST", Depth: 0, Seq: 1, Title: "Teammate task",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeEpic, ContentHash: "t1", UID: mustUID(t), CreatedAt: earlier, UpdatedAt: earlier,
+	}))
+	moved := *local
+	moved.ID, moved.Seq = "TEST-2", 2
+	require.NoError(t, src.CreateNode(ctx, &moved))
+	data, err := src.Export(ctx, "TEST", "test")
+	require.NoError(t, err)
+	raw, err := json.MarshalIndent(data, "", "  ")
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "board.json")
+	require.NoError(t, os.WriteFile(path, raw, 0o600))
+	remapPath := filepath.Join(t.TempDir(), "remap.json")
+
+	require.NoError(t, runImport(path, importFlags{mode: "merge", remapFile: remapPath}), "a move needs no --confirm")
+	assert.Equal(t, map[string]string{local.UID: "TEST-2"}, readRemapFile(t, remapPath))
+}

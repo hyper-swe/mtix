@@ -31,6 +31,7 @@ func TestApplyLocalRenumbers_StoreChangedAfterPlan_WritesNothing(t *testing.T) {
 		{"the id is free", localRenumber{uid: localUID, oldID: "REC-9", newID: "REC-10", seq: 10}},
 		{"the planned id is under another parent", localRenumber{uid: localUID,
 			oldID: "REC-1", newID: "REC-3.2", seq: 2}},
+		{"two nodes hold the uid", localRenumber{uid: localUID, oldID: "REC-1", newID: "REC-5", seq: 5}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -42,6 +43,15 @@ func TestApplyLocalRenumbers_StoreChangedAfterPlan_WritesNothing(t *testing.T) {
 				Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
 				NodeType: model.NodeTypeEpic, ContentHash: "h1", UID: localUID, CreatedAt: now, UpdatedAt: now,
 			}))
+			if tt.name == "two nodes hold the uid" {
+				require.NoError(t, s.CreateNode(ctx, &model.Node{
+					ID: "REC-2", Project: "REC", Depth: 0, Seq: 2, Title: "Same uid",
+					Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+					NodeType: model.NodeTypeEpic, ContentHash: "h2", CreatedAt: now, UpdatedAt: now,
+				}))
+				_, err := s.writeDB.ExecContext(ctx, `UPDATE nodes SET uid = ? WHERE id = 'REC-2'`, localUID)
+				require.NoError(t, err)
+			}
 			data, err := s.Export(ctx, "", "")
 			require.NoError(t, err)
 			before, err := json.Marshal(data.Nodes)

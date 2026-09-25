@@ -6,9 +6,12 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
@@ -24,8 +27,8 @@ type localRenumber struct {
 // localNode is what a merge import plans with for one local node, live or
 // soft-deleted (MTIX-95.31.4).
 type localNode struct {
-	id, uid, project, parentID, createdAt, title string
-	seq, finalSeq                                int
+	id, uid, project, parentID, createdAt string
+	seq, finalSeq                         int
 	// final is the node's id after the merge.
 	final string
 	// renumbered is true when the node, or an ancestor, moves off an id the
@@ -33,31 +36,51 @@ type localNode struct {
 	renumbered bool
 }
 
-// taskIdentity is what tells two tasks under one id apart: the uid, then
-// the creation time, then the title (MTIX-95.31.4).
-type taskIdentity struct{ uid, createdAt, title string }
+// taskIdentity is what tells two tasks under one id apart: the uid and the
+// creation time (MTIX-95.31.4).
+type taskIdentity struct{ uid, createdAt string }
 
 // differentTask reports whether the local node and the file's node under
 // the same id are different tasks (MTIX-95.31.4, differentIdentity).
 func differentTask(local, in *exportNode) bool {
-	return differentIdentity(taskIdentity{local.UID, local.CreatedAt, local.Title},
-		taskIdentity{in.UID, in.CreatedAt, in.Title})
+	return differentIdentity(taskIdentity{local.UID, local.CreatedAt}, taskIdentity{in.UID, in.CreatedAt})
 }
 
 // differentIdentity reports whether a and b, which hold the same id, are
-// different tasks (MTIX-95.31.4): both carry a uid, the uids differ, and so
-// does the creation time, or, when either lacks one, the title. The same id
-// with the same creation time is one task under two uids, as clones upgraded
-// from before uids were shared hold it (each minted its own); a merge then
-// adopts the file's uid. A node without a uid has no identity to compare.
+// different tasks (MTIX-95.31.4). Nodes that both carry a uid, with
+// different uids, are one task only when their creation times are the same
+// and at least one uid was not minted when its task was created
+// (mintedAtCreation): a uid a clone assigned when it upgraded from before
+// uids were shared (BackfillUIDs step 2), long after the task was created.
+// A merge then adopts the file's uid. Two tasks two clones created in the
+// same second both carry uids minted then, so they stay different tasks,
+// as do nodes whose creation times differ or are missing. A node without a
+// uid has no identity to compare.
 func differentIdentity(a, b taskIdentity) bool {
 	if a.uid == "" || b.uid == "" || a.uid == b.uid {
 		return false
 	}
-	if a.createdAt != "" && b.createdAt != "" {
-		return !sameInstant(a.createdAt, b.createdAt)
+	sameCreate := a.createdAt != "" && b.createdAt != "" && sameInstant(a.createdAt, b.createdAt)
+	backfilled := !mintedAtCreation(a.uid, a.createdAt) || !mintedAtCreation(b.uid, b.createdAt)
+	return !sameCreate || !backfilled
+}
+
+// mintedAtCreation reports whether uid is the uid CreateNode minted when the
+// task was created at createdAt (MTIX-95.31.4): a UUIDv7 whose embedded
+// time lies within [createdAt - 1 s, createdAt + 2 s], allowing for
+// created_at's one-second resolution. Any other uid (not a UUIDv7, or
+// minted at another time) was assigned later, by a backfill.
+func mintedAtCreation(uid, createdAt string) bool {
+	u, err := uuid.Parse(uid)
+	if err != nil || u.Version() != 7 {
+		return false
 	}
-	return a.title != b.title
+	created, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return false
+	}
+	minted := time.UnixMilli(int64(binary.BigEndian.Uint64(u[:8]) >> 16)) //nolint:gosec // 48-bit ms field
+	return !minted.Before(created.Add(-time.Second)) && !minted.After(created.Add(2*time.Second))
 }
 
 // sameInstant reports whether two RFC 3339 times are the same instant, or,
@@ -139,7 +162,7 @@ func (s *Store) loadLocalNodes(ctx context.Context) ([]*localNode, error) {
 	// Every node a merge may move: deleted rows still own their ids.
 	rows, err := s.readDB.QueryContext(ctx,
 		`SELECT id, COALESCE(uid, ''), project, COALESCE(parent_id, ''), seq,
-		        COALESCE(created_at, ''), title
+		        COALESCE(created_at, '')
 		   FROM nodes ORDER BY depth, id`)
 	if err != nil {
 		return nil, fmt.Errorf("read the local nodes for the merge plan: %w", err)
@@ -152,7 +175,7 @@ func (s *Store) loadLocalNodes(ctx context.Context) ([]*localNode, error) {
 	var nodes []*localNode
 	for rows.Next() {
 		n := &localNode{}
-		if err := rows.Scan(&n.id, &n.uid, &n.project, &n.parentID, &n.seq, &n.createdAt, &n.title); err != nil {
+		if err := rows.Scan(&n.id, &n.uid, &n.project, &n.parentID, &n.seq, &n.createdAt); err != nil {
 			return nil, fmt.Errorf("read the local nodes for the merge plan: %w", err)
 		}
 		n.finalSeq, n.final = n.seq, n.id
@@ -238,7 +261,7 @@ func (p *localMovePlan) renumber() {
 		p.place(l)
 		f := p.fileByID[l.final]
 		if f == nil || f.UID == l.uid ||
-			!differentIdentity(taskIdentity{l.uid, l.createdAt, l.title}, taskIdentity{f.UID, f.CreatedAt, f.Title}) {
+			!differentIdentity(taskIdentity{l.uid, l.createdAt}, taskIdentity{f.UID, f.CreatedAt}) {
 			continue
 		}
 		l.finalSeq = p.nextSeqFreeInBoth(l.project, parent)

@@ -246,7 +246,7 @@ func (s *Store) ImportReconcile(
 	// over the rewritten content before the integrity-checked apply: the import
 	// attests to what is actually being written (ADR-003 §6). Then run the
 	// caller's step before any write, once every check passed (MTIX-95.31.4).
-	if err := s.prepareWrite(ctx, data, opts, report); err != nil {
+	if err := s.prepareWrite(ctx, data, opts, report, moves); err != nil {
 		return report, nil, err
 	}
 

@@ -13,12 +13,12 @@ package service_test
 import (
 	"bytes"
 	"context"
-	"hash/fnv"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -28,23 +28,22 @@ import (
 )
 
 // createLocalTask creates a root task under the number the local sequence
-// counter hands out next, as mtix create does, with a description and an
-// annotation of its own, and returns it as stored. Its creation time
-// follows from its title, so tasks two clones create with different titles
-// have different creation times, as tasks created apart do.
+// counter hands out next, as mtix create does, at 11:00:00 with the uid
+// CreateNode mints then (a UUIDv7 of that time), with a description and an
+// annotation of its own, and returns it as stored. Tasks two clones create
+// this way share a creation second, as parallel agents' tasks do.
 func createLocalTask(t *testing.T, f *guardFixture, title string) *model.Node {
 	t.Helper()
 	ctx := context.Background()
 	seq, err := f.store.NextSequence(ctx, "PROJ:")
 	require.NoError(t, err)
 	id := model.BuildID("PROJ", "", seq)
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(title))
-	now := time.Date(2026, 9, 24, 11, 0, 0, 0, time.UTC).Add(time.Duration(h.Sum32()%3600) * time.Second)
+	now := time.Date(2026, 9, 24, 11, 0, 0, 0, time.UTC)
 	require.NoError(t, f.store.CreateNode(ctx, &model.Node{
 		ID: id, Project: "PROJ", Depth: 0, Seq: seq, Title: title, Description: "Why: " + title,
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
-		NodeType: model.NodeTypeEpic, ContentHash: "h-" + title, CreatedAt: now, UpdatedAt: now,
+		NodeType: model.NodeTypeEpic, ContentHash: "h-" + title, UID: uidMintedAt(t, now),
+		CreatedAt: now, UpdatedAt: now,
 	}))
 	require.NoError(t, f.store.SetAnnotations(ctx, id, []model.Annotation{{
 		ID: "01J9-" + strings.ReplaceAll(title, " ", "-"), Author: "local", Text: "evidence: " + title, CreatedAt: now,
@@ -53,6 +52,19 @@ func createLocalTask(t *testing.T, f *guardFixture, title string) *model.Node {
 	require.NoError(t, err)
 	require.NotEmpty(t, node.UID)
 	return node
+}
+
+// uidMintedAt returns a UUIDv7 whose embedded time is at: the uid CreateNode
+// mints for a task created at that time.
+func uidMintedAt(t *testing.T, at time.Time) string {
+	t.Helper()
+	u, err := uuid.NewV7()
+	require.NoError(t, err)
+	ms := uint64(at.UnixMilli()) //nolint:gosec // a positive test time
+	for i := 0; i < 6; i++ {
+		u[i] = byte(ms >> (40 - 8*i))
+	}
+	return u.String()
 }
 
 // pulledBoard decodes the .mtix/tasks.json on disk, as mtix import reads it.

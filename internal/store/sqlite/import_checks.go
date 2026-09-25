@@ -12,6 +12,10 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
+// errDryRun rolls back the transaction of a dry-run import
+// (countImportChanges).
+var errDryRun = errors.New("dry run: roll back")
+
 // ErrStoreChangedSinceCheck is returned by Store.Import, which then writes
 // nothing, when the caller passed IfStoreUnchanged and the store changed
 // after the caller checked it (MTIX-95.31.4): the automatic import compares
@@ -105,4 +109,45 @@ func (s *Store) refuseEmptyImport(ctx context.Context, data *ExportData, force b
 			existingCount, model.ErrInvalidInput)
 	}
 	return nil
+}
+
+// countImportChanges runs the import in a transaction it rolls back, and
+// returns how many rows it would insert, update or delete (SQLite's
+// total_changes over the transaction; MTIX-95.31.4). It works on a copy of
+// the file's node list, because writing a node normalizes its node_type,
+// and the real import must still verify the file's checksum.
+func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode ImportMode,
+	moves []localRenumber) (int64, error) {
+	dry := *data
+	dry.Nodes = append([]exportNode(nil), data.Nodes...)
+	var changes int64
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		var before, after int64
+		// Rows this connection has changed so far.
+		if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&before); err != nil {
+			return fmt.Errorf("count the import's changes: %w", err)
+		}
+		if err := applyLocalRenumbers(ctx, tx, moves); err != nil {
+			return err
+		}
+		var applyErr error
+		if mode == ImportModeReplace {
+			_, applyErr = replaceAllData(ctx, tx, &dry)
+		} else {
+			_, applyErr = mergeAllData(ctx, tx, &dry)
+		}
+		if applyErr != nil {
+			return applyErr
+		}
+		// Rows changed by the import.
+		if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&after); err != nil {
+			return fmt.Errorf("count the import's changes: %w", err)
+		}
+		changes = after - before
+		return errDryRun
+	})
+	if !errors.Is(err, errDryRun) {
+		return 0, err
+	}
+	return changes, nil
 }

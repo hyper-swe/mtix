@@ -229,13 +229,14 @@ func parseSignatures(t *testing.T, body string) []string {
 }
 
 // TestRestoreEpochMigration_Shape pins the shape of 017 (MTIX-95.1.7): both
-// functions run as their owner with a fixed search_path; the DO block
+// functions run as their owner with a fixed search_path; before creating
+// them, the migration notes which of them this run creates; the DO block
 // sets that search_path to the migration's schema, then pg_temp last, and
-// revokes PUBLIC's EXECUTE only from a function that still has the
-// built-in default privileges, so a re-run issues no privilege command; the
-// stamp trigger is created only when pg_trigger lacks it bound to its
-// function by OID; the recorder reads the epochs from the hub, not from
-// its arguments.
+// revokes PUBLIC's EXECUTE from each function this run created, whatever
+// its ACL, so a re-run issues no privilege command; the stamp trigger is
+// created only when pg_trigger lacks it bound to its function by OID; the
+// recorder reads the epochs from the hub, not from its arguments, and
+// counts a held stamp as earlier only from 0 up to the current epoch.
 func TestRestoreEpochMigration_Shape(t *testing.T) {
 	body, err := migrations.Read(migrations.RestoreEpochFile)
 	require.NoError(t, err)
@@ -243,12 +244,18 @@ func TestRestoreEpochMigration_Shape(t *testing.T) {
 	require.Equal(t, 2, strings.Count(body, "SET search_path = pg_catalog, pg_temp"),
 		"each function is created with a fixed search_path")
 	require.Contains(t, body, "SET search_path = %I, pg_temp")
-	require.Contains(t, body, "p.proacl IS NULL", "PUBLIC's EXECUTE is revoked only at creation")
+	noted := strings.Index(body, "PERFORM pg_catalog.set_config('mtix.hub_017_created'")
+	require.GreaterOrEqual(t, noted, 0, "the functions this run creates are noted")
+	require.Less(t, noted, strings.Index(body, "CREATE OR REPLACE FUNCTION hub_stamp_restore_epoch()"),
+		"before they are created")
+	require.Contains(t, body, "IF fn = ANY (created) THEN", "PUBLIC's EXECUTE is revoked only at creation")
+	require.NotContains(t, body, "proacl", "whatever the function's ACL")
 	require.Contains(t, body, "FROM PUBLIC")
 	require.Contains(t, body, "IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t")
 	require.Contains(t, body, "AND t.tgfoid = stamp_fn")
 	require.Contains(t, body, "FROM sync_hub_state s WHERE s.id")
-	require.Contains(t, body, "h.restore_epoch < v_current_epoch", "the recorder re-checks the cross-epoch condition")
+	require.Contains(t, body, "AND h.restore_epoch >= 0\n       AND h.restore_epoch < v_current_epoch",
+		"the recorder re-checks the cross-epoch condition, from epoch 0")
 	require.Contains(t, body, "SELECT 1 FROM sync_events e WHERE e.event_id = p_incoming_event_id",
 		"the recorder refuses an incoming event id already on the hub")
 	require.NotContains(t, strings.ToUpper(body), "ROW LEVEL SECURITY")

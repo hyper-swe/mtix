@@ -170,3 +170,37 @@ func TestDocs_CollisionCheckExemptions_SameInEveryCopy(t *testing.T) {
 		require.Containsf(t, text, exemptionSentence, "%s states the exemptions", name)
 	}
 }
+
+// Phrases every copy of the schema current check's description carries
+// (MTIX-95.1.7): ownership of the tables' schema, reach through chains of
+// SET ROLE and ADMIN OPTION, create events stamped outside the hub's
+// epoch range, and how mtix sync init creates migration 017's functions.
+const (
+	schemaOwnerPhrase = "owns the schema that holds the sync tables"
+	reachPhrase       = "can reach, through a chain of SET ROLE and ADMIN OPTION, a role that holds either or " +
+		"owns that schema, or a superuser it can then SET ROLE to"
+	stampsPhrase = "stamped with a restore epoch below 0 or above the hub's current epoch"
+	notEarlier   = "restore-collision checks treat each as not earlier than the current epoch"
+	initPhrase   = "creates the restore-collision functions of migration 017 without EXECUTE for PUBLIC"
+)
+
+// TestDocs_CollisionCheckReachAndStamps_SameInEveryCopy: the user manual
+// and the admin skill (rendered, and its plugin mirrors) describe the
+// schema current check with the same phrases: schema ownership, chains of
+// SET ROLE and ADMIN OPTION, and create events stamped outside the hub's
+// epoch range; the admin skill says mtix sync init creates migration 017's
+// functions without EXECUTE for PUBLIC (MTIX-95.1.7).
+func TestDocs_CollisionCheckReachAndStamps_SameInEveryCopy(t *testing.T) {
+	texts := everyLeastPrivilegeCopy(t)
+	for _, name := range []string{"USERMANUAL.md", "rendered admin skill", ".claude-plugin/skills/mtix-admin.md",
+		".codex-plugin/skills/admin/SKILL.md"} {
+		for _, phrase := range []string{schemaOwnerPhrase, reachPhrase, stampsPhrase, notEarlier} {
+			require.Containsf(t, texts[name], phrase, "%s describes the check", name)
+		}
+		require.NotContainsf(t, texts[name], "can SET ROLE to or administers a role", "%s", name)
+		if name != "USERMANUAL.md" {
+			require.Containsf(t, texts[name], initPhrase, "%s says how init creates the functions", name)
+			require.NotContainsf(t, texts[name], "executable by their owner alone", "%s", name)
+		}
+	}
+}

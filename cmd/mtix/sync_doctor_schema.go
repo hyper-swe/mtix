@@ -19,8 +19,9 @@ const schemaCurrentName = "schema current"
 // (MTIX-95.1.7): whether sync_projects resolves, which objects of
 // migration 017 the hub lacks, whether the connecting role can execute the
 // collision recorder, which privileges on sync_node_collisions and its
-// sequence it holds beyond the least-privilege list, and the owners and
-// schemas the fix names.
+// sequence it holds beyond the least-privilege list, how many create
+// events carry a restore epoch outside 0 to the hub's current one, and the
+// owners and schemas the fix names.
 type schemaState struct {
 	projects            bool           // sync_projects resolves through the search_path
 	recorder            bool           // record_restore_collision resolves
@@ -30,6 +31,9 @@ type schemaState struct {
 	collisionPrivileges []string       // e.g. "INSERT on sync_node_collisions", held by a role that is not the owner
 	revokes             []string       // the REVOKE statements that remove them, quoted server-side
 	collisionPaths      []string       // every other path by name, for a role administrator
+	stampsOutside       int64          // create events stamped below 0 or above the current epoch
+	epoch               int64          // the hub's current restore epoch
+	stampFix            string         // the UPDATE that sets each to the current epoch, quoted server-side
 	hub                 hubObjectState // the tables' owners and schema, and current_schema()
 }
 
@@ -44,8 +48,10 @@ type schemaRow struct {
 // trigger, stamp function and collision recorder, which the connecting
 // role can execute; on a hub with the recorder, a connecting role other
 // than the table owner must hold neither INSERT on sync_node_collisions
-// nor USAGE on its sequence (MTIX-95.1.7). It reports whether the sync
-// tables are there, so the checks that read the hub's catalog can run.
+// nor USAGE on its sequence, nor reach them, and every create event's
+// restore epoch lies from 0 to the hub's current one (MTIX-95.1.7). It
+// reports whether the sync tables are there, so the checks that read the
+// hub's catalog can run.
 func checkSchemaCurrent(ctx context.Context, dsn string, opts transport.Options, strict bool) (DoctorCheck, bool) {
 	cctx, cancel := context.WithTimeout(ctx, syncConnectBudget)
 	defer cancel()
@@ -57,6 +63,9 @@ func checkSchemaCurrent(ctx context.Context, dsn string, opts transport.Options,
 	state, err := readSchemaState(cctx, pool)
 	if err == nil && state.recorder {
 		state.collisionPrivileges, state.revokes, state.collisionPaths, err = readCollisionPrivileges(cctx, pool)
+	}
+	if err == nil && state.recorder {
+		state.stampsOutside, state.epoch, state.stampFix, err = readStampRange(cctx, pool)
 	}
 	if err != nil {
 		return DoctorCheck{Name: schemaCurrentName, Detail: err.Error()}, false
@@ -136,7 +145,8 @@ func missing017(r schemaRow, schema string) []string {
 // (MTIX-95.1.7): FAIL without sync_projects, as before; PASS when the hub
 // has migration 017, the role can execute the recorder and holds no
 // privilege on sync_node_collisions or its sequence beyond the
-// least-privilege list; otherwise a WARN by default and a FAIL in strict
+// least-privilege list, and no create event is stamped outside 0 to the
+// hub's current epoch; otherwise a WARN by default and a FAIL in strict
 // mode, like the hub-triggers check, naming each gap, with the fix: the
 // table owner's steps, then the paths a role administrator removes, by
 // name.
@@ -181,8 +191,10 @@ func gradeSchemaCurrent(s schemaState, strict bool) DoctorCheck {
 // printed GRANT for a role that cannot execute the recorder, until which a
 // push that meets a restore collision fails; for the privileges the
 // least-privilege list does not name, removed once every syncing client is
-// upgraded, the table owner's printed REVOKE statements; the paths a role
-// administrator removes are the last part of the fix (gradeSchemaCurrent).
+// upgraded, the table owner's printed REVOKE statements; for create events
+// stamped outside 0 to the hub's current epoch, the owner's printed
+// UPDATE; the paths a role administrator removes are the last part of the
+// fix (gradeSchemaCurrent).
 func schemaGaps(s schemaState) (gaps, steps []string) {
 	if len(s.missing) > 0 {
 		gap := "the hub schema predates migration 017, with which the hub stamps every event's " +
@@ -210,6 +222,12 @@ func schemaGaps(s schemaState) (gaps, steps []string) {
 		if len(s.revokes) > 0 {
 			steps = append(steps, strings.Join(s.revokes, " "))
 		}
+	}
+	if s.stampsOutside > 0 {
+		gaps = append(gaps, fmt.Sprintf("create events stamped with a restore epoch outside 0 to %d, the hub's "+
+			"current epoch: %d; restore-collision checks treat each as not earlier than the current epoch, and "+
+			"the table owner sets each to the current epoch with the printed UPDATE", s.epoch, s.stampsOutside))
+		steps = append(steps, s.stampFix)
 	}
 	return gaps, steps
 }

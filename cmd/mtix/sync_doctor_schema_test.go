@@ -21,9 +21,13 @@ import (
 // table owner: mtix sync init (after the search_path step when init would
 // refuse), and the GRANT the check printed. Pushes keep working on a hub
 // without 017; for a role that cannot execute the recorder, a push that
-// meets a restore collision fails until the owner runs the GRANT.
+// meets a restore collision fails until the owner runs the GRANT. Create
+// events stamped with a restore epoch outside 0 to the hub's current
+// epoch are counted, with the owner's printed UPDATE after the other
+// owner steps.
 func TestGradeSchemaCurrent_StateAndMode_ReportsEachGapWithItsFix(t *testing.T) {
 	const grant = "GRANT EXECUTE ON FUNCTION public.record_restore_collision(text, text, text, text, bigint) TO syncer;"
+	const stampFix = "UPDATE public.sync_events SET restore_epoch = 1;"
 	owner := hubObjectState{owners: []string{"mtix_owner"}, ownerIdents: []string{"mtix_owner"},
 		tablesSchema: "public", tablesSchemaIdent: "public", currentSchema: "public"}
 	elsewhere := owner
@@ -60,6 +64,22 @@ func TestGradeSchemaCurrent_StateAndMode_ReportsEachGapWithItsFix(t *testing.T) 
 				"a push that meets a restore collision fails until the table owner runs the printed GRANT"},
 			notDetail: []string{"pushes keep working"},
 			wantFix:   "as the table owner (mtix_owner): " + grant},
+		{name: "create stamps outside the hub's range warn with the UPDATE", state: schemaState{projects: true,
+			canRecord: true, hub: owner, stampsOutside: 2, epoch: 1, stampFix: stampFix},
+			wantPass: true, wantWarn: true, wantDetail: []string{
+				"create events stamped with a restore epoch outside 0 to 1, the hub's current epoch: 2",
+				"restore-collision checks treat each as not earlier than the current epoch",
+				"run the fix as the table owner"},
+			wantFix: "as the table owner (mtix_owner): " + stampFix},
+		{name: "create stamps outside the hub's range fail in strict mode", state: schemaState{projects: true,
+			canRecord: true, hub: owner, stampsOutside: 1, epoch: 0, stampFix: stampFix},
+			strict: true, wantDetail: []string{"strict mode (sync.keep_roles is set)",
+				"outside 0 to 0, the hub's current epoch: 1"},
+			wantFix: "as the table owner (mtix_owner): " + stampFix},
+		{name: "the UPDATE after the GRANT", state: schemaState{projects: true, grant: grant, hub: owner,
+			stampsOutside: 3, epoch: 4, stampFix: stampFix},
+			wantPass: true, wantWarn: true, wantDetail: []string{"cannot execute record_restore_collision", "4, the hub's"},
+			wantFix: "as the table owner (mtix_owner): " + grant + ", then " + stampFix},
 		{name: "both gaps, init first", state: schemaState{projects: true, grant: grant, hub: owner,
 			missing: []string{"trigger sync_events_stamp_restore_epoch on public.sync_events"}},
 			wantPass: true, wantWarn: true, wantDetail: []string{"migration 017", "cannot execute record_restore_collision"},
@@ -95,6 +115,12 @@ func TestSyncDoctorCmd_CLIReference_MatchesHelp(t *testing.T) {
 		"A connecting role without EXECUTE on record_restore_collision is a WARN by default and fails in strict " +
 			"mode; a push that meets a restore collision fails until the table owner runs the printed GRANT.",
 		"INSERT on sync_node_collisions or USAGE on sync_node_collisions_collision_id_seq",
+		"owns the schema that holds the sync tables",
+		"can reach, through a chain of SET ROLE and ADMIN OPTION, a role that holds either or owns that schema, " +
+			"or a superuser it can then SET ROLE to",
+		"Create events stamped with a restore epoch below 0 or above the hub's current epoch are a WARN by " +
+			"default and fail in strict mode: restore-collision checks treat each as not earlier than the current " +
+			"epoch, and the table owner runs the printed UPDATE, which sets each to the current epoch.",
 		"The check skips the table owner, roles that inherit it, and superusers."} {
 		require.Contains(t, long, want)
 	}

@@ -67,3 +67,35 @@ func TestGradeSchemaCurrent_RoleHoldsCollisionPrivileges_WarnsWithRevoke(t *test
 		})
 	}
 }
+
+// TestCollectCollisionPrivileges_RowsFromTheHub_EachPrivilegeNamed: the
+// rows of collisionPrivilegesSQL become the privileges held, the table
+// owner's REVOKE statements and the named paths, sorted, each listed once
+// (MTIX-95.1.7). A privilege whose rows name no statement and no path is
+// named itself, so every privilege held appears in the fix.
+func TestCollectCollisionPrivileges_RowsFromTheHub_EachPrivilegeNamed(t *testing.T) {
+	const insert, usage = "INSERT on sync_node_collisions", "USAGE on sync_node_collisions_collision_id_seq"
+	const revoke = "REVOKE INSERT ON TABLE public.sync_node_collisions FROM syncer;"
+	tests := []struct {
+		name                             string
+		rows                             []collisionPrivilegeRow
+		wantHeld, wantRevokes, wantPaths []string
+	}{
+		{"nothing held", nil, nil, nil, nil},
+		{"a REVOKE and a privilege named by no row", []collisionPrivilegeRow{
+			{insert, 1, revoke}, {usage, 0, ""}},
+			[]string{insert, usage}, []string{revoke}, []string{usage + " held through a grant or a role membership"}},
+		{"paths sorted and listed once", []collisionPrivilegeRow{
+			{insert, 2, "SET ROLE to su, a superuser"}, {insert, 2, "CREATEROLE, which x"},
+			{usage, 2, "SET ROLE to su, a superuser"}},
+			[]string{insert, usage}, nil, []string{"CREATEROLE, which x", "SET ROLE to su, a superuser"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			held, revokes, paths := collectCollisionPrivileges(tt.rows)
+			require.Equal(t, tt.wantHeld, held)
+			require.Equal(t, tt.wantRevokes, revokes)
+			require.Equal(t, tt.wantPaths, paths)
+		})
+	}
+}

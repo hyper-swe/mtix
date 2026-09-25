@@ -81,6 +81,36 @@ func TestMigration017_HubInOtherSchema_FunctionsRunAsOwnerWithFixedSearchPath(t 
 	require.Equal(t, aclBefore, f.queryStrings(acl), "a second migrate changes no function privilege")
 }
 
+// TestMigration017_OwnerDefaultPrivileges_NewFunctionsWithoutPublicExecute:
+// when the table owner's default privileges grant EXECUTE on new functions
+// in the hub's schema to a role, migration 017 still creates both of its
+// functions without EXECUTE for PUBLIC, and that role keeps its grant. A
+// second migrate changes no privilege of the existing functions, not even
+// an EXECUTE the owner has since granted to PUBLIC (MTIX-95.1.7).
+func TestMigration017_OwnerDefaultPrivileges_NewFunctionsWithoutPublicExecute(t *testing.T) {
+	f := newHubFixture(t)
+	owner, caller := f.ownerRole(), f.role("caller")
+	f.ddl("CREATE SCHEMA %I AUTHORIZATION %I", "hub_d", owner)
+	f.ddl("ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA %I GRANT EXECUTE ON FUNCTIONS TO %I", owner, "hub_d", caller)
+	pool := f.openInSchema(owner, "hub_d")
+	ctx := context.Background()
+	require.NoError(t, pool.Migrate(ctx))
+
+	require.Equal(t, []string{
+		"hub_stamp_restore_epoch true " + owner + " search_path=hub_d, pg_temp false",
+		"record_restore_collision true " + owner + " search_path=hub_d, pg_temp false",
+	}, recorderState(f, "hub_d"), "PUBLIC cannot execute either function")
+	require.Equal(t, []string{"true"}, f.queryStrings(`SELECT pg_catalog.has_function_privilege($1,
+		'hub_d.`+recorderSignature+`'::regprocedure, 'EXECUTE')::text`, caller), "the default privilege's grantee keeps it")
+
+	f.ddl("GRANT EXECUTE ON FUNCTION %I."+recorderSignature+" TO PUBLIC", "hub_d")
+	acl := `SELECT p.proname::text || ' ' || COALESCE(p.proacl::text, '-') FROM pg_catalog.pg_proc p
+		JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'hub_d' ORDER BY 1`
+	aclBefore := f.queryStrings(acl)
+	require.NoError(t, pool.Migrate(ctx))
+	require.Equal(t, aclBefore, f.queryStrings(acl), "a second migrate changes no function privilege")
+}
+
 // TestHubStamp_RoleWithInsertOnly_StoredWithHubEpoch: a role that may only
 // INSERT into sync_events, with no privilege on sync_hub_state, inserts
 // rows, each with a client-supplied restore epoch; each is stored with the

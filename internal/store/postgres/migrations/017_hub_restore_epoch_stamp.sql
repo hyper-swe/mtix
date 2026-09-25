@@ -15,11 +15,12 @@
 --    (project, number, event id, uid, wall clock) and reads everything
 --    else from the hub: the create that holds the number, the epoch it was
 --    stamped with and the current epoch. It records the collision only when
---    that held create is a different node stamped in an epoch earlier than
---    the current one and the incoming event id is not already in
---    sync_events, and returns whether a collision for the incoming create
---    is on record. A syncing role needs EXECUTE on it, and SELECT on
---    sync_node_collisions to list (UPDATE to resolve), nothing more.
+--    that held create is a different node stamped in an epoch from 0 up to,
+--    but not including, the current one and the incoming event id is not
+--    already in sync_events, and returns whether a collision for the
+--    incoming create is on record. A syncing role needs EXECUTE on it, and
+--    SELECT on sync_node_collisions to list (UPDATE to resolve), nothing
+--    more.
 --
 -- Both functions run as their owner, the owner of the sync tables, who
 -- ran this migration. Each is created with the search_path fixed to
@@ -28,15 +29,30 @@
 -- name in a session's temporary schema is never read, and the hub may live
 -- in a schema other than public. Migrate refuses before this file runs
 -- when that schema is not the sync tables' schema (checkSchemaFirst, and
--- the check at the top of 016). Each function is created executable by its
--- owner alone: PUBLIC's EXECUTE is revoked only while the function still
--- has the built-in default privileges, so a re-run changes no privilege.
--- A trigger fires without EXECUTE on its function.
+-- the check at the top of 016). Before creating them, the migration notes
+-- which of the two functions this run creates, in a setting local to the
+-- migration's transaction; PUBLIC's EXECUTE is revoked from those alone,
+-- whatever the owner's default privileges grant on new functions, so a
+-- re-run changes no privilege. A trigger fires without EXECUTE on its
+-- function.
 --
 -- The stamp trigger is created only when pg_trigger lacks a trigger of its
 -- name that executes this migration's function, compared by OID, as for
 -- the TRUNCATE guards of 016: CREATE TRIGGER takes a lock that blocks every
 -- writer of sync_events, so a re-run on a hub that has it takes none (F-44).
+
+-- Note which of the two functions this run creates (the DO block after
+-- them reads the note). Identifiers are quoted server-side.
+DO $$
+BEGIN
+    PERFORM pg_catalog.set_config('mtix.hub_017_created', pg_catalog.array_to_string(ARRAY(
+        SELECT f.sig
+          FROM pg_catalog.unnest(ARRAY['hub_stamp_restore_epoch()',
+                                       'record_restore_collision(text, text, text, text, bigint)']) AS f(sig)
+         WHERE pg_catalog.to_regprocedure(
+                   pg_catalog.quote_ident(pg_catalog.current_schema()) || '.' || f.sig) IS NULL), ';'), true);
+END
+$$;
 
 CREATE OR REPLACE FUNCTION hub_stamp_restore_epoch()
 RETURNS TRIGGER
@@ -77,8 +93,8 @@ BEGIN
     END IF;
 
     -- The create that holds the number, when it is another node stamped in
-    -- an earlier epoch than the current one. A re-sent blocked create keeps
-    -- its one row (incoming_event_id is unique).
+    -- an epoch from 0 up to, but not including, the current one. A re-sent
+    -- blocked create keeps its one row (incoming_event_id is unique).
     INSERT INTO sync_node_collisions
         (project_prefix, display_path,
          held_event_id, held_uid, held_epoch, held_wall_clock_ts,
@@ -94,6 +110,7 @@ BEGIN
        AND h.op_type = 'create_node'
        AND h.event_id <> p_incoming_event_id
        AND COALESCE(NULLIF(h.uid, ''), h.event_id) <> v_incoming_uid
+       AND h.restore_epoch >= 0
        AND h.restore_epoch < v_current_epoch
      ORDER BY h.restore_epoch, h.event_id
      LIMIT 1
@@ -104,23 +121,25 @@ BEGIN
 END;
 $$;
 
--- Fix each function's search_path to this schema, then pg_temp, and make
--- a newly created function executable by its owner alone. Identifiers are
--- quoted server-side (%I); the signatures are this file's constants.
+-- Fix each function's search_path to this schema, then pg_temp, and
+-- revoke PUBLIC's EXECUTE from each function this run created. Identifiers
+-- are quoted server-side (%I); the signatures are this file's constants.
 DO $$
 DECLARE
-    hub_schema TEXT := pg_catalog.current_schema();
+    hub_schema TEXT   := pg_catalog.current_schema();
+    created    TEXT[] := pg_catalog.string_to_array(
+                             pg_catalog.current_setting('mtix.hub_017_created', true), ';');
     fn         TEXT;
 BEGIN
     FOREACH fn IN ARRAY ARRAY['hub_stamp_restore_epoch()',
                               'record_restore_collision(text, text, text, text, bigint)'] LOOP
         EXECUTE pg_catalog.format('ALTER FUNCTION %I.%s SET search_path = %I, pg_temp',
                                   hub_schema, fn, hub_schema);
-        IF (SELECT p.proacl IS NULL FROM pg_catalog.pg_proc p
-             WHERE p.oid = pg_catalog.to_regprocedure(pg_catalog.quote_ident(hub_schema) || '.' || fn)) THEN
+        IF fn = ANY (created) THEN
             EXECUTE pg_catalog.format('REVOKE ALL ON FUNCTION %I.%s FROM PUBLIC', hub_schema, fn);
         END IF;
     END LOOP;
+    PERFORM pg_catalog.set_config('mtix.hub_017_created', '', true);
 END
 $$;
 

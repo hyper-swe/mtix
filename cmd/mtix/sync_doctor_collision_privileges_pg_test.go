@@ -290,14 +290,17 @@ func memberPaths() []collisionPath {
 
 // TestDoctorSchemaCurrent_CollisionPaths_ReportedWithTheirFix: for each way
 // a syncing role can write collision rows (a grant, inherited privilege, a
-// role it can SET ROLE to or administers, a superuser membership,
+// role it reaches through a chain of SET ROLE and ADMIN OPTION, a
+// superuser it can SET ROLE to, ownership of the tables' schema,
 // CREATEROLE before PostgreSQL 16, a server file or program role), the
 // schema current check warns and reports it: the exact REVOKE for the
 // table owner's own plain grant, which run as printed clears the check,
-// and the path by name for a role administrator for everything else. A
-// case that reaches nothing stays clean (MTIX-95.1.7).
+// and the path by name, with its chain, for a role administrator for
+// everything else. A case that reaches nothing stays clean (MTIX-95.1.7).
 func TestDoctorSchemaCurrent_CollisionPaths_ReportedWithTheirFix(t *testing.T) {
-	for _, tt := range append(grantPaths(), memberPaths()...) {
+	cases := append(grantPaths(), memberPaths()...)
+	cases = append(cases, reachPaths()...)
+	for _, tt := range append(cases, schemaOwnerPaths()...) {
 		t.Run(tt.name, func(t *testing.T) {
 			initTestApp(t)
 			h := newSchemaHub(t, tt.schema)

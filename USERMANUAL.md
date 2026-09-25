@@ -1716,13 +1716,23 @@ refuse it.
     task was renumbered (by `mtix import --mode merge --confirm` on this
     machine, or by a renumber the hub asks for during a push) is still
     held, and a change of another task that later takes one of its old
-    numbers is not. If `mtix gc` purges a deleted task of the subtree, a
-    change already held stays held, a change of a task whose own creation
-    is held is still found by its internal id, and any other change is
-    checked by the number it names. Known limit: a change made under a
-    number the task got by a renumber on this machine, which no push
-    checked before `mtix gc` purged the task, is not recognized. The
-    reason names the nearest held creation.
+    numbers is not. The same holds when the task's internal id changed
+    after its creation was queued: a merge import (`mtix import --mode
+    merge`, or the automatic import after a git pull) can give the task
+    the id the board holds for it, and a creation queued by an mtix from
+    before changes carried an internal id has none. Push then finds the
+    task by the creation's own id or else by the number the creation
+    names, and holds its later changes and its child tasks too (a task
+    that has taken that number since is held as well). Known limit: if
+    a task whose id a merge import changed is then renumbered on this
+    machine, its changes that no push checked before that renumber are
+    not recognized. If `mtix gc` purges a deleted task of the subtree,
+    a change already held stays held, a change of a task whose own
+    creation is held is still found by its internal id, and any other
+    change is checked by the number it names. Known limit: a change made
+    under a number the task got by a renumber on this machine, which no
+    push checked before `mtix gc` purged the task, is not recognized.
+    The reason names the nearest held creation.
   - **Dependent, for a link** (the reason ends `links made while a task
     creation is held wait for it; this version names a link's target by
     number`):

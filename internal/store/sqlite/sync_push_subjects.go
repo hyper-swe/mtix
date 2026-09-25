@@ -18,12 +18,23 @@ import (
 // PushSubject is the task a pending event is about: the event's uid and
 // the current number of the node that has it (soft-deleted or not; empty
 // when the event has no uid or no node has it, as after mtix gc purged it).
+//
+// For a create_node event, TaskNodeID and TaskUID are the current number
+// and uid of the task it created (MTIX-95.12 run 2, review r1 S1 and S2):
+// the node that has the event's uid; else, for an event without a uid (one
+// queued before events carried uids), the node whose uid is the event's own
+// id, as the pre-v3 backfill sets it; else the node at the number the event
+// names, as when a merge import gave the task the file's uid (MTIX-95.31.6,
+// 95.31.9). Both are empty for other ops and when no such node is left.
 type PushSubject struct {
-	UID, CurrentNodeID string
+	UID, CurrentNodeID  string
+	TaskNodeID, TaskUID string
 }
 
 // PushSubjects returns the subject of each of eventIDs that has a
-// sync_events row, keyed by event id, in one query (idx_nodes_uid).
+// sync_events row, keyed by event id, in one query (idx_nodes_uid; for a
+// creation whose uid no node has, the task found another way, see
+// PushSubject).
 func (s *Store) PushSubjects(ctx context.Context, eventIDs []string) (map[string]PushSubject, error) {
 	out := make(map[string]PushSubject, len(eventIDs))
 	if len(eventIDs) == 0 {
@@ -33,12 +44,20 @@ func (s *Store) PushSubjects(ctx context.Context, eventIDs []string) (map[string
 	if err != nil {
 		return nil, fmt.Errorf("read push subjects: %w", err)
 	}
-	// The uid of each event in the bound JSON array, and the current number
-	// of the node that has it.
+	// The uid of each event in the bound JSON array and the current number
+	// of the node that has it; for a creation, also the task it created (n
+	// by uid, else s by the event's own id for an event without a uid, else
+	// f by the number the event names; idx_nodes_uid and the primary key).
 	rows, err := s.Query(ctx, `
-		SELECT e.event_id, COALESCE(e.uid, ''), COALESCE(n.id, '')
+		SELECT e.event_id, COALESCE(e.uid, ''), COALESCE(n.id, ''),
+		       CASE WHEN e.op_type = 'create_node' THEN COALESCE(n.id, s.id, f.id, '') ELSE '' END,
+		       CASE WHEN e.op_type = 'create_node' THEN COALESCE(n.uid, s.uid, f.uid, '') ELSE '' END
 		FROM sync_events e
 		LEFT JOIN nodes n ON n.uid = e.uid AND n.uid IS NOT NULL AND n.uid <> ''
+		LEFT JOIN nodes s ON e.op_type = 'create_node' AND n.id IS NULL
+		     AND COALESCE(e.uid, '') = '' AND s.uid = e.event_id
+		LEFT JOIN nodes f ON e.op_type = 'create_node' AND n.id IS NULL AND s.id IS NULL
+		     AND f.id = e.node_id
 		WHERE e.event_id IN (SELECT value FROM json_each(?))`, string(ids))
 	if err != nil {
 		return nil, fmt.Errorf("read push subjects: %w", err)
@@ -47,7 +66,7 @@ func (s *Store) PushSubjects(ctx context.Context, eventIDs []string) (map[string
 	for rows.Next() {
 		var id string
 		var subj PushSubject
-		if err := rows.Scan(&id, &subj.UID, &subj.CurrentNodeID); err != nil {
+		if err := rows.Scan(&id, &subj.UID, &subj.CurrentNodeID, &subj.TaskNodeID, &subj.TaskUID); err != nil {
 			return nil, fmt.Errorf("read push subjects: %w", err)
 		}
 		out[id] = subj

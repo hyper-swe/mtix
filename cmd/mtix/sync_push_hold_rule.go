@@ -30,6 +30,15 @@ import (
 // by the number it names instead, against the number each held creation's
 // event names and its current number.
 //
+// A held creation's task may have a uid its event does not carry (run 2,
+// review r1 S1 and S2): a merge import can give it the file's uid
+// (MTIX-95.31.6, 95.31.9), and a creation queued before events carried
+// uids has none, while its task's uid is the event's own id. Every later
+// change of the task carries the task's uid. So the creation is found as
+// sqlite.PushSubject says (by its self-anchored uid, else by the number its
+// event names) and is filed under that task's current number and its
+// current uid too.
+//
 // A dependency link or unlink names the task it points to by number only,
 // and a local renumber records no history of numbers, so what a link's
 // number meant cannot be told afterwards. While any task creation is held,
@@ -44,12 +53,13 @@ const holdLinkWait = "links made while a task creation is held wait for it; " +
 	"this version names a link's target by number"
 
 // blocker is a held local task creation: its event, the number that event
-// names and its place in the queue, and the hold reasons of the events it
-// blocks once worked out.
+// names, the uid it carries, the uid its task has now (taskUID, when found),
+// its place in the queue, and the hold reasons of the events it blocks once
+// worked out.
 type blocker struct {
-	eventID, nodeID, uid string
-	lamport              int64
-	why, linkWhy         string
+	eventID, nodeID, uid, taskUID string
+	lamport                       int64
+	why, linkWhy                  string
 }
 
 // before reports whether b comes before the event (lamport, eventID) in
@@ -58,31 +68,53 @@ func (b *blocker) before(lamport int64, eventID string) bool {
 	return b.lamport < lamport || (b.lamport == lamport && b.eventID < eventID)
 }
 
-// blockerKey is one place a blocker is filed: a key of byTask or byNumber.
+// blockerIndex names one of the indexes a blocker is filed in.
+type blockerIndex int
+
+const (
+	indexNumber blockerIndex = iota // byNumber
+	indexTask                       // byTask
+	indexUID                        // byUID
+)
+
+// blockerKey is one place a blocker is filed: a key of one index.
 type blockerKey struct {
-	byTask bool
-	key    string
+	index blockerIndex
+	key   string
 }
 
 // blockers are the held creations of one push. byTask files each under the
 // current number of its task, for events found by uid; byNumber under the
 // number its event names and its current number, for the others; byUID
-// under its task's uid, for the events of that task itself, whether or not
-// the task still has a node. keys is the reverse index remove uses; byEvent
-// finds a creation by its event id; first is the earliest in queue order,
-// worked out again after it is removed.
+// under the uid its event carries and the uid its task has now, for the
+// events of that task itself, whether or not the task still has a node.
+// keys is the reverse index remove uses; byEvent finds a creation by its
+// event id; first is the earliest in queue order, worked out again after it
+// is removed.
 type blockers struct {
-	byTask, byNumber map[string][]*blocker
-	keys             map[string][]blockerKey
-	byEvent, byUID   map[string]*blocker
-	first            *blocker
-	firstStale       bool
+	byTask, byNumber, byUID map[string][]*blocker
+	keys                    map[string][]blockerKey
+	byEvent                 map[string]*blocker
+	first                   *blocker
+	firstStale              bool
 }
 
 // newBlockers returns an empty set of held creations.
 func newBlockers() *blockers {
 	return &blockers{byTask: map[string][]*blocker{}, byNumber: map[string][]*blocker{},
-		keys: map[string][]blockerKey{}, byEvent: map[string]*blocker{}, byUID: map[string]*blocker{}}
+		byUID: map[string][]*blocker{}, keys: map[string][]blockerKey{}, byEvent: map[string]*blocker{}}
+}
+
+// index returns the index i names.
+func (bs *blockers) index(i blockerIndex) map[string][]*blocker {
+	switch i {
+	case indexTask:
+		return bs.byTask
+	case indexUID:
+		return bs.byUID
+	default:
+		return bs.byNumber
+	}
 }
 
 // empty reports whether no held creation blocks anything.
@@ -91,30 +123,29 @@ func (bs *blockers) empty() bool {
 }
 
 // add files b under currentID, the current number of its task (empty when
-// the task has no node), and under the numbers for events not found by uid.
+// the task has no node), under the numbers for events not found by uid, and
+// under the uid its event carries and the uid its task has now.
 func (bs *blockers) add(b *blocker, currentID string) {
-	file := func(byTask bool, key string) {
+	file := func(i blockerIndex, key string) {
 		if key == "" {
 			return
 		}
-		m := bs.byNumber
-		if byTask {
-			m = bs.byTask
-		}
+		m := bs.index(i)
 		m[key] = append(m[key], b)
-		bs.keys[b.eventID] = append(bs.keys[b.eventID], blockerKey{byTask: byTask, key: key})
+		bs.keys[b.eventID] = append(bs.keys[b.eventID], blockerKey{index: i, key: key})
 	}
 	bs.byEvent[b.eventID] = b
-	if b.uid != "" {
-		bs.byUID[b.uid] = b
-	}
 	if !bs.firstStale && (bs.first == nil || b.before(bs.first.lamport, bs.first.eventID)) {
 		bs.first = b
 	}
-	file(true, currentID)
-	file(false, b.nodeID)
+	file(indexUID, b.uid)
+	if b.taskUID != b.uid {
+		file(indexUID, b.taskUID)
+	}
+	file(indexTask, currentID)
+	file(indexNumber, b.nodeID)
 	if currentID != b.nodeID {
-		file(false, currentID)
+		file(indexNumber, currentID)
 	}
 }
 
@@ -122,10 +153,7 @@ func (bs *blockers) add(b *blocker, currentID string) {
 // keys it was filed under only.
 func (bs *blockers) remove(eventID string) {
 	for _, k := range bs.keys[eventID] {
-		m := bs.byNumber
-		if k.byTask {
-			m = bs.byTask
-		}
+		m := bs.index(k.index)
 		kept := m[k.key][:0]
 		for _, b := range m[k.key] {
 			if b.eventID != eventID {
@@ -139,9 +167,6 @@ func (bs *blockers) remove(eventID string) {
 		m[k.key] = kept
 	}
 	delete(bs.keys, eventID)
-	if b, ok := bs.byEvent[eventID]; ok && bs.byUID[b.uid] == b {
-		delete(bs.byUID, b.uid)
-	}
 	delete(bs.byEvent, eventID)
 	if bs.first != nil && bs.first.eventID == eventID {
 		bs.first, bs.firstStale = nil, true
@@ -192,9 +217,11 @@ func (bs *blockers) holdFor(c holdCheck) (*blocker, string, bool) {
 		why := b.linkReason()
 		return b, why, true
 	}
-	if b, ok := bs.byUID[c.subject.UID]; ok && c.subject.UID != "" && b.eventID != c.eventID {
-		why := b.reason()
-		return b, why, true
+	for _, b := range bs.byUID[c.subject.UID] {
+		if b.eventID != c.eventID {
+			why := b.reason()
+			return b, why, true
+		}
 	}
 	byUID := c.subject.UID != "" && c.subject.CurrentNodeID != ""
 	line, m := nodeLine(c.nodeID), bs.byNumber
@@ -261,15 +288,17 @@ func nodeLine(nodeID string) []string {
 }
 
 // buildBlockers returns the held task creations among holds, each filed
-// under the current number of its task and the numbers for events not
-// found by uid.
+// under the current number and uid of the task it created
+// (sqlite.PushSubject), the uid its event carries and the numbers for
+// events not found by uid.
 func buildBlockers(holds []sqlite.HeldPushEvent) *blockers {
 	bs := newBlockers()
 	for _, h := range holds {
 		if h.OpType != string(model.OpCreateNode) || h.NodeID == "" {
 			continue
 		}
-		bs.add(&blocker{eventID: h.EventID, nodeID: h.NodeID, uid: h.UID, lamport: h.Lamport}, h.CurrentNodeID)
+		bs.add(&blocker{eventID: h.EventID, nodeID: h.NodeID, uid: h.UID, taskUID: h.TaskUID, lamport: h.Lamport},
+			h.TaskNodeID)
 	}
 	return bs
 }

@@ -79,17 +79,26 @@ func (s *Store) CountHeldPushEvents(ctx context.Context) (int, error) {
 // event id), in one query: the node, op, payload, Lamport clock and uid of
 // each come from its sync_events row, and the current number of the task it
 // is about from the node whose uid is the event's uid (idx_nodes_uid; a
-// soft-deleted node counts). LEFT JOINs still list a hold whose rows are
+// soft-deleted node counts), with, for a held creation, the task it created
+// found as PushSubject says. LEFT JOINs still list a hold whose rows are
 // missing.
 func (s *Store) HeldPushEvents(ctx context.Context, limit int) ([]HeldPushEvent, error) {
 	// The held push events in queue order, with their event rows and the
-	// current number of the task each is about.
+	// current number of the task each is about; for a creation, also the
+	// task it created (n by uid, else s by the event's own id for an event
+	// without a uid, else f by the number the event names).
 	rows, err := s.Query(ctx, `
 		SELECT q.event_id, COALESCE(e.node_id, ''), COALESCE(e.op_type, ''), q.reason,
-		       COALESCE(e.payload, ''), COALESCE(e.lamport_clock, 0), COALESCE(e.uid, ''), COALESCE(n.id, '')
+		       COALESCE(e.payload, ''), COALESCE(e.lamport_clock, 0), COALESCE(e.uid, ''), COALESCE(n.id, ''),
+		       CASE WHEN e.op_type = 'create_node' THEN COALESCE(n.id, s.id, f.id, '') ELSE '' END,
+		       CASE WHEN e.op_type = 'create_node' THEN COALESCE(n.uid, s.uid, f.uid, '') ELSE '' END
 		FROM sync_quarantine q
 		LEFT JOIN sync_events e ON e.event_id = q.event_id
 		LEFT JOIN nodes n ON n.uid = e.uid AND n.uid IS NOT NULL AND n.uid <> ''
+		LEFT JOIN nodes s ON e.op_type = 'create_node' AND n.id IS NULL
+		     AND COALESCE(e.uid, '') = '' AND s.uid = e.event_id
+		LEFT JOIN nodes f ON e.op_type = 'create_node' AND n.id IS NULL AND s.id IS NULL
+		     AND f.id = e.node_id
 		WHERE q.source = 'push'
 		ORDER BY COALESCE(e.lamport_clock, 0), q.event_id
 		LIMIT ?`, limit)
@@ -101,7 +110,7 @@ func (s *Store) HeldPushEvents(ctx context.Context, limit int) ([]HeldPushEvent,
 	for rows.Next() {
 		var h HeldPushEvent
 		if err := rows.Scan(&h.EventID, &h.NodeID, &h.OpType, &h.Reason, &h.Payload,
-			&h.Lamport, &h.UID, &h.CurrentNodeID); err != nil {
+			&h.Lamport, &h.UID, &h.CurrentNodeID, &h.TaskNodeID, &h.TaskUID); err != nil {
 			return nil, fmt.Errorf("read held push events: %w", err)
 		}
 		out = append(out, h)

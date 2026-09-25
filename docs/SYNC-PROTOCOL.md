@@ -840,7 +840,20 @@ of the queue the client stopped pushing altogether.
    this machine, or one the hub asks for during a push) moves a whole
    subtree and keeps uids, so an event made under an earlier number is
    still found, and a task that later takes an old number is not held
-   (review r5 S1, S2). An event of a task whose own creation is held is
+   (review r5 S1, S2). A held creation's task can carry a uid its event
+   does not (run 2, review r1 S1, S2): a merge import can give it the
+   file's uid (MTIX-95.31.6, 95.31.9), and a creation queued before events
+   carried a `uid` has none, while the pre-v3 backfill set the task's uid
+   to the creation's event id. So the task a creation created is the node
+   with the event's uid, else, for an event without one, the node whose
+   uid is the event id, else the node at the number the event names
+   (`PushSubject.TaskNodeID` and `TaskUID`), and the held creation is
+   filed under that task's current number and current uid as well as the
+   uid its event carries; a task that has taken that number since is held
+   too. Known limit: when a task found by that number is then renumbered
+   on this machine, its events that no push checked before the renumber
+   are not recognized (MTIX-95.31.16 carries an adopted uid onto unpushed
+   events). An event of a task whose own creation is held is
    held by its uid alone, node or not. Any other event without a `uid`,
    or whose uid no node has any more (`mtix gc` purged the task), is
    checked by the number it names against the number each held creation's

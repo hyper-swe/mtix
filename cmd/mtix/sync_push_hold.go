@@ -98,8 +98,8 @@ func decideBatch(ctx context.Context, store *sqlite.Store, events []*model.SyncE
 			continue
 		}
 		if c := checkAt(checks, i); c != nil && e.OpType == model.OpCreateNode {
-			blocked.add(&blocker{eventID: e.EventID, nodeID: e.NodeID, uid: c.subject.UID, lamport: e.LamportClock},
-				c.subject.CurrentNodeID)
+			blocked.add(&blocker{eventID: e.EventID, nodeID: e.NodeID, uid: c.subject.UID,
+				taskUID: c.subject.TaskUID, lamport: e.LamportClock}, c.subject.TaskNodeID)
 		}
 		q, err := pushHold(e, reason)
 		if err != nil {

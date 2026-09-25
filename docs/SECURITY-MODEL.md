@@ -162,11 +162,11 @@ the epoch, set an event's epoch, or write a collision row directly. A DSN
 that names the table owner can change any hub table (see "What sync mode
 does NOT protect against"). With no restore there is no epoch advance, so
 the Option-B path is closed and every collision takes the ordinary
-auto-renumber path (a liveness event, no admin). The attack window
-shrinks to the operator-supervised interval right after a restore. Within that
-window resolution stays human-gated: no auto-pick, the older-claim default is
-advisory only (audit F-5), and the loser renumbers via `Store.RenumberSubtree`
-without deleting any create event — so no node is ever lost.
+auto-renumber path (a liveness event, no admin). When a restore collision
+is recorded, resolution stays human-gated: no auto-pick, the older-claim
+default is advisory only (audit F-5), and the loser renumbers via
+`Store.RenumberSubtree` without deleting any create event — so no node is
+ever lost.
 
 The registry referee itself is **liveness, not a security boundary**: a broken
 or hostile hub can at worst force a renumber; it cannot lose or corrupt a node,

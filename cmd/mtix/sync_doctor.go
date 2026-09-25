@@ -80,10 +80,12 @@ connecting role without EXECUTE on record_restore_collision is a WARN by
 default and fails in strict mode; a push that meets a restore collision
 fails until the table owner runs the printed GRANT. A connecting role
 other than the table owner that holds INSERT on sync_node_collisions or
-USAGE on sync_node_collisions_collision_id_seq, which the least-privilege
-list does not name, is a WARN by default and fails in strict mode; the
-table owner runs the printed REVOKE statements once every syncing client
-is upgraded. The check names each gap and the fix the table owner runs.
+USAGE on sync_node_collisions_collision_id_seq, or can reach either through
+SET ROLE, which the least-privilege list does not name, is a WARN by
+default and fails in strict mode; once every syncing client is upgraded,
+the table owner runs the printed REVOKE statements, and mtix sync harden
+for a grant a REVOKE cannot clear. The check names each gap and the fix
+the table owner runs.
 
 Hub triggers names each missing function or trigger, each trigger that
 executes another function, and each trigger that is not enabled, with the

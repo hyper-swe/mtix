@@ -29,6 +29,7 @@ type schemaState struct {
 	grant               string         // the GRANT that lets the role execute it, quoted server-side
 	collisionPrivileges []string       // e.g. "INSERT on sync_node_collisions", held by a role that is not the owner
 	revokes             []string       // the REVOKE statements that remove them, quoted server-side
+	collisionHarden     bool           // a grant no printed REVOKE clears: mtix sync harden is the fix
 	hub                 hubObjectState // the tables' owners and schema, and current_schema()
 }
 
@@ -55,7 +56,7 @@ func checkSchemaCurrent(ctx context.Context, dsn string, opts transport.Options,
 	defer pool.Close()
 	state, err := readSchemaState(cctx, pool)
 	if err == nil && state.recorder {
-		state.collisionPrivileges, state.revokes, err = readCollisionPrivileges(cctx, pool)
+		state.collisionPrivileges, state.revokes, state.collisionHarden, err = readCollisionPrivileges(cctx, pool)
 	}
 	if err != nil {
 		return DoctorCheck{Name: schemaCurrentName, Detail: err.Error()}, false
@@ -109,65 +110,6 @@ func readSchemaState(ctx context.Context, pool *transport.Pool) (schemaState, er
 	s.recorder = r.recorder
 	s.missing = missing017(r, h.tablesSchema)
 	return s, nil
-}
-
-// readCollisionPrivileges returns the privileges on sync_node_collisions
-// and its sequence that the connecting role holds beyond the
-// least-privilege list, INSERT on the table (on any of its columns
-// included) and USAGE on the sequence, with the REVOKE statements that
-// remove them (MTIX-95.1.7). A superuser, and a role that is or inherits
-// the object's owner, are not reported: those privileges come with the
-// ownership. Each statement names a grantee that holds the privilege
-// directly: the role itself, PUBLIC, or a role it inherits; the statements
-// are built server-side with format() (SQL Rule 1a).
-func readCollisionPrivileges(ctx context.Context, pool *transport.Pool) (held, revokes []string, err error) {
-	// For each object, when the role holds the privilege without owning
-	// the object, its label and the REVOKE of every direct grant it comes
-	// from, table and column grants alike.
-	rows, err := pool.Inner().Query(ctx, `
-		WITH me AS (SELECT r.oid, r.rolsuper FROM pg_catalog.pg_roles r WHERE r.rolname = current_user),
-		     obj(label, rel, priv, kind) AS (VALUES
-		       ('INSERT on sync_node_collisions', pg_catalog.to_regclass('sync_node_collisions'), 'INSERT', 'TABLE'),
-		       ('USAGE on sync_node_collisions_collision_id_seq',
-		        pg_catalog.to_regclass('sync_node_collisions_collision_id_seq'), 'USAGE', 'SEQUENCE'))
-		SELECT o.label, COALESCE((
-		         SELECT pg_catalog.string_agg(DISTINCT pg_catalog.format('REVOKE %s ON %s %I.%I FROM %s;',
-		                o.priv, o.kind, n.nspname, c.relname,
-		                CASE WHEN a.grantee = 0 THEN 'PUBLIC'
-		                     ELSE pg_catalog.quote_ident(pg_catalog.pg_get_userbyid(a.grantee)::text) END), ' ')
-		         FROM (SELECT x.grantee, x.privilege_type FROM pg_catalog.aclexplode(c.relacl) x
-		               UNION ALL
-		               SELECT x.grantee, x.privilege_type FROM pg_catalog.pg_attribute att
-		               CROSS JOIN LATERAL pg_catalog.aclexplode(att.attacl) x
-		               WHERE att.attrelid = c.oid AND att.attacl IS NOT NULL AND NOT att.attisdropped) a
-		         WHERE a.privilege_type = o.priv
-		           AND CASE WHEN a.grantee = 0 THEN true
-		                    ELSE pg_catalog.pg_has_role(me.oid, a.grantee, 'USAGE') END), '')
-		FROM obj o CROSS JOIN me
-		JOIN pg_catalog.pg_class c ON c.oid = o.rel
-		JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-		WHERE NOT me.rolsuper AND NOT pg_catalog.pg_has_role(me.oid, c.relowner, 'USAGE')
-		  AND CASE WHEN o.kind = 'TABLE' THEN pg_catalog.has_any_column_privilege(me.oid, c.oid, 'INSERT')
-		           ELSE pg_catalog.has_sequence_privilege(me.oid, c.oid, 'USAGE') END
-		ORDER BY 1`)
-	if err != nil {
-		return nil, nil, fmt.Errorf("read sync_node_collisions privileges: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var label, revoke string
-		if err := rows.Scan(&label, &revoke); err != nil {
-			return nil, nil, fmt.Errorf("read sync_node_collisions privileges: %w", err)
-		}
-		held = append(held, label)
-		if revoke != "" {
-			revokes = append(revokes, revoke)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, nil, fmt.Errorf("read sync_node_collisions privileges: %w", err)
-	}
-	return held, revokes, nil
 }
 
 // missing017 names each object of migration 017 the hub lacks, in the
@@ -227,10 +169,11 @@ func gradeSchemaCurrent(s schemaState, strict bool) DoctorCheck {
 // (MTIX-95.1.7): mtix sync init, after the search_path step when init would
 // refuse, for a hub without migration 017, where pushes keep working; the
 // printed GRANT for a role that cannot execute the recorder, until which a
-// push that meets a restore collision fails; the printed REVOKE statements
-// for the privileges the least-privilege list does not name, which the
-// owner runs once every syncing client is upgraded, or mtix sync harden
-// when no statement could be printed.
+// push that meets a restore collision fails; for the privileges the
+// least-privilege list does not name, which the owner removes once every
+// syncing client is upgraded, the printed REVOKE statements, then mtix
+// sync harden for a grant no printed REVOKE clears, or when none could be
+// printed.
 func schemaGaps(s schemaState) (gaps, steps []string) {
 	if len(s.missing) > 0 {
 		gap := "the hub schema predates migration 017, with which the hub stamps every event's " +
@@ -256,7 +199,8 @@ func schemaGaps(s schemaState) (gaps, steps []string) {
 			"record_restore_collision); the table owner revokes them once every syncing client is upgraded")
 		if len(s.revokes) > 0 {
 			steps = append(steps, strings.Join(s.revokes, " "))
-		} else {
+		}
+		if s.collisionHarden || len(s.revokes) == 0 {
 			steps = append(steps, hubPrivilegesFix)
 		}
 	}

@@ -75,8 +75,9 @@ fails until that client upgrades.
 `mtix sync doctor`, run with a syncing role's DSN, names that role in its
 `schema current` check when it cannot execute the function, with the
 exact GRANT to run, and when it still holds INSERT on
-`sync_node_collisions` or USAGE on its sequence, with the exact REVOKE
-statements.
+`sync_node_collisions` or USAGE on its sequence, or can reach either
+through SET ROLE, with the exact REVOKE statements, and `mtix sync harden`
+for a grant a REVOKE cannot clear.
 
 A dump holds no privileges: after restoring the hub and running
 `mtix sync init`, grant each syncing role this list again, EXECUTE on

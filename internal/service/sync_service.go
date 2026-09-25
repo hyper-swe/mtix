@@ -357,7 +357,7 @@ func writeFileAtomically(path string, data []byte) error {
 // PreSyncBackupsKept deleted; no other file in the directory is touched.
 func (s *SyncService) backupDB(ctx context.Context, mtixDir, fileHash string, local *sqlite.ExportData) (string, error) {
 	dir := filepath.Join(mtixDir, "data", "backups")
-	storeHash, hashErr := exportHash(local)
+	storeHash, hashErr := exportHash(local, formCurrent)
 	if hashErr != nil {
 		storeHash = "" // never reuse a backup of a store state not known
 	}
@@ -377,9 +377,13 @@ func (s *SyncService) backupDB(ctx context.Context, mtixDir, fileHash string, lo
 // sync per FR-15.2h. If both changed, the user must resolve manually. The
 // caller passes the local store's export, taken before this check, so an
 // unreadable store has already failed closed (MTIX-95.31.1). Without a
-// stored DB hash there is no baseline and no conflict.
+// stored DB hash there is no baseline and no conflict. MTIX-95.31.11: a
+// baseline that differs only because it was hashed over an older form of
+// the same, unchanged store (the 1.0.0 export mtix 0.5.3 wrote, or an
+// export before the open-time backfill minted uids, matchOlderBaseline) is
+// rewritten in the current form and is no conflict.
 func (s *SyncService) hasConflict(mtixDir string, local *sqlite.ExportData) (bool, error) {
-	currentDBHash, err := exportHash(local)
+	currentDBHash, err := exportHash(local, formCurrent)
 	if err != nil {
 		return false, err
 	}
@@ -391,10 +395,21 @@ func (s *SyncService) hasConflict(mtixDir string, local *sqlite.ExportData) (boo
 		// No conflict possible without a baseline.
 		return false, nil
 	}
+	if currentDBHash == string(storedDBHash) {
+		return false, nil
+	}
+	form, older, err := matchOlderBaseline(local, string(storedDBHash))
+	if err != nil {
+		return false, err
+	}
+	if older {
+		s.upgradeBaseline(mtixDir, currentDBHash, form)
+		return false, nil
+	}
 
 	// DB hash differs AND file hash differs (we're in this code path because
 	// file hash already differed) → conflict.
-	return currentDBHash != string(storedDBHash), nil
+	return true, nil
 }
 
 // SyncReport describes the result of comparing SQLite state with tasks.json.

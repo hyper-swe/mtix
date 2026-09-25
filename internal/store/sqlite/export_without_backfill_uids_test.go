@@ -84,3 +84,46 @@ func TestWithoutBackfillUIDs_NilExport_ReturnsInvalidInput(t *testing.T) {
 	_, err := sqlite.WithoutBackfillUIDs(nil)
 	assert.ErrorIs(t, err, model.ErrInvalidInput)
 }
+
+// TestWithoutUIDs_EveryUID_ExportAsBeforeUIDs verifies every uid is left
+// out, a uid a create minted (COL-1) and a backfill uid (COL-2) alike, and
+// the result, checksum included, is the export of the same store with no
+// uid at all, as mtix 0.3.0 exported it before nodes had uids
+// (MTIX-95.31.11). The export passed in is not changed.
+func TestWithoutUIDs_EveryUID_ExportAsBeforeUIDs(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	for i, id := range []string{"COL-1", "COL-2"} {
+		createEveryColumnNode(t, s, id, i+1)
+	}
+	exec := func(query string, args ...any) {
+		_, err := s.WriteDB().ExecContext(ctx, query, args...)
+		require.NoError(t, err)
+	}
+	exec(`UPDATE nodes SET uid = NULL`)
+	withoutUIDs, err := s.Export(ctx, "", "")
+	require.NoError(t, err)
+	backfill, err := model.NewBackfillUID()
+	require.NoError(t, err)
+	exec(`UPDATE nodes SET uid = ? WHERE id = 'COL-1'`, "01995a1e-8c00-7a11-8b22-00000000c011")
+	exec(`UPDATE nodes SET uid = ? WHERE id = 'COL-2'`, backfill)
+	data, err := s.Export(ctx, "", "")
+	require.NoError(t, err)
+	before := exportJSON(t, data)
+
+	form, err := sqlite.WithoutUIDs(data)
+	require.NoError(t, err)
+
+	assert.Equal(t, exportJSON(t, withoutUIDs), exportJSON(t, form))
+	ok, err := sqlite.VerifyExportChecksum(form)
+	require.NoError(t, err)
+	assert.True(t, ok, "the result carries its own checksum")
+	assert.Equal(t, before, exportJSON(t, data), "the export passed in is not changed")
+}
+
+// TestWithoutUIDs_NilExport_ReturnsInvalidInput verifies a nil export is
+// refused.
+func TestWithoutUIDs_NilExport_ReturnsInvalidInput(t *testing.T) {
+	_, err := sqlite.WithoutUIDs(nil)
+	assert.ErrorIs(t, err, model.ErrInvalidInput)
+}

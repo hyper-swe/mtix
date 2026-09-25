@@ -61,13 +61,20 @@ func teammateChange(t *testing.T) func(d *sqlite.ExportData) {
 	}
 }
 
+// The versions whose conflict baseline a case writes (olderBaselineCase.by);
+// "" is this version's, written by the fixture's export.
+const (
+	by053 = "0.5.3" // the 1.0.0 form, uids included (v053BaselineHash)
+	by030 = "0.3.0" // the 1.0.0 form without any uid key (v030BaselineHash)
+)
+
 // olderBaselineCase is a store upgraded with its conflict baseline written
 // in an older form, as the tests below build it.
 type olderBaselineCase struct {
 	name   string
 	setup  upgradeSetup
-	v053   bool   // the baseline is the one 0.5.3 wrote (1.0.0 form); otherwise this version's
-	pinned string // the 0.5.3 baseline pinned for the setup, when there is one
+	by     string // the version that wrote the baseline: by053, by030, or "" for this one
+	pinned string // the baseline pinned for the setup, when there is one
 	reopen bool   // the next command opens the store, minting backfill uids
 	form   string // the older form the log names, as the text log writes it
 }
@@ -77,8 +84,14 @@ type olderBaselineCase struct {
 func (c *olderBaselineCase) prepare(t *testing.T) *guardFixture {
 	t.Helper()
 	f := newUpgradeFixture(t, c.setup)
-	if c.v053 {
-		baseline := v053BaselineHash(t, f.store)
+	baseline := ""
+	switch c.by {
+	case by053:
+		baseline = v053BaselineHash(t, f.store)
+	case by030:
+		baseline = v030BaselineHash(t, f.store)
+	}
+	if baseline != "" {
 		if c.pinned != "" {
 			require.Equal(t, c.pinned, baseline, "the fixture is the pinned one")
 		}
@@ -94,17 +107,28 @@ func (c *olderBaselineCase) prepare(t *testing.T) *guardFixture {
 // first automatic import after the upgrade applies a teammate's board when
 // the local store is unchanged since its baseline was written: by 0.5.3
 // (1.0.0 form), or by this version before backfill uids were minted, or
-// both. The baseline is rewritten in the current form, logged once.
+// both, or by 0.3.0 (1.0.0 form without any uid key; the upgrade gave the
+// tasks uids). The baseline is rewritten in the current form, logged once.
+// The rows with invalid UTF-8 also pin the order in which the older forms
+// are built: the uids are left out before the 1.0.0 checksum is computed.
 func TestAutoImport_BaselineInAnOlderForm_AppliesTeammateBoard(t *testing.T) {
 	tests := []olderBaselineCase{
-		{name: "0.5.3 baseline", v053: true, pinned: v053FixtureBaseline, form: "1.0.0"},
+		{name: "0.5.3 baseline", by: by053, pinned: v053FixtureBaseline, form: "1.0.0"},
 		{name: "0.5.3 baseline, a text holding invalid UTF-8", setup: upgradeSetup{invalidUTF8: true},
-			v053: true, pinned: v053FixtureBaselineInvalidUTF8, form: "1.0.0"},
-		{name: "0.5.3 baseline of a store without tasks", setup: upgradeSetup{empty: true}, v053: true, form: "1.0.0"},
+			by: by053, pinned: v053FixtureBaselineInvalidUTF8, form: "1.0.0"},
+		{name: "0.5.3 baseline of a store without tasks", setup: upgradeSetup{empty: true}, by: by053, form: "1.0.0"},
 		{name: "baseline written before backfill uids were minted", setup: upgradeSetup{uidless: true}, reopen: true,
 			form: `"current without backfill uids"`},
 		{name: "0.5.3 baseline written before backfill uids were minted", setup: upgradeSetup{uidless: true},
-			v053: true, reopen: true, form: `"1.0.0 without backfill uids"`},
+			by: by053, reopen: true, form: `"1.0.0 without backfill uids"`},
+		{name: "0.5.3 baseline written before backfill uids were minted, a text holding invalid UTF-8",
+			setup: upgradeSetup{invalidUTF8: true, uidless: true}, by: by053, reopen: true,
+			form: `"1.0.0 without backfill uids"`},
+		{name: "0.3.0 baseline", by: by030, pinned: v030FixtureBaseline, form: `"1.0.0 without uids"`},
+		{name: "0.3.0 baseline, a text holding invalid UTF-8", setup: upgradeSetup{invalidUTF8: true},
+			by: by030, pinned: v030FixtureBaselineInvalidUTF8, form: `"1.0.0 without uids"`},
+		{name: "0.3.0 baseline, a task given a backfill uid at the upgrade", setup: upgradeSetup{uidless: true},
+			by: by030, reopen: true, form: `"1.0.0 without uids"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -140,7 +164,7 @@ func TestAutoImport_BaselineInAnOlderForm_AppliesTeammateBoard(t *testing.T) {
 // conflict, and the next command does not rewrite the baseline again.
 func TestAutoImport_BaselineFrom053AndLossyBoard_RefusedAsLossyBaselineUpgraded(t *testing.T) {
 	ctx := context.Background()
-	c := olderBaselineCase{v053: true, pinned: v053FixtureBaseline}
+	c := olderBaselineCase{by: by053, pinned: v053FixtureBaseline}
 	f := c.prepare(t)
 	unchanged := f.currentBaseline(t)
 	f.pull(t, asOlderClientBoard(t, f.teammateBoard(t, teammateChange(t))))
@@ -180,9 +204,10 @@ func TestAutoImport_LocalChangeNotExported_StillAConflict(t *testing.T) {
 		olderBaselineCase
 		change func(t *testing.T, f *guardFixture)
 	}{
-		{olderBaselineCase{name: "0.5.3 baseline, a title changed", v053: true, pinned: v053FixtureBaseline}, retitle},
+		{olderBaselineCase{name: "0.5.3 baseline, a title changed", by: by053, pinned: v053FixtureBaseline}, retitle},
 		{olderBaselineCase{name: "0.5.3 baseline written before backfill uids were minted, a title changed",
-			setup: upgradeSetup{uidless: true}, v053: true, reopen: true}, retitle},
+			setup: upgradeSetup{uidless: true}, by: by053, reopen: true}, retitle},
+		{olderBaselineCase{name: "0.3.0 baseline, a title changed", by: by030, pinned: v030FixtureBaseline}, retitle},
 		{olderBaselineCase{name: "baseline written before backfill uids were minted, a title changed",
 			setup: upgradeSetup{uidless: true}, reopen: true}, retitle},
 		{olderBaselineCase{name: "current baseline, a title changed"}, retitle},
@@ -227,4 +252,32 @@ func TestAutoImport_CurrentBaselineUnchangedStore_AppliesWithoutUpgrade(t *testi
 	_, err := f.store.GetNode(ctx, "PROJ-3")
 	require.NoError(t, err)
 	assert.NotContains(t, f.logs.String(), baselineUpgradedEvent)
+}
+
+// TestAutoImport_BaselineRewriteFails_WarnsAndKeepsOlderBaseline verifies
+// the rewrite of a baseline recognized in an older form is atomic: in a data
+// directory mtix cannot write to, the rewrite fails with a warning, the
+// older baseline stays as it was (never truncated), and no rewrite is
+// logged. The next command recognizes it again.
+func TestAutoImport_BaselineRewriteFails_WarnsAndKeepsOlderBaseline(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes to a read-only directory")
+	}
+	ctx := context.Background()
+	c := olderBaselineCase{by: by053, pinned: v053FixtureBaseline}
+	f := c.prepare(t)
+	f.pull(t, f.teammateBoard(t, teammateChange(t)))
+	dataDir := filepath.Join(f.mtixDir, "data")
+	require.NoError(t, os.Chmod(dataDir, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(dataDir, 0o755) }) // runs before the store closes and the directory is removed
+
+	// Nothing is imported either: the backup before the import cannot be
+	// written, which is logged, not returned.
+	require.NoError(t, f.svc.AutoImport(ctx, f.mtixDir))
+
+	assert.Contains(t, f.logs.String(), "could not rewrite the conflict baseline in the current form")
+	assert.NotContains(t, f.logs.String(), baselineUpgradedEvent)
+	assert.Equal(t, v053FixtureBaseline, string(f.read(t, "data/sync-db.sha256")), "the older baseline is kept")
+	_, err := f.store.GetNode(ctx, "PROJ-3")
+	assert.ErrorIs(t, err, model.ErrNotFound)
 }

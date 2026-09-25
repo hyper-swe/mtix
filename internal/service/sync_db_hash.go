@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -29,24 +30,46 @@ const (
 	formWithoutBackfillUIDs baselineForm = 1 << 0
 	// form100 is the 1.0.0 export mtix 0.5.3 and earlier wrote and hashed.
 	form100 baselineForm = 1 << 1
+	// formWithoutUIDs leaves out every uid: mtix 0.3.0 and earlier exported
+	// no uid key at all, and the uids of a store upgraded from them were
+	// given to its tasks at the upgrade.
+	formWithoutUIDs baselineForm = 1 << 2
+	// knownForms are the flags exportHash knows.
+	knownForms = formWithoutBackfillUIDs | form100 | formWithoutUIDs
 )
 
 // olderBaselineForms are the forms, other than the current one, a baseline
-// written by mtix 0.5.3 or earlier, or by this version before backfill
-// uids were minted, is in: the store's export without its backfill uids,
-// in the 1.0.0 form, and both (MTIX-95.31.11).
+// written by an older mtix, or by this version before backfill uids were
+// minted, is in (MTIX-95.31.11): the store's export without its backfill
+// uids; the 1.0.0 form (0.5.3 and earlier); both; and the 1.0.0 form
+// without any uid (0.3.0 and earlier), which matches only a baseline that
+// had no uid key and hides nothing but the assignment of uids.
 func olderBaselineForms() []baselineForm {
-	return []baselineForm{formWithoutBackfillUIDs, form100, form100 | formWithoutBackfillUIDs}
+	return []baselineForm{
+		formWithoutBackfillUIDs, form100, form100 | formWithoutBackfillUIDs, form100 | formWithoutUIDs,
+	}
 }
 
-// String names the form in logs: "current", "1.0.0", and either followed
-// by " without backfill uids".
+// baselineForms returns the older forms hasConflict tries, in order:
+// olderForms when set, olderBaselineForms otherwise (MTIX-95.31.11).
+func (s *SyncService) baselineForms() []baselineForm {
+	if s.olderForms != nil {
+		return s.olderForms
+	}
+	return olderBaselineForms()
+}
+
+// String names the form in logs: "current" or "1.0.0", followed by
+// " without backfill uids" or " without uids".
 func (f baselineForm) String() string {
 	name := "current"
 	if f&form100 != 0 {
 		name = "1.0.0"
 	}
-	if f&formWithoutBackfillUIDs != 0 {
+	switch {
+	case f&formWithoutUIDs != 0:
+		name += " without uids"
+	case f&formWithoutBackfillUIDs != 0:
 		name += " without backfill uids"
 	}
 	return name
@@ -84,16 +107,29 @@ func (s *SyncService) computeDBHash(ctx context.Context) (string, error) {
 // generated. Without this, two exports of identical data in different
 // seconds produce different hashes, causing false-positive conflict
 // detection in hasConflict. An older form (olderBaselineForms) first
-// leaves out every backfill uid (sqlite.WithoutBackfillUIDs), for a
-// baseline written before the open-time backfill minted them, and/or turns
-// the export into the 1.0.0 form mtix 0.5.3 hashed (sqlite.Schema100Form),
-// in that order, each with its checksum computed again, so hasConflict can
-// recognize a baseline an older build wrote for the same store. data is
-// not changed.
+// leaves out every uid (sqlite.WithoutUIDs), for a baseline written before
+// nodes had uids, or every backfill uid (sqlite.WithoutBackfillUIDs), for
+// a baseline written before the open-time backfill minted them, and then
+// turns the export into the 1.0.0 form mtix 0.5.3 hashed
+// (sqlite.Schema100Form), each with its checksum computed again, so
+// hasConflict can recognize a baseline an older build wrote for the same
+// store. The order matters: the 1.0.0 checksum is computed last, over the
+// nodes as that build exported them. A form with a flag exportHash does not
+// know is refused with ErrInvalidInput. data is not changed.
 func exportHash(data *sqlite.ExportData, form baselineForm) (string, error) {
+	if form&^knownForms != 0 {
+		return "", fmt.Errorf("unknown baseline form %d: %w", uint8(form), model.ErrInvalidInput)
+	}
 	content := *data
 	content.ExportedAt = ""
-	if form&formWithoutBackfillUIDs != 0 {
+	switch {
+	case form&formWithoutUIDs != 0:
+		older, err := sqlite.WithoutUIDs(&content)
+		if err != nil {
+			return "", fmt.Errorf("the local store without its uids: %w", err)
+		}
+		content = *older
+	case form&formWithoutBackfillUIDs != 0:
 		older, err := sqlite.WithoutBackfillUIDs(&content)
 		if err != nil {
 			return "", fmt.Errorf("the local store without its backfill uids: %w", err)
@@ -115,13 +151,14 @@ func exportHash(data *sqlite.ExportData, form baselineForm) (string, error) {
 	return fmt.Sprintf("%x", hash), nil
 }
 
-// matchOlderBaseline returns the older form (olderBaselineForms) in which
-// the export local hashes to stored, the conflict baseline, and whether
-// there is one (MTIX-95.31.11). hasConflict compares the current form
-// first. A store changed since its baseline was written matches no older
-// form, unless the change is only to fields that form lacks.
-func matchOlderBaseline(local *sqlite.ExportData, stored string) (baselineForm, bool, error) {
-	for _, form := range olderBaselineForms() {
+// matchOlderBaseline returns the first of forms in which the export local
+// hashes to stored, the conflict baseline, and whether there is one
+// (MTIX-95.31.11). hasConflict compares the current form first, then the
+// older forms (olderBaselineForms). A store changed since its baseline was
+// written matches no older form, unless the change is only to fields that
+// form lacks.
+func matchOlderBaseline(local *sqlite.ExportData, stored string, forms []baselineForm) (baselineForm, bool, error) {
+	for _, form := range forms {
 		hash, err := exportHash(local, form)
 		if err != nil {
 			return formCurrent, false, fmt.Errorf("hash the local store in the %s form: %w", form, err)
@@ -137,10 +174,11 @@ func matchOlderBaseline(local *sqlite.ExportData, stored string) (baselineForm, 
 // matched the unchanged local store in an older form, with current, the
 // store's hash in the current form, and logs it (MTIX-95.31.11, FR-15.2h).
 // From then on the baseline is compared exactly, so a change to a field
-// the older form lacks counts as a change too. A failed write is logged:
-// the next command recognizes the older baseline again.
+// the older form lacks counts as a change too. The write is atomic
+// (writeFileAtomically), so a failure leaves the older baseline whole; it
+// is logged, and the next command recognizes the older baseline again.
 func (s *SyncService) upgradeBaseline(mtixDir, current string, form baselineForm) {
-	if err := os.WriteFile(filepath.Join(mtixDir, "data", "sync-db.sha256"), []byte(current), 0o644); err != nil {
+	if err := writeFileAtomically(filepath.Join(mtixDir, "data", "sync-db.sha256"), []byte(current)); err != nil {
 		s.logger.Warn("could not rewrite the conflict baseline in the current form", "error", err)
 		return
 	}

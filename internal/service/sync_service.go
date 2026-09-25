@@ -35,6 +35,9 @@ type SyncService struct {
 	notices  io.Writer      // user-facing auto-import notices, stderr by default (MTIX-95.31.2)
 	mu       sync.Mutex     // guards noticed
 	noticed  map[string]bool
+	// olderForms are the older conflict baseline forms hasConflict tries,
+	// in order; nil means olderBaselineForms() (MTIX-95.31.11). Tests set it.
+	olderForms []baselineForm
 
 	MaxImportSize int64 // Maximum file size for auto-import per FR-15.2e.
 }
@@ -331,15 +334,17 @@ func (s *SyncService) exportBoard(ctx context.Context, mtixDir string) error {
 }
 
 // writeFileAtomically writes data to path through a temporary file in the
-// same directory and a rename (FR-15.3c), so a crash never leaves a torn
-// file.
+// same directory and a rename (FR-15.3c), so a crash or a failed write
+// never leaves a torn file: tasks.json, and the conflict baseline when it
+// is rewritten from an older form (MTIX-95.31.11).
 func writeFileAtomically(path string, data []byte) error {
 	tmpPath := path + ".tmp"
+	name := filepath.Base(path)
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return fmt.Errorf("write temp tasks.json: %w", err)
+		return fmt.Errorf("write temp %s: %w", name, err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("rename temp to tasks.json: %w", err)
+		return fmt.Errorf("rename temp to %s: %w", name, err)
 	}
 	return nil
 }
@@ -379,9 +384,10 @@ func (s *SyncService) backupDB(ctx context.Context, mtixDir, fileHash string, lo
 // unreadable store has already failed closed (MTIX-95.31.1). Without a
 // stored DB hash there is no baseline and no conflict. MTIX-95.31.11: a
 // baseline that differs only because it was hashed over an older form of
-// the same, unchanged store (the 1.0.0 export mtix 0.5.3 wrote, or an
-// export before the open-time backfill minted uids, matchOlderBaseline) is
-// rewritten in the current form and is no conflict.
+// the same, unchanged store (the 1.0.0 export mtix 0.5.3 wrote, the one
+// without uids 0.3.0 wrote, or an export before the open-time backfill
+// minted uids, matchOlderBaseline) is rewritten in the current form and is
+// no conflict.
 func (s *SyncService) hasConflict(mtixDir string, local *sqlite.ExportData) (bool, error) {
 	currentDBHash, err := exportHash(local, formCurrent)
 	if err != nil {
@@ -398,9 +404,9 @@ func (s *SyncService) hasConflict(mtixDir string, local *sqlite.ExportData) (boo
 	if currentDBHash == string(storedDBHash) {
 		return false, nil
 	}
-	form, older, err := matchOlderBaseline(local, string(storedDBHash))
+	form, older, err := matchOlderBaseline(local, string(storedDBHash), s.baselineForms())
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("compare the conflict baseline with older forms: %w", err)
 	}
 	if older {
 		s.upgradeBaseline(mtixDir, currentDBHash, form)

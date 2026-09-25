@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -44,29 +45,35 @@ func TestConflictGuidance_BothChanged_LeadsWithMergeImport(t *testing.T) {
 		change  func(t *testing.T, f *guardFixture)
 		message func(t *testing.T, f *guardFixture) string
 		combine bool // the message says the merge combines both sides
+		refused bool // the auto-import returns ErrAutoImportRefused; otherwise nil
 	}{
 		{"the warning of a lossless conflict", retitleLocally, func(_ *testing.T, f *guardFixture) string {
 			return lineWith(f.logs.String(), "conflict detected")
-		}, true},
+		}, true, false},
 		{"the line a write prints while the conflict is pending", retitleLocally, func(t *testing.T, f *guardFixture) string {
 			writeLocalTask(t, f, "PROJ-4", 4)
 			require.NoError(t, f.svc.AutoExport(context.Background(), f.mtixDir))
 			return lineWith(f.notices.String(), "Both it and the local store changed")
-		}, true},
+		}, true, false},
 		{"the refusal of a conflict that would delete local data", func(t *testing.T, f *guardFixture) {
 			require.NoError(t, f.store.SetAnnotations(context.Background(), "PROJ-2", []model.Annotation{{
 				ID: "01J9GUIDANCE000000000000001", Author: "dev", Text: "local only", CreatedAt: f.now,
 			}}))
 		}, func(_ *testing.T, f *guardFixture) string {
 			return f.notices.String()
-		}, false},
+		}, false, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newGuardFixture(t)
 			f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) { addTeammateNode(t, d, "PROJ-2", "PROJ-3", 3) }))
 			tt.change(t, f)
-			_ = f.svc.AutoImport(context.Background(), f.mtixDir) // the command's own auto-import: a conflict
+			err := f.svc.AutoImport(context.Background(), f.mtixDir) // the command's own auto-import: a conflict
+			if tt.refused {
+				require.ErrorIs(t, err, service.ErrAutoImportRefused)
+			} else {
+				require.NoError(t, err, "a conflict that loses nothing is recorded and logged, not returned")
+			}
 
 			text := tt.message(t, f)
 			assertMergeLeads(t, text)

@@ -72,19 +72,25 @@ func queueWithoutUID(t *testing.T, nodeID string) string {
 // or because the creation was queued without a uid. An edit made before
 // that, and an edit, a comment, a child creation and the child's edit made
 // after it, are all held, over two pushes, whether the creation was first
-// held before or in the same push; an edit of another task is pushed.
+// held before or in the same push; an edit of another task is pushed. When
+// the task is then deleted with its subtree (review r2 S2), the delete is
+// held too: a soft-deleted task still counts as the task found by the
+// number its creation names.
 func TestPushLoop_HeldCreationWhoseUIDNoNodeHas_TaskAndSubtreeHeld(t *testing.T) {
+	adopt := func(t *testing.T) { adoptFileUID(t, "TEST-1") }
+	queue := func(t *testing.T) { queueWithoutUID(t, "TEST-1") }
 	tests := []struct {
-		name      string
-		pushFirst bool // a push holds the creation before its task loses its uid
-		loseUID   func(t *testing.T)
+		name       string
+		pushFirst  bool // a push holds the creation before its task loses its uid
+		loseUID    func(t *testing.T)
+		deleteTask bool // mtix delete TEST-1 --cascade after the other changes
 	}{
-		{"uid adopted by a merge, creation held before", true, func(t *testing.T) { adoptFileUID(t, "TEST-1") }},
-		{"uid adopted by a merge, creation held in the same push", false,
-			func(t *testing.T) { adoptFileUID(t, "TEST-1") }},
-		{"creation queued without a uid, held before", true, func(t *testing.T) { queueWithoutUID(t, "TEST-1") }},
-		{"creation queued without a uid, held in the same push", false,
-			func(t *testing.T) { queueWithoutUID(t, "TEST-1") }},
+		{"uid adopted by a merge, creation held before", true, adopt, false},
+		{"uid adopted by a merge, creation held in the same push", false, adopt, false},
+		{"uid adopted by a merge, task deleted, creation held before", true, adopt, true},
+		{"uid adopted by a merge, task deleted, creation held in the same push", false, adopt, true},
+		{"creation queued without a uid, held before", true, queue, false},
+		{"creation queued without a uid, held in the same push", false, queue, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -105,6 +111,9 @@ func TestPushLoop_HeldCreationWhoseUIDNoNodeHas_TaskAndSubtreeHeld(t *testing.T)
 			require.NoError(t, runUpdate("TEST-1.1", "child edit", "", "", "", 0, "", ""))
 			require.NoError(t, runUpdate("TEST-2", "unrelated edit", "", "", "", 0, "", ""))
 			child := eventIDFor(t, "TEST-1.1", model.OpCreateNode)
+			if tt.deleteTask {
+				require.NoError(t, runDelete("TEST-1", true))
+			}
 
 			for push := 1; push <= 2; push++ {
 				require.NoError(t, pushWith(t, hub), "push %d", push)
@@ -116,6 +125,9 @@ func TestPushLoop_HeldCreationWhoseUIDNoNodeHas_TaskAndSubtreeHeld(t *testing.T)
 				require.True(t, held, "the edit made before is held")
 				require.False(t, hub.sent(before))
 				require.False(t, hub.sent(root), "the creation stays held")
+				if tt.deleteTask {
+					requireHeldDependent(t, hub, "TEST-1", model.OpDelete, root)
+				}
 			}
 			requireSent(t, hub, "TEST-2", model.OpUpdateField)
 		})

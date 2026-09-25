@@ -14,32 +14,49 @@ import (
 )
 
 // TestBlockers_RemoveSharedKey_ForgetsOnlyThatCreation: two held creations
-// filed under the same number (a task and a re-emitted creation of it, or a
-// creation whose event names another's current number) are removed one at
-// a time: each removal forgets that creation only, under every key it was
-// filed under, and once both are gone nothing blocks (MTIX-95.12).
+// filed under the same keys (a task and a re-emitted creation of it, which
+// carries the task's uid, filed under the same current number) are removed
+// one at a time: each removal forgets that creation only, under every key
+// it was filed under, and once both are gone nothing blocks and every index
+// is empty (MTIX-95.12). An event of the task found only by its uid (no
+// node has it now) is held while either is; a creation's own event is held
+// by the other creation of its task, found past itself under the shared
+// uid, and never by itself.
 func TestBlockers_RemoveSharedKey_ForgetsOnlyThatCreation(t *testing.T) {
 	bs := newBlockers()
-	first := &blocker{eventID: "e1", nodeID: "P-1", lamport: 1}
-	second := &blocker{eventID: "e2", nodeID: "P-2", lamport: 2}
+	first := &blocker{eventID: "e1", nodeID: "P-1", uid: "u", lamport: 1}
+	second := &blocker{eventID: "e2", nodeID: "P-2", uid: "u", lamport: 2}
 	bs.add(first, "P-5")
 	bs.add(second, "P-5")
-	byUID := holdCheck{eventID: "x", nodeID: "P-5.1", op: model.OpUpdateField, lamport: 9,
-		subject: sqlite.PushSubject{UID: "u", CurrentNodeID: "P-5.1"}}
+	byTask := holdCheck{eventID: "x", nodeID: "P-5.1", op: model.OpUpdateField, lamport: 9,
+		subject: sqlite.PushSubject{UID: "v", CurrentNodeID: "P-5.1"}}
 	byNumber := holdCheck{eventID: "y", nodeID: "P-5.1", op: model.OpUpdateField, lamport: 9}
+	byUID := holdCheck{eventID: "z", nodeID: "P-9", op: model.OpUpdateField, lamport: 9,
+		subject: sqlite.PushSubject{UID: "u"}}
+	firstItself := holdCheck{eventID: "e1", nodeID: "P-1", op: model.OpCreateNode, lamport: 1,
+		subject: sqlite.PushSubject{UID: "u"}}
 
+	b, _, ok := bs.holdFor(firstItself)
+	require.True(t, ok, "the other creation of the task, past this one under the uid, holds it")
+	require.Same(t, second, b)
 	bs.remove("e2")
-	for _, c := range []holdCheck{byUID, byNumber} {
+	for _, c := range []holdCheck{byTask, byNumber, byUID} {
 		b, _, ok := bs.holdFor(c)
-		require.True(t, ok)
-		require.Same(t, first, b)
+		require.True(t, ok, c.eventID)
+		require.Same(t, first, b, c.eventID)
 	}
+	_, _, ok = bs.holdFor(firstItself)
+	require.False(t, ok, "a creation never holds its own event")
 	bs.remove("e1")
-	for _, c := range []holdCheck{byUID, byNumber} {
+	for _, c := range []holdCheck{byTask, byNumber, byUID, firstItself} {
 		_, _, ok := bs.holdFor(c)
-		require.False(t, ok, "a removed creation blocks nothing")
+		require.False(t, ok, "a removed creation blocks nothing: %s", c.eventID)
 	}
 	require.True(t, bs.empty())
+	for _, m := range []map[string][]*blocker{bs.byTask, bs.byNumber, bs.byUID} {
+		require.Empty(t, m)
+	}
+	require.Empty(t, bs.keys)
 }
 
 // TestBlockers_Link_WaitsForEarliestHeldCreationBeforeIt: a link or unlink

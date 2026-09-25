@@ -847,9 +847,10 @@ of the queue the client stopped pushing altogether.
    to the creation's event id. So the task a creation created is the node
    with the event's uid, else, for an event without one, the node whose
    uid is the event id, else the node at the number the event names
-   (`PushSubject.TaskNodeID` and `TaskUID`), and the held creation is
-   filed under that task's current number and current uid as well as the
-   uid its event carries; a task that has taken that number since is held
+   (`PushSubject.TaskNodeID`; a soft-deleted node counts in each step),
+   and the held creation is filed under that task's current number, where
+   every later change of the task, whatever uid it carries, and its
+   subtree are found; a task that has taken that number since is held
    too. Known limit: when a task found by that number is then renumbered
    on this machine, its events that no push checked before the renumber
    are not recognized (MTIX-95.31.16 carries an adopted uid onto unpushed

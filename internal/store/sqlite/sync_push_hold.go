@@ -90,8 +90,7 @@ func (s *Store) HeldPushEvents(ctx context.Context, limit int) ([]HeldPushEvent,
 	rows, err := s.Query(ctx, `
 		SELECT q.event_id, COALESCE(e.node_id, ''), COALESCE(e.op_type, ''), q.reason,
 		       COALESCE(e.payload, ''), COALESCE(e.lamport_clock, 0), COALESCE(e.uid, ''), COALESCE(n.id, ''),
-		       CASE WHEN e.op_type = 'create_node' THEN COALESCE(n.id, s.id, f.id, '') ELSE '' END,
-		       CASE WHEN e.op_type = 'create_node' THEN COALESCE(n.uid, s.uid, f.uid, '') ELSE '' END
+		       CASE WHEN e.op_type = 'create_node' THEN COALESCE(n.id, s.id, f.id, '') ELSE '' END
 		FROM sync_quarantine q
 		LEFT JOIN sync_events e ON e.event_id = q.event_id
 		LEFT JOIN nodes n ON n.uid = e.uid AND n.uid IS NOT NULL AND n.uid <> ''
@@ -110,7 +109,7 @@ func (s *Store) HeldPushEvents(ctx context.Context, limit int) ([]HeldPushEvent,
 	for rows.Next() {
 		var h HeldPushEvent
 		if err := rows.Scan(&h.EventID, &h.NodeID, &h.OpType, &h.Reason, &h.Payload,
-			&h.Lamport, &h.UID, &h.CurrentNodeID, &h.TaskNodeID, &h.TaskUID); err != nil {
+			&h.Lamport, &h.UID, &h.CurrentNodeID, &h.TaskNodeID); err != nil {
 			return nil, fmt.Errorf("read held push events: %w", err)
 		}
 		out = append(out, h)

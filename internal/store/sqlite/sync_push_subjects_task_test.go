@@ -19,9 +19,9 @@ import (
 // by PushSubjects and by HeldPushEvents alike, is the node that has the
 // event's uid; else, for an event without a uid, the node whose uid is the
 // event's own id (the pre-v3 backfill's), under its current number; else
-// the node at the number the event names. TaskNodeID and TaskUID are that
-// node's current number and uid. An edit gets no task fields, and a
-// creation whose task no node is left for gets none.
+// the node at the number the event names, soft-deleted or not (review r2
+// S2). TaskNodeID is that node's current number. An edit gets no task
+// number, and a creation whose task no node is left for gets none.
 func TestPushSubjects_CreationTask_FoundByUIDSelfAnchorOrNumber(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -30,29 +30,32 @@ func TestPushSubjects_CreationTask_FoundByUIDSelfAnchorOrNumber(t *testing.T) {
 		wantUID     func(create string) string
 		wantCurrent string
 		wantTask    string
-		wantTaskUID func(create string) string
 	}{
 		{"found by uid, renumbered", func(t *testing.T, s *sqlite.Store, _ string) {
 			require.NoError(t, s.RenumberSubtree(context.Background(), "PROJ-1", 5))
-		}, false, creationID, "PROJ-5", "PROJ-5", creationID},
+		}, false, creationID, "PROJ-5", "PROJ-5"},
 		{"uid adopted by a merge: by the number", func(t *testing.T, s *sqlite.Store, _ string) {
 			setNodeUID(t, s, "PROJ-1", "file-uid")
-		}, false, creationID, "", "PROJ-1", literalUID("file-uid")},
+		}, false, creationID, "", "PROJ-1"},
+		{"uid adopted by a merge, task soft-deleted: by the number", func(t *testing.T, s *sqlite.Store, _ string) {
+			setNodeUID(t, s, "PROJ-1", "file-uid")
+			require.NoError(t, s.DeleteNode(context.Background(), "PROJ-1", true, "tester"))
+		}, false, creationID, "", "PROJ-1"},
 		{"queued without a uid: by its own id, renumbered", func(t *testing.T, s *sqlite.Store, create string) {
 			clearEventUID(t, s, create)
 			require.NoError(t, s.RenumberSubtree(context.Background(), "PROJ-1", 5))
-		}, false, literalUID(""), "", "PROJ-5", creationID},
+		}, false, literalUID(""), "", "PROJ-5"},
 		{"queued without a uid, uid adopted: by the number", func(t *testing.T, s *sqlite.Store, create string) {
 			clearEventUID(t, s, create)
 			setNodeUID(t, s, "PROJ-1", "file-uid")
-		}, false, literalUID(""), "", "PROJ-1", literalUID("file-uid")},
+		}, false, literalUID(""), "", "PROJ-1"},
 		{"task purged: no task", func(t *testing.T, s *sqlite.Store, _ string) {
 			_, err := s.WriteDB().ExecContext(context.Background(), `DELETE FROM nodes WHERE id = 'PROJ-1'`)
 			require.NoError(t, err)
-		}, false, creationID, "", "", literalUID("")},
-		{"an edit of a task whose uid was adopted: no task fields", func(t *testing.T, s *sqlite.Store, _ string) {
+		}, false, creationID, "", ""},
+		{"an edit of a task whose uid was adopted: no task number", func(t *testing.T, s *sqlite.Store, _ string) {
 			setNodeUID(t, s, "PROJ-1", "file-uid")
-		}, true, creationID, "", "", literalUID("")},
+		}, true, creationID, "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -68,8 +71,7 @@ func TestPushSubjects_CreationTask_FoundByUIDSelfAnchorOrNumber(t *testing.T) {
 				id = eventOf(t, s, "PROJ-1", "update_field")
 			}
 			tt.change(t, s, create)
-			want := sqlite.PushSubject{UID: tt.wantUID(create), CurrentNodeID: tt.wantCurrent,
-				TaskNodeID: tt.wantTask, TaskUID: tt.wantTaskUID(create)}
+			want := sqlite.PushSubject{UID: tt.wantUID(create), CurrentNodeID: tt.wantCurrent, TaskNodeID: tt.wantTask}
 
 			got, err := s.PushSubjects(ctx, []string{id})
 			require.NoError(t, err)

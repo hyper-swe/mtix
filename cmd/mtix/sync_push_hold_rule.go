@@ -36,8 +36,9 @@ import (
 // uids has none, while its task's uid is the event's own id. Every later
 // change of the task carries the task's uid. So the creation is found as
 // sqlite.PushSubject says (by its self-anchored uid, else by the number its
-// event names) and is filed under that task's current number and its
-// current uid too.
+// event names) and is filed under that task's current number, where every
+// later change of the task, whatever uid it carries, and its subtree are
+// found.
 //
 // A dependency link or unlink names the task it points to by number only,
 // and a local renumber records no history of numbers, so what a link's
@@ -53,13 +54,12 @@ const holdLinkWait = "links made while a task creation is held wait for it; " +
 	"this version names a link's target by number"
 
 // blocker is a held local task creation: its event, the number that event
-// names, the uid it carries, the uid its task has now (taskUID, when found),
-// its place in the queue, and the hold reasons of the events it blocks once
-// worked out.
+// names, the uid it carries, its place in the queue, and the hold reasons
+// of the events it blocks once worked out.
 type blocker struct {
-	eventID, nodeID, uid, taskUID string
-	lamport                       int64
-	why, linkWhy                  string
+	eventID, nodeID, uid string
+	lamport              int64
+	why, linkWhy         string
 }
 
 // before reports whether b comes before the event (lamport, eventID) in
@@ -86,11 +86,11 @@ type blockerKey struct {
 // blockers are the held creations of one push. byTask files each under the
 // current number of its task, for events found by uid; byNumber under the
 // number its event names and its current number, for the others; byUID
-// under the uid its event carries and the uid its task has now, for the
-// events of that task itself, whether or not the task still has a node.
-// keys is the reverse index remove uses; byEvent finds a creation by its
-// event id; first is the earliest in queue order, worked out again after it
-// is removed.
+// under the uid its event carries, for the events of that task itself,
+// whether or not the task still has a node (several creations of one task,
+// such as a re-emitted one, share that key). keys is the reverse index
+// remove uses; byEvent finds a creation by its event id; first is the
+// earliest in queue order, worked out again after it is removed.
 type blockers struct {
 	byTask, byNumber, byUID map[string][]*blocker
 	keys                    map[string][]blockerKey
@@ -124,7 +124,7 @@ func (bs *blockers) empty() bool {
 
 // add files b under currentID, the current number of its task (empty when
 // the task has no node), under the numbers for events not found by uid, and
-// under the uid its event carries and the uid its task has now.
+// under the uid its event carries.
 func (bs *blockers) add(b *blocker, currentID string) {
 	file := func(i blockerIndex, key string) {
 		if key == "" {
@@ -139,9 +139,6 @@ func (bs *blockers) add(b *blocker, currentID string) {
 		bs.first = b
 	}
 	file(indexUID, b.uid)
-	if b.taskUID != b.uid {
-		file(indexUID, b.taskUID)
-	}
 	file(indexTask, currentID)
 	file(indexNumber, b.nodeID)
 	if currentID != b.nodeID {
@@ -288,17 +285,15 @@ func nodeLine(nodeID string) []string {
 }
 
 // buildBlockers returns the held task creations among holds, each filed
-// under the current number and uid of the task it created
-// (sqlite.PushSubject), the uid its event carries and the numbers for
-// events not found by uid.
+// under the current number of the task it created (sqlite.PushSubject),
+// the uid its event carries and the numbers for events not found by uid.
 func buildBlockers(holds []sqlite.HeldPushEvent) *blockers {
 	bs := newBlockers()
 	for _, h := range holds {
 		if h.OpType != string(model.OpCreateNode) || h.NodeID == "" {
 			continue
 		}
-		bs.add(&blocker{eventID: h.EventID, nodeID: h.NodeID, uid: h.UID, taskUID: h.TaskUID, lamport: h.Lamport},
-			h.TaskNodeID)
+		bs.add(&blocker{eventID: h.EventID, nodeID: h.NodeID, uid: h.UID, lamport: h.Lamport}, h.TaskNodeID)
 	}
 	return bs
 }

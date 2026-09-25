@@ -19,16 +19,16 @@ import (
 // the current number of the node that has it (soft-deleted or not; empty
 // when the event has no uid or no node has it, as after mtix gc purged it).
 //
-// For a create_node event, TaskNodeID and TaskUID are the current number
-// and uid of the task it created (MTIX-95.12 run 2, review r1 S1 and S2):
-// the node that has the event's uid; else, for an event without a uid (one
-// queued before events carried uids), the node whose uid is the event's own
-// id, as the pre-v3 backfill sets it; else the node at the number the event
-// names, as when a merge import gave the task the file's uid (MTIX-95.31.6,
-// 95.31.9). Both are empty for other ops and when no such node is left.
+// For a create_node event, TaskNodeID is the current number of the task it
+// created (MTIX-95.12 run 2, review r1 S1 and S2): the node that has the
+// event's uid; else, for an event without a uid (one queued before events
+// carried uids), the node whose uid is the event's own id, as the pre-v3
+// backfill sets it; else the node at the number the event names, as when a
+// merge import gave the task the file's uid (MTIX-95.31.6, 95.31.9). A
+// soft-deleted node counts in each step. It is empty for other ops and when
+// no such node is left.
 type PushSubject struct {
-	UID, CurrentNodeID  string
-	TaskNodeID, TaskUID string
+	UID, CurrentNodeID, TaskNodeID string
 }
 
 // PushSubjects returns the subject of each of eventIDs that has a
@@ -50,8 +50,7 @@ func (s *Store) PushSubjects(ctx context.Context, eventIDs []string) (map[string
 	// f by the number the event names; idx_nodes_uid and the primary key).
 	rows, err := s.Query(ctx, `
 		SELECT e.event_id, COALESCE(e.uid, ''), COALESCE(n.id, ''),
-		       CASE WHEN e.op_type = 'create_node' THEN COALESCE(n.id, s.id, f.id, '') ELSE '' END,
-		       CASE WHEN e.op_type = 'create_node' THEN COALESCE(n.uid, s.uid, f.uid, '') ELSE '' END
+		       CASE WHEN e.op_type = 'create_node' THEN COALESCE(n.id, s.id, f.id, '') ELSE '' END
 		FROM sync_events e
 		LEFT JOIN nodes n ON n.uid = e.uid AND n.uid IS NOT NULL AND n.uid <> ''
 		LEFT JOIN nodes s ON e.op_type = 'create_node' AND n.id IS NULL
@@ -66,7 +65,7 @@ func (s *Store) PushSubjects(ctx context.Context, eventIDs []string) (map[string
 	for rows.Next() {
 		var id string
 		var subj PushSubject
-		if err := rows.Scan(&id, &subj.UID, &subj.CurrentNodeID, &subj.TaskNodeID, &subj.TaskUID); err != nil {
+		if err := rows.Scan(&id, &subj.UID, &subj.CurrentNodeID, &subj.TaskNodeID); err != nil {
 			return nil, fmt.Errorf("read push subjects: %w", err)
 		}
 		out[id] = subj

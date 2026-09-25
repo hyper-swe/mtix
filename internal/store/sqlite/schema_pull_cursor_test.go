@@ -74,3 +74,34 @@ func TestSchema_StoreFromBeforeTupleCursor_GainsEmptyEventIDKeepsClock(t *testin
 		require.Equal(t, c.want, v, c.key)
 	}
 }
+
+// TestSchema_ReopenKeepsSavedPullCursorAndCheckpoint: the seeds are INSERT
+// OR IGNORE, so reopening a store that has saved a pull cursor and a clone
+// checkpoint, both halves, leaves every value as saved. A seed that
+// replaced rows would reset the event ids to empty on every open, and the
+// next pull would read the events at the saved clock again each time.
+func TestSchema_ReopenKeepsSavedPullCursorAndCheckpoint(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "saved.db")
+	s, db := schemaTestEnv(t, dbPath)
+	saved := []struct{ key, value string }{
+		{"meta.sync.last_pulled_clock", "42"},
+		{"meta.sync.last_pulled_event_id", "0193fb00-0000-7000-8000-000000000042"},
+		{"meta.sync.clone.checkpoint", "17"},
+		{"meta.sync.clone.checkpoint_event_id", "0193fb00-0000-7000-8000-000000000017"},
+	}
+	for _, kv := range saved {
+		_, err := db.Exec(`UPDATE meta SET value = ? WHERE key = ?`, kv.value, kv.key)
+		require.NoError(t, err, kv.key)
+	}
+	require.NoError(t, s.Close())
+
+	reopened, err := sqlite.New(dbPath, slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reopened.Close() })
+
+	for _, kv := range saved {
+		v, ok := metaValue(t, db, kv.key)
+		require.Truef(t, ok, "%s must exist after the reopen", kv.key)
+		require.Equal(t, kv.value, v, kv.key)
+	}
+}

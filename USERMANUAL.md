@@ -1573,9 +1573,10 @@ nothing; it is only recorded as received.
   and `idx_sync_events_lamport_event_id`, so each pull batch reads from
   its saved position. `mtix sync init` runs in one transaction, and
   pushes and pulls both wait until it finishes, longer on a large hub
-  while it builds the indexes (a push or pull that waits too long fails;
-  run it again afterwards, nothing is lost). Run it when a pause in sync
-  is acceptable. `mtix sync init` stops after 30 seconds; if building
+  while it builds the indexes. A waiting push or pull retries for about
+  50 seconds and normally completes once `mtix sync init` finishes; only
+  if the wait outlasts that does it fail, and then nothing is lost: run
+  it again. Run `mtix sync init` when a pause in sync is acceptable. `mtix sync init` stops after 30 seconds; if building
   the indexes takes longer it changes nothing, and pulls keep working
   without them.
   Until then pulls fetch the same events as with the indexes, only

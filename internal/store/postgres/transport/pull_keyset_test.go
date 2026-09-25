@@ -193,7 +193,7 @@ func TestMigrate_CreatesPullKeysetIndex(t *testing.T) {
 func TestPullEvents_HubWithoutKeysetIndex_StillServesPulls(t *testing.T) {
 	pool := openTestPool(t)
 	require.NoError(t, pool.Migrate(context.Background()))
-	_, err := pool.Inner().Exec(context.Background(), `DROP INDEX IF EXISTS `+keysetIndexName)
+	_, err := pool.Inner().Exec(context.Background(), `DROP INDEX IF EXISTS idx_sync_events_lamport_event_id`)
 	require.NoError(t, err)
 	require.NotContains(t, syncEventsIndexes(t, pool), keysetIndexName, "precondition: no keyset index")
 	want := pushKeysetEvents(t, pool, 5, 7, 7, 7, 9)

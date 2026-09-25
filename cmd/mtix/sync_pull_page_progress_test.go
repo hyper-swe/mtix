@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -55,19 +56,24 @@ type pageProgressCase struct {
 	wantCalls  int
 	wantStopAt *transport.PullCursor // the cursor the error names; nil for no error
 	applies    []*model.SyncEvent    // events a pull or clone applies when it does not stop
+	refused    []*model.SyncEvent    // events of a refused page that no earlier page held
 }
 
 // pageProgressCases builds the hub behaviours, with fresh events for each
-// test: the same page served again; a page that ends below the cursor's
-// clock; two pages at one clock that alternate, each ending at a new event
-// id until the first comes back; and, as progress, a page that ends at a
-// new event id at the cursor's clock that sorts before the cursor's id byte
-// by byte (another collation's order).
+// test: the same page served again; a page that ends at the start cursor's
+// own event; a page that ends below the cursor's clock, at an event id the
+// loop has never met (so only the clock refuses it); two pages at one clock
+// that alternate, each ending at a new event id until the first comes back;
+// and, as progress, a page that ends at a new event id at the cursor's
+// clock that sorts before the cursor's id byte by byte (another
+// collation's order), and an empty hub.
 func pageProgressCases(t *testing.T) []pageProgressCase {
 	t.Helper()
 	same := remoteCreates(t, 5, 5)
+	atStart := remoteCreates(t, 5, 5)
+	startAtEnd := transport.CursorAt(atStart[1])
 	below := remoteCreates(t, 5, 5)
-	aboveBelow := transport.PullCursor{Lamport: 9, EventID: below[1].EventID}
+	aboveBelow := transport.PullCursor{Lamport: 9, EventID: remoteCreateAt(t, "TEST-9", 9).EventID}
 	ping := remoteCreates(t, 5, 5)
 	pingAt := func(i int) transport.PullCursor { return transport.CursorAt(ping[i]) }
 	// 'F' (0x46) sorts before 'f' (0x66) byte by byte; a case-insensitive
@@ -79,9 +85,12 @@ func pageProgressCases(t *testing.T) []pageProgressCase {
 		{name: "the same page served again", serve: func(transport.PullCursor) ([]*model.SyncEvent, bool) {
 			return same, true
 		}, wantCalls: 2, wantStopAt: ptrCursor(transport.CursorAt(same[1]))},
-		{name: "a page that ends below the cursor's clock", start: aboveBelow,
+		{name: "a page that ends at the start cursor's own event", start: startAtEnd,
+			serve:     func(transport.PullCursor) ([]*model.SyncEvent, bool) { return atStart, true },
+			wantCalls: 1, wantStopAt: ptrCursor(startAtEnd)},
+		{name: "a page that ends below the cursor's clock, at a new event id", start: aboveBelow,
 			serve:     func(transport.PullCursor) ([]*model.SyncEvent, bool) { return below, true },
-			wantCalls: 1, wantStopAt: ptrCursor(aboveBelow)},
+			wantCalls: 1, wantStopAt: ptrCursor(aboveBelow), refused: below},
 		{name: "two pages at one clock that alternate", serve: func(after transport.PullCursor) ([]*model.SyncEvent, bool) {
 			if after == pingAt(0) {
 				return ping[1:], true
@@ -92,6 +101,9 @@ func pageProgressCases(t *testing.T) []pageProgressCase {
 			serve: func(transport.PullCursor) ([]*model.SyncEvent, bool) {
 				return []*model.SyncEvent{lower}, false
 			}, wantCalls: 1, applies: []*model.SyncEvent{lower}},
+		{name: "an empty hub", serve: func(transport.PullCursor) ([]*model.SyncEvent, bool) {
+			return nil, false
+		}, wantCalls: 1},
 	}
 }
 
@@ -108,23 +120,44 @@ func requirePageProgressOutcome(t *testing.T, tt pageProgressCase, hub *scripted
 		require.NoError(t, err)
 		return
 	}
-	require.ErrorContains(t, err, "does not advance past the cursor")
+	require.ErrorIs(t, err, errPageNotAfterCursor)
 	require.ErrorContains(t, err, fmt.Sprintf("cursor: lamport %d, event %q", tt.wantStopAt.Lamport, tt.wantStopAt.EventID))
 }
 
+// saveStartCursors saves start as the peer's pull cursor and clone
+// checkpoint, as a pull or a resumed clone that starts there would find
+// them.
+func saveStartCursors(t *testing.T, start transport.PullCursor) {
+	t.Helper()
+	setPeerMeta(t, "meta.sync.last_pulled_clock", strconv.FormatInt(start.Lamport, 10))
+	setPeerMeta(t, "meta.sync.last_pulled_event_id", start.EventID)
+	setPeerMeta(t, "meta.sync.clone.checkpoint", strconv.FormatInt(start.Lamport, 10))
+	setPeerMeta(t, "meta.sync.clone.checkpoint_event_id", start.EventID)
+}
+
 // TestPullLoop_HubPageNotAfterCursor_StopsNamingCursor: the cursor pass
-// stops with an error naming its cursor, without applying the page, when a
-// page does not advance past the cursor, and follows a page that does.
+// stops with an error naming its cursor when a page does not advance past
+// the cursor, before it applies that page: the saved pull cursor stays at
+// the cursor the error names, and no event only the refused page held is
+// applied. It follows a page that does advance.
 func TestPullLoop_HubPageNotAfterCursor_StopsNamingCursor(t *testing.T) {
 	initTestApp(t)
 	for _, tt := range pageProgressCases(t) {
 		t.Run(tt.name, func(t *testing.T) {
 			initTestApp(t)
+			saveStartCursors(t, tt.start)
 			hub := &scriptedHub{serve: tt.serve}
 
 			_, _, err := pullLoop(context.Background(), testIngest(nil), hub, app.store, tt.start, 2)
 
 			requirePageProgressOutcome(t, tt, hub, err)
+			for _, e := range tt.refused {
+				requireNotApplied(t, e)
+			}
+			if tt.wantStopAt != nil {
+				requireSavedCursor(t, *tt.wantStopAt)
+				return
+			}
 			for _, e := range tt.applies {
 				requireAppliedOnce(t, e)
 			}
@@ -133,20 +166,27 @@ func TestPullLoop_HubPageNotAfterCursor_StopsNamingCursor(t *testing.T) {
 }
 
 // TestCloneLoop_HubPageNotAfterCursor_StopsNamingCursor: the clone stops
-// with an error naming its cursor when a page does not advance past it, and
-// then saves no pull cursor.
+// with an error naming its cursor when a page does not advance past it,
+// before it applies that page: the checkpoint and the pull cursor stay
+// where they were (at the cursor the error names), and no event only the
+// refused page held is applied.
 func TestCloneLoop_HubPageNotAfterCursor_StopsNamingCursor(t *testing.T) {
 	initTestApp(t)
 	for _, tt := range pageProgressCases(t) {
 		t.Run(tt.name, func(t *testing.T) {
 			initTestApp(t)
+			saveStartCursors(t, tt.start)
 			hub := &scriptedHub{serve: tt.serve}
 
 			_, _, err := cloneLoop(context.Background(), &bytes.Buffer{}, hub, app.store, tt.start, 2)
 
 			requirePageProgressOutcome(t, tt, hub, err)
+			for _, e := range tt.refused {
+				requireNotApplied(t, e)
+			}
 			if tt.wantStopAt != nil {
-				requireSavedCursor(t, transport.PullCursor{})
+				requireCloneCheckpoint(t, *tt.wantStopAt)
+				requireSavedCursor(t, tt.start)
 				return
 			}
 			for _, e := range tt.applies {
@@ -158,7 +198,7 @@ func TestCloneLoop_HubPageNotAfterCursor_StopsNamingCursor(t *testing.T) {
 
 // TestPreflightClone_HubPageNotAfterCursor_StopsNamingCursor: the clone's
 // check stops with an error naming its cursor when a page does not advance
-// past it.
+// past it, and returns without error, after one request, on an empty hub.
 func TestPreflightClone_HubPageNotAfterCursor_StopsNamingCursor(t *testing.T) {
 	initTestApp(t)
 	for _, tt := range pageProgressCases(t) {

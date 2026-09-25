@@ -23,11 +23,12 @@
 -- EXCLUSIVE lock on sync_events, taken by the ADD COLUMN IF NOT EXISTS
 -- statements of 010 and 013, until it commits: pushes and pulls both wait
 -- for `mtix sync init`. A push or pull that waits past its 10-second
--- statement timeout is retried a few times and then fails; nothing is
--- lost, and the next one succeeds. On a large hub the first build of this
--- index makes the wait longer, so run `mtix sync init` when a pause in
--- sync is acceptable. Once the index exists the statement only checks for
--- it.
+-- statement timeout is retried, up to 5 attempts in all (about 50
+-- seconds), so it normally completes once `mtix sync init` finishes; it
+-- fails only if the wait outlasts its retries, and then nothing is lost
+-- and the next one succeeds. On a large hub the first build of this index
+-- makes the wait longer, so run `mtix sync init` when a pause in sync is
+-- acceptable. Once the index exists the statement only checks for it.
 --
 -- Additive and idempotent: IF NOT EXISTS makes a re-run a no-op, and no
 -- column, constraint or row is touched.

@@ -739,10 +739,13 @@ transaction also re-runs the `ALTER TABLE sync_events ADD COLUMN IF NOT
 EXISTS` of migrations 010 and 013, which take an `ACCESS EXCLUSIVE` lock
 on `sync_events` even when the column exists, and hold it until the
 transaction commits. So while `mtix sync init` migrates, pushes and
-pulls both wait for it: a push or pull whose statement waits past its
-10-second statement timeout is retried a few times and then fails (a
-push keeps its events queued; a pull keeps its cursor), and the next
-one succeeds. Run `mtix sync init` when a pause in sync is acceptable.
+pulls both wait for it. A push or pull whose statement waits past its
+10-second statement timeout is retried, up to 5 attempts in all (about
+50 seconds, `DefaultRetryConfig` in `transport/retry.go`), so it
+normally completes once `mtix sync init` finishes. It fails only if the
+wait outlasts its retries; a push then keeps its events queued and a
+pull keeps its cursor, and the next one succeeds. Run `mtix sync init`
+when a pause in sync is acceptable.
 On a large hub the first build of an index makes that pause longer;
 once the index exists its `CREATE INDEX IF NOT EXISTS` only checks for
 it. `mtix sync init` gives the connection and the whole migration 30

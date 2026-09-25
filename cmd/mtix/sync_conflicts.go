@@ -129,9 +129,12 @@ per FR-18.5), and it changes no node. The output says so in text and
 you chose, edit the node with 'mtix update' and push.
 
 The decision resolves the conflict and every earlier conflict on the same
-node and field; a later conflict on that node and field is unresolved
-again. A conflict_id that is itself a manual resolution is refused as
-invalid input.`,
+node and field; a conflict recorded later on that node and field is
+unresolved again. Resolve the newest conflict of a node and field: a
+conflict_id that already has a later decision or a later conflict on its
+node and field is refused as invalid input, and the error names the
+newest conflict_id of that node and field. A conflict_id that is itself a
+manual resolution is refused as invalid input too.`,
 		Args: syncExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncConflictsResolve(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
@@ -178,7 +181,9 @@ func runSyncConflictsList(ctx context.Context, stdout, stderr io.Writer, nodeFil
 // runSyncConflictsResolve records a manual decision for the conflict
 // conflictIDArg as a new 'manual' row and reports, in text and --json,
 // that no node state changed (FR-18.12, MTIX-95.7, Commandment 11). A
-// conflict_id that is itself a manual row is invalid input.
+// conflict_id that is itself a manual row, or that already has a later
+// decision or a later conflict on its node and field, is invalid input
+// (checkResolveTarget).
 func runSyncConflictsResolve(ctx context.Context, stdout, stderr io.Writer,
 	conflictIDArg, action string,
 ) error {
@@ -209,16 +214,70 @@ func runSyncConflictsResolve(ctx context.Context, stdout, stderr io.Writer,
 	if original.ConflictID == 0 {
 		return fmt.Errorf("mtix sync conflicts resolve: conflict_id %d not found", conflictID)
 	}
-	if original.Resolution == "manual" {
-		return fmt.Errorf("mtix sync conflicts resolve: conflict_id %d is a manual resolution, not a conflict; "+
-			"resolve the conflict it answers (see mtix sync conflicts list --all): %w",
-			conflictID, model.ErrInvalidInput)
+	if err := checkResolveTarget(ctx, app.store, original); err != nil {
+		return err
 	}
 
 	if err := recordManualResolution(ctx, app.store, original, action); err != nil {
 		return wrapSyncErr(stderr, "record resolution", err)
 	}
 	return printResolveResult(stdout, original, action)
+}
+
+// checkResolveTarget refuses, as invalid input, a resolve that would not
+// decide the conflict the operator reviewed: a manual row, which records a
+// decision rather than a conflict, and a conflict with a later manual or
+// lww row for its node and field, whose decision would also close every
+// conflict recorded after it. The error names the newest conflict of the
+// node and field: the one to resolve, or, when it is resolved too, the
+// one whose decision already stands (MTIX-95.7).
+func checkResolveTarget(ctx context.Context, store *sqlite.Store, target ConflictRow) error {
+	if target.Resolution == "manual" {
+		return fmt.Errorf("mtix sync conflicts resolve: conflict_id %d is a manual resolution, not a conflict; "+
+			"resolve the conflict it answers (see mtix sync conflicts list --all): %w",
+			target.ConflictID, model.ErrInvalidInput)
+	}
+	var later, newestResolved bool
+	var newest int64
+	// For the target's node and field (NULL fields pair with each other):
+	// whether a manual or lww row follows the target, the newest lww
+	// conflict, and whether a manual row follows that newest conflict.
+	err := store.QueryRow(ctx, `
+		SELECT later, newest,
+		       EXISTS (SELECT 1 FROM sync_conflicts
+		               WHERE node_id = ?1 AND field_name IS ?2 AND resolution = 'manual'
+		                 AND conflict_id > newest)
+		FROM (SELECT
+		        EXISTS (SELECT 1 FROM sync_conflicts
+		                WHERE node_id = ?1 AND field_name IS ?2 AND conflict_id > ?3
+		                  AND resolution IN ('manual', 'lww')) AS later,
+		        COALESCE((SELECT MAX(conflict_id) FROM sync_conflicts
+		                  WHERE node_id = ?1 AND field_name IS ?2 AND resolution = 'lww'), ?3) AS newest)`,
+		target.NodeID, nullIfEmpty(target.FieldName), target.ConflictID,
+	).Scan(&later, &newest, &newestResolved)
+	if err != nil {
+		return fmt.Errorf("mtix sync conflicts resolve: read later conflicts: %w", err)
+	}
+	if !later {
+		return nil
+	}
+	pair := "node " + target.NodeID + ", " + fieldLabel(target.FieldName)
+	if newest > target.ConflictID && !newestResolved {
+		return fmt.Errorf("mtix sync conflicts resolve: conflict_id %d has a later conflict on %s; "+
+			"resolve conflict_id %d instead, the newest conflict for that node and field: %w",
+			target.ConflictID, pair, newest, model.ErrInvalidInput)
+	}
+	return fmt.Errorf("mtix sync conflicts resolve: conflict_id %d is already resolved: a later decision "+
+		"covers %s, whose newest conflict is conflict_id %d, also resolved: %w",
+		target.ConflictID, pair, newest, model.ErrInvalidInput)
+}
+
+// fieldLabel names a conflict's field for a message, or says it has none.
+func fieldLabel(field string) string {
+	if field == "" {
+		return "no field"
+	}
+	return "field " + field
 }
 
 // printResolveResult reports a recorded decision, stating in text and

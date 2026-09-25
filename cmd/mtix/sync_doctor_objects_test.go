@@ -50,6 +50,12 @@ func TestGradeHubObjects_StateAndMode_ReportsEachGapWithItsFix(t *testing.T) {
 		disabledTriggers: []string{"audit_log_no_update on public.audit_log (tgenabled D)"}, enableStatements: []string{enable}}
 	both := missingFn
 	both.disabledTriggers, both.enableStatements = disabled.disabledTriggers, disabled.enableStatements
+	const drop = "DROP TRIGGER audit_log_no_update ON public.audit_log;"
+	wrongFn := hubObjectState{functions: 2, triggers: 7,
+		wrongFunction:  []string{"audit_log_no_update on public.audit_log calls noop, not audit_log_immutable"},
+		dropStatements: []string{drop}}
+	wrongAndDisabled := wrongFn
+	wrongAndDisabled.disabledTriggers, wrongAndDisabled.enableStatements = disabled.disabledTriggers, disabled.enableStatements
 
 	tests := []struct {
 		name       string
@@ -73,6 +79,10 @@ func TestGradeHubObjects_StateAndMode_ReportsEachGapWithItsFix(t *testing.T) {
 			[]string{"triggers not enabled: audit_log_no_update on public.audit_log (tgenabled D)"}},
 		{"missing and disabled: init, then the statement", both, false, true, true, "mtix sync init, then " + enable,
 			[]string{"missing functions", "triggers not enabled"}},
+		{"another function: drop, then init", wrongFn, false, true, true, drop + ", then mtix sync init",
+			[]string{"triggers calling another function: audit_log_no_update on public.audit_log calls noop, not audit_log_immutable"}},
+		{"another function and disabled", wrongAndDisabled, true, false, false, drop + ", then mtix sync init, then " + enable,
+			[]string{"strict mode", "triggers calling another function", "triggers not enabled"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -108,38 +118,55 @@ func TestCheckHubObjects_HubNotReady_WarnsOrFailsStrict(t *testing.T) {
 }
 
 // TestHubObjectState_Record_ClassifiesEachTrigger: a trigger is missing
-// when tgenabled is empty, not enabled for anything but 'O' (disabled,
-// replica-only or always), and fine at 'O' (MTIX-95.7).
+// when tgenabled is empty; it calls the wrong function when its function
+// is not the one its migration binds; it is not enabled when tgenabled is
+// D (disabled) or R (replica sessions only); O and A (always) are both
+// enabled, as for mtix sync harden (MTIX-95.7).
 func TestHubObjectState_Record_ClassifiesEachTrigger(t *testing.T) {
-	const stmt = "ALTER TABLE public.audit_log ENABLE TRIGGER t;"
+	const enable = "ALTER TABLE public.audit_log ENABLE TRIGGER t;"
+	const drop = "DROP TRIGGER t ON public.audit_log;"
+	row := func(schema, enabled, function string) triggerRow {
+		r := triggerRow{table: "audit_log", name: "t", schema: schema, enabled: enabled,
+			function: function, wantFunction: "audit_log_immutable"}
+		if enabled != "" {
+			r.enable, r.drop = enable, drop
+		}
+		return r
+	}
 	tests := []struct {
 		name         string
-		schema       string
-		enabled      string
+		row          triggerRow
 		wantMissing  []string
 		wantDisabled []string
+		wantWrongFn  []string
 	}{
-		{"enabled", "public", "O", nil, nil},
-		{"missing trigger", "public", "", []string{"t on public.audit_log"}, nil},
-		{"missing table", "", "", []string{"t on audit_log"}, nil},
-		{"disabled", "public", "D", nil, []string{"t on public.audit_log (tgenabled D)"}},
-		{"replica only", "public", "R", nil, []string{"t on public.audit_log (tgenabled R)"}},
-		{"always", "public", "A", nil, []string{"t on public.audit_log (tgenabled A)"}},
+		{"enabled", row("public", "O", "audit_log_immutable"), nil, nil, nil},
+		{"always", row("public", "A", "audit_log_immutable"), nil, nil, nil},
+		{"missing trigger", row("public", "", ""), []string{"t on public.audit_log"}, nil, nil},
+		{"missing table", row("", "", ""), []string{"t on audit_log"}, nil, nil},
+		{"disabled", row("public", "D", "audit_log_immutable"), nil, []string{"t on public.audit_log (tgenabled D)"}, nil},
+		{"replica only", row("public", "R", "audit_log_immutable"), nil, []string{"t on public.audit_log (tgenabled R)"}, nil},
+		{"another function", row("public", "O", "noop"), nil, nil,
+			[]string{"t on public.audit_log calls noop, not audit_log_immutable"}},
+		{"another function, disabled", row("public", "D", "noop"), nil, nil,
+			[]string{"t on public.audit_log calls noop, not audit_log_immutable"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var s hubObjectState
-			fix := ""
-			if tt.enabled != "" {
-				fix = stmt
-			}
-			s.record("audit_log", "t", tt.schema, tt.enabled, fix)
+			s.record(tt.row)
 			require.Equal(t, tt.wantMissing, s.missingTriggers)
 			require.Equal(t, tt.wantDisabled, s.disabledTriggers)
+			require.Equal(t, tt.wantWrongFn, s.wrongFunction)
 			if tt.wantDisabled != nil {
-				require.Equal(t, []string{stmt}, s.enableStatements)
+				require.Equal(t, []string{enable}, s.enableStatements)
 			} else {
 				require.Empty(t, s.enableStatements)
+			}
+			if tt.wantWrongFn != nil {
+				require.Equal(t, []string{drop}, s.dropStatements)
+			} else {
+				require.Empty(t, s.dropStatements)
 			}
 		})
 	}

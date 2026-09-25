@@ -42,18 +42,19 @@ func TestFunctions_EmbeddedMigrations_ReturnsEveryFunction(t *testing.T) {
 
 // TestTriggers_EmbeddedMigrations_IncludesTruncateGuards pins every trigger
 // the migrations create, including the TRUNCATE guards that migration 016
-// creates inside a DO block (MTIX-95.1).
+// creates inside a DO block (MTIX-95.1), and the function each executes
+// (MTIX-95.7).
 func TestTriggers_EmbeddedMigrations_IncludesTruncateGuards(t *testing.T) {
 	got, err := migrations.Triggers()
 	require.NoError(t, err)
 	require.Equal(t, []migrations.Trigger{
-		{Name: "audit_log_no_delete", Table: "audit_log", Event: "DELETE"},
-		{Name: "audit_log_no_truncate", Table: "audit_log", Event: "TRUNCATE"},
-		{Name: "audit_log_no_update", Table: "audit_log", Event: "UPDATE"},
-		{Name: "sync_conflicts_no_delete", Table: "sync_conflicts", Event: "DELETE"},
-		{Name: "sync_conflicts_no_truncate", Table: "sync_conflicts", Event: "TRUNCATE"},
-		{Name: "sync_conflicts_no_update", Table: "sync_conflicts", Event: "UPDATE"},
-		{Name: "sync_events_no_truncate", Table: "sync_events", Event: "TRUNCATE"},
+		{Name: "audit_log_no_delete", Table: "audit_log", Event: "DELETE", Function: "audit_log_immutable"},
+		{Name: "audit_log_no_truncate", Table: "audit_log", Event: "TRUNCATE", Function: "append_only_no_truncate"},
+		{Name: "audit_log_no_update", Table: "audit_log", Event: "UPDATE", Function: "audit_log_immutable"},
+		{Name: "sync_conflicts_no_delete", Table: "sync_conflicts", Event: "DELETE", Function: "audit_log_immutable"},
+		{Name: "sync_conflicts_no_truncate", Table: "sync_conflicts", Event: "TRUNCATE", Function: "append_only_no_truncate"},
+		{Name: "sync_conflicts_no_update", Table: "sync_conflicts", Event: "UPDATE", Function: "audit_log_immutable"},
+		{Name: "sync_events_no_truncate", Table: "sync_events", Event: "TRUNCATE", Function: "append_only_no_truncate"},
 	}, got)
 }
 

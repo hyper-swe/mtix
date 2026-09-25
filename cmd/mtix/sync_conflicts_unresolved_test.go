@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -75,12 +76,19 @@ func statusText(t *testing.T) string {
 // unresolved flag.
 func listConflicts(t *testing.T, all bool) ([]int64, []bool) {
 	t.Helper()
+	if all {
+		return listConflictsWith(t, "--all")
+	}
+	return listConflictsWith(t)
+}
+
+// listConflictsWith runs mtix sync conflicts list --json with flags and
+// returns the conflict ids in order and each row's unresolved flag.
+func listConflictsWith(t *testing.T, flags ...string) ([]int64, []bool) {
+	t.Helper()
 	app.jsonOutput = true
 	defer func() { app.jsonOutput = false }()
-	argv := []string{"sync", "conflicts", "list"}
-	if all {
-		argv = append(argv, "--all")
-	}
+	argv := append([]string{"sync", "conflicts", "list"}, flags...)
 	stdout, stderr, err := execSyncCLI(context.Background(), argv)
 	require.NoError(t, err, stderr)
 	var rows []struct {
@@ -88,12 +96,12 @@ func listConflicts(t *testing.T, all bool) ([]int64, []bool) {
 		Unresolved *bool `json:"unresolved"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(stdout), &rows), stdout)
-	ids, flags := []int64{}, []bool{}
+	ids, unresolved := []int64{}, []bool{}
 	for _, r := range rows {
 		require.NotNilf(t, r.Unresolved, "row %d carries its unresolved flag", r.ConflictID)
-		ids, flags = append(ids, r.ConflictID), append(flags, *r.Unresolved)
+		ids, unresolved = append(ids, r.ConflictID), append(unresolved, *r.Unresolved)
 	}
-	return ids, flags
+	return ids, unresolved
 }
 
 // resolveConflict records a manual resolution for id.
@@ -109,7 +117,7 @@ func resolveConflict(t *testing.T, id int64, action string) {
 // takes the counter to 0 and clears the banner. The table and --json no
 // longer carry a 'conflicted' count (MTIX-95.7).
 func TestSyncStatus_ResolvedConflictNotCounted(t *testing.T) {
-	for _, n := range []int{1, 3, 51} {
+	for _, n := range []int{1, 3, 50, 51} {
 		t.Run(fmt.Sprintf("%d conflicts", n), func(t *testing.T) {
 			initTestApp(t)
 			ids := make([]int64, 0, n)
@@ -334,6 +342,7 @@ func TestPrintConflictsTable_AllRows_BannerCountsUnresolvedOnly(t *testing.T) {
 		wantText   string
 	}{
 		{"60 rows, 10 unresolved: no banner", rowsWith(60, 10), true, "", "unresolved=false"},
+		{"60 rows, exactly 50 unresolved: no banner", rowsWith(60, 50), true, "", "unresolved=true"},
 		{"60 rows, 51 unresolved: banner counts 51", rowsWith(60, 51), true, "51 unresolved conflicts", "unresolved=true"},
 		{"no unresolved rows", nil, false, "", "no unresolved conflicts"},
 		{"no rows at all", nil, true, "", "no conflicts recorded"},
@@ -349,6 +358,128 @@ func TestPrintConflictsTable_AllRows_BannerCountsUnresolvedOnly(t *testing.T) {
 			} else {
 				require.Contains(t, out, tt.wantBanner)
 			}
+		})
+	}
+}
+
+// TestSyncConflictsList_NodeFilter_ScopesListNotStatus: --node and its
+// alias --batch list only the named node's rows, unresolved by default and
+// every row with --all; sync status still counts every node's unresolved
+// conflicts (MTIX-95.7).
+func TestSyncConflictsList_NodeFilter_ScopesListNotStatus(t *testing.T) {
+	seeds := []conflictSeed{
+		{"TEST-1", "title", "lww"},       // 0: unresolved
+		{"TEST-2", "title", "lww"},       // 1: resolved by 2
+		{"TEST-2", "title", "manual"},    // 2
+		{"TEST-2", "description", "lww"}, // 3: unresolved
+	}
+	tests := []struct {
+		name  string
+		flags []string
+		want  []int // indexes into seeds
+	}{
+		{"--node, unresolved only", []string{"--node", "TEST-2"}, []int{3}},
+		{"--node with --all", []string{"--node", "TEST-2", "--all"}, []int{1, 2, 3}},
+		{"--batch, unresolved only", []string{"--batch", "TEST-1"}, []int{0}},
+		{"--batch with --all", []string{"--batch", "TEST-2", "--all"}, []int{1, 2, 3}},
+		{"a node without rows", []string{"--node", "TEST-9", "--all"}, nil},
+		{"no filter", nil, []int{0, 3}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			initTestApp(t)
+			ids := make([]int64, 0, len(seeds))
+			for _, sd := range seeds {
+				ids = append(ids, seedConflictRow(t, sd))
+			}
+			want := []int64{}
+			for _, i := range tt.want {
+				want = append(want, ids[i])
+			}
+			got, _ := listConflictsWith(t, tt.flags...)
+			require.Equal(t, want, got)
+			require.JSONEq(t, "2", string(statusJSON(t)["open_conflicts"]),
+				"status counts both nodes' unresolved conflicts, whatever the list filter")
+		})
+	}
+}
+
+// conflictOp is one step of a resolve scenario: insert seed, or, when
+// resolve is set, resolve the conflict inserted by that step (1-based).
+type conflictOp struct {
+	seed    conflictSeed
+	resolve int
+}
+
+// TestConflictsResolve_TargetWithLaterRow_ReturnsInvalidInputNamingNewest:
+// a resolve whose conflict already has a later manual or lww row for the
+// same node and field is refused as invalid input, names the newest
+// conflict of that node and field, and records nothing; the newest
+// conflict is the one to resolve (MTIX-95.7).
+func TestConflictsResolve_TargetWithLaterRow_ReturnsInvalidInputNamingNewest(t *testing.T) {
+	lww := func(node, field string) conflictOp { return conflictOp{seed: conflictSeed{node, field, "lww"}} }
+	resolve := func(step int) conflictOp { return conflictOp{resolve: step} }
+	tests := []struct {
+		name       string
+		ops        []conflictOp
+		target     int    // step whose conflict is resolved last
+		wantErr    string // "" when the resolve is accepted
+		wantNewest int    // step of the conflict the error names
+		wantOpen   []int  // steps still unresolved afterwards
+	}{
+		{"a repeated resolve", []conflictOp{lww("TEST-1", "title"), resolve(1)}, 1,
+			"already resolved", 1, nil},
+		{"a stale resolve after the pair reopened", []conflictOp{lww("TEST-1", "title"), resolve(1), lww("TEST-1", "title")}, 1,
+			"resolve conflict_id %d instead", 3, []int{3}},
+		{"an older conflict whose newest conflict is resolved",
+			[]conflictOp{lww("TEST-1", "title"), lww("TEST-1", "title"), resolve(2)}, 1,
+			"already resolved", 2, nil},
+		{"the older of two open conflicts", []conflictOp{lww("TEST-1", "title"), lww("TEST-1", "title")}, 1,
+			"resolve conflict_id %d instead", 2, []int{1, 2}},
+		{"the older of two open conflicts without a field", []conflictOp{lww("TEST-1", ""), lww("TEST-1", "")}, 1,
+			"resolve conflict_id %d instead", 2, []int{1, 2}},
+		{"the newest conflict resolves the pair", []conflictOp{lww("TEST-1", "title"), lww("TEST-1", "title")}, 2,
+			"", 0, nil},
+		{"a later conflict on another field does not block", []conflictOp{lww("TEST-1", "title"), lww("TEST-1", "description")}, 1,
+			"", 0, []int{2}},
+		{"a later conflict on another node does not block", []conflictOp{lww("TEST-1", "title"), lww("TEST-2", "title")}, 1,
+			"", 0, []int{2}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			initTestApp(t)
+			ids := make([]int64, len(tt.ops)+1)
+			for i, op := range tt.ops {
+				if op.resolve > 0 {
+					resolveConflict(t, ids[op.resolve], "acknowledge")
+					continue
+				}
+				ids[i+1] = seedConflictRow(t, op.seed)
+			}
+			manualBefore := conflictRowsFor(t, "TEST-1", "manual")
+
+			var stdout, stderr bytes.Buffer
+			err := runSyncConflictsResolve(context.Background(), &stdout, &stderr,
+				strconv.FormatInt(ids[tt.target], 10), "keep-local")
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, model.ErrInvalidInput)
+				wantErr := tt.wantErr
+				if strings.Contains(wantErr, "%d") {
+					wantErr = fmt.Sprintf(wantErr, ids[tt.wantNewest])
+				}
+				require.Contains(t, err.Error(), wantErr)
+				require.Contains(t, err.Error(), fmt.Sprintf("conflict_id %d", ids[tt.wantNewest]))
+				require.Equal(t, manualBefore, conflictRowsFor(t, "TEST-1", "manual"), "nothing is recorded")
+				require.Empty(t, stdout.String())
+			}
+			wantOpen := []int64{}
+			for _, step := range tt.wantOpen {
+				wantOpen = append(wantOpen, ids[step])
+			}
+			got, _ := listConflicts(t, false)
+			require.Equal(t, wantOpen, got)
 		})
 	}
 }

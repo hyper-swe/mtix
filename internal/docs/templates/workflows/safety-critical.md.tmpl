@@ -235,8 +235,10 @@ each CLI.
    triggers:**
 
    ```bash
-   # PG* variables name the new database and the role that will own the
-   # sync tables; the password is in ~/.pgpass, not on the command line.
+   # PG* variables name the new database, the role that will own the
+   # sync tables and the CA of the hub (PGSSLMODE=verify-full,
+   # PGSSLROOTCERT=<ca.pem>, or system with libpq 16 or later); the
+   # password is in ~/.pgpass, not on the command line.
    psql -f mtix-hub.sql
    # With MTIX_SYNC_DSN naming that same owner role:
    mtix sync init

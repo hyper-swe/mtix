@@ -7,6 +7,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -27,7 +29,8 @@ import (
 
 // fakePgDumpScript records argv and the PG* environment under
 // $MTIX_TEST_PGDUMP_REC, writes the dump to -f's path when given and to
-// stdout otherwise, and exits 1 when $MTIX_TEST_PGDUMP_FAIL is set.
+// stdout otherwise, then waits $MTIX_TEST_PGDUMP_SLEEP seconds when set,
+// and exits 1 when $MTIX_TEST_PGDUMP_FAIL is set.
 const fakePgDumpScript = `#!/bin/sh
 rec="$MTIX_TEST_PGDUMP_REC"
 : > "$rec/ran"
@@ -44,6 +47,7 @@ if [ -n "$out" ]; then
 else
   printf -- '-- fake dump\n'
 fi
+if [ -n "$MTIX_TEST_PGDUMP_SLEEP" ]; then exec sleep "$MTIX_TEST_PGDUMP_SLEEP"; fi
 if [ -n "$MTIX_TEST_PGDUMP_FAIL" ]; then exit 1; fi
 exit 0
 `
@@ -67,6 +71,7 @@ func installFakePgDump(t *testing.T) fakePgDump {
 	t.Setenv("MTIX_PG_DUMP", bin)
 	t.Setenv("MTIX_TEST_PGDUMP_REC", rec)
 	t.Setenv("MTIX_TEST_PGDUMP_FAIL", "")
+	t.Setenv("MTIX_TEST_PGDUMP_SLEEP", "")
 	t.Setenv("MTIX_SYNC_HOOK", "")
 	t.Setenv("HOME", t.TempDir())
 	for _, k := range []string{
@@ -303,4 +308,54 @@ func TestBackup_TableArgs_EqualMigrationTables(t *testing.T) {
 	require.Contains(t, stderr, "system trust store (PGSSLROOTCERT=system)",
 		"with no CA configured the backup says which trust it uses")
 	require.Contains(t, stderr, "sslrootcert=<ca.pem> in the DSN or with MTIX_SYNC_SSLROOTCERT")
+}
+
+// TestBackup_Interrupted_RemovesThePartialFile: a backup interrupted while
+// pg_dump runs, by a cancelled context or by SIGINT or SIGTERM, stops
+// pg_dump, removes the partial dump and says so, so an interrupted backup
+// leaves no file either (MTIX-95.7).
+func TestBackup_Interrupted_RemovesThePartialFile(t *testing.T) {
+	const dsn = "postgres://backup_user:" + backupTestPassword + "@db.example.invalid:5432/hub"
+	signalSelf := func(sig syscall.Signal) func(*testing.T, context.CancelFunc) {
+		return func(t *testing.T, _ context.CancelFunc) {
+			require.NoError(t, syscall.Kill(os.Getpid(), sig))
+		}
+	}
+	tests := []struct {
+		name      string
+		interrupt func(*testing.T, context.CancelFunc)
+	}{
+		{"cancelled context", func(_ *testing.T, cancel context.CancelFunc) { cancel() }},
+		{"SIGINT", signalSelf(syscall.SIGINT)},
+		{"SIGTERM", signalSelf(syscall.SIGTERM)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			initTestApp(t)
+			fake := installFakePgDump(t)
+			t.Setenv("MTIX_TEST_PGDUMP_SLEEP", "30")
+			t.Setenv(transport.EnvDSN, dsn)
+			out := filepath.Join(t.TempDir(), "hub.sql")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			done := make(chan error, 1)
+			go func() {
+				var stdout, stderr bytes.Buffer
+				done <- runSyncBackup(ctx, &stdout, &stderr, nil, out, transport.Options{})
+			}()
+			require.Eventually(t, fake.ran, 10*time.Second, 10*time.Millisecond, "pg_dump started")
+			require.FileExists(t, out, "the output file exists while pg_dump runs")
+			tt.interrupt(t, cancel)
+
+			select {
+			case err := <-done:
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "interrupted")
+			case <-time.After(20 * time.Second):
+				t.Fatal("the backup did not stop after the interrupt")
+			}
+			require.NoFileExists(t, out, "an interrupted backup leaves no file")
+		})
+	}
 }

@@ -34,13 +34,13 @@ func TestParseObjects_StatementForms_ReturnsObjects(t *testing.T) {
 		{
 			name:     "top-level trigger over several lines",
 			body:     "CREATE TRIGGER t_upd\n    BEFORE UPDATE ON tab\n    FOR EACH ROW EXECUTE FUNCTION f();",
-			triggers: []Trigger{{Name: "t_upd", Table: "tab", Event: "UPDATE"}},
+			triggers: []Trigger{{Name: "t_upd", Table: "tab", Event: "UPDATE", Function: "f"}},
 		},
 		{
 			name: "trigger inside a DO block",
 			body: "DO $$\nBEGIN\n  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'g') THEN\n" +
 				"    CREATE TRIGGER g\n      BEFORE TRUNCATE ON tab\n      FOR EACH STATEMENT EXECUTE FUNCTION f();\n  END IF;\nEND\n$$;",
-			triggers: []Trigger{{Name: "g", Table: "tab", Event: "TRUNCATE"}},
+			triggers: []Trigger{{Name: "g", Table: "tab", Event: "TRUNCATE", Function: "f"}},
 		},
 		{
 			name:     "drop trigger is not a creation",
@@ -69,15 +69,17 @@ func TestParseObjects_StatementForms_ReturnsObjects(t *testing.T) {
 }
 
 // TestParseObjects_SeveralFiles_SortsAndMerges checks that objects from
-// several migration bodies merge into one sorted, de-duplicated set.
+// several migration bodies merge into one sorted, de-duplicated set, and
+// that each trigger records the function it executes, under EXECUTE
+// FUNCTION or EXECUTE PROCEDURE, folded to lower case (MTIX-95.7).
 func TestParseObjects_SeveralFiles_SortsAndMerges(t *testing.T) {
 	got := parseObjects([]string{
-		"CREATE TABLE zeta (id INT);\nCREATE TRIGGER z_t BEFORE DELETE ON zeta FOR EACH ROW EXECUTE FUNCTION f();",
+		"CREATE TABLE zeta (id INT);\nCREATE TRIGGER z_t BEFORE DELETE ON zeta FOR EACH ROW EXECUTE PROCEDURE G_Fn();",
 		"CREATE TABLE alpha (id INT);\nCREATE TRIGGER a_t AFTER INSERT ON alpha FOR EACH ROW EXECUTE FUNCTION f();",
 	})
 	require.Equal(t, []string{"alpha", "zeta"}, got.tables)
 	require.Equal(t, []Trigger{
-		{Name: "a_t", Table: "alpha", Event: "INSERT"},
-		{Name: "z_t", Table: "zeta", Event: "DELETE"},
+		{Name: "a_t", Table: "alpha", Event: "INSERT", Function: "f"},
+		{Name: "z_t", Table: "zeta", Event: "DELETE", Function: "g_fn"},
 	}, got.triggers)
 }

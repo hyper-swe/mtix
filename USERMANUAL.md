@@ -1595,14 +1595,19 @@ mtix sync conflicts resolve <id> --action keep-local  # or keep-remote, both-ren
 `mtix sync conflicts resolve` records your decision and changes no node:
 it appends a `manual` row to `sync_conflicts` (the table is
 append-only), and its output says `decision recorded; node state not
-changed`. With `--json` it prints `conflict_id`, `node_id`, `field_name`,
-`action`, `decision_recorded`, `node_state_changed` (always `false`) and
-`message`. To apply the value you chose, edit the node with `mtix update`
-and push. The decision resolves the conflict and every earlier conflict on
-the same node and field; a later conflict on that node and field is
-unresolved again, and `mtix sync conflicts list` shows it. Passing the id
-of a `manual` row is refused as invalid input: resolve the conflict it
-answers instead (`--all` shows both).
+changed`. With `--json` it prints `conflict_id`, `node_id`, `field_name`
+(for a conflict on a field), `action`, `decision_recorded`,
+`node_state_changed` (always `false`) and `message`. To apply the value
+you chose, edit the node with `mtix update` and push. The decision
+resolves the conflict and every earlier conflict on the same node and
+field; a conflict recorded later on that node and field is unresolved
+again, and `mtix sync conflicts list` shows it. Resolve the newest
+conflict of a node and field: a conflict that already has a later
+decision or a later conflict on its node and field is refused as invalid
+input, and the error names the newest conflict id of that node and field
+(the one to resolve, or, when it is resolved too, the one whose decision
+stands). Passing the id of a `manual` row is refused as invalid input as
+well: resolve the conflict it answers instead (`--all` shows both).
 
 For whole-project escapes (many conflicts, divergent history):
 
@@ -1644,15 +1649,19 @@ init`, `clone`, `push` and `pull`, so a hub database that is resuming from
 idle passes the doctor whenever it would sync.
 
 The `hub-triggers` check compares the hub with the functions and triggers
-the mtix hub migrations define: every one must exist, and every trigger
-must be enabled for normal sessions (`tgenabled` is `O`). Without them the
-append-only tables (`audit_log`, `sync_conflicts`, `sync_events`) accept
-changes they should refuse. The detail names each missing function, each
-missing trigger and each trigger that is not enabled, and `fix` holds what
-to run as the table owner: `mtix sync init` for anything missing (it
-recreates every function and trigger), and for a trigger that is not
-enabled the exact `ALTER TABLE <schema>.<table> ENABLE TRIGGER <name>;`
-statement. Like `hub-privileges`, a gap is a **WARN** by default (exit 0)
+the mtix hub migrations define: every one must exist, every trigger must
+execute the function its migration binds, and every trigger must be
+enabled (`tgenabled` is `O`, or `A` for a trigger set to fire always;
+both count, as for `mtix sync harden`). Without them the append-only
+tables (`audit_log`, `sync_conflicts`, `sync_events`) accept changes they
+should refuse. The detail names each missing function, each missing
+trigger, each trigger that executes another function and each trigger
+that is not enabled, and `fix` holds what to run as the table owner, in
+order: the `DROP TRIGGER <name> ON <schema>.<table>;` statement for a
+trigger that executes another function; `mtix sync init` for anything
+missing or dropped (it recreates every function and trigger, each bound
+to its function); and for a trigger that is not enabled the exact
+`ALTER TABLE <schema>.<table> ENABLE TRIGGER <name>;` statement. Like `hub-privileges`, a gap is a **WARN** by default (exit 0)
 and a **FAIL** (exit 2) in strict mode (`sync.keep_roles` set); so is a
 check that cannot run. After a restore from backup this check is how you
 confirm the runbook finished (see "Backup and restore").
@@ -1818,23 +1827,29 @@ as new as the hub's server. It contacts the hub only while it runs.
   loopback or a local socket. `pg_dump` receives every host and port, the
   CA file (`sslrootcert` in the DSN, or `MTIX_SYNC_SSLROOTCERT`) and
   `target_session_attrs` through `PG*` environment variables; the DSN and
-  its password never appear on its command line. With no CA file
+  its password never appear on its command line. Client certificates
+  (`sslcert`, `sslkey`) are not passed to `pg_dump`: a hub that requires
+  a client certificate cannot be backed up with `mtix sync backup` yet.
+  With no CA file
   configured, `pg_dump` verifies the hub against the system trust store
   and the backup says so; a hub whose certificate comes from a private CA
   needs `sslrootcert=<ca.pem>` in the DSN or `MTIX_SYNC_SSLROOTCERT`.
 - **Output file.** mtix creates the file, readable and writable only by
   you (mode 0600), before `pg_dump` writes to it. It never overwrites a
   file: an existing path, or a symlink, is refused, so give each backup a
-  new name. A failed backup leaves no file.
+  new name. A failed backup, including one interrupted with Ctrl-C or
+  SIGTERM, leaves no file.
 
 The dump holds the tables and their data, not the mtix functions and
 triggers. Restore it into an empty database as follows:
 
 1. Restore the dump with `psql`, connected to the empty database as the
    role that will own the sync tables. Keep the password out of the
-   command line: set `PGHOST`, `PGPORT`, `PGUSER`, `PGDATABASE` and
-   `PGSSLMODE=verify-full`, with the password in a `~/.pgpass` file, then
-   run `psql -f hub-<date>.sql`. `psql` reports an error for each trigger
+   command line: set `PGHOST`, `PGPORT`, `PGUSER`, `PGDATABASE`,
+   `PGSSLMODE=verify-full` and `PGSSLROOTCERT=<ca.pem>` (the hub's CA
+   file, or `system` for the operating system's trust store with libpq 16
+   or later; without it `psql` looks for `~/.postgresql/root.crt`), with
+   the password in a `~/.pgpass` file, then run `psql -f hub-<date>.sql`. `psql` reports an error for each trigger
    (its function does not exist yet); step 2 creates them.
 2. Run `mtix sync init` with the hub DSN naming that same role, the table
    owner. It recreates every mtix function and trigger and keeps the
@@ -1880,6 +1895,7 @@ operator does.
 | `mtix sync doctor` shows `[WARN] hub-triggers` (`[FAIL]` in strict mode) | An mtix function or trigger is missing, as after a restore from backup, or a trigger is not enabled | As the table owner, run the check's `fix`: `mtix sync init` for what is missing, the printed `ALTER TABLE ... ENABLE TRIGGER` statement for what is not enabled; then run `mtix sync doctor` again |
 | `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
 | `mtix sync conflicts resolve` fails with `is a manual resolution` | The id is a recorded decision, not a conflict | Run `mtix sync conflicts list --all` and resolve the conflict it answers |
+| `mtix sync conflicts resolve` fails with `has a later conflict` or `is already resolved` | A later conflict or a later decision exists for the same node and field | Resolve the newest conflict the error names; if it says that one is resolved too, the decision already stands |
 
 ### MCP integration
 
@@ -1961,7 +1977,7 @@ Run this after every hub restore:
 # 1. Restore the hub from your backup into an empty database, then run
 #    mtix sync init as the table owner and check mtix sync doctor's
 #    hub-triggers check (see "Backup and restore" above).
-psql -f /path/to/hub-backup.sql      # PG* variables name the empty database and the owner role
+psql -f /path/to/hub-backup.sql      # PG* variables name the empty database, the owner role and the CA (PGSSLROOTCERT)
 mtix sync init
 mtix sync doctor
 

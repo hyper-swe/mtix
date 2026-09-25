@@ -56,8 +56,10 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
   No orphan applied      - every applied_event has a matching node OR tombstone
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
   Hub triggers           - every function and trigger the hub migrations
-                           define exists, and every trigger is enabled
-                           (tgenabled 'O')
+                           define exists, every trigger executes the
+                           function its migration binds, and every trigger
+                           is enabled (tgenabled 'O', or 'A' for one that
+                           fires always)
   Hub privileges         - which roles other than the table owner can use the
                            sync tables, and whether every TRUNCATE guard is in
                            place (the check mtix sync harden runs)
@@ -65,11 +67,13 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
 Each hub check allows 30 s to connect, the same budget as mtix sync init,
 clone, push and pull, so a hub that is resuming from idle passes.
 
-Hub triggers names each missing function or trigger and each trigger that
-is not enabled, with the fix, run as the table owner: mtix sync init for
-what is missing, and the ALTER TABLE ... ENABLE TRIGGER statement it
-prints for what is not enabled. Like hub privileges, it is a WARN by
-default and fails in strict mode.
+Hub triggers names each missing function or trigger, each trigger that
+executes another function, and each trigger that is not enabled, with the
+fix, run as the table owner: mtix sync init for what is missing; the DROP
+TRIGGER statement it prints, then mtix sync init, for a trigger that
+executes another function; and the ALTER TABLE ... ENABLE TRIGGER
+statement it prints for one that is not enabled. Like hub privileges, it
+is a WARN by default and fails in strict mode.
 
 Hub privileges is a WARN by default: roles other than the owner may use
 the sync tables, which can be fine when the database is reachable only

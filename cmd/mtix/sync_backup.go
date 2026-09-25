@@ -10,9 +10,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/spf13/cobra"
@@ -57,17 +59,20 @@ verify-full when the DSN names none, and a weaker sslmode needs
 socket. pg_dump receives every host and port, the CA file (sslrootcert in
 the DSN, or MTIX_SYNC_SSLROOTCERT) and target_session_attrs through PG*
 environment variables; the DSN and its password are never on its command
-line.
+line. Client certificates (sslcert, sslkey) are not passed to pg_dump, so
+a hub that requires one cannot be backed up with this command yet.
 
 mtix creates the output file, readable and writable only by you (mode
 0600), before pg_dump writes to it. An existing file is never overwritten:
-choose a new path for each backup. A failed backup leaves no file.
+choose a new path for each backup. A failed backup, or one interrupted
+with Ctrl-C or SIGTERM, leaves no file.
 
 The dump holds the tables and their data, not the mtix functions and
 triggers. To restore into an empty database:
-  1. psql -f FILE, connected as the role that will own the sync tables
-     (psql reports errors for the triggers, whose functions do not exist
-     yet; step 2 creates them)
+  1. psql -f FILE, connected as the role that will own the sync tables,
+     with PGSSLROOTCERT naming the hub's CA file (or system, with libpq 16
+     or later); psql reports errors for the triggers, whose functions do
+     not exist yet, and step 2 creates them
   2. mtix sync init, with the DSN naming that role
   3. mtix sync doctor: its hub-triggers check passes
   4. mtix sync mark-restored
@@ -93,7 +98,8 @@ and retention of the backup file are the operator's responsibility.`,
 // the table list comes from migrations.Tables(), pg_dump connects with the
 // settings the sync transport approves (pgDumpConnParams), and the output
 // file is created 0600 and exclusive before pg_dump writes to it. A failed
-// backup removes the file it created.
+// backup, one interrupted by SIGINT or SIGTERM included, removes the file
+// it created.
 func runSyncBackup(ctx context.Context, stdout, stderr io.Writer,
 	args []string, output string, opts transport.Options,
 ) error {
@@ -120,26 +126,51 @@ func runSyncBackup(ctx context.Context, stdout, stderr io.Writer,
 		return fmt.Errorf("mtix sync backup: hub tables: %w", err)
 	}
 
+	// From here on SIGINT and SIGTERM cancel ctx instead of ending the
+	// process, so an interrupted backup stops pg_dump and removes the
+	// partial dump like any other failed backup.
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	out, err := createBackupFile(output)
 	if err != nil {
 		return err
 	}
+	noteSystemTrustStore(stderr, conn)
+	if err := dumpInto(ctx, out, stderr, conn, tables); err != nil {
+		if ctx.Err() != nil {
+			err = fmt.Errorf("mtix sync backup: interrupted, so the partial dump is removed: %w", ctx.Err())
+		}
+		return discardBackup(out, output, err)
+	}
+	if err := closeBackupFile(out); err != nil {
+		return discardBackup(nil, output, err)
+	}
+
+	fmt.Fprintf(stdout, "backup written to %s (tables: %s)\n", output, strings.Join(tables, ", "))
+	return nil
+}
+
+// noteSystemTrustStore tells the operator, on stderr, when pg_dump will
+// verify the hub against the system trust store because no CA file is
+// configured (MTIX-59).
+func noteSystemTrustStore(stderr io.Writer, conn pgDumpConn) {
 	if conn.sslrootcert == pgSystemTrustStore {
 		fmt.Fprintln(stderr, "mtix sync backup: no CA file is configured, so pg_dump verifies the hub's "+
 			"certificate against the system trust store (PGSSLROOTCERT=system). If the hub's certificate "+
 			"comes from a private CA, name it with sslrootcert=<ca.pem> in the DSN or with MTIX_SYNC_SSLROOTCERT.")
 	}
-	if err := dumpInto(ctx, out, stderr, conn, tables); err != nil {
-		return discardBackup(out, output, err)
-	}
+}
+
+// closeBackupFile flushes the finished dump to disk and closes it. On an
+// error the file is closed, and the caller removes it (MTIX-95.7).
+func closeBackupFile(out *os.File) error {
 	if err := out.Sync(); err != nil {
-		return discardBackup(out, output, fmt.Errorf("mtix sync backup: sync %s: %w", output, err))
+		closeErr := out.Close()
+		return errors.Join(fmt.Errorf("mtix sync backup: sync %s: %w", out.Name(), err), closeErr)
 	}
 	if err := out.Close(); err != nil {
-		return discardBackup(nil, output, fmt.Errorf("mtix sync backup: close %s: %w", output, err))
+		return fmt.Errorf("mtix sync backup: close %s: %w", out.Name(), err)
 	}
-
-	fmt.Fprintf(stdout, "backup written to %s (tables: %s)\n", output, strings.Join(tables, ", "))
 	return nil
 }
 

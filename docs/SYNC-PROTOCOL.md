@@ -422,8 +422,9 @@ restore runbook is: restore the dump into an empty database with `psql`,
 connected as the role that will own the sync tables; run `mtix sync
 init` as that role, which recreates every function and trigger the
 migrations define; confirm with the `hub-triggers` check of `mtix sync
-doctor`, which verifies the function and trigger sets and that every
-trigger is enabled (`tgenabled` `O`); then run `mtix sync
+doctor`, which verifies the function and trigger sets, that every
+trigger executes the function its migration binds, and that every
+trigger is enabled (`tgenabled` `O` or `A`); then run `mtix sync
 mark-restored`. See the user manual, "Backup and restore".
 
 ## See also

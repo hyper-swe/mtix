@@ -1131,17 +1131,20 @@ verify-full when the DSN names none, and a weaker sslmode needs
 socket. pg_dump receives every host and port, the CA file (sslrootcert in
 the DSN, or MTIX_SYNC_SSLROOTCERT) and target_session_attrs through PG*
 environment variables; the DSN and its password are never on its command
-line.
+line. Client certificates (sslcert, sslkey) are not passed to pg_dump, so
+a hub that requires one cannot be backed up with this command yet.
 
 mtix creates the output file, readable and writable only by you (mode
 0600), before pg_dump writes to it. An existing file is never overwritten:
-choose a new path for each backup. A failed backup leaves no file.
+choose a new path for each backup. A failed backup, or one interrupted
+with Ctrl-C or SIGTERM, leaves no file.
 
 The dump holds the tables and their data, not the mtix functions and
 triggers. To restore into an empty database:
-  1. psql -f FILE, connected as the role that will own the sync tables
-     (psql reports errors for the triggers, whose functions do not exist
-     yet; step 2 creates them)
+  1. psql -f FILE, connected as the role that will own the sync tables,
+     with PGSSLROOTCERT naming the hub's CA file (or system, with libpq 16
+     or later); psql reports errors for the triggers, whose functions do
+     not exist yet, and step 2 creates them
   2. mtix sync init, with the DSN naming that role
   3. mtix sync doctor: its hub-triggers check passes
   4. mtix sync mark-restored
@@ -1299,9 +1302,12 @@ per FR-18.5), and it changes no node. The output says so in text and
 you chose, edit the node with 'mtix update' and push.
 
 The decision resolves the conflict and every earlier conflict on the same
-node and field; a later conflict on that node and field is unresolved
-again. A conflict_id that is itself a manual resolution is refused as
-invalid input.
+node and field; a conflict recorded later on that node and field is
+unresolved again. Resolve the newest conflict of a node and field: a
+conflict_id that already has a later decision or a later conflict on its
+node and field is refused as invalid input, and the error names the
+newest conflict_id of that node and field. A conflict_id that is itself a
+manual resolution is refused as invalid input too.
 
 ### Flags
 
@@ -1355,8 +1361,10 @@ Run health checks against the local store and the BYO Postgres hub:
   No orphan applied      - every applied_event has a matching node OR tombstone
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
   Hub triggers           - every function and trigger the hub migrations
-                           define exists, and every trigger is enabled
-                           (tgenabled 'O')
+                           define exists, every trigger executes the
+                           function its migration binds, and every trigger
+                           is enabled (tgenabled 'O', or 'A' for one that
+                           fires always)
   Hub privileges         - which roles other than the table owner can use the
                            sync tables, and whether every TRUNCATE guard is in
                            place (the check mtix sync harden runs)
@@ -1364,11 +1372,13 @@ Run health checks against the local store and the BYO Postgres hub:
 Each hub check allows 30 s to connect, the same budget as mtix sync init,
 clone, push and pull, so a hub that is resuming from idle passes.
 
-Hub triggers names each missing function or trigger and each trigger that
-is not enabled, with the fix, run as the table owner: mtix sync init for
-what is missing, and the ALTER TABLE ... ENABLE TRIGGER statement it
-prints for what is not enabled. Like hub privileges, it is a WARN by
-default and fails in strict mode.
+Hub triggers names each missing function or trigger, each trigger that
+executes another function, and each trigger that is not enabled, with the
+fix, run as the table owner: mtix sync init for what is missing; the DROP
+TRIGGER statement it prints, then mtix sync init, for a trigger that
+executes another function; and the ALTER TABLE ... ENABLE TRIGGER
+statement it prints for one that is not enabled. Like hub privileges, it
+is a WARN by default and fails in strict mode.
 
 Hub privileges is a WARN by default: roles other than the owner may use
 the sync tables, which can be fine when the database is reachable only

@@ -15,11 +15,13 @@ import (
 const TruncateGuardFile = "016_append_only_truncate_guard.sql"
 
 // Trigger is one trigger the embedded migrations create: its name, the
-// table it is on and the event that fires it (MTIX-95.1).
+// table it is on, the event that fires it (MTIX-95.1) and the function it
+// executes (MTIX-95.7).
 type Trigger struct {
-	Name  string
-	Table string
-	Event string // INSERT, UPDATE, DELETE or TRUNCATE
+	Name     string
+	Table    string
+	Event    string // INSERT, UPDATE, DELETE or TRUNCATE
+	Function string
 }
 
 // Statement patterns the parser reads. Names are unquoted identifiers, as
@@ -29,7 +31,8 @@ var (
 	createTable   = regexp.MustCompile(`(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)`)
 	createFunc    = regexp.MustCompile(`(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-z_][a-z0-9_]*)\s*\(`)
 	createTrigger = regexp.MustCompile(`(?is)\bCREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+([a-z_][a-z0-9_]*)\s+` +
-		`(?:BEFORE|AFTER|INSTEAD\s+OF)\s+([a-z]+)\b.*?\bON\s+([a-z_][a-z0-9_]*)`)
+		`(?:BEFORE|AFTER|INSTEAD\s+OF)\s+([a-z]+)\b.*?\bON\s+([a-z_][a-z0-9_]*)` +
+		`.*?\bEXECUTE\s+(?:FUNCTION|PROCEDURE)\s+([a-z_][a-z0-9_]*)\s*\(`)
 )
 
 // objects is the parsed object set of the migrations.
@@ -63,7 +66,7 @@ func Functions() ([]string, error) {
 
 // Triggers returns every trigger the embedded migrations create, sorted by
 // table then name, including triggers created inside a DO block
-// (MTIX-95.1).
+// (MTIX-95.1), each with the function it executes (MTIX-95.7).
 func Triggers() ([]Trigger, error) {
 	o, err := embeddedObjects()
 	if err != nil {
@@ -123,9 +126,10 @@ func parseObjects(bodies []string) objects {
 		}
 		for _, m := range createTrigger.FindAllStringSubmatch(sql, -1) {
 			triggers[Trigger{
-				Name:  strings.ToLower(m[1]),
-				Event: strings.ToUpper(m[2]),
-				Table: strings.ToLower(m[3]),
+				Name:     strings.ToLower(m[1]),
+				Event:    strings.ToUpper(m[2]),
+				Table:    strings.ToLower(m[3]),
+				Function: strings.ToLower(m[4]),
 			}] = true
 		}
 	}

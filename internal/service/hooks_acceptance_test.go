@@ -294,7 +294,10 @@ func TestAwaitEventJSON_ExecOutputCreatedBeforeWritten_WaitsForCompleteJSON(t *t
 	outFile := filepath.Join(proj, "exec-out.json")
 	gate := &execGate{path: filepath.Join(proj, "exec-gate")}
 
-	// mkfifo runs first, so the gate exists whenever outFile does.
+	// JSON is valid YAML flow syntax, so the argv (script, then $0 $1 $2) is
+	// embedded without hand-quoting.
+	command, err := json.Marshal([]string{"sh", "-c", gatedHookScript, "sh", gate.path, outFile})
+	require.NoError(t, err)
 	writeHooks(t, mtixDir, `
 hooks:
   - name: exec-gated
@@ -303,7 +306,7 @@ hooks:
       status-to: [done]
     deliver: [exec]
     exec:
-      command: ["sh", "-c", "mkfifo '`+gate.path+`' && : > '`+outFile+`' && read _ < '`+gate.path+`'; printf '%s' \"$MTIX_EVENT\" > '`+outFile+`'"]
+      command: `+string(command)+`
       timeout-seconds: 5
 `)
 	require.NoError(t, hooks.SaveTrust(mtixDir, hooks.ConfigHash(mtixDir)))
@@ -314,6 +317,7 @@ hooks:
 	require.NoError(t, svc.TransitionStatus(ctx, node.ID, model.StatusInProgress, "", "worker"))
 	require.NoError(t, svc.TransitionStatus(ctx, node.ID, model.StatusDone, "", "worker"))
 	service.NewHooksDispatcher(store, mtixDir, slog.Default()).Dispatch(ctx)
+	gate.dispatched = true // from here on a hook may be parked on the gate
 
 	payload := awaitEventJSON(t, gate.reader(outFile))
 
@@ -322,10 +326,30 @@ hooks:
 	assert.Equal(t, node.ID, payload["node_id"])
 }
 
+// gatedHookScript is the gated exec hook, run as
+// `sh -c gatedHookScript sh GATE OUT` (MTIX-107.23). It creates OUT, then parks
+// on the FIFO GATE until something opens it, and only then writes $MTIX_EVENT
+// to OUT: mkfifo runs first, so GATE exists whenever OUT does.
+//
+// The park is bounded inside the script, not by the test binary, which can die
+// (-timeout, Ctrl-C) before it releases the gate. A background watchdog opens
+// the gate after 10 s and exits. `1<>` opens the FIFO read-write, which never
+// blocks, so the watchdog cannot park either. When the test opens the gate, the
+// hook kills the watchdog (its trap also kills its sleep), so a passing run
+// leaves nothing behind. The exec adapter's 5 s timeout still applies first
+// while the test binary lives.
+const gatedHookScript = `mkfifo "$1" && : > "$2" || exit 1
+(trap 'kill $! 2>/dev/null; exit 0' TERM; sleep 10 & wait; printf '\n' 1<>"$1") &
+dog=$!
+read _ < "$1"
+kill "$dog" 2>/dev/null
+printf '%s' "$MTIX_EVENT" > "$2"`
+
 // execGate holds an exec hook parked on `read _ < path` (a FIFO) between
 // creating its output file and writing it (MTIX-107.23).
 type execGate struct {
 	path        string
+	dispatched  bool        // Dispatch has run, so a hook may be parked (test goroutine only)
 	opened      atomic.Bool // the parked hook was released
 	handedEmpty atomic.Bool // the read that released it returned an empty file
 }
@@ -366,19 +390,23 @@ func (g *execGate) open() error {
 	return nil
 }
 
-// releaseIfParked frees a hook still parked on the gate when the test failed
-// before its wait opened it. A fast failure can come before the shell reaches
-// the gate, and the exec adapter's own timeout dies with the test binary, so
-// it retries until the shell is there to release: a failed run leaves no
-// blocked shell behind. A passing run opened the gate and returns at once.
+// releaseIfParked makes one attempt to free a hook still parked on the gate
+// when the test failed after Dispatch but before its wait opened the gate, and
+// logs the result. The test has already failed, so the attempt never adds a
+// failure. Before Dispatch no hook can be parked, so there is nothing to
+// attempt. If the shell has not reached the gate yet, the attempt misses, and
+// the script's own watchdog frees the hook within its budget. A passing run
+// opened the gate and returns at once.
 func (g *execGate) releaseIfParked(t *testing.T) {
 	t.Helper()
-	if g.opened.Load() {
+	if !g.dispatched || g.opened.Load() {
 		return
 	}
-	assert.EventuallyWithT(t, func(c *assert.CollectT) {
-		assert.NoError(c, g.open())
-	}, 5*time.Second, 10*time.Millisecond, "release the exec hook still parked on the gate")
+	if err := g.open(); err != nil {
+		t.Logf("exec gate: parked hook not released (%v); the hook's watchdog frees it within 10 s", err)
+		return
+	}
+	t.Logf("exec gate: released the hook parked on %s", g.path)
 }
 
 // --- Criterion 4: idempotence (kill-9 proxy) -------------------------------

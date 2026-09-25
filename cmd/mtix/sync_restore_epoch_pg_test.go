@@ -25,10 +25,11 @@ func documentedSmallTeamGrants(t *testing.T) []documentedGrant {
 }
 
 // insertEventAs inserts one create_node row into sync_events as the
-// syncing role, carrying restore_epoch forged (nil for NULL), in a
-// transaction whose session also holds a temporary table named
-// sync_hub_state with epoch -7, and returns the event id (MTIX-95.1.7).
-func (h *leastPrivilegeHub) insertEventAs(t *testing.T, node string, forged any) string {
+// syncing role, with the client-supplied restore_epoch supplied (nil for
+// NULL), in a transaction whose session also holds a session-local table
+// named sync_hub_state with epoch -7, and returns the event id
+// (MTIX-95.1.7).
+func (h *leastPrivilegeHub) insertEventAs(t *testing.T, node string, supplied any) string {
 	t.Helper()
 	h.lamport++
 	id := fmt.Sprintf("0193fa00-0000-7000-8000-%012d", 5000+h.lamport)
@@ -44,8 +45,8 @@ func (h *leastPrivilegeHub) insertEventAs(t *testing.T, node string, forged any)
 	}
 	_, err = tx.Exec(h.ctx, `INSERT INTO sync_events (event_id, project_prefix, node_id, uid, op_type,
 		payload, wall_clock_ts, lamport_clock, vector_clock, author_id, author_machine_hash, restore_epoch)
-		VALUES ($1, 'MTIX', $2, $1, 'create_node', '{"title":"x"}', 1, $3, '{"mallory":1}', 'mallory',
-		'0123456789abcdef', $4)`, id, node, h.lamport, forged)
+		VALUES ($1, 'MTIX', $2, $1, 'create_node', '{"title":"x"}', 1, $3, '{"w":1}', 'w',
+		'0123456789abcdef', $4)`, id, node, h.lamport, supplied)
 	require.NoError(t, err, "the documented set inserts events")
 	require.NoError(t, tx.Commit(h.ctx))
 	return id
@@ -59,14 +60,14 @@ func (h *leastPrivilegeHub) stampedEpochOf(t *testing.T, id string) string {
 	return got[0]
 }
 
-// TestLeastPrivilegeRole_ForgedRestoreEpoch_StoredWithHubEpoch: a login
-// role holding exactly the documented least-privilege list inserts
-// sync_events rows directly with forged restore epochs (negative, larger
-// than the hub's, older than the hub's, NULL), while its session holds a
-// temporary table named sync_hub_state; every row is stored with the
-// hub's own epoch, before and after the owner's mark-restored
-// (MTIX-95.1.7).
-func TestLeastPrivilegeRole_ForgedRestoreEpoch_StoredWithHubEpoch(t *testing.T) {
+// TestLeastPrivilegeRole_ClientSuppliedRestoreEpoch_StoredWithHubEpoch: a
+// login role holding exactly the documented least-privilege list inserts
+// sync_events rows directly, each with a client-supplied restore epoch
+// (negative, larger than the hub's, older than the hub's, NULL), while its
+// session holds a session-local table named sync_hub_state; every row is
+// stored with the hub's own epoch, before and after the owner's
+// mark-restored (MTIX-95.1.7).
+func TestLeastPrivilegeRole_ClientSuppliedRestoreEpoch_StoredWithHubEpoch(t *testing.T) {
 	grants := documentedSmallTeamGrants(t) // read before initTestApp changes directory
 	initTestApp(t)
 	h := newLeastPrivilegeHub(t, grants)
@@ -74,7 +75,7 @@ func TestLeastPrivilegeRole_ForgedRestoreEpoch_StoredWithHubEpoch(t *testing.T) 
 		name      string
 		restored  bool // the owner has run mark-restored once before the insert
 		node      string
-		forged    any
+		supplied  any
 		wantEpoch string
 	}{
 		{"negative epoch at epoch 0", false, "MTIX-8.1", int64(-1), "0"},
@@ -91,7 +92,7 @@ func TestLeastPrivilegeRole_ForgedRestoreEpoch_StoredWithHubEpoch(t *testing.T) 
 				require.NoError(t, err)
 				restored = true
 			}
-			id := h.insertEventAs(t, tt.node, tt.forged)
+			id := h.insertEventAs(t, tt.node, tt.supplied)
 			require.Equal(t, tt.wantEpoch, h.stampedEpochOf(t, id), "the hub stamps its own epoch")
 		})
 	}
@@ -132,8 +133,8 @@ func (h *leastPrivilegeHub) collisionRows(t *testing.T) []string {
 // for a free number, another project, the held node's own uid or event id,
 // or a number only a non-create event names. A genuine cross-epoch call is
 // recorded once, with the held create, its epoch and the detected epoch
-// read from the hub; an empty uid is recorded as the event id
-// (MTIX-95.1.7).
+// read from the hub, and the incoming create's own uid; an empty uid is
+// recorded as the event id (MTIX-95.1.7).
 func TestLeastPrivilegeRole_CollisionRecords_OnlyGenuineCrossEpochThroughHub(t *testing.T) {
 	grants := documentedSmallTeamGrants(t) // read before initTestApp changes directory
 	initTestApp(t)
@@ -152,7 +153,7 @@ func TestLeastPrivilegeRole_CollisionRecords_OnlyGenuineCrossEpochThroughHub(t *
 	_, err = h.syncPool.Inner().Exec(h.ctx, `INSERT INTO sync_node_collisions
 		(project_prefix, display_path, held_event_id, held_uid, held_epoch, held_wall_clock_ts,
 		 incoming_event_id, incoming_uid, incoming_wall_clock_ts, detected_epoch)
-		VALUES ('MTIX', 'MTIX-2.1', $1, $1, -1, 1, 'forged', 'forged', 1, 9)`, held.EventID)
+		VALUES ('MTIX', 'MTIX-2.1', $1, $1, -1, 1, 'x', 'x', 1, 9)`, held.EventID)
 	requireDenied(t, err, "sync_node_collisions", "the documented set holds no INSERT on sync_node_collisions")
 
 	for _, c := range []struct {
@@ -173,10 +174,14 @@ func TestLeastPrivilegeRole_CollisionRecords_OnlyGenuineCrossEpochThroughHub(t *
 	require.True(t, h.callRecorder(t, incoming), "a repeated call reports it on record")
 	blankUID := recordCall{"MTIX", "MTIX-2.1", "0193fa00-0000-7000-8000-00000000f002", "", 778}
 	require.True(t, h.callRecorder(t, blankUID))
+	ownUID := recordCall{"MTIX", "MTIX-2.1", "0193fa00-0000-7000-8000-00000000f003",
+		"0193fa00-0000-7000-8000-00000000f0aa", 779}
+	require.True(t, h.callRecorder(t, ownUID), "a create whose uid differs from its event id")
 	require.Equal(t, []string{
 		"MTIX|MTIX-2.1|" + held.EventID + "|" + held.UID + "|0|" + incoming.eventID + "|" + incoming.uid + "|777|1|open",
 		"MTIX|MTIX-2.1|" + held.EventID + "|" + held.UID + "|0|" + blankUID.eventID + "|" + blankUID.eventID + "|778|1|open",
-	}, h.collisionRows(t), "one row per incoming create, with the hub's held create and epochs")
+		"MTIX|MTIX-2.1|" + held.EventID + "|" + held.UID + "|0|" + ownUID.eventID + "|" + ownUID.uid + "|779|1|open",
+	}, h.collisionRows(t), "one row per incoming create, with its uid, and the hub's held create and epochs")
 }
 
 // TestLeastPrivilegeRole_AfterMarkRestored_CrossEpochCreateRecordedByHub:
@@ -300,6 +305,88 @@ func TestDoctorSchemaCurrent_RoleWithoutExecute_WarnsWithGrantFix(t *testing.T) 
 	require.Equal(t, "as the table owner ("+h.owner+"): "+grant, fix)
 
 	require.NoError(t, h.f.tryAs(h.owner, grant), "the printed fix runs as printed")
+	pass, warn, detail, _, err = schemaCurrentCheck(t, h.syncDSN)
+	require.NoError(t, err)
+	require.True(t, pass, detail)
+	require.False(t, warn, detail)
+}
+
+// TestDoctorSchemaCurrent_StampTriggerOnAnotherFunction_ListedWithInitFix:
+// a trigger named sync_events_stamp_restore_epoch that executes another
+// function than hub_stamp_restore_epoch counts as missing in the schema
+// current check, with mtix sync init as the fix; after init the trigger
+// executes the stamp function and the check passes (MTIX-95.1.7).
+func TestDoctorSchemaCurrent_StampTriggerOnAnotherFunction_ListedWithInitFix(t *testing.T) {
+	dsn := requireCmdPG(t)
+	_ = openCmdHub(t)
+	initTestApp(t)
+	ctx := context.Background()
+	pool := hubPool(t, dsn)
+	t.Cleanup(func() {
+		_, err := pool.Exec(context.Background(), `DROP FUNCTION IF EXISTS mtix_test_other_stamp() CASCADE`)
+		require.NoError(t, err)
+	})
+	for _, stmt := range []string{
+		`CREATE FUNCTION mtix_test_other_stamp() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER sync_events_stamp_restore_epoch ON sync_events`,
+		`CREATE TRIGGER sync_events_stamp_restore_epoch BEFORE INSERT ON sync_events
+		 FOR EACH ROW EXECUTE FUNCTION mtix_test_other_stamp()`,
+	} {
+		_, err := pool.Exec(ctx, stmt)
+		require.NoError(t, err, stmt)
+	}
+
+	pass, warn, detail, fix, err := schemaCurrentCheck(t, dsn)
+	require.NoError(t, err)
+	require.True(t, pass, detail)
+	require.True(t, warn, detail)
+	require.Contains(t, detail, "trigger sync_events_stamp_restore_epoch on public.sync_events")
+	require.NotContains(t, detail, "function hub_stamp_restore_epoch()", "the stamp function itself is present")
+	require.Equal(t, "as the table owner (postgres): mtix sync init", fix)
+
+	var stdout, stderr bytes.Buffer
+	require.NoError(t, runSyncInit(ctx, &stdout, &stderr, nil, cloudOpts), stderr.String())
+	pass, warn, detail, _, err = schemaCurrentCheck(t, dsn)
+	require.NoError(t, err)
+	require.True(t, pass, detail)
+	require.False(t, warn, "init binds the trigger to the stamp function: %s", detail)
+}
+
+// TestDoctorSchemaCurrent_RoleWithCollisionInsert_WarnsWithRevokeFix: a
+// syncing role that holds the documented list plus INSERT on
+// sync_node_collisions and USAGE on its sequence gets a schema current
+// WARN naming both, with the exact REVOKE statements the table owner runs;
+// strict mode fails it; once the statements run, the check passes. A DSN
+// naming the table owner is never reported for them (MTIX-95.1.7).
+func TestDoctorSchemaCurrent_RoleWithCollisionInsert_WarnsWithRevokeFix(t *testing.T) {
+	initTestApp(t)
+	grants := append(expectedSyncGrants(),
+		documentedGrant{"INSERT", "TABLE", "sync_node_collisions", ""},
+		documentedGrant{"USAGE", "SEQUENCE", "sync_node_collisions_collision_id_seq", ""})
+	h := newLeastPrivilegeHub(t, grants)
+
+	pass, warn, detail, fix, err := schemaCurrentCheck(t, h.syncDSN)
+	require.NoError(t, err, "a WARN keeps the doctor's exit code 0")
+	require.True(t, pass, detail)
+	require.True(t, warn, "a role holding INSERT on sync_node_collisions warns: %s", detail)
+	require.Contains(t, detail, "INSERT on sync_node_collisions")
+	require.Contains(t, detail, "USAGE on sync_node_collisions_collision_id_seq")
+	revokes := "REVOKE INSERT ON TABLE hub_data.sync_node_collisions FROM " + h.syncer + "; " +
+		"REVOKE USAGE ON SEQUENCE hub_data.sync_node_collisions_collision_id_seq FROM " + h.syncer + ";"
+	require.Equal(t, "as the table owner ("+h.owner+"): "+revokes, fix)
+
+	setKeepRoles(t, h.syncer)
+	pass, _, _, _, err = schemaCurrentCheck(t, h.syncDSN)
+	require.ErrorIs(t, err, errDoctorChecksFailed)
+	require.False(t, pass, "strict mode fails the check")
+	setKeepRoles(t, "")
+
+	pass, warn, detail, _, err = schemaCurrentCheck(t, withSearchPath(t, h.f.dsnAs(h.owner)))
+	require.NoError(t, err)
+	require.True(t, pass, detail)
+	require.False(t, warn, "the table owner is not reported: %s", detail)
+
+	require.NoError(t, h.f.tryAs(h.owner, revokes), "the printed fix runs as printed")
 	pass, warn, detail, _, err = schemaCurrentCheck(t, h.syncDSN)
 	require.NoError(t, err)
 	require.True(t, pass, detail)

@@ -72,8 +72,19 @@ const leastPrivilegePointer = "The least-privilege list is in step 2 of the smal
 // syncing role records restore collisions (MTIX-95.1.7).
 const recorderSentence = "A syncing role records restore collisions only through the hub function " +
 	"`record_restore_collision`, which runs as the table owner and records a collision only when the " +
-	"hub's own data shows one, so the role needs EXECUTE on that function and no INSERT on " +
-	"`sync_node_collisions`."
+	"hub's own data shows an earlier-epoch create holding the number, so the role needs EXECUTE on that " +
+	"function and no INSERT on `sync_node_collisions`."
+
+// upgradeOrderSentence is the one sentence every document uses for the
+// order of the upgrade steps of an existing hub (MTIX-95.1.7).
+const upgradeOrderSentence = "Upgrade every syncing client first, then run the REVOKE statements; if the " +
+	"REVOKE comes first, an older client's push that meets a restore collision fails until that client upgrades."
+
+// restoreGrantsSentence is the restore runbook step that gives the syncing
+// roles their privileges back (MTIX-95.1.7).
+const restoreGrantsSentence = "A dump holds no privileges: after `mtix sync init`, grant each syncing role " +
+	"the least-privilege list again, EXECUTE on `record_restore_collision` included, then run " +
+	"`mtix sync doctor` with a syncing role's DSN."
 
 // everyLeastPrivilegeCopy returns, by name, the whitespace-normalized text
 // of every document that states the least-privilege sentences: the user
@@ -116,13 +127,29 @@ func TestDocs_MarkRestoredSentence_SameInEveryCopy(t *testing.T) {
 }
 
 // TestDocs_RecorderSentence_SameInEveryCopy: every copy states the same
-// sentence on how a syncing role records restore collisions, and the
-// GRANT an owner runs for a syncing role on a hub that mtix sync init has
-// just given the function (MTIX-95.1.7).
+// sentence on how a syncing role records restore collisions, the GRANT an
+// owner runs for a syncing role on a hub that mtix sync init has just given
+// the function, and the order of the upgrade steps (MTIX-95.1.7).
 func TestDocs_RecorderSentence_SameInEveryCopy(t *testing.T) {
 	for name, text := range everyLeastPrivilegeCopy(t) {
 		require.Containsf(t, text, recorderSentence, "%s states the recorder sentence", name)
 		require.Containsf(t, text, "GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;",
 			"%s gives the grant for an existing hub", name)
+		require.Containsf(t, text, upgradeOrderSentence, "%s states the upgrade order", name)
 	}
+}
+
+// TestDocs_RestoreRunbook_GrantsLeastPrivilegeListAgain: the user manual and
+// the admin skill (rendered, and its plugin mirrors) carry the restore step
+// that grants the syncing roles the least-privilege list again and checks
+// it with the doctor; the security model says what a least-privilege role
+// cannot do (MTIX-95.1.7).
+func TestDocs_RestoreRunbook_GrantsLeastPrivilegeListAgain(t *testing.T) {
+	texts := everyLeastPrivilegeCopy(t)
+	for _, name := range []string{"USERMANUAL.md", "rendered admin skill", ".claude-plugin/skills/mtix-admin.md",
+		".codex-plugin/skills/admin/SKILL.md"} {
+		require.Containsf(t, texts[name], restoreGrantsSentence, "%s carries the restore grants step", name)
+	}
+	require.Contains(t, texts["docs/SECURITY-MODEL.md"],
+		"it cannot advance the epoch, set an event's epoch, or write a collision row directly")
 }

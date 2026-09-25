@@ -83,8 +83,8 @@ func TestMigration017_HubInOtherSchema_FunctionsRunAsOwnerWithFixedSearchPath(t 
 
 // TestHubStamp_RoleWithInsertOnly_StoredWithHubEpoch: a role that may only
 // INSERT into sync_events, with no privilege on sync_hub_state, inserts
-// rows carrying forged restore epochs; each is stored with the hub's
-// epoch, before and after mark-restored (MTIX-95.1.7).
+// rows, each with a client-supplied restore epoch; each is stored with the
+// hub's epoch, before and after mark-restored (MTIX-95.1.7).
 func TestHubStamp_RoleWithInsertOnly_StoredWithHubEpoch(t *testing.T) {
 	f := newHubFixture(t)
 	owner, writer := f.ownerRole(), f.role("writer")
@@ -94,10 +94,10 @@ func TestHubStamp_RoleWithInsertOnly_StoredWithHubEpoch(t *testing.T) {
 	f.ddl("GRANT INSERT ON public.sync_events TO %I", writer)
 	writerPool := f.openAs(writer, transport.Options{})
 
-	insert := func(id string, forged any) {
+	insert := func(id string, supplied any) {
 		_, err := writerPool.Inner().Exec(ctx, `INSERT INTO sync_events (event_id, project_prefix, node_id, op_type,
 			payload, wall_clock_ts, lamport_clock, vector_clock, author_id, author_machine_hash, restore_epoch)
-			VALUES ($1, 'MTIX', $1, 'comment', '{"body":"x"}', 1, 1, '{"w":1}', 'w', '0123456789abcdef', $2)`, id, forged)
+			VALUES ($1, 'MTIX', $1, 'comment', '{"body":"x"}', 1, 1, '{"w":1}', 'w', '0123456789abcdef', $2)`, id, supplied)
 		require.NoError(t, err)
 	}
 	insert("e-before", int64(-3))
@@ -111,8 +111,8 @@ func TestHubStamp_RoleWithInsertOnly_StoredWithHubEpoch(t *testing.T) {
 }
 
 // crossEpochPush pushes a held create, runs mark-restored and pushes a
-// distinct create for the same number, returning the second push's
-// outcome.
+// distinct create for the same number, whose uid differs from its event
+// id, returning the second push's outcome.
 func crossEpochPush(t *testing.T, pool *transport.Pool, suffix string) (*model.SyncEvent, []transport.RestoreCollision, error) {
 	t.Helper()
 	ctx := context.Background()
@@ -122,15 +122,33 @@ func crossEpochPush(t *testing.T, pool *transport.Pool, suffix string) (*model.S
 	_, err = pool.MarkRestored(ctx)
 	require.NoError(t, err)
 	incoming := uidEvent("0193fa00-0000-7000-8000-0000000b"+suffix+"002", "MTIX-1.4", "bob", 2)
+	incoming.UID = "0193fa00-0000-7000-8000-0000000b" + suffix + "0aa"
 	_, _, _, collisions, err := pool.PushEventsWithCollisions(ctx, []*model.SyncEvent{incoming})
 	return incoming, collisions, err
+}
+
+// TestPush_CrossEpochCreate_RecordsItsUID: a cross-epoch create whose uid
+// differs from its event id is recorded by the hub's recorder with that
+// uid as incoming_uid, next to its event id (MTIX-95.1.7).
+func TestPush_CrossEpochCreate_RecordsItsUID(t *testing.T) {
+	f := newHubFixture(t)
+	owner := f.ownerRole()
+	pool := f.openAs(owner, transport.Options{})
+	require.NoError(t, pool.Migrate(context.Background()))
+
+	incoming, collisions, err := crossEpochPush(t, pool, "3")
+	require.NoError(t, err)
+	require.Len(t, collisions, 1)
+	require.NotEqual(t, incoming.EventID, incoming.UID)
+	require.Equal(t, []string{incoming.EventID + " " + incoming.UID}, f.queryStrings(
+		`SELECT incoming_event_id || ' ' || incoming_uid FROM public.sync_node_collisions`))
 }
 
 // TestPush_HubWithoutMigration017_StillStampsAndRecords: on a hub that
 // lacks migration 017's trigger and functions (not yet initialized since
 // the upgrade), pushes keep working: each create is stored with the epoch
 // the push read from the hub, and a cross-epoch create is still recorded
-// as a restore collision (MTIX-95.1.7).
+// as a restore collision, with its own uid (MTIX-95.1.7).
 func TestPush_HubWithoutMigration017_StillStampsAndRecords(t *testing.T) {
 	f := newHubFixture(t)
 	owner := f.ownerRole()
@@ -144,9 +162,9 @@ func TestPush_HubWithoutMigration017_StillStampsAndRecords(t *testing.T) {
 	incoming, collisions, err := crossEpochPush(t, pool, "1")
 	require.NoError(t, err, "a hub without migration 017 still accepts the push")
 	require.Len(t, collisions, 1)
-	require.Equal(t, []string{"open 0 1"}, f.queryStrings(
-		`SELECT status || ' ' || held_epoch::text || ' ' || detected_epoch::text FROM public.sync_node_collisions
-		 WHERE incoming_event_id = $1`, incoming.EventID))
+	require.Equal(t, []string{"open 0 1 " + incoming.UID}, f.queryStrings(
+		`SELECT status || ' ' || held_epoch::text || ' ' || detected_epoch::text || ' ' || incoming_uid
+		 FROM public.sync_node_collisions WHERE incoming_event_id = $1`, incoming.EventID))
 	later := uidEvent("0193fa00-0000-7000-8000-0000000b1003", "MTIX-1.5", "bob", 3)
 	_, _, _, _, err = pool.PushEventsWithCollisions(ctx, []*model.SyncEvent{later})
 	require.NoError(t, err)

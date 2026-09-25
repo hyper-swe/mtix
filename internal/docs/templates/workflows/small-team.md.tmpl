@@ -53,8 +53,9 @@ The hub stamps every event with its own restore epoch: a trigger on
 `sync_events` sets it from `sync_hub_state` on every insert. A syncing
 role records restore collisions only through the hub function
 `record_restore_collision`, which runs as the table owner and records a
-collision only when the hub's own data shows one, so the role needs
-EXECUTE on that function and no INSERT on `sync_node_collisions`.
+collision only when the hub's own data shows an earlier-epoch create
+holding the number, so the role needs EXECUTE on that function and no
+INSERT on `sync_node_collisions`.
 
 When `mtix sync init` adds this function to an existing hub, the table
 owner then grants EXECUTE on it to each syncing role, and revokes the
@@ -62,13 +63,25 @@ privileges the list no longer names:
 
 ```sql
 GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;
+-- once every syncing client is upgraded:
 REVOKE INSERT ON sync_node_collisions FROM <role>;
 REVOKE USAGE ON SEQUENCE sync_node_collisions_collision_id_seq FROM <role>;
 ```
 
+Upgrade every syncing client first, then run the REVOKE statements; if the
+REVOKE comes first, an older client's push that meets a restore collision
+fails until that client upgrades.
+
 `mtix sync doctor`, run with a syncing role's DSN, names that role in its
 `schema current` check when it cannot execute the function, with the
-exact GRANT to run.
+exact GRANT to run, and when it still holds INSERT on
+`sync_node_collisions` or USAGE on its sequence, with the exact REVOKE
+statements.
+
+A dump holds no privileges: after restoring the hub and running
+`mtix sync init`, grant each syncing role this list again, EXECUTE on
+`record_restore_collision` included, then run `mtix sync doctor` with a
+syncing role's DSN.
 
 A syncing role set up with the least-privilege list holds no UPDATE on
 `sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs

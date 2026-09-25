@@ -76,15 +76,16 @@ a superuser, or that holds ADMIN OPTION on a role that can), or when the
 check cannot run.
 `mtix sync init` changes no existing privilege (it creates the restore-collision functions of migration 017 executable by their owner alone) and `mtix sync push` issues no DDL.
 
-The hub stamps every event with its own restore epoch (a trigger on `sync_events`). A syncing role records restore collisions only through the hub function `record_restore_collision`, which runs as the table owner and records a collision only when the hub's own data shows one, so the role needs EXECUTE on that function and no INSERT on `sync_node_collisions`. When `mtix sync init` adds this function to an existing hub, the table owner then grants EXECUTE on it to each syncing role and revokes the privileges the least-privilege list no longer names:
+The hub stamps every event with its own restore epoch (a trigger on `sync_events`). A syncing role records restore collisions only through the hub function `record_restore_collision`, which runs as the table owner and records a collision only when the hub's own data shows an earlier-epoch create holding the number, so the role needs EXECUTE on that function and no INSERT on `sync_node_collisions`. When `mtix sync init` adds this function to an existing hub, the table owner then grants EXECUTE on it to each syncing role and revokes the privileges the least-privilege list no longer names:
 
 ```sql
 GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;
+-- once every syncing client is upgraded:
 REVOKE INSERT ON sync_node_collisions FROM <role>;
 REVOKE USAGE ON SEQUENCE sync_node_collisions_collision_id_seq FROM <role>;
 ```
 
-`mtix sync doctor`'s `schema current` check, run with a syncing role's DSN, reports a hub without migration 017 and a role that cannot execute the function, with the fix the table owner runs: a WARN by default, a FAIL in strict mode. `mtix sync harden --apply` revokes EXECUTE on it from every role that is not kept.
+Upgrade every syncing client first, then run the REVOKE statements; if the REVOKE comes first, an older client's push that meets a restore collision fails until that client upgrades. `mtix sync doctor`'s `schema current` check, run with a syncing role's DSN, reports each of these as a WARN by default and a FAIL in strict mode, with the fix the table owner runs: a hub without migration 017 (pushes keep working; the fix is `mtix sync init`), a role that cannot execute the function (a push that meets a restore collision fails until the table owner runs the printed GRANT), and a role other than the table owner that holds INSERT on `sync_node_collisions` or USAGE on its sequence (the fix is the printed REVOKE statements). `mtix sync harden --apply` revokes EXECUTE on it from every role that is not kept.
 
 Never pass `--apply` without a human approving the dry run's role list. Never
 run `mtix sync harden` from a hook, a push or the daemon.
@@ -154,6 +155,12 @@ compared by OID; tgenabled `O` and `A` both count as enabled; a gap is a
 WARN by default, a FAIL in strict mode), then
 `mtix sync mark-restored` once, with the DSN naming the table owner, and
 `mtix sync collisions list`.
+
+A dump holds no privileges: after `mtix sync init`, grant each syncing role
+the least-privilege list again, EXECUTE on `record_restore_collision`
+included, then run `mtix sync doctor` with a syncing role's DSN. Its
+`schema current` check names a syncing role that cannot execute the
+function.
 
 A syncing role set up with the least-privilege list holds no UPDATE on
 `sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs as

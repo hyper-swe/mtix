@@ -1655,13 +1655,23 @@ table: run `mtix sync init`. It also checks that the hub has migration
 017, with which the hub stamps every event's restore epoch (a trigger on
 `sync_events` sets it from `sync_hub_state` on every insert) and records
 restore collisions itself (the function `record_restore_collision`), and
-that the DSN's role can execute that function. A hub whose owner has not
-run `mtix sync init` since the upgrade, or a role without EXECUTE, is a
-WARN by default and a FAIL in strict mode (`sync.keep_roles` set);
-pushes keep working. The detail names each missing object, and `fix`
-names the table owner and what to run: `mtix sync init`, or the printed
-`GRANT EXECUTE ON FUNCTION <schema>.record_restore_collision(...) TO
-<role>;`.
+that the DSN's role can execute that function and, unless it owns the
+sync tables, holds no INSERT on `sync_node_collisions` and no USAGE on
+`sync_node_collisions_collision_id_seq`. Each gap is a WARN by default
+and a FAIL in strict mode (`sync.keep_roles` set):
+
+- a hub whose owner has not run `mtix sync init` since the upgrade:
+  pushes keep working; the fix is `mtix sync init`;
+- a role without EXECUTE on `record_restore_collision`: a push that meets
+  a restore collision fails until the table owner runs the printed
+  `GRANT EXECUTE ON FUNCTION <schema>.record_restore_collision(...) TO
+  <role>;`;
+- a role that holds INSERT on `sync_node_collisions` or USAGE on its
+  sequence: the fix is the printed `REVOKE` statements, which the table
+  owner runs once every syncing client is upgraded.
+
+The detail names each gap, and `fix` names the table owner and what to
+run.
 
 The `hub-triggers` check compares the hub with the functions and triggers
 the mtix hub migrations define: every one must exist, every trigger must
@@ -1933,7 +1943,13 @@ search_path=<schema>` in the DSN, or `ALTER ROLE <owner> SET search_path
    count must be at least that number, which rules out only a new or
    emptier hub. Do not use the `COPY <n>` lines `psql` prints during the
    restore: they do not name their table.
-4. Continue with the "Restore-from-backup runbook" below: `mtix sync
+4. A dump holds no privileges: after `mtix sync init`, grant each syncing
+   role the least-privilege list again, EXECUTE on
+   `record_restore_collision` included, then run `mtix sync doctor` with
+   a syncing role's DSN. The list is in step 2 of the small-team workflow
+   and in `docs/SECURITY-MODEL.md`; the doctor's `schema current` check
+   names a role that cannot execute the function.
+5. Continue with the "Restore-from-backup runbook" below: `mtix sync
    mark-restored`, then `mtix sync collisions list`.
 
 For compliance-grade durability, copy each backup to immutable cold
@@ -1968,7 +1984,7 @@ operator does.
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
 | `mtix sync doctor` shows `[WARN] hub-privileges` | Roles other than the table owner can use the sync tables, or a TRUNCATE guard is missing or disabled. Nothing is blocked, and this may be fine on a private network | To restrict access, the table owner runs `mtix sync harden` (a dry run), then, after reviewing its role list, `mtix sync harden --apply --keep-role <role>`; see "Hub privileges" |
 | `mtix sync doctor` shows `[FAIL] hub-privileges` | Strict mode (`sync.keep_roles` set): the check fails whenever `mtix sync harden` would report a finding (for example, a role not in the list can use the sync tables, a guard is missing or disabled, a kept role can grant its access on or holds a privilege another role granted it, an mtix object is owned by another role, or a membership reaches every table), or when the check cannot run (for example, the hub is unreachable, or a sync table is missing) | Add the role to `sync.keep_roles` if it should keep access, or run `mtix sync harden` and then `--apply` as the table owner; give an administrator the statements harden prints for what it cannot change. When the check cannot run, take the next step its detail names |
-| `mtix sync doctor` shows `[WARN] schema current` (`[FAIL]` in strict mode) | The hub lacks migration 017 (its owner has not run `mtix sync init` since the upgrade), or the DSN's role cannot execute `record_restore_collision`, which records restore collisions on the hub. Pushes keep working; a push that meets a restore collision fails while the role cannot execute the function | As the table owner the `fix` names, run it: `mtix sync init`, or the printed `GRANT EXECUTE ON FUNCTION ... TO <role>;`; then run `mtix sync doctor` again |
+| `mtix sync doctor` shows `[WARN] schema current` (`[FAIL]` in strict mode) | The hub lacks migration 017 (its owner has not run `mtix sync init` since the upgrade; pushes keep working); or the DSN's role cannot execute `record_restore_collision`, which records restore collisions on the hub (a push that meets a restore collision fails until the table owner runs the printed GRANT); or the DSN's role, other than the table owner, holds INSERT on `sync_node_collisions` or USAGE on its sequence | As the table owner the `fix` names, run it: `mtix sync init`, the printed `GRANT EXECUTE ON FUNCTION ... TO <role>;`, or, once every syncing client is upgraded, the printed `REVOKE` statements; then run `mtix sync doctor` again |
 | `mtix sync doctor` shows `[WARN] hub-triggers` (`[FAIL]` in strict mode) | An mtix function or trigger is missing, as after a restore from backup; a trigger executes another function than its migration binds; or a trigger is not enabled | As the table owner the `fix` names, run it: `mtix sync init` for what is missing and for a trigger bound to another function (init replaces it), the printed `ALTER TABLE ... ENABLE TRIGGER` statement for what is not enabled; then run `mtix sync doctor` again |
 | `mtix sync init`, or a `mtix sync harden --apply` that would restore or replace a TRUNCATE guard, fails with `the sync tables are in schema …, but the first schema on the search_path is …` (and `mtix sync doctor`'s `hub-triggers` says so) | The session's search_path puts another schema before the one holding the sync tables, so new objects would land away from them; nothing was changed. The usual cause is a schema named after the connecting role, which the default search_path (`"$user", public`) puts first | Set the search_path so the sync tables' schema comes first: `ALTER ROLE <owner> SET search_path = public` when the tables are in `public`, else `ALTER ROLE <owner> SET search_path = <schema>, public` (or `options=-c search_path=...` in the DSN); then run the command again. To keep a separate hub in the first schema instead (one hub per search_path), put that schema alone on the search_path (`ALTER ROLE <owner> SET search_path = <first schema>`). A `mtix sync harden --apply` that only changes privileges is not affected |
 | `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
@@ -2055,7 +2071,10 @@ Run this after every hub restore:
 ```bash
 # 1. Restore the hub from your backup into an empty database, then run
 #    mtix sync init as the table owner and check mtix sync doctor's
-#    hub-triggers check (see "Backup and restore" above).
+#    hub-triggers check (see "Backup and restore" above). Then grant each
+#    syncing role the least-privilege list again, EXECUTE on
+#    record_restore_collision included, and run mtix sync doctor with a
+#    syncing role's DSN.
 psql -f /path/to/hub-backup.sql      # PG* variables name the empty database, the owner role and the CA (PGSSLROOTCERT)
 mtix sync init
 mtix sync doctor
@@ -2082,15 +2101,24 @@ small-team workflow (`.mtix/docs/workflows/small-team.md`) and in
 
 A syncing role records restore collisions only through the hub function
 `record_restore_collision`, which runs as the table owner and records a
-collision only when the hub's own data shows one, so the role needs
-EXECUTE on that function and no INSERT on `sync_node_collisions`. When
-`mtix sync init` adds this function to an existing hub, the table owner
-then grants EXECUTE on it to each syncing role
+collision only when the hub's own data shows an earlier-epoch create
+holding the number, so the role needs EXECUTE on that function and no
+INSERT on `sync_node_collisions`. When `mtix sync init` adds this
+function to an existing hub, the table owner then grants EXECUTE on it to
+each syncing role
 (`GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;`) and
 revokes the privileges the list no longer names
 (`REVOKE INSERT ON sync_node_collisions FROM <role>;` and
 `REVOKE USAGE ON SEQUENCE sync_node_collisions_collision_id_seq FROM <role>;`).
-The doctor's `schema current` check names a role that cannot execute it.
+Upgrade every syncing client first, then run the REVOKE statements; if the
+REVOKE comes first, an older client's push that meets a restore collision
+fails until that client upgrades. The doctor's `schema current` check
+names a role that cannot execute the function, and a role that still
+holds INSERT on `sync_node_collisions` or USAGE on its sequence.
+
+A dump holds no privileges: after `mtix sync init`, grant each syncing role
+the least-privilege list again, EXECUTE on `record_restore_collision`
+included, then run `mtix sync doctor` with a syncing role's DSN.
 
 If `collisions list` is empty, you are done — the team's normal sync
 self-healed everything. If it shows a collision, each row surfaces both

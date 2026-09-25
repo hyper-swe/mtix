@@ -158,11 +158,11 @@ it: it is a deliberate, supervised action a client cannot manufacture.
 **Calibration:** under the trusted-team contract, a compromised client whose
 DSN names a syncing role with the least-privilege list (see the checklist
 below) **cannot trigger Option B during normal operation**: it cannot advance
-the epoch, set an event's epoch, or write a collision row. A DSN that names the
-table owner can change any hub table (see "What sync mode does NOT protect
-against"). With no restore there is no epoch advance, so the Option-B path is
-closed and every collision takes the ordinary auto-renumber path (a liveness
-event, no admin). The attack window
+the epoch, set an event's epoch, or write a collision row directly. A DSN
+that names the table owner can change any hub table (see "What sync mode
+does NOT protect against"). With no restore there is no epoch advance, so
+the Option-B path is closed and every collision takes the ordinary
+auto-renumber path (a liveness event, no admin). The attack window
 shrinks to the operator-supervised interval right after a restore. Within that
 window resolution stays human-gated: no auto-pick, the older-claim default is
 advisory only (audit F-5), and the loser renumbers via `Store.RenumberSubtree`
@@ -236,7 +236,7 @@ Before going live with sync mode, verify each of these:
   - SELECT on `node_renumber_remaps`, only for a role that runs `mtix sync migrate`;
   - INSERT on `node_renumber_remaps`, only for a role that runs `mtix sync migrate --yes`.
 
-  A syncing role set up with the least-privilege list holds no UPDATE on `sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs as the table owner. A syncing role records restore collisions only through the hub function `record_restore_collision`, which runs as the table owner and records a collision only when the hub's own data shows one, so the role needs EXECUTE on that function and no INSERT on `sync_node_collisions`. When `mtix sync init` adds this function to an existing hub, the table owner then grants EXECUTE on it to each syncing role (`GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;`) and revokes the privileges the list no longer names (`REVOKE INSERT ON sync_node_collisions FROM <role>;` and `REVOKE USAGE ON SEQUENCE sync_node_collisions_collision_id_seq FROM <role>;`). `mtix sync doctor`, run with a syncing role's DSN, reports in its `schema current` check a hub without the function and a role that cannot execute it, with the exact fix.
+  A syncing role set up with the least-privilege list holds no UPDATE on `sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs as the table owner. A syncing role records restore collisions only through the hub function `record_restore_collision`, which runs as the table owner and records a collision only when the hub's own data shows an earlier-epoch create holding the number, so the role needs EXECUTE on that function and no INSERT on `sync_node_collisions`. When `mtix sync init` adds this function to an existing hub, the table owner then grants EXECUTE on it to each syncing role (`GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;`) and revokes the privileges the list no longer names (`REVOKE INSERT ON sync_node_collisions FROM <role>;` and `REVOKE USAGE ON SEQUENCE sync_node_collisions_collision_id_seq FROM <role>;`). Upgrade every syncing client first, then run the REVOKE statements; if the REVOKE comes first, an older client's push that meets a restore collision fails until that client upgrades. `mtix sync doctor`, run with a syncing role's DSN, reports in its `schema current` check a hub without the function, a role that cannot execute it, and a role that still holds INSERT on `sync_node_collisions` or USAGE on its sequence, with the exact fix. A restored hub has no privileges from the dump: grant each syncing role the list again, EXECUTE included, then run `mtix sync doctor` with a syncing role's DSN.
 - [ ] `audit_log` and `sync_conflicts` triggers are in place (test: `UPDATE audit_log SET ...` raises exception).
 - [ ] Backup procedure for the hub is in place AND has been tested to restore (use `mtix sync backup --output FILE` for the mtix-owned tables). A role that runs `mtix sync backup` also needs SELECT on every sync table and on the sequences `audit_log_audit_id_seq`, `sync_conflicts_conflict_id_seq` and `sync_node_collisions_collision_id_seq`; otherwise run the backup as the table owner.
 - [ ] DR runbook tested: rebuild a CLI from a fresh `mtix sync clone` (DSN from `MTIX_SYNC_DSN` or `.mtix/secrets`).

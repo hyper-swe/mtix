@@ -54,8 +54,10 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
   Schema current         - sync_projects table exists with expected columns,
                            the hub has migration 017 (it stamps every
                            event's restore epoch and records restore
-                           collisions itself), and the connecting role
-                           can execute record_restore_collision
+                           collisions itself), the connecting role can
+                           execute record_restore_collision, and, unless it
+                           owns the sync tables, holds no INSERT on
+                           sync_node_collisions
   Queue draining         - no events older than 1h still in pending
   No orphan applied      - every applied_event has a matching node OR tombstone
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
@@ -72,11 +74,16 @@ Each hub check allows 30 s to connect, the same budget as mtix sync init,
 clone, push and pull, so a hub that is resuming from idle passes.
 
 Schema current fails when sync_projects is missing. A hub without
-migration 017 (its owner has not run mtix sync init since the upgrade),
-or a connecting role without EXECUTE on record_restore_collision, is a
-WARN by default and fails in strict mode; pushes keep working. The check
-names each gap and the fix the table owner runs: mtix sync init, or the
-GRANT EXECUTE statement it prints.
+migration 017 (its owner has not run mtix sync init since the upgrade) is
+a WARN by default and fails in strict mode; pushes keep working. A
+connecting role without EXECUTE on record_restore_collision is a WARN by
+default and fails in strict mode; a push that meets a restore collision
+fails until the table owner runs the printed GRANT. A connecting role
+other than the table owner that holds INSERT on sync_node_collisions or
+USAGE on sync_node_collisions_collision_id_seq, which the least-privilege
+list does not name, is a WARN by default and fails in strict mode; the
+table owner runs the printed REVOKE statements once every syncing client
+is upgraded. The check names each gap and the fix the table owner runs.
 
 Hub triggers names each missing function or trigger, each trigger that
 executes another function, and each trigger that is not enabled, with the

@@ -255,8 +255,9 @@ func (svc *NodeService) validateCreateRequest(req *CreateNodeRequest) error {
 }
 
 // buildNode constructs a model.Node from the CreateNodeRequest.
-// Generates the dot-notation ID via atomic sequence (FR-2.7),
-// computes content hash (FR-3.7), and sets defaults.
+// Generates the dot-notation ID via atomic sequence (FR-2.7), which skips a
+// number a node already holds (MTIX-95.38), computes content hash (FR-3.7),
+// and sets defaults.
 func (svc *NodeService) buildNode(
 	ctx context.Context, req *CreateNodeRequest, now time.Time,
 ) (*model.Node, error) {
@@ -285,6 +286,13 @@ func (svc *NodeService) buildNode(
 		seqKey = req.Project + ":"
 	}
 
+	// The number comes from the parent's counter. When the counter fell
+	// behind the nodes (an import that stopped before rebuilding it, a pull
+	// before MTIX-95.38, or any other cause) and reaches a taken number,
+	// NextSequence moves it past the highest number under the parent, once,
+	// in one atomic statement under the write lock, and returns that number:
+	// the create does not fail with "already exists", and the counter ends
+	// at the number the node takes, so no gap follows it (MTIX-95.38).
 	seq, err := svc.store.NextSequence(ctx, seqKey)
 	if err != nil {
 		return nil, fmt.Errorf("generate sequence: %w", err)

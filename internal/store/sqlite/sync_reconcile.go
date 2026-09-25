@@ -289,7 +289,7 @@ func executeImportAsTx(
 	if err := updateSentinelsAfterReconcile(ctx, tx, newRootPrefix); err != nil {
 		return count, err
 	}
-	return count, nil
+	return count, advanceImportedCounters(ctx, tx, parentID) // MTIX-95.38
 }
 
 // assignParentToFormerRoots sets parent_id = parentID for every
@@ -327,7 +327,7 @@ func executeRenameTx(
 	if err := updateSentinelsAfterReconcile(ctx, tx, newPrefix); err != nil {
 		return count, err
 	}
-	return count, nil
+	return count, advanceRenamedCounters(ctx, tx, newPrefix) // MTIX-95.38
 }
 
 // applyRenameLoop iterates the rename mapping in long-id-first order

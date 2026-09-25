@@ -403,3 +403,50 @@ func TestNextSequence_NonASCIIParentID_CountsByCharacters(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 22, got)
 }
+
+// TestNextSequence_SkipToLimit_HandsOutLimitThenFails: the skip may hand
+// out 2147483647 itself, the highest number mtix numbers tasks with, and
+// only the allocation after it fails with the limit error. With the
+// counter row present, AA-2147483645 and AA-2147483646 are taken and the
+// counter is at 2147483644; with the row deleted between the allocation
+// and the skip (a test trigger), AA-2147483646 is taken and the counter
+// is at 2147483645.
+func TestNextSequence_SkipToLimit_HandsOutLimitThenFails(t *testing.T) {
+	tests := []struct {
+		name      string
+		nodes     []seqEntry
+		counter   int
+		deleteRow bool
+	}{
+		{"counter row present", []seqEntry{{"AA-2147483645", 2147483645}, {"AA-2147483646", 2147483646}},
+			2147483644, false},
+		{"counter row deleted before the skip", []seqEntry{{"AA-2147483646", 2147483646}}, 2147483645, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			for _, n := range tt.nodes {
+				require.NoError(t, s.CreateNode(ctx, seqNode(n.id, n.seq)))
+			}
+			setCounterOf(t, s, "AA:", tt.counter)
+			if tt.deleteRow {
+				// The allocation increments the counter by one; the trigger
+				// then deletes the row, before the skip runs.
+				_, err := s.WriteDB().ExecContext(ctx, `CREATE TRIGGER test_counter_row_deleted
+					AFTER UPDATE OF value ON sequences WHEN NEW.value = OLD.value + 1
+					BEGIN DELETE FROM sequences WHERE key = NEW.key; END`)
+				require.NoError(t, err)
+			}
+
+			got, err := s.NextSequence(ctx, "AA:")
+
+			require.NoError(t, err)
+			require.Equal(t, 2147483647, got)
+			require.Equal(t, 2147483647, counterOf(t, s, "AA:"))
+			_, err = s.NextSequence(ctx, "AA:")
+			require.ErrorIs(t, err, model.ErrInvalidInput)
+			require.ErrorContains(t, err, "2147483647")
+		})
+	}
+}

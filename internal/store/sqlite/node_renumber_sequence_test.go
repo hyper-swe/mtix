@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -231,6 +232,54 @@ func TestRenumberSubtree_NonASCIIRootPrefix_CountsByCharacters(t *testing.T) {
 	require.NoError(t, s.RenumberSubtree(ctx, "\u00c9A-1", 5))
 
 	require.Equal(t, 12, counterOf(t, s, "\u00c9A:"))
+}
+
+// TestRenumberSubtree_NonASCIIParent_ChildRaiseCountsByCharacters: the
+// child raise finds the numbers after '<parent>.' by characters, as
+// SQLite's SUBSTR counts them. Under the parent AA-1\u00e9, holding .1, .2,
+// .4 and .21, renumbering the leaf .4 to 5 leaves AA:AA-1\u00e9 at 21. (A
+// renumber of a node with children under such a parent hits MTIX-107.66.)
+func TestRenumberSubtree_NonASCIIParent_ChildRaiseCountsByCharacters(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	parent := "AA-1\u00e9"
+	require.NoError(t, s.CreateNode(ctx, seqNode(parent, 1)))
+	for _, n := range []int{1, 2, 4, 21} {
+		require.NoError(t, s.CreateNode(ctx, seqNode(fmt.Sprintf("%s.%d", parent, n), n)))
+	}
+
+	require.NoError(t, s.RenumberSubtree(ctx, parent+".4", 5))
+
+	require.Equal(t, 21, counterOf(t, s, "AA:"+parent))
+}
+
+// TestRenumberSubtree_NextToLimitID_CounterAtLimit: an id numbered
+// 2147483647, the highest number mtix counts, still raises its counter: a
+// renumber of the root AA-1, or of the leaf AA-1.1, to 5 next to
+// AA-2147483647 or AA-1.2147483647 leaves the counter at 2147483647.
+func TestRenumberSubtree_NextToLimitID_CounterAtLimit(t *testing.T) {
+	tests := []struct {
+		name  string
+		nodes []seqEntry
+		id    string
+		key   string
+	}{
+		{"root", []seqEntry{{"AA-1", 1}, {"AA-2147483647", 2147483647}}, "AA-1", "AA:"},
+		{"child", []seqEntry{{"AA-1", 1}, {"AA-1.1", 1}, {"AA-1.2147483647", 2147483647}}, "AA-1.1", "AA:AA-1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			for _, n := range tt.nodes {
+				require.NoError(t, s.CreateNode(ctx, seqNode(n.id, n.seq)), n.id)
+			}
+
+			require.NoError(t, s.RenumberSubtree(ctx, tt.id, 5))
+
+			require.Equal(t, 2147483647, counterOf(t, s, tt.key))
+		})
+	}
 }
 
 // TestRenumberForHubRejection_MovedSubtree_NextChildContinues: the hub

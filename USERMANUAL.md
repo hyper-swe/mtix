@@ -1608,17 +1608,29 @@ pull's position either, so later changes keep arriving.
   Raise the bound, `mtix config set sync.max_lamport_jump <positive
   integer>`, only if you know the hub's clocks are legitimately that far
   ahead. Do not delete quarantine rows or edit the database by hand.
-  To rebuild the local store from the hub, run `mtix sync reconcile
-  --discard-local --yes` (without `--yes` it only shows what it drops; it
-  empties the quarantine with the rest of the local sync state), then
-  `mtix sync pull`, which quarantines again any event that still fails.
+- **Rebuilding from the hub deletes local work.** `mtix sync reconcile
+  --discard-local --yes` deletes your local tasks and unpushed changes,
+  and empties the quarantine with the rest of the local sync state. Its
+  dry run (without `--yes`) shows only the node count, not what would be
+  lost. Before `--yes`, run `mtix sync push`, check that `mtix sync
+  status` shows `pending` 0, and make sure a human has agreed. Then run
+  it, and `mtix sync pull`, which quarantines again any event that still
+  fails.
+- **A quarantined copy of your own event.** If the hub row of an event
+  you pushed was changed after the push, pull quarantines that copy and
+  it does not clear by itself, even after the hub row is repaired: every
+  retry checks the stored copy again. Recover in this order: whoever
+  runs the hub repairs the hub row first; run `mtix sync push` and check
+  that `pending` is 0; then, with a human's go-ahead, `mtix sync
+  reconcile --discard-local --yes` and `mtix sync pull`. Discarding
+  before the hub row is repaired drops your own true copy of the event,
+  which then comes back only as a quarantined hub event.
 - **Clone refuses such events.** `mtix sync clone` has no quarantine: it
   runs the same checks on every hub event before it writes anything, and
   refuses the whole clone, naming the event and the reason, when any
-  event fails. Use `mtix sync reconcile --discard-local --yes` and then
-  `mtix sync pull` instead (on a fresh store, `mtix sync pull` alone);
-  pull quarantines the event and applies the rest.
-  Because of the check, a clone reads the hub's event log twice.
+  event fails. On the fresh store, run `mtix sync pull` alone: it
+  quarantines the event and applies the rest. Because of the check, a
+  clone reads the hub's event log twice.
 
 ### Daemon mode (for durability)
 

@@ -64,8 +64,7 @@ func TestPreflightClone_EventPullWouldQuarantine_Refused(t *testing.T) {
 			require.ErrorContains(t, err, bad.EventID)
 			require.ErrorContains(t, err, tt.want)
 			require.ErrorContains(t, err, "nothing was written")
-			require.ErrorContains(t, err, "mtix sync reconcile --discard-local")
-			require.ErrorContains(t, err, "mtix sync pull")
+			require.ErrorContains(t, err, cloneRecoveryText)
 			require.Equal(t, []int64{0, 1, 2}, hub.pullCalls, "paged through the history, --batch-size at a time")
 		})
 	}

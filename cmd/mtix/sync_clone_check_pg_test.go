@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -17,6 +18,15 @@ import (
 
 // Real-Postgres tests of the clone's checks (MTIX-95.11 round 3). Gated on
 // MTIX_PG_TEST_DSN.
+
+// cloneRecoveryText is the recovery a clone refusal gives (MTIX-95.11.1
+// round 2): on a fresh store, pull alone; discard-local only on a store
+// that already holds sync state, after a push, a pending count of 0 and a
+// human's go-ahead, since it deletes local tasks and unpushed changes.
+const cloneRecoveryText = "Clone has no quarantine: on a fresh store, run 'mtix sync pull' instead, which " +
+	"quarantines the event and applies the rest. Only on a store that already holds sync state does " +
+	"'mtix sync reconcile --discard-local --yes' come first; it deletes local tasks and unpushed changes, so " +
+	"before it run 'mtix sync push', check that 'mtix sync status' shows pending 0, and get a human's go-ahead"
 
 // peerState is the local state a refused clone must leave unchanged.
 type peerState struct {
@@ -77,11 +87,11 @@ func TestRunSyncClone_ExtremeLamportHubRow_RefusedNothingWritten(t *testing.T) {
 	err := runSyncClone(ctx, &stdout, &stderr, []string{f.dsn}, transport.Options{InsecureTLS: true}, false, 1)
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "mtix sync clone check:")
-	require.Contains(t, err.Error(), "nothing was written")
-	require.Contains(t, err.Error(), extreme.EventID)
-	require.Contains(t, err.Error(), "sync.max_lamport_jump")
-	require.Contains(t, err.Error(), "mtix sync reconcile --discard-local")
+	require.Equal(t, fmt.Sprintf("mtix sync clone check: clone refused: hub event %s fails the checks sync pull runs "+
+		"(lamport_clock %d is %d above the local clock %d (sync.max_lamport_jump %d): lamport_clock jump beyond "+
+		"sync.max_lamport_jump); nothing was written. "+cloneRecoveryText,
+		extreme.EventID, extreme.LamportClock, extreme.LamportClock-ok.LamportClock, ok.LamportClock,
+		validator.DefaultMaxLamportJump), err.Error(), "the exact refusal, recovery included")
 	require.Equal(t, before, readPeerState(t, f),
 		"a refused clone writes nothing: clock, cursor, rows, the seeded quarantine row and the sweep time")
 	require.NotContains(t, stdout.String(), "clone complete")

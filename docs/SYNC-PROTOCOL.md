@@ -551,9 +551,17 @@ through the same checks and its own savepoint, including a row for this
 replica's own event that is only in `sync_events`: an event that applies is removed; one that fails again
 stays, with `attempts` and `last_attempt` updated. The retry uses the
 stored raw event and contacts no hub. `mtix sync reconcile
---discard-local` empties the quarantine with the rest of the local sync
-state; the next pull runs the checks again and quarantines again what
-still fails.
+--discard-local --yes` empties the quarantine with the rest of the local
+sync state, and deletes local tasks and unpushed changes (its dry run
+shows only the node count); the next pull runs the checks again and
+quarantines again what still fails. The agent guidance requires `mtix
+sync push`, a pending count of 0 and a human's go-ahead before it. A
+quarantined copy of this replica's own event (its hub row changed after
+the push) never clears by itself, because every retry re-checks the
+stored copy, even after the hub row is repaired; the documented order is:
+repair the hub row, push, then discard-local and pull. Discarding first
+would drop the replica's own true copy, which would then return only as
+a quarantined hub event.
 
 **Clone.** `mtix sync clone` has no quarantine and stays all or
 nothing, so it runs the same checks (`checkPulledEvent`: the clock, then
@@ -562,8 +570,11 @@ writes anything (`preflightClone`, `cmd/mtix/sync_clone_check.go`), with
 the running clock the clone would have (the local clock, then the
 highest clock checked so far). When any event fails, clone refuses the
 whole clone and writes nothing; the refusal names the event and the
-reason and points to `mtix sync reconcile --discard-local --yes` then
-`mtix sync pull`, which quarantines the event and applies the rest. The apply
+reason and gives the recovery (`cloneRecovery`): on the fresh store,
+`mtix sync pull`, which quarantines the event and applies the rest;
+`mtix sync reconcile --discard-local --yes` only on a store that already
+holds sync state, after a push, a pending count of 0 and a human's
+go-ahead, since it deletes local tasks and unpushed changes. The apply
 checks each event again, so an event pushed to the hub after the check
 stops the clone at that batch. A clone that completes resets the
 quarantine along with the late-event sweep state, since every hub event

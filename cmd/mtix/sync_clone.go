@@ -58,10 +58,13 @@ Before it writes anything, clone runs on every hub event the checks that
 'mtix sync pull' runs (the Lamport clock: below 2^53 and at most
 sync.max_lamport_jump above the local clock; the FR-18.7 envelope caps;
 a hub row that decodes), and refuses the whole clone when any event
-fails, naming the event and the reason. Clone has no quarantine: run
-'mtix sync reconcile --discard-local --yes', then 'mtix sync pull', which
-quarantines such an event and applies the rest. Clone therefore reads
-the hub's event log twice, once to check it and once to apply it.
+fails, naming the event and the reason. Clone has no quarantine: on the
+fresh store, run 'mtix sync pull' instead, which quarantines such an
+event and applies the rest. 'mtix sync reconcile --discard-local --yes'
+deletes local tasks and unpushed changes; use it only on a store that
+already holds sync state, after 'mtix sync push', a pending count of 0 in
+'mtix sync status' and a human's go-ahead. Clone reads the hub's event
+log twice, once to check it and once to apply it.
 
 Use --resume to pick up an interrupted clone from the last batch
 checkpoint (.mtix data sentinel meta.sync.clone.checkpoint).`,

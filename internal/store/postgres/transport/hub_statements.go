@@ -103,8 +103,10 @@ func newAction(name, query string, rank int, params ...string) *action {
 	return a
 }
 
-// guardMigrationAction restores missing TRUNCATE guards by running the
-// guard migration, which creates each guard only when it is absent.
+// guardMigrationAction restores TRUNCATE guards by running the guard
+// migration, which creates each guard that is absent and replaces one
+// whose trigger calls another function; a guard already in place is left
+// as it is (MTIX-95.1, MTIX-95.7).
 func guardMigrationAction() *action {
 	return &action{migration: migrations.TruncateGuardFile, rank: rankGuard}
 }
@@ -118,7 +120,7 @@ type queryRower interface {
 // A migration action renders as a description of the file it runs.
 func (a *action) render(ctx context.Context, q queryRower) (string, error) {
 	if a.migration != "" {
-		return "run migration " + a.migration + " (creates each missing guard)", nil
+		return "run migration " + a.migration + " (creates each missing guard and replaces one that executes another function)", nil
 	}
 	args, err := a.args()
 	if err != nil {

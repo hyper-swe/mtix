@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
@@ -29,18 +28,10 @@ const hubPrivilegesFix = "mtix sync harden"
 // stops. With sync.keep_roles set (strict mode) the same cases fail it. A
 // clean hub passes. The hub is contacted only here, while the doctor runs.
 func checkHubPrivileges(ctx context.Context, dsn string, hubReady bool, opts transport.Options) DoctorCheck {
-	configured := ""
-	if app.configSvc != nil {
-		v, err := app.configSvc.Get("sync.keep_roles")
-		if err != nil {
-			return DoctorCheck{Name: hubPrivilegesName, Detail: err.Error()}
-		}
-		configured = v
-	}
-	kept, err := model.ParseKeepRoles(configured)
+	kept, err := doctorKeptRoles()
 	if err != nil {
 		// A value is set, so strict mode was intended: fail.
-		return DoctorCheck{Name: hubPrivilegesName, Detail: "sync.keep_roles in .mtix/config.yaml: " + err.Error()}
+		return DoctorCheck{Name: hubPrivilegesName, Detail: err.Error()}
 	}
 	strict := len(kept) > 0
 	if !hubReady {
@@ -56,15 +47,41 @@ func checkHubPrivileges(ctx context.Context, dsn string, hubReady bool, opts tra
 	return hubPrivilegesResult(report, strict)
 }
 
+// doctorKeptRoles reads sync.keep_roles from the project config
+// (MTIX-95.1). A non-empty list turns on the doctor's strict mode for its
+// hub-privileges and hub-triggers checks (MTIX-95.7). An unreadable or
+// invalid value is an error that names the key.
+func doctorKeptRoles() ([]string, error) {
+	configured := ""
+	if app.configSvc != nil {
+		v, err := app.configSvc.Get("sync.keep_roles")
+		if err != nil {
+			return nil, fmt.Errorf("read sync.keep_roles: %w", err)
+		}
+		configured = v
+	}
+	kept, err := model.ParseKeepRoles(configured)
+	if err != nil {
+		return nil, fmt.Errorf("sync.keep_roles in .mtix/config.yaml: %w", err)
+	}
+	return kept, nil
+}
+
 // unverified reports a hub-privileges check that could not run: a WARN by
 // default, never red, and a failure in strict mode (MTIX-95.1).
 func unverified(strict bool, detail string) DoctorCheck {
-	return DoctorCheck{Name: hubPrivilegesName, Pass: !strict, Warn: !strict, Detail: detail}
+	return unverifiedCheck(hubPrivilegesName, strict, detail)
+}
+
+// unverifiedCheck reports the check name that could not run: a WARN by
+// default and a failure in strict mode (MTIX-95.1, MTIX-95.7).
+func unverifiedCheck(name string, strict bool, detail string) DoctorCheck {
+	return DoctorCheck{Name: name, Pass: !strict, Warn: !strict, Detail: detail}
 }
 
 // verifyHubPrivileges opens a pool and runs the verification.
 func verifyHubPrivileges(ctx context.Context, dsn string, opts transport.Options, kept []string) (*transport.PrivilegeReport, error) {
-	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	cctx, cancel := context.WithTimeout(ctx, syncConnectBudget)
 	defer cancel()
 	pool, err := transport.New(cctx, dsn, opts)
 	if err != nil {

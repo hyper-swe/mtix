@@ -130,7 +130,7 @@ func TestRunSyncBackup_RefusesEmptyOutput(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := runSyncBackup(context.Background(), &stdout, &stderr,
-		[]string{"postgres://u:p@h/d"}, "")
+		[]string{"postgres://u:p@h/d"}, "", transport.Options{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--output is required")
 }
@@ -142,20 +142,19 @@ func TestRunSyncBackup_RefusesOutsideMtixProject(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := runSyncBackup(context.Background(), &stdout, &stderr,
-		[]string{"postgres://u:p@h/d"}, "/tmp/backup.sql")
+		[]string{"postgres://u:p@h/d"}, "/tmp/backup.sql", transport.Options{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not in an mtix project")
 }
 
-func TestBackupTables_CanonicalSet(t *testing.T) {
-	want := map[string]bool{
-		"sync_events": true, "sync_conflicts": true, "sync_projects": true,
-		"applied_events": true, "audit_log": true,
-	}
-	require.Len(t, backupTables, len(want))
-	for _, tbl := range backupTables {
-		require.Truef(t, want[tbl], "unexpected table %s in backup set", tbl)
-	}
+// TestSyncBackupCmd_InsecureTLSFlag: backup takes --insecure-tls like the
+// other sync commands, since its connection follows the same TLS rules
+// (MTIX-95.7).
+func TestSyncBackupCmd_InsecureTLSFlag(t *testing.T) {
+	cmd := newSyncBackupCmd()
+	f := cmd.Flags().Lookup("insecure-tls")
+	require.NotNil(t, f)
+	require.Equal(t, "false", f.DefValue)
 }
 
 func TestPgDumpBin_Default(t *testing.T) {

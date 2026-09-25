@@ -1121,21 +1121,45 @@ After backfill: run 'mtix sync push' to ship events to the hub.
 
 Dump the mtix-owned hub tables to a portable SQL file (FR-18.21)
 
-Invoke pg_dump to write a portable SQL dump of the mtix-owned
-tables on the BYO Postgres hub: sync_events, sync_conflicts,
-sync_projects, applied_events, audit_log.
+Invoke pg_dump to write a portable SQL dump of every table the mtix hub
+migrations create, with its data; the report lists the tables. pg_dump's
+own messages are shown with the DSN's password removed.
 
-The output file is suitable for psql restore via:
-    psql "$DSN" < FILE
+The connection uses the TLS settings the sync commands use: sslmode is
+verify-full when the DSN names none, and a weaker sslmode needs
+--insecure-tls and is allowed only when every host is loopback or a local
+socket. pg_dump receives every host and port, the CA file (sslrootcert in
+the DSN, or MTIX_SYNC_SSLROOTCERT) and target_session_attrs through PG*
+environment variables; the DSN and its password are never on its command
+line. pg_dump does not receive the DSN's options, so it finds the tables
+through the role's default search_path: for a hub whose schema is named
+only in the DSN, first run ALTER ROLE <owner> SET search_path = <schema>,
+public. Client certificates (sslcert, sslkey) are not passed to pg_dump, so
+a hub that requires one cannot be backed up with this command yet.
 
-Requires pg_dump on PATH (override via MTIX_PG_DUMP env var). The
-DSN must point at the hub; rotation/retention of the backup file is
-the operator's responsibility.
+mtix creates the output file, readable and writable only by you (mode
+0600), before pg_dump writes to it. An existing file is never overwritten:
+choose a new path for each backup. A failed backup, or one interrupted
+with Ctrl-C or SIGTERM, leaves no file.
+
+The dump holds the tables and their data, not the mtix functions and
+triggers. To restore into an empty database:
+  1. psql -f FILE, connected as the role that will own the sync tables,
+     with PGSSLROOTCERT naming the hub's CA file (or system, with libpq 16
+     or later); psql reports errors for the triggers, whose functions do
+     not exist yet, and step 2 creates them
+  2. mtix sync init, with the DSN naming that role
+  3. mtix sync doctor: its hub-triggers check passes
+  4. mtix sync mark-restored
+
+Requires pg_dump on PATH (override via MTIX_PG_DUMP env var). Rotation
+and retention of the backup file are the operator's responsibility.
 
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--output` |  | Path to the output SQL file (required) |  |
 ---
 
@@ -1241,8 +1265,15 @@ List or resolve unresolved sync conflicts (FR-18.12)
 
 List unresolved sync conflicts
 
-List rows from the local sync_conflicts table. Default output is a
-human-readable table; --json for agent and CI consumption.
+List conflicts from the local sync_conflicts table. By default only the
+unresolved ones: lww conflicts with no later manual resolution for the
+same node and field ('mtix sync conflicts resolve' records one). A later
+lww conflict on the same node and field is unresolved again.
+
+--all lists every row, manual resolutions and tombstone rows included,
+each marked unresolved=true or unresolved=false. Default output is a
+human-readable table; --json for agent and CI consumption (each row
+carries "unresolved").
 
 When unresolved conflicts exceed 50, a banner is printed pointing
 at --batch <node_id> for batch resolution. --batch <node_id> filters
@@ -1252,6 +1283,7 @@ output to the named node.
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
+| `--all` |  | List every row, resolved conflicts and manual resolutions included | false |
 | `--batch` |  | Group conflicts by node (alias for --node) |  |
 | `--node` |  | Filter by node ID |  |
 ---
@@ -1266,11 +1298,19 @@ Record a manual resolution decision for the given conflict_id.
 --action must be one of: keep-local, keep-remote, both-renumbered,
 acknowledge.
 
-This command records the decision in sync_conflicts (a new row with
-resolution='manual' since the original row is append-only per
-FR-18.5). Actual state mutation (e.g. reverting a winner field) is
-DEFERRED to a future ticket; v1 records the decision so audit history
-is preserved and a follow-up tool can replay the choices.
+This command records the decision only: it appends a row with
+resolution='manual' to sync_conflicts (the original row is append-only
+per FR-18.5), and it changes no node. The output says so in text and
+--json ("decision recorded; node state not changed"). To apply the value
+you chose, edit the node with 'mtix update' and push.
+
+The decision resolves the conflict and every earlier conflict on the same
+node and field; a conflict recorded later on that node and field is
+unresolved again. Resolve the newest conflict of a node and field: a
+conflict_id that already has a later decision or a later conflict on its
+node and field is refused as invalid input, and the error names the
+newest conflict_id of that node and field. A conflict_id that is itself a
+manual resolution is refused as invalid input too.
 
 ### Flags
 
@@ -1323,9 +1363,25 @@ Run health checks against the local store and the BYO Postgres hub:
   Queue draining         - no events older than 1h still in pending
   No orphan applied      - every applied_event has a matching node OR tombstone
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
+  Hub triggers           - every function and trigger the hub migrations
+                           define exists, every trigger executes the
+                           function its migration binds, and every trigger
+                           is enabled (tgenabled 'O', or 'A' for one that
+                           fires always)
   Hub privileges         - which roles other than the table owner can use the
                            sync tables, and whether every TRUNCATE guard is in
                            place (the check mtix sync harden runs)
+
+Each hub check allows 30 s to connect, the same budget as mtix sync init,
+clone, push and pull, so a hub that is resuming from idle passes.
+
+Hub triggers names each missing function or trigger, each trigger that
+executes another function, and each trigger that is not enabled, with the
+fix and the table owner who runs it: mtix sync init for what is missing
+and for a trigger that executes another function (init replaces it in
+one transaction), and the ALTER TABLE ... ENABLE TRIGGER statement it
+prints for one that is not enabled. Like hub privileges, it is a WARN by
+default and fails in strict mode.
 
 Hub privileges is a WARN by default: roles other than the owner may use
 the sync tables, which can be fine when the database is reachable only
@@ -1371,9 +1427,13 @@ another role's grant. The owner's default privileges that would give
 those roles access to tables created later are revoked too. A membership
 in pg_read_all_data, pg_write_all_data or pg_maintain, even one with only
 ADMIN OPTION, is revoked when the owner may do so; it is cluster-wide. A
-missing TRUNCATE guard is restored, and a disabled one, or one that fires
-only in replication sessions, is enabled. A server WARNING fails the run
-and nothing changes. Access it cannot remove is reported with the
+missing TRUNCATE guard is restored, one whose trigger executes another
+function (compared by OID) is replaced, and a disabled one, or one that
+fires only in replication sessions, is enabled. A server WARNING fails the run
+and nothing changes. An --apply that would restore or replace a guard
+refuses, changing nothing, when the first schema on the search_path is not
+the schema of the sync tables; privilege changes and the dry run are not
+affected. Access it cannot remove is reported with the
 statement an administrator runs, and after --apply every finding that
 remains is listed. EXECUTE on the mtix trigger functions and other roles'
 default privileges are information and never fail verification.
@@ -1565,8 +1625,12 @@ Show the local sync queue counts plus meta sentinels. Pure local
 read — does not touch the hub. Use 'mtix sync doctor' to verify hub
 reachability and schema currency.
 
-When unresolved conflicts exceed 50, surfaces the FR-18.12 banner
-pointing at 'mtix sync conflicts list --batch'.
+A conflict is unresolved until mtix sync conflicts resolve records a
+decision for its node and field; a later conflict on the same node and
+field is unresolved again. When unresolved conflicts exceed 50, surfaces
+the FR-18.12 banner pointing at 'mtix sync conflicts list --batch'.
+
+There is no 'conflicted' count: no sync path marks an event conflicted.
 ---
 
 ## tree

@@ -243,15 +243,15 @@ func TestWrapSyncErr_KnownDSN_ScrubbedEvenWhenUnparseable(t *testing.T) {
 	}
 }
 
-// TestPgDumpConnParams_MalformedDSN_FixedMessage: mtix sync backup's own
-// DSN parse reports one fixed message and no part of the DSN (FR-18.17,
-// MTIX-95.15).
+// TestPgDumpConnParams_MalformedDSN_FixedMessage: mtix sync backup reports
+// a DSN that does not parse with the transport's fixed message, which
+// names no part of the DSN (FR-18.17, MTIX-95.15, MTIX-95.7).
 func TestPgDumpConnParams_MalformedDSN_FixedMessage(t *testing.T) {
 	for _, d := range malformedDSNs() {
 		t.Run(d.name, func(t *testing.T) {
-			_, err := pgDumpConnParams(d.dsn)
-			require.Error(t, err)
-			require.Equal(t, "parse backup dsn: DSN could not be parsed", err.Error())
+			_, err := pgDumpConnParams(d.dsn, transport.Options{})
+			require.ErrorIs(t, err, transport.ErrDSNMalformed)
+			require.True(t, strings.HasPrefix(err.Error(), "backup connection: "), err.Error())
 			requireNoDSNPart(t, "backup parse error", err.Error(), d)
 		})
 	}

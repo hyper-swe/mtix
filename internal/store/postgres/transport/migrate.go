@@ -69,6 +69,12 @@ func (p *Pool) Migrate(ctx context.Context) error {
 		return fmt.Errorf("migrate: acquire advisory lock: %w", err)
 	}
 
+	// Refuse before creating anything when the search_path would put new
+	// objects away from existing sync tables (MTIX-95.7).
+	if err := checkSchemaFirst(ctx, tx); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+
 	// Apply all migration files in a SINGLE round-trip. Every file is
 	// idempotent (IF NOT EXISTS), so re-running the whole set is always correct
 	// — even after an out-of-band schema change, where a version table would

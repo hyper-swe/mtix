@@ -142,12 +142,13 @@ resolves it via Last-Write-Wins (deterministic by lamport →
 wall_clock_ts → author_machine_hash).
 
 ```bash
-# Inspect the contested entries
+# Inspect the contested entries (unresolved only; --all lists every row)
 mtix sync conflicts list
 
-# Resolve a specific conflict (per-conflict, surgical)
-mtix sync conflicts resolve <id> --keep-local
-mtix sync conflicts resolve <id> --keep-remote
+# Record a decision for a specific conflict (per-conflict, surgical).
+# It changes no node: apply the chosen value with mtix update, then push.
+mtix sync conflicts resolve <id> --action keep-local
+mtix sync conflicts resolve <id> --action keep-remote
 
 # Whole-project escape hatch (only if many conflicts at once)
 mtix sync reconcile --dry-run

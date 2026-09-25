@@ -1,6 +1,6 @@
 ---
 name: admin
-description: Administrative operations for mtix projects. Backup, export, import, verification, statistics, and sync hub privileges.
+description: Administrative operations for mtix projects. Backup, export, import, verification, statistics, sync hub privileges, sync hub backup and restore, and sync conflicts.
 ---
 
 # mtix Administration
@@ -71,6 +71,59 @@ owned by another role, and memberships that reach every table included).
 
 Never pass `--apply` without a human approving the dry run's role list. Never
 run `mtix sync harden` from a hook, a push or the daemon.
+
+## Sync Hub Backup, Restore and Conflicts
+
+Only for projects that sync through a Postgres hub; run these only when a
+human asks. Never put the DSN or a password on a command line.
+
+```bash
+mtix sync backup --output hub-<date>.sql  # pg_dump of every hub table; creates the file 0600, never overwrites
+mtix sync doctor --json                   # hub-triggers: every mtix function and trigger present, bound to its function, enabled (O or A)
+mtix sync conflicts list [--all]          # unresolved conflicts (every row, marked, with --all)
+mtix sync conflicts resolve <id> --action keep-local|keep-remote|both-renumbered|acknowledge
+```
+
+The backup uses the TLS settings sync uses (`sslmode` `verify-full` when
+the DSN names none; a weaker one needs `--insecure-tls`, loopback or a
+local socket only; the CA from `sslrootcert` or `MTIX_SYNC_SSLROOTCERT`).
+`pg_dump` does not receive the DSN's `options`: for a hub whose schema is
+named only there, first `ALTER ROLE <owner> SET search_path = <schema>,
+public`.
+Client certificates (`sslcert`, `sslkey`) are not passed to `pg_dump`, so a
+hub that requires one cannot be backed up with this command yet. A failed
+or interrupted (Ctrl-C, SIGTERM) backup leaves no file; an existing path is
+refused.
+
+Restore into an empty database (if the tables were in a schema other than
+`public`, create that schema first and put it first on the search_path for
+psql and for mtix; `mtix sync init`, and a `mtix sync harden --apply` that
+would restore or replace a guard, refuse, changing nothing, when another
+schema comes first, usually a schema named after the role under the default
+`"$user", public`): `psql -f <file>` as
+the role that will own the sync tables, with `PGSSLMODE=verify-full` and `PGSSLROOTCERT=<ca.pem>`
+(or `system` with libpq 16 or later) and the password in `~/.pgpass` (psql
+reports errors for the triggers; their functions do not exist yet), then,
+after checking as that role that `SHOW search_path;` puts the tables'
+schema first (not a schema named after the role), `mtix sync init` with
+the DSN naming that role, then `mtix sync doctor`
+(and `SELECT count(*) FROM sync_events;` through the DSN's role and
+search_path must match the dump's `COPY <n>`) until `hub-triggers` passes (its `fix` names the table owner who runs it
+and, in order, `mtix sync init` for a missing trigger or one bound to
+another function, and the `ALTER TABLE ... ENABLE TRIGGER` statement for
+one not enabled, printed on a `fix:` line without `--json`; functions are
+compared by OID; tgenabled `O` and `A` both count as enabled; a gap is a
+WARN by default, a FAIL in strict mode), then
+`mtix sync mark-restored` once and `mtix sync collisions list`.
+
+`mtix sync status` counts unresolved conflicts only (`open_conflicts`); it
+has no `conflicted` count. `resolve` records the decision only and says
+`decision recorded; node state not changed`: apply the chosen value with
+`mtix update` and push. A conflict recorded later on the same node and
+field is unresolved again. Resolve the newest conflict of a node and field:
+one with a later decision or a later conflict on its node and field is
+refused as invalid input, and the error names the newest conflict id.
+Resolving a `manual` row is refused as invalid input too.
 
 ## Documentation
 

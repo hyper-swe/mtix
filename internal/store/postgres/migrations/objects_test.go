@@ -42,18 +42,19 @@ func TestFunctions_EmbeddedMigrations_ReturnsEveryFunction(t *testing.T) {
 
 // TestTriggers_EmbeddedMigrations_IncludesTruncateGuards pins every trigger
 // the migrations create, including the TRUNCATE guards that migration 016
-// creates inside a DO block (MTIX-95.1).
+// creates inside a DO block (MTIX-95.1), and the function each executes
+// (MTIX-95.7).
 func TestTriggers_EmbeddedMigrations_IncludesTruncateGuards(t *testing.T) {
 	got, err := migrations.Triggers()
 	require.NoError(t, err)
 	require.Equal(t, []migrations.Trigger{
-		{Name: "audit_log_no_delete", Table: "audit_log", Event: "DELETE"},
-		{Name: "audit_log_no_truncate", Table: "audit_log", Event: "TRUNCATE"},
-		{Name: "audit_log_no_update", Table: "audit_log", Event: "UPDATE"},
-		{Name: "sync_conflicts_no_delete", Table: "sync_conflicts", Event: "DELETE"},
-		{Name: "sync_conflicts_no_truncate", Table: "sync_conflicts", Event: "TRUNCATE"},
-		{Name: "sync_conflicts_no_update", Table: "sync_conflicts", Event: "UPDATE"},
-		{Name: "sync_events_no_truncate", Table: "sync_events", Event: "TRUNCATE"},
+		{Name: "audit_log_no_delete", Table: "audit_log", Event: "DELETE", Function: "audit_log_immutable"},
+		{Name: "audit_log_no_truncate", Table: "audit_log", Event: "TRUNCATE", Function: "append_only_no_truncate"},
+		{Name: "audit_log_no_update", Table: "audit_log", Event: "UPDATE", Function: "audit_log_immutable"},
+		{Name: "sync_conflicts_no_delete", Table: "sync_conflicts", Event: "DELETE", Function: "audit_log_immutable"},
+		{Name: "sync_conflicts_no_truncate", Table: "sync_conflicts", Event: "TRUNCATE", Function: "append_only_no_truncate"},
+		{Name: "sync_conflicts_no_update", Table: "sync_conflicts", Event: "UPDATE", Function: "audit_log_immutable"},
+		{Name: "sync_events_no_truncate", Table: "sync_events", Event: "TRUNCATE", Function: "append_only_no_truncate"},
 	}, got)
 }
 
@@ -72,8 +73,13 @@ func TestTruncateGuards_EmbeddedMigrations_CoverAppendOnlyTables(t *testing.T) {
 }
 
 // TestTruncateGuardMigration_CreatesOnlyWhenAbsent pins the shape of 016:
-// the guards are created only when pg_trigger lacks them, never dropped and
-// re-created, so a re-run takes no table lock for them (MTIX-95.1).
+// a guard is created only when pg_trigger lacks a trigger of its name that
+// executes this migration's append_only_no_truncate, compared by OID, so a
+// re-run on a hub whose guards are in place takes no table lock for them
+// (MTIX-95.1). In that same branch a trigger of the guard's name bound to
+// another function, one of the same name in another schema included, is
+// dropped first, so mtix sync init replaces it inside its one transaction
+// (MTIX-95.7).
 func TestTruncateGuardMigration_CreatesOnlyWhenAbsent(t *testing.T) {
 	body, err := migrations.Read(migrations.TruncateGuardFile)
 	require.NoError(t, err)
@@ -81,7 +87,37 @@ func TestTruncateGuardMigration_CreatesOnlyWhenAbsent(t *testing.T) {
 	require.Contains(t, body, "FOR EACH STATEMENT")
 	require.Equal(t, 3, strings.Count(body, "IF NOT EXISTS (SELECT 1 FROM pg_trigger"),
 		"each guard is created only when absent")
-	require.NotContains(t, body, "DROP TRIGGER", "a guard is never dropped and re-created")
+	require.Contains(t, body, "guard_fn oid := pg_catalog.to_regprocedure(\n"+
+		"        pg_catalog.quote_ident(pg_catalog.current_schema()) || '.append_only_no_truncate()');",
+		"the guard function is resolved once, schema-qualified, to its OID")
+	require.Equal(t, 3, strings.Count(body, "AND t.tgfoid = guard_fn"),
+		"a guard counts as present only when it executes that function, by OID")
+	require.NotContains(t, body, "proname", "no guard is matched by function name")
+	guards, err := migrations.TruncateGuards()
+	require.NoError(t, err)
+	for _, g := range guards {
+		ifAt := strings.Index(body, "t.tgname = '"+g.Name+"'")
+		dropAt := strings.Index(body, "DROP TRIGGER IF EXISTS "+g.Name+" ON "+g.Table+";")
+		createAt := strings.Index(body, "CREATE TRIGGER "+g.Name)
+		require.Truef(t, ifAt >= 0 && ifAt < dropAt && dropAt < createAt,
+			"%s: the drop sits inside the guard's IF block, before its CREATE", g.Name)
+	}
+	require.Equal(t, 3, strings.Count(body, "DROP TRIGGER"), "nothing else is dropped")
+}
+
+// TestTruncateGuardMigration_RefusesWhenTheTablesAreInAnotherSchema pins
+// that 016 first checks that the schema of every guarded table is
+// current_schema(), where it creates the guard function, and raises
+// otherwise, before it creates or changes anything (MTIX-95.7).
+func TestTruncateGuardMigration_RefusesWhenTheTablesAreInAnotherSchema(t *testing.T) {
+	body, err := migrations.Read(migrations.TruncateGuardFile)
+	require.NoError(t, err)
+	check := strings.Index(body, "RAISE EXCEPTION 'the sync tables are in schema %, but the first schema on the search_path is %")
+	create := strings.Index(body, "CREATE OR REPLACE FUNCTION append_only_no_truncate()")
+	require.True(t, check >= 0 && check < create, "the schema check comes before anything is created")
+	for _, tbl := range []string{"audit_log", "sync_conflicts", "sync_events"} {
+		require.Contains(t, body[:create], "'"+tbl+"'", "the check covers %s", tbl)
+	}
 }
 
 // TestMigrations_NoRowLevelSecurity keeps row-level security out of the

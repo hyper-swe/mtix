@@ -32,7 +32,7 @@ func sampleReport() *transport.PrivilegeReport {
 				Via: transport.FindingViaMembership, Scope: transport.ScopeClusterWide,
 				Manual: "REVOKE pg_read_all_data FROM reader"},
 			{Object: "audit_log_no_truncate on public.audit_log", Kind: transport.FindingKindTrigger,
-				Via: transport.FindingViaMissing, Fix: "run migration 016_append_only_truncate_guard.sql (creates each missing guard)"},
+				Via: transport.FindingViaMissing, Fix: "run migration 016_append_only_truncate_guard.sql (creates each missing guard and replaces one that executes another function)"},
 			{Role: "anon", Object: "default privileges of owner in schema public on tables",
 				Kind: transport.FindingKindDefaultACL, Privileges: []string{"SELECT"},
 				Via: transport.FindingViaDefaultACL,

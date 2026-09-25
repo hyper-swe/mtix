@@ -253,6 +253,15 @@ func (p *Pool) applyHardening(ctx context.Context, kept []string, warnings *Warn
 	if err != nil {
 		return nil, err
 	}
+	// The guard migration creates objects in the search_path's first
+	// schema: when it would run, refuse unless that is the sync tables'
+	// schema. Privilege fixes create nothing and always proceed
+	// (MTIX-95.7).
+	if runsGuardMigration(actions) {
+		if err := checkSchemaFirst(ctx, tx); err != nil {
+			return nil, err
+		}
+	}
 	if w := warnings.Take(); len(w) > 0 {
 		return nil, fmt.Errorf("reading the hub raised a server WARNING: %s: %w", strings.Join(w, "; "), ErrHubWarning)
 	}
@@ -271,6 +280,17 @@ func (p *Pool) applyHardening(ctx context.Context, kept []string, warnings *Warn
 		return nil, fmt.Errorf("commit: %w", err)
 	}
 	return executed, nil
+}
+
+// runsGuardMigration reports whether actions include the guard migration
+// (MTIX-95.7).
+func runsGuardMigration(actions []*action) bool {
+	for _, a := range actions {
+		if a.migration != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // execAction runs one fix: its format()-built statement, or the embedded

@@ -76,7 +76,7 @@ func baseCatalog() *hubCatalog {
 		canSet: map[[2]uint32]bool{},
 		admin:  map[[2]uint32]bool{},
 		guards: []guardState{
-			{table: "audit_log", trigger: "audit_log_no_truncate", enabled: "O", function: guardFunction},
+			{table: "audit_log", trigger: "audit_log_no_truncate", enabled: "O", bound: true},
 		},
 	}
 }
@@ -376,22 +376,24 @@ func TestComputeFindings_EffectivePrivileges(t *testing.T) {
 
 // TestComputeFindings_Guards covers the TRUNCATE guards: a missing guard is
 // restored by the guard migration, a disabled one is enabled, and one that
-// calls another function is reported.
+// executes another function, whatever its name, is replaced by the guard
+// migration (MTIX-95.1, MTIX-95.7).
 func TestComputeFindings_Guards(t *testing.T) {
 	tests := []struct {
 		name  string
 		guard guardState
 		want  []string
 	}{
-		{"enabled always", guardState{table: "audit_log", trigger: "audit_log_no_truncate", enabled: "A", function: guardFunction}, nil},
+		{"enabled always", guardState{table: "audit_log", trigger: "audit_log_no_truncate", enabled: "A", bound: true}, nil},
 		{"missing", guardState{table: "audit_log", trigger: "audit_log_no_truncate"},
 			[]string{"|trigger|audit_log_no_truncate on public.audit_log|missing||migration 016_append_only_truncate_guard.sql"}},
-		{"disabled", guardState{table: "audit_log", trigger: "audit_log_no_truncate", enabled: "D", function: guardFunction},
+		{"disabled", guardState{table: "audit_log", trigger: "audit_log_no_truncate", enabled: "D", bound: true},
 			[]string{"|trigger|audit_log_no_truncate on public.audit_log|disabled||enable public audit_log audit_log_no_truncate"}},
-		{"replica only", guardState{table: "audit_log", trigger: "audit_log_no_truncate", enabled: "R", function: guardFunction},
+		{"replica only", guardState{table: "audit_log", trigger: "audit_log_no_truncate", enabled: "R", bound: true},
 			[]string{"|trigger|audit_log_no_truncate on public.audit_log|disabled||enable public audit_log audit_log_no_truncate"}},
-		{"another function", guardState{table: "audit_log", trigger: "audit_log_no_truncate", enabled: "O", function: "other_fn"},
-			[]string{"|trigger|audit_log_no_truncate on public.audit_log|missing||-"}},
+		{"another function", guardState{table: "audit_log", trigger: "audit_log_no_truncate", enabled: "O",
+			function: "other.append_only_no_truncate"},
+			[]string{"|trigger|audit_log_no_truncate on public.audit_log|missing||migration 016_append_only_truncate_guard.sql"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

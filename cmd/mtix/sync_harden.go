@@ -64,9 +64,13 @@ another role's grant. The owner's default privileges that would give
 those roles access to tables created later are revoked too. A membership
 in pg_read_all_data, pg_write_all_data or pg_maintain, even one with only
 ADMIN OPTION, is revoked when the owner may do so; it is cluster-wide. A
-missing TRUNCATE guard is restored, and a disabled one, or one that fires
-only in replication sessions, is enabled. A server WARNING fails the run
-and nothing changes. Access it cannot remove is reported with the
+missing TRUNCATE guard is restored, one whose trigger executes another
+function (compared by OID) is replaced, and a disabled one, or one that
+fires only in replication sessions, is enabled. A server WARNING fails the run
+and nothing changes. An --apply that would restore or replace a guard
+refuses, changing nothing, when the first schema on the search_path is not
+the schema of the sync tables; privilege changes and the dry run are not
+affected. Access it cannot remove is reported with the
 statement an administrator runs, and after --apply every finding that
 remains is listed. EXECUTE on the mtix trigger functions and other roles'
 default privileges are information and never fail verification.
@@ -149,7 +153,7 @@ func runSyncHarden(ctx context.Context, stdout, _ io.Writer,
 // carries a DSN.
 var hardenSentinels = []error{
 	transport.ErrHardenNotOwner, transport.ErrHubWarning,
-	transport.ErrSyncSchemaIncomplete, model.ErrInvalidInput,
+	transport.ErrSyncSchemaIncomplete, transport.ErrSearchPathSchema, model.ErrInvalidInput,
 }
 
 // hardenError is a scrubbed harden failure that still unwraps to the

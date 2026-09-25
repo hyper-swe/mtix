@@ -79,10 +79,11 @@ func TestDoctorHubTriggers_MissingOrDisabled_NamesEachAndTheExactFix(t *testing.
 }
 
 // TestDoctorHubTriggers_TriggerBoundToAnotherFunction_ReportedWithFix: a
-// trigger with the expected name that calls a function other than the one
-// its migration binds is reported, with the fix that recreates it: drop
-// the trigger, then mtix sync init. Once the fix is run, the check passes
-// (MTIX-95.7).
+// trigger with the expected name that executes another function than its
+// migration binds, a row trigger or a TRUNCATE guard, is reported, and the
+// fix is mtix sync init alone, run as the table owner: init replaces both
+// inside its one transaction. Afterwards each executes its own function,
+// and a guard that was already in place is left as it was (MTIX-95.7).
 func TestDoctorHubTriggers_TriggerBoundToAnotherFunction_ReportedWithFix(t *testing.T) {
 	dsn := requireCmdPG(t)
 	_ = openCmdHub(t)
@@ -93,6 +94,14 @@ func TestDoctorHubTriggers_TriggerBoundToAnotherFunction_ReportedWithFix(t *test
 		_, err := pool.Exec(context.Background(), `DROP FUNCTION IF EXISTS mtix_test_noop_trigger() CASCADE`)
 		require.NoError(t, err)
 	})
+	guardOID := func(table, name string) (oid uint32, function string) {
+		require.NoError(t, pool.QueryRow(ctx, `
+			SELECT t.oid, p.proname::text FROM pg_catalog.pg_trigger t
+			JOIN pg_catalog.pg_proc p ON p.oid = t.tgfoid
+			WHERE t.tgrelid = pg_catalog.to_regclass($1) AND t.tgname = $2`, table, name).Scan(&oid, &function))
+		return oid, function
+	}
+	untouched, _ := guardOID("sync_conflicts", "sync_conflicts_no_truncate")
 	for _, stmt := range []string{
 		`CREATE OR REPLACE FUNCTION mtix_test_noop_trigger() RETURNS trigger AS $$ BEGIN RETURN NULL; END $$ LANGUAGE plpgsql`,
 		`DROP TRIGGER audit_log_no_update ON audit_log`,
@@ -111,22 +120,21 @@ func TestDoctorHubTriggers_TriggerBoundToAnotherFunction_ReportedWithFix(t *test
 	require.True(t, warn)
 	require.Contains(t, detail, "audit_log_no_update on public.audit_log calls mtix_test_noop_trigger, not audit_log_immutable")
 	require.Contains(t, detail, "sync_events_no_truncate on public.sync_events calls mtix_test_noop_trigger, not append_only_no_truncate")
-	require.Contains(t, fix, "DROP TRIGGER audit_log_no_update ON public.audit_log;")
-	require.Contains(t, fix, "DROP TRIGGER sync_events_no_truncate ON public.sync_events;")
-	require.Contains(t, fix, "mtix sync init")
+	require.Equal(t, "as the table owner (postgres): mtix sync init", fix,
+		"init alone replaces both triggers; no separate DROP step")
 
-	for _, stmt := range []string{
-		`DROP TRIGGER audit_log_no_update ON public.audit_log;`,
-		`DROP TRIGGER sync_events_no_truncate ON public.sync_events;`,
-	} {
-		_, err := pool.Exec(ctx, stmt)
-		require.NoError(t, err, stmt)
-	}
 	var stdout, stderr bytes.Buffer
 	require.NoError(t, runSyncInit(ctx, &stdout, &stderr, nil, cloudOpts), stderr.String())
 	report, err = runDoctorReport(t)
 	require.NoError(t, err)
 	pass, warn, detail, _ = doctorCheckNamed(t, report, "hub-triggers")
 	require.True(t, pass, detail)
-	require.False(t, warn, "drop, then mtix sync init, restores the triggers: %s", detail)
+	require.False(t, warn, "mtix sync init alone restores the triggers: %s", detail)
+	_, fn := guardOID("audit_log", "audit_log_no_update")
+	require.Equal(t, "audit_log_immutable", fn)
+	_, fn = guardOID("sync_events", "sync_events_no_truncate")
+	require.Equal(t, "append_only_no_truncate", fn)
+	again, fn := guardOID("sync_conflicts", "sync_conflicts_no_truncate")
+	require.Equal(t, "append_only_no_truncate", fn)
+	require.Equal(t, untouched, again, "a guard already in place is not dropped and re-created")
 }

@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -181,9 +182,9 @@ func runSyncConflictsList(ctx context.Context, stdout, stderr io.Writer, nodeFil
 // runSyncConflictsResolve records a manual decision for the conflict
 // conflictIDArg as a new 'manual' row and reports, in text and --json,
 // that no node state changed (FR-18.12, MTIX-95.7, Commandment 11). A
-// conflict_id that is itself a manual row, or that already has a later
-// decision or a later conflict on its node and field, is invalid input
-// (checkResolveTarget).
+// conflict_id that is itself a manual row is invalid input, and so is one
+// that already has a later decision or a later conflict on its node and
+// field (resolveConflictRow).
 func runSyncConflictsResolve(ctx context.Context, stdout, stderr io.Writer,
 	conflictIDArg, action string,
 ) error {
@@ -214,35 +215,54 @@ func runSyncConflictsResolve(ctx context.Context, stdout, stderr io.Writer,
 	if original.ConflictID == 0 {
 		return fmt.Errorf("mtix sync conflicts resolve: conflict_id %d not found", conflictID)
 	}
-	if err := checkResolveTarget(ctx, app.store, original); err != nil {
-		return err
+	if original.Resolution == "manual" {
+		return fmt.Errorf("mtix sync conflicts resolve: conflict_id %d is a manual resolution, not a conflict; "+
+			"resolve the conflict it answers (see mtix sync conflicts list --all): %w",
+			conflictID, model.ErrInvalidInput)
 	}
 
-	if err := recordManualResolution(ctx, app.store, original, action); err != nil {
+	if err := resolveConflictRow(ctx, app.store, original, action, nil); err != nil {
+		if errors.Is(err, model.ErrInvalidInput) {
+			return err
+		}
 		return wrapSyncErr(stderr, "record resolution", err)
 	}
 	return printResolveResult(stdout, original, action)
 }
 
-// checkResolveTarget refuses, as invalid input, a resolve that would not
-// decide the conflict the operator reviewed: a manual row, which records a
-// decision rather than a conflict, and a conflict with a later manual or
-// lww row for its node and field, whose decision would also close every
-// conflict recorded after it. The error names the newest conflict of the
-// node and field: the one to resolve, or, when it is resolved too, the
-// one whose decision already stands (MTIX-95.7).
-func checkResolveTarget(ctx context.Context, store *sqlite.Store, target ConflictRow) error {
-	if target.Resolution == "manual" {
-		return fmt.Errorf("mtix sync conflicts resolve: conflict_id %d is a manual resolution, not a conflict; "+
-			"resolve the conflict it answers (see mtix sync conflicts list --all): %w",
-			target.ConflictID, model.ErrInvalidInput)
-	}
+// resolveConflictRow records the decision action for target in one write
+// transaction: it checks for a later row on target's node and field
+// (checkResolveTarget), then inserts the manual row (MTIX-95.7). The
+// writer begins IMMEDIATE, so no other writer, a pull recording a new
+// conflict included, commits between the check and the insert: a later
+// conflict waits and lands after the decision, unresolved. afterCheck,
+// when set, runs between the two; it is the seam the tests use to write
+// from another connection there.
+func resolveConflictRow(ctx context.Context, store *sqlite.Store, target ConflictRow, action string, afterCheck func()) error {
+	return store.WithTx(ctx, func(tx *sql.Tx) error {
+		if err := checkResolveTarget(ctx, tx, target); err != nil {
+			return err
+		}
+		if afterCheck != nil {
+			afterCheck()
+		}
+		return insertManualResolution(ctx, tx, target, action)
+	})
+}
+
+// checkResolveTarget refuses, as invalid input, a resolve of a conflict
+// with a later manual or lww row for its node and field: its decision
+// would also close every conflict recorded after it, unreviewed. The error
+// names the newest conflict of the node and field: the one to resolve,
+// or, when it is resolved too, the one whose decision already stands. It
+// runs on the resolve's own transaction (MTIX-95.7).
+func checkResolveTarget(ctx context.Context, tx *sql.Tx, target ConflictRow) error {
 	var later, newestResolved bool
 	var newest int64
 	// For the target's node and field (NULL fields pair with each other):
 	// whether a manual or lww row follows the target, the newest lww
 	// conflict, and whether a manual row follows that newest conflict.
-	err := store.QueryRow(ctx, `
+	err := tx.QueryRowContext(ctx, `
 		SELECT later, newest,
 		       EXISTS (SELECT 1 FROM sync_conflicts
 		               WHERE node_id = ?1 AND field_name IS ?2 AND resolution = 'manual'
@@ -367,22 +387,22 @@ func lookupConflict(ctx context.Context, store *sqlite.Store, id int64) (Conflic
 	return r, err
 }
 
-// recordManualResolution appends a manual-resolution row to
-// sync_conflicts. The original 'lww' row remains; the new row marks
-// the user's choice. A future ticket can replay these choices to
-// reconstruct the resolution timeline.
-func recordManualResolution(ctx context.Context, store *sqlite.Store, original ConflictRow, action string) error {
-	return store.WithTx(ctx, func(tx *sql.Tx) error {
-		now := nowISO()
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO sync_conflicts
-			  (event_id_winner, event_id_loser, node_id, field_name, resolution, resolved_at, resolved_by)
-			VALUES (?, ?, ?, ?, 'manual', ?, ?)`,
-			original.EventIDWinner, original.EventIDLoser, original.NodeID,
-			nullIfEmpty(original.FieldName), now, action,
-		)
-		return err
-	})
+// insertManualResolution appends a manual-resolution row to
+// sync_conflicts on tx. The original 'lww' row remains; the new row marks
+// the user's choice.
+func insertManualResolution(ctx context.Context, tx *sql.Tx, original ConflictRow, action string) error {
+	// Append the decision as a new row: sync_conflicts is append-only.
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO sync_conflicts
+		  (event_id_winner, event_id_loser, node_id, field_name, resolution, resolved_at, resolved_by)
+		VALUES (?, ?, ?, ?, 'manual', ?, ?)`,
+		original.EventIDWinner, original.EventIDLoser, original.NodeID,
+		nullIfEmpty(original.FieldName), nowISO(), action,
+	)
+	if err != nil {
+		return fmt.Errorf("insert manual resolution: %w", err)
+	}
+	return nil
 }
 
 // nowISO returns the current time in RFC3339Nano. Wall-clock; tests

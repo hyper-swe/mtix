@@ -41,19 +41,23 @@ func doctorCheckNamed(t *testing.T, report doctorJSON, name string) (pass, warn 
 // TestGradeHubObjects_StateAndMode_ReportsEachGapWithItsFix grades the
 // hub-triggers check from what the hub holds: PASS when every function
 // and trigger is present and enabled; otherwise a WARN by default and a
-// FAIL in strict mode, naming each gap and the exact fix (MTIX-95.7).
+// FAIL in strict mode, naming each gap and the exact fix, which names the
+// table owner who runs it. mtix sync init repairs a missing trigger and a
+// trigger bound to another function alike, with no separate step
+// (MTIX-95.7).
 func TestGradeHubObjects_StateAndMode_ReportsEachGapWithItsFix(t *testing.T) {
 	const enable = "ALTER TABLE public.audit_log ENABLE TRIGGER audit_log_no_update;"
+	const owner = "as the table owner (mtix_owner): "
 	missingFn := hubObjectState{functions: 2, triggers: 7, missingFunctions: []string{"audit_log_immutable"},
 		missingTriggers: []string{"audit_log_no_update on public.audit_log"}}
-	disabled := hubObjectState{functions: 2, triggers: 7,
+	disabled := hubObjectState{functions: 2, triggers: 7, owners: []string{"mtix_owner"},
 		disabledTriggers: []string{"audit_log_no_update on public.audit_log (tgenabled D)"}, enableStatements: []string{enable}}
 	both := missingFn
 	both.disabledTriggers, both.enableStatements = disabled.disabledTriggers, disabled.enableStatements
-	const drop = "DROP TRIGGER audit_log_no_update ON public.audit_log;"
-	wrongFn := hubObjectState{functions: 2, triggers: 7,
-		wrongFunction:  []string{"audit_log_no_update on public.audit_log calls noop, not audit_log_immutable"},
-		dropStatements: []string{drop}}
+	wrongFn := hubObjectState{functions: 2, triggers: 7, owners: []string{"mtix_owner"},
+		wrongFunction: []string{"audit_log_no_update on public.audit_log calls noop, not audit_log_immutable"}}
+	twoOwners := wrongFn
+	twoOwners.owners = []string{"mtix_a", "mtix_b"}
 	wrongAndDisabled := wrongFn
 	wrongAndDisabled.disabledTriggers, wrongAndDisabled.enableStatements = disabled.disabledTriggers, disabled.enableStatements
 
@@ -70,18 +74,21 @@ func TestGradeHubObjects_StateAndMode_ReportsEachGapWithItsFix(t *testing.T) {
 			[]string{"every mtix function (2) and trigger (7) is present and enabled"}},
 		{"every object present and enabled, strict mode", hubObjectState{functions: 2, triggers: 7}, true, true, false, "",
 			[]string{"present and enabled"}},
-		{"missing objects warn by default", missingFn, false, true, true, "mtix sync init",
+		{"missing objects warn by default", missingFn, false, true, true, "as the table owner: mtix sync init",
 			[]string{"missing functions: audit_log_immutable", "missing triggers: audit_log_no_update on public.audit_log",
 				"as the table owner"}},
-		{"missing objects fail in strict mode", missingFn, true, false, false, "mtix sync init",
+		{"missing objects fail in strict mode", missingFn, true, false, false, "as the table owner: mtix sync init",
 			[]string{"strict mode", "missing functions: audit_log_immutable"}},
-		{"a disabled trigger names its ALTER statement", disabled, false, true, true, enable,
+		{"a disabled trigger names its ALTER statement", disabled, false, true, true, owner + enable,
 			[]string{"triggers not enabled: audit_log_no_update on public.audit_log (tgenabled D)"}},
-		{"missing and disabled: init, then the statement", both, false, true, true, "mtix sync init, then " + enable,
+		{"missing and disabled: init, then the statement", both, false, true, true,
+			"as the table owner: mtix sync init, then " + enable,
 			[]string{"missing functions", "triggers not enabled"}},
-		{"another function: drop, then init", wrongFn, false, true, true, drop + ", then mtix sync init",
+		{"another function: init alone", wrongFn, false, true, true, owner + "mtix sync init",
 			[]string{"triggers calling another function: audit_log_no_update on public.audit_log calls noop, not audit_log_immutable"}},
-		{"another function and disabled", wrongAndDisabled, true, false, false, drop + ", then mtix sync init, then " + enable,
+		{"tables with two owners name both", twoOwners, false, true, true, "as the table owner (mtix_a, mtix_b): mtix sync init",
+			[]string{"triggers calling another function"}},
+		{"another function and disabled", wrongAndDisabled, true, false, false, owner + "mtix sync init, then " + enable,
 			[]string{"strict mode", "triggers calling another function", "triggers not enabled"}},
 	}
 	for _, tt := range tests {
@@ -124,12 +131,14 @@ func TestCheckHubObjects_HubNotReady_WarnsOrFailsStrict(t *testing.T) {
 // enabled, as for mtix sync harden (MTIX-95.7).
 func TestHubObjectState_Record_ClassifiesEachTrigger(t *testing.T) {
 	const enable = "ALTER TABLE public.audit_log ENABLE TRIGGER t;"
-	const drop = "DROP TRIGGER t ON public.audit_log;"
 	row := func(schema, enabled, function string) triggerRow {
 		r := triggerRow{table: "audit_log", name: "t", schema: schema, enabled: enabled,
 			function: function, wantFunction: "audit_log_immutable"}
+		if schema != "" {
+			r.owner = "mtix_owner"
+		}
 		if enabled != "" {
-			r.enable, r.drop = enable, drop
+			r.enable = enable
 		}
 		return r
 	}
@@ -163,10 +172,10 @@ func TestHubObjectState_Record_ClassifiesEachTrigger(t *testing.T) {
 			} else {
 				require.Empty(t, s.enableStatements)
 			}
-			if tt.wantWrongFn != nil {
-				require.Equal(t, []string{drop}, s.dropStatements)
+			if tt.row.schema != "" {
+				require.Equal(t, []string{"mtix_owner"}, s.owners, "the table's owner is recorded")
 			} else {
-				require.Empty(t, s.dropStatements)
+				require.Empty(t, s.owners)
 			}
 		})
 	}

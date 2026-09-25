@@ -1656,12 +1656,14 @@ both count, as for `mtix sync harden`). Without them the append-only
 tables (`audit_log`, `sync_conflicts`, `sync_events`) accept changes they
 should refuse. The detail names each missing function, each missing
 trigger, each trigger that executes another function and each trigger
-that is not enabled, and `fix` holds what to run as the table owner, in
-order: the `DROP TRIGGER <name> ON <schema>.<table>;` statement for a
-trigger that executes another function; `mtix sync init` for anything
-missing or dropped (it recreates every function and trigger, each bound
-to its function); and for a trigger that is not enabled the exact
-`ALTER TABLE <schema>.<table> ENABLE TRIGGER <name>;` statement. Like `hub-privileges`, a gap is a **WARN** by default (exit 0)
+that is not enabled, and `fix` holds what to run and names the table
+owner who runs it (`as the table owner (<role>): ...`), in order:
+`mtix sync init` for anything missing and for a trigger that executes
+another function (in one transaction it recreates every missing function
+and trigger and replaces a trigger bound to another function, so the
+table is never left unguarded), and for a trigger that is not enabled
+the exact `ALTER TABLE <schema>.<table> ENABLE TRIGGER <name>;`
+statement. Like `hub-privileges`, a gap is a **WARN** by default (exit 0)
 and a **FAIL** (exit 2) in strict mode (`sync.keep_roles` set); so is a
 check that cannot run. After a restore from backup this check is how you
 confirm the runbook finished (see "Backup and restore").
@@ -1746,6 +1748,8 @@ With `--apply`, in one transaction, harden:
   has. The change is cluster-wide, so the dry run marks it;
 - restores a missing TRUNCATE guard, and enables a disabled one or one
   set to fire only in replication sessions, so every guard ends enabled.
+  (`mtix sync init` also restores a missing guard, and replaces one that
+  executes another function.)
 
 Harden takes the hub's migration lock and waits at most 5 seconds for any
 lock, so it fails fast rather than hold up pushes and pulls. A statement
@@ -1892,7 +1896,7 @@ operator does.
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
 | `mtix sync doctor` shows `[WARN] hub-privileges` | Roles other than the table owner can use the sync tables, or a TRUNCATE guard is missing or disabled. Nothing is blocked, and this may be fine on a private network | To restrict access, the table owner runs `mtix sync harden` (a dry run), then, after reviewing its role list, `mtix sync harden --apply --keep-role <role>`; see "Hub privileges" |
 | `mtix sync doctor` shows `[FAIL] hub-privileges` | Strict mode (`sync.keep_roles` set): a role not in it can use the sync tables, or a guard is missing or disabled | Add the role to `sync.keep_roles` if it should keep access, or run `mtix sync harden` and then `--apply` as the table owner |
-| `mtix sync doctor` shows `[WARN] hub-triggers` (`[FAIL]` in strict mode) | An mtix function or trigger is missing, as after a restore from backup, or a trigger is not enabled | As the table owner, run the check's `fix`: `mtix sync init` for what is missing, the printed `ALTER TABLE ... ENABLE TRIGGER` statement for what is not enabled; then run `mtix sync doctor` again |
+| `mtix sync doctor` shows `[WARN] hub-triggers` (`[FAIL]` in strict mode) | An mtix function or trigger is missing, as after a restore from backup; a trigger executes another function than its migration binds; or a trigger is not enabled | As the table owner the `fix` names, run it: `mtix sync init` for what is missing and for a trigger bound to another function (init replaces it), the printed `ALTER TABLE ... ENABLE TRIGGER` statement for what is not enabled; then run `mtix sync doctor` again |
 | `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
 | `mtix sync conflicts resolve` fails with `is a manual resolution` | The id is a recorded decision, not a conflict | Run `mtix sync conflicts list --all` and resolve the conflict it answers |
 | `mtix sync conflicts resolve` fails with `has a later conflict` or `is already resolved` | A later conflict or a later decision exists for the same node and field | Resolve the newest conflict the error names; if it says that one is resolved too, the decision already stands |

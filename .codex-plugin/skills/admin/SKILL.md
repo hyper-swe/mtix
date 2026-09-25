@@ -97,11 +97,11 @@ the sync tables, with `PGSSLMODE=verify-full` and `PGSSLROOTCERT=<ca.pem>`
 (or `system` with libpq 16 or later) and the password in `~/.pgpass` (psql
 reports errors for the triggers; their functions do not exist yet), then
 `mtix sync init` with the DSN naming that role, then `mtix sync doctor`
-until `hub-triggers` passes (its `fix` names, in order, the `DROP TRIGGER`
-statement for a trigger bound to another function, `mtix sync init`, and
-the `ALTER TABLE ... ENABLE TRIGGER` statement for one not enabled, all
-run as the table owner; tgenabled `O` and `A` both count as enabled; a
-gap is a WARN by default, a FAIL in strict mode), then
+until `hub-triggers` passes (its `fix` names the table owner who runs it
+and, in order, `mtix sync init` for a missing trigger or one bound to
+another function, and the `ALTER TABLE ... ENABLE TRIGGER` statement for
+one not enabled; tgenabled `O` and `A` both count as enabled; a gap is a
+WARN by default, a FAIL in strict mode), then
 `mtix sync mark-restored` once and `mtix sync collisions list`.
 
 `mtix sync status` counts unresolved conflicts only (`open_conflicts`); it

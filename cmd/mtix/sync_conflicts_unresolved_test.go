@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -482,4 +483,48 @@ func TestConflictsResolve_TargetWithLaterRow_ReturnsInvalidInputNamingNewest(t *
 			require.Equal(t, wantOpen, got)
 		})
 	}
+}
+
+// TestResolveConflictRow_ConcurrentLaterConflict_CannotCommitBetweenCheckAndInsert:
+// resolve checks for a later conflict and inserts its manual row in one
+// write transaction. A later lww conflict that another connection (a pull,
+// for example) tries to commit between the check and the insert cannot
+// land there: the resolve holds the write lock, so that write waits and
+// commits after the manual row, and the later conflict stays unresolved
+// (MTIX-95.7).
+func TestResolveConflictRow_ConcurrentLaterConflict_CannotCommitBetweenCheckAndInsert(t *testing.T) {
+	initTestApp(t)
+	ctx := context.Background()
+	id := seedConflictRow(t, conflictSeed{"TEST-1", "title", "lww"})
+	target, err := lookupConflict(ctx, app.store, id)
+	require.NoError(t, err)
+
+	dbPath := filepath.Join(app.mtixDir, "data", "mtix.db")
+	require.FileExists(t, dbPath)
+	other, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(200)&_txlock=immediate")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, other.Close()) })
+	insertLater := func() error {
+		_, err := other.ExecContext(ctx, `
+			INSERT INTO sync_conflicts
+			  (event_id_winner, event_id_loser, node_id, field_name, resolution, resolved_at, resolved_by)
+			VALUES ('evt-winner-later', 'evt-loser-later', 'TEST-1', 'title', 'lww', '2026-09-25T00:00:01Z', NULL)`)
+		return err
+	}
+
+	var windowErr error
+	ran := false
+	err = resolveConflictRow(ctx, app.store, target, "acknowledge", func() {
+		ran = true
+		windowErr = insertLater()
+	})
+	require.True(t, ran, "the hook runs between the check and the insert")
+	require.NoError(t, err)
+	require.Error(t, windowErr, "no other writer commits between the check and the insert")
+	require.Regexp(t, `(?i)busy|locked`, windowErr.Error(), "the other writer waits for the resolve's write lock")
+
+	require.NoError(t, insertLater(), "the later conflict commits once the resolve has")
+	open, _ := listConflicts(t, false)
+	require.Len(t, open, 1, "the later conflict is unresolved: the decision did not close it")
+	require.NotEqual(t, id, open[0])
 }

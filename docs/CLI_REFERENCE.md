@@ -1374,11 +1374,11 @@ clone, push and pull, so a hub that is resuming from idle passes.
 
 Hub triggers names each missing function or trigger, each trigger that
 executes another function, and each trigger that is not enabled, with the
-fix, run as the table owner: mtix sync init for what is missing; the DROP
-TRIGGER statement it prints, then mtix sync init, for a trigger that
-executes another function; and the ALTER TABLE ... ENABLE TRIGGER
-statement it prints for one that is not enabled. Like hub privileges, it
-is a WARN by default and fails in strict mode.
+fix and the table owner who runs it: mtix sync init for what is missing
+and for a trigger that executes another function (init replaces it in
+one transaction), and the ALTER TABLE ... ENABLE TRIGGER statement it
+prints for one that is not enabled. Like hub privileges, it is a WARN by
+default and fails in strict mode.
 
 Hub privileges is a WARN by default: roles other than the owner may use
 the sync tables, which can be fine when the database is reachable only

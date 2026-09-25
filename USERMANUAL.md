@@ -1849,9 +1849,13 @@ hub's server. It contacts the hub only while it runs.
   default search_path of the role the DSN names, which may not be the
   table owner: for a hub whose schema is named only in the DSN
   (`options=-c search_path=<schema>`), first run
-  `ALTER ROLE <the DSN's role> SET search_path = <schema>, public` so the
-  backup dumps that hub. A backup that cannot find a hub table prints
-  this step with the DSN's role filled in. Client certificates
+  `ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`
+  so the backup dumps that hub. It applies in that database only and
+  takes precedence over a role-wide
+  `ALTER ROLE <the DSN's role> SET search_path = <schema>, public`, which
+  a setting for that role in that database overrides. A backup that
+  cannot find a hub table prints both statements with the DSN's role and
+  database filled in. Client certificates
   (`sslcert`, `sslkey`) are not passed to `pg_dump`: a hub that requires
   a client certificate cannot be backed up with `mtix sync backup` yet.
   With no CA file
@@ -1894,18 +1898,19 @@ search_path=<schema>` in the DSN, or `ALTER ROLE <owner> SET search_path
 3. Run `mtix sync doctor`. Its `hub-triggers` check must pass: every mtix
    function and trigger present and enabled. If it names a gap, run its
    `fix` as the table owner and run the doctor again. Then confirm that
-   the DSN reaches the restored data, not a new, empty hub, against a
-   reference count of the hub's events. Take the reference from the
-   source hub just before the backup (`SELECT count(*) FROM
-   <schema>.sync_events;` on the hub being backed up, noted with the
-   backup file; the hub only gains events, so the dump may hold more,
-   never fewer), or from the restored database: the same count with the
-   schema named (`public` unless the hub used another), run as the
-   table owner. Do not use the `COPY <n>` lines `psql` prints during the
-   restore: they do not name their table. Then `SELECT count(*) FROM
-   sync_events;`, run by the DSN's role with the DSN's search_path, must
-   equal the restored database's count, or be at least the source hub's,
-   and for a hub that has events it must not be zero.
+   the DSN reaches the restored database, not a new, empty hub. As the
+   table owner, in the restored database, count the events with the
+   schema named: `SELECT count(*) FROM <schema>.sync_events;` (`public`
+   unless the hub used another). `SELECT count(*) FROM sync_events;`, run
+   by the DSN's role with the DSN's search_path, must equal that count:
+   only this equality shows that the DSN reaches the restored database.
+   For a hub that has events, the count must not be zero. A count of
+   `sync_events` taken on the source hub just before the backup is a
+   weaker reference: the hub only gains events, so the DSN's count must
+   be at least that number, which rules out only a new or emptier hub (a
+   DSN that still reaches the source hub passes it too). Do not use the
+   `COPY <n>` lines `psql` prints during the restore: they do not name
+   their table.
 4. Continue with the "Restore-from-backup runbook" below: `mtix sync
    mark-restored`, then `mtix sync collisions list`.
 
@@ -1944,7 +1949,7 @@ operator does.
 | `mtix sync doctor` shows `[WARN] hub-triggers` (`[FAIL]` in strict mode) | An mtix function or trigger is missing, as after a restore from backup; a trigger executes another function than its migration binds; or a trigger is not enabled | As the table owner the `fix` names, run it: `mtix sync init` for what is missing and for a trigger bound to another function (init replaces it), the printed `ALTER TABLE ... ENABLE TRIGGER` statement for what is not enabled; then run `mtix sync doctor` again |
 | `mtix sync init`, or a `mtix sync harden --apply` that would restore or replace a TRUNCATE guard, fails with `the sync tables are in schema …, but the first schema on the search_path is …` (and `mtix sync doctor`'s `hub-triggers` says so) | The session's search_path puts another schema before the one holding the sync tables, so new objects would land away from them; nothing was changed. The usual cause is a schema named after the connecting role, which the default search_path (`"$user", public`) puts first | Set the search_path so the sync tables' schema comes first: `ALTER ROLE <owner> SET search_path = public` when the tables are in `public`, else `ALTER ROLE <owner> SET search_path = <schema>, public` (or `options=-c search_path=...` in the DSN); then run the command again. To keep a separate hub in the first schema instead (one hub per search_path), put that schema alone on the search_path (`ALTER ROLE <owner> SET search_path = <first schema>`). A `mtix sync harden --apply` that only changes privileges is not affected |
 | `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
-| `mtix sync backup` fails with `a hub table was not found` (`pg_dump` names the table above it) | `pg_dump` found no table of that name through the search_path of the role the DSN names; no file was left. Either the hub has not been initialized since an upgrade added the table, or the hub's schema is named only in the DSN, which `pg_dump` does not receive | Run `mtix sync init` with the DSN naming the table owner, then back up again; for a hub whose schema only the DSN names, first run the printed `ALTER ROLE <the DSN's role> SET search_path = <schema>, public` |
+| `mtix sync backup` fails with `a hub table was not found` (`pg_dump` names the table above it) | `pg_dump` found no table of that name through the search_path of the role the DSN names; no file was left. Either the hub has not been initialized since an upgrade added the table, or the hub's schema is named only in the DSN, which `pg_dump` does not receive | Run `mtix sync init` with the DSN naming the table owner, then back up again; for a hub whose schema only the DSN names, first run the printed `ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`, which takes precedence over a role-wide `ALTER ROLE <the DSN's role> SET search_path = <schema>, public` |
 | `mtix sync conflicts resolve` fails with `is a manual resolution` | The id is a recorded decision, not a conflict | Run `mtix sync conflicts list --all` and resolve the conflict it answers |
 | `mtix sync conflicts resolve` fails with `has a later conflict` or `is already resolved` | A later conflict or a later decision exists for the same node and field | Resolve the newest conflict the error names; if it says that one is resolved too, the decision already stands |
 

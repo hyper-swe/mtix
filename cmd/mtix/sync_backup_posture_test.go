@@ -27,7 +27,7 @@ import (
 // its arguments and the PG* environment it received, then writes a small
 // dump. No hub is contacted (MTIX-95.7).
 
-// fakePgDumpScript records argv and the PG* environment under
+// fakePgDumpScript records argv and the PG*, LC_* and LANG* environment under
 // $MTIX_TEST_PGDUMP_REC, writes the dump to -f's path when given and to
 // stdout otherwise, then waits $MTIX_TEST_PGDUMP_SLEEP seconds when set,
 // writes $MTIX_TEST_PGDUMP_STDERR as a line on stderr when set, and exits
@@ -37,7 +37,7 @@ rec="$MTIX_TEST_PGDUMP_REC"
 : > "$rec/ran"
 : > "$rec/argv"
 for a in "$@"; do printf '%s\n' "$a" >> "$rec/argv"; done
-env | grep '^PG' > "$rec/env"
+env | grep -E '^(PG|LC_|LANG)' > "$rec/env"
 out=""
 while [ $# -gt 0 ]; do
   if [ "$1" = "-f" ]; then out="$2"; shift; fi
@@ -99,7 +99,8 @@ func (f fakePgDump) argv(t *testing.T) []string {
 	return readLines(t, filepath.Join(f.rec, "argv"))
 }
 
-// env returns the non-empty PG* variables the stand-in received.
+// env returns the non-empty PG*, LC_* and LANG* variables the stand-in
+// received.
 func (f fakePgDump) env(t *testing.T) map[string]string {
 	t.Helper()
 	out := map[string]string{}

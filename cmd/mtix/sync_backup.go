@@ -58,8 +58,8 @@ const syncBackupLong = `Invoke pg_dump to write a portable SQL dump of every tab
 migrations create, with its data; the report lists the tables. Every one
 of them must exist: a hub that lacks one, such as a hub not initialized
 since an upgrade added a table, fails the backup with a hint to run mtix
-sync init. pg_dump's own messages are shown with the DSN's password
-removed.
+sync init. pg_dump's own messages are shown untranslated (it runs with
+LC_MESSAGES=C), with the DSN's password removed.
 
 The connection uses the TLS settings the sync commands use: sslmode is
 verify-full when the DSN names none, and a weaker sslmode needs
@@ -70,9 +70,12 @@ environment variables; the DSN and its password are never on its command
 line. pg_dump does not receive the DSN's options, so it finds the tables
 through the default search_path of the role the DSN names, which may not
 be the table owner: for a hub whose schema is named only in the DSN, first
-run ALTER ROLE <the DSN's role> SET search_path = <schema>, public. Client
-certificates (sslcert, sslkey) are not passed to pg_dump, so a hub that
-requires one cannot be backed up with this command yet.
+run ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET
+search_path = <schema>, public. It applies in that database only and
+takes precedence over a role-wide ALTER ROLE <the DSN's role> SET
+search_path = <schema>, public. Client certificates (sslcert, sslkey) are
+not passed to pg_dump, so a hub that requires one cannot be backed up with
+this command yet.
 
 mtix creates the output file, readable and writable only by you (mode
 0600), before pg_dump writes to it. An existing file is never overwritten:
@@ -125,7 +128,8 @@ func newSyncBackupCmd() *cobra.Command {
 // file is created 0600 and exclusive before pg_dump writes to it. A failed
 // backup, one interrupted by SIGINT or SIGTERM included, removes the file
 // it created. A backup that failed because a hub table was not found also
-// gives the search_path step for the DSN's role (withSearchPathAdvice),
+// gives the search_path step for the DSN's role in the DSN's database
+// (withSearchPathAdvice),
 // and the success message lists the tables, every one of which pg_dump
 // found (MTIX-95.7.4).
 func runSyncBackup(ctx context.Context, stdout, stderr io.Writer,
@@ -169,8 +173,9 @@ func runSyncBackup(ctx context.Context, stdout, stderr io.Writer,
 			err = fmt.Errorf("mtix sync backup: interrupted, so the partial dump is removed: %w", ctx.Err())
 		}
 		// pg_dump connects as the DSN's role, with that role's default
-		// search_path: the step for a hub whose schema only the DSN names.
-		return discardBackup(out, output, withSearchPathAdvice(err, conn.user))
+		// search_path in the DSN's database: the step for a hub whose
+		// schema only the DSN names.
+		return discardBackup(out, output, withSearchPathAdvice(err, conn.user, conn.database))
 	}
 	if err := closeBackupFile(out); err != nil {
 		return discardBackup(nil, output, err)
@@ -272,21 +277,29 @@ func (w *lineWatch) Write(p []byte) (int, error) {
 // withSearchPathAdvice returns err with the search_path step added when it
 // wraps errHubTableNotFound, and err unchanged otherwise. pg_dump receives
 // no DSN options, so it resolves the tables through the default
-// search_path of role, the role the DSN names: a hub whose schema is named
-// only in the DSN is not visible to it until that role's search_path names
-// the schema. role is quoted as an identifier, so the statement runs as
-// printed; a DSN that names no role gets a placeholder (MTIX-95.7.4).
-func withSearchPathAdvice(err error, role string) error {
+// search_path of role in database: a hub whose schema is named only in
+// the DSN is not visible to it until that search_path names the schema.
+// role is the role pg_dump connects as: the DSN's user, or the OS user the
+// driver uses when the DSN names none; database is the DSN's database. The
+// step sets the search_path for role in database only, which takes
+// precedence over the role-wide setting it also names. Both names are
+// quoted as identifiers, so the statements run as printed; a placeholder
+// stands for a name only when it is not known (MTIX-95.7.4).
+func withSearchPathAdvice(err error, role, database string) error {
 	if !errors.Is(err, errHubTableNotFound) {
 		return err
 	}
-	name := "<the DSN's role>"
+	roleName, dbName := "<the DSN's role>", "<the DSN's database>"
 	if role != "" {
-		name = pgx.Identifier{role}.Sanitize()
+		roleName = pgx.Identifier{role}.Sanitize()
+	}
+	if database != "" {
+		dbName = pgx.Identifier{database}.Sanitize()
 	}
 	return fmt.Errorf("%w; if the hub's schema is named only in the DSN, pg_dump, which connects as the DSN's role "+
-		"without the DSN's options, does not see it: run ALTER ROLE %s SET search_path = <schema>, public, "+
-		"then back up again", err, name)
+		"without the DSN's options, does not see it: run ALTER ROLE %s IN DATABASE %s SET search_path = <schema>, public "+
+		"(this database only; it takes precedence over a role-wide ALTER ROLE %s SET search_path = <schema>, public), "+
+		"then back up again", err, roleName, dbName, roleName)
 }
 
 // discardBackup closes f (when still open) and removes path, the output
@@ -372,16 +385,19 @@ func libpqHostList(cfg *pgconn.Config) (hosts, ports string) {
 // are the only connection settings pg_dump applies: base keeps no
 // connection service (PGSERVICE, PGSERVICEFILE), whose settings libpq
 // applies over the environment, and no PGHOSTADDR, which the sync
-// transport does not read (MTIX-95.7).
+// transport does not read (MTIX-95.7). pg_dump's messages are the
+// untranslated ones, which dumpInto reads: LC_MESSAGES is C, and base's
+// LC_ALL and LANGUAGE, which would override it, are dropped (MTIX-95.7.4).
 func (c pgDumpConn) pgEnv(base []string) []string {
-	env := make([]string, 0, len(base)+8)
+	env := make([]string, 0, len(base)+9)
 	for _, kv := range base {
 		switch name, _, _ := strings.Cut(kv, "="); name {
-		case "PGSERVICE", "PGSERVICEFILE", "PGHOSTADDR":
+		case "PGSERVICE", "PGSERVICEFILE", "PGHOSTADDR", "LC_ALL", "LANGUAGE", "LC_MESSAGES":
 			continue
 		}
 		env = append(env, kv)
 	}
+	env = append(env, "LC_MESSAGES=C")
 	add := func(k, v string) {
 		if v != "" {
 			env = append(env, k+"="+v)

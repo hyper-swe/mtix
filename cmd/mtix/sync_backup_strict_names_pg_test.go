@@ -93,11 +93,13 @@ func TestBackup_HubLacksATable_FailsWithInitHintAndNoFile(t *testing.T) {
 // are in schema hub_data, owned by another role, and only the DSN's
 // options put hub_data on the search_path. pg_dump, which receives no
 // options, does not see them: the backup fails with the search_path step
-// for the role the DSN names, quoted, and leaves no file. Setting the
-// owner's search_path changes nothing; setting the DSN role's makes the
-// backup dump every hub table in hub_data. The settings are made per
-// database (ALTER ROLE ... IN DATABASE), the same role default pg_dump
-// reads at login, so the server's other databases are not affected
+// for the role the DSN names in the DSN's database, both quoted, and
+// leaves no file. Setting the owner's search_path changes nothing. The DSN
+// role already has a setting for this database, which a role-wide
+// setting would not override; the printed IN DATABASE statement, run as
+// printed with the schema filled in, replaces it, and the backup then
+// dumps every hub table in hub_data. Every setting here is for this
+// database only, so the server's other databases are not affected
 // (MTIX-95.7.4).
 func TestBackup_HubSchemaOnlyInDSN_AdviceNamesTheDSNRole(t *testing.T) {
 	initTestApp(t)
@@ -127,17 +129,21 @@ func TestBackup_HubSchemaOnlyInDSN_AdviceNamesTheDSNRole(t *testing.T) {
 		}
 		return out, errText, err
 	}
+	f.ddl(`ALTER ROLE %I IN DATABASE %I SET search_path = "$user", public`, f.superuser, f.dbName)
 	_, _, err = backup()
 	require.Error(t, err, "pg_dump does not see hub_data")
-	require.Contains(t, err.Error(), `ALTER ROLE "`+f.superuser+`" SET search_path = <schema>, public`,
-		"the step names the role the DSN names, which pg_dump connects as")
+	printed := regexp.MustCompile(`ALTER ROLE "[^"]+" IN DATABASE "[^"]+" SET search_path = <schema>, public`).
+		FindString(err.Error())
+	require.Equal(t, `ALTER ROLE "`+f.superuser+`" IN DATABASE "`+f.dbName+`" SET search_path = <schema>, public`, printed,
+		"the step names the role the DSN names, which pg_dump connects as, and the DSN's database: %s", err.Error())
+	require.Contains(t, err.Error(), `ALTER ROLE "`+f.superuser+`" SET search_path = <schema>, public`)
 	require.NotContains(t, err.Error(), owner, "not the table owner")
 
 	f.ddl("ALTER ROLE %I IN DATABASE %I SET search_path = hub_data, public", owner, f.dbName)
 	_, _, err = backup()
 	require.Error(t, err, "the owner's search_path does not reach pg_dump")
 
-	f.ddl("ALTER ROLE %I IN DATABASE %I SET search_path = hub_data, public", f.superuser, f.dbName)
+	f.exec(strings.Replace(printed, "<schema>", "hub_data", 1))
 	out, errText, err := backup()
 	require.NoError(t, err, errText)
 	body, err := os.ReadFile(out) //nolint:gosec // path from t.TempDir()

@@ -89,8 +89,10 @@ the DSN names none; a weaker one needs `--insecure-tls`, loopback or a
 local socket only; the CA from `sslrootcert` or `MTIX_SYNC_SSLROOTCERT`).
 `pg_dump` does not receive the DSN's `options`: for a hub whose schema is
 named only there, first
-`ALTER ROLE <the DSN's role> SET search_path = <schema>, public` (the role
-the DSN names, which may not be the table owner). Every hub table must exist: a hub that lacks one, such as a hub
+`ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`
+(the role the DSN names, which may not be the table owner; this database
+only, and it takes precedence over a role-wide
+`ALTER ROLE <the DSN's role> SET search_path = <schema>, public`). Every hub table must exist: a hub that lacks one, such as a hub
 not initialized since an upgrade added a table, fails the backup with `a
 hub table was not found`; run `mtix sync init` with the DSN naming the
 table owner, then back up again.
@@ -113,9 +115,11 @@ schema first (not a schema named after the role), `mtix sync init` with
 the DSN naming that role, then `mtix sync doctor`
 (and `SELECT count(*) FROM sync_events;` through the DSN's role and
 search_path must equal `SELECT count(*) FROM <schema>.sync_events;` run as
-the table owner in the restored database, or be at least the source hub's
-count taken just before the backup, never psql's unlabeled `COPY <n>`
-lines, and must not be zero for a hub that has events) until `hub-triggers` passes (its `fix` names the table owner who runs it
+the table owner in the restored database, which alone shows the DSN
+reaches the restored database, and must not be zero for a hub that has
+events; being at least the source hub's count taken just before the
+backup rules out only a new or emptier hub; never compare with psql's
+unlabeled `COPY <n>` lines) until `hub-triggers` passes (its `fix` names the table owner who runs it
 and, in order, `mtix sync init` for a missing trigger or one bound to
 another function, and the `ALTER TABLE ... ENABLE TRIGGER` statement for
 one not enabled, printed on a `fix:` line without `--json`; functions are

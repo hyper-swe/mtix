@@ -46,6 +46,8 @@ func TestIsBackfillUID_TellsMarkedFromOtherUIDs(t *testing.T) {
 	otherV8[7] ^= 0xFF // same version, another marker
 	wrongVariant := uuid.MustParse(marked)
 	wrongVariant[8] &= 0x3F // not the RFC 4122 variant
+	otherNibble := uuid.MustParse(marked)
+	otherNibble[6] = 0x8A // version 8, another marker nibble; byte 7 still 0xF1
 	v7WithMarkerBits := v7
 	v7WithMarkerBits[6], v7WithMarkerBits[7] = 0x7B, 0xF1 // a v7 whose sub-millisecond counter carries 0xBF1
 	tests := []struct {
@@ -59,6 +61,7 @@ func TestIsBackfillUID_TellsMarkedFromOtherUIDs(t *testing.T) {
 		{"a create's UUIDv7 whose counter bits equal the marker", v7WithMarkerBits.String(), false},
 		{"a random UUIDv4", uuid.NewString(), false},
 		{"a UUIDv8 with another marker", otherV8.String(), false},
+		{"a UUIDv8 with byte 7 0xF1 and another nibble in byte 6", otherNibble.String(), false},
 		{"another variant", wrongVariant.String(), false},
 		{"empty", "", false},
 		{"not a uid", "01J9NOTAUUIDV70000000000001", false},

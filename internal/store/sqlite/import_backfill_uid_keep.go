@@ -28,8 +28,12 @@ func replaceAllData(ctx context.Context, tx *sql.Tx, data *ExportData) (ImportRe
 
 // keepLocalBackfillUIDs returns the file a replace writes (MTIX-95.31.9):
 // data, or a copy of it in which every node without a uid, at an id whose
-// local node carries a marked backfill uid, takes that uid, unless the
-// file holds the uid on a node already. A board written before uids were
+// local node carries a marked backfill uid and has the same title, takes
+// that uid, unless the file holds the uid on a node already. A task with
+// another title is a different task (differentTitleNoUID): it gets a new
+// backfill uid, so it never inherits the replaced task's uid, and a
+// teammate who holds that task sees a different task under the id. A board
+// written before uids were
 // shared then never changes the uid a store gave such a task: the uid
 // stays stable, the automatic import does not count it as lost
 // (keptUIDCopy), and a later pull of such a board imports as before. A
@@ -48,18 +52,18 @@ func keepLocalBackfillUIDs(ctx context.Context, tx *sql.Tx, data *ExportData) (*
 	kept.Nodes = append([]exportNode(nil), data.Nodes...)
 	for i := range kept.Nodes {
 		n := &kept.Nodes[i]
-		if uid, ok := local[n.ID]; ok && n.UID == "" && !held[uid] {
-			n.UID = uid
+		if l, ok := local[n.ID]; ok && n.UID == "" && !held[l.UID] && !differentTitleNoUID(l, n) {
+			n.UID = l.UID
 		}
 	}
 	return &kept, nil
 }
 
-// localBackfillUIDs returns, read through tx, the marked backfill uid of
-// every local node that carries one, by id (MTIX-95.31.9).
-func localBackfillUIDs(ctx context.Context, tx *sql.Tx) (uids map[string]string, err error) {
-	// Every local node's uid, soft-deleted nodes included.
-	rows, err := tx.QueryContext(ctx, `SELECT id, uid FROM nodes WHERE uid IS NOT NULL AND uid <> ''`)
+// localBackfillUIDs returns, read through tx, the uid and title of every
+// local node that carries a marked backfill uid, by id (MTIX-95.31.9).
+func localBackfillUIDs(ctx context.Context, tx *sql.Tx) (nodes map[string]*exportNode, err error) {
+	// Every local node's uid and title, soft-deleted nodes included.
+	rows, err := tx.QueryContext(ctx, `SELECT id, uid, title FROM nodes WHERE uid IS NOT NULL AND uid <> ''`)
 	if err != nil {
 		return nil, fmt.Errorf("read the local uids a replace keeps: %w", err)
 	}
@@ -68,31 +72,50 @@ func localBackfillUIDs(ctx context.Context, tx *sql.Tx) (uids map[string]string,
 			err = fmt.Errorf("close the local uids a replace keeps: %w", closeErr)
 		}
 	}()
-	uids = make(map[string]string)
+	nodes = make(map[string]*exportNode)
 	for rows.Next() {
-		var id, uid string
-		if err := rows.Scan(&id, &uid); err != nil {
+		n := &exportNode{}
+		if err := rows.Scan(&n.ID, &n.UID, &n.Title); err != nil {
 			return nil, fmt.Errorf("read the local uids a replace keeps: %w", err)
 		}
-		if model.IsBackfillUID(uid) {
-			uids[id] = uid
+		if model.IsBackfillUID(n.UID) {
+			nodes[n.ID] = n
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("read the local uids a replace keeps: %w", err)
 	}
-	return uids, nil
+	return nodes, nil
 }
 
 // keptUIDCopy returns in, the file's copy of local node l, as a replace
-// writes it (MTIX-95.31.9): with l's uid when in has none and l carries a
-// marked backfill uid, which the replace keeps (keepLocalBackfillUIDs), so
-// the comparison does not count the uid as lost; otherwise in itself.
+// writes it (MTIX-95.31.9): with l's uid when in has none, l carries a
+// marked backfill uid and the titles match, which the replace keeps
+// (keepLocalBackfillUIDs), so the comparison does not count the uid as
+// lost; otherwise in itself.
 func keptUIDCopy(l, in *exportNode) *exportNode {
-	if in.UID != "" || !model.IsBackfillUID(l.UID) {
+	if in.UID != "" || !model.IsBackfillUID(l.UID) || differentTitleNoUID(l, in) {
 		return in
 	}
 	c := *in
 	c.UID = l.UID
 	return &c
+}
+
+// asTheMergeSeesIt returns local node l as a merge compares it
+// (MTIX-95.31.9): a node without a uid with a new backfill uid, as the
+// merge gives it before any identity decision (stampMissingUIDs), so the
+// automatic import's refusal, the merge and its adoption report agree;
+// otherwise l itself. l is never changed.
+func asTheMergeSeesIt(l *exportNode) (*exportNode, error) {
+	if l.UID != "" {
+		return l, nil
+	}
+	uid, err := model.NewBackfillUID()
+	if err != nil {
+		return nil, fmt.Errorf("compare local node %s as the merge does: %w", l.ID, err)
+	}
+	c := *l
+	c.UID = uid
+	return &c, nil
 }

@@ -13,7 +13,9 @@ package sqlite_test
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,10 +32,11 @@ func TestDiffReplace_UIDlessCopyOfTask_UIDIsLostOnlyForACreateUID(t *testing.T) 
 	tests := []struct {
 		name     string
 		localUID func(t *testing.T) string
-		want     []string // the fields lost by REC-1
+		want     []string // the fields lost by REC-1 (another title: a task the replace does not keep the uid for)
 	}{
 		{"a marked backfill uid", importBackfillUID, nil},
 		{"a create's UUIDv7", taskUID, []string{"uid"}},
+		{"a marked backfill uid, another title", importBackfillUID, []string{"uid"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -44,6 +47,9 @@ func TestDiffReplace_UIDlessCopyOfTask_UIDIsLostOnlyForACreateUID(t *testing.T) 
 			require.NoError(t, err)
 			file := asSchemaV1(t, exportOf(t, local))
 			file.Nodes[0].UID = ""
+			if strings.HasSuffix(tt.name, "another title") {
+				file.Nodes[0].Title = "Another task"
+			}
 			require.NoError(t, sqlite.RecomputeExportChecksum(file))
 
 			diff, err := sqlite.DiffReplace(exportOf(t, local), file)
@@ -117,9 +123,76 @@ func TestImportReconcile_LocalTaskWithoutUID_ComparedByItsBackfillUID(t *testing
 	report := mergeFile(t, local, exportOf(t, teammate))
 	assert.Empty(t, report.LocalRenumbers)
 	assert.Empty(t, report.TitleMismatches)
+	assert.Equal(t, []sqlite.ImportUIDAdoption{{ID: "REC-1", FileUID: theirs, LocalTitle: "Shared task",
+		FileTitle: "Retitled by the teammate"}}, report.UIDAdoptions)
+	assert.Contains(t, report.String(), "    - REC-1 local uid=(new) -> file uid="+theirs)
 	node, err := local.GetNode(ctx, "REC-1")
 	require.NoError(t, err)
 	assert.Equal(t, "Retitled by the teammate", node.Title)
 	assert.Equal(t, theirs, node.UID)
 	assert.Len(t, exportOf(t, local).Nodes, 1, "no duplicate")
+}
+
+// TestImport_ReplaceWithAnotherUIDlessTask_MintsNewUIDSoTeammateSeesADifferentTask
+// verifies a replace keeps the local backfill uid only for a file task with
+// the same title (MTIX-95.31.9, round 4): a task without a uid and with
+// another title at the id is a different task, so it gets a new backfill
+// uid, and a teammate who holds the replaced task under the old uid sees a
+// different task under the id instead of taking it silently.
+func TestImport_ReplaceWithAnotherUIDlessTask_MintsNewUIDSoTeammateSeesADifferentTask(t *testing.T) {
+	ctx := context.Background()
+	local, teammate := newTestStore(t), newTestStore(t)
+	alpha := importBackfillUID(t)
+	createSameIDTask(t, local, "REC-1", "", 1, alpha, "Alpha")
+	createSameIDTask(t, teammate, "REC-1", "", 1, alpha, "Alpha")
+	file := exportOf(t, local)
+	file.Nodes[0].UID, file.Nodes[0].Title = "", "Beta"
+	file.Nodes[0].CreatedAt = sameIDTime.Add(time.Hour).Format(time.RFC3339) // created elsewhere, at another time
+	require.NoError(t, sqlite.RecomputeExportChecksum(file))
+
+	_, err := local.Import(ctx, file, sqlite.ImportModeReplace, false)
+	require.NoError(t, err)
+	beta := uidAtID(t, local, "REC-1")
+	assert.NotEqual(t, alpha, beta, "the different task does not inherit the replaced task's uid")
+	assert.True(t, model.IsBackfillUID(beta))
+
+	diff, err := sqlite.DiffReplace(exportOf(t, teammate), exportOf(t, local))
+	require.NoError(t, err)
+	loss := lossOf(diff, "REC-1")
+	require.NotNil(t, loss, "the teammate's import is refused: %+v", diff.Losses)
+	assert.True(t, loss.DifferentTask)
+}
+
+// TestImport_ReplaceWithTheFileUID_KeepsTheFileUID verifies a file task
+// that carries its own uid keeps it through a replace, even where the
+// local task at the id carries a backfill uid (MTIX-95.31.9, round 4).
+func TestImport_ReplaceWithTheFileUID_KeepsTheFileUID(t *testing.T) {
+	local := newTestStore(t)
+	createSameIDTask(t, local, "REC-1", "", 1, importBackfillUID(t), "Shared task")
+	file := exportOf(t, local)
+	theirs := taskUID(t)
+	file.Nodes[0].UID = theirs
+	require.NoError(t, sqlite.RecomputeExportChecksum(file))
+
+	_, err := local.Import(context.Background(), file, sqlite.ImportModeReplace, false)
+	require.NoError(t, err)
+	assert.Equal(t, theirs, uidAtID(t, local, "REC-1"))
+}
+
+// TestDiffReplace_CopyWithItsOwnUID_IsAnUpdate verifies a file copy that
+// carries its own uid is compared with that uid, never the local backfill
+// uid (MTIX-95.31.9, round 4): the same task under another backfill uid,
+// with the same title, loses nothing, and the replace updates it (it
+// writes the file's uid).
+func TestDiffReplace_CopyWithItsOwnUID_IsAnUpdate(t *testing.T) {
+	local := newTestStore(t)
+	createSameIDTask(t, local, "REC-1", "", 1, importBackfillUID(t), "Shared task")
+	file := exportOf(t, local)
+	file.Nodes[0].UID = importBackfillUID(t)
+	require.NoError(t, sqlite.RecomputeExportChecksum(file))
+
+	diff, err := sqlite.DiffReplace(exportOf(t, local), file)
+	require.NoError(t, err)
+	assert.False(t, diff.Lossy(), "losses: %+v", diff.Losses)
+	assert.Equal(t, []string{"REC-1"}, diff.Updated)
 }

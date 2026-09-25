@@ -55,19 +55,8 @@ func (s *Store) ResolveDisplayPathByUID(ctx context.Context, uid string) (string
 // MTIX-95.31.9) — safe because such data was never shared — and are
 // logged. Idempotent: only fills empty uids.
 func (s *Store) BackfillUIDs(ctx context.Context) error {
-	// Step 1: deterministic fill from each node's create_node event.
-	if _, err := s.writeDB.ExecContext(ctx, `
-		UPDATE nodes
-		   SET uid = (
-		     SELECT e.event_id FROM sync_events e
-		     WHERE e.node_id = nodes.id AND e.op_type = 'create_node'
-		     ORDER BY e.lamport_clock ASC LIMIT 1)
-		 WHERE (uid IS NULL OR uid = '')
-		   AND EXISTS (
-		     SELECT 1 FROM sync_events e2
-		     WHERE e2.node_id = nodes.id AND e2.op_type = 'create_node')`,
-	); err != nil {
-		return fmt.Errorf("backfill uids from create events: %w", err)
+	if err := s.backfillUIDsFromCreateEvents(ctx); err != nil {
+		return err
 	}
 
 	// Step 2: local-mint for nodes still missing a uid (no create event).
@@ -83,6 +72,29 @@ func (s *Store) BackfillUIDs(ctx context.Context) error {
 	return nil
 }
 
+// backfillUIDsFromCreateEvents is step 1 of BackfillUIDs, and all the
+// pre-v3 migration runs (MTIX-95.31.9): the deterministic fill of each
+// node's uid from its create_node event. A node without one is left to the
+// backfill on open, which the free-space pre-flight may postpone without
+// keeping the store from opening (NFR-2.8).
+func (s *Store) backfillUIDsFromCreateEvents(ctx context.Context) error {
+	// Step 1: deterministic fill from each node's create_node event.
+	if _, err := s.writeDB.ExecContext(ctx, `
+		UPDATE nodes
+		   SET uid = (
+		     SELECT e.event_id FROM sync_events e
+		     WHERE e.node_id = nodes.id AND e.op_type = 'create_node'
+		     ORDER BY e.lamport_clock ASC LIMIT 1)
+		 WHERE (uid IS NULL OR uid = '')
+		   AND EXISTS (
+		     SELECT 1 FROM sync_events e2
+		     WHERE e2.node_id = nodes.id AND e2.op_type = 'create_node')`,
+	); err != nil {
+		return fmt.Errorf("backfill uids from create events: %w", err)
+	}
+	return nil
+}
+
 // backfillUIDsOnOpen runs when the store opens (MTIX-95.31.9): the
 // deterministic backfill of a pre-v3 database (backfillUIDsPreV3), then a
 // backfill uid for every node still without one (NULL or empty), such as a
@@ -90,10 +102,17 @@ func (s *Store) BackfillUIDs(ctx context.Context) error {
 // logged. Idempotent: a store whose nodes all carry a uid is not written.
 // A failed backfill is logged and retried at the next open, never fatal:
 // the store must still open, for example on a full disk (MTIX-26), and a
-// node without a uid is only compared by title until then.
+// merge gives such a node a backfill uid before it compares it. With
+// MTIX_SKIP_INTEGRITY_CHECK=1, the escape hatch for reading a damaged
+// store, it writes nothing and logs that it skipped.
 func (s *Store) backfillUIDsOnOpen(ctx context.Context, existingVersion int) error {
 	if err := s.backfillUIDsPreV3(ctx, existingVersion); err != nil {
 		return err
+	}
+	if integrityChecksSkipped() { // the escape hatch for reading a damaged store writes nothing
+		s.logger.Warn("backfill_uid_on_open_skipped", "event", "backfill_uid_on_open_skipped",
+			"reason", skipIntegrityCheckEnv+"=1")
+		return nil
 	}
 	minted, err := s.mintMissingUIDs(ctx)
 	switch {
@@ -107,12 +126,14 @@ func (s *Store) backfillUIDsOnOpen(ctx context.Context, existingVersion int) err
 }
 
 // backfillUIDsPreV3 runs the deterministic UID backfill for a pre-v3
-// database (MTIX-30.1 / ADR-003 §7 Phase 0). No-op on fresh DBs and v3+.
+// database (MTIX-30.1 / ADR-003 §7 Phase 0), from create events only
+// (MTIX-95.31.9): the rest is the backfill on open, which never keeps the
+// store from opening. No-op on fresh DBs and v3+.
 func (s *Store) backfillUIDsPreV3(ctx context.Context, existingVersion int) error {
 	if existingVersion == 0 || existingVersion >= 3 {
 		return nil
 	}
-	if err := s.BackfillUIDs(ctx); err != nil {
+	if err := s.backfillUIDsFromCreateEvents(ctx); err != nil {
 		return fmt.Errorf("migrate v2 -> v3 (backfill uids): %w", err)
 	}
 	s.logger.Info("schema_migrated",

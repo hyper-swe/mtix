@@ -147,3 +147,55 @@ func TestMintMissingUIDs_CountsTheTasksItGaveAUID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Zero(t, n, "nothing left to give a uid")
 }
+
+// TestNew_PreV3StoreBelowTheFreeSpaceFloor_OpensReadsAndMintsLater verifies
+// the pre-v3 migration only runs the deterministic backfill from create
+// events, as before (MTIX-95.31.9, round 4): below the free-space floor a
+// pre-v3 store whose task has no create event still opens and reads
+// (NFR-2.8), nothing is minted, and a later open above the floor gives the
+// task a backfill uid.
+func TestNew_PreV3StoreBelowTheFreeSpaceFloor_OpensReadsAndMintsLater(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "mtix.db")
+	storeWithUIDlessTask(t, dbPath, "")
+	raw, err := New(dbPath, slog.Default())
+	require.NoError(t, err)
+	_, err = raw.writeDB.ExecContext(ctx, `DELETE FROM sync_events`)
+	require.NoError(t, err)
+	_, err = raw.writeDB.ExecContext(ctx, `UPDATE nodes SET uid = NULL`)
+	require.NoError(t, err)
+	_, err = raw.writeDB.ExecContext(ctx, `UPDATE meta SET value = '2' WHERE key = 'schema_version'`)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+
+	t.Setenv(minFreeBytesEnv, "18446744073709551615") // above any volume's free space
+	s, err := New(dbPath, slog.Default())
+	require.NoError(t, err, "a pre-v3 store below the floor opens")
+	node, err := s.GetNode(ctx, "REC-1")
+	require.NoError(t, err, "reads work")
+	assert.Equal(t, "Task one", node.Title)
+	assert.Empty(t, uidOf(t, s, "REC-1"), "nothing is minted below the floor")
+	require.NoError(t, s.Close())
+
+	t.Setenv(minFreeBytesEnv, "0")
+	s, err = New(dbPath, slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	assert.True(t, model.IsBackfillUID(uidOf(t, s, "REC-1")), "a later open above the floor mints")
+}
+
+// TestNew_IntegrityChecksSkipped_BackfillSkippedAndLogged verifies an open
+// with MTIX_SKIP_INTEGRITY_CHECK=1, the escape hatch for reading a damaged
+// store, writes no backfill uid and says so (MTIX-95.31.9, round 4).
+func TestNew_IntegrityChecksSkipped_BackfillSkippedAndLogged(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "mtix.db")
+	storeWithUIDlessTask(t, dbPath, "")
+	t.Setenv(skipIntegrityCheckEnv, "1")
+	logs := &bytes.Buffer{}
+
+	s, err := New(dbPath, slog.New(slog.NewTextHandler(logs, nil)))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	assert.Empty(t, uidOf(t, s, "REC-1"), "nothing is written")
+	assert.Contains(t, logs.String(), "backfill_uid_on_open_skipped")
+}

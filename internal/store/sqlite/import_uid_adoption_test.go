@@ -29,7 +29,7 @@ import (
 func adoptionLine(a sqlite.ImportUIDAdoption) string {
 	local := a.LocalUID
 	if local == "" {
-		local = "(none)"
+		local = "(new)" // the merge gives the local task a backfill uid first (MTIX-95.31.9)
 	}
 	return fmt.Sprintf("    - %s local uid=%s -> file uid=%s (local %q, file %q)\n",
 		a.ID, local, a.FileUID, a.LocalTitle, a.FileTitle)

@@ -99,9 +99,10 @@ func (l *NodeLoss) lossy() bool {
 
 // markSameTaskAtUpgrade flags, with both titles, a local node l that match
 // took for one task with in, the file's node under l's id, although their
-// titles differ: DifferentTitleNoUID when either has no uid to compare
-// (differentTitleNoUID, MTIX-95.31.9: a merge takes them for different
-// tasks), and SameTaskAtUpgrade when both carry uids that differ, so only
+// titles differ: DifferentTitleNoUID when the file's node has no uid to
+// compare (differentTitleNoUID, MTIX-95.31.9: a merge takes them for
+// different tasks; a local node without a uid is compared with a backfill
+// uid, asTheMergeSeesIt), and SameTaskAtUpgrade when both carry uids that differ, so only
 // the upgrade rule of differentIdentity made them one (MTIX-95.31.6).
 func markSameTaskAtUpgrade(loss *NodeLoss, l, in *exportNode) {
 	switch {
@@ -160,7 +161,10 @@ func DiffReplace(local, file *ExportData) (*ReplaceDiff, error) {
 	sameTaskAt := make(map[string]string, len(local.Nodes)) // local id -> the file's id of that task
 	diff := &ReplaceDiff{}
 	for i := range local.Nodes {
-		l := &local.Nodes[i]
+		l, err := asTheMergeSeesIt(&local.Nodes[i]) // MTIX-95.31.9: no uid is a backfill uid
+		if err != nil {
+			return nil, err
+		}
 		in, other := idx.match(l)
 		switch {
 		case other != nil: // MTIX-95.31.4: a replace deletes the local task

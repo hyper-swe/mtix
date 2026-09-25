@@ -22,7 +22,8 @@ import (
 type ImportUIDAdoption struct {
 	// ID is the id both copies hold.
 	ID string `json:"id"`
-	// LocalUID is the uid the local task gives up (empty when it had none).
+	// LocalUID is the uid the local task gives up; empty when it had none,
+	// shown as (new): the merge gave it a backfill uid first.
 	LocalUID string `json:"local_uid"`
 	// FileUID is the uid the local task takes from the file.
 	FileUID string `json:"file_uid"`
@@ -119,7 +120,7 @@ func writeUIDAdoptions(b *strings.Builder, adoptions []ImportUIDAdoption) {
 	for _, a := range adoptions {
 		local := a.LocalUID
 		if local == "" {
-			local = "(none)"
+			local = "(new)" // the merge gave the task a backfill uid first (stampMissingUIDs)
 		}
 		fmt.Fprintf(b, "    - %s local uid=%s -> file uid=%s (local %q, file %q)\n",
 			a.ID, local, a.FileUID, a.LocalTitle, a.FileTitle)

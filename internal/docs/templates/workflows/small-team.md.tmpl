@@ -27,9 +27,13 @@ trusted CA is enabled. Note the host, port, database name.
 
 ### 2. Create a least-privilege role for mtix
 
-Run as a PG superuser once during provisioning. The role only needs
-INSERT/SELECT on the mtix-owned tables, the sync tables that
-`mtix sync init` creates:
+Run as a PG superuser once during provisioning. `mtix_sync` runs
+`mtix sync init`, so it creates and owns the sync tables. Sync itself
+uses SELECT and INSERT on the sync tables, UPDATE on `sync_hub_state`,
+`sync_node_collisions` and `sync_project_clients`, and USAGE on the sync
+tables' sequences; a role that syncs without owning the tables needs
+exactly these. CREATE on the schema is needed only while `mtix sync init`
+first creates the tables:
 
 ```sql
 CREATE ROLE mtix_sync LOGIN PASSWORD 'set-a-strong-one';

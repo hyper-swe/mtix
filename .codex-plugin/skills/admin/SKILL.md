@@ -51,12 +51,12 @@ superusers, and the kept roles and their members, no role holds a privilege
 on the sync tables, their sequences or the mtix functions (EXECUTE on the
 trigger functions aside), or a role membership that leads to one, ADMIN
 OPTION included; the owner's default privileges give such roles nothing; and
-every TRUNCATE guard is in place. Superusers and the REPLICATION role
+every TRUNCATE guard is in place. 2 means changes are pending or access
+remains; 1 means an error or a refusal. Superusers and the REPLICATION role
 attribute are outside the check: a role with REPLICATION is checked for its
 privileges and memberships like any other role, but not for the attribute,
 so review the roles that have it (`SELECT rolname FROM pg_catalog.pg_roles
-WHERE rolreplication;`) with the database administrator. 2 means changes are pending or access
-remains; 1 means an error or a refusal. A role that is
+WHERE rolreplication;`) with the database administrator. A role that is
 not the table owner, a member of it or a superuser is refused and nothing
 changes. Members of a kept role keep their access through it, and the owner
 grants again anything a kept role holds by another role's grant; superusers
@@ -103,9 +103,10 @@ only, and it takes precedence over a role-wide
 not initialized since an upgrade added a table, fails the backup with `a
 hub table was not found`; run `mtix sync init` with the DSN naming the
 table owner, then back up again. The same error comes when the DSN's role
-lacks USAGE on the hub's schema: the table owner grants it USAGE on the
-schema and SELECT on its tables and sequences, and keeps that role with
-`--keep-role` so `mtix sync harden --apply` leaves its access.
+lacks USAGE on the hub's schema: the table owner runs the GRANT statements
+the backup prints (USAGE on the schema, and SELECT on each sync table and
+sync-table sequence by name, nothing else in the schema), then keeps that
+role with `--keep-role` so `mtix sync harden --apply` leaves its access.
 Client certificates (`sslcert`, `sslkey`) are not passed to `pg_dump`, so a
 hub that requires one cannot be backed up with this command yet. A failed
 or interrupted (Ctrl-C, SIGTERM) backup leaves no file; an existing path is

@@ -80,8 +80,10 @@ protection rule.
 
 The CI job's read-only role can use the sync tables, so hub-privileges
 reports it as a WARN by default and the job still passes. Strict mode
-(`sync.keep_roles` set) fails the check for any role not in that list:
-if you turn it on, add the CI role to `sync.keep_roles`.
+(`sync.keep_roles` set) fails the check whenever `mtix sync harden` would
+report a finding, or when the check cannot run, and a role not in that
+list that can use the sync tables is such a finding: if you turn it on,
+add the CI role to `sync.keep_roles`.
 
 ```yaml
 # .github/workflows/mtix-hub-health.yml

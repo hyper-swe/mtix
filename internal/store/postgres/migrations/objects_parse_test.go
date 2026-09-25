@@ -68,6 +68,32 @@ func TestParseObjects_StatementForms_ReturnsObjects(t *testing.T) {
 	}
 }
 
+// TestParseObjects_SerialColumns_ReturnsSequences: each serial column of a
+// created table yields the sequence PostgreSQL creates for it,
+// <table>_<column>_seq, for serial, bigserial and smallserial in any case;
+// a column of another type, a serial named only in a comment, and a
+// serial column of a later table are not attributed to an earlier one
+// (MTIX-95.1.4).
+func TestParseObjects_SerialColumns_ReturnsSequences(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		sequences []string
+	}{
+		{"every serial form", "CREATE TABLE IF NOT EXISTS t (\n  id BIGSERIAL PRIMARY KEY,\n  n serial,\n  s SmallSerial,\n  x BIGINT\n);",
+			[]string{"t_id_seq", "t_n_seq", "t_s_seq"}},
+		{"no serial column", "CREATE TABLE t (id BIGINT PRIMARY KEY);", nil},
+		{"a serial in a comment", "CREATE TABLE t (\n  id BIGINT -- was id BIGSERIAL\n);", nil},
+		{"each table keeps its own columns", "CREATE TABLE a (id INT);\nCREATE INDEX a_i ON a (id);\nCREATE TABLE b (k BIGSERIAL);",
+			[]string{"b_k_seq"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.sequences, parseObjects([]string{tt.body}).sequences)
+		})
+	}
+}
+
 // TestParseObjects_SeveralFiles_SortsAndMerges checks that objects from
 // several migration bodies merge into one sorted, de-duplicated set, and
 // that each trigger records the function it executes, under EXECUTE

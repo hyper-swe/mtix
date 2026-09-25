@@ -1140,8 +1140,11 @@ be the table owner: for a hub whose schema is named only in the DSN, first
 run ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET
 search_path = <schema>, public. It applies in that database only and
 takes precedence over a role-wide ALTER ROLE <the DSN's role> SET
-search_path = <schema>, public. Client certificates (sslcert, sslkey) are
-not passed to pg_dump, so a hub that requires one cannot be backed up with
+search_path = <schema>, public. If the role the DSN names lacks USAGE on
+the hub's schema, pg_dump does not see the tables either: the failed
+backup prints the GRANT statements, naming each sync table and sequence,
+that the table owner runs. Client certificates (sslcert, sslkey) are not
+passed to pg_dump, so a hub that requires one cannot be backed up with
 this command yet.
 
 mtix creates the output file, readable and writable only by you (mode

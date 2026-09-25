@@ -19,8 +19,9 @@ import (
 func TestSyncHardenCmd_Help_StatesWhatTheCheckCovers(t *testing.T) {
 	long := strings.Join(strings.Fields(newSyncHardenCmd().Long), " ")
 	require.Contains(t, long, "Superusers are not checked.")
-	require.Contains(t, long, "The REPLICATION role attribute is outside the check")
-	require.Contains(t, long, "review the roles that have it")
+	require.Contains(t, long, "The REPLICATION role attribute is outside the check too: a role that has it is "+
+		"checked for its privileges and memberships like any other role, but not for the attribute, so review the "+
+		"roles that have it (rolreplication in pg_roles).")
 }
 
 // TestSyncHardenCmd_CLIReference_MatchesHelp: docs/CLI_REFERENCE.md

@@ -32,6 +32,19 @@ func TestTables_EmbeddedMigrations_ReturnsEveryCreatedTable(t *testing.T) {
 	}, got)
 }
 
+// TestSequences_EmbeddedMigrations_ReturnsEverySerialSequence pins the
+// sequences the sync tables' serial columns create, which a backup role
+// needs SELECT on (MTIX-95.1.4). A PG test pins them to a migrated hub.
+func TestSequences_EmbeddedMigrations_ReturnsEverySerialSequence(t *testing.T) {
+	got, err := migrations.Sequences()
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"audit_log_audit_id_seq",
+		"sync_conflicts_conflict_id_seq",
+		"sync_node_collisions_collision_id_seq",
+	}, got)
+}
+
 // TestFunctions_EmbeddedMigrations_ReturnsEveryFunction pins the mtix
 // functions whose privileges hub hardening manages (MTIX-95.1).
 func TestFunctions_EmbeddedMigrations_ReturnsEveryFunction(t *testing.T) {

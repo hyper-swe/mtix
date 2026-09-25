@@ -165,15 +165,6 @@ func (s *Store) Import(
 	return &result, nil
 }
 
-// replaceAllData drops all data and reimports from export per FR-7.8,
-// inside the import's transaction.
-func replaceAllData(ctx context.Context, tx *sql.Tx, data *ExportData) (ImportResult, error) {
-	if err := clearAllTables(ctx, tx); err != nil {
-		return ImportResult{}, err
-	}
-	return insertAllExportData(ctx, tx, data)
-}
-
 // clearAllTables deletes all data from tables in FK-safe order.
 func clearAllTables(ctx context.Context, tx *sql.Tx) error {
 	tables := []string{"dependencies", "sessions", "agents", "nodes", "sequences"}
@@ -319,9 +310,14 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 // node_type is derived from depth (not trusted from the file) for
 // tamper resistance and cross-version compatibility. The durable uid
 // is persisted so re-import stays idempotent and import-boundary uid
-// validation can run (ADR-003 §6, §7; audit F-3).
+// validation can run (ADR-003 §6, §7; audit F-3); a node without one gets
+// a backfill uid, in this transaction (MTIX-95.31.9).
 func insertExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
 	n.NodeType = string(model.NodeTypeForDepth(n.Depth))
+	uid, err := uidForInsert(n.UID)
+	if err != nil {
+		return err
+	}
 	cols, err := encodeNodeColumns(n)
 	if err != nil {
 		return err
@@ -345,7 +341,7 @@ func insertExportNode(ctx context.Context, tx *sql.Tx, n *exportNode) error {
 		n.Weight, nullStr(n.ContentHash),
 		n.CreatedAt, n.UpdatedAt, nullStr(n.ClosedAt),
 		nullStr(n.DeferUntil), nullStr(n.DeletedAt),
-		nullStr(n.UID), nullStr(n.PreviousStatus), cols.estimateMin, cols.actualMin, cols.codeRefs,
+		uid, nullStr(n.PreviousStatus), cols.estimateMin, cols.actualMin, cols.codeRefs,
 		cols.commitRefs, cols.annotations, nullStr(n.InvalidatedAt),
 		nullStr(n.InvalidatedBy), nullStr(n.InvalidationReason),
 		cols.activity, nullStr(n.DeletedBy), nullStr(n.Metadata), nullStr(n.SessionID),

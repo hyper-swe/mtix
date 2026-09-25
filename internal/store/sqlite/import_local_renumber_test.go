@@ -57,7 +57,7 @@ func TestApplyLocalRenumbers_StoreChangedAfterPlan_WritesNothing(t *testing.T) {
 			before, err := json.Marshal(data.Nodes)
 			require.NoError(t, err)
 
-			_, err = s.Import(ctx, data, ImportModeMerge, false, renumberLocalFirst([]localRenumber{tt.move}))
+			_, err = s.Import(ctx, data, ImportModeMerge, false, renumberLocalFirst(localWrites{moves: []localRenumber{tt.move}}))
 			require.ErrorIs(t, err, model.ErrConflict)
 			after, err := s.Export(ctx, "", "")
 			require.NoError(t, err)

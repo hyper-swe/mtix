@@ -166,7 +166,10 @@ func (s *SyncService) refuseConflict(mtixDir, fileHash string, diff *sqlite.Repl
 // title, the merge option says the merge takes the file's title and content
 // for it, names every such task, and says how to keep the local one (copy
 // it with mtix create first), so the user can refuse the merge
-// (MTIX-95.31.6).
+// (MTIX-95.31.6). When the file holds a local task's id with another title
+// and either has no uid to compare, the merge option says the merge takes
+// them for different tasks and renumbers the local one with --confirm, and
+// what to do when they are one task retitled (MTIX-95.31.9).
 func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss) string {
 	upgradeMatched := sameTaskAtUpgrade(losses) // MTIX-95.31.6
 	keeps := "keeps every value the refusal lists"
@@ -191,6 +194,9 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss) string 
 	}
 	if len(upgradeMatched) > 0 {
 		b.WriteString(sameTaskAtUpgradeNote(upgradeMatched))
+	}
+	if ids := differentTitleNoUID(losses); len(ids) > 0 { // MTIX-95.31.9
+		b.WriteString(differentTitleNoUIDNote(ids))
 	}
 	b.WriteString("  mtix sync --fix                              keep the local store and rewrite " +
 		".mtix/tasks.json from it; every change in the file is dropped\n")
@@ -232,11 +238,40 @@ func sameTaskAtUpgrade(losses []sqlite.NodeLoss) []string {
 func sameTaskAtUpgradeNote(ids []string) string {
 	return "                                               a task treated as the same task (uid assigned at " +
 		"upgrade), here " + strings.Join(ids, ", ") + ", keeps its id and takes the file's uid, title and " +
-		"content, and the import lists each uid it adopts; if the two titles name different tasks (created in " +
-		"the same second, and neither clone's event log holds their create events: made before 0.2, for " +
-		"example), yours would survive only in the backup the merge takes: copy it to a new task first (mtix " +
+		"content, and the import lists each uid it adopts; if the two titles name different tasks (tasks " +
+		"created in the same second whose create event at least one clone's event log lacks, for example " +
+		"created before 0.2), yours would survive only in the backup the merge takes: copy it to a new task first (mtix " +
 		"show <id>, then mtix create with its title and description; writes stay local while this refusal is " +
 		"pending), then merge\n"
+}
+
+// differentTitleNoUID returns the ids of the local tasks the file holds
+// under their id with another title while either has no uid to compare
+// (MTIX-95.31.9), every one of them, even those lossList counts without
+// naming.
+func differentTitleNoUID(losses []sqlite.NodeLoss) []string {
+	var ids []string
+	for i := range losses {
+		if losses[i].DifferentTitleNoUID {
+			ids = append(ids, losses[i].NodeID)
+		}
+	}
+	return ids
+}
+
+// differentTitleNoUIDNote is the merge option's note on the local tasks
+// ids that the file holds under their id with another title and no uid to
+// compare (MTIX-95.31.9): the merge takes them for different tasks, and a
+// task a teammate only retitled on a board without uids ends up twice, the
+// renumbered copy holding the local comments, activity and field values.
+func differentTitleNoUIDNote(ids []string) string {
+	return "                                               a local task listed with a different title and no uid " +
+		"to compare is taken for a different task (here " + strings.Join(ids, ", ") + "): the merge renumbers " +
+		"it, with its subtree, to the next number free in both the store and the file (the file's task keeps " +
+		"the id), and applies that only when you rerun it with --confirm; if it is the same task, retitled on " +
+		"a board without uids, the merge keeps both copies, and the renumbered one holds your comments, activity " +
+		"and field values the board lacked: move them to the task at the id, or keep the renumbered copy, before " +
+		"you delete anything\n"
 }
 
 // lossList describes up to maxLossLines nodes' losses joined by sep, and
@@ -257,6 +292,9 @@ func lossList(losses []sqlite.NodeLoss, sep string) string {
 // "PROJ-1: 2 annotations (01J..., 01J...), 1 activity entry, field assignee",
 // or, for a different task under the id (MTIX-95.31.4),
 // `PROJ-3: a different task under this id (local "Mine", file "Theirs")`.
+// A task the file holds with another title and no uid to compare starts
+// with `a task under this id with a different title and no uid to compare
+// (local "Mine", file "Theirs")` (MTIX-95.31.9).
 // A task the file holds under another uid assigned at upgrade, with another
 // title, starts with `treated as the same task (uid assigned at upgrade)
 // (local "Mine", file "Theirs")` (MTIX-95.31.6).
@@ -271,6 +309,10 @@ func describeLoss(l *sqlite.NodeLoss) string {
 		return l.NodeID + ": the whole node"
 	}
 	var parts []string
+	if l.DifferentTitleNoUID { // MTIX-95.31.9
+		parts = append(parts, fmt.Sprintf("a task under this id with a different title and no uid to compare "+
+			"(local %q, file %q)", l.LocalTitle, l.FileTitle))
+	}
 	if l.SameTaskAtUpgrade {
 		parts = append(parts, fmt.Sprintf("treated as the same task (uid assigned at upgrade) (local %q, file %q)",
 			l.LocalTitle, l.FileTitle))

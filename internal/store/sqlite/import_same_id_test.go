@@ -222,16 +222,18 @@ func TestImportReconcile_SameIDDifferentUID_ChildAndSoftDeleted(t *testing.T) {
 	assert.Equal(t, "Teammate REC-2", theirs.Title)
 }
 
-// TestImportReconcile_SameIDSameOrMissingUID_NoRenumber verifies only a
-// different, non-empty uid on both sides is a different task: the same uid
-// or a file without uids (an older export) updates the node in place.
+// TestImportReconcile_SameIDSameOrMissingUID_NoRenumber verifies the same
+// uid, or a file without uids (an older export) whose task has the local
+// title, updates the node in place (MTIX-95.31.9: without a uid to compare,
+// another title is another task, see import_uidless_title_test.go).
 func TestImportReconcile_SameIDSameOrMissingUID_NoRenumber(t *testing.T) {
 	tests := []struct {
 		name    string
 		fileUID func(local string) string
+		title   string
 	}{
-		{"same uid", func(local string) string { return local }},
-		{"file without uid", func(string) string { return "" }},
+		{"same uid", func(local string) string { return local }, "Retitled"},
+		{"file without uid, the local title", func(string) string { return "" }, "Local title"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -239,7 +241,7 @@ func TestImportReconcile_SameIDSameOrMissingUID_NoRenumber(t *testing.T) {
 			local := newTestStore(t)
 			uid := createSameIDTask(t, local, "REC-1", "", 1, taskUID(t), "Local title")
 			data := reconcileExport(t, "REC", sqlite.TestExportNode{
-				ID: "REC-1", Project: "REC", Title: "Retitled", Seq: 1, ContentHash: "h-new",
+				ID: "REC-1", Project: "REC", Title: tt.title, Seq: 1, ContentHash: "h-new",
 				UID: tt.fileUID(uid), CreatedAt: sameIDTime, UpdatedAt: sameIDTime.Add(time.Hour),
 			})
 
@@ -248,7 +250,7 @@ func TestImportReconcile_SameIDSameOrMissingUID_NoRenumber(t *testing.T) {
 			assert.Empty(t, report.LocalRenumbers)
 			node, err := local.GetNode(ctx, "REC-1")
 			require.NoError(t, err)
-			assert.Equal(t, "Retitled", node.Title)
+			assert.Equal(t, tt.title, node.Title)
 			assert.Equal(t, uid, node.UID)
 		})
 	}
@@ -276,17 +278,19 @@ func TestImport_MergeOverDifferentTask_RefusedWritesNothing(t *testing.T) {
 
 // TestDiffReplace_SameIDDifferentUID_ReportsDifferentTask verifies a node
 // whose id holds different non-empty uids locally and in the file is lost
-// as a whole task, named with both titles, while the same uid or a missing
-// uid is compared field by field as before.
+// as a whole task, named with both titles, while the same uid, or a missing
+// uid with the local title, is compared field by field as before (a missing
+// uid with another title: TestDiffReplace_SameTaskAtUpgradeWithOtherTitle_ListedAsLoss).
 func TestDiffReplace_SameIDDifferentUID_ReportsDifferentTask(t *testing.T) {
 	tests := []struct {
-		name     string
-		fileUID  func(local string) string
-		wantLoss bool
+		name      string
+		fileUID   func(local string) string
+		fileTitle string
+		wantLoss  bool
 	}{
-		{"different uid", func(string) string { return "01J9OTHERTASK0000000000001" }, true},
-		{"same uid", func(local string) string { return local }, false},
-		{"file without uid", func(string) string { return "" }, false},
+		{"different uid", func(string) string { return "01J9OTHERTASK0000000000001" }, "File title", true},
+		{"same uid", func(local string) string { return local }, "File title", false},
+		{"file without uid, the local title", func(string) string { return "" }, "Local title", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -299,7 +303,7 @@ func TestDiffReplace_SameIDDifferentUID_ReportsDifferentTask(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, json.Unmarshal(raw, &file))
 			file.Nodes[0].UID = tt.fileUID(uid)
-			file.Nodes[0].Title = "File title"
+			file.Nodes[0].Title = tt.fileTitle
 			file.Nodes[0].CreatedAt = "2026-09-23T08:00:00Z" // created elsewhere, at another time
 
 			diff, err := sqlite.DiffReplace(localData, &file)

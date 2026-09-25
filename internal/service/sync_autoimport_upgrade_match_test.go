@@ -38,8 +38,8 @@ const upgradeMatchedNote = "a task treated as the same task (uid assigned at upg
 
 // upgradeMatchedWayOut is how the refusal says to keep the local task when
 // the two are different tasks.
-const upgradeMatchedWayOut = "if the two titles name different tasks (created in the same second, and " +
-	"neither clone's event log holds their create events: made before 0.2, for example), yours would survive " +
+const upgradeMatchedWayOut = "if the two titles name different tasks (tasks created in the same second whose " +
+	"create event at least one clone's event log lacks, for example created before 0.2), yours would survive " +
 	"only in the backup the merge takes: copy it to a new task first (mtix show <id>, then mtix create with its " +
 	"title and description; writes stay local while this refusal is pending), then merge\n"
 
@@ -162,4 +162,41 @@ func TestAutoImport_SameTaskAtUpgradeBeyondTheTenListed_NamedInMergeOption(t *te
 	assert.NotContains(t, msg, "  PROJ-8: ")
 	assert.NotContains(t, msg, "  PROJ-9: ")
 	assert.Contains(t, msg, "a task treated as the same task (uid assigned at upgrade), here PROJ-8, PROJ-9, keeps its id")
+}
+
+// TestAutoImport_LocalTaskWithoutUID_RefusalAdoptionAndMergeAgree verifies
+// the automatic import treats a local task without a uid (an open whose
+// backfill failed) as the merge does, as one with a backfill uid
+// (MTIX-95.31.9, round 4). Against a board that holds it under a uid
+// assigned at upgrade, with the same creation time and another title, the
+// refusal lists it as "treated as the same task (uid assigned at upgrade)",
+// not as a task without a uid to compare; the merge it recommends adopts
+// the board's uid without --confirm and reports the local uid as (new),
+// with the titles-differ note.
+func TestAutoImport_LocalTaskWithoutUID_RefusalAdoptionAndMergeAgree(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	_, err := f.store.WriteDB().ExecContext(ctx, `UPDATE nodes SET uid = NULL WHERE id = 'PROJ-2'`)
+	require.NoError(t, err)
+	require.NoError(t, f.svc.AutoExport(ctx, f.mtixDir))
+	fileUID := uidMintedAt(t, upgradedAt())
+	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) {
+		n := &d.Nodes[nodeIndex(t, d, "PROJ-2")]
+		n.UID, n.Title = fileUID, "Teammate's PROJ-2"
+	}))
+
+	require.ErrorIs(t, f.svc.AutoImport(ctx, f.mtixDir), service.ErrAutoImportRefused)
+	msg := f.notices.String()
+	assert.Contains(t, msg, upgradeMatchedLine+"\n")
+	assert.NotContains(t, msg, "no uid to compare")
+	assert.NotContains(t, msg, "a different task under this id")
+
+	report, _, err := f.store.ImportReconcile(ctx, f.pulledBoard(t), sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge})
+	require.NoError(t, err, "no --confirm: the merge adopts, as the refusal said")
+	assert.Empty(t, report.LocalRenumbers)
+	out := report.String()
+	assert.Contains(t, out, "    - PROJ-2 local uid=(new) -> file uid="+fileUID+
+		` (local "Task PROJ-2", file "Teammate's PROJ-2")`+"\n")
+	assert.Contains(t, out, "  a task above whose titles differ may be two different tasks")
+	assert.Equal(t, fileUID, uidAt(t, f, "PROJ-2"))
 }

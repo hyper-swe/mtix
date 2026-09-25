@@ -13,14 +13,17 @@ import (
 // uid (MTIX-95.31.6, FR-7.8): the file holds the same id under another uid,
 // and the two count as one task (differentIdentity), so the local task
 // takes the file's uid. Two different tasks that the identity rule cannot
-// tell apart (two clones created the id in the same second, neither clone's
-// event log holds the create events, so both uids were assigned when the
-// clones upgraded, more than an hour later) are adopted too: the titles are
-// the sign, and the backup taken before the merge holds the local task.
+// tell apart (two clones created the id in the same second, and at least
+// one clone assigned its uid after the task was created: at upgrade, or as
+// a backfill uid on import or open, as for a task whose create event its
+// event log lacks, for example created before 0.2) are adopted too: the
+// titles are the sign, and the backup taken before the merge holds the
+// local task.
 type ImportUIDAdoption struct {
 	// ID is the id both copies hold.
 	ID string `json:"id"`
-	// LocalUID is the uid the local task gives up (empty when it had none).
+	// LocalUID is the uid the local task gives up; empty when it had none,
+	// shown as (new): the merge gave it a backfill uid first.
 	LocalUID string `json:"local_uid"`
 	// FileUID is the uid the local task takes from the file.
 	FileUID string `json:"file_uid"`
@@ -117,7 +120,7 @@ func writeUIDAdoptions(b *strings.Builder, adoptions []ImportUIDAdoption) {
 	for _, a := range adoptions {
 		local := a.LocalUID
 		if local == "" {
-			local = "(none)"
+			local = "(new)" // the merge gave the task a backfill uid first (stampMissingUIDs)
 		}
 		fmt.Fprintf(b, "    - %s local uid=%s -> file uid=%s (local %q, file %q)\n",
 			a.ID, local, a.FileUID, a.LocalTitle, a.FileTitle)
@@ -125,7 +128,7 @@ func writeUIDAdoptions(b *strings.Builder, adoptions []ImportUIDAdoption) {
 	}
 	if titlesDiffer {
 		b.WriteString("  a task above whose titles differ may be two different tasks created in the same second " +
-			"whose create events neither clone's event log holds (created before 0.2, for example): the merge " +
-			"keeps the file's under the id, and the backup taken before the merge holds the local one\n")
+			"whose create event at least one clone's event log lacks (for example, created before 0.2): the " +
+			"merge keeps the file's under the id, and the backup taken before the merge holds the local one\n")
 	}
 }

@@ -87,8 +87,7 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			`DELETE FROM dependencies`,
 			`DELETE FROM nodes`,
 			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.lamport'`,
-			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.last_pulled_clock'`,
-			`UPDATE meta SET value = '' WHERE key = 'meta.sync.last_pulled_event_id'`, // MTIX-95.4
+			resetPullCursorSQL, // both halves of the pull cursor (MTIX-95.4)
 			// Never swept again: the next pull diffs the full hub history from
 			// the first id, with no saved full-diff progress (MTIX-95.5).
 			`UPDATE meta SET value = '' WHERE key = 'meta.sync.last_sweep_at'`,

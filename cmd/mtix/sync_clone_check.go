@@ -56,19 +56,28 @@ func cloneRefusal(e *model.SyncEvent, reason error, written bool) error {
 // previous page's last event (MTIX-95.4), with the running clock the clone
 // would have (local, then the highest clock checked so far, since the clone
 // applies in Lamport order). It returns an error wrapping errCloneRefused
-// for the first event that fails, and a hub error as it is. The clone
-// therefore reads the hub's event log twice: once to check, once to apply.
+// for the first event that fails, a page that does not advance past the
+// cursor as an error naming the cursor (pageCursor.advance), and a hub
+// error as it is. The clone therefore reads the hub's event log twice: once
+// to check, once to apply.
 func preflightClone(ctx context.Context, in pullIngest, hub cursorPuller,
 	after transport.PullCursor, local int64, batchSize int,
 ) error {
 	clock := local
+	page := newPageCursor(after)
 	for {
-		events, hasMore, err := hub.PullEvents(ctx, after, batchSize)
+		events, hasMore, err := hub.PullEvents(ctx, page.at, batchSize)
 		if err != nil {
-			return fmt.Errorf("check events after %d: %w", after.Lamport, err)
+			return fmt.Errorf("check events after %d: %w", page.at.Lamport, err)
 		}
 		if err := requireEvents(events); err != nil {
 			return err
+		}
+		if len(events) == 0 {
+			return nil
+		}
+		if err := page.advance(events); err != nil {
+			return fmt.Errorf("check events: %w", err)
 		}
 		for _, e := range events {
 			if refused := checkPulledEvent(in, e, clock); refused != nil {
@@ -76,10 +85,9 @@ func preflightClone(ctx context.Context, in pullIngest, hub cursorPuller,
 			}
 			clock = max(clock, e.LamportClock)
 		}
-		if len(events) == 0 || !hasMore {
+		if !hasMore {
 			return nil
 		}
-		after = transport.CursorAt(events[len(events)-1])
 	}
 }
 

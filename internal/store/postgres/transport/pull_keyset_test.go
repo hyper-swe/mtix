@@ -6,6 +6,7 @@ package transport_test
 import (
 	"context"
 	"fmt"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -29,21 +30,30 @@ func keysetEventID(i int) string {
 	return fmt.Sprintf("0193fc00-0000-7000-8000-%012d", i)
 }
 
-// pushKeysetEvents pushes one create per Lamport clock in lamports, with
-// ids keysetEventID(1..n), and returns the ids in keyset order. The events
-// are pushed in reverse, so the hub's insertion order is not the keyset
-// order.
+// pushKeysetEvents pushes one create per Lamport clock in lamports, the
+// i-th with id keysetEventID(i+1), so ids ascend in the order given whatever
+// the clocks, and returns the ids in keyset order (clock, then id). The
+// events are pushed in reverse, so the hub's insertion order is not the
+// keyset order.
 func pushKeysetEvents(t *testing.T, pool *transport.Pool, lamports ...int64) []string {
 	t.Helper()
 	events := make([]*model.SyncEvent, len(lamports))
-	ids := make([]string, len(lamports))
 	for i, l := range lamports {
-		ids[i] = keysetEventID(i + 1)
-		events[len(lamports)-1-i] = makeEvent(ids[i], fmt.Sprintf("MTIX-%d", i+1), "alice", l)
+		events[len(lamports)-1-i] = makeEvent(keysetEventID(i+1), fmt.Sprintf("MTIX-%d", i+1), "alice", l)
 	}
 	accepted, _, err := pool.PushEvents(context.Background(), events)
 	require.NoError(t, err)
 	require.Len(t, accepted, len(lamports))
+	sort.Slice(events, func(i, j int) bool {
+		if events[i].LamportClock != events[j].LamportClock {
+			return events[i].LamportClock < events[j].LamportClock
+		}
+		return events[i].EventID < events[j].EventID
+	})
+	ids := make([]string, len(events))
+	for i, e := range events {
+		ids[i] = e.EventID
+	}
 	return ids
 }
 
@@ -89,6 +99,13 @@ func TestPullEvents_EqualLamportAcrossPageBoundary_NoneSkipped(t *testing.T) {
 		{"a tie between other clocks, limit 3", []int64{5, 7, 7, 7, 9}, 3, 2},
 		{"a tie between other clocks, limit 4", []int64{5, 7, 7, 7, 9}, 4, 2},
 		{"one page holds everything", []int64{5, 7, 7, 7, 9}, 100, 1},
+		// Clocks 9, 5, 7, 5, 7 with ids ascending in that order: neither the
+		// clock nor the id alone gives the order, and the last event (clock
+		// 9) has the lowest id.
+		{"interleaved clocks and ids, limit 1", []int64{9, 5, 7, 5, 7}, 1, 5},
+		{"interleaved clocks and ids, limit 2", []int64{9, 5, 7, 5, 7}, 2, 3},
+		{"interleaved clocks and ids, limit 3", []int64{9, 5, 7, 5, 7}, 3, 2},
+		{"interleaved clocks and ids, one page", []int64{9, 5, 7, 5, 7}, 100, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -100,6 +117,10 @@ func TestPullEvents_EqualLamportAcrossPageBoundary_NoneSkipped(t *testing.T) {
 
 			require.Equal(t, want, got, "every event, once, in (lamport_clock, event_id) order")
 			require.Equal(t, tt.wantPages, pages)
+			if tt.lamports[0] == 9 {
+				require.Equal(t, []string{keysetEventID(2), keysetEventID(4), keysetEventID(3),
+					keysetEventID(5), keysetEventID(1)}, got, "clocks 5, 5, 7, 7, 9")
+			}
 		})
 	}
 }

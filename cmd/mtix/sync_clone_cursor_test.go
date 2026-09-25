@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -111,12 +112,16 @@ func TestCloneLoop_ResumeFromCheckpoint_ContinuesAfterLastClonedEvent(t *testing
 	tests := []struct {
 		name        string
 		eventID     func(events []*model.SyncEvent) string
+		absentIDKey bool
 		wantPulled  int
 		wantResumed func(events []*model.SyncEvent) transport.PullCursor
 	}{
-		{"tuple checkpoint", func(events []*model.SyncEvent) string { return events[1].EventID }, 2,
+		{"tuple checkpoint", func(events []*model.SyncEvent) string { return events[1].EventID }, false, 2,
 			func(events []*model.SyncEvent) transport.PullCursor { return transport.CursorAt(events[1]) }},
-		{"Lamport-only checkpoint from before the upgrade", func([]*model.SyncEvent) string { return "" }, 4,
+		{"Lamport-only checkpoint, event-id key seeded empty", func([]*model.SyncEvent) string { return "" }, false, 4,
+			func([]*model.SyncEvent) transport.PullCursor { return transport.PullCursor{Lamport: 5} }},
+		{"Lamport-only checkpoint, event-id key absent (written before the upgrade)",
+			func([]*model.SyncEvent) string { return "" }, true, 4,
 			func([]*model.SyncEvent) transport.PullCursor { return transport.PullCursor{Lamport: 5} }},
 	}
 	for _, tt := range tests {
@@ -127,6 +132,9 @@ func TestCloneLoop_ResumeFromCheckpoint_ContinuesAfterLastClonedEvent(t *testing
 			require.NoError(t, applyBatch(ctx, testIngest(nil), app.store, events[:2]))
 			setPeerMeta(t, "meta.sync.clone.checkpoint", "5")
 			setPeerMeta(t, "meta.sync.clone.checkpoint_event_id", tt.eventID(events))
+			if tt.absentIDKey {
+				execPeer(t, `DELETE FROM meta WHERE key = 'meta.sync.clone.checkpoint_event_id'`)
+			}
 			since, err := readCloneCheckpoint(ctx, app.store, true)
 			require.NoError(t, err)
 			require.Equal(t, tt.wantResumed(events), since)
@@ -142,6 +150,39 @@ func TestCloneLoop_ResumeFromCheckpoint_ContinuesAfterLastClonedEvent(t *testing
 			}
 			requireCloneCheckpoint(t, transport.CursorAt(events[3]))
 			requireSavedCursor(t, transport.CursorAt(events[3]))
+		})
+	}
+}
+
+// TestReadCloneCheckpoint_CorruptedLamportHalf_Refused: on --resume, a
+// checkpoint whose Lamport half is absent, negative or not a number is
+// refused as corrupted state, an absent one wrapping sql.ErrNoRows and
+// naming the key.
+func TestReadCloneCheckpoint_CorruptedLamportHalf_Refused(t *testing.T) {
+	tests := []struct {
+		name, value string
+		absent      bool
+		wantErr     string
+		wantErrIs   error
+	}{
+		{"checkpoint row absent", "", true, "meta.sync.clone.checkpoint", sql.ErrNoRows},
+		{"negative checkpoint", "-1", false, "negative", nil},
+		{"checkpoint not a number", "x", false, "parse checkpoint", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			initTestApp(t)
+			setPeerMeta(t, "meta.sync.clone.checkpoint", tt.value)
+			if tt.absent {
+				execPeer(t, `DELETE FROM meta WHERE key = 'meta.sync.clone.checkpoint'`)
+			}
+
+			_, err := readCloneCheckpoint(context.Background(), app.store, true)
+
+			require.ErrorContains(t, err, tt.wantErr)
+			if tt.wantErrIs != nil {
+				require.ErrorIs(t, err, tt.wantErrIs)
+			}
 		})
 	}
 }

@@ -363,13 +363,11 @@ planner can serve the query from it. Migrations run in `mtix sync init`
 with the hub owner's DSN, so an existing hub gets the index the next
 time its owner runs `mtix sync init`. Every migration runs in one
 transaction (see [Migration single-flight](#migration-single-flight)),
-so the index is built inside it, not concurrently: while it builds,
-pulls keep reading but pushes block, and a push that waits past its
-10-second statement timeout is retried a few times and then fails, its
-events kept queued for the next push. On a large hub, run
-`mtix sync init` when a pause in pushes is acceptable. Until the index
-exists, pulls return the same events, but each page scans and sorts
-`sync_events`.
+so the index is built inside it, not concurrently, and `sync_events`
+stays locked until that transaction commits: pushes and pulls both wait
+for `mtix sync init` to finish. Run it when a pause in sync is
+acceptable. Until the index exists, pulls return the same events, but
+each page scans and sorts `sync_events`.
 
 The Lamport clock is stamped by the client that wrote the event, not by
 the hub. A teammate who worked offline pushes events stamped below the
@@ -737,9 +735,19 @@ cleanly. See `internal/store/postgres/transport/migrate.go` and
 
 Every migration file runs in that one transaction, so an index a
 migration adds (014, 015) is built inside it, not concurrently. The
-build blocks writes to `sync_events`, that is pushes, until the
-transaction commits; reads, that is pulls, go on. Once the index exists
-its `CREATE INDEX IF NOT EXISTS` only checks for it.
+transaction also re-runs the `ALTER TABLE sync_events ADD COLUMN IF NOT
+EXISTS` of migrations 010 and 013, which take an `ACCESS EXCLUSIVE` lock
+on `sync_events` even when the column exists, and hold it until the
+transaction commits. So while `mtix sync init` migrates, pushes and
+pulls both wait for it: a push or pull whose statement waits past its
+10-second statement timeout is retried a few times and then fails (a
+push keeps its events queued; a pull keeps its cursor), and the next
+one succeeds. Run `mtix sync init` when a pause in sync is acceptable.
+On a large hub the first build of an index makes that pause longer;
+once the index exists its `CREATE INDEX IF NOT EXISTS` only checks for
+it. `mtix sync init` gives the connection and the whole migration 30
+seconds; a migration that takes longer is rolled back, and the hub
+keeps working without the new index (pulls stay correct, only slower).
 
 ## Transport security
 

@@ -160,37 +160,42 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 // page boundary are all cloned (MTIX-95.4; ADR-006 D6). It saves the
 // checkpoint, both halves, after each batch so --resume can pick up, and
 // on completion saves the pull cursor at the same position (ADR-006 D16):
-// the first pull after a clone then asks the hub only for newer events.
+// the first pull after a clone then asks the hub only for newer events. A
+// page that does not advance past the cursor stops the clone, before it is
+// applied, with an error naming the cursor (pageCursor.advance).
 func cloneLoop(ctx context.Context, stderr io.Writer,
 	pool cursorPuller, store *sqlite.Store, after transport.PullCursor, batchSize int,
 ) (int, int, error) {
 	totalPulled := 0
 	batches := 0
+	page := newPageCursor(after)
 	for {
-		events, hasMore, err := pool.PullEvents(ctx, after, batchSize)
+		events, hasMore, err := pool.PullEvents(ctx, page.at, batchSize)
 		if err != nil {
 			return totalPulled, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
 		}
 		if len(events) == 0 {
 			break
 		}
+		if err := page.advance(events); err != nil {
+			return totalPulled, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
+		}
 		// The check before the clone already warned about its events.
 		if err := applyBatch(ctx, newPullIngest(io.Discard), store, events); err != nil {
 			return totalPulled, batches, fmt.Errorf("apply batch %d: %w", batches+1, err)
 		}
-		after = transport.CursorAt(events[len(events)-1])
-		if err := writeCloneCheckpoint(ctx, store, after); err != nil {
+		if err := writeCloneCheckpoint(ctx, store, page.at); err != nil {
 			return totalPulled, batches, fmt.Errorf("checkpoint write: %w", err)
 		}
 		totalPulled += len(events)
 		batches++
 		fmt.Fprintf(stderr, "clone progress: batch %d (%d events; through lamport %d)\n",
-			batches, len(events), after.Lamport)
+			batches, len(events), page.at.Lamport)
 		if !hasMore {
 			break
 		}
 	}
-	if err := store.WithTx(ctx, func(tx *sql.Tx) error { return writePullCursor(ctx, tx, after) }); err != nil {
+	if err := store.WithTx(ctx, func(tx *sql.Tx) error { return writePullCursor(ctx, tx, page.at) }); err != nil {
 		return totalPulled, batches, fmt.Errorf("pull cursor write: %w", err)
 	}
 	return totalPulled, batches, nil

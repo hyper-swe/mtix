@@ -4,7 +4,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -349,34 +351,146 @@ func nodeSnapshot(t *testing.T, ids ...string) map[string]string {
 }
 
 // TestReadLastPulledClock_ReturnsSavedTuple: the cursor is read back as
-// saved, both halves; a Lamport half that is negative or not a number is
-// refused as corrupted state.
+// saved, both halves; a Lamport half that is absent, negative or not a
+// number is refused as corrupted state, an absent one wrapping
+// sql.ErrNoRows and naming the key.
 func TestReadLastPulledClock_ReturnsSavedTuple(t *testing.T) {
 	tests := []struct {
 		name, clock, eventID string
+		absentClock          bool
 		want                 transport.PullCursor
 		wantErr              string
+		wantErrIs            error
 	}{
-		{"fresh store", "0", "", transport.PullCursor{}, ""},
-		{"saved tuple", "42", "0193fb00-0000-7000-8000-000000000042",
-			transport.PullCursor{Lamport: 42, EventID: "0193fb00-0000-7000-8000-000000000042"}, ""},
-		{"negative clock", "-1", "", transport.PullCursor{}, "negative"},
-		{"clock not a number", "x", "", transport.PullCursor{}, "parse cursor"},
+		{"fresh store", "0", "", false, transport.PullCursor{}, "", nil},
+		{"saved tuple", "42", "0193fb00-0000-7000-8000-000000000042", false,
+			transport.PullCursor{Lamport: 42, EventID: "0193fb00-0000-7000-8000-000000000042"}, "", nil},
+		{"negative clock", "-1", "", false, transport.PullCursor{}, "negative", nil},
+		{"clock not a number", "x", "", false, transport.PullCursor{}, "parse cursor", nil},
+		{"clock row absent", "", "0193fb00-0000-7000-8000-000000000042", true, transport.PullCursor{},
+			"meta.sync.last_pulled_clock", sql.ErrNoRows},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			initTestApp(t)
 			setPeerMeta(t, "meta.sync.last_pulled_clock", tt.clock)
 			setPeerMeta(t, "meta.sync.last_pulled_event_id", tt.eventID)
+			if tt.absentClock {
+				execPeer(t, `DELETE FROM meta WHERE key = 'meta.sync.last_pulled_clock'`)
+			}
 
 			got, err := readLastPulledClock(context.Background(), app.store)
 
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
+				if tt.wantErrIs != nil {
+					require.ErrorIs(t, err, tt.wantErrIs)
+				}
 				return
 			}
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// remoteCreatesInOrder returns one remote create per Lamport clock in
+// lamports, in the order given, creating TEST-1, TEST-2, ... in that order.
+// Their event ids ascend in the same order, whatever the clocks: with
+// clocks 9, 5, 7, 5, 7 the keyset order (clock, then id) interleaves them
+// and the event with the highest clock has the lowest id.
+func remoteCreatesInOrder(t *testing.T, lamports ...int64) []*model.SyncEvent {
+	t.Helper()
+	ids := make([]string, len(lamports))
+	for i := range ids {
+		id, err := clock.NewEventID()
+		require.NoError(t, err)
+		ids[i] = id
+	}
+	sort.Strings(ids)
+	out := make([]*model.SyncEvent, len(lamports))
+	for i, l := range lamports {
+		e := remoteCreateAt(t, fmt.Sprintf("TEST-%d", i+1), l)
+		e.EventID, e.UID = ids[i], ids[i]
+		out[i] = e
+	}
+	return out
+}
+
+// keysetOrder returns events sorted as the hub serves them: by Lamport
+// clock, then by event id.
+func keysetOrder(events []*model.SyncEvent) []*model.SyncEvent {
+	out := append([]*model.SyncEvent(nil), events...)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].LamportClock != out[j].LamportClock {
+			return out[i].LamportClock < out[j].LamportClock
+		}
+		return out[i].EventID < out[j].EventID
+	})
+	return out
+}
+
+// TestPullLoop_InterleavedClocksAndIDs_EveryEventOnceInKeysetOrder: with
+// clocks 9, 5, 7, 5, 7 and event ids that ascend in that order, so that
+// neither the clock nor the id alone gives the keyset order, the cursor pass
+// applies every event exactly once at every --limit, asks for each page
+// after the previous page's last event in (clock, id) order, and saves the
+// cursor at the event with the highest clock, which has the lowest id.
+func TestPullLoop_InterleavedClocksAndIDs_EveryEventOnceInKeysetOrder(t *testing.T) {
+	for _, limit := range []int{1, 2, 3, 4, 100} {
+		t.Run(fmt.Sprintf("limit %d", limit), func(t *testing.T) {
+			initTestApp(t)
+			events := remoteCreatesInOrder(t, 9, 5, 7, 5, 7)
+			order := keysetOrder(events)
+			hub := &fakeLateHub{pullEvents: events}
+
+			applied, batches, err := pullLoop(context.Background(), testIngest(nil), hub, app.store,
+				transport.PullCursor{}, limit)
+
+			require.NoError(t, err)
+			require.Equal(t, len(events), applied, "each event applied once")
+			wantBatches := (len(events) + limit - 1) / limit
+			require.Equal(t, wantBatches, batches)
+			wantCursors := []transport.PullCursor{{}}
+			for b := 1; b < wantBatches; b++ {
+				wantCursors = append(wantCursors, transport.CursorAt(order[b*limit-1]))
+			}
+			require.Equal(t, wantCursors, hub.pullCursors, "each page starts after the previous page's last event")
+			for _, e := range events {
+				requireAppliedOnce(t, e)
+			}
+			require.Equal(t, int64(9), order[len(order)-1].LamportClock)
+			require.Equal(t, events[0].EventID, order[len(order)-1].EventID, "the highest clock has the lowest id")
+			requireSavedCursor(t, transport.CursorAt(events[0]))
+		})
+	}
+}
+
+// TestClone_InterleavedClocksAndIDs_EveryEventOnce: the clone pages the same
+// interleaved log by the keyset: every event is cloned once, the checkpoint
+// and the pull cursor end at the event with the highest clock and the
+// lowest id, and the first pull after the clone asks only for what follows
+// it.
+func TestClone_InterleavedClocksAndIDs_EveryEventOnce(t *testing.T) {
+	initTestApp(t)
+	ctx := context.Background()
+	events := remoteCreatesInOrder(t, 9, 5, 7, 5, 7)
+	hub := &fakeLateHub{pullEvents: events}
+
+	pulled, batches, stage, err := checkThenClone(ctx, &bytes.Buffer{}, hub, transport.PullCursor{}, 2)
+
+	require.NoError(t, err, stage)
+	require.Equal(t, 5, pulled)
+	require.Equal(t, 3, batches)
+	for _, e := range events {
+		requireAppliedOnce(t, e)
+	}
+	last := transport.CursorAt(events[0])
+	requireCloneCheckpoint(t, last)
+	requireSavedCursor(t, last)
+	hub.pullCursors = nil
+	applied, _, err := pullLoop(ctx, testIngest(nil), hub, app.store, last, 100)
+	require.NoError(t, err)
+	require.Zero(t, applied)
+	require.Equal(t, []transport.PullCursor{last}, hub.pullCursors)
 }

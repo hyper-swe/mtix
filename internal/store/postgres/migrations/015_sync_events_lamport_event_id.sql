@@ -19,13 +19,15 @@
 -- but each page scans and sorts the whole of sync_events.
 --
 -- Migrate applies every file in ONE transaction, so this index is built
--- inside it, not concurrently. The build locks sync_events against writes
--- until that transaction commits: pulls keep reading, but pushes block. A
--- push that waits past its 10-second statement timeout is retried a few
--- times and then fails; its events stay queued for the next push. On a
--- large hub the first build can take a while, so run `mtix sync init` when
--- a pause in pushes is acceptable. Once the index exists the statement
--- only checks for it.
+-- inside it, not concurrently. That transaction already holds an ACCESS
+-- EXCLUSIVE lock on sync_events, taken by the ADD COLUMN IF NOT EXISTS
+-- statements of 010 and 013, until it commits: pushes and pulls both wait
+-- for `mtix sync init`. A push or pull that waits past its 10-second
+-- statement timeout is retried a few times and then fails; nothing is
+-- lost, and the next one succeeds. On a large hub the first build of this
+-- index makes the wait longer, so run `mtix sync init` when a pause in
+-- sync is acceptable. Once the index exists the statement only checks for
+-- it.
 --
 -- Additive and idempotent: IF NOT EXISTS makes a re-run a no-op, and no
 -- column, constraint or row is touched.

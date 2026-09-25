@@ -138,9 +138,9 @@ more for a larger window or recovered changes, and it has no timer of
 its own. After
 upgrading, the hub owner runs `mtix sync init` once with the owner's
 DSN to add the hub indexes the sweep and the pull cursor read by. It
-builds them in one transaction: pulls keep working, but pushes wait
-until it finishes, which on a large hub takes a while, so run it when a
-pause in pushes is acceptable. Until then pulls fetch the same events,
+runs in one transaction, and pushes and pulls both wait until it
+finishes (longer on a large hub, while it builds the indexes), so run it
+when a pause in sync is acceptable. Until then pulls fetch the same events,
 only slower: each page the sweep lists scans the hub's event table
 (once per pull for the usual window, and once per page of the one-time
 full comparison, spread across pulls), and so does each pull batch.

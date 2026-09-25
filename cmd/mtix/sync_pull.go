@@ -251,29 +251,34 @@ func pullThenSweep(ctx context.Context, in pullIngest, hub pullSweepHub,
 // (MTIX-95.11). applyPullBatch saves the pull cursor in the batch's own
 // transaction, never at a refused Lamport clock (advancePullCursor); the
 // next page still starts after the whole batch, so this pull does not
-// fetch a refused event again. It returns how many events applied and how
-// many batches it read.
+// fetch a refused event again. A page that does not advance past the
+// cursor stops the loop, before it is applied, with an error naming the
+// cursor (pageCursor.advance), instead of being asked for forever. It
+// returns how many events applied and how many batches it read.
 func pullLoop(ctx context.Context, in pullIngest,
 	pool cursorPuller, store *sqlite.Store, after transport.PullCursor, limit int,
 ) (int, int, error) {
 	applied, batches := 0, 0
+	page := newPageCursor(after)
 	for {
-		events, hasMore, err := pool.PullEvents(ctx, after, limit)
+		events, hasMore, err := pool.PullEvents(ctx, page.at, limit)
 		if err != nil {
 			return applied, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
 		}
 		if len(events) == 0 {
 			break
 		}
+		if err = page.advance(events); err != nil {
+			return applied, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
+		}
 		held, err := applyPullBatch(ctx, in, store, quarantineSourcePull, events)
 		if err != nil {
 			return applied, batches, fmt.Errorf("apply batch %d: %w", batches+1, err)
 		}
-		after = transport.CursorAt(events[len(events)-1])
 		applied += len(events) - len(held)
 		batches++
 		fmt.Fprintf(in.stderr, "pull progress: batch %d (%d events, %d quarantined; through lamport %d)\n",
-			batches, len(events), len(held), after.Lamport)
+			batches, len(events), len(held), page.at.Lamport)
 		if !hasMore {
 			break
 		}

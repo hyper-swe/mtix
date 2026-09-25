@@ -1571,11 +1571,13 @@ nothing; it is only recorded as received.
   hub owner's DSN. It adds two indexes on the hub:
   `idx_sync_events_created_at`, so each sweep reads only recent events,
   and `idx_sync_events_lamport_event_id`, so each pull batch reads from
-  its saved position. `mtix sync init` builds them in one transaction;
-  on a large hub that takes a while, and pushes wait until it finishes
-  (pulls keep working; a push that waits too long fails and keeps its
-  changes queued for the next push), so run it when a pause in pushes
-  is acceptable.
+  its saved position. `mtix sync init` runs in one transaction, and
+  pushes and pulls both wait until it finishes, longer on a large hub
+  while it builds the indexes (a push or pull that waits too long fails;
+  run it again afterwards, nothing is lost). Run it when a pause in sync
+  is acceptable. `mtix sync init` stops after 30 seconds; if building
+  the indexes takes longer it changes nothing, and pulls keep working
+  without them.
   Until then pulls fetch the same events as with the indexes, only
   slower: each page the sweep lists scans the hub's whole event table
   (once per pull for the usual window, and once per page of the

@@ -6,6 +6,7 @@ package docs
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -56,4 +57,41 @@ func TestPluginInstaller_AdminSkill_StatesHubPrivilegeCoverage(t *testing.T) {
 	}
 	require.NotContains(t, skill, "when any other role can use the sync tables", "the narrower strict-mode description is gone")
 	require.NotContains(t, skill, "ALL TABLES IN SCHEMA", "the grant names each sync table")
+}
+
+// markRestoredSentence is the one sentence every document uses for what the
+// least-privilege list means for mtix sync mark-restored (MTIX-95.1.4).
+const markRestoredSentence = "A syncing role set up with the least-privilege list holds no UPDATE on " +
+	"`sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs as the table owner."
+
+// leastPrivilegePointer says where the least-privilege list is.
+const leastPrivilegePointer = "The least-privilege list is in step 2 of the small-team workflow " +
+	"(`.mtix/docs/workflows/small-team.md`) and in `docs/SECURITY-MODEL.md`."
+
+// TestDocs_MarkRestoredSentence_SameInEveryCopy: the user manual, the
+// admin skill (rendered, and its plugin mirrors), the small-team workflow
+// and the security model state the same mark-restored sentence, and the
+// user manual and the admin skill say where the least-privilege list is
+// (MTIX-95.1.4).
+func TestDocs_MarkRestoredSentence_SameInEveryCopy(t *testing.T) {
+	dir := t.TempDir()
+	_, err := NewPluginInstaller(dir, minimalTemplateData(), nil).Install("claude-code", false)
+	require.NoError(t, err)
+	docs := map[string]string{"rendered admin skill": filepath.Join(dir, ".claude", "skills", "mtix-admin.md")}
+	for _, rel := range []string{"USERMANUAL.md", ".claude-plugin/skills/mtix-admin.md",
+		".codex-plugin/skills/admin/SKILL.md", "internal/docs/templates/workflows/small-team.md.tmpl",
+		"docs/SECURITY-MODEL.md"} {
+		docs[rel] = filepath.Join(append([]string{"..", ".."}, strings.Split(rel, "/")...)...)
+	}
+	pointed := map[string]bool{"rendered admin skill": true, "USERMANUAL.md": true,
+		".claude-plugin/skills/mtix-admin.md": true, ".codex-plugin/skills/admin/SKILL.md": true}
+	for name, path := range docs {
+		body, err := os.ReadFile(path) //nolint:gosec // repository and t.TempDir() paths
+		require.NoError(t, err)
+		text := strings.Join(strings.Fields(string(body)), " ")
+		require.Containsf(t, text, markRestoredSentence, "%s states the mark-restored sentence", name)
+		if pointed[name] {
+			require.Containsf(t, text, leastPrivilegePointer, "%s says where the list is", name)
+		}
+	}
 }

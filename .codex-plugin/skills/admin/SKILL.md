@@ -142,9 +142,14 @@ another function, and the `ALTER TABLE ... ENABLE TRIGGER` statement for
 one not enabled, printed on a `fix:` line without `--json`; functions are
 compared by OID; tgenabled `O` and `A` both count as enabled; a gap is a
 WARN by default, a FAIL in strict mode), then
-`mtix sync mark-restored` once, with the DSN naming the table owner (a
-syncing role holds no UPDATE on `sync_hub_state`), and `mtix sync
-collisions list`.
+`mtix sync mark-restored` once, with the DSN naming the table owner, and
+`mtix sync collisions list`.
+
+A syncing role set up with the least-privilege list holds no UPDATE on
+`sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs as
+the table owner. The least-privilege list is in step 2 of the small-team
+workflow (`.mtix/docs/workflows/small-team.md`) and in
+`docs/SECURITY-MODEL.md`.
 
 `mtix sync status` counts unresolved conflicts only (`open_conflicts`); it
 has no `conflicted` count. `resolve` records the decision only and says

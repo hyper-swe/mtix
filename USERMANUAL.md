@@ -1269,7 +1269,9 @@ the source of truth; the hub is a mailroom for events.
 
 ```bash
 # Provision a Postgres hub (Supabase / Neon / RDS / self-hosted).
-# Configure TLS with a trusted CA. Create a least-privilege role.
+# Configure TLS with a trusted CA. Create a least-privilege role: see
+# step 2 of the small-team workflow (.mtix/docs/workflows/small-team.md)
+# and docs/SECURITY-MODEL.md.
 
 # Store the DSN — env var preferred, .mtix/secrets fallback (mode 0600).
 export MTIX_SYNC_DSN="postgresql://mtix_sync@hub.example.com:5432/mtix_hub?sslmode=verify-full"
@@ -2044,11 +2046,9 @@ psql -f /path/to/hub-backup.sql      # PG* variables name the empty database, th
 mtix sync init
 mtix sync doctor
 
-# 2. Open a restore window. Run this EXACTLY ONCE, right after the restore,
-#    with the DSN naming the table owner. This is the only way to arm
-#    restore-collision detection. Clients cannot do it; only the operator
-#    can (a syncing role set up with the least-privilege list holds no
-#    UPDATE on sync_hub_state).
+# 2. Open a restore window. Run this EXACTLY ONCE, right after the restore.
+#    This is the only way to arm restore-collision detection. Clients
+#    cannot do it; only the operator can.
 mtix sync mark-restored
 
 # 3. Let teammates reconnect and push as normal.
@@ -2056,6 +2056,13 @@ mtix sync mark-restored
 # 4. Check for settled-vs-settled collisions.
 mtix sync collisions list
 ```
+
+Run `mtix sync mark-restored` with the DSN naming the table owner.
+A syncing role set up with the least-privilege list holds no UPDATE on
+`sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs
+as the table owner. The least-privilege list is in step 2 of the
+small-team workflow (`.mtix/docs/workflows/small-team.md`) and in
+`docs/SECURITY-MODEL.md`.
 
 If `collisions list` is empty, you are done — the team's normal sync
 self-healed everything. If it shows a collision, each row surfaces both

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -80,6 +81,12 @@ var valueValidators = map[string]func(string) error{
 				"(16 hex characters, optionally -label): %w", v, model.ErrInvalidInput)
 		}
 		return nil
+	},
+	// MTIX-95.31.2: sync.auto_sync accepts true or false in any form;
+	// a mistyped value is refused here rather than read as "on" later.
+	"sync.auto_sync": func(v string) error {
+		_, err := parseAutoSync(v)
+		return err
 	},
 }
 
@@ -200,7 +207,9 @@ func (cs *ConfigService) Get(key string) (string, error) {
 }
 
 // Set writes a config value for the given key.
-// Returns ErrInvalidConfigKey if the key is not recognized.
+// Returns ErrInvalidConfigKey if the key is not recognized, and
+// ErrInvalidInput for a sync.auto_sync value that is neither true nor false
+// (MTIX-95.31.2); nothing is written then.
 // Returns a warning string if the key requires server restart.
 func (cs *ConfigService) Set(key, value string) (string, error) {
 	if !validConfigKeys[key] {
@@ -249,6 +258,31 @@ func (cs *ConfigService) Delete(key string) error {
 func (cs *ConfigService) AutoClaim() bool {
 	v, _ := cs.Get("agent.auto_claim")
 	return v == "true"
+}
+
+// AutoSyncSetting reports the sync.auto_sync switch (default true;
+// FR-15.2j, MTIX-95.31.2): the value as configured, and whether a changed
+// .mtix/tasks.json is imported automatically. A value that is neither true
+// nor false (strconv.ParseBool, surrounding spaces ignored) returns an
+// error, and auto-import is then on, the default. Auto-export does not
+// depend on it.
+func (cs *ConfigService) AutoSyncSetting() (raw string, on bool, err error) {
+	raw, _ = cs.Get("sync.auto_sync")
+	on, err = parseAutoSync(raw)
+	if err != nil {
+		return raw, true, err
+	}
+	return raw, on, nil
+}
+
+// parseAutoSync reads a sync.auto_sync value: true or false in any form
+// strconv.ParseBool accepts (MTIX-95.31.2).
+func parseAutoSync(value string) (bool, error) {
+	on, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return false, fmt.Errorf("sync.auto_sync must be true or false, not %q: %w", value, model.ErrInvalidInput)
+	}
+	return on, nil
 }
 
 // AuthorID returns the configured default author identity for emitted sync

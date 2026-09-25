@@ -48,6 +48,7 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 6. **Never leave tasks empty** — after `create` or `decompose`, every task MUST have `description`, `prompt`, and `acceptance` populated
 7. Add a traceability comment before marking done: task → requirement → test → result
 8. No stub implementations — functions must perform their documented purpose end-to-end
+9. **Run `mtix sync` before you commit or push `.mtix/tasks.json`** — MCP tool results do not show the auto-import notices, so a write can succeed while the board on disk is a pulled one mtix has not imported. Commit it only when `Last auto-import refusal` does not read `pending`; otherwise follow the "Auto-import of .mtix/tasks.json Refused" procedure in [AGENTS.md]({{ .DocsPath }}AGENTS.md)
 
 ## Best Practices for Claude
 
@@ -59,4 +60,4 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 
 ## Error Handling
 
-If you encounter an error, check [TROUBLESHOOTING.md]({{ .DocsPath }}TROUBLESHOOTING.md) for common solutions. If blocked, record the reason with `mtix_comment`, then call `mtix_defer` (with an optional `until` wake time) rather than abandoning the task. Always document anomalies with `mtix_comment`.
+If you encounter an error, check [TROUBLESHOOTING.md]({{ .DocsPath }}TROUBLESHOOTING.md) for common solutions. If a command prints `mtix: auto-import of .mtix/tasks.json refused`, nothing was imported: never run the `--mode replace` import it names just to silence it, because that deletes the comments, activity and tasks it lists; follow the "Auto-import of .mtix/tasks.json Refused" procedure in [AGENTS.md]({{ .DocsPath }}AGENTS.md). If blocked, record the reason with `mtix_comment`, then call `mtix_defer` (with an optional `until` wake time) rather than abandoning the task. Always document anomalies with `mtix_comment`.

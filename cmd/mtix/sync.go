@@ -6,6 +6,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -22,7 +23,9 @@ func newSyncCmd() *cobra.Command {
 		Short: "Check or fix sync between SQLite and tasks.json (FR-15)",
 		Long: `Without subcommand: compare the SQLite database with .mtix/tasks.json and
 report any drift. Use --fix to re-export the database to tasks.json,
-resolving any discrepancies.
+resolving any discrepancies. The report also shows whether the automatic
+import of a changed tasks.json is enabled (sync.auto_sync) and the last
+automatic import mtix refused, with its reason.
 
 With subcommand (FR-18 / MTIX-15): manage the BYO Postgres sync hub.
 See 'mtix sync init --help' and 'mtix sync clone --help'.`,
@@ -53,11 +56,17 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.`,
 		newSyncRepairUIDsCmd(),
 		newSyncCollisionsCmd(),
 		newSyncRelayCmd(),
+		// MTIX-95.6: re-derive workflow state from the local event log.
+		newSyncRepairCmd(),
 	)
 
 	return cmd
 }
 
+// runSync reports drift and the auto-import state (FR-15, MTIX-95.31.2)
+// and, with fix, rewrites tasks.json from the database. --fix works even
+// when tasks.json cannot be compared (missing, or not parseable, such as a
+// board with git conflict markers): it then warns and rewrites it.
 func runSync(cmd *cobra.Command, fix bool) error {
 	if app.syncSvc == nil {
 		return fmt.Errorf("not in an mtix project")
@@ -66,17 +75,18 @@ func runSync(cmd *cobra.Command, fix bool) error {
 	ctx := cmd.Context()
 
 	report, err := app.syncSvc.Compare(ctx, app.mtixDir)
-	if err != nil {
+	switch {
+	case err != nil && !fix:
 		return fmt.Errorf("compare: %w", err)
-	}
-
-	if app.jsonOutput {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "warning: compare: %v; rewriting tasks.json from the database\n", err)
+	case app.jsonOutput:
 		data, marshalErr := json.MarshalIndent(report, "", "  ")
 		if marshalErr != nil {
 			return fmt.Errorf("marshal report: %w", marshalErr)
 		}
 		fmt.Println(string(data))
-	} else {
+	default:
 		printSyncReport(report)
 	}
 
@@ -84,12 +94,13 @@ func runSync(cmd *cobra.Command, fix bool) error {
 	// InSync=true. This refreshes both sentinel hash files and the meta
 	// last_export_hash, clearing the conflict-detection warning that
 	// AutoImport otherwise emits when the sentinels are stale despite
-	// content being equivalent (MTIX-11).
+	// content being equivalent (MTIX-11). It rewrites tasks.json even while
+	// an auto-import of it is pending, resolving that refusal (MTIX-95.31.2).
 	if fix {
-		if exportErr := app.syncSvc.AutoExport(ctx, app.mtixDir); exportErr != nil {
+		if exportErr := app.syncSvc.ForceExport(ctx, app.mtixDir); exportErr != nil {
 			return fmt.Errorf("fix: %w", exportErr)
 		}
-		if report.InSync {
+		if report != nil && report.InSync {
 			fmt.Println("Sentinels refreshed: tasks.json re-exported from database.")
 		} else {
 			fmt.Println("Sync fixed: tasks.json updated from database.")
@@ -99,14 +110,58 @@ func runSync(cmd *cobra.Command, fix bool) error {
 	return nil
 }
 
+// printSyncReport prints the drift report and the auto-import state
+// (MTIX-95.31.2).
 func printSyncReport(report *service.SyncReport) {
-	if report.InSync {
+	printDrift(report)
+	printAutoImportState(report.AutoImport)
+}
+
+// printAutoImportState prints whether sync.auto_sync leaves auto-import on,
+// the value as configured, and the last auto-import mtix refused
+// (MTIX-95.31.2).
+func printAutoImportState(state service.AutoImportState) {
+	switch {
+	case state.SettingError != "":
+		fmt.Printf("Auto-import: enabled (sync.auto_sync: %q is neither true nor false, so the default applies; "+
+			"fix it with: mtix config set sync.auto_sync true|false)\n", state.Setting)
+	case state.Enabled:
+		fmt.Printf("Auto-import: enabled (sync.auto_sync: %s)\n", state.Setting)
+	default:
+		fmt.Printf("Auto-import: disabled (sync.auto_sync: %s): tasks.json is still exported, and a changed "+
+			"tasks.json is imported automatically only into a store that holds no tasks\n", state.Setting)
+	}
+	refusal := state.LastRefusal
+	if refusal == nil {
+		fmt.Println("Last auto-import refusal: none")
+		return
+	}
+	status := "no longer pending"
+	switch {
+	case refusal.Pending:
+		status = "pending"
+	case refusal.ResolvedAt != "":
+		status = "resolved " + refusal.ResolvedAt
+	}
+	fmt.Printf("Last auto-import refusal: %s (%s): %s\n", refusal.RefusedAt, status, refusal.Reason)
+}
+
+// printDrift prints whether the node ids of SQLite and tasks.json agree.
+// MTIX-95.31.4: never "In sync" while an auto-import of tasks.json is
+// pending, which the headline says, or while an id is held under different
+// uids, which it lists.
+func printDrift(report *service.SyncReport) {
+	refusal := report.AutoImport.LastRefusal
+	switch {
+	case refusal != nil && refusal.Pending:
+		fmt.Printf("OUT OF SYNC: tasks.json changed and has not been imported (the last auto-import refusal, below, is pending)\n")
+	case report.InSync:
 		fmt.Printf("In sync: %d nodes in both SQLite and tasks.json\n",
 			report.DBNodeCount)
 		return
+	default:
+		fmt.Printf("OUT OF SYNC\n")
 	}
-
-	fmt.Printf("OUT OF SYNC\n")
 	fmt.Printf("  SQLite:     %d nodes\n", report.DBNodeCount)
 	fmt.Printf("  tasks.json: %d nodes\n", report.FileNodeCount)
 
@@ -119,6 +174,12 @@ func printSyncReport(report *service.SyncReport) {
 	if len(report.OnlyInDB) > 0 {
 		fmt.Printf("  Only in SQLite (%d):\n", len(report.OnlyInDB))
 		for _, id := range report.OnlyInDB {
+			fmt.Printf("    - %s\n", id)
+		}
+	}
+	if len(report.DifferentUID) > 0 {
+		fmt.Printf("  Another uid in tasks.json (%d):\n", len(report.DifferentUID))
+		for _, id := range report.DifferentUID {
 			fmt.Printf("    - %s\n", id)
 		}
 	}

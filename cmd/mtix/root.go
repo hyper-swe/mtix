@@ -5,10 +5,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -203,8 +205,11 @@ func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error 
 
 	// Auto-import tasks.json if hash changed (FR-15.2).
 	// Skip for excluded commands per FR-15.2c.
-	if app.syncSvc != nil && app.mtixDir != "" && !shouldSkipAutoImport(cmd.Name()) {
-		if err := app.syncSvc.AutoImport(cmd.Context(), app.mtixDir); err != nil {
+	if app.syncSvc != nil && app.mtixDir != "" && !shouldSkipAutoImport(autoImportCommandPath(cmd)) {
+		// A refusal (MTIX-95.31.2) has already been printed by AutoImport,
+		// once for this command; logging it again would print it twice.
+		err := app.syncSvc.AutoImport(cmd.Context(), app.mtixDir)
+		if err != nil && !errors.Is(err, service.ErrAutoImportRefused) {
 			app.logger.Warn("auto-import failed", "error", err)
 		}
 	}
@@ -283,11 +288,20 @@ func initApp(_ *cobra.Command, logLevel string) error {
 	app.agentSvc = service.NewAgentService(app.store, broadcaster, app.configSvc, app.logger, clock)
 	app.sessionSvc = service.NewSessionService(app.store, app.configSvc, app.logger, clock)
 	app.bgSvc = service.NewBackgroundService(app.store, app.configSvc, app.logger, clock)
-	app.syncSvc = service.NewSyncService(app.store, app.logger, clock)
+	app.syncSvc = newSyncService(clock)
 	app.hooksDisp = service.NewHooksDispatcher(app.store, mtixDir, app.logger)
 	app.mtixDir = mtixDir
 
 	return nil
+}
+
+// newSyncService wires the tasks.json sync service (FR-15) for the opened
+// store, reading the sync.auto_sync switch from the project config
+// (MTIX-95.31.2).
+func newSyncService(clock func() time.Time) *service.SyncService {
+	svc := service.NewSyncService(app.store, app.logger, clock)
+	svc.SetAutoSyncConfig(app.configSvc)
+	return svc
 }
 
 // resolveProcessAuthor resolves this process's author identity (MTIX-24).
@@ -360,23 +374,43 @@ func findMtixDir() (string, error) {
 }
 
 // shouldSkipAutoImport returns true for commands that must not trigger
-// auto-import per FR-15.2c (avoids circular dependencies and init conflicts).
-func shouldSkipAutoImport(cmdName string) bool {
-	switch cmdName {
+// auto-import per FR-15.2c (avoids circular dependencies and init
+// conflicts). It matches the command path below the root (MTIX-95.31.2),
+// so "sync" is mtix sync itself, and a subcommand that shares a name, such
+// as mtix sync init, still auto-imports.
+func shouldSkipAutoImport(commandPath string) bool {
+	switch commandPath {
 	case "init", "export", "import", "help", "version", "migrate", "sync":
 		return true
 	}
 	return false
 }
 
+// autoImportCommandPath returns cmd's path below the root command, for
+// example "sync init" for mtix sync init (MTIX-95.31.2).
+func autoImportCommandPath(cmd *cobra.Command) string {
+	root := cmd.Root()
+	if root == cmd {
+		return cmd.Name()
+	}
+	return strings.TrimPrefix(cmd.CommandPath(), root.Name()+" ")
+}
+
 // withAutoExport wraps a command's RunE to always trigger auto-export after
 // execution, regardless of whether RunE returns an error. This is critical
 // because Cobra skips PersistentPostRunE when RunE errors — but the DB
 // mutation may have already committed. Per FR-15.3b, export failure must
-// not cause the primary command to fail.
+// not cause the primary command to fail. The one exception is an error the
+// command marked as raised before it wrote anything (nothingWrittenError,
+// MTIX-95.31.1): then the store is unchanged and the export is skipped, so
+// a refused command leaves .mtix/tasks.json and its hash as they were.
 func withAutoExport(fn func(cmd *cobra.Command, args []string) error) func(cmd *cobra.Command, args []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		runErr := fn(cmd, args)
+		var unchanged *nothingWrittenError
+		if errors.As(runErr, &unchanged) {
+			return runErr
+		}
 		if app.syncSvc != nil && app.mtixDir != "" {
 			if exportErr := app.syncSvc.AutoExport(cmd.Context(), app.mtixDir); exportErr != nil {
 				if app.logger != nil {

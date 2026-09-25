@@ -537,3 +537,81 @@ func TestConfig_ParseDuration_InvalidString_UsesFallback(t *testing.T) {
 	// Should fall back to default 30 days.
 	assert.Equal(t, 30*24*time.Hour, retention)
 }
+
+// TestConfig_AutoSyncSetting_SetAcceptsOnlyTrueOrFalse verifies config set
+// of sync.auto_sync (MTIX-95.31.2): true or false in any form
+// strconv.ParseBool reads is stored; anything else is rejected with
+// ErrInvalidInput and changes nothing. The default is on.
+func TestConfig_AutoSyncSetting_SetAcceptsOnlyTrueOrFalse(t *testing.T) {
+	cs, err := service.NewConfigService("")
+	require.NoError(t, err)
+	raw, on, err := cs.AutoSyncSetting()
+	require.NoError(t, err)
+	assert.Equal(t, "true", raw)
+	assert.True(t, on, "auto-import is on by default")
+
+	tests := []struct {
+		value   string
+		wantOn  bool
+		wantErr bool
+	}{
+		{"true", true, false},
+		{"TRUE", true, false},
+		{" true ", true, false},
+		{"1", true, false},
+		{"false", false, false},
+		{"False", false, false},
+		{"0", false, false},
+		{"yes", false, true},
+		{"on", false, true},
+		{"ture", false, true},
+		{"", false, true},
+	}
+	for _, tt := range tests {
+		t.Run("value "+tt.value, func(t *testing.T) {
+			dir := t.TempDir()
+			cs, err := service.NewConfigService("")
+			require.NoError(t, err)
+			require.NoError(t, cs.InitConfig(dir, "PROJ"))
+			_, err = cs.Set("sync.auto_sync", "false")
+			require.NoError(t, err)
+
+			_, err = cs.Set("sync.auto_sync", tt.value)
+			if tt.wantErr {
+				require.ErrorIs(t, err, model.ErrInvalidInput)
+				assert.Contains(t, err.Error(), "true or false")
+				raw, on, getErr := cs.AutoSyncSetting()
+				require.NoError(t, getErr)
+				assert.Equal(t, "false", raw, "a rejected value changes nothing")
+				assert.False(t, on)
+				reloaded, loadErr := service.NewConfigService(filepath.Join(dir, ".mtix", "config.yaml"))
+				require.NoError(t, loadErr)
+				raw, _, _ = reloaded.AutoSyncSetting()
+				assert.Equal(t, "false", raw, "nothing is written")
+				return
+			}
+			require.NoError(t, err)
+			_, on, getErr := cs.AutoSyncSetting()
+			require.NoError(t, getErr)
+			assert.Equal(t, tt.wantOn, on)
+		})
+	}
+}
+
+// TestConfig_AutoSyncSetting_UnreadableFileValue_DefaultsOn verifies a
+// value in .mtix/config.yaml that is neither true nor false (written by
+// hand) leaves auto-import on, the default, and reports why (MTIX-95.31.2).
+func TestConfig_AutoSyncSetting_UnreadableFileValue_DefaultsOn(t *testing.T) {
+	for _, value := range []string{"yes", "off", "ture"} {
+		t.Run(value, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			require.NoError(t, os.WriteFile(path, []byte("sync:\n  auto_sync: "+value+"\n"), 0o644))
+			cs, err := service.NewConfigService(path)
+			require.NoError(t, err)
+			raw, on, err := cs.AutoSyncSetting()
+			require.ErrorIs(t, err, model.ErrInvalidInput)
+			assert.Equal(t, value, raw)
+			assert.True(t, on, "the default applies")
+		})
+	}
+}

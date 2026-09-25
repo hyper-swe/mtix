@@ -27,8 +27,9 @@ machines is not a supported topology.
 1. Install mtix: `go install github.com/hyper-swe/mtix/cmd/mtix@latest`.
 2. Initialize the project from your repo root: `mtix init`. This creates
    `.mtix/data/mtix.db` and the documentation set.
-3. Verify `.mtix/data/` is **not** in `.gitignore`. SQLite is tracked
-   alongside the snapshot file so a fresh clone has a working store.
+3. Add `.mtix/data/` to `.gitignore`. It holds the local SQLite store,
+   its pre-import backups and other local sync state; the git-tracked
+   `.mtix/tasks.json` snapshot is what a fresh clone imports.
 4. Create your first task: `mtix create --title "Bootstrap the codebase"`.
 5. Optional: install the bundled Claude Code skills with
    `mtix plugin install claude-code` so your IDE agent picks them up.
@@ -47,6 +48,7 @@ machines is not a supported topology.
 | **Queue full** | N/A — sync queue is empty in solo mode | Not applicable to solo mode |
 | **Lost laptop** | The git-tracked `.mtix/tasks.json` is your only off-machine copy | Restore from a fresh clone via `mtix import` — see "Disaster recovery" below |
 | **Divergent history** | N/A — solo mode has only one source of events | Not applicable to solo mode |
+| **Auto-import refused** after a `git pull` or checkout (`mtix: auto-import of .mtix/tasks.json refused`) | The pulled `.mtix/tasks.json` lacks tasks, comments, activity, dependencies or field values this store holds (a stale snapshot, or one from mtix older than 0.5.4). Nothing is imported; the refusal repeats on every command, and writes stay in the store without rewriting the snapshot | Read the list, then run `mtix import .mtix/tasks.json --mode merge` (keeps local data; your field values win on unchanged tasks; a task listed as `a different task under this id` is renumbered to the next free number, applied only with `--confirm`), `mtix sync --fix` (keeps the store, rewrites the file) or `mtix import .mtix/tasks.json --mode replace` (the file wins). `mtix sync` shows the refusal |
 
 ---
 
@@ -77,7 +79,36 @@ Solo DR is git-driven and intentionally minimal:
 2. Run `mtix init` if `.mtix/data/mtix.db` is missing.
 3. Run `mtix import .mtix/tasks.json` to rebuild the SQLite store from
    the last committed snapshot.
-4. Verify with `mtix list --status open`.
+4. Verify with `mtix list --status open`, and `mtix show <id>` on a task
+   you know has comments.
+
+From mtix 0.5.4 the snapshot carries every field of every task, comments
+(annotations) and the activity stream included (`schema_version` 2.0.0),
+so the restore brings them back. A snapshot committed by an earlier
+version has no comments, and a restore from it has none either.
+
+Every machine that shares the snapshot must run 0.5.4 or later. An
+earlier version skips a 2.0.0 snapshot as newer than it supports, but its
+next writing command re-exports `.mtix/tasks.json` from its own store,
+without the comments and changes it skipped; committing that file reverts
+them. On an earlier version even an `mtix import` that fails rewrites
+`.mtix/tasks.json` the same way. Until every machine is upgraded, run no
+writing commands or `mtix import` on an older one and do not commit its
+`.mtix/tasks.json`. If one was committed, restore `.mtix/tasks.json` from
+the last good commit in git history, or restore the store from the backup
+taken before the import (`.mtix/data/backups/pre-sync-<time>.db`, the
+newest 5 kept; `.mtix/data/pre-sync-backup.db` on 0.5.3 and earlier). A
+0.5.4 store is protected by the auto-import guard: a snapshot that lacks
+comments, activity, tasks or field values the store holds is not
+imported, and nothing changes (see "Auto-import refused" above).
+
+Automatic import is on by default. `mtix config set sync.auto_sync false`
+turns it off (the setting is in the tracked `.mtix/config.yaml`, so every
+clone gets it, but an empty store, such as a fresh clone's, is always
+imported). Writes never overwrite a snapshot that changed on disk and was
+not imported: with the switch off, import a pulled snapshot yourself
+(`mtix import .mtix/tasks.json --mode merge`), or keep your board with
+`mtix sync --fix`.
 
 For richer DR (sync hub backup + immutable cold storage), see the
 [safety-critical workflow](safety-critical.md), which uses the BYO

@@ -6,8 +6,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -230,7 +232,8 @@ func newImportCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&f.recomputeChecksum, "recompute-checksum", false,
 		"Recovery only (MTIX-26.5): replace the file's checksum with one computed over its current content, accepting hand-reconstructed exports")
 	cmd.Flags().BoolVar(&f.confirm, "confirm", false,
-		"Confirm applying provisional renumbering to a non-empty live store (ADR-003 §6); without it such an import is reported but not applied")
+		"Confirm renumbering in a non-empty live store (ADR-003 \u00a76): incoming provisional nodes, and local tasks "+
+			"whose id the file gives to a different task; without it such an import is reported but not applied")
 	cmd.Flags().BoolVar(&f.forceRename, "force-rename", false,
 		"On an incoming uid that collides with a different local node, re-stamp the import node with a fresh local uid instead of rejecting (ADR-003 §6)")
 	cmd.Flags().StringVar(&f.remapFile, "remap-file", "",
@@ -241,32 +244,12 @@ func newImportCmd() *cobra.Command {
 
 func runImport(filePath string, f importFlags) error {
 	if app.store == nil {
-		return fmt.Errorf("not in an mtix project")
+		return nothingWritten(fmt.Errorf("not in an mtix project"))
 	}
 
-	// MTIX-2.3.1: stream-decode the export straight off the file via
-	// sqlite.DecodeExportData (json.Decoder) rather than os.ReadFile +
-	// json.Unmarshal, so a large export is not held as both raw bytes and a
-	// parsed tree at peak.
-	file, err := os.Open(filePath) //nolint:gosec // filePath is an operator-supplied import path
+	exportData, err := readImportFile(filePath, f)
 	if err != nil {
-		return fmt.Errorf("read import file %s: %w", filePath, err)
-	}
-	defer func() { _ = file.Close() }()
-
-	exportData, err := sqlite.DecodeExportData(file)
-	if err != nil {
-		return fmt.Errorf("parse import file: %w", err)
-	}
-
-	if f.recomputeChecksum {
-		// Recovery path: integrity now attests to the reconstructed
-		// content, not the original. Be loud about it.
-		fmt.Fprintln(os.Stderr,
-			"WARNING: --recompute-checksum replaces the file's integrity checksum; the import attests to the reconstructed content, not the original")
-		if recompErr := sqlite.RecomputeExportChecksum(exportData); recompErr != nil {
-			return fmt.Errorf("recompute checksum: %w", recompErr)
-		}
+		return nothingWritten(err)
 	}
 
 	ctx := context.Background()
@@ -278,23 +261,35 @@ func runImport(filePath string, f importFlags) error {
 		}
 	}
 
-	report, result, err := app.store.ImportReconcile(ctx, exportData, sqlite.ImportReconcileOptions{
-		Mode:        importMode,
-		Force:       f.force,
-		ForceRename: f.forceRename,
-		Confirm:     f.confirm,
-	})
+	report, result, err := app.store.ImportReconcile(ctx, exportData, importOptions(ctx, importMode, f))
 
 	// The report is loud whether or not the import applied (ADR-003 §6): always
 	// surface it, and persist the uid-keyed remap when one was produced.
 	if report != nil {
 		fmt.Fprint(os.Stderr, report.String())
 		if writeErr := writeRemapFile(f.remapFile, report); writeErr != nil {
+			if !report.Applied {
+				return nothingWritten(writeErr)
+			}
 			return writeErr
 		}
 	}
 	if err != nil {
-		return fmt.Errorf("import failed: %w", err)
+		// Every import error but ErrImportIncomplete leaves the store
+		// unchanged (MTIX-95.31.1), so the auto-export is skipped for it.
+		if errors.Is(err, sqlite.ErrImportIncomplete) {
+			return fmt.Errorf("import failed: %w", err)
+		}
+		return nothingWritten(fmt.Errorf("import failed: %w", err))
+	}
+
+	// An import of the tasks.json whose auto-import was refused resolves
+	// that refusal, so the auto-export after it rewrites the board
+	// (MTIX-95.31.2).
+	if app.syncSvc != nil && app.mtixDir != "" {
+		if resolveErr := app.syncSvc.ResolveRefusalByImport(app.mtixDir, filePath); resolveErr != nil {
+			fmt.Fprintf(os.Stderr, "warning: %v\n", resolveErr)
+		}
 	}
 
 	if app.jsonOutput {
@@ -308,16 +303,51 @@ func runImport(filePath string, f importFlags) error {
 	return nil
 }
 
+// importOptions returns the reconciliation options of an import. A merge
+// takes the verified pre-import backup the automatic import takes, once
+// every check has passed and just before it writes, and says where it is
+// (MTIX-95.31.4).
+func importOptions(ctx context.Context, mode sqlite.ImportMode, f importFlags) sqlite.ImportReconcileOptions {
+	opts := sqlite.ImportReconcileOptions{
+		Mode:        mode,
+		Force:       f.force,
+		ForceRename: f.forceRename,
+		Confirm:     f.confirm,
+	}
+	if mode == sqlite.ImportModeMerge && app.syncSvc != nil && app.mtixDir != "" {
+		opts.BeforeWrite = func() error {
+			backup, err := app.syncSvc.BackupBeforeImport(ctx, app.mtixDir)
+			if err != nil {
+				return err
+			}
+			if rel, relErr := filepath.Rel(filepath.Dir(app.mtixDir), backup); relErr == nil {
+				backup = rel
+			}
+			fmt.Fprintf(os.Stderr, "mtix: local database backed up to %s before the merge\n", backup)
+			return nil
+		}
+	}
+	return opts
+}
+
 // writeRemapFile persists the uid-keyed remap (uid -> new display_path) produced
 // by reconciliation to path, when path is non-empty and a remap exists
-// (ADR-003 §6 — the remap file external references reconcile against).
+// (ADR-003 §6 — the remap file external references reconcile against). It
+// holds the renumbered provisional nodes, the local tasks a merge renumbers
+// because the file holds a different task under their id, and the local
+// tasks it moves to the id the file holds them under (MTIX-95.31.4); a node
+// without a uid has no key and is left out.
 func writeRemapFile(path string, report *sqlite.ImportReconcileReport) error {
-	if path == "" || len(report.Remaps) == 0 {
+	moved := append(append(append([]sqlite.ImportRemapEntry{}, report.Remaps...), report.LocalRenumbers...),
+		report.Moved...)
+	if path == "" || len(moved) == 0 {
 		return nil
 	}
-	remap := make(map[string]string, len(report.Remaps))
-	for _, m := range report.Remaps {
-		remap[m.UID] = m.NewPath
+	remap := make(map[string]string, len(moved))
+	for _, m := range moved {
+		if m.UID != "" {
+			remap[m.UID] = m.NewPath
+		}
 	}
 	out, err := json.MarshalIndent(remap, "", "  ")
 	if err != nil {

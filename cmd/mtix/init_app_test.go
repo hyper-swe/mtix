@@ -196,6 +196,9 @@ func TestShouldSkipAutoImport_ExcludedCommands(t *testing.T) {
 		{"list does not skip", "list", false},
 		{"create does not skip", "create", false},
 		{"update does not skip", "update", false},
+		{"sync itself skips", "sync", true},
+		{"sync init does not skip", "sync init", false},
+		{"sync migrate does not skip", "sync migrate", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

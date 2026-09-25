@@ -46,12 +46,14 @@ func TestSyncCmd_AllSyncCommandsRegistered(t *testing.T) {
 		"repair-uids",
 		// MTIX-64.8: the FR-21 file relay transport's command group.
 		"relay",
+		// MTIX-95.6: ADR-006 §5.3 status repair from the local event log.
+		"repair",
 	}
 	for _, name := range expected {
 		require.Truef(t, subs[name], "%s subcommand registered", name)
 	}
 	require.Equal(t, len(expected), len(cmd.Commands()),
-		"exactly the FR-18 + ADR-003 §7 + §6.1 + FR-21 sync commands are registered (no extras)")
+		"exactly the FR-18 + ADR-003 §7 + §6.1 + FR-21 + ADR-006 §5.3 sync commands are registered (no extras)")
 }
 
 // TestSyncRelayCmd_AllVerbsRegistered gives the FR-21 group the same

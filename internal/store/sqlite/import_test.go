@@ -162,13 +162,25 @@ func TestImport_MergeMode_ContentHashComparison(t *testing.T) {
 	// Create dest store with one overlapping node (same hash) and one different.
 	destStore := newTestStore(t)
 	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Second)
+	// The same node as IMP-1 in the export: same content hash and the same
+	// creation time, hence the same "created" activity entry. Since the
+	// export carries the activity stream (MTIX-95.31.1), a node created a
+	// second later would hold a different entry, and the merge would add
+	// the incoming one and count the node as updated; reading the clock
+	// again here made this test fail whenever a second boundary fell
+	// between the two creations (seen under load).
+	now, err := time.Parse(time.RFC3339, exportData.Nodes[0].CreatedAt)
+	require.NoError(t, err)
+	require.Equal(t, "IMP-1", exportData.Nodes[0].ID)
 
-	// Same hash as IMP-1 in export — should be skipped.
+	// Same hash as IMP-1 in export — should be skipped. The same task, so
+	// it carries its uid (MTIX-95.31.4: another uid is a different task,
+	// which merge never overwrites).
 	require.NoError(t, destStore.CreateNode(ctx, &model.Node{
 		ID: "IMP-1", Project: "IMP", Depth: 0, Seq: 1, Title: "Import node 1",
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
-		NodeType: model.NodeTypeIssue, ContentHash: "h1", CreatedAt: now, UpdatedAt: now,
+		NodeType: model.NodeTypeIssue, ContentHash: "h1", UID: exportData.Nodes[0].UID,
+		CreatedAt: now, UpdatedAt: now,
 	}))
 
 	result, err := destStore.Import(ctx, exportData, sqlite.ImportModeMerge, false)
@@ -188,11 +200,13 @@ func TestImport_MergeMode_UpdatesDifferentHash(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	// Same ID as IMP-1 but different hash — should be updated.
+	// Same ID as IMP-1 but different hash — should be updated. The same
+	// task, so it carries its uid (MTIX-95.31.4).
+	require.Equal(t, "IMP-1", exportData.Nodes[0].ID)
 	require.NoError(t, destStore.CreateNode(ctx, &model.Node{
 		ID: "IMP-1", Project: "IMP", Depth: 0, Seq: 1, Title: "Old title",
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
-		NodeType: model.NodeTypeIssue, ContentHash: "different_hash",
+		NodeType: model.NodeTypeIssue, ContentHash: "different_hash", UID: exportData.Nodes[0].UID,
 		CreatedAt: now, UpdatedAt: now,
 	}))
 

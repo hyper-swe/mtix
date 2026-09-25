@@ -7,7 +7,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -88,8 +87,9 @@ import (
 //     moves the node out of deferred. Otherwise a wake time kept from an
 //     earlier deferral would wake a later one received through sync. A defer
 //     until outside UTC years 1..9999 is stored as NULL (storedDeferUntil).
-//     A future repair re-derivation from this table (MTIX-95.6) would clear
-//     a local wake time: the local defer's winning event carries none.
+//     Status repair (MTIX-95.6) re-derives from this table too, and there a
+//     winner that is this replica's own deferral keeps the stored wake time,
+//     which its event does not carry (resolveWorkflowWrite).
 //   - update_field on status, assignee or agent_state keeps its own per-field
 //     register and is not compared with workflow events.
 //   - closed_at on the originator. The originating store stamps its own
@@ -360,6 +360,7 @@ type workflowInput struct {
 	deferUntil  *time.Time   // defer payload; nil means none
 	wallClockTS int64        // the event envelope's wall_clock_ts, in ms
 	updatedAt   string       // the caller's updated_at value (apply time)
+	localWinner bool         // status repair only: this replica emitted the event (MTIX-95.6)
 }
 
 // workflowColumn is one resolved column write: write says whether the column
@@ -392,12 +393,21 @@ type workflowWrite struct {
 // sets the status column (and updated_at) alone, as apply did before
 // MTIX-95.10, instead of failing: a failed event fails its whole pull batch,
 // and the pull cursor never moves past it.
+//
+// Status repair (MTIX-95.6) resolves the same rows, and marks a winner this
+// replica emitted itself (localWinner; ingest never applies its own events,
+// MTIX-95.2). When that winner is a deferral, defer_until is kept: a local
+// defer stores its wake time beside an event that carries none (MTIX-95.22),
+// so the row's NULL would clear a wake time this replica set.
 func resolveWorkflowWrite(in workflowInput) (w workflowWrite, known bool) {
 	rule, ok := lookupWorkflowRule(in.op, in.from, in.to)
 	if !ok {
 		return workflowWrite{status: in.to, updatedAt: in.updatedAt}, false
 	}
-	until := storedDeferUntil(in.deferUntil)
+	deferUntil := resolveColumn(rule.deferUntil, storedDeferUntil(in.deferUntil))
+	if in.localWinner && rule.to == model.StatusDeferred {
+		deferUntil = workflowColumn{} // keep this replica's own wake time
+	}
 	return workflowWrite{
 		status:         rule.to,
 		updatedAt:      in.updatedAt,
@@ -406,7 +416,7 @@ func resolveWorkflowWrite(in workflowInput) (w workflowWrite, known bool) {
 		previousStatus: resolveColumn(rule.previousStatus, string(in.from)),
 		closedAt:       resolveColumn(rule.closedAt, closedAtFromWallClock(in.wallClockTS, in.updatedAt)),
 		progress:       resolveColumn(rule.progress, 1.0),
-		deferUntil:     resolveColumn(rule.deferUntil, until),
+		deferUntil:     deferUntil,
 	}, true
 }
 
@@ -439,60 +449,4 @@ func closedAtFromWallClock(ms int64, fallback string) string {
 		return fallback
 	}
 	return t.Format(time.RFC3339)
-}
-
-// writeWorkflowColumns writes a resolved table row onto node id (MTIX-95.10).
-// A soft-deleted or missing node matches no row and is left alone.
-func writeWorkflowColumns(ctx context.Context, tx *sql.Tx, id string, w workflowWrite) error {
-	// One fixed statement, every value bound: status and updated_at always;
-	// each other column only when the row writes it (the CASE keeps the
-	// stored value otherwise).
-	_, err := tx.ExecContext(ctx, `
-		UPDATE nodes SET
-		  status          = ?,
-		  updated_at      = ?,
-		  assignee        = CASE WHEN ? THEN ? ELSE assignee END,
-		  agent_state     = CASE WHEN ? THEN ? ELSE agent_state END,
-		  previous_status = CASE WHEN ? THEN ? ELSE previous_status END,
-		  closed_at       = CASE WHEN ? THEN ? ELSE closed_at END,
-		  progress        = CASE WHEN ? THEN ? ELSE progress END,
-		  defer_until     = CASE WHEN ? THEN ? ELSE defer_until END
-		WHERE id = ? AND deleted_at IS NULL`,
-		string(w.status), w.updatedAt,
-		w.assignee.write, w.assignee.value,
-		w.agentState.write, w.agentState.value,
-		w.previousStatus.write, w.previousStatus.value,
-		w.closedAt.write, w.closedAt.value,
-		w.progress.write, w.progress.value,
-		w.deferUntil.write, w.deferUntil.value,
-		id,
-	)
-	if err != nil {
-		return fmt.Errorf("write workflow columns of %s: %w", id, err)
-	}
-	return nil
-}
-
-// applyWorkflowWinner writes a winning workflow event's table row onto the
-// node the event addresses and returns that node's current id (MTIX-95.10).
-// applyTransitionStatus, applyClaim, applyUnclaim and applyDefer
-// (sync_apply.go) call it after decoding their payload, and are reached only
-// for an event that won (dispatchWithLWW). They pass the event's
-// wall_clock_ts, so a terminal closed_at is the same on every replica
-// whatever order the node's workflow events arrived in, and their apply time
-// as updated_at.
-func applyWorkflowWinner(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, in workflowInput) (string, error) {
-	id, err := resolveNodeRef(ctx, tx, e)
-	if err != nil {
-		return "", err
-	}
-	w, known := resolveWorkflowWrite(in)
-	if !known {
-		slog.Default().Warn("sync apply: unknown status in transition_status; wrote the status column only",
-			"event_id", e.EventID, "status", string(in.to))
-	}
-	if err := writeWorkflowColumns(ctx, tx, id, w); err != nil {
-		return "", fmt.Errorf("apply %s %s: %w", e.OpType, e.EventID, err)
-	}
-	return id, nil
 }

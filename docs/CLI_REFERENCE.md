@@ -638,7 +638,7 @@ Import nodes from JSON export
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--confirm` |  | Confirm applying provisional renumbering to a non-empty live store (ADR-003 §6); without it such an import is reported but not applied | false |
+| `--confirm` |  | Confirm renumbering in a non-empty live store (ADR-003 §6): incoming provisional nodes, and local tasks whose id the file gives to a different task; without it such an import is reported but not applied | false |
 | `--force` |  | Allow importing zero nodes into a non-empty database | false |
 | `--force-rename` |  | On an incoming uid that collides with a different local node, re-stamp the import node with a fresh local uid instead of rejecting (ADR-003 §6) | false |
 | `--mode` |  | Import mode: merge, or replace (DELETES every existing ticket first; typed confirmation required) | merge |
@@ -1120,7 +1120,9 @@ Check or fix sync between SQLite and tasks.json (FR-15)
 
 Without subcommand: compare the SQLite database with .mtix/tasks.json and
 report any drift. Use --fix to re-export the database to tasks.json,
-resolving any discrepancies.
+resolving any discrepancies. The report also shows whether the automatic
+import of a changed tasks.json is enabled (sync.auto_sync) and the last
+automatic import mtix refused, with its reason.
 
 With subcommand (FR-18 / MTIX-15): manage the BYO Postgres sync hub.
 See 'mtix sync init --help' and 'mtix sync clone --help'.
@@ -1147,6 +1149,7 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.
 - `push [DSN]` — Push pending events to the sync hub (FR-18)
 - `reconcile` — Resolve divergent history (FR-18.13)
 - `relay` — Manage the file-based sync relay (FR-21)
+- `repair` — Repair local state from the local sync event log (--status)
 - `repair-uids [DSN]` — Stamp hub create rows with their node uid (upgrade step for pre-MTIX-91 pushes)
 - `status` — Show local sync state (counts + sentinels)
 ---
@@ -1721,6 +1724,71 @@ One pass and exit — for peers that cannot host a daemon:
 a turn-driven agent seat, a cron-locked appliance, a courier laptop.
 Such a peer converges on its next tick; it is a deployment, not a
 degraded daemon.
+---
+
+## repair
+
+**Usage:** `repair`
+
+Repair local state from the local sync event log (--status)
+
+Re-derive state from this machine's local sync event log and list, or
+repair, every node whose stored state differs. --status is required; it is
+the only repair so far.
+
+--status re-derives each node's workflow state from its newest well-formed
+claim, unclaim, defer or status-change event, with the rule a pull
+applies. It compares status, assignee, agent_state, whether closed_at is
+set, and the progress of a node without children, to heal nodes that an
+older mtix left reverted when a pull replayed an older event. A node
+without such events is never listed or changed. State that a change
+outside the event log may have set is never repaired by --apply alone: a
+block while a blocker is unresolved and a node cancelled with an ancestor
+by cancel --cascade are left alone, and a difference only in the assignee
+or agent_state (mtix update --assignee leaves no trace) is flagged.
+
+Each listed node shows its winning event, when it was made, whether this
+machine or another machine made it, and a reason. A replay (the stored
+state is the row of an older event, as a replayed pull leaves it) and a
+derived fix (the status matches; closed_at or progress does not) are
+repaired by --apply. Anything else, for example newer state that arrived
+by importing .mtix/tasks.json, is FLAGGED "not a replay; review" and is
+repaired only with --apply --force, after review. Clocks that differ
+between machines can mislead the check both ways: a genuine replay can be
+flagged, and when this machine's clock is ahead, a teammate's newer state
+can look like a replay, which --apply would revert. Check each replay's
+winner time and origin before --apply.
+
+Run 'mtix sync pull' before listing, and again just before --apply. A
+repair event carries this machine's newest clock, so on a log that lacks a
+teammate's newer change it can win over that change (whenever this
+machine's Lamport clock is ahead of it), and every machine that pulls it
+then reverts the teammate's change. After pulling, list again and apply
+only what is still listed.
+
+Without --apply the command is a dry run: it lists the differences and
+writes nothing. When it lists differences, it ends with a reminder to pull
+first. --json prints them as JSON, with that reminder in a "reminder"
+field, which is omitted when there is no reminder.
+
+With --apply it first writes a verified backup of the database to
+.mtix/data/backups/pre-repair-status-<UTC time>.db, and stops if it cannot.
+Then it repairs each node in its own transaction: it writes the derived
+state, records an activity entry and recomputes the parent's progress.
+When the status changes it also emits one status-change event (reason
+"sync repair", stamped with the winning event's time, or with the current
+time if that is in the future), which other machines apply at their next
+pull and which fires status.changed hooks, and it unblocks dependents; a
+repair that leaves the status alone emits nothing. A second run lists
+nothing. Run 'mtix sync push' afterwards to send the events.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--apply` |  | Back up the database, then repair every listed node that is not flagged (default: dry run) | false |
+| `--force` |  | With --apply, also repair nodes flagged for review (not a replay) | false |
+| `--status` |  | Re-derive workflow state (status, assignee, agent_state, closed_at, leaf progress) from the local event log | false |
 ---
 
 ## repair-uids

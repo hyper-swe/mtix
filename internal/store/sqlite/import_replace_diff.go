@@ -187,8 +187,10 @@ func newReplaceIndex(local, file *ExportData) *replaceIndex {
 // task under l's id, or neither when the file lacks l (MTIX-95.31.4). The
 // file's node with l's uid is l's copy wherever it sits: another clone may
 // have renumbered the task, a move rather than a loss. Otherwise the node
-// under l's id is l's copy unless it is another local task (its uid is held
-// locally) or a different task (differentTask).
+// under l's id is l's copy unless it is a different task: another local
+// task, which a clone moved there (its uid is held locally), or one
+// differentTask tells apart. Either way a merge renumbers l, with
+// confirmation, so the refusal lists it as a different task.
 func (x *replaceIndex) match(l *exportNode) (same, different *exportNode) {
 	f := x.fileByID[l.ID]
 	if f != nil && l.UID != "" && f.UID == l.UID {
@@ -198,9 +200,9 @@ func (x *replaceIndex) match(l *exportNode) (same, different *exportNode) {
 		return moved, nil
 	}
 	switch {
-	case f == nil, f.UID != "" && x.localUIDs[f.UID]:
+	case f == nil:
 		return nil, nil
-	case differentTask(l, f):
+	case f.UID != "" && x.localUIDs[f.UID], differentTask(l, f):
 		return nil, f
 	}
 	return f, nil

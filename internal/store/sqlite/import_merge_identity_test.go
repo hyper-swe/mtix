@@ -1,12 +1,14 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
-// Round-2 tests for MTIX-95.31.4 (FR-15.2i, FR-7.8): a merge keeps a local
-// value that a stale copy of the node leaves empty; a local uid the file
-// holds under another id is the same task moved there, not a different
-// task; the same id with the same creation time is the same task even when
-// the uids differ (clones upgraded from before uids were shared); and the
-// numbering of renumbered local tasks. Written red-first against round 1.
+// Tests for MTIX-95.31.4 (FR-15.2i, FR-7.8), rounds 2 to 4: a merge keeps a
+// local value that a stale copy of the node leaves empty; a local uid the
+// file holds under another id is the same task moved there, not a different
+// task; two nodes under one id with different uids are the same task only
+// when their creation times are equal and one uid is a UUIDv7 minted more
+// than an hour after that time (a backfill when a clone upgraded from before
+// uids were shared), and different tasks otherwise; and the numbering of
+// renumbered local tasks. Written red-first against the round before each.
 package sqlite_test
 
 import (
@@ -128,6 +130,15 @@ func TestImportReconcile_MergeOfStaleCopy_KeepsFieldTheCopyBlanks(t *testing.T) 
 			assert.Equal(t, "Retitled by the teammate", n.Title)
 			assert.Equal(t, model.StatusDone, n.Status, "the status stays with the kept closed time")
 			assert.NotNil(t, n.ClosedAt)
+		}},
+		{"stale copy blanks a status field and a content field", func(t *testing.T, s *sqlite.Store) {
+			require.NoError(t, s.ClaimNode(context.Background(), "REC-1", "agent-a"))
+			describe(t, s)
+		}, retitle, false, func(t *testing.T, n *model.Node) {
+			assert.Equal(t, "Retitled by the teammate", n.Title)
+			assert.Equal(t, "Local description", n.Description)
+			assert.Equal(t, model.StatusInProgress, n.Status, "the whole local status stays")
+			assert.Equal(t, "agent-a", n.Assignee)
 		}},
 		{"stale copy defers a task claimed locally", func(t *testing.T, s *sqlite.Store) {
 			require.NoError(t, s.ClaimNode(context.Background(), "REC-1", "agent-a"))
@@ -253,19 +264,23 @@ func TestImportReconcile_UIDsSwappedBetweenIDs_MovesBoth(t *testing.T) {
 	}
 }
 
-// TestDiffReplace_SameIDOtherUID_ClassifiesByIdentity verifies when two
-// nodes under one id with different uids are one task: only with the same
-// creation time and a uid that was not minted when its task was created (a
-// uid a clone assigned when it upgraded from before uids were shared, or
-// one that is not a UUIDv7). Two tasks two clones created in the same
-// second, both uids minted then, are different tasks (MTIX-95.31.4).
+// TestDiffReplace_SameIDOtherUID_ClassifiesByIdentity verifies the rule
+// that decides whether two nodes under one id with different uids are one
+// task (MTIX-95.31.4, round 4). Calling two tasks different is safe (a
+// merge renumbers one, with confirmation); calling them the same loses one.
+// So they are the same task only when their creation times are equal and
+// one uid is a UUIDv7 minted more than an hour after that time: a uid a
+// clone assigned when it upgraded from before uids were shared. A uid
+// minted before the creation time (a node a hub applied, created_at being
+// the apply time), within the hour after it (a create that waited for the
+// write lock), or that is not a UUIDv7, leaves them different tasks.
 func TestDiffReplace_SameIDOtherUID_ClassifiesByIdentity(t *testing.T) {
 	minted := func(offset time.Duration) func(t *testing.T) string {
 		return func(t *testing.T) string { return uidMintedAt(t, sameIDTime.Add(offset)) }
 	}
 	notUUID := func(*testing.T) string { return "01J9NOTAUUIDV70000000000001" }
-	v4AtCreation := func(t *testing.T) string { // creation time in its first bits, but version 4
-		u := uuid.MustParse(taskUID(t))
+	v4Late := func(t *testing.T) string { // minted a month late, but version 4
+		u := uuid.MustParse(backfilledUID(t))
 		u[6] = u[6]&0x0f | 0x40
 		return u.String()
 	}
@@ -277,18 +292,19 @@ func TestDiffReplace_SameIDOtherUID_ClassifiesByIdentity(t *testing.T) {
 		different     bool
 	}{
 		{"both minted at creation in the same second", taskUID, taskUID, "", true},
+		{"a create that waited 3 s for the write lock", taskUID, minted(3 * time.Second), "", true},
+		{"minted 59 minutes after creation", taskUID, minted(59 * time.Minute), "", true},
+		{"minted exactly one hour after creation", taskUID, minted(time.Hour), "", true},
+		{"a node a hub applied: minted before its creation time", taskUID, minted(-10 * time.Minute), "", true},
+		{"file uid not a UUID", taskUID, notUUID, "", true},
+		{"file uid a UUIDv4 with a late time in its first bits", taskUID, v4Late, "", true},
 		{"file uid backfilled", taskUID, backfilledUID, "", false},
 		{"local uid backfilled", backfilledUID, taskUID, "", false},
 		{"both backfilled", backfilledUID, backfilledUID, "", false},
-		{"file uid not a UUID", taskUID, notUUID, "", false},
-		{"file uid a UUIDv4 with the creation time in its first bits", taskUID, v4AtCreation, "", false},
+		{"minted one hour and one second after creation", taskUID, minted(time.Hour + time.Second), "", false},
 		{"backfilled uid, other creation time", taskUID, backfilledUID, "2026-09-24T09:00:00Z", true},
-		{"minted at creation, other creation times", taskUID, minted(time.Hour), "2026-09-24T09:00:00Z", true},
-		{"minted 1 s before creation counts as at creation", taskUID, minted(-time.Second), "", true},
-		{"minted 2 s after creation counts as at creation", taskUID, minted(2 * time.Second), "", true},
-		{"minted 1.1 s before creation is backfilled", taskUID, minted(-1100 * time.Millisecond), "", false},
-		{"minted 2.1 s after creation is backfilled", taskUID, minted(2100 * time.Millisecond), "", false},
 		{"file without a creation time", taskUID, backfilledUID, "none", true},
+		{"creation times that cannot be read", taskUID, backfilledUID, "unreadable", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -301,6 +317,8 @@ func TestDiffReplace_SameIDOtherUID_ClassifiesByIdentity(t *testing.T) {
 			case "":
 			case "none":
 				file.Nodes[0].CreatedAt = ""
+			case "unreadable": // the same text on both sides, but not a time
+				file.Nodes[0].CreatedAt, localData.Nodes[0].CreatedAt = "not-a-time", "not-a-time"
 			default:
 				file.Nodes[0].CreatedAt = tt.fileCreatedAt
 			}
@@ -657,14 +675,16 @@ func TestImportReconcile_MovedParentsChildCollides_RenumberedAfterSiblings(t *te
 	}, report.Moved)
 }
 
-// TestDiffReplace_FileGivesIDToAnotherLocalTask_LocalTaskIsRemoved verifies
-// a local task whose id the file gives to another local task (which the
-// file moved there), and which the file lacks, is a whole-node loss, not a
-// different task under the id.
-func TestDiffReplace_FileGivesIDToAnotherLocalTask_LocalTaskIsRemoved(t *testing.T) {
+// TestDiffReplace_FileGivesIDToAnotherLocalTask_ListedAsDifferentTask
+// verifies a local task whose id the file gives to another local task (a
+// clone moved it there), and which the file lacks, is listed as a different
+// task under its id, so the refusal says the merge renumbers it; the moved
+// task is not a loss. Both carry backfilled uids with one creation time, so
+// only the move tells them apart.
+func TestDiffReplace_FileGivesIDToAnotherLocalTask_ListedAsDifferentTask(t *testing.T) {
 	local := newTestStore(t)
-	createSameIDTask(t, local, "REC-1", "", 1, taskUID(t), "Dropped task")
-	kept := createSameIDTask(t, local, "REC-2", "", 2, taskUID(t), "Kept task")
+	createSameIDTask(t, local, "REC-1", "", 1, backfilledUID(t), "Dropped task")
+	kept := createSameIDTask(t, local, "REC-2", "", 2, backfilledUID(t), "Kept task")
 	file := exportOf(t, local)
 	file.Nodes = file.Nodes[1:]
 	file.Nodes[0].ID, file.Nodes[0].Seq = "REC-1", 1
@@ -674,7 +694,34 @@ func TestDiffReplace_FileGivesIDToAnotherLocalTask_LocalTaskIsRemoved(t *testing
 	require.NoError(t, err)
 	loss := lossOf(diff, "REC-1")
 	require.NotNil(t, loss)
-	assert.True(t, loss.WholeNode)
-	assert.False(t, loss.DifferentTask)
+	assert.True(t, loss.DifferentTask)
+	assert.Equal(t, "Dropped task", loss.LocalTitle)
+	assert.Equal(t, "Kept task", loss.FileTitle)
 	assert.Nil(t, lossOf(diff, "REC-2"), "the kept task only moved")
+}
+
+// TestImportReconcile_WriteAfterTheDryRun_WritesNothing verifies a write
+// committed between the merge's dry run and its write (here from the step
+// run before it writes) makes the merge write nothing: the dry run's
+// checksum of the store is re-checked inside the write's transaction, so
+// the write survives and the error says the store changed.
+func TestImportReconcile_WriteAfterTheDryRun_WritesNothing(t *testing.T) {
+	ctx := context.Background()
+	local := newTestStore(t)
+	createSameIDTask(t, local, "REC-1", "", 1, taskUID(t), "Local title")
+	file := exportOf(t, local)
+	file.Nodes[0].Title, file.Nodes[0].ContentHash = "File title", "h-File title"
+	require.NoError(t, sqlite.RecomputeExportChecksum(file))
+	concurrent := "Written after the dry run"
+
+	_, _, err := local.ImportReconcile(ctx, file, sqlite.ImportReconcileOptions{
+		Mode: sqlite.ImportModeMerge,
+		BeforeWrite: func() error {
+			return local.UpdateNode(ctx, "REC-1", &store.NodeUpdate{Title: &concurrent})
+		},
+	})
+	require.ErrorIs(t, err, sqlite.ErrStoreChangedSinceCheck)
+	node, err := local.GetNode(ctx, "REC-1")
+	require.NoError(t, err)
+	assert.Equal(t, concurrent, node.Title, "the concurrent write survives; nothing was imported")
 }

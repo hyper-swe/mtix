@@ -47,30 +47,35 @@ func differentTask(local, in *exportNode) bool {
 }
 
 // differentIdentity reports whether a and b, which hold the same id, are
-// different tasks (MTIX-95.31.4). Nodes that both carry a uid, with
-// different uids, are one task only when their creation times are the same
-// and at least one uid was not minted when its task was created
-// (mintedAtCreation): a uid a clone assigned when it upgraded from before
-// uids were shared (BackfillUIDs step 2), long after the task was created.
-// A merge then adopts the file's uid. Two tasks two clones created in the
-// same second both carry uids minted then, so they stay different tasks,
-// as do nodes whose creation times differ or are missing. A node without a
-// uid has no identity to compare.
+// different tasks (MTIX-95.31.4). Calling two tasks different is safe (a
+// merge renumbers one, only with confirmation); calling two tasks the same
+// loses one. So nodes that both carry a uid, with different uids, are one
+// task only when their creation times are equal and at least one uid is a
+// UUIDv7 minted more than an hour after that time (backfilledLater): a uid a
+// clone assigned when it upgraded from before uids were shared
+// (BackfillUIDs step 2). A merge then adopts the file's uid. Every other
+// pair is two tasks: a uid minted before created_at (a node a hub applied
+// records the apply time), within the hour after it (a create that waited
+// for the write lock), or not a UUIDv7, and creation times that differ or
+// are missing. A node without a uid has no identity to compare.
 func differentIdentity(a, b taskIdentity) bool {
 	if a.uid == "" || b.uid == "" || a.uid == b.uid {
 		return false
 	}
 	sameCreate := a.createdAt != "" && b.createdAt != "" && sameInstant(a.createdAt, b.createdAt)
-	backfilled := !mintedAtCreation(a.uid, a.createdAt) || !mintedAtCreation(b.uid, b.createdAt)
-	return !sameCreate || !backfilled
+	return !sameCreate || (!backfilledLater(a.uid, a.createdAt) && !backfilledLater(b.uid, b.createdAt))
 }
 
-// mintedAtCreation reports whether uid is the uid CreateNode minted when the
-// task was created at createdAt (MTIX-95.31.4): a UUIDv7 whose embedded
-// time lies within [createdAt - 1 s, createdAt + 2 s], allowing for
-// created_at's one-second resolution. Any other uid (not a UUIDv7, or
-// minted at another time) was assigned later, by a backfill.
-func mintedAtCreation(uid, createdAt string) bool {
+// backfillAge is how long after a task's creation its uid must have been
+// minted to count as a backfill (MTIX-95.31.4): far longer than any wait
+// between reading the clock and minting the uid at creation.
+const backfillAge = time.Hour
+
+// backfilledLater reports whether uid is a UUIDv7 whose embedded time is
+// more than backfillAge after createdAt: a uid assigned long after the task
+// was created (MTIX-95.31.4). A uid that is not a UUIDv7, or a creation
+// time that cannot be read, is not.
+func backfilledLater(uid, createdAt string) bool {
 	u, err := uuid.Parse(uid)
 	if err != nil || u.Version() != 7 {
 		return false
@@ -80,7 +85,7 @@ func mintedAtCreation(uid, createdAt string) bool {
 		return false
 	}
 	minted := time.UnixMilli(int64(binary.BigEndian.Uint64(u[:8]) >> 16)) //nolint:gosec // 48-bit ms field
-	return !minted.Before(created.Add(-time.Second)) && !minted.After(created.Add(2*time.Second))
+	return minted.After(created.Add(backfillAge))
 }
 
 // sameInstant reports whether two RFC 3339 times are the same instant, or,

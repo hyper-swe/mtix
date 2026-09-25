@@ -34,6 +34,14 @@ import (
 // this way share a creation second, as parallel agents' tasks do.
 func createLocalTask(t *testing.T, f *guardFixture, title string) *model.Node {
 	t.Helper()
+	return createLocalTaskUIDLag(t, f, title, 0)
+}
+
+// createLocalTaskUIDLag creates a task as createLocalTask does, with a uid
+// minted lag after its creation time, as a create that waited for the
+// write lock after reading the clock mints it.
+func createLocalTaskUIDLag(t *testing.T, f *guardFixture, title string, lag time.Duration) *model.Node {
+	t.Helper()
 	ctx := context.Background()
 	seq, err := f.store.NextSequence(ctx, "PROJ:")
 	require.NoError(t, err)
@@ -42,7 +50,7 @@ func createLocalTask(t *testing.T, f *guardFixture, title string) *model.Node {
 	require.NoError(t, f.store.CreateNode(ctx, &model.Node{
 		ID: id, Project: "PROJ", Depth: 0, Seq: seq, Title: title, Description: "Why: " + title,
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
-		NodeType: model.NodeTypeEpic, ContentHash: "h-" + title, UID: uidMintedAt(t, now),
+		NodeType: model.NodeTypeEpic, ContentHash: "h-" + title, UID: uidMintedAt(t, now.Add(lag)),
 		CreatedAt: now, UpdatedAt: now,
 	}))
 	require.NoError(t, f.store.SetAnnotations(ctx, id, []model.Annotation{{
@@ -190,4 +198,50 @@ func TestAutoImport_TaskCreatedWhileRefusalPending_RenumberedByMerge(t *testing.
 	annotated, err := a.store.GetNode(ctx, "PROJ-2")
 	require.NoError(t, err)
 	assert.Equal(t, []model.Annotation{evidence}, annotated.Annotations, "the merge keeps the local annotation")
+}
+
+// TestAutoImport_SameSecondCreateAfterLockWait_DifferentTask verifies two
+// tasks created under one id in the same second stay different tasks when
+// one create waited 3 s for the write lock before it minted its uid (an
+// MCP create while another command wrote): the refusal names a different
+// task, and the merge renumbers only with confirmation (MTIX-95.31.4).
+func TestAutoImport_SameSecondCreateAfterLockWait_DifferentTask(t *testing.T) {
+	ctx := context.Background()
+	pair := clones(t, newGuardFixture(t), 2)
+	a, b := pair[0], pair[1]
+	mine := createLocalTaskUIDLag(t, a, "A's task", 3*time.Second)
+	createLocalTask(t, b, "B's task")
+	require.NoError(t, a.svc.AutoExport(ctx, a.mtixDir))
+	require.NoError(t, b.svc.AutoExport(ctx, b.mtixDir))
+	shareBoard(t, b, a)
+
+	require.ErrorIs(t, a.svc.AutoImport(ctx, a.mtixDir), service.ErrAutoImportRefused)
+	assert.Contains(t, a.notices.String(), `PROJ-3: a different task under this id (local "A's task", file "B's task")`)
+	_, _, err := a.store.ImportReconcile(ctx, a.pulledBoard(t), sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge})
+	require.ErrorIs(t, err, sqlite.ErrImportConfirmationRequired)
+	_, _, err = a.store.ImportReconcile(ctx, a.pulledBoard(t), sqlite.ImportReconcileOptions{
+		Mode: sqlite.ImportModeMerge, Confirm: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, mine.UID, uidAt(t, a, "PROJ-4"), "A's task is renumbered, not overwritten")
+}
+
+// TestAutoImport_BoardGivesIDToAnotherLocalTask_RefusalNamesRenumber
+// verifies the refusal for a local task whose id the board gives to another
+// local task (a clone moved it there) lists it as a different task and
+// says the merge renumbers it with --confirm (MTIX-95.31.4).
+func TestAutoImport_BoardGivesIDToAnotherLocalTask_RefusalNamesRenumber(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) {
+		d.Nodes = append(d.Nodes[:0:0], d.Nodes[nodeIndex(t, d, "PROJ-2")])
+		d.Nodes[0].ID, d.Nodes[0].Seq = "PROJ-1", 1
+		d.NodeCount = 1
+	}))
+
+	require.ErrorIs(t, f.svc.AutoImport(ctx, f.mtixDir), service.ErrAutoImportRefused)
+	msg := f.notices.String()
+	assert.Contains(t, msg, `PROJ-1: a different task under this id (local "Task PROJ-1", file "Task PROJ-2")`)
+	assert.Contains(t, msg, "renumbered to the next number free")
+	assert.Contains(t, msg, "--confirm")
 }

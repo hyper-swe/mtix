@@ -77,16 +77,7 @@ func (s *Store) verifyStoreUnchanged(ctx context.Context, tx *sql.Tx, cfg import
 	if !cfg.checkStore {
 		return nil
 	}
-	nodes, err := s.exportNodes(ctx, tx)
-	if err != nil {
-		return fmt.Errorf("re-check the store before the import: %w", err)
-	}
-	deps, err := s.exportDependencies(ctx, tx)
-	if err != nil {
-		return fmt.Errorf("re-check the store before the import: %w", err)
-	}
-	sortForChecksum(nodes, deps)
-	current, err := computeExportChecksum(nodes, deps)
+	current, err := s.storeChecksumTx(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("re-check the store before the import: %w", err)
 	}
@@ -94,6 +85,21 @@ func (s *Store) verifyStoreUnchanged(ctx context.Context, tx *sql.Tx, cfg import
 		return fmt.Errorf("nothing was imported: %w", ErrStoreChangedSinceCheck)
 	}
 	return nil
+}
+
+// storeChecksumTx returns the export checksum of the store's nodes and
+// dependencies, read through tx and computed exactly as Export computes it.
+func (s *Store) storeChecksumTx(ctx context.Context, tx *sql.Tx) (string, error) {
+	nodes, err := s.exportNodes(ctx, tx)
+	if err != nil {
+		return "", err
+	}
+	deps, err := s.exportDependencies(ctx, tx)
+	if err != nil {
+		return "", err
+	}
+	sortForChecksum(nodes, deps)
+	return computeExportChecksum(nodes, deps)
 }
 
 // refuseEmptyImport rejects importing zero nodes into a non-empty database
@@ -113,16 +119,24 @@ func (s *Store) refuseEmptyImport(ctx context.Context, data *ExportData, force b
 
 // countImportChanges runs the import in a transaction it rolls back, and
 // returns how many rows it would insert, update or delete (SQLite's
-// total_changes over the transaction; MTIX-95.31.4). It works on a copy of
-// the file's node list, because writing a node normalizes its node_type,
-// and the real import must still verify the file's checksum.
+// total_changes over the transaction; MTIX-95.31.4), and the store's export
+// checksum read at the start of that transaction: the real import passes it
+// to IfStoreUnchanged, so a write committed between the two makes the
+// import write nothing. It works on a copy of the file's node list, because
+// writing a node normalizes its node_type, and the real import must still
+// verify the file's checksum.
 func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode ImportMode,
-	moves []localRenumber) (int64, error) {
+	moves []localRenumber) (int64, string, error) {
 	dry := *data
 	dry.Nodes = append([]exportNode(nil), data.Nodes...)
 	var changes int64
+	var checksum string
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
 		var before, after int64
+		var sumErr error
+		if checksum, sumErr = s.storeChecksumTx(ctx, tx); sumErr != nil {
+			return fmt.Errorf("read the store before the import: %w", sumErr)
+		}
 		// Rows this connection has changed so far.
 		if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&before); err != nil {
 			return fmt.Errorf("count the import's changes: %w", err)
@@ -147,7 +161,7 @@ func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode I
 		return errDryRun
 	})
 	if !errors.Is(err, errDryRun) {
-		return 0, err
+		return 0, "", err
 	}
-	return changes, nil
+	return changes, checksum, nil
 }

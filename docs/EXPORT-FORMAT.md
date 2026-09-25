@@ -166,10 +166,11 @@ them:
 - an activity entry (by the merge key: id, type, author, text and time);
 - a dependency (from, to, type);
 - the whole local node, when the file gives its id to a different task:
-  both carry a `uid` and the uids differ, unless `created_at` is equal and
-  one uid was assigned after creation (not a UUIDv7 whose time lies within
-  two seconds of `created_at`: a clone's backfill); listed as "a
-  different task under this id", with both titles. A local node whose `uid` the file holds under
+  both carry a `uid` and the uids differ (they are one task only when
+  `created_at` is equal and one uid is a UUIDv7 minted more than an hour
+  after it, a clone's backfill), or the file gives the id to another local
+  task, moved there; listed as "a different task under this id", with
+  both titles. A local node whose `uid` the file holds under
   another id is the same task, renumbered by another clone: it is compared
   with that copy, not lost.
 

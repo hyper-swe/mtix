@@ -41,31 +41,39 @@ func rejectConflicts(report *ImportReconcileReport) error {
 // count, checksum and times, and the zero-node guard), then a dry run of
 // the import (countImportChanges), and runs BeforeWrite only when the
 // import will change something (MTIX-95.31.4). So a file that would be
-// refused, and an import that changes nothing, cost no backup.
+// refused, and an import that changes nothing, cost no backup. It returns
+// the import options the write takes: after a dry run, IfStoreUnchanged
+// with the checksum the dry run read, so a write committed after the dry
+// run (or by BeforeWrite) makes the import write nothing.
 func (s *Store) prepareWrite(ctx context.Context, data *ExportData, opts ImportReconcileOptions,
-	report *ImportReconcileReport, moves []localRenumber) error {
+	report *ImportReconcileReport, moves []localRenumber) ([]ImportOption, error) {
 	if len(report.Remaps) > 0 || len(report.Renamed) > 0 {
 		if err := RecomputeExportChecksum(data); err != nil {
-			return fmt.Errorf("recompute checksum after reconcile: %w", err)
+			return nil, fmt.Errorf("recompute checksum after reconcile: %w", err)
 		}
 	}
+	writeOpts := []ImportOption{renumberLocalFirst(moves)}
 	if opts.BeforeWrite == nil {
-		return nil
+		return writeOpts, nil
 	}
 	if err := ValidateExport(data); err != nil {
-		return err
+		return nil, err
 	}
 	if err := s.refuseEmptyImport(ctx, data, opts.Force); err != nil {
-		return err
+		return nil, err
 	}
-	changes, err := s.countImportChanges(ctx, data, opts.Mode, moves)
-	if err != nil || changes == 0 {
-		return err
+	changes, checksum, err := s.countImportChanges(ctx, data, opts.Mode, moves)
+	if err != nil {
+		return nil, err
+	}
+	writeOpts = append(writeOpts, IfStoreUnchanged(checksum))
+	if changes == 0 {
+		return writeOpts, nil
 	}
 	if err := opts.BeforeWrite(); err != nil {
-		return fmt.Errorf("before the import writes: %w", err)
+		return nil, fmt.Errorf("before the import writes: %w", err)
 	}
-	return nil
+	return writeOpts, nil
 }
 
 // requireConfirmation returns ErrImportConfirmationRequired, before

@@ -246,13 +246,15 @@ func (s *Store) ImportReconcile(
 	// over the rewritten content before the integrity-checked apply: the import
 	// attests to what is actually being written (ADR-003 §6). Then run the
 	// caller's step before any write, once every check passed (MTIX-95.31.4).
-	if err := s.prepareWrite(ctx, data, opts, report, moves); err != nil {
+	writeOpts, err := s.prepareWrite(ctx, data, opts, report, moves)
+	if err != nil {
 		return report, nil, err
 	}
 
 	// Step 6: apply the (validated, rewritten) import via the existing
-	// path, which first moves the planned local tasks (MTIX-95.31.4).
-	result, err := s.Import(ctx, data, opts.Mode, opts.Force, renumberLocalFirst(moves))
+	// path, which first moves the planned local tasks and, after a dry run,
+	// re-checks the store it read (MTIX-95.31.4).
+	result, err := s.Import(ctx, data, opts.Mode, opts.Force, writeOpts...)
 	if err != nil {
 		return report, nil, err
 	}

@@ -1,0 +1,97 @@
+// Copyright 2025-2026 HyperSWE
+// SPDX-License-Identifier: Apache-2.0
+
+package docs
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// TestPluginInstaller_AdminSkill_MatchesPluginMirror: the admin skill in
+// .claude-plugin/skills is byte-identical to the admin skill template
+// rendered for this repository's prefix (MTIX), so the plugin ships what
+// the template says (MTIX-95.1.4).
+func TestPluginInstaller_AdminSkill_MatchesPluginMirror(t *testing.T) {
+	data := minimalTemplateData()
+	data.ProjectPrefix = "MTIX"
+	dir := t.TempDir()
+	_, err := NewPluginInstaller(dir, data, nil).Install("claude-code", false)
+	require.NoError(t, err)
+	rendered, err := os.ReadFile(filepath.Join(dir, ".claude", "skills", "mtix-admin.md")) //nolint:gosec // path from t.TempDir()
+	require.NoError(t, err)
+	mirror, err := os.ReadFile(filepath.Join("..", "..", ".claude-plugin", "skills", "mtix-admin.md"))
+	require.NoError(t, err)
+	require.Equal(t, string(rendered), string(mirror), ".claude-plugin/skills/mtix-admin.md matches the rendered template")
+}
+
+// TestPluginInstaller_AdminSkill_StatesHubPrivilegeCoverage: the rendered
+// admin skill states when strict mode fails, what superuser_membership
+// covers, that the REPLICATION role attribute is outside the check, and
+// the missing schema USAGE cause of a backup that finds no hub table
+// (MTIX-95.1.4).
+func TestPluginInstaller_AdminSkill_StatesHubPrivilegeCoverage(t *testing.T) {
+	dir := t.TempDir()
+	_, err := NewPluginInstaller(dir, minimalTemplateData(), nil).Install("claude-code", false)
+	require.NoError(t, err)
+	body, err := os.ReadFile(filepath.Join(dir, ".claude", "skills", "mtix-admin.md")) //nolint:gosec // path from t.TempDir()
+	require.NoError(t, err)
+	skill := string(body)
+	for _, phrase := range []string{
+		"Setting it turns on strict mode for the doctor's `hub-privileges` check, which then fails whenever " +
+			"`mtix sync harden` would report a finding, or when the check cannot run",
+		"(its `hub-privileges` check then fails, instead of warning, whenever `mtix sync harden` would report a " +
+			"finding, or when the check cannot run)",
+		"`superuser_membership` (a role that can SET ROLE to a superuser, or that holds ADMIN OPTION on a role that can)",
+		"The REPLICATION role attribute is outside the check too: a role that has it is checked for its privileges " +
+			"and memberships like any other role, but not for the attribute.",
+		"If the DSN's role lacks USAGE on the hub's schema, which leaves that schema off its search_path, run the " +
+			"GRANT statements the backup prints: the schema's owner grants USAGE on the schema (",
+		"and the table owner grants SELECT on each sync table and sync-table sequence by name",
+	} {
+		require.Contains(t, skill, phrase)
+	}
+	require.NotContains(t, skill, "when any other role can use the sync tables", "the narrower strict-mode description is gone")
+	require.NotContains(t, skill, "ALL TABLES IN SCHEMA", "the grant names each sync table")
+}
+
+// markRestoredSentence is the one sentence every document uses for what the
+// least-privilege list means for mtix sync mark-restored (MTIX-95.1.4).
+const markRestoredSentence = "A syncing role set up with the least-privilege list holds no UPDATE on " +
+	"`sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs as the table owner."
+
+// leastPrivilegePointer says where the least-privilege list is.
+const leastPrivilegePointer = "The least-privilege list is in step 2 of the small-team workflow " +
+	"(`.mtix/docs/workflows/small-team.md`) and in `docs/SECURITY-MODEL.md`."
+
+// TestDocs_MarkRestoredSentence_SameInEveryCopy: the user manual, the
+// admin skill (rendered, and its plugin mirrors), the small-team workflow
+// and the security model state the same mark-restored sentence, and the
+// user manual and the admin skill say where the least-privilege list is
+// (MTIX-95.1.4).
+func TestDocs_MarkRestoredSentence_SameInEveryCopy(t *testing.T) {
+	dir := t.TempDir()
+	_, err := NewPluginInstaller(dir, minimalTemplateData(), nil).Install("claude-code", false)
+	require.NoError(t, err)
+	docs := map[string]string{"rendered admin skill": filepath.Join(dir, ".claude", "skills", "mtix-admin.md")}
+	for _, rel := range []string{"USERMANUAL.md", ".claude-plugin/skills/mtix-admin.md",
+		".codex-plugin/skills/admin/SKILL.md", "internal/docs/templates/workflows/small-team.md.tmpl",
+		"docs/SECURITY-MODEL.md"} {
+		docs[rel] = filepath.Join(append([]string{"..", ".."}, strings.Split(rel, "/")...)...)
+	}
+	pointed := map[string]bool{"rendered admin skill": true, "USERMANUAL.md": true,
+		".claude-plugin/skills/mtix-admin.md": true, ".codex-plugin/skills/admin/SKILL.md": true}
+	for name, path := range docs {
+		body, err := os.ReadFile(path) //nolint:gosec // repository and t.TempDir() paths
+		require.NoError(t, err)
+		text := strings.Join(strings.Fields(string(body)), " ")
+		require.Containsf(t, text, markRestoredSentence, "%s states the mark-restored sentence", name)
+		if pointed[name] {
+			require.Containsf(t, text, leastPrivilegePointer, "%s says where the list is", name)
+		}
+	}
+}

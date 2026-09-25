@@ -220,7 +220,9 @@ func TestPrintHardenScope_Caller_StatesWhetherChecked(t *testing.T) {
 
 // TestPrintHardenResult_Apply_KeepRolesHintNamesStrictMode: the config
 // command harden offers also turns on strict mode for mtix sync doctor, and
-// the report says so (MTIX-95.1).
+// the report says so and when strict mode fails: whenever mtix sync harden
+// would report a finding, or when the check cannot run (MTIX-95.1,
+// MTIX-95.1.4).
 func TestPrintHardenResult_Apply_KeepRolesHintNamesStrictMode(t *testing.T) {
 	saveAndResetApp(t)
 	clean := &transport.PrivilegeReport{Schema: "public", Owners: []string{"owner"}}
@@ -229,6 +231,10 @@ func TestPrintHardenResult_Apply_KeepRolesHintNamesStrictMode(t *testing.T) {
 		true, "mtix config set sync.keep_roles team"))
 	require.Contains(t, out.String(), "mtix config set sync.keep_roles team")
 	require.Contains(t, out.String(), "also turns on strict mode for mtix sync doctor")
+	text := strings.Join(strings.Fields(out.String()), " ")
+	require.Contains(t, text, "its hub-privileges check then fails, instead of warning, whenever mtix sync harden "+
+		"would report a finding, or when the check cannot run.")
+	require.NotContains(t, text, "when any other role can use the sync tables", "the narrower description is gone")
 }
 
 // TestPrintHardenResult_OnlyCallerOwnerMembership_Hint: when the only

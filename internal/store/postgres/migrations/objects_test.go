@@ -4,6 +4,7 @@
 package migrations_test
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -30,6 +31,46 @@ func TestTables_EmbeddedMigrations_ReturnsEveryCreatedTable(t *testing.T) {
 		"sync_project_clients",
 		"sync_projects",
 	}, got)
+}
+
+// TestSequences_EmbeddedMigrations_ReturnsEverySerialSequence pins the
+// sequences the sync tables' serial columns create, which a backup role
+// needs SELECT on (MTIX-95.1.4). A PG test pins them to a migrated hub.
+func TestSequences_EmbeddedMigrations_ReturnsEverySerialSequence(t *testing.T) {
+	got, err := migrations.Sequences()
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"audit_log_audit_id_seq",
+		"sync_conflicts_conflict_id_seq",
+		"sync_node_collisions_collision_id_seq",
+	}, got)
+}
+
+// TestMigrations_SequenceForms_AllParsed: every sequence a migration
+// creates comes from a serial column of a CREATE TABLE, the only form
+// Sequences() reads. A migration that creates one another way (an identity
+// column, a serial column added by ALTER TABLE, CREATE SEQUENCE, or a
+// quoted table or column name, which the parser does not read) fails here,
+// so Sequences() never silently misses a sequence (MTIX-95.1.4).
+func TestMigrations_SequenceForms_AllParsed(t *testing.T) {
+	comment := regexp.MustCompile(`--[^\n]*`)
+	unparsed := map[string]*regexp.Regexp{
+		"an identity column":             regexp.MustCompile(`(?i)\bGENERATED\s+(?:ALWAYS|BY\s+DEFAULT)\s+AS\s+IDENTITY\b`),
+		"a serial column added later":    regexp.MustCompile(`(?is)\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?[a-z_][a-z0-9_]*\s+(?:smallserial|bigserial|serial[248]?)\b`),
+		"an explicitly created sequence": regexp.MustCompile(`(?i)\bCREATE\s+(?:TEMP\s+|TEMPORARY\s+|UNLOGGED\s+)?SEQUENCE\b`),
+		"a quoted serial column name":    regexp.MustCompile(`(?i)"[^"]+"\s+(?:smallserial|bigserial|serial[248]?)\b`),
+		"a quoted table name":            regexp.MustCompile(`(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"`),
+	}
+	files, err := migrations.Files()
+	require.NoError(t, err)
+	for _, f := range files {
+		body, err := migrations.Read(f)
+		require.NoError(t, err)
+		sql := comment.ReplaceAllString(body, "")
+		for form, re := range unparsed {
+			require.Falsef(t, re.MatchString(sql), "%s creates a sequence with %s, which Sequences() does not read", f, form)
+		}
+	}
 }
 
 // TestFunctions_EmbeddedMigrations_ReturnsEveryFunction pins the mtix

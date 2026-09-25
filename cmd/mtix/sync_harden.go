@@ -48,45 +48,8 @@ func newSyncHardenCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "harden",
 		Short: "Owner only: restrict the hub's sync tables to the owner and the roles you keep",
-		Long: `Check which roles can use the hub's sync tables, sequences and mtix
-functions, and with --apply restrict them to the owner and the roles you
-keep. Without --apply this is a dry run: it lists every role, default
-privilege and membership it would change, and changes nothing.
-
-With --apply, in one transaction, it revokes every privilege on those
-objects, column privileges included, from PUBLIC, from the roles a data
-API uses for anonymous and signed-in callers, and from every other role
-except the table owner, superusers and the roles named with --keep-role
-or in the sync.keep_roles config key. A kept role keeps its privileges,
-and its members keep them through it, but it loses any right to grant
-them on; the owner first grants again anything a kept role holds by
-another role's grant. The owner's default privileges that would give
-those roles access to tables created later are revoked too. A membership
-in pg_read_all_data, pg_write_all_data or pg_maintain, even one with only
-ADMIN OPTION, is revoked when the owner may do so; it is cluster-wide. A
-missing TRUNCATE guard is restored, one whose trigger executes another
-function (compared by OID) is replaced, and a disabled one, or one that
-fires only in replication sessions, is enabled. A server WARNING fails the run
-and nothing changes. An --apply that would restore or replace a guard
-refuses, changing nothing, when the first schema on the search_path is not
-the schema of the sync tables; privilege changes and the dry run are not
-affected. Access it cannot remove is reported with the
-statement an administrator runs, and after --apply every finding that
-remains is listed. EXECUTE on the mtix trigger functions and other roles'
-default privileges are information and never fail verification.
-
-Run it as the role that owns the sync tables, or as a superuser or a
-member of the owner role; any other role is refused and nothing changes.
-Superusers are not checked. The connecting role is checked unless it owns
-the sync tables, is a superuser or is kept, so a member of the owner role
-reports its own membership: run as the owner, or keep the role, to verify
-clean. Review the dry run's role list before --apply: a role you do not
-keep loses its access.
-
-Exit code: 0 when verification passes, 2 when changes are pending (dry
-run) or access remains (--apply), 1 on an error or a refusal. --json
-prints the report for agents and CI.`,
-		Args: syncExactArgs(0),
+		Long:  syncHardenLong,
+		Args:  syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncHarden(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, flags)
@@ -279,7 +242,11 @@ func printHardenDryRun(w io.Writer, rep *transport.PrivilegeReport) {
 	}
 }
 
-// printHardenApply writes what --apply ran and the verification after it.
+// printHardenApply writes what --apply ran and the verification after it,
+// then, when --keep-role named a role the config lacks, the command that
+// records the kept roles and what the strict mode it turns on fails on:
+// whatever mtix sync harden would report, and a check that cannot run
+// (MTIX-95.1, MTIX-95.1.4).
 func printHardenApply(w io.Writer, r *transport.HardenResult, hint string) {
 	if !r.Applied {
 		fmt.Fprintln(w, "mtix sync harden: nothing to change.")
@@ -302,7 +269,8 @@ func printHardenApply(w io.Writer, r *transport.HardenResult, hint string) {
 	if hint != "" {
 		fmt.Fprintln(w, "\nTo keep the same roles in later runs, run: "+hint)
 		fmt.Fprintln(w, "Setting sync.keep_roles also turns on strict mode for mtix sync doctor: its hub-privileges")
-		fmt.Fprintln(w, "check then fails, instead of warning, when any other role can use the sync tables.")
+		fmt.Fprintln(w, "check then fails, instead of warning, whenever mtix sync harden would report a finding,")
+		fmt.Fprintln(w, "or when the check cannot run.")
 	}
 }
 

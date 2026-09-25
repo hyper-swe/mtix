@@ -52,8 +52,9 @@ var errHubTableNotFound = errors.New("a hub table was not found (pg_dump names i
 const pgSystemTrustStore = "system"
 
 // syncBackupLong is the help of mtix sync backup: what it dumps, how it
-// connects (including the search_path step for the DSN's role), the output
-// file and the restore runbook (FR-18.21, MTIX-95.7, MTIX-95.7.4).
+// connects (including the search_path and schema-usage steps for the DSN's
+// role), the output file and the restore runbook (FR-18.21, MTIX-95.7,
+// MTIX-95.7.4, MTIX-95.1.4).
 const syncBackupLong = `Invoke pg_dump to write a portable SQL dump of every table the mtix hub
 migrations create, with its data; the report lists the tables. Every one
 of them must exist: a hub that lacks one, such as a hub not initialized
@@ -73,9 +74,12 @@ be the table owner: for a hub whose schema is named only in the DSN, first
 run ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET
 search_path = <schema>, public. It applies in that database only and
 takes precedence over a role-wide ALTER ROLE <the DSN's role> SET
-search_path = <schema>, public. Client certificates (sslcert, sslkey) are
-not passed to pg_dump, so a hub that requires one cannot be backed up with
-this command yet.
+search_path = <schema>, public. If the role the DSN names lacks USAGE on
+the hub's schema, pg_dump does not see the tables either: the failed
+backup prints the GRANT statements, naming each sync table and sequence:
+the schema's owner grants USAGE on the schema, and the table owner grants
+SELECT. Client certificates (sslcert, sslkey) are not passed to pg_dump,
+so a hub that requires one cannot be backed up with this command yet.
 
 mtix creates the output file, readable and writable only by you (mode
 0600), before pg_dump writes to it. An existing file is never overwritten:
@@ -129,9 +133,10 @@ func newSyncBackupCmd() *cobra.Command {
 // backup, one interrupted by SIGINT or SIGTERM included, removes the file
 // it created. A backup that failed because a hub table was not found also
 // gives the search_path step for the DSN's role in the DSN's database
-// (withSearchPathAdvice),
-// and the success message lists the tables, every one of which pg_dump
-// found (MTIX-95.7.4).
+// (withSearchPathAdvice) and the schema-usage grants for that role, by
+// table and sequence name (withSchemaUsageAdvice), and the success message
+// lists the tables, every one of which pg_dump found (MTIX-95.7.4,
+// MTIX-95.1.4).
 func runSyncBackup(ctx context.Context, stdout, stderr io.Writer,
 	args []string, output string, opts transport.Options,
 ) error {
@@ -157,6 +162,10 @@ func runSyncBackup(ctx context.Context, stdout, stderr io.Writer,
 	if err != nil {
 		return fmt.Errorf("mtix sync backup: hub tables: %w", err)
 	}
+	sequences, err := migrations.Sequences()
+	if err != nil {
+		return fmt.Errorf("mtix sync backup: hub sequences: %w", err)
+	}
 
 	// From here on SIGINT and SIGTERM cancel ctx instead of ending the
 	// process, so an interrupted backup stops pg_dump and removes the
@@ -173,9 +182,10 @@ func runSyncBackup(ctx context.Context, stdout, stderr io.Writer,
 			err = fmt.Errorf("mtix sync backup: interrupted, so the partial dump is removed: %w", ctx.Err())
 		}
 		// pg_dump connects as the DSN's role, with that role's default
-		// search_path in the DSN's database: the step for a hub whose
-		// schema only the DSN names.
-		return discardBackup(out, output, withSearchPathAdvice(err, conn.user, conn.database))
+		// search_path in the DSN's database: the steps for a hub whose
+		// schema only the DSN names, or that the role may not use.
+		err = withSearchPathAdvice(err, conn.user, conn.database)
+		return discardBackup(out, output, withSchemaUsageAdvice(err, conn.user, tables, sequences))
 	}
 	if err := closeBackupFile(out); err != nil {
 		return discardBackup(nil, output, err)
@@ -289,17 +299,52 @@ func withSearchPathAdvice(err error, role, database string) error {
 	if !errors.Is(err, errHubTableNotFound) {
 		return err
 	}
-	roleName, dbName := "<the DSN's role>", "<the DSN's database>"
-	if role != "" {
-		roleName = pgx.Identifier{role}.Sanitize()
-	}
-	if database != "" {
-		dbName = pgx.Identifier{database}.Sanitize()
-	}
+	roleName := quotedIdentOr(role, "<the DSN's role>")
+	dbName := quotedIdentOr(database, "<the DSN's database>")
 	return fmt.Errorf("%w; if the hub's schema is named only in the DSN, pg_dump, which connects as the DSN's role "+
 		"without the DSN's options, does not see it: run ALTER ROLE %s IN DATABASE %s SET search_path = <schema>, public "+
 		"(this database only; it takes precedence over a role-wide ALTER ROLE %s SET search_path = <schema>, public), "+
 		"then back up again", err, roleName, dbName, roleName)
+}
+
+// withSchemaUsageAdvice returns err with the schema-usage step added when
+// it wraps errHubTableNotFound, and err unchanged otherwise. A role without
+// USAGE on a schema does not have it on its search_path, so pg_dump,
+// connecting as role, finds no hub table there. The step has the schema's
+// owner grant role USAGE on the schema (only the schema's owner, a role
+// holding that USAGE with grant option, or a superuser can) and the table
+// owner grant SELECT on each of tables and sequences by name, qualified
+// with a <schema> placeholder, so no more is granted than the backup
+// reads. role is quoted as an identifier, and a placeholder stands for it
+// only when it is not known (MTIX-95.1.4).
+func withSchemaUsageAdvice(err error, role string, tables, sequences []string) error {
+	if !errors.Is(err, errHubTableNotFound) {
+		return err
+	}
+	roleName := quotedIdentOr(role, "<the DSN's role>")
+	var grants []string
+	for _, g := range []struct {
+		kind  string
+		names []string
+	}{{"TABLE", tables}, {"SEQUENCE", sequences}} {
+		if len(g.names) > 0 {
+			grants = append(grants, "GRANT SELECT ON "+g.kind+" <schema>."+
+				strings.Join(g.names, ", <schema>.")+" TO "+roleName)
+		}
+	}
+	return fmt.Errorf("%w; if the DSN's role lacks USAGE on the hub's schema, which leaves the schema off its "+
+		"search_path, the schema's owner runs GRANT USAGE ON SCHEMA <schema> TO %s, and the table owner runs %s; "+
+		"then back up again (keep that role with mtix sync harden --keep-role, so that harden leaves its access)",
+		err, roleName, strings.Join(grants, "; "))
+}
+
+// quotedIdentOr returns name quoted as an SQL identifier, or placeholder
+// when name is empty (MTIX-95.1.4).
+func quotedIdentOr(name, placeholder string) string {
+	if name == "" {
+		return placeholder
+	}
+	return pgx.Identifier{name}.Sanitize()
 }
 
 // discardBackup closes f (when still open) and removes path, the output

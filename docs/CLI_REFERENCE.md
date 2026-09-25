@@ -1140,9 +1140,12 @@ be the table owner: for a hub whose schema is named only in the DSN, first
 run ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET
 search_path = <schema>, public. It applies in that database only and
 takes precedence over a role-wide ALTER ROLE <the DSN's role> SET
-search_path = <schema>, public. Client certificates (sslcert, sslkey) are
-not passed to pg_dump, so a hub that requires one cannot be backed up with
-this command yet.
+search_path = <schema>, public. If the role the DSN names lacks USAGE on
+the hub's schema, pg_dump does not see the tables either: the failed
+backup prints the GRANT statements, naming each sync table and sequence:
+the schema's owner grants USAGE on the schema, and the table owner grants
+SELECT. Client certificates (sslcert, sslkey) are not passed to pg_dump,
+so a hub that requires one cannot be backed up with this command yet.
 
 mtix creates the output file, readable and writable only by you (mode
 0600), before pg_dump writes to it. An existing file is never overwritten:
@@ -1447,11 +1450,14 @@ default privileges are information and never fail verification.
 
 Run it as the role that owns the sync tables, or as a superuser or a
 member of the owner role; any other role is refused and nothing changes.
-Superusers are not checked. The connecting role is checked unless it owns
-the sync tables, is a superuser or is kept, so a member of the owner role
-reports its own membership: run as the owner, or keep the role, to verify
-clean. Review the dry run's role list before --apply: a role you do not
-keep loses its access.
+Superusers are not checked. The REPLICATION role attribute is outside the
+check too: a role that has it is checked for its privileges and
+memberships like any other role, but not for the attribute, so review the
+roles that have it (rolreplication in pg_roles). The connecting role is
+checked unless it owns the sync tables, is a superuser or is kept, so a
+member of the owner role reports its own membership: run as the owner, or
+keep the role, to verify clean. Review the dry run's role list before
+--apply: a role you do not keep loses its access.
 
 Exit code: 0 when verification passes, 2 when changes are pending (dry
 run) or access remains (--apply), 1 on an error or a refusal. --json

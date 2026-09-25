@@ -29,6 +29,7 @@ type Trigger struct {
 var (
 	lineComment   = regexp.MustCompile(`--[^\n]*`)
 	createTable   = regexp.MustCompile(`(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)`)
+	serialColumn  = regexp.MustCompile(`(?i)\b([a-z_][a-z0-9_]*)\s+(?:smallserial|bigserial|serial[248]?)\b`)
 	createFunc    = regexp.MustCompile(`(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-z_][a-z0-9_]*)\s*\(`)
 	createTrigger = regexp.MustCompile(`(?is)\bCREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+([a-z_][a-z0-9_]*)\s+` +
 		`(?:BEFORE|AFTER|INSTEAD\s+OF)\s+([a-z]+)\b.*?\bON\s+([a-z_][a-z0-9_]*)` +
@@ -38,6 +39,7 @@ var (
 // objects is the parsed object set of the migrations.
 type objects struct {
 	tables    []string
+	sequences []string
 	functions []string
 	triggers  []Trigger
 }
@@ -52,6 +54,20 @@ func Tables() ([]string, error) {
 		return nil, err
 	}
 	return o.tables, nil
+}
+
+// Sequences returns the name of every sequence the serial columns of the
+// embedded migrations' tables create (serial, serial2, serial4, serial8,
+// smallserial or bigserial), <table>_<column>_seq as PostgreSQL names them,
+// sorted (MTIX-95.1.4). A test fails when a migration creates a sequence
+// any other way. A role that backs up the hub reads
+// them with the sync tables. A PG test pins them to a migrated hub.
+func Sequences() ([]string, error) {
+	o, err := embeddedObjects()
+	if err != nil {
+		return nil, err
+	}
+	return o.sequences, nil
 }
 
 // Functions returns the name of every function the embedded migrations
@@ -109,17 +125,23 @@ func embeddedObjects() (objects, error) {
 	return parseObjects(bodies), nil
 }
 
-// parseObjects collects the tables, functions and triggers created by the
-// given migration bodies, ignoring -- comments. Each list is sorted and
-// de-duplicated; names are lower-cased as PostgreSQL folds them.
+// parseObjects collects the tables, the sequences of their serial columns,
+// the functions and the triggers created by the given migration bodies,
+// ignoring -- comments. Each list is sorted and de-duplicated; names are
+// lower-cased as PostgreSQL folds them.
 func parseObjects(bodies []string) objects {
 	tables := map[string]bool{}
+	sequences := map[string]bool{}
 	functions := map[string]bool{}
 	triggers := map[Trigger]bool{}
 	for _, body := range bodies {
 		sql := lineComment.ReplaceAllString(body, "")
-		for _, m := range createTable.FindAllStringSubmatch(sql, -1) {
-			tables[strings.ToLower(m[1])] = true
+		for _, m := range createTable.FindAllStringSubmatchIndex(sql, -1) {
+			table := strings.ToLower(sql[m[2]:m[3]])
+			tables[table] = true
+			for _, seq := range serialSequences(table, sql[m[1]:]) {
+				sequences[seq] = true
+			}
 		}
 		for _, m := range createFunc.FindAllStringSubmatch(sql, -1) {
 			functions[strings.ToLower(m[1])] = true
@@ -135,9 +157,24 @@ func parseObjects(bodies []string) objects {
 	}
 	return objects{
 		tables:    sortedKeys(tables),
+		sequences: sortedKeys(sequences),
 		functions: sortedKeys(functions),
 		triggers:  sortedTriggers(triggers),
 	}
+}
+
+// serialSequences returns the sequences PostgreSQL creates for the serial
+// columns of table, whose CREATE TABLE statement continues in rest up to
+// its terminating semicolon (MTIX-95.1.4).
+func serialSequences(table, rest string) []string {
+	if end := strings.IndexByte(rest, ';'); end >= 0 {
+		rest = rest[:end]
+	}
+	var out []string
+	for _, m := range serialColumn.FindAllStringSubmatch(rest, -1) {
+		out = append(out, table+"_"+strings.ToLower(m[1])+"_seq")
+	}
+	return out
 }
 
 // sortedKeys returns the keys of set in order, or nil when it is empty.

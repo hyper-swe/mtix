@@ -217,9 +217,19 @@ Before going live with sync mode, verify each of these:
 - [ ] Connection uses a server certificate signed by a trusted CA (test: `MTIX_SYNC_SSLROOTCERT` set if managed PG requires it).
 - [ ] DSN is stored in `MTIX_SYNC_DSN` env var or `.mtix/secrets` (gitignored, mode 0600). **Not** in any tracked config file (`Source()` will refuse to load if it detects one).
 - [ ] `.mtix/secrets` is in `.gitignore` (test: `git check-ignore .mtix/secrets` succeeds; `mtix sync init` installs the rule automatically).
-- [ ] PG role used by the hub is **least privilege**: SELECT/INSERT on `sync_events`, `sync_conflicts`, `sync_projects`, `applied_events`, `audit_log` only. Not SUPERUSER, not CREATEDB, not REPLICATION.
+- [ ] PG role used by the hub is **least privilege**: not SUPERUSER, not CREATEDB, not REPLICATION. A role that syncs without owning the sync tables holds only this least-privilege list (the same list as step 2 of the small-team workflow):
+  - USAGE on the schema;
+  - SELECT on `sync_events`, `sync_hub_state`, `sync_node_collisions` and `sync_project_clients`;
+  - INSERT on `sync_events`, `sync_conflicts`, `sync_node_collisions` and `sync_project_clients`;
+  - UPDATE on `sync_project_clients`;
+  - USAGE on the sequences `sync_conflicts_conflict_id_seq` and `sync_node_collisions_collision_id_seq`;
+  - UPDATE on `sync_node_collisions`, only for a role that runs `mtix sync collisions resolve`;
+  - SELECT on `node_renumber_remaps`, only for a role that runs `mtix sync migrate`;
+  - INSERT on `node_renumber_remaps`, only for a role that runs `mtix sync migrate --yes`.
+
+  A syncing role set up with the least-privilege list holds no UPDATE on `sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs as the table owner.
 - [ ] `audit_log` and `sync_conflicts` triggers are in place (test: `UPDATE audit_log SET ...` raises exception).
-- [ ] Backup procedure for the hub is in place AND has been tested to restore (use `mtix sync backup --output FILE` for the mtix-owned tables).
+- [ ] Backup procedure for the hub is in place AND has been tested to restore (use `mtix sync backup --output FILE` for the mtix-owned tables). A role that runs `mtix sync backup` also needs SELECT on every sync table and on the sequences `audit_log_audit_id_seq`, `sync_conflicts_conflict_id_seq` and `sync_node_collisions_collision_id_seq`; otherwise run the backup as the table owner.
 - [ ] DR runbook tested: rebuild a CLI from a fresh `mtix sync clone` (DSN from `MTIX_SYNC_DSN` or `.mtix/secrets`).
 - [ ] At least one of: client-side pre-push hook installed across all team machines (`examples/hooks/pre-push` calls `mtix sync push`), OR server-side enforcement.
 - [ ] If durability across machine loss matters: `mtix sync daemon` is running as a systemd/launchd service on each developer's machine (push interval ≤ 30s recommended).

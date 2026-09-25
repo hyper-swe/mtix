@@ -52,7 +52,11 @@ on the sync tables, their sequences or the mtix functions (EXECUTE on the
 trigger functions aside), or a role membership that leads to one, ADMIN
 OPTION included; the owner's default privileges give such roles nothing; and
 every TRUNCATE guard is in place. 2 means changes are pending or access
-remains; 1 means an error or a refusal. A role that is
+remains; 1 means an error or a refusal. Superusers and the REPLICATION role
+attribute are outside the check: a role with REPLICATION is checked for its
+privileges and memberships like any other role, but not for the attribute,
+so review the roles that have it (`SELECT rolname FROM pg_catalog.pg_roles
+WHERE rolreplication;`) with the database administrator. A role that is
 not the table owner, a member of it or a superuser is refused and nothing
 changes. Members of a kept role keep their access through it, and the owner
 grants again anything a kept role holds by another role's grant; superusers
@@ -64,9 +68,12 @@ migrated hub verifies clean.
 `mtix sync doctor` runs the same verification as its `hub-privileges` check: a
 WARN (exit 0) by default when other roles can use the sync tables, which may be
 fine on a private network and blocks nothing; a FAIL (exit 2) only in strict
-mode, when `sync.keep_roles` is set, and then for every finding harden would
-report (kept roles' grant options and grants from other roles, mtix objects
-owned by another role, and memberships that reach every table included).
+mode, when `sync.keep_roles` is set, and then whenever `mtix sync harden`
+would report a finding (kept roles' grant options and grants from other
+roles, mtix objects owned by another role, and memberships that reach every
+table included, such as `superuser_membership`: a role that can SET ROLE to
+a superuser, or that holds ADMIN OPTION on a role that can), or when the
+check cannot run.
 `mtix sync init` changes no privileges and `mtix sync push` issues no DDL.
 
 Never pass `--apply` without a human approving the dry run's role list. Never
@@ -95,7 +102,15 @@ only, and it takes precedence over a role-wide
 `ALTER ROLE <the DSN's role> SET search_path = <schema>, public`). Every hub table must exist: a hub that lacks one, such as a hub
 not initialized since an upgrade added a table, fails the backup with `a
 hub table was not found`; run `mtix sync init` with the DSN naming the
-table owner, then back up again.
+table owner, then back up again. The same error comes when the DSN's role
+lacks USAGE on the hub's schema: run the GRANT statements the backup
+prints (the schema's owner grants USAGE on the schema: find it with
+`SELECT nspowner::regrole FROM pg_catalog.pg_namespace WHERE nspname = '<schema>';`;
+for `public` in a database created on PostgreSQL 15 or later it is
+`pg_database_owner`, that is, the database's owner; the table owner grants
+SELECT on each sync table and sync-table sequence by name, nothing else in
+the schema), then keep that role with `--keep-role` so
+`mtix sync harden --apply` leaves its access.
 Client certificates (`sslcert`, `sslkey`) are not passed to `pg_dump`, so a
 hub that requires one cannot be backed up with this command yet. A failed
 or interrupted (Ctrl-C, SIGTERM) backup leaves no file; an existing path is
@@ -115,17 +130,26 @@ schema first (not a schema named after the role), `mtix sync init` with
 the DSN naming that role, then `mtix sync doctor`
 (and `SELECT count(*) FROM sync_events;` through the DSN's role and
 search_path must equal `SELECT count(*) FROM <schema>.sync_events;` run as
-the table owner in the restored database, which alone shows the DSN
-reaches the restored database, and must not be zero for a hub that has
-events; being at least the source hub's count taken just before the
-backup rules out only a new or emptier hub; never compare with psql's
+the table owner in the restored database: a mismatch shows the DSN does
+not reach the restored database, while equality with a non-zero count
+rules out only a new or empty hub, so also confirm that the DSN's host and
+database name the restored server; the count must not be zero for a hub
+that has events; being at least the source hub's count taken just before
+the backup rules out only a new or emptier hub; never compare with psql's
 unlabeled `COPY <n>` lines) until `hub-triggers` passes (its `fix` names the table owner who runs it
 and, in order, `mtix sync init` for a missing trigger or one bound to
 another function, and the `ALTER TABLE ... ENABLE TRIGGER` statement for
 one not enabled, printed on a `fix:` line without `--json`; functions are
 compared by OID; tgenabled `O` and `A` both count as enabled; a gap is a
 WARN by default, a FAIL in strict mode), then
-`mtix sync mark-restored` once and `mtix sync collisions list`.
+`mtix sync mark-restored` once, with the DSN naming the table owner, and
+`mtix sync collisions list`.
+
+A syncing role set up with the least-privilege list holds no UPDATE on
+`sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs as
+the table owner. The least-privilege list is in step 2 of the small-team
+workflow (`.mtix/docs/workflows/small-team.md`) and in
+`docs/SECURITY-MODEL.md`.
 
 `mtix sync status` counts unresolved conflicts only (`open_conflicts`); it
 has no `conflicted` count. `resolve` records the decision only and says

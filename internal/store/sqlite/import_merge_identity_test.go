@@ -305,6 +305,10 @@ func TestDiffReplace_SameIDOtherUID_ClassifiesByIdentity(t *testing.T) {
 		{"backfilled uid, other creation time", taskUID, backfilledUID, "2026-09-24T09:00:00Z", true},
 		{"file without a creation time", taskUID, backfilledUID, "none", true},
 		{"creation times that cannot be read", taskUID, backfilledUID, "unreadable", true},
+		{"file uid a marked backfill uid (MTIX-95.31.9)", taskUID, importBackfillUID, "", false},
+		{"local uid a marked backfill uid", importBackfillUID, taskUID, "", false},
+		{"both marked backfill uids", importBackfillUID, importBackfillUID, "", false},
+		{"marked backfill uid, other creation time", taskUID, importBackfillUID, "2026-09-24T09:00:00Z", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -345,6 +349,7 @@ func TestImportReconcile_SameSecondCreates_RenumberedOnlyWithConfirm(t *testing.
 	report, _, err := local.ImportReconcile(ctx, exportOf(t, teammate), sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge})
 	require.ErrorIs(t, err, sqlite.ErrImportConfirmationRequired)
 	assert.Equal(t, []sqlite.ImportRemapEntry{{UID: mine, OldPath: "REC-1", NewPath: "REC-2"}}, report.LocalRenumbers)
+	assert.Empty(t, report.TitleMismatches, "both carry uids: not a title mismatch (MTIX-95.31.9)")
 	assert.Equal(t, before, storeSnapshotJSON(t, local))
 
 	_, _, err = local.ImportReconcile(ctx, exportOf(t, teammate), sqlite.ImportReconcileOptions{

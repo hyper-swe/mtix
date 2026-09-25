@@ -99,3 +99,30 @@ func TestRunImport_MergeAdoptsNothing_JSONAndRemapFileUnchanged(t *testing.T) {
 	_, statErr := os.Stat(remapPath)
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
 }
+
+// TestWriteRemapFile_UIDMintedByTheImport_OnlyOnceApplied verifies a remap
+// file leaves out a uid the import minted for a local task that had none
+// while the import is not applied (the confirmed run mints another), and
+// holds it once the import is applied (MTIX-95.31.9).
+func TestWriteRemapFile_UIDMintedByTheImport_OnlyOnceApplied(t *testing.T) {
+	report := &sqlite.ImportReconcileReport{LocalRenumbers: []sqlite.ImportRemapEntry{
+		{UID: "minted-uid", OldPath: "TEST-1", NewPath: "TEST-3", NewUID: true},
+		{UID: "held-uid", OldPath: "TEST-2", NewPath: "TEST-4"},
+	}}
+	tests := []struct {
+		name    string
+		applied bool
+		want    map[string]string
+	}{
+		{"not applied", false, map[string]string{"held-uid": "TEST-4"}},
+		{"applied", true, map[string]string{"held-uid": "TEST-4", "minted-uid": "TEST-3"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "remap.json")
+			report.Applied = tt.applied
+			require.NoError(t, writeRemapFile(path, report))
+			assert.Equal(t, tt.want, readRemapFile(t, path))
+		})
+	}
+}

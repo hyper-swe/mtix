@@ -12,6 +12,7 @@ package sqlite_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -80,6 +81,8 @@ func TestImportReconcile_NoUIDToCompareAndAnotherTitle_RenumberedOnlyWithConfirm
 				report.TitleMismatches)
 			assert.Contains(t, report.String(), "  of these, a task under this id with a different title and no uid "+
 				"to compare: 1\n    - REC-1 (local \"Local task\", file \"Teammate task\")\n")
+			assert.Equal(t, !tt.localUID, report.LocalRenumbers[0].NewUID, "a uid minted by this import is new")
+			assert.Equal(t, !tt.localUID, strings.Contains(report.String(), "    - uid=(new) REC-1 -> REC-2\n"))
 			assert.Empty(t, report.UIDAdoptions)
 
 			report, _, err = local.ImportReconcile(ctx, exportOf(t, teammate), sqlite.ImportReconcileOptions{
@@ -135,4 +138,28 @@ func TestImport_MergeOverNoUIDTaskWithAnotherTitle_Refused(t *testing.T) {
 	_, err := local.Import(ctx, file, sqlite.ImportModeMerge, false)
 	require.ErrorIs(t, err, model.ErrConflict)
 	assert.Equal(t, before, storeSnapshotJSON(t, local))
+}
+
+// TestImportReconcile_NoUIDToCompareUnderMovedParent_ReportsTheFinalID
+// verifies a local child whose parent another clone renumbered, and whose
+// id under the moved parent the file gives to a task without a uid and with
+// another title, is renumbered and reported under the id it collides at
+// (REC-3.1), not its old one (MTIX-95.31.9).
+func TestImportReconcile_NoUIDToCompareUnderMovedParent_ReportsTheFinalID(t *testing.T) {
+	local, teammate := newTestStore(t), newTestStore(t)
+	parent, child := taskUID(t), taskUID(t)
+	createSameIDTask(t, local, "REC-2", "", 2, parent, "Moved parent")
+	createSameIDTask(t, local, "REC-2.1", "REC-2", 1, child, "Local child")
+	createSameIDTask(t, teammate, "REC-3", "", 3, parent, "Moved parent")
+	createSameIDTask(t, teammate, "REC-3.1", "REC-3", 1, taskUID(t), "Teammate child")
+	_, err := teammate.WriteDB().ExecContext(context.Background(), `UPDATE nodes SET uid = NULL WHERE id = 'REC-3.1'`)
+	require.NoError(t, err)
+
+	report, _, err := local.ImportReconcile(context.Background(), exportOf(t, teammate),
+		sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge})
+	require.ErrorIs(t, err, sqlite.ErrImportConfirmationRequired)
+	assert.Equal(t, []sqlite.ImportRemapEntry{{UID: parent, OldPath: "REC-2", NewPath: "REC-3"}}, report.Moved)
+	assert.Equal(t, []sqlite.ImportRemapEntry{{UID: child, OldPath: "REC-2.1", NewPath: "REC-3.2"}}, report.LocalRenumbers)
+	assert.Equal(t, []sqlite.ImportTitleMismatch{{ID: "REC-3.1", LocalTitle: "Local child", FileTitle: "Teammate child"}},
+		report.TitleMismatches)
 }

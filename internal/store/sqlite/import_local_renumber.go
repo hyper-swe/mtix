@@ -57,9 +57,10 @@ func differentTask(local, in *exportNode) bool {
 // merge renumbers one, only with confirmation); calling two tasks the same
 // loses one. So nodes that both carry a uid, with different uids, are one
 // task only when their creation times are equal and at least one uid is a
-// UUIDv7 minted more than an hour after that time (backfilledLater): a uid a
-// clone assigned when it upgraded from before uids were shared
-// (BackfillUIDs step 2). A merge then adopts the file's uid. Every other
+// UUIDv7 minted more than an hour after that time, or a marked backfill uid
+// (backfilledLater): a uid a clone assigned when it upgraded from before
+// uids were shared, or to a task it imported without one (MTIX-95.31.9). A
+// merge then adopts the file's uid. Every other
 // pair is two tasks: a uid minted before created_at (a node a hub applied
 // records the apply time), within the hour after it (a create that waited
 // for the write lock), or not a UUIDv7, and creation times that differ or
@@ -77,11 +78,15 @@ func differentIdentity(a, b taskIdentity) bool {
 // between reading the clock and minting the uid at creation.
 const backfillAge = time.Hour
 
-// backfilledLater reports whether uid is a UUIDv7 whose embedded time is
-// more than backfillAge after createdAt: a uid assigned long after the task
-// was created (MTIX-95.31.4). A uid that is not a UUIDv7, or a creation
-// time that cannot be read, is not.
+// backfilledLater reports whether uid was assigned after the task was
+// created: a marked backfill uid, whatever the time (model.IsBackfillUID,
+// MTIX-95.31.9), or a UUIDv7 whose embedded time is more than backfillAge
+// after createdAt (MTIX-95.31.4). Any other uid, or a UUIDv7 with a
+// creation time that cannot be read, is not.
 func backfilledLater(uid, createdAt string) bool {
+	if model.IsBackfillUID(uid) {
+		return true
+	}
 	u, err := uuid.Parse(uid)
 	if err != nil || u.Version() != 7 {
 		return false
@@ -375,7 +380,7 @@ func (p *localMovePlan) finish() []localRenumber {
 		if l.final == l.id {
 			continue
 		}
-		entry := ImportRemapEntry{UID: l.uid, OldPath: l.id, NewPath: l.final}
+		entry := ImportRemapEntry{UID: l.uid, OldPath: l.id, NewPath: l.final, NewUID: l.stamp}
 		if l.renumbered {
 			p.report.LocalRenumbers = append(p.report.LocalRenumbers, entry)
 		} else {

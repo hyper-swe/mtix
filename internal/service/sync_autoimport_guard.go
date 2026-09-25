@@ -262,14 +262,16 @@ func differentTitleNoUID(losses []sqlite.NodeLoss) []string {
 // differentTitleNoUIDNote is the merge option's note on the local tasks
 // ids that the file holds under their id with another title and no uid to
 // compare (MTIX-95.31.9): the merge takes them for different tasks, and a
-// task a teammate only retitled on a board without uids ends up twice.
+// task a teammate only retitled on a board without uids ends up twice, the
+// renumbered copy holding the local comments, activity and field values.
 func differentTitleNoUIDNote(ids []string) string {
 	return "                                               a local task listed with a different title and no uid " +
 		"to compare is taken for a different task (here " + strings.Join(ids, ", ") + "): the merge renumbers " +
 		"it, with its subtree, to the next number free in both the store and the file (the file's task keeps " +
 		"the id), and applies that only when you rerun it with --confirm; if it is the same task, retitled on " +
-		"a board without uids, the merge keeps both copies: check the renumbered one, then delete it with mtix " +
-		"delete <new id>\n"
+		"a board without uids, the merge keeps both copies, and the renumbered one holds your comments, activity " +
+		"and field values the board lacked: move them to the task at the id, or keep the renumbered copy, before " +
+		"you delete anything\n"
 }
 
 // lossList describes up to maxLossLines nodes' losses joined by sep, and

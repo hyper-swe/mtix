@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/hyper-swe/mtix/internal/model"
-	"github.com/hyper-swe/mtix/internal/sync/clock"
 )
 
 // ImportTitleMismatch is a local task that a merge renumbers because the
@@ -98,15 +97,16 @@ func (s *Store) loadTitlesIfUIDless(ctx context.Context, p *localMovePlan) error
 }
 
 // stampMissingUIDs gives every local node whose own number the merge
-// changes and that has no uid a fresh uid, as BackfillUIDs mints one for a
-// node without a create event (MTIX-95.31.9): the renumber finds each node
-// by its uid. The write sets it first (stampNewUIDs).
+// changes and that has no uid a backfill uid, as BackfillUIDs gives one to
+// a node without a create event (MTIX-95.31.9): the renumber finds each
+// node by its uid. The write sets it first (stampNewUIDs); the report shows
+// it as uid=(new), since a later run mints another.
 func (p *localMovePlan) stampMissingUIDs() error {
 	for _, l := range p.nodes {
 		if l.uid != "" || l.finalSeq == l.seq {
 			continue
 		}
-		uid, err := clock.NewEventID()
+		uid, err := model.NewBackfillUID()
 		if err != nil {
 			return fmt.Errorf("mint a uid for local task %s before it is renumbered: %w", l.id, err)
 		}
@@ -131,7 +131,11 @@ func stampNewUIDs(ctx context.Context, tx *sql.Tx, moves []localRenumber) error 
 		if err != nil {
 			return fmt.Errorf("give local task %s a uid: %w", m.oldID, err)
 		}
-		if n, err := res.RowsAffected(); err != nil || n != 1 {
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("give local task %s a uid: %w", m.oldID, err)
+		}
+		if n != 1 {
 			return fmt.Errorf("give local task %s a uid: it is no longer there without one; the store changed "+
 				"after the import was planned, run the import again: %w", m.oldID, model.ErrConflict)
 		}
@@ -150,6 +154,16 @@ func refuseTitleMismatch(local, in *exportNode) error {
 	return fmt.Errorf("merge node %s: the file holds a task with another title under this id (%q, local %q) and "+
 		"no uid to compare; mtix import renumbers the local task first: %w", in.ID, in.Title, local.Title,
 		model.ErrConflict)
+}
+
+// shownUID is how a report shows the uid of a renumbered local task
+// (MTIX-95.31.9): uid=(new) for one this import minted, which a later run
+// mints again.
+func shownUID(m ImportRemapEntry) string {
+	if m.NewUID {
+		return "(new)"
+	}
+	return m.UID
 }
 
 // writeTitleMismatches renders, after the renumbered local tasks, those

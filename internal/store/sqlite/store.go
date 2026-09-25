@@ -313,9 +313,10 @@ func (s *Store) init(ctx context.Context) error {
 		return fmt.Errorf("create schema: %w", err)
 	}
 
-	// Deterministic UID backfill for pre-v3 rows (after schemaSQL so the
-	// uid index exists; idempotent — only fills empty uids).
-	if err := s.backfillUIDsPreV3(ctx, existingVersion); err != nil {
+	// Deterministic UID backfill for pre-v3 rows, then a backfill uid for
+	// any node still without one (after schemaSQL so the uid index exists;
+	// idempotent — only fills empty uids; MTIX-95.31.9).
+	if err := s.backfillUIDsOnOpen(ctx, existingVersion); err != nil {
 		return err
 	}
 
@@ -369,21 +370,6 @@ func (s *Store) addSyncEventUIDColumnPreV4(ctx context.Context, existingVersion 
 	s.logger.Info("schema_migrated",
 		"event", "schema_migrated", "from_version", existingVersion, "to_version", 4,
 		"added", "sync_events.uid")
-	return nil
-}
-
-// backfillUIDsPreV3 runs the deterministic UID backfill for a pre-v3
-// database (MTIX-30.1 / ADR-003 §7 Phase 0). No-op on fresh DBs and v3+.
-func (s *Store) backfillUIDsPreV3(ctx context.Context, existingVersion int) error {
-	if existingVersion == 0 || existingVersion >= 3 {
-		return nil
-	}
-	if err := s.BackfillUIDs(ctx); err != nil {
-		return fmt.Errorf("migrate v2 -> v3 (backfill uids): %w", err)
-	}
-	s.logger.Info("schema_migrated",
-		"event", "schema_migrated", "from_version", existingVersion, "to_version", 3,
-		"added", "nodes.uid")
 	return nil
 }
 

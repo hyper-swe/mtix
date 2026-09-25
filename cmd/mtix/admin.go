@@ -333,10 +333,19 @@ func importOptions(ctx context.Context, mode sqlite.ImportMode, f importFlags) s
 // tasks it moves to the id the file holds them under (MTIX-95.31.4); a node
 // without a uid has no key and is left out. A local uid a merge gives up
 // for the file's maps to the id its task keeps, so a reference to it still
-// resolves (MTIX-95.31.6).
+// resolves (MTIX-95.31.6). A uid the import minted for a local task that
+// had none (NewUID) is written only once the import is applied: a run
+// without --confirm leaves it out, since the confirmed run mints another
+// (MTIX-95.31.9).
 func writeRemapFile(path string, report *sqlite.ImportReconcileReport) error {
-	moved := append(append(append([]sqlite.ImportRemapEntry{}, report.Remaps...), report.LocalRenumbers...),
-		report.Moved...)
+	var moved []sqlite.ImportRemapEntry
+	for _, list := range [][]sqlite.ImportRemapEntry{report.Remaps, report.LocalRenumbers, report.Moved} {
+		for _, m := range list {
+			if report.Applied || !m.NewUID {
+				moved = append(moved, m)
+			}
+		}
+	}
 	for _, a := range report.UIDAdoptions {
 		if a.LocalUID != "" {
 			moved = append(moved, sqlite.ImportRemapEntry{UID: a.LocalUID, OldPath: a.ID, NewPath: a.ID})

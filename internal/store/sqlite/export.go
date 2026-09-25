@@ -150,12 +150,12 @@ type exportSession struct {
 // Includes all nodes (including soft-deleted within retention), dependencies,
 // agents, sessions, with node_count and SHA-256 checksum for integrity.
 func (s *Store) Export(ctx context.Context, project, mtixVersion string) (*ExportData, error) {
-	nodes, err := s.exportNodes(ctx)
+	nodes, err := s.exportNodes(ctx, s.readDB)
 	if err != nil {
 		return nil, exportReadError("export nodes", err)
 	}
 
-	deps, err := s.exportDependencies(ctx)
+	deps, err := s.exportDependencies(ctx, s.readDB)
 	if err != nil {
 		return nil, exportReadError("export dependencies", err)
 	}
@@ -171,13 +171,7 @@ func (s *Store) Export(ctx context.Context, project, mtixVersion string) (*Expor
 	}
 
 	// Sort nodes by ID for canonical checksum.
-	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
-	sort.Slice(deps, func(i, j int) bool {
-		if deps[i].FromID != deps[j].FromID {
-			return deps[i].FromID < deps[j].FromID
-		}
-		return deps[i].ToID < deps[j].ToID
-	})
+	sortForChecksum(nodes, deps)
 
 	// Compute checksum over canonical JSON of nodes and deps.
 	checksum, err := computeExportChecksum(nodes, deps)
@@ -198,6 +192,18 @@ func (s *Store) Export(ctx context.Context, project, mtixVersion string) (*Expor
 		NodeCount:     len(nodes),
 		Checksum:      checksum,
 	}, nil
+}
+
+// sortForChecksum puts the nodes (by id) and the dependencies (by their
+// endpoints) in the canonical order the export checksum hashes (FR-7.8).
+func sortForChecksum(nodes []exportNode, deps []exportDep) {
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	sort.Slice(deps, func(i, j int) bool {
+		if deps[i].FromID != deps[j].FromID {
+			return deps[i].FromID < deps[j].FromID
+		}
+		return deps[i].ToID < deps[j].ToID
+	})
 }
 
 // exportReadError wraps a failure to read the store for an export with the
@@ -257,9 +263,10 @@ func scanExportNode(row rowScanner) (exportNode, error) {
 	return n, decodeErr
 }
 
-// exportNodes reads all nodes (including soft-deleted) for export.
-func (s *Store) exportNodes(ctx context.Context) ([]exportNode, error) {
-	rows, err := s.readDB.QueryContext(ctx, exportNodeSelectSQL+" ORDER BY id")
+// exportNodes reads all nodes (including soft-deleted) for export through
+// q: the read pool, or an import's own transaction (MTIX-95.31.4).
+func (s *Store) exportNodes(ctx context.Context, q queryable) ([]exportNode, error) {
+	rows, err := q.QueryContext(ctx, exportNodeSelectSQL+" ORDER BY id")
 	if err != nil {
 		return nil, fmt.Errorf("query nodes: %w", err)
 	}
@@ -291,9 +298,10 @@ func (s *Store) exportNodes(ctx context.Context) ([]exportNode, error) {
 	return nodes, rows.Err()
 }
 
-// exportDependencies reads all dependencies for export.
-func (s *Store) exportDependencies(ctx context.Context) ([]exportDep, error) {
-	rows, err := s.readDB.QueryContext(ctx,
+// exportDependencies reads all dependencies for export through q, as
+// exportNodes does.
+func (s *Store) exportDependencies(ctx context.Context, q queryable) ([]exportDep, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT from_id, to_id, dep_type, created_at
 		 FROM dependencies ORDER BY from_id, to_id`)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,47 +17,47 @@ import (
 
 // validConfigKeys lists all 29 allowed config keys per FR-11.2.
 var validConfigKeys = map[string]bool{
-	"prefix":                   true,
-	"author_id":                true,
-	"mcp.read_only":            true,
-	"api.bind":                 true,
-	"api.http_port":            true,
-	"api.grpc_port":            true,
-	"api.rate_limit":           true,
-	"mcp.enabled":              true,
-	"mcp.transport":            true,
-	"data.dir":                 true,
+	"prefix":                     true,
+	"author_id":                  true,
+	"mcp.read_only":              true,
+	"api.bind":                   true,
+	"api.http_port":              true,
+	"api.grpc_port":              true,
+	"api.rate_limit":             true,
+	"mcp.enabled":                true,
+	"mcp.transport":              true,
+	"data.dir":                   true,
 	"data.soft_delete_retention": true,
-	"sync.enabled":             true,
-	"sync.endpoint":            true,
-	"sync.team_id":             true,
-	"sync.auto_sync":           true,
-	"sync.interval":            true,
-	"agent.heartbeat_interval": true,
-	"agent.stale_threshold":    true,
-	"agent.session_timeout":    true,
-	"agent.stuck_timeout":      true,
-	"agent.id_pattern":         true,
-	"agent.auto_claim":         true,
-	"context.token_estimator":  true,
-	"logging.file":             true,
-	"logging.level":            true,
-	"progress.weighted":        true,
-	"ui.default_depth":         true,
-	"ui.collapse_done":         true,
-	"ui.theme":                 true,
+	"sync.enabled":               true,
+	"sync.endpoint":              true,
+	"sync.team_id":               true,
+	"sync.auto_sync":             true,
+	"sync.interval":              true,
+	"agent.heartbeat_interval":   true,
+	"agent.stale_threshold":      true,
+	"agent.session_timeout":      true,
+	"agent.stuck_timeout":        true,
+	"agent.id_pattern":           true,
+	"agent.auto_claim":           true,
+	"context.token_estimator":    true,
+	"logging.file":               true,
+	"logging.level":              true,
+	"progress.weighted":          true,
+	"ui.default_depth":           true,
+	"ui.collapse_done":           true,
+	"ui.theme":                   true,
 }
 
 // serverRestartKeys are keys that affect a running server and require restart.
 var serverRestartKeys = map[string]bool{
-	"api.bind":      true,
-	"api.http_port": true,
-	"api.grpc_port": true,
+	"api.bind":       true,
+	"api.http_port":  true,
+	"api.grpc_port":  true,
 	"api.rate_limit": true,
-	"mcp.enabled":   true,
-	"mcp.transport": true,
-	"logging.file":  true,
-	"logging.level": true,
+	"mcp.enabled":    true,
+	"mcp.transport":  true,
+	"logging.file":   true,
+	"logging.level":  true,
 }
 
 // configDefaults contains default values for all 29 keys per FR-11.2.
@@ -141,7 +142,9 @@ func (cs *ConfigService) Get(key string) (string, error) {
 }
 
 // Set writes a config value for the given key.
-// Returns ErrInvalidConfigKey if the key is not recognized.
+// Returns ErrInvalidConfigKey if the key is not recognized, and
+// ErrInvalidInput for a sync.auto_sync value that is neither true nor false
+// (MTIX-95.31.2); nothing is written then.
 // Returns a warning string if the key requires server restart.
 func (cs *ConfigService) Set(key, value string) (string, error) {
 	if !validConfigKeys[key] {
@@ -149,6 +152,11 @@ func (cs *ConfigService) Set(key, value string) (string, error) {
 			"unknown config key %q; valid keys: %s: %w",
 			key, validKeyList(), model.ErrInvalidConfigKey,
 		)
+	}
+	if key == "sync.auto_sync" {
+		if _, err := parseAutoSync(value); err != nil {
+			return "", err
+		}
 	}
 
 	cs.values[key] = value
@@ -185,6 +193,31 @@ func (cs *ConfigService) Delete(key string) error {
 func (cs *ConfigService) AutoClaim() bool {
 	v, _ := cs.Get("agent.auto_claim")
 	return v == "true"
+}
+
+// AutoSyncSetting reports the sync.auto_sync switch (default true;
+// FR-15.2j, MTIX-95.31.2): the value as configured, and whether a changed
+// .mtix/tasks.json is imported automatically. A value that is neither true
+// nor false (strconv.ParseBool, surrounding spaces ignored) returns an
+// error, and auto-import is then on, the default. Auto-export does not
+// depend on it.
+func (cs *ConfigService) AutoSyncSetting() (raw string, on bool, err error) {
+	raw, _ = cs.Get("sync.auto_sync")
+	on, err = parseAutoSync(raw)
+	if err != nil {
+		return raw, true, err
+	}
+	return raw, on, nil
+}
+
+// parseAutoSync reads a sync.auto_sync value: true or false in any form
+// strconv.ParseBool accepts (MTIX-95.31.2).
+func parseAutoSync(value string) (bool, error) {
+	on, err := strconv.ParseBool(strings.TrimSpace(value))
+	if err != nil {
+		return false, fmt.Errorf("sync.auto_sync must be true or false, not %q: %w", value, model.ErrInvalidInput)
+	}
+	return on, nil
 }
 
 // AuthorID returns the configured default author identity for emitted sync

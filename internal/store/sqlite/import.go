@@ -70,24 +70,19 @@ type ImportResult struct {
 	FTSRebuilt   bool `json:"fts_rebuilt"`
 }
 
-// Import loads data from an ExportData structure per FR-7.8.
-// Verifies node_count, checksum and every time value (MTIX-95.31.1) before
-// importing, so a rejected file writes nothing. Supports replace and merge
-// modes. Rebuilds sequences and FTS index after bulk import.
-// If force is false, importing zero nodes into a non-empty database is rejected.
-func (s *Store) Import(
-	ctx context.Context,
-	data *ExportData,
-	mode ImportMode,
-	force bool,
-) (*ImportResult, error) {
+// ValidateExport runs the checks every import makes before it writes
+// anything (FR-7.8): node_count matches the nodes, the checksum verifies,
+// and every time value can be read back (MTIX-95.31.1). The automatic
+// import runs it before it takes its pre-import backup, so a file that
+// would be rejected never costs a backup (MTIX-95.31.2).
+func ValidateExport(data *ExportData) error {
 	if data == nil {
-		return nil, fmt.Errorf("import data is nil: %w", model.ErrInvalidInput)
+		return fmt.Errorf("import data is nil: %w", model.ErrInvalidInput)
 	}
 
 	// Verify node count per FR-7.8.
 	if data.NodeCount != len(data.Nodes) {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"node count mismatch: declared %d, actual %d: %w",
 			data.NodeCount, len(data.Nodes), model.ErrInvalidInput)
 	}
@@ -95,36 +90,60 @@ func (s *Store) Import(
 	// Verify checksum per FR-7.8.
 	valid, err := VerifyExportChecksum(data)
 	if err != nil {
-		return nil, fmt.Errorf("verify checksum: %w", err)
+		return fmt.Errorf("verify checksum: %w", err)
 	}
 	if !valid {
-		return nil, fmt.Errorf("checksum verification failed: %w", model.ErrInvalidInput)
+		return fmt.Errorf("checksum verification failed: %w", model.ErrInvalidInput)
 	}
 
 	// Reject a time value no reader could parse back (not RFC 3339, or a
 	// UTC year outside 1..9999, model.IsStorableTime) before anything is
 	// written (MTIX-95.31.1).
-	if timeErr := validateExportTimes(data); timeErr != nil {
-		return nil, timeErr
-	}
+	return validateExportTimes(data)
+}
 
-	// Reject zero-node imports into non-empty databases unless forced.
-	if len(data.Nodes) == 0 && !force {
-		var existingCount int
-		if countErr := s.readDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM nodes").Scan(&existingCount); countErr == nil && existingCount > 0 {
-			return nil, fmt.Errorf(
-				"import contains zero nodes but database has %d — use --force to confirm: %w",
-				existingCount, model.ErrInvalidInput)
-		}
+// Import loads data from an ExportData structure per FR-7.8.
+// Verifies node_count, checksum and every time value (ValidateExport,
+// MTIX-95.31.1) before importing, so a rejected file writes nothing.
+// Supports replace and merge modes. Rebuilds sequences and FTS index after
+// bulk import. If force is false, importing zero nodes into a non-empty
+// database is rejected.
+// MTIX-95.31.4: one transaction writes everything, after it re-checks the
+// store (IfStoreUnchanged) and renumbers the local tasks ImportReconcile
+// planned to move (renumberLocalFirst).
+func (s *Store) Import(
+	ctx context.Context,
+	data *ExportData,
+	mode ImportMode,
+	force bool,
+	opts ...ImportOption,
+) (*ImportResult, error) {
+	if err := ValidateExport(data); err != nil {
+		return nil, err
 	}
+	if err := s.refuseEmptyImport(ctx, data, force); err != nil {
+		return nil, err
+	}
+	cfg := collectImportOptions(opts)
 
 	var result ImportResult
-
-	if mode == ImportModeReplace {
-		result, err = s.importReplace(ctx, data)
-	} else {
-		result, err = s.importMerge(ctx, data)
-	}
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		// MTIX-95.31.4: the store must still be the one the caller checked.
+		if err := s.verifyStoreUnchanged(ctx, tx, cfg); err != nil {
+			return err
+		}
+		// MTIX-95.31.4: move each local task the file's task takes the id of.
+		if err := applyLocalRenumbers(ctx, tx, cfg.localMoves); err != nil {
+			return err
+		}
+		var applyErr error
+		if mode == ImportModeReplace {
+			result, applyErr = replaceAllData(ctx, tx, data)
+		} else {
+			result, applyErr = mergeAllData(ctx, tx, data)
+		}
+		return applyErr
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -143,20 +162,13 @@ func (s *Store) Import(
 	return &result, nil
 }
 
-// importReplace drops all data and reimports from export per FR-7.8.
-func (s *Store) importReplace(ctx context.Context, data *ExportData) (ImportResult, error) {
-	var result ImportResult
-
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
-		if err := clearAllTables(ctx, tx); err != nil {
-			return err
-		}
-		var insertErr error
-		result, insertErr = insertAllExportData(ctx, tx, data)
-		return insertErr
-	})
-
-	return result, err
+// replaceAllData drops all data and reimports from export per FR-7.8,
+// inside the import's transaction.
+func replaceAllData(ctx context.Context, tx *sql.Tx, data *ExportData) (ImportResult, error) {
+	if err := clearAllTables(ctx, tx); err != nil {
+		return ImportResult{}, err
+	}
+	return insertAllExportData(ctx, tx, data)
 }
 
 // clearAllTables deletes all data from tables in FK-safe order.
@@ -203,40 +215,35 @@ func insertAllExportData(ctx context.Context, tx *sql.Tx, data *ExportData) (Imp
 	return result, nil
 }
 
-// importMerge merges imported data with existing using content_hash per FR-7.8.
-// Whether the file carries the columns schema 2.0.0 added decides how their
-// absence is read (MTIX-95.31.1, carriesNodeColumns).
-func (s *Store) importMerge(ctx context.Context, data *ExportData) (ImportResult, error) {
+// mergeAllData merges imported data with existing using content_hash per
+// FR-7.8, inside the import's transaction. Whether the file carries the
+// columns schema 2.0.0 added decides how their absence is read
+// (MTIX-95.31.1, carriesNodeColumns).
+func mergeAllData(ctx context.Context, tx *sql.Tx, data *ExportData) (ImportResult, error) {
 	var result ImportResult
 	fileCarriesAllColumns := carriesNodeColumns(data.SchemaVersion)
-
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
-		for i := range data.Nodes {
-			action, mergeErr := mergeImportNode(ctx, tx, &data.Nodes[i], fileCarriesAllColumns)
-			if mergeErr != nil {
-				return mergeErr
-			}
-			switch action {
-			case importActionCreated:
-				result.NodesCreated++
-			case importActionUpdated:
-				result.NodesUpdated++
-			case importActionSkipped:
-				result.NodesSkipped++
-			}
+	for i := range data.Nodes {
+		action, mergeErr := mergeImportNode(ctx, tx, &data.Nodes[i], fileCarriesAllColumns)
+		if mergeErr != nil {
+			return result, mergeErr
 		}
-
-		for _, d := range data.Dependencies {
-			if err := insertExportDep(ctx, tx, &d); err != nil {
-				return fmt.Errorf("insert dep %s->%s: %w", d.FromID, d.ToID, err)
-			}
-			result.DepsImported++
+		switch action {
+		case importActionCreated:
+			result.NodesCreated++
+		case importActionUpdated:
+			result.NodesUpdated++
+		case importActionSkipped:
+			result.NodesSkipped++
 		}
+	}
 
-		return nil
-	})
-
-	return result, err
+	for _, d := range data.Dependencies {
+		if err := insertExportDep(ctx, tx, &d); err != nil {
+			return result, fmt.Errorf("insert dep %s->%s: %w", d.FromID, d.ToID, err)
+		}
+		result.DepsImported++
+	}
+	return result, nil
 }
 
 // importAction represents the result of merging a single node.
@@ -249,7 +256,10 @@ const (
 )
 
 // mergeImportNode merges one imported node into the store (FR-7.8). A node
-// new to the store is inserted as exported. For a node the store holds,
+// new to the store is inserted as exported; one the store holds as a
+// different task is never overwritten (refuseDifferentTask), and a local
+// value that a stale copy leaves empty is kept (keepLocalBlankedFields,
+// MTIX-95.31.4). For a node the store holds,
 // annotations and the activity stream merge as a union that never drops a
 // local entry (mergeNodeStreams, MTIX-95.31.1): an incoming node without
 // annotations keeps the local ones. The other columns take the incoming
@@ -276,20 +286,22 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 	if err != nil {
 		return 0, fmt.Errorf("read local node %s: %w", n.ID, err)
 	}
+	if err := refuseDifferentTask(&local, n); err != nil {
+		return 0, err
+	}
 	merged := *n // merge into a copy: the caller's export must still verify
 	if !fileCarriesAllColumns {
 		keepLocalNodeColumns(&merged, &local)
 	}
+	if !copyIsCurrent(&local, n, fileCarriesAllColumns) { // MTIX-95.31.4
+		if err := keepLocalBlankedFields(&merged, &local); err != nil {
+			return 0, fmt.Errorf("merge node %s: %w", n.ID, err)
+		}
+	}
 	streamsChanged := mergeNodeStreams(&merged, &local)
 
 	if existingHash.Valid && existingHash.String == n.ContentHash {
-		if !streamsChanged {
-			return importActionSkipped, nil
-		}
-		if err := writeNodeStreams(ctx, tx, &merged); err != nil {
-			return 0, fmt.Errorf("merge annotations and activity of node %s: %w", n.ID, err)
-		}
-		return importActionUpdated, nil
+		return mergeUnchangedContent(ctx, tx, &merged, local.UID, streamsChanged)
 	}
 
 	if err := updateExportNode(ctx, tx, &merged); err != nil {

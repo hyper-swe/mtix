@@ -187,7 +187,8 @@ func TestAutoImport_ConflictDetection_BothChanged_SkipsImport(t *testing.T) {
 
 	mtixDir := filepath.Join(dir, ".mtix")
 	err = svc.AutoImport(context.Background(), mtixDir)
-	assert.NoError(t, err, "conflict should not error, just skip")
+	assert.ErrorIs(t, err, service.ErrAutoImportRefused,
+		"a conflict whose replace would delete LOCAL-1 is refused, naming it (MTIX-95.31.4)")
 
 	// File hash should still be "oldhash" (import was skipped).
 	storedHash, err := os.ReadFile(filepath.Join(mtixDir, "data", "sync.sha256"))
@@ -283,8 +284,9 @@ func TestAutoImport_SchemaVersionCheck(t *testing.T) {
 	}
 }
 
-// TestAutoImport_HashMismatch_CreatesBackup verifies FR-15.2f:
-// before import, a backup of the existing database is created.
+// TestAutoImport_HashMismatch_CreatesBackup verifies FR-15.2f (amended by
+// MTIX-95.31.2): before import, a timestamped backup of the existing
+// database is created in .mtix/data/backups.
 func TestAutoImport_HashMismatch_CreatesBackup(t *testing.T) {
 	svc, _, dir := newTestSyncService(t)
 
@@ -305,10 +307,10 @@ func TestAutoImport_HashMismatch_CreatesBackup(t *testing.T) {
 	err = svc.AutoImport(context.Background(), mtixDir)
 	require.NoError(t, err)
 
-	// Verify backup was created.
-	backupPath := filepath.Join(mtixDir, "data", "pre-sync-backup.db")
+	// Verify backup was created, named after the service clock (UTC).
+	backupPath := filepath.Join(mtixDir, "data", "backups", "pre-sync-20260314-120000.db")
 	_, err = os.Stat(backupPath)
-	assert.NoError(t, err, "pre-sync-backup.db should exist after import")
+	assert.NoError(t, err, "a timestamped pre-sync backup should exist after import")
 }
 
 // TestAutoImport_FileTooLarge_ReturnsError verifies FR-15.2e:
@@ -503,11 +505,13 @@ func TestAutoImport_ConflictDetection_DBHashMatchesStored_NoConflict(t *testing.
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	// Create initial state.
+	// Create initial state. The teammate's copy below is the same task, so
+	// it carries the same uid (MTIX-95.31.4: another uid is a different task).
+	const uid = "01a0d56f-0000-7000-8000-00000000b001"
 	require.NoError(t, store.CreateNode(ctx, &model.Node{
 		ID: "NC-1", Project: "NC", Depth: 0, Seq: 1, Title: "No conflict",
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
-		NodeType: model.NodeTypeIssue, ContentHash: "nc1", CreatedAt: now, UpdatedAt: now,
+		NodeType: model.NodeTypeIssue, ContentHash: "nc1", UID: uid, CreatedAt: now, UpdatedAt: now,
 	}))
 
 	mtixDir := filepath.Join(dir, ".mtix")
@@ -524,6 +528,13 @@ func TestAutoImport_ConflictDetection_DBHashMatchesStored_NoConflict(t *testing.
 	require.NoError(t, err)
 	defer srcStore.Close()
 
+	// The teammate's board carries NC-1 as well: a replace that would drop
+	// it is refused (MTIX-95.31.2).
+	require.NoError(t, srcStore.CreateNode(ctx, &model.Node{
+		ID: "NC-1", Project: "NC", Depth: 0, Seq: 1, Title: "No conflict",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "nc1", UID: uid, CreatedAt: now, UpdatedAt: now,
+	}))
 	newData := makeExportData(t, srcStore)
 	writeTasksJSON(t, dir, newData)
 
@@ -640,11 +651,13 @@ func TestAutoImport_FullRoundtrip_ExportImportExport(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
-	// Create node and export.
+	// Create node and export. The pulled copy below is the same task, so
+	// it carries the same uid (MTIX-95.31.4: another uid is a different task).
+	const uid = "01a0d56f-0000-7000-8000-00000000b002"
 	require.NoError(t, store.CreateNode(ctx, &model.Node{
 		ID: "RT-1", Project: "RT", Depth: 0, Seq: 1, Title: "Round trip",
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
-		NodeType: model.NodeTypeIssue, ContentHash: "rt1", CreatedAt: now, UpdatedAt: now,
+		NodeType: model.NodeTypeIssue, ContentHash: "rt1", UID: uid, CreatedAt: now, UpdatedAt: now,
 	}))
 
 	mtixDir := filepath.Join(dir, ".mtix")
@@ -659,6 +672,13 @@ func TestAutoImport_FullRoundtrip_ExportImportExport(t *testing.T) {
 	require.NoError(t, err)
 	defer srcStore.Close()
 
+	// The pulled board carries RT-1 as well: a replace that would drop it
+	// is refused (MTIX-95.31.2).
+	require.NoError(t, srcStore.CreateNode(ctx, &model.Node{
+		ID: "RT-1", Project: "RT", Depth: 0, Seq: 1, Title: "Round trip",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		NodeType: model.NodeTypeIssue, ContentHash: "rt1", UID: uid, CreatedAt: now, UpdatedAt: now,
+	}))
 	newData := makeExportData(t, srcStore)
 	writeTasksJSON(t, dir, newData)
 
@@ -804,7 +824,7 @@ func TestAutoExport_ThenAutoImport_RoundTrips(t *testing.T) {
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
 		NodeType: model.NodeTypeIssue, ContentHash: "rt1",
 		Description: "Test description for roundtrip",
-		CreatedAt: now, UpdatedAt: now,
+		CreatedAt:   now, UpdatedAt: now,
 	}))
 
 	// Export.
@@ -879,9 +899,10 @@ func TestAutoImport_ConflictDetection_BothChanged_Skips(t *testing.T) {
 		NodeType: model.NodeTypeIssue, ContentHash: "c2", CreatedAt: now, UpdatedAt: now,
 	}))
 
-	// Import should detect conflict and skip (no error, just a warning).
+	// Import should detect conflict and skip; its replace would delete
+	// CONF-2, so it is refused naming it (MTIX-95.31.4).
 	err = svc.AutoImport(ctx, mtixDir)
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, service.ErrAutoImportRefused)
 
 	// DB should still have the local change (import was skipped).
 	_, err = store.GetNode(ctx, "CONF-2")
@@ -953,11 +974,14 @@ func TestAutoImport_ImportsWhenFileChangedExternally(t *testing.T) {
 	mtixDir := filepath.Join(dir, ".mtix")
 	now := time.Now().UTC().Truncate(time.Second)
 
-	// Create initial node and export.
+	// Create initial node and export. The other machine's copy below is the
+	// same task, so it carries the same uid (MTIX-95.31.4: another uid is a
+	// different task).
+	const uid = "01a0d56f-0000-7000-8000-00000000b003"
 	require.NoError(t, store.CreateNode(ctx, &model.Node{
 		ID: "EXT-1", Project: "EXT", Depth: 0, Seq: 1, Title: "Original title",
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
-		NodeType: model.NodeTypeEpic, ContentHash: "e1", CreatedAt: now, UpdatedAt: now,
+		NodeType: model.NodeTypeEpic, ContentHash: "e1", UID: uid, CreatedAt: now, UpdatedAt: now,
 	}))
 	require.NoError(t, svc.AutoExport(ctx, mtixDir))
 
@@ -974,7 +998,7 @@ func TestAutoImport_ImportsWhenFileChangedExternally(t *testing.T) {
 	require.NoError(t, externalStore.CreateNode(ctx, &model.Node{
 		ID: "EXT-1", Project: "EXT", Depth: 0, Seq: 1, Title: "Changed by another machine",
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
-		NodeType: model.NodeTypeEpic, ContentHash: "e2", CreatedAt: now, UpdatedAt: now,
+		NodeType: model.NodeTypeEpic, ContentHash: "e2", UID: uid, CreatedAt: now, UpdatedAt: now,
 	}))
 	externalExport, err := externalStore.Export(ctx, "EXT", "0.1.0")
 	require.NoError(t, err)

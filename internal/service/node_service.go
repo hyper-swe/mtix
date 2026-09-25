@@ -260,15 +260,24 @@ func (svc *NodeService) validateCreateRequest(req *CreateNodeRequest) error {
 func (svc *NodeService) buildNode(
 	ctx context.Context, req *CreateNodeRequest, now time.Time,
 ) (*model.Node, error) {
+	// The uid is the create-event id (ADR-003 §2), a UUIDv7 carrying the
+	// time it is minted. Mint it with the creation time, before the steps
+	// that can wait for the write lock (NextSequence), so its time stays
+	// with created_at (MTIX-95.31.4).
+	uid, err := clock.NewEventID()
+	if err != nil {
+		return nil, fmt.Errorf("generate uid: %w", err)
+	}
+
 	var parentID string
 	var depth int
 	var seqKey string
 
 	if req.ParentID != "" {
 		parentID = req.ParentID
-		parent, err := svc.store.GetNode(ctx, parentID)
-		if err != nil {
-			return nil, fmt.Errorf("parent %s: %w", parentID, err)
+		parent, getErr := svc.store.GetNode(ctx, parentID)
+		if getErr != nil {
+			return nil, fmt.Errorf("parent %s: %w", parentID, getErr)
 		}
 		depth = parent.Depth + 1
 		seqKey = req.Project + ":" + parentID
@@ -286,10 +295,6 @@ func (svc *NodeService) buildNode(
 	// unreachable AND the node has a parent — then it is born PROVISIONAL (a
 	// uid-bearing id) and re-settles on the next sync. A project root is always
 	// settled in ADR-003's model, so only a child can be provisional.
-	uid, err := clock.NewEventID()
-	if err != nil {
-		return nil, fmt.Errorf("generate uid: %w", err)
-	}
 	id, err := svc.chooseDisplayID(req.Project, parentID, seq, uid)
 	if err != nil {
 		return nil, err

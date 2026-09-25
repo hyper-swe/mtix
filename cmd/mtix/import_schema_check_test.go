@@ -4,6 +4,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -114,6 +116,9 @@ func TestImportCmd_Applied_StillAutoExports(t *testing.T) {
 	tasksPath := filepath.Join(app.mtixDir, "tasks.json")
 	stale := []byte(`{"note": "stale"}` + "\n")
 	require.NoError(t, os.WriteFile(tasksPath, stale, 0o644))
+	// mtix wrote this stale board: an export may replace it. A board that
+	// changed on disk since is never overwritten (MTIX-95.31.2).
+	markWrittenByMtix(t, stale)
 
 	cmd := newImportCmd()
 	cmd.SetArgs([]string{path})
@@ -143,6 +148,9 @@ func TestImportCmd_FailsAfterCommit_StillAutoExports(t *testing.T) {
 	tasksPath := filepath.Join(app.mtixDir, "tasks.json")
 	stale := []byte(`{"note": "stale"}` + "\n")
 	require.NoError(t, os.WriteFile(tasksPath, stale, 0o644))
+	// mtix wrote this stale board: an export may replace it. A board that
+	// changed on disk since is never overwritten (MTIX-95.31.2).
+	markWrittenByMtix(t, stale)
 
 	cmd := newImportCmd()
 	cmd.SetArgs([]string{path, "--mode", "replace"})
@@ -154,4 +162,13 @@ func TestImportCmd_FailsAfterCommit_StillAutoExports(t *testing.T) {
 	got, readErr := os.ReadFile(tasksPath)
 	require.NoError(t, readErr)
 	assert.NotEqual(t, stale, got, "an import that committed re-exports .mtix/tasks.json even though it failed")
+}
+
+// markWrittenByMtix records board as the .mtix/tasks.json mtix last wrote
+// (its hash in sync.sha256), as an export or import does.
+func markWrittenByMtix(t *testing.T, board []byte) {
+	t.Helper()
+	sum := sha256.Sum256(board)
+	require.NoError(t, os.WriteFile(filepath.Join(app.mtixDir, "data", "sync.sha256"),
+		[]byte(hex.EncodeToString(sum[:])), 0o644))
 }

@@ -286,11 +286,13 @@ func TestImport_MergeMode_ExistingNodeNullHash_Updates(t *testing.T) {
 
 	destStore := newTestStore(t)
 
-	// Create dest node with NULL content_hash.
+	// Create dest node with NULL content_hash: the same task, so it carries
+	// its uid (MTIX-95.31.4: another uid is a different task).
 	require.NoError(t, destStore.CreateNode(ctx, &model.Node{
 		ID: "IMP-1", Project: "IMP", Depth: 0, Seq: 1, Title: "Old title",
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
-		NodeType: model.NodeTypeIssue, ContentHash: "", CreatedAt: now, UpdatedAt: now,
+		NodeType: model.NodeTypeIssue, ContentHash: "", UID: exportData.Nodes[0].UID,
+		CreatedAt: now, UpdatedAt: now,
 	}))
 	// Force content_hash to NULL.
 	_, err = destStore.WriteDB().ExecContext(ctx,

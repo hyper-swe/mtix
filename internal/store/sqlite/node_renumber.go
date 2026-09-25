@@ -53,31 +53,40 @@ func (s *Store) RenumberSubtree(ctx context.Context, id string, newSeq int) erro
 		if err != nil {
 			return err
 		}
-
-		// Idempotent: renumbering to the current number changes nothing.
-		if node.seq == newSeq {
-			return nil
-		}
-
-		newID := model.BuildID(node.project, node.parentID, newSeq)
-		if err := assertTargetNamespaceFree(ctx, tx, newID); err != nil {
-			return err
-		}
-
-		// Defer FK enforcement to commit time so the parent's id can change
-		// before its children's parent_id are rewritten within this single
-		// statement set, without tripping the parent_id -> nodes(id) FK
-		// mid-transaction. defer_foreign_keys resets automatically at commit,
-		// where all constraints are re-checked (FK-safe per ADR-003 §5).
-		if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
-			return fmt.Errorf("renumber %s: enable deferred FK: %w", id, err)
-		}
-
-		if err := rewriteSubtreeIDs(ctx, tx, id, newID, newSeq); err != nil {
-			return err
-		}
-		return rewriteDependencyRefs(ctx, tx, id, newID)
+		return renumberSubtreeTx(ctx, tx, id, node, newSeq)
 	})
+}
+
+// renumberSubtreeTx moves node id, loaded as node, and its whole subtree to
+// sibling number newSeq inside tx: the body of RenumberSubtree, shared with
+// a merge import that renumbers a local task inside its own transaction
+// (MTIX-95.31.4). The destination namespace must be free (ErrAlreadyExists
+// otherwise, nothing written); the nodes, their children's parent_id and
+// the dependency rows are rewritten with foreign keys checked at commit.
+func renumberSubtreeTx(ctx context.Context, tx *sql.Tx, id string, node renumberTarget, newSeq int) error {
+	// Idempotent: renumbering to the current number changes nothing.
+	if node.seq == newSeq {
+		return nil
+	}
+
+	newID := model.BuildID(node.project, node.parentID, newSeq)
+	if err := assertTargetNamespaceFree(ctx, tx, newID); err != nil {
+		return err
+	}
+
+	// Defer FK enforcement to commit time so the parent's id can change
+	// before its children's parent_id are rewritten within this single
+	// statement set, without tripping the parent_id -> nodes(id) FK
+	// mid-transaction. defer_foreign_keys resets automatically at commit,
+	// where all constraints are re-checked (FK-safe per ADR-003 §5).
+	if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
+		return fmt.Errorf("renumber %s: enable deferred FK: %w", id, err)
+	}
+
+	if err := rewriteSubtreeIDs(ctx, tx, id, newID, newSeq); err != nil {
+		return err
+	}
+	return rewriteDependencyRefs(ctx, tx, id, newID)
 }
 
 // renumberTarget holds the columns of the node being renumbered.

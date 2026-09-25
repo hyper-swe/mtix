@@ -206,11 +206,20 @@ On a loss the import is refused and nothing changes: no import, no
 backup, the stored hash kept, so it refuses again on every command. The
 refusal names the loss node by node and three ways to proceed, each of
 which resolves it: `mtix import .mtix/tasks.json --mode merge` (backs up
-the database and keeps all local data, a field value a stale copy leaves
-empty included, with the node's local status when the value is part of it;
-for a node whose `content_hash` is unchanged the local field values win; a local node whose id the file gives to a different task, one
-with another `uid`, is renumbered with its subtree to the next number free
-in both, keeping its `uid`, and applied only with `--confirm`),
+the database; keeps every local annotation and activity entry, with the
+file's added, and every field value the refusal lists, with the node's
+local status when the value is part of it; decides the other field values
+per node by its content, the title, description, prompt, acceptance and
+labels that `content_hash` covers: where the local content matches the
+file's, every local field value stays, so a teammate's claim, status,
+assignee or wake-time change to that node is not applied, and where it
+differs, the file's copy wins, so a local edit to that node (an unclaim or
+a prompt edit, for example) is undone, except a value the file leaves
+empty in a copy that is not current; check `git log -p .mtix/tasks.json`
+afterwards and reapply what it undid; a local node whose id the file gives
+to a different task, one with another `uid`, is renumbered with its
+subtree to the next number free in both, keeping its `uid`, and applied
+only with `--confirm`),
 `mtix sync --fix` (rewrite the file from the store) and
 `mtix import .mtix/tasks.json --mode replace`. The replace re-checks, in
 its own transaction, that the store is unchanged since the comparison; if
@@ -247,8 +256,11 @@ never `mtix sync --fix`).
   different entries that share an id are both kept, and an entry both
   sides hold is kept once. When anything is added, the list is ordered by
   time, then id.
-- When the node's `content_hash` differs, the file's values replace the
-  other fields. When it is the same, the other fields keep their local
-  values.
+- When the node's `content_hash` (its title, description, prompt,
+  acceptance and labels) differs, the file's values replace the other
+  fields, so a local edit to them is undone, except a value the file
+  leaves empty in a copy that is not current, which stays. When it is the
+  same, the other fields keep their local values, so a change the file
+  carries to them (a teammate's claim, for example) is not applied.
 - A merge cannot remove an annotation or an activity entry. To make the
   store match a file exactly, use replace mode.

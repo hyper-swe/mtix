@@ -3,14 +3,18 @@
 
 // Tests for MTIX-95.31.11 (FR-15.2h): when a pulled tasks.json and the
 // local store both changed, every message that names the ways out leads
-// with the merge import, which keeps both sides' data, before mtix sync
-// --fix and the replace import, which each keep one side and drop the
-// other. The merge is never described as combining both: for a task whose
-// content the teammate did not change, it keeps the local status, assignee
-// and wake time over the teammate's, so it can revert a teammate's claim.
-// The warning and the line a write prints therefore say so, and point to
-// the way out for a conflict although nothing changed locally (the
-// recovery the user manual documents with the upgrade notes).
+// with the merge import, which keeps the comments and activity of both
+// sides, before mtix sync --fix and the replace import, which each keep one
+// side and drop the other. The merge is never described as combining both:
+// it decides the other field values per task, by the task's content (title,
+// description, prompt, acceptance, labels). Where the local content matches
+// the file's, every local field value stays, so a teammate's claim is
+// reverted; where it differs, the file's copy wins, so a local edit to that
+// task (an unclaim, a prompt edit) is undone. The warning, the lines a
+// write prints and the refusal therefore state that rule in both
+// directions, and the warning and the conflict line point to the way out
+// for a conflict although nothing changed locally (the recovery the user
+// manual documents with the upgrade notes).
 package service_test
 
 import (

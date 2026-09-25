@@ -165,15 +165,6 @@ func (s *Store) Import(
 	return &result, nil
 }
 
-// replaceAllData drops all data and reimports from export per FR-7.8,
-// inside the import's transaction.
-func replaceAllData(ctx context.Context, tx *sql.Tx, data *ExportData) (ImportResult, error) {
-	if err := clearAllTables(ctx, tx); err != nil {
-		return ImportResult{}, err
-	}
-	return insertAllExportData(ctx, tx, data)
-}
-
 // clearAllTables deletes all data from tables in FK-safe order.
 func clearAllTables(ctx context.Context, tx *sql.Tx) error {
 	tables := []string{"dependencies", "sessions", "agents", "nodes", "sequences"}

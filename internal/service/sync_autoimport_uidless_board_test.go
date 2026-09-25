@@ -174,3 +174,58 @@ func TestAutoImport_FreshClonesOfUIDlessBoard_RetitleConvergesWithoutDuplicate(t
 	require.NoError(t, err)
 	assert.Equal(t, "Retitled again by D", node.Title)
 }
+
+// editedBoard returns board, decoded, changed by edit and sealed again with
+// a valid checksum, as a teammate's client writes its next board.
+func editedBoard(t *testing.T, board []byte, edit func(d *sqlite.ExportData)) []byte {
+	t.Helper()
+	data, err := sqlite.DecodeExportData(bytes.NewReader(board))
+	require.NoError(t, err)
+	edit(data)
+	require.NoError(t, sqlite.RecomputeExportChecksum(data))
+	out, err := json.MarshalIndent(data, "", "  ")
+	require.NoError(t, err)
+	return out
+}
+
+// TestAutoImport_SuccessiveUIDlessBoards_ApplyAndKeepBackfillUIDs is the
+// MTIX-95.31.9 round-2 regression: a fresh clone imports a board without
+// uids (a teammate on 0.3 or older), then pulls that teammate's next
+// boards. Each applies the teammate's change without a refusal ("field uid"
+// is no loss for a task whose local uid is a backfill uid), before and
+// after a merge, and every local backfill uid stays as it was.
+func TestAutoImport_SuccessiveUIDlessBoards_ApplyAndKeepBackfillUIDs(t *testing.T) {
+	ctx := context.Background()
+	first := withoutUIDs(t, newGuardFixture(t).teammateBoard(t, func(*sqlite.ExportData) {}))
+	f := newProjectFixture(t)
+	f.pull(t, first)
+	require.NoError(t, f.svc.AutoImport(ctx, f.mtixDir))
+	uids := map[string]string{"PROJ-1": uidAt(t, f, "PROJ-1"), "PROJ-2": uidAt(t, f, "PROJ-2")}
+	describe := func(board []byte, id, description string) []byte {
+		return editedBoard(t, board, func(d *sqlite.ExportData) {
+			n := &d.Nodes[nodeIndex(t, d, id)]
+			n.Description, n.ContentHash = description, "h-"+description
+		})
+	}
+
+	second := describe(first, "PROJ-2", "Teammate's description")
+	f.pull(t, second)
+	require.NoError(t, f.svc.AutoImport(ctx, f.mtixDir), "the second board applies")
+	assert.NotContains(t, f.notices.String(), refusalHeader)
+	node, err := f.store.GetNode(ctx, "PROJ-2")
+	require.NoError(t, err)
+	assert.Equal(t, "Teammate's description", node.Description)
+
+	_, _, err = f.store.ImportReconcile(ctx, f.pulledBoard(t), sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge})
+	require.NoError(t, err, "a merge of the board")
+	f.pull(t, describe(second, "PROJ-1", "Another change"))
+	require.NoError(t, f.svc.AutoImport(ctx, f.mtixDir), "the third board applies after a merge")
+	assert.NotContains(t, f.notices.String(), refusalHeader)
+	node, err = f.store.GetNode(ctx, "PROJ-1")
+	require.NoError(t, err)
+	assert.Equal(t, "Another change", node.Description)
+	for id, uid := range uids {
+		assert.True(t, model.IsBackfillUID(uid))
+		assert.Equal(t, uid, uidAt(t, f, id), "the backfill uid of %s stays", id)
+	}
+}

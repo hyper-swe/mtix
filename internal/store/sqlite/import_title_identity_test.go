@@ -59,14 +59,15 @@ func TestStampNewUIDs_StoreChangedAfterPlan_ConflictWritesNothing(t *testing.T) 
 			createUIDlessTask(t, s, "REC-1", 1, "Local task")
 			minted, err := model.NewBackfillUID()
 			require.NoError(t, err)
-			moves := []localRenumber{{uid: minted, oldID: "REC-1", newID: "REC-2", seq: 2, stamp: true}}
+			writes := localWrites{stamps: []uidStamp{{id: "REC-1", uid: minted}},
+				moves: []localRenumber{{uid: minted, oldID: "REC-1", newID: "REC-2", seq: 2}}}
 			_, err = s.writeDB.ExecContext(ctx, tt.change)
 			require.NoError(t, err)
 			data, err := s.Export(ctx, "", "")
 			require.NoError(t, err)
 			before := nodesJSON(t, s)
 
-			_, err = s.Import(ctx, data, ImportModeMerge, false, renumberLocalFirst(moves))
+			_, err = s.Import(ctx, data, ImportModeMerge, false, renumberLocalFirst(writes))
 			require.ErrorIs(t, err, model.ErrConflict)
 			assert.ErrorContains(t, err, "give local task REC-1 a uid")
 			assert.Equal(t, before, nodesJSON(t, s), "nothing was written")

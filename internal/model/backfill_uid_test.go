@@ -46,6 +46,8 @@ func TestIsBackfillUID_TellsMarkedFromOtherUIDs(t *testing.T) {
 	otherV8[7] ^= 0xFF // same version, another marker
 	wrongVariant := uuid.MustParse(marked)
 	wrongVariant[8] &= 0x3F // not the RFC 4122 variant
+	v7WithMarkerBits := v7
+	v7WithMarkerBits[6], v7WithMarkerBits[7] = 0x7B, 0xF1 // a v7 whose sub-millisecond counter carries 0xBF1
 	tests := []struct {
 		name string
 		uid  string
@@ -54,6 +56,7 @@ func TestIsBackfillUID_TellsMarkedFromOtherUIDs(t *testing.T) {
 		{"a backfill uid", marked, true},
 		{"a backfill uid in upper case", strings.ToUpper(marked), true},
 		{"a create's UUIDv7", v7.String(), false},
+		{"a create's UUIDv7 whose counter bits equal the marker", v7WithMarkerBits.String(), false},
 		{"a random UUIDv4", uuid.NewString(), false},
 		{"a UUIDv8 with another marker", otherV8.String(), false},
 		{"another variant", wrongVariant.String(), false},

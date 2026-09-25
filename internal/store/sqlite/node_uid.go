@@ -6,7 +6,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -123,32 +122,99 @@ func (s *Store) backfillUIDsPreV3(ctx context.Context, existingVersion int) erro
 }
 
 // mintMissingUIDs gives every node without a uid (NULL or empty), live or
-// soft-deleted, a backfill uid in one transaction, and returns how many
-// it gave (MTIX-95.31.9). A node that got a uid meanwhile keeps it.
+// soft-deleted, a backfill uid, and returns how many it gave, counted from
+// the rows it changed (MTIX-95.31.9). A store whose nodes all carry a uid
+// is only read. Otherwise the backfill is a write like any other, through
+// WithTx: the NFR-2.8 free-space pre-flight may refuse it, and a fatal
+// storage error latches fail-stop. The nodes are found inside the
+// transaction, and each is written only while it still has no uid.
 func (s *Store) mintMissingUIDs(ctx context.Context) (int, error) {
-	ids, err := s.nodesMissingUID(ctx)
-	if err != nil || len(ids) == 0 {
-		return 0, err
+	var missing bool
+	// Does any node, soft-deleted ones included, lack a uid?
+	if err := s.readDB.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM nodes WHERE uid IS NULL OR uid = '')`).Scan(&missing); err != nil {
+		return 0, fmt.Errorf("look for nodes without a uid: %w", err)
 	}
-	tx, err := s.writeDB.BeginTx(ctx, nil)
+	if !missing {
+		return 0, nil
+	}
+	minted := 0
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		ids, err := uidlessNodeIDs(ctx, tx)
+		if err != nil {
+			return err
+		}
+		minted, err = setBackfillUIDs(ctx, tx, ids)
+		return err
+	})
 	if err != nil {
-		return 0, fmt.Errorf("begin the uid backfill: %w", err)
+		return 0, fmt.Errorf("give nodes without a uid a backfill uid: %w", err)
 	}
+	return minted, nil
+}
+
+// uidlessNodeIDs returns, read through tx, the ids of the nodes without a
+// uid (NULL or empty), soft-deleted ones included (MTIX-95.31.9).
+func uidlessNodeIDs(ctx context.Context, tx *sql.Tx) (ids []string, err error) {
+	// Every node without a uid.
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM nodes WHERE uid IS NULL OR uid = ''`)
+	if err != nil {
+		return nil, fmt.Errorf("scan nodes missing uid: %w", err)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close the scan of nodes missing uid: %w", closeErr)
+		}
+	}()
+	for rows.Next() {
+		var id string
+		if scanErr := rows.Scan(&id); scanErr != nil {
+			return nil, fmt.Errorf("scan node id: %w", scanErr)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scan nodes missing uid: %w", err)
+	}
+	return ids, nil
+}
+
+// setBackfillUIDs gives each node of ids, inside tx, a backfill uid while
+// it still has none (setBackfillUID), and returns how many it gave, counted
+// from the rows it changed (MTIX-95.31.9).
+func setBackfillUIDs(ctx context.Context, tx *sql.Tx, ids []string) (int, error) {
+	set := 0
 	for _, id := range ids {
-		uid, mintErr := model.NewBackfillUID()
-		if mintErr != nil {
-			return 0, errors.Join(fmt.Errorf("mint uid for %s: %w", id, mintErr), tx.Rollback())
+		ok, err := setBackfillUID(ctx, tx, id)
+		if err != nil {
+			return set, err
 		}
-		// Give the node its uid, only while it still has none.
-		if _, execErr := tx.ExecContext(ctx,
-			`UPDATE nodes SET uid = ? WHERE id = ? AND COALESCE(uid, '') = ''`, uid, id); execErr != nil {
-			return 0, errors.Join(fmt.Errorf("set local uid for %s: %w", id, execErr), tx.Rollback())
+		if ok {
+			set++
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit the uid backfill: %w", err)
+	return set, nil
+}
+
+// setBackfillUID gives node id, inside tx, a new backfill uid, only while it
+// still has none, and reports whether it did (MTIX-95.31.9): a node another
+// process gave a uid after the scan keeps that uid and is not counted.
+func setBackfillUID(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
+	uid, err := model.NewBackfillUID()
+	if err != nil {
+		return false, fmt.Errorf("mint uid for %s: %w", id, err)
 	}
-	return len(ids), nil
+	// Give the node its uid, only while it still has none.
+	res, err := tx.ExecContext(ctx,
+		`UPDATE nodes SET uid = ? WHERE id = ? AND COALESCE(uid, '') = ''`, uid, id)
+	if err != nil {
+		return false, fmt.Errorf("set local uid for %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("set local uid for %s: %w", id, err)
+	}
+	return n == 1, nil
 }
 
 // uidForInsert returns the uid an import writes for a node it inserts
@@ -164,23 +230,4 @@ func uidForInsert(uid string) (string, error) {
 		return "", fmt.Errorf("give an imported node a uid: %w", err)
 	}
 	return minted, nil
-}
-
-// nodesMissingUID returns the ids of live nodes whose uid is still empty.
-func (s *Store) nodesMissingUID(ctx context.Context) ([]string, error) {
-	rows, err := s.writeDB.QueryContext(ctx,
-		`SELECT id FROM nodes WHERE uid IS NULL OR uid = ''`)
-	if err != nil {
-		return nil, fmt.Errorf("scan nodes missing uid: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if scanErr := rows.Scan(&id); scanErr != nil {
-			return nil, fmt.Errorf("scan node id: %w", scanErr)
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
 }

@@ -19,11 +19,9 @@ import (
 // localRenumber is one local node whose own number a merge import changes
 // (MTIX-95.31.4, FR-15.2i): the node holding uid, now at oldID, ends at
 // newID, number seq, under the same parent (whose id may change too).
-// stamp: the node has no uid yet and is given uid first (MTIX-95.31.9).
 type localRenumber struct {
 	uid, oldID, newID string
 	seq               int
-	stamp             bool
 }
 
 // localNode is what a merge import plans with for one local node, live or
@@ -31,8 +29,8 @@ type localRenumber struct {
 type localNode struct {
 	id, uid, project, parentID, createdAt string
 	seq, finalSeq                         int
-	// title is read only when a uid is missing (MTIX-95.31.9); stamp is
-	// set when the plan minted uid for the node (stampMissingUIDs).
+	// title is read only when a file node has no uid (MTIX-95.31.9); stamp
+	// is set when the plan minted uid for the node (stampMissingUIDs).
 	title string
 	stamp bool
 	// final is the node's id after the merge.
@@ -161,27 +159,27 @@ type localMovePlan struct {
 func (s *Store) planLocalRenumbers(
 	ctx context.Context, data *ExportData, mode ImportMode,
 	report *ImportReconcileReport, taken map[string]map[int]bool,
-) ([]localRenumber, error) {
+) (localWrites, error) {
 	if mode != ImportModeMerge {
-		return nil, nil
+		return localWrites{}, nil
 	}
 	nodes, err := s.loadLocalNodes(ctx)
 	if err != nil {
-		return nil, err
+		return localWrites{}, err
 	}
 	p := newLocalMovePlan(data, nodes, report, taken)
+	if err := p.stampMissingUIDs(); err != nil { // MTIX-95.31.9: before any identity decision
+		return localWrites{}, err
+	}
 	if err := s.loadTitlesIfUIDless(ctx, p); err != nil {
-		return nil, err
+		return localWrites{}, err
 	}
 	p.follow()
 	p.renumber()
 	if err := p.checkFinals(); err != nil {
-		return nil, err
+		return localWrites{}, err
 	}
-	if err := p.stampMissingUIDs(); err != nil {
-		return nil, err
-	}
-	return p.finish(), nil
+	return localWrites{stamps: p.stampList(), moves: p.finish()}, nil
 }
 
 // loadLocalNodes reads every local node, soft-deleted ones included,
@@ -387,7 +385,7 @@ func (p *localMovePlan) finish() []localRenumber {
 			p.report.Moved = append(p.report.Moved, entry)
 		}
 		if l.finalSeq != l.seq {
-			moves = append(moves, localRenumber{uid: l.uid, oldID: l.id, newID: l.final, seq: l.finalSeq, stamp: l.stamp})
+			moves = append(moves, localRenumber{uid: l.uid, oldID: l.id, newID: l.final, seq: l.finalSeq})
 		}
 	}
 	return moves
@@ -404,12 +402,13 @@ func (p *localMovePlan) finish() []localRenumber {
 // that trade ids (two tasks the file swapped) never meet an occupied id.
 // The sequence counters follow the final numbers when Import rebuilds them
 // after the transaction.
-func applyLocalRenumbers(ctx context.Context, tx *sql.Tx, moves []localRenumber) error {
+func applyLocalRenumbers(ctx context.Context, tx *sql.Tx, w localWrites) error {
+	if err := stampNewUIDs(ctx, tx, w.stamps); err != nil { // MTIX-95.31.9
+		return err
+	}
+	moves := w.moves
 	if len(moves) == 0 {
 		return nil
-	}
-	if err := stampNewUIDs(ctx, tx, moves); err != nil { // MTIX-95.31.9
-		return err
 	}
 	for _, m := range moves {
 		id, err := idOfUID(ctx, tx, m.uid)

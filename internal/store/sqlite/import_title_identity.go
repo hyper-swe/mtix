@@ -96,14 +96,29 @@ func (s *Store) loadTitlesIfUIDless(ctx context.Context, p *localMovePlan) error
 	return nil
 }
 
-// stampMissingUIDs gives every local node whose own number the merge
-// changes and that has no uid a backfill uid, as BackfillUIDs gives one to
-// a node without a create event (MTIX-95.31.9): the renumber finds each
-// node by its uid. The write sets it first (stampNewUIDs); the report shows
-// it as uid=(new), since a later run mints another.
+// uidStamp is a backfill uid the merge plan minted for local node id,
+// which had none (MTIX-95.31.9); the import writes it first (stampNewUIDs).
+type uidStamp struct{ id, uid string }
+
+// localWrites are the writes a merge makes to local nodes, inside its
+// transaction, before it writes the file's nodes (MTIX-95.31.4,
+// MTIX-95.31.9): the backfill uids the plan minted, then the renumbers.
+type localWrites struct {
+	stamps []uidStamp
+	moves  []localRenumber
+}
+
+// stampMissingUIDs gives every local node without a uid a backfill uid
+// before the plan decides any identity (MTIX-95.31.9): as the open does,
+// in case its backfill failed, so a merge never compares a local task
+// without a uid (the identity rule then counts the uid as one assigned
+// after the task was created), and the renumber finds each node by its
+// uid. The import writes the uids first (stampNewUIDs), so a plan that is
+// not applied writes nothing; the report shows a renumbered node's minted
+// uid as uid=(new), since a later run mints another.
 func (p *localMovePlan) stampMissingUIDs() error {
 	for _, l := range p.nodes {
-		if l.uid != "" || l.finalSeq == l.seq {
+		if l.uid != "" {
 			continue
 		}
 		uid, err := model.NewBackfillUID()
@@ -115,29 +130,38 @@ func (p *localMovePlan) stampMissingUIDs() error {
 	return nil
 }
 
+// stampList returns the backfill uids the plan minted (stampMissingUIDs),
+// by the ids the nodes hold before any renumber.
+func (p *localMovePlan) stampList() []uidStamp {
+	var stamps []uidStamp
+	for _, l := range p.nodes {
+		if l.stamp {
+			stamps = append(stamps, uidStamp{id: l.id, uid: l.uid})
+		}
+	}
+	return stamps
+}
+
 // stampNewUIDs writes, inside the import's transaction tx, the uid the
-// plan minted for each local node to renumber that had none
-// (stampMissingUIDs, MTIX-95.31.9). A node that no longer sits at its
+// plan minted for each local node that had none (stampMissingUIDs,
+// MTIX-95.31.9), before the renumbers. A node that no longer sits at its
 // planned id without a uid means the store changed after the plan
 // (ErrConflict), and the transaction writes nothing.
-func stampNewUIDs(ctx context.Context, tx *sql.Tx, moves []localRenumber) error {
-	for _, m := range moves {
-		if !m.stamp {
-			continue
-		}
+func stampNewUIDs(ctx context.Context, tx *sql.Tx, stamps []uidStamp) error {
+	for _, st := range stamps {
 		// Give the node its minted uid, only while it still has none.
 		res, err := tx.ExecContext(ctx,
-			`UPDATE nodes SET uid = ? WHERE id = ? AND COALESCE(uid, '') = ''`, m.uid, m.oldID)
+			`UPDATE nodes SET uid = ? WHERE id = ? AND COALESCE(uid, '') = ''`, st.uid, st.id)
 		if err != nil {
-			return fmt.Errorf("give local task %s a uid: %w", m.oldID, err)
+			return fmt.Errorf("give local task %s a uid: %w", st.id, err)
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
-			return fmt.Errorf("give local task %s a uid: %w", m.oldID, err)
+			return fmt.Errorf("give local task %s a uid: %w", st.id, err)
 		}
 		if n != 1 {
 			return fmt.Errorf("give local task %s a uid: it is no longer there without one; the store changed "+
-				"after the import was planned, run the import again: %w", m.oldID, model.ErrConflict)
+				"after the import was planned, run the import again: %w", st.id, model.ErrConflict)
 		}
 	}
 	return nil

@@ -136,7 +136,9 @@ func markSameTaskAtUpgrade(loss *NodeLoss, l, in *exportNode) {
 //     to compare (DifferentTitleNoUID, MTIX-95.31.9), which a merge takes
 //     for a different task;
 //   - a loss only when the file's copy of the node is not known to be
-//     current: a non-empty field value the file leaves empty. The copy is
+//     current: a non-empty field value the file leaves empty, except a
+//     marked backfill uid, which the replace keeps (keptUIDCopy,
+//     MTIX-95.31.9). The copy is
 //     current when the file carries activity (schema 2.0.0 or later),
 //     holds every local activity entry of the node, and its updated_at is
 //     not older than the local one. Activity is append-only, and the
@@ -172,7 +174,7 @@ func DiffReplace(local, file *ExportData) (*ReplaceDiff, error) {
 			continue
 		}
 		matched[in], sameTaskAt[l.ID] = true, in.ID
-		loss, changed, err := compareReplacedNode(l, in, fileCarriesActivity)
+		loss, changed, err := compareReplacedNode(l, keptUIDCopy(l, in), fileCarriesActivity) // MTIX-95.31.9
 		if err != nil {
 			return nil, err
 		}

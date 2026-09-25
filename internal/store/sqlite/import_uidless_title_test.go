@@ -52,8 +52,7 @@ func TestImportReconcile_NoUIDToCompareAndAnotherTitle_RenumberedOnlyWithConfirm
 		localUID, teammateID bool // whether the local and the teammate's task keep a uid
 	}{
 		{"the file's task has no uid", true, false},
-		{"the local task has no uid", false, true},
-		{"neither has a uid", false, false},
+		{"neither has a uid", false, false}, // the local task gets a backfill uid first (TestImportReconcile_LocalTaskWithoutUID_ComparedByItsBackfillUID)
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

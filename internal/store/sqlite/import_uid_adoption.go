@@ -14,10 +14,11 @@ import (
 // and the two count as one task (differentIdentity), so the local task
 // takes the file's uid. Two different tasks that the identity rule cannot
 // tell apart (two clones created the id in the same second, and at least
-// one clone's event log lacks the create event, for example created before
-// 0.2, so that clone assigned its uid when it upgraded, more than an hour
-// later) are adopted too: the titles are the sign, and the backup taken
-// before the merge holds the local task.
+// one clone assigned its uid after the task was created: at upgrade, or as
+// a backfill uid on import or open, as for a task whose create event its
+// event log lacks, for example created before 0.2) are adopted too: the
+// titles are the sign, and the backup taken before the merge holds the
+// local task.
 type ImportUIDAdoption struct {
 	// ID is the id both copies hold.
 	ID string `json:"id"`

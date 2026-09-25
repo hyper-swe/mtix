@@ -142,7 +142,7 @@ func TestPull_OversizedHubEvent_QuarantinedNotApplied(t *testing.T) {
 				hubNows: []time.Time{sweepHubT1}}
 			var stderr bytes.Buffer
 
-			got, err := pullThenSweep(ctx, testIngest(&stderr), hub, app.store, 0, 100)
+			got, err := pullThenSweep(ctx, testIngest(&stderr), hub, app.store, transport.PullCursor{}, 100)
 
 			require.NoError(t, err, "a quarantined event does not fail the pull: %s", stderr.String())
 			require.Zero(t, got.pulled, "nothing was applied")
@@ -168,7 +168,7 @@ func requireCursor(t *testing.T, want int64, msg string) {
 	t.Helper()
 	cursor, err := readLastPulledClock(context.Background(), app.store)
 	require.NoError(t, err)
-	require.Equal(t, want, cursor, msg)
+	require.Equal(t, want, cursor.Lamport, msg)
 }
 
 // requireLaterEventViaCursorPass asserts that the saved cursor did not move
@@ -180,7 +180,7 @@ func requireLaterEventViaCursorPass(t *testing.T, hub *fakeLateHub) {
 	requireCursor(t, 0, "the cursor never moves to a refused clock")
 	from, _, _ := linkDepEvents(t)
 	hub.pullEvents = append(hub.pullEvents, from)
-	got, err := pullThenSweep(context.Background(), testIngest(nil), hub, app.store, 0, 100)
+	got, err := pullThenSweep(context.Background(), testIngest(nil), hub, app.store, transport.PullCursor{}, 100)
 	require.NoError(t, err)
 	require.Equal(t, 1, got.pulled, "the later event arrives through the cursor pass")
 	_, err = app.store.GetNode(context.Background(), "TEST-1")
@@ -200,7 +200,7 @@ func TestPull_FutureStampedHubEvent_AppliedWithWarning(t *testing.T) {
 	hub := &fakeLateHub{pullEvents: []*model.SyncEvent{&ahead}, hubNows: []time.Time{sweepHubT1}}
 	var stderr bytes.Buffer
 
-	got, err := pullThenSweep(ctx, testIngest(&stderr), hub, app.store, 0, 100)
+	got, err := pullThenSweep(ctx, testIngest(&stderr), hub, app.store, transport.PullCursor{}, 100)
 
 	require.NoError(t, err)
 	require.Equal(t, 1, got.pulled)
@@ -241,13 +241,13 @@ func TestPull_ExtremeLamport_QuarantinedClockUnchanged(t *testing.T) {
 			in := testIngest(nil)
 			in.maxJump = tt.maxJump
 
-			_, err := pullThenSweep(ctx, in, hub, app.store, 0, 100)
+			_, err := pullThenSweep(ctx, in, hub, app.store, transport.PullCursor{}, 100)
 
 			require.NoError(t, err)
 			require.Equal(t, tt.wantLamport, peerLamport(t))
 			cursor, err := readLastPulledClock(ctx, app.store)
 			require.NoError(t, err)
-			require.Equal(t, tt.wantLamport, cursor, "the cursor never moves to a refused clock")
+			require.Equal(t, tt.wantLamport, cursor.Lamport, "the cursor never moves to a refused clock")
 			if !tt.wantHeld {
 				require.Empty(t, quarantined(t))
 				return
@@ -319,7 +319,7 @@ func TestPull_BatchContinuesPastQuarantine(t *testing.T) {
 				pullEvents: []*model.SyncEvent{events[0], &bad, events[2]}, hubNows: []time.Time{sweepHubT1}}
 			var stderr bytes.Buffer
 
-			got, err := pullThenSweep(ctx, testIngest(&stderr), hub, app.store, 0, limit)
+			got, err := pullThenSweep(ctx, testIngest(&stderr), hub, app.store, transport.PullCursor{}, limit)
 
 			require.NoError(t, err, stderr.String())
 			require.Equal(t, 2, got.pulled, "the create and the last edit applied")
@@ -330,7 +330,7 @@ func TestPull_BatchContinuesPastQuarantine(t *testing.T) {
 			requireQuarantinedAs(t, &bad, "pull", "not_a_field")
 			cursor, err := readLastPulledClock(ctx, app.store)
 			require.NoError(t, err)
-			require.Equal(t, events[2].LamportClock, cursor, "the cursor moves past the quarantined event")
+			require.Equal(t, events[2].LamportClock, cursor.Lamport, "the cursor moves past the quarantined event")
 			require.Equal(t, events[2].LamportClock, peerLamport(t))
 			require.Empty(t, hub.fetched, "the sweep does not fetch the quarantined event again")
 		})
@@ -386,7 +386,7 @@ func TestPull_LinkDepBeforeTargetArrives_QuarantinedThenRetriedAndApplied(t *tes
 		from, target, link := linkDepEvents(t)
 		first := &fakeLateHub{events: []*model.SyncEvent{from, link},
 			pullEvents: []*model.SyncEvent{from, link}, hubNows: []time.Time{sweepHubT1}}
-		_, err := pullThenSweep(ctx, testIngest(nil), first, app.store, 0, 100)
+		_, err := pullThenSweep(ctx, testIngest(nil), first, app.store, transport.PullCursor{}, 100)
 		require.NoError(t, err, "the link_dep without its target does not fail the pull")
 		requireQuarantinedAs(t, link, "pull", "FOREIGN KEY")
 		requireNotApplied(t, link)
@@ -395,7 +395,7 @@ func TestPull_LinkDepBeforeTargetArrives_QuarantinedThenRetriedAndApplied(t *tes
 		lateTarget.CreatedAt = sweepHubT1.Add(time.Second)
 		second := &fakeLateHub{events: []*model.SyncEvent{from, &lateTarget, link},
 			pullEvents: []*model.SyncEvent{from, target, link}, hubNows: []time.Time{sweepHubT2}}
-		got, err := pullThenSweep(ctx, testIngest(nil), second, app.store, link.LamportClock, 100)
+		got, err := pullThenSweep(ctx, testIngest(nil), second, app.store, transport.CursorAt(link), 100)
 
 		require.NoError(t, err)
 		require.Equal(t, 1, got.sweep.Recovered, "the late-event sweep brings the target")

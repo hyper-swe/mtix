@@ -1231,7 +1231,9 @@ already holds sync state, after 'mtix sync push', a pending count of 0 in
 log twice, once to check it and once to apply it.
 
 Use --resume to pick up an interrupted clone from the last batch
-checkpoint (.mtix data sentinel meta.sync.clone.checkpoint).
+checkpoint (.mtix data sentinels meta.sync.clone.checkpoint and
+meta.sync.clone.checkpoint_event_id). When it completes, clone sets the
+pull cursor, so the next 'mtix sync pull' fetches only newer events.
 
 ### Flags
 
@@ -1500,9 +1502,10 @@ Phase 1 MOVES display numbers on the hub when duplicates exist. Without
 
 Pull events from the sync hub and apply locally (FR-18)
 
-Pull events from the BYO Postgres sync hub starting at the local
-last_pulled_clock cursor; apply each event via the FR-18.9 idempotent
-apply engine; advance the cursor.
+Pull events from the BYO Postgres sync hub, starting after the local
+pull cursor (the Lamport clock and event id of the last event pulled);
+apply each event via the FR-18.9 idempotent apply engine; save the
+cursor in the same transaction as each batch.
 
 Then sweep for late events: list the hub events created since the
 previous sweep (hub time, minus a 15-minute overlap), fetch the ones

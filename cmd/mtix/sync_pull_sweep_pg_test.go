@@ -64,7 +64,7 @@ func (f *sweepFixture) seedSharedNode(t *testing.T) {
 	require.NoError(t, runCreate("shared", "", "", 3, "", "", "", "", ""))
 	f.pushPeer(t)
 	var stderr bytes.Buffer
-	_, _, err := pullLoop(context.Background(), testIngest(&stderr), f.pool, f.b, 0, 100)
+	_, _, err := pullLoop(context.Background(), testIngest(&stderr), f.pool, f.b, transport.PullCursor{}, 100)
 	require.NoError(t, err, "B pulls the shared node: %s", stderr.String())
 	_, err = f.b.GetNode(context.Background(), "TEST-1")
 	require.NoError(t, err, "B must hold TEST-1 before going offline")
@@ -148,7 +148,7 @@ func (f *sweepFixture) peerCursor(t *testing.T) int64 {
 	t.Helper()
 	c, err := readLastPulledClock(context.Background(), app.store)
 	require.NoError(t, err)
-	return c
+	return c.Lamport
 }
 
 // appliedOnPeer reports whether the peer recorded eventID in applied_events,

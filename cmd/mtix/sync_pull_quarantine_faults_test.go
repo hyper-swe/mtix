@@ -58,17 +58,19 @@ func TestPullThenSweep_EndRetryFails_ReturnsQuarantineRetryStage(t *testing.T) {
 	require.NoError(t, err)
 	hub := &fakeLateHub{pullEvents: events[:1], hubNows: []time.Time{sweepHubT1}}
 
-	got, err := pullThenSweep(ctx, testIngest(nil), hub, app.store, 0, 100)
+	got, err := pullThenSweep(ctx, testIngest(nil), hub, app.store, transport.PullCursor{}, 100)
 
 	require.ErrorContains(t, err, "injected quarantine fault")
 	require.Equal(t, "quarantine retry", got.stage)
 	require.Equal(t, 1, got.pulled, "the cursor pass committed before the retry")
 }
 
-// TestPullLoop_LocalClockUnreadableAfterBatch_FailsPullLoop: reading the
-// local clock after a committed batch (for the cursor decision) fails, so
-// the pull fails at the "pull loop" stage and no cursor is saved from it.
-func TestPullLoop_LocalClockUnreadableAfterBatch_FailsPullLoop(t *testing.T) {
+// TestPullLoop_LocalClockUnreadableAtCursorSave_RollsBackBatch: reading the
+// local clock for the cursor decision, at the end of the batch transaction,
+// fails, so the pull fails at the "pull loop" stage and the batch rolls
+// back with its cursor: neither the event nor a cursor is saved
+// (MTIX-95.4).
+func TestPullLoop_LocalClockUnreadableAtCursorSave_RollsBackBatch(t *testing.T) {
 	initTestApp(t)
 	ctx := context.Background()
 	events := offlineEvents(t)
@@ -78,12 +80,13 @@ func TestPullLoop_LocalClockUnreadableAfterBatch_FailsPullLoop(t *testing.T) {
 	require.NoError(t, err)
 	hub := &fakeLateHub{pullEvents: events[:1], hubNows: []time.Time{sweepHubT1}}
 
-	got, err := pullThenSweep(ctx, testIngest(nil), hub, app.store, 0, 100)
+	got, err := pullThenSweep(ctx, testIngest(nil), hub, app.store, transport.PullCursor{}, 100)
 
-	require.ErrorContains(t, err, "read local clock after batch 1")
+	require.ErrorContains(t, err, "apply batch 1: pull cursor")
 	require.ErrorContains(t, err, "meta.sync.lamport")
 	require.Equal(t, "pull loop", got.stage)
 	requireCursor(t, 0, "no cursor is saved from a batch whose cursor decision failed")
+	requireNotApplied(t, events[0])
 }
 
 // TestRunSyncDoctorAndStatus_QuarantineUnreadable_ReportFailure: when the

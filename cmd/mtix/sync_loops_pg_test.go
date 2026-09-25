@@ -113,7 +113,7 @@ func TestPullLoop_EmptyHubReturnsCleanly(t *testing.T) {
 
 	var stderr bytes.Buffer
 	pulled, batches, err := pullLoop(context.Background(), testIngest(&stderr),
-		pool, app.store, 0, 100)
+		pool, app.store, transport.PullCursor{}, 100)
 	require.NoError(t, err)
 	require.Equal(t, 0, pulled)
 	require.Equal(t, 0, batches)
@@ -140,7 +140,7 @@ func TestPullLoop_AppliesHubEvents(t *testing.T) {
 		`UPDATE meta SET value = '0' WHERE key = 'meta.sync.last_pulled_clock'`)
 	require.NoError(t, err)
 
-	pulled, batches, err := pullLoop(ctx, testIngest(&stderr), pool, app.store, 0, 100)
+	pulled, batches, err := pullLoop(ctx, testIngest(&stderr), pool, app.store, transport.PullCursor{}, 100)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, pulled, 1)
 	require.GreaterOrEqual(t, batches, 1)
@@ -154,7 +154,7 @@ func TestCloneLoop_EmptyHubReturnsCleanly(t *testing.T) {
 
 	var stderr bytes.Buffer
 	pulled, batches, err := cloneLoop(context.Background(), &stderr,
-		pool, app.store, 0, 100)
+		pool, app.store, transport.PullCursor{}, 100)
 	require.NoError(t, err)
 	require.Equal(t, 0, pulled)
 	require.Equal(t, 0, batches)
@@ -193,13 +193,13 @@ func TestCloneLoop_AppliesAndCheckpoints(t *testing.T) {
 		`UPDATE meta SET value = '0' WHERE key = 'meta.sync.clone.checkpoint'`)
 	require.NoError(t, err)
 
-	pulled, _, err := cloneLoop(ctx, &stderr, pool, app.store, 0, 100)
+	pulled, _, err := cloneLoop(ctx, &stderr, pool, app.store, transport.PullCursor{}, 100)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, pulled, 1)
 
 	cursor, err := readCloneCheckpoint(ctx, app.store, true)
 	require.NoError(t, err)
-	require.Greater(t, cursor, int64(0),
+	require.Greater(t, cursor.Lamport, int64(0),
 		"clone checkpoint must advance past initial 0 after pull")
 
 	// Counts and the checkpoint advance even when every event is only

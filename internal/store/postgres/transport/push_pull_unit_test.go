@@ -113,18 +113,18 @@ func TestPushEvents_VectorClockOverflowRejectedBeforePG(t *testing.T) {
 
 func TestPullEvents_NilPool(t *testing.T) {
 	var p *transport.Pool
-	_, _, err := p.PullEvents(context.Background(), 0, 10)
+	_, _, err := p.PullEvents(context.Background(), transport.PullCursor{}, 10)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "pool not open")
 }
 
 func TestPullEvents_LimitMustBePositive(t *testing.T) {
 	p := &transport.Pool{}
-	_, _, err := p.PullEvents(context.Background(), 0, 0)
+	_, _, err := p.PullEvents(context.Background(), transport.PullCursor{}, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "limit must be > 0")
 
-	_, _, err = p.PullEvents(context.Background(), 0, -5)
+	_, _, err = p.PullEvents(context.Background(), transport.PullCursor{}, -5)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "limit must be > 0")
 }

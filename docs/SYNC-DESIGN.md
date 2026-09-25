@@ -190,7 +190,8 @@ There is no per-project sync flag, filter, or cursor.
   (§3, §8); neither side branches on a node's project. A push ships events for
   all projects in the queue; a clone reconstructs every project the hub holds,
   not just the primary. The pull/clone cursors are **hub-global** (a single
-  `last_pulled_clock` / clone checkpoint), not per-project.
+  `(last_pulled_clock, last_pulled_event_id)` position / clone checkpoint,
+  MTIX-95.4), not per-project.
 - **The hub is already per-project namespaced.** Carrying several projects over
   one connection is free precisely because the hub mechanics that matter are
   keyed by `project_prefix`: the number registry and renumber-required path

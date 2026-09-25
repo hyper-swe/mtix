@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/sync/validator"
 )
 
@@ -66,7 +67,7 @@ func TestPull_OwnEventHubCopyTampered_QuarantinedClockUnaffected(t *testing.T) {
 			hub := &fakeLateHub{pullEvents: []*model.SyncEvent{&tampered}, hubNows: []time.Time{sweepHubT1}}
 			var stderr bytes.Buffer
 
-			_, err = pullThenSweep(ctx, testIngest(&stderr), hub, app.store, 0, 100)
+			_, err = pullThenSweep(ctx, testIngest(&stderr), hub, app.store, transport.PullCursor{}, 100)
 
 			require.NoError(t, err)
 			requireQuarantinedAs(t, &tampered, "pull", tt.wantReason)
@@ -94,7 +95,7 @@ func TestPull_OwnEventHubCopyUntouched_Acknowledged(t *testing.T) {
 	require.NoError(t, err)
 	hub := &fakeLateHub{pullEvents: own, hubNows: []time.Time{sweepHubT1}}
 
-	got, err := pullThenSweep(ctx, testIngest(nil), hub, app.store, 0, 100)
+	got, err := pullThenSweep(ctx, testIngest(nil), hub, app.store, transport.PullCursor{}, 100)
 
 	require.NoError(t, err)
 	require.Equal(t, 1, got.pulled)

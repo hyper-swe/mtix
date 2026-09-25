@@ -161,12 +161,23 @@ func TestDiscardLocal_ResetsSentinels(t *testing.T) {
 	require.NoError(t, err)
 	_, err = raw.Exec(`UPDATE meta SET value = '2026-09-24T01:00:00Z' WHERE key = 'meta.sync.sweep_started_at'`)
 	require.NoError(t, err)
+	// And a pull cursor with its event id (MTIX-95.4): the next pull must
+	// start from the whole hub log, not after that event.
+	_, err = raw.Exec(`UPDATE meta SET value = '17' WHERE key = 'meta.sync.last_pulled_clock'`)
+	require.NoError(t, err)
+	res, err := raw.Exec(`UPDATE meta SET value = '0193fb00-0000-7000-8000-000000000017'
+		WHERE key = 'meta.sync.last_pulled_event_id'`)
+	require.NoError(t, err)
+	n, err := res.RowsAffected()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), n, "precondition: the event-id key is seeded")
 
 	require.NoError(t, DiscardLocal(context.Background(), s, mtixDir))
 
 	for _, kv := range []struct{ key, want string }{
 		{"meta.sync.lamport", "0"},
 		{"meta.sync.last_pulled_clock", "0"},
+		{"meta.sync.last_pulled_event_id", ""},
 		{"meta.sync.vector_clock", "{}"},
 		{"meta.sync.first_event_hash", ""},
 		{"meta.sync.project_prefix", ""},

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"sort"
@@ -40,6 +41,7 @@ type fakeLateHub struct {
 	fetched     [][]string
 	pullEvents  []*model.SyncEvent
 	pullCalls   []int64
+	pullCursors []transport.PullCursor
 	pullErr     error
 	listErr     error
 	failAtCall  int
@@ -47,6 +49,10 @@ type fakeLateHub struct {
 	fetchFailAt int
 	moreOnEmpty bool
 }
+
+// maxFakePullCalls bounds the cursor-pass pages one fakeLateHub serves, so
+// a cursor that stops advancing fails the test instead of looping forever.
+const maxFakePullCalls = 1000
 
 func (h *fakeLateHub) ListEventIDsSince(_ context.Context, after transport.EventIDCursor, limit int) (transport.EventIDPage, error) {
 	h.calls = append(h.calls, after)
@@ -82,20 +88,32 @@ func (h *fakeLateHub) ListEventIDsSince(_ context.Context, after transport.Event
 	return pg, nil
 }
 
-// PullEvents serves the cursor pass from pullEvents: the events above since,
-// in Lamport order, limit at a time. It records each since in pullCalls.
-func (h *fakeLateHub) PullEvents(_ context.Context, since int64, limit int) ([]*model.SyncEvent, bool, error) {
-	h.pullCalls = append(h.pullCalls, since)
+// PullEvents serves the cursor pass from pullEvents as the hub does
+// (MTIX-95.4): the events strictly after the keyset position after, in
+// (lamport_clock, event_id) order, limit at a time; an empty after.EventID
+// sorts before every event id. It records each position in pullCursors and
+// its Lamport clock in pullCalls.
+func (h *fakeLateHub) PullEvents(_ context.Context, after transport.PullCursor, limit int) ([]*model.SyncEvent, bool, error) {
+	h.pullCalls = append(h.pullCalls, after.Lamport)
+	h.pullCursors = append(h.pullCursors, after)
+	if len(h.pullCursors) > maxFakePullCalls {
+		return nil, false, fmt.Errorf("fake hub: more than %d cursor-pass pages; the cursor is not advancing", maxFakePullCalls)
+	}
 	if h.pullErr != nil {
 		return nil, false, h.pullErr
 	}
 	var out []*model.SyncEvent
 	for _, e := range h.pullEvents {
-		if e.LamportClock > since {
+		if e.LamportClock > after.Lamport || (e.LamportClock == after.Lamport && e.EventID > after.EventID) {
 			out = append(out, e)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].LamportClock < out[j].LamportClock })
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].LamportClock != out[j].LamportClock {
+			return out[i].LamportClock < out[j].LamportClock
+		}
+		return out[i].EventID < out[j].EventID
+	})
 	if len(out) > limit {
 		return out[:limit], true, nil
 	}

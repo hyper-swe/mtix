@@ -411,7 +411,7 @@ func (s *SyncService) hasConflict(mtixDir string, local *sqlite.ExportData) (boo
 		return false, fmt.Errorf("compare the conflict baseline with older forms: %w", err)
 	}
 	if older {
-		s.upgradeBaseline(mtixDir, currentDBHash, form)
+		s.upgradeBaseline(mtixDir, string(storedDBHash), currentDBHash, form)
 		return false, nil
 	}
 

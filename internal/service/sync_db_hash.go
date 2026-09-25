@@ -172,17 +172,31 @@ func matchOlderBaseline(local *sqlite.ExportData, stored string, forms []baselin
 	return formCurrent, false, nil
 }
 
+// errBaselineChanged reports that the conflict baseline no longer held the
+// hash its rewrite expected: another command recorded a newer one meanwhile
+// (MTIX-95.31.11).
+var errBaselineChanged = errors.New("the conflict baseline changed during its rewrite")
+
 // upgradeBaseline rewrites the conflict baseline (sync-db.sha256), which
-// matched the unchanged local store in an older form, with current, the
-// store's hash in the current form, and logs it (MTIX-95.31.11, FR-15.2h).
-// From then on the baseline is compared exactly, so a change to a field
-// the older form lacks counts as a change too. The write is atomic and
-// safe against a concurrent rewrite (replaceBaseline), so a failure leaves
-// the older baseline whole; it is logged, and the next command recognizes
-// the older baseline again.
-func (s *SyncService) upgradeBaseline(mtixDir, current string, form baselineForm) {
+// held stored, the hash that matched the unchanged local store in an older
+// form, with current, the store's hash in the current form, and logs it
+// (MTIX-95.31.11, FR-15.2h). From then on the baseline is compared exactly,
+// so a change to a field the older form lacks counts as a change too. The
+// write is atomic and safe against a concurrent rewrite (replaceBaseline),
+// so a failure leaves the older baseline whole; it is logged, and the next
+// command recognizes the older baseline again. A baseline that no longer
+// holds stored when the rewrite would replace it, because another command's
+// import recorded a newer one under the same shared lock, is kept: it is
+// logged at debug level, and the import that follows records its own.
+func (s *SyncService) upgradeBaseline(mtixDir, stored, current string, form baselineForm) {
 	path := filepath.Join(mtixDir, "data", "sync-db.sha256")
-	if err := replaceBaseline(path, []byte(current), s.wrapBaselineFile); err != nil {
+	err := replaceBaseline(path, []byte(current), stored, s.wrapBaselineFile)
+	switch {
+	case errors.Is(err, errBaselineChanged):
+		s.logger.Debug("the conflict baseline changed during its rewrite; the newer one is kept",
+			"from_form", form.String())
+		return
+	case err != nil:
 		s.logger.Warn("could not rewrite the conflict baseline in the current form", "error", err)
 		return
 	}
@@ -195,11 +209,21 @@ func (s *SyncService) upgradeBaseline(mtixDir, current string, form baselineForm
 // so two commands may rewrite the baseline at once: with its own temporary
 // file, neither can truncate or move the other's half-written file, and a
 // reader sees the old baseline or one whole new one, never an empty or
-// partial one. The baseline keeps mode 0644. On any failure, a failed write
-// or close included (a full disk), the temporary file is removed and the
-// baseline is left as it was. wrap, when not nil, wraps the temporary file
-// for the write and the close (SyncService.wrapBaselineFile).
-func replaceBaseline(path string, data []byte, wrap func(*os.File) io.WriteCloser) (err error) {
+// partial one. Just before the rename it reads the baseline again and goes
+// ahead only while it still holds expected (baselineStillHolds), so it
+// does not replace a newer baseline another command recorded before that
+// read; it then returns errBaselineChanged. This narrows the race but does
+// not close it: the shared lock lets another command's import record its
+// baseline between that read and the rename, and the rename then replaces
+// it with this command's older one. The next pull is then reported as a
+// conflict although nothing changed, until a write records a new baseline;
+// no data is lost. Closing the window would need the exclusive lock, which
+// AutoImport does not hold here. The baseline keeps mode 0644. On any
+// failure, a failed write or close included (a full disk), the temporary
+// file is removed and the baseline is left as it was. wrap, when not nil,
+// wraps the temporary file for the write and the close
+// (SyncService.wrapBaselineFile).
+func replaceBaseline(path string, data []byte, expected string, wrap func(*os.File) io.WriteCloser) (err error) {
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
 	if err != nil {
 		return fmt.Errorf("create a temporary baseline: %w", err)
@@ -226,8 +250,25 @@ func replaceBaseline(path string, data []byte, wrap func(*os.File) io.WriteClose
 	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
 		return fmt.Errorf("set the temporary baseline's mode: %w", err)
 	}
+	if err := baselineStillHolds(path, expected); err != nil {
+		return err
+	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
 		return fmt.Errorf("replace the baseline: %w", err)
+	}
+	return nil
+}
+
+// baselineStillHolds returns errBaselineChanged unless the conflict baseline
+// at path holds expected, or the error that kept it from being read
+// (MTIX-95.31.11).
+func baselineStillHolds(path, expected string) error {
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read the baseline before replacing it: %w", err)
+	}
+	if string(onDisk) != expected {
+		return errBaselineChanged
 	}
 	return nil
 }

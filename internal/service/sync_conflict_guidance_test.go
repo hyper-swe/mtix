@@ -26,11 +26,15 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
-// mergeCaveat is how the warning and the pending line say what the merge
-// keeps; recoveryPointer is the step of the recovery that puts the pulled
-// board back.
+// mergeCaveat is how the warning and the pending lines say what the merge
+// keeps, in both directions, as mergeImportNode decides per task: every
+// local field value when the task's content (its content hash) matches the
+// file's, the file's copy otherwise, which undoes local edits to that task.
+// recoveryPointer is the step of the recovery that puts the pulled board
+// back.
 const (
-	mergeCaveat     = "the local status, assignee and wake time win for a task whose content the teammate did not change"
+	mergeCaveat = "per task, the merge keeps your field values (status, assignee, wake time) when the task's content " +
+		"matches the file's, and otherwise takes the file's copy, which undoes your edits to that task"
 	recoveryPointer = "if you changed nothing locally: mtix sync --fix, then git checkout HEAD -- .mtix/tasks.json, then any command that imports, such as mtix list"
 )
 
@@ -55,27 +59,28 @@ func assertMergeLeads(t *testing.T, text string) {
 // whose replace would delete local data.
 func TestConflictGuidance_BothChanged_LeadsWithMergeImport(t *testing.T) {
 	tests := []struct {
-		name    string
-		change  func(t *testing.T, f *guardFixture)
-		message func(t *testing.T, f *guardFixture) string
-		caveat  bool // the message says what the merge keeps and names the recovery
-		refused bool // the auto-import returns ErrAutoImportRefused; otherwise nil
+		name     string
+		change   func(t *testing.T, f *guardFixture)
+		message  func(t *testing.T, f *guardFixture) string
+		caveat   bool // the message says what the merge keeps, in both directions
+		recovery bool // the message names the recovery for a conflict when nothing changed locally
+		refused  bool // the auto-import returns ErrAutoImportRefused; otherwise nil
 	}{
 		{"the warning of a lossless conflict", retitleLocally, func(_ *testing.T, f *guardFixture) string {
 			return lineWith(f.logs.String(), "conflict detected")
-		}, true, false},
+		}, true, true, false},
 		{"the line a write prints while the conflict is pending", retitleLocally, func(t *testing.T, f *guardFixture) string {
 			writeLocalTask(t, f, "PROJ-4", 4)
 			require.NoError(t, f.svc.AutoExport(context.Background(), f.mtixDir))
 			return lineWith(f.notices.String(), "Both it and the local store changed")
-		}, true, false},
+		}, true, true, false},
 		{"the refusal of a conflict that would delete local data", func(t *testing.T, f *guardFixture) {
 			require.NoError(t, f.store.SetAnnotations(context.Background(), "PROJ-2", []model.Annotation{{
 				ID: "01J9GUIDANCE000000000000001", Author: "dev", Text: "local only", CreatedAt: f.now,
 			}}))
 		}, func(_ *testing.T, f *guardFixture) string {
 			return f.notices.String()
-		}, false, true},
+		}, true, false, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -93,8 +98,12 @@ func TestConflictGuidance_BothChanged_LeadsWithMergeImport(t *testing.T) {
 			assertMergeLeads(t, text)
 			if tt.caveat {
 				assert.Contains(t, text, mergeCaveat)
-				assert.Contains(t, text, recoveryPointer)
 				assert.NotContains(t, text, "combine them")
+				assert.NotContains(t, text, "whose content the teammate did not change", "the one-directional rule")
+				assert.NotContains(t, text, "whose content is unchanged", "the one-directional rule")
+			}
+			if tt.recovery {
+				assert.Contains(t, text, recoveryPointer)
 			}
 		})
 	}
@@ -129,4 +138,5 @@ func TestPendingGuidance_NotImported_NamesWhatMergeKeeps(t *testing.T) {
 	assert.Less(t, merge, fix, "the merge import comes first: %s", text)
 	assert.Contains(t, text, mergeCaveat)
 	assert.NotContains(t, text, "combine them")
+	assert.NotContains(t, text, "whose content the teammate did not change", "the one-directional rule")
 }

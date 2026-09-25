@@ -23,6 +23,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // baselineRewriteDir returns a .mtix directory whose conflict baseline is
@@ -95,7 +97,13 @@ func TestUpgradeBaseline_ConcurrentRewrites_BaselineAlwaysWhole(t *testing.T) {
 		go func(hash string) {
 			defer wg.Done()
 			for r := 0; r < rounds; r++ {
-				s.upgradeBaseline(mtixDir, hash, form100)
+				// Each rewrite expects the baseline it read, as hasConflict does.
+				read, err := os.ReadFile(filepath.Join(mtixDir, "data", "sync-db.sha256"))
+				if err != nil {
+					t.Errorf("read the baseline: %v", err) // a rename replaces it atomically: it always exists
+					return
+				}
+				s.upgradeBaseline(mtixDir, string(read), hash, form100)
 			}
 		}(fmt.Sprintf("%064x", w+1))
 	}
@@ -110,20 +118,58 @@ func TestUpgradeBaseline_ConcurrentRewrites_BaselineAlwaysWhole(t *testing.T) {
 	assert.Empty(t, leftoverTempFiles(t, mtixDir), "no temporary file is left behind")
 }
 
+// removedTempFile wraps the temporary baseline file and removes it once it
+// is written and closed, so the rename that follows fails.
+type removedTempFile struct{ f *os.File }
+
+// Write writes p to the temporary file.
+func (r *removedTempFile) Write(p []byte) (int, error) { return r.f.Write(p) }
+
+// Close closes the temporary file, then removes it.
+func (r *removedTempFile) Close() error {
+	if err := r.f.Close(); err != nil {
+		return err
+	}
+	return os.Remove(r.f.Name())
+}
+
 // TestUpgradeBaseline_RenameFails_WarnsAndLeavesNoTempFile verifies a
-// rewrite whose rename fails (here the baseline's path is a directory) is
-// logged, not reported as done, and removes its temporary file.
+// rewrite that cannot complete is logged, not reported as done, keeps the
+// baseline as it was and leaves no temporary file: when the rename fails,
+// and when the baseline cannot be read again before the rename (its mode
+// is 0000), which a rename would otherwise replace unchecked.
 func TestUpgradeBaseline_RenameFails_WarnsAndLeavesNoTempFile(t *testing.T) {
-	mtixDir, s, logs := baselineRewriteDir(t, "unused")
-	baselinePath := filepath.Join(mtixDir, "data", "sync-db.sha256")
-	require.NoError(t, os.Remove(baselinePath))
-	require.NoError(t, os.MkdirAll(filepath.Join(baselinePath, "blocker"), 0o755)) // a non-empty directory: no rename replaces it
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file of mode 0000")
+	}
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, baselinePath string, s *SyncService)
+	}{
+		{"the rename fails", func(_ *testing.T, _ string, s *SyncService) {
+			s.wrapBaselineFile = func(f *os.File) io.WriteCloser { return &removedTempFile{f: f} }
+		}},
+		{"the baseline cannot be read before the rename", func(t *testing.T, baselinePath string, _ *SyncService) {
+			require.NoError(t, os.Chmod(baselinePath, 0o000))
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mtixDir, s, logs := baselineRewriteDir(t, "older")
+			baselinePath := filepath.Join(mtixDir, "data", "sync-db.sha256")
+			tt.setup(t, baselinePath, s)
 
-	s.upgradeBaseline(mtixDir, strings.Repeat("a", 64), form100)
+			s.upgradeBaseline(mtixDir, "older", strings.Repeat("a", 64), form100)
 
-	assert.Contains(t, logs.String(), "could not rewrite the conflict baseline in the current form")
-	assert.NotContains(t, logs.String(), "event=sync_baseline_upgraded")
-	assert.Empty(t, leftoverTempFiles(t, mtixDir), "the temporary file is removed")
+			assert.Contains(t, logs.String(), "could not rewrite the conflict baseline in the current form")
+			assert.NotContains(t, logs.String(), "event=sync_baseline_upgraded")
+			assert.Empty(t, leftoverTempFiles(t, mtixDir), "the temporary file is removed")
+			require.NoError(t, os.Chmod(baselinePath, 0o644))
+			after, err := os.ReadFile(baselinePath)
+			require.NoError(t, err)
+			assert.Equal(t, "older", string(after), "the baseline is left as it was")
+		})
+	}
 }
 
 // TestUpgradeBaseline_Rewrite_BesideTheBaselineWithMode0644 verifies the
@@ -135,7 +181,7 @@ func TestUpgradeBaseline_Rewrite_BesideTheBaselineWithMode0644(t *testing.T) {
 	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "no-such-directory")) // the system temporary directory is unusable
 	want := strings.Repeat("b", 64)
 
-	s.upgradeBaseline(mtixDir, want, form100)
+	s.upgradeBaseline(mtixDir, "older", want, form100)
 
 	path := filepath.Join(mtixDir, "data", "sync-db.sha256")
 	got, err := os.ReadFile(path)
@@ -203,7 +249,7 @@ func TestUpgradeBaseline_WriteOrCloseFails_KeepsOldBaselineAndNoTempFile(t *test
 				return &failingFile{f: f, failWrite: tt.failWrite, failClose: tt.failClose}
 			}
 
-			s.upgradeBaseline(mtixDir, strings.Repeat("c", 64), form100)
+			s.upgradeBaseline(mtixDir, "older", strings.Repeat("c", 64), form100)
 
 			got, err := os.ReadFile(filepath.Join(mtixDir, "data", "sync-db.sha256"))
 			require.NoError(t, err)
@@ -214,4 +260,58 @@ func TestUpgradeBaseline_WriteOrCloseFails_KeepsOldBaselineAndNoTempFile(t *test
 			assert.NotContains(t, logs.String(), "event=sync_baseline_upgraded")
 		})
 	}
+}
+
+// concurrentImportFile wraps the temporary baseline file of a rewrite and,
+// once the rewrite has written and closed it, writes fresh to the baseline
+// itself, as another command's import (recordImported) does when it
+// finishes under the same shared sync lock between this rewrite's read of
+// the baseline and its rename.
+type concurrentImportFile struct {
+	f        *os.File
+	baseline string
+	fresh    string
+}
+
+// Write writes p to the temporary file.
+func (c *concurrentImportFile) Write(p []byte) (int, error) {
+	return c.f.Write(p)
+}
+
+// Close closes the temporary file, then writes the concurrent import's
+// fresh baseline.
+func (c *concurrentImportFile) Close() error {
+	if err := c.f.Close(); err != nil {
+		return err
+	}
+	return os.WriteFile(c.baseline, []byte(c.fresh), 0o644)
+}
+
+// TestHasConflict_BaselineRefreshedDuringUpgrade_KeepsTheFreshBaseline
+// verifies the rewrite of a baseline recognized in an older form never
+// replaces a fresher baseline that a concurrent command's import wrote
+// meanwhile: the rewrite goes ahead only while the baseline still holds
+// the older hash that matched, so the fresh one stays and no rewrite is
+// logged. The import that follows is then checked as usual.
+func TestHasConflict_BaselineRefreshedDuringUpgrade_KeepsTheFreshBaseline(t *testing.T) {
+	local := &sqlite.ExportData{}
+	older, err := exportHash(local, form100)
+	require.NoError(t, err)
+	mtixDir, s, logs := baselineRewriteDir(t, older)
+	baselinePath := filepath.Join(mtixDir, "data", "sync-db.sha256")
+	fresh := strings.Repeat("f", 64)
+	s.wrapBaselineFile = func(f *os.File) io.WriteCloser {
+		return &concurrentImportFile{f: f, baseline: baselinePath, fresh: fresh}
+	}
+
+	conflict, err := s.hasConflict(mtixDir, local)
+
+	require.NoError(t, err)
+	assert.False(t, conflict, "the baseline matched the store in an older form")
+	got, err := os.ReadFile(baselinePath)
+	require.NoError(t, err)
+	assert.Equal(t, fresh, string(got), "the baseline the concurrent import wrote is kept")
+	assert.NotContains(t, logs.String(), "event=sync_baseline_upgraded")
+	assert.NotContains(t, logs.String(), "could not rewrite", "a newer baseline is no failure")
+	assert.Empty(t, leftoverTempFiles(t, mtixDir), "no temporary file is left behind")
 }

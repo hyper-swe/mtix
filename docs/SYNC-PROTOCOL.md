@@ -412,7 +412,9 @@ applied to the canonical tables.
 
 `mtix sync backup --output FILE` wraps `pg_dump` with one `--table`
 for every table the hub migrations create (`migrations.Tables()`), plus
-`--no-owner --no-privileges`. The connection uses the same TLS settings
+`--no-owner --no-privileges --strict-names`: every table name must match
+a table, so a hub that lacks one fails the backup, leaves no file and
+points at `mtix sync init`. The connection uses the same TLS settings
 as sync, and mtix creates FILE (mode 0600, refusing a path that exists)
 before `pg_dump` writes to it.
 

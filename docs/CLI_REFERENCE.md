@@ -1122,8 +1122,11 @@ After backfill: run 'mtix sync push' to ship events to the hub.
 Dump the mtix-owned hub tables to a portable SQL file (FR-18.21)
 
 Invoke pg_dump to write a portable SQL dump of every table the mtix hub
-migrations create, with its data; the report lists the tables. pg_dump's
-own messages are shown with the DSN's password removed.
+migrations create, with its data; the report lists the tables. Every one
+of them must exist: a hub that lacks one, such as a hub not initialized
+since an upgrade added a table, fails the backup with a hint to run mtix
+sync init. pg_dump's own messages are shown untranslated (it runs with
+LC_MESSAGES=C), with the DSN's password removed.
 
 The connection uses the TLS settings the sync commands use: sslmode is
 verify-full when the DSN names none, and a weaker sslmode needs
@@ -1132,10 +1135,14 @@ socket. pg_dump receives every host and port, the CA file (sslrootcert in
 the DSN, or MTIX_SYNC_SSLROOTCERT) and target_session_attrs through PG*
 environment variables; the DSN and its password are never on its command
 line. pg_dump does not receive the DSN's options, so it finds the tables
-through the role's default search_path: for a hub whose schema is named
-only in the DSN, first run ALTER ROLE <owner> SET search_path = <schema>,
-public. Client certificates (sslcert, sslkey) are not passed to pg_dump, so
-a hub that requires one cannot be backed up with this command yet.
+through the default search_path of the role the DSN names, which may not
+be the table owner: for a hub whose schema is named only in the DSN, first
+run ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET
+search_path = <schema>, public. It applies in that database only and
+takes precedence over a role-wide ALTER ROLE <the DSN's role> SET
+search_path = <schema>, public. Client certificates (sslcert, sslkey) are
+not passed to pg_dump, so a hub that requires one cannot be backed up with
+this command yet.
 
 mtix creates the output file, readable and writable only by you (mode
 0600), before pg_dump writes to it. An existing file is never overwritten:

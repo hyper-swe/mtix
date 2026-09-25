@@ -62,7 +62,10 @@ off each day.
 
 `mtix sync backup --output FILE` wraps `pg_dump` for every table the
 mtix hub migrations create, with `--no-owner --no-privileges` for
-portability. It connects with the same TLS settings as sync, creates
+portability. Every one of those tables must exist: a hub that lacks one
+fails the backup, so a scheduled backup fails loudly rather than writing
+an incomplete dump (run `mtix sync init` as the table owner, then back up
+again). It connects with the same TLS settings as sync, creates
 FILE readable only by its owner, and refuses a FILE that already
 exists, so every backup needs a new name. The dump holds the tables and
 their data, not the mtix functions and triggers: the restore procedure

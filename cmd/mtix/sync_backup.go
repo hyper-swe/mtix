@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/spf13/cobra"
 
@@ -33,25 +35,31 @@ var pgDumpBin = func() string {
 	return "pg_dump"
 }
 
+// pgDumpNoTableMessage starts pg_dump's error for a --table name that
+// matches no table: `no matching tables were found for pattern "<name>"`
+// under --strict-names, or `no matching tables were found` when none
+// matches (MTIX-95.7.4).
+const pgDumpNoTableMessage = "no matching tables were found"
+
+// errHubTableNotFound marks a backup that pg_dump stopped because a hub
+// table name matched no table through the search_path of the role it
+// connects as (--strict-names, MTIX-95.7.4).
+var errHubTableNotFound = errors.New("a hub table was not found (pg_dump names it above)")
+
 // pgSystemTrustStore is the sslrootcert value that makes libpq (16 and
 // later) verify the server against the operating system's trust store,
 // as the sync transport does when no CA is configured (MTIX-59).
 const pgSystemTrustStore = "system"
 
-// newSyncBackupCmd creates `mtix sync backup --output FILE` per
-// FR-18.21. Wraps pg_dump for every hub table the migrations create.
-// The restore runbook is in its help and the user manual (MTIX-95.7).
-func newSyncBackupCmd() *cobra.Command {
-	var (
-		output      string
-		insecureTLS bool
-	)
-	cmd := &cobra.Command{
-		Use:   "backup",
-		Short: "Dump the mtix-owned hub tables to a portable SQL file (FR-18.21)",
-		Long: `Invoke pg_dump to write a portable SQL dump of every table the mtix hub
-migrations create, with its data; the report lists the tables. pg_dump's
-own messages are shown with the DSN's password removed.
+// syncBackupLong is the help of mtix sync backup: what it dumps, how it
+// connects (including the search_path step for the DSN's role), the output
+// file and the restore runbook (FR-18.21, MTIX-95.7, MTIX-95.7.4).
+const syncBackupLong = `Invoke pg_dump to write a portable SQL dump of every table the mtix hub
+migrations create, with its data; the report lists the tables. Every one
+of them must exist: a hub that lacks one, such as a hub not initialized
+since an upgrade added a table, fails the backup with a hint to run mtix
+sync init. pg_dump's own messages are shown untranslated (it runs with
+LC_MESSAGES=C), with the DSN's password removed.
 
 The connection uses the TLS settings the sync commands use: sslmode is
 verify-full when the DSN names none, and a weaker sslmode needs
@@ -60,10 +68,14 @@ socket. pg_dump receives every host and port, the CA file (sslrootcert in
 the DSN, or MTIX_SYNC_SSLROOTCERT) and target_session_attrs through PG*
 environment variables; the DSN and its password are never on its command
 line. pg_dump does not receive the DSN's options, so it finds the tables
-through the role's default search_path: for a hub whose schema is named
-only in the DSN, first run ALTER ROLE <owner> SET search_path = <schema>,
-public. Client certificates (sslcert, sslkey) are not passed to pg_dump, so
-a hub that requires one cannot be backed up with this command yet.
+through the default search_path of the role the DSN names, which may not
+be the table owner: for a hub whose schema is named only in the DSN, first
+run ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET
+search_path = <schema>, public. It applies in that database only and
+takes precedence over a role-wide ALTER ROLE <the DSN's role> SET
+search_path = <schema>, public. Client certificates (sslcert, sslkey) are
+not passed to pg_dump, so a hub that requires one cannot be backed up with
+this command yet.
 
 mtix creates the output file, readable and writable only by you (mode
 0600), before pg_dump writes to it. An existing file is never overwritten:
@@ -81,8 +93,21 @@ triggers. To restore into an empty database:
   4. mtix sync mark-restored
 
 Requires pg_dump on PATH (override via MTIX_PG_DUMP env var). Rotation
-and retention of the backup file are the operator's responsibility.`,
-		Args: syncExactArgs(0),
+and retention of the backup file are the operator's responsibility.`
+
+// newSyncBackupCmd creates `mtix sync backup --output FILE` per
+// FR-18.21. Wraps pg_dump for every hub table the migrations create.
+// The restore runbook is in its help and the user manual (MTIX-95.7).
+func newSyncBackupCmd() *cobra.Command {
+	var (
+		output      string
+		insecureTLS bool
+	)
+	cmd := &cobra.Command{
+		Use:   "backup",
+		Short: "Dump the mtix-owned hub tables to a portable SQL file (FR-18.21)",
+		Long:  syncBackupLong,
+		Args:  syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncBackup(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, output, transport.Options{InsecureTLS: insecureTLS})
@@ -102,7 +127,11 @@ and retention of the backup file are the operator's responsibility.`,
 // settings the sync transport approves (pgDumpConnParams), and the output
 // file is created 0600 and exclusive before pg_dump writes to it. A failed
 // backup, one interrupted by SIGINT or SIGTERM included, removes the file
-// it created.
+// it created. A backup that failed because a hub table was not found also
+// gives the search_path step for the DSN's role in the DSN's database
+// (withSearchPathAdvice),
+// and the success message lists the tables, every one of which pg_dump
+// found (MTIX-95.7.4).
 func runSyncBackup(ctx context.Context, stdout, stderr io.Writer,
 	args []string, output string, opts transport.Options,
 ) error {
@@ -143,12 +172,16 @@ func runSyncBackup(ctx context.Context, stdout, stderr io.Writer,
 		if ctx.Err() != nil {
 			err = fmt.Errorf("mtix sync backup: interrupted, so the partial dump is removed: %w", ctx.Err())
 		}
-		return discardBackup(out, output, err)
+		// pg_dump connects as the DSN's role, with that role's default
+		// search_path in the DSN's database: the step for a hub whose
+		// schema only the DSN names.
+		return discardBackup(out, output, withSearchPathAdvice(err, conn.user, conn.database))
 	}
 	if err := closeBackupFile(out); err != nil {
 		return discardBackup(nil, output, err)
 	}
 
+	// pg_dump ran with --strict-names, so it found every listed table.
 	fmt.Fprintf(stdout, "backup written to %s (tables: %s)\n", output, strings.Join(tables, ", "))
 	return nil
 }
@@ -195,14 +228,18 @@ func createBackupFile(path string) (*os.File, error) {
 
 // dumpInto runs pg_dump for tables with conn's settings, writing the
 // plain SQL dump to out (pg_dump's standard output) and its messages to
-// stderr through the DSN scrubber (FR-18.17, MTIX-95.15).
+// stderr through the DSN scrubber (FR-18.17, MTIX-95.15). --strict-names
+// makes every table name match a table, so a hub that lacks one fails the
+// backup instead of producing a dump without it; that failure wraps
+// errHubTableNotFound and says to run mtix sync init (MTIX-95.7.4).
 func dumpInto(ctx context.Context, out *os.File, stderr io.Writer, conn pgDumpConn, tables []string) error {
-	argv := []string{"--no-owner", "--no-privileges"}
+	argv := []string{"--no-owner", "--no-privileges", "--strict-names"}
 	for _, t := range tables {
 		argv = append(argv, "--table="+t)
 	}
 	cmd := exec.CommandContext(ctx, pgDumpBin(), argv...) //nolint:gosec // G204: pgDumpBin is overridable for tests; arguments are fixed flags and migration table names
-	pgStderr := newScrubWriter(stderr)
+	notFound := &lineWatch{needle: []byte(pgDumpNoTableMessage)}
+	pgStderr := newScrubWriter(io.MultiWriter(notFound, stderr))
 	cmd.Stdout = out
 	cmd.Stderr = pgStderr
 	cmd.Env = conn.pgEnv(os.Environ())
@@ -211,10 +248,58 @@ func dumpInto(ctx context.Context, out *os.File, stderr io.Writer, conn pgDumpCo
 	if err := pgStderr.Flush(); err != nil {
 		return fmt.Errorf("mtix sync backup: %w", err)
 	}
+	if runErr != nil && notFound.seen {
+		return fmt.Errorf("mtix sync backup: pg_dump failed: %w: %w; if the hub has not been initialized since "+
+			"an upgrade added the table, run mtix sync init, with the DSN naming the table owner, then back up again",
+			errHubTableNotFound, runErr)
+	}
 	if runErr != nil {
 		return fmt.Errorf("mtix sync backup: pg_dump failed: %w", runErr)
 	}
 	return nil
+}
+
+// lineWatch records whether a line written to it contains needle; it
+// receives pg_dump's messages one scrubbed line per write (MTIX-95.7.4).
+type lineWatch struct {
+	needle []byte
+	seen   bool
+}
+
+// Write notes whether p contains the needle and never fails.
+func (w *lineWatch) Write(p []byte) (int, error) {
+	if bytes.Contains(p, w.needle) {
+		w.seen = true
+	}
+	return len(p), nil
+}
+
+// withSearchPathAdvice returns err with the search_path step added when it
+// wraps errHubTableNotFound, and err unchanged otherwise. pg_dump receives
+// no DSN options, so it resolves the tables through the default
+// search_path of role in database: a hub whose schema is named only in
+// the DSN is not visible to it until that search_path names the schema.
+// role is the role pg_dump connects as: the DSN's user, or the OS user the
+// driver uses when the DSN names none; database is the DSN's database. The
+// step sets the search_path for role in database only, which takes
+// precedence over the role-wide setting it also names. Both names are
+// quoted as identifiers, so the statements run as printed; a placeholder
+// stands for a name only when it is not known (MTIX-95.7.4).
+func withSearchPathAdvice(err error, role, database string) error {
+	if !errors.Is(err, errHubTableNotFound) {
+		return err
+	}
+	roleName, dbName := "<the DSN's role>", "<the DSN's database>"
+	if role != "" {
+		roleName = pgx.Identifier{role}.Sanitize()
+	}
+	if database != "" {
+		dbName = pgx.Identifier{database}.Sanitize()
+	}
+	return fmt.Errorf("%w; if the hub's schema is named only in the DSN, pg_dump, which connects as the DSN's role "+
+		"without the DSN's options, does not see it: run ALTER ROLE %s IN DATABASE %s SET search_path = <schema>, public "+
+		"(this database only; it takes precedence over a role-wide ALTER ROLE %s SET search_path = <schema>, public), "+
+		"then back up again", err, roleName, dbName, roleName)
 }
 
 // discardBackup closes f (when still open) and removes path, the output
@@ -300,16 +385,19 @@ func libpqHostList(cfg *pgconn.Config) (hosts, ports string) {
 // are the only connection settings pg_dump applies: base keeps no
 // connection service (PGSERVICE, PGSERVICEFILE), whose settings libpq
 // applies over the environment, and no PGHOSTADDR, which the sync
-// transport does not read (MTIX-95.7).
+// transport does not read (MTIX-95.7). pg_dump's messages are the
+// untranslated ones, which dumpInto reads: LC_MESSAGES is C, and base's
+// LC_ALL and LANGUAGE, which would override it, are dropped (MTIX-95.7.4).
 func (c pgDumpConn) pgEnv(base []string) []string {
-	env := make([]string, 0, len(base)+8)
+	env := make([]string, 0, len(base)+9)
 	for _, kv := range base {
 		switch name, _, _ := strings.Cut(kv, "="); name {
-		case "PGSERVICE", "PGSERVICEFILE", "PGHOSTADDR":
+		case "PGSERVICE", "PGSERVICEFILE", "PGHOSTADDR", "LC_ALL", "LANGUAGE", "LC_MESSAGES":
 			continue
 		}
 		env = append(env, kv)
 	}
+	env = append(env, "LC_MESSAGES=C")
 	add := func(k, v string) {
 		if v != "" {
 			env = append(env, k+"="+v)

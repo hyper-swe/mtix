@@ -172,3 +172,77 @@ func TestIdempotentApply_CreateNodeCounterWriteFails_NothingApplied(t *testing.T
 	require.Zero(t, countNodes(t, raw))
 	require.Zero(t, countApplied(t, raw))
 }
+
+// projectNode builds the node id with the number seq and the title title;
+// its parent and project follow from the id.
+func projectNode(id string, seq int, title string) *model.Node {
+	now := time.Date(2026, 9, 25, 9, 0, 0, 0, time.UTC)
+	depth := model.ParseIDDepth(id)
+	n := &model.Node{
+		ID: id, ParentID: model.ParseIDParent(id), Project: model.ParseIDProject(id),
+		Depth: depth, Seq: seq, Title: title, NodeType: model.NodeTypeForDepth(depth),
+		Priority: model.PriorityMedium, Status: model.StatusOpen, Weight: 1.0,
+		Creator: "local", CreatedAt: now, UpdatedAt: now,
+	}
+	n.ContentHash = n.ComputeHash()
+	return n
+}
+
+// TestIdempotentApply_CreateNodeIDTakenCounterBehind_CounterAdvanced: a
+// different local task already holds PROJ-3, inserted without advancing
+// its counter, so the pulled PROJ-3 is not inserted. The apply still
+// advances the counter to 3, because the number is taken either way, and
+// the next local create takes PROJ-4.
+func TestIdempotentApply_CreateNodeIDTakenCounterBehind_CounterAdvanced(t *testing.T) {
+	s, raw := applyTestStore(t)
+	require.NoError(t, s.CreateNode(context.Background(), projectNode("PROJ-3", 3, "local task")))
+	require.Zero(t, sequenceCounter(t, raw, "PROJ:"))
+
+	require.NoError(t, applyOnce(t, s, pulledCreate(t, "PROJ-3", 10)))
+
+	require.Equal(t, 3, sequenceCounter(t, raw, "PROJ:"))
+	require.Equal(t, "local task", readNodeColumn(t, raw, "PROJ-3", "title"), "the local task keeps the id")
+	id, err := createLocally(t, s, "", "next")
+	require.NoError(t, err)
+	require.Equal(t, "PROJ-4", id)
+}
+
+// TestIdempotentApply_CreateNodeNumberAboveBound_CounterNotAdvanced: a
+// pulled task numbered above maxSequence (2147483647) is applied, but its
+// number does not advance the counter, and the apply logs a warning naming
+// the task. Before, PROJ-9223372036854775807 set the counter to the int64
+// maximum and every later create in the namespace overflowed.
+func TestIdempotentApply_CreateNodeNumberAboveBound_CounterNotAdvanced(t *testing.T) {
+	for _, id := range []string{"PROJ-2147483648", "PROJ-9223372036854775807"} {
+		t.Run(id, func(t *testing.T) {
+			logs := captureDefaultLog(t)
+			s, raw := applyTestStore(t)
+
+			require.NoError(t, applyOnce(t, s, pulledCreate(t, id, 10)))
+
+			require.Equal(t, 1, countNodes(t, raw), "the task is applied")
+			require.Zero(t, sequenceCounter(t, raw, "PROJ:"), "its number is not counted")
+			require.Contains(t, logs.String(), "level=WARN")
+			require.Contains(t, logs.String(), "node_id="+id)
+			root, err := createLocally(t, s, "", "local")
+			require.NoError(t, err)
+			require.Equal(t, "PROJ-1", root)
+		})
+	}
+}
+
+// TestIdempotentApply_CreateNodeAtBound_NextCreateFailsClearly: a pulled
+// number equal to maxSequence advances the counter to it. The namespace
+// then has no number left, and the next allocation fails with an error
+// that names the limit instead of handing out 2147483648.
+func TestIdempotentApply_CreateNodeAtBound_NextCreateFailsClearly(t *testing.T) {
+	s, raw := applyTestStore(t)
+	require.NoError(t, applyOnce(t, s, pulledCreate(t, "PROJ-2147483647", 10)))
+	require.Equal(t, 2147483647, sequenceCounter(t, raw, "PROJ:"))
+
+	_, err := s.NextSequence(context.Background(), "PROJ:")
+
+	require.ErrorIs(t, err, model.ErrInvalidInput)
+	require.ErrorContains(t, err, "2147483647")
+	require.Equal(t, 2147483647, sequenceCounter(t, raw, "PROJ:"), "the counter is unchanged")
+}

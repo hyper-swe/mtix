@@ -95,6 +95,58 @@ func TestRenumberSubtree_MovedSubtree_CountersCoverEveryNumber(t *testing.T) {
 	}
 }
 
+// TestRenumberSubtree_RootNode_CountersCoverRootsAndSubtree: renumbering
+// the root RNB-1 to 5 raises the root counter of RNB to the highest root
+// number (8, the untouched root RNB-8), and the counter of every parent in
+// the moved subtree, now under RNB-5, to the highest number under it.
+func TestRenumberSubtree_RootNode_CountersCoverRootsAndSubtree(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedRenumberTree(t, s)
+	require.NoError(t, s.CreateNode(ctx, seqNode("RNB-8", 8)))
+
+	require.NoError(t, s.RenumberSubtree(ctx, "RNB-1", 5))
+
+	for key, want := range map[string]int{
+		"RNB:": 8, "RNB:RNB-5": 7, "RNB:RNB-5.4": 2, "RNB:RNB-5.4.1": 1, "RNB:RNB-5.4.1.1": 1,
+	} {
+		require.Equal(t, want, counterOf(t, s, key), key)
+	}
+}
+
+// TestRenumberSubtree_UncountedIDs_CountersIgnoreThem: a number above
+// maxSequence (2147483647), and the id of another prefix that starts the
+// same way (RNB-9-3, of prefix RNB-9), never raise a counter. Renumbering
+// RNB-1.4, which has a child RNB-1.4.9999999999, to 5 leaves RNB:RNB-1.5 at
+// 2; renumbering the root RNB-1 to 5 leaves RNB: at 5.
+func TestRenumberSubtree_UncountedIDs_CountersIgnoreThem(t *testing.T) {
+	tests := []struct {
+		name  string
+		extra []seqEntry
+		id    string
+		key   string
+		want  int
+	}{
+		{"child above the limit", []seqEntry{{"RNB-1.4.9999999999", 9999999999}}, "RNB-1.4", "RNB:RNB-1.5", 2},
+		{"root above the limit, and another prefix", []seqEntry{{"RNB-9999999999", 9999999999}, {"RNB-9-3", 3}},
+			"RNB-1", "RNB:", 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			seedRenumberTree(t, s)
+			for _, n := range tt.extra {
+				require.NoError(t, s.CreateNode(ctx, seqNode(n.id, n.seq)), n.id)
+			}
+
+			require.NoError(t, s.RenumberSubtree(ctx, tt.id, 5))
+
+			require.Equal(t, tt.want, counterOf(t, s, tt.key))
+		})
+	}
+}
+
 // TestRenumberForHubRejection_MovedSubtree_NextChildContinues: the hub
 // rejects PRJX-1.1, which has a child PRJX-1.1.1; the drain renumbers it to
 // PRJX-1.2. The counter of PRJX-1.2 covers the moved child, so the next

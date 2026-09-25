@@ -118,7 +118,8 @@ type Store interface {
 	// for the given key (project:parent_dotpath) per FR-2.7. When a node
 	// already holds the number reached, the counter is moved past the
 	// highest number under the parent, once, and that number is returned
-	// (MTIX-95.38).
+	// (MTIX-95.38). A key with no number left at or below 2147483647
+	// returns ErrInvalidInput.
 	NextSequence(ctx context.Context, key string) (int, error)
 
 	// Dependency operations

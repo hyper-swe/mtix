@@ -8,6 +8,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -442,7 +443,9 @@ func (s *Store) Close() error {
 // When a node already holds the number the counter reaches, the counter
 // fell behind the nodes; NextSequence then moves it past the highest number
 // under the parent, once, and returns that number (skipTakenSequence,
-// MTIX-95.38), so a local create does not fail with "already exists".
+// MTIX-95.38), so a local create does not fail with "already exists". A
+// counter at maxSequence or past it has no number left: NextSequence fails
+// with an error naming the limit and leaves the counter unchanged.
 //
 // These writes run outside WithTx, so they carry their own NFR-2.8 guards:
 // free-space pre-flight before, fail-stop classification after.
@@ -454,12 +457,17 @@ func (s *Store) NextSequence(ctx context.Context, key string) (int, error) {
 	var value int
 
 	// Atomic upsert per FR-2.7 — parameterized query, no string concatenation.
+	// A counter at maxSequence or past it is not incremented and returns no
+	// row (MTIX-95.38), so it never overflows.
 	err := s.writeDB.QueryRowContext(ctx,
 		`INSERT INTO sequences (key, value) VALUES (?, 1)
-		 ON CONFLICT(key) DO UPDATE SET value = value + 1
+		 ON CONFLICT(key) DO UPDATE SET value = value + 1 WHERE value < ?
 		 RETURNING value`,
-		key,
+		key, maxSequence,
 	).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, sequenceLimitError(key)
+	}
 	if err != nil {
 		return 0, s.classifyWriteError(fmt.Errorf("next sequence for %s: %w", key, err))
 	}

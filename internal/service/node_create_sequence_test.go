@@ -139,30 +139,33 @@ func TestCreateNode_CounterBehindFreeNumber_UsesAllocatedNumber(t *testing.T) {
 	require.Equal(t, "PROJ-3", node.ID)
 }
 
-// TestCreateNode_SkippedNumberAlsoTaken_SkipsOnlyOnce: in a store whose
-// PROJ-2 records the number 0, the skip past the highest recorded number
-// (1) lands on the taken PROJ-2. The create skips once, not in a loop, and
-// fails with ErrAlreadyExists; the counter has moved on, so the next create
-// succeeds.
+// TestCreateNode_SkippedNumberAlsoTaken_SkipsOnlyOnce: the skip reads a
+// child namespace's numbers from the children that name the parent in
+// parent_id. In a store whose PROJ-1.2 does not (its parent_id is empty),
+// the skip past the highest number it sees (1) lands on the taken
+// PROJ-1.2. The create skips once, not in a loop, and fails with
+// ErrAlreadyExists; the counter has moved on, so the next create succeeds.
 func TestCreateNode_SkippedNumberAlsoTaken_SkipsOnlyOnce(t *testing.T) {
 	svc, st, _ := newTestNodeService(t)
 	createPROJs(t, svc, "", 1)
+	createPROJs(t, svc, "PROJ-1", 1)
 	now := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
 	odd := &model.Node{
-		ID: "PROJ-2", Project: "PROJ", Seq: 0, Title: "number not recorded", NodeType: model.NodeTypeForDepth(0),
-		Priority: model.PriorityMedium, Status: model.StatusOpen, Weight: 1.0, CreatedAt: now, UpdatedAt: now,
+		ID: "PROJ-1.2", Project: "PROJ", Depth: 1, Seq: 2, Title: "parent not recorded",
+		NodeType: model.NodeTypeForDepth(1), Priority: model.PriorityMedium, Status: model.StatusOpen,
+		Weight: 1.0, CreatedAt: now, UpdatedAt: now,
 	}
 	odd.ContentHash = odd.ComputeHash()
 	require.NoError(t, st.CreateNode(context.Background(), odd))
-	setSequenceCounter(t, st, "PROJ:", 0)
+	setSequenceCounter(t, st, "PROJ:PROJ-1", 0)
 
-	_, err := createPROJ(svc, "", "new")
+	_, err := createPROJ(svc, "PROJ-1", "new")
 
 	require.ErrorIs(t, err, model.ErrAlreadyExists)
-	require.Equal(t, 2, sequenceCounterValue(t, st, "PROJ:"), "one skip, to the number after the highest recorded")
-	node, err := createPROJ(svc, "", "retry")
+	require.Equal(t, 2, sequenceCounterValue(t, st, "PROJ:PROJ-1"), "one skip, to the number after the highest seen")
+	node, err := createPROJ(svc, "PROJ-1", "retry")
 	require.NoError(t, err)
-	require.Equal(t, "PROJ-3", node.ID)
+	require.Equal(t, "PROJ-1.3", node.ID)
 }
 
 // TestCreateNode_CounterBehindConcurrentCreates_DistinctContiguousNumbers:

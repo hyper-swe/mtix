@@ -4,6 +4,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -152,4 +153,31 @@ func (s *SyncService) forgetBackup(mtixDir string) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		s.logger.Warn("could not clear the pre-import backup record", "error", err)
 	}
+}
+
+// writePreSyncBackup writes a new verified snapshot of the local database
+// (VACUUM INTO, then PRAGMA quick_check: Store.Backup) to the next
+// pre-sync-<UTC time>.db path in dir and returns it; only then are the
+// oldest pre-import backups beyond PreSyncBackupsKept deleted (FR-15.2f).
+func (s *SyncService) writePreSyncBackup(ctx context.Context, dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create backups directory: %w", err)
+	}
+	dest, err := nextPreSyncBackupPath(dir, s.clock())
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.store.Backup(ctx, dest); err != nil {
+		return "", fmt.Errorf("back up the database before the import: %w", err)
+	}
+	s.prunePreSyncBackups(dir)
+	return dest, nil
+}
+
+// BackupBeforeImport takes the verified pre-import backup the automatic
+// import takes (FR-15.2f), for mtix import --mode merge just before it
+// writes (MTIX-95.31.4), and returns its path. It is always a new backup,
+// and it counts among the PreSyncBackupsKept kept.
+func (s *SyncService) BackupBeforeImport(ctx context.Context, mtixDir string) (string, error) {
+	return s.writePreSyncBackup(ctx, filepath.Join(mtixDir, "data", "backups"))
 }

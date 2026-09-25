@@ -143,14 +143,21 @@ func printAutoImportState(state service.AutoImportState) {
 }
 
 // printDrift prints whether the node ids of SQLite and tasks.json agree.
+// MTIX-95.31.4: never "In sync" while an auto-import of tasks.json is
+// pending, which the headline says, or while an id is held under different
+// uids, which it lists.
 func printDrift(report *service.SyncReport) {
-	if report.InSync {
+	refusal := report.AutoImport.LastRefusal
+	switch {
+	case refusal != nil && refusal.Pending:
+		fmt.Printf("OUT OF SYNC: tasks.json changed and has not been imported (the last auto-import refusal, below, is pending)\n")
+	case report.InSync:
 		fmt.Printf("In sync: %d nodes in both SQLite and tasks.json\n",
 			report.DBNodeCount)
 		return
+	default:
+		fmt.Printf("OUT OF SYNC\n")
 	}
-
-	fmt.Printf("OUT OF SYNC\n")
 	fmt.Printf("  SQLite:     %d nodes\n", report.DBNodeCount)
 	fmt.Printf("  tasks.json: %d nodes\n", report.FileNodeCount)
 
@@ -163,6 +170,12 @@ func printDrift(report *service.SyncReport) {
 	if len(report.OnlyInDB) > 0 {
 		fmt.Printf("  Only in SQLite (%d):\n", len(report.OnlyInDB))
 		for _, id := range report.OnlyInDB {
+			fmt.Printf("    - %s\n", id)
+		}
+	}
+	if len(report.DifferentUID) > 0 {
+		fmt.Printf("  Another uid in tasks.json (%d):\n", len(report.DifferentUID))
+		for _, id := range report.DifferentUID {
 			fmt.Printf("    - %s\n", id)
 		}
 	}

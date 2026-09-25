@@ -364,18 +364,11 @@ func (s *SyncService) backupDB(ctx context.Context, mtixDir, fileHash string, lo
 	if taken := s.backupTakenFor(mtixDir, fileHash, storeHash); taken != "" {
 		return taken, nil
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("create backups directory: %w", err)
-	}
-	dest, err := nextPreSyncBackupPath(dir, s.clock())
+	dest, err := s.writePreSyncBackup(ctx, dir) // new verified snapshot; prunes to PreSyncBackupsKept
 	if err != nil {
 		return "", err
 	}
-	if _, err := s.store.Backup(ctx, dest); err != nil {
-		return "", fmt.Errorf("back up the database before auto-import: %w", err)
-	}
 	s.rememberBackup(mtixDir, fileHash, storeHash, dest)
-	s.prunePreSyncBackups(dir)
 	s.logger.Debug("database backed up before auto-import", "backup", dest)
 	return dest, nil
 }
@@ -411,6 +404,10 @@ type SyncReport struct {
 	DBNodeCount   int      `json:"db_node_count"`
 	OnlyInFile    []string `json:"only_in_file,omitempty"`
 	OnlyInDB      []string `json:"only_in_db,omitempty"`
+	// DifferentUID are the ids that tasks.json and the store both hold
+	// under different uids (MTIX-95.31.4): the file's task under the id may
+	// be another task.
+	DifferentUID []string `json:"different_uid,omitempty"`
 	// AutoImport is the automatic import state: whether sync.auto_sync
 	// leaves it on, and the last auto-import mtix refused (MTIX-95.31.2).
 	AutoImport AutoImportState `json:"auto_import"`
@@ -418,20 +415,18 @@ type SyncReport struct {
 
 // Compare checks whether the SQLite database and .mtix/tasks.json are in sync.
 // Returns a SyncReport describing any drift and the auto-import state
-// (MTIX-95.31.2). Does not modify either store.
+// (MTIX-95.31.2). Does not modify either store. MTIX-95.31.4: the two are
+// never in sync while an auto-import of the file is pending, or while an id
+// is held under different uids (DifferentUID).
 func (s *SyncService) Compare(ctx context.Context, mtixDir string) (*SyncReport, error) {
-	// Read tasks.json and extract node IDs via lightweight JSON parsing.
+	// Read tasks.json and extract node ids and uids via lightweight parsing.
 	fileBytes, err := os.ReadFile(filepath.Join(mtixDir, "tasks.json"))
 	if err != nil {
 		return nil, fmt.Errorf("read tasks.json for compare: %w", err)
 	}
-	var fileData struct {
-		Nodes []struct {
-			ID string `json:"id"`
-		} `json:"nodes"`
-	}
-	if unmarshalErr := json.Unmarshal(fileBytes, &fileData); unmarshalErr != nil {
-		return nil, fmt.Errorf("parse tasks.json for compare: %w", unmarshalErr)
+	fileUIDs, fileNodeCount, err := fileNodeUIDs(fileBytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse tasks.json for compare: %w", err)
 	}
 
 	// Export current DB state.
@@ -439,29 +434,20 @@ func (s *SyncService) Compare(ctx context.Context, mtixDir string) (*SyncReport,
 	if err != nil {
 		return nil, fmt.Errorf("export DB for compare: %w", err)
 	}
-
-	fileIDs := make(map[string]bool, len(fileData.Nodes))
-	for _, n := range fileData.Nodes {
-		if n.ID != "" {
-			fileIDs[n.ID] = true
-		}
-	}
-	dbIDs := make(map[string]bool, len(dbExport.Nodes))
-	for i := range dbExport.Nodes {
-		if id := dbExport.Nodes[i].ID; id != "" {
-			dbIDs[id] = true
-		}
-	}
+	dbUIDs := exportNodeUIDs(dbExport)
 
 	report := &SyncReport{
-		FileNodeCount: len(fileData.Nodes),
+		FileNodeCount: fileNodeCount,
 		DBNodeCount:   len(dbExport.Nodes),
-		OnlyInFile:    idsMissingFrom(fileIDs, dbIDs),
-		OnlyInDB:      idsMissingFrom(dbIDs, fileIDs),
+		OnlyInFile:    idsMissingFrom(fileUIDs.ids(), dbUIDs.ids()),
+		OnlyInDB:      idsMissingFrom(dbUIDs.ids(), fileUIDs.ids()),
+		DifferentUID:  differentUIDs(fileUIDs, dbUIDs),
 	}
-	report.InSync = len(report.OnlyInFile) == 0 && len(report.OnlyInDB) == 0
 	// MTIX-95.31.2: the auto-import switch and the last refusal.
 	report.AutoImport = s.autoImportState(mtixDir, fileBytes)
+	pending := report.AutoImport.LastRefusal != nil && report.AutoImport.LastRefusal.Pending
+	report.InSync = len(report.OnlyInFile) == 0 && len(report.OnlyInDB) == 0 &&
+		len(report.DifferentUID) == 0 && !pending
 	return report, nil
 }
 

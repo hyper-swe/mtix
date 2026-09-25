@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/hyper-swe/mtix/internal/model"
-	"github.com/hyper-swe/mtix/internal/sync/clock"
 )
 
 // ErrImportConfirmationRequired is returned by ImportReconcile when applying the
@@ -39,6 +38,11 @@ type ImportReconcileOptions struct {
 	// non-empty live store. Without it, such an import returns the remap report
 	// and ErrImportConfirmationRequired without touching the store (ADR-003 §6).
 	Confirm bool
+	// BeforeWrite, when set, runs once every check has passed (the file's
+	// count, checksum and times included), just before the import writes
+	// (MTIX-95.31.4): mtix import --mode merge takes the verified pre-import
+	// backup there. An error from it stops the import, which writes nothing.
+	BeforeWrite func() error
 }
 
 // ImportConflictKind classifies an import-boundary uid collision (audit F-3).
@@ -111,6 +115,11 @@ type ImportReconcileReport struct {
 	// under their id, keyed by uid (MTIX-95.31.4). The file's task keeps
 	// the id; the local one moves to the next number free in both.
 	LocalRenumbers []ImportRemapEntry
+	// Moved are local tasks, with their subtrees, that a merge moves to the
+	// id the file holds them under (the same uid): another clone renumbered
+	// them (MTIX-95.31.4). Following the published board needs no
+	// confirmation.
+	Moved []ImportRemapEntry
 	// Idempotent counts incoming nodes that were an exact uid+display_path
 	// no-op against the local store (ADR-003 §6).
 	Idempotent int
@@ -152,6 +161,13 @@ func (r *ImportReconcileReport) String() string {
 		}
 		if !r.Applied {
 			b.WriteString("  not applied: review the renumbering above, then rerun the import with --confirm\n")
+		}
+	}
+	if len(r.Moved) > 0 {
+		fmt.Fprintf(&b, "  local tasks moved to the id the file holds them under (renumbered elsewhere): %d\n",
+			len(r.Moved))
+		for _, m := range r.Moved {
+			fmt.Fprintf(&b, "    - uid=%s %s -> %s\n", m.UID, m.OldPath, m.NewPath)
 		}
 	}
 	return b.String()
@@ -196,8 +212,9 @@ func (s *Store) ImportReconcile(
 		return report, nil, err
 	}
 
-	// Step 3a (MTIX-95.31.4): a merge never overwrites a local task that is
-	// a different task than the file's under the same id: plan to renumber
+	// Step 3a (MTIX-95.31.4): a merge moves a local task the file holds
+	// under another id there, and never overwrites a local task that is a
+	// different task than the file's under the same id: plan to renumber
 	// the local task and its subtree to the next number free in the store
 	// and the file. Planned first, so the provisional renumbers avoid its
 	// numbers (taken).
@@ -205,6 +222,9 @@ func (s *Store) ImportReconcile(
 	moves, planErr := s.planLocalRenumbers(ctx, data, opts.Mode, report, taken)
 	if planErr != nil {
 		return report, nil, planErr
+	}
+	if err := rejectConflicts(report); err != nil {
+		return report, nil, err
 	}
 
 	// Step 3b: plan deterministic renumbers for incoming provisional nodes
@@ -224,11 +244,10 @@ func (s *Store) ImportReconcile(
 	// Step 5: the reconcile rewrote node ids/uids/seqs in place, so the
 	// original checksum no longer matches the (now-clean) content. Recompute it
 	// over the rewritten content before the integrity-checked apply: the import
-	// attests to what is actually being written (ADR-003 §6).
-	if len(report.Remaps) > 0 || len(report.Renamed) > 0 {
-		if err := RecomputeExportChecksum(data); err != nil {
-			return report, nil, fmt.Errorf("recompute checksum after reconcile: %w", err)
-		}
+	// attests to what is actually being written (ADR-003 §6). Then run the
+	// caller's step before any write, once every check passed (MTIX-95.31.4).
+	if err := s.prepareWrite(ctx, data, opts, report); err != nil {
+		return report, nil, err
 	}
 
 	// Step 6: apply the (validated, rewritten) import via the existing
@@ -271,57 +290,6 @@ func exportDuplicateUIDConflicts(data *ExportData) []ImportUIDConflict {
 		})
 	}
 	return conflicts
-}
-
-// classifyAgainstLocal validates each incoming uid against the local store
-// (ADR-003 §6, F-3). For each node carrying a uid that already exists locally:
-// an identical display_path is an idempotent no-op (counted, left untouched); a
-// different display_path is a collision — rejected, or, with ForceRename,
-// re-stamped on the import node with a freshly minted local uid. Empty uids are
-// skipped (no shared identity to validate).
-func (s *Store) classifyAgainstLocal(
-	ctx context.Context,
-	data *ExportData,
-	opts ImportReconcileOptions,
-	report *ImportReconcileReport,
-) error {
-	for i := range data.Nodes {
-		n := &data.Nodes[i]
-		if n.UID == "" {
-			continue
-		}
-		localPath, err := s.ResolveDisplayPathByUID(ctx, n.UID)
-		if errors.Is(err, model.ErrNotFound) {
-			continue // uid is new to this store — nothing to reconcile.
-		}
-		if err != nil {
-			return fmt.Errorf("validate import uid %s: %w", n.UID, err)
-		}
-		if localPath == n.ID {
-			report.Idempotent++ // identical uid + display_path — a no-op.
-			continue
-		}
-		if !opts.ForceRename {
-			report.Conflicts = append(report.Conflicts, ImportUIDConflict{
-				UID:        n.UID,
-				ImportPath: n.ID,
-				LocalPath:  localPath,
-				Kind:       ConflictLocalUIDMismatch,
-			})
-			continue
-		}
-		// Force-rename: re-stamp the IMPORT node with a fresh local uid so it
-		// stops colliding with the local node (ADR-003 §6).
-		freshUID, mintErr := clock.NewEventID()
-		if mintErr != nil {
-			return fmt.Errorf("mint replacement uid for %s: %w", n.ID, mintErr)
-		}
-		report.Renamed = append(report.Renamed, ImportRemapEntry{
-			UID: n.UID, OldPath: n.ID, NewPath: n.ID,
-		})
-		n.UID = freshUID
-	}
-	return nil
 }
 
 // planProvisionalRemaps renumbers every incoming provisional (uid-bearing)

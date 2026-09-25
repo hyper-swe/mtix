@@ -169,9 +169,10 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss) string 
 	b.WriteString("Nothing was imported. Until you choose, mtix refuses again on every command, and writing " +
 		"commands save to the local store but leave .mtix/tasks.json as it is.\n")
 	fmt.Fprintf(&b, "Choose one, run from the project root (%s):\n", projectRoot)
-	b.WriteString("  mtix import .mtix/tasks.json --mode merge    keep the data listed above and add the file's; " +
-		"for a node whose content is unchanged the local field values win, so a teammate's change to its " +
-		"status or assignee is not applied and your next export reverts it\n")
+	b.WriteString("  mtix import .mtix/tasks.json --mode merge    backs up the database, keeps every value the refusal " +
+		"lists and adds the file's changes: a field value listed above stays, with the task's local status when " +
+		"the value is part of it; for a task whose content is unchanged, all local field values win, so a " +
+		"teammate's change to its status or assignee is not applied and your next export reverts it\n")
 	if holdsDifferentTask(losses) {
 		b.WriteString("                                               a local task listed as a different task " +
 			"under its id is renumbered to the next number free in both the store and the file (it keeps its " +

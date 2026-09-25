@@ -23,6 +23,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
+	"github.com/hyper-swe/mtix/internal/store"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -72,6 +73,38 @@ func TestAutoImport_LocalWriteAfterLossyRefusal_ConflictKeepsLossList(t *testing
 	assert.Contains(t, f.notices.String(), "keep the file with mtix import .mtix/tasks.json --mode replace, "+
 		"which deletes PROJ-1: 2 annotations (01J9GITPULL000000000000001, 01J9GITPULL000000000000002); "+
 		"PROJ-4: the whole node")
+}
+
+// TestAutoImport_LosslessConflict_PrintsNothingAndReturnsNil verifies a
+// conflict whose replace would lose nothing (a local retitle) is recorded
+// without a refusal message, and AutoImport returns nil.
+func TestAutoImport_LosslessConflict_PrintsNothingAndReturnsNil(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	board := f.teammateBoard(t, func(d *sqlite.ExportData) { addTeammateNode(t, d, "PROJ-2", "PROJ-3", 3) })
+	title := "Local edit after the last export"
+	require.NoError(t, f.store.UpdateNode(ctx, "PROJ-2", &store.NodeUpdate{Title: &title}))
+	f.pull(t, board)
+
+	require.NoError(t, f.svc.AutoImport(ctx, f.mtixDir))
+	assert.Empty(t, f.notices.String(), "a lossless conflict prints no refusal")
+	report, err := f.svc.Compare(ctx, f.mtixDir)
+	require.NoError(t, err)
+	require.NotNil(t, report.AutoImport.LastRefusal)
+	assert.Equal(t, "conflict", report.AutoImport.LastRefusal.Kind)
+	assert.Empty(t, report.AutoImport.LastRefusal.Loss)
+}
+
+// TestAutoExport_LossyRefusalPending_LineNamesTheLoss verifies the line a
+// write prints while a lossy refusal is pending names what the replace
+// option deletes.
+func TestAutoExport_LossyRefusalPending_LineNamesTheLoss(t *testing.T) {
+	f, _ := refusedFixture(t)
+	writeLocalTask(t, f, "PROJ-4", 4)
+
+	require.NoError(t, f.svc.AutoExport(context.Background(), f.mtixDir))
+	assert.Contains(t, f.notices.String(), "mtix import .mtix/tasks.json --mode replace, "+
+		"which deletes PROJ-1: 2 annotations (01J9GITPULL000000000000001, 01J9GITPULL000000000000002)")
 }
 
 // writeOnTrigger is a log handler that runs write once, when the service

@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -25,7 +26,7 @@ import (
 func writeOtherTaskImportFile(t *testing.T) string {
 	t.Helper()
 	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Second)
+	now := time.Now().UTC().Truncate(time.Second).Add(-time.Hour) // created apart from the local TEST-1
 	src, err := sqlite.New(filepath.Join(t.TempDir(), "src.db"), slog.Default())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = src.Close() })
@@ -83,4 +84,55 @@ func TestRunImport_DifferentTaskUnderID_RenumbersOnlyWithConfirm(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Teammate task", theirs.Title)
 	assert.Equal(t, map[string]string{local.UID: "TEST-2"}, readRemapFile(t, remapPath))
+}
+
+// preSyncBackups lists the pre-import backups of the test project.
+func preSyncBackups(t *testing.T) []string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(app.mtixDir, "data", "backups", "pre-sync-*.db"))
+	require.NoError(t, err)
+	return matches
+}
+
+// TestRunImport_Merge_BacksUpBeforeItWrites verifies mtix import --mode
+// merge takes the verified pre-import backup before it writes, and none
+// when it writes nothing (the renumbering awaits --confirm).
+func TestRunImport_Merge_BacksUpBeforeItWrites(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, runCreate("Local task", "", "epic", 3, "", "", "", "", ""))
+	path := writeOtherTaskImportFile(t)
+
+	require.ErrorIs(t, runImport(path, importFlags{mode: "merge"}), sqlite.ErrImportConfirmationRequired)
+	assert.Empty(t, preSyncBackups(t), "an import that writes nothing takes no backup")
+
+	require.NoError(t, runImport(path, importFlags{mode: "merge", confirm: true}))
+	assert.Len(t, preSyncBackups(t), 1, "the merge backed up the database before it wrote")
+}
+
+// TestPrintSyncReport_PendingImportOrOtherUID_HeadlineSaysSo verifies mtix
+// sync never prints "In sync" while an import of tasks.json is pending or a
+// task under one id differs, and says which.
+func TestPrintSyncReport_PendingImportOrOtherUID_HeadlineSaysSo(t *testing.T) {
+	tests := []struct {
+		name   string
+		report service.SyncReport
+		want   []string
+	}{
+		{"pending import", service.SyncReport{FileNodeCount: 3, DBNodeCount: 3,
+			AutoImport: service.AutoImportState{Enabled: true, Setting: "true",
+				LastRefusal: &service.AutoImportRefusal{Pending: true, Kind: "lossy", Reason: "r"}}},
+			[]string{"OUT OF SYNC: tasks.json changed and has not been imported"}},
+		{"another task under an id", service.SyncReport{FileNodeCount: 3, DBNodeCount: 3, DifferentUID: []string{"PROJ-3"},
+			AutoImport: service.AutoImportState{Enabled: true, Setting: "true"}},
+			[]string{"OUT OF SYNC", "Another uid in tasks.json (1):", "    - PROJ-3"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := captureStdout(t, func() { printSyncReport(&tt.report) })
+			assert.NotContains(t, out, "In sync")
+			for _, w := range tt.want {
+				assert.Contains(t, out, w)
+			}
+		})
+	}
 }

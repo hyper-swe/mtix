@@ -166,8 +166,11 @@ them:
 - an activity entry (by the merge key: id, type, author, text and time);
 - a dependency (from, to, type);
 - the whole local node, when the file gives its id to a different task:
-  both carry a `uid` and the uids differ (listed as "a different task
-  under this id", with both titles).
+  both carry a `uid`, the uids differ, and so does `created_at` (or, when
+  either lacks one, the title); listed as "a different task under this
+  id", with both titles. A local node whose `uid` the file holds under
+  another id is the same task, renumbered by another clone: it is compared
+  with that copy, not lost.
 
 A non-empty field value that the file leaves empty or leaves out (an empty
 string, list or object, `null`, or, for `labels` and `metadata`, the text
@@ -191,9 +194,10 @@ as current, so a field it leaves empty is applied as cleared.
 On a loss the import is refused and nothing changes: no import, no
 backup, the stored hash kept, so it refuses again on every command. The
 refusal names the loss node by node and three ways to proceed, each of
-which resolves it: `mtix import .mtix/tasks.json --mode merge` (keeps all
-local data; for a node whose `content_hash` is unchanged the local field
-values win; a local node whose id the file gives to a different task, one
+which resolves it: `mtix import .mtix/tasks.json --mode merge` (backs up
+the database and keeps all local data, a field value a stale copy leaves
+empty included, with the node's local status when the value is part of it;
+for a node whose `content_hash` is unchanged the local field values win; a local node whose id the file gives to a different task, one
 with another `uid`, is renumbered with its subtree to the next number free
 in both, keeping its `uid`, and applied only with `--confirm`),
 `mtix sync --fix` (rewrite the file from the store) and

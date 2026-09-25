@@ -62,8 +62,10 @@ func TestImportReconcile_IdempotentReimport(t *testing.T) {
 }
 
 // TestImportReconcile_LocalUIDCollisionRejected verifies that an incoming uid
-// that duplicates an existing LOCAL node with a DIFFERENT display_path is
-// rejected loudly and nothing is mutated (ADR-003 §6, audit F-3).
+// that duplicates an existing LOCAL node with a DIFFERENT display_path under
+// another parent is rejected loudly and nothing is mutated (ADR-003 §6, audit
+// F-3). Under the same parent it is the same task renumbered elsewhere, which
+// a merge moves (MTIX-95.31.4).
 func TestImportReconcile_LocalUIDCollisionRejected(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -77,9 +79,9 @@ func TestImportReconcile_LocalUIDCollisionRejected(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	}))
 
-	// Incoming node reuses the same uid but a different display_path.
+	// Incoming node reuses the same uid but a display_path under another parent.
 	data := reconcileExport(t, "REC", sqlite.TestExportNode{
-		ID: "REC-2", Project: "REC", Depth: 0, Seq: 2, Title: "Intruder",
+		ID: "REC-2.1", ParentID: "REC-2", Project: "REC", Depth: 1, Seq: 1, Title: "Intruder",
 		ContentHash: "h2", UID: uid, CreatedAt: now, UpdatedAt: now,
 	})
 
@@ -91,12 +93,12 @@ func TestImportReconcile_LocalUIDCollisionRejected(t *testing.T) {
 	require.NotNil(t, report)
 	require.Len(t, report.Conflicts, 1)
 	assert.Equal(t, uid, report.Conflicts[0].UID)
-	assert.Equal(t, "REC-2", report.Conflicts[0].ImportPath)
+	assert.Equal(t, "REC-2.1", report.Conflicts[0].ImportPath)
 	assert.Equal(t, "REC-1", report.Conflicts[0].LocalPath)
 	assert.False(t, report.Applied, "nothing must be applied on rejection")
 
 	// The intruder must NOT have been created.
-	_, getErr := s.GetNode(ctx, "REC-2")
+	_, getErr := s.GetNode(ctx, "REC-2.1")
 	assert.ErrorIs(t, getErr, model.ErrNotFound)
 }
 
@@ -571,8 +573,8 @@ func TestImportReconcile_ConflictReportString(t *testing.T) {
 		NodeType: model.NodeTypeIssue, ContentHash: "h1", UID: uid,
 		CreatedAt: now, UpdatedAt: now,
 	}))
-	data := reconcileExport(t, "REC", sqlite.TestExportNode{
-		ID: "REC-2", Project: "REC", Depth: 0, Seq: 2, Title: "Intruder",
+	data := reconcileExport(t, "REC", sqlite.TestExportNode{ // under another parent: MTIX-95.31.4
+		ID: "REC-2.1", ParentID: "REC-2", Project: "REC", Depth: 1, Seq: 1, Title: "Intruder",
 		ContentHash: "h2", UID: uid, CreatedAt: now, UpdatedAt: now,
 	})
 

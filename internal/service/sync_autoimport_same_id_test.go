@@ -13,6 +13,7 @@ package service_test
 import (
 	"bytes"
 	"context"
+	"hash/fnv"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,14 +29,18 @@ import (
 
 // createLocalTask creates a root task under the number the local sequence
 // counter hands out next, as mtix create does, with a description and an
-// annotation of its own, and returns it as stored.
+// annotation of its own, and returns it as stored. Its creation time
+// follows from its title, so tasks two clones create with different titles
+// have different creation times, as tasks created apart do.
 func createLocalTask(t *testing.T, f *guardFixture, title string) *model.Node {
 	t.Helper()
 	ctx := context.Background()
 	seq, err := f.store.NextSequence(ctx, "PROJ:")
 	require.NoError(t, err)
 	id := model.BuildID("PROJ", "", seq)
-	now := time.Date(2026, 9, 24, 11, 0, 0, 0, time.UTC)
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(title))
+	now := time.Date(2026, 9, 24, 11, 0, 0, 0, time.UTC).Add(time.Duration(h.Sum32()%3600) * time.Second)
 	require.NoError(t, f.store.CreateNode(ctx, &model.Node{
 		ID: id, Project: "PROJ", Depth: 0, Seq: seq, Title: title, Description: "Why: " + title,
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,

@@ -15,6 +15,7 @@ package sqlite_test
 import (
 	"context"
 	"encoding/json"
+	"hash/fnv"
 	"testing"
 	"time"
 
@@ -31,7 +32,9 @@ var sameIDTime = time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
 
 // createSameIDTask creates task id, number seq, with the given uid and
 // title in s, as a root when parent is empty and as parent's child
-// otherwise, and returns the uid.
+// otherwise, and returns the uid. Its creation time follows from its title
+// (createdAtFor), so tasks created on two stores with one title are the
+// same task, and tasks with different titles are not (MTIX-95.31.4).
 func createSameIDTask(t *testing.T, s *sqlite.Store, id, parent string, seq int, uid, title string) string {
 	t.Helper()
 	depth := 0
@@ -42,9 +45,17 @@ func createSameIDTask(t *testing.T, s *sqlite.Store, id, parent string, seq int,
 		ID: id, ParentID: parent, Project: "REC", Depth: depth, Seq: seq, Title: title,
 		Description: "Description of " + title, Status: model.StatusOpen,
 		Priority: model.PriorityMedium, Weight: 1.0, NodeType: model.NodeTypeForDepth(depth),
-		ContentHash: "h-" + title, UID: uid, CreatedAt: sameIDTime, UpdatedAt: sameIDTime,
+		ContentHash: "h-" + title, UID: uid, CreatedAt: createdAtFor(title), UpdatedAt: createdAtFor(title),
 	}))
 	return uid
+}
+
+// createdAtFor returns a creation time derived from title, within a day
+// after sameIDTime.
+func createdAtFor(title string) time.Time {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(title))
+	return sameIDTime.Add(time.Duration(h.Sum32()%86400) * time.Second)
 }
 
 // storeSnapshotJSON returns the store's export without its export time.
@@ -272,6 +283,7 @@ func TestDiffReplace_SameIDDifferentUID_ReportsDifferentTask(t *testing.T) {
 			require.NoError(t, json.Unmarshal(raw, &file))
 			file.Nodes[0].UID = tt.fileUID(uid)
 			file.Nodes[0].Title = "File title"
+			file.Nodes[0].CreatedAt = "2026-09-23T08:00:00Z" // created elsewhere, at another time
 
 			diff, err := sqlite.DiffReplace(localData, &file)
 			require.NoError(t, err)

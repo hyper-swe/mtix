@@ -257,7 +257,9 @@ const (
 
 // mergeImportNode merges one imported node into the store (FR-7.8). A node
 // new to the store is inserted as exported; one the store holds as a
-// different task is never overwritten (refuseDifferentTask, MTIX-95.31.4). For a node the store holds,
+// different task is never overwritten (refuseDifferentTask), and a local
+// value that a stale copy leaves empty is kept (keepLocalBlankedFields,
+// MTIX-95.31.4). For a node the store holds,
 // annotations and the activity stream merge as a union that never drops a
 // local entry (mergeNodeStreams, MTIX-95.31.1): an incoming node without
 // annotations keeps the local ones. The other columns take the incoming
@@ -291,16 +293,15 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 	if !fileCarriesAllColumns {
 		keepLocalNodeColumns(&merged, &local)
 	}
+	if !copyIsCurrent(&local, n, fileCarriesAllColumns) { // MTIX-95.31.4
+		if err := keepLocalBlankedFields(&merged, &local); err != nil {
+			return 0, fmt.Errorf("merge node %s: %w", n.ID, err)
+		}
+	}
 	streamsChanged := mergeNodeStreams(&merged, &local)
 
 	if existingHash.Valid && existingHash.String == n.ContentHash {
-		if !streamsChanged {
-			return importActionSkipped, nil
-		}
-		if err := writeNodeStreams(ctx, tx, &merged); err != nil {
-			return 0, fmt.Errorf("merge annotations and activity of node %s: %w", n.ID, err)
-		}
-		return importActionUpdated, nil
+		return mergeUnchangedContent(ctx, tx, &merged, local.UID, streamsChanged)
 	}
 
 	if err := updateExportNode(ctx, tx, &merged); err != nil {

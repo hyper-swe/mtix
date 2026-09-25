@@ -90,8 +90,11 @@ func (l *NodeLoss) lossy() bool {
 //     resolution, an activity entry (by the key merge import uses: id,
 //     type, author, text and time) and a dependency (from, to, type);
 //   - always a loss of the whole local task: a node whose id the file
-//     gives to a different task, one with another uid (DifferentTask,
-//     MTIX-95.31.4);
+//     gives to a different task (differentTask: another uid and another
+//     identity; DifferentTask, MTIX-95.31.4). A local node whose uid the
+//     file holds under another id is the same task, renumbered by another
+//     clone: it is compared with that copy, and its dependencies are read
+//     at the ids the file gives its ends;
 //   - a loss only when the file's copy of the node is not known to be
 //     current: a non-empty field value the file leaves empty. The copy is
 //     current when the file carries activity (schema 2.0.0 or later),
@@ -110,27 +113,25 @@ func DiffReplace(local, file *ExportData) (*ReplaceDiff, error) {
 		return nil, fmt.Errorf("compare exports for a replace import: missing export: %w", model.ErrInvalidInput)
 	}
 	fileCarriesActivity := carriesNodeColumns(file.SchemaVersion)
-	fileNodes := make(map[string]*exportNode, len(file.Nodes))
-	for i := range file.Nodes {
-		fileNodes[file.Nodes[i].ID] = &file.Nodes[i]
-	}
-	localIDs := make(map[string]bool, len(local.Nodes))
+	idx := newReplaceIndex(local, file)
+	matched := make(map[*exportNode]bool, len(file.Nodes))
+	sameTaskAt := make(map[string]string, len(local.Nodes)) // local id -> the file's id of that task
 	diff := &ReplaceDiff{}
 	for i := range local.Nodes {
 		l := &local.Nodes[i]
-		localIDs[l.ID] = true
-		in, held := fileNodes[l.ID]
-		if !held {
+		in, other := idx.match(l)
+		switch {
+		case other != nil: // MTIX-95.31.4: a replace deletes the local task
+			diff.Updated = append(diff.Updated, l.ID)
+			diff.Losses = append(diff.Losses, NodeLoss{NodeID: l.ID, SoftDeleted: l.DeletedAt != "",
+				DifferentTask: true, LocalTitle: l.Title, FileTitle: other.Title})
+			continue
+		case in == nil:
 			diff.Removed = append(diff.Removed, l.ID)
 			diff.Losses = append(diff.Losses, NodeLoss{NodeID: l.ID, WholeNode: true, SoftDeleted: l.DeletedAt != ""})
 			continue
 		}
-		if differentTask(l, in) { // MTIX-95.31.4: a replace deletes the local task
-			diff.Updated = append(diff.Updated, l.ID)
-			diff.Losses = append(diff.Losses, NodeLoss{NodeID: l.ID, SoftDeleted: l.DeletedAt != "",
-				DifferentTask: true, LocalTitle: l.Title, FileTitle: in.Title})
-			continue
-		}
+		matched[in], sameTaskAt[l.ID] = true, in.ID
 		loss, changed, err := compareReplacedNode(l, in, fileCarriesActivity)
 		if err != nil {
 			return nil, err
@@ -143,13 +144,66 @@ func DiffReplace(local, file *ExportData) (*ReplaceDiff, error) {
 		}
 	}
 	for i := range file.Nodes {
-		if !localIDs[file.Nodes[i].ID] {
+		if !matched[&file.Nodes[i]] {
 			diff.Added = append(diff.Added, file.Nodes[i].ID)
 		}
 	}
-	diff.compareDependencies(local.Dependencies, file.Dependencies)
+	diff.compareDependencies(local.Dependencies, file.Dependencies, sameTaskAt)
 	diff.sort()
 	return diff, nil
+}
+
+// replaceIndex finds, for a local node, the file's copy of the same task
+// (MTIX-95.31.4).
+type replaceIndex struct {
+	fileByID, fileByUID map[string]*exportNode
+	localUIDs           map[string]bool
+}
+
+// newReplaceIndex indexes the file's nodes by id and by uid, and the uids
+// the local store holds.
+func newReplaceIndex(local, file *ExportData) *replaceIndex {
+	idx := &replaceIndex{
+		fileByID:  make(map[string]*exportNode, len(file.Nodes)),
+		fileByUID: make(map[string]*exportNode, len(file.Nodes)),
+		localUIDs: make(map[string]bool, len(local.Nodes)),
+	}
+	for i := range file.Nodes {
+		n := &file.Nodes[i]
+		idx.fileByID[n.ID] = n
+		if n.UID != "" {
+			idx.fileByUID[n.UID] = n
+		}
+	}
+	for i := range local.Nodes {
+		if uid := local.Nodes[i].UID; uid != "" {
+			idx.localUIDs[uid] = true
+		}
+	}
+	return idx
+}
+
+// match returns the file's copy of local node l, or the file's different
+// task under l's id, or neither when the file lacks l (MTIX-95.31.4). The
+// file's node with l's uid is l's copy wherever it sits: another clone may
+// have renumbered the task, a move rather than a loss. Otherwise the node
+// under l's id is l's copy unless it is another local task (its uid is held
+// locally) or a different task (differentTask).
+func (x *replaceIndex) match(l *exportNode) (same, different *exportNode) {
+	f := x.fileByID[l.ID]
+	if f != nil && l.UID != "" && f.UID == l.UID {
+		return f, nil // the same task under the same id
+	}
+	if moved := x.fileByUID[l.UID]; l.UID != "" && moved != nil {
+		return moved, nil
+	}
+	switch {
+	case f == nil, f.UID != "" && x.localUIDs[f.UID]:
+		return nil, nil
+	case differentTask(l, f):
+		return nil, f
+	}
+	return f, nil
 }
 
 // sort orders every list of the diff, the losses by node id.
@@ -166,9 +220,17 @@ func depLabel(d *exportDep) string { return d.DepType + " " + d.ToID }
 
 // compareDependencies records the dependencies only the file holds and
 // those only the store holds; each of the latter is a loss of the node it
-// starts from.
-func (d *ReplaceDiff) compareDependencies(local, file []exportDep) {
+// starts from. A local dependency's ends are read as the file's ids of the
+// same tasks (sameTaskAt), so a dependency on a task the file holds under
+// another id is held (MTIX-95.31.4).
+func (d *ReplaceDiff) compareDependencies(local, file []exportDep, sameTaskAt map[string]string) {
 	key := func(dep *exportDep) string { return dep.FromID + "\x00" + dep.ToID + "\x00" + dep.DepType }
+	inFile := func(id string) string {
+		if moved, ok := sameTaskAt[id]; ok {
+			return moved
+		}
+		return id
+	}
 	held := make(map[string]bool, len(file))
 	for i := range file {
 		held[key(&file[i])] = true
@@ -176,8 +238,9 @@ func (d *ReplaceDiff) compareDependencies(local, file []exportDep) {
 	localHeld := make(map[string]bool, len(local))
 	for i := range local {
 		dep := &local[i]
-		localHeld[key(dep)] = true
-		if held[key(dep)] {
+		asFile := exportDep{FromID: inFile(dep.FromID), ToID: inFile(dep.ToID), DepType: dep.DepType}
+		localHeld[key(&asFile)] = true
+		if held[key(&asFile)] {
 			continue
 		}
 		d.DepsRemoved = append(d.DepsRemoved, dep.FromID+" "+depLabel(dep))
@@ -218,14 +281,23 @@ func compareReplacedNode(local, in *exportNode, fileCarriesActivity bool) (NodeL
 	}
 	loss.Annotations, loss.Unresolved = lostAnnotations(local.Annotations, in.Annotations)
 	loss.Activity = lostActivity(local.Activity, in.Activity)
-	current := fileCarriesActivity && loss.Activity == 0 && !olderCopy(in.UpdatedAt, local.UpdatedAt)
-	if !current {
+	if !copyIsCurrent(local, in, fileCarriesActivity) {
 		loss.Fields, err = blankedFields(localJSON, inJSON)
 		if err != nil {
 			return loss, false, fmt.Errorf("compare node %s: %w", local.ID, err)
 		}
 	}
 	return loss, !bytes.Equal(localJSON, inJSON), nil
+}
+
+// copyIsCurrent reports whether the file's copy of a node has seen every
+// local change (FR-15.2i): the file carries activity (schema 2.0.0 or
+// later), the copy holds every local activity entry of the node, and its
+// updated_at is not older than the local one. DiffReplace lists a field the
+// copy leaves empty as a loss only when it is not current, and merge keeps
+// such a field by the same rule (MTIX-95.31.4).
+func copyIsCurrent(local, in *exportNode, fileCarriesActivity bool) bool {
+	return fileCarriesActivity && lostActivity(local.Activity, in.Activity) == 0 && !olderCopy(in.UpdatedAt, local.UpdatedAt)
 }
 
 // olderCopy reports whether the file's updated_at is older than the local

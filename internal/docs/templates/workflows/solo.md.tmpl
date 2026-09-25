@@ -48,7 +48,7 @@ machines is not a supported topology.
 | **Queue full** | N/A — sync queue is empty in solo mode | Not applicable to solo mode |
 | **Lost laptop** | The git-tracked `.mtix/tasks.json` is your only off-machine copy | Restore from a fresh clone via `mtix import` — see "Disaster recovery" below |
 | **Divergent history** | N/A — solo mode has only one source of events | Not applicable to solo mode |
-| **Auto-import refused** after a `git pull` or checkout (`mtix: auto-import of .mtix/tasks.json refused`) | The pulled `.mtix/tasks.json` lacks tasks, comments, activity, dependencies or field values this store holds (a stale snapshot, or one from mtix older than 0.5.4). Nothing is imported; the refusal repeats on every command, and writes stay in the store without rewriting the snapshot | Read the list, then run `mtix import .mtix/tasks.json --mode merge` (keeps local data; your field values win on unchanged tasks; a task listed as `a different task under this id` is renumbered to the next free number, applied only with `--confirm`), `mtix sync --fix` (keeps the store, rewrites the file) or `mtix import .mtix/tasks.json --mode replace` (the file wins). `mtix sync` shows the refusal |
+| **Auto-import refused** after a `git pull` or checkout (`mtix: auto-import of .mtix/tasks.json refused`) | The pulled `.mtix/tasks.json` lacks tasks, comments, activity, dependencies or field values this store holds (a stale snapshot, or one from mtix older than 0.5.4). Nothing is imported; the refusal repeats on every command, and writes stay in the store without rewriting the snapshot | Read the list, then run `mtix import .mtix/tasks.json --mode merge` (keeps local data, but your status, assignee and wake time win on tasks whose content the snapshot did not change, which can undo a change made elsewhere: check `git log -p .mtix/tasks.json` afterwards and reapply such changes; a task listed as `a different task under this id` is renumbered to the next free number, applied only with `--confirm`), `mtix sync --fix` (keeps the store, rewrites the file) or `mtix import .mtix/tasks.json --mode replace` (the file wins). `mtix sync` shows the refusal. For a conflict although you changed nothing locally (after an upgrade), see [A conflict although nothing changed locally](../TROUBLESHOOTING.md#a-conflict-although-nothing-changed-locally) |
 
 ---
 
@@ -108,7 +108,9 @@ clone gets it, but an empty store, such as a fresh clone's, is always
 imported). Writes never overwrite a snapshot that changed on disk and was
 not imported: with the switch off, import a pulled snapshot yourself
 (`mtix import .mtix/tasks.json --mode merge`), or keep your board with
-`mtix sync --fix`.
+`mtix sync --fix`. The merge keeps your status, assignee and wake time
+on tasks whose content the snapshot did not change: check
+`git log -p .mtix/tasks.json` afterwards and reapply such changes.
 
 For richer DR (sync hub backup + immutable cold storage), see the
 [safety-critical workflow](safety-critical.md), which uses the BYO

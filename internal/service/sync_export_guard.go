@@ -28,6 +28,9 @@ const (
 // A newer schema needs an upgrade: mtix sync --fix would rewrite the board
 // in this build's older format. When the refusal records what a replace
 // of the file would delete, the replace option names it (MTIX-95.31.4).
+// A conflict's line says what the merge keeps and names the way out when
+// nothing changed locally, and a not_imported line says what the merge
+// keeps (MTIX-95.31.11).
 func resolutionFor(refusal *AutoImportRefusal) string {
 	replace := "mtix import .mtix/tasks.json --mode replace"
 	if refusal.Loss != "" {
@@ -38,9 +41,9 @@ func resolutionFor(refusal *AutoImportRefusal) string {
 		return "It was written by a newer mtix: upgrade mtix, then run any mtix command. " +
 			"Rewriting it from the local store would downgrade it to this older format"
 	case refusalConflict:
-		return "Both it and the local store changed since the last sync: combine them with " +
-			"mtix import .mtix/tasks.json --mode merge, keep the local store with mtix sync --fix, " +
-			"or keep the file with " + replace
+		return "Both it and the local store changed since the last sync: merge them with " +
+			"mtix import .mtix/tasks.json --mode merge (" + mergeKeeps + "), keep the local store with " +
+			"mtix sync --fix, or keep the file with " + replace + "; " + unchangedRecovery
 	case refusalInvalidFile:
 		return "It fails its checks (mtix sync shows why): if it was edited or merged by hand, repair and check it, " +
 			"then run mtix import .mtix/tasks.json --recompute-checksum; to keep the local board, run mtix sync --fix"
@@ -49,7 +52,8 @@ func resolutionFor(refusal *AutoImportRefusal) string {
 	case refusalBackupFailed:
 		return "The backup before the import could not be written: free disk space; the next command retries"
 	case refusalNotImported:
-		return "Import it with mtix import .mtix/tasks.json --mode merge, or keep the local board with mtix sync --fix"
+		return "Import it with mtix import .mtix/tasks.json --mode merge (" + mergeKeeps + "), " +
+			"or keep the local board with mtix sync --fix"
 	}
 	return "Resolve it with mtix import .mtix/tasks.json --mode merge, mtix sync --fix or " + replace
 }

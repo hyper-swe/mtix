@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -180,7 +181,8 @@ func matchOlderBaseline(local *sqlite.ExportData, stored string, forms []baselin
 // the older baseline whole; it is logged, and the next command recognizes
 // the older baseline again.
 func (s *SyncService) upgradeBaseline(mtixDir, current string, form baselineForm) {
-	if err := replaceBaseline(filepath.Join(mtixDir, "data", "sync-db.sha256"), []byte(current)); err != nil {
+	path := filepath.Join(mtixDir, "data", "sync-db.sha256")
+	if err := replaceBaseline(path, []byte(current), s.wrapBaselineFile); err != nil {
 		s.logger.Warn("could not rewrite the conflict baseline in the current form", "error", err)
 		return
 	}
@@ -193,9 +195,11 @@ func (s *SyncService) upgradeBaseline(mtixDir, current string, form baselineForm
 // so two commands may rewrite the baseline at once: with its own temporary
 // file, neither can truncate or move the other's half-written file, and a
 // reader sees the old baseline or one whole new one, never an empty or
-// partial one. The baseline keeps mode 0644. On any failure the temporary
-// file is removed and the baseline is left as it was.
-func replaceBaseline(path string, data []byte) (err error) {
+// partial one. The baseline keeps mode 0644. On any failure, a failed write
+// or close included (a full disk), the temporary file is removed and the
+// baseline is left as it was. wrap, when not nil, wraps the temporary file
+// for the write and the close (SyncService.wrapBaselineFile).
+func replaceBaseline(path string, data []byte, wrap func(*os.File) io.WriteCloser) (err error) {
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
 	if err != nil {
 		return fmt.Errorf("create a temporary baseline: %w", err)
@@ -208,8 +212,12 @@ func replaceBaseline(path string, data []byte) (err error) {
 			err = errors.Join(err, fmt.Errorf("remove the temporary baseline: %w", rmErr))
 		}
 	}()
-	_, writeErr := tmp.Write(data)
-	if closeErr := tmp.Close(); writeErr == nil {
+	var file io.WriteCloser = tmp
+	if wrap != nil {
+		file = wrap(tmp)
+	}
+	_, writeErr := file.Write(data)
+	if closeErr := file.Close(); writeErr == nil {
 		writeErr = closeErr
 	}
 	if writeErr != nil {

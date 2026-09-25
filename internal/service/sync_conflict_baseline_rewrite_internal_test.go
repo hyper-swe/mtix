@@ -11,6 +11,7 @@ package service
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -145,4 +146,72 @@ func TestUpgradeBaseline_Rewrite_BesideTheBaselineWithMode0644(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm())
 	assert.Contains(t, logs.String(), "event=sync_baseline_upgraded")
 	assert.Empty(t, leftoverTempFiles(t, mtixDir))
+}
+
+// errDiskFull is the error failingFile returns, as a full disk would.
+var errDiskFull = errors.New("no space left on device")
+
+// failingFile wraps the temporary baseline file (SyncService.wrapBaselineFile)
+// and fails its write after writing half of the data, or its close after
+// closing the file, as a full disk can (MTIX-26).
+type failingFile struct {
+	f         *os.File
+	failWrite bool
+	failClose bool
+}
+
+// Write writes p, or half of it and then fails when failWrite is set.
+func (w *failingFile) Write(p []byte) (int, error) {
+	if !w.failWrite {
+		return w.f.Write(p)
+	}
+	n, err := w.f.Write(p[:len(p)/2])
+	if err != nil {
+		return n, err
+	}
+	return n, errDiskFull
+}
+
+// Close closes the file, then fails when failClose is set.
+func (w *failingFile) Close() error {
+	if err := w.f.Close(); err != nil {
+		return err
+	}
+	if w.failClose {
+		return errDiskFull
+	}
+	return nil
+}
+
+// TestUpgradeBaseline_WriteOrCloseFails_KeepsOldBaselineAndNoTempFile
+// verifies a rewrite whose write or close fails, as on a full disk, never
+// puts a torn baseline in place: the older baseline stays as it was, the
+// temporary file is removed, and the failure is logged, not reported as a
+// rewrite.
+func TestUpgradeBaseline_WriteOrCloseFails_KeepsOldBaselineAndNoTempFile(t *testing.T) {
+	tests := []struct {
+		name                 string
+		failWrite, failClose bool
+	}{
+		{"a failed write", true, false},
+		{"a failed close", false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mtixDir, s, logs := baselineRewriteDir(t, "older")
+			s.wrapBaselineFile = func(f *os.File) io.WriteCloser {
+				return &failingFile{f: f, failWrite: tt.failWrite, failClose: tt.failClose}
+			}
+
+			s.upgradeBaseline(mtixDir, strings.Repeat("c", 64), form100)
+
+			got, err := os.ReadFile(filepath.Join(mtixDir, "data", "sync-db.sha256"))
+			require.NoError(t, err)
+			assert.Equal(t, "older", string(got), "the older baseline is kept whole")
+			assert.Empty(t, leftoverTempFiles(t, mtixDir), "the temporary file is removed")
+			assert.Contains(t, logs.String(), "could not rewrite the conflict baseline in the current form")
+			assert.Contains(t, logs.String(), errDiskFull.Error())
+			assert.NotContains(t, logs.String(), "event=sync_baseline_upgraded")
+		})
+	}
 }

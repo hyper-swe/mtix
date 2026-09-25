@@ -22,6 +22,14 @@ mtix backup <path>      # Create database backup
 mtix gc                 # Run garbage collection
 ```
 
+## Pulled `.mtix/tasks.json` not imported
+
+After a `git pull`, the next CLI command (for example `mtix list`) imports a changed `.mtix/tasks.json`, or refuses and says why; `mtix sync` shows a pending refusal.
+
+- Never run `mtix import .mtix/tasks.json --mode replace` to silence a refusal: it runs no loss check and deletes the comments, activity and tasks the board lacks.
+- `mtix import .mtix/tasks.json --mode merge` keeps local data, but for a task whose content the teammate did not change your status, assignee and wake time win over theirs (it undoes their claim, for example): check `git log -p .mtix/tasks.json` afterwards and reapply such changes.
+- A conflict although you changed nothing locally (after an upgrade from 0.5.3 or earlier): run `mtix sync --fix`, then `git checkout HEAD -- .mtix/tasks.json`, then `mtix list`, which imports the board with the loss check. Never stop after `mtix sync --fix`: alone, it drops every change in the file.
+
 ## Configuration
 
 ```bash

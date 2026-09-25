@@ -38,6 +38,10 @@ type SyncService struct {
 	// olderForms are the older conflict baseline forms hasConflict tries,
 	// in order; nil means olderBaselineForms() (MTIX-95.31.11). Tests set it.
 	olderForms []baselineForm
+	// wrapBaselineFile wraps the temporary file a baseline rewrite writes
+	// (replaceBaseline); nil writes the file directly (MTIX-95.31.11). Tests
+	// set it to make the write or the close fail.
+	wrapBaselineFile func(*os.File) io.WriteCloser
 
 	MaxImportSize int64 // Maximum file size for auto-import per FR-15.2e.
 }
@@ -334,17 +338,15 @@ func (s *SyncService) exportBoard(ctx context.Context, mtixDir string) error {
 }
 
 // writeFileAtomically writes data to path through a temporary file in the
-// same directory and a rename (FR-15.3c), so a crash or a failed write
-// never leaves a torn file: tasks.json, and the conflict baseline when it
-// is rewritten from an older form (MTIX-95.31.11).
+// same directory and a rename (FR-15.3c), so a crash never leaves a torn
+// file.
 func writeFileAtomically(path string, data []byte) error {
 	tmpPath := path + ".tmp"
-	name := filepath.Base(path)
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return fmt.Errorf("write temp %s: %w", name, err)
+		return fmt.Errorf("write temp tasks.json: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("rename temp to %s: %w", name, err)
+		return fmt.Errorf("rename temp to tasks.json: %w", err)
 	}
 	return nil
 }

@@ -19,9 +19,11 @@ import (
 // localRenumber is one local node whose own number a merge import changes
 // (MTIX-95.31.4, FR-15.2i): the node holding uid, now at oldID, ends at
 // newID, number seq, under the same parent (whose id may change too).
+// stamp: the node has no uid yet and is given uid first (MTIX-95.31.9).
 type localRenumber struct {
 	uid, oldID, newID string
 	seq               int
+	stamp             bool
 }
 
 // localNode is what a merge import plans with for one local node, live or
@@ -29,6 +31,10 @@ type localRenumber struct {
 type localNode struct {
 	id, uid, project, parentID, createdAt string
 	seq, finalSeq                         int
+	// title is read only when a uid is missing (MTIX-95.31.9); stamp is
+	// set when the plan minted uid for the node (stampMissingUIDs).
+	title string
+	stamp bool
 	// final is the node's id after the merge.
 	final string
 	// renumbered is true when the node, or an ancestor, moves off an id the
@@ -105,6 +111,9 @@ func sameInstant(a, b string) bool {
 // merge it runs never reaches this; a direct merge (Store.Import) or a store
 // that changed after the plan fails here and writes nothing.
 func refuseDifferentTask(local, in *exportNode) error {
+	if err := refuseTitleMismatch(local, in); err != nil { // MTIX-95.31.9
+		return err
+	}
 	if !differentTask(local, in) {
 		return nil
 	}
@@ -137,7 +146,10 @@ type localMovePlan struct {
 //     subtree move to the next number free under its parent in both the
 //     store and the file (nextSeqFreeInBoth), keeping their uids, so the
 //     published board keeps its numbers (report.LocalRenumbers, applied
-//     only with confirmation).
+//     only with confirmation). When either task has no uid to compare, the
+//     titles decide (differentTaskAt, MTIX-95.31.9): such a pair with
+//     different titles is renumbered and listed in report.TitleMismatches,
+//     and a renumbered local task without a uid is given one.
 //
 // It returns the nodes whose own number changes, shallowest first; the
 // numbers it takes are recorded in taken for the provisional renumbering.
@@ -153,9 +165,15 @@ func (s *Store) planLocalRenumbers(
 		return nil, err
 	}
 	p := newLocalMovePlan(data, nodes, report, taken)
+	if err := s.loadTitlesIfUIDless(ctx, p); err != nil {
+		return nil, err
+	}
 	p.follow()
 	p.renumber()
 	if err := p.checkFinals(); err != nil {
+		return nil, err
+	}
+	if err := p.stampMissingUIDs(); err != nil {
 		return nil, err
 	}
 	return p.finish(), nil
@@ -265,10 +283,10 @@ func (p *localMovePlan) renumber() {
 		}
 		p.place(l)
 		f := p.fileByID[l.final]
-		if f == nil || f.UID == l.uid ||
-			!differentIdentity(taskIdentity{l.uid, l.createdAt}, taskIdentity{f.UID, f.CreatedAt}) {
+		if f == nil || !p.differentTaskAt(l, f) {
 			continue
 		}
+		p.noteTitleMismatch(l, f)
 		l.finalSeq = p.nextSeqFreeInBoth(l.project, parent)
 		l.final, l.renumbered = model.BuildID(l.project, parent, l.finalSeq), true
 	}
@@ -364,7 +382,7 @@ func (p *localMovePlan) finish() []localRenumber {
 			p.report.Moved = append(p.report.Moved, entry)
 		}
 		if l.finalSeq != l.seq {
-			moves = append(moves, localRenumber{uid: l.uid, oldID: l.id, newID: l.final, seq: l.finalSeq})
+			moves = append(moves, localRenumber{uid: l.uid, oldID: l.id, newID: l.final, seq: l.finalSeq, stamp: l.stamp})
 		}
 	}
 	return moves
@@ -384,6 +402,9 @@ func (p *localMovePlan) finish() []localRenumber {
 func applyLocalRenumbers(ctx context.Context, tx *sql.Tx, moves []localRenumber) error {
 	if len(moves) == 0 {
 		return nil
+	}
+	if err := stampNewUIDs(ctx, tx, moves); err != nil { // MTIX-95.31.9
+		return err
 	}
 	for _, m := range moves {
 		id, err := idOfUID(ctx, tx, m.uid)

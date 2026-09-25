@@ -38,8 +38,8 @@ const upgradeMatchedNote = "a task treated as the same task (uid assigned at upg
 
 // upgradeMatchedWayOut is how the refusal says to keep the local task when
 // the two are different tasks.
-const upgradeMatchedWayOut = "if the two titles name different tasks (created in the same second, and " +
-	"neither clone's event log holds their create events: made before 0.2, for example), yours would survive " +
+const upgradeMatchedWayOut = "if the two titles name different tasks (tasks created in the same second whose " +
+	"create event at least one clone's event log lacks, for example created before 0.2), yours would survive " +
 	"only in the backup the merge takes: copy it to a new task first (mtix show <id>, then mtix create with its " +
 	"title and description; writes stay local while this refusal is pending), then merge\n"
 

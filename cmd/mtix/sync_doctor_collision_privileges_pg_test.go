@@ -156,7 +156,10 @@ const (
 	pg16       = 160000
 )
 
-// grantPaths are the paths a grant opens (MTIX-95.1.7).
+// grantPaths are the paths a grant opens, on the table or on a column
+// (MTIX-95.1.7). A plain grant from the table owner gets its REVOKE even
+// when another path is named beside it; a grant with a grant option, or
+// one another grant depends on, is named.
 func grantPaths() []collisionPath {
 	const revoke = "REVOKE INSERT ON TABLE hub_data.sync_node_collisions FROM "
 	return []collisionPath{
@@ -222,6 +225,37 @@ func grantPaths() []collisionPath {
 			return []string{revoke + h.syncer + ";"},
 				[]string{heldInsert + " granted to " + h.syncer + " by " + granter}, []string{heldInsert}
 		}},
+		{"a grant from the table owner and SET ROLE to a holder", "hub_data", pg16, 0,
+			func(h *schemaHub) ([]string, []string, []string) {
+				holder := h.f.role("holder")
+				h.grantTo("INSERT", h.syncer, "")
+				h.grantTo("INSERT", holder, "")
+				h.f.ddl("GRANT %I TO %I WITH INHERIT FALSE, SET TRUE", holder, h.syncer)
+				return []string{revoke + h.syncer + ";"},
+					[]string{"SET ROLE to " + holder + ", which holds " + heldInsert}, []string{heldInsert}
+			}},
+		{"a grant from the table owner and a column grant option granted on", "hub_data", 0, 0,
+			func(h *schemaHub) ([]string, []string, []string) {
+				h.grantTo("INSERT", h.syncer, "")
+				h.f.ddl("GRANT INSERT (project_prefix) ON TABLE %I.sync_node_collisions TO %I WITH GRANT OPTION",
+					h.schema, h.syncer)
+				h.f.ddlAs(h.syncer, "GRANT INSERT (project_prefix) ON TABLE %I.sync_node_collisions TO %I",
+					h.schema, h.f.role("other"))
+				// The table owner's REVOKE of the table grant also revokes the
+				// column grant, on which another grant depends, so it fails
+				// without CASCADE: the check names both grants, with no REVOKE.
+				require.ErrorContains(h.f.t, h.f.tryAs(h.owner, revoke+h.syncer+";"), "SQLSTATE 2BP01")
+				return nil, []string{
+					heldInsert + " granted to " + h.syncer + " by " + h.owner,
+					heldInsert + " granted to " + h.syncer + " by " + h.owner + " with grant option",
+				}, []string{heldInsert}
+			}},
+		{"a grant option on one column", "hub_data", 0, 0, func(h *schemaHub) ([]string, []string, []string) {
+			h.f.ddl("GRANT INSERT (project_prefix) ON TABLE %I.sync_node_collisions TO %I WITH GRANT OPTION",
+				h.schema, h.syncer)
+			return nil, []string{heldInsert + " granted to " + h.syncer + " by " + h.owner + " with grant option"},
+				[]string{heldInsert}
+		}},
 	}
 }
 
@@ -233,7 +267,8 @@ func serverRolePath(role string) string {
 
 // memberPaths are the paths a role membership or a role attribute opens
 // (MTIX-95.1.7). Membership in a server file or program role is named
-// whether or not the role inherits it.
+// whether or not the role inherits it, and whether or not it can SET ROLE
+// to it.
 func memberPaths() []collisionPath {
 	return []collisionPath{
 		{"pg_write_all_data", "hub_data", 0, 0, func(h *schemaHub) ([]string, []string, []string) {
@@ -258,6 +293,11 @@ func memberPaths() []collisionPath {
 		{"a server-program membership WITH INHERIT FALSE", "hub_data", pg16, 0,
 			func(h *schemaHub) ([]string, []string, []string) {
 				h.f.ddl("GRANT pg_execute_server_program TO %I WITH INHERIT FALSE", h.syncer)
+				return nil, []string{serverRolePath("pg_execute_server_program")}, []string{heldInsert}
+			}},
+		{"a server-program membership WITH INHERIT TRUE, SET FALSE", "hub_data", pg16, 0,
+			func(h *schemaHub) ([]string, []string, []string) {
+				h.f.ddl("GRANT pg_execute_server_program TO %I WITH INHERIT TRUE, SET FALSE", h.syncer)
 				return nil, []string{serverRolePath("pg_execute_server_program")}, []string{heldInsert}
 			}},
 		{"a server-file role", "hub_data", 0, 0, func(h *schemaHub) ([]string, []string, []string) {

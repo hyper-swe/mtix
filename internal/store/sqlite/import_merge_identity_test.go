@@ -725,3 +725,75 @@ func TestImportReconcile_WriteAfterTheDryRun_WritesNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, concurrent, node.Title, "the concurrent write survives; nothing was imported")
 }
+
+// TestImportReconcile_ChildRenumberedUnderMovedParent_FollowsTheBoard
+// verifies a local child that another clone renumbered under a task it also
+// moved follows the board to its new number under the parent's new id,
+// without confirmation (MTIX-95.31.4.4, carried by MTIX-95.31.6): the file's
+// parent id is compared with the parent's final id, not its local one.
+func TestImportReconcile_ChildRenumberedUnderMovedParent_FollowsTheBoard(t *testing.T) {
+	ctx := context.Background()
+	local, teammate := newTestStore(t), newTestStore(t)
+	parent, child := taskUID(t), taskUID(t)
+	createSameIDTask(t, local, "REC-2", "", 2, parent, "Moved parent")
+	createSameIDTask(t, local, "REC-2.1", "REC-2", 1, child, "Renumbered child")
+	createSameIDTask(t, teammate, "REC-2", "", 2, taskUID(t), "Teammate task")
+	createSameIDTask(t, teammate, "REC-3", "", 3, parent, "Moved parent")
+	createSameIDTask(t, teammate, "REC-3.1", "REC-3", 1, taskUID(t), "Teammate child")
+	createSameIDTask(t, teammate, "REC-3.2", "REC-3", 2, child, "Renumbered child")
+
+	report := mergeFile(t, local, exportOf(t, teammate))
+	assert.Empty(t, report.LocalRenumbers)
+	assert.Equal(t, []sqlite.ImportRemapEntry{
+		{UID: parent, OldPath: "REC-2", NewPath: "REC-3"},
+		{UID: child, OldPath: "REC-2.1", NewPath: "REC-3.2"},
+	}, report.Moved)
+	for uid, want := range map[string]string{parent: "REC-3", child: "REC-3.2"} {
+		path, err := local.ResolveDisplayPathByUID(ctx, uid)
+		require.NoError(t, err)
+		assert.Equal(t, want, path)
+	}
+}
+
+// TestImportReconcile_FileIDDisagreesWithItsNumber_HoldingALocalUID_Rejected
+// verifies a file node that holds a local task's uid under an id its number
+// does not build (a provisional id, or a settled id with another number) is
+// a uid conflict, never a move: the merge writes nothing, even with
+// confirmation, so no two nodes end up sharing the uid (MTIX-95.31.4.4,
+// carried by MTIX-95.31.6).
+func TestImportReconcile_FileIDDisagreesWithItsNumber_HoldingALocalUID_Rejected(t *testing.T) {
+	shared, child := taskUID(t), taskUID(t)
+	tests := []struct {
+		name string
+		id   string
+		seq  int
+	}{
+		{"a provisional id", provisionalPath(t, "REC-1", child), 1},
+		{"a settled id under another number", "REC-1.3", 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			local := newTestStore(t)
+			createSameIDTask(t, local, "REC-1", "", 1, shared, "Shared task")
+			createSameIDTask(t, local, "REC-1.1", "REC-1", 1, child, "Local child")
+			before := storeSnapshotJSON(t, local)
+			file := reconcileExport(t, "REC",
+				sqlite.TestExportNode{ID: "REC-1", Project: "REC", Seq: 1, Title: "Shared task",
+					ContentHash: "h-Shared task", UID: shared, CreatedAt: sameIDTime, UpdatedAt: sameIDTime},
+				sqlite.TestExportNode{ID: tt.id, ParentID: "REC-1", Project: "REC", Depth: 1, Seq: tt.seq,
+					Title: "Local child", ContentHash: "h-Local child", UID: child, CreatedAt: sameIDTime,
+					UpdatedAt: sameIDTime},
+			)
+
+			report, _, err := local.ImportReconcile(ctx, file, sqlite.ImportReconcileOptions{
+				Mode: sqlite.ImportModeMerge, Confirm: true,
+			})
+			require.ErrorIs(t, err, model.ErrConflict)
+			assert.Equal(t, []sqlite.ImportUIDConflict{{UID: child, ImportPath: tt.id, LocalPath: "REC-1.1",
+				Kind: sqlite.ConflictLocalUIDMismatch}}, report.Conflicts)
+			assert.Empty(t, report.Moved)
+			assert.Equal(t, before, storeSnapshotJSON(t, local), "nothing was written")
+		})
+	}
+}

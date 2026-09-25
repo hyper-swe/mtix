@@ -34,6 +34,27 @@ const (
 		"and a replace import of the file would delete local data it lacks"
 )
 
+// How the guidance a write or a conflict prints (the warning of a conflict
+// whose replace loses nothing, and the lines a write prints while a
+// conflict or a not-imported board is pending) describes the merge, which
+// does not combine both sides (MTIX-95.31.11). mergeKeeps states the rule
+// mergeImportNode (internal/store/sqlite/import.go) applies per task, in
+// both directions: when the task's content hash (title, description,
+// prompt, acceptance, labels) matches the file's, every local field value
+// stays, so a teammate's status or assignee change is not applied;
+// otherwise the file's copy wins, so a local edit to that task (an unclaim,
+// a prompt edit) is undone, except a value the file leaves empty in a copy
+// that is not current. The user manual gives the rule in full.
+// unchangedRecovery is the way out of a conflict although nothing changed
+// locally, as after an upgrade from 0.5.3 or earlier; the user manual
+// documents it with the upgrade notes.
+const (
+	mergeKeeps = "per task, the merge keeps your field values (status, assignee, wake time) when the task's content " +
+		"matches the file's, and otherwise takes the file's copy, which undoes your edits to that task"
+	unchangedRecovery = "if you changed nothing locally: mtix sync --fix, then git checkout HEAD -- .mtix/tasks.json, " +
+		"then any command that imports, such as mtix list"
+)
+
 // AutoSyncConfig is the source of the sync.auto_sync switch (FR-15.2j,
 // MTIX-95.31.2); ConfigService implements it.
 type AutoSyncConfig interface {
@@ -133,6 +154,9 @@ func (s *SyncService) refuseLossyImport(mtixDir, fileHash string, diff *sqlite.R
 // refuseConflict handles a changed tasks.json when the local store changed
 // too since the last sync (FR-15.2h): nothing is imported, and the conflict
 // is recorded for mtix sync and for AutoExport, which then keeps the file.
+// A conflict that loses nothing is logged with its ways out: the merge
+// first, with what it keeps, and the way out when nothing changed locally
+// (MTIX-95.31.11).
 // MTIX-95.31.4: when a replace of the file would also delete local data,
 // the conflict keeps that loss list: it is printed as a refusal (the replace
 // option says it deletes the data listed), recorded in the reason and as
@@ -143,8 +167,9 @@ func (s *SyncService) refuseConflict(mtixDir, fileHash string, diff *sqlite.Repl
 	reason := "both the local store and tasks.json changed since the last sync (FR-15.2h)"
 	if !diff.Lossy() {
 		s.logger.Warn("conflict detected: both tasks.json and local database changed since last sync",
-			"resolution", "combine them with 'mtix import .mtix/tasks.json --mode merge', keep the file with "+
-				"'mtix import .mtix/tasks.json --mode replace', or keep the local store with 'mtix sync --fix'")
+			"resolution", "merge them with mtix import .mtix/tasks.json --mode merge ("+mergeKeeps+"), keep the file "+
+				"with mtix import .mtix/tasks.json --mode replace, or keep the local store with mtix sync --fix; "+
+				unchangedRecovery)
 		s.recordRefusal(mtixDir, fileHash, refusalConflict, reason)
 		return nil
 	}
@@ -159,7 +184,9 @@ func (s *SyncService) refuseConflict(mtixDir, fileHash string, diff *sqlite.Repl
 
 // refusalMessage renders the refusal the user sees: its cause, what would
 // be lost, node by node, and the three deliberate ways to proceed, run from
-// the project root, with what each of them keeps and loses. When a local
+// the project root, with what each of them keeps and loses. The merge
+// option states the merge rule in both directions (mergeKeeps,
+// MTIX-95.31.11), as the other printed lines do. When a local
 // task is a different task than the file's under its id, the merge option
 // says the merge renumbers it and needs --confirm (MTIX-95.31.4). When the
 // file holds a task under another uid assigned at upgrade, with another
@@ -184,8 +211,7 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss) string 
 	fmt.Fprintf(&b, "Choose one, run from the project root (%s):\n", projectRoot)
 	b.WriteString("  mtix import .mtix/tasks.json --mode merge    backs up the database, " + keeps +
 		" and adds the file's changes: a field value listed above stays, with the task's local status when " +
-		"the value is part of it; for a task whose content is unchanged, all local field values win, so a " +
-		"teammate's change to its status or assignee is not applied and your next export reverts it\n")
+		"the value is part of it; beyond those, " + mergeKeeps + "\n")
 	if holdsDifferentTask(losses) {
 		b.WriteString("                                               a local task listed as a different task " +
 			"under its id is renumbered to the next number free in both the store and the file (it keeps its " +

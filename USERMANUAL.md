@@ -1871,9 +1871,15 @@ search_path=<schema>` in the DSN, or `ALTER ROLE <owner> SET search_path
    or later; without it `psql` looks for `~/.postgresql/root.crt`), with
    the password in a `~/.pgpass` file, then run `psql -f hub-<date>.sql`. `psql` reports an error for each trigger
    (its function does not exist yet); step 2 creates them.
-2. Run `mtix sync init` with the hub DSN naming that same role, the table
-   owner. It recreates every mtix function and trigger and keeps the
-   restored data, including the restore epoch.
+2. Check the owner's search_path first, above all for a hub in
+   `public`: connected as that role, `SHOW search_path;` and
+   `SELECT current_schema();` must put the sync tables' schema first.
+   The default `"$user", public` puts a schema named after the role first
+   when one exists; `mtix sync init` then refuses, changing nothing, until
+   you run `ALTER ROLE <owner> SET search_path = public` (or
+   `<schema>, public`). Then run `mtix sync init` with the hub DSN naming
+   that same role, the table owner. It recreates every mtix function and
+   trigger and keeps the restored data, including the restore epoch.
 3. Run `mtix sync doctor`. Its `hub-triggers` check must pass: every mtix
    function and trigger present and enabled. If it names a gap, run its
    `fix` as the table owner and run the doctor again.

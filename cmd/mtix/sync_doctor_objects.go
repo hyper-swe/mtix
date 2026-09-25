@@ -33,7 +33,9 @@ type hubObjectState struct {
 	disabledTriggers    []string // "trigger on schema.table (tgenabled X)"
 	enableStatements    []string // the ALTER TABLE statement for each disabled trigger
 	owners              []string // the owners of the triggers' tables, who run the fix
+	ownerIdents         []string // owners, each quoted as an SQL identifier
 	tablesSchema        string   // the schema of the triggers' tables, "" when none exists
+	tablesSchemaIdent   string   // tablesSchema quoted as an SQL identifier
 	currentSchema       string   // current_schema(): where mtix sync init creates objects
 }
 
@@ -45,6 +47,7 @@ type hubObjectState struct {
 // server-side (MTIX-95.7).
 type triggerRow struct {
 	table, name, schema, owner, enabled string
+	schemaIdent, ownerIdent             string // schema and owner quoted as SQL identifiers
 	function, wantFunction              string // schema-qualified, for display
 	bound                               bool   // the trigger executes wantFunction itself (same OID)
 	enable                              string
@@ -153,7 +156,8 @@ func readHubTriggers(ctx context.Context, pool *transport.Pool, triggers []migra
 	}
 	// Each migration-defined trigger, its table resolved through the
 	// connecting role's search_path as the CLI's statements resolve it:
-	// the table's schema and owner, tgenabled ('' when the trigger or its
+	// the table's schema and owner, raw and quoted as identifiers
+	// (MTIX-95.7), tgenabled ('' when the trigger or its
 	// table is missing), the function the trigger executes and the one its
 	// migration binds (created in the table's schema), both
 	// schema-qualified, whether they are the same function by OID, and the
@@ -162,6 +166,8 @@ func readHubTriggers(ctx context.Context, pool *transport.Pool, triggers []migra
 	rows, err := pool.Inner().Query(ctx, `
 		SELECT g.tbl, g.name, COALESCE(n.nspname::text, ''),
 		       COALESCE(pg_catalog.pg_get_userbyid(c.relowner)::text, ''),
+		       COALESCE(pg_catalog.quote_ident(n.nspname), ''),
+		       COALESCE(pg_catalog.quote_ident(pg_catalog.pg_get_userbyid(c.relowner)::text), ''),
 		       COALESCE(t.tgenabled::text, ''),
 		       COALESCE(pn.nspname::text || '.' || p.proname::text, ''),
 		       COALESCE(n.nspname::text || '.', '') || g.fn,
@@ -183,7 +189,7 @@ func readHubTriggers(ctx context.Context, pool *transport.Pool, triggers []migra
 	defer rows.Close()
 	for rows.Next() {
 		var r triggerRow
-		if err := rows.Scan(&r.table, &r.name, &r.schema, &r.owner, &r.enabled,
+		if err := rows.Scan(&r.table, &r.name, &r.schema, &r.owner, &r.schemaIdent, &r.ownerIdent, &r.enabled,
 			&r.function, &r.wantFunction, &r.bound, &r.enable); err != nil {
 			return fmt.Errorf("read hub triggers: %w", err)
 		}
@@ -205,9 +211,10 @@ func readHubTriggers(ctx context.Context, pool *transport.Pool, triggers []migra
 func (s *hubObjectState) record(r triggerRow) {
 	if r.owner != "" && !slices.Contains(s.owners, r.owner) {
 		s.owners = append(s.owners, r.owner)
+		s.ownerIdents = append(s.ownerIdents, r.ownerIdent)
 	}
 	if s.tablesSchema == "" {
-		s.tablesSchema = r.schema
+		s.tablesSchema, s.tablesSchemaIdent = r.schema, r.schemaIdent
 	}
 	where := r.table
 	if r.schema != "" {
@@ -320,13 +327,14 @@ func (s hubObjectState) searchPathNote() string {
 
 // searchPathStep is the fix step that puts the sync tables' schema first
 // on the owner's search_path: that schema alone when it is public, else
-// that schema and then public (MTIX-95.7).
+// that schema and then public. The statement names the role and the
+// schema quoted as SQL identifiers, so it runs as printed (MTIX-95.7).
 func (s hubObjectState) searchPathStep() string {
 	owner := "<owner>"
-	if len(s.owners) == 1 {
-		owner = s.owners[0]
+	if len(s.ownerIdents) == 1 {
+		owner = s.ownerIdents[0]
 	}
-	path := s.tablesSchema + ", public"
+	path := s.tablesSchemaIdent + ", public"
 	if s.tablesSchema == "public" {
 		path = "public"
 	}

@@ -10,8 +10,6 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-
-	"github.com/hyper-swe/mtix/internal/store/postgres/migrations"
 )
 
 // ErrSearchPathSchema refuses a change to the hub schema when the first
@@ -23,21 +21,21 @@ var ErrSearchPathSchema = errors.New("search_path does not start with the sync t
 // checkSchemaFirst refuses (ErrSearchPathSchema) when the search_path
 // reaches an mtix hub in a schema other than current_schema(), the schema
 // the migrations create objects in: sync_projects and sync_events both
-// resolve to that same other schema, and it holds an mtix function. An
-// unrelated table that only shares a sync table's name, and a hub with no
-// sync table yet, pass. The message names both schemas and how to put the
-// hub's schema first (MTIX-95.7).
+// resolve to that same other schema, and that sync_events has mtix's
+// event_id, lamport_clock and vector_clock columns. The test uses only
+// what a dump carries (a dump carries no mtix function), so
+// a hub restored from mtix sync backup counts. An application's tables
+// that only share a sync table's name, and a hub with no sync table yet,
+// pass. The message names both schemas and how to put the hub's schema
+// first (MTIX-95.7).
 func checkSchemaFirst(ctx context.Context, q queryRower) error {
-	functions, err := migrations.Functions()
-	if err != nil {
-		return fmt.Errorf("mtix function list: %w", err)
-	}
 	var tablesSchema, first, example string
 	// The schema sync_projects and sync_events both resolve to, when it is
-	// not current_schema() and holds an mtix function; both schema names
-	// quoted server-side, and the search_path to suggest: that schema
-	// alone when it is public, else that schema and then public.
-	err = q.QueryRow(ctx, `
+	// not current_schema() and its sync_events has every mtix column; both
+	// schema names quoted server-side, and the search_path to suggest:
+	// that schema alone when it is public, else that schema and then
+	// public.
+	err := q.QueryRow(ctx, `
 		SELECT pg_catalog.quote_ident(n.nspname),
 		       COALESCE(pg_catalog.quote_ident(pg_catalog.current_schema()), '(none)'),
 		       CASE WHEN n.nspname = 'public' THEN 'public'
@@ -48,9 +46,10 @@ func checkSchemaFirst(ctx context.Context, q queryRower) error {
 		WHERE p.oid = pg_catalog.to_regclass('sync_projects')
 		  AND e.oid = pg_catalog.to_regclass('sync_events')
 		  AND n.nspname IS DISTINCT FROM pg_catalog.current_schema()
-		  AND EXISTS (SELECT 1 FROM pg_catalog.pg_proc f
-		              WHERE f.pronamespace = n.oid AND f.proname = ANY($1::text[]))`,
-		functions).Scan(&tablesSchema, &first, &example)
+		  AND (SELECT count(DISTINCT col.column_name) FROM information_schema.columns col
+		       WHERE col.table_schema = n.nspname AND col.table_name = 'sync_events'
+		         AND col.column_name IN ('event_id', 'lamport_clock', 'vector_clock')) = 3`,
+	).Scan(&tablesSchema, &first, &example)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}

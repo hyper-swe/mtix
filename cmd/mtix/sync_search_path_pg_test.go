@@ -1,11 +1,15 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+//go:build !windows
+
 package main
 
 import (
 	"bytes"
 	"context"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -212,24 +216,35 @@ func TestHarden_SchemaNamedAfterRoleFirst_OnlyTheGuardMigrationIsRefused(t *test
 		"(ALTER ROLE "+owner+" SET search_path = public), then mtix sync init", fix)
 }
 
-// TestInit_UnrelatedTableOfASyncTableNameLaterOnPath_CreatesTheHubFirst: an
-// application's own objects later on the search_path 'mtix, public' are
-// not an mtix hub, even when they share sync table or function names: an
-// mtix hub has sync_projects and sync_events in one schema together with
-// an mtix function. Init creates every sync table in mtix and leaves the
-// application's objects alone (MTIX-95.7).
-func TestInit_UnrelatedTableOfASyncTableNameLaterOnPath_CreatesTheHubFirst(t *testing.T) {
+// mtixEventColumns are the sync_events columns that identify an mtix hub
+// (MTIX-95.7), as a dump or the migrations create them.
+const mtixEventColumns = `event_id text PRIMARY KEY, lamport_clock bigint NOT NULL, vector_clock jsonb NOT NULL`
+
+// TestInit_SearchPathReachesAnotherHub_DecidedByWhatADumpCarries: init
+// refuses when the search_path reaches an mtix hub in a schema other than
+// its first one: sync_projects and sync_events together in that schema,
+// sync_events with mtix's event_id, lamport_clock and vector_clock
+// columns, functions or not (a dump carries none). An application's own
+// tables that merely share a sync table's name are not a hub: init then
+// creates every sync table in mtix and leaves them alone (MTIX-95.7).
+func TestInit_SearchPathReachesAnotherHub_DecidedByWhatADumpCarries(t *testing.T) {
 	tests := []struct {
-		name string
-		app  []string
+		name   string
+		app    []string
+		refuse bool
 	}{
-		{"an application's audit_log", []string{`CREATE TABLE public.audit_log (id integer PRIMARY KEY, note text)`}},
-		{"sync_projects and sync_events without an mtix function", []string{
+		{"an application's audit_log", []string{`CREATE TABLE public.audit_log (id integer PRIMARY KEY, note text)`}, false},
+		{"sync_projects and sync_events without mtix's columns", []string{
 			`CREATE TABLE public.sync_projects (id integer PRIMARY KEY, note text)`,
-			`CREATE TABLE public.sync_events (id integer PRIMARY KEY, note text)`}},
-		{"sync_projects and an mtix-named function without sync_events", []string{
+			`CREATE TABLE public.sync_events (id integer PRIMARY KEY, note text)`}, false},
+		{"sync_events with only some of mtix's columns", []string{
 			`CREATE TABLE public.sync_projects (id integer PRIMARY KEY, note text)`,
-			`CREATE FUNCTION public.audit_log_immutable() RETURNS trigger AS $$ BEGIN RETURN NULL; END $$ LANGUAGE plpgsql`}},
+			`CREATE TABLE public.sync_events (event_id text PRIMARY KEY, lamport_clock bigint NOT NULL)`}, false},
+		{"mtix's sync_events without sync_projects", []string{
+			`CREATE TABLE public.sync_events (` + mtixEventColumns + `)`}, false},
+		{"a hub as a dump leaves it: the tables, no function", []string{
+			`CREATE TABLE public.sync_projects (project_prefix text PRIMARY KEY, first_event_hash text NOT NULL)`,
+			`CREATE TABLE public.sync_events (` + mtixEventColumns + `)`}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -242,17 +257,103 @@ func TestInit_UnrelatedTableOfASyncTableNameLaterOnPath_CreatesTheHubFirst(t *te
 			appObjects := `SELECT c.relname::text FROM pg_catalog.pg_class c
 				JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 				WHERE n.nspname = 'public' AND c.relkind = 'r' ORDER BY 1`
+			inMtix := `SELECT c.relname::text FROM pg_catalog.pg_class c
+				JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+				WHERE n.nspname = 'mtix' AND c.relkind = 'r' ORDER BY 1`
 			before := f.strings(appObjects)
 			t.Setenv(transport.EnvDSN, searchPathDSN(f, "mtix,public"))
 			var stdout, stderr bytes.Buffer
-			require.NoError(t, runSyncInit(context.Background(), &stdout, &stderr, nil, cloudOpts), stderr.String())
-
+			err := runSyncInit(context.Background(), &stdout, &stderr, nil, cloudOpts)
+			require.Equal(t, before, f.strings(appObjects), "the application's tables are untouched")
+			if tt.refuse {
+				require.Error(t, err, "init refuses: the search_path reaches the hub in public")
+				require.Contains(t, err.Error(), "the sync tables are in schema public, but the first schema on the search_path is mtix")
+				require.Empty(t, f.strings(inMtix), "init creates nothing in mtix")
+				return
+			}
+			require.NoError(t, err, stderr.String())
 			tables, err := migrations.Tables()
 			require.NoError(t, err)
-			require.Equal(t, tables, f.strings(`SELECT c.relname::text FROM pg_catalog.pg_class c
-				JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-				WHERE n.nspname = 'mtix' AND c.relkind = 'r' ORDER BY 1`), "every sync table is in mtix")
-			require.Equal(t, before, f.strings(appObjects), "the application's tables are untouched")
+			require.Equal(t, tables, f.strings(inMtix), "every sync table is in mtix")
 		})
 	}
+}
+
+// TestInit_RestoredBackupWithRoleSchemaFirst_Refuses follows the restore
+// runbook into a database where a schema named after the owner role exists,
+// so the default search_path ("$user", public) puts it first: a real mtix
+// sync backup dump, restored with psql into public, carries no mtix
+// function, and init still refuses and creates nothing in the role's
+// schema (MTIX-95.7).
+func TestInit_RestoredBackupWithRoleSchemaFirst_Refuses(t *testing.T) {
+	initTestApp(t)
+	src := newHardenFixture(t)
+	requirePgDumpForServer(t, src.dbURL.String())
+	psql := requirePsql(t)
+	t.Setenv(transport.EnvDSN, src.dbURL.String())
+	var stdout, stderr bytes.Buffer
+	require.NoError(t, runSyncInit(context.Background(), &stdout, &stderr, nil, cloudOpts), stderr.String())
+	dump := filepath.Join(t.TempDir(), "hub.sql")
+	_, errText, err := runBackupCLI(t, src.dbURL.String(), dump, "--insecure-tls")
+	require.NoError(t, err, errText)
+
+	dst := newHardenFixture(t)
+	owner := dst.ownerRole()
+	dst.ddl("CREATE SCHEMA %I AUTHORIZATION %I", owner, owner)
+	env := append(psqlEnv(t, dst.dbURL.String()), "PGOPTIONS=-c role="+owner)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, psql, "-X", "-q", "-f", dump) //nolint:gosec // psql from LookPath, dump from t.TempDir()
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	require.Equal(t, []string{"sync_events", "sync_projects"}, dst.strings(`SELECT c.relname::text FROM pg_catalog.pg_class c
+		JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = 'public' AND c.relname IN ('sync_events', 'sync_projects') ORDER BY 1`), "the dump is restored into public")
+	require.Empty(t, dst.strings(`SELECT p.proname::text FROM pg_catalog.pg_proc p
+		JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public'
+		AND p.proname IN ('append_only_no_truncate', 'audit_log_immutable')`), "the dump carries no mtix function")
+
+	t.Setenv(transport.EnvDSN, dst.dsnAs(owner))
+	stdout.Reset()
+	stderr.Reset()
+	err = runSyncInit(context.Background(), &stdout, &stderr, nil, cloudOpts)
+	require.Error(t, err, "init refuses: the role's own schema comes first")
+	require.Contains(t, err.Error(), "the sync tables are in schema public, but the first schema on the search_path is "+owner)
+	require.Empty(t, dst.strings(`SELECT c.relname::text FROM pg_catalog.pg_class c
+		JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1
+		UNION ALL SELECT p.proname::text FROM pg_catalog.pg_proc p
+		JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = $1`, owner),
+		"init creates nothing in the role's schema")
+}
+
+// TestDoctor_SearchPathStep_QuotesRoleAndSchema: the search_path step of
+// the hub-triggers fix quotes the owner role and the schema as SQL
+// identifiers, so it runs as printed for a role like "Bob-Hub" and a
+// mixed-case schema (MTIX-95.7).
+func TestDoctor_SearchPathStep_QuotesRoleAndSchema(t *testing.T) {
+	initTestApp(t)
+	f := newHardenFixture(t)
+	bob := f.role("Bob-Hub")
+	f.ddl("CREATE SCHEMA %I AUTHORIZATION %I", "MixedHub", bob)
+	f.ddl("CREATE SCHEMA %I AUTHORIZATION %I", "mtix_other", bob)
+	dsn := func(searchPath string) string {
+		u := f.dbURL
+		q := u.Query()
+		q.Set("options", "-c role="+bob+" -c search_path="+searchPath)
+		u.RawQuery = q.Encode()
+		return u.String()
+	}
+	t.Setenv(transport.EnvDSN, dsn(`"MixedHub"`))
+	var stdout, stderr bytes.Buffer
+	require.NoError(t, runSyncInit(context.Background(), &stdout, &stderr, nil, cloudOpts), stderr.String())
+	f.exec(`DROP TRIGGER audit_log_no_truncate ON "MixedHub".audit_log`)
+
+	t.Setenv(transport.EnvDSN, dsn(`mtix_other,"MixedHub"`))
+	report, err := runDoctorReport(t)
+	require.NoError(t, err)
+	_, _, _, fix := doctorCheckNamed(t, report, "hub-triggers")
+	stmt := `ALTER ROLE "` + bob + `" SET search_path = "MixedHub", public`
+	require.Contains(t, fix, "("+stmt+")", "the step quotes both identifiers")
+	f.exec(stmt)
 }

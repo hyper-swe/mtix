@@ -59,13 +59,17 @@ func TestGradeHubObjects_StateAndMode_ReportsEachGapWithItsFix(t *testing.T) {
 		wrongFunction: []string{"audit_log_no_update on public.audit_log calls noop, not audit_log_immutable"}}
 	twoOwners := wrongFn
 	twoOwners.owners = []string{"mtix_a", "mtix_b"}
-	pathMissing := hubObjectState{functions: 2, triggers: 7, owners: []string{"mtix_owner"},
-		missingTriggers: []string{"audit_log_no_truncate on hub.audit_log"}, tablesSchema: "hub", currentSchema: "scratch"}
+	pathMissing := hubObjectState{functions: 2, triggers: 7, owners: []string{"mtix_owner"}, ownerIdents: []string{"mtix_owner"},
+		missingTriggers: []string{"audit_log_no_truncate on hub.audit_log"}, tablesSchema: "hub", tablesSchemaIdent: "hub",
+		currentSchema: "scratch"}
 	publicMissing := pathMissing
-	publicMissing.tablesSchema, publicMissing.currentSchema = "public", "mtix_owner"
+	publicMissing.tablesSchema, publicMissing.tablesSchemaIdent, publicMissing.currentSchema = "public", "public", "mtix_owner"
 	pathDisabled := disabled
 	pathDisabled.tablesSchema, pathDisabled.currentSchema = "hub", "scratch"
 	pathClean := hubObjectState{functions: 2, triggers: 7, tablesSchema: "hub", currentSchema: "scratch"}
+	quotedMissing := hubObjectState{functions: 2, triggers: 7, owners: []string{"Bob-Hub"},
+		ownerIdents: []string{`"Bob-Hub"`}, missingTriggers: []string{"audit_log_no_truncate on MixedHub.audit_log"},
+		tablesSchema: "MixedHub", tablesSchemaIdent: `"MixedHub"`, currentSchema: "scratch"}
 	wrongAndDisabled := wrongFn
 	wrongAndDisabled.disabledTriggers, wrongAndDisabled.enableStatements = disabled.disabledTriggers, disabled.enableStatements
 
@@ -104,6 +108,10 @@ func TestGradeHubObjects_StateAndMode_ReportsEachGapWithItsFix(t *testing.T) {
 			[]string{"the first schema on the search_path is mtix_owner, not public"}},
 		{"another schema first, only a statement to run: no search_path step", pathDisabled, false, true, true, owner + enable,
 			[]string{"the first schema on the search_path is scratch, not hub"}},
+		{"names that need quoting are quoted in the statement", quotedMissing, false, true, true,
+			"as the table owner (Bob-Hub): set the search_path so that MixedHub comes first " +
+				`(ALTER ROLE "Bob-Hub" SET search_path = "MixedHub", public), then mtix sync init`,
+			[]string{"the first schema on the search_path is scratch, not MixedHub"}},
 		{"another schema first, nothing to fix: still passes, and says so", pathClean, false, true, false, "",
 			[]string{"present and enabled", "the first schema on the search_path is scratch, not hub"}},
 		{"another function and disabled", wrongAndDisabled, true, false, false, owner + "mtix sync init, then " + enable,
@@ -153,7 +161,7 @@ func TestHubObjectState_Record_ClassifiesEachTrigger(t *testing.T) {
 		r := triggerRow{table: "audit_log", name: "t", schema: schema, enabled: enabled,
 			function: function, wantFunction: "audit_log_immutable", bound: function == "audit_log_immutable"}
 		if schema != "" {
-			r.owner = "mtix_owner"
+			r.owner, r.ownerIdent, r.schemaIdent = "mtix_owner", "mtix_owner", schema
 		}
 		if enabled != "" {
 			r.enable = enable
@@ -196,6 +204,8 @@ func TestHubObjectState_Record_ClassifiesEachTrigger(t *testing.T) {
 			if tt.row.schema != "" {
 				require.Equal(t, []string{"mtix_owner"}, s.owners, "the table's owner is recorded")
 				require.Equal(t, tt.row.schema, s.tablesSchema, "the tables' schema is recorded")
+				require.Equal(t, tt.row.schemaIdent, s.tablesSchemaIdent, "and its quoted form")
+				require.Equal(t, []string{tt.row.ownerIdent}, s.ownerIdents, "and the owner's quoted form")
 			} else {
 				require.Empty(t, s.owners)
 				require.Empty(t, s.tablesSchema)

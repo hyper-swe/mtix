@@ -100,8 +100,10 @@ schema comes first, usually a schema named after the role under the default
 `"$user", public`): `psql -f <file>` as
 the role that will own the sync tables, with `PGSSLMODE=verify-full` and `PGSSLROOTCERT=<ca.pem>`
 (or `system` with libpq 16 or later) and the password in `~/.pgpass` (psql
-reports errors for the triggers; their functions do not exist yet), then
-`mtix sync init` with the DSN naming that role, then `mtix sync doctor`
+reports errors for the triggers; their functions do not exist yet), then,
+after checking as that role that `SHOW search_path;` puts the tables'
+schema first (not a schema named after the role), `mtix sync init` with
+the DSN naming that role, then `mtix sync doctor`
 until `hub-triggers` passes (its `fix` names the table owner who runs it
 and, in order, `mtix sync init` for a missing trigger or one bound to
 another function, and the `ALTER TABLE ... ENABLE TRIGGER` statement for

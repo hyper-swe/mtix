@@ -151,5 +151,22 @@ func TestDocs_RestoreRunbook_GrantsLeastPrivilegeListAgain(t *testing.T) {
 		require.Containsf(t, texts[name], restoreGrantsSentence, "%s carries the restore grants step", name)
 	}
 	require.Contains(t, texts["docs/SECURITY-MODEL.md"],
-		"it cannot advance the epoch, set an event's epoch, or write a collision row directly")
+		"it cannot advance the epoch, set an event's epoch, or insert a collision row")
+}
+
+// exemptionSentence is how every document states whom the doctor's check
+// of the collision privileges leaves out (MTIX-95.1.7).
+const exemptionSentence = "The check skips the table owner, roles that inherit it, and superusers."
+
+// TestDocs_CollisionCheckExemptions_SameInEveryCopy: the user manual, the
+// admin skill (rendered, and its plugin mirrors) and the small-team
+// workflow state the exemptions of the schema current check's collision
+// privileges exactly (MTIX-95.1.7).
+func TestDocs_CollisionCheckExemptions_SameInEveryCopy(t *testing.T) {
+	for name, text := range everyLeastPrivilegeCopy(t) {
+		if name == "docs/SECURITY-MODEL.md" {
+			continue
+		}
+		require.Containsf(t, text, exemptionSentence, "%s states the exemptions", name)
+	}
 }

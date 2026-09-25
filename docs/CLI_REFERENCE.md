@@ -1397,14 +1397,18 @@ a WARN by default and fails in strict mode; pushes keep working. A
 connecting role without EXECUTE on record_restore_collision is a WARN by
 default and fails in strict mode; a push that meets a restore collision
 fails until the table owner runs the printed GRANT. A connecting role
-other than the table owner that holds INSERT on sync_node_collisions or
-USAGE on sync_node_collisions_collision_id_seq, or can reach either through
-a role membership (SET ROLE, ADMIN OPTION, or a predefined role such as
-pg_write_all_data), which the least-privilege list does not name, is a
-WARN by default and fails in strict mode; once every syncing client is
-upgraded, the table owner runs the printed REVOKE statements and a role
-administrator the printed membership REVOKE statements. The check names
-each gap and who runs each part of the fix.
+that can write collision rows, which the least-privilege list does not
+grant, is a WARN by default and fails in strict mode: it holds INSERT on
+sync_node_collisions or USAGE on sync_node_collisions_collision_id_seq
+(a grant, or a predefined role such as pg_write_all_data), can SET ROLE
+to or administers a role that holds either or is a superuser, has
+CREATEROLE before PostgreSQL 16, or is a member of
+pg_execute_server_program or pg_write_server_files. The check skips the
+table owner, roles that inherit it, and superusers. Once every syncing
+client is upgraded, the table owner runs the printed REVOKE for a plain
+grant the owner made, and a role administrator removes each other path,
+which the check names. The check names each gap and who runs each part
+of the fix.
 
 Hub triggers names each missing function or trigger, each trigger that
 executes another function, and each trigger that is not enabled, with the

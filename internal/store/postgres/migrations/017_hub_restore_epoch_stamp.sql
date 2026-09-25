@@ -16,8 +16,9 @@
 --    else from the hub: the create that holds the number, the epoch it was
 --    stamped with and the current epoch. It records the collision only when
 --    that held create is a different node stamped in an epoch earlier than
---    the current one, and returns whether a collision for the incoming
---    create is on record. A syncing role needs EXECUTE on it, and SELECT on
+--    the current one and the incoming event id is not already in
+--    sync_events, and returns whether a collision for the incoming create
+--    is on record. A syncing role needs EXECUTE on it, and SELECT on
 --    sync_node_collisions to list (UPDATE to resolve), nothing more.
 --
 -- Both functions run as their owner, the owner of the sync tables, who
@@ -68,6 +69,12 @@ DECLARE
     v_current_epoch   BIGINT;
 BEGIN
     SELECT s.restore_epoch INTO v_current_epoch FROM sync_hub_state s WHERE s.id;
+
+    -- The incoming create is one the hub does not hold: an event id that
+    -- is already in sync_events records nothing.
+    IF EXISTS (SELECT 1 FROM sync_events e WHERE e.event_id = p_incoming_event_id) THEN
+        RETURN false;
+    END IF;
 
     -- The create that holds the number, when it is another node stamped in
     -- an earlier epoch than the current one. A re-sent blocked create keeps

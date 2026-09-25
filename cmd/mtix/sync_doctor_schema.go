@@ -29,7 +29,7 @@ type schemaState struct {
 	grant               string         // the GRANT that lets the role execute it, quoted server-side
 	collisionPrivileges []string       // e.g. "INSERT on sync_node_collisions", held by a role that is not the owner
 	revokes             []string       // the REVOKE statements that remove them, quoted server-side
-	memberships         []string       // the membership REVOKE statements a role administrator runs
+	collisionPaths      []string       // every other path by name, for a role administrator
 	hub                 hubObjectState // the tables' owners and schema, and current_schema()
 }
 
@@ -56,7 +56,7 @@ func checkSchemaCurrent(ctx context.Context, dsn string, opts transport.Options,
 	defer pool.Close()
 	state, err := readSchemaState(cctx, pool)
 	if err == nil && state.recorder {
-		state.collisionPrivileges, state.revokes, state.memberships, err = readCollisionPrivileges(cctx, pool)
+		state.collisionPrivileges, state.revokes, state.collisionPaths, err = readCollisionPrivileges(cctx, pool)
 	}
 	if err != nil {
 		return DoctorCheck{Name: schemaCurrentName, Detail: err.Error()}, false
@@ -138,8 +138,8 @@ func missing017(r schemaRow, schema string) []string {
 // privilege on sync_node_collisions or its sequence beyond the
 // least-privilege list; otherwise a WARN by default and a FAIL in strict
 // mode, like the hub-triggers check, naming each gap, with the fix: the
-// table owner's steps, then the membership REVOKE statements a role
-// administrator runs.
+// table owner's steps, then the paths a role administrator removes, by
+// name.
 func gradeSchemaCurrent(s schemaState, strict bool) DoctorCheck {
 	check := DoctorCheck{Name: schemaCurrentName}
 	if !s.projects {
@@ -164,8 +164,8 @@ func gradeSchemaCurrent(s schemaState, strict bool) DoctorCheck {
 	if len(steps) > 0 {
 		fix = append(fix, tableOwnerPrefix(s.hub.owners)+strings.Join(steps, ", then "))
 	}
-	if len(s.collisionPrivileges) > 0 && len(s.memberships) > 0 {
-		fix = append(fix, "as a role administrator: "+strings.Join(s.memberships, " "))
+	if paths := collisionPathsToName(s); len(paths) > 0 {
+		fix = append(fix, collisionPathsIntro+strings.Join(paths, "; "))
 		parts = append(parts, "run each part of the fix as the role it names, then run mtix sync doctor again")
 	} else {
 		parts = append(parts, "run the fix as the table owner, then run mtix sync doctor again")
@@ -181,11 +181,8 @@ func gradeSchemaCurrent(s schemaState, strict bool) DoctorCheck {
 // printed GRANT for a role that cannot execute the recorder, until which a
 // push that meets a restore collision fails; for the privileges the
 // least-privilege list does not name, removed once every syncing client is
-// upgraded, the printed REVOKE statements; a role administrator's
-// membership REVOKE statements are the last part of the fix
-// (gradeSchemaCurrent). With no statement at all, the step is mtix sync
-// harden, whose dry run names how the role holds the privilege, so the fix
-// is never empty.
+// upgraded, the table owner's printed REVOKE statements; the paths a role
+// administrator removes are the last part of the fix (gradeSchemaCurrent).
 func schemaGaps(s schemaState) (gaps, steps []string) {
 	if len(s.missing) > 0 {
 		gap := "the hub schema predates migration 017, with which the hub stamps every event's " +
@@ -208,16 +205,36 @@ func schemaGaps(s schemaState) (gaps, steps []string) {
 	if len(s.collisionPrivileges) > 0 {
 		gaps = append(gaps, "the connecting role holds or can reach "+strings.Join(s.collisionPrivileges, " and ")+
 			", which the least-privilege list does not name (restore collisions are recorded through "+
-			"record_restore_collision); once every syncing client is upgraded, the table owner revokes the "+
-			"grants and a role administrator the memberships the fix names")
+			"record_restore_collision); once every syncing client is upgraded, the table owner runs the "+
+			"printed REVOKE and a role administrator removes each named path")
 		if len(s.revokes) > 0 {
 			steps = append(steps, strings.Join(s.revokes, " "))
 		}
-		if len(s.revokes)+len(s.memberships) == 0 {
-			steps = append(steps, hubPrivilegesFix)
-		}
 	}
 	return gaps, steps
+}
+
+// collisionPathsIntro introduces the paths a role administrator removes
+// (MTIX-95.1.7).
+const collisionPathsIntro = `a role administrator removes each of these paths ` +
+	`(see "Hub health checks" in the user manual): `
+
+// collisionPathsToName returns the paths of s a role administrator removes:
+// its named paths, or, when the role can write collision rows and neither
+// a REVOKE nor a path was found, each privilege itself, so the fix is
+// never empty (MTIX-95.1.7).
+func collisionPathsToName(s schemaState) []string {
+	if len(s.collisionPrivileges) == 0 {
+		return nil
+	}
+	if len(s.collisionPaths) > 0 || len(s.revokes) > 0 {
+		return s.collisionPaths
+	}
+	paths := make([]string, 0, len(s.collisionPrivileges))
+	for _, p := range s.collisionPrivileges {
+		paths = append(paths, unnamedPath(p))
+	}
+	return paths
 }
 
 // tableOwnerPrefix introduces a fix run as the table owner, named when

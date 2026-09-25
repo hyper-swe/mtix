@@ -74,11 +74,10 @@ fails until that client upgrades.
 
 `mtix sync doctor`, run with a syncing role's DSN, names that role in its
 `schema current` check when it cannot execute the function, with the
-exact GRANT to run, and when it still holds INSERT on
-`sync_node_collisions` or USAGE on its sequence, or can reach either
-through a role membership, with the exact REVOKE statements the table
-owner runs and the membership REVOKE statements a role administrator
-runs.
+exact GRANT to run, and when it can write collision rows, with the exact
+REVOKE the table owner runs for a plain grant the owner made and every
+other path by name, which a role administrator removes (see "Hub health
+checks" in the user manual). The check skips the table owner, roles that inherit it, and superusers.
 
 A dump holds no privileges: after restoring the hub and running
 `mtix sync init`, grant each syncing role this list again, EXECUTE on

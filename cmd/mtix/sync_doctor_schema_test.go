@@ -94,7 +94,8 @@ func TestSyncDoctorCmd_CLIReference_MatchesHelp(t *testing.T) {
 			"and fails in strict mode; pushes keep working.",
 		"A connecting role without EXECUTE on record_restore_collision is a WARN by default and fails in strict " +
 			"mode; a push that meets a restore collision fails until the table owner runs the printed GRANT.",
-		"INSERT on sync_node_collisions or USAGE on sync_node_collisions_collision_id_seq"} {
+		"INSERT on sync_node_collisions or USAGE on sync_node_collisions_collision_id_seq",
+		"The check skips the table owner, roles that inherit it, and superusers."} {
 		require.Contains(t, long, want)
 	}
 	ref, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI_REFERENCE.md"))

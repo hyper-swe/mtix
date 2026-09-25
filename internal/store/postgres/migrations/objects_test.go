@@ -249,5 +249,7 @@ func TestRestoreEpochMigration_Shape(t *testing.T) {
 	require.Contains(t, body, "AND t.tgfoid = stamp_fn")
 	require.Contains(t, body, "FROM sync_hub_state s WHERE s.id")
 	require.Contains(t, body, "h.restore_epoch < v_current_epoch", "the recorder re-checks the cross-epoch condition")
+	require.Contains(t, body, "SELECT 1 FROM sync_events e WHERE e.event_id = p_incoming_event_id",
+		"the recorder refuses an incoming event id already on the hub")
 	require.NotContains(t, strings.ToUpper(body), "ROW LEVEL SECURITY")
 }

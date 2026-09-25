@@ -131,7 +131,8 @@ func (h *leastPrivilegeHub) collisionRows(t *testing.T) []string {
 // records nothing unless a different create, stamped in an epoch earlier
 // than the hub's current one, holds the number: not in the same epoch, not
 // for a free number, another project, the held node's own uid or event id,
-// or a number only a non-create event names. A genuine cross-epoch call is
+// a number only a non-create event names, or an incoming event id already
+// on the hub. A genuine cross-epoch call is
 // recorded once, with the held create, its epoch and the detected epoch
 // read from the hub, and the incoming create's own uid; an empty uid is
 // recorded as the event id (MTIX-95.1.7).
@@ -165,6 +166,7 @@ func TestLeastPrivilegeRole_CollisionRecords_OnlyGenuineCrossEpochThroughHub(t *
 		{"the held node's own uid", recordCall{"MTIX", "MTIX-2.1", incoming.eventID, held.UID, 1}},
 		{"the held create's own event id", recordCall{"MTIX", "MTIX-2.1", held.EventID, incoming.uid, 1}},
 		{"a number only an update names", recordCall{"MTIX", "MTIX-3.1", incoming.eventID, incoming.uid, 1}},
+		{"an incoming event id already on the hub", recordCall{"MTIX", "MTIX-2.1", onlyUpdate.EventID, incoming.uid, 1}},
 	} {
 		require.Falsef(t, h.callRecorder(t, c.call), "%s records nothing", c.name)
 		require.Emptyf(t, h.collisionRows(t), "%s leaves no row", c.name)

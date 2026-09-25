@@ -139,7 +139,7 @@ Only for projects that sync through a Postgres hub. Run these only when a human 
 - `weak sslmode requires --insecure-tls`, or `not loopback or a local socket`: the DSN names an `sslmode` weaker than `verify-full`. Use `verify-full`; `--insecure-tls` is for a development hub on loopback or a local socket only.
 - A certificate error after `system trust store (PGSSLROOTCERT=system)`: the hub's certificate comes from a private CA; set `sslrootcert=<ca.pem>` in the DSN or `MTIX_SYNC_SSLROOTCERT`.
 - `server version mismatch` from `pg_dump`: install a `pg_dump` at least as new as the hub's server and point `MTIX_PG_DUMP` at it.
-- `the sync tables are in schema …, but the first schema on the search_path is …` from `mtix sync init` or `mtix sync harden --apply`: nothing was changed. Put the sync tables' schema first on the owner's search_path (`ALTER ROLE <owner> SET search_path = <schema>, public`, or `options=-c search_path=<schema>` in the DSN) and run it again.
+- `the sync tables are in schema …, but the first schema on the search_path is …` from `mtix sync init`, or from a `mtix sync harden --apply` that would restore or replace a TRUNCATE guard (a privilege-only `--apply` is not affected): nothing was changed. The usual cause is a schema named after the connecting role, which the default search_path (`"$user", public`) puts first. Put the sync tables' schema first on the owner's search_path (`ALTER ROLE <owner> SET search_path = public` when the tables are in `public`, else `ALTER ROLE <owner> SET search_path = <schema>, public`, or `options=-c search_path=...` in the DSN) and run it again. `mtix sync doctor`'s `hub-triggers` check states the mismatch and puts this step first in its fix.
 
 ## Sync Conflicts
 

@@ -1427,9 +1427,10 @@ ADMIN OPTION, is revoked when the owner may do so; it is cluster-wide. A
 missing TRUNCATE guard is restored, one whose trigger executes another
 function (compared by OID) is replaced, and a disabled one, or one that
 fires only in replication sessions, is enabled. A server WARNING fails the run
-and nothing changes. --apply refuses, changing nothing, when the first
-schema on the search_path is not the schema of the sync tables; the dry
-run still reports. Access it cannot remove is reported with the
+and nothing changes. An --apply that would restore or replace a guard
+refuses, changing nothing, when the first schema on the search_path is not
+the schema of the sync tables; privilege changes and the dry run are not
+affected. Access it cannot remove is reported with the
 statement an administrator runs, and after --apply every finding that
 remains is listed. EXECUTE on the mtix trigger functions and other roles'
 default privileges are information and never fail verification.

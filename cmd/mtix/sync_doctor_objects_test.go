@@ -59,6 +59,13 @@ func TestGradeHubObjects_StateAndMode_ReportsEachGapWithItsFix(t *testing.T) {
 		wrongFunction: []string{"audit_log_no_update on public.audit_log calls noop, not audit_log_immutable"}}
 	twoOwners := wrongFn
 	twoOwners.owners = []string{"mtix_a", "mtix_b"}
+	pathMissing := hubObjectState{functions: 2, triggers: 7, owners: []string{"mtix_owner"},
+		missingTriggers: []string{"audit_log_no_truncate on hub.audit_log"}, tablesSchema: "hub", currentSchema: "scratch"}
+	publicMissing := pathMissing
+	publicMissing.tablesSchema, publicMissing.currentSchema = "public", "mtix_owner"
+	pathDisabled := disabled
+	pathDisabled.tablesSchema, pathDisabled.currentSchema = "hub", "scratch"
+	pathClean := hubObjectState{functions: 2, triggers: 7, tablesSchema: "hub", currentSchema: "scratch"}
 	wrongAndDisabled := wrongFn
 	wrongAndDisabled.disabledTriggers, wrongAndDisabled.enableStatements = disabled.disabledTriggers, disabled.enableStatements
 
@@ -89,6 +96,16 @@ func TestGradeHubObjects_StateAndMode_ReportsEachGapWithItsFix(t *testing.T) {
 			[]string{"triggers calling another function: audit_log_no_update on public.audit_log calls noop, not audit_log_immutable"}},
 		{"tables with two owners name both", twoOwners, false, true, true, "as the table owner (mtix_a, mtix_b): mtix sync init",
 			[]string{"triggers calling another function"}},
+		{"another schema first on the search_path: that step comes first", pathMissing, false, true, true,
+			owner + "set the search_path so that hub comes first (ALTER ROLE mtix_owner SET search_path = hub, public), then mtix sync init",
+			[]string{"the first schema on the search_path is scratch, not hub"}},
+		{"public tables: search_path = public alone", publicMissing, false, true, true,
+			owner + "set the search_path so that public comes first (ALTER ROLE mtix_owner SET search_path = public), then mtix sync init",
+			[]string{"the first schema on the search_path is mtix_owner, not public"}},
+		{"another schema first, only a statement to run: no search_path step", pathDisabled, false, true, true, owner + enable,
+			[]string{"the first schema on the search_path is scratch, not hub"}},
+		{"another schema first, nothing to fix: still passes, and says so", pathClean, false, true, false, "",
+			[]string{"present and enabled", "the first schema on the search_path is scratch, not hub"}},
 		{"another function and disabled", wrongAndDisabled, true, false, false, owner + "mtix sync init, then " + enable,
 			[]string{"strict mode", "triggers calling another function", "triggers not enabled"}},
 	}
@@ -178,8 +195,10 @@ func TestHubObjectState_Record_ClassifiesEachTrigger(t *testing.T) {
 			}
 			if tt.row.schema != "" {
 				require.Equal(t, []string{"mtix_owner"}, s.owners, "the table's owner is recorded")
+				require.Equal(t, tt.row.schema, s.tablesSchema, "the tables' schema is recorded")
 			} else {
 				require.Empty(t, s.owners)
+				require.Empty(t, s.tablesSchema)
 			}
 		})
 	}

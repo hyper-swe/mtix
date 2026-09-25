@@ -33,6 +33,8 @@ type hubObjectState struct {
 	disabledTriggers    []string // "trigger on schema.table (tgenabled X)"
 	enableStatements    []string // the ALTER TABLE statement for each disabled trigger
 	owners              []string // the owners of the triggers' tables, who run the fix
+	tablesSchema        string   // the schema of the triggers' tables, "" when none exists
+	currentSchema       string   // current_schema(): where mtix sync init creates objects
 }
 
 // triggerRow is the catalog state of one trigger the migrations define:
@@ -98,6 +100,11 @@ func readHubObjects(ctx context.Context, dsn string, opts transport.Options) (hu
 	defer pool.Close()
 
 	state := hubObjectState{functions: len(functions), triggers: len(triggers)}
+	// The schema mtix sync init would create objects in (MTIX-95.7).
+	if err = pool.Inner().QueryRow(cctx,
+		`SELECT COALESCE(pg_catalog.current_schema()::text, '')`).Scan(&state.currentSchema); err != nil {
+		return hubObjectState{}, fmt.Errorf("read the search_path: %w", err)
+	}
 	if state.missingFunctions, err = missingHubFunctions(cctx, pool, functions); err != nil {
 		return hubObjectState{}, err
 	}
@@ -199,6 +206,9 @@ func (s *hubObjectState) record(r triggerRow) {
 	if r.owner != "" && !slices.Contains(s.owners, r.owner) {
 		s.owners = append(s.owners, r.owner)
 	}
+	if s.tablesSchema == "" {
+		s.tablesSchema = r.schema
+	}
 	where := r.table
 	if r.schema != "" {
 		where = r.schema + "." + r.table
@@ -224,6 +234,9 @@ func gradeHubObjects(s hubObjectState, strict bool) DoctorCheck {
 	if len(s.missingFunctions)+len(s.missingTriggers)+len(s.wrongFunction)+len(s.disabledTriggers) == 0 {
 		check.Detail = fmt.Sprintf("every mtix function (%d) and trigger (%d) is present and enabled",
 			s.functions, s.triggers)
+		if note := s.searchPathNote(); note != "" {
+			check.Detail += "; " + note
+		}
 		return check
 	}
 	var parts []string
@@ -246,6 +259,9 @@ func gradeHubObjects(s hubObjectState, strict bool) DoctorCheck {
 			parts = append(parts, gap.label+strings.Join(gap.items, ", "))
 		}
 	}
+	if note := s.searchPathNote(); note != "" {
+		parts = append(parts, note)
+	}
 	parts = append(parts, "the append-only tables are not fully protected; "+
 		"run the fix as the table owner, then run mtix sync doctor again")
 	check.Detail = strings.Join(parts, "; ")
@@ -256,11 +272,15 @@ func gradeHubObjects(s hubObjectState, strict bool) DoctorCheck {
 // hubObjectsFix returns the fix for s, naming the table owner who runs
 // it, with its steps joined by ", then ": mtix sync init when a function
 // or trigger is missing or a trigger executes another function (init
-// replaces it inside its transaction, with no separate drop), and the
-// ALTER TABLE statement for each trigger that is not enabled (MTIX-95.7).
+// replaces it inside its transaction, with no separate drop), preceded by
+// the search_path step when init would refuse without it, and the ALTER
+// TABLE statement for each trigger that is not enabled (MTIX-95.7).
 func hubObjectsFix(s hubObjectState) string {
 	var steps []string
 	if len(s.missingFunctions)+len(s.missingTriggers)+len(s.wrongFunction) > 0 {
+		if s.searchPathMismatch() {
+			steps = append(steps, s.searchPathStep())
+		}
 		steps = append(steps, hubTriggersInitFix)
 	}
 	if len(s.enableStatements) > 0 {
@@ -274,4 +294,42 @@ func hubObjectsFix(s hubObjectState) string {
 		owner = "as the table owner (" + strings.Join(s.owners, ", ") + "): "
 	}
 	return owner + strings.Join(steps, ", then ")
+}
+
+// searchPathMismatch reports whether current_schema(), where mtix sync
+// init creates objects, is not the schema of the sync tables; init and
+// harden --apply then refuse to create objects (MTIX-95.7).
+func (s hubObjectState) searchPathMismatch() bool {
+	return s.tablesSchema != "" && s.currentSchema != s.tablesSchema
+}
+
+// searchPathNote states a search_path mismatch for the detail, or returns
+// "" when there is none (MTIX-95.7).
+func (s hubObjectState) searchPathNote() string {
+	if !s.searchPathMismatch() {
+		return ""
+	}
+	first := s.currentSchema
+	if first == "" {
+		first = "(none)"
+	}
+	return "the first schema on the search_path is " + first + ", not " + s.tablesSchema +
+		": mtix sync init and mtix sync harden --apply refuse to create objects until " +
+		s.tablesSchema + " comes first"
+}
+
+// searchPathStep is the fix step that puts the sync tables' schema first
+// on the owner's search_path: that schema alone when it is public, else
+// that schema and then public (MTIX-95.7).
+func (s hubObjectState) searchPathStep() string {
+	owner := "<owner>"
+	if len(s.owners) == 1 {
+		owner = s.owners[0]
+	}
+	path := s.tablesSchema + ", public"
+	if s.tablesSchema == "public" {
+		path = "public"
+	}
+	return "set the search_path so that " + s.tablesSchema + " comes first (ALTER ROLE " + owner +
+		" SET search_path = " + path + ")"
 }

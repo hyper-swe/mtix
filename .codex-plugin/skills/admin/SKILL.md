@@ -94,8 +94,10 @@ refused.
 
 Restore into an empty database (if the tables were in a schema other than
 `public`, create that schema first and put it first on the search_path for
-psql and for mtix; `mtix sync init` and `mtix sync harden --apply` refuse,
-changing nothing, when another schema comes first): `psql -f <file>` as
+psql and for mtix; `mtix sync init`, and a `mtix sync harden --apply` that
+would restore or replace a guard, refuse, changing nothing, when another
+schema comes first, usually a schema named after the role under the default
+`"$user", public`): `psql -f <file>` as
 the role that will own the sync tables, with `PGSSLMODE=verify-full` and `PGSSLROOTCERT=<ca.pem>`
 (or `system` with libpq 16 or later) and the password in `~/.pgpass` (psql
 reports errors for the triggers; their functions do not exist yet), then

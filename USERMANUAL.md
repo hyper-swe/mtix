@@ -1666,7 +1666,11 @@ another function (in one transaction it recreates every missing function
 and trigger and replaces a trigger bound to another function, so the
 table is never left unguarded), and for a trigger that is not enabled
 the exact `ALTER TABLE <schema>.<table> ENABLE TRIGGER <name>;`
-statement. Like `hub-privileges`, a gap is a **WARN** by default (exit 0)
+statement. When the first schema on the search_path is not the sync
+tables' schema, the detail says so (even when the check passes), and a fix
+that runs `mtix sync init` starts with the step that puts the tables'
+schema first (`ALTER ROLE <owner> SET search_path = ...`), since init
+refuses until then. Like `hub-privileges`, a gap is a **WARN** by default (exit 0)
 and a **FAIL** (exit 2) in strict mode (`sync.keep_roles` set); so is a
 check that cannot run. After a restore from backup this check is how you
 confirm the runbook finished (see "Backup and restore").
@@ -1909,7 +1913,7 @@ operator does.
 | `mtix sync doctor` shows `[WARN] hub-privileges` | Roles other than the table owner can use the sync tables, or a TRUNCATE guard is missing or disabled. Nothing is blocked, and this may be fine on a private network | To restrict access, the table owner runs `mtix sync harden` (a dry run), then, after reviewing its role list, `mtix sync harden --apply --keep-role <role>`; see "Hub privileges" |
 | `mtix sync doctor` shows `[FAIL] hub-privileges` | Strict mode (`sync.keep_roles` set): a role not in it can use the sync tables, or a guard is missing or disabled | Add the role to `sync.keep_roles` if it should keep access, or run `mtix sync harden` and then `--apply` as the table owner |
 | `mtix sync doctor` shows `[WARN] hub-triggers` (`[FAIL]` in strict mode) | An mtix function or trigger is missing, as after a restore from backup; a trigger executes another function than its migration binds; or a trigger is not enabled | As the table owner the `fix` names, run it: `mtix sync init` for what is missing and for a trigger bound to another function (init replaces it), the printed `ALTER TABLE ... ENABLE TRIGGER` statement for what is not enabled; then run `mtix sync doctor` again |
-| `mtix sync init` or `mtix sync harden --apply` fails with `the sync tables are in schema …, but the first schema on the search_path is …` | The session's search_path puts another schema before the one holding the sync tables, so new objects would land away from them; nothing was changed | Set the search_path so the sync tables' schema comes first (`ALTER ROLE <owner> SET search_path = <schema>, public`, or `options=-c search_path=<schema>` in the DSN), then run the command again |
+| `mtix sync init`, or a `mtix sync harden --apply` that would restore or replace a TRUNCATE guard, fails with `the sync tables are in schema …, but the first schema on the search_path is …` (and `mtix sync doctor`'s `hub-triggers` says so) | The session's search_path puts another schema before the one holding the sync tables, so new objects would land away from them; nothing was changed. The usual cause is a schema named after the connecting role, which the default search_path (`"$user", public`) puts first | Set the search_path so the sync tables' schema comes first: `ALTER ROLE <owner> SET search_path = public` when the tables are in `public`, else `ALTER ROLE <owner> SET search_path = <schema>, public` (or `options=-c search_path=...` in the DSN); then run the command again. A `mtix sync harden --apply` that only changes privileges is not affected |
 | `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
 | `mtix sync conflicts resolve` fails with `is a manual resolution` | The id is a recorded decision, not a conflict | Run `mtix sync conflicts list --all` and resolve the conflict it answers |
 | `mtix sync conflicts resolve` fails with `has a later conflict` or `is already resolved` | A later conflict or a later decision exists for the same node and field | Resolve the newest conflict the error names; if it says that one is resolved too, the decision already stands |

@@ -23,9 +23,10 @@ import (
 const pullDefaultBatchSize = 1000
 
 // newSyncPullCmd creates the `mtix sync pull` command per FR-18 /
-// MTIX-15.7.2. Pulls events from the hub starting at
-// meta.sync.last_pulled_clock, applies them locally via
-// IdempotentApply, and advances the cursor sentinel. It then runs the
+// MTIX-15.7.2. Pulls events from the hub after the pull cursor
+// (meta.sync.last_pulled_clock and meta.sync.last_pulled_event_id,
+// MTIX-95.4), applies them locally via IdempotentApply, and advances the
+// cursor in each batch's transaction. It then runs the
 // MTIX-95.5 late-event sweep (sync_pull_sweep.go) for events stamped
 // below the cursor.
 //
@@ -41,9 +42,10 @@ func newSyncPullCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pull [DSN]",
 		Short: "Pull events from the sync hub and apply locally (FR-18)",
-		Long: `Pull events from the BYO Postgres sync hub starting at the local
-last_pulled_clock cursor; apply each event via the FR-18.9 idempotent
-apply engine; advance the cursor.
+		Long: `Pull events from the BYO Postgres sync hub, starting after the local
+pull cursor (the Lamport clock and event id of the last event pulled);
+apply each event via the FR-18.9 idempotent apply engine; save the
+cursor in the same transaction as each batch.
 
 Then sweep for late events: list the hub events created since the
 previous sweep (hub time, minus a 15-minute overlap), fetch the ones
@@ -187,7 +189,7 @@ func connectAndPull(ctx context.Context, in pullIngest, args []string,
 // cursorPuller is the hub surface of the cursor pass; *transport.Pool
 // implements it.
 type cursorPuller interface {
-	PullEvents(ctx context.Context, sinceLamport int64, limit int) ([]*model.SyncEvent, bool, error)
+	PullEvents(ctx context.Context, after transport.PullCursor, limit int) ([]*model.SyncEvent, bool, error)
 }
 
 // pullSweepHub is the hub surface of a whole pull: the cursor pass and the
@@ -218,7 +220,7 @@ type pullOutcome struct {
 // sweep delivers the create). A pulled event that fails never fails the
 // pull: it is quarantined. Any other failure is returned with its stage.
 func pullThenSweep(ctx context.Context, in pullIngest, hub pullSweepHub,
-	st *sqlite.Store, since int64, limit int,
+	st *sqlite.Store, since transport.PullCursor, limit int,
 ) (pullOutcome, error) {
 	out := pullOutcome{stage: "pull loop"}
 	var err error
@@ -240,20 +242,23 @@ func pullThenSweep(ctx context.Context, in pullIngest, hub pullSweepHub,
 	return out, err
 }
 
-// pullLoop drives the pull-and-apply iteration. Mirrors cloneLoop
-// from MTIX-15.7.1 but reads/writes the last_pulled_clock sentinel
-// (not the clone checkpoint). Each batch is applied event by event
-// (applyPullBatch): an event that fails is quarantined and the batch, and
-// the cursor, continue past it (MTIX-95.11), except that the saved cursor
-// never moves to a refused Lamport clock (advancePullCursor).
-// It returns how many events applied and how many batches it read.
+// pullLoop drives the pull-and-apply iteration from the keyset position
+// after (MTIX-95.4). Mirrors cloneLoop from MTIX-15.7.1. Each page is asked
+// for after the previous page's last event, its Lamport clock and its event
+// id, so events that share a clock across a page boundary are all pulled
+// (ADR-006 D6). Each batch is applied event by event (applyPullBatch): an
+// event that fails is quarantined and the batch continues past it
+// (MTIX-95.11). applyPullBatch saves the pull cursor in the batch's own
+// transaction, never at a refused Lamport clock (advancePullCursor); the
+// next page still starts after the whole batch, so this pull does not
+// fetch a refused event again. It returns how many events applied and how
+// many batches it read.
 func pullLoop(ctx context.Context, in pullIngest,
-	pool cursorPuller, store *sqlite.Store, since int64, limit int,
+	pool cursorPuller, store *sqlite.Store, after transport.PullCursor, limit int,
 ) (int, int, error) {
 	applied, batches := 0, 0
-	cursor := since
 	for {
-		events, hasMore, err := pool.PullEvents(ctx, since, limit)
+		events, hasMore, err := pool.PullEvents(ctx, after, limit)
 		if err != nil {
 			return applied, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
 		}
@@ -264,21 +269,11 @@ func pullLoop(ctx context.Context, in pullIngest,
 		if err != nil {
 			return applied, batches, fmt.Errorf("apply batch %d: %w", batches+1, err)
 		}
-		// The next page starts after the whole batch; the saved cursor moves
-		// past every event but one whose Lamport clock is refused, decided
-		// from the clock against the local clock after the batch.
-		local, err := store.LocalLamportClock(ctx)
-		if err != nil {
-			return applied, batches, fmt.Errorf("read local clock after batch %d: %w", batches+1, err)
-		}
-		since, cursor = advancePullCursor(events, local, in.maxJump, since, cursor)
-		if err := writeLastPulledClock(ctx, store, cursor); err != nil {
-			return applied, batches, fmt.Errorf("cursor write: %w", err)
-		}
+		after = transport.CursorAt(events[len(events)-1])
 		applied += len(events) - len(held)
 		batches++
-		fmt.Fprintf(in.stderr, "pull progress: batch %d (%d events, %d quarantined; cursor=%d)\n",
-			batches, len(events), len(held), cursor)
+		fmt.Fprintf(in.stderr, "pull progress: batch %d (%d events, %d quarantined; through lamport %d)\n",
+			batches, len(events), len(held), after.Lamport)
 		if !hasMore {
 			break
 		}
@@ -309,6 +304,13 @@ func pullLoop(ctx context.Context, in pullIngest,
 // event is applied or quarantined: the late-event sweep (MTIX-95.5) uses it
 // to remove the event's id from its staging table atomically with the
 // apply or the quarantine.
+//
+// A batch of the cursor pass (source quarantineSourcePull) also saves the
+// pull cursor, both halves, in the same transaction, after its last event
+// (savePullCursor, MTIX-95.4; ADR-006 D6): the batch's applies, its
+// quarantine rows and the cursor commit together or not at all, so a crash
+// between the apply and the cursor write cannot happen. A sweep batch never
+// moves the cursor.
 func applyPullBatch(ctx context.Context, in pullIngest, store *sqlite.Store, source string,
 	events []*model.SyncEvent, afterEach ...func(tx *sql.Tx, e *model.SyncEvent) error,
 ) (heldEvents, error) {
@@ -333,7 +335,10 @@ func applyPullBatch(ctx context.Context, in pullIngest, store *sqlite.Store, sou
 				held[e.EventID] = refused
 			}
 		}
-		return nil
+		if source != quarantineSourcePull {
+			return nil
+		}
+		return savePullCursor(ctx, tx, in, events)
 	})
 	if err != nil {
 		return nil, err
@@ -367,34 +372,74 @@ func runAfterEach(tx *sql.Tx, e *model.SyncEvent,
 	return nil
 }
 
-// readLastPulledClock returns meta.sync.last_pulled_clock or 0 when
-// the row is missing (fresh DB).
-func readLastPulledClock(ctx context.Context, store *sqlite.Store) (int64, error) {
-	var raw string
-	err := store.QueryRow(ctx,
-		`SELECT value FROM meta WHERE key = 'meta.sync.last_pulled_clock'`,
-	).Scan(&raw)
+// savePullCursor saves, in the batch transaction tx, the pull cursor after
+// a cursor-pass batch (MTIX-95.4): at the last event whose Lamport clock
+// advancePullCursor accepts against the local clock after the batch. A
+// batch with no such event leaves the saved cursor where it was.
+func savePullCursor(ctx context.Context, tx *sql.Tx, in pullIngest, events []*model.SyncEvent) error {
+	local, err := sqlite.LocalLamport(ctx, tx)
 	if err != nil {
-		return 0, err
+		return fmt.Errorf("pull cursor: %w", err)
 	}
-	v, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parse cursor %q: %w", raw, err)
+	cursor, ok := advancePullCursor(events, local, in.maxJump)
+	if !ok {
+		return nil
 	}
-	if v < 0 {
-		return 0, fmt.Errorf("cursor %q negative; corrupted state", raw)
-	}
-	return v, nil
+	return writePullCursor(ctx, tx, cursor)
 }
 
-// writeLastPulledClock advances the cursor sentinel after a successful
-// batch apply.
-func writeLastPulledClock(ctx context.Context, store *sqlite.Store, cursor int64) error {
-	return store.WithTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx,
-			`UPDATE meta SET value = ? WHERE key = 'meta.sync.last_pulled_clock'`,
-			strconv.FormatInt(cursor, 10),
-		)
-		return err
-	})
+// readLastPulledClock returns the saved pull cursor (MTIX-95.4; ADR-006
+// D6): meta.sync.last_pulled_clock and meta.sync.last_pulled_event_id,
+// read in one statement. The Lamport half must exist and be a non-negative
+// integer. An event-id half that is absent or empty reads as "": a store
+// upgraded from a Lamport-only cursor (the key is seeded empty when this
+// version opens it). An empty event id sorts before every event id, so the
+// next cursor pass reads the events at exactly the saved clock again and
+// applied_events dedupes the ones already applied, while any the old
+// Lamport-only paging skipped at that clock are applied.
+func readLastPulledClock(ctx context.Context, store *sqlite.Store) (transport.PullCursor, error) {
+	var raw sql.NullString
+	var eventID string
+	// Both cursor keys in one read, so a concurrent pull's write is seen whole.
+	err := store.QueryRow(ctx, `
+		SELECT (SELECT value FROM meta WHERE key = 'meta.sync.last_pulled_clock'),
+		       COALESCE((SELECT value FROM meta WHERE key = 'meta.sync.last_pulled_event_id'), '')`,
+	).Scan(&raw, &eventID)
+	if err != nil {
+		return transport.PullCursor{}, fmt.Errorf("read pull cursor: %w", err)
+	}
+	if !raw.Valid {
+		return transport.PullCursor{}, fmt.Errorf("read pull cursor: meta.sync.last_pulled_clock: %w", sql.ErrNoRows)
+	}
+	v, err := strconv.ParseInt(raw.String, 10, 64)
+	if err != nil {
+		return transport.PullCursor{}, fmt.Errorf("parse cursor %q: %w", raw.String, err)
+	}
+	if v < 0 {
+		return transport.PullCursor{}, fmt.Errorf("cursor %q negative; corrupted state", raw.String)
+	}
+	return transport.PullCursor{Lamport: v, EventID: eventID}, nil
+}
+
+// writePullCursor saves cursor as the pull cursor, both halves, in tx
+// (MTIX-95.4). Each key is upserted, so a store that lacks the event-id key
+// gains it.
+func writePullCursor(ctx context.Context, tx *sql.Tx, cursor transport.PullCursor) error {
+	return upsertMeta(ctx, tx,
+		[2]string{"meta.sync.last_pulled_clock", strconv.FormatInt(cursor.Lamport, 10)},
+		[2]string{"meta.sync.last_pulled_event_id", cursor.EventID})
+}
+
+// upsertMeta sets each {key, value} pair in meta, in tx and in order, adding
+// a row that is absent.
+func upsertMeta(ctx context.Context, tx *sql.Tx, pairs ...[2]string) error {
+	for _, kv := range pairs {
+		// Parameterized upsert of one meta key.
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO meta (key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, kv[0], kv[1]); err != nil {
+			return fmt.Errorf("write %s: %w", kv[0], err)
+		}
+	}
+	return nil
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
 // PG-free tests of pullThenSweep (MTIX-95.5, MTIX-95.11): the cursor pass,
@@ -38,7 +39,7 @@ func TestPullThenSweep_CursorPassMissingNode_QuarantinedThenAppliedSamePull(t *t
 	hub := &fakeLateHub{events: events, pullEvents: events[1:], hubNows: []time.Time{sweepHubT1}}
 	var stderr bytes.Buffer
 
-	got, err := pullThenSweep(ctx, testIngest(&stderr), hub, app.store, 0, 100)
+	got, err := pullThenSweep(ctx, testIngest(&stderr), hub, app.store, transport.PullCursor{}, 100)
 
 	require.NoError(t, err)
 	require.Equal(t, []int64{0}, hub.pullCalls, "one cursor pass")
@@ -51,7 +52,7 @@ func TestPullThenSweep_CursorPassMissingNode_QuarantinedThenAppliedSamePull(t *t
 	require.Contains(t, stderr.String(), "2 quarantined events applied on retry; 0 still quarantined")
 	cursor, err := readLastPulledClock(ctx, app.store)
 	require.NoError(t, err)
-	require.Equal(t, int64(3), cursor)
+	require.Equal(t, int64(3), cursor.Lamport)
 	node, err := app.store.GetNode(ctx, "TEST-9")
 	require.NoError(t, err)
 	require.Equal(t, "second edit", node.Description)
@@ -67,7 +68,7 @@ func TestPullThenSweep_CreateNowhere_EditsStayQuarantined(t *testing.T) {
 	events := offlineEvents(t)
 	hub := &fakeLateHub{pullEvents: events[1:], hubNows: []time.Time{sweepHubT1}}
 
-	got, err := pullThenSweep(ctx, testIngest(nil), hub, app.store, 0, 100)
+	got, err := pullThenSweep(ctx, testIngest(nil), hub, app.store, transport.PullCursor{}, 100)
 
 	require.NoError(t, err)
 	require.Zero(t, got.pulled)
@@ -78,7 +79,7 @@ func TestPullThenSweep_CreateNowhere_EditsStayQuarantined(t *testing.T) {
 	require.Contains(t, q[events[1].EventID].Reason, "not found")
 	cursor, err := readLastPulledClock(ctx, app.store)
 	require.NoError(t, err)
-	require.Equal(t, int64(3), cursor, "the cursor moves past quarantined events")
+	require.Equal(t, int64(3), cursor.Lamport, "the cursor moves past quarantined events")
 }
 
 // TestPullThenSweep_Failures_ReturnTheirStage: a hub failure still fails
@@ -109,7 +110,7 @@ func TestPullThenSweep_Failures_ReturnTheirStage(t *testing.T) {
 			ctx := context.Background()
 			hub := tt.hub(offlineEvents(t))
 
-			got, err := pullThenSweep(ctx, testIngest(nil), hub, app.store, 0, 100)
+			got, err := pullThenSweep(ctx, testIngest(nil), hub, app.store, transport.PullCursor{}, 100)
 
 			require.ErrorContains(t, err, tt.wantErr)
 			require.Equal(t, tt.wantStage, got.stage)
@@ -117,7 +118,7 @@ func TestPullThenSweep_Failures_ReturnTheirStage(t *testing.T) {
 			require.Len(t, hub.calls, tt.wantListings)
 			cursor, err := readLastPulledClock(ctx, app.store)
 			require.NoError(t, err)
-			require.Equal(t, tt.wantCursor, cursor)
+			require.Equal(t, tt.wantCursor, cursor.Lamport)
 		})
 	}
 }
@@ -130,7 +131,7 @@ func TestPullThenSweep_NoFailure_NoExtraHubQuery(t *testing.T) {
 	events := offlineEvents(t)
 	hub := &fakeLateHub{events: events, pullEvents: events, hubNows: []time.Time{sweepHubT1}}
 
-	got, err := pullThenSweep(context.Background(), testIngest(nil), hub, app.store, 0, 100)
+	got, err := pullThenSweep(context.Background(), testIngest(nil), hub, app.store, transport.PullCursor{}, 100)
 
 	require.NoError(t, err)
 	require.Equal(t, []int64{0}, hub.pullCalls)

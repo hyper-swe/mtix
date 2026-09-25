@@ -15,6 +15,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/validator"
 )
@@ -45,7 +46,8 @@ import (
 // An event that is already quarantined is left to the quarantine retry: the
 // passes do not rewrite its row. The cursor moves past quarantined events
 // (advancePullCursor), except past a Lamport clock at or above 2^53 or
-// beyond sync.max_lamport_jump, decided from the clock itself.
+// beyond sync.max_lamport_jump, decided from the clock itself, and it is
+// saved in the transaction that applies the batch (MTIX-95.4).
 // retryQuarantinedEvents retries every quarantined event, in Lamport order,
 // at the start of every pull and again at the end of a pull that applied
 // events; an event that applies, or that is already in applied_events,
@@ -227,32 +229,27 @@ func recordQuarantine(ctx context.Context, tx *sql.Tx, in pullIngest,
 	return sqlite.QuarantineEvent(ctx, tx, q)
 }
 
-// advancePullCursor returns, after a batch, where the next page of the
-// cursor pass starts (the highest Lamport clock of the batch) and the
-// cursor to save (MTIX-95.11). The saved cursor moves to the highest clock
-// of the batch that validator.CheckIngestClock accepts against the local
-// clock after the batch: below 2^53 and at most maxJump above it. The
-// decision comes from the clock itself, never from the reason an event was
-// held, so an event with an extreme clock that also failed another check
-// cannot move the cursor: a cursor at an extreme clock would stop the
-// cursor pass from returning any later event. Applied events always pass
-// (they passed the same check against a lower local clock), and a batch in
-// Lamport order has no applied event above a refused one. The next pull
-// fetches a refused event again; paging in memory past it keeps this pull
-// from fetching it in a loop.
-func advancePullCursor(events []*model.SyncEvent, local, maxJump, page, cursor int64) (int64, int64) {
-	for _, e := range events {
-		if e.LamportClock > page {
-			page = e.LamportClock
-		}
-		if validator.CheckIngestClock(e.LamportClock, local, maxJump) != nil {
-			continue
-		}
-		if e.LamportClock > cursor {
-			cursor = e.LamportClock
+// advancePullCursor returns where to save the pull cursor after a
+// cursor-pass batch, and whether to move it at all (MTIX-95.11, MTIX-95.4):
+// the keyset position of the last event of the batch whose Lamport clock
+// validator.CheckIngestClock accepts against the local clock after the
+// batch (below 2^53 and at most maxJump above it). The decision comes from
+// the clock itself, never from the reason an event was held, so the cursor
+// moves past a quarantined event but an event with an extreme clock that
+// also failed another check cannot move it: a cursor at an extreme clock
+// would stop the cursor pass from returning any later event. Applied events
+// always pass (they passed the same check against a lower local clock), and
+// a batch in keyset order has no applied event after a refused one. With
+// no accepted event it reports false and the saved cursor stays. The next
+// pull fetches a refused event again; pullLoop pages past it in memory, so
+// this pull does not fetch it in a loop.
+func advancePullCursor(events []*model.SyncEvent, local, maxJump int64) (transport.PullCursor, bool) {
+	for i := len(events) - 1; i >= 0; i-- {
+		if validator.CheckIngestClock(events[i].LamportClock, local, maxJump) == nil {
+			return transport.CursorAt(events[i]), true
 		}
 	}
-	return page, cursor
+	return transport.PullCursor{}, false
 }
 
 // quarantineRetry is the outcome of one retry of the quarantine: how many

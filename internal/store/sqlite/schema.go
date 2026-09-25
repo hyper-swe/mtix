@@ -440,6 +440,11 @@ INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.vector_clock', '{}');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.first_event_hash', '');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.project_prefix', '');
 INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.clone.checkpoint', '0');
+-- *_event_id: the event-id halves of the (lamport_clock, event_id) pull cursor
+-- and clone checkpoint (MTIX-95.4). Empty, as seeded on upgrade, sorts first:
+-- the next page re-reads the saved clock's events; applied_events dedupes.
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.last_pulled_event_id', '');
+INSERT OR IGNORE INTO meta (key, value) VALUES ('meta.sync.clone.checkpoint_event_id', '');
 -- meta.sync.last_sweep_at: the hub's clock (RFC 3339, UTC) at the start of
 -- the last late-event sweep of sync pull (MTIX-95.5). The next sweep lists
 -- hub events created since this time minus a 15-minute overlap. Empty means

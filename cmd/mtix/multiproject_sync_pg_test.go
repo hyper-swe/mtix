@@ -27,6 +27,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
 // seedTwoProjectsAndPush seeds roots/child across TEST + MTIX-DEV-OPS, pushes
@@ -62,7 +64,7 @@ func seedTwoProjectsAndPushThenWipe(t *testing.T) (*bytes.Buffer, context.Contex
 		`UPDATE meta SET value = '0' WHERE key = 'meta.sync.clone.checkpoint'`)
 	require.NoError(t, err)
 
-	pulled, _, err := cloneLoop(ctx, &stderr, pool, app.store, 0, 100)
+	pulled, _, err := cloneLoop(ctx, &stderr, pool, app.store, transport.PullCursor{}, 100)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, pulled, 3, "clone must reconstruct every project's events")
 	return &stderr, ctx
@@ -77,7 +79,7 @@ func TestMultiProject_AC5_SyncCarriesAllProjects(t *testing.T) {
 
 	cursor, err := readCloneCheckpoint(ctx, app.store, true)
 	require.NoError(t, err)
-	require.Greater(t, cursor, int64(0), "hub-global clone checkpoint advances")
+	require.Greater(t, cursor.Lamport, int64(0), "hub-global clone checkpoint advances")
 
 	// Every node id from BOTH projects is reconstructed by the single clone.
 	for _, id := range []string{"TEST-1", "MTIX-DEV-OPS-1", "MTIX-DEV-OPS-1.1"} {

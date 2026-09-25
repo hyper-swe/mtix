@@ -138,7 +138,8 @@ func pushAllPerf(ctx context.Context, t testing.TB, st *sqlite.Store, pool *tran
 	}
 }
 
-// pullAllPerf pulls and applies all hub events.
+// pullAllPerf pulls and applies all hub events, paging by the
+// (lamport_clock, event_id) keyset and saving the cursor with each batch.
 // Mirrors e2e/sync_e2e_test.fakeCLI.pullAll.
 func pullAllPerf(ctx context.Context, t testing.TB, st *sqlite.Store, pool *transport.Pool) int {
 	t.Helper()
@@ -151,20 +152,15 @@ func pullAllPerf(ctx context.Context, t testing.TB, st *sqlite.Store, pool *tran
 		if len(events) == 0 {
 			return total
 		}
+		since = transport.CursorAt(events[len(events)-1])
 		require.NoError(t, st.WithTx(ctx, func(tx *sql.Tx) error {
 			for _, e := range events {
 				if applyErr := sqlite.IdempotentApply(ctx, tx, e); applyErr != nil {
 					return applyErr
 				}
 			}
-			return nil
+			return writeCursorForPerf(ctx, tx, since)
 		}))
-		for _, e := range events {
-			if e.LamportClock > since {
-				since = e.LamportClock
-			}
-		}
-		writeCursorForPerf(ctx, t, st, since)
 		total += len(events)
 		if !hasMore {
 			return total
@@ -202,25 +198,33 @@ func readPendingForPerf(ctx context.Context, t testing.TB, st *sqlite.Store, lim
 	return out
 }
 
-func readCursorForPerf(ctx context.Context, t testing.TB, st *sqlite.Store) int64 {
+// readCursorForPerf reads the saved pull cursor: its Lamport clock and the
+// id of the last event pulled at it, empty when unset (MTIX-95.4).
+func readCursorForPerf(ctx context.Context, t testing.TB, st *sqlite.Store) transport.PullCursor {
 	t.Helper()
-	var raw string
-	require.NoError(t, st.QueryRow(ctx,
-		`SELECT value FROM meta WHERE key = 'meta.sync.last_pulled_clock'`,
-	).Scan(&raw))
+	var raw, eventID string
+	require.NoError(t, st.QueryRow(ctx, `
+		SELECT (SELECT value FROM meta WHERE key = 'meta.sync.last_pulled_clock'),
+		       COALESCE((SELECT value FROM meta WHERE key = 'meta.sync.last_pulled_event_id'), '')`,
+	).Scan(&raw, &eventID))
 	v, err := strconv.ParseInt(raw, 10, 64)
 	require.NoError(t, err)
-	return v
+	return transport.PullCursor{Lamport: v, EventID: eventID}
 }
 
-func writeCursorForPerf(ctx context.Context, t testing.TB, st *sqlite.Store, cursor int64) {
-	t.Helper()
-	require.NoError(t, st.WithTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx,
-			`UPDATE meta SET value = ? WHERE key = 'meta.sync.last_pulled_clock'`,
-			strconv.FormatInt(cursor, 10))
-		return err
-	}))
+// writeCursorForPerf saves both pull cursor keys in the caller's transaction.
+func writeCursorForPerf(ctx context.Context, tx *sql.Tx, cursor transport.PullCursor) error {
+	for _, kv := range [][2]string{
+		{"meta.sync.last_pulled_clock", strconv.FormatInt(cursor.Lamport, 10)},
+		{"meta.sync.last_pulled_event_id", cursor.EventID},
+	} {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO meta (key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, kv[0], kv[1]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // TestPerf_PushPullTargets is the gating perf assertion: 1000 events

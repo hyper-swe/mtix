@@ -14,8 +14,8 @@ import (
 // Hub reads for the late-event sweep of `mtix sync pull` (MTIX-95.5;
 // ADR-006 D5, review F-43; FR-18).
 //
-// PullEvents serves lamport_clock > cursor, and the Lamport clock is
-// stamped by the pushing client. An offline writer's later push carries
+// PullEvents serves the events after the cursor in (lamport_clock,
+// event_id) order, and the Lamport clock is stamped by the pushing client. An offline writer's later push carries
 // clocks below busier peers' cursors, so those peers never receive it
 // through the cursor. After its cursor loop a pull therefore lists hub
 // event ids, diffs them against the ids it holds, and fetches the missing

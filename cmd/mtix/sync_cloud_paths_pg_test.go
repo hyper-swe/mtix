@@ -62,7 +62,7 @@ func pushLocal(t *testing.T, dsn string) {
 // resetLocalForFreshPull turns this store into a fresh consumer of the hub, so
 // the next pull must fetch and apply every hub event. It deletes the local
 // event log (sync_events), the applied-event ledger and the nodes, rewinds the
-// pull cursor, and then checks all four.
+// pull cursor (both halves, MTIX-95.4), and then checks all four.
 //
 // Fixture, not product (MTIX-95.28). This reset used to keep sync_events. The
 // own-event rule (MTIX-95.2; ADR-006 I4: "have it" means the event_id is in
@@ -90,6 +90,7 @@ func resetLocalForFreshPull(t *testing.T) {
 		`DELETE FROM applied_events`,
 		`DELETE FROM nodes`,
 		`UPDATE meta SET value = '0' WHERE key = 'meta.sync.last_pulled_clock'`,
+		`UPDATE meta SET value = '' WHERE key = 'meta.sync.last_pulled_event_id'`,
 	} {
 		_, err := db.ExecContext(ctx, stmt)
 		require.NoErrorf(t, err, "reset: %s", stmt)
@@ -215,7 +216,7 @@ func TestCloudPath_Daemon_PullTickAppliesHubEvents(t *testing.T) {
 		liveNodeTitles(t), "the tick must re-apply the hub creates' content, not only their count")
 	cursor, err := readLastPulledClock(ctx, app.store)
 	require.NoError(t, err)
-	require.Equal(t, hubMaxLamport(t, pool), cursor,
+	require.Equal(t, hubMaxLamport(t, pool), cursor.Lamport,
 		"the tick must advance the pull cursor to the hub's highest Lamport clock")
 }
 
@@ -229,14 +230,14 @@ func pullBeforeReset(t *testing.T, pool *transport.Pool) {
 	t.Helper()
 	ctx := context.Background()
 	var stderr bytes.Buffer
-	pulled, _, err := pullLoop(ctx, testIngest(&stderr), pool, app.store, 0, pullDefaultBatchSize)
+	pulled, _, err := pullLoop(ctx, testIngest(&stderr), pool, app.store, transport.PullCursor{}, pullDefaultBatchSize)
 	require.NoError(t, err, "pull before reset: %s", stderr.String())
 	require.Positive(t, pulled, "precondition: the hub returned this replica's pushed events")
 	require.Equal(t, pulled, appliedEventTotal(t),
 		"precondition: applied_events holds a row per pulled event for the reset to clear")
 	cursor, err := readLastPulledClock(ctx, app.store)
 	require.NoError(t, err)
-	require.Positive(t, cursor, "precondition: the pull cursor has advanced for the reset to rewind")
+	require.Positive(t, cursor.Lamport, "precondition: the pull cursor has advanced for the reset to rewind")
 }
 
 // appliedEventTotal returns the number of rows in the local applied_events
@@ -255,7 +256,7 @@ func appliedEventTotal(t *testing.T) int {
 // hub log leaves its cursor exactly here.
 func hubMaxLamport(t *testing.T, pool *transport.Pool) int64 {
 	t.Helper()
-	events, hasMore, err := pool.PullEvents(context.Background(), 0, pullDefaultBatchSize)
+	events, hasMore, err := pool.PullEvents(context.Background(), transport.PullCursor{}, pullDefaultBatchSize)
 	require.NoError(t, err)
 	require.False(t, hasMore, "the test hub log fits in one page")
 	var highest int64

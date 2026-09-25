@@ -1,0 +1,34 @@
+-- MTIX-95.4 hub schema (file 015).
+-- Executed by the transport under PG advisory-lock single-flight,
+-- auto-applied in lexical order via migrations.Files(). DO NOT run manually;
+-- the hub owner applies it with `mtix sync init`.
+--
+-- Index for the cursor pass of `mtix sync pull` and for `mtix sync clone`
+-- (ADR-006 D6, D39).
+--
+-- Both page through the hub log by the keyset (lamport_clock, event_id):
+--
+--     WHERE (lamport_clock, event_id) > ($1, $2)
+--     ORDER BY lamport_clock, event_id
+--     LIMIT $3
+--
+-- The event id breaks Lamport ties, so events that share a Lamport clock
+-- across a page boundary are all pulled. This index serves each page from
+-- the cursor on, in order. Until it exists (a hub whose owner has not yet
+-- re-run `mtix sync init` after upgrading) pulls return the same events,
+-- but each page scans and sorts the whole of sync_events.
+--
+-- Migrate applies every file in ONE transaction, so this index is built
+-- inside it, not concurrently. The build locks sync_events against writes
+-- until that transaction commits: pulls keep reading, but pushes block. A
+-- push that waits past its 10-second statement timeout is retried a few
+-- times and then fails; its events stay queued for the next push. On a
+-- large hub the first build can take a while, so run `mtix sync init` when
+-- a pause in pushes is acceptable. Once the index exists the statement
+-- only checks for it.
+--
+-- Additive and idempotent: IF NOT EXISTS makes a re-run a no-op, and no
+-- column, constraint or row is touched.
+
+CREATE INDEX IF NOT EXISTS idx_sync_events_lamport_event_id
+    ON sync_events (lamport_clock, event_id);

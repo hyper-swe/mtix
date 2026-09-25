@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,7 +34,7 @@ func TestPushPull_CarriesUID(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ids, 3)
 
-	got, _, err := pool.PullEvents(context.Background(), 0, 100)
+	got, _, err := pool.PullEvents(context.Background(), transport.PullCursor{}, 100)
 	require.NoError(t, err)
 	require.Len(t, got, 3)
 

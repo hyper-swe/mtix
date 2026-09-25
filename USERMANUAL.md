@@ -1484,7 +1484,9 @@ mtix sync clone              # idempotent
 
 `mtix sync clone` pulls the full event log from the hub and replays
 it into the local SQLite. Re-running clone is a no-op (per
-`applied_events` dedupe).
+`applied_events` dedupe). When it completes it sets your pull cursor,
+so the next `mtix sync pull` fetches only the changes pushed after the
+clone.
 
 ### Daily flow
 
@@ -1502,6 +1504,25 @@ Install the pre-push hook (`examples/hooks/pre-push`) to automate
 cp examples/hooks/pre-push .git/hooks/pre-push
 chmod +x .git/hooks/pre-push
 ```
+
+### Where pull resumes
+
+`mtix sync pull` remembers the last event it fetched: its sync clock
+and its event id (`meta.sync.last_pulled_clock` and
+`meta.sync.last_pulled_event_id` in the local database). The next pull
+asks the hub for the events after that one, in order of clock and then
+event id, so events that carry the same clock are all fetched however
+`--limit` splits them into batches. Each batch and the saved position
+are written in one transaction: a pull that stops part-way resumes
+after the last batch it applied, never after one it did not.
+
+- **First pull after upgrading from 0.5.3 or earlier.** The saved
+  position has no event id yet, so the pull fetches the events at the
+  saved clock once more, skips the ones you already have and applies
+  any that an earlier version missed at that clock.
+- **Hub owner, after upgrading.** Run `mtix sync init` once with the
+  hub owner's DSN to add the hub index pull reads by; the same item in
+  the next section says when to run it and what it costs.
 
 ### Late changes from offline teammates
 
@@ -1547,11 +1568,19 @@ nothing; it is only recorded as received.
   that scales to zero stays idle (a daemon that pulls on an interval
   sweeps on each of its pulls).
 - **Hub owner, after upgrading.** Run `mtix sync init` once with the
-  hub owner's DSN. It adds an index on the hub (`idx_sync_events_created_at`)
-  so each sweep reads only recent events. Until then pulls work as
-  before, but each page the sweep lists scans the hub's whole event
-  table: once per pull for the usual window, and once per page of the
-  one-time full comparison, spread across pulls.
+  hub owner's DSN. It adds two indexes on the hub:
+  `idx_sync_events_created_at`, so each sweep reads only recent events,
+  and `idx_sync_events_lamport_event_id`, so each pull batch reads from
+  its saved position. `mtix sync init` builds them in one transaction;
+  on a large hub that takes a while, and pushes wait until it finishes
+  (pulls keep working; a push that waits too long fails and keeps its
+  changes queued for the next push), so run it when a pause in pushes
+  is acceptable.
+  Until then pulls fetch the same events as with the indexes, only
+  slower: each page the sweep lists scans the hub's whole event table
+  (once per pull for the usual window, and once per page of the
+  one-time full comparison, spread across pulls), and so does each pull
+  batch.
 
 ### Quarantined events
 

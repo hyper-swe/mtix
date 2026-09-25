@@ -306,16 +306,70 @@ first_event_hash for `PROJ`, init refuses and points the operator at
 
 `mtix sync pull` (and every pull the daemon runs) has two passes.
 
-**Cursor pass.** `PullEvents` returns the hub events with
-`lamport_clock > meta.sync.last_pulled_clock`, in Lamport order, in
-batches of `--limit` (default 1000). Each batch is applied in one local
-transaction, each event checked first and then applied through
-`IdempotentApply` (see [Idempotent apply](#idempotent-apply)) in its own
-savepoint; an event that fails is quarantined and the batch goes on
-(see [Quarantine](#quarantine)). The cursor advances to the highest
-Lamport clock of the batch, quarantined events included, except to a
-clock at or above 2^53 or beyond `sync.max_lamport_jump`, decided from
-the clock itself.
+**Cursor pass.** The pull cursor is a keyset position, the tuple
+`(lamport_clock, event_id)` of the last event pulled, kept in
+`meta.sync.last_pulled_clock` and `meta.sync.last_pulled_event_id`
+(MTIX-95.4). `PullEvents` returns the hub events after it, in that
+order, in batches of `--limit` (default 1000):
+
+```
+WHERE (lamport_clock, event_id) > ($1, $2)
+ORDER BY lamport_clock, event_id
+LIMIT $3
+```
+
+Each next batch starts after the previous batch's last event. The event
+id breaks Lamport ties: Lamport clocks are not unique, and before 0.5.4
+the cursor was the batch's highest clock alone, so events that shared
+it but did not fit in the batch were never pulled. Each batch is applied
+in one local transaction, each event checked first and then applied
+through `IdempotentApply` (see [Idempotent apply](#idempotent-apply)) in
+its own savepoint; an event that fails is quarantined and the batch goes
+on (see [Quarantine](#quarantine)). The cursor is saved in that same
+transaction, at the batch's last event, quarantined events included,
+except at a clock at or above 2^53 or beyond `sync.max_lamport_jump`,
+decided from the clock itself. The batch's applies, its quarantine rows
+and the cursor commit together or not at all, so a crash cannot leave
+applied events behind an older cursor, or a cursor past events that
+were neither applied nor quarantined.
+
+**Upgrading from a Lamport-only cursor.** A store written by an earlier
+version has only `meta.sync.last_pulled_clock`. When this version opens
+the store it adds `meta.sync.last_pulled_event_id` and
+`meta.sync.clone.checkpoint_event_id`, empty (`INSERT OR IGNORE`, no
+schema version change). An empty event id sorts before every event id,
+so the first pull reads the events at exactly the saved clock again:
+`IdempotentApply` dedupes the ones already applied, and any that the
+old paging skipped at that clock are applied. Events it skipped at
+earlier clocks are recovered by the late-event sweep's one-time
+comparison of the full hub history (below).
+
+**Clone.** `mtix sync clone` pages the hub log by the same keyset. After
+each batch it saves its `--resume` checkpoint, both halves, in
+`meta.sync.clone.checkpoint` and `meta.sync.clone.checkpoint_event_id`
+(a checkpoint without an event id resumes at its clock, idempotently).
+When it completes it saves the pull cursor at the last event it cloned,
+so the first pull after a clone asks the hub only for newer events.
+Before 0.5.4 clone left the pull cursor at 0 and that first pull read
+the whole hub log again. `mtix sync reconcile --discard-local` resets
+both halves of the pull cursor.
+
+**Hub index.** Hub migration 015 adds `idx_sync_events_lamport_event_id`
+on `sync_events (lamport_clock, event_id)`, an additive
+`CREATE INDEX IF NOT EXISTS`, so each page is read from the cursor on,
+in index order.
+`TestPullEvents_PlanUsesKeysetIndex_NoSeqScanNoSort` checks that the
+planner can serve the query from it. Migrations run in `mtix sync init`
+with the hub owner's DSN, so an existing hub gets the index the next
+time its owner runs `mtix sync init`. Every migration runs in one
+transaction (see [Migration single-flight](#migration-single-flight)),
+so the index is built inside it, not concurrently: while it builds,
+pulls keep reading but pushes block, and a push that waits past its
+10-second statement timeout is retried a few times and then fails, its
+events kept queued for the next push. On a large hub, run
+`mtix sync init` when a pause in pushes is acceptable. Until the index
+exists, pulls return the same events, but each page scans and sorts
+`sync_events`.
 
 The Lamport clock is stamped by the client that wrote the event, not by
 the hub. A teammate who worked offline pushes events stamped below the
@@ -404,7 +458,7 @@ from its own start. `mtix sync reconcile --discard-local` and `mtix sync
 clone` clear the progress keys, the staged ids and
 `meta.sync.last_sweep_at`.
 
-The sweep does not move the Lamport cursor. After a full-history diff
+The sweep does not move the pull cursor. After a full-history diff
 pull prints `late-event sweep (first run, full hub history): N late
 events recovered`, even when N is 0; after a windowed sweep it prints
 `late-event sweep: N late events recovered` only when N > 0; N counts
@@ -681,6 +735,12 @@ only one runs the DDL, the others see the schema is current and return
 cleanly. See `internal/store/postgres/transport/migrate.go` and
 `TestMigrate_ConcurrentSingleFlight`.
 
+Every migration file runs in that one transaction, so an index a
+migration adds (014, 015) is built inside it, not concurrently. The
+build blocks writes to `sync_events`, that is pushes, until the
+transaction commits; reads, that is pulls, go on. Once the index exists
+its `CREATE INDEX IF NOT EXISTS` only checks for it.
+
 ## Transport security
 
 - TLS posture is enforced in `EnforceTLSPosture` (`transport/dsn.go`).
@@ -723,7 +783,9 @@ the daemon holds the lock for the duration of its push pass.
 ## Daemon
 
 `mtix sync daemon` runs `runOneDaemonPull` on a fixed interval
-(default 30s). It does NOT push by itself — pushes happen via the
+(default 30s). Each tick is a full `mtix sync pull`: the same tuple
+cursor, saved with each batch, and the same late-event sweep. It does
+NOT push by itself — pushes happen via the
 normal `mtix sync push` invocation (either manual or via the pre-push
 hook).
 

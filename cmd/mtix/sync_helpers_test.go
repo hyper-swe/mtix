@@ -5,11 +5,13 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
 // These tests cover the internal helpers in sync_push.go / sync_pull.go /
@@ -103,16 +105,19 @@ func TestReadLastPulledClock_FreshStoreReturnsZero(t *testing.T) {
 	initTestApp(t)
 	cursor, err := readLastPulledClock(context.Background(), app.store)
 	require.NoError(t, err)
-	require.Equal(t, int64(0), cursor)
+	require.Equal(t, transport.PullCursor{}, cursor)
 }
 
-func TestWriteLastPulledClock_RoundTrip(t *testing.T) {
+func TestWritePullCursor_RoundTrip(t *testing.T) {
 	initTestApp(t)
 	ctx := context.Background()
-	require.NoError(t, writeLastPulledClock(ctx, app.store, 42))
+	want := transport.PullCursor{Lamport: 42, EventID: "0193fb00-0000-7000-8000-000000000042"}
+	require.NoError(t, app.store.WithTx(ctx, func(tx *sql.Tx) error {
+		return writePullCursor(ctx, tx, want)
+	}))
 	cursor, err := readLastPulledClock(ctx, app.store)
 	require.NoError(t, err)
-	require.Equal(t, int64(42), cursor)
+	require.Equal(t, want, cursor)
 }
 
 func TestApplyPullBatch_EmptyBatchIsNoop(t *testing.T) {
@@ -141,26 +146,27 @@ func TestReadCloneCheckpoint_FreshStoreNoResumeReturnsZero(t *testing.T) {
 	initTestApp(t)
 	cursor, err := readCloneCheckpoint(context.Background(), app.store, false)
 	require.NoError(t, err)
-	require.Equal(t, int64(0), cursor)
+	require.Equal(t, transport.PullCursor{}, cursor)
 }
 
 func TestWriteCloneCheckpoint_RoundTrip(t *testing.T) {
 	initTestApp(t)
 	ctx := context.Background()
-	require.NoError(t, writeCloneCheckpoint(ctx, app.store, 123))
+	want := transport.PullCursor{Lamport: 123, EventID: "0193fb00-0000-7000-8000-000000000123"}
+	require.NoError(t, writeCloneCheckpoint(ctx, app.store, want))
 	cursor, err := readCloneCheckpoint(ctx, app.store, true)
 	require.NoError(t, err)
-	require.Equal(t, int64(123), cursor,
+	require.Equal(t, want, cursor,
 		"resume=true must surface the persisted checkpoint")
 }
 
 func TestReadCloneCheckpoint_ResumeFalseIgnoresPersisted(t *testing.T) {
 	initTestApp(t)
 	ctx := context.Background()
-	require.NoError(t, writeCloneCheckpoint(ctx, app.store, 500))
+	require.NoError(t, writeCloneCheckpoint(ctx, app.store, transport.PullCursor{Lamport: 500, EventID: "x"}))
 	cursor, err := readCloneCheckpoint(ctx, app.store, false)
 	require.NoError(t, err)
-	require.Equal(t, int64(0), cursor,
+	require.Equal(t, transport.PullCursor{}, cursor,
 		"resume=false must start from 0 even when a checkpoint exists")
 }
 

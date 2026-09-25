@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/sync/validator"
 )
 
@@ -58,7 +59,7 @@ func TestPreflightClone_EventPullWouldQuarantine_Refused(t *testing.T) {
 			in := testIngest(nil)
 			in.maxJump = tt.maxJump
 
-			err := preflightClone(context.Background(), in, hub, 0, 0, 1)
+			err := preflightClone(context.Background(), in, hub, transport.PullCursor{}, 0, 1)
 
 			require.ErrorIs(t, err, errCloneRefused)
 			require.ErrorContains(t, err, bad.EventID)
@@ -75,13 +76,13 @@ func TestPreflightClone_EventPullWouldQuarantine_Refused(t *testing.T) {
 		in := testIngest(nil)
 		in.maxJump = 1
 
-		require.NoError(t, preflightClone(context.Background(), in, hub, 0, 0, 2))
+		require.NoError(t, preflightClone(context.Background(), in, hub, transport.PullCursor{}, 0, 2))
 		require.Equal(t, []int64{0, 2}, hub.pullCalls)
 	})
 	t.Run("hub failure is returned", func(t *testing.T) {
 		initTestApp(t)
 		hub := &fakeLateHub{pullErr: context.DeadlineExceeded}
-		err := preflightClone(context.Background(), testIngest(nil), hub, 0, 0, 10)
+		err := preflightClone(context.Background(), testIngest(nil), hub, transport.PullCursor{}, 0, 10)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		require.NotErrorIs(t, err, errCloneRefused)
 	})
@@ -113,7 +114,7 @@ func TestPreflightClone_FutureStamped_WarnsOnly(t *testing.T) {
 	ahead.WallClockTS = time.Now().Add(48 * time.Hour).UnixMilli()
 	var stderr bytes.Buffer
 
-	err := preflightClone(context.Background(), testIngest(&stderr), &fakeLateHub{pullEvents: []*model.SyncEvent{&ahead}}, 0, 0, 10)
+	err := preflightClone(context.Background(), testIngest(&stderr), &fakeLateHub{pullEvents: []*model.SyncEvent{&ahead}}, transport.PullCursor{}, 0, 10)
 
 	require.NoError(t, err)
 	require.Contains(t, stderr.String(), "is stamped more than 24h ahead of this machine's clock")
@@ -132,7 +133,7 @@ func TestPull_EventAlreadyApplied_NotQuarantined(t *testing.T) {
 	var stderr bytes.Buffer
 	hub := &fakeLateHub{pullEvents: []*model.SyncEvent{&big}, hubNows: []time.Time{sweepHubT1}}
 
-	got, err := pullThenSweep(ctx, testIngest(&stderr), hub, app.store, 0, 100)
+	got, err := pullThenSweep(ctx, testIngest(&stderr), hub, app.store, transport.PullCursor{}, 100)
 
 	require.NoError(t, err)
 	require.Equal(t, 1, got.pulled, "counted as applied: the store holds it")

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/sync/validator"
 )
 
@@ -26,7 +27,7 @@ type latePushHub struct {
 	late  []*model.SyncEvent
 }
 
-func (h *latePushHub) PullEvents(ctx context.Context, since int64, limit int) ([]*model.SyncEvent, bool, error) {
+func (h *latePushHub) PullEvents(ctx context.Context, since transport.PullCursor, limit int) ([]*model.SyncEvent, bool, error) {
 	if len(h.pullCalls) == h.after {
 		h.pullEvents = append(h.pullEvents, h.late...)
 	}
@@ -45,7 +46,7 @@ func TestCheckThenClone_EventPushedAfterCheck_StopsCloneKeepsClock(t *testing.T)
 	hub := &latePushHub{fakeLateHub: fakeLateHub{pullEvents: events[:2]}, after: 2,
 		late: []*model.SyncEvent{&extreme}}
 
-	pulled, _, stage, err := checkThenClone(context.Background(), &bytes.Buffer{}, hub, 0, 1)
+	pulled, _, stage, err := checkThenClone(context.Background(), &bytes.Buffer{}, hub, transport.PullCursor{}, 1)
 
 	require.ErrorIs(t, err, errCloneRefused)
 	require.Equal(t, "clone loop", stage)
@@ -87,7 +88,7 @@ func TestCheckThenClone_ResumeAboveBound_Passes(t *testing.T) {
 	}
 	hub := &fakeLateHub{pullEvents: events}
 
-	pulled, batches, _, err := checkThenClone(ctx, &bytes.Buffer{}, hub, base, 10)
+	pulled, batches, _, err := checkThenClone(ctx, &bytes.Buffer{}, hub, transport.PullCursor{Lamport: base}, 10)
 
 	require.NoError(t, err)
 	require.Equal(t, 2, pulled)
@@ -108,7 +109,7 @@ func TestCheckThenClone_Refused_LeavesQuarantineAndSweepUnchanged(t *testing.T) 
 	extreme.LamportClock = validator.MaxLamportClock - 2
 	hub := &fakeLateHub{pullEvents: []*model.SyncEvent{events[0], events[1], &extreme}}
 
-	_, _, stage, err := checkThenClone(context.Background(), &bytes.Buffer{}, hub, 0, 10)
+	_, _, stage, err := checkThenClone(context.Background(), &bytes.Buffer{}, hub, transport.PullCursor{}, 10)
 
 	require.ErrorIs(t, err, errCloneRefused)
 	require.Equal(t, "clone check", stage)

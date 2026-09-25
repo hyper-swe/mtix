@@ -36,12 +36,15 @@ the tables needs:
 - SELECT on the sync tables;
 - INSERT on `sync_events`, `sync_conflicts`, `sync_node_collisions`,
   `sync_project_clients` and `node_renumber_remaps`;
-- UPDATE on `sync_hub_state`, `sync_node_collisions` and
-  `sync_project_clients`;
-- USAGE on the sync tables' sequences.
+- UPDATE on `sync_project_clients`;
+- USAGE on the sequences `sync_conflicts_conflict_id_seq` and
+  `sync_node_collisions_collision_id_seq`;
+- UPDATE on `sync_node_collisions`, only for a role that runs
+  `mtix sync collisions resolve`.
 
-CREATE on the schema is needed only while `mtix sync init` first creates
-the tables:
+It needs no UPDATE on `sync_hub_state`: `mtix sync mark-restored`, the
+operator's step after a restore, runs as the table owner. CREATE on the
+schema is needed only while `mtix sync init` first creates the tables:
 
 ```sql
 CREATE ROLE mtix_sync LOGIN PASSWORD 'set-a-strong-one';

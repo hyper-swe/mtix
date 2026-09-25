@@ -49,14 +49,17 @@ func TestSequences_EmbeddedMigrations_ReturnsEverySerialSequence(t *testing.T) {
 // TestMigrations_SequenceForms_AllParsed: every sequence a migration
 // creates comes from a serial column of a CREATE TABLE, the only form
 // Sequences() reads. A migration that creates one another way (an identity
-// column, a serial column added by ALTER TABLE, CREATE SEQUENCE) fails
-// here, so Sequences() never silently misses a sequence (MTIX-95.1.4).
+// column, a serial column added by ALTER TABLE, CREATE SEQUENCE, or a
+// quoted table or column name, which the parser does not read) fails here,
+// so Sequences() never silently misses a sequence (MTIX-95.1.4).
 func TestMigrations_SequenceForms_AllParsed(t *testing.T) {
 	comment := regexp.MustCompile(`--[^\n]*`)
 	unparsed := map[string]*regexp.Regexp{
 		"an identity column":             regexp.MustCompile(`(?i)\bGENERATED\s+(?:ALWAYS|BY\s+DEFAULT)\s+AS\s+IDENTITY\b`),
 		"a serial column added later":    regexp.MustCompile(`(?is)\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?[a-z_][a-z0-9_]*\s+(?:smallserial|bigserial|serial[248]?)\b`),
 		"an explicitly created sequence": regexp.MustCompile(`(?i)\bCREATE\s+(?:TEMP\s+|TEMPORARY\s+|UNLOGGED\s+)?SEQUENCE\b`),
+		"a quoted serial column name":    regexp.MustCompile(`(?i)"[^"]+"\s+(?:smallserial|bigserial|serial[248]?)\b`),
+		"a quoted table name":            regexp.MustCompile(`(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"`),
 	}
 	files, err := migrations.Files()
 	require.NoError(t, err)

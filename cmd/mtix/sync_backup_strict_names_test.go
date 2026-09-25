@@ -207,7 +207,8 @@ func TestWithSchemaUsageAdvice_Grants_ByNameOrUnchanged(t *testing.T) {
 		{"tables and sequences", notFound, "reader", []string{"a", "b"}, []string{"a_id_seq"},
 			`the schema's owner runs GRANT USAGE ON SCHEMA <schema> TO "reader", and the table owner runs ` +
 				`GRANT SELECT ON TABLE <schema>.a, ` +
-				`<schema>.b TO "reader"; GRANT SELECT ON SEQUENCE <schema>.a_id_seq TO "reader"; then back up again`, ""},
+				`<schema>.b TO "reader"; GRANT SELECT ON SEQUENCE <schema>.a_id_seq TO "reader"; then back up again ` +
+				`(keep that role with mtix sync harden --keep-role, so that harden leaves its access)`, ""},
 		{"no sequence", notFound, "reader", []string{"a"}, nil,
 			`GRANT SELECT ON TABLE <schema>.a TO "reader"; then back up again`, "SEQUENCE"},
 		{"no role known", notFound, "", []string{"a"}, nil,

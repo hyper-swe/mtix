@@ -217,7 +217,7 @@ Before going live with sync mode, verify each of these:
 - [ ] Connection uses a server certificate signed by a trusted CA (test: `MTIX_SYNC_SSLROOTCERT` set if managed PG requires it).
 - [ ] DSN is stored in `MTIX_SYNC_DSN` env var or `.mtix/secrets` (gitignored, mode 0600). **Not** in any tracked config file (`Source()` will refuse to load if it detects one).
 - [ ] `.mtix/secrets` is in `.gitignore` (test: `git check-ignore .mtix/secrets` succeeds; `mtix sync init` installs the rule automatically).
-- [ ] PG role used by the hub is **least privilege**: SELECT/INSERT on `sync_events`, `sync_conflicts`, `sync_projects`, `applied_events`, `audit_log` only. Not SUPERUSER, not CREATEDB, not REPLICATION.
+- [ ] PG role used by the hub is **least privilege**. A role that syncs without owning the sync tables holds only: USAGE on the schema; SELECT on the sync tables; INSERT on `sync_events`, `sync_conflicts`, `sync_node_collisions`, `sync_project_clients` and `node_renumber_remaps`; UPDATE on `sync_project_clients`; USAGE on the sequences `sync_conflicts_conflict_id_seq` and `sync_node_collisions_collision_id_seq`; and UPDATE on `sync_node_collisions` only when it runs `mtix sync collisions resolve` (the small-team workflow lists the same set). It holds no UPDATE on `sync_hub_state`: `mtix sync mark-restored` runs as the table owner. Not SUPERUSER, not CREATEDB, not REPLICATION.
 - [ ] `audit_log` and `sync_conflicts` triggers are in place (test: `UPDATE audit_log SET ...` raises exception).
 - [ ] Backup procedure for the hub is in place AND has been tested to restore (use `mtix sync backup --output FILE` for the mtix-owned tables).
 - [ ] DR runbook tested: rebuild a CLI from a fresh `mtix sync clone` (DSN from `MTIX_SYNC_DSN` or `.mtix/secrets`).

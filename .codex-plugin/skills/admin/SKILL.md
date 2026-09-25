@@ -104,8 +104,10 @@ not initialized since an upgrade added a table, fails the backup with `a
 hub table was not found`; run `mtix sync init` with the DSN naming the
 table owner, then back up again. The same error comes when the DSN's role
 lacks USAGE on the hub's schema: run the GRANT statements the backup
-prints (the schema's owner grants USAGE on the schema, which for `public`
-on PostgreSQL 15 and later is the database's owner; the table owner grants
+prints (the schema's owner grants USAGE on the schema: find it with
+`SELECT nspowner::regrole FROM pg_catalog.pg_namespace WHERE nspname = '<schema>';`;
+for `public` in a database created on PostgreSQL 15 or later it is
+`pg_database_owner`, that is, the database's owner; the table owner grants
 SELECT on each sync table and sync-table sequence by name, nothing else in
 the schema), then keep that role with `--keep-role` so
 `mtix sync harden --apply` leaves its access.
@@ -140,7 +142,9 @@ another function, and the `ALTER TABLE ... ENABLE TRIGGER` statement for
 one not enabled, printed on a `fix:` line without `--json`; functions are
 compared by OID; tgenabled `O` and `A` both count as enabled; a gap is a
 WARN by default, a FAIL in strict mode), then
-`mtix sync mark-restored` once and `mtix sync collisions list`.
+`mtix sync mark-restored` once, with the DSN naming the table owner (a
+syncing role holds no UPDATE on `sync_hub_state`), and `mtix sync
+collisions list`.
 
 `mtix sync status` counts unresolved conflicts only (`open_conflicts`); it
 has no `conflicted` count. `resolve` records the decision only and says

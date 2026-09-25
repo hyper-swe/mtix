@@ -64,7 +64,7 @@ func (f *sweepFixture) seedSharedNode(t *testing.T) {
 	require.NoError(t, runCreate("shared", "", "", 3, "", "", "", "", ""))
 	f.pushPeer(t)
 	var stderr bytes.Buffer
-	_, _, err := pullLoop(context.Background(), &stderr, f.pool, f.b, 0, 100)
+	_, _, err := pullLoop(context.Background(), testIngest(&stderr), f.pool, f.b, 0, 100)
 	require.NoError(t, err, "B pulls the shared node: %s", stderr.String())
 	_, err = f.b.GetNode(context.Background(), "TEST-1")
 	require.NoError(t, err, "B must hold TEST-1 before going offline")
@@ -465,15 +465,16 @@ func (f *sweepFixture) listEditBeforeCreate(t *testing.T, create, edit *model.Sy
 		"precondition: the edit ends page one and its create starts page two")
 }
 
-// TestPullSweep_FirstRunInterrupted_ResumesFromSavedProgress: a first full
-// diff that stops part-way (here: in its apply phase, on a late event that
-// cannot be applied) keeps its listing progress and the staged ids it has
-// not applied. The next pull resumes after the saved listing position
-// (there is nothing left to list), applies the remaining staged event,
-// completes, and records the FIRST pull's start time as
-// meta.sync.last_sweep_at (MTIX-95.5). B's three late events were pushed
-// last, in one transaction, so they are listed last.
-func TestPullSweep_FirstRunInterrupted_ResumesFromSavedProgress(t *testing.T) {
+// TestPullSweep_FirstRunUnappliableEvent_QuarantinedSweepCompletes: a
+// first full diff that meets a late event it cannot apply (its hub payload
+// names a field apply rejects) quarantines that event with source "sweep"
+// and completes: the other late events apply, nothing stays staged, and
+// meta.sync.last_sweep_at records the hub time read before the first page
+// (MTIX-95.5, MTIX-95.11). The pull succeeds and reports the held event.
+// Before MTIX-95.11 the event stopped the sweep on every pull. (Resuming an
+// interrupted sweep from its saved progress is covered by the PG-free tests
+// in sync_pull_sweep_test.go.)
+func TestPullSweep_FirstRunUnappliableEvent_QuarantinedSweepCompletes(t *testing.T) {
 	f := newSweepFixture(t)
 	ctx := context.Background()
 	f.seedSharedNode(t)
@@ -487,10 +488,6 @@ func TestPullSweep_FirstRunInterrupted_ResumesFromSavedProgress(t *testing.T) {
 	require.NoError(t, f.b.UpdateNode(ctx, "TEST-2", &store.NodeUpdate{Description: &desc}))
 	late := f.pushB(t)
 	require.Len(t, late, 3)
-	var lastHubID string
-	require.NoError(t, f.pool.Inner().QueryRow(ctx,
-		`SELECT event_id FROM sync_events ORDER BY created_at DESC, event_id DESC LIMIT 1`).Scan(&lastHubID))
-	require.Equal(t, late[2].EventID, lastHubID, "precondition: B's last event is listed last")
 	_, err := f.pool.Inner().Exec(ctx,
 		`UPDATE sync_events SET payload = '{"field_name":"not_a_field","new_value":"x"}'::jsonb
 		 WHERE event_id = $1`, late[2].EventID)
@@ -499,41 +496,29 @@ func TestPullSweep_FirstRunInterrupted_ResumesFromSavedProgress(t *testing.T) {
 		`UPDATE meta SET value = '' WHERE key = 'meta.sync.last_sweep_at'`)
 	require.NoError(t, err)
 
-	var stdout, stderr bytes.Buffer
 	before := f.hubNow(t)
-	require.Error(t, f.runPeerPull(&stdout, &stderr, 1), "the unappliable page stops the first full diff")
+	out, errOut := f.pullPeerStreams(t, 1)
 	after := f.hubNow(t)
 
-	require.Equal(t, "", f.peerMeta(t, "meta.sync.last_sweep_at"))
-	require.Equal(t, late[2].EventID, f.peerMeta(t, "meta.sync.sweep_after_id"),
-		"the listing finished before the apply phase stopped")
-	require.Equal(t, []string{late[2].EventID}, f.stagedOnPeer(t),
-		"the event that failed stays staged")
-	started, err := time.Parse(time.RFC3339Nano, f.peerMeta(t, "meta.sync.sweep_started_at"))
-	require.NoError(t, err)
-	requireWithin(t, started, before, after)
+	require.Contains(t, errOut, "quarantined event "+late[2].EventID+" (sweep pass)")
+	require.Contains(t, out, "2 late events recovered")
+	require.Contains(t, out, "quarantine: 1 pulled events held")
+	q := quarantined(t)[late[2].EventID]
+	require.Equal(t, "sweep", q.Source)
+	require.Contains(t, q.Reason, "not_a_field")
+	require.False(t, f.appliedOnPeer(t, late[2].EventID))
 	require.True(t, f.appliedOnPeer(t, late[0].EventID))
 	require.True(t, f.appliedOnPeer(t, late[1].EventID))
-
-	_, err = f.pool.Inner().Exec(ctx, `UPDATE sync_events SET payload = $1::jsonb WHERE event_id = $2`,
-		string(late[2].Payload), late[2].EventID)
-	require.NoError(t, err)
-	out, errOut := f.pullPeerStreams(t, 1)
-
-	require.Contains(t, errOut, "resuming the full hub event comparison after "+late[2].EventID)
-	require.Contains(t, errOut, "late-event sweep: compared 0 hub event ids in 1 pages",
-		"the resumed diff lists only the ids after the saved position")
-	require.Contains(t, out, "1 late events recovered")
-	require.Equal(t, f.peerMeta(t, "meta.sync.last_sweep_at"), started.UTC().Format(time.RFC3339Nano),
-		"the next window is measured from the first pull's start")
+	require.Empty(t, f.stagedOnPeer(t))
+	recorded := f.peerLastSweep(t)
+	requireWithin(t, recorded, before, after)
 	for _, key := range []string{"meta.sync.sweep_after_id",
 		"meta.sync.sweep_after_created_at", "meta.sync.sweep_started_at"} {
 		require.Equalf(t, "", f.peerMeta(t, key), "%s is cleared on completion", key)
 	}
-	require.Empty(t, f.stagedOnPeer(t))
 	created, err := app.store.GetNode(ctx, "TEST-2")
 	require.NoError(t, err)
-	require.Equal(t, desc, created.Description)
+	require.Equal(t, "B's node", created.Title)
 }
 
 // stagedOnPeer returns the event ids staged in the peer's sweep table.
@@ -571,6 +556,7 @@ func TestRunSyncClone_ResetsLateEventSweepState(t *testing.T) {
 	_, err := app.store.WriteDB().ExecContext(ctx,
 		`INSERT INTO sync_sweep_pending (event_id) VALUES ('stale-staged-id')`)
 	require.NoError(t, err)
+	quarantineN(t, 1)
 
 	var stdout, stderr bytes.Buffer
 	require.NoError(t, runSyncClone(ctx, &stdout, &stderr,
@@ -585,15 +571,17 @@ func TestRunSyncClone_ResetsLateEventSweepState(t *testing.T) {
 	var staged int
 	require.NoError(t, app.store.QueryRow(ctx, `SELECT COUNT(*) FROM sync_sweep_pending`).Scan(&staged))
 	require.Zero(t, staged, "clone clears the staged ids")
+	require.Empty(t, quarantined(t), "clone clears the quarantine (MTIX-95.11): it rebuilds the store from the hub")
 }
 
-// TestRunSyncPull_SweepApplyFails_ReturnsErrorKeepsLastSweep: when a
-// recovered event cannot be applied, the pull fails with the late-event
-// sweep error, counts a sync error (meta.sync.consecutive_errors) and
-// leaves meta.sync.last_sweep_at as it was, so the next pull retries the
-// same window. The late event's hub payload is rewritten to name a field
-// that apply rejects; the test hub is a throwaway database.
-func TestRunSyncPull_SweepApplyFails_ReturnsErrorKeepsLastSweep(t *testing.T) {
+// TestRunSyncPull_SweepEventFailsApply_QuarantinedPullSucceeds: when a
+// recovered event cannot be applied, it is quarantined (MTIX-95.11) and the
+// pull succeeds: no sync error is counted (meta.sync.consecutive_errors),
+// meta.sync.last_sweep_at advances, and the event is not applied. The late
+// event's hub payload is rewritten to name a field that apply rejects; the
+// test hub is a throwaway database. Before MTIX-95.11 the pull failed with
+// the late-event sweep error on every attempt.
+func TestRunSyncPull_SweepEventFailsApply_QuarantinedPullSucceeds(t *testing.T) {
 	f := newSweepFixture(t)
 	ctx := context.Background()
 	f.seedSharedNode(t)
@@ -615,14 +603,14 @@ func TestRunSyncPull_SweepApplyFails_ReturnsErrorKeepsLastSweep(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err = f.runPeerPull(&stdout, &stderr, 100)
 
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "mtix sync late-event sweep:")
-	require.Contains(t, err.Error(), late[0].EventID)
-	require.Equal(t, "1", f.peerMeta(t, "meta.sync.consecutive_errors"))
-	require.Equal(t, lastSweep, f.peerMeta(t, "meta.sync.last_sweep_at"),
-		"a failed sweep must not advance its window")
+	require.NoError(t, err, stderr.String())
+	require.Equal(t, "0", f.peerMeta(t, "meta.sync.consecutive_errors"))
+	require.NotEqual(t, lastSweep, f.peerMeta(t, "meta.sync.last_sweep_at"),
+		"the sweep completed and moved its window")
 	require.False(t, f.appliedOnPeer(t, late[0].EventID))
-	require.NotContains(t, stdout.String(), "pull complete")
+	require.Equal(t, "sweep", quarantined(t)[late[0].EventID].Source)
+	require.Contains(t, stdout.String(), "pull complete")
+	require.Contains(t, stdout.String(), "quarantine: 1 pulled events held")
 }
 
 // requireWithin asserts lo <= got <= hi.

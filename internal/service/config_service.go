@@ -15,7 +15,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
-// validConfigKeys lists all 29 allowed config keys per FR-11.2.
+// validConfigKeys lists all 30 allowed config keys per FR-11.2.
 var validConfigKeys = map[string]bool{
 	"prefix":                     true,
 	"author_id":                  true,
@@ -31,6 +31,7 @@ var validConfigKeys = map[string]bool{
 	"sync.enabled":               true,
 	"sync.endpoint":              true,
 	"sync.team_id":               true,
+	"sync.max_lamport_jump":      true,
 	"sync.auto_sync":             true,
 	"sync.interval":              true,
 	"agent.heartbeat_interval":   true,
@@ -60,7 +61,7 @@ var serverRestartKeys = map[string]bool{
 	"logging.level":  true,
 }
 
-// configDefaults contains default values for all 29 keys per FR-11.2.
+// configDefaults contains default values for all 30 keys per FR-11.2.
 var configDefaults = map[string]string{
 	"prefix":                     "PROJ",
 	"author_id":                  "",
@@ -76,6 +77,7 @@ var configDefaults = map[string]string{
 	"sync.enabled":               "false",
 	"sync.endpoint":              "",
 	"sync.team_id":               "",
+	"sync.max_lamport_jump":      maxLamportJumpDefault,
 	"sync.auto_sync":             "true",
 	"sync.interval":              "30s",
 	"agent.heartbeat_interval":   "60s",
@@ -144,7 +146,8 @@ func (cs *ConfigService) Get(key string) (string, error) {
 // Set writes a config value for the given key.
 // Returns ErrInvalidConfigKey if the key is not recognized, and
 // ErrInvalidInput for a sync.auto_sync value that is neither true nor false
-// (MTIX-95.31.2); nothing is written then.
+// (MTIX-95.31.2) or a sync.max_lamport_jump value that is not a positive
+// integer (MTIX-95.11); nothing is written then.
 // Returns a warning string if the key requires server restart.
 func (cs *ConfigService) Set(key, value string) (string, error) {
 	if !validConfigKeys[key] {
@@ -157,6 +160,9 @@ func (cs *ConfigService) Set(key, value string) (string, error) {
 		if _, err := parseAutoSync(value); err != nil {
 			return "", err
 		}
+	}
+	if err := validateMaxLamportJump(key, value); err != nil {
+		return "", err
 	}
 
 	cs.values[key] = value

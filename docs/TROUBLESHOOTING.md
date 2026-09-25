@@ -110,6 +110,7 @@ Each of them resolves the refusal. `mtix sync` shows the last refusal, its kind,
 - `sync.enabled`
 - `sync.endpoint`
 - `sync.interval`
+- `sync.max_lamport_jump`
 - `sync.team_id`
 - `ui.collapse_done`
 - `ui.default_depth`

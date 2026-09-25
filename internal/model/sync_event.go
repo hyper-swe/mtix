@@ -145,6 +145,13 @@ type SyncEvent struct {
 	SyncStatus        SyncStatus      `json:"sync_status,omitempty"`
 	CreatedAt         time.Time       `json:"created_at"`
 	RetainedUntil     *time.Time      `json:"retained_until,omitempty"`
+	// Malformed is set, only by the hub transport, on an event whose hub
+	// row did not fully decode (for example a vector_clock that is not a
+	// map of counters): it says what failed. Such an event is returned
+	// instead of failing the whole pull, and the pull's ingest checks
+	// quarantine it (MTIX-95.11). Empty for every well-formed event, so it
+	// never appears in their JSON.
+	Malformed string `json:"malformed,omitempty"`
 }
 
 // Validate enforces the FR-18.7 / SYNC-DESIGN §5.1 schema validation rules

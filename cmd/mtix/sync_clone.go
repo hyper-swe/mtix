@@ -54,6 +54,18 @@ func newSyncCloneCmd() *cobra.Command {
 		Long: `Clone all events from the BYO Postgres sync hub into the local SQLite.
 Refuses if the local store already has events unless --resume is set.
 
+Before it writes anything, clone runs on every hub event the checks that
+'mtix sync pull' runs (the Lamport clock: below 2^53 and at most
+sync.max_lamport_jump above the local clock; the FR-18.7 envelope caps;
+a hub row that decodes), and refuses the whole clone when any event
+fails, naming the event and the reason. Clone has no quarantine: on the
+fresh store, run 'mtix sync pull' instead, which quarantines such an
+event and applies the rest. 'mtix sync reconcile --discard-local --yes'
+deletes local tasks and unpushed changes; use it only on a store that
+already holds sync state, after 'mtix sync push', a pending count of 0 in
+'mtix sync status' and a human's go-ahead. Clone reads the hub's event
+log twice, once to check it and once to apply it.
+
 Use --resume to pick up an interrupted clone from the last batch
 checkpoint (.mtix data sentinel meta.sync.clone.checkpoint).`,
 		Args: cobra.MaximumNArgs(1),
@@ -116,15 +128,10 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 	if err != nil {
 		return wrapSyncErr(stderr, "checkpoint", err)
 	}
-	// A clone rebuilds the store from the hub: the next pull's late-event
-	// sweep diffs the full hub history from the first id (MTIX-95.5).
-	if resetErr := resetLateEventSweep(ctx, app.store); resetErr != nil {
-		return wrapSyncErr(stderr, "reset late-event sweep", resetErr)
-	}
-
-	pulled, batches, err := cloneLoop(ctx, stderr, pool, app.store, since, batchSize)
+	// Check every hub event before writing anything (MTIX-95.11), then clone.
+	pulled, batches, stage, err := checkThenClone(ctx, stderr, pool, since, batchSize)
 	if err != nil {
-		return wrapSyncErr(stderr, "clone loop", err)
+		return wrapSyncErr(stderr, stage, err)
 	}
 
 	// A clone bootstraps a store with HISTORY: initialize the hook scan floor
@@ -143,7 +150,7 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 // number of events applied and batches consumed. Updates the
 // checkpoint sentinel after each batch so --resume can pick up.
 func cloneLoop(ctx context.Context, stderr io.Writer,
-	pool *transport.Pool, store *sqlite.Store, since int64, batchSize int,
+	pool cursorPuller, store *sqlite.Store, since int64, batchSize int,
 ) (int, int, error) {
 	totalPulled := 0
 	batches := 0
@@ -155,7 +162,8 @@ func cloneLoop(ctx context.Context, stderr io.Writer,
 		if len(events) == 0 {
 			break
 		}
-		if err := applyBatch(ctx, store, events); err != nil {
+		// The check before the clone already warned about its events.
+		if err := applyBatch(ctx, newPullIngest(io.Discard), store, events); err != nil {
 			return totalPulled, batches, fmt.Errorf("apply batch %d: %w", batches+1, err)
 		}
 		// Advance the since cursor to the highest lamport in the batch.
@@ -181,10 +189,23 @@ func cloneLoop(ctx context.Context, stderr io.Writer,
 // applyBatch wraps IdempotentApply for every event in the batch
 // inside a single tx for performance. A failure on any event rolls
 // back the entire batch — the caller's --resume picks up from the
-// last successful checkpoint.
-func applyBatch(ctx context.Context, store *sqlite.Store, events []*model.SyncEvent) error {
+// last successful checkpoint. Each event first gets the pull's checks
+// against the local clock (checkPulledEvent, MTIX-95.11): the clone checked
+// every event before it began (preflightClone), so this refuses only an
+// event pushed to the hub since, with an error wrapping errCloneRefused.
+func applyBatch(ctx context.Context, in pullIngest, store *sqlite.Store, events []*model.SyncEvent) error {
+	if err := requireEvents(events); err != nil {
+		return err
+	}
 	return store.WithTx(ctx, func(tx *sql.Tx) error {
 		for _, e := range events {
+			local, err := sqlite.LocalLamport(ctx, tx)
+			if err != nil {
+				return fmt.Errorf("check %s: %w", e.EventID, err)
+			}
+			if refused := checkPulledEvent(in, e, local); refused != nil {
+				return cloneRefusal(e, refused, true)
+			}
 			if err := sqlite.IdempotentApply(ctx, tx, e); err != nil {
 				return fmt.Errorf("apply %s: %w", e.EventID, err)
 			}

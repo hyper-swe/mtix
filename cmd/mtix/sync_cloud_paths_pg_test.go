@@ -229,7 +229,7 @@ func pullBeforeReset(t *testing.T, pool *transport.Pool) {
 	t.Helper()
 	ctx := context.Background()
 	var stderr bytes.Buffer
-	pulled, _, err := pullLoop(ctx, &stderr, pool, app.store, 0, pullDefaultBatchSize)
+	pulled, _, err := pullLoop(ctx, testIngest(&stderr), pool, app.store, 0, pullDefaultBatchSize)
 	require.NoError(t, err, "pull before reset: %s", stderr.String())
 	require.Positive(t, pulled, "precondition: the hub returned this replica's pushed events")
 	require.Equal(t, pulled, appliedEventTotal(t),

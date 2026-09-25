@@ -264,11 +264,11 @@ func TestConfig_SessionTimeout_WithCustomValue(t *testing.T) {
 	assert.Equal(t, 8*time.Hour, timeout)
 }
 
-// TestConfig_ValidConfigKeys_Returns29Keys verifies FR-13.2 documentation introspection.
-func TestConfig_ValidConfigKeys_Returns29Keys(t *testing.T) {
+// TestConfig_ValidConfigKeys_Returns30Keys verifies FR-13.2 documentation introspection.
+func TestConfig_ValidConfigKeys_Returns30Keys(t *testing.T) {
 	keys := service.ValidConfigKeys()
 
-	assert.Len(t, keys, 29, "should return exactly 29 valid config keys")
+	assert.Len(t, keys, 30, "should return exactly 30 valid config keys")
 
 	// Verify sorted order.
 	for i := 1; i < len(keys); i++ {

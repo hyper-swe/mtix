@@ -1513,10 +1513,11 @@ the ones your machine does not have; when the listing is done it
 fetches them and applies them the usual way, oldest first by the sync
 clock, so a task's creation applies before its edits. If the regular
 fetch meets an edit of a task whose creation it has not received (the
-creation was pushed late with an older clock), pull runs the sweep at
-once, which brings the creation, and retries the regular fetch one
-time. A recovered claim or status change that is older than the task's
-current one changes nothing; it is only recorded as received.
+creation was pushed late with an older clock), the edit is quarantined
+(see [Quarantined events](#quarantined-events)), the sweep brings the
+creation, and the same pull then applies the edit. A recovered claim or
+status change that is older than the task's current one changes
+nothing; it is only recorded as received.
 
 - **First pull after upgrading.** It compares the full hub event history
   once and prints `late-event sweep (first run, full hub history): N
@@ -1540,8 +1541,8 @@ current one changes nothing; it is only recorded as received.
 - **Cost.** In the common case (nothing missing, and at most `--limit`
   changes since the last sweep) one extra hub query per pull, and only
   during a pull. A larger window adds a query per further `--limit`
-  changes, recovered changes add a fetch per `--limit` of them, and a
-  retried fetch adds one pass. The sweep adds no timer, so an idle hub
+  changes, and recovered changes add a fetch per `--limit` of them. The
+  sweep adds no timer, so an idle hub
   that scales to zero stays idle (a daemon that pulls on an interval
   sweeps on each of its pulls).
 - **Hub owner, after upgrading.** Run `mtix sync init` once with the
@@ -1550,6 +1551,86 @@ current one changes nothing; it is only recorded as received.
   before, but each page the sweep lists scans the hub's whole event
   table: once per pull for the usual window, and once per page of the
   one-time full comparison, spread across pulls.
+
+### Quarantined events
+
+`mtix sync pull` checks every event it receives before applying it, the
+same way the hub checks an event when it is pushed:
+
+- **Size and shape.** A payload of at most 64 KB and at most 10 levels
+  of nesting, clocks below 2^53, at most 100 entries in the vector
+  clock, and well-formed author, machine and project ids.
+- **Clock jump.** The event's Lamport clock may be at most
+  `sync.max_lamport_jump` above your local clock (default 4294967296,
+  that is 2^32; far above any real team's history). One extreme event
+  would otherwise push your clock so high that the hub refuses every
+  change you make afterwards.
+- **Future timestamps only warn.** An event stamped more than 24 hours
+  ahead of your machine's clock is applied, with a `WARN` line on
+  stderr; check your machine's clock if you see it.
+
+Each event is applied on its own. An event that fails a check, or whose
+apply fails (for example a dependency whose target task has not arrived
+yet), is rolled back and kept in the local **quarantine** (the table
+`sync_quarantine` in `.mtix/data/mtix.db`) instead of failing the pull;
+the pull applies the other events and moves on. The same goes for a hub
+row that does not decode. A quarantined event is never lost and never
+changes your clock, and an event refused for its clock never moves the
+pull's position either, so later changes keep arriving.
+
+- **Retried on every pull.** Each pull retries the quarantine first,
+  before it contacts the hub (so this works offline too), and again at
+  its end when it applied events. An event whose missing task or
+  dependency target has arrived applies then and leaves the quarantine,
+  and so does one your store has already applied (for example after
+  `mtix sync clone`). Retries are local: they add no hub query, but a pull
+  downloads an event refused for its clock again each time.
+- **See it.** Pull prints each newly quarantined event on stderr and, at
+  the end, `quarantine: N pulled events held, not applied`. `mtix sync
+  status` shows `quarantined events` (`quarantined_events` in `--json`).
+  `mtix sync doctor` fails its `quarantined events` check while any
+  remain.
+- **Inspect it** (read-only; it changes nothing and does not contact the
+  hub):
+
+  ```bash
+  mtix sync quarantine list          # event id, node, op, attempts, first seen, last attempt, reason
+  mtix sync quarantine list --json   # the same, plus the Lamport clock, source and mtix version
+  ```
+
+  `reason` is why the event was first quarantined; `attempts` counts
+  the failed tries; `source` (in `--json`) is `pull` (the regular fetch)
+  or `sweep` (the late-event sweep).
+- **What to do.** Run `mtix sync pull` again first. An event waiting for
+  a task or dependency target that has not been pushed yet applies once
+  its teammate pushes it. An event that fails the size, shape or clock
+  checks will not apply by itself: report it to whoever runs the hub.
+  Raise the bound, `mtix config set sync.max_lamport_jump <positive
+  integer>`, only if you know the hub's clocks are legitimately that far
+  ahead. Do not delete quarantine rows or edit the database by hand.
+- **Rebuilding from the hub deletes local work.** `mtix sync reconcile
+  --discard-local --yes` deletes your local tasks and unpushed changes,
+  and empties the quarantine with the rest of the local sync state. Its
+  dry run (without `--yes`) shows only the node count, not what would be
+  lost. Before `--yes`, run `mtix sync push`, check that `mtix sync
+  status` shows `pending` 0, and make sure a human has agreed. Then run
+  it, and `mtix sync pull`, which quarantines again any event that still
+  fails.
+- **A quarantined copy of your own event.** If the hub row of an event
+  you pushed was changed after the push, pull quarantines that copy and
+  it does not clear by itself, even after the hub row is repaired: every
+  retry checks the stored copy again. Recover in this order: whoever
+  runs the hub repairs the hub row first; run `mtix sync push` and check
+  that `pending` is 0; then, with a human's go-ahead, `mtix sync
+  reconcile --discard-local --yes` and `mtix sync pull`. Discarding
+  before the hub row is repaired drops your own true copy of the event,
+  which then comes back only as a quarantined hub event.
+- **Clone refuses such events.** `mtix sync clone` has no quarantine: it
+  runs the same checks on every hub event before it writes anything, and
+  refuses the whole clone, naming the event and the reason, when any
+  event fails. On the fresh store, run `mtix sync pull` alone: it
+  quarantines the event and applies the rest. Because of the check, a
+  clone reads the hub's event log twice.
 
 ### Daemon mode (for durability)
 
@@ -1801,9 +1882,9 @@ for the full tradeoff.
 ### Hub health checks
 
 ```bash
-mtix sync doctor             # 5 health checks: PG reachable, schema current,
+mtix sync doctor             # 6 health checks: PG reachable, schema current,
                              #   queue draining, no orphan applied,
-                             #   secrets file mode
+                             #   quarantined events, secrets file mode
 ```
 
 Exit code 0 on all-pass; exit code 2 if any check fails (operators
@@ -1968,7 +2049,8 @@ change the node's status with the normal commands instead.
 | `ErrSyncDivergentHistory` on `mtix sync init` | Hub already has a different lineage for this prefix | Run `mtix sync clone` to join, OR `mtix sync reconcile --import-as PARENT-ID` |
 | `ErrSyncQueueFull` from `mtix create` / `update` | Local pending queue at the cap | `mtix sync push --force`, or raise `sync.max_queue_size` |
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
-| A teammate's change is missing after `mtix sync pull` | They have not pushed yet, or the late-event sweep failed (the pull reports the error) | Ask them to run `mtix sync push`, then pull again; `mtix sync status` shows `last sweep` |
+| A teammate's change is missing after `mtix sync pull` | They have not pushed yet, the late-event sweep failed (the pull reports the error), or the change is quarantined | Ask them to run `mtix sync push`, then pull again; `mtix sync status` shows `last sweep` and `quarantined events` |
+| `mtix sync doctor` fails `quarantined events` | Pulled events failed their checks or their apply and are held, not applied | Run `mtix sync pull` (it retries them); if they remain, list them with `mtix sync quarantine list` (see [Quarantined events](#quarantined-events)) and report the reasons to whoever runs the hub |
 | A node shows an older state than its history after a pull on a client older than 0.5.4 (for example `in_progress` after `mtix done`) | That pull replayed an older event of this machine | Upgrade, run `mtix sync pull`, then `mtix sync repair --status` and review the list; run `mtix sync pull` again, then `mtix sync repair --status --apply` and `mtix sync push`; a flagged node needs review and `--force` (see above). Pulling first matters: a repair made on a stale log can revert a teammate's newer change on every machine |
 
 ### MCP integration

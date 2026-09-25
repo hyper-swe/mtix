@@ -59,3 +59,7 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 ## Error Handling
 
 If you encounter an error, check [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common solutions. If a command prints `mtix: auto-import of .mtix/tasks.json refused`, nothing was imported: never run the `--mode replace` import it names just to silence it, because that deletes the comments, activity and tasks it lists; follow the "Auto-import of .mtix/tasks.json Refused" procedure in [AGENTS.md](AGENTS.md). If blocked, record the reason with `mtix_comment`, then call `mtix_defer` (with an optional `until` wake time) rather than abandoning the task. Always document anomalies with `mtix_comment`.
+
+If `mtix sync doctor` fails its `quarantined events` check, `mtix sync pull` has held pulled events it could not validate or apply; every pull retries them. Run `mtix sync pull` again; if events remain, list them with `mtix sync quarantine list` (read-only) and give the operator the event ids and reasons. **Never** delete quarantine rows, edit the local database, or raise `sync.max_lamport_jump` without a human's confirmation.
+
+`mtix sync clone` refuses, naming the event and writing nothing, while the hub holds an event that fails these checks: on the fresh store, recover with `mtix sync pull` alone (it quarantines the event), never any other way. **Never** run `mtix sync reconcile --discard-local --yes` on your own: it deletes local tasks and unpushed changes; it needs `mtix sync push`, `mtix sync status` showing pending 0, and a human's go-ahead first.

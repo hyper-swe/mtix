@@ -4,7 +4,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -34,7 +33,7 @@ func runDelete(id string, cascade bool) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.nodeSvc.DeleteNode(ctx, id, cascade, "cli"); err != nil {
 		return err
 	}
@@ -65,7 +64,7 @@ func runUndelete(id string) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.nodeSvc.UndeleteNode(ctx, id); err != nil {
 		return err
 	}

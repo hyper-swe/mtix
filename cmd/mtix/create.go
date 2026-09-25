@@ -121,7 +121,7 @@ func runCreateWithProject(title, under, nodeType string, priority int,
 		return fmt.Errorf("not in an mtix project (run 'mtix init' first)")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 
 	project, err := resolveCreateProject(ctx, under, projectFlag, yes)
 	if err != nil {

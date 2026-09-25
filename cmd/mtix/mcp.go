@@ -117,6 +117,9 @@ func registerMCPTools(reg *mcp.ToolRegistry) string {
 	mcp.RegisterAnalyticsTools(reg, app.store, app.agentSvc, app.configSvc)
 	mcp.RegisterDocsTools(reg)
 	mcp.RegisterSyncWorkflowTool(reg, app.store.ReadDB(), app.mtixDir)
+	// MTIX-95.12: warn in the tool result when a mutation's sync event is
+	// over the wire cap and a hub is configured.
+	reg.SetPayloadWarnings(func() bool { return hubConfigured(app.mtixDir) })
 	return primary
 }
 

@@ -4,7 +4,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -38,7 +37,7 @@ func runUnblock(id string) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project (run 'mtix init' first)")
 	}
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.store.RefreshBlocked(ctx, id); err != nil {
 		return err
 	}

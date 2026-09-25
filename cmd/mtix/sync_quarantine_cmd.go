@@ -18,15 +18,20 @@ import (
 
 // newSyncQuarantineCmd creates `mtix sync quarantine`, the read-only view of
 // the pulled events `mtix sync pull` holds in the local quarantine
-// (MTIX-95.11).
+// (MTIX-95.11) and of the own events `mtix sync push` holds (MTIX-95.12).
 func newSyncQuarantineCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "quarantine",
-		Short: "Inspect pulled events held in the local quarantine",
-		Long: `Inspect the pulled events that 'mtix sync pull' holds in the local
-quarantine: events that failed the pull's checks (the FR-18.7 caps, the
-sync.max_lamport_jump bound) or their apply. They are not applied; every
-pull retries them.`,
+		Short: "Inspect events held in the local quarantine",
+		Long: `Inspect the events held in the local quarantine: pulled events that
+'mtix sync pull' could not take (they failed the pull's checks, the FR-18.7
+caps and the sync.max_lamport_jump bound, or their apply), and events of
+this replica that 'mtix sync push' holds because the hub would refuse them
+(such as a field over the 64 KB sync limit). Pulled events are not applied;
+every pull retries them. Held push events are not pushed. A hold for the
+clock is released automatically once the event's stamp is within 24 h of
+this machine's clock, together with the events of its task's subtree
+that the hub would accept; every other push hold stays.`,
 		Args: cobra.NoArgs,
 	}
 	cmd.AddCommand(newSyncQuarantineListCmd())
@@ -37,16 +42,22 @@ pull retries them.`,
 func newSyncQuarantineListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List quarantined pulled events (read-only)",
-		Long: `List the pulled events held in the local quarantine, in the order the
-pull retries them (Lamport clock, then event id): event id, node, op,
-failed attempts, first seen, last attempt and the reason the event was
-quarantined. --json adds the Lamport clock, the pass that quarantined the
-event (pull or sweep) and the mtix version that did.
+		Short: "List quarantined and held events (read-only)",
+		Long: `List the events held in the local quarantine, in Lamport clock order,
+then event id: event id, node, op, failed attempts, first seen, last
+attempt and the reason the event was quarantined. --json adds the Lamport
+clock, the source (pull or sweep for a pulled event, push for an event
+push holds) and the mtix version that recorded it.
 
 Read-only and local: it never retries, removes or changes an event and
 does not contact the hub. 'mtix sync pull' retries every quarantined
-event, first before it contacts the hub.`,
+pulled event, first before it contacts the hub. Push releases a held push
+event automatically only in two cases: a reason that starts with
+"temporary: clock:" once the event's stamp is within 24 h of this
+machine's clock, and one that starts with "depends on held create of"
+once no creation above it (for a link, made before it) is held and the
+hub would accept it (if not, it stays held under its own reason). Every other hold stays. 'mtix sync
+doctor' names the fix for each held push event.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSyncQuarantineList(cmd.Context(), cmd.OutOrStdout())

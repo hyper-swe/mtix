@@ -82,7 +82,7 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			`DELETE FROM sync_conflicts`,
 			`DELETE FROM applied_events`,
 			`DELETE FROM sync_sweep_pending`,
-			`DELETE FROM sync_quarantine`, // pulled again from the hub (MTIX-95.11)
+			`DELETE FROM sync_quarantine`, // pulled rows: pulled again (MTIX-95.11); push holds: their events go below (MTIX-95.12)
 			`DELETE FROM sync_events`,
 			`DELETE FROM dependencies`,
 			`DELETE FROM nodes`,

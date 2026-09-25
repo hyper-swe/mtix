@@ -1665,6 +1665,120 @@ pull's position either, so later changes keep arriving.
   quarantines the event and applies the rest. Because of the check, a
   clone reads the hub's event log twice.
 
+### Held push events
+
+The hub accepts an event payload of at most 64 KB (65536 bytes). Local
+fields can be larger: a new task's prompt may be 100 KB and its
+description 50 KB, and acceptance criteria, comments and later edits of
+a description or prompt have no local size limit. A change whose sync
+event is over the limit is saved locally as usual, but the hub would
+refuse it.
+
+- **A warning when you make the change.** With a hub configured
+  (`MTIX_SYNC_DSN` or `.mtix/secrets`), a CLI command prints one line on
+  stderr that names the field and the limit, for example:
+
+  ```text
+  WARN: PROJ-12: the prompt field makes this set_prompt sync event 70123 bytes, over the 65536-byte sync limit; saved locally, but sync push will hold it and not send it (shorten or split prompt; see mtix sync doctor)
+  ```
+
+  An MCP tool call adds the same line to its result as an extra text
+  block. The change itself succeeds. Changes made through the web UI,
+  the REST API or gRPC (`mtix serve`) are not warned about; push still
+  holds their events and doctor reports them. Imports (`mtix import`
+  and the automatic import of `.mtix/tasks.json`) write no sync events,
+  so nothing they write is pushed, held or warned about.
+- **Push holds that event and pushes the rest.** `mtix sync push` checks
+  each pending event with the hub's rules before it sends a batch. An
+  event the hub would refuse is **held**: it stays in the local queue as
+  pending and is recorded in the local `sync_quarantine` table with
+  source `push` and the reason, and it is never sent. The rest of the
+  batch is pushed, and later changes of other tasks keep pushing (but
+  not dependency links while a task creation is held; see below). Push
+  prints `push:
+  held event <id> ...` for each newly held event and `held: N events
+  not pushed ...` at the end. (Before 0.5.4, one such event failed
+  every push.) There are three kinds of hold; the reason starts with its
+  kind:
+  - **Permanent** (`too large: ...`, `refused: ...`): a payload over the
+    limit, or a broken nesting-depth, id or Lamport/vector-clock cap
+    rule. None of these changes, so the event stays held.
+  - **Temporary** (`temporary: clock: ...`): the event is stamped more
+    than 24 hours ahead of this machine's clock, usually because the
+    clock was wrong when the change was made. Every push checks it again
+    and releases it once it passes; it then pushes.
+  - **Dependent** (`depends on held create of <event id> (<task>)`):
+    while a task's creation is held, none of the changes of its subtree
+    are sent. Push holds every change of that task, the creation of its
+    child tasks at any depth and every change of those, including changes
+    made after the last push. It finds the task a change is about by the
+    task's internal id, not by its number, so a change made before the
+    task was renumbered (by `mtix import --mode merge --confirm` on this
+    machine, or by a renumber the hub asks for during a push) is still
+    held, and a change of another task that later takes one of its old
+    numbers is not. If `mtix gc` purges a deleted task of the subtree, a
+    change already held stays held, a change of a task whose own creation
+    is held is still found by its internal id, and any other change is
+    checked by the number it names. Known limit: a change made under a
+    number the task got by a renumber on this machine, which no push
+    checked before `mtix gc` purged the task, is not recognized. The
+    reason names the nearest held creation.
+  - **Dependent, for a link** (the reason ends `links made while a task
+    creation is held wait for it; this version names a link's target by
+    number`):
+    a dependency link or unlink names the task it points to by number
+    only, and this version keeps no record of the numbers a task had. So
+    while any task creation is held, every link or unlink made after it
+    is held too, whatever task it names, even a teammate's task that took
+    one of the held task's old numbers. The reason names the earliest
+    held creation, and the link pushes once no creation made before it
+    is held.
+
+  Once a clock hold on a task's creation clears, the creation and the
+  changes of its subtree go through the ordinary push, in the same run.
+  Push first checks each of those changes with the hub's rules: one the
+  hub would refuse stays held under its own reason, keeping when it was
+  first held and its attempt count, and if it is a child task's
+  creation, that child's subtree stays held with it. In the ordinary
+  push, a renumber by the hub is a known limit of this version: if a
+  teammate took the task's number while the creation was held, the hub
+  renumbers the creation, and the changes sent with it keep the old
+  number. A creation held permanently keeps its whole subtree held.
+- **See it.** `mtix sync status` shows `held push events`
+  (`held_push_events` in `--json`). Held events also stay in `pending`,
+  so `pending` does not reach 0 while any is held. `mtix sync doctor`
+  fails its `held push events` check and lists the first five held
+  events with node, op, the fix and the reason; its `queue draining`
+  check leaves held events out. `mtix sync quarantine list` lists them
+  together with quarantined pulled events; `--json` shows `"source":
+  "push"`.
+- **What to do** (doctor names the fix for each event):
+  - **A field edit over the limit:** shorten the field, or split the
+    content (for example into child tasks), and save it again. The edit
+    makes a new event that fits, and it pushes. The held event stays
+    held and listed, and teammates never receive the held version.
+  - **A held task creation:** stop editing that task and tell whoever
+    looks after your sync setup. Shortening a field afterwards does not
+    help: the creation itself must be sent, and this release has no
+    automatic re-send. The task, its later changes and its subtree stay
+    local.
+  - **A dependent:** nothing to do for the event itself; it resolves
+    with the held creation it depends on.
+  - **A held link:** nothing to do for the link itself; it pushes once
+    no task creation made before it is held. Handle the held creation
+    its reason names.
+  - **A clock hold:** check this machine's clock. The event pushes once
+    its stamp is within 24 hours of the clock; if it is a task's
+    creation, the changes of its subtree push with it.
+  - On a synced project, keep fields under the limit. Permanent holds
+    and their dependents stay listed, and doctor keeps failing its
+    check; this release has no command to release or discard one held
+    event.
+- Do not delete rows from `sync_quarantine` or edit the database by
+  hand. `mtix sync reconcile --discard-local --yes` removes held events
+  together with every other unpushed change; it is not a way to clear
+  one held event.
+
 ### Daemon mode (for durability)
 
 Un-pushed events on a lost machine are **not recoverable**. If your
@@ -2084,6 +2198,7 @@ change the node's status with the normal commands instead.
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
 | A teammate's change is missing after `mtix sync pull` | They have not pushed yet, the late-event sweep failed (the pull reports the error), or the change is quarantined | Ask them to run `mtix sync push`, then pull again; `mtix sync status` shows `last sweep` and `quarantined events` |
 | `mtix sync doctor` fails `quarantined events` | Pulled events failed their checks or their apply and are held, not applied | Run `mtix sync pull` (it retries them); if they remain, list them with `mtix sync quarantine list` (see [Quarantined events](#quarantined-events)) and report the reasons to whoever runs the hub |
+| A command prints `WARN: ... over the 65536-byte sync limit`, or `mtix sync doctor` fails `held push events` | Push holds events the hub would refuse (and the events of a held task creation's subtree, and links made while one is held), and pushes the rest | Follow the fix doctor names for each held event: shorten or split a field edit; escalate a held task creation, without editing it; check the clock for a clock hold (see [Held push events](#held-push-events)) |
 | A node shows an older state than its history after a pull on a client older than 0.5.4 (for example `in_progress` after `mtix done`) | That pull replayed an older event of this machine | Upgrade, run `mtix sync pull`, then `mtix sync repair --status` and review the list; run `mtix sync pull` again, then `mtix sync repair --status --apply` and `mtix sync push`; a flagged node needs review and `--force` (see above). Pulling first matters: a repair made on a stale log can revert a teammate's newer change on every machine |
 
 ### MCP integration

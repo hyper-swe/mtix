@@ -53,13 +53,16 @@ func newSyncBackupCmd() *cobra.Command {
 migrations create, with its data; the report lists the tables. pg_dump's
 own messages are shown with the DSN's password removed.
 
-The connection uses the settings the sync commands use: sslmode is
+The connection uses the TLS settings the sync commands use: sslmode is
 verify-full when the DSN names none, and a weaker sslmode needs
 --insecure-tls and is allowed only when every host is loopback or a local
 socket. pg_dump receives every host and port, the CA file (sslrootcert in
 the DSN, or MTIX_SYNC_SSLROOTCERT) and target_session_attrs through PG*
 environment variables; the DSN and its password are never on its command
-line. Client certificates (sslcert, sslkey) are not passed to pg_dump, so
+line. pg_dump does not receive the DSN's options, so it finds the tables
+through the role's default search_path: for a hub whose schema is named
+only in the DSN, first run ALTER ROLE <owner> SET search_path = <schema>,
+public. Client certificates (sslcert, sslkey) are not passed to pg_dump, so
 a hub that requires one cannot be backed up with this command yet.
 
 mtix creates the output file, readable and writable only by you (mode
@@ -240,7 +243,7 @@ type pgDumpConn struct {
 
 // pgDumpConnParams returns pg_dump's connection from the configuration
 // the sync transport approves for dsn (transport.ApproveDSN, FR-18.15),
-// so the backup connects with the settings sync connects with: sslmode
+// so the backup connects with the TLS settings sync connects with: sslmode
 // verify-full when the DSN names none, a weaker sslmode only with
 // --insecure-tls and only when every host is loopback or a local socket,
 // every host and port in dial order, the CA file and

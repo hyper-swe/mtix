@@ -84,9 +84,12 @@ mtix sync conflicts list [--all]          # unresolved conflicts (every row, mar
 mtix sync conflicts resolve <id> --action keep-local|keep-remote|both-renumbered|acknowledge
 ```
 
-The backup connects with the settings sync uses (`sslmode` `verify-full`
-when the DSN names none; a weaker one needs `--insecure-tls`, loopback or a
+The backup uses the TLS settings sync uses (`sslmode` `verify-full` when
+the DSN names none; a weaker one needs `--insecure-tls`, loopback or a
 local socket only; the CA from `sslrootcert` or `MTIX_SYNC_SSLROOTCERT`).
+`pg_dump` does not receive the DSN's `options`: for a hub whose schema is
+named only there, first `ALTER ROLE <owner> SET search_path = <schema>,
+public`.
 Client certificates (`sslcert`, `sslkey`) are not passed to `pg_dump`, so a
 hub that requires one cannot be backed up with this command yet. A failed
 or interrupted (Ctrl-C, SIGTERM) backup leaves no file; an existing path is
@@ -104,7 +107,8 @@ reports errors for the triggers; their functions do not exist yet), then,
 after checking as that role that `SHOW search_path;` puts the tables'
 schema first (not a schema named after the role), `mtix sync init` with
 the DSN naming that role, then `mtix sync doctor`
-until `hub-triggers` passes (its `fix` names the table owner who runs it
+(and `SELECT count(*) FROM sync_events;` through the DSN's role and
+search_path must match the dump's `COPY <n>`) until `hub-triggers` passes (its `fix` names the table owner who runs it
 and, in order, `mtix sync init` for a missing trigger or one bound to
 another function, and the `ALTER TABLE ... ENABLE TRIGGER` statement for
 one not enabled, printed on a `fix:` line without `--json`; functions are

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/store/postgres/migrations"
@@ -203,7 +204,7 @@ func TestHarden_SchemaNamedAfterRoleFirst_OnlyTheGuardMigrationIsRefused(t *test
 	out, err = f.harden(owner, "--apply")
 	require.ErrorIs(t, err, transport.ErrSearchPathSchema, out)
 	require.Contains(t, err.Error(), "the sync tables are in schema public, but the first schema on the search_path is "+owner)
-	require.Contains(t, err.Error(), `"ALTER ROLE <owner> SET search_path = public"`, "public alone, not public, public")
+	require.Contains(t, err.Error(), "ALTER ROLE <owner> SET search_path = public;", "public alone, not public, public")
 	require.Empty(t, f.strings(inOwnSchema, owner), "the refused --apply creates nothing")
 
 	t.Setenv(transport.EnvDSN, f.dsnAs(owner))
@@ -242,6 +243,12 @@ func TestInit_SearchPathReachesAnotherHub_DecidedByWhatADumpCarries(t *testing.T
 			`CREATE TABLE public.sync_events (event_id text PRIMARY KEY, lamport_clock bigint NOT NULL)`}, false},
 		{"mtix's sync_events without sync_projects", []string{
 			`CREATE TABLE public.sync_events (` + mtixEventColumns + `)`}, false},
+		{"application tables on the path, a hub off it", []string{
+			`CREATE TABLE public.sync_projects (id integer PRIMARY KEY, note text)`,
+			`CREATE TABLE public.sync_events (id integer PRIMARY KEY, note text)`,
+			`CREATE SCHEMA hub_off_path`,
+			`CREATE TABLE hub_off_path.sync_projects (project_prefix text PRIMARY KEY, first_event_hash text NOT NULL)`,
+			`CREATE TABLE hub_off_path.sync_events (` + mtixEventColumns + `)`}, false},
 		{"a hub as a dump leaves it: the tables, no function", []string{
 			`CREATE TABLE public.sync_projects (project_prefix text PRIMARY KEY, first_event_hash text NOT NULL)`,
 			`CREATE TABLE public.sync_events (` + mtixEventColumns + `)`}, true},
@@ -282,49 +289,133 @@ func TestInit_SearchPathReachesAnotherHub_DecidedByWhatADumpCarries(t *testing.T
 // TestInit_RestoredBackupWithRoleSchemaFirst_Refuses follows the restore
 // runbook into a database where a schema named after the owner role exists,
 // so the default search_path ("$user", public) puts it first: a real mtix
-// sync backup dump, restored with psql into public, carries no mtix
-// function, and init still refuses and creates nothing in the role's
-// schema (MTIX-95.7).
+// sync backup dump, restored with psql into public by the owner role or by
+// the superuser (then the owner holds no privilege on the tables), carries
+// no mtix function, and init still refuses and creates nothing in the
+// role's schema (MTIX-95.7).
 func TestInit_RestoredBackupWithRoleSchemaFirst_Refuses(t *testing.T) {
-	initTestApp(t)
-	src := newHardenFixture(t)
-	requirePgDumpForServer(t, src.dbURL.String())
-	psql := requirePsql(t)
-	t.Setenv(transport.EnvDSN, src.dbURL.String())
-	var stdout, stderr bytes.Buffer
-	require.NoError(t, runSyncInit(context.Background(), &stdout, &stderr, nil, cloudOpts), stderr.String())
-	dump := filepath.Join(t.TempDir(), "hub.sql")
-	_, errText, err := runBackupCLI(t, src.dbURL.String(), dump, "--insecure-tls")
-	require.NoError(t, err, errText)
+	for _, asOwner := range []bool{true, false} {
+		t.Run(map[bool]string{true: "restored by the owner", false: "restored by the superuser"}[asOwner], func(t *testing.T) {
+			initTestApp(t)
+			src := newHardenFixture(t)
+			requirePgDumpForServer(t, src.dbURL.String())
+			psql := requirePsql(t)
+			t.Setenv(transport.EnvDSN, src.dbURL.String())
+			var stdout, stderr bytes.Buffer
+			require.NoError(t, runSyncInit(context.Background(), &stdout, &stderr, nil, cloudOpts), stderr.String())
+			dump := filepath.Join(t.TempDir(), "hub.sql")
+			_, errText, err := runBackupCLI(t, src.dbURL.String(), dump, "--insecure-tls")
+			require.NoError(t, err, errText)
 
-	dst := newHardenFixture(t)
-	owner := dst.ownerRole()
-	dst.ddl("CREATE SCHEMA %I AUTHORIZATION %I", owner, owner)
-	env := append(psqlEnv(t, dst.dbURL.String()), "PGOPTIONS=-c role="+owner)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, psql, "-X", "-q", "-f", dump) //nolint:gosec // psql from LookPath, dump from t.TempDir()
-	cmd.Env = env
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-	require.Equal(t, []string{"sync_events", "sync_projects"}, dst.strings(`SELECT c.relname::text FROM pg_catalog.pg_class c
-		JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-		WHERE n.nspname = 'public' AND c.relname IN ('sync_events', 'sync_projects') ORDER BY 1`), "the dump is restored into public")
-	require.Empty(t, dst.strings(`SELECT p.proname::text FROM pg_catalog.pg_proc p
-		JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public'
-		AND p.proname IN ('append_only_no_truncate', 'audit_log_immutable')`), "the dump carries no mtix function")
+			dst := newHardenFixture(t)
+			owner := dst.ownerRole()
+			dst.ddl("CREATE SCHEMA %I AUTHORIZATION %I", owner, owner)
+			env := psqlEnv(t, dst.dbURL.String())
+			if asOwner {
+				env = append(env, "PGOPTIONS=-c role="+owner)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, psql, "-X", "-q", "-f", dump) //nolint:gosec // psql from LookPath, dump from t.TempDir()
+			cmd.Env = env
+			out, err := cmd.CombinedOutput()
+			require.NoError(t, err, string(out))
+			require.Equal(t, []string{"sync_events", "sync_projects"}, dst.strings(`SELECT c.relname::text FROM pg_catalog.pg_class c
+				JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+				WHERE n.nspname = 'public' AND c.relname IN ('sync_events', 'sync_projects') ORDER BY 1`), "the dump is restored into public")
+			require.Empty(t, dst.strings(`SELECT p.proname::text FROM pg_catalog.pg_proc p
+				JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'public'
+				AND p.proname IN ('append_only_no_truncate', 'audit_log_immutable')`), "the dump carries no mtix function")
+			wantPrivilege := map[bool]string{true: "true", false: "false"}[asOwner]
+			require.Equal(t, []string{wantPrivilege},
+				dst.strings(`SELECT pg_catalog.has_table_privilege($1, 'public.sync_events', 'SELECT')::text`, owner))
 
-	t.Setenv(transport.EnvDSN, dst.dsnAs(owner))
-	stdout.Reset()
-	stderr.Reset()
-	err = runSyncInit(context.Background(), &stdout, &stderr, nil, cloudOpts)
-	require.Error(t, err, "init refuses: the role's own schema comes first")
-	require.Contains(t, err.Error(), "the sync tables are in schema public, but the first schema on the search_path is "+owner)
-	require.Empty(t, dst.strings(`SELECT c.relname::text FROM pg_catalog.pg_class c
+			t.Setenv(transport.EnvDSN, dst.dsnAs(owner))
+			stdout.Reset()
+			stderr.Reset()
+			err = runSyncInit(context.Background(), &stdout, &stderr, nil, cloudOpts)
+			require.Error(t, err, "init refuses: the role's own schema comes first")
+			require.Contains(t, err.Error(), "the sync tables are in schema public, but the first schema on the search_path is "+owner)
+			requireNothingIn(t, dst, owner)
+		})
+	}
+}
+
+// requireNothingIn fails when schema holds a table or function.
+func requireNothingIn(t *testing.T, f *hardenFixture, schema string) {
+	t.Helper()
+	require.Empty(t, f.strings(`SELECT c.relname::text FROM pg_catalog.pg_class c
 		JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1
 		UNION ALL SELECT p.proname::text FROM pg_catalog.pg_proc p
-		JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = $1`, owner),
-		"init creates nothing in the role's schema")
+		JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = $1`, schema),
+		"nothing is created in %s", schema)
+}
+
+// TestInit_RoleWithoutPrivilegesOnTheHub_Refuses: a live hub in public is
+// owned by one role; another role, with no privilege on the hub's tables
+// and a schema of its own that the default search_path puts first, runs
+// init. Reading the hub's catalog needs no privilege, so init refuses
+// instead of creating a private hub in that role's schema (MTIX-95.7).
+func TestInit_RoleWithoutPrivilegesOnTheHub_Refuses(t *testing.T) {
+	initTestApp(t)
+	f := newHardenFixture(t)
+	alice := f.ownerRole()
+	f.migrateAs(alice)
+	bob := f.role("bob")
+	f.ddl("CREATE SCHEMA %I AUTHORIZATION %I", bob, bob)
+	require.Equal(t, []string{"false"},
+		f.strings(`SELECT pg_catalog.has_table_privilege($1, 'public.sync_events', 'SELECT')::text`, bob))
+
+	t.Setenv(transport.EnvDSN, f.dsnAs(bob))
+	var stdout, stderr bytes.Buffer
+	err := runSyncInit(context.Background(), &stdout, &stderr, nil, cloudOpts)
+	require.Error(t, err, "init refuses: the role's own schema comes first")
+	require.Contains(t, err.Error(), "the sync tables are in schema public, but the first schema on the search_path is "+bob)
+	requireNothingIn(t, f, bob)
+}
+
+// TestInit_RefusalExamples_RunAsPrinted: for a hub in schema "Hub Data" and
+// another schema first, the refusal's ALTER ROLE and DSN examples quote the
+// schema so both run as printed, and it says that a separate hub in the
+// first schema needs that schema alone on the search_path (MTIX-95.7).
+func TestInit_RefusalExamples_RunAsPrinted(t *testing.T) {
+	initTestApp(t)
+	f := newHardenFixture(t)
+	f.exec(`CREATE SCHEMA "Hub Data"`)
+	f.exec(`CREATE SCHEMA mtix_first`)
+	t.Setenv(transport.EnvDSN, searchPathDSN(f, `"Hub\ Data"`))
+	var stdout, stderr bytes.Buffer
+	require.NoError(t, runSyncInit(context.Background(), &stdout, &stderr, nil, cloudOpts), stderr.String())
+
+	t.Setenv(transport.EnvDSN, searchPathDSN(f, `mtix_first,"Hub\ Data"`))
+	err := runSyncInit(context.Background(), &stdout, &stderr, nil, cloudOpts)
+	require.Error(t, err)
+	msg := err.Error()
+	const alter = `ALTER ROLE <owner> SET search_path = "Hub Data", public;`
+	const options = `options=-c search_path="Hub\ Data",public in the DSN`
+	require.Contains(t, msg, alter)
+	require.Contains(t, msg, options)
+	require.Contains(t, msg, "to keep a separate hub in mtix_first instead, put mtix_first alone on the search_path "+
+		"(ALTER ROLE <owner> SET search_path = mtix_first)")
+	requireNothingIn(t, f, "mtix_first")
+
+	// Both examples run as printed.
+	role := f.role("printed")
+	f.exec(strings.Replace(strings.TrimSuffix(alter, ";"), "<owner>", `"`+role+`"`, 1))
+	require.Equal(t, []string{`search_path="Hub Data", public`}, f.strings(`SELECT c.setting FROM pg_catalog.pg_roles r,
+		unnest(r.rolconfig) AS c(setting) WHERE r.rolname = $1`, role), "the ALTER ROLE example sets the search_path")
+	u := f.dbURL
+	q := u.Query()
+	q.Set("options", strings.TrimSuffix(strings.TrimPrefix(options, "options="), " in the DSN"))
+	u.RawQuery = q.Encode()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, err := pgxpool.New(ctx, u.String())
+	require.NoError(t, err)
+	defer pool.Close()
+	var current string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT pg_catalog.current_schema()`).Scan(&current))
+	require.Equal(t, "Hub Data", current, "the DSN example puts the hub's schema first")
 }
 
 // TestDoctor_SearchPathStep_QuotesRoleAndSchema: the search_path step of

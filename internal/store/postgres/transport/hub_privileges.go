@@ -31,7 +31,8 @@ const (
 // sequence; grantor is a kept role's privilege granted by a role other
 // than the owner, which --apply grants again from the owner; createrole is
 // a CREATEROLE role before PostgreSQL 16; superuser_membership is a role
-// that can SET ROLE to a superuser.
+// that can SET ROLE to a superuser, or that holds ADMIN OPTION on a role
+// that can (MTIX-95.1.4).
 const (
 	FindingViaGrant           = "grant"
 	FindingViaGrantOption     = "grant_option"

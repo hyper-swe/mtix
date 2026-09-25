@@ -902,7 +902,7 @@ mtix config delete auto_claim
 | `agent.stuck_timeout` | `0` (disabled) | Auto-unclaim stuck agents after this duration |
 | `session.timeout` | `4h` | Max session duration before auto-end |
 | `data.soft_delete_retention` | `720h` (30 days) | Time before soft-deleted nodes are purged |
-| `sync.keep_roles` | (none) | Comma-separated hub roles that `mtix sync harden` leaves with their access (see "Hub privileges"); PUBLIC, data-API and `pg_` roles are refused. Setting it turns on strict mode: the doctor's `hub-privileges` check then fails, instead of warning, when any other role can use the sync tables |
+| `sync.keep_roles` | (none) | Comma-separated hub roles that `mtix sync harden` leaves with their access (see "Hub privileges"); PUBLIC, data-API and `pg_` roles are refused. Setting it turns on strict mode: the doctor's `hub-privileges` check then fails, instead of warning, whenever `mtix sync harden` would report a finding, or when the check cannot run |
 | `progress.weighted` | `false` | Use weight field in progress calculation |
 
 ---
@@ -1774,8 +1774,9 @@ read-all roles is found too. A role that is a member of the owner role or
 of a read-all role in any way, by inheriting it, by SET ROLE or by ADMIN
 OPTION alone (with which it can grant the role to itself), is reported as
 well, and so is a CREATEROLE role before PostgreSQL 16. So is a role that
-can SET ROLE to a superuser (`superuser_membership`), or that is a member
-of `pg_execute_server_program`, `pg_read_server_files` or
+can SET ROLE to a superuser, or that holds ADMIN OPTION on a role that can
+(`superuser_membership`), and a role that is a member of
+`pg_execute_server_program`, `pg_read_server_files` or
 `pg_write_server_files`: each can reach every table without a privilege on
 it. Harden reports these memberships and never changes them. After
 `--apply`, every finding that remains is listed, with the statement that
@@ -1807,7 +1808,11 @@ tables, their sequences or the mtix functions (EXECUTE on the trigger
 functions aside), or a role membership that leads to one; the owner's
 default privileges give such roles nothing; and every TRUNCATE guard is in
 place. It says nothing about superusers or about who can reach the
-database over the network.
+database over the network. The REPLICATION role attribute is outside the
+check too: a role that has it is checked for its privileges and
+memberships like any other role, but not for the attribute. Review the
+roles that have it (`SELECT rolname FROM pg_catalog.pg_roles WHERE
+rolreplication;`) with the database administrator.
 
 Exit code: 0 when verification passes, 2 when changes are pending (dry run)
 or access remains (after `--apply`), 1 on an error or a refusal. With
@@ -1898,19 +1903,21 @@ search_path=<schema>` in the DSN, or `ALTER ROLE <owner> SET search_path
 3. Run `mtix sync doctor`. Its `hub-triggers` check must pass: every mtix
    function and trigger present and enabled. If it names a gap, run its
    `fix` as the table owner and run the doctor again. Then confirm that
-   the DSN reaches the restored database, not a new, empty hub. As the
-   table owner, in the restored database, count the events with the
-   schema named: `SELECT count(*) FROM <schema>.sync_events;` (`public`
-   unless the hub used another). `SELECT count(*) FROM sync_events;`, run
-   by the DSN's role with the DSN's search_path, must equal that count:
-   only this equality shows that the DSN reaches the restored database.
-   For a hub that has events, the count must not be zero. A count of
-   `sync_events` taken on the source hub just before the backup is a
-   weaker reference: the hub only gains events, so the DSN's count must
-   be at least that number, which rules out only a new or emptier hub (a
-   DSN that still reaches the source hub passes it too). Do not use the
-   `COPY <n>` lines `psql` prints during the restore: they do not name
-   their table.
+   the DSN reaches the restored database. As the table owner, in the
+   restored database, count the events with the schema named:
+   `SELECT count(*) FROM <schema>.sync_events;` (`public` unless the hub
+   used another). Then run `SELECT count(*) FROM sync_events;` as the
+   DSN's role with the DSN's search_path. If the two counts differ, the
+   DSN does not reach the restored database. If they are equal and not
+   zero, that rules out only a new or empty hub: a source hub that is
+   still reachable and holds the same events gives the same count. So
+   also confirm that the DSN's host and database name the restored
+   server. For a hub that has events, the count must not be zero. A
+   count of `sync_events` taken on the source hub just before the backup
+   is a weaker reference still: the hub only gains events, so the DSN's
+   count must be at least that number, which rules out only a new or
+   emptier hub. Do not use the `COPY <n>` lines `psql` prints during the
+   restore: they do not name their table.
 4. Continue with the "Restore-from-backup runbook" below: `mtix sync
    mark-restored`, then `mtix sync collisions list`.
 
@@ -1945,11 +1952,11 @@ operator does.
 | `ErrSyncQueueFull` from `mtix create` / `update` | Local pending queue at the cap | `mtix sync push --force`, or raise `sync.max_queue_size` |
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
 | `mtix sync doctor` shows `[WARN] hub-privileges` | Roles other than the table owner can use the sync tables, or a TRUNCATE guard is missing or disabled. Nothing is blocked, and this may be fine on a private network | To restrict access, the table owner runs `mtix sync harden` (a dry run), then, after reviewing its role list, `mtix sync harden --apply --keep-role <role>`; see "Hub privileges" |
-| `mtix sync doctor` shows `[FAIL] hub-privileges` | Strict mode (`sync.keep_roles` set): a role not in it can use the sync tables, or a guard is missing or disabled | Add the role to `sync.keep_roles` if it should keep access, or run `mtix sync harden` and then `--apply` as the table owner |
+| `mtix sync doctor` shows `[FAIL] hub-privileges` | Strict mode (`sync.keep_roles` set): the check fails whenever `mtix sync harden` would report a finding (a role not in the list can use the sync tables, a guard is missing or disabled, a kept role can grant its access on or holds a privilege another role granted it, an mtix object is owned by another role, or a membership reaches every table), or when the check cannot run (the hub is unreachable, or a sync table is missing) | Add the role to `sync.keep_roles` if it should keep access, or run `mtix sync harden` and then `--apply` as the table owner; give an administrator the statements harden prints for what it cannot change. When the check cannot run, take the next step its detail names |
 | `mtix sync doctor` shows `[WARN] hub-triggers` (`[FAIL]` in strict mode) | An mtix function or trigger is missing, as after a restore from backup; a trigger executes another function than its migration binds; or a trigger is not enabled | As the table owner the `fix` names, run it: `mtix sync init` for what is missing and for a trigger bound to another function (init replaces it), the printed `ALTER TABLE ... ENABLE TRIGGER` statement for what is not enabled; then run `mtix sync doctor` again |
 | `mtix sync init`, or a `mtix sync harden --apply` that would restore or replace a TRUNCATE guard, fails with `the sync tables are in schema …, but the first schema on the search_path is …` (and `mtix sync doctor`'s `hub-triggers` says so) | The session's search_path puts another schema before the one holding the sync tables, so new objects would land away from them; nothing was changed. The usual cause is a schema named after the connecting role, which the default search_path (`"$user", public`) puts first | Set the search_path so the sync tables' schema comes first: `ALTER ROLE <owner> SET search_path = public` when the tables are in `public`, else `ALTER ROLE <owner> SET search_path = <schema>, public` (or `options=-c search_path=...` in the DSN); then run the command again. To keep a separate hub in the first schema instead (one hub per search_path), put that schema alone on the search_path (`ALTER ROLE <owner> SET search_path = <first schema>`). A `mtix sync harden --apply` that only changes privileges is not affected |
 | `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
-| `mtix sync backup` fails with `a hub table was not found` (`pg_dump` names the table above it) | `pg_dump` found no table of that name through the search_path of the role the DSN names; no file was left. Either the hub has not been initialized since an upgrade added the table, or the hub's schema is named only in the DSN, which `pg_dump` does not receive | Run `mtix sync init` with the DSN naming the table owner, then back up again; for a hub whose schema only the DSN names, first run the printed `ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`, which takes precedence over a role-wide `ALTER ROLE <the DSN's role> SET search_path = <schema>, public` |
+| `mtix sync backup` fails with `a hub table was not found` (`pg_dump` names the table above it) | `pg_dump` found no table of that name through the search_path of the role the DSN names; no file was left. The hub has not been initialized since an upgrade added the table; or the hub's schema is named only in the DSN, which `pg_dump` does not receive; or the DSN's role lacks USAGE on the hub's schema, which leaves that schema off its search_path | Run `mtix sync init` with the DSN naming the table owner, then back up again; for a hub whose schema only the DSN names, first run the printed `ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`, which takes precedence over a role-wide `ALTER ROLE <the DSN's role> SET search_path = <schema>, public`; for a DSN role without USAGE, the table owner grants it USAGE on the schema and SELECT on its tables and sequences (`GRANT USAGE ON SCHEMA <schema> TO <the DSN's role>; GRANT SELECT ON ALL TABLES IN SCHEMA <schema> TO <the DSN's role>; GRANT SELECT ON ALL SEQUENCES IN SCHEMA <schema> TO <the DSN's role>;`), and keeps that role with `--keep-role` so `mtix sync harden --apply` leaves its access |
 | `mtix sync conflicts resolve` fails with `is a manual resolution` | The id is a recorded decision, not a conflict | Run `mtix sync conflicts list --all` and resolve the conflict it answers |
 | `mtix sync conflicts resolve` fails with `has a later conflict` or `is already resolved` | A later conflict or a later decision exists for the same node and field | Resolve the newest conflict the error names; if it says that one is resolved too, the decision already stands |
 

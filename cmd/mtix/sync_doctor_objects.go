@@ -86,7 +86,7 @@ func checkHubObjects(ctx context.Context, dsn string, hubReady bool, opts transp
 // of the migrations' functions and triggers the hub lacks or has not
 // enabled (MTIX-95.7).
 func readHubObjects(ctx context.Context, dsn string, opts transport.Options) (hubObjectState, error) {
-	functions, err := migrations.Functions()
+	functions, err := migrations.FunctionSignatures()
 	if err != nil {
 		return hubObjectState{}, fmt.Errorf("function list: %w", err)
 	}
@@ -117,15 +117,20 @@ func readHubObjects(ctx context.Context, dsn string, opts transport.Options) (hu
 	return state, nil
 }
 
-// missingHubFunctions returns, sorted, each of functions that the
-// connecting role's search_path does not resolve. Every mtix function
-// takes no arguments.
-func missingHubFunctions(ctx context.Context, pool *transport.Pool, functions []string) ([]string, error) {
-	// Each migration-defined function that does not resolve as name().
+// missingHubFunctions returns, sorted, the name of each of functions that
+// the connecting role's search_path does not resolve by its signature
+// (MTIX-95.7, MTIX-95.1.7).
+func missingHubFunctions(ctx context.Context, pool *transport.Pool, functions []migrations.Function) ([]string, error) {
+	names := make([]string, 0, len(functions))
+	args := make([]string, 0, len(functions))
+	for _, fn := range functions {
+		names, args = append(names, fn.Name), append(args, fn.Args)
+	}
+	// Each migration-defined function that does not resolve as name(args).
 	rows, err := pool.Inner().Query(ctx, `
-		SELECT f.name FROM unnest($1::text[]) AS f(name)
-		WHERE pg_catalog.to_regprocedure(f.name || '()') IS NULL
-		ORDER BY f.name`, functions)
+		SELECT f.name FROM unnest($1::text[], $2::text[]) AS f(name, args)
+		WHERE pg_catalog.to_regprocedure(f.name || '(' || f.args || ')') IS NULL
+		ORDER BY f.name`, names, args)
 	if err != nil {
 		return nil, fmt.Errorf("read hub functions: %w", err)
 	}

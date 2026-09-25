@@ -169,13 +169,14 @@ func restoreWithPsql(t *testing.T, psql, dsn, dump string) string {
 func dropMtixFunctions(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	ctx := context.Background()
-	functions, err := migrations.Functions()
+	functions, err := migrations.FunctionSignatures()
 	require.NoError(t, err)
 	for _, fn := range functions {
 		var stmt string
-		// Quote the function name server-side (directive SQL Rule 1a).
+		// Quote the function name server-side (directive SQL Rule 1a);
+		// the argument types are the migrations' own constant text.
 		require.NoError(t, pool.QueryRow(ctx,
-			`SELECT format('DROP FUNCTION IF EXISTS %I() CASCADE', $1::text)`, fn).Scan(&stmt))
+			`SELECT format('DROP FUNCTION IF EXISTS %I(%s) CASCADE', $1::text, $2::text)`, fn.Name, fn.Args).Scan(&stmt))
 		_, err := pool.Exec(ctx, stmt)
 		require.NoError(t, err)
 	}
@@ -188,12 +189,16 @@ func hubObjectCounts(t *testing.T, pool *pgxpool.Pool) (tables, functions int) {
 	ctx := context.Background()
 	tableNames, err := migrations.Tables()
 	require.NoError(t, err)
-	functionNames, err := migrations.Functions()
+	signatures, err := migrations.FunctionSignatures()
 	require.NoError(t, err)
+	functionSigs := make([]string, 0, len(signatures))
+	for _, fn := range signatures {
+		functionSigs = append(functionSigs, fn.Signature())
+	}
 	require.NoError(t, pool.QueryRow(ctx, `
 		SELECT (SELECT count(*) FROM unnest($1::text[]) AS t(name) WHERE pg_catalog.to_regclass(t.name) IS NOT NULL),
-		       (SELECT count(*) FROM unnest($2::text[]) AS f(name) WHERE pg_catalog.to_regprocedure(f.name || '()') IS NOT NULL)`,
-		tableNames, functionNames).Scan(&tables, &functions))
+		       (SELECT count(*) FROM unnest($2::text[]) AS f(sig) WHERE pg_catalog.to_regprocedure(f.sig) IS NOT NULL)`,
+		tableNames, functionSigs).Scan(&tables, &functions))
 	return tables, functions
 }
 

@@ -19,7 +19,10 @@ import (
 // a documented restore-from-backup runbook step). No push path advances it, so
 // CLIENTS CANNOT ADVANCE IT — the property that makes the discriminator
 // trust-minimizing: a compromised client cannot manufacture a restore window
-// during normal operation (§15).
+// during normal operation (§15). The hub reads it itself (hub migration 017,
+// MTIX-95.1.7): a trigger stamps every inserted sync_events row with it, and
+// the collision recorder, record_restore_collision, compares the held
+// create's stamp against it.
 
 // CurrentRestoreEpoch returns the hub's current restore_epoch (ADR-003 §15).
 // Zero is the no-restore-ever baseline. It reads the sync_hub_state singleton;
@@ -51,6 +54,8 @@ func (p *Pool) MarkRestored(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("MarkRestored: pool not open")
 	}
 	var epoch int64
+	// The one mutation of the epoch; the hub's stamp trigger and collision
+	// recorder read the value it leaves (migration 017, MTIX-95.1.7).
 	err := p.p.QueryRow(ctx, `
 		UPDATE sync_hub_state
 		   SET restore_epoch = restore_epoch + 1

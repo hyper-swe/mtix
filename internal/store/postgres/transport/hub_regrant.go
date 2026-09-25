@@ -11,21 +11,23 @@ type regrantKey struct {
 	column    string
 }
 
-// regrantFindings reports each privilege on a sync table or sequence that a
-// kept role holds by the grant of a role other than the owners (MTIX-95.1).
-// --apply revokes every other role's privileges, and a kept role's grant
-// options, with CASCADE, which would also remove what that role granted to
-// the kept role. So the owner grants the privilege again first, and the
-// kept role keeps it. The mtix functions are trigger functions, whose
-// EXECUTE is not needed, so they are left out; so is an object another role
-// owns, which the owner cannot grant on (it is an object_owner finding).
+// regrantFindings reports each privilege on a sync table, sequence or
+// mtix function that a kept role holds by the grant of a role other than
+// the owners (MTIX-95.1). --apply revokes every other role's privileges,
+// and a kept role's grant options, with CASCADE, which would also remove
+// what that role granted to the kept role. So the owner grants the
+// privilege again first, and the kept role keeps it: EXECUTE on
+// record_restore_collision included, which a syncing role needs
+// (MTIX-95.1.7). The trigger functions are left out, since a trigger fires
+// without EXECUTE; so is an object another role owns, which the owner
+// cannot grant on (it is an object_owner finding).
 func regrantFindings(c *hubCatalog, kept map[string]bool) []finding {
 	seen := map[regrantKey]bool{}
 	var out []finding
 	for _, e := range c.acl {
 		o := c.object(e.obj)
 		r := c.roles[e.grantee]
-		if o == nil || o.kind == FindingKindFunction || !c.owners[o.owner] || e.grantee == publicOID ||
+		if o == nil || o.trigger || !c.owners[o.owner] || e.grantee == publicOID ||
 			!kept[r.name] || c.owners[e.grantor] {
 			continue
 		}
@@ -55,9 +57,12 @@ func regrantFinding(c *hubCatalog, o *hubObject, e aclEntry, role string) findin
 	if o.kind == FindingKindSequence {
 		keyword = "SEQUENCE"
 	}
-	if e.column != "" {
+	switch {
+	case o.kind == FindingKindFunction:
+		f.fix = newFunctionAction("regrant-function", sqlFmtGrantFunction, rankRegrant, o.args, o.schema, o.name, role)
+	case e.column != "":
 		f.fix = newAction("regrant-column", sqlFmtGrantColumn, rankRegrant, e.privilege, e.column, o.schema, o.name, role)
-	} else {
+	default:
 		f.fix = newAction("regrant", sqlFmtGrantRelation, rankRegrant, e.privilege, keyword, o.schema, o.name, role)
 	}
 	if f.fix == nil {

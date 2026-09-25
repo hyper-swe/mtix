@@ -78,7 +78,8 @@ func TestMigrations_SequenceForms_AllParsed(t *testing.T) {
 func TestFunctions_EmbeddedMigrations_ReturnsEveryFunction(t *testing.T) {
 	got, err := migrations.Functions()
 	require.NoError(t, err)
-	require.Equal(t, []string{"append_only_no_truncate", "audit_log_immutable"}, got)
+	require.Equal(t, []string{"append_only_no_truncate", "audit_log_immutable",
+		"hub_stamp_restore_epoch", "record_restore_collision"}, got)
 }
 
 // TestTriggers_EmbeddedMigrations_IncludesTruncateGuards pins every trigger
@@ -96,6 +97,7 @@ func TestTriggers_EmbeddedMigrations_IncludesTruncateGuards(t *testing.T) {
 		{Name: "sync_conflicts_no_truncate", Table: "sync_conflicts", Event: "TRUNCATE", Function: "append_only_no_truncate"},
 		{Name: "sync_conflicts_no_update", Table: "sync_conflicts", Event: "UPDATE", Function: "audit_log_immutable"},
 		{Name: "sync_events_no_truncate", Table: "sync_events", Event: "TRUNCATE", Function: "append_only_no_truncate"},
+		{Name: "sync_events_stamp_restore_epoch", Table: "sync_events", Event: "INSERT", Function: "hub_stamp_restore_epoch"},
 	}, got)
 }
 
@@ -173,25 +175,88 @@ func TestMigrations_NoRowLevelSecurity(t *testing.T) {
 	}
 }
 
-// TestFunctions_EmbeddedMigrations_TakeNoArguments pins an assumption hub
-// hardening relies on: it names every mtix function as name(), so each one
-// the migrations define must take no arguments (MTIX-95.1). A migration
-// that adds a function with arguments fails here until hardening learns
-// its signature.
-func TestFunctions_EmbeddedMigrations_TakeNoArguments(t *testing.T) {
-	files, err := migrations.Files()
+// TestFunctionSignatures_EmbeddedMigrations_ReturnsArgumentTypes pins the
+// identity signature of every mtix function, the argument types hub
+// hardening and the doctor name it by (MTIX-95.1.7). The PG test
+// TestMigrationObjects_MatchMigratedHub pins them to a migrated hub.
+func TestFunctionSignatures_EmbeddedMigrations_ReturnsArgumentTypes(t *testing.T) {
+	got, err := migrations.FunctionSignatures()
 	require.NoError(t, err)
-	fns, err := migrations.Functions()
+	require.Equal(t, []migrations.Function{
+		{Name: "append_only_no_truncate"},
+		{Name: "audit_log_immutable"},
+		{Name: "hub_stamp_restore_epoch"},
+		{Name: "record_restore_collision", Args: "text, text, text, text, bigint"},
+	}, got)
+	names, err := migrations.Functions()
 	require.NoError(t, err)
-	for _, fn := range fns {
-		found := false
-		for _, f := range files {
-			body, err := migrations.Read(f)
-			require.NoError(t, err)
-			if strings.Contains(body, "FUNCTION "+fn+"()") {
-				found = true
-			}
-		}
-		require.Truef(t, found, "%s must be defined as %s()", fn, fn)
+	require.Len(t, names, len(got), "one signature per function name")
+	for i, fn := range got {
+		require.Equal(t, names[i], fn.Name)
+		require.Equal(t, fn.Name+"("+fn.Args+")", fn.Signature())
 	}
+}
+
+// TestRestoreEpochMigration_NamesMatchParsedObjects: the names the
+// transport and the doctor use for migration 017's objects are the ones it
+// creates: the stamp trigger on sync_events, the function it executes, and
+// the collision recorder's signature (MTIX-95.1.7).
+func TestRestoreEpochMigration_NamesMatchParsedObjects(t *testing.T) {
+	body, err := migrations.Read(migrations.RestoreEpochFile)
+	require.NoError(t, err)
+	fns := parseSignatures(t, body)
+	require.Contains(t, fns, migrations.RecordCollisionSignature)
+	require.Contains(t, fns, migrations.StampFunction+"()")
+	triggers, err := migrations.Triggers()
+	require.NoError(t, err)
+	require.Contains(t, triggers, migrations.Trigger{Name: migrations.StampTrigger, Table: "sync_events",
+		Event: "INSERT", Function: migrations.StampFunction})
+}
+
+// parseSignatures returns the signature of every function created in body,
+// through the package's own parser applied to the full migration set.
+func parseSignatures(t *testing.T, body string) []string {
+	t.Helper()
+	all, err := migrations.FunctionSignatures()
+	require.NoError(t, err)
+	var out []string
+	for _, fn := range all {
+		if strings.Contains(body, "FUNCTION "+fn.Name+"(") {
+			out = append(out, fn.Signature())
+		}
+	}
+	return out
+}
+
+// TestRestoreEpochMigration_Shape pins the shape of 017 (MTIX-95.1.7): both
+// functions run as their owner with a fixed search_path; before creating
+// them, the migration notes which of them this run creates; the DO block
+// sets that search_path to the migration's schema, then pg_temp last, and
+// revokes PUBLIC's EXECUTE from each function this run created, whatever
+// its ACL, so a re-run issues no privilege command; the stamp trigger is
+// created only when pg_trigger lacks it bound to its function by OID; the
+// recorder reads the epochs from the hub, not from its arguments, and
+// counts a held stamp as earlier only from 0 up to the current epoch.
+func TestRestoreEpochMigration_Shape(t *testing.T) {
+	body, err := migrations.Read(migrations.RestoreEpochFile)
+	require.NoError(t, err)
+	require.Equal(t, 2, strings.Count(body, "SECURITY DEFINER"), "both functions run as their owner")
+	require.Equal(t, 2, strings.Count(body, "SET search_path = pg_catalog, pg_temp"),
+		"each function is created with a fixed search_path")
+	require.Contains(t, body, "SET search_path = %I, pg_temp")
+	noted := strings.Index(body, "PERFORM pg_catalog.set_config('mtix.hub_017_created'")
+	require.GreaterOrEqual(t, noted, 0, "the functions this run creates are noted")
+	require.Less(t, noted, strings.Index(body, "CREATE OR REPLACE FUNCTION hub_stamp_restore_epoch()"),
+		"before they are created")
+	require.Contains(t, body, "IF fn = ANY (created) THEN", "PUBLIC's EXECUTE is revoked only at creation")
+	require.NotContains(t, body, "proacl", "whatever the function's ACL")
+	require.Contains(t, body, "FROM PUBLIC")
+	require.Contains(t, body, "IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t")
+	require.Contains(t, body, "AND t.tgfoid = stamp_fn")
+	require.Contains(t, body, "FROM sync_hub_state s WHERE s.id")
+	require.Contains(t, body, "AND h.restore_epoch >= 0\n       AND h.restore_epoch < v_current_epoch",
+		"the recorder re-checks the cross-epoch condition, from epoch 0")
+	require.Contains(t, body, "SELECT 1 FROM sync_events e WHERE e.event_id = p_incoming_event_id",
+		"the recorder refuses an incoming event id already on the hub")
+	require.NotContains(t, strings.ToUpper(body), "ROW LEVEL SECURITY")
 }

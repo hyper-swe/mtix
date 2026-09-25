@@ -1369,7 +1369,13 @@ Run sync health checks (FR-18)
 Run health checks against the local store and the BYO Postgres hub:
 
   PG reachable           - opens pool + Ping
-  Schema current         - sync_projects table exists with expected columns
+  Schema current         - sync_projects table exists with expected columns,
+                           the hub has migration 017 (it stamps every
+                           event's restore epoch and records restore
+                           collisions itself), the connecting role can
+                           execute record_restore_collision, and, unless it
+                           owns the sync tables, holds no INSERT on
+                           sync_node_collisions
   Queue draining         - no events older than 1h still in pending
   No orphan applied      - every applied_event has a matching node OR tombstone
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
@@ -1384,6 +1390,31 @@ Run health checks against the local store and the BYO Postgres hub:
 
 Each hub check allows 30 s to connect, the same budget as mtix sync init,
 clone, push and pull, so a hub that is resuming from idle passes.
+
+Schema current fails when sync_projects is missing. A hub without
+migration 017 (its owner has not run mtix sync init since the upgrade) is
+a WARN by default and fails in strict mode; pushes keep working. A
+connecting role without EXECUTE on record_restore_collision is a WARN by
+default and fails in strict mode; a push that meets a restore collision
+fails until the table owner runs the printed GRANT. A connecting role
+that can write collision rows, which the least-privilege list does not
+grant, is a WARN by default and fails in strict mode: it holds INSERT on
+sync_node_collisions or USAGE on sync_node_collisions_collision_id_seq
+(a grant, or a predefined role such as pg_write_all_data), owns the
+schema that holds the sync tables, can reach, through a chain of SET
+ROLE and ADMIN OPTION, a role that holds either or owns that schema, or
+a superuser it can then SET ROLE to, has CREATEROLE before PostgreSQL
+16, or is a member of pg_execute_server_program or
+pg_write_server_files. The check skips the table owner, roles that
+inherit it, and superusers. Once every syncing client is upgraded, the
+table owner runs the printed REVOKE for a plain grant the owner made,
+and a role administrator removes each other path, which the check names
+with its chain. Create events stamped with a restore epoch below 0 or
+above the hub's current epoch are a WARN by default and fail in strict
+mode: restore-collision checks treat each as not earlier than the
+current epoch, and the table owner runs the printed UPDATE, which sets
+each to the current epoch. The check names each gap and who runs each
+part of the fix.
 
 Hub triggers names each missing function or trigger, each trigger that
 executes another function, and each trigger that is not enabled, with the

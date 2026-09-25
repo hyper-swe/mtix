@@ -223,14 +223,17 @@ func decideAgainst(e *model.SyncEvent, registeredID, registeredUID, incomingUID 
 // restore-collision discriminator (ADR-003 §6.1, Addendum A §15):
 //
 //   - same effective uid → SAME logical node → noop (MTIX-30.15).
-//   - distinct uid, held stamped in an EARLIER epoch than currentEpoch →
-//     RESTORE collision (Option B): the two creates straddle an operator
-//     restore-bump (a cross-epoch re-grant), so the incoming create is BLOCKED
-//     for admin resolution, never silently renumbered.
+//   - distinct uid, held stamped in an EARLIER epoch than currentEpoch, from
+//     0 up → RESTORE collision (Option B): the two creates straddle an
+//     operator restore-bump (a cross-epoch re-grant), so the incoming create
+//     is BLOCKED for admin resolution, never silently renumbered.
 //   - distinct uid, held stamped in the SAME (current) epoch → ordinary
 //     concurrent-create race → renumber (ADR-003 §6, MTIX-30.7). This is the
 //     normal-race false-positive the rejected UID-age trigger could not avoid;
 //     here it is eliminated by construction (§15).
+//   - distinct uid, held stamp below 0 or above currentEpoch, outside what
+//     the hub stamps → not earlier than the current epoch → renumber
+//     (MTIX-95.1.7).
 //
 // Because currentEpoch advances ONLY by the operator (MarkRestored), in normal
 // operation every create is stamped the same epoch, held.epoch == currentEpoch,
@@ -241,7 +244,7 @@ func decideAgainstRegistered(
 	if reg.uid == incomingUID {
 		return registryOutcome{noop: true}
 	}
-	if reg.epoch < currentEpoch {
+	if reg.epoch >= 0 && reg.epoch < currentEpoch {
 		return registryOutcome{restoreCollision: &RestoreCollision{
 			EventID: e.EventID, ProjectPrefix: e.ProjectPrefix, DisplayPath: e.NodeID,
 			HeldEventID: reg.eventID, HeldEpoch: reg.epoch, DetectedEpoch: currentEpoch,

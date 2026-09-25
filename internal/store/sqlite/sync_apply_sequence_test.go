@@ -210,8 +210,9 @@ func TestIdempotentApply_CreateNodeIDTakenCounterBehind_CounterAdvanced(t *testi
 // TestIdempotentApply_CreateNodeNumberAboveBound_CounterNotAdvanced: a
 // pulled task numbered above maxSequence (2147483647) is applied, but its
 // number does not advance the counter, and the apply logs a warning naming
-// the task. Before, PROJ-9223372036854775807 set the counter to the int64
-// maximum and every later create in the namespace overflowed.
+// the task, so the counter never passes the limit on apply (a counter can
+// be past the limit after an import of a store that holds such a task,
+// MTIX-107.56).
 func TestIdempotentApply_CreateNodeNumberAboveBound_CounterNotAdvanced(t *testing.T) {
 	for _, id := range []string{"PROJ-2147483648", "PROJ-9223372036854775807"} {
 		t.Run(id, func(t *testing.T) {

@@ -176,3 +176,21 @@ func TestReconcile_CounterWriteFails_NothingRenamed(t *testing.T) {
 		})
 	}
 }
+
+// TestRenameTo_RootCounterAhead_Kept: a DEMO root counter already above
+// the renamed roots (2) keeps its value, and the first root create takes
+// the number after it.
+func TestRenameTo_RootCounterAhead_Kept(t *testing.T) {
+	s, raw, mtixDir := reconcileTestStore(t)
+	seedTreeWithStrayChild(t, s)
+	_, err := raw.Exec(`INSERT INTO sequences (key, value) VALUES ('DEMO:', 20)`)
+	require.NoError(t, err)
+
+	_, err = RenameTo(context.Background(), s, mtixDir, "DEMO")
+
+	require.NoError(t, err)
+	require.Equal(t, 20, sequenceCounter(t, raw, "DEMO:"))
+	id, err := createUnder(t, s, "DEMO", "")
+	require.NoError(t, err)
+	require.Equal(t, "DEMO-21", id)
+}

@@ -98,20 +98,54 @@ func TestRenumberSubtree_MovedSubtree_CountersCoverEveryNumber(t *testing.T) {
 // TestRenumberSubtree_RootNode_CountersCoverRootsAndSubtree: renumbering
 // the root RNB-1 to 5 raises the root counter of RNB to the highest root
 // number (8, the untouched root RNB-8), and the counter of every parent in
-// the moved subtree, now under RNB-5, to the highest number under it.
+// the moved subtree, now under RNB-5, to the highest number under it. A
+// root counter already above (20) keeps its value.
 func TestRenumberSubtree_RootNode_CountersCoverRootsAndSubtree(t *testing.T) {
+	tests := []struct {
+		name string
+		seed map[string]int
+		want map[string]int
+	}{
+		{"counters behind", nil, map[string]int{
+			"RNB:": 8, "RNB:RNB-5": 7, "RNB:RNB-5.4": 2, "RNB:RNB-5.4.1": 1, "RNB:RNB-5.4.1.1": 1,
+		}},
+		{"root counter ahead is kept", map[string]int{"RNB:": 20}, map[string]int{
+			"RNB:": 20, "RNB:RNB-5": 7,
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			seedRenumberTree(t, s)
+			require.NoError(t, s.CreateNode(ctx, seqNode("RNB-8", 8)))
+			for key, v := range tt.seed {
+				setCounterOf(t, s, key, v)
+			}
+
+			require.NoError(t, s.RenumberSubtree(ctx, "RNB-1", 5))
+
+			for key, want := range tt.want {
+				require.Equal(t, want, counterOf(t, s, key), key)
+			}
+		})
+	}
+}
+
+// TestRenumberSubtree_NeighbourIDs_NotInParentNamespace: the ids next to
+// P-1's child namespace are not in it: the root P-123, whose id extends
+// P-1 with digits, and P-1-9, a root of the prefix P-1. Renumbering P-1.4
+// to 2 leaves P:P-1 at 2.
+func TestRenumberSubtree_NeighbourIDs_NotInParentNamespace(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	seedRenumberTree(t, s)
-	require.NoError(t, s.CreateNode(ctx, seqNode("RNB-8", 8)))
-
-	require.NoError(t, s.RenumberSubtree(ctx, "RNB-1", 5))
-
-	for key, want := range map[string]int{
-		"RNB:": 8, "RNB:RNB-5": 7, "RNB:RNB-5.4": 2, "RNB:RNB-5.4.1": 1, "RNB:RNB-5.4.1.1": 1,
-	} {
-		require.Equal(t, want, counterOf(t, s, key), key)
+	for _, n := range []seqEntry{{"P-1", 1}, {"P-1.1", 1}, {"P-1.4", 4}, {"P-123", 123}, {"P-1-9", 9}} {
+		require.NoError(t, s.CreateNode(ctx, seqNode(n.id, n.seq)), n.id)
 	}
+
+	require.NoError(t, s.RenumberSubtree(ctx, "P-1.4", 2))
+
+	require.Equal(t, 2, counterOf(t, s, "P:P-1"))
 }
 
 // TestRenumberSubtree_UncountedIDs_CountersIgnoreThem: a number above
@@ -176,6 +210,27 @@ func TestRenumberSubtree_RootNamespace_ExactPrefixOnly(t *testing.T) {
 			require.Equal(t, tt.want, counterOf(t, s, tt.key))
 		})
 	}
+}
+
+// TestRenumberSubtree_NonASCIIRootPrefix_CountsByCharacters: the root
+// raise finds the numbers after '<prefix>-' by characters, as SQLite's
+// SUBSTR counts them. mtix never creates a prefix that is not ASCII, but a
+// store can hold one, written directly; renumbering its root \u00c9A-1 to 5
+// next to \u00c9A-12 raises the root counter to 12.
+func TestRenumberSubtree_NonASCIIRootPrefix_CountsByCharacters(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	for _, n := range []seqEntry{{"EA-1", 1}, {"EA-12", 12}} {
+		require.NoError(t, s.CreateNode(ctx, seqNode(n.id, n.seq)))
+		// Test seam: the prefix written directly, past the prefix grammar.
+		_, err := s.WriteDB().ExecContext(ctx,
+			`UPDATE nodes SET id = ? || SUBSTR(id, 2), project = ? WHERE id = ?`, "\u00c9", "\u00c9A", n.id)
+		require.NoError(t, err)
+	}
+
+	require.NoError(t, s.RenumberSubtree(ctx, "\u00c9A-1", 5))
+
+	require.Equal(t, 12, counterOf(t, s, "\u00c9A:"))
 }
 
 // TestRenumberForHubRejection_MovedSubtree_NextChildContinues: the hub

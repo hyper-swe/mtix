@@ -110,8 +110,9 @@ func advanceRenumberedSequences(ctx context.Context, tx *sql.Tx, node renumberTa
 // under SQLite's binary collation (MTIX-95.38): lo is prefix, and hi is
 // prefix with its last byte incremented ('P-' gives 'P.', 'P-1.' gives
 // 'P-1/'). The match is exact and case-sensitive, has no wildcard, and can
-// use the primary-key index on nodes.id. Ids and prefixes are ASCII (the
-// id grammar), and prefix is never empty.
+// use the primary-key index on nodes.id. Every caller passes a prefix that
+// ends in '-' or '.', so the last byte is ASCII; the bytes before it may be
+// any UTF-8, which the binary collation compares byte by byte.
 func idRange(prefix string) (lo, hi string) {
 	last := len(prefix) - 1
 	return prefix, prefix[:last] + string(rune(prefix[last]+1))
@@ -125,18 +126,19 @@ func idRange(prefix string) (lo, hi string) {
 func advanceRootCounter(ctx context.Context, tx *sql.Tx, prefix string) error {
 	ns := prefix + "-"
 	lo, hi := idRange(ns)
-	// The highest number among the ids in [lo, hi) whose rest, from the
-	// first digit, is all digits and at most maxSequence. It creates the
-	// root counter at that number, or raises it; no row when there is none.
+	// The highest number among the ids in [lo, hi) whose rest after ns
+	// (SUBSTR and LENGTH both count characters) is all digits and at most
+	// maxSequence. It creates the root counter at that number, or raises
+	// it; no row when there is none.
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sequences (key, value)
 		SELECT ?, n FROM (
 		  SELECT MAX(CAST(d AS INTEGER)) AS n FROM (
-		    SELECT SUBSTR(id, ?) AS d FROM nodes WHERE id >= ? AND id < ?)
+		    SELECT SUBSTR(id, LENGTH(?) + 1) AS d FROM nodes WHERE id >= ? AND id < ?)
 		   WHERE d <> '' AND d NOT GLOB '*[^0-9]*' AND CAST(d AS INTEGER) <= ?)
 		 WHERE n IS NOT NULL
 		ON CONFLICT(key) DO UPDATE SET value = max(value, excluded.value)`,
-		sequenceKey(prefix, ""), len(ns)+1, lo, hi, maxSequence,
+		sequenceKey(prefix, ""), ns, lo, hi, maxSequence,
 	); err != nil {
 		return fmt.Errorf("advance the %s root counter: %w", prefix, err)
 	}
@@ -173,19 +175,25 @@ func advanceChildCounters(ctx context.Context, tx *sql.Tx, parentID, subtreePref
 	return nil
 }
 
-// skipSQL moves a counter that fell behind past the highest number the ids
-// of its namespace hold: the ids in [lo, hi) whose rest, from a given
-// 1-based position, is all digits and at most maxSequence. The counter
-// becomes one more than that number or than itself, whichever is higher,
-// so it never drops below a number already handed out. It writes nothing,
-// and returns no row, when the new value would pass maxSequence.
+// skipSQL moves a counter that fell behind past the highest number n the
+// ids of its namespace ns hold: the ids in [lo, hi) whose rest after ns
+// (SUBSTR and LENGTH both count characters) is all digits and at most
+// maxSequence. It is an upsert, so it also works when the counter row was
+// removed after the allocation (an import's rebuild deletes every counter,
+// MTIX-107.56): the counter becomes max(counter, n) + 1, or n + 1 when the
+// row is missing, so it never drops below a number already handed out.
+// It writes nothing, and returns no row, only when max(counter, n) is at
+// maxSequence or above. Parameters: ns, lo, hi, maxSequence, key,
+// maxSequence, maxSequence.
 const skipSQL = `
 	WITH taken(n) AS (
 	  SELECT COALESCE(MAX(CAST(d AS INTEGER)), 0) FROM (
-	    SELECT SUBSTR(id, ?) AS d FROM nodes WHERE id >= ? AND id < ?)
+	    SELECT SUBSTR(id, LENGTH(?) + 1) AS d FROM nodes WHERE id >= ? AND id < ?)
 	   WHERE d <> '' AND d NOT GLOB '*[^0-9]*' AND CAST(d AS INTEGER) <= ?)
-	UPDATE sequences SET value = max(value, (SELECT n FROM taken)) + 1
-	 WHERE key = ? AND max(value, (SELECT n FROM taken)) < ?
+	INSERT INTO sequences (key, value)
+	SELECT ?, n + 1 FROM taken WHERE n < ?
+	ON CONFLICT(key) DO UPDATE SET value = max(value, excluded.value - 1) + 1
+	 WHERE max(value, excluded.value - 1) < ?
 	RETURNING value`
 
 // skipTakenSequence checks value, the number NextSequence just took from
@@ -195,9 +203,10 @@ const skipSQL = `
 // the write lock (skipSQL) it is moved past the highest number the ids of
 // key's namespace hold, '{project}-<digits>' for a root key and
 // '<parent>.<digits>' for a child key, whatever the project, seq and
-// parent_id columns say, and the new value is returned. It skips once and
-// does not check the new number again. When the skip would pass
-// maxSequence it writes nothing and fails with an error naming the limit.
+// parent_id columns say, and the new value is returned; a counter row
+// removed in the meantime is created again. It skips once and does not
+// check the new number again. When the skip would pass maxSequence it
+// writes nothing and fails with an error naming the limit.
 func (s *Store) skipTakenSequence(ctx context.Context, key string, value int) (int, error) {
 	project, parentID, _ := strings.Cut(key, ":")
 	var taken bool
@@ -215,7 +224,8 @@ func (s *Store) skipTakenSequence(ctx context.Context, key string, value int) (i
 	}
 	lo, hi := idRange(ns)
 	next := value
-	err := s.writeDB.QueryRowContext(ctx, skipSQL, len(ns)+1, lo, hi, maxSequence, key, maxSequence).Scan(&next)
+	err := s.writeDB.QueryRowContext(ctx, skipSQL,
+		ns, lo, hi, maxSequence, key, maxSequence, maxSequence).Scan(&next)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, sequenceLimitError(key)
 	}

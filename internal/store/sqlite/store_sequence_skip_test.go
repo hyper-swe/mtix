@@ -29,7 +29,9 @@ type seqEntry struct {
 
 // TestNextSequence_CounterBehind_SkipsPastHighestInItsNamespace covers the
 // root and child namespaces, numbers held by soft-deleted nodes, and a free
-// number, which is handed out as is.
+// number, which is handed out as is. The child case holds ids next to
+// AA-1's namespace that are not in it: the root AA-123, whose id extends
+// AA-1 with digits, and AA-1-9, a root of the prefix AA-1.
 func TestNextSequence_CounterBehind_SkipsPastHighestInItsNamespace(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -41,7 +43,8 @@ func TestNextSequence_CounterBehind_SkipsPastHighestInItsNamespace(t *testing.T)
 		{"root taken, another project's higher roots ignored",
 			[]seqEntry{{"AA-1", 1}, {"AA-2", 2}, {"AA-3", 3}, {"BB-9", 9}}, nil, "AA:", []int{4, 5}},
 		{"child taken, other parents' children ignored",
-			[]seqEntry{{"AA-1", 1}, {"AA-1.1", 1}, {"AA-1.2", 2}, {"AA-2", 2}, {"AA-2.8", 8}}, nil, "AA:AA-1", []int{3, 4}},
+			[]seqEntry{{"AA-1", 1}, {"AA-1.1", 1}, {"AA-1.2", 2}, {"AA-2", 2}, {"AA-2.8", 8},
+				{"AA-123", 123}, {"AA-1-9", 9}}, nil, "AA:AA-1", []int{3, 4}},
 		{"numbers held by soft-deleted nodes count",
 			[]seqEntry{{"AA-1", 1}, {"AA-2", 2}, {"AA-3", 3}}, []string{"AA-1", "AA-3"}, "AA:", []int{4}},
 		{"free number is handed out as is, a taken one is skipped",
@@ -149,8 +152,9 @@ func TestNextSequence_NumberAboveBound_IgnoredBySkip(t *testing.T) {
 }
 
 // TestNextSequence_CounterAtOrPastLimit_FailsClearlyCounterUnchanged: a
-// counter at maxSequence, or past it (as a counter set by a pulled task
-// before MTIX-95.38 can be), has no number left. NextSequence fails with an
+// counter at maxSequence, or past it (a counter can be past the limit after
+// an import of a store that holds such a task, MTIX-107.56), has no number
+// left. NextSequence fails with an
 // error naming the limit and leaves the counter as it was, an integer,
 // instead of overflowing it to a real number.
 func TestNextSequence_CounterAtOrPastLimit_FailsClearlyCounterUnchanged(t *testing.T) {
@@ -330,4 +334,72 @@ func lowerCaseID(t *testing.T, s *sqlite.Store, id string) {
 	_, err := s.WriteDB().ExecContext(context.Background(),
 		`UPDATE nodes SET id = lower(id) WHERE id = ?`, id)
 	require.NoError(t, err)
+}
+
+// TestNextSequence_CounterRowDeletedBeforeSkip_NoFalseLimitError: the
+// counter row can disappear between the allocation and the skip (an
+// import's rebuild deletes every counter before it writes them again,
+// MTIX-107.56; a test trigger stands in for it). The skip then creates the
+// counter past the highest number instead of failing with the limit
+// error, which it returns only when that number is at the limit.
+func TestNextSequence_CounterRowDeletedBeforeSkip_NoFalseLimitError(t *testing.T) {
+	tests := []struct {
+		name      string
+		key       string
+		nodes     []seqEntry
+		seed      int
+		want      int
+		wantLimit bool
+	}{
+		{"root key", "AA:", []seqEntry{{"AA-1", 1}, {"AA-2", 2}}, 0, 3, false},
+		{"child key", "AA:AA-1", []seqEntry{{"AA-1", 1}, {"AA-1.1", 1}, {"AA-1.2", 2}}, 0, 3, false},
+		{"highest number at the limit", "AA:", []seqEntry{{"AA-2147483647", 2147483647}}, 2147483646, 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			for _, n := range tt.nodes {
+				require.NoError(t, s.CreateNode(ctx, seqNode(n.id, n.seq)))
+			}
+			setCounterOf(t, s, tt.key, tt.seed)
+			// The allocation increments the counter by one; the trigger then
+			// deletes the row, before the skip runs.
+			_, err := s.WriteDB().ExecContext(ctx, `CREATE TRIGGER test_counter_row_deleted
+				AFTER UPDATE OF value ON sequences WHEN NEW.value = OLD.value + 1
+				BEGIN DELETE FROM sequences WHERE key = NEW.key; END`)
+			require.NoError(t, err)
+
+			got, err := s.NextSequence(ctx, tt.key)
+
+			if tt.wantLimit {
+				require.ErrorIs(t, err, model.ErrInvalidInput)
+				require.ErrorContains(t, err, "2147483647")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+			require.Equal(t, tt.want, counterOf(t, s, tt.key))
+		})
+	}
+}
+
+// TestNextSequence_NonASCIIParentID_CountsByCharacters: a pulled node id
+// can hold a character that is not ASCII (only its project prefix is
+// checked), and SQLite's SUBSTR counts characters, not bytes. Under the
+// parent AA-1\u00e9, whose children are .1, .2 and .21, the skip hands out
+// 22, not the taken 2.
+func TestNextSequence_NonASCIIParentID_CountsByCharacters(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	parent := "AA-1\u00e9"
+	require.NoError(t, s.CreateNode(ctx, seqNode(parent, 1)))
+	for _, n := range []int{1, 2, 21} {
+		require.NoError(t, s.CreateNode(ctx, seqNode(fmt.Sprintf("%s.%d", parent, n), n)))
+	}
+
+	got, err := s.NextSequence(ctx, "AA:"+parent)
+
+	require.NoError(t, err)
+	require.Equal(t, 22, got)
 }

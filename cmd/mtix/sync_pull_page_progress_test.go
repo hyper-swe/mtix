@@ -48,13 +48,14 @@ func (h *scriptedHub) PullEvents(_ context.Context, after transport.PullCursor, 
 }
 
 // pageProgressCase is one hub behaviour the loops must stop on, or, when
-// wantStopAt is nil, one they must follow to the end.
+// wantStopAt and wantErrIs are nil, one they must follow to the end.
 type pageProgressCase struct {
 	name       string
 	start      transport.PullCursor
 	serve      func(after transport.PullCursor) ([]*model.SyncEvent, bool)
 	wantCalls  int
-	wantStopAt *transport.PullCursor // the cursor the error names; nil for no error
+	wantStopAt *transport.PullCursor // the cursor the refusal names; nil for no refusal
+	wantErrIs  error                 // the error a malformed page stops the loop with; nil for none
 	applies    []*model.SyncEvent    // events a pull or clone applies when it does not stop
 	refused    []*model.SyncEvent    // events of a refused page that no earlier page held
 }
@@ -66,9 +67,12 @@ type pageProgressCase struct {
 // that alternate, each ending at a new event id until the first comes back;
 // and, as progress, a page that ends at a new event id at the cursor's
 // clock that sorts before the cursor's id byte by byte (another
-// collation's order), and an empty hub.
+// collation's order), and an empty hub. It adds a malformed page, one whose
+// last event is nil, which every loop refuses as invalid input before it
+// uses the page, applying nothing.
 func pageProgressCases(t *testing.T) []pageProgressCase {
 	t.Helper()
+	nilEnd := remoteCreates(t, 5)
 	same := remoteCreates(t, 5, 5)
 	atStart := remoteCreates(t, 5, 5)
 	startAtEnd := transport.CursorAt(atStart[1])
@@ -104,7 +108,19 @@ func pageProgressCases(t *testing.T) []pageProgressCase {
 		{name: "an empty hub", serve: func(transport.PullCursor) ([]*model.SyncEvent, bool) {
 			return nil, false
 		}, wantCalls: 1},
+		{name: "a page whose last event is nil", serve: func(transport.PullCursor) ([]*model.SyncEvent, bool) {
+			return []*model.SyncEvent{nilEnd[0], nil}, true
+		}, wantCalls: 1, wantErrIs: model.ErrInvalidInput, refused: nilEnd},
 	}
+}
+
+// stopCursor returns where a loop that stops on tt leaves its cursor: the
+// cursor its refusal names, or, for a malformed page, its start.
+func stopCursor(tt pageProgressCase) transport.PullCursor {
+	if tt.wantStopAt != nil {
+		return *tt.wantStopAt
+	}
+	return tt.start
 }
 
 // ptrCursor returns a pointer to c.
@@ -116,6 +132,10 @@ func ptrCursor(c transport.PullCursor) *transport.PullCursor { return &c }
 func requirePageProgressOutcome(t *testing.T, tt pageProgressCase, hub *scriptedHub, err error) {
 	t.Helper()
 	require.Len(t, hub.calls, tt.wantCalls, "pages asked for")
+	if tt.wantErrIs != nil {
+		require.ErrorIs(t, err, tt.wantErrIs)
+		return
+	}
 	if tt.wantStopAt == nil {
 		require.NoError(t, err)
 		return
@@ -154,8 +174,8 @@ func TestPullLoop_HubPageNotAfterCursor_StopsNamingCursor(t *testing.T) {
 			for _, e := range tt.refused {
 				requireNotApplied(t, e)
 			}
-			if tt.wantStopAt != nil {
-				requireSavedCursor(t, *tt.wantStopAt)
+			if tt.wantStopAt != nil || tt.wantErrIs != nil {
+				requireSavedCursor(t, stopCursor(tt))
 				return
 			}
 			for _, e := range tt.applies {
@@ -184,8 +204,8 @@ func TestCloneLoop_HubPageNotAfterCursor_StopsNamingCursor(t *testing.T) {
 			for _, e := range tt.refused {
 				requireNotApplied(t, e)
 			}
-			if tt.wantStopAt != nil {
-				requireCloneCheckpoint(t, *tt.wantStopAt)
+			if tt.wantStopAt != nil || tt.wantErrIs != nil {
+				requireCloneCheckpoint(t, stopCursor(tt))
 				requireSavedCursor(t, tt.start)
 				return
 			}

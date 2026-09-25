@@ -32,7 +32,8 @@ func newPageCursor(start transport.PullCursor) *pageCursor {
 }
 
 // advance moves the cursor to the last event of events, a non-empty page
-// the hub returned for c.at (MTIX-95.4). It refuses a page that does not
+// with no nil event (the caller checks with requireEvents first) that the
+// hub returned for c.at (MTIX-95.4). It refuses a page that does not
 // advance, with errPageNotAfterCursor naming the cursor and the page end:
 // one that ends at a lower Lamport clock than the cursor, or at an event id
 // the loop has already paged past at the cursor's clock (the cursor's own,

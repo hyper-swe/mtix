@@ -268,6 +268,10 @@ func pullLoop(ctx context.Context, in pullIngest,
 		if len(events) == 0 {
 			break
 		}
+		// A nil event is invalid input; refuse it before the page is read.
+		if err = requireEvents(events); err != nil {
+			return applied, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
+		}
 		if err = page.advance(events); err != nil {
 			return applied, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
 		}

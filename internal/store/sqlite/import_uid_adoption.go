@@ -13,10 +13,10 @@ import (
 // uid (MTIX-95.31.6, FR-7.8): the file holds the same id under another uid,
 // and the two count as one task (differentIdentity), so the local task
 // takes the file's uid. Two different tasks that the identity rule cannot
-// tell apart (clones running releases before 0.4 created the id in the same
-// second, and both upgraded more than an hour later) are adopted too: the
-// titles are the sign, and the backup taken before the merge holds the
-// local task.
+// tell apart (two clones created the id in the same second, neither clone's
+// event log holds the create events, so both uids were assigned when the
+// clones upgraded, more than an hour later) are adopted too: the titles are
+// the sign, and the backup taken before the merge holds the local task.
 type ImportUIDAdoption struct {
 	// ID is the id both copies hold.
 	ID string `json:"id"`
@@ -124,8 +124,8 @@ func writeUIDAdoptions(b *strings.Builder, adoptions []ImportUIDAdoption) {
 		titlesDiffer = titlesDiffer || a.LocalTitle != a.FileTitle
 	}
 	if titlesDiffer {
-		b.WriteString("  a task above whose titles differ may be two different tasks, created in the same second " +
-			"on clones running releases before 0.4: the merge keeps the file's under the id, and the backup taken " +
-			"before the merge holds the local one\n")
+		b.WriteString("  a task above whose titles differ may be two different tasks created in the same second " +
+			"whose create events neither clone's event log holds (created before 0.2, for example): the merge " +
+			"keeps the file's under the id, and the backup taken before the merge holds the local one\n")
 	}
 }

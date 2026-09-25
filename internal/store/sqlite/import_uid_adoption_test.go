@@ -4,9 +4,11 @@
 // Tests for MTIX-95.31.6 (FR-7.8): a merge import reports every uid it
 // adopts, with the id, both uids and both titles, in its report and in its
 // result, so a merge of two tasks the identity rule cannot tell apart (two
-// clones running releases before 0.4 created the id in the same second and
-// both upgraded more than an hour later) is visible. Written red-first
-// against the MTIX-95.31.4 code, which adopted such uids without a word.
+// clones created the id in the same second, neither clone's event log holds
+// the create events, and both upgraded more than an hour later) is visible.
+// Written red-first against the MTIX-95.31.4 code, which adopted such uids
+// without a word; round 2 adds a file node without a uid, and checks that
+// every local uid not reported as adopted survives.
 package sqlite_test
 
 import (
@@ -55,7 +57,8 @@ func TestImportReconcile_MergeAdoptingUIDs_ReportsEachAdoption(t *testing.T) {
 				return []sqlite.ImportUIDAdoption{{ID: "REC-1", LocalUID: mine, FileUID: theirs,
 					LocalTitle: "Shared task", FileTitle: "Shared task"}}
 			}, nil},
-		{"two tasks created in the same second before 0.4, both upgraded an hour later", sqlite.ImportModeMerge, false,
+		{"two tasks created in the same second without create events, both upgraded an hour later",
+			sqlite.ImportModeMerge, false,
 			func(t *testing.T, s stores) []sqlite.ImportUIDAdoption {
 				mine := createSameIDTask(t, s.local, "REC-1", "", 1, backfilledUID(t), "A pre-upgrade task")
 				theirs := createSameIDTask(t, s.teammate, "REC-1", "", 1, backfilledUID(t), "B pre-upgrade task")
@@ -70,6 +73,14 @@ func TestImportReconcile_MergeAdoptingUIDs_ReportsEachAdoption(t *testing.T) {
 				theirs := createSameIDTask(t, s.teammate, "REC-1", "", 1, taskUID(t), "Shared task")
 				return []sqlite.ImportUIDAdoption{{ID: "REC-1", FileUID: theirs,
 					LocalTitle: "Shared task", FileTitle: "Shared task"}}
+			}, nil},
+		{"a file node without a uid at an id the store holds", sqlite.ImportModeMerge, false,
+			func(t *testing.T, s stores) []sqlite.ImportUIDAdoption {
+				createSameIDTask(t, s.local, "REC-1", "", 1, backfilledUID(t), "Local title")
+				createSameIDTask(t, s.teammate, "REC-1", "", 1, backfilledUID(t), "File title")
+				_, err := s.teammate.WriteDB().ExecContext(context.Background(), `UPDATE nodes SET uid = NULL`)
+				require.NoError(t, err)
+				return nil
 			}, nil},
 		{"a soft-deleted local task", sqlite.ImportModeMerge, false,
 			func(t *testing.T, s stores) []sqlite.ImportUIDAdoption {
@@ -123,6 +134,7 @@ func TestImportReconcile_MergeAdoptingUIDs_ReportsEachAdoption(t *testing.T) {
 			ctx := context.Background()
 			s := stores{local: newTestStore(t), teammate: newTestStore(t)}
 			want := tt.setup(t, s)
+			localUIDs := uidsOf(t, s.local)
 
 			report, result, err := s.local.ImportReconcile(ctx, exportOf(t, s.teammate), sqlite.ImportReconcileOptions{
 				Mode: tt.mode, Confirm: tt.confirm,
@@ -146,7 +158,50 @@ func TestImportReconcile_MergeAdoptingUIDs_ReportsEachAdoption(t *testing.T) {
 					`SELECT COALESCE(uid, '') FROM nodes WHERE id = ?`, a.ID).Scan(&uid))
 				assert.Equal(t, a.FileUID, uid, "the merge wrote the adoption it reported")
 			}
+			if tt.mode == sqlite.ImportModeMerge {
+				assertOnlyAdoptedUIDsGone(t, s.local, localUIDs, want)
+			}
 		})
+	}
+}
+
+// uidsOf returns every uid s holds, soft-deleted nodes included.
+func uidsOf(t *testing.T, s *sqlite.Store) []string {
+	t.Helper()
+	// Every non-empty uid in the store.
+	rows, err := s.WriteDB().QueryContext(context.Background(), `SELECT uid FROM nodes WHERE uid IS NOT NULL AND uid <> ''`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var uids []string
+	for rows.Next() {
+		var uid string
+		require.NoError(t, rows.Scan(&uid))
+		uids = append(uids, uid)
+	}
+	require.NoError(t, rows.Err())
+	return uids
+}
+
+// assertOnlyAdoptedUIDsGone checks that, of the uids s held before a merge
+// (before), exactly the local uids of the reported adoptions are gone and
+// every other one is still held, by one node: a merge never drops a local
+// uid without reporting it.
+func assertOnlyAdoptedUIDsGone(t *testing.T, s *sqlite.Store, before []string, adopted []sqlite.ImportUIDAdoption) {
+	t.Helper()
+	gone := make(map[string]bool, len(adopted))
+	for _, a := range adopted {
+		gone[a.LocalUID] = true
+	}
+	for _, uid := range before {
+		var held int
+		// How many nodes hold the uid now, soft-deleted ones included.
+		require.NoError(t, s.WriteDB().QueryRowContext(context.Background(),
+			`SELECT COUNT(*) FROM nodes WHERE uid = ?`, uid).Scan(&held))
+		want := 1
+		if gone[uid] {
+			want = 0
+		}
+		assert.Equal(t, want, held, "uid %s", uid)
 	}
 }
 
@@ -183,6 +238,8 @@ func TestImportReconcileReport_String_AdoptedTitlesDiffer_SaysWhereTheLocalTaskI
 			out := report.String()
 			assert.Equal(t, tt.want, containsLine(out, titlesDifferNote), out)
 			if tt.want {
+				assert.Contains(t, out, "may be two different tasks created in the same second whose create "+
+					"events neither clone's event log holds (created before 0.2, for example)")
 				assert.Contains(t, out, "the backup taken before the merge holds the local one")
 			}
 		})
@@ -191,8 +248,8 @@ func TestImportReconcileReport_String_AdoptedTitlesDiffer_SaysWhereTheLocalTaskI
 
 // TestImportReconcile_ResidualSameSecondPair_MergeKeepsFileTaskAndReportsIt
 // is the MTIX-95.31.4 round-4 residual: two different tasks created in the
-// same second on clones running releases before 0.4, both upgraded more
-// than an hour later, count as one task. The merge takes the file's task
+// same second, whose create events neither clone's event log holds, both
+// upgraded more than an hour later, count as one task. The merge takes the file's task
 // under the id (the identity rule is unchanged) and its report names both
 // titles, so the user can recover the local task from the pre-merge backup.
 func TestImportReconcile_ResidualSameSecondPair_MergeKeepsFileTaskAndReportsIt(t *testing.T) {

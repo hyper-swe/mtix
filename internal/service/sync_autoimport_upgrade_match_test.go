@@ -6,8 +6,10 @@
 // because a uid was assigned when a clone upgraded from before uids were
 // shared, whose two titles differ, as "treated as the same task (uid
 // assigned at upgrade)", so the user can refuse the merge that would keep
-// only the board's task. Written red-first against the MTIX-95.31.4 code,
-// which imported such a pair without a word.
+// only the board's task: the merge option says the merge takes the file's
+// title and content for it, and how to keep the local task (copy it with
+// mtix create first). Written red-first against the MTIX-95.31.4 code,
+// which imported such a pair without a word, and in round 2 against round 1.
 package service_test
 
 import (
@@ -32,7 +34,20 @@ const upgradeMatchedLine = `  PROJ-2: treated as the same task (uid assigned at 
 // upgradeMatchedNote is the start of what the refusal's merge option says
 // about such a task, PROJ-2.
 const upgradeMatchedNote = "a task treated as the same task (uid assigned at upgrade), here PROJ-2, " +
-	"keeps its id and takes the file's uid"
+	"keeps its id and takes the file's uid, title and content"
+
+// upgradeMatchedWayOut is how the refusal says to keep the local task when
+// the two are different tasks.
+const upgradeMatchedWayOut = "if the two titles name different tasks (created in the same second, and " +
+	"neither clone's event log holds their create events: made before 0.2, for example), yours would survive " +
+	"only in the backup the merge takes: copy it to a new task first (mtix show <id>, then mtix create with its " +
+	"title and description; writes stay local while this refusal is pending), then merge\n"
+
+// upgradeMatchedMergeLine is the merge option's first line when the
+// refusal lists such a task: it does not keep that task's title and
+// content.
+const upgradeMatchedMergeLine = "keeps every value the refusal lists (a task treated as the same task takes " +
+	"the file's title and content, see below) and adds the file's changes"
 
 // upgradedAt returns when the clones in these tests upgraded: a month after
 // the tasks were created, so every uid they assigned then counts as one
@@ -54,21 +69,28 @@ func setUpgradedUID(t *testing.T, f *guardFixture, id string) {
 // TestAutoImport_SameTaskAtUpgradeWithOtherTitle_RefusalListsIt verifies
 // the refusal lists PROJ-2, held under uids both assigned at upgrade, when
 // the pulled board gives it another title (the two may be different tasks
-// created in the same second before 0.4), on its own or beside other
-// losses, and changes nothing; with one title the board imports and the
-// file's uid is adopted.
+// created in the same second without create events), on its own or beside other
+// losses, and changes nothing; the merge option then says the merge takes
+// the file's title and content for it and how to keep the local task. A
+// refusal without such a task says neither, and with one title the board
+// imports and the file's uid is adopted.
 func TestAutoImport_SameTaskAtUpgradeWithOtherTitle_RefusalListsIt(t *testing.T) {
 	tests := []struct {
 		name      string
 		title     string
 		dropNotes bool // the board also lacks PROJ-1's two annotations
 		want      []string
+		notWant   []string
 	}{
 		{"only the uid and the title differ", "Teammate's PROJ-2", false,
-			[]string{upgradeMatchedLine + "\n", upgradeMatchedNote}},
+			[]string{upgradeMatchedLine + "\n", upgradeMatchedMergeLine, upgradeMatchedNote, upgradeMatchedWayOut}, nil},
 		{"the board also lacks local annotations", "Teammate's PROJ-2", true,
-			[]string{upgradeMatchedLine + "\n", "  PROJ-1: 2 annotations", upgradeMatchedNote}},
-		{"one title", "Task PROJ-2", false, nil},
+			[]string{upgradeMatchedLine + "\n", "  PROJ-1: 2 annotations", upgradeMatchedMergeLine, upgradeMatchedNote,
+				upgradeMatchedWayOut}, nil},
+		{"one title, the board lacks local annotations", "Task PROJ-2", true,
+			[]string{"  PROJ-1: 2 annotations", "keeps every value the refusal lists and adds the file's changes"},
+			[]string{"PROJ-2", "treated as the same task"}},
+		{"one title", "Task PROJ-2", false, nil, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -98,19 +120,22 @@ func TestAutoImport_SameTaskAtUpgradeWithOtherTitle_RefusalListsIt(t *testing.T)
 			for _, w := range tt.want {
 				assert.Contains(t, msg, w)
 			}
+			for _, w := range tt.notWant {
+				assert.NotContains(t, msg, w)
+			}
 		})
 	}
 }
 
 // TestAutoImport_SameTaskAtUpgradeBeyondTheTenListed_NamedInMergeOption
-// verifies the merge option names a task treated as the same task at
-// upgrade with another title even when the loss list counts it without
-// listing it (more than ten nodes lose data).
+// verifies the merge option names every task treated as the same task at
+// upgrade with another title, here two, even when the loss list counts
+// them without listing them (more than ten nodes lose data).
 func TestAutoImport_SameTaskAtUpgradeBeyondTheTenListed_NamedInMergeOption(t *testing.T) {
 	ctx := context.Background()
 	f := newGuardFixture(t)
 	created := time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
-	for seq := 3; seq <= 13; seq++ {
+	for seq := 3; seq <= 14; seq++ {
 		id := "PROJ-" + strconv.Itoa(seq)
 		require.NoError(t, f.store.CreateNode(ctx, &model.Node{
 			ID: id, Project: "PROJ", Depth: 0, Seq: seq, Title: "Task " + id,
@@ -118,19 +143,23 @@ func TestAutoImport_SameTaskAtUpgradeBeyondTheTenListed_NamedInMergeOption(t *te
 			NodeType: model.NodeTypeEpic, ContentHash: "h-" + id, CreatedAt: created, UpdatedAt: created,
 		}))
 	}
+	setUpgradedUID(t, f, "PROJ-8")
 	setUpgradedUID(t, f, "PROJ-9")
 	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) {
 		kept := d.Nodes[:0:0]
-		for _, id := range []string{"PROJ-1", "PROJ-2", "PROJ-9"} {
+		for _, id := range []string{"PROJ-1", "PROJ-2", "PROJ-8", "PROJ-9"} {
 			kept = append(kept, d.Nodes[nodeIndex(t, d, id)])
 		}
-		kept[2].UID, kept[2].Title = uidMintedAt(t, upgradedAt().Add(time.Hour)), "Teammate's PROJ-9"
+		for i := 2; i < 4; i++ {
+			kept[i].UID, kept[i].Title = uidMintedAt(t, upgradedAt().Add(time.Hour)), "Teammate's "+kept[i].ID
+		}
 		d.Nodes, d.NodeCount = kept, len(kept)
 	}))
 
 	require.ErrorIs(t, f.svc.AutoImport(ctx, f.mtixDir), service.ErrAutoImportRefused)
 	msg := f.notices.String()
-	assert.Contains(t, msg, "  and 1 more nodes\n", "PROJ-9 sorts after the ten listed")
+	assert.Contains(t, msg, "  and 2 more nodes\n", "PROJ-8 and PROJ-9 sort after the ten listed")
+	assert.NotContains(t, msg, "  PROJ-8: ")
 	assert.NotContains(t, msg, "  PROJ-9: ")
-	assert.Contains(t, msg, "a task treated as the same task (uid assigned at upgrade), here PROJ-9, keeps its id")
+	assert.Contains(t, msg, "a task treated as the same task (uid assigned at upgrade), here PROJ-8, PROJ-9, keeps its id")
 }

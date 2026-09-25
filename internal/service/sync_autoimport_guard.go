@@ -163,17 +163,24 @@ func (s *SyncService) refuseConflict(mtixDir, fileHash string, diff *sqlite.Repl
 // task is a different task than the file's under its id, the merge option
 // says the merge renumbers it and needs --confirm (MTIX-95.31.4). When the
 // file holds a task under another uid assigned at upgrade, with another
-// title, the merge option names every such task and says the merge keeps
-// only the file's, so the user can refuse it (MTIX-95.31.6).
+// title, the merge option says the merge takes the file's title and content
+// for it, names every such task, and says how to keep the local one (copy
+// it with mtix create first), so the user can refuse the merge
+// (MTIX-95.31.6).
 func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss) string {
+	upgradeMatched := sameTaskAtUpgrade(losses) // MTIX-95.31.6
+	keeps := "keeps every value the refusal lists"
+	if len(upgradeMatched) > 0 {
+		keeps += " (a task treated as the same task takes the file's title and content, see below)"
+	}
 	var b strings.Builder
 	b.WriteString("mtix: auto-import of .mtix/tasks.json refused: " + cause + ":\n")
 	b.WriteString("  " + lossList(losses, "\n  ") + "\n")
 	b.WriteString("Nothing was imported. Until you choose, mtix refuses again on every command, and writing " +
 		"commands save to the local store but leave .mtix/tasks.json as it is.\n")
 	fmt.Fprintf(&b, "Choose one, run from the project root (%s):\n", projectRoot)
-	b.WriteString("  mtix import .mtix/tasks.json --mode merge    backs up the database, keeps every value the refusal " +
-		"lists and adds the file's changes: a field value listed above stays, with the task's local status when " +
+	b.WriteString("  mtix import .mtix/tasks.json --mode merge    backs up the database, " + keeps +
+		" and adds the file's changes: a field value listed above stays, with the task's local status when " +
 		"the value is part of it; for a task whose content is unchanged, all local field values win, so a " +
 		"teammate's change to its status or assignee is not applied and your next export reverts it\n")
 	if holdsDifferentTask(losses) {
@@ -182,12 +189,8 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss) string 
 			"uid; the file's task keeps the id): the import lists the renumbering and applies it only when you " +
 			"rerun it with --confirm\n")
 	}
-	if ids := sameTaskAtUpgrade(losses); len(ids) > 0 { // MTIX-95.31.6
-		b.WriteString("                                               a task treated as the same task (uid assigned " +
-			"at upgrade), here " + strings.Join(ids, ", ") + ", keeps its id and takes the file's uid and changes, " +
-			"and the import lists each uid it adopts; if the two titles name different tasks (created in the same " +
-			"second on clones running releases before 0.4), do not merge: the merge would keep only the file's " +
-			"task, and yours would survive only in the backup the merge takes\n")
+	if len(upgradeMatched) > 0 {
+		b.WriteString(sameTaskAtUpgradeNote(upgradeMatched))
 	}
 	b.WriteString("  mtix sync --fix                              keep the local store and rewrite " +
 		".mtix/tasks.json from it; every change in the file is dropped\n")
@@ -219,6 +222,21 @@ func sameTaskAtUpgrade(losses []sqlite.NodeLoss) []string {
 		}
 	}
 	return ids
+}
+
+// sameTaskAtUpgradeNote is the merge option's note on the tasks ids that
+// the file holds under another uid assigned at upgrade, with another title
+// (MTIX-95.31.6): the merge takes the file's uid, title and content for
+// them, and a local task that is a different task is kept by copying it to
+// a new task first.
+func sameTaskAtUpgradeNote(ids []string) string {
+	return "                                               a task treated as the same task (uid assigned at " +
+		"upgrade), here " + strings.Join(ids, ", ") + ", keeps its id and takes the file's uid, title and " +
+		"content, and the import lists each uid it adopts; if the two titles name different tasks (created in " +
+		"the same second, and neither clone's event log holds their create events: made before 0.2, for " +
+		"example), yours would survive only in the backup the merge takes: copy it to a new task first (mtix " +
+		"show <id>, then mtix create with its title and description; writes stay local while this refusal is " +
+		"pending), then merge\n"
 }
 
 // lossList describes up to maxLossLines nodes' losses joined by sep, and

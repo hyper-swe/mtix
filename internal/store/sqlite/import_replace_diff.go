@@ -118,7 +118,8 @@ func markSameTaskAtUpgrade(loss *NodeLoss, l, in *exportNode) {
 //     holds under another uid that differentTask takes for the same task
 //     (a uid assigned at upgrade) while the titles differ
 //     (SameTaskAtUpgrade, MTIX-95.31.6): the two may be different tasks
-//     created in the same second on clones older than 0.4;
+//     created in the same second whose create events neither clone's
+//     event log holds (created before 0.2, for example);
 //   - a loss only when the file's copy of the node is not known to be
 //     current: a non-empty field value the file leaves empty. The copy is
 //     current when the file carries activity (schema 2.0.0 or later),

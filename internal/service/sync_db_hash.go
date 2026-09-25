@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -174,13 +175,51 @@ func matchOlderBaseline(local *sqlite.ExportData, stored string, forms []baselin
 // matched the unchanged local store in an older form, with current, the
 // store's hash in the current form, and logs it (MTIX-95.31.11, FR-15.2h).
 // From then on the baseline is compared exactly, so a change to a field
-// the older form lacks counts as a change too. The write is atomic
-// (writeFileAtomically), so a failure leaves the older baseline whole; it
-// is logged, and the next command recognizes the older baseline again.
+// the older form lacks counts as a change too. The write is atomic and
+// safe against a concurrent rewrite (replaceBaseline), so a failure leaves
+// the older baseline whole; it is logged, and the next command recognizes
+// the older baseline again.
 func (s *SyncService) upgradeBaseline(mtixDir, current string, form baselineForm) {
-	if err := writeFileAtomically(filepath.Join(mtixDir, "data", "sync-db.sha256"), []byte(current)); err != nil {
+	if err := replaceBaseline(filepath.Join(mtixDir, "data", "sync-db.sha256"), []byte(current)); err != nil {
 		s.logger.Warn("could not rewrite the conflict baseline in the current form", "error", err)
 		return
 	}
 	s.logger.Info("sync_baseline_upgraded", "event", "sync_baseline_upgraded", "from_form", form.String())
+}
+
+// replaceBaseline writes data to the conflict baseline at path through a
+// temporary file only this call uses, in the same directory, and a rename
+// (MTIX-95.31.11). The rewrite runs under the shared sync lock (FR-15.8),
+// so two commands may rewrite the baseline at once: with its own temporary
+// file, neither can truncate or move the other's half-written file, and a
+// reader sees the old baseline or one whole new one, never an empty or
+// partial one. The baseline keeps mode 0644. On any failure the temporary
+// file is removed and the baseline is left as it was.
+func replaceBaseline(path string, data []byte) (err error) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create a temporary baseline: %w", err)
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if rmErr := os.Remove(tmp.Name()); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			err = errors.Join(err, fmt.Errorf("remove the temporary baseline: %w", rmErr))
+		}
+	}()
+	_, writeErr := tmp.Write(data)
+	if closeErr := tmp.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr != nil {
+		return fmt.Errorf("write the temporary baseline: %w", writeErr)
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return fmt.Errorf("set the temporary baseline's mode: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("replace the baseline: %w", err)
+	}
+	return nil
 }

@@ -38,6 +38,8 @@ func TestSyncCmd_AllSyncCommandsRegistered(t *testing.T) {
 	expected := []string{
 		"init", "clone", "push", "pull", "status", "doctor",
 		"conflicts", "reconcile", "daemon", "backup", "backfill",
+		// MTIX-95.11: read-only view of the pulled-event quarantine.
+		"quarantine",
 		// MTIX-30.10: the ADR-003 §7 node-identity migration driver.
 		"migrate",
 		// MTIX-30.8: restore-collision (ADR-003 §6.1/§15) operator commands.

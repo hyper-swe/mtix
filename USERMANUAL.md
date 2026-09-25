@@ -1269,6 +1269,7 @@ mtix import project-data.json --mode replace
 - When the file's copy of a task is stale (it lacks one of the task's local activity entries, its `updated_at` is older, or the file comes from a client older than 0.5.4 and carries no activity), a field value the copy leaves empty keeps its local value: exactly the field values the automatic import's refusal lists. If the value is part of the task's status (a closed or wake time, an assignee, an invalidation), the task keeps its whole local status. A current copy's clear (a teammate's unclaim, say) applies.
 - A task you hold whose uid the file holds under another id is the same task, renumbered by another clone: the merge moves it, and its subtree, to that id without asking for `--confirm`, and prints the move.
 - A node the store holds as a different task (another uid, for example when two clones each created `PROJ-3`, even in the same second) is never overwritten. The local task and its subtree are renumbered to the next number free in both the store and the file under the same parent (the number after the highest either holds, so no earlier number is reused), keeping their uids, annotations, activity and dependencies, and the file's task takes the id: the published board keeps its numbers, and later creates continue after the new number. The import prints the renumbering (uid, old id, new id; `--remap-file <path>` writes it as JSON) and applies it only with `--confirm`; without it, nothing is written. A node without a uid on either side (a file written before uids existed) is merged into the local one as before. So is a node under another uid when it is the same task: it has the same creation time, and at least one of the two uids was given to the task more than an hour after it was created, as a clone did when it upgraded from before uids were shared (a uid is a UUIDv7 that carries the time it was minted). Any other pair is two different tasks, even when they were created in the same second or a create waited seconds for another command: mtix treats two tasks as one only on that clear sign, because merging two tasks would lose one, while renumbering asks you first. The merge adopts the file's uid, and never replaces a uid with an empty one.
+- The merge lists every uid it adopts in its report on stderr, applied or not: `uids adopted from the file (the same task under another uid): N`, then one line per task, `PROJ-3 local uid=<uid> -> file uid=<uid> (local "<your title>", file "<their title>")`. Once the import is applied, `--json` carries them as `uid_adoptions` (`id`, `local_uid`, `file_uid`, `local_title`, `file_title`); an import that waits for `--confirm` prints no JSON. `--remap-file` maps each local uid to its id, so a reference to the old uid still resolves. Check every adoption whose titles differ. One case gets past the rule: two different tasks created in the same second whose create events neither clone's event log holds (for example, created before 0.2), when both clones upgraded more than an hour later, both carry uids assigned at upgrade, so mtix treats them as one task and the merge keeps the file's task under the id. The report then adds `a task above whose titles differ may be two different tasks ...`, and the backup the merge took first (its path is printed before the report) holds your task. To recover it, stop every mtix process that uses this store (the MCP server, `mtix serve`, a running `mtix daemon`) and copy that backup over `.mtix/data/mtix.db`. Then delete `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm`: they belong to the replaced database and must not be replayed onto the backup. Then, before you run any mtix command, restore the pulled board: `git checkout -- .mtix/tasks.json`, or take the file from the pulled commit. The merge's own export rewrote it, so the next command would otherwise export the restored store over it and drop the teammate's task. The next command refuses the import again. Copy your task to a new one (`mtix show PROJ-3`, then `mtix create` with its title and description; writes stay local while the refusal is pending), then run `mtix import .mtix/tasks.json --mode merge --confirm`: the teammate's task keeps PROJ-3 and your copy keeps its new id. The automatic import lists such a pair, when the titles differ, as `PROJ-3: treated as the same task (uid assigned at upgrade) (local "<your title>", file "<their title>")` and refuses, even when nothing else would be lost. Its merge option then says that the merge takes the file's title and content for that task, and names each such task. If the titles name two different tasks, do not merge yet: copy your task to a new one first, as above, then merge. The opposite case is safe but can look wrong: when every uid a task carries was assigned less than an hour after the task was created (both clones upgraded within that hour), the uids count as minted at creation, so the two copies of that one task are listed as `a different task under this id` with identical titles, and the merge renumbers your copy only with `--confirm`. If both copies are the same task, merge with `--confirm`, check that the renumbered copy holds nothing the other lacks (annotations, activity), and delete it with `mtix delete <new id>`.
 - `mtix import --mode merge` backs up the database first, as the automatic import does (`.mtix/data/backups/pre-sync-<UTC time>.db`, newest 5 kept), once the file has passed its checks and just before it writes. A merge that would change nothing (the same file again, say), one that awaits `--confirm`, and one refused by its checks take no backup, so they never rotate the automatic import's backups away.
 - A merge never removes an annotation or activity entry. To make the store match a file exactly, use replace mode.
 
@@ -1513,10 +1514,11 @@ the ones your machine does not have; when the listing is done it
 fetches them and applies them the usual way, oldest first by the sync
 clock, so a task's creation applies before its edits. If the regular
 fetch meets an edit of a task whose creation it has not received (the
-creation was pushed late with an older clock), pull runs the sweep at
-once, which brings the creation, and retries the regular fetch one
-time. A recovered claim or status change that is older than the task's
-current one changes nothing; it is only recorded as received.
+creation was pushed late with an older clock), the edit is quarantined
+(see [Quarantined events](#quarantined-events)), the sweep brings the
+creation, and the same pull then applies the edit. A recovered claim or
+status change that is older than the task's current one changes
+nothing; it is only recorded as received.
 
 - **First pull after upgrading.** It compares the full hub event history
   once and prints `late-event sweep (first run, full hub history): N
@@ -1540,8 +1542,8 @@ current one changes nothing; it is only recorded as received.
 - **Cost.** In the common case (nothing missing, and at most `--limit`
   changes since the last sweep) one extra hub query per pull, and only
   during a pull. A larger window adds a query per further `--limit`
-  changes, recovered changes add a fetch per `--limit` of them, and a
-  retried fetch adds one pass. The sweep adds no timer, so an idle hub
+  changes, and recovered changes add a fetch per `--limit` of them. The
+  sweep adds no timer, so an idle hub
   that scales to zero stays idle (a daemon that pulls on an interval
   sweeps on each of its pulls).
 - **Hub owner, after upgrading.** Run `mtix sync init` once with the
@@ -1550,6 +1552,86 @@ current one changes nothing; it is only recorded as received.
   before, but each page the sweep lists scans the hub's whole event
   table: once per pull for the usual window, and once per page of the
   one-time full comparison, spread across pulls.
+
+### Quarantined events
+
+`mtix sync pull` checks every event it receives before applying it, the
+same way the hub checks an event when it is pushed:
+
+- **Size and shape.** A payload of at most 64 KB and at most 10 levels
+  of nesting, clocks below 2^53, at most 100 entries in the vector
+  clock, and well-formed author, machine and project ids.
+- **Clock jump.** The event's Lamport clock may be at most
+  `sync.max_lamport_jump` above your local clock (default 4294967296,
+  that is 2^32; far above any real team's history). One extreme event
+  would otherwise push your clock so high that the hub refuses every
+  change you make afterwards.
+- **Future timestamps only warn.** An event stamped more than 24 hours
+  ahead of your machine's clock is applied, with a `WARN` line on
+  stderr; check your machine's clock if you see it.
+
+Each event is applied on its own. An event that fails a check, or whose
+apply fails (for example a dependency whose target task has not arrived
+yet), is rolled back and kept in the local **quarantine** (the table
+`sync_quarantine` in `.mtix/data/mtix.db`) instead of failing the pull;
+the pull applies the other events and moves on. The same goes for a hub
+row that does not decode. A quarantined event is never lost and never
+changes your clock, and an event refused for its clock never moves the
+pull's position either, so later changes keep arriving.
+
+- **Retried on every pull.** Each pull retries the quarantine first,
+  before it contacts the hub (so this works offline too), and again at
+  its end when it applied events. An event whose missing task or
+  dependency target has arrived applies then and leaves the quarantine,
+  and so does one your store has already applied (for example after
+  `mtix sync clone`). Retries are local: they add no hub query, but a pull
+  downloads an event refused for its clock again each time.
+- **See it.** Pull prints each newly quarantined event on stderr and, at
+  the end, `quarantine: N pulled events held, not applied`. `mtix sync
+  status` shows `quarantined events` (`quarantined_events` in `--json`).
+  `mtix sync doctor` fails its `quarantined events` check while any
+  remain.
+- **Inspect it** (read-only; it changes nothing and does not contact the
+  hub):
+
+  ```bash
+  mtix sync quarantine list          # event id, node, op, attempts, first seen, last attempt, reason
+  mtix sync quarantine list --json   # the same, plus the Lamport clock, source and mtix version
+  ```
+
+  `reason` is why the event was first quarantined; `attempts` counts
+  the failed tries; `source` (in `--json`) is `pull` (the regular fetch)
+  or `sweep` (the late-event sweep).
+- **What to do.** Run `mtix sync pull` again first. An event waiting for
+  a task or dependency target that has not been pushed yet applies once
+  its teammate pushes it. An event that fails the size, shape or clock
+  checks will not apply by itself: report it to whoever runs the hub.
+  Raise the bound, `mtix config set sync.max_lamport_jump <positive
+  integer>`, only if you know the hub's clocks are legitimately that far
+  ahead. Do not delete quarantine rows or edit the database by hand.
+- **Rebuilding from the hub deletes local work.** `mtix sync reconcile
+  --discard-local --yes` deletes your local tasks and unpushed changes,
+  and empties the quarantine with the rest of the local sync state. Its
+  dry run (without `--yes`) shows only the node count, not what would be
+  lost. Before `--yes`, run `mtix sync push`, check that `mtix sync
+  status` shows `pending` 0, and make sure a human has agreed. Then run
+  it, and `mtix sync pull`, which quarantines again any event that still
+  fails.
+- **A quarantined copy of your own event.** If the hub row of an event
+  you pushed was changed after the push, pull quarantines that copy and
+  it does not clear by itself, even after the hub row is repaired: every
+  retry checks the stored copy again. Recover in this order: whoever
+  runs the hub repairs the hub row first; run `mtix sync push` and check
+  that `pending` is 0; then, with a human's go-ahead, `mtix sync
+  reconcile --discard-local --yes` and `mtix sync pull`. Discarding
+  before the hub row is repaired drops your own true copy of the event,
+  which then comes back only as a quarantined hub event.
+- **Clone refuses such events.** `mtix sync clone` has no quarantine: it
+  runs the same checks on every hub event before it writes anything, and
+  refuses the whole clone, naming the event and the reason, when any
+  event fails. On the fresh store, run `mtix sync pull` alone: it
+  quarantines the event and applies the rest. Because of the check, a
+  clone reads the hub's event log twice.
 
 ### Daemon mode (for durability)
 
@@ -1935,9 +2017,9 @@ for the full tradeoff.
 ### Hub health checks
 
 ```bash
-mtix sync doctor             # 5 health checks: PG reachable, schema current,
+mtix sync doctor             # 6 health checks: PG reachable, schema current,
                              #   queue draining, no orphan applied,
-                             #   secrets file mode
+                             #   quarantined events, secrets file mode
 ```
 
 Exit code 0 on all-pass; exit code 2 if any check fails (operators
@@ -2135,7 +2217,8 @@ change the node's status with the normal commands instead.
 | `ErrSyncDivergentHistory` on `mtix sync init` | Hub already has a different lineage for this prefix | Run `mtix sync clone` to join, OR `mtix sync reconcile --import-as PARENT-ID` |
 | `ErrSyncQueueFull` from `mtix create` / `update` | Local pending queue at the cap | `mtix sync push --force`, or raise `sync.max_queue_size` |
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
-| A teammate's change is missing after `mtix sync pull` | They have not pushed yet, or the late-event sweep failed (the pull reports the error) | Ask them to run `mtix sync push`, then pull again; `mtix sync status` shows `last sweep` |
+| A teammate's change is missing after `mtix sync pull` | They have not pushed yet, the late-event sweep failed (the pull reports the error), or the change is quarantined | Ask them to run `mtix sync push`, then pull again; `mtix sync status` shows `last sweep` and `quarantined events` |
+| `mtix sync doctor` fails `quarantined events` | Pulled events failed their checks or their apply and are held, not applied | Run `mtix sync pull` (it retries them); if they remain, list them with `mtix sync quarantine list` (see [Quarantined events](#quarantined-events)) and report the reasons to whoever runs the hub |
 | A node shows an older state than its history after a pull on a client older than 0.5.4 (for example `in_progress` after `mtix done`) | That pull replayed an older event of this machine | Upgrade, run `mtix sync pull`, then `mtix sync repair --status` and review the list; run `mtix sync pull` again, then `mtix sync repair --status --apply` and `mtix sync push`; a flagged node needs review and `--force` (see above). Pulling first matters: a repair made on a stale log can revert a teammate's newer change on every machine |
 
 ### MCP integration

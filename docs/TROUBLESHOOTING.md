@@ -68,7 +68,7 @@
 
 **Solution:** Read the list the refusal prints, then run one of these from the project root:
 
-- `mtix import .mtix/tasks.json --mode merge` backs up the database, keeps everything the refusal lists (every local task, comment, activity entry and dependency, and every listed field value, with the task's local status when the value is part of it) and adds the file's changes. For a task whose content is unchanged, the local field values win, so a teammate's status or assignee change to it is not applied and the board you commit next reverts it. A task listed as `a different task under this id` is renumbered, with its subtree, to the next number free in both the store and the file (it keeps its uid; the file's task keeps the id); the merge prints the renumbering and applies it only when you rerun it with `--confirm`.
+- `mtix import .mtix/tasks.json --mode merge` backs up the database, keeps everything the refusal lists (every local task, comment, activity entry and dependency, and every listed field value, with the task's local status when the value is part of it) and adds the file's changes. For a task whose content is unchanged, the local field values win, so a teammate's status or assignee change to it is not applied and the board you commit next reverts it. A task listed as `a different task under this id` is renumbered, with its subtree, to the next number free in both the store and the file (it keeps its uid; the file's task keeps the id); the merge prints the renumbering and applies it only when you rerun it with `--confirm`. For a task listed as `treated as the same task (uid assigned at upgrade)` (the file holds its id under another uid, one of them assigned when a clone upgraded, and the titles differ) the merge takes the file's uid, title and content. If the two titles name different tasks (created in the same second, and neither clone's event log holds their create events: made before 0.2, for example), copy yours to a new task first (`mtix show <id>`, then `mtix create` with its title and description; writes stay local while the refusal is pending), then merge.
 - `mtix sync --fix` keeps the local store and rewrites `.mtix/tasks.json` from it; every change in the file is dropped.
 - `mtix import .mtix/tasks.json --mode replace` makes the file win and deletes what the refusal listed. Take a copy first with `mtix backup <file>`.
 
@@ -110,6 +110,7 @@ Each of them resolves the refusal. `mtix sync` shows the last refusal, its kind,
 - `sync.enabled`
 - `sync.endpoint`
 - `sync.interval`
+- `sync.max_lamport_jump`
 - `sync.team_id`
 - `ui.collapse_done`
 - `ui.default_depth`

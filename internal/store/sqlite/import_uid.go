@@ -120,6 +120,9 @@ type ImportReconcileReport struct {
 	// them (MTIX-95.31.4). Following the published board needs no
 	// confirmation.
 	Moved []ImportRemapEntry
+	// UIDAdoptions are the local tasks a merge gives the file's uid, the
+	// same task under another uid, with both titles (MTIX-95.31.6).
+	UIDAdoptions []ImportUIDAdoption
 	// Idempotent counts incoming nodes that were an exact uid+display_path
 	// no-op against the local store (ADR-003 §6).
 	Idempotent int
@@ -128,8 +131,9 @@ type ImportReconcileReport struct {
 }
 
 // String renders a loud, human-readable summary of the reconciliation
-// (ADR-003 §6). Every conflict, remap, and re-stamp is listed so the operator
-// can audit exactly what the import did or would do.
+// (ADR-003 §6). Every conflict, remap, re-stamp and uid adoption
+// (MTIX-95.31.6) is listed so the operator can audit exactly what the import
+// did or would do.
 func (r *ImportReconcileReport) String() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "import reconciliation report (applied=%t):\n", r.Applied)
@@ -170,6 +174,7 @@ func (r *ImportReconcileReport) String() string {
 			fmt.Fprintf(&b, "    - uid=%s %s -> %s\n", m.UID, m.OldPath, m.NewPath)
 		}
 	}
+	writeUIDAdoptions(&b, r.UIDAdoptions) // MTIX-95.31.6
 	return b.String()
 }
 
@@ -192,6 +197,8 @@ func (r *ImportReconcileReport) String() string {
 //     Confirm is false, the remap report is returned with
 //     ErrImportConfirmationRequired and the store is left untouched.
 //
+// Every uid a merge adopts (the same task under another uid, FR-7.8) is
+// listed in the report, applied or not, and in the result (MTIX-95.31.6).
 // The returned report is always non-nil when data is non-nil, even on error, so
 // callers can surface the loud report. The ImportResult is nil unless the import
 // was applied.
@@ -234,6 +241,13 @@ func (s *Store) ImportReconcile(
 		return report, nil, err
 	}
 
+	// Step 3c (MTIX-95.31.6): list every uid the merge adopts, with the id,
+	// both uids and both titles, before any confirmation is asked for: two
+	// different tasks the identity rule treats as one are then visible.
+	if err := s.planUIDAdoptions(ctx, data, opts.Mode, report); err != nil {
+		return report, nil, err
+	}
+
 	// Step 4: live-store safety. Renumbering touches an existing store's
 	// namespace, so require confirmation unless the store is empty (ADR-003
 	// §6); renumbering a local task always does (MTIX-95.31.4).
@@ -259,6 +273,7 @@ func (s *Store) ImportReconcile(
 		return report, nil, err
 	}
 	report.Applied = true
+	result.UIDAdoptions = report.UIDAdoptions // MTIX-95.31.6: --json lists them too
 	return report, result, nil
 }
 

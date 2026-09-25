@@ -45,13 +45,15 @@ func newSyncDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor [DSN]",
 		Short: "Run sync health checks (FR-18)",
-		Long: `Run 5 health checks against the local store and the BYO Postgres hub:
+		Long: `Run 6 health checks against the local store and the BYO Postgres hub:
 
   1. PG reachable           — opens pool + Ping
   2. Schema current         — sync_projects table exists with expected columns
   3. Queue draining         — no events older than 1h still in pending
   4. No orphan applied      — every applied_event has a matching node OR tombstone
-  5. DSN secrets file mode  — .mtix/secrets is mode 0600 (when present)
+  5. Quarantined events     — no pulled event is held in the local quarantine;
+                              each pull retries them ('mtix sync quarantine list')
+  6. DSN secrets file mode  — .mtix/secrets is mode 0600 (when present)
 
 Exit code: 0 on all-pass, 2 if any check fails. --json output for
 agents and CI consumption.`,
@@ -113,15 +115,11 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 		report = appendCheck(report, "queue draining", drainOK, detail)
 	}
 
-	// Check 4: no orphan applied events (local only).
-	if app.store == nil {
-		report = appendCheck(report, "no orphan applied", false, "local store not initialized")
-	} else {
-		orphanOK, detail := checkNoOrphanApplied(ctx, app.store)
-		report = appendCheck(report, "no orphan applied", orphanOK, detail)
-	}
+	// Checks 4 and 5: no orphan applied events, and no quarantined pulled
+	// events (local only; sync_doctor_local.go).
+	report = appendLocalStoreChecks(ctx, report, app.store)
 
-	// Check 5: DSN secrets file mode.
+	// Check 6: DSN secrets file mode.
 	modeOK, detail := checkSecretsFileMode(app.mtixDir)
 	report = appendCheck(report, "secrets file mode", modeOK, detail)
 

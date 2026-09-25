@@ -68,17 +68,36 @@ type NodeLoss struct {
 	// The replace would delete the whole local task, so the node's other
 	// losses are not listed. LocalTitle and FileTitle name the two tasks.
 	DifferentTask bool
-	LocalTitle    string
-	FileTitle     string
+	// SameTaskAtUpgrade is true when the file holds the node's id under
+	// another uid, the two count as one task only because a uid was
+	// assigned when a clone upgraded from before uids were shared
+	// (differentIdentity), and their titles differ (MTIX-95.31.6): they may
+	// be two tasks that rule cannot tell apart, and the file's copy would
+	// replace the local task. LocalTitle and FileTitle name the two copies.
+	SameTaskAtUpgrade bool
+	LocalTitle        string
+	FileTitle         string
 }
 
 // Lossy reports whether the replace would delete any local data.
 func (d *ReplaceDiff) Lossy() bool { return len(d.Losses) > 0 }
 
-// lossy reports whether the node loses anything.
+// lossy reports whether the node loses anything, or may lose the whole
+// task (SameTaskAtUpgrade, MTIX-95.31.6).
 func (l *NodeLoss) lossy() bool {
 	return l.WholeNode || len(l.Annotations) > 0 || len(l.Unresolved) > 0 ||
-		l.Activity > 0 || len(l.Fields) > 0 || len(l.Dependencies) > 0
+		l.Activity > 0 || len(l.Fields) > 0 || len(l.Dependencies) > 0 || l.SameTaskAtUpgrade
+}
+
+// markSameTaskAtUpgrade sets loss.SameTaskAtUpgrade, with both titles,
+// when in, the file's copy of local node l, holds l's id under another uid,
+// both uids set (so match took the two for one task only by the upgrade
+// rule of differentIdentity), and the titles differ (MTIX-95.31.6).
+func markSameTaskAtUpgrade(loss *NodeLoss, l, in *exportNode) {
+	if l.UID == "" || in.UID == "" || l.UID == in.UID || l.Title == in.Title {
+		return
+	}
+	loss.SameTaskAtUpgrade, loss.LocalTitle, loss.FileTitle = true, l.Title, in.Title
 }
 
 // DiffReplace compares a store's own export (local) with the export a
@@ -95,6 +114,12 @@ func (l *NodeLoss) lossy() bool {
 //     file holds under another id is the same task, renumbered by another
 //     clone: it is compared with that copy, and its dependencies are read
 //     at the ids the file gives its ends;
+//   - possibly a loss of the whole local task: a node whose id the file
+//     holds under another uid that differentTask takes for the same task
+//     (a uid assigned at upgrade) while the titles differ
+//     (SameTaskAtUpgrade, MTIX-95.31.6): the two may be different tasks
+//     created in the same second whose create events neither clone's
+//     event log holds (created before 0.2, for example);
 //   - a loss only when the file's copy of the node is not known to be
 //     current: a non-empty field value the file leaves empty. The copy is
 //     current when the file carries activity (schema 2.0.0 or later),
@@ -136,6 +161,7 @@ func DiffReplace(local, file *ExportData) (*ReplaceDiff, error) {
 		if err != nil {
 			return nil, err
 		}
+		markSameTaskAtUpgrade(&loss, l, in) // MTIX-95.31.6
 		if changed {
 			diff.Updated = append(diff.Updated, l.ID)
 		}

@@ -45,6 +45,8 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.`,
 		newSyncPushCmd(),
 		newSyncPullCmd(),
 		newSyncStatusCmd(),
+		// MTIX-95.11: read-only view of the pulled-event quarantine.
+		newSyncQuarantineCmd(),
 		newSyncDoctorCmd(),
 		newSyncConflictsCmd(),
 		newSyncReconcileCmd(),

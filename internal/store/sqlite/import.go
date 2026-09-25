@@ -68,6 +68,9 @@ type ImportResult struct {
 	NodesSkipped int  `json:"nodes_skipped"`
 	DepsImported int  `json:"deps_imported"`
 	FTSRebuilt   bool `json:"fts_rebuilt"`
+	// UIDAdoptions lists the local tasks a merge gave the file's uid; only
+	// ImportReconcile fills it (MTIX-95.31.6).
+	UIDAdoptions []ImportUIDAdoption `json:"uid_adoptions,omitempty"`
 }
 
 // ValidateExport runs the checks every import makes before it writes

@@ -336,10 +336,17 @@ func importOptions(ctx context.Context, mode sqlite.ImportMode, f importFlags) s
 // holds the renumbered provisional nodes, the local tasks a merge renumbers
 // because the file holds a different task under their id, and the local
 // tasks it moves to the id the file holds them under (MTIX-95.31.4); a node
-// without a uid has no key and is left out.
+// without a uid has no key and is left out. A local uid a merge gives up
+// for the file's maps to the id its task keeps, so a reference to it still
+// resolves (MTIX-95.31.6).
 func writeRemapFile(path string, report *sqlite.ImportReconcileReport) error {
 	moved := append(append(append([]sqlite.ImportRemapEntry{}, report.Remaps...), report.LocalRenumbers...),
 		report.Moved...)
+	for _, a := range report.UIDAdoptions {
+		if a.LocalUID != "" {
+			moved = append(moved, sqlite.ImportRemapEntry{UID: a.LocalUID, OldPath: a.ID, NewPath: a.ID})
+		}
+	}
 	if path == "" || len(moved) == 0 {
 		return nil
 	}

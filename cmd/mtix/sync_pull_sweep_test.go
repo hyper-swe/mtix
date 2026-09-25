@@ -31,7 +31,8 @@ import (
 // records every cursor in calls, returns hubNows[i] on the i-th listing call
 // (the last value repeats), and returns fetched events in REVERSE pull order
 // so the caller must sort. listErr fails every listing call, or only call
-// number failAtCall (1-based) when that is set.
+// number failAtCall (1-based) when that is set; fetchErr likewise fails
+// every fetch, or only fetch number fetchFailAt when that is set.
 type fakeLateHub struct {
 	events      []*model.SyncEvent
 	hubNows     []time.Time
@@ -43,6 +44,7 @@ type fakeLateHub struct {
 	listErr     error
 	failAtCall  int
 	fetchErr    error
+	fetchFailAt int
 	moreOnEmpty bool
 }
 
@@ -102,7 +104,7 @@ func (h *fakeLateHub) PullEvents(_ context.Context, since int64, limit int) ([]*
 
 func (h *fakeLateHub) FetchEventsByID(_ context.Context, ids []string) ([]*model.SyncEvent, error) {
 	h.fetched = append(h.fetched, append([]string(nil), ids...))
-	if h.fetchErr != nil {
+	if h.fetchErr != nil && (h.fetchFailAt == 0 || h.fetchFailAt == len(h.fetched)) {
 		return nil, h.fetchErr
 	}
 	want := make(map[string]bool, len(ids))
@@ -231,7 +233,7 @@ func TestSweepLateEvents_FirstSweep_PagesFullHistoryAndRecordsFirstHubTime(t *te
 			hub := &fakeLateHub{events: offlineEvents(t), hubNows: []time.Time{sweepHubT1, sweepHubT2}}
 			var stderr bytes.Buffer
 
-			got, err := sweepLateEvents(context.Background(), &stderr, hub, app.store, 2)
+			got, err := sweepLateEvents(context.Background(), testIngest(&stderr), hub, app.store, 2)
 
 			require.NoError(t, err)
 			require.Equal(t, lateEventSweep{Recovered: 3, FullDiff: true}, got)
@@ -256,11 +258,11 @@ func TestSweepLateEvents_FirstSweep_PagesFullHistoryAndRecordsFirstHubTime(t *te
 func TestSweepLateEvents_RecordedSweep_ListsWindowFromHubTimeMinusOverlap(t *testing.T) {
 	initTestApp(t)
 	events := offlineEvents(t)
-	require.NoError(t, applyPullBatch(context.Background(), app.store, events[:2]))
+	mustApplyPullBatch(t, events[:2])
 	setLastSweep(t, "2026-09-24T09:00:00.5Z")
 	hub := &fakeLateHub{events: events, hubNows: []time.Time{sweepHubT1}}
 
-	got, err := sweepLateEvents(context.Background(), &bytes.Buffer{}, hub, app.store, 100)
+	got, err := sweepLateEvents(context.Background(), testIngest(nil), hub, app.store, 100)
 
 	require.NoError(t, err)
 	require.Equal(t, lateEventSweep{Recovered: 1}, got)
@@ -303,7 +305,7 @@ func TestSweepLateEvents_UnreadableSweepState_FallsBackToFreshFullDiff(t *testin
 			hub := &fakeLateHub{hubNows: []time.Time{sweepHubT1}}
 			var stderr bytes.Buffer
 
-			got, err := sweepLateEvents(context.Background(), &stderr, hub, app.store, 10)
+			got, err := sweepLateEvents(context.Background(), testIngest(&stderr), hub, app.store, 10)
 
 			require.NoError(t, err)
 			require.True(t, got.FullDiff)
@@ -346,7 +348,7 @@ func TestSweepLateEvents_ListingInterrupted_ResumesListingThenApplies(t *testing
 			first := &fakeLateHub{events: events, hubNows: []time.Time{sweepHubT1},
 				listErr: errors.New("listing timed out"), failAtCall: 2}
 
-			got, err := sweepLateEvents(ctx, &bytes.Buffer{}, first, app.store, 1)
+			got, err := sweepLateEvents(ctx, testIngest(nil), first, app.store, 1)
 
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "listing timed out")
@@ -360,7 +362,7 @@ func TestSweepLateEvents_ListingInterrupted_ResumesListingThenApplies(t *testing
 
 			resumed := &fakeLateHub{events: events, hubNows: []time.Time{sweepHubT2}}
 			var stderr bytes.Buffer
-			got, err = sweepLateEvents(ctx, &stderr, resumed, app.store, 1)
+			got, err = sweepLateEvents(ctx, testIngest(&stderr), resumed, app.store, 1)
 
 			require.NoError(t, err)
 			require.Equal(t, lateEventSweep{Recovered: 3, FullDiff: full}, got)
@@ -382,34 +384,33 @@ func TestSweepLateEvents_ListingInterrupted_ResumesListingThenApplies(t *testing
 // TestSweepLateEvents_ApplyInterrupted_ResumesWithRemainingStaged: the apply
 // phase runs after the whole listing and applies the staged events in
 // Lamport order, removing each from the staging table in its apply's
-// transaction. When an event cannot be applied the pull fails; the events
-// applied before it stay applied, it and the later ones stay staged, and
-// meta.sync.last_sweep_at keeps its value. The next sweep has nothing left
-// to list, fetches only the remaining staged ids, applies them, and records
-// the first start time.
+// transaction. When the apply phase stops (here the hub fails the fetch of
+// its second chunk; an event that fails its apply is quarantined instead,
+// MTIX-95.11) the pull fails; the events applied before it stay applied,
+// the unfetched ones stay staged, and meta.sync.last_sweep_at keeps its
+// value. The next sweep has nothing left to list, fetches only the
+// remaining staged ids, applies them, and records the first start time.
 func TestSweepLateEvents_ApplyInterrupted_ResumesWithRemainingStaged(t *testing.T) {
 	initTestApp(t)
 	ctx := context.Background()
 	events := offlineEvents(t)
 	ids := eventIDs(events)
-	bad := *events[1]
-	bad.OpType = model.OpType("not_an_op")
-	first := &fakeLateHub{events: []*model.SyncEvent{events[0], &bad, events[2]},
-		hubNows: []time.Time{sweepHubT1}}
+	first := &fakeLateHub{events: events, hubNows: []time.Time{sweepHubT1},
+		fetchErr: errors.New("hub unavailable"), fetchFailAt: 2}
 
-	got, err := sweepLateEvents(ctx, &bytes.Buffer{}, first, app.store, 1)
+	got, err := sweepLateEvents(ctx, testIngest(nil), first, app.store, 1)
 
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "apply late events")
+	require.Contains(t, err.Error(), "fetch late events: hub unavailable")
 	require.Equal(t, lateEventSweep{Recovered: 1, FullDiff: true}, got, "the create applied first")
 	require.Equal(t, [][]string{{ids[0]}, {ids[1]}}, first.fetched,
 		"one bounded chunk (--limit 1) at a time, stopping at the failed chunk")
 	require.Equal(t, "", lastSweep(t))
-	require.Equal(t, []string{ids[1], ids[2]}, stagedIDs(t), "the failed event and the later one stay staged")
+	require.Equal(t, []string{ids[1], ids[2]}, stagedIDs(t), "the unfetched event and the later one stay staged")
 	require.Equal(t, ids[2], sweepMeta(t, "meta.sync.sweep_after_id"), "the listing had finished")
 
 	resumed := &fakeLateHub{events: events, hubNows: []time.Time{sweepHubT2}}
-	got, err = sweepLateEvents(ctx, &bytes.Buffer{}, resumed, app.store, 1)
+	got, err = sweepLateEvents(ctx, testIngest(nil), resumed, app.store, 1)
 
 	require.NoError(t, err)
 	require.Equal(t, lateEventSweep{Recovered: 2, FullDiff: true}, got)
@@ -439,7 +440,7 @@ func TestSweepLateEvents_OwnEditListedBeforeCreate_AppliesInLamportOrder(t *test
 	events[2].EventID = "00" + events[2].EventID[2:]
 	hub := &fakeLateHub{events: events, hubNows: []time.Time{sweepHubT1}}
 
-	got, err := sweepLateEvents(context.Background(), &bytes.Buffer{}, hub, app.store, 1)
+	got, err := sweepLateEvents(context.Background(), testIngest(nil), hub, app.store, 1)
 
 	require.NoError(t, err)
 	require.Equal(t, events[2].EventID, hub.calls[1].EventID, "precondition: the last edit is listed first")
@@ -460,7 +461,7 @@ func TestSweepLateEvents_StagedHeldOrGone_UnstagedWithoutApply(t *testing.T) {
 	initTestApp(t)
 	ctx := context.Background()
 	events := offlineEvents(t)
-	require.NoError(t, applyPullBatch(ctx, app.store, events[:1]))
+	mustApplyPullBatch(t, events[:1])
 	setLastSweep(t, "2026-09-24T09:00:00Z")
 	for _, id := range []string{events[0].EventID, events[1].EventID, "0193fb00-0000-7000-8000-00000000dead"} {
 		_, err := app.store.WriteDB().ExecContext(ctx,
@@ -469,7 +470,7 @@ func TestSweepLateEvents_StagedHeldOrGone_UnstagedWithoutApply(t *testing.T) {
 	}
 	hub := &fakeLateHub{events: events[:2], hubNows: []time.Time{sweepHubT1}}
 
-	got, err := sweepLateEvents(ctx, &bytes.Buffer{}, hub, app.store, 10)
+	got, err := sweepLateEvents(ctx, testIngest(nil), hub, app.store, 10)
 
 	require.NoError(t, err)
 	require.Equal(t, lateEventSweep{Recovered: 1}, got, "only the missing staged event applies")
@@ -489,7 +490,7 @@ func TestSweepLateEvents_StagedHeldOrGone_UnstagedWithoutApply(t *testing.T) {
 func TestSweepLateEvents_ResumedFullDiff_ReportsPagesOfThisPull(t *testing.T) {
 	initTestApp(t)
 	events := offlineEvents(t)
-	require.NoError(t, applyPullBatch(context.Background(), app.store, events[:1]))
+	mustApplyPullBatch(t, events[:1])
 	for key, v := range map[string]string{
 		"meta.sync.sweep_after_id":         events[0].EventID,
 		"meta.sync.sweep_after_created_at": "2026-09-24T09:00:00Z",
@@ -501,7 +502,7 @@ func TestSweepLateEvents_ResumedFullDiff_ReportsPagesOfThisPull(t *testing.T) {
 	}
 	var stderr bytes.Buffer
 
-	_, err := sweepLateEvents(context.Background(), &stderr,
+	_, err := sweepLateEvents(context.Background(), testIngest(&stderr),
 		&fakeLateHub{events: events, hubNows: []time.Time{sweepHubT2}}, app.store, 1)
 
 	require.NoError(t, err)
@@ -572,11 +573,11 @@ func TestSweepLateEvents_AllIDsHeld_ListingProgressSavedAndResumed(t *testing.T)
 	ctx := context.Background()
 	events := offlineEvents(t)
 	ids := eventIDs(events)
-	require.NoError(t, applyPullBatch(ctx, app.store, events))
+	mustApplyPullBatch(t, events)
 	first := &fakeLateHub{events: events, hubNows: []time.Time{sweepHubT1},
 		listErr: errors.New("listing timed out"), failAtCall: 3}
 
-	_, err := sweepLateEvents(ctx, &bytes.Buffer{}, first, app.store, 1)
+	_, err := sweepLateEvents(ctx, testIngest(nil), first, app.store, 1)
 
 	require.Error(t, err)
 	require.Equal(t, ids[1], sweepMeta(t, "meta.sync.sweep_after_id"),
@@ -584,7 +585,7 @@ func TestSweepLateEvents_AllIDsHeld_ListingProgressSavedAndResumed(t *testing.T)
 	require.Empty(t, stagedIDs(t))
 
 	resumed := &fakeLateHub{events: events, hubNows: []time.Time{sweepHubT2}}
-	_, err = sweepLateEvents(ctx, &bytes.Buffer{}, resumed, app.store, 1)
+	_, err = sweepLateEvents(ctx, testIngest(nil), resumed, app.store, 1)
 
 	require.NoError(t, err)
 	require.Equal(t, transport.EventIDCursor{CreatedAt: events[1].CreatedAt, EventID: ids[1]},
@@ -593,10 +594,11 @@ func TestSweepLateEvents_AllIDsHeld_ListingProgressSavedAndResumed(t *testing.T)
 	require.Equal(t, "2026-09-24T10:00:00.123456Z", lastSweep(t))
 }
 
-// TestSweepLateEvents_Failure_LeavesLastSweepUnchanged: a failed listing,
-// fetch or apply, a hub that reports more ids after an empty page, or a
-// page without a hub clock returns an error, and meta.sync.last_sweep_at
-// keeps its value so the next pull retries the same window.
+// TestSweepLateEvents_Failure_LeavesLastSweepUnchanged: a failed listing or
+// fetch, a hub that reports more ids after an empty page, or a page without
+// a hub clock returns an error, and meta.sync.last_sweep_at keeps its value
+// so the next pull retries the same window. (An event that fails its apply
+// no longer fails the sweep: it is quarantined, MTIX-95.11.)
 func TestSweepLateEvents_Failure_LeavesLastSweepUnchanged(t *testing.T) {
 	boom := errors.New("hub unavailable")
 	tests := []struct {
@@ -610,12 +612,6 @@ func TestSweepLateEvents_Failure_LeavesLastSweepUnchanged(t *testing.T) {
 		{"fetch fails", func(ev []*model.SyncEvent) *fakeLateHub {
 			return &fakeLateHub{events: ev, hubNows: []time.Time{sweepHubT1}, fetchErr: boom}
 		}, "fetch late events: hub unavailable"},
-		{"apply fails", func(ev []*model.SyncEvent) *fakeLateHub {
-			bad := *ev[2]
-			bad.OpType = model.OpType("not_an_op")
-			return &fakeLateHub{events: []*model.SyncEvent{ev[0], ev[1], &bad},
-				hubNows: []time.Time{sweepHubT1}}
-		}, "apply late events"},
 		{"more after an empty page", func(ev []*model.SyncEvent) *fakeLateHub {
 			return &fakeLateHub{events: ev, hubNows: []time.Time{sweepHubT1}, moreOnEmpty: true}
 		}, "hub reported more ids after an empty page"},
@@ -628,7 +624,7 @@ func TestSweepLateEvents_Failure_LeavesLastSweepUnchanged(t *testing.T) {
 			initTestApp(t)
 			setLastSweep(t, "2026-09-24T09:00:00Z")
 
-			_, err := sweepLateEvents(context.Background(), &bytes.Buffer{},
+			_, err := sweepLateEvents(context.Background(), testIngest(nil),
 				tt.hub(offlineEvents(t)), app.store, 2)
 
 			require.Error(t, err)
@@ -647,7 +643,7 @@ func TestMissingLocalEventIDs_HeldInEitherTable_NotMissing(t *testing.T) {
 	initTestApp(t)
 	ctx := context.Background()
 	events := offlineEvents(t)
-	require.NoError(t, applyPullBatch(ctx, app.store, events[:1]))
+	mustApplyPullBatch(t, events[:1])
 	_, err := app.store.WriteDB().ExecContext(ctx,
 		`INSERT INTO applied_events (event_id, applied_at, applied_by_lamport) VALUES (?, ?, 0)`,
 		events[1].EventID, "2026-09-24T00:00:00Z")

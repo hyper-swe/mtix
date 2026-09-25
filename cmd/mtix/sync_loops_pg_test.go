@@ -112,7 +112,7 @@ func TestPullLoop_EmptyHubReturnsCleanly(t *testing.T) {
 	initTestApp(t)
 
 	var stderr bytes.Buffer
-	pulled, batches, err := pullLoop(context.Background(), &stderr,
+	pulled, batches, err := pullLoop(context.Background(), testIngest(&stderr),
 		pool, app.store, 0, 100)
 	require.NoError(t, err)
 	require.Equal(t, 0, pulled)
@@ -140,7 +140,7 @@ func TestPullLoop_AppliesHubEvents(t *testing.T) {
 		`UPDATE meta SET value = '0' WHERE key = 'meta.sync.last_pulled_clock'`)
 	require.NoError(t, err)
 
-	pulled, batches, err := pullLoop(ctx, &stderr, pool, app.store, 0, 100)
+	pulled, batches, err := pullLoop(ctx, testIngest(&stderr), pool, app.store, 0, 100)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, pulled, 1)
 	require.GreaterOrEqual(t, batches, 1)

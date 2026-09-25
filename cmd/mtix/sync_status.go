@@ -46,6 +46,10 @@ type SyncStatus struct {
 	// open_conflicts > 50 so the human-readable output adds a
 	// guidance banner.
 	HighConflict bool `json:"high_conflict"`
+	// QuarantinedEvents counts the pulled events held in the local
+	// quarantine, not applied (sync_quarantine, MTIX-95.11). Every pull
+	// retries them.
+	QuarantinedEvents int `json:"quarantined_events"`
 }
 
 // newSyncStatusCmd creates `mtix sync status` per FR-18 / MTIX-15.7.3.
@@ -122,6 +126,9 @@ func readSyncStatus(ctx context.Context, store *sqlite.Store) (SyncStatus, error
 		return st, fmt.Errorf("count staged late events: %w", err)
 	}
 	st.HighConflict = st.OpenConflicts > 50
+	if err := readQuarantineStatus(ctx, store, &st); err != nil {
+		return st, err
+	}
 
 	if err := readStatusSentinels(ctx, store, &st); err != nil {
 		return st, err
@@ -186,6 +193,7 @@ func printStatusTable(w io.Writer, st SyncStatus) error {
 		{"conflicted", strconv.Itoa(st.Conflicted)},
 		{"applied", strconv.Itoa(st.Applied)},
 		{"open conflicts", strconv.Itoa(st.OpenConflicts)},
+		{"quarantined events", strconv.Itoa(st.QuarantinedEvents)},
 		{"", ""},
 		{"local lamport", strconv.FormatInt(st.Lamport, 10)},
 		{"last pulled clock", strconv.FormatInt(st.LastPulled, 10)},

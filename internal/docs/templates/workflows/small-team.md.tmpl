@@ -88,6 +88,16 @@ Pulls the full event log from the hub and replays it into the local
 SQLite. Idempotent — re-running clone after the initial pull is a
 no-op (per `applied_events` dedupe).
 
+Clone first runs, on every hub event, the checks `mtix sync pull` runs
+(see "Pulled event fails its checks" under Failure modes). If the hub
+holds an event that fails them, clone refuses, naming the event, and
+writes nothing. On the fresh store, run `mtix sync pull` instead: pull
+quarantines that event and applies the rest. On a store that already
+holds local sync state, `mtix sync reconcile --discard-local --yes` comes
+first, and it deletes local tasks and unpushed changes: before it, run
+`mtix sync push`, check that `mtix sync status` shows `pending` 0, and
+get a human's go-ahead.
+
 ### 6. Daily flow
 
 ```bash
@@ -230,6 +240,7 @@ tradeoff discussion.
 |---|---|---|
 | **Hub unreachable** during push | `mtix sync push` errors with a redacted message; `meta.sync.consecutive_errors` bumps. In MTIX_SYNC_HOOK=1 mode (pre-push hook) it warns and skips. | Retry once connectivity is back. The local queue is durable. |
 | **Hub unreachable** during pull | Same — error + bumped counter. Daemon catches up on the next tick. | No action needed if you're not blocked. |
+| **Pulled event fails its checks or its apply** (a hub event over the size or clock limits, more than `sync.max_lamport_jump` above your clock, or a dependency whose target has not arrived) | The pull quarantines that event in the local `sync_quarantine` table and applies the rest; the event never changes your clock. Every pull retries the quarantine. `mtix sync status` counts it; `mtix sync doctor` fails its `quarantined events` check. | Run `mtix sync pull` again; if events remain, list them with `mtix sync quarantine list` and take the reasons to whoever runs the hub. Do not delete quarantine rows. `mtix sync clone` refuses while the hub holds such an event: on the fresh store run `mtix sync pull` alone; `mtix sync reconcile --discard-local --yes` deletes local tasks and unpushed changes, so use it only on a store with sync state, after `mtix sync push`, `pending` 0 and a human's go-ahead. |
 | **Hub unreachable consecutive ≥ 3** | `mtix_sync_workflow` MCP tool reports `hub-unreachable` and recommends `mtix sync doctor`. | Run `mtix sync doctor`; verify TLS / DSN / connectivity. |
 | **Local queue full** (`sync.max_queue_size` cap reached) | Next emit returns `ErrSyncQueueFull` with a remediation message. Event is NOT silently dropped. | Run `mtix sync push --force`, or raise the cap. |
 | **Hook bypassed** (`git push --no-verify`) | Local queue retains pending events; hub stays at the older state until next push. | If freshness matters, graduate to the safety-critical workflow's server-side enforcement OR run the daemon. |

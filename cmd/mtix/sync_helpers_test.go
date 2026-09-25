@@ -117,7 +117,7 @@ func TestWriteLastPulledClock_RoundTrip(t *testing.T) {
 
 func TestApplyPullBatch_EmptyBatchIsNoop(t *testing.T) {
 	initTestApp(t)
-	require.NoError(t, applyPullBatch(context.Background(), app.store, nil))
+	mustApplyPullBatch(t, nil)
 }
 
 // --- sync_clone.go helpers ---
@@ -166,5 +166,5 @@ func TestReadCloneCheckpoint_ResumeFalseIgnoresPersisted(t *testing.T) {
 
 func TestApplyBatch_EmptyBatchIsNoop(t *testing.T) {
 	initTestApp(t)
-	require.NoError(t, applyBatch(context.Background(), app.store, nil))
+	require.NoError(t, applyBatch(context.Background(), testIngest(nil), app.store, nil))
 }

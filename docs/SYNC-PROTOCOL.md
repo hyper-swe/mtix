@@ -88,6 +88,10 @@ On emit:
 
 On apply (incoming events from pull):
 
+0. Before the apply, pull refuses an event stamped more than
+   `sync.max_lamport_jump` above `meta.sync.lamport` (default 2^32) and
+   quarantines it (see [Quarantine](#quarantine)), so no single event
+   can carry the clock toward the FR-18.7 overflow guard.
 1. `advanceLamport` writes `meta.sync.lamport = max(current, incoming)`.
 2. `mergeVectorClock` takes the per-author max of the local VC and the
    incoming VC.
@@ -304,9 +308,14 @@ first_event_hash for `PROJ`, init refuses and points the operator at
 
 **Cursor pass.** `PullEvents` returns the hub events with
 `lamport_clock > meta.sync.last_pulled_clock`, in Lamport order, in
-batches of `--limit` (default 1000). Each batch is applied through
-`IdempotentApply` (see [Idempotent apply](#idempotent-apply)) and the
-cursor advances to the highest Lamport clock applied.
+batches of `--limit` (default 1000). Each batch is applied in one local
+transaction, each event checked first and then applied through
+`IdempotentApply` (see [Idempotent apply](#idempotent-apply)) in its own
+savepoint; an event that fails is quarantined and the batch goes on
+(see [Quarantine](#quarantine)). The cursor advances to the highest
+Lamport clock of the batch, quarantined events included, except to a
+clock at or above 2^53 or beyond `sync.max_lamport_jump`, decided from
+the clock itself.
 
 The Lamport clock is stamped by the client that wrote the event, not by
 the hub. A teammate who worked offline pushes events stamped below the
@@ -317,16 +326,15 @@ them.
 create stamped below it and an edit of that node above it (one offline
 client made more events than the cursor gap, or a teammate who received
 the node edited it). The cursor pass then returns the edit without its
-create, and the apply fails because the node is missing
-(`model.ErrNotFound`). The failed batch rolls back; the cursor has
-advanced only over committed batches. On that failure, and only on it,
-pull runs the late-event sweep below, which delivers the create and
-applies everything it recovers in Lamport order, and then retries the
-cursor pass once from the saved cursor (stderr says `retrying the pull
-once`). If the retry fails again, or the sweep fails, the pull fails
-with that error, as before; it never loops. A pull whose cursor pass
-succeeds runs no extra query for this. Together with the sweep's Lamport
-order, this is how a node's create always applies before its edits.
+create, and the edit's apply fails because the node is missing
+(`model.ErrNotFound`). The edit is quarantined and the cursor moves past
+it. The late-event sweep below delivers the create in Lamport order, and
+the quarantine retry at the end of the same pull applies the edit
+(stderr says `quarantined event <id>`, then `N quarantined events
+applied on retry`). Before quarantine (MTIX-95.11) the failed batch
+rolled back and pull retried the cursor pass once after the sweep.
+Together with the sweep's Lamport order, this is how a node's create
+always applies before its edits.
 
 **Late-event sweep** (`cmd/mtix/sync_pull_sweep.go`,
 `cmd/mtix/sync_pull_sweep_apply.go`, `transport/late_events.go`). After
@@ -340,7 +348,9 @@ the cursor pass, pull runs two phases.
    --discard-local`), it lists the full id history instead, once, from
    the zero position. It diffs each page against the ids this store holds
    in `sync_events` (its own events and every mirrored one) or
-   `applied_events`, and stages the missing ids, each with its Lamport
+   `applied_events`, or has quarantined (`sync_quarantine`; the
+   quarantine retries those itself), and stages the missing ids, each
+   with its Lamport
    clock (the listing returns it), in the local table
    `sync_sweep_pending`. It applies nothing: the listing order is not
    causal. One client's push gives all its events the same `created_at`,
@@ -351,8 +361,10 @@ the cursor pass, pull runs two phases.
 2. **Apply**, once the listing is complete. It reads the staged ids in
    pull order (Lamport clock, then event id), `--limit` at a time; for
    each chunk it fetches the events by id and applies them through the
-   same `IdempotentApply` path in one transaction, removing each id from
-   `sync_sweep_pending` in that transaction. Every chunk's clocks are at
+   same checks and `IdempotentApply` path in one transaction, removing
+   each id from `sync_sweep_pending` in that transaction. An event that
+   fails is quarantined with source `sweep` and removed from
+   `sync_sweep_pending` in the same transaction. Every chunk's clocks are at
    or above the previous chunk's, so the order is global while memory and
    each transaction stay bounded by `--limit`, and a pull stopped between
    chunks resumes at the next one. Lamport order is causal: an event is always
@@ -426,8 +438,8 @@ version.
 holds at most `--limit` ids, the sweep adds one hub query to each pull:
 the id listing, which also returns the hub clock. A larger window adds
 one listing query per further `--limit` ids, and late events add one
-fetch per `--limit` of them. A straddling push adds one more cursor
-pass (the retry). The first sweep on a store pages through
+fetch per `--limit` of them. The quarantine retry reads and writes only
+the local store and adds no hub query. The first sweep on a store pages through
 the full id history once, across as many pulls as it needs. The sweep
 runs only inside a pull and has no timer, so an idle hub that scales to
 zero stays idle; a daemon that pulls on an interval runs the sweep on
@@ -442,10 +454,154 @@ always uses the primary key.
 `TestLateEventQueries_PlanUsesIndex_ServesSweepWithoutSeqScan` checks
 that the planner can serve each query from its index.
 
-**Failure.** Until recovered events can be quarantined, a recovered
-event that cannot be applied fails the pull, exactly as it would in
-the cursor pass. It stays staged, and the next pull tries it again
-after the events with lower Lamport clocks.
+**Failure.** A recovered event that fails its checks or its apply is
+quarantined like one from the cursor pass, and the sweep completes and
+records its time. A hub failure (a listing or fetch that fails, a hub
+that returns no clock) fails the pull; the events it has not applied
+stay staged, and the next pull applies them after the events with
+lower Lamport clocks.
+
+## Quarantine
+
+`cmd/mtix/sync_pull_quarantine.go`,
+`internal/sync/validator/validator_ingest.go`,
+`internal/store/sqlite/sync_quarantine.go` and
+`internal/store/sqlite/schema_quarantine.go` (MTIX-95.11). The hub checks
+an event when it is pushed, but a replica cannot trust that every hub
+row passed that check (a row written by an older or modified client, or
+directly into the database). Pull therefore checks every event it
+receives, from the cursor pass or the late-event sweep, before applying
+it, in this order:
+
+1. **Lamport clock** (`validator.CheckIngestClock`). A clock at or above
+   2^53 is refused (FR-18.7 overflow guard), and so is a clock more than
+   `sync.max_lamport_jump` above the local clock (`meta.sync.lamport`,
+   read in the batch's transaction). The clock is checked first, so an
+   event with an extreme clock is always refused for its clock, whatever
+   else is wrong with it. The default bound is 2^32 (4294967296). A
+   Lamport gap is bounded by the number of events a replica has not yet
+   seen, so no real history comes near it, while no single event can
+   carry the clock near 2^53, after which every event this replica emits
+   would be refused at push. Set it with `mtix config set
+   sync.max_lamport_jump <positive integer>`; any other value is refused,
+   and one edited into `config.yaml` by hand is ignored in favour of the
+   default. A failure to read the local clock is a local fault: it fails
+   the batch and never quarantines a hub event.
+2. **Envelope.** The FR-18.7 validation the hub runs at push
+   (`validator.ValidateIngest`, which shares its rules with `Validate`):
+   payload at most 64 KB and nesting depth at most 10, vector clock at
+   most 100 entries, each below 2^53, and the id grammars (`author_id`,
+   `author_machine_hash`, `project_prefix`, `op_type`). A hub row the
+   transport could not fully decode (a `vector_clock` that is not a map
+   of counters) is returned marked malformed instead of failing the whole
+   pull, and is refused here. The clock-relative FR-18.8 rule only warns:
+   an event stamped more than 24 hours ahead of this machine's clock is
+   applied, with `WARN: pull: event <id> is stamped more than 24h ahead
+   of this machine's clock` on stderr (review F-25). The hub refuses such
+   an event at push, but at ingest this machine's clock may be the wrong
+   one, and refusing a hub event would make this replica diverge from its
+   peers.
+
+An admitted event is applied through `IdempotentApply` inside its own
+savepoint. An event that fails a check or its apply has the savepoint
+rolled back (its mirror row in `sync_events` included) and is stored in
+the local table `sync_quarantine` instead:
+
+| Column | Meaning |
+|---|---|
+| `event_id` | primary key |
+| `source` | the pass that first quarantined it: `pull` (cursor pass) or `sweep` |
+| `raw_event` | the event as JSON, as pulled |
+| `reason` | why it was first quarantined (one line, control characters removed) |
+| `first_seen`, `last_attempt` | RFC 3339 UTC |
+| `attempts` | every failed attempt, the first included |
+| `cli_version` | the mtix version that first quarantined it |
+
+The batch goes on with the next event. A quarantined event is never
+written to `sync_events` and never advances the local Lamport or vector
+clock. A later failure of the same event counts one attempt and moves
+`last_attempt`; nothing else in its row is rewritten. When the cursor
+pass or the sweep meets an event that is already quarantined, it leaves
+the event to the quarantine retry without touching its row. An event
+already in `applied_events` skips the checks: `IdempotentApply` dedupes
+it with no clock change. The hub copy of this replica's own event, which
+is only in `sync_events` until a pull acknowledges it, is checked like
+any other, since its hub row can be changed after the push; a legitimate
+copy always passes.
+
+**Cursor.** The pull cursor moves past quarantined events, except past
+a Lamport clock at or above 2^53 or more than `sync.max_lamport_jump`
+above the local clock after the batch. That decision comes from the
+clock itself, never from the reason recorded for the event: a cursor at
+an extreme clock would stop the cursor pass from returning any later
+event. Only a failure of the transaction itself fails the batch:
+reading the local clock, a savepoint or quarantine write, or a pull
+that is cancelled or times out, which never quarantines the event it
+was on.
+
+**Retry.** Every pull retries the whole quarantine, in Lamport order
+(the `lamport_clock` of `raw_event`, then `event_id`), `--limit` rows
+per local transaction: at the start of the pull, before the hub is
+contacted (so it also runs when the hub is unreachable), and again at
+the end of a pull that applied events, since those can be what a
+quarantined event lacked (a `link_dep` target, a node's create). A row
+whose event is already in `applied_events` (for example after `mtix sync
+clone` applied it) is removed before any check. Every other row goes
+through the same checks and its own savepoint, including a row for this
+replica's own event that is only in `sync_events`: an event that applies is removed; one that fails again
+stays, with `attempts` and `last_attempt` updated. The retry uses the
+stored raw event and contacts no hub. `mtix sync reconcile
+--discard-local --yes` empties the quarantine with the rest of the local
+sync state, and deletes local tasks and unpushed changes (its dry run
+shows only the node count); the next pull runs the checks again and
+quarantines again what still fails. The agent guidance requires `mtix
+sync push`, a pending count of 0 and a human's go-ahead before it. A
+quarantined copy of this replica's own event (its hub row changed after
+the push) never clears by itself, because every retry re-checks the
+stored copy, even after the hub row is repaired; the documented order is:
+repair the hub row, push, then discard-local and pull. Discarding first
+would drop the replica's own true copy, which would then return only as
+a quarantined hub event.
+
+**Clone.** `mtix sync clone` has no quarantine and stays all or
+nothing, so it runs the same checks (`checkPulledEvent`: the clock, then
+the envelope, a malformed row included) on every hub event before it
+writes anything (`preflightClone`, `cmd/mtix/sync_clone_check.go`), with
+the running clock the clone would have (the local clock, then the
+highest clock checked so far). When any event fails, clone refuses the
+whole clone and writes nothing; the refusal names the event and the
+reason and gives the recovery (`cloneRecovery`): on the fresh store,
+`mtix sync pull`, which quarantines the event and applies the rest;
+`mtix sync reconcile --discard-local --yes` only on a store that already
+holds sync state, after a push, a pending count of 0 and a human's
+go-ahead, since it deletes local tasks and unpushed changes. The apply
+checks each event again, so an event pushed to the hub after the check
+stops the clone at that batch. A clone that completes resets the
+quarantine along with the late-event sweep state, since every hub event
+passed. The check reads the hub's event log once more before the apply
+reads it.
+
+**Cost per pull.** The retry reads every quarantined row and writes
+`attempts` and `last_attempt` for each one that fails again, up to twice
+per pull (start and end), in the local database only. An event refused
+for its clock keeps the cursor below it, so every cursor pass downloads
+it from the hub again (one row each; the cursor pass leaves it to the
+retry and writes nothing for it). None of this adds a hub query or wakes
+an idle hub; a daemon that pulls on an interval repeats it on each pull.
+
+**Surfaces.** Pull prints each newly quarantined event on stderr and, at
+the end, `quarantine: N pulled events held, not applied` on stdout. `mtix
+sync status` shows `quarantined events` (`quarantined_events` in
+`--json`). `mtix sync quarantine list` (`--json` for an array) lists
+every quarantined event read-only through the service layer: event id,
+node, op, attempts, first seen, last attempt and reason, and in JSON
+also the Lamport clock, source and CLI version. `mtix sync doctor` has a
+`quarantined events` check that fails while the table is not empty; its
+detail says the events are retried on every pull, to run `mtix sync
+pull` first, and to list them with `mtix sync quarantine list`.
+
+The table is created with `CREATE TABLE IF NOT EXISTS` the next time
+mtix opens the store (no schema version change) and is local only.
 
 ## Idempotent apply
 
@@ -457,7 +613,8 @@ if event_id already in applied_events:
     return nil (already applied, no-op)
 if event_id already in local sync_events (any sync_status):
     # own-event rule: this replica already holds the event
-    advance lamport, merge VC, INSERT OR IGNORE into applied_events
+    advance lamport, merge VC (both from the LOCAL row's clocks),
+    INSERT OR IGNORE into applied_events
     return nil (no dispatch, no conflict row, no new sync_events row)
 mirror into sync_events (sync_status = 'applied')
 if op_type is a workflow op and the event loses its node's workflow
@@ -474,8 +631,13 @@ never passes through apply when it is emitted, so it is not in
 `applied_events` when it first comes back; it is already in the local
 `sync_events` log (`pending`, `pushed` or `conflicted`). Apply therefore
 treats any event whose `event_id` is already in `sync_events` as held:
-it merges the event's clocks and records it in `applied_events`, but
-never applies it again. Applying it again would log a spurious LWW
+it merges the clocks of the local `sync_events` row, never those of the
+pulled copy, and records the event in `applied_events` with the local
+row's Lamport clock, but never applies it again. The local row is what
+this replica emitted; the hub row of a pushed event can be changed on
+the hub (MTIX-95.11). Pull's ingest checks also run on the hub copy of
+an own event until it is acknowledged: only an event already in
+`applied_events` skips them (see [Quarantine](#quarantine)). Applying it again would log a spurious LWW
 conflict for every field update whose field has any other event in the
 local log, earlier or newer (the same pair twice when the field was
 written twice), and a replayed

@@ -1656,8 +1656,11 @@ both count, as for `mtix sync harden`). Without them the append-only
 tables (`audit_log`, `sync_conflicts`, `sync_events`) accept changes they
 should refuse. The detail names each missing function, each missing
 trigger, each trigger that executes another function and each trigger
-that is not enabled, and `fix` holds what to run and names the table
-owner who runs it (`as the table owner (<role>): ...`), in order:
+that is not enabled. A function is compared by OID: a function of the
+right name in another schema is another function. `fix` holds what to
+run and names the table owner who runs it (`as the table owner (<role>):
+...`); the text report prints it on a `fix:` line under the check, and
+`--json` carries it in `fix`. In order:
 `mtix sync init` for anything missing and for a trigger that executes
 another function (in one transaction it recreates every missing function
 and trigger and replaces a trigger bound to another function, so the
@@ -1746,9 +1749,11 @@ With `--apply`, in one transaction, harden:
   ADMIN OPTION, when the owner may: it holds ADMIN on the role, and the
   membership was granted by the owner or by a role whose privileges it
   has. The change is cluster-wide, so the dry run marks it;
-- restores a missing TRUNCATE guard, and enables a disabled one or one
+- restores a missing TRUNCATE guard, replaces one whose trigger executes
+  another function (compared by OID, so a function of the guard's name in
+  another schema is another function), and enables a disabled one or one
   set to fire only in replication sessions, so every guard ends enabled.
-  (`mtix sync init` also restores a missing guard, and replaces one that
+  (`mtix sync init` also restores a missing guard and replaces one that
   executes another function.)
 
 Harden takes the hub's migration lock and waits at most 5 seconds for any

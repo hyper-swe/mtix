@@ -326,7 +326,8 @@ func checkSecretsFileMode(mtixDir string) (bool, string) {
 }
 
 // printDoctorTable writes one line per check, marked PASS, WARN or FAIL,
-// and a summary that counts warnings (MTIX-95.1).
+// with a check's fix, when it has one, on an indented line under it
+// (MTIX-95.7), and a summary that counts warnings (MTIX-95.1).
 func printDoctorTable(w io.Writer, r DoctorReport) {
 	warnings := 0
 	for _, c := range r.Checks {
@@ -339,6 +340,9 @@ func printDoctorTable(w io.Writer, r DoctorReport) {
 			warnings++
 		}
 		fmt.Fprintf(w, "[%s] %-20s %s\n", mark, c.Name, c.Detail)
+		if c.Fix != "" {
+			fmt.Fprintf(w, "       fix: %s\n", c.Fix)
+		}
 	}
 	fmt.Fprintln(w)
 	switch {

@@ -9,7 +9,7 @@
 -- TRUNCATE ... CASCADE fires the guard of every table it would empty.
 --
 -- Each guard is created only when pg_trigger lacks a trigger of its name
--- that executes append_only_no_truncate. CREATE TRIGGER takes a lock that
+-- that executes this migration's append_only_no_truncate, compared by OID. CREATE TRIGGER takes a lock that
 -- blocks every writer of the table, so a re-run on a hub whose guards are
 -- in place must not take it again (F-44): nothing is dropped and
 -- re-created then. A trigger of a guard's name that executes another
@@ -27,12 +27,17 @@ END;
 $$ LANGUAGE plpgsql;
 
 DO $$
+DECLARE
+    -- The guard function this migration created above, in the current
+    -- schema, by OID: a function of the same name in another schema is
+    -- another function (MTIX-95.7).
+    guard_fn oid := pg_catalog.to_regprocedure(
+        pg_catalog.quote_ident(pg_catalog.current_schema()) || '.append_only_no_truncate()');
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_trigger t
-                   JOIN pg_proc p ON p.oid = t.tgfoid
                    WHERE t.tgrelid = 'audit_log'::regclass
                      AND t.tgname = 'audit_log_no_truncate'
-                     AND p.proname = 'append_only_no_truncate') THEN
+                     AND t.tgfoid = guard_fn) THEN
         DROP TRIGGER IF EXISTS audit_log_no_truncate ON audit_log;
         CREATE TRIGGER audit_log_no_truncate
             BEFORE TRUNCATE ON audit_log
@@ -40,10 +45,9 @@ BEGIN
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM pg_trigger t
-                   JOIN pg_proc p ON p.oid = t.tgfoid
                    WHERE t.tgrelid = 'sync_conflicts'::regclass
                      AND t.tgname = 'sync_conflicts_no_truncate'
-                     AND p.proname = 'append_only_no_truncate') THEN
+                     AND t.tgfoid = guard_fn) THEN
         DROP TRIGGER IF EXISTS sync_conflicts_no_truncate ON sync_conflicts;
         CREATE TRIGGER sync_conflicts_no_truncate
             BEFORE TRUNCATE ON sync_conflicts
@@ -51,10 +55,9 @@ BEGIN
     END IF;
 
     IF NOT EXISTS (SELECT 1 FROM pg_trigger t
-                   JOIN pg_proc p ON p.oid = t.tgfoid
                    WHERE t.tgrelid = 'sync_events'::regclass
                      AND t.tgname = 'sync_events_no_truncate'
-                     AND p.proname = 'append_only_no_truncate') THEN
+                     AND t.tgfoid = guard_fn) THEN
         DROP TRIGGER IF EXISTS sync_events_no_truncate ON sync_events;
         CREATE TRIGGER sync_events_no_truncate
             BEFORE TRUNCATE ON sync_events

@@ -348,8 +348,10 @@ func objectOwnerFindings(c *hubCatalog) []finding {
 
 // guardFindings reports a TRUNCATE guard that is missing, disabled, or
 // calls another function. A missing guard is restored by the guard
-// migration and a disabled one is enabled; a guard that calls another
-// function is reported, since replacing it is the administrator's call.
+// migration and a disabled one is enabled. A trigger of a guard's name
+// that calls another function, compared by OID so one of the same name in
+// another schema counts, is replaced by the guard migration too, which
+// drops and recreates it in the same transaction (MTIX-95.7).
 func guardFindings(c *hubCatalog) []finding {
 	var out []finding
 	for _, g := range c.guards {
@@ -359,8 +361,9 @@ func guardFindings(c *hubCatalog) []finding {
 		switch {
 		case g.enabled == "":
 			f.Via, f.fix = FindingViaMissing, guardMigrationAction()
-		case g.function != guardFunction:
-			f.Via, f.Note = FindingViaMissing, "a trigger with this name calls "+g.function+"; drop it, then run mtix sync harden --apply"
+		case !g.bound:
+			f.Via, f.fix = FindingViaMissing, guardMigrationAction()
+			f.Note = "a trigger with this name calls " + g.function + "; the guard migration replaces it"
 		case g.enabled == "O" || g.enabled == "A":
 			continue
 		default:

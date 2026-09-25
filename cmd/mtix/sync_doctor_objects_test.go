@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -133,7 +134,7 @@ func TestHubObjectState_Record_ClassifiesEachTrigger(t *testing.T) {
 	const enable = "ALTER TABLE public.audit_log ENABLE TRIGGER t;"
 	row := func(schema, enabled, function string) triggerRow {
 		r := triggerRow{table: "audit_log", name: "t", schema: schema, enabled: enabled,
-			function: function, wantFunction: "audit_log_immutable"}
+			function: function, wantFunction: "audit_log_immutable", bound: function == "audit_log_immutable"}
 		if schema != "" {
 			r.owner = "mtix_owner"
 		}
@@ -159,6 +160,9 @@ func TestHubObjectState_Record_ClassifiesEachTrigger(t *testing.T) {
 			[]string{"t on public.audit_log calls noop, not audit_log_immutable"}},
 		{"another function, disabled", row("public", "D", "noop"), nil, nil,
 			[]string{"t on public.audit_log calls noop, not audit_log_immutable"}},
+		{"same name in another schema", triggerRow{table: "audit_log", name: "t", schema: "public", owner: "mtix_owner",
+			enabled: "O", function: "other.audit_log_immutable", wantFunction: "public.audit_log_immutable", enable: enable},
+			nil, nil, []string{"t on public.audit_log calls other.audit_log_immutable, not public.audit_log_immutable"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -200,4 +204,71 @@ func TestRunSyncDoctor_HubUnreachable_ReportsHubTriggersSkipped(t *testing.T) {
 	require.True(t, warn)
 	require.Contains(t, detail, "skipped")
 	require.NotContains(t, stdout.String(), "Qx7doctorSecret")
+}
+
+// TestPrintDoctorTable_Fix_PrintedUnderItsCheck: the text report prints a
+// check's fix on an indented line under it, so the default output shows
+// what --json carries; a check without a fix prints no such line
+// (MTIX-95.7).
+func TestPrintDoctorTable_Fix_PrintedUnderItsCheck(t *testing.T) {
+	var buf bytes.Buffer
+	printDoctorTable(&buf, DoctorReport{OverallPass: true, Checks: []DoctorCheck{
+		{Name: "PG reachable", Pass: true, Detail: "ok"},
+		{Name: "hub-triggers", Pass: true, Warn: true, Detail: "triggers not enabled: t on public.audit_log (tgenabled D)",
+			Fix: "as the table owner (mtix_owner): ALTER TABLE public.audit_log ENABLE TRIGGER t;"},
+	}})
+	out := buf.String()
+	require.Contains(t, out, "[PASS] PG reachable         ok\n[WARN] hub-triggers")
+	require.Contains(t, out, "(tgenabled D)\n       fix: as the table owner (mtix_owner): ALTER TABLE public.audit_log ENABLE TRIGGER t;\n")
+	require.Equal(t, 1, strings.Count(out, "fix:"), "only the check with a fix gets a fix line")
+}
+
+// TestCheckHubObjects_InvalidKeepRoles_Fails: a hand-edited, invalid
+// sync.keep_roles value means strict mode was meant, so hub-triggers fails
+// and names the key, as hub-privileges does (MTIX-95.7).
+func TestCheckHubObjects_InvalidKeepRoles_Fails(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, writeRawKeepRoles(t, "a,,b"))
+	c := checkHubObjects(context.Background(), "", true, transport.Options{})
+	require.Equal(t, "hub-triggers", c.Name)
+	require.False(t, c.Pass)
+	require.False(t, c.Warn)
+	require.Contains(t, c.Detail, "sync.keep_roles in .mtix/config.yaml")
+}
+
+// TestCheckHubObjects_ReadError_WarnsOrFailsStrict: when the hub is ready
+// but its catalog cannot be read (here the connection fails), the check
+// says so: a WARN by default, a FAIL in strict mode (MTIX-95.7).
+func TestCheckHubObjects_ReadError_WarnsOrFailsStrict(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		t.Run(map[bool]string{false: "default", true: "strict"}[strict], func(t *testing.T) {
+			initTestApp(t)
+			if strict {
+				setKeepRoles(t, "mtix_team")
+			}
+			got := checkHubObjects(context.Background(),
+				"postgres://mtix@127.0.0.1:1/hub?sslmode=disable&connect_timeout=2", true,
+				transport.Options{InsecureTLS: true})
+			require.Contains(t, got.Detail, "could not read the hub's functions and triggers")
+			require.Equal(t, !strict, got.Pass)
+			require.Equal(t, !strict, got.Warn)
+		})
+	}
+}
+
+// TestScrubDoctorReport_DetailAndFix_NoDSNSecret: every check's detail and
+// fix pass through the DSN scrubber before the report is printed, text or
+// --json, so neither carries the configured DSN's password (FR-18.17,
+// MTIX-95.7).
+func TestScrubDoctorReport_DetailAndFix_NoDSNSecret(t *testing.T) {
+	saveAndResetApp(t)
+	app.mtixDir = t.TempDir()
+	d := wellFormedDSN()
+	t.Setenv(transport.EnvDSN, d.dsn)
+	got := scrubDoctorReport(DoctorReport{Checks: []DoctorCheck{{
+		Name: "hub-triggers", Detail: "detail " + d.dsn, Fix: "as the table owner: mtix sync init " + d.dsn,
+	}}})
+	requireNoSecret(t, "doctor detail", got.Checks[0].Detail, d)
+	requireNoSecret(t, "doctor fix", got.Checks[0].Fix, d)
+	require.Contains(t, got.Checks[0].Fix, "as the table owner: mtix sync init", "the rest of the fix is kept")
 }

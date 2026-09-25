@@ -100,7 +100,8 @@ reports errors for the triggers; their functions do not exist yet), then
 until `hub-triggers` passes (its `fix` names the table owner who runs it
 and, in order, `mtix sync init` for a missing trigger or one bound to
 another function, and the `ALTER TABLE ... ENABLE TRIGGER` statement for
-one not enabled; tgenabled `O` and `A` both count as enabled; a gap is a
+one not enabled, printed on a `fix:` line without `--json`; functions are
+compared by OID; tgenabled `O` and `A` both count as enabled; a gap is a
 WARN by default, a FAIL in strict mode), then
 `mtix sync mark-restored` once and `mtix sync collisions list`.
 

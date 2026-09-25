@@ -91,13 +91,19 @@ func TestDoctorHubTriggers_TriggerBoundToAnotherFunction_ReportedWithFix(t *test
 	ctx := context.Background()
 	pool := hubPool(t, dsn)
 	t.Cleanup(func() {
-		_, err := pool.Exec(context.Background(), `DROP FUNCTION IF EXISTS mtix_test_noop_trigger() CASCADE`)
-		require.NoError(t, err)
+		for _, stmt := range []string{
+			`DROP FUNCTION IF EXISTS mtix_test_noop_trigger() CASCADE`,
+			`DROP SCHEMA IF EXISTS mtix_elsewhere CASCADE`,
+		} {
+			_, err := pool.Exec(context.Background(), stmt)
+			require.NoError(t, err)
+		}
 	})
 	guardOID := func(table, name string) (oid uint32, function string) {
 		require.NoError(t, pool.QueryRow(ctx, `
-			SELECT t.oid, p.proname::text FROM pg_catalog.pg_trigger t
+			SELECT t.oid, n.nspname::text || '.' || p.proname::text FROM pg_catalog.pg_trigger t
 			JOIN pg_catalog.pg_proc p ON p.oid = t.tgfoid
+			JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
 			WHERE t.tgrelid = pg_catalog.to_regclass($1) AND t.tgname = $2`, table, name).Scan(&oid, &function))
 		return oid, function
 	}
@@ -108,6 +114,11 @@ func TestDoctorHubTriggers_TriggerBoundToAnotherFunction_ReportedWithFix(t *test
 		`CREATE TRIGGER audit_log_no_update BEFORE UPDATE ON audit_log FOR EACH ROW EXECUTE FUNCTION mtix_test_noop_trigger()`,
 		`DROP TRIGGER sync_events_no_truncate ON sync_events`,
 		`CREATE TRIGGER sync_events_no_truncate BEFORE TRUNCATE ON sync_events FOR EACH STATEMENT EXECUTE FUNCTION mtix_test_noop_trigger()`,
+		// A no-op of the guard function's own name, in another schema.
+		`CREATE SCHEMA mtix_elsewhere`,
+		`CREATE FUNCTION mtix_elsewhere.append_only_no_truncate() RETURNS trigger AS $$ BEGIN RETURN NULL; END $$ LANGUAGE plpgsql`,
+		`DROP TRIGGER audit_log_no_truncate ON audit_log`,
+		`CREATE TRIGGER audit_log_no_truncate BEFORE TRUNCATE ON audit_log FOR EACH STATEMENT EXECUTE FUNCTION mtix_elsewhere.append_only_no_truncate()`,
 	} {
 		_, err := pool.Exec(ctx, stmt)
 		require.NoError(t, err, stmt)
@@ -118,8 +129,10 @@ func TestDoctorHubTriggers_TriggerBoundToAnotherFunction_ReportedWithFix(t *test
 	pass, warn, detail, fix := doctorCheckNamed(t, report, "hub-triggers")
 	require.True(t, pass)
 	require.True(t, warn)
-	require.Contains(t, detail, "audit_log_no_update on public.audit_log calls mtix_test_noop_trigger, not audit_log_immutable")
-	require.Contains(t, detail, "sync_events_no_truncate on public.sync_events calls mtix_test_noop_trigger, not append_only_no_truncate")
+	require.Contains(t, detail, "audit_log_no_update on public.audit_log calls public.mtix_test_noop_trigger, not public.audit_log_immutable")
+	require.Contains(t, detail, "sync_events_no_truncate on public.sync_events calls public.mtix_test_noop_trigger, not public.append_only_no_truncate")
+	require.Contains(t, detail, "audit_log_no_truncate on public.audit_log calls mtix_elsewhere.append_only_no_truncate, not public.append_only_no_truncate",
+		"a function of the right name in another schema is another function")
 	require.Equal(t, "as the table owner (postgres): mtix sync init", fix,
 		"init alone replaces both triggers; no separate DROP step")
 
@@ -131,10 +144,32 @@ func TestDoctorHubTriggers_TriggerBoundToAnotherFunction_ReportedWithFix(t *test
 	require.True(t, pass, detail)
 	require.False(t, warn, "mtix sync init alone restores the triggers: %s", detail)
 	_, fn := guardOID("audit_log", "audit_log_no_update")
-	require.Equal(t, "audit_log_immutable", fn)
+	require.Equal(t, "public.audit_log_immutable", fn)
 	_, fn = guardOID("sync_events", "sync_events_no_truncate")
-	require.Equal(t, "append_only_no_truncate", fn)
+	require.Equal(t, "public.append_only_no_truncate", fn)
+	_, fn = guardOID("audit_log", "audit_log_no_truncate")
+	require.Equal(t, "public.append_only_no_truncate", fn, "init replaces the guard bound to the other schema's function")
 	again, fn := guardOID("sync_conflicts", "sync_conflicts_no_truncate")
-	require.Equal(t, "append_only_no_truncate", fn)
+	require.Equal(t, "public.append_only_no_truncate", fn)
 	require.Equal(t, untouched, again, "a guard already in place is not dropped and re-created")
+}
+
+// TestDoctorText_DisabledTrigger_ShowsFixWithOwnerAndStatement: without
+// --json the doctor prints the hub-triggers fix under the check, naming
+// the table owner and the exact ALTER TABLE statement (MTIX-95.7).
+func TestDoctorText_DisabledTrigger_ShowsFixWithOwnerAndStatement(t *testing.T) {
+	dsn := requireCmdPG(t)
+	_ = openCmdHub(t)
+	initTestApp(t)
+	pool := hubPool(t, dsn)
+	_, err := pool.Exec(context.Background(), `ALTER TABLE audit_log DISABLE TRIGGER audit_log_no_update`)
+	require.NoError(t, err)
+
+	app.jsonOutput = false
+	var stdout, stderr bytes.Buffer
+	require.NoError(t, runSyncDoctor(context.Background(), &stdout, &stderr, nil, cloudOpts), "a WARN exits 0")
+	out := stdout.String()
+	require.Contains(t, out, "[WARN] hub-triggers")
+	require.Contains(t, out,
+		"\n       fix: as the table owner (postgres): ALTER TABLE public.audit_log ENABLE TRIGGER audit_log_no_update;\n")
 }

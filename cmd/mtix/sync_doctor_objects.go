@@ -38,11 +38,13 @@ type hubObjectState struct {
 // triggerRow is the catalog state of one trigger the migrations define:
 // its table and name, the table's schema and owner ("" when the table is
 // missing), tgenabled ("" when the trigger is missing), the function it
-// executes, the function its migration binds, and the statement that
-// enables it, quoted server-side (MTIX-95.7).
+// executes and the function its migration binds, whether those are the
+// same function by OID, and the statement that enables it, quoted
+// server-side (MTIX-95.7).
 type triggerRow struct {
 	table, name, schema, owner, enabled string
-	function, wantFunction              string
+	function, wantFunction              string // schema-qualified, for display
+	bound                               bool   // the trigger executes wantFunction itself (same OID)
 	enable                              string
 }
 
@@ -145,13 +147,19 @@ func readHubTriggers(ctx context.Context, pool *transport.Pool, triggers []migra
 	// Each migration-defined trigger, its table resolved through the
 	// connecting role's search_path as the CLI's statements resolve it:
 	// the table's schema and owner, tgenabled ('' when the trigger or its
-	// table is missing), the function the trigger executes next to the one
-	// its migration binds, and the statement that enables it, quoted
-	// server-side (directive SQL Rule 1a).
+	// table is missing), the function the trigger executes and the one its
+	// migration binds (created in the table's schema), both
+	// schema-qualified, whether they are the same function by OID, and the
+	// statement that enables the trigger, quoted server-side (directive SQL
+	// Rule 1a).
 	rows, err := pool.Inner().Query(ctx, `
 		SELECT g.tbl, g.name, COALESCE(n.nspname::text, ''),
 		       COALESCE(pg_catalog.pg_get_userbyid(c.relowner)::text, ''),
-		       COALESCE(t.tgenabled::text, ''), COALESCE(p.proname::text, ''), g.fn,
+		       COALESCE(t.tgenabled::text, ''),
+		       COALESCE(pn.nspname::text || '.' || p.proname::text, ''),
+		       COALESCE(n.nspname::text || '.', '') || g.fn,
+		       COALESCE(t.tgfoid = pg_catalog.to_regprocedure(
+		                pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident(g.fn) || '()'), false),
 		       CASE WHEN t.oid IS NULL THEN ''
 		            ELSE format('ALTER TABLE %I.%I ENABLE TRIGGER %I;', n.nspname, g.tbl, g.name) END
 		FROM unnest($1::text[], $2::text[], $3::text[]) AS g(tbl, name, fn)
@@ -160,6 +168,7 @@ func readHubTriggers(ctx context.Context, pool *transport.Pool, triggers []migra
 		LEFT JOIN pg_catalog.pg_trigger t
 		       ON t.tgrelid = c.oid AND t.tgname = g.name AND NOT t.tgisinternal
 		LEFT JOIN pg_catalog.pg_proc p ON p.oid = t.tgfoid
+		LEFT JOIN pg_catalog.pg_namespace pn ON pn.oid = p.pronamespace
 		ORDER BY 1, 2`, tables, names, functions)
 	if err != nil {
 		return fmt.Errorf("read hub triggers: %w", err)
@@ -168,7 +177,7 @@ func readHubTriggers(ctx context.Context, pool *transport.Pool, triggers []migra
 	for rows.Next() {
 		var r triggerRow
 		if err := rows.Scan(&r.table, &r.name, &r.schema, &r.owner, &r.enabled,
-			&r.function, &r.wantFunction, &r.enable); err != nil {
+			&r.function, &r.wantFunction, &r.bound, &r.enable); err != nil {
 			return fmt.Errorf("read hub triggers: %w", err)
 		}
 		state.record(r)
@@ -181,7 +190,8 @@ func readHubTriggers(ctx context.Context, pool *transport.Pool, triggers []migra
 
 // record files one trigger's catalog state: missing when tgenabled is
 // empty; calling the wrong function when it executes another function than
-// its migration binds (recreating it also enables it); not enabled when
+// its migration binds, compared by OID, so a function of the same name in
+// another schema is another function (recreating it also enables it); not enabled when
 // tgenabled is anything but 'O' (fires in normal sessions) or 'A' (fires
 // always), the two states mtix sync harden accepts. It also records the
 // owner of the trigger's table, who runs the fix (MTIX-95.7).
@@ -197,7 +207,7 @@ func (s *hubObjectState) record(r triggerRow) {
 	switch {
 	case r.enabled == "":
 		s.missingTriggers = append(s.missingTriggers, label)
-	case r.function != r.wantFunction:
+	case !r.bound:
 		s.wrongFunction = append(s.wrongFunction, label+" calls "+r.function+", not "+r.wantFunction)
 	case r.enabled != "O" && r.enabled != "A":
 		s.disabledTriggers = append(s.disabledTriggers, label+" (tgenabled "+r.enabled+")")

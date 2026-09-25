@@ -485,46 +485,88 @@ func TestConflictsResolve_TargetWithLaterRow_ReturnsInvalidInputNamingNewest(t *
 	}
 }
 
+// laterConflictSQL inserts a later lww conflict on TEST-1's title.
+const laterConflictSQL = `
+	INSERT INTO sync_conflicts
+	  (event_id_winner, event_id_loser, node_id, field_name, resolution, resolved_at, resolved_by)
+	VALUES ('evt-winner-later', 'evt-loser-later', 'TEST-1', 'title', 'lww', '2026-09-25T00:00:01Z', NULL)`
+
+// otherConnection opens a second connection to the project database, as
+// another process (a pull, for example) would, with a short busy timeout.
+func otherConnection(t *testing.T) *sql.DB {
+	t.Helper()
+	dbPath := filepath.Join(app.mtixDir, "data", "mtix.db")
+	require.FileExists(t, dbPath)
+	other, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(200)&_txlock=immediate")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, other.Close()) })
+	return other
+}
+
 // TestResolveConflictRow_ConcurrentLaterConflict_CannotCommitBetweenCheckAndInsert:
 // resolve checks for a later conflict and inserts its manual row in one
-// write transaction. A later lww conflict that another connection (a pull,
-// for example) tries to commit between the check and the insert cannot
-// land there: the resolve holds the write lock, so that write waits and
-// commits after the manual row, and the later conflict stays unresolved
+// write transaction. Another connection (a pull, for example) cannot
+// commit a later lww conflict just before the check or between the check
+// and the insert: the resolve holds the write lock throughout, so that
+// write waits, commits after the manual row, and stays unresolved
 // (MTIX-95.7).
 func TestResolveConflictRow_ConcurrentLaterConflict_CannotCommitBetweenCheckAndInsert(t *testing.T) {
+	tests := []struct {
+		name  string
+		seams func(probe func(*sql.Tx) error) resolveSeams
+	}{
+		{"just before the check", func(probe func(*sql.Tx) error) resolveSeams { return resolveSeams{beforeCheck: probe} }},
+		{"between the check and the insert", func(probe func(*sql.Tx) error) resolveSeams { return resolveSeams{afterCheck: probe} }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			initTestApp(t)
+			ctx := context.Background()
+			id := seedConflictRow(t, conflictSeed{"TEST-1", "title", "lww"})
+			target, err := lookupConflict(ctx, app.store, id)
+			require.NoError(t, err)
+			other := otherConnection(t)
+
+			var windowErr error
+			ran := false
+			err = resolveConflictRow(ctx, app.store, target, "acknowledge", tt.seams(func(*sql.Tx) error {
+				ran = true
+				_, windowErr = other.ExecContext(ctx, laterConflictSQL)
+				return nil
+			}))
+			require.True(t, ran, "the seam runs inside the resolve")
+			require.NoError(t, err)
+			require.Error(t, windowErr, "no other writer commits inside the resolve")
+			require.Regexp(t, `(?i)busy|locked`, windowErr.Error(), "the other writer waits for the resolve's write lock")
+
+			_, err = other.ExecContext(ctx, laterConflictSQL)
+			require.NoError(t, err, "the later conflict commits once the resolve has")
+			open, _ := listConflicts(t, false)
+			require.Len(t, open, 1, "the later conflict is unresolved: the decision did not close it")
+			require.NotEqual(t, id, open[0])
+		})
+	}
+}
+
+// TestResolveConflictRow_CheckReadsTheWriteTransaction: the check runs on
+// the resolve's own write transaction, so a later conflict written on that
+// transaction just before the check is seen and the resolve is refused;
+// nothing is committed (MTIX-95.7).
+func TestResolveConflictRow_CheckReadsTheWriteTransaction(t *testing.T) {
 	initTestApp(t)
 	ctx := context.Background()
 	id := seedConflictRow(t, conflictSeed{"TEST-1", "title", "lww"})
 	target, err := lookupConflict(ctx, app.store, id)
 	require.NoError(t, err)
 
-	dbPath := filepath.Join(app.mtixDir, "data", "mtix.db")
-	require.FileExists(t, dbPath)
-	other, err := sql.Open("sqlite", dbPath+"?_pragma=busy_timeout(200)&_txlock=immediate")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, other.Close()) })
-	insertLater := func() error {
-		_, err := other.ExecContext(ctx, `
-			INSERT INTO sync_conflicts
-			  (event_id_winner, event_id_loser, node_id, field_name, resolution, resolved_at, resolved_by)
-			VALUES ('evt-winner-later', 'evt-loser-later', 'TEST-1', 'title', 'lww', '2026-09-25T00:00:01Z', NULL)`)
-		return err
-	}
-
-	var windowErr error
-	ran := false
-	err = resolveConflictRow(ctx, app.store, target, "acknowledge", func() {
-		ran = true
-		windowErr = insertLater()
+	err = resolveConflictRow(ctx, app.store, target, "acknowledge", resolveSeams{
+		beforeCheck: func(tx *sql.Tx) error {
+			_, execErr := tx.ExecContext(ctx, laterConflictSQL)
+			return execErr
+		},
 	})
-	require.True(t, ran, "the hook runs between the check and the insert")
-	require.NoError(t, err)
-	require.Error(t, windowErr, "no other writer commits between the check and the insert")
-	require.Regexp(t, `(?i)busy|locked`, windowErr.Error(), "the other writer waits for the resolve's write lock")
-
-	require.NoError(t, insertLater(), "the later conflict commits once the resolve has")
+	require.ErrorIs(t, err, model.ErrInvalidInput, "the check sees the later conflict on its own transaction")
+	require.Equal(t, 0, conflictRowsFor(t, "TEST-1", "manual"), "no decision is recorded")
 	open, _ := listConflicts(t, false)
-	require.Len(t, open, 1, "the later conflict is unresolved: the decision did not close it")
-	require.NotEqual(t, id, open[0])
+	require.Equal(t, []int64{id}, open, "the refused transaction commits nothing")
 }

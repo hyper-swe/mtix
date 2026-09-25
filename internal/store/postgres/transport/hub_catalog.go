@@ -108,7 +108,8 @@ type guardState struct {
 	table    string
 	trigger  string
 	enabled  string // "" when missing; else pg_trigger.tgenabled
-	function string // the function the trigger calls
+	function string // the function the trigger calls, schema-qualified
+	bound    bool   // the trigger calls the guard function of the table's schema, by OID (MTIX-95.7)
 }
 
 // hubCatalog is everything the privilege verification reads, loaded in

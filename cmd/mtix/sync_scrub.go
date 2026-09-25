@@ -82,13 +82,15 @@ func warnSync(w io.Writer, prefix string, err error) {
 	fmt.Fprintf(w, "%s: %s\n", prefix, scrubSyncText(err.Error()))
 }
 
-// scrubDoctorReport returns r with every check detail passed through
-// scrubSyncText, so neither the text nor the --json report of mtix sync
-// doctor carries a DSN or its password (FR-18.17, MTIX-95.15).
+// scrubDoctorReport returns r with every check detail and fix passed
+// through scrubSyncText, so neither the text nor the --json report of mtix
+// sync doctor carries a DSN or its password (FR-18.17, MTIX-95.15,
+// MTIX-95.7).
 func scrubDoctorReport(r DoctorReport) DoctorReport {
 	checks := make([]DoctorCheck, len(r.Checks))
 	for i, c := range r.Checks {
 		c.Detail = scrubSyncText(c.Detail)
+		c.Fix = scrubSyncText(c.Fix)
 		checks[i] = c
 	}
 	r.Checks = checks

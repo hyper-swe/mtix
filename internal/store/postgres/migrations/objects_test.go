@@ -74,10 +74,12 @@ func TestTruncateGuards_EmbeddedMigrations_CoverAppendOnlyTables(t *testing.T) {
 
 // TestTruncateGuardMigration_CreatesOnlyWhenAbsent pins the shape of 016:
 // a guard is created only when pg_trigger lacks a trigger of its name that
-// executes append_only_no_truncate, so a re-run on a hub whose guards are
-// in place takes no table lock for them (MTIX-95.1). In that same branch a
-// trigger of the guard's name bound to another function is dropped first,
-// so mtix sync init replaces it inside its one transaction (MTIX-95.7).
+// executes this migration's append_only_no_truncate, compared by OID, so a
+// re-run on a hub whose guards are in place takes no table lock for them
+// (MTIX-95.1). In that same branch a trigger of the guard's name bound to
+// another function, one of the same name in another schema included, is
+// dropped first, so mtix sync init replaces it inside its one transaction
+// (MTIX-95.7).
 func TestTruncateGuardMigration_CreatesOnlyWhenAbsent(t *testing.T) {
 	body, err := migrations.Read(migrations.TruncateGuardFile)
 	require.NoError(t, err)
@@ -85,8 +87,12 @@ func TestTruncateGuardMigration_CreatesOnlyWhenAbsent(t *testing.T) {
 	require.Contains(t, body, "FOR EACH STATEMENT")
 	require.Equal(t, 3, strings.Count(body, "IF NOT EXISTS (SELECT 1 FROM pg_trigger"),
 		"each guard is created only when absent")
-	require.Equal(t, 3, strings.Count(body, "p.proname = 'append_only_no_truncate'"),
-		"a guard counts as present only when it executes append_only_no_truncate")
+	require.Contains(t, body, "guard_fn oid := pg_catalog.to_regprocedure(\n"+
+		"        pg_catalog.quote_ident(pg_catalog.current_schema()) || '.append_only_no_truncate()');",
+		"the guard function is resolved once, schema-qualified, to its OID")
+	require.Equal(t, 3, strings.Count(body, "AND t.tgfoid = guard_fn"),
+		"a guard counts as present only when it executes that function, by OID")
+	require.NotContains(t, body, "proname", "no guard is matched by function name")
 	guards, err := migrations.TruncateGuards()
 	require.NoError(t, err)
 	for _, g := range guards {

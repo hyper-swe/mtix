@@ -221,7 +221,7 @@ func runSyncConflictsResolve(ctx context.Context, stdout, stderr io.Writer,
 			conflictID, model.ErrInvalidInput)
 	}
 
-	if err := resolveConflictRow(ctx, app.store, original, action, nil); err != nil {
+	if err := resolveConflictRow(ctx, app.store, original, action, resolveSeams{}); err != nil {
 		if errors.Is(err, model.ErrInvalidInput) {
 			return err
 		}
@@ -230,21 +230,39 @@ func runSyncConflictsResolve(ctx context.Context, stdout, stderr io.Writer,
 	return printResolveResult(stdout, original, action)
 }
 
+// resolveSeams are the points inside the resolve transaction where tests
+// act: just before the check and between the check and the insert. Each
+// runs on the transaction when set; production leaves both unset.
+type resolveSeams struct {
+	beforeCheck, afterCheck func(tx *sql.Tx) error
+}
+
+// run calls seam on tx when it is set.
+func (resolveSeams) run(seam func(*sql.Tx) error, tx *sql.Tx) error {
+	if seam == nil {
+		return nil
+	}
+	return seam(tx)
+}
+
 // resolveConflictRow records the decision action for target in one write
 // transaction: it checks for a later row on target's node and field
 // (checkResolveTarget), then inserts the manual row (MTIX-95.7). The
-// writer begins IMMEDIATE, so no other writer, a pull recording a new
-// conflict included, commits between the check and the insert: a later
-// conflict waits and lands after the decision, unresolved. afterCheck,
-// when set, runs between the two; it is the seam the tests use to write
-// from another connection there.
-func resolveConflictRow(ctx context.Context, store *sqlite.Store, target ConflictRow, action string, afterCheck func()) error {
+// writer begins IMMEDIATE, so from before the check to after the insert
+// no other writer, a pull recording a new conflict included, commits: a
+// later conflict waits and lands after the decision, unresolved.
+func resolveConflictRow(ctx context.Context, store *sqlite.Store, target ConflictRow, action string,
+	seams resolveSeams,
+) error {
 	return store.WithTx(ctx, func(tx *sql.Tx) error {
+		if err := seams.run(seams.beforeCheck, tx); err != nil {
+			return err
+		}
 		if err := checkResolveTarget(ctx, tx, target); err != nil {
 			return err
 		}
-		if afterCheck != nil {
-			afterCheck()
+		if err := seams.run(seams.afterCheck, tx); err != nil {
+			return err
 		}
 		return insertManualResolution(ctx, tx, target, action)
 	})

@@ -198,21 +198,30 @@ func (c *hubCatalog) loadGuards(ctx context.Context, tx pgx.Tx) error {
 	for _, g := range guards {
 		tables, names = append(tables, g.Table), append(names, g.Name)
 	}
-	// Each guard's enabled state and function; NULLs when it is missing.
+	// Each guard's enabled state, the function it calls (schema-qualified)
+	// and whether that is the guard function of the table's schema by OID,
+	// so a function of the same name in another schema does not count
+	// (MTIX-95.7); empty and false when the guard is missing.
 	rows, err := tx.Query(ctx, `
-		SELECT g.tbl, g.name, COALESCE(t.tgenabled::text, ''), COALESCE(p.proname::text, '')
+		SELECT g.tbl, g.name, COALESCE(t.tgenabled::text, ''),
+		       COALESCE(pn.nspname::text || '.' || p.proname::text, ''),
+		       COALESCE(t.tgfoid = pg_catalog.to_regprocedure(
+		                pg_catalog.quote_ident(n.nspname) || '.' || pg_catalog.quote_ident($3) || '()'), false)
 		FROM unnest($1::text[], $2::text[]) AS g(tbl, name)
+		LEFT JOIN pg_catalog.pg_class c ON c.oid = pg_catalog.to_regclass(g.tbl)
+		LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 		LEFT JOIN pg_catalog.pg_trigger t
-		       ON t.tgrelid = pg_catalog.to_regclass(g.tbl) AND t.tgname = g.name AND NOT t.tgisinternal
+		       ON t.tgrelid = c.oid AND t.tgname = g.name AND NOT t.tgisinternal
 		LEFT JOIN pg_catalog.pg_proc p ON p.oid = t.tgfoid
-		ORDER BY 1`, tables, names)
+		LEFT JOIN pg_catalog.pg_namespace pn ON pn.oid = p.pronamespace
+		ORDER BY 1`, tables, names, guardFunction)
 	if err != nil {
 		return fmt.Errorf("read guard triggers: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var g guardState
-		if err := rows.Scan(&g.table, &g.trigger, &g.enabled, &g.function); err != nil {
+		if err := rows.Scan(&g.table, &g.trigger, &g.enabled, &g.function, &g.bound); err != nil {
 			return fmt.Errorf("read guard triggers: %w", err)
 		}
 		c.guards = append(c.guards, g)

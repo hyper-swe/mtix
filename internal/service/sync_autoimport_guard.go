@@ -161,7 +161,10 @@ func (s *SyncService) refuseConflict(mtixDir, fileHash string, diff *sqlite.Repl
 // be lost, node by node, and the three deliberate ways to proceed, run from
 // the project root, with what each of them keeps and loses. When a local
 // task is a different task than the file's under its id, the merge option
-// says the merge renumbers it and needs --confirm (MTIX-95.31.4).
+// says the merge renumbers it and needs --confirm (MTIX-95.31.4). When the
+// file holds a task under another uid assigned at upgrade, with another
+// title, the merge option names every such task and says the merge keeps
+// only the file's, so the user can refuse it (MTIX-95.31.6).
 func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss) string {
 	var b strings.Builder
 	b.WriteString("mtix: auto-import of .mtix/tasks.json refused: " + cause + ":\n")
@@ -178,6 +181,13 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss) string 
 			"under its id is renumbered to the next number free in both the store and the file (it keeps its " +
 			"uid; the file's task keeps the id): the import lists the renumbering and applies it only when you " +
 			"rerun it with --confirm\n")
+	}
+	if ids := sameTaskAtUpgrade(losses); len(ids) > 0 { // MTIX-95.31.6
+		b.WriteString("                                               a task treated as the same task (uid assigned " +
+			"at upgrade), here " + strings.Join(ids, ", ") + ", keeps its id and takes the file's uid and changes, " +
+			"and the import lists each uid it adopts; if the two titles name different tasks (created in the same " +
+			"second on clones running releases before 0.4), do not merge: the merge would keep only the file's " +
+			"task, and yours would survive only in the backup the merge takes\n")
 	}
 	b.WriteString("  mtix sync --fix                              keep the local store and rewrite " +
 		".mtix/tasks.json from it; every change in the file is dropped\n")
@@ -198,6 +208,19 @@ func holdsDifferentTask(losses []sqlite.NodeLoss) bool {
 	return false
 }
 
+// sameTaskAtUpgrade returns the ids of the local tasks the file holds under
+// another uid assigned at upgrade, with another title (MTIX-95.31.6), every
+// one of them, even those lossList counts without naming.
+func sameTaskAtUpgrade(losses []sqlite.NodeLoss) []string {
+	var ids []string
+	for i := range losses {
+		if losses[i].SameTaskAtUpgrade {
+			ids = append(ids, losses[i].NodeID)
+		}
+	}
+	return ids
+}
+
 // lossList describes up to maxLossLines nodes' losses joined by sep, and
 // counts the rest.
 func lossList(losses []sqlite.NodeLoss, sep string) string {
@@ -216,6 +239,9 @@ func lossList(losses []sqlite.NodeLoss, sep string) string {
 // "PROJ-1: 2 annotations (01J..., 01J...), 1 activity entry, field assignee",
 // or, for a different task under the id (MTIX-95.31.4),
 // `PROJ-3: a different task under this id (local "Mine", file "Theirs")`.
+// A task the file holds under another uid assigned at upgrade, with another
+// title, starts with `treated as the same task (uid assigned at upgrade)
+// (local "Mine", file "Theirs")` (MTIX-95.31.6).
 func describeLoss(l *sqlite.NodeLoss) string {
 	if l.DifferentTask {
 		return fmt.Sprintf("%s: a different task under this id (local %q, file %q)", l.NodeID, l.LocalTitle, l.FileTitle)
@@ -227,6 +253,10 @@ func describeLoss(l *sqlite.NodeLoss) string {
 		return l.NodeID + ": the whole node"
 	}
 	var parts []string
+	if l.SameTaskAtUpgrade {
+		parts = append(parts, fmt.Sprintf("treated as the same task (uid assigned at upgrade) (local %q, file %q)",
+			l.LocalTitle, l.FileTitle))
+	}
 	if n := len(l.Annotations); n > 0 {
 		parts = append(parts, fmt.Sprintf("%s (%s)", plural(n, "annotation", "annotations"),
 			strings.Join(l.Annotations, ", ")))

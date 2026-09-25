@@ -452,3 +452,72 @@ func TestDiffReplace_NilExport_ReturnsError(t *testing.T) {
 		})
 	}
 }
+
+// TestDiffReplace_SameTaskAtUpgradeWithOtherTitle_ListedAsLoss verifies a
+// node the file holds under its id with another uid, the same task only
+// because a uid was assigned when a clone upgraded (MTIX-95.31.4), is
+// listed when the two titles differ (MTIX-95.31.6): the two may be
+// different tasks that rule cannot tell apart, and the replace would keep
+// only the file's. One title, one uid, a file without uids and a different
+// task are not flagged.
+func TestDiffReplace_SameTaskAtUpgradeWithOtherTitle_ListedAsLoss(t *testing.T) {
+	const localTitle = "A pre-upgrade task"
+	flagged := func(fileTitle string) *sqlite.NodeLoss {
+		return &sqlite.NodeLoss{NodeID: "REC-1", SameTaskAtUpgrade: true, LocalTitle: localTitle, FileTitle: fileTitle}
+	}
+	tests := []struct {
+		name      string
+		localUID  func(t *testing.T) string // nil: the local node has no uid
+		fileUID   string                    // "backfilled", "minted" (at creation), "same" or "none"
+		fileTitle string
+		want      *sqlite.NodeLoss // nil: the node loses nothing
+	}{
+		{"both uids assigned at upgrade, titles differ", backfilledUID, "backfilled", "B pre-upgrade task",
+			flagged("B pre-upgrade task")},
+		{"the local uid assigned at upgrade, titles differ", backfilledUID, "minted", "B task", flagged("B task")},
+		{"the file's uid assigned at upgrade, titles differ", taskUID, "backfilled", "B task", flagged("B task")},
+		{"both uids assigned at upgrade, one title", backfilledUID, "backfilled", localTitle, nil},
+		{"the same uid, retitled", backfilledUID, "same", "Retitled", nil},
+		{"a file without uids, retitled", backfilledUID, "none", "Retitled", nil},
+		{"a local node without a uid, retitled", nil, "backfilled", "Retitled", nil},
+		{"a different task", taskUID, "minted", "B task", &sqlite.NodeLoss{NodeID: "REC-1", DifferentTask: true,
+			LocalTitle: localTitle, FileTitle: "B task"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			local := newTestStore(t)
+			uid := ""
+			if tt.localUID != nil {
+				uid = tt.localUID(t)
+			}
+			uid = createSameIDTask(t, local, "REC-1", "", 1, uid, localTitle)
+			if tt.localUID == nil { // a node from before uids existed
+				_, err := local.WriteDB().ExecContext(context.Background(), `UPDATE nodes SET uid = NULL`)
+				require.NoError(t, err)
+			}
+			file := exportOf(t, local)
+			switch tt.fileUID {
+			case "backfilled":
+				file.Nodes[0].UID = backfilledUID(t)
+			case "minted":
+				file.Nodes[0].UID = taskUID(t)
+			case "none":
+				file.Nodes[0].UID = ""
+			default:
+				require.Equal(t, uid, file.Nodes[0].UID)
+			}
+			file.Nodes[0].Title = tt.fileTitle
+
+			diff, err := sqlite.DiffReplace(exportOf(t, local), file)
+			require.NoError(t, err)
+			if tt.want == nil {
+				assert.False(t, diff.Lossy(), "losses: %+v", diff.Losses)
+				return
+			}
+			loss := lossOf(diff, "REC-1")
+			require.NotNil(t, loss, "losses: %+v", diff.Losses)
+			assert.Equal(t, *tt.want, *loss)
+			assert.True(t, diff.Lossy())
+		})
+	}
+}

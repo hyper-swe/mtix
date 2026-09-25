@@ -115,7 +115,10 @@ type Store interface {
 	// Sequence operations
 
 	// NextSequence atomically increments and returns the next sequence number
-	// for the given key (project:parent_dotpath) per FR-2.7.
+	// for the given key (project:parent_dotpath) per FR-2.7. When a node
+	// already holds the number reached, the counter is moved past the
+	// highest number under the parent, once, and that number is returned
+	// (MTIX-95.38).
 	NextSequence(ctx context.Context, key string) (int, error)
 
 	// Dependency operations

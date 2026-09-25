@@ -439,7 +439,12 @@ func (s *Store) Close() error {
 // for atomic, collision-free sequence generation.
 // Key format: '{project}:{parent_dotpath}' (e.g., 'PROJ:', 'PROJ:PROJ-42.1').
 //
-// This write runs outside WithTx, so it carries its own NFR-2.8 guards:
+// When a node already holds the number the counter reaches, the counter
+// fell behind the nodes; NextSequence then moves it past the highest number
+// under the parent, once, and returns that number (skipTakenSequence,
+// MTIX-95.38), so a local create does not fail with "already exists".
+//
+// These writes run outside WithTx, so they carry their own NFR-2.8 guards:
 // free-space pre-flight before, fail-stop classification after.
 func (s *Store) NextSequence(ctx context.Context, key string) (int, error) {
 	if err := s.preflightWrite(); err != nil {
@@ -459,7 +464,7 @@ func (s *Store) NextSequence(ctx context.Context, key string) (int, error) {
 		return 0, s.classifyWriteError(fmt.Errorf("next sequence for %s: %w", key, err))
 	}
 
-	return value, nil
+	return s.skipTakenSequence(ctx, key, value)
 }
 
 // UpdateProgress sets the progress value for a node.

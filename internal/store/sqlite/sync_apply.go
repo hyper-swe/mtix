@@ -476,6 +476,14 @@ func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error 
 		return fmt.Errorf("apply create_node %s: insert node %s: %w", e.EventID, e.NodeID, err)
 	}
 
+	// MTIX-95.38: advance the counter of the node's parent key to the
+	// node's number, in this transaction, so the next local create under
+	// that parent does not pick the pulled number. The counter is never
+	// lowered, so an idempotent re-apply leaves it unchanged.
+	if err := advanceSequence(ctx, tx, e.ProjectPrefix, p.ParentID, deriveSeq(e.NodeID)); err != nil {
+		return fmt.Errorf("apply create_node %s: %w", e.EventID, err)
+	}
+
 	// MTIX-44: mirror the local CreateNode parent-progress rollup
 	// (node_create.go, FR-5.7). A new leaf enters at progress 0.0 / weight
 	// 1.0, which lowers the parent's weighted average; without recomputing,

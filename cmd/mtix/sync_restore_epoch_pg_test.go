@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -280,6 +281,52 @@ func TestDoctorSchemaCurrent_HubWithoutMigration017_WarnsWithInitFix(t *testing.
 	require.True(t, pass, detail)
 	require.False(t, warn, "mtix sync init adds migration 017: %s", detail)
 	require.Empty(t, fix)
+}
+
+// TestDoctorSchemaCurrent_KeepRolesConfig_GradesGapByMode: on a hub
+// without migration 017's stamp trigger, the schema current check is a
+// WARN when sync.keep_roles is unset, and a FAIL, not a WARN, when it is
+// set or cannot be read (a hand-edited, invalid value): strict mode was
+// meant. The hub-privileges check names the unreadable key (MTIX-95.1.7).
+func TestDoctorSchemaCurrent_KeepRolesConfig_GradesGapByMode(t *testing.T) {
+	tests := []struct {
+		name       string
+		keep       func(t *testing.T)
+		wantPass   bool
+		wantWarn   bool
+		privDetail string // what the hub-privileges check names, if anything
+	}{
+		{"unset", func(*testing.T) {}, true, true, ""},
+		{"set", func(t *testing.T) { setKeepRoles(t, "mtix_team") }, false, false, ""},
+		{"unreadable", func(t *testing.T) { require.NoError(t, writeRawKeepRoles(t, "a,,b")) }, false, false,
+			"sync.keep_roles in .mtix/config.yaml"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dsn := requireCmdPG(t)
+			_ = openCmdHub(t)
+			initTestApp(t)
+			_, err := hubPool(t, dsn).Exec(context.Background(),
+				`DROP TRIGGER sync_events_stamp_restore_epoch ON sync_events`)
+			require.NoError(t, err)
+			tt.keep(t)
+
+			report, err := runDoctorReport(t)
+			if tt.wantPass {
+				require.NoError(t, err, "a WARN keeps the doctor's exit code 0")
+			} else {
+				require.ErrorIs(t, err, errDoctorChecksFailed)
+			}
+			pass, warn, detail, fix := doctorCheckNamed(t, report, schemaCurrentName)
+			require.Equal(t, tt.wantPass, pass, detail)
+			require.Equal(t, tt.wantWarn, warn, detail)
+			require.Equal(t, !tt.wantPass, strings.Contains(detail, "strict mode"), detail)
+			require.Contains(t, detail, "trigger sync_events_stamp_restore_epoch on public.sync_events")
+			require.Equal(t, "as the table owner (postgres): mtix sync init", fix)
+			_, _, privDetail, _ := doctorCheckNamed(t, report, hubPrivilegesName)
+			require.Contains(t, privDetail, tt.privDetail)
+		})
+	}
 }
 
 // TestDoctorSchemaCurrent_RoleWithoutExecute_WarnsWithGrantFix: a syncing

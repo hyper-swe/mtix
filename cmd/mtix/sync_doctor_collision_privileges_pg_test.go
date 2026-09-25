@@ -225,8 +225,15 @@ func grantPaths() []collisionPath {
 	}
 }
 
+// serverRolePath is how the check names membership in role, a role that
+// writes server files or runs server programs (MTIX-95.1.7).
+func serverRolePath(role string) string {
+	return "membership in " + role + ", which writes server files or runs server programs"
+}
+
 // memberPaths are the paths a role membership or a role attribute opens
-// (MTIX-95.1.7).
+// (MTIX-95.1.7). Membership in a server file or program role is named
+// whether or not the role inherits it.
 func memberPaths() []collisionPath {
 	return []collisionPath{
 		{"pg_write_all_data", "hub_data", 0, 0, func(h *schemaHub) ([]string, []string, []string) {
@@ -241,8 +248,21 @@ func memberPaths() []collisionPath {
 		}},
 		{"a server-program role", "hub_data", 0, 0, func(h *schemaHub) ([]string, []string, []string) {
 			h.f.ddl("GRANT pg_execute_server_program TO %I", h.syncer)
-			return nil, []string{"membership in pg_execute_server_program, which writes server files or runs " +
-				"server programs"}, []string{heldInsert}
+			return nil, []string{serverRolePath("pg_execute_server_program")}, []string{heldInsert}
+		}},
+		{"a server-program role it does not inherit", "hub_data", 0, 0, func(h *schemaHub) ([]string, []string, []string) {
+			h.f.ddl("ALTER ROLE %I NOINHERIT", h.syncer)
+			h.f.ddl("GRANT pg_execute_server_program TO %I", h.syncer)
+			return nil, []string{serverRolePath("pg_execute_server_program")}, []string{heldInsert}
+		}},
+		{"a server-program membership WITH INHERIT FALSE", "hub_data", pg16, 0,
+			func(h *schemaHub) ([]string, []string, []string) {
+				h.f.ddl("GRANT pg_execute_server_program TO %I WITH INHERIT FALSE", h.syncer)
+				return nil, []string{serverRolePath("pg_execute_server_program")}, []string{heldInsert}
+			}},
+		{"a server-file role", "hub_data", 0, 0, func(h *schemaHub) ([]string, []string, []string) {
+			h.f.ddl("GRANT pg_write_server_files TO %I", h.syncer)
+			return nil, []string{serverRolePath("pg_write_server_files")}, []string{heldInsert}
 		}},
 		{"CREATEROLE before PostgreSQL 16", "hub_data", 0, pg16 - 1, func(h *schemaHub) ([]string, []string, []string) {
 			h.f.ddl("ALTER ROLE %I CREATEROLE", h.syncer)

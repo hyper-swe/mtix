@@ -29,7 +29,7 @@ type Trigger struct {
 var (
 	lineComment   = regexp.MustCompile(`--[^\n]*`)
 	createTable   = regexp.MustCompile(`(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)`)
-	serialColumn  = regexp.MustCompile(`(?i)\b([a-z_][a-z0-9_]*)\s+(?:small|big)?serial\b`)
+	serialColumn  = regexp.MustCompile(`(?i)\b([a-z_][a-z0-9_]*)\s+(?:smallserial|bigserial|serial[248]?)\b`)
 	createFunc    = regexp.MustCompile(`(?i)\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([a-z_][a-z0-9_]*)\s*\(`)
 	createTrigger = regexp.MustCompile(`(?is)\bCREATE\s+(?:OR\s+REPLACE\s+)?TRIGGER\s+([a-z_][a-z0-9_]*)\s+` +
 		`(?:BEFORE|AFTER|INSTEAD\s+OF)\s+([a-z]+)\b.*?\bON\s+([a-z_][a-z0-9_]*)` +
@@ -57,8 +57,10 @@ func Tables() ([]string, error) {
 }
 
 // Sequences returns the name of every sequence the serial columns of the
-// embedded migrations' tables create, <table>_<column>_seq as PostgreSQL
-// names them, sorted (MTIX-95.1.4). A role that backs up the hub reads
+// embedded migrations' tables create (serial, serial2, serial4, serial8,
+// smallserial or bigserial), <table>_<column>_seq as PostgreSQL names them,
+// sorted (MTIX-95.1.4). A test fails when a migration creates a sequence
+// any other way. A role that backs up the hub reads
 // them with the sync tables. A PG test pins them to a migrated hub.
 func Sequences() ([]string, error) {
 	o, err := embeddedObjects()

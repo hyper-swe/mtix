@@ -140,8 +140,8 @@ func TestBackup_PgDumpFails_HintOnlyWhenATableIsNotFound(t *testing.T) {
 			tables, err := migrations.Tables()
 			require.NoError(t, err)
 			require.Contains(t, msg, "if the DSN's role lacks USAGE on the hub's schema, which leaves the schema off its "+
-				"search_path, the table owner runs GRANT USAGE ON SCHEMA <schema> TO "+tt.wantRole+"; "+
-				"GRANT SELECT ON TABLE <schema>."+strings.Join(tables, ", <schema>.")+" TO "+tt.wantRole+"; "+
+				"search_path, the schema's owner runs GRANT USAGE ON SCHEMA <schema> TO "+tt.wantRole+
+				", and the table owner runs GRANT SELECT ON TABLE <schema>."+strings.Join(tables, ", <schema>.")+" TO "+tt.wantRole+"; "+
 				"GRANT SELECT ON SEQUENCE <schema>.audit_log_audit_id_seq, <schema>.sync_conflicts_conflict_id_seq, "+
 				"<schema>.sync_node_collisions_collision_id_seq TO "+tt.wantRole+"; then back up again")
 			require.NotContains(t, msg, "ALL TABLES", "the grant names each table")
@@ -205,12 +205,14 @@ func TestWithSchemaUsageAdvice_Grants_ByNameOrUnchanged(t *testing.T) {
 		absent            string
 	}{
 		{"tables and sequences", notFound, "reader", []string{"a", "b"}, []string{"a_id_seq"},
-			`the table owner runs GRANT USAGE ON SCHEMA <schema> TO "reader"; GRANT SELECT ON TABLE <schema>.a, ` +
+			`the schema's owner runs GRANT USAGE ON SCHEMA <schema> TO "reader", and the table owner runs ` +
+				`GRANT SELECT ON TABLE <schema>.a, ` +
 				`<schema>.b TO "reader"; GRANT SELECT ON SEQUENCE <schema>.a_id_seq TO "reader"; then back up again`, ""},
 		{"no sequence", notFound, "reader", []string{"a"}, nil,
 			`GRANT SELECT ON TABLE <schema>.a TO "reader"; then back up again`, "SEQUENCE"},
 		{"no role known", notFound, "", []string{"a"}, nil,
-			`GRANT USAGE ON SCHEMA <schema> TO <the DSN's role>; GRANT SELECT ON TABLE <schema>.a TO <the DSN's role>;`, ""},
+			`GRANT USAGE ON SCHEMA <schema> TO <the DSN's role>, and the table owner runs GRANT SELECT ON TABLE ` +
+				`<schema>.a TO <the DSN's role>;`, ""},
 		{"another failure", other, "reader", []string{"a"}, nil, "", ""},
 	}
 	for _, tt := range tests {
@@ -238,8 +240,8 @@ func TestSyncBackupCmd_Help_SearchPathAdviceNamesTheDSNRole(t *testing.T) {
 	long := strings.Join(strings.Fields(newSyncBackupCmd().Long), " ")
 	require.Contains(t, long, "ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public")
 	require.Contains(t, long, "If the role the DSN names lacks USAGE on the hub's schema, pg_dump does not see the "+
-		"tables either: the failed backup prints the GRANT statements, naming each sync table and sequence, that the "+
-		"table owner runs.")
+		"tables either: the failed backup prints the GRANT statements, naming each sync table and sequence: the "+
+		"schema's owner grants USAGE on the schema, and the table owner grants SELECT.")
 	require.Contains(t, long, "takes precedence over a role-wide ALTER ROLE <the DSN's role> SET search_path = <schema>, public")
 	require.NotContains(t, long, "ALTER ROLE <owner>")
 	require.Contains(t, long, "a hub that lacks one")

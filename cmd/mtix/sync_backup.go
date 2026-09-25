@@ -76,10 +76,10 @@ search_path = <schema>, public. It applies in that database only and
 takes precedence over a role-wide ALTER ROLE <the DSN's role> SET
 search_path = <schema>, public. If the role the DSN names lacks USAGE on
 the hub's schema, pg_dump does not see the tables either: the failed
-backup prints the GRANT statements, naming each sync table and sequence,
-that the table owner runs. Client certificates (sslcert, sslkey) are not
-passed to pg_dump, so a hub that requires one cannot be backed up with
-this command yet.
+backup prints the GRANT statements, naming each sync table and sequence:
+the schema's owner grants USAGE on the schema, and the table owner grants
+SELECT. Client certificates (sslcert, sslkey) are not passed to pg_dump,
+so a hub that requires one cannot be backed up with this command yet.
 
 mtix creates the output file, readable and writable only by you (mode
 0600), before pg_dump writes to it. An existing file is never overwritten:
@@ -310,17 +310,19 @@ func withSearchPathAdvice(err error, role, database string) error {
 // withSchemaUsageAdvice returns err with the schema-usage step added when
 // it wraps errHubTableNotFound, and err unchanged otherwise. A role without
 // USAGE on a schema does not have it on its search_path, so pg_dump,
-// connecting as role, finds no hub table there. The step grants role USAGE
-// on the schema and SELECT on each of tables and sequences by name,
-// qualified with a <schema> placeholder, so the table owner grants no more
-// than the backup reads. role is quoted as an identifier, and a
-// placeholder stands for it only when it is not known (MTIX-95.1.4).
+// connecting as role, finds no hub table there. The step has the schema's
+// owner grant role USAGE on the schema (only the schema's owner, a role
+// holding that USAGE with grant option, or a superuser can) and the table
+// owner grant SELECT on each of tables and sequences by name, qualified
+// with a <schema> placeholder, so no more is granted than the backup
+// reads. role is quoted as an identifier, and a placeholder stands for it
+// only when it is not known (MTIX-95.1.4).
 func withSchemaUsageAdvice(err error, role string, tables, sequences []string) error {
 	if !errors.Is(err, errHubTableNotFound) {
 		return err
 	}
 	roleName := quotedIdentOr(role, "<the DSN's role>")
-	grants := []string{"GRANT USAGE ON SCHEMA <schema> TO " + roleName}
+	var grants []string
 	for _, g := range []struct {
 		kind  string
 		names []string
@@ -331,8 +333,9 @@ func withSchemaUsageAdvice(err error, role string, tables, sequences []string) e
 		}
 	}
 	return fmt.Errorf("%w; if the DSN's role lacks USAGE on the hub's schema, which leaves the schema off its "+
-		"search_path, the table owner runs %s; then back up again (keep that role with mtix sync harden "+
-		"--keep-role, so that harden leaves its access)", err, strings.Join(grants, "; "))
+		"search_path, the schema's owner runs GRANT USAGE ON SCHEMA <schema> TO %s, and the table owner runs %s; "+
+		"then back up again (keep that role with mtix sync harden --keep-role, so that harden leaves its access)",
+		err, roleName, strings.Join(grants, "; "))
 }
 
 // quotedIdentOr returns name quoted as an SQL identifier, or placeholder

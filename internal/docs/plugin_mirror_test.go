@@ -48,9 +48,9 @@ func TestPluginInstaller_AdminSkill_StatesHubPrivilegeCoverage(t *testing.T) {
 		"`superuser_membership` (a role that can SET ROLE to a superuser, or that holds ADMIN OPTION on a role that can)",
 		"The REPLICATION role attribute is outside the check too: a role that has it is checked for its privileges " +
 			"and memberships like any other role, but not for the attribute.",
-		"If the DSN's role lacks USAGE on the hub's schema, which leaves that schema off its search_path, the table " +
-			"owner runs the GRANT statements the backup prints: USAGE on the schema, and SELECT on each sync table " +
-			"and sync-table sequence by name",
+		"If the DSN's role lacks USAGE on the hub's schema, which leaves that schema off its search_path, run the " +
+			"GRANT statements the backup prints: the schema's owner grants USAGE on the schema (",
+		"and the table owner grants SELECT on each sync table and sync-table sequence by name",
 	} {
 		require.Contains(t, skill, phrase)
 	}

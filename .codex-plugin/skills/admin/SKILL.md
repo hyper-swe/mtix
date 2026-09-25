@@ -103,10 +103,12 @@ only, and it takes precedence over a role-wide
 not initialized since an upgrade added a table, fails the backup with `a
 hub table was not found`; run `mtix sync init` with the DSN naming the
 table owner, then back up again. The same error comes when the DSN's role
-lacks USAGE on the hub's schema: the table owner runs the GRANT statements
-the backup prints (USAGE on the schema, and SELECT on each sync table and
-sync-table sequence by name, nothing else in the schema), then keeps that
-role with `--keep-role` so `mtix sync harden --apply` leaves its access.
+lacks USAGE on the hub's schema: run the GRANT statements the backup
+prints (the schema's owner grants USAGE on the schema, which for `public`
+on PostgreSQL 15 and later is the database's owner; the table owner grants
+SELECT on each sync table and sync-table sequence by name, nothing else in
+the schema), then keep that role with `--keep-role` so
+`mtix sync harden --apply` leaves its access.
 Client certificates (`sslcert`, `sslkey`) are not passed to `pg_dump`, so a
 hub that requires one cannot be backed up with this command yet. A failed
 or interrupted (Ctrl-C, SIGTERM) backup leaves no file; an existing path is

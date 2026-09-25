@@ -4,6 +4,7 @@
 package migrations_test
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -43,6 +44,30 @@ func TestSequences_EmbeddedMigrations_ReturnsEverySerialSequence(t *testing.T) {
 		"sync_conflicts_conflict_id_seq",
 		"sync_node_collisions_collision_id_seq",
 	}, got)
+}
+
+// TestMigrations_SequenceForms_AllParsed: every sequence a migration
+// creates comes from a serial column of a CREATE TABLE, the only form
+// Sequences() reads. A migration that creates one another way (an identity
+// column, a serial column added by ALTER TABLE, CREATE SEQUENCE) fails
+// here, so Sequences() never silently misses a sequence (MTIX-95.1.4).
+func TestMigrations_SequenceForms_AllParsed(t *testing.T) {
+	comment := regexp.MustCompile(`--[^\n]*`)
+	unparsed := map[string]*regexp.Regexp{
+		"an identity column":             regexp.MustCompile(`(?i)\bGENERATED\s+(?:ALWAYS|BY\s+DEFAULT)\s+AS\s+IDENTITY\b`),
+		"a serial column added later":    regexp.MustCompile(`(?is)\bADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?[a-z_][a-z0-9_]*\s+(?:smallserial|bigserial|serial[248]?)\b`),
+		"an explicitly created sequence": regexp.MustCompile(`(?i)\bCREATE\s+(?:TEMP\s+|TEMPORARY\s+|UNLOGGED\s+)?SEQUENCE\b`),
+	}
+	files, err := migrations.Files()
+	require.NoError(t, err)
+	for _, f := range files {
+		body, err := migrations.Read(f)
+		require.NoError(t, err)
+		sql := comment.ReplaceAllString(body, "")
+		for form, re := range unparsed {
+			require.Falsef(t, re.MatchString(sql), "%s creates a sequence with %s, which Sequences() does not read", f, form)
+		}
+	}
 }
 
 // TestFunctions_EmbeddedMigrations_ReturnsEveryFunction pins the mtix

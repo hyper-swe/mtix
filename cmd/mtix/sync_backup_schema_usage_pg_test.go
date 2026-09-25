@@ -60,20 +60,22 @@ func loginRoleDSN(t *testing.T, f *hardenFixture, role string) string {
 }
 
 // TestBackup_DSNRoleWithoutSchemaUsage_PrintsGrantsThatFixIt: the hub's
-// tables are in schema hub_data, and the role the DSN names has hub_data
-// on its search_path but no USAGE on it, so pg_dump sees no hub table. The
-// backup fails, leaves no file and prints the grants the table owner runs:
-// USAGE on the schema and SELECT on each sync table and sync-table
-// sequence by name, every sequence of the migrated hub. Run
-// as printed by the owner, with the schema filled in, they let the backup
+// tables are in schema hub_data, which another role owns, and the role the
+// DSN names has hub_data on its search_path but no USAGE on it, so pg_dump
+// sees no hub table. The backup fails, leaves no file and prints the
+// grants: the schema's owner grants USAGE on the schema (the table owner
+// cannot), and the table owner grants SELECT on each sync table and
+// sync-table sequence by name, every sequence of the migrated hub. Run as
+// printed by those roles, with the schema filled in, they let the backup
 // dump every hub table, and give no access to another table of the owner
 // in that schema (MTIX-95.1.4).
 func TestBackup_DSNRoleWithoutSchemaUsage_PrintsGrantsThatFixIt(t *testing.T) {
 	initTestApp(t)
 	f := newHardenFixture(t)
 	requirePgDumpForServer(t, f.dbURL.String())
-	owner := f.ownerRole()
-	f.ddl("CREATE SCHEMA %I AUTHORIZATION %I", "hub_data", owner)
+	owner, schemaOwner := f.ownerRole(), f.role("schema_owner")
+	f.ddl("CREATE SCHEMA %I AUTHORIZATION %I", "hub_data", schemaOwner)
+	f.ddl("GRANT USAGE, CREATE ON SCHEMA %I TO %I", "hub_data", owner)
 	u := f.dbURL
 	q := u.Query()
 	q.Set("options", "-c role="+owner+" -c search_path=hub_data")
@@ -97,9 +99,17 @@ func TestBackup_DSNRoleWithoutSchemaUsage_PrintsGrantsThatFixIt(t *testing.T) {
 	require.NoFileExists(t, out)
 	require.Contains(t, err.Error(), "GRANT SELECT ON SEQUENCE <schema>."+strings.Join(sequences, ", <schema>.")+
 		` TO "`+reader+`"`, "the sequence grant names every sequence of the hub")
-	grants := regexp.MustCompile(`GRANT [^;]+ TO "[^"]+"`).FindAllString(err.Error(), -1)
-	require.Len(t, grants, 3, "USAGE on the schema, SELECT on the tables and on the sequences: %s", err.Error())
-	for _, g := range grants {
+	usage := regexp.MustCompile(`the schema's owner runs (GRANT USAGE ON SCHEMA <schema> TO "[^"]+")`).
+		FindStringSubmatch(err.Error())
+	require.Len(t, usage, 2, "the schema's owner grants USAGE: %s", err.Error())
+	selects := regexp.MustCompile(`GRANT SELECT ON [^;]+? TO "[^"]+"`).FindAllString(err.Error(), -1)
+	require.Len(t, selects, 2, "the table owner grants SELECT on the tables and on the sequences: %s", err.Error())
+	usageOnHub := `SELECT pg_catalog.has_schema_privilege($1, 'hub_data', 'USAGE')::text`
+	f.ddlAs(owner, strings.ReplaceAll(usage[1], "<schema>", "hub_data"))
+	require.Equal(t, []string{"false"}, f.strings(usageOnHub, reader), "the table owner cannot grant USAGE on the schema")
+	f.ddlAs(schemaOwner, strings.ReplaceAll(usage[1], "<schema>", "hub_data"))
+	require.Equal(t, []string{"true"}, f.strings(usageOnHub, reader), "the schema's owner can")
+	for _, g := range selects {
 		f.ddlAs(owner, strings.ReplaceAll(g, "<schema>", "hub_data"))
 	}
 

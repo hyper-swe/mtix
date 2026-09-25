@@ -1142,10 +1142,10 @@ search_path = <schema>, public. It applies in that database only and
 takes precedence over a role-wide ALTER ROLE <the DSN's role> SET
 search_path = <schema>, public. If the role the DSN names lacks USAGE on
 the hub's schema, pg_dump does not see the tables either: the failed
-backup prints the GRANT statements, naming each sync table and sequence,
-that the table owner runs. Client certificates (sslcert, sslkey) are not
-passed to pg_dump, so a hub that requires one cannot be backed up with
-this command yet.
+backup prints the GRANT statements, naming each sync table and sequence:
+the schema's owner grants USAGE on the schema, and the table owner grants
+SELECT. Client certificates (sslcert, sslkey) are not passed to pg_dump,
+so a hub that requires one cannot be backed up with this command yet.
 
 mtix creates the output file, readable and writable only by you (mode
 0600), before pg_dump writes to it. An existing file is never overwritten:

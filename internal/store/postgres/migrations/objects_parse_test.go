@@ -70,10 +70,11 @@ func TestParseObjects_StatementForms_ReturnsObjects(t *testing.T) {
 
 // TestParseObjects_SerialColumns_ReturnsSequences: each serial column of a
 // created table yields the sequence PostgreSQL creates for it,
-// <table>_<column>_seq, for serial, bigserial and smallserial in any case;
-// a column of another type, a serial named only in a comment, and a
-// serial column of a later table are not attributed to an earlier one
-// (MTIX-95.1.4).
+// <table>_<column>_seq, for serial, serial2, serial4, serial8, bigserial
+// and smallserial in any case, with the column name folded to lower case;
+// a column of another type, a name that only starts with "serial", a
+// serial named only in a comment, and a serial column of a later table
+// are not attributed to an earlier one (MTIX-95.1.4).
 func TestParseObjects_SerialColumns_ReturnsSequences(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -82,6 +83,11 @@ func TestParseObjects_SerialColumns_ReturnsSequences(t *testing.T) {
 	}{
 		{"every serial form", "CREATE TABLE IF NOT EXISTS t (\n  id BIGSERIAL PRIMARY KEY,\n  n serial,\n  s SmallSerial,\n  x BIGINT\n);",
 			[]string{"t_id_seq", "t_n_seq", "t_s_seq"}},
+		{"serial2, serial4 and serial8", "CREATE TABLE t (a serial2, b SERIAL4, c Serial8);",
+			[]string{"t_a_seq", "t_b_seq", "t_c_seq"}},
+		{"an upper-case column name", "CREATE TABLE t (Ticket_ID BIGSERIAL PRIMARY KEY);", []string{"t_ticket_id_seq"}},
+		{"names that only start with serial", "CREATE TABLE t (\n  id INT PRIMARY KEY,\n  serial_no TEXT,\n" +
+			"  owner_id INT REFERENCES serial_owners (id)\n);", nil},
 		{"no serial column", "CREATE TABLE t (id BIGINT PRIMARY KEY);", nil},
 		{"a serial in a comment", "CREATE TABLE t (\n  id BIGINT -- was id BIGSERIAL\n);", nil},
 		{"each table keeps its own columns", "CREATE TABLE a (id INT);\nCREATE INDEX a_i ON a (id);\nCREATE TABLE b (k BIGSERIAL);",

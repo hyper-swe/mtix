@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // NextSequence hands out the next free number of its key (MTIX-95.38): when
@@ -189,6 +190,7 @@ func TestNextSequence_SkipPastLimit_FailsClearly(t *testing.T) {
 
 	require.ErrorIs(t, err, model.ErrInvalidInput)
 	require.ErrorContains(t, err, "2147483647")
+	require.Equal(t, 2147483647, counterOf(t, s, "AA:"), "the skip writes nothing past the limit")
 }
 
 // TestNextSequence_ChildOutsideParentNamespace_NotCounted: a child row
@@ -212,4 +214,120 @@ func TestNextSequence_ChildOutsideParentNamespace_NotCounted(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, 2, got)
+}
+
+// TestNextSequence_CounterMovedOnBeforeSkip_NeverLowered: another
+// allocation moves the counter from 1 to 9 after NextSequence took 1 and
+// before the skip runs (a test trigger stands in for it). The taken
+// number's namespace holds only 1 and 2, so the skip hands out one more
+// than the counter, 10, and never lowers the counter to 3, below a number
+// already handed out. Root and child keys.
+func TestNextSequence_CounterMovedOnBeforeSkip_NeverLowered(t *testing.T) {
+	tests := []struct {
+		key   string
+		nodes []seqEntry
+	}{
+		{"AA:", []seqEntry{{"AA-1", 1}, {"AA-2", 2}}},
+		{"AA:AA-1", []seqEntry{{"AA-1", 1}, {"AA-1.1", 1}, {"AA-1.2", 2}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			for _, n := range tt.nodes {
+				require.NoError(t, s.CreateNode(ctx, seqNode(n.id, n.seq)))
+			}
+			setCounterOf(t, s, tt.key, 0)
+			_, err := s.WriteDB().ExecContext(ctx, `CREATE TRIGGER test_concurrent_allocation
+				AFTER UPDATE OF value ON sequences WHEN OLD.value = 0 AND NEW.value = 1
+				BEGIN UPDATE sequences SET value = 9 WHERE key = NEW.key; END`)
+			require.NoError(t, err)
+
+			got, err := s.NextSequence(ctx, tt.key)
+
+			require.NoError(t, err)
+			require.Equal(t, 10, got)
+			require.Equal(t, 10, counterOf(t, s, tt.key), "the counter never drops below 9")
+		})
+	}
+}
+
+// TestNextSequence_ChildIDOfAnotherParentRow_Counted: an id in the
+// namespace '<parent>.<digits>' holds that number whatever its parent_id
+// says (a pulled create can carry a parent_id that disagrees with its id),
+// so the skip counts it and the create does not fail on it. The second
+// case is the round-2 reviewer's probe: the counter at 4 hands out 5,
+// which AA-1.5 holds, and the skip hands out 6.
+func TestNextSequence_ChildIDOfAnotherParentRow_Counted(t *testing.T) {
+	tests := []struct {
+		name    string
+		counter int
+		under   []seqEntry // children whose parent_id is AA-1
+		other   []seqEntry // ids under AA-1 whose parent_id is empty
+		want    int
+	}{
+		{"counter lost", 0, []seqEntry{{"AA-1.1", 1}}, []seqEntry{{"AA-1.2", 2}}, 3},
+		{"counter at 4", 4, []seqEntry{{"AA-1.1", 1}, {"AA-1.2", 2}}, []seqEntry{{"AA-1.5", 5}}, 6},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			require.NoError(t, s.CreateNode(ctx, seqNode("AA-1", 1)))
+			for _, n := range tt.under {
+				require.NoError(t, s.CreateNode(ctx, seqNode(n.id, n.seq)))
+			}
+			for _, n := range tt.other {
+				odd := seqNode(n.id, n.seq)
+				odd.ParentID = ""
+				require.NoError(t, s.CreateNode(ctx, odd))
+			}
+			setCounterOf(t, s, "AA:AA-1", tt.counter)
+
+			got, err := s.NextSequence(ctx, "AA:AA-1")
+
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+			require.Equal(t, tt.want, counterOf(t, s, "AA:AA-1"))
+		})
+	}
+}
+
+// TestNextSequence_RootNamespace_ExactPrefixOnly: the root namespace of a
+// key is matched exactly and case-sensitively: a lowercase aa-50 is not in
+// AA's namespace, and the '_' of A_B is not a wildcard, so AXB-9 is not in
+// A_B's.
+func TestNextSequence_RootNamespace_ExactPrefixOnly(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		nodes []seqEntry
+	}{
+		{"lowercase id", "AA:", []seqEntry{{"AA-1", 1}, {"AA-50", 50}}},
+		{"underscore in the prefix", "A_B:", []seqEntry{{"A_B-1", 1}, {"AXB-9", 9}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			for _, n := range tt.nodes {
+				require.NoError(t, s.CreateNode(ctx, seqNode(n.id, n.seq)), n.id)
+			}
+			lowerCaseID(t, s, "AA-50")
+
+			got, err := s.NextSequence(ctx, tt.key)
+
+			require.NoError(t, err)
+			require.Equal(t, 2, got)
+		})
+	}
+}
+
+// lowerCaseID rewrites the id of the node id, if the store holds it, to
+// lower case: mtix never creates such an id, but a store can hold one.
+func lowerCaseID(t *testing.T, s *sqlite.Store, id string) {
+	t.Helper()
+	_, err := s.WriteDB().ExecContext(context.Background(),
+		`UPDATE nodes SET id = lower(id) WHERE id = ?`, id)
+	require.NoError(t, err)
 }

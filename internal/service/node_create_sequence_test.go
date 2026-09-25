@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -139,70 +138,83 @@ func TestCreateNode_CounterBehindFreeNumber_UsesAllocatedNumber(t *testing.T) {
 	require.Equal(t, "PROJ-3", node.ID)
 }
 
-// TestCreateNode_SkippedNumberAlsoTaken_SkipsOnlyOnce: the skip reads a
-// child namespace's numbers from the children that name the parent in
-// parent_id. In a store whose PROJ-1.2 does not (its parent_id is empty),
-// the skip past the highest number it sees (1) lands on the taken
-// PROJ-1.2. The create skips once, not in a loop, and fails with
-// ErrAlreadyExists; the counter has moved on, so the next create succeeds.
+// TestCreateNode_SkippedNumberAlsoTaken_SkipsOnlyOnce: the skip checks
+// the number it hands out once and does not loop. A test trigger stands in
+// for a pulled PROJ-1.3 that lands between the skip and the insert (the
+// allocate/insert race, MTIX-107.57): the create that skipped from 1 to 3
+// fails with ErrAlreadyExists, the counter stays at 3, and the next create
+// succeeds with PROJ-1.4.
 func TestCreateNode_SkippedNumberAlsoTaken_SkipsOnlyOnce(t *testing.T) {
 	svc, st, _ := newTestNodeService(t)
 	createPROJs(t, svc, "", 1)
-	createPROJs(t, svc, "PROJ-1", 1)
-	now := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
-	odd := &model.Node{
-		ID: "PROJ-1.2", Project: "PROJ", Depth: 1, Seq: 2, Title: "parent not recorded",
-		NodeType: model.NodeTypeForDepth(1), Priority: model.PriorityMedium, Status: model.StatusOpen,
-		Weight: 1.0, CreatedAt: now, UpdatedAt: now,
-	}
-	odd.ContentHash = odd.ComputeHash()
-	require.NoError(t, st.CreateNode(context.Background(), odd))
+	createPROJs(t, svc, "PROJ-1", 2)
 	setSequenceCounter(t, st, "PROJ:PROJ-1", 0)
+	_, err := st.WriteDB().ExecContext(context.Background(), `CREATE TRIGGER test_pulled_after_skip
+		AFTER UPDATE OF value ON sequences WHEN NEW.key = 'PROJ:PROJ-1' AND OLD.value = 1 AND NEW.value = 3
+		BEGIN
+		  INSERT INTO nodes (id, parent_id, depth, seq, project, title, status, created_at, updated_at)
+		  VALUES ('PROJ-1.3', 'PROJ-1', 1, 3, 'PROJ', 'pulled', 'open', '2026-03-10T12:00:00Z', '2026-03-10T12:00:00Z');
+		END`)
+	require.NoError(t, err)
 
-	_, err := createPROJ(svc, "PROJ-1", "new")
+	_, err = createPROJ(svc, "PROJ-1", "new")
 
 	require.ErrorIs(t, err, model.ErrAlreadyExists)
-	require.Equal(t, 2, sequenceCounterValue(t, st, "PROJ:PROJ-1"), "one skip, to the number after the highest seen")
+	require.Equal(t, 3, sequenceCounterValue(t, st, "PROJ:PROJ-1"), "one skip, no loop")
 	node, err := createPROJ(svc, "PROJ-1", "retry")
 	require.NoError(t, err)
-	require.Equal(t, "PROJ-1.3", node.ID)
+	require.Equal(t, "PROJ-1.4", node.ID)
 }
 
 // TestCreateNode_CounterBehindConcurrentCreates_DistinctContiguousNumbers:
 // concurrent creates against a counter behind five tasks all succeed, with
-// distinct numbers that continue after the highest with no gap.
+// distinct numbers that continue after the highest with no gap, under a
+// root key and a child key.
 func TestCreateNode_CounterBehindConcurrentCreates_DistinctContiguousNumbers(t *testing.T) {
-	svc, st, _ := newTestNodeService(t)
-	createPROJs(t, svc, "", 5)
-	setSequenceCounter(t, st, "PROJ:", 0)
-	const creates = 8
-
-	var wg sync.WaitGroup
-	seqs := make([]int, creates)
-	errs := make([]error, creates)
-	for i := 0; i < creates; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			node, err := createPROJ(svc, "", fmt.Sprintf("concurrent %d", i))
-			errs[i] = err
-			if err == nil {
-				seqs[i] = node.Seq
+	tests := []struct {
+		name, parent, key string
+		prefix            string
+	}{
+		{"root key", "", "PROJ:", "PROJ-"},
+		{"child key", "PROJ-1", "PROJ:PROJ-1", "PROJ-1."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, st, _ := newTestNodeService(t)
+			if tt.parent != "" {
+				createPROJs(t, svc, "", 1)
 			}
-		}(i)
-	}
-	wg.Wait()
+			createPROJs(t, svc, tt.parent, 5)
+			setSequenceCounter(t, st, tt.key, 0)
+			const creates = 8
 
-	for i, err := range errs {
-		require.NoError(t, err, "create %d", i)
+			var wg sync.WaitGroup
+			ids := make([]string, creates)
+			errs := make([]error, creates)
+			for i := 0; i < creates; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					node, err := createPROJ(svc, tt.parent, fmt.Sprintf("concurrent %d", i))
+					errs[i] = err
+					if err == nil {
+						ids[i] = node.ID
+					}
+				}(i)
+			}
+			wg.Wait()
+
+			for i, err := range errs {
+				require.NoError(t, err, "create %d", i)
+			}
+			want := make([]string, creates)
+			for i := range want {
+				want[i] = fmt.Sprintf("%s%d", tt.prefix, 6+i)
+			}
+			require.ElementsMatch(t, want, ids)
+			require.Equal(t, 5+creates, sequenceCounterValue(t, st, tt.key))
+		})
 	}
-	sort.Ints(seqs)
-	want := make([]int, creates)
-	for i := range want {
-		want[i] = 6 + i
-	}
-	require.Equal(t, want, seqs)
-	require.Equal(t, 5+creates, sequenceCounterValue(t, st, "PROJ:"))
 }
 
 // TestDecompose_CounterBehind_ChildrenContinueAfterHighest: decompose

@@ -147,6 +147,37 @@ func TestRenumberSubtree_UncountedIDs_CountersIgnoreThem(t *testing.T) {
 	}
 }
 
+// TestRenumberSubtree_RootNamespace_ExactPrefixOnly: the root counter a
+// root renumber raises counts only the ids of its own prefix, matched
+// exactly and case-sensitively: not a lowercase rnb-50, and not AXB-9 for
+// the prefix A_B, whose '_' is not a wildcard.
+func TestRenumberSubtree_RootNamespace_ExactPrefixOnly(t *testing.T) {
+	tests := []struct {
+		name  string
+		nodes []seqEntry
+		id    string
+		key   string
+		want  int
+	}{
+		{"lowercase id", []seqEntry{{"RNB-1", 1}, {"RNB-50", 50}}, "RNB-1", "RNB:", 5},
+		{"underscore in the prefix", []seqEntry{{"A_B-1", 1}, {"AXB-9", 9}}, "A_B-1", "A_B:", 5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			for _, n := range tt.nodes {
+				require.NoError(t, s.CreateNode(ctx, seqNode(n.id, n.seq)), n.id)
+			}
+			lowerCaseID(t, s, "RNB-50")
+
+			require.NoError(t, s.RenumberSubtree(ctx, tt.id, 5))
+
+			require.Equal(t, tt.want, counterOf(t, s, tt.key))
+		})
+	}
+}
+
 // TestRenumberForHubRejection_MovedSubtree_NextChildContinues: the hub
 // rejects PRJX-1.1, which has a child PRJX-1.1.1; the drain renumbers it to
 // PRJX-1.2. The counter of PRJX-1.2 covers the moved child, so the next

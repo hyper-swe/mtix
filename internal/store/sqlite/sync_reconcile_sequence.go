@@ -19,7 +19,7 @@ func advanceRenamedCounters(ctx context.Context, tx *sql.Tx, newPrefix string) e
 	if err := advanceRootCounter(ctx, tx, newPrefix); err != nil {
 		return fmt.Errorf("rename-to %s: %w", newPrefix, err)
 	}
-	if err := advanceChildCounters(ctx, tx, "", escapeLIKEPrefix(newPrefix+"-")+"%"); err != nil {
+	if err := advanceChildCounters(ctx, tx, "", newPrefix+"-"); err != nil {
 		return fmt.Errorf("rename-to %s: %w", newPrefix, err)
 	}
 	return nil
@@ -30,7 +30,7 @@ func advanceRenamedCounters(ctx context.Context, tx *sql.Tx, newPrefix string) e
 // namespace of parentID, which now holds the former roots, and of every
 // node under it, each to the highest number its ids hold.
 func advanceImportedCounters(ctx context.Context, tx *sql.Tx, parentID string) error {
-	if err := advanceChildCounters(ctx, tx, parentID, escapeLIKEPrefix(parentID)+".%"); err != nil {
+	if err := advanceChildCounters(ctx, tx, parentID, parentID+"."); err != nil {
 		return fmt.Errorf("import-as %s: %w", parentID, err)
 	}
 	return nil

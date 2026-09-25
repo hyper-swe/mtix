@@ -62,15 +62,30 @@ type reconcileCreate struct {
 	project, parent, want string
 }
 
-// reconcileCases: --rename-to DEMO over seedTree (MTIX-1 with MTIX-1.1,
-// MTIX-1.1.1 and MTIX-1.2, and MTIX-2, all with seq 0), and --import-as
+// seedTreeWithStrayChild seeds seedTree plus two rows whose parent_id
+// names MTIX-1 although their ids are not '<MTIX-1>.<digits>': MTIX-9.9,
+// outside MTIX-1's namespace, and MTIX-1.7.1, shaped as a grandchild. Neither
+// may raise the counter of MTIX-1 (renamed DEMO-1) to 9 or 7.
+func seedTreeWithStrayChild(t *testing.T, s *Store) {
+	t.Helper()
+	seedTree(t, s)
+	for _, id := range []string{"MTIX-9.9", "MTIX-1.7.1"} {
+		stray := projectNode(id, 9, "stray")
+		stray.ParentID = "MTIX-1"
+		require.NoError(t, s.CreateNode(context.Background(), stray))
+	}
+}
+
+// reconcileCases: --rename-to DEMO over seedTreeWithStrayChild (MTIX-1 with
+// MTIX-1.1, MTIX-1.1.1 and MTIX-1.2, and MTIX-2, all with seq 0, and the
+// strays MTIX-9.9 and MTIX-1.7.1), and --import-as
 // PROJ-7 of the roots MTIX-4 (child MTIX-4.1) and MTIX-9, which become
 // PROJ-7.1 (PROJ-7.1.1) and PROJ-7.2 but keep the seq columns 4, 1 and 9.
 // A child key names the parent's project column, as a create under it
 // does: MTIX for the renamed and imported tasks, PROJ for PROJ-7.
 func reconcileCases() []reconcileCase {
 	return []reconcileCase{
-		{"rename-to", seedTree, func(s *Store, mtixDir string) error {
+		{"rename-to", seedTreeWithStrayChild, func(s *Store, mtixDir string) error {
 			_, err := RenameTo(context.Background(), s, mtixDir, "DEMO")
 			return err
 		}, map[string]int{"DEMO:": 2, "MTIX:DEMO-1": 2, "MTIX:DEMO-1.1": 1}, []reconcileCreate{

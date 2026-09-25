@@ -98,7 +98,7 @@ func advanceRenumberedSequences(ctx context.Context, tx *sql.Tx, node renumberTa
 		err = advanceChildCounters(ctx, tx, node.parentID, "")
 	}
 	if err == nil {
-		err = advanceChildCounters(ctx, tx, newID, escapeLIKEPrefix(newID)+".%")
+		err = advanceChildCounters(ctx, tx, newID, newID+".")
 	}
 	if err != nil {
 		return fmt.Errorf("renumber to %s: %w", newID, err)
@@ -106,24 +106,37 @@ func advanceRenumberedSequences(ctx context.Context, tx *sql.Tx, node renumberTa
 	return nil
 }
 
+// idRange returns the bounds [lo, hi) of the ids that start with prefix
+// under SQLite's binary collation (MTIX-95.38): lo is prefix, and hi is
+// prefix with its last byte incremented ('P-' gives 'P.', 'P-1.' gives
+// 'P-1/'). The match is exact and case-sensitive, has no wildcard, and can
+// use the primary-key index on nodes.id. Ids and prefixes are ASCII (the
+// id grammar), and prefix is never empty.
+func idRange(prefix string) (lo, hi string) {
+	last := len(prefix) - 1
+	return prefix, prefix[:last] + string(rune(prefix[last]+1))
+}
+
 // advanceRootCounter raises the counter of the root namespace of prefix,
 // '{prefix}:', to the highest number a root id '{prefix}-<digits>' holds,
-// counting only numbers up to maxSequence (MTIX-95.38). Ids of children,
-// and of another prefix that starts with prefix, do not match.
+// live or soft-deleted, counting only numbers up to maxSequence
+// (MTIX-95.38). The prefix is matched exactly and case-sensitively; ids of
+// children, and of another prefix that starts the same way, do not count.
 func advanceRootCounter(ctx context.Context, tx *sql.Tx, prefix string) error {
-	start := len(prefix) + 2 // 1-based index of the first digit
-	// The highest number among the ids '{prefix}-<digits>', live or
-	// soft-deleted, at most maxSequence; no row when there is none. It
-	// creates the root counter at that number, or raises it.
+	ns := prefix + "-"
+	lo, hi := idRange(ns)
+	// The highest number among the ids in [lo, hi) whose rest, from the
+	// first digit, is all digits and at most maxSequence. It creates the
+	// root counter at that number, or raises it; no row when there is none.
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sequences (key, value)
 		SELECT ?, n FROM (
-		  SELECT MAX(CAST(SUBSTR(id, ?) AS INTEGER)) AS n FROM nodes
-		   WHERE id LIKE ? ESCAPE '\' AND SUBSTR(id, ?) <> ''
-		     AND SUBSTR(id, ?) NOT GLOB '*[^0-9]*' AND CAST(SUBSTR(id, ?) AS INTEGER) <= ?)
+		  SELECT MAX(CAST(d AS INTEGER)) AS n FROM (
+		    SELECT SUBSTR(id, ?) AS d FROM nodes WHERE id >= ? AND id < ?)
+		   WHERE d <> '' AND d NOT GLOB '*[^0-9]*' AND CAST(d AS INTEGER) <= ?)
 		 WHERE n IS NOT NULL
 		ON CONFLICT(key) DO UPDATE SET value = max(value, excluded.value)`,
-		sequenceKey(prefix, ""), start, escapeLIKEPrefix(prefix+"-")+"%", start, start, start, maxSequence,
+		sequenceKey(prefix, ""), len(ns)+1, lo, hi, maxSequence,
 	); err != nil {
 		return fmt.Errorf("advance the %s root counter: %w", prefix, err)
 	}
@@ -131,90 +144,83 @@ func advanceRootCounter(ctx context.Context, tx *sql.Tx, prefix string) error {
 }
 
 // advanceChildCounters raises the child-namespace counter of the node
-// parentID and of every node whose id matches the LIKE pattern subtreeLike
-// ("" matches none) to the highest number among its children's ids, the
-// digits after '<parent>.', counting only numbers up to maxSequence
-// (MTIX-95.38). The key names the parent's project column, as a create
-// under that parent does.
-func advanceChildCounters(ctx context.Context, tx *sql.Tx, parentID, subtreeLike string) error {
-	// For each selected parent p, the highest number the ids of its
-	// children hold, live or soft-deleted; parents with no numbered child
-	// produce no row. It creates each counter at that number, or raises it.
+// parentID and of every node whose id starts with subtreePrefix ("" selects
+// none) to the highest number an id '<parent>.<digits>' holds, whatever its
+// parent_id, counting only numbers up to maxSequence (MTIX-95.38). The key
+// names the parent's project column, as a create under that parent does.
+func advanceChildCounters(ctx context.Context, tx *sql.Tx, parentID, subtreePrefix string) error {
+	lo, hi := "", "" // an empty range selects no node
+	if subtreePrefix != "" {
+		lo, hi = idRange(subtreePrefix)
+	}
+	// For each selected parent p, the highest number among the ids in its
+	// namespace [p.id || '.', p.id || '/') whose rest is all digits, live or
+	// soft-deleted; a parent with none produces no row. It creates each
+	// counter at that number, or raises it.
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sequences (key, value)
 		SELECT p.project || ':' || p.id, MAX(CAST(SUBSTR(c.id, LENGTH(p.id) + 2) AS INTEGER))
-		  FROM nodes p JOIN nodes c ON c.parent_id = p.id
-		 WHERE (p.id = ? OR p.id LIKE ? ESCAPE '\')
-		   AND SUBSTR(c.id, 1, LENGTH(p.id) + 1) = p.id || '.'
-		   AND SUBSTR(c.id, LENGTH(p.id) + 2) <> ''
+		  FROM nodes p JOIN nodes c ON c.id > p.id || '.' AND c.id < p.id || '/'
+		 WHERE (p.id = ? OR (p.id >= ? AND p.id < ?))
 		   AND SUBSTR(c.id, LENGTH(p.id) + 2) NOT GLOB '*[^0-9]*'
 		   AND CAST(SUBSTR(c.id, LENGTH(p.id) + 2) AS INTEGER) <= ?
 		 GROUP BY p.id
 		ON CONFLICT(key) DO UPDATE SET value = max(value, excluded.value)`,
-		parentID, subtreeLike, maxSequence,
+		parentID, lo, hi, maxSequence,
 	); err != nil {
 		return fmt.Errorf("advance child counters: %w", err)
 	}
 	return nil
 }
 
-// skipRootSQL moves a root counter past a taken number: when a node holds
-// the id the allocated number names, the counter becomes one more than
-// the highest number among the ids '{prefix}-<digits>' (at most
-// maxSequence) or than itself, whichever is higher. A counter past
-// maxSequence is left as it is.
-const skipRootSQL = `
-	UPDATE sequences
-	   SET value = CASE WHEN value > ? THEN value ELSE max(value, (
-	         SELECT COALESCE(MAX(CAST(SUBSTR(id, ?) AS INTEGER)), 0) FROM nodes
-	          WHERE id LIKE ? ESCAPE '\' AND SUBSTR(id, ?) <> ''
-	            AND SUBSTR(id, ?) NOT GLOB '*[^0-9]*' AND CAST(SUBSTR(id, ?) AS INTEGER) <= ?)) + 1 END
-	 WHERE key = ? AND EXISTS (SELECT 1 FROM nodes WHERE id = ?)
-	RETURNING value`
-
-// skipChildSQL is skipRootSQL for a child namespace: the numbers are the
-// digits after '<parent>.' in the ids of the parent's children.
-const skipChildSQL = `
-	UPDATE sequences
-	   SET value = CASE WHEN value > ? THEN value ELSE max(value, (
-	         SELECT COALESCE(MAX(CAST(SUBSTR(id, LENGTH(parent_id) + 2) AS INTEGER)), 0) FROM nodes
-	          WHERE parent_id = ?
-	            AND SUBSTR(id, 1, LENGTH(parent_id) + 1) = parent_id || '.'
-	            AND SUBSTR(id, LENGTH(parent_id) + 2) <> ''
-	            AND SUBSTR(id, LENGTH(parent_id) + 2) NOT GLOB '*[^0-9]*'
-	            AND CAST(SUBSTR(id, LENGTH(parent_id) + 2) AS INTEGER) <= ?)) + 1 END
-	 WHERE key = ? AND EXISTS (SELECT 1 FROM nodes WHERE id = ?)
+// skipSQL moves a counter that fell behind past the highest number the ids
+// of its namespace hold: the ids in [lo, hi) whose rest, from a given
+// 1-based position, is all digits and at most maxSequence. The counter
+// becomes one more than that number or than itself, whichever is higher,
+// so it never drops below a number already handed out. It writes nothing,
+// and returns no row, when the new value would pass maxSequence.
+const skipSQL = `
+	WITH taken(n) AS (
+	  SELECT COALESCE(MAX(CAST(d AS INTEGER)), 0) FROM (
+	    SELECT SUBSTR(id, ?) AS d FROM nodes WHERE id >= ? AND id < ?)
+	   WHERE d <> '' AND d NOT GLOB '*[^0-9]*' AND CAST(d AS INTEGER) <= ?)
+	UPDATE sequences SET value = max(value, (SELECT n FROM taken)) + 1
+	 WHERE key = ? AND max(value, (SELECT n FROM taken)) < ?
 	RETURNING value`
 
 // skipTakenSequence checks value, the number NextSequence just took from
 // the counter key, against the nodes (MTIX-95.38). When no node holds the
 // id it names, value is returned unchanged. When a node, live or
 // soft-deleted, holds it, the counter fell behind: in one statement under
-// the write lock it is moved past the highest number the ids of key's
-// namespace hold, and the new value is returned. The numbers come from the
-// ids, never from the project or seq columns. It skips once and does not
-// check the new number again. A skip past maxSequence fails with an error
-// naming the limit.
+// the write lock (skipSQL) it is moved past the highest number the ids of
+// key's namespace hold, '{project}-<digits>' for a root key and
+// '<parent>.<digits>' for a child key, whatever the project, seq and
+// parent_id columns say, and the new value is returned. It skips once and
+// does not check the new number again. When the skip would pass
+// maxSequence it writes nothing and fails with an error naming the limit.
 func (s *Store) skipTakenSequence(ctx context.Context, key string, value int) (int, error) {
 	project, parentID, _ := strings.Cut(key, ":")
-	taken := model.BuildID(project, parentID, value)
-	query, args := skipChildSQL, []any{maxSequence, parentID, maxSequence, key, taken}
-	if parentID == "" {
-		start := len(project) + 2 // 1-based index of the first digit
-		query = skipRootSQL
-		args = []any{maxSequence, start, escapeLIKEPrefix(project+"-") + "%", start, start, start,
-			maxSequence, key, taken}
+	var taken bool
+	// Does a node, live or soft-deleted, hold the id the number names?
+	if err := s.writeDB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM nodes WHERE id = ?)`,
+		model.BuildID(project, parentID, value)).Scan(&taken); err != nil {
+		return 0, fmt.Errorf("next sequence for %s: check number %d: %w", key, value, err)
 	}
-	next := value
-	err := s.writeDB.QueryRowContext(ctx, query, args...).Scan(&next)
-	if errors.Is(err, sql.ErrNoRows) {
+	if !taken {
 		return value, nil
+	}
+	ns := project + "-"
+	if parentID != "" {
+		ns = parentID + "."
+	}
+	lo, hi := idRange(ns)
+	next := value
+	err := s.writeDB.QueryRowContext(ctx, skipSQL, len(ns)+1, lo, hi, maxSequence, key, maxSequence).Scan(&next)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, sequenceLimitError(key)
 	}
 	if err != nil {
 		return 0, s.classifyWriteError(fmt.Errorf("next sequence for %s: skip taken number %d: %w", key, value, err))
-	}
-	if next > maxSequence {
-		return 0, sequenceLimitError(key)
 	}
 	return next, nil
 }

@@ -32,8 +32,10 @@ func TestMigrations_FilesPresent(t *testing.T) {
 		"012_node_renumber_remaps.sql",
 		"013_hub_restore_epoch.sql",
 		// 014 and 015 are reserved by other tickets (MTIX-95.5, MTIX-95.4);
-		// 016 is MTIX-95.1's append-only TRUNCATE guard.
+		// 016 is MTIX-95.1's append-only TRUNCATE guard; 017 is
+		// MTIX-95.1.7's hub-stamped restore epoch and collision recorder.
 		"016_append_only_truncate_guard.sql",
+		"017_hub_restore_epoch_stamp.sql",
 	}
 	require.Equal(t, want, got, "all hub-schema files must be embedded in lex order")
 }
@@ -75,8 +77,8 @@ func TestMigrations_ReadMissingFile(t *testing.T) {
 // migration set.
 func TestMigrations_ContainExpectedTables(t *testing.T) {
 	want := map[string]int{
-		"sync_events":     0,
-		"sync_conflicts":  0,
+		"sync_events":          0,
+		"sync_conflicts":       0,
 		"sync_projects":        0,
 		"applied_events":       0,
 		"audit_log":            0,

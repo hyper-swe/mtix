@@ -115,3 +115,30 @@ func TestParseObjects_SeveralFiles_SortsAndMerges(t *testing.T) {
 		{Name: "z_t", Table: "zeta", Event: "DELETE", Function: "g_fn"},
 	}, got.triggers)
 }
+
+// TestParseObjects_FunctionArguments_ReturnsSignatures: each created
+// function yields its name and the types of its arguments, in order,
+// folded to lower case and joined as PostgreSQL's identity signature lists
+// them, whether the parameters are named or not and over several lines
+// (MTIX-95.1.7).
+func TestParseObjects_FunctionArguments_ReturnsSignatures(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want []Function
+	}{
+		{"no arguments", "CREATE OR REPLACE FUNCTION f_none()\nRETURNS TRIGGER AS $$ BEGIN END; $$ LANGUAGE plpgsql;",
+			[]Function{{Name: "f_none"}}},
+		{"named parameters over several lines", "CREATE OR REPLACE FUNCTION f_named(\n    p_a TEXT,\n    p_b BIGINT)\n" +
+			"RETURNS BOOLEAN AS $$ SELECT true $$ LANGUAGE sql;", []Function{{Name: "f_named", Args: "text, bigint"}}},
+		{"unnamed parameters", "CREATE FUNCTION f_bare(text, Integer) RETURNS INT AS $$ SELECT 1 $$ LANGUAGE sql;",
+			[]Function{{Name: "f_bare", Args: "text, integer"}}},
+		{"a commented-out parameter is ignored", "CREATE FUNCTION f_c(\n  p_a text -- , p_b bigint\n) RETURNS INT AS $$ SELECT 1 $$ LANGUAGE sql;",
+			[]Function{{Name: "f_c", Args: "text"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, parseObjects([]string{tt.body}).signatures)
+		})
+	}
+}

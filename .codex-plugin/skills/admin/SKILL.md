@@ -74,7 +74,17 @@ roles, mtix objects owned by another role, and memberships that reach every
 table included, such as `superuser_membership`: a role that can SET ROLE to
 a superuser, or that holds ADMIN OPTION on a role that can), or when the
 check cannot run.
-`mtix sync init` changes no privileges and `mtix sync push` issues no DDL.
+`mtix sync init` changes no existing privilege (it creates the restore-collision functions of migration 017 executable by their owner alone) and `mtix sync push` issues no DDL.
+
+The hub stamps every event with its own restore epoch (a trigger on `sync_events`). A syncing role records restore collisions only through the hub function `record_restore_collision`, which runs as the table owner and records a collision only when the hub's own data shows one, so the role needs EXECUTE on that function and no INSERT on `sync_node_collisions`. When `mtix sync init` adds this function to an existing hub, the table owner then grants EXECUTE on it to each syncing role and revokes the privileges the least-privilege list no longer names:
+
+```sql
+GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;
+REVOKE INSERT ON sync_node_collisions FROM <role>;
+REVOKE USAGE ON SEQUENCE sync_node_collisions_collision_id_seq FROM <role>;
+```
+
+`mtix sync doctor`'s `schema current` check, run with a syncing role's DSN, reports a hub without migration 017 and a role that cannot execute the function, with the fix the table owner runs: a WARN by default, a FAIL in strict mode. `mtix sync harden --apply` revokes EXECUTE on it from every role that is not kept.
 
 Never pass `--apply` without a human approving the dry run's role list. Never
 run `mtix sync harden` from a hook, a push or the daemon.

@@ -162,15 +162,16 @@ func revokeAction(o *hubObject, grantee uint32, role, via string) *action {
 	isFunc := o.kind == FindingKindFunction
 	switch {
 	case via == FindingViaGrantOption && isFunc:
-		return newAction("revoke-grant-option-function", sqlFmtRevokeFunctionGrantOption, rankGrantOption, o.schema, o.name, role)
+		return newFunctionAction("revoke-grant-option-function", sqlFmtRevokeFunctionGrantOption, rankGrantOption,
+			o.args, o.schema, o.name, role)
 	case via == FindingViaGrantOption:
 		return newAction("revoke-grant-option", sqlFmtRevokeRelationGrantOption, rankGrantOption, keyword, o.schema, o.name, role)
 	case grantee == publicOID && isFunc:
-		return newAction("revoke-public-function", sqlFmtRevokeFunctionPublic, rankPublicGrant, o.schema, o.name)
+		return newFunctionAction("revoke-public-function", sqlFmtRevokeFunctionPublic, rankPublicGrant, o.args, o.schema, o.name)
 	case grantee == publicOID:
 		return newAction("revoke-public", sqlFmtRevokeRelationPublic, rankPublicGrant, keyword, o.schema, o.name)
 	case isFunc:
-		return newAction("revoke-function", sqlFmtRevokeFunction, rankRoleGrant, o.schema, o.name, role)
+		return newFunctionAction("revoke-function", sqlFmtRevokeFunction, rankRoleGrant, o.args, o.schema, o.name, role)
 	default:
 		return newAction("revoke", sqlFmtRevokeRelation, rankRoleGrant, keyword, o.schema, o.name, role)
 	}
@@ -337,7 +338,8 @@ func objectOwnerFindings(c *hubCatalog) []finding {
 			Via: FindingViaObjectOwner, Note: noteObjectOwner,
 		}}
 		if o.kind == FindingKindFunction {
-			f.manual = newAction("manual-owner-function", sqlFmtManualOwnerFunction, rankGuard, o.schema, o.name, owners[0])
+			f.manual = newFunctionAction("manual-owner-function", sqlFmtManualOwnerFunction, rankGuard,
+				o.args, o.schema, o.name, owners[0])
 		} else {
 			f.manual = newAction("manual-owner-sequence", sqlFmtManualOwnerSequence, rankGuard, o.schema, o.name, owners[0])
 		}

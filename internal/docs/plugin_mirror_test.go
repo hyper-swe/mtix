@@ -68,12 +68,19 @@ const markRestoredSentence = "A syncing role set up with the least-privilege lis
 const leastPrivilegePointer = "The least-privilege list is in step 2 of the small-team workflow " +
 	"(`.mtix/docs/workflows/small-team.md`) and in `docs/SECURITY-MODEL.md`."
 
-// TestDocs_MarkRestoredSentence_SameInEveryCopy: the user manual, the
-// admin skill (rendered, and its plugin mirrors), the small-team workflow
-// and the security model state the same mark-restored sentence, and the
-// user manual and the admin skill say where the least-privilege list is
-// (MTIX-95.1.4).
-func TestDocs_MarkRestoredSentence_SameInEveryCopy(t *testing.T) {
+// recorderSentence is the one sentence every document uses for how a
+// syncing role records restore collisions (MTIX-95.1.7).
+const recorderSentence = "A syncing role records restore collisions only through the hub function " +
+	"`record_restore_collision`, which runs as the table owner and records a collision only when the " +
+	"hub's own data shows one, so the role needs EXECUTE on that function and no INSERT on " +
+	"`sync_node_collisions`."
+
+// everyLeastPrivilegeCopy returns, by name, the whitespace-normalized text
+// of every document that states the least-privilege sentences: the user
+// manual, the admin skill (rendered, and its plugin mirrors), the
+// small-team workflow and the security model (MTIX-95.1.4).
+func everyLeastPrivilegeCopy(t *testing.T) map[string]string {
+	t.Helper()
 	dir := t.TempDir()
 	_, err := NewPluginInstaller(dir, minimalTemplateData(), nil).Install("claude-code", false)
 	require.NoError(t, err)
@@ -83,15 +90,39 @@ func TestDocs_MarkRestoredSentence_SameInEveryCopy(t *testing.T) {
 		"docs/SECURITY-MODEL.md"} {
 		docs[rel] = filepath.Join(append([]string{"..", ".."}, strings.Split(rel, "/")...)...)
 	}
-	pointed := map[string]bool{"rendered admin skill": true, "USERMANUAL.md": true,
-		".claude-plugin/skills/mtix-admin.md": true, ".codex-plugin/skills/admin/SKILL.md": true}
+	texts := map[string]string{}
 	for name, path := range docs {
 		body, err := os.ReadFile(path) //nolint:gosec // repository and t.TempDir() paths
 		require.NoError(t, err)
-		text := strings.Join(strings.Fields(string(body)), " ")
+		texts[name] = strings.Join(strings.Fields(string(body)), " ")
+	}
+	return texts
+}
+
+// TestDocs_MarkRestoredSentence_SameInEveryCopy: the user manual, the
+// admin skill (rendered, and its plugin mirrors), the small-team workflow
+// and the security model state the same mark-restored sentence, and the
+// user manual and the admin skill say where the least-privilege list is
+// (MTIX-95.1.4).
+func TestDocs_MarkRestoredSentence_SameInEveryCopy(t *testing.T) {
+	pointed := map[string]bool{"rendered admin skill": true, "USERMANUAL.md": true,
+		".claude-plugin/skills/mtix-admin.md": true, ".codex-plugin/skills/admin/SKILL.md": true}
+	for name, text := range everyLeastPrivilegeCopy(t) {
 		require.Containsf(t, text, markRestoredSentence, "%s states the mark-restored sentence", name)
 		if pointed[name] {
 			require.Containsf(t, text, leastPrivilegePointer, "%s says where the list is", name)
 		}
+	}
+}
+
+// TestDocs_RecorderSentence_SameInEveryCopy: every copy states the same
+// sentence on how a syncing role records restore collisions, and the
+// GRANT an owner runs for a syncing role on a hub that mtix sync init has
+// just given the function (MTIX-95.1.7).
+func TestDocs_RecorderSentence_SameInEveryCopy(t *testing.T) {
+	for name, text := range everyLeastPrivilegeCopy(t) {
+		require.Containsf(t, text, recorderSentence, "%s states the recorder sentence", name)
+		require.Containsf(t, text, "GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;",
+			"%s gives the grant for an existing hub", name)
 	}
 }

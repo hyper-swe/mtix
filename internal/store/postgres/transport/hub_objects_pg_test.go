@@ -17,9 +17,10 @@ import (
 )
 
 // TestMigrationObjects_MatchMigratedHub: the table, function and trigger
-// sets parsed from the embedded migrations equal what a freshly migrated
-// hub holds (MTIX-95.1). The fixture database holds nothing else, so any
-// table the parser misses, or invents, shows up here.
+// sets parsed from the embedded migrations, and each function's argument
+// types, equal what a freshly migrated hub holds (MTIX-95.1, MTIX-95.1.7).
+// The fixture database holds nothing else, so any table the parser
+// misses, or invents, shows up here.
 func TestMigrationObjects_MatchMigratedHub(t *testing.T) {
 	f := newHubFixture(t)
 	owner := f.ownerRole()
@@ -37,6 +38,17 @@ func TestMigrationObjects_MatchMigratedHub(t *testing.T) {
 		`SELECT p.proname::text FROM pg_catalog.pg_proc p
 		 JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
 		 WHERE n.nspname = 'public' ORDER BY 1`))
+
+	signatures, err := migrations.FunctionSignatures()
+	require.NoError(t, err)
+	wantSignatures := make([]string, 0, len(signatures))
+	for _, fn := range signatures {
+		wantSignatures = append(wantSignatures, fn.Signature())
+	}
+	require.Equal(t, wantSignatures, f.queryStrings(
+		`SELECT p.proname::text || '(' || pg_catalog.oidvectortypes(p.proargtypes) || ')'
+		 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+		 WHERE n.nspname = 'public' ORDER BY p.proname`), "each parsed signature is the migrated function's")
 
 	triggers, err := migrations.Triggers()
 	require.NoError(t, err)

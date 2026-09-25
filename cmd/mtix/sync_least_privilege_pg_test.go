@@ -28,9 +28,9 @@ import (
 // syncs without owning the sync tables: scope is "" for every syncing
 // role, or the command whose runner needs it.
 type documentedGrant struct {
-	privilege string // SELECT, INSERT, UPDATE or USAGE
-	kind      string // SCHEMA, TABLE or SEQUENCE
-	object    string // "" for the schema, else a table or sequence name
+	privilege string // SELECT, INSERT, UPDATE, USAGE or EXECUTE
+	kind      string // SCHEMA, TABLE, SEQUENCE or FUNCTION
+	object    string // "" for the schema, else a table, sequence or function name
 	scope     string
 }
 
@@ -50,7 +50,9 @@ const leastPrivilegeMarker = "A role that syncs without owning"
 const hubSchema = "hub_data"
 
 // expectedSyncGrants is the exact privilege set both documents must name
-// (MTIX-95.1.4).
+// (MTIX-95.1.4): restore collisions are recorded through EXECUTE on the hub
+// function record_restore_collision, so the set holds no INSERT on
+// sync_node_collisions and no USAGE on its sequence (MTIX-95.1.7).
 func expectedSyncGrants() []documentedGrant {
 	var out []documentedGrant
 	add := func(priv, kind, scope string, objects ...string) {
@@ -60,9 +62,10 @@ func expectedSyncGrants() []documentedGrant {
 	}
 	add("USAGE", "SCHEMA", "", "")
 	add("SELECT", "TABLE", "", "sync_events", "sync_hub_state", "sync_node_collisions", "sync_project_clients")
-	add("INSERT", "TABLE", "", "sync_events", "sync_conflicts", "sync_node_collisions", "sync_project_clients")
+	add("INSERT", "TABLE", "", "sync_events", "sync_conflicts", "sync_project_clients")
 	add("UPDATE", "TABLE", "", "sync_project_clients")
-	add("USAGE", "SEQUENCE", "", "sync_conflicts_conflict_id_seq", "sync_node_collisions_collision_id_seq")
+	add("USAGE", "SEQUENCE", "", "sync_conflicts_conflict_id_seq")
+	add("EXECUTE", "FUNCTION", "", "record_restore_collision")
 	add("UPDATE", "TABLE", scopeResolve, "sync_node_collisions")
 	add("SELECT", "TABLE", scopeMigrate, "node_renumber_remaps")
 	add("INSERT", "TABLE", scopeMigrateYes, "node_renumber_remaps")
@@ -106,17 +109,20 @@ func documentedGrantsIn(t *testing.T, doc string) []documentedGrant {
 }
 
 // grantItem is the form of every item of the documented list.
-var grantItem = regexp.MustCompile("^- (SELECT|INSERT|UPDATE|USAGE) on (.+?)(?:, only for a role that runs `([^`]+)`)?[;.]?$")
+var grantItem = regexp.MustCompile("^- (SELECT|INSERT|UPDATE|USAGE|EXECUTE) on (.+?)(?:, only for a role that runs `([^`]+)`)?[;.]?$")
 
 // parseGrantItems turns the list items into grants. Every item must read
-// "- <SELECT|INSERT|UPDATE|USAGE> on <objects>", the objects being "the
-// schema" or backquoted table and sequence names, optionally ending "only
-// for a role that runs `<command>`"; any other item fails the test, so the
-// list names no privilege the test does not check (MTIX-95.1.4).
+// "- <SELECT|INSERT|UPDATE|USAGE|EXECUTE> on <objects>", the objects being
+// "the schema" or backquoted table, sequence and function names (EXECUTE
+// names functions only), optionally ending "only for a role that runs
+// `<command>`"; any other item fails the test, so the list names no
+// privilege the test does not check (MTIX-95.1.4, MTIX-95.1.7).
 func parseGrantItems(t *testing.T, items []string) []documentedGrant {
 	t.Helper()
 	require.NotEmpty(t, items, "the least-privilege list has items")
 	sequences, err := migrations.Sequences()
+	require.NoError(t, err)
+	functions, err := migrations.Functions()
 	require.NoError(t, err)
 	ident := regexp.MustCompile("`([a-z_][a-z0-9_]*)`")
 	var out []documentedGrant
@@ -131,7 +137,11 @@ func parseGrantItems(t *testing.T, items []string) []documentedGrant {
 		require.NotEmptyf(t, names, "unrecognised objects in the least-privilege list: %q", item)
 		for _, n := range names {
 			kind := "TABLE"
-			if strings.HasSuffix(n[1], "_seq") {
+			switch {
+			case m[1] == "EXECUTE":
+				require.Containsf(t, functions, n[1], "a function the migrations create: %q", item)
+				kind = "FUNCTION"
+			case strings.HasSuffix(n[1], "_seq"):
 				require.Containsf(t, sequences, n[1], "a sequence the migrations create: %q", item)
 				kind = "SEQUENCE"
 			}
@@ -150,6 +160,8 @@ var grantTemplates = map[[2]string]string{
 	{"INSERT", "TABLE"}:   "GRANT INSERT ON TABLE %3$I.%1$I TO %2$I",
 	{"UPDATE", "TABLE"}:   "GRANT UPDATE ON TABLE %3$I.%1$I TO %2$I",
 	{"USAGE", "SEQUENCE"}: "GRANT USAGE ON SEQUENCE %3$I.%1$I TO %2$I",
+	// A function name alone is enough while it is not overloaded.
+	{"EXECUTE", "FUNCTION"}: "GRANT EXECUTE ON FUNCTION %3$I.%1$I TO %2$I",
 }
 
 // leastPrivilegeHub is a hub in hubSchema, owned by owner, and a login
@@ -159,6 +171,7 @@ type leastPrivilegeHub struct {
 	owner, syncer       string
 	grants              []documentedGrant
 	ownerPool, syncPool *transport.Pool
+	syncDSN             string // the syncing role's DSN, hubSchema first on its search_path
 	ctx                 context.Context
 	lamport             int64
 }
@@ -192,8 +205,8 @@ func newLeastPrivilegeHub(t *testing.T, grants []documentedGrant) *leastPrivileg
 	t.Cleanup(h.ownerPool.Close)
 	require.NoError(t, h.ownerPool.Migrate(ctx))
 	h.grant(t, "")
-	dsn := withSearchPath(t, loginRoleDSN(t, f, h.syncer))
-	h.syncPool, err = transport.New(ctx, dsn, transport.Options{InsecureTLS: true})
+	h.syncDSN = withSearchPath(t, loginRoleDSN(t, f, h.syncer))
+	h.syncPool, err = transport.New(ctx, h.syncDSN, transport.Options{InsecureTLS: true})
 	require.NoError(t, err)
 	t.Cleanup(h.syncPool.Close)
 	return h
@@ -260,6 +273,11 @@ func (h *leastPrivilegeHub) syncs(t *testing.T) {
 	require.NoError(t, err, "the table owner runs mark-restored")
 	_, _, collisions := h.push(t, create("carol"))
 	require.Len(t, collisions, 1, "the restore collision is recorded")
+	open, err := h.syncPool.ListOpenCollisions(h.ctx, "MTIX")
+	require.NoError(t, err)
+	require.Len(t, open, 1, "the hub holds the collision")
+	require.Equal(t, [2]int64{0, 1}, [2]int64{open[0].HeldEpoch, open[0].DetectedEpoch},
+		"held in epoch 0, detected in epoch 1, as the hub reads them")
 	events, _, err := h.syncPool.PullEvents(h.ctx, 0, 100)
 	require.NoError(t, err, "the documented set pulls")
 	require.NotEmpty(t, events)
@@ -338,10 +356,11 @@ func (h *leastPrivilegeHub) migrates(t *testing.T) {
 // small-team workflow and docs/SECURITY-MODEL.md name exactly the expected
 // set for a role that syncs without owning the tables. On a hub in a
 // schema PUBLIC cannot use, a login role holding that set pushes, pulls,
-// records a conflict and a restore collision, and lists collisions; the
+// records a conflict and, through the hub's recorder, a restore collision
+// held in epoch 0 and detected in epoch 1, and lists collisions; the
 // resolve and migrate paths need, and work with, their scoped grants; and
 // with every grant the role is refused the mark-restored update of
-// sync_hub_state, which runs as the table owner (MTIX-95.1.4).
+// sync_hub_state, which runs as the table owner (MTIX-95.1.4, MTIX-95.1.7).
 func TestSmallTeamPrivileges_DocumentedSet_SyncsButCannotRunMarkRestored(t *testing.T) {
 	small := documentedGrantsIn(t, readRepoFile(t, "internal/docs/templates/workflows/small-team.md.tmpl"))
 	security := documentedGrantsIn(t, readRepoFile(t, "docs/SECURITY-MODEL.md"))

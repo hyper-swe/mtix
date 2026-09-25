@@ -29,7 +29,7 @@ func (c *hubCatalog) oidsOf(kind string) []uint32 {
 func (c *hubCatalog) loadSequences(ctx context.Context, tx pgx.Tx) error {
 	// Sequences owned by a sync table, plus sequences its column defaults use.
 	rows, err := tx.Query(ctx, `
-		SELECT s.oid, n.nspname::text, s.relname::text, s.relowner, false
+		SELECT s.oid, n.nspname::text, s.relname::text, s.relowner, false, ''
 		FROM pg_catalog.pg_depend d
 		JOIN pg_catalog.pg_class s ON s.oid = d.objid AND s.relkind = 'S'
 		JOIN pg_catalog.pg_namespace n ON n.oid = s.relnamespace
@@ -37,7 +37,7 @@ func (c *hubCatalog) loadSequences(ctx context.Context, tx pgx.Tx) error {
 		  AND d.refclassid = 'pg_catalog.pg_class'::regclass
 		  AND d.refobjid = ANY($1::oid[]) AND d.deptype IN ('a', 'i')
 		UNION
-		SELECT s.oid, n.nspname::text, s.relname::text, s.relowner, false
+		SELECT s.oid, n.nspname::text, s.relname::text, s.relowner, false, ''
 		FROM pg_catalog.pg_attrdef ad
 		JOIN pg_catalog.pg_depend d ON d.classid = 'pg_catalog.pg_attrdef'::regclass
 		     AND d.objid = ad.oid AND d.refclassid = 'pg_catalog.pg_class'::regclass
@@ -51,35 +51,43 @@ func (c *hubCatalog) loadSequences(ctx context.Context, tx pgx.Tx) error {
 	return c.appendObjects(rows, catRelation, FindingKindSequence)
 }
 
-// loadFunctions finds the mtix functions, by the names the migrations
-// define, in the sync schema, and whether each returns trigger. Each takes
-// no arguments.
+// loadFunctions finds the mtix functions in the sync schema by the
+// signatures the migrations define, whether each returns trigger, and the
+// argument types the catalog lists for it (MTIX-95.1, MTIX-95.1.7).
 func (c *hubCatalog) loadFunctions(ctx context.Context, tx pgx.Tx) error {
-	names, err := migrations.Functions()
+	fns, err := migrations.FunctionSignatures()
 	if err != nil {
 		return fmt.Errorf("mtix function list: %w", err)
 	}
-	// The zero-argument mtix functions in the sync schema.
+	names := make([]string, 0, len(fns))
+	args := make([]string, 0, len(fns))
+	for _, fn := range fns {
+		names, args = append(names, fn.Name), append(args, fn.Args)
+	}
+	// Each mtix function resolved in the sync schema by its signature, the
+	// schema and name quoted server-side.
 	rows, err := tx.Query(ctx, `
 		SELECT p.oid, n.nspname::text, p.proname::text, p.proowner,
-		       p.prorettype = 'pg_catalog.trigger'::pg_catalog.regtype
-		FROM pg_catalog.pg_proc p
+		       p.prorettype = 'pg_catalog.trigger'::pg_catalog.regtype,
+		       pg_catalog.oidvectortypes(p.proargtypes)
+		FROM unnest($1::text[], $2::text[]) AS f(name, args)
+		JOIN pg_catalog.pg_proc p ON p.oid = pg_catalog.to_regprocedure(
+		     pg_catalog.quote_ident($3) || '.' || pg_catalog.quote_ident(f.name) || '(' || f.args || ')')
 		JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-		WHERE p.proname = ANY($1::text[]) AND p.pronargs = 0 AND n.nspname = $2
-		ORDER BY 3`, names, c.schema)
+		ORDER BY 3`, names, args, c.schema)
 	if err != nil {
 		return fmt.Errorf("read mtix functions: %w", err)
 	}
 	return c.appendObjects(rows, catFunction, FindingKindFunction)
 }
 
-// appendObjects scans (oid, schema, name, owner, returns trigger) rows
-// into c.objects.
+// appendObjects scans (oid, schema, name, owner, returns trigger,
+// argument types) rows into c.objects.
 func (c *hubCatalog) appendObjects(rows pgx.Rows, cat byte, kind string) error {
 	defer rows.Close()
 	for rows.Next() {
 		o := hubObject{key: objKey{cat: cat}, kind: kind}
-		if err := rows.Scan(&o.key.oid, &o.schema, &o.name, &o.owner, &o.trigger); err != nil {
+		if err := rows.Scan(&o.key.oid, &o.schema, &o.name, &o.owner, &o.trigger, &o.args); err != nil {
 			return fmt.Errorf("read %s: %w", kind, err)
 		}
 		c.objects = append(c.objects, o)

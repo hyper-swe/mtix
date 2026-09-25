@@ -1369,7 +1369,11 @@ Run sync health checks (FR-18)
 Run health checks against the local store and the BYO Postgres hub:
 
   PG reachable           - opens pool + Ping
-  Schema current         - sync_projects table exists with expected columns
+  Schema current         - sync_projects table exists with expected columns,
+                           the hub has migration 017 (it stamps every
+                           event's restore epoch and records restore
+                           collisions itself), and the connecting role
+                           can execute record_restore_collision
   Queue draining         - no events older than 1h still in pending
   No orphan applied      - every applied_event has a matching node OR tombstone
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
@@ -1384,6 +1388,13 @@ Run health checks against the local store and the BYO Postgres hub:
 
 Each hub check allows 30 s to connect, the same budget as mtix sync init,
 clone, push and pull, so a hub that is resuming from idle passes.
+
+Schema current fails when sync_projects is missing. A hub without
+migration 017 (its owner has not run mtix sync init since the upgrade),
+or a connecting role without EXECUTE on record_restore_collision, is a
+WARN by default and fails in strict mode; pushes keep working. The check
+names each gap and the fix the table owner runs: mtix sync init, or the
+GRANT EXECUTE statement it prints.
 
 Hub triggers names each missing function or trigger, each trigger that
 executes another function, and each trigger that is not enabled, with the

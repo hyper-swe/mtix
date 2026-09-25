@@ -47,15 +47,16 @@ type hubObject struct {
 	kind    string // FindingKindTable, FindingKindSequence or FindingKindFunction
 	schema  string
 	name    string
+	args    string // a function's argument types, as its identity signature lists them (MTIX-95.1.7)
 	owner   uint32
 	trigger bool // a function that returns trigger: callable only as a trigger
 }
 
-// label names the object as findings show it: schema.name, with () after
-// a function.
+// label names the object as findings show it: schema.name, and for a
+// function its argument types in parentheses (MTIX-95.1.7).
 func (o *hubObject) label() string {
 	if o.kind == FindingKindFunction {
-		return o.schema + "." + o.name + "()"
+		return o.schema + "." + o.name + "(" + o.args + ")"
 	}
 	return o.schema + "." + o.name
 }

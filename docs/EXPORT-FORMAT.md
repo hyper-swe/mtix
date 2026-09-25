@@ -206,8 +206,9 @@ On a loss the import is refused and nothing changes: no import, no
 backup, the stored hash kept, so it refuses again on every command. The
 refusal names the loss node by node and three ways to proceed, each of
 which resolves it: `mtix import .mtix/tasks.json --mode merge` (backs up
-the database; keeps every local annotation and activity entry, with the
-file's added, and every field value the refusal lists, with the node's
+the database; keeps every local node and dependency, every local
+annotation and activity entry, with the file's added, and every field
+value the refusal lists, with the node's
 local status when the value is part of it; decides the other field values
 per node by its content, the title, description, prompt, acceptance and
 labels that `content_hash` covers: where the local content matches the
@@ -259,7 +260,8 @@ never `mtix sync --fix`).
 - When the node's `content_hash` (its title, description, prompt,
   acceptance and labels) differs, the file's values replace the other
   fields, so a local edit to them is undone, except a value the file
-  leaves empty in a copy that is not current, which stays. When it is the
+  leaves empty in a copy that is not current, which stays, with the node's
+  local status when the value is part of it. When it is the
   same, the other fields keep their local values, so a change the file
   carries to them (a teammate's claim, for example) is not applied.
 - A merge cannot remove an annotation or an activity entry. To make the

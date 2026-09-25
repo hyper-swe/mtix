@@ -226,32 +226,45 @@ const mtixEventColumns = `event_id text PRIMARY KEY, lamport_clock bigint NOT NU
 // its first one: sync_projects and sync_events together in that schema,
 // sync_events with mtix's event_id, lamport_clock and vector_clock
 // columns, functions or not (a dump carries none). An application's own
-// tables that merely share a sync table's name are not a hub: init then
-// creates every sync table in mtix and leaves them alone (MTIX-95.7).
+// tables that merely share a sync table's name are not a hub, nor are
+// sync_projects and mtix's sync_events that the search_path resolves to
+// two different schemas: init then creates every sync table in mtix and
+// leaves them alone (MTIX-95.7, MTIX-95.7.4). The search_path is
+// 'mtix,public' unless a case names another.
 func TestInit_SearchPathReachesAnotherHub_DecidedByWhatADumpCarries(t *testing.T) {
 	tests := []struct {
 		name   string
 		app    []string
+		path   string
 		refuse bool
 	}{
-		{"an application's audit_log", []string{`CREATE TABLE public.audit_log (id integer PRIMARY KEY, note text)`}, false},
+		{"an application's audit_log", []string{`CREATE TABLE public.audit_log (id integer PRIMARY KEY, note text)`}, "", false},
 		{"sync_projects and sync_events without mtix's columns", []string{
 			`CREATE TABLE public.sync_projects (id integer PRIMARY KEY, note text)`,
-			`CREATE TABLE public.sync_events (id integer PRIMARY KEY, note text)`}, false},
+			`CREATE TABLE public.sync_events (id integer PRIMARY KEY, note text)`}, "", false},
 		{"sync_events with only some of mtix's columns", []string{
 			`CREATE TABLE public.sync_projects (id integer PRIMARY KEY, note text)`,
-			`CREATE TABLE public.sync_events (event_id text PRIMARY KEY, lamport_clock bigint NOT NULL)`}, false},
+			`CREATE TABLE public.sync_events (event_id text PRIMARY KEY, lamport_clock bigint NOT NULL)`}, "", false},
 		{"mtix's sync_events without sync_projects", []string{
-			`CREATE TABLE public.sync_events (` + mtixEventColumns + `)`}, false},
+			`CREATE TABLE public.sync_events (` + mtixEventColumns + `)`}, "", false},
 		{"application tables on the path, a hub off it", []string{
 			`CREATE TABLE public.sync_projects (id integer PRIMARY KEY, note text)`,
 			`CREATE TABLE public.sync_events (id integer PRIMARY KEY, note text)`,
 			`CREATE SCHEMA hub_off_path`,
 			`CREATE TABLE hub_off_path.sync_projects (project_prefix text PRIMARY KEY, first_event_hash text NOT NULL)`,
-			`CREATE TABLE hub_off_path.sync_events (` + mtixEventColumns + `)`}, false},
+			`CREATE TABLE hub_off_path.sync_events (` + mtixEventColumns + `)`}, "", false},
 		{"a hub as a dump leaves it: the tables, no function", []string{
 			`CREATE TABLE public.sync_projects (project_prefix text PRIMARY KEY, first_event_hash text NOT NULL)`,
-			`CREATE TABLE public.sync_events (` + mtixEventColumns + `)`}, true},
+			`CREATE TABLE public.sync_events (` + mtixEventColumns + `)`}, "", true},
+		{"sync_projects in public, mtix's sync_events in another schema", []string{
+			`CREATE TABLE public.sync_projects (project_prefix text PRIMARY KEY, first_event_hash text NOT NULL)`,
+			`CREATE SCHEMA events_elsewhere`,
+			`CREATE TABLE events_elsewhere.sync_events (` + mtixEventColumns + `)`}, "mtix,public,events_elsewhere", false},
+		{"mtix's sync_events in public, sync_projects in another schema", []string{
+			`CREATE TABLE public.sync_events (` + mtixEventColumns + `)`,
+			`CREATE SCHEMA projects_elsewhere`,
+			`CREATE TABLE projects_elsewhere.sync_projects (project_prefix text PRIMARY KEY, first_event_hash text NOT NULL)`},
+			"mtix,public,projects_elsewhere", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -268,7 +281,11 @@ func TestInit_SearchPathReachesAnotherHub_DecidedByWhatADumpCarries(t *testing.T
 				JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
 				WHERE n.nspname = 'mtix' AND c.relkind = 'r' ORDER BY 1`
 			before := f.strings(appObjects)
-			t.Setenv(transport.EnvDSN, searchPathDSN(f, "mtix,public"))
+			path := tt.path
+			if path == "" {
+				path = "mtix,public"
+			}
+			t.Setenv(transport.EnvDSN, searchPathDSN(f, path))
 			var stdout, stderr bytes.Buffer
 			err := runSyncInit(context.Background(), &stdout, &stderr, nil, cloudOpts)
 			require.Equal(t, before, f.strings(appObjects), "the application's tables are untouched")

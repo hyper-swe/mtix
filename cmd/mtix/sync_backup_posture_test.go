@@ -30,7 +30,8 @@ import (
 // fakePgDumpScript records argv and the PG* environment under
 // $MTIX_TEST_PGDUMP_REC, writes the dump to -f's path when given and to
 // stdout otherwise, then waits $MTIX_TEST_PGDUMP_SLEEP seconds when set,
-// and exits 1 when $MTIX_TEST_PGDUMP_FAIL is set.
+// writes $MTIX_TEST_PGDUMP_STDERR as a line on stderr when set, and exits
+// 1 when $MTIX_TEST_PGDUMP_FAIL is set.
 const fakePgDumpScript = `#!/bin/sh
 rec="$MTIX_TEST_PGDUMP_REC"
 : > "$rec/ran"
@@ -48,6 +49,7 @@ else
   printf -- '-- fake dump\n'
 fi
 if [ -n "$MTIX_TEST_PGDUMP_SLEEP" ]; then exec sleep "$MTIX_TEST_PGDUMP_SLEEP"; fi
+if [ -n "$MTIX_TEST_PGDUMP_STDERR" ]; then printf '%s\n' "$MTIX_TEST_PGDUMP_STDERR" >&2; fi
 if [ -n "$MTIX_TEST_PGDUMP_FAIL" ]; then exit 1; fi
 exit 0
 `
@@ -72,6 +74,7 @@ func installFakePgDump(t *testing.T) fakePgDump {
 	t.Setenv("MTIX_TEST_PGDUMP_REC", rec)
 	t.Setenv("MTIX_TEST_PGDUMP_FAIL", "")
 	t.Setenv("MTIX_TEST_PGDUMP_SLEEP", "")
+	t.Setenv("MTIX_TEST_PGDUMP_STDERR", "")
 	t.Setenv("MTIX_SYNC_HOOK", "")
 	t.Setenv("HOME", t.TempDir())
 	for _, k := range []string{

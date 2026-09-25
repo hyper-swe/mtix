@@ -105,6 +105,21 @@ func TestTruncateGuardMigration_CreatesOnlyWhenAbsent(t *testing.T) {
 	require.Equal(t, 3, strings.Count(body, "DROP TRIGGER"), "nothing else is dropped")
 }
 
+// TestTruncateGuardMigration_RefusesWhenTheTablesAreInAnotherSchema pins
+// that 016 first checks that the schema of every guarded table is
+// current_schema(), where it creates the guard function, and raises
+// otherwise, before it creates or changes anything (MTIX-95.7).
+func TestTruncateGuardMigration_RefusesWhenTheTablesAreInAnotherSchema(t *testing.T) {
+	body, err := migrations.Read(migrations.TruncateGuardFile)
+	require.NoError(t, err)
+	check := strings.Index(body, "RAISE EXCEPTION 'the sync tables are in schema %, but the first schema on the search_path is %")
+	create := strings.Index(body, "CREATE OR REPLACE FUNCTION append_only_no_truncate()")
+	require.True(t, check >= 0 && check < create, "the schema check comes before anything is created")
+	for _, tbl := range []string{"audit_log", "sync_conflicts", "sync_events"} {
+		require.Contains(t, body[:create], "'"+tbl+"'", "the check covers %s", tbl)
+	}
+}
+
 // TestMigrations_NoRowLevelSecurity keeps row-level security out of the
 // 0.5.x hub schema: no migration enables or forces it (MTIX-95.1).
 func TestMigrations_NoRowLevelSecurity(t *testing.T) {

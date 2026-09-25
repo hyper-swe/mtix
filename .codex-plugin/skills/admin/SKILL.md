@@ -92,8 +92,11 @@ hub that requires one cannot be backed up with this command yet. A failed
 or interrupted (Ctrl-C, SIGTERM) backup leaves no file; an existing path is
 refused.
 
-Restore into an empty database: `psql -f <file>` as the role that will own
-the sync tables, with `PGSSLMODE=verify-full` and `PGSSLROOTCERT=<ca.pem>`
+Restore into an empty database (if the tables were in a schema other than
+`public`, create that schema first and put it first on the search_path for
+psql and for mtix; `mtix sync init` and `mtix sync harden --apply` refuse,
+changing nothing, when another schema comes first): `psql -f <file>` as
+the role that will own the sync tables, with `PGSSLMODE=verify-full` and `PGSSLROOTCERT=<ca.pem>`
 (or `system` with libpq 16 or later) and the password in `~/.pgpass` (psql
 reports errors for the triggers; their functions do not exist yet), then
 `mtix sync init` with the DSN naming that role, then `mtix sync doctor`

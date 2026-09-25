@@ -199,6 +199,12 @@ func (p *Pool) Harden(ctx context.Context, req HardenRequest) (*HardenResult, er
 	if !req.Apply {
 		return result, nil
 	}
+	// --apply may run the guard migration, which creates objects in the
+	// search_path's first schema: refuse unless that is the sync tables'
+	// schema (MTIX-95.7). The dry run above still reports.
+	if err = checkSchemaFirst(ctx, p.p); err != nil {
+		return nil, fmt.Errorf("harden: %w", err)
+	}
 	if before.Pending() == 0 {
 		result.After = before
 		return result, nil

@@ -1850,7 +1850,14 @@ as new as the hub's server. It contacts the hub only while it runs.
   SIGTERM, leaves no file.
 
 The dump holds the tables and their data, not the mtix functions and
-triggers. Restore it into an empty database as follows:
+triggers. Restore it into an empty database as follows. If the hub's sync
+tables were in a schema other than `public`, the dump names that schema
+without creating it: first create it in the empty database
+(`CREATE SCHEMA <schema>;`, as the role that will own the sync tables),
+and in steps 1 to 3 put it first on the search_path (for example
+`PGOPTIONS='-c search_path=<schema>'` for `psql`, and `options=-c
+search_path=<schema>` in the DSN, or `ALTER ROLE <owner> SET search_path
+= <schema>, public`, for mtix).
 
 1. Restore the dump with `psql`, connected to the empty database as the
    role that will own the sync tables. Keep the password out of the
@@ -1902,6 +1909,7 @@ operator does.
 | `mtix sync doctor` shows `[WARN] hub-privileges` | Roles other than the table owner can use the sync tables, or a TRUNCATE guard is missing or disabled. Nothing is blocked, and this may be fine on a private network | To restrict access, the table owner runs `mtix sync harden` (a dry run), then, after reviewing its role list, `mtix sync harden --apply --keep-role <role>`; see "Hub privileges" |
 | `mtix sync doctor` shows `[FAIL] hub-privileges` | Strict mode (`sync.keep_roles` set): a role not in it can use the sync tables, or a guard is missing or disabled | Add the role to `sync.keep_roles` if it should keep access, or run `mtix sync harden` and then `--apply` as the table owner |
 | `mtix sync doctor` shows `[WARN] hub-triggers` (`[FAIL]` in strict mode) | An mtix function or trigger is missing, as after a restore from backup; a trigger executes another function than its migration binds; or a trigger is not enabled | As the table owner the `fix` names, run it: `mtix sync init` for what is missing and for a trigger bound to another function (init replaces it), the printed `ALTER TABLE ... ENABLE TRIGGER` statement for what is not enabled; then run `mtix sync doctor` again |
+| `mtix sync init` or `mtix sync harden --apply` fails with `the sync tables are in schema …, but the first schema on the search_path is …` | The session's search_path puts another schema before the one holding the sync tables, so new objects would land away from them; nothing was changed | Set the search_path so the sync tables' schema comes first (`ALTER ROLE <owner> SET search_path = <schema>, public`, or `options=-c search_path=<schema>` in the DSN), then run the command again |
 | `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
 | `mtix sync conflicts resolve` fails with `is a manual resolution` | The id is a recorded decision, not a conflict | Run `mtix sync conflicts list --all` and resolve the conflict it answers |
 | `mtix sync conflicts resolve` fails with `has a later conflict` or `is already resolved` | A later conflict or a later decision exists for the same node and field | Resolve the newest conflict the error names; if it says that one is resolved too, the decision already stands |

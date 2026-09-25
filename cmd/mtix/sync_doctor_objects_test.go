@@ -216,11 +216,14 @@ func TestPrintDoctorTable_Fix_PrintedUnderItsCheck(t *testing.T) {
 		{Name: "PG reachable", Pass: true, Detail: "ok"},
 		{Name: "hub-triggers", Pass: true, Warn: true, Detail: "triggers not enabled: t on public.audit_log (tgenabled D)",
 			Fix: "as the table owner (mtix_owner): ALTER TABLE public.audit_log ENABLE TRIGGER t;"},
+		{Name: "hub-privileges", Pass: false, Detail: "strict mode (sync.keep_roles: team)", Fix: "mtix sync harden"},
 	}})
 	out := buf.String()
 	require.Contains(t, out, "[PASS] PG reachable         ok\n[WARN] hub-triggers")
 	require.Contains(t, out, "(tgenabled D)\n       fix: as the table owner (mtix_owner): ALTER TABLE public.audit_log ENABLE TRIGGER t;\n")
-	require.Equal(t, 1, strings.Count(out, "fix:"), "only the check with a fix gets a fix line")
+	require.Contains(t, out, "[FAIL] hub-privileges       strict mode (sync.keep_roles: team)\n       fix: mtix sync harden\n",
+		"a failing check prints its fix too")
+	require.Equal(t, 2, strings.Count(out, "fix:"), "only the checks with a fix get a fix line")
 }
 
 // TestCheckHubObjects_InvalidKeepRoles_Fails: a hand-edited, invalid

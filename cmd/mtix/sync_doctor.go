@@ -245,7 +245,8 @@ func checkPGReachable(ctx context.Context, dsn string, opts transport.Options) (
 }
 
 // checkSchemaCurrent checks, within syncConnectBudget, that the hub has
-// the sync_projects table (MTIX-95.7).
+// the sync_projects table, resolved through the search_path in whatever
+// schema the sync tables are (MTIX-95.7).
 func checkSchemaCurrent(ctx context.Context, dsn string, opts transport.Options) (bool, string) {
 	cctx, cancel := context.WithTimeout(ctx, syncConnectBudget)
 	defer cancel()
@@ -254,14 +255,17 @@ func checkSchemaCurrent(ctx context.Context, dsn string, opts transport.Options)
 		return false, err.Error()
 	}
 	defer pool.Close()
-	var n int
+	var present bool
+	// Whether sync_projects resolves through the search_path, as every
+	// other hub statement resolves the sync tables, in whatever schema
+	// they are (MTIX-95.7).
 	err = pool.Inner().QueryRow(cctx,
-		`SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename='sync_projects'`,
-	).Scan(&n)
+		`SELECT pg_catalog.to_regclass('sync_projects') IS NOT NULL`,
+	).Scan(&present)
 	if err != nil {
 		return false, err.Error()
 	}
-	if n != 1 {
+	if !present {
 		return false, "sync_projects table missing — run 'mtix sync init'"
 	}
 	return true, "ok"

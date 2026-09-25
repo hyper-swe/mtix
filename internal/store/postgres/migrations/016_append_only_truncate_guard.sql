@@ -19,6 +19,28 @@
 -- every guard exists and is enabled, and restores a missing one by
 -- running this file.
 
+-- The guard function and the guards are created in current_schema(), the
+-- first schema on the search_path. Refuse, before creating anything, when
+-- a guarded table is in another schema: a guard there would execute a
+-- function outside the hub, and the whole transaction rolls back
+-- (MTIX-95.7).
+DO $$
+DECLARE
+    tables_schema text;
+BEGIN
+    SELECT n.nspname INTO tables_schema
+    FROM unnest(ARRAY['audit_log', 'sync_conflicts', 'sync_events']) AS g(tbl)
+    JOIN pg_class c ON c.oid = to_regclass(g.tbl)
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname IS DISTINCT FROM current_schema()
+    LIMIT 1;
+    IF tables_schema IS NOT NULL THEN
+        RAISE EXCEPTION 'the sync tables are in schema %, but the first schema on the search_path is %; set the search_path so that % comes first, then run the command again',
+            quote_ident(tables_schema), COALESCE(quote_ident(current_schema()), '(none)'), quote_ident(tables_schema);
+    END IF;
+END
+$$;
+
 CREATE OR REPLACE FUNCTION append_only_no_truncate()
 RETURNS TRIGGER AS $$
 BEGIN

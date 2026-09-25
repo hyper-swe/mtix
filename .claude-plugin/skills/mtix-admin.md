@@ -126,7 +126,7 @@ Only for projects that sync through a Postgres hub. Run these only when a human 
 
 **Back up:** `mtix sync backup --output hub-<date>.sql` runs `pg_dump` for every table the hub migrations create, with its data, and prints the table list. It needs a `pg_dump` at least as new as the hub's server, on `PATH` or named by `MTIX_PG_DUMP`. It connects with the settings sync uses: `sslmode` is `verify-full` when the DSN names none; a weaker `sslmode` needs `--insecure-tls` and works only when every host is loopback or a local socket; the CA file comes from `sslrootcert` in the DSN or from `MTIX_SYNC_SSLROOTCERT`, and with neither `pg_dump` verifies the hub against the system trust store (the backup says so). Client certificates (`sslcert`, `sslkey`) are not passed to `pg_dump`, so a hub that requires one cannot be backed up with this command yet. mtix creates the output file readable and writable only by its owner (mode 0600) and never overwrites one: give every backup a new path. A failed backup, including one interrupted with Ctrl-C or SIGTERM, leaves no file.
 
-**Restore into an empty database (the runbook):**
+**Restore into an empty database (the runbook):** if the hub's sync tables were in a schema other than `public`, the dump names that schema without creating it: first create it in the empty database (`CREATE SCHEMA <schema>;`, as the owner role), and in steps 1 to 3 put it first on the search_path (`PGOPTIONS='-c search_path=<schema>'` for `psql`; `options=-c search_path=<schema>` in the DSN, or `ALTER ROLE <owner> SET search_path = <schema>, public`, for mtix).
 1. Restore the dump with `psql -f <file>`, connected to the empty database as the role that will own the sync tables. Put the connection in `PG*` variables (`PGHOST`, `PGPORT`, `PGUSER`, `PGDATABASE`, `PGSSLMODE=verify-full`, and `PGSSLROOTCERT=<ca.pem>` for the hub's CA file, or `system` for the operating system's trust store with libpq 16 or later) and the password in `~/.pgpass`, never on the command line. psql reports an error for each trigger: the dump holds no trigger functions yet.
 2. Run `mtix sync init`, with the hub DSN naming that owner role. It recreates every mtix function and trigger and keeps the restored data, the restore epoch included.
 3. Run `mtix sync doctor` and check `hub-triggers` (below).
@@ -139,6 +139,7 @@ Only for projects that sync through a Postgres hub. Run these only when a human 
 - `weak sslmode requires --insecure-tls`, or `not loopback or a local socket`: the DSN names an `sslmode` weaker than `verify-full`. Use `verify-full`; `--insecure-tls` is for a development hub on loopback or a local socket only.
 - A certificate error after `system trust store (PGSSLROOTCERT=system)`: the hub's certificate comes from a private CA; set `sslrootcert=<ca.pem>` in the DSN or `MTIX_SYNC_SSLROOTCERT`.
 - `server version mismatch` from `pg_dump`: install a `pg_dump` at least as new as the hub's server and point `MTIX_PG_DUMP` at it.
+- `the sync tables are in schema …, but the first schema on the search_path is …` from `mtix sync init` or `mtix sync harden --apply`: nothing was changed. Put the sync tables' schema first on the owner's search_path (`ALTER ROLE <owner> SET search_path = <schema>, public`, or `options=-c search_path=<schema>` in the DSN) and run it again.
 
 ## Sync Conflicts
 

@@ -67,7 +67,9 @@ ADMIN OPTION, is revoked when the owner may do so; it is cluster-wide. A
 missing TRUNCATE guard is restored, one whose trigger executes another
 function (compared by OID) is replaced, and a disabled one, or one that
 fires only in replication sessions, is enabled. A server WARNING fails the run
-and nothing changes. Access it cannot remove is reported with the
+and nothing changes. --apply refuses, changing nothing, when the first
+schema on the search_path is not the schema of the sync tables; the dry
+run still reports. Access it cannot remove is reported with the
 statement an administrator runs, and after --apply every finding that
 remains is listed. EXECUTE on the mtix trigger functions and other roles'
 default privileges are information and never fail verification.
@@ -150,7 +152,7 @@ func runSyncHarden(ctx context.Context, stdout, _ io.Writer,
 // carries a DSN.
 var hardenSentinels = []error{
 	transport.ErrHardenNotOwner, transport.ErrHubWarning,
-	transport.ErrSyncSchemaIncomplete, model.ErrInvalidInput,
+	transport.ErrSyncSchemaIncomplete, transport.ErrSearchPathSchema, model.ErrInvalidInput,
 }
 
 // hardenError is a scrubbed harden failure that still unwraps to the

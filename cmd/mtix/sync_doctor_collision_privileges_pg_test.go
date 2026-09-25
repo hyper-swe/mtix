@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,9 +48,42 @@ func (h *schemaHub) ident(name string) string {
 	return h.f.strings(`SELECT pg_catalog.format('%I', $1::text)`, name)[0]
 }
 
+// pg16 reports whether the fixture server is PostgreSQL 16 or later, where
+// a membership carries its own INHERIT, SET and ADMIN options.
+func (h *schemaHub) pg16() bool {
+	h.f.t.Helper()
+	return h.f.strings(`SELECT (current_setting('server_version_num')::int >= 160000)::text`)[0] == "true"
+}
+
+// membershipRevoke is the statement a role administrator runs to remove
+// the syncing role's membership in role, granted by the test's superuser:
+// with GRANTED BY from PostgreSQL 16, where one membership may have been
+// granted by several roles.
+func (h *schemaHub) membershipRevoke(role string) string {
+	h.f.t.Helper()
+	stmt := "REVOKE " + h.ident(role) + " FROM " + h.ident(h.syncer)
+	if h.pg16() {
+		stmt += " GRANTED BY " + h.ident(h.f.superuser)
+	}
+	return stmt + ";"
+}
+
+// collisionFix is what the schema current check prints for the owner's
+// statements and the role administrator's statements.
+func (h *schemaHub) collisionFix(owner, admin []string) string {
+	var parts []string
+	if len(owner) > 0 {
+		parts = append(parts, "as the table owner ("+h.owner+"): "+strings.Join(owner, " "))
+	}
+	if len(admin) > 0 {
+		parts = append(parts, "as a role administrator: "+strings.Join(admin, " "))
+	}
+	return strings.Join(parts, ", then ")
+}
+
 // requireSchemaCurrentFix asserts that the schema current check of a
 // doctor run with the syncing role's DSN warns, names each of held, and
-// prints fix as the table owner.
+// prints fix.
 func (h *schemaHub) requireSchemaCurrentFix(t *testing.T, fix string, held ...string) {
 	t.Helper()
 	pass, warn, detail, got, err := schemaCurrentCheck(t, h.syncDSN)
@@ -59,7 +93,7 @@ func (h *schemaHub) requireSchemaCurrentFix(t *testing.T, fix string, held ...st
 	for _, p := range held {
 		require.Contains(t, detail, p)
 	}
-	require.Equal(t, "as the table owner ("+h.owner+"): "+fix, got)
+	require.Equal(t, fix, got)
 }
 
 // requireSchemaCurrentClean asserts that the schema current check passes
@@ -73,107 +107,186 @@ func (h *schemaHub) requireSchemaCurrentClean(t *testing.T) {
 	require.Empty(t, fix)
 }
 
-// TestDoctorSchemaCurrent_CollisionPrivilegeSources_PrintedRevokeClearsThem:
-// for each way a syncing role can hold INSERT on sync_node_collisions or
-// USAGE on its sequence through a grant the owner made (to PUBLIC, to a
-// role it inherits through two memberships, on one column only, and to a
-// role in a schema whose names need quoting), the schema current check
-// prints the exact REVOKE statements; run as printed by the table owner,
-// they clear it and the check passes (MTIX-95.1.7).
-func TestDoctorSchemaCurrent_CollisionPrivilegeSources_PrintedRevokeClearsThem(t *testing.T) {
-	const insert, usage = "INSERT on sync_node_collisions", "USAGE on sync_node_collisions_collision_id_seq"
-	tests := []struct {
-		name   string
-		schema string
-		setup  func(h *schemaHub) (fix string, held []string)
-	}{
-		{"a grant to PUBLIC", "hub_data", func(h *schemaHub) (string, []string) {
-			h.f.ddl("GRANT INSERT ON TABLE %I.sync_node_collisions TO PUBLIC", h.schema)
-			return "REVOKE INSERT ON TABLE hub_data.sync_node_collisions FROM PUBLIC;", []string{insert}
+// collisionPath is one way a syncing role can hold or reach INSERT on
+// sync_node_collisions or USAGE on its sequence, and the statements the
+// schema current check prints for it: run by the table owner, and run by
+// a role administrator.
+type collisionPath struct {
+	name   string
+	schema string
+	pg16   bool // needs the membership options of PostgreSQL 16
+	setup  func(h *schemaHub) (owner, admin, held []string)
+}
+
+// grantTo gives role (or PUBLIC) privilege on the collision table or its
+// sequence in the hub's schema, as the table owner would, with extra
+// appended.
+func (h *schemaHub) grantTo(privilege, role, extra string) {
+	h.f.t.Helper()
+	object := "TABLE %I.sync_node_collisions"
+	if privilege == "USAGE" {
+		object = "SEQUENCE %I.sync_node_collisions_collision_id_seq"
+	}
+	if role == "PUBLIC" {
+		h.f.ddl("GRANT "+privilege+" ON "+object+" TO PUBLIC "+extra, h.schema)
+		return
+	}
+	h.f.ddl("GRANT "+privilege+" ON "+object+" TO %I "+extra, h.schema, role)
+}
+
+const (
+	heldInsert = "INSERT on sync_node_collisions"
+	heldUsage  = "USAGE on sync_node_collisions_collision_id_seq"
+)
+
+// grantCollisionPaths are the paths a grant on the objects opens; the
+// table owner's REVOKE statements clear each (MTIX-95.1.7).
+func grantCollisionPaths() []collisionPath {
+	const revoke = "REVOKE INSERT ON TABLE hub_data.sync_node_collisions FROM "
+	return []collisionPath{
+		{"a grant to PUBLIC", "hub_data", false, func(h *schemaHub) ([]string, []string, []string) {
+			h.grantTo("INSERT", "PUBLIC", "")
+			return []string{revoke + "PUBLIC;"}, nil, []string{heldInsert}
 		}},
-		{"a grant reached through two memberships", "hub_data", func(h *schemaHub) (string, []string) {
+		{"a grant reached through two memberships", "hub_data", false, func(h *schemaHub) ([]string, []string, []string) {
 			outer, inner := h.f.role("outer"), h.f.role("inner")
-			h.f.ddl("GRANT INSERT ON TABLE %I.sync_node_collisions TO %I", h.schema, outer)
+			h.grantTo("INSERT", outer, "")
 			h.f.ddl("GRANT %I TO %I", outer, inner)
 			h.f.ddl("GRANT %I TO %I", inner, h.syncer)
-			return "REVOKE INSERT ON TABLE hub_data.sync_node_collisions FROM " + outer + ";", []string{insert}
+			return []string{revoke + outer + ";"}, nil, []string{heldInsert}
 		}},
-		{"a grant on one column", "hub_data", func(h *schemaHub) (string, []string) {
+		{"a grant on one column", "hub_data", false, func(h *schemaHub) ([]string, []string, []string) {
 			h.f.ddl("GRANT INSERT (project_prefix) ON TABLE %I.sync_node_collisions TO %I", h.schema, h.syncer)
-			return "REVOKE INSERT ON TABLE hub_data.sync_node_collisions FROM " + h.syncer + ";", []string{insert}
+			return []string{revoke + h.syncer + ";"}, nil, []string{heldInsert}
 		}},
-		{"names that need quoting", `Hub "Q" x`, func(h *schemaHub) (string, []string) {
+		{"a table grant and a column grant to the same role", "hub_data", false, func(h *schemaHub) ([]string, []string, []string) {
+			h.grantTo("INSERT", h.syncer, "")
+			h.f.ddl("GRANT INSERT (display_path) ON TABLE %I.sync_node_collisions TO %I", h.schema, h.syncer)
+			return []string{revoke + h.syncer + ";"}, nil, []string{heldInsert}
+		}},
+		{"names that need quoting", `Hub "Q" x`, false, func(h *schemaHub) ([]string, []string, []string) {
 			odd := h.f.role(`x_Odd "Grp" x`)
-			h.f.ddl("GRANT INSERT ON TABLE %I.sync_node_collisions TO %I", h.schema, odd)
-			h.f.ddl("GRANT USAGE ON SEQUENCE %I.sync_node_collisions_collision_id_seq TO %I", h.schema, odd)
+			h.grantTo("INSERT", odd, "")
+			h.grantTo("USAGE", odd, "")
 			h.f.ddl("GRANT %I TO %I", odd, h.syncer)
 			schema, grantee := h.ident(h.schema), h.ident(odd)
-			return "REVOKE INSERT ON TABLE " + schema + ".sync_node_collisions FROM " + grantee + "; " +
-					"REVOKE USAGE ON SEQUENCE " + schema + ".sync_node_collisions_collision_id_seq FROM " + grantee + ";",
-				[]string{insert, usage}
+			return []string{
+				"REVOKE INSERT ON TABLE " + schema + ".sync_node_collisions FROM " + grantee + ";",
+				"REVOKE USAGE ON SEQUENCE " + schema + ".sync_node_collisions_collision_id_seq FROM " + grantee + ";",
+			}, nil, []string{heldInsert, heldUsage}
+		}},
+		{"a grant made by a role other than the owner", "hub_data", false, func(h *schemaHub) ([]string, []string, []string) {
+			granter := h.f.role("granter")
+			h.f.ddl("GRANT USAGE ON SCHEMA %I TO %I", h.schema, granter)
+			h.grantTo("INSERT", granter, "WITH GRANT OPTION")
+			h.f.ddlAs(granter, "GRANT INSERT ON TABLE %I.sync_node_collisions TO %I", h.schema, h.syncer)
+			return []string{"REVOKE GRANT OPTION FOR INSERT ON TABLE hub_data.sync_node_collisions FROM " +
+				granter + " CASCADE;"}, nil, []string{heldInsert}
+		}},
+		{"a grant option passed on", "hub_data", false, func(h *schemaHub) ([]string, []string, []string) {
+			h.grantTo("INSERT", h.syncer, "WITH GRANT OPTION")
+			h.f.ddlAs(h.syncer, "GRANT INSERT ON TABLE %I.sync_node_collisions TO %I", h.schema, h.f.role("other"))
+			return []string{revoke + h.syncer + " CASCADE;"}, nil, []string{heldInsert}
+		}},
+		{"a column grant option passed on", "hub_data", false, func(h *schemaHub) ([]string, []string, []string) {
+			h.f.ddl("GRANT INSERT (project_prefix) ON TABLE %I.sync_node_collisions TO %I WITH GRANT OPTION",
+				h.schema, h.syncer)
+			h.f.ddlAs(h.syncer, "GRANT INSERT (project_prefix) ON TABLE %I.sync_node_collisions TO %I",
+				h.schema, h.f.role("other"))
+			h.f.ddl("GRANT INSERT (actor) ON TABLE %I.audit_log TO %I", h.schema, h.syncer)
+			return []string{revoke + h.syncer + " CASCADE;"}, nil, []string{heldInsert}
 		}},
 	}
-	for _, tt := range tests {
+}
+
+// membershipCollisionPaths are the paths a role membership opens; a role
+// administrator's membership REVOKE clears each (MTIX-95.1.7).
+func membershipCollisionPaths() []collisionPath {
+	return []collisionPath{
+		{"membership in pg_write_all_data", "hub_data", false, func(h *schemaHub) ([]string, []string, []string) {
+			h.f.ddl("GRANT pg_write_all_data TO %I", h.syncer)
+			return nil, []string{h.membershipRevoke("pg_write_all_data")}, []string{heldInsert}
+		}},
+		{"pg_write_all_data through another role", "hub_data", false, func(h *schemaHub) ([]string, []string, []string) {
+			writers := h.f.role("writers")
+			h.f.ddl("GRANT pg_write_all_data TO %I", writers)
+			h.f.ddl("GRANT %I TO %I", writers, h.syncer)
+			return nil, []string{h.membershipRevoke(writers)}, []string{heldInsert}
+		}},
+		{"a membership of a role that does not inherit", "hub_data", false, func(h *schemaHub) ([]string, []string, []string) {
+			member := h.f.role("member")
+			h.grantTo("INSERT", member, "")
+			h.f.ddl("ALTER ROLE %I NOINHERIT", h.syncer)
+			h.f.ddl("GRANT %I TO %I", member, h.syncer)
+			return nil, []string{h.membershipRevoke(member)}, []string{heldInsert}
+		}},
+		{"a SET-only membership in the table owner", "hub_data", true, func(h *schemaHub) ([]string, []string, []string) {
+			h.f.ddl("GRANT %I TO %I WITH INHERIT FALSE, SET TRUE", h.owner, h.syncer)
+			return nil, []string{h.membershipRevoke(h.owner)}, []string{heldInsert, heldUsage}
+		}},
+		{"a direct grant and a SET path", "hub_data", true, func(h *schemaHub) ([]string, []string, []string) {
+			setOnly := h.f.role("setonly")
+			h.grantTo("INSERT", h.syncer, "")
+			h.grantTo("INSERT", setOnly, "")
+			h.f.ddl("GRANT %I TO %I WITH INHERIT FALSE, SET TRUE", setOnly, h.syncer)
+			return []string{"REVOKE INSERT ON TABLE hub_data.sync_node_collisions FROM " + h.syncer + ";"},
+				[]string{h.membershipRevoke(setOnly)}, []string{heldInsert}
+		}},
+		{"a SET-only membership reaching the sequence", "hub_data", true, func(h *schemaHub) ([]string, []string, []string) {
+			setOnly := h.f.role("setonly")
+			h.grantTo("USAGE", setOnly, "")
+			h.f.ddl("GRANT %I TO %I WITH INHERIT FALSE, SET TRUE", setOnly, h.syncer)
+			return nil, []string{h.membershipRevoke(setOnly)}, []string{heldUsage}
+		}},
+		{"an ADMIN-only membership", "hub_data", true, func(h *schemaHub) ([]string, []string, []string) {
+			adminOnly := h.f.role("adminonly")
+			h.grantTo("INSERT", adminOnly, "")
+			h.f.ddl("GRANT %I TO %I WITH ADMIN TRUE, INHERIT FALSE, SET FALSE", adminOnly, h.syncer)
+			return nil, []string{h.membershipRevoke(adminOnly)}, []string{heldInsert}
+		}},
+		{"a membership without INHERIT, SET or ADMIN", "hub_data", true, func(h *schemaHub) ([]string, []string, []string) {
+			bare := h.f.role("bare")
+			h.grantTo("INSERT", bare, "")
+			h.f.ddl("GRANT %I TO %I WITH ADMIN FALSE, INHERIT FALSE, SET FALSE", bare, h.syncer)
+			return nil, nil, nil // nothing reaches the privilege: the check stays clean
+		}},
+	}
+}
+
+// TestDoctorSchemaCurrent_CollisionPrivilegePaths_PrintedFixClearsThem: for
+// each way a syncing role can hold or reach INSERT on sync_node_collisions
+// or USAGE on its sequence, the schema current check warns, names the
+// privilege and prints the exact fix: the table owner's REVOKE statements
+// (CASCADE for a grant option, REVOKE GRANT OPTION ... CASCADE from the
+// role the owner granted it to for a grant another role made), each once,
+// and a role administrator's membership REVOKE for a path through a role
+// membership. Run as printed, by those roles, the fix clears the check. A
+// membership with neither INHERIT, SET nor ADMIN reaches nothing and stays
+// clean (MTIX-95.1.7).
+func TestDoctorSchemaCurrent_CollisionPrivilegePaths_PrintedFixClearsThem(t *testing.T) {
+	for _, tt := range append(grantCollisionPaths(), membershipCollisionPaths()...) {
 		t.Run(tt.name, func(t *testing.T) {
 			initTestApp(t)
 			h := newSchemaHub(t, tt.schema)
+			if tt.pg16 && !h.pg16() {
+				t.Skip("membership options INHERIT, SET and ADMIN need PostgreSQL 16 or later")
+			}
 			h.requireSchemaCurrentClean(t)
-			fix, held := tt.setup(h)
-			h.requireSchemaCurrentFix(t, fix, held...)
-			require.NoError(t, h.f.tryAs(h.owner, fix), "the printed fix runs as printed")
+			owner, admin, held := tt.setup(h)
+			if len(owner)+len(admin) == 0 {
+				h.requireSchemaCurrentClean(t)
+				return
+			}
+			h.requireSchemaCurrentFix(t, h.collisionFix(owner, admin), held...)
+			if len(owner) > 0 {
+				require.NoError(t, h.f.tryAs(h.owner, strings.Join(owner, " ")), "the owner's statements run as printed")
+			}
+			if len(admin) > 0 {
+				h.f.exec(strings.Join(admin, " "))
+			}
 			h.requireSchemaCurrentClean(t)
 		})
 	}
-}
-
-// TestDoctorSchemaCurrent_CollisionGrantsHardenClears_PrintsHarden: when
-// the syncing role holds INSERT on sync_node_collisions by the grant of a
-// role other than the table owner, or holds it with a grant option it has
-// passed on, the fix the schema current check prints is mtix sync harden,
-// whose --apply revokes with CASCADE (MTIX-95.1.7).
-func TestDoctorSchemaCurrent_CollisionGrantsHardenClears_PrintsHarden(t *testing.T) {
-	tests := []struct {
-		name  string
-		setup func(h *schemaHub)
-	}{
-		{"granted by a role other than the owner", func(h *schemaHub) {
-			granter := h.f.role("granter")
-			h.f.ddl("GRANT USAGE ON SCHEMA %I TO %I", h.schema, granter)
-			h.f.ddl("GRANT INSERT ON TABLE %I.sync_node_collisions TO %I WITH GRANT OPTION", h.schema, granter)
-			h.f.ddlAs(granter, "GRANT INSERT ON TABLE %I.sync_node_collisions TO %I", h.schema, h.syncer)
-		}},
-		{"a grant option passed on", func(h *schemaHub) {
-			other := h.f.role("other")
-			h.f.ddl("GRANT INSERT ON TABLE %I.sync_node_collisions TO %I WITH GRANT OPTION", h.schema, h.syncer)
-			h.f.ddlAs(h.syncer, "GRANT INSERT ON TABLE %I.sync_node_collisions TO %I", h.schema, other)
-		}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			initTestApp(t)
-			h := newSchemaHub(t, "hub_data")
-			tt.setup(h)
-			h.requireSchemaCurrentFix(t, hubPrivilegesFix, "INSERT on sync_node_collisions")
-		})
-	}
-}
-
-// TestDoctorSchemaCurrent_SetRoleMembership_PrintsHarden: a syncing role
-// that does not inherit a role but can SET ROLE to it, where that role
-// holds INSERT on sync_node_collisions, is reported, with mtix sync
-// harden as the fix (MTIX-95.1.7). PostgreSQL 16 and later.
-func TestDoctorSchemaCurrent_SetRoleMembership_PrintsHarden(t *testing.T) {
-	initTestApp(t)
-	h := newSchemaHub(t, "hub_data")
-	if h.f.strings(`SELECT (current_setting('server_version_num')::int >= 160000)::text`)[0] != "true" {
-		t.Skip("membership options INHERIT and SET need PostgreSQL 16 or later")
-	}
-	setOnly := h.f.role("setonly")
-	h.f.ddl("GRANT INSERT ON TABLE %I.sync_node_collisions TO %I", h.schema, setOnly)
-	h.f.ddl("GRANT %I TO %I WITH INHERIT FALSE, SET TRUE", setOnly, h.syncer)
-	require.Equal(t, []string{"false"}, h.f.strings(`SELECT pg_catalog.has_table_privilege($1::text,
-		'hub_data.sync_node_collisions', 'INSERT')::text`, h.syncer), "the role does not hold it itself")
-	h.requireSchemaCurrentFix(t, hubPrivilegesFix, "INSERT on sync_node_collisions")
 }
 
 // TestDoctorSchemaCurrent_HubWithoutRecorder_ReportsOnlyMigration017: on a

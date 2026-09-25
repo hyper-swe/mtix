@@ -29,7 +29,7 @@ type schemaState struct {
 	grant               string         // the GRANT that lets the role execute it, quoted server-side
 	collisionPrivileges []string       // e.g. "INSERT on sync_node_collisions", held by a role that is not the owner
 	revokes             []string       // the REVOKE statements that remove them, quoted server-side
-	collisionHarden     bool           // a grant no printed REVOKE clears: mtix sync harden is the fix
+	memberships         []string       // the membership REVOKE statements a role administrator runs
 	hub                 hubObjectState // the tables' owners and schema, and current_schema()
 }
 
@@ -56,7 +56,7 @@ func checkSchemaCurrent(ctx context.Context, dsn string, opts transport.Options,
 	defer pool.Close()
 	state, err := readSchemaState(cctx, pool)
 	if err == nil && state.recorder {
-		state.collisionPrivileges, state.revokes, state.collisionHarden, err = readCollisionPrivileges(cctx, pool)
+		state.collisionPrivileges, state.revokes, state.memberships, err = readCollisionPrivileges(cctx, pool)
 	}
 	if err != nil {
 		return DoctorCheck{Name: schemaCurrentName, Detail: err.Error()}, false
@@ -137,8 +137,9 @@ func missing017(r schemaRow, schema string) []string {
 // has migration 017, the role can execute the recorder and holds no
 // privilege on sync_node_collisions or its sequence beyond the
 // least-privilege list; otherwise a WARN by default and a FAIL in strict
-// mode, like the hub-triggers check, naming each gap, with the fix the
-// table owner runs.
+// mode, like the hub-triggers check, naming each gap, with the fix: the
+// table owner's steps, then the membership REVOKE statements a role
+// administrator runs.
 func gradeSchemaCurrent(s schemaState, strict bool) DoctorCheck {
 	check := DoctorCheck{Name: schemaCurrentName}
 	if !s.projects {
@@ -159,9 +160,18 @@ func gradeSchemaCurrent(s schemaState, strict bool) DoctorCheck {
 		check.Warn = true
 	}
 	parts = append(parts, gaps...)
-	parts = append(parts, "run the fix as the table owner, then run mtix sync doctor again")
+	var fix []string
+	if len(steps) > 0 {
+		fix = append(fix, tableOwnerPrefix(s.hub.owners)+strings.Join(steps, ", then "))
+	}
+	if len(s.collisionPrivileges) > 0 && len(s.memberships) > 0 {
+		fix = append(fix, "as a role administrator: "+strings.Join(s.memberships, " "))
+		parts = append(parts, "run each part of the fix as the role it names, then run mtix sync doctor again")
+	} else {
+		parts = append(parts, "run the fix as the table owner, then run mtix sync doctor again")
+	}
 	check.Detail = strings.Join(parts, "; ")
-	check.Fix = tableOwnerPrefix(s.hub.owners) + strings.Join(steps, ", then ")
+	check.Fix = strings.Join(fix, ", then ")
 	return check
 }
 
@@ -170,10 +180,12 @@ func gradeSchemaCurrent(s schemaState, strict bool) DoctorCheck {
 // refuse, for a hub without migration 017, where pushes keep working; the
 // printed GRANT for a role that cannot execute the recorder, until which a
 // push that meets a restore collision fails; for the privileges the
-// least-privilege list does not name, which the owner removes once every
-// syncing client is upgraded, the printed REVOKE statements, then mtix
-// sync harden for a grant no printed REVOKE clears, or when none could be
-// printed.
+// least-privilege list does not name, removed once every syncing client is
+// upgraded, the printed REVOKE statements; a role administrator's
+// membership REVOKE statements are the last part of the fix
+// (gradeSchemaCurrent). With no statement at all, the step is mtix sync
+// harden, whose dry run names how the role holds the privilege, so the fix
+// is never empty.
 func schemaGaps(s schemaState) (gaps, steps []string) {
 	if len(s.missing) > 0 {
 		gap := "the hub schema predates migration 017, with which the hub stamps every event's " +
@@ -194,13 +206,14 @@ func schemaGaps(s schemaState) (gaps, steps []string) {
 		steps = append(steps, s.grant)
 	}
 	if len(s.collisionPrivileges) > 0 {
-		gaps = append(gaps, "the connecting role holds "+strings.Join(s.collisionPrivileges, " and ")+
+		gaps = append(gaps, "the connecting role holds or can reach "+strings.Join(s.collisionPrivileges, " and ")+
 			", which the least-privilege list does not name (restore collisions are recorded through "+
-			"record_restore_collision); the table owner revokes them once every syncing client is upgraded")
+			"record_restore_collision); once every syncing client is upgraded, the table owner revokes the "+
+			"grants and a role administrator the memberships the fix names")
 		if len(s.revokes) > 0 {
 			steps = append(steps, strings.Join(s.revokes, " "))
 		}
-		if s.collisionHarden || len(s.revokes) == 0 {
+		if len(s.revokes)+len(s.memberships) == 0 {
 			steps = append(steps, hubPrivilegesFix)
 		}
 	}

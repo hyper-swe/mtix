@@ -14,9 +14,10 @@ import (
 // sync_node_collisions or USAGE on its sequence, which the least-privilege
 // list does not name, gets a WARN by default and a FAIL in strict mode,
 // naming each privilege, with the exact REVOKE statements the table owner
-// runs (MTIX-95.1.7). Without a printable statement, or for a grant only
-// mtix sync harden clears (another grantor, or a grant option), the fix is
-// mtix sync harden, after any REVOKE statements.
+// runs (MTIX-95.1.7), and the membership REVOKE statements a role
+// administrator runs; without any printable statement the fix is mtix sync
+// harden, whose dry run names how the role holds the privilege, so the fix
+// is never empty.
 func TestGradeSchemaCurrent_RoleHoldsCollisionPrivileges_WarnsWithRevoke(t *testing.T) {
 	const revokes = "REVOKE INSERT ON TABLE public.sync_node_collisions FROM syncer; " +
 		"REVOKE USAGE ON SEQUENCE public.sync_node_collisions_collision_id_seq FROM syncer;"
@@ -42,14 +43,15 @@ func TestGradeSchemaCurrent_RoleHoldsCollisionPrivileges_WarnsWithRevoke(t *test
 		{"no printable statement points to mtix sync harden", schemaState{projects: true, canRecord: true, hub: owner,
 			collisionPrivileges: held[1:]},
 			false, true, true, "as the table owner (mtix_owner): mtix sync harden"},
-		{"a grant only mtix sync harden clears", schemaState{projects: true, canRecord: true, hub: owner,
-			collisionPrivileges: held[:1], collisionHarden: true},
-			false, true, true, "as the table owner (mtix_owner): mtix sync harden"},
-		{"the REVOKE statements, then mtix sync harden", schemaState{projects: true, canRecord: true, hub: owner,
-			collisionPrivileges: held, collisionHarden: true,
+		{"a membership a role administrator revokes", schemaState{projects: true, canRecord: true, hub: owner,
+			collisionPrivileges: held[:1], memberships: []string{"REVOKE w FROM syncer GRANTED BY postgres;"}},
+			false, true, true, "as a role administrator: REVOKE w FROM syncer GRANTED BY postgres;"},
+		{"the owner's REVOKE, then the membership REVOKE", schemaState{projects: true, canRecord: true, hub: owner,
+			collisionPrivileges: held, memberships: []string{"REVOKE w FROM syncer GRANTED BY postgres;"},
 			revokes: []string{"REVOKE USAGE ON SEQUENCE public.sync_node_collisions_collision_id_seq FROM syncer;"}},
 			false, true, true, "as the table owner (mtix_owner): REVOKE USAGE ON SEQUENCE " +
-				"public.sync_node_collisions_collision_id_seq FROM syncer;, then mtix sync harden"},
+				"public.sync_node_collisions_collision_id_seq FROM syncer;, then as a role administrator: " +
+				"REVOKE w FROM syncer GRANTED BY postgres;"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -60,6 +62,9 @@ func TestGradeSchemaCurrent_RoleHoldsCollisionPrivileges_WarnsWithRevoke(t *test
 				require.Contains(t, got.Detail, p)
 			}
 			require.Contains(t, got.Detail, "once every syncing client is upgraded")
+			if len(tt.state.memberships) > 0 {
+				require.Contains(t, got.Detail, "run each part of the fix as the role it names")
+			}
 			require.Equal(t, tt.wantFix, got.Fix)
 		})
 	}

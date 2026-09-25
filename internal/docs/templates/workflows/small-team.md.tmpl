@@ -76,8 +76,9 @@ fails until that client upgrades.
 `schema current` check when it cannot execute the function, with the
 exact GRANT to run, and when it still holds INSERT on
 `sync_node_collisions` or USAGE on its sequence, or can reach either
-through SET ROLE, with the exact REVOKE statements, and `mtix sync harden`
-for a grant a REVOKE cannot clear.
+through a role membership, with the exact REVOKE statements the table
+owner runs and the membership REVOKE statements a role administrator
+runs.
 
 A dump holds no privileges: after restoring the hub and running
 `mtix sync init`, grant each syncing role this list again, EXECUTE on

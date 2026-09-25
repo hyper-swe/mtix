@@ -22,21 +22,21 @@ import (
 // applyStagedLateEvents is the apply phase. It reads the staged ids in
 // (lamport_clock, event_id) order, limit at a time, and for each chunk
 // fetches the events the store still lacks, applies them in pull order
-// (Lamport clock, then event id) and removes each id from sync_sweep_pending
-// in its apply's transaction. Every staged event has a Lamport clock at or
+// (Lamport clock, then event id), quarantining any that fails (MTIX-95.11),
+// and removes each id from sync_sweep_pending in its apply's transaction. Every staged event has a Lamport clock at or
 // above the previous chunk's, so the order is global although memory and
 // each transaction are bounded by limit, and a pull stopped between chunks
 // resumes at the next one. Staged ids the store now holds (a concurrent pull
 // applied them) or the hub no longer has are removed without an apply.
 // Returns how many events it applied.
-func applyStagedLateEvents(ctx context.Context, hub lateEventHub, st *sqlite.Store, limit int) (int, error) {
+func applyStagedLateEvents(ctx context.Context, in pullIngest, hub lateEventHub, st *sqlite.Store, limit int) (int, error) {
 	applied := 0
 	for {
 		chunk, err := readStagedChunk(ctx, st, limit)
 		if err != nil || len(chunk) == 0 {
 			return applied, err
 		}
-		n, err := applyStagedChunk(ctx, hub, st, chunk, limit)
+		n, err := applyStagedChunk(ctx, in, hub, st, chunk, limit)
 		applied += n
 		if err != nil {
 			return applied, err
@@ -45,8 +45,10 @@ func applyStagedLateEvents(ctx context.Context, hub lateEventHub, st *sqlite.Sto
 }
 
 // applyStagedChunk fetches and applies one chunk of staged ids and returns
-// how many events it applied.
-func applyStagedChunk(ctx context.Context, hub lateEventHub, st *sqlite.Store,
+// how many events it applied. An event that fails its checks or its apply
+// is quarantined (MTIX-95.11) and unstaged in the same transaction; it is
+// not counted.
+func applyStagedChunk(ctx context.Context, in pullIngest, hub lateEventHub, st *sqlite.Store,
 	chunk []string, limit int,
 ) (int, error) {
 	missing, err := missingLocalEventIDs(ctx, st, chunk)
@@ -61,15 +63,17 @@ func applyStagedChunk(ctx context.Context, hub lateEventHub, st *sqlite.Store,
 		return 0, err
 	}
 	unstage := func(tx *sql.Tx, e *model.SyncEvent) error {
-		// Remove the applied event's id, in its apply's transaction.
+		// Remove the event's id, applied or quarantined, in the same
+		// transaction.
 		_, execErr := tx.ExecContext(ctx,
 			`DELETE FROM sync_sweep_pending WHERE event_id = ?`, e.EventID)
 		return execErr
 	}
-	if err := applyPullBatch(ctx, st, events, unstage); err != nil {
-		return 0, fmt.Errorf("apply late events: %w", err)
+	held, applyErr := applyPullBatch(ctx, in, st, quarantineSourceSweep, events, unstage)
+	if applyErr != nil {
+		return 0, fmt.Errorf("apply late events: %w", applyErr)
 	}
-	return len(events), nil
+	return len(events) - len(held), nil
 }
 
 // idsNotApplied returns the staged ids that have no fetched event to apply.

@@ -1,5 +1,5 @@
 ---
-description: "Administer MTIX project using mtix. Use when backing up data, exporting/importing tasks, running garbage collection, managing configuration, verifying data integrity, or repairing workflow state that an older sync pull reverted."
+description: "Administer MTIX project using mtix. Use when backing up data, exporting/importing tasks, running garbage collection, managing configuration, verifying data integrity, repairing workflow state that an older sync pull reverted, or handling events that sync pull quarantined."
 allowed-tools:
   - mcp__mtix__mtix_export
   - mcp__mtix__mtix_import
@@ -96,6 +96,7 @@ Key configuration options:
 - `prefix` — project prefix for dot-notation IDs
 - `max_depth` — maximum hierarchy depth (default: 50)
 - `auto_claim` — whether to auto-claim on creation
+- `sync.max_lamport_jump` — how far above the local Lamport clock a pulled event may be stamped before `mtix sync pull` quarantines it (default: 4294967296, that is 2^32; a positive integer; see Sync Recovery: Quarantined Pulled Events)
 - `agent_stale_threshold` — heartbeat timeout for stale detection (default: 30m)
 - `session_timeout` — maximum session duration (default: 8h)
 - `data.soft_delete_retention` — how long to keep deleted data (default: 720h/30 days)
@@ -156,3 +157,33 @@ mtix sync push
 **Verify:** `mtix sync repair --status` lists nothing (or only flagged nodes the human chose to keep), and `mtix sync status` counts the repair events as pending until `mtix sync push` sends them.
 
 **Recover:** to undo a repair before `mtix sync push`, stop every mtix process and copy the backup over `.mtix/data/mtix.db`. After the push a restore does not undo it, because the next pull brings the repair events back; change the node's status with the normal commands instead.
+
+## Sync Recovery: Quarantined Pulled Events
+
+`mtix sync pull` checks every event it receives before applying it: first its Lamport clock (below 2^53, and at most `sync.max_lamport_jump` above the local clock; default 4294967296, that is 2^32), then the same size, shape and id rules the hub applies at push (payload at most 64 KB and 10 levels deep, at most 100 vector-clock entries, well-formed author, machine and project ids, a hub row that decodes). An event stamped more than 24 hours ahead of this machine's clock is applied with a `WARN`. Each event applies on its own: an event that fails a check or its apply (for example a dependency whose target has not arrived) is rolled back and kept in the local table `sync_quarantine` (in `.mtix/data/mtix.db`), and the pull goes on. A quarantined event never changes the local clock and is never lost, and one refused for its clock never moves the pull cursor. Every pull retries the quarantine at its start, before it contacts the hub, and again at its end when it applied events; an event that applies, or that the store has already applied, leaves the quarantine. Retries are local and add no hub query, so they do not keep a scale-to-zero database awake; an event refused for its clock is downloaded again by each pull.
+
+**Recognize:** `mtix sync doctor` fails its `quarantined events` check (exit 2; with `--json` the check has `"pass": false` and the detail); `mtix sync status` shows `quarantined events` above 0 (`quarantined_events` in `--json`); a pull prints `quarantined event <id> (<pass> pass): <reason>` on stderr and `quarantine: N pulled events held, not applied` at the end.
+
+**Routine:**
+1. Run `mtix sync pull` again. Events that were waiting for a task or a dependency target apply once it has arrived.
+2. If `mtix sync doctor` still fails the check, list the quarantine (read-only; it changes nothing and does not contact the hub):
+   ```bash
+   mtix sync quarantine list          # event id, node, op, attempts, first seen, last attempt, reason
+   mtix sync quarantine list --json   # the same as an array, plus lamport_clock, source and cli_version
+   ```
+   `reason` is why the event was first quarantined; `attempts` counts every failed try; `source` is `pull` (the cursor pass) or `sweep` (the late-event sweep).
+3. Read each reason:
+   - `not found` or `FOREIGN KEY`: the event needs a task or dependency target this replica does not hold yet. Ask the teammate who made it to run `mtix sync push`, then pull again.
+   - `envelope validation` (payload too large or too deep, a vector clock over its caps, an id that does not match its grammar, a hub row that does not decode): the hub holds an event that a correct client never pushes. It will not apply by itself. Show the human the event ids and reasons, for whoever runs the hub.
+   - `lamport_clock at or above 2^53`: the event's clock is past the overflow guard. It will never apply; show it to the human, for whoever runs the hub.
+   - `sync.max_lamport_jump`: the event's Lamport clock is far above this replica's. If the human confirms the hub's clocks are legitimately that high, raise the bound: `mtix config set sync.max_lamport_jump <positive integer>` (only a positive integer is accepted; `mtix config delete sync.max_lamport_jump` restores the default). The next pull retries the event with the new bound.
+
+**Verify:** `mtix sync quarantine list` prints `no quarantined events`, `mtix sync doctor` passes the `quarantined events` check, and `mtix sync status` shows `quarantined events 0`.
+
+**Recover:** to rebuild the local store from the hub, run `mtix sync reconcile --discard-local` (a dry run that shows what it drops), then `mtix sync reconcile --discard-local --yes` (it empties the quarantine with the rest of the local sync state), then `mtix sync pull`, which runs the checks and quarantines again any event that still fails. Do not use `mtix sync clone` for this: clone has no quarantine, so it runs the same checks on every hub event before it writes anything and refuses the whole clone, naming the event and the reason, while the hub holds an event that fails them; a clone that completes empties the quarantine because every hub event passed.
+
+**Never:**
+- Never delete rows from `sync_quarantine` or edit the local database to force an event in; a quarantined event is the only local copy of what the hub sent.
+- Never raise `sync.max_lamport_jump` without a human's confirmation: the bound is what keeps one extreme event from pushing this replica's clock to where the hub refuses all its later changes.
+- Never try to get past a refused `mtix sync clone` by any means other than `mtix sync reconcile --discard-local --yes` then `mtix sync pull`; the refusal is what keeps an event the pull would quarantine out of the store.
+- Never copy quarantined events into tickets or shared documents beyond the event ids and reasons; the raw events hold task content.

@@ -19,6 +19,11 @@
 //
 // MTIX-15.3.3's PushEvents calls ValidateBatch before any database
 // touch; the entire batch fails atomically on the first invalid event.
+//
+// `mtix sync pull` runs the same envelope rules on every event it pulls
+// (ValidateIngest, validator_ingest.go, MTIX-95.11), where the 24h
+// future-timestamp rule only warns, and bounds the Lamport jump of each
+// event (CheckLamportJump).
 package validator
 
 import (
@@ -65,6 +70,11 @@ var (
 // timestamp that warranted a warning but did not cause rejection.
 type Result struct {
 	StaleTimestamps []string // event_ids with wall_clock_ts < now - PastTimestampWarn
+	// FutureTimestamps lists the event_ids whose wall_clock_ts is more than
+	// FutureTimestampGrace ahead of now. Only ValidateIngest reports them:
+	// at ingest that rule warns instead of rejecting (MTIX-95.11, review
+	// F-25). Validate rejects such an event.
+	FutureTimestamps []string
 }
 
 // Validate runs every FR-18.7 rule against e. Returns nil iff all rules
@@ -77,6 +87,29 @@ type Result struct {
 // Stale-but-acceptable timestamps surface in res.StaleTimestamps when
 // res != nil (callers passing nil opt out of warnings).
 func Validate(e *model.SyncEvent, now time.Time, res *Result) error {
+	if err := validateEnvelope(e); err != nil {
+		return err
+	}
+
+	tsMS := e.WallClockTS
+	wallTS := time.UnixMilli(tsMS).UTC()
+	if wallTS.After(now.Add(FutureTimestampGrace)) {
+		return fmt.Errorf("event %s wall_clock_ts %s > now+%s: %w",
+			e.EventID, wallTS.Format(time.RFC3339), FutureTimestampGrace, ErrTimestampFuture)
+	}
+	if wallTS.Before(now.Add(-PastTimestampWarn)) && res != nil {
+		res.StaleTimestamps = append(res.StaleTimestamps, e.EventID)
+	}
+
+	return nil
+}
+
+// validateEnvelope runs every FR-18.7 rule that does not depend on the
+// reference time: the model grammar rules, the payload size and nesting
+// caps, the Lamport overflow guard and the vector-clock caps. Validate
+// (push) and ValidateIngest (pull, MTIX-95.11) share it, so the two can
+// never enforce different caps.
+func validateEnvelope(e *model.SyncEvent) error {
 	if e == nil {
 		return fmt.Errorf("event nil: %w", model.ErrInvalidInput)
 	}
@@ -100,17 +133,6 @@ func Validate(e *model.SyncEvent, now time.Time, res *Result) error {
 	if err := e.VectorClock.Validate(); err != nil {
 		return fmt.Errorf("event %s vector_clock: %w", e.EventID, err)
 	}
-
-	tsMS := e.WallClockTS
-	wallTS := time.UnixMilli(tsMS).UTC()
-	if wallTS.After(now.Add(FutureTimestampGrace)) {
-		return fmt.Errorf("event %s wall_clock_ts %s > now+%s: %w",
-			e.EventID, wallTS.Format(time.RFC3339), FutureTimestampGrace, ErrTimestampFuture)
-	}
-	if wallTS.Before(now.Add(-PastTimestampWarn)) && res != nil {
-		res.StaleTimestamps = append(res.StaleTimestamps, e.EventID)
-	}
-
 	return nil
 }
 

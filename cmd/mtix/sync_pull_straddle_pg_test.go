@@ -21,9 +21,10 @@ import (
 // Real-Postgres tests for a late push that STRADDLES the peer's Lamport
 // cursor (MTIX-95.5): a node's create is stamped below the cursor and an
 // edit of it above. The cursor pass returns the edit but not the create,
-// so the edit's apply finds no node (ErrNotFound). Pull then runs the
-// late-event sweep, which delivers the create in Lamport order, and
-// retries the cursor pass once. Gated on MTIX_PG_TEST_DSN.
+// so the edit's apply finds no node (ErrNotFound) and the edit is
+// quarantined (MTIX-95.11); the cursor moves past it. The late-event sweep
+// then delivers the create, and the quarantine retry at the end of the
+// same pull applies the edit. Gated on MTIX_PG_TEST_DSN.
 
 // pullPeerTwice runs two pulls on the peer, each of which must succeed, and
 // returns the first one's stderr.
@@ -34,11 +35,13 @@ func (f *sweepFixture) pullPeerTwice(t *testing.T) string {
 	return errOut
 }
 
-// TestRunSyncPull_SameClientPushStraddlesCursor_SweepsThenRetries: B,
+// TestRunSyncPull_SameClientPushStraddlesCursor_QuarantinedThenApplied: B,
 // offline, creates a node and edits it twenty times, so its Lamport clocks
 // run from below the peer's cursor to above it. Both of the peer's next
-// pulls succeed and the node arrives with every edit.
-func TestRunSyncPull_SameClientPushStraddlesCursor_SweepsThenRetries(t *testing.T) {
+// pulls succeed; the first quarantines the edits above the cursor and
+// applies them at its end, after the sweep brought the create, so the node
+// arrives with every edit and nothing stays quarantined.
+func TestRunSyncPull_SameClientPushStraddlesCursor_QuarantinedThenApplied(t *testing.T) {
 	f := newSweepFixture(t)
 	ctx := context.Background()
 	f.seedSharedNode(t)
@@ -61,7 +64,9 @@ func TestRunSyncPull_SameClientPushStraddlesCursor_SweepsThenRetries(t *testing.
 
 	errOut := f.pullPeerTwice(t)
 
-	require.Contains(t, errOut, "retrying the pull once")
+	require.Contains(t, errOut, "quarantined event "+late[20].EventID)
+	require.Contains(t, errOut, "quarantined events applied on retry; 0 still quarantined")
+	require.Empty(t, quarantined(t))
 	node, err := app.store.GetNode(ctx, "TEST-2")
 	require.NoError(t, err)
 	require.Equal(t, desc, node.Description, "every edit applied, the last one wins")
@@ -69,15 +74,15 @@ func TestRunSyncPull_SameClientPushStraddlesCursor_SweepsThenRetries(t *testing.
 		require.Truef(t, f.appliedOnPeer(t, e.EventID), "event %s (L=%d) applied", e.EventID, e.LamportClock)
 	}
 	require.Equal(t, late[20].LamportClock, f.peerCursor(t),
-		"the retried cursor pass advances the cursor over B's edits")
+		"the cursor moves past the quarantined edits")
 }
 
-// TestRunSyncPull_CrossClientEditStraddlesCursor_SweepsThenRetries: B,
+// TestRunSyncPull_CrossClientEditStraddlesCursor_QuarantinedThenApplied: B,
 // offline, creates a node below the peer's cursor; C, who received it,
 // edits it with a clock above the peer's cursor. The peer's cursor pass
-// returns C's edit without B's create. Both of the peer's next pulls
-// succeed and the node arrives with C's edit.
-func TestRunSyncPull_CrossClientEditStraddlesCursor_SweepsThenRetries(t *testing.T) {
+// returns C's edit without B's create and quarantines it. Both of the
+// peer's next pulls succeed and the node arrives with C's edit.
+func TestRunSyncPull_CrossClientEditStraddlesCursor_QuarantinedThenApplied(t *testing.T) {
 	f := newSweepFixture(t)
 	ctx := context.Background()
 	f.seedSharedNode(t)
@@ -98,7 +103,7 @@ func TestRunSyncPull_CrossClientEditStraddlesCursor_SweepsThenRetries(t *testing
 		`UPDATE meta SET value = 'agent-c' WHERE key = 'meta.sync.author_id'`)
 	require.NoError(t, err)
 	var stderr bytes.Buffer
-	_, _, err = pullLoop(ctx, &stderr, f.pool, c, 0, 100)
+	_, _, err = pullLoop(ctx, testIngest(&stderr), f.pool, c, 0, 100)
 	require.NoError(t, err, "C receives B's node: %s", stderr.String())
 	desc := "C's edit of B's node"
 	require.NoError(t, c.UpdateNode(ctx, "TEST-2", &store.NodeUpdate{Description: &desc}))
@@ -111,7 +116,9 @@ func TestRunSyncPull_CrossClientEditStraddlesCursor_SweepsThenRetries(t *testing
 
 	errOut := f.pullPeerTwice(t)
 
-	require.Contains(t, errOut, "retrying the pull once")
+	require.Contains(t, errOut, "quarantined event "+fromC[0].EventID)
+	require.Contains(t, errOut, "quarantined events applied on retry; 0 still quarantined")
+	require.Empty(t, quarantined(t))
 	node, err := app.store.GetNode(ctx, "TEST-2")
 	require.NoError(t, err)
 	require.Equal(t, desc, node.Description)

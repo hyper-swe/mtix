@@ -443,6 +443,12 @@ func (p *Pool) pullEventsOnce(ctx context.Context, sinceLamport int64, limit int
 // (MTIX-95.5), whose queries select the same columns in the same order, so
 // a pulled event and a swept one cannot decode differently. A NULL uid (an
 // event pushed by a CLI older than ADR-003 §7 Phase 3) leaves UID empty.
+//
+// A vector_clock that does not decode into counters (the column is JSONB, so
+// it is valid JSON, but not necessarily a map of integers) does not fail the
+// scan: that would fail the whole PullEvents or FetchEventsByID, and every
+// later pull with it. The event is returned with VectorClock nil and
+// Malformed saying what failed, and the pull quarantines it (MTIX-95.11).
 func scanHubEvent(rows pgx.Rows) (*model.SyncEvent, error) {
 	var e model.SyncEvent
 	var opType, payload, vc string
@@ -460,7 +466,8 @@ func scanHubEvent(rows pgx.Rows) (*model.SyncEvent, error) {
 	e.OpType = model.OpType(opType)
 	e.Payload = json.RawMessage(payload)
 	if err := json.Unmarshal([]byte(vc), &e.VectorClock); err != nil {
-		return nil, fmt.Errorf("decode VC for %s: %w", e.EventID, err)
+		e.VectorClock = nil
+		e.Malformed = fmt.Sprintf("vector_clock does not decode: %v", err)
 	}
 	return &e, nil
 }

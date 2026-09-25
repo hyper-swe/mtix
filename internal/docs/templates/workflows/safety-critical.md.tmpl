@@ -160,6 +160,7 @@ within a single hub instance.
 | **Daemon stops running** | No periodic pull/push; local queue grows. | Add a monitoring check (`systemctl is-active mtix-sync`) to your alerting; alert on `inactive`. |
 | **Schema mismatch** (developer running an older binary) | Sync operations refuse with a structured error mentioning the schema version. | Pin the team's mtix binary version in your dev env documentation; gate upgrades through the same change management you use for code. |
 | **Queue full** (`sync.max_queue_size` cap) | `ErrSyncQueueFull` returned to the caller of `mtix create`/`update`. Event NOT silently dropped. | Run `mtix sync push --force` to drain; or raise the cap. |
+| **Pulled event fails its checks or its apply** (FR-18.7 caps, the `sync.max_lamport_jump` bound, or a missing node or dependency target) | The pull quarantines the event in the local `sync_quarantine` table (raw event, reason, attempts) and applies the rest; it never advances the local clock. Every pull retries the quarantine. `mtix sync doctor` fails its `quarantined events` check while any remain. | Treat a quarantined event that stays after a pull as an incident: record `mtix sync quarantine list --json` in your compliance evidence and investigate the hub row. Never delete quarantine rows; raise `sync.max_lamport_jump` only after review. `mtix sync clone` refuses, naming the event and writing nothing, while the hub holds such an event: recover with `mtix sync reconcile --discard-local --yes`, then `mtix sync pull`, and record the refusal. |
 | **PG superuser disables triggers** | `audit_log` is mutable. mtix has no in-process detection. | Mitigated by the immutable backup archive: the cold-storage copy is the canonical history. Detect via routine archive-vs-hub comparison. |
 | **Hub backup upload fails** | Local SQL file remains on the operator machine. | Monitor your upload job; alert on failure. Do not delete the local file until upload is confirmed. |
 | **DSN leaked** | Every error / log / panic flows through `redact.DSN`; the DSN itself does not leak via mtix. But possession of the DSN by an attacker is still possession. | Rotate the PG password immediately; revoke the leaked role; review `pg_stat_activity` for unfamiliar sessions. |
@@ -207,7 +208,11 @@ within a single hub instance.
 
 This procedure is the canonical mtix DR runbook for the hub.
 Individual CLI loss is covered by `mtix sync clone` against the live
-hub.
+hub. Clone refuses, naming the event and writing nothing, while the hub
+holds an event that fails the checks `mtix sync pull` runs; then run
+`mtix sync pull` on the fresh store instead, which quarantines that
+event and applies the rest, and record the refusal in your compliance
+evidence.
 
 **Recovery objective:** restore the hub from the most recent
 immutable backup, with the full event log available for replay onto

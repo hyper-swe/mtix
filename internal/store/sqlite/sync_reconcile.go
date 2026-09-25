@@ -55,8 +55,8 @@ type auditEvent struct {
 	Extra     map[string]any `json:"extra,omitempty"`
 }
 
-// DiscardLocal drops the local mutable state (nodes, dependencies,
-// sync_events, sync_conflicts, applied_events) and resets the
+// DiscardLocal drops the local mutable state (nodes, dependencies, sync
+// events, conflicts, applied events, staged ids, quarantine) and resets the
 // meta.sync.* sentinels. The DB schema and meta keys remain — only
 // the data is cleared. Use when the user wants to take the hub's
 // state as the new ground truth.
@@ -82,6 +82,7 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			`DELETE FROM sync_conflicts`,
 			`DELETE FROM applied_events`,
 			`DELETE FROM sync_sweep_pending`,
+			`DELETE FROM sync_quarantine`, // pulled again from the hub (MTIX-95.11)
 			`DELETE FROM sync_events`,
 			`DELETE FROM dependencies`,
 			`DELETE FROM nodes`,

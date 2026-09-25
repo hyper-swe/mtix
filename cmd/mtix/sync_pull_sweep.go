@@ -31,7 +31,9 @@ import (
 //     lateEventSweepOverlap (or, on a store that has never swept, the full
 //     hub id history once), diffs each page against the ids this store
 //     holds (sync_events, its own events and every mirrored one, or
-//     applied_events), and stages the missing ids in the local
+//     applied_events) or has quarantined (sync_quarantine, MTIX-95.11:
+//     the quarantine retries those itself), and stages the missing ids in
+//     the local
 //     sync_sweep_pending table. It applies nothing: the listing order is
 //     not causal (one client's push gives all its events one created_at,
 //     and after a clock step-back or a renumbered create an edit can be
@@ -40,7 +42,10 @@ import (
 //     event by id, sorts them all into pull order (Lamport clock, then
 //     event id), which is causal, and applies them through applyPullBatch,
 //     the cursor loop's ingest path, removing each id from the staging
-//     table in its apply's transaction. Recovered events are late and
+//     table in its apply's transaction. A recovered event that fails its
+//     checks or its apply is quarantined like one from the cursor loop
+//     (MTIX-95.11, sync_pull_quarantine.go) and removed from the staging
+//     table in the same transaction. Recovered events are late and
 //     low-Lamport by construction, so a recovered claim, unclaim, defer or
 //     status change goes through the MTIX-95.10 workflow winner rule there
 //     and cannot revert newer status.
@@ -128,29 +133,30 @@ type sweepListing struct {
 
 // sweepLateEvents runs one late-event sweep after the cursor loop
 // (MTIX-95.5): the listing phase stages the missing ids, then the apply
-// phase applies every staged event in Lamport order. limit is the page size
-// for listing ids, fetching events and applying them.
+// phase applies every staged event in Lamport order, through the ingest
+// checks and quarantine of in (MTIX-95.11). limit is the page size for
+// listing ids, fetching events and applying them.
 // meta.sync.last_sweep_at advances only when the whole window has been
 // listed and nothing is left staged; a failed sweep resumes on the next
 // pull.
-func sweepLateEvents(ctx context.Context, stderr io.Writer, hub lateEventHub,
+func sweepLateEvents(ctx context.Context, in pullIngest, hub lateEventHub,
 	st *sqlite.Store, limit int,
 ) (lateEventSweep, error) {
-	window, err := readSweepWindow(ctx, stderr, st)
+	window, err := readSweepWindow(ctx, in.stderr, st)
 	if err != nil {
 		return lateEventSweep{}, err
 	}
-	announceSweep(stderr, window)
+	announceSweep(in.stderr, window)
 	listing, err := listLateEvents(ctx, hub, st, window, limit)
 	out := lateEventSweep{FullDiff: window.full}
 	if err != nil {
 		return out, err
 	}
 	if window.full {
-		fmt.Fprintf(stderr, "late-event sweep: compared %d hub event ids in %d pages\n",
+		fmt.Fprintf(in.stderr, "late-event sweep: compared %d hub event ids in %d pages\n",
 			listing.compared, listing.pages)
 	}
-	out.Recovered, err = applyStagedLateEvents(ctx, hub, st, limit)
+	out.Recovered, err = applyStagedLateEvents(ctx, in, hub, st, limit)
 	if err != nil {
 		return out, err
 	}
@@ -159,7 +165,7 @@ func sweepLateEvents(ctx context.Context, stderr io.Writer, hub lateEventHub,
 		return out, err
 	}
 	if !recorded {
-		fmt.Fprintln(stderr,
+		fmt.Fprintln(in.stderr,
 			"late-event sweep: another pull staged events meanwhile; a later pull applies them and records the sweep")
 	}
 	return out, nil
@@ -370,7 +376,9 @@ func stageLateEvents(ctx context.Context, st *sqlite.Store, staged []stagedLateE
 
 // missingLocalEventIDs returns, in the given order, the ids this store
 // holds in neither sync_events (its own events and every mirrored one) nor
-// applied_events.
+// applied_events, and has not quarantined (sync_quarantine, MTIX-95.11): a
+// quarantined event is already stored locally and the quarantine retries
+// it on every pull, so the sweep never fetches it again.
 func missingLocalEventIDs(ctx context.Context, st *sqlite.Store, ids []string) ([]string, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -381,11 +389,12 @@ func missingLocalEventIDs(ctx context.Context, st *sqlite.Store, ids []string) (
 	}
 	// Expand the page, passed as ONE JSON-array parameter, with json_each,
 	// so the SQL text is fixed whatever the page size; keep the ids found in
-	// neither local table (both keyed by event_id), in page order.
+	// none of the local tables (all keyed by event_id), in page order.
 	rows, err := st.Query(ctx, `
 		SELECT j.value FROM json_each(?) AS j
 		WHERE NOT EXISTS (SELECT 1 FROM sync_events s WHERE s.event_id = j.value)
 		  AND NOT EXISTS (SELECT 1 FROM applied_events a WHERE a.event_id = j.value)
+		  AND NOT EXISTS (SELECT 1 FROM sync_quarantine q WHERE q.event_id = j.value)
 		ORDER BY j.key`, string(page))
 	if err != nil {
 		return nil, fmt.Errorf("diff hub ids against local events: %w", err)

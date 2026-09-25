@@ -25,8 +25,12 @@ const schemaVersion = 4
 // Every CREATE is IF NOT EXISTS so this SQL is safe to re-run on every
 // startup. Migration from v1 (which has the OLD sync_events shape) drops
 // the legacy table BEFORE running this SQL — see migrateV1ToV2SQL and
-// the dispatch in store.init.
-const schemaSQL = `
+// the dispatch in store.init. The pulled-event quarantine table is kept in
+// schema_quarantine.go (MTIX-95.11).
+const schemaSQL = schemaCoreSQL + syncQuarantineSQL
+
+// schemaCoreSQL is schemaSQL without the tables kept in their own files.
+const schemaCoreSQL = `
 -- Core node storage (one row per task/micro task) per NFR-2.2
 CREATE TABLE IF NOT EXISTS nodes (
     id              TEXT PRIMARY KEY,

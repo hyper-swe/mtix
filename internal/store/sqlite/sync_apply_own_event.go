@@ -6,6 +6,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -20,9 +21,13 @@ import (
 // emitted, so applied_events alone cannot recognize them. An event whose
 // event_id is already in the local sync_events log, whatever its
 // sync_status, is one this replica already holds. It is acknowledged, not
-// applied: the Lamport and vector clocks are merged and the event is
-// recorded in applied_events (INSERT OR IGNORE), but it is never
-// dispatched, never mirrored and never logged as a conflict. Applying it
+// applied: the Lamport and vector clocks of the LOCAL sync_events row are
+// merged and the event is recorded in applied_events (INSERT OR IGNORE)
+// with the local row's Lamport clock, but it is never dispatched, never
+// mirrored and never logged as a conflict. The clocks come from the local
+// row, never from the pulled copy (MTIX-95.11): the hub row of an event
+// this replica pushed can be changed on the hub, and the local row is what
+// this replica emitted, so a changed copy cannot move the local clocks. Applying it
 // again would log a spurious LWW conflict against this replica's own
 // history and let a replayed claim, unclaim, defer or transition_status
 // overwrite newer local state.
@@ -35,39 +40,46 @@ import (
 // not hold; the caller then applies it through dispatchWithLWW (field LWW,
 // or the workflow winner rule for workflow events, MTIX-95.10).
 func acknowledgeHeldEvent(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) (bool, error) {
-	held, err := isHeldEvent(ctx, tx, event.EventID)
+	local, err := readHeldEvent(ctx, tx, event.EventID)
 	if err != nil {
 		return false, fmt.Errorf("apply %s: own-event check: %w", event.EventID, err)
 	}
-	if !held {
+	if local == nil {
 		return false, nil
 	}
-	if err := advanceLamport(ctx, tx, event.LamportClock); err != nil {
+	if err := advanceLamport(ctx, tx, local.LamportClock); err != nil {
 		return true, fmt.Errorf("apply %s: held event: advance lamport: %w", event.EventID, err)
 	}
-	if err := mergeVectorClock(ctx, tx, event.AuthorID, event.VectorClock); err != nil {
+	if err := mergeVectorClock(ctx, tx, local.AuthorID, local.VectorClock); err != nil {
 		return true, fmt.Errorf("apply %s: held event: merge VC: %w", event.EventID, err)
 	}
-	if err := recordApplied(ctx, tx, event); err != nil {
+	if err := recordApplied(ctx, tx, local); err != nil {
 		return true, fmt.Errorf("apply %s: held event: record applied: %w", event.EventID, err)
 	}
 	return true, nil
 }
 
-// isHeldEvent reports whether eventID is already in the local sync_events
-// log (MTIX-95.2). Any sync_status counts: pending, pushed or conflicted
-// (this replica emitted it) and applied (it was mirrored from the hub).
-func isHeldEvent(ctx context.Context, tx *sql.Tx, eventID string) (bool, error) {
-	var one int
+// readHeldEvent returns the clocks of eventID's row in the local
+// sync_events log (MTIX-95.2), or nil when this replica does not hold it.
+// Any sync_status counts: pending, pushed or conflicted (this replica
+// emitted it) and applied (it was mirrored from the hub). The returned
+// event carries only EventID, LamportClock, VectorClock and AuthorID: what
+// acknowledgeHeldEvent merges and records (MTIX-95.11).
+func readHeldEvent(ctx context.Context, tx *sql.Tx, eventID string) (*model.SyncEvent, error) {
+	held := model.SyncEvent{EventID: eventID}
+	var vc string
 	// Primary-key lookup on sync_events.event_id; the status is irrelevant.
 	err := tx.QueryRowContext(ctx,
-		`SELECT 1 FROM sync_events WHERE event_id = ?`, eventID,
-	).Scan(&one)
+		`SELECT lamport_clock, vector_clock, author_id FROM sync_events WHERE event_id = ?`, eventID,
+	).Scan(&held.LamportClock, &vc, &held.AuthorID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return nil, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("query sync_events: %w", err)
+		return nil, fmt.Errorf("query sync_events: %w", err)
 	}
-	return true, nil
+	if err := json.Unmarshal([]byte(vc), &held.VectorClock); err != nil {
+		return nil, fmt.Errorf("decode local vector_clock: %w", err)
+	}
+	return &held, nil
 }

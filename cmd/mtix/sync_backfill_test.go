@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -76,9 +77,130 @@ func TestRunSyncBackfill_RefusesWhenSyncEventsNonEmpty(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	err := runSyncBackfill(context.Background(), &stdout, &stderr, false, false)
 	require.Error(t, err)
-	// Helpful recovery hint is part of the contract.
-	require.Contains(t, err.Error(), "reconcile --discard-local",
-		"refusal message must point at the recovery path")
+	// MTIX-90: the refusal must NOT send the operator to the command that
+	// deletes every ticket. It may name it only to warn against it.
+	require.NotContains(t, err.Error(), "run 'mtix sync reconcile --discard-local'",
+		"refusal message must not recommend --discard-local")
+	require.Contains(t, err.Error(), "DELETES EVERY TICKET",
+		"refusal message must say what --discard-local actually does")
+	require.Contains(t, err.Error(), "mtix backup",
+		"refusal message must point at the safe first step")
+}
+
+// --- MTIX-95.45 (backport of MTIX-90, main 62e899f): operator guidance ---
+
+// normalizeGuidance lowercases text and collapses every run of
+// whitespace to one space, so an assertion about the guidance does not
+// depend on where the help text happens to wrap.
+func normalizeGuidance(text string) string {
+	return strings.ToLower(strings.Join(strings.Fields(text), " "))
+}
+
+// discardLocalRemedies returns each sentence of text that names
+// --discard-local without warning against it. MTIX-90: the backfill
+// guidance may name 'mtix sync reconcile --discard-local' only to say
+// that it deletes every ticket and must not be used; a sentence that
+// names it without both parts of that warning offers it as a remedy.
+func discardLocalRemedies(text string) []string {
+	var remedies []string
+	for _, sentence := range strings.Split(normalizeGuidance(text), ". ") {
+		if !strings.Contains(sentence, "--discard-local") {
+			continue
+		}
+		warns := strings.Contains(sentence, "deletes every ticket") &&
+			strings.Contains(sentence, "do not")
+		if !warns {
+			remedies = append(remedies, sentence)
+		}
+	}
+	return remedies
+}
+
+// TestSyncBackfillGuidance_SyncEventsNonEmpty_NeverOffersDiscardLocal pins
+// the MTIX-90 text fix on both operator-facing surfaces of the refusal:
+// the error formatBackfillError returns when sync_events is non-empty, and
+// the backfill help text newSyncBackfillCmd carries. Before the fix both
+// told the operator to re-backfill from scratch by running 'mtix sync
+// reconcile --discard-local' first, which runs DELETE FROM nodes and so
+// destroys every ticket in the store. Each surface must now warn against
+// that command wherever it names it, say that --force appends a second
+// history rather than regenerating, and (the refusal) point at a backup.
+//
+// The hidden --force flag's usage text is the third surface (MTIX-95.45):
+// it claimed the hub dedupes the duplicate by event_id so it is invisible
+// there, but --force mints fresh event ids (see the ported
+// e2e/sync_backfill_reparent_test.go characterization test), so it must
+// say that --force appends a second history and does not regenerate.
+func TestSyncBackfillGuidance_SyncEventsNonEmpty_NeverOffersDiscardLocal(t *testing.T) {
+	// The store wraps the sentinel; errors.Is must still select the
+	// guidance, so the test passes it wrapped the same way.
+	refusal := formatBackfillError(&bytes.Buffer{},
+		fmt.Errorf("backfill: %w", sqlite.ErrBackfillSyncEventsNonEmpty))
+	require.Error(t, refusal)
+	forceFlag := newSyncBackfillCmd().Flags().Lookup("force")
+	require.NotNil(t, forceFlag)
+
+	tests := []struct {
+		name      string
+		text      string
+		required  []string
+		forbidden []string
+	}{
+		{
+			name: "refusal error",
+			text: refusal.Error(),
+			required: []string{
+				"'mtix sync reconcile --discard-local'",
+				"--force appends a second history rather than replacing the first",
+				"no supported way to regenerate",
+				"deletes every ticket in this store",
+				"do not use it for this",
+				"back up first with 'mtix backup <path>'",
+				"re-run 'mtix sync push'",
+			},
+		},
+		{
+			name: "help text",
+			text: newSyncBackfillCmd().Long,
+			required: []string{
+				"'mtix sync reconcile --discard-local'",
+				"--force does not regenerate",
+				"appends a second history alongside the first",
+				"no supported regenerate path yet",
+				"deletes every ticket in this store",
+			},
+		},
+		{
+			name: "force flag usage",
+			text: forceFlag.Usage,
+			required: []string{
+				"does not regenerate",
+				"appends a second history alongside the first",
+				"fresh event ids",
+			},
+			// The duplicate is neither deduplicated nor hidden on the hub.
+			forbidden: []string{"dedupe", "invisible", "duplicate event_id"},
+		},
+	}
+	forbidden := []string{
+		"re-backfill from scratch",
+		"run 'mtix sync reconcile --discard-local'",
+		"--discard-local' first",
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeGuidance(tt.text)
+			require.Empty(t, discardLocalRemedies(tt.text),
+				"every mention of --discard-local must warn that it deletes every ticket and must not be used")
+			for _, phrase := range append(append([]string{}, forbidden...), tt.forbidden...) {
+				require.NotContainsf(t, got, phrase,
+					"the guidance must not say %q", phrase)
+			}
+			for _, phrase := range tt.required {
+				require.Containsf(t, got, phrase, "the guidance must say %q", phrase)
+			}
+		})
+	}
 }
 
 // --- Dry-run ---

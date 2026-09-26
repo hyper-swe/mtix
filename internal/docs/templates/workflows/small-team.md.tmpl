@@ -105,14 +105,15 @@ CREATE on the schema is needed whenever `mtix sync init` runs: the first
 run, after an upgrade that adds a migration, and in the restore runbook.
 
 These statements are for PostgreSQL 15 and later. The superuser that runs
-them owns the hub database; `mtix_sync` owns only the objects
-`mtix sync init` creates, and its privileges on schema `public` are the
-ones granted here.
+them owns the hub database, which grants CREATE on schema `public` only to
+the roles named here; `mtix_sync` owns only the objects `mtix sync init`
+creates, and its privileges on schema `public` are the ones granted here.
 
 ```sql
 CREATE ROLE mtix_sync LOGIN PASSWORD 'set-a-strong-one';
 CREATE DATABASE mtix_hub;
 \c mtix_hub
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT CONNECT ON DATABASE mtix_hub TO mtix_sync;
 GRANT USAGE, CREATE ON SCHEMA public TO mtix_sync;
 ```

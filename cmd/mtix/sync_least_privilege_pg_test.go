@@ -613,8 +613,9 @@ const (
 	initCreateSentence = "CREATE on the schema is needed whenever `mtix sync init` runs: the first run, " +
 		"after an upgrade that adds a migration, and in the restore runbook."
 	hubOwnershipSentence = "These statements are for PostgreSQL 15 and later. The superuser that runs them " +
-		"owns the hub database; `mtix_sync` owns only the objects `mtix sync init` creates, and its " +
-		"privileges on schema `public` are the ones granted here."
+		"owns the hub database, which grants CREATE on schema `public` only to the roles named here; " +
+		"`mtix_sync` owns only the objects `mtix sync init` creates, and its privileges on schema `public` " +
+		"are the ones granted here."
 	initCreateBetweenRuns = "Between runs of `mtix sync init` you may drop schema-level CREATE, and grant it " +
 		"again before the next run:"
 )
@@ -625,30 +626,39 @@ const (
 	documentedDatabase = "mtix_hub"
 )
 
-// The line forms the workflow's setup and between-runs SQL blocks may hold
-// (MTIX-95.1.8). createRoleLine is recognised but not run: the test makes
-// the role itself and never sends a password (directive SQL Rule 1a).
-var (
-	createRoleLine = regexp.MustCompile("^CREATE ROLE " + documentedRole + " LOGIN PASSWORD '[^']+';$")
-	connectLine    = `\c ` + documentedDatabase
-	runnableLine   = regexp.MustCompile("^(?:CREATE DATABASE " + documentedDatabase + "(?: OWNER " + documentedRole + ")?" +
-		"|GRANT CONNECT ON DATABASE " + documentedDatabase + " TO " + documentedRole +
-		"|(?:GRANT|REVOKE) (?:USAGE|CREATE)(?:, (?:USAGE|CREATE))* ON SCHEMA public (?:TO|FROM) " + documentedRole + ");$")
-	blockComment = "-- before the next mtix sync init:"
-)
+// sqlForm is one line form the workflow's setup and between-runs SQL blocks
+// may hold: its name, its pattern, and whether the test runs it. The role's
+// CREATE ROLE line is recognised but not run: the test makes the role
+// itself and never sends a password (directive SQL Rule 1a) (MTIX-95.1.8).
+type sqlForm struct {
+	name    string
+	pattern *regexp.Regexp
+	run     bool
+}
 
-// sqlStep is one line of a workflow SQL block that the test acts on.
+// sqlForms are the recognised forms, by name.
+var sqlForms = []sqlForm{
+	{"create role", regexp.MustCompile("^CREATE ROLE " + documentedRole + " LOGIN PASSWORD '[^']+';$"), false},
+	{"create database", regexp.MustCompile("^CREATE DATABASE " + documentedDatabase + "(?: OWNER " + documentedRole + ")?;$"), true},
+	{"connect", regexp.MustCompile(`^\\c ` + documentedDatabase + "$"), false},
+	{"revoke create from public", regexp.MustCompile("^REVOKE CREATE ON SCHEMA public FROM PUBLIC;$"), true},
+	{"grant connect", regexp.MustCompile("^GRANT CONNECT ON DATABASE " + documentedDatabase + " TO " + documentedRole + ";$"), true},
+	{"schema privileges", regexp.MustCompile("^(?:GRANT|REVOKE) (?:USAGE|CREATE)(?:, (?:USAGE|CREATE))* " +
+		"ON SCHEMA public (?:TO|FROM) " + documentedRole + ";$"), true},
+	{"comment", regexp.MustCompile("^-- before the next mtix sync init:$"), false},
+}
+
+// sqlStep is one line of a workflow SQL block.
 type sqlStep struct {
-	connect  bool   // `\c mtix_hub`: the next statements run in the hub database
-	template string // else a statement, %1$I for the database and %2$I for the role
+	form     string // the name of its sqlForm
+	template string // for a form the test runs: %1$I for the database, %2$I for the role
 }
 
 // sqlBlockAfter returns the steps of the first SQL block that follows
 // sentence in doc, however doc wraps the sentence. Every non-blank line
-// must be a form the test recognises; any other line, in any letter case,
-// fails the test. Statements become templates for hardenFixture.ddl, whose
-// format() fills in the names on the server (directive SQL Rule 1a)
-// (MTIX-95.1.8).
+// must be a recognised form; any other line, in any letter case, fails the
+// test. Statements become templates for hardenFixture.ddl, whose format()
+// fills in the names on the server (directive SQL Rule 1a) (MTIX-95.1.8).
 func sqlBlockAfter(t *testing.T, doc, sentence string) []sqlStep {
 	t.Helper()
 	words := strings.Fields(sentence)
@@ -664,16 +674,30 @@ func sqlBlockAfter(t *testing.T, doc, sentence string) []sqlStep {
 	names := strings.NewReplacer(documentedDatabase, "%1$I", documentedRole, "%2$I")
 	var out []sqlStep
 	for _, line := range strings.Split(block, "\n") {
-		line = strings.TrimSpace(line)
-		switch {
-		case line == "" || line == blockComment || createRoleLine.MatchString(line):
-		case line == connectLine:
-			out = append(out, sqlStep{connect: true})
-		case runnableLine.MatchString(line):
-			out = append(out, sqlStep{template: names.Replace(strings.TrimSuffix(line, ";"))})
-		default:
-			require.Failf(t, "unrecognised line in the workflow's SQL", "%q", line)
+		if line = strings.TrimSpace(line); line == "" {
+			continue
 		}
+		step := sqlStep{}
+		for _, f := range sqlForms {
+			if f.pattern.MatchString(line) {
+				step.form = f.name
+				if f.run {
+					step.template = names.Replace(strings.TrimSuffix(line, ";"))
+				}
+				break
+			}
+		}
+		require.NotEmptyf(t, step.form, "unrecognised line in the workflow's SQL: %q", line)
+		out = append(out, step)
+	}
+	return out
+}
+
+// formCounts counts the steps of each form.
+func formCounts(steps []sqlStep) map[string]int {
+	out := map[string]int{}
+	for _, s := range steps {
+		out[s.form]++
 	}
 	return out
 }
@@ -694,10 +718,11 @@ func (f *hardenFixture) database(name string) *hardenFixture {
 // documentedHub runs the workflow's setup steps as the superuser, the
 // administrative role the workflow names, with a new database name and
 // role in place of the documented ones, and returns a fixture on the hub
-// database they create. Statements before `\c` run in the fixture's own
-// database. PUBLIC then loses its privileges on schema public, so the
-// role's privileges there are the ones the workflow grants (MTIX-95.1.8).
-func documentedHub(t *testing.T, f *hardenFixture, steps []sqlStep, role string) *hardenFixture {
+// database they create; statements before `\c` run in the fixture's own
+// database. With publicCreate, the new database's schema public grants
+// CREATE to PUBLIC before the statements after `\c` run, as in a database
+// whose template carries that grant (MTIX-95.1.8).
+func documentedHub(t *testing.T, f *hardenFixture, steps []sqlStep, role string, publicCreate bool) *hardenFixture {
 	t.Helper()
 	name := "mtix_hub_" + hardenRandomHex(t, 6)
 	var hub *hardenFixture
@@ -709,15 +734,18 @@ func documentedHub(t *testing.T, f *hardenFixture, steps []sqlStep, role string)
 	})
 	at := f
 	for _, s := range steps {
-		if s.connect {
+		switch {
+		case s.form == "connect":
 			hub = f.database(name)
 			at = hub
-			continue
+			if publicCreate {
+				hub.exec(`GRANT CREATE ON SCHEMA public TO PUBLIC`)
+			}
+		case s.template != "":
+			at.ddl(s.template, name, role)
 		}
-		at.ddl(s.template, name, role)
 	}
 	require.NotNil(t, hub, "the setup connects to the hub database")
-	hub.exec(`REVOKE ALL ON SCHEMA public FROM PUBLIC`)
 	return hub
 }
 
@@ -727,6 +755,17 @@ func schemaPrivileges(t *testing.T, f *hardenFixture, role string) string {
 	t.Helper()
 	got := f.strings(`SELECT pg_catalog.has_schema_privilege($1, 'public', 'USAGE')::text
 		|| ' ' || pg_catalog.has_schema_privilege($1, 'public', 'CREATE')::text`, role)
+	require.Len(t, got, 1)
+	return got[0]
+}
+
+// grantedSchemaPrivileges lists, sorted and comma-separated, the privileges
+// on schema public granted to role itself, "" for none (MTIX-95.1.8).
+func grantedSchemaPrivileges(t *testing.T, f *hardenFixture, role string) string {
+	t.Helper()
+	got := f.strings(`SELECT COALESCE(string_agg(a.privilege_type, ',' ORDER BY a.privilege_type), '')
+		FROM pg_catalog.pg_namespace n, pg_catalog.aclexplode(n.nspacl) a
+		WHERE n.nspname = 'public' AND a.grantee = $1::regrole`, role)
 	require.Len(t, got, 1)
 	return got[0]
 }
@@ -751,33 +790,22 @@ func pullsAs(t *testing.T, f *hardenFixture, role string) {
 	require.NoError(t, err, "the role pulls between runs of mtix sync init")
 }
 
-// TestSmallTeamPrivileges_SyncInitOnMigratedHub_NeedsSchemaCreate: the
-// small-team workflow says the role that runs `mtix sync init` needs CREATE
-// on the schema whenever init runs, that the superuser owns the hub
-// database, and that the role may drop CREATE between runs. The test runs
-// the workflow's own SQL, the database and role renamed: the setup block as
-// the superuser, then the first init as the role; after the between-runs
-// REVOKE the role keeps USAGE, holds no CREATE, creates no table, still
-// pulls, and init on the migrated hub fails with PostgreSQL's refusal on
-// the schema; after the GRANT that precedes the next run, init runs
+// initsBetweenRuns sets up a hub with the workflow's setup steps, runs the
+// first init as the role, then the between-runs steps: after the REVOKE
+// the role holds USAGE and no CREATE on schema public, creates no table
+// there, still pulls, and cannot run init; after the GRANT, init runs
 // (MTIX-95.1.8).
-func TestSmallTeamPrivileges_SyncInitOnMigratedHub_NeedsSchemaCreate(t *testing.T) {
-	raw := readRepoFile(t, smallTeamPath)
-	small := strings.Join(strings.Fields(raw), " ")
-	for _, sentence := range []string{initCreateSentence, hubOwnershipSentence, initCreateBetweenRuns} {
-		require.Truef(t, strings.Contains(small, sentence), "the small-team workflow states %q", sentence)
-	}
-	setup := sqlBlockAfter(t, raw, initCreateSentence)
-	between := sqlBlockAfter(t, raw, initCreateBetweenRuns)
-	require.Len(t, between, 2, "the between-runs SQL drops CREATE, then grants it before the next run")
-
+func initsBetweenRuns(t *testing.T, setup, between []sqlStep, publicCreate bool) {
+	t.Helper()
 	initTestApp(t)
 	f := newHardenFixture(t)
 	role := f.role("sync")
-	hub := documentedHub(t, f, setup, role)
+	hub := documentedHub(t, f, setup, role, publicCreate)
+	require.Equal(t, "CREATE,USAGE", grantedSchemaPrivileges(t, hub, role), "the setup grants USAGE and CREATE")
 	require.NoError(t, syncInitAs(t, hub, role), "the first init runs with the setup grants")
 	hub.ddl(between[0].template, hub.dbName, role)
-	require.Equal(t, "true false", schemaPrivileges(t, hub, role), "between runs the role keeps USAGE and holds no CREATE")
+	require.Equal(t, "USAGE", grantedSchemaPrivileges(t, hub, role), "the between-runs REVOKE leaves the role USAGE")
+	require.Equal(t, "true false", schemaPrivileges(t, hub, role), "between runs the role holds USAGE and no CREATE")
 	err := hub.tryAs(role, `CREATE TABLE public.mtixt_between_runs (id integer)`)
 	require.Error(t, err, "between runs the role creates no table in the schema")
 	require.Contains(t, err.Error(), "permission denied for schema public")
@@ -788,4 +816,47 @@ func TestSmallTeamPrivileges_SyncInitOnMigratedHub_NeedsSchemaCreate(t *testing.
 
 	hub.ddl(between[1].template, hub.dbName, role)
 	require.NoError(t, syncInitAs(t, hub, role), "init runs once CREATE is granted again")
+}
+
+// TestSmallTeamPrivileges_SyncInitOnMigratedHub_NeedsSchemaCreate: the
+// small-team workflow says the role that runs `mtix sync init` needs CREATE
+// on the schema whenever init runs, that the superuser owns the hub
+// database, which grants CREATE on schema public only to the roles named,
+// and that the role may drop CREATE between runs. Its setup block holds
+// each statement once. The test runs the workflow's own SQL, the database
+// and role renamed, on a new database as PostgreSQL 15 creates it and on
+// one whose schema public grants CREATE to PUBLIC; on both, CREATE is the
+// role's only while the workflow grants it (MTIX-95.1.8).
+func TestSmallTeamPrivileges_SyncInitOnMigratedHub_NeedsSchemaCreate(t *testing.T) {
+	raw := readRepoFile(t, smallTeamPath)
+	small := strings.Join(strings.Fields(raw), " ")
+	for _, sentence := range []string{initCreateSentence, hubOwnershipSentence, initCreateBetweenRuns} {
+		require.Truef(t, strings.Contains(small, sentence), "the small-team workflow states %q", sentence)
+	}
+	setup := sqlBlockAfter(t, raw, initCreateSentence)
+	require.Equal(t, map[string]int{"create role": 1, "create database": 1, "connect": 1,
+		"revoke create from public": 1, "grant connect": 1, "schema privileges": 1}, formCounts(setup),
+		"the setup SQL holds each statement once")
+	between := sqlBlockAfter(t, raw, initCreateBetweenRuns)
+	require.Equal(t, map[string]int{"schema privileges": 2, "comment": 1}, formCounts(between),
+		"the between-runs SQL drops CREATE, then grants it before the next run")
+	var runs []sqlStep
+	for _, s := range between {
+		if s.template != "" {
+			runs = append(runs, s)
+		}
+	}
+
+	tests := []struct {
+		name         string
+		publicCreate bool
+	}{
+		{"new database as PostgreSQL 15 creates it", false},
+		{"new database whose schema public grants CREATE to PUBLIC", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			initsBetweenRuns(t, setup, runs, tt.publicCreate)
+		})
+	}
 }

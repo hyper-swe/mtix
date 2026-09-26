@@ -102,7 +102,7 @@ func runDecomposeChildren(parentID string, children []service.DecomposeInput) er
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	ids, err := app.nodeSvc.Decompose(ctx, parentID, children, "cli")
 	if err != nil {
 		return err

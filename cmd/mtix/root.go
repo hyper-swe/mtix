@@ -52,6 +52,9 @@ type appContext struct {
 	jsonOutput bool
 	mtixDir    string // Path to .mtix directory, set during initApp.
 	authorID   string // Resolved author identity for this process (MTIX-24): MTIX_AUTHOR_ID > author_id config > "cli".
+	// payloadWarnings collects mutation-time wire-cap warnings when a hub is
+	// configured; nil otherwise (MTIX-95.12, sync_payload_warning.go).
+	payloadWarnings *sqlite.PayloadWarnings
 }
 
 // global app context set during PersistentPreRunE.
@@ -103,7 +106,7 @@ prompt chain propagation, and multi-agent orchestration.`,
 				// errored (skipping this path) are picked up by the next one.
 				app.hooksDisp.Dispatch(cmd.Context())
 			}
-			return closeApp()
+			return finishCommand(cmd) // payload warnings (MTIX-95.12), then closeApp
 		},
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -290,7 +293,7 @@ func initApp(_ *cobra.Command, logLevel string) error {
 	app.bgSvc = service.NewBackgroundService(app.store, app.configSvc, app.logger, clock)
 	app.syncSvc = newSyncService(clock)
 	app.hooksDisp = service.NewHooksDispatcher(app.store, mtixDir, app.logger)
-	app.mtixDir = mtixDir
+	setProjectDir(mtixDir) // app.mtixDir and, with a hub, app.payloadWarnings (MTIX-95.12)
 
 	return nil
 }

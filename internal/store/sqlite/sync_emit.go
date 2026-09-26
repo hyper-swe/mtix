@@ -64,7 +64,9 @@ type emitParams struct {
 // property hinges on it. Returns model.ErrInvalidInput on validation
 // failure (callers should not hide these — a buggy emitter is worse than
 // a missing event). Returns model.ErrSyncQueueFull if the local queue
-// has reached the configured cap.
+// has reached the configured cap. An event whose payload is over the sync
+// wire cap is still written, and reported to the context's PayloadWarnings
+// collector, if any (afterEmit, warnOversizedPayload, MTIX-95.12).
 func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 	if err := enforceQueueLimit(ctx, tx); err != nil {
 		return err
@@ -144,7 +146,7 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 		return fmt.Errorf("emit %s: insert sync_events: %w", p.OpType, err)
 	}
 
-	if err := maybeRecordHookOrigin(ctx, tx, event.EventID); err != nil {
+	if err := afterEmit(ctx, tx, event); err != nil {
 		return fmt.Errorf("emit %s: %w", p.OpType, err)
 	}
 	return nil

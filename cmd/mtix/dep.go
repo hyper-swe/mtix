@@ -54,7 +54,7 @@ func runDepAdd(fromID, toID, depType string) error {
 		DepType: model.DepType(depType),
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.store.AddDependency(ctx, dep); err != nil {
 		return err
 	}
@@ -94,7 +94,7 @@ func runDepRemove(fromID, toID, depType string) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.store.RemoveDependency(ctx, fromID, toID, model.DepType(depType)); err != nil {
 		return err
 	}

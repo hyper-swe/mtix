@@ -310,8 +310,8 @@ func (s *Store) init(ctx context.Context) error {
 		return err
 	}
 
-	if _, err := s.writeDB.ExecContext(ctx, schemaSQL); err != nil {
-		return fmt.Errorf("create schema: %w", err)
+	if err := s.createSchema(ctx); err != nil {
+		return err
 	}
 
 	// Deterministic UID backfill for pre-v3 rows, then a backfill uid for

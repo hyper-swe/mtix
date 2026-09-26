@@ -4,7 +4,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -36,7 +35,7 @@ func runComment(id, text, to string) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.promptSvc.AddAnnotation(ctx, id, text, "cli", to); err != nil {
 		return err
 	}

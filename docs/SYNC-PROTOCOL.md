@@ -655,6 +655,14 @@ pull` first, and to list them with `mtix sync quarantine list`.
 The table is created with `CREATE TABLE IF NOT EXISTS` the next time
 mtix opens the store (no schema version change) and is local only.
 
+The same table holds the events push holds back, with source `push`
+(see [Push: held events](#push-held-events)). The pull side leaves those
+rows alone: the quarantine retry skips them, `CountQuarantined` (status,
+doctor, pull's summary) counts only pulled rows, `RemoveQuarantined`
+never deletes a push row, and the clone reset (`ClearQuarantine`) keeps
+them. `mtix sync reconcile --discard-local` empties the whole table,
+push rows included, together with `sync_events`.
+
 ## Idempotent apply
 
 A replica applies each event at most once. `event_id` is the dedupe
@@ -780,6 +788,174 @@ keeps working without the new index (pulls stay correct, only slower).
   `cmd/mtix/sync_pull.go` (pull is read-only on the hub so larger
   batches are safe).
 
+## Push: held events
+
+`cmd/mtix/sync_push.go` (`pushLoop`, `readPendingBatch`),
+`cmd/mtix/sync_push_hold.go`, `internal/store/postgres/transport/push_validate.go`
+and `internal/store/sqlite/sync_push_hold.go` (MTIX-95.12, review F-15).
+`PushEvents` refuses a whole batch that holds an invalid event (FR-18.7),
+and the local field limits allow more than the 64 KB payload cap (a new
+task's prompt may be 100 KB; acceptance, comments and later edits of a
+description or prompt are not size-limited locally). Before 0.5.4 one such
+event failed its batch on every push, and because it stayed at the head
+of the queue the client stopped pushing altogether.
+
+1. **Settle first.** Every push starts with `releasePushHolds`
+   (`cmd/mtix/sync_push_hold_release.go`), which settles the push rows
+   before any event is read. It reads every push hold in one query
+   (`sqlite.HeldPushEvents`, which also resolves the task each held event
+   is about: the node whose uid is the event's uid, through
+   `idx_nodes_uid`). A temporary clock hold is validated again at the
+   store's clock, and one that passes is released. Every dependent hold is
+   then re-evaluated with the subtree rule below, in queue order (Lamport
+   order, where a task's creation precedes every event of its subtree made
+   on this replica): kept with its nearest held creation's reason
+   (relabeled when that changed) while one is left above it (for a link,
+   while one is left before it); otherwise validated with
+   `transport.ValidatePushEvent` and released if it passes. A dependent that fails stays held under its own reason, its row
+   (first_seen, attempts) kept, and a creation among those keeps blocking
+   its own subtree; the pass is then run again with those kept, which
+   releases nothing new. So a creation whose clock hold cleared is
+   released together with every valid event of its subtree, and the push
+   that released them sends them as ordinary pending events. A released
+   creation is removed only from the keys it was filed under (a reverse
+   index), so releasing many is linear. Every clock hold and dependent
+   that stays has an attempt counted. Releases are one statement
+   (`ReleasePushHolds`), the attempts one statement per kind over the
+   holds left (`NotePushHoldAttempts`), and relabels one update per
+   relabeled hold (`SetPushHoldReasons`).
+2. **The subtree rule** (`cmd/mtix/sync_push_hold_rule.go`). In 0.5.x an
+   event names its task by display number (`node_id`) only, so a teammate
+   who created a task with the same number would apply another replica's
+   events for that number to their own task (review r1 S0). While a
+   task's creation is held, none of the changes of its subtree are sent:
+   push holds an event, before any other check, when the task it is about
+   is the held creation's task or lies below it in the local tree now,
+   including a creation held earlier in the same batch and an event made
+   after the last push. The task an event is about is the node whose uid
+   is the event's `uid` (`sqlite.PushSubjects` for a batch, read only when
+   a creation is held or the batch has a refused one), soft-deleted or
+   not; its current number and the held creation's current number are
+   compared by dot-path prefix. A renumber (an import merge or a settle on
+   this machine, or one the hub asks for during a push) moves a whole
+   subtree and keeps uids, so an event made under an earlier number is
+   still found, and a task that later takes an old number is not held
+   (review r5 S1, S2). A held creation's task can carry a uid its event
+   does not (run 2, review r1 S1, S2): a merge import can give it the
+   file's uid (MTIX-95.31.6, 95.31.9), and a creation queued before events
+   carried a `uid` has none, while the pre-v3 backfill set the task's uid
+   to the creation's event id. So the task a creation created is the node
+   with the event's uid, else, for an event without one, the node whose
+   uid is the event id, else the node at the number the event names
+   (`PushSubject.TaskNodeID`; a soft-deleted node counts in each step),
+   and the held creation is filed under that task's current number, where
+   every later change of the task, whatever uid it carries, and its
+   subtree are found; a task that has taken that number since is held
+   too. Known limit: when a task found by that number is then renumbered
+   on this machine, its events that no push checked before the renumber
+   are not recognized (MTIX-95.31.16 carries an adopted uid onto unpushed
+   events). An event of a task whose own creation is held is
+   held by its uid alone, node or not. Any other event without a `uid`,
+   or whose uid no node has any more (`mtix gc` purged the task), is
+   checked by the number it names against the number each held creation's
+   event names and its current number. A held event also stays held while
+   the creation its reason names is held (`heldFor`), so a purge cannot
+   release what a push already held. Known limit: a change made under a
+   number from a local renumber, first checked after `mtix gc` purged its
+   task, is not recognized. A `link_dep` or `unlink_dep` names its target by number only,
+   and no record of a task's earlier numbers is kept, so while any
+   creation is held, every link or unlink after the earliest held creation
+   in queue order (Lamport clock, then event id) is held, with the reason
+   `depends on held create of <event id> (<node>): links made while a task
+   creation is held wait for it; this version names a link's target by
+   number`; it is released once no creation before it is held. Any other
+   event's reason names the nearest held creation: `depends on held create
+   of <event id> (<node>)`. The held creations are filed under their
+   tasks' current numbers, which a renumber changes (one the hub asks for
+   in this push, or one another process, such as `mtix import --mode merge
+   --confirm`, commits while the push runs), so `heldIndex` makes every
+   decision with the index and the batch's tasks read at the same data
+   version: it reads `PRAGMA data_version` on the write connection (which
+   changes only when another connection commits) BEFORE it reads the held
+   creations, for the push's first index before the release step and for
+   every later read; it decides a batch (`decideBatch`, which reads the
+   batch's tasks), then reads the version again; if it changed, it reads
+   the held creations again and decides the batch again, until the version
+   holds still (at most 16 reads, then the push fails and asks to be run
+   again), and only then records the batch's holds. A renumber the hub
+   asked for in this push marks the index stale, and the next batch reads
+   it again first. Once a clock hold on a creation clears, the creation and the
+   changes of its subtree go through the ordinary push, where a renumber
+   by the hub is a known limit of this version: `RenumberForHubRejection`
+   re-stamps only the creation, so the changes sent with it keep the old
+   number (MTIX-95.37). A permanently held creation keeps its whole
+   subtree held.
+3. **Per-event validation.** Every other pending event is checked with
+   `transport.ValidatePushEvent`, which runs `validator.Validate`, the rule
+   set `PushEvents` applies to every event of a batch, against the store's
+   clock. The batch validation inside `PushEvents` is unchanged and still
+   refuses a whole invalid batch.
+4. **Hold.** An invalid event is recorded in `sync_quarantine` with source
+   `push`, the event JSON and a reason whose prefix gives its kind
+   (`sqlite.HoldPushEvents`): `temporary: clock: ...` for the FR-18.8
+   future-stamp rule, the only rule that depends on the clock; `too large:
+   ...` for a payload over the cap, with its size, the limit and the field
+   that makes up most of it (`validator.LargestPayloadField`: the
+   update_field name, else the largest payload key, with `prompt_text`,
+   `acceptance_text` and `body` reported as prompt, acceptance and
+   comment); `refused: ...` for any other rule (depth, grammar, caps). The
+   event's `sync_events` row stays `pending`; nothing deletes it.
+5. **The rest pushes.** Only the events that are not held are sent.
+   The pending reads leave out every event with a push hold (a
+   `NOT EXISTS` probe of `sync_quarantine`) and continue after the last
+   event read (a Lamport clock and event id cursor, reset after a
+   renumber re-queues a creation), so held events never occupy a batch
+   again and are passed over once per push, however many there are. A batch whose events were all
+   held makes progress by holding them; one that neither sends nor newly
+   holds anything ends the loop.
+6. **Permanent holds stay.** A `too large` or `refused` hold is never
+   validated again, and the subtree of such a held creation stays held. A field
+   edit is fixed by a new edit, which emits a new event; a held creation
+   has no automatic re-send in this release. No command releases or
+   discards a single held event.
+
+**Mutation-time warning.** `emitEvent` calls `warnOversizedPayload` for
+every event it writes; for a `create_node` the line says the creation
+will be held with every later change of it and must not be edited
+to fix it, and for any other op it says to shorten or split the field. When the payload is over `validator.MaxPayloadBytes`
+and the context carries a `sqlite.PayloadWarnings` collector, it records
+the node, op, field, size and limit; the mutation is never refused. The
+CLI installs a collector in the context of each mutation command when a
+hub is configured (`MTIX_SYNC_DSN` or `.mtix/secrets`) and prints one
+`WARN:` line per event on stderr after the command succeeds; the MCP tool
+registry does the same per tool call and appends the line to a successful
+result as a text block. The REST API, the web UI and gRPC (`mtix serve`)
+install no collector, so their changes are not warned about; push still
+holds their events. Imports (`store.Import`, used by `mtix import` and the
+automatic import of `.mtix/tasks.json`) write tasks without sync events, so
+nothing they write is pushed, held or warned about.
+
+**Surfaces.** Push prints `push: held event <id> (<node> <op>), not
+pushed: <reason>` on stderr for each newly held event, `push: released held
+event <id> ...` for each hold it releases, and `held: N events not pushed
+...` on stdout at the end. `mtix sync status` shows `held push
+events` (`held_push_events` in `--json`); held events stay in `pending`.
+`mtix sync doctor` has a `held push events` check that fails while any is
+held and lists up to five as `<node> <op>: <fix> (reason: <reason>)`, the
+fix chosen from the op and the reason's kind (`heldPushGuidance`: a
+link made while a creation is held waits until no creation before it is
+held; any other dependent resolves with the held creation it depends on;
+a clock hold waits for its stamp to be within 24 h of the clock; a held `create_node` is escalated; a field edit over the cap is
+shortened or split), then the list command; its `queue draining` check
+leaves held events out. `mtix sync quarantine list` shows them
+(`"source": "push"` in `--json`).
+
+**Schema.** The `source` CHECK of `sync_quarantine` allows `push`. A
+table created by an earlier development build with the narrower CHECK is
+rebuilt once, rows kept, when mtix opens the store
+(`widenQuarantineSource`); no schema version change, no protocol change,
+no hub change.
+
 ## Push lock (single-flight per CLI)
 
 `internal/sync/pushlock` is a filesystem advisory lock at
@@ -812,6 +988,10 @@ pending  -- on emit
    v  push succeeds (event_id accepted by hub)
 pushed   -- terminal
 ```
+
+A pending event push holds (see [Push: held events](#push-held-events))
+keeps `sync_status = 'pending'`; the hold is the `sync_quarantine` row
+with source `push`, and pending reads leave it out.
 
 Pull operations do NOT touch `sync_status` on the local row; they INSERT
 into `applied_events` to dedupe future re-pulls. Events that the local

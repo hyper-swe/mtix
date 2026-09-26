@@ -265,7 +265,9 @@ type quarantineRetry struct{ applied, dropped, held int }
 // before any check; an event that applies leaves the quarantine; one that
 // fails again stays, with the attempt counted. It reads and writes only
 // the local store. Pull runs it before contacting the hub and again at the
-// end of a pull that applied events.
+// end of a pull that applied events. Held push events (source push,
+// MTIX-95.12) share the table but are own events push holds back: the
+// retry skips them.
 func retryQuarantinedEvents(ctx context.Context, in pullIngest, st *sqlite.Store, limit int) (quarantineRetry, error) {
 	var out quarantineRetry
 	var after *sqlite.QuarantineKey
@@ -323,6 +325,9 @@ func retryQuarantinePage(ctx context.Context, in pullIngest, st *sqlite.Store,
 	err = st.WithTx(ctx, func(tx *sql.Tx) error {
 		applied, dropped = 0, 0
 		for _, q := range page {
+			if q.Source == sqlite.QuarantineSourcePush {
+				continue // a held push event, not a pulled one (MTIX-95.12)
+			}
 			outcome, retryErr := retryQuarantined(ctx, tx, in, q)
 			if retryErr != nil {
 				return retryErr

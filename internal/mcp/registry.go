@@ -27,6 +27,9 @@ type ToolRegistry struct {
 	tools    map[string]registeredTool
 	order    []string // Preserves registration order for listing.
 	readOnly bool     // MTIX-2.1.3: when true, only ScopeRead tools are listed/callable.
+	// payloadWarnings, when set and true, adds wire-cap warnings to tool
+	// results (MTIX-95.12, payload_warnings.go).
+	payloadWarnings func() bool
 }
 
 // SetReadOnly restricts this registry to read-scoped tools (MTIX-2.1.3). A
@@ -96,6 +99,7 @@ func (r *ToolRegistry) Call(ctx context.Context, name string, args json.RawMessa
 	r.mu.RLock()
 	tool, ok := r.tools[name]
 	readOnly := r.readOnly
+	warnings := r.payloadWarnings
 	r.mu.RUnlock()
 
 	if !ok {
@@ -109,7 +113,7 @@ func (r *ToolRegistry) Call(ctx context.Context, name string, args json.RawMessa
 			ErrReadOnly, name, tool.def.Scope)
 	}
 
-	return tool.handler(ctx, args)
+	return callWithPayloadWarnings(ctx, warnings, tool.handler, args)
 }
 
 // Count returns the number of registered tools.

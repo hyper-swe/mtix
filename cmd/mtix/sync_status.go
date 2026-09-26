@@ -50,6 +50,9 @@ type SyncStatus struct {
 	// quarantine, not applied (sync_quarantine, MTIX-95.11). Every pull
 	// retries them.
 	QuarantinedEvents int `json:"quarantined_events"`
+	// HeldPushEvents counts own events push holds (sync_quarantine source
+	// push, MTIX-95.12); they are also counted in Pending.
+	HeldPushEvents int `json:"held_push_events"`
 }
 
 // newSyncStatusCmd creates `mtix sync status` per FR-18 / MTIX-15.7.3.
@@ -194,6 +197,7 @@ func printStatusTable(w io.Writer, st SyncStatus) error {
 		{"applied", strconv.Itoa(st.Applied)},
 		{"open conflicts", strconv.Itoa(st.OpenConflicts)},
 		{"quarantined events", strconv.Itoa(st.QuarantinedEvents)},
+		{"held push events", strconv.Itoa(st.HeldPushEvents)},
 		{"", ""},
 		{"local lamport", strconv.FormatInt(st.Lamport, 10)},
 		{"last pulled clock", strconv.FormatInt(st.LastPulled, 10)},

@@ -30,6 +30,14 @@ After a `git pull`, the next CLI command (for example `mtix list`) imports a cha
 - `mtix import .mtix/tasks.json --mode merge` keeps comments and activity from both sides and decides the field values per task: when the task's content (title, description, prompt, acceptance, labels) matches the file's, yours win, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid. It can undo a teammate's claim or your own unclaim.
 - A conflict although you changed nothing locally (after an upgrade from 0.5.3 or earlier): run `mtix sync --fix`, then `git checkout HEAD -- .mtix/tasks.json`, then `mtix list`, which imports the board with the loss check. Never stop after `mtix sync --fix`: alone, it drops every change in the file.
 
+## Corruption recovery
+
+When `mtix export` or the automatic import of `.mtix/tasks.json` fails because a stored node field cannot be read, or mtix reports an integrity error at startup: copy `.mtix/data/` aside, then run `mtix recover`. It reads the database read-only and writes `.mtix/recovered-<time>.json` with a report.
+
+- A task whose comments, activity, `code_refs` or `commit_refs` cannot be read gets that field from its copy in `.mtix/tasks.json` when the copy is usable (the only task under that id, the same uid when both carry one, `schema_version` 2.0.0 or later, times that pass the import checks); the report says `restored from the mirror <path>`. The copy is from the last successful export, so later changes are not in it.
+- Otherwise the report says the field is dropped and why, and the task is salvaged without it.
+- Show the human every dropped or restored field before `mtix import --mode replace` of the salvage file.
+
 ## Configuration
 
 ```bash

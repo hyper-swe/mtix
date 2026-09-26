@@ -39,6 +39,48 @@ func TestRunRecover_HealthyProject_WritesImportableExport(t *testing.T) {
 	assert.True(t, valid)
 }
 
+// TestRunRecover_CommentCellCorrupted_RestoresCommentFromMirror is the
+// reviewer's end-to-end scenario (MTIX-95.31.3): mtix comment on a task,
+// the automatic export writes .mtix/tasks.json, the task's annotations cell
+// is then corrupted, and mtix recover writes a salvage file whose copy of
+// the task holds the comment, taken from .mtix/tasks.json.
+func TestRunRecover_CommentCellCorrupted_RestoresCommentFromMirror(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, runCreate("recover mirror column fixture", "", "", 3, "", "", "", "", ""))
+	require.NoError(t, runComment("TEST-1", "review PASS: evidence attached", ""))
+	require.NoError(t, app.syncSvc.AutoExport(t.Context(), app.mtixDir))
+	require.FileExists(t, filepath.Join(app.mtixDir, "tasks.json"))
+
+	_, err := app.store.WriteDB().ExecContext(t.Context(),
+		`UPDATE nodes SET annotations = ? WHERE id = ?`, `[{"id":"torn`, "TEST-1")
+	require.NoError(t, err)
+	require.NoError(t, app.store.Close())
+
+	outPath, err := runRecover()
+	require.NoError(t, err)
+	raw, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	var data struct {
+		Nodes []struct {
+			ID          string `json:"id"`
+			Annotations []struct {
+				Text string `json:"text"`
+			} `json:"annotations"`
+		} `json:"nodes"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &data))
+	var texts []string
+	for _, n := range data.Nodes {
+		if n.ID == "TEST-1" {
+			for _, a := range n.Annotations {
+				texts = append(texts, a.Text)
+			}
+		}
+	}
+	assert.Equal(t, []string{"review PASS: evidence attached"}, texts,
+		"the comment is restored from .mtix/tasks.json")
+}
+
 // TestRunRecover_NoProject_Errors: outside a project there is nothing to
 // salvage and the command must say so.
 func TestRunRecover_NoProject_Errors(t *testing.T) {

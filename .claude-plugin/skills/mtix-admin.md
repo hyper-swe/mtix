@@ -52,7 +52,7 @@ Call `mcp__mtix__mtix_import` with the export file path and mode:
 
 Import writes nothing when the schema version (a higher major version than this mtix writes), the node count, the checksum or any time value (RFC 3339, UTC year 1 to 9999; the required ones not empty) fails its check; the error names what failed. A refused import leaves `.mtix/tasks.json` untouched.
 
-If an export, or the automatic import of a changed `.mtix/tasks.json`, fails because a stored node field cannot be read, the error names the node, the field and `mtix recover`: nothing was imported, and local changes are kept. Run `mtix recover` to salvage everything readable (see its report) before importing again.
+If an export, or the automatic import of a changed `.mtix/tasks.json`, fails because a stored node field cannot be read, the error names the node, the field and `mtix recover`: nothing was imported, and local changes are kept. Run `mtix recover` to salvage everything readable (see its report) before importing again. For such a field (comments, activity, `code_refs`, `commit_refs`), `mtix recover` takes the value from the task's copy in `.mtix/tasks.json` when that copy is usable (the only task under that id, the same uid when both carry one, `schema_version` 2.0.0 or later, times that pass the import checks), and its report says `restored from the mirror <path>` with the number of entries; the copy is from the last successful export, so later changes are not in it. Otherwise the report says the field is dropped and why, and the task is salvaged without it. Show the human every dropped or restored field before the salvage file is imported.
 
 **Import protocol:**
 1. Run `mcp__mtix__mtix_backup` first

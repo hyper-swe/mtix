@@ -85,7 +85,7 @@ func (f *sweepFixture) editPeer(t *testing.T, n int) {
 func (f *sweepFixture) pushPeer(t *testing.T) {
 	t.Helper()
 	var stderr bytes.Buffer
-	_, _, _, _, err := pushLoop(context.Background(), &stderr, f.pool, app.store)
+	_, err := pushLoop(context.Background(), &stderr, f.pool, app.store)
 	require.NoError(t, err, "peer push: %s", stderr.String())
 }
 
@@ -96,7 +96,7 @@ func (f *sweepFixture) pushB(t *testing.T) []*model.SyncEvent {
 	pending, err := readPendingBatch(ctx, f.b, 1000)
 	require.NoError(t, err)
 	var stderr bytes.Buffer
-	_, _, _, _, err = pushLoop(ctx, &stderr, f.pool, f.b)
+	_, err = pushLoop(ctx, &stderr, f.pool, f.b)
 	require.NoError(t, err, "B push: %s", stderr.String())
 	return pending
 }

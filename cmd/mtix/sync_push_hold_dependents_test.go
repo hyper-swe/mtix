@@ -44,7 +44,7 @@ func TestPushLoop_HeldCreateCollision_TeammateTaskIntact(t *testing.T) {
 	require.NoError(t, runUpdate("TEST-1", "A retitled its task", "", "", "", 0, "", ""))
 	hub := newFakePushHub()
 	var stderr bytes.Buffer
-	_, _, _, _, err := pushLoop(ctx, &stderr, hub, app.store)
+	_, err := pushLoop(ctx, &stderr, hub, app.store)
 	require.NoError(t, err)
 
 	t.Setenv(sqlite.AuthorIDEnv, "agent-b")
@@ -91,7 +91,7 @@ func TestPushLoop_HeldCreate_DependentsHeld(t *testing.T) {
 		{"edit of a grandchild, the child held by an earlier push", true, func(t *testing.T) {
 			require.NoError(t, runCreate("child", "TEST-1", "", 3, "", "", "", "", ""))
 			var stderr bytes.Buffer
-			_, _, _, _, err := pushLoop(context.Background(), &stderr, newFakePushHub(), app.store)
+			_, err := pushLoop(context.Background(), &stderr, newFakePushHub(), app.store)
 			require.NoError(t, err)
 			require.NoError(t, runCreate("grandchild", "TEST-1.1", "", 3, "", "", "", "", ""))
 			require.NoError(t, runUpdate("TEST-1.1.1", "grandchild retitled", "", "", "", 0, "", ""))
@@ -120,11 +120,11 @@ func TestPushLoop_HeldCreate_DependentsHeld(t *testing.T) {
 			hub := newFakePushHub()
 			var stderr bytes.Buffer
 			if tt.pushFirst {
-				_, _, _, _, err := pushLoop(ctx, &stderr, hub, app.store)
+				_, err := pushLoop(ctx, &stderr, hub, app.store)
 				require.NoError(t, err)
 			}
 			tt.mutate(t)
-			_, _, _, _, err := pushLoop(ctx, &stderr, hub, app.store)
+			_, err := pushLoop(ctx, &stderr, hub, app.store)
 			require.NoError(t, err)
 
 			if !tt.held {
@@ -166,7 +166,7 @@ func TestPushLoop_FutureStampedCreate_TemporaryHoldReleased(t *testing.T) {
 
 			hub := newFakePushHub()
 			var stderr bytes.Buffer
-			pushed, _, _, _, err := pushLoop(ctx, &stderr, hub, app.store)
+			pushed, _, _, _, err := pushLoopCounts(ctx, &stderr, hub, app.store)
 			require.NoError(t, err)
 			require.Equal(t, 1, pushed, "only TEST-1 pushes")
 			held := quarantined(t)
@@ -178,7 +178,7 @@ func TestPushLoop_FutureStampedCreate_TemporaryHoldReleased(t *testing.T) {
 			}
 			next := newFakePushHub()
 			stderr.Reset()
-			pushed, _, _, _, err = pushLoop(ctx, &stderr, next, app.store)
+			pushed, _, _, _, err = pushLoopCounts(ctx, &stderr, next, app.store)
 			require.NoError(t, err)
 			if !tt.fixed {
 				require.Zero(t, pushed)
@@ -221,7 +221,7 @@ func TestPushLoop_InvalidDependent_KeepsDependsReason(t *testing.T) {
 			tt.mutate(t)
 			hub := newFakePushHub()
 			var stderr bytes.Buffer
-			_, _, _, _, err := pushLoop(context.Background(), &stderr, hub, app.store)
+			_, err := pushLoop(context.Background(), &stderr, hub, app.store)
 			require.NoError(t, err)
 			requireHeldDependent(t, hub, "TEST-1", tt.op, root)
 		})

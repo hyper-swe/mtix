@@ -54,11 +54,11 @@ const (
 )
 
 // eventPusher is the hub surface pushLoop sends batches through;
-// *transport.Pool implements it. Tests pass a fake hub (MTIX-95.12).
+// *transport.Pool implements it. Tests pass a fake hub (MTIX-95.12). The
+// result tells the events the hub inserted from the events it already held
+// (MTIX-95.3).
 type eventPusher interface {
-	PushEventsWithRenumbers(ctx context.Context, events []*model.SyncEvent) (
-		acceptedIDs []string, conflicts []transport.ConflictDescriptor,
-		renumbers []transport.RenumberRequired, err error)
+	PushEventsResult(ctx context.Context, events []*model.SyncEvent) (transport.PushResult, error)
 }
 
 // batchHolds is what push decided for one pending batch: the events to

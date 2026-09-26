@@ -26,7 +26,7 @@ import (
 func pushWith(t *testing.T, hub *fakePushHub) error {
 	t.Helper()
 	var stderr bytes.Buffer
-	_, _, _, _, err := pushLoop(context.Background(), &stderr, hub, app.store)
+	_, err := pushLoop(context.Background(), &stderr, hub, app.store)
 	return err
 }
 

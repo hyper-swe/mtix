@@ -7,10 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
-	"github.com/hyper-swe/mtix/internal/sync/validator"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -27,8 +25,9 @@ type ConflictDescriptor struct {
 
 // PushEvents validates the batch and inserts each event into
 // sync_events under the caller's retry/backoff envelope. Returns the
-// IDs that landed (after ON CONFLICT DO NOTHING dedupe) plus any
-// concurrency conflicts detected against pre-existing events.
+// IDs the hub now holds (inserted, or already there with the same node,
+// op and payload: MTIX-95.3) plus any concurrency conflicts detected
+// against pre-existing events.
 //
 // This is the field-level-conflict view kept for callers that predate
 // the node registry. It DISCARDS the renumber-required outcomes; callers
@@ -41,8 +40,10 @@ type ConflictDescriptor struct {
 // Validation happens BEFORE the transaction opens; an invalid batch
 // returns immediately with no PG side effects.
 //
-// Idempotent: re-pushing the same events is a no-op (the event_id PK
-// + ON CONFLICT DO NOTHING short-circuits duplicates).
+// Idempotent: re-pushing the same events writes nothing (the event_id PK
+// + ON CONFLICT DO NOTHING short-circuits duplicates), and reports them
+// accepted, so a pusher that lost the first acknowledgement marks them
+// pushed (MTIX-95.3).
 func (p *Pool) PushEvents(ctx context.Context, events []*model.SyncEvent) (
 	acceptedIDs []string, conflicts []ConflictDescriptor, err error,
 ) {
@@ -88,48 +89,30 @@ func (p *Pool) PushEventsWithRenumbers(ctx context.Context, events []*model.Sync
 //
 // No node is lost: a blocked create stays in the pusher's canonical local
 // store (ADR-003 §9). Atomicity and idempotency match PushEvents.
+//
+// The accepted IDs are PushResult.Accepted of PushEventsResult: the events
+// inserted and the events the hub already held (MTIX-95.3). An event whose
+// id the hub holds with other content is not accepted.
 func (p *Pool) PushEventsWithCollisions(ctx context.Context, events []*model.SyncEvent) (
 	acceptedIDs []string, conflicts []ConflictDescriptor,
 	renumbers []RenumberRequired, collisions []RestoreCollision, err error,
 ) {
-	if len(events) == 0 {
-		return nil, nil, nil, nil, nil
-	}
-	// Validate before touching the pool: caller-side bugs surface even
-	// when the pool is misconfigured.
-	if vErr := validator.ValidateBatch(events, time.Now().UTC(), nil); vErr != nil {
-		return nil, nil, nil, nil, fmt.Errorf("PushEvents validate: %w", vErr)
-	}
-	if p == nil || p.p == nil {
-		return nil, nil, nil, nil, fmt.Errorf("PushEvents: pool not open")
-	}
-
-	cfg := DefaultRetryConfig()
-	err = retryWithBackoff(ctx, cfg, func(ctx context.Context) error {
-		ids, conf, ren, col, opErr := p.pushEventsOnce(ctx, events)
-		if opErr != nil {
-			return opErr
-		}
-		acceptedIDs = ids
-		conflicts = conf
-		renumbers = ren
-		collisions = col
-		return nil
-	})
+	res, err := p.PushEventsResult(ctx, events)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("PushEvents: %w", err)
+		return nil, nil, nil, nil, err
 	}
-	return acceptedIDs, conflicts, renumbers, collisions, nil
+	return res.Accepted(), res.Conflicts, res.Renumbers, res.Collisions, nil
 }
 
-// pushEventsOnce runs one PG transaction's worth of pushes. Wrapped
-// by retryWithBackoff in PushEvents.
-func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
-	[]string, []ConflictDescriptor, []RenumberRequired, []RestoreCollision, error,
-) {
+// pushEventsOnce runs one PG transaction's worth of pushes. Wrapped by
+// retryWithBackoff in PushEventsResult, which runs it again from the start
+// after a transient error, a failed or unacknowledged COMMIT included: the
+// retry then finds the events the lost commit wrote already on the hub,
+// and ackPresent acknowledges them (MTIX-95.3, review F-80).
+func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (PushResult, error) {
 	tx, err := p.p.Begin(ctx)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("begin: %w", err)
+		return PushResult{}, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
@@ -139,7 +122,7 @@ func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
 	// consistent with the rows this push inserts.
 	currentEpoch, err := readRestoreEpoch(ctx, tx)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return PushResult{}, err
 	}
 
 	acc := &pushAccum{
@@ -155,8 +138,14 @@ func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
 
 	for _, e := range events {
 		if err := p.pushOneEvent(ctx, tx, e, acc); err != nil {
-			return nil, nil, nil, nil, err
+			return PushResult{}, err
 		}
+	}
+	// One query for the whole batch finds which of the events whose INSERT
+	// inserted no row the hub already holds, and acknowledges each one whose
+	// hub copy has the same node, op and payload (MTIX-95.3, ADR-006 D7).
+	if err := ackPresent(ctx, tx, acc); err != nil {
+		return PushResult{}, err
 	}
 
 	// Record the calling CLI's version for each project touched, in the
@@ -164,22 +153,28 @@ func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (
 	// when no client identity is set (SetClientIdentity not called).
 	for prefix := range acc.seenPrefixes {
 		if err := p.recordClientOnPush(ctx, tx, prefix); err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("record client for %s: %w", prefix, err)
+			return PushResult{}, fmt.Errorf("record client for %s: %w", prefix, err)
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("commit: %w", err)
+	if err := p.commitPush(ctx, tx); err != nil {
+		return PushResult{}, fmt.Errorf("commit: %w", err)
 	}
-	return acc.accepted, acc.conflicts, acc.renumbers, acc.collisions, nil
+	return acc.result(), nil
 }
 
 // pushAccum accumulates one push transaction's outcomes across events so
 // pushEventsOnce stays a thin loop and per-event handling lives in
 // pushOneEvent. seenPrefixes and batchClaims are the cross-event state
 // (version-gate projects and intra-batch number claims, ADR-003 §6.1/F-1).
+// inserted, present and mismatches are the per-event acknowledgement
+// outcomes (MTIX-95.3); notInserted holds, in batch order, the events whose
+// INSERT inserted no row, for ackPresent to resolve with one query.
 type pushAccum struct {
-	accepted     []string
+	inserted     []string
+	present      []string
+	mismatches   []PresenceMismatch
+	notInserted  []*model.SyncEvent
 	conflicts    []ConflictDescriptor
 	renumbers    []RenumberRequired
 	collisions   []RestoreCollision
@@ -194,8 +189,12 @@ type pushAccum struct {
 // pushOneEvent runs the registry check, conflict detection, and insert for a
 // single event, folding the results into acc. It short-circuits a create
 // that the registry resolves to a renumber or a no-op (ADR-003 §6/§9) before
-// any insert.
+// any insert. An event whose INSERT inserts no row, because its event_id is
+// already on the hub, waits for the batch's presence check and is not
+// checked for conflicts again (MTIX-95.3).
 func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, acc *pushAccum) error {
+	// Every outcome below touches the event's project, for the version gate.
+	acc.seenPrefixes[e.ProjectPrefix] = struct{}{}
 	// Registry check (ADR-003 §6/§9), keyed on the node's stable uid
 	// (ADR-003 §2): a create_node for an already-held (project,
 	// display_path) is either the SAME logical node (a no-op — e.g. a
@@ -218,12 +217,10 @@ func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, 
 			return recErr
 		}
 		acc.collisions = append(acc.collisions, *outcome.restoreCollision)
-		acc.seenPrefixes[e.ProjectPrefix] = struct{}{}
 		return nil
 	}
 	if outcome.renumber != nil {
 		acc.renumbers = append(acc.renumbers, *outcome.renumber)
-		acc.seenPrefixes[e.ProjectPrefix] = struct{}{}
 		return nil
 	}
 	if outcome.noop {
@@ -235,17 +232,11 @@ func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, 
 		// It IS reported accepted so the pusher marks it pushed and stops
 		// re-sending — the hub has absorbed it. Without this, a --force
 		// re-backfill would loop forever re-pushing a never-acknowledged
-		// event (the hang this ticket fixes).
-		acc.accepted = append(acc.accepted, e.EventID)
-		acc.seenPrefixes[e.ProjectPrefix] = struct{}{}
+		// event (the hang this ticket fixes). It is counted as already on
+		// the hub, since this push inserts nothing for it (MTIX-95.3).
+		acc.present = append(acc.present, e.EventID)
 		return nil
 	}
-
-	conf, err := detectConflicts(ctx, tx, e)
-	if err != nil {
-		return fmt.Errorf("detect conflicts for %s: %w", e.EventID, err)
-	}
-	acc.conflicts = append(acc.conflicts, conf...)
 
 	vcJSON, err := json.Marshal(e.VectorClock)
 	if err != nil {
@@ -274,11 +265,25 @@ func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, 
 	if err != nil {
 		return fmt.Errorf("insert %s: %w", e.EventID, err)
 	}
-	if tag.RowsAffected() == 1 {
-		acc.accepted = append(acc.accepted, e.EventID)
+	// ON CONFLICT (event_id) DO NOTHING inserted no row: the event_id is
+	// already on the hub. The event goes to the batch's presence check
+	// (ackPresent), which acknowledges it only when the hub copy matches
+	// (MTIX-95.3, ADR-006 D7). Its conflicts are not detected again: they
+	// were recorded when it was inserted, and recording them once more per
+	// re-push would count each conflict twice.
+	if tag.RowsAffected() != 1 {
+		acc.notInserted = append(acc.notInserted, e)
+		return nil
 	}
-	acc.seenPrefixes[e.ProjectPrefix] = struct{}{}
+	acc.inserted = append(acc.inserted, e.EventID)
 
+	// Conflict detection runs after the insert and leaves the event itself
+	// out (event_id <> $2), so it sees the same prior events as before it.
+	conf, err := detectConflicts(ctx, tx, e)
+	if err != nil {
+		return fmt.Errorf("detect conflicts for %s: %w", e.EventID, err)
+	}
+	acc.conflicts = append(acc.conflicts, conf...)
 	return persistConflicts(ctx, tx, conf)
 }
 

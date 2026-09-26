@@ -25,6 +25,14 @@ type Pool struct {
 	// does not record a client row (see UpsertProjectClient).
 	clientMachineHash string
 	clientCLIVersion  string
+
+	// afterCommit is a test seam (MTIX-95.3, review F-80). When set, it runs
+	// after a push transaction's COMMIT succeeded, and its error is returned
+	// in place of the commit's, as a lost commit acknowledgement would be:
+	// the rows are committed, the caller sees an error, and the retry
+	// envelope runs the whole transaction again. Nil in production; only
+	// tests set it (export_for_test.go).
+	afterCommit func() error
 }
 
 // SetClientIdentity records the calling CLI's machine hash and build

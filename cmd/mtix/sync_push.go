@@ -115,10 +115,12 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 }
 
 // pushAndReport runs pushLoop against pool, records the outcome for the
-// hub-unreachable counter and prints the summary: the pushed, renumbered
-// and conflict counts, then how many events push holds (MTIX-95.12).
+// hub-unreachable counter and prints the summary: the pushed count, split
+// into the events the hub inserted and the events it already held
+// (MTIX-95.3), the renumbered and conflict counts, then how many events push
+// holds (MTIX-95.12).
 func pushAndReport(ctx context.Context, stdout, stderr io.Writer, pool eventPusher, store *sqlite.Store) error {
-	pushed, batches, conflicts, renumbered, err := pushLoop(ctx, stderr, pool, store)
+	tot, err := pushLoop(ctx, stderr, pool, store)
 	if err != nil {
 		noteSyncResult(ctx, store, false)
 		return wrapSyncErr(stderr, "push loop", err)
@@ -126,8 +128,9 @@ func pushAndReport(ctx context.Context, stdout, stderr io.Writer, pool eventPush
 	noteSyncResult(ctx, store, true)
 
 	fmt.Fprintf(stdout,
-		"push complete: %d events pushed across %d batches; %d renumbered, %d conflicts surfaced\n",
-		pushed, batches, renumbered, conflicts)
+		"push complete: %d events pushed across %d batches (%d inserted, %d already on the hub); "+
+			"%d renumbered, %d conflicts surfaced\n",
+		tot.pushed(), tot.batches, tot.inserted, tot.present, tot.renumbered, tot.conflicts)
 	printHeldPushEvents(ctx, stdout, stderr, store)
 	return nil
 }
@@ -150,56 +153,92 @@ func pushAndReport(ctx context.Context, stdout, stderr io.Writer, pool eventPush
 // (releasePushHolds): a stamp that is no longer too far ahead, and the
 // valid events of the subtree of a creation released that way, which then
 // go through this push as ordinary pending events.
+//
+// An event already on the hub is acknowledged and marked pushed like an
+// inserted one (MTIX-95.3, ADR-006 D7): its first push reached the hub, but
+// the local mark was lost (a lost commit acknowledgement, a crash or disk
+// failure before markPushed, a retry after a network drop). Before, the hub
+// acknowledged nothing for such an event, so it stayed pending, and a full
+// batch of them at the head of the queue stopped the push at the
+// no-progress guard with everything behind it unsent. Each batch's progress
+// line and the returned totals count inserted and already-present events
+// apart. An event whose id the hub holds with other content is held
+// instead (holdMismatches) and counts as progress, since it leaves the
+// queue's reads.
 func pushLoop(ctx context.Context, stderr io.Writer,
 	pool eventPusher, store *sqlite.Store,
-) (totalPushed, batches, totalConflicts, totalRenumbered int, err error) {
+) (pushTotals, error) {
+	var tot pushTotals
 	idx, err := newHeldIndex(ctx, stderr, store)
 	if err != nil {
-		return 0, 0, 0, 0, fmt.Errorf("release push holds: %w", err)
+		return tot, fmt.Errorf("release push holds: %w", err)
 	}
 	var after pendingCursor // read on past each batch, held events included
 	for {
 		events, err := readPendingBatchFrom(ctx, store, after, pushBatchSize)
 		if err != nil {
-			return totalPushed, batches, totalConflicts, totalRenumbered,
-				fmt.Errorf("read pending batch %d: %w", batches+1, err)
+			return tot, fmt.Errorf("read pending batch %d: %w", tot.batches+1, err)
 		}
 		if len(events) == 0 {
-			return totalPushed, batches, totalConflicts, totalRenumbered, nil
+			return tot, nil
 		}
 		after = cursorAfter(events)
 		events, held, err := idx.holdBatch(ctx, stderr, store, events)
 		if err != nil {
-			return totalPushed, batches, totalConflicts, totalRenumbered,
-				fmt.Errorf("hold invalid events of batch %d: %w", batches+1, err)
+			return tot, fmt.Errorf("hold invalid events of batch %d: %w", tot.batches+1, err)
 		}
 		if len(events) == 0 {
 			if held == 0 {
-				return totalPushed, batches, totalConflicts, totalRenumbered, nil
+				return tot, nil
 			}
 			continue // every event of the batch is now held; read on past them
 		}
-		acceptedIDs, conflicts, renumbers, err := pushBatch(ctx, pool, store, events, batches+1)
+		res, mismatched, err := pushBatch(ctx, stderr, pool, store, events, tot.batches+1)
 		if err != nil {
-			return totalPushed, batches, totalConflicts, totalRenumbered, err
+			return tot, err
 		}
-		if len(renumbers) > 0 {
+		if len(res.Renumbers) > 0 {
 			after = pendingCursor{} // re-queued creates keep their clock: read them again
-			idx.stale = true        // the renumbers moved subtrees: read the held creations again
 		}
-		totalPushed += len(acceptedIDs)
-		totalConflicts += len(conflicts)
-		totalRenumbered += len(renumbers)
-		batches++
-		fmt.Fprintf(stderr, "push progress: batch %d (%d sent, %d accepted, %d renumbered, %d conflicts)\n",
-			batches, len(events), len(acceptedIDs), len(renumbers), len(conflicts))
-		// No-progress guard: a batch that neither accepted nor renumbered any
-		// event (e.g. pure conflicts) makes no headway — stop so the loop can
-		// never spin forever.
-		if len(acceptedIDs) == 0 && len(renumbers) == 0 {
-			return totalPushed, batches, totalConflicts, totalRenumbered, nil
+		// The renumbers moved subtrees, and a held mismatch may be a task's
+		// creation, which holds its subtree: read the held creations again.
+		idx.stale = idx.stale || len(res.Renumbers)+mismatched > 0
+		tot.add(res, mismatched)
+		fmt.Fprintf(stderr, "push progress: batch %d (%d sent, %d accepted: %d inserted, %d already on the hub; "+
+			"%d renumbered, %d conflicts)\n", tot.batches, len(events), len(res.Inserted)+len(res.AlreadyPresent),
+			len(res.Inserted), len(res.AlreadyPresent), len(res.Renumbers), len(res.Conflicts))
+		// No-progress guard: a batch that neither acknowledged (inserted or
+		// already on the hub, MTIX-95.3), renumbered nor held any event (e.g.
+		// pure conflicts) makes no headway — stop so the loop can never spin
+		// forever.
+		if len(res.Inserted)+len(res.AlreadyPresent)+len(res.Renumbers)+mismatched == 0 {
+			return tot, nil
 		}
 	}
+}
+
+// pushTotals counts what one push did (MTIX-95.3): the events the hub
+// inserted and the events it already held, both marked pushed; the batches
+// sent; the renumbers and conflicts; and the events held because the hub
+// holds their id with other content.
+type pushTotals struct {
+	inserted, present, batches, conflicts, renumbered, mismatched int
+}
+
+// pushed returns how many events the push marked pushed.
+func (t pushTotals) pushed() int {
+	return t.inserted + t.present
+}
+
+// add counts one pushed batch: its result res and the mismatched events
+// it held.
+func (t *pushTotals) add(res transport.PushResult, mismatched int) {
+	t.batches++
+	t.inserted += len(res.Inserted)
+	t.present += len(res.AlreadyPresent)
+	t.conflicts += len(res.Conflicts)
+	t.renumbered += len(res.Renumbers)
+	t.mismatched += mismatched
 }
 
 // readPendingBatch returns up to limit pending events in lamport order,
@@ -249,23 +288,41 @@ func readPendingBatchFrom(ctx context.Context, store *sqlite.Store, after pendin
 // already held, so the next free sibling is re-claimed, the node renumbered
 // locally and the create re-queued ('pending') so a later batch carries a
 // distinct number. batch numbers the batch in errors.
-func pushBatch(ctx context.Context, pool eventPusher, store *sqlite.Store,
+//
+// The accepted events are the ones the hub inserted and the ones it already
+// held (MTIX-95.3): an event whose earlier push committed on the hub but
+// was never marked here, because the mark failed or the process stopped,
+// is marked by the next push. An event whose id the hub holds with another
+// node, op or payload is never marked: it is held (holdMismatches). It
+// returns the hub's result and how many events it newly held.
+func pushBatch(ctx context.Context, stderr io.Writer, pool eventPusher, store *sqlite.Store,
 	events []*model.SyncEvent, batch int,
-) ([]string, []transport.ConflictDescriptor, []transport.RenumberRequired, error) {
-	acceptedIDs, conflicts, renumbers, err := pool.PushEventsWithRenumbers(ctx, events)
+) (transport.PushResult, int, error) {
+	res, err := pool.PushEventsResult(ctx, events)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("push batch %d: %w", batch, err)
+		return transport.PushResult{}, 0, fmt.Errorf("push batch %d: %w", batch, err)
 	}
-	if err := markPushed(ctx, store, acceptedIDs); err != nil {
-		return nil, nil, nil, fmt.Errorf("mark pushed batch %d: %w", batch, err)
+	if markErr := markPushed(ctx, store, res.Accepted()); markErr != nil {
+		return transport.PushResult{}, 0, fmt.Errorf("mark pushed batch %d: %w", batch, markErr)
 	}
-	for _, r := range renumbers {
+	mismatched, err := holdMismatches(ctx, stderr, store, events, res.Mismatches)
+	if err != nil {
+		return transport.PushResult{}, 0, fmt.Errorf("hold mismatched events of batch %d: %w", batch, err)
+	}
+	for _, r := range res.Renumbers {
 		if _, err := store.RenumberForHubRejection(ctx, r.EventID); err != nil {
-			return nil, nil, nil, fmt.Errorf("resolve renumber for %s (batch %d): %w", r.EventID, batch, err)
+			return transport.PushResult{}, 0, fmt.Errorf("resolve renumber for %s (batch %d): %w", r.EventID, batch, err)
 		}
 	}
-	return acceptedIDs, conflicts, renumbers, nil
+	return res, mismatched, nil
 }
+
+// markPushedFailKey is the context key of a test seam (MTIX-95.3): a
+// func([]string) error under it runs before markPushed writes, with the ids
+// to mark, and an error it returns is markPushed's, as a local failure
+// after the hub committed the batch would be (a crash, a full disk). Push
+// never sets it.
+type markPushedFailKey struct{}
 
 // markPushed updates sync_status from 'pending' to 'pushed' for every
 // event_id the hub accepted. Done in a single tx for atomicity; if
@@ -274,6 +331,11 @@ func pushBatch(ctx context.Context, pool eventPusher, store *sqlite.Store,
 func markPushed(ctx context.Context, store *sqlite.Store, acceptedIDs []string) error {
 	if len(acceptedIDs) == 0 {
 		return nil
+	}
+	if fail, ok := ctx.Value(markPushedFailKey{}).(func([]string) error); ok {
+		if err := fail(acceptedIDs); err != nil {
+			return err
+		}
 	}
 	return store.WithTx(ctx, func(tx *sql.Tx) error {
 		for _, id := range acceptedIDs {

@@ -342,7 +342,7 @@ func TestPushLoop_RenumberCommittedBeforeBatchTasksRead_BatchDecidedAgain(t *tes
 	})
 
 	var stderr bytes.Buffer
-	_, _, _, _, err := pushLoop(ctx, &stderr, hub, app.store)
+	_, err := pushLoop(ctx, &stderr, hub, app.store)
 	require.NoError(t, err)
 	requireHeldDependent(t, hub, "TEST-1.1", model.OpCreateNode, root)
 	requireHeldDependent(t, hub, "TEST-1.1", model.OpUpdateField, eventIDFor(t, "TEST-1.1", model.OpCreateNode))

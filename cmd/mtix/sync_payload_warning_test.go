@@ -117,7 +117,7 @@ func requireHeldAtPush(t *testing.T, node string, op model.OpType, field string)
 	t.Helper()
 	id := eventIDFor(t, node, op)
 	var stderr bytes.Buffer
-	_, _, _, _, err := pushLoop(context.Background(), &stderr, newFakePushHub(), app.store)
+	_, err := pushLoop(context.Background(), &stderr, newFakePushHub(), app.store)
 	require.NoError(t, err)
 	q, ok := quarantined(t)[id]
 	require.True(t, ok, "the event is held at push")

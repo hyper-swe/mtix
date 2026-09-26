@@ -34,7 +34,7 @@ func holdOversizedEvents(t *testing.T, n int) []string {
 		ids[i] = eventIDFor(t, fmt.Sprintf("TEST-%d", i+1), model.OpCreateNode)
 	}
 	var stderr bytes.Buffer
-	_, _, _, _, err := pushLoop(context.Background(), &stderr, newFakePushHub(), app.store)
+	_, err := pushLoop(context.Background(), &stderr, newFakePushHub(), app.store)
 	require.NoError(t, err)
 	return ids
 }
@@ -226,7 +226,7 @@ func TestRunSyncDoctor_HeldPushEvents_GuidanceMatchesOpAndReason(t *testing.T) {
 func pushToFakeHub(t *testing.T) {
 	t.Helper()
 	var stderr bytes.Buffer
-	_, _, _, _, err := pushLoop(context.Background(), &stderr, newFakePushHub(), app.store)
+	_, err := pushLoop(context.Background(), &stderr, newFakePushHub(), app.store)
 	require.NoError(t, err)
 }
 
@@ -240,10 +240,10 @@ func TestPushAndReport_HeldEvents_EndLineCountsThem(t *testing.T) {
 		want   string
 	}{
 		{"one event held", overWireCap(),
-			"push complete: 1 events pushed across 1 batches; 0 renumbered, 0 conflicts surfaced\n" +
+			"push complete: 1 events pushed across 1 batches (1 inserted, 0 already on the hub); 0 renumbered, 0 conflicts surfaced\n" +
 				"held: 1 events not pushed because the hub would refuse them or they depend on a held task creation (see mtix sync doctor)\n"},
 		{"none held", "",
-			"push complete: 2 events pushed across 1 batches; 0 renumbered, 0 conflicts surfaced\n"},
+			"push complete: 2 events pushed across 1 batches (2 inserted, 0 already on the hub); 0 renumbered, 0 conflicts surfaced\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

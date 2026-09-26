@@ -33,7 +33,7 @@ func TestPushLoop_OversizedEvent_HeldOthersReachRealHub(t *testing.T) {
 	}
 
 	var stderr bytes.Buffer
-	pushed, _, _, _, err := pushLoop(ctx, &stderr, pool, app.store)
+	pushed, _, _, _, err := pushLoopCounts(ctx, &stderr, pool, app.store)
 	require.NoError(t, err, stderr.String())
 	require.Equal(t, 2, pushed)
 	onHub := func(id string) bool {
@@ -47,7 +47,7 @@ func TestPushLoop_OversizedEvent_HeldOthersReachRealHub(t *testing.T) {
 	require.True(t, onHub(ids[2]))
 	require.Equal(t, "push", quarantined(t)[ids[1]].Source)
 
-	pushed, _, _, _, err = pushLoop(ctx, &stderr, pool, app.store)
+	pushed, _, _, _, err = pushLoopCounts(ctx, &stderr, pool, app.store)
 	require.NoError(t, err)
 	require.Zero(t, pushed, "the held event is not sent again")
 }
@@ -65,21 +65,21 @@ func TestPushLoop_HeldCreateCollision_RealHub_TeammateTaskIntact(t *testing.T) {
 	initTestApp(t)
 	appA := app
 	require.NoError(t, runCreate("A's task", "", "", 3, "", overWireCap(), "", "", ""))
-	_, _, _, _, err := pushLoop(ctx, &stderr, pool, app.store)
+	_, err := pushLoop(ctx, &stderr, pool, app.store)
 	require.NoError(t, err)
 
 	t.Setenv(sqlite.AuthorIDEnv, "agent-b")
 	initTestApp(t)
 	appB := app
 	require.NoError(t, runCreate("B's own task", "", "", 3, "", "", "", "", ""))
-	_, _, _, _, err = pushLoop(ctx, &stderr, pool, app.store)
+	_, err = pushLoop(ctx, &stderr, pool, app.store)
 	require.NoError(t, err)
 
 	app = appA
 	t.Setenv(sqlite.AuthorIDEnv, "agent-a")
 	require.NoError(t, runClaim("TEST-1", "agent-a"))
 	require.NoError(t, runUpdate("TEST-1", "A retitled its task", "", "", "", 0, "", ""))
-	_, _, _, _, err = pushLoop(ctx, &stderr, pool, app.store)
+	_, err = pushLoop(ctx, &stderr, pool, app.store)
 	require.NoError(t, err)
 
 	app = appB

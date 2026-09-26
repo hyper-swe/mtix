@@ -49,7 +49,7 @@ func TestRunSyncRepairUIDs_EndToEnd(t *testing.T) {
 	regenerateJournal(ctx, t)
 
 	var pushErr bytes.Buffer
-	_, _, _, _, err = pushLoop(ctx, &pushErr, pool, app.store)
+	_, err = pushLoop(ctx, &pushErr, pool, app.store)
 	require.Error(t, err, "RED: a NULL-uid hub must make the re-push collide")
 	require.ErrorContains(t, err, "renumber")
 
@@ -76,7 +76,7 @@ func TestRunSyncRepairUIDs_EndToEnd(t *testing.T) {
 
 	// GREEN: the same re-push is now the same-logical-node no-op.
 	pushErr.Reset()
-	pushed, _, conflicts, renumbered, err := pushLoop(ctx, &pushErr, pool, app.store)
+	pushed, _, conflicts, renumbered, err := pushLoopCounts(ctx, &pushErr, pool, app.store)
 	require.NoError(t, err, "stderr: %s", pushErr.String())
 	require.Equal(t, 2, pushed, "both regenerated creates are accepted as no-ops")
 	require.Equal(t, 0, renumbered)

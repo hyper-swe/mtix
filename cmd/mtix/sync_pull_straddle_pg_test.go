@@ -112,7 +112,7 @@ func TestRunSyncPull_CrossClientEditStraddlesCursor_QuarantinedThenApplied(t *te
 	require.NoError(t, err)
 	require.Len(t, fromC, 1)
 	require.Greater(t, fromC[0].LamportClock, cursor, "precondition: C's edit is above the cursor")
-	_, _, _, _, err = pushLoop(ctx, &stderr, f.pool, c)
+	_, err = pushLoop(ctx, &stderr, f.pool, c)
 	require.NoError(t, err, "C push: %s", stderr.String())
 
 	errOut := f.pullPeerTwice(t)

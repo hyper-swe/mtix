@@ -59,11 +59,15 @@ type salvagedRow struct {
 //
 // Under a damaged index an entry for id A can point at a row that carries
 // another id, B. Such a row is set aside until every entry has been read,
-// then handled by keepMisreadRow: nothing is kept under A, A is listed in
-// LostIDs (Recover drops it from that list when the mirror supplies A), and
-// the row is exported once at most, as B. So Export never holds two nodes
-// with one id, and a mirror copy never reaches a row through another
-// node's entry.
+// then handled by keepMisreadRow: nothing from it is kept under A, and it is
+// exported once at most, as B. A itself ends up exactly one way: salvaged
+// from the database when another entry reaches A's own row, supplied by the
+// mirror merge when the mirror holds A, or listed as lost (A is added to
+// LostIDs here, and Recover drops it from that list once A is salvaged). An
+// entry that repeats the id and rowid of a row already kept (a duplicated
+// index cell) is skipped with a note, so each row is read once. So Export
+// never holds two nodes with one id, and a mirror copy never reaches a row
+// through another node's entry.
 func salvageRows(ctx context.Context, db *sql.DB, keys []salvageKey, out *dbSalvage, res *RecoverResult) {
 	ownEntry := map[int64]bool{} // rowids kept through their own index entry
 	var misread []salvagedRow
@@ -75,6 +79,11 @@ func salvageRows(ctx context.Context, db *sql.DB, keys []salvageKey, out *dbSalv
 		}
 		if row.node.ID != k.id {
 			misread = append(misread, row)
+			continue
+		}
+		if ownEntry[k.rowid] {
+			res.Notes = append(res.Notes, fmt.Sprintf(
+				"node %s: a second index entry for %s points at the same row, which is salvaged once", k.id, k.id))
 			continue
 		}
 		keepSalvagedRow(out, res, row)
@@ -110,15 +119,16 @@ func keepSalvagedRow(out *dbSalvage, res *RecoverResult, row salvagedRow) {
 }
 
 // keepMisreadRow handles a row that the index entry for id A reached
-// although the row carries id B (MTIX-95.31.3). Nothing is kept under A,
-// and A is listed in LostIDs. The row is kept once, as B, unless it is
+// although the row carries id B (MTIX-95.31.3). Nothing from the row is kept
+// under A, and A is listed in LostIDs until Recover finds it salvaged
+// another way (see salvageRows). The row is kept once, as B, unless it is
 // already kept: through B's own entry (ownEntry), or as B through another
-// entry. The note names A, the row's id B and what happened to the row.
+// entry. The note says only what is known: the entry for A points at the
+// row of B, and what happened to that row.
 func keepMisreadRow(out *dbSalvage, res *RecoverResult, row salvagedRow, ownEntry bool) {
 	a, b := row.key.id, row.node.ID
 	res.LostIDs = append(res.LostIDs, a)
-	note := fmt.Sprintf("node %s: the database row read under id %s carries id %s, "+
-		"so the row of %s could not be read through the primary-key index; ", a, a, b, a)
+	note := fmt.Sprintf("node %s: the index entry for %s points at the row of %s; ", a, a, b)
 	_, already := out.nodes[b]
 	switch {
 	case ownEntry:

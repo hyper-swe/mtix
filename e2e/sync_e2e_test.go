@@ -313,12 +313,14 @@ func (c *fakeCLI) nodeByUID(ctx context.Context, t *testing.T, uid string) (id, 
 	return id, project, parent.String
 }
 
-// pullAll drains the hub into the local store. Mirrors pullLoop;
+// pullAll drains the hub into the local store. Mirrors pullLoop: it pages by
+// the (lamport_clock, event_id) keyset from the saved pull cursor and saves
+// the cursor after each batch in the batch's own transaction (MTIX-95.4);
 // applies via sqlite.IdempotentApply.
 func (c *fakeCLI) pullAll(ctx context.Context, t *testing.T, pool *transport.Pool) int {
 	t.Helper()
 	const batchSize = 100
-	since := readLastPulledClockForTest(ctx, t, c.store)
+	since := readPullCursorForTest(ctx, t, c.store)
 	totalPulled := 0
 	for {
 		events, hasMore, err := pool.PullEvents(ctx, since, batchSize)
@@ -326,20 +328,15 @@ func (c *fakeCLI) pullAll(ctx context.Context, t *testing.T, pool *transport.Poo
 		if len(events) == 0 {
 			return totalPulled
 		}
+		since = transport.CursorAt(events[len(events)-1])
 		require.NoError(t, c.store.WithTx(ctx, func(tx *sql.Tx) error {
 			for _, e := range events {
 				if applyErr := sqlite.IdempotentApply(ctx, tx, e); applyErr != nil {
 					return applyErr
 				}
 			}
-			return nil
+			return writePullCursorForTest(ctx, tx, since)
 		}), "%s apply batch", c.name)
-		for _, e := range events {
-			if e.LamportClock > since {
-				since = e.LamportClock
-			}
-		}
-		writeLastPulledClockForTest(ctx, t, c.store, since)
 		totalPulled += len(events)
 		if !hasMore {
 			return totalPulled
@@ -376,25 +373,35 @@ func readPendingForTest(ctx context.Context, t *testing.T, st *sqlite.Store, lim
 	return events
 }
 
-func readLastPulledClockForTest(ctx context.Context, t *testing.T, st *sqlite.Store) int64 {
+// readPullCursorForTest mirrors cmd/mtix readLastPulledClock: the saved pull
+// cursor's Lamport clock and the id of the last event pulled at it, empty
+// when unset (MTIX-95.4).
+func readPullCursorForTest(ctx context.Context, t *testing.T, st *sqlite.Store) transport.PullCursor {
 	t.Helper()
-	var raw string
-	require.NoError(t, st.QueryRow(ctx,
-		`SELECT value FROM meta WHERE key = 'meta.sync.last_pulled_clock'`,
-	).Scan(&raw))
+	var raw, eventID string
+	require.NoError(t, st.QueryRow(ctx, `
+		SELECT (SELECT value FROM meta WHERE key = 'meta.sync.last_pulled_clock'),
+		       COALESCE((SELECT value FROM meta WHERE key = 'meta.sync.last_pulled_event_id'), '')`,
+	).Scan(&raw, &eventID))
 	v, err := strconv.ParseInt(raw, 10, 64)
 	require.NoError(t, err)
-	return v
+	return transport.PullCursor{Lamport: v, EventID: eventID}
 }
 
-func writeLastPulledClockForTest(ctx context.Context, t *testing.T, st *sqlite.Store, cursor int64) {
-	t.Helper()
-	require.NoError(t, st.WithTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx,
-			`UPDATE meta SET value = ? WHERE key = 'meta.sync.last_pulled_clock'`,
-			strconv.FormatInt(cursor, 10))
-		return err
-	}))
+// writePullCursorForTest mirrors cmd/mtix writePullCursor: both cursor keys,
+// in the caller's transaction.
+func writePullCursorForTest(ctx context.Context, tx *sql.Tx, cursor transport.PullCursor) error {
+	for _, kv := range [][2]string{
+		{"meta.sync.last_pulled_clock", strconv.FormatInt(cursor.Lamport, 10)},
+		{"meta.sync.last_pulled_event_id", cursor.EventID},
+	} {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO meta (key, value) VALUES (?, ?)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value`, kv[0], kv[1]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // registerOnHub mirrors cmd/mtix/sync_init.registerProjectOnHub.

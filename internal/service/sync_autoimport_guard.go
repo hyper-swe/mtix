@@ -34,6 +34,27 @@ const (
 		"and a replace import of the file would delete local data it lacks"
 )
 
+// How the guidance a write or a conflict prints (the warning of a conflict
+// whose replace loses nothing, and the lines a write prints while a
+// conflict or a not-imported board is pending) describes the merge, which
+// does not combine both sides (MTIX-95.31.11). mergeKeeps states the rule
+// mergeImportNode (internal/store/sqlite/import.go) applies per task, in
+// both directions: when the task's content hash (title, description,
+// prompt, acceptance, labels) matches the file's, every local field value
+// stays, so a teammate's status or assignee change is not applied;
+// otherwise the file's copy wins, so a local edit to that task (an unclaim,
+// a prompt edit) is undone, except a value the file leaves empty in a copy
+// that is not current. The user manual gives the rule in full.
+// unchangedRecovery is the way out of a conflict although nothing changed
+// locally, as after an upgrade from 0.5.3 or earlier; the user manual
+// documents it with the upgrade notes.
+const (
+	mergeKeeps = "per task, the merge keeps your field values (status, assignee, wake time) when the task's content " +
+		"matches the file's, and otherwise takes the file's copy, which undoes your edits to that task"
+	unchangedRecovery = "if you changed nothing locally: mtix sync --fix, then git checkout HEAD -- .mtix/tasks.json, " +
+		"then any command that imports, such as mtix list"
+)
+
 // AutoSyncConfig is the source of the sync.auto_sync switch (FR-15.2j,
 // MTIX-95.31.2); ConfigService implements it.
 type AutoSyncConfig interface {
@@ -133,6 +154,9 @@ func (s *SyncService) refuseLossyImport(mtixDir, fileHash string, diff *sqlite.R
 // refuseConflict handles a changed tasks.json when the local store changed
 // too since the last sync (FR-15.2h): nothing is imported, and the conflict
 // is recorded for mtix sync and for AutoExport, which then keeps the file.
+// A conflict that loses nothing is logged with its ways out: the merge
+// first, with what it keeps, and the way out when nothing changed locally
+// (MTIX-95.31.11).
 // MTIX-95.31.4: when a replace of the file would also delete local data,
 // the conflict keeps that loss list: it is printed as a refusal (the replace
 // option says it deletes the data listed), recorded in the reason and as
@@ -143,8 +167,9 @@ func (s *SyncService) refuseConflict(mtixDir, fileHash string, diff *sqlite.Repl
 	reason := "both the local store and tasks.json changed since the last sync (FR-15.2h)"
 	if !diff.Lossy() {
 		s.logger.Warn("conflict detected: both tasks.json and local database changed since last sync",
-			"resolution", "combine them with 'mtix import .mtix/tasks.json --mode merge', keep the file with "+
-				"'mtix import .mtix/tasks.json --mode replace', or keep the local store with 'mtix sync --fix'")
+			"resolution", "merge them with mtix import .mtix/tasks.json --mode merge ("+mergeKeeps+"), keep the file "+
+				"with mtix import .mtix/tasks.json --mode replace, or keep the local store with mtix sync --fix; "+
+				unchangedRecovery)
 		s.recordRefusal(mtixDir, fileHash, refusalConflict, reason)
 		return nil
 	}
@@ -159,14 +184,19 @@ func (s *SyncService) refuseConflict(mtixDir, fileHash string, diff *sqlite.Repl
 
 // refusalMessage renders the refusal the user sees: its cause, what would
 // be lost, node by node, and the three deliberate ways to proceed, run from
-// the project root, with what each of them keeps and loses. When a local
+// the project root, with what each of them keeps and loses. The merge
+// option states the merge rule in both directions (mergeKeeps,
+// MTIX-95.31.11), as the other printed lines do. When a local
 // task is a different task than the file's under its id, the merge option
 // says the merge renumbers it and needs --confirm (MTIX-95.31.4). When the
 // file holds a task under another uid assigned at upgrade, with another
 // title, the merge option says the merge takes the file's title and content
 // for it, names every such task, and says how to keep the local one (copy
 // it with mtix create first), so the user can refuse the merge
-// (MTIX-95.31.6).
+// (MTIX-95.31.6). When the file holds a local task's id with another title
+// and either has no uid to compare, the merge option says the merge takes
+// them for different tasks and renumbers the local one with --confirm, and
+// what to do when they are one task retitled (MTIX-95.31.9).
 func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss) string {
 	upgradeMatched := sameTaskAtUpgrade(losses) // MTIX-95.31.6
 	keeps := "keeps every value the refusal lists"
@@ -181,8 +211,7 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss) string 
 	fmt.Fprintf(&b, "Choose one, run from the project root (%s):\n", projectRoot)
 	b.WriteString("  mtix import .mtix/tasks.json --mode merge    backs up the database, " + keeps +
 		" and adds the file's changes: a field value listed above stays, with the task's local status when " +
-		"the value is part of it; for a task whose content is unchanged, all local field values win, so a " +
-		"teammate's change to its status or assignee is not applied and your next export reverts it\n")
+		"the value is part of it; beyond those, " + mergeKeeps + "\n")
 	if holdsDifferentTask(losses) {
 		b.WriteString("                                               a local task listed as a different task " +
 			"under its id is renumbered to the next number free in both the store and the file (it keeps its " +
@@ -191,6 +220,9 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss) string 
 	}
 	if len(upgradeMatched) > 0 {
 		b.WriteString(sameTaskAtUpgradeNote(upgradeMatched))
+	}
+	if ids := differentTitleNoUID(losses); len(ids) > 0 { // MTIX-95.31.9
+		b.WriteString(differentTitleNoUIDNote(ids))
 	}
 	b.WriteString("  mtix sync --fix                              keep the local store and rewrite " +
 		".mtix/tasks.json from it; every change in the file is dropped\n")
@@ -232,11 +264,40 @@ func sameTaskAtUpgrade(losses []sqlite.NodeLoss) []string {
 func sameTaskAtUpgradeNote(ids []string) string {
 	return "                                               a task treated as the same task (uid assigned at " +
 		"upgrade), here " + strings.Join(ids, ", ") + ", keeps its id and takes the file's uid, title and " +
-		"content, and the import lists each uid it adopts; if the two titles name different tasks (created in " +
-		"the same second, and neither clone's event log holds their create events: made before 0.2, for " +
-		"example), yours would survive only in the backup the merge takes: copy it to a new task first (mtix " +
+		"content, and the import lists each uid it adopts; if the two titles name different tasks (tasks " +
+		"created in the same second whose create event at least one clone's event log lacks, for example " +
+		"created before 0.2), yours would survive only in the backup the merge takes: copy it to a new task first (mtix " +
 		"show <id>, then mtix create with its title and description; writes stay local while this refusal is " +
 		"pending), then merge\n"
+}
+
+// differentTitleNoUID returns the ids of the local tasks the file holds
+// under their id with another title while either has no uid to compare
+// (MTIX-95.31.9), every one of them, even those lossList counts without
+// naming.
+func differentTitleNoUID(losses []sqlite.NodeLoss) []string {
+	var ids []string
+	for i := range losses {
+		if losses[i].DifferentTitleNoUID {
+			ids = append(ids, losses[i].NodeID)
+		}
+	}
+	return ids
+}
+
+// differentTitleNoUIDNote is the merge option's note on the local tasks
+// ids that the file holds under their id with another title and no uid to
+// compare (MTIX-95.31.9): the merge takes them for different tasks, and a
+// task a teammate only retitled on a board without uids ends up twice, the
+// renumbered copy holding the local comments, activity and field values.
+func differentTitleNoUIDNote(ids []string) string {
+	return "                                               a local task listed with a different title and no uid " +
+		"to compare is taken for a different task (here " + strings.Join(ids, ", ") + "): the merge renumbers " +
+		"it, with its subtree, to the next number free in both the store and the file (the file's task keeps " +
+		"the id), and applies that only when you rerun it with --confirm; if it is the same task, retitled on " +
+		"a board without uids, the merge keeps both copies, and the renumbered one holds your comments, activity " +
+		"and field values the board lacked: move them to the task at the id, or keep the renumbered copy, before " +
+		"you delete anything\n"
 }
 
 // lossList describes up to maxLossLines nodes' losses joined by sep, and
@@ -257,6 +318,9 @@ func lossList(losses []sqlite.NodeLoss, sep string) string {
 // "PROJ-1: 2 annotations (01J..., 01J...), 1 activity entry, field assignee",
 // or, for a different task under the id (MTIX-95.31.4),
 // `PROJ-3: a different task under this id (local "Mine", file "Theirs")`.
+// A task the file holds with another title and no uid to compare starts
+// with `a task under this id with a different title and no uid to compare
+// (local "Mine", file "Theirs")` (MTIX-95.31.9).
 // A task the file holds under another uid assigned at upgrade, with another
 // title, starts with `treated as the same task (uid assigned at upgrade)
 // (local "Mine", file "Theirs")` (MTIX-95.31.6).
@@ -271,6 +335,10 @@ func describeLoss(l *sqlite.NodeLoss) string {
 		return l.NodeID + ": the whole node"
 	}
 	var parts []string
+	if l.DifferentTitleNoUID { // MTIX-95.31.9
+		parts = append(parts, fmt.Sprintf("a task under this id with a different title and no uid to compare "+
+			"(local %q, file %q)", l.LocalTitle, l.FileTitle))
+	}
 	if l.SameTaskAtUpgrade {
 		parts = append(parts, fmt.Sprintf("treated as the same task (uid assigned at upgrade) (local %q, file %q)",
 			l.LocalTitle, l.FileTitle))

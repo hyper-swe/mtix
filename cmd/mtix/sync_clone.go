@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -32,10 +33,14 @@ import (
 //     is not set. This protects against accidentally clobbering local
 //     work; the user must explicitly choose 'mtix sync reconcile
 //     --discard-local' first.
-//  3. Pull events in batches (PullEvents limit=batchSize); apply each
-//     batch via IdempotentApply. Update meta.sync.last_pulled_clock
-//     and meta.sync.clone.checkpoint after each batch so --resume can
-//     pick up.
+//  3. Pull events in batches (PullEvents limit=batchSize), paging by the
+//     (lamport_clock, event_id) keyset; apply each batch via
+//     IdempotentApply. Save the checkpoint (meta.sync.clone.checkpoint and
+//     meta.sync.clone.checkpoint_event_id) after each batch so --resume
+//     can pick up, and on completion save the pull cursor
+//     (meta.sync.last_pulled_clock and meta.sync.last_pulled_event_id) at
+//     the last cloned event, so the next pull fetches only newer events
+//     (MTIX-95.4).
 //  4. Print a progress line every batch on stderr.
 //
 // --resume is opt-in to avoid the surprising case where a user runs
@@ -67,7 +72,9 @@ already holds sync state, after 'mtix sync push', a pending count of 0 in
 log twice, once to check it and once to apply it.
 
 Use --resume to pick up an interrupted clone from the last batch
-checkpoint (.mtix data sentinel meta.sync.clone.checkpoint).`,
+checkpoint (.mtix data sentinels meta.sync.clone.checkpoint and
+meta.sync.clone.checkpoint_event_id). When it completes, clone sets the
+pull cursor, so the next 'mtix sync pull' fetches only newer events.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncClone(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
@@ -146,42 +153,54 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 	return nil
 }
 
-// cloneLoop drives the pull-and-apply iteration. Returns the total
-// number of events applied and batches consumed. Updates the
-// checkpoint sentinel after each batch so --resume can pick up.
+// cloneLoop drives the pull-and-apply iteration from the keyset position
+// after and returns the number of events applied and batches consumed. It
+// pages by (lamport_clock, event_id) like pullLoop, each page after the
+// previous page's last event, so events that share a Lamport clock across a
+// page boundary are all cloned (MTIX-95.4; ADR-006 D6). It saves the
+// checkpoint, both halves, after each batch so --resume can pick up, and
+// on completion saves the pull cursor at the same position (ADR-006 D16):
+// the first pull after a clone then asks the hub only for newer events. A
+// page that does not advance past the cursor stops the clone, before it is
+// applied, with an error naming the cursor (pageCursor.advance).
 func cloneLoop(ctx context.Context, stderr io.Writer,
-	pool cursorPuller, store *sqlite.Store, since int64, batchSize int,
+	pool cursorPuller, store *sqlite.Store, after transport.PullCursor, batchSize int,
 ) (int, int, error) {
 	totalPulled := 0
 	batches := 0
+	page := newPageCursor(after)
 	for {
-		events, hasMore, err := pool.PullEvents(ctx, since, batchSize)
+		events, hasMore, err := pool.PullEvents(ctx, page.at, batchSize)
 		if err != nil {
 			return totalPulled, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
 		}
 		if len(events) == 0 {
 			break
 		}
+		// A nil event is invalid input; refuse it before the page is read.
+		if err := requireEvents(events); err != nil {
+			return totalPulled, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
+		}
+		if err := page.advance(events); err != nil {
+			return totalPulled, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
+		}
 		// The check before the clone already warned about its events.
 		if err := applyBatch(ctx, newPullIngest(io.Discard), store, events); err != nil {
 			return totalPulled, batches, fmt.Errorf("apply batch %d: %w", batches+1, err)
 		}
-		// Advance the since cursor to the highest lamport in the batch.
-		for _, e := range events {
-			if e.LamportClock > since {
-				since = e.LamportClock
-			}
-		}
-		if err := writeCloneCheckpoint(ctx, store, since); err != nil {
+		if err := writeCloneCheckpoint(ctx, store, page.at); err != nil {
 			return totalPulled, batches, fmt.Errorf("checkpoint write: %w", err)
 		}
 		totalPulled += len(events)
 		batches++
-		fmt.Fprintf(stderr, "clone progress: batch %d (%d events; cursor=%d)\n",
-			batches, len(events), since)
+		fmt.Fprintf(stderr, "clone progress: batch %d (%d events; through lamport %d)\n",
+			batches, len(events), page.at.Lamport)
 		if !hasMore {
 			break
 		}
+	}
+	if err := store.WithTx(ctx, func(tx *sql.Tx) error { return writePullCursor(ctx, tx, page.at) }); err != nil {
+		return totalPulled, batches, fmt.Errorf("pull cursor write: %w", err)
 	}
 	return totalPulled, batches, nil
 }
@@ -234,46 +253,56 @@ func localHasEvents(ctx context.Context, store *sqlite.Store) (bool, error) {
 	return n > 0, nil
 }
 
-// readCloneCheckpoint returns the last-pulled lamport. When --resume
-// is set, reads from meta.sync.clone.checkpoint; otherwise returns 0.
+// readCloneCheckpoint returns the keyset position an interrupted clone
+// resumes after. When --resume is set it reads meta.sync.clone.checkpoint
+// and meta.sync.clone.checkpoint_event_id in one statement (MTIX-95.4);
+// otherwise it returns the start of the log. An event-id half that is
+// absent or empty (a checkpoint saved before MTIX-95.4) reads as "", so
+// the resume reads the events at exactly the saved clock again and
+// applies the ones it holds idempotently.
 //
 // Validates non-negative — a corrupted negative checkpoint would
 // cause PullEvents(since=-1) to return ALL events from lamport 0,
 // silently re-applying the entire log. Refuse instead.
-func readCloneCheckpoint(ctx context.Context, store *sqlite.Store, resume bool) (int64, error) {
+func readCloneCheckpoint(ctx context.Context, store *sqlite.Store, resume bool) (transport.PullCursor, error) {
 	if !resume {
-		return 0, nil
+		return transport.PullCursor{}, nil
 	}
-	var raw string
-	err := store.QueryRow(ctx,
-		`SELECT value FROM meta WHERE key = 'meta.sync.clone.checkpoint'`,
-	).Scan(&raw)
+	var raw sql.NullString
+	var eventID string
+	// Both checkpoint keys in one read.
+	err := store.QueryRow(ctx, `
+		SELECT (SELECT value FROM meta WHERE key = 'meta.sync.clone.checkpoint'),
+		       COALESCE((SELECT value FROM meta WHERE key = 'meta.sync.clone.checkpoint_event_id'), '')`,
+	).Scan(&raw, &eventID)
 	if err != nil {
-		return 0, err
+		return transport.PullCursor{}, fmt.Errorf("read clone checkpoint: %w", err)
+	}
+	if !raw.Valid {
+		return transport.PullCursor{}, fmt.Errorf("read clone checkpoint: meta.sync.clone.checkpoint: %w", sql.ErrNoRows)
 	}
 	var v int64
-	if _, err := fmt.Sscanf(raw, "%d", &v); err != nil {
-		return 0, fmt.Errorf("parse checkpoint %q: %w", raw, err)
+	if _, err := fmt.Sscanf(raw.String, "%d", &v); err != nil {
+		return transport.PullCursor{}, fmt.Errorf("parse checkpoint %q: %w", raw.String, err)
 	}
 	if v < 0 {
-		return 0, fmt.Errorf("checkpoint %q is negative; corrupted state — "+
-			"either restore a backup or run 'mtix sync reconcile --discard-local'", raw)
+		return transport.PullCursor{}, fmt.Errorf("checkpoint %q is negative; corrupted state — "+
+			"either restore a backup or run 'mtix sync reconcile --discard-local'", raw.String)
 	}
-	return v, nil
+	return transport.PullCursor{Lamport: v, EventID: eventID}, nil
 }
 
-// writeCloneCheckpoint persists the current cursor so --resume can
-// pick up from this point after an interruption.
+// writeCloneCheckpoint persists the clone's keyset position, both halves,
+// so --resume can pick up after this point after an interruption
+// (MTIX-95.4).
 //
 // Uses WithTx (write tx) because this is a write — needed for SQLite
 // WAL durability. The corresponding read in readCloneCheckpoint goes
 // through readDB directly (audit fix).
-func writeCloneCheckpoint(ctx context.Context, store *sqlite.Store, cursor int64) error {
+func writeCloneCheckpoint(ctx context.Context, store *sqlite.Store, cursor transport.PullCursor) error {
 	return store.WithTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx,
-			`UPDATE meta SET value = ? WHERE key = 'meta.sync.clone.checkpoint'`,
-			fmt.Sprintf("%d", cursor),
-		)
-		return err
+		return upsertMeta(ctx, tx,
+			[2]string{"meta.sync.clone.checkpoint", strconv.FormatInt(cursor.Lamport, 10)},
+			[2]string{"meta.sync.clone.checkpoint_event_id", cursor.EventID})
 	})
 }

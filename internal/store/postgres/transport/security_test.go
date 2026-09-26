@@ -170,7 +170,7 @@ func TestPushEvents_DSNNeverInRetryErrors(t *testing.T) {
 	require.NoError(t, err)
 
 	// Pull and verify content survives.
-	got, _, err := pool.PullEvents(context.Background(), 0, 10)
+	got, _, err := pool.PullEvents(context.Background(), transport.PullCursor{}, 10)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Contains(t, string(got[0].Payload), redact.SecretSentinel,

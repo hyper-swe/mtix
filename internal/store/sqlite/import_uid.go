@@ -95,6 +95,10 @@ type ImportRemapEntry struct {
 	OldPath string
 	// NewPath is the clean local display_path the node settled into.
 	NewPath string
+	// NewUID is true when this import minted UID for a local node that had
+	// none (MTIX-95.31.9): shown as uid=(new), and kept out of a remap file
+	// written without --confirm, since the confirmed run mints another.
+	NewUID bool
 }
 
 // ImportReconcileReport is the loud, reviewable outcome of an import
@@ -123,6 +127,10 @@ type ImportReconcileReport struct {
 	// UIDAdoptions are the local tasks a merge gives the file's uid, the
 	// same task under another uid, with both titles (MTIX-95.31.6).
 	UIDAdoptions []ImportUIDAdoption
+	// TitleMismatches are the local tasks of LocalRenumbers whose id the
+	// file holds with another title while one of the two has no uid to
+	// compare (MTIX-95.31.9).
+	TitleMismatches []ImportTitleMismatch
 	// Idempotent counts incoming nodes that were an exact uid+display_path
 	// no-op against the local store (ADR-003 §6).
 	Idempotent int
@@ -161,12 +169,13 @@ func (r *ImportReconcileReport) String() string {
 		fmt.Fprintf(&b, "  local tasks renumbered, the file holds a different task under their id: %d\n",
 			len(r.LocalRenumbers))
 		for _, m := range r.LocalRenumbers {
-			fmt.Fprintf(&b, "    - uid=%s %s -> %s\n", m.UID, m.OldPath, m.NewPath)
+			fmt.Fprintf(&b, "    - uid=%s %s -> %s\n", shownUID(m), m.OldPath, m.NewPath) // MTIX-95.31.9
 		}
 		if !r.Applied {
 			b.WriteString("  not applied: review the renumbering above, then rerun the import with --confirm\n")
 		}
 	}
+	writeTitleMismatches(&b, r.TitleMismatches) // MTIX-95.31.9
 	if len(r.Moved) > 0 {
 		fmt.Fprintf(&b, "  local tasks moved to the id the file holds them under (renumbered elsewhere): %d\n",
 			len(r.Moved))
@@ -224,7 +233,8 @@ func (s *Store) ImportReconcile(
 	// different task than the file's under the same id: plan to renumber
 	// the local task and its subtree to the next number free in the store
 	// and the file. Planned first, so the provisional renumbers avoid its
-	// numbers (taken).
+	// numbers (taken). MTIX-95.31.9: when either task has no uid to
+	// compare, different titles are different tasks (report.TitleMismatches).
 	taken := make(map[string]map[int]bool)
 	moves, planErr := s.planLocalRenumbers(ctx, data, opts.Mode, report, taken)
 	if planErr != nil {

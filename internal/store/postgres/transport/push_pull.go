@@ -368,14 +368,18 @@ func extractFieldName(e *model.SyncEvent) (string, error) {
 	return p.FieldName, nil
 }
 
-// PullEvents returns up to limit events with lamport_clock greater
-// than sinceLamport, in ascending order. The hasMore flag is true
-// when there are events past the returned page.
+// PullEvents returns up to limit events strictly after the keyset
+// position after, in (lamport_clock, event_id) order (MTIX-95.4; ADR-006
+// D6). The hasMore flag is true when there are events past the returned
+// page. The caller passes transport.CursorAt of a page's last event to
+// read the next page, so events that share a Lamport clock across a page
+// boundary are all returned. An after with an empty EventID returns every
+// event at after.Lamport and above (see PullCursor).
 //
 // Wrapped in the retry envelope so transient PG failures don't fail
 // the caller's pull loop. Validation NOT applied here — events on the
 // hub are already validated; pull is a read.
-func (p *Pool) PullEvents(ctx context.Context, sinceLamport int64, limit int) (
+func (p *Pool) PullEvents(ctx context.Context, after PullCursor, limit int) (
 	events []*model.SyncEvent, hasMore bool, err error,
 ) {
 	if limit <= 0 {
@@ -387,7 +391,7 @@ func (p *Pool) PullEvents(ctx context.Context, sinceLamport int64, limit int) (
 
 	cfg := DefaultRetryConfig()
 	err = retryWithBackoff(ctx, cfg, func(ctx context.Context) error {
-		evs, more, opErr := p.pullEventsOnce(ctx, sinceLamport, limit)
+		evs, more, opErr := p.pullEventsOnce(ctx, after, limit)
 		if opErr != nil {
 			return opErr
 		}
@@ -401,19 +405,33 @@ func (p *Pool) PullEvents(ctx context.Context, sinceLamport int64, limit int) (
 	return events, hasMore, nil
 }
 
-func (p *Pool) pullEventsOnce(ctx context.Context, sinceLamport int64, limit int) (
+// pullEventsSQL reads one page of the pull cursor pass: the events strictly
+// after the keyset position ($1, $2) = (lamport_clock, event_id), in that
+// order (MTIX-95.4; ADR-006 D6). The event id breaks Lamport ties, so the
+// next page starts after the previous page's last event, not after its
+// clock. An empty $2 sorts before every event id, so the events at $1 and
+// above are selected. The comparison and the ORDER BY use the same
+// collation, so the pages tile the log whatever the hub's collation is.
+// Hub migration 015 indexes (lamport_clock, event_id) so each page is read
+// from the cursor on; a hub without the index serves the same rows with a
+// sequential scan and a sort. $3 is the page size plus one, to detect a
+// further page.
+const pullEventsSQL = `
+SELECT event_id, project_prefix, node_id, uid, op_type, payload,
+       wall_clock_ts, lamport_clock, vector_clock,
+       author_id, author_machine_hash, created_at
+FROM sync_events
+WHERE (lamport_clock, event_id) > ($1, $2)
+ORDER BY lamport_clock, event_id
+LIMIT $3`
+
+// pullEventsOnce runs pullEventsSQL once from after and folds the rows
+// into a page of at most limit events (MTIX-95.4). Wrapped by
+// retryWithBackoff in PullEvents.
+func (p *Pool) pullEventsOnce(ctx context.Context, after PullCursor, limit int) (
 	[]*model.SyncEvent, bool, error,
 ) {
-	rows, err := p.p.Query(ctx, `
-		SELECT event_id, project_prefix, node_id, uid, op_type, payload,
-		       wall_clock_ts, lamport_clock, vector_clock,
-		       author_id, author_machine_hash, created_at
-		FROM sync_events
-		WHERE lamport_clock > $1
-		ORDER BY lamport_clock
-		LIMIT $2`,
-		sinceLamport, limit+1,
-	)
+	rows, err := p.p.Query(ctx, pullEventsSQL, after.Lamport, after.EventID, limit+1)
 	if err != nil {
 		return nil, false, err
 	}

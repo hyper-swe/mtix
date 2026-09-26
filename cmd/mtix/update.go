@@ -4,7 +4,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -92,7 +91,7 @@ func runUpdate(id, title, description, prompt, acceptance string,
 		return fmt.Errorf("no fields to update (use flags like --title, --priority)")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.nodeSvc.UpdateNode(ctx, id, updates); err != nil {
 		return err
 	}

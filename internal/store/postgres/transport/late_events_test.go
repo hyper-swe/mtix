@@ -222,7 +222,7 @@ func TestFetchEventsByID_SameEventsAsPullEvents(t *testing.T) {
 	require.NoError(t, pool.Migrate(context.Background()))
 	ids, _ := pushUIDMix(t, pool)
 
-	pulled, _, err := pool.PullEvents(context.Background(), 0, 100)
+	pulled, _, err := pool.PullEvents(context.Background(), transport.PullCursor{}, 100)
 	require.NoError(t, err)
 	fetched, err := pool.FetchEventsByID(context.Background(), ids)
 	require.NoError(t, err)

@@ -45,15 +45,20 @@ func newSyncDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor [DSN]",
 		Short: "Run sync health checks (FR-18)",
-		Long: `Run 6 health checks against the local store and the BYO Postgres hub:
+		Long: `Run 7 health checks against the local store and the BYO Postgres hub:
 
   1. PG reachable           — opens pool + Ping
   2. Schema current         — sync_projects table exists with expected columns
   3. Queue draining         — no events older than 1h still in pending
+                              (held push events aside; check 6 lists them)
   4. No orphan applied      — every applied_event has a matching node OR tombstone
   5. Quarantined events     — no pulled event is held in the local quarantine;
                               each pull retries them ('mtix sync quarantine list')
-  6. DSN secrets file mode  — .mtix/secrets is mode 0600 (when present)
+  6. Held push events       — push holds no event the hub would refuse (such as
+                              a field over the 64 KB sync limit) or that
+                              depends on a held task creation; names the fix
+                              for each ('mtix sync quarantine list')
+  7. DSN secrets file mode  — .mtix/secrets is mode 0600 (when present)
 
 Exit code: 0 on all-pass, 2 if any check fails. --json output for
 agents and CI consumption.`,
@@ -118,8 +123,9 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	// Checks 4 and 5: no orphan applied events, and no quarantined pulled
 	// events (local only; sync_doctor_local.go).
 	report = appendLocalStoreChecks(ctx, report, app.store)
+	report = appendHeldPushCheck(ctx, report, app.store) // check 6 (MTIX-95.12)
 
-	// Check 6: DSN secrets file mode.
+	// Check 7: DSN secrets file mode.
 	modeOK, detail := checkSecretsFileMode(app.mtixDir)
 	report = appendCheck(report, "secrets file mode", modeOK, detail)
 
@@ -194,13 +200,17 @@ func checkSchemaCurrent(ctx context.Context, dsn string, opts transport.Options)
 
 // checkQueueDraining flags pending events older than 1 hour as a
 // stuck-queue indicator. The threshold is conservative: a healthy
-// pusher drains within seconds.
+// pusher drains within seconds. Held push events are left out: push
+// skips them on purpose, and the held-push-events check reports them
+// (MTIX-95.12).
 func checkQueueDraining(ctx context.Context, store *sqlite.Store) (bool, string) {
 	cutoff := time.Now().Add(-1 * time.Hour).UTC().Format(time.RFC3339)
 	var n int
 	if err := store.QueryRow(ctx, `
 		SELECT COUNT(*) FROM sync_events
-		WHERE sync_status = 'pending' AND created_at < ?`, cutoff,
+		WHERE sync_status = 'pending' AND created_at < ?
+		  AND NOT EXISTS (SELECT 1 FROM sync_quarantine q
+		                  WHERE q.event_id = sync_events.event_id AND q.source = 'push')`, cutoff,
 	).Scan(&n); err != nil {
 		return false, err.Error()
 	}

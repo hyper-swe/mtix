@@ -19,9 +19,14 @@ package service_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -175,6 +180,10 @@ hooks:
 
 	_, statErr := os.Stat(outFile)
 	assert.True(t, os.IsNotExist(statErr), "exec must NOT run for an untrusted hooks.yaml")
+	// The detached spawn can write after the stat above; the audit log is
+	// written during Dispatch, so this check is exact (MTIX-107.23).
+	assert.Equal(t, []string{sqlite.OutcomeSkippedUntrusted}, execOutcomes(t, store, "exec-wake", n1.ID),
+		"n1's exec delivery is recorded as skipped for the untrusted hooks.yaml")
 
 	// Phase B — TRUSTED: record trust for the current config, then a fresh
 	// transition fires exec (the Phase-A events are already past the cursor).
@@ -187,18 +196,217 @@ hooks:
 
 	service.NewHooksDispatcher(store, mtixDir, slog.Default()).Dispatch(ctx)
 
-	// MTIX-56.9: the exec is a detached spawn — await its output.
-	require.Eventually(t, func() bool {
-		_, statErr := os.Stat(outFile)
-		return statErr == nil
-	}, 10*time.Second, 25*time.Millisecond, "the trusted exec hook runs after dispatch")
-	data, readErr := os.ReadFile(outFile)
-	require.NoError(t, readErr, "exec must run once the config is trusted")
-
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(data, &payload), "the process received valid event JSON on $MTIX_EVENT")
+	// MTIX-56.9: the exec is a detached spawn — await its complete output.
+	payload := awaitEventJSON(t, func() ([]byte, error) { return os.ReadFile(outFile) })
 	assert.Equal(t, "status.changed", payload["event"])
 	assert.Equal(t, n2.ID, payload["node_id"])
+}
+
+// execOutcomes returns the audit-log outcomes of hook's exec deliveries for
+// nodeID. The dispatcher writes them synchronously during Dispatch (FR-19.7),
+// so unlike the exec's own output they need no waiting.
+func execOutcomes(t *testing.T, store *sqlite.Store, hook, nodeID string) []string {
+	t.Helper()
+	entries, err := store.ReadHookLog(context.Background(), 1000)
+	require.NoError(t, err)
+	var outcomes []string
+	for _, e := range entries {
+		if e.Hook == hook && e.NodeID == nodeID && e.Adapter == hooks.AdapterExec {
+			outcomes = append(outcomes, e.Outcome)
+		}
+	}
+	return outcomes
+}
+
+// awaitEventJSON polls read until it returns the exec hook's complete event
+// JSON and returns the decoded payload. The exec is a detached spawn
+// (MTIX-56.9), and the hook's shell creates (truncates) its output file before
+// printf writes to it, so a file that exists may still be empty or partly
+// written. Only a read that parses counts as delivery (MTIX-107.23); anything
+// less keeps polling until the deadline, whose failure reports the last read.
+func awaitEventJSON(t *testing.T, read func() ([]byte, error)) map[string]any {
+	t.Helper()
+	var payload map[string]any
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		data, err := read()
+		if !assert.NoError(c, err, "exec must run once the config is trusted") {
+			return
+		}
+		var got map[string]any
+		if !assert.NoError(c, json.Unmarshal(data, &got), "the process received complete event JSON on $MTIX_EVENT") {
+			return
+		}
+		payload = got
+	}, 10*time.Second, 25*time.Millisecond, "the trusted exec hook delivers its complete event JSON")
+	return payload
+}
+
+// scriptedRead is one canned result of an output-file read.
+type scriptedRead struct {
+	data string
+	err  error
+}
+
+// TestAwaitEventJSON_IncompleteReads_PollsUntilJSONParses: a read that is not
+// yet complete event JSON — no file yet, the empty file a shell redirect
+// creates before its command writes, a partly written object — keeps the wait
+// polling; the first read that parses is the payload returned (MTIX-107.23).
+func TestAwaitEventJSON_IncompleteReads_PollsUntilJSONParses(t *testing.T) {
+	complete := scriptedRead{data: `{"event":"status.changed","node_id":"PROJ-2"}`}
+	missing := scriptedRead{err: fs.ErrNotExist}
+	tests := []struct {
+		name  string
+		reads []scriptedRead // the last read is the complete event
+	}{
+		{"complete on the first read", []scriptedRead{complete}},
+		{"output not created yet", []scriptedRead{missing, complete}},
+		{"created but still empty", []scriptedRead{missing, {data: ""}, complete}},
+		{"partly written", []scriptedRead{{data: ""}, {data: `{"event":"status.chan`}, complete}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0 // polls run one at a time, each after the previous finished
+			read := func() ([]byte, error) {
+				r := tt.reads[min(calls, len(tt.reads)-1)]
+				calls++
+				return []byte(r.data), r.err
+			}
+
+			payload := awaitEventJSON(t, read)
+
+			assert.Equal(t, map[string]any{"event": "status.changed", "node_id": "PROJ-2"}, payload)
+			assert.Equal(t, len(tt.reads), calls, "the wait stops at the first read that parses, and not before")
+		})
+	}
+}
+
+// TestAwaitEventJSON_ExecOutputCreatedBeforeWritten_WaitsForCompleteJSON
+// reproduces the MTIX-107.23 flake on the real exec path without timing. The
+// hook creates its output file, as the redirect in the ExecWake hook does, and
+// then parks on a FIFO gate before printf writes the event. The gate opens
+// only inside a read that returns the created-but-empty file, so a wait that
+// takes "the file exists" for delivery fails on every run, and a wait that
+// polls until the JSON parses passes.
+func TestAwaitEventJSON_ExecOutputCreatedBeforeWritten_WaitsForCompleteJSON(t *testing.T) {
+	svc, store, _ := newTestNodeService(t)
+	ctx := context.Background()
+	proj, mtixDir := projectDirs(t)
+	outFile := filepath.Join(proj, "exec-out.json")
+	gate := &execGate{path: filepath.Join(proj, "exec-gate")}
+
+	// JSON is valid YAML flow syntax, so the argv (script, then $0 $1 $2) is
+	// embedded without hand-quoting.
+	command, err := json.Marshal([]string{"sh", "-c", gatedHookScript, "sh", gate.path, outFile})
+	require.NoError(t, err)
+	writeHooks(t, mtixDir, `
+hooks:
+  - name: exec-gated
+    match:
+      events: [status.changed]
+      status-to: [done]
+    deliver: [exec]
+    exec:
+      command: `+string(command)+`
+      timeout-seconds: 5
+`)
+	require.NoError(t, hooks.SaveTrust(mtixDir, hooks.ConfigHash(mtixDir)))
+	t.Cleanup(func() { gate.releaseIfParked(t) })
+
+	node, err := svc.CreateNode(ctx, &service.CreateNodeRequest{Project: "PROJ", Title: "gated", Creator: "worker"})
+	require.NoError(t, err)
+	require.NoError(t, svc.TransitionStatus(ctx, node.ID, model.StatusInProgress, "", "worker"))
+	require.NoError(t, svc.TransitionStatus(ctx, node.ID, model.StatusDone, "", "worker"))
+	service.NewHooksDispatcher(store, mtixDir, slog.Default()).Dispatch(ctx)
+	gate.dispatched = true // from here on a hook may be parked on the gate
+
+	payload := awaitEventJSON(t, gate.reader(outFile))
+
+	assert.True(t, gate.handedEmpty.Load(), "the wait was first handed the created-but-empty output")
+	assert.Equal(t, "status.changed", payload["event"])
+	assert.Equal(t, node.ID, payload["node_id"])
+}
+
+// gatedHookScript is the gated exec hook, run as
+// `sh -c gatedHookScript sh GATE OUT` (MTIX-107.23). It creates OUT, then parks
+// on the FIFO GATE until something opens it, and only then writes $MTIX_EVENT
+// to OUT: mkfifo runs first, so GATE exists whenever OUT does.
+//
+// The park is bounded inside the script, not by the test binary, which can die
+// (-timeout, Ctrl-C) before it releases the gate. A background watchdog opens
+// the gate after 10 s and exits. `1<>` opens the FIFO read-write, which never
+// blocks, so the watchdog cannot park either. When the test opens the gate, the
+// hook kills the watchdog (its trap also kills its sleep), so a passing run
+// leaves nothing behind. The exec adapter's 5 s timeout still applies first
+// while the test binary lives.
+const gatedHookScript = `mkfifo "$1" && : > "$2" || exit 1
+(trap 'kill $! 2>/dev/null; exit 0' TERM; sleep 10 & wait; printf '\n' 1<>"$1") &
+dog=$!
+read _ < "$1"
+kill "$dog" 2>/dev/null
+printf '%s' "$MTIX_EVENT" > "$2"`
+
+// execGate holds an exec hook parked on `read _ < path` (a FIFO) between
+// creating its output file and writing it (MTIX-107.23).
+type execGate struct {
+	path        string
+	dispatched  bool        // Dispatch has run, so a hook may be parked (test goroutine only)
+	opened      atomic.Bool // the parked hook was released
+	handedEmpty atomic.Bool // the read that released it returned an empty file
+}
+
+// reader returns a read of outFile that releases the hook the first time it
+// finds outFile while the gate is shut. That read returns what it found — the
+// file the hook created and has not yet written — so the wait under test is
+// always handed exactly the state that flaked.
+func (g *execGate) reader(outFile string) func() ([]byte, error) {
+	return func() ([]byte, error) {
+		data, err := os.ReadFile(outFile)
+		if err != nil || g.opened.Load() {
+			return data, err
+		}
+		if openErr := g.open(); openErr != nil {
+			return nil, openErr // the shell has not opened the FIFO yet; retry on the next poll
+		}
+		g.handedEmpty.Store(len(data) == 0)
+		return data, nil
+	}
+}
+
+// open writes one line to the FIFO, which ends the hook's `read`. The
+// non-blocking open fails while no process has the FIFO open for reading,
+// that is, before the shell reaches the `read`.
+func (g *execGate) open() error {
+	f, err := os.OpenFile(g.path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return fmt.Errorf("open exec gate %s: %w", g.path, err)
+	}
+	if _, err := f.Write([]byte("\n")); err != nil {
+		return fmt.Errorf("write exec gate %s: %w", g.path, errors.Join(err, f.Close()))
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close exec gate %s: %w", g.path, err)
+	}
+	g.opened.Store(true)
+	return nil
+}
+
+// releaseIfParked makes one attempt to free a hook still parked on the gate
+// when the test failed after Dispatch but before its wait opened the gate, and
+// logs the result. The test has already failed, so the attempt never adds a
+// failure. Before Dispatch no hook can be parked, so there is nothing to
+// attempt. If the shell has not reached the gate yet, the attempt misses, and
+// the script's own watchdog frees the hook within its budget. A passing run
+// opened the gate and returns at once.
+func (g *execGate) releaseIfParked(t *testing.T) {
+	t.Helper()
+	if !g.dispatched || g.opened.Load() {
+		return
+	}
+	if err := g.open(); err != nil {
+		t.Logf("exec gate: parked hook not released (%v); the hook's watchdog frees it within 10 s", err)
+		return
+	}
+	t.Logf("exec gate: released the hook parked on %s", g.path)
 }
 
 // --- Criterion 4: idempotence (kill-9 proxy) -------------------------------

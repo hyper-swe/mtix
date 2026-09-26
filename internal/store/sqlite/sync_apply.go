@@ -497,7 +497,7 @@ func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error 
 	if err := recomputeContentHashRow(ctx, tx, e.NodeID); err != nil {
 		return fmt.Errorf("apply create_node %s: %w", e.EventID, err)
 	}
-	return nil
+	return advanceAppliedSequence(ctx, tx, e, p.ParentID) // MTIX-95.38
 }
 
 // computeDepth returns the depth of a node given its parent ID. Depth 0

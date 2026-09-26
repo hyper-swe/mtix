@@ -4,8 +4,9 @@
 // Tests for MTIX-95.31.6 (FR-7.8): a merge import reports every uid it
 // adopts, with the id, both uids and both titles, in its report and in its
 // result, so a merge of two tasks the identity rule cannot tell apart (two
-// clones created the id in the same second, neither clone's event log holds
-// the create events, and both upgraded more than an hour later) is visible.
+// clones created the id in the same second, at least one clone's event log
+// lacks the create event, and both upgraded more than an hour later) is
+// visible.
 // Written red-first against the MTIX-95.31.4 code, which adopted such uids
 // without a word; round 2 adds a file node without a uid, and checks that
 // every local uid not reported as adopted survives.
@@ -28,7 +29,7 @@ import (
 func adoptionLine(a sqlite.ImportUIDAdoption) string {
 	local := a.LocalUID
 	if local == "" {
-		local = "(none)"
+		local = "(new)" // the merge gives the local task a backfill uid first (MTIX-95.31.9)
 	}
 	return fmt.Sprintf("    - %s local uid=%s -> file uid=%s (local %q, file %q)\n",
 		a.ID, local, a.FileUID, a.LocalTitle, a.FileTitle)
@@ -74,10 +75,10 @@ func TestImportReconcile_MergeAdoptingUIDs_ReportsEachAdoption(t *testing.T) {
 				return []sqlite.ImportUIDAdoption{{ID: "REC-1", FileUID: theirs,
 					LocalTitle: "Shared task", FileTitle: "Shared task"}}
 			}, nil},
-		{"a file node without a uid at an id the store holds", sqlite.ImportModeMerge, false,
+		{"a file node without a uid at an id the store holds, one title", sqlite.ImportModeMerge, false,
 			func(t *testing.T, s stores) []sqlite.ImportUIDAdoption {
-				createSameIDTask(t, s.local, "REC-1", "", 1, backfilledUID(t), "Local title")
-				createSameIDTask(t, s.teammate, "REC-1", "", 1, backfilledUID(t), "File title")
+				createSameIDTask(t, s.local, "REC-1", "", 1, backfilledUID(t), "Shared task")
+				createSameIDTask(t, s.teammate, "REC-1", "", 1, backfilledUID(t), "Shared task")
 				_, err := s.teammate.WriteDB().ExecContext(context.Background(), `UPDATE nodes SET uid = NULL`)
 				require.NoError(t, err)
 				return nil
@@ -239,7 +240,7 @@ func TestImportReconcileReport_String_AdoptedTitlesDiffer_SaysWhereTheLocalTaskI
 			assert.Equal(t, tt.want, containsLine(out, titlesDifferNote), out)
 			if tt.want {
 				assert.Contains(t, out, "may be two different tasks created in the same second whose create "+
-					"events neither clone's event log holds (created before 0.2, for example)")
+					"event at least one clone's event log lacks (for example, created before 0.2)")
 				assert.Contains(t, out, "the backup taken before the merge holds the local one")
 			}
 		})
@@ -248,8 +249,8 @@ func TestImportReconcileReport_String_AdoptedTitlesDiffer_SaysWhereTheLocalTaskI
 
 // TestImportReconcile_ResidualSameSecondPair_MergeKeepsFileTaskAndReportsIt
 // is the MTIX-95.31.4 round-4 residual: two different tasks created in the
-// same second, whose create events neither clone's event log holds, both
-// upgraded more than an hour later, count as one task. The merge takes the file's task
+// same second, whose create event at least one clone's event log lacks,
+// both upgraded more than an hour later, count as one task. The merge takes the file's task
 // under the id (the identity rule is unchanged) and its report names both
 // titles, so the user can recover the local task from the pre-merge backup.
 func TestImportReconcile_ResidualSameSecondPair_MergeKeepsFileTaskAndReportsIt(t *testing.T) {
@@ -268,4 +269,23 @@ func TestImportReconcile_ResidualSameSecondPair_MergeKeepsFileTaskAndReportsIt(t
 		FileUID: theirs, LocalTitle: "A pre-upgrade task", FileTitle: "B pre-upgrade task"}))
 	_, err = local.ResolveDisplayPathByUID(ctx, mine)
 	require.ErrorIs(t, err, model.ErrNotFound, "the local uid is gone: only the report and the backup name it")
+}
+
+// TestImportReconcileReport_String_TwoAdoptionsDifferingFirst_CountsBothAndWarns
+// verifies the report of a merge that adopts two uids, the one whose titles
+// differ listed first, counts both and still prints the titles-differ note
+// (MTIX-95.31.9): the note is not decided by the last adoption alone.
+func TestImportReconcileReport_String_TwoAdoptionsDifferingFirst_CountsBothAndWarns(t *testing.T) {
+	local, teammate := newTestStore(t), newTestStore(t)
+	createSameIDTask(t, local, "REC-1", "", 1, backfilledUID(t), "A pre-upgrade task")
+	createSameIDTask(t, teammate, "REC-1", "", 1, backfilledUID(t), "B pre-upgrade task")
+	createSameIDTask(t, local, "REC-2", "", 2, backfilledUID(t), "Shared task")
+	createSameIDTask(t, teammate, "REC-2", "", 2, backfilledUID(t), "Shared task")
+
+	report := mergeFile(t, local, exportOf(t, teammate))
+	require.Len(t, report.UIDAdoptions, 2)
+	require.Equal(t, "A pre-upgrade task", report.UIDAdoptions[0].LocalTitle, "the differing adoption comes first")
+	out := report.String()
+	assert.Contains(t, out, "  uids adopted from the file (the same task under another uid): 2\n")
+	assert.True(t, containsLine(out, titlesDifferNote), out)
 }

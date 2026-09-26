@@ -343,7 +343,7 @@ func TestPullEvents_FromZero(t *testing.T) {
 	_, _, err := pool.PushEvents(context.Background(), events)
 	require.NoError(t, err)
 
-	got, hasMore, err := pool.PullEvents(context.Background(), 0, 100)
+	got, hasMore, err := pool.PullEvents(context.Background(), transport.PullCursor{}, 100)
 	require.NoError(t, err)
 	require.Len(t, got, 3)
 	require.False(t, hasMore)
@@ -361,9 +361,10 @@ func TestPullEvents_FromHighWaterMark(t *testing.T) {
 	_, _, err := pool.PushEvents(context.Background(), events)
 	require.NoError(t, err)
 
-	got, hasMore, err := pool.PullEvents(context.Background(), 2, 100)
+	after := transport.PullCursor{Lamport: 2, EventID: events[1].EventID}
+	got, hasMore, err := pool.PullEvents(context.Background(), after, 100)
 	require.NoError(t, err)
-	require.Len(t, got, 3, "lamport > 2: events 3, 4, 5")
+	require.Len(t, got, 3, "after (2, event 2): events 3, 4, 5")
 	require.False(t, hasMore)
 	for _, e := range got {
 		require.Greater(t, e.LamportClock, int64(2))
@@ -382,7 +383,7 @@ func TestPullEvents_HasMoreFlag(t *testing.T) {
 	_, _, err := pool.PushEvents(context.Background(), events)
 	require.NoError(t, err)
 
-	got, hasMore, err := pool.PullEvents(context.Background(), 0, 3)
+	got, hasMore, err := pool.PullEvents(context.Background(), transport.PullCursor{}, 3)
 	require.NoError(t, err)
 	require.Len(t, got, 3)
 	require.True(t, hasMore, "5 events on hub, limit 3 -> hasMore=true")
@@ -401,7 +402,7 @@ func TestPullEvents_OrderedByLamport(t *testing.T) {
 	_, _, err := pool.PushEvents(context.Background(), events)
 	require.NoError(t, err)
 
-	got, _, err := pool.PullEvents(context.Background(), 0, 100)
+	got, _, err := pool.PullEvents(context.Background(), transport.PullCursor{}, 100)
 	require.NoError(t, err)
 	require.Len(t, got, 3)
 	require.Equal(t, int64(1), got[0].LamportClock)

@@ -465,6 +465,9 @@ func TestDiffReplace_SameTaskAtUpgradeWithOtherTitle_ListedAsLoss(t *testing.T) 
 	flagged := func(fileTitle string) *sqlite.NodeLoss {
 		return &sqlite.NodeLoss{NodeID: "REC-1", SameTaskAtUpgrade: true, LocalTitle: localTitle, FileTitle: fileTitle}
 	}
+	noUID := func(fileTitle string) *sqlite.NodeLoss { // MTIX-95.31.9: no uid to compare, the titles decide
+		return &sqlite.NodeLoss{NodeID: "REC-1", DifferentTitleNoUID: true, LocalTitle: localTitle, FileTitle: fileTitle}
+	}
 	tests := []struct {
 		name      string
 		localUID  func(t *testing.T) string // nil: the local node has no uid
@@ -478,8 +481,13 @@ func TestDiffReplace_SameTaskAtUpgradeWithOtherTitle_ListedAsLoss(t *testing.T) 
 		{"the file's uid assigned at upgrade, titles differ", taskUID, "backfilled", "B task", flagged("B task")},
 		{"both uids assigned at upgrade, one title", backfilledUID, "backfilled", localTitle, nil},
 		{"the same uid, retitled", backfilledUID, "same", "Retitled", nil},
-		{"a file without uids, retitled", backfilledUID, "none", "Retitled", nil},
-		{"a local node without a uid, retitled", nil, "backfilled", "Retitled", nil},
+		{"a file without uids, another title", backfilledUID, "none", "Retitled", noUID("Retitled")},
+		{"a local node without a uid (a backfill uid, as the merge gives it), another title", nil, "backfilled",
+			"Retitled", &sqlite.NodeLoss{NodeID: "REC-1", SameTaskAtUpgrade: true, LocalTitle: localTitle,
+				FileTitle: "Retitled"}},
+		{"no uid on either side, another title", nil, "none", "Retitled", noUID("Retitled")},
+		{"a file without uids, one title", backfilledUID, "none", localTitle, nil},
+		{"no uid on either side, one title", nil, "none", localTitle, nil},
 		{"a different task", taskUID, "minted", "B task", &sqlite.NodeLoss{NodeID: "REC-1", DifferentTask: true,
 			LocalTitle: localTitle, FileTitle: "B task"}},
 	}

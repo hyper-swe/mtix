@@ -4,7 +4,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -47,7 +46,7 @@ func runRerun(id, strategy, reason string) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.nodeSvc.Rerun(
 		ctx, id, service.RerunStrategy(strategy), reason, "cli",
 	); err != nil {
@@ -82,7 +81,7 @@ func runRestore(id string) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.nodeSvc.Restore(ctx, id, "cli"); err != nil {
 		return err
 	}

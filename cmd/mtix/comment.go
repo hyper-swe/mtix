@@ -4,7 +4,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 
@@ -36,7 +35,7 @@ func runComment(id, text, to string) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	// Use the process's resolved identity (MTIX-24: MTIX_AUTHOR_ID env >
 	// author_id config > "cli"), not a hardcoded "cli": the annotation's
 	// displayed author is what the addressee's inbox shows as the sender, so

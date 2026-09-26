@@ -47,7 +47,7 @@ does not know the new fields would drop them (see
 | `content_hash` | 1.0.0 | Hash of the content fields; a merge import compares it. |
 | `created_at`, `updated_at` | 1.0.0 | RFC 3339. |
 | `closed_at`, `defer_until`, `deleted_at` | 1.0.0 | RFC 3339; omitted when empty. |
-| `uid` | 1.0.0 | Durable internal identity; omitted when empty. |
+| `uid` | 1.0.0 | Durable internal identity; omitted when empty. Every node of a board mtix 0.5.4 writes carries one: a node that reached the store without a uid (from a board written before uids were shared) is given a backfill uid, a UUIDv8 whose 12 bits after the version hold the marker `0xBF1`, when it is imported or when the store opens. |
 | `previous_status` | 2.0.0 | Status to return to when a block or invalidation clears; omitted when empty. |
 | `estimate_min`, `actual_min` | 2.0.0 | Minutes; omitted when empty. |
 | `code_refs`, `commit_refs` | 2.0.0 | Same structure as `mtix show --json`; omitted when empty. |
@@ -167,12 +167,18 @@ them:
 - a dependency (from, to, type);
 - the whole local node, when the file gives its id to a different task:
   both carry a `uid` and the uids differ (they are one task only when
-  `created_at` is equal and one uid is a UUIDv7 minted more than an hour
-  after it, a clone's backfill), or the file gives the id to another local
-  task, moved there; listed as "a different task under this id", with
-  both titles. A local node whose `uid` the file holds under
-  another id is the same task, renumbered by another clone: it is compared
-  with that copy, not lost.
+  `created_at` is equal and one uid was assigned after the task was
+  created: a marked backfill uid, whatever its time, or a UUIDv7 minted
+  more than an hour after `created_at`, a clone's backfill at upgrade), or
+  the file gives the id to another local task, moved there; listed as "a
+  different task under this id", with both titles. A local node whose
+  `uid` the file holds under another id is the same task, renumbered by
+  another clone: it is compared with that copy, not lost;
+- the whole local node, when the file holds its id with another title and
+  either copy has no `uid` to compare (a board written before uids were
+  shared); listed as "a task under this id with a different title and no
+  uid to compare", with both titles. With the same title the two are one
+  task.
 
 A non-empty field value that the file leaves empty or leaves out (an empty
 string, list or object, `null`, or, for `labels` and `metadata`, the text
@@ -185,7 +191,10 @@ current copy has seen the local changes and a field it cleared (unclaim,
 reopen, undefer, undelete, a later update) was cleared on purpose. A 1.x
 file is never current, nor is a copy whose `updated_at` cannot be read;
 clock skew that makes a current copy look older refuses. Numbers are never
-empty, and `node_type` is exempt because import derives it from `depth`. A
+empty, and `node_type` is exempt because import derives it from `depth`.
+A `uid` the file leaves out is no loss when the local `uid` is a marked
+backfill uid: the replace keeps it, so a board without uids imports as
+before; a create-time `uid` (a UUIDv7) the file leaves out is a loss. A
 stale copy that changes a non-empty value, rather than clearing it, is
 applied (a checkout of an older board does this on purpose); the backup
 keeps the state before. The rule fails open in one direction: a copy with
@@ -197,11 +206,21 @@ On a loss the import is refused and nothing changes: no import, no
 backup, the stored hash kept, so it refuses again on every command. The
 refusal names the loss node by node and three ways to proceed, each of
 which resolves it: `mtix import .mtix/tasks.json --mode merge` (backs up
-the database and keeps all local data, a field value a stale copy leaves
-empty included, with the node's local status when the value is part of it;
-for a node whose `content_hash` is unchanged the local field values win; a local node whose id the file gives to a different task, one
-with another `uid`, is renumbered with its subtree to the next number free
-in both, keeping its `uid`, and applied only with `--confirm`),
+the database; keeps every local node and dependency, every local
+annotation and activity entry, with the file's added, and every field
+value the refusal lists, with the node's
+local status when the value is part of it; decides the other field values
+per node by its content, the title, description, prompt, acceptance and
+labels that `content_hash` covers: where the local content matches the
+file's, every local field value stays, so a teammate's claim, status,
+assignee or wake-time change to that node is not applied, and where it
+differs, the file's copy wins, so a local edit to that node (an unclaim or
+a prompt edit, for example) is undone, except a value the file leaves
+empty in a copy that is not current; check `git log -p .mtix/tasks.json`
+afterwards and reapply what it undid; a local node whose id the file gives
+to a different task, one with another `uid`, is renumbered with its
+subtree to the next number free in both, keeping its `uid`, and applied
+only with `--confirm`),
 `mtix sync --fix` (rewrite the file from the store) and
 `mtix import .mtix/tasks.json --mode replace`. The replace re-checks, in
 its own transaction, that the store is unchanged since the comparison; if
@@ -238,8 +257,12 @@ never `mtix sync --fix`).
   different entries that share an id are both kept, and an entry both
   sides hold is kept once. When anything is added, the list is ordered by
   time, then id.
-- When the node's `content_hash` differs, the file's values replace the
-  other fields. When it is the same, the other fields keep their local
-  values.
+- When the node's `content_hash` (its title, description, prompt,
+  acceptance and labels) differs, the file's values replace the other
+  fields, so a local edit to them is undone, except a value the file
+  leaves empty in a copy that is not current, which stays, with the node's
+  local status when the value is part of it. When it is the
+  same, the other fields keep their local values, so a change the file
+  carries to them (a teammate's claim, for example) is not applied.
 - A merge cannot remove an annotation or an activity entry. To make the
   store match a file exactly, use replace mode.

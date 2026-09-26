@@ -33,9 +33,9 @@ type importConfig struct {
 	// storeChecksum.
 	checkStore    bool
 	storeChecksum string
-	// localMoves are the local tasks to renumber before a merge
-	// (renumberLocalFirst).
-	localMoves []localRenumber
+	// localMoves are the local writes before a merge: backfill uids and
+	// renumbers (renumberLocalFirst).
+	localMoves localWrites
 }
 
 // IfStoreUnchanged makes the import write nothing, and return
@@ -53,7 +53,7 @@ func IfStoreUnchanged(checksum string) ImportOption {
 // renumberLocalFirst makes the import move the planned local tasks, inside
 // its transaction and before it writes the file's nodes (MTIX-95.31.4,
 // planLocalRenumbers).
-func renumberLocalFirst(moves []localRenumber) ImportOption {
+func renumberLocalFirst(moves localWrites) ImportOption {
 	return func(c *importConfig) { c.localMoves = moves }
 }
 
@@ -126,7 +126,7 @@ func (s *Store) refuseEmptyImport(ctx context.Context, data *ExportData, force b
 // writing a node normalizes its node_type, and the real import must still
 // verify the file's checksum.
 func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode ImportMode,
-	moves []localRenumber) (int64, string, error) {
+	moves localWrites) (int64, string, error) {
 	dry := *data
 	dry.Nodes = append([]exportNode(nil), data.Nodes...)
 	var changes int64

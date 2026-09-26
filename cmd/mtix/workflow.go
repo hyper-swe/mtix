@@ -4,7 +4,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -38,7 +37,7 @@ func runClaim(id, agentID string) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.store.ClaimNode(ctx, id, agentID); err != nil {
 		return err
 	}
@@ -77,7 +76,7 @@ func runUnclaim(id, reason string) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.store.UnclaimNode(ctx, id, reason, "cli"); err != nil {
 		return err
 	}
@@ -159,7 +158,7 @@ func runDefer(id, until string) error {
 		return fmt.Errorf("invalid --until timestamp: %w", err)
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.nodeSvc.DeferNode(ctx, id, wake, "deferred via CLI", app.authorID); err != nil {
 		return err
 	}
@@ -208,7 +207,7 @@ func runCancel(id, reason string, cascade bool) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.store.CancelNode(ctx, id, reason, "cli", cascade); err != nil {
 		return err
 	}
@@ -241,7 +240,7 @@ func runTransition(id string, status model.Status, reason string) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.nodeSvc.TransitionStatus(ctx, id, status, reason, "cli"); err != nil {
 		return err
 	}

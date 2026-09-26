@@ -15,7 +15,10 @@ import (
 // that isolates each pulled event's apply inside a batch transaction, and
 // the local Lamport read the jump bound compares with. The rules that decide
 // what is quarantined live with the pull (cmd/mtix/sync_pull_quarantine.go
-// and internal/sync/validator); this file only stores and reads.
+// and internal/sync/validator); this file only stores and reads. The same
+// table holds the own events `mtix sync push` holds back (source push,
+// MTIX-95.12; sync_push_hold.go): the pull-side reads and writes here leave
+// those rows alone.
 
 // QuarantinedEvent is one row of sync_quarantine: a pulled event that failed
 // its ingest checks or its apply, kept as the raw event JSON it was pulled as
@@ -23,8 +26,9 @@ import (
 type QuarantinedEvent struct {
 	// EventID is the event's id, the table's key.
 	EventID string
-	// Source is the pull pass that first quarantined the event: "pull" (the
-	// cursor pass) or "sweep" (the late-event sweep).
+	// Source is the pass that first quarantined the event: "pull" (the
+	// cursor pass) or "sweep" (the late-event sweep), or "push" for an own
+	// event push holds back (QuarantineSourcePush, MTIX-95.12).
 	Source string
 	// RawEvent is the event as JSON (a model.SyncEvent).
 	RawEvent string
@@ -57,7 +61,9 @@ type QuarantineKey struct {
 // The first time an event id is recorded it is inserted with one attempt;
 // after that each call only counts one more attempt and moves last_attempt:
 // the row is not rewritten, so source, the raw event, the reason, first_seen
-// and cli_version stay as first recorded.
+// and cli_version stay as first recorded. Push holds are recorded through it
+// too (HoldPushEvents); the push also releases them and relabels a kept
+// dependent's reason (sync_push_hold.go).
 func QuarantineEvent(ctx context.Context, tx *sql.Tx, q QuarantinedEvent) error {
 	// Insert the event, or count one more failed attempt of it (event_id is
 	// the primary key).
@@ -76,19 +82,21 @@ func QuarantineEvent(ctx context.Context, tx *sql.Tx, q QuarantinedEvent) error 
 	return nil
 }
 
-// RemoveQuarantined deletes eventID's row, in the caller's transaction; a
-// pull calls it when the event has applied. An id that is not quarantined
-// is a no-op.
+// RemoveQuarantined deletes eventID's pulled-event row, in the caller's
+// transaction; a pull calls it when the event has applied. An id that is
+// not quarantined is a no-op, and a held push event's row is never removed
+// (MTIX-95.12).
 func RemoveQuarantined(ctx context.Context, tx *sql.Tx, eventID string) error {
-	// Drop the row of an event that has now applied.
+	// Drop the row of a pulled event that has now applied.
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM sync_quarantine WHERE event_id = ?`, eventID); err != nil {
+		`DELETE FROM sync_quarantine WHERE event_id = ? AND source <> 'push'`, eventID); err != nil {
 		return fmt.Errorf("unquarantine %s: %w", eventID, err)
 	}
 	return nil
 }
 
-// QuarantinePage returns up to limit quarantined events in retry order, the
+// QuarantinePage returns up to limit quarantined events, held push events
+// included (source push, MTIX-95.12), in retry order, the
 // raw event's Lamport clock and then the event id, starting after the given
 // key (from the first row when after is nil). Lamport order is causal, so a
 // node's create is retried before its edits. A raw event that is not JSON
@@ -140,11 +148,13 @@ func (s *Store) QuarantinePage(ctx context.Context, after *QuarantineKey, limit 
 }
 
 // CountQuarantined returns how many pulled events are quarantined, for
-// `mtix sync status` and `mtix sync doctor`.
+// `mtix sync status` and `mtix sync doctor`; held push events are counted by
+// CountHeldPushEvents instead (MTIX-95.12).
 func (s *Store) CountQuarantined(ctx context.Context) (int, error) {
 	var n int
-	// Every quarantined event, whatever its source.
-	if err := s.QueryRow(ctx, `SELECT COUNT(*) FROM sync_quarantine`).Scan(&n); err != nil {
+	// Every quarantined pulled event (source pull or sweep).
+	if err := s.QueryRow(ctx,
+		`SELECT COUNT(*) FROM sync_quarantine WHERE source <> 'push'`).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count quarantined events: %w", err)
 	}
 	return n, nil
@@ -223,13 +233,16 @@ func EventApplied(ctx context.Context, tx *sql.Tx, eventID string) (bool, error)
 	return n > 0, nil
 }
 
-// ClearQuarantine empties sync_quarantine. `mtix sync clone` calls it with
-// the rest of its reset: a clone rebuilds the store from the hub, so the
-// quarantined events are applied again or quarantined again by later pulls.
+// ClearQuarantine removes the quarantined pulled events. `mtix sync clone`
+// calls it with the rest of its reset: a clone rebuilds the store from the
+// hub, so those events are applied again or quarantined again by later
+// pulls. Held push events are kept: their events stay in sync_events and
+// never reached the hub (MTIX-95.12).
 func (s *Store) ClearQuarantine(ctx context.Context) error {
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		// Drop every quarantined event.
-		if _, err := tx.ExecContext(ctx, `DELETE FROM sync_quarantine`); err != nil {
+		// Drop every quarantined pulled event.
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM sync_quarantine WHERE source <> 'push'`); err != nil {
 			return fmt.Errorf("clear quarantine: %w", err)
 		}
 		return nil

@@ -20,11 +20,11 @@ import (
 // Late-event sweep of `mtix sync pull` (MTIX-95.5; ADR-006 D5, review F-43;
 // FR-18).
 //
-// The pull cursor is a Lamport clock stamped by the pushing client, and the
-// hub serves lamport_clock > cursor. A teammate who worked offline pushes
-// events stamped below busier peers' cursors, so the cursor loop never
-// returns them and replicas silently diverge. After the cursor loop, the
-// sweep therefore:
+// The pull cursor is a (lamport_clock, event_id) position whose clock is
+// stamped by the pushing client, and the hub serves the events after it
+// (MTIX-95.4). A teammate who worked offline pushes events stamped below
+// busier peers' cursors, so the cursor loop never returns them and
+// replicas silently diverge. After the cursor loop, the sweep therefore:
 //
 //  1. Listing phase: lists, in (created_at, event_id) keyset pages, the hub
 //     event ids created since the previous sweep's hub time minus

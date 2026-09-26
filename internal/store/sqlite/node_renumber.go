@@ -63,6 +63,9 @@ func (s *Store) RenumberSubtree(ctx context.Context, id string, newSeq int) erro
 // (MTIX-95.31.4). The destination namespace must be free (ErrAlreadyExists
 // otherwise, nothing written); the nodes, their children's parent_id and
 // the dependency rows are rewritten with foreign keys checked at commit.
+// The sequence counters of the moved node's parent and of every parent in
+// the moved subtree are raised to the highest number under each
+// (MTIX-95.38).
 func renumberSubtreeTx(ctx context.Context, tx *sql.Tx, id string, node renumberTarget, newSeq int) error {
 	// Idempotent: renumbering to the current number changes nothing.
 	if node.seq == newSeq {
@@ -86,7 +89,13 @@ func renumberSubtreeTx(ctx context.Context, tx *sql.Tx, id string, node renumber
 	if err := rewriteSubtreeIDs(ctx, tx, id, newID, newSeq); err != nil {
 		return err
 	}
-	return rewriteDependencyRefs(ctx, tx, id, newID)
+	if err := rewriteDependencyRefs(ctx, tx, id, newID); err != nil {
+		return err
+	}
+	// MTIX-95.38: keep every counter the move touched at or above the
+	// numbers under it, so the next create under the moved node, or under
+	// its parent, does not pick a taken number.
+	return advanceRenumberedSequences(ctx, tx, node, newID)
 }
 
 // renumberTarget holds the columns of the node being renumbered.

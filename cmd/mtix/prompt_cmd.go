@@ -30,7 +30,7 @@ func runPrompt(id, text string) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.promptSvc.UpdatePrompt(ctx, id, text, "cli"); err != nil {
 		return err
 	}
@@ -61,7 +61,7 @@ func runAnnotate(id, text string) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	// MTIX-24 process identity, not hardcoded "cli" (see runComment).
 	if err := app.promptSvc.AddAnnotation(ctx, id, text, app.authorID, ""); err != nil {
 		return err
@@ -93,7 +93,7 @@ func runResolveAnnotation(nodeID, annotID string) error {
 		return fmt.Errorf("not in an mtix project")
 	}
 
-	ctx := context.Background()
+	ctx := mutationContext()
 	if err := app.promptSvc.ResolveAnnotation(ctx, nodeID, annotID, true); err != nil {
 		return err
 	}

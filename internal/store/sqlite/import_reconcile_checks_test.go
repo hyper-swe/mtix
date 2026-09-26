@@ -62,7 +62,7 @@ func TestPrepareWrite_ImportChangingOneRowOutsideTheSearchIndex_RunsBeforeWriteO
 				return data
 			}
 
-			changes, _, err := s.countImportChanges(ctx, file(), ImportModeMerge, nil)
+			changes, _, err := s.countImportChanges(ctx, file(), ImportModeMerge, localWrites{})
 			require.NoError(t, err)
 			require.Equal(t, int64(1), changes, "the case changes exactly one row")
 

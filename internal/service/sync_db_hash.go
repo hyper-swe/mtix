@@ -7,12 +7,75 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
+
+// baselineForm is a form of the local store's export that a conflict
+// baseline (sync-db.sha256) may have been hashed over (MTIX-95.31.11,
+// FR-15.2h). The zero value is the form this version writes; the others
+// are flags that combine.
+type baselineForm uint8
+
+const (
+	// formCurrent is the export this version writes (schema 2.0.0).
+	formCurrent baselineForm = 0
+	// formWithoutBackfillUIDs leaves out every backfill uid: the baseline
+	// was written before the open-time backfill (MTIX-95.31.9) gave the
+	// tasks without a uid one.
+	formWithoutBackfillUIDs baselineForm = 1 << 0
+	// form100 is the 1.0.0 export mtix 0.5.3 and earlier wrote and hashed.
+	form100 baselineForm = 1 << 1
+	// formWithoutUIDs leaves out every uid: mtix 0.3.0 and earlier exported
+	// no uid key at all, and the uids of a store upgraded from them were
+	// given to its tasks at the upgrade.
+	formWithoutUIDs baselineForm = 1 << 2
+	// knownForms are the flags exportHash knows.
+	knownForms = formWithoutBackfillUIDs | form100 | formWithoutUIDs
+)
+
+// olderBaselineForms are the forms, other than the current one, a baseline
+// written by an older mtix, or by this version before backfill uids were
+// minted, is in (MTIX-95.31.11): the store's export without its backfill
+// uids; the 1.0.0 form (0.5.3 and earlier); both; and the 1.0.0 form
+// without any uid (0.3.0 and earlier), which matches only a baseline that
+// had no uid key and hides nothing but the assignment of uids.
+func olderBaselineForms() []baselineForm {
+	return []baselineForm{
+		formWithoutBackfillUIDs, form100, form100 | formWithoutBackfillUIDs, form100 | formWithoutUIDs,
+	}
+}
+
+// baselineForms returns the older forms hasConflict tries, in order:
+// olderForms when set, olderBaselineForms otherwise (MTIX-95.31.11).
+func (s *SyncService) baselineForms() []baselineForm {
+	if s.olderForms != nil {
+		return s.olderForms
+	}
+	return olderBaselineForms()
+}
+
+// String names the form in logs: "current" or "1.0.0", followed by
+// " without backfill uids" or " without uids".
+func (f baselineForm) String() string {
+	name := "current"
+	if f&form100 != 0 {
+		name = "1.0.0"
+	}
+	switch {
+	case f&formWithoutUIDs != 0:
+		name += " without uids"
+	case f&formWithoutBackfillUIDs != 0:
+		name += " without backfill uids"
+	}
+	return name
+}
 
 // refreshDBHash writes the conflict baseline (sync-db.sha256) for the store
 // as it is after an auto-import (MTIX-95.31.2), so the next changed
@@ -36,21 +99,176 @@ func (s *SyncService) computeDBHash(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("export the local store: %w", err)
 	}
-	return exportHash(data)
+	return exportHash(data, formCurrent)
 }
 
-// exportHash computes the SHA-256 hash of an export's content. The
-// ExportedAt timestamp is left out, so the hash reflects only data content,
-// not when the export was generated. Without this, two exports of identical
-// data in different seconds produce different hashes, causing
-// false-positive conflict detection in hasConflict. data is not changed.
-func exportHash(data *sqlite.ExportData) (string, error) {
+// exportHash computes the SHA-256 hash of an export's content in the given
+// form (MTIX-95.31.11): formCurrent hashes the export as it is, the
+// conflict baseline this version writes. The ExportedAt timestamp is left
+// out, so the hash reflects only data content, not when the export was
+// generated. Without this, two exports of identical data in different
+// seconds produce different hashes, causing false-positive conflict
+// detection in hasConflict. An older form (olderBaselineForms) first
+// leaves out every uid (sqlite.WithoutUIDs), for a baseline written before
+// nodes had uids, or every backfill uid (sqlite.WithoutBackfillUIDs), for
+// a baseline written before the open-time backfill minted them, and then
+// turns the export into the 1.0.0 form mtix 0.5.3 hashed
+// (sqlite.Schema100Form), each with its checksum computed again, so
+// hasConflict can recognize a baseline an older build wrote for the same
+// store. The order matters: the 1.0.0 checksum is computed last, over the
+// nodes as that build exported them. A form with a flag exportHash does not
+// know is refused with ErrInvalidInput. data is not changed.
+func exportHash(data *sqlite.ExportData, form baselineForm) (string, error) {
+	if form&^knownForms != 0 {
+		return "", fmt.Errorf("unknown baseline form %d: %w", uint8(form), model.ErrInvalidInput)
+	}
 	content := *data
 	content.ExportedAt = ""
+	switch {
+	case form&formWithoutUIDs != 0:
+		older, err := sqlite.WithoutUIDs(&content)
+		if err != nil {
+			return "", fmt.Errorf("the local store without its uids: %w", err)
+		}
+		content = *older
+	case form&formWithoutBackfillUIDs != 0:
+		older, err := sqlite.WithoutBackfillUIDs(&content)
+		if err != nil {
+			return "", fmt.Errorf("the local store without its backfill uids: %w", err)
+		}
+		content = *older
+	}
+	if form&form100 != 0 {
+		older, err := sqlite.Schema100Form(&content)
+		if err != nil {
+			return "", fmt.Errorf("the local store in the 1.0.0 form: %w", err)
+		}
+		content = *older
+	}
 	jsonBytes, err := json.Marshal(&content)
 	if err != nil {
 		return "", fmt.Errorf("encode the local store: %w", err)
 	}
 	hash := sha256.Sum256(jsonBytes)
 	return fmt.Sprintf("%x", hash), nil
+}
+
+// matchOlderBaseline returns the first of forms in which the export local
+// hashes to stored, the conflict baseline, and whether there is one
+// (MTIX-95.31.11). hasConflict compares the current form first, then the
+// older forms (olderBaselineForms). A store changed since its baseline was
+// written matches no older form, unless the change is only to fields that
+// form lacks.
+func matchOlderBaseline(local *sqlite.ExportData, stored string, forms []baselineForm) (baselineForm, bool, error) {
+	for _, form := range forms {
+		hash, err := exportHash(local, form)
+		if err != nil {
+			return formCurrent, false, fmt.Errorf("hash the local store in the %s form: %w", form, err)
+		}
+		if hash == stored {
+			return form, true, nil
+		}
+	}
+	return formCurrent, false, nil
+}
+
+// errBaselineChanged reports that the conflict baseline no longer held the
+// hash its rewrite expected: another command recorded a newer one meanwhile
+// (MTIX-95.31.11).
+var errBaselineChanged = errors.New("the conflict baseline changed during its rewrite")
+
+// upgradeBaseline rewrites the conflict baseline (sync-db.sha256), which
+// held stored, the hash that matched the unchanged local store in an older
+// form, with current, the store's hash in the current form, and logs it
+// (MTIX-95.31.11, FR-15.2h). From then on the baseline is compared exactly,
+// so a change to a field the older form lacks counts as a change too. The
+// write is atomic and safe against a concurrent rewrite (replaceBaseline),
+// so a failure leaves the older baseline whole; it is logged, and the next
+// command recognizes the older baseline again. A baseline that no longer
+// holds stored when the rewrite would replace it, because another command's
+// import recorded a newer one under the same shared lock, is kept: it is
+// logged at debug level, and the import that follows records its own.
+func (s *SyncService) upgradeBaseline(mtixDir, stored, current string, form baselineForm) {
+	path := filepath.Join(mtixDir, "data", "sync-db.sha256")
+	err := replaceBaseline(path, []byte(current), stored, s.wrapBaselineFile)
+	switch {
+	case errors.Is(err, errBaselineChanged):
+		s.logger.Debug("the conflict baseline changed during its rewrite; the newer one is kept",
+			"from_form", form.String())
+		return
+	case err != nil:
+		s.logger.Warn("could not rewrite the conflict baseline in the current form", "error", err)
+		return
+	}
+	s.logger.Info("sync_baseline_upgraded", "event", "sync_baseline_upgraded", "from_form", form.String())
+}
+
+// replaceBaseline writes data to the conflict baseline at path through a
+// temporary file only this call uses, in the same directory, and a rename
+// (MTIX-95.31.11). The rewrite runs under the shared sync lock (FR-15.8),
+// so two commands may rewrite the baseline at once: with its own temporary
+// file, neither can truncate or move the other's half-written file, and a
+// reader sees the old baseline or one whole new one, never an empty or
+// partial one. Just before the rename it reads the baseline again and goes
+// ahead only while it still holds expected (baselineStillHolds), so it
+// does not replace a newer baseline another command recorded before that
+// read; it then returns errBaselineChanged. This narrows the race but does
+// not close it: the shared lock lets another command's import record its
+// baseline between that read and the rename, and the rename then replaces
+// it with this command's older one. The next pull is then reported as a
+// conflict although nothing changed, until a write records a new baseline;
+// no data is lost. Closing the window would need the exclusive lock, which
+// AutoImport does not hold here. The baseline keeps mode 0644. On any
+// failure, a failed write or close included (a full disk), the temporary
+// file is removed and the baseline is left as it was. wrap, when not nil,
+// wraps the temporary file for the write and the close
+// (SyncService.wrapBaselineFile).
+func replaceBaseline(path string, data []byte, expected string, wrap func(*os.File) io.WriteCloser) (err error) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create a temporary baseline: %w", err)
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if rmErr := os.Remove(tmp.Name()); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			err = errors.Join(err, fmt.Errorf("remove the temporary baseline: %w", rmErr))
+		}
+	}()
+	var file io.WriteCloser = tmp
+	if wrap != nil {
+		file = wrap(tmp)
+	}
+	_, writeErr := file.Write(data)
+	if closeErr := file.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr != nil {
+		return fmt.Errorf("write the temporary baseline: %w", writeErr)
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return fmt.Errorf("set the temporary baseline's mode: %w", err)
+	}
+	if err := baselineStillHolds(path, expected); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return fmt.Errorf("replace the baseline: %w", err)
+	}
+	return nil
+}
+
+// baselineStillHolds returns errBaselineChanged unless the conflict baseline
+// at path holds expected, or the error that kept it from being read
+// (MTIX-95.31.11).
+func baselineStillHolds(path, expected string) error {
+	onDisk, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read the baseline before replacing it: %w", err)
+	}
+	if string(onDisk) != expected {
+		return errBaselineChanged
+	}
+	return nil
 }

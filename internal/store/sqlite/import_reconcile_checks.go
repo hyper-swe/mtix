@@ -46,7 +46,7 @@ func rejectConflicts(report *ImportReconcileReport) error {
 // with the checksum the dry run read, so a write committed after the dry
 // run (or by BeforeWrite) makes the import write nothing.
 func (s *Store) prepareWrite(ctx context.Context, data *ExportData, opts ImportReconcileOptions,
-	report *ImportReconcileReport, moves []localRenumber) ([]ImportOption, error) {
+	report *ImportReconcileReport, moves localWrites) ([]ImportOption, error) {
 	if len(report.Remaps) > 0 || len(report.Renamed) > 0 {
 		if err := RecomputeExportChecksum(data); err != nil {
 			return nil, fmt.Errorf("recompute checksum after reconcile: %w", err)

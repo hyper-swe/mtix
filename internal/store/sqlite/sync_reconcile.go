@@ -83,7 +83,7 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			`DELETE FROM sync_conflicts`,
 			`DELETE FROM applied_events`,
 			`DELETE FROM sync_sweep_pending`,
-			`DELETE FROM sync_quarantine`, // pulled again from the hub (MTIX-95.11)
+			`DELETE FROM sync_quarantine`, // pulled rows: pulled again (MTIX-95.11); push holds: their events go below (MTIX-95.12)
 			`DELETE FROM sync_events`,
 			// The inbox bookkeeping is keyed to sync_events.rowid, and
 			// sync_events has no AUTOINCREMENT: once the journal is
@@ -144,7 +144,7 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			`DELETE FROM dependencies`,
 			`DELETE FROM nodes`,
 			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.lamport'`,
-			`UPDATE meta SET value = '0' WHERE key = 'meta.sync.last_pulled_clock'`,
+			resetPullCursorSQL, // both halves of the pull cursor (MTIX-95.4)
 			// Never swept again: the next pull diffs the full hub history from
 			// the first id, with no saved full-diff progress (MTIX-95.5).
 			`UPDATE meta SET value = '' WHERE key = 'meta.sync.last_sweep_at'`,
@@ -346,7 +346,7 @@ func executeImportAsTx(
 	if err := updateSentinelsAfterReconcile(ctx, tx, newRootPrefix); err != nil {
 		return count, err
 	}
-	return count, nil
+	return count, advanceImportedCounters(ctx, tx, parentID) // MTIX-95.38
 }
 
 // assignParentToFormerRoots sets parent_id = parentID for every
@@ -384,7 +384,7 @@ func executeRenameTx(
 	if err := updateSentinelsAfterReconcile(ctx, tx, newPrefix); err != nil {
 		return count, err
 	}
-	return count, nil
+	return count, advanceRenamedCounters(ctx, tx, newPrefix) // MTIX-95.38
 }
 
 // applyRenameLoop iterates the rename mapping in long-id-first order

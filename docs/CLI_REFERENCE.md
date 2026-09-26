@@ -1147,7 +1147,7 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.
 - `migrate [DSN]` — Drive the ADR-003 §7 node-identity migration phases
 - `pull [DSN]` — Pull events from the sync hub and apply locally (FR-18)
 - `push [DSN]` — Push pending events to the sync hub (FR-18)
-- `quarantine` — Inspect pulled events held in the local quarantine
+- `quarantine` — Inspect events held in the local quarantine
 - `reconcile` — Resolve divergent history (FR-18.13)
 - `relay` — Manage the file-based sync relay (FR-21)
 - `repair` — Repair local state from the local sync event log (--status)
@@ -1240,7 +1240,9 @@ already holds sync state, after 'mtix sync push', a pending count of 0 in
 log twice, once to check it and once to apply it.
 
 Use --resume to pick up an interrupted clone from the last batch
-checkpoint (.mtix data sentinel meta.sync.clone.checkpoint).
+checkpoint (.mtix data sentinels meta.sync.clone.checkpoint and
+meta.sync.clone.checkpoint_event_id). When it completes, clone sets the
+pull cursor, so the next 'mtix sync pull' fetches only newer events.
 
 ### Flags
 
@@ -1407,15 +1409,20 @@ Use --install to print a systemd unit (linux) or launchd plist
 
 Run sync health checks (FR-18)
 
-Run 6 health checks against the local store and the BYO Postgres hub:
+Run 7 health checks against the local store and the BYO Postgres hub:
 
   1. PG reachable           — opens pool + Ping
   2. Schema current         — sync_projects table exists with expected columns
   3. Queue draining         — no events older than 1h still in pending
+                              (held push events aside; check 6 lists them)
   4. No orphan applied      — every applied_event has a matching node OR tombstone
   5. Quarantined events     — no pulled event is held in the local quarantine;
                               each pull retries them ('mtix sync quarantine list')
-  6. DSN secrets file mode  — .mtix/secrets is mode 0600 (when present)
+  6. Held push events       — push holds no event the hub would refuse (such as
+                              a field over the 64 KB sync limit) or that
+                              depends on a held task creation; names the fix
+                              for each ('mtix sync quarantine list')
+  7. DSN secrets file mode  — .mtix/secrets is mode 0600 (when present)
 
 Exit code: 0 on all-pass, 2 if any check fails. --json output for
 agents and CI consumption.
@@ -1509,9 +1516,10 @@ Phase 1 MOVES display numbers on the hub when duplicates exist. Without
 
 Pull events from the sync hub and apply locally (FR-18)
 
-Pull events from the BYO Postgres sync hub starting at the local
-last_pulled_clock cursor; apply each event via the FR-18.9 idempotent
-apply engine; advance the cursor.
+Pull events from the BYO Postgres sync hub, starting after the local
+pull cursor (the Lamport clock and event id of the last event pulled);
+apply each event via the FR-18.9 idempotent apply engine; save the
+cursor in the same transaction as each batch.
 
 Then sweep for late events: list the hub events created since the
 previous sweep (hub time, minus a 15-minute overlap), fetch the ones
@@ -1578,33 +1586,44 @@ so git pre-push hooks never block code pushes.
 
 **Usage:** `quarantine`
 
-Inspect pulled events held in the local quarantine
+Inspect events held in the local quarantine
 
-Inspect the pulled events that 'mtix sync pull' holds in the local
-quarantine: events that failed the pull's checks (the FR-18.7 caps, the
-sync.max_lamport_jump bound) or their apply. They are not applied; every
-pull retries them.
+Inspect the events held in the local quarantine: pulled events that
+'mtix sync pull' could not take (they failed the pull's checks, the FR-18.7
+caps and the sync.max_lamport_jump bound, or their apply), and events of
+this replica that 'mtix sync push' holds because the hub would refuse them
+(such as a field over the 64 KB sync limit). Pulled events are not applied;
+every pull retries them. Held push events are not pushed. A hold for the
+clock is released automatically once the event's stamp is within 24 h of
+this machine's clock, together with the events of its task's subtree
+that the hub would accept; every other push hold stays.
 
 ### Subcommands
 
-- `list` — List quarantined pulled events (read-only)
+- `list` — List quarantined and held events (read-only)
 ---
 
 ## list
 
 **Usage:** `list`
 
-List quarantined pulled events (read-only)
+List quarantined and held events (read-only)
 
-List the pulled events held in the local quarantine, in the order the
-pull retries them (Lamport clock, then event id): event id, node, op,
-failed attempts, first seen, last attempt and the reason the event was
-quarantined. --json adds the Lamport clock, the pass that quarantined the
-event (pull or sweep) and the mtix version that did.
+List the events held in the local quarantine, in Lamport clock order,
+then event id: event id, node, op, failed attempts, first seen, last
+attempt and the reason the event was quarantined. --json adds the Lamport
+clock, the source (pull or sweep for a pulled event, push for an event
+push holds) and the mtix version that recorded it.
 
 Read-only and local: it never retries, removes or changes an event and
 does not contact the hub. 'mtix sync pull' retries every quarantined
-event, first before it contacts the hub.
+pulled event, first before it contacts the hub. Push releases a held push
+event automatically only in two cases: a reason that starts with
+"temporary: clock:" once the event's stamp is within 24 h of this
+machine's clock, and one that starts with "depends on held create of"
+once no creation above it (for a link, made before it) is held and the
+hub would accept it (if not, it stays held under its own reason). Every other hold stays. 'mtix sync
+doctor' names the fix for each held push event.
 ---
 
 ## reconcile

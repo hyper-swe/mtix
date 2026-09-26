@@ -300,3 +300,39 @@ func TestAutoImport_SameFileAfterSuccessfulImport_TakesNewBackup(t *testing.T) {
 	require.NoError(t, f.svc.AutoImport(ctx, f.mtixDir))
 	assert.Equal(t, []string{"pre-sync-20260924-190000.db", "pre-sync-20260924-190500.db"}, f.preSyncBackups(t))
 }
+
+// TestAutoImport_RetryAfterAnnotationOnlyChange_TakesNewBackup verifies a
+// failed import's backup is reused only while the whole store is unchanged,
+// its annotations included, not only the fields an older export form
+// carries (MTIX-95.31.11): after a change to nothing but an annotation, the
+// retry takes a new backup, which holds that change.
+func TestAutoImport_RetryAfterAnnotationOnlyChange_TakesNewBackup(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) {
+		addTeammateNode(t, d, "PROJ-2", "PROJ-3", 3)
+		d.Nodes[nodeIndex(t, d, "PROJ-3")].ParentID = "PROJ-404"
+	}))
+	require.NoError(t, os.Remove(filepath.Join(f.mtixDir, "data", "sync-db.sha256"))) // no conflict baseline
+	f.now = time.Date(2026, 9, 24, 19, 0, 0, 0, time.UTC)
+	require.Error(t, f.svc.AutoImport(ctx, f.mtixDir), "the import fails while writing")
+
+	// Only the annotations column changes: PROJ-1 keeps one of its two
+	// annotations, which the board still carries, so nothing is lost.
+	kept, err := json.Marshal(guardAnnotations()[:1])
+	require.NoError(t, err)
+	f.exec(t, `UPDATE nodes SET annotations = ? WHERE id = 'PROJ-1'`, string(kept))
+	f.now = time.Date(2026, 9, 24, 19, 1, 0, 0, time.UTC)
+	require.Error(t, f.svc.AutoImport(ctx, f.mtixDir), "the retry fails the same way")
+
+	second := "pre-sync-20260924-190100.db"
+	assert.Equal(t, []string{"pre-sync-20260924-190000.db", second}, f.preSyncBackups(t))
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(f.mtixDir, "data", "backups", second)+"?mode=ro")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+	var held int
+	// How many annotations PROJ-1 holds in the new backup.
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT json_array_length(annotations) FROM nodes WHERE id = ?`, "PROJ-1").Scan(&held))
+	assert.Equal(t, 1, held, "the new backup holds the annotation change")
+}

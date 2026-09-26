@@ -15,6 +15,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -103,7 +104,7 @@ func TestRunSyncPull_CrossClientEditStraddlesCursor_QuarantinedThenApplied(t *te
 		`UPDATE meta SET value = 'agent-c' WHERE key = 'meta.sync.author_id'`)
 	require.NoError(t, err)
 	var stderr bytes.Buffer
-	_, _, err = pullLoop(ctx, testIngest(&stderr), f.pool, c, 0, 100)
+	_, _, err = pullLoop(ctx, testIngest(&stderr), f.pool, c, transport.PullCursor{}, 100)
 	require.NoError(t, err, "C receives B's node: %s", stderr.String())
 	desc := "C's edit of B's node"
 	require.NoError(t, c.UpdateNode(ctx, "TEST-2", &store.NodeUpdate{Description: &desc}))

@@ -33,6 +33,16 @@ const AdvisoryLockKey = "mtix_sync_migration"
 // transaction rolled back AND the lock released. The next CLI re-runs
 // the whole migration cleanly — the partial-migration recovery test
 // asserts this property.
+//
+// Locking: the re-run ALTER TABLE sync_events ADD COLUMN IF NOT EXISTS of
+// migrations 010 and 013 takes an ACCESS EXCLUSIVE lock on sync_events
+// even when the column exists, held until this transaction commits, so
+// pushes and pulls both wait for Migrate. A migration that adds an index
+// (014 for the late-event sweep, 015 for the (lamport_clock, event_id)
+// pull keyset, MTIX-95.4) uses CREATE INDEX IF NOT EXISTS, never a
+// concurrent build, which cannot run inside this transaction; its first
+// build lengthens that wait. A hub that has not run the migration yet
+// still serves every pull, only without the index.
 func (p *Pool) Migrate(ctx context.Context) error {
 	if p == nil || p.p == nil {
 		return fmt.Errorf("migrate: pool not open")

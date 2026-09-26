@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/sync/validator"
 )
 
@@ -55,7 +57,7 @@ func TestPull_ExtremeAndMalformed_CursorStays(t *testing.T) {
 			hub := &fakeLateHub{events: []*model.SyncEvent{&bad}, pullEvents: []*model.SyncEvent{&bad},
 				hubNows: []time.Time{sweepHubT1}}
 
-			_, err := pullThenSweep(context.Background(), testIngest(nil), hub, app.store, 0, 100)
+			_, err := pullThenSweep(context.Background(), testIngest(nil), hub, app.store, transport.PullCursor{}, 100)
 
 			require.NoError(t, err)
 			requireQuarantinedAs(t, &bad, "pull", tt.wantReason)
@@ -66,37 +68,41 @@ func TestPull_ExtremeAndMalformed_CursorStays(t *testing.T) {
 }
 
 // TestAdvancePullCursor_DecidesFromClock: the saved cursor moves to the
-// highest clock of the batch that is below 2^53 and at most maxJump above
-// the local clock after the batch; the next page always starts after the
-// whole batch.
+// last event of the batch whose clock is below 2^53 and at most maxJump
+// above the local clock after the batch, its clock and its event id
+// (MTIX-95.4); with no such event it does not move.
 func TestAdvancePullCursor_DecidesFromClock(t *testing.T) {
 	ev := func(clocks ...int64) []*model.SyncEvent {
 		out := make([]*model.SyncEvent, 0, len(clocks))
-		for _, c := range clocks {
-			out = append(out, &model.SyncEvent{LamportClock: c})
+		for i, c := range clocks {
+			out = append(out, &model.SyncEvent{LamportClock: c, EventID: fmt.Sprintf("e%d", i)})
 		}
 		return out
 	}
 	tests := []struct {
-		name                string
-		events              []*model.SyncEvent
-		start               int64
-		local, maxJump      int64
-		wantPage, wantSaved int64
+		name           string
+		events         []*model.SyncEvent
+		local, maxJump int64
+		wantIdx        int // index of the event the cursor moves to; -1 for none
 	}{
-		{"all within the bound", ev(1, 2, 3), 0, 3, 10, 3, 3},
-		{"one past the jump bound", ev(1, 3, 14), 0, 3, 10, 14, 3},
-		{"exactly the bound above", ev(1, 3, 13), 0, 3, 10, 13, 13},
-		{"at 2^53 whatever the bound", ev(2, validator.MaxLamportClock), 0, validator.MaxLamportClock - 1,
-			1 << 62, validator.MaxLamportClock, 2},
-		{"only an extreme event: the saved cursor stays", ev(1 << 40), 7, 7, validator.DefaultMaxLamportJump,
-			1 << 40, 7},
+		{"all within the bound", ev(1, 2, 3), 3, 10, 2},
+		{"one past the jump bound", ev(1, 3, 14), 3, 10, 1},
+		{"exactly the bound above", ev(1, 3, 13), 3, 10, 2},
+		{"a Lamport tie: the last event at the clock", ev(3, 3, 3), 3, 10, 2},
+		{"at 2^53 whatever the bound", ev(2, validator.MaxLamportClock), validator.MaxLamportClock - 1,
+			1 << 62, 0},
+		{"only an extreme event: the saved cursor stays", ev(1 << 40), 7, validator.DefaultMaxLamportJump, -1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			page, saved := advancePullCursor(tt.events, tt.local, tt.maxJump, tt.start, tt.start)
-			require.Equal(t, tt.wantPage, page)
-			require.Equal(t, tt.wantSaved, saved)
+			saved, moved := advancePullCursor(tt.events, tt.local, tt.maxJump)
+			if tt.wantIdx < 0 {
+				require.False(t, moved)
+				require.Equal(t, transport.PullCursor{}, saved)
+				return
+			}
+			require.True(t, moved)
+			require.Equal(t, transport.CursorAt(tt.events[tt.wantIdx]), saved)
 		})
 	}
 }

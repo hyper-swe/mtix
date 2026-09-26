@@ -11,12 +11,19 @@ import (
 
 // readQuarantineStatus fills st.QuarantinedEvents for `mtix sync status`:
 // how many pulled events are held in the local quarantine, not applied
-// (sync_quarantine, MTIX-95.11). Every pull retries them.
+// (sync_quarantine, MTIX-95.11); every pull retries them. It also fills
+// st.HeldPushEvents: how many own events push holds, not pushed (source
+// push, MTIX-95.12).
 func readQuarantineStatus(ctx context.Context, store *sqlite.Store, st *SyncStatus) error {
 	n, err := store.CountQuarantined(ctx)
 	if err != nil {
 		return err
 	}
 	st.QuarantinedEvents = n
+	held, err := store.CountHeldPushEvents(ctx)
+	if err != nil {
+		return err
+	}
+	st.HeldPushEvents = held
 	return nil
 }

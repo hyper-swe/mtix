@@ -14,10 +14,11 @@ import (
 // query.
 const quarantineListPage = 500
 
-// QuarantinedEvent is one pulled event held in the local quarantine
-// (sync_quarantine, MTIX-95.11) as `mtix sync quarantine list` shows it:
-// the event's id, node, op and Lamport clock (read from the raw event as
-// pulled), the pass that first quarantined it, why, how many attempts
+// QuarantinedEvent is one event held in the local quarantine
+// (sync_quarantine) as `mtix sync quarantine list` shows it: a pulled event
+// (MTIX-95.11) or an own event push holds (source push, MTIX-95.12). It
+// carries the event's id, node, op and Lamport clock (read from the raw
+// event), the pass that first quarantined it, why, how many attempts
 // failed, when it was first seen and last attempted, and the version of
 // mtix that first quarantined it.
 type QuarantinedEvent struct {
@@ -33,9 +34,9 @@ type QuarantinedEvent struct {
 	CLIVersion   string `json:"cli_version"`
 }
 
-// ListQuarantined returns every quarantined pulled event in retry order
-// (Lamport clock, then event id), for `mtix sync quarantine list`
-// (MTIX-95.11). It only reads: it never retries, removes or rewrites a
+// ListQuarantined returns every quarantined event, held push events
+// included, in Lamport clock order, then event id, for `mtix sync
+// quarantine list` (MTIX-95.11, MTIX-95.12). It only reads: it never retries, removes or rewrites a
 // row, and it contacts no hub. An empty quarantine is an empty, non-nil
 // slice.
 func (s *SyncService) ListQuarantined(ctx context.Context) ([]QuarantinedEvent, error) {

@@ -1268,8 +1268,8 @@ mtix import project-data.json --mode replace
 - When the node's content hash differs, the file's values replace its other fields; when it is the same, they keep their local values. A file written before 0.5.4 never changes the fields it does not carry (annotations, activity, `previous_status`, the invalidation fields and the others listed in docs/EXPORT-FORMAT.md).
 - When the file's copy of a task is stale (it lacks one of the task's local activity entries, its `updated_at` is older, or the file comes from a client older than 0.5.4 and carries no activity), a field value the copy leaves empty keeps its local value: exactly the field values the automatic import's refusal lists. If the value is part of the task's status (a closed or wake time, an assignee, an invalidation), the task keeps its whole local status. A current copy's clear (a teammate's unclaim, say) applies.
 - A task you hold whose uid the file holds under another id is the same task, renumbered by another clone: the merge moves it, and its subtree, to that id without asking for `--confirm`, and prints the move.
-- A node the store holds as a different task (another uid, for example when two clones each created `PROJ-3`, even in the same second) is never overwritten. The local task and its subtree are renumbered to the next number free in both the store and the file under the same parent (the number after the highest either holds, so no earlier number is reused), keeping their uids, annotations, activity and dependencies, and the file's task takes the id: the published board keeps its numbers, and later creates continue after the new number. The import prints the renumbering (uid, old id, new id; `--remap-file <path>` writes it as JSON) and applies it only with `--confirm`; without it, nothing is written. A node without a uid on either side (a file written before uids existed) is merged into the local one as before. So is a node under another uid when it is the same task: it has the same creation time, and at least one of the two uids was given to the task more than an hour after it was created, as a clone did when it upgraded from before uids were shared (a uid is a UUIDv7 that carries the time it was minted). Any other pair is two different tasks, even when they were created in the same second or a create waited seconds for another command: mtix treats two tasks as one only on that clear sign, because merging two tasks would lose one, while renumbering asks you first. The merge adopts the file's uid, and never replaces a uid with an empty one.
-- The merge lists every uid it adopts in its report on stderr, applied or not: `uids adopted from the file (the same task under another uid): N`, then one line per task, `PROJ-3 local uid=<uid> -> file uid=<uid> (local "<your title>", file "<their title>")`. Once the import is applied, `--json` carries them as `uid_adoptions` (`id`, `local_uid`, `file_uid`, `local_title`, `file_title`); an import that waits for `--confirm` prints no JSON. `--remap-file` maps each local uid to its id, so a reference to the old uid still resolves. Check every adoption whose titles differ. One case gets past the rule: two different tasks created in the same second whose create events neither clone's event log holds (for example, created before 0.2), when both clones upgraded more than an hour later, both carry uids assigned at upgrade, so mtix treats them as one task and the merge keeps the file's task under the id. The report then adds `a task above whose titles differ may be two different tasks ...`, and the backup the merge took first (its path is printed before the report) holds your task. To recover it, stop every mtix process that uses this store (the MCP server, `mtix serve`, a running `mtix daemon`) and copy that backup over `.mtix/data/mtix.db`. Then delete `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm`: they belong to the replaced database and must not be replayed onto the backup. Then, before you run any mtix command, restore the pulled board: `git checkout -- .mtix/tasks.json`, or take the file from the pulled commit. The merge's own export rewrote it, so the next command would otherwise export the restored store over it and drop the teammate's task. The next command refuses the import again. Copy your task to a new one (`mtix show PROJ-3`, then `mtix create` with its title and description; writes stay local while the refusal is pending), then run `mtix import .mtix/tasks.json --mode merge --confirm`: the teammate's task keeps PROJ-3 and your copy keeps its new id. The automatic import lists such a pair, when the titles differ, as `PROJ-3: treated as the same task (uid assigned at upgrade) (local "<your title>", file "<their title>")` and refuses, even when nothing else would be lost. Its merge option then says that the merge takes the file's title and content for that task, and names each such task. If the titles name two different tasks, do not merge yet: copy your task to a new one first, as above, then merge. The opposite case is safe but can look wrong: when every uid a task carries was assigned less than an hour after the task was created (both clones upgraded within that hour), the uids count as minted at creation, so the two copies of that one task are listed as `a different task under this id` with identical titles, and the merge renumbers your copy only with `--confirm`. If both copies are the same task, merge with `--confirm`, check that the renumbered copy holds nothing the other lacks (annotations, activity), and delete it with `mtix delete <new id>`.
+- A node the store holds as a different task (another uid, for example when two clones each created `PROJ-3`, even in the same second) is never overwritten. The local task and its subtree are renumbered to the next number free in both the store and the file under the same parent (the number after the highest either holds, so no earlier number is reused), keeping their uids, annotations, activity and dependencies, and the file's task takes the id: the published board keeps its numbers, and later creates continue after the new number. The import prints the renumbering (uid, old id, new id; `--remap-file <path>` writes it as JSON) and applies it only with `--confirm`; without it, nothing is written. Every task mtix imports without a uid (from a board written before uids were shared) is given one in the import, a backfill uid (a UUIDv8 that carries a fixed marker), and a store that still holds tasks without a uid gives them one when it opens (it logs how many; below the free-space floor, or with `MTIX_SKIP_INTEGRITY_CHECK=1`, it writes nothing and the next open retries), so every board 0.5.4 writes carries a uid for every task. When the file's copy has no uid to compare (a board written by a client at 0.3 or older, or one not re-exported since), the titles decide (a task of yours never lacks a uid here: the merge, and the automatic import's comparison, give it a backfill uid first, and the import shows it as `uid=(new)`): with the same title the file's node is merged into the local one as before, and with another title it is a different task, renumbered like one (the local task and its subtree move, only with `--confirm`; a local task without a uid is given one, shown as `uid=(new)` and left out of a `--remap-file` written without `--confirm`), and the import lists it under `of these, a task under this id with a different title and no uid to compare` with both titles. A task a teammate only retitled on such a board is renumbered too, and the merge keeps both copies: the renumbered one holds your comments, activity and field values the board lacked, so move them to the task at the id, or keep the renumbered copy, before you delete anything. A node under another uid is merged too when it is the same task: it has the same creation time, and at least one of the two uids was given to the task after it was created: a backfill uid, or a UUIDv7 (which carries the time it was minted) minted more than an hour after, as a clone did when it upgraded from before uids were shared. So two clones that each gave a task from such a board their own backfill uid keep one task: after a teammate's retitle, the first exchange may refuse once with `treated as the same task (uid assigned at upgrade)`, and the merge then takes the teammate's uid. Any other pair is two different tasks, even when they were created in the same second or a create waited seconds for another command: mtix treats two tasks as one only on that clear sign, because merging two tasks would lose one, while renumbering asks you first. The merge adopts the file's uid, and never replaces a uid with an empty one.
+- The merge lists every uid it adopts in its report on stderr, applied or not: `uids adopted from the file (the same task under another uid): N`, then one line per task, `PROJ-3 local uid=<uid> -> file uid=<uid> (local "<your title>", file "<their title>")`. Once the import is applied, `--json` carries them as `uid_adoptions` (`id`, `local_uid`, `file_uid`, `local_title`, `file_title`); an import that waits for `--confirm` prints no JSON. `--remap-file` maps each local uid to its id, so a reference to the old uid still resolves. Check every adoption whose titles differ. One case gets past the rule: two different tasks created in the same second, when at least one clone assigned its uid after the task was created (at upgrade, or as a backfill uid when it imported the task without one or opened a store holding it without one, as happens for a task whose create event its event log lacks, for example one created before 0.2): that uid counts as assigned later, so mtix treats the two as one task and the merge keeps the file's task under the id. The report then adds `a task above whose titles differ may be two different tasks ...`, and the backup the merge took first (its path is printed before the report) holds your task. Restoring that backup drops every change made after the merge, from the store and, once the pulled board is restored, from the board: recover right away, or first note the changes made since the merge and redo them afterwards. To recover it, stop every mtix process that uses this store (the MCP server, `mtix serve`, a running `mtix daemon`) and copy that backup over `.mtix/data/mtix.db`. Then delete `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm`: they belong to the replaced database and must not be replayed onto the backup. Then, before you run any mtix command, restore the pulled board: `git checkout -- .mtix/tasks.json`, or take the file from the pulled commit. The merge's own export rewrote it, so the next command would otherwise export the restored store over it and drop the teammate's task. The next command refuses the import again. Copy your task to a new one (`mtix show PROJ-3`, then `mtix create` with its title and description; writes stay local while the refusal is pending), then run `mtix import .mtix/tasks.json --mode merge --confirm`: the teammate's task keeps PROJ-3 and your copy keeps its new id. The automatic import lists such a pair, when the titles differ, as `PROJ-3: treated as the same task (uid assigned at upgrade) (local "<your title>", file "<their title>")` and refuses, even when nothing else would be lost. Its merge option then says that the merge takes the file's title and content for that task, and names each such task. If the titles name two different tasks, do not merge yet: copy your task to a new one first, as above, then merge. The opposite case is safe but can look wrong: when every uid a task carries was assigned less than an hour after the task was created (both clones upgraded within that hour), the uids count as minted at creation, so the two copies of that one task are listed as `a different task under this id` with identical titles, and the merge renumbers your copy only with `--confirm`. If both copies are the same task, merge with `--confirm`, check that the renumbered copy holds nothing the other lacks (annotations, activity), and delete it with `mtix delete <new id>`.
 - `mtix import --mode merge` backs up the database first, as the automatic import does (`.mtix/data/backups/pre-sync-<UTC time>.db`, newest 5 kept), once the file has passed its checks and just before it writes. A merge that would change nothing (the same file again, say), one that awaits `--confirm`, and one refused by its checks take no backup, so they never rotate the automatic import's backups away.
 - A merge never removes an annotation or activity entry. To make the store match a file exactly, use replace mode.
 
@@ -1299,9 +1299,11 @@ mtix: imported the changed .mtix/tasks.json: nodes 1 added, 2 updated, 0 removed
 
 It also refreshes the conflict baseline, so a second pull before any write is imported too, not reported as a conflict.
 
+**Conflict baseline.** Every automatic export (after each write) and every applied import records a hash of the local store, the conflict baseline (`.mtix/data/sync-db.sha256`); `mtix export` does not. When the file changed and the store no longer matches that hash, both changed since the last sync: nothing is imported, and the refusal is recorded as a `conflict` (see the table below). **After upgrading from 0.3.0 through 0.5.3**, the baseline on disk is the one the older version recorded, over its 1.0.0 export. That export lacked the fields 0.5.4 exports (comments, activity and the other fields added in 2.0.0), and before 0.4 it had no uids either: the upgrade gives the tasks their uids. A baseline can also predate the uids a store gives its tasks without one when it opens. mtix recognizes such a baseline: when the store, unchanged, matches it in that older form, mtix records the baseline again in the current form and logs `sync_baseline_upgraded` once, and the first pull after the upgrade is not reported as a conflict, whether or not other commands ran before it. It can still be refused as a loss: when the local store holds data that boards written by an older version never carried (comments, activity entries, a previous status), a teammate whose store was filled from such boards lacks it, and so does the board they commit. The way out that keeps that data today is `mtix import .mtix/tasks.json --mode merge`, which can undo a teammate's change or your own, task by task (see the merge rule below): afterwards check `git log -p .mtix/tasks.json` and reapply what it undid. A fix is tracked. One case is not recognized: when the older version's last automatic import was not followed by a writing command. That version recorded no new baseline after an automatic import, and read-only commands record none either, so the baseline describes the store before that import, and the first pull after the upgrade is still refused as a conflict (see below for the way out). A change made while a baseline in an older form is on disk is still a conflict: a change you made before upgrading and never exported, or one made on 0.5.4 while a pulled board is kept, not imported. The exception is a change only to a field the older form lacks (a comment, an activity entry or another field added in 2.0.0, or a uid), which the older version did not detect either. The loss check below still compares those fields: a board that would delete a local comment or activity entry is refused. **A conflict although you changed nothing** (such as the case above): apply the pulled board through the automatic import, which still runs the loss check. From the project root, run `mtix sync --fix`, which records a new baseline and rewrites `.mtix/tasks.json` from the local store; then `git checkout HEAD -- .mtix/tasks.json`, which puts the pulled board back; then any command that imports, such as `mtix list`. That command imports the board and prints its one-line notice, or refuses it and lists what it would delete, as described below. Do not run `mtix sync --fix` without the checkout that follows it: alone, it drops every change in the file. `mtix import .mtix/tasks.json --mode replace` runs no loss check, so it deletes local data the file lacks, a comment for example. **The merge rule.** The merge decides per task, by its content (title, description, prompt, acceptance and labels). When your copy's content matches the file's, every local field value stays, so a teammate's claim, status, assignee or wake-time change to that task is not applied, and your next export writes your values back to `.mtix/tasks.json`, which reverts the teammate's change upstream once committed. When it differs, the file's copy wins, so your own edits to that task (an unclaim or a prompt edit, for example) are undone, except values the file leaves empty in a copy that is not current. Comments and activity entries from both sides are kept. After a merge, check `git log -p .mtix/tasks.json` and reapply what it undid.
+
 **Backup.** mtix first checks the whole file: its format and schema version, its node count, checksum and time values, whether the local store can be read, and whether anything would be lost (below). Only a file that passes every check is backed up and imported. The backup is a verified copy of the local database (`VACUUM INTO`, then `PRAGMA quick_check`) at `.mtix/data/backups/pre-sync-<UTC time>.db`, with a `-2`, `-3`, ... suffix for further imports in the same second. Every import that applies takes a new backup of the store as it is then, even of a file imported before (a board checked out again after local writes). The one exception is a retry: when an import fails while writing, its retries reuse that backup as long as the store has not changed since. mtix keeps the newest 5 and deletes older `pre-sync-*` files only; the rolling `mtix-*.db` backups and any other file in the directory are left alone, so failing or refused imports never rotate good backups away. If the backup cannot be written, the import is skipped with a warning. To return to the state before an import, stop every mtix process (the MCP server included) and copy the backup over `.mtix/data/mtix.db`. mtix 0.5.3 and earlier kept one overwritten copy, `.mtix/data/pre-sync-backup.db`; 0.5.4 no longer writes it and leaves an existing one in place. `.mtix/data/` is local state: keep it out of git.
 
-**What counts as a loss.** The automatic import compares the node and dependency data of the store with the file, node by node. Agents and sessions are runtime state and are always replaced. These are always a loss when the file lacks them: a task, a comment (annotation), the resolution of a comment, an activity entry, and a dependency. A field value the file leaves empty (an assignee, a description, a closed time, a wake time, a deletion) is a loss unless the file's copy of the task is current: it holds every activity entry the local copy holds, and its `updated_at` is not older than the local one. Activity only grows, and the writes that record no activity (`mtix update`, `mtix delete`) still move `updated_at`, so a current copy has seen your latest change, and a field it cleared was cleared on purpose: a teammate's `mtix unclaim`, `mtix reopen`, undeferral, `mtix undelete` or later `mtix update` applies. A copy that lacks one of your entries or is older is stale, and a file written by a client older than 0.5.4 carries no activity at all, so the fields such files leave empty are losses. A task whose id the file gives to a different task is a loss of the whole task: both copies carry a uid and the uids differ, as when you and a teammate each created `PROJ-3`, or you created a task while a refusal was pending and it took an id the pulled board already uses. It is listed as `PROJ-3: a different task under this id (local "<your title>", file "<their title>")`. Two copies under different uids are the same task only when they have the same creation time and one of the uids was given to the task more than an hour after it was created, when a clone upgraded from before uids were shared; the import then takes the file's uid. Every other pair, such as two tasks two clones created in the same second, is two different tasks. A task the file holds under another id with the same uid (another clone renumbered it) is not a loss either: the import moves it there. Clocks that disagree between machines can make a current copy look older; that refuses, the safe side. Three things this comparison does not treat as a loss. A stale copy can still change a non-empty value back (an older title, say), as checking out an older board does on purpose; the backup keeps the state before. A teammate's copy with a later `updated_at` counts as current even when it missed your `mtix update` or `mtix delete`, which record no activity (after you both edited the same task, or when the teammate's clock runs ahead), so a field that copy leaves empty is applied as cleared; the backup keeps the state before. And a dependency a teammate removed on purpose still counts as a loss, so their `mtix dep remove` is refused until you choose.
+**What counts as a loss.** The automatic import compares the node and dependency data of the store with the file, node by node. Agents and sessions are runtime state and are always replaced. These are always a loss when the file lacks them: a task, a comment (annotation), the resolution of a comment, an activity entry, and a dependency. A field value the file leaves empty (an assignee, a description, a closed time, a wake time, a deletion) is a loss unless the file's copy of the task is current: it holds every activity entry the local copy holds, and its `updated_at` is not older than the local one. Activity only grows, and the writes that record no activity (`mtix update`, `mtix delete`) still move `updated_at`, so a current copy has seen your latest change, and a field it cleared was cleared on purpose: a teammate's `mtix unclaim`, `mtix reopen`, undeferral, `mtix undelete` or later `mtix update` applies. A copy that lacks one of your entries or is older is stale, and a file written by a client older than 0.5.4 carries no activity at all, so the fields such files leave empty are losses. A task whose id the file gives to a different task is a loss of the whole task: both copies carry a uid and the uids differ, as when you and a teammate each created `PROJ-3`, or you created a task while a refusal was pending and it took an id the pulled board already uses. It is listed as `PROJ-3: a different task under this id (local "<your title>", file "<their title>")`. A task whose id the file holds with another title while the file's copy has no uid to compare (a board from a client at 0.3 or older, or one never re-exported after an upgrade) may be a different task too: it is listed as `PROJ-3: a task under this id with a different title and no uid to compare (local "<your title>", file "<their title>")`, and the merge renumbers your task with `--confirm`. Two copies under different uids are the same task only when they have the same creation time and one of the uids was given to the task after it was created: a backfill uid (mtix gives one to every task it imports without a uid, and to every such task a store holds when it opens), whatever its time, or a uid given more than an hour after creation, when a clone upgraded from before uids were shared; the import then takes the file's uid. A file without uids does not lose a backfill uid: when the task has the same title, the missing uid is no loss, and the replace keeps your uid (a task with another title is a different task: it gets a new uid), so each pull of a teammate's board from a client at 0.3 or older imports as before; a uid your client gave the task at creation that such a file leaves out is still a loss. Every other pair, such as two tasks two clones created in the same second, is two different tasks. A task the file holds under another id with the same uid (another clone renumbered it) is not a loss either: the import moves it there. Clocks that disagree between machines can make a current copy look older; that refuses, the safe side. Three things this comparison does not treat as a loss. A stale copy can still change a non-empty value back (an older title, say), as checking out an older board does on purpose; the backup keeps the state before. A teammate's copy with a later `updated_at` counts as current even when it missed your `mtix update` or `mtix delete`, which record no activity (after you both edited the same task, or when the teammate's clock runs ahead), so a field that copy leaves empty is applied as cleared; the backup keeps the state before. And a dependency a teammate removed on purpose still counts as a loss, so their `mtix dep remove` is refused until you choose.
 
 **Refusal.** When the file would lose anything, mtix refuses the automatic import. Nothing is imported, no backup is taken, and the stored hash is not updated, so the refusal repeats, printed once, on every command until you choose. The refusal lists what would be lost, task by task, for example:
 
@@ -1320,25 +1322,25 @@ Run the command you choose from the project root. `mtix import` and `mtix sync` 
 
 | Command | Keeps | Loses |
 |---------|-------|-------|
-| `mtix import .mtix/tasks.json --mode merge` | Everything the refusal lists: every local task, comment, activity entry and dependency, and every field value listed (with the task's local status when the value is part of it), plus the file's new data and its other changes. The database is backed up first. A task listed as a different task under its id is renumbered to the next number free in both the store and the file, keeping its uid, and the file's task keeps the id; the import lists the renumbering and applies it only when you rerun it with `--confirm` | Some of the teammate's field changes: for a task whose content (title, description, prompt, acceptance) is unchanged, the local field values win, so a teammate's status, assignee or wake-time change to it is not applied, and the board you then commit reverts it upstream. For a task whose content changed, the file's values win (see "Merge mode") |
+| `mtix import .mtix/tasks.json --mode merge` | Everything the refusal lists: every local task, comment, activity entry and dependency, and every field value listed (with the task's local status when the value is part of it), plus the file's new data and its other changes. The database is backed up first. A task listed as a different task under its id is renumbered to the next number free in both the store and the file, keeping its uid, and the file's task keeps the id; the import lists the renumbering and applies it only when you rerun it with `--confirm` | Field changes on one side, decided per task by its content (title, description, prompt, acceptance, labels): where your copy's content matches the file's, your field values win, so a teammate's claim, status, assignee or wake-time change to it is not applied, and the board you then commit reverts it upstream; where it differs, the file's values win, so your own edits to that task (an unclaim or a prompt edit, for example) are undone, except the values listed. Check `git log -p .mtix/tasks.json` afterwards and reapply what it undid (see "Merge mode" and the merge rule under "Conflict baseline") |
 | `mtix sync --fix` | The local store exactly | Every change in the file: `.mtix/tasks.json` is rewritten from the store |
 | `mtix import .mtix/tasks.json --mode replace` | The file exactly | Everything the refusal listed. Take a copy first with `mtix backup <file>` |
 
-To choose: when the file came from a client older than 0.5.4, use `mtix sync --fix` or merge, and ask the teammate to upgrade. When a teammate's board is stale, find out which changes are newer (for example with `git log -p .mtix/tasks.json`); merge keeps all your data but can undo the teammate's field changes, and replace keeps theirs but deletes what the refusal listed. If you cannot tell, ask before choosing.
+To choose: when the file came from a client older than 0.5.4, use `mtix sync --fix` or merge, and ask the teammate to upgrade. When a teammate's board is stale, find out which changes are newer (for example with `git log -p .mtix/tasks.json`); merge keeps every comment, activity entry and value the refusal lists but decides the other field values per task, so it can undo the teammate's field changes or your own edits (see the merge rule under "Conflict baseline" above), and replace keeps theirs but deletes what the refusal listed. If you cannot tell, ask before choosing.
 
 **Writes never overwrite a pulled board.** A write exports the store to `.mtix/tasks.json` only when the file on disk is the one mtix last wrote or imported. When it changed on disk and was not imported (a pull while `mtix mcp`, `mtix serve` or the daemon runs, a pull with automatic import off, or a board mtix refused), the export first runs the automatic import. If that imports the board, the export goes ahead. Otherwise the board is left as it is, the write stays in the local store, the refusal is recorded as pending, and one line says so, with the way out for that kind of refusal:
 
 | Kind (`mtix sync --json`) | Cause | Way out |
 |------|-------|---------|
 | `lossy` | The file would delete local data | The three commands above |
-| `conflict` | Both the file and the local store changed since the last sync | Combine them with `mtix import .mtix/tasks.json --mode merge`, keep the local store with `mtix sync --fix`, or keep the file with `--mode replace`. When the replace would also delete local data, the conflict is printed as a refusal that lists it, and the line names what the replace deletes |
+| `conflict` | Both the file and the local store changed since the last sync | Merge them with `mtix import .mtix/tasks.json --mode merge` (the merge decides per task: when the task's content (title, description, prompt, acceptance, labels) matches the file's, your field values win, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid), keep the local store with `mtix sync --fix`, or keep the file with `--mode replace`. If you changed nothing locally, use the way out under "Conflict baseline" above instead. When the replace would also delete local data, the conflict is printed as a refusal that lists it, and the line names what the replace deletes |
 | `newer_schema` | A newer mtix wrote the file | Upgrade mtix, then run any command. Do not rewrite it from the local store, which would downgrade it to the older format |
 | `invalid_file` | The file fails its checks (it is not an mtix export, does not parse, or its node count, checksum or times are wrong, for example after a merge by hand) | Repair and check the file, then `mtix import .mtix/tasks.json --recompute-checksum`; to keep the local board, `mtix sync --fix`, which works even when the file does not parse (`mtix sync` without `--fix` then reports the parse error) |
 | `unreadable_store` | The local store cannot be exported | `mtix recover`, then import the file |
 | `backup_failed` | The backup before the import could not be written | Free disk space; the next command retries |
-| `not_imported` | The file changed on disk and was not imported, for example with automatic import off | `mtix import .mtix/tasks.json --mode merge`, or keep the local board with `mtix sync --fix` |
+| `not_imported` | The file changed on disk and was not imported, for example with automatic import off | `mtix import .mtix/tasks.json --mode merge` (the merge decides per task: when the task's content (title, description, prompt, acceptance, labels) matches the file's, your field values win, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid), or keep the local board with `mtix sync --fix` |
 
-**Turning it off.** `sync.auto_sync: false` (`mtix config set sync.auto_sync false`) turns automatic import off. `mtix config set` accepts only true or false (in any form Go's `strconv.ParseBool` reads, such as `true`, `1`, `false`, `0`) and rejects anything else. A value written by hand that is neither true nor false leaves automatic import on, the default, with a one-line warning. `.mtix/config.yaml` is tracked in git, so the switch applies to every clone of the project. A store that holds no tasks, such as a fresh clone's, is always imported whatever the switch says, since nothing in it can be lost. With the switch off, writes keep exporting the store as long as `.mtix/tasks.json` is the file mtix last wrote; after a pull, the file is not overwritten (kind `not_imported`) until you import it with `mtix import .mtix/tasks.json --mode merge` or keep your board with `mtix sync --fix`.
+**Turning it off.** `sync.auto_sync: false` (`mtix config set sync.auto_sync false`) turns automatic import off. `mtix config set` accepts only true or false (in any form Go's `strconv.ParseBool` reads, such as `true`, `1`, `false`, `0`) and rejects anything else. A value written by hand that is neither true nor false leaves automatic import on, the default, with a one-line warning. `.mtix/config.yaml` is tracked in git, so the switch applies to every clone of the project. A store that holds no tasks, such as a fresh clone's, is always imported whatever the switch says, since nothing in it can be lost. With the switch off, writes keep exporting the store as long as `.mtix/tasks.json` is the file mtix last wrote; after a pull, the file is not overwritten (kind `not_imported`) until you import it with `mtix import .mtix/tasks.json --mode merge` or keep your board with `mtix sync --fix`. The merge decides per task: when the task's content (title, description, prompt, acceptance, labels) matches the file's, your field values win, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid.
 
 **State.** `mtix sync` shows the `sync.auto_sync` value as configured, whether automatic import is on, and the last automatic import mtix refused or skipped for you to decide, with its time, its reason and whether it is pending, resolved or no longer pending:
 
@@ -1484,7 +1486,9 @@ mtix sync clone              # idempotent
 
 `mtix sync clone` pulls the full event log from the hub and replays
 it into the local SQLite. Re-running clone is a no-op (per
-`applied_events` dedupe).
+`applied_events` dedupe). When it completes it sets your pull cursor,
+so the next `mtix sync pull` fetches only the changes pushed after the
+clone.
 
 ### Daily flow
 
@@ -1502,6 +1506,25 @@ Install the pre-push hook (`examples/hooks/pre-push`) to automate
 cp examples/hooks/pre-push .git/hooks/pre-push
 chmod +x .git/hooks/pre-push
 ```
+
+### Where pull resumes
+
+`mtix sync pull` remembers the last event it fetched: its sync clock
+and its event id (`meta.sync.last_pulled_clock` and
+`meta.sync.last_pulled_event_id` in the local database). The next pull
+asks the hub for the events after that one, in order of clock and then
+event id, so events that carry the same clock are all fetched however
+`--limit` splits them into batches. Each batch and the saved position
+are written in one transaction: a pull that stops part-way resumes
+after the last batch it applied, never after one it did not.
+
+- **First pull after upgrading from 0.5.3 or earlier.** The saved
+  position has no event id yet, so the pull fetches the events at the
+  saved clock once more, skips the ones you already have and applies
+  any that an earlier version missed at that clock.
+- **Hub owner, after upgrading.** Run `mtix sync init` once with the
+  hub owner's DSN to add the hub index pull reads by; the same item in
+  the next section says when to run it and what it costs.
 
 ### Late changes from offline teammates
 
@@ -1547,11 +1570,22 @@ nothing; it is only recorded as received.
   that scales to zero stays idle (a daemon that pulls on an interval
   sweeps on each of its pulls).
 - **Hub owner, after upgrading.** Run `mtix sync init` once with the
-  hub owner's DSN. It adds an index on the hub (`idx_sync_events_created_at`)
-  so each sweep reads only recent events. Until then pulls work as
-  before, but each page the sweep lists scans the hub's whole event
-  table: once per pull for the usual window, and once per page of the
-  one-time full comparison, spread across pulls.
+  hub owner's DSN. It adds two indexes on the hub:
+  `idx_sync_events_created_at`, so each sweep reads only recent events,
+  and `idx_sync_events_lamport_event_id`, so each pull batch reads from
+  its saved position. `mtix sync init` runs in one transaction, and
+  pushes and pulls both wait until it finishes, longer on a large hub
+  while it builds the indexes. A waiting push or pull retries for about
+  50 seconds and normally completes once `mtix sync init` finishes; only
+  if the wait outlasts that does it fail, and then nothing is lost: run
+  it again. Run `mtix sync init` when a pause in sync is acceptable. `mtix sync init` stops after 30 seconds; if building
+  the indexes takes longer it changes nothing, and pulls keep working
+  without them.
+  Until then pulls fetch the same events as with the indexes, only
+  slower: each page the sweep lists scans the hub's whole event table
+  (once per pull for the usual window, and once per page of the
+  one-time full comparison, spread across pulls), and so does each pull
+  batch.
 
 ### Quarantined events
 
@@ -1632,6 +1666,130 @@ pull's position either, so later changes keep arriving.
   event fails. On the fresh store, run `mtix sync pull` alone: it
   quarantines the event and applies the rest. Because of the check, a
   clone reads the hub's event log twice.
+
+### Held push events
+
+The hub accepts an event payload of at most 64 KB (65536 bytes). Local
+fields can be larger: a new task's prompt may be 100 KB and its
+description 50 KB, and acceptance criteria, comments and later edits of
+a description or prompt have no local size limit. A change whose sync
+event is over the limit is saved locally as usual, but the hub would
+refuse it.
+
+- **A warning when you make the change.** With a hub configured
+  (`MTIX_SYNC_DSN` or `.mtix/secrets`), a CLI command prints one line on
+  stderr that names the field and the limit, for example:
+
+  ```text
+  WARN: PROJ-12: the prompt field makes this set_prompt sync event 70123 bytes, over the 65536-byte sync limit; saved locally, but sync push will hold it and not send it (shorten or split prompt; see mtix sync doctor)
+  ```
+
+  An MCP tool call adds the same line to its result as an extra text
+  block. The change itself succeeds. Changes made through the web UI,
+  the REST API or gRPC (`mtix serve`) are not warned about; push still
+  holds their events and doctor reports them. Imports (`mtix import`
+  and the automatic import of `.mtix/tasks.json`) write no sync events,
+  so nothing they write is pushed, held or warned about.
+- **Push holds that event and pushes the rest.** `mtix sync push` checks
+  each pending event with the hub's rules before it sends a batch. An
+  event the hub would refuse is **held**: it stays in the local queue as
+  pending and is recorded in the local `sync_quarantine` table with
+  source `push` and the reason, and it is never sent. The rest of the
+  batch is pushed, and later changes of other tasks keep pushing (but
+  not dependency links while a task creation is held; see below). Push
+  prints `push:
+  held event <id> ...` for each newly held event and `held: N events
+  not pushed ...` at the end. (Before 0.5.4, one such event failed
+  every push.) There are three kinds of hold; the reason starts with its
+  kind:
+  - **Permanent** (`too large: ...`, `refused: ...`): a payload over the
+    limit, or a broken nesting-depth, id or Lamport/vector-clock cap
+    rule. None of these changes, so the event stays held.
+  - **Temporary** (`temporary: clock: ...`): the event is stamped more
+    than 24 hours ahead of this machine's clock, usually because the
+    clock was wrong when the change was made. Every push checks it again
+    and releases it once it passes; it then pushes.
+  - **Dependent** (`depends on held create of <event id> (<task>)`):
+    while a task's creation is held, none of the changes of its subtree
+    are sent. Push holds every change of that task, the creation of its
+    child tasks at any depth and every change of those, including changes
+    made after the last push. It finds the task a change is about by the
+    task's internal id, not by its number, so a change made before the
+    task was renumbered (by `mtix import --mode merge --confirm` on this
+    machine, or by a renumber the hub asks for during a push) is still
+    held, and a change of another task that later takes one of its old
+    numbers is not. The same holds when the task's internal id changed
+    after its creation was queued: a merge import (`mtix import --mode
+    merge`, or the automatic import after a git pull) can give the task
+    the id the board holds for it, and a creation queued by an mtix from
+    before changes carried an internal id has none. Push then finds the
+    task by the creation's own id or else by the number the creation
+    names, and holds its later changes and its child tasks too (a task
+    that has taken that number since is held as well). Known limit: if
+    a task whose id a merge import changed is then renumbered on this
+    machine, its changes that no push checked before that renumber are
+    not recognized. If `mtix gc` purges a deleted task of the subtree,
+    a change already held stays held, a change of a task whose own
+    creation is held is still found by its internal id, and any other
+    change is checked by the number it names. Known limit: a change made
+    under a number the task got by a renumber on this machine, which no
+    push checked before `mtix gc` purged the task, is not recognized.
+    The reason names the nearest held creation.
+  - **Dependent, for a link** (the reason ends `links made while a task
+    creation is held wait for it; this version names a link's target by
+    number`):
+    a dependency link or unlink names the task it points to by number
+    only, and this version keeps no record of the numbers a task had. So
+    while any task creation is held, every link or unlink made after it
+    is held too, whatever task it names, even a teammate's task that took
+    one of the held task's old numbers. The reason names the earliest
+    held creation, and the link pushes once no creation made before it
+    is held.
+
+  Once a clock hold on a task's creation clears, the creation and the
+  changes of its subtree go through the ordinary push, in the same run.
+  Push first checks each of those changes with the hub's rules: one the
+  hub would refuse stays held under its own reason, keeping when it was
+  first held and its attempt count, and if it is a child task's
+  creation, that child's subtree stays held with it. In the ordinary
+  push, a renumber by the hub is a known limit of this version: if a
+  teammate took the task's number while the creation was held, the hub
+  renumbers the creation, and the changes sent with it keep the old
+  number. A creation held permanently keeps its whole subtree held.
+- **See it.** `mtix sync status` shows `held push events`
+  (`held_push_events` in `--json`). Held events also stay in `pending`,
+  so `pending` does not reach 0 while any is held. `mtix sync doctor`
+  fails its `held push events` check and lists the first five held
+  events with node, op, the fix and the reason; its `queue draining`
+  check leaves held events out. `mtix sync quarantine list` lists them
+  together with quarantined pulled events; `--json` shows `"source":
+  "push"`.
+- **What to do** (doctor names the fix for each event):
+  - **A field edit over the limit:** shorten the field, or split the
+    content (for example into child tasks), and save it again. The edit
+    makes a new event that fits, and it pushes. The held event stays
+    held and listed, and teammates never receive the held version.
+  - **A held task creation:** stop editing that task and tell whoever
+    looks after your sync setup. Shortening a field afterwards does not
+    help: the creation itself must be sent, and this release has no
+    automatic re-send. The task, its later changes and its subtree stay
+    local.
+  - **A dependent:** nothing to do for the event itself; it resolves
+    with the held creation it depends on.
+  - **A held link:** nothing to do for the link itself; it pushes once
+    no task creation made before it is held. Handle the held creation
+    its reason names.
+  - **A clock hold:** check this machine's clock. The event pushes once
+    its stamp is within 24 hours of the clock; if it is a task's
+    creation, the changes of its subtree push with it.
+  - On a synced project, keep fields under the limit. Permanent holds
+    and their dependents stay listed, and doctor keeps failing its
+    check; this release has no command to release or discard one held
+    event.
+- Do not delete rows from `sync_quarantine` or edit the database by
+  hand. `mtix sync reconcile --discard-local --yes` removes held events
+  together with every other unpushed change; it is not a way to clear
+  one held event.
 
 ### Daemon mode (for durability)
 
@@ -2219,6 +2377,7 @@ change the node's status with the normal commands instead.
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
 | A teammate's change is missing after `mtix sync pull` | They have not pushed yet, the late-event sweep failed (the pull reports the error), or the change is quarantined | Ask them to run `mtix sync push`, then pull again; `mtix sync status` shows `last sweep` and `quarantined events` |
 | `mtix sync doctor` fails `quarantined events` | Pulled events failed their checks or their apply and are held, not applied | Run `mtix sync pull` (it retries them); if they remain, list them with `mtix sync quarantine list` (see [Quarantined events](#quarantined-events)) and report the reasons to whoever runs the hub |
+| A command prints `WARN: ... over the 65536-byte sync limit`, or `mtix sync doctor` fails `held push events` | Push holds events the hub would refuse (and the events of a held task creation's subtree, and links made while one is held), and pushes the rest | Follow the fix doctor names for each held event: shorten or split a field edit; escalate a held task creation, without editing it; check the clock for a clock hold (see [Held push events](#held-push-events)) |
 | A node shows an older state than its history after a pull on a client older than 0.5.4 (for example `in_progress` after `mtix done`) | That pull replayed an older event of this machine | Upgrade, run `mtix sync pull`, then `mtix sync repair --status` and review the list; run `mtix sync pull` again, then `mtix sync repair --status --apply` and `mtix sync push`; a flagged node needs review and `--force` (see above). Pulling first matters: a repair made on a stale log can revert a teammate's newer change on every machine |
 
 ### MCP integration

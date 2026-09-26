@@ -10,6 +10,7 @@ import (
 	"io"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
 // The clone's checks (MTIX-95.11). `mtix sync clone` stays all-or-nothing
@@ -51,31 +52,40 @@ func cloneRefusal(e *model.SyncEvent, reason error, written bool) error {
 
 // preflightClone runs, before a clone writes anything, the pull's checks on
 // every hub event the clone will apply: it pages through PullEvents from
-// since, batchSize at a time, with the running clock the clone would have
-// (local, then the highest clock checked so far, since the clone applies in
-// Lamport order). It returns an error wrapping errCloneRefused for the
-// first event that fails, and a hub error as it is. The clone therefore
-// reads the hub's event log twice: once to check, once to apply.
+// the keyset position after, batchSize at a time, each page after the
+// previous page's last event (MTIX-95.4), with the running clock the clone
+// would have (local, then the highest clock checked so far, since the clone
+// applies in Lamport order). It returns an error wrapping errCloneRefused
+// for the first event that fails, a page that does not advance past the
+// cursor as an error naming the cursor (pageCursor.advance), and a hub
+// error as it is. The clone therefore reads the hub's event log twice: once
+// to check, once to apply.
 func preflightClone(ctx context.Context, in pullIngest, hub cursorPuller,
-	since, local int64, batchSize int,
+	after transport.PullCursor, local int64, batchSize int,
 ) error {
 	clock := local
+	page := newPageCursor(after)
 	for {
-		events, hasMore, err := hub.PullEvents(ctx, since, batchSize)
+		events, hasMore, err := hub.PullEvents(ctx, page.at, batchSize)
 		if err != nil {
-			return fmt.Errorf("check events after %d: %w", since, err)
+			return fmt.Errorf("check events after %d: %w", page.at.Lamport, err)
 		}
 		if err := requireEvents(events); err != nil {
 			return err
+		}
+		if len(events) == 0 {
+			return nil
+		}
+		if err := page.advance(events); err != nil {
+			return fmt.Errorf("check events: %w", err)
 		}
 		for _, e := range events {
 			if refused := checkPulledEvent(in, e, clock); refused != nil {
 				return cloneRefusal(e, refused, false)
 			}
 			clock = max(clock, e.LamportClock)
-			since = max(since, e.LamportClock)
 		}
-		if len(events) == 0 || !hasMore {
+		if !hasMore {
 			return nil
 		}
 	}
@@ -85,7 +95,7 @@ func preflightClone(ctx context.Context, in pullIngest, hub cursorPuller,
 // writes anything, then resets the pull state and runs cloneLoop. stage
 // names the step that failed, for the "mtix sync <stage>: ..." message.
 func checkThenClone(ctx context.Context, stderr io.Writer, pool cursorPuller,
-	since int64, batchSize int,
+	since transport.PullCursor, batchSize int,
 ) (pulled, batches int, stage string, err error) {
 	local, clockErr := app.store.LocalLamportClock(ctx)
 	if clockErr != nil {

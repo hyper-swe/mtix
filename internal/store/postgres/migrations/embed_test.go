@@ -33,6 +33,8 @@ func TestMigrations_FilesPresent(t *testing.T) {
 		"013_hub_restore_epoch.sql",
 		// 014 is MTIX-95.5's created_at index for the late-event sweep.
 		"014_sync_events_created_at.sql",
+		// 015 is MTIX-95.4's (lamport_clock, event_id) index for the pull keyset.
+		"015_sync_events_lamport_event_id.sql",
 	}
 	require.Equal(t, want, got, "all hub-schema files must be embedded in lex order")
 }
@@ -160,6 +162,23 @@ func TestMigrations_SyncEventsCreatedAtIndex(t *testing.T) {
 	require.Contains(t, body, "MTIX-95.5", "014 must reference its ticket")
 	for _, forbidden := range []string{"ALTER TABLE", "DROP ", "UPDATE ", "DELETE "} {
 		require.NotContains(t, body, forbidden, "014 must be additive only")
+	}
+}
+
+// TestMigrations_SyncEventsLamportEventIndex asserts the MTIX-95.4 migration
+// adds the index the pull cursor pass reads by: the (lamport_clock,
+// event_id) keyset of PullEvents, created only when absent so re-running the
+// migration set stays a no-op. The migration is additive: no column,
+// constraint or data changes.
+func TestMigrations_SyncEventsLamportEventIndex(t *testing.T) {
+	body, err := migrations.Read("015_sync_events_lamport_event_id.sql")
+	require.NoError(t, err)
+	require.Contains(t, body,
+		"CREATE INDEX IF NOT EXISTS idx_sync_events_lamport_event_id\n    ON sync_events (lamport_clock, event_id);",
+		"015 must add the keyset index idempotently")
+	require.Contains(t, body, "MTIX-95.4", "015 must reference its ticket")
+	for _, forbidden := range []string{"ALTER TABLE", "DROP ", "UPDATE ", "DELETE ", "CONCURRENTLY"} {
+		require.NotContains(t, body, forbidden, "015 must be additive only, and run inside the migrate transaction")
 	}
 }
 

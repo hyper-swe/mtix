@@ -63,41 +63,7 @@ func detectLWWOutcome(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (lwwO
 	}
 	fieldName := strings.TrimPrefix(strings.SplitN(key, ":", 2)[1], "")
 
-	// Scope the LWW history by uid when the event carries one (ADR-003 §3,
-	// §10): a node's pre- and post-renumber events share a stable uid but
-	// DIFFERENT node_ids, so keying on node_id would split one node's
-	// history across a renumber and let a stale-path event spuriously win.
-	// Keying on uid keeps it ONE history. Uid-less (old-CLI) events fall
-	// back to node_id, matching the legacy behavior exactly.
-	scopeCol, scopeVal := "node_id", e.NodeID
-	if e.UID != "" {
-		scopeCol, scopeVal = "uid", e.UID
-	}
-
-	// Match prior events on the same (node, op_type, field). For
-	// update_field we also need to filter by payload->>'field_name';
-	// for set_acceptance / set_prompt the op_type alone is sufficient.
-	// The scope column is a fixed identifier (never user input); the value
-	// is always a bound parameter.
-	var query string
-	args := []any{scopeVal, string(e.OpType), e.EventID}
-	switch e.OpType {
-	case model.OpUpdateField:
-		query = `SELECT event_id, lamport_clock, wall_clock_ts, author_machine_hash
-		         FROM sync_events
-		         WHERE ` + scopeCol + ` = ? AND op_type = ? AND event_id <> ?
-		           AND json_extract(payload, '$.field_name') = ?
-		         ORDER BY lamport_clock DESC, wall_clock_ts DESC, author_machine_hash ASC
-		         LIMIT 1`
-		args = append(args, fieldName)
-	default:
-		query = `SELECT event_id, lamport_clock, wall_clock_ts, author_machine_hash
-		         FROM sync_events
-		         WHERE ` + scopeCol + ` = ? AND op_type = ? AND event_id <> ?
-		         ORDER BY lamport_clock DESC, wall_clock_ts DESC, author_machine_hash ASC
-		         LIMIT 1`
-	}
-
+	query, args := lwwPriorQuery(e, fieldName)
 	var (
 		priorID   string
 		priorLamp int64
@@ -117,6 +83,56 @@ func detectLWWOutcome(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (lwwO
 		IncomingWins: incomingBeats(e, priorLamp, priorTS, priorHash),
 		FieldName:    fieldName,
 	}, nil
+}
+
+// lwwPriorQuery returns the query detectLWWOutcome runs for the highest-
+// lamport prior event on e's (node, field), and its arguments. Scoped by
+// uid when e carries one (ADR-003 §3, §10): a node's pre- and post-renumber
+// events share a stable uid but DIFFERENT node_ids, so keying on node_id
+// would split one history across a renumber and let a stale-path event
+// win. Uid-less (old-CLI) events fall back to node_id exactly as before.
+// update_field also matches payload->>'field_name'; for set_acceptance and
+// set_prompt the op_type alone is enough.
+//
+// The uid variants require a non-empty uid so the partial
+// idx_sync_events_uid can serve them, and write "+op_type" so the planner
+// does not pick idx_sync_events_op_type, which reads every event of that
+// op type on an unanalysed store (MTIX-95.47).
+func lwwPriorQuery(e *model.SyncEvent, fieldName string) (string, []any) {
+	if e.UID == "" {
+		args := []any{e.NodeID, string(e.OpType), e.EventID}
+		if e.OpType == model.OpUpdateField {
+			// The node's latest prior change of this field, by number.
+			return `SELECT event_id, lamport_clock, wall_clock_ts, author_machine_hash
+			         FROM sync_events
+			         WHERE node_id = ? AND op_type = ? AND event_id <> ?
+			           AND json_extract(payload, '$.field_name') = ?
+			         ORDER BY lamport_clock DESC, wall_clock_ts DESC, author_machine_hash ASC
+			         LIMIT 1`, append(args, fieldName)
+		}
+		// The node's latest prior event of this op, by number.
+		return `SELECT event_id, lamport_clock, wall_clock_ts, author_machine_hash
+		         FROM sync_events
+		         WHERE node_id = ? AND op_type = ? AND event_id <> ?
+		         ORDER BY lamport_clock DESC, wall_clock_ts DESC, author_machine_hash ASC
+		         LIMIT 1`, args
+	}
+	args := []any{e.UID, string(e.OpType), e.EventID}
+	if e.OpType == model.OpUpdateField {
+		// The node's latest prior change of this field, by uid.
+		return `SELECT event_id, lamport_clock, wall_clock_ts, author_machine_hash
+		         FROM sync_events
+		         WHERE uid = ? AND uid <> '' AND +op_type = ? AND event_id <> ?
+		           AND json_extract(payload, '$.field_name') = ?
+		         ORDER BY lamport_clock DESC, wall_clock_ts DESC, author_machine_hash ASC
+		         LIMIT 1`, append(args, fieldName)
+	}
+	// The node's latest prior event of this op, by uid.
+	return `SELECT event_id, lamport_clock, wall_clock_ts, author_machine_hash
+	         FROM sync_events
+	         WHERE uid = ? AND uid <> '' AND +op_type = ? AND event_id <> ?
+	         ORDER BY lamport_clock DESC, wall_clock_ts DESC, author_machine_hash ASC
+	         LIMIT 1`, args
 }
 
 // incomingBeats encodes the FR-18.11 / SYNC-DESIGN section 8.2 LWW
@@ -962,7 +978,9 @@ func resolveNodeRef(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (string
 		arg   = e.NodeID
 	)
 	if e.UID != "" {
-		query = `SELECT id FROM nodes WHERE uid = ? AND deleted_at IS NULL`
+		// The live node holding the event's uid; "uid <> ''" lets the partial
+		// idx_nodes_uid serve it, not a read of every node (MTIX-95.47).
+		query = `SELECT id FROM nodes WHERE uid = ? AND uid <> '' AND deleted_at IS NULL`
 		arg = e.UID
 	}
 	err = tx.QueryRowContext(ctx, query, arg).Scan(&id)

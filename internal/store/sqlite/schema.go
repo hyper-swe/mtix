@@ -101,6 +101,9 @@ CREATE TABLE IF NOT EXISTS nodes (
 
 -- Indexes for query performance per NFR-2.2
 CREATE INDEX IF NOT EXISTS idx_nodes_parent   ON nodes(parent_id);
+-- Partial: SQLite uses it only when a query also says uid <> '' (a bound
+-- uid = ? does not imply it), so every lookup of nodes by uid carries that
+-- term (MTIX-95.47); uid_lookup_guard_test.go fails on one that does not.
 CREATE INDEX IF NOT EXISTS idx_nodes_uid      ON nodes(uid) WHERE uid IS NOT NULL AND uid <> '';
 CREATE INDEX IF NOT EXISTS idx_nodes_status   ON nodes(project, status) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_nodes_priority ON nodes(project, priority) WHERE deleted_at IS NULL;

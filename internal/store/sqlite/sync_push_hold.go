@@ -86,7 +86,9 @@ func (s *Store) HeldPushEvents(ctx context.Context, limit int) ([]HeldPushEvent,
 	// The held push events in queue order, with their event rows and the
 	// current number of the task each is about; for a creation, also the
 	// task it created (n by uid, else s by the event's own id for an event
-	// without a uid, else f by the number the event names).
+	// without a uid, else f by the number the event names). "uid <> ''"
+	// lets the partial idx_nodes_uid serve n and s; without it s is found
+	// through an index built over every node (MTIX-95.47).
 	rows, err := s.Query(ctx, `
 		SELECT q.event_id, COALESCE(e.node_id, ''), COALESCE(e.op_type, ''), q.reason,
 		       COALESCE(e.payload, ''), COALESCE(e.lamport_clock, 0), COALESCE(e.uid, ''), COALESCE(n.id, ''),
@@ -95,7 +97,7 @@ func (s *Store) HeldPushEvents(ctx context.Context, limit int) ([]HeldPushEvent,
 		LEFT JOIN sync_events e ON e.event_id = q.event_id
 		LEFT JOIN nodes n ON n.uid = e.uid AND n.uid IS NOT NULL AND n.uid <> ''
 		LEFT JOIN nodes s ON e.op_type = 'create_node' AND n.id IS NULL
-		     AND COALESCE(e.uid, '') = '' AND s.uid = e.event_id
+		     AND COALESCE(e.uid, '') = '' AND s.uid = e.event_id AND s.uid <> ''
 		LEFT JOIN nodes f ON e.op_type = 'create_node' AND n.id IS NULL AND s.id IS NULL
 		     AND f.id = e.node_id
 		WHERE q.source = 'push'

@@ -62,14 +62,16 @@ const (
 const registryIndex = "sync_events_node_registry_uidx"
 
 // migrateIndexSentence is the paragraph both documents use for when
-// `mtix sync migrate --yes` builds the registry index (MTIX-95.1.8).
-const migrateIndexSentence = "On a hub without the node-number registry index, `mtix sync migrate --yes` " +
+// `mtix sync migrate --yes` builds the registry index (MTIX-95.1.8,
+// MTIX-95.44).
+const migrateIndexSentence = "On a hub without a valid node-number registry index, `mtix sync migrate --yes` " +
 	"also builds that index when the version gate is open, that is, when the project has at least one " +
-	"active client and every active client runs a remap-aware mtix version, and no project on the hub " +
-	"holds duplicate creates. While the gate is closed, it leaves the index for a later run. While the " +
-	"gate is open and a project on the hub holds duplicate creates, the build fails, and " +
-	"`mtix sync migrate --yes` exits with the error of the index build. Only the table owner can build " +
-	"the index."
+	"active client and every active client runs a remap-aware mtix version. It first records the " +
+	"duplicate creates of every project on the hub, and the index leaves those creates out, so they stay " +
+	"in the event log unchanged and the build succeeds. It drops an index that is not valid or not ready " +
+	"and builds it again. While the gate is closed, it leaves the index for a later run. A hub with more " +
+	"duplicate creates than the index can leave out is refused before the build, with the count and the " +
+	"limit. Only the table owner can build the index."
 
 // leastPrivilegeMarker starts the documented list in the small-team
 // workflow and in docs/SECURITY-MODEL.md.
@@ -454,35 +456,71 @@ func (h *leastPrivilegeHub) migrates(t *testing.T) {
 	require.Contains(t, out, "version gate closed", "with the version gate closed --yes leaves the index for later")
 }
 
-// buildFails: on a hub without the registry index where project LEG holds
-// duplicate creates, the table owner's `mtix sync migrate --yes` for
-// project, whose version gate is open, exits with the error of the index
-// build (MTIX-95.1.8).
-func (h *leastPrivilegeHub) buildFails(t *testing.T, project string) {
+// indexState returns "<indisvalid> <indisready>" of the registry index
+// in hubSchema, or "absent" (MTIX-95.44).
+func (h *leastPrivilegeHub) indexState(t *testing.T) string {
+	t.Helper()
+	got := h.f.strings(`SELECT i.indisvalid::text || ' ' || i.indisready::text FROM pg_catalog.pg_index i
+		WHERE i.indexrelid = to_regclass(format('%I.%I', $1::text, $2::text))`, hubSchema, registryIndex)
+	if len(got) == 0 {
+		return "absent"
+	}
+	return got[0]
+}
+
+// buildsOverDuplicates: on a hub without the registry index where project
+// LEG holds duplicate creates, the table owner's `mtix sync migrate --yes`
+// for project, whose version gate is open, ends with a valid and ready
+// registry index, and LEG keeps both its creates (MTIX-95.1.8,
+// MTIX-95.44).
+func (h *leastPrivilegeHub) buildsOverDuplicates(t *testing.T, project string) {
 	t.Helper()
 	h.f.ddlAs(h.owner, "DROP INDEX IF EXISTS %I.%I", hubSchema, registryIndex)
-	require.Equal(t, []string{"2"}, h.f.strings(`SELECT count(*)::text FROM hub_data.sync_events
-		WHERE project_prefix = 'LEG' AND node_id = 'LEG-1' AND op_type = 'create_node'`),
-		"project LEG holds duplicate creates")
+	creates := `SELECT count(*)::text FROM hub_data.sync_events
+		WHERE project_prefix = 'LEG' AND node_id = 'LEG-1' AND op_type = 'create_node'`
+	require.Equal(t, []string{"2"}, h.f.strings(creates), "project LEG holds duplicate creates")
 	out, err := h.migrate(t, h.ownerDSN, project, true)
-	require.Errorf(t, err, "the index build fails while a project on the hub holds duplicate creates: %s", out)
-	require.Contains(t, err.Error(), "build index")
-	require.Contains(t, err.Error(), "SQLSTATE 23505")
+	require.NoErrorf(t, err, "the index is built while a project on the hub holds duplicate creates: %s", out)
+	require.Contains(t, out, "registry unique index added")
+	require.Equal(t, "true true", h.indexState(t), "the registry index is valid and ready")
+	require.Equal(t, []string{"2"}, h.f.strings(creates), "the duplicate creates stay in the log")
+}
+
+// migratesValidIndexWithDuplicates: on a hub whose valid registry index
+// leaves project LEG's duplicate creates out, a syncing role holding only
+// the unscoped grants runs `mtix sync migrate` and `--yes` for LEG, which
+// find nothing to record and the index in place (MTIX-95.44).
+func (h *leastPrivilegeHub) migratesValidIndexWithDuplicates(t *testing.T) {
+	t.Helper()
+	h.f.ddlAs(h.owner, "REVOKE SELECT, INSERT ON TABLE %I.%I FROM %I", hubSchema, "node_renumber_remaps", h.syncer)
+	require.Equal(t, "false false", h.remapPrivileges(t), "the role holds only the unscoped grants")
+	out, err := h.migrate(t, h.syncDSN, "LEG", false)
+	require.NoError(t, err, "the unscoped grants preview a hub with a valid registry index")
+	require.Contains(t, out, "no duplicate numbers")
+	out, err = h.migrate(t, h.syncDSN, "LEG", true)
+	require.NoError(t, err, "the unscoped grants run --yes on a hub with a valid registry index")
+	require.Contains(t, out, "registry index already present")
 }
 
 // needsGrantsWithoutValidIndex: on a hub whose registry index is not valid,
 // the syncing role's migrate preview of the project with duplicate creates
-// is refused once the table owner revokes its migrate-scoped grants
-// (MTIX-95.1.8).
+// is refused without its migrate-scoped grant (MTIX-95.1.8, MTIX-95.44).
 func (h *leastPrivilegeHub) needsGrantsWithoutValidIndex(t *testing.T) {
 	t.Helper()
-	require.Equal(t, []string{"false"}, h.f.strings(`SELECT i.indisvalid::text FROM pg_catalog.pg_index i
-		WHERE i.indexrelid = to_regclass(format('%I.%I', $1::text, $2::text))`, hubSchema, registryIndex),
-		"the hub holds a registry index that is not valid")
-	h.f.ddlAs(h.owner, "REVOKE SELECT, INSERT ON TABLE %I.%I FROM %I", hubSchema, "node_renumber_remaps", h.syncer)
+	h.execAsSuperuser(t, `UPDATE pg_catalog.pg_index SET indisvalid = false, indisready = false
+		WHERE indexrelid = to_regclass(format('%I.%I', $1::text, $2::text))`, hubSchema, registryIndex)
+	require.Equal(t, "false false", h.indexState(t), "the hub holds a registry index that is not valid")
 	require.Equal(t, "false false", h.remapPrivileges(t), "the role holds only the unscoped grants")
 	_, err := h.migrate(t, h.syncDSN, "LEG", false)
 	requireDenied(t, err, "node_renumber_remaps", "the migrate preview needs its scoped grant")
+}
+
+// execAsSuperuser runs a statement with bound arguments as the test's
+// superuser.
+func (h *leastPrivilegeHub) execAsSuperuser(t *testing.T, sql string, args ...any) {
+	t.Helper()
+	_, err := h.f.admin.Exec(h.ctx, sql, args...)
+	require.NoError(t, err)
 }
 
 // TestSmallTeamPrivileges_DocumentedSet_SyncsButCannotRunMarkRestored: the
@@ -516,17 +554,19 @@ func TestSmallTeamPrivileges_DocumentedSet_SyncsButCannotRunMarkRestored(t *test
 // both documents scope SELECT and INSERT on node_renumber_remaps to a role
 // that runs `mtix sync migrate` on a hub without a valid node-number
 // registry index, and say when --yes builds that index: with the version
-// gate open and no duplicate creates on the hub, and only as the table
-// owner. On a hub in a schema PUBLIC cannot use, a login role holding the
-// unscoped grants runs the migrate preview and --yes on the hub as init
-// leaves it, with the index, and previews a hub without the index and
-// without duplicate creates; the table owner's --yes builds the index; on
-// a hub without the index and with duplicate creates the preview and --yes
-// each need, and run with, their scoped grant, and --yes leaves the index
-// while the gate is closed; with the gate open, the table owner's --yes
-// exits with the error of the index build while any project on the hub
-// holds duplicate creates; and the scoped grants stay needed on a hub
-// whose registry index is not valid (MTIX-95.1.8).
+// gate open, over the duplicate creates of every project, which it records
+// and leaves out, and only as the table owner. On a hub in a schema PUBLIC
+// cannot use, a login role holding the unscoped grants runs the migrate
+// preview and --yes on the hub as init leaves it, with the index, and
+// previews a hub without the index and without duplicate creates; the
+// table owner's --yes builds the index; on a hub without the index and
+// with duplicate creates the preview and --yes each need, and run with,
+// their scoped grant, and --yes leaves the index while the gate is closed;
+// with the gate open, the table owner's --yes, for the project with
+// duplicate creates or another one, ends with a valid and ready index;
+// then the unscoped grants run the preview and --yes again; and the scoped
+// grants are needed again once the index is not valid (MTIX-95.1.8,
+// MTIX-95.44).
 func TestSmallTeamPrivileges_MigrateGrants_NeededOnlyOnUnindexedHubWithDuplicates(t *testing.T) {
 	small := documentedGrantsIn(t, readRepoFile(t, smallTeamPath))
 	require.Subset(t, small, []documentedGrant{
@@ -547,8 +587,9 @@ func TestSmallTeamPrivileges_MigrateGrants_NeededOnlyOnUnindexedHubWithDuplicate
 	h.migrates(t)
 	require.NoError(t, h.syncPool.UpsertProjectClient(h.ctx, "LEG", "0123456789abcdef", "0.5.5"),
 		"a remap-aware client opens the version gate of the project with duplicate creates")
-	h.buildFails(t, "LEG")
-	h.buildFails(t, "MTIX")
+	h.buildsOverDuplicates(t, "LEG")
+	h.buildsOverDuplicates(t, "MTIX")
+	h.migratesValidIndexWithDuplicates(t)
 	h.needsGrantsWithoutValidIndex(t)
 }
 

@@ -35,6 +35,9 @@ type schemaState struct {
 	epoch               int64          // the hub's current restore epoch
 	stampFix            string         // the UPDATE that sets each to the current epoch, quoted server-side
 	hub                 hubObjectState // the tables' owners and schema, and current_schema()
+	// registry is the node-number registry index as pg_index records it
+	// (MTIX-95.44).
+	registry transport.RegistryIndexState
 }
 
 // schemaRow is the catalog row readSchemaState reads.
@@ -49,9 +52,11 @@ type schemaRow struct {
 // role can execute; on a hub with the recorder, a connecting role other
 // than the table owner must hold neither INSERT on sync_node_collisions
 // nor USAGE on its sequence, nor reach them, and every create event's
-// restore epoch lies from 0 to the hub's current one (MTIX-95.1.7). It
-// reports whether the sync tables are there, so the checks that read the
-// hub's catalog can run.
+// restore epoch lies from 0 to the hub's current one (MTIX-95.1.7); and
+// that the node-number registry index, when present, is valid and ready,
+// failing the check in every mode when it is not (MTIX-95.44). It reports
+// whether the sync tables are there, so the checks that read the hub's
+// catalog can run.
 func checkSchemaCurrent(ctx context.Context, dsn string, opts transport.Options, strict bool) (DoctorCheck, bool) {
 	cctx, cancel := context.WithTimeout(ctx, syncConnectBudget)
 	defer cancel()
@@ -66,6 +71,9 @@ func checkSchemaCurrent(ctx context.Context, dsn string, opts transport.Options,
 	}
 	if err == nil && state.recorder {
 		state.stampsOutside, state.epoch, state.stampFix, err = readStampRange(cctx, pool)
+	}
+	if err == nil && state.projects {
+		state.registry, err = pool.RegistryIndex(cctx)
 	}
 	if err != nil {
 		return DoctorCheck{Name: schemaCurrentName, Detail: err.Error()}, false
@@ -149,7 +157,8 @@ func missing017(r schemaRow, schema string) []string {
 // hub's current epoch; otherwise a WARN by default and a FAIL in strict
 // mode, like the hub-triggers check, naming each gap, with the fix: the
 // table owner's steps, then the paths a role administrator removes, by
-// name.
+// name. A registry index that is not valid or not ready is a FAIL in
+// every mode: it checks no new create (MTIX-95.44).
 func gradeSchemaCurrent(s schemaState, strict bool) DoctorCheck {
 	check := DoctorCheck{Name: schemaCurrentName}
 	if !s.projects {
@@ -163,10 +172,13 @@ func gradeSchemaCurrent(s schemaState, strict bool) DoctorCheck {
 		return check
 	}
 	var parts []string
-	if strict {
+	switch {
+	case strict:
 		check.Pass = false
 		parts = append(parts, "strict mode (sync.keep_roles is set)")
-	} else {
+	case s.registry.NotUsable():
+		check.Pass = false
+	default:
 		check.Warn = true
 	}
 	parts = append(parts, gaps...)
@@ -193,8 +205,9 @@ func gradeSchemaCurrent(s schemaState, strict bool) DoctorCheck {
 // least-privilege list does not name, removed once every syncing client is
 // upgraded, the table owner's printed REVOKE statements; for create events
 // stamped outside 0 to the hub's current epoch, the owner's printed
-// UPDATE; the paths a role administrator removes are the last part of the
-// fix (gradeSchemaCurrent).
+// UPDATE; for a registry index that is not valid or not ready, mtix sync
+// migrate --yes (MTIX-95.44); the paths a role administrator removes are
+// the last part of the fix (gradeSchemaCurrent).
 func schemaGaps(s schemaState) (gaps, steps []string) {
 	if len(s.missing) > 0 {
 		gap := "the hub schema predates migration 017, with which the hub stamps every event's " +
@@ -228,6 +241,9 @@ func schemaGaps(s schemaState) (gaps, steps []string) {
 			"current epoch: %d; restore-collision checks treat each as not earlier than the current epoch, and "+
 			"the table owner sets each to the current epoch with the printed UPDATE", s.epoch, s.stampsOutside))
 		steps = append(steps, s.stampFix)
+	}
+	if gap, step := registryIndexGap(s.registry); gap != "" {
+		gaps, steps = append(gaps, gap), append(steps, step)
 	}
 	return gaps, steps
 }

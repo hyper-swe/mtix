@@ -1373,9 +1373,10 @@ Run health checks against the local store and the BYO Postgres hub:
                            the hub has migration 017 (it stamps every
                            event's restore epoch and records restore
                            collisions itself), the connecting role can
-                           execute record_restore_collision, and, unless it
+                           execute record_restore_collision, unless it
                            owns the sync tables, holds no INSERT on
-                           sync_node_collisions
+                           sync_node_collisions, and the node-number
+                           registry index, when present, is valid and ready
   Queue draining         - no events older than 1h still in pending
   No orphan applied      - every applied_event has a matching node OR tombstone
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
@@ -1415,6 +1416,11 @@ mode: restore-collision checks treat each as not earlier than the
 current epoch, and the table owner runs the printed UPDATE, which sets
 each to the current epoch. The check names each gap and who runs each
 part of the fix.
+
+A node-number registry index (sync_events_node_registry_uidx) that is not
+valid or not ready fails the check in every mode: it checks no new
+create. The fix is mtix sync migrate --yes, run as the table owner while
+the version gate is open, which drops the index and builds it again.
 
 Hub triggers names each missing function or trigger, each trigger that
 executes another function, and each trigger that is not enabled, with the
@@ -1522,6 +1528,14 @@ Positional DSN arguments are no longer accepted; set MTIX_SYNC_DSN or
 is accepted only when every host the connection may use is loopback or
 a local socket.
 
+After the migration, init checks the node-number registry index
+(sync_events_node_registry_uidx) and prints a WARN with the fix when it
+is not valid or not ready: the migration skips an index of that name,
+which then checks no new create. On a hub without that index whose
+projects hold duplicate creates, the migration cannot build the index,
+and init refuses and names the fix: as the table owner, run mtix sync
+migrate --yes while the version gate is open, then mtix sync init again.
+
 ### Flags
 
 | Flag | Short | Description | Default |
@@ -1570,6 +1584,16 @@ Orchestrate the distributed node-identity migration (ADR-003 §7):
 Phase 1 MOVES display numbers on the hub when duplicates exist. Without
 --yes the command PREVIEWS the renumbers and applies nothing. Re-run with
 --yes to record the remaps to the live store.
+
+The registry index covers every project on the hub, so Phase 1 records
+the duplicate creates of every project, whichever project --project
+names. Phase 1.5 builds the index while the version gate is open, and
+leaves the recorded duplicate creates out of it by event id: they stay in
+the event log unchanged. It drops an index that is not valid or not ready
+and builds it again, and never reports such an index present. It refuses
+before the build, with the count and the limit, when the hub holds more
+duplicate creates than the index can leave out. Only the table owner can
+build the index. --json reports the index state as registry_index.
 
 ### Flags
 

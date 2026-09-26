@@ -1839,6 +1839,10 @@ already had, within the push you run; it adds no background contact.
   not checked for conflicts again: its conflicts were recorded when it
   reached the hub, so a re-push adds no `sync_conflicts` row and no
   `conflicts` count (before 0.5.4 each re-push recorded them again).
+  After a lost commit confirmation, the retry finds the whole batch
+  already on the hub, so that push can report `0 conflicts` although the
+  first attempt recorded some: run `mtix sync conflicts list` to see
+  them.
 - **Verify.** After the push, `mtix sync status` shows `pending` 0
   (apart from held events, see [Held push events](#held-push-events)),
   and `mtix sync doctor` passes its `queue draining` check.

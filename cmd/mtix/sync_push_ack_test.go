@@ -329,3 +329,45 @@ func TestPushLoop_IDOnHubWithOtherContent_LaterBatchChangesHeld(t *testing.T) {
 	require.True(t, strings.HasPrefix(q.Reason, holdDependsPrefix+head[0]), q.Reason)
 	require.Equal(t, "pending", syncStatusOf(t, retitle))
 }
+
+// TestPushLoop_BatchOfOnlyMismatches_LaterEventsPushed: a first batch made
+// only of events whose ids the hub holds with other content holds them all
+// and counts as progress, so the same push goes on, inserts the events
+// queued after them, and leaves exactly the held events pending
+// (MTIX-95.3, review r1 S2).
+func TestPushLoop_BatchOfOnlyMismatches_LaterEventsPushed(t *testing.T) {
+	for _, hc := range ackHubCases() {
+		t.Run(hc.name, func(t *testing.T) {
+			hub, onHub := hc.open(t)
+			initTestApp(t)
+			ctx := context.Background()
+			head := createTasks(t, 1)
+			head = append(head, cloneCreates(t, head[0], pushBatchSize-1)...)
+			events, err := app.store.ReadPendingEventsByID(ctx, head)
+			require.NoError(t, err)
+			others := make([]*model.SyncEvent, 0, len(events))
+			for _, e := range events {
+				other := *e
+				other.Payload = []byte(`{"title":"another task under this event id"}`)
+				others = append(others, &other)
+			}
+			res, err := hub.PushEventsResult(ctx, others)
+			require.NoError(t, err)
+			require.Len(t, res.Inserted, len(others))
+			later := createTasks(t, 2)
+
+			var stderr bytes.Buffer
+			tot, err := pushLoop(ctx, &stderr, hub, app.store)
+			require.NoError(t, err, stderr.String())
+			require.Equal(t, pushBatchSize, tot.mismatched, "the whole first batch is held")
+			require.Equal(t, len(later), tot.inserted, "the same push goes on to the later events")
+			for _, id := range later {
+				require.True(t, onHub(id))
+				require.Equal(t, "pushed", syncStatusOf(t, id))
+			}
+			held := countTestRows(t, `SELECT COUNT(*) FROM sync_quarantine WHERE source = 'push'`)
+			require.Equal(t, pushBatchSize, held)
+			require.Equal(t, held, pendingCount(t), "only the held events stay pending")
+		})
+	}
+}

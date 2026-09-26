@@ -19,7 +19,7 @@ import (
 // records each here so both humans and agents see exactly what happened.
 type PhaseReport struct {
 	Phase   string `json:"phase"`
-	Status  string `json:"status"` // "ok" | "deferred" | "skipped" | "noop"
+	Status  string `json:"status"` // "ok" | "deferred" | "skipped" | "noop" | "failed"
 	Detail  string `json:"detail,omitempty"`
 	Applied bool   `json:"applied,omitempty"` // a live-store mutation happened
 }
@@ -132,16 +132,19 @@ func runSyncMigrate(ctx context.Context, stdout, stderr io.Writer,
 	}
 	defer pool.Close()
 
+	// A refused index build still prints the report: the sweep of the
+	// same run has already recorded the duplicates (MTIX-95.44).
 	report, err := orchestrateMigration(ctx, pool, prefix, yes)
+	if len(report.Phases) > 0 {
+		if app.jsonOutput {
+			body, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(stdout, string(body))
+		} else {
+			printMigrateReport(stdout, report)
+		}
+	}
 	if err != nil {
 		return wrapSyncErr(stderr, "orchestrate", err)
-	}
-
-	if app.jsonOutput {
-		body, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Fprintln(stdout, string(body))
-	} else {
-		printMigrateReport(stdout, report)
 	}
 	return nil
 }
@@ -184,9 +187,13 @@ func orchestrateMigration(ctx context.Context, hub migrateHub, prefix string, ye
 
 	// Phase 1.5 (apply): version-gated index build. Phase 1 has just run,
 	// so every duplicate create is recorded and the build leaves it out.
+	// A refused build returns the report with the sweep's records and a
+	// failed index phase, together with the error (MTIX-95.44).
 	idx, err := hub.EnsureRegistryIndex(ctx, prefix)
 	if err != nil {
-		return MigrateReport{}, err
+		report.Phases = append(report.Phases, PhaseReport{Phase: "1.5-index", Status: "failed",
+			Detail: scrubSyncText(err.Error())})
+		return report, err
 	}
 	report.RegistryIndex = &idx.State
 	report.Phases = append(report.Phases, indexPhaseReport(idx))

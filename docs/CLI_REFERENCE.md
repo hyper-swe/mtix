@@ -1423,7 +1423,9 @@ ready checks no new create; one that is ready but not valid still
 refuses a duplicate create, but queries do not use it and it must be
 built again. The fix is mtix sync migrate --yes, run as the table owner
 while the version gate is open, which drops the index and builds it
-again.
+again. A hub that holds sync_events but no registry index is a WARN by
+default and fails in strict mode, with the same fix, which builds the
+index.
 
 Hub triggers names each missing function or trigger, each trigger that
 executes another function, and each trigger that is not enabled, with the

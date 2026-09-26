@@ -1686,7 +1686,9 @@ queries do not use it and it must be built again. That is a FAIL in every mode,
 not a WARN: the detail names the index and its flags, and the `fix` is
 `mtix sync migrate --yes`, run as the table owner while the version gate
 is open, which drops the index and builds it again (see "New sync
-commands"). Then run `mtix sync doctor` again.
+commands"). Then run `mtix sync doctor` again. A hub that holds
+`sync_events` but no registry index is a WARN by default (a FAIL in
+strict mode), with the same fix, which builds the index.
 
 A role can write collision rows when it holds INSERT on
 `sync_node_collisions` or USAGE on
@@ -2115,9 +2117,12 @@ or with more than 3600 bytes of their event ids, is refused before the
 build, with the count and the limit; pushes keep working, and a push
 whose create takes a number already in use is still renumbered. So is a
 hub where one node lost two numbers: the remap ledger records one number
-per node, and the refusal names the creates it cannot record. A refusal
-changes nothing on the hub: an index that is not valid stays, and `mtix
-sync doctor` keeps reporting it.
+per node, and the refusal names the creates it cannot record. A refused
+build drops and builds nothing: an index that is not valid stays, and
+`mtix sync doctor` keeps reporting it. Phase 1 of the same run has
+already recorded the duplicates (remap and conflict rows), and the
+report, in text and in `--json`, still shows that sweep phase, with the
+count and the projects, before the refusal.
 
 `mtix sync init` checks the registry index after its migration and
 prints a WARN with the same fix when the index is not valid or not

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -48,6 +47,10 @@ const registryCleanupBudget = 30 * time.Second
 // not use it and it must be built again. CREATE INDEX IF NOT EXISTS skips
 // either.
 type RegistryIndexState struct {
+	// Table reports whether sync_events resolves through the search_path,
+	// so that a hub without the index can be told from a hub without the
+	// sync tables (MTIX-95.44).
+	Table bool `json:"-"`
 	// Present reports whether sync_events has an index of the registry's
 	// name.
 	Present bool `json:"present"`
@@ -72,6 +75,12 @@ func (s RegistryIndexState) NotUsable() bool {
 	return s.Present && !s.Usable()
 }
 
+// Missing reports a hub whose sync_events table has no index of the
+// registry's name (MTIX-95.44).
+func (s RegistryIndexState) Missing() bool {
+	return s.Table && !s.Present
+}
+
 // QualifiedName is the index's name, schema-qualified when the schema is
 // known, for messages that name it.
 func (s RegistryIndexState) QualifiedName() string {
@@ -94,23 +103,29 @@ func (p *Pool) RegistryIndex(ctx context.Context) (RegistryIndexState, error) {
 // readRegistryIndex reads the registry index state through q
 // (MTIX-95.44).
 func readRegistryIndex(ctx context.Context, q queryRower) (RegistryIndexState, error) {
-	s := RegistryIndexState{Present: true}
-	// The index of the registry's name on sync_events, found by the table
-	// it indexes (indrelid), with its flags and its schema, raw and
-	// quoted server-side. No row: the hub has no such index.
+	var s RegistryIndexState
+	// Whether sync_events resolves, and the index of the registry's name on
+	// it, found by the table it indexes (indrelid), with its flags and its
+	// schema, raw and quoted server-side; the index columns are NULL when
+	// there is no such index.
+	var valid, ready *bool
+	var schema, schemaIdent *string
 	err := q.QueryRow(ctx, `
-		SELECT i.indisvalid, i.indisready, n.nspname::text, pg_catalog.quote_ident(n.nspname)
-		FROM pg_catalog.pg_index i
-		JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
-		JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-		WHERE i.indrelid = pg_catalog.to_regclass('sync_events') AND c.relname = $1`,
+		SELECT e.t IS NOT NULL, x.indisvalid, x.indisready, x.nspname, x.ident
+		FROM (SELECT pg_catalog.to_regclass('sync_events') AS t) AS e
+		LEFT JOIN (SELECT i.indrelid, i.indisvalid, i.indisready, n.nspname::text AS nspname,
+		                  pg_catalog.quote_ident(n.nspname) AS ident
+		           FROM pg_catalog.pg_index i
+		           JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
+		           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+		           WHERE c.relname = $1) AS x ON x.indrelid = e.t`,
 		RegistryIndexName,
-	).Scan(&s.Valid, &s.Ready, &s.Schema, &s.SchemaIdent)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return RegistryIndexState{}, nil
-	}
+	).Scan(&s.Table, &valid, &ready, &schema, &schemaIdent)
 	if err != nil {
 		return RegistryIndexState{}, fmt.Errorf("read the registry index state: %s", redact.DSN(err.Error()))
+	}
+	if valid != nil {
+		s.Present, s.Valid, s.Ready, s.Schema, s.SchemaIdent = true, *valid, *ready, *schema, *schemaIdent
 	}
 	return s, nil
 }

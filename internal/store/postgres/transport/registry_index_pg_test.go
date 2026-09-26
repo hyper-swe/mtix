@@ -506,7 +506,7 @@ func requireCapRefusal(t *testing.T, err error) {
 // TestEnsureRegistryIndex_CapBoundary_BuildsAtTheCapRefusesAboveIt: both
 // limits are inclusive: exactly MaxRegistryLeftOut left-out creates, and
 // exactly MaxRegistryLeftOutBytes of their event ids, build a valid index;
-// one create more, or one byte more, is refused before the build
+// one create more, or exactly one byte more, is refused before the build
 // (MTIX-95.44).
 func TestEnsureRegistryIndex_CapBoundary_BuildsAtTheCapRefusesAboveIt(t *testing.T) {
 	cases := []struct {
@@ -516,8 +516,8 @@ func TestEnsureRegistryIndex_CapBoundary_BuildsAtTheCapRefusesAboveIt(t *testing
 	}{
 		{"count at the cap", transport.MaxRegistryLeftOut, 20, false},
 		{"count one above the cap", transport.MaxRegistryLeftOut + 1, 20, true},
-		{"bytes at the limit", transport.MaxRegistryLeftOutBytes / 40, 40, false},
-		{"bytes one above the limit", transport.MaxRegistryLeftOutBytes / 40, 41, true},
+		{"bytes at the limit", 12, transport.MaxRegistryLeftOutBytes / 12, false},
+		{"bytes one above the limit", 13, (transport.MaxRegistryLeftOutBytes + 1) / 13, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -617,6 +617,30 @@ func TestEnsureRegistryIndex_LoserNodeAtTwoNumbers_RefusesNamingTheCreates(t *te
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "recorded at another number")
 	require.Contains(t, err.Error(), "0193fa00-0000-7000-8000-0000009544c4")
+	present, _, _ := registryIndexState(t, db)
+	require.False(t, present)
+}
+
+// TestEnsureRegistryIndex_LoserRecordedInAnotherProject_Refuses: a node's
+// remap row is for another project at the same number, so the create it
+// lost in this project is not recorded: the build refuses, naming it
+// (MTIX-95.44).
+func TestEnsureRegistryIndex_LoserRecordedInAnotherProject_Refuses(t *testing.T) {
+	db := migratedPoolWithoutIndex(t)
+	pool := poolFor(t, db)
+	const node = "0193fa00-0000-7000-8000-0000009544d9"
+	insertCreate(t, db, "0193fa00-0000-7000-8000-0000009544d1", "AAA", "X-1", "", 1)
+	insertCreate(t, db, "0193fa00-0000-7000-8000-0000009544d2", "AAA", "X-1", node, 2)
+	insertCreate(t, db, "0193fa00-0000-7000-8000-0000009544d3", "BBB", "X-1", "", 3)
+	insertCreate(t, db, "0193fa00-0000-7000-8000-0000009544d4", "BBB", "X-1", node, 4)
+	openGate(t, pool, "AAA")
+	_, err := pool.SweepDuplicates(context.Background(), "AAA")
+	require.NoError(t, err)
+
+	_, err = pool.EnsureRegistryIndex(context.Background(), "AAA")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "recorded at another number")
+	require.Contains(t, err.Error(), "0193fa00-0000-7000-8000-0000009544d4")
 	present, _, _ := registryIndexState(t, db)
 	require.False(t, present)
 }

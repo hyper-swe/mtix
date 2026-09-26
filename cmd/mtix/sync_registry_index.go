@@ -61,12 +61,18 @@ func warnRegistryIndex(ctx context.Context, stderr io.Writer, pool *transport.Po
 }
 
 // registryIndexGap is the doctor's gap and fix step for a registry index
-// that is not valid or not ready, or "" for an index that is valid and
-// ready or absent (MTIX-95.44).
+// that is not valid or not ready, or missing from a hub that holds
+// sync_events, or "" for an index that is valid and ready (MTIX-95.44).
 func registryIndexGap(s transport.RegistryIndexState) (gap, step string) {
-	if !s.NotUsable() {
+	switch {
+	case s.NotUsable():
+		return registryIndexNotUsable(s), "mtix sync migrate --yes while the version gate is open " +
+			"(it drops the index and builds it again)"
+	case s.Missing():
+		return "the node-number registry index " + transport.RegistryIndexName + " is missing, so no new " +
+				"create is checked against it", "mtix sync migrate --yes while the version gate is open " +
+				"(it builds the index)"
+	default:
 		return "", ""
 	}
-	return registryIndexNotUsable(s), "mtix sync migrate --yes while the version gate is open " +
-		"(it drops the index and builds it again)"
 }

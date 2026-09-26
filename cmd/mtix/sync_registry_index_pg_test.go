@@ -353,3 +353,63 @@ func TestSyncDoctor_RegistryIndexNotValidOrNotReady_FailsWithTheFix(t *testing.T
 		})
 	}
 }
+
+// TestSyncMigrate_IndexRefused_ReportsTheRecordedSweep: when mtix sync
+// migrate --yes refuses the index build, it still prints, in text and in
+// --json, the sweep phase that recorded the duplicates before the refusal
+// (MTIX-95.44).
+func TestSyncMigrate_IndexRefused_ReportsTheRecordedSweep(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		t.Run(map[bool]string{false: "text", true: "json"}[asJSON], func(t *testing.T) {
+			initTestApp(t)
+			h := newRegistryHub(t)
+			h.f.ddlAs(h.owner, "DROP INDEX IF EXISTS public.%I", registryIndex)
+			_, err := h.f.admin.Exec(h.ctx, `INSERT INTO public.sync_events
+				  (event_id, project_prefix, node_id, uid, op_type, payload,
+				   wall_clock_ts, lamport_clock, vector_clock, author_id, author_machine_hash)
+				SELECT gen_random_uuid()::text, 'LEG', 'LEG-' || (g % 101), NULL, 'create_node', '{"title":"x"}',
+				       1, g, '{"alice":1}', 'alice', '0123456789abcdef'
+				FROM generate_series(1, 202) AS g`)
+			require.NoError(t, err)
+			h.openGate(t, "LEG")
+
+			out, err := h.migrate(t, "LEG", true, asJSON)
+			require.Error(t, err, "101 duplicate creates are above the cap")
+			if !asJSON {
+				require.Contains(t, out, "renumbered 101 duplicate number(s) in 1 project(s)")
+				return
+			}
+			var r migrateJSON
+			require.NoError(t, json.Unmarshal([]byte(out), &r), out)
+			require.NotEmpty(t, r.Phases)
+			found := false
+			for _, p := range r.Phases {
+				if p.Phase == "1-sweep" {
+					found = p.Applied
+				}
+			}
+			require.True(t, found, "--json reports the applied sweep")
+		})
+	}
+}
+
+// TestSyncDoctor_RegistryIndexMissing_ReportsTheFix: on a hub that holds
+// sync_events but no registry index, the schema current check reports the
+// missing index with the fix, run as the table owner (MTIX-95.44).
+func TestSyncDoctor_RegistryIndexMissing_ReportsTheFix(t *testing.T) {
+	initTestApp(t)
+	h := newRegistryHub(t)
+	h.f.ddlAs(h.owner, "DROP INDEX IF EXISTS public.%I", registryIndex)
+	t.Setenv(transport.EnvDSN, h.dsn)
+	app.jsonOutput = true
+	var stdout, stderr bytes.Buffer
+	_ = runSyncDoctor(h.ctx, &stdout, &stderr, nil, transport.Options{InsecureTLS: true})
+	var report doctorJSON
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report), stdout.String())
+
+	pass, warn, detail, fix := doctorCheckNamed(t, report, schemaCurrentName)
+	require.True(t, pass && warn, "a missing index is a WARN by default: %s", detail)
+	require.Contains(t, detail, registryIndex+" is missing")
+	require.Contains(t, fix, "as the table owner ("+h.owner+")")
+	require.Contains(t, fix, "mtix sync migrate --yes")
+}

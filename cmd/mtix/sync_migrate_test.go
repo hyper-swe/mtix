@@ -342,3 +342,34 @@ func TestOrchestrate_SweepAcrossProjects_NamesTheProjectCount(t *testing.T) {
 	p1, _ := phaseByName(rep, "1-sweep")
 	require.Equal(t, "renumbered 3 duplicate number(s) in 2 project(s) on the hub; see 'mtix sync conflicts'", p1.Detail)
 }
+
+// TestOrchestrate_IndexError_ReportsTheSweepBeforeTheError: when the index
+// build is refused, the sweep of the same run has already recorded the
+// duplicates, so the report still carries the sweep phase, and the index
+// phase, with the error (MTIX-95.44).
+func TestOrchestrate_IndexError_ReportsTheSweepBeforeTheError(t *testing.T) {
+	hub := &fakeHub{sweep: transport.SweepReport{Resolved: 2, Projects: []string{"LEG"}},
+		idxErr: fmt.Errorf("registry index not built: the hub holds 2 duplicate creates")}
+	rep, err := orchestrateMigration(context.Background(), hub, "MTIX", true)
+	require.Error(t, err)
+	p1, ok := phaseByName(rep, "1-sweep")
+	require.True(t, ok, "the sweep phase is reported")
+	require.True(t, p1.Applied)
+	require.Contains(t, p1.Detail, "renumbered 2 duplicate number(s) in 1 project(s)")
+	idx, ok := phaseByName(rep, "1.5-index")
+	require.True(t, ok)
+	require.Contains(t, idx.Detail, "registry index not built")
+}
+
+// TestOrchestrate_IndexNotValidAfterBuild_NamesTheFix: an index result with
+// the gate open that neither built the index nor shows it valid and ready
+// never reports the index present and names the fix (MTIX-95.44).
+func TestOrchestrate_IndexNotValidAfterBuild_NamesTheFix(t *testing.T) {
+	hub := &fakeHub{idx: transport.IndexResult{GateOpen: true, State: notUsableIndex}}
+	rep, err := orchestrateMigration(context.Background(), hub, "MTIX", true)
+	require.NoError(t, err)
+	idx, _ := phaseByName(rep, "1.5-index")
+	require.NotContains(t, idx.Detail, "already present")
+	require.Contains(t, idx.Detail, "mtix sync migrate --yes")
+	require.Equal(t, &notUsableIndex, rep.RegistryIndex)
+}

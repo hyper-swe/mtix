@@ -42,12 +42,20 @@ the tables needs this least-privilege list:
 - UPDATE on `sync_node_collisions`, only for a role that runs
   `mtix sync collisions resolve`;
 - SELECT on `node_renumber_remaps`, only for a role that runs
-  `mtix sync migrate`;
+  `mtix sync migrate` on a hub without a valid node-number registry
+  index;
 - INSERT on `node_renumber_remaps`, only for a role that runs
-  `mtix sync migrate --yes`.
+  `mtix sync migrate --yes` on a hub without a valid node-number registry
+  index.
 
 On a hub without the node-number registry index, `mtix sync migrate --yes`
-also builds that index, which only the table owner can do.
+also builds that index when the version gate is open, that is, when the
+project has at least one active client and every active client runs a
+remap-aware mtix version, and no project on the hub holds duplicate
+creates. While the gate is closed, it leaves the index for a later run.
+While the gate is open and a project on the hub holds duplicate creates,
+the build fails, and `mtix sync migrate --yes` exits with the error of the
+index build. Only the table owner can build the index.
 
 The hub stamps every event with its own restore epoch: a trigger on
 `sync_events` sets it from `sync_hub_state` on every insert. A syncing
@@ -96,13 +104,18 @@ otherwise run the backup as the table owner.
 CREATE on the schema is needed whenever `mtix sync init` runs: the first
 run, after an upgrade that adds a migration, and in the restore runbook.
 
+These statements are for PostgreSQL 15 and later. The superuser that runs
+them owns the hub database, which grants CREATE on schema `public` only to
+the roles named here; `mtix_sync` owns only the objects `mtix sync init`
+creates, and its privileges on schema `public` are the ones granted here.
+
 ```sql
 CREATE ROLE mtix_sync LOGIN PASSWORD 'set-a-strong-one';
-CREATE DATABASE mtix_hub OWNER mtix_sync;
+CREATE DATABASE mtix_hub;
 \c mtix_hub
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT CONNECT ON DATABASE mtix_hub TO mtix_sync;
 GRANT USAGE, CREATE ON SCHEMA public TO mtix_sync;
--- mtix_sync needs CREATE whenever it runs mtix sync init.
 ```
 
 Between runs of `mtix sync init` you may drop schema-level CREATE, and

@@ -104,13 +104,17 @@ otherwise run the backup as the table owner.
 CREATE on the schema is needed whenever `mtix sync init` runs: the first
 run, after an upgrade that adds a migration, and in the restore runbook.
 
+These statements are for PostgreSQL 15 and later. The superuser that runs
+them owns the hub database; `mtix_sync` owns only the objects
+`mtix sync init` creates, and its privileges on schema `public` are the
+ones granted here.
+
 ```sql
 CREATE ROLE mtix_sync LOGIN PASSWORD 'set-a-strong-one';
-CREATE DATABASE mtix_hub OWNER mtix_sync;
+CREATE DATABASE mtix_hub;
 \c mtix_hub
 GRANT CONNECT ON DATABASE mtix_hub TO mtix_sync;
 GRANT USAGE, CREATE ON SCHEMA public TO mtix_sync;
--- mtix_sync needs CREATE whenever it runs mtix sync init.
 ```
 
 Between runs of `mtix sync init` you may drop schema-level CREATE, and

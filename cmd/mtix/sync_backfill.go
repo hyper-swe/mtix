@@ -38,8 +38,11 @@ populated hub to replicate the history locally.
 Safety properties:
   * Single-tx atomicity: all events OR none. SQLite WAL rolls back
     on any failure mid-walk (including SIGKILL).
-  * Refusal-by-default if sync_events is non-empty. To re-backfill
-    from scratch, run 'mtix sync reconcile --discard-local' first.
+  * Refusal-by-default if sync_events is non-empty. Note --force does
+    NOT regenerate: it appends a second history alongside the first.
+    There is no supported regenerate path yet (MTIX-89). Do NOT reach
+    for 'mtix sync reconcile --discard-local' — that deletes every
+    ticket in this store.
   * Refusal if the nodes table fails an FK invariant check
     (parent_id pointing at a missing parent). Run 'mtix verify' first.
   * Acquires the pushlock so a concurrent daemon push cannot race
@@ -55,8 +58,10 @@ After backfill: run 'mtix sync push' to ship events to the hub.`,
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"Print counts without writing anything")
+	// MTIX-95.45: --force mints fresh event ids for a second copy of the
+	// history; it never regenerates the first (see the Safety properties).
 	cmd.Flags().BoolVar(&force, "force", false,
-		"Re-backfill even if sync_events is non-empty (DANGEROUS — causes duplicate event_ids; hub dedupes by event_id so the dup is invisible there, but the local queue grows)")
+		"Re-backfill even if sync_events is non-empty (DANGEROUS: does NOT regenerate; appends a second history alongside the first, with fresh event ids)")
 	if err := cmd.Flags().MarkHidden("force"); err != nil {
 		panic(err)
 	}
@@ -121,8 +126,11 @@ func formatBackfillError(stderr io.Writer, err error) error {
 		return fmt.Errorf(
 			"mtix sync backfill: sync_events table is non-empty. " +
 				"If backfill was previously run, re-run 'mtix sync push' to drain " +
-				"pending events. To re-backfill from scratch, run " +
-				"'mtix sync reconcile --discard-local' first")
+				"pending events. There is no supported way to regenerate the " +
+				"journal yet (MTIX-89): --force appends a second history rather " +
+				"than replacing the first, and 'mtix sync reconcile " +
+				"--discard-local' DELETES EVERY TICKET in this store — do not " +
+				"use it for this. Back up first with 'mtix backup <path>'")
 	case errors.Is(err, sqlite.ErrBackfillNodesInvariant):
 		return fmt.Errorf(
 			"mtix sync backfill: nodes table has invariant violations. " +

@@ -32,9 +32,17 @@ type BackfillResult struct {
 // rail per MTIX-15.13.1 N5: re-running backfill against a project that
 // has emitted events would silently duplicate the history on the hub
 // (the hub dedupes by event_id; --force generates fresh IDs and
-// defeats that). To re-backfill from scratch, the operator must first
-// run `mtix sync reconcile --discard-local` (which wipes sync_events
-// per FR-18.13).
+// defeats that, so --force APPENDS a second history rather than
+// replacing the first — see MTIX-89).
+//
+// This comment used to point operators at `mtix sync reconcile
+// --discard-local` as the way to re-backfill from scratch. It does wipe
+// sync_events, but it also runs DELETE FROM nodes (sync_reconcile.go)
+// and adopts hub state — following that advice to fix an ordering bug
+// destroys every ticket in the local store. Never recommend it as a
+// routine remedy (MTIX-90). A non-destructive regenerate path is
+// MTIX-89; until it lands there is no supported command, and the
+// journal has to be cleared by hand against a backed-up store.
 var ErrBackfillSyncEventsNonEmpty = errors.New("sync_events table is non-empty")
 
 // ErrBackfillNodesInvariant is returned when the canonical `nodes`

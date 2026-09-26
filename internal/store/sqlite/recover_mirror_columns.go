@@ -70,40 +70,24 @@ func (m *mirrorSource) copyOf(n *exportNode) (*exportNode, string) {
 	return c, ""
 }
 
-// salvagedColumn is a JSON column salvageFromDB could not read, with the key
-// it kept the node under: the id the primary-key walk yielded (MTIX-95.31.3).
-// On a damaged index that key can differ from the id the row carries.
-type salvagedColumn struct {
-	key string
-	col *unreadableColumnError
-}
-
 // restoreColumnsFromMirror handles every JSON column the database could not
 // read (MTIX-95.31.3). When the mirror holds a usable copy of the node
 // (mirrorSource.copyOf), the column is taken from that copy and the note
 // names the mirror as its source; otherwise the node keeps the column
 // empty, as before, and the note says the column was dropped and why the
 // mirror was not used. Every column in cols belongs to the node nodes holds
-// under its key: salvageFromDB lists only the columns of nodes it salvaged.
-// When that key differs from the id the row carries (a damaged index), the
-// mirror is not consulted, so no other node's copy is ever applied.
+// under the id its row carries: salvageRows keeps each row under that id
+// and lists only the columns of rows it keeps, so a mirror copy of a node
+// only ever reaches that node's own row (MTIX-95.31.3).
 func restoreColumnsFromMirror(
-	nodes map[string]exportNode, cols []salvagedColumn, mirror *mirrorSource, res *RecoverResult,
+	nodes map[string]exportNode, cols []*unreadableColumnError, mirror *mirrorSource, res *RecoverResult,
 ) {
-	for _, sc := range cols {
-		col := sc.col
-		if sc.key != col.nodeID {
-			res.Notes = append(res.Notes, fmt.Sprintf(
-				"%v; the column is dropped, and the node is salvaged without it: "+
-					"the database row read under id %s carries id %s, so the mirror is not used",
-				col, sc.key, col.nodeID))
-			continue
-		}
-		n := nodes[sc.key]
+	for _, col := range cols {
+		n := nodes[col.nodeID]
 		src, why := mirror.copyOf(&n)
 		if src != nil {
 			if entries, ok := copyNodeColumn(&n, src, col.column); ok {
-				nodes[sc.key] = n
+				nodes[col.nodeID] = n
 				res.Notes = append(res.Notes, restoredColumnNote(col, mirror, entries))
 				continue
 			}

@@ -159,6 +159,17 @@ func columnNote(t *testing.T, res *RecoverResult, id, column string) string {
 	return notes[0]
 }
 
+// countOf returns how many of notes equal note.
+func countOf(notes []string, note string) int {
+	n := 0
+	for _, got := range notes {
+		if got == note {
+			n++
+		}
+	}
+	return n
+}
+
 // mirrorChecksumNote is the note recover writes once when the mirror's
 // checksum does not verify (MTIX-26.5).
 const mirrorChecksumNote = "mirror checksum did not verify; its contents are still used as salvage of last resort"
@@ -267,7 +278,8 @@ func TestRecover_UnreadableColumns_RestoredFromMirror(t *testing.T) {
 			}
 			assert.Empty(t, columnNotes(res, "RC-2", "annotations"), "RC-2 is readable")
 			if tt.stale {
-				assert.Contains(t, res.Notes, mirrorChecksumNote, "the unverified mirror is noted once, on its own")
+				assert.Equal(t, 1, countOf(res.Notes, mirrorChecksumNote),
+					"the unverified mirror is noted once, on its own; notes: %v", res.Notes)
 			} else {
 				assert.NotContains(t, res.Notes, mirrorChecksumNote)
 			}

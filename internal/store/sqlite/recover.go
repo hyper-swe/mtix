@@ -21,11 +21,13 @@ import (
 
 // RecoverResult is the salvage report produced by Recover (MTIX-26.5).
 // Export is always importable via the standard import path: it carries a
-// freshly computed checksum, and missing ancestors are synthesized as
-// placeholders so the parent foreign-key chain holds.
+// freshly computed checksum, it holds each node id once, even under a
+// damaged primary-key index (MTIX-95.31.3, salvageRows), and missing
+// ancestors are synthesized as placeholders so the parent foreign-key chain
+// holds.
 type RecoverResult struct {
 	Export       *ExportData
-	RecoveredIDs []string // read intact from the damaged database
+	RecoveredIDs []string // rows read from the damaged database, by the id each row carries
 	LostIDs      []string // unreadable in the database and absent from the mirror
 	FromMirror   []string // unreadable or missing in the database, salvaged from the mirror
 	Placeholders []string // synthesized parents for orphaned survivors
@@ -135,19 +137,21 @@ func finishRecover(
 }
 
 // dbSalvage holds everything readable from the damaged database, and the
-// JSON columns it could not read (MTIX-95.31.3).
+// JSON columns of its nodes it could not read (MTIX-95.31.3). Every node is
+// kept under the id its row carries (salvageRows).
 type dbSalvage struct {
 	nodes      map[string]exportNode
 	deps       []exportDep
 	agents     []exportAgent
 	sessions   []exportSession
-	unreadable []salvagedColumn
+	unreadable []*unreadableColumnError
 }
 
-// salvageFromDB opens dbPath read-only and reads rows individually.
-// Recovered/lost ID bookkeeping is written into res as a side effect. A node
-// whose JSON column cannot be read is salvaged without it, and the column
-// is listed in the result's unreadable (MTIX-95.31.3).
+// salvageFromDB opens dbPath read-only, walks the primary-key index and
+// reads each row individually (salvageRows). Recovered/lost ID bookkeeping
+// is written into res as a side effect. A node whose JSON column cannot be
+// read is salvaged without it, and the column is listed in the result's
+// unreadable.
 func salvageFromDB(ctx context.Context, dbPath string, res *RecoverResult) (*dbSalvage, error) {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil, fmt.Errorf("stat database: %w", err)
@@ -165,59 +169,18 @@ func salvageFromDB(ctx context.Context, dbPath string, res *RecoverResult) (*dbS
 	// (this is what salvaged 47 of 80 rows in the field incident).
 	_, _ = db.ExecContext(ctx, "PRAGMA cell_size_check = OFF")
 
-	ids, err := salvageIDs(ctx, db)
+	keys, err := salvageKeys(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("walk primary-key index: %w", err)
 	}
 
 	out := &dbSalvage{nodes: map[string]exportNode{}}
-	for _, id := range ids {
-		n, err := scanExportNode(db.QueryRowContext(ctx, exportNodeSelectSQL+" WHERE id = ?", id))
-		if cols := unreadableColumns(err); len(cols) > 0 {
-			// MTIX-95.31.1: the row is readable but a JSON column is not.
-			// Salvage the node without that column; Recover takes it from
-			// the mirror or notes that it is dropped (MTIX-95.31.3).
-			for _, col := range cols {
-				out.unreadable = append(out.unreadable, salvagedColumn{key: id, col: col})
-			}
-			err = nil
-		}
-		if err != nil {
-			res.LostIDs = append(res.LostIDs, id)
-			continue
-		}
-		n.NodeType = string(model.NodeTypeForDepth(n.Depth))
-		out.nodes[id] = n
-		res.RecoveredIDs = append(res.RecoveredIDs, id)
-	}
+	salvageRows(ctx, db, keys, out, res)
 
 	// Secondary tables, best effort: their loss never blocks node salvage.
 	out.deps = salvageDeps(ctx, db, res)
 	out.agents, out.sessions = salvageAgentsSessions(ctx, db, res)
 	return out, nil
-}
-
-// salvageIDs walks the primary-key index, which often survives damage to
-// table leaf pages.
-func salvageIDs(ctx context.Context, db *sql.DB) ([]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT id FROM nodes ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return ids, nil //nolint:nilerr // keep what the index yielded before the error
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return ids, nil //nolint:nilerr // partial index walk is still salvage
-	}
-	return ids, nil
 }
 
 // salvageDeps bulk-reads dependencies, tolerating total loss.

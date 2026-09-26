@@ -1,0 +1,154 @@
+// Copyright 2025-2026 HyperSWE
+// SPDX-License-Identifier: Apache-2.0
+
+// Tests for the helpers recover uses to restore an unreadable node JSON
+// column from the mirror (MTIX-95.31.3): finding every unreadable column
+// in a scan error, copying a known column, and never claiming a restore of
+// a column it does not know.
+package sqlite
+
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/model"
+)
+
+// TestUnreadableColumns_ErrorShapes_FindsEveryColumn verifies that every
+// unreadable column is found in an error, alone, joined (as scanExportNode
+// returns them) or wrapped, and that nothing is found in any other error.
+func TestUnreadableColumns_ErrorShapes_FindsEveryColumn(t *testing.T) {
+	a := &unreadableColumnError{nodeID: "RC-1", column: columnAnnotations, cause: sql.ErrNoRows}
+	b := &unreadableColumnError{nodeID: "RC-1", column: columnActivity, cause: sql.ErrNoRows}
+	tests := []struct {
+		name string
+		err  error
+		want []string
+	}{
+		{"nil", nil, nil},
+		{"other error", sql.ErrNoRows, nil},
+		{"the sentinel alone", fmt.Errorf("x: %w", errUnreadableNodeColumn), nil},
+		{"one column", a, []string{columnAnnotations}},
+		{"joined columns", errors.Join(a, b), []string{columnAnnotations, columnActivity}},
+		{"wrapped join", fmt.Errorf("salvage: %w", errors.Join(a, b)), []string{columnAnnotations, columnActivity}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []string
+			for _, c := range unreadableColumns(tt.err) {
+				got = append(got, c.column)
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestUnreadableColumnError_Message_KeepsFormatAndChain verifies the error
+// reads as the MTIX-95.31.1 message did and still matches the sentinel and
+// the parse error.
+func TestUnreadableColumnError_Message_KeepsFormatAndChain(t *testing.T) {
+	err := &unreadableColumnError{nodeID: "RC-1", column: columnAnnotations, cause: sql.ErrNoRows}
+	assert.Equal(t, "node RC-1 column annotations: unreadable node column: "+sql.ErrNoRows.Error(), err.Error())
+	assert.ErrorIs(t, err, errUnreadableNodeColumn)
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+}
+
+// TestScanExportNode_TwoUnreadableColumns_NamesBoth verifies that the scan
+// error of a row with two unparsable JSON columns names both columns.
+func TestScanExportNode_TwoUnreadableColumns_NamesBoth(t *testing.T) {
+	j := exportNodeJSON{
+		annotations: sql.NullString{String: "{torn", Valid: true},
+		commitRefs:  sql.NullString{String: "[1,", Valid: true},
+	}
+	n := exportNode{ID: "RC-1"}
+	var got []string
+	for _, c := range unreadableColumns(j.decodeInto(&n)) {
+		assert.Equal(t, "RC-1", c.nodeID)
+		got = append(got, c.column)
+	}
+	assert.Equal(t, []string{columnCommitRefs, columnAnnotations}, got)
+}
+
+// TestCopyNodeColumn_EachColumn_CopiesItOnly verifies each known column is
+// copied with its entry count, the other columns are left alone, and an
+// unknown column is reported as not copied.
+func TestCopyNodeColumn_EachColumn_CopiesItOnly(t *testing.T) {
+	src := exportNode{
+		Annotations: []model.Annotation{{ID: "a1"}, {ID: "a2"}},
+		Activity:    []model.ActivityEntry{{ID: "e1"}},
+		CodeRefs:    []model.CodeRef{{File: "f.go"}, {File: "g.go"}, {File: "h.go"}},
+		CommitRefs:  []string{"abc"},
+		Metadata:    `{"k":"v"}`,
+	}
+	tests := []struct {
+		column      string
+		wantEntries int
+		wantOK      bool
+		check       func(t *testing.T, dst exportNode)
+	}{
+		{columnAnnotations, 2, true, func(t *testing.T, dst exportNode) {
+			assert.Equal(t, src.Annotations, dst.Annotations)
+			assert.Nil(t, dst.Activity)
+		}},
+		{columnActivity, 1, true, func(t *testing.T, dst exportNode) {
+			assert.Equal(t, src.Activity, dst.Activity)
+			assert.Nil(t, dst.Annotations)
+		}},
+		{columnCodeRefs, 3, true, func(t *testing.T, dst exportNode) {
+			assert.Equal(t, src.CodeRefs, dst.CodeRefs)
+			assert.Nil(t, dst.CommitRefs)
+		}},
+		{columnCommitRefs, 1, true, func(t *testing.T, dst exportNode) {
+			assert.Equal(t, src.CommitRefs, dst.CommitRefs)
+			assert.Nil(t, dst.CodeRefs)
+		}},
+		{"metadata", 0, false, func(t *testing.T, dst exportNode) {
+			assert.Equal(t, exportNode{}, dst)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.column, func(t *testing.T) {
+			var dst exportNode
+			entries, ok := copyNodeColumn(&dst, &src, tt.column)
+			assert.Equal(t, tt.wantEntries, entries)
+			assert.Equal(t, tt.wantOK, ok)
+			tt.check(t, dst)
+		})
+	}
+}
+
+// TestRestoreColumnsFromMirror_UnknownColumn_NotedAsDropped verifies that a
+// column recover cannot copy is noted as dropped, never as restored, even
+// when the mirror holds a usable copy of the node.
+func TestRestoreColumnsFromMirror_UnknownColumn_NotedAsDropped(t *testing.T) {
+	node := exportNode{ID: "RC-1", CreatedAt: "2026-09-01T10:00:00Z", UpdatedAt: "2026-09-01T10:00:00Z"}
+	mirror := &mirrorSource{
+		path:     "/p/.mtix/tasks.json",
+		data:     &ExportData{SchemaVersion: SchemaVersionV1, Nodes: []exportNode{node}},
+		verified: true,
+		byID:     map[string][]int{"RC-1": {0}},
+	}
+	nodes := map[string]exportNode{"RC-1": node}
+	col := &unreadableColumnError{nodeID: "RC-1", column: "metadata", cause: sql.ErrNoRows}
+	res := &RecoverResult{}
+
+	restoreColumnsFromMirror(nodes, []*unreadableColumnError{col}, mirror, res)
+
+	require.Len(t, res.Notes, 1)
+	assert.Contains(t, res.Notes[0], "dropped")
+	assert.Contains(t, res.Notes[0], "recover cannot restore this column")
+	assert.NotContains(t, res.Notes[0], "restored")
+}
+
+// TestEntryCount_ZeroOneMany_PluralizesEntries verifies the entry count
+// wording of the notes: "entry" for one, "entries" otherwise.
+func TestEntryCount_ZeroOneMany_PluralizesEntries(t *testing.T) {
+	assert.Equal(t, "0 entries", entryCount(0))
+	assert.Equal(t, "1 entry", entryCount(1))
+	assert.Equal(t, "2 entries", entryCount(2))
+}

@@ -7,7 +7,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -22,11 +21,13 @@ import (
 
 // RecoverResult is the salvage report produced by Recover (MTIX-26.5).
 // Export is always importable via the standard import path: it carries a
-// freshly computed checksum, and missing ancestors are synthesized as
-// placeholders so the parent foreign-key chain holds.
+// freshly computed checksum, it holds each node id once, even under a
+// damaged primary-key index (MTIX-95.31.3, salvageRows), and missing
+// ancestors are synthesized as placeholders so the parent foreign-key chain
+// holds.
 type RecoverResult struct {
 	Export       *ExportData
-	RecoveredIDs []string // read intact from the damaged database
+	RecoveredIDs []string // rows read from the damaged database, by the id each row carries
 	LostIDs      []string // unreadable in the database and absent from the mirror
 	FromMirror   []string // unreadable or missing in the database, salvaged from the mirror
 	Placeholders []string // synthesized parents for orphaned survivors
@@ -41,7 +42,9 @@ type RecoverResult struct {
 //     primary-key index for IDs; read each row individually so one torn
 //     page does not hide every other row.
 //  2. Fill rows the database lost from the mirror, which is written on
-//     every mutation on every interface (FR-15.3).
+//     every mutation on every interface (FR-15.3). A JSON column the
+//     database cannot read is taken from the mirror's copy of the same
+//     node when that copy is usable, or reported as dropped (MTIX-95.31.3).
 //  3. Synthesize placeholder parents for orphaned survivors and recompute
 //     the export checksum, so the result imports through the standard,
 //     fully validated path.
@@ -50,45 +53,21 @@ type RecoverResult struct {
 // source — partial damage yields a partial result plus Notes.
 func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger *slog.Logger) (*RecoverResult, error) {
 	res := &RecoverResult{}
-	nodes := map[string]exportNode{}
-	var deps []exportDep
-	var agents []exportAgent
-	var sessions []exportSession
-
-	dbNodes, dbErr := salvageFromDB(ctx, dbPath, res)
+	db, dbErr := salvageFromDB(ctx, dbPath, res)
 	if dbErr != nil {
 		res.Notes = append(res.Notes, fmt.Sprintf("database unusable: %v", dbErr))
 		logger.Warn("recover: database unusable, falling back to mirror", "error", dbErr)
-	} else {
-		for id, n := range dbNodes.nodes {
-			nodes[id] = n
-		}
-		deps = dbNodes.deps
-		agents = dbNodes.agents
-		sessions = dbNodes.sessions
+		db = &dbSalvage{nodes: map[string]exportNode{}}
 	}
+	nodes := db.nodes
 
-	mirror, mirrorErr := readMirror(mirrorPath)
-	if mirrorErr != nil {
-		res.Notes = append(res.Notes, fmt.Sprintf("mirror unusable: %v", mirrorErr))
-	} else {
-		if valid, err := VerifyExportChecksum(mirror); err != nil || !valid {
-			res.Notes = append(res.Notes,
-				"mirror checksum did not verify; its contents are still used as salvage of last resort")
-		}
-		for _, n := range mirror.Nodes {
-			if _, ok := nodes[n.ID]; !ok {
-				nodes[n.ID] = n
-				res.FromMirror = append(res.FromMirror, n.ID)
-			}
-		}
-		deps = append(deps, mirror.Dependencies...)
-		if len(agents) == 0 {
-			agents = mirror.Agents
-		}
-		if len(sessions) == 0 {
-			sessions = mirror.Sessions
-		}
+	mirror := readMirrorSource(mirrorPath, res)
+	// MTIX-95.31.3: a JSON column the database could not read comes from
+	// the mirror's copy of the same node when that copy is usable; the note
+	// names the mirror, or says the column was dropped and why.
+	restoreColumnsFromMirror(nodes, db.unreadable, mirror, res)
+	if mirror.data != nil {
+		mergeMirrorRows(nodes, db, mirror.data, res)
 	}
 
 	// IDs the database knew about but neither source could produce.
@@ -101,16 +80,44 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger
 	}
 
 	res.Placeholders = synthesizePlaceholderParents(nodes)
+	return finishRecover(res, nodes, db, mtixVersion)
+}
 
+// mergeMirrorRows adds to the salvage what only the mirror holds (MTIX-26.5):
+// every node the database did not produce (listed in FromMirror), every
+// mirror dependency (deduplicated later), and the mirror's agents and
+// sessions when the database yielded none.
+func mergeMirrorRows(nodes map[string]exportNode, db *dbSalvage, mirror *ExportData, res *RecoverResult) {
+	for _, n := range mirror.Nodes {
+		if _, ok := nodes[n.ID]; !ok {
+			nodes[n.ID] = n
+			res.FromMirror = append(res.FromMirror, n.ID)
+		}
+	}
+	db.deps = append(db.deps, mirror.Dependencies...)
+	if len(db.agents) == 0 {
+		db.agents = mirror.Agents
+	}
+	if len(db.sessions) == 0 {
+		db.sessions = mirror.Sessions
+	}
+}
+
+// finishRecover builds the recovered export from the salvaged rows with a
+// freshly computed checksum, sorts the ID lists of res and notes the lost
+// rows (MTIX-26.5).
+func finishRecover(
+	res *RecoverResult, nodes map[string]exportNode, db *dbSalvage, mtixVersion string,
+) (*RecoverResult, error) {
 	export := &ExportData{
 		Version:       1,
 		SchemaVersion: SchemaVersionV1,
 		MtixVersion:   mtixVersion,
 		Project:       firstProject(nodes),
 		Nodes:         slices.Collect(maps.Values(nodes)),
-		Dependencies:  dedupDeps(deps, nodes),
-		Agents:        agents,
-		Sessions:      sessions,
+		Dependencies:  dedupDeps(db.deps, nodes),
+		Agents:        db.agents,
+		Sessions:      db.sessions,
 	}
 	if err := RecomputeExportChecksum(export); err != nil {
 		return nil, fmt.Errorf("finalize recovered export: %w", err)
@@ -129,16 +136,22 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger
 	return res, nil
 }
 
-// dbSalvage holds everything readable from the damaged database.
+// dbSalvage holds everything readable from the damaged database, and the
+// JSON columns of its nodes it could not read (MTIX-95.31.3). Every node is
+// kept under the id its row carries (salvageRows).
 type dbSalvage struct {
-	nodes    map[string]exportNode
-	deps     []exportDep
-	agents   []exportAgent
-	sessions []exportSession
+	nodes      map[string]exportNode
+	deps       []exportDep
+	agents     []exportAgent
+	sessions   []exportSession
+	unreadable []*unreadableColumnError
 }
 
-// salvageFromDB opens dbPath read-only and reads rows individually.
-// Recovered/lost ID bookkeeping is written into res as a side effect.
+// salvageFromDB opens dbPath read-only, walks the primary-key index and
+// reads each row individually (salvageRows). Recovered/lost ID bookkeeping
+// is written into res as a side effect. A node whose JSON column cannot be
+// read is salvaged without it, and the column is listed in the result's
+// unreadable.
 func salvageFromDB(ctx context.Context, dbPath string, res *RecoverResult) (*dbSalvage, error) {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil, fmt.Errorf("stat database: %w", err)
@@ -156,56 +169,18 @@ func salvageFromDB(ctx context.Context, dbPath string, res *RecoverResult) (*dbS
 	// (this is what salvaged 47 of 80 rows in the field incident).
 	_, _ = db.ExecContext(ctx, "PRAGMA cell_size_check = OFF")
 
-	ids, err := salvageIDs(ctx, db)
+	keys, err := salvageKeys(ctx, db)
 	if err != nil {
 		return nil, fmt.Errorf("walk primary-key index: %w", err)
 	}
 
 	out := &dbSalvage{nodes: map[string]exportNode{}}
-	for _, id := range ids {
-		n, err := scanExportNode(db.QueryRowContext(ctx, exportNodeSelectSQL+" WHERE id = ?", id))
-		if errors.Is(err, errUnreadableNodeColumn) {
-			// MTIX-95.31.1: the row is readable but a JSON column is not.
-			// Salvage the node without that column, and say so.
-			res.Notes = append(res.Notes, fmt.Sprintf("%v; the node is salvaged without that column", err))
-			err = nil
-		}
-		if err != nil {
-			res.LostIDs = append(res.LostIDs, id)
-			continue
-		}
-		n.NodeType = string(model.NodeTypeForDepth(n.Depth))
-		out.nodes[id] = n
-		res.RecoveredIDs = append(res.RecoveredIDs, id)
-	}
+	salvageRows(ctx, db, keys, out, res)
 
 	// Secondary tables, best effort: their loss never blocks node salvage.
 	out.deps = salvageDeps(ctx, db, res)
 	out.agents, out.sessions = salvageAgentsSessions(ctx, db, res)
 	return out, nil
-}
-
-// salvageIDs walks the primary-key index, which often survives damage to
-// table leaf pages.
-func salvageIDs(ctx context.Context, db *sql.DB) ([]string, error) {
-	rows, err := db.QueryContext(ctx, `SELECT id FROM nodes ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return ids, nil //nolint:nilerr // keep what the index yielded before the error
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return ids, nil //nolint:nilerr // partial index walk is still salvage
-	}
-	return ids, nil
 }
 
 // salvageDeps bulk-reads dependencies, tolerating total loss.
@@ -341,19 +316,19 @@ func placeholderNode(child exportNode) exportNode {
 		seq, _ = strconv.Atoi(id[dash+1:])
 	}
 	return exportNode{
-		ID:          id,
-		ParentID:    parentIDOf(id),
-		Depth:       depth,
-		Seq:         seq,
-		Project:     child.Project,
-		Title:       "[recovered placeholder — original node lost]",
-		NodeType:    string(model.NodeTypeForDepth(depth)),
-		Priority:    3,
-		Labels:      "[]",
-		Status:      "open",
-		Weight:      1,
-		CreatedAt:   child.CreatedAt,
-		UpdatedAt:   child.UpdatedAt,
+		ID:        id,
+		ParentID:  parentIDOf(id),
+		Depth:     depth,
+		Seq:       seq,
+		Project:   child.Project,
+		Title:     "[recovered placeholder — original node lost]",
+		NodeType:  string(model.NodeTypeForDepth(depth)),
+		Priority:  3,
+		Labels:    "[]",
+		Status:    "open",
+		Weight:    1,
+		CreatedAt: child.CreatedAt,
+		UpdatedAt: child.UpdatedAt,
 	}
 }
 

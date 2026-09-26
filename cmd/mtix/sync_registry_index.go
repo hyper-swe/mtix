@@ -19,10 +19,17 @@ const registryIndexRebuild = "run mtix sync migrate --yes as the table owner whi
 	"it drops the index and builds it again"
 
 // registryIndexNotUsable describes a registry index that is not valid or
-// not ready, with its pg_index flags (MTIX-95.44).
+// not ready, with its pg_index flags and what it still does: one that is
+// not ready checks no new create; one that is ready but not valid still
+// refuses a duplicate create, but queries do not use it and it must be
+// built again (MTIX-95.44).
 func registryIndexNotUsable(s transport.RegistryIndexState) string {
+	what := "it checks no new create"
+	if s.Ready {
+		what = "it still refuses a duplicate create, but queries do not use it and it must be built again"
+	}
 	return fmt.Sprintf("the node-number registry index %s is not valid or not ready "+
-		"(indisvalid %t, indisready %t), so it does not check new creates", s.QualifiedName(), s.Valid, s.Ready)
+		"(indisvalid %t, indisready %t): %s", s.QualifiedName(), s.Valid, s.Ready, what)
 }
 
 // withRegistryIndexFix adds the exact fix to a migration error that is

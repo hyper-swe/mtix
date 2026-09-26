@@ -1679,8 +1679,10 @@ and what to run.
 The `schema current` check also reads the node-number registry index,
 `sync_events_node_registry_uidx`, from `pg_index`. An index of that name
 that is not valid or not ready (`indisvalid` or `indisready` false), as a
-failed or interrupted build leaves it, checks no new create, and the
-migration `mtix sync init` runs skips it. That is a FAIL in every mode,
+failed or interrupted build leaves it, is skipped by the migration `mtix
+sync init` runs. An index that is not ready checks no new create; one
+that is ready but not valid still refuses a duplicate create, but
+queries do not use it and it must be built again. That is a FAIL in every mode,
 not a WARN: the detail names the index and its flags, and the `fix` is
 `mtix sync migrate --yes`, run as the table owner while the version gate
 is open, which drops the index and builds it again (see "New sync
@@ -2023,7 +2025,7 @@ operator does.
 | `mtix sync doctor` shows `[WARN] hub-privileges` | Roles other than the table owner can use the sync tables, or a TRUNCATE guard is missing or disabled. Nothing is blocked, and this may be fine on a private network | To restrict access, the table owner runs `mtix sync harden` (a dry run), then, after reviewing its role list, `mtix sync harden --apply --keep-role <role>`; see "Hub privileges" |
 | `mtix sync doctor` shows `[FAIL] hub-privileges` | Strict mode (`sync.keep_roles` set): the check fails whenever `mtix sync harden` would report a finding (for example, a role not in the list can use the sync tables, a guard is missing or disabled, a kept role can grant its access on or holds a privilege another role granted it, an mtix object is owned by another role, or a membership reaches every table), or when the check cannot run (for example, the hub is unreachable, or a sync table is missing) | Add the role to `sync.keep_roles` if it should keep access, or run `mtix sync harden` and then `--apply` as the table owner; give an administrator the statements harden prints for what it cannot change. When the check cannot run, take the next step its detail names |
 | `mtix sync doctor` shows `[WARN] schema current` (`[FAIL]` in strict mode) | The hub lacks migration 017 (its owner has not run `mtix sync init` since the upgrade; pushes keep working); or the DSN's role cannot execute `record_restore_collision`, which records restore collisions on the hub (a push that meets a restore collision fails until the table owner runs the printed GRANT); or the DSN's role, other than the table owner, holds or can reach INSERT on `sync_node_collisions` or USAGE on its sequence; or create events are stamped with a restore epoch below 0 or above the hub's current epoch | As the table owner the `fix` names, run it: `mtix sync init`, the printed `GRANT EXECUTE ON FUNCTION ... TO <role>;`, the printed `UPDATE`, or, once every syncing client is upgraded, the printed `REVOKE`, while a role administrator removes each path the `fix` names (see "Hub health checks"); then run `mtix sync doctor` again |
-| `mtix sync doctor` shows `[FAIL] schema current` naming `sync_events_node_registry_uidx`, or `mtix sync init` warns that it is not valid or not ready | The node-number registry index is not valid or not ready, as a failed or interrupted build leaves it, so it checks no new create | As the table owner, run `mtix sync migrate --yes` while the version gate is open: it drops the index and builds it again. Then run `mtix sync doctor` again |
+| `mtix sync doctor` shows `[FAIL] schema current` naming `sync_events_node_registry_uidx`, or `mtix sync init` warns that it is not valid or not ready | The node-number registry index is not valid or not ready, as a failed or interrupted build leaves it: an index that is not ready checks no new create; one that is ready but not valid still refuses a duplicate create, but queries do not use it and it must be built again | As the table owner, run `mtix sync migrate --yes` while the version gate is open: it drops the index and builds it again. Then run `mtix sync doctor` again |
 | `mtix sync init` fails with `could not create unique index "sync_events_node_registry_uidx"` and names `mtix sync migrate --yes` | The hub has no registry index and a project on it holds duplicate creates, so the migration cannot build the index | As the table owner, run `mtix sync migrate --yes` while the version gate is open (it records the duplicates and builds the index without them), then `mtix sync init` again |
 | `mtix sync doctor` shows `[WARN] hub-triggers` (`[FAIL]` in strict mode) | An mtix function or trigger is missing, as after a restore from backup; a trigger executes another function than its migration binds; or a trigger is not enabled | As the table owner the `fix` names, run it: `mtix sync init` for what is missing and for a trigger bound to another function (init replaces it), the printed `ALTER TABLE ... ENABLE TRIGGER` statement for what is not enabled; then run `mtix sync doctor` again |
 | `mtix sync init`, or a `mtix sync harden --apply` that would restore or replace a TRUNCATE guard, fails with `the sync tables are in schema …, but the first schema on the search_path is …` (and `mtix sync doctor`'s `hub-triggers` says so) | The session's search_path puts another schema before the one holding the sync tables, so new objects would land away from them; nothing was changed. The usual cause is a schema named after the connecting role, which the default search_path (`"$user", public`) puts first | Set the search_path so the sync tables' schema comes first: `ALTER ROLE <owner> SET search_path = public` when the tables are in `public`, else `ALTER ROLE <owner> SET search_path = <schema>, public` (or `options=-c search_path=...` in the DSN); then run the command again. To keep a separate hub in the first schema instead (one hub per search_path), put that schema alone on the search_path (`ALTER ROLE <owner> SET search_path = <first schema>`). A `mtix sync harden --apply` that only changes privileges is not affected |
@@ -2108,9 +2110,14 @@ any number already in use. The run drops an index that is not valid or
 not ready and builds it again, and never reports such an index present.
 Without `--yes`, or while the gate is closed, the report names such an
 index with the fix. `--json` gives the index state as `registry_index`
-(`present`, `valid`, `ready`). A hub with more than 100 duplicate creates
-is refused before the build, with the count; pushes keep working, and a
-push whose create takes a number already in use is still renumbered.
+(`present`, `valid`, `ready`). A hub with more than 100 duplicate creates,
+or with more than 3600 bytes of their event ids, is refused before the
+build, with the count and the limit; pushes keep working, and a push
+whose create takes a number already in use is still renumbered. So is a
+hub where one node lost two numbers: the remap ledger records one number
+per node, and the refusal names the creates it cannot record. A refusal
+changes nothing on the hub: an index that is not valid stays, and `mtix
+sync doctor` keeps reporting it.
 
 `mtix sync init` checks the registry index after its migration and
 prints a WARN with the same fix when the index is not valid or not

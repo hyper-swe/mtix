@@ -80,8 +80,10 @@ a local socket.
 
 After the migration, init checks the node-number registry index
 (sync_events_node_registry_uidx) and prints a WARN with the fix when it
-is not valid or not ready: the migration skips an index of that name,
-which then checks no new create. On a hub without that index whose
+is not valid or not ready: the migration skips an index of that name.
+An index that is not ready checks no new create; one that is ready but
+not valid still refuses a duplicate create, but queries do not use it
+and it must be built again. On a hub without that index whose
 projects hold duplicate creates, the migration cannot build the index,
 and init refuses and names the fix: as the table owner, run mtix sync
 migrate --yes while the version gate is open, then mtix sync init again.`,

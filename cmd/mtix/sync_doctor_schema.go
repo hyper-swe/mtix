@@ -158,7 +158,7 @@ func missing017(r schemaRow, schema string) []string {
 // mode, like the hub-triggers check, naming each gap, with the fix: the
 // table owner's steps, then the paths a role administrator removes, by
 // name. A registry index that is not valid or not ready is a FAIL in
-// every mode: it checks no new create (MTIX-95.44).
+// every mode: it must be built again (MTIX-95.44).
 func gradeSchemaCurrent(s schemaState, strict bool) DoctorCheck {
 	check := DoctorCheck{Name: schemaCurrentName}
 	if !s.projects {

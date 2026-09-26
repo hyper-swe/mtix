@@ -1418,9 +1418,12 @@ each to the current epoch. The check names each gap and who runs each
 part of the fix.
 
 A node-number registry index (sync_events_node_registry_uidx) that is not
-valid or not ready fails the check in every mode: it checks no new
-create. The fix is mtix sync migrate --yes, run as the table owner while
-the version gate is open, which drops the index and builds it again.
+valid or not ready fails the check in every mode. An index that is not
+ready checks no new create; one that is ready but not valid still
+refuses a duplicate create, but queries do not use it and it must be
+built again. The fix is mtix sync migrate --yes, run as the table owner
+while the version gate is open, which drops the index and builds it
+again.
 
 Hub triggers names each missing function or trigger, each trigger that
 executes another function, and each trigger that is not enabled, with the
@@ -1530,8 +1533,10 @@ a local socket.
 
 After the migration, init checks the node-number registry index
 (sync_events_node_registry_uidx) and prints a WARN with the fix when it
-is not valid or not ready: the migration skips an index of that name,
-which then checks no new create. On a hub without that index whose
+is not valid or not ready: the migration skips an index of that name.
+An index that is not ready checks no new create; one that is ready but
+not valid still refuses a duplicate create, but queries do not use it
+and it must be built again. On a hub without that index whose
 projects hold duplicate creates, the migration cannot build the index,
 and init refuses and names the fix: as the table owner, run mtix sync
 migrate --yes while the version gate is open, then mtix sync init again.

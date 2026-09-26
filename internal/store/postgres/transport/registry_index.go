@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -31,13 +32,21 @@ const RegistryIndexName = "sync_events_node_registry_uidx"
 // the build; MTIX-97.12 tracks a design without this limit.
 const MaxRegistryLeftOut = 100
 
+// MaxRegistryLeftOutBytes bounds the left-out event ids by their total
+// length, since the catalog row's limit is in bytes: 100 ids of the
+// 36-character form mtix mints, about half of the 217 that fit
+// (MTIX-95.44). A list must meet both limits.
+const MaxRegistryLeftOutBytes = 3600
+
 // registryCleanupBudget bounds the drop of an index a failed build left
 // behind, which runs even when the caller's context has ended.
 const registryCleanupBudget = 30 * time.Second
 
 // RegistryIndexState is the registry index as pg_index records it
-// (MTIX-95.44). An index that is not valid or not ready does not check
-// new creates, and CREATE INDEX IF NOT EXISTS skips it.
+// (MTIX-95.44). An index that is not ready checks no new create; one that
+// is ready but not valid still refuses a duplicate create, but queries do
+// not use it and it must be built again. CREATE INDEX IF NOT EXISTS skips
+// either.
 type RegistryIndexState struct {
 	// Present reports whether sync_events has an index of the registry's
 	// name.
@@ -116,10 +125,11 @@ func IsRegistryIndexConflict(err error) bool {
 
 // buildRegistryIndex is the part of EnsureRegistryIndex that runs under
 // the session advisory lock, on conn, with the version gate open
-// (MTIX-95.44). A valid and ready index is left as it is. An index of the
-// registry's name that is not valid or not ready is dropped first. Then
-// the duplicate creates to leave out are read and checked, and the index
-// is built CONCURRENTLY, leaving them out by name.
+// (MTIX-95.44). A valid and ready index is left as it is. Every refusal
+// check runs first, so a refusal changes nothing: the duplicate creates to
+// leave out are read and checked, and only then is an index of the
+// registry's name that is not valid or not ready dropped and the index
+// built CONCURRENTLY, leaving them out by name.
 func buildRegistryIndex(ctx context.Context, conn *pgxpool.Conn, res IndexResult) (IndexResult, error) {
 	state, err := readRegistryIndex(ctx, conn)
 	if err != nil {
@@ -129,15 +139,15 @@ func buildRegistryIndex(ctx context.Context, conn *pgxpool.Conn, res IndexResult
 	if state.Usable() {
 		return res, nil // idempotent: already present, valid and ready
 	}
+	leftOut, err := registryLeftOut(ctx, conn)
+	if err != nil {
+		return res, err
+	}
 	if state.Present {
 		if dropErr := dropRegistryIndex(ctx, conn, state); dropErr != nil {
 			return res, dropErr
 		}
 		res.Rebuilt, res.State = true, RegistryIndexState{}
-	}
-	leftOut, err := registryLeftOut(ctx, conn)
-	if err != nil {
-		return res, err
 	}
 	if buildErr := createRegistryIndex(ctx, conn, leftOut); buildErr != nil {
 		return res, buildErr
@@ -171,44 +181,71 @@ func dropRegistryIndex(ctx context.Context, conn *pgxpool.Conn, state RegistryIn
 // registryLeftOut returns, sorted, the event id of every create the
 // registry index leaves out: every create that is not the first create
 // (lowest event id, the sweep's winner) of its (project_prefix, node_id),
-// in every project (MTIX-95.44). It refuses, before anything is built,
-// when a left-out create belongs neither to the winner's node (same
-// effective uid, ADR-003 §2) nor to a node the sweep recorded in
-// node_renumber_remaps, or when there are more than MaxRegistryLeftOut.
+// in every project (MTIX-95.44). It refuses, before anything is dropped or
+// built, when a left-out create belongs neither to the winner's node (same
+// effective uid, ADR-003 §2) nor to its node's remap row for that number,
+// or when the list is above MaxRegistryLeftOut or MaxRegistryLeftOutBytes.
 // The slice is never nil, so an empty list builds migration 009's index.
 func registryLeftOut(ctx context.Context, conn *pgxpool.Conn) ([]string, error) {
-	ids, loserUIDs, err := scanLeftOut(ctx, conn)
+	ids, losers, err := scanLeftOut(ctx, conn)
 	if err != nil {
 		return nil, err
 	}
-	n, err := unrecordedLeftOut(ctx, conn, loserUIDs)
+	notYet, elsewhere, err := unrecordedLeftOut(ctx, conn, losers)
 	if err != nil {
 		return nil, err
 	}
-	if n > 0 {
+	if len(elsewhere) > 0 {
+		return nil, fmt.Errorf("registry index not built: %d duplicate create(s) belong to a node already "+
+			"recorded at another number, and the remap ledger records one number per node: %s; pushes keep "+
+			"working; a durable design for such hubs is tracked as MTIX-97.12",
+			len(elsewhere), strings.Join(elsewhere, ", "))
+	}
+	if notYet > 0 {
 		return nil, fmt.Errorf("registry index not built: %d duplicate create(s) on the hub are not recorded yet; "+
-			"run mtix sync migrate --yes again, which records them first", n)
+			"run mtix sync migrate --yes again, which records them first", notYet)
 	}
-	if len(ids) > MaxRegistryLeftOut {
-		return nil, fmt.Errorf("registry index not built: the hub holds %d duplicate creates, more than the %d "+
-			"the registry index can leave out; pushes keep working, and a push whose create takes a number "+
-			"already in use is still renumbered; a durable design for such hubs is tracked as MTIX-97.12",
-			len(ids), MaxRegistryLeftOut)
+	if len(ids) > MaxRegistryLeftOut || idBytes(ids) > MaxRegistryLeftOutBytes {
+		return nil, capRefusal(ids)
 	}
 	return ids, nil
 }
 
+// idBytes is the total length of ids.
+func idBytes(ids []string) int {
+	n := 0
+	for _, id := range ids {
+		n += len(id)
+	}
+	return n
+}
+
+// capRefusal is the exact refusal of a left-out list the registry index
+// cannot name: above the cap, above the byte limit, or refused by
+// PostgreSQL as too large (SQLSTATE 54000) (MTIX-95.44).
+func capRefusal(ids []string) error {
+	return fmt.Errorf("registry index not built: the hub holds %d duplicate creates (%d bytes of event ids), "+
+		"more than the registry index can leave out (%d creates, %d bytes); pushes keep working, and a push "+
+		"whose create takes a number already in use is still renumbered; a durable design for such hubs is "+
+		"tracked as MTIX-97.12", len(ids), idBytes(ids), MaxRegistryLeftOut, MaxRegistryLeftOutBytes)
+}
+
+// leftOutLoser is a left-out create of a node that is not the winner's:
+// its event id, its node's effective uid, and its number.
+type leftOutLoser struct {
+	eventID, uid, project, path string
+}
+
 // scanLeftOut reads the creates the index leaves out: their event ids,
-// sorted, and, for each one whose node is not the winner's, its effective
-// uid, one entry per create (MTIX-95.44).
-func scanLeftOut(ctx context.Context, conn *pgxpool.Conn) ([]string, []string, error) {
+// sorted, and each one whose node is not the winner's (MTIX-95.44).
+func scanLeftOut(ctx context.Context, conn *pgxpool.Conn) ([]string, []leftOutLoser, error) {
 	// Every create ranked within its (project, number) by event id; rank
 	// 1 is the winner the index keeps. The effective uid is the stored uid,
 	// or the create's own event id when it has none (ADR-003 §2). Reads
 	// sync_events only.
 	rows, err := conn.Query(ctx, `
 		WITH creates AS (
-		    SELECT event_id,
+		    SELECT event_id, project_prefix, node_id,
 		        CASE WHEN uid IS NULL OR uid = '' THEN event_id ELSE uid END AS eff_uid,
 		        row_number() OVER w AS rnk,
 		        first_value(CASE WHEN uid IS NULL OR uid = '' THEN event_id ELSE uid END) OVER w AS winner_uid
@@ -216,7 +253,7 @@ func scanLeftOut(ctx context.Context, conn *pgxpool.Conn) ([]string, []string, e
 		    WHERE op_type = 'create_node'
 		    WINDOW w AS (PARTITION BY project_prefix, node_id ORDER BY event_id)
 		)
-		SELECT event_id, CASE WHEN eff_uid = winner_uid THEN '' ELSE eff_uid END
+		SELECT event_id, CASE WHEN eff_uid = winner_uid THEN '' ELSE eff_uid END, project_prefix, node_id
 		FROM creates WHERE rnk > 1
 		ORDER BY event_id`)
 	if err != nil {
@@ -224,40 +261,52 @@ func scanLeftOut(ctx context.Context, conn *pgxpool.Conn) ([]string, []string, e
 	}
 	defer rows.Close()
 	ids := []string{}
-	var loserUIDs []string
+	var losers []leftOutLoser
 	for rows.Next() {
-		var id, loserUID string
-		if err := rows.Scan(&id, &loserUID); err != nil {
+		var l leftOutLoser
+		if err := rows.Scan(&l.eventID, &l.uid, &l.project, &l.path); err != nil {
 			return nil, nil, fmt.Errorf("EnsureRegistryIndex: scan duplicate create: %w", err)
 		}
-		ids = append(ids, id)
-		if loserUID != "" {
-			loserUIDs = append(loserUIDs, loserUID)
+		ids = append(ids, l.eventID)
+		if l.uid != "" {
+			losers = append(losers, l)
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, fmt.Errorf("EnsureRegistryIndex: duplicate creates: %w", err)
 	}
-	return ids, loserUIDs, nil
+	return ids, losers, nil
 }
 
-// unrecordedLeftOut counts the left-out creates whose node the sweep has
-// not recorded in node_renumber_remaps (MTIX-95.44). It reads the ledger
-// only when there is a loser to look up.
-func unrecordedLeftOut(ctx context.Context, conn *pgxpool.Conn, loserUIDs []string) (int, error) {
-	if len(loserUIDs) == 0 {
-		return 0, nil
+// unrecordedLeftOut checks each left-out create of a loser node against
+// the remap ledger (MTIX-95.44): it counts those whose node has no remap
+// row yet, and returns, sorted, the event ids of those whose node's remap
+// row is for another number, which the ledger, one row per node, cannot
+// record. It reads the ledger only when there is a loser to look up.
+func unrecordedLeftOut(ctx context.Context, conn *pgxpool.Conn, losers []leftOutLoser) (int, []string, error) {
+	if len(losers) == 0 {
+		return 0, nil, nil
 	}
-	var n int
-	// One row per left-out create of a loser node; count those whose uid
-	// has no remap row.
+	var event, uid, project, path []string
+	for _, l := range losers {
+		event, uid, project, path = append(event, l.eventID), append(uid, l.uid), append(project, l.project),
+			append(path, l.path)
+	}
+	var notYet int
+	var elsewhere []string
+	// For each left-out loser create: no remap row for its node (not yet
+	// recorded), or a remap row for another project or number (recorded
+	// elsewhere).
 	if err := conn.QueryRow(ctx, `
-		SELECT count(*) FROM pg_catalog.unnest($1::text[]) AS l(uid)
-		WHERE NOT EXISTS (SELECT 1 FROM node_renumber_remaps r WHERE r.uid = l.uid)`,
-		loserUIDs).Scan(&n); err != nil {
-		return 0, fmt.Errorf("EnsureRegistryIndex: check the remap ledger: %s", redact.DSN(err.Error()))
+		SELECT count(*) FILTER (WHERE r.uid IS NULL),
+		       COALESCE(array_agg(l.event_id ORDER BY l.event_id) FILTER (WHERE r.uid IS NOT NULL
+		           AND (r.project_prefix <> l.project OR r.old_display_path <> l.path)), '{}')
+		FROM unnest($1::text[], $2::text[], $3::text[], $4::text[]) AS l(event_id, uid, project, path)
+		LEFT JOIN node_renumber_remaps r ON r.uid = l.uid`,
+		event, uid, project, path).Scan(&notYet, &elsewhere); err != nil {
+		return 0, nil, fmt.Errorf("EnsureRegistryIndex: check the remap ledger: %s", redact.DSN(err.Error()))
 	}
-	return n, nil
+	return notYet, elsewhere, nil
 }
 
 // createRegistryIndex builds the registry index CONCURRENTLY, outside any
@@ -285,6 +334,10 @@ func createRegistryIndex(ctx context.Context, conn *pgxpool.Conn, leftOut []stri
 	}
 	defer func() { err = errors.Join(err, restore()) }()
 	if _, buildErr := conn.Exec(ctx, stmt); buildErr != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(buildErr, &pgErr) && pgErr.Code == "54000" {
+			return errors.Join(capRefusal(leftOut), dropFailedBuild(ctx, conn))
+		}
 		return errors.Join(fmt.Errorf("EnsureRegistryIndex: build the registry index (run mtix sync migrate --yes "+
 			"again as the table owner): %s", redact.DSN(buildErr.Error())), dropFailedBuild(ctx, conn))
 	}

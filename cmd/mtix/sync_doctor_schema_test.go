@@ -97,7 +97,8 @@ func TestGradeSchemaCurrent_StateAndMode_ReportsEachGapWithItsFix(t *testing.T) 
 		{name: "a registry index that is not valid fails in default mode", state: schemaState{projects: true,
 			canRecord: true, hub: owner, registry: transport.RegistryIndexState{Present: true, Ready: true, SchemaIdent: "public"}},
 			wantDetail: []string{"the node-number registry index public.sync_events_node_registry_uidx is not valid or " +
-				"not ready (indisvalid false, indisready true), so it does not check new creates",
+				"not ready (indisvalid false, indisready true): it still refuses a duplicate create, but queries do not " +
+				"use it and it must be built again",
 				"run the fix as the table owner"},
 			notDetail: []string{"strict mode"},
 			wantFix:   "as the table owner (mtix_owner): " + registryFixStep},

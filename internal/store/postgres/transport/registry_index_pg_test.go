@@ -478,3 +478,145 @@ func TestBuildRegistryIndex_BuildFails_LeavesNoIndexAndRestoresTimeout(t *testin
 	require.False(t, present, "the failed build leaves no index behind")
 	require.Equal(t, "10s", timeout, "the pool's statement_timeout is set back")
 }
+
+// insertLongIDPairs gives project MTIX two creates of each of pairs
+// numbers, each with a random event id of idLen hex characters.
+func insertLongIDPairs(t *testing.T, db *pgxpool.Pool, pairs, idLen int) {
+	t.Helper()
+	_, err := db.Exec(context.Background(), `
+		INSERT INTO sync_events
+		  (event_id, project_prefix, node_id, uid, op_type, payload,
+		   wall_clock_ts, lamport_clock, vector_clock, author_id, author_machine_hash)
+		SELECT substr(repeat(md5(random()::text), 1 + $2 / 32), 1, $2), 'MTIX', 'MTIX-' || (g % $1), NULL,
+		       'create_node', '{"title":"x"}', 1, g, '{"alice":1}', 'alice', '0123456789abcdef'
+		FROM generate_series(1, 2 * $1) AS g`, pairs, idLen)
+	require.NoError(t, err)
+}
+
+// requireCapRefusal fails unless err is the refusal of a hub whose
+// duplicate creates are more than the index can leave out.
+func requireCapRefusal(t *testing.T, err error) {
+	t.Helper()
+	require.Error(t, err)
+	for _, want := range []string{"more than the registry index can leave out", "pushes keep working", "MTIX-97.12"} {
+		require.Contains(t, err.Error(), want)
+	}
+}
+
+// TestEnsureRegistryIndex_CapBoundary_BuildsAtTheCapRefusesAboveIt: both
+// limits are inclusive: exactly MaxRegistryLeftOut left-out creates, and
+// exactly MaxRegistryLeftOutBytes of their event ids, build a valid index;
+// one create more, or one byte more, is refused before the build
+// (MTIX-95.44).
+func TestEnsureRegistryIndex_CapBoundary_BuildsAtTheCapRefusesAboveIt(t *testing.T) {
+	cases := []struct {
+		name         string
+		pairs, idLen int
+		wantRefusal  bool
+	}{
+		{"count at the cap", transport.MaxRegistryLeftOut, 20, false},
+		{"count one above the cap", transport.MaxRegistryLeftOut + 1, 20, true},
+		{"bytes at the limit", transport.MaxRegistryLeftOutBytes / 40, 40, false},
+		{"bytes one above the limit", transport.MaxRegistryLeftOutBytes / 40, 41, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := migratedPoolWithoutIndex(t)
+			pool := poolFor(t, db)
+			insertLongIDPairs(t, db, tc.pairs, tc.idLen)
+			openGate(t, pool, "MTIX")
+			_, err := pool.SweepDuplicates(context.Background(), "MTIX")
+			require.NoError(t, err)
+
+			_, err = pool.EnsureRegistryIndex(context.Background(), "MTIX")
+			present, valid, _ := registryIndexState(t, db)
+			if !tc.wantRefusal {
+				require.NoError(t, err)
+				require.True(t, present && valid)
+				return
+			}
+			requireCapRefusal(t, err)
+			require.False(t, present)
+		})
+	}
+}
+
+// TestEnsureRegistryIndex_NotValidIndexAboveTheCap_RefusesAndKeepsTheIndex:
+// a refusal changes nothing: on a hub whose registry index is not valid and
+// whose recorded duplicates are above the cap, the index that is not valid
+// stays, so mtix sync doctor keeps reporting it (MTIX-95.44).
+func TestEnsureRegistryIndex_NotValidIndexAboveTheCap_RefusesAndKeepsTheIndex(t *testing.T) {
+	db := migratedPoolWithoutIndex(t)
+	pool := poolFor(t, db)
+	insertDuplicatePairs(t, db, transport.MaxRegistryLeftOut+1)
+	_, err := db.Exec(context.Background(), `CREATE UNIQUE INDEX CONCURRENTLY sync_events_node_registry_uidx
+		ON sync_events (project_prefix, node_id) WHERE op_type = 'create_node'`)
+	require.Error(t, err, "the failed build leaves an index that is not valid")
+	openGate(t, pool, "MTIX")
+	_, err = pool.SweepDuplicates(context.Background(), "MTIX")
+	require.NoError(t, err)
+
+	_, err = pool.EnsureRegistryIndex(context.Background(), "MTIX")
+	requireCapRefusal(t, err)
+	present, valid, _ := registryIndexState(t, db)
+	require.True(t, present, "the refusal drops nothing")
+	require.False(t, valid)
+}
+
+// TestEnsureRegistryIndex_LongEventIDsAboveTheByteLimit_RefusesAndLeavesNoIndex:
+// the index definition is bounded by bytes, so long event ids are refused
+// before the build even below the count cap (MTIX-95.44).
+func TestEnsureRegistryIndex_LongEventIDsAboveTheByteLimit_RefusesAndLeavesNoIndex(t *testing.T) {
+	db := migratedPoolWithoutIndex(t)
+	pool := poolFor(t, db)
+	insertLongIDPairs(t, db, 40, 256)
+	openGate(t, pool, "MTIX")
+	_, err := pool.SweepDuplicates(context.Background(), "MTIX")
+	require.NoError(t, err)
+
+	_, err = pool.EnsureRegistryIndex(context.Background(), "MTIX")
+	requireCapRefusal(t, err)
+	present, _, _ := registryIndexState(t, db)
+	require.False(t, present)
+}
+
+// TestBuildRegistryIndex_DefinitionTooLarge_RefusesWithTheCapMessage: a
+// build whose definition PostgreSQL cannot store (SQLSTATE 54000) is
+// refused with the same exact message as the cap (MTIX-95.44).
+func TestBuildRegistryIndex_DefinitionTooLarge_RefusesWithTheCapMessage(t *testing.T) {
+	db := migratedPoolWithoutIndex(t)
+	pool := poolFor(t, db)
+	var ids []string
+	require.NoError(t, db.QueryRow(context.Background(), `
+		SELECT array_agg(substr(repeat(md5(random()::text), 9), 1, 256)) FROM generate_series(1, 200)`).Scan(&ids))
+
+	_, err := transport.BuildRegistryIndexForTest(context.Background(), pool, ids)
+	requireCapRefusal(t, err)
+	require.NotContains(t, err.Error(), "run mtix sync migrate --yes again")
+	present, _, _ := registryIndexState(t, db)
+	require.False(t, present)
+}
+
+// TestEnsureRegistryIndex_LoserNodeAtTwoNumbers_RefusesNamingTheCreates: the
+// remap ledger holds one row per node, so a node that lost two numbers is
+// recorded at one only; the build refuses, naming the create it cannot
+// record, instead of leaving it out unrecorded (MTIX-95.44).
+func TestEnsureRegistryIndex_LoserNodeAtTwoNumbers_RefusesNamingTheCreates(t *testing.T) {
+	db := migratedPoolWithoutIndex(t)
+	pool := poolFor(t, db)
+	const node = "0193fa00-0000-7000-8000-0000009544c9"
+	insertCreate(t, db, "0193fa00-0000-7000-8000-0000009544c1", "LEG", "LEG-1", "", 1)
+	insertCreate(t, db, "0193fa00-0000-7000-8000-0000009544c2", "LEG", "LEG-1", node, 2)
+	insertCreate(t, db, "0193fa00-0000-7000-8000-0000009544c3", "LEG", "LEG-2", "", 3)
+	insertCreate(t, db, "0193fa00-0000-7000-8000-0000009544c4", "LEG", "LEG-2", node, 4)
+	openGate(t, pool, "LEG")
+	_, err := pool.SweepDuplicates(context.Background(), "LEG")
+	require.NoError(t, err)
+
+	_, err = pool.EnsureRegistryIndex(context.Background(), "LEG")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "recorded at another number")
+	require.Contains(t, err.Error(), "0193fa00-0000-7000-8000-0000009544c4")
+	present, _, _ := registryIndexState(t, db)
+	require.False(t, present)
+}

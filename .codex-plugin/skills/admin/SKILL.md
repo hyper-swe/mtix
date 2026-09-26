@@ -34,9 +34,10 @@ After a `git pull`, the next CLI command (for example `mtix list`) imports a cha
 
 When `mtix export` or the automatic import of `.mtix/tasks.json` fails because a stored node field cannot be read, or mtix reports an integrity error at startup: copy `.mtix/data/` aside, then run `mtix recover`. It reads the database read-only and writes `.mtix/recovered-<time>.json` with a report.
 
-- A task whose comments, activity, `code_refs` or `commit_refs` cannot be read gets that field from its copy in `.mtix/tasks.json` when the copy is usable (the only task under that id, the same uid when both carry one, `schema_version` 2.0.0 or later, times that pass the import checks); the report says `restored from the mirror <path>`. The copy is from the last successful export, so later changes are not in it.
+- A task whose comments, activity, `code_refs` or `commit_refs` cannot be read gets that field from its copy in `.mtix/tasks.json` when the copy is usable (the only task under that id, the same uid when both carry one, `schema_version` 2.0.0 or later, times that pass the import checks); the report says `restored from the mirror <path>`. The copy is whatever `.mtix/tasks.json` holds: the last export, or a file a `git pull` or checkout put there (for example one whose automatic import was refused), which is another clone's copy and can hold its comments and lack local ones.
+- A mirror whose checksum does not verify is still used; the note then ends `(the mirror checksum did not verify)`.
 - Otherwise the report says the field is dropped and why, and the task is salvaged without it.
-- Show the human every dropped or restored field before `mtix import --mode replace` of the salvage file.
+- Before `mtix import --mode replace` of the salvage file, show the human every dropped or restored field and every note ending `(the mirror checksum did not verify)`, and have them compare each restored field with the local history (for example `git log -p .mtix/tasks.json`).
 
 ## Configuration
 

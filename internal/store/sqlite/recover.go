@@ -141,7 +141,7 @@ type dbSalvage struct {
 	deps       []exportDep
 	agents     []exportAgent
 	sessions   []exportSession
-	unreadable []*unreadableColumnError
+	unreadable []salvagedColumn
 }
 
 // salvageFromDB opens dbPath read-only and reads rows individually.
@@ -177,7 +177,9 @@ func salvageFromDB(ctx context.Context, dbPath string, res *RecoverResult) (*dbS
 			// MTIX-95.31.1: the row is readable but a JSON column is not.
 			// Salvage the node without that column; Recover takes it from
 			// the mirror or notes that it is dropped (MTIX-95.31.3).
-			out.unreadable = append(out.unreadable, cols...)
+			for _, col := range cols {
+				out.unreadable = append(out.unreadable, salvagedColumn{key: id, col: col})
+			}
 			err = nil
 		}
 		if err != nil {

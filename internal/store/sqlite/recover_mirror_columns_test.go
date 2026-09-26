@@ -135,16 +135,33 @@ func recoveredNode(t *testing.T, res *RecoverResult, id string) exportNode {
 	return exportNode{}
 }
 
-// columnNote returns the recovery note about column of node id, or "".
-func columnNote(res *RecoverResult, id, column string) string {
+// columnNotes returns every recovery note about column of node id.
+func columnNotes(res *RecoverResult, id, column string) []string {
 	prefix := "node " + id + " column " + column + ":"
+	var notes []string
 	for _, n := range res.Notes {
 		if strings.HasPrefix(n, prefix) {
-			return n
+			notes = append(notes, n)
 		}
 	}
-	return ""
+	return notes
 }
+
+// columnNote asserts that recover wrote exactly one note about column of
+// node id, so a restore is never followed by a contradicting note, and
+// returns it ("" when there is none).
+func columnNote(t *testing.T, res *RecoverResult, id, column string) string {
+	t.Helper()
+	notes := columnNotes(res, id, column)
+	if !assert.Len(t, notes, 1, "exactly one note about %s %s; notes: %v", id, column, res.Notes) || len(notes) == 0 {
+		return ""
+	}
+	return notes[0]
+}
+
+// mirrorChecksumNote is the note recover writes once when the mirror's
+// checksum does not verify (MTIX-26.5).
+const mirrorChecksumNote = "mirror checksum did not verify; its contents are still used as salvage of last resort"
 
 // TestRecover_CommentCellCorrupted_RestoresCommentFromMirror is the
 // reviewer's scenario (MTIX-95.31.3): a comment on RC-1, its annotations
@@ -166,7 +183,7 @@ func TestRecover_CommentCellCorrupted_RestoresCommentFromMirror(t *testing.T) {
 	assert.Equal(t, rcCommentText, rc1.Annotations[0].Text)
 	assert.Equal(t, "reviewer", rc1.Annotations[0].Author)
 
-	note := columnNote(res, "RC-1", "annotations")
+	note := columnNote(t, res, "RC-1", "annotations")
 	assert.Contains(t, note, "restored from the mirror", "notes: %v", res.Notes)
 	assert.Contains(t, note, mirrorPath, "the note names the mirror file")
 	assert.Contains(t, note, "1 entry")
@@ -186,11 +203,12 @@ func TestRecover_CommentCellCorrupted_RestoresCommentFromMirror(t *testing.T) {
 // columns keep the database's values.
 func TestRecover_UnreadableColumns_RestoredFromMirror(t *testing.T) {
 	tests := []struct {
-		name      string
-		columns   []string
-		edit      func(t *testing.T, m *ExportData)
-		stale     bool
-		wantNotes []string
+		name       string
+		columns    []string
+		edit       func(t *testing.T, m *ExportData)
+		stale      bool
+		blankDBUID bool
+		wantNotes  []string
 	}{
 		{name: "activity", columns: []string{"activity"}, wantNotes: []string{"1 entry"}},
 		{name: "code_refs", columns: []string{"code_refs"}, wantNotes: []string{"1 entry"}},
@@ -198,6 +216,8 @@ func TestRecover_UnreadableColumns_RestoredFromMirror(t *testing.T) {
 		{name: "annotations and activity together", columns: []string{"annotations", "activity"}},
 		{name: "mirror copy without a uid (older board)", columns: []string{"annotations"},
 			edit: func(t *testing.T, m *ExportData) { mirrorNodeOf(t, m, "RC-1").UID = "" }},
+		{name: "database row without a uid, mirror copy with one", columns: []string{"annotations"},
+			blankDBUID: true},
 		{name: "mirror copy holds two comments", columns: []string{"annotations"},
 			edit: func(t *testing.T, m *ExportData) {
 				n := mirrorNodeOf(t, m, "RC-1")
@@ -217,6 +237,11 @@ func TestRecover_UnreadableColumns_RestoredFromMirror(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s, dbPath := seedMirrorColumnFixture(t)
 			mirrorPath, mirror := exportMirrorOf(t, s, tt.edit, tt.stale)
+			if tt.blankDBUID {
+				require.NotEmpty(t, mirrorNodeOf(t, mirror, "RC-1").UID, "the mirror copy keeps its uid")
+				_, err := s.WriteDB().ExecContext(context.Background(), `UPDATE nodes SET uid = NULL WHERE id = ?`, "RC-1")
+				require.NoError(t, err)
+			}
 			corruptAndClose(t, s, tt.columns...)
 
 			res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", slog.Default())
@@ -232,7 +257,7 @@ func TestRecover_UnreadableColumns_RestoredFromMirror(t *testing.T) {
 				assert.JSONEq(t, orNull(wantJSON), orNull(got), "column %s", column)
 			}
 			for _, column := range tt.columns {
-				note := columnNote(res, "RC-1", column)
+				note := columnNote(t, res, "RC-1", column)
 				assert.Contains(t, note, "restored from the mirror", "notes: %v", res.Notes)
 				assert.Contains(t, note, mirrorPath)
 				assert.NotContains(t, note, "dropped")
@@ -240,7 +265,12 @@ func TestRecover_UnreadableColumns_RestoredFromMirror(t *testing.T) {
 					assert.Contains(t, note, w)
 				}
 			}
-			assert.Empty(t, columnNote(res, "RC-2", "annotations"), "RC-2 is readable")
+			assert.Empty(t, columnNotes(res, "RC-2", "annotations"), "RC-2 is readable")
+			if tt.stale {
+				assert.Contains(t, res.Notes, mirrorChecksumNote, "the unverified mirror is noted once, on its own")
+			} else {
+				assert.NotContains(t, res.Notes, mirrorChecksumNote)
+			}
 			importRoundTrip(t, res.Export)
 		})
 	}
@@ -307,7 +337,7 @@ func TestRecover_UnreadableColumnNoUsableMirrorCopy_DropsColumn(t *testing.T) {
 			assert.Empty(t, rc1.Annotations, "no usable copy: the column is dropped")
 			assert.NotEmpty(t, rc1.Activity, "the readable columns are kept")
 
-			note := columnNote(res, "RC-1", "annotations")
+			note := columnNote(t, res, "RC-1", "annotations")
 			assert.Contains(t, note, "dropped", "notes: %v", res.Notes)
 			assert.Contains(t, note, tt.wantReason)
 			assert.NotContains(t, note, "restored")

@@ -37,9 +37,9 @@ type documentedGrant struct {
 }
 
 // unindexedHub is the condition the documented list adds to the command
-// of a migrate-scoped privilege: the hub lacks the node-number registry
-// index (MTIX-95.1.8).
-const unindexedHub = " on a hub without the node-number registry index"
+// of a migrate-scoped privilege: the hub holds no valid node-number
+// registry index (MTIX-95.1.8).
+const unindexedHub = " on a hub without a valid node-number registry index"
 
 // The scopes the documented list gives a privilege: the command whose
 // runner needs it, and for mtix sync migrate the hub it runs on
@@ -60,11 +60,15 @@ const (
 // registryIndex is the node-number registry index migration 009 creates.
 const registryIndex = "sync_events_node_registry_uidx"
 
-// migrateIndexSentence is the sentence both documents use for when
+// migrateIndexSentence is the paragraph both documents use for when
 // `mtix sync migrate --yes` builds the registry index (MTIX-95.1.8).
 const migrateIndexSentence = "On a hub without the node-number registry index, `mtix sync migrate --yes` " +
-	"also builds that index when the version gate is open, that is, when every active client of the " +
-	"project runs a remap-aware mtix version; only the table owner can build it."
+	"also builds that index when the version gate is open, that is, when the project has at least one " +
+	"active client and every active client runs a remap-aware mtix version, and no project on the hub " +
+	"holds duplicate creates. While the gate is closed, it leaves the index for a later run. While the " +
+	"gate is open and a project on the hub holds duplicate creates, the build fails, and " +
+	"`mtix sync migrate --yes` exits with the error of the index build. Only the table owner can build " +
+	"the index."
 
 // leastPrivilegeMarker starts the documented list in the small-team
 // workflow and in docs/SECURITY-MODEL.md.
@@ -449,6 +453,37 @@ func (h *leastPrivilegeHub) migrates(t *testing.T) {
 	require.Contains(t, out, "version gate closed", "with the version gate closed --yes leaves the index for later")
 }
 
+// buildFails: on a hub without the registry index where project LEG holds
+// duplicate creates, the table owner's `mtix sync migrate --yes` for
+// project, whose version gate is open, exits with the error of the index
+// build (MTIX-95.1.8).
+func (h *leastPrivilegeHub) buildFails(t *testing.T, project string) {
+	t.Helper()
+	h.f.ddlAs(h.owner, "DROP INDEX IF EXISTS %I.%I", hubSchema, registryIndex)
+	require.Equal(t, []string{"2"}, h.f.strings(`SELECT count(*)::text FROM hub_data.sync_events
+		WHERE project_prefix = 'LEG' AND node_id = 'LEG-1' AND op_type = 'create_node'`),
+		"project LEG holds duplicate creates")
+	out, err := h.migrate(t, h.ownerDSN, project, true)
+	require.Errorf(t, err, "the index build fails while a project on the hub holds duplicate creates: %s", out)
+	require.Contains(t, err.Error(), "build index")
+	require.Contains(t, err.Error(), "SQLSTATE 23505")
+}
+
+// needsGrantsWithoutValidIndex: on a hub whose registry index is not valid,
+// the syncing role's migrate preview of the project with duplicate creates
+// is refused once the table owner revokes its migrate-scoped grants
+// (MTIX-95.1.8).
+func (h *leastPrivilegeHub) needsGrantsWithoutValidIndex(t *testing.T) {
+	t.Helper()
+	require.Equal(t, []string{"false"}, h.f.strings(`SELECT i.indisvalid::text FROM pg_catalog.pg_index i
+		WHERE i.indexrelid = to_regclass(format('%I.%I', $1::text, $2::text))`, hubSchema, registryIndex),
+		"the hub holds a registry index that is not valid")
+	h.f.ddlAs(h.owner, "REVOKE SELECT, INSERT ON TABLE %I.%I FROM %I", hubSchema, "node_renumber_remaps", h.syncer)
+	require.Equal(t, "false false", h.remapPrivileges(t), "the role holds only the unscoped grants")
+	_, err := h.migrate(t, h.syncDSN, "LEG", false)
+	requireDenied(t, err, "node_renumber_remaps", "the migrate preview needs its scoped grant")
+}
+
 // TestSmallTeamPrivileges_DocumentedSet_SyncsButCannotRunMarkRestored: the
 // small-team workflow and docs/SECURITY-MODEL.md name exactly the expected
 // set for a role that syncs without owning the tables. On a hub in a
@@ -478,21 +513,25 @@ func TestSmallTeamPrivileges_DocumentedSet_SyncsButCannotRunMarkRestored(t *test
 
 // TestSmallTeamPrivileges_MigrateGrants_NeededOnlyOnUnindexedHubWithDuplicates:
 // both documents scope SELECT and INSERT on node_renumber_remaps to a role
-// that runs `mtix sync migrate` on a hub without the node-number registry
-// index, and say that --yes builds that index when the version gate is
-// open, which only the table owner can do. On a hub in a schema PUBLIC
-// cannot use, a login role holding the unscoped grants runs the migrate
-// preview and --yes on the hub as init leaves it, with the index, and
-// previews a hub without the index and without duplicate creates; the
-// table owner's --yes builds the index; and on a hub without the index and
-// with duplicate creates the preview and --yes each need, and run with,
-// their scoped grant (MTIX-95.1.8).
+// that runs `mtix sync migrate` on a hub without a valid node-number
+// registry index, and say when --yes builds that index: with the version
+// gate open and no duplicate creates on the hub, and only as the table
+// owner. On a hub in a schema PUBLIC cannot use, a login role holding the
+// unscoped grants runs the migrate preview and --yes on the hub as init
+// leaves it, with the index, and previews a hub without the index and
+// without duplicate creates; the table owner's --yes builds the index; on
+// a hub without the index and with duplicate creates the preview and --yes
+// each need, and run with, their scoped grant, and --yes leaves the index
+// while the gate is closed; with the gate open, the table owner's --yes
+// exits with the error of the index build while any project on the hub
+// holds duplicate creates; and the scoped grants stay needed on a hub
+// whose registry index is not valid (MTIX-95.1.8).
 func TestSmallTeamPrivileges_MigrateGrants_NeededOnlyOnUnindexedHubWithDuplicates(t *testing.T) {
 	small := documentedGrantsIn(t, readRepoFile(t, smallTeamPath))
 	require.Subset(t, small, []documentedGrant{
 		{"SELECT", "TABLE", "node_renumber_remaps", scopeMigrate},
 		{"INSERT", "TABLE", "node_renumber_remaps", scopeMigrateYes},
-	}, "the migrate grants are scoped to a hub without the registry index")
+	}, "the migrate grants are scoped to a hub without a valid registry index")
 	for _, rel := range []string{smallTeamPath, securityModelPath} {
 		require.Containsf(t, normalizedRepoFile(t, rel), migrateIndexSentence, "%s says when --yes builds the index", rel)
 	}
@@ -505,6 +544,11 @@ func TestSmallTeamPrivileges_MigrateGrants_NeededOnlyOnUnindexedHubWithDuplicate
 	h.migratesIndexedHub(t)
 	h.buildsIndex(t)
 	h.migrates(t)
+	require.NoError(t, h.syncPool.UpsertProjectClient(h.ctx, "LEG", "0123456789abcdef", "0.5.5"),
+		"a remap-aware client opens the version gate of the project with duplicate creates")
+	h.buildFails(t, "LEG")
+	h.buildFails(t, "MTIX")
+	h.needsGrantsWithoutValidIndex(t)
 }
 
 // The backup sentence of the small-team workflow and docs/SECURITY-MODEL.md
@@ -531,7 +575,9 @@ func backupSequencesIn(t *testing.T, doc string) []string {
 	list, _, found := strings.Cut(rest, backupSentenceEnd)
 	require.True(t, found, "the backup sentence ends with the table-owner alternative")
 	items := strings.Split(list, ", ")
-	if head, last, ok := strings.Cut(items[len(items)-1], " and "); ok {
+	head, last, joined := strings.Cut(items[len(items)-1], " and ")
+	if len(items) > 1 || joined {
+		require.Truef(t, joined, "the backup sentence joins its last two sequences with \" and \": %q", list)
 		items = append(items[:len(items)-1], head, last)
 	}
 	var names []string
@@ -569,6 +615,54 @@ const (
 		"again before the next run:"
 )
 
+// documentedRole is the role the small-team workflow's SQL names.
+const documentedRole = "mtix_sync"
+
+// schemaStatement is the form of a documented statement on the privileges
+// of documentedRole on schema public.
+var schemaStatement = regexp.MustCompile("^(?:GRANT|REVOKE) (?:USAGE|CREATE)(?:, (?:USAGE|CREATE))* " +
+	"ON SCHEMA public (?:TO|FROM) " + documentedRole + ";$")
+
+// schemaStatementsAfter returns, in order, the statements on schema public
+// in the first SQL block that follows sentence in doc, however doc wraps
+// the sentence. Each is a template for hardenFixture.ddl, with %I in place
+// of documentedRole, which format() fills in on the server (directive SQL
+// Rule 1a). A block line on a schema that does not have the documented
+// form fails the test (MTIX-95.1.8).
+func schemaStatementsAfter(t *testing.T, doc, sentence string) []string {
+	t.Helper()
+	words := strings.Fields(sentence)
+	for i, w := range words {
+		words[i] = regexp.QuoteMeta(w)
+	}
+	at := regexp.MustCompile(strings.Join(words, `\s+`)).FindStringIndex(doc)
+	require.NotNilf(t, at, "the workflow states %q", sentence)
+	_, rest, found := strings.Cut(doc[at[1]:], "```sql\n")
+	require.True(t, found, "a SQL block follows the sentence")
+	block, _, found := strings.Cut(rest, "```")
+	require.True(t, found, "the SQL block ends")
+	var out []string
+	for _, line := range strings.Split(block, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.Contains(line, " ON SCHEMA ") {
+			continue
+		}
+		require.Regexpf(t, schemaStatement, line, "a schema statement of the documented form: %q", line)
+		out = append(out, strings.TrimSuffix(strings.Replace(line, documentedRole, "%I", 1), ";"))
+	}
+	return out
+}
+
+// schemaPrivileges reports whether role holds USAGE and CREATE on schema
+// public, as "<usage> <create>".
+func schemaPrivileges(t *testing.T, f *hardenFixture, role string) string {
+	t.Helper()
+	got := f.strings(`SELECT pg_catalog.has_schema_privilege($1, 'public', 'USAGE')::text
+		|| ' ' || pg_catalog.has_schema_privilege($1, 'public', 'CREATE')::text`, role)
+	require.Len(t, got, 1)
+	return got[0]
+}
+
 // syncInitAs runs `mtix sync init` connected as role and returns its error.
 func syncInitAs(t *testing.T, f *hardenFixture, role string) error {
 	t.Helper()
@@ -577,28 +671,50 @@ func syncInitAs(t *testing.T, f *hardenFixture, role string) error {
 	return runSyncInit(context.Background(), &stdout, &stderr, nil, transport.Options{InsecureTLS: true})
 }
 
+// pullsAs pulls the hub's events connected as role.
+func pullsAs(t *testing.T, f *hardenFixture, role string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	pool, err := transport.New(ctx, f.dsnAs(role), transport.Options{InsecureTLS: true})
+	require.NoError(t, err)
+	defer pool.Close()
+	_, _, err = pool.PullEvents(ctx, 0, 10)
+	require.NoError(t, err, "the role pulls between runs of mtix sync init")
+}
+
 // TestSmallTeamPrivileges_SyncInitOnMigratedHub_NeedsSchemaCreate: the
 // small-team workflow says the role that runs `mtix sync init` needs CREATE
-// on the schema whenever init runs, and may drop it between runs. On a hub
-// that role has migrated, holding USAGE but no CREATE on the schema, init
-// fails with PostgreSQL's refusal on the schema; once CREATE is granted
-// again, init runs (MTIX-95.1.8).
+// on the schema whenever init runs, and may drop it between runs. On a
+// database where PUBLIC holds no privilege on schema public, the test runs
+// the workflow's own SQL for the role: with the setup GRANT, the first init
+// runs; after the between-runs REVOKE the role keeps USAGE, holds no
+// CREATE, still pulls, and init on the migrated hub fails with
+// PostgreSQL's refusal on the schema; after the GRANT that precedes the
+// next run, init runs (MTIX-95.1.8).
 func TestSmallTeamPrivileges_SyncInitOnMigratedHub_NeedsSchemaCreate(t *testing.T) {
-	small := normalizedRepoFile(t, smallTeamPath)
+	raw := readRepoFile(t, smallTeamPath)
+	small := strings.Join(strings.Fields(raw), " ")
 	require.Contains(t, small, initCreateSentence)
 	require.Contains(t, small, initCreateBetweenRuns)
+	setup := schemaStatementsAfter(t, raw, initCreateSentence)
+	require.Len(t, setup, 1, "the setup SQL grants the schema privileges in one statement")
+	between := schemaStatementsAfter(t, raw, initCreateBetweenRuns)
+	require.Len(t, between, 2, "the between-runs SQL drops CREATE, then grants it before the next run")
 
 	initTestApp(t)
 	f := newHardenFixture(t)
-	owner := f.ownerRole()
-	f.migrateAs(owner)
-	f.ddl("REVOKE CREATE ON SCHEMA public FROM %I", owner)
-	require.Equal(t, []string{"true false"}, f.strings(`SELECT pg_catalog.has_schema_privilege($1, 'public', 'USAGE')::text
-		|| ' ' || pg_catalog.has_schema_privilege($1, 'public', 'CREATE')::text`, owner))
+	f.exec(`REVOKE ALL ON SCHEMA public FROM PUBLIC`)
+	owner := f.role("owner")
+	f.ddl(setup[0], owner)
+	require.NoError(t, syncInitAs(t, f, owner), "the first init runs with the setup grant")
+	f.ddl(between[0], owner)
+	require.Equal(t, "true false", schemaPrivileges(t, f, owner), "between runs the role keeps USAGE and holds no CREATE")
+	pullsAs(t, f, owner)
 	err := syncInitAs(t, f, owner)
 	require.Error(t, err, "init on a migrated hub needs CREATE on the schema")
 	require.Contains(t, err.Error(), "permission denied for schema public")
 
-	f.ddl("GRANT CREATE ON SCHEMA public TO %I", owner)
+	f.ddl(between[1], owner)
 	require.NoError(t, syncInitAs(t, f, owner), "init runs once CREATE is granted again")
 }

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -108,6 +109,158 @@ func TestRunSyncBackfill_RefusesWhenSyncEventsNonEmpty(t *testing.T) {
 		"refusal message must say what --discard-local actually does")
 	require.Contains(t, err.Error(), "mtix backup",
 		"refusal message must point at the safe first step")
+}
+
+// --- MTIX-95.45 (backport of MTIX-90, main 62e899f): operator guidance ---
+
+// normalizeGuidance lowercases text and collapses every run of
+// whitespace to one space, so an assertion about the guidance does not
+// depend on where the help text happens to wrap.
+func normalizeGuidance(text string) string {
+	return strings.ToLower(strings.Join(strings.Fields(text), " "))
+}
+
+// discardLocalRemedies returns each sentence of text that offers
+// --discard-local as a remedy. MTIX-90: the backfill guidance may name
+// 'mtix sync reconcile --discard-local' only to say that it deletes every
+// ticket and must not be used. A sentence that names it offers it as a
+// remedy when it lacks either part of that warning, or when it qualifies
+// the warning with a case in which the command would be the answer
+// ("unless ...", re-backfilling, starting from scratch).
+func discardLocalRemedies(text string) []string {
+	qualifiers := []string{"unless", "re-backfill", "from scratch"}
+	var remedies []string
+	for _, sentence := range strings.Split(normalizeGuidance(text), ". ") {
+		if !strings.Contains(sentence, "--discard-local") {
+			continue
+		}
+		warns := strings.Contains(sentence, "deletes every ticket") &&
+			strings.Contains(sentence, "do not")
+		for _, q := range qualifiers {
+			if strings.Contains(sentence, q) {
+				warns = false
+			}
+		}
+		if !warns {
+			remedies = append(remedies, sentence)
+		}
+	}
+	return remedies
+}
+
+// backfillGuidanceSurface is one operator-facing text on the backfill
+// refusal path and what it must say (MTIX-90, MTIX-95.45).
+type backfillGuidanceSurface struct {
+	name string
+	text string
+	// discardLocal is how often the surface may name --discard-local:
+	// once, in its pinned warning sentence, or never.
+	discardLocal int
+	required     []string
+}
+
+// backfillGuidanceSurfaces returns the three surfaces an operator reads
+// when sync_events is non-empty: the refusal formatBackfillError returns,
+// the help text of newSyncBackfillCmd, and the usage of its hidden --force
+// flag. Each pinned warning sentence is required verbatim, so no qualifier
+// can slip into it.
+func backfillGuidanceSurfaces(t *testing.T) []backfillGuidanceSurface {
+	t.Helper()
+	// The store wraps the sentinel; errors.Is must still select the
+	// guidance, so the refusal is built from a wrapped error.
+	refusal := formatBackfillError(&bytes.Buffer{},
+		fmt.Errorf("backfill: %w", sqlite.ErrBackfillSyncEventsNonEmpty))
+	require.Error(t, refusal)
+	forceFlag := newSyncBackfillCmd().Flags().Lookup("force")
+	require.NotNil(t, forceFlag)
+
+	return []backfillGuidanceSurface{
+		{
+			name:         "refusal error",
+			text:         refusal.Error(),
+			discardLocal: 1,
+			required: []string{
+				"and 'mtix sync reconcile --discard-local' deletes every ticket in this store \u2014 do not use it for this.",
+				"--force appends a second history rather than replacing the first",
+				"no supported way to regenerate",
+				"back up first with 'mtix backup <path>'",
+				"re-run 'mtix sync push'",
+			},
+		},
+		{
+			name:         "help text",
+			text:         newSyncBackfillCmd().Long,
+			discardLocal: 1,
+			required: []string{
+				"do not reach for 'mtix sync reconcile --discard-local' \u2014 that deletes every ticket in this store.",
+				"--force does not regenerate",
+				"appends a second history alongside the first",
+				"no supported regenerate path yet",
+			},
+		},
+		{
+			name:         "force flag usage",
+			text:         forceFlag.Usage,
+			discardLocal: 0,
+			required: []string{
+				"does not regenerate",
+				"appends a second history alongside the first",
+				"fresh event ids",
+			},
+		},
+	}
+}
+
+// backfillGuidanceForbidden returns the phrases no backfill guidance
+// surface may contain: the old --discard-local remedy (MTIX-90), and the
+// claim that the hub dedupes or hides the duplicate --force writes
+// (MTIX-95.45; --force mints fresh event ids).
+func backfillGuidanceForbidden() []string {
+	return []string{
+		"re-backfill from scratch",
+		"run 'mtix sync reconcile --discard-local'",
+		"--discard-local' first",
+		"dedupe",
+		"invisible",
+		"duplicate event_id",
+	}
+}
+
+// TestSyncBackfillGuidance_SyncEventsNonEmpty_NeverOffersDiscardLocal pins
+// the MTIX-90 text fix on both operator-facing surfaces of the refusal:
+// the error formatBackfillError returns when sync_events is non-empty, and
+// the backfill help text newSyncBackfillCmd carries. Before the fix both
+// told the operator to re-backfill from scratch by running 'mtix sync
+// reconcile --discard-local' first, which runs DELETE FROM nodes and so
+// destroys every ticket in the store. Each surface must now carry its
+// exact warning against that command as its only mention of it, never
+// re-offer it, say that --force appends a second history rather than
+// regenerating, and (the refusal) point at a backup.
+//
+// The hidden --force flag's usage text is the third surface (MTIX-95.45):
+// it claimed the hub dedupes the duplicate by event_id so it is invisible
+// there, but --force mints fresh event ids (see the ported
+// e2e/sync_backfill_reparent_test.go characterization test), so it must
+// say that --force appends a second history and does not regenerate. No
+// surface may make the dedupe claim.
+func TestSyncBackfillGuidance_SyncEventsNonEmpty_NeverOffersDiscardLocal(t *testing.T) {
+	forbidden := backfillGuidanceForbidden()
+	for _, tt := range backfillGuidanceSurfaces(t) {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeGuidance(tt.text)
+			require.Equal(t, tt.discardLocal, strings.Count(got, "--discard-local"),
+				"the pinned warning sentence must be the only mention of --discard-local")
+			require.Empty(t, discardLocalRemedies(tt.text),
+				"every mention of --discard-local must warn, unqualified, that it deletes every ticket and must not be used")
+			for _, phrase := range forbidden {
+				require.NotContainsf(t, got, phrase,
+					"the guidance must not say %q", phrase)
+			}
+			for _, phrase := range tt.required {
+				require.Containsf(t, got, phrase, "the guidance must say %q", phrase)
+			}
+		})
+	}
 }
 
 // --- Dry-run ---

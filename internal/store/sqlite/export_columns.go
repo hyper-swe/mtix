@@ -11,8 +11,37 @@ import (
 
 // errUnreadableNodeColumn marks a nodes JSON column whose text does not
 // parse (MTIX-95.31.1). Export fails on it rather than write a board of
-// record without that column; recover salvages the node without it.
+// record without that column; recover takes the column from the mirror's
+// copy of the node, or salvages the node without it (MTIX-95.31.3).
 var errUnreadableNodeColumn = errors.New("unreadable node column")
+
+// The nodes JSON columns scanExportNode decodes, by column name.
+const (
+	columnCodeRefs    = "code_refs"
+	columnCommitRefs  = "commit_refs"
+	columnAnnotations = "annotations"
+	columnActivity    = "activity"
+)
+
+// unreadableColumnError reports one JSON column of one node whose text does
+// not parse (MTIX-95.31.1). It names the node and the column, so recover
+// can restore that column from the mirror (MTIX-95.31.3), and it wraps
+// errUnreadableNodeColumn and the parse error.
+type unreadableColumnError struct {
+	nodeID, column string
+	cause          error
+}
+
+// Error names the node and the column, then the parse error.
+func (e *unreadableColumnError) Error() string {
+	return fmt.Sprintf("node %s column %s: %v: %v", e.nodeID, e.column, errUnreadableNodeColumn, e.cause)
+}
+
+// Unwrap exposes errUnreadableNodeColumn and the parse error to errors.Is
+// and errors.As.
+func (e *unreadableColumnError) Unwrap() []error {
+	return []error{errUnreadableNodeColumn, e.cause}
+}
 
 // exportNodeJSON holds the nodes columns scanExportNode decodes rather than
 // copies: the nullable integers and the JSON-text columns (MTIX-95.31.1).
@@ -30,20 +59,21 @@ func (j *exportNodeJSON) decodeInto(n *exportNode) error {
 	n.EstimateMin = nullIntPtr(j.estimateMin)
 	n.ActualMin = nullIntPtr(j.actualMin)
 	return errors.Join(
-		decodeNodeColumn(n.ID, "code_refs", j.codeRefs, &n.CodeRefs),
-		decodeNodeColumn(n.ID, "commit_refs", j.commitRefs, &n.CommitRefs),
-		decodeNodeColumn(n.ID, "annotations", j.annotations, &n.Annotations),
-		decodeNodeColumn(n.ID, "activity", j.activity, &n.Activity),
+		decodeNodeColumn(n.ID, columnCodeRefs, j.codeRefs, &n.CodeRefs),
+		decodeNodeColumn(n.ID, columnCommitRefs, j.commitRefs, &n.CommitRefs),
+		decodeNodeColumn(n.ID, columnAnnotations, j.annotations, &n.Annotations),
+		decodeNodeColumn(n.ID, columnActivity, j.activity, &n.Activity),
 	)
 }
 
 // decodeNodeColumn decodes one JSON-array column of node id into dest
 // (MTIX-95.31.1). NULL, empty text and "null" decode to an empty list. Text
-// that does not parse leaves dest empty, never half-filled.
+// that does not parse leaves dest empty, never half-filled, and is reported
+// as an unreadableColumnError (MTIX-95.31.3).
 func decodeNodeColumn[T any](id, column string, text sql.NullString, dest *[]T) error {
 	if err := unmarshalJSONField(text, dest); err != nil {
 		*dest = nil
-		return fmt.Errorf("node %s column %s: %w: %w", id, column, errUnreadableNodeColumn, err)
+		return &unreadableColumnError{nodeID: id, column: column, cause: err}
 	}
 	return nil
 }

@@ -58,8 +58,10 @@ After backfill: run 'mtix sync push' to ship events to the hub.`,
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"Print counts without writing anything")
+	// MTIX-95.45: --force mints fresh event ids for a second copy of the
+	// history; it never regenerates the first (see the Safety properties).
 	cmd.Flags().BoolVar(&force, "force", false,
-		"Re-backfill even if sync_events is non-empty (DANGEROUS — causes duplicate event_ids; hub dedupes by event_id so the dup is invisible there, but the local queue grows)")
+		"Re-backfill even if sync_events is non-empty (DANGEROUS: does NOT regenerate; appends a second history alongside the first, with fresh event ids)")
 	if err := cmd.Flags().MarkHidden("force"); err != nil {
 		panic(err)
 	}

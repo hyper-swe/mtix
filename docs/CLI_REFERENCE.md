@@ -1191,7 +1191,7 @@ After backfill: run 'mtix sync push' to ship events to the hub.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--dry-run` |  | Print counts without writing anything | false |
-| `--force` |  | Re-backfill even if sync_events is non-empty (DANGEROUS — causes duplicate event_ids; hub dedupes by event_id so the dup is invisible there, but the local queue grows) | false |
+| `--force` |  | Re-backfill even if sync_events is non-empty (DANGEROUS: does NOT regenerate; appends a second history alongside the first, with fresh event ids) | false |
 ---
 
 ## backup

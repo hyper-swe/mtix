@@ -79,7 +79,7 @@ func TestPushLoop_EmptyQueueIsNoop(t *testing.T) {
 	initTestApp(t)
 
 	var stderr bytes.Buffer
-	pushed, batches, conflicts, _, err := pushLoop(context.Background(), &stderr,
+	pushed, batches, conflicts, _, err := pushLoopCounts(context.Background(), &stderr,
 		pool, app.store)
 	require.NoError(t, err)
 	require.Equal(t, 0, pushed)
@@ -98,7 +98,7 @@ func TestPushLoop_DrainsPendingEvents(t *testing.T) {
 	}
 
 	var stderr bytes.Buffer
-	pushed, batches, _, _, err := pushLoop(context.Background(), &stderr,
+	pushed, batches, _, _, err := pushLoopCounts(context.Background(), &stderr,
 		pool, app.store)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, pushed, 3,
@@ -128,7 +128,7 @@ func TestPullLoop_AppliesHubEvents(t *testing.T) {
 	// Seed and push from this CLI.
 	require.NoError(t, runCreate("seed", "", "", 3, "", "", "", "", ""))
 	var stderr bytes.Buffer
-	_, _, _, _, err := pushLoop(context.Background(), &stderr, pool, app.store)
+	_, err := pushLoop(context.Background(), &stderr, pool, app.store)
 	require.NoError(t, err)
 
 	// Wipe local applied_events + events so pullLoop has work to do
@@ -170,7 +170,7 @@ func TestCloneLoop_AppliesAndCheckpoints(t *testing.T) {
 
 	require.NoError(t, runCreate("seed", "", "", 3, "", "", "", "", ""))
 	var stderr bytes.Buffer
-	_, _, _, _, err := pushLoop(context.Background(), &stderr, pool, app.store)
+	_, err := pushLoop(context.Background(), &stderr, pool, app.store)
 	require.NoError(t, err)
 
 	// The create event the hub now holds; the clone must rebuild TEST-1 from it.

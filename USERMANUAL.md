@@ -1703,8 +1703,10 @@ refuse it.
   every push.) There are three kinds of hold; the reason starts with its
   kind:
   - **Permanent** (`too large: ...`, `refused: ...`): a payload over the
-    limit, or a broken nesting-depth, id or Lamport/vector-clock cap
-    rule. None of these changes, so the event stays held.
+    limit, a broken nesting-depth, id or Lamport/vector-clock cap rule,
+    or an event id the hub already holds with other content (see
+    [Events already on the hub](#events-already-on-the-hub)). None of
+    these changes, so the event stays held.
   - **Temporary** (`temporary: clock: ...`): the event is stamped more
     than 24 hours ahead of this machine's clock, usually because the
     clock was wrong when the change was made. Every push checks it again
@@ -1790,6 +1792,69 @@ refuse it.
   hand. `mtix sync reconcile --discard-local --yes` removes held events
   together with every other unpushed change; it is not a way to clear
   one held event.
+
+### Events already on the hub
+
+A push can reach the hub without this machine recording it. Push marks
+an event `pushed` in the local database only after the hub confirms the
+batch, so the event stays `pending` when:
+
+- the hub committed the batch but the confirmation was lost on the way
+  back (a dropped connection or a timeout during the commit);
+- mtix stopped (a crash, a killed process) or the local disk failed or
+  filled up after the hub committed and before the local mark;
+- push retried after a network drop: after a commit error push runs the
+  whole batch again, and the hub already holds what the first attempt
+  wrote.
+
+Before 0.5.4 the hub confirmed an event only when it inserted it, so such
+an event stayed pending forever. Push reads the queue oldest first, 100
+events per batch, and stopped at a batch that nothing confirmed, so once
+100 of them sat at the head of the queue, no later change was ever
+pushed, while `mtix sync push` still reported success. `mtix sync status`
+showed a `pending` count that never went down, and `mtix sync doctor`
+failed its `queue draining` check (`N events pending for >1h — pusher
+may be stuck`).
+
+Now the hub also confirms an event it already holds, when its copy has
+the same task, operation and payload, and push marks it pushed like an
+inserted one. The first push after upgrading drains such a queue by
+itself; there is nothing to run and no hub change. The check is one
+extra hub query per batch, only for a batch that holds events the hub
+already had, within the push you run; it adds no background contact.
+
+- **See it.** Each batch's progress line on stderr and the summary on
+  stdout count the two apart, for example:
+
+  ```text
+  push progress: batch 1 (5 sent, 5 accepted: 2 inserted, 3 already on the hub; 0 renumbered, 0 conflicts)
+  push complete: 5 events pushed across 1 batches (2 inserted, 3 already on the hub); 0 renumbered, 0 conflicts surfaced
+  ```
+
+  `inserted` counts the events this push wrote to the hub; `already on
+  the hub` counts the events an earlier push had delivered, and a
+  re-sent creation of a task the hub already holds. Both are marked
+  pushed. A non-zero `already on the hub` count is expected after an
+  interrupted push; it is not an error. An event already on the hub is
+  not checked for conflicts again: its conflicts were recorded when it
+  reached the hub, so a re-push adds no `sync_conflicts` row and no
+  `conflicts` count (before 0.5.4 each re-push recorded them again).
+- **Verify.** After the push, `mtix sync status` shows `pending` 0
+  (apart from held events, see [Held push events](#held-push-events)),
+  and `mtix sync doctor` passes its `queue draining` check.
+- **Another event under the same id.** If the hub holds the event's id
+  with a different task, operation or payload, the event is not
+  confirmed: that would mark a change pushed that teammates never
+  received. Push holds it permanently (source `push`, reason
+  `refused: the hub already holds this event id with a different
+  payload (hub copy: <task> <op>)`, naming each field that differs),
+  prints `push: held event <id> ...`, and pushes the rest. If the event
+  is a task's creation, the later changes of that task and its subtree
+  are held with it. `mtix sync doctor` fails its `held push events`
+  check and lists it. A correct client never produces this: the local
+  copy of the event was changed after it reached the hub, or another
+  client wrote an event under the same id. Do not edit the database or
+  delete the hold; show the doctor output to whoever runs the hub.
 
 ### Daemon mode (for durability)
 
@@ -2378,6 +2443,7 @@ change the node's status with the normal commands instead.
 | A teammate's change is missing after `mtix sync pull` | They have not pushed yet, the late-event sweep failed (the pull reports the error), or the change is quarantined | Ask them to run `mtix sync push`, then pull again; `mtix sync status` shows `last sweep` and `quarantined events` |
 | `mtix sync doctor` fails `quarantined events` | Pulled events failed their checks or their apply and are held, not applied | Run `mtix sync pull` (it retries them); if they remain, list them with `mtix sync quarantine list` (see [Quarantined events](#quarantined-events)) and report the reasons to whoever runs the hub |
 | A command prints `WARN: ... over the 65536-byte sync limit`, or `mtix sync doctor` fails `held push events` | Push holds events the hub would refuse (and the events of a held task creation's subtree, and links made while one is held), and pushes the rest | Follow the fix doctor names for each held event: shorten or split a field edit; escalate a held task creation, without editing it; check the clock for a clock hold (see [Held push events](#held-push-events)) |
+| `mtix sync status` shows a `pending` count that never goes down, `mtix sync doctor` fails `queue draining`, yet `mtix sync push` reports success | On a client older than 0.5.4: events an earlier push delivered but never marked pushed (a lost commit confirmation, a crash or disk failure before the local mark, a retry after a network drop) sit at the head of the queue, and push stops at them | Upgrade and run `mtix sync push`: it confirms the events already on the hub (`already on the hub` in its output) and pushes the rest; check `pending` 0 (see [Events already on the hub](#events-already-on-the-hub)) |
 | A node shows an older state than its history after a pull on a client older than 0.5.4 (for example `in_progress` after `mtix done`) | That pull replayed an older event of this machine | Upgrade, run `mtix sync pull`, then `mtix sync repair --status` and review the list; run `mtix sync pull` again, then `mtix sync repair --status --apply` and `mtix sync push`; a flagged node needs review and `--force` (see above). Pulling first matters: a repair made on a stale log can revert a teammate's newer change on every machine |
 
 ### MCP integration

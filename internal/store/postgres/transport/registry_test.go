@@ -93,7 +93,8 @@ func TestRegistry_IdempotentRepush_NoSpuriousRenumber(t *testing.T) {
 	accepted2, _, renumbers2, err := pool.PushEventsWithRenumbers(
 		context.Background(), []*model.SyncEvent{ev})
 	require.NoError(t, err)
-	require.Empty(t, accepted2, "re-push lands nothing new (ON CONFLICT DO NOTHING)")
+	require.Equal(t, []string{ev.EventID}, accepted2,
+		"re-push lands nothing new (ON CONFLICT DO NOTHING) and is acknowledged as already on the hub (MTIX-95.3)")
 	require.Empty(t, renumbers2, "re-push of the SAME event must NOT trigger a renumber")
 
 	require.Equal(t, 1, countCreateForNode(t, pool, "MTIX", "MTIX-2.1"))

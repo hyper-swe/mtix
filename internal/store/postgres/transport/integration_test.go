@@ -326,9 +326,16 @@ func TestPushEvents_IdempotentOnRepush(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, ids, 2)
 
+	// The re-push writes nothing (ON CONFLICT DO NOTHING) and reports the
+	// events accepted, as already on the hub, so a pusher that lost the first
+	// acknowledgement marks them pushed (MTIX-95.3).
 	ids2, _, err := pool.PushEvents(context.Background(), events)
 	require.NoError(t, err)
-	require.Empty(t, ids2, "re-push of same events accepts none (ON CONFLICT DO NOTHING)")
+	require.ElementsMatch(t, ids, ids2, "re-push of the same events acknowledges them")
+	var n int
+	require.NoError(t, pool.Inner().QueryRow(context.Background(),
+		`SELECT count(*) FROM sync_events`).Scan(&n))
+	require.Equal(t, 2, n, "re-push writes no second row")
 }
 
 func TestPullEvents_FromZero(t *testing.T) {

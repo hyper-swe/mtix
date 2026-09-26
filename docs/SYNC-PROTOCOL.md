@@ -272,7 +272,21 @@ for each incoming event e of op_type update_field / set_acceptance / set_prompt:
 `VectorClock.Concurrent` is `!a.Dominates(b) && !b.Dominates(a) && !a.Equal(b)`.
 
 The hub also INSERTs into `sync_events` itself in the same transaction
-via `ON CONFLICT (event_id) DO NOTHING`, so duplicate pushes are no-ops.
+via `ON CONFLICT (event_id) DO NOTHING`, so a duplicate push writes
+nothing. An event whose INSERT inserted no row is then checked against
+the hub copy, with one query per batch (`event_id = ANY(...)`, served by
+the primary key): when `node_id`, `op_type` and `payload` (compared as
+JSON values) match, the event is acknowledged as already on the hub and
+the pusher marks it pushed; otherwise it is reported as a mismatch and
+never acknowledged, and the pusher holds it (source `push`, reason
+`refused: the hub already holds this event id with a different ...`).
+A lost commit acknowledgement, a crash before the local mark, or the
+transport's retry after a commit error therefore cannot leave an event
+pending forever (MTIX-95.3). Conflict detection runs only for an event
+the push inserted, after its insert: an event already on the hub had
+its conflicts recorded when it was inserted, and is not checked again. `mtix sync push` counts the events inserted
+and the events already on the hub apart in its progress lines and
+summary.
 
 ## Divergence detection
 

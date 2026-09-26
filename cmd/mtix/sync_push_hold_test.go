@@ -28,16 +28,19 @@ import (
 // rest; held events are left out of the pending reads.
 
 // fakePushHub stands in for the hub in pushLoop tests. Like
-// transport.PushEventsWithCollisions it validates the whole batch with
+// transport.PushEventsResult it validates the whole batch with
 // validator.ValidateBatch before anything else and refuses the batch
-// atomically on the first invalid event (FR-18.7); otherwise it accepts
+// atomically on the first invalid event (FR-18.7); otherwise it inserts
 // every event, except that a create_node listed in renumberOnce is refused
 // once with RenumberRequired, as the hub does when another replica holds
 // its number, and the first failCalls calls fail as an unreachable hub
-// would. beforeCall, when set, runs at the start of every call, as another
+// would. An event whose id it already holds is not inserted again: it is
+// reported already present when its node, op and payload match the copy
+// held, and as a mismatch otherwise, as the hub does (MTIX-95.3).
+// beforeCall, when set, runs at the start of every call, as another
 // process working on the same database while the push runs would. It
 // records the ids of every batch it was sent, and keeps the
-// accepted events so a test can pull them into another replica.
+// inserted events so a test can pull them into another replica.
 type fakePushHub struct {
 	calls        [][]string
 	accepted     map[string]bool
@@ -52,10 +55,8 @@ func newFakePushHub() *fakePushHub {
 	return &fakePushHub{accepted: map[string]bool{}}
 }
 
-// PushEventsWithRenumbers implements eventPusher.
-func (h *fakePushHub) PushEventsWithRenumbers(_ context.Context, events []*model.SyncEvent) (
-	[]string, []transport.ConflictDescriptor, []transport.RenumberRequired, error,
-) {
+// PushEventsResult implements eventPusher.
+func (h *fakePushHub) PushEventsResult(_ context.Context, events []*model.SyncEvent) (transport.PushResult, error) {
 	ids := make([]string, 0, len(events))
 	for _, e := range events {
 		ids = append(ids, e.EventID)
@@ -66,25 +67,60 @@ func (h *fakePushHub) PushEventsWithRenumbers(_ context.Context, events []*model
 	}
 	if h.failCalls > 0 {
 		h.failCalls--
-		return nil, nil, nil, fmt.Errorf("PushEvents: hub unreachable")
+		return transport.PushResult{}, fmt.Errorf("PushEvents: hub unreachable")
 	}
 	if err := validator.ValidateBatch(events, time.Now().UTC(), nil); err != nil {
-		return nil, nil, nil, fmt.Errorf("PushEvents validate: %w", err)
+		return transport.PushResult{}, fmt.Errorf("PushEvents validate: %w", err)
 	}
-	var accepted []string
-	var renumbers []transport.RenumberRequired
+	var res transport.PushResult
 	for _, e := range events {
 		if h.renumberOnce[e.EventID] {
 			delete(h.renumberOnce, e.EventID)
-			renumbers = append(renumbers, transport.RenumberRequired{
+			res.Renumbers = append(res.Renumbers, transport.RenumberRequired{
 				EventID: e.EventID, ProjectPrefix: e.ProjectPrefix, DisplayPath: e.NodeID})
+			continue
+		}
+		if held := h.held(e.EventID); held != nil {
+			h.recordPresent(&res, held, e)
 			continue
 		}
 		h.accepted[e.EventID] = true
 		h.events = append(h.events, e)
-		accepted = append(accepted, e.EventID)
+		res.Inserted = append(res.Inserted, e.EventID)
 	}
-	return accepted, nil, renumbers, nil
+	return res, nil
+}
+
+// held returns the event the hub holds under eventID, or nil.
+func (h *fakePushHub) held(eventID string) *model.SyncEvent {
+	for _, e := range h.events {
+		if e.EventID == eventID {
+			return e
+		}
+	}
+	return nil
+}
+
+// recordPresent adds e, whose id the hub already holds as held, to res:
+// already present when node, op and payload match, else a mismatch naming
+// the fields that differ.
+func (h *fakePushHub) recordPresent(res *transport.PushResult, held, e *model.SyncEvent) {
+	var fields []string
+	if held.NodeID != e.NodeID {
+		fields = append(fields, "node_id")
+	}
+	if held.OpType != e.OpType {
+		fields = append(fields, "op_type")
+	}
+	if !bytes.Equal(held.Payload, e.Payload) {
+		fields = append(fields, "payload")
+	}
+	if len(fields) == 0 {
+		res.AlreadyPresent = append(res.AlreadyPresent, e.EventID)
+		return
+	}
+	res.Mismatches = append(res.Mismatches, transport.PresenceMismatch{EventID: e.EventID,
+		Fields: fields, HubNodeID: held.NodeID, HubOpType: string(held.OpType)})
 }
 
 // sent reports whether any batch sent to the hub carried eventID.
@@ -192,7 +228,7 @@ func TestPushLoop_OversizedEvent_HeldOthersPushed(t *testing.T) {
 
 			hub := newFakePushHub()
 			var stderr bytes.Buffer
-			pushed, _, _, _, err := pushLoop(context.Background(), &stderr, hub, app.store)
+			pushed, _, _, _, err := pushLoopCounts(context.Background(), &stderr, hub, app.store)
 			require.NoError(t, err, "one invalid event must not fail the push")
 			require.Equal(t, tt.total-1, pushed)
 
@@ -268,7 +304,7 @@ func TestPushLoop_HeldEventsDoNotWedgeQueue(t *testing.T) {
 
 			hub := newFakePushHub()
 			var stderr bytes.Buffer
-			pushed, _, _, _, err := pushLoop(ctx, &stderr, hub, app.store)
+			pushed, _, _, _, err := pushLoopCounts(ctx, &stderr, hub, app.store)
 			require.NoError(t, err)
 			require.Equal(t, 1, pushed, "the valid event behind the held ones is pushed")
 			require.True(t, hub.accepted[behind])
@@ -283,7 +319,7 @@ func TestPushLoop_HeldEventsDoNotWedgeQueue(t *testing.T) {
 			require.NoError(t, runCreate("later", "", "", 3, "", "", "", "", ""))
 			later := eventIDFor(t, "TEST-3", model.OpCreateNode)
 			second := newFakePushHub()
-			pushed, _, _, _, err = pushLoop(ctx, &stderr, second, app.store)
+			pushed, _, _, _, err = pushLoopCounts(ctx, &stderr, second, app.store)
 			require.NoError(t, err)
 			require.Equal(t, 1, pushed, "a later valid event still pushes")
 			require.Equal(t, [][]string{{later}}, second.calls, "held events are not sent again")

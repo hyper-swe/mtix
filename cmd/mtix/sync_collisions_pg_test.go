@@ -80,7 +80,7 @@ func seedCrossEpochCollision(t *testing.T, pool *transport.Pool, dsn string) {
 	require.NoError(t, runCreate("A parent", "", "", 3, "", "", "", "", ""))   // TEST-1
 	require.NoError(t, runCreate("A child", "TEST-1", "", 3, "", "", "", "", "")) // TEST-1.1
 	var stderr bytes.Buffer
-	_, _, _, _, err := pushLoop(ctx, &stderr, pool, app.store)
+	_, err := pushLoop(ctx, &stderr, pool, app.store)
 	require.NoError(t, err)
 
 	// Operator advances the epoch (restore-from-backup runbook step).

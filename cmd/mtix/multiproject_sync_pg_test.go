@@ -46,7 +46,7 @@ func seedTwoProjectsAndPushThenWipe(t *testing.T) (*bytes.Buffer, context.Contex
 	require.NoError(t, runCreateWithProject("ops child", "MTIX-DEV-OPS-1", "", 3, "", "", "", "", "", "", true))
 
 	var stderr bytes.Buffer
-	pushed, batches, _, _, err := pushLoop(ctx, &stderr, pool, app.store)
+	pushed, batches, _, _, err := pushLoopCounts(ctx, &stderr, pool, app.store)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, pushed, 3, "three creates across two projects must push")
 	require.GreaterOrEqual(t, batches, 1)

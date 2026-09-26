@@ -74,7 +74,7 @@ func TestPushLoop_DrainsRenumberRequired(t *testing.T) {
 	// TEST-1 (free), A's child collides with B's TEST-1.1 -> renumber-required
 	// -> re-claimed to TEST-1.2 -> re-pushed.
 	var stderr bytes.Buffer
-	pushed, _, _, renumbered, err := pushLoop(ctx, &stderr, pool, app.store)
+	pushed, _, _, renumbered, err := pushLoopCounts(ctx, &stderr, pool, app.store)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, renumbered, 1, "A's colliding child must be renumbered")
 	assert.GreaterOrEqual(t, pushed, 2, "A's parent + renumbered child both land")

@@ -40,14 +40,14 @@ func TestPushLoop_HeldCreationWhoseUIDNoNodeHas_RealHub_TeammateTaskIntact(t *te
 			initTestApp(t)
 			appA := app
 			require.NoError(t, runCreate("A's task", "", "", 3, "", overWireCap(), "", "", ""))
-			_, _, _, _, err := pushLoop(ctx, &stderr, pool, app.store)
+			_, err := pushLoop(ctx, &stderr, pool, app.store)
 			require.NoError(t, err)
 
 			t.Setenv(sqlite.AuthorIDEnv, "agent-b")
 			initTestApp(t)
 			appB := app
 			require.NoError(t, runCreate("B's own task", "", "", 3, "", "", "", "", ""))
-			_, _, _, _, err = pushLoop(ctx, &stderr, pool, app.store)
+			_, err = pushLoop(ctx, &stderr, pool, app.store)
 			require.NoError(t, err)
 
 			app = appA
@@ -55,7 +55,7 @@ func TestPushLoop_HeldCreationWhoseUIDNoNodeHas_RealHub_TeammateTaskIntact(t *te
 			tt.loseUID(t)
 			require.NoError(t, runUpdate("TEST-1", "A retitled its task", "", "", "", 0, "", ""))
 			require.NoError(t, runCreate("A's child", "TEST-1", "", 3, "", "", "", "", ""))
-			_, _, _, _, err = pushLoop(ctx, &stderr, pool, app.store)
+			_, err = pushLoop(ctx, &stderr, pool, app.store)
 			require.NoError(t, err)
 
 			app = appB

@@ -442,9 +442,11 @@ func applyLocalRenumbers(ctx context.Context, tx *sql.Tx, w localWrites) error {
 func idOfUID(ctx context.Context, tx *sql.Tx, uid string) (string, error) {
 	var count int
 	var id string
-	// How many nodes hold uid, and one of their ids.
+	// How many nodes hold uid, and one of their ids. "uid <> ''" lets the
+	// partial idx_nodes_uid serve it (MTIX-95.47); every planned move has a
+	// uid (stampMissingUIDs), so the term drops no match.
 	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*), COALESCE(MIN(id), '') FROM nodes WHERE uid = ?`, uid,
+		`SELECT COUNT(*), COALESCE(MIN(id), '') FROM nodes WHERE uid = ? AND uid <> ''`, uid,
 	).Scan(&count, &id); err != nil {
 		return "", fmt.Errorf("find the node with uid %s: %w", uid, err)
 	}

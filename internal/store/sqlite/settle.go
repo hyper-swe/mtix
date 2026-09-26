@@ -293,8 +293,10 @@ func (s *Store) loadSettleTarget(ctx context.Context, uid string) (settleTarget,
 	}
 	t := settleTarget{uid: uid}
 	var parent sql.NullString
+	// The live node holding uid; "uid <> ''" lets the partial idx_nodes_uid
+	// serve it instead of a read of every node (MTIX-95.47).
 	err := s.readDB.QueryRowContext(ctx,
-		`SELECT id, project, parent_id FROM nodes WHERE uid = ? AND deleted_at IS NULL`,
+		`SELECT id, project, parent_id FROM nodes WHERE uid = ? AND uid <> '' AND deleted_at IS NULL`,
 		uid).Scan(&t.id, &t.project, &parent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return settleTarget{}, fmt.Errorf("settle uid %s: %w", uid, model.ErrNotFound)

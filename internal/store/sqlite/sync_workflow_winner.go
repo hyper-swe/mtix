@@ -315,9 +315,10 @@ func heldWorkflowQuery(e *model.SyncEvent) (query, scope string) {
 		         ORDER BY lamport_clock DESC, event_id DESC`, e.NodeID
 	}
 	// Same walk scoped by the node's durable uid (ADR-003 §3), so a renumbered
-	// node keeps one workflow history.
+	// node keeps one workflow history. "uid <> ''" lets the partial
+	// idx_sync_events_uid serve it (MTIX-95.47); e.UID is not empty here.
 	return `SELECT lamport_clock, event_id, op_type, payload FROM sync_events
-	         WHERE uid = ? AND op_type IN (?, ?, ?, ?) AND event_id <> ?
+	         WHERE uid = ? AND uid <> '' AND op_type IN (?, ?, ?, ?) AND event_id <> ?
 	         ORDER BY lamport_clock DESC, event_id DESC`, e.UID
 }
 

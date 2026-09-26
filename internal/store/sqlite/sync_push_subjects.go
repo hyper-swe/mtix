@@ -48,13 +48,15 @@ func (s *Store) PushSubjects(ctx context.Context, eventIDs []string) (map[string
 	// of the node that has it; for a creation, also the task it created (n
 	// by uid, else s by the event's own id for an event without a uid, else
 	// f by the number the event names; idx_nodes_uid and the primary key).
+	// "uid <> ''" lets the partial idx_nodes_uid serve n and s; without it s
+	// is found through an index built over every node (MTIX-95.47).
 	rows, err := s.Query(ctx, `
 		SELECT e.event_id, COALESCE(e.uid, ''), COALESCE(n.id, ''),
 		       CASE WHEN e.op_type = 'create_node' THEN COALESCE(n.id, s.id, f.id, '') ELSE '' END
 		FROM sync_events e
 		LEFT JOIN nodes n ON n.uid = e.uid AND n.uid IS NOT NULL AND n.uid <> ''
 		LEFT JOIN nodes s ON e.op_type = 'create_node' AND n.id IS NULL
-		     AND COALESCE(e.uid, '') = '' AND s.uid = e.event_id
+		     AND COALESCE(e.uid, '') = '' AND s.uid = e.event_id AND s.uid <> ''
 		LEFT JOIN nodes f ON e.op_type = 'create_node' AND n.id IS NULL AND s.id IS NULL
 		     AND f.id = e.node_id
 		WHERE e.event_id IN (SELECT value FROM json_each(?))`, string(ids))

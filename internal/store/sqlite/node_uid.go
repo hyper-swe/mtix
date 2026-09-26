@@ -36,8 +36,10 @@ func (s *Store) ResolveDisplayPathByUID(ctx context.Context, uid string) (string
 		return "", fmt.Errorf("empty uid: %w", model.ErrNotFound)
 	}
 	var id string
+	// The live node holding uid; "uid <> ''" lets the partial idx_nodes_uid
+	// serve it instead of a read of every node (MTIX-95.47).
 	err := s.readDB.QueryRowContext(ctx,
-		`SELECT id FROM nodes WHERE uid = ? AND deleted_at IS NULL`, uid).Scan(&id)
+		`SELECT id FROM nodes WHERE uid = ? AND uid <> '' AND deleted_at IS NULL`, uid).Scan(&id)
 	if err == sql.ErrNoRows {
 		return "", fmt.Errorf("uid %s: %w", uid, model.ErrNotFound)
 	}

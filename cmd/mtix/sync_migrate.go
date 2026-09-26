@@ -19,17 +19,20 @@ import (
 // records each here so both humans and agents see exactly what happened.
 type PhaseReport struct {
 	Phase   string `json:"phase"`
-	Status  string `json:"status"` // "ok" | "deferred" | "skipped" | "noop"
+	Status  string `json:"status"` // "ok" | "deferred" | "skipped" | "noop" | "failed"
 	Detail  string `json:"detail,omitempty"`
 	Applied bool   `json:"applied,omitempty"` // a live-store mutation happened
 }
 
 // MigrateReport aggregates the phase outcomes for `mtix sync migrate`.
+// RegistryIndex is the node-number registry index as pg_index records it
+// at the end of the run: present, valid and ready (MTIX-95.44).
 type MigrateReport struct {
-	Project       string        `json:"project"`
-	DryRun        bool          `json:"dry_run"`
-	Phases        []PhaseReport `json:"phases"`
-	RemapsToApply int           `json:"remaps_to_apply"`
+	Project       string                        `json:"project"`
+	DryRun        bool                          `json:"dry_run"`
+	Phases        []PhaseReport                 `json:"phases"`
+	RemapsToApply int                           `json:"remaps_to_apply"`
+	RegistryIndex *transport.RegistryIndexState `json:"registry_index,omitempty"`
 }
 
 // newSyncMigrateCmd creates `mtix sync migrate` — the driver for the
@@ -62,7 +65,17 @@ func newSyncMigrateCmd() *cobra.Command {
 
 Phase 1 MOVES display numbers on the hub when duplicates exist. Without
 --yes the command PREVIEWS the renumbers and applies nothing. Re-run with
---yes to record the remaps to the live store.`,
+--yes to record the remaps to the live store.
+
+The registry index covers every project on the hub, so Phase 1 records
+the duplicate creates of every project, whichever project --project
+names. Phase 1.5 builds the index while the version gate is open, and
+leaves the recorded duplicate creates out of it by event id: they stay in
+the event log unchanged. It drops an index that is not valid or not ready
+and builds it again, and never reports such an index present. It refuses
+before the build, with the count and the limit, when the hub holds more
+duplicate creates than the index can leave out. Only the table owner can
+build the index. --json reports the index state as registry_index.`,
 		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncMigrate(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
@@ -86,6 +99,7 @@ type migrateHub interface {
 	SweepDuplicates(ctx context.Context, project string) (transport.SweepReport, error)
 	PreviewDuplicates(ctx context.Context, project string) (int, error)
 	EnsureRegistryIndex(ctx context.Context, project string) (transport.IndexResult, error)
+	RegistryIndex(ctx context.Context) (transport.RegistryIndexState, error)
 	ProjectUIDCutoverReady(ctx context.Context, project string) (bool, error)
 }
 
@@ -118,16 +132,19 @@ func runSyncMigrate(ctx context.Context, stdout, stderr io.Writer,
 	}
 	defer pool.Close()
 
+	// A refused index build still prints the report: the sweep of the
+	// same run has already recorded the duplicates (MTIX-95.44).
 	report, err := orchestrateMigration(ctx, pool, prefix, yes)
+	if len(report.Phases) > 0 {
+		if app.jsonOutput {
+			body, _ := json.MarshalIndent(report, "", "  ")
+			fmt.Fprintln(stdout, string(body))
+		} else {
+			printMigrateReport(stdout, report)
+		}
+	}
 	if err != nil {
 		return wrapSyncErr(stderr, "orchestrate", err)
-	}
-
-	if app.jsonOutput {
-		body, _ := json.MarshalIndent(report, "", "  ")
-		fmt.Fprintln(stdout, string(body))
-	} else {
-		printMigrateReport(stdout, report)
 	}
 	return nil
 }
@@ -138,10 +155,10 @@ func runSyncMigrate(ctx context.Context, stdout, stderr io.Writer,
 // this out lets the phase sequencing be unit-tested against a fake hub.
 //
 // When yes is false the function PREVIEWS Phase 1 (counts the duplicate
-// losers without recording any remap) and stops before Phase 1.5 — adding
-// the index to a still-dirty log would error, and a preview must never
-// mutate. When yes is true it applies the sweep then attempts the
-// version-gated index add.
+// losers without recording any remap) and stops before Phase 1.5 — a
+// preview must never mutate. When yes is true it applies the sweep then
+// attempts the version-gated index build, which leaves the recorded
+// duplicate creates out (MTIX-95.44).
 func orchestrateMigration(ctx context.Context, hub migrateHub, prefix string, yes bool) (MigrateReport, error) {
 	report := MigrateReport{Project: prefix, DryRun: !yes}
 	report.Phases = append(report.Phases, PhaseReport{
@@ -150,62 +167,107 @@ func orchestrateMigration(ctx context.Context, hub migrateHub, prefix string, ye
 	})
 
 	if !yes {
-		// Dry-run: preview Phase 1 only, mutate nothing.
-		n, err := hub.PreviewDuplicates(ctx, prefix)
-		if err != nil {
-			return MigrateReport{}, err
-		}
-		report.RemapsToApply = n
-		status, detail := "noop", "no duplicate numbers — sweep would be a no-op"
-		if n > 0 {
-			status = "deferred"
-			detail = fmt.Sprintf("%d duplicate number(s) would be renumbered — re-run with --yes to apply", n)
-		}
-		report.Phases = append(report.Phases,
-			PhaseReport{Phase: "1-sweep", Status: status, Detail: detail},
-			PhaseReport{Phase: "1.5-index", Status: "skipped", Detail: "deferred until Phase 1 is applied (--yes)"},
-		)
-		report.Phases = appendDualAndCutover(ctx, hub, prefix, report.Phases)
-		return report, nil
+		return previewMigration(ctx, hub, prefix, report)
 	}
 
-	// Phase 1 (apply): the dedup sweep records remaps + conflicts.
+	// Phase 1 (apply): the dedup sweep records remaps + conflicts, in
+	// every project on the hub (MTIX-95.44).
 	sweep, err := hub.SweepDuplicates(ctx, prefix)
 	if err != nil {
 		return MigrateReport{}, err
 	}
 	report.RemapsToApply = sweep.Resolved
-	p1 := PhaseReport{Phase: "1-sweep", Status: "noop", Detail: "clean project — nothing to renumber"}
+	p1 := PhaseReport{Phase: "1-sweep", Status: "noop", Detail: "no duplicate numbers on the hub — nothing to renumber"}
 	if sweep.Resolved > 0 {
 		p1 = PhaseReport{Phase: "1-sweep", Status: "ok", Applied: true,
-			Detail: fmt.Sprintf("renumbered %d duplicate number(s); see 'mtix sync conflicts'", sweep.Resolved)}
+			Detail: fmt.Sprintf("renumbered %d duplicate number(s) in %d project(s) on the hub; see 'mtix sync conflicts'",
+				sweep.Resolved, len(sweep.Projects))}
 	}
 	report.Phases = append(report.Phases, p1)
 
-	// Phase 1.5 (apply): version-gated index add. Phase 1 has just run,
-	// so the log is clean and the add can succeed when the gate is open.
+	// Phase 1.5 (apply): version-gated index build. Phase 1 has just run,
+	// so every duplicate create is recorded and the build leaves it out.
+	// A refused build returns the report with the sweep's records and a
+	// failed index phase, together with the error (MTIX-95.44).
 	idx, err := hub.EnsureRegistryIndex(ctx, prefix)
 	if err != nil {
-		return MigrateReport{}, err
+		report.Phases = append(report.Phases, PhaseReport{Phase: "1.5-index", Status: "failed",
+			Detail: scrubSyncText(err.Error())})
+		return report, err
 	}
+	report.RegistryIndex = &idx.State
 	report.Phases = append(report.Phases, indexPhaseReport(idx))
 
 	report.Phases = appendDualAndCutover(ctx, hub, prefix, report.Phases)
 	return report, nil
 }
 
-// indexPhaseReport renders the Phase 1.5 outcome.
+// previewMigration is the dry run: it previews Phase 1 and reports the
+// registry index as it is, naming the fix when it is not valid or not
+// ready (MTIX-95.44). It mutates nothing.
+func previewMigration(ctx context.Context, hub migrateHub, prefix string, report MigrateReport) (MigrateReport, error) {
+	n, err := hub.PreviewDuplicates(ctx, prefix)
+	if err != nil {
+		return MigrateReport{}, err
+	}
+	state, err := hub.RegistryIndex(ctx)
+	if err != nil {
+		return MigrateReport{}, err
+	}
+	report.RemapsToApply = n
+	report.RegistryIndex = &state
+	status, detail := "noop", "no duplicate numbers — sweep would be a no-op"
+	if n > 0 {
+		status = "deferred"
+		detail = fmt.Sprintf("%d duplicate number(s) would be renumbered on the hub — re-run with --yes to apply", n)
+	}
+	indexDetail := "deferred until Phase 1 is applied (--yes)"
+	if state.NotUsable() {
+		indexDetail = registryIndexNotUsable(state) + "; " + registryIndexRebuild
+	}
+	report.Phases = append(report.Phases,
+		PhaseReport{Phase: "1-sweep", Status: status, Detail: detail},
+		PhaseReport{Phase: "1.5-index", Status: "skipped", Detail: indexDetail},
+	)
+	report.Phases = appendDualAndCutover(ctx, hub, prefix, report.Phases)
+	return report, nil
+}
+
+// indexPhaseReport renders the Phase 1.5 outcome. It reports the registry
+// index already present only when the result shows it valid and ready,
+// and names the fix for an index that is not (MTIX-95.44).
 func indexPhaseReport(idx transport.IndexResult) PhaseReport {
 	switch {
 	case !idx.GateOpen:
-		return PhaseReport{Phase: "1.5-index", Status: "deferred",
-			Detail: "version gate closed — an active client is below the remap-aware minimum"}
+		detail := "version gate closed — an active client is below the remap-aware minimum"
+		if idx.State.NotUsable() {
+			detail += "; " + registryIndexNotUsable(idx.State) + "; " + registryIndexRebuild
+		}
+		return PhaseReport{Phase: "1.5-index", Status: "deferred", Detail: detail}
 	case idx.Added:
-		return PhaseReport{Phase: "1.5-index", Status: "ok", Applied: true,
-			Detail: fmt.Sprintf("registry unique index added over %d create rows", idx.CreateCount)}
-	default:
+		return PhaseReport{Phase: "1.5-index", Status: "ok", Applied: true, Detail: indexAddedDetail(idx)}
+	case idx.State.Usable():
 		return PhaseReport{Phase: "1.5-index", Status: "noop", Detail: "registry index already present"}
+	default:
+		return PhaseReport{Phase: "1.5-index", Status: "deferred",
+			Detail: "the node-number registry index is not valid and ready; " + registryIndexRebuild}
 	}
+}
+
+// indexAddedDetail describes a built index: rebuilt when it replaced one
+// that was not valid or not ready, and the duplicate creates it leaves out
+// (MTIX-95.44).
+func indexAddedDetail(idx transport.IndexResult) string {
+	detail := fmt.Sprintf("registry unique index added over %d create rows", idx.CreateCount)
+	if idx.Rebuilt {
+		detail = fmt.Sprintf("registry index was not valid or not ready: dropped and built again over %d create rows",
+			idx.CreateCount)
+	}
+	if idx.LeftOut > 0 {
+		detail += fmt.Sprintf(", leaving out %d duplicate create(s) the sweep recorded (they stay in the event log)",
+			idx.LeftOut)
+	}
+	return detail
 }
 
 // appendDualAndCutover adds the Phase 2 (always-on dual resolution) and

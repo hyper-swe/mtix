@@ -47,7 +47,7 @@ var errDoctorChecksFailed = errors.New("doctor checks failed")
 
 // syncDoctorLong is the help text of `mtix sync doctor`: every check, the
 // connect budget and when a check warns or fails (FR-18, MTIX-95.1,
-// MTIX-95.7).
+// MTIX-95.7, MTIX-95.44).
 const syncDoctorLong = `Run health checks against the local store and the BYO Postgres hub:
 
   PG reachable           - opens pool + Ping
@@ -55,9 +55,10 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            the hub has migration 017 (it stamps every
                            event's restore epoch and records restore
                            collisions itself), the connecting role can
-                           execute record_restore_collision, and, unless it
+                           execute record_restore_collision, unless it
                            owns the sync tables, holds no INSERT on
-                           sync_node_collisions
+                           sync_node_collisions, and the node-number
+                           registry index, when present, is valid and ready
   Queue draining         - no events older than 1h still in pending
   No orphan applied      - every applied_event has a matching node OR tombstone
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
@@ -97,6 +98,16 @@ mode: restore-collision checks treat each as not earlier than the
 current epoch, and the table owner runs the printed UPDATE, which sets
 each to the current epoch. The check names each gap and who runs each
 part of the fix.
+
+A node-number registry index (sync_events_node_registry_uidx) that is not
+valid or not ready fails the check in every mode. An index that is not
+ready checks no new create; one that is ready but not valid still
+refuses a duplicate create, but queries do not use it and it must be
+built again. The fix is mtix sync migrate --yes, run as the table owner
+while the version gate is open, which drops the index and builds it
+again. A hub that holds sync_events but no registry index is a WARN by
+default and fails in strict mode, with the same fix, which builds the
+index.
 
 Hub triggers names each missing function or trigger, each trigger that
 executes another function, and each trigger that is not enabled, with the

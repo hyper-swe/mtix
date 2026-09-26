@@ -45,7 +45,10 @@ func clientMachineHash() string {
 // Behavior:
 //  1. Resolve the DSN via transport.Source (refuses tracked-config DSNs).
 //  2. Open a TLS-verify-full pool against the hub.
-//  3. Run the schema migration under PG advisory lock.
+//  3. Run the schema migration under PG advisory lock; name the fix when
+//     migration 009 cannot build the node-number registry index over
+//     duplicate creates, and warn, with the fix, when that index is not
+//     valid or not ready (MTIX-95.44).
 //  4. Compute the local first_event_hash if the local store has events.
 //  5. Detect divergent history if the hub already has the prefix.
 //  6. Otherwise, write the local first_event_hash to the hub's
@@ -73,7 +76,17 @@ Positional DSN arguments are no longer accepted; set MTIX_SYNC_DSN or
 .mtix/secrets. The DSN is refused if found in any tracked
 .mtix/config.* file. The default sslmode is verify-full; --insecure-tls
 is accepted only when every host the connection may use is loopback or
-a local socket.`,
+a local socket.
+
+After the migration, init checks the node-number registry index
+(sync_events_node_registry_uidx) and prints a WARN with the fix when it
+is not valid or not ready: the migration skips an index of that name.
+An index that is not ready checks no new create; one that is ready but
+not valid still refuses a duplicate create, but queries do not use it
+and it must be built again. On a hub without that index whose
+projects hold duplicate creates, the migration cannot build the index,
+and init refuses and names the fix: as the table owner, run mtix sync
+migrate --yes while the version gate is open, then mtix sync init again.`,
 		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncInit(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
@@ -107,9 +120,15 @@ func runSyncInit(ctx context.Context, stdout, stderr io.Writer, args []string, o
 	}
 	defer pool.Close()
 
+	// On a hub without the registry index whose projects hold duplicate
+	// creates, migration 009 cannot build the index: the refusal names the
+	// fix. After the migrations, an index of the registry's name that is
+	// not valid or not ready, which 009's IF NOT EXISTS skips, is reported
+	// with its fix (MTIX-95.44).
 	if migrateErr := pool.Migrate(connectCtx); migrateErr != nil {
-		return wrapSyncErr(stderr, "migrate", migrateErr)
+		return wrapSyncErr(stderr, "migrate", withRegistryIndexFix(migrateErr))
 	}
+	warnRegistryIndex(connectCtx, stderr, pool)
 
 	if app.store == nil {
 		// Mtix project not initialized — migration succeeded on the
@@ -130,7 +149,22 @@ func runSyncInit(ctx context.Context, stdout, stderr io.Writer, args []string, o
 		return nil
 	}
 
-	hubPrefix, hubHash, err := readHubFirstEventHash(connectCtx, pool, prefix)
+	return claimProjectOnHub(connectCtx, stdout, stderr, pool, localFirstEvent{prefix: prefix, hash: hash})
+}
+
+// localFirstEvent is the local project's prefix and first_event_hash.
+type localFirstEvent struct {
+	prefix, hash string
+}
+
+// claimProjectOnHub checks the local project against the hub's
+// first_event_hash, records this CLI's version for the version gate, and
+// registers the project on the hub or confirms it (FR-18.13). It is the
+// tail of runSyncInit, split out to keep that function within the length
+// limit (MTIX-95.44).
+func claimProjectOnHub(ctx context.Context, stdout, stderr io.Writer, pool *transport.Pool, local localFirstEvent) error {
+	prefix, hash := local.prefix, local.hash
+	hubPrefix, hubHash, err := readHubFirstEventHash(ctx, pool, prefix)
 	if err != nil {
 		return wrapSyncErr(stderr, "hub first_event_hash", err)
 	}
@@ -145,7 +179,7 @@ func runSyncInit(ctx context.Context, stdout, stderr io.Writer, args []string, o
 	// upsert must not block init (the gate just lacks this client's row
 	// until its next push refreshes it).
 	if mh := clientMachineHash(); mh != "" {
-		if upErr := pool.UpsertProjectClient(connectCtx, prefix, mh, version); upErr != nil {
+		if upErr := pool.UpsertProjectClient(ctx, prefix, mh, version); upErr != nil {
 			warnSync(stderr, "WARN: version-gate client upsert skipped", upErr)
 		}
 	}
@@ -156,7 +190,7 @@ func runSyncInit(ctx context.Context, stdout, stderr io.Writer, args []string, o
 	// divergence detection. This is the explicit "I claim this
 	// prefix" handshake per FR-18.13 / SYNC-DESIGN section 10.1.
 	if hubPrefix == "" {
-		if err := registerProjectOnHub(connectCtx, pool, prefix, hash); err != nil {
+		if err := registerProjectOnHub(ctx, pool, prefix, hash); err != nil {
 			return wrapSyncErr(stderr, "register project on hub", err)
 		}
 		fmt.Fprintf(stdout,

@@ -5,6 +5,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -75,33 +76,43 @@ type registeredCreate struct {
 // SAME-logical-node (no-op) vs DISTINCT-node (renumber) per ADR-003 §6/§9.
 // Parameterized SQL only; errors redact any DSN.
 //
+// The registered create is the first create of the number, the lowest
+// event_id — the winner the Phase 1 sweep keeps. A hub whose registry
+// index leaves duplicate creates out keeps them in the log, so the lookup
+// orders by event_id and always answers with that winner (MTIX-95.44).
+//
 // excludeEventID lets an idempotent re-push of the SAME create event see
-// the number as free relative to itself: re-pushing a create must be a
-// no-op, never a spurious renumber (ADR-003 §6).
+// the number as free relative to itself: when the winner is that event,
+// the number is free, and re-pushing a create is a no-op, never a
+// spurious renumber (ADR-003 §6).
 func lookupRegisteredCreate(ctx context.Context, tx pgx.Tx, prefix, displayPath, excludeEventID string) (registeredCreate, error) {
 	var (
 		registeredID    string
 		registeredUID   *string
 		registeredEpoch int64
 	)
+	// The first create of the number: the lowest event_id (the sweep's
+	// winner), whatever other creates the log keeps for it.
 	err := tx.QueryRow(ctx, `
 		SELECT event_id, uid, restore_epoch
 		FROM sync_events
 		WHERE project_prefix = $1
 		  AND node_id = $2
 		  AND op_type = 'create_node'
-		  AND event_id <> $3
+		ORDER BY event_id
 		LIMIT 1`,
-		prefix, displayPath, excludeEventID,
+		prefix, displayPath,
 	).Scan(&registeredID, &registeredUID, &registeredEpoch)
-	switch err {
-	case nil:
+	switch {
+	case err == nil && registeredID == excludeEventID:
+		return registeredCreate{}, nil // the winner is this very event: a re-push
+	case err == nil:
 		uid := registeredID // fallback when the stored uid is NULL/empty
 		if registeredUID != nil && *registeredUID != "" {
 			uid = *registeredUID
 		}
 		return registeredCreate{eventID: registeredID, uid: uid, epoch: registeredEpoch}, nil
-	case pgx.ErrNoRows:
+	case errors.Is(err, pgx.ErrNoRows):
 		return registeredCreate{}, nil
 	default:
 		return registeredCreate{}, fmt.Errorf("lookup registry %s/%s: %s",

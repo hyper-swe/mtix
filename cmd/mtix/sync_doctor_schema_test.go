@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
 // TestGradeSchemaCurrent_StateAndMode_ReportsEachGapWithItsFix grades the
@@ -24,8 +26,12 @@ import (
 // meets a restore collision fails until the owner runs the GRANT. Create
 // events stamped with a restore epoch outside 0 to the hub's current
 // epoch are counted, with the owner's printed UPDATE after the other
-// owner steps.
+// owner steps. A registry index that is not valid or not ready is a FAIL
+// in every mode, fixed by the table owner's mtix sync migrate --yes
+// (MTIX-95.44).
 func TestGradeSchemaCurrent_StateAndMode_ReportsEachGapWithItsFix(t *testing.T) {
+	const registryFixStep = "mtix sync migrate --yes while the version gate is open " +
+		"(it drops the index and builds it again)"
 	const grant = "GRANT EXECUTE ON FUNCTION public.record_restore_collision(text, text, text, text, bigint) TO syncer;"
 	const stampFix = "UPDATE public.sync_events SET restore_epoch = 1;"
 	owner := hubObjectState{owners: []string{"mtix_owner"}, ownerIdents: []string{"mtix_owner"},
@@ -85,6 +91,27 @@ func TestGradeSchemaCurrent_StateAndMode_ReportsEachGapWithItsFix(t *testing.T) 
 			wantPass: true, wantWarn: true, wantDetail: []string{"migration 017", "cannot execute record_restore_collision"},
 			notDetail: []string{"pushes keep working"},
 			wantFix:   "as the table owner (mtix_owner): mtix sync init, then " + grant},
+		{name: "a valid and ready registry index passes", state: schemaState{projects: true, canRecord: true, hub: owner,
+			registry: transport.RegistryIndexState{Present: true, Valid: true, Ready: true, SchemaIdent: "public"}},
+			wantPass: true, wantDetail: []string{"ok"}},
+		{name: "a registry index that is not valid fails in default mode", state: schemaState{projects: true,
+			canRecord: true, hub: owner, registry: transport.RegistryIndexState{Present: true, Ready: true, SchemaIdent: "public"}},
+			wantDetail: []string{"the node-number registry index public.sync_events_node_registry_uidx is not valid or " +
+				"not ready (indisvalid false, indisready true): it still refuses a duplicate create, but queries do not " +
+				"use it and it must be built again",
+				"run the fix as the table owner"},
+			notDetail: []string{"strict mode"},
+			wantFix:   "as the table owner (mtix_owner): " + registryFixStep},
+		{name: "a missing registry index warns with the fix", state: schemaState{projects: true, canRecord: true,
+			hub: owner, registry: transport.RegistryIndexState{Table: true}},
+			wantPass: true, wantWarn: true,
+			wantDetail: []string{"sync_events_node_registry_uidx is missing"},
+			wantFix:    "as the table owner (mtix_owner): mtix sync migrate --yes while the version gate is open (it builds the index)"},
+		{name: "a registry index that is not ready fails, after the UPDATE", state: schemaState{projects: true,
+			canRecord: true, hub: owner, stampsOutside: 1, epoch: 0, stampFix: stampFix,
+			registry: transport.RegistryIndexState{Present: true, Valid: true, SchemaIdent: "public"}},
+			wantDetail: []string{"(indisvalid true, indisready false)", "outside 0 to 0"},
+			wantFix:    "as the table owner (mtix_owner): " + stampFix + ", then " + registryFixStep},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -82,12 +82,25 @@ func countEmpty(body string) int {
 	return 0
 }
 
+// The wake exec is a detached spawn whose adapter kills it after its
+// timeout-seconds (internal/hooks ExecAdapter), counted from the spawn, and the
+// test waits for its record with its own deadline (MTIX-107.64). Under heavy
+// parallel load a 10 s budget on both let a slow-starting hook be killed
+// ("signal: killed") before it wrote, so the wake was never observed. Both
+// budgets are failure bounds, not pacing: the wait returns the moment the
+// record appears, and the hook timeout outlives the wait deadline so the test
+// deadline is always the one that reports a real failure.
+const (
+	wakeHookTimeoutSeconds = 120
+	wakeWaitDeadline       = 60 * time.Second
+)
+
 // requireWakes waits for the DETACHED wake exec (MTIX-56.9) to reach exactly n
 // firings, then settles briefly and re-checks so an over-fire cannot hide.
 func requireWakes(t *testing.T, path string, n int, msg string) {
 	t.Helper()
 	require.Eventually(t, func() bool { return wakeCount(t, path) == n },
-		10*time.Second, 25*time.Millisecond, msg)
+		wakeWaitDeadline, 25*time.Millisecond, msg)
 	time.Sleep(200 * time.Millisecond)
 	require.Equal(t, n, wakeCount(t, path), msg)
 }
@@ -119,7 +132,7 @@ hooks:
     deliver: [exec]
     exec:
       command: [%q]
-      timeout-seconds: 10
+      timeout-seconds: %d
   - name: wake-tester
     match:
       events: [comment.addressed]
@@ -127,8 +140,8 @@ hooks:
     deliver: [exec]
     exec:
       command: [%q]
-      timeout-seconds: 10
-`, script, script)), 0o600))
+      timeout-seconds: %d
+`, script, wakeHookTimeoutSeconds, script, wakeHookTimeoutSeconds)), 0o600))
 	// The operator reviews and trusts the config on this host (MTIX-49).
 	require.NoError(t, hooks.SaveTrust(host.mtixDir, hooks.ConfigHash(host.mtixDir)))
 

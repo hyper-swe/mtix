@@ -18,7 +18,9 @@ import (
 
 // validConfigKeys lists all 37 allowed config keys per FR-11.2.
 //
-// The sync.relay.* family configures the FR-21 file transport. It is a
+// The sync.relay.* family configures the FR-21 file transport, which is
+// EXPERIMENTAL and opt-in (trial use; behavior and on-disk format may
+// change in 0.6.0; nothing changes unless sync.relay.dir is set). It is a
 // second transport beside the hub, so its cadence and thresholds are
 // its own settings rather than the hub's: the daemon's tick and a
 // shared medium's propagation are unrelated concerns (D-R12).
@@ -122,8 +124,9 @@ var configDefaults = map[string]string{
 	"sync.max_lamport_jump":      maxLamportJumpDefault,
 	"sync.auto_sync":             "true",
 	"sync.interval":              "30s",
-	// An empty relay directory means no relay is configured; every
-	// relay phase is then a no-op rather than an error.
+	// EXPERIMENTAL, opt-in file relay. An empty relay directory means no
+	// relay is configured; every relay phase is then a no-op rather than
+	// an error.
 	"sync.relay.dir": "",
 	// An operator-assigned relay identity, for peers whose workspace is
 	// rebuilt somewhere else between sessions. Empty derives it from

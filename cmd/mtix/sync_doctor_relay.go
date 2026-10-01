@@ -88,8 +88,7 @@ func appendRelayChecks(ctx context.Context, report DoctorReport) DoctorReport {
 	if metaErr != nil {
 		return appendCheck(report, "relay record", false, relayDoctorHint(metaErr))
 	}
-	report = appendCheck(report, "relay record", true,
-		fmt.Sprintf("relay %s, %s", doc.RelayID, relayModeWord(doc.Authenticated)))
+	report = appendCheck(report, "relay record", true, relayRecordDetail(doc))
 
 	for _, c := range []struct {
 		name string
@@ -106,6 +105,13 @@ func appendRelayChecks(ctx context.Context, report DoctorReport) DoctorReport {
 		report = appendCheck(report, c.name, ok, detail)
 	}
 	return report
+}
+
+// relayRecordDetail renders the "relay record" row. The relay is
+// experimental (trial use; behavior and on-disk format may change in
+// 0.6.0), so the row says so rather than reading as production-ready.
+func relayRecordDetail(doc *metadata.Relay) string {
+	return fmt.Sprintf("relay %s, %s (experimental)", doc.RelayID, relayModeWord(doc.Authenticated))
 }
 
 // relayModeWord renders an authentication mode.

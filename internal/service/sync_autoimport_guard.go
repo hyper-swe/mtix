@@ -151,6 +151,12 @@ func (s *SyncService) refuseLossyImport(mtixDir, fileHash string, diff *sqlite.R
 	return fmt.Errorf("%w: %s", ErrAutoImportRefused, reason)
 }
 
+// replaceNeedsHuman qualifies every offer of `mtix import --mode replace` in
+// a refusal: the command is gated by a typed confirmation no flag supplies
+// (MTIX-90), so an agent that reads the refusal must hand it to the human
+// (MTIX-107.74).
+const replaceNeedsHuman = "it needs the ticket count typed at an interactive terminal, so a human runs it"
+
 // refuseConflict handles a changed tasks.json when the local store changed
 // too since the last sync (FR-15.2h): nothing is imported, and the conflict
 // is recorded for mtix sync and for AutoExport, which then keeps the file.
@@ -168,7 +174,7 @@ func (s *SyncService) refuseConflict(mtixDir, fileHash string, diff *sqlite.Repl
 	if !diff.Lossy() {
 		s.logger.Warn("conflict detected: both tasks.json and local database changed since last sync",
 			"resolution", "merge them with mtix import .mtix/tasks.json --mode merge ("+mergeKeeps+"), keep the file "+
-				"with mtix import .mtix/tasks.json --mode replace, or keep the local store with mtix sync --fix; "+
+				"with mtix import .mtix/tasks.json --mode replace ("+replaceNeedsHuman+"), or keep the local store with mtix sync --fix; "+
 				unchangedRecovery)
 		s.recordRefusal(mtixDir, fileHash, refusalConflict, reason)
 		return nil
@@ -227,7 +233,7 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss) string 
 	b.WriteString("  mtix sync --fix                              keep the local store and rewrite " +
 		".mtix/tasks.json from it; every change in the file is dropped\n")
 	b.WriteString("  mtix import .mtix/tasks.json --mode replace  make the file win and delete the local " +
-		"data listed above (take a copy first: mtix backup <file>)\n")
+		"data listed above (a human runs it: " + replaceNeedsHuman + "; a verified snapshot is written first)\n")
 	b.WriteString("mtix sync shows this refusal.\n")
 	return b.String()
 }

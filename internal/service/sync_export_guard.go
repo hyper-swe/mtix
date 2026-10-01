@@ -36,6 +36,7 @@ func resolutionFor(refusal *AutoImportRefusal) string {
 	if refusal.Loss != "" {
 		replace += ", which deletes " + refusal.Loss
 	}
+	replace += " (" + replaceNeedsHuman + ")"
 	switch refusal.Kind {
 	case refusalNewerSchema:
 		return "It was written by a newer mtix: upgrade mtix, then run any mtix command. " +

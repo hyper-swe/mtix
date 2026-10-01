@@ -21,6 +21,12 @@ import (
 // newRecoverCmd creates the mtix recover command (MTIX-26.5).
 // It must work when the database is too damaged for the store to open,
 // so persistentPreRun skips store initialization for it.
+// recoverNextStep is the hint printed after a salvage. The replace import is
+// gated by a typed ticket count whenever the target store holds tickets, so
+// it is a human's command (MTIX-107.74).
+const recoverNextStep = "Next: review the file, then have the human run 'mtix import --mode replace' on it in a " +
+	"fresh project (when the store holds tickets, it needs the ticket count typed at an interactive terminal)."
+
 func newRecoverCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "recover",
@@ -35,7 +41,11 @@ report, restore with:
 
   mtix import --mode replace .mtix/recovered-<timestamp>.json
 
-into this project (after moving the damaged database aside) or a fresh
+When the store holds tickets, the replace import needs the ticket count typed
+at an interactive terminal (no flag supplies it); a human runs it, and an
+agent hands it over.
+
+Restore into this project (after moving the damaged database aside) or a fresh
 'mtix init' project.`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			_, err := runRecover()
@@ -125,5 +135,5 @@ func printRecoverReport(res *sqlite.RecoverResult, outPath string) {
 	for _, note := range res.Notes {
 		fmt.Printf("  note: %s\n", note)
 	}
-	fmt.Println("\nNext: review the file, then 'mtix import --mode replace' it into a fresh project.")
+	fmt.Println("\n" + recoverNextStep)
 }

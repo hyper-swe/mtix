@@ -116,12 +116,12 @@ func NewWithDefaults(ctx context.Context, dsn string, opts Options, defs PoolDef
 	cfg.HealthCheckPeriod = defs.HealthCheckPeriod
 	if defs.StatementTimeout > 0 {
 		// Apply statement_timeout via SET after connect, NOT as a startup
-		// RuntimeParam. Managed Postgres proxies/poolers (Neon, Supabase)
-		// silently drop unknown startup parameters, so the RuntimeParam
-		// no-ops and the query cap is never enforced on cloud (Neon returns
-		// "0", Supabase its own default). A SET is ordinary SQL the proxy
-		// passes through — verified against Neon (direct + pooler) and the
-		// Supabase session pooler. Runs on every new pooled connection. The
+		// RuntimeParam. Managed Postgres proxies and poolers silently drop
+		// unknown startup parameters, so the RuntimeParam no-ops and the
+		// query cap is never enforced on a managed hub (the server reports
+		// "0" or its own default). A SET is ordinary SQL the proxy passes
+		// through — verified against a direct connection and a session-mode
+		// pooler. Runs on every new pooled connection. The
 		// value is an integer we control, so the formatted SQL carries no
 		// injection surface.
 		stmtTimeoutMS := defs.StatementTimeout.Milliseconds()
@@ -146,7 +146,7 @@ func NewWithDefaults(ctx context.Context, dsn string, opts Options, defs PoolDef
 
 // pingWithRetry runs the initial healthcheck, retrying a few times with
 // exponential backoff on TRANSIENT network errors — a provider that briefly
-// refuses (e.g. a Neon compute waking from scale-to-zero) or a momentary blip
+// refuses (e.g. a scale-to-zero compute waking up) or a momentary blip
 // then succeeds instead of hard-failing the whole open (MTIX-48). Permanent
 // errors (auth, TLS trust, missing database) are not retryable and fail fast.
 // The whole loop is bounded by ctx.
@@ -201,7 +201,7 @@ func isRetryableConnErr(err error) bool {
 
 // hintTLSTrust augments a connection error with actionable guidance when it is
 // a TLS certificate-verification failure and no CA was supplied. Managed
-// Postgres providers (notably Supabase) serve certificates that chain to a
+// Postgres services commonly serve certificates that chain to a
 // PRIVATE CA absent from the system trust store; Go's raw x509 error
 // ("certificate is not standards compliant" / "failed to verify certificate")
 // gives the operator no clue that the fix is a one-line sslrootcert. Non-cert
@@ -222,10 +222,10 @@ func hintTLSTrust(enforcedDSN string, err error) error {
 		return err
 	}
 	return fmt.Errorf("%w\n\nhint: TLS verification failed because the server's "+
-		"certificate chains to a private CA not in the system trust store "+
-		"(common with Supabase and some managed Postgres). Download your "+
-		"provider's CA certificate and add sslrootcert=<path> to the DSN, or "+
-		"export %s=<path>, then retry", err, EnvSSLRootCert)
+		"certificate chains to a private CA not in the system trust store. A hub "+
+		"whose certificate chains to a private CA needs an explicit root "+
+		"certificate: download its CA certificate and add sslrootcert=<ca.pem> "+
+		"to the DSN, or export %s=<ca.pem>, then retry", err, EnvSSLRootCert)
 }
 
 // HealthCheck pings the underlying pool. Returns nil on success.

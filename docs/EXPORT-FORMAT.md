@@ -115,7 +115,9 @@ fails; check it, then import it with `mtix import --recompute-checksum`.
   the store of a machine that imported it from the backup taken before
   that import: `.mtix/data/backups/pre-sync-<time>.db` (0.5.4 and later,
   newest 5 kept) or `.mtix/data/pre-sync-backup.db` (0.5.3 and earlier).
-  Copy it over `.mtix/data/mtix.db` while no mtix process runs. A 0.5.4
+  To restore it, stop every mtix process (the MCP server, `mtix serve` and
+  the sync daemon), copy it over `.mtix/data/mtix.db`, delete
+  `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm`, then continue. A 0.5.4
   store is protected from such a file by the auto-import guard
   (MTIX-95.31.2): the file carries no annotations or activity, so its
   automatic import is refused and nothing changes (see "Automatic import"
@@ -151,7 +153,7 @@ a changed `.mtix/tasks.json`) deletes every node, dependency, agent and
 session, then writes the file's content, every field included. An export
 followed by a replace import leaves the store as it was. The automatic
 import refuses a replace that would delete local data (below); the
-explicit `mtix import --mode replace` does not.
+explicit `mtix import --mode replace` runs no loss check, but since 0.5.4 it needs the ticket count typed at an interactive terminal (no flag supplies it), so an agent hands it to the human.
 
 **Automatic import** (FR-15.2, MTIX-95.31.2). Before it replaces the
 store with a changed `.mtix/tasks.json`, the automatic import runs every
@@ -222,7 +224,7 @@ to a different task, one with another `uid`, is renumbered with its
 subtree to the next number free in both, keeping its `uid`, and applied
 only with `--confirm`),
 `mtix sync --fix` (rewrite the file from the store) and
-`mtix import .mtix/tasks.json --mode replace`. The replace re-checks, in
+`mtix import .mtix/tasks.json --mode replace` (the human's last resort: it needs the ticket count typed at an interactive terminal). The replace re-checks, in
 its own transaction, that the store is unchanged since the comparison; if
 it changed, nothing is written and the next command compares again. A file that only adds or
 changes data is imported, after a verified backup to

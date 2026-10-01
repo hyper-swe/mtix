@@ -30,7 +30,7 @@ import (
 const EnvDSN = "MTIX_SYNC_DSN"
 
 // EnvSSLRootCert names the env var holding a path to the TLS CA bundle
-// per FR-18.15. Managed PG providers (Supabase, Neon, RDS) commonly
+// per FR-18.15. Managed PG services with a private CA commonly
 // require this; the workflow docs in MTIX-15.12 show how to fetch it.
 const EnvSSLRootCert = "MTIX_SYNC_SSLROOTCERT"
 

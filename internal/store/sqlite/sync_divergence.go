@@ -25,7 +25,7 @@ import (
 // errors so the user immediately sees the four resolution paths.
 const DivergentHistoryGuide = "this prefix has divergent history vs the hub. " +
 	"Choose one: " +
-	"--discard-local (drop local, take hub state); " +
+	"--discard-local (drop local, take hub state; a human runs it, typing the ticket count at an interactive terminal); " +
 	"--rename-to NEWPREFIX (rewrite local IDs); " +
 	"--import-as PARENT-ID (re-parent local tree); " +
 	"--dry-run (preview only)"

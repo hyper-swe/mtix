@@ -106,8 +106,8 @@ func runSyncBackup(ctx context.Context, stdout, stderr io.Writer,
 	if conn.sslrootcert == "system" {
 		fmt.Fprintf(stderr, "mtix sync backup: DSN requests TLS verification but names no "+
 			"sslrootcert and no ~/.postgresql/root.crt exists — using the system trust store "+
-			"(PGSSLROOTCERT=system). A private-CA hub (e.g. Supabase) needs an explicit "+
-			"sslrootcert=<ca.pem> in the DSN.\n")
+			"(PGSSLROOTCERT=system). A hub whose certificate chains to a private CA needs an explicit "+
+			"root certificate: sslrootcert=<ca.pem> in the DSN (or MTIX_SYNC_SSLROOTCERT).\n")
 	}
 
 	if err := cmd.Run(); err != nil {

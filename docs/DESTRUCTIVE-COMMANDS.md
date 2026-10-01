@@ -83,6 +83,8 @@ grep -rn "DELETE FROM" --include='*.go' . | grep -v _test.go
 ## Recovering from a confirmed mistake
 
 Every gated command prints the snapshot path before it deletes. To roll
-back, stop any daemon, back up the current database if it has changed
-since, then copy the snapshot over `.mtix/data/mtix.db` and restart. The
+back, stop every mtix process (the MCP server, `mtix serve` and the sync
+daemon), back up the current database if it has changed
+since, then copy the snapshot over `.mtix/data/mtix.db`, delete
+`.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm`, and restart. The
 snapshot is a complete, verified SQLite database.

@@ -66,9 +66,10 @@ a hub row that decodes), and refuses the whole clone when any event
 fails, naming the event and the reason. Clone has no quarantine: on the
 fresh store, run 'mtix sync pull' instead, which quarantines such an
 event and applies the rest. 'mtix sync reconcile --discard-local --yes'
-deletes local tasks and unpushed changes; use it only on a store that
-already holds sync state, after 'mtix sync push', a pending count of 0 in
-'mtix sync status' and a human's go-ahead. Clone reads the hub's event
+deletes local tasks and unpushed changes and needs the ticket count typed
+at an interactive terminal (no flag supplies it), so the human runs it,
+only on a store that already holds sync state, after 'mtix sync push', a
+pending count of 0 in 'mtix sync status' and the human's go-ahead. Clone reads the hub's event
 log twice, once to check it and once to apply it.
 
 Use --resume to pick up an interrupted clone from the last batch
@@ -118,7 +119,8 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 			return fmt.Errorf(
 				"mtix sync clone: local sync_events not empty; " +
 					"either run 'mtix sync clone --resume' or " +
-					"'mtix sync reconcile --discard-local' first")
+					"'mtix sync reconcile --discard-local' first (a human runs that: it needs the " +
+					"ticket count typed at an interactive terminal)")
 		}
 	}
 
@@ -287,7 +289,8 @@ func readCloneCheckpoint(ctx context.Context, store *sqlite.Store, resume bool) 
 	}
 	if v < 0 {
 		return transport.PullCursor{}, fmt.Errorf("checkpoint %q is negative; corrupted state — "+
-			"either restore a backup or run 'mtix sync reconcile --discard-local'", raw.String)
+			"either restore a backup or have the human run 'mtix sync reconcile --discard-local' "+
+			"(it needs the ticket count typed at an interactive terminal)", raw.String)
 	}
 	return transport.PullCursor{Lamport: v, EventID: eventID}, nil
 }

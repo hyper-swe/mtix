@@ -934,7 +934,11 @@ report, restore with:
 
   mtix import --mode replace .mtix/recovered-<timestamp>.json
 
-into this project (after moving the damaged database aside) or a fresh
+When the store holds tickets, the replace import needs the ticket count typed
+at an interactive terminal (no flag supplies it); a human runs it, and an
+agent hands it over.
+
+Restore into this project (after moving the damaged database aside) or a fresh
 'mtix init' project.
 ---
 
@@ -1149,7 +1153,7 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.
 - `push [DSN]` — Push pending events to the sync hub (FR-18)
 - `quarantine` — Inspect events held in the local quarantine
 - `reconcile` — Resolve divergent history (FR-18.13)
-- `relay` — Manage the file-based sync relay (FR-21)
+- `relay` — EXPERIMENTAL: manage the file-based sync relay (FR-21)
 - `repair` — Repair local state from the local sync event log (--status)
 - `repair-uids [DSN]` — Stamp hub create rows with their node uid (upgrade step for pre-MTIX-91 pushes)
 - `status` — Show local sync state (counts + sentinels)
@@ -1234,9 +1238,10 @@ a hub row that decodes), and refuses the whole clone when any event
 fails, naming the event and the reason. Clone has no quarantine: on the
 fresh store, run 'mtix sync pull' instead, which quarantines such an
 event and applies the rest. 'mtix sync reconcile --discard-local --yes'
-deletes local tasks and unpushed changes; use it only on a store that
-already holds sync state, after 'mtix sync push', a pending count of 0 in
-'mtix sync status' and a human's go-ahead. Clone reads the hub's event
+deletes local tasks and unpushed changes and needs the ticket count typed
+at an interactive terminal (no flag supplies it), so the human runs it,
+only on a store that already holds sync state, after 'mtix sync push', a
+pending count of 0 in 'mtix sync status' and the human's go-ahead. Clone reads the hub's event
 log twice, once to check it and once to apply it.
 
 Use --resume to pick up an interrupted clone from the last batch
@@ -1670,11 +1675,16 @@ See 'mtix sync init' for divergent-history detection.
 
 **Usage:** `relay`
 
-Manage the file-based sync relay (FR-21)
+EXPERIMENTAL: manage the file-based sync relay (FR-21)
 
-Operate a sync transport that carries events through a shared
-directory — a mounted folder, a network filer, removable media —
-for peers that cannot reach a database.
+EXPERIMENTAL and opt-in. Operate a sync transport that carries events
+through a shared directory — a mounted folder, a network filer,
+removable media — for peers that cannot reach a database.
+
+In this release the relay is experimental, meaning supported for trial use:
+its behavior and on-disk format may change in 0.6.0, and it is not yet
+covered by the release gate. It is opt-in: nothing changes unless
+sync.relay.dir is set.
 
 ### Subcommands
 

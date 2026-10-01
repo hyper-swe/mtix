@@ -32,11 +32,13 @@ var errCloneRefused = errors.New("clone refused")
 // `mtix sync reconcile --discard-local --yes` deletes local tasks and
 // unpushed changes (its dry run shows only the node count), so it is named
 // only for a store that already holds sync state, after a push, a pending
-// count of 0 and a human's go-ahead.
+// count of 0 and a human's go-ahead. It also needs the ticket count typed at
+// an interactive terminal, so only a human can run it (MTIX-107.74).
 const cloneRecovery = "Clone has no quarantine: on a fresh store, run 'mtix sync pull' instead, which " +
 	"quarantines the event and applies the rest. Only on a store that already holds sync state does " +
 	"'mtix sync reconcile --discard-local --yes' come first; it deletes local tasks and unpushed changes, so " +
-	"before it run 'mtix sync push', check that 'mtix sync status' shows pending 0, and get a human's go-ahead"
+	"before it run 'mtix sync push', check that 'mtix sync status' shows pending 0, and get a human's go-ahead; " +
+	"it needs the ticket count typed at an interactive terminal (no flag supplies it), so the human runs it"
 
 // cloneRefusal is the error of a clone refused on e. written says whether
 // earlier batches were already applied (an event pushed to the hub during

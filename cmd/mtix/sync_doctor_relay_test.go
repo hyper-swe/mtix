@@ -120,3 +120,11 @@ func TestRelayStallRecovery_NamesACommandForEveryVerdict(t *testing.T) {
 	require.NotEmpty(t, relayStallRecovery(""),
 		"even an unclassified failure must say what to try")
 }
+
+// TestRelayRecordDetail_MarksRelayExperimental: the doctor's "relay record"
+// row never presents the relay as production-ready (MTIX-95.48).
+func TestRelayRecordDetail_MarksRelayExperimental(t *testing.T) {
+	got := relayRecordDetail(&metadata.Relay{RelayID: "r1", Authenticated: true})
+	require.Contains(t, got, "relay r1, authenticated", "existing detail text is kept")
+	require.Contains(t, got, "experimental")
+}

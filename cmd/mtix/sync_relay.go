@@ -38,10 +38,14 @@ const relayKeysSubdir = "relay/keys"
 func newSyncRelayCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "relay",
-		Short: "Manage the file-based sync relay (FR-21)",
-		Long: "Operate a sync transport that carries events through a shared\n" +
-			"directory — a mounted folder, a network filer, removable media —\n" +
-			"for peers that cannot reach a database.",
+		Short: "EXPERIMENTAL: manage the file-based sync relay (FR-21)",
+		Long: "EXPERIMENTAL and opt-in. Operate a sync transport that carries events\n" +
+			"through a shared directory — a mounted folder, a network filer,\n" +
+			"removable media — for peers that cannot reach a database.\n\n" +
+			"In this release the relay is experimental, meaning supported for trial use:\n" +
+			"its behavior and on-disk format may change in 0.6.0, and it is not yet\n" +
+			"covered by the release gate. It is opt-in: nothing changes unless\n" +
+			"sync.relay.dir is set.",
 	}
 	cmd.AddCommand(
 		newRelayInitCmd(),

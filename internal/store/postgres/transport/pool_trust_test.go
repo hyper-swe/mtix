@@ -5,6 +5,13 @@ package transport
 
 import (
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -75,5 +82,70 @@ func TestIsRetryableConnErr(t *testing.T) {
 				t.Fatalf("isRetryableConnErr(%q) = %v, want %v", tc.err, got, tc.retry)
 			}
 		})
+	}
+}
+
+// TestHintTLSTrust_NamesNoProviderAndGivesCapabilityFix: the hint states the
+// fix as capability wording (a private-CA hub needs an explicit root
+// certificate) and names no hosting provider (MTIX-107.38).
+func TestHintTLSTrust_NamesNoProviderAndGivesCapabilityFix(t *testing.T) {
+	t.Setenv(EnvSSLRootCert, "")
+	certErr := errors.New("tls: failed to verify certificate: x509: unknown authority")
+	got := hintTLSTrust("postgres://u@host:5432/db?sslmode=verify-full", certErr).Error()
+	for _, want := range []string{"private CA", "sslrootcert=<ca.pem>", EnvSSLRootCert} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("hint missing %q: %s", want, got)
+		}
+	}
+	if providerNameRE.MatchString(got) {
+		t.Fatalf("hint names a provider: %s", got)
+	}
+}
+
+// providerNameRE matches the hosting and database provider names that shipped
+// text must not carry (CLAUDE.md provider-neutral rule), on word boundaries.
+var providerNameRE = regexp.MustCompile(`(?i)\b(supabase|neon|aurora|rds|cloud sql|alloydb)\b`)
+
+// TestNoProviderNameInShippedGoStringLiterals: no non-test Go string literal
+// under cmd/ or internal/ names a hosting or database provider (MTIX-107.38).
+func TestNoProviderNameInShippedGoStringLiterals(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "..")
+	fset := token.NewFileSet()
+	scanned := 0
+	for _, dir := range []string{"cmd", "internal"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			f, perr := parser.ParseFile(fset, path, nil, 0)
+			if perr != nil {
+				return perr
+			}
+			scanned++
+			ast.Inspect(f, func(n ast.Node) bool {
+				lit, ok := n.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					return true
+				}
+				val, uerr := strconv.Unquote(lit.Value)
+				if uerr != nil {
+					val = lit.Value
+				}
+				if m := providerNameRE.FindString(val); m != "" {
+					t.Errorf("%s: string literal names provider %q", fset.Position(lit.Pos()), m)
+				}
+				return true
+			})
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", dir, err)
+		}
+	}
+	if scanned < 50 {
+		t.Fatalf("scanned only %d files; the walk is not reaching cmd/ and internal/", scanned)
 	}
 }

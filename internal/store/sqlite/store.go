@@ -314,6 +314,11 @@ func (s *Store) init(ctx context.Context) error {
 		return err
 	}
 
+	// Unique uid index (MTIX-95.31.8), before the backfill mints uids.
+	if err := s.ensureUniqueUIDIndex(ctx); err != nil {
+		return err
+	}
+
 	// Deterministic UID backfill for pre-v3 rows, then a backfill uid for
 	// any node still without one (after schemaSQL so the uid index exists;
 	// idempotent — only fills empty uids; MTIX-95.31.9).

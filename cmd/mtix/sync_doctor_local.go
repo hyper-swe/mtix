@@ -21,5 +21,26 @@ func appendLocalStoreChecks(ctx context.Context, r DoctorReport, st *sqlite.Stor
 		orphanOK, detail := checkNoOrphanApplied(ctx, st)
 		r = appendCheck(r, "no orphan applied", orphanOK, detail)
 	}
-	return appendQuarantineCheck(ctx, r, st)
+	r = appendQuarantineCheck(ctx, r, st)
+	return appendUniqueUIDCheck(ctx, r, st)
+}
+
+// uniqueUIDCheckName is the name of the doctor's unique-uid check.
+const uniqueUIDCheckName = "unique node uids"
+
+// appendUniqueUIDCheck adds the doctor's "unique node uids" check
+// (MTIX-95.31.8): it fails while two nodes share a uid, naming each uid, its
+// nodes and the exact recovery, and passes otherwise. Local only.
+func appendUniqueUIDCheck(ctx context.Context, r DoctorReport, st *sqlite.Store) DoctorReport {
+	if st == nil {
+		return appendCheck(r, uniqueUIDCheckName, false, "local store not initialized")
+	}
+	report, err := st.DuplicateNodeUIDsReport(ctx)
+	if err != nil {
+		return appendCheck(r, uniqueUIDCheckName, false, err.Error())
+	}
+	if report != "" {
+		return appendCheck(r, uniqueUIDCheckName, false, report)
+	}
+	return appendCheck(r, uniqueUIDCheckName, true, "ok")
 }

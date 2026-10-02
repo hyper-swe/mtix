@@ -17,6 +17,7 @@ type VerifyResult struct {
 	SequenceOK   bool     `json:"sequence_ok"`
 	ProgressOK   bool     `json:"progress_ok"`
 	FTSOK        bool     `json:"fts_ok"`
+	UIDUniqueOK  bool     `json:"uid_unique_ok"`
 	AllPassed    bool     `json:"all_passed"`
 	Errors       []string `json:"errors,omitempty"`
 }
@@ -52,8 +53,13 @@ func (s *Store) Verify(ctx context.Context) (*VerifyResult, error) {
 		return nil, fmt.Errorf("FTS check: %w", err)
 	}
 
+	// 6. No two nodes share a non-empty uid (MTIX-95.31.8).
+	if err := s.verifyUIDUnique(ctx, result); err != nil {
+		return nil, fmt.Errorf("uid uniqueness check: %w", err)
+	}
+
 	result.AllPassed = result.IntegrityOK && result.ForeignKeyOK &&
-		result.SequenceOK && result.ProgressOK && result.FTSOK
+		result.SequenceOK && result.ProgressOK && result.FTSOK && result.UIDUniqueOK
 
 	return result, nil
 }

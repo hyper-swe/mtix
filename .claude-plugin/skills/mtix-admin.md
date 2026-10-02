@@ -1,5 +1,5 @@
 ---
-description: "Administer MTIX project using mtix. Use when backing up data, exporting/importing tasks, running garbage collection, managing configuration, verifying data integrity, repairing workflow state that an older sync pull reverted, handling events that sync pull quarantined, events that sync push holds because a field is over the sync limit, or a sync push pending queue that never drains."
+description: "Administer MTIX project using mtix. Use when backing up data, exporting/importing tasks, running garbage collection, managing configuration, verifying data integrity, repairing workflow state that an older sync pull reverted, handling events that sync pull quarantined, tasks that share a uid (doctor check unique node uids), events that sync push holds because a field is over the sync limit, or a sync push pending queue that never drains."
 allowed-tools:
   - mcp__mtix__mtix_export
   - mcp__mtix__mtix_import
@@ -193,6 +193,30 @@ mtix sync push
 - Never try to get past a refused `mtix sync clone` by any means other than `mtix sync pull` on the fresh store; the refusal is what keeps an event the pull would quarantine out of the store.
 - Never run `mtix sync reconcile --discard-local --yes` yourself: it needs the ticket count typed at an interactive terminal (no flag supplies it) and a human; hand it over only after `mtix sync push`, with `mtix sync status` showing `pending` 0 and the human's go-ahead, because it deletes local tasks and unpushed changes.
 - Never copy quarantined events into tickets or shared documents beyond the event ids and reasons; the raw events hold task content.
+
+## Quarantined Pulled Events: uid held by a local task
+
+A pulled `create_node` event whose uid a different local task already holds is not applied and not dropped: it is quarantined with the reason `uid <u> is held by local task <id>` and retried on every pull. `mtix sync quarantine list` shows it and the doctor's `quarantined events` check names this step.
+
+**Decide which case it is:** run `mtix show <id>` and compare it with the quarantined event's title and content. A uid names one task for good (ADR-003), so the same uid means the same task: the same title and content means the task exists twice under two ids, and different content means the uid was duplicated (an old import, a restored copy). No mtix command resolves either case in this version (tracked as MTIX-95.31.8.1; `mtix sync reconcile` keeps uids, so it does not apply).
+
+**Never:** delete the local task, edit `sync_quarantine` rows, or clear the uid yourself. Escalate to a human with the uid, the local task id and the event id, and stop.
+
+**Verify:** `mtix sync pull` retries it; `mtix sync doctor` passes `quarantined events` and `mtix sync quarantine list --json` no longer shows the event.
+
+## Recovery: Duplicate Task UIDs
+
+Every task has a durable uid, and no two tasks (soft-deleted ones included) may share one: the local database enforces it with a unique index. A database written by an older mtix can already hold two tasks with one uid. mtix still opens it, loses no row and changes no uid, logs `duplicate_node_uids`, and keeps the old non-unique index until the duplicates are gone.
+
+**Recognize:** `mtix verify` prints `INTEGRITY FAILURE` (with `--json`, `uid_unique_ok` is false and `uid_unique_recovery` holds the text), or `mtix sync doctor` fails its `unique node uids` check (exit 2; with `--json` the check has `"pass": false` and the detail). The detail names each shared uid and the task ids that hold it.
+
+**Fix:** (1) Back up first: `mtix backup .mtix/data/backups/pre-uid-fix.db`. (2) Decide which task keeps the uid, normally the original (the one the hub and teammates know). (3) For every other holder, clear its uid in the local database, `UPDATE nodes SET uid = '' WHERE id = '<id>';` (for example with the `sqlite3` shell on `.mtix/data/mtix.db`), while no mtix process is running. (4) Run any `mtix` command: the open gives that task a fresh uid and creates the unique index.
+
+**Synced project: escalate to a human; do not run the fix yourself.** The project syncs if `mtix sync status` shows a `project_prefix` other than `-` or a `pushed` or `applied` count above 0, `MTIX_SYNC_DSN` is set, or `.mtix/secrets` exists (when in doubt, treat the project as synced). A task given a new uid has no create event on the hub or at any peer, and events already queued locally under the shared uid are applied to the other holder, not to it. No mtix command repairs this on a synced project in this version (tracked as MTIX-95.31.8.1). Report the uids and task ids from the detail, ask the human to run `mtix sync push` until `mtix sync status` shows `pending` 0 before anything is changed, and stop.
+
+**Verify:** `mtix verify` prints `All node uids unique` and `mtix sync doctor` passes the `unique node uids` check.
+
+**Never:** delete a task row to remove a duplicate, or edit uids on tasks that are not listed.
 
 ## Sync Recovery: Held Push Events
 

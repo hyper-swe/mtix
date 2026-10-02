@@ -1414,7 +1414,7 @@ Use --install to print a systemd unit (linux) or launchd plist
 
 Run sync health checks (FR-18)
 
-Run 7 health checks against the local store and the BYO Postgres hub:
+Run 8 health checks against the local store and the BYO Postgres hub:
 
   1. PG reachable           — opens pool + Ping
   2. Schema current         — sync_projects table exists with expected columns
@@ -1428,6 +1428,8 @@ Run 7 health checks against the local store and the BYO Postgres hub:
                               depends on a held task creation; names the fix
                               for each ('mtix sync quarantine list')
   7. DSN secrets file mode  — .mtix/secrets is mode 0600 (when present)
+  8. Unique node uids      — no two tasks share a uid; names each uid, its tasks
+                              and the recovery (see 'mtix verify')
 
 Exit code: 0 on all-pass, 2 if any check fails. --json output for
 agents and CI consumption.

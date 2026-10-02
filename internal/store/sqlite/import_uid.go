@@ -51,6 +51,10 @@ type ImportReconcileOptions struct {
 	// flight would then mark, as pushed, the events it sent under the old
 	// one. An error from it stops the import, which writes nothing.
 	HoldPush func() (release func(), err error)
+	// Workflow settles the tasks whose status, assignee, agent state or
+	// wake time differ between the store and the file; without it a merge
+	// that finds one is refused, writing nothing (MTIX-95.31.13).
+	Workflow WorkflowResolution
 }
 
 // ImportConflictKind classifies an import-boundary uid collision (audit F-3).
@@ -142,6 +146,11 @@ type ImportReconcileReport struct {
 	// Idempotent counts incoming nodes that were an exact uid+display_path
 	// no-op against the local store (ADR-003 §6).
 	Idempotent int
+	// WorkflowConflicts are the tasks whose workflow values differ between
+	// the store and the file, with the choice made for each (empty while
+	// unresolved); a merge with an unresolved one writes nothing
+	// (MTIX-95.31.13).
+	WorkflowConflicts []WorkflowConflict
 	// Applied is true once the (possibly rewritten) import has been committed.
 	Applied bool
 }
@@ -191,7 +200,8 @@ func (r *ImportReconcileReport) String() string {
 			fmt.Fprintf(&b, "    - uid=%s %s -> %s\n", m.UID, m.OldPath, m.NewPath)
 		}
 	}
-	writeUIDAdoptions(&b, r.UIDAdoptions) // MTIX-95.31.6
+	writeUIDAdoptions(&b, r.UIDAdoptions)                      // MTIX-95.31.6
+	writeWorkflowConflicts(&b, r.WorkflowConflicts, r.Applied) // MTIX-95.31.13
 	return b.String()
 }
 
@@ -280,6 +290,7 @@ func (s *Store) ImportReconcile(
 	// caller's step before any write, once every check passed (MTIX-95.31.4).
 	writeOpts, err := s.prepareWrite(ctx, data, opts, report, moves)
 	if err != nil {
+		report.noteWorkflowConflicts(err)
 		return report, nil, err
 	}
 
@@ -295,8 +306,11 @@ func (s *Store) ImportReconcile(
 	}
 	result, err := s.Import(ctx, data, opts.Mode, opts.Force, writeOpts...)
 	if err != nil {
+		report.noteWorkflowConflicts(err)
 		return report, nil, err
 	}
+	report.WorkflowConflicts = result.WorkflowResolved // MTIX-95.31.13
+	report.Idempotent -= countIdempotent(result.WorkflowResolved)
 	report.Applied = true
 	result.UIDAdoptions = report.UIDAdoptions // MTIX-95.31.6: --json lists them too
 	return report, result, nil

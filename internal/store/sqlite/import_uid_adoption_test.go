@@ -139,6 +139,9 @@ func TestImportReconcile_MergeAdoptingUIDs_ReportsEachAdoption(t *testing.T) {
 
 			report, result, err := s.local.ImportReconcile(ctx, exportOf(t, s.teammate), sqlite.ImportReconcileOptions{
 				Mode: tt.mode, Confirm: tt.confirm,
+				// MTIX-95.31.13: a local delete the file lacks is a workflow conflict;
+				// keep it, for that row only, so no other case hides a spurious conflict.
+				Workflow: sqlite.WorkflowResolution{Ours: oursFor(tt.name)},
 			})
 			require.NotNil(t, report)
 			assert.Equal(t, want, report.UIDAdoptions)
@@ -288,4 +291,13 @@ func TestImportReconcileReport_String_TwoAdoptionsDifferingFirst_CountsBothAndWa
 	out := report.String()
 	assert.Contains(t, out, "  uids adopted from the file (the same task under another uid): 2\n")
 	assert.True(t, containsLine(out, titlesDifferNote), out)
+}
+
+// oursFor returns the ids to keep local for the case that deletes REC-1
+// locally: only that case has a workflow conflict (MTIX-95.31.13).
+func oursFor(name string) []string {
+	if name == "a soft-deleted local task" {
+		return []string{"REC-1"}
+	}
+	return nil
 }

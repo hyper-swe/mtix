@@ -458,6 +458,7 @@ func newRelayRetirePeerCmd() *cobra.Command {
 
 func newRelayCloneCmd() *cobra.Command {
 	var export bool
+	var f importFlags
 	cmd := &cobra.Command{
 		Use:   "clone",
 		Short: "Export or import a bootstrap snapshot",
@@ -473,10 +474,18 @@ func newRelayCloneCmd() *cobra.Command {
 			if export {
 				return runRelayCloneExport(ctx, cmd, dir)
 			}
-			return runRelayCloneImport(ctx, cmd, dir)
+			return runRelayCloneImport(ctx, cmd, dir, f)
 		},
 	}
 	cmd.Flags().BoolVar(&export, "export", false, "Produce a snapshot instead of consuming one")
+	cmd.Flags().StringVar(&f.prefer, "prefer", "",
+		"Import only: for every task whose status, assignee, agent state, wake time or deletion state differs from "+
+			"the snapshot's, take the snapshot's values (theirs) or keep yours (ours); without a choice such an import "+
+			"is reported and writes nothing")
+	cmd.Flags().StringSliceVar(&f.theirs, "theirs", nil,
+		"Import only: comma-separated task ids whose differing workflow values take the snapshot's")
+	cmd.Flags().StringSliceVar(&f.ours, "ours", nil,
+		"Import only: comma-separated task ids whose differing workflow values keep yours")
 	return cmd
 }
 
@@ -541,7 +550,14 @@ func runRelayCloneExport(ctx context.Context, cmd *cobra.Command, dir string) er
 }
 
 // runRelayCloneImport consumes the newest snapshot in the relay.
-func runRelayCloneImport(ctx context.Context, cmd *cobra.Command, dir string) error {
+// A snapshot task whose status, assignee, agent state, wake time or deletion
+// state differs from the local one refuses the import until --prefer,
+// --theirs or --ours settles it (MTIX-95.31.13).
+func runRelayCloneImport(ctx context.Context, cmd *cobra.Command, dir string, f importFlags) error {
+	f.mode = "merge"
+	if flagErr := checkWorkflowFlags(f); flagErr != nil {
+		return flagErr
+	}
 	names, err := bootstrap.SnapshotNames(dir)
 	if err != nil {
 		return err
@@ -551,8 +567,12 @@ func runRelayCloneImport(ctx context.Context, cmd *cobra.Command, dir string) er
 			filepath.Join(dir, bootstrap.DirName))
 	}
 	path := filepath.Join(dir, bootstrap.DirName, names[len(names)-1])
-	res, err := bootstrap.ImportSnapshot(ctx, bootstrap.ImportRequest{Store: app.store, Path: path,
-		Options: sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge, HoldPush: holdPushForAdoption}})
+	opts := sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge, Workflow: workflowResolution(f),
+		HoldPush: holdPushForAdoption} // MTIX-95.31.16: an adopted uid moves pending events under the push lock
+	res, err := bootstrap.ImportSnapshot(ctx, bootstrap.ImportRequest{Store: app.store, Path: path, Options: opts})
+	if res.Report != nil {
+		fmt.Fprint(cmd.ErrOrStderr(), res.Report.String())
+	}
 	if err != nil {
 		return err
 	}

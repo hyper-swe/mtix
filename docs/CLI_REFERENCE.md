@@ -642,8 +642,11 @@ Import nodes from JSON export
 | `--force` |  | Allow importing zero nodes into a non-empty database | false |
 | `--force-rename` |  | On an incoming uid that collides with a different local node, re-stamp the import node with a fresh local uid instead of rejecting (ADR-003 §6) | false |
 | `--mode` |  | Import mode: merge, or replace (DELETES every existing ticket first; typed confirmation required) | merge |
+| `--ours` |  | Merge only: comma-separated task ids whose differing status, assignee, agent state, wake time and deletion state keep your values | [] |
+| `--prefer` |  | Merge only: for every task whose status, assignee, agent state, wake time or deletion state differs from the file's, take the file's values (theirs) or keep yours (ours); without a choice such a merge is reported and writes nothing |  |
 | `--recompute-checksum` |  | Recovery only (MTIX-26.5): replace the file's checksum with one computed over its current content, accepting hand-reconstructed exports | false |
 | `--remap-file` |  | Write the uid-keyed remap (uid -> new display_path) to this JSON file (ADR-003 §6) |  |
+| `--theirs` |  | Merge only: comma-separated task ids whose differing status, assignee, agent state, wake time and deletion state take the file's values | [] |
 ---
 
 ## inbox
@@ -1723,6 +1726,9 @@ begins tailing from the stamped positions.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--export` |  | Produce a snapshot instead of consuming one | false |
+| `--ours` |  | Import only: comma-separated task ids whose differing workflow values keep yours | [] |
+| `--prefer` |  | Import only: for every task whose status, assignee, agent state, wake time or deletion state differs from the snapshot's, take the snapshot's values (theirs) or keep yours (ours); without a choice such an import is reported and writes nothing |  |
+| `--theirs` |  | Import only: comma-separated task ids whose differing workflow values take the snapshot's | [] |
 ---
 
 ## init

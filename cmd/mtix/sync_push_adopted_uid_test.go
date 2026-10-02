@@ -231,7 +231,7 @@ func TestRelayClone_AdoptingUIDDuringPush_IsRefused(t *testing.T) {
 
 	lock, err := pushlock.Acquire(app.mtixDir)
 	require.NoError(t, err)
-	err = runRelayCloneImport(context.Background(), &cobra.Command{Use: "clone"}, dir)
+	err = runRelayCloneImport(context.Background(), &cobra.Command{Use: "clone"}, dir, importFlags{})
 	require.ErrorContains(t, err, "push is running")
 	require.NoError(t, lock.Release())
 	node, err := app.store.GetNode(context.Background(), "TEST-1")

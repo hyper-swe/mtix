@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // A held creation whose task no node's uid finds (MTIX-95.12 run 2, review
@@ -27,6 +28,18 @@ import (
 // one uid was assigned later, so the merge treats them as the same task and
 // adopts the file's uid. It returns that uid.
 func adoptFileUID(t *testing.T, nodeID string) string {
+	t.Helper()
+	uid, err := tryAdoptFileUID(t, nodeID)
+	require.NoError(t, err)
+	node, err := app.store.GetNode(context.Background(), nodeID)
+	require.NoError(t, err)
+	require.Equal(t, uid, node.UID, "the merge adopted the file's uid")
+	return uid
+}
+
+// tryAdoptFileUID is adoptFileUID without the checks on the outcome: it
+// returns the uid the file gives nodeID and the merge import's error.
+func tryAdoptFileUID(t *testing.T, nodeID string) (string, error) {
 	t.Helper()
 	ctx := context.Background()
 	data, err := app.store.Export(ctx, "", "")
@@ -44,11 +57,7 @@ func adoptFileUID(t *testing.T, nodeID string) string {
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "board.json")
 	require.NoError(t, os.WriteFile(path, board, 0o600))
-	require.NoError(t, runImport(path, importFlags{mode: "merge", recomputeChecksum: true}))
-	node, err := app.store.GetNode(ctx, nodeID)
-	require.NoError(t, err)
-	require.Equal(t, uid, node.UID, "the merge adopted the file's uid")
-	return uid
+	return uid, runImport(path, importFlags{mode: "merge", recomputeChecksum: true})
 }
 
 // queueWithoutUID makes nodeID's creation one queued before events carried
@@ -98,13 +107,14 @@ func TestPushLoop_HeldCreationWhoseUIDNoNodeHas_TaskAndSubtreeHeld(t *testing.T)
 			require.NoError(t, runCreate("held", "", "", 3, "", overWireCap(), "", "", ""))
 			require.NoError(t, runCreate("other", "", "", 3, "", "", "", "", ""))
 			require.NoError(t, runUpdate("TEST-1", "edit before", "", "", "", 0, "", ""))
-			root := eventIDFor(t, "TEST-1", model.OpCreateNode)
 			before := eventIDFor(t, "TEST-1", model.OpUpdateField)
 			hub := newFakePushHub()
 			if tt.pushFirst {
 				require.NoError(t, pushWith(t, hub))
 			}
 			tt.loseUID(t)
+			// A merge's adopted uid is also the creation's new event id (MTIX-95.31.16).
+			root := eventIDFor(t, "TEST-1", model.OpCreateNode)
 			require.NoError(t, runUpdate("TEST-1", "edit after", "", "", "", 0, "", ""))
 			require.NoError(t, runComment("TEST-1", "comment after", ""))
 			require.NoError(t, runCreate("child", "TEST-1", "", 3, "", "", "", "", ""))
@@ -132,4 +142,30 @@ func TestPushLoop_HeldCreationWhoseUIDNoNodeHas_TaskAndSubtreeHeld(t *testing.T)
 			requireSent(t, hub, "TEST-2", model.OpUpdateField)
 		})
 	}
+}
+
+// autoImportFileUID gives nodeID the file's uid through the automatic import
+// after a git pull (replace mode): this store's board, with nodeID under a
+// marked backfill uid, is written to .mtix/tasks.json and imported by
+// SyncService.AutoImport. It returns that uid and the import's error.
+func autoImportFileUID(t *testing.T, nodeID string) (string, error) {
+	t.Helper()
+	ctx := context.Background()
+	require.NotNil(t, app.syncSvc)
+	data, err := app.store.Export(ctx, "", "")
+	require.NoError(t, err)
+	uid, err := model.NewBackfillUID()
+	require.NoError(t, err)
+	found := false
+	for i := range data.Nodes {
+		if data.Nodes[i].ID == nodeID {
+			data.Nodes[i].UID, found = uid, true
+		}
+	}
+	require.True(t, found, "%s is on the board", nodeID)
+	require.NoError(t, sqlite.RecomputeExportChecksum(data))
+	board, err := json.MarshalIndent(data, "", "  ")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(app.mtixDir, "tasks.json"), board, 0o600))
+	return uid, app.syncSvc.AutoImport(ctx, app.mtixDir)
 }

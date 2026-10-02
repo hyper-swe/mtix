@@ -135,6 +135,9 @@ func mergeUnchangedContent(ctx context.Context, tx *sql.Tx, merged *exportNode, 
 		if _, err := tx.ExecContext(ctx, `UPDATE nodes SET uid = ? WHERE id = ?`, merged.UID, merged.ID); err != nil {
 			return 0, fmt.Errorf("adopt the file's uid for node %s: %w", merged.ID, err)
 		}
+		if err := carryAdoptedUID(ctx, tx, merged.ID, localUID, merged.UID); err != nil {
+			return 0, err
+		}
 	}
 	return importActionUpdated, nil
 }

@@ -547,7 +547,8 @@ func runRelayCloneImport(ctx context.Context, cmd *cobra.Command, dir string) er
 			filepath.Join(dir, bootstrap.DirName))
 	}
 	path := filepath.Join(dir, bootstrap.DirName, names[len(names)-1])
-	res, err := bootstrap.ImportSnapshot(ctx, bootstrap.ImportRequest{Store: app.store, Path: path})
+	res, err := bootstrap.ImportSnapshot(ctx, bootstrap.ImportRequest{Store: app.store, Path: path,
+		Options: sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge, HoldPush: holdPushForAdoption}})
 	if err != nil {
 		return err
 	}

@@ -865,10 +865,31 @@ of the queue the client stopped pushing altogether.
    and the held creation is filed under that task's current number, where
    every later change of the task, whatever uid it carries, and its
    subtree are found; a task that has taken that number since is held
-   too. Known limit: when a task found by that number is then renumbered
-   on this machine, its events that no push checked before the renumber
-   are not recognized (MTIX-95.31.16 carries an adopted uid onto unpushed
-   events). An event of a task whose own creation is held is
+   too. When a merge import gives a task the file's uid (MTIX-95.31.6), the
+   uid column of its pending `sync_events`, and the `uid` inside the raw
+   event of each of its held push events in `sync_quarantine`, move to the
+   adopted uid in the import's transaction (MTIX-95.31.16, `carryAdoptedUID`):
+   a task's unpushed events, a held creation included, never name a uid the
+   task has given up. A pending event queued without a uid takes the
+   adopted uid too. Pushed events are history and keep theirs; payloads
+   carry numbers (`parent_id`, `depends_on_node_id`), never uids. A
+   pending creation keeps the rule that its uid is its event id (ADR-003
+   §2): it takes the adopted uid as its event id too, with its held copy and
+   the reason of each held event that names it, unless an event already has
+   that id (`renameAdoptedCreation`), so the hub's renumber-required outcome,
+   which names the event id, still finds the task (`RenumberForHubRejection`).
+   The carry runs under the push lock (`ImportReconcileOptions.HoldPush`) for
+   every path that changes a task's uid: the merge import, the relay clone,
+   and the replace of the automatic import (`carryReplacedUIDs`, for a task
+   that keeps its id and title). The automatic import is skipped with a
+   one-line notice while a push runs, never fails the command and leaves the
+   pulled board to the next command. The carry for a merge or clone:
+   a merge that adopts a uid is refused, and writes nothing, while a push
+   runs, because a push in flight would otherwise mark as pushed the events
+   it sent under the old uid and send the renamed creation again. Known
+   limit (experimental relay, FR-21): the relay publishes `sync_events` by
+   row order, so an event already published keeps its old uid on relay
+   peers. An event of a task whose own creation is held is
    held by its uid alone, node or not. Any other event without a `uid`,
    or whose uid no node has any more (`mtix gc` purged the task), is
    checked by the number it names against the number each held creation's

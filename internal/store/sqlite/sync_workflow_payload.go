@@ -91,13 +91,13 @@ func malformedPayload(op model.OpType, cause error) error {
 }
 
 // workflowInputForApply reads a winning workflow event with the workflow
-// payload rule and returns its input for applyWorkflowWinner, with updatedAt
-// (the caller's apply time) as updated_at (MTIX-95.27).
+// payload rule and returns its input for applyWorkflowWinner, with applyTime
+// as updated_at and as the stand-in for an unusable event time (eventTime) (MTIX-95.27).
 //
 // ok is false when the payload is malformed. A warning then names the event
 // and its op, and the caller changes no node column and returns nil, so the
 // event is still recorded as applied and the rest of the pull batch applies.
-func workflowInputForApply(e *model.SyncEvent, updatedAt string) (workflowInput, bool) {
+func workflowInputForApply(e *model.SyncEvent, applyTime time.Time) (workflowInput, bool) {
 	p, err := decodeWorkflowPayload(e.OpType, e.Payload)
 	if err != nil {
 		slog.Default().Warn("sync apply: malformed workflow event; node left unchanged",
@@ -106,6 +106,6 @@ func workflowInputForApply(e *model.SyncEvent, updatedAt string) (workflowInput,
 	}
 	return workflowInput{
 		op: e.OpType, from: p.from, to: p.to, agentID: p.agentID, deferUntil: p.deferUntil,
-		wallClockTS: e.WallClockTS, updatedAt: updatedAt,
+		eventAt: eventTime(e.WallClockTS, applyTime), updatedAt: applyTime.Format(time.RFC3339),
 	}, true
 }

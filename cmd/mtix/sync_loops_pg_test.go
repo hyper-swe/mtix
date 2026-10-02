@@ -24,12 +24,16 @@ import (
 
 const envCmdPGTestDSN = "MTIX_PG_TEST_DSN"
 
+// requireCmdPG returns the test hub DSN and makes it the process's hub
+// DSN the way an operator configures one, through MTIX_SYNC_DSN: sync
+// commands refuse a DSN on the command line (FR-18.16, MTIX-95.15).
 func requireCmdPG(t *testing.T) string {
 	t.Helper()
 	dsn := os.Getenv(envCmdPGTestDSN)
 	if dsn == "" {
 		t.Skipf("set %s to enable PG-gated cmd/mtix loop coverage", envCmdPGTestDSN)
 	}
+	t.Setenv(transport.EnvDSN, dsn)
 	return dsn
 }
 
@@ -220,7 +224,7 @@ func TestCloneLoop_AppliesAndCheckpoints(t *testing.T) {
 // (resolve DSN → acquire pushlock → open transport.Pool → run loop).
 
 func TestRunSyncPush_HappyPath(t *testing.T) {
-	dsn := requireCmdPG(t)
+	requireCmdPG(t)   // routes the hub DSN through MTIX_SYNC_DSN
 	_ = openCmdHub(t) // drop + migrate; we re-open below via the DSN.
 	initTestApp(t)
 
@@ -230,14 +234,14 @@ func TestRunSyncPush_HappyPath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := runSyncPush(context.Background(), &stdout, &stderr,
-		[]string{dsn}, transport.Options{InsecureTLS: true}, false /*force*/)
+		nil, transport.Options{InsecureTLS: true}, false /*force*/)
 	require.NoError(t, err)
 	require.Contains(t, stdout.String(), "push complete",
 		"stdout must report push completion")
 }
 
 func TestRunSyncPull_HappyPath(t *testing.T) {
-	dsn := requireCmdPG(t)
+	requireCmdPG(t) // routes the hub DSN through MTIX_SYNC_DSN
 	_ = openCmdHub(t)
 	initTestApp(t)
 
@@ -245,7 +249,7 @@ func TestRunSyncPull_HappyPath(t *testing.T) {
 	require.NoError(t, runCreate("seed", "", "", 3, "", "", "", "", ""))
 	var stdout, stderr bytes.Buffer
 	require.NoError(t, runSyncPush(context.Background(), &stdout, &stderr,
-		[]string{dsn}, transport.Options{InsecureTLS: true}, false))
+		nil, transport.Options{InsecureTLS: true}, false))
 
 	// Reset local applied state so pull has events to apply.
 	ctx := context.Background()
@@ -258,13 +262,13 @@ func TestRunSyncPull_HappyPath(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	err = runSyncPull(ctx, &stdout, &stderr,
-		[]string{dsn}, transport.Options{InsecureTLS: true}, 100)
+		nil, transport.Options{InsecureTLS: true}, 100)
 	require.NoError(t, err)
 	require.Contains(t, stdout.String(), "pull complete")
 }
 
 func TestRunSyncClone_HappyPath(t *testing.T) {
-	dsn := requireCmdPG(t)
+	requireCmdPG(t) // routes the hub DSN through MTIX_SYNC_DSN
 	_ = openCmdHub(t)
 	initTestApp(t)
 
@@ -272,7 +276,7 @@ func TestRunSyncClone_HappyPath(t *testing.T) {
 	require.NoError(t, runCreate("seed", "", "", 3, "", "", "", "", ""))
 	var stdout, stderr bytes.Buffer
 	require.NoError(t, runSyncPush(context.Background(), &stdout, &stderr,
-		[]string{dsn}, transport.Options{InsecureTLS: true}, false))
+		nil, transport.Options{InsecureTLS: true}, false))
 
 	// Reset local state so clone has work to do. Clone refuses if
 	// sync_events is non-empty (the fresh-clone invariant); wipe it
@@ -293,6 +297,6 @@ func TestRunSyncClone_HappyPath(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	require.NoError(t, runSyncClone(ctx, &stdout, &stderr,
-		[]string{dsn}, transport.Options{InsecureTLS: true}, false /*resume*/, 100))
+		nil, transport.Options{InsecureTLS: true}, false /*resume*/, 100))
 	require.Contains(t, stdout.String(), "clone complete")
 }

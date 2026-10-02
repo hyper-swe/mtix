@@ -83,12 +83,12 @@ func TestWorkflowInputForApply_WellFormedEvent_CarriesPayloadAndEnvelope(t *test
 		&model.TransitionStatusPayload{From: model.StatusBlocked, To: model.StatusOpen}, 4)
 	e.WallClockTS = 1_234
 
-	in, ok := workflowInputForApply(e, "2026-09-24T00:00:00Z")
+	in, ok := workflowInputForApply(e, time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC))
 
 	require.True(t, ok)
 	require.Equal(t, workflowInput{
 		op: model.OpTransitionStatus, from: model.StatusBlocked, to: model.StatusOpen,
-		wallClockTS: 1_234, updatedAt: "2026-09-24T00:00:00Z",
+		eventAt: time.UnixMilli(1_234).UTC(), updatedAt: "2026-09-24T00:00:00Z",
 	}, in)
 }
 
@@ -99,7 +99,7 @@ func TestWorkflowInputForApply_MalformedEvent_WarnsNamingEventAndOp(t *testing.T
 	e := winnerTestEvent(t, "claim-bad", model.OpClaim, nil, 4)
 	e.Payload = []byte(`<<<not-json`)
 
-	_, ok := workflowInputForApply(e, "2026-09-24T00:00:00Z")
+	_, ok := workflowInputForApply(e, time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC))
 
 	require.False(t, ok)
 	var warned bool

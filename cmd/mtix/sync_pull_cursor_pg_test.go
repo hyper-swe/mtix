@@ -104,7 +104,7 @@ func TestCloudPath_Pull_LamportOnlyCursor_ReReadsBoundaryIdempotently(t *testing
 // clock clones all three and saves the pull cursor at the last one; the
 // first `mtix sync pull` after it applies only the event pushed since.
 func TestCloudPath_Clone_SetsPullCursor_FirstPullFetchesOnlyNewer(t *testing.T) {
-	dsn := requireCmdPG(t)
+	requireCmdPG(t)
 	pool := openCmdHub(t)
 	initTestApp(t)
 	ctx := context.Background()
@@ -113,7 +113,7 @@ func TestCloudPath_Clone_SetsPullCursor_FirstPullFetchesOnlyNewer(t *testing.T) 
 	requireHubOrder(t, pool, events)
 	var stdout, stderr bytes.Buffer
 
-	require.NoError(t, runSyncClone(ctx, &stdout, &stderr, []string{dsn}, cloudOpts, false, 2), stderr.String())
+	require.NoError(t, runSyncClone(ctx, &stdout, &stderr, nil, cloudOpts, false, 2), stderr.String())
 
 	require.Contains(t, stdout.String(), "clone complete: 3 events applied across 2 batches")
 	for _, e := range events {
@@ -125,7 +125,7 @@ func TestCloudPath_Clone_SetsPullCursor_FirstPullFetchesOnlyNewer(t *testing.T) 
 	pushToHub(t, pool, newer)
 	stdout.Reset()
 	stderr.Reset()
-	require.NoError(t, runSyncPull(ctx, &stdout, &stderr, []string{dsn}, cloudOpts, 100), stderr.String())
+	require.NoError(t, runSyncPull(ctx, &stdout, &stderr, nil, cloudOpts, 100), stderr.String())
 
 	require.Contains(t, stdout.String(), "pull complete: 1 events applied across 1 batches",
 		"the first pull after the clone fetches only the newer event")
@@ -137,7 +137,7 @@ func TestCloudPath_Clone_SetsPullCursor_FirstPullFetchesOnlyNewer(t *testing.T) 
 // same pull, so it saves both halves of the cursor, and its next tick asks
 // the hub only for the events after the saved event.
 func TestCloudPath_Daemon_PullTickSavesTupleCursor(t *testing.T) {
-	dsn := requireCmdPG(t)
+	requireCmdPG(t)
 	pool := openCmdHub(t)
 	initTestApp(t)
 	ctx := context.Background()
@@ -146,7 +146,7 @@ func TestCloudPath_Daemon_PullTickSavesTupleCursor(t *testing.T) {
 	requireHubOrder(t, pool, events)
 	var stderr bytes.Buffer
 
-	runOneDaemonPull(ctx, &stderr, []string{dsn}, cloudOpts)
+	runOneDaemonPull(ctx, &stderr, nil, cloudOpts)
 
 	for _, e := range events {
 		requireAppliedOnce(t, e)
@@ -156,7 +156,7 @@ func TestCloudPath_Daemon_PullTickSavesTupleCursor(t *testing.T) {
 	newer := remoteCreateAt(t, "TEST-4", 6)
 	pushToHub(t, pool, newer)
 	stderr.Reset()
-	runOneDaemonPull(ctx, &stderr, []string{dsn}, cloudOpts)
+	runOneDaemonPull(ctx, &stderr, nil, cloudOpts)
 
 	require.Contains(t, stderr.String(), "pull progress: batch 1 (1 events, 0 quarantined;",
 		"the next tick reads only the event after the saved one")

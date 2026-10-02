@@ -45,7 +45,7 @@ func newSyncDaemonCmd() *cobra.Command {
 		dispatchHooks bool
 	)
 	cmd := &cobra.Command{
-		Use:   "daemon [DSN]",
+		Use:   "daemon",
 		Short: "Run a background pull loop (FR-18, opt-in)",
 		Long: `DEPRECATED: use 'mtix daemon' — the first-class dispatcher loop
 (FR-20) that pulls AND fires hooks by default at a seconds cadence.
@@ -61,7 +61,7 @@ non-error message. The PID file is removed on graceful shutdown.
 
 Use --install to print a systemd unit (linux) or launchd plist
 (darwin) ready to be installed by the user.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if install {
 				return printDaemonInstallStub(cmd.OutOrStdout())
@@ -71,7 +71,7 @@ Use --install to print a systemd unit (linux) or launchd plist
 		},
 	}
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
-		"Allow weaker TLS modes on loopback hosts (development only)")
+		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	cmd.Flags().IntVar(&intervalSec, "interval", daemonDefaultIntervalSec,
 		"Pull interval in seconds")
 	cmd.Flags().BoolVar(&install, "install", false,
@@ -86,11 +86,8 @@ Use --install to print a systemd unit (linux) or launchd plist
 func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 	args []string, opts transport.Options, intervalSec int, dispatchHooks bool,
 ) error {
-	if app.mtixDir == "" {
-		return fmt.Errorf("mtix sync daemon: not in an mtix project")
-	}
-	if app.store == nil {
-		return fmt.Errorf("mtix sync daemon: local store not initialized")
+	if err := syncDaemonPreflight(stderr, args); err != nil {
+		return err
 	}
 	if intervalSec <= 0 {
 		intervalSec = daemonDefaultIntervalSec
@@ -158,6 +155,24 @@ func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 			pullThenDispatch()
 		}
 	}
+}
+
+// syncDaemonPreflight holds the checks mtix sync daemon makes before it
+// starts: an mtix project with a local store, and no DSN on the command
+// line. The DSN refusal comes from resolveSyncDSN and happens here, before
+// the loop, which would otherwise retry the refused pull forever
+// (FR-18.16, MTIX-95.15).
+func syncDaemonPreflight(stderr io.Writer, args []string) error {
+	if app.mtixDir == "" {
+		return fmt.Errorf("mtix sync daemon: not in an mtix project")
+	}
+	if app.store == nil {
+		return fmt.Errorf("mtix sync daemon: local store not initialized")
+	}
+	if _, err := resolveSyncDSN(args); errors.Is(err, transport.ErrPositionalDSN) {
+		return wrapSyncErr(stderr, "dsn", err)
+	}
+	return nil
 }
 
 // runOneDaemonPull invokes the same logic as `mtix sync pull` once.

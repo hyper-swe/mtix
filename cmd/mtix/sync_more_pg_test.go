@@ -30,7 +30,7 @@ func TestRunSyncInit_HappyPath(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := runSyncInit(context.Background(), &stdout, &stderr,
-		[]string{dsn}, transport.Options{InsecureTLS: true})
+		nil, transport.Options{InsecureTLS: true})
 	require.NoError(t, err)
 	require.Contains(t, stdout.String(), "hub schema migrated")
 }
@@ -44,7 +44,7 @@ func TestRunSyncInit_NoLocalEventsEarlyExit(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := runSyncInit(context.Background(), &stdout, &stderr,
-		[]string{dsn}, transport.Options{InsecureTLS: true})
+		nil, transport.Options{InsecureTLS: true})
 	require.NoError(t, err)
 	require.Contains(t, stdout.String(), "no local events yet")
 }
@@ -62,7 +62,7 @@ func TestRunSyncStatus_HappyPath(t *testing.T) {
 }
 
 func TestRunSyncDoctor_HappyPath(t *testing.T) {
-	dsn := requireCmdPG(t)
+	requireCmdPG(t) // routes the hub DSN through MTIX_SYNC_DSN
 	_ = openCmdHub(t)
 	initTestApp(t)
 
@@ -71,7 +71,7 @@ func TestRunSyncDoctor_HappyPath(t *testing.T) {
 	// accept either nil (all-pass) or that sentinel as the
 	// "completed normally" outcome. Other errors are failures.
 	err := runSyncDoctor(context.Background(), &stdout, &stderr,
-		[]string{dsn}, transport.Options{InsecureTLS: true})
+		nil, transport.Options{InsecureTLS: true})
 	if err != nil && !errors.Is(err, errDoctorChecksFailed) {
 		t.Fatalf("doctor errored unexpectedly: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestRunSyncConflictsList_NoConflicts(t *testing.T) {
 	initTestApp(t)
 
 	var stdout, stderr bytes.Buffer
-	err := runSyncConflictsList(context.Background(), &stdout, &stderr, "")
+	err := runSyncConflictsList(context.Background(), &stdout, &stderr, "", false)
 	require.NoError(t, err)
 }
 
@@ -144,7 +144,7 @@ func TestReadSyncStatus_FreshStore(t *testing.T) {
 
 func TestReadConflicts_EmptyTable(t *testing.T) {
 	initTestApp(t)
-	conflicts, err := readConflicts(context.Background(), app.store, "")
+	conflicts, err := readConflicts(context.Background(), app.store, "", false)
 	require.NoError(t, err)
 	require.Empty(t, conflicts)
 }

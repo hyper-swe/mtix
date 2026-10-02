@@ -15,8 +15,8 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
-// doctorCheckNamed returns the named check of a doctor JSON report.
-func doctorCheckNamed(t *testing.T, raw []byte, name string) DoctorCheck {
+// doctorCheckFromJSON returns the named check of a doctor JSON report.
+func doctorCheckFromJSON(t *testing.T, raw []byte, name string) DoctorCheck {
 	t.Helper()
 	var report DoctorReport
 	require.NoError(t, json.Unmarshal(raw, &report))
@@ -69,7 +69,7 @@ func TestRunSyncDoctor_Quarantined_FailsWithRetryAndInspectDetail(t *testing.T) 
 			var out, errOut bytes.Buffer
 			app.jsonOutput = true
 			require.ErrorIs(t, runSyncDoctor(ctx, &out, &errOut, nil, transport.Options{}), errDoctorChecksFailed)
-			check := doctorCheckNamed(t, out.Bytes(), "quarantined events")
+			check := doctorCheckFromJSON(t, out.Bytes(), "quarantined events")
 			require.Equal(t, tt.wantPass, check.Pass)
 			for _, want := range tt.wantDetail {
 				require.Contains(t, check.Detail, want)

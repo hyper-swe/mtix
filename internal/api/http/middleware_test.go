@@ -169,7 +169,7 @@ func TestLoggingMiddleware_LogsRequest(t *testing.T) {
 // TestRateLimitMiddleware_AllowsNormalTraffic verifies normal traffic passes.
 func TestRateLimitMiddleware_AllowsNormalTraffic(t *testing.T) {
 	router := setupTestRouter()
-	router.Use(RateLimitMiddleware(100))
+	router.Use(RateLimitMiddleware(100, 16, testClock()))
 	router.GET("/test", func(c *gin.Context) {
 		c.JSON(200, gin.H{"ok": true})
 	})
@@ -184,7 +184,7 @@ func TestRateLimitMiddleware_AllowsNormalTraffic(t *testing.T) {
 // TestRateLimitMiddleware_ReturnsRetryAfter verifies 429 includes Retry-After.
 func TestRateLimitMiddleware_ReturnsRetryAfter(t *testing.T) {
 	router := setupTestRouter()
-	router.Use(RateLimitMiddleware(1)) // 1 req/sec — very restrictive
+	router.Use(RateLimitMiddleware(1, 16, testClock())) // 1 req/sec — very restrictive
 	router.GET("/test", func(c *gin.Context) {
 		c.JSON(200, gin.H{"ok": true})
 	})
@@ -208,7 +208,7 @@ func TestRateLimitMiddleware_ReturnsRetryAfter(t *testing.T) {
 // TestCORSMiddleware_PreflightRequest verifies CORS preflight returns 204.
 func TestCORSMiddleware_PreflightRequest(t *testing.T) {
 	router := setupTestRouter()
-	router.Use(CORSMiddleware())
+	router.Use(CORSMiddleware("127.0.0.1", "8377"))
 	router.OPTIONS("/test", func(c *gin.Context) {
 		// This should not be reached — CORSMiddleware handles OPTIONS.
 		c.Status(200)
@@ -240,10 +240,11 @@ func TestSecurityHeadersMiddleware_SetsAllHeaders(t *testing.T) {
 	assert.Equal(t, "same-origin", w.Header().Get("Referrer-Policy"))
 }
 
-// TestCORSMiddleware_ExternalOrigin_Rejected verifies non-localhost origins are rejected.
+// TestCORSMiddleware_ExternalOrigin_Rejected verifies non-localhost origins
+// are refused with 403 and no CORS grant (MTIX-95.14).
 func TestCORSMiddleware_ExternalOrigin_Rejected(t *testing.T) {
 	router := setupTestRouter()
-	router.Use(CORSMiddleware())
+	router.Use(CORSMiddleware("127.0.0.1", "8377"))
 	router.GET("/test", func(c *gin.Context) {
 		c.JSON(200, gin.H{"ok": true})
 	})
@@ -253,6 +254,6 @@ func TestCORSMiddleware_ExternalOrigin_Rejected(t *testing.T) {
 	req.Header.Set("Origin", "https://evil.com")
 	router.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
 }

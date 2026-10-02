@@ -67,7 +67,7 @@ func detectLWWOutcome(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (lwwO
 	var (
 		priorID   string
 		priorLamp int64
-		priorTS   int64
+		priorTS   int64 // wall_clock_ts: an integer tie-break key here, never a stored time (MTIX-95.26)
 		priorHash string
 	)
 	err := tx.QueryRowContext(ctx, query, args...).Scan(&priorID, &priorLamp, &priorTS, &priorHash)
@@ -673,7 +673,7 @@ func decodeNewValueForColumn(field string, raw json.RawMessage) (any, error) {
 // applyTransitionStatus applies a winning transition_status (MTIX-95.10). A
 // malformed one changes nothing and does not fail (MTIX-95.27).
 func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	in, ok := workflowInputForApply(e, time.Now().UTC().Format(time.RFC3339))
+	in, ok := workflowInputForApply(e, time.Now().UTC())
 	if !ok {
 		return nil
 	}
@@ -703,7 +703,7 @@ func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) 
 // applyClaim applies a winning claim (MTIX-95.10). A claim whose payload
 // cannot be decoded changes nothing and does not fail (MTIX-95.27).
 func applyClaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	in, ok := workflowInputForApply(e, time.Now().UTC().Format(time.RFC3339))
+	in, ok := workflowInputForApply(e, time.Now().UTC())
 	if !ok {
 		return nil
 	}
@@ -714,7 +714,7 @@ func applyClaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 // applyUnclaim applies a winning unclaim (MTIX-95.10). The workflow payload
 // rule never rejects one (MTIX-95.27); the check keeps the four ops alike.
 func applyUnclaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	in, ok := workflowInputForApply(e, time.Now().UTC().Format(time.RFC3339))
+	in, ok := workflowInputForApply(e, time.Now().UTC())
 	if !ok {
 		return nil
 	}
@@ -726,7 +726,7 @@ func applyUnclaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 // be decoded, including an unparseable until, changes nothing and does not
 // fail (MTIX-95.27); defer_until is stored in UTC (resolveWorkflowWrite).
 func applyDefer(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	in, ok := workflowInputForApply(e, time.Now().UTC().Format(time.RFC3339))
+	in, ok := workflowInputForApply(e, time.Now().UTC())
 	if !ok {
 		return nil
 	}
@@ -756,14 +756,11 @@ func applyComment(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 			return fmt.Errorf("decode annotations: %w", decErr)
 		}
 	}
-	// Use the event's wall_clock_ts so two replicas applying the same
-	// event in different orders produce byte-identical annotation
-	// rows. Apply-time wall clock would diverge across replicas.
+	// The event's own time (eventTime, MTIX-95.26), not the apply time, so two
+	// replicas applying the same events in any order write byte-identical rows.
+	at := eventTime(e.WallClockTS, time.Now().UTC())
 	annotations = append(annotations, model.Annotation{
-		ID:        e.EventID,
-		Author:    p.AuthorID,
-		Text:      p.Body,
-		CreatedAt: time.UnixMilli(e.WallClockTS).UTC(),
+		ID: e.EventID, Author: p.AuthorID, Text: p.Body, CreatedAt: at,
 	})
 	// Sort by (CreatedAt, ID) so the on-disk list order is independent
 	// of apply order. Two replicas converging on the same set of
@@ -780,7 +777,7 @@ func applyComment(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	}
 	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET annotations = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
-		string(encoded), time.UnixMilli(e.WallClockTS).UTC().Format(time.RFC3339), id,
+		string(encoded), at.Format(time.RFC3339), id,
 	)
 	return err
 }

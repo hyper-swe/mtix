@@ -38,7 +38,7 @@ func newSyncRepairUIDsCmd() *cobra.Command {
 		project     string
 	)
 	cmd := &cobra.Command{
-		Use:   "repair-uids [DSN]",
+		Use:   "repair-uids",
 		Short: "Stamp hub create rows with their node uid (upgrade step for pre-MTIX-91 pushes)",
 		Long: `Stamp every create_node row on the hub whose uid is NULL with the uid of
 the matching local node, matched on (project, node id).
@@ -66,7 +66,7 @@ Safety properties:
 Local node uids are backfilled first (the same idempotent step as
 'mtix sync migrate' Phase 0), so a store predating uids can still
 repair its hub.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncRepairUIDs(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, project, dryRun)

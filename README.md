@@ -355,14 +355,16 @@ mtix docs generate [--force]        Regenerate agent documentation
 mtix config get|set|delete <key>    Manage configuration
 
 # Team sync (FR-18) — optional, opt-in via MTIX_SYNC_DSN
-mtix sync init [DSN]                Provision hub schema + register project
-mtix sync clone [DSN]               Pull all events; idempotent rebuild
+# The DSN comes from MTIX_SYNC_DSN or .mtix/secrets; positional DSN
+# arguments are no longer accepted.
+mtix sync init                      Provision hub schema + register project
+mtix sync clone                     Pull all events; idempotent rebuild
 mtix sync push                      Drain local pending queue to hub
 mtix sync pull                      Apply new hub events to local SQLite
 mtix sync status                    Show queue + last push/pull + machine_hash
-mtix sync doctor                    5 health checks; exit 2 if any fail
-mtix sync conflicts list            Show contested edits (post-LWW)
-mtix sync conflicts resolve <id>    Override LWW for a specific conflict
+mtix sync doctor                    Health checks, including hub-triggers and hub-privileges (WARNs by default, exit 0); exit 2 if any fail
+mtix sync conflicts list            Show unresolved contested edits (post-LWW); --all for every row
+mtix sync conflicts resolve <id>    Record a decision for a conflict (changes no node)
 mtix sync reconcile --discard-local|--rename-to|--import-as
                                     Whole-project divergence escape hatches
                                     (--discard-local deletes every local ticket:
@@ -372,7 +374,7 @@ mtix sync reconcile --discard-local|--rename-to|--import-as
 mtix sync repair-uids [--dry-run]   One-time hub repair after pushes from a
                                     client older than v0.5.4-beta (MTIX-92)
 mtix sync daemon [--interval SEC]   Run periodic pull as a long-lived process
-mtix sync backup --output FILE      Wrap pg_dump on the 5 mtix-owned tables
+mtix sync backup --output FILE      Wrap pg_dump on every mtix hub table (restore: see the user manual)
 ```
 
 ## Development

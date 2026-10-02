@@ -18,7 +18,9 @@ import (
 
 // TestHintTLSTrust: a verify-full failure with no CA supplied gets actionable
 // sslrootcert guidance (MTIX-48); other errors and CA-already-supplied cases
-// pass through unchanged.
+// pass through unchanged. Whether a CA was supplied comes from the approved
+// configuration (Approval.CASupplied), not from the DSN text or the
+// environment (MTIX-95.25).
 func TestHintTLSTrust(t *testing.T) {
 	certErr := errors.New(`initial ping: failed to write startup message: ` +
 		`write failed: tls: failed to verify certificate: x509: ` +
@@ -26,8 +28,7 @@ func TestHintTLSTrust(t *testing.T) {
 	nonCertErr := errors.New("initial ping: dial tcp: connection refused")
 
 	t.Run("cert failure, no CA -> hint added, original wrapped", func(t *testing.T) {
-		t.Setenv(EnvSSLRootCert, "")
-		got := hintTLSTrust("postgres://u@host:5432/db?sslmode=verify-full", certErr)
+		got := hintTLSTrust(false, certErr)
 		if !strings.Contains(got.Error(), "sslrootcert") {
 			t.Fatalf("expected sslrootcert guidance, got: %v", got)
 		}
@@ -36,24 +37,30 @@ func TestHintTLSTrust(t *testing.T) {
 		}
 	})
 
-	t.Run("cert failure but CA already in DSN -> passthrough", func(t *testing.T) {
-		t.Setenv(EnvSSLRootCert, "")
-		got := hintTLSTrust("postgres://u@host/db?sslmode=verify-full&sslrootcert=/ca.pem", certErr)
-		if strings.Contains(got.Error(), "hint:") {
-			t.Fatalf("must not hint when sslrootcert already set: %v", got)
+	t.Run("cert failure but CA already supplied -> passthrough", func(t *testing.T) {
+		got := hintTLSTrust(true, certErr)
+		if got.Error() != certErr.Error() {
+			t.Fatalf("must pass the error through unchanged when a CA was supplied: %v", got)
+		}
+	})
+
+	t.Run("CA flag alone decides, not the environment", func(t *testing.T) {
+		t.Setenv(EnvSSLRootCert, "/set/but/not/in/the/config.pem")
+		got := hintTLSTrust(false, certErr)
+		if !strings.Contains(got.Error(), "hint:") {
+			t.Fatalf("expected a hint when the approved configuration carries no CA: %v", got)
 		}
 	})
 
 	t.Run("non-cert error -> passthrough", func(t *testing.T) {
-		t.Setenv(EnvSSLRootCert, "")
-		got := hintTLSTrust("postgres://u@host/db", nonCertErr)
+		got := hintTLSTrust(false, nonCertErr)
 		if strings.Contains(got.Error(), "hint:") {
 			t.Fatalf("must not hint on a non-cert error: %v", got)
 		}
 	})
 
 	t.Run("nil error -> nil", func(t *testing.T) {
-		if hintTLSTrust("postgres://u@host/db", nil) != nil {
+		if hintTLSTrust(false, nil) != nil {
 			t.Fatal("nil in must stay nil out")
 		}
 	})
@@ -91,7 +98,7 @@ func TestIsRetryableConnErr(t *testing.T) {
 func TestHintTLSTrust_NamesNoProviderAndGivesCapabilityFix(t *testing.T) {
 	t.Setenv(EnvSSLRootCert, "")
 	certErr := errors.New("tls: failed to verify certificate: x509: unknown authority")
-	got := hintTLSTrust("postgres://u@host:5432/db?sslmode=verify-full", certErr).Error()
+	got := hintTLSTrust(false, certErr).Error()
 	for _, want := range []string{"private CA", "sslrootcert=<ca.pem>", EnvSSLRootCert} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("hint missing %q: %s", want, got)

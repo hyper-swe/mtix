@@ -60,10 +60,16 @@ off each day.
 
 ### 3. Schedule hub backups to immutable cold storage
 
-`mtix sync backup --output FILE` wraps `pg_dump` for the 5
-mtix-owned tables (`sync_events`, `sync_conflicts`, `sync_projects`,
-`applied_events`, `audit_log`) with `--no-owner --no-privileges` for
-portability.
+`mtix sync backup --output FILE` wraps `pg_dump` for every table the
+mtix hub migrations create, with `--no-owner --no-privileges` for
+portability. Every one of those tables must exist: a hub that lacks one
+fails the backup, so a scheduled backup fails loudly rather than writing
+an incomplete dump (run `mtix sync init` as the table owner, then back up
+again). It connects with the same TLS settings as sync, creates
+FILE readable only by its owner, and refuses a FILE that already
+exists, so every backup needs a new name. The dump holds the tables and
+their data, not the mtix functions and triggers: the restore procedure
+below recreates them.
 
 Schedule a daily backup to immutable cold storage:
 
@@ -234,15 +240,26 @@ each CLI.
    aws s3 cp s3://my-compliance-bucket/mtix-hub/<latest>.sql ./mtix-hub.sql
    ```
 
-4. **Restore the backup:**
+4. **Restore the backup, then recreate the mtix functions and
+   triggers:**
 
    ```bash
-   psql "$NEW_DSN" < mtix-hub.sql
+   # PG* variables name the new database, the role that will own the
+   # sync tables and the CA of the hub (PGSSLMODE=verify-full,
+   # PGSSLROOTCERT=<ca.pem>, or system with libpq 16 or later); the
+   # password is in ~/.pgpass, not on the command line.
+   psql -f mtix-hub.sql
+   # With MTIX_SYNC_DSN naming that same owner role:
+   mtix sync init
+   mtix sync doctor
    ```
 
-   The backup carries the 5 mtix-owned tables with their triggers
-   and constraints intact. After restore, run `mtix sync doctor` to
-   confirm schema is current and the triggers are present.
+   The backup carries every mtix hub table with its data and
+   constraints, but not the trigger functions, so psql reports an
+   error for each trigger. `mtix sync init`, run as the table owner,
+   recreates every mtix function and trigger. The `hub-triggers` check
+   of `mtix sync doctor` must then pass; if it names a gap, run its
+   `fix` as the table owner. Then run `mtix sync mark-restored` once.
 
 5. **Repoint each CLI to the new hub.** Distribute the new DSN via
    your secrets channel (not git). Each developer updates their

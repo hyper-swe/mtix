@@ -352,6 +352,6 @@ func workflowInputOf(e workflowWinner, now string) workflowInput {
 	return workflowInput{
 		op: e.op, from: e.payload.from, to: e.payload.to,
 		agentID: e.payload.agentID, deferUntil: e.payload.deferUntil,
-		wallClockTS: e.wallClockTS, updatedAt: now, localWinner: e.local,
+		eventAt: eventTimeWithFallback(e.wallClockTS, now), updatedAt: now, localWinner: e.local,
 	}
 }

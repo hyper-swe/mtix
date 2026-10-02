@@ -20,14 +20,14 @@ import (
 
 func TestSyncInitCmd_Construction(t *testing.T) {
 	cmd := newSyncInitCmd()
-	require.Equal(t, "init [DSN]", cmd.Use)
+	require.Equal(t, "init", cmd.Use)
 	require.NotEmpty(t, cmd.Long)
 	require.NotNil(t, cmd.Flags().Lookup("insecure-tls"))
 }
 
 func TestSyncCloneCmd_Construction(t *testing.T) {
 	cmd := newSyncCloneCmd()
-	require.Equal(t, "clone [DSN]", cmd.Use)
+	require.Equal(t, "clone", cmd.Use)
 	require.NotEmpty(t, cmd.Long)
 	require.NotNil(t, cmd.Flags().Lookup("insecure-tls"))
 	require.NotNil(t, cmd.Flags().Lookup("resume"))
@@ -68,17 +68,6 @@ func TestRunSyncClone_RefusesOutsideMtixProject(t *testing.T) {
 		transport.Options{InsecureTLS: true}, false, 1000)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not in an mtix project")
-}
-
-func TestResolveSyncDSN_PrefersPositional(t *testing.T) {
-	saved := app.mtixDir
-	app.mtixDir = t.TempDir()
-	t.Cleanup(func() { app.mtixDir = saved })
-
-	// Even with no env or secrets file, positional arg wins.
-	got, err := resolveSyncDSN([]string{"postgres://positional@host/db"})
-	require.NoError(t, err)
-	require.Equal(t, "postgres://positional@host/db", got)
 }
 
 func TestResolveSyncDSN_FallsBackToTransportSource(t *testing.T) {

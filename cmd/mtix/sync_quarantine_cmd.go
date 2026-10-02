@@ -58,7 +58,7 @@ machine's clock, and one that starts with "depends on held create of"
 once no creation above it (for a link, made before it) is held and the
 hub would accept it (if not, it stays held under its own reason). Every other hold stays. 'mtix sync
 doctor' names the fix for each held push event.`,
-		Args: cobra.NoArgs,
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSyncQuarantineList(cmd.Context(), cmd.OutOrStdout())
 		},

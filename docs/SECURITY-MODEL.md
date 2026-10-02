@@ -67,7 +67,7 @@ If the hub is wiped, every CLI keeps its local SQLite intact. If a CLI's SQLite 
 | # | Threat | What mtix does about it | Residual risk | What you do |
 |---|---|---|---|---|
 | 1 | **Credentials in git** (DSN committed by accident) | mtix refuses to load DSN from any tracked config file. DSN must come from `MTIX_SYNC_DSN` env var or `.mtix/secrets` (gitignore-enforced, mode 0600). | Low — fail-closed at config load | Use a secrets manager or env var; never paste DSN into a yaml that gets committed |
-| 2 | **MitM on PG connection** (network adversary reads/modifies traffic) | mtix defaults to `sslmode=verify-full` and refuses `sslmode=disable` unless explicit `--insecure-tls` flag is set AND host is localhost. | Low if `verify-full` is honored end-to-end | Use a managed PG provider that enforces TLS; verify the root CA matches |
+| 2 | **MitM on PG connection** (network adversary reads/modifies traffic) | mtix defaults to `sslmode=verify-full` and refuses `sslmode=disable` unless explicit `--insecure-tls` flag is set AND every host the connection may use is loopback or a local Unix-domain socket. | Low if `verify-full` is honored end-to-end | Use a managed PG provider that enforces TLS; verify the root CA matches |
 | 3 | **SQL injection** (malicious filter values) | All store and transport SQL uses bound parameters. Audited in MTIX-9.1 (FR-17.1) for the SQLite driver and MTIX-15.3 / MTIX-15.11 audit pass 2 for the PG transport (`TestSQLInjection_AttackPatternsHandledSafely`). | Very low — depends on no future regression | Run the parameterization regression tests on every change |
 | 4 | **Insider mutation tampering** (compromised team member edits/deletes data via mtix) | Append-only `audit_log` table records every mutation atomically. PG triggers prevent `UPDATE`/`DELETE` on audit rows. | Medium — superuser can disable triggers; insider with write access can still create or modify nodes | Use least-privilege PG roles; archive `audit_log` to immutable cold storage for true tamper evidence |
 | 5 | **Audit log tampering** (DBA edits or deletes audit rows) | Triggers raise exception on `UPDATE`/`DELETE`. WAL archival recommended for safety-critical adopters. | Medium — PG superuser bypasses triggers | For tamper evidence, ship `audit_log` to an external append-only store (S3 with object lock, immudb, etc.) |
@@ -86,15 +86,18 @@ The sync hub is a replication mechanism, not a canonical store. Events flow CLI 
 ### DSN handling
 
 1. **`MTIX_SYNC_DSN` env var** — production-preferred path. Lives in the environment, never on disk.
-2. **`.mtix/secrets`** — file-mode 0600 is enforced; `Source()` refuses looser modes. Auto-gitignored by `mtix sync init`.
+2. **`.mtix/secrets`** — file-mode 0600 is enforced; `Source()` refuses looser modes. It must be a regular file (a symlink to one is followed) of at most 64 KiB. Auto-gitignored by `mtix sync init`.
 3. **Tracked config files** (`.mtix/config.{yaml,yml,json}`) — `Source()` scans for DSN-shaped keys and **refuses to proceed** if any are present. Fail-closed at the earliest detectable misconfiguration.
+4. **Command line** — positional DSN arguments are no longer accepted; set `MTIX_SYNC_DSN` or `.mtix/secrets`.
 
-Every error string that may contain a DSN passes through `redact.DSN` before reaching stderr, MCP output, or panic traces. `cmd/mtix/main.go` wraps `main()` with `defer redact.Recover(nil)` so panics with a DSN in scope are redacted before the runtime printer sees them.
+Every error string that may contain a DSN passes through `redact.DSN` before reaching stderr, MCP output, or panic traces. A DSN that is not a valid `postgres://` or `postgresql://` URL, or whose connection settings the driver cannot parse, is reported with a fixed message that quotes none of it. Sync command errors and warnings, `mtix sync doctor` details (text and `--json`) and pg_dump's messages from `mtix sync backup` are shown with the configured DSN (from `MTIX_SYNC_DSN` or `.mtix/secrets`, read as `Source()` reads it) and its password removed; a password shorter than 6 characters is removed where it appears as a password (`:password@` or `password=`). The CLI's final error line is scrubbed the same way, also for flag and argument errors inside a project, before the project is opened. `cmd/mtix/main.go` wraps `main()` with `defer redact.Recover(nil)` so panics with a DSN in scope are redacted before the runtime printer sees them.
 
 ### TLS posture
 
-- `verify-full` is the default. `EnforceTLSPosture` defaults the DSN's sslmode to verify-full when omitted.
-- Weaker `sslmode` is allowed **only** on loopback hosts (`localhost`, `127.0.0.1`, `::1`) and **only** when `--insecure-tls` is set explicitly.
+- `verify-full` is the default. `ApproveDSN` (which `EnforceTLSPosture` wraps) defaults the DSN's sslmode to verify-full when omitted.
+- The DSN is parsed once, by `ApproveDSN`, with PG* environment variables and any service file merged. The posture rule is checked on that parsed configuration, every host and fallback included, and the connection pool opens from the same configuration. Under `verify-full` every network host verifies the server certificate against its own name.
+- For each network host, that check also loads the certificate files the driver uses for a TLS connection: the CA file whenever `sslrootcert` names one (from the DSN, `MTIX_SYNC_SSLROOTCERT`, `PGSSLROOTCERT`, a service file, or the driver's default `root.crt` when that file exists and nothing else names a CA file), and the client certificate and key (`sslcert`, `sslkey`; by default `postgresql.crt` and `postgresql.key`, used only when both exist) whenever the sslmode is not `disable`. The driver's default directory is `~/.postgresql/` (`%APPDATA%\postgresql\` on Windows). A DSN whose hosts are all local Unix-domain sockets loads none of them. A file the check loads that cannot be read, or that holds no usable certificate or key, stops the command before any network contact, with a fixed message that quotes neither the path nor the DSN.
+- Weaker `sslmode` is allowed **only** when `--insecure-tls` is set explicitly **and** every host the connection may use, fallback hosts included, is loopback (`localhost`, `127.0.0.0/8`, `::1`) or a local Unix-domain socket.
 - `MTIX_SYNC_SSLROOTCERT` populates `sslrootcert` for managed-PG providers that require a CA bundle.
 
 ### Hub trust boundary
@@ -210,11 +213,15 @@ arm it matters.
 
 **The trigger is the operator's epoch bump, and only that.** The hub keeps a
 monotonic `restore_epoch`, advanced *only* by an explicit operator action
-(`mtix sync mark-restored`). No client or push path can advance it. Each
-accepted `create_node` is hub-stamped with the current epoch at acceptance —
-hub-side, never client-asserted. A restore collision is detected only when a
-held create in the current epoch contests an incoming claim from an earlier era
-(ADR-003 Addendum A).
+(`mtix sync mark-restored`), which runs as the table owner. No client or push
+path can advance it. Each accepted `create_node` is hub-stamped with the
+current epoch at acceptance — hub-side, never client-asserted: a trigger on
+`sync_events` sets the epoch of every inserted event from `sync_hub_state`,
+whatever value the inserting session supplies. A restore collision is recorded
+only when the create that holds the number was stamped in an epoch earlier than
+the current one, and the hub checks that itself: collisions are recorded by the
+hub function `record_restore_collision`, which runs as the table owner and reads
+the held create and both epochs from the hub (ADR-003 Addendum A).
 
 **A client "previously-settled" flag was considered and rejected** on security
 review. It would put a forgeable, client-asserted signal on the trigger of a
@@ -226,14 +233,17 @@ legitimate ticket. That is recoverable (the uid is stable, no node is lost) but
 it breaks external references and wastes trust. The operator epoch bump avoids
 it: it is a deliberate, supervised action a client cannot manufacture.
 
-**Calibration:** under the trusted-team contract, a compromised client
-**cannot trigger Option B during normal operation**. With no restore there is
-no epoch advance, so the Option-B path is closed and every collision takes the
-ordinary auto-renumber path (a liveness event, no admin). The attack window
-shrinks to the operator-supervised interval right after a restore. Within that
-window resolution stays gated on a user's decision: no auto-pick, the older-claim default is
-advisory only (audit F-5), and the loser renumbers via `Store.RenumberSubtree`
-without deleting any create event — so no node is ever lost.
+**Calibration:** under the trusted-team contract, a compromised client whose
+DSN names a syncing role with the least-privilege list (see the checklist
+below) **cannot trigger Option B during normal operation**: it cannot advance
+the epoch, set an event's epoch, or insert a collision row. A DSN that names
+the table owner can change any hub table (see "What sync mode does NOT protect
+against"). With no restore there is no epoch advance, so the Option-B path is
+closed and every collision takes the ordinary auto-renumber path (a liveness
+event, no admin). When a restore collision is recorded, resolution stays
+gated on a user's decision: no auto-pick, the older-claim default is advisory only (audit
+F-5), and the loser renumbers via `Store.RenumberSubtree` without deleting any
+create event — so no node is ever lost.
 
 The registry referee itself is **liveness, not a security boundary**: a broken
 or hostile hub can at worst force a renumber; it cannot lose or corrupt a node,
@@ -249,7 +259,7 @@ Procedure when a CLI machine is lost:
 
 1. On every surviving CLI, run `mtix sync status` — pending count of 0 means all your in-flight events are already on the hub.
 2. The lost machine's pending events (if any) are unrecoverable.
-3. Provision the replacement machine. Run `mtix sync clone DSN` to rebuild local state from the hub event log. Replay is idempotent (per `applied_events` dedupe).
+3. Provision the replacement machine. Set `MTIX_SYNC_DSN` (or `.mtix/secrets`) and run `mtix sync clone` to rebuild local state from the hub event log. Replay is idempotent (per `applied_events` dedupe).
 
 The hub-unreachable detector (`internal/sync/workflow`) surfaces this risk: when `meta.sync.consecutive_errors ≥ 3`, the `mtix_sync_workflow` MCP tool reports state `hub-unreachable` and recommends `mtix sync doctor`. Operators who care about durability across machine loss must push frequently OR run `mtix sync daemon` for periodic auto-push.
 
@@ -297,10 +307,21 @@ Before going live with sync mode, verify each of these:
 - [ ] Connection uses a server certificate signed by a trusted CA (test: `MTIX_SYNC_SSLROOTCERT` set if managed PG requires it).
 - [ ] DSN is stored in `MTIX_SYNC_DSN` env var or `.mtix/secrets` (gitignored, mode 0600). **Not** in any tracked config file (`Source()` will refuse to load if it detects one).
 - [ ] `.mtix/secrets` is in `.gitignore` (test: `git check-ignore .mtix/secrets` succeeds; `mtix sync init` installs the rule automatically).
-- [ ] PG role used by the hub is **least privilege**: SELECT/INSERT on `sync_events`, `sync_conflicts`, `sync_projects`, `applied_events`, `audit_log` only. Not SUPERUSER, not CREATEDB, not REPLICATION.
+- [ ] PG role used by the hub is **least privilege**: not SUPERUSER, not CREATEDB, not REPLICATION. A role that syncs without owning the sync tables holds only this least-privilege list (the same list as step 2 of the small-team workflow):
+  - USAGE on the schema;
+  - SELECT on `sync_events`, `sync_hub_state`, `sync_node_collisions` and `sync_project_clients`;
+  - INSERT on `sync_events`, `sync_conflicts` and `sync_project_clients`;
+  - UPDATE on `sync_project_clients`;
+  - USAGE on the sequence `sync_conflicts_conflict_id_seq`;
+  - EXECUTE on the function `record_restore_collision`;
+  - UPDATE on `sync_node_collisions`, only for a role that runs `mtix sync collisions resolve`;
+  - SELECT on `node_renumber_remaps`, only for a role that runs `mtix sync migrate` on a hub without a valid node-number registry index;
+  - INSERT on `node_renumber_remaps`, only for a role that runs `mtix sync migrate --yes` on a hub without a valid node-number registry index.
+
+  On a hub without a valid node-number registry index, `mtix sync migrate --yes` also builds that index when the version gate is open, that is, when the project has at least one active client and every active client runs a remap-aware mtix version. It first records the duplicate creates of every project on the hub, and the index leaves those creates out, so they stay in the event log unchanged and the build succeeds. It drops an index that is not valid or not ready and builds it again. While the gate is closed, it leaves the index for a later run. A hub with more duplicate creates than the index can leave out is refused before the build, with the count and the limit. Only the table owner can build the index. `mtix sync doctor` fails its `schema current` check while the registry index is not valid or not ready, and `mtix sync init` warns about such an index; both print the fix: as the table owner, run `mtix sync migrate --yes` while the version gate is open. A syncing role set up with the least-privilege list holds no UPDATE on `sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs as the table owner. A syncing role records restore collisions only through the hub function `record_restore_collision`, which runs as the table owner and records a collision only when the hub's own data shows an earlier-epoch create holding the number, so the role needs EXECUTE on that function and no INSERT on `sync_node_collisions`. When `mtix sync init` adds this function to an existing hub, the table owner then grants EXECUTE on it to each syncing role (`GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;`) and revokes the privileges the list no longer names (`REVOKE INSERT ON sync_node_collisions FROM <role>;` and `REVOKE USAGE ON SEQUENCE sync_node_collisions_collision_id_seq FROM <role>;`). Upgrade every syncing client first, then run the REVOKE statements; if the REVOKE comes first, an older client's push that meets a restore collision fails until that client upgrades. `mtix sync doctor`, run with a syncing role's DSN, reports in its `schema current` check a hub without the function, a role that cannot execute it, a role that holds or can reach INSERT on `sync_node_collisions` or USAGE on its sequence, and create events stamped with a restore epoch below 0 or above the hub's current epoch, with the exact fix. A restored hub has no privileges from the dump: grant each syncing role the list again, EXECUTE included, then run `mtix sync doctor` with a syncing role's DSN.
 - [ ] `audit_log` and `sync_conflicts` triggers are in place (test: `UPDATE audit_log SET ...` raises exception).
-- [ ] Backup procedure for the hub is in place AND has been tested to restore (use `mtix sync backup --output FILE` for the mtix-owned tables).
-- [ ] DR runbook tested: rebuild a CLI from a fresh `mtix sync clone DSN`.
+- [ ] Backup procedure for the hub is in place AND has been tested to restore (use `mtix sync backup --output FILE` for the mtix-owned tables). A role that runs `mtix sync backup` also needs SELECT on every sync table and on the sequences `audit_log_audit_id_seq`, `sync_conflicts_conflict_id_seq` and `sync_node_collisions_collision_id_seq`; otherwise run the backup as the table owner.
+- [ ] DR runbook tested: rebuild a CLI from a fresh `mtix sync clone` (DSN from `MTIX_SYNC_DSN` or `.mtix/secrets`).
 - [ ] At least one of: client-side pre-push hook installed across all team machines (`examples/hooks/pre-push` calls `mtix sync push`), OR server-side enforcement.
 - [ ] If durability across machine loss matters: `mtix sync daemon` is running as a systemd/launchd service on each developer's machine (push interval ≤ 30s recommended).
 - [ ] All team members have read this document and understand the trust model and the same-authorID limitation.

@@ -51,6 +51,8 @@ func TestSyncCmd_AllSyncCommandsRegistered(t *testing.T) {
 		"relay",
 		// MTIX-95.6: ADR-006 §5.3 status repair from the local event log.
 		"repair",
+		// MTIX-95.1: the owner's hub privilege command.
+		"harden",
 	}
 	for _, name := range expected {
 		require.Truef(t, subs[name], "%s subcommand registered", name)

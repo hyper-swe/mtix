@@ -976,6 +976,7 @@ mtix config delete auto_claim
 | `agent.stuck_timeout` | `0` (disabled) | Auto-unclaim stuck agents after this duration |
 | `session.timeout` | `4h` | Max session duration before auto-end |
 | `data.soft_delete_retention` | `720h` (30 days) | Time before soft-deleted nodes are purged |
+| `sync.keep_roles` | (none) | Comma-separated hub roles that `mtix sync harden` leaves with their access (see "Hub privileges"); PUBLIC, data-API and `pg_` roles are refused. Setting it turns on strict mode: the doctor's `hub-privileges` check then fails, instead of warning, whenever `mtix sync harden` would report a finding, or when the check cannot run |
 | `progress.weighted` | `false` | Use weight field in progress calculation |
 | `sync.auto_sync` | `true` | Automatic import of a changed `.mtix/tasks.json` (after `git pull`); `false` turns it off, except for a store that holds no tasks. `mtix config set` accepts only true or false. Tracked in git with `.mtix/config.yaml`, so it applies to every clone. Writes keep exporting, but never over a pulled board that was not imported. See "Automatic import of `.mtix/tasks.json`" |
 
@@ -1049,7 +1050,17 @@ The UI connects to `/ws/events` via WebSocket for live updates. Connection statu
 | `--addr` | `127.0.0.1` | Bind address |
 | `--port` | `8377` | HTTP port |
 
-The server binds to localhost by default. To expose on the network, use `--addr 0.0.0.0` (requires authentication configuration).
+The server binds to localhost by default. To reach it from another machine, bind to the address that clients use, for example `--addr 192.168.1.20`. The API has no authentication, so do this only on a trusted network; the server prints a warning at startup for any bind address that is not loopback.
+
+### Accepted Requests
+
+`mtix serve` answers a request only when it is addressed to this server and, for a browser, comes from a local page:
+
+- **Host.** The `Host` header must name `localhost` or a loopback address (`127.0.0.1`, `::1` and the rest of the loopback range), on any port. When `--addr` is a specific address or host name, that exact address or name is accepted as well. A wildcard bind such as `--addr 0.0.0.0` or `--addr ::` adds no name, so it accepts loopback names only: bind to the specific address clients use. Other requests get `403` with error code `HOST_NOT_ALLOWED`.
+- **Browser origin.** A request that carries an `Origin` header is accepted when that origin is `http` or `https` on `localhost` or a loopback address, on any port (for example `http://localhost:5173` or `http://[::1]:8377`). When `--addr` is a specific address or host name, the server's own origin is accepted as well: `http`, that address or name, and the `--port` value (for example `http://192.168.1.20:8377` for `--addr 192.168.1.20 --port 8377`), so the web UI works when opened at that address. Any other origin gets `403`, with error code `ORIGIN_NOT_ALLOWED` for HTTP requests; the WebSocket upgrade at `/ws/events` applies the same rule. Clients that send no `Origin` header, such as the CLI, scripts and SDKs, are not affected.
+- **Client address.** The client address in the request log is the address of the TCP connection. Behind a reverse proxy, the log shows the proxy's address.
+
+`GET /health` reports the version of the running `mtix` binary in its `version` field.
 
 ---
 
@@ -1425,7 +1436,9 @@ the source of truth; the hub is a mailroom for events.
 
 ```bash
 # Provision a Postgres hub (Supabase / Neon / RDS / self-hosted).
-# Configure TLS with a trusted CA. Create a least-privilege role.
+# Configure TLS with a trusted CA. Create a least-privilege role: see
+# step 2 of the small-team workflow (.mtix/docs/workflows/small-team.md)
+# and docs/SECURITY-MODEL.md.
 
 # Store the DSN — env var preferred, .mtix/secrets fallback (mode 0600).
 export MTIX_SYNC_DSN="postgresql://mtix_sync@hub.example.com:5432/mtix_hub?sslmode=verify-full"
@@ -1433,6 +1446,8 @@ export MTIX_SYNC_DSN="postgresql://mtix_sync@hub.example.com:5432/mtix_hub?sslmo
 # Initialize the hub (runs migration + registers your project)
 mtix sync init
 ```
+
+Positional DSN arguments are no longer accepted; set `MTIX_SYNC_DSN` or `.mtix/secrets`.
 
 **Never commit the DSN to a tracked yaml.** `mtix sync init` scans
 `.mtix/config.{yaml,yml,json}` for DSN-shaped keys and refuses to
@@ -1472,8 +1487,10 @@ export MTIX_SYNC_DSN="postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.sup
 
 **Any provider** — `statement_timeout` is applied per connection via SQL (not a
 startup parameter), so it is honored even behind proxies/poolers that drop
-startup parameters. `sslmode=require` is rejected for non-loopback hosts; use
-`verify-full`, with `sslrootcert` if the provider uses a private CA.
+startup parameters. `sslmode=require` is accepted only with `--insecure-tls`
+and only when every host the connection may use is loopback or a local
+Unix-domain socket; use `verify-full`, with `sslrootcert` if the provider uses
+a private CA.
 
 ### Setup (every other teammate)
 
@@ -1498,6 +1515,19 @@ mtix sync pull               # pull teammate events
 mtix sync push               # ship your queue to the hub
 mtix sync status             # check pending queue + last push time
 ```
+
+`mtix sync status` reads only the local store; it does not contact the
+hub. It shows the pending, pushed and applied event counts, the
+unresolved conflicts, and the local clocks. `--json` carries the same
+values (`pending`, `pushed`, `applied`, `open_conflicts`,
+`high_conflict`, `lamport`, `last_pulled_clock`, `machine_hash`,
+`project_prefix`). `open_conflicts` counts unresolved conflicts only: an
+lww conflict is unresolved until `mtix sync conflicts resolve` records a
+decision for its node and field, and a later conflict on the same node
+and field is unresolved again. Above 50 unresolved conflicts, status
+prints a banner that points at `mtix sync conflicts list --batch
+<node-id>`. There is no `conflicted` count: no sync path ever marks an
+event conflicted, so earlier versions always showed 0 there.
 
 Install the pre-push hook (`examples/hooks/pre-push`) to automate
 `mtix sync push` before `git push`:
@@ -1918,8 +1948,10 @@ Three triggers share the ledger, so nothing double-fires:
 ```bash
 mtix daemon                 # pull from the hub (if configured) + dispatch, every 5s
 mtix daemon --interval 10   # slower cadence
-mtix daemon /path/or/DSN    # explicit hub DSN
 ```
+
+The daemon reads the hub DSN from `MTIX_SYNC_DSN` or `.mtix/secrets`.
+Positional DSN arguments are no longer accepted.
 
 With no hub configured the daemon still runs, tailing the local journal
 (cross-process writes into the same `.mtix` keep dispatching). A second
@@ -2228,10 +2260,27 @@ The hub also records contested edits in `sync_conflicts` for audit
 visibility:
 
 ```bash
-mtix sync conflicts list              # inspect what is contested
-mtix sync conflicts resolve <id> --keep-local
-mtix sync conflicts resolve <id> --keep-remote
+mtix sync conflicts list                              # unresolved conflicts only
+mtix sync conflicts list --all                        # every row, marked unresolved=true|false
+mtix sync conflicts resolve <id> --action keep-local  # or keep-remote, both-renumbered, acknowledge
 ```
+
+`mtix sync conflicts resolve` records your decision and changes no node:
+it appends a `manual` row to `sync_conflicts` (the table is
+append-only), and its output says `decision recorded; node state not
+changed`. With `--json` it prints `conflict_id`, `node_id`, `field_name`
+(for a conflict on a field), `action`, `decision_recorded`,
+`node_state_changed` (always `false`) and `message`. To apply the value
+you chose, edit the node with `mtix update` and push. The decision
+resolves the conflict and every earlier conflict on the same node and
+field; a conflict recorded later on that node and field is unresolved
+again, and `mtix sync conflicts list` shows it. Resolve the newest
+conflict of a node and field: a conflict that already has a later
+decision or a later conflict on its node and field is refused as invalid
+input, and the error names the newest conflict id of that node and field
+(the one to resolve, or, when it is resolved too, the one whose decision
+stands). Passing the id of a `manual` row is refused as invalid input as
+well: resolve the conflict it answers instead (`--all` shows both).
 
 For whole-project escapes (many conflicts, divergent history):
 
@@ -2271,13 +2320,264 @@ for the full tradeoff.
 ### Hub health checks
 
 ```bash
-mtix sync doctor             # 6 health checks: PG reachable, schema current,
+mtix sync doctor             # health checks: PG reachable, schema current,
                              #   queue draining, no orphan applied,
-                             #   quarantined events, secrets file mode
+                             #   quarantined events, unique node uids,
+                             #   held push events, secrets file mode,
+                             #   hub triggers, hub privileges
 ```
 
-Exit code 0 on all-pass; exit code 2 if any check fails (operators
-can gate CI / monitoring on this).
+Exit code 0 on all-pass, including a check that passes with a WARN; exit
+code 2 if any check fails (operators can gate CI / monitoring on this).
+
+Each hub check allows 30 s to connect, the same budget as `mtix sync
+init`, `clone`, `push` and `pull`, so a hub database that is resuming from
+idle passes the doctor whenever it would sync.
+
+The `schema current` check fails when the hub has no `sync_projects`
+table: run `mtix sync init`. It also checks that the hub has migration
+017, with which the hub stamps every event's restore epoch (a trigger on
+`sync_events` sets it from `sync_hub_state` on every insert) and records
+restore collisions itself (the function `record_restore_collision`),
+that the DSN's role can execute that function and cannot write collision
+rows, and that every create event's restore epoch lies from 0 to the
+hub's current epoch. Each gap is a WARN by default and a FAIL in strict
+mode (`sync.keep_roles` set):
+
+- a hub whose owner has not run `mtix sync init` since the upgrade:
+  pushes keep working; the fix is `mtix sync init`;
+- a role without EXECUTE on `record_restore_collision`: a push that meets
+  a restore collision fails until the table owner runs the printed
+  `GRANT EXECUTE ON FUNCTION <schema>.record_restore_collision(...) TO
+  <role>;`;
+- a role that can write collision rows: see below;
+- create events stamped with a restore epoch below 0 or above the hub's
+  current epoch: restore-collision checks treat each as not earlier than
+  the current epoch; the detail gives their number and the current
+  epoch, and the fix is the printed `UPDATE` the table owner runs, which
+  sets each to the current epoch.
+
+The detail names each gap, and `fix` names who runs each part of the fix
+and what to run.
+
+The `schema current` check also reads the node-number registry index,
+`sync_events_node_registry_uidx`, from `pg_index`. An index of that name
+that is not valid or not ready (`indisvalid` or `indisready` false), as a
+failed or interrupted build leaves it, is skipped by the migration `mtix
+sync init` runs. An index that is not ready checks no new create; one
+that is ready but not valid still refuses a duplicate create, but
+queries do not use it and it must be built again. That is a FAIL in every mode,
+not a WARN: the detail names the index and its flags, and the `fix` is
+`mtix sync migrate --yes`, run as the table owner while the version gate
+is open, which drops the index and builds it again (see "New sync
+commands"). Then run `mtix sync doctor` again. A hub that holds
+`sync_events` but no registry index is a WARN by default (a FAIL in
+strict mode), with the same fix, which builds the index.
+
+A role can write collision rows when it holds INSERT on
+`sync_node_collisions` or USAGE on
+`sync_node_collisions_collision_id_seq` (through a grant, or a
+predefined role such as `pg_write_all_data`), owns the schema that holds
+the sync tables (itself, or through a role it inherits), can reach,
+through a chain of SET ROLE and ADMIN OPTION, a role that holds either
+or owns that schema, or a superuser it can then SET ROLE to, has
+CREATEROLE before PostgreSQL 16, or is a member of
+`pg_execute_server_program` or `pg_write_server_files`. A chain counts
+ADMIN OPTION the role can use: held by the role itself, or by a role
+whose privileges it inherits. ADMIN OPTION on a superuser opens no path,
+since only a superuser grants a superuser role. The check skips the
+table owner, roles that inherit it, and superusers. For a plain grant
+the table owner made (no grant option, and no grant made from it), the
+fix is the exact `REVOKE` the table owner runs. Every other path is
+named, with the roles involved and the chain that reaches each (for
+example `ADMIN OPTION on a, which can SET ROLE to b, which holds INSERT
+on sync_node_collisions`), and a role administrator removes it: revokes
+the named grant (the role that made it, or a superuser, with `CASCADE`
+for a grant option), revokes a membership or ADMIN OPTION in the named
+chain, makes the table owner the owner of the schema, removes
+CREATEROLE, or removes the membership in the server file or program
+role. Do this once every syncing client is upgraded, then run
+`mtix sync doctor` again.
+
+The `hub-triggers` check compares the hub with the functions and triggers
+the mtix hub migrations define: every one must exist, every trigger must
+execute the function its migration binds, and every trigger must be
+enabled (`tgenabled` is `O`, or `A` for a trigger set to fire always;
+both count, as for `mtix sync harden`). Without them the append-only
+tables (`audit_log`, `sync_conflicts`, `sync_events`) accept changes they
+should refuse. The detail names each missing function, each missing
+trigger, each trigger that executes another function and each trigger
+that is not enabled. A function is compared by OID: a function of the
+right name in another schema is another function. `fix` holds what to
+run and names the table owner who runs it (`as the table owner (<role>):
+...`); the text report prints it on a `fix:` line under the check, and
+`--json` carries it in `fix`. In order:
+`mtix sync init` for anything missing and for a trigger that executes
+another function (in one transaction it recreates every missing function
+and trigger and replaces a trigger bound to another function, so the
+table is never left unguarded), and for a trigger that is not enabled
+the exact `ALTER TABLE <schema>.<table> ENABLE TRIGGER <name>;`
+statement. When the first schema on the search_path is not the sync
+tables' schema, the detail says so (even when the check passes), and a fix
+that runs `mtix sync init` starts with the step that puts the tables'
+schema first (`ALTER ROLE <owner> SET search_path = ...`), since init
+refuses until then. Like `hub-privileges`, a gap is a **WARN** by default (exit 0)
+and a **FAIL** (exit 2) in strict mode (`sync.keep_roles` set); so is a
+check that cannot run. After a restore from backup this check is how you
+confirm the runbook finished (see "Backup and restore").
+
+The `hub-privileges` check runs the verification `mtix sync harden` runs
+(see "Hub privileges" below), as whichever role the DSN names. It is a
+**WARN** by default when roles other than the table owner can use the sync
+tables, or a TRUNCATE guard is missing or disabled: the doctor still exits
+0 and nothing is blocked, since that can be fine when the database is
+reachable only from a private network. The detail names those roles and
+says how to restrict them. It is a **FAIL** (exit 2) only in strict mode,
+when `sync.keep_roles` is set: then it fails whenever `mtix sync harden`
+would report a finding, not only a role outside the list or a missing or
+disabled guard, but also a kept role that can grant its access on or
+holds a privilege another role granted it, an mtix object owned by
+another role, and a membership through which a role can reach every
+table. If the verification cannot run
+(the hub is unreachable, or a sync table is missing), the check is a WARN
+that says so and names the next step, or a FAIL in strict mode. A clean
+hub passes. With
+`--json` the check carries `name`, `pass`, `warn` (only when set),
+`detail`, `fix` (`mtix sync harden`) and `findings` (the same findings as
+`mtix sync harden --json`). The check contacts the hub only while the
+doctor runs; there is no timer.
+
+### Hub privileges
+
+Everyday use needs no role configuration. `mtix sync harden` is for a hub
+owner who wants the sync tables usable only by the owner and the roles the
+team chooses. It runs only when you ask for it, never from a hook, push,
+pull or the daemon. It contacts the hub only while it runs, so it does not
+keep a scale-to-zero database awake.
+
+```bash
+mtix sync harden                                # dry run: lists what --apply would change
+mtix sync harden --apply --keep-role mtix_team  # restrict to the owner and mtix_team
+mtix config set sync.keep_roles mtix_team       # keep mtix_team in later runs; also doctor strict mode
+mtix sync harden --json                         # the report for agents and CI
+```
+
+Run it as the role that owns the sync tables, the one that ran
+`mtix sync init`; a superuser or a member of the owner role may run it
+too. Any other role is refused with "the connecting role does not own
+every sync table" and nothing changes. The report says whether the
+connecting role was checked: it is, unless it owns the sync tables, is a
+superuser or is kept, so a member of the owner role that runs harden is
+reported like any other member. When the connecting role's own
+membership is the only finding, the report says so: run harden as the
+owner itself, or keep that role, to verify clean. Setting
+`sync.keep_roles`, as the report after `--apply --keep-role` suggests,
+also turns on strict mode for `mtix sync doctor`.
+
+The dry run starts with the roles `--apply` would affect: the roles that
+lose their access, the kept roles that keep their access but can no longer
+grant it to others, and the roles whose access it cannot remove. It then
+lists each privilege, default privilege, membership and guard it would
+change, and the statements `--apply` would run. Review that list before
+`--apply`: every role you do not keep loses its access. A role that other
+people or services use to sync must be kept with `--keep-role <role>`
+(repeatable), or listed in the `sync.keep_roles` config key; harden uses
+both. Members of a kept role keep their access through it. PUBLIC, the
+roles a data API uses for anonymous and signed-in callers, and `pg_` roles
+cannot be kept. Superusers are out of scope: harden neither checks nor
+changes them.
+
+With `--apply`, in one transaction, harden:
+
+- revokes every privilege on the sync tables (including privileges on
+  single columns), their sequences and the mtix functions from PUBLIC,
+  from the data-API roles and from every other role except the table
+  owner, superusers and the kept roles;
+- first grants again, from the owner, every privilege a kept role holds by
+  another role's grant, so the revokes below cannot take it away;
+- revokes a kept role's right to grant its privileges to others, and with
+  it whatever the kept role granted on;
+- revokes the owner's default privileges toward those roles, so tables the
+  owner creates later are not usable by them either;
+- revokes a membership in `pg_read_all_data`, `pg_write_all_data` or
+  (from PostgreSQL 17) `pg_maintain`, including one that carries only
+  ADMIN OPTION, when the owner may: it holds ADMIN on the role, and the
+  membership was granted by the owner or by a role whose privileges it
+  has. The change is cluster-wide, so the dry run marks it;
+- restores a missing TRUNCATE guard, replaces one whose trigger executes
+  another function (compared by OID, so a function of the guard's name in
+  another schema is another function), and enables a disabled one or one
+  set to fire only in replication sessions, so every guard ends enabled.
+  (`mtix sync init` also restores a missing guard and replaces one that
+  executes another function.)
+
+Harden takes the hub's migration lock and waits at most 5 seconds for any
+lock, so it fails fast rather than hold up pushes and pulls. A statement
+that raises a PostgreSQL WARNING fails the run, for example when an mtix
+function or sequence is owned by another role; the transaction is rolled
+back, so nothing changes, and the message names the object. It then checks
+again: for every role except the owner, superusers and the kept roles, it
+asks PostgreSQL which of SELECT, INSERT, UPDATE, DELETE, TRUNCATE,
+REFERENCES and TRIGGER (and MAINTAIN from PostgreSQL 17) the role holds on
+each sync table or any of its columns (and the sequence and function
+privileges), so access through PUBLIC, role membership and the predefined
+read-all roles is found too. A role that is a member of the owner role or
+of a read-all role in any way, by inheriting it, by SET ROLE or by ADMIN
+OPTION alone (with which it can grant the role to itself), is reported as
+well, and so is a CREATEROLE role before PostgreSQL 16. So is a role that
+can SET ROLE to a superuser, or that holds ADMIN OPTION on a role that can
+(`superuser_membership`), and a role that is a member of
+`pg_execute_server_program`, `pg_read_server_files` or
+`pg_write_server_files`: each can reach every table without a privilege on
+it. Harden reports these memberships and never changes them. After
+`--apply`, every finding that remains is listed, with the statement that
+fixes it or the one an administrator runs.
+
+Access harden may not change is reported, not changed: a read-all
+membership that another role granted (the report prints the statement a
+database administrator runs), membership in the owner role (which carries
+all of the owner's privileges), and an mtix function or sequence owned by
+another role (the report prints the `ALTER ... OWNER TO` statement an
+administrator runs). Two things are information and never fail
+verification: other roles' default privileges, which do not apply to
+tables the owner creates, and EXECUTE on the mtix trigger functions, which
+cannot be called directly (a trigger fires without it; `--apply` revokes
+it when it makes other changes). A freshly migrated hub therefore
+verifies clean. After `--apply` with
+`--keep-role`, harden prints the `mtix config set sync.keep_roles` command
+that records the kept roles; it never writes the config itself.
+
+The append-only tables `audit_log`, `sync_conflicts` and `sync_events`
+refuse TRUNCATE, alone or with CASCADE, as they refuse UPDATE and DELETE.
+`mtix sync init` adds these guards automatically, only when they are
+missing, and changes no privilege. `mtix sync push` issues no DDL. Harden
+never enables row-level security.
+
+Verification passes when, apart from the table owner, superusers, and the
+kept roles and their members, no role holds a privilege on the sync
+tables, their sequences or the mtix functions (EXECUTE on the trigger
+functions aside), or a role membership that leads to one; the owner's
+default privileges give such roles nothing; and every TRUNCATE guard is in
+place. It says nothing about superusers or about who can reach the
+database over the network. The REPLICATION role attribute is outside the
+check too: a role that has it is checked for its privileges and
+memberships like any other role, but not for the attribute. Review the
+roles that have it (`SELECT rolname FROM pg_catalog.pg_roles WHERE
+rolreplication;`) with the database administrator.
+
+Exit code: 0 when verification passes, 2 when changes are pending (dry run)
+or access remains (after `--apply`), 1 on an error or a refusal. With
+`--json` the report has `applied`, `before` and `after` (each with
+`schema`, `owners`, `caller`, `caller_scope` (`owner`, `superuser`, `kept`
+or `checked`), `kept_roles`, `findings`, `info` and `statements`),
+`executed` and `keep_roles_hint`. Each finding has `role`, `object`,
+`kind` (`table`, `sequence`, `function`, `default_acl`, `role` or
+`trigger`), `privileges`, `via` (`grant`, `grant_option`, `membership`,
+`owner_membership`, `superuser_membership`, `default_acl`,
+`object_owner`, `grantor`, `createrole`, `missing` or `disabled`), `scope`
+(`cluster-wide` for a membership), and `fix` (the statement `--apply`
+runs) or, when harden cannot fix it, `manual` (the statement an
+administrator runs) or `note` (why).
 
 ### Upgrade step: repair hub uids after pushes from an older client
 
@@ -2315,13 +2615,105 @@ narrow it. After the repair, regenerate + re-push is a clean no-op:
 ### Backup and restore
 
 ```bash
-mtix sync backup --output /tmp/hub.sql      # wraps pg_dump on 5 mtix tables
-psql "$DSN" < /tmp/hub.sql                  # restore
+mtix sync backup --output "hub-$(date -u +%Y%m%dT%H%M%SZ).sql"   # pg_dump of every mtix hub table
 ```
 
-For compliance-grade durability, schedule the backup to immutable
-cold storage (S3 Object Lock, GCS retention, Azure Immutable). See
-the [safety-critical
+`mtix sync backup` runs `pg_dump` for every table the mtix hub migrations
+create, with its data (`--no-owner --no-privileges --strict-names`), and
+prints the table list. Every one of those tables must exist: a hub that
+lacks one, such as a hub not initialized since an upgrade added a table,
+fails the backup and leaves no file, and the error says to run `mtix sync
+init` with the DSN naming the table owner, then back up again. It needs
+`pg_dump` on `PATH` (or `MTIX_PG_DUMP`), a client at least as new as the
+hub's server. It contacts the hub only while it runs.
+
+- **Connection.** The backup uses the TLS settings the sync commands
+  use: `sslmode` is `verify-full` when the DSN names none, and a weaker
+  `sslmode` needs `--insecure-tls` and is allowed only when every host is
+  loopback or a local socket. `pg_dump` receives every host and port, the
+  CA file (`sslrootcert` in the DSN, or `MTIX_SYNC_SSLROOTCERT`) and
+  `target_session_attrs` through `PG*` environment variables; the DSN and
+  its password never appear on its command line. `pg_dump` does not
+  receive the DSN's `options`, so it finds the sync tables through the
+  default search_path of the role the DSN names, which may not be the
+  table owner: for a hub whose schema is named only in the DSN
+  (`options=-c search_path=<schema>`), first run
+  `ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`
+  so the backup dumps that hub. It applies in that database only and
+  takes precedence over a role-wide
+  `ALTER ROLE <the DSN's role> SET search_path = <schema>, public`, which
+  a setting for that role in that database overrides. A backup that
+  cannot find a hub table prints both statements with the DSN's role and
+  database filled in. Client certificates
+  (`sslcert`, `sslkey`) are not passed to `pg_dump`: a hub that requires
+  a client certificate cannot be backed up with `mtix sync backup` yet.
+  With no CA file
+  configured, `pg_dump` verifies the hub against the system trust store
+  and the backup says so; a hub whose certificate comes from a private CA
+  needs `sslrootcert=<ca.pem>` in the DSN or `MTIX_SYNC_SSLROOTCERT`.
+- **Output file.** mtix creates the file, readable and writable only by
+  you (mode 0600), before `pg_dump` writes to it. It never overwrites a
+  file: an existing path, or a symlink, is refused, so give each backup a
+  new name. A failed backup, including one interrupted with Ctrl-C or
+  SIGTERM, leaves no file.
+
+The dump holds the tables and their data, not the mtix functions and
+triggers. Restore it into an empty database as follows. If the hub's sync
+tables were in a schema other than `public`, the dump names that schema
+without creating it: first create it in the empty database
+(`CREATE SCHEMA <schema>;`, as the role that will own the sync tables),
+and in steps 1 to 3 put it first on the search_path (for example
+`PGOPTIONS='-c search_path=<schema>'` for `psql`, and `options=-c
+search_path=<schema>` in the DSN, or `ALTER ROLE <owner> SET search_path
+= <schema>, public`, for mtix).
+
+1. Restore the dump with `psql`, connected to the empty database as the
+   role that will own the sync tables. Keep the password out of the
+   command line: set `PGHOST`, `PGPORT`, `PGUSER`, `PGDATABASE`,
+   `PGSSLMODE=verify-full` and `PGSSLROOTCERT=<ca.pem>` (the hub's CA
+   file, or `system` for the operating system's trust store with libpq 16
+   or later; without it `psql` looks for `~/.postgresql/root.crt`), with
+   the password in a `~/.pgpass` file, then run `psql -f hub-<date>.sql`. `psql` reports an error for each trigger
+   (its function does not exist yet); step 2 creates them.
+2. Check the owner's search_path first, above all for a hub in
+   `public`: connected as that role, `SHOW search_path;` and
+   `SELECT current_schema();` must put the sync tables' schema first.
+   The default `"$user", public` puts a schema named after the role first
+   when one exists; `mtix sync init` then refuses, changing nothing, until
+   you run `ALTER ROLE <owner> SET search_path = public` (or
+   `<schema>, public`). Then run `mtix sync init` with the hub DSN naming
+   that same role, the table owner. It recreates every mtix function and
+   trigger and keeps the restored data, including the restore epoch.
+3. Run `mtix sync doctor`. Its `hub-triggers` check must pass: every mtix
+   function and trigger present and enabled. If it names a gap, run its
+   `fix` as the table owner and run the doctor again. Then confirm that
+   the DSN reaches the restored database. As the table owner, in the
+   restored database, count the events with the schema named:
+   `SELECT count(*) FROM <schema>.sync_events;` (`public` unless the hub
+   used another). Then run `SELECT count(*) FROM sync_events;` as the
+   DSN's role with the DSN's search_path. If the two counts differ, the
+   DSN does not reach the restored database. If they are equal and not
+   zero, that rules out only a new or empty hub: a source hub that is
+   still reachable and holds the same events gives the same count. So
+   also confirm that the DSN's host and database name the restored
+   server. For a hub that has events, the count must not be zero. A
+   count of `sync_events` taken on the source hub just before the backup
+   is a weaker reference still: the hub only gains events, so the DSN's
+   count must be at least that number, which rules out only a new or
+   emptier hub. Do not use the `COPY <n>` lines `psql` prints during the
+   restore: they do not name their table.
+4. A dump holds no privileges: after `mtix sync init`, grant each syncing
+   role the least-privilege list again, EXECUTE on
+   `record_restore_collision` included, then run `mtix sync doctor` with
+   a syncing role's DSN. The list is in step 2 of the small-team workflow
+   and in `docs/SECURITY-MODEL.md`; the doctor's `schema current` check
+   names a role that cannot execute the function.
+5. Continue with the "Restore-from-backup runbook" below: `mtix sync
+   mark-restored`, then `mtix sync collisions list`.
+
+For compliance-grade durability, copy each backup to immutable cold
+storage: object storage with a retention lock that nobody, including the
+hub's administrators, can shorten. See the [safety-critical
 workflow](docs/audit/MTIX-15-audit-pass2.md) for the full procedure.
 
 ### Lost-laptop recovery
@@ -2331,8 +2723,9 @@ Procedure when a CLI machine is lost:
 1. On every surviving CLI, run `mtix sync status`. Pending count of 0
    means all in-flight events are on the hub.
 2. The lost machine's pending events (if any) are unrecoverable.
-3. Provision the replacement machine. Run `mtix sync clone DSN` to
-   rebuild local state from the hub event log. Replay is idempotent.
+3. Provision the replacement machine. Set `MTIX_SYNC_DSN` (or
+   `.mtix/secrets`) and run `mtix sync clone` to rebuild local state
+   from the hub event log. Replay is idempotent.
 
 The `mtix_sync_workflow` MCP tool surfaces hub-unreachable conditions
 (`meta.sync.consecutive_errors ≥ 3`) so agents notice before the
@@ -2467,6 +2860,7 @@ change the node's status with the normal commands instead.
 |---|---|---|
 | `mtix sync push` errors with "connection refused" | Hub unreachable | Retry; check `mtix sync doctor` |
 | `mtix sync push` errors with "tls handshake timeout" | TLS misconfiguration | Verify `MTIX_SYNC_SSLROOTCERT` if managed-PG requires it |
+| A sync command fails with a message containing "check the DSN's connection parameters" | The DSN's settings, or a CA, client-certificate or key file they name (`sslrootcert`, `MTIX_SYNC_SSLROOTCERT`, `PGSSLROOTCERT`, `PGSSLCERT`/`PGSSLKEY`, or the driver's defaults in `~/.postgresql/` (`%APPDATA%\postgresql\` on Windows): `root.crt` when it exists, and `postgresql.crt` with `postgresql.key` only when both exist), could not be parsed or loaded. The message never repeats the path or the DSN | Check the DSN's parameters and that each named file exists, is readable and holds PEM data; then run `mtix sync doctor` |
 | `ErrSyncDivergentHistory` on `mtix sync init` | Hub already has a different lineage for this prefix | Run `mtix sync clone` to join, OR `mtix sync reconcile --import-as PARENT-ID` |
 | `ErrSyncQueueFull` from `mtix create` / `update` | Local pending queue at the cap | `mtix sync push --force`, or raise `sync.max_queue_size` |
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
@@ -2477,6 +2871,17 @@ change the node's status with the normal commands instead.
 | A command prints `WARN: ... over the 65536-byte sync limit`, or `mtix sync doctor` fails `held push events` | Push holds events the hub would refuse (and the events of a held task creation's subtree, and links made while one is held), and pushes the rest | Follow the fix doctor names for each held event: shorten or split a field edit; escalate a held task creation, without editing it; check the clock for a clock hold (see [Held push events](#held-push-events)) |
 | `mtix sync status` shows a `pending` count that never goes down, `mtix sync doctor` fails `queue draining`, yet `mtix sync push` reports success | On a client older than 0.5.4: events an earlier push delivered but never marked pushed (a lost commit confirmation, a crash or disk failure before the local mark, a retry after a network drop) sit at the head of the queue, and push stops at them | Upgrade and run `mtix sync push`: it confirms the events already on the hub (`already on the hub` in its output) and pushes the rest; check `pending` 0 (see [Events already on the hub](#events-already-on-the-hub)) |
 | A node shows an older state than its history after a pull on a client older than 0.5.4 (for example `in_progress` after `mtix done`) | That pull replayed an older event of this machine | Upgrade, run `mtix sync pull`, then `mtix sync repair --status` and review the list; run `mtix sync pull` again, then `mtix sync repair --status --apply` and `mtix sync push`; a flagged node needs review and `--force` (see above). Pulling first matters: a repair made on a stale log can revert a teammate's newer change on every machine |
+| `mtix sync doctor` shows `[WARN] hub-privileges` | Roles other than the table owner can use the sync tables, or a TRUNCATE guard is missing or disabled. Nothing is blocked, and this may be fine on a private network | To restrict access, the table owner runs `mtix sync harden` (a dry run), then, after reviewing its role list, `mtix sync harden --apply --keep-role <role>`; see "Hub privileges" |
+| `mtix sync doctor` shows `[FAIL] hub-privileges` | Strict mode (`sync.keep_roles` set): the check fails whenever `mtix sync harden` would report a finding (for example, a role not in the list can use the sync tables, a guard is missing or disabled, a kept role can grant its access on or holds a privilege another role granted it, an mtix object is owned by another role, or a membership reaches every table), or when the check cannot run (for example, the hub is unreachable, or a sync table is missing) | Add the role to `sync.keep_roles` if it should keep access, or run `mtix sync harden` and then `--apply` as the table owner; give an administrator the statements harden prints for what it cannot change. When the check cannot run, take the next step its detail names |
+| `mtix sync doctor` shows `[WARN] schema current` (`[FAIL]` in strict mode) | The hub lacks migration 017 (its owner has not run `mtix sync init` since the upgrade; pushes keep working); or the DSN's role cannot execute `record_restore_collision`, which records restore collisions on the hub (a push that meets a restore collision fails until the table owner runs the printed GRANT); or the DSN's role, other than the table owner, holds or can reach INSERT on `sync_node_collisions` or USAGE on its sequence; or create events are stamped with a restore epoch below 0 or above the hub's current epoch | As the table owner the `fix` names, run it: `mtix sync init`, the printed `GRANT EXECUTE ON FUNCTION ... TO <role>;`, the printed `UPDATE`, or, once every syncing client is upgraded, the printed `REVOKE`, while a role administrator removes each path the `fix` names (see "Hub health checks"); then run `mtix sync doctor` again |
+| `mtix sync doctor` shows `[FAIL] schema current` naming `sync_events_node_registry_uidx`, or `mtix sync init` warns that it is not valid or not ready | The node-number registry index is not valid or not ready, as a failed or interrupted build leaves it: an index that is not ready checks no new create; one that is ready but not valid still refuses a duplicate create, but queries do not use it and it must be built again | As the table owner, run `mtix sync migrate --yes` while the version gate is open: it drops the index and builds it again. Then run `mtix sync doctor` again |
+| `mtix sync init` fails with `could not create unique index "sync_events_node_registry_uidx"` and names `mtix sync migrate --yes` | The hub has no registry index and a project on it holds duplicate creates, so the migration cannot build the index | As the table owner, run `mtix sync migrate --yes` while the version gate is open (it records the duplicates and builds the index without them), then `mtix sync init` again |
+| `mtix sync doctor` shows `[WARN] hub-triggers` (`[FAIL]` in strict mode) | An mtix function or trigger is missing, as after a restore from backup; a trigger executes another function than its migration binds; or a trigger is not enabled | As the table owner the `fix` names, run it: `mtix sync init` for what is missing and for a trigger bound to another function (init replaces it), the printed `ALTER TABLE ... ENABLE TRIGGER` statement for what is not enabled; then run `mtix sync doctor` again |
+| `mtix sync init`, or a `mtix sync harden --apply` that would restore or replace a TRUNCATE guard, fails with `the sync tables are in schema …, but the first schema on the search_path is …` (and `mtix sync doctor`'s `hub-triggers` says so) | The session's search_path puts another schema before the one holding the sync tables, so new objects would land away from them; nothing was changed. The usual cause is a schema named after the connecting role, which the default search_path (`"$user", public`) puts first | Set the search_path so the sync tables' schema comes first: `ALTER ROLE <owner> SET search_path = public` when the tables are in `public`, else `ALTER ROLE <owner> SET search_path = <schema>, public` (or `options=-c search_path=...` in the DSN); then run the command again. To keep a separate hub in the first schema instead (one hub per search_path), put that schema alone on the search_path (`ALTER ROLE <owner> SET search_path = <first schema>`). A `mtix sync harden --apply` that only changes privileges is not affected |
+| `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
+| `mtix sync backup` fails with `a hub table was not found` (`pg_dump` names the table above it) | `pg_dump` found no table of that name through the search_path of the role the DSN names; no file was left. The hub has not been initialized since an upgrade added the table; or the hub's schema is named only in the DSN, which `pg_dump` does not receive; or the DSN's role lacks USAGE on the hub's schema, which leaves that schema off its search_path | Run `mtix sync init` with the DSN naming the table owner, then back up again; for a hub whose schema only the DSN names, first run the printed `ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`, which takes precedence over a role-wide `ALTER ROLE <the DSN's role> SET search_path = <schema>, public`; for a DSN role without USAGE, run the GRANT statements the backup prints: the schema's owner grants USAGE on the schema (find it with `SELECT nspowner::regrole FROM pg_catalog.pg_namespace WHERE nspname = '<schema>';`; for `public` in a database created on PostgreSQL 15 or later it is `pg_database_owner`, that is, the database's owner), and the table owner grants SELECT on each sync table and sync-table sequence by name (`GRANT SELECT ON TABLE <schema>.applied_events, <schema>.audit_log, ... TO <the DSN's role>;`), so the role gets nothing else in the schema; then keep that role with `--keep-role` so `mtix sync harden --apply` leaves its access |
+| `mtix sync conflicts resolve` fails with `is a manual resolution` | The id is a recorded decision, not a conflict | Run `mtix sync conflicts list --all` and resolve the conflict it answers |
+| `mtix sync conflicts resolve` fails with `has a later conflict` or `is already resolved` | A later conflict or a later decision exists for the same node and field | Resolve the newest conflict the error names; if it says that one is resolved too, the decision already stands |
 
 ### MCP integration
 
@@ -2575,6 +2980,35 @@ idempotent and a no-op once complete. Phase 1 only moves numbers when the
 hub already has duplicates, and only with `--yes`; without `--yes` it
 previews and changes nothing.
 
+The registry index, `sync_events_node_registry_uidx`, covers every project
+on the hub, so the sweep records the duplicate creates of every project,
+whichever project `--project` names. With `--yes` and the version gate
+open, the table owner's run builds the index and leaves the recorded
+duplicate creates out of it by event id: they stay in the event log
+unchanged, and the index is valid and ready and refuses a new create of
+any number already in use. The run drops an index that is not valid or
+not ready and builds it again, and never reports such an index present.
+Without `--yes`, or while the gate is closed, the report names such an
+index with the fix. `--json` gives the index state as `registry_index`
+(`present`, `valid`, `ready`). A hub with more than 100 duplicate creates,
+or with more than 3600 bytes of their event ids, is refused before the
+build, with the count and the limit; pushes keep working, and a push
+whose create takes a number already in use is still renumbered. So is a
+hub where one node lost two numbers: the remap ledger records one number
+per node, and the refusal names the creates it cannot record. A refused
+build drops and builds nothing: an index that is not valid stays, and
+`mtix sync doctor` keeps reporting it. Phase 1 of the same run has
+already recorded the duplicates (remap and conflict rows), and the
+report, in text and in `--json`, still shows that sweep phase, with the
+count and the projects, before the refusal.
+
+`mtix sync init` checks the registry index after its migration and
+prints a WARN with the same fix when the index is not valid or not
+ready. On a hub without the index whose projects hold duplicate creates,
+the migration cannot build it: `mtix sync init` refuses and names the
+fix, `mtix sync migrate --yes` as the table owner while the version gate
+is open; then run `mtix sync init` again.
+
 ### Restore-from-backup runbook
 
 Restoring the hub from a backup can, in rare cases, hand the same number
@@ -2586,12 +3020,21 @@ call, so mtix blocks just the affected node and asks an admin.
 Run this after every hub restore:
 
 ```bash
-# 1. Restore the hub from your backup.
-psql "$DSN" < /path/to/hub-backup.sql
+# 1. Restore the hub from your backup into an empty database, then run
+#    mtix sync init as the table owner and check mtix sync doctor's
+#    hub-triggers check (see "Backup and restore" above). Then grant each
+#    syncing role the least-privilege list again, EXECUTE on
+#    record_restore_collision included, and run mtix sync doctor with a
+#    syncing role's DSN.
+psql -f /path/to/hub-backup.sql      # PG* variables name the empty database, the owner role and the CA (PGSSLROOTCERT)
+mtix sync init
+mtix sync doctor
 
 # 2. Open a restore window. Run this EXACTLY ONCE, right after the restore.
-#    This is the only way to arm restore-collision detection. Clients
-#    cannot do it; only the operator can.
+#    This is the only way to arm restore-collision detection, and it runs
+#    as the table owner. A syncing role with the least-privilege list
+#    cannot do it: the hub stamps each event's restore epoch and records
+#    each restore collision itself.
 mtix sync mark-restored
 
 # 3. Let teammates reconnect and push as normal.
@@ -2599,6 +3042,34 @@ mtix sync mark-restored
 # 4. Check for settled-vs-settled collisions.
 mtix sync collisions list
 ```
+
+Run `mtix sync mark-restored` with the DSN naming the table owner.
+A syncing role set up with the least-privilege list holds no UPDATE on
+`sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs
+as the table owner. The least-privilege list is in step 2 of the
+small-team workflow (`.mtix/docs/workflows/small-team.md`) and in
+`docs/SECURITY-MODEL.md`.
+
+A syncing role records restore collisions only through the hub function
+`record_restore_collision`, which runs as the table owner and records a
+collision only when the hub's own data shows an earlier-epoch create
+holding the number, so the role needs EXECUTE on that function and no
+INSERT on `sync_node_collisions`. When `mtix sync init` adds this
+function to an existing hub, the table owner then grants EXECUTE on it to
+each syncing role
+(`GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;`) and
+revokes the privileges the list no longer names
+(`REVOKE INSERT ON sync_node_collisions FROM <role>;` and
+`REVOKE USAGE ON SEQUENCE sync_node_collisions_collision_id_seq FROM <role>;`).
+Upgrade every syncing client first, then run the REVOKE statements; if the
+REVOKE comes first, an older client's push that meets a restore collision
+fails until that client upgrades. The doctor's `schema current` check
+names a role that cannot execute the function, and a role that still
+holds INSERT on `sync_node_collisions` or USAGE on its sequence.
+
+A dump holds no privileges: after `mtix sync init`, grant each syncing role
+the least-privilege list again, EXECUTE on `record_restore_collision`
+included, then run `mtix sync doctor` with a syncing role's DSN.
 
 If `collisions list` is empty, you are done — the team's normal sync
 self-healed everything. If it shows a collision, each row surfaces both
@@ -2635,6 +3106,7 @@ mtix exits with structured codes so scripts and agents can react without parsing
 |---|---|
 | 0 | Success |
 | 1 | Generic error |
+| 2 | Attention needed — `mtix sync doctor` found a failing check, or `mtix sync harden` has changes to make (dry run) or access remains (after `--apply`); the report was printed |
 | 3 | Disk full — a write or backup was refused or failed because the volume is out of space; free space and retry |
 | 4 | Database corrupted — an integrity gate failed at open; see "Disk full and corruption recovery" |
 | 5 | Inbox empty — `mtix inbox --wait` timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Note: a harness-hosted (Claude) agent cannot stay parked *between* turns — a dormant session runs no poller, so `mtix_inbox_wait` only watches the inbox *within* a live turn. To wake a dormant agent when work lands, cold-start it with an exec wake hook on the worker host (see "Waking agents: delivery that terminates in the prompt"), or use channel push / a background watcher for a live session |

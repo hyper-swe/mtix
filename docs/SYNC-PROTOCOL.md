@@ -799,15 +799,19 @@ keeps working without the new index (pulls stay correct, only slower).
 
 ## Transport security
 
-- TLS posture is enforced in `EnforceTLSPosture` (`transport/dsn.go`).
+- TLS posture is enforced by `ApproveDSN` (`transport/posture.go`),
+  which `EnforceTLSPosture` (`transport/dsn.go`) wraps. It parses the
+  DSN once, and the pool opens from the configuration it approves.
   Default sslmode is `verify-full`; weaker modes refused unless
-  `--insecure-tls` is set AND the host is loopback.
+  `--insecure-tls` is set AND every host the connection may use is
+  loopback or a local Unix-domain socket.
 - `MTIX_SYNC_SSLROOTCERT` populates `sslrootcert` for managed-PG
   providers that require a CA bundle.
 - DSN sourcing (`Source()`) order: `MTIX_SYNC_DSN` env → `.mtix/secrets`
   (mode 0600 enforced). `Source()` refuses to load if any tracked config
   file under `.mtix/` mentions a DSN-shaped key — fail-closed at the
-  earliest detectable misconfiguration.
+  earliest detectable misconfiguration. Positional DSN arguments are no
+  longer accepted; set `MTIX_SYNC_DSN` or `.mtix/secrets`.
 - Every error path passes through `redact.DSN`. `cmd/mtix/main.go`
   wraps with `defer redact.Recover` so panics with a DSN in scope are
   scrubbed before the runtime printer.
@@ -1127,20 +1131,24 @@ applied to the canonical tables.
 
 ## Backup
 
-`mtix sync backup --output FILE` wraps `pg_dump` for the 5 mtix-owned
-tables:
+`mtix sync backup --output FILE` wraps `pg_dump` with one `--table`
+for every table the hub migrations create (`migrations.Tables()`), plus
+`--no-owner --no-privileges --strict-names`: every table name must match
+a table, so a hub that lacks one fails the backup, leaves no file and
+points at `mtix sync init`. The connection uses the same TLS settings
+as sync, and mtix creates FILE (mode 0600, refusing a path that exists)
+before `pg_dump` writes to it.
 
-```
---table=sync_events
---table=sync_conflicts
---table=sync_projects
---table=applied_events
---table=audit_log
---no-owner --no-privileges
-```
-
-Restore is `psql "$DSN" < FILE`. The append-only triggers permit INSERT,
-so the restore replays cleanly.
+The dump holds the tables and their data, not the mtix functions and
+triggers, so replaying it with `psql` cannot create the triggers. The
+restore runbook is: restore the dump into an empty database with `psql`,
+connected as the role that will own the sync tables; run `mtix sync
+init` as that role, which recreates every function and trigger the
+migrations define; confirm with the `hub-triggers` check of `mtix sync
+doctor`, which verifies the function and trigger sets, that every
+trigger executes the function its migration binds, and that every
+trigger is enabled (`tgenabled` `O` or `A`); then run `mtix sync
+mark-restored`. See the user manual, "Backup and restore".
 
 ## See also
 

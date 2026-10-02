@@ -8,6 +8,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/hyper-swe/mtix/internal/sync/redact"
@@ -32,13 +33,22 @@ func main() {
 	if err := run(); err != nil {
 		// An empty `inbox --wait` timeout is an expected non-zero outcome, not a
 		// failure — surface it via the exit code only, no scary "error:" line.
-		if !errors.Is(err, errInboxWaitEmpty) {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		// So are harden's pending changes: its report is already printed.
+		if !errors.Is(err, errInboxWaitEmpty) && !errors.Is(err, errHardenPending) {
+			printFinalError(os.Stderr, err)
 		}
-		// Structured exit codes per MTIX-26.8 (3 = disk full,
-		// 4 = corrupted, 5 = inbox-empty, 1 = generic).
+		// Structured exit codes per MTIX-26.8 (2 = harden pending,
+		// 3 = disk full, 4 = corrupted, 5 = inbox-empty, 1 = generic).
 		os.Exit(exitCodeForError(err)) //nolint:gocritic // intentional: errors flow here without panic; defer covers the panic path
 	}
+}
+
+// printFinalError writes err as the CLI's final "error:" line. The text
+// passes through the central scrubber scrubSyncText, so no configured
+// DSN, password or URL-shaped DSN reaches the terminal, including from
+// errors cobra builds around an argument (FR-18.17, MTIX-95.15).
+func printFinalError(w io.Writer, err error) {
+	fmt.Fprintf(w, "error: %s\n", scrubSyncText(err.Error()))
 }
 
 func run() error { return runArgs(nil) }

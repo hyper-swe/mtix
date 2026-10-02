@@ -148,7 +148,10 @@ func TestEnforceTLS_RefusesWeakerWithoutInsecureFlag(t *testing.T) {
 }
 
 func TestEnforceTLS_AllowsWeakerWithInsecureFlagOnLoopback(t *testing.T) {
-	cases := []string{"127.0.0.1", "localhost", "::1"}
+	pinPGEnv(t)
+	// IPv6 literals take brackets in a URL; without them the driver
+	// reads "::1:5432" as a single address.
+	cases := []string{"127.0.0.1", "localhost", "[::1]"}
 	for _, host := range cases {
 		t.Run(host, func(t *testing.T) {
 			dsn := "postgres://user:pass@" + host + ":5432/db?sslmode=disable"
@@ -160,6 +163,7 @@ func TestEnforceTLS_AllowsWeakerWithInsecureFlagOnLoopback(t *testing.T) {
 }
 
 func TestEnforceTLS_RefusesWeakerOnRemoteHostEvenWithInsecureFlag(t *testing.T) {
+	pinPGEnv(t)
 	_, err := transport.EnforceTLSPosture(
 		"postgres://user:pass@db.example.com/db?sslmode=disable",
 		transport.Options{InsecureTLS: true},
@@ -169,25 +173,31 @@ func TestEnforceTLS_RefusesWeakerOnRemoteHostEvenWithInsecureFlag(t *testing.T) 
 }
 
 func TestEnforceTLS_HonorsSSLROOTCERTEnv(t *testing.T) {
-	t.Setenv(transport.EnvSSLRootCert, "/path/to/ca.pem")
+	pinPGEnv(t)
+	// The check loads the CA file, so the variable names a real one.
+	caPath, _ := writeTestCA(t)
+	t.Setenv(transport.EnvSSLRootCert, caPath)
 	out, err := transport.EnforceTLSPosture(
 		"postgres://user:pass@example.com/db",
 		transport.Options{},
 	)
 	require.NoError(t, err)
 	u, _ := url.Parse(out)
-	require.Equal(t, "/path/to/ca.pem", u.Query().Get("sslrootcert"))
+	require.Equal(t, caPath, u.Query().Get("sslrootcert"))
 }
 
 func TestEnforceTLS_DoesNotOverrideExplicitSSLROOTCERT(t *testing.T) {
-	t.Setenv(transport.EnvSSLRootCert, "/path/to/ca.pem")
+	pinPGEnv(t)
+	envCA, _ := writeTestCA(t)
+	explicitCA, _ := writeTestCA(t)
+	t.Setenv(transport.EnvSSLRootCert, envCA)
 	out, err := transport.EnforceTLSPosture(
-		"postgres://user:pass@example.com/db?sslrootcert=/explicit.pem",
+		"postgres://user:pass@example.com/db?sslrootcert="+url.QueryEscape(explicitCA),
 		transport.Options{},
 	)
 	require.NoError(t, err)
 	u, _ := url.Parse(out)
-	require.Equal(t, "/explicit.pem", u.Query().Get("sslrootcert"),
+	require.Equal(t, explicitCA, u.Query().Get("sslrootcert"),
 		"explicit DSN value beats env var")
 }
 

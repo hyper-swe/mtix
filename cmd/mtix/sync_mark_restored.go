@@ -18,7 +18,10 @@ import (
 // (ADR-003 §15, Addendum A).
 //
 // RUNBOOK (restore the hub from a backup):
-//  1. Restore the mtix-owned tables from a `mtix sync backup` dump.
+//  1. Restore the hub tables from a `mtix sync backup` dump into an empty
+//     database, run `mtix sync init` as the table owner (it recreates the
+//     mtix functions and triggers the dump does not hold) and check the
+//     hub-triggers check of `mtix sync doctor` (MTIX-95.7).
 //  2. Run `mtix sync mark-restored`. This advances the hub restore_epoch so
 //     every surviving create's stamp falls into an EARLIER epoch than every
 //     create accepted afterward — opening the restore window in which a
@@ -33,7 +36,7 @@ import (
 func newSyncMarkRestoredCmd() *cobra.Command {
 	var insecureTLS bool
 	cmd := &cobra.Command{
-		Use:   "mark-restored [DSN]",
+		Use:   "mark-restored",
 		Short: "Operator: advance the hub restore-epoch after a backup restore (ADR-003 §15)",
 		Long: `Advance the hub restore-epoch by one. Run this EXACTLY ONCE immediately
 after restoring the hub from a backup.
@@ -45,14 +48,14 @@ collision (Option B) and queued for admin resolution via
 restore window every collision renumbers normally.
 
 This is an OPERATOR action — no client or push can advance the epoch.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncMarkRestored(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS})
 		},
 	}
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
-		"Allow weaker TLS modes on loopback hosts (development only)")
+		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	return cmd
 }
 

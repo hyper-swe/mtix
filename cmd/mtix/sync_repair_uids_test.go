@@ -104,7 +104,7 @@ func TestRunSyncRepairUIDs_EmptyStoreHasNothingToRepair(t *testing.T) {
 
 func TestNewSyncRepairUIDsCmd_Flags(t *testing.T) {
 	cmd := newSyncRepairUIDsCmd()
-	assert.Equal(t, "repair-uids [DSN]", cmd.Use)
+	assert.Equal(t, "repair-uids", cmd.Use)
 	require.NotNil(t, cmd.Flags().Lookup("dry-run"))
 	require.NotNil(t, cmd.Flags().Lookup("project"))
 	assert.Contains(t, cmd.Long, "never overwritten")

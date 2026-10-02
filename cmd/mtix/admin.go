@@ -367,7 +367,9 @@ func newMigrateCmd() *cobra.Command {
 	}
 }
 
-// newServeCmd creates the mtix serve command per FR-6.4.
+// newServeCmd creates the mtix serve command per FR-6.4. Its help names
+// only what serve starts: the HTTP server, which also serves the web UI
+// and the WebSocket event stream (MTIX-95.14).
 func newServeCmd() *cobra.Command {
 	var (
 		addr string
@@ -376,7 +378,7 @@ func newServeCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start the mtix HTTP/WebSocket/gRPC server",
+		Short: "Start the mtix HTTP and WebSocket server",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runServe(addr, port)
 		},
@@ -413,10 +415,7 @@ func runServe(addr string, port int) error {
 		app.agentSvc,
 		app.configSvc,
 		app.logger,
-		mtixhttp.ServerConfig{
-			Bind: addr,
-			Port: fmt.Sprintf("%d", port),
-		},
+		serveConfig(addr, port),
 		clock,
 	)
 
@@ -462,4 +461,15 @@ func guardImportReplace(ctx context.Context, exportData *sqlite.ExportData) erro
 	}
 	_, err = guardDestructive(ctx, os.Stderr, op)
 	return err
+}
+
+// serveConfig builds the HTTP server configuration for `mtix serve`,
+// including the build version injected at link time, which /health
+// reports (FR-7.3b, MTIX-95.14).
+func serveConfig(addr string, port int) mtixhttp.ServerConfig {
+	return mtixhttp.ServerConfig{
+		Bind:    addr,
+		Port:    fmt.Sprintf("%d", port),
+		Version: version,
+	}
 }

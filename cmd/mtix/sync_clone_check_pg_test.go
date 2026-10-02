@@ -87,7 +87,7 @@ func TestRunSyncClone_ExtremeLamportHubRow_RefusedNothingWritten(t *testing.T) {
 	require.Equal(t, 1, before.quarantine, "precondition: a quarantine row is seeded")
 	var stdout, stderr bytes.Buffer
 
-	err := runSyncClone(ctx, &stdout, &stderr, []string{f.dsn}, transport.Options{InsecureTLS: true}, false, 1)
+	err := runSyncClone(ctx, &stdout, &stderr, nil, transport.Options{InsecureTLS: true}, false, 1)
 
 	require.Error(t, err)
 	require.Equal(t, fmt.Sprintf("mtix sync clone check: clone refused: hub event %s fails the checks sync pull runs "+
@@ -120,7 +120,7 @@ func TestRunSyncClone_CorruptVectorClockRow_RefusedQuotingMalformed(t *testing.T
 	require.NoError(t, err)
 	before := readPeerState(t, f)
 
-	err = runSyncClone(ctx, &bytes.Buffer{}, &bytes.Buffer{}, []string{f.dsn},
+	err = runSyncClone(ctx, &bytes.Buffer{}, &bytes.Buffer{}, nil,
 		transport.Options{InsecureTLS: true}, false, 100)
 
 	require.Error(t, err)

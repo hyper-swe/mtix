@@ -184,7 +184,7 @@ func newDaemonInstallCmd() *cobra.Command {
 	install := &cobra.Command{
 		Use:   "install",
 		Short: "Register the daemon as an OS service (boot-start, crash-restart)",
-		Args:  cobra.NoArgs,
+		Args:  syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			spec, err := currentServiceSpec(intervalSec)
 			if err != nil {
@@ -230,7 +230,7 @@ func newDaemonServiceCmds() []*cobra.Command {
 		return &cobra.Command{
 			Use:   use,
 			Short: short,
-			Args:  cobra.NoArgs,
+			Args:  syncExactArgs(0),
 			RunE: func(cmd *cobra.Command, _ []string) error {
 				spec, err := currentServiceSpec(daemonDispatchDefaultIntervalSec)
 				if err != nil {

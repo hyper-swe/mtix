@@ -122,7 +122,7 @@ func (f *sweepFixture) pullPeerStreams(t *testing.T, limit int) (string, string)
 // error.
 func (f *sweepFixture) runPeerPull(stdout, stderr *bytes.Buffer, limit int) error {
 	return runSyncPull(context.Background(), stdout, stderr,
-		[]string{f.dsn}, transport.Options{InsecureTLS: true}, limit)
+		nil, transport.Options{InsecureTLS: true}, limit)
 }
 
 // peerMeta returns one meta value of the peer store.
@@ -543,7 +543,7 @@ func (f *sweepFixture) stagedOnPeer(t *testing.T) []string {
 // progress and any staged ids; the first pull after it diffs the full hub
 // history.
 func TestRunSyncClone_ResetsLateEventSweepState(t *testing.T) {
-	dsn := requireCmdPG(t)
+	requireCmdPG(t)
 	_ = openCmdHub(t)
 	initTestApp(t)
 	ctx := context.Background()
@@ -560,7 +560,7 @@ func TestRunSyncClone_ResetsLateEventSweepState(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	require.NoError(t, runSyncClone(ctx, &stdout, &stderr,
-		[]string{dsn}, transport.Options{InsecureTLS: true}, false, 100), stderr.String())
+		nil, transport.Options{InsecureTLS: true}, false, 100), stderr.String())
 
 	for _, key := range []string{"meta.sync.last_sweep_at", "meta.sync.sweep_after_id",
 		"meta.sync.sweep_after_created_at", "meta.sync.sweep_started_at"} {

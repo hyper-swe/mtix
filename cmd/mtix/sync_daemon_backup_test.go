@@ -21,7 +21,7 @@ import (
 
 func TestSyncDaemonCmd_Construction(t *testing.T) {
 	cmd := newSyncDaemonCmd()
-	require.Equal(t, "daemon [DSN]", cmd.Use)
+	require.Equal(t, "daemon", cmd.Use)
 	for _, name := range []string{"insecure-tls", "interval", "install"} {
 		require.NotNilf(t, cmd.Flags().Lookup(name), "%s flag declared", name)
 	}
@@ -119,7 +119,7 @@ func TestRemoveDaemonPID_AbsentIsNoop(t *testing.T) {
 
 func TestSyncBackupCmd_Construction(t *testing.T) {
 	cmd := newSyncBackupCmd()
-	require.Equal(t, "backup [DSN]", cmd.Use)
+	require.Equal(t, "backup", cmd.Use)
 	require.NotNil(t, cmd.Flags().Lookup("output"))
 }
 
@@ -130,7 +130,7 @@ func TestRunSyncBackup_RefusesEmptyOutput(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := runSyncBackup(context.Background(), &stdout, &stderr,
-		[]string{"postgres://u:p@h/d"}, "")
+		[]string{"postgres://u:p@h/d"}, "", transport.Options{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--output is required")
 }
@@ -142,20 +142,19 @@ func TestRunSyncBackup_RefusesOutsideMtixProject(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	err := runSyncBackup(context.Background(), &stdout, &stderr,
-		[]string{"postgres://u:p@h/d"}, "/tmp/backup.sql")
+		[]string{"postgres://u:p@h/d"}, "/tmp/backup.sql", transport.Options{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not in an mtix project")
 }
 
-func TestBackupTables_CanonicalSet(t *testing.T) {
-	want := map[string]bool{
-		"sync_events": true, "sync_conflicts": true, "sync_projects": true,
-		"applied_events": true, "audit_log": true,
-	}
-	require.Len(t, backupTables, len(want))
-	for _, tbl := range backupTables {
-		require.Truef(t, want[tbl], "unexpected table %s in backup set", tbl)
-	}
+// TestSyncBackupCmd_InsecureTLSFlag: backup takes --insecure-tls like the
+// other sync commands, since its connection follows the same TLS rules
+// (MTIX-95.7).
+func TestSyncBackupCmd_InsecureTLSFlag(t *testing.T) {
+	cmd := newSyncBackupCmd()
+	f := cmd.Flags().Lookup("insecure-tls")
+	require.NotNil(t, f)
+	require.Equal(t, "false", f.DefValue)
 }
 
 func TestPgDumpBin_Default(t *testing.T) {
@@ -171,4 +170,3 @@ func TestPgDumpBin_OverrideViaEnv(t *testing.T) {
 // The final command-registration check moved to sync_backfill_test.go
 // as TestSyncCmd_AllElevenFR18CommandsRegistered when MTIX-15.13.1
 // added the 11th subcommand.
-

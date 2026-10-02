@@ -33,8 +33,7 @@ func TestAdmin_Verify_DuplicateNodeUIDs_ReportsRecovery(t *testing.T) {
 	}
 	verify := func() map[string]any {
 		w := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/verify", nil)
-		req.Header.Set("X-Requested-With", "mtix")
+		req := apiRequest(http.MethodPost, "/api/v1/admin/verify", "")
 		s.Router().ServeHTTP(w, req)
 		require.Equal(t, http.StatusOK, w.Code)
 		var resp map[string]any

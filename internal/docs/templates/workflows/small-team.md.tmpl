@@ -27,27 +27,119 @@ trusted CA is enabled. Note the host, port, database name.
 
 ### 2. Create a least-privilege role for mtix
 
-Run as a PG superuser once during provisioning. The role only needs
-INSERT/SELECT on the 5 mtix-owned tables:
+Run as a PG superuser once during provisioning. `mtix_sync` runs
+`mtix sync init`, so it creates and owns the sync tables; `sync_projects`
+is written only by init, as the owner. A role that syncs without owning
+the tables needs this least-privilege list:
+
+- USAGE on the schema;
+- SELECT on `sync_events`, `sync_hub_state`, `sync_node_collisions` and
+  `sync_project_clients`;
+- INSERT on `sync_events`, `sync_conflicts` and `sync_project_clients`;
+- UPDATE on `sync_project_clients`;
+- USAGE on the sequence `sync_conflicts_conflict_id_seq`;
+- EXECUTE on the function `record_restore_collision`;
+- UPDATE on `sync_node_collisions`, only for a role that runs
+  `mtix sync collisions resolve`;
+- SELECT on `node_renumber_remaps`, only for a role that runs
+  `mtix sync migrate` on a hub without a valid node-number registry
+  index;
+- INSERT on `node_renumber_remaps`, only for a role that runs
+  `mtix sync migrate --yes` on a hub without a valid node-number registry
+  index.
+
+On a hub without a valid node-number registry index, `mtix sync migrate
+--yes` also builds that index when the version gate is open, that is, when
+the project has at least one active client and every active client runs a
+remap-aware mtix version. It first records the duplicate creates of every
+project on the hub, and the index leaves those creates out, so they stay in
+the event log unchanged and the build succeeds. It drops an index that is
+not valid or not ready and builds it again. While the gate is closed, it
+leaves the index for a later run. A hub with more duplicate creates than
+the index can leave out is refused before the build, with the count and the
+limit. Only the table owner can build the index.
+
+`mtix sync doctor` fails its `schema current` check while the registry
+index is not valid or not ready, and `mtix sync init` warns about such an
+index; both print the fix: as the table owner, run `mtix sync migrate
+--yes` while the version gate is open. On a hub without the index whose
+projects hold duplicate creates, `mtix sync init` refuses and names the
+same fix; run `mtix sync init` again after it.
+
+The hub stamps every event with its own restore epoch: a trigger on
+`sync_events` sets it from `sync_hub_state` on every insert. A syncing
+role records restore collisions only through the hub function
+`record_restore_collision`, which runs as the table owner and records a
+collision only when the hub's own data shows an earlier-epoch create
+holding the number, so the role needs EXECUTE on that function and no
+INSERT on `sync_node_collisions`.
+
+When `mtix sync init` adds this function to an existing hub, the table
+owner then grants EXECUTE on it to each syncing role, and revokes the
+privileges the list no longer names:
+
+```sql
+GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;
+-- once every syncing client is upgraded:
+REVOKE INSERT ON sync_node_collisions FROM <role>;
+REVOKE USAGE ON SEQUENCE sync_node_collisions_collision_id_seq FROM <role>;
+```
+
+Upgrade every syncing client first, then run the REVOKE statements; if the
+REVOKE comes first, an older client's push that meets a restore collision
+fails until that client upgrades.
+
+`mtix sync doctor`, run with a syncing role's DSN, names that role in its
+`schema current` check when it cannot execute the function, with the
+exact GRANT to run, and when it can write collision rows, with the exact
+REVOKE the table owner runs for a plain grant the owner made and every
+other path by name, which a role administrator removes (see "Hub health
+checks" in the user manual). The check skips the table owner, roles that inherit it, and superusers.
+
+A dump holds no privileges: after restoring the hub and running
+`mtix sync init`, grant each syncing role this list again, EXECUTE on
+`record_restore_collision` included, then run `mtix sync doctor` with a
+syncing role's DSN.
+
+A syncing role set up with the least-privilege list holds no UPDATE on
+`sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs
+as the table owner.
+
+A role that runs `mtix sync backup` also needs SELECT on every sync table
+and on the sequences `audit_log_audit_id_seq`,
+`sync_conflicts_conflict_id_seq` and `sync_node_collisions_collision_id_seq`;
+otherwise run the backup as the table owner.
+
+CREATE on the schema is needed whenever `mtix sync init` runs: the first
+run, after an upgrade that adds a migration, and in the restore runbook.
+
+These statements are for PostgreSQL 15 and later. The superuser that runs
+them owns the hub database, which grants CREATE on schema `public` only to
+the roles named here; `mtix_sync` owns only the objects `mtix sync init`
+creates, and its privileges on schema `public` are the ones granted here.
 
 ```sql
 CREATE ROLE mtix_sync LOGIN PASSWORD 'set-a-strong-one';
-CREATE DATABASE mtix_hub OWNER mtix_sync;
+CREATE DATABASE mtix_hub;
 \c mtix_hub
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT CONNECT ON DATABASE mtix_hub TO mtix_sync;
 GRANT USAGE, CREATE ON SCHEMA public TO mtix_sync;
--- mtix_sync needs CREATE during initial migration only; revoke after.
 ```
 
-After `mtix sync init` has run once, drop schema-level CREATE:
+Between runs of `mtix sync init` you may drop schema-level CREATE, and
+grant it again before the next run:
 
 ```sql
 REVOKE CREATE ON SCHEMA public FROM mtix_sync;
+-- before the next mtix sync init:
+GRANT CREATE ON SCHEMA public TO mtix_sync;
 ```
 
 ### 3. Store the DSN
 
-Two sources, in order of preference:
+Two sources, in order of preference. Positional DSN arguments are no
+longer accepted; set `MTIX_SYNC_DSN` or `.mtix/secrets`.
 
 ```bash
 # Preferred (production): env var
@@ -184,12 +276,13 @@ resolves it via Last-Write-Wins (deterministic by lamport →
 wall_clock_ts → author_machine_hash).
 
 ```bash
-# Inspect the contested entries
+# Inspect the contested entries (unresolved only; --all lists every row)
 mtix sync conflicts list
 
-# Resolve a specific conflict (per-conflict, surgical)
-mtix sync conflicts resolve <id> --keep-local
-mtix sync conflicts resolve <id> --keep-remote
+# Record a decision for a specific conflict (per-conflict, surgical).
+# It changes no node: apply the chosen value with mtix update, then push.
+mtix sync conflicts resolve <id> --action keep-local
+mtix sync conflicts resolve <id> --action keep-remote
 
 # Whole-project escape hatch (only if many conflicts at once)
 mtix sync reconcile --dry-run
@@ -260,7 +353,8 @@ tradeoff discussion.
 | **Mixed mtix versions on the git-tracked `.mtix/tasks.json`** (a teammate still older than 0.5.4) | mtix 0.5.4 writes the file as `schema_version` 2.0.0, with comments and activity. An older client skips it as newer than it supports (`newer than supported — upgrade mtix`), but its next writing command re-exports `.mtix/tasks.json` from its own store, without the comments and changes it skipped. On such a client even an `mtix import` that fails rewrites `.mtix/tasks.json` the same way. A 0.5.4 store is protected from such a file by the auto-import guard: the file carries no comments or activity, so its automatic import is refused and nothing changes. | Upgrade every teammate to 0.5.4 or later. Until then, run no writing commands or `mtix import` on an older client and never commit its `.mtix/tasks.json`. If one was committed, restore `.mtix/tasks.json` from the last good commit in git history, or restore the store from the backup taken before the import (`.mtix/data/backups/pre-sync-<time>.db`; `.mtix/data/pre-sync-backup.db` on 0.5.3 and earlier): stop every mtix process (the MCP server, `mtix serve` and the sync daemon), copy the backup over `.mtix/data/mtix.db`, delete `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm`, then continue. |
 | **Auto-import of `.mtix/tasks.json` refused** after a `git pull` (`mtix: auto-import of .mtix/tasks.json refused`) | The pulled board lacks tasks, comments, comment resolutions, activity entries or dependencies this store holds, or leaves fields empty in a stale copy of a task (one that lacks some of its local activity or has an older `updated_at`). Fields a teammate cleared on purpose apply. Nothing is imported, no backup is taken, the refusal repeats on every command, and writes stay in the store without rewriting the board. An applied import prints one line and keeps the database before it in `.mtix/data/backups/pre-sync-<time>.db` (newest 5 kept). | Read the list, then choose: `mtix import .mtix/tasks.json --mode merge` keeps every local task, comment, activity entry and dependency, and writes nothing while a task's status, assignee, agent state, wake time or deletion state differs from the file's (it lists each conflict; rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`, which it records in the task's activity), and decides the other field values per task: when the task's content (title, description, prompt, acceptance, labels) matches the file's, yours win, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid (a wrong choice can undo a teammate's claim or your own unclaim), and a task of yours listed as `a different task under this id` (you both created that id) is renumbered to the next number free in both, keeping its uid, and applied only when you rerun with `--confirm`; `mtix sync --fix` keeps the store and rewrites the board; the last resort, `mtix import .mtix/tasks.json --mode replace` (it needs the ticket count typed at an interactive terminal (no flag supplies it)), makes the board win. `mtix sync` shows the refusal until it is resolved. For a conflict although you changed nothing locally (after an upgrade), see [A conflict although nothing changed locally](../TROUBLESHOOTING.md#a-conflict-although-nothing-changed-locally). `sync.auto_sync: false` turns automatic import off for every clone (it is in the tracked `.mtix/config.yaml`), except into an empty store. No write, from the CLI or the MCP server, overwrites a board that changed on disk and was not imported. |
 | **Divergent history** (you initialized a hub but a teammate already initialized one with the same project prefix) | `mtix sync init` refuses with `ErrSyncDivergentHistory`. | Either join the existing hub via `mtix sync clone`, or run `mtix sync reconcile --import-as PARENT-ID` to graft your local nodes under a new parent. |
-| **Wrong sslmode** in DSN (e.g. `sslmode=disable`) | mtix refuses to connect unless `--insecure-tls` is set AND host is loopback. | Fix the DSN to `sslmode=verify-full`. |
+| **Wrong sslmode** in DSN (e.g. `sslmode=disable`) | mtix refuses to connect unless `--insecure-tls` is set AND every host the connection may use is loopback or a local Unix-domain socket. | Fix the DSN to `sslmode=verify-full`. |
+| **CA or certificate file unusable** (the CA file named by `sslrootcert`, `MTIX_SYNC_SSLROOTCERT` or `PGSSLROOTCERT`, or the client certificate and key used for TLS, is missing, unreadable or not PEM; when nothing names them, the driver uses `root.crt` from `~/.postgresql/` (`%APPDATA%\postgresql\` on Windows) if it exists, and `postgresql.crt` with `postgresql.key` from the same directory only if both exist) | mtix refuses before connecting to a network host, with a fixed message containing `check the DSN's connection parameters` that repeats neither the path nor the DSN. | Point the setting at a readable PEM file, then run `mtix sync doctor` until it is green. |
 | **DSN in a tracked file** | mtix refuses to load DSN from any tracked config; fail-closed at `Source()`. | Move it to `MTIX_SYNC_DSN` env var or `.mtix/secrets` (mode 0600). |
 | **Lost laptop with un-pushed events** | The local pending queue dies with the machine; hub never saw those events. | See "Disaster recovery" below — explicit procedure. Recovery is to clone from hub onto a fresh machine. |
 

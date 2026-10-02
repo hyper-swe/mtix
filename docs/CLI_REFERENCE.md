@@ -27,7 +27,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `config` — Manage mtix configuration
 - `context <id>` — Show assembled context chain for a node
 - `create <title>` — Create a new node
-- `daemon [DSN]` — Run this host's event dispatcher: pull from the hub (if configured), then fire hooks — continuously (FR-20)
+- `daemon` — Run this host's event dispatcher: pull from the hub (if configured), then fire hooks — continuously (FR-20)
 - `decompose <parent-id> [title1 title2...]` — Create multiple children under a node atomically
 - `defer <id>` — Defer a node until a specified time
 - `delete <id>` — Soft-delete a node
@@ -56,7 +56,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `resolve-annotation <node-id> <annotation-id>` — Resolve an annotation on a node
 - `restore <id>` — Restore an invalidated node to its previous status
 - `search` — Search nodes with advanced filters
-- `serve` — Start the mtix HTTP/WebSocket/gRPC server
+- `serve` — Start the mtix HTTP and WebSocket server
 - `session` — Manage agent sessions
 - `show <id>` — Show a node's details and annotations
 - `stale` — List nodes with stale agent assignments
@@ -267,7 +267,7 @@ Create a new node. Use --under to create a child node.
 
 ## daemon
 
-**Usage:** `daemon [DSN]`
+**Usage:** `daemon`
 
 Run this host's event dispatcher: pull from the hub (if configured), then fire hooks — continuously (FR-20)
 
@@ -291,7 +291,7 @@ together. Transient pull errors are logged and retried, never fatal.
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--install` |  | Print a systemd unit / launchd plist stub (deprecated: use 'mtix daemon install') | false |
 | `--interval` |  | Pull-then-dispatch interval in seconds | 5 |
 
@@ -1012,7 +1012,7 @@ Search nodes with advanced filters
 
 **Usage:** `serve`
 
-Start the mtix HTTP/WebSocket/gRPC server
+Start the mtix HTTP and WebSocket server
 
 ### Flags
 
@@ -1143,22 +1143,23 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.
 ### Subcommands
 
 - `backfill` — Synthesize sync_events from existing nodes (v0.1.x → v0.2.0-beta upgraders)
-- `backup [DSN]` — Dump the mtix-owned hub tables to a portable SQL file (FR-18.21)
-- `clone [DSN]` — Clone the sync hub into a fresh local store (FR-18)
+- `backup` — Dump the mtix-owned hub tables to a portable SQL file (FR-18.21)
+- `clone` — Clone the sync hub into a fresh local store (FR-18)
 - `collisions` — List or resolve restore collisions (ADR-003 §6.1, Option B)
 - `conflicts` — List or resolve unresolved sync conflicts (FR-18.12)
-- `daemon [DSN]` — Run a background pull loop (FR-18, opt-in)
-- `doctor [DSN]` — Run sync health checks (FR-18)
-- `init [DSN]` — Initialize the sync hub for this project (FR-18)
-- `mark-restored [DSN]` — Operator: advance the hub restore-epoch after a backup restore (ADR-003 §15)
-- `migrate [DSN]` — Drive the ADR-003 §7 node-identity migration phases
-- `pull [DSN]` — Pull events from the sync hub and apply locally (FR-18)
-- `push [DSN]` — Push pending events to the sync hub (FR-18)
+- `daemon` — Run a background pull loop (FR-18, opt-in)
+- `doctor` — Run sync health checks (FR-18)
+- `harden` — Owner only: restrict the hub's sync tables to the owner and the roles you keep
+- `init` — Initialize the sync hub for this project (FR-18)
+- `mark-restored` — Operator: advance the hub restore-epoch after a backup restore (ADR-003 §15)
+- `migrate` — Drive the ADR-003 §7 node-identity migration phases
+- `pull` — Pull events from the sync hub and apply locally (FR-18)
+- `push` — Push pending events to the sync hub (FR-18)
 - `quarantine` — Inspect events held in the local quarantine
 - `reconcile` — Resolve divergent history (FR-18.13)
 - `relay` — EXPERIMENTAL: manage the file-based sync relay (FR-21)
 - `repair` — Repair local state from the local sync event log (--status)
-- `repair-uids [DSN]` — Stamp hub create rows with their node uid (upgrade step for pre-MTIX-91 pushes)
+- `repair-uids` — Stamp hub create rows with their node uid (upgrade step for pre-MTIX-91 pushes)
 - `status` — Show local sync state (counts + sentinels)
 ---
 
@@ -1203,31 +1204,65 @@ After backfill: run 'mtix sync push' to ship events to the hub.
 
 ## backup
 
-**Usage:** `backup [DSN]`
+**Usage:** `backup`
 
 Dump the mtix-owned hub tables to a portable SQL file (FR-18.21)
 
-Invoke pg_dump to write a portable SQL dump of the mtix-owned
-tables on the BYO Postgres hub: sync_events, sync_conflicts,
-sync_projects, applied_events, audit_log.
+Invoke pg_dump to write a portable SQL dump of every table the mtix hub
+migrations create, with its data; the report lists the tables. Every one
+of them must exist: a hub that lacks one, such as a hub not initialized
+since an upgrade added a table, fails the backup with a hint to run mtix
+sync init. pg_dump's own messages are shown untranslated (it runs with
+LC_MESSAGES=C), with the DSN's password removed.
 
-The output file is suitable for psql restore via:
-    psql "$DSN" < FILE
+The connection uses the TLS settings the sync commands use: sslmode is
+verify-full when the DSN names none, and a weaker sslmode needs
+--insecure-tls and is allowed only when every host is loopback or a local
+socket. pg_dump receives every host and port, the CA file (sslrootcert in
+the DSN, or MTIX_SYNC_SSLROOTCERT) and target_session_attrs through PG*
+environment variables; the DSN and its password are never on its command
+line. pg_dump does not receive the DSN's options, so it finds the tables
+through the default search_path of the role the DSN names, which may not
+be the table owner: for a hub whose schema is named only in the DSN, first
+run ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET
+search_path = <schema>, public. It applies in that database only and
+takes precedence over a role-wide ALTER ROLE <the DSN's role> SET
+search_path = <schema>, public. If the role the DSN names lacks USAGE on
+the hub's schema, pg_dump does not see the tables either: the failed
+backup prints the GRANT statements, naming each sync table and sequence:
+the schema's owner grants USAGE on the schema, and the table owner grants
+SELECT. Client certificates (sslcert, sslkey) are not passed to pg_dump,
+so a hub that requires one cannot be backed up with this command yet.
 
-Requires pg_dump on PATH (override via MTIX_PG_DUMP env var). The
-DSN must point at the hub; rotation/retention of the backup file is
-the operator's responsibility.
+mtix creates the output file, readable and writable only by you (mode
+0600), before pg_dump writes to it. An existing file is never overwritten:
+choose a new path for each backup. A failed backup, or one interrupted
+with Ctrl-C or SIGTERM, leaves no file.
+
+The dump holds the tables and their data, not the mtix functions and
+triggers. To restore into an empty database:
+  1. psql -f FILE, connected as the role that will own the sync tables,
+     with PGSSLROOTCERT naming the hub's CA file (or system, with libpq 16
+     or later); psql reports errors for the triggers, whose functions do
+     not exist yet, and step 2 creates them
+  2. mtix sync init, with the DSN naming that role
+  3. mtix sync doctor: its hub-triggers check passes
+  4. mtix sync mark-restored
+
+Requires pg_dump on PATH (override via MTIX_PG_DUMP env var). Rotation
+and retention of the backup file are the operator's responsibility.
 
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--output` |  | Path to the output SQL file (required) |  |
 ---
 
 ## clone
 
-**Usage:** `clone [DSN]`
+**Usage:** `clone`
 
 Clone the sync hub into a fresh local store (FR-18)
 
@@ -1258,7 +1293,7 @@ pull cursor, so the next 'mtix sync pull' fetches only newer events.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--batch-size` |  | Number of events to pull per batch (FR-18.20) | 1000 |
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--resume` |  | Resume an interrupted clone from the last checkpoint | false |
 ---
 
@@ -1277,13 +1312,13 @@ the loser renumbers to the next free number under its parent.
 
 ### Subcommands
 
-- `list [DSN]` — List open restore collisions awaiting resolution
-- `resolve <collision_id> [DSN]` — Resolve a restore collision by choosing the winner
+- `list` — List open restore collisions awaiting resolution
+- `resolve <collision_id>` — Resolve a restore collision by choosing the winner
 ---
 
 ## list
 
-**Usage:** `list [DSN]`
+**Usage:** `list`
 
 List open restore collisions awaiting resolution
 
@@ -1297,13 +1332,13 @@ automatically (audit F-5). --json for agent/CI consumption.
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--project` |  | Project prefix (defaults to the local project) |  |
 ---
 
 ## resolve
 
-**Usage:** `resolve <collision_id> [DSN]`
+**Usage:** `resolve <collision_id>`
 
 Resolve a restore collision by choosing the winner
 
@@ -1321,7 +1356,7 @@ moved node may have external references that need updating.
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--winner` |  | Which node keeps the number: held | incoming |  |
 ---
 
@@ -1343,8 +1378,15 @@ List or resolve unresolved sync conflicts (FR-18.12)
 
 List unresolved sync conflicts
 
-List rows from the local sync_conflicts table. Default output is a
-plain-text table; --json for agent and CI consumption.
+List conflicts from the local sync_conflicts table. By default only the
+unresolved ones: lww conflicts with no later manual resolution for the
+same node and field ('mtix sync conflicts resolve' records one). A later
+lww conflict on the same node and field is unresolved again.
+
+--all lists every row, manual resolutions and tombstone rows included,
+each marked unresolved=true or unresolved=false. Default output is a
+plain-text table; --json for agent and CI consumption (each row
+carries "unresolved").
 
 When unresolved conflicts exceed 50, a banner is printed pointing
 at --batch <node_id> for batch resolution. --batch <node_id> filters
@@ -1354,6 +1396,7 @@ output to the named node.
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
+| `--all` |  | List every row, resolved conflicts and manual resolutions included | false |
 | `--batch` |  | Group conflicts by node (alias for --node) |  |
 | `--node` |  | Filter by node ID |  |
 ---
@@ -1368,11 +1411,19 @@ Record a manual resolution decision for the given conflict_id.
 --action must be one of: keep-local, keep-remote, both-renumbered,
 acknowledge.
 
-This command records the decision in sync_conflicts (a new row with
-resolution='manual' since the original row is append-only per
-FR-18.5). Actual state mutation (e.g. reverting a winner field) is
-DEFERRED to a future ticket; v1 records the decision so audit history
-is preserved and a follow-up tool can replay the choices.
+This command records the decision only: it appends a row with
+resolution='manual' to sync_conflicts (the original row is append-only
+per FR-18.5), and it changes no node. The output says so in text and
+--json ("decision recorded; node state not changed"). To apply the value
+you chose, edit the node with 'mtix update' and push.
+
+The decision resolves the conflict and every earlier conflict on the same
+node and field; a conflict recorded later on that node and field is
+unresolved again. Resolve the newest conflict of a node and field: a
+conflict_id that already has a later decision or a later conflict on its
+node and field is refused as invalid input, and the error names the
+newest conflict_id of that node and field. A conflict_id that is itself a
+manual resolution is refused as invalid input too.
 
 ### Flags
 
@@ -1383,7 +1434,7 @@ is preserved and a follow-up tool can replay the choices.
 
 ## daemon
 
-**Usage:** `daemon [DSN]`
+**Usage:** `daemon`
 
 Run a background pull loop (FR-18, opt-in)
 
@@ -1407,47 +1458,178 @@ Use --install to print a systemd unit (linux) or launchd plist
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--dispatch-hooks` |  | After each pull, fire this host's hooks for undispatched events of ANY origin (FR-20, deduped per host by the dispatch ledger). A hook fires on every host whose hooks.yaml configures it — placement is designation | false |
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--install` |  | Print a systemd unit / launchd plist for supervised install | false |
 | `--interval` |  | Pull interval in seconds | 30 |
 ---
 
 ## doctor
 
-**Usage:** `doctor [DSN]`
+**Usage:** `doctor`
 
 Run sync health checks (FR-18)
 
-Run 8 health checks against the local store and the BYO Postgres hub:
+Run health checks against the local store and the BYO Postgres hub:
 
-  1. PG reachable           — opens pool + Ping
-  2. Schema current         — sync_projects table exists with expected columns
-  3. Queue draining         — no events older than 1h still in pending
-                              (held push events aside; check 6 lists them)
-  4. No orphan applied      — every applied_event has a matching node OR tombstone
-  5. Quarantined events     — no pulled event is held in the local quarantine;
-                              each pull retries them ('mtix sync quarantine list')
-  6. Held push events       — push holds no event the hub would refuse (such as
-                              a field over the 64 KB sync limit) or that
-                              depends on a held task creation; names the fix
-                              for each ('mtix sync quarantine list')
-  7. DSN secrets file mode  — .mtix/secrets is mode 0600 (when present)
-  8. Unique node uids      — no two tasks share a uid; names each uid, its tasks
-                              and the recovery (see 'mtix verify')
+  PG reachable           - opens pool + Ping
+  Schema current         - sync_projects table exists with expected columns,
+                           the hub has migration 017 (it stamps every
+                           event's restore epoch and records restore
+                           collisions itself), the connecting role can
+                           execute record_restore_collision, unless it
+                           owns the sync tables, holds no INSERT on
+                           sync_node_collisions, and the node-number
+                           registry index, when present, is valid and ready
+  Queue draining         - no events older than 1h still in pending
+                           (held push events aside; the held push events
+                           check lists them)
+  No orphan applied      - every applied_event has a matching node OR tombstone
+  Quarantined events     - no pulled event is held in the local quarantine;
+                           each pull retries them ('mtix sync quarantine list')
+  Unique node uids       - no two tasks share a uid; names each uid, its tasks
+                           and the recovery (see 'mtix verify')
+  Held push events       - push holds no event the hub would refuse (such as
+                           a field over the 64 KB sync limit) or that
+                           depends on a held task creation; names the fix
+                           for each ('mtix sync quarantine list')
+  DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
+  Hub triggers           - every function and trigger the hub migrations
+                           define exists, every trigger executes the
+                           function its migration binds, and every trigger
+                           is enabled (tgenabled 'O', or 'A' for one that
+                           fires always)
+  Hub privileges         - which roles other than the table owner can use the
+                           sync tables, and whether every TRUNCATE guard is in
+                           place (the check mtix sync harden runs)
 
-Exit code: 0 on all-pass, 2 if any check fails. --json output for
-agents and CI consumption.
+Each hub check allows 30 s to connect, the same budget as mtix sync init,
+clone, push and pull, so a hub that is resuming from idle passes.
+
+Schema current fails when sync_projects is missing. A hub without
+migration 017 (its owner has not run mtix sync init since the upgrade) is
+a WARN by default and fails in strict mode; pushes keep working. A
+connecting role without EXECUTE on record_restore_collision is a WARN by
+default and fails in strict mode; a push that meets a restore collision
+fails until the table owner runs the printed GRANT. A connecting role
+that can write collision rows, which the least-privilege list does not
+grant, is a WARN by default and fails in strict mode: it holds INSERT on
+sync_node_collisions or USAGE on sync_node_collisions_collision_id_seq
+(a grant, or a predefined role such as pg_write_all_data), owns the
+schema that holds the sync tables, can reach, through a chain of SET
+ROLE and ADMIN OPTION, a role that holds either or owns that schema, or
+a superuser it can then SET ROLE to, has CREATEROLE before PostgreSQL
+16, or is a member of pg_execute_server_program or
+pg_write_server_files. The check skips the table owner, roles that
+inherit it, and superusers. Once every syncing client is upgraded, the
+table owner runs the printed REVOKE for a plain grant the owner made,
+and a role administrator removes each other path, which the check names
+with its chain. Create events stamped with a restore epoch below 0 or
+above the hub's current epoch are a WARN by default and fail in strict
+mode: restore-collision checks treat each as not earlier than the
+current epoch, and the table owner runs the printed UPDATE, which sets
+each to the current epoch. The check names each gap and who runs each
+part of the fix.
+
+A node-number registry index (sync_events_node_registry_uidx) that is not
+valid or not ready fails the check in every mode. An index that is not
+ready checks no new create; one that is ready but not valid still
+refuses a duplicate create, but queries do not use it and it must be
+built again. The fix is mtix sync migrate --yes, run as the table owner
+while the version gate is open, which drops the index and builds it
+again. A hub that holds sync_events but no registry index is a WARN by
+default and fails in strict mode, with the same fix, which builds the
+index.
+
+Hub triggers names each missing function or trigger, each trigger that
+executes another function, and each trigger that is not enabled, with the
+fix and the table owner who runs it: mtix sync init for what is missing
+and for a trigger that executes another function (init replaces it in
+one transaction), and the ALTER TABLE ... ENABLE TRIGGER statement it
+prints for one that is not enabled. Like hub privileges, it is a WARN by
+default and fails in strict mode.
+
+Hub privileges is a WARN by default: roles other than the owner may use
+the sync tables, which can be fine when the database is reachable only
+from a private network; mtix sync harden restricts them. It fails only in
+strict mode, when the sync.keep_roles config key is set: then it fails
+whenever mtix sync harden would report a finding, not only a role outside
+the list or a missing or disabled TRUNCATE guard, but also a kept role
+that can grant its access on or holds a privilege another role granted
+it, an mtix object owned by another role, and a membership through which
+a role can reach every table. If the check cannot run, it is a WARN by
+default and fails in strict mode. The check contacts the hub only while
+the doctor runs.
+
+Exit code: 0 on all-pass, including checks that pass with a WARN; 2 if
+any check fails. --json output for agents and CI consumption.
 
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
+---
+
+## harden
+
+**Usage:** `harden`
+
+Owner only: restrict the hub's sync tables to the owner and the roles you keep
+
+Check which roles can use the hub's sync tables, sequences and mtix
+functions, and with --apply restrict them to the owner and the roles you
+keep. Without --apply this is a dry run: it lists every role, default
+privilege and membership it would change, and changes nothing.
+
+With --apply, in one transaction, it revokes every privilege on those
+objects, column privileges included, from PUBLIC, from the roles a data
+API uses for anonymous and signed-in callers, and from every other role
+except the table owner, superusers and the roles named with --keep-role
+or in the sync.keep_roles config key. A kept role keeps its privileges,
+and its members keep them through it, but it loses any right to grant
+them on; the owner first grants again anything a kept role holds by
+another role's grant. The owner's default privileges that would give
+those roles access to tables created later are revoked too. A membership
+in pg_read_all_data, pg_write_all_data or pg_maintain, even one with only
+ADMIN OPTION, is revoked when the owner may do so; it is cluster-wide. A
+missing TRUNCATE guard is restored, one whose trigger executes another
+function (compared by OID) is replaced, and a disabled one, or one that
+fires only in replication sessions, is enabled. A server WARNING fails the run
+and nothing changes. An --apply that would restore or replace a guard
+refuses, changing nothing, when the first schema on the search_path is not
+the schema of the sync tables; privilege changes and the dry run are not
+affected. Access it cannot remove is reported with the
+statement an administrator runs, and after --apply every finding that
+remains is listed. EXECUTE on the mtix trigger functions and other roles'
+default privileges are information and never fail verification.
+
+Run it as the role that owns the sync tables, or as a superuser or a
+member of the owner role; any other role is refused and nothing changes.
+Superusers are not checked. The REPLICATION role attribute is outside the
+check too: a role that has it is checked for its privileges and
+memberships like any other role, but not for the attribute, so review the
+roles that have it (rolreplication in pg_roles). The connecting role is
+checked unless it owns the sync tables, is a superuser or is kept, so a
+member of the owner role reports its own membership: run as the owner, or
+keep the role, to verify clean. Review the dry run's role list before
+--apply: a role you do not keep loses its access.
+
+Exit code: 0 when verification passes, 2 when changes are pending (dry
+run) or access remains (--apply), 1 on an error or a refusal. --json
+prints the report for agents and CI.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--apply` |  | Make the changes the dry run lists (without it nothing is changed) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
+| `--keep-role` |  | A role that keeps its access to the sync tables (repeatable; adds to sync.keep_roles) | [] |
 ---
 
 ## init
 
-**Usage:** `init [DSN]`
+**Usage:** `init`
 
 Initialize the sync hub for this project (FR-18)
 
@@ -1455,24 +1637,35 @@ Initialize the BYO Postgres sync hub for this project. Runs the schema
 migration under a PG advisory lock so concurrent first-connects are safe.
 
 DSN sources (FR-18.16):
-  1. Argument:           mtix sync init postgres://...
-  2. Environment:        MTIX_SYNC_DSN=postgres://... mtix sync init
-  3. Secrets file:       .mtix/secrets (mode 0600, gitignored)
+  1. Environment:        MTIX_SYNC_DSN
+  2. Secrets file:       .mtix/secrets (mode 0600, gitignored)
 
-The DSN is refused if found in any tracked .mtix/config.* file. The
-default sslmode is verify-full; --insecure-tls is accepted only for
-loopback hosts.
+Positional DSN arguments are no longer accepted; set MTIX_SYNC_DSN or
+.mtix/secrets. The DSN is refused if found in any tracked
+.mtix/config.* file. The default sslmode is verify-full; --insecure-tls
+is accepted only when every host the connection may use is loopback or
+a local socket.
+
+After the migration, init checks the node-number registry index
+(sync_events_node_registry_uidx) and prints a WARN with the fix when it
+is not valid or not ready: the migration skips an index of that name.
+An index that is not ready checks no new create; one that is ready but
+not valid still refuses a duplicate create, but queries do not use it
+and it must be built again. On a hub without that index whose
+projects hold duplicate creates, the migration cannot build the index,
+and init refuses and names the fix: as the table owner, run mtix sync
+migrate --yes while the version gate is open, then mtix sync init again.
 
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 ---
 
 ## mark-restored
 
-**Usage:** `mark-restored [DSN]`
+**Usage:** `mark-restored`
 
 Operator: advance the hub restore-epoch after a backup restore (ADR-003 §15)
 
@@ -1491,12 +1684,12 @@ This is an OPERATOR action — no client or push can advance the epoch.
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 ---
 
 ## migrate
 
-**Usage:** `migrate [DSN]`
+**Usage:** `migrate`
 
 Drive the ADR-003 §7 node-identity migration phases
 
@@ -1512,18 +1705,28 @@ Phase 1 MOVES display numbers on the hub when duplicates exist. Without
 --yes the command PREVIEWS the renumbers and applies nothing. Re-run with
 --yes to record the remaps to the live store.
 
+The registry index covers every project on the hub, so Phase 1 records
+the duplicate creates of every project, whichever project --project
+names. Phase 1.5 builds the index while the version gate is open, and
+leaves the recorded duplicate creates out of it by event id: they stay in
+the event log unchanged. It drops an index that is not valid or not ready
+and builds it again, and never reports such an index present. It refuses
+before the build, with the count and the limit, when the hub holds more
+duplicate creates than the index can leave out. Only the table owner can
+build the index. --json reports the index state as registry_index.
+
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--project` |  | Project prefix to migrate (defaults to the local project) |  |
 | `--yes` |  | Apply the Phase 1 renumber remaps to the live hub (required to mutate) | false |
 ---
 
 ## pull
 
-**Usage:** `pull [DSN]`
+**Usage:** `pull`
 
 Pull events from the sync hub and apply locally (FR-18)
 
@@ -1563,13 +1766,13 @@ Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--limit` |  | Number of events to pull per batch (also the late-event sweep page size) | 1000 |
 ---
 
 ## push
 
-**Usage:** `push [DSN]`
+**Usage:** `push`
 
 Push pending events to the sync hub (FR-18)
 
@@ -1590,7 +1793,7 @@ so git pre-push hooks never block code pushes.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--force` |  | Bypass the singleton pusher lock (debugging only) | false |
-| `--insecure-tls` |  | Allow weaker TLS modes on loopback hosts (development only) | false |
+| `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 ---
 
 ## quarantine
@@ -1894,7 +2097,7 @@ nothing. Run 'mtix sync push' afterwards to send the events.
 
 ## repair-uids
 
-**Usage:** `repair-uids [DSN]`
+**Usage:** `repair-uids`
 
 Stamp hub create rows with their node uid (upgrade step for pre-MTIX-91 pushes)
 
@@ -1944,8 +2147,12 @@ Show the local sync queue counts plus meta sentinels. Pure local
 read — does not touch the hub. Use 'mtix sync doctor' to verify hub
 reachability and schema currency.
 
-When unresolved conflicts exceed 50, surfaces the FR-18.12 banner
-pointing at 'mtix sync conflicts list --batch'.
+A conflict is unresolved until mtix sync conflicts resolve records a
+decision for its node and field; a later conflict on the same node and
+field is unresolved again. When unresolved conflicts exceed 50, surfaces
+the FR-18.12 banner pointing at 'mtix sync conflicts list --batch'.
+
+There is no 'conflicted' count: no sync path marks an event conflicted.
 ---
 
 ## tree

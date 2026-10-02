@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"strconv"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -40,7 +39,7 @@ func newSyncPullCmd() *cobra.Command {
 		limit       int
 	)
 	cmd := &cobra.Command{
-		Use:   "pull [DSN]",
+		Use:   "pull",
 		Short: "Pull events from the sync hub and apply locally (FR-18)",
 		Long: `Pull events from the BYO Postgres sync hub, starting after the local
 pull cursor (the Lamport clock and event id of the last event pulled);
@@ -73,14 +72,14 @@ Lock-free: multiple processes pulling concurrently is safe because
 applied_events dedupes on event_id.
 
 Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncPull(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, limit)
 		},
 	}
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
-		"Allow weaker TLS modes on loopback hosts (development only)")
+		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	cmd.Flags().IntVar(&limit, "limit", pullDefaultBatchSize,
 		"Number of events to pull per batch (also the late-event sweep page size)")
 	return cmd
@@ -163,7 +162,7 @@ func connectAndPull(ctx context.Context, in pullIngest, args []string,
 		return pullOutcome{stage: "dsn"}, err
 	}
 
-	connectCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	connectCtx, cancel := context.WithTimeout(ctx, syncConnectBudget)
 	defer cancel()
 
 	pool, err := transport.New(connectCtx, dsn, opts)

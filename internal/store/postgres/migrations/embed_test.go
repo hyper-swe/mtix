@@ -35,6 +35,10 @@ func TestMigrations_FilesPresent(t *testing.T) {
 		"014_sync_events_created_at.sql",
 		// 015 is MTIX-95.4's (lamport_clock, event_id) index for the pull keyset.
 		"015_sync_events_lamport_event_id.sql",
+		// 016 is MTIX-95.1's append-only TRUNCATE guard; 017 is MTIX-95.1.7's hub-stamped
+		// restore epoch and collision recorder.
+		"016_append_only_truncate_guard.sql",
+		"017_hub_restore_epoch_stamp.sql",
 	}
 	require.Equal(t, want, got, "all hub-schema files must be embedded in lex order")
 }

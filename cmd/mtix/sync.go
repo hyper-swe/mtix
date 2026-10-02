@@ -29,6 +29,7 @@ automatic import mtix refused, with its reason.
 
 With subcommand (FR-18 / MTIX-15): manage the BYO Postgres sync hub.
 See 'mtix sync init --help' and 'mtix sync clone --help'.`,
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSync(cmd, fix)
 		},
@@ -60,6 +61,7 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.`,
 		newSyncRelayCmd(),
 		// MTIX-95.6: re-derive workflow state from the local event log.
 		newSyncRepairCmd(),
+		newSyncHardenCmd(),
 	)
 
 	return cmd

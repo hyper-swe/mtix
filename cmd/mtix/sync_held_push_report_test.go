@@ -102,7 +102,7 @@ func TestRunSyncDoctor_HeldPushEvents_ListedWithGuidance(t *testing.T) {
 			app.jsonOutput = true
 			err := runSyncDoctor(ctx, &out, &errOut, nil, transport.Options{})
 			require.ErrorIs(t, err, errDoctorChecksFailed, "no hub is reachable in this test")
-			check := doctorCheckNamed(t, out.Bytes(), "held push events")
+			check := doctorCheckFromJSON(t, out.Bytes(), "held push events")
 			require.Equal(t, tt.wantPass, check.Pass, check.Detail)
 			for _, want := range tt.wantDetail {
 				require.Contains(t, check.Detail, want)
@@ -110,9 +110,9 @@ func TestRunSyncDoctor_HeldPushEvents_ListedWithGuidance(t *testing.T) {
 			if tt.held > 5 {
 				require.NotContains(t, check.Detail, "TEST-6 create_node", "at most five are listed")
 			}
-			require.True(t, doctorCheckNamed(t, out.Bytes(), "queue draining").Pass,
+			require.True(t, doctorCheckFromJSON(t, out.Bytes(), "queue draining").Pass,
 				"held push events do not fail the queue check")
-			require.True(t, doctorCheckNamed(t, out.Bytes(), "quarantined events").Pass,
+			require.True(t, doctorCheckFromJSON(t, out.Bytes(), "quarantined events").Pass,
 				"held push events are not quarantined pulled events")
 
 			out.Reset()

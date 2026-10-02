@@ -45,7 +45,7 @@ func TestRunSyncDoctor_DuplicateNodeUIDs_FailsNamingThemAndTheFix(t *testing.T) 
 		var out, errOut bytes.Buffer
 		app.jsonOutput = true
 		_ = runSyncDoctor(ctx, &out, &errOut, nil, transport.Options{})
-		return doctorCheckNamed(t, out.Bytes(), uniqueUIDCheckName)
+		return doctorCheckFromJSON(t, out.Bytes(), uniqueUIDCheckName)
 	}
 	assert.True(t, run().Pass)
 
@@ -151,6 +151,6 @@ func duplicateUIDRecoveryForTest(t *testing.T) string {
 // the number of checks and lists the unique node uids check.
 func TestSyncDoctorHelp_ListsTheUniqueUIDCheck(t *testing.T) {
 	long := newSyncDoctorCmd().Long
-	assert.Contains(t, long, "Run 8 health checks")
+	assert.Contains(t, long, "Run health checks")
 	assert.Contains(t, long, "Unique node uids")
 }

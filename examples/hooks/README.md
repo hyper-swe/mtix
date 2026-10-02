@@ -72,9 +72,18 @@ for inbound + outbound auto-sync.
 
 Even without server-side snapshot enforcement, you can gate merges on
 hub reachability via a CI job that runs `mtix sync doctor --json`. The
-doctor command exits 2 if any of its 5 health checks fail (PG
-reachable, schema current, queue draining, no orphan applied, secrets
-file mode). Add it as a required check in your branch protection rule.
+doctor command runs health checks, including hub-privileges (a WARN by
+default, exit 0), and exits 2 if any check fails (PG reachable, schema
+current, queue draining, no orphan applied, secrets file mode, and
+hub-privileges in strict mode). Add it as a required check in your branch
+protection rule.
+
+The CI job's read-only role can use the sync tables, so hub-privileges
+reports it as a WARN by default and the job still passes. Strict mode
+(`sync.keep_roles` set) fails the check whenever `mtix sync harden` would
+report a finding, or when the check cannot run, and a role not in that
+list that can use the sync tables is such a finding: if you turn it on,
+add the CI role to `sync.keep_roles`.
 
 ```yaml
 # .github/workflows/mtix-hub-health.yml

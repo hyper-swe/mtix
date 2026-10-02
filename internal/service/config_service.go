@@ -16,7 +16,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/relay/segment"
 )
 
-// validConfigKeys lists all 37 allowed config keys per FR-11.2.
+// validConfigKeys lists all 38 allowed config keys per FR-11.2.
 //
 // The sync.relay.* family configures the FR-21 file transport, which is
 // EXPERIMENTAL and opt-in (trial use; behavior and on-disk format may
@@ -42,6 +42,7 @@ var validConfigKeys = map[string]bool{
 	"sync.max_lamport_jump":        true,
 	"sync.auto_sync":               true,
 	"sync.interval":                true,
+	"sync.keep_roles":              true,
 	"sync.relay.dir":               true,
 	"sync.relay.peer_id":           true,
 	"sync.relay.poll_interval":     true,
@@ -105,7 +106,7 @@ var serverRestartKeys = map[string]bool{
 	"logging.level":  true,
 }
 
-// configDefaults contains default values for all 37 keys per FR-11.2.
+// configDefaults contains default values for all 38 keys per FR-11.2.
 var configDefaults = map[string]string{
 	"prefix":                     "PROJ",
 	"author_id":                  "",
@@ -124,6 +125,7 @@ var configDefaults = map[string]string{
 	"sync.max_lamport_jump":      maxLamportJumpDefault,
 	"sync.auto_sync":             "true",
 	"sync.interval":              "30s",
+	"sync.keep_roles":            "",
 	// EXPERIMENTAL, opt-in file relay. An empty relay directory means no
 	// relay is configured; every relay phase is then a no-op rather than
 	// an error.
@@ -214,8 +216,10 @@ func (cs *ConfigService) Get(key string) (string, error) {
 // Set writes a config value for the given key.
 // Returns ErrInvalidConfigKey if the key is not recognized, and
 // ErrInvalidInput for a sync.auto_sync value that is neither true nor false
-// (MTIX-95.31.2) or a sync.max_lamport_jump value that is not a positive
-// integer (MTIX-95.11); nothing is written then.
+// (MTIX-95.31.2), a sync.max_lamport_jump value that is not a positive
+// integer (MTIX-95.11), or a sync.keep_roles value that is not a list of
+// roles that may be kept (model.ParseKeepRoles, MTIX-95.1); nothing is
+// written then.
 // Returns a warning string if the key requires server restart.
 func (cs *ConfigService) Set(key, value string) (string, error) {
 	if !validConfigKeys[key] {
@@ -231,6 +235,11 @@ func (cs *ConfigService) Set(key, value string) (string, error) {
 	}
 	if err := validateMaxLamportJump(key, value); err != nil {
 		return "", err
+	}
+	if key == "sync.keep_roles" {
+		if _, err := model.ParseKeepRoles(value); err != nil {
+			return "", fmt.Errorf("set %s: %w", key, err)
+		}
 	}
 
 	cs.values[key] = value

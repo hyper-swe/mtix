@@ -57,7 +57,7 @@ database is written to .mtix/data/backups/pre-discard-local-<time>.db
 before anything is deleted (MTIX-90).
 
 See 'mtix sync init' for divergent-history detection.`,
-		Args: cobra.NoArgs,
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSyncReconcile(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				reconcileFlags{

@@ -42,7 +42,7 @@ func TestPull_CreateWhoseUIDALocalTaskHolds_QuarantinedThenAppliedAfterRepair(t 
 	var out, errOut bytes.Buffer
 	app.jsonOutput = true
 	_ = runSyncDoctor(ctx, &out, &errOut, nil, transport.Options{})
-	assert.False(t, doctorCheckNamed(t, out.Bytes(), quarantineCheckName).Pass)
+	assert.False(t, doctorCheckFromJSON(t, out.Bytes(), quarantineCheckName).Pass)
 
 	// The owner repairs the duplicate; the next pull retries the event.
 	_, err = app.store.WriteDB().ExecContext(ctx, `UPDATE nodes SET uid = '01a0fb06-0000-7000-8000-0000000000aa' WHERE id = 'TEST-1'`)

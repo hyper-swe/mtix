@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/store/postgres/migrations"
 	"github.com/hyper-swe/mtix/internal/sync/redact"
 	"github.com/jackc/pgx/v5"
 )
@@ -62,14 +63,56 @@ type OpenCollision struct {
 	DetectedEpoch       int64  `json:"detected_epoch"`
 }
 
-// recordCollision persists one blocked RESTORE collision into
-// sync_node_collisions inside the push transaction (ADR-003 §6.1, audit F-1).
-// The held side's uid and wall_clock_ts are read from the already-committed
-// create row (it FKs sync_events); the incoming side comes from the blocked
-// event. Idempotent: a re-push of the same blocked create hits the
-// incoming_event_id unique index and is a no-op (ON CONFLICT DO NOTHING), so a
-// flaky network never piles up duplicate open rows. Parameterized SQL only.
+// recordCollision records one blocked RESTORE collision inside the push
+// transaction (ADR-003 §6.1, audit F-1) through the hub's collision
+// recorder, record_restore_collision (hub migration 017, MTIX-95.1.7). It
+// passes only the incoming create's identity. The recorder runs as the
+// table owner, reads the held create, the epoch it was stamped with and the
+// current epoch from the hub, records the collision only when that create is
+// a different node stamped in an earlier epoch, and reports whether a
+// collision for the incoming create is on record. When none is, the push
+// fails, so a create is never withheld with nothing on the hub for an
+// administrator to resolve. Idempotent: a re-push of the same blocked
+// create finds its one row on record (incoming_event_id is unique), so a
+// flaky network never piles up duplicate open rows.
+//
+// A hub whose owner has not run mtix sync init since the upgrade lacks the
+// recorder; there the row is written directly, as before migration 017, so
+// clients keep pushing to it. Parameterized SQL only; errors redact any DSN.
 func recordCollision(ctx context.Context, tx pgx.Tx, rc *RestoreCollision,
+	incomingUID string, incomingWallClockTS int64,
+) error {
+	var present bool
+	// Whether the recorder resolves through the search_path, as the call does.
+	if err := tx.QueryRow(ctx, `SELECT pg_catalog.to_regprocedure($1) IS NOT NULL`,
+		migrations.RecordCollisionSignature).Scan(&present); err != nil {
+		return fmt.Errorf("record collision %s vs %s: look up the hub recorder: %s",
+			rc.EventID, rc.HeldEventID, redact.DSN(err.Error()))
+	}
+	if !present {
+		return recordCollisionDirect(ctx, tx, rc, incomingUID, incomingWallClockTS)
+	}
+	var onRecord bool
+	// The hub records the collision itself, from its own data.
+	if err := tx.QueryRow(ctx, `SELECT record_restore_collision($1, $2, $3, $4, $5)`,
+		rc.ProjectPrefix, rc.DisplayPath, rc.EventID, incomingUID, incomingWallClockTS,
+	).Scan(&onRecord); err != nil {
+		return fmt.Errorf("record collision %s vs %s: %s",
+			rc.EventID, rc.HeldEventID, redact.DSN(err.Error()))
+	}
+	if !onRecord {
+		return fmt.Errorf("record collision %s vs %s: the hub reports the collision not on record, "+
+			"so the push stops instead of withholding the create", rc.EventID, rc.HeldEventID)
+	}
+	return nil
+}
+
+// recordCollisionDirect writes the collision row itself, on a hub without
+// migration 017's recorder (MTIX-95.1.7). The held side's uid and
+// wall_clock_ts are read from the already-committed create row (it FKs
+// sync_events); the incoming side comes from the blocked event. A re-push
+// of the same blocked create is a no-op (ON CONFLICT DO NOTHING).
+func recordCollisionDirect(ctx context.Context, tx pgx.Tx, rc *RestoreCollision,
 	incomingUID string, incomingWallClockTS int64,
 ) error {
 	_, err := tx.Exec(ctx, `

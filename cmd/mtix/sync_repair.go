@@ -83,7 +83,7 @@ func newSyncRepairCmd() *cobra.Command {
 		Use:   "repair",
 		Short: "Repair local state from the local sync event log (--status)",
 		Long:  syncRepairLong,
-		Args:  cobra.NoArgs,
+		Args:  syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSyncRepair(cmd.Context(), cmd.OutOrStdout(), f)
 		},

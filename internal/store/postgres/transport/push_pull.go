@@ -247,10 +247,15 @@ func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, 
 	// back to node_id. NULLIF keeps the omitempty contract on the hub: an
 	// empty string lands as SQL NULL, so the column matches the wire shape
 	// and pulls back empty.
-	// restore_epoch is hub-stamped here, at acceptance, with the epoch read
-	// for this tx — NEVER client-asserted (ADR-003 §15). It is the durable
-	// fingerprint the detector uses to tell a cross-epoch re-grant (Option B)
-	// from a same-epoch race (renumber).
+	// restore_epoch is hub-stamped at acceptance, never client-asserted
+	// (ADR-003 §15): hub migration 017's BEFORE INSERT trigger
+	// (sync_events_stamp_restore_epoch) sets it on every row from the
+	// sync_hub_state singleton, whatever value this statement carries
+	// (MTIX-95.1.7). The epoch read for this tx is carried so a hub whose
+	// owner has not run mtix sync init since the upgrade, which lacks the
+	// trigger, stores the same value. It is the durable fingerprint the
+	// detector uses to tell a cross-epoch re-grant (Option B) from a
+	// same-epoch race (renumber).
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO sync_events
 		  (event_id, project_prefix, node_id, uid, op_type, payload,

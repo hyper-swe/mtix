@@ -53,14 +53,14 @@ func newSyncCollisionsListCmd() *cobra.Command {
 		project     string
 	)
 	cmd := &cobra.Command{
-		Use:   "list [DSN]",
+		Use:   "list",
 		Short: "List open restore collisions awaiting resolution",
 		Long: `List unresolved restore collisions for the project. Each row surfaces
 BOTH contesting nodes and their available signals (uids, epochs, claim
 timestamps). The older-claim timestamp is ADVISORY only — it is
 client-asserted and partly lost on restore, so it is shown, never acted on
 automatically (audit F-5). --json for agent/CI consumption.`,
-		Args: cobra.MaximumNArgs(1),
+		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncCollisionsList(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, project)
@@ -69,7 +69,7 @@ automatically (audit F-5). --json for agent/CI consumption.`,
 	cmd.Flags().StringVar(&project, "project", "",
 		"Project prefix (defaults to the local project)")
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
-		"Allow weaker TLS modes on loopback hosts (development only)")
+		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	return cmd
 }
 
@@ -79,7 +79,7 @@ func newSyncCollisionsResolveCmd() *cobra.Command {
 		winner      string
 	)
 	cmd := &cobra.Command{
-		Use:   "resolve <collision_id> [DSN]",
+		Use:   "resolve <collision_id>",
 		Short: "Resolve a restore collision by choosing the winner",
 		Long: `Resolve one restore collision (Option B). --winner selects which node
 keeps the contested number:
@@ -90,7 +90,7 @@ keeps the contested number:
 The LOSER renumbers to the next free number under its parent via
 Store.RenumberSubtree (no create event is deleted, no node is lost). The
 moved node may have external references that need updating.`,
-		Args: cobra.RangeArgs(1, 2),
+		Args: syncExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncCollisionsResolve(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, winner)
@@ -102,7 +102,7 @@ moved node may have external references that need updating.`,
 		panic(err) // unreachable: the flag is declared just above
 	}
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
-		"Allow weaker TLS modes on loopback hosts (development only)")
+		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	return cmd
 }
 
@@ -150,7 +150,9 @@ func runSyncCollisionsResolve(ctx context.Context, stdout, stderr io.Writer,
 	}
 	collisionID, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil {
-		return fmt.Errorf("mtix sync collisions resolve: collision_id must be an integer: %w", err)
+		// Deliberately not wrapped: err quotes the argument, which may be
+		// a DSN typed in the wrong place (FR-18.17, MTIX-95.15).
+		return fmt.Errorf("mtix sync collisions resolve: collision_id must be an integer: %w", model.ErrInvalidInput)
 	}
 	if app.mtixDir == "" || app.store == nil {
 		return fmt.Errorf("mtix sync collisions resolve: not in an mtix project (run 'mtix init' first)")

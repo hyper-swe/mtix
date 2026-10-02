@@ -103,9 +103,8 @@ import (
 //     as in apply before MTIX-95.10; and a restore from invalidated keeps the
 //     originator's closed_at while replicas clear it.
 //   - closed_at range. When the winner's wall_clock_ts is outside years
-//     1..9999 (RFC3339 cannot represent it; validation rejects only
-//     negatives), closed_at falls back to the apply time on that replica, so
-//     the node stays readable but its closed_at differs from the others'.
+//     1..9999, closed_at is the apply time on that replica (eventTime,
+//     sync_event_time.go; MTIX-95.26), so it differs from the others'.
 //   - updated_at stays the apply time, and ingest writes no activity entry.
 //   - Local writes that emit no event (auto-block on a new dependency, the
 //     descendants of a cascade cancel) are invisible to the winner check, so
@@ -152,9 +151,10 @@ const (
 //	assignee         the claim payload's agent_id
 //	agent_state      working
 //	previous_status  the transition payload's from-status
-//	closed_at        the event's wall_clock_ts, RFC3339 in whole seconds (UTC)
+//	closed_at        the event's time (eventTime), RFC3339 in whole seconds (UTC)
 //	progress         1.0
-//	defer_until      the defer payload's until (NULL when absent)
+//	defer_until      the defer payload's until in UTC (deferWakeTime; NULL when
+//	                 absent or outside years 1..9999)
 type workflowRule struct {
 	op             model.OpType
 	from           model.Status // transition_status: the payload from-status this row requires; "" matches any
@@ -170,7 +170,7 @@ type workflowRule struct {
 // workflowWinnerTable is the one documented table of the nodes columns a
 // winning workflow event writes (MTIX-95.10; shared with MTIX-95.6). Rows are
 // matched in order, so the specific blocked rows precede the generic ones.
-// "-" means not written; "wall" is the event's wall_clock_ts as RFC3339 in
+// "-" means not written; "wall" is the event's time (eventTime) as RFC3339 in
 // whole seconds; "from" and "until" come from the payload; every row also
 // writes updated_at (the apply time).
 //
@@ -359,7 +359,7 @@ type workflowInput struct {
 	from, to    model.Status // transition_status payload
 	agentID     string       // claim payload
 	deferUntil  *time.Time   // defer payload; nil means none
-	wallClockTS int64        // the event envelope's wall_clock_ts, in ms
+	eventAt     time.Time    // the event's time: eventTime of its wall_clock_ts (MTIX-95.26)
 	updatedAt   string       // the caller's updated_at value (apply time)
 	localWinner bool         // status repair only: this replica emitted the event (MTIX-95.6)
 }
@@ -384,10 +384,10 @@ type workflowWrite struct {
 }
 
 // resolveWorkflowWrite looks up the table row for in and resolves its column
-// values from the event (MTIX-95.10). A terminal closed_at is the event's
-// wall_clock_ts in whole seconds, not the apply time, so every replica stamps
-// the same value; closedAtFromWallClock covers a wall_clock_ts RFC3339 cannot
-// represent.
+// values from the event (MTIX-95.10). A terminal closed_at is the event's time
+// (in.eventAt, from eventTime; MTIX-95.26) in whole seconds, not the apply
+// time, so every replica stamps the same value. A defer's until becomes
+// defer_until through deferWakeTime (MTIX-95.26).
 //
 // known is false when no row matches: a transition_status to a status this
 // build does not know (for example one a newer client added). The write then
@@ -415,7 +415,7 @@ func resolveWorkflowWrite(in workflowInput) (w workflowWrite, known bool) {
 		assignee:       resolveColumn(rule.assignee, in.agentID),
 		agentState:     resolveColumn(rule.agentState, string(model.AgentStateWorking)),
 		previousStatus: resolveColumn(rule.previousStatus, string(in.from)),
-		closedAt:       resolveColumn(rule.closedAt, closedAtFromWallClock(in.wallClockTS, in.updatedAt)),
+		closedAt:       resolveColumn(rule.closedAt, in.eventAt.UTC().Format(time.RFC3339)),
 		progress:       resolveColumn(rule.progress, 1.0),
 		deferUntil:     deferUntil,
 	}, true
@@ -445,9 +445,17 @@ func resolveColumn(a workflowAction, v any) workflowColumn {
 // time, the value closed_at had before MTIX-95.10), so the event still applies
 // and the node stays readable (MTIX-95.10, review round 1).
 func closedAtFromWallClock(ms int64, fallback string) string {
-	t := time.UnixMilli(ms).UTC()
-	if y := t.Year(); y < 1 || y > 9999 {
-		return fallback
+	return eventTimeWithFallback(ms, fallback).Format(time.RFC3339)
+}
+
+// eventTimeWithFallback is eventTime for a caller that holds its apply time as
+// RFC3339 text (status repair, MTIX-95.6). An unparseable fallback yields the
+// zero time only when the event's own time is out of range, which the callers'
+// own apply-time strings never are.
+func eventTimeWithFallback(ms int64, fallback string) time.Time {
+	applyTime, err := time.Parse(time.RFC3339, fallback)
+	if err != nil {
+		applyTime = time.Time{}
 	}
-	return t.Format(time.RFC3339)
+	return eventTime(ms, applyTime)
 }

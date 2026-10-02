@@ -332,7 +332,7 @@ For two concurrent events touching the same field of the same node, the winner i
   - **Row exists, hash differs:** refuse with structured error `MTIX_SYNC_DIVERGENT_HISTORY` and four-option summary.
 
 ### 10.2 Four resolution paths
-1. **`--discard-local`** — **destroys every ticket in the local store.** Runs `DELETE FROM nodes` plus a wipe of `sync_events`, `sync_conflicts`, `applied_events` and the inbox/hook bookkeeping, then takes hub state. Without `--yes` the command dry-runs and prints a plan. With `--yes` it prints the exact counts (tickets, journal events) and the store's projects, then requires the operator to **type the ticket count** at an interactive terminal; no flag can answer, `--yes` does not bypass it, and a non-TTY stdin is refused so automation fails closed (MTIX-90, see `docs/DESTRUCTIVE-COMMANDS.md`). A verified snapshot is written to `.mtix/data/backups/pre-discard-local-<time>.db` before the first DELETE. Never recommend this as a routine remedy — it is a divergent-history resolution path, not a way to reset the journal.
+1. **`--discard-local`** — **destroys every ticket in the local store.** Runs `DELETE FROM nodes` plus a wipe of `sync_events`, `sync_conflicts`, `applied_events` and the inbox/hook bookkeeping, then takes hub state. Without `--yes` the command dry-runs and prints a plan. With `--yes` it prints the exact counts (tickets, journal events) and the store's projects, then requires the operator to **type the ticket count** at an interactive terminal; no flag can answer, `--yes` does not bypass it, and a non-TTY stdin is refused so automation fails closed (MTIX-90, see `docs/DESTRUCTIVE-COMMANDS.md`). A verified snapshot is written to `.mtix/data/backups/pre-discard-local-<time>.db` before the first DELETE. Before it, run `mtix sync push` and check that `mtix sync status` shows `pending` 0, because it deletes local tasks and unpushed changes. Never recommend this as a routine remedy — it is a divergent-history resolution path, not a way to reset the journal.
 2. **`--rename-to NEWPREFIX`** — atomically rewrite all local node IDs from `<old>-N` to `<new>-N`; register `NEWPREFIX` as a new project on the hub; push. Both prefixes coexist.
 3. **`--import-as PARENT-ID`** — re-parent the entire local tree under `PARENT-ID`; renumber local IDs into the new namespace; push as additions.
 4. **`--dry-run`** — preview only. Output identical to the actual run's audit events, minus side effects. Diff-tested against the actual run in MTIX-15.6.
@@ -374,7 +374,7 @@ Per AGENTS.md, agents MUST NOT silently choose; escalate via mtix_comment.
 === END CONFLICT ===
 ```
 
-`AGENTS.md` is updated to instruct: agents that see a CONFLICT block MUST `mtix_comment` requesting human resolution rather than acting on the LWW value.
+`AGENTS.md` is updated to instruct: agents that see a CONFLICT block MUST `mtix_comment` requesting resolution by the user rather than acting on the LWW value.
 
 ## 12. Pluggability boundaries (mgit integration note)
 
@@ -405,7 +405,7 @@ The actual event transport (NATS? Postgres LISTEN/NOTIFY on the existing hub? Fi
 ### D2. Vector clocks vs CRDTs
 **Decision:** Vector clocks + LWW.
 **Considered alternative:** CRDTs (LWW-Map, RGA, etc.) for field-level merging.
-**Why:** mtix tasks have low write rates, small object counts, and human-readable text fields where partial merges produce incoherent garbage. The trade between "always merge" (CRDT) and "deterministic LWW with surfaced conflicts" (current design) favors LWW: the user sees what was dropped and can override. CRDTs would silently merge concurrent edits, producing unreadable text fields.
+**Why:** mtix tasks have low write rates, small object counts, and plain-text text fields where partial merges produce incoherent garbage. The trade between "always merge" (CRDT) and "deterministic LWW with surfaced conflicts" (current design) favors LWW: the user sees what was dropped and can override. CRDTs would silently merge concurrent edits, producing unreadable text fields.
 
 ### D3. Events vs diffs
 **Decision:** Events (full op-type with payload).
@@ -484,7 +484,7 @@ read this for where each piece sits in the sync protocol.
 ### 14.1 Two identifiers per node
 
 - **`display_path`** — the dot-path (`PRJX-1.4`). The only identifier on the
-  surface (humans, agents, CLI/MCP/REST, git, CI). Encodes tree position.
+  surface (users, agents, CLI/MCP/REST, git, CI). Encodes tree position.
   Mutable only under a controlled renumber (§14.3).
 - **`uid`** — the node's `create_node` `event_id` (UUIDv7). Internal only:
   node-to-node links, idempotent apply, and the provisional path segment.

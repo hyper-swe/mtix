@@ -27,7 +27,7 @@ It does **not** cover:
 | Layer | Role | Persistence | Authority |
 |---|---|---|---|
 | `.mtix/data/mtix.db` (SQLite) | Canonical local store | Survives across runs; backed up to `.mtix/tasks.json` | Source of truth |
-| `.mtix/tasks.json` | Git-tracked snapshot | Survives across machines via git | Human-readable view; sentinel hashes detect drift |
+| `.mtix/tasks.json` | Git-tracked snapshot | Survives across machines via git | Plain-text view; sentinel hashes detect drift |
 | BYO Postgres hub (sync mode) | Replication mechanism | Receives `sync_events`; replays to other CLIs | NOT a canonical store; treat as a mailroom |
 
 If the hub is wiped, every CLI keeps its local SQLite intact. If a CLI's SQLite is destroyed without push, those events are lost (see "Lost-laptop recovery" below).
@@ -231,7 +231,7 @@ it: it is a deliberate, supervised action a client cannot manufacture.
 no epoch advance, so the Option-B path is closed and every collision takes the
 ordinary auto-renumber path (a liveness event, no admin). The attack window
 shrinks to the operator-supervised interval right after a restore. Within that
-window resolution stays human-gated: no auto-pick, the older-claim default is
+window resolution stays gated on a user's decision: no auto-pick, the older-claim default is
 advisory only (audit F-5), and the loser renumbers via `Store.RenumberSubtree`
 without deleting any create event — so no node is ever lost.
 
@@ -285,7 +285,7 @@ Default cap is `0` (unlimited). Set explicitly via the `sync.max_queue_size` met
 - **Peer impersonation within a relay fleet** — the shared relay key authenticates the fleet, not the peer; any key-holder can publish under any peer's identity. See "Relay transport trust model" above.
 - **Deletion or truncation of relay files** — anyone who can write the shared directory can destroy its contents. The damage is loud and recoverable (every relay file is re-derivable from a peer's own store), but it is not prevented.
 - **Confidentiality of relay content** — records are authenticated, not encrypted. A relay inside a third-party-synced folder ships the team's event content to that provider.
-- **Prompt injection over the inbox (FR-20)** — with origin-independent dispatch, an addressed comment written by ANY hub participant can cold-start a worker (exec wake) or be pushed into a live agent session (channel push), landing verbatim in that agent's context. Addressed comments are prompt input: only federate the hub with agents and humans you trust with that authority — the DSN is effectively the right to speak into every agent's prompt. Mitigations already in place: `exec` runs only for a locally trusted `hooks.yaml` (content hash, per host — placement is designation), commands are argv-only with event data confined to env/stdin, per-node rate limits and via-hook loop guards bound runaway firing, and a fire that errors is never auto-retried.
+- **Prompt injection over the inbox (FR-20)** — with origin-independent dispatch, an addressed comment written by ANY hub participant can cold-start a worker (exec wake) or be pushed into a live agent session (channel push), landing verbatim in that agent's context. Addressed comments are prompt input: only federate the hub with agents and users you trust with that authority — the DSN is effectively the right to speak into every agent's prompt. Mitigations already in place: `exec` runs only for a locally trusted `hooks.yaml` (content hash, per host — placement is designation), commands are argv-only with event data confined to env/stdin, per-node rate limits and via-hook loop guards bound runaway firing, and a fire that errors is never auto-retried.
 
 ---
 

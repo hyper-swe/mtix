@@ -65,12 +65,13 @@ sync.max_lamport_jump above the local clock; the FR-18.7 envelope caps;
 a hub row that decodes), and refuses the whole clone when any event
 fails, naming the event and the reason. Clone has no quarantine: on the
 fresh store, run 'mtix sync pull' instead, which quarantines such an
-event and applies the rest. 'mtix sync reconcile --discard-local --yes'
-deletes local tasks and unpushed changes and needs the ticket count typed
-at an interactive terminal (no flag supplies it), so the human runs it,
-only on a store that already holds sync state, after 'mtix sync push', a
-pending count of 0 in 'mtix sync status' and the human's go-ahead. Clone reads the hub's event
-log twice, once to check it and once to apply it.
+event and applies the rest. Only on a store that already holds sync state
+does 'mtix sync reconcile --discard-local' come first. It deletes local
+tasks and unpushed changes, so first run 'mtix sync push' and check that
+'mtix sync status' shows pending 0. It then asks for the ticket count,
+typed at an interactive terminal; no flag supplies it, so it cannot run
+unattended. Clone reads the hub's event log twice, once to check it and
+once to apply it.
 
 Use --resume to pick up an interrupted clone from the last batch
 checkpoint (.mtix data sentinels meta.sync.clone.checkpoint and
@@ -116,11 +117,7 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 		if hasEvents, hErr := localHasEvents(ctx, app.store); hErr != nil {
 			return wrapSyncErr(stderr, "local probe", hErr)
 		} else if hasEvents {
-			return fmt.Errorf(
-				"mtix sync clone: local sync_events not empty; " +
-					"either run 'mtix sync clone --resume' or " +
-					"'mtix sync reconcile --discard-local' first (a human runs that: it needs the " +
-					"ticket count typed at an interactive terminal)")
+			return errCloneLocalNotEmpty()
 		}
 	}
 
@@ -289,8 +286,7 @@ func readCloneCheckpoint(ctx context.Context, store *sqlite.Store, resume bool) 
 	}
 	if v < 0 {
 		return transport.PullCursor{}, fmt.Errorf("checkpoint %q is negative; corrupted state — "+
-			"either restore a backup or have the human run 'mtix sync reconcile --discard-local' "+
-			"(it needs the ticket count typed at an interactive terminal)", raw.String)
+			"restore a backup or run 'mtix sync pull' on a fresh store. %s", raw.String, discardLocalGuard)
 	}
 	return transport.PullCursor{Lamport: v, EventID: eventID}, nil
 }
@@ -308,4 +304,12 @@ func writeCloneCheckpoint(ctx context.Context, store *sqlite.Store, cursor trans
 			[2]string{"meta.sync.clone.checkpoint", strconv.FormatInt(cursor.Lamport, 10)},
 			[2]string{"meta.sync.clone.checkpoint_event_id", cursor.EventID})
 	})
+}
+
+// errCloneLocalNotEmpty is the refusal of a clone onto a store that already
+// holds sync events. It names --resume and states the guard on
+// --discard-local (MTIX-95.11.3).
+func errCloneLocalNotEmpty() error {
+	return fmt.Errorf("mtix sync clone: local sync_events not empty; "+
+		"run 'mtix sync clone --resume' to continue an interrupted clone. %s", discardLocalGuard)
 }

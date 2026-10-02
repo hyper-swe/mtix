@@ -312,7 +312,7 @@ func TestImportReplace_EmptyStoreNeedsNoConfirmation(t *testing.T) {
 func TestReconcileHelp_StatesDiscardLocalDeletesEveryTicket(t *testing.T) {
 	cmd := newSyncReconcileCmd()
 	assert.Contains(t, cmd.Long, "DELETE EVERY TICKET in the local store")
-	assert.Contains(t, cmd.Long, "No\nflag satisfies it (--yes does not)")
+	assert.Contains(t, cmd.Long, "No flag supplies it (--yes does not)")
 	assert.Contains(t, cmd.Flags().Lookup("discard-local").Usage, "DELETE every ticket")
 	assert.Contains(t, cmd.Flags().Lookup("yes").Usage, "does NOT bypass")
 	assert.NotContains(t, cmd.Long, "drop local nodes/events")

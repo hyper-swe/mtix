@@ -23,9 +23,10 @@ import (
 // so persistentPreRun skips store initialization for it.
 // recoverNextStep is the hint printed after a salvage. The replace import is
 // gated by a typed ticket count whenever the target store holds tickets, so
-// it is a human's command (MTIX-107.74).
-const recoverNextStep = "Next: review the file, then have the human run 'mtix import --mode replace' on it in a " +
-	"fresh project (when the store holds tickets, it needs the ticket count typed at an interactive terminal)."
+// it cannot run unattended (MTIX-107.74).
+const recoverNextStep = "Next: review the file, then run 'mtix import --mode replace' on it in a " +
+	"fresh project. When the store holds tickets, it asks for the ticket count, typed at an interactive " +
+	"terminal; no flag supplies it, so it cannot run unattended."
 
 func newRecoverCmd() *cobra.Command {
 	return &cobra.Command{
@@ -41,9 +42,9 @@ report, restore with:
 
   mtix import --mode replace .mtix/recovered-<timestamp>.json
 
-When the store holds tickets, the replace import needs the ticket count typed
-at an interactive terminal (no flag supplies it); a human runs it, and an
-agent hands it over.
+When the store holds tickets, the replace import asks for the ticket count,
+typed at an interactive terminal; no flag supplies it, so it cannot run
+unattended.
 
 Restore into this project (after moving the damaged database aside) or a fresh
 'mtix init' project.`,

@@ -29,16 +29,21 @@ var errCloneRefused = errors.New("clone refused")
 
 // cloneRecovery is the recovery a clone refusal gives (MTIX-95.11). A clone
 // normally runs on a fresh store, where `mtix sync pull` alone recovers.
-// `mtix sync reconcile --discard-local --yes` deletes local tasks and
-// unpushed changes (its dry run shows only the node count), so it is named
-// only for a store that already holds sync state, after a push, a pending
-// count of 0 and a human's go-ahead. It also needs the ticket count typed at
-// an interactive terminal, so only a human can run it (MTIX-107.74).
+// `mtix sync reconcile --discard-local` deletes local tasks and unpushed
+// changes (its dry run shows only the node count), so it is named only for a
+// store that already holds sync state, after a push and a pending count of 0.
+// It then asks for the ticket count, typed at an interactive terminal, so it
+// cannot run unattended (MTIX-107.74).
 const cloneRecovery = "Clone has no quarantine: on a fresh store, run 'mtix sync pull' instead, which " +
-	"quarantines the event and applies the rest. Only on a store that already holds sync state does " +
-	"'mtix sync reconcile --discard-local --yes' come first; it deletes local tasks and unpushed changes, so " +
-	"before it run 'mtix sync push', check that 'mtix sync status' shows pending 0, and get a human's go-ahead; " +
-	"it needs the ticket count typed at an interactive terminal (no flag supplies it), so the human runs it"
+	"quarantines the event and applies the rest. " + discardLocalGuard
+
+// discardLocalGuard is the one statement of the guard on `mtix sync reconcile
+// --discard-local` (MTIX-95.11.3): what it deletes, what to do first, and why
+// it cannot run unattended.
+const discardLocalGuard = "Only on a store that already holds sync state does 'mtix sync reconcile --discard-local' " +
+	"come first. It deletes local tasks and unpushed changes, so first run 'mtix sync push' and check that " +
+	"'mtix sync status' shows pending 0. It then asks for the ticket count, typed at an interactive terminal; " +
+	"no flag supplies it, so it cannot run unattended"
 
 // cloneRefusal is the error of a clone refused on e. written says whether
 // earlier batches were already applied (an event pushed to the hub during

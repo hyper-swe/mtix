@@ -40,7 +40,7 @@ func newSyncCollisionsCmd() *cobra.Command {
 across a hub restore boundary (see 'mtix sync mark-restored').
 
 These are NOT auto-resolved: which node keeps the contested number is a
-human judgment (it may carry external references). No node is ever lost;
+manual judgment (it may carry external references). No node is ever lost;
 the loser renumbers to the next free number under its parent.`,
 	}
 	cmd.AddCommand(newSyncCollisionsListCmd(), newSyncCollisionsResolveCmd())

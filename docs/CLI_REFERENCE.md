@@ -183,7 +183,7 @@ Add a comment annotation to a node.
 
 Use --to <agent> to address the comment at a specific agent; it then lands in
 that agent's inbox (see 'mtix inbox'), which is how a worker gets woken by a
-ruling without a human relay (FR-19.1).
+ruling without a manual relay (FR-19.1).
 
 ### Flags
 
@@ -663,7 +663,7 @@ outer loop parks on between tasks — or until --timeout seconds elapse. Exit 0
 when events are returned; exit 5 on an empty timeout (so a loop can distinguish
 "woke with work" from "nothing yet").
 
---format emits agent-ready text instead of the human listing (FR-20 §9,
+--format emits agent-ready text instead of the plain listing (FR-20 §9,
 "delivery terminates in the prompt"):
   prompt   a complete opening prompt for a cold-started agent — the events
            verbatim plus the ack/reply contract. A wake exec launches the
@@ -937,9 +937,9 @@ report, restore with:
 
   mtix import --mode replace .mtix/recovered-<timestamp>.json
 
-When the store holds tickets, the replace import needs the ticket count typed
-at an interactive terminal (no flag supplies it); a human runs it, and an
-agent hands it over.
+When the store holds tickets, the replace import asks for the ticket count,
+typed at an interactive terminal; no flag supplies it, so it cannot run
+unattended.
 
 Restore into this project (after moving the damaged database aside) or a fresh
 'mtix init' project.
@@ -1240,12 +1240,13 @@ sync.max_lamport_jump above the local clock; the FR-18.7 envelope caps;
 a hub row that decodes), and refuses the whole clone when any event
 fails, naming the event and the reason. Clone has no quarantine: on the
 fresh store, run 'mtix sync pull' instead, which quarantines such an
-event and applies the rest. 'mtix sync reconcile --discard-local --yes'
-deletes local tasks and unpushed changes and needs the ticket count typed
-at an interactive terminal (no flag supplies it), so the human runs it,
-only on a store that already holds sync state, after 'mtix sync push', a
-pending count of 0 in 'mtix sync status' and the human's go-ahead. Clone reads the hub's event
-log twice, once to check it and once to apply it.
+event and applies the rest. Only on a store that already holds sync state
+does 'mtix sync reconcile --discard-local' come first. It deletes local
+tasks and unpushed changes, so first run 'mtix sync push' and check that
+'mtix sync status' shows pending 0. It then asks for the ticket count,
+typed at an interactive terminal; no flag supplies it, so it cannot run
+unattended. Clone reads the hub's event log twice, once to check it and
+once to apply it.
 
 Use --resume to pick up an interrupted clone from the last batch
 checkpoint (.mtix data sentinels meta.sync.clone.checkpoint and
@@ -1271,7 +1272,7 @@ Manage restore collisions — settled-vs-settled number contests detected
 across a hub restore boundary (see 'mtix sync mark-restored').
 
 These are NOT auto-resolved: which node keeps the contested number is a
-human judgment (it may carry external references). No node is ever lost;
+manual judgment (it may carry external references). No node is ever lost;
 the loser renumbers to the next free number under its parent.
 
 ### Subcommands
@@ -1343,7 +1344,7 @@ List or resolve unresolved sync conflicts (FR-18.12)
 List unresolved sync conflicts
 
 List rows from the local sync_conflicts table. Default output is a
-human-readable table; --json for agent and CI consumption.
+plain-text table; --json for agent and CI consumption.
 
 When unresolved conflicts exceed 50, a banner is printed pointing
 at --batch <node_id> for batch resolution. --batch <node_id> filters
@@ -1655,11 +1656,13 @@ Exactly one path flag must be set. --dry-run is implicit unless --yes
 is also set; without --yes the command prints the Plan (renames,
 node count) and exits without mutation. With --yes, executes the path.
 
---discard-local additionally requires a typed confirmation at an
-interactive terminal: the command prints how many tickets and journal
-events it is about to destroy and you must type that ticket count. No
-flag satisfies it (--yes does not), and when stdin is not a terminal the
-command refuses, so automation fails closed. A verified snapshot of the
+--discard-local deletes local tasks and unpushed changes, so first run
+'mtix sync push' and check that 'mtix sync status' shows pending 0. It
+then asks for the ticket count, typed at an interactive terminal: the
+command prints how many tickets and journal events it is about to destroy
+and you must type that ticket count. No flag supplies it (--yes does not),
+and when stdin is not a terminal the command refuses, so it cannot run
+unattended and automation fails closed. A verified snapshot of the
 database is written to .mtix/data/backups/pre-discard-local-<time>.db
 before anything is deleted (MTIX-90).
 
@@ -1669,7 +1672,7 @@ See 'mtix sync init' for divergent-history detection.
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--discard-local` |  | DELETE every ticket in the local store and take hub state (irreversible; typed confirmation required) | false |
+| `--discard-local` |  | DELETE every ticket in the local store and take hub state (irreversible; run 'mtix sync push' and check pending 0 first; typed confirmation required) | false |
 | `--dry-run` |  | Preview the plan without mutation | false |
 | `--import-as` |  | Re-parent local tree under PARENT-ID |  |
 | `--rename-to` |  | Rewrite local IDs to NEWPREFIX |  |

@@ -12,7 +12,7 @@ mtix ships as a single binary. It speaks MCP, so Claude Code uses it natively. E
 
 ---
 
-mtix (micro-ticks) is a hierarchical task management system where multiple LLM coding agents decompose, claim, and execute work concurrently. Work breaks down into infinitely nested micro issues using dot-notation IDs (`PROJ-42.1.3.2.1`), where the hierarchy itself becomes the agent's briefing — each level adds context that flows down to the executing agent. Every operation is available through CLI, REST, gRPC, MCP, and a real-time web UI — agents and humans use whichever interface fits.
+mtix (micro-ticks) is a hierarchical task management system where multiple LLM coding agents decompose, claim, and execute work concurrently. Work breaks down into infinitely nested micro issues using dot-notation IDs (`PROJ-42.1.3.2.1`), where the hierarchy itself becomes the agent's briefing — each level adds context that flows down to the executing agent. Every operation is available through CLI, REST, gRPC, MCP, and a real-time web UI — agents and people use whichever interface fits.
 
 ## Why mtix
 
@@ -365,8 +365,10 @@ mtix sync conflicts list            Show contested edits (post-LWW)
 mtix sync conflicts resolve <id>    Override LWW for a specific conflict
 mtix sync reconcile --discard-local|--rename-to|--import-as
                                     Whole-project divergence escape hatches
-                                    (--discard-local deletes every local ticket;
-                                    typed confirmation, refuses off a terminal)
+                                    (--discard-local deletes every local ticket:
+                                    run 'mtix sync push' and check pending 0
+                                    first; it then asks for the ticket count at
+                                    a terminal and cannot run unattended)
 mtix sync repair-uids [--dry-run]   One-time hub repair after pushes from a
                                     client older than v0.5.4-beta (MTIX-92)
 mtix sync daemon [--interval SEC]   Run periodic pull as a long-lived process

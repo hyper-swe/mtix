@@ -639,11 +639,11 @@ through the same checks and its own savepoint, including a row for this
 replica's own event that is only in `sync_events`: an event that applies is removed; one that fails again
 stays, with `attempts` and `last_attempt` updated. The retry uses the
 stored raw event and contacts no hub. `mtix sync reconcile
---discard-local --yes` empties the quarantine with the rest of the local
+--discard-local` empties the quarantine with the rest of the local
 sync state, and deletes local tasks and unpushed changes (its dry run
 shows only the node count); the next pull runs the checks again and
 quarantines again what still fails. The agent guidance requires `mtix
-sync push`, a pending count of 0 and a human's go-ahead before it, and the command needs the ticket count typed at an interactive terminal, so a human runs it. A
+sync push` and a pending count of 0 before it; the command then asks for the ticket count, typed at an interactive terminal, so it cannot run unattended. A
 quarantined copy of this replica's own event (its hub row changed after
 the push) never clears by itself, because every retry re-checks the
 stored copy, even after the hub row is repaired; the documented order is:
@@ -660,10 +660,10 @@ highest clock checked so far). When any event fails, clone refuses the
 whole clone and writes nothing; the refusal names the event and the
 reason and gives the recovery (`cloneRecovery`): on the fresh store,
 `mtix sync pull`, which quarantines the event and applies the rest;
-`mtix sync reconcile --discard-local --yes` only on a store that already
-holds sync state, after a push, a pending count of 0 and a human's
-go-ahead, since it deletes local tasks and unpushed changes; it needs the
-ticket count typed at an interactive terminal, so a human runs it. The apply
+`mtix sync reconcile --discard-local` only on a store that already
+holds sync state, after a push and a pending count of 0, since it deletes
+local tasks and unpushed changes; it then asks for the ticket count, typed at
+an interactive terminal, so it cannot run unattended. The apply
 checks each event again, so an event pushed to the hub after the check
 stops the clone at that batch. A clone that completes resets the
 quarantine along with the late-event sweep state, since every hub event

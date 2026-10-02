@@ -114,20 +114,34 @@ func rebuildMerged(merged *exportNode, fields map[string]json.RawMessage, rehash
 	return nil
 }
 
+// unchangedWrite says what a merge writes for a node whose content hash the
+// file leaves unchanged: the merged annotations and activity (streams), and
+// the file's status group when the caller chose the file's workflow values
+// (workflow, MTIX-95.31.13).
+type unchangedWrite struct {
+	streams, workflow bool
+}
+
 // mergeUnchangedContent writes a merged node whose content hash the file
-// leaves unchanged (FR-7.8): the local field values stand. The merged
+// leaves unchanged (FR-7.8): the local field values stand, except the
+// status group when the caller chose the file's (MTIX-95.31.13). The merged
 // annotations and activity are written when they grew, and the file's uid
 // is adopted when the file holds the same task under another uid
 // (MTIX-95.31.4, differentIdentity), as for a node whose content changed.
 func mergeUnchangedContent(ctx context.Context, tx *sql.Tx, merged *exportNode, localUID string,
-	streamsChanged bool) (importAction, error) {
+	write unchangedWrite) (importAction, error) {
 	adoptUID := merged.UID != "" && merged.UID != localUID
-	if !streamsChanged && !adoptUID {
+	if !write.streams && !write.workflow && !adoptUID {
 		return importActionSkipped, nil
 	}
-	if streamsChanged {
+	if write.streams {
 		if err := writeNodeStreams(ctx, tx, merged); err != nil {
 			return 0, fmt.Errorf("merge annotations and activity of node %s: %w", merged.ID, err)
+		}
+	}
+	if write.workflow {
+		if err := writeWorkflowGroup(ctx, tx, merged); err != nil {
+			return 0, fmt.Errorf("take the file's workflow values for node %s: %w", merged.ID, err)
 		}
 	}
 	if adoptUID {

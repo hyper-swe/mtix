@@ -37,20 +37,23 @@ const (
 // How the guidance a write or a conflict prints (the warning of a conflict
 // whose replace loses nothing, and the lines a write prints while a
 // conflict or a not-imported board is pending) describes the merge, which
-// does not combine both sides (MTIX-95.31.11). mergeKeeps states the rule
-// mergeImportNode (internal/store/sqlite/import.go) applies per task, in
-// both directions: when the task's content hash (title, description,
-// prompt, acceptance, labels) matches the file's, every local field value
-// stays, so a teammate's status or assignee change is not applied;
-// otherwise the file's copy wins, so a local edit to that task (an unclaim,
-// a prompt edit) is undone, except a value the file leaves empty in a copy
-// that is not current. The user manual gives the rule in full.
+// does not combine both sides (MTIX-95.31.11). MTIX-95.31.13: mergeKeeps
+// states the rule mergeAllData (internal/store/sqlite/import_merge_node.go)
+// applies: a task whose status, assignee, agent state, wake time or deletion state differ
+// from the file's is a conflict, which the merge lists and refuses until
+// the caller chooses a side (--prefer, --theirs, --ours), whichever side
+// changed it; where they agree, the content hash (title, description,
+// prompt, acceptance, labels) decides as before: matching keeps every local
+// value, otherwise the file's copy wins, except a value the file leaves
+// empty in a copy that is not current. The user manual gives the rule in full.
 // unchangedRecovery is the way out of a conflict although nothing changed
 // locally, as after an upgrade from 0.5.3 or earlier; the user manual
 // documents it with the upgrade notes.
 const (
-	mergeKeeps = "per task, the merge keeps your field values (status, assignee, wake time) when the task's content " +
-		"matches the file's, and otherwise takes the file's copy, which undoes your edits to that task"
+	mergeKeeps = "the merge never guesses between your status, assignee, agent state, wake time and deletion state and the file's: " +
+		"where they differ it writes nothing and lists each conflict until you choose with --prefer theirs|ours, " +
+		"or --theirs ID,ID and --ours ID,ID; where they agree, it keeps your other field values when the task's " +
+		"content matches the file's, and otherwise takes the file's copy, which undoes your edits to that task"
 	unchangedRecovery = "if you changed nothing locally: mtix sync --fix, then git checkout HEAD -- .mtix/tasks.json, " +
 		"then any command that imports, such as mtix list"
 )

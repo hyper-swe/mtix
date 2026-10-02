@@ -211,11 +211,13 @@ which resolves it: `mtix import .mtix/tasks.json --mode merge` (backs up
 the database; keeps every local node and dependency, every local
 annotation and activity entry, with the file's added, and every field
 value the refusal lists, with the node's
-local status when the value is part of it; decides the other field values
+local status when the value is part of it; refuses, writing nothing, where a node's status, assignee,
+agent state or wake time differs from the file's (it lists each conflict;
+rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`);
+decides the other field values
 per node by its content, the title, description, prompt, acceptance and
 labels that `content_hash` covers: where the local content matches the
-file's, every local field value stays, so a teammate's claim, status,
-assignee or wake-time change to that node is not applied, and where it
+file's, every other local field value stays, and where it
 differs, the file's copy wins, so a local edit to that node (an unclaim or
 a prompt edit, for example) is undone, except a value the file leaves
 empty in a copy that is not current; check `git log -p .mtix/tasks.json`

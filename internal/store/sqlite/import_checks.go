@@ -36,6 +36,8 @@ type importConfig struct {
 	// localMoves are the local writes before a merge: backfill uids and
 	// renumbers (renumberLocalFirst).
 	localMoves localWrites
+	// workflow settles the tasks whose workflow values differ (MTIX-95.31.13).
+	workflow WorkflowResolution
 }
 
 // IfStoreUnchanged makes the import write nothing, and return
@@ -126,7 +128,7 @@ func (s *Store) refuseEmptyImport(ctx context.Context, data *ExportData, force b
 // writing a node normalizes its node_type, and the real import must still
 // verify the file's checksum.
 func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode ImportMode,
-	moves localWrites) (int64, string, error) {
+	moves localWrites, workflow WorkflowResolution) (int64, string, error) {
 	dry := *data
 	dry.Nodes = append([]exportNode(nil), data.Nodes...)
 	var changes int64
@@ -148,7 +150,7 @@ func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode I
 		if mode == ImportModeReplace {
 			_, applyErr = replaceAllData(ctx, tx, &dry)
 		} else {
-			_, applyErr = mergeAllData(ctx, tx, &dry)
+			_, applyErr = mergeAllData(ctx, tx, &dry, workflowPolicy{workflow, s.clock()})
 		}
 		if applyErr != nil {
 			return applyErr

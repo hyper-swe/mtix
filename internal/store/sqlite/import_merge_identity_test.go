@@ -169,7 +169,12 @@ func TestImportReconcile_MergeOfStaleCopy_KeepsFieldTheCopyBlanks(t *testing.T) 
 			}
 			tt.local(t, local)
 
-			mergeFile(t, local, file)
+			// MTIX-95.31.13: where the stale copy's status differs from the
+			// local one the merge asks for a choice; ours keeps the local status.
+			_, _, mergeErr := local.ImportReconcile(ctx, file, sqlite.ImportReconcileOptions{
+				Mode: sqlite.ImportModeMerge, Workflow: sqlite.WorkflowResolution{Prefer: sqlite.WorkflowOurs},
+			})
+			require.NoError(t, mergeErr)
 			node, err := local.GetNode(ctx, "REC-1")
 			require.NoError(t, err)
 			tt.check(t, node)

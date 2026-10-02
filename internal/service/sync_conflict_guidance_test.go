@@ -37,8 +37,10 @@ import (
 // recoveryPointer is the step of the recovery that puts the pulled board
 // back.
 const (
-	mergeCaveat = "per task, the merge keeps your field values (status, assignee, wake time) when the task's content " +
-		"matches the file's, and otherwise takes the file's copy, which undoes your edits to that task"
+	mergeCaveat = "the merge never guesses between your status, assignee, agent state, wake time and deletion state and the file's: " +
+		"where they differ it writes nothing and lists each conflict until you choose with --prefer theirs|ours, " +
+		"or --theirs ID,ID and --ours ID,ID; where they agree, it keeps your other field values when the task's " +
+		"content matches the file's, and otherwise takes the file's copy, which undoes your edits to that task"
 	recoveryPointer = "if you changed nothing locally: mtix sync --fix, then git checkout HEAD -- .mtix/tasks.json, then any command that imports, such as mtix list"
 )
 

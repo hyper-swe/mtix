@@ -177,6 +177,11 @@ type importFlags struct {
 	forceRename       bool
 	confirm           bool
 	remapFile         string
+	// prefer, theirs and ours settle the tasks whose status, assignee,
+	// agent state or wake time differ from the file's (MTIX-95.31.13).
+	prefer string
+	theirs []string
+	ours   []string
 }
 
 // newImportCmd creates the mtix import command per FR-6.3 and FR-7.8.
@@ -205,6 +210,13 @@ func newImportCmd() *cobra.Command {
 			"whose id the file gives to a different task; without it such an import is reported but not applied")
 	cmd.Flags().BoolVar(&f.forceRename, "force-rename", false,
 		"On an incoming uid that collides with a different local node, re-stamp the import node with a fresh local uid instead of rejecting (ADR-003 §6)")
+	cmd.Flags().StringVar(&f.prefer, "prefer", "",
+		"Merge only: for every task whose status, assignee, agent state, wake time or deletion state differs from the file's, "+
+			"take the file's values (theirs) or keep yours (ours); without a choice such a merge is reported and writes nothing")
+	cmd.Flags().StringSliceVar(&f.theirs, "theirs", nil,
+		"Merge only: comma-separated task ids whose differing status, assignee, agent state, wake time and deletion state take the file's values")
+	cmd.Flags().StringSliceVar(&f.ours, "ours", nil,
+		"Merge only: comma-separated task ids whose differing status, assignee, agent state, wake time and deletion state keep your values")
 	cmd.Flags().StringVar(&f.remapFile, "remap-file", "",
 		"Write the uid-keyed remap (uid -> new display_path) to this JSON file (ADR-003 §6)")
 
@@ -222,12 +234,9 @@ func runImport(filePath string, f importFlags) error {
 	}
 
 	ctx := context.Background()
-	importMode := sqlite.ImportModeMerge
-	if f.mode == "replace" {
-		importMode = sqlite.ImportModeReplace
-		if gErr := guardImportReplace(ctx, exportData); gErr != nil {
-			return gErr
-		}
+	importMode, modeErr := importModeFor(ctx, exportData, f)
+	if modeErr != nil {
+		return modeErr
 	}
 
 	report, result, err := app.store.ImportReconcile(ctx, exportData, importOptions(ctx, importMode, f))
@@ -282,6 +291,7 @@ func importOptions(ctx context.Context, mode sqlite.ImportMode, f importFlags) s
 		Force:       f.force,
 		ForceRename: f.forceRename,
 		Confirm:     f.confirm,
+		Workflow:    workflowResolution(f),
 	}
 	opts.HoldPush = holdPushForAdoption
 	if mode == sqlite.ImportModeMerge && app.syncSvc != nil && app.mtixDir != "" {

@@ -231,7 +231,9 @@ func ImportSnapshot(ctx context.Context, req ImportRequest) (ImportResult, error
 	}
 	report, _, err := req.Store.ImportReconcile(ctx, snap.Export, req.Options)
 	if err != nil {
-		return ImportResult{}, fmt.Errorf("import relay bootstrap snapshot: %w", err)
+		// The report is returned with the error: it lists the workflow
+		// conflicts a refused import found (MTIX-95.31.13).
+		return ImportResult{Report: report}, fmt.Errorf("import relay bootstrap snapshot: %w", err)
 	}
 	return ImportResult{
 		Positions:     snap.Positions,

@@ -71,6 +71,9 @@ type ImportResult struct {
 	// UIDAdoptions lists the local tasks a merge gave the file's uid; only
 	// ImportReconcile fills it (MTIX-95.31.6).
 	UIDAdoptions []ImportUIDAdoption `json:"uid_adoptions,omitempty"`
+	// WorkflowResolved lists the tasks whose differing workflow values the
+	// merge settled with the caller's choice (MTIX-95.31.13).
+	WorkflowResolved []WorkflowConflict `json:"workflow_resolved,omitempty"`
 }
 
 // ValidateExport runs the checks every import makes before it writes
@@ -143,7 +146,7 @@ func (s *Store) Import(
 		if mode == ImportModeReplace {
 			result, applyErr = replaceAllData(ctx, tx, data)
 		} else {
-			result, applyErr = mergeAllData(ctx, tx, data)
+			result, applyErr = mergeAllData(ctx, tx, data, workflowPolicy{cfg.workflow, s.clock()})
 		}
 		return applyErr
 	})
@@ -207,107 +210,6 @@ func insertAllExportData(ctx context.Context, tx *sql.Tx, data *ExportData) (Imp
 	}
 
 	return result, nil
-}
-
-// mergeAllData merges imported data with existing using content_hash per
-// FR-7.8, inside the import's transaction. Whether the file carries the
-// columns schema 2.0.0 added decides how their absence is read
-// (MTIX-95.31.1, carriesNodeColumns).
-func mergeAllData(ctx context.Context, tx *sql.Tx, data *ExportData) (ImportResult, error) {
-	var result ImportResult
-	fileCarriesAllColumns := carriesNodeColumns(data.SchemaVersion)
-	for i := range data.Nodes {
-		action, mergeErr := mergeImportNode(ctx, tx, &data.Nodes[i], fileCarriesAllColumns)
-		if mergeErr != nil {
-			return result, mergeErr
-		}
-		switch action {
-		case importActionCreated:
-			result.NodesCreated++
-		case importActionUpdated:
-			result.NodesUpdated++
-		case importActionSkipped:
-			result.NodesSkipped++
-		}
-	}
-
-	for _, d := range data.Dependencies {
-		if err := insertExportDep(ctx, tx, &d); err != nil {
-			return result, fmt.Errorf("insert dep %s->%s: %w", d.FromID, d.ToID, err)
-		}
-		result.DepsImported++
-	}
-	return result, nil
-}
-
-// importAction represents the result of merging a single node.
-type importAction int
-
-const (
-	importActionCreated importAction = iota
-	importActionUpdated
-	importActionSkipped
-)
-
-// mergeImportNode merges one imported node into the store (FR-7.8). A node
-// new to the store is inserted as exported; one the store holds as a
-// different task is never overwritten (refuseDifferentTask), and a local
-// value that a stale copy leaves empty is kept (keepLocalBlankedFields,
-// MTIX-95.31.4). For a node the store holds,
-// annotations and the activity stream merge as a union that never drops a
-// local entry (mergeNodeStreams, MTIX-95.31.1): an incoming node without
-// annotations keeps the local ones. The other columns take the incoming
-// values only when the content hash differs, and a file older than schema
-// 2.0.0 carries none of the 2.0.0 columns, so for those the local values
-// stand (keepLocalNodeColumns).
-func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarriesAllColumns bool) (importAction, error) {
-	var existingHash sql.NullString
-	err := tx.QueryRowContext(ctx,
-		"SELECT content_hash FROM nodes WHERE id = ?", n.ID,
-	).Scan(&existingHash)
-
-	if err == sql.ErrNoRows {
-		if insertErr := insertExportNode(ctx, tx, n); insertErr != nil {
-			return 0, fmt.Errorf("insert node %s: %w", n.ID, insertErr)
-		}
-		return importActionCreated, nil
-	}
-	if err != nil {
-		return 0, fmt.Errorf("check node %s: %w", n.ID, err)
-	}
-
-	local, err := scanExportNode(tx.QueryRowContext(ctx, exportNodeSelectSQL+" WHERE id = ?", n.ID))
-	if err != nil {
-		return 0, fmt.Errorf("read local node %s: %w", n.ID, err)
-	}
-	if err := refuseDifferentTask(&local, n); err != nil {
-		return 0, err
-	}
-	merged := *n // merge into a copy: the caller's export must still verify
-	if !fileCarriesAllColumns {
-		keepLocalNodeColumns(&merged, &local)
-	}
-	if !copyIsCurrent(&local, n, fileCarriesAllColumns) { // MTIX-95.31.4
-		if err := keepLocalBlankedFields(&merged, &local); err != nil {
-			return 0, fmt.Errorf("merge node %s: %w", n.ID, err)
-		}
-	}
-	streamsChanged := mergeNodeStreams(&merged, &local)
-
-	if existingHash.Valid && existingHash.String == n.ContentHash {
-		return mergeUnchangedContent(ctx, tx, &merged, local.UID, streamsChanged)
-	}
-
-	if err := updateExportNode(ctx, tx, &merged); err != nil {
-		return 0, fmt.Errorf("update node %s: %w", n.ID, err)
-	}
-	// A uid adopted here moves the task's unpushed events with it (MTIX-95.31.16).
-	if merged.UID != "" && merged.UID != local.UID {
-		if err := carryAdoptedUID(ctx, tx, merged.ID, local.UID, merged.UID); err != nil {
-			return 0, err
-		}
-	}
-	return importActionUpdated, nil
 }
 
 // insertExportNode inserts a node from export data, writing every exported

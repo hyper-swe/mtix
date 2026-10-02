@@ -52,7 +52,7 @@ func (s *Store) prepareWrite(ctx context.Context, data *ExportData, opts ImportR
 			return nil, fmt.Errorf("recompute checksum after reconcile: %w", err)
 		}
 	}
-	writeOpts := []ImportOption{renumberLocalFirst(moves)}
+	writeOpts := []ImportOption{renumberLocalFirst(moves), withWorkflowResolution(opts.Workflow)}
 	if opts.BeforeWrite == nil {
 		return writeOpts, nil
 	}
@@ -62,7 +62,7 @@ func (s *Store) prepareWrite(ctx context.Context, data *ExportData, opts ImportR
 	if err := s.refuseEmptyImport(ctx, data, opts.Force); err != nil {
 		return nil, err
 	}
-	changes, checksum, err := s.countImportChanges(ctx, data, opts.Mode, moves)
+	changes, checksum, err := s.countImportChanges(ctx, data, opts.Mode, moves, opts.Workflow)
 	if err != nil {
 		return nil, err
 	}

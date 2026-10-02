@@ -406,7 +406,7 @@ func TestPackageSQL_UIDLookups_CarryIndexTerm(t *testing.T) {
 // TestUIDIndexes_StoredDefinition_ArePartialOnNonEmptyUID pins the indexes
 // the guard is written for (schema.go), as SQLite stores them:
 //
-//	CREATE INDEX idx_nodes_uid ON nodes(uid) WHERE uid IS NOT NULL AND uid <> ''
+//	CREATE UNIQUE INDEX idx_nodes_uid ON nodes(uid) WHERE uid IS NOT NULL AND uid <> ''
 //	CREATE INDEX idx_sync_events_uid ON sync_events(uid) WHERE uid IS NOT NULL AND uid <> ''
 //
 // A change to that predicate changes the term every lookup needs, so it must
@@ -420,7 +420,11 @@ func TestUIDIndexes_StoredDefinition_ArePartialOnNonEmptyUID(t *testing.T) {
 			// The stored definition of the table's uid index.
 			require.NoError(t, s.readDB.QueryRowContext(context.Background(),
 				`SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?`, table.index).Scan(&def))
-			assert.Equal(t, "CREATE INDEX "+table.index+" ON "+table.name+"(uid) WHERE uid IS NOT NULL AND uid <> ''",
+			kind := "CREATE INDEX " // nodes.uid is UNIQUE since MTIX-95.31.8
+			if table.name == "nodes" {
+				kind = "CREATE UNIQUE INDEX "
+			}
+			assert.Equal(t, kind+table.index+" ON "+table.name+"(uid) WHERE uid IS NOT NULL AND uid <> ''",
 				strings.Join(strings.Fields(def), " "))
 		})
 	}

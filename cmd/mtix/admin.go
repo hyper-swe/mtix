@@ -16,7 +16,6 @@ import (
 
 	mtixhttp "github.com/hyper-swe/mtix/internal/api/http"
 	"github.com/hyper-swe/mtix/internal/model"
-	"github.com/hyper-swe/mtix/internal/store"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -89,38 +88,8 @@ func runVerify(id string) error {
 			fmt.Printf("%s: hash=%s (verified)\n", id, node.ContentHash)
 		}
 	} else {
-		// Full project verification: check all nodes' content hashes.
-		nodes, _, err := app.store.ListNodes(ctx, store.NodeFilter{}, store.ListOptions{Limit: 10000})
-		if err != nil {
-			return fmt.Errorf("list nodes for verification: %w", err)
-		}
-
-		var mismatches []string
-		for _, n := range nodes {
-			expected := n.ComputeHash()
-			if expected != n.ContentHash {
-				mismatches = append(mismatches, n.ID)
-			}
-		}
-
-		if app.jsonOutput {
-			data, _ := json.Marshal(map[string]any{
-				"total_nodes": len(nodes),
-				"verified":    len(mismatches) == 0,
-				"mismatches":  mismatches,
-			})
-			fmt.Println(string(data))
-		} else {
-			fmt.Printf("Verified %d nodes\n", len(nodes))
-			if len(mismatches) > 0 {
-				fmt.Printf("INTEGRITY FAILURE: %d nodes with hash mismatches:\n", len(mismatches))
-				for _, id := range mismatches {
-					fmt.Printf("  - %s\n", id)
-				}
-			} else {
-				fmt.Println("All content hashes verified OK")
-			}
-		}
+		// Full project verification: content hashes and uid uniqueness.
+		return runVerifyProject(ctx)
 	}
 	return nil
 }

@@ -454,6 +454,10 @@ func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error 
 		uid = e.EventID
 	}
 
+	if err := refuseUIDHeldByOtherNode(ctx, tx, e, uid); err != nil {
+		return err
+	}
+
 	// Idempotency no longer rides "OR IGNORE": a re-applied SAME create is
 	// already short-circuited by the applied_events event_id check in
 	// IdempotentApply BEFORE dispatch (FR-18.9). So the only thing that can
@@ -463,7 +467,9 @@ func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error 
 	// is MTIX-30.7's job. Until then this keeps the documented residual
 	// first-writer-wins behavior (e2e/sync_collision_test.go pins it), but
 	// expresses it explicitly as a conflict on the id PK rather than as a
-	// blanket OR IGNORE that also masked re-applies. It must NOT hard-error
+	// blanket OR IGNORE that also masked re-applies. A create whose uid
+	// another local task holds is refused before the insert (MTIX-95.31.8), so
+	// the pull quarantines it, visibly, instead of dropping it. It must NOT hard-error
 	// (that would wedge the apply pipeline for the whole batch); the
 	// surfacing/renumber is layered on top by 30.7.
 	res, err := tx.ExecContext(ctx, `

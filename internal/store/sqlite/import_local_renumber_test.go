@@ -49,7 +49,10 @@ func TestApplyLocalRenumbers_StoreChangedAfterPlan_WritesNothing(t *testing.T) {
 					Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
 					NodeType: model.NodeTypeEpic, ContentHash: "h2", CreatedAt: now, UpdatedAt: now,
 				}))
-				_, err := s.writeDB.ExecContext(ctx, `UPDATE nodes SET uid = ? WHERE id = 'REC-2'`, localUID)
+				// A store written before the unique uid index (MTIX-95.31.8).
+				_, err := s.writeDB.ExecContext(ctx, `DROP INDEX idx_nodes_uid`)
+				require.NoError(t, err)
+				_, err = s.writeDB.ExecContext(ctx, `UPDATE nodes SET uid = ? WHERE id = 'REC-2'`, localUID)
 				require.NoError(t, err)
 			}
 			data, err := s.Export(ctx, "", "")

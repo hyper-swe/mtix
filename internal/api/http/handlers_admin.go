@@ -74,10 +74,21 @@ func (s *Server) runVerify(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	// MTIX-95.31.8: no two nodes may share a non-empty uid.
+	uidReport, err := s.store.DuplicateNodeUIDsReport(c.Request.Context())
+	if err != nil {
+		HandleError(c, err)
+		return
+	}
+	body := gin.H{
 		"status":          result,
 		"integrity_check": result == "ok",
-	})
+		"uid_unique_ok":   uidReport == "",
+	}
+	if uidReport != "" {
+		body["uid_unique_recovery"] = uidReport
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 // runBackup handles POST /api/v1/admin/backup per FR-6.3.

@@ -901,10 +901,8 @@ of the queue the client stopped pushing altogether.
    asked for in this push marks the index stale, and the next batch reads
    it again first. Once a clock hold on a creation clears, the creation and the
    changes of its subtree go through the ordinary push, where a renumber
-   by the hub is a known limit of this version: `RenumberForHubRejection`
-   re-stamps only the creation, so the changes sent with it keep the old
-   number (MTIX-95.37). A permanently held creation keeps its whole
-   subtree held.
+   by the hub re-addresses them (see "Push: renumbered creations"). A
+   permanently held creation keeps its whole subtree held.
 3. **Per-event validation.** Every other pending event is checked with
    `transport.ValidatePushEvent`, which runs `validator.Validate`, the rule
    set `PushEvents` applies to every event of a batch, against the store's
@@ -970,6 +968,76 @@ table created by an earlier development build with the narrower CHECK is
 rebuilt once, rows kept, when mtix opens the store
 (`widenQuarantineSource`); no schema version change, no protocol change,
 no hub change.
+
+## Push: renumbered creations
+
+MTIX-95.37. The hub keeps the first of two creations of the same number
+(first-writer-wins, ADR-003 §6) and answers the second with a renumber. The
+number is then the first creator's, and an event sent under it, or applied
+by it, changes that creator's task. Two invariants keep the two tasks apart,
+whatever kind of event follows the creation (update, claim, unclaim, status
+change, comment, annotation, child creation, dependency link or unlink,
+delete):
+
+1. **No event of a renumbered creation travels under the old number.**
+   - *The creation gate.* `pushLoop` reads each batch, applies the holds
+     above, then defers every event that waits for a pending creation
+     (`Store.EventsAwaitingCreation`, two queries per batch): an event about
+     a task, or a task below it, whose `create_node` is still `pending`, and
+     a link or unlink whose target is such a task. A creation waits only for
+     the creations of the tasks above it. The deferred events stay `pending`;
+     the loop remembers where the first one was read and reads from there
+     again when the queue is drained and a batch has since moved (sent,
+     renumbered or held something), so they go out in a later batch of the
+     same push, after the creation is on the hub. A creation the hub never
+     acknowledges (a restore collision, a push hold) is never followed by
+     its events, and a batch that moves nothing still ends the loop.
+   - *The re-addressing.* `Store.RenumberForHubRejection` claims the next
+     free number, moves the subtree (`RenumberSubtree`, now also for a task
+     soft-deleted locally) and, in the same transaction, requeues the
+     creation and rewrites every `pending` event of the subtree:
+     `node_id` by the uid of each event (by number prefix for an event
+     without a uid), the `parent_id` of each child's creation, and the
+     `depends_on_node_id` of every link or unlink that points into the
+     subtree. An event with another `sync_status` is hub history and is not
+     rewritten. A second rejection of the same creation, after a push that
+     failed midway, finds the task by uid and moves the events again.
+2. **Pull never applies an event to a task whose creation is pending here
+   by number.** An event with a uid resolves by uid only (`resolveNodeRef`),
+   so it finds no task of another uid. Every other place where apply names a
+   node by number goes through one check, `refusePendingNumber`, which asks
+   `pendingCreationSQL` whether the number, or any task above it, belongs to
+   a task whose own `create_node` is still `pending` here: the number of an
+   event without a uid (a client at 0.5.3 or older) and the fallback source
+   of a link, a creation's `parent_id` and its own number (`refuseHeldNumber`,
+   instead of being dropped as applied), and a link's or unlink's
+   `depends_on_node_id`. The event fails with
+   `ErrNumberHeldByPendingCreate`, which is not `ErrNotFound` (a delete
+   treats that as nothing to do). It is quarantined, source `pull`, and the
+   quarantine retry applies it once the local task has moved. A number held
+   by a task the hub already knows keeps the first-writer-wins no-op. Push's
+   creation gate reads the same predicate. An event whose uid, parent or link
+   target belongs to a creation that is in the quarantine is quarantined
+   behind it (`ErrBehindQuarantinedCreate`, checked by
+   `Store.QuarantinedCreateBehind` at ingest and at retry), whatever its op;
+   it is never applied as a no-op (a delete of a task not yet held) or
+   dropped, and the retry, in Lamport order, applies it after the creation
+   or keeps it queued while the creation cannot apply.
+
+*ADR-006 (protocol 2).* Protocol 2 supersedes the re-addressing and the by-number
+fallback of 2, not the guarantees: a renumber stops rewriting events and emits a
+`rebind{uid, display_path}` identity event, link payloads carry both tasks'
+uids, and every event keys on its uid, so the by-number fallbacks go away
+with the cutover. The creation gate stays as delivery ordering, since the
+hub's per-event outcome for a creation decides what happens to the events
+that follow it. Until a hub is cut over, this section describes the
+behaviour of every client.
+
+Limit: events a client from before MTIX-95.37 already pushed under an old
+number stay on the hub (the log is append-only); a fresh `mtix sync clone`
+of such a hub can fail applying them (`node <id> (uid=""): not found`), as
+clone applies a batch in one transaction and does not quarantine. No recovery
+exists in this version; it is tracked as MTIX-95.37.1.
 
 ## Push lock (single-flight per CLI)
 

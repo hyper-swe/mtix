@@ -188,7 +188,8 @@ func TestPushLoop_FutureStampedCreate_TemporaryHoldReleased(t *testing.T) {
 				return
 			}
 			require.Equal(t, 2, pushed, "the released creation and its claim push")
-			require.Equal(t, [][]string{{create, claim}}, next.calls, "creation first, then its claim, in one push")
+			require.Equal(t, [][]string{{create}, {claim}}, next.calls,
+				"creation first, then its claim once the creation is on the hub (MTIX-95.37)")
 			require.Empty(t, quarantined(t), "both holds are released")
 			require.Contains(t, stderr.String(), "released")
 		})

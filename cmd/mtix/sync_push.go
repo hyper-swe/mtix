@@ -168,53 +168,104 @@ func pushAndReport(ctx context.Context, stdout, stderr io.Writer, pool eventPush
 func pushLoop(ctx context.Context, stderr io.Writer,
 	pool eventPusher, store *sqlite.Store,
 ) (pushTotals, error) {
-	var tot pushTotals
 	idx, err := newHeldIndex(ctx, stderr, store)
 	if err != nil {
-		return tot, fmt.Errorf("release push holds: %w", err)
+		return pushTotals{}, fmt.Errorf("release push holds: %w", err)
 	}
-	var after pendingCursor // read on past each batch, held events included
+	run := &pushRun{ctx: ctx, stderr: stderr, pool: pool, store: store, idx: idx}
 	for {
-		events, err := readPendingBatchFrom(ctx, store, after, pushBatchSize)
-		if err != nil {
-			return tot, fmt.Errorf("read pending batch %d: %w", tot.batches+1, err)
-		}
-		if len(events) == 0 {
-			return tot, nil
-		}
-		after = cursorAfter(events)
-		events, held, err := idx.holdBatch(ctx, stderr, store, events)
-		if err != nil {
-			return tot, fmt.Errorf("hold invalid events of batch %d: %w", tot.batches+1, err)
-		}
-		if len(events) == 0 {
-			if held == 0 {
-				return tot, nil
-			}
-			continue // every event of the batch is now held; read on past them
-		}
-		res, mismatched, err := pushBatch(ctx, stderr, pool, store, events, tot.batches+1)
-		if err != nil {
-			return tot, err
-		}
-		if len(res.Renumbers) > 0 {
-			after = pendingCursor{} // re-queued creates keep their clock: read them again
-		}
-		// The renumbers moved subtrees, and a held mismatch may be a task's
-		// creation, which holds its subtree: read the held creations again.
-		idx.stale = idx.stale || len(res.Renumbers)+mismatched > 0
-		tot.add(res, mismatched)
-		fmt.Fprintf(stderr, "push progress: batch %d (%d sent, %d accepted: %d inserted, %d already on the hub; "+
-			"%d renumbered, %d conflicts)\n", tot.batches, len(events), len(res.Inserted)+len(res.AlreadyPresent),
-			len(res.Inserted), len(res.AlreadyPresent), len(res.Renumbers), len(res.Conflicts))
-		// No-progress guard: a batch that neither acknowledged (inserted or
-		// already on the hub, MTIX-95.3), renumbered nor held any event (e.g.
-		// pure conflicts) makes no headway — stop so the loop can never spin
-		// forever.
-		if len(res.Inserted)+len(res.AlreadyPresent)+len(res.Renumbers)+mismatched == 0 {
-			return tot, nil
+		done, err := run.step()
+		if err != nil || done {
+			return run.tot, err
 		}
 	}
+}
+
+// pushRun is the state of one pushLoop: the hub and store it works on, the
+// held creations, what it has pushed, the cursor it reads on from (past each
+// batch, held and deferred events included) and its memory of deferred events
+// (awaitRedo, MTIX-95.37).
+type pushRun struct {
+	ctx    context.Context
+	stderr io.Writer
+	pool   eventPusher
+	store  *sqlite.Store
+	idx    *heldIndex
+	tot    pushTotals
+	after  pendingCursor
+	await  awaitRedo
+}
+
+// step reads, screens and sends one batch. It reports true when the push is
+// over: the queue is drained, or a batch made no headway.
+func (r *pushRun) step() (bool, error) {
+	start := r.after
+	events, err := readPendingBatchFrom(r.ctx, r.store, r.after, pushBatchSize)
+	if err != nil {
+		return true, fmt.Errorf("read pending batch %d: %w", r.tot.batches+1, err)
+	}
+	if len(events) == 0 {
+		if back, ok := r.await.back(); ok {
+			r.after = back // the creations the deferred events waited for are on the hub now
+			return false, nil
+		}
+		return true, nil
+	}
+	r.after = cursorAfter(events)
+	events, skipped, err := r.screen(start, events)
+	if err != nil {
+		return true, err
+	}
+	if len(events) == 0 {
+		return skipped == 0, nil // every event of the batch is held or waits; read on past them
+	}
+	return r.send(events)
+}
+
+// screen holds the events of the batch that are invalid or in a held
+// creation's subtree (MTIX-95.12) and defers the ones that wait for a pending
+// creation (MTIX-95.37; start is where the batch was read). It returns the
+// events left to send and how many it held or deferred.
+func (r *pushRun) screen(start pendingCursor, events []*model.SyncEvent) ([]*model.SyncEvent, int, error) {
+	events, held, err := r.idx.holdBatch(r.ctx, r.stderr, r.store, events)
+	if err != nil {
+		return nil, 0, fmt.Errorf("hold invalid events of batch %d: %w", r.tot.batches+1, err)
+	}
+	events, deferred, err := deferAwaitingCreation(r.ctx, r.store, events)
+	if err != nil {
+		return nil, 0, fmt.Errorf("defer events of batch %d: %w", r.tot.batches+1, err)
+	}
+	r.await.note(start, deferred)
+	return events, held + deferred, nil
+}
+
+// send pushes one screened batch and folds the result into the totals. It
+// reports true when the batch made no headway.
+func (r *pushRun) send(events []*model.SyncEvent) (bool, error) {
+	res, mismatched, err := pushBatch(r.ctx, r.stderr, r.pool, r.store, events, r.tot.batches+1)
+	if err != nil {
+		return true, err
+	}
+	if len(res.Renumbers) > 0 {
+		r.after = pendingCursor{} // re-queued creates keep their clock: read them again
+		r.await.reset()
+	}
+	// The renumbers moved subtrees, and a held mismatch may be a task's
+	// creation, which holds its subtree: read the held creations again.
+	r.idx.stale = r.idx.stale || len(res.Renumbers)+mismatched > 0
+	r.tot.add(res, mismatched)
+	fmt.Fprintf(r.stderr, "push progress: batch %d (%d sent, %d accepted: %d inserted, %d already on the hub; "+
+		"%d renumbered, %d conflicts)\n", r.tot.batches, len(events), len(res.Inserted)+len(res.AlreadyPresent),
+		len(res.Inserted), len(res.AlreadyPresent), len(res.Renumbers), len(res.Conflicts))
+	// No-progress guard: a batch that neither acknowledged (inserted or
+	// already on the hub, MTIX-95.3), renumbered nor held any event (e.g.
+	// pure conflicts) makes no headway — stop so the loop can never spin
+	// forever.
+	if len(res.Inserted)+len(res.AlreadyPresent)+len(res.Renumbers)+mismatched == 0 {
+		return true, nil
+	}
+	r.await.progressed = true
+	return false, nil
 }
 
 // pushTotals counts what one push did (MTIX-95.3): the events the hub

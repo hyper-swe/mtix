@@ -42,6 +42,7 @@ func TestApplyLinkDep_AutoBlocksDependent(t *testing.T) {
 
 	require.NoError(t, s.CreateNode(ctx, mkUnblockRoot("PROJ-1", "PROJ", "Blocker", now)))
 	require.NoError(t, s.CreateNode(ctx, mkUnblockRoot("PROJ-2", "PROJ", "Dependent", now)))
+	markSynced(ctx, t, s)
 
 	// Simulate a dependency created on ANOTHER client and synced in: PROJ-1
 	// blocks PROJ-2. The event's NodeID is the edge's from-node (blocker);
@@ -73,6 +74,7 @@ func TestApplyUnlinkDep_LastBlocker_AutoUnblocksDependent(t *testing.T) {
 
 	require.NoError(t, s.CreateNode(ctx, mkUnblockRoot("PROJ-1", "PROJ", "Blocker", now)))
 	require.NoError(t, s.CreateNode(ctx, mkUnblockRoot("PROJ-2", "PROJ", "Dependent", now)))
+	markSynced(ctx, t, s)
 	require.NoError(t, s.AddDependency(ctx, &model.Dependency{
 		FromID: "PROJ-1", ToID: "PROJ-2", DepType: model.DepTypeBlocks, CreatedAt: now, CreatedBy: "pm",
 	}))
@@ -106,6 +108,7 @@ func TestApplyCreateNode_RecomputesParentProgress(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	require.NoError(t, s.CreateNode(ctx, mkUnblockRoot("PROJ-1", "PROJ", "Parent", now)))
+	markSynced(ctx, t, s)
 
 	// First child, synced in, then marked done -> parent progress = 1.0.
 	applyOne(ctx, t, s, &model.SyncEvent{
@@ -139,6 +142,7 @@ func TestApplyDelete_RecomputesParentProgress(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	require.NoError(t, s.CreateNode(ctx, mkUnblockRoot("PROJ-1", "PROJ", "Parent", now)))
+	markSynced(ctx, t, s)
 
 	// Two children: PROJ-1.1 (open, 0.0) and PROJ-1.2 (done, 1.0) -> parent 0.5.
 	applyOne(ctx, t, s, &model.SyncEvent{
@@ -165,4 +169,13 @@ func TestApplyDelete_RecomputesParentProgress(t *testing.T) {
 	require.NoError(t, err)
 	require.InDelta(t, 1.0, post.Progress, 1e-9,
 		"MTIX-44: a sync-deleted child must be excluded from parent progress (1.0), not leave it stale (0.5)")
+}
+
+// markSynced marks every pending event of s pushed: the hub knows the tasks
+// made so far, so a foreign event that names one by number or as a parent is
+// about it (a task whose creation is pending is not, MTIX-95.37).
+func markSynced(ctx context.Context, t *testing.T, s *Store) {
+	t.Helper()
+	_, err := s.writeDB.ExecContext(ctx, `UPDATE sync_events SET sync_status = 'pushed'`)
+	require.NoError(t, err)
 }

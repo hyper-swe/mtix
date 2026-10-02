@@ -428,6 +428,11 @@ func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error 
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply create_node %s: decode payload: %w", e.EventID, err)
 	}
+	// The parent is named by number: refuse one a pending local task holds
+	// (MTIX-95.37).
+	if err := refusePendingNumber(ctx, tx, e.EventID, p.ParentID); err != nil {
+		return err
+	}
 	depth := computeDepth(p.ParentID)
 	canonical := model.NodeTypeForDepth(depth) // FR-18.10 enforcement
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -461,7 +466,7 @@ func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error 
 	// blanket OR IGNORE that also masked re-applies. It must NOT hard-error
 	// (that would wedge the apply pipeline for the whole batch); the
 	// surfacing/renumber is layered on top by 30.7.
-	_, err := tx.ExecContext(ctx, `
+	res, err := tx.ExecContext(ctx, `
 		INSERT INTO nodes
 		  (id, uid, parent_id, depth, seq, project,
 		   title, description, prompt, acceptance,
@@ -490,6 +495,13 @@ func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error 
 	)
 	if err != nil {
 		return fmt.Errorf("apply create_node %s: insert node %s: %w", e.EventID, e.NodeID, err)
+	}
+	if inserted, rowsErr := res.RowsAffected(); rowsErr != nil {
+		return fmt.Errorf("apply create_node %s: rows affected: %w", e.EventID, rowsErr)
+	} else if inserted == 0 {
+		if err := refuseHeldNumber(ctx, tx, e, uid); err != nil {
+			return err
+		}
 	}
 
 	// MTIX-44: mirror the local CreateNode parent-progress rollup
@@ -765,7 +777,13 @@ func applyLinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	// Route the edge's source node through the uid-aware ref so a dep
 	// survives a renumber of the from-node (ADR-003 §3). The dependencies
 	// FK to nodes(id) is satisfied by the resolved current display path.
-	fromID := fromIDForDepEdge(ctx, tx, e)
+	fromID, err := fromIDForDepEdge(ctx, tx, e)
+	if err != nil {
+		return fmt.Errorf("apply link_dep %s: %w", e.EventID, err)
+	}
+	if err := refusePendingNumber(ctx, tx, e.EventID, p.DependsOnNodeID); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO dependencies (from_id, to_id, dep_type, created_at, created_by)
 		 VALUES (?, ?, ?, ?, ?)`,
@@ -798,7 +816,13 @@ func applyUnlinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	if depType == "" {
 		depType = string(model.DepTypeBlocks)
 	}
-	fromID := fromIDForDepEdge(ctx, tx, e)
+	fromID, err := fromIDForDepEdge(ctx, tx, e)
+	if err != nil {
+		return fmt.Errorf("apply unlink_dep %s: %w", e.EventID, err)
+	}
+	if err := refusePendingNumber(ctx, tx, e.EventID, p.DependsOnNodeID); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM dependencies WHERE from_id = ? AND to_id = ? AND dep_type = ?`,
 		fromID, p.DependsOnNodeID, depType,
@@ -826,11 +850,19 @@ func applyUnlinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 // tuple, not on node existence (the FK already guards a missing node), so
 // a NotFound from resolveNodeRef is tolerated by falling back to the
 // event's node_id — preserving the pre-30.6 behavior for uid-less events.
-func fromIDForDepEdge(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) string {
-	if id, err := resolveNodeRef(ctx, tx, e); err == nil {
-		return id
+func fromIDForDepEdge(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (string, error) {
+	id, err := resolveNodeRef(ctx, tx, e)
+	if err == nil {
+		return id, nil
 	}
-	return e.NodeID
+	if errors.Is(err, ErrNumberHeldByPendingCreate) {
+		return "", err
+	}
+	// The fallback names the task by number alone: the same guard applies.
+	if err := refusePendingNumber(ctx, tx, e.EventID, e.NodeID); err != nil {
+		return "", err
+	}
+	return e.NodeID, nil
 }
 
 // applyDelete is a tombstone. SYNC-DESIGN section 8.3: delete on a
@@ -989,6 +1021,14 @@ func resolveNodeRef(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (string
 	}
 	if err != nil {
 		return "", err
+	}
+	if e.UID == "" {
+		// An event without a uid names its task by number alone: refuse a
+		// number held by a task whose creation is still pending here, which
+		// the event is not about (MTIX-95.37).
+		if err := refusePendingNumber(ctx, tx, e.EventID, id); err != nil {
+			return "", err
+		}
 	}
 	return id, nil
 }

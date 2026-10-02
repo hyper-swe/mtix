@@ -272,6 +272,7 @@ func relayAttachHint(err error) error {
 func newRelayTickCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "tick",
+		Args:  syncExactArgs(0),
 		Short: "Run exactly one relay pass: publish, then ingest",
 		Long: "One pass and exit — for peers that cannot host a daemon:\n" +
 			"a turn-driven agent seat, a cron-locked appliance, a courier laptop.\n" +
@@ -341,6 +342,7 @@ func newRelayStatusCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "status",
+		Args:  syncExactArgs(0),
 		Short: "Show relay peers, positions and outstanding problems",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rep, err := collectRelayStatus(cmd.Context())
@@ -363,6 +365,7 @@ func newRelayStatusCmd() *cobra.Command {
 func newRelayRotateKeyCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "rotate-key",
+		Args:  syncExactArgs(0),
 		Short: "Install the next key epoch and record its boundary",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dir, err := requireRelay()
@@ -403,6 +406,7 @@ func newRelayResetPeerCmd() *cobra.Command {
 	var floor int64
 	cmd := &cobra.Command{
 		Use:   "reset-peer",
+		Args:  syncExactArgs(0),
 		Short: "Declare a new publisher epoch after restoring this store from backup",
 		Long: "Use after a restore, when publishing has refused with\n" +
 			"RELAY_PUBLISHER_DIVERGED. Bumps this peer's publisher epoch and\n" +
@@ -461,6 +465,7 @@ func newRelayCloneCmd() *cobra.Command {
 	var f importFlags
 	cmd := &cobra.Command{
 		Use:   "clone",
+		Args:  syncExactArgs(0),
 		Short: "Export or import a bootstrap snapshot",
 		Long: "A peer joining after pruning cannot tail from the start. Any current\n" +
 			"peer exports a snapshot into the relay; the joiner imports it and\n" +
@@ -493,6 +498,7 @@ func newRelayRepublishCmd() *cobra.Command {
 	var fromRS uint64
 	cmd := &cobra.Command{
 		Use:   "republish",
+		Args:  syncExactArgs(0),
 		Short: "Re-emit this peer's events from an earlier relay sequence",
 		Long: "Operator gap repair. Re-emits into FRESH segments — no existing file\n" +
 			"is touched — and the duplicates are absorbed on arrival, so it is\n" +

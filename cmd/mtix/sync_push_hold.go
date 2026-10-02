@@ -236,7 +236,7 @@ func pushHoldReason(e *model.SyncEvent, refused error) string {
 func printHeldPushEvents(ctx context.Context, stdout, stderr io.Writer, store *sqlite.Store) {
 	held, err := store.CountHeldPushEvents(ctx)
 	if err != nil {
-		fmt.Fprintf(stderr, "mtix sync push: %s\n", err)
+		warnSync(stderr, "mtix sync push", err)
 		return
 	}
 	if held > 0 {

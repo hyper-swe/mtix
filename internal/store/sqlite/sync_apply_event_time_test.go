@@ -25,9 +25,9 @@ import (
 // Stored times at apply (MTIX-95.26).
 //
 // The apply code turns an event's wall_clock_ts into a stored time only
-// through eventTime, and a defer payload's until only through deferWakeTime
-// (sync_event_time.go; both helpers have range tests in
-// sync_event_time_test.go). These tests pin, for pulled events, where "large"
+// through eventTime, and a defer payload's until only through storedDeferUntil
+// (eventTime in sync_event_time.go and storedDeferUntil in defer.go; both
+// have range tests). These tests pin, for pulled events, where "large"
 // means a wall_clock_ts of year 10000 or of MaxInt64:
 //   - a comment: the annotation's created_at and the node's updated_at are the
 //     event's time when in range (including the last millisecond of year

@@ -145,7 +145,7 @@ func initBootstrapHookFloor(ctx context.Context, stderr io.Writer, init bool) {
 		return
 	}
 	if err := app.store.InitHookScanFloorAtTail(ctx); err != nil {
-		fmt.Fprintf(stderr, "mtix sync pull: hook floor init: %s\n", err)
+		warnSync(stderr, "mtix sync pull: hook floor init", err)
 	}
 }
 

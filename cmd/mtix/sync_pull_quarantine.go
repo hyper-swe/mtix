@@ -415,7 +415,7 @@ func reportQuarantined(w io.Writer, source string, events []*model.SyncEvent, he
 func printQuarantineHeld(ctx context.Context, stdout, stderr io.Writer, st *sqlite.Store) {
 	held, err := st.CountQuarantined(ctx)
 	if err != nil {
-		fmt.Fprintf(stderr, "mtix sync pull: %s\n", err)
+		warnSync(stderr, "mtix sync pull", err)
 		return
 	}
 	if held > 0 {

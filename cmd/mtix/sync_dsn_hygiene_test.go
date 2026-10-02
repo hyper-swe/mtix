@@ -97,6 +97,12 @@ func sweepCommands(backupOut string) []sweepCommand {
 		{name: "sync repair-uids", argv: func(pos []string) []string {
 			return cmdLine([]string{"sync", "repair-uids"}, pos, "--dry-run")
 		}},
+		{name: "sync relay tick", argv: at("sync", "relay", "tick"), argsOnly: true},
+		{name: "sync relay status", argv: at("sync", "relay", "status"), argsOnly: true},
+		{name: "sync relay rotate-key", argv: at("sync", "relay", "rotate-key"), argsOnly: true},
+		{name: "sync relay reset-peer", argv: at("sync", "relay", "reset-peer"), argsOnly: true},
+		{name: "sync relay clone", argv: at("sync", "relay", "clone"), argsOnly: true},
+		{name: "sync relay republish", argv: at("sync", "relay", "republish"), argsOnly: true},
 		{name: "sync backfill", argv: func(pos []string) []string {
 			return cmdLine([]string{"sync", "backfill"}, pos, "--dry-run")
 		}},
@@ -228,10 +234,11 @@ func TestDSNSweep_CoversEverySyncCommand(t *testing.T) {
 		if c == root || !c.Runnable() {
 			return // the test root and command groups without a RunE
 		}
-		// The FR-21 file relay is a directory transport: no relay command
-		// reads or accepts a hub DSN, and its positional argument is a
-		// path, so a DSN-shaped argument would name a directory.
-		if strings.HasPrefix(path, "sync relay ") {
+		// These relay commands take a <dir> or <peer-id> as their positional
+		// argument, so a DSN-shaped argument would name a directory or peer;
+		// the other relay commands are in sweepCommands.
+		switch path {
+		case "sync relay init", "sync relay attach", "sync relay retire-peer":
 			return
 		}
 		require.Truef(t, swept[path], "%q is missing from the FR-18.17 output sweep", path)

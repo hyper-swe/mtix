@@ -153,7 +153,7 @@ const (
 //	previous_status  the transition payload's from-status
 //	closed_at        the event's time (eventTime), RFC3339 in whole seconds (UTC)
 //	progress         1.0
-//	defer_until      the defer payload's until in UTC (deferWakeTime; NULL when
+//	defer_until      the defer payload's until in UTC (storedDeferUntil; NULL when
 //	                 absent or outside years 1..9999)
 type workflowRule struct {
 	op             model.OpType
@@ -387,7 +387,7 @@ type workflowWrite struct {
 // values from the event (MTIX-95.10). A terminal closed_at is the event's time
 // (in.eventAt, from eventTime; MTIX-95.26) in whole seconds, not the apply
 // time, so every replica stamps the same value. A defer's until becomes
-// defer_until through deferWakeTime (MTIX-95.26).
+// defer_until through storedDeferUntil (MTIX-95.22).
 //
 // known is false when no row matches: a transition_status to a status this
 // build does not know (for example one a newer client added). The write then

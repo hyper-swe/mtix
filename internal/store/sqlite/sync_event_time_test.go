@@ -46,10 +46,10 @@ func TestEventTime_WallClockRange_EventTimeOrApplyTime(t *testing.T) {
 	}
 }
 
-// TestDeferWakeTime_UntilRange_UTCOrNoWakeTime pins the helper that turns a
+// TestStoredDeferUntil_UntilRange_UTCOrNoWakeTime pins the helper that turns a
 // defer payload's until into defer_until (MTIX-95.26): the until in UTC when
 // its UTC year lies within 1..9999, else nil (no wake time).
-func TestDeferWakeTime_UntilRange_UTCOrNoWakeTime(t *testing.T) {
+func TestStoredDeferUntil_UntilRange_UTCOrNoWakeTime(t *testing.T) {
 	minus5 := time.FixedZone("minus5", -5*3600)
 	plus1 := time.FixedZone("plus1", 3600)
 	at := func(v time.Time) *time.Time { return &v }
@@ -70,14 +70,12 @@ func TestDeferWakeTime_UntilRange_UTCOrNoWakeTime(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := deferWakeTime(tt.until)
+			got := storedDeferUntil(tt.until)
 			if tt.want == nil {
 				require.Nil(t, got)
 				return
 			}
-			require.NotNil(t, got)
-			require.True(t, tt.want.Equal(*got), "deferWakeTime = %s, want %s", *got, *tt.want)
-			require.Equal(t, time.UTC, got.Location(), "stored times are UTC")
+			require.Equal(t, tt.want.UTC().Format(time.RFC3339), got, "stored as UTC RFC 3339 text")
 		})
 	}
 }

@@ -71,39 +71,67 @@ jobs:
           verify: false
 
   test-go-postgres-docker:
-    # MTIX-42: real Postgres contract suite against an ephemeral postgres:16
-    # service. Runs the ACTUAL MTIX_PG_TEST_DSN-gated transport + multi-project
-    # suites — the whole point being that these are exercised on every push, not
-    # skipped. Replaces the e2e/postgres scaffold, which t.Skip'd every contract
-    # body (a false green: it only proved the harness compiled). The e2e sync
-    # suite has its own real-PG job (test-sync-chaos-postgres). Hermetic — no
-    # external secrets. A red run here is a PG-store regression.
+    # MTIX-95.51: the MTIX_PG_TEST_DSN-gated suites run on every push to main
+    # and every pull request, with -race, against PostgreSQL 16 AND 17. Before
+    # this, a push ran only the transport suite and `cmd/mtix -run
+    # TestMultiProject`, so the rest of the gated suites (cmd/mtix, e2e) ran
+    # only on a release tag, after the merge that broke them. MTIX-42: the
+    # gated suites are the point; a skipped one is a false green, so the DSN is
+    # always set here. Service image, credentials, DSN and the 20m go test
+    # timeout mirror release.yml's test-go job.
+    #
+    # One job per (PG version, package): pg and pkg are both real matrix axes
+    # (2 x 3 = 6 jobs; an include entry that carries only one of them would be
+    # merged into every combination and collapse the matrix, so none is used
+    # for pg or pkg). Each job has its own service container, so packages
+    # never share a database concurrently: the gated tests in cmd/mtix and e2e
+    # DROP and re-migrate the shared database, and `-p 1` serializes the
+    # packages inside one job (see release.yml). Packages are separate jobs
+    # only to keep each under its wall-clock budget and to show which package
+    # failed. Timeouts: the go test limit is 20m (release.yml's) where the old
+    # transport step had 8m and the old chaos job 12m, because -race over
+    # cmd/mtix measured ~13 minutes locally; the job limit of 35m adds setup
+    # headroom. The e2e run keeps -v, as the old chaos job had. Hermetic, no
+    # external secrets. A red run is a PG-store or sync regression and must
+    # never be merged around.
+    name: pg-${{ matrix.pg }} ${{ matrix.pkg }}
     runs-on: ubuntu-22.04
-    timeout-minutes: 12
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: ["16", "17"]
+        pkg:
+          - ./cmd/mtix/
+          - ./internal/store/postgres/transport/
+          - ./e2e/...
+        include:
+          # Extra flag for the e2e package only; it matches an existing pkg
+          # value, so it augments those two jobs rather than adding any.
+          - pkg: ./e2e/...
+            verbose: -v
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:${{ matrix.pg }}
         env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: mtixcontract
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: mtix_ci
         ports:
           - 5432:5432
         options: >-
           --health-cmd pg_isready
-          --health-interval 5s
+          --health-interval 10s
           --health-timeout 5s
-          --health-retries 10
+          --health-retries 5
+    env:
+      MTIX_PG_TEST_DSN: "postgres://postgres:ci@localhost:5432/mtix_ci?sslmode=disable"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.25"
-      - name: Run transport + multi-project contract suites
-        env:
-          MTIX_PG_TEST_DSN: postgres://postgres:postgres@127.0.0.1:5432/mtixcontract?sslmode=disable
-        run: |
-          go test ./internal/store/postgres/transport/ -p 1 -count=1 -timeout 8m
-          go test ./cmd/mtix/ -run TestMultiProject -count=1
+      - name: Run ${{ matrix.pkg }} against PostgreSQL ${{ matrix.pg }}
+        run: go test ${{ matrix.pkg }} ${{ matrix.verbose }} -race -count=1 -p 1 -timeout 20m
 
   test-fault-injection:
     # NFR-2.8 conformance (MTIX-26.7): storage must survive disk-full and
@@ -126,43 +154,8 @@ jobs:
           MTIX_FAULTFS_DIR: /mnt/mtix-faultfs
         run: go test ./e2e/faultinject/ -tags=faultinject -count=1 -timeout=12m -v
 
-  test-sync-chaos-postgres:
-    # MTIX-30.11: distributed-identity fault-injection + chaos e2e against a
-    # real Postgres hub — crash-resumability of RenumberSubtree / the Phase-1
-    # dedup SweepDuplicates / the push renumber-drain (ADR-003 §5/§6/§7), and
-    # the restore-collision Option B discriminator (ADR-003 §6.1/§15: a
-    # cross-epoch re-grant blocks; same-epoch / no-restore near-misses
-    # renumber). The whole e2e sync suite is MTIX_PG_TEST_DSN-gated and SKIPS
-    # in test-go (no DSN there), so this job is what actually exercises it.
-    # Run with -race for the concurrent sweep/renumber coverage. A red run here
-    # is an identity/sync regression and must never be merged around.
-    runs-on: ubuntu-22.04
-    timeout-minutes: 15
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: mtixchaos
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: "1.25"
-      - name: Run identity/sync chaos + restore e2e suite
-        env:
-          MTIX_PG_TEST_DSN: postgres://postgres:postgres@127.0.0.1:5432/mtixchaos?sslmode=disable
-        run: go test ./e2e/ -race -count=1 -timeout=12m -v
-
   build:
-    needs: [test-go, test-web, lint, test-go-postgres-docker, test-fault-injection, test-sync-chaos-postgres]
+    needs: [test-go, test-web, lint, test-go-postgres-docker, test-fault-injection]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

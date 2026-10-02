@@ -1417,14 +1417,14 @@ the source of truth; the hub is a mailroom for events.
 | You are... | Use |
 |---|---|
 | One developer, one or two machines | Solo. Sync between machines via git-tracked `.mtix/tasks.json`. |
-| 2–10 trusted developers | Sync mode with BYO Postgres hub (Supabase, Neon, RDS, or self-hosted). |
+| 2–10 trusted developers | Sync mode with a bring-your-own Postgres hub (managed or self-hosted). |
 | Regulated team (medical, finance, aerospace) | Sync mode + the [safety-critical workflow](docs/audit/MTIX-15-audit-pass2.md) (immutable backups, daemon-as-service, server-side enforcement). |
 | Multiple unrelated tenants | Wait for the planned HyperSWE hosted SaaS. The sync hub is not a tenancy boundary. |
 
 ### Setup (one teammate, once)
 
 ```bash
-# Provision a Postgres hub (Supabase / Neon / RDS / self-hosted).
+# Provision a Postgres hub (managed or self-hosted).
 # Configure TLS with a trusted CA. Create a least-privilege role.
 
 # Store the DSN — env var preferred, .mtix/secrets fallback (mode 0600).
@@ -1438,42 +1438,42 @@ mtix sync init
 `.mtix/config.{yaml,yml,json}` for DSN-shaped keys and refuses to
 proceed if any are present (fail-closed).
 
-### Cloud Postgres providers (Neon, Supabase, RDS)
+### Connecting to a managed or self-hosted Postgres hub
 
 mtix connects over TLS with `sslmode=verify-full` and needs a **session-mode**
-connection for the migration path. The two most popular serverless providers
-each need one setting; both are verified end-to-end.
+connection for the migration path. Match your platform to the capabilities
+below; each one maps to one mtix setting.
 
-**Neon** — use the **direct** endpoint (drop `-pooler` from the host). Neon's
-pooled endpoint is transaction-mode, which breaks the session semantics the
-migration single-flight relies on. Neon's cert is publicly trusted — no CA
-setup needed.
+- **Connection pooling.** If your provider offers connection pooling, use its
+  **direct** endpoint or its **session-mode** pooler (usually port 5432), never
+  the transaction-mode pooler. Transaction mode breaks the session semantics
+  the migration single-flight relies on.
+- **Certificate authority.** If the server certificate does not chain to a
+  publicly trusted CA (a private CA), `verify-full` needs that CA bundle: obtain
+  it from your provider's console or your DBA, then set
+  `MTIX_SYNC_SSLROOTCERT=/path/to/ca-bundle.crt` (or add `sslrootcert=` to the
+  DSN). If you skip it, mtix's error names the setting. A publicly trusted
+  certificate needs no extra setting.
+- **Database that pauses when idle.** If the database scales to zero or
+  suspends after inactivity, the first command waits for it to resume, and a
+  direct endpoint may refuse the first connection while it is suspended. Wake
+  it once (run any trivial query) before `mtix sync init`, or keep it active
+  during setup. mtix does not poll the hub on a timer by default, so an idle
+  database stays idle.
+- **Tables exposed over an HTTP API.** If your platform can expose tables
+  through an HTTP API, keep the mtix tables unexposed. `mtix sync doctor`
+  confirms reachability and schema; it does not check exposure, so verify that
+  in the database platform's own settings.
+- **Any provider.** `statement_timeout` is applied per connection via SQL (not a
+  startup parameter), so it is honored even behind proxies and poolers that
+  drop startup parameters. `sslmode=require` is rejected for non-loopback
+  hosts; use `verify-full`, with `MTIX_SYNC_SSLROOTCERT` if the server uses a
+  private CA.
 
 ```bash
-# direct endpoint (no "-pooler" in the host)
-export MTIX_SYNC_DSN="postgresql://<user>:<pw>@ep-xxxx.<region>.aws.neon.tech/<db>?sslmode=verify-full"
+export MTIX_SYNC_SSLROOTCERT="/path/to/ca-bundle.crt"   # only for a private CA
+export MTIX_SYNC_DSN="postgresql://<user>:<pw>@<host>:5432/<db>?sslmode=verify-full"
 ```
-
-Neon scales computes to zero after inactivity, and the direct endpoint may
-refuse the first connection while suspended. Wake it once (run any query in the
-Neon SQL editor, or connect via the pooled endpoint) before `mtix sync init`,
-or keep the compute active.
-
-**Supabase** — use the **session pooler** (port **5432**, not the transaction
-pooler on 6543). Supabase's certificate chains to its own **private CA**, so
-`verify-full` needs that CA: download it from the Supabase dashboard
-(Database → SSL) and point `sslrootcert` at it. Skip it and mtix's error tells
-you exactly what to set.
-
-```bash
-export MTIX_SYNC_SSLROOTCERT="/path/to/supabase-ca.crt"   # or add &sslrootcert=... to the DSN
-export MTIX_SYNC_DSN="postgresql://postgres.<ref>:<pw>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=verify-full"
-```
-
-**Any provider** — `statement_timeout` is applied per connection via SQL (not a
-startup parameter), so it is honored even behind proxies/poolers that drop
-startup parameters. `sslmode=require` is rejected for non-loopback hosts; use
-`verify-full`, with `sslrootcert` if the provider uses a private CA.
 
 ### Setup (every other teammate)
 
@@ -2320,7 +2320,7 @@ psql "$DSN" < /tmp/hub.sql                  # restore
 ```
 
 For compliance-grade durability, schedule the backup to immutable
-cold storage (S3 Object Lock, GCS retention, Azure Immutable). See
+cold storage (object storage with an S3-compatible API or similar, with object lock or a retention policy). See
 the [safety-critical
 workflow](docs/audit/MTIX-15-audit-pass2.md) for the full procedure.
 

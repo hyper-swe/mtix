@@ -250,7 +250,7 @@ There is no per-project sync flag, filter, or cursor.
 
 ### 7.4 TLS posture
 - Default: `sslmode=verify-full`. Refuse `verify-ca`, `prefer`, `disable` unless `--insecure-tls` AND host resolves to loopback.
-- `MTIX_SYNC_SSLROOTCERT` env var and DSN `sslrootcert=` parameter honored. Managed PG providers (Supabase, Neon, RDS) commonly require this; the docs in workflows/* explain how to fetch the provider's CA bundle.
+- `MTIX_SYNC_SSLROOTCERT` env var and DSN `sslrootcert=` parameter honored. Managed PG providers whose certificate chains to a private CA require this; the docs in workflows/* explain how to obtain the provider's CA bundle.
 - pgbouncer in **session mode** is supported. Transaction mode breaks prepared statements and advisory locks; `mtix sync doctor` detects transaction mode via `SHOW pool_mode` and warns.
 
 ### 7.5 DSN sourcing (fail-closed)
@@ -628,5 +628,6 @@ The safety scenarios above map to their tests in
 | 1.0 | 2026-04-27 | Initial design lock-in (MTIX-15.1). Covers protocol versioning, validation, retention deferral, scale envelope, threat catalogue, conflict resolution, reconciliation, decision log. |
 | 1.1 | 2026-06 | §14 distributed node identity (MTIX-30 / ADR-003): uid anchor, provisional/settled, hub registry + renumber-required, atomic subtree renumber, restore-epoch + Option B, import uid validation, migration phases. Cross-reference and document-version sections renumbered to §15/§16. |
 | 1.2 | 2026-06 | §6.4 + decision D15 (FR-MULTI-PROJECT MP-20/MP-21): sync carries all projects in a DB to one hub with hub-global cursors; the hub stays per-project namespaced; no per-project cursors or routing by design. |
+| 1.3 | 2026-10 | §7.4 and the shipped docs made provider-neutral: capability plus the mtix setting, no named hosting providers (MTIX-95.8.2). |
 
 Future changes to this document MUST bump this version, update the changelog row, and reference the corresponding implementation ticket. If a code change conflicts with this document, the document MUST be updated in the same change.

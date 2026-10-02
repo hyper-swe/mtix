@@ -127,6 +127,15 @@ func NewGenerator(templateDir, outputDir string, data *TemplateData, logger *slo
 		}
 	}
 
+	// Parse shared partials ({{ define }} blocks reused by several documents,
+	// for example "hub_connection"). Absence is tolerated like workflows.
+	partialPattern := filepath.Join(templateDir, "partials", "*.tmpl")
+	if _, statErr := template.ParseGlob(partialPattern); statErr == nil {
+		if _, parseErr := tmpl.ParseGlob(partialPattern); parseErr != nil {
+			return nil, fmt.Errorf("parse partial templates from %s: %w", partialPattern, parseErr)
+		}
+	}
+
 	return &Generator{
 		outputDir: outputDir,
 		templates: tmpl,
@@ -151,6 +160,7 @@ func NewEmbeddedGenerator(outputDir string, data *TemplateData, logger *slog.Log
 	tmpl, err := template.ParseFS(embeddedTemplates,
 		"templates/*.tmpl",
 		"templates/workflows/*.tmpl",
+		"templates/partials/*.tmpl",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("parse embedded templates: %w", err)

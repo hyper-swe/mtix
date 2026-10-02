@@ -87,6 +87,10 @@ No production code may be written without a corresponding test written first.
 | Benchmark Tests | Performance verification | `*_bench_test.go` | `Benchmark{Operation}` |
 | Concurrency Tests | Race condition detection | `*_race_test.go` | `TestRace_{Scenario}` |
 
+### 3.2a PostgreSQL-gated suites in CI (MTIX-95.51)
+
+Tests gated on `MTIX_PG_TEST_DSN` skip when it is unset, so a plain `go test ./...` does not exercise them. Every push to `main` and every pull request runs them with `-race` on PostgreSQL 16 and 17 service containers, in the `test-go-postgres-docker` job of `.github/workflows/ci.yml`: one job per version and package (`./cmd/mtix/`, `./internal/store/postgres/transport/`, `./e2e/...`), each with its own database, `-p 1 -count=1 -timeout 20m`. The service image, credentials, DSN and timeout match the `test-go` job of `release.yml`, which keeps running every package on a tag. To reproduce one job locally, point `MTIX_PG_TEST_DSN` at a disposable database and run the same `go test` command.
+
 ### 3.3 Test Naming Convention
 
 ```go

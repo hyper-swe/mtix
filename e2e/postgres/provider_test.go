@@ -12,6 +12,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -142,11 +143,29 @@ func TestCI_E2EJobConfigured(t *testing.T) {
 	require.True(t, ok, "ci.yml must define job test-go-postgres-docker")
 	assert.NotEmpty(t, job.Steps, "test-go-postgres-docker must have steps")
 
-	combined := combineRuns(job)
-	assert.Contains(t, combined, "-tags=e2e",
-		"e2e job must build with -tags=e2e")
-	assert.Contains(t, combined, "-provider=docker",
-		"e2e job must select the docker provider")
+	// MTIX-95.51: the job is a matrix over PG 16/17 and the gated packages,
+	// each run with -race against a service container (not the old
+	// -tags=e2e -provider=docker form, which no CI job used).
+	assert.Contains(t, job.Env["MTIX_PG_TEST_DSN"], "postgres://",
+		"job must set MTIX_PG_TEST_DSN so the gated suites run, not skip")
+	// Expand the matrix the way GitHub Actions does: a bare include entry
+	// that carries only one axis is merged into every combination and
+	// collapses the matrix (the S1 this guard exists for), so assert that all
+	// six (pg, pkg) pairs survive expansion.
+	got := map[string]bool{}
+	for _, c := range expandMatrix(job.Strategy.Matrix) {
+		got[fmt.Sprint(c["pg"])+"|"+fmt.Sprint(c["pkg"])] = true
+	}
+	for _, pg := range []string{"16", "17"} {
+		for _, pkg := range []string{"./cmd/mtix/",
+			"./internal/store/postgres/transport/", "./e2e/..."} {
+			assert.True(t, got[pg+"|"+pkg], "no job for pg %s, package %s", pg, pkg)
+		}
+	}
+	assert.Contains(t, combineRuns(job), "matrix.pkg",
+		"the run step must test ${{ matrix.pkg }}")
+	assert.Contains(t, combineRuns(job), "-race",
+		"PG-gated suites must run with the race detector")
 }
 
 // TestCI_ReleaseJobConfigured parses .github/workflows/release.yml and
@@ -315,7 +334,11 @@ type workflow struct {
 	Jobs map[string]workflowJob `yaml:"jobs"`
 }
 type workflowJob struct {
-	Steps []map[string]any `yaml:"steps"`
+	Steps    []map[string]any `yaml:"steps"`
+	Strategy struct {
+		Matrix map[string]any `yaml:"matrix"`
+	} `yaml:"strategy"`
+	Env map[string]string `yaml:"env"`
 }
 
 func parseWorkflow(t *testing.T, src []byte) workflow {
@@ -366,3 +389,58 @@ func toString(v any) string {
 	}
 }
 
+// expandMatrix expands a GitHub Actions strategy.matrix into its job
+// combinations: the cross product of the array axes, then each include
+// entry either augments every combination it does not contradict on an
+// original axis value or, if it contradicts all of them, becomes its own.
+func expandMatrix(m map[string]any) []map[string]any {
+	combos := []map[string]any{{}}
+	for axis, v := range m {
+		vals, ok := v.([]any)
+		if axis == "include" || axis == "exclude" || !ok {
+			continue
+		}
+		var next []map[string]any
+		for _, c := range combos {
+			for _, val := range vals {
+				n := map[string]any{axis: val}
+				for k, x := range c {
+					n[k] = x
+				}
+				next = append(next, n)
+			}
+		}
+		combos = next
+	}
+	orig := map[string]bool{}
+	for _, c := range combos {
+		for k := range c {
+			orig[k] = true
+		}
+	}
+	inc, _ := m["include"].([]any)
+	for _, raw := range inc {
+		entry, _ := raw.(map[string]any)
+		matched := false
+		for _, c := range combos {
+			ok := true
+			for k, x := range entry {
+				if cv, has := c[k]; has && orig[k] && fmt.Sprint(cv) != fmt.Sprint(x) {
+					ok = false
+				}
+			}
+			if ok {
+				matched = true
+				for k, x := range entry {
+					if !orig[k] {
+						c[k] = x
+					}
+				}
+			}
+		}
+		if !matched {
+			combos = append(combos, entry)
+		}
+	}
+	return combos
+}

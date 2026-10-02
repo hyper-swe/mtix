@@ -43,6 +43,14 @@ type ImportReconcileOptions struct {
 	// (MTIX-95.31.4): mtix import --mode merge takes the verified pre-import
 	// backup there. An error from it stops the import, which writes nothing.
 	BeforeWrite func() error
+	// HoldPush, when set, is called just before the write of a merge that
+	// adopts a uid for a local task (MTIX-95.31.16), and the release it
+	// returns after the write. It must keep every push of this store's
+	// events from running meanwhile (mtix takes the push lock), because the
+	// adoption moves the task's pending events to the new uid and a push in
+	// flight would then mark, as pushed, the events it sent under the old
+	// one. An error from it stops the import, which writes nothing.
+	HoldPush func() (release func(), err error)
 }
 
 // ImportConflictKind classifies an import-boundary uid collision (audit F-3).
@@ -278,6 +286,13 @@ func (s *Store) ImportReconcile(
 	// Step 6: apply the (validated, rewritten) import via the existing
 	// path, which first moves the planned local tasks and, after a dry run,
 	// re-checks the store it read (MTIX-95.31.4).
+	if len(report.UIDAdoptions) > 0 && opts.HoldPush != nil {
+		release, holdErr := opts.HoldPush()
+		if holdErr != nil {
+			return report, nil, holdErr
+		}
+		defer release()
+	}
 	result, err := s.Import(ctx, data, opts.Mode, opts.Force, writeOpts...)
 	if err != nil {
 		return report, nil, err

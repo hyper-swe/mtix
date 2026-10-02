@@ -283,6 +283,7 @@ func importOptions(ctx context.Context, mode sqlite.ImportMode, f importFlags) s
 		ForceRename: f.forceRename,
 		Confirm:     f.confirm,
 	}
+	opts.HoldPush = holdPushForAdoption
 	if mode == sqlite.ImportModeMerge && app.syncSvc != nil && app.mtixDir != "" {
 		opts.BeforeWrite = func() error {
 			backup, err := app.syncSvc.BackupBeforeImport(ctx, app.mtixDir)

@@ -301,6 +301,12 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 	if err := updateExportNode(ctx, tx, &merged); err != nil {
 		return 0, fmt.Errorf("update node %s: %w", n.ID, err)
 	}
+	// A uid adopted here moves the task's unpushed events with it (MTIX-95.31.16).
+	if merged.UID != "" && merged.UID != local.UID {
+		if err := carryAdoptedUID(ctx, tx, merged.ID, local.UID, merged.UID); err != nil {
+			return 0, err
+		}
+	}
 	return importActionUpdated, nil
 }
 

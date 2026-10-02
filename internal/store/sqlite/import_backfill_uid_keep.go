@@ -12,7 +12,9 @@ import (
 )
 
 // replaceAllData drops all data and reimports from export per FR-7.8,
-// inside the import's transaction. A node of the file without a uid, at an
+// inside the import's transaction. A task that keeps its id and title but
+// takes the file's uid has its pending events carried to it
+// (carryReplacedUIDs, MTIX-95.31.16); the caller holds the push lock. A node of the file without a uid, at an
 // id whose local node carries a marked backfill uid, keeps that uid
 // (keepLocalBackfillUIDs, MTIX-95.31.9).
 func replaceAllData(ctx context.Context, tx *sql.Tx, data *ExportData) (ImportResult, error) {
@@ -20,10 +22,18 @@ func replaceAllData(ctx context.Context, tx *sql.Tx, data *ExportData) (ImportRe
 	if err != nil {
 		return ImportResult{}, err
 	}
-	if err := clearAllTables(ctx, tx); err != nil {
+	before, err := localUIDsByID(ctx, tx)
+	if err != nil {
 		return ImportResult{}, err
 	}
-	return insertAllExportData(ctx, tx, kept)
+	if clearErr := clearAllTables(ctx, tx); clearErr != nil {
+		return ImportResult{}, clearErr
+	}
+	result, err := insertAllExportData(ctx, tx, kept)
+	if err != nil {
+		return result, err
+	}
+	return result, carryReplacedUIDs(ctx, tx, before, kept)
 }
 
 // keepLocalBackfillUIDs returns the file a replace writes (MTIX-95.31.9):

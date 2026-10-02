@@ -75,6 +75,11 @@ func NewSyncService(store *sqlite.Store, logger *slog.Logger, clock func() time.
 // loss check compared: if it changed, nothing is written and the error
 // wraps sqlite.ErrStoreChangedSinceCheck, so the next command checks the
 // file again.
+// MTIX-95.31.16: the import runs under the push lock, so a replace that
+// gives a task the file's uid carries it onto the task's pending events
+// (carryReplacedUIDs) while no push runs. If a push runs, the automatic
+// import is skipped with a one-line notice, does not fail the command and
+// does not record the file as imported: the next command imports it.
 func (s *SyncService) AutoImport(ctx context.Context, mtixDir string) error {
 	if s.autoImportSwitchedOff(ctx) {
 		return nil // FR-15.2j: auto-import is off; auto-export keeps running, except over a pulled board (FR-15.3e).
@@ -98,6 +103,13 @@ func (s *SyncService) AutoImport(ctx context.Context, mtixDir string) error {
 	if skip || s.isOwnExport(ctx, hashPath, fileHash) {
 		return nil
 	}
+
+	// MTIX-95.31.16: take the push lock for the import, or skip it.
+	releasePush, skip := s.holdPushForImport(mtixDir)
+	if skip {
+		return nil
+	}
+	defer releasePush()
 
 	// Step 5: parse and validate the whole file; export the local store.
 	incoming, local, conflict, err := s.parseAndValidateExport(ctx, data, mtixDir, fileHash)

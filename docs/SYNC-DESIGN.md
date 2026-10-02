@@ -277,6 +277,7 @@ There is no per-project sync flag, filter, or cursor.
 - Each event carries a `vector_clock: map[author_id]int64` and a `lamport_clock: int64`.
 - On emit: `lamport_clock = max(local_lamport, max(observed_lamport_in_pulled_events)) + 1`. Vector clock entry for `local.author_id` is incremented.
 - On apply: local lamport advances to `max(local, event.lamport_clock)`. Vector-clock entry for `event.author_id` updated.
+- Size cap: the clock is pruned to 100 entries on emit and on apply (smallest counters of other authors first, ties by author id; the local author is never dropped), so a local write never fails on the clock's size. Conflict detection degrades for pruned authors (a dropped author reads as 0); convergence does not depend on the vector clock, only on §8.2. See SYNC-PROTOCOL, "Vector-clock size cap".
 - Causality: event A causally precedes event B iff `A.vc <= B.vc` componentwise. A and B are concurrent iff neither dominates the other; concurrent events of the same field trigger conflict resolution.
 
 ### 8.2 LWW resolution (deterministic)

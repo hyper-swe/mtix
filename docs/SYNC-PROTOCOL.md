@@ -83,8 +83,9 @@ On emit:
 1. `bumpLamport` reads `meta.sync.lamport`, increments, persists, returns
    the new value as the event's `lamport_clock`.
 2. `bumpAndPersistVectorClock` reads `meta.sync.vector_clock`, calls
-   `VectorClock.Bump(authorID)`, validates against the FR-18.7 caps,
-   persists, returns the new VC.
+   `VectorClock.Bump(authorID)`, prunes the result to
+   `MaxVectorClockEntries` (see [Vector-clock size cap](#vector-clock-size-cap)),
+   validates it, persists, returns the new VC.
 
 On apply (incoming events from pull):
 
@@ -94,7 +95,28 @@ On apply (incoming events from pull):
    can carry the clock toward the FR-18.7 overflow guard.
 1. `advanceLamport` writes `meta.sync.lamport = max(current, incoming)`.
 2. `mergeVectorClock` takes the per-author max of the local VC and the
-   incoming VC.
+   incoming VC, then prunes the result to `MaxVectorClockEntries`.
+
+#### Vector-clock size cap
+
+A local write never fails because of the vector clock's size. The hub
+accepts at most `MaxVectorClockEntries` (100) entries, so the local clock
+is bounded before it is stored or emitted, on emit and on apply alike
+(`VectorClock.Prune`). When more authors are known, the entries with the
+smallest counters are dropped first, ties by author id (larger id first),
+so the result is deterministic; every author this replica has emitted
+under, and the default local author, are never dropped, so their counters
+never reset and a new event never compares as older than that author's own
+earlier events. A dropped author reads as 0, so **conflict detection degrades for
+pruned authors**: two events may be logged as concurrent, or compared as
+equal, where an exact clock would have ordered them. Convergence does not
+depend on the vector clock: the winner is always chosen by LWW (Lamport,
+wall clock, machine hash, see SYNC-DESIGN section 8.2). The database's first
+prune logs one warning, through the store's logger, and records the time in
+`meta` (`sync.vc_pruned_first_at`); later prunes are silent, so the warning is
+once per database, not once per command; events emitted afterwards pass hub validation.
+If more than 100 authors have emitted from one replica, the smallest of
+them are dropped too, as the cap is absolute.
 
 The combination guarantees that locally-emitted events always have a
 lamport higher than any previously-applied event from the same author —

@@ -325,6 +325,20 @@ func bumpAndPersistVectorClock(ctx context.Context, tx *sql.Tx, authorID string)
 		}
 	}
 	vc.Bump(authorID)
+	// A local write never fails on the clock's size (MTIX-95.16): bound the
+	// clock with the deterministic prune, keeping the bumping author.
+	// The authors this replica has emitted under are kept too, so none
+	// restarts its counter (see emittingAuthorsKey).
+	emitting, stored, err := loadEmittingAuthors(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	emitting = append([]string{authorID}, emitting...) // the bumping author has top priority
+	vc, pruned := vc.Prune(emitting...)
+	notePrune(ctx, tx, pruned, authorID)
+	if storeErr := storeEmittingAuthors(ctx, tx, emitting, vc, stored); storeErr != nil {
+		return nil, storeErr
+	}
 	if validateErr := vc.Validate(); validateErr != nil {
 		return nil, fmt.Errorf("vector_clock invalid after bump: %w", validateErr)
 	}

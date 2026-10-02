@@ -372,12 +372,23 @@ func mergeVectorClock(ctx context.Context, tx *sql.Tx, authorID string, observed
 			return fmt.Errorf("parse local VC %q: %w", raw, parseErr)
 		}
 	}
+	// Exact per-key max, then the deterministic prune (MTIX-95.16): the
+	// stored clock never exceeds the cap, so a later local write cannot fail
+	// on it. The observed author (recorded even at 0 if the event did not
+	// carry it), every author this replica emits under and the default local
+	// author are kept, so no counter is lost or reset.
 	merged := local.Merge(observed)
-	// Ensure we record the author_id even if observed didn't include
-	// itself (defensive — emit-time should have included it).
 	if _, ok := merged[authorID]; !ok {
 		merged[authorID] = 0
 	}
+	emitting, _, err := loadEmittingAuthors(ctx, tx)
+	if err != nil {
+		return err
+	}
+	keep := append([]string{authorID}, emitting...)
+	keep = append(keep, sanitizeAuthorID(resolveEmitAuthor(ctx, tx, "")))
+	merged, pruned := merged.Prune(keep...)
+	notePrune(ctx, tx, pruned, authorID)
 	encoded, err := json.Marshal(merged)
 	if err != nil {
 		return fmt.Errorf("encode merged VC: %w", err)

@@ -1757,10 +1757,11 @@ refuse it.
   hub would refuse stays held under its own reason, keeping when it was
   first held and its attempt count, and if it is a child task's
   creation, that child's subtree stays held with it. In the ordinary
-  push, a renumber by the hub is a known limit of this version: if a
-  teammate took the task's number while the creation was held, the hub
-  renumbers the creation, and the changes sent with it keep the old
-  number. A creation held permanently keeps its whole subtree held.
+  push, if a teammate took the task's number while the creation was
+  held, the hub renumbers the creation, and push moves the task's
+  changes to the new number before it sends any of them (see
+  "Concurrent creates auto-renumber"). A creation held permanently
+  keeps its whole subtree held.
 - **See it.** `mtix sync status` shows `held push events`
   (`held_push_events` in `--json`). Held events also stay in `pending`,
   so `pending` does not reach 0 while any is held. `mtix sync doctor`
@@ -2509,6 +2510,37 @@ If two teammates both create `PRJX-1.4` at the same time, the hub accepts
 the first to arrive and tells the second to renumber. The second node
 becomes `PRJX-1.5` on its own. Both nodes survive; nothing is lost; you
 do not have to do anything. This is normal operation and needs no admin.
+
+Everything you did to the renumbered node before the push moves with it:
+its claim, edits, comments, child nodes and dependency links all land under
+`PRJX-1.5` (and `PRJX-1.5.1` for a child), on your clone, on your
+teammate's and on a fresh `mtix sync clone`. Your teammate's `PRJX-1.4` is
+never touched by your changes, and the reverse holds too. How:
+
+- Push sends a node's creation before any change that depends on it (a
+  change of the node, a node or change below it, a dependency link to or from
+  it), so a push of a new node with edits shows two or more batches.
+- When the hub renumbers a creation, mtix moves the node and its subtree to
+  the next free number and rewrites every unsent change, child creation and
+  link of the subtree to the new numbers in one step. A node you deleted
+  offline is renumbered with its delete.
+- Pull never applies a teammate's change to a node that is yours and not
+  yet on the hub: changes find their node by its internal id, and one that
+  names a number instead (a new node's parent, a dependency's target, a
+  change from an old client) is refused when that number, or one above it,
+  is held by such a node. If you pull before you push, the teammate's
+  creations, children and links wait in the quarantine (`mtix sync
+  quarantine list`) and apply on the next pull after your push.
+
+After a push that prints `<n> renumbered`, look your node up by title (the
+number changed) and fix any commit or PR text that names the old number.
+Check with `mtix sync push`, `mtix sync pull`, `mtix sync status` (pending 0)
+and `mtix sync doctor`. Events a client from before this fix pushed under
+an old number stay on the hub; a fresh clone of such a hub can fail with
+`node <id> (uid=""): not found`. No recovery exists in this version (a
+clone applies a batch in one transaction and does not quarantine); it is
+tracked as MTIX-95.37.1, so report the error to the person who runs the hub. The sync protocol 2 design (ADR-006) changes how this is done (a rebind
+event, uid-keyed links) and not what you see.
 
 ### New sync commands
 

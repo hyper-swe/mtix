@@ -341,7 +341,7 @@ func TestStatusRepairDiffs_WinnerRuleResiduals_NeverAppliedWithoutForce(t *testi
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "restore", "agent-a"))
 			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-b"))
 		}, ""},
-		{"local lifecycle and synced events", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
+		{"local lifecycle and synced events", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
 			wake := time.Date(2031, 1, 2, 3, 4, 5, 0, time.UTC)
 			require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
 			require.NoError(t, s.UnclaimNode(ctx, "MTIX-1", "handoff", "agent-a"))
@@ -352,6 +352,7 @@ func TestStatusRepairDiffs_WinnerRuleResiduals_NeverAppliedWithoutForce(t *testi
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", false))
 			mustCreateNode(t, s, "MTIX-3", "")
+			markEventsPushed(t, raw) // the hub knows MTIX-3 (MTIX-95.37)
 			pullEvents(t, s, []*model.SyncEvent{
 				foreignWorkflowEvent(t, "MTIX-3", model.OpClaim, &model.ClaimPayload{AgentID: "agent-b"}, 900, ""),
 				foreignWorkflowEvent(t, "MTIX-3", model.OpTransitionStatus,
@@ -443,7 +444,7 @@ func TestStatusRepairDiffs_OlderAssigneeUpdate_DoesNotOwnTheColumn(t *testing.T)
 // winner stamps the same closed_at when it applies the repair event.
 func TestRepairNodeStatus_RepairEvent_OtherReplicaKeepsItsClosedAt(t *testing.T) {
 	ctx := context.Background()
-	a, rawA := replicaWithNode(t)
+	a, rawA := replicaWithPendingNode(t)
 	require.NoError(t, a.ClaimNode(ctx, "MTIX-1", "agent-a"))
 	require.NoError(t, a.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
 	done := eventIDOf(t, rawA, "MTIX-1", model.OpTransitionStatus)

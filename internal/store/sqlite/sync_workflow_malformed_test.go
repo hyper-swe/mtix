@@ -159,6 +159,7 @@ func pullMalformedThenNormal(t *testing.T, c malformedCase) {
 	t.Helper()
 	s, raw := replicaWithNode(t)
 	mustCreateNode(t, s, "MTIX-2", "")
+	markEventsPushed(t, raw) // both tasks are known to the hub (MTIX-95.37)
 	seedWorkflowColumns(t, raw, model.StatusOpen)
 	before := nodeRow(t, raw, "MTIX-1")
 	logs := captureWarnings(t)

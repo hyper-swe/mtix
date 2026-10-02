@@ -124,60 +124,68 @@ func sequenceKey(project, parentID string) string {
 }
 
 // RenumberForHubRejection resolves a hub renumber-required outcome locally
-// (ADR-003 §6, MTIX-30.7). The hub rejected this node's create_node because
-// the number is already held by a different node (first-writer-wins); the
-// outcome's event id IS the node's durable uid (uid == create-event id,
-// ADR-003 §2). It re-claims the next free sibling number under the node's
-// parent, renumbers the node's whole subtree to it (RenumberSubtree, ADR-003
-// §5 — display path only, emits no sync events), then re-stamps the create
-// event with the new display_path and resets it to 'pending' so the next push
-// carries the distinct number. Returns the node's new display_path.
+// (ADR-003 §6, MTIX-30.7, MTIX-95.37). The hub rejected this node's
+// create_node because the number is already held by a different node
+// (first-writer-wins); the outcome's event id IS the node's durable uid
+// (uid == create-event id, ADR-003 §2). It re-claims the next free sibling
+// number under the node's parent and renumbers the node's whole subtree to
+// it (renumberSubtreeTx, ADR-003 §5), then, in the SAME transaction,
+// requeues the create and re-addresses every pending event of the subtree
+// to the new numbers (requeueRenumberedEvents), so no event of the task
+// travels under the old number, which now belongs to the teammate's task.
+// A task deleted locally is renumbered too: its creation is rejected like
+// any other and its delete event follows it. Returns the node's new
+// display_path.
 //
 // A claimed number can be taken in the LOCAL store (the colliding id minted
 // at create time, or a sibling claimed earlier), so it claims strictly
-// increasing numbers until RenumberSubtree finds a free local namespace — the
-// local mirror of the registry's retry-on-taken (ADR-003 §6, §12 sc.9),
-// bounded so a corrupt counter can never spin forever.
+// increasing numbers until the local namespace is free — the local mirror
+// of the registry's retry-on-taken (ADR-003 §6, §12 sc.9), bounded so a
+// corrupt counter can never spin forever.
 func (s *Store) RenumberForHubRejection(ctx context.Context, uid string) (string, error) {
-	target, err := s.loadSettleTarget(ctx, uid)
+	target, err := s.loadRenumberTarget(ctx, uid)
 	if err != nil {
 		return "", err
 	}
 
 	const maxAttempts = 10000
-	newID := ""
-	for attempt := 0; newID == ""; attempt++ {
-		if attempt >= maxAttempts {
-			return "", fmt.Errorf(
-				"renumber %s for hub rejection: no free sibling after %d attempts",
-				target.id, maxAttempts)
-		}
+	for attempt := 0; attempt < maxAttempts; attempt++ {
 		seq, claimErr := s.ClaimNextSeq(ctx, target.project, target.parentID)
 		if claimErr != nil {
 			return "", fmt.Errorf("claim next seq for %s: %w", target.id, claimErr)
 		}
-		switch renErr := s.RenumberSubtree(ctx, target.id, seq); {
+		newID := model.BuildID(target.project, target.parentID, seq)
+		renErr := s.WithTx(ctx, func(tx *sql.Tx) error {
+			return renumberAndRequeue(ctx, tx, target, seq, newID)
+		})
+		switch {
 		case renErr == nil:
-			newID = model.BuildID(target.project, target.parentID, seq)
+			return newID, nil
 		case errors.Is(renErr, model.ErrAlreadyExists):
 			continue // number taken locally; claim the next one
 		default:
 			return "", fmt.Errorf("renumber %s -> seq %d: %w", target.id, seq, renErr)
 		}
 	}
+	return "", fmt.Errorf("renumber %s for hub rejection: no free sibling after %d attempts",
+		target.id, maxAttempts)
+}
 
-	// RenumberSubtree touches no sync events; re-stamp the create event with
-	// the new display path and re-queue it for the next push.
-	if err := s.WithTx(ctx, func(tx *sql.Tx) error {
-		_, execErr := tx.ExecContext(ctx,
-			`UPDATE sync_events SET node_id = ?, sync_status = 'pending'
-			 WHERE event_id = ? AND op_type = 'create_node'`,
-			newID, uid)
-		return execErr
-	}); err != nil {
-		return "", fmt.Errorf("re-queue renumbered create %s: %w", uid, err)
+// renumberAndRequeue moves target's subtree to sibling number seq (newID)
+// and requeues its events in one transaction (MTIX-95.37): the numbers and
+// the events that name them change together or not at all.
+func renumberAndRequeue(ctx context.Context, tx *sql.Tx, target settleTarget, seq int, newID string) error {
+	node, err := lockAnyNodeForRenumber(ctx, tx, target.id)
+	if err != nil {
+		return err
 	}
-	return newID, nil
+	if err := renumberSubtreeTx(ctx, tx, target.id, node, seq); err != nil {
+		return err
+	}
+	if err := requeueRenumberedEvents(ctx, tx, target.uid, target.id, newID); err != nil {
+		return fmt.Errorf("re-queue renumbered create %s: %w", target.uid, err)
+	}
+	return nil
 }
 
 // settleTarget holds the columns SettleNode needs about the node being settled.
@@ -303,6 +311,32 @@ func (s *Store) loadSettleTarget(ctx context.Context, uid string) (settleTarget,
 	}
 	if err != nil {
 		return settleTarget{}, fmt.Errorf("settle: load node for uid %s: %w", uid, err)
+	}
+	t.parentID = parent.String
+	return t, nil
+}
+
+// loadRenumberTarget is loadSettleTarget for the hub-rejection renumber: the
+// node holding uid may be soft-deleted, because a task deleted locally is
+// still rejected by the hub as a renumber when its creation is sent
+// (MTIX-95.37). A live node wins over a deleted one with the same uid.
+func (s *Store) loadRenumberTarget(ctx context.Context, uid string) (settleTarget, error) {
+	if uid == "" {
+		return settleTarget{}, fmt.Errorf("renumber: empty uid: %w", model.ErrNotFound)
+	}
+	t := settleTarget{uid: uid}
+	var parent sql.NullString
+	// The node holding uid, live first; "uid <> ''" lets the partial
+	// idx_nodes_uid serve it (MTIX-95.47).
+	err := s.readDB.QueryRowContext(ctx,
+		`SELECT id, project, parent_id FROM nodes WHERE uid = ? AND uid <> ''
+		 ORDER BY deleted_at IS NULL DESC LIMIT 1`,
+		uid).Scan(&t.id, &t.project, &parent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return settleTarget{}, fmt.Errorf("renumber uid %s: %w", uid, model.ErrNotFound)
+	}
+	if err != nil {
+		return settleTarget{}, fmt.Errorf("renumber: load node for uid %s: %w", uid, err)
 	}
 	t.parentID = parent.String
 	return t, nil

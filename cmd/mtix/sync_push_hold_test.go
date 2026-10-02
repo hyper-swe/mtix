@@ -47,6 +47,9 @@ type fakePushHub struct {
 	events       []*model.SyncEvent
 	renumberOnce map[string]bool
 	failCalls    int
+	// refuse lists events the hub neither accepts nor reports: a creation it
+	// never acknowledges (MTIX-95.37).
+	refuse map[string]bool
 	beforeCall   func(call int)
 }
 
@@ -78,6 +81,9 @@ func (h *fakePushHub) PushEventsResult(_ context.Context, events []*model.SyncEv
 			delete(h.renumberOnce, e.EventID)
 			res.Renumbers = append(res.Renumbers, transport.RenumberRequired{
 				EventID: e.EventID, ProjectPrefix: e.ProjectPrefix, DisplayPath: e.NodeID})
+			continue
+		}
+		if h.refuse[e.EventID] {
 			continue
 		}
 		if held := h.held(e.EventID); held != nil {

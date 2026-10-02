@@ -196,6 +196,9 @@ func projectNode(id string, seq int, title string) *model.Node {
 func TestIdempotentApply_CreateNodeIDTakenCounterBehind_CounterAdvanced(t *testing.T) {
 	s, raw := applyTestStore(t)
 	require.NoError(t, s.CreateNode(context.Background(), projectNode("PROJ-3", 3, "local task")))
+	// The hub knows the local task: a pulled creation of its number is dropped.
+	_, err := raw.Exec(`UPDATE sync_events SET sync_status = 'pushed'`)
+	require.NoError(t, err)
 	require.Zero(t, sequenceCounter(t, raw, "PROJ:"))
 
 	require.NoError(t, applyOnce(t, s, pulledCreate(t, "PROJ-3", 10)))

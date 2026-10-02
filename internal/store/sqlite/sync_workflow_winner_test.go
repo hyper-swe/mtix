@@ -116,6 +116,7 @@ func claimedThenDone(t *testing.T) (*sqlite.Store, *sql.DB) {
 	ctx := context.Background()
 	s, raw := mutationTestStore(t)
 	mustCreateNode(t, s, "MTIX-1", "")
+	markEventsPushed(t, raw) // the hub knows the task: foreign events name it by number (MTIX-95.37)
 	require.NoError(t, s.ClaimNode(ctx, "MTIX-1", "agent-a"))
 	require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
 	return s, raw
@@ -210,8 +211,21 @@ func TestApply_NewerForeignClaimAfterDone_Applies(t *testing.T) {
 	require.Equal(t, nullColumn, after["closed_at"], "the winning claim clears closed_at")
 }
 
-// replicaWithNode returns a fresh store holding one open node MTIX-1.
+// replicaWithNode returns a fresh store holding one open node MTIX-1 that
+// the hub already knows: its creation is marked pushed, so the foreign
+// events these tests apply, which name the task by number alone, are applied
+// to it (a task whose creation is pending is the teammate's number, not
+// this one, MTIX-95.37).
 func replicaWithNode(t *testing.T) (*sqlite.Store, *sql.DB) {
+	t.Helper()
+	s, raw := replicaWithPendingNode(t)
+	markEventsPushed(t, raw)
+	return s, raw
+}
+
+// replicaWithPendingNode returns a fresh store holding one open node MTIX-1
+// whose creation is still pending, for tests that push it to a peer.
+func replicaWithPendingNode(t *testing.T) (*sqlite.Store, *sql.DB) {
 	t.Helper()
 	s, raw := mutationTestStore(t)
 	mustCreateNode(t, s, "MTIX-1", "")
@@ -256,7 +270,7 @@ func TestApply_ConcurrentClaims_SameWinnerOnAllReplicas(t *testing.T) {
 // same Lamport, push, and pull each other's claim.
 func TestApply_ConcurrentLocalClaims_ReplicasConvergeOnOneClaim(t *testing.T) {
 	ctx := context.Background()
-	storeA, rawA := replicaWithNode(t)
+	storeA, rawA := replicaWithPendingNode(t)
 	storeB, rawB := mutationTestStore(t)
 	pullEvents(t, storeB, pushPendingOwnEvents(t, rawA)) // B receives the node
 
@@ -327,7 +341,7 @@ func TestIdempotentApply_OwnEventAndOlderForeignWorkflowEvent_ReplicasConverge(t
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			storeA, rawA := replicaWithNode(t)
+			storeA, rawA := replicaWithPendingNode(t)
 			storeB, rawB := mutationTestStore(t)
 			pullEvents(t, storeB, pushPendingOwnEvents(t, rawA)) // both at Lamport 1
 

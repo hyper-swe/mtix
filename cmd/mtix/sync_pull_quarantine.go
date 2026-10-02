@@ -123,6 +123,11 @@ func ingestPulledEvent(ctx context.Context, tx *sql.Tx, in pullIngest,
 			return nil, err
 		}
 	}
+	if refused == nil && !applied {
+		if refused, err = refuseBehindQuarantinedCreate(ctx, tx, e); err != nil {
+			return nil, err
+		}
+	}
 	if refused == nil {
 		if refused, err = applyPulledEvent(ctx, tx, e); err != nil {
 			return nil, err
@@ -368,6 +373,11 @@ func retryQuarantined(ctx context.Context, tx *sql.Tx, in pullIngest,
 		return retryHeld, err
 	}
 	if refused == nil {
+		if refused, err = refuseBehindQuarantinedCreate(ctx, tx, &e); err != nil {
+			return retryHeld, err
+		}
+	}
+	if refused == nil {
 		if refused, err = applyPulledEvent(ctx, tx, &e); err != nil {
 			return retryHeld, err
 		}
@@ -430,4 +440,20 @@ func quarantineReason(err error) string {
 // into single spaces.
 func oneLine(s string) string {
 	return strings.Join(strings.Fields(format.StripControlChars(s)), " ")
+}
+
+// refuseBehindQuarantinedCreate returns the refusal of an event that depends
+// on a creation sitting in the quarantine (MTIX-95.37): it is quarantined too
+// and retried after the creation, in Lamport order, instead of being applied
+// as a no-op or dropped. refused is nil when it depends on none; err is a
+// local read failure that aborts the batch.
+func refuseBehindQuarantinedCreate(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (refused, err error) {
+	creation, err := sqlite.QuarantinedCreateBehind(ctx, tx, e)
+	if err != nil {
+		return nil, err
+	}
+	if creation == "" {
+		return nil, nil
+	}
+	return fmt.Errorf("%w %s", sqlite.ErrBehindQuarantinedCreate, creation), nil
 }

@@ -75,6 +75,10 @@ func TestWakeDeferredNodes_PeerDefersAfterWake_StaysDeferred(t *testing.T) {
 	ctx := context.Background()
 	node, err := svc.CreateNode(ctx, &service.CreateNodeRequest{Project: "PROJ", Title: "Probe", Creator: "a"})
 	require.NoError(t, err)
+	// The hub knows the task, so the peer's event that names it by number is
+	// about it (a task whose creation is pending is not, MTIX-95.37).
+	_, err = s.WriteDB().ExecContext(ctx, `UPDATE sync_events SET sync_status = 'pushed' WHERE op_type = 'create_node'`)
+	require.NoError(t, err)
 	past := now.Add(-time.Hour)
 	require.NoError(t, svc.DeferNode(ctx, node.ID, &past, "deferred via CLI", "agent-a"))
 
@@ -116,6 +120,10 @@ func TestApplyPeerDeferral_StaleWakeTime_IsCleared(t *testing.T) {
 	bg := service.NewBackgroundService(s, nil, nil, clk)
 	ctx := context.Background()
 	node, err := svc.CreateNode(ctx, &service.CreateNodeRequest{Project: "PROJ", Title: "Stale", Creator: "a"})
+	require.NoError(t, err)
+	// The hub knows the task, so the peer's event that names it by number is
+	// about it (a task whose creation is pending is not, MTIX-95.37).
+	_, err = s.WriteDB().ExecContext(ctx, `UPDATE sync_events SET sync_status = 'pushed' WHERE op_type = 'create_node'`)
 	require.NoError(t, err)
 	_, err = s.WriteDB().ExecContext(ctx,
 		`UPDATE nodes SET defer_until = ? WHERE id = ?`, "2030-06-01T11:00:00Z", node.ID)

@@ -40,6 +40,15 @@ import (
 //   - A newSeq already taken by a live sibling — or whose target namespace is
 //     otherwise occupied — returns model.ErrAlreadyExists and changes nothing.
 func (s *Store) RenumberSubtree(ctx context.Context, id string, newSeq int) error {
+	return s.renumberSubtree(ctx, id, newSeq, lockNodeForRenumber)
+}
+
+// renumberSubtree is RenumberSubtree with the lock that decides which nodes
+// may be renumbered: live ones only (RenumberSubtree) or soft-deleted ones
+// too (RenumberForHubRejection, MTIX-95.37).
+func (s *Store) renumberSubtree(ctx context.Context, id string, newSeq int,
+	lock func(context.Context, *sql.Tx, string) (renumberTarget, error),
+) error {
 	if id == "" {
 		return fmt.Errorf("renumber: id is required: %w", model.ErrInvalidInput)
 	}
@@ -49,7 +58,7 @@ func (s *Store) RenumberSubtree(ctx context.Context, id string, newSeq int) erro
 	}
 
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		node, err := lockNodeForRenumber(ctx, tx, id)
+		node, err := lock(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -107,11 +116,24 @@ type renumberTarget struct {
 // lockNodeForRenumber reads the renumber target inside the transaction.
 // Returns model.ErrNotFound if no live node carries the id.
 func lockNodeForRenumber(ctx context.Context, tx *sql.Tx, id string) (renumberTarget, error) {
+	return scanRenumberTarget(id, tx.QueryRowContext(ctx,
+		`SELECT project, parent_id, seq FROM nodes WHERE id = ? AND deleted_at IS NULL`, id))
+}
+
+// lockAnyNodeForRenumber is lockNodeForRenumber for a node that may be
+// soft-deleted: a task deleted locally still holds its number, and the hub
+// can still reject its creation as a renumber (MTIX-95.37).
+func lockAnyNodeForRenumber(ctx context.Context, tx *sql.Tx, id string) (renumberTarget, error) {
+	return scanRenumberTarget(id, tx.QueryRowContext(ctx,
+		`SELECT project, parent_id, seq FROM nodes WHERE id = ?`, id))
+}
+
+// scanRenumberTarget reads the renumber target columns of row, wrapping
+// model.ErrNotFound when it has none.
+func scanRenumberTarget(id string, row *sql.Row) (renumberTarget, error) {
 	var n renumberTarget
 	var parent sql.NullString
-	err := tx.QueryRowContext(ctx,
-		`SELECT project, parent_id, seq FROM nodes WHERE id = ? AND deleted_at IS NULL`,
-		id).Scan(&n.project, &parent, &n.seq)
+	err := row.Scan(&n.project, &parent, &n.seq)
 	if err == sql.ErrNoRows {
 		return n, fmt.Errorf("renumber %s: %w", id, model.ErrNotFound)
 	}

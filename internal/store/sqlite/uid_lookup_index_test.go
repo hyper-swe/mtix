@@ -196,6 +196,10 @@ func newUIDFixture(t *testing.T) uidFixture {
 	require.NoError(t, err)
 	f := uidFixture{s: s, live: uidOf(t, s, "PROJ-1"), child: uidOf(t, s, "PROJ-1.1"), deletedUID: uidOf(t, s, "PROJ-2")}
 	require.NotContains(t, []string{f.live, f.child, f.deletedUID}, "", "every fixture node but PROJ-3 holds a uid")
+	// The hub knows every fixture task: an event that names one by number alone
+	// is about it (a task whose creation is pending is not, MTIX-95.37).
+	_, err = s.writeDB.ExecContext(ctx, `UPDATE sync_events SET sync_status = 'pushed'`)
+	require.NoError(t, err)
 	return f
 }
 
@@ -214,12 +218,15 @@ func inTx(t *testing.T, s *Store, f func(tx *sql.Tx) (string, error)) (string, e
 // carries none; never a soft-deleted node, and not found for an unknown uid.
 func TestResolveNodeRef_EventKeying_ResolvesTheSameNode(t *testing.T) {
 	f := newUIDFixture(t)
+	require.NoError(t, f.s.CreateNode(context.Background(),
+		makeTestNode("PROJ-4", "", "PROJ", "pending", 0, 4, time.Date(2026, 9, 26, 9, 0, 0, 0, time.UTC))))
 	tests := []struct {
 		name    string
 		event   model.SyncEvent
 		want    string
 		wantErr error
 	}{
+		{"no uid: a task whose creation is pending", model.SyncEvent{NodeID: "PROJ-4"}, "", ErrNumberHeldByPendingCreate},
 		{"uid of a live node, stale number", model.SyncEvent{UID: f.live, NodeID: "PROJ-9"}, "PROJ-1", nil},
 		{"uid of a live child", model.SyncEvent{UID: f.child, NodeID: "PROJ-1"}, "PROJ-1.1", nil},
 		{"uid of a soft-deleted node", model.SyncEvent{UID: f.deletedUID, NodeID: "PROJ-2"}, "", model.ErrNotFound},

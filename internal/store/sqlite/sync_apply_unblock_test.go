@@ -43,6 +43,10 @@ func TestApplyTransitionStatus_ResolvingBlocker_AutoUnblocksDependents(t *testin
 
 	require.NoError(t, s.CreateNode(ctx, mkUnblockRoot("PROJ-1", "PROJ", "Blocker", now)))
 	require.NoError(t, s.CreateNode(ctx, mkUnblockRoot("PROJ-2", "PROJ", "Dependent", now)))
+	// The hub knows both tasks, so the event below, which names one by number,
+	// is about it (a task whose creation is pending is not, MTIX-95.37).
+	_, err = s.writeDB.ExecContext(ctx, `UPDATE sync_events SET sync_status = 'pushed'`)
+	require.NoError(t, err)
 
 	// PROJ-1 blocks PROJ-2 -> PROJ-2 is auto-blocked.
 	require.NoError(t, s.AddDependency(ctx, &model.Dependency{

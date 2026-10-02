@@ -60,8 +60,10 @@ func TestPushLoop_HubRenumbersAncestorMidPush_HeldChildEditStaysHeld(t *testing.
 	node, err := app.store.GetNode(context.Background(), "TEST-3.1")
 	require.NoError(t, err)
 	require.Equal(t, "child edit", node.Title, "the child moved with its parent")
-	requireHeldDependent(t, hub, "TEST-1.1", model.OpUpdateField, child)
-	requireHeldDependent(t, hub, "TEST-1.1.1", model.OpCreateNode, child)
+	// The renumber re-addressed the held events to the child's new number
+	// (MTIX-95.37), where they stay held under its creation.
+	requireHeldDependent(t, hub, "TEST-3.1", model.OpUpdateField, child)
+	requireHeldDependent(t, hub, "TEST-3.1.1", model.OpCreateNode, child)
 	require.False(t, hub.sent(edit))
 }
 

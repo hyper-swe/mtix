@@ -1,0 +1,36 @@
+{{- define "hub_connection" -}}
+mtix connects over TLS with `sslmode=verify-full` and needs a **session-mode**
+connection for the migration path. Match your platform to the capabilities
+below; each one maps to one mtix setting.
+
+- **Connection pooling.** If your provider offers connection pooling, use its
+  **direct** endpoint or its **session-mode** pooler (usually port 5432), never
+  the transaction-mode pooler. Transaction mode breaks the session semantics
+  the migration single-flight relies on.
+- **Certificate authority.** If the server certificate does not chain to a
+  publicly trusted CA (a private CA), `verify-full` needs that CA bundle: obtain
+  it from your provider's console or your DBA, then set
+  `MTIX_SYNC_SSLROOTCERT=/path/to/ca-bundle.crt` (or add `sslrootcert=` to the
+  DSN). If you skip it, mtix's error names the setting. A publicly trusted
+  certificate needs no extra setting.
+- **Database that pauses when idle.** If the database scales to zero or
+  suspends after inactivity, the first command waits for it to resume, and a
+  direct endpoint may refuse the first connection while it is suspended. Wake
+  it once (run any trivial query) before `mtix sync init`, or keep it active
+  during setup. mtix does not poll the hub on a timer by default, so an idle
+  database stays idle.
+- **Tables exposed over an HTTP API.** If your platform can expose tables
+  through an HTTP API, keep the mtix tables unexposed. `mtix sync doctor`
+  confirms reachability and schema; it does not check exposure, so verify that
+  in the database platform's own settings.
+- **Any provider.** `statement_timeout` is applied per connection via SQL (not a
+  startup parameter), so it is honored even behind proxies and poolers that
+  drop startup parameters. `sslmode=require` is rejected for non-loopback
+  hosts; use `verify-full`, with `MTIX_SYNC_SSLROOTCERT` if the server uses a
+  private CA.
+
+```bash
+export MTIX_SYNC_SSLROOTCERT="/path/to/ca-bundle.crt"   # only for a private CA
+export MTIX_SYNC_DSN="postgresql://<user>:<pw>@<host>:5432/<db>?sslmode=verify-full"
+```
+{{- end -}}

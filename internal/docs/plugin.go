@@ -68,6 +68,7 @@ func NewPluginInstaller(projectDir string, data *TemplateData, logger *slog.Logg
 		"templates/skills/references/*.tmpl",
 		"templates/agents.md.tmpl",
 		"templates/claude.md.tmpl",
+		"templates/partials/*.tmpl",
 	)
 	if err != nil {
 		// Log error but don't fail construction — Install will fail later.

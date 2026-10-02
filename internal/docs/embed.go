@@ -6,5 +6,5 @@ package docs
 
 import "embed"
 
-//go:embed templates/*.tmpl templates/skills/*.tmpl templates/skills/references/*.tmpl templates/workflows/*.tmpl
+//go:embed templates/*.tmpl templates/skills/*.tmpl templates/skills/references/*.tmpl templates/workflows/*.tmpl templates/partials/*.tmpl
 var embeddedTemplates embed.FS

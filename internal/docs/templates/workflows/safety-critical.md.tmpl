@@ -71,14 +71,13 @@ Schedule a daily backup to immutable cold storage:
 # In a cron / systemd timer on a hardened operator machine:
 DATE=$(date -u +%Y%m%dT%H%M%SZ)
 mtix sync backup --output "/tmp/mtix-hub-${DATE}.sql"
-aws s3 cp "/tmp/mtix-hub-${DATE}.sql" \
-  "s3://my-compliance-bucket/mtix-hub/${DATE}.sql" \
-  --acl bucket-owner-full-control
+<your-upload-tool> "/tmp/mtix-hub-${DATE}.sql" \
+  "<bucket>/mtix-hub/${DATE}.sql"   # object storage (an S3-compatible API or similar)
 shred -u "/tmp/mtix-hub-${DATE}.sql"
 ```
 
-Configure the destination bucket with Object Lock (S3) or equivalent
-retention policy (GCS, Azure Blob Immutable Storage). The backup is
+Configure the destination bucket with object lock or an equivalent
+immutable retention policy (object storage, an S3-compatible API or similar). The backup is
 the canonical record of what the hub saw; the audit_log triggers
 prevent mutation in-place, but they do not prevent a PG superuser
 from disabling the triggers — only the external archive does.
@@ -231,7 +230,7 @@ each CLI.
 3. **Download the most recent backup from immutable storage:**
 
    ```bash
-   aws s3 cp s3://my-compliance-bucket/mtix-hub/<latest>.sql ./mtix-hub.sql
+   <your-download-tool> <bucket>/mtix-hub/<latest>.sql ./mtix-hub.sql
    ```
 
 4. **Restore the backup:**
@@ -273,7 +272,7 @@ each CLI.
   and an unrelated CLI loss. Those are unrecoverable; the daemon's
   interval bounds the window.
 - DR for the backup archive itself — that is your storage provider's
-  job (S3 cross-region replication, etc.).
+  job (cross-region replication of your object storage, etc.).
 
 ---
 

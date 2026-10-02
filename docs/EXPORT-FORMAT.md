@@ -153,7 +153,7 @@ a changed `.mtix/tasks.json`) deletes every node, dependency, agent and
 session, then writes the file's content, every field included. An export
 followed by a replace import leaves the store as it was. The automatic
 import refuses a replace that would delete local data (below); the
-explicit `mtix import --mode replace` runs no loss check, but since 0.5.4 it needs the ticket count typed at an interactive terminal (no flag supplies it), so an agent hands it to the human.
+explicit `mtix import --mode replace` runs no loss check, but since 0.5.4 it needs the ticket count typed at an interactive terminal (no flag supplies it), so an agent never runs it: ask the user.
 
 **Automatic import** (FR-15.2, MTIX-95.31.2). Before it replaces the
 store with a changed `.mtix/tasks.json`, the automatic import runs every
@@ -226,7 +226,7 @@ to a different task, one with another `uid`, is renumbered with its
 subtree to the next number free in both, keeping its `uid`, and applied
 only with `--confirm`),
 `mtix sync --fix` (rewrite the file from the store) and
-`mtix import .mtix/tasks.json --mode replace` (the human's last resort: it needs the ticket count typed at an interactive terminal). The replace re-checks, in
+`mtix import .mtix/tasks.json --mode replace` (the last resort: it needs the ticket count typed at an interactive terminal). The replace re-checks, in
 its own transaction, that the store is unchanged since the comparison; if
 it changed, nothing is written and the next command compares again. A file that only adds or
 changes data is imported, after a verified backup to

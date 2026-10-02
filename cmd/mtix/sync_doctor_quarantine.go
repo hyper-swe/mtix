@@ -58,8 +58,8 @@ func checkQuarantinedEvents(ctx context.Context, st *sqlite.Store) (bool, string
 // heldUIDAction is the doctor's next step for a pulled create quarantined
 // with the reason "uid <u> is held by local task <id>" (MTIX-95.31.8).
 const heldUIDAction = ". For a reason 'uid <u> is held by local task <id>': run 'mtix show <id>' and compare it with the" +
-	" quarantined event. A uid names one task (ADR-003); no mtix command resolves this in this version (MTIX-95.31.8.1), so a human" +
-	" resolves it with the uid, the task id and the event id, and the local task is never deleted; see the admin skill," +
+	" quarantined event. A uid names one task (ADR-003); no mtix command resolves this in this version (MTIX-95.31.8.1), so escalate to the project maintainer" +
+	" with the uid, the task id and the event id, and the local task is never deleted; see the admin skill," +
 	" 'Quarantined Pulled Events: uid held by a local task'"
 
 // uidHeldReasonQuarantined reports whether any quarantined event carries the

@@ -146,7 +146,7 @@ func duplicateUIDMessage(dups []duplicateUID) string {
 		" If this project syncs (mtix sync status shows a project_prefix other than - or" +
 		" a pushed or applied count above 0, MTIX_SYNC_DSN is set, or .mtix/secrets exists; when in doubt it does), do not do this alone:" +
 		" a task given a new uid has no create event any peer holds, and events already queued under the shared uid are applied to the other holder." +
-		" No mtix command repairs a synced project in this version (MTIX-95.31.8.1): hand it to a human, who first runs mtix sync push until mtix sync status shows pending 0.")
+		" No mtix command repairs a synced project in this version (MTIX-95.31.8.1): escalate to the project maintainer, who first runs mtix sync push until mtix sync status shows pending 0.")
 	return b.String()
 }
 

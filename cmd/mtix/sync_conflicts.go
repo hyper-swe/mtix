@@ -59,7 +59,7 @@ func newSyncConflictsListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List unresolved sync conflicts",
 		Long: `List rows from the local sync_conflicts table. Default output is a
-human-readable table; --json for agent and CI consumption.
+plain-text table; --json for agent and CI consumption.
 
 When unresolved conflicts exceed 50, a banner is printed pointing
 at --batch <node_id> for batch resolution. --batch <node_id> filters

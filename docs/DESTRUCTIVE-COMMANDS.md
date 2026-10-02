@@ -60,7 +60,7 @@ grep -rn "DELETE FROM" --include='*.go' . | grep -v _test.go
 
 | Command | What it deletes | Confirmation |
 |---|---|---|
-| `mtix sync reconcile --discard-local --yes` | Every row of `nodes` and `dependencies` (all projects, soft-deleted included), the whole sync journal (`sync_events`, `sync_conflicts`, `applied_events`), the inbox and hook bookkeeping, and `sync_projects`; then adopts hub state. | Typed ticket count at a terminal; snapshot `pre-discard-local-<time>.db`. |
+| `mtix sync reconcile --discard-local` | Every row of `nodes` and `dependencies` (all projects, soft-deleted included), the whole sync journal (`sync_events`, `sync_conflicts`, `applied_events`), the inbox and hook bookkeeping, and `sync_projects`; then adopts hub state. | Run `mtix sync push` and check that `mtix sync status` shows `pending` 0 first; then the typed ticket count at an interactive terminal (no flag supplies it, so it cannot run unattended); snapshot `pre-discard-local-<time>.db`. |
 | `mtix import --mode replace <file>` | Every row of `nodes`, `dependencies`, `sessions`, `agents` and `sequences`, then inserts the file's content. Any ticket not in the file is gone. | Typed ticket count at a terminal; snapshot `pre-import-replace-<time>.db`. Skipped when the store is empty. The file's checksum is verified before the prompt so a rejected file never asks for a confirmation. |
 
 ### Not gated, with the recorded position

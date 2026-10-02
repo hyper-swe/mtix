@@ -25,7 +25,7 @@ import (
 // errors so the user immediately sees the four resolution paths.
 const DivergentHistoryGuide = "this prefix has divergent history vs the hub. " +
 	"Choose one: " +
-	"--discard-local (drop local, take hub state; a human runs it, typing the ticket count at an interactive terminal); " +
+	"--discard-local (drop local, take hub state; it deletes local tasks and unpushed changes, so first run 'mtix sync push' and check that 'mtix sync status' shows pending 0; it then asks for the ticket count, typed at an interactive terminal, and cannot run unattended); " +
 	"--rename-to NEWPREFIX (rewrite local IDs); " +
 	"--import-as PARENT-ID (re-parent local tree); " +
 	"--dry-run (preview only)"

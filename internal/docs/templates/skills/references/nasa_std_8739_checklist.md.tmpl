@@ -6,7 +6,7 @@ This checklist maps mtix workflows to NASA-STD-8739.8 (Software Assurance and So
 
 | Level | Impact | mtix Mapping |
 |-------|--------|--------------|
-| Class A — Human-rated | Loss of crew/mission | Story-level annotation: `NASA-A`. Full IV&V. Independent verification agent required. All transitions justified. |
+| Class A — Crew-rated | Loss of crew/mission | Story-level annotation: `NASA-A`. Full IV&V. Independent verification agent required. All transitions justified. |
 | Class B — Robotic/high-value | Loss of mission | Story-level annotation: `NASA-B`. IV&V on safety-critical paths. Independent verification recommended. |
 | Class C — Medium risk | Degraded performance | Story-level annotation: `NASA-C`. Standard verification with traceability. |
 | Class D — Low risk | Minimal impact | Story-level annotation: `NASA-D`. Standard mtix workflow. |

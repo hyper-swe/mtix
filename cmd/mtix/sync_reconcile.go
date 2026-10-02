@@ -46,11 +46,13 @@ Exactly one path flag must be set. --dry-run is implicit unless --yes
 is also set; without --yes the command prints the Plan (renames,
 node count) and exits without mutation. With --yes, executes the path.
 
---discard-local additionally requires a typed confirmation at an
-interactive terminal: the command prints how many tickets and journal
-events it is about to destroy and you must type that ticket count. No
-flag satisfies it (--yes does not), and when stdin is not a terminal the
-command refuses, so automation fails closed. A verified snapshot of the
+--discard-local deletes local tasks and unpushed changes, so first run
+'mtix sync push' and check that 'mtix sync status' shows pending 0. It
+then asks for the ticket count, typed at an interactive terminal: the
+command prints how many tickets and journal events it is about to destroy
+and you must type that ticket count. No flag supplies it (--yes does not),
+and when stdin is not a terminal the command refuses, so it cannot run
+unattended and automation fails closed. A verified snapshot of the
 database is written to .mtix/data/backups/pre-discard-local-<time>.db
 before anything is deleted (MTIX-90).
 
@@ -68,7 +70,7 @@ See 'mtix sync init' for divergent-history detection.`,
 		},
 	}
 	cmd.Flags().BoolVar(&discardLocal, "discard-local", false,
-		"DELETE every ticket in the local store and take hub state (irreversible; typed confirmation required)")
+		"DELETE every ticket in the local store and take hub state (irreversible; run 'mtix sync push' and check pending 0 first; typed confirmation required)")
 	cmd.Flags().StringVar(&renameTo, "rename-to", "", "Rewrite local IDs to NEWPREFIX")
 	cmd.Flags().StringVar(&importAs, "import-as", "", "Re-parent local tree under PARENT-ID")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview the plan without mutation")
@@ -190,6 +192,15 @@ func runReconcileExecute(ctx context.Context, stdout, stderr io.Writer, f reconc
 	return fmt.Errorf("no path selected")
 }
 
+// discardLocalPath is the Plan.Path of the --discard-local path.
+const discardLocalPath = "discard-local"
+
+// discardLocalPlanNote is printed with the dry-run plan of --discard-local,
+// whose plan shows only the node count (MTIX-95.11.3).
+const discardLocalPlanNote = "note: --discard-local deletes local tasks and unpushed changes; this plan shows only the node count. " +
+	"First run 'mtix sync push' and check that 'mtix sync status' shows pending 0. " +
+	"It then asks for the ticket count, typed at an interactive terminal; no flag supplies it, so it cannot run unattended."
+
 func printReconcilePlan(w io.Writer, plan sqlite.Plan, autoDryRun bool) {
 	if autoDryRun {
 		fmt.Fprintln(w, "DRY RUN (re-run with --yes to execute)")
@@ -202,6 +213,9 @@ func printReconcilePlan(w io.Writer, plan sqlite.Plan, autoDryRun bool) {
 		fmt.Fprintf(w, "parent_id: %s\n", plan.ParentID)
 	}
 	fmt.Fprintf(w, "node_count: %d\n", plan.NodeCount)
+	if plan.Path == discardLocalPath {
+		fmt.Fprintln(w, discardLocalPlanNote)
+	}
 	if len(plan.Renames) == 0 {
 		return
 	}

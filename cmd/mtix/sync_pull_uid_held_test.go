@@ -72,5 +72,5 @@ func TestRunSyncDoctor_UIDHeldQuarantine_NamesTheAction(t *testing.T) {
 	ok, detail := checkQuarantinedEvents(ctx, app.store)
 	assert.False(t, ok)
 	assert.Contains(t, detail, "is held by local task <id>")
-	assert.Contains(t, detail, "a human resolves it")
+	assert.Contains(t, detail, "escalate to the project maintainer")
 }

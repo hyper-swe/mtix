@@ -20,7 +20,7 @@ func newCommentCmd() *cobra.Command {
 
 Use --to <agent> to address the comment at a specific agent; it then lands in
 that agent's inbox (see 'mtix inbox'), which is how a worker gets woken by a
-ruling without a human relay (FR-19.1).`,
+ruling without a manual relay (FR-19.1).`,
 		Args: cobra.ExactArgs(2),
 		RunE: withAutoExport(func(_ *cobra.Command, args []string) error {
 			return runComment(args[0], args[1], to)

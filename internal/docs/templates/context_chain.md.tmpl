@@ -100,7 +100,7 @@ Use `max_tokens` to control prompt size:
 
 The assembled prompt includes source attribution:
 
-- `[HUMAN]` — Content authored by humans
+- `[HUMAN-AUTHORED]` — Content authored by users
 - `[AI]` — Content authored by AI agents
 - `[SYSTEM]` — System-generated content
 

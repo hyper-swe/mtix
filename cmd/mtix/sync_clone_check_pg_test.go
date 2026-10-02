@@ -20,16 +20,16 @@ import (
 // MTIX_PG_TEST_DSN.
 
 // cloneRecoveryText is the recovery a clone refusal gives (MTIX-95.11.1
-// round 2): on a fresh store, pull alone; discard-local only on a store
-// that already holds sync state, after a push, a pending count of 0 and a
-// human's go-ahead, since it deletes local tasks and unpushed changes; it
-// also needs the ticket count typed at an interactive terminal, so a human
-// runs it (MTIX-107.74).
+// round 2, MTIX-95.11.3): on a fresh store, pull alone; discard-local only
+// on a store that already holds sync state, after a push and a pending count
+// of 0, since it deletes local tasks and unpushed changes; it then asks for
+// the ticket count, typed at an interactive terminal, so it cannot run
+// unattended.
 const cloneRecoveryText = "Clone has no quarantine: on a fresh store, run 'mtix sync pull' instead, which " +
 	"quarantines the event and applies the rest. Only on a store that already holds sync state does " +
-	"'mtix sync reconcile --discard-local --yes' come first; it deletes local tasks and unpushed changes, so " +
-	"before it run 'mtix sync push', check that 'mtix sync status' shows pending 0, and get a human's go-ahead; " +
-	"it needs the ticket count typed at an interactive terminal (no flag supplies it), so the human runs it"
+	"'mtix sync reconcile --discard-local' come first. It deletes local tasks and unpushed changes, so " +
+	"first run 'mtix sync push' and check that 'mtix sync status' shows pending 0. It then asks for the " +
+	"ticket count, typed at an interactive terminal; no flag supplies it, so it cannot run unattended"
 
 // peerState is the local state a refused clone must leave unchanged.
 type peerState struct {

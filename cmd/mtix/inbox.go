@@ -42,7 +42,7 @@ outer loop parks on between tasks — or until --timeout seconds elapse. Exit 0
 when events are returned; exit 5 on an empty timeout (so a loop can distinguish
 "woke with work" from "nothing yet").
 
---format emits agent-ready text instead of the human listing (FR-20 §9,
+--format emits agent-ready text instead of the plain listing (FR-20 §9,
 "delivery terminates in the prompt"):
   prompt   a complete opening prompt for a cold-started agent — the events
            verbatim plus the ack/reply contract. A wake exec launches the

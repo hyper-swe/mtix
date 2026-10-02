@@ -129,7 +129,7 @@ No `--prompt`. No `--acceptance`. No `--labels`. No dependencies. The next agent
 - no test scenarios,
 - no idea which related work this came out of.
 
-They have to either (a) guess, (b) ask the human (who may be unavailable), or (c) reverse-engineer the originating conversation from chat logs that probably no longer exist. All three are unacceptable for autonomous agent execution.
+They have to either (a) guess, (b) ask the user (who may be unavailable), or (c) reverse-engineer the originating conversation from chat logs that probably no longer exist. All three are unacceptable for autonomous agent execution.
 
 ### GOOD — the populated form
 

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	// Pure Go SQLite driver — no CGO (NFR-4.7).
@@ -36,10 +37,11 @@ func resolveDBPath(path string) string {
 // Store implements store.Store using SQLite with WAL mode.
 // It uses separate read and write connection pools per NFR-2.1.
 type Store struct {
-	writeDB *sql.DB
-	readDB  *sql.DB
-	logger  *slog.Logger
-	clock   func() time.Time
+	writeDB    *sql.DB
+	readDB     *sql.DB
+	logger     *slog.Logger
+	vcReported atomic.Bool // this Store has seen the vector-clock prune notice issued (MTIX-95.16)
+	clock      func() time.Time
 
 	// Durability state per NFR-2.8.
 	dbDir        string     // directory holding the DB, for free-space checks

@@ -50,6 +50,77 @@ func (vc VectorClock) Merge(other VectorClock) VectorClock {
 	return out
 }
 
+// Prune returns vc bounded to MaxVectorClockEntries entries, and the number
+// of entries dropped. It is the one place the size cap is enforced for
+// local state (MTIX-95.16).
+//
+// Invariant: a local write never fails because of the vector clock's size.
+// The cap is a wire limit (FR-18.7, the hub rejects larger clocks), so the
+// local clock is bounded here, before it is persisted or emitted, instead of
+// being validated and refused after a bump.
+//
+// Design choice: drop the authors with the SMALLEST counters first (the
+// least active, so least likely to matter for causality), ties broken by
+// author id in descending lexical order, so the kept set is a pure function
+// of the input and never of map iteration order. The author ids in keep
+// (the local author) are never dropped, so the local counter never resets
+// and stays monotonic. keep is ordered by priority: if keep alone exceeds the
+// cap, the entries listed last are dropped first, so the first keep entry
+// (the author being bumped) survives; the result is always valid.
+//
+// Causality: a dropped author reads as 0 in Dominates, Concurrent and
+// Equal (missing keys are 0). That can only make two clocks look
+// concurrent or equal where an exact comparison would order them, so
+// conflict DETECTION degrades for pruned authors (a conflict can be logged
+// that an exact clock would have ordered, or one missed when the dropped
+// entries were the only difference). It never changes which write wins:
+// convergence is decided by LWW (lamport, wall clock, machine hash), not by the
+// vector clock (SYNC-DESIGN §8.1-8.2). Merge stays an exact per-key max;
+// only the stored and emitted result is pruned. When len(vc) is within the
+// cap vc is returned unchanged (as a copy).
+func (vc VectorClock) Prune(keep ...string) (VectorClock, int) {
+	out := make(VectorClock, len(vc))
+	for k, v := range vc {
+		out[k] = v
+	}
+	excess := len(out) - MaxVectorClockEntries
+	if excess <= 0 {
+		return out, 0
+	}
+	rank := make(map[string]int, len(keep))
+	for i, k := range keep {
+		if _, dup := rank[k]; !dup {
+			rank[k] = i
+		}
+	}
+	keys := make([]string, 0, len(out))
+	for k := range out {
+		keys = append(keys, k)
+	}
+	// Drop order: unprotected before protected; unprotected by smallest
+	// counter, then larger author id first; protected (only when keep alone
+	// exceeds the cap) by later position in keep first.
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := keys[i], keys[j]
+		ra, pa := rank[a]
+		rb, pb := rank[b]
+		if pa != pb {
+			return !pa
+		}
+		if pa {
+			return ra > rb
+		}
+		if out[a] != out[b] {
+			return out[a] < out[b]
+		}
+		return a > b
+	})
+	for _, k := range keys[:excess] {
+		delete(out, k)
+	}
+	return out, excess
+}
+
 // Dominates reports whether vc strictly dominates other in the partial
 // order: every entry in vc is >= the corresponding entry in other (treating
 // missing keys as 0), and at least one entry is strictly greater.

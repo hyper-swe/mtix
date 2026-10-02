@@ -57,6 +57,8 @@ func (s *Store) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) (err erro
 		return s.classifyWriteError(wrapBusyError(fmt.Errorf("commit transaction: %w", err)))
 	}
 
+	s.reportVCPrune(ctx)
+
 	for _, fn := range s.onCommit {
 		if fn != nil {
 			fn()

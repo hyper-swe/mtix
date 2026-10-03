@@ -2596,8 +2596,9 @@ number and the push fails on a renumber it cannot settle:
 error: mtix sync push loop: resolve renumber for <event-id> ...
 ```
 
-Run this once per hub, from any client that holds the project's nodes,
-after upgrading:
+Run this from any client that holds the project's nodes, after every
+client that pushes to the hub runs 0.5.4 (an older client keeps pushing
+rows without a uid), and run it again if an older client pushes again:
 
 ```bash
 mtix sync repair-uids --dry-run    # what would be stamped, per project

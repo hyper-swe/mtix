@@ -1140,15 +1140,24 @@ as sync, and mtix creates FILE (mode 0600, refusing a path that exists)
 before `pg_dump` writes to it.
 
 The dump holds the tables and their data, not the mtix functions and
-triggers, so replaying it with `psql` cannot create the triggers. The
-restore runbook is: restore the dump into an empty database with `psql`,
-connected as the role that will own the sync tables; run `mtix sync
-init` as that role, which recreates every function and trigger the
-migrations define; confirm with the `hub-triggers` check of `mtix sync
+not any privilege (`--no-privileges`). A trigger definition in the dump
+names a function the dump lacks, so each `CREATE TRIGGER` fails during
+the `psql` replay (the append-only row triggers of migration 006, the
+TRUNCATE guards of 016, the restore-epoch stamp trigger of 017). `psql`
+prints those errors and carries on unless it runs with `ON_ERROR_STOP`,
+so a restore that looks complete leaves a hub with no append-only
+triggers and no restore-epoch stamp until `mtix sync init` runs, and no
+syncing role holds any grant. The triggers do not refuse the restore:
+the rows load before any trigger exists. The restore runbook is: restore
+the dump into an empty database with `psql`, connected as the role that
+will own the sync tables; run `mtix sync init` as that role, which
+recreates every function and trigger the migrations define;
+confirm with the `hub-triggers` check of `mtix sync
 doctor`, which verifies the function and trigger sets, that every
 trigger executes the function its migration binds, and that every
-trigger is enabled (`tgenabled` `O` or `A`); then run `mtix sync
-mark-restored`. See the user manual, "Backup and restore".
+trigger is enabled (`tgenabled` `O` or `A`); grant each syncing role
+its least-privilege list again (see SECURITY-MODEL.md); then run `mtix
+sync mark-restored`. See the user manual, "Backup and restore".
 
 ## See also
 

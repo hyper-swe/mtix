@@ -2,10 +2,12 @@
 -- Executed by MTIX-15.3 transport under PG advisory-lock single-flight.
 -- DO NOT run manually.
 --
--- audit_log is the append-only mutation record per FR-18.5. Every
--- mutation that lands on the hub also writes an audit_log row in the
--- same transaction. The audit_log_immutable trigger in 006 enforces
--- append-only at the trigger layer.
+-- audit_log is an append-only table (FR-18.5). mtix itself writes no
+-- audit_log row: a hub mutation is recorded in sync_events (and
+-- sync_conflicts), not here, so the table stays empty unless an operator
+-- inserts into it. The audit_log_immutable trigger in 006 and the
+-- TRUNCATE guard in 016 refuse UPDATE, DELETE and TRUNCATE on it; the
+-- table owner and a superuser can drop or disable those triggers.
 
 CREATE TABLE IF NOT EXISTS audit_log (
     audit_id        BIGSERIAL PRIMARY KEY,

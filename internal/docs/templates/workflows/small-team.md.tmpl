@@ -180,7 +180,8 @@ mtix sync clone
 
 Pulls the full event log from the hub and replays it into the local
 SQLite. Idempotent — re-running clone after the initial pull is a
-no-op (per `applied_events` dedupe).
+no-op: an event the machine already holds in its own local `sync_events` log
+is acknowledged from that row first, and `applied_events` dedupes the rest.
 
 Clone first runs, on every hub event, the checks `mtix sync pull` runs
 (see "Pulled event fails its checks" under Failure modes). If the hub
@@ -424,9 +425,11 @@ before stepping away from the machine.
   2 (transport).
 - Silent data loss — the local queue is durable until pushed;
   queue-full surfaces `ErrSyncQueueFull` rather than dropping.
-- Audit-log tampering — PG triggers raise on UPDATE/DELETE of
-  `audit_log` and `sync_conflicts`.
-- Replay of pushed events — `applied_events.event_id` dedupes.
+- Casual edits to the conflict log — PG triggers raise on UPDATE/DELETE of
+  `sync_conflicts` (and of `audit_log`, which mtix never writes). The
+  table owner or a superuser can drop or disable them.
+- Replay of pushed events — a client matches an event against its own
+  local `sync_events` row first, then against `applied_events.event_id`.
 
 **What this workflow does NOT protect against:**
 
@@ -436,7 +439,7 @@ before stepping away from the machine.
   hooks are advisory.
 - A compromised PG provider — hub data is as private as the hosting
   PG instance.
-- A PG superuser disabling triggers — see [safety-critical
+- The table owner or a PG superuser dropping or disabling triggers — see [safety-critical
   workflow](safety-critical.md) for hardening.
 - Lost un-pushed events — explicit operational practice (daemon +
   push-before-step-away) is the mitigation.

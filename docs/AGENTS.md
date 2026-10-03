@@ -258,7 +258,7 @@ trust-boundary section and a failure-modes table.
 - [workflows/small-team.md](workflows/small-team.md) — 2-10 developers
   sharing one BYO Postgres with a client-side pre-push snapshot hook.
 - [workflows/safety-critical.md](workflows/safety-critical.md) — regulated
-  teams: server-side enforcement, long `audit_log` retention,
+  teams: server-side enforcement, long retention of hub backups,
   rehearsed disaster recovery.
 
 Foundational trust model for all of the above:

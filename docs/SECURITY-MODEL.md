@@ -69,12 +69,12 @@ If the hub is wiped, every CLI keeps its local SQLite intact. If a CLI's SQLite 
 | 1 | **Credentials in git** (DSN committed by accident) | mtix refuses to load DSN from any tracked config file. DSN must come from `MTIX_SYNC_DSN` env var or `.mtix/secrets` (gitignore-enforced, mode 0600). | Low — fail-closed at config load | Use a secrets manager or env var; never paste DSN into a yaml that gets committed |
 | 2 | **MitM on PG connection** (network adversary reads/modifies traffic) | mtix defaults to `sslmode=verify-full` and refuses `sslmode=disable` unless explicit `--insecure-tls` flag is set AND every host the connection may use is loopback or a local Unix-domain socket. | Low if `verify-full` is honored end-to-end | Use a managed PG provider that enforces TLS; verify the root CA matches |
 | 3 | **SQL injection** (malicious filter values) | All store and transport SQL uses bound parameters. Audited in MTIX-9.1 (FR-17.1) for the SQLite driver and MTIX-15.3 / MTIX-15.11 audit pass 2 for the PG transport (`TestSQLInjection_AttackPatternsHandledSafely`). | Very low — depends on no future regression | Run the parameterization regression tests on every change |
-| 4 | **Insider mutation tampering** (compromised team member edits/deletes data via mtix) | Append-only `audit_log` table records every mutation atomically. PG triggers prevent `UPDATE`/`DELETE` on audit rows. | Medium — superuser can disable triggers; insider with write access can still create or modify nodes | Use least-privilege PG roles; archive `audit_log` to immutable cold storage for true tamper evidence |
-| 5 | **Audit log tampering** (DBA edits or deletes audit rows) | Triggers raise exception on `UPDATE`/`DELETE`. WAL archival recommended for safety-critical adopters. | Medium — PG superuser bypasses triggers | For tamper evidence, ship `audit_log` to an external append-only store (an S3-compatible store with object lock, immudb, etc.) |
+| 4 | **Insider mutation tampering** (compromised team member edits/deletes data via mtix) | Every mutation is a `sync_events` row on the hub; a conflict between concurrent edits is a `sync_conflicts` row. The syncing role's least-privilege list holds INSERT on both and no UPDATE or DELETE, and the row triggers refuse `UPDATE`/`DELETE` on `sync_conflicts`. mtix writes no `audit_log` row (see "What the audit trail is"). | Medium — the table owner or a superuser can drop or disable the triggers, and an insider with write access can still create or modify nodes | Give each team member a syncing role with the least-privilege list, never the owner's DSN; archive the hub (`mtix sync backup`) to immutable cold storage for true tamper evidence |
+| 5 | **Audit log tampering** (DBA edits or deletes audit rows) | Row triggers raise on `UPDATE`/`DELETE` of `audit_log` and `sync_conflicts`, and a statement guard refuses `TRUNCATE` of `audit_log`, `sync_conflicts` and `sync_events` (migrations 006 and 016); `mtix sync doctor` (`hub-triggers`) reports any missing or disabled trigger; `mtix sync harden` reports and repairs only the TRUNCATE guards. | Medium — the table owner or a PG superuser can drop or disable the triggers, or change the rows with the triggers off | For tamper evidence, ship backups of the hub to an external append-only store (an S3-compatible store with object lock, immudb, etc.) |
 | 6 | **Hook bypass** (`git push --no-verify` or running on a machine without the hook) | Client-side hooks are advisory. Server-side enforcement (pre-receive on self-hosted git, GitHub Action on github.com) is the only real gate. | Medium — depends on team policy | If `tasks.json` freshness matters, deploy the example pre-receive hook or GitHub Action |
 | 7 | **PG provider compromise** (the managed-database hosting layer breached) | Out of mtix's scope. mtix data is exactly as safe as the PG instance hosting it. | High — depends on provider | Pick a provider you trust; encrypt sensitive task content client-side if needed |
-| 8 | **DoS via mutation spam** (script writes millions of nodes) | mtix has no per-actor rate limit. Configurable retention on `audit_log` prevents unbounded growth there. | Medium — relies on PG-side controls | Set PG-side rate limits; configure `audit_log` retention policy |
-| 9 | **Replay or forgery of mutation history** (forged actor field in `audit_log`) | mtix CLI populates `actor` from local config. A compromised CLI can write any actor name. | Medium — logical identity, not enforced at PG layer | Use PG-level user accounts as the real authentication; trust only what `pg_stat_activity` reports |
+| 8 | **DoS via mutation spam** (script writes millions of nodes) | mtix has no per-actor rate limit, and no retention or pruning setting for hub tables. | Medium — relies on PG-side controls | Set PG-side rate limits; size the hub storage for the event log |
+| 9 | **Replay or forgery of mutation history** (forged author field in `sync_events`) | mtix CLI populates `author_id` from local config. A compromised CLI can write any author name. | Medium — logical identity, not enforced at PG layer | Use PG-level user accounts as the real authentication; trust only what `pg_stat_activity` reports |
 | 10 | **Denial of read access via PG exhaustion** | Connection pool with limits; document pgbouncer for >5 users | Low — operational concern | Pool sizing per the workflow doc |
 
 ---
@@ -188,9 +188,14 @@ Replicas converge deterministically by `(lamport_clock, wall_clock_ts, author_ma
 
 ### Audit trail invariants
 
-- `audit_log` table has a PG trigger that raises on `UPDATE` or `DELETE`. Append-only by construction.
-- `sync_conflicts` table is similarly append-only; manual conflict resolutions INSERT a new row with `resolution='manual'` that supersedes the LWW row.
+- `audit_log` and `sync_conflicts` have PG row triggers that raise on `UPDATE` or `DELETE` (migration 006, `internal/store/postgres/migrations/006_triggers.sql`), and `audit_log`, `sync_conflicts` and `sync_events` have a statement trigger that refuses `TRUNCATE` (migration 016). The triggers hold against the syncing role and, until it drops or disables them, against the table owner. They do not hold against the owner who drops them or a superuser.
+- `sync_events` has no `UPDATE`/`DELETE` trigger: the syncing role cannot change it because its least-privilege list holds no such privilege, while the owner and a superuser can.
+- A manual conflict resolution (`mtix sync conflicts resolve`) appends a row with `resolution='manual'` to the local `sync_conflicts` table and changes no node and emits no event (`cmd/mtix/sync_conflicts.go`, `runSyncConflictsResolve`); it is a recorded decision, not an override that supersedes the LWW outcome.
 - Schema migration is single-flight via `pg_advisory_xact_lock(AdvisoryLockKey)`. Concurrent Migrate calls from 10 CLIs all return cleanly; only one runs the schema work.
+
+### What the audit trail is
+
+The hub's record of what happened is the `sync_events` log (every accepted mutation) plus `sync_conflicts` (conflicts detected while accepting pushes). The hub schema also creates an `audit_log` table, with the same triggers, but no mtix code writes to it: it stays empty unless an operator inserts rows. Do not rely on it as a mutation record, and do not count its triggers as tamper evidence for the event log. `TestAuditLog_PushWritesNoRows` (`internal/store/postgres/transport/audit_log_behavior_pg_test.go`) pins this, and `TestAuditLog_RowTriggersRefuseUpdateAndDelete` proves the triggers on the table.
 
 ### Known audit-trail limitation: same-authorID conflicts
 
@@ -259,7 +264,7 @@ Procedure when a CLI machine is lost:
 
 1. On every surviving CLI, run `mtix sync status` — pending count of 0 means all your in-flight events are already on the hub.
 2. The lost machine's pending events (if any) are unrecoverable.
-3. Provision the replacement machine. Set `MTIX_SYNC_DSN` (or `.mtix/secrets`) and run `mtix sync clone` to rebuild local state from the hub event log. Replay is idempotent (per `applied_events` dedupe).
+3. Provision the replacement machine. Set `MTIX_SYNC_DSN` (or `.mtix/secrets`) and run `mtix sync clone` to rebuild local state from the hub event log. Replay is idempotent: an event this machine already holds in its own `sync_events` log is acknowledged from that row, and any other event is deduplicated by `applied_events`.
 
 The hub-unreachable detector (`internal/sync/workflow`) surfaces this risk: when `meta.sync.consecutive_errors ≥ 3`, the `mtix_sync_workflow` MCP tool reports state `hub-unreachable` and recommends `mtix sync doctor`. Operators who care about durability across machine loss must push frequently OR run `mtix sync daemon` for periodic auto-push.
 
@@ -276,8 +281,8 @@ Default cap is `0` (unlimited). Set explicitly via the `sync.max_queue_size` met
 - **Network adversaries between CLI and hub** — mandatory TLS verify-full; weaker sslmode only on loopback.
 - **DSN leakage in logs / errors / MCP output / panic traces** — every error string passes through `redact.DSN`; `defer redact.Recover` wraps `main()` for panic paths. Sentinel-based regression sweep covers all 10 FR-18 sync commands plus the MCP tool.
 - **Malformed events reaching the hub** — pre-flight validator runs before any PG round-trip; rejects schema violations, oversized payloads, deep JSON, lamport overflow, VC overflow, future timestamps beyond grace.
-- **Audit log tampering** — PG triggers raise on UPDATE/DELETE of `audit_log` and `sync_conflicts`.
-- **Replay of pushed events** — `applied_events.event_id` is the dedupe key. Replay is a no-op.
+- **Casual or accidental edits to the conflict log** — PG triggers raise on UPDATE/DELETE of `audit_log` and `sync_conflicts`, and a guard refuses TRUNCATE of those and `sync_events`. The owner and a superuser can bypass them (see below).
+- **Replay of pushed events** — a client first matches an event against its own local `sync_events` row (`acknowledgeHeldEvent`, `internal/store/sqlite/sync_apply_own_event.go`: the event it emitted or already mirrored is acknowledged and not applied again), and then against `applied_events.event_id`. Replay is a no-op; the hub also keys `sync_events` by `event_id`.
 - **Migration race** — `pg_advisory_xact_lock` single-flights schema work across concurrent CLIs.
 - **Silent data loss in the queue** — queue-full returns `ErrSyncQueueFull`; events never silently dropped.
 - **Forged, altered or relocated relay records** — every record is MAC'd over its own position and epochs; a tampered, replayed or moved record fails authentication and the reader stops rather than applying it.
@@ -287,7 +292,7 @@ Default cap is `0` (unlimited). Set explicitly via the `sync.max_queue_size` met
 
 - **Compromised team members** — anyone with the DSN can read and write everything. mtix does not partition data per-user within a single instance.
 - **Compromised PG provider** — the provider has full access to hub data.
-- **PG superuser disabling triggers** — `audit_log` tamper-resistance assumes triggers are not bypassed.
+- **The table owner or a PG superuser bypassing the triggers** — they can drop or disable the append-only triggers and the TRUNCATE guards, then change or delete rows. `mtix sync doctor` (`hub-triggers`) reports any missing or disabled trigger; `mtix sync harden` reports and repairs only the TRUNCATE guards; neither prevents the bypass. `audit_log` is never written by mtix, so it is not a record to protect.
 - **Lost un-pushed events** — see "Lost-laptop recovery" above. The hub never sees an event until `push` succeeds.
 - **Forged author identity** — `author_id` is a logical identifier from the CLI. PG-level user accounts are the real authentication boundary.
 - **Bypassed git hooks** — `git push --no-verify` or absence of installed hooks defeats the pre-push sync. Use server-side enforcement for safety-critical teams.
@@ -318,14 +323,34 @@ Before going live with sync mode, verify each of these:
   - SELECT on `node_renumber_remaps`, only for a role that runs `mtix sync migrate` on a hub without a valid node-number registry index;
   - INSERT on `node_renumber_remaps`, only for a role that runs `mtix sync migrate --yes` on a hub without a valid node-number registry index.
 
+As statements, run by the table owner (replace `public` if the hub lives in another schema, and `mtix_writer` with the syncing role). This is the same SQL the sync skill gives, and a test compares the two:
+
+```sql
+GRANT USAGE ON SCHEMA public TO mtix_writer;
+GRANT SELECT ON TABLE sync_events, sync_hub_state, sync_node_collisions, sync_project_clients TO mtix_writer;
+GRANT INSERT ON TABLE sync_events, sync_conflicts, sync_project_clients TO mtix_writer;
+GRANT UPDATE ON TABLE sync_project_clients TO mtix_writer;
+GRANT USAGE ON SEQUENCE sync_conflicts_conflict_id_seq TO mtix_writer;
+GRANT EXECUTE ON FUNCTION record_restore_collision TO mtix_writer;
+```
+
+Three more grants are for a role that also runs the command named in the comment; leave them out otherwise:
+
+```sql
+GRANT UPDATE ON TABLE sync_node_collisions TO mtix_writer; -- only for a role that runs `mtix sync collisions resolve`
+GRANT SELECT ON TABLE node_renumber_remaps TO mtix_writer; -- only for a role that runs `mtix sync migrate` on a hub without a valid node-number registry index
+GRANT INSERT ON TABLE node_renumber_remaps TO mtix_writer; -- only for a role that runs `mtix sync migrate --yes` on a hub without a valid node-number registry index
+```
+
+
   On a hub without a valid node-number registry index, `mtix sync migrate --yes` also builds that index when the version gate is open, that is, when the project has at least one active client and every active client runs a remap-aware mtix version. It first records the duplicate creates of every project on the hub, and the index leaves those creates out, so they stay in the event log unchanged and the build succeeds. It drops an index that is not valid or not ready and builds it again. While the gate is closed, it leaves the index for a later run. A hub with more duplicate creates than the index can leave out is refused before the build, with the count and the limit. Only the table owner can build the index. `mtix sync doctor` fails its `schema current` check while the registry index is not valid or not ready, and `mtix sync init` warns about such an index; both print the fix: as the table owner, run `mtix sync migrate --yes` while the version gate is open. A syncing role set up with the least-privilege list holds no UPDATE on `sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs as the table owner. A syncing role records restore collisions only through the hub function `record_restore_collision`, which runs as the table owner and records a collision only when the hub's own data shows an earlier-epoch create holding the number, so the role needs EXECUTE on that function and no INSERT on `sync_node_collisions`. When `mtix sync init` adds this function to an existing hub, the table owner then grants EXECUTE on it to each syncing role (`GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;`) and revokes the privileges the list no longer names (`REVOKE INSERT ON sync_node_collisions FROM <role>;` and `REVOKE USAGE ON SEQUENCE sync_node_collisions_collision_id_seq FROM <role>;`). Upgrade every syncing client first, then run the REVOKE statements; if the REVOKE comes first, an older client's push that meets a restore collision fails until that client upgrades. `mtix sync doctor`, run with a syncing role's DSN, reports in its `schema current` check a hub without the function, a role that cannot execute it, a role that holds or can reach INSERT on `sync_node_collisions` or USAGE on its sequence, and create events stamped with a restore epoch below 0 or above the hub's current epoch, with the exact fix. A restored hub has no privileges from the dump: grant each syncing role the list again, EXECUTE included, then run `mtix sync doctor` with a syncing role's DSN.
-- [ ] `audit_log` and `sync_conflicts` triggers are in place (test: `UPDATE audit_log SET ...` raises exception).
+- [ ] The append-only triggers are in place (test: `mtix sync doctor` passes its `hub-triggers` check; as the table owner, `UPDATE sync_conflicts SET ...` on an existing row raises an exception).
 - [ ] Backup procedure for the hub is in place AND has been tested to restore (use `mtix sync backup --output FILE` for the mtix-owned tables). A role that runs `mtix sync backup` also needs SELECT on every sync table and on the sequences `audit_log_audit_id_seq`, `sync_conflicts_conflict_id_seq` and `sync_node_collisions_collision_id_seq`; otherwise run the backup as the table owner.
 - [ ] DR runbook tested: rebuild a CLI from a fresh `mtix sync clone` (DSN from `MTIX_SYNC_DSN` or `.mtix/secrets`).
 - [ ] At least one of: client-side pre-push hook installed across all team machines (`examples/hooks/pre-push` calls `mtix sync push`), OR server-side enforcement.
 - [ ] If durability across machine loss matters: `mtix sync daemon` is running as a systemd/launchd service on each developer's machine (push interval ≤ 30s recommended).
 - [ ] All team members have read this document and understand the trust model and the same-authorID limitation.
-- [ ] If running pgbouncer in front of PG, it is in **session mode** (not transaction mode — mtix uses advisory locks that transaction mode breaks).
+- [ ] If a connection pooler sits in front of PG, it is in **session mode** (not transaction mode — mtix holds a session-level advisory lock while it builds the registry index, which transaction mode breaks). `mtix sync doctor` does not check the pooler mode.
 
 ---
 
@@ -345,5 +370,6 @@ mtix is a pre-funding open-source project. Triage is best-effort. Critical issue
 | 1.1 | 2026-05 | MTIX-15 sync hub trust model: hub is replication, not canonical; DSN handling via redact + Recover; LWW convergence; same-authorID audit-trail tradeoff documented; lost-laptop and queue-full procedures |
 | 1.2 | 2026-06 | MTIX-30 / ADR-003 restore-epoch trust model: operator-gated epoch is the un-forgeable Option-B discriminator; client "previously-settled" flag rejected as a forgeable signal on a safety-critical trigger; calibration that a compromised client cannot reach Option B in normal operation |
 | 1.3 | 2026-07 | FR-20 origin-independent dispatch: hooks fire for events of any origin on hosts that configure them (placement is designation); inbox content is prompt input for exec-wake and channel-push delivery; hub write access now implies prompt-injection reach into federated agents |
+| 1.4 | 2026-10 | Corrected claims the code does not meet (MTIX-95.8.4): `audit_log` is never written by mtix and the event record is `sync_events` plus `sync_conflicts`; the owner or a superuser can drop or disable the append-only triggers; the least-privilege block carries the proven grant set as SQL; dedupe is the local `sync_events` row first, `applied_events` second; the pooler mode is not checked by doctor. |
 
 Changes that alter the trust model (adding/removing a guarantee, adding a new threat) require a documented version bump and a corresponding `CHANGELOG.md` security note.

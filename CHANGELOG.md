@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- Documentation corrected to what the code enforces (MTIX-95.8.4): mtix writes no `audit_log` row, the table owner or a superuser can bypass the append-only triggers, dedupe checks the local `sync_events` row before `applied_events`, and a restore replays no trigger until `mtix sync init` runs. Ten placeholder contract tests that only pinged were removed (with a documented-absence note) and two real audit_log trigger tests were added.
 - Hardening (MTIX-95.14).
 - Hardening (MTIX-95.26).
 - Hardening (MTIX-95.20).

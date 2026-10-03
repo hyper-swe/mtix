@@ -3,10 +3,11 @@
 -- DO NOT run manually.
 --
 -- audit_log_immutable enforces FR-18.5 at the trigger layer: UPDATE and
--- DELETE on audit_log and sync_conflicts raise an exception. A PG
--- superuser can disable triggers — that residual risk is documented as
--- threat T5 in SYNC-DESIGN section 7.3 and mitigated by archiving
--- audit_log to immutable cold storage for safety-critical adopters.
+-- DELETE on audit_log and sync_conflicts raise an exception. The table
+-- owner or a PG superuser can drop or disable triggers — that residual
+-- risk is documented as threat T5 in SYNC-DESIGN section 7.3 and
+-- mitigated by archiving the hub to immutable cold storage for
+-- safety-critical adopters.
 
 CREATE OR REPLACE FUNCTION audit_log_immutable()
 RETURNS TRIGGER AS $$

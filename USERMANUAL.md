@@ -2544,7 +2544,12 @@ verifies clean. After `--apply` with
 that records the kept roles; it never writes the config itself.
 
 The append-only tables `audit_log`, `sync_conflicts` and `sync_events`
-refuse TRUNCATE, alone or with CASCADE, as they refuse UPDATE and DELETE.
+refuse TRUNCATE, alone or with CASCADE. `audit_log` and `sync_conflicts`
+also refuse UPDATE and DELETE through row triggers; `sync_events` has no
+such trigger, and a syncing role cannot change it only because its
+least-privilege list holds no UPDATE or DELETE. The table owner and a
+superuser can drop or disable any of these triggers. mtix writes no
+`audit_log` row.
 `mtix sync init` adds these guards automatically, only when they are
 missing, and changes no privilege. `mtix sync push` issues no DDL. Harden
 never enables row-level security.

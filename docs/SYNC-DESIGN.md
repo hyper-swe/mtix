@@ -15,7 +15,7 @@ This document is the canonical specification for mtix's local-first team sync. E
 - **Convergence.** Any two CLIs that have observed the same set of events converge to byte-identical local state, regardless of the order events arrived.
 - **Auditability.** Every mutation that lands locally is also recorded as a sync event in the same SQLite transaction. No ghost mutations; no orphan events.
 - **Set up once and forget.** No daemons required for correctness. No periodic maintenance. Sync triggers in-process on mutations; an opt-in daemon exists only for real-time UX.
-- **Safety.** Existing FR guarantees (NodeTypeForDepth canonicalization, atomic audit log, deterministic ordering, parameterized SQL) apply equally to events that arrive over sync.
+- **Safety.** Existing FR guarantees (NodeTypeForDepth canonicalization, atomic apply (an event and its `applied_events` row commit in one transaction), deterministic ordering, parameterized SQL) apply equally to events that arrive over sync.
 
 ### 1.2 Non-goals
 - **Hosted SaaS.** A HyperSWE-operated multi-tenant cloud is out of scope for v0.2 (separate roadmap). BYO-hub-Postgres only.
@@ -45,7 +45,7 @@ This document is the canonical specification for mtix's local-first team sync. E
                   |  sync_conflicts             |
                   |  sync_projects              |
                   |  applied_events  (dedupe)   |
-                  |  audit_log    (append-only) |
+                  |  audit_log    (never written)|
                   +-----------------------------+
 ```
 
@@ -80,7 +80,7 @@ Events are the unit of replication. Schema lives in `sync_events` (local mirror)
 ### 3.2 Hub-only tables
 - **`sync_conflicts`** — every non-trivial LWW resolution that drops a value. Columns: `conflict_id`, `event_id_a`, `event_id_b`, `node_id`, `field_name`, `resolution` (`lww`|`tombstone`|`manual`), `resolved_at`, `resolved_by` (NULL unless manual override).
 - **`sync_projects`** — one row per project. Columns: `project_prefix` (PK), `first_event_hash` (used for divergent-history detection §10), `created_at`, `schema_version`, `last_seen_cli_version` (per MTIX-15.7 advisory check).
-- **`applied_events`** (also local) — `event_id` PK; existence ⇒ event has been applied; idempotent dedupe key.
+- **`applied_events`** (also local) — `event_id` PK; existence ⇒ event has been applied; idempotent dedupe key. On a client, an event it already holds in its own `sync_events` log is acknowledged from that row first (`acknowledgeHeldEvent`), and `applied_events` dedupes the rest.
 
 ### 3.3 Operation types (12)
 1. `create_node` — payload: full Node row (title, parent_id, node_type, etc.).
@@ -230,8 +230,8 @@ There is no per-project sync flag, filter, or cursor.
 | T1 | Credentials in git | DSN refused from any tracked file; only `MTIX_SYNC_DSN` env var or `.mtix/secrets` (mode 0600, gitignored). Refusal is fail-closed at config load. | Low — fail-closed |
 | T2 | MitM on the PG connection | `sslmode=verify-full` default; weaker modes refused unless `--insecure-tls` AND every host the connection may use is loopback or a local Unix-domain socket | Low if the operator picks a managed PG with proper certs |
 | T3 | SQL injection from malicious filter values or event payloads | Bound parameters at every PG call; MTIX-9.1 attack-pattern test ported to the PG transport | Very low — depends on no future regression |
-| T4 | Insider mutation tampering (compromised team member edits/deletes via mtix) | Append-only `audit_log` written atomically with every mutation; PG triggers prevent UPDATE/DELETE on audit rows | Medium — PG superuser bypasses triggers; insider with write access can still create or modify nodes |
-| T5 | Audit log tampering (DBA edits or deletes audit rows) | Triggers raise on UPDATE/DELETE | Medium — PG superuser bypasses; safety-critical adopters ship audit_log to immutable cold storage |
+| T4 | Insider mutation tampering (compromised team member edits/deletes via mtix) | Every mutation is a `sync_events` row; the syncing role's least-privilege list holds INSERT only on `sync_events` and `sync_conflicts`, and row triggers refuse UPDATE/DELETE on `sync_conflicts`. mtix writes no `audit_log` row | Medium — the table owner or a PG superuser can drop or disable the triggers; insider with write access can still create or modify nodes |
+| T5 | Audit log tampering (DBA edits or deletes audit rows) | Row triggers raise on UPDATE/DELETE of `audit_log` and `sync_conflicts`, and a statement guard refuses TRUNCATE of those and `sync_events` (migrations 006, 016); `mtix sync doctor` (`hub-triggers`) reports any missing or disabled trigger; `mtix sync harden` reports and repairs only the TRUNCATE guards | Medium — the table owner or a PG superuser bypasses (drops or disables the triggers); safety-critical adopters ship hub backups to immutable cold storage |
 | T6 | Hook bypass (`git push --no-verify`, missing hook on a machine) | Client-side hooks are advisory; server-side enforcement (pre-receive, GitHub Action) is the real gate | Medium — depends on team policy |
 | T7 | Replay attack from a stolen sync event | Idempotent apply via `applied_events` PK; replay is a no-op | Very low |
 | T8 | Future-timestamp abuse to win LWW | Hub rejects `wall_clock_ts > now + 24h` (§9); LWW primarily uses `lamport_clock`, `wall_clock_ts` is tie-break only | Very low |
@@ -239,7 +239,7 @@ There is no per-project sync flag, filter, or cursor.
 | T10 | Malformed events crashing the hub or apply engine | Schema validator (§5); fuzz targets in MTIX-15.11; `IdempotentApply` chaos test in MTIX-15.4 | Very low |
 | T11 | Conflict storm (200 concurrent edits to the same node) | Conflict storm UX (§11); LWW remains deterministic regardless of count | Low — UX degrades gracefully, semantics intact |
 | T12 | Divergent history (Charlie joins from a solo project with conflicting prefix) | First-sync hash check refuses with structured error and four resolution paths (§10) | Low |
-| T13 | Conflict log poisoning (insider writes thousands of bogus conflicts) | sync_conflicts inherits audit_log triggers; conflicts have no semantic effect on node state | Low |
+| T13 | Conflict log poisoning (insider writes thousands of bogus conflicts) | `sync_conflicts` has the same row triggers as `audit_log`; conflicts have no semantic effect on node state | Low |
 | T14 | Stolen DSN gives full read+write to the hub | Documented as residual; rotate via PG password rotation; existing CLIs fail closed | Medium — only mitigation is DSN rotation; per-user PG roles deferred to v2 |
 | T15 | Side-channel attacks (timing, cache, memory) | Out of scope: mtix is not a confidentiality boundary inside a team | N/A — see §7.7 |
 | T16 | DSN leakage via panic message or log | Top-level `defer-recover` runs every panic value through `RedactDSN` (extends MTIX-14.9 redactor); regression sweep in MTIX-15.11 | Very low |
@@ -251,7 +251,7 @@ There is no per-project sync flag, filter, or cursor.
 ### 7.4 TLS posture
 - Default: `sslmode=verify-full`. Refuse `verify-ca`, `prefer`, `disable` unless `--insecure-tls` AND every host the connection may use is loopback or a local Unix-domain socket.
 - `MTIX_SYNC_SSLROOTCERT` env var and DSN `sslrootcert=` parameter honored. Managed PG providers whose certificate chains to a private CA require this; the docs in workflows/* explain how to obtain the provider's CA bundle.
-- pgbouncer in **session mode** is supported. Transaction mode breaks prepared statements and advisory locks; `mtix sync doctor` detects transaction mode via `SHOW pool_mode` and warns.
+- A connection pooler in **session mode** (or no pooler) is supported. Transaction mode breaks the session-level advisory lock `pg_advisory_lock` that `EnsureRegistryIndex` holds while it builds the registry index (`internal/store/postgres/transport/sweep.go`) and per-connection settings such as `statement_timeout`, which mtix applies with a `SET` after each connection opens (`poolConfig`, `transport/pool.go`). `mtix sync doctor` does not check the pooler mode; the operator confirms it.
 
 ### 7.5 DSN sourcing (fail-closed)
 | Source | Allowed | Why |
@@ -313,7 +313,7 @@ For two concurrent events touching the same field of the same node, the winner i
 
 ### 8.4 Manual override
 - `mtix sync conflicts list` surfaces unresolved conflicts.
-- `mtix sync conflicts resolve <id> --action keep-local|keep-remote|both-renumbered` writes a new event that supersedes the LWW outcome. Recorded as `resolution=manual` in `sync_conflicts`.
+- `mtix sync conflicts resolve <id> --action keep-local|keep-remote|both-renumbered|acknowledge` appends a row with `resolution=manual` to the local `sync_conflicts` table and nothing else: it emits no event, supersedes nothing and changes no node (`runSyncConflictsResolve`, `cmd/mtix/sync_conflicts.go`). The LWW outcome stands. To apply the value you chose, edit the node (`mtix update`) and push; that edit is an ordinary event.
 
 ## 9. Timestamp validation (HIGH)
 
@@ -424,9 +424,9 @@ The actual event transport (NATS? Postgres LISTEN/NOTIFY on the existing hub? Fi
 **Why:** UUID v7 is timestamp-prefixed, so event_id sorts naturally by emission time within one author. This makes per-author event log scans trivially fast. UUID v4 has no temporal ordering. ULID is functionally equivalent but less standardized. Snowflake requires a coordinator.
 
 ### D6. Append-only audit_log via PG triggers
-**Decision:** Triggers raise on UPDATE/DELETE.
+**Decision:** Triggers raise on UPDATE/DELETE. (The `audit_log` table the schema creates is not written by mtix code; the triggers also guard `sync_conflicts`, and migration 016 adds a TRUNCATE guard to `sync_events`. See [SECURITY-MODEL.md](SECURITY-MODEL.md), "What the audit trail is".)
 **Considered alternative:** Application-only enforcement.
-**Why:** Application-only enforcement is bypassed by any direct SQL access (operator, DBA, debugging session). Triggers shift the boundary to PG itself. The residual risk (PG superuser can disable triggers) is documented in T5 and mitigated by archiving `audit_log` to immutable cold storage for safety-critical adopters.
+**Why:** Application-only enforcement is bypassed by any direct SQL access (operator, DBA, debugging session). Triggers shift the boundary to PG itself. The residual risk (the table owner or a PG superuser can drop or disable triggers) is documented in T5 and mitigated by archiving hub backups to immutable cold storage for safety-critical adopters.
 
 ### D7. PG advisory lock for schema migrations
 **Decision:** `pg_advisory_xact_lock(hash('mtix_sync_migration'))` inside the migration transaction.
@@ -630,5 +630,6 @@ The safety scenarios above map to their tests in
 | 1.1 | 2026-06 | §14 distributed node identity (MTIX-30 / ADR-003): uid anchor, provisional/settled, hub registry + renumber-required, atomic subtree renumber, restore-epoch + Option B, import uid validation, migration phases. Cross-reference and document-version sections renumbered to §15/§16. |
 | 1.2 | 2026-06 | §6.4 + decision D15 (FR-MULTI-PROJECT MP-20/MP-21): sync carries all projects in a DB to one hub with hub-global cursors; the hub stays per-project namespaced; no per-project cursors or routing by design. |
 | 1.3 | 2026-10 | §7.4 and the shipped docs made provider-neutral: capability plus the mtix setting, no named hosting providers (MTIX-95.8.2). |
+| 1.4 | 2026-10 | Claims corrected to what the code enforces (MTIX-95.8.4): `audit_log` is never written by mtix; T4/T5 name the owner and superuser as able to bypass the triggers and the TRUNCATE guard; §8.4 states that a manual resolution records a decision and emits no event; §7.4 says doctor does not check the pooler mode; dedupe is the local `sync_events` row first. |
 
 Future changes to this document MUST bump this version, update the changelog row, and reference the corresponding implementation ticket. If a code change conflicts with this document, the document MUST be updated in the same change.

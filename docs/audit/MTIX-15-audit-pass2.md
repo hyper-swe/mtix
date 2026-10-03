@@ -86,6 +86,13 @@ go test -count=1 -run 'TestRenameTo_AtomicityFailureMidLoop' ./internal/store/sq
 requirements (fuzz N1a/N1b/N1c, VC overflow N2, panic redaction
 N3a/N3b/N3c) all have passing tests cited above.
 
+> **Correction (2026-10, MTIX-95.8.4):** the original record above says
+> `audit_log` is written atomically with mutations. mtix never writes
+> `audit_log`; the hub's record is `sync_events` and `sync_conflicts`. The
+> atomicity that `TestApply_AtomicityUnderKill` proves is that of a node
+> and its `applied_events` row. See `docs/SECURITY-MODEL.md`, "What the
+> audit trail is". The original rows are left as written.
+
 ## Final sign-off (MTIX-15.11.3)
 
 **Audited git SHA:** see `git rev-parse HEAD` at the commit landing

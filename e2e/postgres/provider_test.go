@@ -102,7 +102,13 @@ func TestContractSuite_RunsIdenticallyAcrossProviders(t *testing.T) {
 
 	// Every contract test function name starts with TestStore_.
 	tests := scanTestFunctions(body, "TestStore_")
-	require.NotEmpty(t, tests, "contract suite should contain TestStore_ functions")
+	// MTIX-95.8.4 removed every ping-only TestStore_ function; none is
+	// implemented now. An empty suite passes only while contract_test.go
+	// records that absence, so it cannot go empty silently.
+	if len(tests) == 0 {
+		require.Contains(t, body, "none are implemented, and none is a placeholder",
+			"an empty contract suite must carry its documented-absence note")
+	}
 
 	// Every test body must call activeProvider(t). If a contributor adds a
 	// test that bypasses the provider seam, this assertion fires.

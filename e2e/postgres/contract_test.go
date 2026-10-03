@@ -96,119 +96,34 @@ func openStore(t *testing.T, dsn string) PGStore {
 }
 
 // ---------------------------------------------------------------------------
-// Contract tests. Each is a single-purpose assertion against the store
-// under test. Bodies are intentionally short — coverage of the assertion
-// itself comes from the SQLite store's existing tests; here we are proving
-// the SAME behavior holds against the PG providers.
+// Contract tests: none are implemented, and none is a placeholder.
+//
+// This file used to hold ten tests (CRUD, list filters, concurrent
+// mutations, concurrent schema migration, TLS verify-full, statement timeout,
+// audit-log triggers, audit-log atomicity, node-type canonicalization, SQL
+// injection) whose bodies only called Ping on a store the suite could not
+// open: openStore skips on ErrPGStoreNotReady, and nothing registers a real
+// opener, so each either skipped or passed without asserting its behavior.
+// They are removed (MTIX-95.8.4). What each named is covered, or absent, as
+// follows:
+//
+//   - Audit-log triggers: the row triggers (UPDATE, DELETE) are asserted by
+//     TestAuditLog_RowTriggersRefuseUpdateAndDelete and the TRUNCATE guard by
+//     TestTruncateGuard_BlocksOwnerTruncate, both in
+//     internal/store/postgres/transport.
+//   - Audit-log atomicity with a mutation: UNTESTED because the behavior does
+//     not exist. mtix never writes audit_log
+//     (TestAuditLog_PushWritesNoRows pins that), so there is no audit row to
+//     commit or roll back with a mutation.
+//   - Concurrent schema migration: internal/store/postgres/transport tests.
+//   - TLS posture, SQL injection: transport tests (dsn_test.go,
+//     security_test.go). Statement timeout: TestPool_StatementTimeoutApplied
+//     (integration_test.go) proves the setting is applied; a query actually
+//     aborted at the timeout is UNTESTED.
+//   - CRUD, list filters, concurrent mutations and node-type
+//     canonicalization: UNTESTED here because the hub has no node
+//     store; nodes live in the local SQLite store, tested in
+//     internal/store/sqlite.
+//
+// A new contract test must assert real behavior through a registered opener.
 // ---------------------------------------------------------------------------
-
-// TestStore_CRUDContract exercises the full Create/Get/Update/Delete cycle.
-// Until MTIX-14.1 lands this skips at openStore; once landed it will
-// construct a Node, round-trip it, mutate it, soft-delete it, and verify
-// each transition leaves the store in the documented state.
-func TestStore_CRUDContract(t *testing.T) {
-	p := activeProvider(t)
-	dsn, _ := p.Setup(t.Context(), t)
-	s := openStore(t, dsn)
-	require.NoError(t, s.Ping(t.Context()),
-		"store should answer Ping after Setup")
-}
-
-// TestStore_ListNodes_AllFilters validates the FR-17.1 multi-value filter
-// matrix (status, under, assignee, node_type, priority, labels). Each
-// combination uses OR within a field and AND across fields.
-func TestStore_ListNodes_AllFilters(t *testing.T) {
-	p := activeProvider(t)
-	dsn, _ := p.Setup(t.Context(), t)
-	s := openStore(t, dsn)
-	require.NoError(t, s.Ping(t.Context()))
-}
-
-// TestStore_ConcurrentMutations runs two goroutines mutating different
-// nodes against one store. Asserts both succeed and no deadlock occurs;
-// race detector catches data races in the driver's internal state.
-func TestStore_ConcurrentMutations(t *testing.T) {
-	p := activeProvider(t)
-	dsn, _ := p.Setup(t.Context(), t)
-	s := openStore(t, dsn)
-	require.NoError(t, s.Ping(t.Context()))
-}
-
-// TestStore_ConcurrentSchemaMigration runs two goroutines that both try to
-// run schema migrations. Single-flighting via advisory lock means exactly
-// one runs the SQL and the other waits, then sees the result. Skipped on
-// providers that lack advisory-lock support (pgbouncer transaction mode).
-func TestStore_ConcurrentSchemaMigration(t *testing.T) {
-	p := activeProvider(t)
-	if !p.SupportsAdvisoryLocks() {
-		t.Skipf("provider %q does not support advisory locks; skipping", p.Name())
-	}
-	dsn, _ := p.Setup(t.Context(), t)
-	s := openStore(t, dsn)
-	require.NoError(t, s.Ping(t.Context()))
-}
-
-// TestStore_TLSVerifyFull asserts that connecting with sslmode=verify-full
-// succeeds and that lower modes (verify-ca, prefer, disable) are rejected
-// by mtix's connection-string validator. The Docker provider uses sslmode
-// =disable internally, so this test is provider-conditional.
-func TestStore_TLSVerifyFull(t *testing.T) {
-	p := activeProvider(t)
-	if p.Name() == ProviderDocker {
-		t.Skip("docker provider runs without TLS by design (loopback only)")
-	}
-	dsn, _ := p.Setup(t.Context(), t)
-	s := openStore(t, dsn)
-	require.NoError(t, s.Ping(t.Context()))
-}
-
-// TestStore_StatementTimeout confirms that a long-running query is aborted
-// at the statement_timeout boundary, surfacing a wrapped sql.ErrTxDone (or
-// equivalent) rather than hanging the test process.
-func TestStore_StatementTimeout(t *testing.T) {
-	p := activeProvider(t)
-	dsn, _ := p.Setup(t.Context(), t)
-	s := openStore(t, dsn)
-	require.NoError(t, s.Ping(t.Context()))
-}
-
-// TestStore_AuditLogTriggers validates that UPDATE / DELETE on the
-// audit_log table raises an exception (audit log is append-only per
-// MTIX-14.2). We attempt both via raw Exec and verify the error.
-func TestStore_AuditLogTriggers(t *testing.T) {
-	p := activeProvider(t)
-	dsn, _ := p.Setup(t.Context(), t)
-	s := openStore(t, dsn)
-	require.NoError(t, s.Ping(t.Context()))
-}
-
-// TestStore_AuditLogAtomicWithMutation is a chaos test: start a tx, perform
-// a node mutation that writes to audit_log, force-abort the tx, verify
-// neither the data nor the audit row persisted. Catches the classic
-// "audit row leaked because it was on a separate connection" bug.
-func TestStore_AuditLogAtomicWithMutation(t *testing.T) {
-	p := activeProvider(t)
-	dsn, _ := p.Setup(t.Context(), t)
-	s := openStore(t, dsn)
-	require.NoError(t, s.Ping(t.Context()))
-}
-
-// TestStore_NodeTypeCanonicalization inserts a row with a legacy node_type
-// value via raw SQL, then verifies the store's read path canonicalises
-// it on export. Protects against silent data drift across migrations.
-func TestStore_NodeTypeCanonicalization(t *testing.T) {
-	p := activeProvider(t)
-	dsn, _ := p.Setup(t.Context(), t)
-	s := openStore(t, dsn)
-	require.NoError(t, s.Ping(t.Context()))
-}
-
-// TestStore_SQLInjectionResistance ports the MTIX-9.1 attack pattern: a
-// node title containing `'); DROP TABLE nodes;--` round-trips intact and
-// the table is still queryable afterwards.
-func TestStore_SQLInjectionResistance(t *testing.T) {
-	p := activeProvider(t)
-	dsn, _ := p.Setup(t.Context(), t)
-	s := openStore(t, dsn)
-	require.NoError(t, s.Ping(t.Context()))
-}

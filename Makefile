@@ -170,8 +170,12 @@ security-audit:
 	@echo "=== Go vulnerability scan ==="
 	govulncheck $(GO_PKGS)
 	@echo ""
-	@echo "=== Web vulnerability scan ==="
-	cd $(WEB_DIR) && npm audit
+	@echo "=== Web vulnerability scan (shipped dependencies, blocking; MTIX-95.53) ==="
+	cd $(WEB_DIR) && npm audit --omit=dev --audit-level=high
+	@echo "=== Web vulnerability scan (build tooling, critical blocks; MTIX-95.53) ==="
+	cd $(WEB_DIR) && npm audit --audit-level=critical
+	@echo "=== Web vulnerability scan (full report incl. dev dependencies, non-blocking) ==="
+	-cd $(WEB_DIR) && npm audit
 	@echo ""
 	@echo "=== Go security linter ==="
 	golangci-lint run
@@ -317,8 +321,12 @@ verify: test-race test-web lint embed-check
 	@echo "=== Coverage report ==="
 	@go tool cover -func=$(COVERFILE) | tail -1
 	@echo ""
-	@echo "=== Web vulnerability scan ==="
-	@cd $(WEB_DIR) && npm audit
+	@echo "=== Web vulnerability scan (shipped dependencies, blocking; MTIX-95.53) ==="
+	@cd $(WEB_DIR) && npm audit --omit=dev --audit-level=high
+	@echo "=== Web vulnerability scan (build tooling, critical blocks; MTIX-95.53) ==="
+	@cd $(WEB_DIR) && npm audit --audit-level=critical
+	@echo "=== Web vulnerability scan (full report incl. dev dependencies, non-blocking) ==="
+	-@cd $(WEB_DIR) && npm audit
 	@echo ""
 	@echo "=== Building ==="
 	@$(MAKE) build
@@ -382,12 +390,24 @@ preflight:
 	echo ""; \
 	\
 	echo "⑤ NPM audit..."; \
-	AUDIT=$$(cd "$$PROJDIR/$(WEB_DIR)" && npm audit 2>&1); \
-	if echo "$$AUDIT" | grep -q "found 0 vulnerabilities"; then \
-		echo "  ✓ PASS: Zero npm vulnerabilities"; PASS=$$((PASS+1)); \
+	AUDIT=$$(cd "$$PROJDIR/$(WEB_DIR)" && npm audit --omit=dev --audit-level=high 2>&1); \
+	if [ $$? -eq 0 ]; then \
+		echo "  ✓ PASS: No high/critical vulnerabilities in shipped npm dependencies"; PASS=$$((PASS+1)); \
 	else \
-		echo "  ✗ FAIL: npm vulnerabilities found"; FAIL=$$((FAIL+1)); \
+		echo "  ✗ FAIL: shipped npm dependencies have high/critical vulnerabilities"; FAIL=$$((FAIL+1)); \
 		echo "$$AUDIT" | tail -3; \
+	fi; \
+	if (cd "$$PROJDIR/$(WEB_DIR)" && npm audit --audit-level=critical > /dev/null 2>&1); then \
+		echo "  ✓ PASS: No critical vulnerabilities in build tooling (dev dependencies)"; PASS=$$((PASS+1)); \
+	else \
+		echo "  ✗ FAIL: critical vulnerabilities in build tooling, which builds the shipped bundle"; FAIL=$$((FAIL+1)); \
+	fi; \
+	FULL=$$(cd "$$PROJDIR/$(WEB_DIR)" && npm audit 2>&1); \
+	if echo "$$FULL" | grep -q "found 0 vulnerabilities"; then \
+		echo "  ✓ PASS: Zero npm vulnerabilities including dev dependencies"; \
+	else \
+		echo "  ⚠ WARN: high/lower advisories in dev tooling (reported, triage and ticket; MTIX-95.53; braces chain: MTIX-113)"; WARN=$$((WARN+1)); \
+		echo "$$FULL" | tail -3 | sed 's/^/    /'; \
 	fi; \
 	echo ""; \
 	\

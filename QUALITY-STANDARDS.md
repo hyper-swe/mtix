@@ -232,6 +232,7 @@ scenario declared here without a linked, existing test fails CI.
 - New dependencies MUST go through the approval process (PACKAGE-APPROVAL-PROCESS.md)
 - `go.sum` MUST be committed and verified
 - Known CVEs in dependencies MUST be tracked and patched within 72 hours
+- npm audit policy (MTIX-95.53), enforced identically by the release workflow, `make security-audit`, `make verify` and `make preflight`: (1) `npm audit --omit=dev --audit-level=high` blocks, covering shipped (production) dependencies; (2) `npm audit --audit-level=critical` blocks, covering dev dependencies too, because dev dependencies are build-time tools whose code is not in the shipped bundle but the release builds the bundle with them; (3) a full `npm audit` is reported without blocking. High and lower advisories in dev tooling MUST be triaged and ticketed. The current ones: the braces chain via Tailwind 3 is cleared by the Tailwind 4 migration (MTIX-113); the moderate @vitest/mocker path traversal (vitest, @vitest/coverage-v8) is tracked in MTIX-114
 
 ### 5.4 OWASP Compliance
 

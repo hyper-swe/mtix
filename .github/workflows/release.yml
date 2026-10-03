@@ -106,8 +106,23 @@ jobs:
       - name: Build and test web UI
         run: cd web && npm ci && npx vitest run
 
-      - name: Run npm audit
-        run: cd web && npm audit --audit-level=high
+      - name: Run npm audit (shipped dependencies)
+        # Blocking gate (MTIX-95.53): production dependencies only (react,
+        # react-dom), at high level. These are what the bundle runs on.
+        run: cd web && npm audit --omit=dev --audit-level=high
+
+      - name: Run npm audit (build tooling, critical)
+        # Blocking gate (MTIX-95.53): dev dependencies are build-time tools
+        # whose code is not in the shipped bundle, but the release builds the
+        # bundle with them, so a critical advisory in them must block.
+        run: cd web && npm audit --audit-level=critical
+
+      - name: Report npm audit (full, including dev dependencies)
+        # Non-blocking by design (MTIX-95.53): high and lower advisories in
+        # dev tooling stay visible in the log so they are triaged and
+        # ticketed, without failing the release.
+        continue-on-error: true
+        run: cd web && npm audit
 
       - name: Go vulnerability scan
         # A hard gate, not advisory (MTIX-83). Eleven reachable

@@ -130,8 +130,14 @@ jobs:
         # net/http — shipped through v0.5.2-beta because govulncheck ran
         # nowhere in CI and preflight only WARNed, and only when the tool
         # happened to be installed.
+        # Pinned, not @latest (MTIX-95.54): govulncheck v1.8.0 requires
+        # go >= 1.26, and this job runs the setup-go version above with
+        # GOTOOLCHAIN=local, so @latest failed the v0.5.4-beta release run
+        # before it scanned anything. v1.7.0 supports go 1.25. Bump this
+        # pin together with go-version (MTIX-116). Local `make preflight`
+        # installs @latest under the go.mod toolchain (go1.26), which fits.
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
           "$(go env GOPATH)/bin/govulncheck" $(go list ./... | grep -v node_modules)
 
       - name: Lint

@@ -6,6 +6,7 @@ package transport_test
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -96,11 +97,29 @@ func insertRawCreate(t *testing.T, db *pgxpool.Pool, eventID, prefix, nodeID str
 	return nil
 }
 
+// requireSuperuserEnv is set to "1" on the self-hosted PG jobs, where the
+// test role is a superuser and PostgreSQL enforces its own limits: there a
+// skipped or accepted-instead-of-refused case is a failure, never a quiet
+// pass (MTIX-95.55). It is unset against a managed server.
+const requireSuperuserEnv = "MTIX_PG_TEST_REQUIRE_SUPERUSER"
+
 // setRegistryIndexFlags sets indisvalid and indisready of the registry
 // index in pg_index, as the superuser the test DSN names, to reproduce
-// each state an interrupted or failed build leaves (MTIX-95.44).
+// each state an interrupted or failed build leaves (MTIX-95.44). A role
+// that is not a superuser cannot write pg_catalog (a managed server), so
+// the calling test is skipped there, never weakened (MTIX-95.55).
 func setRegistryIndexFlags(t *testing.T, db *pgxpool.Pool, valid, ready bool) {
 	t.Helper()
+	var super bool
+	require.NoError(t, db.QueryRow(context.Background(),
+		`SELECT rolsuper FROM pg_catalog.pg_roles WHERE rolname = current_user`).Scan(&super))
+	if !super && os.Getenv(requireSuperuserEnv) == "1" {
+		t.Fatal("the self-hosted PG job must connect as a superuser")
+	}
+	if !super {
+		t.Skip("needs a superuser to simulate an interrupted index build; " +
+			"runs on the self-hosted PG16/17 CI jobs")
+	}
 	tag, err := db.Exec(context.Background(), `
 		UPDATE pg_catalog.pg_index SET indisvalid = $1, indisready = $2
 		WHERE indrelid = 'sync_events'::regclass
@@ -591,6 +610,24 @@ func TestBuildRegistryIndex_DefinitionTooLarge_RefusesWithTheCapMessage(t *testi
 		SELECT array_agg(substr(repeat(md5(random()::text), 9), 1, 256)) FROM generate_series(1, 200)`).Scan(&ids))
 
 	_, err := transport.BuildRegistryIndexForTest(context.Background(), pool, ids)
+	if err == nil {
+		// A server that stores a very large index predicate (a managed
+		// server) accepts the build; the index must then be a good one.
+		// Self-hosted PostgreSQL refuses, so there accepting is a failure.
+		require.NotEqual(t, "1", os.Getenv(requireSuperuserEnv),
+			"self-hosted PostgreSQL must refuse the definition (SQLSTATE 54000)")
+		present, valid, ready := registryIndexState(t, db)
+		require.Equal(t, [3]bool{true, true, true}, [3]bool{present, valid, ready})
+		var predLen int
+		require.NoError(t, db.QueryRow(context.Background(), `
+			SELECT length(pg_get_expr(i.indpred, i.indrelid)) FROM pg_catalog.pg_index i
+			JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
+			WHERE i.indrelid = 'sync_events'::regclass AND c.relname = $1`,
+			registryIndexName).Scan(&predLen))
+		require.Greater(t, predLen, 40000, "the server stored the large predicate it was sent")
+		t.Log("the server accepted the large index definition; the cap refusal is not reachable here")
+		return
+	}
 	requireCapRefusal(t, err)
 	require.NotContains(t, err.Error(), "run mtix sync migrate --yes again")
 	present, _, _ := registryIndexState(t, db)

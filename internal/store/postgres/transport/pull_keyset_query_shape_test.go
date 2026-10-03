@@ -5,11 +5,13 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,22 +26,40 @@ import (
 // holds a Sort or a Seq Scan means it cannot. Skips when MTIX_PG_TEST_DSN
 // is unset.
 
-// pullEventsPlanName names the server-side prepared statement that holds
+// pullEventsPlanName names the session-level prepared statement that holds
 // the exact SQL PullEvents runs (pullEventsSQL), so each case EXPLAINs it
-// with a literal EXECUTE statement and no SQL is built by concatenation.
+// with a literal EXECUTE statement.
 const pullEventsPlanName = "pull_events_plan"
 
-// explainIndexOrderOnly prepares pullEventsSQL as pullEventsPlanName, runs
-// the literal statement explain (an EXPLAIN EXECUTE of that plan) and
-// returns the plan text, with sequential scans, bitmap scans and sorts
-// disabled for the transaction. The prepared statement is deallocated
-// before the transaction ends.
+// deallocatePullEvents is a fully literal statement (no concatenation).
+const deallocatePullEvents = `DEALLOCATE pull_events_plan`
+
+// explainIndexOrderOnly prepares pullEventsSQL as pullEventsPlanName with a
+// SQL PREPARE built server-side by format() from bound arguments (SQL Rule
+// 1a), runs the literal statement explain (an EXPLAIN EXECUTE of that
+// plan) and returns the plan text, with sequential scans, bitmap scans and
+// sorts disabled for the transaction. A SQL PREPARE outlives a rolled back
+// transaction, so a deferred DEALLOCATE on the same connection (ignoring
+// SQLSTATE 26000, "does not exist") keeps a failure from leaking the
+// statement into the next case on a pooled connection.
 func explainIndexOrderOnly(t *testing.T, pool *Pool, explain string) string {
 	t.Helper()
 	ctx := context.Background()
-	tx, err := pool.p.Begin(ctx)
+	conn, err := pool.p.Acquire(ctx)
 	require.NoError(t, err)
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer conn.Release()
+	tx, err := conn.Begin(ctx)
+	require.NoError(t, err)
+	defer func() {
+		// Roll back, then clean up on the same connection.
+		_ = tx.Rollback(ctx)
+		if _, derr := conn.Exec(ctx, deallocatePullEvents); derr != nil {
+			var pgErr *pgconn.PgError
+			if !errors.As(derr, &pgErr) || pgErr.Code != "26000" {
+				t.Errorf("deallocate %s: %v", pullEventsPlanName, derr)
+			}
+		}
+	}()
 	for _, stmt := range []string{
 		`SET LOCAL enable_seqscan = off`,
 		`SET LOCAL enable_bitmapscan = off`,
@@ -48,13 +68,21 @@ func explainIndexOrderOnly(t *testing.T, pool *Pool, explain string) string {
 		_, err = tx.Exec(ctx, stmt)
 		require.NoError(t, err, stmt)
 	}
-	_, err = tx.Prepare(ctx, pullEventsPlanName, pullEventsSQL)
+	// SQL PREPARE, not the protocol-level Prepare: a connection pooler may
+	// rename protocol-level statements, so EXPLAIN EXECUTE could not find
+	// them (SQLSTATE 26000). Both run in this transaction on one session.
+	var prepare string
+	require.NoError(t, tx.QueryRow(ctx,
+		`SELECT format('PREPARE %I AS %s', $1::text, $2::text)`,
+		pullEventsPlanName, pullEventsSQL).Scan(&prepare))
+	_, err = tx.Exec(ctx, prepare)
 	require.NoError(t, err)
 	rows, err := tx.Query(ctx, explain)
 	require.NoError(t, err)
 	lines, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	require.NoError(t, err)
-	require.NoError(t, tx.Conn().Deallocate(ctx, pullEventsPlanName))
+	_, err = tx.Exec(ctx, deallocatePullEvents)
+	require.NoError(t, err)
 	return strings.Join(lines, "\n")
 }
 

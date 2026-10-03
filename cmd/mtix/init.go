@@ -109,6 +109,7 @@ func generateInitDocs(docsDir, prefix, ver string) []docs.GenerateResult {
 	reg := mcp.NewToolRegistry()
 
 	data := docs.BuildTemplateData(rootCmd, reg, prefix, ver)
+	data.SyncHubConfigured = hubConfigured(filepath.Dir(docsDir)) // MTIX-95.8.1
 
 	gen, err := docs.NewEmbeddedGenerator(docsDir, data, slog.Default())
 	if err != nil {

@@ -50,6 +50,12 @@ type TemplateData struct {
 
 	// ErrorCodes is the list of sentinel error names.
 	ErrorCodes []string
+
+	// SyncHubConfigured reports whether the project has a sync hub DSN
+	// source (MTIX_SYNC_DSN or .mtix/secrets). It selects the full managed
+	// SYNC section of CLAUDE.md and AGENTS.md over the one-line pointer
+	// (MTIX-95.8.1).
+	SyncHubConfigured bool
 }
 
 // CommandInfo describes a CLI command for documentation per FR-13.2.

@@ -539,6 +539,17 @@ func TestWorkflowDocs_GenerateErrorWhenTemplateMissing(t *testing.T) {
 		require.NoError(t, os.WriteFile(dst, body, 0o644))
 	}
 
+	// The top-level templates include shared partials, so the sandbox keeps
+	// them; only the workflows subtree is absent.
+	require.NoError(t, os.MkdirAll(filepath.Join(tmplDir, "partials"), 0o755))
+	partials, err := embeddedTemplates.ReadDir("templates/partials")
+	require.NoError(t, err)
+	for _, entry := range partials {
+		body, rerr := embeddedTemplates.ReadFile("templates/partials/" + entry.Name())
+		require.NoError(t, rerr)
+		require.NoError(t, os.WriteFile(filepath.Join(tmplDir, "partials", entry.Name()), body, 0o644))
+	}
+
 	outDir := filepath.Join(t.TempDir(), "docs")
 	data := minimalTemplateData()
 	gen, err := NewGenerator(tmplDir, outDir, data, nil)

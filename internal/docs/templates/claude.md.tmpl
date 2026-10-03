@@ -15,7 +15,7 @@ If skill files are not yet installed, run:
 ```
 mtix plugin install --target claude-code
 ```
-This installs 5 skill files and 4 compliance reference checklists to `.claude/skills/`.
+This installs 6 skill files and 4 compliance reference checklists to `.claude/skills/`.
 
 ## MCP Tools
 
@@ -57,6 +57,10 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 - **Search before creating** — use `mcp__mtix__mtix_search` to check for existing similar tasks
 - **Use briefing format for analysis** — call `mcp__mtix__mtix_briefing` with multi-value filters instead of writing Python/jq post-processing code. Example: `mtix_briefing(under="PROJ-1,PROJ-2", status="done", type="issue", fields="id,title,prompt")`
 - **Progress checks** — use `mcp__mtix__mtix_progress` to verify rollup before reporting completion
+
+## Sync
+
+{{ template "sync_section" . }}
 
 ## Sync Hub Privileges
 

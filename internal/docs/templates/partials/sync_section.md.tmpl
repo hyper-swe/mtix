@@ -1,0 +1,15 @@
+{{- define "sync_section" -}}
+<!-- AUTO-GENERATED: SYNC -->
+{{ if .SyncHubConfigured -}}
+This project syncs its tasks through a shared hub (a Postgres database). The hub DSN comes from `MTIX_SYNC_DSN` or the mode 0600 `.mtix/secrets` file; never read, print, paste or commit it.
+- Session start: run `mtix sync push`, then `mtix sync pull`. Push first, so a pull never runs while local changes are unpushed.
+- After you change tasks, run `mtix sync push`. `mtix sync status` shows the local queue and does not contact the hub.
+- In hooks and scripts set `MTIX_SYNC_HOOK=1`, so a transient hub error warns instead of failing.
+- Sync after activity only. The hub may be a scale-to-zero database that wakes on contact, so never poll with `mtix sync pull` on a timer or start an interval daemon without telling the user the cost.
+- Never: put credentials in tracked files, commits, tickets, comments or chat; use the owner or admin credential for daily sync; run `mtix sync push --force` or `mtix sync repair --status --apply` unless the user asks; run `mtix sync reconcile --discard-local` yourself (it deletes local tasks and unpushed changes, needs `mtix sync push` and `pending` 0 first, and needs the ticket count typed at an interactive terminal, so ask the user); edit `.mtix` data or hub tables by hand.
+- If sync fails, `mtix sync doctor` prints the fix for each failing check; the `mtix-sync` skill maps every failure to its recovery.
+{{- else -}}
+No sync hub is configured for this project. To share tasks between machines through a hub, or to fix a sync problem, follow the `mtix-sync` skill (`mtix plugin install --target claude-code` installs it).
+{{- end }}
+<!-- END AUTO-GENERATED -->
+{{- end -}}

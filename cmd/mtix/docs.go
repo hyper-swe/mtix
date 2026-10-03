@@ -88,6 +88,10 @@ func runDocsGenerate(force bool) error {
 	reg := mcp.NewToolRegistry()
 
 	data := docs.BuildTemplateData(rootCmd, reg, "PROJ", version)
+	// A hub DSN source (MTIX_SYNC_DSN or .mtix/secrets) selects the full SYNC
+	// section of CLAUDE.md and AGENTS.md; the DSN itself is never read here
+	// (MTIX-95.8.1).
+	data.SyncHubConfigured = hubConfigured(mtixDir)
 
 	// Use embedded templates compiled into the binary.
 	gen, err := docs.NewEmbeddedGenerator(docsDir, data, slog.Default())

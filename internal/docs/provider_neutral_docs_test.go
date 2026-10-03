@@ -111,4 +111,11 @@ func TestProviderNeutral_HubConnectionPartialIsSharedWithUserManual(t *testing.T
 
 	set := loadShippedDocs(t)
 	require.Contains(t, set.all["internal/docs/templates/workflows/small-team.md.tmpl"], `template "hub_connection"`)
+
+	// The sync skill (MTIX-95.8.1) includes the partial, and both plugin
+	// mirrors carry its text.
+	require.Contains(t, set.all["internal/docs/templates/skills/sync.md.tmpl"], `{{ template "hub_connection" . }}`)
+	for _, mirror := range []string{".claude-plugin/skills/mtix-sync.md", ".codex-plugin/skills/sync/SKILL.md"} {
+		require.Contains(t, set.all[mirror], partial, "%s must carry the hub_connection partial", mirror)
+	}
 }

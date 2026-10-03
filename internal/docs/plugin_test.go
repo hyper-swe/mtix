@@ -13,10 +13,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSkillDocFiles_Returns5 verifies the skill file list has all 5 entries.
-func TestSkillDocFiles_Returns5(t *testing.T) {
+// TestSkillDocFiles_Returns6 verifies the skill file list has all 6 entries.
+func TestSkillDocFiles_Returns6(t *testing.T) {
 	files := SkillDocFiles()
-	assert.Len(t, files, 5)
+	assert.Len(t, files, 6)
 
 	names := make(map[string]bool)
 	for _, f := range files {
@@ -30,6 +30,7 @@ func TestSkillDocFiles_Returns5(t *testing.T) {
 		"mtix-review.md",
 		"mtix-multi-agent.md",
 		"mtix-admin.md",
+		"mtix-sync.md",
 	}
 	for _, name := range expected {
 		assert.True(t, names[name], "missing skill file: %s", name)
@@ -58,8 +59,8 @@ func TestReferenceDocFiles_Returns4(t *testing.T) {
 	}
 }
 
-// TestPluginInstaller_ClaudeCode_Writes5Skills verifies skill files are written.
-func TestPluginInstaller_ClaudeCode_Writes5Skills(t *testing.T) {
+// TestPluginInstaller_ClaudeCode_Writes6Skills verifies skill files are written.
+func TestPluginInstaller_ClaudeCode_Writes6Skills(t *testing.T) {
 	tmpDir := t.TempDir()
 	projectDir := filepath.Join(tmpDir, "project")
 	require.NoError(t, os.MkdirAll(projectDir, 0o755))
@@ -70,8 +71,8 @@ func TestPluginInstaller_ClaudeCode_Writes5Skills(t *testing.T) {
 	results, err := installer.Install("claude-code", false)
 	require.NoError(t, err)
 
-	// Root CLAUDE.md + 5 skill files + 4 reference files = 10 total.
-	assert.Len(t, results, 10)
+	// Root CLAUDE.md + 6 skill files + 4 reference files = 11 total.
+	assert.Len(t, results, 11)
 
 	// Verify skill files exist in .claude/skills/.
 	skillDir := filepath.Join(projectDir, ".claude", "skills")
@@ -83,6 +84,7 @@ func TestPluginInstaller_ClaudeCode_Writes5Skills(t *testing.T) {
 		"mtix-review.md",
 		"mtix-multi-agent.md",
 		"mtix-admin.md",
+		"mtix-sync.md",
 	} {
 		assert.FileExists(t, filepath.Join(skillDir, name), "skill %s should exist", name)
 	}

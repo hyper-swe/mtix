@@ -114,6 +114,7 @@ For deeper guidance, `mtix plugin install` provides role-specific skills:
 - **mtix-review.md** — audit, verification, and progress tracking
 - **mtix-multi-agent.md** — agent coordination and handoff protocols
 - **mtix-admin.md** — backup, export/import, garbage collection
+- **mtix-sync.md** — set up, use, verify and recover the shared sync hub
 
 ## Reference Documentation
 

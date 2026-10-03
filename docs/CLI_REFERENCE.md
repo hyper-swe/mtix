@@ -860,7 +860,7 @@ Install skill files and MCP configuration
 
 Install agent integration files for the target AI coding agent.
 
-claude-code: 5 skill files + 4 compliance reference checklists into
+claude-code: 6 skill files + 4 compliance reference checklists into
 .claude/skills/ (or ~/.claude/skills/ with --global). Skills include
 safety-critical operating procedures as baseline — context chain
 traversal, independent verification, traceability, anomaly reporting.

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
@@ -41,7 +42,7 @@ func newPluginInstallCmd() *cobra.Command {
 		Short: "Install skill files and MCP configuration",
 		Long: `Install agent integration files for the target AI coding agent.
 
-claude-code: 5 skill files + 4 compliance reference checklists into
+claude-code: 6 skill files + 4 compliance reference checklists into
 .claude/skills/ (or ~/.claude/skills/ with --global). Skills include
 safety-critical operating procedures as baseline — context chain
 traversal, independent verification, traceability, anomaly reporting.
@@ -95,6 +96,7 @@ func runPluginInstall(target string, global bool) error {
 	}
 
 	data := docs.BuildTemplateData(rootCmd, reg, prefix, version)
+	data.SyncHubConfigured = hubConfigured(filepath.Join(cwd, ".mtix")) // MTIX-95.8.1
 
 	installer := docs.NewPluginInstaller(cwd, data, slog.Default())
 

@@ -45,8 +45,13 @@ Diff the surface area since the last tag and verify each item is documented:
       (CI runs this on every push; run locally only if CI is not green on HEAD).
 - [ ] Traceability gate: `go test . -run TestTraceability -count=1`
       (every QUALITY-STANDARDS §3.6 scenario maps to existing tests).
-- [ ] `make security-audit` — govulncheck + npm audit clean, release
-      artifacts updated.
+- [ ] `make security-audit` — govulncheck clean; npm audit of shipped
+      (production) dependencies clean at high level; npm audit clean at
+      critical level including dev dependencies (the release builds the
+      bundle with those build tools); release artifacts updated. The full
+      npm audit is reported but non-blocking: triage and ticket high and
+      lower dev-tooling advisories (braces chain: MTIX-113, Tailwind 4;
+      moderate @vitest/mocker: MTIX-114) (MTIX-95.53).
 - [ ] CI fully green on the exact commit to be tagged (all jobs,
       including `test-fault-injection` and the postgres contract suite).
 

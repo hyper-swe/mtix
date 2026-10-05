@@ -316,7 +316,7 @@ func TestRunImport_LiveStoreWithoutConfirm_Rejected(t *testing.T) {
 	initTestApp(t)
 	// Local store already owns TEST-1 and TEST-1.1, so the incoming provisional
 	// child cannot take clean number 1 and must be renumbered.
-	require.NoError(t, runCreate("Local root", "", "epic", 3, "", "", "", "", ""))
+	require.NoError(t, runCreate("Local root", "", "", 3, "", "", "", "", ""))
 	require.NoError(t, runCreate("Local child", "TEST-1", "", 3, "", "", "", "", ""))
 
 	provUID := mustUID(t)
@@ -335,7 +335,7 @@ func TestRunImport_LiveStoreWithoutConfirm_Rejected(t *testing.T) {
 // renumber and --remap-file persists the uid-keyed remap (ADR-003 §6).
 func TestRunImport_ConfirmAppliesAndWritesRemap(t *testing.T) {
 	initTestApp(t)
-	require.NoError(t, runCreate("Local root", "", "epic", 3, "", "", "", "", ""))
+	require.NoError(t, runCreate("Local root", "", "", 3, "", "", "", "", ""))
 	require.NoError(t, runCreate("Local child", "TEST-1", "", 3, "", "", "", "", ""))
 
 	provUID := mustUID(t)

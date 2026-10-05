@@ -258,13 +258,13 @@ Create a new node. Use --under to create a child node.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--acceptance` |  | Acceptance criteria |  |
-| `--assign` |  | Assign to agent/user |  |
+| `--assign` |  | Claim the new node for agent/user atomically (status in_progress; creator stays author) |  |
 | `--description` |  | Node description |  |
 | `--labels` |  | Comma-separated labels |  |
 | `--priority` |  | Priority (1=critical, 5=backlog) | 3 |
 | `--project` |  | Project prefix for a root node (overrides the primary; inherited for children) (FR-MULTI-PROJECT MP-5) |  |
 | `--prompt` |  | Node prompt (FR-12.5) |  |
-| `--type` |  | Node type (bug, feature, task, chore) |  |
+| `--type` |  | Issue type (bug, feature, task, chore, refactor, test, doc; omitted = unset) |  |
 | `--under` |  | Parent node ID |  |
 | `--yes` |  | Skip the confirmation prompt when --project names a new project | false |
 ---

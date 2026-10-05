@@ -21,16 +21,17 @@ import (
 // CreateNodePayload carries the full node fields needed to recreate.
 // Fields mirror model.Node but use json tags only — no DB-coupled types.
 type CreateNodePayload struct {
-	Title       string   `json:"title"`
-	ParentID    string   `json:"parent_id,omitempty"`
-	NodeType    NodeType `json:"node_type"`
-	Description string   `json:"description,omitempty"`
-	Prompt      string   `json:"prompt,omitempty"`
-	Acceptance  string   `json:"acceptance,omitempty"`
-	Priority    Priority `json:"priority,omitempty"`
-	Labels      []string `json:"labels,omitempty"`
-	Assignee    string   `json:"assignee,omitempty"`
-	Creator     string   `json:"creator,omitempty"`
+	Title       string    `json:"title"`
+	ParentID    string    `json:"parent_id,omitempty"`
+	IssueType   IssueType `json:"issue_type,omitempty"`
+	NodeType    NodeType  `json:"node_type"`
+	Description string    `json:"description,omitempty"`
+	Prompt      string    `json:"prompt,omitempty"`
+	Acceptance  string    `json:"acceptance,omitempty"`
+	Priority    Priority  `json:"priority,omitempty"`
+	Labels      []string  `json:"labels,omitempty"`
+	Assignee    string    `json:"assignee,omitempty"`
+	Creator     string    `json:"creator,omitempty"`
 }
 
 // UpdateFieldPayload captures a single-field update.

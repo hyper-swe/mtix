@@ -63,7 +63,7 @@ func readRemapFile(t *testing.T, path string) map[string]string {
 // remap file records the move.
 func TestRunImport_DifferentTaskUnderID_RenumbersOnlyWithConfirm(t *testing.T) {
 	initTestApp(t)
-	require.NoError(t, runCreate("Local task", "", "epic", 3, "", "", "", "", ""))
+	require.NoError(t, runCreate("Local task", "", "", 3, "", "", "", "", ""))
 	local, err := app.store.GetNode(t.Context(), "TEST-1")
 	require.NoError(t, err)
 	path := writeOtherTaskImportFile(t)
@@ -99,7 +99,7 @@ func preSyncBackups(t *testing.T) []string {
 // when it writes nothing (the renumbering awaits --confirm).
 func TestRunImport_Merge_BacksUpBeforeItWrites(t *testing.T) {
 	initTestApp(t)
-	require.NoError(t, runCreate("Local task", "", "epic", 3, "", "", "", "", ""))
+	require.NoError(t, runCreate("Local task", "", "", 3, "", "", "", "", ""))
 	path := writeOtherTaskImportFile(t)
 
 	require.ErrorIs(t, runImport(path, importFlags{mode: "merge"}), sqlite.ErrImportConfirmationRequired)
@@ -142,7 +142,7 @@ func TestPrintSyncReport_PendingImportOrOtherUID_HeadlineSaysSo(t *testing.T) {
 // merges never rotate the automatic import's backups away.
 func TestRunImport_MergeChangesNothing_TakesNoBackup(t *testing.T) {
 	initTestApp(t)
-	require.NoError(t, runCreate("Local task", "", "epic", 3, "", "", "", "", ""))
+	require.NoError(t, runCreate("Local task", "", "", 3, "", "", "", "", ""))
 	path := writeOtherTaskImportFile(t)
 	require.NoError(t, runImport(path, importFlags{mode: "merge", confirm: true}))
 	require.Len(t, preSyncBackups(t), 1)
@@ -156,7 +156,7 @@ func TestRunImport_MergeChangesNothing_TakesNoBackup(t *testing.T) {
 // it under (another clone renumbered it).
 func TestRunImport_MergeMovesLocalTask_RemapFileRecordsTheMove(t *testing.T) {
 	initTestApp(t)
-	require.NoError(t, runCreate("Local task", "", "epic", 3, "", "", "", "", ""))
+	require.NoError(t, runCreate("Local task", "", "", 3, "", "", "", "", ""))
 	local, err := app.store.GetNode(t.Context(), "TEST-1")
 	require.NoError(t, err)
 	ctx := context.Background()

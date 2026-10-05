@@ -21,48 +21,56 @@ import (
 // Returns ErrInvalidTransition for other invalid states.
 func (s *Store) ClaimNode(ctx context.Context, id, agentID string) error {
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		if err := s.validateClaimStatus(ctx, tx, id); err != nil {
-			return err
-		}
+		return s.claimNodeTx(ctx, tx, id, agentID)
+	})
+}
 
-		now := s.clock()
-		nowStr := now.Format(time.RFC3339)
+// claimNodeTx records the ordinary FR-10.4 claim inside its caller's transaction.
+func (s *Store) claimNodeTx(ctx context.Context, tx *sql.Tx, id, agentID string) error {
+	if err := s.validateClaimStatus(ctx, tx, id); err != nil {
+		return err
+	}
 
-		// Atomic update: set status, assignee, and agent_state.
-		_, err := tx.ExecContext(ctx,
-			`UPDATE nodes SET status = ?, assignee = ?, agent_state = ?,
+	now := s.clock()
+	nowStr := now.Format(time.RFC3339)
+
+	// Atomic update: set status, assignee, and agent_state.
+	_, err := tx.ExecContext(ctx,
+		`UPDATE nodes SET status = ?, assignee = ?, agent_state = ?,
 			 updated_at = ?, defer_until = NULL
 			 WHERE id = ? AND deleted_at IS NULL`,
-			string(model.StatusInProgress), agentID, string(model.AgentStateWorking),
-			nowStr, id,
-		)
-		if err != nil {
-			return fmt.Errorf("claim node %s: %w", id, err)
-		}
+		string(model.StatusInProgress), agentID, string(model.AgentStateWorking),
+		nowStr, id,
+	)
+	if err != nil {
+		return fmt.Errorf("claim node %s: %w", id, err)
+	}
 
-		if err := ensureAndSyncAgent(ctx, tx, agentID, id, nowStr); err != nil {
-			return err
-		}
+	if agentErr := ensureAndSyncAgent(ctx, tx, agentID, id, nowStr); agentErr != nil {
+		return agentErr
+	}
 
-		// Record claim activity.
-		if err := appendActivityEntry(ctx, tx, id, model.ActivityEntry{
-			ID:        fmt.Sprintf("act-%d", now.UnixNano()),
-			Type:      model.ActivityTypeClaim,
-			Author:    agentID,
-			Text:      fmt.Sprintf("Claimed by %s", agentID),
-			CreatedAt: now,
-		}); err != nil {
-			return err
-		}
+	// Record claim activity.
+	if activityErr := appendActivityEntry(ctx, tx, id, model.ActivityEntry{
+		ID:        fmt.Sprintf("act-%d", now.UnixNano()),
+		Type:      model.ActivityTypeClaim,
+		Author:    agentID,
+		Text:      fmt.Sprintf("Claimed by %s", agentID),
+		CreatedAt: now,
+	}); activityErr != nil {
+		return activityErr
+	}
 
-		payload, _ := model.EncodePayload(&model.ClaimPayload{AgentID: agentID})
-		return emitEvent(ctx, tx, emitParams{
-			NodeID:      id,
-			ProjectCode: projectPrefixFromNodeID(id),
-			OpType:      model.OpClaim,
-			Author:      agentID,
-			Payload:     payload,
-		})
+	payload, err := model.EncodePayload(&model.ClaimPayload{AgentID: agentID})
+	if err != nil {
+		return fmt.Errorf("encode claim payload: %w", err)
+	}
+	return emitEvent(ctx, tx, emitParams{
+		NodeID:      id,
+		ProjectCode: projectPrefixFromNodeID(id),
+		OpType:      model.OpClaim,
+		Author:      agentID,
+		Payload:     payload,
 	})
 }
 

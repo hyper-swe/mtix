@@ -1,12 +1,8 @@
 ---
 description: "Administer MTIX project using mtix. Use when backing up data, exporting/importing tasks, running garbage collection, managing configuration, verifying data integrity, restricting who can use a sync hub's tables (mtix sync harden), backing up or restoring a sync hub (mtix sync backup), resolving sync conflicts, repairing workflow state that an older sync pull reverted, handling events that sync pull quarantined, tasks that share a uid (doctor check unique node uids), events that sync push holds because a field is over the sync limit, or a sync push pending queue that never drains."
 allowed-tools:
-  - mcp__mtix__mtix_export
-  - mcp__mtix__mtix_import
-  - mcp__mtix__mtix_gc
-  - mcp__mtix__mtix_backup
-  - mcp__mtix__mtix_config
-  - mcp__mtix__mtix_verify
+  - Bash(mtix *)
+  - mcp__mtix__mtix_stats
 ---
 
 # MTIX — Administration
@@ -17,10 +13,10 @@ mtix manages task hierarchies that may track safety-critical work (aviation main
 
 ## Backup-Before-Mutate Protocol
 
-**ALWAYS run `mcp__mtix__mtix_backup` before any destructive operation:**
+**ALWAYS run `mtix backup <path>` before any destructive operation:**
 
-- Before `mcp__mtix__mtix_import` (may overwrite existing data)
-- Before `mcp__mtix__mtix_gc` (permanently removes soft-deleted data)
+- Before `mtix import <file> --mode merge` (may overwrite existing data)
+- Before `mtix gc` (permanently removes soft-deleted data)
 - Before any database maintenance
 - Before major configuration changes
 
@@ -28,7 +24,7 @@ Backup creates a timestamped copy of the SQLite database. Store backups in a saf
 
 ## Export
 
-Call `mcp__mtix__mtix_export` to create a JSON snapshot of all project data.
+Run `mtix export > <file>` to save a JSON snapshot of all project data.
 
 The export includes:
 - All nodes with every field, including each node's annotations (comments, review verdicts, close receipts) and activity stream
@@ -43,7 +39,7 @@ The export includes:
 
 ## Import
 
-Call `mcp__mtix__mtix_import` with the export file path and mode:
+Run `mtix import <file> --mode merge` from the CLI. If it reports renumbering without applying, review the report before rerunning with `--confirm`; this flag confirms renumbering only. The MCP server exposes no import tool. Import modes:
 
 - **merge** — creates nodes the store lacks; for a node it has, annotations and activity merge as a union (no local annotation is ever dropped, and a resolved annotation stays resolved), and the other fields take the file's values only when the node's content hash differs
 - **replace** — replaces all project data with the import file, annotations and activity included; a file written before mtix 0.5.4 carries no annotations, so a replace import of it leaves every node without them. It needs the ticket count typed at an interactive terminal, so an agent never runs it: ask the user; prefer merge.
@@ -55,9 +51,9 @@ Import writes nothing when the schema version (a higher major version than this 
 If an export, or the automatic import of a changed `.mtix/tasks.json`, fails because a stored node field cannot be read, the error names the node, the field and `mtix recover`: nothing was imported, and local changes are kept. Run `mtix recover` to salvage everything readable (see its report) before importing again. For such a field (comments, activity, `code_refs`, `commit_refs`), `mtix recover` takes the value from the task's copy in `.mtix/tasks.json` when that copy is usable (the only task under that id, the same uid when both carry one, `schema_version` 2.0.0 or later, times that pass the import checks), and its report says `restored from the mirror <path>` with the number of entries. The copy is whatever `.mtix/tasks.json` holds: the last export, or a file a `git pull` or checkout put there (for example one whose automatic import was refused), which is another clone's copy and can hold its comments and lack local ones. A mirror whose checksum does not verify is still used, and the note then ends `(the mirror checksum did not verify)`. Otherwise the report says the field is dropped and why, and the task is salvaged without it. A note `node A: the index entry for A points at the row of B; ...` means the primary-key index is damaged: nothing from that row is salvaged as A, and the row is salvaged once, as B. A itself is then salvaged from the database when another index entry reaches A's own row, taken from `.mtix/tasks.json` when the mirror holds it, or listed on the report's LOST line; show such tasks to the user. Before the salvage file is imported, show the user every dropped or restored field and every note ending `(the mirror checksum did not verify)`, and have them compare each restored field with the local history (for example `git log -p .mtix/tasks.json`).
 
 **Import protocol:**
-1. Run `mcp__mtix__mtix_backup` first
+1. Run `mtix backup <path>` first
 2. Import the data
-3. Run `mcp__mtix__mtix_verify` to confirm integrity post-import
+3. Run `mtix verify` to confirm integrity post-import
 4. Check `mcp__mtix__mtix_stats` to verify expected node counts
 
 **Never skip the post-import verification.** A corrupt import in a safety-critical environment could hide incomplete or missing tasks.
@@ -78,7 +74,7 @@ When a `git pull` or checkout changes `.mtix/tasks.json`, the next mtix CLI comm
 
 ## Garbage Collection
 
-Call `mcp__mtix__mtix_gc` to permanently remove soft-deleted nodes past the retention period (default: 30 days). Purging a deleted task whose creation `mtix sync push` holds does not release its held changes: they stay held, and `mtix sync doctor` keeps listing them. Run `mtix sync push` before purging such a task, so its latest changes are checked and held first.
+Run `mtix gc` to permanently remove soft-deleted nodes past the retention period (default: 30 days). Purging a deleted task whose creation `mtix sync push` holds does not release its held changes: they stay held, and `mtix sync doctor` keeps listing them. Run `mtix sync push` before purging such a task, so its latest changes are checked and held first.
 
 **Before GC:**
 - Verify retention period is appropriate for your compliance requirements (some standards require longer retention)
@@ -92,7 +88,7 @@ Call `mcp__mtix__mtix_gc` to permanently remove soft-deleted nodes past the rete
 
 ## Configuration
 
-Use `mcp__mtix__mtix_config` to view or modify project settings.
+Run `mtix config get <key>` to view a setting and `mtix config set <key> <value>` to change it.
 
 Key configuration options:
 - `prefix` — project prefix for dot-notation IDs
@@ -183,7 +179,7 @@ Only for projects that sync through a Postgres hub. Run these only when the user
 
 ## Integrity Verification
 
-Run `mcp__mtix__mtix_verify` to check content hash integrity across all nodes.
+Run `mtix verify` to check content hash integrity across all nodes.
 
 **When to verify:**
 - After every import operation

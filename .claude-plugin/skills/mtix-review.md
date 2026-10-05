@@ -1,15 +1,14 @@
 ---
 description: "Review progress, audit tasks, verify integrity, and check status in MTIX project. Use when checking progress, finding stale work, auditing task completion, or verifying data integrity."
 allowed-tools:
+  - Bash(mtix *)
   - mcp__mtix__mtix_stats
   - mcp__mtix__mtix_progress
   - mcp__mtix__mtix_stale
-  - mcp__mtix__mtix_verify
-  - mcp__mtix__mtix_tree
   - mcp__mtix__mtix_show
   - mcp__mtix__mtix_list
   - mcp__mtix__mtix_blocked
-  - mcp__mtix__mtix_dep_list
+  - mcp__mtix__mtix_dep_show
   - mcp__mtix__mtix_search
 ---
 
@@ -37,7 +36,7 @@ Use `mcp__mtix__mtix_search` to find tasks with missing fields:
 
 ## Integrity Verification
 
-Run `mcp__mtix__mtix_verify` to check content hash integrity across all nodes.
+Run `mtix verify` to check content hash integrity across all nodes.
 
 - **Hash match:** Node data is intact since last write
 - **Hash mismatch:** Data corruption detected — escalate immediately. Do NOT modify corrupted nodes. Report the mismatch and the affected node IDs
@@ -52,7 +51,7 @@ For each stale agent:
 1. Check their claimed work via the stale report
 2. Investigate: Did the agent crash? Is it stuck? Is the work partially complete?
 3. If the agent is truly gone, the work should be unclaimed and reassigned
-4. Document findings via `mcp__mtix__mtix_comment` on the affected nodes
+4. Document findings via `mcp__mtix__mtix_annotate` on the affected nodes
 
 ## Progress Verification
 
@@ -69,23 +68,23 @@ Call `mcp__mtix__mtix_progress` on root nodes to see rollup percentages.
 ## Orphan Detection
 
 Find tasks with incomplete decomposition:
-1. Call `mcp__mtix__mtix_tree` to see the hierarchy
+1. Run `mtix tree <id>` to see the hierarchy
 2. Look for leaf nodes with only a title (no description, prompt, or acceptance)
 3. These are compliance gaps — agents cannot execute tasks without context
 4. Flag them for the decomposing agent to complete
 
 ## Dependency Graph Validation
 
-Call `mcp__mtix__mtix_dep_list` to review dependencies:
+Call `mcp__mtix__mtix_dep_show` with the node `id` to review its active blockers:
 - Verify all `blocks` dependencies are resolved before dependent work starts
-- Check for orphaned dependencies (pointing to deleted or cancelled nodes)
+- The tool returns active blockers; use `mtix show <id> --json` to inspect the node and `mtix dep show <id>` to check blockers from the CLI
 - Ensure cross-branch dependencies are declared (not implicit)
 
 ## Audit Checklist
 
 Run this checklist periodically:
 
-- [ ] `mcp__mtix__mtix_verify` — all content hashes pass
+- [ ] `mtix verify` — all content hashes pass
 - [ ] `mcp__mtix__mtix_stale` — no unaddressed stale agents
 - [ ] `mcp__mtix__mtix_blocked` — all blocked nodes have documented reasons
 - [ ] `mcp__mtix__mtix_stats` — overall project health metrics reviewed

@@ -13,7 +13,7 @@ This checklist maps mtix workflows to IEC 62304 (Medical Device Software — Sof
 ## Software Development Process (§5)
 
 ### §5.1 Software Development Planning
-- Use `mtix_tree` and `mtix_decompose` to create the software development plan as a task hierarchy
+- Use `mtix tree <id>` and `mtix_decompose` to create the software development plan as a task hierarchy
 - Each story represents a software system requirement
 - Decomposition creates the detailed design and implementation tasks
 

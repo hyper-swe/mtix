@@ -2904,6 +2904,8 @@ change the node's status with the normal commands instead.
 
 ### MCP integration
 
+Use `mtix_discover` to list the tools this build registers. Comments use `mtix_annotate` (`id`, `text`, `author`); `mtix_dep_show` lists a node's active blockers. Tree views and administration use the CLI: `mtix tree <id>`, `mtix verify`, `mtix backup <path>`, `mtix export`, `mtix gc`, and `mtix config get/set`. There is no MCP import tool: use `mtix import <file> --mode merge`. Replace import needs an operator to type the ticket count at an interactive terminal; agents never run it.
+
 The `mtix_sync_workflow` MCP tool exposes structured sync-state
 recommendations to LLM agents. State buckets: `solo`,
 `sync-configured-no-hub`, `sync-active`, `divergent-state-pending`,

@@ -25,7 +25,7 @@ PROJ-1.1       → CSC: "Position Calculator"
 PROJ-1.1.1     → Unit: "Coordinate Transform Function"
 ```
 
-Use `mtix_tree` to visualize the CSCI/CSC decomposition. The context chain from root to leaf provides the full decomposition path.
+Use `mtix tree <id>` to visualize the CSCI/CSC decomposition. The context chain from root to leaf provides the full decomposition path.
 
 ## Classification Awareness
 
@@ -44,8 +44,8 @@ MIL-STD-498 §5.14 requires configuration status accounting. mtix provides:
 | Unique identification | Dot-notation IDs |
 | Current status | `mtix_show`, `mtix_stats` |
 | Change history | State machine transitions, activity log |
-| Baseline snapshots | `mtix_export` with checksums |
-| Integrity verification | `mtix_verify` (SHA-256 content hashes) |
+| Baseline snapshots | `mtix export > <file>` with checksums |
+| Integrity verification | `mtix verify` (SHA-256 content hashes) |
 
 ## Test Readiness Review
 
@@ -55,9 +55,9 @@ Before marking a CSCI-level task as done, conduct a Test Readiness Review:
 2. All test tasks have passing results documented in comments
 3. No unresolved blocked or deferred tasks
 4. `mtix_progress` shows 100% completion
-5. `mtix_verify` confirms data integrity
+5. `mtix verify` confirms data integrity
 
-Use `mtix_tree` to verify the complete decomposition is done, not just the top-level node.
+Use `mtix tree <id>` to verify the complete decomposition is done, not just the top-level node.
 
 ## Agent Session Logging
 

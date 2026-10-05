@@ -371,11 +371,11 @@ field: assignee
   candidate A: alice  (event 0193fa-..., lamport=42, ts=2026-04-27T10:00Z)
   candidate B: bob    (event 0193fb-..., lamport=42, ts=2026-04-27T10:00:01Z)
 LWW winner currently exposed in this context: bob (tie-break by wall_clock_ts).
-Per AGENTS.md, agents MUST NOT silently choose; escalate via mtix_comment.
+Per AGENTS.md, agents MUST NOT silently choose; escalate via mtix_annotate.
 === END CONFLICT ===
 ```
 
-`AGENTS.md` is updated to instruct: agents that see a CONFLICT block MUST `mtix_comment` requesting resolution by the user rather than acting on the LWW value.
+`AGENTS.md` is updated to instruct: agents that see a CONFLICT block MUST `mtix_annotate` requesting resolution by the user rather than acting on the LWW value.
 
 ## 12. Pluggability boundaries (mgit integration note)
 

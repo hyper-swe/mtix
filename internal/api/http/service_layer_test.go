@@ -244,8 +244,10 @@ type backendGuardBinding struct {
 	owner, method string
 }
 type backendGuardScope struct {
-	parent *backendGuardScope
-	names  map[string]backendGuardBinding
+	parent       *backendGuardScope
+	names        map[string]backendGuardBinding
+	conservative bool
+	types        map[string]backendGuardType
 }
 
 func (s *backendGuardScope) lookup(name string) backendGuardBinding {
@@ -256,16 +258,71 @@ func (s *backendGuardScope) lookup(name string) backendGuardBinding {
 	}
 	return backendGuardBinding{}
 }
+func (s *backendGuardScope) localType(name string) (backendGuardType, bool) {
+	for scope := s; scope != nil; scope = scope.parent {
+		if declaration, ok := scope.types[name]; ok {
+			return declaration, true
+		}
+	}
+	return backendGuardType{}, false
+}
+func (s *backendGuardScope) contains(name string) bool {
+	for scope := s; scope != nil; scope = scope.parent {
+		if _, ok := scope.names[name]; ok {
+			return true
+		}
+	}
+	return false
+}
 func (s *backendGuardScope) assign(name string, value backendGuardBinding, define bool) {
 	if !define {
 		for scope := s; scope != nil; scope = scope.parent {
-			if _, ok := scope.names[name]; ok {
+			if previous, ok := scope.names[name]; ok {
+				if scope.conservative {
+					value = possibleBackendBinding(previous, value)
+				}
 				scope.names[name] = value
 				return
 			}
 		}
 	}
 	s.names[name] = value
+}
+
+// A possible backend path is retained without evaluating branch conditions.
+func possibleBackendBinding(previous, alternative backendGuardBinding) backendGuardBinding {
+	if alternative.backend {
+		previous.backend = true
+	}
+	if previous.owner == "" {
+		previous.owner = alternative.owner
+	}
+	if alternative.method != "" && (previous.method == "" || backendReadMethod(previous.method) && !backendReadMethod(alternative.method)) {
+		previous.method = alternative.method
+	}
+	return previous
+}
+func forkBackendScope(scope *backendGuardScope) *backendGuardScope {
+	if scope == nil {
+		return nil
+	}
+	fork := &backendGuardScope{parent: forkBackendScope(scope.parent), names: map[string]backendGuardBinding{}, conservative: true}
+	for name, value := range scope.names {
+		fork.names[name] = value
+	}
+	fork.types = map[string]backendGuardType{}
+	for name, declaration := range scope.types {
+		fork.types[name] = declaration
+	}
+	return fork
+}
+func joinBackendScopes(original, alternative *backendGuardScope) {
+	for original != nil && alternative != nil {
+		for name, previous := range original.names {
+			original.names[name] = possibleBackendBinding(previous, alternative.names[name])
+		}
+		original, alternative = original.parent, alternative.parent
+	}
 }
 
 type backendGuardFile struct {
@@ -415,6 +472,9 @@ func (g *packageBackendGuard) expression(expr ast.Expr, scope *backendGuardScope
 		return g.expression(value.X, scope, file)
 	case *ast.SelectorExpr:
 		receiver := g.expression(value.X, scope, file)
+		if g.receiverBackendType(value.X, scope, file) {
+			receiver.backend = true
+		}
 		if field, ok := g.fieldBinding(receiver.owner, value.Sel.Name); ok {
 			return field
 		}
@@ -426,11 +486,57 @@ func (g *packageBackendGuard) expression(expr ast.Expr, scope *backendGuardScope
 		if method == "ReadDB" || method == "WriteDB" {
 			return backendGuardBinding{backend: true}
 		}
-		if typed := g.typeBinding(value.Fun, file, map[string]bool{}); typed.backend {
-			return typed
+		if g.receiverBackendType(value.Fun, scope, file) {
+			return backendGuardBinding{backend: true}
+		}
+		if converted := g.backendConversion(value, scope, file); converted.backend || converted.method != "" {
+			return converted
 		}
 	}
 	return backendGuardBinding{}
+}
+
+// A type expression is distinct from a value that shadows its name/import.
+func (g *packageBackendGuard) receiverBackendType(expr ast.Expr, scope *backendGuardScope, file *backendGuardFile) bool {
+	switch value := expr.(type) {
+	case *ast.ParenExpr:
+		return g.receiverBackendType(value.X, scope, file)
+	case *ast.StarExpr:
+		return g.receiverBackendType(value.X, scope, file)
+	case *ast.Ident:
+		if scope.contains(value.Name) {
+			return false
+		}
+		if declaration, local := scope.localType(value.Name); local {
+			return g.receiverBackendType(declaration.expr, scope, declaration.file)
+		}
+	case *ast.SelectorExpr:
+		if qualifier, ok := value.X.(*ast.Ident); !ok || scope.contains(qualifier.Name) {
+			return false
+		}
+	default:
+		return false
+	}
+	return g.typeBinding(expr, file, map[string]bool{}).backend
+}
+
+// Conversion to a local interface does not erase the original backend source.
+func (g *packageBackendGuard) backendConversion(call *ast.CallExpr, scope *backendGuardScope, file *backendGuardFile) backendGuardBinding {
+	if len(call.Args) != 1 {
+		return backendGuardBinding{}
+	}
+	switch callee := call.Fun.(type) {
+	case *ast.Ident:
+		_, typed := g.types[callee.Name]
+		_, local := scope.localType(callee.Name)
+		if !typed && !local || scope.contains(callee.Name) {
+			return backendGuardBinding{}
+		}
+	case *ast.InterfaceType:
+	default:
+		return backendGuardBinding{}
+	}
+	return g.expression(call.Args[0], scope, file)
 }
 func (g *packageBackendGuard) bindFields(fields *ast.FieldList, scope *backendGuardScope, file *backendGuardFile) {
 	if fields == nil {
@@ -490,6 +596,9 @@ func (g *packageBackendGuard) inspectPackage() {
 	}
 	for _, file := range g.files {
 		for _, declaration := range file.tree.Decls {
+			if global, ok := declaration.(*ast.GenDecl); ok && global.Tok == token.VAR {
+				g.walk(global, g.globals, file)
+			}
 			if function, ok := declaration.(*ast.FuncDecl); ok {
 				scope := &backendGuardScope{parent: g.globals, names: map[string]backendGuardBinding{}}
 				g.bindFields(function.Recv, scope, file)
@@ -510,7 +619,13 @@ func (g *packageBackendGuard) walk(node ast.Node, scope *backendGuardScope, file
 		if g.controlScope(node, scope, file) {
 			return false
 		}
+		g.rejectBackendReference(node, scope, file)
 		switch value := node.(type) {
+		case *ast.TypeSpec:
+			if scope.types == nil {
+				scope.types = map[string]backendGuardType{}
+			}
+			scope.types[value.Name.Name] = backendGuardType{value.Type, file}
 		case *ast.BlockStmt:
 			child := &backendGuardScope{parent: scope, names: map[string]backendGuardBinding{}}
 			for _, statement := range value.List {
@@ -518,10 +633,12 @@ func (g *packageBackendGuard) walk(node ast.Node, scope *backendGuardScope, file
 			}
 			return false
 		case *ast.FuncLit:
-			child := &backendGuardScope{parent: scope, names: map[string]backendGuardBinding{}}
+			fork := forkBackendScope(scope)
+			child := &backendGuardScope{parent: fork, names: map[string]backendGuardBinding{}, conservative: true}
 			g.bindFields(value.Type.Params, child, file)
 			g.bindFields(value.Type.Results, child, file)
 			g.walk(value.Body, child, file)
+			joinBackendScopes(scope, fork)
 			return false
 		case *ast.AssignStmt:
 			for _, expr := range value.Rhs {
@@ -535,19 +652,45 @@ func (g *packageBackendGuard) walk(node ast.Node, scope *backendGuardScope, file
 			}
 			g.bindValues(value, scope, file)
 			return false
-		case *ast.CallExpr:
-			method := g.expression(value.Fun, scope, file).method
-			if method != "" && !backendReadMethod(method) {
-				g.findings = append(g.findings, file.path+":"+method)
-			}
+
 		}
 		return true
 	})
 }
 
+// Reject the mutation selector itself, including a method value that is never
+// invoked. Transport code must never obtain a backend write capability.
+func (g *packageBackendGuard) rejectBackendReference(node ast.Node, scope *backendGuardScope, file *backendGuardFile) {
+	var expression ast.Expr
+	switch value := node.(type) {
+	case *ast.SelectorExpr:
+		expression = value
+	case *ast.CallExpr:
+		expression = value.Fun
+	default:
+		return
+	}
+	method := g.expression(expression, scope, file).method
+	if method != "" && !backendReadMethod(method) {
+		g.findings = append(g.findings, file.path+":"+method)
+	}
+}
+func backendControlNode(node ast.Node) bool {
+	switch node.(type) {
+	case *ast.IfStmt, *ast.ForStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.RangeStmt, *ast.CaseClause, *ast.CommClause:
+		return true
+	}
+	return false
+}
+
 // Control initializers have lexical scopes independent of the enclosing block.
 func (g *packageBackendGuard) controlScope(node ast.Node, scope *backendGuardScope, file *backendGuardFile) bool {
-	child := &backendGuardScope{parent: scope, names: map[string]backendGuardBinding{}}
+	if !backendControlNode(node) {
+		return false
+	}
+	fork := forkBackendScope(scope)
+	defer joinBackendScopes(scope, fork)
+	child := &backendGuardScope{parent: fork, names: map[string]backendGuardBinding{}, conservative: true}
 	switch value := node.(type) {
 	case *ast.IfStmt:
 		g.walk(value.Init, child, file)
@@ -680,5 +823,80 @@ func TestServiceLayer_GuardAllowsScopedServicesAndBackendReads(t *testing.T) {
 	} {
 		sources := map[string]string{"server.go": server, "handlers.go": "package sample; func(s *Server)f(){" + body + "}; func(h *ServiceHolder)g(){h.store.CancelNode(nil,\"\",\"\",\"\",false)}"}
 		require.Empty(t, directPackageStoreMutations(sources), body)
+	}
+}
+
+// Taking a backend mutation method value already crosses the service boundary;
+// dead branches, deferred/uncalled closures, and alias overwrites cannot hide it.
+func TestServiceLayer_GuardRejectsCapturedBackendMutationReferences(t *testing.T) {
+	for _, overwrite := range []string{
+		`if false { cancel = s.svc.CancelNode }`,
+		`for false { cancel = s.svc.CancelNode }`,
+		`unused := func(){ cancel = s.svc.CancelNode }; _ = unused`,
+		`if true { cancel = s.svc.CancelNode } else { cancel = s.svc.CancelNode }`,
+		`defer func(){ cancel = s.svc.CancelNode }()`,
+		`cancel = s.svc.CancelNode`,
+	} {
+		t.Run(overwrite, func(t *testing.T) {
+			source := `package sample; import backend "github.com/hyper-swe/mtix/internal/store"; type Server struct { store backend.Store; svc NodeWriter }; func(s *Server)f(){ var cancel func(...any)error = (s.store.CancelNode); ` + overwrite + `; (cancel)(nil,"","","",false) }`
+			require.NotEmpty(t, directStoreMutations("guard.go", source))
+		})
+	}
+}
+func TestServiceLayer_GuardConservativelyJoinsPossibleBackendValues(t *testing.T) {
+	for _, source := range []string{
+		`var db interface{CancelNode(...any)error} = s.store; if false { db = s.svc }; db.CancelNode(nil)`,
+		`var db interface{CancelNode(...any)error} = s.svc; if true { db = s.store } else { db = s.svc }; db.CancelNode(nil)`,
+		`var db interface{CancelNode(...any)error} = s.store; for false { db = s.svc }; db.CancelNode(nil)`,
+		`var db interface{CancelNode(...any)error} = s.store; unused := func(){db = s.svc}; _ = unused; db.CancelNode(nil)`,
+	} {
+		t.Run(source, func(t *testing.T) {
+			declarations := `package sample; import backend "github.com/hyper-swe/mtix/internal/store"; type Server struct { store backend.Store; svc NodeWriter }; func(s *Server)f(){`
+			require.NotEmpty(t, directStoreMutations("guard.go", declarations+source+`}`))
+		})
+	}
+}
+func TestServiceLayer_GuardCaptureControlsAllowReadsAndServices(t *testing.T) {
+	for _, body := range []string{
+		`read := (s.store.GetNode); if false {read = s.svc.GetNode}; (read)(nil,"")`,
+		`cancel := (s.svc.CancelNode); if false {cancel = s.svc.CancelNode}; (cancel)(nil,"","","",false)`,
+		`cancel := s.svc.CancelNode; for false {cancel = s.svc.CancelNode}; cancel(nil,"","","",false)`,
+		`cancel := s.svc.CancelNode; unused:=func(){cancel=s.svc.CancelNode};_=unused;cancel(nil,"","","",false)`,
+		`db:=s.store; if true {db:=s.svc; db.CancelNode(nil,"","","",false)}; db.GetNode(nil,"")`,
+		`db:=s.store; unused:=func(db NodeWriter){db.CancelNode(nil,"","","",false)};_=unused;db.GetNode(nil,"")`,
+	} {
+		source := `package sample; import backend "github.com/hyper-swe/mtix/internal/store"; type Server struct { store backend.Store; svc NodeWriter }; func(s *Server)f(){` + body + `}`
+		require.Empty(t, directStoreMutations("guard.go", source), body)
+	}
+}
+
+func TestServiceLayer_GuardTracksBackendMethodExpressionsAndConversions(t *testing.T) {
+	for _, body := range []string{
+		`cancel:=backend.Store.CancelNode; cancel(s.store,nil,"","","",false)`,
+		`cancel:=(*sqlbackend.Store).CancelNode; cancel(s.store,nil,"","","",false)`,
+		`cancel:=Storage.CancelNode; cancel(s.store,nil,"","","",false)`,
+		`type LocalStorage=backend.Store; cancel:=LocalStorage.CancelNode; cancel(s.store,nil,"","","",false)`,
+		`type LocalAPI interface{CancelNode(...any)error}; db:=LocalAPI(s.store); db.CancelNode(nil)`,
+		`db:=CancelAPI(s.store); db.CancelNode(nil,"","","",false)`,
+	} {
+		source := `package sample;import backend "github.com/hyper-swe/mtix/internal/store";import sqlbackend "github.com/hyper-swe/mtix/internal/store/sqlite";type Storage=backend.Store;type CancelAPI interface{CancelNode(...any)error};type Server struct{store backend.Store;svc NodeWriter};func(s *Server)f(){` + body + `}`
+		require.NotEmpty(t, directStoreMutations("guard.go", source), body)
+	}
+	for _, body := range []string{
+		`read:=backend.Store.GetNode; read(s.store,nil,"")`,
+		`db:=CancelAPI(s.svc); db.CancelNode(nil,"","","",false)`,
+	} {
+		source := `package sample;import backend "github.com/hyper-swe/mtix/internal/store";type CancelAPI interface{CancelNode(...any)error};type Server struct{store backend.Store;svc NodeWriter};func(s *Server)f(){` + body + `}`
+		require.Empty(t, directStoreMutations("guard.go", source), body)
+	}
+}
+
+func TestServiceLayer_GuardAllowsValuesShadowingTypeNames(t *testing.T) {
+	for _, source := range []string{
+		`package sample; import backend "github.com/hyper-swe/mtix/internal/store"; type Storage=backend.Store;func f(Storage NodeWriter){Storage.CancelNode(nil,"","","",false)}`,
+		`package sample; import backend "github.com/hyper-swe/mtix/internal/store"; type Holder struct{Store NodeWriter};func f(backend Holder){backend.Store.CancelNode(nil,"","","",false)}`,
+		`package sample; type CancelAPI interface{CancelNode(...any)error};func f(CancelAPI func(any)NodeWriter, svc NodeWriter){writer:=CancelAPI(svc);writer.CancelNode(nil,"","","",false)}`,
+	} {
+		require.Empty(t, directStoreMutations("guard.go", source))
 	}
 }

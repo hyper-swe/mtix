@@ -59,13 +59,6 @@ func NewAgentService(
 	}
 }
 
-// RegisterAgent registers an agent per FR-10.1 and refreshes its heartbeat
-// on repeat registration without changing its state, work, project, or session.
-func (svc *AgentService) RegisterAgent(ctx context.Context, agentID, project string) error {
-	_, err := svc.RegisterAgentWithStatus(ctx, agentID, project)
-	return err
-}
-
 // RegisterAgentWithStatus registers an agent per FR-10.1, returning true only
 // when it creates the identity. Existing identities refresh their heartbeat
 // per FR-10.3; their state, work, project, and active sessions are preserved.

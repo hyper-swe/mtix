@@ -24,8 +24,9 @@ func TestE2E_AgentLifecycle_FullCycle(t *testing.T) {
 	env := setupE2E(t)
 
 	// Register agent explicitly.
-	err := env.agentSvc.RegisterAgent(env.ctx, "lifecycle-agent", "LIFE")
+	created, err := env.agentSvc.RegisterAgentWithStatus(env.ctx, "lifecycle-agent", "LIFE")
 	require.NoError(t, err)
+	assert.True(t, created)
 
 	// Create a task.
 	node, err := env.nodeSvc.CreateNode(env.ctx, &service.CreateNodeRequest{
@@ -200,8 +201,9 @@ func TestE2E_AgentLifecycle_ExportImportRoundtrip(t *testing.T) {
 	env := setupE2E(t)
 
 	// Register agent and start a session.
-	err := env.agentSvc.RegisterAgent(env.ctx, "export-agent", "EXP")
+	created, err := env.agentSvc.RegisterAgentWithStatus(env.ctx, "export-agent", "EXP")
 	require.NoError(t, err)
+	assert.True(t, created)
 
 	sessionID, err := env.sessionSvc.SessionStart(env.ctx, "export-agent", "EXP")
 	require.NoError(t, err)
@@ -353,11 +355,13 @@ func TestE2E_AgentLifecycle_ForceReclaimWithAgentSync(t *testing.T) {
 func TestE2E_AgentLifecycle_RegisterDuplicate(t *testing.T) {
 	env := setupE2E(t)
 
-	err := env.agentSvc.RegisterAgent(env.ctx, "dup-agent", "DUP")
+	created, err := env.agentSvc.RegisterAgentWithStatus(env.ctx, "dup-agent", "DUP")
 	require.NoError(t, err)
+	assert.True(t, created)
 
-	err = env.agentSvc.RegisterAgent(env.ctx, "dup-agent", "DUP")
+	created, err = env.agentSvc.RegisterAgentWithStatus(env.ctx, "dup-agent", "DUP")
 	require.NoError(t, err)
+	assert.False(t, created)
 }
 
 // TestE2E_AgentLifecycle_ClaimReclaimConsistentState validates that after

@@ -26,7 +26,9 @@ func TestRegisterAgent_Existing_RefreshesHeartbeatPreservingWorkAndSession(t *te
 			require.NoError(t, err)
 			_, err = s.WriteDB().ExecContext(ctx, `INSERT INTO sessions (id,agent_id,project,started_at,status) VALUES (?,?,?,?,?)`, "test-session", "test-worker", "TEST", past, "active")
 			require.NoError(t, err)
-			require.NoError(t, svc.RegisterAgent(ctx, "test-worker", "OTHER"))
+			created, err := svc.RegisterAgentWithStatus(ctx, "test-worker", "OTHER")
+			require.NoError(t, err)
+			assert.False(t, created)
 			var project, gotState, changed, hb, work string
 			require.NoError(t, s.QueryRow(ctx, `SELECT project,state,state_changed_at,last_heartbeat,current_node_id FROM agents WHERE agent_id = ?`, "test-worker").Scan(&project, &gotState, &changed, &hb, &work))
 			assert.Equal(t, "TEST", project)
@@ -50,7 +52,11 @@ func TestRegisterAgent_ConcurrentRepeats_OneIdentityAllSucceed(t *testing.T) {
 	errs := make(chan error, 8)
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); errs <- svc.RegisterAgent(ctx, "test-worker", "TEST") }()
+		go func() {
+			defer wg.Done()
+			_, err := svc.RegisterAgentWithStatus(ctx, "test-worker", "TEST")
+			errs <- err
+		}()
 	}
 	wg.Wait()
 	close(errs)
@@ -83,7 +89,8 @@ func TestRegisterAgent_InvalidOrUnavailable_ReturnsError(t *testing.T) {
 			if tc.closed {
 				require.NoError(t, s.Close())
 			}
-			err := svc.RegisterAgent(ctx, tc.id, tc.project)
+			created, err := svc.RegisterAgentWithStatus(ctx, tc.id, tc.project)
+			assert.False(t, created)
 			require.Error(t, err)
 			if tc.want != nil {
 				assert.ErrorIs(t, err, tc.want)
@@ -95,11 +102,13 @@ func TestRegisterAgent_InvalidOrUnavailable_ReturnsError(t *testing.T) {
 func TestRegisterAgent_RepeatHeartbeatFailure_ReturnsError(t *testing.T) {
 	svc, _, s, _ := newTestAgentService(t)
 	ctx := context.Background()
-	require.NoError(t, svc.RegisterAgent(ctx, "test-worker", "TEST"))
-	// A write failure must be propagated, rather than reported as a successful repeat.
-	_, err := s.WriteDB().ExecContext(ctx, `CREATE TRIGGER reject_registration_heartbeat BEFORE UPDATE OF last_heartbeat ON agents BEGIN SELECT RAISE(ABORT, 'test heartbeat failure'); END`)
+	created, err := svc.RegisterAgentWithStatus(ctx, "test-worker", "TEST")
 	require.NoError(t, err)
-	err = svc.RegisterAgent(ctx, "test-worker", "TEST")
+	assert.True(t, created)
+	// A write failure must be propagated, rather than reported as a successful repeat.
+	_, err = s.WriteDB().ExecContext(ctx, `CREATE TRIGGER reject_registration_heartbeat BEFORE UPDATE OF last_heartbeat ON agents BEGIN SELECT RAISE(ABORT, 'test heartbeat failure'); END`)
+	require.NoError(t, err)
+	_, err = svc.RegisterAgentWithStatus(ctx, "test-worker", "TEST")
 	require.Error(t, err)
 	assert.Contains(t, fmt.Sprint(err), "test heartbeat failure")
 }
@@ -116,7 +125,7 @@ CREATE TRIGGER reject_registration_commit AFTER INSERT ON agents BEGIN INSERT IN
 			ctx := context.Background()
 			_, err := s.WriteDB().ExecContext(ctx, tc.setup)
 			require.NoError(t, err)
-			err = svc.RegisterAgent(ctx, "test-worker", "TEST")
+			_, err = svc.RegisterAgentWithStatus(ctx, "test-worker", "TEST")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
 			var count int

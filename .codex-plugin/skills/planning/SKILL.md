@@ -30,3 +30,9 @@ Write each level to complete the chain:
 - Story: business goal and success criteria
 - Epic: technical scope and approach
 - Issue: exact files, functions, and test cases
+
+## Declaring Dependencies
+
+For the CLI, use `mtix dep add <from-id> <to-id> --type related` for an informational link; `mtix dep add --help` lists every accepted type. Use the same type with `mtix dep remove`.
+
+Supported types: `blocks`, `related`, `discovered_from`, and `duplicates`. Parent-child relationships are inherent in dot-notation IDs and are not dependencies.

@@ -262,6 +262,12 @@ Every node moves through a 7-state machine with enforced transitions.
 | `cancelled` | | Work descoped with reason |
 | `invalidated` | | Parent prompt changed, needs re-evaluation (auto-managed) |
 
+`mtix show <id>` prints a timed deferred task as
+`Status:   ⏸ deferred (until 2026-10-01T09:00:00Z)`, with the wake time
+in ISO-8601 UTC. It adds nothing when no wake time is set or the task is
+not deferred, even if a stale `defer_until` remains. `--json` returns the
+stored record unchanged.
+
 ### Transition Map
 
 ```

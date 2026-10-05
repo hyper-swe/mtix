@@ -66,6 +66,14 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 
 A `hub-privileges` **WARN** from `mtix sync doctor` is acceptable for everyday use (it may be fine on a private network) and blocks nothing. To restrict who can use the hub's sync tables, the table owner runs `mtix sync harden` (a dry run). **Never** run `mtix sync harden --apply` until the user has approved the dry run's role list, and never run `mtix sync harden` from a hook, a push or the daemon.
 
+## Inspecting deferred tasks
+
+`mtix show <id>` prints a timed deferred task as
+`Status:   ⏸ deferred (until 2026-10-01T09:00:00Z)`, with the wake time
+in ISO-8601 UTC. It adds nothing when no wake time is set or the task is
+not deferred, even if a stale `defer_until` remains. `--json` returns the
+stored record unchanged.
+
 ## Error Handling
 
 If you encounter an error, check [TROUBLESHOOTING.md]({{ .DocsPath }}TROUBLESHOOTING.md) for common solutions. If a command prints `mtix: auto-import of .mtix/tasks.json refused`, nothing was imported: never run the `--mode replace` import it names just to silence it, because that deletes the comments, activity and tasks it lists and needs the ticket count typed at an interactive terminal, it cannot run unattended; follow the "Auto-import of .mtix/tasks.json Refused" procedure in [AGENTS.md]({{ .DocsPath }}AGENTS.md). If blocked, record the reason with `mtix_comment`, then call `mtix_defer` (with an optional `until` wake time) rather than abandoning the task. Always document anomalies with `mtix_comment`.

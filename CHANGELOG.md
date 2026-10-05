@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **`mtix show` displays a deferred task's wake time (MTIX-107.75).** The text status line now includes `(until 2026-10-01T09:00:00Z)` when a deferred task has a stored wake time, normalized to ISO-8601 UTC. Indefinite deferrals and other statuses, including records with a stale wake time, keep their existing status line. JSON output is unchanged.
+
 ## [0.5.4-beta] - 2026-10-03
 
 A security and data-integrity release for teams that sync through a hub or share a `.mtix/tasks.json` board. It is cut from main, so it also carries the features merged since 0.5.3-beta. Upgrade every client, and read Upgrading first if you use a hub or a shared board.

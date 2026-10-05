@@ -91,6 +91,12 @@ When all work is complete, call `mcp__mtix__mtix_session_end`.
 - **Deferred:** Record the root cause with `mcp__mtix__mtix_annotate` (what remains to be done and why you're deferring), then call `mcp__mtix__mtix_defer` with an optional `until`. To have the task come back on its own, pass `until`, an RFC 3339 timestamp with a zone (e.g. `2026-04-01T00:00:00Z`): claims are refused before it; from the wake time on, `mcp__mtix__mtix_ready` lists the task again and the next background pass (`mtix gc`) reopens it. Omitting `until` stores no wake time and clears any earlier one; deferring an already-deferred task replaces its wake time. A deferred task with no wake time (deferred without `until`, or any deferral received through sync) is listed by `mcp__mtix__mtix_ready` and can be claimed at once. Leaving deferred (the background pass, reopen, claim, cancel, or a status change received through sync) clears the wake time. An `until` that is not RFC 3339, or whose UTC year is outside 1 to 9999, is rejected and nothing changes. The stored wake time is the `defer_until` field of `mcp__mtix__mtix_show`. Hub sync does not carry the wake time: other machines that sync through the hub receive the deferral but not the wake time, so there the task is not woken and claims are not refused (a git-tracked `.mtix/tasks.json` does carry it)
 - **Anomaly detected:** Always annotate with `mcp__mtix__mtix_annotate` — unexplained failures, inconsistent state, or missing context must be recorded for audit
 
+`mtix show <id>` prints a timed deferred task as
+`Status:   ⏸ deferred (until 2026-10-01T09:00:00Z)`, with the wake time
+in ISO-8601 UTC. It adds nothing when no wake time is set or the task is
+not deferred, even if a stale `defer_until` remains. `--json` returns the
+stored record unchanged.
+
 ## Error Recovery
 
 | Situation | Action |

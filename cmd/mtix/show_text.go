@@ -4,11 +4,13 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/hyper-swe/mtix/internal/format"
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // showValueIndent aligns continuation lines under the value column of
@@ -92,4 +94,15 @@ func annotationTime(t time.Time) string {
 		return "unknown time"
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+// showStatus renders the status and its stored wake time per FR-6.3
+// (MTIX-107.75). Only deferred nodes have a meaningful wake time; stale
+// timestamps on other statuses are hidden without modifying the record.
+func showStatus(node *model.Node) string {
+	status := fmt.Sprintf("%s %s", StatusIcon(string(node.Status)), node.Status)
+	if node.Status == model.StatusDeferred && node.DeferUntil != nil {
+		status += " (until " + node.DeferUntil.UTC().Format(time.RFC3339) + ")"
+	}
+	return status
 }

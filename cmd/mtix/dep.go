@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -38,9 +39,19 @@ func newDepAddCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&depType, "type", "blocks",
-		"Dependency type (blocks, relates_to)")
+		dependencyTypeHelp())
 
 	return cmd
+}
+
+// dependencyTypeHelp lists the same canonical types validation accepts (FR-4.2).
+func dependencyTypeHelp() string {
+	types := model.AllDepTypes()
+	names := make([]string, len(types))
+	for i, depType := range types {
+		names[i] = string(depType)
+	}
+	return "Dependency type (" + strings.Join(names, ", ") + ")"
 }
 
 func runDepAdd(fromID, toID, depType string) error {
@@ -84,7 +95,7 @@ func newDepRemoveCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&depType, "type", "blocks",
-		"Dependency type (blocks, relates_to)")
+		dependencyTypeHelp())
 
 	return cmd
 }

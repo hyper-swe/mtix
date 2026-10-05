@@ -23,7 +23,9 @@ const showLongHelp = `Show a node's details and annotations as labeled lines, in
 
   ID           node id, marked when the id is still provisional
   Title        title
-  Status       status with its icon
+  Status       status with its icon; deferred nodes with a wake time add
+               "(until <ISO-8601 UTC timestamp>)"; no suffix without a wake
+               time, or for other statuses even with a stale wake time
   Priority     priority (1 = critical ... 5 = backlog)
   Type         node type
   Assignee     current assignee (only when set)
@@ -88,8 +90,8 @@ func newListCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List nodes with filters",
+		Use:     "list",
+		Short:   "List nodes with filters",
 		Aliases: []string{"ls"},
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runList(status, under, assignee, nodeType, priority, fields, changedSince, outputFormat, maxFieldChars, showEmpty, limit, project, allProjects)
@@ -150,12 +152,11 @@ func runShow(id string) error {
 		return out.WriteJSON(node)
 	}
 
-	icon := StatusIcon(string(node.Status))
 	// A provisional id is flagged so the reader knows its number is not yet
 	// settled and must not be externalized (ADR-003 §8).
 	out.WriteHuman("ID:       %s\n", format.AnnotateID(node.ID))
 	out.WriteHuman("Title:    %s\n", node.Title)
-	out.WriteHuman("Status:   %s %s\n", icon, node.Status)
+	out.WriteHuman("Status:   %s\n", showStatus(node))
 	out.WriteHuman("Priority: %d\n", node.Priority)
 	out.WriteHuman("Type:     %s\n", node.NodeType)
 	if node.Assignee != "" {

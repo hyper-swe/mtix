@@ -79,7 +79,7 @@ Manage agent lifecycle
 ### Subcommands
 
 - `heartbeat <agent-id>` — Send a heartbeat for an agent
-- `register <agent-id>` — Register a new agent
+- `register <agent-id>` — Register an agent or refresh its heartbeat
 - `state <agent-id>` — Get or set agent state
 - `work <agent-id>` — Show current work assignment for an agent
 ---
@@ -95,7 +95,11 @@ Send a heartbeat for an agent
 
 **Usage:** `register <agent-id>`
 
-Register a new agent
+Register an agent or refresh its heartbeat
+
+Register an agent on this board. Repeat registration succeeds with an
+"already registered" notice and refreshes its heartbeat, preserving its state,
+work assignment, project, and active session. Registration does not start a session.
 ---
 
 ## state

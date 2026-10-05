@@ -59,37 +59,51 @@ func NewAgentService(
 	}
 }
 
-// RegisterAgent creates a new agent record per FR-10.1a.
-// Sets initial state to idle with timestamps from the injected clock.
-// Returns ErrAlreadyExists if an agent with the same ID already exists.
+// RegisterAgent registers an agent per FR-10.1 and refreshes its heartbeat
+// on repeat registration without changing its state, work, project, or session.
 func (svc *AgentService) RegisterAgent(ctx context.Context, agentID, project string) error {
-	if agentID == "" {
-		return fmt.Errorf("agent ID is required: %w", model.ErrInvalidInput)
-	}
-	if project == "" {
-		return fmt.Errorf("project is required: %w", model.ErrInvalidInput)
-	}
+	_, err := svc.RegisterAgentWithStatus(ctx, agentID, project)
+	return err
+}
 
-	now := svc.clock().UTC().Format(time.RFC3339)
-	db := svc.store.WriteDB()
-	result, err := db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO agents (agent_id, project, state, state_changed_at, last_heartbeat)
-		 VALUES (?, ?, 'idle', ?, ?)`,
-		agentID, project, now, now,
-	)
+// RegisterAgentWithStatus registers an agent per FR-10.1, returning true only
+// when it creates the identity. Existing identities refresh their heartbeat
+// per FR-10.3; their state, work, project, and active sessions are preserved.
+func (svc *AgentService) RegisterAgentWithStatus(ctx context.Context, agentID, project string) (bool, error) {
+	if agentID == "" || project == "" {
+		return false, fmt.Errorf("agent ID and project are required: %w", model.ErrInvalidInput)
+	}
+	tx, err := svc.store.WriteDB().BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("register agent %s: %w", agentID, err)
+		return false, fmt.Errorf("begin registration for %s: %w", agentID, err)
 	}
-
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && rollbackErr != sql.ErrTxDone {
+			svc.logger.Error("rollback agent registration", "agent_id", agentID, "error", rollbackErr)
+		}
+	}()
+	now := svc.clock().UTC().Format(time.RFC3339)
+	// Insert once: an existing identity's state and work must never be reset.
+	result, err := tx.ExecContext(ctx,
+		`INSERT OR IGNORE INTO agents (agent_id, project, state, state_changed_at, last_heartbeat)
+         VALUES (?, ?, 'idle', ?, ?)`, agentID, project, now, now)
+	if err != nil {
+		return false, fmt.Errorf("register agent %s: %w", agentID, err)
+	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("check register result for %s: %w", agentID, err)
+		return false, fmt.Errorf("check register result for %s: %w", agentID, err)
 	}
 	if rows == 0 {
-		return fmt.Errorf("agent %s: %w", agentID, model.ErrAlreadyExists)
+		// Only liveness changes on a repeat; the existing session remains intact.
+		if _, err := tx.ExecContext(ctx, `UPDATE agents SET last_heartbeat = ? WHERE agent_id = ?`, now, agentID); err != nil {
+			return false, fmt.Errorf("refresh registered agent %s heartbeat: %w", agentID, err)
+		}
 	}
-
-	return nil
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit registration for %s: %w", agentID, err)
+	}
+	return rows != 0, nil
 }
 
 // EnsureAgent creates the agent if it does not exist (idempotent) per FR-10.1a.

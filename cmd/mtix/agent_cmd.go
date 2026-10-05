@@ -33,8 +33,11 @@ func newAgentCmd() *cobra.Command {
 func newAgentRegisterCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "register <agent-id>",
-		Short: "Register a new agent",
-		Args:  cobra.ExactArgs(1),
+		Short: "Register an agent or refresh its heartbeat",
+		Long: `Register an agent on this board. Repeat registration succeeds with an
+"already registered" notice and refreshes its heartbeat, preserving its state,
+work assignment, project, and active session. Registration does not start a session.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runAgentRegister(args[0])
 		},
@@ -54,17 +57,28 @@ func runAgentRegister(agentID string) error {
 	}
 
 	ctx := context.Background()
-	if err := app.agentSvc.RegisterAgent(ctx, agentID, project); err != nil {
-		return err
+	created, err := app.agentSvc.RegisterAgentWithStatus(ctx, agentID, project)
+	if err != nil {
+		return fmt.Errorf("register agent: %w", err)
+	}
+	status := "registered"
+	if !created {
+		status = "already_registered"
 	}
 
-	if app.jsonOutput {
-		data, _ := json.Marshal(map[string]string{
-			"agent_id": agentID, "status": "registered",
+	switch {
+	case app.jsonOutput:
+		data, err := json.Marshal(map[string]string{
+			"agent_id": agentID, "status": status,
 		})
+		if err != nil {
+			return fmt.Errorf("encode registration result: %w", err)
+		}
 		fmt.Println(string(data))
-	} else {
+	case created:
 		fmt.Printf("Registered agent %s\n", agentID)
+	default:
+		fmt.Printf("Agent %s already registered; heartbeat refreshed\n", agentID)
 	}
 	return nil
 }

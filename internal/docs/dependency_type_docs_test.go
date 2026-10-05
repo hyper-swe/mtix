@@ -34,13 +34,45 @@ func dependencyTypeMentions(body string) []string {
 		"[`\"']?dep_type[`\"']?\\s*[:=]\\s*" + named,
 	}
 	var names []string
-	normalized := strings.ReplaceAll(body, "\\\n", " ")
+	normalized := normalizeDependencyMarkup(strings.ReplaceAll(body, "\\\n", " "))
 	for _, pattern := range patterns {
 		for _, match := range regexp.MustCompile(pattern).FindAllStringSubmatch(normalized, -1) {
 			names = append(names, match[1])
 		}
 	}
-	names = append(names, dependencyListMentions(body)...)
+	names = append(names, dependencyListMentions(normalized)...)
+	names = append(names, dependencyProseLists(normalized)...)
+	return names
+}
+
+func normalizeDependencyMarkup(body string) string {
+	asterisks := regexp.MustCompile("\\*{1,3}([`]?\\b[A-Za-z][A-Za-z0-9_-]*[`]?)\\*{1,3}")
+	underscores := regexp.MustCompile(`(^|[^A-Za-z0-9_])_{1,3}([A-Za-z][A-Za-z0-9_-]*?)_{1,3}([^A-Za-z0-9_]|$)`)
+	body = asterisks.ReplaceAllString(body, "$1")
+	for {
+		next := underscores.ReplaceAllString(body, "${1}${2}${3}")
+		if next == body {
+			return body
+		}
+		body = next
+	}
+}
+
+func dependencyProseLists(body string) []string {
+	name := "[`\"']?[A-Za-z][A-Za-z0-9_-]*[`\"']?"
+	separator := `\s*(?:,\s*(?:\band\b|\bor\b)?|\band\b|\bor\b|/)\s*`
+	list := name + "(?:" + separator + name + ")+"
+	patterns := []string{
+		"(" + list + `)\s+(?:dependency|dep)\s+types?\b`,
+		`(?i:\b(?:dependency|dep)\s+types?)\s*(?::|=|\bare\b|\bis\b|\binclude[s]?\b|\bnamed\b|\bcalled\b|\bof\b)\s*(` + name + "(?:" + separator + name + ")*)",
+		`(?i:\b(?:dependency|dep)\s+types?)\s+(` + list + ")",
+	}
+	var names []string
+	for _, pattern := range patterns {
+		for _, match := range regexp.MustCompile(pattern).FindAllStringSubmatch(body, -1) {
+			names = append(names, dependencyNameList(match[1])...)
+		}
+	}
 	return names
 }
 
@@ -66,11 +98,9 @@ func dependencyListMentions(body string) []string {
 			names = append(names, dependencyNameList(match[1])...)
 		}
 		if strings.Contains(line, "|") {
-			var name string
-			name, column = dependencyTableName(line, inTypes, column)
-			if name != "" {
-				names = append(names, name)
-			}
+			var cellNames []string
+			cellNames, column = dependencyTableNames(line, inTypes, column)
+			names = append(names, cellNames...)
 		} else {
 			column = -1
 			if inTypes {
@@ -86,7 +116,7 @@ func dependencyListMentions(body string) []string {
 }
 
 func dependencyNameList(text string) []string {
-	separator := regexp.MustCompile(`\s*(?:,|\band\b|\bor\b|/)\s*`)
+	separator := regexp.MustCompile(`\s*(?:,\s*(?:\band\b|\bor\b)?|\band\b|\bor\b|/)\s*`)
 	firstName := regexp.MustCompile("^[`*\"']*([A-Za-z][A-Za-z0-9_-]*)")
 	var names []string
 	for _, part := range separator.Split(text, -1) {
@@ -97,21 +127,18 @@ func dependencyNameList(text string) []string {
 	return names
 }
 
-func dependencyTableName(line string, inTypes bool, column int) (string, int) {
+func dependencyTableNames(line string, inTypes bool, column int) ([]string, int) {
 	cells := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
 	for i, cell := range cells {
 		label := strings.ToLower(strings.Trim(strings.TrimSpace(cell), "`*"))
 		if label == "dependency type" || label == "dependency types" || label == "dep type" || label == "dep types" || label == "dep_type" || (inTypes && label == "type") {
-			return "", i
+			return nil, i
 		}
 	}
 	if column < 0 || column >= len(cells) {
-		return "", column
+		return nil, column
 	}
-	if names := dependencyNameList(cells[column]); len(names) != 0 {
-		return names[0], column
-	}
-	return "", column
+	return dependencyNameList(cells[column]), column
 }
 
 func undefinedDependencyTypes(documents map[string]string) []string {
@@ -156,6 +183,8 @@ func TestDependencyTypeDocs_RecognizesUndefinedNamesAcrossSurfaces(t *testing.T)
 		{"section table", "## Dependency Types\n\n| Type | Meaning |\n| --- | --- |\n| future_kind | Requests |", true},
 		{"list", "Supported dependency types:\n- `blocks`: hard blocker\n- future_kind: request", true},
 		{"issue create", "mtix create --type feature", false},
+		{"emphasized issue types", "**Issue types** are bug and feature. `mtix create --type feature`", false},
+		{"issue table", "| Issue type | Purpose |\n| --- | --- |\n| **bug**, *feature* | Work |", false},
 		{"hierarchy list", "mtix list --type issue", false},
 		{"status", "The `blocked` status has unresolved blocking dependencies", false},
 		{"arbitrary identifier", "`future_kind` is an example task label", false},
@@ -170,12 +199,52 @@ func TestDependencyTypeDocs_RecognizesUndefinedNamesAcrossSurfaces(t *testing.T)
 	}
 }
 
+func TestDependencyTypeDocs_EmphasisAndAllNamedValues(t *testing.T) {
+	cases := []struct{ name, body string }{
+		{"bold", "Use **future_kind** dependency type"},
+		{"emphasis", "Use *future_kind* dependency type"},
+		{"underscore bold", "Use __future_kind__ dependency type"},
+		{"underscore emphasis", "Use _future_kind_ dependency type"},
+		{"bold code", "Use **`future_kind`** dependency type"},
+		{"later table name", "| Dependency type | Purpose |\n| --- | --- |\n| blocks, future_kind | Request |"},
+		{"later table name with markup", "| Dependency type | Purpose |\n| --- | --- |\n| **blocks** and _future_kind_ | Request |"},
+		{"middle table name", "| Dependency type | Purpose |\n| --- | --- |\n| blocks, future_kind, related | Request |"},
+		{"plural before", "Use blocks and future_kind dependency types."},
+		{"plural after", "The dependency types are blocks and future_kind."},
+		{"plural both unknown positions", "Use future_kind, blocks and other_future dependency types."},
+		{"Oxford comma", "Use blocks, related, and future_kind dependency types."},
+		{"adjacent underscore names", "Use __blocks__/__future_kind__ dependency types."},
+		{"plural markup", "Use **blocks** and *future_kind* dependency types."},
+		{"plural examples", "Dependency types include blocks, related and future_kind."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hits := undefinedDependencyTypes(map[string]string{"x.tmpl": tc.body})
+			require.NotEmpty(t, hits, tc.body)
+			require.Contains(t, strings.Join(hits, "\n"), "future_kind", "must report the named invalid value")
+			if strings.Contains(tc.body, "other_future") {
+				require.Contains(t, strings.Join(hits, "\n"), "other_future", "must report every invalid value")
+			}
+		})
+	}
+}
+
 func TestDependencyTypeDocs_EveryModelValueIsAccepted(t *testing.T) {
 	for _, kind := range model.AllDepTypes() {
 		t.Run(string(kind), func(t *testing.T) {
 			name := string(kind)
 			forms := []string{
 				"Use `" + name + "` dependency type.",
+				"Use **" + name + "** dependency type.",
+				"Use *" + name + "* dependency type.",
+				"Use __" + name + "__ dependency type.",
+				"Use _" + name + "_ dependency type.",
+				"Use **`" + name + "`** dependency type.",
+				"Use blocks and " + name + " dependency types.",
+				"The dependency types are blocks and " + name + ".",
+				"Use blocks, related, and " + name + " dependency types.",
+				"Use __blocks__/__" + name + "__ dependency types.",
+				"| Dependency type | Purpose |\n| --- | --- |\n| blocks, " + name + " | Supported |",
 				"Use " + name + " dependency type.",
 				"Use dependency type `" + name + "`.",
 				"Use dependency type " + name + " for requests",

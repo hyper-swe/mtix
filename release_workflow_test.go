@@ -32,6 +32,7 @@ type releaseWorkflowJob struct {
 	Needs       any               `yaml:"needs"`
 	Permissions map[string]string `yaml:"permissions"`
 	Steps       []map[string]any  `yaml:"steps"`
+	Extra       map[string]any    `yaml:",inline"`
 }
 
 func readReleaseWorkflow(t *testing.T) []byte {
@@ -65,6 +66,9 @@ func releaseNpmAuditGatesError(src []byte) error {
 	if !ok {
 		return fmt.Errorf("release workflow must define preflight")
 	}
+	if err := releaseDefaultJobGatesError("preflight", job); err != nil {
+		return fmt.Errorf("check audit containing job: %w", err)
+	}
 	gates := []struct{ name, run string }{
 		{"Run npm audit (shipped dependencies)", "cd web && npm audit --omit=dev --audit-level=high"},
 		{"Run npm audit (build tooling, critical)", "cd web && npm audit --audit-level=critical"},
@@ -78,6 +82,9 @@ func releaseNpmAuditGatesError(src []byte) error {
 			count++
 			if step["run"] != gate.run {
 				return fmt.Errorf("%s must run %q without masking failures", gate.name, gate.run)
+			}
+			if _, exists := step["if"]; exists {
+				return fmt.Errorf("%s must run unconditionally", gate.name)
 			}
 			if _, exists := step["continue-on-error"]; exists {
 				return fmt.Errorf("%s must not declare continue-on-error", gate.name)
@@ -102,6 +109,11 @@ func releaseJobConfiguredError(src []byte) error {
 	if err != nil {
 		return fmt.Errorf("check release job configuration: %w", err)
 	}
+	for _, name := range []string{"preflight", "test-go-postgres-cloud", "release"} {
+		if err := releaseDefaultJobGatesError(name, wf.Jobs[name]); err != nil {
+			return fmt.Errorf("check release gate execution: %w", err)
+		}
+	}
 	if len(wf.On.Push.Tags) != 1 || wf.On.Push.Tags[0] != "v*.*.*" {
 		return fmt.Errorf("release must trigger on version tags")
 	}
@@ -124,6 +136,18 @@ func releaseJobConfiguredError(src []byte) error {
 	release, ok := wf.Jobs["release"]
 	if !ok || !releaseNeedsJob(release.Needs, "preflight") || !releaseNeedsJob(release.Needs, "test-go-postgres-cloud") {
 		return fmt.Errorf("release must wait for preflight and cloud contract gates")
+	}
+	return nil
+}
+
+// Pin the checked-in defaults instead of interpreting GitHub expressions:
+// absent if keeps success-gated execution; absent continue-on-error blocks on
+// failure. Any future condition requires an explicit guard/test update.
+func releaseDefaultJobGatesError(name string, job releaseWorkflowJob) error {
+	for _, key := range []string{"if", "continue-on-error"} {
+		if _, exists := job.Extra[key]; exists {
+			return fmt.Errorf("%s must retain default success gating without %s", name, key)
+		}
 	}
 	return nil
 }
@@ -158,6 +182,7 @@ func TestCI_ReleaseNpmAuditGates_MutatedWorkflowRejected(t *testing.T) {
 			{"continue-on-error", gate.command + "\n        continue-on-error: true"},
 			{"conditional continue-on-error", gate.command + "\n        continue-on-error: ${{ always() }}"},
 			{"masked failure", gate.command + " || true"},
+			{"conditionally skipped", gate.command + "\n        if: false"},
 			{"removed step command", "echo skipped"},
 		}
 		for _, mutation := range mutations {
@@ -167,6 +192,12 @@ func TestCI_ReleaseNpmAuditGates_MutatedWorkflowRejected(t *testing.T) {
 				assert.Error(t, releaseNpmAuditGatesError([]byte(mutated)))
 			})
 		}
+	}
+	for _, tolerance := range []string{"true", "${{ always() }}"} {
+		t.Run("preflight tolerates failures/"+tolerance, func(t *testing.T) {
+			mutated := strings.Replace(src, "  preflight:\n", "  preflight:\n    continue-on-error: "+tolerance+"\n", 1)
+			assert.Error(t, releaseNpmAuditGatesError([]byte(mutated)))
+		})
 	}
 	t.Run("lost shipped scope", func(t *testing.T) {
 		mutated := strings.Replace(src, "npm audit --omit=dev --audit-level=high", "npm audit --audit-level=high", 1)
@@ -179,6 +210,10 @@ func TestCI_ReleaseNpmAuditGates_MutatedWorkflowRejected(t *testing.T) {
 func TestCI_ReleaseJobConfigured_MutatedWorkflowRejected(t *testing.T) {
 	src := string(readReleaseWorkflow(t))
 	mutations := []struct{ name, old, replacement string }{
+		{"release ignores gate failures", "  release:\n", "  release:\n    if: always()\n"},
+		{"cloud conditionally skipped", "  test-go-postgres-cloud:\n", "  test-go-postgres-cloud:\n    if: false\n"},
+		{"cloud tolerates failure", "  test-go-postgres-cloud:\n", "  test-go-postgres-cloud:\n    continue-on-error: true\n"},
+		{"preflight conditionally skipped", "  preflight:\n", "  preflight:\n    if: false\n"},
 		{"tag trigger", `- "v*.*.*"`, `- "main"`},
 		{"missing cloud job", "  test-go-postgres-cloud:", "  retired-cloud:"},
 		{"wrong reusable workflow", "uses: ./.github/workflows/cloud-contract.yml", "uses: ./.github/workflows/ci.yml"},

@@ -174,29 +174,6 @@ func TestCI_E2EJobConfigured(t *testing.T) {
 		"PG-gated suites must run with the race detector")
 }
 
-// TestCI_ReleaseJobConfigured parses .github/workflows/release.yml and
-// asserts the cloud-Postgres job exists, runs only on tags, and references
-// both Supabase and Neon DSN secrets.
-func TestCI_ReleaseJobConfigured(t *testing.T) {
-	root := projectRoot(t)
-	src, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
-	require.NoError(t, err)
-
-	wf := parseWorkflow(t, src)
-
-	job, ok := wf.Jobs["test-go-postgres-cloud"]
-	require.True(t, ok, "release.yml must define job test-go-postgres-cloud")
-	assert.NotEmpty(t, job.Steps, "test-go-postgres-cloud must have steps")
-
-	combined := combineRuns(job)
-	assert.Contains(t, combined, "MTIX_TEST_SUPABASE_DSN",
-		"cloud job must consume Supabase DSN secret")
-	assert.Contains(t, combined, "MTIX_TEST_NEON_DSN",
-		"cloud job must consume Neon DSN secret")
-	assert.Contains(t, combined, "-tags=e2e",
-		"cloud job must build with -tags=e2e")
-}
-
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------

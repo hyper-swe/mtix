@@ -41,7 +41,7 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 ## Key Rules
 
 1. **Always call `mcp__mtix__mtix_context` before doing any work** — the assembled prompt is your complete briefing
-2. Start a session before doing work, end it when done
+2. Run `mtix agent register <agent-id>` at session boot. Repeat registration on the same board exits 0 with an "already registered" notice and refreshes the heartbeat. It preserves the existing state, work assignment, project, and active session; it does not start or replace a session. With `--json`, the status is `registered` for a new identity or `already_registered` for a repeat. Use a unique ID per agent; registration currently identifies an agent by ID on the board, without a live-session ownership check. Start a session before doing work, end it when done
 3. Claim nodes before working on them
 4. Follow the state machine — no shortcuts
 5. Send heartbeats every 5 minutes to avoid stale detection

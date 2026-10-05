@@ -1,7 +1,6 @@
 ---
 description: "Coordinate multiple agents in MTIX project using mtix. Use when registering agents, managing parallel work, handling handoffs, checking agent status, or resolving stale claims."
 allowed-tools:
-  - mcp__mtix__mtix_agent_register
   - mcp__mtix__mtix_agent_state
   - mcp__mtix__mtix_agent_heartbeat
   - mcp__mtix__mtix_agent_work
@@ -32,7 +31,7 @@ Every agent has a unique ID (e.g., `agent-claude-1`, `agent-opus-review`). All o
 ## Agent Lifecycle
 
 ### 1. Registration
-Call `mcp__mtix__mtix_agent_register` to create the agent record. Registration is automatic on first claim, but explicit registration is preferred for audit clarity.
+Run `mtix agent register <agent-id>` at session boot. Repeat registration on the same board exits 0 with an "already registered" notice and refreshes the heartbeat. It preserves the existing state, work assignment, project, and active session; it does not start or replace a session. With `--json`, the status is `registered` for a new identity or `already_registered` for a repeat. Use a unique ID per agent; registration currently identifies an agent by ID on the board, without a live-session ownership check. Registration is automatic on first claim, but explicit registration is preferred for audit clarity.
 
 ### 2. Session Start
 Call `mcp__mtix__mtix_session_start` with agent ID and project. This creates a timestamped session record.

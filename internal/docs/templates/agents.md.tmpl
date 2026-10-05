@@ -91,6 +91,8 @@ If the candidate parent is the wrong scope, create a new top-level story. A new 
 ## Agent Workflow
 
 ### 1. Start Session
+Run `mtix agent register <agent-id>` at session boot. Repeat registration on the same board exits 0 with an "already registered" notice and refreshes the heartbeat. It preserves the existing state, work assignment, project, and active session; it does not start or replace a session. With `--json`, the status is `registered` for a new identity or `already_registered` for a repeat. Use a unique ID per agent; registration currently identifies an agent by ID on the board, without a live-session ownership check.
+
 Call `mtix session start` or `mtix_session_start` with your agent ID and the {{ .ProjectPrefix }} project. This creates an auditable session record.
 
 ### 2. Find Work

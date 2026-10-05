@@ -133,12 +133,18 @@ const (
 	DepTypeDuplicates DepType = "duplicates"
 )
 
-// IsValid returns true if the dependency type is recognized.
+// AllDepTypes returns the supported dependency types per FR-4.2.
+// Each call returns a fresh slice so callers cannot alter validation or help.
+func AllDepTypes() []DepType {
+	return []DepType{DepTypeBlocks, DepTypeRelated, DepTypeDiscoveredFrom, DepTypeDuplicates}
+}
+
+// IsValid returns true if the dependency type is recognized per FR-4.2.
 func (d DepType) IsValid() bool {
-	switch d {
-	case DepTypeBlocks, DepTypeRelated, DepTypeDiscoveredFrom, DepTypeDuplicates:
-		return true
-	default:
-		return false
+	for _, valid := range AllDepTypes() {
+		if d == valid {
+			return true
+		}
 	}
+	return false
 }

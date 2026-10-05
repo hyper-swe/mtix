@@ -453,7 +453,7 @@ Add a dependency between two nodes
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--type` |  | Dependency type (blocks, relates_to) | blocks |
+| `--type` |  | Dependency type (blocks, related, discovered_from, duplicates) | blocks |
 ---
 
 ## remove
@@ -466,7 +466,7 @@ Remove a dependency between two nodes
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--type` |  | Dependency type (blocks, relates_to) | blocks |
+| `--type` |  | Dependency type (blocks, related, discovered_from, duplicates) | blocks |
 ---
 
 ## show

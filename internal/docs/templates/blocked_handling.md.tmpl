@@ -33,5 +33,5 @@ Or via MCP: `mtix_blocked`
 
 1. Always create explicit dependency nodes — do not just defer
 2. Include expected resolution date in the placeholder description
-3. Use `needs_input` dependency type for information requests
+3. Track information requests with a placeholder node and a `blocks` dependency; mark the placeholder done when answered
 4. Use `blocks` dependency type for hard blockers

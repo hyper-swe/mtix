@@ -33,6 +33,7 @@ func requireCmdPG(t *testing.T) string {
 	if dsn == "" {
 		t.Skipf("set %s to enable PG-gated cmd/mtix loop coverage", envCmdPGTestDSN)
 	}
+	dsn = cmdPGFixtureDSN(t, dsn)
 	t.Setenv(transport.EnvDSN, dsn)
 	return dsn
 }

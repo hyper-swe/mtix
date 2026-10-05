@@ -91,6 +91,8 @@ No production code may be written without a corresponding test written first.
 
 Tests gated on `MTIX_PG_TEST_DSN` skip when it is unset, so a plain `go test ./...` does not exercise them. Every push to `main` and every pull request runs them with `-race` on PostgreSQL 16 and 17 service containers, in the `test-go-postgres-docker` job of `.github/workflows/ci.yml`: one job per version and package (`./cmd/mtix/`, `./internal/store/postgres/transport/`, `./e2e/...`), each with its own database, `-p 1 -count=1 -timeout 20m`. The service image, credentials, DSN and timeout match the `test-go` job of `release.yml`, which keeps running every package on a tag. To reproduce one job locally, point `MTIX_PG_TEST_DSN` at a disposable database and run the same `go test` command.
 
+The PG-gated cmd tests create a unique disposable database per test (MTIX-107.67). The login configured through `MTIX_PG_TEST_DSN` therefore needs `CREATE DATABASE` permission on the disposable server. Repeated fixture lookups within one test reuse that database; cleanup closes its connections and drops only that owned database. Other test packages and processes may share the configured server without a cmd fixture resetting their hub tables. A missing privilege fails fixture setup rather than silently skipping coverage.
+
 ### 3.3 Test Naming Convention
 
 ```go

@@ -21,8 +21,9 @@ func TestRegisterAgent_NewAgent_Succeeds(t *testing.T) {
 	agentSvc, _, s, _ := newTestAgentService(t)
 	ctx := context.Background()
 
-	err := agentSvc.RegisterAgent(ctx, "agent-new", "PROJ")
+	created, err := agentSvc.RegisterAgentWithStatus(ctx, "agent-new", "PROJ")
 	require.NoError(t, err)
+	assert.True(t, created)
 
 	// Verify agent row exists with correct initial state.
 	var state, project string
@@ -39,12 +40,14 @@ func TestRegisterAgent_Duplicate_Succeeds(t *testing.T) {
 	agentSvc, _, _, _ := newTestAgentService(t)
 	ctx := context.Background()
 
-	err := agentSvc.RegisterAgent(ctx, "agent-dup", "PROJ")
+	created, err := agentSvc.RegisterAgentWithStatus(ctx, "agent-dup", "PROJ")
 	require.NoError(t, err)
+	assert.True(t, created)
 
 	// Second registration should succeed.
-	err = agentSvc.RegisterAgent(ctx, "agent-dup", "PROJ")
+	created, err = agentSvc.RegisterAgentWithStatus(ctx, "agent-dup", "PROJ")
 	assert.NoError(t, err)
+	assert.False(t, created)
 }
 
 // TestEnsureAgent_NewAgent_CreatesRow verifies idempotent creation.

@@ -371,7 +371,7 @@ field: assignee
   candidate A: alice  (event 0193fa-..., lamport=42, ts=2026-04-27T10:00Z)
   candidate B: bob    (event 0193fb-..., lamport=42, ts=2026-04-27T10:00:01Z)
 LWW winner currently exposed in this context: bob (tie-break by wall_clock_ts).
-Per AGENTS.md, agents MUST NOT silently choose; escalate via mtix_comment.
+Per AGENTS.md, agents MUST NOT silently choose; escalate via mtix_annotate.
 === END CONFLICT ===
 ```
 

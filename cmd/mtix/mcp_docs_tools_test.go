@@ -57,23 +57,112 @@ func readMCPInstructionDoc(root, path string, documents map[string]string) error
 	return nil
 }
 
-// isMCPDocDataReference exempts only the existing schema-key and SQL-role
-// declarations, identified by their repository path and exact line. The same
-// identifier in a tool instruction, or a prefixed name, remains an error.
-func isMCPDocDataReference(path, line, name string) bool {
+// mcpDocDataReference describes one data token in a specific literal context.
+// Paths below locate shipped examples, not exemptions for their whole contents.
+type mcpDocDataReference struct {
+	name    string
+	context string
+}
+
+func mcpDocDataReferences(path string) []mcpDocDataReference {
 	switch path {
 	case "docs/EXPORT-FORMAT.md":
-		return name == "mtix_version" && line == "| `mtix_version` | Version of the mtix that wrote the file (may be empty). |"
-	case "docs/SECURITY-MODEL.md":
-		return name == "mtix_writer" && line == "As statements, run by the table owner (replace `public` if the hub lives in another schema, and `mtix_writer` with the syncing role). This is the same SQL the sync skill gives, and a test compares the two:"
+		return []mcpDocDataReference{{"mtix_version", "| `mtix_version` | Version of the mtix that wrote the file (may be empty). |"}}
+	case "docs/SYNC-PROTOCOL.md":
+		return []mcpDocDataReference{{"mtix_sync_migration", "hash of the constant string `\"mtix_sync_migration\"`"}}
+	case "docs/SYNC-DESIGN.md":
+		return []mcpDocDataReference{
+			{"mtix_user", "ALTER ROLE mtix_user WITH PASSWORD '...'"},
+			{"mtix_sync_migration", "pg_advisory_xact_lock(hash('mtix_sync_migration'))"},
+		}
+	case "README.md", "USERMANUAL.md":
+		refs := mcpDocDSNDataReferences()
+		if path == "USERMANUAL.md" {
+			refs = append(refs, mcpDocDataReference{"mtix_team", "mtix sync harden --apply --keep-role mtix_team"},
+				mcpDocDataReference{"mtix_team", "# restrict to the owner and mtix_team"},
+				mcpDocDataReference{"mtix_team", "mtix config set sync.keep_roles mtix_team"},
+				mcpDocDataReference{"mtix_team", "# keep mtix_team in later runs; also doctor strict mode"})
+		}
+		return refs
 	case "internal/docs/templates/workflows/safety-critical.md.tmpl":
-		return name == "mtix_sync" && line == "Provision the hub, create the least-privilege role (`mtix_sync`),"
+		return []mcpDocDataReference{{"mtix_sync", "Provision the hub, create the least-privilege role (`mtix_sync`),"}}
 	case "internal/docs/templates/workflows/small-team.md.tmpl":
-		return name == "mtix_sync" && (line == "Run as a PG superuser once during provisioning. `mtix_sync` runs" ||
-			line == "the roles named here; `mtix_sync` owns only the objects `mtix sync init`")
+		return append(mcpDocSmallTeamDataReferences(), mcpDocDSNDataReferences()...)
+	case "internal/docs/templates/skills/sync.md.tmpl", ".claude-plugin/skills/mtix-sync.md", ".codex-plugin/skills/sync/SKILL.md":
+		return mcpDocSQLDataReferences()
+	case "docs/SECURITY-MODEL.md":
+		return append(mcpDocSQLDataReferences(), mcpDocDataReference{"mtix_writer",
+			"and `mtix_writer` with the syncing role)"})
 	default:
-		return false
+		return nil
 	}
+}
+
+func mcpDocDSNDataReferences() []mcpDocDataReference {
+	const example = "postgresql://mtix_sync@hub.example.com:5432/mtix_hub?sslmode=verify-full"
+	return []mcpDocDataReference{{"mtix_sync", example}, {"mtix_hub", example}}
+}
+
+func mcpDocSmallTeamDataReferences() []mcpDocDataReference {
+	return []mcpDocDataReference{
+		{"mtix_sync", "Run as a PG superuser once during provisioning. `mtix_sync` runs"},
+		{"mtix_sync", "the roles named here; `mtix_sync` owns only the objects `mtix sync init`"},
+		{"mtix_sync", "CREATE ROLE mtix_sync LOGIN PASSWORD 'set-a-strong-one';"},
+		{"mtix_hub", "CREATE DATABASE mtix_hub;"},
+		{"mtix_hub", "\\c mtix_hub"},
+		{"mtix_hub", "GRANT CONNECT ON DATABASE mtix_hub TO mtix_sync;"},
+		{"mtix_sync", "GRANT CONNECT ON DATABASE mtix_hub TO mtix_sync;"},
+		{"mtix_sync", "GRANT USAGE, CREATE ON SCHEMA public TO mtix_sync;"},
+		{"mtix_sync", "REVOKE CREATE ON SCHEMA public FROM mtix_sync;"},
+		{"mtix_sync", "GRANT CREATE ON SCHEMA public TO mtix_sync;"},
+	}
+}
+
+func mcpDocSQLDataReferences() []mcpDocDataReference {
+	return []mcpDocDataReference{
+		{"mtix_owner", "\\password mtix_owner"},
+		{"mtix_writer", "\\password mtix_writer"},
+		{"mtix_owner", "CREATE ROLE mtix_owner LOGIN;"},
+		{"mtix_writer", "CREATE ROLE mtix_writer LOGIN;"},
+		{"mtix_hub", "CREATE DATABASE mtix_hub OWNER mtix_owner;"},
+		{"mtix_owner", "CREATE DATABASE mtix_hub OWNER mtix_owner;"},
+		{"mtix_hub", "\\c mtix_hub"},
+		{"mtix_owner", "GRANT USAGE, CREATE ON SCHEMA public TO mtix_owner;"},
+		{"mtix_hub", "GRANT CONNECT ON DATABASE mtix_hub TO mtix_writer;"},
+		{"mtix_writer", "GRANT CONNECT ON DATABASE mtix_hub TO mtix_writer;"},
+		{"mtix_writer", "GRANT USAGE ON SCHEMA public TO mtix_writer;"},
+		{"mtix_writer", "GRANT SELECT ON TABLE sync_events, sync_hub_state, sync_node_collisions, sync_project_clients TO mtix_writer;"},
+		{"mtix_writer", "GRANT INSERT ON TABLE sync_events, sync_conflicts, sync_project_clients TO mtix_writer;"},
+		{"mtix_writer", "GRANT UPDATE ON TABLE sync_project_clients TO mtix_writer;"},
+		{"mtix_writer", "GRANT USAGE ON SEQUENCE sync_conflicts_conflict_id_seq TO mtix_writer;"},
+		{"mtix_writer", "GRANT EXECUTE ON FUNCTION record_restore_collision TO mtix_writer;"},
+		{"mtix_writer", "GRANT UPDATE ON TABLE sync_node_collisions TO mtix_writer;"},
+		{"mtix_writer", "GRANT SELECT ON TABLE node_renumber_remaps TO mtix_writer;"},
+		{"mtix_writer", "GRANT INSERT ON TABLE node_renumber_remaps TO mtix_writer;"},
+	}
+}
+
+// isMCPDocDataReference matches only this occurrence within an explicit data
+// example. Another occurrence of the same name on the same line is checked
+// as a tool reference. Prefixed names never use these exemptions.
+func isMCPDocDataReference(path, line, name string, at int) bool {
+	for _, ref := range mcpDocDataReferences(path) {
+		if ref.name != name {
+			continue
+		}
+		for from := 0; from < len(line); {
+			pos := strings.Index(line[from:], ref.context)
+			if pos < 0 {
+				break
+			}
+			pos += from
+			if at == pos+strings.Index(ref.context, name) {
+				return true
+			}
+			from = pos + len(ref.context)
+		}
+	}
+	return false
 }
 
 func unknownMCPInstructionTools(documents map[string]string, reg *mcp.ToolRegistry) []string {
@@ -81,21 +170,20 @@ func unknownMCPInstructionTools(documents map[string]string, reg *mcp.ToolRegist
 	for _, tool := range reg.List() {
 		registered[tool.Name] = true
 	}
-	prefixedName := regexp.MustCompile(`mcp__mtix__[A-Za-z0-9_-]+`)
-	bareName := regexp.MustCompile("`(mtix_[A-Za-z0-9_-]+)`")
+	toolName := regexp.MustCompile(`\b(?:mcp__mtix__)?mtix_[A-Za-z0-9_-]+`)
 	var problems []string
 	for path, text := range documents {
 		for i, line := range strings.Split(text, "\n") {
-			for _, name := range prefixedName.FindAllString(line, -1) {
-				if !registered[strings.TrimPrefix(name, "mcp__mtix__")] {
-					problems = append(problems, fmt.Sprintf("%s:%d: %s", path, i+1, name))
+			for _, span := range toolName.FindAllStringIndex(line, -1) {
+				name := line[span[0]:span[1]]
+				prefixed := strings.HasPrefix(name, "mcp__mtix__")
+				if registered[strings.TrimPrefix(name, "mcp__mtix__")] {
+					continue
 				}
-			}
-			for _, match := range bareName.FindAllStringSubmatch(line, -1) {
-				name := match[1]
-				if !registered[name] && !isMCPDocDataReference(path, line, name) {
-					problems = append(problems, fmt.Sprintf("%s:%d: %s", path, i+1, name))
+				if !prefixed && isMCPDocDataReference(path, line, name, span[0]) {
+					continue
 				}
+				problems = append(problems, fmt.Sprintf("%s:%d: %s", path, i+1, name))
 			}
 		}
 	}
@@ -166,7 +254,7 @@ func TestMCPInstructionDocs_InventoryIncludesNestedDocsAndReferences(t *testing.
 	for _, path := range paths {
 		file := filepath.Join(root, path)
 		require.NoError(t, os.MkdirAll(filepath.Dir(file), 0o750))
-		require.NoError(t, os.WriteFile(file, []byte("mcp__mtix__mtix_planted_unknown\nCall `mtix_planted_unknown`."), 0o600))
+		require.NoError(t, os.WriteFile(file, []byte("mcp__mtix__mtix_planted_unknown\nCall `mtix_planted_unknown`.\nCall mtix_planted_unknown."), 0o600))
 	}
 	documents, err := loadMCPInstructionDocs(root)
 	require.NoError(t, err)
@@ -175,9 +263,10 @@ func TestMCPInstructionDocs_InventoryIncludesNestedDocsAndReferences(t *testing.
 	reg := mcp.NewToolRegistry()
 	registerMCPTools(reg)
 	for _, path := range paths {
-		require.Equal(t, "mcp__mtix__mtix_planted_unknown\nCall `mtix_planted_unknown`.", documents[path])
+		require.Equal(t, "mcp__mtix__mtix_planted_unknown\nCall `mtix_planted_unknown`.\nCall mtix_planted_unknown.", documents[path])
 		require.Contains(t, unknownMCPInstructionTools(documents, reg), path+":1: mcp__mtix__mtix_planted_unknown")
 		require.Contains(t, unknownMCPInstructionTools(documents, reg), path+":2: mtix_planted_unknown")
+		require.Contains(t, unknownMCPInstructionTools(documents, reg), path+":3: mtix_planted_unknown")
 	}
 }
 
@@ -198,8 +287,8 @@ func TestMCPInstructionDocs_DataReferencesExemptOnlyExactDeclarations(t *testing
 	}
 	for i, tt := range tests {
 		t.Run(fmt.Sprintf("%s-%d", tt.name, i), func(t *testing.T) {
-			require.True(t, isMCPDocDataReference(tt.path, tt.declaration, tt.name))
-			require.False(t, isMCPDocDataReference(tt.path, tt.declaration, "mtix_planted_unknown"))
+			require.True(t, isMCPDocDataReference(tt.path, tt.declaration, tt.name, strings.Index(tt.declaration, tt.name)))
+			require.False(t, isMCPDocDataReference(tt.path, tt.declaration, "mtix_planted_unknown", strings.Index(tt.declaration, tt.name)))
 			require.Empty(t, unknownMCPInstructionTools(map[string]string{tt.path: tt.declaration}, reg))
 			require.Equal(t, []string{tt.path + ":2: mtix_planted_unknown"},
 				unknownMCPInstructionTools(map[string]string{tt.path: tt.declaration + "\nCall `mtix_planted_unknown`."}, reg))
@@ -210,6 +299,65 @@ func TestMCPInstructionDocs_DataReferencesExemptOnlyExactDeclarations(t *testing
 				require.NotEmpty(t, unknownMCPInstructionTools(map[string]string{tt.path: instruction}, reg), instruction)
 			}
 			require.NotEmpty(t, unknownMCPInstructionTools(map[string]string{"other.md": tt.declaration}, reg))
+		})
+	}
+}
+
+func TestMCPInstructionDocs_UnquotedProseAndFencesRejectUnknownTools(t *testing.T) {
+	initTestApp(t)
+	reg := mcp.NewToolRegistry()
+	registerMCPTools(reg)
+	tests := []struct {
+		name string
+		path string
+		text string
+		want []string
+	}{
+		{"registered prose", "fixture.md", "Call mtix_annotate.", nil},
+		{"unquoted prose", "fixture.md", "Call mtix_planted_unknown.", []string{"fixture.md:1: mtix_planted_unknown"}},
+		{"instruction fence", "fixture.md", "```\nPer AGENTS.md, escalate via mtix_planted_unknown.\n```", []string{"fixture.md:2: mtix_planted_unknown"}},
+		{"SQL fence instruction", "fixture.md", "```sql\nCall mtix_planted_unknown.\n```", []string{"fixture.md:2: mtix_planted_unknown"}},
+		{"schema plus unquoted unknown", "docs/EXPORT-FORMAT.md", "| `mtix_version` | Version of the mtix that wrote the file (may be empty). | Call mtix_planted_unknown.", []string{"docs/EXPORT-FORMAT.md:1: mtix_planted_unknown"}},
+		{"SQL role plus unquoted unknown", "docs/SECURITY-MODEL.md", "GRANT USAGE ON SCHEMA public TO mtix_writer; Call mtix_planted_unknown.", []string{"docs/SECURITY-MODEL.md:1: mtix_planted_unknown"}},
+		{"SQL role plus misused role name", "docs/SECURITY-MODEL.md", "GRANT USAGE ON SCHEMA public TO mtix_writer; Call mtix_writer.", []string{"docs/SECURITY-MODEL.md:1: mtix_writer"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, unknownMCPInstructionTools(map[string]string{tt.path: tt.text}, reg))
+		})
+	}
+}
+
+func TestMCPInstructionDocs_SQLLockAndConfigDataCannotHideToolCalls(t *testing.T) {
+	initTestApp(t)
+	reg := mcp.NewToolRegistry()
+	registerMCPTools(reg)
+	tests := []struct {
+		path string
+		name string
+		data string
+	}{
+		{"README.md", "mtix_hub", "postgresql://mtix_sync@hub.example.com:5432/mtix_hub?sslmode=verify-full"},
+		{"USERMANUAL.md", "mtix_team", "mtix sync harden --apply --keep-role mtix_team # restrict to the owner and mtix_team"},
+		{"USERMANUAL.md", "mtix_team", "mtix config set sync.keep_roles mtix_team # keep mtix_team in later runs; also doctor strict mode"},
+		{"docs/SYNC-DESIGN.md", "mtix_user", "`ALTER ROLE mtix_user WITH PASSWORD '...'`"},
+		{"docs/SYNC-DESIGN.md", "mtix_sync_migration", "`pg_advisory_xact_lock(hash('mtix_sync_migration'))`"},
+		{"docs/SYNC-PROTOCOL.md", "mtix_sync_migration", "hash of the constant string `\"mtix_sync_migration\"`"},
+		{"internal/docs/templates/skills/sync.md.tmpl", "mtix_owner", "CREATE DATABASE mtix_hub OWNER mtix_owner;"},
+		{"internal/docs/templates/workflows/small-team.md.tmpl", "mtix_sync", "GRANT USAGE, CREATE ON SCHEMA public TO mtix_sync;"},
+		{".claude-plugin/skills/mtix-sync.md", "mtix_writer", "GRANT USAGE ON SCHEMA public TO mtix_writer;"},
+		{".codex-plugin/skills/sync/SKILL.md", "mtix_writer", "`\\password mtix_writer`"},
+	}
+	for i, tt := range tests {
+		t.Run(fmt.Sprintf("%s-%d", tt.name, i), func(t *testing.T) {
+			require.Empty(t, unknownMCPInstructionTools(map[string]string{tt.path: tt.data}, reg))
+			require.Equal(t, []string{tt.path + ":1: mtix_planted_unknown"}, unknownMCPInstructionTools(
+				map[string]string{tt.path: tt.data + " Call mtix_planted_unknown."}, reg))
+			require.Equal(t, []string{tt.path + ":1: " + tt.name}, unknownMCPInstructionTools(
+				map[string]string{tt.path: tt.data + " Call " + tt.name + "."}, reg))
+			require.Equal(t, []string{tt.path + ":1: mcp__mtix__" + tt.name}, unknownMCPInstructionTools(
+				map[string]string{tt.path: "Call mcp__mtix__" + tt.name + "."}, reg))
+			require.NotEmpty(t, unknownMCPInstructionTools(map[string]string{"other.md": tt.data}, reg))
 		})
 	}
 }

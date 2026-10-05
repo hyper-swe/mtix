@@ -17,7 +17,7 @@ import (
 
 func recursiveRemove(source string) bool {
 	source = strings.ReplaceAll(source, "\\\n", " ")
-	command := regexp.MustCompile(`(?:^|[\s;])(?:/[^\s;]+/)?["']?rm["']?\s+([^\n;|&]+)`)
+	command := regexp.MustCompile(`(?:^|[\s;])[-@+]*(?:/[^\s;]+/)?["']?rm["']?\s+([^\n;|&]+)`)
 	for _, line := range strings.Split(source, "\n") {
 		line = strings.SplitN(line, "#", 2)[0]
 		for _, match := range command.FindAllStringSubmatch(line, -1) {
@@ -48,6 +48,30 @@ func TestBuildCleanup_RecursiveRemoveGuardVariants(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.source, func(t *testing.T) { require.Equal(t, tc.forbidden, recursiveRemove(tc.source)) })
+	}
+}
+
+// Standard Make recipe prefixes must not hide a forbidden recursive remove.
+func TestBuildCleanup_RecursiveRemoveGuardMakePrefixes(t *testing.T) {
+	prefixes := []string{"@", "-", "+", "@-", "-@", "@+", "+@", "-+", "+-", "@-+", "@+-", "-@+", "-+@", "+@-", "+-@"}
+	for _, prefix := range prefixes {
+		t.Run(prefix, func(t *testing.T) {
+			cases := []struct {
+				source    string
+				forbidden bool
+			}{
+				{"\t" + prefix + "rm -rf dist", true},
+				{"  \t" + prefix + " /bin/rm '-fr' dist", true},
+				{"\t" + prefix + "rm -r -f dist", true},
+				{"\t" + prefix + "rm --recursive --force dist", true},
+				{"\t" + prefix + "rm -f file", false},
+				{"\t" + prefix + "rm --force file", false},
+				{"\t" + prefix + "find dist -type f -print -delete", false},
+			}
+			for _, tc := range cases {
+				require.Equal(t, tc.forbidden, recursiveRemove(tc.source), tc.source)
+			}
+		})
 	}
 }
 

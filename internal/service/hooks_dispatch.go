@@ -42,6 +42,8 @@ type HooksDispatcher struct {
 	registry *hooks.Registry
 	mtixDir  string
 	logger   *slog.Logger
+	// encodeEvent is per-dispatcher so encoding failures can be exercised in tests.
+	encodeEvent func(any) ([]byte, error)
 
 	// isDaemon marks this dispatcher as the daemon trigger — the only trigger
 	// allowed to run passes on a host whose local exec-dispatch policy is
@@ -74,7 +76,7 @@ func NewHooksDispatcher(store *sqlite.Store, mtixDir string, logger *slog.Logger
 		hooks.NewAppendFileAdapter(filepath.Dir(mtixDir)),
 		hooks.NewExecAdapter(),
 	)
-	return &HooksDispatcher{store: store, registry: reg, mtixDir: mtixDir, logger: logger}
+	return &HooksDispatcher{store: store, registry: reg, mtixDir: mtixDir, logger: logger, encodeEvent: json.Marshal}
 }
 
 // Dispatch runs one pass of the journal-tail dispatcher (FR-20 §4.2): re-fire
@@ -255,7 +257,7 @@ func hookByName(cfg hooks.Config, name string) (hooks.Hook, bool) {
 }
 
 // fire delivers one matched event to each adapter the hook names and returns
-// the aggregate ledger outcome: error if any adapter failed, else a skip
+// the aggregate ledger outcome: error if encoding or any adapter failed, else a skip
 // outcome if exec was gated (untrusted config or exec-dispatch policy "off"),
 // else delivered. For exec, "delivered" means SPAWNED (MTIX-56.9): dispatch
 // never waits on the command; its exit code is the script's own to report and
@@ -264,12 +266,10 @@ func hookByName(cfg hooks.Config, name string) (hooks.Hook, bool) {
 // The outcome is terminal either way — a fire that ran and failed is never
 // auto-retried (FR-20 §14.3).
 func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent, execTrusted bool, execMode string) string {
-	eventJSON, _ := json.Marshal(map[string]any{
-		"seq": je.Seq, "event": evt.Name, "node_id": evt.NodeID,
-		"author": evt.Author, "to": evt.ToAgent, "status": evt.StatusTo,
-		"synced": evt.Synced, "hook": h.Name,
-	})
-	del := hooks.Delivery{Hook: h, Event: evt, EventJSON: eventJSON}
+	del, ok := d.encodeDelivery(ctx, h, evt, je)
+	if !ok {
+		return sqlite.OutcomeError
+	}
 	var anyError, anySkipped, anySkippedPolicy bool
 	for _, name := range h.Deliver {
 		if name == hooks.AdapterExec && execMode == hooks.ExecDispatchOff {
@@ -313,6 +313,23 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 	default:
 		return sqlite.OutcomeDelivered
 	}
+}
+
+// encodeDelivery rejects an encoding error before any adapter sees the payload.
+// Its error is terminal and audited, like an adapter failure (FR-19.3/19.7).
+func (d *HooksDispatcher) encodeDelivery(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent) (hooks.Delivery, bool) {
+	eventJSON, err := d.encodeEvent(map[string]any{
+		"seq": je.Seq, "event": evt.Name, "node_id": evt.NodeID,
+		"author": evt.Author, "to": evt.ToAgent, "status": evt.StatusTo,
+		"synced": evt.Synced, "hook": h.Name,
+	})
+	if err != nil {
+		err = fmt.Errorf("encode hook event payload: %w", err)
+		d.logger.Error("hook dispatch: encode event", "hook", h.Name, "seq", je.Seq, "error", err)
+		d.logFiring(ctx, h, evt, "", sqlite.OutcomeError, err.Error())
+		return hooks.Delivery{}, false
+	}
+	return hooks.Delivery{Hook: h, Event: evt, EventJSON: eventJSON}, true
 }
 
 // rateLimited reports whether hook h has already fired the FR-19.6 cap of times

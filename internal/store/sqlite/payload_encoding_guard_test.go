@@ -35,9 +35,7 @@ func payloadEncoderAliases(file *ast.File) map[string]bool {
 }
 
 func isPayloadEncoder(expr ast.Expr, imports, aliases map[string]bool) bool {
-	switch e := expr.(type) {
-	case *ast.ParenExpr:
-		return isPayloadEncoder(e.X, imports, aliases)
+	switch e := payloadUnparenthesize(expr).(type) {
 	case *ast.Ident:
 		return aliases[e.Name] || (imports["."] && e.Name == "EncodePayload")
 	case *ast.SelectorExpr:
@@ -122,13 +120,24 @@ func payloadDiscardPositions(node ast.Node, fset *token.FileSet, imports, aliase
 	return hits
 }
 
+// Parentheses preserve the call and result count at both the callee and RHS.
+func payloadUnparenthesize(expr ast.Expr) ast.Expr {
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = paren.X
+	}
+}
+
 func payloadDiscardCall(n ast.Node) (*ast.CallExpr, bool) {
 	var call *ast.CallExpr
 	discarded := false
 	switch a := n.(type) {
 	case *ast.AssignStmt:
 		if len(a.Rhs) == 1 {
-			call, _ = a.Rhs[0].(*ast.CallExpr)
+			call, _ = payloadUnparenthesize(a.Rhs[0]).(*ast.CallExpr)
 		}
 		if len(a.Lhs) == 1 || len(a.Lhs) == 2 {
 			if id, ok := a.Lhs[len(a.Lhs)-1].(*ast.Ident); ok {
@@ -137,11 +146,13 @@ func payloadDiscardCall(n ast.Node) (*ast.CallExpr, bool) {
 		}
 	case *ast.ValueSpec:
 		if len(a.Values) == 1 {
-			call, _ = a.Values[0].(*ast.CallExpr)
+			call, _ = payloadUnparenthesize(a.Values[0]).(*ast.CallExpr)
 		}
-		discarded = len(a.Names) == 2 && a.Names[1].Name == "_"
+		if len(a.Names) == 1 || len(a.Names) == 2 {
+			discarded = a.Names[len(a.Names)-1].Name == "_"
+		}
 	case *ast.ExprStmt:
-		call, _ = a.X.(*ast.CallExpr)
+		call, _ = payloadUnparenthesize(a.X).(*ast.CallExpr)
 		discarded = true
 	case *ast.GoStmt:
 		call = a.Call
@@ -222,4 +233,37 @@ func TestPayloadEncodingGuard_AliasesDoNotLeakBetweenFunctions(t *testing.T) {
 	hits, err := discardedPayloadErrors(source)
 	require.NoError(t, err)
 	require.Empty(t, hits)
+}
+
+func TestPayloadEncodingGuard_ParenthesizedAndSingleResult(t *testing.T) {
+	cases := []struct {
+		name, body string
+		bad        bool
+	}{
+		{"tuple declaration", "raw, _ := (model.EncodePayload(nil)); _ = raw", true},
+		{"tuple reassignment", "var raw []byte; raw, _ = ((model.EncodePayload(nil))); _ = raw", true},
+		{"var tuple", "var raw, _ = (((model.EncodePayload)(nil))); _ = raw", true},
+		{"standalone", "((model.EncodePayload(nil)))", true},
+		{"single var helper", "var s *Store; var _ = s.emitPayload(nil,nil,emitParams{},nil)", true},
+		{"parenthesized single var", "var s *Store; var _ = (((s.emitPayload)(nil,nil,emitParams{},nil)))", true},
+		{"method alias", "var s *Store; emit := ((s.emitPayload)); var _ = ((emit(nil,nil,emitParams{},nil)))", true},
+		{"encoder alias", "encode := ((model.EncodePayload)); var raw, _ = ((encode(nil))); _ = raw", true},
+		{"helper assignment", "var s *Store; _ = ((s.emitPayload(nil,nil,emitParams{},nil)))", true},
+		{"parenthesized defer", "defer ((model.EncodePayload))(nil)", true},
+		{"parenthesized go", "var s *Store; go ((s.emitPayload))(nil,nil,emitParams{},nil)", true},
+		{"checked tuple", "raw, err := ((model.EncodePayload(nil))); if err != nil { return err }; _ = raw", false},
+		{"checked var tuple", "var raw, err = ((model.EncodePayload(nil))); if err != nil { return err }; _ = raw", false},
+		{"checked var helper", "var s *Store; var err = ((s.emitPayload(nil,nil,emitParams{},nil))); if err != nil { return err }", false},
+		{"checked method alias", "var s *Store; emit := ((s.emitPayload)); var err = ((emit(nil,nil,emitParams{},nil))); if err != nil { return err }", false},
+		{"unrelated encode", "encode := func(any)([]byte,error){return nil,nil}; var raw, _ = ((encode(nil))); _ = raw", false},
+		{"unrelated one result", "encode := func()error{return nil}; var _ = ((encode()))", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source := "package sqlite\nimport model \"github.com/hyper-swe/mtix/internal/model\"\nfunc probe() error {" + tc.body + "; return nil }"
+			hits, err := discardedPayloadErrors(source)
+			require.NoError(t, err)
+			require.Equal(t, tc.bad, len(hits) > 0, hits)
+		})
+	}
 }

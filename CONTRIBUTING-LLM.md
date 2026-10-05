@@ -453,3 +453,14 @@ Before committing any code, the agent MUST verify:
 ---
 
 *Every line of code is a liability. Make each one earn its place with a test.*
+
+## Build artifact cleanup (MTIX-122)
+
+`make build-web` and `make clean` use `scripts/clean-build-artifacts.sh`.
+It accepts only the fixed build paths, checks their parents and entries for
+symlinks or special files, prints the inventory, deletes regular files, then
+removes empty directories from the bottom up. Missing outputs are harmless.
+Path overrides and unsafe agent-kit version suffixes are refused before writes.
+Do not replace this with recursive `rm`. Build directories must not be changed
+concurrently with cleanup. The cloud-secret probe trap uses the same sequence
+only for its own `mktemp` directory; testing that trap requires no credentials.

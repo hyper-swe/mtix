@@ -124,7 +124,25 @@ pluck() {
 # the product uses, so verify-full and a private CA get exercised for real.
 # Runs SELECT 1 only — it never touches mtix tables. (The transport tests call
 # freshSchema, which DROPS them. Deliberately not used here.)
-PROBE_DIR="$(mktemp -d)"; trap 'rm -rf "$PROBE_DIR"' EXIT
+# This trap owns exactly the directory returned by mktemp, beneath the
+# physical temporary parent captured here. It never accepts an external path.
+cleanup_probe_dir() {
+  [ "${PROBE_DIR%/*}" = "$PROBE_PARENT" ] &&
+    [[ "${PROBE_DIR##*/}" =~ ^mtix-cloud-probe\.[[:alnum:]]{8}$ ]] &&
+    [ -d "$PROBE_DIR" ] && [ ! -L "$PROBE_DIR" ] || {
+      echo 'refusing unexpected probe cleanup path' >&2; return 1;
+    }
+  [ -z "$(find "$PROBE_DIR" ! -type f ! -type d -print)" ] || {
+    echo 'refusing probe cleanup with links or special files' >&2; return 1;
+  }
+  find "$PROBE_DIR" -mindepth 1 -print
+  find "$PROBE_DIR" -type f -print -delete
+  find "$PROBE_DIR" -depth -type d -empty -print -delete
+}
+PROBE_PARENT="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+PROBE_DIR="$(mktemp -d "$PROBE_PARENT/mtix-cloud-probe.XXXXXXXX")"
+readonly PROBE_PARENT PROBE_DIR
+trap cleanup_probe_dir EXIT
 cat > "$PROBE_DIR/main.go" <<'GO'
 package main
 

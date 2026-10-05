@@ -201,7 +201,7 @@ func TestRunSearch_FieldsFlag_ProjectsJSONOutput(t *testing.T) {
 func TestRunList_BriefingFormat_ProducesOutput(t *testing.T) {
 	initTestApp(t)
 
-	require.NoError(t, runCreate("Briefing Test", "", "A description", 1, "", "", "", "", ""))
+	require.NoError(t, runCreate("Briefing Test", "", "", 1, "A description", "", "", "", ""))
 
 	err := runList("", "", "", "", "", "", "", "briefing", 0, false, 50, "", false)
 	assert.NoError(t, err, "--format briefing must be accepted")
@@ -212,7 +212,7 @@ func TestRunList_BriefingFormat_ProducesOutput(t *testing.T) {
 func TestRunList_BriefingFormat_WithFields(t *testing.T) {
 	initTestApp(t)
 
-	require.NoError(t, runCreate("Briefing Fields", "", "Desc", 1, "", "Prompt text", "Accept text", "", ""))
+	require.NoError(t, runCreate("Briefing Fields", "", "", 1, "Desc", "Prompt text", "Accept text", "", ""))
 
 	err := runList("", "", "", "", "", "id,title,prompt", "", "briefing", 0, false, 50, "", false)
 	assert.NoError(t, err, "--format briefing with --fields must work")

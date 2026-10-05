@@ -56,6 +56,9 @@ type Store interface {
 	// Returns ErrAlreadyExists if a node with the given ID already exists.
 	CreateNode(ctx context.Context, node *model.Node) error
 
+	// CreateNodeAndClaim creates an open node and claims it in the same transaction (FR-10.4).
+	CreateNodeAndClaim(ctx context.Context, node *model.Node, assignee string) error
+
 	// GetNode retrieves a node by its dot-notation ID.
 	// Returns ErrNotFound if the node does not exist or is soft-deleted.
 	GetNode(ctx context.Context, id string) (*model.Node, error)
@@ -234,26 +237,26 @@ type ProjectInfo struct {
 
 // Stats holds aggregate statistics per FR-2.7.5.
 type Stats struct {
-	TotalNodes     int            `json:"total_nodes"`
-	ByStatus       map[string]int `json:"by_status"`
-	ByPriority     map[string]int `json:"by_priority"`
-	ByType         map[string]int `json:"by_type"`
-	Progress       float64        `json:"progress"`
-	ScopeID        string         `json:"scope_id,omitempty"`
+	TotalNodes int            `json:"total_nodes"`
+	ByStatus   map[string]int `json:"by_status"`
+	ByPriority map[string]int `json:"by_priority"`
+	ByType     map[string]int `json:"by_type"`
+	Progress   float64        `json:"progress"`
+	ScopeID    string         `json:"scope_id,omitempty"`
 }
 
 // NodeUpdate represents a partial update to a node.
 // Only non-nil fields are applied.
 type NodeUpdate struct {
-	Title       *string         `json:"title,omitempty"`
-	Description *string         `json:"description,omitempty"`
-	Prompt      *string         `json:"prompt,omitempty"`
-	Acceptance  *string         `json:"acceptance,omitempty"`
-	Status      *model.Status   `json:"status,omitempty"`
-	Priority    *model.Priority `json:"priority,omitempty"`
-	Labels      []string        `json:"labels,omitempty"`
-	Assignee    *string         `json:"assignee,omitempty"`
+	Title       *string           `json:"title,omitempty"`
+	Description *string           `json:"description,omitempty"`
+	Prompt      *string           `json:"prompt,omitempty"`
+	Acceptance  *string           `json:"acceptance,omitempty"`
+	Status      *model.Status     `json:"status,omitempty"`
+	Priority    *model.Priority   `json:"priority,omitempty"`
+	Labels      []string          `json:"labels,omitempty"`
+	Assignee    *string           `json:"assignee,omitempty"`
 	AgentState  *model.AgentState `json:"agent_state,omitempty"`
-	ContentHash *string         `json:"content_hash,omitempty"`
-	UpdatedAt   *string         `json:"updated_at,omitempty"`
+	ContentHash *string           `json:"content_hash,omitempty"`
+	UpdatedAt   *string           `json:"updated_at,omitempty"`
 }

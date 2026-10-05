@@ -83,7 +83,7 @@ Events are the unit of replication. Schema lives in `sync_events` (local mirror)
 - **`applied_events`** (also local) — `event_id` PK; existence ⇒ event has been applied; idempotent dedupe key. On a client, an event it already holds in its own `sync_events` log is acknowledged from that row first (`acknowledgeHeldEvent`), and `applied_events` dedupes the rest.
 
 ### 3.3 Operation types (12)
-1. `create_node` — payload: full Node row (title, parent_id, node_type, etc.).
+1. `create_node` — payload: full Node row (title, parent_id, node_type, etc.). Optional `issue_type` carries bug, feature, task, chore, refactor, test or doc independently of depth-derived `node_type`; omitted values remain unset. This additive field does not bump the protocol: new clients accept old payloads without it. Upgrade every replica before relying on synchronized issue type. A node created while a 0.5.4 replica is attached stays unclassified on that replica after upgrade; already-applied create events are not replayed. Explicit creation assignment emits the existing `claim` operation after the create event, with both local writes in one transaction.
 2. `update_field` — payload: `{field_name, new_value}` for a single field.
 3. `transition_status` — payload: `{from_status, to_status}`.
 4. `claim` — payload: `{agent_id, ttl_seconds}`.

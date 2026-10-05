@@ -488,6 +488,9 @@ func strPtr(s string) *string {
 // mockStore is a minimal mock for constructor tests that don't need real storage.
 type mockStore struct{}
 
+func (m *mockStore) CreateNodeAndClaim(ctx context.Context, node *model.Node, _ string) error {
+	return m.CreateNode(ctx, node)
+}
 func (m *mockStore) CreateNode(_ context.Context, _ *model.Node) error { return nil }
 func (m *mockStore) GetNode(_ context.Context, _ string) (*model.Node, error) {
 	return nil, model.ErrNotFound
@@ -499,7 +502,7 @@ func (m *mockStore) ResolveDisplayPathByUID(_ context.Context, _ string) (string
 	return "", model.ErrNotFound
 }
 func (m *mockStore) UpdateNode(_ context.Context, _ string, _ *store.NodeUpdate) error { return nil }
-func (m *mockStore) DeleteNode(_ context.Context, _ string, _ bool, _ string) error   { return nil }
+func (m *mockStore) DeleteNode(_ context.Context, _ string, _ bool, _ string) error    { return nil }
 func (m *mockStore) UndeleteNode(_ context.Context, _ string) error                    { return nil }
 func (m *mockStore) ListNodes(_ context.Context, _ store.NodeFilter, _ store.ListOptions) ([]*model.Node, int, error) {
 	return nil, 0, nil
@@ -526,12 +529,12 @@ func (m *mockStore) DeferNode(_ context.Context, _ string, _ *time.Time, _, _ st
 func (m *mockStore) WakeDeferredNode(_ context.Context, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }
-func (m *mockStore) ClaimNode(_ context.Context, _, _ string) error   { return nil }
+func (m *mockStore) ClaimNode(_ context.Context, _, _ string) error      { return nil }
 func (m *mockStore) UnclaimNode(_ context.Context, _, _, _ string) error { return nil }
 func (m *mockStore) ForceReclaimNode(_ context.Context, _, _ string, _ time.Duration) error {
 	return nil
 }
-func (m *mockStore) CancelNode(_ context.Context, _, _, _ string, _ bool) error { return nil }
+func (m *mockStore) CancelNode(_ context.Context, _, _, _ string, _ bool) error  { return nil }
 func (m *mockStore) UpdateProgress(_ context.Context, _ string, _ float64) error { return nil }
 func (m *mockStore) GetDirectChildren(_ context.Context, _ string) ([]*model.Node, error) {
 	return nil, nil

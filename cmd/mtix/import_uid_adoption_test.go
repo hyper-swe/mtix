@@ -47,7 +47,7 @@ func writeUpgradedTaskImportFile(t *testing.T, title string) (path, localUID, fi
 // uid_adoptions, and the remap file maps the local uid to the id.
 func TestRunImport_MergeAdoptsUID_ListedInEveryOutput(t *testing.T) {
 	initTestApp(t)
-	require.NoError(t, runCreate("Local task", "", "epic", 3, "", "", "", "", ""))
+	require.NoError(t, runCreate("Local task", "", "", 3, "", "", "", "", ""))
 	path, localUID, fileUID := writeUpgradedTaskImportFile(t, "Teammate task")
 	remapPath := filepath.Join(t.TempDir(), "remap.json")
 	app.jsonOutput = true
@@ -80,7 +80,7 @@ func TestRunImport_MergeAdoptsUID_ListedInEveryOutput(t *testing.T) {
 // writes no remap file.
 func TestRunImport_MergeAdoptsNothing_JSONAndRemapFileUnchanged(t *testing.T) {
 	initTestApp(t)
-	require.NoError(t, runCreate("Local task", "", "epic", 3, "", "", "", "", ""))
+	require.NoError(t, runCreate("Local task", "", "", 3, "", "", "", "", ""))
 	data, err := app.store.Export(context.Background(), "TEST", "test")
 	require.NoError(t, err)
 	raw, err := json.Marshal(data)

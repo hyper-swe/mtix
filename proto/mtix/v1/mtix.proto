@@ -90,6 +90,7 @@ message CreateNodeRequest {
   repeated string labels = 10;
   string creator     = 11;
   google.protobuf.Struct metadata = 12;
+  string assignee = 13; // Explicit atomic claim; creator remains the author.
 }
 
 message GetNodeRequest {

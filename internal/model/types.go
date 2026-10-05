@@ -3,6 +3,11 @@
 
 package model
 
+import (
+	"fmt"
+	"strings"
+)
+
 // NodeType represents the tier classification of a node.
 // Tier labels are CANONICALLY DERIVED FROM DEPTH per FR-1.2:
 //   - At node creation (NodeService.CreateNode): NodeType is set from NodeTypeForDepth(depth).
@@ -89,6 +94,26 @@ const (
 	// AgentStateDone indicates the agent has completed its work.
 	AgentStateDone AgentState = "done"
 )
+
+// AllIssueTypes returns the canonical work classifications per FR-3.1.
+func AllIssueTypes() []IssueType {
+	return []IssueType{IssueTypeBug, IssueTypeFeature, IssueTypeTask, IssueTypeChore, IssueTypeRefactor, IssueTypeTest, IssueTypeDoc}
+}
+
+// ValidateIssueType accepts an unset classification or one of the FR-3.1 issue types.
+func ValidateIssueType(kind IssueType) error {
+	if kind == "" {
+		return nil
+	}
+	allowed := make([]string, 0, len(AllIssueTypes()))
+	for _, valid := range AllIssueTypes() {
+		if kind == valid {
+			return nil
+		}
+		allowed = append(allowed, string(valid))
+	}
+	return fmt.Errorf("invalid issue type %q; allowed: %s: %w", kind, strings.Join(allowed, ", "), ErrInvalidInput)
+}
 
 // Priority represents the importance of a node.
 // Values are 1-indexed (1=critical through 5=backlog) per FR-3.1.

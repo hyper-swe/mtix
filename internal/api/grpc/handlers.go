@@ -37,6 +37,8 @@ func (s *Server) HandleCreateNode(ctx context.Context, req *CreateNodeReq) (*mod
 		Prompt:      req.Prompt,
 		Acceptance:  req.Acceptance,
 		Creator:     req.Creator,
+		IssueType:   req.IssueType,
+		Assignee:    req.Assignee,
 	})
 	if err != nil {
 		return nil, mapError(err)
@@ -413,13 +415,15 @@ func (cs *channelSubscriber) matchesFilter(event service.Event) bool {
 
 // CreateNodeReq maps to CreateNodeRequest proto message.
 type CreateNodeReq struct {
-	Title       string `json:"title"`
-	ParentID    string `json:"parent_id"`
-	Project     string `json:"project"`
-	Description string `json:"description"`
-	Prompt      string `json:"prompt"`
-	Acceptance  string `json:"acceptance"`
-	Creator     string `json:"creator"`
+	Title       string          `json:"title"`
+	ParentID    string          `json:"parent_id"`
+	Project     string          `json:"project"`
+	Description string          `json:"description"`
+	Prompt      string          `json:"prompt"`
+	Acceptance  string          `json:"acceptance"`
+	Creator     string          `json:"creator"`
+	IssueType   model.IssueType `json:"issue_type,omitempty"`
+	Assignee    string          `json:"assignee,omitempty"`
 }
 
 // UpdateNodeReq maps to UpdateNodeRequest proto message.

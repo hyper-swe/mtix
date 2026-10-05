@@ -55,7 +55,7 @@ func TestRunImport_Merge_WorkflowConflict_RefusesAndWritesNothing(t *testing.T) 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			initTestApp(t)
-			require.NoError(t, runCreate("Local task", "", "epic", 3, "", "", "", "", ""))
+			require.NoError(t, runCreate("Local task", "", "", 3, "", "", "", "", ""))
 			board := workflowBoard(t, tt.edit)
 			tt.local(t)
 			before, err := app.store.Export(t.Context(), "", "")
@@ -92,7 +92,7 @@ func TestRunImport_Merge_WorkflowFlags_SettleTheConflict(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			initTestApp(t)
-			require.NoError(t, runCreate("Local task", "", "epic", 3, "", "", "", "", ""))
+			require.NoError(t, runCreate("Local task", "", "", 3, "", "", "", "", ""))
 			board := workflowBoard(t, func(data *sqlite.ExportData) {
 				data.Nodes[0].Status, data.Nodes[0].Assignee = string(model.StatusInProgress), "bob"
 			})
@@ -134,7 +134,7 @@ func TestRunImport_Merge_WorkflowFlags_Invalid_WriteNothing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			initTestApp(t)
-			require.NoError(t, runCreate("Local task", "", "epic", 3, "", "", "", "", ""))
+			require.NoError(t, runCreate("Local task", "", "", 3, "", "", "", "", ""))
 			board := workflowBoard(t, func(data *sqlite.ExportData) { data.Nodes[0].Assignee = "bob" })
 			before, err := app.store.Export(t.Context(), "", "")
 			require.NoError(t, err)

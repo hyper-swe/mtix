@@ -22,21 +22,34 @@ import (
 // Returns ErrAlreadyExists if a node with the given ID already exists.
 // Returns ErrInvalidInput if the parent has a terminal status.
 func (s *Store) CreateNode(ctx context.Context, node *model.Node) error {
+	return s.createNode(ctx, node, "")
+}
+
+// CreateNodeAndClaim inserts an open node and performs the normal claim in one
+// transaction (FR-10.4/FR-18.3). A failed claim leaves no node, activity or event.
+// The supplied node reflects the committed assignment only after success.
+func (s *Store) CreateNodeAndClaim(ctx context.Context, node *model.Node, assignee string) error {
+	if assignee == "" || node.Status != model.StatusOpen || node.Assignee != "" {
+		return fmt.Errorf("explicit creation claim requires an unassigned open node and assignee: %w", model.ErrInvalidInput)
+	}
+	if err := s.createNode(ctx, node, assignee); err != nil {
+		return err
+	}
+	node.Status = model.StatusInProgress
+	node.Assignee = assignee
+	node.AgentState = model.AgentStateWorking
+	node.DeferUntil = nil
+	return nil
+}
+
+// createNode keeps creation and optional explicit claim under the same write lock.
+func (s *Store) createNode(ctx context.Context, node *model.Node, assignee string) error {
 	if err := node.Validate(); err != nil {
 		return fmt.Errorf("create node validate: %w", err)
 	}
 
-	// A node's durable UID is its create_node event id (ADR-003 §2 /
-	// MTIX-30.1). Generate that id up front so it can be stamped on the
-	// node row and reused as the create event's id — keeping the
-	// invariant uid == create-event-id true atomically, with no second
-	// write. If the caller already set a UID (e.g. import), keep it.
-	if node.UID == "" {
-		eventID, err := clock.NewEventID()
-		if err != nil {
-			return fmt.Errorf("create node %s: new uid: %w", node.ID, err)
-		}
-		node.UID = eventID
+	if err := ensureCreateNodeUID(node); err != nil {
+		return err
 	}
 
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
@@ -71,8 +84,29 @@ func (s *Store) CreateNode(ctx context.Context, node *model.Node) error {
 			}
 		}
 
+		if assignee != "" {
+			return s.claimNodeTx(ctx, tx, node.ID, assignee)
+		}
 		return nil
 	})
+}
+
+// ensureCreateNodeUID preserves the durable create-event identity (ADR-003 §2).
+func ensureCreateNodeUID(node *model.Node) error {
+	// A node's durable UID is its create_node event id (ADR-003 §2 /
+	// MTIX-30.1). Generate that id up front so it can be stamped on the
+	// node row and reused as the create event's id — keeping the
+	// invariant uid == create-event-id true atomically, with no second
+	// write. If the caller already set a UID (e.g. import), keep it.
+	if node.UID == "" {
+		eventID, err := clock.NewEventID()
+		if err != nil {
+			return fmt.Errorf("create node %s: new uid: %w", node.ID, err)
+		}
+		node.UID = eventID
+	}
+
+	return nil
 }
 
 // buildCreateNodePayload serializes the create_node payload per
@@ -82,6 +116,7 @@ func buildCreateNodePayload(node *model.Node) (json.RawMessage, error) {
 		Title:       node.Title,
 		ParentID:    node.ParentID,
 		NodeType:    node.NodeType,
+		IssueType:   node.IssueType,
 		Description: node.Description,
 		Prompt:      node.Prompt,
 		Acceptance:  node.Acceptance,

@@ -1070,7 +1070,9 @@ Show a node's details and annotations as labeled lines, in this order:
 
   ID           node id, marked when the id is still provisional
   Title        title
-  Status       status with its icon
+  Status       status with its icon; deferred nodes with a wake time add
+               "(until <ISO-8601 UTC timestamp>)"; no suffix without a wake
+               time, or for other statuses even with a stale wake time
   Priority     priority (1 = critical ... 5 = backlog)
   Type         node type
   Assignee     current assignee (only when set)

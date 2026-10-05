@@ -48,13 +48,13 @@ func newCreateCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&under, "under", "", "Parent node ID")
-	cmd.Flags().StringVar(&nodeType, "type", "", "Node type (bug, feature, task, chore)")
+	cmd.Flags().StringVar(&nodeType, "type", "", "Issue type (bug, feature, task, chore, refactor, test, doc; omitted = unset)")
 	cmd.Flags().IntVar(&priority, "priority", 3, "Priority (1=critical, 5=backlog)")
 	cmd.Flags().StringVar(&description, "description", "", "Node description")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Node prompt (FR-12.5)")
 	cmd.Flags().StringVar(&acceptance, "acceptance", "", "Acceptance criteria")
 	cmd.Flags().StringVar(&labels, "labels", "", "Comma-separated labels")
-	cmd.Flags().StringVar(&assign, "assign", "", "Assign to agent/user")
+	cmd.Flags().StringVar(&assign, "assign", "", "Claim the new node for agent/user atomically (status in_progress; creator stays author)")
 	cmd.Flags().StringVar(&project, "project", "",
 		"Project prefix for a root node (overrides the primary; inherited for children) (FR-MULTI-PROJECT MP-5)")
 	cmd.Flags().BoolVar(&yes, "yes", false,
@@ -135,7 +135,9 @@ func runCreateWithProject(title, under, nodeType string, priority int,
 		Description: description,
 		Prompt:      prompt,
 		Acceptance:  acceptance,
-		Creator:     assign,
+		Creator:     app.authorID,
+		Assignee:    assign,
+		IssueType:   model.IssueType(nodeType),
 		Priority:    model.Priority(priority),
 	}
 
@@ -145,15 +147,6 @@ func runCreateWithProject(title, under, nodeType string, priority int,
 			req.Labels[i] = strings.TrimSpace(req.Labels[i])
 		}
 	}
-
-	if req.Creator == "" {
-		// MTIX-24: default the creator to this process's resolved author
-		// (MTIX_AUTHOR_ID > author_id config > "cli") so same-machine agents
-		// are distinguishable.
-		req.Creator = app.authorID
-	}
-
-	_ = nodeType // IssueType handled in future refinement.
 
 	node, err := app.nodeSvc.CreateNode(ctx, req)
 	if err != nil {

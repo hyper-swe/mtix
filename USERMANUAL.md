@@ -120,13 +120,21 @@ mtix create "Build authentication module" \
 | Flag | Description | Default |
 |------|-------------|---------|
 | `--under` | Parent node ID | (root-level) |
-| `--type` | Issue type: `bug`, `feature`, `task`, `chore`, `refactor`, `test`, `doc` | `task` |
+| `--type` | Issue type: `bug`, `feature`, `task`, `chore`, `refactor`, `test`, `doc` | unset |
 | `--priority` | 1 (critical) to 5 (backlog) | 3 |
 | `--description` | Detailed description (max 50KB) | |
 | `--prompt` | LLM agent instructions (max 100KB) | |
 | `--acceptance` | Acceptance criteria | |
 | `--labels` | Comma-separated labels | |
-| `--assign` | Assign to agent on creation | |
+| `--assign` | Atomically create and claim for agent/user (`in_progress`); preserve creator as author | |
+
+## Creating classified and assigned work
+
+`mtix create --type` selects the issue type: `bug`, `feature`, `task`, `chore`, `refactor`, `test`, or `doc`. Omission leaves `issue_type` unset; it does not default to `task`. Hierarchy `node_type` is derived from depth independently (epic, story, issue, micro). `mtix show` and `mtix list` display both classifications; JSON carries separate fields.
+
+`mtix create --assign <agent>` creates an open node and claims it atomically, yielding `in_progress` with normal claim activity and agent state. The creator remains the resolved author (`MTIX_AUTHOR_ID`, configured author, then `cli`). An explicit assignee overrides parent auto-claim; without it, the existing parent auto-claim setting applies. A failed explicit claim rolls back the node and its creation/claim activity and sync events.
+
+MCP `mtix_create`, REST create and gRPC create accept `issue_type` and `assignee` with the same behavior. MCP accepts an optional `creator` (default `mcp`), REST retains the `X-Agent-ID` author, and gRPC retains `creator`; none uses the assignee as creator. Sync carries issue type as an optional create payload field; older clients ignore it and older payloads leave the issue type unset. Assignment uses the ordinary claim event.
 
 ### Create a Micro Issue (Shorthand)
 

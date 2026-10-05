@@ -317,12 +317,6 @@ func TestRegistry_Call_PassesArgumentsCorrectly(t *testing.T) {
 // (*service.NodeService, *service.BackgroundService, etc.), which cannot be mocked.
 // Full integration tests with real services are in internal/integration/mcp_test.go.
 
-
-
-
-
-
-
 // ============================================================================
 // Tool Registration Tests (Docs Tools)
 // ============================================================================
@@ -433,7 +427,10 @@ func TestSSEServer_HandleSSE_WithGETRequest_KeepsConnectionOpen(t *testing.T) {
 // Returns empty/nil results for all operations so handlers complete without error.
 type mcpMockStore struct{}
 
-func (m *mcpMockStore) CreateNode(_ context.Context, _ *model.Node) error   { return nil }
+func (m *mcpMockStore) CreateNodeAndClaim(ctx context.Context, node *model.Node, _ string) error {
+	return m.CreateNode(ctx, node)
+}
+func (m *mcpMockStore) CreateNode(_ context.Context, _ *model.Node) error { return nil }
 func (m *mcpMockStore) GetNode(_ context.Context, _ string) (*model.Node, error) {
 	return &model.Node{ID: "TEST-1", Title: "mock", Status: model.StatusOpen}, nil
 }

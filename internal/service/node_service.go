@@ -18,16 +18,18 @@ import (
 
 // CreateNodeRequest contains the parameters for creating a new node.
 type CreateNodeRequest struct {
-	ParentID    string         `json:"parent_id,omitempty"`
-	Project     string         `json:"project"`
-	Title       string         `json:"title"`
-	Description string         `json:"description,omitempty"`
-	Prompt      string         `json:"prompt,omitempty"`
-	Acceptance  string         `json:"acceptance,omitempty"`
-	Labels      []string       `json:"labels,omitempty"`
-	Priority    model.Priority `json:"priority,omitempty"`
-	Creator     string         `json:"creator"`
-	DeferUntil  *time.Time     `json:"defer_until,omitempty"`
+	IssueType   model.IssueType `json:"issue_type,omitempty"`
+	Assignee    string          `json:"assignee,omitempty"`
+	ParentID    string          `json:"parent_id,omitempty"`
+	Project     string          `json:"project"`
+	Title       string          `json:"title"`
+	Description string          `json:"description,omitempty"`
+	Prompt      string          `json:"prompt,omitempty"`
+	Acceptance  string          `json:"acceptance,omitempty"`
+	Labels      []string        `json:"labels,omitempty"`
+	Priority    model.Priority  `json:"priority,omitempty"`
+	Creator     string          `json:"creator"`
+	DeferUntil  *time.Time      `json:"defer_until,omitempty"`
 }
 
 // NodeService orchestrates node business logic per MTIX-3.1.1.
@@ -127,16 +129,21 @@ func (svc *NodeService) CreateNode(ctx context.Context, req *CreateNodeRequest) 
 		return nil, err
 	}
 
-	if err := svc.store.CreateNode(ctx, node); err != nil {
+	if err := svc.persistCreatedNode(ctx, node, req.Assignee); err != nil {
 		return nil, fmt.Errorf("create node: %w", err)
 	}
 
 	// FR-11.2a: Auto-claim when configured and parent is in_progress with assignee.
-	if err := svc.maybeAutoClaim(ctx, node, req); err != nil {
-		return nil, fmt.Errorf("auto-claim: %w", err)
+	if req.Assignee == "" {
+		if err := svc.maybeAutoClaim(ctx, node, req); err != nil {
+			return nil, fmt.Errorf("auto-claim: %w", err)
+		}
 	}
 
 	svc.broadcastEvent(ctx, EventNodeCreated, node.ID, req.Creator, nil)
+	if req.Assignee != "" {
+		svc.broadcastEvent(ctx, EventNodeClaimed, node.ID, req.Assignee, nil)
+	}
 
 	// Eagerly settle against the hub in the BACKGROUND (ADR-003 §4): the create
 	// call must not block on the network. An offline node simply stays
@@ -144,6 +151,14 @@ func (svc *NodeService) CreateNode(ctx context.Context, req *CreateNodeRequest) 
 	svc.scheduleSettlement()
 
 	return node, nil
+}
+
+// persistCreatedNode preserves unassigned creation and explicitly claims atomically (FR-10.4).
+func (svc *NodeService) persistCreatedNode(ctx context.Context, node *model.Node, assignee string) error {
+	if assignee != "" {
+		return svc.store.CreateNodeAndClaim(ctx, node, assignee)
+	}
+	return svc.store.CreateNode(ctx, node)
 }
 
 // scheduleSettlement kicks off one background settlement pass when a reachable
@@ -235,6 +250,9 @@ func (svc *NodeService) TransitionStatus(
 
 // validateCreateRequest checks the CreateNodeRequest for correctness per FR-3.1.
 func (svc *NodeService) validateCreateRequest(req *CreateNodeRequest) error {
+	if err := model.ValidateIssueType(req.IssueType); err != nil {
+		return err
+	}
 	if req.Title == "" {
 		return fmt.Errorf("title is required: %w", model.ErrInvalidInput)
 	}
@@ -320,6 +338,7 @@ func (svc *NodeService) buildNode(
 		Depth:       depth,
 		Seq:         seq,
 		Title:       req.Title,
+		IssueType:   req.IssueType,
 		Description: req.Description,
 		Prompt:      req.Prompt,
 		Acceptance:  req.Acceptance,

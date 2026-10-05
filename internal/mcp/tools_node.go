@@ -89,70 +89,6 @@ func RegisterNodeTools(reg *ToolRegistry, nodeSvc *service.NodeService, st store
 	registerUpdateTool(reg, nodeSvc)
 }
 
-func registerCreateTool(reg *ToolRegistry, svc *service.NodeService, primaryProject string) {
-	reg.Register(ToolDef{
-		Name:        "mtix_create",
-		Description: "Create a new node in the task hierarchy",
-		InputSchema: SchemaObj{
-			Type: "object",
-			Properties: map[string]SchemaProp{
-				"title":       {Type: "string", Description: "Node title (required)"},
-				"parent_id":   {Type: "string", Description: "Parent node ID (empty for root)"},
-				"project":     {Type: "string", Description: "Project prefix (optional; defaults to the primary project)"},
-				"description": {Type: "string", Description: "Node description"},
-				"prompt":      {Type: "string", Description: "Prompt text for LLM agents"},
-				"acceptance":  {Type: "string", Description: "Acceptance criteria"},
-				"priority":    {Type: "number", Description: "Priority 1-5 (1=critical)"},
-			},
-			Required: []string{"title"},
-		},
-	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct {
-			Title       string `json:"title"`
-			ParentID    string `json:"parent_id"`
-			Project     string `json:"project"`
-			Description string `json:"description"`
-			Prompt      string `json:"prompt"`
-			Acceptance  string `json:"acceptance"`
-			Priority    int    `json:"priority"`
-		}
-		if err := json.Unmarshal(args, &p); err != nil {
-			return nil, fmt.Errorf("parse create args: %w", err)
-		}
-
-		// MP-13: project is optional — default to the configured primary when
-		// omitted so simple agents stay simple, while multi-project agents may
-		// still target a project explicitly. For a child, the service inherits
-		// the parent's project, so this default only matters for a root.
-		project := p.Project
-		if project == "" {
-			project = primaryProject
-		}
-
-		req := &service.CreateNodeRequest{
-			ParentID:    p.ParentID,
-			Project:     project,
-			Title:       p.Title,
-			Description: p.Description,
-			Prompt:      p.Prompt,
-			Acceptance:  p.Acceptance,
-			Creator:     "mcp",
-			Priority:    model.Priority(p.Priority),
-		}
-		if req.Priority == 0 {
-			req.Priority = model.PriorityMedium
-		}
-
-		node, err := svc.CreateNode(ctx, req)
-		if err != nil {
-			return nil, err
-		}
-
-		data, _ := json.MarshalIndent(node, "", "  ")
-		return SuccessResult(string(data)), nil
-	})
-}
-
 func registerShowTool(reg *ToolRegistry, st store.Store) {
 	reg.Register(ToolDef{
 		Name:        "mtix_show",
@@ -165,7 +101,9 @@ func registerShowTool(reg *ToolRegistry, st store.Store) {
 			Required: []string{"id"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct{ ID string `json:"id"` }
+		var p struct {
+			ID string `json:"id"`
+		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse show args: %w", err)
 		}
@@ -304,7 +242,9 @@ func registerUndeleteTool(reg *ToolRegistry, svc *service.NodeService) {
 			Required: []string{"id"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct{ ID string `json:"id"` }
+		var p struct {
+			ID string `json:"id"`
+		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse undelete args: %w", err)
 		}
@@ -331,8 +271,8 @@ func registerDecomposeTool(reg *ToolRegistry, svc *service.NodeService) {
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
 		var p struct {
-			ParentID string                    `json:"parent_id"`
-			Children []service.DecomposeInput  `json:"children"`
+			ParentID string                   `json:"parent_id"`
+			Children []service.DecomposeInput `json:"children"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse decompose args: %w", err)

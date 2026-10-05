@@ -17,14 +17,16 @@ import (
 // createNode handles POST /api/v1/nodes per FR-7.2.
 func (s *Server) createNode(c *gin.Context) {
 	var req struct {
-		Title       string   `json:"title" binding:"required"`
-		ParentID    string   `json:"parent_id"`
-		Project     string   `json:"project"`
-		Description string   `json:"description"`
-		Prompt      string   `json:"prompt"`
-		Acceptance  string   `json:"acceptance"`
-		Priority    int      `json:"priority"`
-		Labels      []string `json:"labels"`
+		Title       string          `json:"title" binding:"required"`
+		ParentID    string          `json:"parent_id"`
+		Project     string          `json:"project"`
+		Description string          `json:"description"`
+		Prompt      string          `json:"prompt"`
+		Acceptance  string          `json:"acceptance"`
+		Priority    int             `json:"priority"`
+		Labels      []string        `json:"labels"`
+		IssueType   model.IssueType `json:"issue_type"`
+		Assignee    string          `json:"assignee"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -48,6 +50,8 @@ func (s *Server) createNode(c *gin.Context) {
 		Priority:    model.Priority(req.Priority),
 		Labels:      req.Labels,
 		Creator:     c.GetHeader("X-Agent-ID"),
+		IssueType:   req.IssueType,
+		Assignee:    req.Assignee,
 	})
 	if err != nil {
 		HandleError(c, err)

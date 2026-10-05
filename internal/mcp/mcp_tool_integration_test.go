@@ -91,7 +91,10 @@ func newDBMockStore(t *testing.T) *dbMockStore {
 	return &dbMockStore{db: db}
 }
 
-func (m *dbMockStore) CreateNode(_ context.Context, _ *model.Node) error   { return nil }
+func (m *dbMockStore) CreateNodeAndClaim(ctx context.Context, node *model.Node, _ string) error {
+	return m.CreateNode(ctx, node)
+}
+func (m *dbMockStore) CreateNode(_ context.Context, _ *model.Node) error { return nil }
 func (m *dbMockStore) GetNode(_ context.Context, id string) (*model.Node, error) {
 	return &model.Node{ID: id, Title: "mock", Status: model.StatusOpen}, nil
 }
@@ -933,7 +936,7 @@ type failResponseWriter struct{}
 
 func (f *failResponseWriter) Header() http.Header         { return http.Header{} }
 func (f *failResponseWriter) Write(_ []byte) (int, error) { return 0, errors.New("write error") }
-func (f *failResponseWriter) WriteHeader(_ int)            {}
+func (f *failResponseWriter) WriteHeader(_ int)           {}
 
 // noopFlusher implements http.Flusher.
 type noopFlusher struct{}

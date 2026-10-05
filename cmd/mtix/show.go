@@ -159,6 +159,9 @@ func runShow(id string) error {
 	out.WriteHuman("Status:   %s\n", showStatus(node))
 	out.WriteHuman("Priority: %d\n", node.Priority)
 	out.WriteHuman("Type:     %s\n", node.NodeType)
+	if node.IssueType != "" {
+		out.WriteHuman("Issue type: %s\n", node.IssueType)
+	}
 	if node.Assignee != "" {
 		out.WriteHuman("Assignee: %s\n", node.Assignee)
 	}
@@ -300,12 +303,14 @@ func runList(status, under, assignee, nodeType, priority, fields, changedSince, 
 		})
 	}
 
-	headers := []string{"ID", "Status", "Pri", "Progress", "Title"}
+	headers := []string{"ID", "Node type", "Issue type", "Status", "Pri", "Progress", "Title"}
 	rows := make([][]string, 0, len(nodes))
 	for _, n := range nodes {
 		icon := StatusIcon(string(n.Status))
 		rows = append(rows, []string{
 			n.ID,
+			string(n.NodeType),
+			string(n.IssueType),
 			fmt.Sprintf("%s %s", icon, n.Status),
 			fmt.Sprintf("%d", n.Priority),
 			fmt.Sprintf("%.0f%%", n.Progress*100),

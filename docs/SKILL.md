@@ -35,6 +35,15 @@ allowed-tools:
 
 This skill enables AI agents to work on the **PROJ** project using mtix task management. Safety-critical operating procedures are baked in as the baseline standard.
 
+## Creating classified and assigned work
+
+`mtix create --type` selects the issue type: `bug`, `feature`, `task`, `chore`, `refactor`, `test`, or `doc`. Omission leaves `issue_type` unset; it does not default to `task`. Hierarchy `node_type` is derived from depth independently (epic, story, issue, micro). `mtix show` and `mtix list` display both classifications; JSON carries separate fields.
+
+`mtix create --assign <agent>` creates an open node and claims it atomically, yielding `in_progress` with normal claim activity and agent state. The creator remains the resolved author (`MTIX_AUTHOR_ID`, configured author, then `cli`). An explicit assignee overrides parent auto-claim; without it, the existing parent auto-claim setting applies. A failed explicit claim rolls back the node and its creation/claim activity and sync events.
+
+MCP `mtix_create`, REST create and gRPC create accept `issue_type` and `assignee` with the same behavior. MCP accepts an optional `creator` (default `mcp`), REST retains the `X-Agent-ID` author, and gRPC retains `creator`; none uses the assignee as creator. Sync carries issue type as an optional create payload field; older clients ignore it and older payloads leave the issue type unset. Assignment uses the ordinary claim event.
+
+
 ## NON-NEGOTIABLE: Context Chain Traversal
 
 **Before doing ANY work, call `mcp__mtix__mtix_context` with the node ID.** The assembled prompt from root→node IS your complete briefing — business goal, technical scope, exact instructions, acceptance criteria, and test specifications.

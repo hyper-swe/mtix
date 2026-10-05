@@ -285,3 +285,14 @@ func TestTypes_EventTypeEnum_14Values(t *testing.T) {
 			"EventType enum missing value: %s", val)
 	}
 }
+
+// TestProto_CreateNode_AssigneeIsAdditive preserves existing wire field numbers.
+func TestProto_CreateNode_AssigneeIsAdditive(t *testing.T) {
+	src := readProtoFile(t, "mtix/v1/mtix.proto")
+	body := regexp.MustCompile(`(?s)message CreateNodeRequest \{(.*?)\n\}`).FindStringSubmatch(src)
+	require.Len(t, body, 2)
+	assert.Regexp(t, `IssueType\s+issue_type\s*=\s*8;`, body[1])
+	assert.Regexp(t, `string\s+creator\s*=\s*11;`, body[1])
+	assert.Regexp(t, `google.protobuf.Struct\s+metadata\s*=\s*12;`, body[1])
+	assert.Regexp(t, `string\s+assignee\s*=\s*13;`, body[1])
+}

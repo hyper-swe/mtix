@@ -42,6 +42,14 @@ The `--prompt` field MUST capture:
 
 **The canonical lazy-creation failure:** `mtix create "Build X" --description "build the X feature"`. No `--prompt`. No `--acceptance`. No `--labels`. The next agent inherits a title and a one-sentence description — exactly what the context chain was designed to *prevent*. If you would not hand a colleague a sticky note with these contents and expect them to ship the feature, the ticket is incomplete. Populate `--prompt`, `--acceptance`, and `--labels` from your current conversation before claiming the ticket or marking it ready.
 
+## Inspecting deferred tasks
+
+`mtix show <id>` prints a timed deferred task as
+`Status:   ⏸ deferred (until 2026-10-01T09:00:00Z)`, with the wake time
+in ISO-8601 UTC. It adds nothing when no wake time is set or the task is
+not deferred, even if a stale `defer_until` remains. `--json` returns the
+stored record unchanged.
+
 ## Node ID semantics
 
 Reference every node by its **dot-path id** (e.g. `{{ .ProjectPrefix }}-1.4`) — never by anything else. The dot-path is the only identifier you need to read, write, or pass to a tool.

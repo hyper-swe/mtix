@@ -41,7 +41,7 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 ## Key Rules
 
 1. **Always call `mcp__mtix__mtix_context` before doing any work** — the assembled prompt is your complete briefing
-2. Run `mtix agent register <agent-id>` at session boot. Repeat registration on the same board exits 0 with an "already registered" notice and refreshes the heartbeat. It preserves the existing state, work assignment, project, and active session; it does not start or replace a session. With `--json`, the status is `registered` for a new identity or `already_registered` for a repeat. Use a unique ID per agent; registration currently identifies an agent by ID on the board, without a live-session ownership check. Start a session before doing work, end it when done
+2. Register with `mtix agent register <agent-id>` at session boot; repeats exit 0 with an "already registered" notice. Start a session before work and end it when done
 3. Claim nodes before working on them
 4. Follow the state machine — no shortcuts
 5. Send heartbeats every 5 minutes to avoid stale detection
@@ -65,14 +65,6 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 ## Sync Hub Privileges
 
 A `hub-privileges` **WARN** from `mtix sync doctor` is acceptable for everyday use (it may be fine on a private network) and blocks nothing. To restrict who can use the hub's sync tables, the table owner runs `mtix sync harden` (a dry run). **Never** run `mtix sync harden --apply` until the user has approved the dry run's role list, and never run `mtix sync harden` from a hook, a push or the daemon.
-
-## Inspecting deferred tasks
-
-`mtix show <id>` prints a timed deferred task as
-`Status:   ⏸ deferred (until 2026-10-01T09:00:00Z)`, with the wake time
-in ISO-8601 UTC. It adds nothing when no wake time is set or the task is
-not deferred, even if a stale `defer_until` remains. `--json` returns the
-stored record unchanged.
 
 ## Error Handling
 

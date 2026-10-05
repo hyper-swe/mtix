@@ -33,3 +33,11 @@ Always run `mtix context <id>` before starting — it assembles the full prompt 
 - Never skip the context chain — it contains your complete briefing
 - Every change must have an mtix task — use `mtix create` if none exists
 - Report blockers: `mtix comment <id> "blocked: <reason>"`
+
+## Inspecting deferred tasks
+
+`mtix show <id>` prints a timed deferred task as
+`Status:   ⏸ deferred (until 2026-10-01T09:00:00Z)`, with the wake time
+in ISO-8601 UTC. It adds nothing when no wake time is set or the task is
+not deferred, even if a stale `defer_until` remains. `--json` returns the
+stored record unchanged.

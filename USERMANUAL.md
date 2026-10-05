@@ -465,6 +465,8 @@ Restores an invalidated node to its previous status.
 
 ### Manage Dependencies
 
+`mtix dep add --help` and `mtix dep remove --help` list all accepted `--type` values. Use `related` for an informational link.
+
 ```bash
 # Add a blocking dependency (PROJ-2 blocks PROJ-1.1)
 mtix dep add PROJ-2 PROJ-1.1

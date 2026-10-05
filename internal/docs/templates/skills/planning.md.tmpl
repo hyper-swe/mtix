@@ -129,5 +129,6 @@ This is not actionable. An agent reading this has no idea what file to modify, w
 Cross-branch dependencies MUST be declared explicitly:
 - Call `mcp__mtix__mtix_dep_add` with `from_id` (blocked node) and `to_id` (blocking node)
 - Supported types: `blocks`, `related`, `duplicates`, `discovered_from`
+- For the CLI, use `mtix dep add <from-id> <to-id> --type related` for an informational link; `mtix dep add --help` lists every accepted type. Use the same type with `mtix dep remove`.
 - mtix performs automatic cycle detection — circular dependencies are rejected
 - An agent cannot claim a node that has unresolved `blocks` dependencies

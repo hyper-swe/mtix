@@ -16,7 +16,7 @@ allowed-tools:
   - mcp__mtix__mtix_session_start
   - mcp__mtix__mtix_session_end
   - mcp__mtix__mtix_blocked
-  - mcp__mtix__mtix_comment
+  - mcp__mtix__mtix_annotate
 ---
 
 # {{ .ProjectPrefix }} — Task Execution
@@ -75,7 +75,7 @@ Before calling `mcp__mtix__mtix_done`:
 
 - **All acceptance criteria met** — check each one explicitly
 - **Tests written and passing** — no stub implementations
-- **Independent verification** — if you implemented it, another agent should verify it. Add a traceability comment linking task→requirement→test→result using `mcp__mtix__mtix_comment`
+- **Independent verification** — if you implemented it, another agent should verify it. Add a traceability comment linking task→requirement→test→result using `mcp__mtix__mtix_annotate`
 - **No stub implementations** — functions must perform their documented purpose end-to-end. A compiling stub is not an implementation
 
 ### 8. Mark Done
@@ -88,21 +88,23 @@ When all work is complete, call `mcp__mtix__mtix_session_end`.
 
 **Never abandon a task silently.** If you cannot complete a task:
 
-- **Blocked by dependency:** Call `mcp__mtix__mtix_comment` to document the blocker, then check `mcp__mtix__mtix_blocked` for the dependency status
-- **Deferred:** Record the root cause with `mcp__mtix__mtix_comment` (what remains to be done and why you're deferring), then call `mcp__mtix__mtix_defer` with an optional `until`. To have the task come back on its own, pass `until`, an RFC 3339 timestamp with a zone (e.g. `2026-04-01T00:00:00Z`): claims are refused before it; from the wake time on, `mcp__mtix__mtix_ready` lists the task again and the next background pass (`mtix gc`) reopens it. Omitting `until` stores no wake time and clears any earlier one; deferring an already-deferred task replaces its wake time. A deferred task with no wake time (deferred without `until`, or any deferral received through sync) is listed by `mcp__mtix__mtix_ready` and can be claimed at once. Leaving deferred (the background pass, reopen, claim, cancel, or a status change received through sync) clears the wake time. An `until` that is not RFC 3339, or whose UTC year is outside 1 to 9999, is rejected and nothing changes. The stored wake time is the `defer_until` field of `mcp__mtix__mtix_show`. Hub sync does not carry the wake time: other machines that sync through the hub receive the deferral but not the wake time, so there the task is not woken and claims are not refused (a git-tracked `.mtix/tasks.json` does carry it)
-- **Anomaly detected:** Always annotate with `mcp__mtix__mtix_comment` — unexplained failures, inconsistent state, or missing context must be recorded for audit
+- **Blocked by dependency:** Call `mcp__mtix__mtix_annotate` to document the blocker, then check `mcp__mtix__mtix_blocked` for the dependency status
+- **Deferred:** Record the root cause with `mcp__mtix__mtix_annotate` (what remains to be done and why you're deferring), then call `mcp__mtix__mtix_defer` with an optional `until`. To have the task come back on its own, pass `until`, an RFC 3339 timestamp with a zone (e.g. `2026-04-01T00:00:00Z`): claims are refused before it; from the wake time on, `mcp__mtix__mtix_ready` lists the task again and the next background pass (`mtix gc`) reopens it. Omitting `until` stores no wake time and clears any earlier one; deferring an already-deferred task replaces its wake time. A deferred task with no wake time (deferred without `until`, or any deferral received through sync) is listed by `mcp__mtix__mtix_ready` and can be claimed at once. Leaving deferred (the background pass, reopen, claim, cancel, or a status change received through sync) clears the wake time. An `until` that is not RFC 3339, or whose UTC year is outside 1 to 9999, is rejected and nothing changes. The stored wake time is the `defer_until` field of `mcp__mtix__mtix_show`. Hub sync does not carry the wake time: other machines that sync through the hub receive the deferral but not the wake time, so there the task is not woken and claims are not refused (a git-tracked `.mtix/tasks.json` does carry it)
+- **Anomaly detected:** Always annotate with `mcp__mtix__mtix_annotate` — unexplained failures, inconsistent state, or missing context must be recorded for audit
 
 ## Error Recovery
 
 | Situation | Action |
 |-----------|--------|
-| Context is insufficient | STOP. Do not guess. Use `mcp__mtix__mtix_comment` to flag the gap. Defer the task. |
+| Context is insufficient | STOP. Do not guess. Use `mcp__mtix__mtix_annotate` to flag the gap. Defer the task. |
 | Claim conflict | Another agent has the node. Find other ready work via `mcp__mtix__mtix_ready`. |
 | Heartbeat lapsed | Your work may be reclaimed. Re-check claim status via `mcp__mtix__mtix_show`. |
 | Tests fail | Do NOT mark done. Fix the tests or defer with an explanation. |
 | State machine error | Check allowed transitions in STATUS_MACHINE.md. Do not force transitions. |
 
 ## Traceability
+
+Use `mcp__mtix__mtix_annotate` with `id`, `text`, and `author` to record a comment; set `to` only when addressing another agent.
 
 Every completed task must have an auditable trail:
 1. Session record (who worked on it, when)

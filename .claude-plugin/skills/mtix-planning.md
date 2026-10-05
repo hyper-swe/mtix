@@ -1,15 +1,15 @@
 ---
 description: "Plan and decompose tasks in MTIX project using mtix. Use when breaking down work, creating subtasks, designing task hierarchies, or writing context-rich task descriptions."
 allowed-tools:
+  - Bash(mtix *)
   - mcp__mtix__mtix_create
   - mcp__mtix__mtix_decompose
   - mcp__mtix__mtix_update
   - mcp__mtix__mtix_context
   - mcp__mtix__mtix_show
-  - mcp__mtix__mtix_tree
   - mcp__mtix__mtix_dep_add
   - mcp__mtix__mtix_dep_remove
-  - mcp__mtix__mtix_comment
+  - mcp__mtix__mtix_annotate
 ---
 
 # MTIX — Planning & Decomposition
@@ -74,7 +74,7 @@ For each child, call `mcp__mtix__mtix_update` with:
 If children have ordering constraints, use `mcp__mtix__mtix_dep_add` to declare dependencies. Undeclared dependencies cause silent failures in parallel agent execution.
 
 ### Step 4: Verify Completeness
-Use `mcp__mtix__mtix_tree` to view the hierarchy. For each leaf node, mentally run the completeness test. If an agent reading only the assembled context would need to ask questions, add more detail.
+Use `mtix tree <id>` to view the hierarchy. For each leaf node, mentally run the completeness test. If an agent reading only the assembled context would need to ask questions, add more detail.
 
 ## Writing Effective Prompts
 

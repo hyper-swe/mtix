@@ -34,17 +34,17 @@ func TestRegisterAgent_NewAgent_Succeeds(t *testing.T) {
 	assert.Equal(t, "PROJ", project)
 }
 
-// TestRegisterAgent_Duplicate_ReturnsAlreadyExists verifies idempotency guard.
-func TestRegisterAgent_Duplicate_ReturnsAlreadyExists(t *testing.T) {
+// TestRegisterAgent_Duplicate_Succeeds verifies repeat registration is idempotent.
+func TestRegisterAgent_Duplicate_Succeeds(t *testing.T) {
 	agentSvc, _, _, _ := newTestAgentService(t)
 	ctx := context.Background()
 
 	err := agentSvc.RegisterAgent(ctx, "agent-dup", "PROJ")
 	require.NoError(t, err)
 
-	// Second registration should return ErrAlreadyExists.
+	// Second registration should succeed.
 	err = agentSvc.RegisterAgent(ctx, "agent-dup", "PROJ")
-	assert.ErrorIs(t, err, model.ErrAlreadyExists)
+	assert.NoError(t, err)
 }
 
 // TestEnsureAgent_NewAgent_CreatesRow verifies idempotent creation.

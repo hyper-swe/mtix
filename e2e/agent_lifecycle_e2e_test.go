@@ -349,7 +349,7 @@ func TestE2E_AgentLifecycle_ForceReclaimWithAgentSync(t *testing.T) {
 }
 
 // TestE2E_AgentLifecycle_RegisterDuplicate validates that registering
-// an already-existing agent returns ErrAlreadyExists.
+// an already-existing agent succeeds.
 func TestE2E_AgentLifecycle_RegisterDuplicate(t *testing.T) {
 	env := setupE2E(t)
 
@@ -357,8 +357,7 @@ func TestE2E_AgentLifecycle_RegisterDuplicate(t *testing.T) {
 	require.NoError(t, err)
 
 	err = env.agentSvc.RegisterAgent(env.ctx, "dup-agent", "DUP")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, model.ErrAlreadyExists)
+	require.NoError(t, err)
 }
 
 // TestE2E_AgentLifecycle_ClaimReclaimConsistentState validates that after

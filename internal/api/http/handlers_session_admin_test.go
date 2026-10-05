@@ -22,7 +22,7 @@ import (
 // session operations (which have an FK on agents.agent_id) can succeed.
 // The HTTP heartbeat endpoint only does UPDATE, not INSERT, so we need
 // direct DB access to create the agent record.
-func ensureHTTPAgent(t *testing.T, s *Server, agentID, project string) {
+func ensureHTTPAgent(t *testing.T, s *serverFixture, agentID, project string) {
 	t.Helper()
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := s.store.WriteDB().ExecContext(context.Background(),

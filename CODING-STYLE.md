@@ -123,6 +123,22 @@ CLI Commands / REST Handlers / gRPC Handlers / MCP Tools
 - The store layer MUST expose only data access operations — no business rules
 - Cross-cutting concerns (logging, metrics) use middleware/interceptors
 
+### 3.1a HTTP service capabilities (MTIX-107.24 / MTIX-99.1)
+
+The HTTP server receives a `Services` bundle with separate `ReadServices` and
+`WriteServices` interfaces. Handler files import service request/result types;
+they never receive a storage implementation or perform raw queries. Node queries
+and workflow operations belong to `NodeService`, dependency operations to
+`DependencyService`, and backup, integrity and database shutdown to `AdminService`.
+Workflow and dependency mutations broadcast after successful persistence.
+
+`NewReadOnlyServer` takes `ReadServices` alone and registers query routes. A read
+implementation needs no mutation methods, database handle or runtime write filter.
+This is the compile-time capability precursor to FR-23, not the complete ReadModel.
+MCP retains its existing runtime read-only tool scope gate; inbox acknowledgements
+now go through `InboxService`. The remaining gRPC/MCP read access is tracked by
+MTIX-127; mutation handlers in all three transports must use services.
+
 ### 3.2 Store Interface Pattern
 
 ```go

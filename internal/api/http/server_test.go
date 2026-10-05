@@ -21,7 +21,12 @@ import (
 )
 
 // testServer creates a Server with real store and services for testing.
-func testServer(t *testing.T) *Server {
+type serverFixture struct {
+	*Server
+	store *sqlite.Store
+}
+
+func testServer(t *testing.T) *serverFixture {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	return testServerWith(t, logger, ServerConfig{Bind: "127.0.0.1", Port: "0", RateLimit: 0})
@@ -29,7 +34,7 @@ func testServer(t *testing.T) *Server {
 
 // testServerWith creates a Server like testServer, with the given logger
 // and configuration.
-func testServerWith(t *testing.T, logger *slog.Logger, cfg ServerConfig) *Server {
+func testServerWith(t *testing.T, logger *slog.Logger, cfg ServerConfig) *serverFixture {
 	t.Helper()
 
 	tmpDir := t.TempDir()
@@ -47,17 +52,20 @@ func testServerWith(t *testing.T, logger *slog.Logger, cfg ServerConfig) *Server
 	configSvc, err := service.NewConfigService("")
 	require.NoError(t, err)
 
-	return NewServer(
-		st,
-		service.NewNodeService(st, broadcaster, config, logger, clock),
-		service.NewBackgroundService(st, config, logger, clock),
-		service.NewSessionService(st, config, logger, clock),
-		service.NewAgentService(st, broadcaster, config, logger, clock),
-		configSvc,
-		logger,
-		cfg,
-		clock,
-	)
+	nodes := service.NewNodeService(st, broadcaster, config, logger, clock)
+	background := service.NewBackgroundService(st, config, logger, clock)
+	sessions := service.NewSessionService(st, config, logger, clock)
+	agents := service.NewAgentService(st, broadcaster, config, logger, clock)
+	dependencies := service.NewDependencyServiceFromNodeService(nodes)
+	admin := service.NewAdminService(st)
+	services := Services{
+		Read:  ReadServices{Nodes: nodes, Background: background, Sessions: sessions, Agents: agents, Config: configSvc, Dependencies: dependencies, Admin: admin},
+		Write: WriteServices{Nodes: nodes, Background: background, Sessions: sessions, Agents: agents, Config: configSvc, Dependencies: dependencies, Admin: admin},
+	}
+	srv := NewServer(services, logger, cfg, clock)
+
+	return &serverFixture{Server: srv, store: st}
+
 }
 
 // TestServer_Health_ReturnsOK verifies /health endpoint.

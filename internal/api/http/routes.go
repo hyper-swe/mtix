@@ -83,3 +83,19 @@ func (s *Server) registerAdminRoutes(rg *gin.RouterGroup) {
 	admin.POST("/verify", s.runVerify)
 	admin.POST("/backup", s.runBackup)
 }
+
+// registerReadOnlyRoutes mounts queries per MTIX-99.1.
+func (s *Server) registerReadOnlyRoutes(rg *gin.RouterGroup) {
+	nodes := rg.Group("/nodes")
+	nodes.GET("/:id", s.getNode)
+	nodes.GET("/:id/children", s.getChildren)
+	nodes.GET("/:id/activity", s.getActivity)
+	nodes.GET("/:id/ancestors", s.nodeAncestors)
+	nodes.GET("/:id/tree", s.nodeTree)
+	s.registerQueryRoutes(rg)
+	rg.GET("/deps/:id", s.getDependencies)
+	rg.GET("/agents/:id/sessions/summary", s.sessionSummary)
+	rg.GET("/agents/:id/state", s.getAgentState)
+	rg.GET("/agents/:id/work", s.getAgentWork)
+	rg.GET("/admin/config", s.getConfig)
+}

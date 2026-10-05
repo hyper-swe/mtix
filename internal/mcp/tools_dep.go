@@ -8,15 +8,23 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store"
 )
 
-// RegisterDepTools registers dependency management MCP tools per MTIX-6.2.4.
-func RegisterDepTools(reg *ToolRegistry, st store.Store) {
-	registerDepAddTool(reg, st)
-	registerDepRemoveTool(reg, st)
+// RegisterDepTools registers dependency management MCP tools per FR-4/FR-14.
+// A supplied service shares the application event publisher and injected clock.
+// Omitted services retain compatibility with standalone tool registrations.
+func RegisterDepTools(reg *ToolRegistry, st store.Store, services ...*service.DependencyService) {
+	svc := service.NewDependencyService(st, nil, nil, time.Now)
+	if len(services) > 0 && services[0] != nil {
+		svc = services[0]
+	}
+	registerDepAddTool(reg, svc)
+	registerDepRemoveTool(reg, svc)
 	registerDepShowTool(reg, st)
 }
 
@@ -30,7 +38,7 @@ func dependencyTypeSchema() SchemaProp {
 	return SchemaProp{Type: "string", Description: "Dependency type: " + strings.Join(values, ", "), Enum: values}
 }
 
-func registerDepAddTool(reg *ToolRegistry, st store.Store) {
+func registerDepAddTool(reg *ToolRegistry, svc *service.DependencyService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_dep_add",
 		Description: "Add a dependency between two nodes",
@@ -59,7 +67,7 @@ func registerDepAddTool(reg *ToolRegistry, st store.Store) {
 			DepType: model.DepType(p.DepType),
 		}
 
-		if err := st.AddDependency(ctx, dep); err != nil {
+		if err := svc.AddDependency(ctx, dep); err != nil {
 			return nil, err
 		}
 
@@ -67,7 +75,7 @@ func registerDepAddTool(reg *ToolRegistry, st store.Store) {
 	})
 }
 
-func registerDepRemoveTool(reg *ToolRegistry, st store.Store) {
+func registerDepRemoveTool(reg *ToolRegistry, svc *service.DependencyService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_dep_remove",
 		Description: "Remove a dependency between two nodes",
@@ -90,7 +98,7 @@ func registerDepRemoveTool(reg *ToolRegistry, st store.Store) {
 			return nil, fmt.Errorf("parse dep_remove args: %w", err)
 		}
 
-		if err := st.RemoveDependency(ctx, p.FromID, p.ToID, model.DepType(p.DepType)); err != nil {
+		if err := svc.RemoveDependency(ctx, p.FromID, p.ToID, model.DepType(p.DepType)); err != nil {
 			return nil, err
 		}
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/channel"
 	"github.com/hyper-swe/mtix/internal/mcp"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -111,7 +112,7 @@ func registerMCPTools(reg *mcp.ToolRegistry) string {
 	mcp.RegisterWorkflowTools(reg, app.nodeSvc, app.store, app.bgSvc,
 		mcp.WithPrimaryProject(primary), mcp.WithAuthor(mcpToolAuthor()))
 	mcp.RegisterContextTools(reg, app.ctxSvc, app.promptSvc)
-	mcp.RegisterDepTools(reg, app.store)
+	mcp.RegisterDepTools(reg, app.store, service.NewDependencyServiceFromNodeService(app.nodeSvc))
 	mcp.RegisterInboxTools(reg, app.store)
 	mcp.RegisterSessionTools(reg, app.sessionSvc, app.agentSvc)
 	mcp.RegisterAnalyticsTools(reg, app.store, app.agentSvc, app.configSvc)

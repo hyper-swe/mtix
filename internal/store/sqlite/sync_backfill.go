@@ -314,24 +314,20 @@ func scanBackfillNode(rows *sql.Rows) (backfillNodeRow, error) {
 	); scanErr != nil {
 		return backfillNodeRow{}, fmt.Errorf("scan node: %w", scanErr)
 	}
-	if parentID.Valid {
-		n.ParentID = parentID.String
+	n.ParentID = backfillString(parentID)
+	n.Description = backfillString(description)
+	n.Prompt = backfillString(prompt)
+	n.Acceptance = backfillString(acceptance)
+	if issueType.Valid {
+		n.IssueType = model.IssueType(issueType.String)
 	}
-	if description.Valid {
-		n.Description = description.String
+	if labels.Valid {
+		if err := json.Unmarshal([]byte(labels.String), &n.Labels); err != nil {
+			return backfillNodeRow{}, fmt.Errorf("decode labels for %s: %w", n.ID, err)
+		}
 	}
-	if prompt.Valid {
-		n.Prompt = prompt.String
-	}
-	if acceptance.Valid {
-		n.Acceptance = acceptance.String
-	}
-	if assignee.Valid {
-		n.Assignee = assignee.String
-	}
-	if creator.Valid {
-		n.Creator = creator.String
-	}
+	n.Assignee = backfillString(assignee)
+	n.Creator = backfillString(creator)
 	if weight.Valid {
 		n.Weight = weight.Float64
 	} else {
@@ -350,6 +346,14 @@ func scanBackfillNode(rows *sql.Rows) (backfillNodeRow, error) {
 		annStr = annotations.String
 	}
 	return backfillNodeRow{node: n, annotations: annStr}, nil
+}
+
+// backfillString preserves the empty value of an absent optional source field.
+func backfillString(value sql.NullString) string {
+	if value.Valid {
+		return value.String
+	}
+	return ""
 }
 
 // parseFlexibleTime accepts either RFC3339Nano or RFC3339 (the two

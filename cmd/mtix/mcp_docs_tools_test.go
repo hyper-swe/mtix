@@ -170,7 +170,7 @@ func unknownMCPInstructionTools(documents map[string]string, reg *mcp.ToolRegist
 	for _, tool := range reg.List() {
 		registered[tool.Name] = true
 	}
-	toolName := regexp.MustCompile(`\b(?:mcp__mtix__)?mtix_[A-Za-z0-9_-]+`)
+	toolName := regexp.MustCompile(`mcp__mtix__[A-Za-z0-9_-]+|\bmtix_[A-Za-z0-9_-]+`)
 	var problems []string
 	for path, text := range documents {
 		for i, line := range strings.Split(text, "\n") {
@@ -358,6 +358,35 @@ func TestMCPInstructionDocs_SQLLockAndConfigDataCannotHideToolCalls(t *testing.T
 			require.Equal(t, []string{tt.path + ":1: mcp__mtix__" + tt.name}, unknownMCPInstructionTools(
 				map[string]string{tt.path: "Call mcp__mtix__" + tt.name + "."}, reg))
 			require.NotEmpty(t, unknownMCPInstructionTools(map[string]string{"other.md": tt.data}, reg))
+		})
+	}
+}
+
+func TestMCPInstructionDocs_ArbitraryPrefixedNamesNeverEscapeValidation(t *testing.T) {
+	initTestApp(t)
+	reg := mcp.NewToolRegistry()
+	registerMCPTools(reg)
+	tests := []struct {
+		name string
+		path string
+		text string
+		want []string
+	}{
+		{"unquoted suffix", "fixture.md", "Call mcp__mtix__planted_unknown.", []string{"fixture.md:1: mcp__mtix__planted_unknown"}},
+		{"backticked suffix", "fixture.md", "Call `mcp__mtix__planted_unknown`.", []string{"fixture.md:1: mcp__mtix__planted_unknown"}},
+		{"fenced suffix", "fixture.md", "```\nCall mcp__mtix__planted_unknown.\n```", []string{"fixture.md:2: mcp__mtix__planted_unknown"}},
+		{"uppercase suffix", "fixture.md", "mcp__mtix__UNKNOWN", []string{"fixture.md:1: mcp__mtix__UNKNOWN"}},
+		{"digit suffix", "fixture.md", "mcp__mtix__42", []string{"fixture.md:1: mcp__mtix__42"}},
+		{"hyphen suffix", "fixture.md", "mcp__mtix__unknown-tool", []string{"fixture.md:1: mcp__mtix__unknown-tool"}},
+		{"adjacent data", "docs/SECURITY-MODEL.md", "GRANT USAGE ON SCHEMA public TO mtix_writer; Call mcp__mtix__planted_unknown.", []string{"docs/SECURITY-MODEL.md:1: mcp__mtix__planted_unknown"}},
+		{"role suffix", "docs/SECURITY-MODEL.md", "GRANT USAGE ON SCHEMA public TO mtix_writer; Call mcp__mtix__mtix_writer.", []string{"docs/SECURITY-MODEL.md:1: mcp__mtix__mtix_writer"}},
+		{"schema suffix", "docs/EXPORT-FORMAT.md", "| `mtix_version` | Version of the mtix that wrote the file (may be empty). | Call mcp__mtix__mtix_version.", []string{"docs/EXPORT-FORMAT.md:1: mcp__mtix__mtix_version"}},
+		{"registered prefix", "fixture.md", "Call mcp__mtix__mtix_annotate.", nil},
+		{"empty suffix description", "fixture.md", "Use the mcp__mtix__ prefix.", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, unknownMCPInstructionTools(map[string]string{tt.path: tt.text}, reg))
 		})
 	}
 }

@@ -23,10 +23,12 @@ import (
 func dependencyTypeMentions(body string) []string {
 	named := "[`\"']?([A-Za-z][A-Za-z0-9_-]*)[`\"']?"
 	quoted := "[`\"']([A-Za-z][A-Za-z0-9_-]*)[`\"']"
+	plainProse := `(?i:\b(?:use|uses|with|via))[ \t]+([A-Za-z][A-Za-z0-9_-]*)[ \t]+(?:dependency|dependencies)\b`
 	patterns := []string{
 		quoted + `\s+(?:dependency|dep)\s+types?\b`,
 		`(?i:\b(?:use|uses|with|via|the|an?))\s+` + named + `\s+(?:dependency|dep)\s+types?\b`,
 		quoted + `\s+(?:dependency|dependencies|dep)\b`,
+		plainProse,
 		`(?i:\b(?:dependency|dep)\s+(?:of\s+)?types?)\s+` + quoted,
 		`(?i:\b(?:dependency|dep)\s+(?:of\s+)?types?)\s+` + named + `(?:[.,;!?)]|\s*$|\s+(?:for|to|with|as|when|if|means|indicates|represents)\b)`,
 		`(?i:\b(?:dependency|dep)\s+(?:of\s+)?types?)\s*(?::|=|\bis\b|\bare\b|\bnamed\b|\bcalled\b|\bof\b|\binclude[s]?\b)\s*` + named,
@@ -37,12 +39,28 @@ func dependencyTypeMentions(body string) []string {
 	normalized := normalizeDependencyMarkup(strings.ReplaceAll(body, "\\\n", " "))
 	for _, pattern := range patterns {
 		for _, match := range regexp.MustCompile(pattern).FindAllStringSubmatch(normalized, -1) {
-			names = append(names, match[1])
+			if pattern != plainProse || !unnamedDependencyDeterminer(match[1]) {
+				names = append(names, match[1])
+			}
 		}
 	}
 	names = append(names, dependencyListMentions(normalized)...)
 	names = append(names, dependencyProseLists(normalized)...)
 	return names
+}
+
+// Unquoted articles/determiners describe dependencies without naming a kind.
+// A value actually added to the model remains recognizable even in this form.
+func unnamedDependencyDeterminer(name string) bool {
+	if name != "a" && name != "an" && name != "the" && name != "no" {
+		return false
+	}
+	for _, kind := range model.AllDepTypes() {
+		if name == string(kind) {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeDependencyMarkup(body string) string {
@@ -89,7 +107,12 @@ func dependencyListMentions(body string) []string {
 			column = -1
 		}
 		if heading.MatchString(line) {
-			for _, match := range literal.FindAllStringSubmatch(line, -1) {
+			valueLine := line
+			if match := intro.FindStringSubmatch(line); match != nil {
+				valueLine = match[1]
+			}
+			valueLine = strings.SplitN(valueLine, ":", 2)[0]
+			for _, match := range literal.FindAllStringSubmatch(valueLine, -1) {
 				names = append(names, match[1])
 			}
 		}
@@ -115,7 +138,10 @@ func dependencyListMentions(body string) []string {
 	return names
 }
 
+// A colon ends the named-value portion; conjunctions, commas and slashes
+// after it belong to the description, not to the dependency type list.
 func dependencyNameList(text string) []string {
+	text = strings.SplitN(text, ":", 2)[0]
 	separator := regexp.MustCompile(`\s*(?:,\s*(?:\band\b|\bor\b)?|\band\b|\bor\b|/)\s*`)
 	firstName := regexp.MustCompile("^[`*\"']*([A-Za-z][A-Za-z0-9_-]*)")
 	var names []string
@@ -130,7 +156,7 @@ func dependencyNameList(text string) []string {
 func dependencyTableNames(line string, inTypes bool, column int) ([]string, int) {
 	cells := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
 	for i, cell := range cells {
-		label := strings.ToLower(strings.Trim(strings.TrimSpace(cell), "`*"))
+		label := strings.ToLower(strings.Trim(strings.TrimSpace(cell), "`*_ "))
 		if label == "dependency type" || label == "dependency types" || label == "dep type" || label == "dep types" || label == "dep_type" || (inTypes && label == "type") {
 			return nil, i
 		}
@@ -182,6 +208,10 @@ func TestDependencyTypeDocs_RecognizesUndefinedNamesAcrossSurfaces(t *testing.T)
 		{"plural table", "| Dependency types | Purpose |\n| --- | --- |\n| future_kind | Requests |", true},
 		{"section table", "## Dependency Types\n\n| Type | Meaning |\n| --- | --- |\n| future_kind | Requests |", true},
 		{"list", "Supported dependency types:\n- `blocks`: hard blocker\n- future_kind: request", true},
+		{"article", "Use a dependency for ordering.", false},
+		{"determiner", "Tasks with no dependency annotations need attention.", false},
+		{"ordinary description", "The external dependency is unresolved.", false},
+		{"CLI description", "Use the same type with `mtix dep remove`.", false},
 		{"issue create", "mtix create --type feature", false},
 		{"emphasized issue types", "**Issue types** are bug and feature. `mtix create --type feature`", false},
 		{"issue table", "| Issue type | Purpose |\n| --- | --- |\n| **bug**, *feature* | Work |", false},
@@ -290,4 +320,55 @@ func TestDependencyTypeDocs_BlockedMirrorMatchesGeneratedTemplate(t *testing.T) 
 	mirror, err := os.ReadFile(filepath.Join("..", "..", "docs", "BLOCKED_HANDLING.md"))
 	require.NoError(t, err)
 	require.Equal(t, string(generated), string(mirror))
+}
+
+func TestDependencyTypeDocs_ReviewMatrix(t *testing.T) {
+	cases := []struct {
+		name, body string
+		invalid    bool
+	}{
+		{"bold", "Use **r2_invalid** dependency type.", true},
+		{"table multiple", "| Dependency type | Meaning |\n| --- | --- |\n| blocks, r2_invalid | request |", true},
+		{"plural before", "Use blocks and r2_invalid dependency types.", true},
+		{"plural after", "The dependency types are blocks and r2_invalid.", true},
+		{"plain dependency", "Use r2_invalid dependency for requests.", true},
+		{"plain dependencies", "Use r2_invalid dependencies for requests.", true},
+		{"underscore code", "Use _`r2_invalid`_ dependency type.", true},
+		{"underscore bold code", "Use __`r2_invalid`__ dependency type.", true},
+		{"italic table header", "| _Dependency type_ | Meaning |\n| --- | --- |\n| r2_invalid | request |", true},
+		{"bold underscore table header", "| __Dependency types__ | Meaning |\n| --- | --- |\n| blocks and r2_invalid | request |", true},
+		{"italic code table header", "| _`dep_type`_ | Meaning |\n| --- | --- |\n| r2_invalid | request |", true},
+		{"bullet and description", "Dependency types:\n- blocks: prevents work and supports ordering", false},
+		{"bullet slash description", "Dependency types:\n- related: informational/context link", false},
+		{"bullet comma description", "Dependency types:\n- duplicates: identifies repeated work, with matching requirements", false},
+		{"valid table descriptions", "| Dependency type | Meaning |\n| --- | --- |\n| blocks | hard and required |", false},
+		{"ordinary issue", "Use **bug** issue type and _feature_ issue type.", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			hits := undefinedDependencyTypes(map[string]string{"matrix.tmpl": c.body})
+			require.Equal(t, c.invalid, len(hits) > 0, "%v", hits)
+		})
+	}
+}
+
+func TestDependencyTypeDocs_ModelHeaderAndDescriptionMatrix(t *testing.T) {
+	for _, kind := range model.AllDepTypes() {
+		name := string(kind)
+		bodies := []string{"Use " + name + " dependency for requests.", "Use " + name + " dependencies for requests."}
+		for _, header := range []string{"Dependency type", "*Dependency type*", "**Dependency types**", "_Dependency type_", "__Dependency types__", "`Dependency type`", "_`dep_type`_", "__`dep_type`__"} {
+			bodies = append(bodies, "| "+header+" | Meaning |\n| --- | --- |\n| "+name+" | request |")
+		}
+		for _, description := range []string{"prevents work and supports ordering", "information/context link", "repeated work, with matching requirements", "work or information", "supports `task` ordering and context"} {
+			bodies = append(bodies, "Dependency types: "+name+": "+description, "Dependency types:\n- "+name+": "+description,
+				"Dependency types:\n- blocks, "+name+": "+description,
+				"| _Dependency type_ | Meaning |\n| --- | --- |\n| blocks, "+name+": "+description+" | request |")
+			hits := undefinedDependencyTypes(map[string]string{"x.tmpl": "Dependency types:\n- blocks, future_kind: " + description})
+			require.Contains(t, strings.Join(hits, "\n"), "future_kind")
+		}
+		for _, body := range bodies {
+			require.Contains(t, dependencyTypeMentions(body), name, body)
+			require.Empty(t, undefinedDependencyTypes(map[string]string{"x.tmpl": body}), body)
+		}
+	}
 }

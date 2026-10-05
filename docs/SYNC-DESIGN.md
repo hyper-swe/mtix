@@ -375,7 +375,7 @@ Per AGENTS.md, agents MUST NOT silently choose; escalate via mtix_comment.
 === END CONFLICT ===
 ```
 
-`AGENTS.md` is updated to instruct: agents that see a CONFLICT block MUST `mtix_comment` requesting resolution by the user rather than acting on the LWW value.
+`AGENTS.md` is updated to instruct: agents that see a CONFLICT block MUST `mtix_annotate` requesting resolution by the user rather than acting on the LWW value.
 
 ## 12. Pluggability boundaries (mgit integration note)
 

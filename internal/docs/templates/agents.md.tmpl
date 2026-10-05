@@ -153,9 +153,9 @@ Run `mtix sync` before you commit or push `.mtix/tasks.json`. MCP tool results d
 
 **Never abandon a task silently.**
 
-- **Blocked:** Document the blocker with `mtix_comment`, check dependency status with `mtix_blocked`
-- **Deferred:** Record the root cause with `mtix_comment` (what remains and why you're deferring), then call `mtix_defer` with an optional `until`. Pass `until` (RFC 3339 with a zone, e.g. `2026-04-01T00:00:00Z`) for a wake time: claims are refused before it, and from it on the task is ready again. Omitting `until` clears any earlier wake time. A deferred task with no wake time (deferred without `until`, or any deferral received through sync) is listed by `mtix_ready` and can be claimed at once. Hub sync does not carry the wake time; other machines that sync through the hub get only the deferral (a git-tracked `.mtix/tasks.json` does carry it)
-- **Anomaly:** Always record unexpected failures, inconsistent state, or missing context via `mtix_comment`
+- **Blocked:** Document the blocker with `mtix_annotate`, check dependency status with `mtix_blocked`
+- **Deferred:** Record the root cause with `mtix_annotate` (what remains and why you're deferring), then call `mtix_defer` with an optional `until`. Pass `until` (RFC 3339 with a zone, e.g. `2026-04-01T00:00:00Z`) for a wake time: claims are refused before it, and from it on the task is ready again. Omitting `until` clears any earlier wake time. A deferred task with no wake time (deferred without `until`, or any deferral received through sync) is listed by `mtix_ready` and can be claimed at once. Hub sync does not carry the wake time; other machines that sync through the hub get only the deferral (a git-tracked `.mtix/tasks.json` does carry it)
+- **Anomaly:** Always record unexpected failures, inconsistent state, or missing context via `mtix_annotate`
 
 ## Decomposition Rules
 
@@ -192,24 +192,26 @@ Use `mtix_dep_add` for cross-branch dependencies. Undeclared dependencies cause 
 Every completed task must have an auditable trail:
 1. **Session record** — who worked on it, when (automatic via session lifecycle)
 2. **State transitions** — logged with timestamps and agent attribution (automatic)
-3. **Traceability comment** — task → requirement → test → result (manual, via `mtix_comment`)
+3. **Traceability comment** — task → requirement → test → result (manual, via `mtix_annotate`)
 4. **Verification evidence** — tests passing, acceptance criteria met (manual, documented in comments)
 
 This is the baseline standard for all {{ .ProjectPrefix }} work, aligned with DO-178C, IEC 62304, NASA-STD-8739.8, and MIL-STD-498 requirements.
 
 ## Emergency Procedures
 
+Comments use `mtix_annotate` with `id`, `text`, and `author`; set `to` only when addressing another agent.
+
 ### Data Inconsistency Detected
-1. Run `mtix_verify` to check content hash integrity
-2. Document the inconsistency via `mtix_comment`
+1. Run `mtix verify` to check content hash integrity
+2. Document the inconsistency via `mtix_annotate`
 3. Do NOT modify affected nodes
 4. Ask the user
 
 ### Blocked State Loop
 If a node is blocked by a dependency that is itself blocked:
-1. Use `mtix_dep_list` to trace the dependency chain
+1. Call `mtix_dep_show` with the node `id` to list its active blockers; repeat for each returned blocker ID to trace the chain
 2. Find the root blocker
-3. Document the loop via `mtix_comment` on all affected nodes
+3. Document the loop via `mtix_annotate` on all affected nodes
 4. Escalate if the root blocker cannot be resolved
 
 ### Auto-import of .mtix/tasks.json Refused

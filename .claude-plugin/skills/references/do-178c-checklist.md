@@ -21,7 +21,7 @@ mtix satisfies requirements traceability via the context chain:
 3. **Task → Test:** The `tests` field specifies test function names and scenarios
 4. **Test → Result:** Completion comments link to test results
 
-To verify: Use `mtix_search` to find tasks referencing a specific requirement number. Use `mtix_tree` to see the full decomposition from requirement to implementation.
+To verify: Use `mtix_search` to find tasks referencing a specific requirement number. Use `mtix tree <id>` to see the full decomposition from requirement to implementation.
 
 ## Verification Objectives (§6.4)
 
@@ -43,4 +43,4 @@ To verify: Use `mtix_search` to find tasks referencing a specific requirement nu
 
 ## Problem Reporting (§8)
 
-Use `mtix_comment` to document problems discovered during implementation or verification. For blocked work, record the root cause with `mtix_comment`, then call `mtix_defer` with an optional `until` wake time. All anomalies are timestamped and attributed to the reporting agent.
+Use `mtix_annotate` to document problems discovered during implementation or verification. For blocked work, record the root cause with `mtix_annotate`, then call `mtix_defer` with an optional `until` wake time. All anomalies are timestamped and attributed to the reporting agent.

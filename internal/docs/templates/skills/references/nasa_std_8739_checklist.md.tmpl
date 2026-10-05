@@ -19,7 +19,7 @@ mtix supports IV&V through:
 1. **Agent identity tracking** — every action is attributed to a specific agent
 2. **Session records** — auditable trail of who did what and when
 3. **Separate claim cycles** — verification agent claims a review task independently
-4. **Comments as evidence** — verification results documented via `mtix_comment`
+4. **Comments as evidence** — verification results documented via `mtix_annotate`
 
 ### IV&V Workflow in mtix
 1. Implementing agent completes the task and marks done
@@ -32,7 +32,7 @@ mtix supports IV&V through:
 
 For safety-critical tasks:
 - Context chain must include safety constraints from the mission/system level
-- All state transitions require a justification comment via `mtix_comment`
+- All state transitions require a justification comment via `mtix_annotate`
 - No task may be marked done without evidence of testing
 - Anomaly reporting is mandatory for blocked or deferred tasks
 
@@ -40,8 +40,8 @@ For safety-critical tasks:
 
 Every anomaly discovered during development must be recorded:
 
-1. Use `mtix_comment` on the affected task to document the anomaly
-2. If the anomaly blocks work, record the root cause with `mtix_comment`, then call `mtix_defer` with an optional `until` wake time
+1. Use `mtix_annotate` on the affected task to document the anomaly
+2. If the anomaly blocks work, record the root cause with `mtix_annotate`, then call `mtix_defer` with an optional `until` wake time
 3. Create a new task for anomaly resolution if needed (linked via `mtix_dep_add`)
 4. Anomaly resolution must include regression test evidence
 
@@ -50,8 +50,8 @@ Every anomaly discovered during development must be recorded:
 mtix provides:
 - **Unique identification:** Dot-notation IDs for every work item
 - **Change tracking:** State machine with logged transitions
-- **Baselines:** Export snapshots with checksums (`mtix_export`)
-- **Integrity verification:** Content hash verification (`mtix_verify`)
+- **Baselines:** Export snapshots with checksums (`mtix export > <file>`)
+- **Integrity verification:** Content hash verification (`mtix verify`)
 
 ## Formal Methods
 

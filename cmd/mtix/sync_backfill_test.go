@@ -155,6 +155,7 @@ func discardLocalRemedies(text string) []string {
 type backfillGuidanceSurface struct {
 	name string
 	text string
+	want string
 	// discardLocal is how often the surface may name --discard-local:
 	// once, in its pinned warning sentence, or never.
 	discardLocal int
@@ -164,8 +165,8 @@ type backfillGuidanceSurface struct {
 // backfillGuidanceSurfaces returns the three surfaces an operator reads
 // when sync_events is non-empty: the refusal formatBackfillError returns,
 // the help text of newSyncBackfillCmd, and the usage of its hidden --force
-// flag. Each pinned warning sentence is required verbatim, so no qualifier
-// can slip into it.
+// flag. Their complete normalized guidance is pinned so reworded
+// re-offers outside the warning sentence cannot slip through (MTIX-107.81).
 func backfillGuidanceSurfaces(t *testing.T) []backfillGuidanceSurface {
 	t.Helper()
 	// The store wraps the sentinel; errors.Is must still select the
@@ -176,10 +177,16 @@ func backfillGuidanceSurfaces(t *testing.T) []backfillGuidanceSurface {
 	forceFlag := newSyncBackfillCmd().Flags().Lookup("force")
 	require.NotNil(t, forceFlag)
 
+	return backfillGuidanceExpectations(refusal.Error(), newSyncBackfillCmd().Long, forceFlag.Usage)
+}
+
+// backfillGuidanceExpectations keeps the pins independent of production text.
+func backfillGuidanceExpectations(refusal, help, force string) []backfillGuidanceSurface {
 	return []backfillGuidanceSurface{
 		{
 			name:         "refusal error",
-			text:         refusal.Error(),
+			text:         refusal,
+			want:         "mtix sync backfill: sync_events table is non-empty. if backfill was previously run, re-run 'mtix sync push' to drain pending events. there is no supported way to regenerate the journal yet (mtix-89): --force appends a second history rather than replacing the first, and 'mtix sync reconcile --discard-local' deletes every ticket in this store — do not use it for this. back up first with 'mtix backup <path>'",
 			discardLocal: 1,
 			required: []string{
 				"and 'mtix sync reconcile --discard-local' deletes every ticket in this store \u2014 do not use it for this.",
@@ -191,7 +198,8 @@ func backfillGuidanceSurfaces(t *testing.T) []backfillGuidanceSurface {
 		},
 		{
 			name:         "help text",
-			text:         newSyncBackfillCmd().Long,
+			text:         help,
+			want:         "refusal-by-default if sync_events is non-empty. note --force does not regenerate: it appends a second history alongside the first. there is no supported regenerate path yet (mtix-89). do not reach for 'mtix sync reconcile --discard-local' — that deletes every ticket in this store.",
 			discardLocal: 1,
 			required: []string{
 				"do not reach for 'mtix sync reconcile --discard-local' \u2014 that deletes every ticket in this store.",
@@ -202,7 +210,8 @@ func backfillGuidanceSurfaces(t *testing.T) []backfillGuidanceSurface {
 		},
 		{
 			name:         "force flag usage",
-			text:         forceFlag.Usage,
+			text:         force,
+			want:         "re-backfill even if sync_events is non-empty (dangerous: does not regenerate; appends a second history alongside the first, with fresh event ids)",
 			discardLocal: 0,
 			required: []string{
 				"does not regenerate",
@@ -211,6 +220,24 @@ func backfillGuidanceSurfaces(t *testing.T) []backfillGuidanceSurface {
 			},
 		},
 	}
+}
+
+// pinnedBackfillGuidance extracts the complete refusal Safety bullet while
+// leaving all of the help available to the diagnostic checks below.
+func pinnedBackfillGuidance(t *testing.T, surface backfillGuidanceSurface) string {
+	t.Helper()
+	if surface.name != "help text" {
+		return normalizeGuidance(surface.text)
+	}
+	_, safety, found := strings.Cut(surface.text, "Safety properties:")
+	require.True(t, found, "help must contain Safety properties")
+	for _, bullet := range strings.Split(safety, "  * ") {
+		if strings.HasPrefix(bullet, "Refusal-by-default") {
+			return normalizeGuidance(bullet)
+		}
+	}
+	t.Fatal("help must contain the Refusal-by-default Safety bullet")
+	return ""
 }
 
 // backfillGuidanceForbidden returns the phrases no backfill guidance
@@ -258,6 +285,8 @@ func TestSyncBackfillGuidance_SyncEventsNonEmpty_NeverOffersDiscardLocal(t *test
 				require.NotContainsf(t, got, phrase,
 					"the guidance must not say %q", phrase)
 			}
+			require.Equal(t, tt.want, pinnedBackfillGuidance(t, tt),
+				"complete guidance must not re-offer a destructive remedy in different words")
 			for _, phrase := range tt.required {
 				require.Containsf(t, got, phrase, "the guidance must say %q", phrase)
 			}

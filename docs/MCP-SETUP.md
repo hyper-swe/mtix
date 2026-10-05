@@ -223,6 +223,8 @@ See the auto-generated `CONTEXT_CHAIN.md` in your project's `.mtix/docs/` for de
 
 Once connected, the following MCP tools are available:
 
+Call `mtix_discover` to inspect this build's registry. Tree views, backup, export, import, garbage collection, configuration and integrity verification use CLI commands; there are no MCP tools for those operations. Use `mtix import <file> --mode merge` for imports. Replace imports require the operator's typed ticket count at an interactive terminal and must never be automated.
+
 ### Node Management
 | Tool | Description |
 |------|-------------|

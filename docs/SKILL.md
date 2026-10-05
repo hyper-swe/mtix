@@ -1,6 +1,7 @@
 ---
 description: "Manage tasks in PROJ project using mtix micro-issue manager. Use for creating, decomposing, claiming, completing tasks, and assembling context chains for agent briefings."
 allowed-tools:
+  - Bash(mtix *)
   - mcp__mtix__mtix_create
   - mcp__mtix__mtix_show
   - mcp__mtix__mtix_list
@@ -11,18 +12,16 @@ allowed-tools:
   - mcp__mtix__mtix_decompose
   - mcp__mtix__mtix_search
   - mcp__mtix__mtix_ready
-  - mcp__mtix__mtix_tree
   - mcp__mtix__mtix_update
   - mcp__mtix__mtix_defer
   - mcp__mtix__mtix_cancel
   - mcp__mtix__mtix_reopen
-  - mcp__mtix__mtix_comment
+  - mcp__mtix__mtix_annotate
   - mcp__mtix__mtix_dep_add
   - mcp__mtix__mtix_dep_remove
-  - mcp__mtix__mtix_dep_list
+  - mcp__mtix__mtix_dep_show
   - mcp__mtix__mtix_session_start
   - mcp__mtix__mtix_session_end
-  - mcp__mtix__mtix_agent_register
   - mcp__mtix__mtix_agent_heartbeat
   - mcp__mtix__mtix_agent_state
   - mcp__mtix__mtix_agent_work
@@ -30,12 +29,6 @@ allowed-tools:
   - mcp__mtix__mtix_progress
   - mcp__mtix__mtix_stale
   - mcp__mtix__mtix_blocked
-  - mcp__mtix__mtix_verify
-  - mcp__mtix__mtix_export
-  - mcp__mtix__mtix_import
-  - mcp__mtix__mtix_backup
-  - mcp__mtix__mtix_gc
-  - mcp__mtix__mtix_config
 ---
 
 # PROJ — mtix Skill
@@ -93,7 +86,7 @@ Before nesting a ticket under an existing node, call `mcp__mtix__mtix_context` o
 - All acceptance criteria explicitly verified
 - Tests written and passing — no stub implementations
 - Independent verification: implementing agent ≠ verifying agent for critical tasks
-- Traceability comment added via `mcp__mtix__mtix_comment` linking task→requirement→test→result
+- Traceability comment added via `mcp__mtix__mtix_annotate` linking task→requirement→test→result
 - No functions with "not yet implemented" or placeholder logic
 
 ## Decomposition Rules

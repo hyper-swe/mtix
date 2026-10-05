@@ -12,13 +12,6 @@ import (
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
-// registerCreateTool describes classification and explicit atomic assignment (FR-3.1/FR-10.4).
-func registerCreateTool(reg *ToolRegistry, svc *service.NodeService, primaryProject string) {
-	reg.Register(createToolDefinition(), func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		return callCreateTool(ctx, svc, primaryProject, args)
-	})
-}
-
 // createToolDefinition keeps work classification separate from hierarchy and authorship.
 func createToolDefinition() ToolDef {
 	return ToolDef{

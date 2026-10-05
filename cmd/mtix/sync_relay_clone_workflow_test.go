@@ -52,7 +52,7 @@ func TestRunRelayCloneImport_WorkflowConflict_RefusesThenResolves(t *testing.T) 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			initTestApp(t)
-			require.NoError(t, runCreate("Local task", "", "epic", 3, "", "", "", "", ""))
+			require.NoError(t, runCreate("Local task", "", "", 3, "", "", "", "", ""))
 			relayDir := t.TempDir()
 			_, err := bootstrap.ExportSnapshot(t.Context(), bootstrap.ExportRequest{
 				Store: claimedExporter{}, RelayDir: relayDir, Project: "TEST", ExportedBy: "0123456789abcdef",

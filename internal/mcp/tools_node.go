@@ -76,6 +76,13 @@ func resolveScopeProject(arg, primary string) string {
 	}
 }
 
+// registerCreateTool describes classification and explicit atomic assignment (FR-3.1/FR-10.4).
+func registerCreateTool(reg *ToolRegistry, svc *service.NodeService, primaryProject string) {
+	reg.Register(createToolDefinition(), func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
+		return callCreateTool(ctx, svc, primaryProject, args)
+	})
+}
+
 // RegisterNodeTools registers node management MCP tools per MTIX-6.2.1 / FR-17.7.
 func RegisterNodeTools(reg *ToolRegistry, nodeSvc *service.NodeService, st store.Store, opts ...ToolOption) {
 	cfg := applyToolOptions(opts)

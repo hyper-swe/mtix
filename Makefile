@@ -31,7 +31,7 @@ TASKS_DB     := .mtix/data/mtix.db
         setup tasks-export tasks-import tasks-sync \
         generate-plugin-skills agent-kit \
         test-pg-docker test-pg-supabase test-pg-neon test-pg-all \
-        cleanup-test-schemas
+        cleanup-test-schemas validate-build-paths
 
 # ─── Default target ───
 all: build
@@ -48,7 +48,7 @@ build-go:
 ## build-web: Build the React SPA and copy to Go embed directory
 build-web: install-web
 	cd $(WEB_DIR) && npm run build
-	rm -rf $(EMBED_DIR)
+	bash scripts/clean-build-artifacts.sh internal/web/dist
 	cp -r $(WEB_DIR)/dist $(EMBED_DIR)
 
 ## install: Build and install the mtix binary to PREFIX/bin (default /usr/local).
@@ -64,7 +64,14 @@ install: build-go
 	@echo "if 'mtix daemon' runs as a service here: run 'mtix daemon start' to restart it onto this binary"
 
 ## install-web: Install web dependencies if needed
-install-web:
+validate-build-paths:
+	@if [ "$(WEB_DIR)" != web ] || [ "$(EMBED_DIR)" != internal/web/dist ] || \
+	    [ "$(BINARY)" != mtix ] || [ "$(COVERFILE)" != cover.out ]; then \
+		echo "cleanup requires fixed build paths" >&2; exit 1; \
+	fi
+	@bash scripts/clean-build-artifacts.sh --check internal/web/dist web/dist mtix cover.out
+
+install-web: validate-build-paths
 	@if [ ! -d $(WEB_DIR)/node_modules ]; then \
 		echo "Installing web dependencies..."; \
 		cd $(WEB_DIR) && npm ci; \
@@ -268,10 +275,8 @@ docs-gen:
 ## ─── Cleanup ───
 
 ## clean: Remove all build artifacts
-clean:
-	rm -f $(BINARY) $(COVERFILE)
-	rm -rf $(EMBED_DIR)
-	rm -rf $(WEB_DIR)/dist
+clean: validate-build-paths
+	bash scripts/clean-build-artifacts.sh mtix cover.out internal/web/dist web/dist
 
 ## ─── Verification ───
 

@@ -6,9 +6,20 @@
 set -euo pipefail
 
 VERSION="${1:?Usage: build-agent-kit.sh <version>}"
+# Version is a single safe basename suffix, never a path or shell fragment.
+[[ "$VERSION" =~ ^[[:alnum:]][[:alnum:].+_-]*$ ]] && [[ "$VERSION" != *..* ]] || {
+  echo 'invalid agent-kit version' >&2; exit 1;
+}
+SCRIPT_DIR="$(dirname -- "${BASH_SOURCE[0]}")"
+[ ! -L "$SCRIPT_DIR" ] || { echo 'refusing symlinked scripts directory' >&2; exit 1; }
+cd "$(cd "$SCRIPT_DIR/.." && pwd -P)"
 KIT_DIR="dist/mtix-agent-kit-v${VERSION}"
 
-rm -rf "$KIT_DIR"
+# Tar opens an existing output file: never follow an archive symlink.
+[ ! -L "$KIT_DIR.tar.gz" ] && { [ ! -e "$KIT_DIR.tar.gz" ] || [ -f "$KIT_DIR.tar.gz" ]; } || {
+  echo 'refusing unexpected agent-kit archive path' >&2; exit 1;
+}
+bash scripts/clean-build-artifacts.sh "$KIT_DIR"
 mkdir -p "$KIT_DIR/skills/references" "$KIT_DIR/mcp-config" "$KIT_DIR/codex"
 
 # Copy skill files

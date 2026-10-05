@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -28,20 +29,21 @@ import (
 // of gRPC/MCP. Their reads are tracked separately by MTIX-127.
 func TestServiceLayer_HTTPHasNoStoreAndTransportsHaveNoDirectMutations(t *testing.T) {
 	for _, dir := range []string{".", "../grpc", "../../mcp"} {
-		files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
 		require.NoError(t, err)
-		for _, file := range files {
-			if strings.HasSuffix(file, "_test.go") {
+		sources := map[string]string{}
+		for _, path := range paths {
+			if strings.HasSuffix(path, "_test.go") {
 				continue
 			}
-			content, err := os.ReadFile(file)
+			content, err := os.ReadFile(path)
 			require.NoError(t, err)
-			text := string(content)
+			sources[path] = string(content)
 			if dir == "." {
-				require.NotContains(t, text, `"github.com/hyper-swe/mtix/internal/store`, file)
+				require.Empty(t, httpBackendImports(string(content)), path)
 			}
-			require.Empty(t, directStoreMutations(file, text), "direct backend mutation in %s", file)
 		}
+		require.Empty(t, directPackageStoreMutations(sources), "direct backend mutation in %s", dir)
 	}
 }
 
@@ -235,107 +237,372 @@ func TestServiceLayer_DependencyQueryInvokesService(t *testing.T) {
 	require.Contains(t, out.Body.String(), "TEST-2")
 }
 
-// directStoreMutations recognizes storage-typed variables/fields and aliases,
-// so changing a receiver name cannot defeat the recurrence guard.
-func directStoreMutations(file, source string) []string {
-	parsed, err := parser.ParseFile(token.NewFileSet(), file, source, 0)
-	if err != nil {
-		return []string{err.Error()}
+// packageBackendGuard resolves receiver types across all files in a package.
+// Local binding scopes prevent shadowed service variables inheriting backend state.
+type backendGuardBinding struct {
+	backend       bool
+	owner, method string
+}
+type backendGuardScope struct {
+	parent *backendGuardScope
+	names  map[string]backendGuardBinding
+}
+
+func (s *backendGuardScope) lookup(name string) backendGuardBinding {
+	for scope := s; scope != nil; scope = scope.parent {
+		if value, ok := scope.names[name]; ok {
+			return value
+		}
 	}
-	aliases := map[string]bool{}
-	for _, imp := range parsed.Imports {
-		path, _ := strconv.Unquote(imp.Path.Value)
-		if path == "github.com/hyper-swe/mtix/internal/store" || strings.HasPrefix(path, "github.com/hyper-swe/mtix/internal/store/") {
+	return backendGuardBinding{}
+}
+func (s *backendGuardScope) assign(name string, value backendGuardBinding, define bool) {
+	if !define {
+		for scope := s; scope != nil; scope = scope.parent {
+			if _, ok := scope.names[name]; ok {
+				scope.names[name] = value
+				return
+			}
+		}
+	}
+	s.names[name] = value
+}
+
+type backendGuardFile struct {
+	path    string
+	tree    *ast.File
+	imports map[string]bool
+}
+type backendGuardType struct {
+	expr ast.Expr
+	file *backendGuardFile
+}
+type packageBackendGuard struct {
+	files    []*backendGuardFile
+	types    map[string]backendGuardType
+	globals  *backendGuardScope
+	findings []string
+}
+
+func backendImport(path string) bool {
+	return path == "github.com/hyper-swe/mtix/internal/store" || strings.HasPrefix(path, "github.com/hyper-swe/mtix/internal/store/")
+}
+func parseBackendGuardFile(path, source string) (*backendGuardFile, error) {
+	tree, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
+	if err != nil {
+		return nil, err
+	}
+	file := &backendGuardFile{path: path, tree: tree, imports: map[string]bool{}}
+	for _, imp := range tree.Imports {
+		path, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			return nil, err
+		}
+		if backendImport(path) {
 			name := filepath.Base(path)
 			if imp.Name != nil {
 				name = imp.Name.Name
 			}
-			aliases[name] = true
+			file.imports[name] = true
 		}
 	}
-	bindings := backendBindings(parsed, aliases)
+	return file, nil
+}
+func httpBackendImports(source string) []string {
+	file, err := parseBackendGuardFile("http.go", source)
+	if err != nil {
+		return []string{err.Error()}
+	}
 	var findings []string
-	ast.Inspect(parsed, func(node ast.Node) bool {
-		call, ok := node.(*ast.CallExpr)
-		if !ok {
-			return true
+	for _, imp := range file.tree.Imports {
+		path, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			findings = append(findings, err.Error())
+			continue
 		}
-		selector, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
+		if backendImport(path) {
+			findings = append(findings, path)
 		}
-		if mutationMethod(selector.Sel.Name) && backendExpression(selector.X, bindings) {
-			findings = append(findings, selector.Sel.Name)
-		}
-		return true
-	})
+	}
 	return findings
 }
-func backendType(expr ast.Expr, aliases map[string]bool) bool {
-	switch v := expr.(type) {
-	case *ast.StarExpr:
-		return backendType(v.X, aliases)
-	case *ast.SelectorExpr:
-		id, ok := v.X.(*ast.Ident)
-		return ok && aliases[id.Name]
-	case *ast.Ident:
-		return strings.HasSuffix(v.Name, "Store")
-	}
-	return false
+func directStoreMutations(path, source string) []string {
+	return directPackageStoreMutations(map[string]string{path: source})
 }
-func backendBindings(file *ast.File, aliases map[string]bool) map[string]bool {
-	names := map[string]bool{}
-	ast.Inspect(file, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.Field:
-			if backendType(x.Type, aliases) {
-				for _, id := range x.Names {
-					names[id.Name] = true
-				}
+func directPackageStoreMutations(sources map[string]string) []string {
+	guard := &packageBackendGuard{types: map[string]backendGuardType{}, globals: &backendGuardScope{names: map[string]backendGuardBinding{}}}
+	paths := make([]string, 0, len(sources))
+	for path := range sources {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		file, err := parseBackendGuardFile(path, sources[path])
+		if err != nil {
+			return []string{err.Error()}
+		}
+		guard.files = append(guard.files, file)
+		for _, declaration := range file.tree.Decls {
+			group, ok := declaration.(*ast.GenDecl)
+			if !ok {
+				continue
 			}
-		case *ast.ValueSpec:
-			if backendType(x.Type, aliases) {
-				for _, id := range x.Names {
-					names[id.Name] = true
+			for _, spec := range group.Specs {
+				if typed, ok := spec.(*ast.TypeSpec); ok {
+					guard.types[typed.Name.Name] = backendGuardType{typed.Type, file}
 				}
 			}
 		}
-		return true
-	})
-	for round := 0; round < 3; round++ {
-		ast.Inspect(file, func(n ast.Node) bool {
-			assign, ok := n.(*ast.AssignStmt)
-			if !ok {
-				return true
+	}
+	guard.inspectPackage()
+	return guard.findings
+}
+func (g *packageBackendGuard) typeBinding(expr ast.Expr, file *backendGuardFile, seen map[string]bool) backendGuardBinding {
+	switch typed := expr.(type) {
+	case *ast.StarExpr:
+		return g.typeBinding(typed.X, file, seen)
+	case *ast.ParenExpr:
+		return g.typeBinding(typed.X, file, seen)
+	case *ast.SelectorExpr:
+		name, ok := typed.X.(*ast.Ident)
+		return backendGuardBinding{backend: ok && file.imports[name.Name]}
+	case *ast.Ident:
+		if typed.Name == "Store" && file.imports["."] {
+			return backendGuardBinding{backend: true}
+		}
+		// Existing MCP persistence contract, distinct from InboxAcknowledger service.
+		if typed.Name == "InboxStore" {
+			return backendGuardBinding{backend: true}
+		}
+		declaration, ok := g.types[typed.Name]
+		if !ok || seen[typed.Name] {
+			return backendGuardBinding{owner: typed.Name}
+		}
+		switch declaration.expr.(type) {
+		case *ast.StructType, *ast.InterfaceType:
+			return backendGuardBinding{owner: typed.Name}
+		}
+		seen[typed.Name] = true
+		return g.typeBinding(declaration.expr, declaration.file, seen)
+	}
+	return backendGuardBinding{}
+}
+func (g *packageBackendGuard) fieldBinding(owner, name string) (backendGuardBinding, bool) {
+	declaration, ok := g.types[owner]
+	if !ok {
+		return backendGuardBinding{}, false
+	}
+	structure, ok := declaration.expr.(*ast.StructType)
+	if !ok {
+		return backendGuardBinding{}, false
+	}
+	for _, field := range structure.Fields.List {
+		for _, id := range field.Names {
+			if id.Name == name {
+				return g.typeBinding(field.Type, declaration.file, map[string]bool{}), true
 			}
-			for i, rhs := range assign.Rhs {
-				if i < len(assign.Lhs) && backendExpression(rhs, names) {
-					if id, ok := assign.Lhs[i].(*ast.Ident); ok {
-						names[id.Name] = true
+		}
+	}
+	return backendGuardBinding{}, false
+}
+func (g *packageBackendGuard) expression(expr ast.Expr, scope *backendGuardScope, file *backendGuardFile) backendGuardBinding {
+	switch value := expr.(type) {
+	case *ast.Ident:
+		return scope.lookup(value.Name)
+	case *ast.ParenExpr:
+		return g.expression(value.X, scope, file)
+	case *ast.UnaryExpr:
+		return g.expression(value.X, scope, file)
+	case *ast.SelectorExpr:
+		receiver := g.expression(value.X, scope, file)
+		if field, ok := g.fieldBinding(receiver.owner, value.Sel.Name); ok {
+			return field
+		}
+		if receiver.backend {
+			return backendGuardBinding{method: value.Sel.Name}
+		}
+	case *ast.CallExpr:
+		method := g.expression(value.Fun, scope, file).method
+		if method == "ReadDB" || method == "WriteDB" {
+			return backendGuardBinding{backend: true}
+		}
+		if typed := g.typeBinding(value.Fun, file, map[string]bool{}); typed.backend {
+			return typed
+		}
+	}
+	return backendGuardBinding{}
+}
+func (g *packageBackendGuard) bindFields(fields *ast.FieldList, scope *backendGuardScope, file *backendGuardFile) {
+	if fields == nil {
+		return
+	}
+	for _, field := range fields.List {
+		value := g.typeBinding(field.Type, file, map[string]bool{})
+		for _, name := range field.Names {
+			scope.names[name.Name] = value
+		}
+	}
+}
+func (g *packageBackendGuard) bindValues(value *ast.ValueSpec, scope *backendGuardScope, file *backendGuardFile) {
+	values := make([]backendGuardBinding, len(value.Names))
+	for i := range values {
+		values[i] = g.typeBinding(value.Type, file, map[string]bool{})
+		if i < len(value.Values) {
+			assigned := g.expression(value.Values[i], scope, file)
+			if !values[i].backend && (assigned.backend || assigned.method != "" || value.Type == nil) {
+				values[i] = assigned
+			}
+		}
+	}
+	for i, name := range value.Names {
+		scope.assign(name.Name, values[i], true)
+	}
+}
+func (g *packageBackendGuard) bindAssignment(value *ast.AssignStmt, scope *backendGuardScope, file *backendGuardFile) {
+	values := make([]backendGuardBinding, len(value.Lhs))
+	for i := range values {
+		if i < len(value.Rhs) {
+			values[i] = g.expression(value.Rhs[i], scope, file)
+		}
+	}
+	for i, left := range value.Lhs {
+		if name, ok := left.(*ast.Ident); ok {
+			scope.assign(name.Name, values[i], value.Tok == token.DEFINE)
+		}
+	}
+}
+func (g *packageBackendGuard) inspectPackage() {
+	// Global var aliases are resolved before function-local scopes.
+	for round := 0; round <= len(g.globals.names)+len(g.files); round++ {
+		for _, file := range g.files {
+			for _, declaration := range file.tree.Decls {
+				group, ok := declaration.(*ast.GenDecl)
+				if !ok {
+					continue
+				}
+				for _, spec := range group.Specs {
+					if value, ok := spec.(*ast.ValueSpec); ok {
+						g.bindValues(value, g.globals, file)
 					}
 				}
 			}
-			return true
-		})
+		}
 	}
-	return names
-}
-func backendExpression(expr ast.Expr, names map[string]bool) bool {
-	switch x := expr.(type) {
-	case *ast.Ident:
-		return names[x.Name]
-	case *ast.SelectorExpr:
-		return names[x.Sel.Name] || backendExpression(x.X, names)
+	for _, file := range g.files {
+		for _, declaration := range file.tree.Decls {
+			if function, ok := declaration.(*ast.FuncDecl); ok {
+				scope := &backendGuardScope{parent: g.globals, names: map[string]backendGuardBinding{}}
+				g.bindFields(function.Recv, scope, file)
+				g.bindFields(function.Type.Params, scope, file)
+				g.bindFields(function.Type.Results, scope, file)
+				if function.Body != nil {
+					g.walk(function.Body, scope, file)
+				}
+			}
+		}
 	}
-	return false
 }
-func mutationMethod(name string) bool {
+func (g *packageBackendGuard) walk(node ast.Node, scope *backendGuardScope, file *backendGuardFile) {
+	if node == nil {
+		return
+	}
+	ast.Inspect(node, func(node ast.Node) bool {
+		if g.controlScope(node, scope, file) {
+			return false
+		}
+		switch value := node.(type) {
+		case *ast.BlockStmt:
+			child := &backendGuardScope{parent: scope, names: map[string]backendGuardBinding{}}
+			for _, statement := range value.List {
+				g.walk(statement, child, file)
+			}
+			return false
+		case *ast.FuncLit:
+			child := &backendGuardScope{parent: scope, names: map[string]backendGuardBinding{}}
+			g.bindFields(value.Type.Params, child, file)
+			g.bindFields(value.Type.Results, child, file)
+			g.walk(value.Body, child, file)
+			return false
+		case *ast.AssignStmt:
+			for _, expr := range value.Rhs {
+				g.walk(expr, scope, file)
+			}
+			g.bindAssignment(value, scope, file)
+			return false
+		case *ast.ValueSpec:
+			for _, expr := range value.Values {
+				g.walk(expr, scope, file)
+			}
+			g.bindValues(value, scope, file)
+			return false
+		case *ast.CallExpr:
+			method := g.expression(value.Fun, scope, file).method
+			if method != "" && !backendReadMethod(method) {
+				g.findings = append(g.findings, file.path+":"+method)
+			}
+		}
+		return true
+	})
+}
+
+// Control initializers have lexical scopes independent of the enclosing block.
+func (g *packageBackendGuard) controlScope(node ast.Node, scope *backendGuardScope, file *backendGuardFile) bool {
+	child := &backendGuardScope{parent: scope, names: map[string]backendGuardBinding{}}
+	switch value := node.(type) {
+	case *ast.IfStmt:
+		g.walk(value.Init, child, file)
+		g.walk(value.Cond, child, file)
+		g.walk(value.Body, child, file)
+		g.walk(value.Else, child, file)
+	case *ast.ForStmt:
+		g.walk(value.Init, child, file)
+		g.walk(value.Cond, child, file)
+		g.walk(value.Body, child, file)
+		g.walk(value.Post, child, file)
+	case *ast.SwitchStmt:
+		g.walk(value.Init, child, file)
+		g.walk(value.Tag, child, file)
+		g.walk(value.Body, child, file)
+	case *ast.TypeSwitchStmt:
+		g.walk(value.Init, child, file)
+		g.walk(value.Assign, child, file)
+		g.walk(value.Body, child, file)
+	case *ast.RangeStmt:
+		g.walk(value.X, child, file)
+		for _, expr := range []ast.Expr{value.Key, value.Value} {
+			if name, ok := expr.(*ast.Ident); ok {
+				child.assign(name.Name, backendGuardBinding{}, value.Tok == token.DEFINE)
+			}
+		}
+		g.walk(value.Body, child, file)
+	case *ast.CaseClause:
+		for _, expr := range value.List {
+			g.walk(expr, child, file)
+		}
+		for _, statement := range value.Body {
+			g.walk(statement, child, file)
+		}
+	case *ast.CommClause:
+		g.walk(value.Comm, child, file)
+		for _, statement := range value.Body {
+			g.walk(statement, child, file)
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+// Explicit reads preserve the gRPC/MCP query scope delegated to MTIX-127.
+// Unknown future backend methods fail closed rather than evading review.
+func backendReadMethod(name string) bool {
 	switch name {
-	case "ClaimNode", "ForceReclaimNode", "UnclaimNode", "CancelNode", "SetAnnotations", "Backup", "AddDependency", "RemoveDependency", "InboxAck", "CreateNode", "UpdateNode", "DeleteNode", "UndeleteNode", "TransitionStatus", "DeferNode", "UpdateProgress", "NextSequence", "WriteDB", "WithTx", "Exec", "ExecContext":
+	case "GetNode", "ListNodes", "SearchNodes", "GetBlockers", "GetDirectChildren", "GetAncestorChain", "GetSiblings", "GetActivity", "DistinctProjects", "InboxList", "InboxWait", "ResolveUIDByDisplayPath", "ResolveDisplayPathByUID", "ReadDB", "Query", "QueryContext", "QueryRow", "QueryRowContext":
 		return true
 	}
 	return false
 }
+
 func TestServiceLayer_MutationGuardRecognizesAliasedBackend(t *testing.T) {
 	for _, source := range []string{
 		`package sample;import backend "github.com/hyper-swe/mtix/internal/store";func f(db backend.Store){renamed:=db;renamed.CancelNode(nil,"","","",false)}`,
@@ -373,4 +640,45 @@ func TestServiceLayer_HTTPMeasuredCoverageFloor(t *testing.T) {
 	require.Greater(t, total, 0)
 	require.GreaterOrEqual(t, float64(covered)/float64(total), 0.9153)
 	require.GreaterOrEqual(t, float64(covered)/float64(total), float64(778)/float64(850))
+}
+
+// Counterexamples reproduce the original cross-file receiver and common aliases.
+func TestServiceLayer_GuardPackageBindingsAndAliases(t *testing.T) {
+	server := "package sample; import backend \"github.com/hyper-swe/mtix/internal/store\"; type Server struct { store backend.Store; svc NodeWriter }"
+	for _, call := range []string{
+		`s.store.CancelNode(nil,"","","",false)`,
+		`var db = s.store; db.CancelNode(nil,"","","",false)`,
+		`var db backend.Store = nil; db.CancelNode(nil,"","","",false)`,
+		`db := s.store; if db := s.svc; true { db.CancelNode(nil,"","","",false) }; db.CancelNode(nil,"","","",false)`,
+		`var cancel = s.store.CancelNode; cancel(nil,"","","",false)`,
+		`db := s.store; other := db; cancel := other.CancelNode; cancel(nil,"","","",false)`,
+		`s.store.FutureBackendMutation()`,
+		`s.store.ReadDB().ExecContext(nil, "")`,
+		`var cancel func(...any)error; cancel = s.store.CancelNode; alias := cancel; alias(nil,"","","",false)`,
+	} {
+		sources := map[string]string{"server.go": server, "handlers.go": `package sample; import backend "github.com/hyper-swe/mtix/internal/store"; func(s *Server)HandleCancel(){` + call + "}"}
+		require.NotEmpty(t, directPackageStoreMutations(sources), call)
+	}
+}
+func TestServiceLayer_HTTPImportGuardHandlesAllGoLiterals(t *testing.T) {
+	for _, literal := range []string{`"github.com/hyper-swe/mtix/internal/store"`, "`github.com/hyper-swe/mtix/internal/store/sqlite`", `"github.com/hyper-swe/mtix/internal/\x73tore/sqlite"`} {
+		source := "package sample; import backend " + literal + "; type Server struct { store *backend.Store }"
+		require.NotEmpty(t, httpBackendImports(source), literal)
+	}
+	require.Empty(t, httpBackendImports(`package sample; import "github.com/hyper-swe/mtix/internal/service"`))
+}
+func TestServiceLayer_GuardAllowsScopedServicesAndBackendReads(t *testing.T) {
+	server := `package sample; import backend "github.com/hyper-swe/mtix/internal/store"; type Server struct { store backend.Store; svc NodeWriter }; type ServiceHolder struct { store NodeWriter }`
+	for _, body := range []string{
+		`s.store.GetNode(nil,""); var read = s.store.ListNodes; read(nil, nil, nil)`,
+		`s.store.ReadDB().QueryRowContext(nil,"")`,
+		`db := s.store; fn := func(db NodeWriter){db.CancelNode(nil,"","","",false)}; fn(s.svc); db.GetNode(nil,"")`,
+		`var writer = s.svc; var cancel = writer.CancelNode; cancel(nil,"","","",false)`,
+		`db := s.store; { db := s.svc; db.CancelNode(nil,"","","",false) }; db.GetNode(nil,"")`,
+		`db := s.store; if db := s.svc; true { db.CancelNode(nil,"","","",false) }; db.GetNode(nil,"")`,
+		`db := s.store; for db := s.svc; false; { db.CancelNode(nil,"","","",false) }; db.GetNode(nil,"")`,
+	} {
+		sources := map[string]string{"server.go": server, "handlers.go": "package sample; func(s *Server)f(){" + body + "}; func(h *ServiceHolder)g(){h.store.CancelNode(nil,\"\",\"\",\"\",false)}"}
+		require.Empty(t, directPackageStoreMutations(sources), body)
+	}
 }

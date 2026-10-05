@@ -15,11 +15,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// withoutShellComment preserves quoted/escaped hashes and hashes inside words.
+// A shell comment starts only at an unquoted word boundary.
+func withoutShellComment(line string) string {
+	var quote rune
+	escaped := false
+	for i, char := range line {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if char == '\\' && quote != '\'' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if char == quote {
+				quote = 0
+			}
+			continue
+		}
+		if char == '\'' || char == '"' {
+			quote = char
+		} else if char == '#' && (i == 0 || strings.ContainsRune(" \t\r;|&()<>", rune(line[i-1]))) {
+			return line[:i]
+		}
+	}
+	return line
+}
+
 func recursiveRemove(source string) bool {
 	source = strings.ReplaceAll(source, "\\\n", " ")
-	command := regexp.MustCompile(`(?:^|[\s;])[-@+]*(?:/[^\s;]+/)?["']?rm["']?\s+([^\n;|&]+)`)
+	command := regexp.MustCompile(`(?:^|[\s;|&()\x60])[-@+]*(?:/[^\s;]+/)?["']?rm["']?\s+([^\n;|&()\x60]+)`)
 	for _, line := range strings.Split(source, "\n") {
-		line = strings.SplitN(line, "#", 2)[0]
+		line = withoutShellComment(line)
 		for _, match := range command.FindAllStringSubmatch(line, -1) {
 			for _, word := range strings.Fields(match[1]) {
 				word = strings.Trim(word, `"'`)
@@ -71,6 +100,39 @@ func TestBuildCleanup_RecursiveRemoveGuardMakePrefixes(t *testing.T) {
 			for _, tc := range cases {
 				require.Equal(t, tc.forbidden, recursiveRemove(tc.source), tc.source)
 			}
+		})
+	}
+}
+
+func TestBuildCleanup_RecursiveRemoveGuardShellBoundaries(t *testing.T) {
+	cases := []struct {
+		source    string
+		forbidden bool
+	}{
+		{"\t@true&&rm -rf dist", true},
+		{"true||rm -r -f dist", true},
+		{"true|rm --recursive dist", true},
+		{"true&rm -R dist", true},
+		{"(rm -rf dist)", true},
+		{"(true)&&rm --recursive", true},
+		{"echo $(rm --recursive)", true},
+		{"echo `rm --recursive`", true},
+		{"printf '#';rm -rf dist", true},
+		{"printf \"#\";rm --recursive dist", true},
+		{"printf foo#bar;rm -r dist", true},
+		{"printf \\#;rm -r dist", true},
+		{"true&&rm -f file", false},
+		{"true||rm --force file", false},
+		{"true|rm -f file", false},
+		{"(rm -f file)", false},
+		{"echo $(rm --force)", false},
+		{"# rm -rf dist", false},
+		{"true # rm -rf dist", false},
+		{"printf '#'; # rm -rf dist", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.source, func(t *testing.T) {
+			require.Equal(t, tc.forbidden, recursiveRemove(tc.source))
 		})
 	}
 }

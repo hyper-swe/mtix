@@ -166,13 +166,15 @@ func TestApply_AtomicityInProcessRollback(t *testing.T) {
 	for i := 0; i < tries; i++ {
 		go func(i int) {
 			defer wg.Done()
-			pl, _ := model.EncodePayload(&model.CreateNodePayload{Title: "n"})
+			pl, encErr := model.EncodePayload(&model.CreateNodePayload{Title: "n"})
+			require.NoError(t, encErr)
 			nodeID := "MTIX-" + strconv.Itoa(i+1)
 			if i%2 == 0 {
 				// Half: apply update on missing node — must fail and roll back.
-				pl, _ = model.EncodePayload(&model.UpdateFieldPayload{
+				pl, encErr = model.EncodePayload(&model.UpdateFieldPayload{
 					FieldName: "title", NewValue: json.RawMessage(`"x"`),
 				})
+				require.NoError(t, encErr)
 				e := &model.SyncEvent{
 					EventID:           clock.MustNewEventID(),
 					ProjectPrefix:     "MTIX",
@@ -247,7 +249,8 @@ func TestApply_ReplayAgainstFreshDB(t *testing.T) {
 			payload = &model.CreateNodePayload{Title: nodeID}
 			creates++
 		}
-		pl, _ := model.EncodePayload(payload)
+		pl, encErr := model.EncodePayload(payload)
+		require.NoError(t, encErr)
 		e := &model.SyncEvent{
 			EventID:           clock.MustNewEventID(),
 			ProjectPrefix:     "MTIX",
@@ -283,7 +286,8 @@ func TestApply_DeleteThenCreate_NewIDProceeds(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 
-	pl1, _ := model.EncodePayload(&model.CreateNodePayload{Title: "first"})
+	pl1, encErr := model.EncodePayload(&model.CreateNodePayload{Title: "first"})
+	require.NoError(t, encErr)
 	create1 := &model.SyncEvent{
 		EventID:           clock.MustNewEventID(),
 		ProjectPrefix:     "MTIX",
@@ -300,7 +304,8 @@ func TestApply_DeleteThenCreate_NewIDProceeds(t *testing.T) {
 		return sqlite.IdempotentApply(context.Background(), tx, create1)
 	}))
 
-	pl2, _ := model.EncodePayload(&model.DeletePayload{})
+	pl2, encErr := model.EncodePayload(&model.DeletePayload{})
+	require.NoError(t, encErr)
 	del := &model.SyncEvent{
 		EventID:           clock.MustNewEventID(),
 		ProjectPrefix:     "MTIX",
@@ -317,7 +322,8 @@ func TestApply_DeleteThenCreate_NewIDProceeds(t *testing.T) {
 		return sqlite.IdempotentApply(context.Background(), tx, del)
 	}))
 
-	pl3, _ := model.EncodePayload(&model.CreateNodePayload{Title: "second"})
+	pl3, encErr := model.EncodePayload(&model.CreateNodePayload{Title: "second"})
+	require.NoError(t, encErr)
 	create2 := &model.SyncEvent{
 		EventID:           clock.MustNewEventID(),
 		ProjectPrefix:     "MTIX",

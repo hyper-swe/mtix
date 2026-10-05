@@ -123,17 +123,15 @@ func (s *Store) SetAnnotations(ctx context.Context, nodeID string, annotations [
 		}
 
 		commentBody, commentAuthor, commentTo := newCommentForSyncEvent(prevJSON.String, annotations)
-		payload, _ := model.EncodePayload(&model.CommentPayload{
-			AuthorID: commentAuthor,
-			Body:     commentBody,
-			To:       commentTo,
-		})
-		return emitEvent(ctx, tx, emitParams{
+		return s.emitPayload(ctx, tx, emitParams{
 			NodeID:      nodeID,
 			ProjectCode: projectPrefixFromNodeID(nodeID),
 			OpType:      model.OpComment,
 			Author:      commentAuthor,
-			Payload:     payload,
+		}, &model.CommentPayload{
+			AuthorID: commentAuthor,
+			Body:     commentBody,
+			To:       commentTo,
 		})
 	})
 }

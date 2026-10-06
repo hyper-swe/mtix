@@ -62,6 +62,8 @@ type Store interface {
 
 	// CreateNodeAllocated allocates the local sequence and creates/claims the node atomically (FR-2.7/FR-11.2a).
 	CreateNodeAllocated(ctx context.Context, node *model.Node, opts CreateNodeOptions) error
+	// CreateNodesAllocated allocates, creates and initially claims the entire batch atomically (FR-6.3).
+	CreateNodesAllocated(ctx context.Context, nodes []*model.Node, opts CreateNodeOptions) error
 
 	// CreateNode persists a new node. The node's ID must be pre-generated.
 	// Returns ErrAlreadyExists if a node with the given ID already exists.

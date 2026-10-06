@@ -71,20 +71,9 @@ func (s *Store) CreateNodeAllocated(ctx context.Context, node *model.Node, opts 
 	candidate := *node
 	assignee := opts.Assignee
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
-		if candidate.ParentID != "" {
-			if err := validateParentStatus(ctx, tx, candidate.ParentID); err != nil {
-				return err
-			}
-		}
 		var err error
-		assignee, err = initialClaimAssignee(ctx, tx, &candidate, opts)
-		if err != nil {
-			return err
-		}
-		if err := allocateNodeID(ctx, tx, &candidate, opts.Provisional); err != nil {
-			return err
-		}
-		return s.createNodeTx(ctx, tx, &candidate, assignee)
+		assignee, err = s.createNodeAllocatedTx(ctx, tx, &candidate, opts)
+		return err
 	})
 	if err != nil {
 		return err
@@ -92,6 +81,66 @@ func (s *Store) CreateNodeAllocated(ctx context.Context, node *model.Node, opts 
 	applyInitialClaim(&candidate, assignee)
 	*node = candidate
 	return nil
+}
+
+// CreateNodesAllocated creates a local batch under one write lock (FR-6.3).
+// Every UID is minted before locking; caller allocations and claims are exposed
+// only after all insertions, events, progress updates and claims commit together.
+func (s *Store) CreateNodesAllocated(ctx context.Context, nodes []*model.Node, opts store.CreateNodeOptions) error {
+	if len(nodes) == 0 {
+		return fmt.Errorf("creation batch must not be empty: %w", model.ErrInvalidInput)
+	}
+	candidates := make([]model.Node, len(nodes))
+	assignees := make([]string, len(nodes))
+	for i, node := range nodes {
+		if node == nil {
+			return fmt.Errorf("creation batch node %d is nil: %w", i, model.ErrInvalidInput)
+		}
+		if err := node.Validate(); err != nil {
+			return fmt.Errorf("create batch node %d validate: %w", i, err)
+		}
+		if (opts.Assignee != "" || opts.ClaimParentAssignee) && (node.Status != model.StatusOpen || node.Assignee != "") {
+			return fmt.Errorf("creation claim requires an unassigned open node: %w", model.ErrInvalidInput)
+		}
+		candidates[i] = *node
+		if err := ensureCreateNodeUID(&candidates[i]); err != nil {
+			return err
+		}
+	}
+	if err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		for i := range candidates {
+			var err error
+			assignees[i], err = s.createNodeAllocatedTx(ctx, tx, &candidates[i], opts)
+			if err != nil {
+				return fmt.Errorf("create batch node %d: %w", i, err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	for i := range candidates {
+		applyInitialClaim(&candidates[i], assignees[i])
+		*nodes[i] = candidates[i]
+	}
+	return nil
+}
+
+// createNodeAllocatedTx reuses the single-create boundary without nesting transactions.
+func (s *Store) createNodeAllocatedTx(ctx context.Context, tx *sql.Tx, node *model.Node, opts store.CreateNodeOptions) (string, error) {
+	if node.ParentID != "" {
+		if err := validateParentStatus(ctx, tx, node.ParentID); err != nil {
+			return "", err
+		}
+	}
+	assignee, err := initialClaimAssignee(ctx, tx, node, opts)
+	if err != nil {
+		return "", err
+	}
+	if err := allocateNodeID(ctx, tx, node, opts.Provisional); err != nil {
+		return "", err
+	}
+	return assignee, s.createNodeTx(ctx, tx, node, assignee)
 }
 
 // applyInitialClaim updates the result only after the transactional claim committed.

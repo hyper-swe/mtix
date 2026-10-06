@@ -224,7 +224,7 @@ func applyBatch(ctx context.Context, in pullIngest, store *sqlite.Store, events 
 			if refused := checkPulledEvent(in, e, local); refused != nil {
 				return cloneRefusal(e, refused, true)
 			}
-			if err := sqlite.IdempotentApply(ctx, tx, e); err != nil {
+			if err := store.IdempotentApply(ctx, tx, e); err != nil {
 				return fmt.Errorf("apply %s: %w", e.EventID, err)
 			}
 		}

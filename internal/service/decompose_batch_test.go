@@ -86,6 +86,9 @@ func TestDecompose_LateRefusal_RollsBackWholeBatch(t *testing.T) {
 			ids, err = svc.Decompose(ctx, parent.ID, children, "author")
 			require.NoError(t, err)
 			assert.Equal(t, []string{"TEST-1.2", "TEST-1.3", "TEST-1.4"}, ids)
+			parentCommitted, err := st.GetNode(ctx, parent.ID)
+			require.NoError(t, err)
+			assert.Equal(t, 0.25, parentCommitted.Progress, "one completed prior sibling and three new open children")
 		})
 	}
 }

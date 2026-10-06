@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
@@ -57,31 +58,10 @@ func (svc *NodeService) Decompose(
 		)
 	}
 
-	now := svc.clock()
-	nodes := make([]*model.Node, 0, len(children))
-
-	// Prepare and validate all children, including their durable UIDs, before
-	// entering the single storage transaction (FR-6.3 / ADR-003).
-	for _, child := range children {
-		req := &CreateNodeRequest{
-			ParentID:    parentID,
-			Project:     parent.Project,
-			Title:       child.Title,
-			Description: child.Description,
-			Prompt:      child.Prompt,
-			Acceptance:  child.Acceptance,
-			Priority:    child.Priority,
-			Labels:      child.Labels,
-			Creator:     creator,
-			DeferUntil:  nil,
-		}
-
-		// Override default priority if needed — children inherit parent defaults.
-		node, err := svc.buildNode(ctx, req, now)
-		if err != nil {
-			return nil, fmt.Errorf("create child %q: %w", child.Title, err)
-		}
-		nodes = append(nodes, node)
+	base := &CreateNodeRequest{ParentID: parentID, Project: parent.Project, Creator: creator}
+	nodes, err := svc.prepareDecomposeChildren(ctx, base, children, svc.clock())
+	if err != nil {
+		return nil, err
 	}
 	if err := svc.store.CreateNodesAllocated(ctx, nodes, store.CreateNodeOptions{
 		ClaimParentAssignee: svc.config.AutoClaim(),
@@ -99,4 +79,27 @@ func (svc *NodeService) Decompose(
 	svc.broadcastEvent(ctx, EventProgressChanged, parentID, creator, nil)
 
 	return createdIDs, nil
+}
+
+// prepareDecomposeChildren applies child defaults and prepares every durable UID
+// and content hash before the single storage transaction (FR-6.3 / ADR-003).
+func (svc *NodeService) prepareDecomposeChildren(
+	ctx context.Context, base *CreateNodeRequest, children []DecomposeInput, now time.Time,
+) ([]*model.Node, error) {
+	nodes := make([]*model.Node, 0, len(children))
+	for _, child := range children {
+		req := *base
+		req.Title = child.Title
+		req.Description = child.Description
+		req.Prompt = child.Prompt
+		req.Acceptance = child.Acceptance
+		req.Priority = child.Priority
+		req.Labels = child.Labels
+		node, err := svc.buildNode(ctx, &req, now)
+		if err != nil {
+			return nil, fmt.Errorf("create child %q: %w", child.Title, err)
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes, nil
 }

@@ -37,7 +37,9 @@ func registerStatsTool(reg *ToolRegistry, st store.Store) {
 			},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct{ Under string `json:"under"` }
+		var p struct {
+			Under string `json:"under"`
+		}
 		if args != nil {
 			_ = json.Unmarshal(args, &p)
 		}
@@ -83,7 +85,9 @@ func registerProgressTool(reg *ToolRegistry, st store.Store) {
 			Required: []string{"id"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct{ ID string `json:"id"` }
+		var p struct {
+			ID string `json:"id"`
+		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse progress args: %w", err)
 		}
@@ -156,7 +160,9 @@ func registerOrphansTool(reg *ToolRegistry, st store.Store) {
 			},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct{ Limit int `json:"limit"` }
+		var p struct {
+			Limit int `json:"limit"`
+		}
 		if args != nil {
 			_ = json.Unmarshal(args, &p)
 		}

@@ -168,8 +168,8 @@ func TestCLI_Ls_ListsWithStatusIcons(t *testing.T) {
 
 	assert.Contains(t, stdout, "Task Alpha")
 	assert.Contains(t, stdout, "Task Beta")
-	assert.Contains(t, stdout, "○") // open status icon
-	assert.Contains(t, stdout, "ID")  // table header
+	assert.Contains(t, stdout, "○")  // open status icon
+	assert.Contains(t, stdout, "ID") // table header
 }
 
 // TestCLI_Done_TransitionsStatus verifies done command transitions status.

@@ -2546,7 +2546,7 @@ func TestCreateNode_WithCodeRefsAndLabels_PersistsJSON(t *testing.T) {
 		ID: "JSON-1", Project: "JSON", Depth: 0, Seq: 1, Title: "JSON fields test",
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
 		NodeType: model.NodeTypeIssue, ContentHash: "j1",
-		Labels:   []string{"bug", "urgent", "p0"},
+		Labels: []string{"bug", "urgent", "p0"},
 		CodeRefs: []model.CodeRef{
 			{File: "internal/store/sqlite/store.go", Line: 47},
 			{File: "cmd/mtix/main.go", Line: 15},
@@ -2576,7 +2576,7 @@ func TestCreateNode_WithAnnotations_PersistsJSON(t *testing.T) {
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
 		NodeType: model.NodeTypeIssue, ContentHash: "a1",
 		Annotations: annotations,
-		CreatedAt: now, UpdatedAt: now,
+		CreatedAt:   now, UpdatedAt: now,
 	}))
 
 	node, err := s.GetNode(ctx, "ANN-1")
@@ -2596,7 +2596,7 @@ func TestCreateNode_WithMetadata_PersistsRawJSON(t *testing.T) {
 		ID: "META-1", Project: "META", Depth: 0, Seq: 1, Title: "Metadata test",
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
 		NodeType: model.NodeTypeIssue, ContentHash: "m1",
-		Metadata: json.RawMessage(`{"custom":"field","nested":{"key":42}}`),
+		Metadata:  json.RawMessage(`{"custom":"field","nested":{"key":42}}`),
 		CreatedAt: now, UpdatedAt: now,
 	}))
 

@@ -67,7 +67,7 @@ func TestPushLoop_DrainsRenumberRequired(t *testing.T) {
 	require.Len(t, acc, 1, "hub registers B's TEST-1.1")
 
 	// Client A independently creates TEST-1 and TEST-1.1 (its own uid).
-	require.NoError(t, runCreate("A parent", "", "", 3, "", "", "", "", ""))   // TEST-1
+	require.NoError(t, runCreate("A parent", "", "", 3, "", "", "", "", ""))      // TEST-1
 	require.NoError(t, runCreate("A child", "TEST-1", "", 3, "", "", "", "", "")) // TEST-1.1
 
 	// The REAL pushLoop must drain the TEST-1.1 collision: A's parent lands at

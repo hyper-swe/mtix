@@ -6,11 +6,11 @@
 // second project is the multi-hyphen "MTIX-DEV-OPS" so these tests also cover
 // the AC-4 sharp edge at the CLI surface (create/list/orphans/projects).
 //
-//   AC-1  cross-project create, child inheritance, parent mismatch error
-//   AC-2  list-style scope (orphans, in addition to list/search in
-//         projects_scope_test.go): default=primary, --project, --all-projects
-//   AC-3  `mtix projects` lists both with counts, primary marked
-//   AC-7  single-project DB behaves identically to pre-feature (regression)
+//	AC-1  cross-project create, child inheritance, parent mismatch error
+//	AC-2  list-style scope (orphans, in addition to list/search in
+//	      projects_scope_test.go): default=primary, --project, --all-projects
+//	AC-3  `mtix projects` lists both with counts, primary marked
+//	AC-7  single-project DB behaves identically to pre-feature (regression)
 //
 // Helpers captureStdout / extractNodeIDs / projectsOf live in
 // projects_scope_test.go (same package). projectsOf splits at the first '-' so

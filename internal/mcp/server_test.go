@@ -96,7 +96,9 @@ func TestServer_ToolsCall_InvokesHandler(t *testing.T) {
 		Description: "Echo tool",
 		InputSchema: mcp.SchemaObj{Type: "object"},
 	}, func(_ context.Context, args json.RawMessage) (*mcp.ToolsCallResult, error) {
-		var p struct{ Text string `json:"text"` }
+		var p struct {
+			Text string `json:"text"`
+		}
 		_ = json.Unmarshal(args, &p)
 		return mcp.SuccessResult(p.Text), nil
 	})

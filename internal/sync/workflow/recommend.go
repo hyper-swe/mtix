@@ -220,4 +220,3 @@ func formatRecommendation(idx int, rec Recommendation) string {
 	}
 	return b.String()
 }
-

@@ -393,4 +393,3 @@ func TestUpdateProgress_DeletedNode_ReturnsNotFound(t *testing.T) {
 	err := s.UpdateProgress(ctx, "PROJ-1", 0.5)
 	assert.ErrorIs(t, err, model.ErrNotFound)
 }
-

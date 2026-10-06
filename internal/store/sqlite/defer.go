@@ -51,12 +51,12 @@ func (s *Store) DeferNode(ctx context.Context, id string, until *time.Time, reas
 		now:    s.clock(),
 	}
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		return executeDeferTx(ctx, tx, req)
+		return s.executeDeferTx(ctx, tx, req)
 	})
 }
 
 // executeDeferTx performs a defer inside the caller's transaction (MTIX-95.22).
-func executeDeferTx(ctx context.Context, tx *sql.Tx, req deferRequest) error {
+func (s *Store) executeDeferTx(ctx context.Context, tx *sql.Tx, req deferRequest) error {
 	fromStatus, _, err := readNodeStatus(ctx, tx, req.id)
 	if err != nil {
 		return err
@@ -65,7 +65,7 @@ func executeDeferTx(ctx context.Context, tx *sql.Tx, req deferRequest) error {
 		return redeferTx(ctx, tx, req)
 	}
 
-	if err := executeTransitionTx(ctx, tx, req.id, model.StatusDeferred, req.reason, req.author); err != nil {
+	if err := s.executeTransitionTx(ctx, tx, transitionRequest{id: req.id, toStatus: model.StatusDeferred, reason: req.reason, author: req.author}); err != nil {
 		return err
 	}
 
@@ -173,8 +173,8 @@ func (s *Store) WakeDeferredNode(ctx context.Context, id string, now time.Time) 
 			return nil
 		}
 		woken = true
-		return executeTransitionTx(ctx, tx, id, model.StatusOpen,
-			"Auto-reopened: defer_until has passed", "system")
+		return s.executeTransitionTx(ctx, tx, transitionRequest{id: id, toStatus: model.StatusOpen,
+			reason: "Auto-reopened: defer_until has passed", author: "system"})
 	})
 	if err != nil {
 		return false, err

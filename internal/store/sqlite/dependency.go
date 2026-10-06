@@ -58,16 +58,14 @@ func (s *Store) AddDependency(ctx context.Context, dep *model.Dependency) error 
 			}
 		}
 
-		payload, _ := model.EncodePayload(&model.LinkDepPayload{
-			DependsOnNodeID: dep.ToID,
-			DepType:         string(dep.DepType),
-		})
-		return emitEvent(ctx, tx, emitParams{
+		return s.emitPayload(ctx, tx, emitParams{
 			NodeID:      dep.FromID,
 			ProjectCode: projectPrefixFromNodeID(dep.FromID),
 			OpType:      model.OpLinkDep,
 			Author:      dep.CreatedBy,
-			Payload:     payload,
+		}, &model.LinkDepPayload{
+			DependsOnNodeID: dep.ToID,
+			DepType:         string(dep.DepType),
 		})
 	})
 }
@@ -102,16 +100,14 @@ func (s *Store) RemoveDependency(ctx context.Context, fromID, toID string, depTy
 			}
 		}
 
-		payload, _ := model.EncodePayload(&model.UnlinkDepPayload{
-			DependsOnNodeID: toID,
-			DepType:         string(depType),
-		})
-		return emitEvent(ctx, tx, emitParams{
+		return s.emitPayload(ctx, tx, emitParams{
 			NodeID:      fromID,
 			ProjectCode: projectPrefixFromNodeID(fromID),
 			OpType:      model.OpUnlinkDep,
 			Author:      "", // MTIX-24: emit resolves the default author (env/meta/'cli')
-			Payload:     payload,
+		}, &model.UnlinkDepPayload{
+			DependsOnNodeID: toID,
+			DepType:         string(depType),
 		})
 	})
 }
@@ -245,6 +241,11 @@ func autoUnblockNode(ctx context.Context, tx *sql.Tx, nodeID string) error {
 		return nil // Still has unresolved blockers.
 	}
 
+	return restoreUnblockedNode(ctx, tx, nodeID, previousStatus)
+}
+
+// restoreUnblockedNode preserves the existing checked unblock event path.
+func restoreUnblockedNode(ctx context.Context, tx *sql.Tx, nodeID string, previousStatus sql.NullString) error {
 	// Restore to previous_status.
 	restoreTo := model.StatusOpen
 	if previousStatus.Valid && previousStatus.String != "" {
@@ -252,7 +253,7 @@ func autoUnblockNode(ctx context.Context, tx *sql.Tx, nodeID string) error {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = tx.ExecContext(ctx,
+	_, err := tx.ExecContext(ctx,
 		`UPDATE nodes SET status = ?, previous_status = NULL, updated_at = ?
 		 WHERE id = ? AND deleted_at IS NULL`,
 		string(restoreTo), now, nodeID,

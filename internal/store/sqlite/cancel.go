@@ -27,7 +27,7 @@ func (s *Store) CancelNode(ctx context.Context, id, reason, author string, casca
 	}
 
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		return executeCancelTx(ctx, tx, id, reason, author, cascade)
+		return s.executeCancelTx(ctx, tx, transitionRequest{id: id, reason: reason, author: author}, cascade)
 	})
 }
 
@@ -40,7 +40,8 @@ func (s *Store) CancelNode(ctx context.Context, id, reason, author string, casca
 // then recomputes the progress of every ancestor of a cancelled descendant
 // inside the subtree, the root included, once each and deepest first,
 // before the root's parent chain, all in this transaction (MTIX-95.21).
-func executeCancelTx(ctx context.Context, tx *sql.Tx, id, reason, author string, cascade bool) error {
+func (s *Store) executeCancelTx(ctx context.Context, tx *sql.Tx, req transitionRequest, cascade bool) error {
+	id, reason, author := req.id, req.reason, req.author
 	fromStatus, parentID, err := readNodeForCancel(ctx, tx, id)
 	if err != nil {
 		return err
@@ -53,21 +54,19 @@ func executeCancelTx(ctx context.Context, tx *sql.Tx, id, reason, author string,
 	now := time.Now().UTC()
 	nowStr := now.Format(time.RFC3339)
 
-	if err := applyCancelUpdate(ctx, tx, id, fromStatus, reason, author, now, nowStr); err != nil {
+	if err := applyCancelUpdate(ctx, tx, req, fromStatus, now); err != nil {
 		return err
 	}
 
-	payload, _ := model.EncodePayload(&model.TransitionStatusPayload{
-		From:   fromStatus,
-		To:     model.StatusCancelled,
-		Reason: reason,
-	})
-	if err := emitEvent(ctx, tx, emitParams{
+	if err := s.emitPayload(ctx, tx, emitParams{
 		NodeID:      id,
 		ProjectCode: projectPrefixFromNodeID(id),
 		OpType:      model.OpTransitionStatus,
 		Author:      author,
-		Payload:     payload,
+	}, &model.TransitionStatusPayload{
+		From:   fromStatus,
+		To:     model.StatusCancelled,
+		Reason: reason,
 	}); err != nil {
 		return err
 	}
@@ -120,7 +119,9 @@ func readNodeForCancel(ctx context.Context, tx *sql.Tx, id string) (model.Status
 
 // applyCancelUpdate sets the node to canceled and records the activity entry.
 // A cancelled node has no wake time, so defer_until is cleared (MTIX-95.22).
-func applyCancelUpdate(ctx context.Context, tx *sql.Tx, id string, fromStatus model.Status, reason, author string, now time.Time, nowStr string) error {
+func applyCancelUpdate(ctx context.Context, tx *sql.Tx, req transitionRequest, fromStatus model.Status, now time.Time) error {
+	id, reason, author := req.id, req.reason, req.author
+	nowStr := now.Format(time.RFC3339)
 	_, err := tx.ExecContext(ctx,
 		`UPDATE nodes SET status = ?, closed_at = ?, updated_at = ?, defer_until = NULL
 		 WHERE id = ? AND deleted_at IS NULL`,

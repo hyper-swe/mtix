@@ -142,8 +142,8 @@ func TestCreateNode_CounterBehindFreeNumber_UsesAllocatedNumber(t *testing.T) {
 // the number it hands out once and does not loop. A test trigger stands in
 // for a pulled PROJ-1.3 that lands between the skip and the insert (the
 // allocate/insert race, MTIX-107.57): the create that skipped from 1 to 3
-// fails with ErrAlreadyExists, the counter stays at 3, and the next create
-// succeeds with PROJ-1.4.
+// fails with ErrAlreadyExists; allocation and trigger writes roll back. After
+// removing the trigger, the next create takes PROJ-1.3 without a gap.
 func TestCreateNode_SkippedNumberAlsoTaken_SkipsOnlyOnce(t *testing.T) {
 	svc, st, _ := newTestNodeService(t)
 	createPROJs(t, svc, "", 1)
@@ -160,10 +160,12 @@ func TestCreateNode_SkippedNumberAlsoTaken_SkipsOnlyOnce(t *testing.T) {
 	_, err = createPROJ(svc, "PROJ-1", "new")
 
 	require.ErrorIs(t, err, model.ErrAlreadyExists)
-	require.Equal(t, 3, sequenceCounterValue(t, st, "PROJ:PROJ-1"), "one skip, no loop")
+	require.Equal(t, 0, sequenceCounterValue(t, st, "PROJ:PROJ-1"), "one skip, entire create rolled back")
+	_, err = st.WriteDB().ExecContext(context.Background(), `DROP TRIGGER test_pulled_after_skip`)
+	require.NoError(t, err)
 	node, err := createPROJ(svc, "PROJ-1", "retry")
 	require.NoError(t, err)
-	require.Equal(t, "PROJ-1.4", node.ID)
+	require.Equal(t, "PROJ-1.3", node.ID)
 }
 
 // TestCreateNode_CounterBehindConcurrentCreates_DistinctContiguousNumbers:

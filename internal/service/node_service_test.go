@@ -488,6 +488,14 @@ func strPtr(s string) *string {
 // mockStore is a minimal mock for constructor tests that don't need real storage.
 type mockStore struct{}
 
+func (m *mockStore) CreateNodeAllocated(ctx context.Context, node *model.Node, opts store.CreateNodeOptions) error {
+	node.Seq = 1
+	node.ID = model.BuildID(node.Project, node.ParentID, node.Seq)
+	if opts.Assignee != "" {
+		return m.CreateNodeAndClaim(ctx, node, opts.Assignee)
+	}
+	return m.CreateNode(ctx, node)
+}
 func (m *mockStore) CreateNodeAndClaim(ctx context.Context, node *model.Node, _ string) error {
 	return m.CreateNode(ctx, node)
 }

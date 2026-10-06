@@ -25,8 +25,17 @@ import (
 	"github.com/hyper-swe/mtix/internal/store"
 )
 
-// Layering guards pin the HTTP service boundary and mutation-only boundary
-// of gRPC/MCP. Their reads are tracked separately by MTIX-127.
+// Layering guards catch accidental recurrence at the HTTP service boundary and
+// mutation boundary of gRPC/MCP; their reads remain tracked by MTIX-127.
+// Per MTIX-120 ruling3345, supported scope is direct backend calls, simple local
+// or cross-file package aliases, and storage imports in any Go quoting form.
+// Known deliberate-evasion limits include asserted/type-switch aliases,
+// container/field projections, returned functions, aliases reassigned through
+// conditionals/loops/closures, and reflection. Existing checks may detect some
+// advanced forms, but comprehensive detection is not an acceptance requirement.
+// These limits are documented S3 follow-up work, not blocking scope failures;
+// see TestServiceLayer_GuardKnownDeliberateEvasionLimits. This does not relax
+// the accidental recurrence checks or alter any production behavior.
 func TestServiceLayer_HTTPHasNoStoreAndTransportsHaveNoDirectMutations(t *testing.T) {
 	for _, dir := range []string{".", "../grpc", "../../mcp"} {
 		paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
@@ -898,5 +907,48 @@ func TestServiceLayer_GuardAllowsValuesShadowingTypeNames(t *testing.T) {
 		`package sample; type CancelAPI interface{CancelNode(...any)error};func f(CancelAPI func(any)NodeWriter, svc NodeWriter){writer:=CancelAPI(svc);writer.CancelNode(nil,"","","",false)}`,
 	} {
 		require.Empty(t, directStoreMutations("guard.go", source))
+	}
+}
+
+// Required accidental scope includes package aliases declared in a different
+// file, not just the same-file local bindings exercised above.
+func TestServiceLayer_GuardSupportedDirectLocalAndPackageAliases(t *testing.T) {
+	for _, body := range []string{
+		`packageStore.CancelNode(nil,"","","",false)`,
+		`db:=packageStore;db.CancelNode(nil,"","","",false)`,
+		`packageAlias.CancelNode(nil,"","","",false)`,
+		`cancel:=packageAlias.CancelNode;cancel(nil,"","","",false)`,
+	} {
+		sources := map[string]string{
+			"backend.go": `package sample; import backend "github.com/hyper-swe/mtix/internal/store";var packageStore backend.Store`,
+			"alias.go":   `package sample; var packageAlias = packageStore`,
+			"handler.go": `package sample;func f(){` + body + `}`,
+		}
+		require.NotEmpty(t, directPackageStoreMutations(sources), body)
+	}
+	sources := map[string]string{
+		"backend.go": `package sample;import backend "github.com/hyper-swe/mtix/internal/store";var packageStore backend.Store;var writer NodeWriter`,
+		"alias.go":   `package sample;var packageAlias=packageStore;var serviceAlias=writer`,
+		"handler.go": `package sample;func f(){packageAlias.GetNode(nil,"");serviceAlias.CancelNode(nil,"","","",false)}`,
+	}
+	require.Empty(t, directPackageStoreMutations(sources))
+}
+
+// Characterize currently unsupported deliberate evasions under ruling3345.
+// Empty findings here document known S3 limits, not a code fix for old F2.
+// Reassigned conditional/loop/closure aliases, reflection and other complex
+// flows are also outside the supported guarantee; some are already detected.
+// Do not infer that every out-of-scope form must bypass the existing detector.
+func TestServiceLayer_GuardKnownDeliberateEvasionLimits(t *testing.T) {
+	for _, body := range []string{
+		`db:=any(s.store).(backend.Store);db.CancelNode(nil,"","","",false)`,
+		`db,ok:=any(s.store).(backend.Store);if ok{db.CancelNode(nil,"","","",false)}`,
+		`switch db:=any(s.store).(type){case backend.Store:db.CancelNode(nil,"","","",false)}`,
+		`db:=[]backend.Store{s.store}[0];db.CancelNode(nil,"","","",false)`,
+		`db:=struct{storage backend.Store}{s.store}.storage;db.CancelNode(nil,"","","",false)`,
+		`db:=func()backend.Store{return s.store}();db.CancelNode(nil,"","","",false)`,
+	} {
+		source := `package sample;import backend "github.com/hyper-swe/mtix/internal/store";type Server struct{store backend.Store};func(s *Server)f(){` + body + `}`
+		require.Empty(t, directStoreMutations("known-limit.go", source), body)
 	}
 }

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -21,10 +22,20 @@ import (
 // obsolete guidance in shipped source, templates, skills and docs (FR-13.1).
 // Board history and private loop evidence are outside shipped guidance.
 func TestUnblockHelp_ShippedGuidanceUsesRealDependencyCommand(t *testing.T) {
-	root := filepath.Join("..", "..")
+	references, err := obsoleteHelpReferences(filepath.Join("..", ".."))
+	require.NoError(t, err)
+	require.Empty(t, references, "obsolete command guidance in shipped source")
+}
+
+func helpGuidanceRoots() []string {
+	return []string{"cmd", "internal", "docs", ".claude-plugin", ".codex-plugin", "USERMANUAL.md", "README.md"}
+}
+
+func obsoleteHelpReferences(root string) ([]string, error) {
+	references := []string{}
 	obsolete := strings.Join([]string{"mtix", "deps"}, " ")
-	for _, name := range []string{"cmd", "internal/docs/templates", "docs", ".claude-plugin", ".codex-plugin", "USERMANUAL.md", "README.md"} {
-		require.NoError(t, filepath.WalkDir(filepath.Join(root, name), func(path string, entry fs.DirEntry, err error) error {
+	for _, name := range helpGuidanceRoots() {
+		err := filepath.WalkDir(filepath.Join(root, name), func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
@@ -38,22 +49,80 @@ func TestUnblockHelp_ShippedGuidanceUsesRealDependencyCommand(t *testing.T) {
 			}
 			content, err := os.ReadFile(path)
 			if err != nil {
-				return err
+				return fmt.Errorf("read shipped guidance %s: %w", path, err)
 			}
-			require.NotContains(t, string(content), obsolete, path)
+			if strings.Contains(string(content), obsolete) {
+				relative, err := filepath.Rel(root, path)
+				if err != nil {
+					return fmt.Errorf("locate shipped guidance %s: %w", path, err)
+				}
+				references = append(references, filepath.ToSlash(relative))
+			}
 			return nil
-		}))
+		})
+		if err != nil {
+			return nil, fmt.Errorf("scan shipped guidance %s: %w", name, err)
+		}
+	}
+	return references, nil
+}
+
+// The scanner covers shipped internal Go as well as templates, while board
+// history and private evidence remain outside the shipped-content boundary.
+func TestUnblockHelp_ScanIncludesInternalSourceExcludesMetadata(t *testing.T) {
+	for _, stale := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stale=%t", stale), func(t *testing.T) {
+			root := t.TempDir()
+			for _, name := range helpGuidanceRoots() {
+				if filepath.Ext(name) == ".md" {
+					writeHelpScanFixture(t, root, name, "reference")
+				} else {
+					require.NoError(t, os.MkdirAll(filepath.Join(root, name), 0o755))
+				}
+			}
+			obsolete := strings.Join([]string{"mtix", "deps"}, " ")
+			guidance := "Show blocking dependencies for a node"
+			if stale {
+				guidance += " (see " + obsolete + ")"
+			}
+			writeHelpScanFixture(t, root, "internal/mcp/tools_dep.go", guidance)
+			for _, name := range []string{".mtix/tasks.json", ".codex-lane/private.md", ".hyperswe/private.go"} {
+				writeHelpScanFixture(t, root, name, obsolete)
+			}
+			references, err := obsoleteHelpReferences(root)
+			require.NoError(t, err)
+			expected := []string{}
+			if stale {
+				expected = append(expected, "internal/mcp/tools_dep.go")
+			}
+			require.Equal(t, expected, references)
+		})
 	}
 }
 
+func writeHelpScanFixture(t *testing.T, root, name, content string) {
+	t.Helper()
+	path := filepath.Join(root, name)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+}
+
 // commandReferencePaths recognizes the quoted invocations shipped by unblock.
-// It checks ordinary accidental guidance drift, not arbitrary natural language.
+// Matching single, double and backtick quotes cover ordinary accidental guidance
+// drift; this is not an arbitrary natural-language or shell parser.
 func commandReferencePaths(text string) [][]string {
-	quoted := regexp.MustCompile("['`]mtix ([^'`]+)['`]")
+	quoted := regexp.MustCompile("'mtix ([^']+)'|\"mtix ([^\"]+)\"|`mtix ([^`]+)`")
 	paths := [][]string{}
 	for _, match := range quoted.FindAllStringSubmatch(text, -1) {
+		reference := ""
+		for _, capture := range match[1:] {
+			if capture != "" {
+				reference = capture
+				break
+			}
+		}
 		path := []string{}
-		for _, token := range strings.Fields(match[1]) {
+		for _, token := range strings.Fields(reference) {
 			if strings.HasPrefix(token, "<") || strings.HasPrefix(token, "-") {
 				break
 			}
@@ -141,4 +210,24 @@ func TestUnblockCmd_StillBlockedGuidanceResolvesRealCommand(t *testing.T) {
 	// The concrete ID is an argument, so resolve the two-word command path.
 	require.Equal(t, []string{"dep", "show", "TEST-2"}, paths[0])
 	require.True(t, resolvesCompleteCommandPath(paths[0][:2]))
+}
+
+// Ordinary matching quote forms must retain every referenced command, including
+// an extra invalid path alongside the original good single-quoted reference.
+func TestUnblockHelp_AllOrdinaryQuotedPathsAreChecked(t *testing.T) {
+	for _, quote := range []string{"'", "\"", "`"} {
+		t.Run(quote, func(t *testing.T) {
+			paths := commandReferencePaths("See " + quote + "mtix dep show <id>" + quote)
+			require.Equal(t, [][]string{{"dep", "show"}}, paths)
+			require.True(t, resolvesCompleteCommandPath(paths[0]))
+			extra := "Original 'mtix dep show <id>'. Also " + quote + "mtix dep missing <id>" + quote
+			paths = commandReferencePaths(extra)
+			require.Equal(t, [][]string{{"dep", "show"}, {"dep", "missing"}}, paths)
+			require.True(t, resolvesCompleteCommandPath(paths[0]))
+			require.False(t, resolvesCompleteCommandPath(paths[1]))
+		})
+	}
+	for _, malformed := range []string{"'mtix dep show <id>\"", "`mtix dep show <id>'", "\"mtix dep show <id>`"} {
+		require.Empty(t, commandReferencePaths(malformed))
+	}
 }

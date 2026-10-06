@@ -108,7 +108,8 @@ func (svc *NodeService) FlushSettlement(ctx context.Context) {
 }
 
 // CreateNode creates a new node with validation, ID generation, and event broadcast.
-// Implements FR-3.1 (field validation), FR-3.9 (terminal parent rejection),
+// Implements FR-2.1a (project prefix validation), FR-3.1 (field validation),
+// FR-3.9 (terminal parent rejection),
 // FR-11.2a (auto-claim), and FR-2.7 (atomic sequence for ID generation).
 //
 // Distributed identity (ADR-003 §4 / MTIX-30.3): the trailing number is claimed
@@ -254,7 +255,8 @@ func (svc *NodeService) TransitionStatus(
 	return nil
 }
 
-// validateCreateRequest checks the CreateNodeRequest for correctness per FR-3.1.
+// validateCreateRequest checks fields per FR-3.1 and the shared prefix grammar
+// per FR-2.1a before sequence allocation or any persistence.
 func (svc *NodeService) validateCreateRequest(req *CreateNodeRequest) error {
 	if err := model.ValidateIssueType(req.IssueType); err != nil {
 		return err
@@ -272,10 +274,7 @@ func (svc *NodeService) validateCreateRequest(req *CreateNodeRequest) error {
 	if len(req.Prompt) > model.MaxPromptSize {
 		return fmt.Errorf("prompt exceeds maximum size: %w", model.ErrInvalidInput)
 	}
-	if req.Project == "" {
-		return fmt.Errorf("project is required: %w", model.ErrInvalidInput)
-	}
-	return nil
+	return model.ValidatePrefix(req.Project)
 }
 
 // buildNode constructs a model.Node from the CreateNodeRequest.
@@ -303,6 +302,13 @@ func (svc *NodeService) buildNode(
 		parent, getErr := svc.store.GetNode(ctx, parentID)
 		if getErr != nil {
 			return nil, fmt.Errorf("parent %s: %w", parentID, getErr)
+		}
+		// The display ID inherits the parent's actual prefix, even when a
+		// caller supplies a different valid project (FR-2.1a / MTIX-107.3).
+		// Historical sync/import prefixes remain readable; local child create
+		// must validate this effective prefix before it consumes a sequence.
+		if prefixErr := model.ValidatePrefix(model.ParseIDProject(parent.ID)); prefixErr != nil {
+			return nil, fmt.Errorf("invalid inherited project prefix from parent %s; choose a parent with a valid project prefix: %w", parent.ID, prefixErr)
 		}
 		depth = parent.Depth + 1
 		seqKey = req.Project + ":" + parentID

@@ -25,3 +25,16 @@ func TestCreateGuidance_ExplainsClassificationAndAssignment(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateGuidance_ExplainsSharedPrefixValidation(t *testing.T) {
+	paths := []string{"templates/agents.md.tmpl", "templates/claude.md.tmpl", "templates/skill.md.tmpl", "../../docs/SKILL.md", "templates/skills/planning.md.tmpl", "../../.claude-plugin/skills/mtix-planning.md", "../../.codex-plugin/skills/planning/SKILL.md", "../../USERMANUAL.md"}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			raw, err := os.ReadFile(path)
+			require.NoError(t, err)
+			for _, fragment := range []string{"^[A-Z][A-Z0-9-]{0,19}$", "INVALID_INPUT", "CLI", "REST", "gRPC", "MCP", "underscore"} {
+				assert.Contains(t, string(raw), fragment)
+			}
+		})
+	}
+}

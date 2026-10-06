@@ -57,14 +57,12 @@ func (s *Store) DeleteNode(ctx context.Context, id string, cascade bool, deleted
 			}
 		}
 
-		payload, _ := model.EncodePayload(&model.DeletePayload{})
-		if err := emitEvent(ctx, tx, emitParams{
+		if err := s.emitPayload(ctx, tx, emitParams{
 			NodeID:      id,
 			ProjectCode: projectPrefixFromNodeID(id),
 			OpType:      model.OpDelete,
 			Author:      deletedBy,
-			Payload:     payload,
-		}); err != nil {
+		}, &model.DeletePayload{}); err != nil {
 			return err
 		}
 

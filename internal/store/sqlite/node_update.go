@@ -23,12 +23,12 @@ import (
 // Returns ErrNotFound if the node does not exist or is soft-deleted.
 func (s *Store) UpdateNode(ctx context.Context, id string, updates *store.NodeUpdate) error {
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		return executeUpdateTx(ctx, tx, id, updates)
+		return s.executeUpdateTx(ctx, tx, id, updates)
 	})
 }
 
 // executeUpdateTx performs the node update within a transaction.
-func executeUpdateTx(ctx context.Context, tx *sql.Tx, id string, updates *store.NodeUpdate) error {
+func (s *Store) executeUpdateTx(ctx context.Context, tx *sql.Tx, id string, updates *store.NodeUpdate) error {
 	if err := verifyNodeExists(ctx, tx, id); err != nil {
 		return err
 	}
@@ -55,7 +55,7 @@ func executeUpdateTx(ctx context.Context, tx *sql.Tx, id string, updates *store.
 		return err
 	}
 
-	return emitUpdateEvents(ctx, tx, id, updates)
+	return s.emitUpdateEvents(ctx, tx, id, updates)
 }
 
 // emitUpdateEvents emits one sync event per changed field. Maps the
@@ -66,35 +66,47 @@ func executeUpdateTx(ctx context.Context, tx *sql.Tx, id string, updates *store.
 // OldValue capture is deferred — the field is optional in the payload
 // and conflict resolution uses lamport_clock first; richer surfacing
 // (which needs the prior value) lands in MTIX-15.5.
-func emitUpdateEvents(ctx context.Context, tx *sql.Tx, id string, u *store.NodeUpdate) error {
+func (s *Store) emitUpdateEvents(ctx context.Context, tx *sql.Tx, id string, u *store.NodeUpdate) error {
 	project := projectPrefixFromNodeID(id)
-	emit := func(op model.OpType, payload json.RawMessage) error {
-		return emitEvent(ctx, tx, emitParams{
+	emit := func(op model.OpType, payload any) error {
+		return s.emitPayload(ctx, tx, emitParams{
 			NodeID:      id,
 			ProjectCode: project,
 			OpType:      op,
 			Author:      "", // MTIX-24: emit resolves the default author (env/meta/'cli')
-			Payload:     payload,
-		})
+		}, payload)
 	}
 
 	if u.Acceptance != nil {
-		p, _ := model.EncodePayload(&model.SetAcceptancePayload{AcceptanceText: *u.Acceptance})
-		if err := emit(model.OpSetAcceptance, p); err != nil {
+		if err := emit(model.OpSetAcceptance, &model.SetAcceptancePayload{AcceptanceText: *u.Acceptance}); err != nil {
 			return err
 		}
 	}
 	if u.Prompt != nil {
-		p, _ := model.EncodePayload(&model.SetPromptPayload{PromptText: *u.Prompt})
-		if err := emit(model.OpSetPrompt, p); err != nil {
+		if err := emit(model.OpSetPrompt, &model.SetPromptPayload{PromptText: *u.Prompt}); err != nil {
 			return err
 		}
 	}
 
-	type fieldEmit struct {
-		name string
-		val  any
+	for _, f := range plainUpdateFields(u) {
+		newJSON, err := json.Marshal(f.val)
+		if err != nil {
+			return fmt.Errorf("marshal new value for %s: %w", f.name, err)
+		}
+		if err := emit(model.OpUpdateField, &model.UpdateFieldPayload{FieldName: f.name, NewValue: newJSON}); err != nil {
+			return err
+		}
 	}
+
+	return nil
+}
+
+type fieldEmit struct {
+	name string
+	val  any
+}
+
+func plainUpdateFields(u *store.NodeUpdate) []fieldEmit {
 	plain := make([]fieldEmit, 0, 8)
 	if u.Title != nil {
 		plain = append(plain, fieldEmit{"title", *u.Title})
@@ -118,21 +130,7 @@ func emitUpdateEvents(ctx context.Context, tx *sql.Tx, id string, u *store.NodeU
 		plain = append(plain, fieldEmit{"agent_state", string(*u.AgentState)})
 	}
 
-	for _, f := range plain {
-		newJSON, err := json.Marshal(f.val)
-		if err != nil {
-			return fmt.Errorf("marshal new value for %s: %w", f.name, err)
-		}
-		p, _ := model.EncodePayload(&model.UpdateFieldPayload{
-			FieldName: f.name,
-			NewValue:  newJSON,
-		})
-		if err := emit(model.OpUpdateField, p); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return plain
 }
 
 // verifyNodeExists checks that a node exists and is not soft-deleted.

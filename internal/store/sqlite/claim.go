@@ -132,23 +132,8 @@ func (s *Store) UnclaimNode(ctx context.Context, id, reason, author string) erro
 	}
 
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		var currentStatus string
-		err := tx.QueryRowContext(ctx,
-			`SELECT status FROM nodes WHERE id = ? AND deleted_at IS NULL`,
-			id,
-		).Scan(&currentStatus)
-		if err == sql.ErrNoRows {
-			return fmt.Errorf("node %s: %w", id, model.ErrNotFound)
-		}
-		if err != nil {
-			return fmt.Errorf("read node %s for unclaim: %w", id, err)
-		}
-
-		if model.Status(currentStatus) != model.StatusInProgress {
-			return fmt.Errorf(
-				"cannot unclaim node %s in %s status: %w",
-				id, currentStatus, model.ErrInvalidTransition,
-			)
+		if err := validateUnclaimStatus(ctx, tx, id); err != nil {
+			return err
 		}
 
 		now := s.clock()
@@ -160,7 +145,7 @@ func (s *Store) UnclaimNode(ctx context.Context, id, reason, author string) erro
 			`SELECT assignee FROM nodes WHERE id = ? AND deleted_at IS NULL`, id,
 		).Scan(&assignee)
 
-		_, err = tx.ExecContext(ctx,
+		_, err := tx.ExecContext(ctx,
 			`UPDATE nodes SET status = ?, assignee = NULL, agent_state = NULL,
 			 updated_at = ?
 			 WHERE id = ? AND deleted_at IS NULL`,
@@ -191,15 +176,37 @@ func (s *Store) UnclaimNode(ctx context.Context, id, reason, author string) erro
 			return err
 		}
 
-		payload, _ := model.EncodePayload(&model.UnclaimPayload{})
-		return emitEvent(ctx, tx, emitParams{
+		return s.emitPayload(ctx, tx, emitParams{
 			NodeID:      id,
 			ProjectCode: projectPrefixFromNodeID(id),
 			OpType:      model.OpUnclaim,
 			Author:      author,
-			Payload:     payload,
-		})
+		}, &model.UnclaimPayload{})
 	})
+}
+
+// validateUnclaimStatus verifies the assignment can be released before writes.
+func validateUnclaimStatus(ctx context.Context, tx *sql.Tx, id string) error {
+	var currentStatus string
+	err := tx.QueryRowContext(ctx,
+		`SELECT status FROM nodes WHERE id = ? AND deleted_at IS NULL`,
+		id,
+	).Scan(&currentStatus)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("node %s: %w", id, model.ErrNotFound)
+	}
+	if err != nil {
+		return fmt.Errorf("read node %s for unclaim: %w", id, err)
+	}
+
+	if model.Status(currentStatus) != model.StatusInProgress {
+		return fmt.Errorf(
+			"cannot unclaim node %s in %s status: %w",
+			id, currentStatus, model.ErrInvalidTransition,
+		)
+	}
+
+	return nil
 }
 
 // ForceReclaimNode reclaims a node from a stale agent per FR-10.4a.
@@ -242,14 +249,12 @@ func (s *Store) ForceReclaimNode(ctx context.Context, id, agentID string, staleT
 			return err
 		}
 
-		payload, _ := model.EncodePayload(&model.ClaimPayload{AgentID: agentID, Forced: true})
-		return emitEvent(ctx, tx, emitParams{
+		return s.emitPayload(ctx, tx, emitParams{
 			NodeID:      id,
 			ProjectCode: projectPrefixFromNodeID(id),
 			OpType:      model.OpClaim,
 			Author:      agentID,
-			Payload:     payload,
-		})
+		}, &model.ClaimPayload{AgentID: agentID, Forced: true})
 	})
 }
 

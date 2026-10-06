@@ -37,11 +37,12 @@ func resolveDBPath(path string) string {
 // Store implements store.Store using SQLite with WAL mode.
 // It uses separate read and write connection pools per NFR-2.1.
 type Store struct {
-	writeDB    *sql.DB
-	readDB     *sql.DB
-	logger     *slog.Logger
-	vcReported atomic.Bool // this Store has seen the vector-clock prune notice issued (MTIX-95.16)
-	clock      func() time.Time
+	writeDB         *sql.DB
+	readDB          *sql.DB
+	logger          *slog.Logger
+	vcReported      atomic.Bool // this Store has seen the vector-clock prune notice issued (MTIX-95.16)
+	clock           func() time.Time
+	encodePayloadFn payloadEncoder // fixed per Store before concurrent use
 
 	// Durability state per NFR-2.8.
 	dbDir        string     // directory holding the DB, for free-space checks
@@ -63,32 +64,6 @@ type Store struct {
 	// — and (MTIX-53) dispatch hooks host-side. Registered once during wiring,
 	// before any traffic, so the slice needs no lock.
 	onCommit []func()
-}
-
-// SetOnCommit registers fn as the FIRST post-commit callback, replacing any
-// previously set via SetOnCommit but preserving callbacks added with
-// AddOnCommit. Must be called during process wiring, before concurrent use.
-// Every long-running interface (anything that mutates without exiting) MUST
-// wire the auto-export path here, or its users lose the FR-15.3 mirror — the
-// gap behind the 2026-05-19 data-loss incident.
-func (s *Store) SetOnCommit(fn func()) {
-	if len(s.onCommit) == 0 {
-		s.onCommit = []func(){fn}
-		return
-	}
-	s.onCommit[0] = fn
-}
-
-// AddOnCommit appends fn to the post-commit callbacks (MTIX-53), so a server can
-// wire hook dispatch alongside the mirror exporter without one replacing the
-// other. Must be called during wiring, before concurrent use.
-func (s *Store) AddOnCommit(fn func()) {
-	if len(s.onCommit) == 0 {
-		// Reserve slot 0 for SetOnCommit so a later SetOnCommit does not
-		// displace this callback.
-		s.onCommit = []func(){nil}
-	}
-	s.onCommit = append(s.onCommit, fn)
 }
 
 // New creates a new Store with the given database path.

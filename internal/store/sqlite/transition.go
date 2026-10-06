@@ -13,6 +13,14 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
+// transitionRequest keeps transaction helpers within the parameter limit.
+type transitionRequest struct {
+	id       string
+	toStatus model.Status
+	reason   string
+	author   string
+}
+
 // TransitionStatus changes a node's status per FR-3.5 state machine rules.
 // Validates the transition, records a status_change activity entry,
 // sets closed_at on done/canceled, clears it on reopen.
@@ -22,12 +30,13 @@ import (
 // Returns ErrNotFound if the node does not exist or is soft-deleted.
 func (s *Store) TransitionStatus(ctx context.Context, id string, toStatus model.Status, reason, author string) error {
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		return executeTransitionTx(ctx, tx, id, toStatus, reason, author)
+		return s.executeTransitionTx(ctx, tx, transitionRequest{id: id, toStatus: toStatus, reason: reason, author: author})
 	})
 }
 
 // executeTransitionTx performs the status transition within a transaction.
-func executeTransitionTx(ctx context.Context, tx *sql.Tx, id string, toStatus model.Status, reason, author string) error {
+func (s *Store) executeTransitionTx(ctx context.Context, tx *sql.Tx, req transitionRequest) error {
+	id, toStatus, reason, author := req.id, req.toStatus, req.reason, req.author
 	fromStatus, parentID, err := readNodeStatus(ctx, tx, id)
 	if err != nil {
 		return err
@@ -43,38 +52,19 @@ func executeTransitionTx(ctx context.Context, tx *sql.Tx, id string, toStatus mo
 	}
 
 	now := time.Now().UTC()
-	nowStr := now.Format(time.RFC3339)
-
-	setClauses, args := buildTransitionClauses(fromStatus, toStatus, nowStr)
-	query := "UPDATE nodes SET " + setClauses + " WHERE id = ? AND deleted_at IS NULL"
-	args = append(args, id)
-
-	if _, err = tx.ExecContext(ctx, query, args...); err != nil {
-		return fmt.Errorf("update status for %s: %w", id, err)
+	if err := applyTransitionUpdate(ctx, tx, req, fromStatus, now); err != nil {
+		return err
 	}
 
-	if err := appendActivityEntry(ctx, tx, id, model.ActivityEntry{
-		ID:        fmt.Sprintf("act-%d", now.UnixNano()),
-		Type:      model.ActivityTypeStatusChange,
-		Author:    author,
-		Text:      reason,
-		CreatedAt: now,
-		Metadata:  mustMarshal(map[string]string{"from_status": string(fromStatus), "to_status": string(toStatus)}),
-	}); err != nil {
-		return fmt.Errorf("record activity for %s: %w", id, err)
-	}
-
-	payload, _ := model.EncodePayload(&model.TransitionStatusPayload{
-		From:   fromStatus,
-		To:     toStatus,
-		Reason: reason,
-	})
-	if err := emitEvent(ctx, tx, emitParams{
+	if err := s.emitPayload(ctx, tx, emitParams{
 		NodeID:      id,
 		ProjectCode: projectPrefixFromNodeID(id),
 		OpType:      model.OpTransitionStatus,
 		Author:      author,
-		Payload:     payload,
+	}, &model.TransitionStatusPayload{
+		From:   fromStatus,
+		To:     toStatus,
+		Reason: reason,
 	}); err != nil {
 		return err
 	}
@@ -96,6 +86,33 @@ func executeTransitionTx(ctx context.Context, tx *sql.Tx, id string, toStatus mo
 		if err := unblockDependents(ctx, tx, id, author); err != nil {
 			return fmt.Errorf("auto-unblock dependents of %s: %w", id, err)
 		}
+	}
+
+	return nil
+}
+
+// applyTransitionUpdate keeps the node and activity write in the caller's transaction.
+func applyTransitionUpdate(ctx context.Context, tx *sql.Tx, req transitionRequest, fromStatus model.Status, now time.Time) error {
+	id, toStatus, reason, author := req.id, req.toStatus, req.reason, req.author
+	nowStr := now.Format(time.RFC3339)
+
+	setClauses, args := buildTransitionClauses(fromStatus, toStatus, nowStr)
+	query := "UPDATE nodes SET " + setClauses + " WHERE id = ? AND deleted_at IS NULL"
+	args = append(args, id)
+
+	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("update status for %s: %w", id, err)
+	}
+
+	if err := appendActivityEntry(ctx, tx, id, model.ActivityEntry{
+		ID:        fmt.Sprintf("act-%d", now.UnixNano()),
+		Type:      model.ActivityTypeStatusChange,
+		Author:    author,
+		Text:      reason,
+		CreatedAt: now,
+		Metadata:  mustMarshal(map[string]string{"from_status": string(fromStatus), "to_status": string(toStatus)}),
+	}); err != nil {
+		return fmt.Errorf("record activity for %s: %w", id, err)
 	}
 
 	return nil

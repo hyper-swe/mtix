@@ -161,7 +161,7 @@ func incomingBeats(e *model.SyncEvent, priorLamp, priorTS int64, priorHash strin
 // sync_status, including this replica's own emitted events) never
 // reaches this call, because the own-event rule in acknowledgeHeldEvent
 // returns first (MTIX-95.2).
-func mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+func (a syncApplier) mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	vcJSON, err := json.Marshal(e.VectorClock)
 	if err != nil {
 		return fmt.Errorf("mirror %s: marshal VC: %w", e.EventID, err)
@@ -175,7 +175,7 @@ func mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) er
 		e.EventID, e.ProjectPrefix, e.NodeID, nullableString(e.UID), string(e.OpType), string(e.Payload),
 		e.WallClockTS, e.LamportClock, string(vcJSON),
 		e.AuthorID, e.AuthorMachineHash, string(model.SyncStatusApplied),
-		time.Now().UTC().Format(time.RFC3339Nano),
+		a.clock().UTC().Format(time.RFC3339Nano),
 	)
 	return err
 }
@@ -187,6 +187,10 @@ func mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) er
 // Extracted from IdempotentApply to keep cyclomatic complexity below
 // the package's lint threshold.
 func dispatchWithLWW(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
+	return (syncApplier{clock: time.Now}).dispatchWithLWW(ctx, tx, event)
+}
+
+func (a syncApplier) dispatchWithLWW(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
 	if isWorkflowOp(event.OpType) {
 		wins, err := workflowEventWins(ctx, tx, event)
 		if err != nil {
@@ -195,7 +199,7 @@ func dispatchWithLWW(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) er
 		if !wins {
 			return nil
 		}
-		return dispatchApply(ctx, tx, event)
+		return a.dispatchApply(ctx, tx, event)
 	}
 
 	outcome, err := detectLWWOutcome(ctx, tx, event)
@@ -204,7 +208,7 @@ func dispatchWithLWW(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) er
 	}
 
 	if outcome.HasPrior && !outcome.IncomingWins {
-		if err := recordLocalConflict(ctx, tx,
+		if err := a.recordLocalConflict(ctx, tx,
 			outcome.PriorEventID, event.EventID, event.NodeID, outcome.FieldName,
 		); err != nil {
 			return fmt.Errorf("apply %s: record loser conflict: %w", event.EventID, err)
@@ -212,11 +216,11 @@ func dispatchWithLWW(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) er
 		return nil
 	}
 
-	if err := dispatchApply(ctx, tx, event); err != nil {
+	if err := a.dispatchApply(ctx, tx, event); err != nil {
 		return err
 	}
 	if outcome.HasPrior && outcome.IncomingWins {
-		if err := recordLocalConflict(ctx, tx,
+		if err := a.recordLocalConflict(ctx, tx,
 			event.EventID, outcome.PriorEventID, event.NodeID, outcome.FieldName,
 		); err != nil {
 			return fmt.Errorf("apply %s: record winner conflict: %w", event.EventID, err)
@@ -227,13 +231,13 @@ func dispatchWithLWW(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) er
 
 // recordLocalConflict persists a row to the local sync_conflicts
 // table for surfacing via mtix sync conflicts list (MTIX-15.7).
-func recordLocalConflict(ctx context.Context, tx *sql.Tx, winnerID, loserID, nodeID, fieldName string) error {
+func (a syncApplier) recordLocalConflict(ctx context.Context, tx *sql.Tx, winnerID, loserID, nodeID, fieldName string) error {
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO sync_conflicts
 		  (event_id_winner, event_id_loser, node_id, field_name, resolution, resolved_at)
 		VALUES (?, ?, ?, ?, 'lww', ?)`,
 		winnerID, loserID, nodeID, nullableString(fieldName),
-		time.Now().UTC().Format(time.RFC3339Nano),
+		a.clock().UTC().Format(time.RFC3339Nano),
 	)
 	return err
 }
@@ -263,6 +267,22 @@ func recordLocalConflict(ctx context.Context, tx *sql.Tx, winnerID, loserID, nod
 //     merges event.author_id into the local vector clock.
 //   - Records the event in applied_events on success.
 func IdempotentApply(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
+	return (syncApplier{clock: time.Now}).IdempotentApply(ctx, tx, event)
+}
+
+// IdempotentApply applies an event in the caller's transaction using this
+// store's clock (FR-18.9). SetClock must be called before concurrent use.
+func (s *Store) IdempotentApply(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
+	return (syncApplier{clock: clockOrDefault(s.clock)}).IdempotentApply(ctx, tx, event)
+}
+
+// syncApplier carries the apply-time clock through all replay writes.
+// Event wall-clock timestamps still determine eventTime and LWW ordering.
+type syncApplier struct {
+	clock func() time.Time
+}
+
+func (a syncApplier) IdempotentApply(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
 	if event == nil {
 		return fmt.Errorf("apply: event nil: %w", model.ErrInvalidInput)
 	}
@@ -284,18 +304,18 @@ func IdempotentApply(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) er
 
 	// Own-event rule (MTIX-95.2): an event this replica already holds is
 	// acknowledged and never re-applied. Foreign events fall through.
-	if held, heldErr := acknowledgeHeldEvent(ctx, tx, event); heldErr != nil || held {
+	if held, heldErr := a.acknowledgeHeldEvent(ctx, tx, event); heldErr != nil || held {
 		return heldErr
 	}
 
 	// Mirror the event into the local sync_events log so subsequent
 	// LWW lookups find it. Only a foreign event reaches this point: an
 	// event already in the log returned above.
-	if mirrorErr := mirrorIncomingEvent(ctx, tx, event); mirrorErr != nil {
+	if mirrorErr := a.mirrorIncomingEvent(ctx, tx, event); mirrorErr != nil {
 		return fmt.Errorf("apply %s: mirror: %w", event.EventID, mirrorErr)
 	}
 
-	if err := dispatchWithLWW(ctx, tx, event); err != nil {
+	if err := a.dispatchWithLWW(ctx, tx, event); err != nil {
 		return err
 	}
 
@@ -305,7 +325,7 @@ func IdempotentApply(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) er
 	if err := mergeVectorClock(ctx, tx, event.AuthorID, event.VectorClock); err != nil {
 		return fmt.Errorf("apply %s: merge VC: %w", event.EventID, err)
 	}
-	if err := recordApplied(ctx, tx, event); err != nil {
+	if err := a.recordApplied(ctx, tx, event); err != nil {
 		return fmt.Errorf("apply %s: record applied: %w", event.EventID, err)
 	}
 	return nil
@@ -330,11 +350,11 @@ func isAppliedEvent(ctx context.Context, tx *sql.Tx, eventID string) (bool, erro
 // recordApplied marks the event as applied so a re-pull-and-replay is
 // a no-op. INSERT OR IGNORE handles the race where two concurrent tx
 // race to apply the same event (only one wins; the other is a no-op).
-func recordApplied(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
+func (a syncApplier) recordApplied(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
 	_, err := tx.ExecContext(ctx,
 		`INSERT OR IGNORE INTO applied_events (event_id, applied_at, applied_by_lamport)
 		 VALUES (?, ?, ?)`,
-		event.EventID, time.Now().UTC().Format(time.RFC3339Nano), event.LamportClock,
+		event.EventID, a.clock().UTC().Format(time.RFC3339Nano), event.LamportClock,
 	)
 	return err
 }
@@ -410,32 +430,32 @@ func mergeVectorClock(ctx context.Context, tx *sql.Tx, authorID string, observed
 }
 
 // dispatchApply routes the event to the per-op_type handler.
-func dispatchApply(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+func (a syncApplier) dispatchApply(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	switch e.OpType {
 	case model.OpCreateNode:
-		return applyCreateNode(ctx, tx, e)
+		return a.applyCreateNode(ctx, tx, e)
 	case model.OpUpdateField:
-		return applyUpdateField(ctx, tx, e)
+		return a.applyUpdateField(ctx, tx, e)
 	case model.OpTransitionStatus:
-		return applyTransitionStatus(ctx, tx, e)
+		return a.applyTransitionStatus(ctx, tx, e)
 	case model.OpClaim:
-		return applyClaim(ctx, tx, e)
+		return a.applyClaim(ctx, tx, e)
 	case model.OpUnclaim:
-		return applyUnclaim(ctx, tx, e)
+		return a.applyUnclaim(ctx, tx, e)
 	case model.OpDefer:
-		return applyDefer(ctx, tx, e)
+		return a.applyDefer(ctx, tx, e)
 	case model.OpComment:
-		return applyComment(ctx, tx, e)
+		return a.applyComment(ctx, tx, e)
 	case model.OpLinkDep:
-		return applyLinkDep(ctx, tx, e)
+		return a.applyLinkDep(ctx, tx, e)
 	case model.OpUnlinkDep:
-		return applyUnlinkDep(ctx, tx, e)
+		return a.applyUnlinkDep(ctx, tx, e)
 	case model.OpDelete:
-		return applyDelete(ctx, tx, e)
+		return a.applyDelete(ctx, tx, e)
 	case model.OpSetAcceptance:
-		return applySetAcceptance(ctx, tx, e)
+		return a.applySetAcceptance(ctx, tx, e)
 	case model.OpSetPrompt:
-		return applySetPrompt(ctx, tx, e)
+		return a.applySetPrompt(ctx, tx, e)
 	default:
 		return fmt.Errorf("unknown op_type %q: %w", e.OpType, model.ErrInvalidInput)
 	}
@@ -443,7 +463,7 @@ func dispatchApply(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 
 // --- per-op_type apply functions ---
 
-func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+func (a syncApplier) applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.CreateNodePayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply create_node %s: decode payload: %w", e.EventID, err)
@@ -453,9 +473,7 @@ func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error 
 	if err := refusePendingNumber(ctx, tx, e.EventID, p.ParentID); err != nil {
 		return err
 	}
-	depth := computeDepth(p.ParentID)
-	canonical := model.NodeTypeForDepth(depth) // FR-18.10 enforcement
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := a.clock().UTC().Format(time.RFC3339)
 
 	labelsJSON := "[]"
 	if len(p.Labels) > 0 {
@@ -492,42 +510,9 @@ func applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error 
 	// the pull quarantines it, visibly, instead of dropping it. It must NOT hard-error
 	// (that would wedge the apply pipeline for the whole batch); the
 	// surfacing/renumber is layered on top by 30.7.
-	res, err := tx.ExecContext(ctx, `
-		INSERT INTO nodes
-		  (id, uid, parent_id, depth, seq, project,
-		   title, description, prompt, acceptance,
-		   node_type, issue_type, priority, labels,
-		   status, progress,
-		   assignee, creator,
-		   created_at, updated_at,
-		   weight,
-		   activity, annotations)
-		VALUES (?, ?, ?, ?, ?, ?, ?,
-		        ?, ?, ?, ?,
-		        ?, ?, ?,
-		        ?, ?,
-		        ?, ?,
-		        ?, ?,
-		        ?,
-		        '[]', '[]')
-		ON CONFLICT (id) DO NOTHING`,
-		e.NodeID, uid, nullableString(p.ParentID), depth, deriveSeq(e.NodeID), e.ProjectPrefix,
-		p.Title, nullableString(p.Description), nullableString(p.Prompt), nullableString(p.Acceptance),
-		string(canonical), nullableString(string(p.IssueType)), int(p.Priority), labelsJSON,
-		string(model.StatusOpen), 0.0,
-		nullableString(p.Assignee), nullableString(p.Creator),
-		now, now,
-		1.0,
-	)
-	if err != nil {
-		return fmt.Errorf("apply create_node %s: insert node %s: %w", e.EventID, e.NodeID, err)
-	}
-	if inserted, rowsErr := res.RowsAffected(); rowsErr != nil {
-		return fmt.Errorf("apply create_node %s: rows affected: %w", e.EventID, rowsErr)
-	} else if inserted == 0 {
-		if err := refuseHeldNumber(ctx, tx, e, uid); err != nil {
-			return err
-		}
+	row := appliedCreateRow{payload: p, uid: uid, labels: labelsJSON, at: now}
+	if err := insertAppliedCreate(ctx, tx, e, row); err != nil {
+		return err
 	}
 
 	// MTIX-44: mirror the local CreateNode parent-progress rollup
@@ -609,7 +594,7 @@ var allowedUpdateFields = map[string]bool{
 	"issue_type":  true,
 }
 
-func applyUpdateField(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+func (a syncApplier) applyUpdateField(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.UpdateFieldPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply update_field %s: decode payload: %w", e.EventID, err)
@@ -626,7 +611,7 @@ func applyUpdateField(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error
 	if err != nil {
 		return fmt.Errorf("apply update_field %s: decode value: %w", e.EventID, err)
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := a.clock().UTC().Format(time.RFC3339)
 	if p.FieldName == "issue_type" {
 		return applyIssueTypeField(ctx, tx, id, value, now)
 	}
@@ -688,8 +673,8 @@ func decodeNewValueForColumn(field string, raw json.RawMessage) (any, error) {
 
 // applyTransitionStatus applies a winning transition_status (MTIX-95.10). A
 // malformed one changes nothing and does not fail (MTIX-95.27).
-func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	in, ok := workflowInputForApply(e, time.Now().UTC())
+func (a syncApplier) applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+	in, ok := workflowInputForApply(e, a.clock().UTC())
 	if !ok {
 		return nil
 	}
@@ -709,7 +694,7 @@ func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) 
 		}
 	}
 	if isResolvingStatus(in.to) {
-		if err := unblockDependents(ctx, tx, id, e.AuthorID); err != nil {
+		if err := unblockDependents(ctx, tx, id, e.AuthorID, a.clock); err != nil {
 			return fmt.Errorf("apply transition_status %s: auto-unblock dependents: %w", e.EventID, err)
 		}
 	}
@@ -718,8 +703,8 @@ func applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) 
 
 // applyClaim applies a winning claim (MTIX-95.10). A claim whose payload
 // cannot be decoded changes nothing and does not fail (MTIX-95.27).
-func applyClaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	in, ok := workflowInputForApply(e, time.Now().UTC())
+func (a syncApplier) applyClaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+	in, ok := workflowInputForApply(e, a.clock().UTC())
 	if !ok {
 		return nil
 	}
@@ -729,8 +714,8 @@ func applyClaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 
 // applyUnclaim applies a winning unclaim (MTIX-95.10). The workflow payload
 // rule never rejects one (MTIX-95.27); the check keeps the four ops alike.
-func applyUnclaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	in, ok := workflowInputForApply(e, time.Now().UTC())
+func (a syncApplier) applyUnclaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+	in, ok := workflowInputForApply(e, a.clock().UTC())
 	if !ok {
 		return nil
 	}
@@ -741,8 +726,8 @@ func applyUnclaim(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 // applyDefer applies a winning defer (MTIX-95.10). A defer whose payload cannot
 // be decoded, including an unparseable until, changes nothing and does not
 // fail (MTIX-95.27); defer_until is stored in UTC (resolveWorkflowWrite).
-func applyDefer(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	in, ok := workflowInputForApply(e, time.Now().UTC())
+func (a syncApplier) applyDefer(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+	in, ok := workflowInputForApply(e, a.clock().UTC())
 	if !ok {
 		return nil
 	}
@@ -750,7 +735,7 @@ func applyDefer(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	return err
 }
 
-func applyComment(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+func (a syncApplier) applyComment(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.CommentPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply comment %s: decode payload: %w", e.EventID, err)
@@ -774,7 +759,7 @@ func applyComment(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	}
 	// The event's own time (eventTime, MTIX-95.26), not the apply time, so two
 	// replicas applying the same events in any order write byte-identical rows.
-	at := eventTime(e.WallClockTS, time.Now().UTC())
+	at := eventTime(e.WallClockTS, a.clock().UTC())
 	annotations = append(annotations, model.Annotation{
 		ID: e.EventID, Author: p.AuthorID, Text: p.Body, CreatedAt: at,
 	})
@@ -798,12 +783,12 @@ func applyComment(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	return err
 }
 
-func applyLinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+func (a syncApplier) applyLinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.LinkDepPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply link_dep %s: decode payload: %w", e.EventID, err)
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := a.clock().UTC().Format(time.RFC3339)
 	// Route the edge's source node through the uid-aware ref so a dep
 	// survives a renumber of the from-node (ADR-003 §3). The dependencies
 	// FK to nodes(id) is satisfied by the resolved current display path.
@@ -830,14 +815,14 @@ func applyLinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	// p.DependsOnNodeID, which AddDependency passes to autoBlockNode as
 	// dep.ToID (LinkDepPayload.DependsOnNodeID is set from dep.ToID at emit).
 	if p.DepType == string(model.DepTypeBlocks) {
-		if err := autoBlockNode(ctx, tx, p.DependsOnNodeID); err != nil {
+		if err := autoBlockNode(ctx, tx, p.DependsOnNodeID, a.clock); err != nil {
 			return fmt.Errorf("apply link_dep %s: auto-block %s: %w", e.EventID, p.DependsOnNodeID, err)
 		}
 	}
 	return nil
 }
 
-func applyUnlinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+func (a syncApplier) applyUnlinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.UnlinkDepPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply unlink_dep %s: decode payload: %w", e.EventID, err)
@@ -867,7 +852,7 @@ func applyUnlinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	// to_id (p.DependsOnNodeID); autoUnblockNode re-counts remaining blockers,
 	// so it is a safe no-op when others remain.
 	if depType == string(model.DepTypeBlocks) {
-		if err := autoUnblockNode(ctx, tx, p.DependsOnNodeID); err != nil {
+		if err := autoUnblockNode(ctx, tx, p.DependsOnNodeID, a.clock); err != nil {
 			return fmt.Errorf("apply unlink_dep %s: auto-unblock %s: %w", e.EventID, p.DependsOnNodeID, err)
 		}
 	}
@@ -899,7 +884,7 @@ func fromIDForDepEdge(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (stri
 // non-existent node is a no-op (no phantom tombstone). Existing nodes
 // get deleted_at set; this does NOT cascade — any descendants must
 // have their own delete events.
-func applyDelete(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+func (a syncApplier) applyDelete(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	// Resolve the target through the uid-aware ref so a delete still finds
 	// a renumbered node by uid. SYNC-DESIGN §8.3: delete on a non-existent
 	// (or already-deleted) node is a no-op — NOT an error — so we swallow
@@ -911,7 +896,7 @@ func applyDelete(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := a.clock().UTC().Format(time.RFC3339)
 	if _, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET deleted_at = ?, deleted_by = ?, updated_at = ?
 		 WHERE id = ? AND deleted_at IS NULL`,
@@ -935,7 +920,7 @@ func applyDelete(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	return nil
 }
 
-func applySetAcceptance(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+func (a syncApplier) applySetAcceptance(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.SetAcceptancePayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply set_acceptance %s: decode payload: %w", e.EventID, err)
@@ -944,7 +929,7 @@ func applySetAcceptance(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) err
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := a.clock().UTC().Format(time.RFC3339)
 	if _, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET acceptance = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
 		p.AcceptanceText, now, id,
@@ -954,7 +939,7 @@ func applySetAcceptance(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) err
 	return recomputeContentHashRow(ctx, tx, id)
 }
 
-func applySetPrompt(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+func (a syncApplier) applySetPrompt(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.SetPromptPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
 		return fmt.Errorf("apply set_prompt %s: decode payload: %w", e.EventID, err)
@@ -963,7 +948,7 @@ func applySetPrompt(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := a.clock().UTC().Format(time.RFC3339)
 	if _, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET prompt = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
 		p.PromptText, now, id,
@@ -1061,4 +1046,66 @@ func resolveNodeRef(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (string
 		}
 	}
 	return id, nil
+}
+
+// dispatchApply retains the free apply seam for existing package callers.
+func dispatchApply(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
+	return (syncApplier{clock: time.Now}).dispatchApply(ctx, tx, event)
+}
+
+// mirrorIncomingEvent retains the existing journal test seam.
+func mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
+	return (syncApplier{clock: time.Now}).mirrorIncomingEvent(ctx, tx, event)
+}
+
+// appliedCreateRow is the decoded, clock-stamped create row.
+type appliedCreateRow struct {
+	payload         model.CreateNodePayload
+	uid, labels, at string
+}
+
+// insertAppliedCreate preserves the existing number-conflict and UID checks.
+func insertAppliedCreate(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, row appliedCreateRow) error {
+	p, uid, labelsJSON, now := row.payload, row.uid, row.labels, row.at
+	depth := computeDepth(p.ParentID)
+	canonical := model.NodeTypeForDepth(depth)
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO nodes
+		  (id, uid, parent_id, depth, seq, project,
+		   title, description, prompt, acceptance,
+		   node_type, issue_type, priority, labels,
+		   status, progress,
+		   assignee, creator,
+		   created_at, updated_at,
+		   weight,
+		   activity, annotations)
+		VALUES (?, ?, ?, ?, ?, ?, ?,
+		        ?, ?, ?, ?,
+		        ?, ?, ?,
+		        ?, ?,
+		        ?, ?,
+		        ?, ?,
+		        ?,
+		        '[]', '[]')
+		ON CONFLICT (id) DO NOTHING`,
+		e.NodeID, uid, nullableString(p.ParentID), depth, deriveSeq(e.NodeID), e.ProjectPrefix,
+		p.Title, nullableString(p.Description), nullableString(p.Prompt), nullableString(p.Acceptance),
+		string(canonical), nullableString(string(p.IssueType)), int(p.Priority), labelsJSON,
+		string(model.StatusOpen), 0.0,
+		nullableString(p.Assignee), nullableString(p.Creator),
+		now, now,
+		1.0,
+	)
+	if err != nil {
+		return fmt.Errorf("apply create_node %s: insert node %s: %w", e.EventID, e.NodeID, err)
+	}
+	if inserted, rowsErr := res.RowsAffected(); rowsErr != nil {
+		return fmt.Errorf("apply create_node %s: rows affected: %w", e.EventID, rowsErr)
+	} else if inserted == 0 {
+		if err := refuseHeldNumber(ctx, tx, e, uid); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

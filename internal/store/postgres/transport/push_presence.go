@@ -6,7 +6,6 @@ package transport
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -87,7 +86,7 @@ func (p *Pool) PushEventsResult(ctx context.Context, events []*model.SyncEvent) 
 	}
 	// Validate before touching the pool: caller-side bugs surface even
 	// when the pool is misconfigured.
-	if vErr := validator.ValidateBatch(events, time.Now().UTC(), nil); vErr != nil {
+	if vErr := validator.ValidateBatch(events, p.now(), nil); vErr != nil {
 		return PushResult{}, fmt.Errorf("PushEvents validate: %w", vErr)
 	}
 	if p == nil || p.p == nil {

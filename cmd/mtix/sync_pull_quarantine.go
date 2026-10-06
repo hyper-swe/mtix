@@ -73,6 +73,7 @@ type pullIngest struct {
 	now        func() time.Time
 	maxJump    int64
 	cliVersion string
+	apply      func(context.Context, *sql.Tx, *model.SyncEvent) error
 }
 
 // newPullIngest wires a pull's ingest settings for production: this
@@ -129,7 +130,7 @@ func ingestPulledEvent(ctx context.Context, tx *sql.Tx, in pullIngest,
 		}
 	}
 	if refused == nil {
-		if refused, err = applyPulledEvent(ctx, tx, e); err != nil {
+		if refused, err = applyPulledEvent(ctx, tx, e, in.apply); err != nil {
 			return nil, err
 		}
 	}
@@ -193,9 +194,13 @@ func checkPulledEvent(in pullIngest, e *model.SyncEvent, local int64) error {
 // the pull's context, so its statements, the savepoint rollback included,
 // fail and the whole batch rolls back; the event it was applying is never
 // quarantined because of the cancellation.
-func applyPulledEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (rejected, err error) {
+func applyPulledEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, applies ...func(context.Context, *sql.Tx, *model.SyncEvent) error) (rejected, err error) {
+	apply := sqlite.IdempotentApply
+	if len(applies) > 0 && applies[0] != nil {
+		apply = applies[0]
+	}
 	rejected, err = sqlite.WithSavepoint(ctx, tx, func() error {
-		if applyErr := sqlite.IdempotentApply(ctx, tx, e); applyErr != nil {
+		if applyErr := apply(ctx, tx, e); applyErr != nil {
 			return applyErr
 		}
 		return sqlite.RemoveQuarantined(ctx, tx, e.EventID)
@@ -327,6 +332,7 @@ const (
 func retryQuarantinePage(ctx context.Context, in pullIngest, st *sqlite.Store,
 	page []sqlite.QuarantinedEvent,
 ) (applied, dropped int, err error) {
+	in.apply = st.IdempotentApply
 	err = st.WithTx(ctx, func(tx *sql.Tx) error {
 		applied, dropped = 0, 0
 		for _, q := range page {
@@ -378,7 +384,7 @@ func retryQuarantined(ctx context.Context, tx *sql.Tx, in pullIngest,
 		}
 	}
 	if refused == nil {
-		if refused, err = applyPulledEvent(ctx, tx, &e); err != nil {
+		if refused, err = applyPulledEvent(ctx, tx, &e, in.apply); err != nil {
 			return retryHeld, err
 		}
 	}

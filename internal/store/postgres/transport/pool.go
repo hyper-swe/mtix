@@ -18,7 +18,8 @@ import (
 // Pool wraps a pgxpool.Pool with mtix-specific defaults applied at
 // open time per FR-18 / SYNC-DESIGN section 5. Use New to construct.
 type Pool struct {
-	p *pgxpool.Pool
+	clock func() time.Time
+	p     *pgxpool.Pool
 
 	// clientMachineHash and clientCLIVersion identify the calling CLI
 	// for the version-negotiation gate (ADR-003 §7 Phase 1.5/3). They
@@ -125,7 +126,7 @@ func NewWithDefaults(ctx context.Context, dsn string, opts Options, defs PoolDef
 	if err != nil {
 		return nil, hintTLSTrust(approval.CASupplied, err)
 	}
-	return &Pool{p: pool}, nil
+	return &Pool{p: pool, clock: time.Now}, nil
 }
 
 // openPool opens a pool from cfg and runs the initial healthcheck,
@@ -282,4 +283,23 @@ func (p *Pool) Inner() *pgxpool.Pool {
 		return nil
 	}
 	return p.p
+}
+
+// SetClock sets the reference time used by push validation (FR-18.8).
+// A nil clock restores time.Now. Set it before using the Pool; changing it
+// concurrently with pushes is not safe. A nil receiver is a no-op.
+func (p *Pool) SetClock(clock func() time.Time) {
+	if p == nil {
+		return
+	}
+	p.clock = clock
+}
+
+// now preserves validation before pool-open errors for nil and zero Pools.
+func (p *Pool) now() time.Time {
+	clock := time.Now
+	if p != nil && p.clock != nil {
+		clock = p.clock
+	}
+	return clock().UTC()
 }

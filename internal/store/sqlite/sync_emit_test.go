@@ -44,12 +44,12 @@ func readOneEvent(t *testing.T, raw *sql.DB) *model.SyncEvent {
 		FROM sync_events ORDER BY lamport_clock DESC LIMIT 1`)
 
 	var (
-		ev          model.SyncEvent
-		opType      string
-		syncStatus  string
-		vcRaw       string
-		payloadRaw  string
-		createdAt   string
+		ev         model.SyncEvent
+		opType     string
+		syncStatus string
+		vcRaw      string
+		payloadRaw string
+		createdAt  string
 	)
 	require.NoError(t, row.Scan(
 		&ev.EventID, &ev.ProjectPrefix, &ev.NodeID, &opType, &payloadRaw,

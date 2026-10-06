@@ -37,9 +37,9 @@ func newDockerProvider(cfg providerConfig) *dockerProvider {
 	return &dockerProvider{cfg: cfg}
 }
 
-func (p *dockerProvider) Name() string                      { return ProviderDocker }
-func (p *dockerProvider) SupportsAdvisoryLocks() bool       { return true }
-func (p *dockerProvider) SupportsPreparedStatements() bool  { return true }
+func (p *dockerProvider) Name() string                     { return ProviderDocker }
+func (p *dockerProvider) SupportsAdvisoryLocks() bool      { return true }
+func (p *dockerProvider) SupportsPreparedStatements() bool { return true }
 
 // Setup launches a postgres container. On any failure (docker missing,
 // container won't start, port detection fails) the test is skipped via

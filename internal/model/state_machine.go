@@ -156,4 +156,3 @@ func GetAllTransitions() []TransitionInfo {
 	}
 	return result
 }
-

@@ -76,7 +76,7 @@ func FuzzVectorClockMerge(f *testing.F) {
 func FuzzPushEventsValidation(f *testing.F) {
 	seeds := []struct {
 		eventID, opType, payload, authorID, vcJSON string
-		wallTS, lamport                             int64
+		wallTS, lamport                            int64
 	}{
 		{"0193fa00-0000-7000-8000-000000000001", "create_node", `{"title":"x"}`, "alice", `{"alice":1}`, time.Now().UnixMilli(), 1},
 		{"", "garbage", `garbage`, "Capital!", `not-json`, -1, -1},

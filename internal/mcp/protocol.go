@@ -67,7 +67,7 @@ type InitializeParams struct {
 
 // ClientCaps describes client capabilities.
 type ClientCaps struct {
-	Roots   *RootsCap   `json:"roots,omitempty"`
+	Roots    *RootsCap    `json:"roots,omitempty"`
 	Sampling *SamplingCap `json:"sampling,omitempty"`
 }
 
@@ -125,9 +125,9 @@ type ToolsListResult struct {
 
 // ToolDef describes a single MCP tool.
 type ToolDef struct {
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	InputSchema SchemaObj  `json:"inputSchema"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	InputSchema SchemaObj `json:"inputSchema"`
 
 	// Scope is the access class this tool needs (MTIX-2.1.3): read, write, or
 	// admin. It is a server-side concept (json:"-": not sent on the wire) used

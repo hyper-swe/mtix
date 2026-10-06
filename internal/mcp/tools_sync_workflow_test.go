@@ -81,8 +81,8 @@ func TestSyncWorkflowTool_DescriptionContainsUntrustedContextWarning(t *testing.
 
 func TestSyncWorkflowTool_HandlerSucceedsAcrossAllStates(t *testing.T) {
 	cases := []struct {
-		name     string
-		setup    func(t *testing.T, db *sql.DB)
+		name       string
+		setup      func(t *testing.T, db *sql.DB)
 		wantSubstr string // expected substring in tool output
 	}{
 		{

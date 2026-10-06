@@ -43,7 +43,7 @@ func TestRegistry_Call_InvokesHandler(t *testing.T) {
 
 	called := false
 	reg.Register(mcp.ToolDef{
-		Name: "test_tool",
+		Name:        "test_tool",
 		InputSchema: mcp.SchemaObj{Type: "object"},
 	}, func(_ context.Context, _ json.RawMessage) (*mcp.ToolsCallResult, error) {
 		called = true
@@ -70,13 +70,13 @@ func TestRegistry_Register_Duplicate_Panics(t *testing.T) {
 	reg := mcp.NewToolRegistry()
 
 	reg.Register(mcp.ToolDef{
-		Name: "dup_tool",
+		Name:        "dup_tool",
 		InputSchema: mcp.SchemaObj{Type: "object"},
 	}, noopHandler)
 
 	assert.Panics(t, func() {
 		reg.Register(mcp.ToolDef{
-			Name: "dup_tool",
+			Name:        "dup_tool",
 			InputSchema: mcp.SchemaObj{Type: "object"},
 		}, noopHandler)
 	})

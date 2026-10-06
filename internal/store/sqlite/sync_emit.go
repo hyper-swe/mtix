@@ -424,6 +424,7 @@ func (s *Store) SetDefaultAuthor(ctx context.Context, author string) error {
 //  3. meta.sync.author_id — the persisted project default (from config
 //     author_id), if the app wrote one;
 //  4. authorIDFallback ('cli').
+//
 // This replaces the old blanket 'cli' default that made every CLI process share
 // one author (VC-Equal, so the hub never logged their concurrent edits).
 func resolveEmitAuthor(ctx context.Context, tx *sql.Tx, explicit string) string {

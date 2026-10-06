@@ -5,8 +5,8 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"

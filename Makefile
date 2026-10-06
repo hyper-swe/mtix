@@ -25,7 +25,7 @@ TASKS_DB     := .mtix/data/mtix.db
 
 # ─── Phony targets ───
 .PHONY: all build build-go build-web install install-web test test-go test-web \
-        test-race test-cover test-all lint lint-go lint-web \
+        test-race test-cover test-all lint lint-go lint-web fmt-check \
         security-scan security-audit bench fuzz e2e proto-gen docs-gen \
         release-artifacts clean verify preflight embed-check help \
         setup tasks-export tasks-import tasks-sync \
@@ -157,8 +157,13 @@ test-cover:
 ## lint: Run all linters (Go + web)
 lint: lint-go lint-web
 
-## lint-go: Run golangci-lint
-lint-go:
+## fmt-check: Reject gofmt drift in all project Go files, including tests and build tags
+fmt-check:
+	@unformatted=$$(find . -type d \( -name .git -o -name .mgit -o -name .hyperswe -o -name .cache -o -name vendor -o -name node_modules \) -prune -o -type f -name '*.go' -exec gofmt -l {} +) || exit $$?; \
+	if [ -n "$$unformatted" ]; then printf '%s\n' "$$unformatted"; printf '%s\n' 'Run gofmt -w on the listed files.' >&2; exit 1; fi
+
+## lint-go: Check formatting, then run golangci-lint
+lint-go: fmt-check
 	golangci-lint run
 
 ## lint-web: Run ESLint on web source

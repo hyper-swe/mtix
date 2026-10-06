@@ -10,6 +10,16 @@ mtix is built to **safety-critical standards** — it is designed for environmen
 
 ---
 
+## Go formatting gate
+
+Run `make fmt-check` to check formatting, or `make lint-go` to check formatting
+and run golangci-lint. Both fail if any project Go source needs `gofmt`, including
+`_test.go` files and files behind build tags. Run `gofmt -w` on the listed files
+and repeat the gate before committing. The check uses the filesystem and works
+in review worktrees without `.git`; it excludes Git/MGIT and review-worktree
+metadata, vendored code, and `node_modules`. The golangci v2 configuration also
+enables the `gofmt` formatter.
+
 ## The Iron Rule: Use mtix to Build mtix
 
 **Every change — feature, bug fix, refactor, documentation update, even a one-line fix — MUST have an mtix task created BEFORE any code is written.** We use mtix to manage mtix development. No exceptions.

@@ -52,7 +52,7 @@ func TestSearchNodes_MatchesDescription(t *testing.T) {
 	require.NoError(t, s.CreateNode(ctx, &model.Node{
 		ID: "S-1", Project: "S", Depth: 0, Seq: 1, Title: "Task One",
 		Description: "Integrate Stripe payments",
-		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
+		Status:      model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
 		NodeType: model.NodeTypeIssue, ContentHash: "h1", CreatedAt: now, UpdatedAt: now,
 	}))
 
@@ -203,7 +203,7 @@ func TestSearchNodes_Pagination(t *testing.T) {
 	for i := 1; i <= 5; i++ {
 		require.NoError(t, s.CreateNode(ctx, &model.Node{
 			ID: fmt.Sprintf("S-%d", i), Project: "S", Depth: 0, Seq: i,
-			Title: fmt.Sprintf("Pageable item %d", i),
+			Title:  fmt.Sprintf("Pageable item %d", i),
 			Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
 			NodeType: model.NodeTypeIssue, ContentHash: fmt.Sprintf("h%d", i),
 			CreatedAt: now.Add(time.Duration(i) * time.Second),
@@ -237,7 +237,7 @@ func TestSearchNodes_WithUnderFilter(t *testing.T) {
 	}))
 	require.NoError(t, s.CreateNode(ctx, &model.Node{
 		ID: "S-1.1", ParentID: "S-1", Project: "S", Depth: 1, Seq: 1,
-		Title: "Searchable child",
+		Title:  "Searchable child",
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
 		NodeType: model.NodeTypeIssue, ContentHash: "h2",
 		CreatedAt: now.Add(time.Second), UpdatedAt: now.Add(time.Second),

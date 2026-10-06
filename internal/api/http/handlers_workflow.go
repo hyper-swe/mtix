@@ -35,9 +35,9 @@ func (s *Server) claimNode(c *gin.Context) {
 	var err error
 	if req.Force {
 		threshold := s.configSvc.AgentStaleThreshold()
-		err = s.store.ForceReclaimNode(c.Request.Context(), nodeID, agentID, threshold)
+		err = s.nodeWriter.ForceReclaimNode(c.Request.Context(), nodeID, agentID, threshold)
 	} else {
-		err = s.store.ClaimNode(c.Request.Context(), nodeID, agentID)
+		err = s.nodeWriter.ClaimNode(c.Request.Context(), nodeID, agentID)
 	}
 
 	if err != nil {
@@ -64,7 +64,7 @@ func (s *Server) unclaimNode(c *gin.Context) {
 	if agentID == "" {
 		agentID = "api"
 	}
-	if err := s.store.UnclaimNode(c.Request.Context(), nodeID, req.Reason, agentID); err != nil {
+	if err := s.nodeWriter.UnclaimNode(c.Request.Context(), nodeID, req.Reason, agentID); err != nil {
 		HandleError(c, err)
 		return
 	}
@@ -89,7 +89,7 @@ func (s *Server) doneNode(c *gin.Context) {
 		reason = "marked done via API"
 	}
 
-	if err := s.nodeSvc.TransitionStatus(
+	if err := s.nodeWriter.TransitionStatus(
 		c.Request.Context(), nodeID, model.StatusDone, reason, agentID,
 	); err != nil {
 		HandleError(c, err)
@@ -156,7 +156,7 @@ func (s *Server) deferNode(c *gin.Context) {
 		agentID = "api"
 	}
 
-	if err := s.nodeSvc.DeferNode(
+	if err := s.nodeWriter.DeferNode(
 		c.Request.Context(), nodeID, wake, "deferred via API", agentID,
 	); err != nil {
 		HandleError(c, err)
@@ -179,7 +179,7 @@ func (s *Server) cancelNode(c *gin.Context) {
 		return
 	}
 
-	if err := s.store.CancelNode(
+	if err := s.nodeWriter.CancelNode(
 		c.Request.Context(), nodeID, req.Reason, "api", req.Cascade,
 	); err != nil {
 		HandleError(c, err)
@@ -209,7 +209,7 @@ func (s *Server) reopenNode(c *gin.Context) {
 		agentID = "api"
 	}
 
-	if err := s.nodeSvc.TransitionStatus(
+	if err := s.nodeWriter.TransitionStatus(
 		c.Request.Context(), nodeID, model.StatusOpen, reason, agentID,
 	); err != nil {
 		HandleError(c, err)
@@ -228,7 +228,7 @@ func (s *Server) rerunNode(c *gin.Context) {
 		agentID = "api"
 	}
 
-	if err := s.nodeSvc.TransitionStatus(
+	if err := s.nodeWriter.TransitionStatus(
 		c.Request.Context(), nodeID, model.StatusOpen, "rerun via API", agentID,
 	); err != nil {
 		HandleError(c, err)
@@ -246,7 +246,7 @@ func (s *Server) blockNode(c *gin.Context) {
 		agentID = "api"
 	}
 
-	if err := s.nodeSvc.TransitionStatus(
+	if err := s.nodeWriter.TransitionStatus(
 		c.Request.Context(), nodeID, model.StatusBlocked, "blocked via API", agentID,
 	); err != nil {
 		HandleError(c, err)
@@ -271,12 +271,6 @@ func (s *Server) commentNode(c *gin.Context) {
 		return
 	}
 
-	node, err := s.nodeSvc.GetNode(c.Request.Context(), nodeID)
-	if err != nil {
-		HandleError(c, err)
-		return
-	}
-
 	author := c.GetHeader("X-Agent-ID")
 	if author == "" {
 		author = "api"
@@ -296,10 +290,7 @@ func (s *Server) commentNode(c *gin.Context) {
 		CreatedAt: s.clock(),
 		Addressee: addressee,
 	}
-	annotations := make([]model.Annotation, 0, len(node.Annotations)+1)
-	annotations = append(annotations, node.Annotations...)
-	annotations = append(annotations, ann)
-	if setErr := s.store.SetAnnotations(c.Request.Context(), nodeID, annotations); setErr != nil {
+	if setErr := s.nodeWriter.AppendAnnotation(c.Request.Context(), nodeID, ann); setErr != nil {
 		HandleError(c, setErr)
 		return
 	}

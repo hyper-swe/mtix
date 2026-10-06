@@ -17,7 +17,7 @@ import (
 )
 
 // createTestNode is a helper that creates a node and returns its ID.
-func createTestNode(t *testing.T, s *Server, title, project string) string {
+func createTestNode(t *testing.T, s *serverFixture, title, project string) string {
 	t.Helper()
 	w := httptest.NewRecorder()
 	body := `{"title":"` + title + `","project":"` + project + `"}`

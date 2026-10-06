@@ -17,11 +17,11 @@ import (
 // RegisterWorkflowTools registers workflow MCP tools per MTIX-6.2.2.
 func RegisterWorkflowTools(reg *ToolRegistry, nodeSvc *service.NodeService, st store.Store, bgSvc *service.BackgroundService, opts ...ToolOption) {
 	cfg := applyToolOptions(opts)
-	registerClaimTool(reg, st)
-	registerUnclaimTool(reg, st)
+	registerClaimTool(reg, nodeSvc)
+	registerUnclaimTool(reg, nodeSvc)
 	registerDoneTool(reg, nodeSvc)
 	registerDeferTool(reg, nodeSvc, cfg.author)
-	registerCancelTool(reg, st)
+	registerCancelTool(reg, nodeSvc)
 	registerReopenTool(reg, nodeSvc)
 	registerReadyTool(reg, bgSvc)
 	registerBlockedTool(reg, st)
@@ -29,7 +29,7 @@ func RegisterWorkflowTools(reg *ToolRegistry, nodeSvc *service.NodeService, st s
 	registerRerunTool(reg, nodeSvc)
 }
 
-func registerClaimTool(reg *ToolRegistry, st store.Store) {
+func registerClaimTool(reg *ToolRegistry, svc *service.NodeService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_claim",
 		Description: "Claim a node for an agent",
@@ -50,7 +50,7 @@ func registerClaimTool(reg *ToolRegistry, st store.Store) {
 			return nil, fmt.Errorf("parse claim args: %w", err)
 		}
 
-		if err := st.ClaimNode(ctx, p.ID, p.AgentID); err != nil {
+		if err := svc.ClaimNode(ctx, p.ID, p.AgentID); err != nil {
 			return nil, err
 		}
 
@@ -58,7 +58,7 @@ func registerClaimTool(reg *ToolRegistry, st store.Store) {
 	})
 }
 
-func registerUnclaimTool(reg *ToolRegistry, st store.Store) {
+func registerUnclaimTool(reg *ToolRegistry, svc *service.NodeService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_unclaim",
 		Description: "Release a node assignment",
@@ -79,7 +79,7 @@ func registerUnclaimTool(reg *ToolRegistry, st store.Store) {
 			return nil, fmt.Errorf("parse unclaim args: %w", err)
 		}
 
-		if err := st.UnclaimNode(ctx, p.ID, p.Reason, "mcp"); err != nil {
+		if err := svc.UnclaimNode(ctx, p.ID, p.Reason, "mcp"); err != nil {
 			return nil, err
 		}
 
@@ -99,7 +99,9 @@ func registerDoneTool(reg *ToolRegistry, svc *service.NodeService) {
 			Required: []string{"id"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct{ ID string `json:"id"` }
+		var p struct {
+			ID string `json:"id"`
+		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse done args: %w", err)
 		}
@@ -164,7 +166,7 @@ func registerDeferTool(reg *ToolRegistry, svc *service.NodeService, author strin
 	})
 }
 
-func registerCancelTool(reg *ToolRegistry, st store.Store) {
+func registerCancelTool(reg *ToolRegistry, svc *service.NodeService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_cancel",
 		Description: "Cancel a node with mandatory reason",
@@ -187,7 +189,7 @@ func registerCancelTool(reg *ToolRegistry, st store.Store) {
 			return nil, fmt.Errorf("parse cancel args: %w", err)
 		}
 
-		if err := st.CancelNode(ctx, p.ID, p.Reason, "mcp", p.Cascade); err != nil {
+		if err := svc.CancelNode(ctx, p.ID, p.Reason, "mcp", p.Cascade); err != nil {
 			return nil, err
 		}
 
@@ -207,7 +209,9 @@ func registerReopenTool(reg *ToolRegistry, svc *service.NodeService) {
 			Required: []string{"id"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct{ ID string `json:"id"` }
+		var p struct {
+			ID string `json:"id"`
+		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse reopen args: %w", err)
 		}
@@ -247,7 +251,9 @@ func registerBlockedTool(reg *ToolRegistry, st store.Store) {
 			},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct{ ID string `json:"id"` }
+		var p struct {
+			ID string `json:"id"`
+		}
 		if args != nil {
 			_ = json.Unmarshal(args, &p)
 		}

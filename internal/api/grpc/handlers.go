@@ -135,11 +135,11 @@ func (s *Server) HandleDecompose(ctx context.Context, parentID, creator string, 
 func (s *Server) HandleClaim(ctx context.Context, id, agent string, force bool) (*model.Node, error) {
 	if force {
 		threshold := 5 * time.Minute
-		if err := s.store.ForceReclaimNode(ctx, id, agent, threshold); err != nil {
+		if err := s.nodeSvc.ForceReclaimNode(ctx, id, agent, threshold); err != nil {
 			return nil, mapError(err)
 		}
 	} else {
-		if err := s.store.ClaimNode(ctx, id, agent); err != nil {
+		if err := s.nodeSvc.ClaimNode(ctx, id, agent); err != nil {
 			return nil, mapError(err)
 		}
 	}
@@ -148,7 +148,7 @@ func (s *Server) HandleClaim(ctx context.Context, id, agent string, force bool) 
 
 // HandleUnclaim implements the Unclaim RPC per FR-8.2.
 func (s *Server) HandleUnclaim(ctx context.Context, id, reason, agent string) (*model.Node, error) {
-	if err := s.store.UnclaimNode(ctx, id, reason, agent); err != nil {
+	if err := s.nodeSvc.UnclaimNode(ctx, id, reason, agent); err != nil {
 		return nil, mapError(err)
 	}
 	return s.nodeSvc.GetNode(ctx, id)
@@ -175,7 +175,7 @@ func (s *Server) HandleDefer(ctx context.Context, id, agent string, until *time.
 
 // HandleCancel implements the Cancel RPC per FR-8.2. Idempotent per FR-7.7a.
 func (s *Server) HandleCancel(ctx context.Context, id, reason, agent string) (*model.Node, error) {
-	if err := s.store.CancelNode(ctx, id, reason, agent, false); err != nil {
+	if err := s.nodeSvc.CancelNode(ctx, id, reason, agent, false); err != nil {
 		return nil, mapError(err)
 	}
 	return s.nodeSvc.GetNode(ctx, id)
@@ -311,12 +311,12 @@ func (s *Server) HandleGetCurrentWork(ctx context.Context, agentID string) (*mod
 
 // HandleAddDependency implements the AddDependency RPC per FR-8.2.
 func (s *Server) HandleAddDependency(ctx context.Context, dep *model.Dependency) error {
-	return mapError(s.store.AddDependency(ctx, dep))
+	return mapError(s.depSvc.AddDependency(ctx, dep))
 }
 
 // HandleRemoveDependency implements the RemoveDependency RPC per FR-8.2.
 func (s *Server) HandleRemoveDependency(ctx context.Context, fromID, toID string, depType model.DepType) error {
-	return mapError(s.store.RemoveDependency(ctx, fromID, toID, depType))
+	return mapError(s.depSvc.RemoveDependency(ctx, fromID, toID, depType))
 }
 
 // HandleGetDependencies implements the GetDependencyTree RPC per FR-8.2.

@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/hyper-swe/mtix/internal/model"
-	"github.com/hyper-swe/mtix/internal/store"
+	"github.com/hyper-swe/mtix/internal/service"
 )
 
 // getConfig handles GET /api/v1/admin/config per FR-11.1.
@@ -36,7 +36,7 @@ func (s *Server) setConfig(c *gin.Context) {
 
 	results := make(map[string]string)
 	for key, value := range req {
-		prev, err := s.configSvc.Set(key, value)
+		prev, err := s.configWriter.Set(key, value)
 		if err != nil {
 			HandleError(c, err)
 			return
@@ -45,15 +45,15 @@ func (s *Server) setConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"updated":  results,
-		"message":  "configuration updated",
+		"updated": results,
+		"message": "configuration updated",
 	})
 }
 
 // runGC handles POST /api/v1/admin/gc per FR-6.3.
 // Runs soft-delete retention cleanup via BackgroundService.
 func (s *Server) runGC(c *gin.Context) {
-	if err := s.bgSvc.RunScan(c.Request.Context()); err != nil {
+	if err := s.bgWriter.RunScan(c.Request.Context()); err != nil {
 		HandleError(c, err)
 		return
 	}
@@ -66,20 +66,13 @@ func (s *Server) runGC(c *gin.Context) {
 // runVerify handles POST /api/v1/admin/verify per FR-6.3.
 // Runs integrity diagnostics on the database.
 func (s *Server) runVerify(c *gin.Context) {
-	// Run basic integrity check via PRAGMA.
-	var result string
-	row := s.store.QueryRow(c.Request.Context(), "PRAGMA integrity_check")
-	if err := row.Scan(&result); err != nil {
-		HandleError(c, err)
-		return
-	}
-
-	// MTIX-95.31.8: no two nodes may share a non-empty uid.
-	uidReport, err := s.store.DuplicateNodeUIDsReport(c.Request.Context())
+	report, err := s.adminSvc.Verify(c.Request.Context())
 	if err != nil {
 		HandleError(c, err)
 		return
 	}
+	result, uidReport := report.Status, report.UIDReport
+
 	body := gin.H{
 		"status":          result,
 		"integrity_check": result == "ok",
@@ -102,7 +95,7 @@ func (s *Server) runBackup(c *gin.Context) {
 		return
 	}
 
-	result, err := s.store.Backup(c.Request.Context(), req.Path)
+	result, err := s.adminWriter.Backup(c.Request.Context(), req.Path)
 	if err != nil {
 		HandleError(c, err)
 		return
@@ -131,7 +124,7 @@ func (s *Server) startSession(c *gin.Context) {
 		}
 	}
 
-	sessionID, err := s.sessionSvc.SessionStart(c.Request.Context(), agentID, req.Project)
+	sessionID, err := s.sessionWriter.SessionStart(c.Request.Context(), agentID, req.Project)
 	if err != nil {
 		HandleError(c, err)
 		return
@@ -148,7 +141,7 @@ func (s *Server) startSession(c *gin.Context) {
 func (s *Server) endSession(c *gin.Context) {
 	agentID := c.Param("id")
 
-	if err := s.sessionSvc.SessionEnd(c.Request.Context(), agentID); err != nil {
+	if err := s.sessionWriter.SessionEnd(c.Request.Context(), agentID); err != nil {
 		HandleError(c, err)
 		return
 	}
@@ -184,7 +177,7 @@ func (s *Server) sessionSummary(c *gin.Context) {
 func (s *Server) agentHeartbeat(c *gin.Context) {
 	agentID := c.Param("id")
 
-	if err := s.agentSvc.Heartbeat(c.Request.Context(), agentID); err != nil {
+	if err := s.agentWriter.Heartbeat(c.Request.Context(), agentID); err != nil {
 		HandleError(c, err)
 		return
 	}
@@ -223,7 +216,7 @@ func (s *Server) setAgentState(c *gin.Context) {
 		return
 	}
 
-	if err := s.agentSvc.UpdateAgentState(c.Request.Context(), agentID, req.State); err != nil {
+	if err := s.agentWriter.UpdateAgentState(c.Request.Context(), agentID, req.State); err != nil {
 		HandleError(c, err)
 		return
 	}
@@ -271,7 +264,7 @@ func (s *Server) addDependency(c *gin.Context) {
 		return
 	}
 
-	if err := s.store.AddDependency(c.Request.Context(), dep); err != nil {
+	if err := s.depWriter.AddDependency(c.Request.Context(), dep); err != nil {
 		HandleError(c, err)
 		return
 	}
@@ -290,7 +283,7 @@ func (s *Server) removeDependency(c *gin.Context) {
 		return
 	}
 
-	if err := s.store.RemoveDependency(
+	if err := s.depWriter.RemoveDependency(
 		c.Request.Context(), fromID, toID, model.DepType(depType),
 	); err != nil {
 		HandleError(c, err)
@@ -305,7 +298,7 @@ func (s *Server) removeDependency(c *gin.Context) {
 func (s *Server) getDependencies(c *gin.Context) {
 	nodeID := c.Param("id")
 
-	blockers, err := s.store.GetBlockers(c.Request.Context(), nodeID)
+	blockers, err := s.depSvc.GetBlockers(c.Request.Context(), nodeID)
 	if err != nil {
 		HandleError(c, err)
 		return
@@ -323,8 +316,8 @@ func (s *Server) getDependencies(c *gin.Context) {
 func (s *Server) bulkUpdateNodes(c *gin.Context) {
 	var req struct {
 		Updates []struct {
-			ID     string          `json:"id" binding:"required"`
-			Fields store.NodeUpdate `json:"fields"`
+			ID     string             `json:"id" binding:"required"`
+			Fields service.NodeUpdate `json:"fields"`
 		} `json:"updates" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -344,7 +337,7 @@ func (s *Server) bulkUpdateNodes(c *gin.Context) {
 	// Apply all updates (non-atomic for now — individual per node).
 	results := make([]gin.H, 0, len(req.Updates))
 	for _, upd := range req.Updates {
-		err := s.nodeSvc.UpdateNode(c.Request.Context(), upd.ID, &upd.Fields)
+		err := s.nodeWriter.ApplyUpdate(c.Request.Context(), upd.ID, &upd.Fields)
 		if err != nil {
 			results = append(results, gin.H{
 				"id":      upd.ID,

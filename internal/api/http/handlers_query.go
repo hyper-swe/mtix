@@ -12,7 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/hyper-swe/mtix/internal/model"
-	"github.com/hyper-swe/mtix/internal/store"
+	"github.com/hyper-swe/mtix/internal/service"
 )
 
 // maxListLimit is the maximum allowed limit for pagination per FR-7.6.
@@ -46,7 +46,7 @@ func csvQueryParam(c *gin.Context, key string) []string {
 // Multi-value filters accept either comma-separated (?under=A,B) or
 // repeated query params (?under=A&under=B) — both forms produce slices.
 func (s *Server) searchNodes(c *gin.Context) {
-	filter := store.NodeFilter{
+	filter := service.NodeFilter{
 		Under:    csvQueryParam(c, "under"),
 		Assignee: csvQueryParam(c, "assignee"),
 		NodeType: csvQueryParam(c, "type"),
@@ -59,7 +59,7 @@ func (s *Server) searchNodes(c *gin.Context) {
 	limit := clampLimit(parseIntParam(c, "limit", 50))
 	offset := parseIntParam(c, "offset", 0)
 
-	nodes, total, err := s.store.ListNodes(c.Request.Context(), filter, store.ListOptions{
+	nodes, total, err := s.nodeSvc.ListNodes(c.Request.Context(), filter, service.ListOptions{
 		Limit:  limit,
 		Offset: offset,
 	})
@@ -97,11 +97,11 @@ func (s *Server) blockedNodes(c *gin.Context) {
 	limit := clampLimit(parseIntParam(c, "limit", 50))
 	offset := parseIntParam(c, "offset", 0)
 
-	filter := store.NodeFilter{
+	filter := service.NodeFilter{
 		Status:  []model.Status{model.StatusBlocked},
 		Project: s.resolveProjectScope(c),
 	}
-	nodes, total, err := s.store.ListNodes(c.Request.Context(), filter, store.ListOptions{
+	nodes, total, err := s.nodeSvc.ListNodes(c.Request.Context(), filter, service.ListOptions{
 		Limit:  limit,
 		Offset: offset,
 	})
@@ -149,9 +149,9 @@ func (s *Server) orphanNodes(c *gin.Context) {
 	offset := parseIntParam(c, "offset", 0)
 
 	// Fetch all nodes to ensure we find every root regardless of child count.
-	nodes, _, err := s.store.ListNodes(c.Request.Context(), store.NodeFilter{
+	nodes, _, err := s.nodeSvc.ListNodes(c.Request.Context(), service.NodeFilter{
 		Project: s.resolveProjectScope(c),
-	}, store.ListOptions{
+	}, service.ListOptions{
 		Limit:  100000,
 		Offset: 0,
 	})
@@ -200,10 +200,10 @@ func (s *Server) projectStats(c *gin.Context) {
 	counts := make(map[string]int)
 	totalNodes := 0
 	for _, st := range statuses {
-		_, count, err := s.store.ListNodes(c.Request.Context(), store.NodeFilter{
+		_, count, err := s.nodeSvc.ListNodes(c.Request.Context(), service.NodeFilter{
 			Status:  []model.Status{st},
 			Project: project,
-		}, store.ListOptions{Limit: 0})
+		}, service.ListOptions{Limit: 0})
 		if err != nil {
 			HandleError(c, err)
 			return
@@ -228,7 +228,7 @@ func (s *Server) nodeProgress(c *gin.Context) {
 	}
 
 	// Count invalidated children for FR-5.6a.
-	children, childErr := s.store.GetDirectChildren(c.Request.Context(), nodeID)
+	children, childErr := s.nodeSvc.GetDirectChildren(c.Request.Context(), nodeID)
 	invalidatedCount := 0
 	if childErr == nil {
 		for _, ch := range children {
@@ -276,7 +276,7 @@ func (s *Server) buildTree(c *gin.Context, node *model.Node, depth, maxDepth int
 		return result
 	}
 
-	children, err := s.store.GetDirectChildren(c.Request.Context(), node.ID)
+	children, err := s.nodeSvc.GetDirectChildren(c.Request.Context(), node.ID)
 	if err != nil || len(children) == 0 {
 		result["children"] = []gin.H{}
 		return result
@@ -301,9 +301,9 @@ func (s *Server) nodeContext(c *gin.Context) {
 		return
 	}
 
-	ancestors, _ := s.store.GetAncestorChain(c.Request.Context(), nodeID)
-	siblings, _ := s.store.GetSiblings(c.Request.Context(), nodeID)
-	children, _ := s.store.GetDirectChildren(c.Request.Context(), nodeID)
+	ancestors, _ := s.nodeSvc.GetAncestorChain(c.Request.Context(), nodeID)
+	siblings, _ := s.nodeSvc.GetSiblings(c.Request.Context(), nodeID)
+	children, _ := s.nodeSvc.GetDirectChildren(c.Request.Context(), nodeID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"node":      node,
@@ -318,7 +318,7 @@ func (s *Server) nodeContext(c *gin.Context) {
 func (s *Server) nodeAncestors(c *gin.Context) {
 	nodeID := c.Param("id")
 
-	ancestors, err := s.store.GetAncestorChain(c.Request.Context(), nodeID)
+	ancestors, err := s.nodeSvc.GetAncestorChain(c.Request.Context(), nodeID)
 	if err != nil {
 		HandleError(c, err)
 		return

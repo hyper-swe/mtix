@@ -20,8 +20,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/web"
 )
 
@@ -35,20 +33,29 @@ type ServerConfig struct {
 
 // Server is the main HTTP server for mtix per FR-7.1.
 type Server struct {
-	router     *gin.Engine
-	httpSrv    *http.Server
-	config     ServerConfig
-	logger     *slog.Logger
-	clock      func() time.Time
-	startedAt  time.Time
-	wsHub      *WSHub
-	store      *sqlite.Store
-	nodeSvc    *service.NodeService
-	bgSvc      *service.BackgroundService
-	sessionSvc *service.SessionService
-	agentSvc   *service.AgentService
-	configSvc  *service.ConfigService
-	warnOut    io.Writer // Destination of the network-exposure warning.
+	router        *gin.Engine
+	httpSrv       *http.Server
+	config        ServerConfig
+	logger        *slog.Logger
+	clock         func() time.Time
+	startedAt     time.Time
+	wsHub         *WSHub
+	nodeSvc       NodeReader
+	nodeWriter    NodeWriter
+	bgSvc         BackgroundReader
+	bgWriter      BackgroundWriter
+	sessionSvc    SessionReader
+	sessionWriter SessionWriter
+	agentSvc      AgentReader
+	agentWriter   AgentWriter
+	configSvc     ConfigReader
+	configWriter  ConfigWriter
+	depSvc        DependencyReader
+	depWriter     DependencyWriter
+	adminSvc      AdminReader
+	adminWriter   AdminWriter
+	readOnly      bool
+	warnOut       io.Writer // Destination of the network-exposure warning.
 }
 
 // NewServer creates a new HTTP server with all middleware configured.
@@ -56,17 +63,17 @@ type Server struct {
 // requires explicit configuration and logs a security warning.
 // The client address that the request log and ClientIP report is the TCP
 // peer: forwarded-address headers are not consulted (MTIX-95.14).
-func NewServer(
-	store *sqlite.Store,
-	nodeSvc *service.NodeService,
-	bgSvc *service.BackgroundService,
-	sessionSvc *service.SessionService,
-	agentSvc *service.AgentService,
-	configSvc *service.ConfigService,
-	logger *slog.Logger,
-	config ServerConfig,
-	clock func() time.Time,
-) *Server {
+func NewServer(services Services, logger *slog.Logger, config ServerConfig, clock func() time.Time) *Server {
+	return newServer(services, logger, config, clock, false)
+}
+
+// NewReadOnlyServer builds from read interfaces alone per MTIX-99.1.
+// It registers no mutation service; this is the FR-23 precursor.
+func NewReadOnlyServer(read ReadServices, logger *slog.Logger, config ServerConfig, clock func() time.Time) *Server {
+	return newServer(Services{Read: read}, logger, config, clock, true)
+}
+
+func newServer(services Services, logger *slog.Logger, config ServerConfig, clock func() time.Time, readOnly bool) *Server {
 	if config.Bind == "" {
 		config.Bind = "127.0.0.1"
 	}
@@ -80,6 +87,9 @@ func NewServer(
 		clock = time.Now
 	}
 
+	if logger == nil {
+		logger = slog.Default()
+	}
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	// Client address = TCP peer, never X-Forwarded-For or X-Real-IP
@@ -90,19 +100,25 @@ func NewServer(
 	go hub.Run()
 
 	s := &Server{
-		router:     router,
-		config:     config,
-		logger:     logger,
-		clock:      clock,
-		startedAt:  clock(),
-		wsHub:      hub,
-		store:      store,
-		nodeSvc:    nodeSvc,
-		bgSvc:      bgSvc,
-		sessionSvc: sessionSvc,
-		agentSvc:   agentSvc,
-		configSvc:  configSvc,
-		warnOut:    os.Stderr,
+		router:    router,
+		config:    config,
+		logger:    logger,
+		clock:     clock,
+		startedAt: clock(),
+		wsHub:     hub,
+
+		nodeSvc:       services.Read.Nodes,
+		nodeWriter:    services.Write.Nodes,
+		bgSvc:         services.Read.Background,
+		bgWriter:      services.Write.Background,
+		sessionSvc:    services.Read.Sessions,
+		sessionWriter: services.Write.Sessions,
+		agentSvc:      services.Read.Agents,
+		agentWriter:   services.Write.Agents,
+		configSvc:     services.Read.Config, configWriter: services.Write.Config,
+		depSvc: services.Read.Dependencies, depWriter: services.Write.Dependencies,
+		adminSvc: services.Read.Admin, adminWriter: services.Write.Admin, readOnly: readOnly,
+		warnOut: os.Stderr,
 	}
 
 	s.setupMiddleware()
@@ -143,13 +159,17 @@ func (s *Server) setupRoutes() {
 	// API v1 group with CSRF protection on mutations.
 	v1 := s.router.Group("/api/v1")
 	v1.Use(CSRFMiddleware())
-	s.registerNodeRoutes(v1)
-	s.registerWorkflowRoutes(v1)
-	s.registerQueryRoutes(v1)
-	s.registerDepRoutes(v1)
-	s.registerAgentRoutes(v1)
-	s.registerAdminRoutes(v1)
-	s.registerBulkRoutes(v1)
+	if s.readOnly {
+		s.registerReadOnlyRoutes(v1)
+	} else {
+		s.registerNodeRoutes(v1)
+		s.registerWorkflowRoutes(v1)
+		s.registerQueryRoutes(v1)
+		s.registerDepRoutes(v1)
+		s.registerAgentRoutes(v1)
+		s.registerAdminRoutes(v1)
+		s.registerBulkRoutes(v1)
+	}
 
 	// Mount embedded SPA UI at root per FR-9.1.
 	// Non-API requests fall through to the SPA handler for client-side routing.
@@ -228,8 +248,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 
 	// Close database.
-	if s.store != nil {
-		if err := s.store.Close(); err != nil {
+	if s.adminWriter != nil {
+		if err := s.adminWriter.Close(); err != nil {
 			s.logger.Error("database close error", "error", err)
 			return fmt.Errorf("database close: %w", err)
 		}

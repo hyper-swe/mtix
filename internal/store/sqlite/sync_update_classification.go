@@ -20,7 +20,7 @@ func validateIssueTypeEvent(event *model.SyncEvent) error {
 	}
 	var payload model.UpdateFieldPayload
 	if err := json.Unmarshal(event.Payload, &payload); err != nil {
-		return fmt.Errorf("decode update field payload: %w: %w", err, model.ErrInvalidInput)
+		return fmt.Errorf("apply update_field %s: decode payload: %w: %w", event.EventID, err, model.ErrInvalidInput)
 	}
 	if payload.FieldName != "issue_type" {
 		return nil

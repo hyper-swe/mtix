@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Building mtix from source now requires Go 1.26+ (MTIX-107.10).
+
+### Security
+- Upgraded `golang.org/x/crypto` to v0.56.0 to clear SSH advisories GO-2026-6354 and GO-2026-6355 (MTIX-107.10). The unfixed, deprecated OpenPGP advisory GO-2026-5932 remains module-only; a repository import guard prevents OpenPGP imports.
+
 ### Fixed
 - **WebSocket subtree subscriptions respect dotted boundaries (MTIX-107.2).** A subscription under `PROJ-1` receives the node and its dotted descendants, without receiving lookalike siblings such as `PROJ-10`. Event whitelists still apply alongside subtree filtering.
 - **SQL compliance (MTIX-107.4, MTIX-107.35, MTIX-107.54, MTIX-99.3).** Reject unknown update fields before LWW lookup, use fixed replace-import DELETE statements, and bind the pooled connection statement timeout through `set_config`. Query-plan tests pin literal EXPLAIN statements to the production queries; embedded migration DDL keeps its single schema execution.

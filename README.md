@@ -118,7 +118,7 @@ pi drives the mtix CLI through its shell tool; for MCP tools the install prints 
 ### Build from Source
 
 ```bash
-# Prerequisites: Go 1.25+, Node.js 18+ (web UI only)
+# Prerequisites: Go 1.26+, Node.js 18+ (web UI only)
 
 # Build the complete suite (web UI + Go binary)
 make build

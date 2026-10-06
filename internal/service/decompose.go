@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store"
 )
 
 // DecomposeInput contains the parameters for a single child in a decompose operation.
@@ -57,31 +58,21 @@ func (svc *NodeService) Decompose(
 		)
 	}
 
-	now := svc.clock()
-	createdIDs := make([]string, 0, len(children))
-
-	// Create each child via the service's CreateNode to reuse all validation,
-	// ID generation, content hash, and activity recording logic.
-	for _, child := range children {
-		req := &CreateNodeRequest{
-			ParentID:    parentID,
-			Project:     parent.Project,
-			Title:       child.Title,
-			Description: child.Description,
-			Prompt:      child.Prompt,
-			Acceptance:  child.Acceptance,
-			Priority:    child.Priority,
-			Labels:      child.Labels,
-			Creator:     creator,
-			DeferUntil:  nil,
-		}
-
-		// Override default priority if needed — children inherit parent defaults.
-		node, err := svc.createChildForDecompose(ctx, req, now)
-		if err != nil {
-			return nil, fmt.Errorf("create child %q: %w", child.Title, err)
-		}
+	base := &CreateNodeRequest{ParentID: parentID, Project: parent.Project, Creator: creator}
+	nodes, err := svc.prepareDecomposeChildren(ctx, base, children, svc.clock())
+	if err != nil {
+		return nil, err
+	}
+	if err := svc.store.CreateNodesAllocated(ctx, nodes, store.CreateNodeOptions{
+		ClaimParentAssignee: svc.config.AutoClaim(),
+		Provisional:         svc.settlement.Enabled() && !svc.settlement.Reachable(),
+	}); err != nil {
+		return nil, fmt.Errorf("create children under %s: %w", parentID, err)
+	}
+	createdIDs := make([]string, 0, len(nodes))
+	for _, node := range nodes {
 		createdIDs = append(createdIDs, node.ID)
+		svc.broadcastCreatedNode(ctx, node, creator)
 	}
 
 	// Broadcast progress.changed for the parent since children were added.
@@ -90,19 +81,25 @@ func (svc *NodeService) Decompose(
 	return createdIDs, nil
 }
 
-// createChildForDecompose creates a single child node for decompose operations.
-// Delegates to the full buildNode + store.CreateNode + auto-claim pipeline.
-func (svc *NodeService) createChildForDecompose(
-	ctx context.Context, req *CreateNodeRequest, now time.Time,
-) (*model.Node, error) {
-	node, err := svc.buildNode(ctx, req, now)
-	if err != nil {
-		return nil, err
+// prepareDecomposeChildren applies child defaults and prepares every durable UID
+// and content hash before the single storage transaction (FR-6.3 / ADR-003).
+func (svc *NodeService) prepareDecomposeChildren(
+	ctx context.Context, base *CreateNodeRequest, children []DecomposeInput, now time.Time,
+) ([]*model.Node, error) {
+	nodes := make([]*model.Node, 0, len(children))
+	for _, child := range children {
+		req := *base
+		req.Title = child.Title
+		req.Description = child.Description
+		req.Prompt = child.Prompt
+		req.Acceptance = child.Acceptance
+		req.Priority = child.Priority
+		req.Labels = child.Labels
+		node, err := svc.buildNode(ctx, &req, now)
+		if err != nil {
+			return nil, fmt.Errorf("create child %q: %w", child.Title, err)
+		}
+		nodes = append(nodes, node)
 	}
-
-	if err := svc.persistCreatedNode(ctx, node, req.Assignee); err != nil {
-		return nil, fmt.Errorf("create node: %w", err)
-	}
-	svc.broadcastCreatedNode(ctx, node, req.Creator)
-	return node, nil
+	return nodes, nil
 }

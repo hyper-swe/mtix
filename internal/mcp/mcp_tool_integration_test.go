@@ -91,6 +91,14 @@ func newDBMockStore(t *testing.T) *dbMockStore {
 	return &dbMockStore{db: db}
 }
 
+func (m *dbMockStore) CreateNodesAllocated(_ context.Context, nodes []*model.Node, _ store.CreateNodeOptions) error {
+	for i, node := range nodes {
+		node.Seq = i + 1
+		node.ID = model.BuildID(node.Project, node.ParentID, node.Seq)
+	}
+	return nil
+}
+
 func (m *dbMockStore) CreateNodeAllocated(ctx context.Context, node *model.Node, opts store.CreateNodeOptions) error {
 	node.Seq = 1
 	node.ID = model.BuildID(node.Project, node.ParentID, node.Seq)

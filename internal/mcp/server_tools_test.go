@@ -427,6 +427,14 @@ func TestSSEServer_HandleSSE_WithGETRequest_KeepsConnectionOpen(t *testing.T) {
 // Returns empty/nil results for all operations so handlers complete without error.
 type mcpMockStore struct{}
 
+func (m *mcpMockStore) CreateNodesAllocated(_ context.Context, nodes []*model.Node, _ store.CreateNodeOptions) error {
+	for i, node := range nodes {
+		node.Seq = i + 1
+		node.ID = model.BuildID(node.Project, node.ParentID, node.Seq)
+	}
+	return nil
+}
+
 func (m *mcpMockStore) CreateNodeAllocated(ctx context.Context, node *model.Node, opts store.CreateNodeOptions) error {
 	node.Seq = 1
 	node.ID = model.BuildID(node.Project, node.ParentID, node.Seq)

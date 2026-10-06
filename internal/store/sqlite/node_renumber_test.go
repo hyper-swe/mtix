@@ -7,10 +7,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -138,9 +138,9 @@ func TestRenumberSubtree_PreservesStableUIDs(t *testing.T) {
 	ctx := context.Background()
 
 	before := map[string]string{
-		"RNB-1.4":         uidOf(t, s, "RNB-1.4"),
-		"RNB-1.4.1":       uidOf(t, s, "RNB-1.4.1"),
-		"RNB-1.4.1.1.1":   uidOf(t, s, "RNB-1.4.1.1.1"),
+		"RNB-1.4":       uidOf(t, s, "RNB-1.4"),
+		"RNB-1.4.1":     uidOf(t, s, "RNB-1.4.1"),
+		"RNB-1.4.1.1.1": uidOf(t, s, "RNB-1.4.1.1.1"),
 	}
 
 	require.NoError(t, s.RenumberSubtree(ctx, "RNB-1.4", 5))
@@ -357,72 +357,117 @@ func TestRenumberSubtree_RejectsEmptyID(t *testing.T) {
 func TestRenumberSubtree_ConcurrentReaderSeesAllOldOrAllNew(t *testing.T) {
 	s := newTestStore(t)
 	seedRenumberTree(t, s)
-	ctx := context.Background()
-
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	writerDone, readerReady := make(chan struct{}), make(chan struct{})
+	results := make(chan renumberObservations, 1)
 	var wg sync.WaitGroup
-	stop := make(chan struct{})
-	var mixed, sawOld, sawNew int32
-
-	// Reader: in a SINGLE read transaction (one consistent WAL snapshot),
-	// observe both the parent and a deep descendant. The atomicity guarantee
-	// (ADR-003 §5, F-2) is that within one snapshot the whole subtree is at its
-	// old paths OR all at its new paths — never a mix. Reading both rows under
-	// the same snapshot is what actually exercises that guarantee (four
-	// independent reads would each see a different committed snapshot and tell
-	// us nothing about atomicity).
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-			}
-			parentOld, deepOld, parentNew, deepNew := snapshotSubtree(t, s)
-			allOld := parentOld && deepOld && !parentNew && !deepNew
-			allNew := parentNew && deepNew && !parentOld && !deepOld
-			switch {
-			case allOld:
-				atomic.StoreInt32(&sawOld, 1)
-			case allNew:
-				atomic.StoreInt32(&sawNew, 1)
-			default:
-				atomic.StoreInt32(&mixed, 1)
-			}
-		}
+		results <- observeRenumber(ctx, s, writerDone, readerReady)
 	}()
+	// Registered before any fatal assertion: cancel SQL work and join the
+	// reader even when the writer fails or the observation deadline expires.
+	defer func() { cancel(); wg.Wait() }()
 
-	require.NoError(t, s.RenumberSubtree(ctx, "RNB-1.4", 5))
-	// Let the reader observe the committed new generation, then stop.
-	time.AfterFunc(20*time.Millisecond, func() { close(stop) })
-	wg.Wait()
+	// Establish an old-generation snapshot before starting the concurrent
+	// writer. Reader readiness is an observation, never a scheduling delay.
+	select {
+	case <-readerReady:
+	case result := <-results:
+		assert.False(t, result.mixed, "concurrent reader observed a torn (mixed-generation) subtree")
+		require.NoError(t, result.err)
+		t.Fatal("reader stopped before observing the original subtree")
+	case <-ctx.Done():
+		t.Fatalf("reader did not observe the original subtree before deadline: %v", ctx.Err())
+	}
+	err := s.RenumberSubtree(ctx, "RNB-1.4", 5)
+	close(writerDone)
+	require.NoError(t, err)
+	result := <-results
+	assert.False(t, result.mixed, "concurrent reader observed a torn (mixed-generation) subtree")
+	require.NoError(t, result.err)
+	assert.True(t, result.sawOld, "reader must have observed the original subtree")
+	assert.True(t, result.sawNew, "reader must have observed the renumbered subtree")
+}
 
-	assert.Zero(t, atomic.LoadInt32(&mixed), "concurrent reader observed a torn (mixed-generation) subtree")
-	assert.Equal(t, int32(1), atomic.LoadInt32(&sawNew), "reader must have observed the renumbered subtree")
+// renumberObservations belongs to the reader until its buffered result is sent;
+// assertions run only in the main test goroutine, after the reader has finished.
+type renumberObservations struct {
+	mixed, sawOld, sawNew bool
+	err                   error
+}
+
+// observeRenumber checks ONE consistent WAL snapshot per iteration. Both the
+// completed writer and an observed new generation are needed to stop; a mixed
+// generation fails immediately, even if the writer has not completed yet.
+func observeRenumber(ctx context.Context, s *sqlite.Store, writerDone <-chan struct{}, readerReady chan<- struct{}) renumberObservations {
+	var result renumberObservations
+	for {
+		select {
+		case <-ctx.Done():
+			result.err = fmt.Errorf("observe renumber (old=%t, new=%t): %w", result.sawOld, result.sawNew, ctx.Err())
+			return result
+		default:
+		}
+		parentOld, deepOld, parentNew, deepNew, err := snapshotSubtree(ctx, s)
+		if err != nil {
+			result.err = err
+			return result
+		}
+		allOld := parentOld && deepOld && !parentNew && !deepNew
+		allNew := parentNew && deepNew && !parentOld && !deepOld
+		switch {
+		case allOld:
+			if !result.sawOld {
+				close(readerReady)
+				result.sawOld = true
+			}
+		case allNew:
+			result.sawNew = true
+		default:
+			result.mixed = true
+			return result
+		}
+		select {
+		case <-writerDone:
+			if result.sawNew {
+				return result
+			}
+		default:
+		}
+	}
 }
 
 // snapshotSubtree reports the presence of the parent and a deep descendant at
 // both their old and new paths, read within ONE read transaction so all four
-// observations come from a single consistent WAL snapshot.
-func snapshotSubtree(t *testing.T, s *sqlite.Store) (parentOld, deepOld, parentNew, deepNew bool) {
-	t.Helper()
-	tx, err := s.ReadDB().BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
-	require.NoError(t, err)
-	defer func() { _ = tx.Rollback() }()
-
-	exists := func(id string) bool {
-		var one int
-		err := tx.QueryRowContext(context.Background(),
-			`SELECT 1 FROM nodes WHERE id = ? AND deleted_at IS NULL`, id).Scan(&one)
-		if errors.Is(err, sql.ErrNoRows) {
-			return false
-		}
-		require.NoError(t, err)
-		return true
+// observations come from a single consistent WAL snapshot. Cancellation reaches
+// every query, and errors are returned rather than asserting in the reader.
+func snapshotSubtree(ctx context.Context, s *sqlite.Store) (parentOld, deepOld, parentNew, deepNew bool, err error) {
+	tx, err := s.ReadDB().BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return false, false, false, false, fmt.Errorf("begin renumber snapshot: %w", err)
 	}
-	return exists("RNB-1.4"), exists("RNB-1.4.1.1.1"),
-		exists("RNB-1.5"), exists("RNB-1.5.1.1.1")
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			err = errors.Join(err, fmt.Errorf("rollback renumber snapshot: %w", rollbackErr))
+		}
+	}()
+	ids := []string{"RNB-1.4", "RNB-1.4.1.1.1", "RNB-1.5", "RNB-1.5.1.1.1"}
+	var present [4]bool
+	for i, id := range ids {
+		var one int
+		queryErr := tx.QueryRowContext(ctx,
+			`SELECT 1 FROM nodes WHERE id = ? AND deleted_at IS NULL`, id).Scan(&one)
+		if errors.Is(queryErr, sql.ErrNoRows) {
+			continue
+		}
+		if queryErr != nil {
+			return false, false, false, false, fmt.Errorf("read renumber snapshot %s: %w", id, queryErr)
+		}
+		present[i] = true
+	}
+	return present[0], present[1], present[2], present[3], nil
 }
 
 // TestRenumberSubtree_WideSubtree exercises a node with many direct children to

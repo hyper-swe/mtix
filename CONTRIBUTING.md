@@ -110,6 +110,8 @@ Always run `mtix export` before pushing. This writes the current task state to `
 
 ## Before You Start
 
+Building mtix from source requires Go 1.26+.
+
 1. **Read the relevant requirements.** Every feature references FR (Functional Requirement) and NFR (Non-Functional Requirement) numbers in `REQUIREMENTS.md`. Read those sections before implementing.
 
 2. **Read the governing documents:**

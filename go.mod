@@ -1,6 +1,6 @@
 module github.com/hyper-swe/mtix
 
-go 1.25.0
+go 1.26.0
 
 // toolchain pins the patched Go for govulncheck-clean builds.
 // Bump when stdlib CVEs land; see docs/audit/MTIX-15-audit-pass2.md.
@@ -55,7 +55,7 @@ require (
 	github.com/ugorji/go/codec v1.3.1 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	golang.org/x/arch v0.22.0 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
+	golang.org/x/crypto v0.56.0 // indirect
 	golang.org/x/exp v0.0.0-20230315142452-642cacee5cc0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect

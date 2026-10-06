@@ -35,3 +35,11 @@ Out of scope:
 - Third-party dependencies (report to the upstream project)
 - Social engineering attacks
 - Denial of service attacks against localhost instances
+
+## Known Module-Only Advisory
+
+GO-2026-5932 affects the deprecated `golang.org/x/crypto/openpgp` package,
+which has no fixed version. It remains a module-only residual because mtix
+never imports that package or its subpackages. The repository import guard
+checks all Go source, including tests and files excluded by build tags or
+platform selection, and fails if an OpenPGP import is introduced.

@@ -1161,17 +1161,7 @@ func TestNewServer_WithRateLimit_ConfiguresMiddleware(t *testing.T) {
 	configSvc, err := service.NewConfigService("")
 	require.NoError(t, err)
 
-	srv := NewServer(
-		st,
-		service.NewNodeService(st, broadcaster, config, logger, clock),
-		service.NewBackgroundService(st, config, logger, clock),
-		service.NewSessionService(st, config, logger, clock),
-		service.NewAgentService(st, broadcaster, config, logger, clock),
-		configSvc,
-		logger,
-		ServerConfig{Bind: "127.0.0.1", Port: "0", RateLimit: 100},
-		clock,
-	)
+	srv := NewServer(Services{Read: ReadServices{Nodes: service.NewNodeService(st, broadcaster, config, logger, clock), Background: service.NewBackgroundService(st, config, logger, clock), Sessions: service.NewSessionService(st, config, logger, clock), Agents: service.NewAgentService(st, broadcaster, config, logger, clock), Config: configSvc, Dependencies: service.NewDependencyServiceFromNodeService(service.NewNodeService(st, broadcaster, config, logger, clock)), Admin: service.NewAdminService(st)}, Write: WriteServices{Nodes: service.NewNodeService(st, broadcaster, config, logger, clock), Background: service.NewBackgroundService(st, config, logger, clock), Sessions: service.NewSessionService(st, config, logger, clock), Agents: service.NewAgentService(st, broadcaster, config, logger, clock), Config: configSvc, Dependencies: service.NewDependencyServiceFromNodeService(service.NewNodeService(st, broadcaster, config, logger, clock)), Admin: service.NewAdminService(st)}}, logger, ServerConfig{Bind: "127.0.0.1", Port: "0", RateLimit: 100}, clock)
 
 	w := httptest.NewRecorder()
 	req := newLocalRequest(http.MethodGet, "/health", nil)
@@ -1198,17 +1188,8 @@ func TestNewServer_EmptyConfig_UsesDefaults(t *testing.T) {
 	configSvc, err := service.NewConfigService("")
 	require.NoError(t, err)
 
-	srv := NewServer(
-		st,
-		service.NewNodeService(st, broadcaster, config, logger, clock),
-		service.NewBackgroundService(st, config, logger, clock),
-		service.NewSessionService(st, config, logger, clock),
-		service.NewAgentService(st, broadcaster, config, logger, clock),
-		configSvc,
-		logger,
-		ServerConfig{}, // Empty config.
-		clock,
-	)
+	srv := NewServer(Services{Read: ReadServices{Nodes: service.NewNodeService(st, broadcaster, config, logger, clock), Background: service.NewBackgroundService(st, config, logger, clock), Sessions: service.NewSessionService(st, config, logger, clock), Agents: service.NewAgentService(st, broadcaster, config, logger, clock), Config: configSvc, Dependencies: service.NewDependencyServiceFromNodeService(service.NewNodeService(st, broadcaster, config, logger, clock)), Admin: service.NewAdminService(st)}, Write: WriteServices{Nodes: service.NewNodeService(st, broadcaster, config, logger, clock), Background: service.NewBackgroundService(st, config, logger, clock), Sessions: service.NewSessionService(st, config, logger, clock), Agents: service.NewAgentService(st, broadcaster, config, logger, clock), Config: configSvc, Dependencies: service.NewDependencyServiceFromNodeService(service.NewNodeService(st, broadcaster, config, logger, clock)), Admin: service.NewAdminService(st)}}, logger, ServerConfig{}, // Empty config.
+		clock)
 
 	assert.Equal(t, "127.0.0.1", srv.config.Bind)
 	assert.Equal(t, "6849", srv.config.Port)
@@ -1231,17 +1212,7 @@ func TestNewServer_NilClockFallback(t *testing.T) {
 	configSvc, err := service.NewConfigService("")
 	require.NoError(t, err)
 
-	srv := NewServer(
-		st,
-		service.NewNodeService(st, broadcaster, config, logger, testClock()),
-		service.NewBackgroundService(st, config, logger, testClock()),
-		service.NewSessionService(st, config, logger, testClock()),
-		service.NewAgentService(st, broadcaster, config, logger, testClock()),
-		configSvc,
-		logger,
-		ServerConfig{Bind: "127.0.0.1", Port: "0"},
-		nil, // nil clock should default to time.Now.
-	)
+	srv := NewServer(Services{Read: ReadServices{Nodes: service.NewNodeService(st, broadcaster, config, logger, testClock()), Background: service.NewBackgroundService(st, config, logger, testClock()), Sessions: service.NewSessionService(st, config, logger, testClock()), Agents: service.NewAgentService(st, broadcaster, config, logger, testClock()), Config: configSvc, Dependencies: service.NewDependencyService(st, broadcaster, logger, testClock()), Admin: service.NewAdminService(st)}, Write: WriteServices{Nodes: service.NewNodeService(st, broadcaster, config, logger, testClock()), Background: service.NewBackgroundService(st, config, logger, testClock()), Sessions: service.NewSessionService(st, config, logger, testClock()), Agents: service.NewAgentService(st, broadcaster, config, logger, testClock()), Config: configSvc, Dependencies: service.NewDependencyService(st, broadcaster, logger, testClock()), Admin: service.NewAdminService(st)}}, logger, ServerConfig{Bind: "127.0.0.1", Port: "0"}, nil)
 
 	assert.NotNil(t, srv.clock)
 	// Verify the clock returns a recent time (not the fixed test time).

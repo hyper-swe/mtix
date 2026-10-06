@@ -11,7 +11,6 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store"
 )
 
 // createNode handles POST /api/v1/nodes per FR-7.2.
@@ -40,7 +39,7 @@ func (s *Server) createNode(c *gin.Context) {
 		req.Project = s.primaryProject()
 	}
 
-	node, err := s.nodeSvc.CreateNode(c.Request.Context(), &service.CreateNodeRequest{
+	node, err := s.nodeWriter.CreateNode(c.Request.Context(), &service.CreateNodeRequest{
 		Title:       req.Title,
 		ParentID:    req.ParentID,
 		Project:     req.Project,
@@ -92,7 +91,7 @@ func (s *Server) updateNode(c *gin.Context) {
 		return
 	}
 
-	updates := &store.NodeUpdate{
+	updates := &service.NodeUpdate{
 		Title:       req.Title,
 		Description: req.Description,
 		Prompt:      req.Prompt,
@@ -101,7 +100,7 @@ func (s *Server) updateNode(c *gin.Context) {
 		Labels:      req.Labels,
 	}
 
-	if err := s.nodeSvc.UpdateNode(c.Request.Context(), nodeID, updates); err != nil {
+	if err := s.nodeWriter.ApplyUpdate(c.Request.Context(), nodeID, updates); err != nil {
 		HandleError(c, err)
 		return
 	}
@@ -126,7 +125,7 @@ func (s *Server) deleteNode(c *gin.Context) {
 		deletedBy = "api"
 	}
 
-	if err := s.nodeSvc.DeleteNode(c.Request.Context(), nodeID, cascade, deletedBy); err != nil {
+	if err := s.nodeWriter.DeleteNode(c.Request.Context(), nodeID, cascade, deletedBy); err != nil {
 		HandleError(c, err)
 		return
 	}
@@ -152,7 +151,7 @@ func (s *Server) getActivity(c *gin.Context) {
 		}
 	}
 
-	entries, err := s.store.GetActivity(c.Request.Context(), nodeID, limit, offset)
+	entries, err := s.nodeSvc.GetActivity(c.Request.Context(), nodeID, limit, offset)
 	if err != nil {
 		HandleError(c, err)
 		return
@@ -169,7 +168,7 @@ func (s *Server) getActivity(c *gin.Context) {
 func (s *Server) getChildren(c *gin.Context) {
 	nodeID := c.Param("id")
 
-	children, err := s.store.GetDirectChildren(c.Request.Context(), nodeID)
+	children, err := s.nodeSvc.GetDirectChildren(c.Request.Context(), nodeID)
 	if err != nil {
 		HandleError(c, err)
 		return
@@ -213,7 +212,7 @@ func (s *Server) decomposeNode(c *gin.Context) {
 	creator := c.GetHeader("X-Agent-ID")
 	created := make([]*model.Node, 0, len(req.Children))
 	for _, child := range req.Children {
-		node, createErr := s.nodeSvc.CreateNode(c.Request.Context(), &service.CreateNodeRequest{
+		node, createErr := s.nodeWriter.CreateNode(c.Request.Context(), &service.CreateNodeRequest{
 			Title:      child.Title,
 			ParentID:   parentID,
 			Project:    parent.Project,

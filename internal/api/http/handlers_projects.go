@@ -23,7 +23,7 @@ func (s *Server) primaryProject() string {
 	return defaultPrefix
 }
 
-// resolveProjectScope maps the ?project query param to a store.NodeFilter
+// resolveProjectScope maps the ?project query param to a service.NodeFilter
 // Project value per FR-MULTI-PROJECT MP-9:
 //   - omitted/empty  → the primary project (config prefix)
 //   - "all"          → "" (no filter; spans all projects)
@@ -43,7 +43,7 @@ func (s *Server) resolveProjectScope(c *gin.Context) string {
 // Returns a JSON array of {prefix, count, isPrimary} describing every project
 // present in the store, with isPrimary set on the configured primary.
 func (s *Server) listProjects(c *gin.Context) {
-	infos, err := s.store.DistinctProjects(c.Request.Context())
+	infos, err := s.nodeSvc.DistinctProjects(c.Request.Context())
 	if err != nil {
 		HandleError(c, err)
 		return

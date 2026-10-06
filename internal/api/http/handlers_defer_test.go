@@ -20,7 +20,7 @@ import (
 // and it ignored a request body that is not valid JSON.
 
 // storedDeferUntil reads the node's defer_until column verbatim.
-func storedDeferUntil(t *testing.T, s *Server, id string) sql.NullString {
+func storedDeferUntil(t *testing.T, s *serverFixture, id string) sql.NullString {
 	t.Helper()
 	var v sql.NullString
 	require.NoError(t, s.store.QueryRow(context.Background(),
@@ -29,7 +29,7 @@ func storedDeferUntil(t *testing.T, s *Server, id string) sql.NullString {
 }
 
 // storedStatus reads the node's status through the service.
-func storedStatus(t *testing.T, s *Server, id string) model.Status {
+func storedStatus(t *testing.T, s *serverFixture, id string) model.Status {
 	t.Helper()
 	node, err := s.nodeSvc.GetNode(context.Background(), id)
 	require.NoError(t, err)

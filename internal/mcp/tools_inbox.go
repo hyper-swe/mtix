@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -39,13 +40,23 @@ type InboxStore interface {
 	InboxAck(ctx context.Context, agentID string, seq int64) error
 }
 
+// InboxAcknowledger is the service capability for selective acknowledgement (FR-19.5).
+type InboxAcknowledger interface {
+	InboxAck(context.Context, string, int64) error
+}
+
 // RegisterInboxTools registers the per-agent inbox MCP tools per MTIX-47.6 /
 // FR-19.5 — the tool-call mirror of `mtix inbox` so a request-driven agent can
-// park on notifications as an ordinary tool call.
-func RegisterInboxTools(reg *ToolRegistry, st InboxStore) {
+// park on notifications as an ordinary tool call. A supplied acknowledgement
+// service is used for writes; reads keep their independent capability.
+func RegisterInboxTools(reg *ToolRegistry, st InboxStore, services ...InboxAcknowledger) {
+	var svc InboxAcknowledger = service.NewInboxService(st)
+	if len(services) > 0 && services[0] != nil {
+		svc = services[0]
+	}
 	registerInboxTool(reg, st)
 	registerInboxWaitTool(reg, st)
-	registerInboxAckTool(reg, st)
+	registerInboxAckTool(reg, svc)
 }
 
 func registerInboxTool(reg *ToolRegistry, st InboxStore) {
@@ -116,7 +127,7 @@ func registerInboxWaitTool(reg *ToolRegistry, st InboxStore) {
 	})
 }
 
-func registerInboxAckTool(reg *ToolRegistry, st InboxStore) {
+func registerInboxAckTool(reg *ToolRegistry, svc InboxAcknowledger) {
 	reg.Register(ToolDef{
 		Name:        "mtix_inbox_ack",
 		Description: "Acknowledge ONE inbox event by its seq (selective): only that event is marked seen, so you can safely process out of order — any event you do not ack reappears on the next mtix_inbox (defer by not acking). Idempotent.",
@@ -150,7 +161,7 @@ func registerInboxAckTool(reg *ToolRegistry, st InboxStore) {
 			return ErrorResult(fmt.Sprintf("inbox_ack: seq %d is not a valid inbox seq (seqs start at 1)", *p.Seq)), nil
 		}
 
-		if err := st.InboxAck(ctx, p.Agent, *p.Seq); err != nil {
+		if err := svc.InboxAck(ctx, p.Agent, *p.Seq); err != nil {
 			return nil, err
 		}
 

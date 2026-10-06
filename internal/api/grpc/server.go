@@ -35,6 +35,7 @@ type Server struct {
 	clock       func() time.Time
 	store       *sqlite.Store
 	nodeSvc     *service.NodeService
+	depSvc      *service.DependencyService
 	bgSvc       *service.BackgroundService
 	sessionSvc  *service.SessionService
 	agentSvc    *service.AgentService
@@ -73,6 +74,7 @@ func NewServer(
 		clock:       clock,
 		store:       store,
 		nodeSvc:     nodeSvc,
+		depSvc:      service.NewDependencyServiceFromNodeService(nodeSvc),
 		bgSvc:       bgSvc,
 		sessionSvc:  sessionSvc,
 		agentSvc:    agentSvc,

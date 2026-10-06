@@ -24,7 +24,7 @@ import (
 
 // wsTestServer creates a test HTTP server with a real WSHub and
 // returns the server, the test httptest.Server, and a cleanup function.
-func wsTestServer(t *testing.T) (*Server, *httptest.Server) {
+func wsTestServer(t *testing.T) (*serverFixture, *httptest.Server) {
 	t.Helper()
 	s := testServer(t)
 

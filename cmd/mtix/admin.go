@@ -16,6 +16,7 @@ import (
 
 	mtixhttp "github.com/hyper-swe/mtix/internal/api/http"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -407,17 +408,19 @@ func runServe(addr string, port int) error {
 
 	clock := func() time.Time { return time.Now().UTC() }
 
-	srv := mtixhttp.NewServer(
-		app.store,
-		app.nodeSvc,
-		app.bgSvc,
-		app.sessionSvc,
-		app.agentSvc,
-		app.configSvc,
-		app.logger,
-		serveConfig(addr, port),
-		clock,
-	)
+	dependencies := service.NewDependencyServiceFromNodeService(app.nodeSvc)
+	admin := service.NewAdminService(app.store)
+	services := mtixhttp.Services{
+		Read: mtixhttp.ReadServices{
+			Nodes: app.nodeSvc, Background: app.bgSvc, Sessions: app.sessionSvc,
+			Agents: app.agentSvc, Config: app.configSvc, Dependencies: dependencies, Admin: admin,
+		},
+		Write: mtixhttp.WriteServices{
+			Nodes: app.nodeSvc, Background: app.bgSvc, Sessions: app.sessionSvc,
+			Agents: app.agentSvc, Config: app.configSvc, Dependencies: dependencies, Admin: admin,
+		},
+	}
+	srv := mtixhttp.NewServer(services, app.logger, serveConfig(addr, port), clock)
 
 	fmt.Printf("Starting mtix server at %s:%d\n", addr, port)
 	return srv.ListenAndServeWithGracefulShutdown()

@@ -24,18 +24,23 @@ func newUpdateCmd() *cobra.Command {
 		priority    int
 		labels      string
 		assignee    string
+		issueType   string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "update <id>",
 		Short: "Update a node's fields",
 		Args:  cobra.ExactArgs(1),
-		RunE: withAutoExport(func(_ *cobra.Command, args []string) error {
+		RunE: withAutoExport(func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("type") {
+				return runUpdate(args[0], title, description, prompt, acceptance, priority, labels, assignee, model.IssueType(issueType))
+			}
 			return runUpdate(args[0], title, description, prompt,
 				acceptance, priority, labels, assignee)
 		}),
 	}
 
+	cmd.Flags().StringVar(&issueType, "type", "", "New work classification (bug, feature, task, chore, refactor, test, doc); empty clears, omission preserves; list --type filters hierarchy")
 	cmd.Flags().StringVar(&title, "title", "", "New title")
 	cmd.Flags().StringVar(&description, "description", "", "New description")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "New prompt")
@@ -48,7 +53,7 @@ func newUpdateCmd() *cobra.Command {
 }
 
 func runUpdate(id, title, description, prompt, acceptance string,
-	priority int, labels, assignee string,
+	priority int, labels, assignee string, issueType ...model.IssueType,
 ) error {
 	if app.nodeSvc == nil {
 		return fmt.Errorf("not in an mtix project")
@@ -56,6 +61,10 @@ func runUpdate(id, title, description, prompt, acceptance string,
 
 	updates := &store.NodeUpdate{}
 	hasUpdate := false
+	if len(issueType) > 0 {
+		updates.IssueType = &issueType[0]
+		hasUpdate = true
+	}
 
 	if title != "" {
 		updates.Title = &title

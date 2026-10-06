@@ -244,7 +244,7 @@ func recordLocalConflict(ctx context.Context, tx *sql.Tx, winnerID, loserID, nod
 // package.
 //
 // Behavior:
-//   - Duplicate event_id: silent no-op (FR-18.9 idempotency).
+//   - Valid duplicate event_id: silent no-op (FR-18.9 idempotency).
 //   - Validates the event before any mutation; invalid events surface
 //     ErrInvalidInput.
 //   - An event already in the local sync_events log (any sync_status;
@@ -263,6 +263,10 @@ func IdempotentApply(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) er
 	}
 	if err := event.Validate(); err != nil {
 		return fmt.Errorf("apply %s: %w", event.EventID, err)
+	}
+
+	if payloadErr := validateIssueTypeEvent(event); payloadErr != nil {
+		return fmt.Errorf("apply %s: classification payload: %w", event.EventID, payloadErr)
 	}
 
 	already, err := isAppliedEvent(ctx, tx, event.EventID)
@@ -597,6 +601,7 @@ var allowedUpdateFields = map[string]bool{
 	"labels":      true,
 	"assignee":    true,
 	"agent_state": true,
+	"issue_type":  true,
 }
 
 func applyUpdateField(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
@@ -617,6 +622,9 @@ func applyUpdateField(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error
 		return fmt.Errorf("apply update_field %s: decode value: %w", e.EventID, err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	if p.FieldName == "issue_type" {
+		return applyIssueTypeField(ctx, tx, id, value, now)
+	}
 	// SQL is constructed from a whitelisted column name; the value is
 	// always a bound parameter.
 	stmt := "UPDATE nodes SET " + p.FieldName + " = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL"
@@ -648,6 +656,9 @@ var contentHashFields = map[string]bool{
 // a Go value suitable for the target SQL column type. Whitelisted
 // columns dictate the expected type.
 func decodeNewValueForColumn(field string, raw json.RawMessage) (any, error) {
+	if field == "issue_type" {
+		return decodeIssueTypeUpdate(raw)
+	}
 	if len(raw) == 0 {
 		return nil, nil
 	}

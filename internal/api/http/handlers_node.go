@@ -79,12 +79,13 @@ func (s *Server) updateNode(c *gin.Context) {
 	nodeID := c.Param("id")
 
 	var req struct {
-		Title       *string         `json:"title"`
-		Description *string         `json:"description"`
-		Prompt      *string         `json:"prompt"`
-		Acceptance  *string         `json:"acceptance"`
-		Priority    *model.Priority `json:"priority"`
-		Labels      []string        `json:"labels"`
+		IssueType   *model.IssueType `json:"issue_type"`
+		Title       *string          `json:"title"`
+		Description *string          `json:"description"`
+		Prompt      *string          `json:"prompt"`
+		Acceptance  *string          `json:"acceptance"`
+		Priority    *model.Priority  `json:"priority"`
+		Labels      []string         `json:"labels"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		HandleValidationError(c, "invalid request body: "+err.Error())
@@ -92,6 +93,7 @@ func (s *Server) updateNode(c *gin.Context) {
 	}
 
 	updates := &service.NodeUpdate{
+		IssueType:   req.IssueType,
 		Title:       req.Title,
 		Description: req.Description,
 		Prompt:      req.Prompt,

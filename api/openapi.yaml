@@ -1218,6 +1218,10 @@ components:
     UpdateNodeRequest:
       type: object
       properties:
+        issue_type:
+          type: string
+          description: New work classification; omission preserves, empty string clears.
+          enum: [bug, feature, task, chore, refactor, test, doc, '']
         title:
           type: string
           maxLength: 500

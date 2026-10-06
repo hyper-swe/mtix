@@ -184,8 +184,14 @@ func (svc *NodeService) GetNode(ctx context.Context, id string) (*model.Node, er
 	return svc.store.GetNode(ctx, id)
 }
 
-// UpdateNode applies partial updates to a node with validation and event broadcast.
+// UpdateNode applies partial updates with validation and event broadcast per FR-3.1.
+// An omitted IssueType preserves classification; an empty value clears it.
 func (svc *NodeService) UpdateNode(ctx context.Context, id string, updates *store.NodeUpdate) error {
+	if updates.IssueType != nil {
+		if err := model.ValidateIssueType(*updates.IssueType); err != nil {
+			return fmt.Errorf("update issue type: %w", err)
+		}
+	}
 	// Validate title length if being updated.
 	if updates.Title != nil {
 		if *updates.Title == "" {

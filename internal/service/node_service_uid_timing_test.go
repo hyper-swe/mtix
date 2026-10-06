@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -27,9 +28,9 @@ type slowSequenceStore struct {
 }
 
 // NextSequence waits, then hands out the next sequence.
-func (s *slowSequenceStore) NextSequence(ctx context.Context, key string) (int, error) {
+func (s *slowSequenceStore) CreateNodeAllocated(ctx context.Context, node *model.Node, opts store.CreateNodeOptions) error {
 	time.Sleep(s.wait)
-	return s.Store.NextSequence(ctx, key)
+	return s.Store.CreateNodeAllocated(ctx, node, opts)
 }
 
 // TestCreateNode_SequenceWaitsForLock_UIDMintedAtTheClockRead verifies a

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store"
 	"github.com/hyper-swe/mtix/internal/sync/clock"
 )
 
@@ -35,10 +36,7 @@ func (s *Store) CreateNodeAndClaim(ctx context.Context, node *model.Node, assign
 	if err := s.createNode(ctx, node, assignee); err != nil {
 		return err
 	}
-	node.Status = model.StatusInProgress
-	node.Assignee = assignee
-	node.AgentState = model.AgentStateWorking
-	node.DeferUntil = nil
+	applyInitialClaim(node, assignee)
 	return nil
 }
 
@@ -53,42 +51,97 @@ func (s *Store) createNode(ctx context.Context, node *model.Node, assignee strin
 	}
 
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		if node.ParentID != "" {
-			if err := validateParentStatus(ctx, tx, node.ParentID); err != nil {
+		return s.createNodeTx(ctx, tx, node, assignee)
+	})
+}
+
+// CreateNodeAllocated allocates and persists a local create with its optional claim
+// in one transaction (FR-2.7/FR-11.2a). Fixed-ID import/sync callers use CreateNode.
+// The caller's node reflects the allocation and claim only after successful commit.
+func (s *Store) CreateNodeAllocated(ctx context.Context, node *model.Node, opts store.CreateNodeOptions) error {
+	if err := node.Validate(); err != nil {
+		return fmt.Errorf("create node validate: %w", err)
+	}
+	if (opts.Assignee != "" || opts.ClaimParentAssignee) && (node.Status != model.StatusOpen || node.Assignee != "") {
+		return fmt.Errorf("creation claim requires an unassigned open node: %w", model.ErrInvalidInput)
+	}
+	if err := ensureCreateNodeUID(node); err != nil {
+		return err
+	}
+	candidate := *node
+	assignee := opts.Assignee
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		if candidate.ParentID != "" {
+			if err := validateParentStatus(ctx, tx, candidate.ParentID); err != nil {
 				return err
 			}
 		}
-
-		if err := insertNode(ctx, tx, node); err != nil {
-			return err
-		}
-
-		payload, err := buildCreateNodePayload(node)
+		var err error
+		assignee, err = initialClaimAssignee(ctx, tx, &candidate, opts)
 		if err != nil {
-			return fmt.Errorf("build sync payload for %s: %w", node.ID, err)
-		}
-		if err := emitEvent(ctx, tx, emitParams{
-			NodeID:      node.ID,
-			ProjectCode: node.Project,
-			OpType:      model.OpCreateNode,
-			Author:      node.Creator,
-			Payload:     payload,
-			EventID:     node.UID, // uid == create-event id (ADR-003 §2)
-		}); err != nil {
 			return err
 		}
-
-		if node.ParentID != "" {
-			if err := recalculateProgress(ctx, tx, node.ParentID); err != nil {
-				return fmt.Errorf("recalculate progress after create: %w", err)
-			}
+		if err := allocateNodeID(ctx, tx, &candidate, opts.Provisional); err != nil {
+			return err
 		}
-
-		if assignee != "" {
-			return s.claimNodeTx(ctx, tx, node.ID, assignee)
-		}
-		return nil
+		return s.createNodeTx(ctx, tx, &candidate, assignee)
 	})
+	if err != nil {
+		return err
+	}
+	applyInitialClaim(&candidate, assignee)
+	*node = candidate
+	return nil
+}
+
+// applyInitialClaim updates the result only after the transactional claim committed.
+func applyInitialClaim(node *model.Node, assignee string) {
+	if assignee == "" {
+		return
+	}
+	node.Status = model.StatusInProgress
+	node.Assignee = assignee
+	node.AgentState = model.AgentStateWorking
+	node.DeferUntil = nil
+}
+
+// createNodeTx shares fixed-ID and allocated insertion, event and claim writes.
+func (s *Store) createNodeTx(ctx context.Context, tx *sql.Tx, node *model.Node, assignee string) error {
+	if node.ParentID != "" {
+		if err := validateParentStatus(ctx, tx, node.ParentID); err != nil {
+			return err
+		}
+	}
+
+	if err := insertNode(ctx, tx, node); err != nil {
+		return err
+	}
+
+	payload, err := buildCreateNodePayload(node)
+	if err != nil {
+		return fmt.Errorf("build sync payload for %s: %w", node.ID, err)
+	}
+	if err := emitEvent(ctx, tx, emitParams{
+		NodeID:      node.ID,
+		ProjectCode: node.Project,
+		OpType:      model.OpCreateNode,
+		Author:      node.Creator,
+		Payload:     payload,
+		EventID:     node.UID, // uid == create-event id (ADR-003 §2)
+	}); err != nil {
+		return err
+	}
+
+	if node.ParentID != "" {
+		if err := recalculateProgress(ctx, tx, node.ParentID); err != nil {
+			return fmt.Errorf("recalculate progress after create: %w", err)
+		}
+	}
+
+	if assignee != "" {
+		return s.claimNodeTx(ctx, tx, node.ID, assignee)
+	}
+	return nil
 }
 
 // ensureCreateNodeUID preserves the durable create-event identity (ADR-003 §2).

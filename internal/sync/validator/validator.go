@@ -59,11 +59,11 @@ const PastTimestampWarn = 30 * 24 * time.Hour
 // Sentinel errors. Callers MUST use errors.Is to dispatch — the wrapped
 // strings are informational and may include the failing event_id.
 var (
-	ErrPayloadTooLarge   = errors.New("payload too large")
-	ErrPayloadTooNested  = errors.New("payload nesting too deep")
-	ErrTimestampFuture   = errors.New("wall_clock_ts too far in future")
-	ErrLamportOverflow   = errors.New("lamport_clock at or above 2^53")
-	ErrInvalidBatch      = errors.New("invalid event in batch")
+	ErrPayloadTooLarge  = errors.New("payload too large")
+	ErrPayloadTooNested = errors.New("payload nesting too deep")
+	ErrTimestampFuture  = errors.New("wall_clock_ts too far in future")
+	ErrLamportOverflow  = errors.New("lamport_clock at or above 2^53")
+	ErrInvalidBatch     = errors.New("invalid event in batch")
 )
 
 // Result lets callers know about non-fatal observations such as a stale

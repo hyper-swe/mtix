@@ -68,7 +68,9 @@ func registerSessionEndTool(reg *ToolRegistry, svc *service.SessionService) {
 			Required: []string{"agent_id"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct{ AgentID string `json:"agent_id"` }
+		var p struct {
+			AgentID string `json:"agent_id"`
+		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse session_end args: %w", err)
 		}
@@ -93,7 +95,9 @@ func registerSessionSummaryTool(reg *ToolRegistry, svc *service.SessionService) 
 			Required: []string{"agent_id"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct{ AgentID string `json:"agent_id"` }
+		var p struct {
+			AgentID string `json:"agent_id"`
+		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse session_summary args: %w", err)
 		}
@@ -120,7 +124,9 @@ func registerAgentHeartbeatTool(reg *ToolRegistry, svc *service.AgentService) {
 			Required: []string{"agent_id"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct{ AgentID string `json:"agent_id"` }
+		var p struct {
+			AgentID string `json:"agent_id"`
+		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse heartbeat args: %w", err)
 		}
@@ -190,7 +196,9 @@ func registerAgentWorkTool(reg *ToolRegistry, svc *service.AgentService) {
 			Required: []string{"agent_id"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct{ AgentID string `json:"agent_id"` }
+		var p struct {
+			AgentID string `json:"agent_id"`
+		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse agent_work args: %w", err)
 		}

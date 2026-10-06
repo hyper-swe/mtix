@@ -35,7 +35,7 @@ const (
 	colorYellow = "\033[33m"
 	colorRed    = "\033[31m"
 	colorCyan   = "\033[36m"
-	colorGray = "\033[90m"
+	colorGray   = "\033[90m"
 )
 
 // OutputWriter abstracts CLI output between JSON and human-readable formats per FR-6.2.

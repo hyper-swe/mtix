@@ -318,10 +318,10 @@ func TestValidateNodeID_Settled(t *testing.T) {
 func TestValidateNodeID_Provisional(t *testing.T) {
 	seg, _ := model.RenderUIDSegment(sampleUID)
 	valid := []string{
-		"PRJX-1." + seg,            // single-level provisional
-		"PRJX-1.4.2." + seg,        // deeply nested provisional
-		"PRJX-1." + seg + ".1",     // numeric child under provisional parent
-		"PRJX-1." + seg + ".1.2",   // deeper child under provisional parent
+		"PRJX-1." + seg,          // single-level provisional
+		"PRJX-1.4.2." + seg,      // deeply nested provisional
+		"PRJX-1." + seg + ".1",   // numeric child under provisional parent
+		"PRJX-1." + seg + ".1.2", // deeper child under provisional parent
 	}
 	for _, id := range valid {
 		t.Run(id, func(t *testing.T) {

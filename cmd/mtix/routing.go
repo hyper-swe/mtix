@@ -25,12 +25,12 @@ const pidLockFile = "mtix.pid"
 // exemptCommands are commands that bypass auto-routing per FR-14.1b.
 // These always operate directly regardless of server state.
 var exemptCommands = map[string]bool{
-	"config":   true, // Reads/writes .mtix/config.yaml, no DB.
-	"init":     true, // No project yet.
-	"migrate":  true, // Must run before server.
-	"docs":     true, // Writes files, no DB.
-	"version":  true, // No DB needed.
-	"help":     true, // No DB needed.
+	"config":  true, // Reads/writes .mtix/config.yaml, no DB.
+	"init":    true, // No project yet.
+	"migrate": true, // Must run before server.
+	"docs":    true, // Writes files, no DB.
+	"version": true, // No DB needed.
+	"help":    true, // No DB needed.
 }
 
 // adminRoutes maps CLI admin commands to REST admin endpoints per FR-14.1b.

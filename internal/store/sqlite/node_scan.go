@@ -30,7 +30,7 @@ const nodeColumns = `id, parent_id, depth, seq, project,
 // scanDest holds the intermediate scan destinations for a node row.
 type scanDest struct {
 	parentID, description, prompt, acceptance sql.NullString
-	issueType, previousStatus, assignee      sql.NullString
+	issueType, previousStatus, assignee       sql.NullString
 	creator, agentState                       sql.NullString
 	closedAt, deferUntil                      sql.NullString
 	contentHash                               sql.NullString

@@ -69,7 +69,9 @@ func registerDocsGenerateTool(reg *ToolRegistry, genFn DocGenerateFunc) {
 			},
 		},
 	}, func(_ context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct{ Force bool `json:"force"` }
+		var p struct {
+			Force bool `json:"force"`
+		}
 		if args != nil {
 			_ = json.Unmarshal(args, &p)
 		}

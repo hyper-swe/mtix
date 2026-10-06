@@ -74,8 +74,8 @@ func TestContentHash_StatusChange_HashUnchanged(t *testing.T) {
 		Prompt:      "prompt",
 		Acceptance:  "acceptance",
 		Labels:      []string{"label"},
-		Status:      model.StatusDone,          // Different status
-		Priority:    model.PriorityBacklog,     // Different priority
+		Status:      model.StatusDone,      // Different status
+		Priority:    model.PriorityBacklog, // Different priority
 	}
 
 	assert.Equal(t, node1.ComputeHash(), node2.ComputeHash(),

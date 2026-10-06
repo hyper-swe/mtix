@@ -49,8 +49,8 @@ type fakePushHub struct {
 	failCalls    int
 	// refuse lists events the hub neither accepts nor reports: a creation it
 	// never acknowledges (MTIX-95.37).
-	refuse map[string]bool
-	beforeCall   func(call int)
+	refuse     map[string]bool
+	beforeCall func(call int)
 }
 
 // newFakePushHub returns a hub that has received nothing.

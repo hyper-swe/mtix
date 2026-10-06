@@ -45,7 +45,7 @@ func TestNotificationForwarder_ForwardsEvent(t *testing.T) {
 	// Give time for forwarding.
 	time.Sleep(100 * time.Millisecond)
 	nf.Stop()
-	cancel() // Cancel context to ensure goroutine exits.
+	cancel()                          // Cancel context to ensure goroutine exits.
 	time.Sleep(50 * time.Millisecond) // Let goroutine drain and exit.
 
 	// Now safe to read — the forwarding goroutine has exited.

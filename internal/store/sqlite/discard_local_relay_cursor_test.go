@@ -144,4 +144,3 @@ func TestJournalGeneration_UnchangedByOrdinaryWrites(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, before, after, "journaling events is growth, not a reset")
 }
-

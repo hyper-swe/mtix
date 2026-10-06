@@ -280,7 +280,7 @@ func TestExampleHooks_PrePush_NoTaskContentEcho(t *testing.T) {
 		"cat .mtix/tasks.json",
 		"cat \"$MTIX_TASKS\"",
 		"cat $MTIX_TASKS",
-		"jq",      // would parse and likely echo task content
+		"jq",           // would parse and likely echo task content
 		"echo \"$(cat", // command substitution that dumps file content
 	}
 	for _, bad := range forbidden {

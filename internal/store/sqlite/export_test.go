@@ -103,7 +103,7 @@ func TestExport_NodeCountMatchesArray(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		require.NoError(t, s.CreateNode(ctx, &model.Node{
 			ID: fmt.Sprintf("EX-%d", i), Project: "EX", Depth: 0, Seq: i,
-			Title: fmt.Sprintf("Node %d", i),
+			Title:  fmt.Sprintf("Node %d", i),
 			Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
 			NodeType: model.NodeTypeIssue, ContentHash: fmt.Sprintf("h%d", i),
 			CreatedAt: now.Add(time.Duration(i) * time.Second),
@@ -270,7 +270,7 @@ func TestExport_DependenciesSortedCanonically(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		require.NoError(t, s.CreateNode(ctx, &model.Node{
 			ID: fmt.Sprintf("EX-%d", i), Project: "EX", Depth: 0, Seq: i,
-			Title: fmt.Sprintf("Node %d", i),
+			Title:  fmt.Sprintf("Node %d", i),
 			Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
 			NodeType: model.NodeTypeIssue, ContentHash: fmt.Sprintf("h%d", i),
 			CreatedAt: now.Add(time.Duration(i) * time.Second),

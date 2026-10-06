@@ -125,9 +125,9 @@ func TestExport_DeepNodes_NodeTypeMicro(t *testing.T) {
 // for MTIX-12. The fix from MTIX-7 made import normalize node_type, but
 // export still wrote raw DB values, making the round-trip non-idempotent
 // for legacy DBs. After MTIX-12, both sides depth-derive, so:
-//   1. Export legacy DB -> tasks.json with normalized values
-//   2. Import that tasks.json -> DB with normalized values
-//   3. Export again -> identical to step 1 (modulo exported_at)
+//  1. Export legacy DB -> tasks.json with normalized values
+//  2. Import that tasks.json -> DB with normalized values
+//  3. Export again -> identical to step 1 (modulo exported_at)
 func TestExportImport_RoundTrip_NodeTypeIdempotent(t *testing.T) {
 	s1 := newTestStore(t)
 	ctx := context.Background()
@@ -199,7 +199,7 @@ func TestExport_NewlyCreatedNode_AlsoCanonical(t *testing.T) {
 	require.NoError(t, s.CreateNode(ctx, &model.Node{
 		ID: "NC-1", Project: "NC", Depth: 0, Seq: 1, Title: "Canonical",
 		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
-		NodeType: model.NodeTypeForDepth(0), // explicitly canonical
+		NodeType:    model.NodeTypeForDepth(0), // explicitly canonical
 		ContentHash: "h", CreatedAt: now, UpdatedAt: now,
 	}))
 

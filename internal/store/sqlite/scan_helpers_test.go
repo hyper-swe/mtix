@@ -585,4 +585,3 @@ func TestScanNode_AllFieldsPopulated_RoundTrips(t *testing.T) {
 	assert.Equal(t, `{"jira_key":"PROJ-123","severity":"high"}`, string(got.Metadata))
 	assert.Equal(t, "session-abc123", got.SessionID)
 }
-

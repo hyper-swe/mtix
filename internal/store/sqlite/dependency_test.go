@@ -60,7 +60,7 @@ func TestAutoBlock_ResolveBlocker_RestoresPreviousStatus(t *testing.T) {
 
 	// Add blocker.
 	dep := &model.Dependency{
-		FromID:  "PROJ-1", ToID: "PROJ-2",
+		FromID: "PROJ-1", ToID: "PROJ-2",
 		DepType: model.DepTypeBlocks, CreatedAt: now, CreatedBy: "pm-1",
 	}
 	require.NoError(t, s.AddDependency(ctx, dep))
@@ -95,7 +95,7 @@ func TestAutoBlock_InvalidatedNode_NotAutoBlocked(t *testing.T) {
 
 	// Add blocker to invalidated node — should NOT auto-block.
 	dep := &model.Dependency{
-		FromID:  "PROJ-1", ToID: "PROJ-2",
+		FromID: "PROJ-1", ToID: "PROJ-2",
 		DepType: model.DepTypeBlocks, CreatedAt: now, CreatedBy: "pm-1",
 	}
 	require.NoError(t, s.AddDependency(ctx, dep))
@@ -124,7 +124,7 @@ func TestAutoBlock_EdgeCase_InProgressBlockedInvalidatedRestore(t *testing.T) {
 
 	// 1. Block PROJ-2: in_progress → blocked (previous_status=in_progress).
 	dep := &model.Dependency{
-		FromID:  "PROJ-1", ToID: "PROJ-2",
+		FromID: "PROJ-1", ToID: "PROJ-2",
 		DepType: model.DepTypeBlocks, CreatedAt: now, CreatedBy: "pm-1",
 	}
 	require.NoError(t, s.AddDependency(ctx, dep))
@@ -159,7 +159,7 @@ func TestAddDependency_DuplicateReturnsAlreadyExists(t *testing.T) {
 	require.NoError(t, s.CreateNode(ctx, nodeB))
 
 	dep := &model.Dependency{
-		FromID:  "PROJ-1", ToID: "PROJ-2",
+		FromID: "PROJ-1", ToID: "PROJ-2",
 		DepType: model.DepTypeRelated, CreatedAt: now, CreatedBy: "pm-1",
 	}
 	require.NoError(t, s.AddDependency(ctx, dep))

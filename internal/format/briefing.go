@@ -26,10 +26,10 @@ type BriefingOpts struct {
 // "LABEL:\n  value" (true) format. The order in this slice is the
 // stable render order per FR-17.5.
 type briefingField struct {
-	label     string                      // Display label (uppercase).
-	jsonName  string                      // model.Node JSON tag for field validation.
-	getter    func(n *model.Node) string  // Extracts the string value.
-	multiLine bool                        // Default render mode for this field.
+	label     string                     // Display label (uppercase).
+	jsonName  string                     // model.Node JSON tag for field validation.
+	getter    func(n *model.Node) string // Extracts the string value.
+	multiLine bool                       // Default render mode for this field.
 }
 
 // defaultBriefingFields defines the default fields and their order per FR-17.4.

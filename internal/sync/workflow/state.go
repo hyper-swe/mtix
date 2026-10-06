@@ -69,13 +69,13 @@ func (s State) String() string {
 // FR-18.17 regression test asserts the raw DSN never appears in any
 // JSON encoding of this struct.
 type Report struct {
-	State                  State `json:"state_code"`
+	State                  State  `json:"state_code"`
 	StateName              string `json:"state"`
-	HasDSN                 bool  `json:"has_dsn"`
-	HasUnresolvedConflicts bool  `json:"has_unresolved_conflicts"`
-	LocalEventCount        int   `json:"local_event_count"`
-	AppliedEventCount      int   `json:"applied_event_count"`
-	ConsecutiveErrors      int   `json:"consecutive_errors"`
+	HasDSN                 bool   `json:"has_dsn"`
+	HasUnresolvedConflicts bool   `json:"has_unresolved_conflicts"`
+	LocalEventCount        int    `json:"local_event_count"`
+	AppliedEventCount      int    `json:"applied_event_count"`
+	ConsecutiveErrors      int    `json:"consecutive_errors"`
 	// LocalNodeCount carries the count of rows in the canonical `nodes`
 	// table. Used by the recommendation engine to detect the
 	// v0.1.x → v0.2.0-beta upgrader case (LocalNodeCount > 0 but

@@ -265,4 +265,3 @@ func TestGetActivity_EmptyActivity_ReturnsEmptySlice(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, entries)
 }
-

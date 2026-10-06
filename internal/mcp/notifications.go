@@ -14,16 +14,16 @@ import (
 // mcpNotificationTypes maps service event types to MCP notification method names per FR-14.5.
 // agent.heartbeat is intentionally excluded (high-frequency, UI-only via WebSocket).
 var mcpNotificationTypes = map[service.EventType]string{
-	service.EventNodeCreated:      "notifications/node.created",
-	service.EventNodeUpdated:      "notifications/node.updated",
-	service.EventNodeDeleted:      "notifications/node.deleted",
-	service.EventProgressChanged:  "notifications/progress.changed",
-	service.EventNodesInvalidated: "notifications/nodes.invalidated",
+	service.EventNodeCreated:       "notifications/node.created",
+	service.EventNodeUpdated:       "notifications/node.updated",
+	service.EventNodeDeleted:       "notifications/node.deleted",
+	service.EventProgressChanged:   "notifications/progress.changed",
+	service.EventNodesInvalidated:  "notifications/nodes.invalidated",
 	service.EventAgentStateChanged: "notifications/agent.state",
-	service.EventAgentStuck:       "notifications/agent.stuck",
-	service.EventStatusChanged:    "notifications/node.status_changed",
-	service.EventNodeClaimed:      "notifications/node.claimed",
-	service.EventNodeCancelled:    "notifications/node.cancelled",
+	service.EventAgentStuck:        "notifications/agent.stuck",
+	service.EventStatusChanged:     "notifications/node.status_changed",
+	service.EventNodeClaimed:       "notifications/node.claimed",
+	service.EventNodeCancelled:     "notifications/node.cancelled",
 }
 
 // NotificationPayload is the JSON-RPC notification sent over MCP per FR-14.5.

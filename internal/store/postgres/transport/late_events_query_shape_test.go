@@ -58,11 +58,28 @@ func queryShapePool(t *testing.T) *Pool {
 	return pool
 }
 
-// The EXPLAIN statements are compile-time constants built from the exact
+// The EXPLAIN statements are literal constants pinned by equality tests to the exact
 // SQL the sweep runs; no value is ever placed in the SQL text.
 const (
-	explainListEventIDsSince = "EXPLAIN " + listEventIDsSinceSQL
-	explainFetchEventsByID   = "EXPLAIN " + fetchEventsByIDSQL
+	explainListEventIDsSince = `EXPLAIN 
+SELECT now(), page.event_id, page.created_at, page.lamport_clock
+FROM (SELECT 1) AS one
+LEFT JOIN (
+    SELECT event_id, created_at, lamport_clock
+    FROM sync_events
+    WHERE created_at >= $1
+      AND (created_at, event_id) > ($1, $2)
+    ORDER BY created_at, event_id
+    LIMIT $3
+) AS page ON true
+ORDER BY page.created_at, page.event_id`
+	explainFetchEventsByID = `EXPLAIN 
+SELECT event_id, project_prefix, node_id, uid, op_type, payload,
+       wall_clock_ts, lamport_clock, vector_clock,
+       author_id, author_machine_hash, created_at
+FROM sync_events
+WHERE event_id = ANY($1)
+ORDER BY lamport_clock, event_id`
 )
 
 // explainWithoutSeqScan runs one EXPLAIN statement with args and returns

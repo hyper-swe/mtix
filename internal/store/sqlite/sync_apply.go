@@ -62,6 +62,11 @@ func detectLWWOutcome(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (lwwO
 		return lwwOutcome{}, nil
 	}
 	fieldName := strings.TrimPrefix(strings.SplitN(key, ":", 2)[1], "")
+	// Reject unknown update columns before even constructing the LWW lookup.
+	if e.OpType == model.OpUpdateField && !allowedUpdateFields[fieldName] {
+		return lwwOutcome{}, fmt.Errorf("LWW update_field %s: field %q not in whitelist: %w",
+			e.EventID, fieldName, model.ErrInvalidInput)
+	}
 
 	query, args := lwwPriorQuery(e, fieldName)
 	var (

@@ -170,11 +170,25 @@ func (s *Store) Import(
 
 // clearAllTables deletes all data from tables in FK-safe order.
 func clearAllTables(ctx context.Context, tx *sql.Tx) error {
-	tables := []string{"dependencies", "sessions", "agents", "nodes", "sequences"}
-	for _, table := range tables {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table); err != nil {
-			return fmt.Errorf("clear table %s: %w", table, err)
-		}
+	// Remove dependency edges before their referenced nodes.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM dependencies"); err != nil {
+		return fmt.Errorf("clear table dependencies: %w", err)
+	}
+	// Remove sessions before their referenced agents.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sessions"); err != nil {
+		return fmt.Errorf("clear table sessions: %w", err)
+	}
+	// Remove agent state before replacing the node hierarchy.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM agents"); err != nil {
+		return fmt.Errorf("clear table agents: %w", err)
+	}
+	// Remove nodes after all referencing rows have been cleared.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM nodes"); err != nil {
+		return fmt.Errorf("clear table nodes: %w", err)
+	}
+	// Reset allocation counters after removing their hierarchy.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM sequences"); err != nil {
+		return fmt.Errorf("clear table sequences: %w", err)
 	}
 	return nil
 }

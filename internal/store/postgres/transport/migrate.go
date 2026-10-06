@@ -92,6 +92,8 @@ func (p *Pool) Migrate(ctx context.Context) error {
 	// round-trips into one keeps a re-run fast, which is what lets concurrent
 	// callers that serialize on the single-flight lock finish within a sane
 	// deadline over cloud network latency (MTIX-48).
+	// SQL Rule 1a permits constant DDL from embedded migration files;
+	// only compiled-in bodies and a constant separator form this statement.
 	var combined strings.Builder
 	for _, name := range files {
 		body, err := migrations.Read(name)

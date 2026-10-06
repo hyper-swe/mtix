@@ -107,6 +107,8 @@ message UpdateNodeRequest {
   repeated string labels      = 7;
   bool labels_set             = 8;  // Explicit flag for labels (empty vs unset)
   google.protobuf.Struct metadata = 9;
+  // Omitted preserves classification; explicit ISSUE_TYPE_UNSPECIFIED clears it.
+  optional IssueType issue_type = 10;
 }
 
 message DeleteNodeRequest {

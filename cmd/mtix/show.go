@@ -78,6 +78,7 @@ func newListCmd() *cobra.Command {
 		under         string
 		assignee      string
 		nodeType      string
+		issueType     string
 		priority      string
 		fields        string
 		changedSince  string
@@ -94,14 +95,15 @@ func newListCmd() *cobra.Command {
 		Short:   "List nodes with filters",
 		Aliases: []string{"ls"},
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runList(status, under, assignee, nodeType, priority, fields, changedSince, outputFormat, maxFieldChars, showEmpty, limit, project, allProjects)
+			return runList(status, under, assignee, nodeType, priority, fields, changedSince, outputFormat, maxFieldChars, showEmpty, limit, project, allProjects, issueType)
 		},
 	}
 
 	cmd.Flags().StringVar(&status, "status", "", "Filter by status (comma-separated for multiple)")
 	cmd.Flags().StringVar(&under, "under", "", "Filter by parent subtree (comma-separated for multiple)")
 	cmd.Flags().StringVar(&assignee, "assignee", "", "Filter by assignee (comma-separated for multiple)")
-	cmd.Flags().StringVar(&nodeType, "type", "", "Filter by node type (comma-separated for multiple)")
+	cmd.Flags().StringVar(&nodeType, "type", "", "Filter by hierarchy node type (epic, story, issue, micro; comma-separated); use --issue-type for work classification")
+	cmd.Flags().StringVar(&issueType, "issue-type", "", "Filter by work classification (bug, feature, task, chore, refactor, test, doc; comma-separated)")
 	cmd.Flags().StringVar(&priority, "priority", "", "Filter by priority (comma-separated for multiple)")
 	cmd.Flags().StringVar(&fields, "fields", "", "Restrict output to these fields (comma-separated)")
 	cmd.Flags().StringVar(&changedSince, "changed-since", "", "Only nodes updated after this RFC3339 time or relative duration (e.g. 1h, 30m)")
@@ -233,7 +235,7 @@ func sortedAnnotations(annotations []model.Annotation) []model.Annotation {
 // Filter values are comma-separated strings parsed via splitCSV per FR-17.1.
 // The fields parameter restricts output to the specified fields per FR-17.3.
 // The outputFormat parameter selects "briefing" format per FR-17.4.
-func runList(status, under, assignee, nodeType, priority, fields, changedSince, outputFormat string, maxFieldChars int, showEmpty bool, limit int, project string, allProjects bool) error {
+func runList(status, under, assignee, nodeType, priority, fields, changedSince, outputFormat string, maxFieldChars int, showEmpty bool, limit int, project string, allProjects bool, issueType ...string) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -264,6 +266,16 @@ func runList(status, under, assignee, nodeType, priority, fields, changedSince, 
 	}
 	for _, s := range splitCSV(status) {
 		filter.Status = append(filter.Status, model.Status(s))
+	}
+
+	if len(issueType) > 0 {
+		for _, kind := range splitCSV(issueType[0]) {
+			value := model.IssueType(kind)
+			if err := model.ValidateIssueType(value); err != nil {
+				return fmt.Errorf("invalid --issue-type: %w", err)
+			}
+			filter.IssueType = append(filter.IssueType, value)
+		}
 	}
 
 	fieldsList := splitCSV(fields)

@@ -597,6 +597,7 @@ var allowedUpdateFields = map[string]bool{
 	"labels":      true,
 	"assignee":    true,
 	"agent_state": true,
+	"issue_type":  true,
 }
 
 func applyUpdateField(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
@@ -617,6 +618,9 @@ func applyUpdateField(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error
 		return fmt.Errorf("apply update_field %s: decode value: %w", e.EventID, err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	if p.FieldName == "issue_type" {
+		return applyIssueTypeField(ctx, tx, id, value, now)
+	}
 	// SQL is constructed from a whitelisted column name; the value is
 	// always a bound parameter.
 	stmt := "UPDATE nodes SET " + p.FieldName + " = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL"
@@ -648,6 +652,9 @@ var contentHashFields = map[string]bool{
 // a Go value suitable for the target SQL column type. Whitelisted
 // columns dictate the expected type.
 func decodeNewValueForColumn(field string, raw json.RawMessage) (any, error) {
+	if field == "issue_type" {
+		return decodeIssueTypeUpdate(raw)
+	}
 	if len(raw) == 0 {
 		return nil, nil
 	}

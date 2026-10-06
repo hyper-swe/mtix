@@ -296,3 +296,9 @@ func TestProto_CreateNode_AssigneeIsAdditive(t *testing.T) {
 	assert.Regexp(t, `google.protobuf.Struct\s+metadata\s*=\s*12;`, body[1])
 	assert.Regexp(t, `string\s+assignee\s*=\s*13;`, body[1])
 }
+
+// Optional issue type makes an explicit unspecified value clear classification.
+func TestProto_UpdateIssueType_Presence(t *testing.T) {
+	content := readProtoFile(t, "mtix/v1/mtix.proto")
+	assert.Regexp(t, `optional\s+IssueType\s+issue_type\s*=\s*10;`, content)
+}

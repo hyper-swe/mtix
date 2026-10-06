@@ -84,7 +84,7 @@ Events are the unit of replication. Schema lives in `sync_events` (local mirror)
 
 ### 3.3 Operation types (12)
 1. `create_node` — payload: full Node row (title, parent_id, node_type, etc.). Optional `issue_type` carries bug, feature, task, chore, refactor, test or doc independently of depth-derived `node_type`; omitted values remain unset. This additive field does not bump the protocol: new clients accept old payloads without it. Upgrade every replica before relying on synchronized issue type. A node created while a 0.5.4 replica is attached stays unclassified on that replica after upgrade; already-applied create events are not replayed. Explicit creation assignment emits the existing `claim` operation after the create event, with both local writes in one transaction.
-2. `update_field` — payload: `{field_name, new_value}` for a single field.
+2. `update_field` — payload: `{field_name, new_value}` for a single field. `field_name: "issue_type"` uses a JSON string `new_value` (bug, feature, task, chore, refactor, test, doc); an empty string clears to SQL NULL. Local apply rejects invalid or non-string classifications before writes. The hub stores/forwards under its envelope validation. Upgrade every replica before emitting these updates: older apply engines reject the unfamiliar field until upgraded.
 3. `transition_status` — payload: `{from_status, to_status}`.
 4. `claim` — payload: `{agent_id, ttl_seconds}`.
 5. `unclaim` — payload: `{}`.

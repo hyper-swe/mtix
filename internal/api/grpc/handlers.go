@@ -58,6 +58,7 @@ func (s *Server) HandleGetNode(ctx context.Context, id string) (*model.Node, err
 // HandleUpdateNode implements the UpdateNode RPC per FR-8.2.
 func (s *Server) HandleUpdateNode(ctx context.Context, req *UpdateNodeReq) (*model.Node, error) {
 	updates := &store.NodeUpdate{
+		IssueType:   req.IssueType,
 		Title:       req.Title,
 		Description: req.Description,
 		Prompt:      req.Prompt,
@@ -428,11 +429,12 @@ type CreateNodeReq struct {
 
 // UpdateNodeReq maps to UpdateNodeRequest proto message.
 type UpdateNodeReq struct {
-	ID          string  `json:"id"`
-	Title       *string `json:"title,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Prompt      *string `json:"prompt,omitempty"`
-	Acceptance  *string `json:"acceptance,omitempty"`
+	IssueType   *model.IssueType `json:"issue_type,omitempty"`
+	ID          string           `json:"id"`
+	Title       *string          `json:"title,omitempty"`
+	Description *string          `json:"description,omitempty"`
+	Prompt      *string          `json:"prompt,omitempty"`
+	Acceptance  *string          `json:"acceptance,omitempty"`
 }
 
 // DecomposeChildReq maps to DecomposeChild proto message.

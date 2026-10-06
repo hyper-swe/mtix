@@ -107,7 +107,10 @@ type fieldEmit struct {
 }
 
 func plainUpdateFields(u *store.NodeUpdate) []fieldEmit {
-	plain := make([]fieldEmit, 0, 8)
+	plain := make([]fieldEmit, 0, 9)
+	if u.IssueType != nil {
+		plain = append(plain, fieldEmit{"issue_type", string(*u.IssueType)})
+	}
 	if u.Title != nil {
 		plain = append(plain, fieldEmit{"title", *u.Title})
 	}
@@ -182,6 +185,10 @@ func buildUpdateClauses(u *store.NodeUpdate) ([]string, []any) {
 	var clauses []string
 	var args []any
 
+	if u.IssueType != nil {
+		clauses = append(clauses, "issue_type = ?")
+		args = append(args, nullStr(string(*u.IssueType)))
+	}
 	if u.Title != nil {
 		clauses = append(clauses, "title = ?")
 		args = append(args, *u.Title)

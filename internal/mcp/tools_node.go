@@ -308,21 +308,23 @@ func registerUpdateTool(reg *ToolRegistry, svc *service.NodeService) {
 				"title":       {Type: "string", Description: "New title"},
 				"description": {Type: "string", Description: "New description"},
 				"priority":    {Type: "number", Description: "New priority (1-5)"},
+				"issue_type":  {Type: "string", Description: "New work classification; omission preserves, empty string clears", Enum: append(issueTypeEnums(), "")},
 			},
 			Required: []string{"id"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
 		var p struct {
-			ID          string `json:"id"`
-			Title       string `json:"title"`
-			Description string `json:"description"`
-			Priority    int    `json:"priority"`
+			ID          string           `json:"id"`
+			IssueType   *model.IssueType `json:"issue_type"`
+			Title       string           `json:"title"`
+			Description string           `json:"description"`
+			Priority    int              `json:"priority"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse update args: %w", err)
 		}
 
-		updates := &store.NodeUpdate{}
+		updates := &store.NodeUpdate{IssueType: p.IssueType}
 		if p.Title != "" {
 			updates.Title = &p.Title
 		}

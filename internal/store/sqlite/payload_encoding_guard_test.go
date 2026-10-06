@@ -3,9 +3,15 @@
 
 package sqlite
 
-// MTIX-107.25: prevent discarded encoder errors in production and fixtures.
+// MTIX-107.25: prevent accidental encoder-error discards in code and fixtures.
+// This syntax guard follows direct calls and simple local or package aliases,
+// including ordinary parentheses, import quoting and multiple-RHS helper calls.
+// Deliberately hidden aliases via assertions/type switches, reassigned closures,
+// loops/conditionals or reflection require control-flow/type analysis and are
+// outside this guard. The known-limit test characterizes that boundary.
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -13,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -34,24 +41,38 @@ func payloadEncoderAliases(file *ast.File) map[string]bool {
 	return aliases
 }
 
-func isPayloadEncoder(expr ast.Expr, imports, aliases map[string]bool) bool {
+// The checked emitter returns one error; encoders return payload then error.
+func payloadErrorIndex(expr ast.Expr, imports map[string]bool, aliases map[string]int) int {
 	switch e := payloadUnparenthesize(expr).(type) {
 	case *ast.Ident:
-		return aliases[e.Name] || (imports["."] && e.Name == "EncodePayload")
+		if index, ok := aliases[e.Name]; ok {
+			return index
+		}
+		if imports["."] && e.Name == "EncodePayload" {
+			return 1
+		}
 	case *ast.SelectorExpr:
-		if e.Sel.Name == "encodePayload" || e.Sel.Name == "encodePayloadFn" || e.Sel.Name == "emitPayload" {
-			return true
+		if e.Sel.Name == "emitPayload" {
+			return 0
+		}
+		if e.Sel.Name == "encodePayload" || e.Sel.Name == "encodePayloadFn" {
+			return 1
 		}
 		owner, ok := e.X.(*ast.Ident)
-		return ok && imports[owner.Name] && e.Sel.Name == "EncodePayload"
+		if ok && imports[owner.Name] && e.Sel.Name == "EncodePayload" {
+			return 1
+		}
 	}
-	return false
+	return -1
 }
 
-func payloadLocalAliases(node ast.Node, imports, initial map[string]bool) map[string]bool {
-	aliases := map[string]bool{}
+func payloadLocalAliases(node ast.Node, imports map[string]bool, initial map[string]int) map[string]int {
+	aliases := map[string]int{}
 	for name, value := range initial {
 		aliases[name] = value
+	}
+	if fn, ok := node.(*ast.FuncDecl); ok {
+		payloadRemoveLocalShadows(fn, imports, aliases)
 	}
 	// Repeat to follow ordinary local chains such as marshal := model.EncodePayload;
 	// encode := marshal. The scanner is a syntax guard, not control-flow analysis.
@@ -73,9 +94,13 @@ func payloadLocalAliases(node ast.Node, imports, initial map[string]bool) map[st
 				return true
 			}
 			for i, value := range values {
-				if id, ok := names[i].(*ast.Ident); ok && !aliases[id.Name] && isPayloadEncoder(value, imports, aliases) {
-					aliases[id.Name] = true
-					changed = true
+				if id, ok := names[i].(*ast.Ident); ok {
+					_, known := aliases[id.Name]
+					index := payloadErrorIndex(value, imports, aliases)
+					if !known && index >= 0 {
+						aliases[id.Name] = index
+						changed = true
+					}
 				}
 			}
 			return true
@@ -85,18 +110,17 @@ func payloadLocalAliases(node ast.Node, imports, initial map[string]bool) map[st
 }
 
 func discardedPayloadErrors(source string) ([]token.Position, error) {
+	return discardedPayloadErrorsWithGlobals(source, nil)
+}
+
+func discardedPayloadErrorsWithGlobals(source string, initial map[string]int) ([]token.Position, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "source.go", source, 0)
 	if err != nil {
 		return nil, err
 	}
 	imports := payloadEncoderAliases(file)
-	globals := map[string]bool{}
-	for _, decl := range file.Decls {
-		if _, ok := decl.(*ast.GenDecl); ok {
-			globals = payloadLocalAliases(decl, imports, globals)
-		}
-	}
+	globals := payloadFileGlobalAliases(file, initial)
 	var hits []token.Position
 	for _, decl := range file.Decls {
 		aliases := globals
@@ -108,12 +132,109 @@ func discardedPayloadErrors(source string) ([]token.Position, error) {
 	return hits, nil
 }
 
-func payloadDiscardPositions(node ast.Node, fset *token.FileSet, imports, aliases map[string]bool) []token.Position {
+func payloadFileGlobalAliases(file *ast.File, initial map[string]int) map[string]int {
+	globals := initial
+	if globals == nil {
+		globals = map[string]int{}
+	}
+	for _, decl := range file.Decls {
+		if _, ok := decl.(*ast.GenDecl); ok {
+			globals = payloadLocalAliases(decl, payloadEncoderAliases(file), globals)
+		}
+	}
+	return globals
+}
+
+func payloadRemoveLocalShadows(fn *ast.FuncDecl, imports map[string]bool, aliases map[string]int) {
+	ast.Inspect(fn, func(n ast.Node) bool {
+		switch d := n.(type) {
+		case *ast.AssignStmt:
+			if d.Tok == token.DEFINE {
+				payloadRemoveShadowNames(d.Lhs, d.Rhs, imports, aliases)
+			}
+		case *ast.ValueSpec:
+			names := make([]ast.Expr, len(d.Names))
+			for i, name := range d.Names {
+				names[i] = name
+			}
+			payloadRemoveShadowNames(names, d.Values, imports, aliases)
+		case *ast.Field:
+			for _, name := range d.Names {
+				delete(aliases, name.Name)
+			}
+		}
+		return true
+	})
+}
+
+func payloadRemoveShadowNames(names, values []ast.Expr, imports map[string]bool, aliases map[string]int) {
+	for i, name := range names {
+		id, ok := name.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		if len(names) == len(values) && payloadErrorIndex(values[i], imports, aliases) >= 0 {
+			continue
+		}
+		delete(aliases, id.Name)
+	}
+}
+
+func payloadPackageGlobalAliases(sources map[string]string) (map[string]map[string]int, error) {
+	files := map[string]*ast.File{}
+	packages := map[string]string{}
+	for path, source := range sources {
+		file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
+		if err != nil {
+			return nil, err
+		}
+		files[path] = file
+		packages[path] = filepath.Dir(path) + "/" + file.Name.Name
+	}
+	globals := map[string]map[string]int{}
+	for changed := true; changed; {
+		changed = false
+		for path, file := range files {
+			key := packages[path]
+			before := len(globals[key])
+			globals[key] = payloadFileGlobalAliases(file, globals[key])
+			if len(globals[key]) > before {
+				changed = true
+			}
+		}
+	}
+	result := map[string]map[string]int{}
+	for path := range files {
+		result[path] = globals[packages[path]]
+	}
+	return result, nil
+}
+
+func payloadGuardSources(root string) (map[string]string, error) {
+	sources := map[string]string{}
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".go" {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err == nil {
+			sources[path] = string(data)
+		}
+		return err
+	})
+	return sources, err
+}
+
+func payloadDiscardPositions(node ast.Node, fset *token.FileSet, imports map[string]bool, aliases map[string]int) []token.Position {
 	var hits []token.Position
 	ast.Inspect(node, func(n ast.Node) bool {
-		call, discarded := payloadDiscardCall(n)
-		if discarded && call != nil && isPayloadEncoder(call.Fun, imports, aliases) {
-			hits = append(hits, fset.Position(call.Pos()))
+		for _, call := range payloadDiscardCalls(n, imports, aliases) {
+			if call != nil && payloadErrorIndex(call.Fun, imports, aliases) >= 0 {
+				hits = append(hits, fset.Position(call.Pos()))
+			}
 		}
 		return true
 	})
@@ -131,37 +252,55 @@ func payloadUnparenthesize(expr ast.Expr) ast.Expr {
 	}
 }
 
-func payloadDiscardCall(n ast.Node) (*ast.CallExpr, bool) {
-	var call *ast.CallExpr
-	discarded := false
+func payloadDiscardCalls(n ast.Node, imports map[string]bool, aliases map[string]int) []*ast.CallExpr {
 	switch a := n.(type) {
 	case *ast.AssignStmt:
-		if len(a.Rhs) == 1 {
-			call, _ = payloadUnparenthesize(a.Rhs[0]).(*ast.CallExpr)
-		}
-		if len(a.Lhs) == 1 || len(a.Lhs) == 2 {
-			if id, ok := a.Lhs[len(a.Lhs)-1].(*ast.Ident); ok {
-				discarded = id.Name == "_"
-			}
-		}
+		return payloadBlankCalls(a.Rhs, payloadBlankIdentifiers(a.Lhs), imports, aliases)
 	case *ast.ValueSpec:
-		if len(a.Values) == 1 {
-			call, _ = payloadUnparenthesize(a.Values[0]).(*ast.CallExpr)
+		names := make([]ast.Expr, len(a.Names))
+		for i, name := range a.Names {
+			names[i] = name
 		}
-		if len(a.Names) == 1 || len(a.Names) == 2 {
-			discarded = a.Names[len(a.Names)-1].Name == "_"
-		}
+		return payloadBlankCalls(a.Values, payloadBlankIdentifiers(names), imports, aliases)
 	case *ast.ExprStmt:
-		call, _ = payloadUnparenthesize(a.X).(*ast.CallExpr)
-		discarded = true
+		call, _ := payloadUnparenthesize(a.X).(*ast.CallExpr)
+		return []*ast.CallExpr{call}
 	case *ast.GoStmt:
-		call = a.Call
-		discarded = true
+		return []*ast.CallExpr{a.Call}
 	case *ast.DeferStmt:
-		call = a.Call
-		discarded = true
+		return []*ast.CallExpr{a.Call}
 	}
-	return call, discarded
+	return nil
+}
+
+func payloadBlankIdentifiers(names []ast.Expr) []bool {
+	blanks := make([]bool, len(names))
+	for i, name := range names {
+		id, ok := name.(*ast.Ident)
+		blanks[i] = ok && id.Name == "_"
+	}
+	return blanks
+}
+
+func payloadBlankCalls(values []ast.Expr, blanks []bool, imports map[string]bool, aliases map[string]int) []*ast.CallExpr {
+	var calls []*ast.CallExpr
+	for i, value := range values {
+		call, ok := payloadUnparenthesize(value).(*ast.CallExpr)
+		if !ok {
+			continue
+		}
+		index := payloadErrorIndex(call.Fun, imports, aliases)
+		if len(values) == 1 {
+			// A sole multi-value encoder maps its error to result index one.
+			if index >= 0 && len(blanks) == index+1 && blanks[index] {
+				calls = append(calls, call)
+			}
+		} else if index == 0 && len(values) == len(blanks) && blanks[i] {
+			// Multiple RHS expressions each yield one result in legal Go assignments.
+			calls = append(calls, call)
+		}
+	}
+	return calls
 }
 
 func TestPayloadEncodingGuard_DiscardVariants(t *testing.T) {
@@ -202,26 +341,17 @@ func TestPayloadEncodingGuard_DiscardVariants(t *testing.T) {
 }
 
 func TestPayloadEncodingGuard_InternalCallsCheckErrors(t *testing.T) {
-	require.NoError(t, filepath.WalkDir("../..", func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() || filepath.Ext(path) != ".go" {
-			return nil
-		}
-		source, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		hits, err := discardedPayloadErrors(string(source))
-		if err != nil {
-			return err
-		}
+	sources, err := payloadGuardSources("../..")
+	require.NoError(t, err)
+	globals, err := payloadPackageGlobalAliases(sources)
+	require.NoError(t, err)
+	for path, source := range sources {
+		hits, err := discardedPayloadErrorsWithGlobals(source, globals[path])
+		require.NoError(t, err)
 		for _, hit := range hits {
 			t.Errorf("%s:%d: discarded payload encoder error", path, hit.Line)
 		}
-		return nil
-	}))
+	}
 }
 
 func TestPayloadEncodingGuard_AliasesDoNotLeakBetweenFunctions(t *testing.T) {
@@ -265,5 +395,134 @@ func TestPayloadEncodingGuard_ParenthesizedAndSingleResult(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.bad, len(hits) > 0, hits)
 		})
+	}
+}
+
+func TestPayloadEncodingGuard_MultipleRHS(t *testing.T) {
+	for _, declaration := range []string{":=", "=", "var"} {
+		for _, position := range []int{0, 2, 4} {
+			for _, alias := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/slot%d/alias%t", declaration, position, alias), func(t *testing.T) {
+					body := payloadMultipleRHSBody(declaration, position, alias, true, false)
+					hits, err := discardedPayloadErrors(payloadGuardProbe(body))
+					require.NoError(t, err)
+					require.Len(t, hits, 1)
+				})
+			}
+			for _, unrelated := range []bool{false, true} {
+				t.Run(fmt.Sprintf("checked/%s/slot%d/unrelated%t", declaration, position, unrelated), func(t *testing.T) {
+					body := payloadMultipleRHSBody(declaration, position, true, false, unrelated)
+					hits, err := discardedPayloadErrors(payloadGuardProbe(body))
+					require.NoError(t, err)
+					require.Empty(t, hits)
+				})
+			}
+		}
+	}
+}
+
+func payloadGuardProbe(body string) string {
+	return "package sqlite\nimport model \"github.com/hyper-swe/mtix/internal/model\"\nfunc probe() error {" + body + ";return nil}"
+}
+
+func payloadMultipleRHSBody(declaration string, position int, alias, discard, unrelated bool) string {
+	prefix := "var s *Store; "
+	call := "((s.emitPayload)(nil,nil,emitParams{},nil))"
+	if alias {
+		prefix += "emit := ((s.emitPayload)); forward := (emit); "
+		call = "((forward)(nil,nil,emitParams{},nil))"
+	}
+	if unrelated {
+		prefix = "encode := func()error{return nil}; "
+		call = "((encode()))"
+	}
+	names, values := []string{"n0", "n1", "n2", "n3", "n4"}, []string{"0", "1", "2", "3", "4"}
+	names[position], values[position] = "err", call
+	if discard || unrelated {
+		names[position] = "_"
+	}
+	if declaration == "=" {
+		for i, name := range names {
+			if name == "_" {
+				continue
+			}
+			kind := "int"
+			if i == position {
+				kind = "error"
+			}
+			prefix += "var " + name + " " + kind + "; "
+		}
+	}
+	assignment := strings.Join(names, ",") + " " + declaration + " " + strings.Join(values, ",") + "; "
+	if declaration == "var" {
+		assignment = "var " + strings.Join(names, ",") + " = " + strings.Join(values, ",") + "; "
+	}
+	suffix := ""
+	for _, name := range names {
+		if name != "_" {
+			suffix += "_ = " + name + "; "
+		}
+	}
+	if !discard && !unrelated {
+		suffix += "if err != nil {return err}; "
+	}
+	return prefix + assignment + suffix
+}
+
+func TestPayloadEncodingGuard_SimplePackageAliases(t *testing.T) {
+	source := `package sqlite
+ import model "github.com/hyper-swe/mtix/internal/model"
+ var marshal = (model.EncodePayload)
+ var encode = marshal
+ var emit = (*Store).emitPayload
+ func probe() {raw,_:=((encode(nil))); _=raw; _,n:=((emit(nil,nil,nil,emitParams{},nil))),0; _=n}
+ `
+	hits, err := discardedPayloadErrors(source)
+	require.NoError(t, err)
+	require.Len(t, hits, 2)
+}
+
+func TestPayloadEncodingGuard_AllMultipleRHSHelperErrors(t *testing.T) {
+	source := payloadGuardProbe("var s *Store; emit := s.emitPayload; _,n,_,m,_ := emit(nil,nil,emitParams{},nil),1,((emit(nil,nil,emitParams{},nil))),2,emit(nil,nil,emitParams{},nil); _=n;_=m")
+	hits, err := discardedPayloadErrors(source)
+	require.NoError(t, err)
+	require.Len(t, hits, 3)
+}
+
+// Deliberately asserting an alias is outside the accidental-discard guard.
+func TestPayloadEncodingGuard_KnownLimit_AssertedAlias(t *testing.T) {
+	source := `package sqlite
+ import "encoding/json"
+ import model "github.com/hyper-swe/mtix/internal/model"
+ func probe() {
+  var boxed any = model.EncodePayload
+  encode := boxed.(func(any)(json.RawMessage,error))
+  raw,_ := encode(nil); _ = raw
+ }
+ `
+	hits, err := discardedPayloadErrors(source)
+	require.NoError(t, err)
+	require.Empty(t, hits, "asserted aliases require analysis outside the documented guard scope")
+}
+
+func TestPayloadEncodingGuard_CrossFilePackageAliasesAndShadows(t *testing.T) {
+	sources := map[string]string{
+		"a/alias.go":      "package sample\nimport m `github.com/hyper-swe/mtix/internal/model`\nvar encode = (m.EncodePayload)",
+		"a/forward.go":    "package sample\nvar forward = encode",
+		"a/call.go":       "package sample\nfunc probe(){raw,_:=((forward(nil)));_=raw}",
+		"a/shadow.go":     "package sample\nfunc probe(){encode:=func(any)([]byte,error){return nil,nil};raw,_:=encode(nil);_=raw}",
+		"a/other_test.go": "package sample_test\nfunc encode(any)([]byte,error){return nil,nil};func probe(){raw,_:=encode(nil);_=raw}",
+		"b/other.go":      "package sample\nfunc encode(any)([]byte,error){return nil,nil};func probe(){raw,_:=encode(nil);_=raw}",
+	}
+	globals, err := payloadPackageGlobalAliases(sources)
+	require.NoError(t, err)
+	for path, source := range sources {
+		hits, err := discardedPayloadErrorsWithGlobals(source, globals[path])
+		require.NoError(t, err)
+		expected := 0
+		if path == "a/call.go" {
+			expected = 1
+		}
+		require.Len(t, hits, expected, path)
 	}
 }

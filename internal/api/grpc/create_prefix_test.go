@@ -6,6 +6,7 @@ package grpc
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,4 +35,22 @@ func TestCreateRPC_PrefixGrammar_MapsSharedError(t *testing.T) {
 			assert.Equal(t, prefix+"-1", n.ID)
 		})
 	}
+}
+
+func TestCreateRPC_InvalidInheritedPrefix_RejectsValidSuppliedProject(t *testing.T) {
+	s := testGRPCServer(t)
+	st := s.store
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, st.CreateNode(t.Context(), &model.Node{
+		ID: "TEST_BAD-1", Project: "TEST_BAD", Seq: 1, Title: "Legacy parent",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1,
+		NodeType: model.NodeTypeEpic, CreatedAt: now, UpdatedAt: now,
+	}))
+	n, err := s.HandleCreateNode(t.Context(), &CreateNodeReq{Title: "Local child", ParentID: "TEST_BAD-1", Project: "TEST"})
+	require.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Contains(t, status.Convert(err).Message(), "invalid inherited project prefix")
+	assert.Contains(t, status.Convert(err).Message(), "TEST_BAD")
+	assert.Nil(t, n)
+	_, err = st.GetNode(t.Context(), "TEST_BAD-1.1")
+	assert.ErrorIs(t, err, model.ErrNotFound)
 }

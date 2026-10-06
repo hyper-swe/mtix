@@ -268,10 +268,7 @@ func (svc *NodeService) validateCreateRequest(req *CreateNodeRequest) error {
 	if len(req.Prompt) > model.MaxPromptSize {
 		return fmt.Errorf("prompt exceeds maximum size: %w", model.ErrInvalidInput)
 	}
-	if err := model.ValidatePrefix(req.Project); err != nil {
-		return err
-	}
-	return nil
+	return model.ValidatePrefix(req.Project)
 }
 
 // buildNode constructs a model.Node from the CreateNodeRequest.
@@ -299,6 +296,13 @@ func (svc *NodeService) buildNode(
 		parent, getErr := svc.store.GetNode(ctx, parentID)
 		if getErr != nil {
 			return nil, fmt.Errorf("parent %s: %w", parentID, getErr)
+		}
+		// The display ID inherits the parent's actual prefix, even when a
+		// caller supplies a different valid project (FR-2.1a / MTIX-107.3).
+		// Historical sync/import prefixes remain readable; local child create
+		// must validate this effective prefix before it consumes a sequence.
+		if prefixErr := model.ValidatePrefix(model.ParseIDProject(parent.ID)); prefixErr != nil {
+			return nil, fmt.Errorf("invalid inherited project prefix from parent %s; choose a parent with a valid project prefix: %w", parent.ID, prefixErr)
 		}
 		depth = parent.Depth + 1
 		seqKey = req.Project + ":" + parentID

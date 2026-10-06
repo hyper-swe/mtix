@@ -62,3 +62,26 @@ func TestCreateMCP_InvalidPrimaryPrefix_ReturnsSharedError(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateMCP_InvalidInheritedPrefix_RejectsValidSuppliedProject(t *testing.T) {
+	st := newInboxTestStore(t)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, st.CreateNode(t.Context(), &model.Node{
+		ID: "TEST_BAD-1", Project: "TEST_BAD", Seq: 1, Title: "Legacy parent",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1,
+		NodeType: model.NodeTypeEpic, CreatedAt: now, UpdatedAt: now,
+	}))
+	reg := NewToolRegistry()
+	svc := service.NewNodeService(st, nil, nil, nil, func() time.Time { return now })
+	RegisterNodeTools(reg, svc, st, WithPrimaryProject("TEST"))
+	n, err := reg.Call(t.Context(), "mtix_create", json.RawMessage(`{"title":"Local child","parent_id":"TEST_BAD-1","project":"TEST"}`))
+	require.ErrorIs(t, err, model.ErrInvalidInput)
+	assert.Contains(t, err.Error(), "invalid inherited project prefix")
+	assert.Contains(t, err.Error(), "TEST_BAD")
+	assert.Nil(t, n)
+	_, err = st.GetNode(t.Context(), "TEST_BAD-1.1")
+	assert.ErrorIs(t, err, model.ErrNotFound)
+	var count int
+	require.NoError(t, st.WriteDB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM sequences").Scan(&count))
+	assert.Zero(t, count)
+}

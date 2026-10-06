@@ -39,7 +39,7 @@ This skill enables AI agents to work on the **PROJ** project using mtix task man
 
 Project prefixes for local create (CLI, REST, gRPC and MCP) and `mtix init` must match `^[A-Z][A-Z0-9-]{0,19}$`: 1–20 uppercase letters, digits or hyphens, starting with a letter. An underscore or other invalid character returns `INVALID_INPUT` (gRPC: `InvalidArgument`) before a node or sequence is written.
 
-CLI, REST and MCP use the configured primary project when no project is supplied; gRPC requires a project. Validation also checks a defaulted project and the CLI child’s inherited project. Historical sync events can retain underscore prefixes for compatibility; local create validation does not change the sync grammar. Correct an invalid project prefix before retrying.
+CLI, REST and MCP use the configured primary project when no project is supplied; gRPC requires a project. Validation also checks a defaulted project, the CLI child’s inherited project, and the prefix in every child’s parent ID before sequence allocation. A historical parent ID with an underscore cannot receive a new local child even if the caller supplies a valid project; choose a parent with a valid prefix. Historical sync events can retain underscore prefixes for compatibility; local create validation does not change the sync grammar. Correct an invalid project prefix before retrying.
 
 ## Creating classified and assigned work
 

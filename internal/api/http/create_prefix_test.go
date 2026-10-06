@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,4 +62,25 @@ func TestCreateREST_InvalidPrimaryPrefix_ReturnsSharedError(t *testing.T) {
 		assert.Equal(t, "INVALID_INPUT", response.Error.Code)
 		assert.Equal(t, model.ValidatePrefix("TEST_BAD").Error(), response.Error.Message)
 	}
+}
+
+func TestCreateREST_InvalidInheritedPrefix_RejectsValidSuppliedProject(t *testing.T) {
+	s := testServer(t)
+	st := s.store
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, st.CreateNode(t.Context(), &model.Node{
+		ID: "TEST_BAD-1", Project: "TEST_BAD", Seq: 1, Title: "Legacy parent",
+		Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1,
+		NodeType: model.NodeTypeEpic, CreatedAt: now, UpdatedAt: now,
+	}))
+	res := httptest.NewRecorder()
+	s.Router().ServeHTTP(res, apiRequest(http.MethodPost, "/api/v1/nodes", `{"title":"Local child","parent_id":"TEST_BAD-1","project":"TEST"}`))
+	require.Equal(t, http.StatusBadRequest, res.Code, res.Body.String())
+	var response ErrorResponse
+	require.NoError(t, json.Unmarshal(res.Body.Bytes(), &response))
+	assert.Equal(t, "INVALID_INPUT", response.Error.Code)
+	assert.Contains(t, response.Error.Message, "invalid inherited project prefix")
+	assert.Contains(t, response.Error.Message, "TEST_BAD")
+	_, err := st.GetNode(t.Context(), "TEST_BAD-1.1")
+	assert.ErrorIs(t, err, model.ErrNotFound)
 }

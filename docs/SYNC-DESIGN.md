@@ -84,7 +84,7 @@ Events are the unit of replication. Schema lives in `sync_events` (local mirror)
 
 ### 3.3 Operation types (12)
 1. `create_node` — payload: full Node row (title, parent_id, node_type, etc.). Optional `issue_type` carries bug, feature, task, chore, refactor, test or doc independently of depth-derived `node_type`; omitted values remain unset. This additive field does not bump the protocol: new clients accept old payloads without it. Upgrade every replica before relying on synchronized issue type. A node created while a 0.5.4 replica is attached stays unclassified on that replica after upgrade; already-applied create events are not replayed. Explicit creation assignment emits the existing `claim` operation after the create event, with both local writes in one transaction.
-2. `update_field` — payload: `{field_name, new_value}` for a single field.
+2. `update_field` — payload: `{field_name, new_value}` for a single field. `field_name: "issue_type"` uses a JSON string `new_value` (bug, feature, task, chore, refactor, test, doc); an empty string clears to SQL NULL. Local apply rejects invalid or non-string classifications before writes, deduplication, held-event acknowledgement and LWW comparison; losing or already-held events cannot bypass validation. The hub stores/forwards under its envelope validation. Upgrade every replica before emitting classification updates. A 0.5.4 replica quarantines `issue_type` updates and continues pulling other events. These updates remain quarantined until the replica is upgraded. After upgrading, run `mtix sync pull` to retry them automatically; retry runs locally before contacting the hub. Updates that apply successfully leave the quarantine. Use `mtix sync quarantine list` to inspect any events still held.
 3. `transition_status` — payload: `{from_status, to_status}`.
 4. `claim` — payload: `{agent_id, ttl_seconds}`.
 5. `unclaim` — payload: `{}`.
@@ -631,5 +631,6 @@ The safety scenarios above map to their tests in
 | 1.2 | 2026-06 | §6.4 + decision D15 (FR-MULTI-PROJECT MP-20/MP-21): sync carries all projects in a DB to one hub with hub-global cursors; the hub stays per-project namespaced; no per-project cursors or routing by design. |
 | 1.3 | 2026-10 | §7.4 and the shipped docs made provider-neutral: capability plus the mtix setting, no named hosting providers (MTIX-95.8.2). |
 | 1.4 | 2026-10 | Claims corrected to what the code enforces (MTIX-95.8.4): `audit_log` is never written by mtix; T4/T5 name the owner and superuser as able to bypass the triggers and the TRUNCATE guard; §8.4 states that a manual resolution records a decision and emits no event; §7.4 says doctor does not check the pooler mode; dedupe is the local `sync_events` row first. |
+| 1.5 | 2026-10 | MTIX-107.60: classification update events are quarantined by 0.5.4 replicas while pulls continue; upgrading and the existing pull retry recover valid held updates. |
 
 Future changes to this document MUST bump this version, update the changelog row, and reference the corresponding implementation ticket. If a code change conflicts with this document, the document MUST be updated in the same change.

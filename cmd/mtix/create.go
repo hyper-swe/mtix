@@ -48,7 +48,7 @@ func newCreateCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&under, "under", "", "Parent node ID")
-	cmd.Flags().StringVar(&nodeType, "type", "", "Issue type (bug, feature, task, chore, refactor, test, doc; omitted = unset)")
+	cmd.Flags().StringVar(&nodeType, "type", "", "Issue type (bug, feature, task, chore, refactor, test, doc; omitted = unset); list --type filters hierarchy")
 	cmd.Flags().IntVar(&priority, "priority", 3, "Priority (1=critical, 5=backlog)")
 	cmd.Flags().StringVar(&description, "description", "", "Node description")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Node prompt (FR-12.5)")

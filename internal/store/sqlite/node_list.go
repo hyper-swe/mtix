@@ -139,6 +139,7 @@ func buildFilterClausesWithPrefix(filter store.NodeFilter, prefix string) ([]str
 	// Assignee, NodeType, Priority filters: IN clauses.
 	addInClause("assignee", len(filter.Assignee), func(i int) any { return filter.Assignee[i] })
 	addInClause("node_type", len(filter.NodeType), func(i int) any { return filter.NodeType[i] })
+	addInClause("issue_type", len(filter.IssueType), func(i int) any { return string(filter.IssueType[i]) })
 	addInClause("priority", len(filter.Priority), func(i int) any { return filter.Priority[i] })
 
 	// Labels filter: JSON array contains check.

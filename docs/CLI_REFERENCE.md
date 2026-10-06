@@ -264,7 +264,7 @@ Create a new node. Use --under to create a child node.
 | `--priority` |  | Priority (1=critical, 5=backlog) | 3 |
 | `--project` |  | Project prefix for a root node (overrides the primary; inherited for children) (FR-MULTI-PROJECT MP-5) |  |
 | `--prompt` |  | Node prompt (FR-12.5) |  |
-| `--type` |  | Issue type (bug, feature, task, chore, refactor, test, doc; omitted = unset) |  |
+| `--type` |  | Issue type (bug, feature, task, chore, refactor, test, doc; omitted = unset); list --type filters hierarchy |  |
 | `--under` |  | Parent node ID |  |
 | `--yes` |  | Skip the confirmation prompt when --project names a new project | false |
 ---
@@ -748,13 +748,14 @@ List nodes with filters
 | `--changed-since` |  | Only nodes updated after this RFC3339 time or relative duration (e.g. 1h, 30m) |  |
 | `--fields` |  | Restrict output to these fields (comma-separated) |  |
 | `--format` |  | Output format: briefing |  |
+| `--issue-type` |  | Filter by work classification (bug, feature, task, chore, refactor, test, doc; comma-separated) |  |
 | `--limit` |  | Maximum results | 50 |
 | `--max-field-chars` |  | Truncate field values (briefing format) | 0 |
 | `--priority` |  | Filter by priority (comma-separated for multiple) |  |
 | `--project` |  | Scope to a single project prefix (default: primary) |  |
 | `--show-empty` |  | Include empty fields (briefing format) | false |
 | `--status` |  | Filter by status (comma-separated for multiple) |  |
-| `--type` |  | Filter by node type (comma-separated for multiple) |  |
+| `--type` |  | Filter by hierarchy node type (epic, story, issue, micro; comma-separated); use --issue-type for work classification |  |
 | `--under` |  | Filter by parent subtree (comma-separated for multiple) |  |
 ---
 
@@ -2226,6 +2227,7 @@ Update a node's fields
 | `--priority` |  | New priority (1-5) | 0 |
 | `--prompt` |  | New prompt |  |
 | `--title` |  | New title |  |
+| `--type` |  | New work classification (bug, feature, task, chore, refactor, test, doc); empty clears, omission preserves; list --type filters hierarchy |  |
 ---
 
 ## verify

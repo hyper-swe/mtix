@@ -28,8 +28,10 @@ type NodeFilter struct {
 	Under    []string       `json:"under,omitempty"`
 	Assignee []string       `json:"assignee,omitempty"`
 	NodeType []string       `json:"node_type,omitempty"`
-	Priority []int          `json:"priority,omitempty"`
-	Labels   []string       `json:"labels,omitempty"`
+	// IssueType filters work classification independently of hierarchy.
+	IssueType []model.IssueType `json:"issue_type,omitempty"`
+	Priority  []int             `json:"priority,omitempty"`
+	Labels    []string          `json:"labels,omitempty"`
 
 	// Project restricts results to a single project prefix (FR-MULTI-PROJECT
 	// MP-3). Empty means NO project filter — results span all projects. A
@@ -261,6 +263,8 @@ type Stats struct {
 // NodeUpdate represents a partial update to a node.
 // Only non-nil fields are applied.
 type NodeUpdate struct {
+	// IssueType: nil preserves, a pointer to empty clears to SQL NULL.
+	IssueType   *model.IssueType  `json:"issue_type,omitempty"`
 	Title       *string           `json:"title,omitempty"`
 	Description *string           `json:"description,omitempty"`
 	Prompt      *string           `json:"prompt,omitempty"`

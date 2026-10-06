@@ -47,3 +47,18 @@ func TestOpenAPIYAML_ContainsServerDefinition(t *testing.T) {
 	assert.Contains(t, spec, "localhost:{port}")
 	assert.Contains(t, spec, "6849")
 }
+
+// Update classification is documented with explicit clear and preserve semantics.
+func TestOpenAPI_UpdateIssueType(t *testing.T) {
+	content := string(OpenAPIYAML())
+	start := strings.Index(content, "    UpdateNodeRequest:")
+	if start < 0 {
+		t.Fatal("missing update schema")
+	}
+	section := strings.Split(content[start:], "    ErrorResponse:")[0]
+	for _, phrase := range []string{"issue_type:", "omission preserves", "empty string clears", `enum: [bug, feature, task, chore, refactor, test, doc, '']`} {
+		if !strings.Contains(section, phrase) {
+			t.Errorf("update schema lacks %q", phrase)
+		}
+	}
+}

@@ -100,15 +100,9 @@ func (svc *NodeService) createChildForDecompose(
 		return nil, err
 	}
 
-	if err := svc.store.CreateNode(ctx, node); err != nil {
+	if err := svc.persistCreatedNode(ctx, node, req.Assignee); err != nil {
 		return nil, fmt.Errorf("create node: %w", err)
 	}
-
-	// FR-11.2a: Auto-claim when configured and parent is in_progress with assignee.
-	if err := svc.maybeAutoClaim(ctx, node, req); err != nil {
-		return nil, fmt.Errorf("auto-claim: %w", err)
-	}
-
-	svc.broadcastEvent(ctx, EventNodeCreated, node.ID, req.Creator, nil)
+	svc.broadcastCreatedNode(ctx, node, req.Creator)
 	return node, nil
 }

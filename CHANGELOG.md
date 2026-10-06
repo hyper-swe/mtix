@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Rejected creates keep their sequence numbers (MTIX-106, MTIX-107.99).** Local creation allocates its ID, inserts the node and performs any initial claim in one transaction. A rejected create or failed parent auto-claim leaves no partial node or sync events, and the next successful create takes the next consecutive number.
 - **`mtix show` displays a deferred task's wake time (MTIX-107.75).** The text status line now includes `(until 2026-10-01T09:00:00Z)` when a deferred task has a stored wake time, normalized to ISO-8601 UTC. Indefinite deferrals and other statuses, including records with a stale wake time, keep their existing status line. JSON output is unchanged.
 
 ## [0.5.4-beta] - 2026-10-03

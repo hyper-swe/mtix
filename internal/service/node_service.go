@@ -132,18 +132,7 @@ func (svc *NodeService) CreateNode(ctx context.Context, req *CreateNodeRequest) 
 	if err := svc.persistCreatedNode(ctx, node, req.Assignee); err != nil {
 		return nil, fmt.Errorf("create node: %w", err)
 	}
-
-	// FR-11.2a: Auto-claim when configured and parent is in_progress with assignee.
-	if req.Assignee == "" {
-		if err := svc.maybeAutoClaim(ctx, node, req); err != nil {
-			return nil, fmt.Errorf("auto-claim: %w", err)
-		}
-	}
-
-	svc.broadcastEvent(ctx, EventNodeCreated, node.ID, req.Creator, nil)
-	if req.Assignee != "" {
-		svc.broadcastEvent(ctx, EventNodeClaimed, node.ID, req.Assignee, nil)
-	}
+	svc.broadcastCreatedNode(ctx, node, req.Creator)
 
 	// Eagerly settle against the hub in the BACKGROUND (ADR-003 §4): the create
 	// call must not block on the network. An offline node simply stays
@@ -153,12 +142,21 @@ func (svc *NodeService) CreateNode(ctx context.Context, req *CreateNodeRequest) 
 	return node, nil
 }
 
-// persistCreatedNode preserves unassigned creation and explicitly claims atomically (FR-10.4).
+// persistCreatedNode allocates and optionally claims atomically (FR-2.7/FR-11.2a).
 func (svc *NodeService) persistCreatedNode(ctx context.Context, node *model.Node, assignee string) error {
-	if assignee != "" {
-		return svc.store.CreateNodeAndClaim(ctx, node, assignee)
+	return svc.store.CreateNodeAllocated(ctx, node, store.CreateNodeOptions{
+		Assignee:            assignee,
+		ClaimParentAssignee: svc.config.AutoClaim(),
+		Provisional:         node.ParentID != "" && svc.settlement.Enabled() && !svc.settlement.Reachable(),
+	})
+}
+
+// broadcastCreatedNode publishes creation and its committed initial claim in order.
+func (svc *NodeService) broadcastCreatedNode(ctx context.Context, node *model.Node, creator string) {
+	svc.broadcastEvent(ctx, EventNodeCreated, node.ID, creator, nil)
+	if node.Assignee != "" {
+		svc.broadcastEvent(ctx, EventNodeClaimed, node.ID, node.Assignee, nil)
 	}
-	return svc.store.CreateNode(ctx, node)
 }
 
 // scheduleSettlement kicks off one background settlement pass when a reachable
@@ -273,9 +271,8 @@ func (svc *NodeService) validateCreateRequest(req *CreateNodeRequest) error {
 }
 
 // buildNode constructs a model.Node from the CreateNodeRequest.
-// Generates the dot-notation ID via atomic sequence (FR-2.7), which skips a
-// number a node already holds (MTIX-95.38), computes content hash (FR-3.7),
-// and sets defaults.
+// Computes content hash (FR-3.7), UID and defaults before the allocation
+// transaction (FR-2.7), preserving UID mint-before-write-lock timing.
 func (svc *NodeService) buildNode(
 	ctx context.Context, req *CreateNodeRequest, now time.Time,
 ) (*model.Node, error) {
@@ -290,7 +287,6 @@ func (svc *NodeService) buildNode(
 
 	var parentID string
 	var depth int
-	var seqKey string
 
 	if req.ParentID != "" {
 		parentID = req.ParentID
@@ -299,31 +295,6 @@ func (svc *NodeService) buildNode(
 			return nil, fmt.Errorf("parent %s: %w", parentID, getErr)
 		}
 		depth = parent.Depth + 1
-		seqKey = req.Project + ":" + parentID
-	} else {
-		seqKey = req.Project + ":"
-	}
-
-	// The number comes from the parent's counter. When the counter fell
-	// behind the nodes (an import that stopped before rebuilding it, a pull
-	// before MTIX-95.38, or any other cause) and reaches a taken number,
-	// NextSequence moves it past the highest number under the parent, once,
-	// in one atomic statement under the write lock, and returns that number:
-	// the create does not fail with "already exists", and the counter ends
-	// at the number the node takes, so no gap follows it (MTIX-95.38).
-	seq, err := svc.store.NextSequence(ctx, seqKey)
-	if err != nil {
-		return nil, fmt.Errorf("generate sequence: %w", err)
-	}
-
-	// Distributed identity (ADR-003 §4): the seq is the eager LOCAL claim. The
-	// node is born with a clean numeric id unless a hub is configured but
-	// unreachable AND the node has a parent — then it is born PROVISIONAL (a
-	// uid-bearing id) and re-settles on the next sync. A project root is always
-	// settled in ADR-003's model, so only a child can be provisional.
-	id, err := svc.chooseDisplayID(req.Project, parentID, seq, uid)
-	if err != nil {
-		return nil, err
 	}
 
 	priority := req.Priority
@@ -332,11 +303,11 @@ func (svc *NodeService) buildNode(
 	}
 
 	node := &model.Node{
-		ID:          id,
+		ID:          "",
 		ParentID:    parentID,
 		Project:     req.Project,
 		Depth:       depth,
-		Seq:         seq,
+		Seq:         0,
 		Title:       req.Title,
 		IssueType:   req.IssueType,
 		Description: req.Description,
@@ -359,55 +330,10 @@ func (svc *NodeService) buildNode(
 	// FR-1.1a: Advisory depth warning (does NOT reject the operation).
 	if depth > svc.config.MaxRecommendedDepth() {
 		svc.logger.Warn("node exceeds recommended depth",
-			"id", id, "depth", depth, "max_recommended", svc.config.MaxRecommendedDepth())
+			"parent_id", parentID, "depth", depth, "max_recommended", svc.config.MaxRecommendedDepth())
 	}
 
 	return node, nil
-}
-
-// chooseDisplayID returns the display_path a new node is born with (ADR-003 §4).
-// It returns the clean numeric id (model.BuildID) in the normal case, and a
-// PROVISIONAL uid-bearing id (model.BuildProvisionalID) only when a hub is
-// configured but unreachable AND the node has a parent — a project root is always
-// settled, so it can never be provisional. The provisional node re-settles via
-// the background settlement engine on the next sync (ADR-003 §4 offline
-// fallback).
-func (svc *NodeService) chooseDisplayID(project, parentID string, seq int, uid string) (string, error) {
-	if parentID != "" && svc.settlement.Enabled() && !svc.settlement.Reachable() {
-		id, err := model.BuildProvisionalID(parentID, uid)
-		if err != nil {
-			return "", fmt.Errorf("build provisional id: %w", err)
-		}
-		return id, nil
-	}
-	return model.BuildID(project, parentID, seq), nil
-}
-
-// maybeAutoClaim implements FR-11.2a: auto-claim child when configured
-// and parent is in_progress with an assignee.
-func (svc *NodeService) maybeAutoClaim(
-	ctx context.Context, node *model.Node, req *CreateNodeRequest,
-) error {
-	if !svc.config.AutoClaim() || req.ParentID == "" {
-		return nil
-	}
-
-	parent, err := svc.store.GetNode(ctx, req.ParentID)
-	if err != nil {
-		return fmt.Errorf("read parent for auto-claim: %w", err)
-	}
-
-	if parent.Status != model.StatusInProgress || parent.Assignee == "" {
-		return nil
-	}
-
-	// Auto-claim the child for the parent's assignee.
-	if err := svc.store.ClaimNode(ctx, node.ID, parent.Assignee); err != nil {
-		return fmt.Errorf("auto-claim %s for %s: %w", node.ID, parent.Assignee, err)
-	}
-
-	svc.broadcastEvent(ctx, EventNodeClaimed, node.ID, parent.Assignee, nil)
-	return nil
 }
 
 // broadcastEvent is a helper that logs and broadcasts an event.

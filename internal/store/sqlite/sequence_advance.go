@@ -207,11 +207,11 @@ const skipSQL = `
 // removed in the meantime is created again. It skips once and does not
 // check the new number again. When the skip would pass maxSequence it
 // writes nothing and fails with an error naming the limit.
-func (s *Store) skipTakenSequence(ctx context.Context, key string, value int) (int, error) {
+func skipTakenSequenceQuery(ctx context.Context, query sequenceQuery, key string, value int) (int, error) {
 	project, parentID, _ := strings.Cut(key, ":")
 	var taken bool
 	// Does a node, live or soft-deleted, hold the id the number names?
-	if err := s.writeDB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM nodes WHERE id = ?)`,
+	if err := query.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM nodes WHERE id = ?)`,
 		model.BuildID(project, parentID, value)).Scan(&taken); err != nil {
 		return 0, fmt.Errorf("next sequence for %s: check number %d: %w", key, value, err)
 	}
@@ -224,13 +224,13 @@ func (s *Store) skipTakenSequence(ctx context.Context, key string, value int) (i
 	}
 	lo, hi := idRange(ns)
 	next := value
-	err := s.writeDB.QueryRowContext(ctx, skipSQL,
+	err := query.QueryRowContext(ctx, skipSQL,
 		ns, lo, hi, maxSequence, key, maxSequence, maxSequence).Scan(&next)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, sequenceLimitError(key)
 	}
 	if err != nil {
-		return 0, s.classifyWriteError(fmt.Errorf("next sequence for %s: skip taken number %d: %w", key, value, err))
+		return 0, fmt.Errorf("next sequence for %s: skip taken number %d: %w", key, value, err)
 	}
 	return next, nil
 }

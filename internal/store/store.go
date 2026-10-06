@@ -45,12 +45,23 @@ type NodeFilter struct {
 	ChangedSince time.Time `json:"changed_since,omitempty"`
 }
 
+// CreateNodeOptions controls local ID allocation and the atomic initial claim.
+type CreateNodeOptions struct {
+	Assignee    string
+	Provisional bool
+	// ClaimParentAssignee requests the current in-progress parent assignment within the create transaction.
+	ClaimParentAssignee bool
+}
+
 // Store defines the data access contract for mtix.
 // All implementations MUST be safe for concurrent use.
 // All write operations MUST be wrapped in transactions.
 // All SQL MUST use parameterized queries — no string concatenation.
 type Store interface {
 	// Node operations
+
+	// CreateNodeAllocated allocates the local sequence and creates/claims the node atomically (FR-2.7/FR-11.2a).
+	CreateNodeAllocated(ctx context.Context, node *model.Node, opts CreateNodeOptions) error
 
 	// CreateNode persists a new node. The node's ID must be pre-generated.
 	// Returns ErrAlreadyExists if a node with the given ID already exists.

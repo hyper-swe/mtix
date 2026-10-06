@@ -145,11 +145,19 @@ func scanClockNode(node ast.Node, imports map[string]bool, scope *clockScope, hi
 			return false
 		}
 		names, values := clockAliasBindings(child)
+		// Go evaluates all RHS expressions before any simultaneous LHS binding.
+		aliases := make([]bool, len(values))
+		for i, value := range values {
+			aliases[i] = clockReference(value, imports, scope)
+		}
+		for _, value := range values {
+			scanClockNode(value, imports, scope, hits)
+		}
 		for i, name := range names {
 			if name == nil {
 				continue
 			}
-			alias := i < len(values) && clockReference(values[i], imports, scope)
+			alias := i < len(aliases) && aliases[i]
 			target := scope
 			if assignment, ok := child.(*ast.AssignStmt); ok && assignment.Tok == token.ASSIGN {
 				for target.parent != nil {
@@ -161,6 +169,9 @@ func scanClockNode(node ast.Node, imports map[string]bool, scope *clockScope, hi
 			}
 			target.aliases[name.Name] = alias
 		}
+		if len(names) > 0 {
+			return false
+		} // RHS calls were scanned before the bindings.
 		if call, ok := child.(*ast.CallExpr); ok && clockReference(call.Fun, imports, scope) {
 			*hits = append(*hits, call.Pos())
 		}
@@ -196,6 +207,9 @@ func TestSyncApplyClockGuard_OrdinaryCallsAndAliases(t *testing.T) {
 		{"local chain", `"time"`, "func f(){ now := time.Now; clock := (now); (clock)() }", 1},
 		{"package chain", `"time"`, "var clock = now; var now = time.Now; func f(){ clock() }", 1},
 		{"multiple RHS", `"time"`, "func f(){ x, now := 1, time.Now; _ = x; now() }", 1},
+		{"simultaneous import shadow", `"time"`, "func f(){ time, now := 1, time.Now; _ = time; _ = now() }", 1},
+		{"declaration import shadow", `"time"`, "func f(){ var time, now = 1, time.Now; _ = time; _ = now() }", 1},
+		{"RHS call before shadow", `"time"`, "func f(){ time, at := 1, time.Now(); _ = time; _ = at }", 1},
 		{"injection reference", `"time"`, "func f(){ use(time.Now) }; func use(func() time.Time){}", 0},
 		{"unrelated method", `"time"`, "type c struct{}; func(c) Now(){}; func f(){ c{}.Now() }", 0},
 		{"documented asserted alias limit", `"time"`, "func f(){ now := any(time.Now).(func() time.Time); now() }", 0},

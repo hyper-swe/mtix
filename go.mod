@@ -7,6 +7,7 @@ go 1.25.0
 toolchain go1.26.6
 
 require (
+	github.com/anishathalye/porcupine v1.3.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3

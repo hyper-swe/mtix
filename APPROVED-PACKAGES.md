@@ -139,6 +139,20 @@
 
 ---
 
+### Porcupine (test-only)
+
+| Package | `github.com/anishathalye/porcupine` |
+|---------|-------------------------------------|
+| Version | >= 1.3.1 |
+| License | MIT |
+| Purpose | Linearizability checking of recorded concurrent histories in tests (MTIX-130) |
+| Status | **APPROVED-CONDITIONAL** |
+| CVE Status | None published (GitHub advisories, govulncheck DB checked 2026-10-06). No transitive dependencies. |
+| Conditions | TEST-ONLY: import only from `_test.go` files, never from production code. Tests that call `VisualizePath` write under `t.TempDir()` and are not enabled by default in CI. |
+| Alternatives Rejected | Knossos/Jepsen (Clojure/JVM), home-grown checker (correctness risk), stdlib (none exists) |
+
+---
+
 ## Standard Library Extended Packages
 
 ### 10. Sync Utilities

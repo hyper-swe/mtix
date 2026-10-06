@@ -6,6 +6,9 @@
 package main
 
 import (
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,7 +16,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/mcp"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 func helpDependencyTypes(t *testing.T, cmd *cobra.Command) []string {
@@ -30,7 +35,7 @@ func helpDependencyTypes(t *testing.T, cmd *cobra.Command) []string {
 
 func TestDepAddCmd_HelpListedTypes_AcceptedAndStored(t *testing.T) {
 	types := helpDependencyTypes(t, newDepAddCmd())
-	assert.ElementsMatch(t, []string{"blocks", "related", "discovered_from", "duplicates"}, types)
+	assert.ElementsMatch(t, canonicalDependencyTypeNames(), types)
 	for _, depType := range types {
 		t.Run(depType, func(t *testing.T) {
 			initTestApp(t)
@@ -49,7 +54,7 @@ func TestDepAddCmd_HelpListedTypes_AcceptedAndStored(t *testing.T) {
 
 func TestDepRemoveCmd_HelpListedTypes_AcceptedAndRemoved(t *testing.T) {
 	types := helpDependencyTypes(t, newDepRemoveCmd())
-	assert.ElementsMatch(t, []string{"blocks", "related", "discovered_from", "duplicates"}, types)
+	assert.ElementsMatch(t, canonicalDependencyTypeNames(), types)
 	for _, depType := range types {
 		t.Run(depType, func(t *testing.T) {
 			initTestApp(t)
@@ -77,4 +82,65 @@ func TestDepAddCmd_InvalidTypes_ReturnInvalidInput(t *testing.T) {
 			require.ErrorIs(t, err, model.ErrInvalidInput)
 		})
 	}
+}
+
+// canonicalDependencyTypeNames derives expectations from the validator's one
+// model-defined source; future FR-4.2 types are not duplicated in these tests.
+func canonicalDependencyTypeNames() []string {
+	names := []string{}
+	for _, kind := range model.AllDepTypes() {
+		names = append(names, string(kind))
+	}
+	return names
+}
+
+// TestDepAddCmd_TypeHelp_ListsExactlyModelTypes is the MTIX-96 acceptance test.
+// Historical red evidence uses a compiling pre-MTIX-107.92 compatibility harness;
+// current producers already use AllDepTypes and must remain model-derived.
+func TestDepAddCmd_TypeHelp_ListsExactlyModelTypes(t *testing.T) {
+	for _, cmd := range []*cobra.Command{newDepAddCmd(), newDepRemoveCmd()} {
+		require.Equal(t, canonicalDependencyTypeNames(), helpDependencyTypes(t, cmd))
+	}
+	for _, kind := range model.AllDepTypes() {
+		require.True(t, kind.IsValid(), "%s", kind)
+	}
+}
+
+func TestDepHelp_MCPAndReferenceMatchModelTypes(t *testing.T) {
+	// Registration constructs the real dependency service; supply its required
+	// store without changing cwd or weakening the schema/reference assertions.
+	st, err := sqlite.New(filepath.Join(t.TempDir(), "dep-help.db"), slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	registry := mcp.NewToolRegistry()
+	mcp.RegisterDepTools(registry, st)
+	seen := 0
+	for _, tool := range registry.List() {
+		if tool.Name != "mtix_dep_add" && tool.Name != "mtix_dep_remove" {
+			continue
+		}
+		seen++
+		prop := tool.InputSchema.Properties["dep_type"]
+		require.Equal(t, canonicalDependencyTypeNames(), prop.Enum, tool.Name)
+		require.Equal(t, "Dependency type: "+strings.Join(canonicalDependencyTypeNames(), ", "), prop.Description, tool.Name)
+	}
+	require.Equal(t, 2, seen)
+	shipped, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI_REFERENCE.md"))
+	require.NoError(t, err)
+	generated := generatedHelpReference(t)
+	for _, cmd := range []*cobra.Command{newDepAddCmd(), newDepRemoveCmd()} {
+		require.Equal(t, cliReferenceSection(t, generated, cmd.Name(), cmd.Use), cliReferenceSection(t, string(shipped), cmd.Name(), cmd.Use))
+	}
+}
+
+func TestDepAddCmd_RelatedPersistsActualDependency(t *testing.T) {
+	initTestApp(t)
+	for _, title := range []string{"source", "target"} {
+		require.NoError(t, runCreate(title, "", "", 3, "", "", "", "", ""))
+	}
+	_, err := executeCmd(newDepAddCmd(), "TEST-1", "TEST-2", "--type", string(model.DepTypeRelated))
+	require.NoError(t, err)
+	var stored string
+	require.NoError(t, app.store.WriteDB().QueryRow(`SELECT dep_type FROM dependencies WHERE from_id = ? AND to_id = ?`, "TEST-1", "TEST-2").Scan(&stored))
+	require.Equal(t, string(model.DepTypeRelated), stored)
 }

@@ -23,7 +23,7 @@ func newUnblockCmd() *cobra.Command {
 
 'blocked' is system-managed: mtix auto-blocks a node when a blocker is added and
 auto-restores it when the last blocker resolves. Use 'unblock' to force that
-re-derivation if a node is stuck 'blocked' even though 'mtix deps <id>' shows the
+re-derivation if a node is stuck 'blocked' even though 'mtix dep show <id>' shows the
 blockers resolved. It never overrides a genuine block — if an unresolved blocker
 remains, the node stays blocked.`,
 		Args: cobra.ExactArgs(1),
@@ -51,7 +51,7 @@ func runUnblock(id string) error {
 		return out.WriteJSON(node)
 	}
 	if node.Status == model.StatusBlocked {
-		out.WriteHuman("%s is still blocked — it has unresolved blockers (see 'mtix deps %s')\n", id, id)
+		out.WriteHuman("%s is still blocked — it has unresolved blockers (see 'mtix dep show %s')\n", id, id)
 		return nil
 	}
 	out.WriteHuman("✓ %s → %s\n", id, node.Status)

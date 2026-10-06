@@ -6,6 +6,7 @@ package transport
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -151,18 +152,15 @@ func poolConfig(a *Approval, defs PoolDefaults) *pgxpool.Config {
 	cfg.MaxConnLifetime = defs.ConnLifetime
 	cfg.HealthCheckPeriod = defs.HealthCheckPeriod
 	if defs.StatementTimeout > 0 {
-		// Apply statement_timeout via SET after connect, NOT as a startup
-		// RuntimeParam. Managed Postgres proxies and poolers silently drop
-		// unknown startup parameters, so the RuntimeParam no-ops and the
-		// query cap is never enforced on a managed hub (the server reports
-		// "0" or its own default). A SET is ordinary SQL the proxy passes
-		// through — verified against a direct connection and a session-mode
-		// pooler. Runs on every new pooled connection. The
-		// value is an integer we control, so the formatted SQL carries no
-		// injection surface.
-		stmtTimeoutMS := defs.StatementTimeout.Milliseconds()
+		// Apply statement_timeout as ordinary SQL after connect: managed proxies
+		// and poolers may drop startup RuntimeParams, leaving the query cap unset.
+		// SQL Rule 1a binds the value through set_config. false selects session
+		// scope for the connection's lifetime; true would revert at transaction end.
+		// Preserve the existing truncation to whole milliseconds, including 0ms
+		// for positive sub-millisecond durations. Runs on every new connection.
+		stmtTimeout := strconv.FormatInt(defs.StatementTimeout.Milliseconds(), 10) + "ms"
 		cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-			if _, execErr := conn.Exec(ctx, fmt.Sprintf("SET statement_timeout = %d", stmtTimeoutMS)); execErr != nil {
+			if _, execErr := conn.Exec(ctx, `SELECT set_config('statement_timeout', $1, false)`, stmtTimeout); execErr != nil {
 				return fmt.Errorf("apply statement_timeout: %w", execErr)
 			}
 			return nil

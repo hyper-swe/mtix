@@ -96,7 +96,11 @@ func TestAckPresent_OneQueryPerBatch(t *testing.T) {
 }
 
 // explainPresence is the EXPLAIN of the exact presence query push runs.
-const explainPresence = "EXPLAIN " + presenceSQL
+const explainPresence = `EXPLAIN 
+SELECT p.n, h.node_id, h.op_type, h.payload = p.payload::jsonb
+FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS p(event_id, payload, n)
+JOIN sync_events AS h ON h.event_id = p.event_id
+WHERE h.event_id = ANY($1)`
 
 // TestPresenceQuery_PlanUsesPrimaryKey: the presence query can be served
 // from sync_events' primary key, bounded by the batch's ids, so its cost

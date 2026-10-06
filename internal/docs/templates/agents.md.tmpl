@@ -81,7 +81,7 @@ status (`open`/`in_progress`) the moment its last blocker resolves.
   blocked node — both are (correctly) disallowed. Resolve the blockers instead;
   the node clears itself.
 - The status column **is** reliable. If a node is stuck `blocked` even though
-  `mtix deps <id>` shows every blocker resolved, that is a recompute glitch, not
+  `mtix dep show <id>` shows every blocker resolved, that is a recompute glitch, not
   "unreliable status" — run **`mtix unblock <id>`** to force the re-derivation.
   It never overrides a genuine block (a no-op if a real blocker remains).
 

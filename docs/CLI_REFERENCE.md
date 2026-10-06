@@ -2184,7 +2184,7 @@ Re-derive a node's blocked status from its current blockers.
 
 'blocked' is system-managed: mtix auto-blocks a node when a blocker is added and
 auto-restores it when the last blocker resolves. Use 'unblock' to force that
-re-derivation if a node is stuck 'blocked' even though 'mtix deps <id>' shows the
+re-derivation if a node is stuck 'blocked' even though 'mtix dep show <id>' shows the
 blockers resolved. It never overrides a genuine block — if an unresolved blocker
 remains, the node stays blocked.
 ---

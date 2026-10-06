@@ -41,16 +41,25 @@ func payloadEncoderAliases(file *ast.File) map[string]bool {
 	return aliases
 }
 
+type payloadLexicalScope struct {
+	parent  *payloadLexicalScope
+	aliases map[string]int
+}
+
+func payloadNameIndex(scope *payloadLexicalScope, name string) (int, bool) {
+	for frame := scope; frame != nil; frame = frame.parent {
+		if index, ok := frame.aliases[name]; ok {
+			return index, true
+		}
+	}
+	return -1, false
+}
+
 // The checked emitter returns one error; encoders return payload then error.
-func payloadErrorIndex(expr ast.Expr, imports map[string]bool, aliases map[string]int) int {
+func payloadErrorIndex(expr ast.Expr, imports map[string]bool, scope *payloadLexicalScope) int {
 	switch e := payloadUnparenthesize(expr).(type) {
 	case *ast.Ident:
-		if index, ok := aliases[e.Name]; ok {
-			return index
-		}
-		if imports["."] && e.Name == "EncodePayload" {
-			return 1
-		}
+		return payloadIdentifierErrorIndex(e, imports, scope)
 	case *ast.SelectorExpr:
 		if e.Sel.Name == "emitPayload" {
 			return 0
@@ -60,8 +69,21 @@ func payloadErrorIndex(expr ast.Expr, imports map[string]bool, aliases map[strin
 		}
 		owner, ok := e.X.(*ast.Ident)
 		if ok && imports[owner.Name] && e.Sel.Name == "EncodePayload" {
+			if _, shadowed := payloadNameIndex(scope, owner.Name); shadowed {
+				return -1
+			}
 			return 1
 		}
+	}
+	return -1
+}
+
+func payloadIdentifierErrorIndex(e *ast.Ident, imports map[string]bool, scope *payloadLexicalScope) int {
+	if index, ok := payloadNameIndex(scope, e.Name); ok {
+		return index
+	}
+	if imports["."] && e.Name == "EncodePayload" {
+		return 1
 	}
 	return -1
 }
@@ -70,9 +92,6 @@ func payloadLocalAliases(node ast.Node, imports map[string]bool, initial map[str
 	aliases := map[string]int{}
 	for name, value := range initial {
 		aliases[name] = value
-	}
-	if fn, ok := node.(*ast.FuncDecl); ok {
-		payloadRemoveLocalShadows(fn, imports, aliases)
 	}
 	// Repeat to follow ordinary local chains such as marshal := model.EncodePayload;
 	// encode := marshal. The scanner is a syntax guard, not control-flow analysis.
@@ -96,7 +115,7 @@ func payloadLocalAliases(node ast.Node, imports map[string]bool, initial map[str
 			for i, value := range values {
 				if id, ok := names[i].(*ast.Ident); ok {
 					_, known := aliases[id.Name]
-					index := payloadErrorIndex(value, imports, aliases)
+					index := payloadErrorIndex(value, imports, &payloadLexicalScope{aliases: aliases})
 					if !known && index >= 0 {
 						aliases[id.Name] = index
 						changed = true
@@ -115,7 +134,7 @@ func discardedPayloadErrors(source string) ([]token.Position, error) {
 
 func discardedPayloadErrorsWithGlobals(source string, initial map[string]int) ([]token.Position, error) {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "source.go", source, 0)
+	file, err := parser.ParseFile(fset, "source.go", source, parser.SkipObjectResolution)
 	if err != nil {
 		return nil, err
 	}
@@ -123,11 +142,11 @@ func discardedPayloadErrorsWithGlobals(source string, initial map[string]int) ([
 	globals := payloadFileGlobalAliases(file, initial)
 	var hits []token.Position
 	for _, decl := range file.Decls {
-		aliases := globals
-		if fn, ok := decl.(*ast.FuncDecl); ok {
-			aliases = payloadLocalAliases(fn, imports, globals)
+		scope := &payloadLexicalScope{aliases: map[string]int{}}
+		for name, index := range globals {
+			scope.aliases[name] = index
 		}
-		hits = append(hits, payloadDiscardPositions(decl, fset, imports, aliases)...)
+		hits = append(hits, payloadDiscardPositions(decl, fset, imports, scope)...)
 	}
 	return hits, nil
 }
@@ -145,38 +164,81 @@ func payloadFileGlobalAliases(file *ast.File, initial map[string]int) map[string
 	return globals
 }
 
-func payloadRemoveLocalShadows(fn *ast.FuncDecl, imports map[string]bool, aliases map[string]int) {
-	ast.Inspect(fn, func(n ast.Node) bool {
-		switch d := n.(type) {
-		case *ast.AssignStmt:
-			if d.Tok == token.DEFINE {
-				payloadRemoveShadowNames(d.Lhs, d.Rhs, imports, aliases)
-			}
-		case *ast.ValueSpec:
-			names := make([]ast.Expr, len(d.Names))
-			for i, name := range d.Names {
-				names[i] = name
-			}
-			payloadRemoveShadowNames(names, d.Values, imports, aliases)
-		case *ast.Field:
-			for _, name := range d.Names {
-				delete(aliases, name.Name)
-			}
-		}
+func payloadScopeNode(node ast.Node) bool {
+	switch node.(type) {
+	case *ast.BlockStmt, *ast.IfStmt, *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt, *ast.CaseClause, *ast.CommClause, *ast.FuncLit:
 		return true
-	})
+	}
+	return false
 }
 
-func payloadRemoveShadowNames(names, values []ast.Expr, imports map[string]bool, aliases map[string]int) {
+func payloadChildScope(node ast.Node, parent *payloadLexicalScope) *payloadLexicalScope {
+	scope := &payloadLexicalScope{parent: parent, aliases: map[string]int{}}
+	switch n := node.(type) {
+	case *ast.FuncDecl:
+		payloadShadowFields(n.Recv, scope)
+		payloadShadowFields(n.Type.Params, scope)
+		payloadShadowFields(n.Type.Results, scope)
+	case *ast.FuncLit:
+		payloadShadowFields(n.Type.Params, scope)
+		payloadShadowFields(n.Type.Results, scope)
+	case *ast.RangeStmt:
+		if n.Tok == token.DEFINE {
+			payloadBindNames([]ast.Expr{n.Key, n.Value}, nil, true, nil, scope)
+		}
+	}
+	return scope
+}
+
+func payloadShadowFields(fields *ast.FieldList, scope *payloadLexicalScope) {
+	if fields == nil {
+		return
+	}
+	for _, field := range fields.List {
+		for _, name := range field.Names {
+			scope.aliases[name.Name] = -1
+		}
+	}
+}
+
+func payloadBindDeclaration(node ast.Node, imports map[string]bool, scope *payloadLexicalScope) {
+	switch n := node.(type) {
+	case *ast.AssignStmt:
+		payloadBindNames(n.Lhs, n.Rhs, n.Tok == token.DEFINE, imports, scope)
+	case *ast.ValueSpec:
+		names := make([]ast.Expr, len(n.Names))
+		for i, name := range n.Names {
+			names[i] = name
+		}
+		payloadBindNames(names, n.Values, true, imports, scope)
+	}
+}
+
+func payloadBindNames(names, values []ast.Expr, declare bool, imports map[string]bool, scope *payloadLexicalScope) {
+	indices := make([]int, len(names))
+	for i := range names {
+		indices[i] = -1
+		if len(names) == len(values) {
+			indices[i] = payloadErrorIndex(values[i], imports, scope)
+		}
+	}
 	for i, name := range names {
 		id, ok := name.(*ast.Ident)
-		if !ok {
+		if !ok || id.Name == "_" {
 			continue
 		}
-		if len(names) == len(values) && payloadErrorIndex(values[i], imports, aliases) >= 0 {
-			continue
+		target := scope
+		if !declare {
+			for target.parent != nil {
+				if _, ok := target.aliases[id.Name]; ok {
+					break
+				}
+				target = target.parent
+			}
 		}
-		delete(aliases, id.Name)
+		if _, exists := target.aliases[id.Name]; !exists || indices[i] >= 0 {
+			target.aliases[id.Name] = indices[i]
+		}
 	}
 }
 
@@ -184,7 +246,7 @@ func payloadPackageGlobalAliases(sources map[string]string) (map[string]map[stri
 	files := map[string]*ast.File{}
 	packages := map[string]string{}
 	for path, source := range sources {
-		file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
+		file, err := parser.ParseFile(token.NewFileSet(), path, source, parser.SkipObjectResolution)
 		if err != nil {
 			return nil, err
 		}
@@ -228,14 +290,28 @@ func payloadGuardSources(root string) (map[string]string, error) {
 	return sources, err
 }
 
-func payloadDiscardPositions(node ast.Node, fset *token.FileSet, imports map[string]bool, aliases map[string]int) []token.Position {
+func payloadDiscardPositions(node ast.Node, fset *token.FileSet, imports map[string]bool, scope *payloadLexicalScope) []token.Position {
+	if payloadScopeNode(node) {
+		scope = payloadChildScope(node, scope)
+	}
+	if fn, ok := node.(*ast.FuncDecl); ok {
+		scope = payloadChildScope(fn, scope)
+	}
 	var hits []token.Position
 	ast.Inspect(node, func(n ast.Node) bool {
-		for _, call := range payloadDiscardCalls(n, imports, aliases) {
-			if call != nil && payloadErrorIndex(call.Fun, imports, aliases) >= 0 {
+		if n == nil {
+			return false
+		}
+		if n != node && payloadScopeNode(n) {
+			hits = append(hits, payloadDiscardPositions(n, fset, imports, scope)...)
+			return false
+		}
+		for _, call := range payloadDiscardCalls(n, imports, scope) {
+			if call != nil && payloadErrorIndex(call.Fun, imports, scope) >= 0 {
 				hits = append(hits, fset.Position(call.Pos()))
 			}
 		}
+		payloadBindDeclaration(n, imports, scope)
 		return true
 	})
 	return hits
@@ -252,16 +328,16 @@ func payloadUnparenthesize(expr ast.Expr) ast.Expr {
 	}
 }
 
-func payloadDiscardCalls(n ast.Node, imports map[string]bool, aliases map[string]int) []*ast.CallExpr {
+func payloadDiscardCalls(n ast.Node, imports map[string]bool, scope *payloadLexicalScope) []*ast.CallExpr {
 	switch a := n.(type) {
 	case *ast.AssignStmt:
-		return payloadBlankCalls(a.Rhs, payloadBlankIdentifiers(a.Lhs), imports, aliases)
+		return payloadBlankCalls(a.Rhs, payloadBlankIdentifiers(a.Lhs), imports, scope)
 	case *ast.ValueSpec:
 		names := make([]ast.Expr, len(a.Names))
 		for i, name := range a.Names {
 			names[i] = name
 		}
-		return payloadBlankCalls(a.Values, payloadBlankIdentifiers(names), imports, aliases)
+		return payloadBlankCalls(a.Values, payloadBlankIdentifiers(names), imports, scope)
 	case *ast.ExprStmt:
 		call, _ := payloadUnparenthesize(a.X).(*ast.CallExpr)
 		return []*ast.CallExpr{call}
@@ -282,14 +358,14 @@ func payloadBlankIdentifiers(names []ast.Expr) []bool {
 	return blanks
 }
 
-func payloadBlankCalls(values []ast.Expr, blanks []bool, imports map[string]bool, aliases map[string]int) []*ast.CallExpr {
+func payloadBlankCalls(values []ast.Expr, blanks []bool, imports map[string]bool, scope *payloadLexicalScope) []*ast.CallExpr {
 	var calls []*ast.CallExpr
 	for i, value := range values {
 		call, ok := payloadUnparenthesize(value).(*ast.CallExpr)
 		if !ok {
 			continue
 		}
-		index := payloadErrorIndex(call.Fun, imports, aliases)
+		index := payloadErrorIndex(call.Fun, imports, scope)
 		if len(values) == 1 {
 			// A sole multi-value encoder maps its error to result index one.
 			if index >= 0 && len(blanks) == index+1 && blanks[index] {
@@ -524,5 +600,71 @@ func TestPayloadEncodingGuard_CrossFilePackageAliasesAndShadows(t *testing.T) {
 			expected = 1
 		}
 		require.Len(t, hits, expected, path)
+	}
+}
+
+func TestPayloadEncodingGuard_NestedLexicalAliases(t *testing.T) {
+	for _, outer := range []string{"package", ":=", "var", "="} {
+		for _, shadow := range []string{":=", "var"} {
+			for _, position := range []string{"before", "after", "both", "checked"} {
+				t.Run(outer+"/"+shadow+"/"+position, func(t *testing.T) {
+					source := payloadLexicalProbe(outer, shadow, position)
+					hits, err := discardedPayloadErrors(source)
+					require.NoError(t, err)
+					want := 1
+					if position == "both" {
+						want = 2
+					}
+					if position == "checked" {
+						want = 0
+					}
+					require.Len(t, hits, want)
+				})
+			}
+		}
+	}
+}
+
+func payloadLexicalProbe(outer, shadow, position string) string {
+	source := "package sqlite\nimport model \"github.com/hyper-swe/mtix/internal/model\"\nvar encode = model.EncodePayload\nfunc probe()error{"
+	switch outer {
+	case ":=":
+		source += "encode:=model.EncodePayload;"
+	case "var":
+		source += "var encode=model.EncodePayload;"
+	case "=":
+		source += "var encode func(any)(json.RawMessage,error);encode=model.EncodePayload;"
+	}
+	if outer == "=" {
+		source = strings.Replace(source, "import model", "import \"encoding/json\"\nimport model", 1)
+	}
+	discard := "{raw,_:=((encode(nil)));_=raw};"
+	checked := "{raw,err:=((encode(nil)));_=raw;if err!=nil{return err}};"
+	inner := "{encode " + shadow + " func(any)([]byte,error){return nil,nil};raw,_:=encode(nil);_=raw};"
+	if shadow == "var" {
+		inner = "{var encode = func(any)([]byte,error){return nil,nil};raw,_:=encode(nil);_=raw};"
+	}
+	switch position {
+	case "before":
+		source += discard + inner + checked
+	case "after":
+		source += checked + inner + discard
+	case "both":
+		source += discard + inner + discard
+	case "checked":
+		source += checked + inner + checked
+	}
+	return source + "return nil}"
+}
+
+func TestPayloadEncodingGuard_WholeFunctionShadows(t *testing.T) {
+	sources := []string{
+		"package sqlite;import model \"github.com/hyper-swe/mtix/internal/model\";var encode=model.EncodePayload;func probe(encode func(any)([]byte,error)){raw,_:=encode(nil);_=raw}",
+		"package sqlite;import model \"github.com/hyper-swe/mtix/internal/model\";var encode=model.EncodePayload;func probe(){var encode=func(any)([]byte,error){return nil,nil};raw,_:=encode(nil);_=raw}",
+	}
+	for _, source := range sources {
+		hits, err := discardedPayloadErrors(source)
+		require.NoError(t, err)
+		require.Empty(t, hits)
 	}
 }

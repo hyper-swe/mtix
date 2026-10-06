@@ -36,27 +36,11 @@ func TestDecompose_LateRefusal_RollsBackWholeBatch(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, st, bc := newTestNodeService(t)
-			svc := service.NewNodeService(st, bc, &service.StaticConfig{AutoClaimEnabled: true}, nil, fixedClock(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)))
+			svc, st, bc, parent, prior := newDecomposeRefusalFixture(t)
 			ctx := context.Background()
-			parent, err := svc.CreateNode(ctx, &service.CreateNodeRequest{Project: "TEST", Title: "Parent", Creator: "author"})
-			require.NoError(t, err)
-			prior, err := svc.CreateNode(ctx, &service.CreateNodeRequest{Project: "TEST", ParentID: parent.ID, Title: "Completed child", Creator: "author"})
-			require.NoError(t, err)
-			require.NoError(t, svc.ClaimNode(ctx, prior.ID, "prior-worker"))
-			require.NoError(t, svc.TransitionStatus(ctx, prior.ID, model.StatusDone, "Complete", "prior-worker"))
-			require.NoError(t, svc.ClaimNode(ctx, parent.ID, "parent-worker"))
-			parentBefore, err := st.GetNode(ctx, parent.ID)
-			require.NoError(t, err)
-			require.Equal(t, 1.0, parentBefore.Progress)
-			priorBefore, err := st.GetNode(ctx, prior.ID)
-			require.NoError(t, err)
-			rowsBefore := createRowCounts(t, st)
-			agentsBefore := decomposeAgentSnapshot(t, st)
-			eventsBefore := decomposeEventSnapshot(t, st)
-			require.Equal(t, 1, sequenceCounterValue(t, st, "TEST:"+parent.ID))
+			before := captureDecomposeState(t, st, parent.ID, prior.ID)
 			if tc.trigger != "" {
-				_, err = st.WriteDB().ExecContext(ctx, tc.trigger)
+				_, err := st.WriteDB().ExecContext(ctx, tc.trigger)
 				require.NoError(t, err)
 			}
 			bc.Reset()
@@ -67,16 +51,7 @@ func TestDecompose_LateRefusal_RollsBackWholeBatch(t *testing.T) {
 			ids, err := svc.Decompose(ctx, parent.ID, children, "author")
 			require.Error(t, err)
 			assert.Empty(t, ids)
-			assert.Equal(t, rowsBefore, createRowCounts(t, st))
-			assert.Equal(t, 1, sequenceCounterValue(t, st, "TEST:"+parent.ID))
-			assert.Equal(t, agentsBefore, decomposeAgentSnapshot(t, st))
-			assert.Equal(t, eventsBefore, decomposeEventSnapshot(t, st))
-			parentAfter, err := st.GetNode(ctx, parent.ID)
-			require.NoError(t, err)
-			assert.Equal(t, parentBefore, parentAfter)
-			priorAfter, err := st.GetNode(ctx, prior.ID)
-			require.NoError(t, err)
-			assert.Equal(t, priorBefore, priorAfter)
+			assertDecomposeState(t, st, before)
 			assert.Empty(t, bc.Events())
 			if tc.trigger != "" {
 				_, err = st.WriteDB().ExecContext(ctx, `DROP TRIGGER reject_batch`)
@@ -159,26 +134,77 @@ func TestDecompose_BatchCommit_PreservesIdentityAndEventOrder(t *testing.T) {
 				}
 			}
 			assert.Equal(t, service.EventProgressChanged, events[len(events)-1].Type)
-			rows, err := st.Query(ctx, `SELECT node_id, op_type FROM sync_events WHERE node_id IN ('TEST-1.1', 'TEST-1.2', 'TEST-1.3') ORDER BY rowid`)
-			require.NoError(t, err)
-			defer rows.Close()
-			for _, id := range ids {
-				require.True(t, rows.Next())
-				var nodeID, op string
-				require.NoError(t, rows.Scan(&nodeID, &op))
-				assert.Equal(t, id, nodeID)
-				assert.Equal(t, "create_node", op)
-				if tc.worker != "" {
-					require.True(t, rows.Next())
-					require.NoError(t, rows.Scan(&nodeID, &op))
-					assert.Equal(t, id, nodeID)
-					assert.Equal(t, "claim", op)
-				}
-			}
-			assert.False(t, rows.Next())
-			require.NoError(t, rows.Err())
+			assertDecomposeEventOrder(t, st, ids, tc.worker)
 		})
 	}
+}
+
+func newDecomposeRefusalFixture(t *testing.T) (*service.NodeService, *sqlite.Store, *recordingBroadcaster, *model.Node, *model.Node) {
+	t.Helper()
+	_, st, bc := newTestNodeService(t)
+	svc := service.NewNodeService(st, bc, &service.StaticConfig{AutoClaimEnabled: true}, nil, fixedClock(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)))
+	ctx := context.Background()
+	parent, err := svc.CreateNode(ctx, &service.CreateNodeRequest{Project: "TEST", Title: "Parent", Creator: "author"})
+	require.NoError(t, err)
+	prior, err := svc.CreateNode(ctx, &service.CreateNodeRequest{Project: "TEST", ParentID: parent.ID, Title: "Completed child", Creator: "author"})
+	require.NoError(t, err)
+	require.NoError(t, svc.ClaimNode(ctx, prior.ID, "prior-worker"))
+	require.NoError(t, svc.TransitionStatus(ctx, prior.ID, model.StatusDone, "Complete", "prior-worker"))
+	require.NoError(t, svc.ClaimNode(ctx, parent.ID, "parent-worker"))
+	return svc, st, bc, parent, prior
+}
+
+type decomposeState struct {
+	parent, prior  *model.Node
+	rows           []int
+	agents, events string
+}
+
+func captureDecomposeState(t *testing.T, st *sqlite.Store, parentID, priorID string) decomposeState {
+	t.Helper()
+	parent, err := st.GetNode(context.Background(), parentID)
+	require.NoError(t, err)
+	require.Equal(t, 1.0, parent.Progress)
+	prior, err := st.GetNode(context.Background(), priorID)
+	require.NoError(t, err)
+	require.Equal(t, 1, sequenceCounterValue(t, st, "TEST:"+parentID))
+	return decomposeState{parent: parent, prior: prior, rows: createRowCounts(t, st), agents: decomposeAgentSnapshot(t, st), events: decomposeEventSnapshot(t, st)}
+}
+
+func assertDecomposeState(t *testing.T, st *sqlite.Store, before decomposeState) {
+	t.Helper()
+	assert.Equal(t, before.rows, createRowCounts(t, st))
+	assert.Equal(t, 1, sequenceCounterValue(t, st, "TEST:"+before.parent.ID))
+	assert.Equal(t, before.agents, decomposeAgentSnapshot(t, st))
+	assert.Equal(t, before.events, decomposeEventSnapshot(t, st))
+	parent, err := st.GetNode(context.Background(), before.parent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before.parent, parent)
+	prior, err := st.GetNode(context.Background(), before.prior.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before.prior, prior)
+}
+
+func assertDecomposeEventOrder(t *testing.T, st *sqlite.Store, ids []string, worker string) {
+	t.Helper()
+	rows, err := st.Query(context.Background(), `SELECT node_id, op_type FROM sync_events WHERE node_id IN ('TEST-1.1', 'TEST-1.2', 'TEST-1.3') ORDER BY rowid`)
+	require.NoError(t, err)
+	defer rows.Close()
+	for _, id := range ids {
+		require.True(t, rows.Next())
+		var nodeID, op string
+		require.NoError(t, rows.Scan(&nodeID, &op))
+		assert.Equal(t, id, nodeID)
+		assert.Equal(t, "create_node", op)
+		if worker != "" {
+			require.True(t, rows.Next())
+			require.NoError(t, rows.Scan(&nodeID, &op))
+			assert.Equal(t, id, nodeID)
+			assert.Equal(t, "claim", op)
+		}
+	}
+	assert.False(t, rows.Next())
+	require.NoError(t, rows.Err())
 }
 
 func decomposeAgentSnapshot(t *testing.T, st *sqlite.Store) string {

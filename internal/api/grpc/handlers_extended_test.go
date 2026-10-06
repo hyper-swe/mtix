@@ -156,7 +156,7 @@ func TestHandleDecompose_NoChildren(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	parent := createTestNode(t, s, "Parent", "DECOMP_EMPTY")
+	parent := createTestNode(t, s, "Parent", "DECOMP-EMPTY")
 
 	_, err := s.HandleDecompose(ctx, parent.ID, "agent-1", nil)
 	require.Error(t, err)
@@ -251,7 +251,7 @@ func TestHandleComment_Addressee(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	created := createTestNode(t, s, "Comment Addressed", "COMMENT_TO")
+	created := createTestNode(t, s, "Comment Addressed", "COMMENT-TO")
 
 	err := s.HandleComment(ctx, created.ID, "ruling: proceed", "reviewer", "worker-7")
 	require.NoError(t, err)
@@ -279,7 +279,7 @@ func TestHandleComment_EmptyText(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	created := createTestNode(t, s, "Comment Empty", "COMMENT_EMPTY")
+	created := createTestNode(t, s, "Comment Empty", "COMMENT-EMPTY")
 
 	err := s.HandleComment(ctx, created.ID, "", "agent-1", "")
 	require.NoError(t, err)
@@ -666,8 +666,8 @@ func TestHandleAddDependency_BlockingDependency(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	nodeA := createTestNode(t, s, "Blocker A", "DEP_ADD")
-	nodeB := createTestNode(t, s, "Blocked B", "DEP_ADD")
+	nodeA := createTestNode(t, s, "Blocker A", "DEP-ADD")
+	nodeB := createTestNode(t, s, "Blocked B", "DEP-ADD")
 
 	dep := &model.Dependency{
 		FromID:  nodeA.ID,
@@ -692,8 +692,8 @@ func TestHandleAddDependency_RelatesTo(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	nodeA := createTestNode(t, s, "Related A", "DEP_RELATES")
-	nodeB := createTestNode(t, s, "Related B", "DEP_RELATES")
+	nodeA := createTestNode(t, s, "Related A", "DEP-RELATES")
+	nodeB := createTestNode(t, s, "Related B", "DEP-RELATES")
 
 	dep := &model.Dependency{
 		FromID:  nodeA.ID,
@@ -717,7 +717,7 @@ func TestHandleAddDependency_InvalidNode(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	nodeA := createTestNode(t, s, "Valid Node", "DEP_INVALID")
+	nodeA := createTestNode(t, s, "Valid Node", "DEP-INVALID")
 
 	dep := &model.Dependency{
 		FromID:  nodeA.ID,
@@ -739,8 +739,8 @@ func TestHandleRemoveDependency_Success(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	nodeA := createTestNode(t, s, "Remover A", "DEP_REM")
-	nodeB := createTestNode(t, s, "Remover B", "DEP_REM")
+	nodeA := createTestNode(t, s, "Remover A", "DEP-REM")
+	nodeB := createTestNode(t, s, "Remover B", "DEP-REM")
 
 	dep := &model.Dependency{
 		FromID:  nodeA.ID,
@@ -767,8 +767,8 @@ func TestHandleRemoveDependency_NotFound(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	nodeA := createTestNode(t, s, "Not Found A", "DEP_NOTFOUND")
-	nodeB := createTestNode(t, s, "Not Found B", "DEP_NOTFOUND")
+	nodeA := createTestNode(t, s, "Not Found A", "DEP-NOTFOUND")
+	nodeB := createTestNode(t, s, "Not Found B", "DEP-NOTFOUND")
 
 	// Try to remove a dependency that doesn't exist.
 	err := s.HandleRemoveDependency(ctx, nodeA.ID, nodeB.ID, model.DepTypeBlocks)
@@ -785,8 +785,8 @@ func TestHandleGetDependencies_ReturnsBlockers(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	nodeA := createTestNode(t, s, "Blocker", "DEP_GET")
-	nodeB := createTestNode(t, s, "Blocked", "DEP_GET")
+	nodeA := createTestNode(t, s, "Blocker", "DEP-GET")
+	nodeB := createTestNode(t, s, "Blocked", "DEP-GET")
 
 	dep := &model.Dependency{
 		FromID:  nodeA.ID,
@@ -807,7 +807,7 @@ func TestHandleGetDependencies_NoDependencies(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	node := createTestNode(t, s, "No Blockers", "DEP_EMPTY")
+	node := createTestNode(t, s, "No Blockers", "DEP-EMPTY")
 
 	deps, err := s.HandleGetDependencies(ctx, node.ID)
 	require.NoError(t, err)
@@ -833,9 +833,9 @@ func TestHandleBulkUpdate_AllSuccess(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	nodeA := createTestNode(t, s, "Bulk A", "BULK_ALL")
-	nodeB := createTestNode(t, s, "Bulk B", "BULK_ALL")
-	nodeC := createTestNode(t, s, "Bulk C", "BULK_ALL")
+	nodeA := createTestNode(t, s, "Bulk A", "BULK-ALL")
+	nodeB := createTestNode(t, s, "Bulk B", "BULK-ALL")
+	nodeC := createTestNode(t, s, "Bulk C", "BULK-ALL")
 
 	titleA := "Updated A"
 	titleB := "Updated B"
@@ -857,7 +857,7 @@ func TestHandleBulkUpdate_PartialFailure(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	nodeA := createTestNode(t, s, "Bulk Part", "BULK_PART")
+	nodeA := createTestNode(t, s, "Bulk Part", "BULK-PART")
 
 	titleA := "Updated"
 	titleBad := "Bad"
@@ -891,7 +891,7 @@ func TestHandleBulkUpdate_OnlyDescription(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	node := createTestNode(t, s, "Desc Node", "BULK_DESC")
+	node := createTestNode(t, s, "Desc Node", "BULK-DESC")
 	desc := "New description"
 
 	updated, failed, err := s.HandleBulkUpdate(ctx, []BulkNodeUpdateReq{

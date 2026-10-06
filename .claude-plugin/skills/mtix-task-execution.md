@@ -117,3 +117,17 @@ Every completed task must have an auditable trail:
 3. Verification evidence (tests passing, acceptance criteria met)
 
 This is not optional — it is the baseline for all MTIX work, aligned with DO-178C, IEC 62304, NASA-STD-8739.8, and MIL-STD-498 standards.
+
+## Watching Task Events
+
+WebSocket subscriptions at `/ws/events` match `under` to the named node and its
+dotted descendants on a `.` boundary: `PROJ-1` includes `PROJ-1` and `PROJ-1.2`,
+but rejects `PROJ-10` and `PROJ-10.2`. Omitted or empty `under` accepts every node.
+A non-empty `events` whitelist must also match; an omitted or empty `events`
+list accepts every event type.
+
+Connect a WebSocket client to the local server's `/ws/events` endpoint and send
+`{"subscribe":{"under":"PROJ-1","events":["node.updated"]}}` to watch updates
+for that task and its descendants. Verify the watch with an event for the named
+task or a child; a lookalike sibling must not appear. If expected events are
+missing, check both `under` and the non-empty event whitelist before retrying.

@@ -6,6 +6,7 @@
 package main
 
 import (
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/mcp"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 func helpDependencyTypes(t *testing.T, cmd *cobra.Command) []string {
@@ -105,8 +107,13 @@ func TestDepAddCmd_TypeHelp_ListsExactlyModelTypes(t *testing.T) {
 }
 
 func TestDepHelp_MCPAndReferenceMatchModelTypes(t *testing.T) {
+	// Registration constructs the real dependency service; supply its required
+	// store without changing cwd or weakening the schema/reference assertions.
+	st, err := sqlite.New(filepath.Join(t.TempDir(), "dep-help.db"), slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	registry := mcp.NewToolRegistry()
-	mcp.RegisterDepTools(registry, nil)
+	mcp.RegisterDepTools(registry, st)
 	seen := 0
 	for _, tool := range registry.List() {
 		if tool.Name != "mtix_dep_add" && tool.Name != "mtix_dep_remove" {

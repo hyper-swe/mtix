@@ -587,26 +587,26 @@ func TestMigrateCmd_Execute_PrintsMessage(t *testing.T) {
 func TestRunInit_InvalidPrefix_ReturnsError(t *testing.T) {
 	err := runInit("invalid_prefix")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid prefix")
+	assert.Contains(t, err.Error(), "invalid project prefix")
 }
 
 // TestRunInit_LowercasePrefix_ReturnsError verifies lowercase rejection.
 func TestRunInit_LowercasePrefix_ReturnsError(t *testing.T) {
 	err := runInit("proj")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid prefix")
+	assert.Contains(t, err.Error(), "invalid project prefix")
 }
 
 // TestRunInit_EmptyPrefix_ReturnsError verifies empty prefix rejection.
 func TestRunInit_EmptyPrefix_ReturnsError(t *testing.T) {
 	err := runInit("")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid prefix")
+	assert.Contains(t, err.Error(), "invalid project prefix")
 }
 
 // TestRunInit_SpecialCharPrefix_ReturnsError verifies special char rejection.
 func TestRunInit_SpecialCharPrefix_ReturnsError(t *testing.T) {
 	err := runInit("PROJ@1")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid prefix")
+	assert.Contains(t, err.Error(), "invalid project prefix")
 }

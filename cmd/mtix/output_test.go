@@ -14,6 +14,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // ============================================================================
@@ -48,12 +50,12 @@ func TestStatusIcon_AllStatuses_ReturnsCorrectIcons(t *testing.T) {
 // TestProgressBar_VariousProgressValues_FormatsCorrectly verifies progress bar rendering.
 func TestProgressBar_VariousProgressValues_FormatsCorrectly(t *testing.T) {
 	tests := []struct {
-		name      string
-		progress  float64
-		width     int
-		wantPct   string
+		name       string
+		progress   float64
+		width      int
+		wantPct    string
 		wantFilled int
-		wantEmpty int
+		wantEmpty  int
 	}{
 		{"zero", 0.0, 5, "0%", 0, 5},
 		{"quarter", 0.25, 4, "25%", 1, 3},
@@ -578,8 +580,8 @@ func TestIsTerminal_RegularFile_ReturnsFalse(t *testing.T) {
 // init.go tests — prefix validation and helpers
 // ============================================================================
 
-// TestPrefixRegex_ValidPrefixes_Matches verifies valid prefix matching.
-func TestPrefixRegex_ValidPrefixes_Matches(t *testing.T) {
+// TestInitPrefix_ValidPrefixes_PassesSharedValidator verifies valid prefix matching.
+func TestInitPrefix_ValidPrefixes_PassesSharedValidator(t *testing.T) {
 	tests := []string{
 		"PROJ",
 		"A",
@@ -591,14 +593,14 @@ func TestPrefixRegex_ValidPrefixes_Matches(t *testing.T) {
 
 	for _, prefix := range tests {
 		t.Run(prefix, func(t *testing.T) {
-			assert.True(t, prefixRegex.MatchString(prefix),
+			assert.NoError(t, model.ValidatePrefix(prefix),
 				"prefix %q should match pattern", prefix)
 		})
 	}
 }
 
-// TestPrefixRegex_InvalidPrefixes_DoesNotMatch verifies invalid prefix rejection.
-func TestPrefixRegex_InvalidPrefixes_DoesNotMatch(t *testing.T) {
+// TestInitPrefix_InvalidPrefixes_ReturnsInvalidInput verifies invalid prefix rejection.
+func TestInitPrefix_InvalidPrefixes_ReturnsInvalidInput(t *testing.T) {
 	tests := []struct {
 		prefix string
 		reason string
@@ -615,7 +617,7 @@ func TestPrefixRegex_InvalidPrefixes_DoesNotMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.reason, func(t *testing.T) {
-			assert.False(t, prefixRegex.MatchString(tt.prefix),
+			assert.ErrorIs(t, model.ValidatePrefix(tt.prefix), model.ErrInvalidInput,
 				"prefix %q should not match (reason: %s)", tt.prefix, tt.reason)
 		})
 	}

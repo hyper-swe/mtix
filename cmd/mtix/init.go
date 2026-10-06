@@ -8,18 +8,15 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"github.com/spf13/cobra"
 
 	"github.com/hyper-swe/mtix/internal/docs"
 	"github.com/hyper-swe/mtix/internal/mcp"
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
-
-// prefixRegex validates project prefixes per FR-2.1a.
-var prefixRegex = regexp.MustCompile(`^[A-Z][A-Z0-9-]{0,19}$`)
 
 // newInitCmd creates the mtix init command per FR-6.3.
 func newInitCmd() *cobra.Command {
@@ -43,12 +40,10 @@ Generates agent documentation in .mtix/docs/.`,
 	return cmd
 }
 
-// runInit implements the mtix init command.
+// runInit implements the mtix init command with shared FR-2.1a validation.
 func runInit(prefix string) error {
-	if !prefixRegex.MatchString(prefix) {
-		return fmt.Errorf(
-			"invalid prefix %q: must match ^[A-Z][A-Z0-9-]{0,19}$", prefix,
-		)
+	if err := model.ValidatePrefix(prefix); err != nil {
+		return err
 	}
 
 	cwd, err := os.Getwd()

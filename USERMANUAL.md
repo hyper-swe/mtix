@@ -93,6 +93,10 @@ The project prefix identifies all nodes (e.g., `MYPROJ-1`, `MYPROJ-1.2.3`). It m
 
 Examples: `PROJ`, `MY-APP`, `TASK1`, `NASA-MCR`
 
+Project prefixes for local create (CLI, REST, gRPC and MCP) and `mtix init` must match `^[A-Z][A-Z0-9-]{0,19}$`: 1–20 uppercase letters, digits or hyphens, starting with a letter. An underscore or other invalid character returns `INVALID_INPUT` (gRPC: `InvalidArgument`) before a node or sequence is written.
+
+CLI, REST and MCP use the configured primary project when no project is supplied; gRPC requires a project. Validation also checks a defaulted project, the CLI child’s inherited project, and the prefix in every child’s parent ID before sequence allocation. A historical parent ID with an underscore cannot receive a new local child even if the caller supplies a valid project; choose a parent with a valid prefix. Historical sync events can retain underscore prefixes for compatibility; local create validation does not change the sync grammar. Correct an invalid project prefix before retrying.
+
 ---
 
 ## Creating and Managing Nodes

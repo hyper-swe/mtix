@@ -590,7 +590,12 @@ func TestMatchesFilter_UnderPrefix(t *testing.T) {
 		{"child match", "PROJ-1", "PROJ-1.2", true},
 		{"deep child", "PROJ-1", "PROJ-1.2.3.4", true},
 		{"no match", "PROJ-1", "PROJ-2", false},
-		{"partial prefix no match", "PROJ-1", "PROJ-10", true}, // prefix match
+		{"partial prefix no match", "PROJ-1", "PROJ-10", false},
+		{"sibling descendants rejected", "PROJ-1", "PROJ-10.2", false},
+		{"nested sibling rejected", "PROJ-1.2", "PROJ-1.20", false},
+		{"nested sibling descendants rejected", "PROJ-1.2", "PROJ-1.20.3", false},
+		{"ancestor rejected", "PROJ-1.2", "PROJ-1", false},
+		{"empty node rejected", "PROJ-1", "", false},
 		{"empty under matches all", "", "PROJ-99", true},
 	}
 

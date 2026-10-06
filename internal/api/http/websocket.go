@@ -149,8 +149,9 @@ func matchesFilter(filter *subscriptionFilter, event service.Event) bool {
 		return true // No filter = all events
 	}
 
-	// Check under prefix filter.
-	if filter.Under != "" && !strings.HasPrefix(event.NodeID, filter.Under) {
+	// Match the node itself or dotted descendants only (FR-7.5a).
+	if filter.Under != "" && event.NodeID != filter.Under &&
+		!strings.HasPrefix(event.NodeID, filter.Under+".") {
 		return false
 	}
 

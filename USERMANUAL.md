@@ -1182,6 +1182,12 @@ The REST API is available at `/api/v1/` when the server is running. All mutation
 
 Connect to `/ws/events` for real-time updates:
 
+WebSocket subscriptions at `/ws/events` match `under` to the named node and its
+dotted descendants on a `.` boundary: `PROJ-1` includes `PROJ-1` and `PROJ-1.2`,
+but rejects `PROJ-10` and `PROJ-10.2`. Omitted or empty `under` accepts every node.
+A non-empty `events` whitelist must also match; an omitted or empty `events`
+list accepts every event type.
+
 ```javascript
 const ws = new WebSocket("ws://127.0.0.1:8377/ws/events");
 

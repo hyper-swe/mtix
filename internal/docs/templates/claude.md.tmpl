@@ -66,6 +66,14 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 - **Use briefing format for analysis** — call `mcp__mtix__mtix_briefing` with multi-value filters instead of writing Python/jq post-processing code. Example: `mtix_briefing(under="PROJ-1,PROJ-2", status="done", type="issue", fields="id,title,prompt")`
 - **Progress checks** — use `mcp__mtix__mtix_progress` to verify rollup before reporting completion
 
+## Watching Task Events
+
+WebSocket subscriptions at `/ws/events` match `under` to the named node and its
+dotted descendants on a `.` boundary: `PROJ-1` includes `PROJ-1` and `PROJ-1.2`,
+but rejects `PROJ-10` and `PROJ-10.2`. Omitted or empty `under` accepts every node.
+A non-empty `events` whitelist must also match; an omitted or empty `events`
+list accepts every event type.
+
 ## Sync
 
 {{ template "sync_section" . }}

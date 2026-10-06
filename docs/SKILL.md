@@ -139,3 +139,17 @@ Safety-critical compliance mapping guides are available in `.claude/skills/refer
 - `iec-62304-checklist.md` — Medical devices (IEC 62304 Class A-C)
 - `nasa-std-8739-checklist.md` — Space systems (NASA-STD-8739.8)
 - `mil-std-498-checklist.md` — Defense (MIL-STD-498)
+
+## Watching Task Events
+
+WebSocket subscriptions at `/ws/events` match `under` to the named node and its
+dotted descendants on a `.` boundary: `PROJ-1` includes `PROJ-1` and `PROJ-1.2`,
+but rejects `PROJ-10` and `PROJ-10.2`. Omitted or empty `under` accepts every node.
+A non-empty `events` whitelist must also match; an omitted or empty `events`
+list accepts every event type.
+
+Connect a WebSocket client to the local server's `/ws/events` endpoint and send
+`{"subscribe":{"under":"PROJ-1","events":["node.updated"]}}` to watch updates
+for that task and its descendants. Verify the watch with an event for the named
+task or a child; a lookalike sibling must not appear. If expected events are
+missing, check both `under` and the non-empty event whitelist before retrying.

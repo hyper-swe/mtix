@@ -12,6 +12,23 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
+// validateIssueTypeEvent validates classification before dedupe or LWW per FR-3.1.
+// Even a held, duplicate or losing event must not bypass payload validity checks.
+func validateIssueTypeEvent(event *model.SyncEvent) error {
+	if event.OpType != model.OpUpdateField {
+		return nil
+	}
+	var payload model.UpdateFieldPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return fmt.Errorf("decode update field payload: %w: %w", err, model.ErrInvalidInput)
+	}
+	if payload.FieldName != "issue_type" {
+		return nil
+	}
+	_, err := decodeIssueTypeUpdate(payload.NewValue)
+	return err
+}
+
 // decodeIssueTypeUpdate validates classification sync updates per FR-3.1.
 // Empty strings clear the field; missing, null and non-string payloads are invalid.
 func decodeIssueTypeUpdate(raw json.RawMessage) (any, error) {

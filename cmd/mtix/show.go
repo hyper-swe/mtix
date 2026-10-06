@@ -268,15 +268,11 @@ func runList(status, under, assignee, nodeType, priority, fields, changedSince, 
 		filter.Status = append(filter.Status, model.Status(s))
 	}
 
-	if len(issueType) > 0 {
-		for _, kind := range splitCSV(issueType[0]) {
-			value := model.IssueType(kind)
-			if err := model.ValidateIssueType(value); err != nil {
-				return fmt.Errorf("invalid --issue-type: %w", err)
-			}
-			filter.IssueType = append(filter.IssueType, value)
-		}
+	classifications, classificationErr := parseListIssueTypes(issueType)
+	if classificationErr != nil {
+		return classificationErr
 	}
+	filter.IssueType = classifications
 
 	fieldsList := splitCSV(fields)
 
@@ -335,6 +331,22 @@ func runList(status, under, assignee, nodeType, priority, fields, changedSince, 
 		out.WriteHuman("\n(%d of %d shown)\n", len(nodes), total)
 	}
 	return nil
+}
+
+// parseListIssueTypes validates work filters independently of hierarchy per FR-17.1.
+func parseListIssueTypes(values []string) ([]model.IssueType, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	var kinds []model.IssueType
+	for _, kind := range splitCSV(values[0]) {
+		value := model.IssueType(kind)
+		if validationErr := model.ValidateIssueType(value); validationErr != nil {
+			return nil, fmt.Errorf("invalid --issue-type: %w", validationErr)
+		}
+		kinds = append(kinds, value)
+	}
+	return kinds, nil
 }
 
 // runTree displays an ASCII tree with status icons and connectors per FR-9.3.

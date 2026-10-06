@@ -39,7 +39,7 @@ import (
 // Returns held=false, having written nothing, for an event this replica does
 // not hold; the caller then applies it through dispatchWithLWW (field LWW,
 // or the workflow winner rule for workflow events, MTIX-95.10).
-func acknowledgeHeldEvent(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) (bool, error) {
+func (a syncApplier) acknowledgeHeldEvent(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) (bool, error) {
 	local, err := readHeldEvent(ctx, tx, event.EventID)
 	if err != nil {
 		return false, fmt.Errorf("apply %s: own-event check: %w", event.EventID, err)
@@ -53,7 +53,7 @@ func acknowledgeHeldEvent(ctx context.Context, tx *sql.Tx, event *model.SyncEven
 	if err := mergeVectorClock(ctx, tx, local.AuthorID, local.VectorClock); err != nil {
 		return true, fmt.Errorf("apply %s: held event: merge VC: %w", event.EventID, err)
 	}
-	if err := recordApplied(ctx, tx, local); err != nil {
+	if err := a.recordApplied(ctx, tx, local); err != nil {
 		return true, fmt.Errorf("apply %s: held event: record applied: %w", event.EventID, err)
 	}
 	return true, nil

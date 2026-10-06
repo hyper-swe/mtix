@@ -390,9 +390,11 @@ func (s *Store) readExistingSchemaVersion(ctx context.Context) (int, error) {
 }
 
 // SetClock overrides the clock function used by the store.
-// Intended for testing to inject deterministic timestamps.
+// It controls local writes and sync replay apply timestamps. Event timestamps
+// and ordering retain their original meaning. A nil clock restores time.Now.
+// Call once before using the store; changing it concurrently is not safe.
 func (s *Store) SetClock(clock func() time.Time) {
-	s.clock = clock
+	s.clock = clockOrDefault(clock)
 }
 
 // Close closes both the read and write database connections.
@@ -459,4 +461,12 @@ func (s *Store) UpdateProgress(ctx context.Context, id string, progress float64)
 		}
 		return nil
 	})
+}
+
+// clockOrDefault preserves default time for existing free mutation callers.
+func clockOrDefault(clocks ...func() time.Time) func() time.Time {
+	if len(clocks) > 0 && clocks[0] != nil {
+		return clocks[0]
+	}
+	return time.Now
 }

@@ -137,7 +137,7 @@ func isResolvingStatus(s model.Status) bool {
 // _ = author is reserved for a future enhancement that records the
 // auto-unblock author in the activity stream; today the activity
 // entry is written by autoUnblockNode without an explicit author.
-func unblockDependents(ctx context.Context, tx *sql.Tx, resolvedID, author string) error {
+func unblockDependents(ctx context.Context, tx *sql.Tx, resolvedID, author string, clocks ...func() time.Time) error {
 	_ = author
 	rows, err := tx.QueryContext(ctx,
 		`SELECT to_id FROM dependencies
@@ -164,7 +164,7 @@ func unblockDependents(ctx context.Context, tx *sql.Tx, resolvedID, author strin
 	}
 
 	for _, dependentID := range dependentIDs {
-		if err := autoUnblockNode(ctx, tx, dependentID); err != nil {
+		if err := autoUnblockNode(ctx, tx, dependentID, clocks...); err != nil {
 			return fmt.Errorf("unblock %s: %w", dependentID, err)
 		}
 	}

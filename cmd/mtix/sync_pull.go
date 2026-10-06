@@ -326,6 +326,7 @@ func applyPullBatch(ctx context.Context, in pullIngest, store *sqlite.Store, sou
 		return nil, err
 	}
 	var held heldEvents
+	in.apply = store.IdempotentApply
 	err := store.WithTx(ctx, func(tx *sql.Tx) error {
 		held = heldEvents{}
 		for _, e := range events {

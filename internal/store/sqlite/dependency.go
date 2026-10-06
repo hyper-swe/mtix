@@ -156,7 +156,7 @@ func (s *Store) GetBlockers(ctx context.Context, nodeID string) ([]*model.Depend
 // autoBlockNode auto-sets a node to blocked if it's open or in_progress per FR-3.8.
 // Saves previous_status for auto-restore.
 // Does NOT auto-block deferred, done, canceled, or invalidated nodes.
-func autoBlockNode(ctx context.Context, tx *sql.Tx, nodeID string) error {
+func autoBlockNode(ctx context.Context, tx *sql.Tx, nodeID string, clocks ...func() time.Time) error {
 	var currentStatus string
 	err := tx.QueryRowContext(ctx,
 		`SELECT status FROM nodes WHERE id = ? AND deleted_at IS NULL`,
@@ -181,7 +181,7 @@ func autoBlockNode(ctx context.Context, tx *sql.Tx, nodeID string) error {
 		return nil
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := clockOrDefault(clocks...)().UTC().Format(time.RFC3339)
 	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET status = ?, previous_status = ?, updated_at = ?
 		 WHERE id = ? AND deleted_at IS NULL`,
@@ -196,7 +196,7 @@ func autoBlockNode(ctx context.Context, tx *sql.Tx, nodeID string) error {
 
 // autoUnblockNode checks if a blocked node has no more unresolved blockers
 // and auto-restores it to previous_status per FR-3.8.
-func autoUnblockNode(ctx context.Context, tx *sql.Tx, nodeID string) error {
+func autoUnblockNode(ctx context.Context, tx *sql.Tx, nodeID string, clocks ...func() time.Time) error {
 	var currentStatus, previousStatus sql.NullString
 	err := tx.QueryRowContext(ctx,
 		`SELECT status, previous_status FROM nodes
@@ -241,18 +241,18 @@ func autoUnblockNode(ctx context.Context, tx *sql.Tx, nodeID string) error {
 		return nil // Still has unresolved blockers.
 	}
 
-	return restoreUnblockedNode(ctx, tx, nodeID, previousStatus)
+	return restoreUnblockedNode(ctx, tx, nodeID, previousStatus, clocks...)
 }
 
 // restoreUnblockedNode preserves the existing checked unblock event path.
-func restoreUnblockedNode(ctx context.Context, tx *sql.Tx, nodeID string, previousStatus sql.NullString) error {
+func restoreUnblockedNode(ctx context.Context, tx *sql.Tx, nodeID string, previousStatus sql.NullString, clocks ...func() time.Time) error {
 	// Restore to previous_status.
 	restoreTo := model.StatusOpen
 	if previousStatus.Valid && previousStatus.String != "" {
 		restoreTo = model.Status(previousStatus.String)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := clockOrDefault(clocks...)().UTC().Format(time.RFC3339)
 	_, err := tx.ExecContext(ctx,
 		`UPDATE nodes SET status = ?, previous_status = NULL, updated_at = ?
 		 WHERE id = ? AND deleted_at IS NULL`,

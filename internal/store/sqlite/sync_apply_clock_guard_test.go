@@ -8,8 +8,10 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -30,6 +32,7 @@ func TestSyncApplyClockGuard_ProductionPaths_NoDirectOrAliasedNow(t *testing.T) 
 		require.NoError(t, err)
 		file, err := parser.ParseFile(token.NewFileSet(), path, raw, 0)
 		require.NoError(t, err)
+		siblings := clockPackageFiles(t, path, file.Name.Name)
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {
@@ -38,7 +41,7 @@ func TestSyncApplyClockGuard_ProductionPaths_NoDirectOrAliasedNow(t *testing.T) 
 			if path == "dependency.go" && fn.Name.Name != "autoBlockNode" && fn.Name.Name != "autoUnblockNode" && fn.Name.Name != "restoreUnblockedNode" {
 				continue
 			}
-			require.Empty(t, directClockCalls(file, fn.Body), "%s:%s must use the injected clock", path, fn.Name.Name)
+			require.Empty(t, directClockCalls(file, fn.Body, siblings...), "%s:%s must use the injected clock", path, fn.Name.Name)
 		}
 	}
 }
@@ -108,31 +111,52 @@ func clockAliasBindings(node ast.Node) ([]*ast.Ident, []ast.Expr) {
 	return nil, nil
 }
 
-func packageClockScope(file *ast.File, imports map[string]bool) *clockScope {
+func packageClockScope(files ...*ast.File) *clockScope {
 	scope := &clockScope{aliases: map[string]bool{}}
-	// Monotone over finite package bindings, including forward alias references.
+	// Monotone over finite package bindings, including forward sibling aliases.
 	for changed := true; changed; {
 		changed = false
-		for _, decl := range file.Decls {
-			gen, ok := decl.(*ast.GenDecl)
-			if !ok || gen.Tok != token.VAR {
-				continue
-			}
-			for _, spec := range gen.Specs {
-				names, values := clockAliasBindings(spec)
-				for i, value := range values {
-					if i >= len(names) {
-						continue
-					}
-					name := names[i].Name
-					if !scope.aliases[name] && clockReference(value, imports, scope) {
-						scope.aliases[name], changed = true, true
+		for _, file := range files {
+			imports := clockImports(file)
+			for _, decl := range file.Decls {
+				gen, ok := decl.(*ast.GenDecl)
+				if !ok || gen.Tok != token.VAR {
+					continue
+				}
+				for _, spec := range gen.Specs {
+					names, values := clockAliasBindings(spec)
+					for i, value := range values {
+						if i >= len(names) {
+							continue
+						}
+						name := names[i].Name
+						if !scope.aliases[name] && clockReference(value, imports, scope) {
+							scope.aliases[name], changed = true, true
+						}
 					}
 				}
 			}
 		}
 	}
 	return scope
+}
+
+func clockPackageFiles(t *testing.T, path, pkg string) []*ast.File {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(filepath.Dir(path), "*.go"))
+	require.NoError(t, err)
+	var files []*ast.File
+	for _, sibling := range paths {
+		if strings.HasSuffix(sibling, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), sibling, nil, 0)
+		require.NoError(t, err)
+		if file.Name.Name == pkg {
+			files = append(files, file)
+		}
+	}
+	return files
 }
 
 func scanClockNode(node ast.Node, imports map[string]bool, scope *clockScope, hits *[]token.Pos) {
@@ -179,9 +203,9 @@ func scanClockNode(node ast.Node, imports map[string]bool, scope *clockScope, hi
 	})
 }
 
-func directClockCalls(file *ast.File, body ast.Node) []token.Pos {
+func directClockCalls(file *ast.File, body ast.Node, siblings ...*ast.File) []token.Pos {
 	imports := clockImports(file)
-	scope := packageClockScope(file, imports)
+	scope := packageClockScope(append(siblings, file)...)
 	var hits []token.Pos
 	if body == file {
 		for _, decl := range file.Decls {
@@ -220,5 +244,60 @@ func TestSyncApplyClockGuard_OrdinaryCallsAndAliases(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, directClockCalls(file, file), tt.want)
 		})
+	}
+}
+
+// Compile the sibling packages before asking the existing production guard to
+// reject their ordinary aliases. Each file keeps its own import spelling.
+func TestSyncApplyClockGuard_CrossFilePackageAliases(t *testing.T) {
+	for _, target := range []string{"sqlite", "transport", "sqlite-independent-import", "transport-independent-import"} {
+		t.Run(target, func(t *testing.T) {
+			root := t.TempDir()
+			writeClockPackageFixture(t, root, target)
+			compile := exec.Command("go", "test", "./...")
+			compile.Dir = root
+			output, err := compile.CombinedOutput()
+			require.NoError(t, err, "fixture must compile: %s", output)
+			guard := exec.Command(os.Args[0], "-test.run=^TestSyncApplyClockGuard_ProductionPaths_NoDirectOrAliasedNow$")
+			guard.Dir = filepath.Join(root, "sqlite")
+			output, err = guard.CombinedOutput()
+			if strings.HasSuffix(target, "-independent-import") {
+				require.NoError(t, err, "declaring-file imports must remain independent: %s", output)
+			} else {
+				require.Error(t, err, "compiled sibling alias escaped production guard: %s", output)
+				require.Contains(t, string(output), "must use the injected clock")
+			}
+		})
+	}
+}
+
+func writeClockPackageFixture(t *testing.T, root, target string) {
+	t.Helper()
+	files := map[string]string{
+		"go.mod":                              "module guardfixture\n\ngo 1.26.0\n",
+		"sqlite/dependency.go":                "package sqlite\n",
+		"sqlite/sync_apply.go":                "package sqlite\nfunc recordApplied() {}\n",
+		"postgres/transport/push_presence.go": "package transport\nfunc pushEvents() {}\n",
+	}
+	independent := strings.HasSuffix(target, "-independent-import")
+	target = strings.TrimSuffix(target, "-independent-import")
+	dir, protected := "sqlite", "sync_apply.go"
+	if target == "transport" {
+		dir, protected = "postgres/transport", "push_presence.go"
+	}
+	pkg := "package " + target + "\n"
+	files[dir+"/store.go"] = pkg + "import tm `time`\nvar siblingClock = tm.Now\n"
+	files[dir+"/alias.go"] = pkg + "var forwardClock = finalClock\nvar finalClock = siblingClock\n"
+	files[dir+"/"+protected] = pkg + "func applyClock() { local := forwardClock; _ = local() }\n"
+	if independent {
+		files["other/clock.go"] = "package other\nfunc Now() int { return 1 }\n"
+		files[dir+"/alias.go"] = pkg + "import tm \"guardfixture/other\"\nvar unrelatedClock = tm.Now\n"
+		files[dir+"/"+protected] = pkg + "func applyClock() { _ = unrelatedClock() }\n"
+	}
+	// The other package's imports and aliases must not leak into this package.
+	for path, raw := range files {
+		full := filepath.Join(root, path)
+		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o700))
+		require.NoError(t, os.WriteFile(full, []byte(raw), 0o600))
 	}
 }

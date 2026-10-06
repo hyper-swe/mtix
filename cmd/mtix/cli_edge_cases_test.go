@@ -132,14 +132,14 @@ func TestInitApp_InfoLogLevel_SetsInfo(t *testing.T) {
 func TestRunInit_TooLongPrefix_ReturnsError(t *testing.T) {
 	err := runInit("ABCDEFGHIJKLMNOPQRSTU") // 21 chars
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid prefix")
+	assert.Contains(t, err.Error(), "invalid project prefix")
 }
 
 // TestRunInit_StartsWithDigit_ReturnsError verifies digit-starting prefix rejection.
 func TestRunInit_StartsWithDigit_ReturnsError(t *testing.T) {
 	err := runInit("1PROJ")
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid prefix")
+	assert.Contains(t, err.Error(), "invalid project prefix")
 }
 
 // TestRunInit_ValidPrefix_AlreadyInit_ReturnsError verifies re-init detection.

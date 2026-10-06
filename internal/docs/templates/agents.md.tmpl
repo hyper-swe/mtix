@@ -7,6 +7,8 @@
 
 `mtix create --type` accepts bug, feature, task, chore, refactor, test or doc (omitted = unset), independently of depth-derived hierarchy; `--assign <agent>` claims atomically as `in_progress`, overrides parent auto-claim and preserves the creator as author. MCP/REST/gRPC use `issue_type` and `assignee`. See the planning skill for the full routine.
 
+Project prefixes for local create (CLI, REST, gRPC and MCP) and `mtix init` must match `^[A-Z][A-Z0-9-]{0,19}$`: 1–20 uppercase letters, digits or hyphens, starting with a letter. An underscore or other invalid character returns `INVALID_INPUT` (gRPC: `InvalidArgument`) before a node or sequence is written.
+
 
 ## Overview
 

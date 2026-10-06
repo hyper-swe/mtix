@@ -108,7 +108,8 @@ func (svc *NodeService) FlushSettlement(ctx context.Context) {
 }
 
 // CreateNode creates a new node with validation, ID generation, and event broadcast.
-// Implements FR-3.1 (field validation), FR-3.9 (terminal parent rejection),
+// Implements FR-2.1a (project prefix validation), FR-3.1 (field validation),
+// FR-3.9 (terminal parent rejection),
 // FR-11.2a (auto-claim), and FR-2.7 (atomic sequence for ID generation).
 //
 // Distributed identity (ADR-003 §4 / MTIX-30.3): the trailing number is claimed
@@ -248,7 +249,8 @@ func (svc *NodeService) TransitionStatus(
 	return nil
 }
 
-// validateCreateRequest checks the CreateNodeRequest for correctness per FR-3.1.
+// validateCreateRequest checks fields per FR-3.1 and the shared prefix grammar
+// per FR-2.1a before sequence allocation or any persistence.
 func (svc *NodeService) validateCreateRequest(req *CreateNodeRequest) error {
 	if err := model.ValidateIssueType(req.IssueType); err != nil {
 		return err
@@ -266,8 +268,8 @@ func (svc *NodeService) validateCreateRequest(req *CreateNodeRequest) error {
 	if len(req.Prompt) > model.MaxPromptSize {
 		return fmt.Errorf("prompt exceeds maximum size: %w", model.ErrInvalidInput)
 	}
-	if req.Project == "" {
-		return fmt.Errorf("project is required: %w", model.ErrInvalidInput)
+	if err := model.ValidatePrefix(req.Project); err != nil {
+		return err
 	}
 	return nil
 }

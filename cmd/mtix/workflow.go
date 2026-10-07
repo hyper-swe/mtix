@@ -26,19 +26,19 @@ func newClaimCmd() *cobra.Command {
 		}),
 	}
 
-	cmd.Flags().StringVar(&agentID, "agent", "", "Agent ID (required)")
+	cmd.Flags().StringVar(&agentID, "agent", "", "Agent ID (required); nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters")
 	_ = cmd.MarkFlagRequired("agent")
 
 	return cmd
 }
 
 func runClaim(id, agentID string) error {
-	if app.store == nil {
+	if app.nodeSvc == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
 
 	ctx := mutationContext()
-	if err := app.store.ClaimNode(ctx, id, agentID); err != nil {
+	if err := app.nodeSvc.ClaimNode(ctx, id, agentID); err != nil {
 		return err
 	}
 
@@ -72,12 +72,12 @@ func newUnclaimCmd() *cobra.Command {
 }
 
 func runUnclaim(id, reason string) error {
-	if app.store == nil {
+	if app.nodeSvc == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
 
 	ctx := mutationContext()
-	if err := app.store.UnclaimNode(ctx, id, reason, "cli"); err != nil {
+	if err := app.nodeSvc.UnclaimNode(ctx, id, reason, "cli"); err != nil {
 		return err
 	}
 

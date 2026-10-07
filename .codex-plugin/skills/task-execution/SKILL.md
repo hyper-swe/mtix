@@ -5,6 +5,8 @@ description: Execute mtix tasks using the context chain. Claim tasks, read assem
 
 # Task Execution with mtix
 
+Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim and unclaim keep their existing required/default actor rules. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
+
 ## Before Starting Any Work
 
 1. Run `mtix ready` to find tasks available for pickup

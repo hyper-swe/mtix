@@ -25,7 +25,7 @@ func createToolDefinition() ToolDef {
 			"acceptance":  {Type: "string", Description: "Acceptance criteria"},
 			"priority":    {Type: "number", Description: "Priority 1-5 (1=critical)"},
 			"issue_type":  {Type: "string", Description: "Work classification (omitted = unset)", Enum: issueTypeEnums()},
-			"assignee":    {Type: "string", Description: "Atomically claim the new node for this agent/user; creator is independent"},
+			"assignee":    {Type: "string", Description: "Atomically claim the new node for this agent/user; creator is independent; empty means no explicit assignment (parent auto-claim still applies); nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters"},
 			"creator":     {Type: "string", Description: "Author of the new node (defaults to mcp)"},
 		}},
 	}

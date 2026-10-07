@@ -13,6 +13,9 @@ import (
 
 // ClaimNode claims work atomically and broadcasts its successful change per FR-10.4.
 func (svc *NodeService) ClaimNode(ctx context.Context, id, agent string) error {
+	if err := validateAgentID(agent); err != nil {
+		return err
+	}
 	if err := svc.store.ClaimNode(ctx, id, agent); err != nil {
 		return wrapAPIOperation(fmt.Sprintf("claim node %s", id), err)
 	}
@@ -22,6 +25,9 @@ func (svc *NodeService) ClaimNode(ctx context.Context, id, agent string) error {
 
 // ForceReclaimNode reclaims stale-agent work per FR-10.4a.
 func (svc *NodeService) ForceReclaimNode(ctx context.Context, id, agent string, threshold time.Duration) error {
+	if err := validateAgentID(agent); err != nil {
+		return err
+	}
 	if err := svc.store.ForceReclaimNode(ctx, id, agent, threshold); err != nil {
 		return wrapAPIOperation(fmt.Sprintf("reclaim node %s", id), err)
 	}
@@ -31,6 +37,9 @@ func (svc *NodeService) ForceReclaimNode(ctx context.Context, id, agent string, 
 
 // UnclaimNode releases an assignment with its reason per FR-10.4.
 func (svc *NodeService) UnclaimNode(ctx context.Context, id, reason, author string) error {
+	if err := validateAgentID(author); err != nil {
+		return err
+	}
 	if err := svc.store.UnclaimNode(ctx, id, reason, author); err != nil {
 		return wrapAPIOperation(fmt.Sprintf("unclaim node %s", id), err)
 	}

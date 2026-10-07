@@ -185,7 +185,13 @@ func (svc *NodeService) GetNode(ctx context.Context, id string) (*model.Node, er
 
 // UpdateNode applies partial updates with validation and event broadcast per FR-3.1.
 // An omitted IssueType preserves classification; an empty value clears it.
+// An omitted Assignee preserves assignment; an empty value clears it.
 func (svc *NodeService) UpdateNode(ctx context.Context, id string, updates *store.NodeUpdate) error {
+	if updates.Assignee != nil {
+		if err := validateAgentID(*updates.Assignee); err != nil {
+			return fmt.Errorf("update assignee: %w", err)
+		}
+	}
 	if updates.IssueType != nil {
 		if err := model.ValidateIssueType(*updates.IssueType); err != nil {
 			return fmt.Errorf("update issue type: %w", err)
@@ -256,6 +262,9 @@ func (svc *NodeService) TransitionStatus(
 // validateCreateRequest checks fields per FR-3.1 and the shared prefix grammar
 // per FR-2.1a before sequence allocation or any persistence.
 func (svc *NodeService) validateCreateRequest(req *CreateNodeRequest) error {
+	if err := validateAgentID(req.Assignee); err != nil {
+		return err
+	}
 	if err := model.ValidateIssueType(req.IssueType); err != nil {
 		return err
 	}

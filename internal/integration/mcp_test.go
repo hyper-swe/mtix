@@ -46,12 +46,12 @@ func setupMCPEnv(t *testing.T) (*mcp.Server, *mcp.ToolRegistry) {
 	require.NoError(t, err)
 
 	reg := mcp.NewToolRegistry()
-	mcp.RegisterNodeTools(reg, nodeSvc, st)
-	mcp.RegisterWorkflowTools(reg, nodeSvc, st, bgSvc)
+	mcp.RegisterNodeTools(reg, nodeSvc)
+	mcp.RegisterWorkflowTools(reg, nodeSvc, bgSvc)
 	mcp.RegisterContextTools(reg, ctxSvc, promptSvc)
-	mcp.RegisterDepTools(reg, st)
+	mcp.RegisterDepTools(reg, service.NewDependencyServiceFromNodeService(nodeSvc))
 	mcp.RegisterSessionTools(reg, sessionSvc, agentSvc)
-	mcp.RegisterAnalyticsTools(reg, st, agentSvc, configSvc)
+	mcp.RegisterAnalyticsTools(reg, nodeSvc, agentSvc, configSvc)
 	mcp.RegisterDocsTools(reg)
 
 	var input bytes.Buffer

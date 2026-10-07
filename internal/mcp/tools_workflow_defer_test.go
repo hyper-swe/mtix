@@ -31,7 +31,7 @@ func newDeferToolEnv(t *testing.T, opts ...ToolOption) (*ToolRegistry, *sqlite.S
 	nodeSvc := service.NewNodeService(s, nil, nil, nil, clock)
 	bgSvc := service.NewBackgroundService(s, nil, nil, clock)
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, nodeSvc, s, bgSvc, opts...)
+	RegisterWorkflowTools(reg, nodeSvc, bgSvc, opts...)
 	return reg, s
 }
 

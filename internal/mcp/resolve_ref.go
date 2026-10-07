@@ -9,15 +9,8 @@ import (
 	"fmt"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 )
-
-// nodeRefResolver is the slice of the store MCP reference resolution needs: a
-// node fetch plus the uid resolver from MTIX-30.1 (ADR-003 §5). store.Store
-// satisfies it.
-type nodeRefResolver interface {
-	GetNode(ctx context.Context, id string) (*model.Node, error)
-	ResolveDisplayPathByUID(ctx context.Context, uid string) (string, error)
-}
 
 // resolveNodeRef resolves an MCP node reference to its live node, routing
 // through the durable uid so a stale-but-renamed reference still resolves
@@ -30,7 +23,7 @@ type nodeRefResolver interface {
 // the normal case; this only adds tolerance, it does not change the surface.
 //
 // Returns model.ErrNotFound if neither path resolves.
-func resolveNodeRef(ctx context.Context, r nodeRefResolver, ref string) (*model.Node, error) {
+func resolveNodeRef(ctx context.Context, r *service.NodeService, ref string) (*model.Node, error) {
 	if ref == "" {
 		return nil, fmt.Errorf("node reference is required: %w", model.ErrInvalidInput)
 	}

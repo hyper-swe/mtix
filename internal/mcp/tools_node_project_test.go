@@ -43,7 +43,7 @@ func callTool(t *testing.T, reg *ToolRegistry, name, args string) *ToolsCallResu
 func TestListTool_ProjectArg_ScopesToProject(t *testing.T) {
 	st := &projectCaptureStore{}
 	reg := NewToolRegistry()
-	registerListTool(reg, st, "MTIX")
+	registerListTool(reg, testReadNodeService(st), "MTIX")
 
 	res := callTool(t, reg, "mtix_list", `{"project":"OPS"}`)
 	assert.False(t, res.IsError)
@@ -53,7 +53,7 @@ func TestListTool_ProjectArg_ScopesToProject(t *testing.T) {
 func TestListTool_ProjectAll_SpansEveryProject(t *testing.T) {
 	st := &projectCaptureStore{}
 	reg := NewToolRegistry()
-	registerListTool(reg, st, "MTIX")
+	registerListTool(reg, testReadNodeService(st), "MTIX")
 
 	res := callTool(t, reg, "mtix_list", `{"project":"all"}`)
 	assert.False(t, res.IsError)
@@ -63,7 +63,7 @@ func TestListTool_ProjectAll_SpansEveryProject(t *testing.T) {
 func TestListTool_OmittedProject_UsesPrimary(t *testing.T) {
 	st := &projectCaptureStore{}
 	reg := NewToolRegistry()
-	registerListTool(reg, st, "MTIX")
+	registerListTool(reg, testReadNodeService(st), "MTIX")
 
 	res := callTool(t, reg, "mtix_list", `{}`)
 	assert.False(t, res.IsError)
@@ -73,7 +73,7 @@ func TestListTool_OmittedProject_UsesPrimary(t *testing.T) {
 func TestSearchTool_ProjectArg_ScopesToProject(t *testing.T) {
 	st := &projectCaptureStore{}
 	reg := NewToolRegistry()
-	registerSearchTool(reg, st, "MTIX")
+	registerSearchTool(reg, testReadNodeService(st), "MTIX")
 
 	res := callTool(t, reg, "mtix_search", `{"project":"OPS"}`)
 	assert.False(t, res.IsError)
@@ -83,7 +83,7 @@ func TestSearchTool_ProjectArg_ScopesToProject(t *testing.T) {
 func TestSearchTool_ProjectAll_SpansEveryProject(t *testing.T) {
 	st := &projectCaptureStore{}
 	reg := NewToolRegistry()
-	registerSearchTool(reg, st, "MTIX")
+	registerSearchTool(reg, testReadNodeService(st), "MTIX")
 
 	res := callTool(t, reg, "mtix_search", `{"project":"all"}`)
 	assert.False(t, res.IsError)
@@ -93,7 +93,7 @@ func TestSearchTool_ProjectAll_SpansEveryProject(t *testing.T) {
 func TestSearchTool_OmittedProject_UsesPrimary(t *testing.T) {
 	st := &projectCaptureStore{}
 	reg := NewToolRegistry()
-	registerSearchTool(reg, st, "MTIX")
+	registerSearchTool(reg, testReadNodeService(st), "MTIX")
 
 	res := callTool(t, reg, "mtix_search", `{}`)
 	assert.False(t, res.IsError)
@@ -103,7 +103,7 @@ func TestSearchTool_OmittedProject_UsesPrimary(t *testing.T) {
 func TestBriefingTool_ProjectArg_ScopesToProject(t *testing.T) {
 	st := &projectCaptureStore{}
 	reg := NewToolRegistry()
-	registerBriefingTool(reg, st, "MTIX")
+	registerBriefingTool(reg, testReadNodeService(st), "MTIX")
 
 	res := callTool(t, reg, "mtix_briefing", `{"project":"OPS"}`)
 	assert.False(t, res.IsError)
@@ -113,7 +113,7 @@ func TestBriefingTool_ProjectArg_ScopesToProject(t *testing.T) {
 func TestBriefingTool_ProjectAll_SpansEveryProject(t *testing.T) {
 	st := &projectCaptureStore{}
 	reg := NewToolRegistry()
-	registerBriefingTool(reg, st, "MTIX")
+	registerBriefingTool(reg, testReadNodeService(st), "MTIX")
 
 	res := callTool(t, reg, "mtix_briefing", `{"project":"all"}`)
 	assert.False(t, res.IsError)
@@ -123,7 +123,7 @@ func TestBriefingTool_ProjectAll_SpansEveryProject(t *testing.T) {
 func TestBriefingTool_OmittedProject_UsesPrimary(t *testing.T) {
 	st := &projectCaptureStore{}
 	reg := NewToolRegistry()
-	registerBriefingTool(reg, st, "MTIX")
+	registerBriefingTool(reg, testReadNodeService(st), "MTIX")
 
 	res := callTool(t, reg, "mtix_briefing", `{}`)
 	assert.False(t, res.IsError)

@@ -582,7 +582,7 @@ func newTestPromptService() *service.PromptService {
 // TestRegisterNodeTools_RegistersExpectedTools verifies node tool registration count and names.
 func TestRegisterNodeTools_RegistersExpectedTools(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 
 	expectedNames := []string{
 		"mtix_create", "mtix_show", "mtix_list", "mtix_briefing",
@@ -603,7 +603,7 @@ func TestRegisterNodeTools_RegistersExpectedTools(t *testing.T) {
 // TestRegisterWorkflowTools_RegistersExpectedTools verifies workflow tool registration.
 func TestRegisterWorkflowTools_RegistersExpectedTools(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	expectedNames := []string{
 		"mtix_claim", "mtix_unclaim", "mtix_done", "mtix_defer",
@@ -646,7 +646,7 @@ func TestRegisterSessionTools_RegistersExpectedTools(t *testing.T) {
 // TestRegisterAnalyticsTools_RegistersExpectedTools verifies analytics tool registration.
 func TestRegisterAnalyticsTools_RegistersExpectedTools(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterAnalyticsTools(reg, &mcpMockStore{}, newTestAgentService(), newTestConfigService())
+	RegisterAnalyticsTools(reg, testReadNodeService(&mcpMockStore{}), newTestAgentService(), newTestConfigService())
 
 	expectedNames := []string{
 		"mtix_stats", "mtix_progress", "mtix_stale", "mtix_orphans",
@@ -686,7 +686,7 @@ func TestRegisterContextTools_RegistersExpectedTools(t *testing.T) {
 // TestRegisterDepTools_RegistersExpectedTools verifies dependency tool registration.
 func TestRegisterDepTools_RegistersExpectedTools(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterDepTools(reg, &mcpMockStore{})
+	RegisterDepTools(reg, testDependencyService(&mcpMockStore{}))
 
 	expectedNames := []string{
 		"mtix_dep_add", "mtix_dep_remove", "mtix_dep_show",
@@ -710,7 +710,7 @@ func TestRegisterDepTools_RegistersExpectedTools(t *testing.T) {
 // TestDepAddTool_WithValidArgs_Succeeds verifies dep_add handler happy path.
 func TestDepAddTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterDepTools(reg, &mcpMockStore{})
+	RegisterDepTools(reg, testDependencyService(&mcpMockStore{}))
 
 	args := json.RawMessage(`{"from_id":"A-1","to_id":"A-2","dep_type":"blocks"}`)
 	result, err := reg.Call(context.Background(), "mtix_dep_add", args)
@@ -722,7 +722,7 @@ func TestDepAddTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestDepAddTool_WithInvalidJSON_ReturnsError verifies dep_add parse error.
 func TestDepAddTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterDepTools(reg, &mcpMockStore{})
+	RegisterDepTools(reg, testDependencyService(&mcpMockStore{}))
 
 	args := json.RawMessage(`{invalid}`)
 	_, err := reg.Call(context.Background(), "mtix_dep_add", args)
@@ -733,7 +733,7 @@ func TestDepAddTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 // TestDepRemoveTool_WithValidArgs_Succeeds verifies dep_remove handler happy path.
 func TestDepRemoveTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterDepTools(reg, &mcpMockStore{})
+	RegisterDepTools(reg, testDependencyService(&mcpMockStore{}))
 
 	args := json.RawMessage(`{"from_id":"A-1","to_id":"A-2","dep_type":"blocks"}`)
 	result, err := reg.Call(context.Background(), "mtix_dep_remove", args)
@@ -745,7 +745,7 @@ func TestDepRemoveTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestDepRemoveTool_WithInvalidJSON_ReturnsError verifies dep_remove parse error.
 func TestDepRemoveTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterDepTools(reg, &mcpMockStore{})
+	RegisterDepTools(reg, testDependencyService(&mcpMockStore{}))
 
 	args := json.RawMessage(`not-json`)
 	_, err := reg.Call(context.Background(), "mtix_dep_remove", args)
@@ -756,7 +756,7 @@ func TestDepRemoveTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 // TestDepShowTool_WithValidArgs_Succeeds verifies dep_show handler happy path.
 func TestDepShowTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterDepTools(reg, &mcpMockStore{})
+	RegisterDepTools(reg, testDependencyService(&mcpMockStore{}))
 
 	args := json.RawMessage(`{"id":"A-1"}`)
 	result, err := reg.Call(context.Background(), "mtix_dep_show", args)
@@ -767,7 +767,7 @@ func TestDepShowTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestDepShowTool_WithInvalidJSON_ReturnsError verifies dep_show parse error.
 func TestDepShowTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterDepTools(reg, &mcpMockStore{})
+	RegisterDepTools(reg, testDependencyService(&mcpMockStore{}))
 
 	args := json.RawMessage(`not-json`)
 	_, err := reg.Call(context.Background(), "mtix_dep_show", args)
@@ -782,7 +782,7 @@ func TestDepShowTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 // TestClaimTool_WithValidArgs_Succeeds verifies claim handler happy path.
 func TestClaimTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	args := json.RawMessage(`{"id":"TEST-1","agent_id":"agent-1"}`)
 	result, err := reg.Call(context.Background(), "mtix_claim", args)
@@ -794,7 +794,7 @@ func TestClaimTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestClaimTool_WithInvalidJSON_ReturnsError verifies claim parse error.
 func TestClaimTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	args := json.RawMessage(`{bad}`)
 	_, err := reg.Call(context.Background(), "mtix_claim", args)
@@ -805,7 +805,7 @@ func TestClaimTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 // TestUnclaimTool_WithValidArgs_Succeeds verifies unclaim handler happy path.
 func TestUnclaimTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	args := json.RawMessage(`{"id":"TEST-1","reason":"done working"}`)
 	result, err := reg.Call(context.Background(), "mtix_unclaim", args)
@@ -817,7 +817,7 @@ func TestUnclaimTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestUnclaimTool_WithInvalidJSON_ReturnsError verifies unclaim parse error.
 func TestUnclaimTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	args := json.RawMessage(`{bad}`)
 	_, err := reg.Call(context.Background(), "mtix_unclaim", args)
@@ -828,7 +828,7 @@ func TestUnclaimTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 // TestCancelTool_WithValidArgs_Succeeds verifies cancel handler happy path.
 func TestCancelTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	args := json.RawMessage(`{"id":"TEST-1","reason":"no longer needed","cascade":false}`)
 	result, err := reg.Call(context.Background(), "mtix_cancel", args)
@@ -840,7 +840,7 @@ func TestCancelTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestCancelTool_WithInvalidJSON_ReturnsError verifies cancel parse error.
 func TestCancelTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	args := json.RawMessage(`{bad}`)
 	_, err := reg.Call(context.Background(), "mtix_cancel", args)
@@ -851,7 +851,7 @@ func TestCancelTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 // TestSearchTool_WithValidArgs_Succeeds verifies search handler happy path.
 func TestSearchTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	args := json.RawMessage(`{"status":"open","limit":10}`)
 	result, err := reg.Call(context.Background(), "mtix_search", args)
@@ -863,7 +863,7 @@ func TestSearchTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestSearchTool_WithNilArgs_UsesDefaults verifies search with empty args.
 func TestSearchTool_WithNilArgs_UsesDefaults(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	result, err := reg.Call(context.Background(), "mtix_search", nil)
 	require.NoError(t, err)
@@ -873,7 +873,7 @@ func TestSearchTool_WithNilArgs_UsesDefaults(t *testing.T) {
 // TestBlockedTool_WithID_ShowsBlockersForNode verifies blocked with specific node.
 func TestBlockedTool_WithID_ShowsBlockersForNode(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	args := json.RawMessage(`{"id":"TEST-1"}`)
 	result, err := reg.Call(context.Background(), "mtix_blocked", args)
@@ -884,7 +884,7 @@ func TestBlockedTool_WithID_ShowsBlockersForNode(t *testing.T) {
 // TestBlockedTool_WithoutID_ListsAllBlocked verifies blocked listing.
 func TestBlockedTool_WithoutID_ListsAllBlocked(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	args := json.RawMessage(`{}`)
 	result, err := reg.Call(context.Background(), "mtix_blocked", args)
@@ -895,7 +895,7 @@ func TestBlockedTool_WithoutID_ListsAllBlocked(t *testing.T) {
 // TestBlockedTool_WithNilArgs_ListsAllBlocked verifies blocked with nil args.
 func TestBlockedTool_WithNilArgs_ListsAllBlocked(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	result, err := reg.Call(context.Background(), "mtix_blocked", nil)
 	require.NoError(t, err)
@@ -909,7 +909,7 @@ func TestBlockedTool_WithNilArgs_ListsAllBlocked(t *testing.T) {
 // TestStatsTool_WithValidArgs_Succeeds verifies stats handler happy path.
 func TestStatsTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterAnalyticsTools(reg, &mcpMockStore{}, newTestAgentService(), newTestConfigService())
+	RegisterAnalyticsTools(reg, testReadNodeService(&mcpMockStore{}), newTestAgentService(), newTestConfigService())
 
 	args := json.RawMessage(`{"under":"TEST-1"}`)
 	result, err := reg.Call(context.Background(), "mtix_stats", args)
@@ -921,7 +921,7 @@ func TestStatsTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestStatsTool_WithNilArgs_ReturnsGlobalStats verifies stats with no scope.
 func TestStatsTool_WithNilArgs_ReturnsGlobalStats(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterAnalyticsTools(reg, &mcpMockStore{}, newTestAgentService(), newTestConfigService())
+	RegisterAnalyticsTools(reg, testReadNodeService(&mcpMockStore{}), newTestAgentService(), newTestConfigService())
 
 	result, err := reg.Call(context.Background(), "mtix_stats", nil)
 	require.NoError(t, err)
@@ -931,7 +931,7 @@ func TestStatsTool_WithNilArgs_ReturnsGlobalStats(t *testing.T) {
 // TestProgressTool_WithValidArgs_Succeeds verifies progress handler happy path.
 func TestProgressTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterAnalyticsTools(reg, &mcpMockStore{}, newTestAgentService(), newTestConfigService())
+	RegisterAnalyticsTools(reg, testReadNodeService(&mcpMockStore{}), newTestAgentService(), newTestConfigService())
 
 	args := json.RawMessage(`{"id":"TEST-1"}`)
 	result, err := reg.Call(context.Background(), "mtix_progress", args)
@@ -943,7 +943,7 @@ func TestProgressTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestProgressTool_WithInvalidJSON_ReturnsError verifies progress parse error.
 func TestProgressTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterAnalyticsTools(reg, &mcpMockStore{}, newTestAgentService(), newTestConfigService())
+	RegisterAnalyticsTools(reg, testReadNodeService(&mcpMockStore{}), newTestAgentService(), newTestConfigService())
 
 	args := json.RawMessage(`{bad}`)
 	_, err := reg.Call(context.Background(), "mtix_progress", args)
@@ -954,7 +954,7 @@ func TestProgressTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 // TestOrphansTool_WithValidArgs_Succeeds verifies orphans handler happy path.
 func TestOrphansTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterAnalyticsTools(reg, &mcpMockStore{}, newTestAgentService(), newTestConfigService())
+	RegisterAnalyticsTools(reg, testReadNodeService(&mcpMockStore{}), newTestAgentService(), newTestConfigService())
 
 	args := json.RawMessage(`{"limit":25}`)
 	result, err := reg.Call(context.Background(), "mtix_orphans", args)
@@ -966,7 +966,7 @@ func TestOrphansTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestOrphansTool_WithNilArgs_UsesDefaultLimit verifies orphans defaults.
 func TestOrphansTool_WithNilArgs_UsesDefaultLimit(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterAnalyticsTools(reg, &mcpMockStore{}, newTestAgentService(), newTestConfigService())
+	RegisterAnalyticsTools(reg, testReadNodeService(&mcpMockStore{}), newTestAgentService(), newTestConfigService())
 
 	result, err := reg.Call(context.Background(), "mtix_orphans", nil)
 	require.NoError(t, err)
@@ -981,7 +981,7 @@ func TestOrphansTool_WithNilArgs_UsesDefaultLimit(t *testing.T) {
 // for all node tool handlers using table-driven tests.
 func TestNodeToolHandlers_WithInvalidJSON_ReturnParseError(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 
 	tests := []struct {
 		name     string
@@ -1009,7 +1009,7 @@ func TestNodeToolHandlers_WithInvalidJSON_ReturnParseError(t *testing.T) {
 // TestListTool_WithInvalidJSON_ReturnsError verifies list parse error.
 func TestListTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 
 	args := json.RawMessage(`{bad}`)
 	_, err := reg.Call(context.Background(), "mtix_list", args)
@@ -1020,7 +1020,7 @@ func TestListTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 // TestListTool_WithValidArgs_Succeeds verifies list handler happy path.
 func TestListTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 
 	args := json.RawMessage(`{"status":"open","limit":10}`)
 	result, err := reg.Call(context.Background(), "mtix_list", args)
@@ -1032,7 +1032,7 @@ func TestListTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestListTool_WithNilArgs_UsesDefaults verifies list with nil args.
 func TestListTool_WithNilArgs_UsesDefaults(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 
 	result, err := reg.Call(context.Background(), "mtix_list", nil)
 	require.NoError(t, err)
@@ -1047,7 +1047,7 @@ func TestListTool_WithNilArgs_UsesDefaults(t *testing.T) {
 // for workflow tool handlers using table-driven tests.
 func TestWorkflowToolHandlers_WithInvalidJSON_ReturnParseError(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	tests := []struct {
 		name     string
@@ -1190,8 +1190,8 @@ func TestMtixDiscover_IncludesToolCount(t *testing.T) {
 func TestToolDefs_HaveDescriptions(t *testing.T) {
 	reg := NewToolRegistry()
 	RegisterDocsTools(reg)
-	RegisterDepTools(reg, &mcpMockStore{})
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterDepTools(reg, testDependencyService(&mcpMockStore{}))
+	RegisterNodeTools(reg, newTestNodeService())
 
 	for _, td := range reg.List() {
 		assert.NotEmpty(t, td.Description, "tool %s missing description", td.Name)
@@ -1203,7 +1203,7 @@ func TestToolDefs_HaveDescriptions(t *testing.T) {
 func TestToolDefs_HaveObjectSchema(t *testing.T) {
 	reg := NewToolRegistry()
 	RegisterDocsTools(reg)
-	RegisterDepTools(reg, &mcpMockStore{})
+	RegisterDepTools(reg, testDependencyService(&mcpMockStore{}))
 
 	for _, td := range reg.List() {
 		assert.Equal(t, "object", td.InputSchema.Type,
@@ -1258,7 +1258,7 @@ func TestServer_HandleToolsCall_UnknownTool_ReturnsError(t *testing.T) {
 // TestShowTool_WithValidArgs_ReturnsNode verifies show handler happy path.
 func TestShowTool_WithValidArgs_ReturnsNode(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 
 	args := json.RawMessage(`{"id":"TEST-1"}`)
 	result, err := reg.Call(context.Background(), "mtix_show", args)
@@ -1270,7 +1270,7 @@ func TestShowTool_WithValidArgs_ReturnsNode(t *testing.T) {
 // TestDeleteTool_WithValidArgs_Succeeds verifies delete handler happy path.
 func TestDeleteTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 
 	args := json.RawMessage(`{"id":"TEST-1","cascade":false}`)
 	result, err := reg.Call(context.Background(), "mtix_delete", args)
@@ -1282,7 +1282,7 @@ func TestDeleteTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestUndeleteTool_WithValidArgs_Succeeds verifies undelete handler happy path.
 func TestUndeleteTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 
 	args := json.RawMessage(`{"id":"TEST-1"}`)
 	result, err := reg.Call(context.Background(), "mtix_undelete", args)
@@ -1294,7 +1294,7 @@ func TestUndeleteTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestUpdateTool_WithValidArgs_Succeeds verifies update handler happy path.
 func TestUpdateTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 
 	args := json.RawMessage(`{"id":"TEST-1","title":"New Title","priority":2}`)
 	result, err := reg.Call(context.Background(), "mtix_update", args)
@@ -1306,7 +1306,7 @@ func TestUpdateTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestUpdateTool_WithEmptyFields_Succeeds verifies update with no fields set.
 func TestUpdateTool_WithEmptyFields_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 
 	args := json.RawMessage(`{"id":"TEST-1"}`)
 	result, err := reg.Call(context.Background(), "mtix_update", args)
@@ -1317,7 +1317,7 @@ func TestUpdateTool_WithEmptyFields_Succeeds(t *testing.T) {
 // TestCreateTool_WithValidArgs_Succeeds verifies create handler happy path.
 func TestCreateTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 
 	args := json.RawMessage(`{"title":"Test Task","project":"TEST","description":"desc","priority":3}`)
 	result, err := reg.Call(context.Background(), "mtix_create", args)
@@ -1329,7 +1329,7 @@ func TestCreateTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestCreateTool_WithDefaultPriority_UsesMedium verifies default priority.
 func TestCreateTool_WithDefaultPriority_UsesMedium(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 
 	args := json.RawMessage(`{"title":"No Priority","project":"TEST"}`)
 	result, err := reg.Call(context.Background(), "mtix_create", args)
@@ -1340,7 +1340,7 @@ func TestCreateTool_WithDefaultPriority_UsesMedium(t *testing.T) {
 // TestDecomposeTool_WithValidArgs_Succeeds verifies decompose handler.
 func TestDecomposeTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 
 	args := json.RawMessage(`{"parent_id":"TEST-1","children":[{"title":"Child 1"},{"title":"Child 2"}]}`)
 	result, err := reg.Call(context.Background(), "mtix_decompose", args)
@@ -1356,7 +1356,7 @@ func TestDecomposeTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestDeferTool_WithValidArgs_Succeeds verifies defer handler (open -> deferred is valid).
 func TestDeferTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	args := json.RawMessage(`{"id":"TEST-1"}`)
 	result, err := reg.Call(context.Background(), "mtix_defer", args)
@@ -1369,7 +1369,7 @@ func TestDeferTool_WithValidArgs_Succeeds(t *testing.T) {
 // parses args and delegates to service (which rejects open -> done transition).
 func TestDoneTool_WithValidArgs_ReturnsTransitionError(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	args := json.RawMessage(`{"id":"TEST-1"}`)
 	_, err := reg.Call(context.Background(), "mtix_done", args)
@@ -1382,7 +1382,7 @@ func TestDoneTool_WithValidArgs_ReturnsTransitionError(t *testing.T) {
 // parses args and delegates to service (which rejects open -> open as noop).
 func TestReopenTool_WithValidArgs_ReopenFromOpen(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	args := json.RawMessage(`{"id":"TEST-1"}`)
 	// open -> open is idempotent (no error) per FR-7.7a.
@@ -1395,7 +1395,7 @@ func TestReopenTool_WithValidArgs_ReopenFromOpen(t *testing.T) {
 // TestRerunTool_WithValidArgs_Succeeds verifies rerun handler with defaults.
 func TestRerunTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	args := json.RawMessage(`{"id":"TEST-1"}`)
 	result, err := reg.Call(context.Background(), "mtix_rerun", args)
@@ -1407,7 +1407,7 @@ func TestRerunTool_WithValidArgs_Succeeds(t *testing.T) {
 // TestRerunTool_WithCustomStrategy_Succeeds verifies rerun with explicit strategy.
 func TestRerunTool_WithCustomStrategy_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, newTestNodeService(), &mcpMockStore{}, newTestBackgroundService())
+	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
 	args := json.RawMessage(`{"id":"TEST-1","strategy":"open_only","reason":"test rerun"}`)
 	result, err := reg.Call(context.Background(), "mtix_rerun", args)
@@ -1534,7 +1534,7 @@ func TestBriefingTool_WithValidArgs_ReturnsBriefingText(t *testing.T) {
 				Description: "Test description", Prompt: "Test prompt"},
 		},
 	}
-	registerBriefingTool(reg, mockStore, "")
+	registerBriefingTool(reg, testReadNodeService(mockStore), "")
 
 	args := json.RawMessage(`{"status":"open","limit":10}`)
 	result, err := reg.Call(context.Background(), "mtix_briefing", args)
@@ -1556,7 +1556,7 @@ func TestBriefingTool_WithFields_RestrictsOutput(t *testing.T) {
 				NodeType: model.NodeTypeEpic, Priority: 2, Prompt: "Build it"},
 		},
 	}
-	registerBriefingTool(reg, mockStore, "")
+	registerBriefingTool(reg, testReadNodeService(mockStore), "")
 
 	args := json.RawMessage(`{"fields":"id,title,prompt"}`)
 	result, err := reg.Call(context.Background(), "mtix_briefing", args)
@@ -1570,7 +1570,7 @@ func TestBriefingTool_WithFields_RestrictsOutput(t *testing.T) {
 // TestBriefingTool_WithNilArgs_UsesDefaults verifies nil args.
 func TestBriefingTool_WithNilArgs_UsesDefaults(t *testing.T) {
 	reg := NewToolRegistry()
-	registerBriefingTool(reg, &briefingMockStore{}, "")
+	registerBriefingTool(reg, testReadNodeService(&briefingMockStore{}), "")
 
 	result, err := reg.Call(context.Background(), "mtix_briefing", nil)
 	require.NoError(t, err)
@@ -1580,7 +1580,7 @@ func TestBriefingTool_WithNilArgs_UsesDefaults(t *testing.T) {
 // TestBriefingTool_WithInvalidJSON_ReturnsError verifies parse error.
 func TestBriefingTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 	reg := NewToolRegistry()
-	registerBriefingTool(reg, &briefingMockStore{}, "")
+	registerBriefingTool(reg, testReadNodeService(&briefingMockStore{}), "")
 
 	args := json.RawMessage(`{bad}`)
 	_, err := reg.Call(context.Background(), "mtix_briefing", args)
@@ -1591,7 +1591,7 @@ func TestBriefingTool_WithInvalidJSON_ReturnsError(t *testing.T) {
 // untrusted-context warning per FR-17.7 / T6 mitigation.
 func TestBriefingTool_DescriptionContainsUntrustedWarning(t *testing.T) {
 	reg := NewToolRegistry()
-	registerBriefingTool(reg, &briefingMockStore{}, "")
+	registerBriefingTool(reg, testReadNodeService(&briefingMockStore{}), "")
 
 	tools := reg.List()
 	var briefingTool *ToolDef
@@ -1609,7 +1609,7 @@ func TestBriefingTool_DescriptionContainsUntrustedWarning(t *testing.T) {
 // registered via RegisterNodeTools.
 func TestRegisterNodeTools_IncludesBriefingTool(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 
 	tools := reg.List()
 	toolNames := make(map[string]bool, len(tools))

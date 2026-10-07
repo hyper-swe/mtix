@@ -54,7 +54,7 @@ func newCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&prompt, "prompt", "", "Node prompt (FR-12.5)")
 	cmd.Flags().StringVar(&acceptance, "acceptance", "", "Acceptance criteria")
 	cmd.Flags().StringVar(&labels, "labels", "", "Comma-separated labels")
-	cmd.Flags().StringVar(&assign, "assign", "", "Claim the new node for agent/user atomically (status in_progress; creator stays author)")
+	cmd.Flags().StringVar(&assign, "assign", "", "Claim the new node for agent/user atomically (status in_progress; creator stays author); empty means no explicit assignment (parent auto-claim still applies); nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters")
 	cmd.Flags().StringVar(&project, "project", "",
 		"Project prefix for a root node (overrides the primary; inherited for children) (FR-MULTI-PROJECT MP-5)")
 	cmd.Flags().BoolVar(&yes, "yes", false,

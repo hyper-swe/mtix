@@ -36,7 +36,7 @@ func registerClaimTool(reg *ToolRegistry, svc *service.NodeService) {
 			Type: "object",
 			Properties: map[string]SchemaProp{
 				"id":       {Type: "string", Description: "Node ID"},
-				"agent_id": {Type: "string", Description: "Agent ID"},
+				"agent_id": {Type: "string", Description: "Agent ID; nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters"},
 			},
 			Required: []string{"id", "agent_id"},
 		},

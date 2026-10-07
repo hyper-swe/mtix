@@ -32,11 +32,15 @@ func newUpdateCmd() *cobra.Command {
 		Short: "Update a node's fields",
 		Args:  cobra.ExactArgs(1),
 		RunE: withAutoExport(func(cmd *cobra.Command, args []string) error {
-			if cmd.Flags().Changed("type") {
-				return runUpdate(args[0], title, description, prompt, acceptance, priority, labels, assignee, model.IssueType(issueType))
+			updates := buildCLIUpdate(cliUpdateInput{title, description, prompt, acceptance, priority, labels, assignee})
+			if cmd.Flags().Changed("assignee") {
+				updates.Assignee = &assignee
 			}
-			return runUpdate(args[0], title, description, prompt,
-				acceptance, priority, labels, assignee)
+			if cmd.Flags().Changed("type") {
+				kind := model.IssueType(issueType)
+				updates.IssueType = &kind
+			}
+			return applyCLIUpdate(args[0], updates)
 		}),
 	}
 
@@ -47,64 +51,67 @@ func newUpdateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&acceptance, "acceptance", "", "New acceptance criteria")
 	cmd.Flags().IntVar(&priority, "priority", 0, "New priority (1-5)")
 	cmd.Flags().StringVar(&labels, "labels", "", "New labels (comma-separated)")
-	cmd.Flags().StringVar(&assignee, "assignee", "", "New assignee")
+	cmd.Flags().StringVar(&assignee, "assignee", "", "New assignee; empty clears, omission preserves; nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters")
 
 	return cmd
+}
+
+// cliUpdateInput carries the legacy CLI update values without changing wire APIs.
+type cliUpdateInput struct {
+	title, description, prompt, acceptance string
+	priority                               int
+	labels, assignee                       string
 }
 
 func runUpdate(id, title, description, prompt, acceptance string,
 	priority int, labels, assignee string, issueType ...model.IssueType,
 ) error {
+	updates := buildCLIUpdate(cliUpdateInput{title, description, prompt, acceptance, priority, labels, assignee})
+	if len(issueType) > 0 {
+		updates.IssueType = &issueType[0]
+	}
+	return applyCLIUpdate(id, updates)
+}
+
+// buildCLIUpdate preserves legacy omission behavior; Cobra supplies explicit empties.
+func buildCLIUpdate(in cliUpdateInput) *store.NodeUpdate {
+	updates := &store.NodeUpdate{}
+	if in.title != "" {
+		updates.Title = &in.title
+	}
+	if in.description != "" {
+		updates.Description = &in.description
+	}
+	if in.prompt != "" {
+		updates.Prompt = &in.prompt
+	}
+	if in.acceptance != "" {
+		updates.Acceptance = &in.acceptance
+	}
+	if in.priority > 0 {
+		p := model.Priority(in.priority)
+		updates.Priority = &p
+	}
+	if in.labels != "" {
+		updates.Labels = splitAndTrim(in.labels)
+	}
+	if in.assignee != "" {
+		updates.Assignee = &in.assignee
+	}
+	return updates
+}
+
+func applyCLIUpdate(id string, updates *store.NodeUpdate) error {
 	if app.nodeSvc == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
-
-	updates := &store.NodeUpdate{}
-	hasUpdate := false
-	if len(issueType) > 0 {
-		updates.IssueType = &issueType[0]
-		hasUpdate = true
-	}
-
-	if title != "" {
-		updates.Title = &title
-		hasUpdate = true
-	}
-	if description != "" {
-		updates.Description = &description
-		hasUpdate = true
-	}
-	if prompt != "" {
-		updates.Prompt = &prompt
-		hasUpdate = true
-	}
-	if acceptance != "" {
-		updates.Acceptance = &acceptance
-		hasUpdate = true
-	}
-	if priority > 0 {
-		p := model.Priority(priority)
-		updates.Priority = &p
-		hasUpdate = true
-	}
-	if labels != "" {
-		updates.Labels = splitAndTrim(labels)
-		hasUpdate = true
-	}
-	if assignee != "" {
-		updates.Assignee = &assignee
-		hasUpdate = true
-	}
-
-	if !hasUpdate {
+	if updates.IssueType == nil && updates.Title == nil && updates.Description == nil && updates.Prompt == nil && updates.Acceptance == nil && updates.Priority == nil && updates.Labels == nil && updates.Assignee == nil {
 		return fmt.Errorf("no fields to update (use flags like --title, --priority)")
 	}
-
 	ctx := mutationContext()
 	if err := app.nodeSvc.UpdateNode(ctx, id, updates); err != nil {
 		return err
 	}
-
 	if app.jsonOutput {
 		data, _ := json.Marshal(map[string]string{"id": id, "status": "updated"})
 		fmt.Println(string(data))

@@ -53,6 +53,8 @@ func decodeReleaseWorkflow(src []byte) (releaseWorkflow, error) {
 // TestCI_ReleaseNpmAuditGates pins the two blocking commands from
 // QUALITY-STANDARDS.md §5.3. The separate full audit report is advisory;
 // it cannot stand in for either blocking step, even if its name changes.
+// MTIX-123 permits only name/run keys on these two steps to retain default
+// execution settings; changes to other steps remain outside this allowlist.
 func TestCI_ReleaseNpmAuditGates(t *testing.T) {
 	require.NoError(t, releaseNpmAuditGatesError(readReleaseWorkflow(t)))
 }
@@ -83,11 +85,10 @@ func releaseNpmAuditGatesError(src []byte) error {
 			if step["run"] != gate.run {
 				return fmt.Errorf("%s must run %q without masking failures", gate.name, gate.run)
 			}
-			if _, exists := step["if"]; exists {
-				return fmt.Errorf("%s must run unconditionally", gate.name)
-			}
-			if _, exists := step["continue-on-error"]; exists {
-				return fmt.Errorf("%s must not declare continue-on-error", gate.name)
+			for key := range step {
+				if key != "name" && key != "run" {
+					return fmt.Errorf("%s must not declare step key %q", gate.name, key)
+				}
 			}
 		}
 		if count != 1 {
@@ -184,6 +185,10 @@ func TestCI_ReleaseNpmAuditGates_MutatedWorkflowRejected(t *testing.T) {
 			{"masked failure", gate.command + " || true"},
 			{"conditionally skipped", gate.command + "\n        if: false"},
 			{"removed step command", "echo skipped"},
+			{"custom shell", gate.command + "\n        shell: bash {0}"},
+			{"audit environment", gate.command + "\n        env: {npm_config_audit_level: none}"},
+			{"working directory", gate.command + "\n        working-directory: /tmp"},
+			{"with inputs", gate.command + "\n        with: {audit-level: none}"},
 		}
 		for _, mutation := range mutations {
 			t.Run(gate.name+"/"+mutation.name, func(t *testing.T) {

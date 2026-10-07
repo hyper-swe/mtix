@@ -174,7 +174,7 @@ Claim a node for an agent
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--agent` |  | Agent ID (required) |  |
+| `--agent` |  | Agent ID (required); nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters |  |
 ---
 
 ## comment
@@ -258,7 +258,7 @@ Create a new node. Use --under to create a child node.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--acceptance` |  | Acceptance criteria |  |
-| `--assign` |  | Claim the new node for agent/user atomically (status in_progress; creator stays author) |  |
+| `--assign` |  | Claim the new node for agent/user atomically (status in_progress; creator stays author); empty means no explicit assignment (parent auto-claim still applies); nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters |  |
 | `--description` |  | Node description |  |
 | `--labels` |  | Comma-separated labels |  |
 | `--priority` |  | Priority (1=critical, 5=backlog) | 3 |
@@ -2221,7 +2221,7 @@ Update a node's fields
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--acceptance` |  | New acceptance criteria |  |
-| `--assignee` |  | New assignee |  |
+| `--assignee` |  | New assignee; empty clears, omission preserves; nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters |  |
 | `--description` |  | New description |  |
 | `--labels` |  | New labels (comma-separated) |  |
 | `--priority` |  | New priority (1-5) | 0 |

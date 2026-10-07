@@ -11,11 +11,10 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store"
 )
 
 // RegisterWorkflowTools registers workflow MCP tools per MTIX-6.2.2.
-func RegisterWorkflowTools(reg *ToolRegistry, nodeSvc *service.NodeService, st store.Store, bgSvc *service.BackgroundService, opts ...ToolOption) {
+func RegisterWorkflowTools(reg *ToolRegistry, nodeSvc *service.NodeService, bgSvc *service.BackgroundService, opts ...ToolOption) {
 	cfg := applyToolOptions(opts)
 	registerClaimTool(reg, nodeSvc)
 	registerUnclaimTool(reg, nodeSvc)
@@ -24,8 +23,8 @@ func RegisterWorkflowTools(reg *ToolRegistry, nodeSvc *service.NodeService, st s
 	registerCancelTool(reg, nodeSvc)
 	registerReopenTool(reg, nodeSvc)
 	registerReadyTool(reg, bgSvc)
-	registerBlockedTool(reg, st)
-	registerSearchTool(reg, st, cfg.primaryProject)
+	registerBlockedTool(reg, nodeSvc)
+	registerSearchTool(reg, nodeSvc, cfg.primaryProject)
 	registerRerunTool(reg, nodeSvc)
 }
 
@@ -240,7 +239,7 @@ func registerReadyTool(reg *ToolRegistry, bgSvc *service.BackgroundService) {
 	})
 }
 
-func registerBlockedTool(reg *ToolRegistry, st store.Store) {
+func registerBlockedTool(reg *ToolRegistry, svc *service.NodeService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_blocked",
 		Description: "List blocked nodes with blocker details",
@@ -259,7 +258,7 @@ func registerBlockedTool(reg *ToolRegistry, st store.Store) {
 		}
 
 		if p.ID != "" {
-			blockers, err := st.GetBlockers(ctx, p.ID)
+			blockers, err := service.NewDependencyServiceFromNodeService(svc).GetBlockers(ctx, p.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -268,9 +267,9 @@ func registerBlockedTool(reg *ToolRegistry, st store.Store) {
 		}
 
 		// List all blocked nodes.
-		nodes, _, err := st.ListNodes(ctx, store.NodeFilter{
+		nodes, _, err := svc.ListNodes(ctx, service.NodeFilter{
 			Status: []model.Status{model.StatusBlocked},
-		}, store.ListOptions{Limit: 50})
+		}, service.ListOptions{Limit: 50})
 		if err != nil {
 			return nil, err
 		}
@@ -279,7 +278,7 @@ func registerBlockedTool(reg *ToolRegistry, st store.Store) {
 	})
 }
 
-func registerSearchTool(reg *ToolRegistry, st store.Store, primaryProject string) {
+func registerSearchTool(reg *ToolRegistry, svc *service.NodeService, primaryProject string) {
 	reg.Register(ToolDef{
 		Name:        "mtix_search",
 		Description: "Search nodes with filters",
@@ -308,7 +307,7 @@ func registerSearchTool(reg *ToolRegistry, st store.Store, primaryProject string
 			p.Limit = 50
 		}
 
-		filter := store.NodeFilter{Project: resolveScopeProject(p.Project, primaryProject)}
+		filter := service.NodeFilter{Project: resolveScopeProject(p.Project, primaryProject)}
 		if p.Under != "" {
 			filter.Under = []string{p.Under}
 		}
@@ -319,7 +318,7 @@ func registerSearchTool(reg *ToolRegistry, st store.Store, primaryProject string
 			filter.Status = []model.Status{model.Status(p.Status)}
 		}
 
-		nodes, total, err := st.ListNodes(ctx, filter, store.ListOptions{Limit: p.Limit})
+		nodes, total, err := svc.ListNodes(ctx, filter, service.ListOptions{Limit: p.Limit})
 		if err != nil {
 			return nil, err
 		}

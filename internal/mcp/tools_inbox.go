@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // maxInboxWaitSeconds caps mtix_inbox_wait's long-poll. A single MCP tool call
@@ -30,36 +29,15 @@ func clampInboxWaitSeconds(secs int) int {
 	return secs
 }
 
-// InboxStore is the minimal store surface the inbox tools need. It is satisfied
-// by *sqlite.Store; the mcp package depends only on these three methods so the
-// per-agent inbox (FR-19.4) reaches the durable event journal without widening
-// the general store.Store interface.
-type InboxStore interface {
-	InboxList(ctx context.Context, agentID string) ([]sqlite.InboxEvent, error)
-	InboxWait(ctx context.Context, agentID string, timeout time.Duration) ([]sqlite.InboxEvent, error)
-	InboxAck(ctx context.Context, agentID string, seq int64) error
-}
-
-// InboxAcknowledger is the service capability for selective acknowledgement (FR-19.5).
-type InboxAcknowledger interface {
-	InboxAck(context.Context, string, int64) error
-}
-
-// RegisterInboxTools registers the per-agent inbox MCP tools per MTIX-47.6 /
-// FR-19.5 — the tool-call mirror of `mtix inbox` so a request-driven agent can
-// park on notifications as an ordinary tool call. A supplied acknowledgement
-// service is used for writes; reads keep their independent capability.
-func RegisterInboxTools(reg *ToolRegistry, st InboxStore, services ...InboxAcknowledger) {
-	var svc InboxAcknowledger = service.NewInboxService(st)
-	if len(services) > 0 && services[0] != nil {
-		svc = services[0]
-	}
-	registerInboxTool(reg, st)
-	registerInboxWaitTool(reg, st)
+// RegisterInboxTools registers list/wait/ack operations through the owning
+// service per FR-19.4/FR-19.5. Backends never enter the registry dependency graph.
+func RegisterInboxTools(reg *ToolRegistry, svc *service.InboxService) {
+	registerInboxTool(reg, svc)
+	registerInboxWaitTool(reg, svc)
 	registerInboxAckTool(reg, svc)
 }
 
-func registerInboxTool(reg *ToolRegistry, st InboxStore) {
+func registerInboxTool(reg *ToolRegistry, svc *service.InboxService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_inbox",
 		Description: "List comment events addressed to an agent that are past its ack cursor (oldest first). Use mtix_inbox_ack to advance the cursor once handled.",
@@ -78,7 +56,7 @@ func registerInboxTool(reg *ToolRegistry, st InboxStore) {
 			return nil, fmt.Errorf("parse inbox args: %w", err)
 		}
 
-		events, err := st.InboxList(ctx, p.Agent)
+		events, err := svc.InboxList(ctx, p.Agent)
 		if err != nil {
 			return nil, err
 		}
@@ -88,7 +66,7 @@ func registerInboxTool(reg *ToolRegistry, st InboxStore) {
 	})
 }
 
-func registerInboxWaitTool(reg *ToolRegistry, st InboxStore) {
+func registerInboxWaitTool(reg *ToolRegistry, svc *service.InboxService) {
 	reg.Register(ToolDef{
 		Name: "mtix_inbox_wait",
 		Description: fmt.Sprintf(
@@ -114,12 +92,12 @@ func registerInboxWaitTool(reg *ToolRegistry, st InboxStore) {
 
 		secs := clampInboxWaitSeconds(p.TimeoutSeconds)
 
-		events, err := st.InboxWait(ctx, p.Agent, time.Duration(secs)*time.Second)
+		events, err := svc.InboxWait(ctx, p.Agent, time.Duration(secs)*time.Second)
 		if err != nil {
 			return nil, err
 		}
 		if events == nil {
-			events = []sqlite.InboxEvent{} // marshal an empty [] rather than null on timeout
+			events = []service.InboxEvent{} // marshal an empty [] rather than null on timeout
 		}
 
 		data, _ := json.MarshalIndent(events, "", "  ")
@@ -127,7 +105,7 @@ func registerInboxWaitTool(reg *ToolRegistry, st InboxStore) {
 	})
 }
 
-func registerInboxAckTool(reg *ToolRegistry, svc InboxAcknowledger) {
+func registerInboxAckTool(reg *ToolRegistry, svc *service.InboxService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_inbox_ack",
 		Description: "Acknowledge ONE inbox event by its seq (selective): only that event is marked seen, so you can safely process out of order — any event you do not ack reappears on the next mtix_inbox (defer by not acking). Idempotent.",

@@ -18,7 +18,6 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	rpcgrpc "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -26,7 +25,12 @@ import (
 )
 
 // testGRPCServer creates a gRPC Server with real store and services for testing.
-func testGRPCServer(t *testing.T) *Server {
+type testServer struct {
+	*Server
+	store *sqlite.Store
+}
+
+func testGRPCServer(t *testing.T) *testServer {
 	t.Helper()
 
 	tmpDir := t.TempDir()
@@ -49,24 +53,11 @@ func testGRPCServer(t *testing.T) *Server {
 	contextSvc := service.NewContextService(st, config, logger)
 	promptSvc := service.NewPromptService(st, broadcaster, logger, clock)
 
-	return NewServer(
-		st,
-		service.NewNodeService(st, broadcaster, config, logger, clock),
-		service.NewBackgroundService(st, config, logger, clock),
-		service.NewSessionService(st, config, logger, clock),
-		service.NewAgentService(st, broadcaster, config, logger, clock),
-		configSvc,
-		contextSvc,
-		promptSvc,
-		broadcaster,
-		logger,
-		ServerConfig{},
-		clock,
-	)
+	return &testServer{store: st, Server: NewServer(Services{NodeSvc: service.NewNodeService(st, broadcaster, config, logger, clock), BgSvc: service.NewBackgroundService(st, config, logger, clock), SessionSvc: service.NewSessionService(st, config, logger, clock), AgentSvc: service.NewAgentService(st, broadcaster, config, logger, clock), ConfigSvc: configSvc, ContextSvc: contextSvc, PromptSvc: promptSvc, Broadcaster: broadcaster}, logger, ServerConfig{}, clock)}
 }
 
 // createTestNode is a test helper that creates a node via the gRPC handler.
-func createTestNode(t *testing.T, s *Server, title, project string) *model.Node {
+func createTestNode(t *testing.T, s *testServer, title, project string) *model.Node {
 	t.Helper()
 	node, err := s.HandleCreateNode(context.Background(), &CreateNodeReq{
 		Title:   title,
@@ -80,7 +71,7 @@ func createTestNode(t *testing.T, s *Server, title, project string) *model.Node 
 
 // ensureAgent is a test helper that creates or verifies an agent record.
 // Required for session/agent tests due to FK constraint on sessions.agent_id.
-func ensureAgent(t *testing.T, s *Server, agentID, project string) {
+func ensureAgent(t *testing.T, s *testServer, agentID, project string) {
 	t.Helper()
 	ctx := context.Background()
 	now := s.clock().UTC().Format(time.RFC3339)
@@ -118,20 +109,7 @@ func TestNewServer_CustomPort(t *testing.T) {
 	configSvc, err := service.NewConfigService("")
 	require.NoError(t, err)
 
-	s := NewServer(
-		st,
-		service.NewNodeService(st, broadcaster, config, logger, clock),
-		service.NewBackgroundService(st, config, logger, clock),
-		service.NewSessionService(st, config, logger, clock),
-		service.NewAgentService(st, broadcaster, config, logger, clock),
-		configSvc,
-		service.NewContextService(st, config, logger),
-		service.NewPromptService(st, broadcaster, logger, clock),
-		broadcaster,
-		logger,
-		ServerConfig{Port: "7777"},
-		clock,
-	)
+	s := NewServer(Services{NodeSvc: service.NewNodeService(st, broadcaster, config, logger, clock), BgSvc: service.NewBackgroundService(st, config, logger, clock), SessionSvc: service.NewSessionService(st, config, logger, clock), AgentSvc: service.NewAgentService(st, broadcaster, config, logger, clock), ConfigSvc: configSvc, ContextSvc: service.NewContextService(st, config, logger), PromptSvc: service.NewPromptService(st, broadcaster, logger, clock), Broadcaster: broadcaster}, logger, ServerConfig{Port: "7777"}, clock)
 
 	assert.Equal(t, "7777", s.config.Port)
 }
@@ -153,20 +131,7 @@ func TestNewServer_DefaultClock(t *testing.T) {
 	configSvc, err := service.NewConfigService("")
 	require.NoError(t, err)
 
-	s := NewServer(
-		st,
-		service.NewNodeService(st, broadcaster, config, logger, testClock()),
-		service.NewBackgroundService(st, config, logger, testClock()),
-		service.NewSessionService(st, config, logger, testClock()),
-		service.NewAgentService(st, broadcaster, config, logger, testClock()),
-		configSvc,
-		service.NewContextService(st, config, logger),
-		service.NewPromptService(st, broadcaster, logger, testClock()),
-		broadcaster,
-		logger,
-		ServerConfig{},
-		nil, // nil clock should default to time.Now
-	)
+	s := NewServer(Services{NodeSvc: service.NewNodeService(st, broadcaster, config, logger, testClock()), BgSvc: service.NewBackgroundService(st, config, logger, testClock()), SessionSvc: service.NewSessionService(st, config, logger, testClock()), AgentSvc: service.NewAgentService(st, broadcaster, config, logger, testClock()), ConfigSvc: configSvc, ContextSvc: service.NewContextService(st, config, logger), PromptSvc: service.NewPromptService(st, broadcaster, logger, testClock()), Broadcaster: broadcaster}, logger, ServerConfig{}, nil) // nil clock should default to time.Now
 
 	// Clock should be set (not nil) — it should use time.Now.
 	require.NotNil(t, s.clock)
@@ -556,7 +521,7 @@ func TestGRPC_Search_ReturnsNodes(t *testing.T) {
 	createTestNode(t, s, "Search A", "SEARCH")
 	createTestNode(t, s, "Search B", "SEARCH")
 
-	filter := store.NodeFilter{
+	filter := service.NodeFilter{
 		Status: []model.Status{model.StatusOpen},
 	}
 
@@ -576,7 +541,7 @@ func TestGRPC_Search_WithPagination(t *testing.T) {
 		createTestNode(t, s, fmt.Sprintf("Page Node %d", i), "PAGE")
 	}
 
-	nodes, _, hasMore, err := s.HandleSearch(ctx, store.NodeFilter{
+	nodes, _, hasMore, err := s.HandleSearch(ctx, service.NodeFilter{
 		Status: []model.Status{model.StatusOpen},
 	}, 2, 0)
 	require.NoError(t, err)

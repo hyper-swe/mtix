@@ -22,7 +22,6 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store"
 )
 
 // --- CRUD Handlers ---
@@ -57,14 +56,14 @@ func (s *Server) HandleGetNode(ctx context.Context, id string) (*model.Node, err
 
 // HandleUpdateNode implements the UpdateNode RPC per FR-8.2.
 func (s *Server) HandleUpdateNode(ctx context.Context, req *UpdateNodeReq) (*model.Node, error) {
-	updates := &store.NodeUpdate{
+	updates := &service.NodeUpdate{
 		IssueType:   req.IssueType,
 		Title:       req.Title,
 		Description: req.Description,
 		Prompt:      req.Prompt,
 		Acceptance:  req.Acceptance,
 	}
-	if err := s.nodeSvc.UpdateNode(ctx, req.ID, updates); err != nil {
+	if err := s.nodeSvc.ApplyUpdate(ctx, req.ID, updates); err != nil {
 		return nil, mapError(err)
 	}
 	node, err := s.nodeSvc.GetNode(ctx, req.ID)
@@ -96,7 +95,7 @@ func (s *Server) HandleUndelete(ctx context.Context, id string) (*model.Node, er
 
 // HandleListChildren implements the ListChildren RPC per FR-8.2.
 func (s *Server) HandleListChildren(ctx context.Context, parentID string, limit, offset int) ([]*model.Node, bool, error) {
-	children, err := s.store.GetDirectChildren(ctx, parentID)
+	children, err := s.nodeSvc.GetDirectChildren(ctx, parentID)
 	if err != nil {
 		return nil, false, mapError(err)
 	}
@@ -209,9 +208,9 @@ func (s *Server) HandleComment(ctx context.Context, nodeID, text, author, addres
 // --- Query Handlers ---
 
 // HandleSearch implements the Search RPC per FR-8.2.
-func (s *Server) HandleSearch(ctx context.Context, filter store.NodeFilter, limit, offset int) ([]*model.Node, int, bool, error) {
-	opts := store.ListOptions{Limit: limit + 1, Offset: offset}
-	nodes, total, err := s.store.ListNodes(ctx, filter, opts)
+func (s *Server) HandleSearch(ctx context.Context, filter service.NodeFilter, limit, offset int) ([]*model.Node, int, bool, error) {
+	opts := service.ListOptions{Limit: limit + 1, Offset: offset}
+	nodes, total, err := s.nodeSvc.ListNodes(ctx, filter, opts)
 	if err != nil {
 		return nil, 0, false, mapError(err)
 	}
@@ -322,7 +321,7 @@ func (s *Server) HandleRemoveDependency(ctx context.Context, fromID, toID string
 
 // HandleGetDependencies implements the GetDependencyTree RPC per FR-8.2.
 func (s *Server) HandleGetDependencies(ctx context.Context, id string) ([]*model.Dependency, error) {
-	deps, err := s.store.GetBlockers(ctx, id)
+	deps, err := s.depSvc.GetBlockers(ctx, id)
 	if err != nil {
 		return nil, mapError(err)
 	}
@@ -343,8 +342,8 @@ func (s *Server) HandleBulkUpdate(ctx context.Context, updates []BulkNodeUpdateR
 		failedIDs []string
 	)
 	for _, u := range updates {
-		upd := &store.NodeUpdate{Title: u.Title, Description: u.Description}
-		if err := s.nodeSvc.UpdateNode(ctx, u.ID, upd); err != nil {
+		upd := &service.NodeUpdate{Title: u.Title, Description: u.Description}
+		if err := s.nodeSvc.ApplyUpdate(ctx, u.ID, upd); err != nil {
 			failedIDs = append(failedIDs, u.ID)
 			continue
 		}

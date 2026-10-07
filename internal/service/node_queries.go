@@ -88,3 +88,13 @@ func (svc *NodeService) DistinctProjects(ctx context.Context) ([]ProjectInfo, er
 	}
 	return out, nil
 }
+
+// ResolveDisplayPathByUID retrieves the current display ID per ADR-003 §5.
+// The UID remains stable across renumbering; errors retain transport messages.
+func (svc *NodeService) ResolveDisplayPathByUID(ctx context.Context, uid string) (string, error) {
+	path, err := svc.store.ResolveDisplayPathByUID(ctx, uid)
+	if err != nil {
+		return "", wrapAPIOperation("resolve node UID", err)
+	}
+	return path, nil
+}

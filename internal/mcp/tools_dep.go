@@ -8,24 +8,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store"
 )
 
 // RegisterDepTools registers dependency management MCP tools per FR-4/FR-14.
 // A supplied service shares the application event publisher and injected clock.
-// Omitted services retain compatibility with standalone tool registrations.
-func RegisterDepTools(reg *ToolRegistry, st store.Store, services ...*service.DependencyService) {
-	svc := service.NewDependencyService(st, nil, nil, time.Now)
-	if len(services) > 0 && services[0] != nil {
-		svc = services[0]
-	}
+// Registrations require the owning service per Commandment 7; handlers never
+// accept its durable backend.
+func RegisterDepTools(reg *ToolRegistry, svc *service.DependencyService) {
 	registerDepAddTool(reg, svc)
 	registerDepRemoveTool(reg, svc)
-	registerDepShowTool(reg, st)
+	registerDepShowTool(reg, svc)
 }
 
 // dependencyTypeSchema advertises the canonical dependency types per FR-4.2.
@@ -106,7 +101,7 @@ func registerDepRemoveTool(reg *ToolRegistry, svc *service.DependencyService) {
 	})
 }
 
-func registerDepShowTool(reg *ToolRegistry, st store.Store) {
+func registerDepShowTool(reg *ToolRegistry, svc *service.DependencyService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_dep_show",
 		Description: "Show blocking dependencies for a node",
@@ -125,7 +120,7 @@ func registerDepShowTool(reg *ToolRegistry, st store.Store) {
 			return nil, fmt.Errorf("parse dep_show args: %w", err)
 		}
 
-		blockers, err := st.GetBlockers(ctx, p.ID)
+		blockers, err := svc.GetBlockers(ctx, p.ID)
 		if err != nil {
 			return nil, err
 		}

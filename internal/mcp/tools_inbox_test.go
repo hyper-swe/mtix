@@ -61,7 +61,7 @@ func TestInboxTools_AnnotateTo_ListAck(t *testing.T) {
 	reg := NewToolRegistry()
 	promptSvc := service.NewPromptService(s, nil, slog.Default(), fixedClock)
 	RegisterContextTools(reg, newTestContextService(), promptSvc)
-	RegisterInboxTools(reg, s)
+	RegisterInboxTools(reg, testInboxService(s))
 
 	ctx := context.Background()
 
@@ -124,7 +124,7 @@ func TestInboxWaitTool_TimesOutEmpty(t *testing.T) {
 	s := newInboxTestStore(t)
 
 	reg := NewToolRegistry()
-	RegisterInboxTools(reg, s)
+	RegisterInboxTools(reg, testInboxService(s))
 
 	start := time.Now()
 	res, err := reg.Call(context.Background(), "mtix_inbox_wait",
@@ -146,7 +146,7 @@ func TestInboxWaitTool_ReturnsAddressedEvent(t *testing.T) {
 	reg := NewToolRegistry()
 	promptSvc := service.NewPromptService(s, nil, slog.Default(), fixedClock)
 	RegisterContextTools(reg, newTestContextService(), promptSvc)
-	RegisterInboxTools(reg, s)
+	RegisterInboxTools(reg, testInboxService(s))
 
 	ctx := context.Background()
 	_, err := reg.Call(ctx, "mtix_annotate", json.RawMessage(
@@ -164,7 +164,7 @@ func TestInboxWaitTool_ReturnsAddressedEvent(t *testing.T) {
 // TestRegisterInboxTools_RegistersExpectedTools verifies inbox tool registration.
 func TestRegisterInboxTools_RegistersExpectedTools(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterInboxTools(reg, newInboxTestStore(t))
+	RegisterInboxTools(reg, testInboxService(newInboxTestStore(t)))
 
 	expectedNames := []string{"mtix_inbox", "mtix_inbox_wait", "mtix_inbox_ack"}
 	assert.Equal(t, len(expectedNames), reg.Count())

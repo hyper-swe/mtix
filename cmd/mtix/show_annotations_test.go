@@ -158,7 +158,7 @@ func TestShowParity_MCPShowReturnsSameAnnotationsAsCLI(t *testing.T) {
 	cliOut := showOutput(t, id)
 
 	reg := mcp.NewToolRegistry()
-	mcp.RegisterNodeTools(reg, app.nodeSvc, app.store)
+	mcp.RegisterNodeTools(reg, app.nodeSvc)
 	args, err := json.Marshal(map[string]string{"id": id})
 	require.NoError(t, err)
 	res, err := reg.Call(context.Background(), "mtix_show", args)

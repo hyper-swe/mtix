@@ -28,7 +28,7 @@ func TestInboxAckTool_RejectsMissingOrInvalidArgs(t *testing.T) {
 	reg := NewToolRegistry()
 	promptSvc := service.NewPromptService(s, nil, slog.Default(), fixedClock)
 	RegisterContextTools(reg, newTestContextService(), promptSvc)
-	RegisterInboxTools(reg, s)
+	RegisterInboxTools(reg, testInboxService(s))
 
 	ctx := context.Background()
 	_, err := reg.Call(ctx, "mtix_annotate", json.RawMessage(

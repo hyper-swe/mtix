@@ -21,7 +21,7 @@ func TestUpdateMCP_IssueType_PartialValidated(t *testing.T) {
 			st := newInboxTestStore(t)
 			reg := NewToolRegistry()
 			svc := service.NewNodeService(st, nil, nil, nil, func() time.Time { return time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC) })
-			RegisterNodeTools(reg, svc, st, WithPrimaryProject("TEST"))
+			RegisterNodeTools(reg, svc, WithPrimaryProject("TEST"))
 			ctx := context.Background()
 			n, err := svc.CreateNode(ctx, &service.CreateNodeRequest{Title: "Classified work", Project: "TEST", IssueType: model.IssueTypeFeature})
 			require.NoError(t, err)
@@ -54,7 +54,7 @@ func TestUpdateMCP_IssueType_SchemaIncludesClear(t *testing.T) {
 	st := newInboxTestStore(t)
 	reg := NewToolRegistry()
 	svc := service.NewNodeService(st, nil, nil, nil, time.Now)
-	RegisterNodeTools(reg, svc, st)
+	RegisterNodeTools(reg, svc)
 	for _, def := range reg.List() {
 		if def.Name == "mtix_update" {
 			assert.Equal(t, []string{"bug", "feature", "task", "chore", "refactor", "test", "doc", ""}, def.InputSchema.Properties["issue_type"].Enum)

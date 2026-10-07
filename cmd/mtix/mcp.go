@@ -108,16 +108,16 @@ func registerMCPTools(reg *mcp.ToolRegistry) string {
 			primary = v
 		}
 	}
-	mcp.RegisterNodeTools(reg, app.nodeSvc, app.store, mcp.WithPrimaryProject(primary))
-	mcp.RegisterWorkflowTools(reg, app.nodeSvc, app.store, app.bgSvc,
+	mcp.RegisterNodeTools(reg, app.nodeSvc, mcp.WithPrimaryProject(primary))
+	mcp.RegisterWorkflowTools(reg, app.nodeSvc, app.bgSvc,
 		mcp.WithPrimaryProject(primary), mcp.WithAuthor(mcpToolAuthor()))
 	mcp.RegisterContextTools(reg, app.ctxSvc, app.promptSvc)
-	mcp.RegisterDepTools(reg, app.store, service.NewDependencyServiceFromNodeService(app.nodeSvc))
-	mcp.RegisterInboxTools(reg, app.store)
+	mcp.RegisterDepTools(reg, service.NewDependencyServiceFromNodeService(app.nodeSvc))
+	mcp.RegisterInboxTools(reg, service.NewInboxService(app.store))
 	mcp.RegisterSessionTools(reg, app.sessionSvc, app.agentSvc)
-	mcp.RegisterAnalyticsTools(reg, app.store, app.agentSvc, app.configSvc)
+	mcp.RegisterAnalyticsTools(reg, app.nodeSvc, app.agentSvc, app.configSvc)
 	mcp.RegisterDocsTools(reg)
-	mcp.RegisterSyncWorkflowTool(reg, app.store.ReadDB(), app.mtixDir)
+	mcp.RegisterSyncWorkflowTool(reg, app.syncSvc, app.mtixDir)
 	// MTIX-95.12: warn in the tool result when a mutation's sync event is
 	// over the wire cap and a hub is configured.
 	reg.SetPayloadWarnings(func() bool { return hubConfigured(app.mtixDir) })

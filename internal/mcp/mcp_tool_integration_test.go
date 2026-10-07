@@ -420,7 +420,7 @@ func TestReadyTool_WithNoNodes_ReturnsEmptyList(t *testing.T) {
 	bgSvc, _ := newDBBackgroundService(t)
 	nodeSvc, _ := newDBNodeService(t)
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, nodeSvc, &mcpMockStore{}, bgSvc)
+	RegisterWorkflowTools(reg, nodeSvc, bgSvc)
 
 	result, err := reg.Call(context.Background(), "mtix_ready", nil)
 	require.NoError(t, err)
@@ -434,7 +434,7 @@ func TestStaleTool_WithNoStaleAgents_ReturnsEmptyList(t *testing.T) {
 	seedAgent(t, st.db, "agent-1", "TEST", "idle")
 	configSvc := newTestConfigService()
 	reg := NewToolRegistry()
-	RegisterAnalyticsTools(reg, &mcpMockStore{}, agentSvc, configSvc)
+	RegisterAnalyticsTools(reg, testReadNodeService(&mcpMockStore{}), agentSvc, configSvc)
 
 	result, err := reg.Call(context.Background(), "mtix_stale", nil)
 	require.NoError(t, err)

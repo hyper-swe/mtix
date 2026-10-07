@@ -23,13 +23,13 @@ func (b *mutationEvents) Broadcast(_ context.Context, event service.Event) error
 	return nil
 }
 
-func mutationServer(t *testing.T) (*Server, *mutationEvents) {
+func mutationServer(t *testing.T) (*testServer, *mutationEvents) {
 	t.Helper()
 	old := testGRPCServer(t)
 	bus := &mutationEvents{}
 	nodes := service.NewNodeService(old.store, bus, nil, old.logger, old.clock)
-	s := NewServer(old.store, nodes, old.bgSvc, old.sessionSvc, old.agentSvc, old.configSvc, old.contextSvc, old.promptSvc, bus, old.logger, old.config, old.clock)
-	return s, bus
+	s := NewServer(Services{NodeSvc: nodes, BgSvc: old.bgSvc, SessionSvc: old.sessionSvc, AgentSvc: old.agentSvc, ConfigSvc: old.configSvc, ContextSvc: old.contextSvc, PromptSvc: old.promptSvc, Broadcaster: bus}, old.logger, old.config, old.clock)
+	return &testServer{Server: s, store: old.store}, bus
 }
 
 func TestGRPCMutations_InvokeServicesAndBroadcast(t *testing.T) {

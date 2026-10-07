@@ -7,14 +7,14 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/service"
 )
 
 // Mutation-time wire-cap warning of MCP tool calls (MTIX-95.12). The local
 // field limits allow more than the sync hub accepts (a prompt may be 100 KB,
 // an event payload at most 64 KB); such a mutation succeeds, and `mtix sync
 // push` holds its event. With a hub configured, each tool call runs with a
-// sqlite.PayloadWarnings collector in its context, and every warning the
+// service.PayloadWarnings collector in its context, and every warning the
 // store reported is added to a successful result as its own text block,
 // after the tool's own content, so the agent sees it.
 
@@ -37,13 +37,13 @@ func callWithPayloadWarnings(ctx context.Context, enabled func() bool,
 	if enabled == nil || !enabled() {
 		return handler(ctx, args)
 	}
-	collected := &sqlite.PayloadWarnings{}
-	result, err := handler(sqlite.WithPayloadWarnings(ctx, collected), args)
+	collected := &service.PayloadWarnings{}
+	result, err := handler(service.WithPayloadWarnings(ctx, collected), args)
 	if err != nil || result == nil || result.IsError {
 		return result, err
 	}
 	for _, w := range collected.Drain() {
-		result.Content = append(result.Content, TextContent(w.String()))
+		result.Content = append(result.Content, TextContent(w))
 	}
 	return result, nil
 }

@@ -29,7 +29,7 @@ func dependencyRegistry(t *testing.T) (*ToolRegistry, *sqlite.Store, string, str
 	require.NoError(t, st.CreateNode(context.Background(), from))
 	require.NoError(t, st.CreateNode(context.Background(), to))
 	reg := NewToolRegistry()
-	RegisterDepTools(reg, st)
+	RegisterDepTools(reg, testDependencyService(st))
 	return reg, st, from.ID, to.ID
 }
 

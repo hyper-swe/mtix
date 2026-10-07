@@ -10,23 +10,22 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store"
 )
 
 // RegisterAnalyticsTools registers analytics and query MCP tools per MTIX-6.2.6.
 func RegisterAnalyticsTools(
 	reg *ToolRegistry,
-	st store.Store,
+	svc *service.NodeService,
 	agentSvc *service.AgentService,
 	configSvc *service.ConfigService,
 ) {
-	registerStatsTool(reg, st)
-	registerProgressTool(reg, st)
+	registerStatsTool(reg, svc)
+	registerProgressTool(reg, svc)
 	registerStaleTool(reg, agentSvc, configSvc)
-	registerOrphansTool(reg, st)
+	registerOrphansTool(reg, svc)
 }
 
-func registerStatsTool(reg *ToolRegistry, st store.Store) {
+func registerStatsTool(reg *ToolRegistry, svc *service.NodeService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_stats",
 		Description: "Get project statistics (node counts by status)",
@@ -55,11 +54,11 @@ func registerStatsTool(reg *ToolRegistry, st store.Store) {
 		total := 0
 
 		for _, s := range statuses {
-			filter := store.NodeFilter{Status: []model.Status{s}}
+			filter := service.NodeFilter{Status: []model.Status{s}}
 			if p.Under != "" {
 				filter.Under = []string{p.Under}
 			}
-			_, count, err := st.ListNodes(ctx, filter, store.ListOptions{Limit: 0})
+			_, count, err := svc.ListNodes(ctx, filter, service.ListOptions{Limit: 0})
 			if err != nil {
 				return nil, fmt.Errorf("count %s nodes: %w", s, err)
 			}
@@ -73,7 +72,7 @@ func registerStatsTool(reg *ToolRegistry, st store.Store) {
 	})
 }
 
-func registerProgressTool(reg *ToolRegistry, st store.Store) {
+func registerProgressTool(reg *ToolRegistry, svc *service.NodeService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_progress",
 		Description: "Get progress details for a node and its children",
@@ -92,12 +91,12 @@ func registerProgressTool(reg *ToolRegistry, st store.Store) {
 			return nil, fmt.Errorf("parse progress args: %w", err)
 		}
 
-		node, err := st.GetNode(ctx, p.ID)
+		node, err := svc.GetNode(ctx, p.ID)
 		if err != nil {
 			return nil, err
 		}
 
-		children, err := st.GetDirectChildren(ctx, p.ID)
+		children, err := svc.GetDirectChildren(ctx, p.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -149,7 +148,7 @@ func registerStaleTool(reg *ToolRegistry, agentSvc *service.AgentService, config
 	})
 }
 
-func registerOrphansTool(reg *ToolRegistry, st store.Store) {
+func registerOrphansTool(reg *ToolRegistry, svc *service.NodeService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_orphans",
 		Description: "List root-level nodes (no parent)",
@@ -172,7 +171,7 @@ func registerOrphansTool(reg *ToolRegistry, st store.Store) {
 
 		// Root nodes are those with no "." in their ID (top-level project nodes).
 		// We use ListNodes with no Under filter and post-filter for root-level.
-		nodes, _, err := st.ListNodes(ctx, store.NodeFilter{}, store.ListOptions{Limit: p.Limit})
+		nodes, _, err := svc.ListNodes(ctx, service.NodeFilter{}, service.ListOptions{Limit: p.Limit})
 		if err != nil {
 			return nil, err
 		}

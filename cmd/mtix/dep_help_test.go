@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/mcp"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -113,7 +115,7 @@ func TestDepHelp_MCPAndReferenceMatchModelTypes(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	registry := mcp.NewToolRegistry()
-	mcp.RegisterDepTools(registry, st)
+	mcp.RegisterDepTools(registry, service.NewDependencyServiceFromNodeService(service.NewNodeService(st, nil, nil, nil, time.Now)))
 	seen := 0
 	for _, tool := range registry.List() {
 		if tool.Name != "mtix_dep_add" && tool.Name != "mtix_dep_remove" {

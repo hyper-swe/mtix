@@ -19,7 +19,7 @@ import (
 
 // deferAuthors returns the author of the node's last activity entry and of
 // its transition_status sync event.
-func deferAuthors(t *testing.T, s *Server, id string) (activity, event string) {
+func deferAuthors(t *testing.T, s *testServer, id string) (activity, event string) {
 	t.Helper()
 	ctx := context.Background()
 	entries, err := s.store.GetActivity(ctx, id, 100, 0)

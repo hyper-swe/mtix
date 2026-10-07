@@ -13,7 +13,6 @@ import (
 	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store"
 )
 
 // toolConfig holds cross-cutting settings for the MCP tools, currently the
@@ -58,7 +57,7 @@ func applyToolOptions(opts []ToolOption) toolConfig {
 }
 
 // resolveScopeProject maps the optional `project` argument of a list-style tool
-// to a store.NodeFilter.Project value per FR-MULTI-PROJECT MP-12:
+// to a service.NodeFilter.Project value per FR-MULTI-PROJECT MP-12:
 //   - "" (omitted) -> the primary project (the configured default scope)
 //   - "all"        -> "" (span every project in the DB)
 //   - otherwise    -> the given prefix (scope to exactly that project)
@@ -84,19 +83,19 @@ func registerCreateTool(reg *ToolRegistry, svc *service.NodeService, primaryProj
 }
 
 // RegisterNodeTools registers node management MCP tools per MTIX-6.2.1 / FR-17.7.
-func RegisterNodeTools(reg *ToolRegistry, nodeSvc *service.NodeService, st store.Store, opts ...ToolOption) {
+func RegisterNodeTools(reg *ToolRegistry, nodeSvc *service.NodeService, opts ...ToolOption) {
 	cfg := applyToolOptions(opts)
 	registerCreateTool(reg, nodeSvc, cfg.primaryProject)
-	registerShowTool(reg, st)
-	registerListTool(reg, st, cfg.primaryProject)
-	registerBriefingTool(reg, st, cfg.primaryProject)
+	registerShowTool(reg, nodeSvc)
+	registerListTool(reg, nodeSvc, cfg.primaryProject)
+	registerBriefingTool(reg, nodeSvc, cfg.primaryProject)
 	registerDeleteTool(reg, nodeSvc)
 	registerUndeleteTool(reg, nodeSvc)
 	registerDecomposeTool(reg, nodeSvc)
 	registerUpdateTool(reg, nodeSvc)
 }
 
-func registerShowTool(reg *ToolRegistry, st store.Store) {
+func registerShowTool(reg *ToolRegistry, svc *service.NodeService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_show",
 		Description: "Show full details of a node",
@@ -118,7 +117,7 @@ func registerShowTool(reg *ToolRegistry, st store.Store) {
 		// Resolve display_path -> uid -> node so a reference survives a
 		// renumber (ADR-003 §5): a plain display id is the common case, but a
 		// reference held as a durable uid still resolves to the current node.
-		node, err := resolveNodeRef(ctx, st, p.ID)
+		node, err := resolveNodeRef(ctx, svc, p.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -149,7 +148,7 @@ func showResultJSON(node *model.Node) string {
 	return string(flagged)
 }
 
-func registerListTool(reg *ToolRegistry, st store.Store, primaryProject string) {
+func registerListTool(reg *ToolRegistry, svc *service.NodeService, primaryProject string) {
 	reg.Register(ToolDef{
 		Name:        "mtix_list",
 		Description: "List nodes with filtering and pagination",
@@ -164,7 +163,11 @@ func registerListTool(reg *ToolRegistry, st store.Store, primaryProject string) 
 				"offset":   {Type: "number", Description: "Pagination offset"},
 			},
 		},
-	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
+	}, listToolHandler(svc, primaryProject))
+}
+
+func listToolHandler(svc *service.NodeService, primaryProject string) ToolHandler {
+	return func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
 		var p struct {
 			Status   string `json:"status"`
 			Under    string `json:"under"`
@@ -183,7 +186,7 @@ func registerListTool(reg *ToolRegistry, st store.Store, primaryProject string) 
 			p.Limit = 50
 		}
 
-		filter := store.NodeFilter{Project: resolveScopeProject(p.Project, primaryProject)}
+		filter := service.NodeFilter{Project: resolveScopeProject(p.Project, primaryProject)}
 		if p.Under != "" {
 			filter.Under = []string{p.Under}
 		}
@@ -194,7 +197,7 @@ func registerListTool(reg *ToolRegistry, st store.Store, primaryProject string) 
 			filter.Status = []model.Status{model.Status(p.Status)}
 		}
 
-		nodes, total, err := st.ListNodes(ctx, filter, store.ListOptions{
+		nodes, total, err := svc.ListNodes(ctx, filter, service.ListOptions{
 			Limit: p.Limit, Offset: p.Offset,
 		})
 		if err != nil {
@@ -205,7 +208,7 @@ func registerListTool(reg *ToolRegistry, st store.Store, primaryProject string) 
 			"nodes": nodes, "total": total,
 		}, "", "  ")
 		return SuccessResult(string(data)), nil
-	})
+	}
 }
 
 func registerDeleteTool(reg *ToolRegistry, svc *service.NodeService) {
@@ -324,7 +327,7 @@ func registerUpdateTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, fmt.Errorf("parse update args: %w", err)
 		}
 
-		updates := &store.NodeUpdate{IssueType: p.IssueType}
+		updates := &service.NodeUpdate{IssueType: p.IssueType}
 		if p.Title != "" {
 			updates.Title = &p.Title
 		}
@@ -336,7 +339,7 @@ func registerUpdateTool(reg *ToolRegistry, svc *service.NodeService) {
 			updates.Priority = &pri
 		}
 
-		if err := svc.UpdateNode(ctx, p.ID, updates); err != nil {
+		if err := svc.ApplyUpdate(ctx, p.ID, updates); err != nil {
 			return nil, err
 		}
 
@@ -347,7 +350,7 @@ func registerUpdateTool(reg *ToolRegistry, svc *service.NodeService) {
 // registerBriefingTool registers the mtix_briefing MCP tool per FR-17.7.
 // Returns briefing-formatted plain text directly — agents can paste it
 // into their context window without parsing JSON.
-func registerBriefingTool(reg *ToolRegistry, st store.Store, primaryProject string) {
+func registerBriefingTool(reg *ToolRegistry, svc *service.NodeService, primaryProject string) {
 	reg.Register(ToolDef{
 		Name: "mtix_briefing",
 		Description: "List nodes in briefing format — labeled text blocks ready for LLM context. " +
@@ -367,7 +370,11 @@ func registerBriefingTool(reg *ToolRegistry, st store.Store, primaryProject stri
 				"limit":           {Type: "number", Description: "Max results (default 50)"},
 			},
 		},
-	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
+	}, briefingToolHandler(svc, primaryProject))
+}
+
+func briefingToolHandler(svc *service.NodeService, primaryProject string) ToolHandler {
+	return func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
 		var p struct {
 			Status        string `json:"status"`
 			Under         string `json:"under"`
@@ -389,7 +396,7 @@ func registerBriefingTool(reg *ToolRegistry, st store.Store, primaryProject stri
 			p.Limit = 50
 		}
 
-		filter := store.NodeFilter{Project: resolveScopeProject(p.Project, primaryProject)}
+		filter := service.NodeFilter{Project: resolveScopeProject(p.Project, primaryProject)}
 		if p.Under != "" {
 			filter.Under = splitCSVParam(p.Under)
 		}
@@ -403,7 +410,7 @@ func registerBriefingTool(reg *ToolRegistry, st store.Store, primaryProject stri
 			filter.Status = append(filter.Status, model.Status(s))
 		}
 
-		nodes, _, err := st.ListNodes(ctx, filter, store.ListOptions{Limit: p.Limit})
+		nodes, _, err := svc.ListNodes(ctx, filter, service.ListOptions{Limit: p.Limit})
 		if err != nil {
 			return nil, err
 		}
@@ -420,7 +427,7 @@ func registerBriefingTool(reg *ToolRegistry, st store.Store, primaryProject stri
 		}
 
 		return SuccessResult(buf.String()), nil
-	})
+	}
 }
 
 // splitCSVParam splits a comma-separated string into non-empty trimmed

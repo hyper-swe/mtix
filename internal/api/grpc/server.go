@@ -19,7 +19,6 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // ServerConfig holds configuration for the gRPC server per FR-8.1.
@@ -33,7 +32,6 @@ type Server struct {
 	config      ServerConfig
 	logger      *slog.Logger
 	clock       func() time.Time
-	store       *sqlite.Store
 	nodeSvc     *service.NodeService
 	depSvc      *service.DependencyService
 	bgSvc       *service.BackgroundService
@@ -45,22 +43,22 @@ type Server struct {
 	broadcaster service.EventBroadcaster
 }
 
+// Services supplies the owning operations per FR-8.1 and Commandment 7.
+// Persistence remains inside these services; Server never receives a backend.
+type Services struct {
+	NodeSvc     *service.NodeService
+	BgSvc       *service.BackgroundService
+	SessionSvc  *service.SessionService
+	AgentSvc    *service.AgentService
+	ConfigSvc   *service.ConfigService
+	ContextSvc  *service.ContextService
+	PromptSvc   *service.PromptService
+	Broadcaster service.EventBroadcaster
+}
+
 // NewServer creates a new gRPC server with interceptors per FR-8.1.
 // Registers the MtixService implementation and enables reflection.
-func NewServer(
-	store *sqlite.Store,
-	nodeSvc *service.NodeService,
-	bgSvc *service.BackgroundService,
-	sessionSvc *service.SessionService,
-	agentSvc *service.AgentService,
-	configSvc *service.ConfigService,
-	contextSvc *service.ContextService,
-	promptSvc *service.PromptService,
-	broadcaster service.EventBroadcaster,
-	logger *slog.Logger,
-	config ServerConfig,
-	clock func() time.Time,
-) *Server {
+func NewServer(services Services, logger *slog.Logger, config ServerConfig, clock func() time.Time) *Server {
 	if config.Port == "" {
 		config.Port = "6850"
 	}
@@ -72,16 +70,15 @@ func NewServer(
 		config:      config,
 		logger:      logger,
 		clock:       clock,
-		store:       store,
-		nodeSvc:     nodeSvc,
-		depSvc:      service.NewDependencyServiceFromNodeService(nodeSvc),
-		bgSvc:       bgSvc,
-		sessionSvc:  sessionSvc,
-		agentSvc:    agentSvc,
-		configSvc:   configSvc,
-		contextSvc:  contextSvc,
-		promptSvc:   promptSvc,
-		broadcaster: broadcaster,
+		nodeSvc:     services.NodeSvc,
+		depSvc:      service.NewDependencyServiceFromNodeService(services.NodeSvc),
+		bgSvc:       services.BgSvc,
+		sessionSvc:  services.SessionSvc,
+		agentSvc:    services.AgentSvc,
+		configSvc:   services.ConfigSvc,
+		contextSvc:  services.ContextSvc,
+		promptSvc:   services.PromptSvc,
+		broadcaster: services.Broadcaster,
 	}
 
 	// Create gRPC server with interceptors.

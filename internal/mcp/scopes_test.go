@@ -99,7 +99,7 @@ func TestRegistry_NotReadOnly_AllowsEverything(t *testing.T) {
 // refused the mutations.
 func TestReadOnly_RealNodeTools(t *testing.T) {
 	reg := NewToolRegistry()
-	RegisterNodeTools(reg, newTestNodeService(), &mcpMockStore{})
+	RegisterNodeTools(reg, newTestNodeService())
 	reg.SetReadOnly(true)
 	ctx := context.Background()
 

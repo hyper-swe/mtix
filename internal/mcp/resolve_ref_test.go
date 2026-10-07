@@ -12,9 +12,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store"
 )
 
 type fakeResolver struct {
+	store.Store
 	byID    map[string]*model.Node
 	uidToID map[string]string
 }
@@ -43,29 +45,29 @@ func newFakeResolver() *fakeResolver {
 }
 
 func TestResolveNodeRef_DisplayPath(t *testing.T) {
-	got, err := resolveNodeRef(context.Background(), newFakeResolver(), "PROJ-1.5")
+	got, err := resolveNodeRef(context.Background(), testReadNodeService(newFakeResolver()), "PROJ-1.5")
 	require.NoError(t, err)
 	assert.Equal(t, "PROJ-1.5", got.ID)
 }
 
 func TestResolveNodeRef_ByUID_SurvivesRenumber(t *testing.T) {
-	got, err := resolveNodeRef(context.Background(), newFakeResolver(), sampleUID)
+	got, err := resolveNodeRef(context.Background(), testReadNodeService(newFakeResolver()), sampleUID)
 	require.NoError(t, err)
 	assert.Equal(t, "PROJ-1.5", got.ID)
 }
 
 func TestResolveNodeRef_UnknownDisplayPath(t *testing.T) {
-	_, err := resolveNodeRef(context.Background(), newFakeResolver(), "PROJ-9.9")
+	_, err := resolveNodeRef(context.Background(), testReadNodeService(newFakeResolver()), "PROJ-9.9")
 	require.ErrorIs(t, err, model.ErrNotFound)
 }
 
 func TestResolveNodeRef_UnknownUID(t *testing.T) {
-	_, err := resolveNodeRef(context.Background(), newFakeResolver(),
+	_, err := resolveNodeRef(context.Background(), testReadNodeService(newFakeResolver()),
 		"0190ffff-ffff-7fff-8fff-ffffffffffff")
 	require.ErrorIs(t, err, model.ErrNotFound)
 }
 
 func TestResolveNodeRef_EmptyRef(t *testing.T) {
-	_, err := resolveNodeRef(context.Background(), newFakeResolver(), "")
+	_, err := resolveNodeRef(context.Background(), testReadNodeService(newFakeResolver()), "")
 	require.ErrorIs(t, err, model.ErrInvalidInput)
 }

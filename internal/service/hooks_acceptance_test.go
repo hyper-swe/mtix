@@ -479,7 +479,7 @@ func TestFR19Acceptance_ViaMCP(t *testing.T) {
 	ctxSvc := service.NewContextService(store, nil, slog.Default())
 	promptSvc := newAcceptancePromptService(store)
 	mcp.RegisterContextTools(reg, ctxSvc, promptSvc)
-	mcp.RegisterInboxTools(reg, store)
+	mcp.RegisterInboxTools(reg, service.NewInboxService(store))
 
 	// Address a comment at opus via mtix_annotate's `to`.
 	_, err = reg.Call(ctx, "mtix_annotate", json.RawMessage(

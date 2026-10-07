@@ -59,7 +59,7 @@ func TestRegisterSyncWorkflowTool_RegistersExactlyOne(t *testing.T) {
 	db := newSyncWorkflowTestDB(t)
 	mtixDir := t.TempDir()
 
-	RegisterSyncWorkflowTool(reg, db, mtixDir)
+	RegisterSyncWorkflowTool(reg, testWorkflowService{db: db}, mtixDir)
 
 	require.Equal(t, 1, reg.Count())
 	tools := reg.List()
@@ -71,7 +71,7 @@ func TestSyncWorkflowTool_DescriptionContainsUntrustedContextWarning(t *testing.
 	db := newSyncWorkflowTestDB(t)
 	mtixDir := t.TempDir()
 
-	RegisterSyncWorkflowTool(reg, db, mtixDir)
+	RegisterSyncWorkflowTool(reg, testWorkflowService{db: db}, mtixDir)
 	desc := reg.List()[0].Description
 	// FR-18.17 requires the untrusted-context warning verbatim.
 	require.Contains(t, desc, "WARNING")
@@ -80,69 +80,14 @@ func TestSyncWorkflowTool_DescriptionContainsUntrustedContextWarning(t *testing.
 }
 
 func TestSyncWorkflowTool_HandlerSucceedsAcrossAllStates(t *testing.T) {
-	cases := []struct {
-		name       string
-		setup      func(t *testing.T, db *sql.DB)
-		wantSubstr string // expected substring in tool output
-	}{
-		{
-			name:       "solo",
-			setup:      func(t *testing.T, db *sql.DB) { t.Setenv("MTIX_SYNC_DSN", "") },
-			wantSubstr: "State: solo",
-		},
-		{
-			name: "sync-configured-no-hub",
-			setup: func(t *testing.T, db *sql.DB) {
-				t.Setenv("MTIX_SYNC_DSN", "postgres://u:p@h/d")
-			},
-			wantSubstr: "State: sync-configured-no-hub",
-		},
-		{
-			name: "sync-active",
-			setup: func(t *testing.T, db *sql.DB) {
-				t.Setenv("MTIX_SYNC_DSN", "postgres://u:p@h/d")
-				_, err := db.ExecContext(context.Background(),
-					`UPDATE meta SET value = 'abc' WHERE key = 'meta.sync.machine_hash'`)
-				require.NoError(t, err)
-				_, err = db.ExecContext(context.Background(),
-					`INSERT INTO sync_events (event_id, node_id, op_type, lamport, wall_clock_ts, author_machine_hash, payload)
-					 VALUES ('e1', 'P-1', 'create_node', 1, '2026-05-01T00:00:00Z', 'abc', '{}')`)
-				require.NoError(t, err)
-			},
-			wantSubstr: "State: sync-active",
-		},
-		{
-			name: "divergent-state-pending",
-			setup: func(t *testing.T, db *sql.DB) {
-				t.Setenv("MTIX_SYNC_DSN", "postgres://u:p@h/d")
-				_, err := db.ExecContext(context.Background(),
-					`INSERT INTO sync_conflicts (event_id, node_id, resolved_at) VALUES ('e1', 'P-1', NULL)`)
-				require.NoError(t, err)
-			},
-			wantSubstr: "State: divergent-state-pending",
-		},
-		{
-			name: "hub-unreachable",
-			setup: func(t *testing.T, db *sql.DB) {
-				t.Setenv("MTIX_SYNC_DSN", "postgres://u:p@h/d")
-				_, err := db.ExecContext(context.Background(),
-					`UPDATE meta SET value = 'abc' WHERE key = 'meta.sync.machine_hash'`)
-				require.NoError(t, err)
-				_, err = db.ExecContext(context.Background(),
-					`UPDATE meta SET value = '5' WHERE key = 'meta.sync.consecutive_errors'`)
-				require.NoError(t, err)
-			},
-			wantSubstr: "State: hub-unreachable",
-		},
-	}
-
+	cases := syncWorkflowStateCases()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			reg := NewToolRegistry()
 			db := newSyncWorkflowTestDB(t)
 			tc.setup(t, db)
 
-			RegisterSyncWorkflowTool(reg, db, t.TempDir())
+			RegisterSyncWorkflowTool(reg, testWorkflowService{db: db}, t.TempDir())
 			result, err := reg.Call(context.Background(), "mtix_sync_workflow", nil)
 			require.NoError(t, err)
 			require.False(t, result.IsError, "tool should not return IsError")
@@ -162,7 +107,7 @@ func TestSyncWorkflowTool_NeverLeaksDSN(t *testing.T) {
 
 	reg := NewToolRegistry()
 	db := newSyncWorkflowTestDB(t)
-	RegisterSyncWorkflowTool(reg, db, t.TempDir())
+	RegisterSyncWorkflowTool(reg, testWorkflowService{db: db}, t.TempDir())
 
 	result, err := reg.Call(context.Background(), "mtix_sync_workflow", nil)
 	require.NoError(t, err)
@@ -198,7 +143,7 @@ func TestSyncWorkflowTool_RecommendsBackfillForUpgrader(t *testing.T) {
 		INSERT INTO nodes (id) VALUES ('PROJ-2');`)
 	require.NoError(t, err)
 
-	RegisterSyncWorkflowTool(reg, db, t.TempDir())
+	RegisterSyncWorkflowTool(reg, testWorkflowService{db: db}, t.TempDir())
 
 	result, err := reg.Call(context.Background(), "mtix_sync_workflow", nil)
 	require.NoError(t, err)
@@ -214,7 +159,7 @@ func TestSyncWorkflowTool_RecommendsBackfillForUpgrader(t *testing.T) {
 func TestSyncWorkflowTool_OutputBoundedTo4KB(t *testing.T) {
 	reg := NewToolRegistry()
 	db := newSyncWorkflowTestDB(t)
-	RegisterSyncWorkflowTool(reg, db, t.TempDir())
+	RegisterSyncWorkflowTool(reg, testWorkflowService{db: db}, t.TempDir())
 
 	result, err := reg.Call(context.Background(), "mtix_sync_workflow", nil)
 	require.NoError(t, err)
@@ -225,7 +170,7 @@ func TestSyncWorkflowTool_OutputBoundedTo4KB(t *testing.T) {
 func TestSyncWorkflowTool_InputSchemaIsEmpty(t *testing.T) {
 	reg := NewToolRegistry()
 	db := newSyncWorkflowTestDB(t)
-	RegisterSyncWorkflowTool(reg, db, t.TempDir())
+	RegisterSyncWorkflowTool(reg, testWorkflowService{db: db}, t.TempDir())
 
 	tools := reg.List()
 	schema := tools[0].InputSchema
@@ -239,7 +184,7 @@ func TestSyncWorkflowTool_HandlerHandlesNilArgs(t *testing.T) {
 	reg := NewToolRegistry()
 	db := newSyncWorkflowTestDB(t)
 	t.Setenv("MTIX_SYNC_DSN", "")
-	RegisterSyncWorkflowTool(reg, db, t.TempDir())
+	RegisterSyncWorkflowTool(reg, testWorkflowService{db: db}, t.TempDir())
 
 	// Pass nil args explicitly — handler must not crash.
 	result, err := reg.Call(context.Background(), "mtix_sync_workflow", nil)
@@ -252,10 +197,74 @@ func TestSyncWorkflowTool_OutputStartsWithStateLine(t *testing.T) {
 
 	reg := NewToolRegistry()
 	db := newSyncWorkflowTestDB(t)
-	RegisterSyncWorkflowTool(reg, db, t.TempDir())
+	RegisterSyncWorkflowTool(reg, testWorkflowService{db: db}, t.TempDir())
 
 	result, err := reg.Call(context.Background(), "mtix_sync_workflow", nil)
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(result.Content[0].Text, "State: "),
 		"output should lead with State: line for predictable parsing")
+}
+
+type syncWorkflowStateCase struct {
+	name       string
+	setup      func(*testing.T, *sql.DB)
+	wantSubstr string
+}
+
+func setupActiveWorkflow(t *testing.T, db *sql.DB) {
+	t.Setenv("MTIX_SYNC_DSN", "postgres://u:p@h/d")
+	_, err := db.ExecContext(context.Background(),
+		`UPDATE meta SET value = 'abc' WHERE key = 'meta.sync.machine_hash'`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(context.Background(),
+		`INSERT INTO sync_events (event_id, node_id, op_type, lamport, wall_clock_ts, author_machine_hash, payload)
+					 VALUES ('e1', 'P-1', 'create_node', 1, '2026-05-01T00:00:00Z', 'abc', '{}')`)
+	require.NoError(t, err)
+
+}
+
+func syncWorkflowStateCases() []syncWorkflowStateCase {
+	return []syncWorkflowStateCase{
+		{
+			name:       "solo",
+			setup:      func(t *testing.T, db *sql.DB) { t.Setenv("MTIX_SYNC_DSN", "") },
+			wantSubstr: "State: solo",
+		},
+		{
+			name: "sync-configured-no-hub",
+			setup: func(t *testing.T, db *sql.DB) {
+				t.Setenv("MTIX_SYNC_DSN", "postgres://u:p@h/d")
+			},
+			wantSubstr: "State: sync-configured-no-hub",
+		},
+		{
+			name:       "sync-active",
+			setup:      setupActiveWorkflow,
+			wantSubstr: "State: sync-active",
+		},
+		{
+			name: "divergent-state-pending",
+			setup: func(t *testing.T, db *sql.DB) {
+				t.Setenv("MTIX_SYNC_DSN", "postgres://u:p@h/d")
+				_, err := db.ExecContext(context.Background(),
+					`INSERT INTO sync_conflicts (event_id, node_id, resolved_at) VALUES ('e1', 'P-1', NULL)`)
+				require.NoError(t, err)
+			},
+			wantSubstr: "State: divergent-state-pending",
+		},
+		{
+			name: "hub-unreachable",
+			setup: func(t *testing.T, db *sql.DB) {
+				t.Setenv("MTIX_SYNC_DSN", "postgres://u:p@h/d")
+				_, err := db.ExecContext(context.Background(),
+					`UPDATE meta SET value = 'abc' WHERE key = 'meta.sync.machine_hash'`)
+				require.NoError(t, err)
+				_, err = db.ExecContext(context.Background(),
+					`UPDATE meta SET value = '5' WHERE key = 'meta.sync.consecutive_errors'`)
+				require.NoError(t, err)
+			},
+			wantSubstr: "State: hub-unreachable",
+		},
+	}
+
 }

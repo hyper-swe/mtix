@@ -43,7 +43,7 @@ func TestMCPWorkflowMutations_InvokeServicesAndBroadcast(t *testing.T) {
 			bus := &mutationEvents{}
 			nodes := service.NewNodeService(st, bus, nil, nil, fixedClock)
 			reg := NewToolRegistry()
-			RegisterWorkflowTools(reg, nodes, st, service.NewBackgroundService(st, nil, nil, fixedClock))
+			RegisterWorkflowTools(reg, nodes, service.NewBackgroundService(st, nil, nil, fixedClock))
 			result, err := reg.Call(ctx, tt.name, json.RawMessage(tt.args))
 			require.NoError(t, err)
 			require.False(t, result.IsError)
@@ -68,7 +68,7 @@ func TestMCPDependencyMutations_InvokeServicesAndBroadcast(t *testing.T) {
 			bus := &mutationEvents{}
 			svc := service.NewDependencyService(st, bus, nil, fixedClock)
 			reg := NewToolRegistry()
-			RegisterDepTools(reg, st, svc)
+			RegisterDepTools(reg, svc)
 			result, err := reg.Call(ctx, name, json.RawMessage(`{"from_id":"PROJ-1","to_id":"PROJ-2","dep_type":"related"}`))
 			require.NoError(t, err)
 			require.False(t, result.IsError)
@@ -104,7 +104,7 @@ func TestMCPInboxAck_InvokesService(t *testing.T) {
 	st := newInboxTestStore(t)
 	svc := &ackServiceSpy{}
 	reg := NewToolRegistry()
-	RegisterInboxTools(reg, &ackBackend{st}, svc)
+	RegisterInboxTools(reg, testInboxService(&ackBackend{st}, svc))
 	result, err := reg.Call(context.Background(), "mtix_inbox_ack", json.RawMessage(`{"agent":"worker","seq":7}`))
 	require.NoError(t, err)
 	require.False(t, result.IsError)
@@ -127,8 +127,8 @@ func TestMCPMutations_FailedWritesPreserveErrorWithoutBroadcast(t *testing.T) {
 			bus := &mutationEvents{}
 			nodes := service.NewNodeService(st, bus, nil, nil, fixedClock)
 			reg := NewToolRegistry()
-			RegisterWorkflowTools(reg, nodes, st, service.NewBackgroundService(st, nil, nil, fixedClock))
-			RegisterDepTools(reg, st, service.NewDependencyServiceFromNodeService(nodes))
+			RegisterWorkflowTools(reg, nodes, service.NewBackgroundService(st, nil, nil, fixedClock))
+			RegisterDepTools(reg, service.NewDependencyServiceFromNodeService(nodes))
 			_, err := reg.Call(context.Background(), tt.name, json.RawMessage(tt.args))
 			if tt.name == "mtix_dep_add" {
 				require.ErrorContains(t, err, "FOREIGN KEY constraint failed")
@@ -152,7 +152,7 @@ func TestMCPInboxAck_ServiceErrorIsPreserved(t *testing.T) {
 	sentinel := errors.New("service refused ack")
 	svc := &failingAckService{err: sentinel}
 	reg := NewToolRegistry()
-	RegisterInboxTools(reg, st, svc)
+	RegisterInboxTools(reg, testInboxService(st, svc))
 	_, err := reg.Call(context.Background(), "mtix_inbox_ack", json.RawMessage(`{"agent":"worker","seq":7}`))
 	require.ErrorIs(t, err, sentinel)
 	require.Equal(t, 1, svc.calls)
@@ -170,7 +170,7 @@ func TestMCPServiceBoundary_PreservesExactBackendMessages(t *testing.T) {
 	ctx := context.Background()
 	nodes := service.NewNodeService(st, nil, nil, nil, fixedClock)
 	reg := NewToolRegistry()
-	RegisterWorkflowTools(reg, nodes, st, service.NewBackgroundService(st, nil, nil, fixedClock))
+	RegisterWorkflowTools(reg, nodes, service.NewBackgroundService(st, nil, nil, fixedClock))
 	backend := st.CancelNode(ctx, "MISSING-1", "cancel", "", false)
 	_, err := reg.Call(ctx, "mtix_cancel", json.RawMessage(`{"id":"MISSING-1","reason":"cancel"}`))
 	require.ErrorIs(t, err, model.ErrNotFound)
@@ -183,7 +183,7 @@ func TestMCPInboxBoundary_PreservesExactBackendMessage(t *testing.T) {
 	reg := NewToolRegistry()
 	ackError := errors.New("original inbox backend context: durable journal unavailable")
 	ack := &errorAckBackend{InboxStore: st, err: ackError}
-	RegisterInboxTools(reg, ack, service.NewInboxService(ack))
+	RegisterInboxTools(reg, testInboxService(ack, service.NewInboxService(ack)))
 	_, err := reg.Call(ctx, "mtix_inbox_ack", json.RawMessage(`{"agent":"worker","seq":7}`))
 	require.ErrorIs(t, err, ackError)
 	require.Equal(t, ackError.Error(), err.Error())

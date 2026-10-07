@@ -23,7 +23,7 @@ func TestCreateMCP_ClassificationAndAssignment(t *testing.T) {
 			st := newInboxTestStore(t)
 			reg := NewToolRegistry()
 			svc := service.NewNodeService(st, nil, nil, nil, func() time.Time { return time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC) })
-			RegisterNodeTools(reg, svc, st, WithPrimaryProject("TEST"))
+			RegisterNodeTools(reg, svc, WithPrimaryProject("TEST"))
 			raw, err := json.Marshal(map[string]string{"title": "Classified work", "issue_type": kind, "assignee": "worker", "creator": "author"})
 			require.NoError(t, err)
 			result, err := reg.Call(context.Background(), "mtix_create", raw)
@@ -53,7 +53,7 @@ func TestCreateMCP_SchemaAndOmittedAuthor(t *testing.T) {
 	st := newInboxTestStore(t)
 	reg := NewToolRegistry()
 	svc := service.NewNodeService(st, nil, nil, nil, func() time.Time { return time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC) })
-	RegisterNodeTools(reg, svc, st, WithPrimaryProject("TEST"))
+	RegisterNodeTools(reg, svc, WithPrimaryProject("TEST"))
 	var schema SchemaObj
 	for _, def := range reg.List() {
 		if def.Name == "mtix_create" {

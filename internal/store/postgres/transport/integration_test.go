@@ -6,7 +6,6 @@ package transport_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"sync"
@@ -205,45 +204,40 @@ func TestMigrate_ConcurrentSingleFlight(t *testing.T) {
 	require.Equal(t, 1, n, "sync_events must exist exactly once")
 }
 
-// TestMigrate_PartialMigrationRecovery is the FR-18.7 chaos test:
-// abort a Migrate mid-execution and verify the next Migrate runs
-// cleanly. We simulate the abort by canceling the ctx after the
-// advisory lock is held but before all SQL files have run.
+// TestMigrate_PartialMigrationRecovery proves FR-18.4 transaction recovery.
+// Cancellation follows observed advisory ownership and blocked schema DDL,
+// rather than elapsed time, so every run exercises the interrupted migration.
 func TestMigrate_PartialMigrationRecovery(t *testing.T) {
 	pool := openTestPool(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	cancelCalled := make(chan struct{})
+	fixture := newMigrationRecoveryFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	finished := make(chan struct{})
 	go func() {
-		// Cancel almost immediately — likely before all migrations
-		// complete. PG rolls back; the advisory lock is released.
-		time.Sleep(5 * time.Millisecond)
-		cancel()
-		close(cancelCalled)
+		defer close(finished)
+		result <- pool.Migrate(ctx)
 	}()
-	err := pool.Migrate(ctx)
-	<-cancelCalled
-	if err == nil {
-		t.Skip("migrate completed before cancel landed; non-deterministic on fast hosts. Re-run for chaos coverage.")
-	}
-	require.True(t, errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded),
-		"abort must surface as canceled/deadline, got: %v", err)
-
-	// Recovery: a fresh Migrate must succeed cleanly.
-	cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cleanCancel()
-	require.NoError(t, pool.Migrate(cleanCtx),
-		"after rollback, fresh Migrate must complete the schema")
-
-	// Verify all tables exist after recovery.
+	fixture.joinOnCleanup(t, cancel, finished)
+	pid := fixture.waitForSchemaLock(t)
+	cancel()
+	err := fixture.migrationResult(t, result)
+	require.ErrorIs(t, err, context.Canceled, "observed schema execution must report explicit cancellation")
+	require.Contains(t, err.Error(), "migrate: apply schema:")
+	fixture.waitForAdvisoryRelease(t, pid)
+	fixture.assertPartialRollback(t)
+	fixture.assertAdvisoryFree(t)
+	fixture.releaseBlocker(t)
+	recovered := fixture.recover(t)
+	// Retain all original schema-completeness assertions after fresh recovery.
 	for _, table := range []string{"sync_events", "sync_conflicts", "applied_events", "audit_log"} {
 		var n int
-		require.NoError(t, pool.Inner().QueryRow(context.Background(),
-			`SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename=$1`,
-			table,
+		require.NoError(t, recovered.Inner().QueryRow(fixture.ctx,
+			`SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename=$1`, table,
 		).Scan(&n))
 		require.Equal(t, 1, n, "%s must exist after recovery", table)
 	}
+	fixture.assertAuditIndex(t, true)
+	fixture.assertAdvisoryFree(t)
 }
 
 // TestSource_AcceptsTestDSNViaEnv is a sanity check that Source()

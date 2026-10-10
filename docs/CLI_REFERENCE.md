@@ -1509,6 +1509,7 @@ Run health checks against the local store and the BYO Postgres hub:
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
+  Operator state placement - reports the sandbox placement limitation
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
   Hub triggers           - every function and trigger the hub migrations
                            define exists, every trigger executes the

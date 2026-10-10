@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestDir_ConfiguredInput(t *testing.T) {
+func TestDir_ConfiguredPaths_UsesPlatformDirectory(t *testing.T) {
 	for _, tc := range []struct{ platform, home, key, value, want string }{
 		{"darwin", "/home/test", "", "", "/home/test/.config/mtix"},
 		{"linux", "/home/test", "XDG_CONFIG_HOME", "/config", "/config/mtix"},
@@ -22,17 +22,23 @@ func TestDir_ConfiguredInput(t *testing.T) {
 		})
 	}
 }
-func TestDir_ValidateInput(t *testing.T) {
-	for _, env := range []Env{{GOOS: "linux"}, {GOOS: "linux", Home: "relative"}, {GOOS: "linux", Values: map[string]string{"XDG_CONFIG_HOME": "relative"}}, {GOOS: "windows", Values: map[string]string{"APPDATA": "relative"}}} {
-		_, err := Dir(env)
-		require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
+func TestDir_RelativeOrMissingBase_Refuses(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  Env
+	}{
+		{"missing_home", Env{GOOS: "linux"}}, {"relative_home", Env{GOOS: "linux", Home: "relative"}},
+		{"relative_xdg", Env{GOOS: "linux", Values: map[string]string{"XDG_CONFIG_HOME": "relative"}}},
+		{"relative_appdata", Env{GOOS: "windows", Values: map[string]string{"APPDATA": "relative"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { _, err := Dir(tc.env); require.ErrorIs(t, err, model.ErrOperatorStateUnreadable) })
 	}
 }
-func TestPath_ValidateInput(t *testing.T) {
+func TestPath_ExcludedPrefix_Refuses(t *testing.T) {
 	for _, platform := range []string{"linux", "darwin", "windows"} {
 		t.Run(platform, func(t *testing.T) {
-			env := Env{GOOS: platform, Home: "/home/test", Values: map[string]string{"TMPDIR": "/temp", "CODEX_HOME": "/codex"}, WritableRoots: []string{"/workspace"}}
-			roots := []string{"/tmp", "/temp", "/codex", "/home/test/.codex", "/workspace"}
+			env := Env{GOOS: platform, Home: "/home/test", Values: map[string]string{"TMPDIR": "/temp", "CODEX_HOME": "/codex"}}
+			roots := []string{"/tmp", "/temp", "/codex", "/home/test/.codex"}
 			for _, root := range roots {
 				require.ErrorIs(t, validateLocation(env, root+"/state"), model.ErrOperatorStateUnreadable)
 			}

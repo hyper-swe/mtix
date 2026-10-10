@@ -17,9 +17,9 @@ import (
 
 func inputState(t *testing.T) *State {
 	t.Helper()
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := filepath.EvalSymlinks(safeFixtureRoot(t))
 	require.NoError(t, err)
-	env := Env{GOOS: runtime.GOOS, Home: "/home/test", Root: root}
+	env := Env{GOOS: runtime.GOOS, Home: "/home/test", root: root}
 	if runtime.GOOS == "windows" {
 		env.Home = `C:\Users\test`
 		env.Values = map[string]string{"APPDATA": `C:\Users\test\AppData\Roaming`}
@@ -27,7 +27,7 @@ func inputState(t *testing.T) *State {
 	return New(env)
 }
 
-func TestReadJSON_ReplacementInput(t *testing.T) {
+func TestReadJSON_ReplacedOrAbsentContent_ClearsDestination(t *testing.T) {
 	for _, kind := range []string{"directory", "record", "foreign", "empty", "removed", "invalid", "name", "type", "partial", "location", "null"} {
 		t.Run(kind, func(t *testing.T) {
 			s := inputState(t)
@@ -72,7 +72,7 @@ func (s *State) pathForTest(t *testing.T) string {
 	return path
 }
 
-func TestWriteJSON_BoundaryInput(t *testing.T) {
+func TestWriteJSON_SizeBoundary_PreservesAndRepairs(t *testing.T) {
 	s := inputState(t)
 	overhead, err := json.Marshal(record{HostID: strings.Repeat("0", 32), Data: json.RawMessage(`""`)})
 	require.NoError(t, err)
@@ -95,11 +95,16 @@ func TestWriteJSON_BoundaryInput(t *testing.T) {
 	require.Equal(t, "replacement", got)
 }
 
-func TestReadJSON_DestinationInput(t *testing.T) {
+func TestReadJSON_InvalidDestination_Refuses(t *testing.T) {
 	s := inputState(t)
-	for _, target := range []any{nil, map[string]int{}, (*map[string]int)(nil)} {
-		_, err := s.ReadJSON("hooks", target)
-		require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
+	for _, tc := range []struct {
+		name   string
+		target any
+	}{{"nil", nil}, {"map_value", map[string]int{}}, {"nil_pointer", (*map[string]int)(nil)}} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := s.ReadJSON("hooks", tc.target)
+			require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
+		})
 	}
 }
 
@@ -114,7 +119,7 @@ func prepareInput(t *testing.T, s *State, kind string) string {
 	case "location":
 		logical, err := Dir(s.env)
 		require.NoError(t, err)
-		s.env.WritableRoots = []string{logical}
+		s.env.Values = map[string]string{"CODEX_HOME": logical}
 	case "partial":
 		require.NoError(t, s.WriteJSON("hooks", map[string]any{"keep": true, "old": "invalid"}))
 	case "null":
@@ -129,4 +134,14 @@ func prepareInput(t *testing.T, s *State, kind string) string {
 		require.NoError(t, s.WriteJSON("hooks", "wrong type"))
 	}
 	return "hooks"
+}
+
+func safeFixtureRoot(t *testing.T) string {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	root, err := os.MkdirTemp(home, ".mtix-state-test-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
+	return root
 }

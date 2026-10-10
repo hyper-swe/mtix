@@ -5,9 +5,6 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"runtime"
 
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/spf13/cobra"
@@ -15,18 +12,10 @@ import (
 
 func newHooksStatusCmd() *cobra.Command {
 	return &cobra.Command{Use: "status", Short: "Validate operator-local state", Long: "Validate operator-local state and report its path, availability, and corrective guidance. This command does not create state or grant hook approval.", Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {
-		home, err := os.UserHomeDir()
+		env, err := oplocal.FromProcess()
 		if err != nil {
-			return fmt.Errorf("resolve home: %w", err)
+			return err
 		}
-		values := map[string]string{}
-		for _, name := range []string{"XDG_CONFIG_HOME", "APPDATA", "TMPDIR", "CODEX_HOME"} {
-			values[name] = os.Getenv(name)
-		}
-		if values["TMPDIR"] == "" {
-			values["TMPDIR"] = os.TempDir()
-		}
-		env := oplocal.Env{GOOS: runtime.GOOS, Home: home, Values: values, WritableRoots: filepath.SplitList(os.Getenv("CODEX_WRITABLE_ROOTS"))}
 		return runHooksStatus(oplocal.New(env))
 	}}
 }
@@ -45,6 +34,9 @@ func runHooksStatus(state *oplocal.State) error {
 		}
 	} else {
 		out.WriteHuman("Operator-local state: %s\nPath: %s\n", status.Status, status.Path)
+		for _, limit := range status.Limitations {
+			out.WriteHuman("Limit: %s\n", limit)
+		}
 		if status.Detail != "" {
 			out.WriteHuman("%s\nFix: %s\n", status.Detail, status.Fix)
 		}

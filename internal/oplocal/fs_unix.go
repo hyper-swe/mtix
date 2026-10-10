@@ -46,15 +46,25 @@ func validateMetadata(uid, actual uint32, directory bool) error {
 	return nil
 }
 
-func openDirectory(path string, create bool) (dir *os.File, err error) {
+func openDirectory(path string, create bool, roots []string) (dir *os.File, err error) {
+	if locationErr := checkUnixLocation(path, roots); locationErr != nil {
+		return nil, locationErr
+	}
 	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}
 	dir = descriptorFile(fd, "/")
+	return walkDirectory(dir, path, create)
+}
+
+func walkDirectory(dir *os.File, path string, create bool) (_ *os.File, err error) {
 	parts := strings.Split(strings.TrimPrefix(filepath.Clean(path), "/"), "/")
 	for i, part := range parts {
-		if err = checkGit(dir); err != nil {
+		if err = verifyAncestor(dir); err == nil {
+			err = checkGit(dir)
+		}
+		if err != nil {
 			break
 		}
 		var next *os.File
@@ -62,7 +72,7 @@ func openDirectory(path string, create bool) (dir *os.File, err error) {
 		if err != nil {
 			break
 		}
-		err = closeFile(dir)
+		err = errors.Join(verifyAncestor(next), closeFile(dir))
 		dir = next
 		if err != nil {
 			break
@@ -145,7 +155,9 @@ func writeData(dir *os.File, name string, data []byte, exclusive bool, before fu
 	defer func() {
 		e := unix.Unlinkat(checkedFD(dir), temp, 0)
 		if !errors.Is(e, unix.ENOENT) {
-			err = errors.Join(err, e)
+			if e != nil {
+				err = errors.Join(err, failure("temporary record cleanup failed", e))
+			}
 		}
 	}()
 	f := descriptorFile(fd, temp)
@@ -184,7 +196,10 @@ func commitData(dir *os.File, temp, name string, exclusive bool, syncDirectory f
 		err = unix.Renameat(checkedFD(dir), temp, checkedFD(dir), name)
 	}
 	if err != nil {
-		return err
+		if exclusive {
+			return failure("create exclusive state record using a hard link", err)
+		}
+		return failure("commit state record", err)
 	}
 	if syncDirectory != nil {
 		return syncDirectory(dir)

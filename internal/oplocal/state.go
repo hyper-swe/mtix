@@ -6,6 +6,7 @@ package oplocal
 import (
 	"errors"
 	"fmt"
+	"github.com/hyper-swe/mtix/internal/model"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,8 +29,8 @@ func (s *State) resolve() (string, error) {
 	}
 	locationErr := validateLocation(s.env, logical)
 	path := logical
-	if s.env.Root != "" {
-		path = filepath.Join(s.env.Root, strings.TrimLeft(strings.TrimPrefix(logical, filepath.VolumeName(logical)), `\/`))
+	if s.env.root != "" {
+		path = filepath.Join(s.env.root, strings.TrimLeft(strings.TrimPrefix(logical, filepath.VolumeName(logical)), `\/`))
 	}
 	return path, locationErr
 }
@@ -39,9 +40,9 @@ func (s *State) directory(create bool) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := openDirectory(path, create)
+	f, err := openDirectory(path, create, excludedRoots(s.env))
 	if err != nil {
-		return nil, fmt.Errorf("operator directory %s: %w: %w", path, err, invalid("validate input"))
+		return nil, failure("directory "+path, err)
 	}
 	return f, nil
 }
@@ -68,5 +69,8 @@ func closeWith(f *os.File, err *error) { *err = errors.Join(*err, closeFile(f)) 
 func (s *State) Path() (string, error) { return s.resolve() }
 
 func failure(reason string, err error) error {
-	return fmt.Errorf("operator state %s: %w: %w", reason, err, invalid(reason))
+	if errors.Is(err, model.ErrOperatorStateUnreadable) {
+		return fmt.Errorf("operator state %s: %w", reason, err)
+	}
+	return fmt.Errorf("operator state %s: %w: %w", reason, err, model.ErrOperatorStateUnreadable)
 }

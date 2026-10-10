@@ -12,13 +12,12 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
-// Env supplies platform paths; Root maps absolute paths into an isolated filesystem.
+// Env supplies paths from the operator process environment.
 type Env struct {
-	GOOS          string
-	Home          string
-	Values        map[string]string
-	Root          string
-	WritableRoots []string
+	GOOS   string
+	Home   string
+	Values map[string]string
+	root   string
 }
 
 // Dir resolves the operator configuration path on the requested platform.
@@ -61,11 +60,7 @@ func inside(platform, target, root string) bool {
 }
 
 func validateLocation(env Env, target string) error {
-	roots := []string{"/tmp", env.Values["TMPDIR"], env.Values["CODEX_HOME"]}
-	if env.Home != "" {
-		roots = append(roots, strings.TrimRight(env.Home, `\/`)+"/.codex")
-	}
-	roots = append(roots, env.WritableRoots...)
+	roots := excludedRoots(env)
 	for _, root := range roots {
 		if inside(env.GOOS, target, root) {
 			return invalid("directory must be outside " + root)

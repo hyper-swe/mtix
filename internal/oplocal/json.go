@@ -59,7 +59,7 @@ func (s *State) readRecord(name string) (data json.RawMessage, reports []Report,
 		return nil, nil, err
 	}
 	dir, err := s.directory(false)
-	if errors.Is(err, os.ErrNotExist) {
+	if missingState(err) {
 		return nil, nil, nil
 	}
 	if err != nil {

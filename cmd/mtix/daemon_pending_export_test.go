@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -63,6 +64,7 @@ func testDaemonPendingProcess(t *testing.T, spelling string) {
 
 type daemonPendingChild struct {
 	cmd     *exec.Cmd
+	stdin   io.WriteCloser
 	ready   chan struct{}
 	done    chan struct{}
 	scanned chan struct{}
@@ -80,47 +82,58 @@ func startDaemonPendingChild(t *testing.T, mode, dir string) *daemonPendingChild
 	// Owned child discovers its operator-selected project via cwd.
 	child.cmd.Dir = dir
 	child.cmd.Stderr = &child.stderr
+	stdin, err := child.cmd.StdinPipe()
+	require.NoError(t, err)
+	child.stdin = stdin
 	stdout, err := child.cmd.StdoutPipe()
 	require.NoError(t, err)
 	require.NoError(t, child.cmd.Start())
-	go func() {
-		defer close(child.scanned)
-		scan := bufio.NewScanner(stdout)
-		signalled := false
-		for scan.Scan() {
-			if scan.Text() == "attempted" && !signalled {
-				close(child.ready)
-				signalled = true
-			}
-		}
-	}()
+	go child.scanReady(stdout)
 	go func() { child.err = child.cmd.Wait(); close(child.done) }()
-	t.Cleanup(func() {
-		select {
-		case <-child.done:
-			select {
-			case <-child.scanned:
-			case <-time.After(60 * time.Second):
-				t.Error("child stdout scanner did not join")
-			}
-			return
-		default:
-		}
-		if err := child.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			t.Errorf("kill owned daemon child: %v", err)
-		}
-		select {
-		case <-child.done:
-		case <-time.After(60 * time.Second):
-			t.Error("owned daemon child did not join")
-		}
-		select {
-		case <-child.scanned:
-		case <-time.After(60 * time.Second):
-			t.Error("child stdout scanner did not join")
-		}
-	})
+	t.Cleanup(func() { child.close(t) })
 	return child
+}
+
+func (c *daemonPendingChild) scanReady(stdout io.Reader) {
+	defer close(c.scanned)
+	scan := bufio.NewScanner(stdout)
+	signalled := false
+	for scan.Scan() {
+		if (scan.Text() == "attempted" || scan.Text() == "committed") && !signalled {
+			close(c.ready)
+			signalled = true
+		}
+	}
+}
+
+func (c *daemonPendingChild) close(t *testing.T) {
+	t.Helper()
+	if err := c.stdin.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		t.Errorf("close owned child stdin: %v", err)
+	}
+	select {
+	case <-c.done:
+		c.joinScanner(t)
+		return
+	default:
+	}
+	if err := c.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		t.Errorf("kill owned daemon child: %v", err)
+	}
+	select {
+	case <-c.done:
+	case <-time.After(60 * time.Second):
+		t.Error("owned daemon child did not join")
+	}
+	c.joinScanner(t)
+}
+func (c *daemonPendingChild) joinScanner(t *testing.T) {
+	t.Helper()
+	select {
+	case <-c.scanned:
+	case <-time.After(60 * time.Second):
+		t.Error("child stdout scanner did not join")
+	}
 }
 
 func (c *daemonPendingChild) awaitReady(t *testing.T) {
@@ -166,6 +179,10 @@ func TestDaemonPendingExportProcessHelper(t *testing.T) {
 	mode := os.Args[len(os.Args)-1]
 	dir, err := os.Getwd()
 	require.NoError(t, err)
+	if mode == "predebounce" || mode == "restart" {
+		mirrorCrashHelper(t, mode, dir)
+		return
+	}
 	store := newDaemonTestStore(t, dir)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

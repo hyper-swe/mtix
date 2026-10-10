@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,23 +20,27 @@ import (
 // automatic import first, and when that does not import the board, keeps
 // it, records the refusal as pending and says so in one line.
 func (s *SyncService) AutoExport(ctx context.Context, mtixDir string) error {
-	if err := markPendingExport(mtixDir); err != nil {
-		return err
-	}
-	return s.runAutoExport(ctx, mtixDir, true)
+	markErr := s.RequestExport(mtixDir)
+	return errors.Join(markErr, s.runAutoExport(ctx, mtixDir, automaticExportPasses))
 }
 
-func (s *SyncService) runAutoExport(ctx context.Context, mtixDir string, followup bool) error {
-	// MTIX-95.31.2: never overwrite a tasks.json that changed on disk and
-	// was not imported; the change stays in the local store.
-	if blocked, err := s.keepPulledBoard(ctx, mtixDir); blocked || err != nil {
-		return err
-	}
-	if err := s.exportBoardProtected(ctx, mtixDir, true); err != nil {
-		return err
-	}
-	if followup {
-		return s.DrainPendingExport(ctx, mtixDir)
+const automaticExportPasses = 3
+
+// runAutoExport bounds catch-up work and releases each lock before the next
+// pass. Contention, refusal, metadata errors and publication errors stop it.
+func (s *SyncService) runAutoExport(ctx context.Context, mtixDir string, passes int) error {
+	for pass := 0; pass < passes; pass++ {
+		if blocked, err := s.keepPulledBoard(ctx, mtixDir); blocked || err != nil {
+			return err
+		}
+		completed, err := s.exportBoardPass(ctx, mtixDir, true)
+		if err != nil || !completed {
+			return err
+		}
+		requests, err := pendingExportRequests(mtixDir)
+		if err != nil || len(requests) == 0 {
+			return err
+		}
 	}
 	return nil
 }
@@ -49,29 +54,32 @@ func (s *SyncService) exportBoard(ctx context.Context, mtixDir string) error {
 }
 
 func (s *SyncService) exportBoardProtected(ctx context.Context, mtixDir string, protect bool) error {
-	start := s.clock()
+	_, err := s.exportBoardPass(ctx, mtixDir, protect)
+	return err
+}
 
-	// Acquire exclusive lock for export per FR-15.8.
+func (s *SyncService) exportBoardPass(ctx context.Context, mtixDir string, protect bool) (bool, error) {
+	start := s.clock()
 	lockFile, lockErr := s.acquireLock(mtixDir, lockExclusive)
 	if lockErr != nil {
 		s.logger.Warn("could not acquire sync lock, skipping auto-export", "error", lockErr)
-		return nil
+		return false, nil
 	}
 	defer s.releaseLock(lockFile)
-
 	if protect {
 		if blocked, err := s.keepPulledBoardUnderLock(mtixDir); blocked || err != nil {
-			return err
+			return false, err
 		}
 	}
-	requests, err := pendingExportRequests(mtixDir)
-	if err != nil {
-		return err
-	}
+	requests, snapshotErr := pendingExportRequests(mtixDir)
 	if err := s.publishExport(ctx, mtixDir, start); err != nil {
-		return err
+		return false, errors.Join(snapshotErr, err)
 	}
-	return retirePendingExports(mtixDir, requests)
+	// An unreadable request snapshot cannot authorize deleting any requests.
+	if snapshotErr != nil {
+		return true, snapshotErr
+	}
+	return true, retirePendingExportsWithSync(mtixDir, requests, s.syncDirectory)
 }
 
 func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start time.Time) error {
@@ -100,7 +108,7 @@ func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start t
 		return err
 	}
 
-	if err := syncExportPublication(mtixDir); err != nil {
+	if err := syncExportPublicationWithSync(mtixDir, s.syncDirectory); err != nil {
 		return err
 	}
 	elapsed := time.Since(start)

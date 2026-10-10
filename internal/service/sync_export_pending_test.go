@@ -43,7 +43,7 @@ func TestPendingExport_LateRequestRetainedThenDrained(t *testing.T) {
 		pendingProcessNode(t, store, 2)
 		require.NoError(t, markPendingExport(dir))
 	}})
-	require.NoError(t, svc.DrainPendingExport(context.Background(), dir))
+	require.NoError(t, svc.exportBoardProtected(context.Background(), dir, true))
 	requests, err := pendingExportRequests(dir)
 	require.NoError(t, err)
 	require.Len(t, requests, 1, "a request created after the snapshot must survive retirement")
@@ -232,4 +232,40 @@ func TestPendingExport_MetadataFailureStillPublishesMirror(t *testing.T) {
 	actual, err := os.ReadFile(pendingPath)
 	require.NoError(t, err)
 	require.Equal(t, metadata, actual, "unknown request metadata must be preserved")
+}
+
+func TestPendingExport_ContinuingArrivalsStopAtBound(t *testing.T) {
+	for _, trigger := range []string{"export", "drain", "import"} {
+		t.Run(trigger, func(t *testing.T) { pendingBoundedArrivals(t, trigger) })
+	}
+}
+func pendingBoundedArrivals(t *testing.T, trigger string) {
+	dir := t.TempDir()
+	store := pendingProcessStore(t, dir)
+	pendingProcessNode(t, store, 1)
+	svc := NewSyncService(store, slog.Default(), pendingProcessClock)
+	require.NoError(t, svc.AutoExport(context.Background(), dir))
+	require.NoError(t, markPendingExport(dir))
+	completed := 0
+	svc.logger = slog.New(pendingExportHandler{callback: func() {
+		completed++
+		pendingProcessNode(t, store, completed+1)
+		require.NoError(t, markPendingExport(dir))
+	}})
+	switch trigger {
+	case "export":
+		require.NoError(t, svc.AutoExport(context.Background(), dir))
+	case "drain":
+		require.NoError(t, svc.DrainPendingExport(context.Background(), dir))
+	case "import":
+		require.NoError(t, svc.AutoImport(context.Background(), dir))
+	}
+	require.Equal(t, 3, completed, "a trigger must not loop indefinitely on continuing arrivals")
+	require.Equal(t, 3, pendingProcessMirrorCount(t, dir))
+	requests, err := pendingExportRequests(dir)
+	require.NoError(t, err)
+	require.Len(t, requests, 1, "arrival beyond the bound survives for the next trigger")
+	svc.logger = slog.Default()
+	require.NoError(t, svc.DrainPendingExport(context.Background(), dir))
+	require.Equal(t, 4, pendingProcessMirrorCount(t, dir))
 }

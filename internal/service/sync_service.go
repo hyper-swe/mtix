@@ -42,6 +42,10 @@ type SyncService struct {
 	// set it to make the write or the close fail.
 	wrapBaselineFile func(*os.File) io.WriteCloser
 
+	// directorySync is an instance-local filesystem dependency; nil uses the
+	// platform directory durability policy. Tests simulate unsupported Sync.
+	directorySync func(string) error
+
 	MaxImportSize int64 // Maximum file size for auto-import per FR-15.2e.
 }
 

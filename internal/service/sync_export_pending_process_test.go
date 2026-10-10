@@ -224,16 +224,23 @@ func TestPendingExportProcessHelper(t *testing.T) {
 	dir, err := os.Getwd()
 	require.NoError(t, err)
 	store := pendingProcessStore(t, dir)
-	logger := slog.Default()
-	if mode == "holder" {
-		logger = slog.New(pendingHolderHandler{})
-	}
+	logger := pendingProcessLogger(mode)
 	svc := NewSyncService(store, logger, pendingProcessClock)
 	switch mode {
 	case "holder":
 		require.NoError(t, svc.AutoImport(context.Background(), dir))
-	case "writer", "writerhold":
-		pendingProcessNode(t, store, 2)
+	case "exportholder", "exportholder2":
+		require.NoError(t, svc.AutoExport(context.Background(), dir))
+	case "drainholder":
+		require.NoError(t, svc.DrainPendingExport(context.Background(), dir))
+	case "importdrainholder":
+		require.NoError(t, svc.AutoImport(context.Background(), dir))
+	case "writer", "writerhold", "writer3":
+		seq := 2
+		if mode == "writer3" {
+			seq = 3
+		}
+		pendingProcessNode(t, store, seq)
 		require.NoError(t, svc.AutoExport(context.Background(), dir))
 		if mode == "writerhold" {
 			_, err := fmt.Fprintln(os.Stdout, "committed")
@@ -243,5 +250,18 @@ func TestPendingExportProcessHelper(t *testing.T) {
 		}
 	default:
 		t.Fatalf("unknown process mode %s", mode)
+	}
+}
+
+func pendingProcessLogger(mode string) *slog.Logger {
+	switch mode {
+	case "holder":
+		return slog.New(pendingHolderHandler{})
+	case "exportholder", "drainholder", "importdrainholder":
+		return slog.New(&pendingPublicationBarrier{remaining: 1})
+	case "exportholder2":
+		return slog.New(&pendingPublicationBarrier{remaining: 2})
+	default:
+		return slog.Default()
 	}
 }

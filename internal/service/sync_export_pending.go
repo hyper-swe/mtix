@@ -20,6 +20,23 @@ func pendingExportDir(mtixDir string) string {
 // nonblocking lock attempt. A request conveys no authority to overwrite a
 // pulled board. Empty O_EXCL files avoid read/modify/write races among writers.
 func markPendingExport(mtixDir string) error {
+	return markPendingExportWithSync(mtixDir, syncExportDirectory)
+}
+
+// RequestExport records work before a long-running exporter starts its debounce.
+// It performs no inline export and conveys no pulled-board overwrite authority.
+func (s *SyncService) RequestExport(mtixDir string) error {
+	return markPendingExportWithSync(mtixDir, s.syncDirectory)
+}
+
+func (s *SyncService) syncDirectory(path string) error {
+	if s.directorySync != nil {
+		return s.directorySync(path)
+	}
+	return syncExportDirectory(path)
+}
+
+func markPendingExportWithSync(mtixDir string, syncDir func(string) error) error {
 	dir := pendingExportDir(mtixDir)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create pending export directory: %w", err)
@@ -33,13 +50,13 @@ func markPendingExport(mtixDir string) error {
 	if err := errors.Join(syncErr, closeErr); err != nil {
 		return fmt.Errorf("persist pending export request: %w", err)
 	}
-	if err := syncExportDirectory(dir); err != nil {
+	if err := syncDir(dir); err != nil {
 		return err
 	}
-	if err := syncExportDirectory(filepath.Dir(dir)); err != nil {
+	if err := syncDir(filepath.Dir(dir)); err != nil {
 		return err
 	}
-	return syncExportDirectory(mtixDir)
+	return syncDir(mtixDir)
 }
 
 func pendingExportRequests(mtixDir string) ([]string, error) {
@@ -60,7 +77,7 @@ func pendingExportRequests(mtixDir string) ([]string, error) {
 	return requests, nil
 }
 
-// DrainPendingExport attempts one recovery pass without creating a request.
+// DrainPendingExport attempts up to three recovery passes without a new request.
 // Contention and pulled-board refusals keep existing requests intact. Callers
 // may invoke this on daemon ticks or after releasing a service import lock.
 func (s *SyncService) DrainPendingExport(ctx context.Context, mtixDir string) error {
@@ -68,12 +85,12 @@ func (s *SyncService) DrainPendingExport(ctx context.Context, mtixDir string) er
 	if err != nil || len(requests) == 0 {
 		return err
 	}
-	return s.runAutoExport(ctx, mtixDir, false)
+	return s.runAutoExport(ctx, mtixDir, automaticExportPasses)
 }
 
 // retirePendingExports removes only the request snapshot taken before exporting
 // the store. A writer arriving during publication remains for the next pass.
-func retirePendingExports(mtixDir string, requests []string) error {
+func retirePendingExportsWithSync(mtixDir string, requests []string, syncDir func(string) error) error {
 	for _, path := range requests {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("retire pending export request: %w", err)
@@ -82,12 +99,12 @@ func retirePendingExports(mtixDir string, requests []string) error {
 	if len(requests) == 0 {
 		return nil
 	}
-	return syncExportDirectory(pendingExportDir(mtixDir))
+	return syncDir(pendingExportDir(mtixDir))
 }
 
 // Publication must reach the filesystem before retiring its durable requests.
 // The DB baseline computation remains the existing separate snapshot (130.3).
-func syncExportPublication(mtixDir string) error {
+func syncExportPublicationWithSync(mtixDir string, syncDir func(string) error) error {
 	for _, path := range []string{"tasks.json", "data/sync.sha256", "data/sync-db.sha256"} {
 		file, err := os.OpenFile(filepath.Join(mtixDir, path), os.O_RDWR, 0)
 		if err != nil {
@@ -99,10 +116,10 @@ func syncExportPublication(mtixDir string) error {
 			return fmt.Errorf("persist export: %w", err)
 		}
 	}
-	if err := syncExportDirectory(filepath.Join(mtixDir, "data")); err != nil {
+	if err := syncDir(filepath.Join(mtixDir, "data")); err != nil {
 		return err
 	}
-	return syncExportDirectory(mtixDir)
+	return syncDir(mtixDir)
 }
 
 // Public startup import drains even when automatic import is switched off.

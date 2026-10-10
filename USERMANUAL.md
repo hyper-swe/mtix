@@ -2212,7 +2212,7 @@ ends with event content in the agent's prompt:
 
 | Rung | Mechanism | Covers |
 |---|---|---|
-| 1. **Cold-start wake** | `exec` hook runs a wake script that launches the harness CLI **with the inbox as the prompt** (`mtix inbox --agent X --format prompt`) | agent not running — works for any runtime |
+| 1. **Cold-start wake** | `exec` hook runs a wake script that launches the harness CLI **with the inbox as the prompt** (`mtix inbox --agent X --format prompt`) | agent not running — requires a verified standard-input interface |
 | 2. **Context injection** | a harness hook (session-start / prompt-submit) shells `mtix inbox --agent X --format context` | interactive sessions, next user prompt |
 | 3. **Background watcher** | the agent arms `mtix inbox --wait --timeout 3600` as a harness background task; its exit re-invokes the agent, which handles, acks, re-arms | idle-but-alive session, no push mechanism |
 | 4. **Channel push** | `mtix mcp --channel-agent X` (Claude Code channels, research preview) pushes events into the running session | idle or busy live session |
@@ -2235,17 +2235,26 @@ hooks:
 Review and trust the config on that host (`mtix hooks trust`). The
 script exits without launching when the inbox is empty (the idempotency
 check under at-least-once dispatch) and otherwise launches the harness
-CLI with the payload — `claude -p "$PAYLOAD"`, `codex exec "$PAYLOAD"`,
-`agent -p "$PAYLOAD"` (Cursor), or any runtime that takes a prompt.
+CLI with the inbox supplied through standard input. Keep exactly one launch
+line enabled in the reference script:
+
+- Claude Code: `printf '%s\n' "$PAYLOAD" | claude -p`
+- OpenAI Codex CLI: `printf '%s\n' "$PAYLOAD" | codex exec -`
+
+The script preserves interior newlines; its shell command substitution removes
+trailing newlines and the launch writes one final newline. Other runtimes need
+a verified standard-input interface before adding a launch line. The reference
+does not provide a Cursor CLI cold-start form; its MCP and context hooks remain
+available.
 
 Per-harness support today:
 
 | Harness | Cold-start (rung 1) | MCP tools | Context injection (rung 2) | Push (rung 4) |
 |---|---|---|---|---|
 | Claude Code | `claude -p` | ✅ | ✅ hooks | ✅ channels (preview) |
-| OpenAI Codex CLI | `codex exec` | ✅ | AGENTS.md convention | ✗ (no push mechanism yet) |
-| Cursor CLI | `agent -p` | ✅ | ✅ hooks | ✗ |
-| any prompt-taking CLI | ✅ | if MCP-capable | varies | ✗ |
+| OpenAI Codex CLI | `codex exec -` | ✅ | AGENTS.md convention | ✗ (no push mechanism yet) |
+| Cursor CLI | Not provided by this reference | ✅ | ✅ hooks | ✗ |
+| other runtimes | Verify standard-input interface first | if MCP-capable | varies | ✗ |
 
 **Channel mode (Claude Code, research preview).** `mtix mcp
 --channel-agent developer` makes the same MCP server that serves the

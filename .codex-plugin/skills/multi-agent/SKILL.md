@@ -34,3 +34,19 @@ mtix stale          # Tasks with inactive agents
 - Check task status before claiming: `mtix show <id>`
 - Never modify tasks claimed by other agents
 - Use comments to coordinate: `mtix comment <id> "message"`
+
+## Reference Wake Routine
+
+The mtix reference `examples/hooks/wake-agent.sh` reads the unhandled inbox
+with `mtix inbox --agent <agent-name> --format prompt`. An empty inbox exits
+without launching a harness. Keep exactly one verified launch line enabled;
+supply the input through standard input:
+
+- Claude Code: `printf '%s\n' "$PAYLOAD" | claude -p`
+- OpenAI Codex CLI: `printf '%s\n' "$PAYLOAD" | codex exec -`
+
+Other runtimes require a verified standard-input interface. The reference
+preserves interior newlines, removes trailing newlines during collection and
+writes one final newline. Handle each event, reply when needed, then ack that
+event; an unacked event remains available on the next inbox read. See the user
+manual's Waking agents section for placement and the complete routine.

@@ -1339,6 +1339,10 @@ After an import:
 - FTS5 index is rebuilt
 - Sequence counters are reconstructed
 
+### Pending mirror exports
+
+A writing command that encounters the mirror sync lock saves its database change and returns without waiting. A durable request in `.mtix/data/export-pending/` keeps the mirror update pending across process exit or restart. A service import lock holder drains after releasing its lock; the next automatic export or either daemon's next tick also retries, without another task mutation. Requests created during publication remain for a bounded follow-up pass. Publication errors retain requests for recovery; the command logs the export error while preserving its saved change. Automatic retries never overwrite a changed or refused pulled board: resolve the import refusal using `mtix sync` guidance first. Do not edit or delete pending requests by hand. On Unix requests and directory entries are synced; on Windows files are synced for process-restart recovery, but directory-entry durability after power loss is not promised.
+
 ### Automatic import of `.mtix/tasks.json`
 
 `.mtix/tasks.json` is the git-tracked board. When a `git pull`, checkout or branch switch changes it, the next mtix command imports it before running. The import is a replace import: the store then matches the file. It checks the file against the store first (below), and the replace re-checks, inside its own transaction, that the store is still the one it compared: a write that lands in between, from another process or the MCP server, is kept, nothing is imported, and the next command checks the file again. Writing commands export the store back to the file afterwards, but never over a board that changed on disk and was not imported (see "Writes never overwrite a pulled board" below).

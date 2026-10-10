@@ -7,6 +7,10 @@ description: Set up, use, verify and recover the mtix sync hub, the shared Postg
 
 The hub is a Postgres database that you and your teammates' agents push task changes to and pull each other's changes from. Each machine keeps its own local store; the hub carries the event log between them. This skill is the full runbook: requirements, setup from zero, daily use, verification, troubleshooting and recovery. The short routine is in the managed SYNC section of `CLAUDE.md` and `AGENTS.md`.
 
+## Pending mirror exports
+
+A writing command that encounters the mirror sync lock saves its database change and returns without waiting. A durable request in `.mtix/data/export-pending/` keeps the mirror update pending across process exit or restart. A service import lock holder drains after releasing its lock; the next automatic export or either daemon's next tick also retries, without another task mutation. Requests created during publication remain for a bounded follow-up pass. Publication errors retain requests for recovery; the command logs the export error while preserving its saved change. Automatic retries never overwrite a changed or refused pulled board: resolve the import refusal using `mtix sync` guidance first. Do not edit or delete pending requests by hand. On Unix requests and directory entries are synced; on Windows files are synced for process-restart recovery, but directory-entry durability after power loss is not promised.
+
 ## Requirements checklist
 
 Before setup, confirm each item with the user or the database administrator:

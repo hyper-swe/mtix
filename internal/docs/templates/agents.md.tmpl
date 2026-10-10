@@ -290,6 +290,8 @@ list accepts every event type.
 
 {{ template "sync_section" . }}
 
+Mirror lock contention saves the task change and leaves a durable pending export. The next service import lock release, automatic export or daemon tick retries it in bounded passes, even after process restart. Retries keep changed or refused pulled boards protected; follow `mtix sync` import guidance and never edit pending request files by hand.
+
 ## Sync recovery (operator tasks — recognize, don't force)
 
 These are **operator/admin** actions, not part of the normal agent loop. Recognize them so you *surface* the situations that need them instead of working around them:

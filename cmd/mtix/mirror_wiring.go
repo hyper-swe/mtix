@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log/slog"
 	"path/filepath"
 
@@ -80,4 +82,15 @@ func maybeAutoBackup() {
 		return
 	}
 	runAutoBackup(newAutoBackupScheduler(logger), logger)
+}
+
+// drainPendingMirror recovers durable exports on both daemon tick paths, even
+// when no pull, hook or new local mutation occurs.
+func drainPendingMirror(ctx context.Context, stderr io.Writer) {
+	if app.syncSvc == nil || app.mtixDir == "" {
+		return
+	}
+	if err := app.syncSvc.DrainPendingExport(ctx, app.mtixDir); err != nil {
+		fmt.Fprintf(stderr, "mtix: pending auto-export: %v\n", err)
+	}
 }

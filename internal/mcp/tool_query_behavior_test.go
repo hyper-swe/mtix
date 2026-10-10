@@ -127,6 +127,7 @@ func TestToolQuery_BriefingFilters_ExcludeDistractors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			out := behaviorCall(t, env.reg, "mtix_briefing", tt.args)
+			lines := strings.Split(out, "\n")
 			for i, n := range nodes {
 				want := false
 				for _, index := range tt.want {
@@ -136,8 +137,10 @@ func TestToolQuery_BriefingFilters_ExcludeDistractors(t *testing.T) {
 				}
 				if want {
 					require.Contains(t, out, n.Title)
+					require.Contains(t, lines, "ID: "+n.ID)
 				} else {
 					require.NotContains(t, out, n.Title)
+					require.NotContains(t, lines, "ID: "+n.ID)
 				}
 			}
 		})

@@ -7,14 +7,10 @@ package service_test
 
 import (
 	"context"
-	"encoding/json"
-	"io"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,6 +45,7 @@ func TestExecDispatch_DetachedSpawn_DoesNotBlockMutationPath(t *testing.T) {
 	gate := newExecHookBarrier(t)
 	makeDoneEvent(t, svc)
 	dispatch := service.NewHooksDispatcher(store, gate.dir, slog.Default())
+	gate.observeDispatch(t, dispatch)
 	gate.dispatchBeforeRelease(t, func() { dispatch.Dispatch(ctx) })
 
 	// Spawn success is recorded while the hook is still parked. Completion
@@ -105,7 +102,10 @@ func TestExecPolicy_DaemonMode_NonDaemonTriggerDefersEntirely(t *testing.T) {
 	makeDoneEvent(t, svc)
 
 	// CLI-shaped trigger: full no-op — no ledger rows, floor unchanged.
-	service.NewHooksDispatcher(store, dir, slog.Default()).Dispatch(ctx)
+	nonDaemon := service.NewHooksDispatcher(store, dir, slog.Default())
+	gate.observeDispatch(t, nonDaemon)
+	nonDaemon.Dispatch(ctx)
+	require.Zero(t, gate.deliveries.Load(), "a non-daemon trigger must invoke no exec adapter")
 	floor, err := store.HookCursor(ctx)
 	require.NoError(t, err)
 	assert.Zero(t, floor, "a non-daemon trigger must not advance the shared floor under daemon policy")
@@ -116,8 +116,10 @@ func TestExecPolicy_DaemonMode_NonDaemonTriggerDefersEntirely(t *testing.T) {
 	// The daemon-marked dispatcher fires it.
 	daemon := service.NewHooksDispatcher(store, dir, slog.Default())
 	daemon.MarkDaemon()
+	gate.observeDispatch(t, daemon)
 	gate.dispatchBeforeRelease(t, func() { daemon.Dispatch(ctx) })
 	daemon.Dispatch(ctx) // The same journal entry must not spawn another hook.
+	require.Equal(t, int64(1), gate.deliveries.Load(), "replay must not invoke the exec adapter again")
 	require.Equal(t, 1, deliveredCount(t, store, "wake-worker"))
 	require.Zero(t, recCount(gate.record), "the hook remains parked until released")
 	gate.complete(t)
@@ -163,118 +165,4 @@ hooks:
 		}
 	}
 	assert.Equal(t, 1, skipped, "exec skipped once with the terminal skipped-policy outcome")
-}
-
-// execHookBarrier coordinates an actual detached hook process over loopback.
-// Its deadlines detect hangs; no elapsed-time threshold determines correctness.
-type execHookBarrier struct {
-	dir      string
-	record   string
-	listener *net.TCPListener
-	conn     net.Conn
-	returned chan struct{}
-}
-
-func newExecHookBarrier(t *testing.T) *execHookBarrier {
-	t.Helper()
-	addr, err := net.ResolveTCPAddr("tcp4", "127.0.0.1:0")
-	require.NoError(t, err)
-	listener, err := net.ListenTCP("tcp4", addr)
-	require.NoError(t, err)
-	gate := &execHookBarrier{dir: t.TempDir(), listener: listener}
-	gate.record = filepath.Join(gate.dir, "completed")
-	t.Cleanup(func() { gate.close(t) })
-	binary, err := os.Executable()
-	require.NoError(t, err)
-	command, err := json.Marshal([]string{binary, "-test.run=^TestExecHookBarrierHelper$",
-		"--", "exec-hook-barrier", listener.Addr().String(), gate.record})
-	require.NoError(t, err)
-	writeHooks(t, gate.dir, `
-hooks:
-  - name: wake-worker
-    match: { events: [status.changed], status-to: [done] }
-    deliver: [exec]
-    exec: { command: `+string(command)+`, timeout-seconds: 180 }
-`)
-	require.NoError(t, hooks.SaveTrust(gate.dir, hooks.ConfigHash(gate.dir)))
-	return gate
-}
-
-func (g *execHookBarrier) dispatchBeforeRelease(t *testing.T, dispatch func()) {
-	t.Helper()
-	g.returned = make(chan struct{})
-	// The child has a longer watchdog than this async-order hang guard.
-	// A synchronous dispatcher must fail here, before the child can time out.
-	guard := time.NewTimer(60 * time.Second)
-	defer guard.Stop()
-	go func() {
-		dispatch()
-		close(g.returned)
-	}()
-	require.NoError(t, g.listener.SetDeadline(time.Now().Add(60*time.Second)))
-	conn, err := g.listener.Accept()
-	require.NoError(t, err, "the detached hook must start")
-	g.conn = conn
-	require.NoError(t, conn.SetDeadline(time.Now().Add(60*time.Second)))
-	var ready [1]byte
-	_, err = io.ReadFull(conn, ready[:])
-	require.NoError(t, err, "the child signals it is parked before completion")
-	require.Equal(t, byte('R'), ready[0])
-	select {
-	case <-g.returned:
-	case <-guard.C:
-		t.Fatal("dispatch did not return before releasing the parked hook (async contract)")
-	}
-}
-
-func (g *execHookBarrier) complete(t *testing.T) {
-	t.Helper()
-	_, err := g.conn.Write([]byte{'G'})
-	require.NoError(t, err, "release the hook only after dispatch returned")
-	var done [1]byte
-	_, err = io.ReadFull(g.conn, done[:])
-	require.NoError(t, err, "the detached hook signals body completion")
-	require.Equal(t, byte('D'), done[0])
-}
-
-func (g *execHookBarrier) close(t *testing.T) {
-	t.Helper()
-	// Closing the connection also releases a synchronous mutant on failure.
-	if g.conn != nil {
-		assert.NoError(t, g.conn.Close())
-	}
-	assert.NoError(t, g.listener.Close())
-	if g.returned != nil {
-		select {
-		case <-g.returned:
-		case <-time.After(60 * time.Second):
-			t.Error("dispatch did not stop after the barrier was closed")
-		}
-	}
-}
-
-// TestExecHookBarrierHelper is the hook body, selected alone when the trusted
-// fixture re-executes this test binary. Normal test runs never enter it.
-func TestExecHookBarrierHelper(t *testing.T) {
-	if len(os.Args) < 4 || os.Args[len(os.Args)-3] != "exec-hook-barrier" {
-		return
-	}
-	conn, err := net.DialTimeout("tcp4", os.Args[len(os.Args)-2], 60*time.Second)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, conn.Close()) }()
-	require.NoError(t, conn.SetDeadline(time.Now().Add(120*time.Second)))
-	_, err = conn.Write([]byte{'R'})
-	require.NoError(t, err)
-	var release [1]byte
-	_, err = io.ReadFull(conn, release[:])
-	require.NoError(t, err)
-	require.Equal(t, byte('G'), release[0])
-	f, err := os.OpenFile(os.Args[len(os.Args)-1], os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600) //nolint:gosec // test-owned completion record
-	require.NoError(t, err)
-	_, writeErr := f.WriteString("fired\n")
-	closeErr := f.Close()
-	require.NoError(t, writeErr)
-	require.NoError(t, closeErr)
-	_, err = conn.Write([]byte{'D'})
-	require.NoError(t, err)
 }

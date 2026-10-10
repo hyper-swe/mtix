@@ -4,9 +4,7 @@
 package oplocal
 
 import (
-	"errors"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -29,7 +27,7 @@ func (s *State) Inspect() (status Status, err error) {
 		return status, err
 	}
 	dir, err := s.directory(false)
-	if errors.Is(err, os.ErrNotExist) {
+	if missingState(err) {
 		status.Status = "absent"
 		return status, nil
 	}

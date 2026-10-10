@@ -66,6 +66,9 @@ func openDirectory(path string, create bool, roots []string) (dir *os.File, err 
 	if err != nil {
 		return nil, err
 	}
+	if err = checkWindowsLocation(path, roots); err != nil {
+		return nil, err
+	}
 	volume := filepath.VolumeName(path)
 	if volume == "" {
 		return nil, invalid("directory must be absolute")

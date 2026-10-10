@@ -20,7 +20,11 @@ func handlePath(handle windows.Handle) (string, error) {
 	if count >= uint32(len(buffer)) {
 		return "", invalid("canonical path is too long")
 	}
-	return strings.TrimPrefix(windows.UTF16ToString(buffer[:count]), `\\?\`), nil
+	path := windows.UTF16ToString(buffer[:count])
+	if strings.HasPrefix(path, `\\?\UNC\`) {
+		return `\\` + strings.TrimPrefix(path, `\\?\UNC\`), nil
+	}
+	return strings.TrimPrefix(path, `\\?\`), nil
 }
 func canonicalRoots(roots []string) ([]string, error) {
 	result := make([]string, 0, len(roots))
@@ -28,26 +32,37 @@ func canonicalRoots(roots []string) ([]string, error) {
 		if root == "" {
 			continue
 		}
-		text, err := windows.UTF16PtrFromString(root)
+		canonical, err := canonicalLocation(root)
 		if err != nil {
-			return nil, failure("configured path is invalid", err)
-		}
-		handle, err := windows.CreateFile(text, windows.FILE_READ_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
-		if errors.Is(err, os.ErrNotExist) {
-			result = append(result, root)
-			continue
-		}
-		if err != nil {
-			return nil, failure("configured path is unavailable", err)
-		}
-		canonical, pathErr := handlePath(handle)
-		closeErr := windows.CloseHandle(handle)
-		if pathErr != nil || closeErr != nil {
-			return nil, failure("configured path metadata is unavailable", errors.Join(pathErr, closeErr))
+			return nil, err
 		}
 		result = append(result, canonical)
 	}
 	return result, nil
+}
+func canonicalExistingPath(path string) (string, error) {
+	text, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return "", err
+	}
+	handle, err := windows.CreateFile(text, windows.FILE_READ_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		return "", err
+	}
+	canonical, pathErr := handlePath(handle)
+	return canonical, errors.Join(pathErr, windows.CloseHandle(handle))
+}
+func checkWindowsLocation(target string, roots []string) error {
+	canonical, err := canonicalLocation(target)
+	if err != nil {
+		return err
+	}
+	for _, root := range roots {
+		if inside("windows", canonical, root) {
+			return invalid("directory must be outside " + root)
+		}
+	}
+	return nil
 }
 func checkHandleLocation(dir *os.File, roots []string) error {
 	current, err := handlePath(windows.Handle(dir.Fd()))

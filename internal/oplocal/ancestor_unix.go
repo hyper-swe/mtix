@@ -5,7 +5,6 @@
 package oplocal
 
 import (
-	"errors"
 	"golang.org/x/sys/unix"
 	"math"
 	"os"
@@ -38,16 +37,17 @@ func checkUnixLocation(target string, roots []string) error {
 		if root == "" {
 			continue
 		}
-		canonical, err := filepath.EvalSymlinks(root)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
+		canonical, err := canonicalLocation(root)
 		if err != nil {
-			return failure("configured path metadata is unavailable", err)
+			return err
 		}
 		if inside("linux", target, canonical) {
 			return invalid("directory must be outside " + root)
 		}
 	}
 	return nil
+}
+
+func canonicalExistingPath(path string) (string, error) {
+	return filepath.EvalSymlinks(path)
 }

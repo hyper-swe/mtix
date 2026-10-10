@@ -1,6 +1,8 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Hook exec-policy tests verify asynchronous spawn ordering and host policy
+// with a process barrier, rather than a mutation latency threshold.
 package service_test
 
 import (
@@ -9,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,25 +21,6 @@ import (
 )
 
 // MTIX-56.9 (detached exec) + MTIX-56.10 (exec dispatch-host policy).
-
-// writeExecHook installs a trusted exec hook whose script appends to recFile.
-func writeExecHook(t *testing.T, dir, recFile, script string) {
-	t.Helper()
-	require.NoError(t, os.WriteFile(script,
-		[]byte("#!/bin/sh\nprintf 'fired\\n' >> \""+recFile+"\"\n"), 0o700)) //nolint:gosec
-	writeHooks(t, dir, `
-hooks:
-  - name: wake-worker
-    match:
-      events: [status.changed]
-      status-to: [done]
-    deliver: [exec]
-    exec:
-      command: ["`+script+`"]
-      timeout-seconds: 10
-`)
-	require.NoError(t, hooks.SaveTrust(dir, hooks.ConfigHash(dir)))
-}
 
 func recCount(path string) int {
 	body, err := os.ReadFile(path) //nolint:gosec // test-owned temp path
@@ -60,33 +42,19 @@ func recCount(path string) int {
 func TestExecDispatch_DetachedSpawn_DoesNotBlockMutationPath(t *testing.T) {
 	svc, store, _ := newTestNodeService(t)
 	ctx := context.Background()
-	dir := t.TempDir()
-	rec := filepath.Join(dir, "rec")
-	script := filepath.Join(dir, "slow.sh")
-	require.NoError(t, os.WriteFile(script,
-		[]byte("#!/bin/sh\nsleep 3\nprintf 'fired\\n' >> \""+rec+"\"\n"), 0o700)) //nolint:gosec
-	writeHooks(t, dir, `
-hooks:
-  - name: wake-worker
-    match: { events: [status.changed], status-to: [done] }
-    deliver: [exec]
-    exec: { command: ["`+script+`"], timeout-seconds: 10 }
-`)
-	require.NoError(t, hooks.SaveTrust(dir, hooks.ConfigHash(dir)))
-
+	gate := newExecHookBarrier(t)
 	makeDoneEvent(t, svc)
-	start := time.Now()
-	service.NewHooksDispatcher(store, dir, slog.Default()).Dispatch(ctx)
-	require.Less(t, time.Since(start), time.Second,
-		"dispatch must return at spawn, not after the 3s script (async contract)")
+	dispatch := service.NewHooksDispatcher(store, gate.dir, slog.Default())
+	gate.observeDispatch(t, dispatch)
+	gate.dispatchBeforeRelease(t, func() { dispatch.Dispatch(ctx) })
 
-	// Spawn success is the terminal outcome (the ledger row is compacted once
-	// the floor passes it; the audit log keeps the record) — and it is
-	// recorded BEFORE the script finishes, which is the async contract.
+	// Spawn success is recorded while the hook is still parked. Completion
+	// is impossible until this test releases the hook after Dispatch returns.
 	require.Equal(t, 1, deliveredCount(t, store, "wake-worker"),
-		"delivered == spawned (MTIX-56.9), recorded before the 3s script completes")
-	require.Eventually(t, func() bool { return recCount(rec) == 1 },
-		10*time.Second, 50*time.Millisecond, "the detached script still runs to completion")
+		"delivered == spawned, recorded before the hook completes")
+	require.Zero(t, recCount(gate.record), "the parked hook has not completed")
+	gate.complete(t)
+	require.Equal(t, 1, recCount(gate.record), "the detached hook completes exactly once")
 }
 
 // TestExecDispatch_SpawnFailureIsError: a spawn that cannot start (missing
@@ -127,15 +95,17 @@ hooks:
 func TestExecPolicy_DaemonMode_NonDaemonTriggerDefersEntirely(t *testing.T) {
 	svc, store, _ := newTestNodeService(t)
 	ctx := context.Background()
-	dir := t.TempDir()
-	rec := filepath.Join(dir, "rec")
-	writeExecHook(t, dir, rec, filepath.Join(dir, "wake.sh"))
+	gate := newExecHookBarrier(t)
+	dir := gate.dir
 	require.NoError(t, hooks.SaveExecDispatchMode(dir, hooks.ExecDispatchDaemon))
 
 	makeDoneEvent(t, svc)
 
 	// CLI-shaped trigger: full no-op — no ledger rows, floor unchanged.
-	service.NewHooksDispatcher(store, dir, slog.Default()).Dispatch(ctx)
+	nonDaemon := service.NewHooksDispatcher(store, dir, slog.Default())
+	gate.observeDispatch(t, nonDaemon)
+	nonDaemon.Dispatch(ctx)
+	require.Zero(t, gate.deliveries.Load(), "a non-daemon trigger must invoke no exec adapter")
 	floor, err := store.HookCursor(ctx)
 	require.NoError(t, err)
 	assert.Zero(t, floor, "a non-daemon trigger must not advance the shared floor under daemon policy")
@@ -146,9 +116,14 @@ func TestExecPolicy_DaemonMode_NonDaemonTriggerDefersEntirely(t *testing.T) {
 	// The daemon-marked dispatcher fires it.
 	daemon := service.NewHooksDispatcher(store, dir, slog.Default())
 	daemon.MarkDaemon()
-	daemon.Dispatch(ctx)
-	require.Eventually(t, func() bool { return recCount(rec) == 1 },
-		10*time.Second, 50*time.Millisecond, "the daemon trigger fires the wake exactly once")
+	gate.observeDispatch(t, daemon)
+	gate.dispatchBeforeRelease(t, func() { daemon.Dispatch(ctx) })
+	daemon.Dispatch(ctx) // The same journal entry must not spawn another hook.
+	require.Equal(t, int64(1), gate.deliveries.Load(), "replay must not invoke the exec adapter again")
+	require.Equal(t, 1, deliveredCount(t, store, "wake-worker"))
+	require.Zero(t, recCount(gate.record), "the hook remains parked until released")
+	gate.complete(t)
+	require.Equal(t, 1, recCount(gate.record), "the daemon trigger fires the wake exactly once")
 }
 
 // TestExecPolicy_OffMode_SkipsExecKeepsOtherAdapters: exec-dispatch=off makes

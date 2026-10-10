@@ -1,6 +1,8 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Tests relay status collection, peer positions and activity, filesystem
+// timestamps, and human and JSON reports using isolated relay fixtures.
 package main
 
 import (

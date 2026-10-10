@@ -1,6 +1,8 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Tests relay doctor verdicts and recovery hints for configuration, metadata,
+// keys, publishing, peer activity, poll cadence, snapshots and privacy advisories.
 package main
 
 import (

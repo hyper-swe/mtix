@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Building mtix from source now requires Go 1.26+ (MTIX-107.10).
 
 ### Security
+- Updated the Go toolchain to 1.26.9 and `golang.org/x/net` to v0.60.0 to clear reachable standard-library and networking vulnerabilities. CI selects the patched toolchain from `go.mod` (MTIX-139).
 - Upgraded `golang.org/x/crypto` to v0.56.0 to clear SSH advisories GO-2026-6354 and GO-2026-6355 (MTIX-107.10). The unfixed, deprecated OpenPGP advisory GO-2026-5932 remains module-only; a repository import guard prevents OpenPGP imports.
 
 ### Fixed

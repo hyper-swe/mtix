@@ -80,6 +80,8 @@ list accepts every event type.
 
 {{ template "sync_section" . }}
 
+Mirror lock contention saves the task change and leaves a durable pending export. The next service import lock release, automatic export or daemon tick retries it in bounded passes, even after process restart. Retries keep changed or refused pulled boards protected; follow `mtix sync` import guidance and never edit pending request files by hand.
+
 ## Sync Hub Privileges
 
 A `hub-privileges` **WARN** from `mtix sync doctor` is acceptable for everyday use (it may be fine on a private network) and blocks nothing. To restrict who can use the hub's sync tables, the table owner runs `mtix sync harden` (a dry run). **Never** run `mtix sync harden --apply` until the user has approved the dry run's role list, and never run `mtix sync harden` from a hook, a push or the daemon.

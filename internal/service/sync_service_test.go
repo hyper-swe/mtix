@@ -582,9 +582,10 @@ func TestAutoExport_EmptyDB_ProducesValidJSON(t *testing.T) {
 func TestAutoExport_BadDir_ReturnsError(t *testing.T) {
 	svc, _, _ := newTestSyncService(t)
 
-	err := svc.AutoExport(context.Background(), "/nonexistent/.mtix")
-	// Should fail on lock acquisition or file write.
-	assert.NoError(t, err, "non-existent dir causes lock skip, not error")
+	blocked := filepath.Join(t.TempDir(), "blocked")
+	require.NoError(t, os.WriteFile(blocked, []byte("file"), 0644))
+	err := svc.AutoExport(context.Background(), filepath.Join(blocked, ".mtix"))
+	assert.ErrorContains(t, err, "create pending export directory", "a request that cannot be persisted must report the error")
 }
 
 // TestAutoImport_BackupDB_NoDB_NoBackup verifies backup skips when no DB file exists.

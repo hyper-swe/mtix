@@ -74,7 +74,7 @@ func (s *SyncService) keepPulledBoard(ctx context.Context, mtixDir string) bool 
 	if !changed {
 		return false
 	}
-	importErr := s.AutoImport(ctx, mtixDir)
+	importErr := s.autoImport(ctx, mtixDir)
 	if _, stillChanged := s.boardChangedOnDisk(mtixDir); !stillChanged {
 		return false // imported: the export writes the store, the board included
 	}
@@ -178,4 +178,19 @@ func (s *SyncService) resolveRefusal(mtixDir, fileHash string) error {
 	}
 	refusal.ResolvedAt = s.clock().UTC().Format(time.RFC3339)
 	return s.writeRefusal(mtixDir, refusal)
+}
+
+// keepPulledBoardUnderLock rechecks protection after taking the export lock.
+// It cannot import here: import would acquire the same lock recursively.
+func (s *SyncService) keepPulledBoardUnderLock(mtixDir string) bool {
+	if s.exportBlockedByPendingImport(mtixDir) {
+		return true
+	}
+	hash, changed := s.boardChangedOnDisk(mtixDir)
+	if !changed {
+		return false
+	}
+	s.recordRefusal(mtixDir, hash, refusalNotImported,
+		"tasks.json changed while acquiring the export lock and was not imported")
+	return true
 }

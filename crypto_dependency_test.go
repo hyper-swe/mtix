@@ -1,8 +1,8 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
-// Crypto dependency guards pin MTIX-107.10's minimal security upgrade and the
-// source-build requirements that users need to install that upgrade.
+// Crypto dependency guards pin the approved security versions and the
+// source-build requirements that users need to install those versions.
 package mtix_test
 
 import (
@@ -18,8 +18,8 @@ func TestCryptoDependency_ApprovedVersions_ArePinned(t *testing.T) {
 	content := readCryptoDocument(t, "go.mod")
 	tests := []struct{ name, line string }{
 		{"minimum Go", "go 1.26.0"},
-		{"patched toolchain unchanged", "toolchain go1.26.6"},
-		{"smallest SSH fix", "\tgolang.org/x/crypto v0.56.0 // indirect"},
+		{"patched toolchain", "toolchain go1.26.9"},
+		{"approved crypto dependency", "\tgolang.org/x/crypto v0.57.0 // indirect"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

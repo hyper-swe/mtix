@@ -60,28 +60,28 @@ func moduleToolchainVersion(t *testing.T) string {
 	for _, line := range strings.Split(string(src), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 2 && fields[0] == "toolchain" {
-			parts := strings.Split(strings.TrimPrefix(fields[1], "go"), ".")
-			require.GreaterOrEqual(t, len(parts), 2)
-			return strings.Join(parts[:2], ".")
+			version := strings.TrimPrefix(fields[1], "go")
+			require.Regexp(t, `^1\.[0-9]+\.[0-9]+$`, version)
+			return version
 		}
 	}
 	t.Fatal("go.mod must declare a toolchain")
 	return ""
 }
 
-// TestCI_WorkflowGoVersions follows the patched toolchain major/minor, keeping
-// the module language line independent. All eight setup-go occurrences matter.
+// TestCI_WorkflowGoVersions consumes the full patched module toolchain through
+// go-version-file. Explicit go-version overrides could select an older cached
+// patch because setup-go disables automatic toolchain switching.
 func TestCI_WorkflowGoVersions(t *testing.T) {
-	version := moduleToolchainVersion(t)
-	require.Equal(t, "1.26", version)
+	moduleToolchainVersion(t)
 	for _, wf := range toolchainWorkflowCases() {
 		t.Run(wf.file, func(t *testing.T) {
-			require.NoError(t, workflowToolchainError(readToolchainWorkflow(t, wf.file), wf.jobs, version))
+			require.NoError(t, workflowToolchainError(readToolchainWorkflow(t, wf.file), wf.jobs))
 		})
 	}
 }
 
-func workflowToolchainError(src []byte, jobs []string, version string) error {
+func workflowToolchainError(src []byte, jobs []string) error {
 	var wf toolchainWorkflow
 	if err := yaml.Unmarshal(src, &wf); err != nil {
 		return fmt.Errorf("parse workflow toolchain: %w", err)
@@ -93,8 +93,11 @@ func workflowToolchainError(src []byte, jobs []string, version string) error {
 				continue
 			}
 			counts[name]++
-			if step.With["go-version"] != version {
-				return fmt.Errorf("%s setup-go must select %s", name, version)
+			if step.With["go-version-file"] != "go.mod" {
+				return fmt.Errorf("%s setup-go must read the go.mod toolchain", name)
+			}
+			if _, exists := step.With["go-version"]; exists {
+				return fmt.Errorf("%s setup-go must not override the module toolchain", name)
 			}
 		}
 	}
@@ -152,16 +155,16 @@ func toolchainDefaultGateError(extra map[string]any) error {
 }
 
 // TestCI_WorkflowGoVersions_MutatedSetupRejected covers each of the eight
-// individual setup steps: old Go, missing version, or a different action with
-// the desired version as a decoy must fail the same validator used by CI.
+// individual setup steps: an explicit version override, missing or wrong
+// module file, and a decoy action must fail the same validator used by CI.
 func TestCI_WorkflowGoVersions_MutatedSetupRejected(t *testing.T) {
 	for _, tc := range toolchainWorkflowCases() {
 		src := readToolchainWorkflow(t, tc.file)
 		for _, job := range tc.jobs {
-			for _, mutation := range []string{"old version", "missing version", "decoy action"} {
+			for _, mutation := range []string{"old version", "major minor override", "missing version file", "wrong version file", "decoy action"} {
 				t.Run(tc.file+"/"+job+"/"+mutation, func(t *testing.T) {
 					mutated := mutateToolchainSetup(t, src, job, mutation)
-					require.Error(t, workflowToolchainError(mutated, tc.jobs, "1.26"))
+					require.Error(t, workflowToolchainError(mutated, tc.jobs))
 				})
 			}
 		}
@@ -184,8 +187,12 @@ func mutateToolchainSetup(t *testing.T, src []byte, name, mutation string) []byt
 		switch mutation {
 		case "old version":
 			step.With["go-version"] = "1.25"
-		case "missing version":
-			delete(step.With, "go-version")
+		case "major minor override":
+			step.With["go-version"] = "1.26"
+		case "missing version file":
+			delete(step.With, "go-version-file")
+		case "wrong version file":
+			step.With["go-version-file"] = "go.sum"
 		case "decoy action":
 			step.Uses = "actions/setup-node@decoy"
 		default:

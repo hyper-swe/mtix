@@ -100,7 +100,10 @@ func TestWakeExample_Variants_ReceiveCanonicalInput(t *testing.T) {
 	inputs := []string{"Ordinary input", "--fixture-mode\nnext line", "spaces 'single' and \"double\" quotes\n\nlast line\n\n", "literal $(touch unexpected) and `touch unexpected`; $HOME | & < >"}
 	for _, harness := range []string{"claude", "codex"} {
 		t.Run(harness, func(t *testing.T) {
-			variant := wakeVariant(t, source, harness)
+			variant := source
+			if harness == "codex" {
+				variant = wakeVariant(t, source, harness)
+			}
 			for _, input := range inputs {
 				t.Run(input, func(t *testing.T) { assertWakeInput(t, runWakeFixture(t, variant, input), input, harness) })
 			}
@@ -112,7 +115,11 @@ func TestWakeExample_EmptyInput_LaunchesNothing(t *testing.T) {
 	source := wakeSource(t, "examples/hooks/wake-agent.sh")
 	for _, harness := range []string{"claude", "codex"} {
 		t.Run(harness, func(t *testing.T) {
-			got := runWakeFixture(t, wakeVariant(t, source, harness), "")
+			variant := source
+			if harness == "codex" {
+				variant = wakeVariant(t, source, harness)
+			}
+			got := runWakeFixture(t, variant, "")
 			for _, name := range []string{"calls", "args", "stdin"} {
 				_, err := os.Stat(filepath.Join(got.dir, name))
 				require.True(t, os.IsNotExist(err), name)

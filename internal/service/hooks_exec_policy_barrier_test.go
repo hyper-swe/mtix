@@ -79,21 +79,21 @@ hooks:
 
 func (g *execHookBarrier) observeDispatch(t *testing.T, d *service.HooksDispatcher) {
 	t.Helper()
-	require.NoError(t, service.WrapExecAdapterForTest(d, func(real hooks.Adapter) hooks.Adapter {
-		return &observedExecAdapter{real: real, gate: g}
+	require.NoError(t, service.WrapExecAdapterForTest(d, func(delegate hooks.Adapter) hooks.Adapter {
+		return &observedExecAdapter{delegate: delegate, gate: g}
 	}))
 }
 
 type observedExecAdapter struct {
-	real hooks.Adapter
-	gate *execHookBarrier
+	delegate hooks.Adapter
+	gate     *execHookBarrier
 }
 
-func (a *observedExecAdapter) Name() string { return a.real.Name() }
+func (a *observedExecAdapter) Name() string { return a.delegate.Name() }
 
 func (a *observedExecAdapter) Deliver(ctx context.Context, delivery hooks.Delivery) error {
 	a.gate.deliveries.Add(1) // Count before delegation: duplicate calls cannot hide behind startup scheduling.
-	if err := a.real.Deliver(ctx, delivery); err != nil {
+	if err := a.delegate.Deliver(ctx, delivery); err != nil {
 		return fmt.Errorf("observed exec delivery: %w", err)
 	}
 	guard := time.NewTimer(120 * time.Second)

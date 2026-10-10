@@ -364,3 +364,9 @@ An event can reach the hub without this replica recording it: push marks an even
 - Never mark events pushed by hand (`UPDATE sync_events ...`) or delete pending events to make the queue drain: an event the hub does not hold then never reaches teammates. Upgrade and run `mtix sync push`.
 - Never run `mtix sync reconcile --discard-local` to clear a pending queue that does not drain: it deletes every unpushed change and local task, and it needs the ticket count typed at an interactive terminal (no flag supplies it), so it cannot run unattended.
 - Never delete the hold of an event under the same id with other content, or edit the event to match the hub's copy.
+
+## Operator-local state
+
+Run `mtix hooks status` or `mtix hooks status --json` to validate the operator-local state directory and read corrective guidance. This check creates no state and grants no hook approval. The directory is `$XDG_CONFIG_HOME/mtix` (default `~/.config/mtix`) on macOS and Linux, or `%APPDATA%\mtix` on Windows. Use an operator-owned directory with mode 0700 and files with mode 0600; Windows requires a protected user-only ACL. Keep it outside projects, git work trees, temporary directories, `~/.codex`, `CODEX_HOME` and harness writable roots, with no symlink components. Never commit or dotfile-sync it.
+
+This directory holds a persistent host identifier and host-specific state records. Other-host records are ignored and reported. Missing records are empty; invalid or inaccessible state is refused. This storage foundation does not move existing hook approvals or enable new grants. To recover, correct the reported path, ownership or access rules manually, then repeat `mtix hooks status --json`; preserve existing state records while correcting permissions.

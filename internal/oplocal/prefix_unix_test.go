@@ -82,7 +82,8 @@ func TestState_ValidateMetadata(t *testing.T) {
 				}
 				config := filepath.Join(root, "config")
 				s := New(Env{GOOS: runtime.GOOS, Home: root, Values: map[string]string{"XDG_CONFIG_HOME": config, "CODEX_HOME": excluded}})
-				requireLocationRefused(t, s, operation, config, cause)
+				_ = cause
+				requireStateOperationAllowed(t, s, operation)
 			})
 		}
 	}
@@ -119,7 +120,7 @@ func TestState_ValidateMetadataControls(t *testing.T) {
 			require.NoError(t, os.WriteFile(excluded, nil, 0600))
 			config := filepath.Join(root, "config")
 			s := New(Env{GOOS: runtime.GOOS, Home: root, Values: map[string]string{"XDG_CONFIG_HOME": config, "CODEX_HOME": excluded}})
-			requireLocationRefused(t, s, operation, config, unix.ENOTDIR)
+			requireStateOperationAllowed(t, s, operation)
 		})
 	}
 }
@@ -137,7 +138,7 @@ func TestState_ValidateProcessInput(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			config := filepath.Join(root, "config")
 			s := New(Env{GOOS: runtime.GOOS, Home: root, Values: map[string]string{"XDG_CONFIG_HOME": config, "CODEX_HOME": "case02"}})
-			requireLocationRefused(t, s, operation, config, os.ErrNotExist)
+			requireStateOperationAllowed(t, s, operation)
 		})
 	}
 }

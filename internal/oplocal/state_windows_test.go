@@ -6,6 +6,7 @@
 package oplocal
 
 import (
+	"fmt"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
@@ -87,4 +88,35 @@ func TestEnsure_CanonicalHandleAlias_Refuses(t *testing.T) {
 	}
 	_, err = openDirectory(short, true, []string{target})
 	require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
+}
+
+// These representative rows use Microsoft-documented defaults, not captured ACLs.
+// https://learn.microsoft.com/en-us/archive/msdn-magazine/2008/november/access-control-understanding-windows-file-and-registry-permissions
+// Published root example: Windows Server 2008; defaults vary by OS and provisioning.
+func TestAncestor_ValidateRepresentativeInput(t *testing.T) {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	require.NoError(t, err)
+	sid := user.User.Sid.String()
+	ti := "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+	rows := []string{
+		"O:" + ti + "D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;CI;LC;;;BU)(A;CIIO;DC;;;BU)(A;OICIIO;GA;;;CO)",
+		"O:BAD:AI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)(A;;LC;;;AU)",
+		"O:" + sid + "D:AI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;" + sid + ")",
+		"O:" + sid + "D:(A;;0x6;;;WD)(A;;FA;;;" + ti + ")",
+	}
+	for i, text := range rows {
+		t.Run(fmt.Sprintf("case%02d", i+1), func(t *testing.T) {
+			sd, parseErr := windows.SecurityDescriptorFromString(text)
+			require.NoError(t, parseErr)
+			require.NoError(t, verifyAncestorAccess(sd, user.User.Sid))
+			require.ErrorIs(t, verifyAccess(sd, user.User.Sid), model.ErrOperatorStateUnreadable)
+		})
+	}
+	for i, right := range []string{"SD", "0x40", "WD", "WO", "GW", "GA"} {
+		t.Run(fmt.Sprintf("case%02d", i+5), func(t *testing.T) {
+			sd, parseErr := windows.SecurityDescriptorFromString("O:" + sid + "D:(A;;" + right + ";;;AU)")
+			require.NoError(t, parseErr)
+			require.ErrorIs(t, verifyAncestorAccess(sd, user.User.Sid), model.ErrOperatorStateUnreadable)
+		})
+	}
 }

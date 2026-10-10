@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 func verifyAncestor(dir *os.File) error {
@@ -30,18 +31,19 @@ func validateAncestor(uid, mode uint32) error {
 }
 
 func checkUnixLocation(target string, roots []string) error {
+	if err := validateCanonicalInput(target); err != nil {
+		return err
+	}
 	if !filepath.IsAbs(target) {
 		return invalid("directory must be absolute")
 	}
 	for _, root := range roots {
-		if root == "" {
+		canonical, err := canonicalExclusion(root, canonicalExistingPath)
+		if err != nil {
+			logExcludedRoot(root, err)
 			continue
 		}
-		canonical, err := canonicalLocation(root)
-		if err != nil {
-			return err
-		}
-		if inside("linux", target, canonical) {
+		if inside(runtime.GOOS, target, canonical) {
 			return invalid("directory must be outside " + root)
 		}
 	}

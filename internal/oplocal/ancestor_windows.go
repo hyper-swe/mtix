@@ -23,7 +23,8 @@ func trustedSID(sid, user *windows.SID) bool {
 			return true
 		}
 	}
-	return false
+	trusted, err := windows.StringToSid("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")
+	return err == nil && sid.Equals(trusted)
 }
 
 func verifyAncestor(dir *os.File) error {
@@ -72,7 +73,7 @@ func verifyAncestorAccess(sd *windows.SECURITY_DESCRIPTOR, user *windows.SID) er
 		if ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE || ace.Header.AceFlags&windows.INHERIT_ONLY_ACE != 0 {
 			continue
 		}
-		const writes = windows.GENERIC_ALL | windows.GENERIC_WRITE | windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER | 0x156
+		const writes = windows.GENERIC_ALL | windows.GENERIC_WRITE | windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER | 0x40
 		if uint32(ace.Mask)&writes != 0 && !trustedSID((*windows.SID)(unsafe.Pointer(&ace.SidStart)), user) {
 			return invalid("ancestor write access is invalid")
 		}

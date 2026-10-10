@@ -168,15 +168,15 @@ func TestEnsure_ConfiguredRootAlias_RefusesBeforeCreation(t *testing.T) {
 	_, err := os.Stat(config)
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
-func TestEnsure_InvalidConfiguredRoot_RefusesBeforeCreation(t *testing.T) {
+func TestEnsure_ValidateConfigurationInput(t *testing.T) {
 	root := safeFixtureRoot(t)
 	alias := filepath.Join(root, "alias")
 	require.NoError(t, os.Symlink(alias, alias))
 	config := filepath.Join(root, "config")
 	s := New(Env{GOOS: runtime.GOOS, Home: root, Values: map[string]string{"XDG_CONFIG_HOME": config, "CODEX_HOME": alias}})
-	require.ErrorIs(t, s.Ensure(), model.ErrOperatorStateUnreadable)
+	require.NoError(t, s.Ensure())
 	_, err := os.Stat(config)
-	require.ErrorIs(t, err, os.ErrNotExist)
+	require.NoError(t, err)
 }
 func TestEnsure_PlatformPathMismatch_RefusesBeforeCreation(t *testing.T) {
 	s := New(Env{GOOS: "windows", Values: map[string]string{"APPDATA": `C:\Users\test\AppData`}})

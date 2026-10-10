@@ -290,6 +290,8 @@ list accepts every event type.
 
 {{ template "sync_section" . }}
 
+Mirror lock contention saves the task change and leaves a durable pending export. Service import lock release, automatic export and daemon ticks retry after restart, with at most three successful passes per trigger; errors, contention and pulled-board refusals stop recovery. Long-running post-commit hooks mark before debounce, but the small commit-to-hook and CLI post-run windows remain. Metadata errors are reported while protected publication is attempted; unreadable snapshots retain requests. Retries protect changed, unreadable or refused pulled boards. Unix directory Sync EINVAL/ENOTSUP is logged as best-effort, and Windows does not sync directory entries; unsupported directory Sync carries no power-loss guarantee. Follow `mtix sync` import guidance and never edit pending request files by hand.
+
 ## Sync recovery (operator tasks — recognize, don't force)
 
 These are **operator/admin** actions, not part of the normal agent loop. Recognize them so you *surface* the situations that need them instead of working around them:

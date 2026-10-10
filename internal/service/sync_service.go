@@ -6,7 +6,6 @@ package service
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -42,6 +41,10 @@ type SyncService struct {
 	// (replaceBaseline); nil writes the file directly (MTIX-95.31.11). Tests
 	// set it to make the write or the close fail.
 	wrapBaselineFile func(*os.File) io.WriteCloser
+
+	// directorySync is an instance-local filesystem dependency; nil uses the
+	// platform directory durability policy. Tests simulate unsupported Sync.
+	directorySync func(string) error
 
 	MaxImportSize int64 // Maximum file size for auto-import per FR-15.2e.
 }
@@ -81,6 +84,11 @@ func NewSyncService(store *sqlite.Store, logger *slog.Logger, clock func() time.
 // import is skipped with a one-line notice, does not fail the command and
 // does not record the file as imported: the next command imports it.
 func (s *SyncService) AutoImport(ctx context.Context, mtixDir string) error {
+	defer s.drainAfterImport(ctx, mtixDir)
+	return s.autoImport(ctx, mtixDir)
+}
+
+func (s *SyncService) autoImport(ctx context.Context, mtixDir string) error {
 	if s.autoImportSwitchedOff(ctx) {
 		return nil // FR-15.2j: auto-import is off; auto-export keeps running, except over a pulled board (FR-15.3e).
 	}
@@ -261,91 +269,6 @@ func (s *SyncService) writeHashFile(hashPath, fileHash string) error {
 	if err := os.WriteFile(cleanPath, []byte(fileHash), 0644); err != nil { //nolint:gosec // G703, see above
 		return fmt.Errorf("write sync hash: %w", err)
 	}
-	return nil
-}
-
-// AutoExport writes the current DB state to .mtix/tasks.json per FR-15.3
-// (exportBoard), unless that would overwrite a board that changed on disk
-// and was not imported (MTIX-95.31.2, keepPulledBoard): it then runs the
-// automatic import first, and when that does not import the board, keeps
-// it, records the refusal as pending and says so in one line.
-func (s *SyncService) AutoExport(ctx context.Context, mtixDir string) error {
-	// MTIX-95.31.2: never overwrite a tasks.json that changed on disk and
-	// was not imported; the change stays in the local store.
-	if s.keepPulledBoard(ctx, mtixDir) {
-		return nil
-	}
-	return s.exportBoard(ctx, mtixDir)
-}
-
-// exportBoard writes the current DB state to .mtix/tasks.json per FR-15.3,
-// without the MTIX-95.31.2 check AutoExport makes first: deterministic
-// export, atomic temp+rename write, then the file hash and the DB hash for
-// conflict detection.
-func (s *SyncService) exportBoard(ctx context.Context, mtixDir string) error {
-	start := s.clock()
-
-	// Acquire exclusive lock for export per FR-15.8.
-	lockFile, lockErr := s.acquireLock(mtixDir, lockExclusive)
-	if lockErr != nil {
-		s.logger.Warn("could not acquire sync lock, skipping auto-export", "error", lockErr)
-		return nil
-	}
-	defer s.releaseLock(lockFile)
-
-	tasksPath := filepath.Join(mtixDir, "tasks.json")
-	hashPath := filepath.Join(mtixDir, "data", "sync.sha256")
-	dbHashPath := filepath.Join(mtixDir, "data", "sync-db.sha256")
-
-	// Step 1: Export current DB state.
-	exportData, err := s.store.Export(ctx, "", "")
-	if err != nil {
-		return fmt.Errorf("export for auto-export: %w", err)
-	}
-
-	// Step 2: Marshal to indented JSON for readability and determinism.
-	jsonBytes, err := json.MarshalIndent(exportData, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal export data: %w", err)
-	}
-
-	// Step 3: Atomic write via temp file + rename per FR-15.3c.
-	if err := writeFileAtomically(tasksPath, jsonBytes); err != nil {
-		return err
-	}
-
-	// Step 4: Update file hash per FR-15.3d.
-	fileHash := fmt.Sprintf("%x", sha256.Sum256(jsonBytes))
-	if err := s.writeHashFile(hashPath, fileHash); err != nil {
-		return err
-	}
-
-	// Step 4b: Store export hash in meta table for redundant import detection.
-	// Sibling agents sharing this DB will see this hash and skip import.
-	if _, metaErr := s.store.WriteDB().ExecContext(ctx,
-		"INSERT OR REPLACE INTO meta (key, value) VALUES ('last_export_hash', ?)",
-		fileHash,
-	); metaErr != nil {
-		s.logger.Warn("failed to write last_export_hash to meta", "error", metaErr)
-	}
-
-	// Step 5: Update DB hash for conflict detection per FR-15.2h.
-	dbHash, hashErr := s.computeDBHash(ctx)
-	if hashErr != nil {
-		return fmt.Errorf("db hash after auto-export: %w", hashErr)
-	}
-	if err := os.WriteFile(dbHashPath, []byte(dbHash), 0644); err != nil {
-		return fmt.Errorf("write db hash: %w", err)
-	}
-
-	elapsed := time.Since(start)
-	s.logger.Info("sync_export_completed",
-		"event", "sync_export_completed",
-		"file_hash", fileHash,
-		"node_count", exportData.NodeCount,
-		"file_size", len(jsonBytes),
-		"duration_ms", elapsed.Milliseconds())
-
 	return nil
 }
 

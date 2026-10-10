@@ -26,7 +26,13 @@ func TestState_ValidateConfiguration(t *testing.T) {
 				excluded := windowsPrefixSpelling(t, root, prefix, spelling)
 				absent := filepath.Join(prefix, "missing")
 				config := filepath.Join(absent, "next", "config")
-				s := New(Env{GOOS: "windows", Home: root, Values: map[string]string{"APPDATA": config, "CODEX_HOME": filepath.Join(excluded, "missing", "next")}})
+				input := excluded + `\missing\next`
+				s := New(Env{GOOS: "windows", Home: root, Values: map[string]string{"APPDATA": config, "CODEX_HOME": input}})
+				require.Equal(t, excluded+`\missing\next`, s.env.Values["CODEX_HOME"])
+				if spelling == "case05" {
+					require.Equal(t, prefix+`\..\other\missing\next`, s.env.Values["CODEX_HOME"])
+					require.Contains(t, s.env.Values["CODEX_HOME"], `\..\`)
+				}
 				requireLocationRefused(t, s, operation, absent, nil)
 			})
 		}
@@ -91,4 +97,40 @@ func TestState_ValidateMetadata(t *testing.T) {
 			requireLocationRefused(t, s, operation, config, os.ErrNotExist)
 		})
 	}
+}
+
+func TestState_ValidateConfigurationControls(t *testing.T) {
+	root := safeFixtureRoot(t)
+	prefix := filepath.Join(root, "existing-prefix")
+	require.NoError(t, os.Mkdir(prefix, 0700))
+	setFixtureWorkingDirectory(t, root)
+	absent := filepath.Join(prefix, "missing")
+	s := New(Env{GOOS: "windows", Home: root, Values: map[string]string{
+		"APPDATA": filepath.Join(absent, "next", "config"), "CODEX_HOME": `.\other\missing\next`,
+	}})
+	require.Equal(t, `.\other\missing\next`, s.env.Values["CODEX_HOME"])
+	got := map[string]int{"old": 1}
+	reports, err := s.ReadJSON("hooks", &got)
+	require.NoError(t, err)
+	require.Empty(t, reports)
+	require.Nil(t, got)
+	status, err := s.Inspect()
+	require.NoError(t, err)
+	require.Equal(t, "absent", status.Status)
+	requireMissingDirectory(t, absent)
+	require.NoError(t, s.Ensure())
+	id, err := s.HostID()
+	require.NoError(t, err)
+	require.Regexp(t, "^[0-9a-f]{32}$", id)
+	again, err := s.HostID()
+	require.NoError(t, err)
+	require.Equal(t, id, again)
+	require.NoError(t, s.WriteJSON("hooks", map[string]int{"value": 7}))
+	reports, err = s.ReadJSON("hooks", &got)
+	require.NoError(t, err)
+	require.Empty(t, reports)
+	require.Equal(t, map[string]int{"value": 7}, got)
+	status, err = s.Inspect()
+	require.NoError(t, err)
+	require.Equal(t, "ready", status.Status)
 }

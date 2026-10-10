@@ -97,3 +97,13 @@ If `mtix sync status` shows a `pending` count that does not go down across pushe
 `mtix sync clone` refuses, naming the event and writing nothing, while the hub holds an event that fails these checks: on the fresh store, recover with `mtix sync pull` alone (it quarantines the event), never any other way. **Never** run `mtix sync reconcile --discard-local` on your own: it deletes local tasks and unpushed changes and needs the ticket count typed at an interactive terminal (no flag supplies it), so it cannot run unattended; ask the user to run it, and only after `mtix sync push` and a `mtix sync status` showing pending 0.
 
 Operator-local state: `mtix hooks status --json` validates its path and access rules without creating state or granting approval. Follow the admin skill for recovery; never commit or dotfile-sync operator-local state.
+
+<!-- AUTO-GENERATED: WAKE_ROUTINE -->
+
+## Reference Wake Routine
+
+See the multi-agent skill and mtix's `examples/hooks/wake-agent.sh` for the
+standard-input launch routine and empty-inbox check. Handle and ack each event
+before reading the inbox again; use only a verified runtime input interface.
+
+<!-- END AUTO-GENERATED -->

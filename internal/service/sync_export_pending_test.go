@@ -200,3 +200,36 @@ func TestPendingExport_TrulyAbsentBoardCreated(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, requests)
 }
+
+// A request-metadata error must stay visible without preventing an otherwise
+// safe mirror publication. A regular file at the request directory makes both
+// request creation and enumeration fail, while the board parent stays writable.
+func TestPendingExport_MetadataFailureStillPublishesMirror(t *testing.T) {
+	dir := t.TempDir()
+	store := pendingProcessStore(t, dir)
+	pendingProcessNode(t, store, 1)
+	svc := NewSyncService(store, slog.Default(), pendingProcessClock)
+	require.NoError(t, svc.AutoExport(context.Background(), dir))
+	require.Equal(t, 1, pendingProcessMirrorCount(t, dir))
+	requests, err := pendingExportRequests(dir)
+	require.NoError(t, err)
+	require.Empty(t, requests)
+	pendingPath := pendingExportDir(dir)
+	require.NoError(t, os.Remove(pendingPath))
+	metadata := []byte("owned unavailable request metadata")
+	require.NoError(t, os.WriteFile(pendingPath, metadata, 0644))
+	_, err = os.ReadDir(pendingPath)
+	require.Error(t, err, "fixture must reject request enumeration")
+	pendingProcessNode(t, store, 2)
+	committed, err := store.Export(context.Background(), "", "")
+	require.NoError(t, err)
+	require.Equal(t, 2, committed.NodeCount, "the writer committed its task")
+
+	exportErr := svc.AutoExport(context.Background(), dir)
+	require.ErrorContains(t, exportErr, "pending export", "request metadata failure must remain visible")
+	require.Equal(t, 2, pendingProcessMirrorCount(t, dir),
+		"failed request metadata must not suppress protected mirror publication")
+	actual, err := os.ReadFile(pendingPath)
+	require.NoError(t, err)
+	require.Equal(t, metadata, actual, "unknown request metadata must be preserved")
+}

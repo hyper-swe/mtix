@@ -41,9 +41,8 @@ PAYLOAD="$(mtix inbox --agent "$AGENT" --format prompt)"
 
 # --- pick ONE launch line for your harness -----------------------------
 # Claude Code (headless; add --channels ... to keep the session push-reachable):
-claude -p "$PAYLOAD"
+printf '%s\n' "$PAYLOAD" | claude -p
 # OpenAI Codex CLI:
-# codex exec "$PAYLOAD"
-# Cursor CLI:
-# agent -p "$PAYLOAD"
-# Any other runtime that takes a prompt argument works the same way.
+# printf '%s\n' "$PAYLOAD" | codex exec -
+# Other runtimes need a verified standard-input interface.
+# Keep the empty-inbox check and pass input through standard input.

@@ -27,6 +27,9 @@ func Dir(env Env) (string, error) {
 		if len(base) < 3 || base[1] != ':' || (base[2] != '\\' && base[2] != '/') {
 			return "", invalid("APPDATA must be absolute")
 		}
+		if err := validatePlatformInput(env.GOOS, base); err != nil {
+			return "", err
+		}
 		return strings.TrimRight(base, `\/`) + `\mtix`, nil
 	}
 	base := env.Values["XDG_CONFIG_HOME"]
@@ -34,10 +37,16 @@ func Dir(env Env) (string, error) {
 		if !path.IsAbs(env.Home) {
 			return "", invalid("home directory must be absolute")
 		}
+		if err := validatePlatformInput(env.GOOS, env.Home); err != nil {
+			return "", err
+		}
 		base = path.Join(env.Home, ".config")
 	}
 	if !path.IsAbs(base) {
 		return "", invalid("XDG_CONFIG_HOME must be absolute")
+	}
+	if err := validatePlatformInput(env.GOOS, base); err != nil {
+		return "", err
 	}
 	return path.Join(base, "mtix"), nil
 }
@@ -51,8 +60,12 @@ func inside(platform, target, root string) bool {
 		return false
 	}
 	if platform == "windows" {
-		target = strings.ToLower(strings.ReplaceAll(target, `\`, "/"))
-		root = strings.ToLower(strings.ReplaceAll(root, `\`, "/"))
+		target = strings.ReplaceAll(target, `\`, "/")
+		root = strings.ReplaceAll(root, `\`, "/")
+	}
+	if platform == "windows" || platform == "darwin" {
+		target = strings.ToLower(target)
+		root = strings.ToLower(root)
 	}
 	target = path.Clean(target)
 	root = strings.TrimRight(path.Clean(root), "/")
@@ -62,8 +75,23 @@ func inside(platform, target, root string) bool {
 func validateLocation(env Env, target string) error {
 	roots := excludedRoots(env)
 	for _, root := range roots {
+		if validatePlatformInput(env.GOOS, root) != nil {
+			continue
+		}
 		if inside(env.GOOS, target, root) {
 			return invalid("directory must be outside " + root)
+		}
+	}
+	return nil
+}
+
+func validatePlatformInput(platform, input string) error {
+	if platform == "windows" {
+		input = strings.ReplaceAll(input, `\`, "/")
+	}
+	for _, part := range strings.Split(input, "/") {
+		if part == ".." {
+			return locationFailure(invalid("configured path contains a parent component"))
 		}
 	}
 	return nil

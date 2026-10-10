@@ -29,12 +29,10 @@ func handlePath(handle windows.Handle) (string, error) {
 func canonicalRoots(roots []string) ([]string, error) {
 	result := make([]string, 0, len(roots))
 	for _, root := range roots {
-		if root == "" {
-			continue
-		}
-		canonical, err := canonicalLocation(root)
+		canonical, err := canonicalExclusion(root, canonicalExistingPath)
 		if err != nil {
-			return nil, err
+			logExcludedRoot(root, err)
+			continue
 		}
 		result = append(result, canonical)
 	}

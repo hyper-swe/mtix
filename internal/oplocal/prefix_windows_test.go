@@ -25,6 +25,9 @@ func TestState_ValidateConfiguration(t *testing.T) {
 				require.NoError(t, os.Mkdir(prefix, 0700))
 				excluded := windowsPrefixSpelling(t, root, prefix, spelling)
 				absent := filepath.Join(prefix, "missing")
+				if spelling == "case05" {
+					absent = filepath.Join(root, "other", "missing")
+				}
 				config := filepath.Join(absent, "next", "config")
 				input := excluded + `\missing\next`
 				s := New(Env{GOOS: "windows", Home: root, Values: map[string]string{"APPDATA": config, "CODEX_HOME": input}})
@@ -94,7 +97,7 @@ func TestState_ValidateMetadata(t *testing.T) {
 			require.NoError(t, err)
 			config := filepath.Join(root, "config")
 			s := New(Env{GOOS: "windows", Home: root, Values: map[string]string{"APPDATA": config, "CODEX_HOME": alias}})
-			requireLocationRefused(t, s, operation, config, os.ErrNotExist)
+			requireWindowsOperationAllowed(t, s, operation)
 		})
 	}
 }
@@ -133,4 +136,26 @@ func TestState_ValidateConfigurationControls(t *testing.T) {
 	status, err = s.Inspect()
 	require.NoError(t, err)
 	require.Equal(t, "ready", status.Status)
+}
+
+func requireWindowsOperationAllowed(t *testing.T, s *State, operation string) {
+	t.Helper()
+	switch operation {
+	case "ensure":
+		require.NoError(t, s.Ensure())
+	case "host":
+		_, err := s.HostID()
+		require.NoError(t, err)
+	case "write":
+		require.NoError(t, s.WriteJSON("hooks", true))
+	case "read":
+		got := map[string]bool{"old": true}
+		_, err := s.ReadJSON("hooks", &got)
+		require.NoError(t, err)
+		require.Nil(t, got)
+	case "inspect":
+		status, err := s.Inspect()
+		require.NoError(t, err)
+		require.Equal(t, "absent", status.Status)
+	}
 }

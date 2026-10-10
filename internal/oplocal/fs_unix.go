@@ -59,9 +59,13 @@ func openDirectory(path string, create bool, roots []string) (dir *os.File, err 
 }
 
 func walkDirectory(dir *os.File, path string, create bool) (_ *os.File, err error) {
+	return walkDirectoryChecked(dir, path, create, verifyAncestor)
+}
+
+func walkDirectoryChecked(dir *os.File, path string, create bool, check func(*os.File) error) (_ *os.File, err error) {
 	parts := strings.Split(strings.TrimPrefix(filepath.Clean(path), "/"), "/")
 	for i, part := range parts {
-		if err = verifyAncestor(dir); err == nil {
+		if err = check(dir); err == nil {
 			err = checkGit(dir)
 		}
 		if err != nil {
@@ -72,7 +76,7 @@ func walkDirectory(dir *os.File, path string, create bool) (_ *os.File, err erro
 		if err != nil {
 			break
 		}
-		err = errors.Join(verifyAncestor(next), closeFile(dir))
+		err = errors.Join(check(next), closeFile(dir))
 		dir = next
 		if err != nil {
 			break

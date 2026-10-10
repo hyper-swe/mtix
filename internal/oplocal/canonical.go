@@ -7,7 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
+	"runtime"
 	"syscall"
 )
 
@@ -67,10 +67,5 @@ func canonicalLocation(input string) (string, error) {
 }
 
 func validateCanonicalInput(input string) error {
-	for _, part := range strings.Split(filepath.ToSlash(input), "/") {
-		if part == ".." {
-			return locationFailure(invalid("configured path contains a parent component"))
-		}
-	}
-	return nil
+	return validatePlatformInput(runtime.GOOS, input)
 }

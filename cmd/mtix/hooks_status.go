@@ -25,7 +25,7 @@ func runHooksStatus(state *oplocal.State) error {
 	if err != nil {
 		status.Status = "refused"
 		status.Detail = err.Error()
-		status.Fix = "Choose an operator-owned configuration directory outside projects, temporary directories and harness writable roots; remove symlink components and use directory mode 0700 and file mode 0600 (a user-only ACL on Windows), then run mtix hooks status --json. Never commit or dotfile-sync this directory."
+		status.Fix = "Choose an operator-owned configuration directory outside projects, temporary directories and harness writable roots; remove symlink components and use directory mode 0700 and file mode 0600 (a user-only ACL on Windows), set XDG_CONFIG_HOME on Unix to a directory whose ancestors are owned by root or the operator and have no group or other write access (group-writable homes and unsupported network or directory-service-owned parents are refused), or choose APPDATA with supported ancestor access on Windows; then run mtix hooks status --json. Never commit or dotfile-sync this directory."
 	}
 	out := NewOutputWriter(app.jsonOutput)
 	if app.jsonOutput {

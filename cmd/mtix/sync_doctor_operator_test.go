@@ -17,6 +17,9 @@ func TestSyncDoctor_PlacementLimit_WarnsWithoutChangingPass(t *testing.T) {
 	require.Len(t, report.Checks, 1)
 	require.True(t, report.Checks[0].Warn)
 	require.True(t, report.Checks[0].Pass)
+	require.Contains(t, report.Checks[0].Fix, "XDG_CONFIG_HOME")
+	require.Contains(t, report.Checks[0].Fix, "group-writable")
+	require.Contains(t, report.Checks[0].Fix, "directory-service")
 	report = appendOperatorPlacementCheck(DoctorReport{})
 	require.False(t, report.OverallPass)
 }

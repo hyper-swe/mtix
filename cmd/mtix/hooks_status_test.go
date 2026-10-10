@@ -16,35 +16,44 @@ func TestHooksStatus_ValidateInput(t *testing.T) {
 	status, _, err := cmd.Find([]string{"status"})
 	require.NoError(t, err)
 	require.Equal(t, "status", status.Name())
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := filepath.EvalSymlinks(operatorTestHome(t))
 	require.NoError(t, err)
-	state := oplocal.New(oplocal.Env{GOOS: "darwin", Home: "/home/test", Root: root})
+	state := oplocal.New(operatorTestEnv(root))
 	saveAndResetApp(t)
 	app.jsonOutput = true
 	text := captureStdout(t, func() { require.NoError(t, runHooksStatus(state)) })
 	require.Contains(t, text, `"status": "absent"`)
+	require.Contains(t, text, oplocal.PlacementLimit)
 	require.NoError(t, state.Ensure())
 	text = captureStdout(t, func() { require.NoError(t, runHooksStatus(state)) })
 	require.Contains(t, text, `"status": "ready"`)
+	require.Contains(t, text, oplocal.PlacementLimit)
 }
 
 func TestHooksStatus_Output(t *testing.T) {
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := filepath.EvalSymlinks(operatorTestHome(t))
 	require.NoError(t, err)
-	state := oplocal.New(oplocal.Env{GOOS: "linux", Home: "/home/test", Root: root, Values: map[string]string{"XDG_CONFIG_HOME": "/tmp"}})
+	env := operatorTestEnv(root)
+	env.Values["CODEX_HOME"] = root
+	state := oplocal.New(env)
 	saveAndResetApp(t)
 	text := captureStdout(t, func() { require.Error(t, runHooksStatus(state)) })
 	require.Contains(t, text, "refused")
+	require.Contains(t, text, oplocal.PlacementLimit)
 	require.Contains(t, text, "mtix hooks status --json")
 	app.jsonOutput = true
 	text = captureStdout(t, func() { require.Error(t, runHooksStatus(state)) })
 	require.Contains(t, text, `"status": "refused"`)
-	require.Contains(t, text, "directory must be outside /tmp")
+	require.Contains(t, text, oplocal.PlacementLimit)
+	require.Contains(t, text, "directory must be outside")
 }
 
 func TestHooksStatus_Command(t *testing.T) {
 	saveAndResetApp(t)
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	temp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", temp)
+	t.Setenv("APPDATA", temp)
+	t.Setenv("CODEX_HOME", temp)
 	cmd := newHooksStatusCmd()
 	text := captureStdout(t, func() { require.Error(t, cmd.RunE(cmd, nil)) })
 	require.Contains(t, text, "Operator-local state: refused")
@@ -52,9 +61,9 @@ func TestHooksStatus_Command(t *testing.T) {
 
 func TestHooksStatus_Reports(t *testing.T) {
 	saveAndResetApp(t)
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := filepath.EvalSymlinks(operatorTestHome(t))
 	require.NoError(t, err)
-	state := oplocal.New(oplocal.Env{GOOS: "linux", Home: "/home/test", Root: root})
+	state := oplocal.New(operatorTestEnv(root))
 	require.NoError(t, state.WriteJSON("hooks", map[string]int{}))
 	dir, err := state.Path()
 	require.NoError(t, err)
@@ -73,4 +82,22 @@ func TestHooksStatus_HomeInput(t *testing.T) {
 	t.Setenv(key, "")
 	cmd := newHooksStatusCmd()
 	require.ErrorContains(t, cmd.RunE(cmd, nil), "resolve home")
+}
+
+func operatorTestHome(t *testing.T) string {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	dir, err := os.MkdirTemp(home, ".mtix-status-test-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
+	return dir
+}
+
+func operatorTestEnv(root string) oplocal.Env {
+	env := oplocal.Env{GOOS: runtime.GOOS, Home: root, Values: map[string]string{}}
+	if runtime.GOOS == "windows" {
+		env.Values["APPDATA"] = filepath.Join(root, "config")
+	}
+	return env
 }

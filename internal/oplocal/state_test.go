@@ -18,11 +18,11 @@ import (
 
 func fixture(t *testing.T) *State {
 	t.Helper()
-	root, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := filepath.EvalSymlinks(safeFixtureRoot(t))
 	require.NoError(t, err)
-	return New(Env{GOOS: "linux", Home: "/home/test", Root: root, Values: map[string]string{"TMPDIR": "/temp"}})
+	return New(Env{GOOS: "linux", Home: "/home/test", root: root, Values: map[string]string{"TMPDIR": "/temp"}})
 }
-func TestDir_Defaults(t *testing.T) {
+func TestDir_XDGUnset_UsesDotConfigOnDarwinAndLinux(t *testing.T) {
 	for _, platform := range []string{"darwin", "linux"} {
 		t.Run(platform, func(t *testing.T) {
 			dir, err := Dir(Env{GOOS: platform, Home: "/home/test"})
@@ -34,7 +34,7 @@ func TestDir_Defaults(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, `C:\Users\test\AppData\Roaming\mtix`, dir)
 }
-func TestState_ValidInput(t *testing.T) {
+func TestState_ValidRecords_RoundTrips(t *testing.T) {
 	s := fixture(t)
 	require.NoError(t, s.Ensure())
 	id, err := s.HostID()
@@ -50,7 +50,7 @@ func TestState_ValidInput(t *testing.T) {
 	require.Empty(t, report)
 	require.Equal(t, 7, got["value"])
 }
-func TestReadJSON_EmptyState(t *testing.T) {
+func TestReadJSON_MissingDirectory_ReturnsEmpty(t *testing.T) {
 	s := fixture(t)
 	var got map[string]int
 	report, err := s.ReadJSON("hooks", &got)
@@ -58,19 +58,19 @@ func TestReadJSON_EmptyState(t *testing.T) {
 	require.Empty(t, report)
 	require.Nil(t, got)
 }
-func TestState_ValidateInput(t *testing.T) {
+func TestEnsure_DisallowedLocationOrMetadata_Refuses(t *testing.T) {
 	cases := []struct {
 		name   string
 		env    func(*State)
 		change func(*testing.T, *State)
 	}{
-		{"input_a", func(s *State) { s.env.Values["XDG_CONFIG_HOME"] = "/tmp" }, nil},
-		{"input_b", func(s *State) { s.env.Values["CODEX_HOME"] = "/home/test/.config" }, nil},
-		{"input_c", nil, func(t *testing.T, s *State) {
-			require.NoError(t, os.WriteFile(filepath.Join(s.env.Root, "home/test/.git"), []byte("gitdir: test"), 0600))
+		{"temporary_directory", func(s *State) { s.env.Values["XDG_CONFIG_HOME"] = "/tmp" }, nil},
+		{"configured_harness_home", func(s *State) { s.env.Values["CODEX_HOME"] = "/home/test/.config" }, nil},
+		{"git_worktree_file", nil, func(t *testing.T, s *State) {
+			require.NoError(t, os.WriteFile(filepath.Join(s.env.root, "home/test/.git"), []byte("gitdir: test"), 0600))
 		}},
-		{"input_d", nil, func(t *testing.T, s *State) { require.NoError(t, os.Chmod(s.pathForTest(t), 0755)) }},
-		{"input_e", nil, func(t *testing.T, s *State) {
+		{"wide_directory_mode", nil, func(t *testing.T, s *State) { require.NoError(t, os.Chmod(s.pathForTest(t), 0755)) }},
+		{"symlink_directory", nil, func(t *testing.T, s *State) {
 			require.NoError(t, os.Rename(s.pathForTest(t), s.pathForTest(t)+"-old"))
 			require.NoError(t, os.Symlink(s.pathForTest(t)+"-old", s.pathForTest(t)))
 		}},
@@ -89,12 +89,12 @@ func TestState_ValidateInput(t *testing.T) {
 		})
 	}
 }
-func TestReadJSON_ValidateInput(t *testing.T) {
+func TestReadJSON_InvalidRecord_ReturnsSentinel(t *testing.T) {
 	for _, tc := range []struct {
 		name, body string
 		mode       os.FileMode
 	}{
-		{"input_a", "{", 0600}, {"input_b", `{"host_id":"%s","data":{}}`, 0644}, {"input_c", `{"data":{}}`, 0600},
+		{"corrupt_json", "{", 0600}, {"wide_record_mode", `{"host_id":"%s","data":{}}`, 0644}, {"missing_host_id", `{"data":{}}`, 0600},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := fixture(t)
@@ -112,7 +112,7 @@ func TestReadJSON_ValidateInput(t *testing.T) {
 		})
 	}
 }
-func TestHostRecords_ValidateInput(t *testing.T) {
+func TestHostRecords_OtherHostID_IgnoredAndReported(t *testing.T) {
 	s := fixture(t)
 	require.NoError(t, s.Ensure())
 	_, err := s.HostID()
@@ -124,7 +124,7 @@ func TestHostRecords_ValidateInput(t *testing.T) {
 	require.NotEmpty(t, report)
 	require.Nil(t, got)
 }
-func TestWriteJSON_PreservesStateOnFailure(t *testing.T) {
+func TestWriteJSON_CrashBeforeRename_LeavesOldFile(t *testing.T) {
 	s := fixture(t)
 	require.NoError(t, s.WriteJSON("hooks", map[string]int{"value": 1}))
 	s.beforeCommit = func() error { return errors.New("operation failed") }
@@ -134,16 +134,17 @@ func TestWriteJSON_PreservesStateOnFailure(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, got["value"])
 }
-func TestHostID_ConcurrentInitialization(t *testing.T) {
+func TestHostID_ConcurrentFirstUse_ReturnsSameID(t *testing.T) {
 	s := fixture(t)
-	require.NoError(t, s.Ensure())
+	start := make(chan struct{})
 	var wg sync.WaitGroup
 	ids := make([]string, 8)
 	errs := make([]error, 8)
 	for i := range ids {
 		wg.Add(1)
-		go func() { defer wg.Done(); ids[i], errs[i] = s.HostID() }()
+		go func() { defer wg.Done(); <-start; ids[i], errs[i] = s.HostID() }()
 	}
+	close(start)
 	wg.Wait()
 	for i := range ids {
 		require.NoError(t, errs[i])

@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWriteJSON_CommitFailure(t *testing.T) {
+func TestWriteJSON_DirectorySyncFailure_ReportsCommittedContent(t *testing.T) {
 	s := fixture(t)
 	require.NoError(t, s.WriteJSON("hooks", "original"))
 	failure := errors.New("operation failed")

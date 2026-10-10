@@ -61,7 +61,11 @@ func relativeOpen(parent *os.File, name string, kind, disposition, access uint32
 	return f, nil
 }
 
-func openDirectory(path string, create bool) (dir *os.File, err error) {
+func openDirectory(path string, create bool, roots []string) (dir *os.File, err error) {
+	roots, err = canonicalRoots(roots)
+	if err != nil {
+		return nil, err
+	}
 	volume := filepath.VolumeName(path)
 	if volume == "" {
 		return nil, invalid("directory must be absolute")
@@ -75,9 +79,19 @@ func openDirectory(path string, create bool) (dir *os.File, err error) {
 		return nil, err
 	}
 	dir = os.NewFile(uintptr(h), volume+`\`)
+	return walkDirectory(dir, path, volume, create, roots)
+}
+
+func walkDirectory(dir *os.File, path, volume string, create bool, roots []string) (_ *os.File, err error) {
 	parts := strings.Split(strings.TrimLeft(strings.TrimPrefix(filepath.Clean(path), volume), `\`), `\`)
 	for _, part := range parts {
-		if err = checkGit(dir); err != nil {
+		if err = verifyAncestor(dir); err == nil {
+			err = checkHandleLocation(dir, roots)
+		}
+		if err == nil {
+			err = checkGit(dir)
+		}
+		if err != nil {
 			break
 		}
 		disposition := uint32(windows.FILE_OPEN)
@@ -89,7 +103,7 @@ func openDirectory(path string, create bool) (dir *os.File, err error) {
 		if err != nil {
 			break
 		}
-		err = closeFile(dir)
+		err = errors.Join(verifyAncestor(next), checkHandleLocation(next, roots), closeFile(dir))
 		dir = next
 		if err != nil {
 			break

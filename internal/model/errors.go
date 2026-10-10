@@ -11,6 +11,9 @@ import "errors"
 // These errors MUST be used consistently across all layers.
 // Wrap them with context using fmt.Errorf("context: %w", ErrSentinel).
 var (
+	// ErrOperatorStateUnreadable indicates operator state validation failed.
+	ErrOperatorStateUnreadable = errors.New("operator state unreadable")
+
 	// ErrNotFound indicates the requested resource does not exist.
 	ErrNotFound = errors.New("not found")
 

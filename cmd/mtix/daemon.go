@@ -123,6 +123,7 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 	// event from another machine all the way to a local wake — and
 	// dispatch needs no knowledge that a relay exists.
 	pass := func() {
+		drainPendingMirror(ctx, stderr)
 		if hub {
 			runOneDaemonPull(ctx, stderr, args, opts)
 		}

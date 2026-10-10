@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -66,17 +67,24 @@ func resolutionFor(refusal *AutoImportRefusal) string {
 // line says so. This protects a pulled board from every writer, the CLI and
 // the long-running ones (MCP server, mtix serve, daemon) alike, which
 // auto-import only when they start.
-func (s *SyncService) keepPulledBoard(ctx context.Context, mtixDir string) bool {
+func (s *SyncService) keepPulledBoard(ctx context.Context, mtixDir string) (bool, error) {
 	if s.exportBlockedByPendingImport(mtixDir) {
-		return true
+		return true, nil
 	}
-	diskHash, changed := s.boardChangedOnDisk(mtixDir)
+	diskHash, changed, err := s.boardChangedOnDisk(mtixDir)
+	if err != nil {
+		return true, err
+	}
 	if !changed {
-		return false
+		return false, nil
 	}
-	importErr := s.AutoImport(ctx, mtixDir)
-	if _, stillChanged := s.boardChangedOnDisk(mtixDir); !stillChanged {
-		return false // imported: the export writes the store, the board included
+	importErr := s.autoImport(ctx, mtixDir)
+	_, stillChanged, err := s.boardChangedOnDisk(mtixDir)
+	if err != nil {
+		return true, err
+	}
+	if !stillChanged {
+		return false, nil // imported: the export writes the store, the board included
 	}
 	if refusal := s.readRefusal(mtixDir); refusal == nil || refusal.FileHash != diskHash || refusal.ResolvedAt != "" {
 		reason := "tasks.json changed on disk and was not imported"
@@ -88,7 +96,7 @@ func (s *SyncService) keepPulledBoard(ctx context.Context, mtixDir string) bool 
 		}
 		s.recordRefusal(mtixDir, diskHash, refusalNotImported, reason)
 	}
-	return s.exportBlockedByPendingImport(mtixDir)
+	return s.exportBlockedByPendingImport(mtixDir), nil
 }
 
 // boardChangedOnDisk returns the hash of .mtix/tasks.json and whether it
@@ -97,15 +105,19 @@ func (s *SyncService) keepPulledBoard(ctx context.Context, mtixDir string) bool 
 // database exported but whose stored hash is stale (a sibling process
 // between its write and its hash update) counts as changed; the automatic
 // import run next recognizes it (isOwnExport) and records its hash. A
-// missing or unreadable file has nothing to protect.
-func (s *SyncService) boardChangedOnDisk(mtixDir string) (string, bool) {
+// missing file has nothing to protect. A non-ENOENT read error stops automatic
+// export: an existing board cannot be replaced before it has been read.
+func (s *SyncService) boardChangedOnDisk(mtixDir string) (string, bool, error) {
 	data, err := os.ReadFile(filepath.Join(mtixDir, "tasks.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
 	if err != nil {
-		return "", false
+		return "", false, fmt.Errorf("read board before automatic export: %w", err)
 	}
 	diskHash := fmt.Sprintf("%x", sha256.Sum256(data))
 	stored, err := os.ReadFile(filepath.Join(mtixDir, "data", "sync.sha256"))
-	return diskHash, err != nil || string(stored) != diskHash
+	return diskHash, err != nil || string(stored) != diskHash, nil
 }
 
 // exportBlockedByPendingImport reports whether auto-export must leave
@@ -178,4 +190,22 @@ func (s *SyncService) resolveRefusal(mtixDir, fileHash string) error {
 	}
 	refusal.ResolvedAt = s.clock().UTC().Format(time.RFC3339)
 	return s.writeRefusal(mtixDir, refusal)
+}
+
+// keepPulledBoardUnderLock rechecks protection after taking the export lock.
+// It cannot import here: import would acquire the same lock recursively.
+func (s *SyncService) keepPulledBoardUnderLock(mtixDir string) (bool, error) {
+	if s.exportBlockedByPendingImport(mtixDir) {
+		return true, nil
+	}
+	hash, changed, err := s.boardChangedOnDisk(mtixDir)
+	if err != nil {
+		return true, err
+	}
+	if !changed {
+		return false, nil
+	}
+	s.recordRefusal(mtixDir, hash, refusalNotImported,
+		"tasks.json changed while acquiring the export lock and was not imported")
+	return true, nil
 }

@@ -82,6 +82,8 @@ list accepts every event type.
 
 `mtix daemon` and `mtix sync daemon` share a lifetime OS lock at `.mtix/data/sync.daemon.lock` (flock on Unix, LockFileEx on Windows). A concurrent start exits cleanly while the owner keeps running. `.mtix/sync.daemon.pid` is diagnostic: stale or missing PID content cannot grant ownership. The PID is published only after acquiring the lock and removed only by its matching owner while the lock is held. Normal exit and process crash release the OS lock; the lock file stays in place so existing descriptors keep using the same inode. Other filesystem or OS errors are reported. Do not delete daemon lock files to force a second instance.
 
+Mirror lock contention saves the task change and leaves a durable pending export. Service import lock release, automatic export and daemon ticks retry after restart, with at most three successful passes per trigger; errors, contention and pulled-board refusals stop recovery. Long-running post-commit hooks mark before debounce, but the small commit-to-hook and CLI post-run windows remain. Metadata errors are reported while protected publication is attempted; unreadable snapshots retain requests. Retries protect changed, unreadable or refused pulled boards. Unix directory Sync EINVAL/ENOTSUP is logged as best-effort, and Windows does not sync directory entries; unsupported directory Sync carries no power-loss guarantee. Follow `mtix sync` import guidance and never edit pending request files by hand.
+
 ## Sync Hub Privileges
 
 A `hub-privileges` **WARN** from `mtix sync doctor` is acceptable for everyday use (it may be fine on a private network) and blocks nothing. To restrict who can use the hub's sync tables, the table owner runs `mtix sync harden` (a dry run). **Never** run `mtix sync harden --apply` until the user has approved the dry run's role list, and never run `mtix sync harden` from a hook, a push or the daemon.
@@ -97,3 +99,13 @@ If a command prints `WARN: ... over the 65536-byte sync limit`, or `mtix sync do
 If `mtix sync status` shows a `pending` count that does not go down across pushes, or `mtix sync doctor` fails its `queue draining` check, run `mtix sync push`: it acknowledges the events an earlier push already delivered (a lost confirmation, a crash before the local mark), counts them as `already on the hub` next to `inserted` in its output, and pushes the rest; `pending` then reaches 0 apart from held push events. **Never** mark events pushed by hand or discard them to make the queue drain.
 
 `mtix sync clone` refuses, naming the event and writing nothing, while the hub holds an event that fails these checks: on the fresh store, recover with `mtix sync pull` alone (it quarantines the event), never any other way. **Never** run `mtix sync reconcile --discard-local` on your own: it deletes local tasks and unpushed changes and needs the ticket count typed at an interactive terminal (no flag supplies it), so it cannot run unattended; ask the user to run it, and only after `mtix sync push` and a `mtix sync status` showing pending 0.
+
+<!-- AUTO-GENERATED: WAKE_ROUTINE -->
+
+## Reference Wake Routine
+
+See the multi-agent skill and mtix's `examples/hooks/wake-agent.sh` for the
+standard-input launch routine and empty-inbox check. Handle and ack each event
+before reading the inbox again; use only a verified runtime input interface.
+
+<!-- END AUTO-GENERATED -->

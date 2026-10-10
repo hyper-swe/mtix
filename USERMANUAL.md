@@ -1339,6 +1339,10 @@ After an import:
 - FTS5 index is rebuilt
 - Sequence counters are reconstructed
 
+### Pending mirror exports
+
+A writing command that encounters the mirror sync lock saves its database change and returns without waiting. A durable request in `.mtix/data/export-pending/` keeps the mirror update pending across process exit or restart. A service import lock holder drains after releasing its lock; the next automatic export or either daemon's next tick also retries, without another task mutation. Each trigger performs at most three successful publication passes, releasing the lock between passes; contention, refusal or errors stop recovery. Requests arriving after a pass's snapshot remain for a later pass or trigger. Publication errors retain requests for recovery. Request creation or enumeration errors are reported while a protected mirror publication is still attempted; an unreadable request snapshot cannot authorize deleting requests. Automatic retries never overwrite a changed, unreadable or refused pulled board: resolve the import refusal using `mtix sync` guidance first. Do not edit or delete pending requests by hand. Long-running interfaces mark the request synchronously in their post-commit hook before starting debounce, and still schedule the export if marking fails. This narrows the debounce crash window; a small commit-to-hook window and the CLI commit-to-post-run window remain outside this guarantee. Request and publication files are synced. Unix directory Sync EINVAL/ENOTSUP is logged and treated as best-effort; other directory errors remain failures. Windows does not sync directory entries. Power-loss durability of directory entries is not promised where directory Sync is unsupported.
+
 ### Automatic import of `.mtix/tasks.json`
 
 `.mtix/tasks.json` is the git-tracked board. When a `git pull`, checkout or branch switch changes it, the next mtix command imports it before running. The import is a replace import: the store then matches the file. It checks the file against the store first (below), and the replace re-checks, inside its own transaction, that the store is still the one it compared: a write that lands in between, from another process or the MCP server, is kept, nothing is imported, and the next command checks the file again. Writing commands export the store back to the file afterwards, but never over a board that changed on disk and was not imported (see "Writes never overwrite a pulled board" below).
@@ -2214,7 +2218,7 @@ ends with event content in the agent's prompt:
 
 | Rung | Mechanism | Covers |
 |---|---|---|
-| 1. **Cold-start wake** | `exec` hook runs a wake script that launches the harness CLI **with the inbox as the prompt** (`mtix inbox --agent X --format prompt`) | agent not running — works for any runtime |
+| 1. **Cold-start wake** | `exec` hook runs a wake script that launches the harness CLI **with the inbox as the prompt** (`mtix inbox --agent X --format prompt`) | agent not running — requires a verified standard-input interface |
 | 2. **Context injection** | a harness hook (session-start / prompt-submit) shells `mtix inbox --agent X --format context` | interactive sessions, next user prompt |
 | 3. **Background watcher** | the agent arms `mtix inbox --wait --timeout 3600` as a harness background task; its exit re-invokes the agent, which handles, acks, re-arms | idle-but-alive session, no push mechanism |
 | 4. **Channel push** | `mtix mcp --channel-agent X` (Claude Code channels, research preview) pushes events into the running session | idle or busy live session |
@@ -2237,17 +2241,26 @@ hooks:
 Review and trust the config on that host (`mtix hooks trust`). The
 script exits without launching when the inbox is empty (the idempotency
 check under at-least-once dispatch) and otherwise launches the harness
-CLI with the payload — `claude -p "$PAYLOAD"`, `codex exec "$PAYLOAD"`,
-`agent -p "$PAYLOAD"` (Cursor), or any runtime that takes a prompt.
+CLI with the inbox supplied through standard input. Keep exactly one launch
+line enabled in the reference script:
+
+- Claude Code: `printf '%s\n' "$PAYLOAD" | claude -p`
+- OpenAI Codex CLI: `printf '%s\n' "$PAYLOAD" | codex exec -`
+
+The script preserves interior newlines; its shell command substitution removes
+trailing newlines and the launch writes one final newline. Other runtimes need
+a verified standard-input interface before adding a launch line. The reference
+does not provide a Cursor CLI cold-start form; its MCP and context hooks remain
+available.
 
 Per-harness support today:
 
 | Harness | Cold-start (rung 1) | MCP tools | Context injection (rung 2) | Push (rung 4) |
 |---|---|---|---|---|
 | Claude Code | `claude -p` | ✅ | ✅ hooks | ✅ channels (preview) |
-| OpenAI Codex CLI | `codex exec` | ✅ | AGENTS.md convention | ✗ (no push mechanism yet) |
-| Cursor CLI | `agent -p` | ✅ | ✅ hooks | ✗ |
-| any prompt-taking CLI | ✅ | if MCP-capable | varies | ✗ |
+| OpenAI Codex CLI | `codex exec -` | ✅ | AGENTS.md convention | ✗ (no push mechanism yet) |
+| Cursor CLI | Not provided by this reference | ✅ | ✅ hooks | ✗ |
+| other runtimes | Verify standard-input interface first | if MCP-capable | varies | ✗ |
 
 **Channel mode (Claude Code, research preview).** `mtix mcp
 --channel-agent developer` makes the same MCP server that serves the

@@ -127,6 +127,7 @@ func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 	// dispatch, so a hub-and-relay peer converges on both transports in
 	// one pass.
 	pullThenDispatch := func() {
+		drainPendingMirror(ctx, stderr)
 		runOneDaemonPull(ctx, stderr, args, opts)
 		maybeRunRelayPhase(ctx, stderr)
 		if dispatchHooks && app.hooksDisp != nil {

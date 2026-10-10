@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log/slog"
 	"path/filepath"
 
@@ -24,10 +26,11 @@ func wireMirrorExporter(logger *slog.Logger) (cleanup func()) {
 	if app.syncSvc == nil || app.mtixDir == "" || app.store == nil {
 		return func() {}
 	}
+	syncSvc, mtixDir := app.syncSvc, app.mtixDir
 	scheduler := newAutoBackupScheduler(logger)
 	exporter := service.NewExportDebouncer(
 		func(ctx context.Context) error {
-			err := app.syncSvc.AutoExport(ctx, app.mtixDir)
+			err := syncSvc.AutoExport(ctx, mtixDir)
 			// Rolling backup per FR-26.6 rides the same post-mutation
 			// cadence; its failure is logged inside and never propagates.
 			runAutoBackup(scheduler, logger)
@@ -35,7 +38,12 @@ func wireMirrorExporter(logger *slog.Logger) (cleanup func()) {
 		},
 		logger, 0, 0,
 	)
-	app.store.SetOnCommit(exporter.Trigger)
+	app.store.SetOnCommit(func() {
+		if err := syncSvc.RequestExport(mtixDir); err != nil {
+			logger.Warn("pending auto-export request failed before debounce", "error", err)
+		}
+		exporter.Trigger()
+	})
 	return exporter.Close
 }
 
@@ -80,4 +88,15 @@ func maybeAutoBackup() {
 		return
 	}
 	runAutoBackup(newAutoBackupScheduler(logger), logger)
+}
+
+// drainPendingMirror recovers durable exports on both daemon tick paths, even
+// when no pull, hook or new local mutation occurs.
+func drainPendingMirror(ctx context.Context, stderr io.Writer) {
+	if app.syncSvc == nil || app.mtixDir == "" {
+		return
+	}
+	if err := app.syncSvc.DrainPendingExport(ctx, app.mtixDir); err != nil {
+		fmt.Fprintf(stderr, "mtix: pending auto-export: %v\n", err)
+	}
 }

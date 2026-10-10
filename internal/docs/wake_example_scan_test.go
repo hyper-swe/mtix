@@ -5,10 +5,12 @@
 package docs
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -16,27 +18,123 @@ import (
 )
 
 var wakeLaunchRE = regexp.MustCompile(`\b(?:claude\s+(?:-p|--print)|codex\s+exec|agent\s+(?:-p|--print))\b`)
-var wakeOperandRE = regexp.MustCompile(`\b(?:claude[ \t]+(?:-p|--print)|codex[ \t]+exec|agent[ \t]+(?:-p|--print))\b([^\n\x60]*)`)
+var wakeVariableRE = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z_0-9]*)`)
+var wakeCaptureRE = regexp.MustCompile(`^([A-Za-z_][A-Za-z_0-9]*)="\$\(mtix inbox --agent (?:"\$[A-Za-z_][A-Za-z_0-9]*"|[A-Za-z_][A-Za-z_0-9-]*) --format prompt\)"$`)
+var wakeInputLineRE = regexp.MustCompile(`^printf '%s\\n' "\$(?:[A-Za-z_][A-Za-z_0-9]*|\{[A-Za-z_][A-Za-z_0-9]*\})" \| (?:claude -p|codex exec -)$`)
+var wakeEmptyRE = regexp.MustCompile(`^\[ -z "\$(?:[A-Za-z_][A-Za-z_0-9]*|\{[A-Za-z_][A-Za-z_0-9]*\})" \] && exit 0$`)
+var wakeDynamicCommandRE = regexp.MustCompile(`^[a-z][A-Za-z_0-9./-]*(?:[ \t]+[^"'\s]+)*[ \t]+["']?\$`)
+var wakeSourceVariableRE = regexp.MustCompile(`([A-Za-z_][A-Za-z_0-9]*)=[^\n]*mtix inbox`)
+var wakeRelayRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z_0-9]*="\$[A-Za-z_{]`)
+var wakeShellLineRE = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z_0-9]*=|[a-z][A-Za-z_0-9./-]*[ \t])`)
+var wakeInlineRE = regexp.MustCompile("`([^`\\n]+)`")
 
-func wakeLaunchProblems(text string) []string {
+func wakeCommandLines(text string) []string {
 	text = strings.ReplaceAll(text, "\\\n", " ")
-	var problems []string
-	for _, match := range wakeOperandRE.FindAllStringSubmatch(text, -1) {
-		tail := strings.TrimSpace(match[1])
-		// Static support-table names have no command operands.
-		if tail == "" {
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		plain := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))
+		if wakeShellLineRE.MatchString(plain) && strings.Contains(plain, "$") {
+			lines = append(lines, plain)
 			continue
 		}
-		if tail != "-" {
-			problems = append(problems, match[0])
+		inline := wakeInlineRE.FindAllStringSubmatch(line, -1)
+		if len(inline) > 0 {
+			for _, span := range inline {
+				lines = append(lines, span[1])
+			}
+			remaining := wakeInlineRE.ReplaceAllString(line, "")
+			if wakeVariableRE.MatchString(remaining) || strings.Contains(remaining, "$(") {
+				lines = append(lines, line)
+			}
+		} else {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func wakeLaunchProblems(text string) []string {
+	lines := wakeCommandLines(text)
+	inputs := map[string]bool{"PAYLOAD": true}
+	for _, line := range lines {
+		if capture := wakeSourceVariableRE.FindStringSubmatch(line); capture != nil {
+			inputs[capture[1]] = true
+		}
+	}
+	var problems []string
+	for _, line := range lines {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))
+		line = strings.Join(strings.Fields(line), " ")
+		if wakeCaptureRE.MatchString(line) || wakeEmptyRE.MatchString(line) || wakeInputLineRE.MatchString(line) {
+			continue
+		}
+		if wakeNeedsInputCheck(line, inputs) {
+			problems = append(problems, line)
 		}
 	}
 	return problems
 }
 
+func wakeNeedsInputCheck(line string, inputs map[string]bool) bool {
+	for _, variable := range wakeVariableRE.FindAllStringSubmatch(line, -1) {
+		if inputs[variable[1]] {
+			return true
+		}
+	}
+	for _, variable := range strings.Fields(line) {
+		if inputs[strings.Trim(variable, ";`.")] && strings.HasPrefix(line, "export ") {
+			return true
+		}
+	}
+	if wakeSourceVariableRE.MatchString(line) {
+		return true
+	}
+	if strings.Contains(line, "--message") && strings.Contains(line, "$") {
+		return true
+	}
+	if (strings.HasPrefix(line, "eval ") || wakeRelayRE.MatchString(line)) && wakeVariableRE.MatchString(line) {
+		return true
+	}
+	if strings.HasPrefix(line, `printf '%s\n' `) && strings.Contains(line, "|") && wakeVariableRE.MatchString(line) {
+		return true
+	}
+	if wakeDynamicCommandRE.MatchString(line) && !wakeUtilityCommand(line) {
+		return true
+	}
+	for _, command := range []string{"claude", "codex", "agent"} {
+		if !strings.HasPrefix(line, command+" ") {
+			continue
+		}
+		if strings.Contains(line, "$") {
+			return true
+		}
+		if wakeLaunchRE.MatchString(line) {
+			return line != "claude -p" && line != "claude --print" && line != "codex exec" && line != "codex exec -" && line != "agent -p" && line != "agent --print"
+		}
+	}
+	if strings.Contains(line, "$") && strings.Contains(line, "|") {
+		consumer := strings.TrimSpace(line[strings.LastIndex(line, "|")+1:])
+		return wakeLaunchRE.MatchString(consumer) || wakeVariableRE.MatchString(consumer)
+	}
+	return false
+}
+
+// Other examples use variables for repository operations, not inbox input.
+func wakeUtilityCommand(line string) bool {
+	for _, prefix := range []string{"git ", "if ", "printf ", "mtix ", "while ", "read "} {
+		if strings.HasPrefix(line, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func wakeShippedFiles(t *testing.T) map[string]string {
 	t.Helper()
 	files := loadShippedDocs(t).all
+	for _, path := range []string{"README.md", "CHANGELOG.md"} {
+		files[path] = wakeSource(t, path)
+	}
 	root := filepath.Join("..", "..")
 	err := filepath.WalkDir(filepath.Join(root, "examples"), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -59,6 +157,9 @@ func wakeShippedFiles(t *testing.T) map[string]string {
 	require.NoError(t, err)
 	require.Contains(t, files, "examples/hooks/wake-agent.sh")
 	require.Contains(t, files, "USERMANUAL.md")
+	for _, path := range []string{"README.md", "CHANGELOG.md", "docs/MCP-SETUP.md", "internal/docs/templates/skills/multi_agent.md.tmpl", ".claude-plugin/skills/mtix-multi-agent.md", ".codex-plugin/skills/multi-agent/SKILL.md"} {
+		require.Contains(t, files, path)
+	}
 	return files
 }
 
@@ -86,6 +187,56 @@ func TestWakeExample_CommandForms_AreClassifiedIndependently(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.text, func(t *testing.T) { require.Equal(t, tt.valid, len(wakeLaunchProblems(tt.text)) == 0) })
+	}
+}
+
+func TestWakeExample_InputForms_FollowDocumentedRoutine(t *testing.T) {
+	forms := []string{
+		`/usr/bin/printf '%s\n' "$PAYLOAD" | claude -p`,
+		`env printf '%s\n' "$INPUT" | claude -p`,
+		`echo "$PAYLOAD" | claude -p`,
+		`printf "$INPUT\n" | claude -p`,
+		`printf '%s\n' "$MESSAGE" | xargs claude -p`,
+		`tee "$INPUT" | claude -p`,
+		`gemini -p "$PAYLOAD"`,
+		`claude "$OTHER"`,
+		`codex "$OTHER"`,
+		`codex queue --message "$X"`,
+		`claude -pv "$OTHER"`,
+		`export PAYLOAD; claude -p`,
+		`eval 'claude -p "$INPUT"'`,
+		`OTHER="$PAYLOAD"; claude -p`,
+		`PRODUCER=printf; "$PRODUCER" '%s\n' "$INPUT" | claude -p`,
+		`new-runtime --message "$(mtix inbox --agent worker --format prompt)"`,
+	}
+	for i, form := range forms {
+		t.Run(strconv.Itoa(i), func(t *testing.T) { require.NotEmpty(t, wakeLaunchProblems(form), "documented input form") })
+	}
+}
+
+func TestWakeExample_SnippetForms_IncludeCompleteCommands(t *testing.T) {
+	forms := []string{
+		`new-runtime -p "$MESSAGE"`,
+		`new-runtime "$MESSAGE"`,
+		"eval `printf '%s\\n' \"$INPUT\" | claude -p`",
+		`TEXT="$(mtix inbox --agent "$AGENT" --format prompt)"` + "\n" + `export TEXT`,
+		`printf '%s\n' "$INPUT" | new-runtime`,
+		`printf '%s\n' "$(cat input)" | claude -p`,
+	}
+	wrappers := []string{"%s", "# %s", "Use `%s`.", "```sh\n%s\n```"}
+	for i, form := range forms {
+		for j, wrapper := range wrappers {
+			t.Run(fmt.Sprintf("%d/%d", i, j), func(t *testing.T) {
+				require.NotEmpty(t, wakeLaunchProblems(fmt.Sprintf(wrapper, form)), "complete documented form")
+			})
+		}
+	}
+	for _, form := range []string{
+		`TEXT="$(mtix inbox --agent "$AGENT" --format prompt)"` + "\n" + `[ -z "$TEXT" ] && exit 0` + "\n" + `printf '%s\n' "$TEXT" | claude -p`,
+		`# printf '%s\n' "${MESSAGE}" | codex exec -`,
+		"printf '%s\\n' \"$INPUT\" \\\n | claude -p",
+	} {
+		require.Empty(t, wakeLaunchProblems(form), "documented form")
 	}
 }
 

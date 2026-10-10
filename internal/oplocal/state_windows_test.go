@@ -32,7 +32,7 @@ func TestPlatformState_ValidateInput(t *testing.T) {
 	require.NoError(t, err)
 	acl, _, err := sd.DACL()
 	require.NoError(t, err)
-	require.NoError(t, windows.SetNamedSecurityInfo(filepath.Join(s.path, "hooks.json"), windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
+	require.NoError(t, windows.SetNamedSecurityInfo(filepath.Join(s.pathForTest(t), "hooks.json"), windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil))
 	var got map[string]int
 	_, err = s.ReadJSON("hooks", &got)
 	require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)

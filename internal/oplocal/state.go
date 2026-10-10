@@ -14,7 +14,6 @@ import (
 // State operates on one operator directory using injected path inputs.
 type State struct {
 	env           Env
-	path          string
 	beforeCommit  func() error
 	syncDirectory func(*os.File) error
 }
@@ -53,7 +52,6 @@ func (s *State) Ensure() error {
 	if err != nil {
 		return err
 	}
-	s.path = f.Name()
 	return closeFile(f)
 }
 

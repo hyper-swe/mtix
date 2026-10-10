@@ -69,10 +69,10 @@ func TestState_ValidateInput(t *testing.T) {
 		{"input_c", nil, func(t *testing.T, s *State) {
 			require.NoError(t, os.WriteFile(filepath.Join(s.env.Root, "home/test/.git"), []byte("gitdir: test"), 0600))
 		}},
-		{"input_d", nil, func(t *testing.T, s *State) { require.NoError(t, os.Chmod(s.path, 0755)) }},
+		{"input_d", nil, func(t *testing.T, s *State) { require.NoError(t, os.Chmod(s.pathForTest(t), 0755)) }},
 		{"input_e", nil, func(t *testing.T, s *State) {
-			require.NoError(t, os.Rename(s.path, s.path+"-old"))
-			require.NoError(t, os.Symlink(s.path+"-old", s.path))
+			require.NoError(t, os.Rename(s.pathForTest(t), s.pathForTest(t)+"-old"))
+			require.NoError(t, os.Symlink(s.pathForTest(t)+"-old", s.pathForTest(t)))
 		}},
 	}
 	for _, tc := range cases {
@@ -105,7 +105,7 @@ func TestReadJSON_ValidateInput(t *testing.T) {
 			if tc.mode == 0644 {
 				body = fmt.Sprintf(body, id)
 			}
-			require.NoError(t, os.WriteFile(filepath.Join(s.path, "hooks.json"), []byte(body), tc.mode))
+			require.NoError(t, os.WriteFile(filepath.Join(s.pathForTest(t), "hooks.json"), []byte(body), tc.mode))
 			var got map[string]int
 			_, err = s.ReadJSON("hooks", &got)
 			require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
@@ -117,7 +117,7 @@ func TestHostRecords_ValidateInput(t *testing.T) {
 	require.NoError(t, s.Ensure())
 	_, err := s.HostID()
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(s.path, "hooks.json"), []byte(`{"host_id":"00000000000000000000000000000000","data":{"value":9}}`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(s.pathForTest(t), "hooks.json"), []byte(`{"host_id":"00000000000000000000000000000000","data":{"value":9}}`), 0600))
 	var got map[string]int
 	report, err := s.ReadJSON("hooks", &got)
 	require.NoError(t, err)

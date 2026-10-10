@@ -41,7 +41,7 @@ func TestReadJSON_ValidateRecordInput(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			s := fixture(t)
 			require.NoError(t, s.Ensure())
-			require.NoError(t, os.WriteFile(filepath.Join(s.path, "hooks.json"), []byte(body), 0600))
+			require.NoError(t, os.WriteFile(filepath.Join(s.pathForTest(t), "hooks.json"), []byte(body), 0600))
 			var got any
 			_, err := s.ReadJSON("hooks", &got)
 			require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
@@ -63,7 +63,7 @@ func TestHostID_ValidateInput(t *testing.T) {
 		t.Run(body, func(t *testing.T) {
 			s := fixture(t)
 			require.NoError(t, s.Ensure())
-			require.NoError(t, os.WriteFile(filepath.Join(s.path, "host-id"), []byte(body), 0600))
+			require.NoError(t, os.WriteFile(filepath.Join(s.pathForTest(t), "host-id"), []byte(body), 0600))
 			_, err := s.HostID()
 			require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
 		})
@@ -74,7 +74,7 @@ func TestReadJSON_ValidateFileInput(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			s := fixture(t)
 			require.NoError(t, s.Ensure())
-			file := filepath.Join(s.path, "hooks.json")
+			file := filepath.Join(s.pathForTest(t), "hooks.json")
 			switch kind {
 			case "directory":
 				require.NoError(t, os.Mkdir(file, 0700))
@@ -96,7 +96,7 @@ func TestInspect_ValidInput(t *testing.T) {
 	status, err := s.Inspect()
 	require.NoError(t, err)
 	require.Equal(t, "ready", status.Status)
-	require.NoError(t, os.WriteFile(filepath.Join(s.path, "hooks.json"), []byte(`{"host_id":"00000000000000000000000000000000","data":{}}`), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(s.pathForTest(t), "hooks.json"), []byte(`{"host_id":"00000000000000000000000000000000","data":{}}`), 0600))
 	status, err = s.Inspect()
 	require.NoError(t, err)
 	require.Len(t, status.Reports, 1)
@@ -120,17 +120,17 @@ func TestState_ReadFailures(t *testing.T) {
 	require.NoError(t, s.Ensure())
 	configured, err := s.Path()
 	require.NoError(t, err)
-	require.Equal(t, s.path, configured)
+	require.Equal(t, filepath.Join(s.env.Root, "home", "test", ".config", "mtix"), configured)
 	require.NoError(t, s.WriteJSON("hooks", map[string]int{"value": 1}))
 	var wrongType int
 	_, err = s.ReadJSON("hooks", &wrongType)
 	require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
-	require.NoError(t, os.Chmod(s.path, 0200))
+	require.NoError(t, os.Chmod(s.pathForTest(t), 0200))
 	var got any
 	_, err = s.ReadJSON("hooks", &got)
 	require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
-	require.NoError(t, os.Chmod(s.path, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(s.path, "host-id"), []byte("invalid"), 0600))
+	require.NoError(t, os.Chmod(s.pathForTest(t), 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(s.pathForTest(t), "host-id"), []byte("invalid"), 0600))
 	_, err = s.Inspect()
 	require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
 }

@@ -146,3 +146,57 @@ func TestPendingExport_UnderLockGuardPreservesChangedBoard(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, requests, 1)
 }
+
+func TestPendingExport_UnreadableExistingBoardPreserved(t *testing.T) {
+	for _, trigger := range []string{"startup-import", "daemon-drain", "under-lock"} {
+		t.Run(trigger, func(t *testing.T) { testPendingUnreadableBoard(t, trigger) })
+	}
+}
+
+func testPendingUnreadableBoard(t *testing.T, trigger string) {
+	dir := t.TempDir()
+	store := pendingProcessStore(t, dir)
+	pendingProcessNode(t, store, 1)
+	svc := NewSyncService(store, slog.Default(), pendingProcessClock)
+	require.NoError(t, svc.AutoExport(context.Background(), dir))
+	path := filepath.Join(dir, "tasks.json")
+	pulled := []byte("{teammate board that must never be overwritten unread}")
+	require.NoError(t, os.WriteFile(path, pulled, 0644))
+	require.NoError(t, markPendingExport(dir))
+	require.NoError(t, os.Chmod(path, 0))
+	t.Cleanup(func() { require.NoError(t, os.Chmod(path, 0644)) })
+	_, err := os.ReadFile(path)
+	require.ErrorIs(t, err, os.ErrPermission, "fixture must deny reads while allowing parent-directory rename")
+	var recoveryErr error
+	switch trigger {
+	case "startup-import":
+		recoveryErr = svc.AutoImport(context.Background(), dir)
+	case "daemon-drain":
+		recoveryErr = svc.DrainPendingExport(context.Background(), dir)
+	case "under-lock":
+		recoveryErr = svc.exportBoardProtected(context.Background(), dir, true)
+	default:
+		t.Fatalf("unknown recovery trigger %s", trigger)
+	}
+	require.NoError(t, os.Chmod(path, 0644))
+	actual, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, pulled, actual, "automatic recovery must preserve an existing unreadable board")
+	requests, err := pendingExportRequests(dir)
+	require.NoError(t, err)
+	require.Len(t, requests, 1, "unreadable board must retain its durable recovery request")
+	require.ErrorIs(t, recoveryErr, os.ErrPermission, "unreadable-board recovery reports its read error")
+}
+
+func TestPendingExport_TrulyAbsentBoardCreated(t *testing.T) {
+	dir := t.TempDir()
+	store := pendingProcessStore(t, dir)
+	pendingProcessNode(t, store, 1)
+	svc := NewSyncService(store, slog.Default(), pendingProcessClock)
+	require.NoError(t, markPendingExport(dir))
+	require.NoError(t, svc.DrainPendingExport(context.Background(), dir))
+	require.Equal(t, 1, pendingProcessMirrorCount(t, dir))
+	requests, err := pendingExportRequests(dir)
+	require.NoError(t, err)
+	require.Empty(t, requests)
+}

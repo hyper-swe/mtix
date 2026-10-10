@@ -73,8 +73,12 @@ type daemonPendingChild struct {
 func startDaemonPendingChild(t *testing.T, mode, dir string) *daemonPendingChild {
 	t.Helper()
 	child := &daemonPendingChild{ready: make(chan struct{}), done: make(chan struct{}), scanned: make(chan struct{})}
-	child.cmd = exec.Command(os.Args[0], "-test.run=^TestDaemonPendingExportProcessHelper$", "--", mode, dir) //nolint:gosec,noctx // owned test binary, cleanup kills and joins
+	binary, err := os.Executable()
+	require.NoError(t, err)
+	child.cmd = exec.Command(binary, "-test.run=^TestDaemonPendingExportProcessHelper$", "--", mode) //nolint:gosec,noctx // owned test binary, cleanup kills and joins
 	child.cmd.Env = append(os.Environ(), transport.EnvDSN+"=")
+	// Owned child discovers its operator-selected project via cwd.
+	child.cmd.Dir = dir
 	child.cmd.Stderr = &child.stderr
 	stdout, err := child.cmd.StdoutPipe()
 	require.NoError(t, err)
@@ -156,10 +160,12 @@ func (h daemonPendingHandler) Handle(_ context.Context, record slog.Record) erro
 }
 
 func TestDaemonPendingExportProcessHelper(t *testing.T) {
-	if len(os.Args) < 4 || os.Args[len(os.Args)-3] != "--" {
+	if len(os.Args) < 3 || os.Args[len(os.Args)-2] != "--" {
 		return
 	}
-	mode, dir := os.Args[len(os.Args)-2], os.Args[len(os.Args)-1]
+	mode := os.Args[len(os.Args)-1]
+	dir, err := os.Getwd()
+	require.NoError(t, err)
 	store := newDaemonTestStore(t, dir)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

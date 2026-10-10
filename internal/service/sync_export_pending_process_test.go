@@ -122,7 +122,11 @@ type pendingChild struct {
 func startPendingProcess(t *testing.T, mode, dir string) *pendingChild {
 	t.Helper()
 	child := &pendingChild{lines: make(chan string, 16), done: make(chan struct{}), scanned: make(chan struct{})}
-	child.cmd = exec.Command(os.Args[0], "-test.run=^TestPendingExportProcessHelper$", "--", mode, dir) //nolint:gosec,noctx // re-executes owned test binary; cleanup owns termination
+	binary, err := os.Executable()
+	require.NoError(t, err)
+	child.cmd = exec.Command(binary, "-test.run=^TestPendingExportProcessHelper$", "--", mode) //nolint:gosec,noctx // re-executes owned test binary; cleanup owns termination
+	// Owned child discovers its operator-selected project via cwd.
+	child.cmd.Dir = dir
 	child.cmd.Stderr = &child.stderr
 	stdin, err := child.cmd.StdinPipe()
 	require.NoError(t, err)
@@ -213,10 +217,12 @@ func (pendingHolderHandler) Handle(_ context.Context, record slog.Record) error 
 }
 
 func TestPendingExportProcessHelper(t *testing.T) {
-	if len(os.Args) < 4 || os.Args[len(os.Args)-3] != "--" {
+	if len(os.Args) < 3 || os.Args[len(os.Args)-2] != "--" {
 		return
 	}
-	mode, dir := os.Args[len(os.Args)-2], os.Args[len(os.Args)-1]
+	mode := os.Args[len(os.Args)-1]
+	dir, err := os.Getwd()
+	require.NoError(t, err)
 	store := pendingProcessStore(t, dir)
 	logger := slog.Default()
 	if mode == "holder" {

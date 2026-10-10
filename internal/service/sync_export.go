@@ -28,8 +28,8 @@ func (s *SyncService) AutoExport(ctx context.Context, mtixDir string) error {
 func (s *SyncService) runAutoExport(ctx context.Context, mtixDir string, followup bool) error {
 	// MTIX-95.31.2: never overwrite a tasks.json that changed on disk and
 	// was not imported; the change stays in the local store.
-	if s.keepPulledBoard(ctx, mtixDir) {
-		return nil
+	if blocked, err := s.keepPulledBoard(ctx, mtixDir); blocked || err != nil {
+		return err
 	}
 	if err := s.exportBoardProtected(ctx, mtixDir, true); err != nil {
 		return err
@@ -59,8 +59,10 @@ func (s *SyncService) exportBoardProtected(ctx context.Context, mtixDir string, 
 	}
 	defer s.releaseLock(lockFile)
 
-	if protect && s.keepPulledBoardUnderLock(mtixDir) {
-		return nil
+	if protect {
+		if blocked, err := s.keepPulledBoardUnderLock(mtixDir); blocked || err != nil {
+			return err
+		}
 	}
 	requests, err := pendingExportRequests(mtixDir)
 	if err != nil {

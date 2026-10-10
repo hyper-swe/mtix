@@ -61,18 +61,16 @@ func TestRunDaemon_SecondInstanceExitsCleanly(t *testing.T) {
 	app = appContext{mtixDir: dir}
 	t.Cleanup(func() { app = saved })
 
-	// A live daemon (this test process) already owns the PID file — the same
-	// lock `mtix sync daemon` uses, so the two commands also exclude each other.
-	require.NoError(t, os.WriteFile(filepath.Join(dir, daemonPIDFilename),
-		[]byte(strconv.Itoa(os.Getpid())), 0o600))
+	// Hold the actual OS lock; the PID alone is diagnostic, not authority.
+	owner, err := acquireDaemonOwnership(dir)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, owner.release()) })
 
-	// The store guard sits behind the PID check; give it a store so we get
-	// past the nil check deterministically regardless of ordering.
 	store := newDaemonTestStore(t, dir)
 	app.store = store
 
 	var stdout, stderr bytes.Buffer
-	err := runDaemon(context.Background(), &stdout, &stderr,
+	err = runDaemon(context.Background(), &stdout, &stderr,
 		nil, transport.Options{}, 5)
 	require.NoError(t, err, "a second instance is a clean no-op, not an error")
 	require.Contains(t, stderr.String(), "already running")

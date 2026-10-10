@@ -18,8 +18,8 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
-// daemonPIDFilename is the path under .mtix/ where the running
-// daemon's PID is recorded for idempotent start (per FR-18.18).
+// daemonPIDFilename is the diagnostic PID marker under .mtix/.
+// Lifetime authority belongs to data/sync.daemon.lock (FR-18.18).
 const daemonPIDFilename = "sync.daemon.pid"
 
 // daemonDefaultIntervalSec is the FR-18 design default: pull every
@@ -34,9 +34,8 @@ const daemonDefaultIntervalSec = 30
 // '--install' subcommand generates unit files; documenting how to
 // register them is a 15.12 docs concern).
 //
-// Idempotent start via .mtix/sync.daemon.pid: a fresh start checks
-// the PID file; if a live PID is found, exits with a non-error
-// message. The file is removed on graceful shutdown (SIGTERM).
+// Idempotent start takes the shared lifetime OS lock. Contention exits
+// cleanly; only the owner removes its matching diagnostic PID on shutdown.
 func newSyncDaemonCmd() *cobra.Command {
 	var (
 		insecureTLS   bool
@@ -55,9 +54,9 @@ Run a foreground process that pulls events from the BYO Postgres
 hub every N seconds (default 30) until killed. Intended for systemd
 or launchd supervision; this command does NOT fork itself.
 
-Idempotent start: a .mtix/sync.daemon.pid file marks the running
-instance. If a live PID is found, this command exits with a
-non-error message. The PID file is removed on graceful shutdown.
+Idempotent start: a lifetime OS lock at .mtix/data/sync.daemon.lock
+excludes both daemon spellings. Lock contention exits cleanly. The
+PID file is diagnostic and removed only by its matching owner.
 
 Use --install to print a systemd unit (linux) or launchd plist
 (darwin) ready to be installed by the user.`,
@@ -85,7 +84,7 @@ Use --install to print a systemd unit (linux) or launchd plist
 
 func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 	args []string, opts transport.Options, intervalSec int, dispatchHooks bool,
-) error {
+) (retErr error) {
 	if err := syncDaemonPreflight(stderr, args); err != nil {
 		return err
 	}
@@ -93,18 +92,11 @@ func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 		intervalSec = daemonDefaultIntervalSec
 	}
 
-	if held, holderPID, err := daemonPIDFileLive(app.mtixDir); err != nil {
-		return wrapSyncErr(stderr, "pid file", err)
-	} else if held {
-		fmt.Fprintf(stderr,
-			"mtix sync daemon: already running (PID %d); exiting cleanly\n", holderPID)
-		return nil
+	owner, err := startDaemonOwnership(stderr, "mtix sync daemon", app.mtixDir)
+	if err != nil || owner == nil {
+		return err
 	}
-
-	if err := writeDaemonPID(app.mtixDir, os.Getpid()); err != nil {
-		return wrapSyncErr(stderr, "pid file write", err)
-	}
-	defer removeDaemonPID(app.mtixDir)
+	defer func() { retErr = errors.Join(retErr, owner.release()) }()
 
 	// Mirror parity per FR-15.3 / MTIX-26.1: pulled events mutate the
 	// local store, so the daemon needs the same on-commit export wiring
@@ -190,9 +182,8 @@ func runOneDaemonPull(ctx context.Context, stderr io.Writer,
 	}
 }
 
-// daemonPIDFileLive reports whether the PID file exists AND the named
-// process is alive. Returns (held, pid, nil) if a live daemon owns the
-// file; (false, 0, nil) if the file is absent OR the PID is stale.
+// daemonPIDFileLive is a read-only diagnostic liveness probe. It grants no
+// singleton authority and never deletes stale or malformed markers.
 func daemonPIDFileLive(mtixDir string) (bool, int, error) {
 	path := filepath.Join(mtixDir, daemonPIDFilename)
 	body, err := os.ReadFile(path) //nolint:gosec // path constructed from caller-supplied mtixDir
@@ -204,12 +195,10 @@ func daemonPIDFileLive(mtixDir string) (bool, int, error) {
 	}
 	pid, err := strconv.Atoi(string(body))
 	if err != nil {
-		// Garbage in the file — treat as stale.
-		_ = os.Remove(path)
+		// Diagnostic only: never delete a marker without lifetime ownership.
 		return false, 0, nil
 	}
 	if !pidLive(pid) {
-		_ = os.Remove(path)
 		return false, 0, nil
 	}
 	return true, pid, nil
@@ -241,13 +230,6 @@ func writeDaemonPID(mtixDir string, pid int) error {
 		return err
 	}
 	return os.Rename(tmp, path)
-}
-
-// removeDaemonPID is the deferred cleanup. Best-effort.
-//
-//nolint:errcheck
-func removeDaemonPID(mtixDir string) {
-	_ = os.Remove(filepath.Join(mtixDir, daemonPIDFilename))
 }
 
 // printDaemonInstallStub emits a minimal systemd unit / launchd plist

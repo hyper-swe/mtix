@@ -45,9 +45,9 @@ With no hub configured the daemon still runs, tailing the local journal
 only — cross-process writes into this .mtix keep dispatching.
 
 Foreground process; intended for launchd/systemd supervision (see
---install). Idempotent start: .mtix/sync.daemon.pid marks the running
-instance — shared with 'mtix sync daemon', so the two never run
-together. Transient pull errors are logged and retried, never fatal.`,
+--install). Idempotent start: a lifetime OS lock at .mtix/data/sync.daemon.lock
+is shared with 'mtix sync daemon', so the two never run together.
+The PID file is diagnostic and removed only by its matching owner. Transient pull errors are logged and retried, never fatal.`,
 		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if install {
@@ -71,7 +71,7 @@ together. Transient pull errors are logged and retried, never fatal.`,
 // runDaemon executes the pull-then-dispatch loop until ctx is cancelled.
 func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 	args []string, opts transport.Options, intervalSec int,
-) error {
+) (retErr error) {
 	if app.mtixDir == "" {
 		return fmt.Errorf("mtix daemon: not in an mtix project (run 'mtix init' first)")
 	}
@@ -95,17 +95,11 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 		hub = false
 	}
 
-	if held, holderPID, err := daemonPIDFileLive(app.mtixDir); err != nil {
-		return fmt.Errorf("mtix daemon: pid file: %w", err)
-	} else if held {
-		fmt.Fprintf(stderr,
-			"mtix daemon: already running (PID %d); exiting cleanly\n", holderPID)
-		return nil
+	owner, err := startDaemonOwnership(stderr, "mtix daemon", app.mtixDir)
+	if err != nil || owner == nil {
+		return err
 	}
-	if err := writeDaemonPID(app.mtixDir, os.Getpid()); err != nil {
-		return fmt.Errorf("mtix daemon: pid file write: %w", err)
-	}
-	defer removeDaemonPID(app.mtixDir)
+	defer func() { retErr = errors.Join(retErr, owner.release()) }()
 
 	// Mirror parity per FR-15.3 / MTIX-26.1: pulled events mutate the local
 	// store, so the daemon needs the same on-commit export wiring as the MCP

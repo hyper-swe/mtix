@@ -16,7 +16,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func writeData(dir *os.File, name string, data []byte, exclusive bool, before func() error) (err error) {
+func writeData(dir *os.File, name string, data []byte, exclusive bool, before func() error, _ func(*os.File) error) (err error) {
 	_, err = readData(dir, name)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err

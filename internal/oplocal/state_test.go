@@ -6,6 +6,7 @@ package oplocal
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -93,14 +94,20 @@ func TestReadJSON_ValidateInput(t *testing.T) {
 		name, body string
 		mode       os.FileMode
 	}{
-		{"input_a", "{", 0600}, {"input_b", `{"host_id":"abc","data":{}}`, 0644}, {"input_c", `{"data":{}}`, 0600},
+		{"input_a", "{", 0600}, {"input_b", `{"host_id":"%s","data":{}}`, 0644}, {"input_c", `{"data":{}}`, 0600},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := fixture(t)
 			require.NoError(t, s.Ensure())
-			require.NoError(t, os.WriteFile(filepath.Join(s.path, "hooks.json"), []byte(tc.body), tc.mode))
+			id, err := s.HostID()
+			require.NoError(t, err)
+			body := tc.body
+			if tc.mode == 0644 {
+				body = fmt.Sprintf(body, id)
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(s.path, "hooks.json"), []byte(body), tc.mode))
 			var got map[string]int
-			_, err := s.ReadJSON("hooks", &got)
+			_, err = s.ReadJSON("hooks", &got)
 			require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
 		})
 	}

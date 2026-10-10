@@ -13,9 +13,10 @@ import (
 
 // State operates on one operator directory using injected path inputs.
 type State struct {
-	env          Env
-	path         string
-	beforeCommit func() error
+	env           Env
+	path          string
+	beforeCommit  func() error
+	syncDirectory func(*os.File) error
 }
 
 // New constructs a state accessor without creating any files.

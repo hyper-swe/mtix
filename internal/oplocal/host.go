@@ -34,7 +34,7 @@ func (s *State) hostID(dir *os.File, create bool) (string, error) {
 			return "", failure("host identifier generation failed", err)
 		}
 		id := hex.EncodeToString(b)
-		err = writeData(dir, "host-id", []byte(id+"\n"), true, nil)
+		err = writeData(dir, "host-id", []byte(id+"\n"), true, nil, nil)
 		if err != nil && !errors.Is(err, os.ErrExist) {
 			return "", err
 		}

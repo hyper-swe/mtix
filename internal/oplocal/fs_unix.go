@@ -119,17 +119,17 @@ func readData(dir *os.File, name string) (data []byte, err error) {
 	if verifyErr := verifyFile(f, false); verifyErr != nil {
 		return nil, verifyErr
 	}
-	data, err = io.ReadAll(io.LimitReader(f, 1024*1024+1))
+	data, err = io.ReadAll(io.LimitReader(f, maxRecordSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("read state: %w: %w", err, invalid("read failed"))
 	}
-	if len(data) > 1024*1024 {
+	if len(data) > maxRecordSize {
 		return nil, invalid("record is too large")
 	}
 	return data, nil
 }
 
-func writeData(dir *os.File, name string, data []byte, exclusive bool, before func() error) (err error) {
+func writeData(dir *os.File, name string, data []byte, exclusive bool, before func() error, syncDirectory func(*os.File) error) (err error) {
 	if validateErr := validateExisting(dir, name); validateErr != nil {
 		return validateErr
 	}
@@ -160,7 +160,7 @@ func writeData(dir *os.File, name string, data []byte, exclusive bool, before fu
 		err = before()
 	}
 	if err == nil {
-		err = commitData(dir, temp, name, exclusive)
+		err = commitData(dir, temp, name, exclusive, syncDirectory)
 	}
 	if err != nil {
 		return fmt.Errorf("write state: %w: %w", err, invalid("write failed"))
@@ -176,7 +176,7 @@ func validateExisting(dir *os.File, name string) error {
 	return err
 }
 
-func commitData(dir *os.File, temp, name string, exclusive bool) error {
+func commitData(dir *os.File, temp, name string, exclusive bool, syncDirectory func(*os.File) error) error {
 	var err error
 	if exclusive {
 		err = unix.Linkat(checkedFD(dir), temp, checkedFD(dir), name, 0)
@@ -185,6 +185,9 @@ func commitData(dir *os.File, temp, name string, exclusive bool) error {
 	}
 	if err != nil {
 		return err
+	}
+	if syncDirectory != nil {
+		return syncDirectory(dir)
 	}
 	return dir.Sync()
 }

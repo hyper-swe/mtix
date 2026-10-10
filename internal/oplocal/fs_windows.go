@@ -182,11 +182,11 @@ func readData(dir *os.File, name string) (data []byte, err error) {
 	if err = verifyFile(f, false); err != nil {
 		return nil, err
 	}
-	data, err = io.ReadAll(io.LimitReader(f, 1024*1024+1))
+	data, err = io.ReadAll(io.LimitReader(f, maxRecordSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("read state: %w: %w", err, invalid("read failed"))
 	}
-	if len(data) > 1024*1024 {
+	if len(data) > maxRecordSize {
 		return nil, invalid("record is too large")
 	}
 	return data, nil

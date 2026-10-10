@@ -1964,6 +1964,8 @@ release.)
 
 ### Event dispatch & the daemon (FR-20)
 
+`mtix daemon` and `mtix sync daemon` share a lifetime OS lock at `.mtix/data/sync.daemon.lock` (flock on Unix, LockFileEx on Windows). A concurrent start exits cleanly while the owner keeps running. `.mtix/sync.daemon.pid` is diagnostic: stale or missing PID content cannot grant ownership. The PID is published only after acquiring the lock and removed only by its matching owner while the lock is held. Normal exit and process crash release the OS lock; the lock file stays in place so existing descriptors keep using the same inode. Other filesystem or OS errors are reported. Do not delete daemon lock files to force a second instance.
+
 Hook dispatch is **origin-independent**: a hook fires for a journaled
 event based only on (a) the event being in the journal and (b) the hook
 not yet having fired for it on this host — never on who wrote the event

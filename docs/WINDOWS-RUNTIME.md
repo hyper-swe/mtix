@@ -80,14 +80,13 @@ is already attached. It has no push, synchronize, schedule, automatic retry or
 ready-for-review trigger. A new commit does not start another Windows run.
 After reviewing a correction, remove and re-add windows-ci deliberately.
 
-Manual workflow dispatch becomes available only after main contains the workflow.
-Dispatch only a specifically reviewed ref. The initial pre-merge capture uses
-the approved PR label event. Do not add another trigger to work around a failure.
+Reviewed runs are label-only. Deliberately re-add the approved PR label only
+after reviewing the current head. Do not add another trigger to work around a failure.
 
 One windows-latest job has a global budget of **15 minutes**; each selected
 package command has **8 minutes**. There is no package/version matrix, PostgreSQL
-service or full-suite expansion. Concurrency is keyed by PR number or dispatch
-ref, with cancellation of an earlier overlapping run. Cancellation still counts
+service or full-suite expansion. Concurrency is keyed by PR number,
+with cancellation of an earlier overlapping run. Cancellation still counts
 as an attempt and must appear in the duration report.
 
 The workflow uses commit-pinned checkout, setup-go and artifact actions, a
@@ -150,7 +149,6 @@ user SID is historical replay input; symbolic local aliases use the explicitly
 documented native replay context above. Personal profile paths and usernames do
 not belong in capture metadata or committed fixture provenance. On PR events the checkout is
 the integration merge commit; head SHA and merge SHA are distinct evidence.
-Dispatch records the selected ref and actual checkout SHA.
 
 Upload and duration steps run even when preceding work failed. A policy failure
 keeps the real raw capture and fails the job. Do not weaken the allow-policy,

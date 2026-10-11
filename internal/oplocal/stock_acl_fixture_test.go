@@ -85,7 +85,7 @@ func parseStockFixture(data []byte, expectedSHA256 string) (capturedStockFixture
 		return capture, fmt.Errorf("decode stock fixture: %w", err)
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
-		return capture, fmt.Errorf("stock fixture must contain exactly one JSON object: %v", err)
+		return capture, fmt.Errorf("stock fixture must contain exactly one JSON object: %w", err)
 	}
 	if capture.stockFixtureIdentity != capturedStockIdentity() {
 		return capture, fmt.Errorf("stock fixture identity/provenance differs from native run 38146429820 attempt 1")

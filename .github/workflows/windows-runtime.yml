@@ -1,9 +1,7 @@
 # Genuine captured bytes are retained; fixture-head native replay remains unproven
 # until its separately reviewed label-triggered run.
-# Dispatch is available only after this workflow reaches main; see docs/WINDOWS-RUNTIME.md.
 name: Windows operator-local runtime
 on:
-  workflow_dispatch:
   pull_request:
     branches: [main]
     types: [labeled]
@@ -17,7 +15,7 @@ defaults:
     shell: pwsh
 jobs:
   windows-runtime:
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'windows-ci' && github.event.pull_request.draft == false) }}
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'windows-ci' && github.event.pull_request.draft == false }}
     runs-on: windows-latest
     timeout-minutes: 15
     env:

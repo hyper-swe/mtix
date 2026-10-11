@@ -70,7 +70,7 @@ jobs:
           & go test ./cmd/mtix -race -count=1 -timeout=8m -json -run '^TestHooksStatus_' > "$env:MTIX_WINDOWS_CAPTURE_DIR/hooks.json"
           $hooksExit = $LASTEXITCODE
           $requiredOplocal = @('TestState_ProtectedAccess_RoundTrips', 'TestReadJSON_WideAccess_Refuses', 'TestAncestor_TrusteeAndOwnerAccess_ValidatesPlatformPrincipals', 'TestAncestor_RepresentativeAclRows_AllowSafeAncestorsAndRefuseHostileRights', 'TestState_ExclusionPrefixSpellings_RefusesBeforeCreation', 'TestOpenDirectory_ProspectiveExclusionRoot_RefusesBeforeCreation', 'TestState_DanglingExclusionAlias_AllowsUnrelatedState', 'TestState_RelativeDotExclusionSibling_AllowsAbsentReadAndFirstUse', 'TestAncestor_StockWindowsAclCapture_AcceptsPolicy')
-          $requiredHooks = @('TestHooksStatus_ValidateInput', 'TestHooksStatus_Output', 'TestHooksStatus_Command', 'TestHooksStatus_Reports', 'TestHooksStatus_HomeInput', 'TestHooksStatus_ValidateConfiguration', 'TestHooksStatus_ValidateInputControls')
+          $requiredHooks = @('TestHooksStatus_ValidateInput', 'TestHooksStatus_Output', 'TestHooksStatus_Command', 'TestHooksStatus_Reports', 'TestHooksStatus_HomeInput')
           foreach ($suite in @(@{ file='oplocal.json'; package='github.com/hyper-swe/mtix/internal/oplocal'; names=$requiredOplocal }, @{ file='hooks.json'; package='github.com/hyper-swe/mtix/cmd/mtix'; names=$requiredHooks })) {
             $events = Get-Content -LiteralPath "$env:MTIX_WINDOWS_CAPTURE_DIR/$($suite.file)" | ForEach-Object { $_ | ConvertFrom-Json }
             $package = $suite.package

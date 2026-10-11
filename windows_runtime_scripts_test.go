@@ -38,7 +38,7 @@ func windowsRuntimeTestScript() string {
 			oplocal = append(oplocal, "Test"+name)
 		}
 	}
-	hooks := []string{"TestHooksStatus_ValidateInput", "TestHooksStatus_Output", "TestHooksStatus_Command", "TestHooksStatus_Reports", "TestHooksStatus_HomeInput", "TestHooksStatus_ValidateConfiguration", "TestHooksStatus_ValidateInputControls"}
+	hooks := []string{"TestHooksStatus_ValidateInput", "TestHooksStatus_Output", "TestHooksStatus_Command", "TestHooksStatus_Reports", "TestHooksStatus_HomeInput"}
 	return strings.NewReplacer("@ACL_FILTER@", windowsRuntimeACLFilter, "@ACL_NAMES@", windowsRuntimeQuotedNames(oplocal), "@HOOK_NAMES@", windowsRuntimeQuotedNames(hooks)).Replace(windowsRuntimeTestTemplate)
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -24,13 +25,14 @@ import (
 // It has no count of events in the 'conflicted' status: no sync path
 // sets that status, so the count was always 0 (MTIX-95.7).
 type SyncStatus struct {
-	Pending       int    `json:"pending"`
-	Pushed        int    `json:"pushed"`
-	Applied       int    `json:"applied"`
-	Lamport       int64  `json:"lamport"`
-	LastPulled    int64  `json:"last_pulled_clock"`
-	MachineHash   string `json:"machine_hash,omitempty"`
-	ProjectPrefix string `json:"project_prefix,omitempty"`
+	PendingExports service.PendingExportStatus `json:"pending_exports"`
+	Pending        int                         `json:"pending"`
+	Pushed         int                         `json:"pushed"`
+	Applied        int                         `json:"applied"`
+	Lamport        int64                       `json:"lamport"`
+	LastPulled     int64                       `json:"last_pulled_clock"`
+	MachineHash    string                      `json:"machine_hash,omitempty"`
+	ProjectPrefix  string                      `json:"project_prefix,omitempty"`
 	// OpenConflicts counts the unresolved conflicts: lww rows without a
 	// later manual row for the same node and field (MTIX-95.7).
 	OpenConflicts int `json:"open_conflicts"`
@@ -67,7 +69,8 @@ func newSyncStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show local sync state (counts + sentinels)",
 		Long: `Show the local sync queue counts plus meta sentinels. Pure local
-read — does not touch the hub. Use 'mtix sync doctor' to verify hub
+read — does not touch the hub or drain mirror requests. Pending exports
+show the logical coalesced count and oldest age separately from hub events. Use 'mtix sync doctor' to verify hub
 reachability and schema currency.
 
 A conflict is unresolved until mtix sync conflicts resolve records a
@@ -91,10 +94,17 @@ func runSyncStatus(ctx context.Context, stdout, stderr io.Writer) error {
 	if app.store == nil {
 		return fmt.Errorf("mtix sync status: local store not initialized")
 	}
+	if app.syncSvc == nil {
+		return fmt.Errorf("mtix sync status: local sync service not initialized")
+	}
 
 	st, err := readSyncStatus(ctx, app.store)
 	if err != nil {
 		return wrapSyncErr(stderr, "read status", err)
+	}
+	st.PendingExports, err = app.syncSvc.PendingExports(ctx, app.mtixDir)
+	if err != nil {
+		return wrapSyncErr(stderr, "read pending exports", err)
 	}
 
 	if app.jsonOutput {
@@ -202,6 +212,7 @@ func printStatusTable(w io.Writer, st SyncStatus) error {
 		{"machine_hash", emptyDash(st.MachineHash)},
 		{"", ""},
 		{"pending", strconv.Itoa(st.Pending)},
+		{"pending exports", pendingExportsLabel(st.PendingExports)},
 		{"pushed", strconv.Itoa(st.Pushed)},
 		{"applied", strconv.Itoa(st.Applied)},
 		{"unresolved conflicts", strconv.Itoa(st.OpenConflicts)},

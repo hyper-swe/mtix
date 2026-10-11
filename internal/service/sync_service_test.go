@@ -578,14 +578,42 @@ func TestAutoExport_EmptyDB_ProducesValidJSON(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestAutoExport_BadDir_ReturnsError verifies export to non-existent dir fails.
+// TestAutoExport_BadDir_ReturnsError verifies a blocked publication directory
+// reports its native filesystem cause while durable database intent survives.
 func TestAutoExport_BadDir_ReturnsError(t *testing.T) {
-	svc, _, _ := newTestSyncService(t)
-
+	svc, store, _ := newTestSyncService(t)
+	ctx := context.Background()
+	before, err := store.ReadExportRequest(ctx)
+	require.NoError(t, err)
 	blocked := filepath.Join(t.TempDir(), "blocked")
-	require.NoError(t, os.WriteFile(blocked, []byte("file"), 0644))
-	err := svc.AutoExport(context.Background(), filepath.Join(blocked, ".mtix"))
-	assert.ErrorContains(t, err, "create pending export directory", "a request that cannot be persisted must report the error")
+	original := []byte("file")
+	require.NoError(t, os.WriteFile(blocked, original, 0644))
+	mtixDir := filepath.Join(blocked, ".mtix")
+	pendingDir := filepath.Join(mtixDir, "data", "export-pending")
+	_, fixtureErr := os.ReadDir(pendingDir)
+	var fixturePathErr *os.PathError
+	require.ErrorAs(t, fixtureErr, &fixturePathErr, "fixture really blocks native directory traversal")
+	err = svc.AutoExport(ctx, mtixDir)
+	require.Error(t, err, "blocked publication must never report success")
+	require.ErrorContains(t, err, "read pending export requests")
+	require.ErrorContains(t, err, "read board before automatic export")
+	var actualPathErr *os.PathError
+	require.ErrorAs(t, err, &actualPathErr)
+	require.Equal(t, pendingDir, actualPathErr.Path)
+	require.ErrorIs(t, err, fixturePathErr.Err, "native OS cause remains visible on every platform")
+	content, readErr := os.ReadFile(blocked)
+	require.NoError(t, readErr)
+	require.Equal(t, original, content, "failed recovery never replaces the blocking file")
+	_, publicationErr := os.ReadFile(filepath.Join(mtixDir, "tasks.json"))
+	require.Error(t, publicationErr, "no board was published")
+	// Metadata is in the real store, so invalid publication paths do not prevent
+	// a durable mark. Inspect it directly; diagnostics cannot traverse this path.
+	after, stateErr := store.ReadExportRequest(ctx)
+	require.NoError(t, stateErr)
+	require.Equal(t, before.Requested+1, after.Requested)
+	require.Equal(t, before.Covered, after.Covered)
+	require.Nil(t, after.Active)
+	require.Equal(t, "2026-03-14T12:00:00Z", after.Oldest)
 }
 
 // TestAutoImport_BackupDB_NoDB_NoBackup verifies backup skips when no DB file exists.

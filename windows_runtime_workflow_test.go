@@ -16,7 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const windowsRuntimeGate = "${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'windows-ci' && github.event.pull_request.draft == false) }}"
+const windowsRuntimeGate = "${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name == 'windows-ci' && github.event.pull_request.draft == false }}"
 const windowsRuntimeGroup = "windows-runtime-${{ github.event.pull_request.number || github.ref }}"
 const windowsRuntimeDir = "${{ runner.temp }}/mtix-windows-runtime"
 const windowsRuntimeACLFilter = "^Test(State_ProtectedAccess_RoundTrips|ReadJSON_WideAccess_Refuses|Ancestor_TrusteeAndOwnerAccess_ValidatesPlatformPrincipals|Ancestor_RepresentativeAclRows_AllowSafeAncestorsAndRefuseHostileRights|Ensure_CanonicalHandleAlias_Refuses|State_ExclusionPrefixSpellings_RefusesBeforeCreation|OpenDirectory_ProspectiveExclusionRoot_RefusesBeforeCreation|State_DanglingExclusionAlias_AllowsUnrelatedState|State_RelativeDotExclusionSibling_AllowsAbsentReadAndFirstUse|Ancestor_StockWindowsAclCapture_AcceptsPolicy|Ancestor_CapturedStockWindowsFixture_ReplaysPolicy)$"
@@ -62,7 +62,7 @@ func windowsRuntimeCompare(path string, got, want any) error {
 func windowsRuntimeExpectedWorkflow() map[string]any {
 	return map[string]any{
 		"name":        "Windows operator-local runtime",
-		"on":          map[string]any{"workflow_dispatch": nil, "pull_request": map[string]any{"branches": []any{"main"}, "types": []any{"labeled"}}},
+		"on":          map[string]any{"pull_request": map[string]any{"branches": []any{"main"}, "types": []any{"labeled"}}},
 		"permissions": map[string]any{"contents": "read"},
 		"concurrency": map[string]any{"group": windowsRuntimeGroup, "cancel-in-progress": true},
 		"defaults":    map[string]any{"run": map[string]any{"shell": "pwsh"}},

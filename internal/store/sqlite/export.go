@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"time"
 	"unicode/utf8"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -146,63 +145,6 @@ type exportSession struct {
 	Summary   string `json:"summary,omitempty"`
 }
 
-// Export produces a complete JSON export of the database per FR-7.8.
-// Includes all nodes (including soft-deleted within retention), dependencies,
-// agents, sessions, with node_count and SHA-256 checksum for integrity.
-func (s *Store) Export(ctx context.Context, project, mtixVersion string) (*ExportData, error) {
-	nodes, err := s.exportNodes(ctx, s.readDB)
-	if err != nil {
-		return nil, exportReadError("export nodes", err)
-	}
-
-	deps, err := s.exportDependencies(ctx, s.readDB)
-	if err != nil {
-		return nil, exportReadError("export dependencies", err)
-	}
-
-	agents, err := s.exportAgents(ctx)
-	if err != nil {
-		return nil, exportReadError("export agents", err)
-	}
-
-	sessions, err := s.exportSessions(ctx)
-	if err != nil {
-		return nil, exportReadError("export sessions", err)
-	}
-
-	// Sort nodes by ID for canonical checksum.
-	sortForChecksum(nodes, deps)
-
-	// Compute checksum over canonical JSON of nodes and deps.
-	checksum, err := computeExportChecksum(nodes, deps)
-	if err != nil {
-		return nil, fmt.Errorf("compute checksum: %w", err)
-	}
-
-	return &ExportData{
-		Version:       1,
-		SchemaVersion: SchemaVersionV1,
-		// The store's injected clock, NOT time.Now(): CODING-STYLE §10
-		// forbids a direct wall-clock read in production code, and the
-		// mechanism was already here — this site simply bypassed it.
-		// Export bytes feed file_hash logging and replica comparison, so
-		// two exports of unchanged state must be byte-identical; reading
-		// the wall clock here made that false across a second boundary
-		// (MTIX-70). Production behavior is unchanged: the default
-		// clock IS the wall clock, so the tasks.json re-export diff is
-		// still there by design.
-		ExportedAt:   s.clock().UTC().Format(time.RFC3339),
-		MtixVersion:  mtixVersion,
-		Project:      project,
-		Nodes:        nodes,
-		Dependencies: deps,
-		Agents:       agents,
-		Sessions:     sessions,
-		NodeCount:    len(nodes),
-		Checksum:     checksum,
-	}, nil
-}
-
 // sortForChecksum puts the nodes (by id) and the dependencies (by their
 // endpoints) in the canonical order the export checksum hashes (FR-7.8).
 func sortForChecksum(nodes []exportNode, deps []exportDep) {
@@ -334,8 +276,8 @@ func (s *Store) exportDependencies(ctx context.Context, q queryable) ([]exportDe
 }
 
 // exportAgents reads all agents for export.
-func (s *Store) exportAgents(ctx context.Context) ([]exportAgent, error) {
-	rows, err := s.readDB.QueryContext(ctx,
+func (s *Store) exportAgents(ctx context.Context, q queryable) ([]exportAgent, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT agent_id, project, COALESCE(state,'idle'),
 		        COALESCE(current_node_id,''), COALESCE(last_heartbeat,'')
 		 FROM agents ORDER BY agent_id`)
@@ -361,8 +303,8 @@ func (s *Store) exportAgents(ctx context.Context) ([]exportAgent, error) {
 }
 
 // exportSessions reads all sessions for export.
-func (s *Store) exportSessions(ctx context.Context) ([]exportSession, error) {
-	rows, err := s.readDB.QueryContext(ctx,
+func (s *Store) exportSessions(ctx context.Context, q queryable) ([]exportSession, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT id, agent_id, project, started_at, COALESCE(ended_at,''),
 		        COALESCE(status,'active'), COALESCE(summary,'')
 		 FROM sessions ORDER BY id`)

@@ -51,14 +51,16 @@ func applyStagedLateEvents(ctx context.Context, in pullIngest, hub lateEventHub,
 func applyStagedChunk(ctx context.Context, in pullIngest, hub lateEventHub, st *sqlite.Store,
 	chunk []string, limit int,
 ) (int, error) {
+	in.receipt.observe(chunk)
 	missing, err := missingLocalEventIDs(ctx, st, chunk)
 	if err != nil {
 		return 0, err
 	}
-	events, err := fetchLateEvents(ctx, hub, missing, limit)
+	events, err := fetchLateEvents(ctx, hub, missing, limit, in.receipt)
 	if err != nil {
 		return 0, err
 	}
+	in.receipt.events(events)
 	if err := unstageLateEvents(ctx, st, idsNotApplied(chunk, events)); err != nil {
 		return 0, err
 	}
@@ -138,11 +140,17 @@ func unstageLateEvents(ctx context.Context, st *sqlite.Store, ids []string) erro
 // the events sorted into pull order (Lamport clock, then event id) across
 // all chunks, so a recovered create applies before any recovered edit of
 // the same node: an edit is always stamped above the create it follows.
-func fetchLateEvents(ctx context.Context, hub lateEventHub, ids []string, limit int) ([]*model.SyncEvent, error) {
+func fetchLateEvents(ctx context.Context, hub lateEventHub, ids []string, limit int, receipt ...*pullExchangeTracker) ([]*model.SyncEvent, error) {
 	var events []*model.SyncEvent
 	for start := 0; start < len(ids); start += limit {
 		chunk, err := hub.FetchEventsByID(ctx, ids[start:min(start+limit, len(ids))])
 		if err != nil {
+			return nil, fmt.Errorf("fetch late events: %w", err)
+		}
+		if len(receipt) > 0 {
+			receipt[0].qualifyFetched(ids[start:min(start+limit, len(ids))], chunk)
+		}
+		if err := requireEvents(chunk); err != nil {
 			return nil, fmt.Errorf("fetch late events: %w", err)
 		}
 		events = append(events, chunk...)

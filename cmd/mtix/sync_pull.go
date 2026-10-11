@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -30,9 +31,8 @@ const pullDefaultBatchSize = 1000
 // below the cursor.
 //
 // Unlike clone, pull does NOT refuse a non-empty local store — it's
-// the routine command for ongoing sync. Pull is also lock-free
-// (multiple processes pulling concurrently is harmless: applied_events
-// dedupes on event_id).
+// the routine command for ongoing sync. Pull holds nonblocking exclusive
+// sync ownership through apply, completion and received-record publication.
 func newSyncPullCmd() *cobra.Command {
 	var (
 		insecureTLS bool
@@ -62,14 +62,15 @@ is applied with a warning. Each event applies in its own savepoint: one
 that fails a check or its apply is rolled back, kept in the local
 quarantine (table sync_quarantine), and the pull goes on past it; the
 cursor never moves to a refused clock. Every pull retries the
-quarantine first, before contacting the hub, and again after it
-applied events, so an event whose node or dependency target arrives
+quarantine first, before contacting the hub, and again after the
+cursor and sweep finish, so an event whose node or dependency target arrives
 later applies then. 'mtix sync quarantine list' shows quarantined
 events, 'mtix sync status' counts them, and 'mtix sync doctor' fails
 while any remain.
 
-Lock-free: multiple processes pulling concurrently is safe because
-applied_events dedupes on event_id.
+Pull holds nonblocking exclusive local sync ownership while applying
+events and recording completed received provenance. A contended local
+sync lock refuses the pull; retry after the current owner finishes.
 
 Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.`,
 		Args: syncExactArgs(0),
@@ -93,7 +94,7 @@ Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.`,
 // applied events.
 func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 	args []string, opts transport.Options, limit int,
-) error {
+) (err error) {
 	if app.mtixDir == "" {
 		return fmt.Errorf("mtix sync pull: not in an mtix project (run 'mtix init' first)")
 	}
@@ -103,7 +104,20 @@ func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 	if limit <= 0 {
 		limit = pullDefaultBatchSize
 	}
+	svc := exchangeService(app.store)
+	owner, err := svc.BeginExchangePull(ctx, app.mtixDir)
+	if err != nil {
+		return err
+	}
+	defer owner.Close()
+	completionAttempted := false
+	defer func() {
+		if err != nil && !completionAttempted {
+			err = errors.Join(err, owner.Incomplete(ctx))
+		}
+	}()
 	in := newPullIngest(stderr)
+	in.receipt = newPullExchangeTracker(svc.MaxImportSize)
 
 	// A pull into an EMPTY journal is a bootstrap: the events it brings in are
 	// history, not fresh work. Detect it before anything is applied (the
@@ -130,6 +144,10 @@ func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 	}
 	initBootstrapHookFloor(ctx, stderr, bootstrap && res.pulled+res.retried > 0)
 
+	completionAttempted = true
+	if err := completePullExchange(ctx, owner, in.receipt, res); err != nil {
+		return err
+	}
 	fmt.Fprintf(stdout,
 		"pull complete: %d events applied across %d batches\n", res.pulled, res.batches)
 	printLateEventSweep(stdout, res.sweep)
@@ -230,7 +248,7 @@ func pullThenSweep(ctx context.Context, in pullIngest, hub pullSweepHub,
 	if out.sweep, err = sweepLateEvents(ctx, in, hub, st, limit); err != nil {
 		return out, err
 	}
-	if out.pulled+out.sweep.Recovered == 0 {
+	if in.receipt == nil && out.pulled+out.sweep.Recovered == 0 {
 		return out, nil
 	}
 	retry, err := retryQuarantinedEvents(ctx, in, st, limit)
@@ -264,6 +282,8 @@ func pullLoop(ctx context.Context, in pullIngest,
 		if err != nil {
 			return applied, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
 		}
+		in.receipt.events(events)
+		in.receipt.cursorPage(len(events), hasMore)
 		if len(events) == 0 {
 			break
 		}

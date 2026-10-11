@@ -53,6 +53,7 @@ func nextPreSyncBackupPath(dir string, now time.Time) (string, error) {
 			name = fmt.Sprintf("%s-%d.db", stamp, seq)
 		}
 		path := filepath.Join(dir, name)
+		// #nosec G703 -- path joins the caller-selected local backup directory with a UTC timestamp and numeric suffix produced here, not received content.
 		if _, err := os.Lstat(path); os.IsNotExist(err) {
 			return path, nil
 		} else if err != nil {
@@ -101,6 +102,7 @@ func (s *SyncService) prunePreSyncBackups(dir string) {
 	})
 	for len(backups) > PreSyncBackupsKept {
 		victim := filepath.Join(dir, backups[0].name)
+		// #nosec G703 -- victim joins the local backup directory with a regular ReadDir entry basename matched by preSyncBackupPattern, not a received path.
 		if removeErr := os.Remove(victim); removeErr != nil {
 			s.logger.Warn("could not delete an old pre-import backup", "path", victim, "error", removeErr)
 		}
@@ -114,6 +116,7 @@ func (s *SyncService) prunePreSyncBackups(dir string) {
 // recorded, it was for another file or another store state, or the backup
 // is gone.
 func (s *SyncService) backupTakenFor(mtixDir, fileHash, storeHash string) string {
+	// #nosec G703 -- caller selects the local project directory; data/sync-backup.json is the fixed local marker filename.
 	raw, err := os.ReadFile(filepath.Join(mtixDir, "data", preSyncBackupMarker))
 	if err != nil || storeHash == "" {
 		return ""
@@ -124,6 +127,7 @@ func (s *SyncService) backupTakenFor(mtixDir, fileHash, storeHash string) string
 		return ""
 	}
 	path := filepath.Join(mtixDir, "data", "backups", filepath.Base(record.Backup))
+	// #nosec G703 -- the local marker name is reduced with filepath.Base and joined under caller-selected data/backups; it is not a received board path.
 	if info, statErr := os.Stat(path); statErr != nil || !info.Mode().IsRegular() {
 		return ""
 	}
@@ -138,6 +142,7 @@ func (s *SyncService) rememberBackup(mtixDir, fileHash, storeHash, backupPath st
 		FileHash: fileHash, StoreHash: storeHash, Backup: filepath.Base(backupPath),
 	})
 	if err == nil {
+		// #nosec G703 -- caller selects the local project directory; marker data supplies no path to this fixed data/sync-backup.json destination.
 		err = os.WriteFile(filepath.Join(mtixDir, "data", preSyncBackupMarker), record, 0o644)
 	}
 	if err != nil {
@@ -149,6 +154,7 @@ func (s *SyncService) rememberBackup(mtixDir, fileHash, storeHash, backupPath st
 // import succeeded: the next import, even of the same file, takes a new
 // backup of the store as it then is (MTIX-95.31.2).
 func (s *SyncService) forgetBackup(mtixDir string) {
+	// #nosec G703 -- caller selects the local project directory; cleanup removes only the fixed data/sync-backup.json marker path.
 	err := os.Remove(filepath.Join(mtixDir, "data", preSyncBackupMarker))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		s.logger.Warn("could not clear the pre-import backup record", "error", err)
@@ -160,6 +166,7 @@ func (s *SyncService) forgetBackup(mtixDir string) {
 // pre-sync-<UTC time>.db path in dir and returns it; only then are the
 // oldest pre-import backups beyond PreSyncBackupsKept deleted (FR-15.2f).
 func (s *SyncService) writePreSyncBackup(ctx context.Context, dir string) (string, error) {
+	// #nosec G703 -- production callers supply fixed data/backups under the caller-selected local project, not a received directory.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create backups directory: %w", err)
 	}

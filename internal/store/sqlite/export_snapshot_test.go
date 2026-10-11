@@ -95,10 +95,15 @@ func TestExportSnapshot_NativeTransactionProtocol(t *testing.T) {
 	nodes, err := store.exportNodes(context.Background(), tx)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
-	for _, table := range []string{"nodes", "agents", "sessions"} {
+	queries := []struct{ label, query string }{
+		{"nodes", "SELECT COUNT(*) FROM nodes"},
+		{"agents", "SELECT COUNT(*) FROM agents"},
+		{"sessions", "SELECT COUNT(*) FROM sessions"},
+	}
+	for _, check := range queries {
 		var count int
-		require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&count)) //nolint:gosec // fixed fixture table allowlist above
-		require.Equal(t, 1, count, "native read transaction must retain old "+table)
+		require.NoError(t, tx.QueryRow(check.query).Scan(&count))
+		require.Equal(t, 1, count, "native read transaction must retain old "+check.label)
 	}
 	var deps int
 	require.NoError(t, tx.QueryRow("SELECT COUNT(*) FROM dependencies").Scan(&deps))

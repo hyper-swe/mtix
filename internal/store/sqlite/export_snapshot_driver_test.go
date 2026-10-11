@@ -6,6 +6,7 @@ package sqlite
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -50,8 +51,11 @@ func (c *snapshotConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 	forwarded, ok := conn.(snapshotNativeConn)
 	if !ok {
-		_ = conn.Close()
-		return nil, fmt.Errorf("native fixture connection lacks delegated interfaces")
+		interfaceErr := errors.New("native fixture connection lacks delegated interfaces")
+		if closeErr := conn.Close(); closeErr != nil {
+			return nil, errors.Join(interfaceErr, fmt.Errorf("close unsupported native fixture connection: %w", closeErr))
+		}
+		return nil, interfaceErr
 	}
 	if c.wrap != nil {
 		forwarded = c.wrap(forwarded)
@@ -71,8 +75,11 @@ func (c *snapshotConn) QueryContext(ctx context.Context, query string, args []dr
 	}
 	forwarded, ok := rows.(snapshotNativeRows)
 	if !ok {
-		_ = rows.Close()
-		return nil, fmt.Errorf("native fixture rows lack delegated interfaces")
+		interfaceErr := errors.New("native fixture rows lack delegated interfaces")
+		if closeErr := rows.Close(); closeErr != nil {
+			return nil, errors.Join(interfaceErr, fmt.Errorf("close unsupported native fixture rows: %w", closeErr))
+		}
+		return nil, interfaceErr
 	}
 	return &snapshotRows{snapshotNativeRows: forwarded, connector: c.connector}, nil
 }

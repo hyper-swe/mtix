@@ -129,9 +129,9 @@ func readSyncStatus(ctx context.Context, store *sqlite.Store) (SyncStatus, error
 		}
 	}
 
-	unresolved, err := readConflicts(ctx, store, "", false)
-	if err != nil {
-		return st, fmt.Errorf("count unresolved conflicts: %w", err)
+	unresolved, conflictErr := readConflicts(ctx, store, "", false)
+	if conflictErr != nil {
+		return st, fmt.Errorf("count unresolved conflicts: %w", conflictErr)
 	}
 	// Late events a sweep has staged but not yet applied (MTIX-95.5).
 	if err := store.QueryRow(ctx,
@@ -148,8 +148,9 @@ func readSyncStatus(ctx context.Context, store *sqlite.Store) (SyncStatus, error
 	if err := readStatusSentinels(ctx, store, &st); err != nil {
 		return st, err
 	}
-	st.ExchangeRecord, err = readExchangeStatus(ctx, store)
-	return st, err
+	exchange, exchangeErr := readExchangeStatus(ctx, store)
+	st.ExchangeRecord = exchange
+	return st, exchangeErr
 }
 
 // readStatusSentinels fills st from the meta.sync.* sentinels, including

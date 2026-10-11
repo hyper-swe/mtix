@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -253,4 +254,160 @@ func TestExchangeRecord_FalseSweepCompletion_PreservesPriorRecord(t *testing.T) 
 	after, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, prior, after)
+}
+
+type exchangeResponseHub struct {
+	*fakeLateHub
+	mode  string
+	extra *model.SyncEvent
+}
+
+func (h *exchangeResponseHub) FetchEventsByID(ctx context.Context, ids []string) ([]*model.SyncEvent, error) {
+	chunk, err := h.fakeLateHub.FetchEventsByID(ctx, ids)
+	if err != nil || len(chunk) == 0 {
+		return chunk, err
+	}
+	switch h.mode {
+	case "extra":
+		return append(chunk, h.extra), nil
+	case "missing":
+		return nil, nil
+	case "nil":
+		return append(chunk, nil), nil
+	case "duplicate":
+		return append(chunk, chunk[0]), nil
+	case "ambiguous":
+		conflicting := *h.extra
+		conflicting.EventID = chunk[0].EventID
+		conflicting.LamportClock = chunk[0].LamportClock
+		return append(chunk, &conflicting), nil
+	}
+	return chunk, nil
+}
+
+func TestExchangeRecord_FetchedResponse_UnknownCompletionDoesNotPublish(t *testing.T) {
+	for _, mode := range []string{"extra", "missing", "duplicate", "ambiguous"} {
+		t.Run(mode, func(t *testing.T) {
+			owner, in, _ := exchangePullFixture(t)
+			events := offlineEvents(t)
+			hub := &exchangeResponseHub{fakeLateHub: &fakeLateHub{events: events, hubNows: []time.Time{sweepHubT1}}, mode: mode, extra: remoteCreateAt(t, "TEST-99", 4)}
+			_, err := finishExchangeTestPull(t, owner, in, hub)
+			require.NoError(t, err)
+			if mode != "missing" {
+				_, err = app.store.GetNode(t.Context(), "TEST-9")
+				require.NoError(t, err, "requested valid events still apply")
+			}
+			if mode == "extra" {
+				_, err = app.store.GetNode(t.Context(), "TEST-99")
+				require.NoError(t, err, "extra valid event admission is unchanged")
+			}
+			_, err = receiptCheckAfterUnlock(t, owner)
+			require.ErrorIs(t, err, service.ErrNoExchangeRecord)
+		})
+	}
+}
+
+func TestExchangeRecord_ReasonDiagnostics_FixedBoundedAndPriorPreserved(t *testing.T) {
+	for _, source := range []string{"completion", "stored"} {
+		for _, tc := range []struct{ name, value, want string }{
+			{"empty", "", ""}, {"known publication", "publish-failed", "publish-failed"},
+			{"known schema", "unsupported-schema", "unsupported-schema"},
+			{"unknown", "private marker\n\x1b[31m", "unknown"},
+			{"oversize", "private marker\n\x1b[31m" + strings.Repeat("x", 100000), "unknown"},
+		} {
+			t.Run(source+"/"+tc.name, func(t *testing.T) {
+				owner, in, _ := exchangePullFixture(t)
+				_, err := finishExchangeTestPull(t, owner, in, &fakeLateHub{hubNows: []time.Time{sweepHubT1}})
+				require.NoError(t, err)
+				path := filepath.Join(app.mtixDir, "data", "exchange-record.json")
+				before, err := os.ReadFile(path)
+				require.NoError(t, err)
+				if source == "completion" {
+					require.NoError(t, owner.Complete(t.Context(), service.ExchangePullCompletion{Reason: tc.value}))
+				} else {
+					require.NoError(t, app.store.WithTx(t.Context(), func(tx *sql.Tx) error {
+						_, err := tx.ExecContext(t.Context(), `INSERT INTO meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, "meta.sync.exchange_record.reason", tc.value)
+						return err
+					}))
+				}
+				owner.Close()
+				status, err := app.syncSvc.ExchangeRecordStatus(t.Context(), app.mtixDir)
+				require.NoError(t, err)
+				require.True(t, status.Present)
+				require.LessOrEqual(t, len(status.Reason), 64)
+				expected := tc.want
+				if source == "completion" && tc.value == "" {
+					expected = "partial-pull"
+				}
+				require.Equal(t, expected, status.Reason)
+				after, err := os.ReadFile(path)
+				require.NoError(t, err)
+				require.Equal(t, before, after)
+				report := appendExchangeRecordCheck(t.Context(), DoctorReport{OverallPass: true}, app.store)
+				var text bytes.Buffer
+				printDoctorTable(&text, report)
+				require.NotContains(t, text.String(), "private marker")
+				encoded, err := json.Marshal(status)
+				require.NoError(t, err)
+				require.NotContains(t, string(encoded), "private marker")
+			})
+		}
+	}
+}
+
+func TestExchangeRecord_RunSyncPull_PublishFailureRetainsSpecificReason(t *testing.T) {
+	pool := openCmdHub(t)
+	initTestApp(t)
+	pushToHub(t, pool, remoteCreateAt(t, "TEST-1", 1))
+	require.NoError(t, os.Mkdir(filepath.Join(app.mtixDir, "data", "exchange-record.json"), 0o700))
+	var stdout, stderr bytes.Buffer
+	err := runSyncPull(t.Context(), &stdout, &stderr, nil, transport.Options{InsecureTLS: true}, 100)
+	require.Error(t, err)
+	_, err = app.store.GetNode(t.Context(), "TEST-1")
+	require.NoError(t, err)
+	var sweep, reason string
+	require.NoError(t, app.store.QueryRow(t.Context(), `SELECT value FROM meta WHERE key=?`, "meta.sync.last_sweep_at").Scan(&sweep))
+	require.NotEmpty(t, sweep)
+	require.NoError(t, app.store.QueryRow(t.Context(), `SELECT value FROM meta WHERE key=?`, "meta.sync.exchange_record.reason").Scan(&reason))
+	require.Equal(t, "publish-failed", reason)
+}
+
+func TestExchangeRecord_FetchedNil_RefusesWithoutPanic(t *testing.T) {
+	owner, in, _ := exchangePullFixture(t)
+	events := offlineEvents(t)
+	hub := &exchangeResponseHub{fakeLateHub: &fakeLateHub{events: events, hubNows: []time.Time{sweepHubT1}}, mode: "nil"}
+	_, err := finishExchangeTestPull(t, owner, in, hub)
+	require.ErrorIs(t, err, model.ErrInvalidInput)
+	require.Equal(t, "unknown-event", in.receipt.reason)
+	_, err = receiptCheckAfterUnlock(t, owner)
+	require.ErrorIs(t, err, service.ErrNoExchangeRecord)
+}
+
+func TestPullExchangeTracker_FetchedResponse_ExactChunkAndStickyControls(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		requested []string
+		events    []*model.SyncEvent
+		want      string
+	}{
+		{"empty", nil, nil, ""},
+		{"exact", []string{"a"}, []*model.SyncEvent{{EventID: "a"}}, ""},
+		{"other chunk", []string{"a"}, []*model.SyncEvent{{EventID: "b"}}, "unknown-event"},
+		{"missing", []string{"a"}, nil, "unknown-event"},
+		{"nil", []string{"a"}, []*model.SyncEvent{nil}, "unknown-event"},
+		{"duplicate", []string{"a"}, []*model.SyncEvent{{EventID: "a"}, {EventID: "a"}}, "unknown-event"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tracker := newPullExchangeTracker(1000)
+			tracker.qualifyFetched(tc.requested, tc.events)
+			require.Equal(t, tc.want, tracker.reason)
+		})
+	}
+	var absent *pullExchangeTracker
+	absent.qualifyFetched([]string{"a"}, nil)
+	limited := newPullExchangeTracker(1)
+	limited.qualifyFetched([]string{"a"}, []*model.SyncEvent{{EventID: "a"}})
+	require.Equal(t, "tracking-limit", limited.reason)
+	limited.qualifyFetched(nil, nil)
+	require.Equal(t, "tracking-limit", limited.reason)
 }

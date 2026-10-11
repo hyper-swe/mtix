@@ -131,3 +131,35 @@ func TestExchangeRecord_FailedReceiptAndHashMatch_NoInventedRepair(t *testing.T)
 	require.False(t, status.Present)
 	require.Equal(t, "publish-failed", status.Reason)
 }
+
+type exchangeCancelWriter struct {
+	*os.File
+	cancel context.CancelFunc
+}
+
+func (w exchangeCancelWriter) Write(raw []byte) (int, error) {
+	n, err := w.File.Write(raw)
+	w.cancel()
+	return n, err
+}
+
+func TestExchangeRecord_CancelAfterOwnedWrite_PreservesPriorRecord(t *testing.T) {
+	s, dir := exchangeFixture(t)
+	prior := exchangePublishReference(t, s, dir)
+	before, err := os.ReadFile(exchangePath(dir))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "tasks.json"), []byte(exchangeCurrentJSON), 0o644))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	s.wrapExchangeFile = func(f *os.File) io.WriteCloser { return exchangeCancelWriter{File: f, cancel: cancel} }
+	require.ErrorIs(t, s.AutoImport(ctx, dir), context.Canceled)
+	after, err := os.ReadFile(exchangePath(dir))
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	r, err := s.LastExchanged(t.Context(), dir)
+	require.NoError(t, err)
+	require.Equal(t, prior, r)
+	temps, err := filepath.Glob(filepath.Join(dir, "data", ".exchange-record-*"))
+	require.NoError(t, err)
+	require.Empty(t, temps)
+}

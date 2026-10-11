@@ -180,3 +180,17 @@ func validateExchangeBoundary(r *ExchangeRecord) error {
 	}
 	return nil
 }
+
+// normalizeExchangeReason exposes only fixed local diagnostic categories.
+func normalizeExchangeReason(reason string) string {
+	switch reason {
+	case "", "unknown", "unavailable", "context", "unsupported", "missing", "invalid-cap", "lock-unavailable",
+		"unsafe-file", "temporary-file", "oversize", "read", "invalid-json", "trailing-json", "format", "time", "hash",
+		"source", "count", "boundary", "task-identity", "task-fields", "historical-form", "board-hash", "task-json",
+		"unsupported-schema", "encode", "publish-failed", "durability-uncertain", "partial-pull", "snapshot-failed",
+		"unapplied-event", "tracking-limit", "unknown-event":
+		return reason
+	default:
+		return "unknown"
+	}
+}

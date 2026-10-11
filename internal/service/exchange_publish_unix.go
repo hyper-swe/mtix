@@ -13,6 +13,6 @@ import (
 
 func exchangePlatformSupported() bool { return true }
 func lockExchangeReader(f *os.File) error {
-	return syscall.Flock(fileFd(f), syscall.LOCK_SH|syscall.LOCK_NB)
+	return syscall.Flock(fileFd(f), lockShared|syscall.LOCK_NB)
 }
 func publishExchangeFile(from, to string) error { return os.Rename(from, to) }

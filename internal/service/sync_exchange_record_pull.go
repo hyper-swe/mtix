@@ -69,6 +69,9 @@ func (p *ExchangePull) Complete(ctx context.Context, c ExchangePullCompletion) e
 }
 
 func (p *ExchangePull) Incomplete(ctx context.Context) error {
+	if p.lock == nil {
+		return exchangeUnavailable("lock-unavailable", nil)
+	}
 	return p.service.saveExchangeReason(ctx, "partial-pull")
 }
 
@@ -108,7 +111,7 @@ func (s *SyncService) ExchangeRecordStatus(ctx context.Context, dir string) (Exc
 		return status, readErr
 	}
 	if reason != "" {
-		status.Reason = reason
+		status.Reason = normalizeExchangeReason(reason)
 	}
 	return status, nil
 }

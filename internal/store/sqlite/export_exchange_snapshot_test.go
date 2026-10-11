@@ -154,3 +154,21 @@ func TestExportExchangeSnapshot_ManyIDs_UsesBoundedQueryChunks(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(raw), `"local_sequence":0`)
 }
+
+func TestExportExchangeSnapshot_MalformedOwnedDatabase_RefusesSnapshot(t *testing.T) {
+	for _, tc := range []struct{ name, statement string }{
+		{"sync_events", "DROP TABLE sync_events"},
+		{"sync_sweep_pending", "DROP TABLE sync_sweep_pending"},
+		{"meta", "DROP TABLE meta"},
+		{"applied_events", "DROP TABLE applied_events"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := exchangeSnapshotStore(t)
+			_, err := s.WriteDB().ExecContext(t.Context(), tc.statement)
+			require.NoError(t, err)
+			data, _, err := s.ExportExchangeSnapshot(t.Context(), "TEST", "reference", []string{"requested"}, 10000)
+			require.ErrorContains(t, err, "no such table: "+tc.name)
+			require.Nil(t, data, "malformed state cannot yield a qualifying board")
+		})
+	}
+}

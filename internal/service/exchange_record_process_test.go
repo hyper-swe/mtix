@@ -129,3 +129,19 @@ func TestExchangeRecord_ConcurrentImporters_NoInterleave(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "2026-10-02T00:00:00Z", loaded.WrittenAt)
 }
+
+func TestExchangeRecord_ImportWriterBlocksReceiptReader(t *testing.T) {
+	s, dir := exchangeFixture(t)
+	exchangePublishReference(t, s, dir)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "tasks.json"), []byte(exchangeCurrentJSON), 0o644))
+	child := startExchangeChild(t, dir)
+	lock, err := s.openExchangeReadLock(dir)
+	if err == nil {
+		s.releaseLock(lock)
+	}
+	require.Error(t, err, "observed receipt writer retains exclusive sync ownership")
+	_, err = fmt.Fprintln(child.input, "resume")
+	require.NoError(t, err)
+	require.NoError(t, child.cmd.Wait())
+	child.waited = true
+}

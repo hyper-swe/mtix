@@ -973,6 +973,8 @@ Publication uses a unique same-directory temporary file, complete write, file sy
 
 A process crash can leave an unpublished `.exchange-record-*` artifact, which the receipt reader refuses to promote or delete. For recovery, an operator must first stop every process using this project and confirm no import/pull writer is active. Inspect the individual artifact path and preserve it outside the data directory if needed; remove only the confirmed abandoned temporary file, never a lock, database, unrelated artifact or glob of files. A subsequent successful exchange can write a fresh receipt. Do not treat the temporary bytes as a trusted board or edit receipt hashes by hand.
 
+Diagnostic categories are fixed and bounded at both storage and reporting boundaries. Unknown stored or supplied values become `unknown`, without repeating their original text. A failed completed publication retains its specific category instead of becoming an incomplete-pull report. Fetched responses must match their exact requested batch: unexpected, missing, nil or repeated IDs withhold the receipt while existing valid event admission remains unchanged.
+
 Compatible imports whose schema has no defined receipt hash form still import successfully. They preserve any prior receipt and report `unsupported-schema`; no form is guessed. A failure saving that omission remains an error.
 
 ### Sync carries every project in the database

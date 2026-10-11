@@ -99,6 +99,7 @@ func (s *SyncService) writeRefusal(mtixDir string, refusal *AutoImportRefusal) e
 		return fmt.Errorf("encode the auto-import refusal record: %w", err)
 	}
 	path := filepath.Join(mtixDir, "data", autoImportRefusalFile)
+	// #nosec G703 -- caller selects the local project directory; the refusal filename is fixed and not received from the board or hub.
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create sync data dir: %w", err)
 	}

@@ -164,3 +164,19 @@ func TestLastExchanged_InvalidHubBoundary_RefusedWithoutRewrite(t *testing.T) {
 		})
 	}
 }
+
+func TestExchangeRecord_BoundedByteReader_OwnedInputBoundaries(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "receipt")
+	_, err := readBoundedExchange(path, 3)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = readBoundedExchange(dir, 3)
+	require.Error(t, err, "directory cannot supply receipt bytes")
+	require.NoError(t, os.WriteFile(path, []byte("four"), 0o600))
+	_, err = readBoundedExchange(path, 3)
+	require.ErrorIs(t, err, ErrNoExchangeRecord)
+	require.Equal(t, "exchange record: oversize", err.Error())
+	raw, err := readBoundedExchange(path, 4)
+	require.NoError(t, err)
+	require.Equal(t, []byte("four"), raw)
+}

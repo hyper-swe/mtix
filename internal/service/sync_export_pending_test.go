@@ -64,14 +64,14 @@ func TestPendingExport_PublicationFailureRetainsRequest(t *testing.T) {
 	hash := filepath.Join(dir, "data", "sync-db.sha256")
 	require.NoError(t, os.Mkdir(hash, 0755))
 	require.ErrorContains(t, svc.AutoExport(context.Background(), dir), "write db hash")
-	requests, err := pendingExportRequests(dir)
+	status, err := svc.PendingExports(context.Background(), dir)
 	require.NoError(t, err)
-	require.Len(t, requests, 1)
+	require.Equal(t, 1, status.Count)
 	require.NoError(t, os.Remove(hash))
 	require.NoError(t, svc.DrainPendingExport(context.Background(), dir))
-	requests, err = pendingExportRequests(dir)
+	status, err = svc.PendingExports(context.Background(), dir)
 	require.NoError(t, err)
-	require.Empty(t, requests)
+	require.Zero(t, status.Count)
 }
 
 func TestPendingExport_RefusedBoardPreserved(t *testing.T) {
@@ -88,9 +88,9 @@ func TestPendingExport_RefusedBoardPreserved(t *testing.T) {
 	actual, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, board, actual)
-	requests, err := pendingExportRequests(dir)
+	status, err := svc.PendingExports(context.Background(), dir)
 	require.NoError(t, err)
-	require.Len(t, requests, 1)
+	require.Equal(t, 1, status.Count)
 	require.NotNil(t, svc.readRefusal(dir))
 }
 
@@ -215,6 +215,7 @@ func TestPendingExport_MetadataFailureStillPublishesMirror(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, requests)
 	pendingPath := pendingExportDir(dir)
+	require.NoError(t, os.MkdirAll(pendingPath, 0755))
 	require.NoError(t, os.Remove(pendingPath))
 	metadata := []byte("owned unavailable request metadata")
 	require.NoError(t, os.WriteFile(pendingPath, metadata, 0644))

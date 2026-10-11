@@ -7,7 +7,9 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -97,8 +99,10 @@ func testMirrorMarkFailure(t *testing.T) {
 	mirrorCrashNode(t, store, 1)
 	require.NoError(t, svc.AutoExport(context.Background(), dir))
 	pending := filepath.Join(dir, "data", "export-pending")
+	require.NoError(t, os.MkdirAll(pending, 0755))
 	require.NoError(t, os.Remove(pending))
 	require.NoError(t, os.WriteFile(pending, []byte("owned unavailable metadata"), 0644))
+	require.ErrorContains(t, svc.RequestExport(dir), "read pending export requests", "owned regular file produces a genuine legacy enumeration error")
 	oldApp := app
 	t.Cleanup(func() { app = oldApp })
 	app = appContext{mtixDir: dir, store: store, logger: logger, syncSvc: svc}
@@ -118,4 +122,34 @@ func mirrorCrashCount(t *testing.T, dir string) int {
 	var board sqlite.ExportData
 	require.NoError(t, json.Unmarshal(data, &board))
 	return board.NodeCount
+}
+
+func TestMirrorPending_MetadataMarkFailureStillSchedulesWithoutInlineExport(t *testing.T) {
+	synctest.Test(t, testMirrorMetadataMarkFailure)
+}
+
+func testMirrorMetadataMarkFailure(t *testing.T) {
+	dir := t.TempDir()
+	store := newDaemonTestStore(t, dir)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	svc := service.NewSyncService(store, logger, time.Now)
+	mirrorCrashNode(t, store, 1)
+	require.NoError(t, svc.AutoExport(context.Background(), dir))
+	require.NoError(t, store.WithTx(context.Background(), func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(context.Background(), "CREATE TRIGGER owned_pending_mark_failure BEFORE INSERT ON meta WHEN NEW.key='meta.export.pending' BEGIN SELECT RAISE(ABORT,'owned pending mark failure'); END")
+		return err
+	}))
+	require.ErrorContains(t, svc.RequestExport(dir), "owned pending mark failure", "native guarded pending-key write really fails")
+	oldApp := app
+	t.Cleanup(func() { app = oldApp })
+	app = appContext{mtixDir: dir, store: store, logger: logger, syncSvc: svc}
+	closeExporter := wireMirrorExporter(logger)
+	t.Cleanup(closeExporter)
+	mirrorCrashNode(t, store, 2)
+	require.Contains(t, logs.String(), "pending auto-export request failed before debounce")
+	require.Contains(t, logs.String(), "owned pending mark failure")
+	require.Equal(t, 1, mirrorCrashCount(t, dir), "guarded mark failure must not inline export")
+	closeExporter()
+	require.Equal(t, 2, mirrorCrashCount(t, dir), "guarded mark failure must still schedule native debouncer")
 }

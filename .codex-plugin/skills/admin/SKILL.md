@@ -3,247 +3,369 @@ name: admin
 description: Administrative operations for mtix projects. Backup, export, import, verification, statistics, sync hub privileges, sync hub backup and restore, and sync conflicts.
 ---
 
-# mtix Administration
+# MTIX — Administration
 
-## Project Health
+## Pending mirror export diagnostics
 
-```bash
-mtix stats              # Project statistics and progress
-mtix verify             # Verify content hash integrity
-mtix progress <id>      # Progress rollup for a subtree
-```
+`mtix sync status` and `mtix sync doctor --json` report local `pending_exports.count`, `oldest_at` and `oldest_age_seconds` without importing, draining or contacting the hub for that check. Doctor warns after one hour and prints `mtix list`: it retries protected import-first mirror recovery, and a pulled-board refusal still needs its printed resolution. Then verify with `mtix sync status`. Do not delete markers or recommend `mtix sync --fix` automatically; it intentionally discards the pulled board. New clients coalesce requests into one durable metadata record, while legacy files can temporarily add to the count and conservative age; old clients can keep creating them. This bounds live intent metadata, not the WAL. See the sync skill's Pending mirror exports section for cutoff, durability and upgrade limits.
 
-## Data Management
+## Context: Data Integrity is Non-Negotiable
 
-```bash
-mtix export             # Export task state to JSON
-mtix import <file>      # Import from JSON
-mtix backup <path>      # Create database backup
-mtix gc                 # Run garbage collection
-```
+mtix manages task hierarchies that may track safety-critical work (aviation maintenance, medical device development, mission control operations, defense systems). Every administrative operation must preserve data integrity and maintain the audit trail.
 
-## Pulled `.mtix/tasks.json` not imported
+## Backup-Before-Mutate Protocol
 
-After a `git pull`, the next CLI command (for example `mtix list`) imports a changed `.mtix/tasks.json`, or refuses and says why; `mtix sync` shows a pending refusal.
+**ALWAYS run `mtix backup <path>` before any destructive operation:**
 
-- Never run `mtix import .mtix/tasks.json --mode replace` to silence a refusal: it runs no loss check, deletes the comments, activity and tasks the board lacks, and needs the ticket count typed at an interactive terminal (no flag supplies it), so it cannot run unattended; name the merge or `mtix sync --fix` first.
-- `mtix import .mtix/tasks.json --mode merge` keeps comments and activity from both sides and writes nothing while a task's status, assignee, agent state, wake time or deletion state differs from the file's (it lists each conflict; rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`, which it records in the task's activity), and decides the other field values per task: when the task's content (title, description, prompt, acceptance, labels) matches the file's, yours win, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid. Check the list before you choose: a wrong choice undoes a teammate's claim or your own unclaim.
-- A conflict although you changed nothing locally (after an upgrade from 0.5.3 or earlier): run `mtix sync --fix`, then `git checkout HEAD -- .mtix/tasks.json`, then `mtix list`, which imports the board with the loss check. Never stop after `mtix sync --fix`: alone, it drops every change in the file.
+- Before `mtix import <file> --mode merge` (may overwrite existing data)
+- Before `mtix gc` (permanently removes soft-deleted data)
+- Before any database maintenance
+- Before major configuration changes
 
-## Corruption recovery
+Backup creates a timestamped copy of the SQLite database. Store backups in a safe location outside the project directory.
 
-When `mtix export` or the automatic import of `.mtix/tasks.json` fails because a stored node field cannot be read, or mtix reports an integrity error at startup: copy `.mtix/data/` aside, then run `mtix recover`. It reads the database read-only and writes `.mtix/recovered-<time>.json` with a report.
+## Export
 
-- A task whose comments, activity, `code_refs` or `commit_refs` cannot be read gets that field from its copy in `.mtix/tasks.json` when the copy is usable (the only task under that id, the same uid when both carry one, `schema_version` 2.0.0 or later, times that pass the import checks); the report says `restored from the mirror <path>`. The copy is whatever `.mtix/tasks.json` holds: the last export, or a file a `git pull` or checkout put there (for example one whose automatic import was refused), which is another clone's copy and can hold its comments and lack local ones.
-- A mirror whose checksum does not verify is still used; the note then ends `(the mirror checksum did not verify)`.
-- Otherwise the report says the field is dropped and why, and the task is salvaged without it.
-- A note `node A: the index entry for A points at the row of B; ...` means the primary-key index is damaged: nothing from that row is salvaged as A, and the row is salvaged once, as B. A itself is then salvaged from the database when another index entry reaches A's own row, taken from `.mtix/tasks.json` when the mirror holds it, or listed on the report's LOST line. Show such tasks to the user.
-- `mtix import --mode replace` of the salvage file needs the ticket count typed at an interactive terminal, it cannot run unattended; before they run it, show the user every dropped or restored field and every note ending `(the mirror checksum did not verify)`, and have them compare each restored field with the local history (for example `git log -p .mtix/tasks.json`).
+Run `mtix export > <file>` to save a JSON snapshot of all project data.
+
+The export includes:
+- All nodes with every field, including each node's annotations (comments, review verdicts, close receipts) and activity stream
+- All dependencies
+- All agent records
+- All session records
+- SHA-256 checksum for integrity verification; it covers the nodes, annotations included, and the dependencies
+
+`.mtix/tasks.json` is the same document (`schema_version` 2.0.0 from mtix 0.5.4). An mtix client older than 0.5.4 skips such a file as newer than it supports, but its next writing command re-exports `.mtix/tasks.json` from its own store, without the annotations and changes it skipped, and committing that file reverts them upstream. On such a client even an `mtix import` that fails rewrites `.mtix/tasks.json` the same way. Until every agent and teammate sharing a board runs 0.5.4 or later, never run writing commands or `mtix import` on an older client and never commit its `.mtix/tasks.json`. If one was committed, restore `.mtix/tasks.json` from the last good commit in git history, or restore the store from the backup taken before the import (`.mtix/data/backups/pre-sync-<time>.db`; `.mtix/data/pre-sync-backup.db` on 0.5.3 and earlier): stop every mtix process (the MCP server, `mtix serve` and the sync daemon), copy the backup over `.mtix/data/mtix.db`, delete `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm`, then continue. A 0.5.4 store is protected by the auto-import guard (see "Automatic import of `.mtix/tasks.json`" below): such a file carries no annotations or activity, so its automatic import is refused and nothing changes.
+
+**After export:** Verify the checksum field is present. Store exports alongside backups for disaster recovery.
+
+## Import
+
+Run `mtix import <file> --mode merge` from the CLI. If it reports renumbering without applying, review the report before rerunning with `--confirm`; this flag confirms renumbering only. The MCP server exposes no import tool. Import modes:
+
+- **merge** — creates nodes the store lacks; for a node it has, annotations and activity merge as a union (no local annotation is ever dropped, and a resolved annotation stays resolved), and the other fields take the file's values only when the node's content hash differs
+- **replace** — replaces all project data with the import file, annotations and activity included; a file written before mtix 0.5.4 carries no annotations, so a replace import of it leaves every node without them. It needs the ticket count typed at an interactive terminal, so an agent never runs it: ask the user; prefer merge.
+
+**Uid adoptions (merge).** When the file holds a task's id under another uid and one of the two uids was assigned when a clone upgraded (more than an hour after the task was created), `mtix import --mode merge` treats them as one task and gives the local task the file's uid. It lists every adoption under `uids adopted from the file` in its report on stderr, applied or not: the id, both uids and both titles (`uid_adoptions` in `--json` once the import is applied; `--remap-file` maps the local uid to the id). The merge, and the automatic import after a git pull, carry the adopted uid onto the task's unpushed sync events and any held copy of them in the same step, so a later push sends the task's creation and its changes under one uid; changes already pushed keep theirs. If the import is refused because a push is running, run it again when the push has ended. Do not edit event uids by hand. Known limit (experimental relay): a change already published to the relay keeps its old uid on relay peers. Check every adoption whose titles differ: two different tasks created in the same second, when at least one clone assigned its uid after the task was created (at upgrade, or as a backfill uid on import or open, for example for a task created before 0.2), are treated as one, the merge keeps the file's task, and the local one survives only in the backup the merge took first. The automatic import refuses such a pair and lists it as `treated as the same task (uid assigned at upgrade)` with both titles; for it, the merge takes the file's title and content. If the titles name two different tasks, do not merge yet: show both to the user, copy the local task to a new one (`mtix show <id>`, then `mtix create` with its title and description; writes stay local while the refusal is pending), then merge. If a merge already took it, restoring the backup drops every change made since the merge: recover right away, or first note the later changes and redo them afterwards. The user stops every mtix process that uses this store (the MCP server, `mtix serve`, a running `mtix daemon`), copies the backup over `.mtix/data/mtix.db` and deletes `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm` (they belong to the replaced database and must not be replayed onto the backup), then, before any mtix command runs, restores the pulled board (`git checkout -- .mtix/tasks.json`, or the file from the pulled commit), because the merge's own export rewrote it. The next command refuses again; copy the task as above, then run `mtix import .mtix/tasks.json --mode merge --confirm`. mtix gives every task it imports without a uid a backfill uid (a UUIDv8 with a fixed marker), and a store gives its tasks without a uid one when it opens, so boards written by 0.5.4 carry a uid for every task, and two clones that each backfilled a task keep one task. A board without uids does not lose a backfill uid: the missing uid is no loss, and the replace keeps the local uid, so a teammate's boards from a client at 0.3 or older keep importing (a uid given at creation that such a board leaves out is still a loss). When the file's copy has no uid to compare (a board from a client at 0.3 or older, or one never re-exported after an upgrade), the titles decide: another title is a different task, which the automatic import lists as `a task under this id with a different title and no uid to compare` and the merge renumbers with `--confirm` (listed under `of these, a task under this id with a different title and no uid to compare`); if a teammate only retitled it, the merge keeps both copies, and the renumbered one holds the comments, activity and field values the board lacked: the user moves them to the task at the id, or keeps the renumbered copy, before anything is deleted. The opposite case: two copies with identical titles listed as `a different task under this id` (every uid the task carries was assigned within an hour of its creation) are one task; the merge renumbers the local copy only with `--confirm`, and the user decides whether to delete the duplicate.
+
+Import writes nothing when the schema version (a higher major version than this mtix writes), the node count, the checksum or any time value (RFC 3339, UTC year 1 to 9999; the required ones not empty) fails its check; the error names what failed. A refused import leaves `.mtix/tasks.json` untouched.
+
+If an export, or the automatic import of a changed `.mtix/tasks.json`, fails because a stored node field cannot be read, the error names the node, the field and `mtix recover`: nothing was imported, and local changes are kept. Run `mtix recover` to salvage everything readable (see its report) before importing again. For such a field (comments, activity, `code_refs`, `commit_refs`), `mtix recover` takes the value from the task's copy in `.mtix/tasks.json` when that copy is usable (the only task under that id, the same uid when both carry one, `schema_version` 2.0.0 or later, times that pass the import checks), and its report says `restored from the mirror <path>` with the number of entries. The copy is whatever `.mtix/tasks.json` holds: the last export, or a file a `git pull` or checkout put there (for example one whose automatic import was refused), which is another clone's copy and can hold its comments and lack local ones. A mirror whose checksum does not verify is still used, and the note then ends `(the mirror checksum did not verify)`. Otherwise the report says the field is dropped and why, and the task is salvaged without it. A note `node A: the index entry for A points at the row of B; ...` means the primary-key index is damaged: nothing from that row is salvaged as A, and the row is salvaged once, as B. A itself is then salvaged from the database when another index entry reaches A's own row, taken from `.mtix/tasks.json` when the mirror holds it, or listed on the report's LOST line; show such tasks to the user. Before the salvage file is imported, show the user every dropped or restored field and every note ending `(the mirror checksum did not verify)`, and have them compare each restored field with the local history (for example `git log -p .mtix/tasks.json`).
+
+**Import protocol:**
+1. Run `mtix backup <path>` first
+2. Import the data
+3. Run `mtix verify` to confirm integrity post-import
+4. Check `mcp__mtix__mtix_stats` to verify expected node counts
+
+**Never skip the post-import verification.** A corrupt import in a safety-critical environment could hide incomplete or missing tasks.
+
+## Automatic import of `.mtix/tasks.json`
+
+When a `git pull` or checkout changes `.mtix/tasks.json`, the next mtix CLI command replace-imports it before it runs. The MCP server imports only when it starts, and its stderr is not shown to you. After a pull, run a CLI command that auto-imports, for example `mtix list`, then check with `mtix sync`. The MCP server protects itself too: its writes never overwrite a board that changed on disk; they import it first, or keep it and record why.
+
+- **Applied.** An import that loses nothing prints one line: `mtix: imported the changed .mtix/tasks.json: nodes N added, N updated, N removed; dependencies N added, N removed (local database backed up to .mtix/data/backups/pre-sync-<time>.db)`. The newest 5 pre-import backups are kept; a file that fails a check or is refused takes none. A field a teammate cleared on purpose (unclaim, reopen, undefer, undelete, a later update) applies: their copy of that task holds all of its activity and is not older. The rule fails open in one direction: a teammate's copy with a later `updated_at` counts as current even when it missed your `mtix update` or `mtix delete` (neither records activity), after a concurrent edit to the same task or with a teammate's clock ahead, so a field it leaves empty is applied as cleared; the pre-import backup keeps the state before. The replace re-checks, in its own transaction, that the store is still the one it compared: a write that lands in between (another process, or the MCP server) is kept, nothing is imported, and the next command checks the file again.
+- **Refused.** If the file lacks a node, an annotation, an annotation's resolution, an activity entry or a dependency the store holds, or leaves a field empty in a copy of a task that is not current (it lacks some of the task's local activity or its `updated_at` is older: a stale board, or one from an mtix client older than 0.5.4), the import is refused and nothing changes. A teammate's deliberate `mtix dep remove` is refused too. The refusal starts `mtix: auto-import of .mtix/tasks.json refused`, lists the loss node by node, and repeats on every command until someone chooses. Until then, writes save to the store but do not rewrite `.mtix/tasks.json` (one line says so). Choose, from the project root:
+  - `mtix import .mtix/tasks.json --mode merge` backs up the database, keeps every value the refusal lists (every local node, annotation, activity entry and dependency, and every listed field value, with the task's local status when the value is part of it) and adds the file's changes. Where a task's status, assignee, agent state, wake time or deletion state differs from the file's, it writes nothing and lists each conflict (yours, the file's, an activity hint) until you rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`; the choice is recorded in the task's activity. Where they agree, the other field values are decided per task by its content (title, description, prompt, acceptance, labels): where it matches the file's, the local values win; where it differs, the file's copy wins, so your own edits to that task (a prompt edit, for example) are undone. Check `git log -p .mtix/tasks.json` afterwards and reapply what it undid. A task the file holds under another id with the same uid (another clone renumbered it) moves there without `--confirm`; two copies under different uids are one task only when they share a creation time and one uid was given to the task more than an hour after it was created, by a clone that upgraded from before uids were shared (the file's uid is then adopted); every other pair, such as tasks two clones created in the same second, stays two tasks; without a uid to compare, another title is another task. A local task whose id the board gives to another local task (a clone moved it there) is listed as a different task too, and the merge renumbers it with `--confirm`. A merge that would change nothing takes no backup. A task listed as `a different task under this id` (you and a teammate each created that id, or you created it while the refusal was pending) is never overwritten: merge renumbers your task and its subtree to the next number free in both the store and the file, keeping its uid, and the file's task keeps the id. It prints the renumbering (uid, old id, new id; `--remap-file <path>` saves it) and applies it only when you rerun it with `--confirm`.
+  - `mtix sync --fix` keeps the local store and rewrites `.mtix/tasks.json` from it; every change in the file is dropped.
+  - Not an agent's choice: `mtix import .mtix/tasks.json --mode replace` makes the file win and deletes what was listed, and it needs the ticket count typed at an interactive terminal (no flag supplies it), so an agent never runs it (it writes a verified snapshot first; `mtix backup <file>` is still a good extra copy). Name `mtix import .mtix/tasks.json --mode merge` or `mtix sync --fix` first: both keep local data.
+- **Not rewritten.** When a write finds `.mtix/tasks.json` changed on disk and not imported, it keeps the file and prints one line with the way out for that kind of refusal (`mtix sync --json` shows `kind`). A write's export, including the one after `mtix import` of another file, imports a changed board first. A conflict (both the file and the store changed) whose replace would also delete local data is printed as a refusal with the loss list, and its replace option names what it deletes. The merge a conflict names decides per task: a task whose status, assignee, agent state, wake time or deletion state differs from the file's is listed and nothing is written until you choose `--prefer theirs|ours` or `--theirs ID,ID` / `--ours ID,ID` (a wrong choice undoes a teammate's claim, for example); where they agree and the task's content (title, description, prompt, acceptance, labels) matches the file's, your field values win, and where it differs, the file's copy wins (it undoes your prompt edit, for example). A conflict although nothing changed locally (after an upgrade from 0.5.3 or earlier, when that version's last automatic import was not followed by a writing command): run `mtix sync --fix`, then `git checkout HEAD -- .mtix/tasks.json`, then `mtix list`, which imports the board with the loss check; never stop after `mtix sync --fix`, which alone drops every change in the file. A file written by a newer mtix (`newer_schema`) needs an upgrade: never rewrite it with `mtix sync --fix`. A file that fails its checks (`invalid_file`, for example merged by hand): check it, then `mtix import .mtix/tasks.json --recompute-checksum`, or keep the local board with `mtix sync --fix`.
+- **Never** run the replace import (it needs the ticket count typed at an interactive terminal, it cannot run unattended) to silence a refusal that lists annotations, activity entries or nodes: they hold review verdicts and close receipts. If you cannot tell whose changes are newer, stop and ask the user.
+- **Verify.** `mtix sync` never prints `In sync` while an import of the board is pending or an id carries another uid in the file (`OUT OF SYNC: tasks.json changed and has not been imported`, `Another uid in tasks.json`). It prints `Auto-import: enabled (sync.auto_sync: <value>)` or `disabled`, and `Last auto-import refusal: <time> (pending|resolved <time>|no longer pending): <reason>` or `none`; `mtix sync --json` reports the same under `auto_import`. After you resolve a refusal, it must no longer read `pending`.
+- **Switch.** `sync.auto_sync` (default `true`) switches only the automatic import; `mtix config set sync.auto_sync false` turns it off, and `mtix config set` accepts only true or false. `.mtix/config.yaml` is tracked in git, so the switch applies to every clone, but a store with no tasks (a fresh clone) is always imported. With it off, a pulled board is not overwritten by writes; import it with `mtix import .mtix/tasks.json --mode merge` (the merge writes nothing while a task's status, assignee, agent state, wake time or deletion state differs from the file's: it lists each conflict, and you rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`, which it records in the task's activity; where they agree, your other field values win when the task's content (title, description, prompt, acceptance, labels) matches the file's, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid), or keep your board with `mtix sync --fix`.
+
+## Garbage Collection
+
+Run `mtix gc` to permanently remove soft-deleted nodes past the retention period (default: 30 days). Purging a deleted task whose creation `mtix sync push` holds does not release its held changes: they stay held, and `mtix sync doctor` keeps listing them. Run `mtix sync push` before purging such a task, so its latest changes are checked and held first.
+
+**Before GC:**
+- Verify retention period is appropriate for your compliance requirements (some standards require longer retention)
+- Check what will be collected — soft-deleted nodes that are past retention
+- Backup first
+
+**GC does NOT delete:**
+- Active nodes (any status except soft-deleted)
+- Nodes within the retention window
+- Agent records or session records (these are permanent audit trail)
 
 ## Configuration
 
-```bash
-mtix config get <key>   # Read config value
-mtix config set <k> <v> # Set config value
-```
+Run `mtix config get <key>` to view a setting and `mtix config set <key> <value>` to change it.
 
-`sync.keep_roles` lists, comma-separated, the hub roles `mtix sync harden`
-leaves with their access (default: none).
+Key configuration options:
+- `prefix` — project prefix for dot-notation IDs
+- `max_depth` — maximum hierarchy depth (default: 50)
+- `auto_claim` — whether to auto-claim on creation
+- `sync.max_lamport_jump` — how far above the local Lamport clock a pulled event may be stamped before `mtix sync pull` quarantines it (default: 4294967296, that is 2^32; a positive integer; see Sync Recovery: Quarantined Pulled Events)
+- `agent_stale_threshold` — heartbeat timeout for stale detection (default: 30m)
+- `session_timeout` — maximum session duration (default: 8h)
+- `data.soft_delete_retention` — how long to keep deleted data (default: 720h/30 days)
+- `sync.keep_roles` — comma-separated hub roles that `mtix sync harden` leaves with their access (default: none; see Hub Privileges). Setting it turns on strict mode for the doctor's `hub-privileges` check, which then fails whenever `mtix sync harden` would report a finding, or when the check cannot run
 
-## Hub Privileges (sync hub owners)
+## Hub Privileges (Sync Hub Owners)
 
-Only for projects that sync through a Postgres hub. Everyday use needs no
-role configuration. Run these only when the user asks, as the role that owns
-the sync tables (the one that ran `mtix sync init`); a superuser or a member
-of the owner role may run them too:
+Only for projects that sync through a Postgres hub (`mtix sync init`). Everyday use needs no role configuration. `mtix sync harden` is for an owner who wants the hub's sync tables usable only by the owner and the roles the team chooses. It is a CLI command; run it only when the user asks for it, never from a hook, push or daemon. It contacts the hub only while it runs, so it does not keep a scale-to-zero database awake.
 
-```bash
-mtix sync harden                          # Dry run: lists every role, default privilege and membership it would change; changes nothing
-mtix sync harden --apply --keep-role <r>  # After the user approves the role list: restrict the sync tables to the owner and the kept roles
-mtix config set sync.keep_roles <r>[,<r>] # Record the kept roles; also turns on doctor strict mode (harden prints this; it never writes config)
-mtix sync harden --json                   # Report for agents: before/after caller, caller_scope, findings, statements; keep_roles_hint
-```
+The append-only tables (`audit_log`, `sync_conflicts`, `sync_events`) refuse TRUNCATE. `mtix sync init` adds these guards automatically; `mtix sync harden` checks them.
 
-Exit code 0 means verification passed: apart from the table owner,
-superusers, and the kept roles and their members, no role holds a privilege
-on the sync tables, their sequences or the mtix functions (EXECUTE on the
-trigger functions aside), or a role membership that leads to one, ADMIN
-OPTION included; the owner's default privileges give such roles nothing; and
-every TRUNCATE guard is in place. 2 means changes are pending or access
-remains; 1 means an error or a refusal. Superusers and the REPLICATION role
-attribute are outside the check: a role with REPLICATION is checked for its
-privileges and memberships like any other role, but not for the attribute,
-so review the roles that have it (`SELECT rolname FROM pg_catalog.pg_roles
-WHERE rolreplication;`) with the database administrator. A role that is
-not the table owner, a member of it or a superuser is refused and nothing
-changes. Members of a kept role keep their access through it, and the owner
-grants again anything a kept role holds by another role's grant; superusers
-are out of scope. A server WARNING fails the run and nothing changes. Access
-harden may not change is printed with the statement a database administrator
-runs. EXECUTE on the mtix trigger functions is information only, so a freshly
-migrated hub verifies clean.
+**Restore collisions:** the hub stamps every event with its own restore epoch (a trigger on `sync_events` sets it from `sync_hub_state` on every insert). A syncing role records restore collisions only through the hub function `record_restore_collision`, which runs as the table owner and records a collision only when the hub's own data shows an earlier-epoch create holding the number, so the role needs EXECUTE on that function and no INSERT on `sync_node_collisions`. When `mtix sync init` adds this function to an existing hub (migration 017), the table owner then grants EXECUTE on it to each syncing role (`GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;`) and revokes the privileges the least-privilege list no longer names (`REVOKE INSERT ON sync_node_collisions FROM <role>;` and `REVOKE USAGE ON SEQUENCE sync_node_collisions_collision_id_seq FROM <role>;`). Upgrade every syncing client first, then run the REVOKE statements; if the REVOKE comes first, an older client's push that meets a restore collision fails until that client upgrades. `mtix sync doctor`'s `schema current` check, run with a syncing role's DSN, reports each of these as a WARN by default and a FAIL in strict mode, with the fix the table owner runs: a hub without migration 017 (pushes keep working; the fix is `mtix sync init`), a role that cannot execute the function (a push that meets a restore collision fails until the table owner runs the printed GRANT), create events stamped with a restore epoch below 0 or above the hub's current epoch (restore-collision checks treat each as not earlier than the current epoch; the fix is the printed UPDATE, which sets each to the current epoch), and a role that can write collision rows: it holds INSERT on `sync_node_collisions` or USAGE on its sequence (a grant, or a predefined role such as `pg_write_all_data`), owns the schema that holds the sync tables, can reach, through a chain of SET ROLE and ADMIN OPTION, a role that holds either or owns that schema, or a superuser it can then SET ROLE to, has CREATEROLE before PostgreSQL 16, or is a member of `pg_execute_server_program` or `pg_write_server_files`. The check skips the table owner, roles that inherit it, and superusers. The fix is the exact REVOKE the table owner runs for a plain grant the owner made, and, for every other path, the path by name, with the chain that reaches it, which a role administrator removes (see "Hub health checks" in the user manual). `mtix sync harden --apply` revokes EXECUTE on the function from every role that is not kept, so keep each syncing role with `--keep-role`.
 
-`mtix sync doctor` runs the same verification as its `hub-privileges` check: a
-WARN (exit 0) by default when other roles can use the sync tables, which may be
-fine on a private network and blocks nothing; a FAIL (exit 2) only in strict
-mode, when `sync.keep_roles` is set, and then whenever `mtix sync harden`
-would report a finding (kept roles' grant options and grants from other
-roles, mtix objects owned by another role, and memberships that reach every
-table included, such as `superuser_membership`: a role that can SET ROLE to
-a superuser, or that holds ADMIN OPTION on a role that can), or when the
-check cannot run.
-`mtix sync init` changes no existing privilege (it creates the restore-collision functions of migration 017 without EXECUTE for PUBLIC, whatever the owner's default privileges) and `mtix sync push` issues no DDL.
+**Registry index:** the node-number registry is the unique index `sync_events_node_registry_uidx` on `sync_events`. An index of that name that is not valid or not ready (`pg_index.indisvalid` or `indisready` false, as a failed or interrupted build leaves it) is skipped by `mtix sync init`'s migration. An index that is not ready checks no new create; one that is ready but not valid still refuses a duplicate create, but queries do not use it and it must be built again. A hub that holds `sync_events` but no index of that name is a WARN in `schema current` by default (a FAIL in strict mode), with the same fix. `mtix sync doctor`'s `schema current` check fails in every mode for an index that is not valid or not ready, and `mtix sync init` prints a WARN; both print the fix: as the table owner, run `mtix sync migrate --yes` while the version gate is open. That run records the duplicate creates of every project on the hub, drops the index and builds it again, leaving the recorded duplicates out by event id: they stay in the event log unchanged. On a hub without the index whose projects hold duplicate creates, `mtix sync init` refuses and names the same fix; run `mtix sync init` again after it. A hub with more than 100 duplicate creates, or more than 3600 bytes of their event ids, or a node that lost two numbers (the remap ledger records one number per node) is refused before the build, with the count or the creates named; a refused build drops and builds nothing, but Phase 1 of the same run has already recorded the duplicates (remap and conflict rows), and the report, in text and in `--json`, still shows that sweep phase; pushes keep working, and a push whose create takes a number already in use is still renumbered. `mtix sync migrate` never reports an index that is not valid or not ready as present. Verify: in `mtix sync doctor --json` the `schema current` check has `pass: true`, and `mtix sync migrate --json` shows `registry_index` with `valid` and `ready` true.
 
-The hub stamps every event with its own restore epoch (a trigger on `sync_events`). A syncing role records restore collisions only through the hub function `record_restore_collision`, which runs as the table owner and records a collision only when the hub's own data shows an earlier-epoch create holding the number, so the role needs EXECUTE on that function and no INSERT on `sync_node_collisions`. When `mtix sync init` adds this function to an existing hub, the table owner then grants EXECUTE on it to each syncing role and revokes the privileges the least-privilege list no longer names:
+**Doctor:** `mtix sync doctor` runs the same verification as its `hub-privileges` check, as whichever role the DSN names. A **WARN** (exit 0) means roles other than the owner can use the sync tables, or a TRUNCATE guard is missing or disabled; this is acceptable for everyday use, may be fine when the database is reachable only from a private network, and blocks nothing. It is a **FAIL** (exit 2) only in strict mode (`sync.keep_roles` set), and then whenever `mtix sync harden` would report a finding: not only a role outside the list or a missing or disabled guard, but also a kept role that can grant its access on or holds a privilege another role granted it, an mtix object owned by another role, and a membership through which a role can reach every table. If the verification cannot run (hub unreachable, schema incomplete), the check is a WARN that says so by default, and a FAIL in strict mode. With `--json` the check carries `name`, `pass`, `warn`, `detail`, `fix` and `findings`. `mtix sync init` changes no existing privilege (it restores missing guards, replaces a guard bound to another function, and creates the restore-collision functions of migration 017 without EXECUTE for PUBLIC, whatever the owner's default privileges), and `mtix sync push` issues no DDL.
 
-```sql
-GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;
--- once every syncing client is upgraded:
-REVOKE INSERT ON sync_node_collisions FROM <role>;
-REVOKE USAGE ON SEQUENCE sync_node_collisions_collision_id_seq FROM <role>;
-```
+**Routine:**
+1. As the role that owns the sync tables (the one that ran `mtix sync init`; a superuser or a member of the owner role may run it too), run the dry run: `mtix sync harden`. It changes nothing.
+2. Show the user the role list at the top of the report. Every role that is not kept loses its access with `--apply`. A role other people or services use to sync must be kept with `--keep-role <role>` (repeatable); members of a kept role keep their access through it. Superusers are out of scope: harden neither checks nor changes them.
+3. Only after the user approves that list: `mtix sync harden --apply --keep-role <role>`.
+4. When the report prints `mtix config set sync.keep_roles <roles>`, show it to the user; running it records the kept roles for later runs and also turns on strict mode for `mtix sync doctor` (its `hub-privileges` check then fails, instead of warning, whenever `mtix sync harden` would report a finding, or when the check cannot run). Harden never writes the config itself.
+5. Verify: run `mtix sync harden` again and expect exit 0. `verification passed` means: apart from the table owner, superusers, and the kept roles and their members, no role holds a privilege on the sync tables, their sequences or the mtix functions (EXECUTE on the trigger functions aside), or a role membership that leads to one, ADMIN OPTION included; the owner's default privileges give such roles nothing; and every TRUNCATE guard is in place. It says nothing about superusers or about who can reach the database over the network. The REPLICATION role attribute is outside the check too: a role that has it is checked for its privileges and memberships like any other role, but not for the attribute. Review the roles that have it (`SELECT rolname FROM pg_catalog.pg_roles WHERE rolreplication;`) with the database administrator.
 
-Upgrade every syncing client first, then run the REVOKE statements; if the REVOKE comes first, an older client's push that meets a restore collision fails until that client upgrades. `mtix sync doctor`'s `schema current` check, run with a syncing role's DSN, reports each of these as a WARN by default and a FAIL in strict mode, with the fix the table owner runs: a hub without migration 017 (pushes keep working; the fix is `mtix sync init`), a role that cannot execute the function (a push that meets a restore collision fails until the table owner runs the printed GRANT), create events stamped with a restore epoch below 0 or above the hub's current epoch (restore-collision checks treat each as not earlier than the current epoch; the fix is the printed UPDATE, which sets each to the current epoch), and a role that can write collision rows: it holds INSERT on `sync_node_collisions` or USAGE on its sequence (a grant, or a predefined role such as `pg_write_all_data`), owns the schema that holds the sync tables, can reach, through a chain of SET ROLE and ADMIN OPTION, a role that holds either or owns that schema, or a superuser it can then SET ROLE to, has CREATEROLE before PostgreSQL 16, or is a member of `pg_execute_server_program` or `pg_write_server_files`. The check skips the table owner, roles that inherit it, and superusers. The fix is the exact REVOKE the table owner runs for a plain grant the owner made, and, for every other path, the path by name, with the chain that reaches it, which a role administrator removes (see "Hub health checks" in the user manual). `mtix sync harden --apply` revokes EXECUTE on it from every role that is not kept.
+**Exit codes:** 0 verification passed; 2 changes pending (dry run) or access remains after `--apply`; 1 error or refusal. With `--json` the report carries `before` and `after`, each with `caller`, `caller_scope` (`owner`, `superuser`, `kept` or `checked`), `findings` (`role`, `object`, `kind`, `privileges`, `via`, `scope`, `fix`, `manual`, `note`), `statements` and `kept_roles`, plus `executed` and `keep_roles_hint`. A finding with `fix` is changed by `--apply`; one with `manual` or `note` is not.
 
-The node-number registry is the unique index `sync_events_node_registry_uidx` on `sync_events`. An index of that name that is not valid or not ready (`pg_index.indisvalid` or `indisready` false, as a failed or interrupted build leaves it) is skipped by `mtix sync init`'s migration. An index that is not ready checks no new create; one that is ready but not valid still refuses a duplicate create, but queries do not use it and it must be built again. A hub that holds `sync_events` but no index of that name is a WARN in `schema current` by default (a FAIL in strict mode), with the same fix. `mtix sync doctor`'s `schema current` check fails in every mode for an index that is not valid or not ready, and `mtix sync init` prints a WARN; both print the fix: as the table owner, run `mtix sync migrate --yes` while the version gate is open. That run records the duplicate creates of every project on the hub, drops the index and builds it again, leaving the recorded duplicates out by event id: they stay in the event log unchanged. On a hub without the index whose projects hold duplicate creates, `mtix sync init` refuses and names the same fix; run `mtix sync init` again after it. A hub with more than 100 duplicate creates, or more than 3600 bytes of their event ids, or a node that lost two numbers (the remap ledger records one number per node) is refused before the build, with the count or the creates named; a refused build drops and builds nothing, but Phase 1 of the same run has already recorded the duplicates (remap and conflict rows), and the report, in text and in `--json`, still shows that sweep phase; pushes keep working, and a push whose create takes a number already in use is still renumbered. `mtix sync migrate` never reports an index that is not valid or not ready as present. Verify: in `mtix sync doctor --json` the `schema current` check has `pass: true`, and `mtix sync migrate --json` shows `registry_index` with `valid` and `ready` true.
+**What `--apply` changes, in one transaction:** every privilege on the sync tables (column privileges included), their sequences and the mtix functions held by PUBLIC, by the roles a data API uses for anonymous and signed-in callers, and by every other role except the owner, superusers and the kept roles; a kept role's right to grant its privileges on (first the owner grants again anything a kept role holds by another role's grant, so the kept role keeps it); the owner's default privileges toward those roles; a membership in `pg_read_all_data`, `pg_write_all_data` or (from PostgreSQL 17) `pg_maintain`, ADMIN-only memberships included, when the owner may revoke it (this is cluster-wide); a missing TRUNCATE guard, one whose trigger executes another function (compared by OID, so a function of the guard's name in another schema counts as another function; the guard migration replaces it), or one that is disabled or fires only in replication sessions (every guard ends enabled). After `--apply` every finding that remains is listed with its statement.
 
-Never pass `--apply` without the user approving the dry run's role list. Never
-run `mtix sync harden` from a hook, a push or the daemon.
+**Information, never a failure:** EXECUTE on the mtix trigger functions (they cannot be called directly) and other roles' default privileges (they do not apply to tables the owner creates). A freshly migrated hub verifies clean.
 
-## Sync Hub Backup, Restore and Conflicts
+**Troubleshooting:**
+- `refused: the connecting role does not own every sync table`: connect as the table owner and run it again. Nothing was changed.
+- `raised a server WARNING`: an mtix object named in the message is owned by another role, so the owner cannot change its privileges. Nothing was changed. A database administrator returns the object to the table owner, then run it again.
+- `the hub schema is incomplete`: run `mtix sync init` first.
+- `an administrator runs: ...`: access harden may not change, such as a read-all membership granted by another role. Give the statement to the database administrator.
+- `owner_membership`: the role is a member of the owner role (inheriting it or able to SET ROLE to it) and has all of its privileges. Harden reports it and never changes it; removing the membership is the administrator's decision. The connecting role is checked too unless it owns the sync tables, is a superuser or is kept; the report's `Connecting role` line says which. A member of the owner role that runs harden therefore always sees its own membership: when that is the only finding, the report says to run as the owner itself or keep the role.
+- `superuser_membership` (a role that can SET ROLE to a superuser, or that holds ADMIN OPTION on a role that can), or membership in `pg_execute_server_program`, `pg_read_server_files` or `pg_write_server_files`: the role can reach every table without a privilege on it. Harden reports it; an administrator removes the membership.
+- `object_owner`: an mtix function or sequence is owned by another role, which could replace or alter it. Give the printed `ALTER ... OWNER TO` statement to the database administrator.
+- `grantor`: a kept role holds a privilege that another role granted. `--apply` grants it again from the owner before revoking that role's grants, so the kept role keeps it.
+- `createrole`: before PostgreSQL 16 a CREATEROLE role can grant itself any role that is not a superuser. Harden reports it; an administrator removes CREATEROLE.
+- A member of the owner role or of a read-all role is reported even when it holds only ADMIN OPTION, because it can grant that role to itself.
+- `kept role ... does not exist` or `cannot be kept`: a kept role must exist, and PUBLIC, the data-API roles and `pg_` roles cannot be kept.
 
-Only for projects that sync through a Postgres hub; run these only when the
-user asks. Never put the DSN or a password on a command line.
+**Never:**
+- Never pass `--apply` without the user approving the dry run's role list.
+- Never run `mtix sync harden` from a hook, a push or the daemon.
+- Never read, print or paste the hub DSN to run it; it comes from `MTIX_SYNC_DSN` or `.mtix/secrets`.
 
-```bash
-mtix sync backup --output hub-<date>.sql  # pg_dump of every hub table; creates the file 0600, never overwrites
-mtix sync doctor --json                   # hub-triggers: every mtix function and trigger present, bound to its function, enabled (O or A)
-mtix sync conflicts list [--all]          # unresolved conflicts (every row, marked, with --all)
-mtix sync conflicts resolve <id> --action keep-local|keep-remote|both-renumbered|acknowledge
-```
+## Sync Hub Backup and Restore (Sync Hub Owners)
 
-The backup uses the TLS settings sync uses (`sslmode` `verify-full` when
-the DSN names none; a weaker one needs `--insecure-tls`, loopback or a
-local socket only; the CA from `sslrootcert` or `MTIX_SYNC_SSLROOTCERT`).
-`pg_dump` does not receive the DSN's `options`: for a hub whose schema is
-named only there, first
-`ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`
-(the role the DSN names, which may not be the table owner; this database
-only, and it takes precedence over a role-wide
-`ALTER ROLE <the DSN's role> SET search_path = <schema>, public`). Every hub table must exist: a hub that lacks one, such as a hub
-not initialized since an upgrade added a table, fails the backup with `a
-hub table was not found`; run `mtix sync init` with the DSN naming the
-table owner, then back up again. The same error comes when the DSN's role
-lacks USAGE on the hub's schema: run the GRANT statements the backup
-prints (the schema's owner grants USAGE on the schema: find it with
-`SELECT nspowner::regrole FROM pg_catalog.pg_namespace WHERE nspname = '<schema>';`;
-for `public` in a database created on PostgreSQL 15 or later it is
-`pg_database_owner`, that is, the database's owner; the table owner grants
-SELECT on each sync table and sync-table sequence by name, nothing else in
-the schema), then keep that role with `--keep-role` so
-`mtix sync harden --apply` leaves its access.
-Client certificates (`sslcert`, `sslkey`) are not passed to `pg_dump`, so a
-hub that requires one cannot be backed up with this command yet. A failed
-or interrupted (Ctrl-C, SIGTERM) backup leaves no file; an existing path is
-refused.
+Only for projects that sync through a Postgres hub. Run these only when the user asks. `mtix sync backup` contacts the hub only while it runs, so it does not keep a scale-to-zero database awake beyond the dump.
 
-Restore into an empty database (if the tables were in a schema other than
-`public`, create that schema first and put it first on the search_path for
-psql and for mtix; `mtix sync init`, and a `mtix sync harden --apply` that
-would restore or replace a guard, refuse, changing nothing, when another
-schema comes first, usually a schema named after the role under the default
-`"$user", public`): `psql -f <file>` as
-the role that will own the sync tables, with `PGSSLMODE=verify-full` and `PGSSLROOTCERT=<ca.pem>`
-(or `system` with libpq 16 or later) and the password in `~/.pgpass` (psql
-reports errors for the triggers; their functions do not exist yet), then,
-after checking as that role that `SHOW search_path;` puts the tables'
-schema first (not a schema named after the role), `mtix sync init` with
-the DSN naming that role, then `mtix sync doctor`
-(and `SELECT count(*) FROM sync_events;` through the DSN's role and
-search_path must equal `SELECT count(*) FROM <schema>.sync_events;` run as
-the table owner in the restored database: a mismatch shows the DSN does
-not reach the restored database, while equality with a non-zero count
-rules out only a new or empty hub, so also confirm that the DSN's host and
-database name the restored server; the count must not be zero for a hub
-that has events; being at least the source hub's count taken just before
-the backup rules out only a new or emptier hub; never compare with psql's
-unlabeled `COPY <n>` lines) until `hub-triggers` passes (its `fix` names the table owner who runs it
-and, in order, `mtix sync init` for a missing trigger or one bound to
-another function, and the `ALTER TABLE ... ENABLE TRIGGER` statement for
-one not enabled, printed on a `fix:` line without `--json`; functions are
-compared by OID; tgenabled `O` and `A` both count as enabled; a gap is a
-WARN by default, a FAIL in strict mode), then
-`mtix sync mark-restored` once, with the DSN naming the table owner, and
-`mtix sync collisions list`.
+**Back up:** `mtix sync backup --output hub-<date>.sql` runs `pg_dump` for every table the hub migrations create, with its data, and prints the table list. Every one of them must exist: a hub that lacks one, such as a hub not initialized since an upgrade added a table, fails the backup and leaves no file, and the error says to run `mtix sync init` with the DSN naming the table owner, then back up again. It needs a `pg_dump` at least as new as the hub's server, on `PATH` or named by `MTIX_PG_DUMP`. It uses the TLS settings sync uses: `sslmode` is `verify-full` when the DSN names none; a weaker `sslmode` needs `--insecure-tls` and works only when every host is loopback or a local socket; the CA file comes from `sslrootcert` in the DSN or from `MTIX_SYNC_SSLROOTCERT`, and with neither `pg_dump` verifies the hub against the system trust store (the backup says so). `pg_dump` does not receive the DSN's `options`, so it finds the sync tables through the default search_path of the role the DSN names, which may not be the table owner: for a hub whose schema is named only in the DSN, first run `ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`. It applies in that database only and takes precedence over a role-wide `ALTER ROLE <the DSN's role> SET search_path = <schema>, public`, which a setting for that role in that database overrides; a backup that cannot find a hub table prints both statements with the names filled in. Client certificates (`sslcert`, `sslkey`) are not passed to `pg_dump`, so a hub that requires one cannot be backed up with this command yet. mtix creates the output file readable and writable only by its owner (mode 0600) and never overwrites one: give every backup a new path. A failed backup, including one interrupted with Ctrl-C or SIGTERM, leaves no file.
 
-A dump holds no privileges: after `mtix sync init`, grant each syncing role
-the least-privilege list again, EXECUTE on `record_restore_collision`
-included, then run `mtix sync doctor` with a syncing role's DSN. Its
-`schema current` check names a syncing role that cannot execute the
-function.
+**Restore into an empty database (the runbook):** if the hub's sync tables were in a schema other than `public`, the dump names that schema without creating it: first create it in the empty database (`CREATE SCHEMA <schema>;`, as the owner role), and in steps 1 to 3 put it first on the search_path (`PGOPTIONS='-c search_path=<schema>'` for `psql`; `options=-c search_path=<schema>` in the DSN, or `ALTER ROLE <owner> SET search_path = <schema>, public`, for mtix).
+1. Restore the dump with `psql -f <file>`, connected to the empty database as the role that will own the sync tables. Put the connection in `PG*` variables (`PGHOST`, `PGPORT`, `PGUSER`, `PGDATABASE`, `PGSSLMODE=verify-full`, and `PGSSLROOTCERT=<ca.pem>` for the hub's CA file, or `system` for the operating system's trust store with libpq 16 or later) and the password in `~/.pgpass`, never on the command line. psql reports an error for each trigger: the dump holds no trigger functions yet.
+2. Check the owner's search_path first, above all for a hub in `public`: connected as that role, `SHOW search_path;` and `SELECT current_schema();` must put the sync tables' schema first. The default `"$user", public` puts a schema named after the role first when one exists; `mtix sync init` then refuses, changing nothing, until `ALTER ROLE <owner> SET search_path = public` (or `<schema>, public`) is run. Then run `mtix sync init`, with the hub DSN naming that owner role. It recreates every mtix function and trigger and keeps the restored data, the restore epoch included.
+3. Run `mtix sync doctor` and check `hub-triggers` (below). Then confirm the DSN reaches the restored database: as the table owner, in the restored database, run `SELECT count(*) FROM <schema>.sync_events;` with the schema named (`public` unless the hub used another), then `SELECT count(*) FROM sync_events;` as the DSN's role with the DSN's search_path. If the two counts differ, the DSN does not reach the restored database. If they are equal and not zero, that rules out only a new or empty hub: a source hub that is still reachable and holds the same events gives the same count, so also confirm that the DSN's host and database name the restored server. For a hub that has events the count must not be zero. The source hub's `sync_events` count, taken just before the backup, is a weaker reference still: the DSN's count must be at least that number (the hub only gains events), which rules out only a new or emptier hub. Never use the `COPY <n>` lines `psql` prints during the restore: they do not name their table.
+4. A dump holds no privileges: after `mtix sync init`, grant each syncing role the least-privilege list again, EXECUTE on `record_restore_collision` included, then run `mtix sync doctor` with a syncing role's DSN. Its `schema current` check names a syncing role that cannot execute the function. The least-privilege list is in step 2 of the small-team workflow.
+5. Run `mtix sync mark-restored` exactly once, with the DSN naming the table owner, then `mtix sync collisions list`. A syncing role set up with the least-privilege list holds no UPDATE on `sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs as the table owner. The least-privilege list is in step 2 of the small-team workflow (`.mtix/docs/workflows/small-team.md`) and in `docs/SECURITY-MODEL.md`.
 
-A syncing role set up with the least-privilege list holds no UPDATE on
-`sync_hub_state`, so it cannot run `mtix sync mark-restored`, which runs as
-the table owner. The least-privilege list is in step 2 of the small-team
-workflow (`.mtix/docs/workflows/small-team.md`) and in
-`docs/SECURITY-MODEL.md`.
+**Verify:** in `mtix sync doctor --json`, the `hub-triggers` check has `pass: true` and no `warn`: every function and trigger the hub migrations define exists, every trigger executes the function its migration binds (compared by OID, so a function of the right name in another schema counts as another function), and every trigger is enabled (`tgenabled` `O`, or `A` for one set to fire always; both count, as for `mtix sync harden`). Without `--json` the fix is printed on a `fix:` line under the check. A gap is a WARN (exit 0), or a FAIL (exit 2) in strict mode (`sync.keep_roles` set). Its `detail` names each missing function, missing trigger, trigger that executes another function and trigger that is not enabled, and its `fix` names the table owner who runs it (`as the table owner (<role>): ...`) and what to run, in order: `mtix sync init` for anything missing and for a trigger that executes another function (init replaces it in one transaction, so the table is never unguarded); the printed `ALTER TABLE <schema>.<table> ENABLE TRIGGER <name>;` statement for a trigger that is not enabled. Then run the doctor again.
 
-`mtix sync status` counts unresolved conflicts only (`open_conflicts`); it
-has no `conflicted` count. `resolve` records the decision only and says
-`decision recorded; node state not changed`: apply the chosen value with
-`mtix update` and push. A conflict recorded later on the same node and
-field is unresolved again. Resolve the newest conflict of a node and field:
-one with a later decision or a later conflict on its node and field is
-refused as invalid input, and the error names the newest conflict id.
-Resolving a `manual` row is refused as invalid input too.
+**Troubleshooting:**
+- `already exists`: the output path exists (a file or a symlink); choose a new path.
+- `weak sslmode requires --insecure-tls`, or `not loopback or a local socket`: the DSN names an `sslmode` weaker than `verify-full`. Use `verify-full`; `--insecure-tls` is for a development hub on loopback or a local socket only.
+- A certificate error after `system trust store (PGSSLROOTCERT=system)`: the hub's certificate comes from a private CA; set `sslrootcert=<ca.pem>` in the DSN or `MTIX_SYNC_SSLROOTCERT`.
+- `server version mismatch` from `pg_dump`: install a `pg_dump` at least as new as the hub's server and point `MTIX_PG_DUMP` at it.
+- `a hub table was not found` from `mtix sync backup` (`pg_dump` names the table above it): no file was left. If the hub has not been initialized since an upgrade added the table, run `mtix sync init` with the DSN naming the table owner, then back up again. If the hub's schema is named only in the DSN, first run the printed `ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`, which takes precedence over a role-wide `ALTER ROLE <the DSN's role> SET search_path = <schema>, public`. If the DSN's role lacks USAGE on the hub's schema, which leaves that schema off its search_path, run the GRANT statements the backup prints: the schema's owner grants USAGE on the schema (find it with `SELECT nspowner::regrole FROM pg_catalog.pg_namespace WHERE nspname = '<schema>';`; for `public` in a database created on PostgreSQL 15 or later it is `pg_database_owner`, that is, the database's owner), and the table owner grants SELECT on each sync table and sync-table sequence by name (`GRANT SELECT ON TABLE <schema>.applied_events, <schema>.audit_log, ... TO <the DSN's role>;`), so the role gets nothing else in the schema; then keep that role with `--keep-role`, so `mtix sync harden --apply` leaves its access.
+- `the sync tables are in schema …, but the first schema on the search_path is …` from `mtix sync init`, or from a `mtix sync harden --apply` that would restore or replace a TRUNCATE guard (a privilege-only `--apply` is not affected): nothing was changed. The usual cause is a schema named after the connecting role, which the default search_path (`"$user", public`) puts first. Put the sync tables' schema first on the owner's search_path (`ALTER ROLE <owner> SET search_path = public` when the tables are in `public`, else `ALTER ROLE <owner> SET search_path = <schema>, public`, or `options=-c search_path=...` in the DSN) and run it again. To keep a separate hub in the first schema instead (one hub per search_path), put that schema alone on the search_path. `mtix sync doctor`'s `hub-triggers` check states the mismatch and puts this step first in its fix.
 
-## Documentation
+## Sync Conflicts
+
+`mtix sync status` counts unresolved conflicts only (`open_conflicts` in `--json`): an lww conflict with no later manual resolution for the same node and field. It has no `conflicted` count; no sync path sets that status. `mtix sync conflicts list` shows the unresolved conflicts, and `--all` shows every row with `unresolved` true or false.
+
+`mtix sync conflicts resolve <id> --action keep-local|keep-remote|both-renumbered|acknowledge` records the decision only. Its output says `decision recorded; node state not changed` (`--json`: `decision_recorded: true`, `node_state_changed: false`). To apply the chosen value, edit the node with `mtix update` and push. The decision resolves the conflict and every earlier one on the same node and field; a conflict recorded later on that node and field is unresolved again. Resolve the newest conflict of a node and field: a conflict that already has a later decision or a later conflict on its node and field is refused as invalid input, and the error names the newest conflict id of that node and field (resolve that one; if the error says it is resolved too, the decision already stands). An id that is itself a `manual` row is refused as invalid input: resolve the conflict it answers.
+
+**Never:**
+- Never read, print or paste the hub DSN or its password; it comes from `MTIX_SYNC_DSN` or `.mtix/secrets`.
+- Never put a password on the `psql` or `pg_dump` command line.
+- Never run `mtix sync mark-restored` more than once for one restore.
+
+## Integrity Verification
+
+Run `mtix verify` to check content hash integrity across all nodes.
+
+**When to verify:**
+- After every import operation
+- After system crashes or unexpected shutdowns
+- As part of regular audit cycles
+- Before critical milestones or releases
+- Any time data integrity is in question
+
+**On hash mismatch:** Do NOT modify the affected nodes. Document the mismatch, escalate, and restore from the most recent verified backup.
+
+## Sync Recovery: Workflow State Reverted by an Older Pull
+
+Before mtix 0.5.4, `mtix sync pull` could re-apply events this machine had already pushed, and applied claims and status changes in the order they arrived. A node could be left in an older workflow state: claim, push, `mtix done`, pull left it `in_progress` with `closed_at` still set. Upgrading stops new damage but does not change nodes already reverted. `mtix sync repair --status` finds and heals them from the local sync event log. It reads and writes only the local database and never contacts the hub.
+
+**Recognize:** a node's status, assignee or agent_state is older than its own activity says (a later status change is recorded), typically after a pull on a client older than 0.5.4.
+
+**Pull first, always.** Run `mtix sync pull` before listing and again just before `--apply`. A repair that changes the status emits an event stamped with this machine's newest Lamport clock; on a log that lacks a teammate's newer, unpulled change, that event can win over the change (whenever this machine's Lamport clock is ahead of it) and revert it on every machine that pulls it. A 0.5.4 pull no longer replays this machine's own events, so pulling is safe.
+
+**List (a dry run, safe at any time):**
 
 ```bash
-mtix docs generate      # Regenerate agent documentation
-mtix plugin install     # Install IDE skill files
+mtix sync pull                     # bring in every teammate's change first
+mtix sync repair --status          # list the nodes that differ; writes nothing
+mtix sync repair --status --json   # the same list as JSON
 ```
 
-## Sync Recovery
+When it lists differences, the dry run ends with a reminder to pull first (the `reminder` field in `--json`, omitted when there is no reminder).
+
+Each listed node names its winning event (its newest well-formed claim, unclaim, defer or status-change event, chosen by the rule a pull applies), when it was made, whether this machine or another machine made it, and a reason, then, per differing field, the stored and the derived value. The fields compared are status, assignee, agent_state, whether `closed_at` is set, and the progress of a node without children. The reasons:
+- `replay`: the stored state is what an older event of the node writes (shown as the replayed event), which is what an older pull left. `--apply` repairs it.
+- `derived fields`: the status is right; only `closed_at` or progress is out of date. `--apply` repairs it.
+- `FLAGGED not a replay; review`: anything else, for example newer state that arrived by importing `.mtix/tasks.json`, a status change recorded after the winning event, a difference only in the assignee or agent_state (a later `mtix update --assignee` leaves no trace), or a cancelled node whose ancestor was cancelled after its winning event (possibly a cascade cancel). `--apply` skips it.
+
+**Clock skew misleads the check in both directions.** When this machine's clock is behind a teammate's, a genuine replay can be flagged. When it is ahead, a teammate's newer state can be listed as a `replay`, and `--apply` would revert it. Before `--apply`, check each replay's winner time and whether this machine or another machine made it, and show any doubtful node to the user (`mtix show <id>`).
+
+Left alone: nodes without claim, unclaim, defer or status-change events; a blocked node with an unresolved blocker, and a node cancelled by `mtix cancel --cascade` on an ancestor without a cancel event of its own, which are not synced as events; an assignee set later with `mtix update --assignee` (flagged when it arrives by import); the wake time of this machine's own deferral; `closed_at` after this machine invalidated or restored the node.
+
+**Apply (only with the user's explicit approval):**
 
 ```bash
-mtix sync pull                             # First, and again just before --apply: a repair on a stale log can revert a teammate's newer change everywhere
-mtix sync repair --status                  # List nodes an older pull left reverted (dry run)
-mtix sync repair --status --apply          # Back up, then repair all but flagged nodes (after the user approves)
-mtix sync repair --status --apply --force  # Also repair flagged nodes, after the user reviews each one
-mtix sync push                             # Send the repair events
+mtix sync pull                     # again, just before applying
+mtix sync repair --status          # list again; apply only what is still listed
+mtix sync repair --status --apply
+mtix sync push
 ```
 
-Quarantined pulled events (MTIX-95.11): `mtix sync pull` checks every pulled event (its Lamport clock, below 2^53 and at most `sync.max_lamport_jump` above the local clock, default 4294967296; then the FR-18.7 size, shape and id rules) and holds one that fails, or whose apply fails, in a local quarantine instead of applying it; every pull retries the quarantine.
+`--apply` first writes a verified backup to `.mtix/data/backups/pre-repair-status-<UTC time>.db`; if it cannot, it stops without changing anything (free disk space and run it again). It then repairs each node that is not flagged, in its own transaction: it writes the derived state, adds an activity entry with the text `sync repair` naming the winning event, recomputes the parent's progress and re-exports `.mtix/tasks.json`. Only when the status changes does it emit a status-change event (reason `sync repair`, stamped with the winning event's time so other machines keep their `closed_at`, or with the current time if that time is in the future, since `mtix sync push` refuses an event more than a day ahead) and unblock dependents; that event fires `status.changed` hooks here and on every machine that pulls it.
 
-```bash
-mtix sync doctor                           # "quarantined events" fails while any are held
-mtix sync quarantine list                  # Read-only: event id, node, op, attempts, first seen, last attempt, reason (--json)
-mtix sync pull                             # Retries them; one waiting for a task or dependency target applies once it arrives
-```
+**Flagged nodes:** never pass `--force` on your own. Show each flagged node to the user (`mtix show <id>`, the reason, the stored and derived values); if they confirm that the stored state is the damage, run `mtix sync pull`, then `mtix sync repair --status --apply --force`, which repairs the flagged nodes too.
 
-`mtix sync clone` refuses, naming the event, and writes nothing while the hub holds an event that fails these checks. On the fresh store, recover with `mtix sync pull` alone, which quarantines that event and applies the rest. `mtix sync reconcile --discard-local` is only for a store that already holds sync state, and it deletes local tasks and unpushed changes (its dry run shows only the node count); it needs the ticket count typed at an interactive terminal (no flag supplies it), so an agent never runs it and hands it to the user: first run `mtix sync push`, confirm `mtix sync status` shows pending 0, and get the user's approval. A quarantined copy of this replica's own event does not clear by itself: the hub row is repaired first, then push, then (the user running discard-local) pull. A quarantined event from a teammate whose hub row was repaired stays quarantined too, so repairing the hub row does not clear it: the recovery is the same guarded rebuild (push, `pending` 0, the user runs discard-local, then pull); never raise `sync.max_lamport_jump` for a row the hub has repaired. Never delete quarantine rows or edit the local database, never raise `sync.max_lamport_jump` (`mtix config set sync.max_lamport_jump <positive integer>`) without the user's confirmation, and never get past a refused clone any other way; show the user the listed reasons for an event that stays quarantined.
+**Verify:** `mtix sync repair --status` lists nothing (or only flagged nodes the user chose to keep), and `mtix sync status` counts the repair events as pending until `mtix sync push` sends them.
 
-Held push events (MTIX-95.12): the sync hub accepts an event payload of at most 64 KB, while local fields can be larger. With a hub configured, a CLI change over the limit still succeeds and prints `WARN: <id>: the <field> field makes this <op> sync event <n> bytes, over the 65536-byte sync limit ...` (for MCP, an extra text block of the result); web UI, REST and gRPC changes print no warning, and imports write no sync events. `mtix sync push` holds such an event (it stays pending, recorded in the local quarantine with source `push`, never sent) and pushes the rest. The reason starts with its kind: `too large:`/`refused:` (permanent), `temporary: clock:` (stamped more than 24h ahead; every push re-checks it and releases it once it passes), or `depends on held create of <event id> (<task>)` (while a task's creation is held, none of the changes of its subtree are sent: push holds every change of that task and of the tasks below it, including changes made after the last push, finding the task by its internal id, so a change made before a renumber is still held and a change of a task that later takes an old number is not; after `mtix gc` purges a deleted task, its held changes stay held and others are checked by the number they name; the reason names the nearest held creation; known limits: if a task whose internal id a merge import changed is then renumbered on this machine, or a task renumbered on this machine is purged by `mtix gc`, its changes that no push checked before that are not recognized). A dependency link or unlink names its target by number only, so while any creation is held, every link or unlink made after it is held (reason ending `links made while a task creation is held wait for it; ...`, naming the earliest held creation) until no creation made before it is held. Once a clock hold on a creation clears, the creation and the changes of its subtree go through the ordinary push in the same run, where a renumber by the hub moves the task and re-addresses every unsent change of its subtree to the new number before any is sent (MTIX-95.37): push sends a task's creation before any change, child creation or link that depends on it, and pull never applies a teammate's change to a task of yours whose creation is not on the hub yet, whether the change names it by id or by number (as a parent, a link target, or an old client's task number): such an event is quarantined and retried after your push moves your task. After a push that reports `renumbered`, find your task by title, not by its old number, and run `mtix sync pull` and `mtix sync status`. A teammate's events the hub already holds under an old number from before this fix stay there, and a fresh `mtix sync clone` of such a hub can fail with `node <id> (uid=""): not found`; there is no recovery in this version (tracked as MTIX-95.37.1), so report it to whoever runs the hub. Push checks each of those changes first; one the hub would refuse stays held under its own reason, and a child creation among them keeps its own subtree held. A creation held permanently keeps its whole subtree held.
+**Recover:** to undo a repair before `mtix sync push`, stop every mtix process (the MCP server, `mtix serve` and the sync daemon), copy the backup over `.mtix/data/mtix.db`, delete `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm` (a stale write-ahead log would replay old writes onto the restored file), then continue. After the push a restore does not undo it, because the next pull brings the repair events back; change the node's status with the normal commands instead.
 
-```bash
-mtix sync doctor                           # "held push events" fails while any are held; lists "<node> <op>: <fix> (reason: ...)"
-mtix sync status                           # "held push events" (held_push_events in --json); held events stay in pending
-mtix sync quarantine list --json           # Read-only; held push events have "source": "push"
-```
+## Sync Recovery: Quarantined Pulled Events
 
-Follow doctor's fix per event: a field edit over the limit, shorten or split the field and save it again (the new event pushes); a held task creation, stop editing the task and show the user (no automatic re-send in this release); a dependent resolves with the held creation it depends on, and a held link pushes once no creation made before it is held (do not re-create it); a clock hold, check this machine's clock (the event pushes once its stamp is within 24 h of the clock, and a creation's subtree pushes with it). Permanent holds and their dependents stay listed (no command in this release releases or discards one). Never delete quarantine rows, and never use `mtix sync reconcile --discard-local` (it deletes local tasks and unpushed changes, so it needs `mtix sync push` and `pending` 0 first, then asks for the ticket count, typed at an interactive terminal, so it cannot run unattended) to clear held events.
+`mtix sync pull` checks every event it receives before applying it: first its Lamport clock (below 2^53, and at most `sync.max_lamport_jump` above the local clock; default 4294967296, that is 2^32), then the same size, shape and id rules the hub applies at push (payload at most 64 KB and 10 levels deep, at most 100 vector-clock entries, well-formed author, machine and project ids, a hub row that decodes). An event stamped more than 24 hours ahead of this machine's clock is applied with a `WARN`. Each event applies on its own: an event that fails a check or its apply (for example a dependency whose target has not arrived) is rolled back and kept in the local table `sync_quarantine` (in `.mtix/data/mtix.db`), and the pull goes on. A quarantined event never changes the local clock and is never lost, and one refused for its clock never moves the pull cursor. Every pull retries the quarantine at its start, before it contacts the hub, and again at its end when it applied events; an event that applies, or that the store has already applied, leaves the quarantine. Retries are local and add no hub query, so they do not keep a scale-to-zero database awake; an event refused for its clock is downloaded again by each pull.
 
-A pending queue that never drained (MTIX-95.3): push marks an event pushed only after the hub confirms the batch, so an event the hub committed stays pending when the confirmation is lost (a connection dropped during the commit), when mtix crashed or the disk failed or filled up before the local mark, or when push retried after a network drop. Before 0.5.4 the hub confirmed only events it inserted, so these stayed pending forever, and 100 of them at the head of the queue stopped every later push while `mtix sync push` reported success (`mtix sync status` pending never going down; `mtix sync doctor` failing `queue draining`). Push now acknowledges events already on the hub: an event whose id the hub holds with the same task, operation and payload is confirmed and marked pushed. After upgrading, run `mtix sync push` once; nothing else is needed (no hub change; the check is one more query within a push, only for a batch holding events the hub already had).
+**Recognize:** `mtix sync doctor` fails its `quarantined events` check (exit 2; with `--json` the check has `"pass": false` and the detail); `mtix sync status` shows `quarantined events` above 0 (`quarantined_events` in `--json`); a pull prints `quarantined event <id> (<pass> pass): <reason>` on stderr and `quarantine: N pulled events held, not applied` at the end.
 
-```bash
-mtix sync push                             # stderr: "push progress: batch <n> (<sent> sent, <accepted> accepted: <i> inserted, <p> already on the hub; ...)"
-                                           # stdout: "push complete: <n> events pushed across <b> batches (<i> inserted, <p> already on the hub); ..."
-mtix sync status                           # verify: pending 0 (held push events stay counted in pending)
-mtix sync doctor                           # verify: "queue draining" passes
-```
+**Routine:**
+1. Run `mtix sync pull` again. Events that were waiting for a task or a dependency target apply once it has arrived.
+2. If `mtix sync doctor` still fails the check, list the quarantine (read-only; it changes nothing and does not contact the hub):
+   ```bash
+   mtix sync quarantine list          # event id, node, op, attempts, first seen, last attempt, reason
+   mtix sync quarantine list --json   # the same as an array, plus lamport_clock, source and cli_version
+   ```
+   `reason` is why the event was first quarantined; `attempts` counts every failed try; `source` is `pull` (the cursor pass) or `sweep` (the late-event sweep).
+3. Read each reason:
+   - `not found` or `FOREIGN KEY`: the event needs a task or dependency target this replica does not hold yet. Ask the teammate who made it to run `mtix sync push`, then pull again.
+   - `envelope validation` (payload too large or too deep, a vector clock over its caps, an id that does not match its grammar, a hub row that does not decode): the hub holds an event that a correct client never pushes. It will not apply by itself. Show the user the event ids and reasons, for whoever runs the hub.
+   - `lamport_clock at or above 2^53`: the event's clock is past the overflow guard. It will never apply; show it to the user, for whoever runs the hub.
+   - `sync.max_lamport_jump`: the event's Lamport clock is far above this replica's. If the user confirms the hub's clocks are legitimately that high, raise the bound: `mtix config set sync.max_lamport_jump <positive integer>` (only a positive integer is accepted; `mtix config delete sync.max_lamport_jump` restores the default). The next pull retries the event with the new bound.
 
-The inserted count is events this push wrote to the hub; the already-on-the-hub count is events an earlier push delivered (and a re-sent creation of a task the hub holds); both are marked pushed, and a non-zero already-on-the-hub count after an interrupted push is expected; an event already on the hub is not checked for conflicts again, so a re-push adds no conflict; after a lost commit acknowledgement a push's conflict count can read 0, so check `mtix sync conflicts list`. An event whose id the hub holds with a different task, operation or payload is never confirmed: push holds it permanently (reason `refused: the hub already holds this event id with a different <field> (hub copy: <task> <op>)`; for a task's creation its later changes and subtree are held too) and `mtix sync doctor` fails `held push events`; show the user the event id, task and reason for whoever runs the hub. Never mark events pushed by hand, delete pending events or holds, or use `mtix sync reconcile --discard-local` (it deletes local tasks and unpushed changes, so it needs `mtix sync push` and `pending` 0 first, then asks for the ticket count, typed at an interactive terminal, so it cannot run unattended) to make the queue drain.
+**Verify:** `mtix sync doctor` passes the `quarantined events` check, `mtix sync status` shows `quarantined events 0`, and `mtix sync quarantine list --json` has no event with `source` `pull` or `sweep` (events with `source` `push` are held push events: see Sync Recovery: Held Push Events).
+
+**Recover:**
+- **A refused clone on a fresh store:** run `mtix sync pull` alone. It quarantines the event and applies the rest. Clone has no quarantine: it runs the same checks on every hub event before it writes anything and refuses the whole clone, naming the event and the reason, while the hub holds an event that fails them; a clone that completes empties the quarantine because every hub event passed.
+- **Rebuilding a store that already holds sync state:** `mtix sync reconcile --discard-local` deletes local tasks and unpushed changes, and empties the quarantine with the rest of the local sync state. It needs the ticket count typed at an interactive terminal (no flag supplies it), so an agent never runs it: ask the user to run it. Its dry run shows only the node count, not what would be lost. Before asking, run `mtix sync push` and confirm `mtix sync status` shows `pending` 0. Once the user has run it, you run `mtix sync pull`, which runs the checks and quarantines again any event that still fails.
+- **A quarantined copy of this replica's own event** (its hub row was changed after the push) does not clear by itself, even after the hub row is repaired: every retry re-checks the stored copy. Recover in this order: whoever runs the hub repairs the hub row first; run `mtix sync push` and confirm `mtix sync status` shows `pending` 0; then ask the user to run `mtix sync reconcile --discard-local` (it asks for the ticket count, typed at an interactive terminal; no flag supplies it, so it cannot run unattended) and, once they have run it, run `mtix sync pull`. Discarding before the hub row is repaired drops this replica's own true copy of the event, which then comes back only as a quarantined hub event.
+- **A quarantined event from a teammate whose hub row was repaired** stays quarantined too: every retry re-checks the stored copy, so repairing the hub row does not clear it. The recovery is the guarded rebuild: run `mtix sync push` and confirm `mtix sync status` shows `pending` 0; ask the user to run `mtix sync reconcile --discard-local` (it deletes local tasks and unpushed changes and asks for the ticket count, typed at an interactive terminal, so it cannot run unattended); then run `mtix sync pull`, which fetches the repaired row. Never raise `sync.max_lamport_jump` for a row the hub has repaired: the bound is not what holds it, and it protects this replica's clock.
+
+**Never:**
+- Never delete rows from `sync_quarantine` or edit the local database to force an event in; a quarantined event is the only local copy of what the hub sent.
+- Never raise `sync.max_lamport_jump` without the user's confirmation: the bound is what keeps one extreme event from pushing this replica's clock to where the hub refuses all its later changes.
+- Never try to get past a refused `mtix sync clone` by any means other than `mtix sync pull` on the fresh store; the refusal is what keeps an event the pull would quarantine out of the store.
+- Never run `mtix sync reconcile --discard-local` yourself: it needs the ticket count typed at an interactive terminal (no flag supplies it), so it cannot run unattended; hand it over only after `mtix sync push`, with `mtix sync status` showing `pending` 0 and the user's approval, because it deletes local tasks and unpushed changes.
+- Never copy quarantined events into tickets or shared documents beyond the event ids and reasons; the raw events hold task content.
+
+## Quarantined Pulled Events: uid held by a local task
+
+A pulled `create_node` event whose uid a different local task already holds is not applied and not dropped: it is quarantined with the reason `uid <u> is held by local task <id>` and retried on every pull. `mtix sync quarantine list` shows it and the doctor's `quarantined events` check names this step.
+
+**Decide which case it is:** run `mtix show <id>` and compare it with the quarantined event's title and content. A uid names one task for good (ADR-003), so the same uid means the same task: the same title and content means the task exists twice under two ids, and different content means the uid was duplicated (an old import, a restored copy). No mtix command resolves either case in this version (tracked as MTIX-95.31.8.1; `mtix sync reconcile` keeps uids, so it does not apply).
+
+**Never:** delete the local task, edit `sync_quarantine` rows, or clear the uid yourself. Ask the user with the uid, the local task id and the event id, and stop.
+
+**Verify:** `mtix sync pull` retries it; `mtix sync doctor` passes `quarantined events` and `mtix sync quarantine list --json` no longer shows the event.
+
+## Recovery: Duplicate Task UIDs
+
+Every task has a durable uid, and no two tasks (soft-deleted ones included) may share one: the local database enforces it with a unique index. A database written by an older mtix can already hold two tasks with one uid. mtix still opens it, loses no row and changes no uid, logs `duplicate_node_uids`, and keeps the old non-unique index until the duplicates are gone.
+
+**Recognize:** `mtix verify` prints `INTEGRITY FAILURE` (with `--json`, `uid_unique_ok` is false and `uid_unique_recovery` holds the text), or `mtix sync doctor` fails its `unique node uids` check (exit 2; with `--json` the check has `"pass": false` and the detail). The detail names each shared uid and the task ids that hold it.
+
+**Fix:** (1) Back up first: `mtix backup .mtix/data/backups/pre-uid-fix.db`. (2) Decide which task keeps the uid, normally the original (the one the hub and teammates know). (3) For every other holder, clear its uid in the local database, `UPDATE nodes SET uid = '' WHERE id = '<id>';` (for example with the `sqlite3` shell on `.mtix/data/mtix.db`), while no mtix process is running. (4) Run any `mtix` command: the open gives that task a fresh uid and creates the unique index.
+
+**Synced project: ask the user; do not run the fix yourself.** The project syncs if `mtix sync status` shows a `project_prefix` other than `-` or a `pushed` or `applied` count above 0, `MTIX_SYNC_DSN` is set, or `.mtix/secrets` exists (when in doubt, treat the project as synced). A task given a new uid has no create event on the hub or at any peer, and events already queued locally under the shared uid are applied to the other holder, not to it. No mtix command repairs this on a synced project in this version (tracked as MTIX-95.31.8.1). Report the uids and task ids from the detail, ask the user to run `mtix sync push` until `mtix sync status` shows `pending` 0 before anything is changed, and stop.
+
+**Verify:** `mtix verify` prints `All node uids unique` and `mtix sync doctor` passes the `unique node uids` check.
+
+**Never:** delete a task row to remove a duplicate, or edit uids on tasks that are not listed.
+
+## Sync Recovery: Held Push Events
+
+The sync hub accepts an event payload of at most 64 KB (65536 bytes); local fields can be larger (a new task's prompt may be 100 KB and its description 50 KB; acceptance criteria, comments and later edits of a description or prompt have no local size limit). A change whose sync event is over the limit is saved locally, but the hub would refuse it. `mtix sync push` checks each pending event with the hub's rules before it sends a batch and **holds** an event the hub would refuse: the event stays pending in the local queue, is recorded in `sync_quarantine` with source `push` and the reason, and is never sent. The rest of the batch is pushed, and later changes of other tasks keep pushing, except dependency links while a task creation is held (see below). Push contacts the hub only when it runs, as before; holding adds no hub query.
+
+The reason starts with the kind of hold:
+- `too large: ...` or `refused: ...` — **permanent**: a payload over the limit, a broken nesting-depth, id or Lamport/vector-clock cap rule, or an event id the hub already holds with other content (`refused: the hub already holds this event id with a different ...`; see Sync Recovery: A Pending Queue That Never Drained). It stays held.
+- `temporary: clock: ...` — the event is stamped more than 24 hours ahead of this machine's clock. Every push checks it again and releases it once it passes.
+- `depends on held create of <event id> (<task>)` — while a task's creation is held, none of the changes of its subtree are sent. In 0.5.x an event names its task by display number only, so push holds every change of that task, the creation of its child tasks at any depth and every change of those, including changes made after the last push. Push finds the task a change is about by the task's internal id, not its number, so a change made before the task was renumbered (by `mtix import --mode merge --confirm` on this machine, or by a renumber the hub asks for during a push) is still held, and a change of another task that later takes one of its old numbers is not. The same holds when the task's internal id changed after its creation was queued: a merge import (`mtix import --mode merge`, or the automatic import after a git pull) can give the task the id the board holds for it, and a creation queued by an mtix from before changes carried an internal id has none. Push then finds the task by the creation's own id or else by the number the creation names, and holds its later changes and its child tasks too (a task that has taken that number since is held as well). The merge carries the adopted id onto the task's pending changes and the held copy of its creation in the same step, so the task is still found by its internal id after a later renumber on this machine. A merge that would do this is refused while `mtix sync push` runs: run it again once the push has ended. The automatic import after a git pull does the same under the push lock; while a push runs it is skipped with a one-line notice, never fails the command, and imports the pulled board on the next command. If `mtix gc` purges a deleted task of the subtree, a change already held stays held, a change of a task whose own creation is held is still found by its internal id, and any other change is checked by the number it names. Known limit: a change made under a number the task got by a renumber on this machine, which no push checked before `mtix gc` purged the task, is not recognized. The reason names the nearest held creation.
+- `depends on held create of <event id> (<task>): links made while a task creation is held wait for it; this version names a link's target by number` — a **held link**: a dependency link or unlink names the task it points to by number only, and this version keeps no record of the numbers a task had, so while any task creation is held, every link or unlink made after it is held, whatever task it names (a teammate's task that took one of the held task's old numbers included). The reason names the earliest held creation; the link pushes once no creation made before it is held.
+
+Once a clock hold on a task's creation clears, the creation and the changes of its subtree go through the ordinary push, in the same run. Push first checks each of those changes with the hub's rules: one the hub would refuse stays held under its own reason (its first-held time and attempt count are kept), and if it is a child task's creation, that child's subtree stays held with it. In the ordinary push, if a teammate took the task's number while the creation was held, the hub renumbers the creation, and push re-addresses every change of the task and its subtree to the new number before it sends any of them (see Sync Recovery: A Teammate Numbered the Same Task First). A creation held permanently keeps its whole subtree held.
+
+**Recognize:**
+- With a hub configured, a CLI command that made the change prints one line on stderr (for an MCP tool call, an extra text block in its result): `WARN: <id>: the <field> field makes this <op> sync event <n> bytes, over the 65536-byte sync limit; saved locally, but sync push will hold it and not send it (shorten or split <field>; see mtix sync doctor)`; for a task's creation (op `create_node`) the line ends `saved locally, but this task's creation will be held with every later change of it; do not edit it to fix this; see mtix sync doctor`. The change itself succeeded. Changes made through the web UI, the REST API or gRPC (`mtix serve`) print no warning; push still holds their events and doctor reports them. Imports (`mtix import`, the automatic import of `.mtix/tasks.json`) write no sync events, so nothing they write is pushed, held or warned about.
+- `mtix sync push` prints `push: held event <event id> (<node> <op>), not pushed: <reason>` on stderr for each newly held event, `push: released held event ...` for each hold it releases, and `held: N events not pushed ...` at the end.
+- `mtix sync doctor` fails its `held push events` check (exit 2; with `--json` the check has `"pass": false`) and lists up to five held events as `<node> <op>: <fix> (reason: <reason>)`.
+- `mtix sync status` shows `held push events` above 0 (`held_push_events` in `--json`). Held events also stay in `pending`, so `pending` does not reach 0 while any is held.
+
+**Routine:** run `mtix sync doctor` and follow the fix it names for each held event (`mtix sync quarantine list --json` lists them all, read-only; keep the entries whose `source` is `push`):
+- **Field edit over the limit** (fix: `shorten or split the field; the next edit pushes`): shorten that field on the node, or split its content (for example move part of a long prompt or description into child tasks), and save it again (`mtix update <id> --prompt ...`, `mtix prompt <id> ...`, `mtix update <id> --description ...`, `mtix update <id> --acceptance ...`). Then run `mtix sync push`; the new event pushes.
+- **Held task creation** (op `create_node`; fix: `stop editing this task and escalate`): stop editing that task and show the user the node id and the reason. Shortening a field does not help: the creation itself must be sent, and there is no automatic re-send in this release. The task, its later changes and its subtree stay local.
+- **Dependent** (fix: `resolves with the held creation it depends on`): nothing to do for the event itself; handle the creation it names.
+- **Held link** (fix: `a link made while a task creation is held; it pushes once no creation made before it is held ...`): nothing to do for the link itself; handle the creation it names. Do not re-create the link to get it through: the new link waits the same way.
+- **Clock hold** (fix: `check this machine's clock; the event pushes once its stamp is within 24 h of the clock`): tell the user this machine's clock was ahead when the change was made, or is behind now. The event pushes on the first push after its stamp is within 24 hours of the clock; if it is a task's creation, the changes of its subtree push with it.
+
+**Verify:** `mtix sync push` prints no new `push: held event` line for your edit, and the node's new value reaches teammates on their next `mtix sync pull`; a released clock hold prints `push: released held event`. Permanent holds and their dependents stay held and listed: `mtix sync doctor` keeps failing its `held push events` check and `mtix sync status` keeps counting them, because this release has no command to release or discard one held event. Tell the user which held events your edit supersedes.
+
+**Never:**
+- Never delete rows from `sync_quarantine` or edit the local database to release or remove a held event.
+- Never keep editing a task whose creation is held: its changes stay local with it.
+- Never run `mtix sync reconcile --discard-local` to clear held events: it deletes every unpushed change and local task along with them, and `mtix sync push` leaves held events pending, so `pending` will not reach 0 while events are held. It needs the ticket count typed at an interactive terminal (no flag supplies it), so it cannot run unattended; ask the user, naming the held events that would be discarded.
+- Never raise or bypass the 64 KB limit; it is the hub's limit, not a setting.
+
+## Sync Recovery: A Teammate Numbered the Same Task First (Renumbered Creations)
+
+Two replicas that create a task with the same number offline (both make `PROJ-1.1`) meet at the hub: it keeps the first and tells the second to renumber, and `mtix sync push` reports `<n> renumbered`. Nothing is lost and no command is needed. What this version guarantees, and how to check it:
+
+- **A creation goes first.** Push sends no change about a task, no creation or change of a task below it and no dependency link to or from it while that task's creation is not yet on the hub. Such changes wait in `pending` and go in a later batch of the same push, so a push that has both shows two or more batches. A creation that never reaches the hub (held, or blocked by a restore collision) keeps everything that depends on it back.
+- **A renumber moves the whole task.** When the hub renumbers a creation, mtix moves the task and its subtree to the next free number in one step and re-addresses every unsent change of the subtree, the creation of each child task and every unsent link into it to the new numbers. Nothing of the task is sent under the old number, which now belongs to the teammate's task. A task you deleted locally is renumbered too, and its delete follows it. A change the hub already holds is history and keeps the number it was sent under.
+- **Pull never crosses the two tasks.** A change carries its task's internal id and applies by it, so it never lands on a task of another id. An event that names a number instead (a creation's parent, a link's or unlink's target, the task itself for a change from a client at 0.5.3 or older that carries no id) is refused when that number, or one above it, belongs to a task of yours whose creation is not yet on the hub. The event is quarantined (`mtix sync quarantine list`, reason `number held by a task whose creation is not on the hub yet`) and applied by the quarantine retry after your push has moved your task; nothing of it is applied to your task, and it is not dropped. Every later event of the teammate's about that creation (an edit, claim, comment, delete, child or link) is quarantined behind it (reason `depends on a quarantined create <event id>`) and applied after it, in order.
+
+**Verify:**
+1. `mtix sync push`, then `mtix sync pull`, then `mtix sync status`: `pending` 0. A pull that had quarantined the teammate's creation prints `pull: <n> quarantined events applied on retry; 0 still quarantined`.
+2. `mtix show <old number>` shows the teammate's task, unchanged, and `mtix show <new number>` shows yours with its claim, edits, child tasks and links. The new number is the one `mtix list` shows for your task's title.
+3. `mtix sync doctor` passes.
+
+**Recover:** if `mtix sync quarantine list` still lists the teammate's creation after a push and a pull, run `mtix sync push` and `mtix sync pull` again; an event that stays quarantined for another reason follows Sync Recovery: Quarantined Pulled Events. Update any commit or PR text that names the old number of your task. Events that a client from before this fix pushed to the hub under an old number stay there (hub history is never rewritten), and a fresh `mtix sync clone` of such a hub can fail with `node <id> (uid=""): not found`; no recovery exists in this version (a clone applies a batch in one transaction and does not quarantine); it is tracked as MTIX-95.37.1, so report the error to whoever runs the hub and do not retry the clone.
+
+Version note: sync protocol 2 (ADR-006) replaces how this is done, not what it guarantees. A renumber then stops rewriting events and emits a `rebind` identity event, links carry both tasks' internal ids, and every event keys on its uid, so the re-addressing and the by-number fallbacks above are no longer needed once a hub is cut over. Until then this section applies.
+
+- Never edit the local database, or delete `sync_events` or `sync_quarantine` rows, to move a task or release an event.
+- Never assume a task kept its number after a push that reports `renumbered`: look it up by title.
+
+## Sync Recovery: A Pending Queue That Never Drained (Events Already on the Hub)
+
+An event can reach the hub without this replica recording it: push marks an event `pushed` locally only after the hub confirms the batch. The confirmation is lost when the connection drops during the commit, when mtix crashes or the disk fails or fills up after the hub committed and before the local mark, or when push retries after a network drop (after a commit error the transport runs the whole batch again, and the hub already holds what the first attempt wrote). Before 0.5.4 the hub confirmed an event only when it inserted it, so such an event stayed pending forever; push reads the queue oldest first, 100 events per batch, and stopped at a batch nothing confirmed, so 100 of them at the head of the queue stopped every later change from being pushed while `mtix sync push` still reported success. **Push now acknowledges events already on the hub:** the hub confirms an event whose id it already holds when its copy has the same task, operation and payload, and push marks it pushed and goes on. Push contacts the hub only when it runs, as before; the check is one more query within a push, only for a batch that holds events the hub already had.
+
+**Recognize:**
+- A pending queue that never drained after a lost acknowledgement (a client older than 0.5.4): `mtix sync status` shows a `pending` count that does not go down across pushes, and `mtix sync doctor` fails its `queue draining` check (`<n> events pending for >1h — pusher may be stuck`), while `mtix sync push` exits 0.
+- On this version, `mtix sync push` prints each batch on stderr as `push progress: batch <n> (<sent> sent, <accepted> accepted: <i> inserted, <p> already on the hub; <r> renumbered, <c> conflicts)` and prints up to three per-pass summary lines on stdout as `push complete: <n> events pushed across <b> batches (<i> inserted, <p> already on the hub); <r> renumbered, <c> conflicts surfaced`. Each line reports totals for that pass, and the last line describes the final pass. The **inserted** count is the events this push wrote to the hub; the **already on the hub** count is the events an earlier push had delivered (and a re-sent creation of a task the hub already holds). Both are marked pushed. A non-zero already-on-the-hub count after an interrupted or failed push is expected, not an error. An event already on the hub is not checked for conflicts again, so a re-push adds no conflict row on the hub and nothing to the `conflicts` counts. After a lost commit acknowledgement a push's `conflicts` count can read 0 although the first attempt recorded conflicts: run `mtix sync conflicts list` to see them.
+
+**Routine:** after upgrading, run `mtix sync push` once. It marks the events already on the hub pushed and pushes the rest of the queue in the same run. Nothing else is needed: no hub change, migration or local repair. If a push fails part-way (an error after some `push progress` lines), run `mtix sync push` again: events already on the hub are confirmed, never written twice.
+
+**Verify:** `mtix sync status` shows `pending` 0 (held push events stay counted in `pending`; see Sync Recovery: Held Push Events), `mtix sync doctor` passes `queue draining`, and a second `mtix sync push` prints `push complete: 0 events pushed across 0 batches (0 inserted, 0 already on the hub); 0 renumbered, 0 conflicts surfaced`.
+
+**An event under the same id with other content:** if the hub holds the event's id with a different task, operation or payload, push never confirms it, since that would mark a change pushed that teammates never received. It holds the event permanently (source `push`, reason `refused: the hub already holds this event id with a different <field> (hub copy: <task> <op>)`, naming each field that differs), prints `push: held event <event id> (<node> <op>), not pushed: <reason>. See mtix sync doctor`, and pushes the rest. `mtix sync doctor` fails `held push events` with the fix `the hub refuses this event; show the reason to the operator`, or, for a task's creation, `stop editing this task and escalate`; the later changes of that task and its subtree are then held with it. A correct client never produces this: the local copy of the event was changed after it reached the hub, or another client wrote an event under the same id. Show the user the event id, the task and the reason, for whoever runs the hub.
+
+**Never:**
+- Never mark events pushed by hand (`UPDATE sync_events ...`) or delete pending events to make the queue drain: an event the hub does not hold then never reaches teammates. Upgrade and run `mtix sync push`.
+- Never run `mtix sync reconcile --discard-local` to clear a pending queue that does not drain: it deletes every unpushed change and local task, and it needs the ticket count typed at an interactive terminal (no flag supplies it), so it cannot run unattended.
+- Never delete the hold of an event under the same id with other content, or edit the event to match the hub's copy.
 
 ## Operator-local state
 

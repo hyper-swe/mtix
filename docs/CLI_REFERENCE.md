@@ -1500,11 +1500,16 @@ Run health checks against the local store and the BYO Postgres hub:
   Queue draining         - no events older than 1h still in pending
                            (held push events aside; the held push events
                            check lists them)
+  Pending exports        - local mirror requests, count and oldest age;
+                           warns after 1h; run mtix list for protected
+                           import-first recovery (refusals need resolution)
   No orphan applied      - every applied_event has a matching node OR tombstone
   Quarantined events     - no pulled event is held in the local quarantine;
                            each pull retries them ('mtix sync quarantine list')
   Unique node uids       - no two tasks share a uid; names each uid, its tasks
                            and the recovery (see 'mtix verify')
+  sync.exchange-record   - local received provenance and recorded omission;
+                           this check does not contact the hub
   Held push events       - push holds no event the hub would refuse (such as
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
@@ -1769,14 +1774,15 @@ is applied with a warning. Each event applies in its own savepoint: one
 that fails a check or its apply is rolled back, kept in the local
 quarantine (table sync_quarantine), and the pull goes on past it; the
 cursor never moves to a refused clock. Every pull retries the
-quarantine first, before contacting the hub, and again after it
-applied events, so an event whose node or dependency target arrives
+quarantine first, before contacting the hub, and again after the
+cursor and sweep finish, so an event whose node or dependency target arrives
 later applies then. 'mtix sync quarantine list' shows quarantined
 events, 'mtix sync status' counts them, and 'mtix sync doctor' fails
 while any remain.
 
-Lock-free: multiple processes pulling concurrently is safe because
-applied_events dedupes on event_id.
+Pull holds nonblocking exclusive local sync ownership while applying
+events and recording completed received provenance. A contended local
+sync lock refuses the pull; retry after the current owner finishes.
 
 Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.
 
@@ -1800,8 +1806,9 @@ the command is a no-op until new mutations land.
 
 Acquires .mtix/data/sync.push.lock so concurrent agents on one
 machine never stampede the hub. If the lock is held by another
-process, exits cleanly without error (the holder will drain the
-queue). Use --force to bypass the lock (debugging only).
+process, exits cleanly without error; queued work remains pending.
+A drained pusher rechecks after unlocking, up to three passes. A
+non-pusher lock holder does not drain the queue. Use --force to bypass the lock (debugging only).
 
 Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors
 so git pre-push hooks never block code pushes.
@@ -2162,7 +2169,8 @@ repair its hub.
 Show local sync state (counts + sentinels)
 
 Show the local sync queue counts plus meta sentinels. Pure local
-read — does not touch the hub. Use 'mtix sync doctor' to verify hub
+read — does not touch the hub or drain mirror requests. Pending exports
+show the logical coalesced count and oldest age separately from hub events. Use 'mtix sync doctor' to verify hub
 reachability and schema currency.
 
 A conflict is unresolved until mtix sync conflicts resolve records a

@@ -551,6 +551,7 @@ Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 - `fire` — Test hooks.yaml against a sample event (dry-run only, for now)
 - `list` — List configured hooks with their events and delivery adapters
 - `log` — Show recent hook firings (audit trail, newest first)
+- `status` — Validate operator-local state
 - `trust` — Trust the current .mtix/hooks.yaml to run exec hooks (content-hash pinned, local)
 ---
 
@@ -609,6 +610,15 @@ Show recent hook firings (audit trail, newest first)
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--limit` |  | Max entries to show | 50 |
+---
+
+## status
+
+**Usage:** `status`
+
+Validate operator-local state
+
+Validate operator-local state and report its path, availability, and corrective guidance. This command does not create state or grant hook approval.
 ---
 
 ## trust
@@ -1499,6 +1509,7 @@ Run health checks against the local store and the BYO Postgres hub:
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
+  Operator state placement - reports the sandbox placement limitation
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
   Hub triggers           - every function and trigger the hub migrations
                            define exists, every trigger executes the

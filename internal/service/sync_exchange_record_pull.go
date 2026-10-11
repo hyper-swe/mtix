@@ -60,6 +60,9 @@ func (p *ExchangePull) Complete(ctx context.Context, c ExchangePullCompletion) e
 	if b.Unresolved != 0 || b.Pending != 0 || b.SweepAfterID != "" || b.SweepAfterCreatedAt != "" || b.SweepStartedAt != "" {
 		return p.service.saveExchangeReason(ctx, "unapplied-event")
 	}
+	if b.PendingOutbound == nil || *b.PendingOutbound != 0 {
+		return p.service.saveExchangeReason(ctx, "pending-outbound")
+	}
 	r, err := buildExchangeRecord(data, "hub-pull", "", p.service.clock().UTC().Format(time.RFC3339))
 	if err != nil {
 		return err
@@ -94,6 +97,9 @@ func (s *SyncService) ExchangeRecordStatus(ctx context.Context, dir string) (Exc
 		status.WrittenAt = r.WrittenAt
 		status.Source = r.Source
 		status.BoardForm = r.BoardForm
+		if r.Boundary != nil && r.Boundary.PendingOutbound == nil {
+			status.Reason = "outbound-boundary-unknown"
+		}
 	}
 	if err != nil && !errors.Is(err, ErrNoExchangeRecord) {
 		return status, err

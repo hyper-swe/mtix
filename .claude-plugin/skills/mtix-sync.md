@@ -26,6 +26,8 @@ Successful automatic import and fully drained eligible hub pull record local rec
 
 Receipt diagnostics use fixed categories; unknown stored or supplied values report `unknown`. A completed publication failure keeps its specific category. Unexpected, missing or repeated fetched IDs prevent a new receipt without changing valid event application. Pull requires exclusive local sync ownership; retry after a contending owner finishes.
 
+A contended local sync lock makes ordinary `mtix sync pull` fail. With `MTIX_SYNC_HOOK=1`, native lock contention instead warns that the pull was not performed and returns success. Retry after the current owner finishes; no pull was completed or automatically retried. Filesystem acquisition failures and cancellation remain errors. Never delete the sync lock file to bypass its owner.
+
 ## Requirements checklist
 
 Before setup, confirm each item with the user or the database administrator:
@@ -155,7 +157,7 @@ For a development hub on this machine (loopback or a local socket only), `--inse
 - At session start run `mtix sync push`, then `mtix sync pull`. Push first, so a pull never runs while local changes are unpushed.
 - After you change tasks, run `mtix sync push`.
 - `mtix sync status` shows the local queue (`pending`, quarantined and held events, open conflicts) and does not contact the hub.
-- In a git hook or script, set `MTIX_SYNC_HOOK=1`: a transient hub error then prints a warning and the command continues, so it never blocks a code push.
+- In a git hook or script, set `MTIX_SYNC_HOOK=1`: a transient hub error then prints a warning and the command continues. A busy local sync lock also warns that pull was not performed; retry after the current owner finishes.
 - After a pull, read the output for `conflicts`, `quarantined` and `renumbered`. A task number can change once when two agents created the same number; re-resolve by title, as the operating guide says.
 
 ## Cost and databases that pause when idle
@@ -188,6 +190,7 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
+| `sync lock` is busy and pull was not performed | another local sync owner is active | Retry after the current owner finishes. Hook mode warns and skips this pull; ordinary mode fails. Never remove the lock file to bypass ownership. |
 | `PG reachable` fails, or a TLS error names `MTIX_SYNC_SSLROOTCERT` | the database is unreachable or paused; the certificate chains to a private CA; a transaction-mode pooler is in use | Retry once while a paused database resumes. For a private CA ask the user to set `MTIX_SYNC_SSLROOTCERT` to the CA bundle. Use a direct or session-mode endpoint. |
 | `secrets file mode` fails | `.mtix/secrets` is looser than 0600 | Ask the user to run `chmod 600 .mtix/secrets`. |
 | `schema current` names a missing migration | the owner has not run `mtix sync init` since an mtix upgrade | Ask the table owner to run `mtix sync init`. |

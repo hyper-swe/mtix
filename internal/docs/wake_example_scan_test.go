@@ -27,12 +27,26 @@ var wakeShellLineRE = regexp.MustCompile(`^(?:(?:[({!][ \t]*)*(?:[A-Za-z_][A-Za-
 var wakeRawShellLineRE = regexp.MustCompile(`^(?:[({!][ \t]*)*(?:[A-Za-z_][A-Za-z_0-9]*=|(?:[0-9]*[A-Za-z_][A-Za-z_0-9./-]*|[./][A-Za-z_0-9./-]*|"[^"\n]+"|'[^'\n]+')+[ \t]|[0-9]*[<>])`)
 var wakeInlineRE = regexp.MustCompile("`([^`\\n]+)`")
 
+var wakeAssignmentOriginRE = regexp.MustCompile(`^(?:[({!][ \t]*)*[A-Za-z_][A-Za-z_0-9]*=`)
+
+func wakeShellCaptureOrigin(line string) bool {
+	if !wakeAssignmentOriginRE.MatchString(line) {
+		return false
+	}
+	for _, capture := range wakeCaptureAssignmentRE.FindAllStringSubmatch(line, -1) {
+		if capture[2] == "`" {
+			return true
+		}
+	}
+	return false
+}
+
 func wakeCommandLines(text string) []string {
 	text = strings.ReplaceAll(text, "\\\n", " ")
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		plain := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))
-		if wakeRawShellLineRE.MatchString(plain) && strings.Contains(plain, "$") {
+		if (wakeRawShellLineRE.MatchString(plain) && strings.Contains(plain, "$")) || wakeShellCaptureOrigin(plain) {
 			lines = append(lines, plain)
 			continue
 		}
@@ -74,7 +88,7 @@ func wakeLaunchProblems(text string) []string {
 }
 
 func wakeNeedsInputCheck(line string, inputs map[string]bool) bool {
-	if wakeReferencesInput(line, inputs) || len(wakeSourceCaptures(line)) > 0 {
+	if wakeReferencesInput(line, inputs) || len(wakeSourceCaptures(line)) > 0 || wakeShellCaptureOrigin(line) {
 		return true
 	}
 	if wakeOtherInputForms[line] {

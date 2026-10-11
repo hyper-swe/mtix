@@ -70,9 +70,13 @@ resolve_tool() {
 MTIX_BIN=$(resolve_tool "${MTIX_BIN:-mtix}") || { report 'mtix executable unavailable'; exit 127; }
 HARNESS_BIN=$(resolve_tool "${HARNESS_BIN:-claude}") || { report 'harness executable unavailable'; exit 127; }
 
+stop_renewal() {
+    if [ -n "$RENEWER" ]; then kill "$RENEWER" 2>/dev/null || :; wait "$RENEWER" 2>/dev/null || :; RENEWER=; fi
+}
+
 stop_children() {
     if [ -n "$CHILD" ]; then kill "$CHILD" 2>/dev/null || :; wait "$CHILD" 2>/dev/null || :; CHILD=; fi
-    if [ -n "$RENEWER" ]; then kill "$RENEWER" 2>/dev/null || :; wait "$RENEWER" 2>/dev/null || :; RENEWER=; fi
+    stop_renewal
 }
 
 cleanup() {
@@ -107,15 +111,25 @@ if [ "$STATUS" -eq 6 ]; then HOLDER=; exit 0; fi
 if [ "$STATUS" -ne 0 ]; then report "lease acquisition failed ($STATUS): $HOLDER"; HOLDER=; exit 1; fi
 
 PARENT=$$
+stop_renewal_commands() {
+    if [ -n "$SLEEP_PID" ]; then kill "$SLEEP_PID" 2>/dev/null || :; wait "$SLEEP_PID" 2>/dev/null || :; SLEEP_PID=; fi
+    if [ -n "$RENEW_PID" ]; then kill "$RENEW_PID" 2>/dev/null || :; wait "$RENEW_PID" 2>/dev/null || :; RENEW_PID=; fi
+}
+
 renew_loop() {
-    SLEEP_PID=
-    trap 'if [ -n "$SLEEP_PID" ]; then kill "$SLEEP_PID" 2>/dev/null || :; wait "$SLEEP_PID" 2>/dev/null || :; fi; exit 0' TERM INT HUP
+    SLEEP_PID= RENEW_PID= STOPPING=
+    trap 'STOPPING=1; stop_renewal_commands' TERM INT HUP
     while kill -0 "$PARENT" 2>/dev/null; do
         sleep 60 & SLEEP_PID=$!
-        wait "$SLEEP_PID" || exit 0
+        if [ -n "$STOPPING" ]; then stop_renewal_commands; return 0; fi
+        wait "$SLEEP_PID" || return 0
         SLEEP_PID=
         kill -0 "$PARENT" 2>/dev/null || exit 0
-        if "$MTIX_BIN" inbox lease acquire --agent "$AGENT" --holder "$HOLDER" --ttl 15m >/dev/null; then STATUS=0; else STATUS=$?; fi
+        "$MTIX_BIN" inbox lease acquire --agent "$AGENT" --holder "$HOLDER" --ttl 15m >/dev/null & RENEW_PID=$!
+        if [ -n "$STOPPING" ]; then stop_renewal_commands; return 0; fi
+        if wait "$RENEW_PID"; then STATUS=0; else STATUS=$?; fi
+        RENEW_PID=
+        [ -z "$STOPPING" ] || return 0
         if [ "$STATUS" -eq 6 ]; then kill -USR1 "$PARENT" 2>/dev/null || :; exit 0; fi
         [ "$STATUS" -eq 0 ] || report "lease renewal failed ($STATUS); TTL recovery remains available"
     done
@@ -138,10 +152,11 @@ while :; do
         CHILD=
         [ "$STATUS" -eq 0 ] || report "harness exited ($STATUS); rechecking pending events"
     fi
+    stop_renewal
     if OUTCOME=$("$MTIX_BIN" inbox lease release --agent "$AGENT" --holder "$HOLDER" --ttl 15m 2>&1); then STATUS=0; else STATUS=$?; fi
     if [ "$STATUS" -ne 0 ]; then report "lease release failed ($STATUS): $OUTCOME"; exit 1; fi
     case "$OUTCOME" in
-        relaunch) : ;;
+        relaunch) renew_loop & RENEWER=$! ;;
         released) HOLDER=; exit 0 ;;
         *) report 'unexpected lease release outcome'; exit 1 ;;
     esac

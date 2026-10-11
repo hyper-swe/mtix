@@ -66,7 +66,7 @@ func wakeMetadataCommand(word string) bool {
 	switch word {
 	case "if", "while", "for", "case", "trap", "[", "then", "else", "fi", "do", "done", "esac", "break", "continue", "exit", "return", ":", "}":
 		return true
-	case "report", "resolve_tool", "stop_children", "cleanup", "interrupted", "lost_lease", "renew_loop":
+	case "report", "resolve_tool", "stop_children", "stop_renewal", "stop_renewal_commands", "cleanup", "interrupted", "lost_lease", "renew_loop":
 		return true
 	case "kill", "wait", "sleep", "printf", "mkdir", "chmod", "date", "dirname", "basename", "cd", "pwd":
 		return true

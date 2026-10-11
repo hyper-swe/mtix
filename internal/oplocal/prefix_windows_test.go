@@ -16,8 +16,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func TestState_ValidateConfiguration(t *testing.T) {
-	for _, spelling := range []string{"case01", "case02", "case03", "case04", "case05"} {
+func TestState_ExclusionPrefixSpellings_RefusesBeforeCreation(t *testing.T) {
+	for _, spelling := range []string{"extended_path", "relative_prefix", "short_path", "directory_symlink", "raw_parent_component"} {
 		for _, operation := range stateOperations() {
 			t.Run(spelling+"/"+operation, func(t *testing.T) {
 				root := safeFixtureRoot(t)
@@ -25,14 +25,14 @@ func TestState_ValidateConfiguration(t *testing.T) {
 				require.NoError(t, os.Mkdir(prefix, 0700))
 				excluded := windowsPrefixSpelling(t, root, prefix, spelling)
 				absent := filepath.Join(prefix, "missing")
-				if spelling == "case05" {
+				if spelling == "raw_parent_component" {
 					absent = filepath.Join(root, "other", "missing")
 				}
 				config := filepath.Join(absent, "next", "config")
 				input := excluded + `\missing\next`
 				s := New(Env{GOOS: "windows", Home: root, Values: map[string]string{"APPDATA": config, "CODEX_HOME": input}})
 				require.Equal(t, excluded+`\missing\next`, s.env.Values["CODEX_HOME"])
-				if spelling == "case05" {
+				if spelling == "raw_parent_component" {
 					require.Equal(t, prefix+`\..\other\missing\next`, s.env.Values["CODEX_HOME"])
 					require.Contains(t, s.env.Values["CODEX_HOME"], `\..\`)
 				}
@@ -45,14 +45,14 @@ func TestState_ValidateConfiguration(t *testing.T) {
 func windowsPrefixSpelling(t *testing.T, root, prefix, spelling string) string {
 	t.Helper()
 	switch spelling {
-	case "case05":
+	case "raw_parent_component":
 		return prefix + `\..\other`
-	case "case01":
+	case "extended_path":
 		return `\\?\` + prefix
-	case "case02":
+	case "relative_prefix":
 		setFixtureWorkingDirectory(t, root)
 		return filepath.Base(prefix)
-	case "case04":
+	case "directory_symlink":
 		alias := filepath.Join(root, "alias")
 		err := os.Symlink(prefix, alias)
 		if errors.Is(err, windows.ERROR_PRIVILEGE_NOT_HELD) || errors.Is(err, os.ErrPermission) {
@@ -60,7 +60,7 @@ func windowsPrefixSpelling(t *testing.T, root, prefix, spelling string) string {
 		}
 		require.NoError(t, err)
 		return alias
-	case "case03":
+	case "short_path":
 		text, err := windows.UTF16PtrFromString(prefix)
 		require.NoError(t, err)
 		buffer := make([]uint16, 32768)
@@ -77,7 +77,7 @@ func windowsPrefixSpelling(t *testing.T, root, prefix, spelling string) string {
 	return ""
 }
 
-func TestOpenDirectory_ValidateConfiguration(t *testing.T) {
+func TestOpenDirectory_ProspectiveExclusionRoot_RefusesBeforeCreation(t *testing.T) {
 	root := safeFixtureRoot(t)
 	absent := filepath.Join(root, "missing")
 	_, err := openDirectory(filepath.Join(absent, "next", "mtix"), true, []string{absent})
@@ -85,7 +85,7 @@ func TestOpenDirectory_ValidateConfiguration(t *testing.T) {
 	requireMissingDirectory(t, absent)
 }
 
-func TestState_ValidateMetadata(t *testing.T) {
+func TestState_DanglingExclusionAlias_AllowsUnrelatedState(t *testing.T) {
 	for _, operation := range stateOperations() {
 		t.Run(operation, func(t *testing.T) {
 			root := safeFixtureRoot(t)
@@ -102,7 +102,7 @@ func TestState_ValidateMetadata(t *testing.T) {
 	}
 }
 
-func TestState_ValidateConfigurationControls(t *testing.T) {
+func TestState_RelativeDotExclusionSibling_AllowsAbsentReadAndFirstUse(t *testing.T) {
 	root := safeFixtureRoot(t)
 	prefix := filepath.Join(root, "existing-prefix")
 	require.NoError(t, os.Mkdir(prefix, 0700))

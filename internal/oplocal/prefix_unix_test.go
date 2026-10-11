@@ -16,8 +16,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestState_ValidateConfiguration(t *testing.T) {
-	for _, spelling := range []string{"case01", "case02", "case03", "case04", "case05", "case06"} {
+func TestState_ExclusionPrefixSpellings_RefusesBeforeCreation(t *testing.T) {
+	for _, spelling := range []string{"absolute_alias_missing_suffix", "relative_existing_root", "relative_alias_missing_suffix", "nested_missing_suffix", "alias_parent_missing_suffix", "alias_dot_missing_suffix"} {
 		for _, operation := range stateOperations() {
 			t.Run(spelling+"/"+operation, func(t *testing.T) {
 				s, absent := unixPrefixState(t, spelling)
@@ -37,19 +37,19 @@ func unixPrefixState(t *testing.T, spelling string) (*State, string) {
 	excluded, absent := filepath.Join(alias, "missing"), filepath.Join(resolved, "missing")
 	config := filepath.Join(absent, "config")
 	switch spelling {
-	case "case02":
+	case "relative_existing_root":
 		setFixtureWorkingDirectory(t, root)
 		excluded, absent = "resolved", filepath.Join(resolved, "config")
 		config = absent
-	case "case03":
+	case "relative_alias_missing_suffix":
 		setFixtureWorkingDirectory(t, root)
 		excluded = filepath.Join("alias", "missing")
-	case "case04":
+	case "nested_missing_suffix":
 		excluded = filepath.Join(alias, "missing", "next")
 		config = filepath.Join(absent, "next", "config")
-	case "case06":
+	case "alias_dot_missing_suffix":
 		excluded = alias + string(filepath.Separator) + "." + string(filepath.Separator) + "missing"
-	case "case05":
+	case "alias_parent_missing_suffix":
 		deeper := filepath.Join(resolved, "deeper")
 		require.NoError(t, os.Mkdir(deeper, 0700))
 		require.NoError(t, os.Remove(alias))
@@ -59,23 +59,23 @@ func unixPrefixState(t *testing.T, spelling string) (*State, string) {
 	return New(Env{GOOS: runtime.GOOS, Home: root, Values: map[string]string{"XDG_CONFIG_HOME": config, "CODEX_HOME": excluded}}), absent
 }
 
-func TestState_ValidateMetadata(t *testing.T) {
-	for _, kind := range []string{"case01", "case02", "case03", "case04"} {
+func TestState_UnresolvableExclusionMetadata_AllowsUnrelatedState(t *testing.T) {
+	for _, kind := range []string{"dangling_symlink", "self_symlink", "file_parent", "overlong_component"} {
 		for _, operation := range stateOperations() {
 			t.Run(kind+"/"+operation, func(t *testing.T) {
 				root := safeFixtureRoot(t)
 				excluded := filepath.Join(root, "excluded")
 				cause := error(os.ErrNotExist)
 				switch kind {
-				case "case01":
+				case "dangling_symlink":
 					require.NoError(t, os.Symlink(filepath.Join(root, "absent"), excluded))
-				case "case02":
+				case "self_symlink":
 					require.NoError(t, os.Symlink(excluded, excluded))
 					cause = unix.ELOOP
-				case "case04":
+				case "overlong_component":
 					excluded = filepath.Join(root, strings.Repeat("x", 300))
 					cause = unix.ENAMETOOLONG
-				case "case03":
+				case "file_parent":
 					require.NoError(t, os.WriteFile(excluded, nil, 0600))
 					excluded = filepath.Join(excluded, "child")
 					cause = unix.ENOTDIR
@@ -89,7 +89,7 @@ func TestState_ValidateMetadata(t *testing.T) {
 	}
 }
 
-func TestState_ValidateConfigurationControls(t *testing.T) {
+func TestState_RelativeDotExclusionSibling_AllowsAbsentReadAndFirstUse(t *testing.T) {
 	root := safeFixtureRoot(t)
 	resolved := filepath.Join(root, "resolved")
 	require.NoError(t, os.Mkdir(resolved, 0700))
@@ -112,7 +112,7 @@ func TestState_ValidateConfigurationControls(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestState_ValidateMetadataControls(t *testing.T) {
+func TestState_FileExclusionRoot_AllowsUnrelatedState(t *testing.T) {
 	for _, operation := range stateOperations() {
 		t.Run(operation, func(t *testing.T) {
 			root := safeFixtureRoot(t)
@@ -125,7 +125,7 @@ func TestState_ValidateMetadataControls(t *testing.T) {
 	}
 }
 
-func TestState_ValidateProcessInput(t *testing.T) {
+func TestState_RemovedWorkingDirectory_AllowsUnrelatedState(t *testing.T) {
 	root := safeFixtureRoot(t)
 	cwd := filepath.Join(root, "cwd")
 	require.NoError(t, os.Mkdir(cwd, 0700))
@@ -136,6 +136,7 @@ func TestState_ValidateProcessInput(t *testing.T) {
 	}
 	for _, operation := range stateOperations() {
 		t.Run(operation, func(t *testing.T) {
+			root := safeFixtureRoot(t)
 			config := filepath.Join(root, "config")
 			s := New(Env{GOOS: runtime.GOOS, Home: root, Values: map[string]string{"XDG_CONFIG_HOME": config, "CODEX_HOME": "case02"}})
 			requireStateOperationAllowed(t, s, operation)

@@ -168,7 +168,7 @@ func TestEnsure_ConfiguredRootAlias_RefusesBeforeCreation(t *testing.T) {
 	_, err := os.Stat(config)
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
-func TestEnsure_ValidateConfigurationInput(t *testing.T) {
+func TestEnsure_CyclicExclusionRoot_SkipsAndCreatesState(t *testing.T) {
 	root := safeFixtureRoot(t)
 	alias := filepath.Join(root, "alias")
 	require.NoError(t, os.Symlink(alias, alias))

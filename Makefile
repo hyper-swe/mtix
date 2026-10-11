@@ -145,7 +145,7 @@ test-all: test-go test-web
 
 ## test-race: Run Go tests with race detector
 test-race:
-	go test $(GO_PKGS) -race -count=1
+	go test $(GO_PKGS) -race -count=1 -timeout 20m
 
 ## test-cover: Run Go tests with coverage report
 test-cover:

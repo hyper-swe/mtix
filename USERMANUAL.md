@@ -3267,6 +3267,12 @@ mtix gc
 
 This removes nodes that were soft-deleted longer than the retention period ago.
 
+### Upgrade ancestor reads
+
+The upgrade service provides an optional read-only Git ancestor-board reader for an import in your own checkout. It reads the common ancestor of `ORIG_HEAD` and the configured upstream, then reads that commit's `.mtix/tasks.json`; it never changes Git refs, the index, the checkout or the local database, and never fetches or prompts. A trusted supported Git installation, available local history and one unambiguous base are required. Missing history, an absent committed board, unsupported metadata or platform policy, invalid board data and the fixed time/output limits return an explained unavailable result. A Git-less or mgit-only repository has the same clean fallback; do not install a repository-supplied executable or change metadata to force a result.
+
+This reader reports graph and board provenance; it does not establish lineage of an arbitrary incoming file. The upgrade import's last-exchanged-first ancestor selection and three-way loss check are separate consumer work. Existing import refusal and recovery behavior still applies: retain the refused board, follow the printed guidance, and do not overwrite it merely because Git is available.
+
 ### Database Migration
 
 The database schema is auto-migrated on startup. If needed:

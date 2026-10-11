@@ -96,7 +96,8 @@ func singleGoTestTimeout(lines []string) (time.Duration, error) {
 	return explicitTestTimeout(command)
 }
 
-// Accept literal arguments and the two shipped package-list expansions only.
+// Accept shipped race/count flags, literal package forms and an explicit timeout.
+// Only the two shipped package-list expansions are replaced with package tokens.
 // Unsupported compound or quoted command shapes fail instead of being interpreted.
 func explicitTestTimeout(command string) (time.Duration, error) {
 	command, _, _ = strings.Cut(command, "#")
@@ -110,9 +111,6 @@ func explicitTestTimeout(command string) (time.Duration, error) {
 	var value string
 	count := 0
 	for i := 2; i < len(fields); i++ {
-		if fields[i] == "--" {
-			return 0, fmt.Errorf("timeout must be a go test flag")
-		}
 		if fields[i] == "-timeout" {
 			count++
 			i++
@@ -123,6 +121,8 @@ func explicitTestTimeout(command string) (time.Duration, error) {
 		} else if strings.HasPrefix(fields[i], "-timeout=") {
 			count++
 			value = strings.TrimPrefix(fields[i], "-timeout=")
+		} else if !supportedRaceArgument(fields[i]) {
+			return 0, fmt.Errorf("unsupported go test argument %q", fields[i])
 		}
 	}
 	if count != 1 {
@@ -168,4 +168,29 @@ func TestMakefile_TestRaceTimeout_RealBlocksIgnoreDecoys(t *testing.T) {
 	makefile := ".PHONY: test-race\n# test-race: go test -timeout 1m\ntest-cover:\n\tgo test ./... -timeout 2m\ntest-race:\n\t# go test ./... -timeout 3m\n\tgo test $(GO_PKGS) -race -count=1 -timeout=20m # -timeout 4m\nhelp:\n\techo 'test-race: -timeout 5m'\n"
 	ci := "jobs:\n  test-go:\n    steps:\n      - run: |\n          # go test ./... -timeout 6m\n          go test $(go list ./... | grep -v node_modules) -race -count=1 -timeout 20m\n  test-go-postgres-docker:\n    steps:\n      - run: go test ./... -timeout 7m\n  test-fault-injection:\n    steps:\n      - run: go test ./e2e/faultinject -timeout 12m\n"
 	require.NoError(t, raceTimeoutError([]byte(makefile), []byte(ci)))
+}
+
+func TestMakefile_TestRaceTimeout_FlagValuesRejected(t *testing.T) {
+	makefile := "test-race:\n\tgo test $(GO_PKGS) -race -count=1 -timeout 20m\n"
+	ci := "jobs:\n  test-go:\n    steps:\n      - run: go test $(go list ./... | grep -v node_modules) -race -count=1 -timeout 20m\n"
+	for _, flag := range []string{"-run", "-bench", "-args"} {
+		decoy := flag + " -timeout=20m"
+		t.Run(flag+"/local", func(t *testing.T) {
+			changed := strings.Replace(makefile, "-timeout 20m", decoy, 1)
+			require.Error(t, raceTimeoutError([]byte(changed), []byte(ci)))
+		})
+		t.Run(flag+"/CI", func(t *testing.T) {
+			changed := strings.Replace(ci, "-timeout 20m", decoy, 1)
+			require.Error(t, raceTimeoutError([]byte(makefile), []byte(changed)))
+		})
+	}
+}
+
+func supportedRaceArgument(argument string) bool {
+	switch argument {
+	case "packages", ".", "./...", "-race", "-count=1":
+		return true
+	default:
+		return false
+	}
 }

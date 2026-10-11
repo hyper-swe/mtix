@@ -14,6 +14,7 @@ import (
 )
 
 func syncExportDirectory(path string) error {
+	// #nosec G703 -- production callers select local project directories or their fixed data/export-pending subdirectories for directory durability; received board contents do not select this path.
 	dir, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open export directory for sync: %w", err)

@@ -63,7 +63,7 @@ Reads never ack — acknowledgement stays explicit.`,
 	cmd.Flags().StringVar(&format, "format", "",
 		"Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection)")
 	_ = cmd.MarkFlagRequired("agent")
-	cmd.AddCommand(newInboxAckCmd())
+	cmd.AddCommand(newInboxAckCmd(), newInboxLeaseCmd())
 	return cmd
 }
 

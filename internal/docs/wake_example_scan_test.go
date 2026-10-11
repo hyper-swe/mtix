@@ -22,17 +22,50 @@ var wakeVariableRE = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z_0-9]*)`)
 var wakeCaptureRE = regexp.MustCompile(`^([A-Za-z_][A-Za-z_0-9]*)="\$\(mtix inbox --agent (?:"\$[A-Za-z_][A-Za-z_0-9]*"|[A-Za-z_][A-Za-z_0-9-]*) --format prompt\)"$`)
 var wakeInputLineRE = regexp.MustCompile(`^printf '%s\\n' "\$(?:[A-Za-z_][A-Za-z_0-9]*|\{[A-Za-z_][A-Za-z_0-9]*\})" \| (?:claude -p|codex exec -)$`)
 var wakeEmptyRE = regexp.MustCompile(`^\[ -z "\$(?:[A-Za-z_][A-Za-z_0-9]*|\{[A-Za-z_][A-Za-z_0-9]*\})" \] && exit 0$`)
-var wakeSourceVariableRE = regexp.MustCompile(`([A-Za-z_][A-Za-z_0-9]*)=[^\n]*mtix inbox`)
+var wakeSourceVariableRE = regexp.MustCompile(`([A-Za-z_][A-Za-z_0-9]*)=["']?\$\(\s*(?:mtix|"\$MTIX_BIN") inbox[^()\n]*--format prompt[^()\n]*\)`)
 var wakeShellLineRE = regexp.MustCompile(`^(?:(?:[({!][ \t]*)*(?:[A-Za-z_][A-Za-z_0-9]*=|(?:[A-Za-z0-9_./-]+|"[^"\n]+"|'[^'\n]+'|\$\{?[A-Za-z_][A-Za-z_0-9]*\}?)+[ \t])|[<>])`)
 var wakeRawShellLineRE = regexp.MustCompile(`^(?:[({!][ \t]*)*(?:[A-Za-z_][A-Za-z_0-9]*=|(?:[0-9]*[A-Za-z_][A-Za-z_0-9./-]*|[./][A-Za-z_0-9./-]*|"[^"\n]+"|'[^'\n]+')+[ \t]|[0-9]*[<>])`)
 var wakeInlineRE = regexp.MustCompile("`([^`\\n]+)`")
+
+var wakeAssignmentOriginRE = regexp.MustCompile(`^(?:[({!][ \t]*)*[A-Za-z_][A-Za-z_0-9]*=`)
+var wakeControlPrefixRE = regexp.MustCompile(`^(?:(?:if|elif|while|until|then|do|else|!)[ \t]+|[({!][ \t]*)*$`)
+var wakeCompoundBoundaryRE = regexp.MustCompile(`;|&&|\|\|`)
+var wakeCaseArmPrefixRE = regexp.MustCompile(`^\(?[A-Za-z_0-9*?./-]+(?:[ \t]*\|[ \t]*[A-Za-z_0-9*?./-]+)*\)[ \t]*(?:![ \t]+)?$`)
+
+func wakeShellCaptureOrigin(line string) bool {
+	for _, capture := range wakeCaptureAssignmentRE.FindAllStringSubmatchIndex(line, -1) {
+		if line[capture[4]:capture[5]] == "`" && wakeCaptureCommandOrigin(line, capture[0]) {
+			return true
+		}
+	}
+	return false
+}
+
+func wakeCaptureCommandOrigin(line string, offset int) bool {
+	if wakeAssignmentOriginRE.MatchString(line) {
+		return true
+	}
+	prefix := line[:offset]
+	if wakeControlPrefixRE.MatchString(prefix) || wakeCaseArmPrefixRE.MatchString(prefix) {
+		return true
+	}
+	boundaries := wakeCompoundBoundaryRE.FindAllStringIndex(prefix, -1)
+	if len(boundaries) == 0 {
+		return false
+	}
+	last := boundaries[len(boundaries)-1]
+	if !wakeRawShellLineRE.MatchString(strings.TrimSpace(prefix[:last[0]]) + " ") {
+		return false
+	}
+	return wakeControlPrefixRE.MatchString(strings.TrimLeft(prefix[last[1]:], " \t"))
+}
 
 func wakeCommandLines(text string) []string {
 	text = strings.ReplaceAll(text, "\\\n", " ")
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		plain := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))
-		if wakeRawShellLineRE.MatchString(plain) && strings.Contains(plain, "$") {
+		if (wakeRawShellLineRE.MatchString(plain) && strings.Contains(plain, "$")) || wakeShellCaptureOrigin(plain) {
 			lines = append(lines, plain)
 			continue
 		}
@@ -54,17 +87,16 @@ func wakeCommandLines(text string) []string {
 
 func wakeLaunchProblems(text string) []string {
 	lines := wakeCommandLines(text)
-	inputs := map[string]bool{"PAYLOAD": true}
-	for _, line := range lines {
-		if capture := wakeSourceVariableRE.FindStringSubmatch(line); capture != nil {
-			inputs[capture[1]] = true
-		}
-	}
+	inputs := wakeInputVariables(lines)
+	protocol := wakeIsLeaseScript(text)
 	var problems []string
 	for _, line := range lines {
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))
 		line = strings.Join(strings.Fields(line), " ")
 		if wakeCaptureRE.MatchString(line) || wakeEmptyRE.MatchString(line) || wakeInputLineRE.MatchString(line) {
+			continue
+		}
+		if wakeLeaseLineAllowed(line, inputs, protocol) {
 			continue
 		}
 		if wakeNeedsInputCheck(line, inputs) {
@@ -75,7 +107,7 @@ func wakeLaunchProblems(text string) []string {
 }
 
 func wakeNeedsInputCheck(line string, inputs map[string]bool) bool {
-	if wakeReferencesInput(line, inputs) || wakeSourceVariableRE.MatchString(line) {
+	if wakeReferencesInput(line, inputs) || len(wakeSourceCaptures(line)) > 0 || wakeShellCaptureOrigin(line) {
 		return true
 	}
 	if wakeOtherInputForms[line] {

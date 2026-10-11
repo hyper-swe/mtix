@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"io"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/hyper-swe/mtix/internal/sync/pushlock"
 )
 
 // pushBatchSize is the per-batch event count for PushEvents per
@@ -29,8 +27,8 @@ const pushBatchSize = 100
 //
 // Singleton pusher lock per FR-18.18: acquires .mtix/data/sync.push.lock
 // before pushing. If another mtix process holds the lock, exits with
-// a non-error message (the ongoing push will eventually drain the
-// queue). --force bypasses the lock for debugging.
+// a non-error message; pending work stays durable. A drained pusher
+// rechecks after unlock, but a non-pusher holder does not drain. --force bypasses the lock for debugging.
 func newSyncPushCmd() *cobra.Command {
 	var (
 		insecureTLS bool
@@ -45,8 +43,9 @@ the command is a no-op until new mutations land.
 
 Acquires .mtix/data/sync.push.lock so concurrent agents on one
 machine never stampede the hub. If the lock is held by another
-process, exits cleanly without error (the holder will drain the
-queue). Use --force to bypass the lock (debugging only).
+process, exits cleanly without error; queued work remains pending.
+A drained pusher rechecks after unlocking, up to three passes. A
+non-pusher lock holder does not drain the queue. Use --force to bypass the lock (debugging only).
 
 Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors
 so git pre-push hooks never block code pushes.`,
@@ -75,23 +74,15 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 		return fmt.Errorf("mtix sync push: local store not initialized")
 	}
 
-	// Singleton lock per FR-18.18. Skip when --force.
-	if !force {
-		lock, err := pushlock.Acquire(app.mtixDir)
-		if errors.Is(err, pushlock.ErrLockHeld) {
-			fmt.Fprintln(stderr,
-				"mtix sync push: another process is pushing; skipping (the holder will drain the queue)")
-			return nil
-		}
-		if err != nil {
-			return wrapSyncErr(stderr, "pushlock", err)
-		}
-		defer func() { _ = lock.Release() }()
-	}
+	return pushWithHandoff(ctx, stderr, app.store, app.mtixDir, force, func() (bool, error) {
+		return pushConnected(ctx, stdout, stderr, args, opts)
+	})
+}
 
+func pushConnected(ctx context.Context, stdout, stderr io.Writer, args []string, opts transport.Options) (bool, error) {
 	dsn, err := resolveSyncDSN(args)
 	if err != nil {
-		return wrapSyncErr(stderr, "dsn", err)
+		return false, wrapSyncErr(stderr, "dsn", err)
 	}
 
 	connectCtx, cancel := context.WithTimeout(ctx, syncConnectBudget)
@@ -100,7 +91,7 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 	pool, err := transport.New(connectCtx, dsn, opts)
 	if err != nil {
 		noteSyncResult(ctx, app.store, false)
-		return wrapSyncErr(stderr, "connect", err)
+		return false, wrapSyncErr(stderr, "connect", err)
 	}
 	defer pool.Close()
 
@@ -110,7 +101,7 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 	// be computed (treated as "no identity"; the gate stays closed).
 	pool.SetClientIdentity(clientMachineHash(), version)
 
-	return pushAndReport(ctx, stdout, stderr, pool, app.store)
+	return pushAndReportState(ctx, stdout, stderr, pool, app.store)
 }
 
 // pushAndReport runs pushLoop against pool, records the outcome for the
@@ -119,10 +110,15 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 // (MTIX-95.3), the renumbered and conflict counts, then how many events push
 // holds (MTIX-95.12).
 func pushAndReport(ctx context.Context, stdout, stderr io.Writer, pool eventPusher, store *sqlite.Store) error {
+	_, err := pushAndReportState(ctx, stdout, stderr, pool, store)
+	return err
+}
+
+func pushAndReportState(ctx context.Context, stdout, stderr io.Writer, pool eventPusher, store *sqlite.Store) (bool, error) {
 	tot, err := pushLoop(ctx, stderr, pool, store)
 	if err != nil {
 		noteSyncResult(ctx, store, false)
-		return wrapSyncErr(stderr, "push loop", err)
+		return false, wrapSyncErr(stderr, "push loop", err)
 	}
 	noteSyncResult(ctx, store, true)
 
@@ -131,7 +127,7 @@ func pushAndReport(ctx context.Context, stdout, stderr io.Writer, pool eventPush
 			"%d renumbered, %d conflicts surfaced\n",
 		tot.pushed(), tot.batches, tot.inserted, tot.present, tot.renumbered, tot.conflicts)
 	printHeldPushEvents(ctx, stdout, stderr, store)
-	return nil
+	return tot.drained, nil
 }
 
 // pushLoop reads pending events from the local sync_events log in
@@ -208,6 +204,7 @@ func (r *pushRun) step() (bool, error) {
 			r.after = back // the creations the deferred events waited for are on the hub now
 			return false, nil
 		}
+		r.tot.drained = r.await.redo == nil
 		return true, nil
 	}
 	r.after = cursorAfter(events)
@@ -272,6 +269,7 @@ func (r *pushRun) send(events []*model.SyncEvent) (bool, error) {
 // sent; the renumbers and conflicts; and the events held because the hub
 // holds their id with other content.
 type pushTotals struct {
+	drained                                                       bool // Native queue exhausted without unresolved deferred events.
 	inserted, present, batches, conflicts, renumbered, mismatched int
 }
 

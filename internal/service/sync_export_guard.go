@@ -108,6 +108,7 @@ func (s *SyncService) keepPulledBoard(ctx context.Context, mtixDir string) (bool
 // missing file has nothing to protect. A non-ENOENT read error stops automatic
 // export: an existing board cannot be replaced before it has been read.
 func (s *SyncService) boardChangedOnDisk(mtixDir string) (string, bool, error) {
+	// #nosec G703 -- caller selects the local project directory; tasks.json is the fixed board filename, not a path taken from its content.
 	data, err := os.ReadFile(filepath.Join(mtixDir, "tasks.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return "", false, nil
@@ -116,6 +117,7 @@ func (s *SyncService) boardChangedOnDisk(mtixDir string) (string, bool, error) {
 		return "", false, fmt.Errorf("read board before automatic export: %w", err)
 	}
 	diskHash := fmt.Sprintf("%x", sha256.Sum256(data))
+	// #nosec G703 -- caller selects the local project directory; data/sync.sha256 is fixed local bookkeeping, not a received path.
 	stored, err := os.ReadFile(filepath.Join(mtixDir, "data", "sync.sha256"))
 	return diskHash, err != nil || string(stored) != diskHash, nil
 }
@@ -131,6 +133,7 @@ func (s *SyncService) exportBlockedByPendingImport(mtixDir string) bool {
 	if refusal == nil || refusal.ResolvedAt != "" || refusal.FileHash == "" {
 		return false
 	}
+	// #nosec G703 -- caller selects the local project directory; tasks.json is the fixed board filename, not a path taken from its content.
 	fileBytes, err := os.ReadFile(filepath.Join(mtixDir, "tasks.json"))
 	if err != nil || !s.refusalPending(mtixDir, refusal, fileBytes) {
 		return false

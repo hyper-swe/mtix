@@ -243,6 +243,8 @@ mtix sync status                           # verify: pending 0 (held push events
 mtix sync doctor                           # verify: "queue draining" passes
 ```
 
+A normal invocation prints up to three per-pass `push complete:` summary lines; each line reports totals for that pass, and the last line describes the final pass.
+
 The inserted count is events this push wrote to the hub; the already-on-the-hub count is events an earlier push delivered (and a re-sent creation of a task the hub holds); both are marked pushed, and a non-zero already-on-the-hub count after an interrupted push is expected; an event already on the hub is not checked for conflicts again, so a re-push adds no conflict; after a lost commit acknowledgement a push's conflict count can read 0, so check `mtix sync conflicts list`. An event whose id the hub holds with a different task, operation or payload is never confirmed: push holds it permanently (reason `refused: the hub already holds this event id with a different <field> (hub copy: <task> <op>)`; for a task's creation its later changes and subtree are held too) and `mtix sync doctor` fails `held push events`; show the user the event id, task and reason for whoever runs the hub. Never mark events pushed by hand, delete pending events or holds, or use `mtix sync reconcile --discard-local` (it deletes local tasks and unpushed changes, so it needs `mtix sync push` and `pending` 0 first, then asks for the ticket count, typed at an interactive terminal, so it cannot run unattended) to make the queue drain.
 
 ## Operator-local state

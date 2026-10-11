@@ -69,6 +69,7 @@ const (
 // check and the quarantine's timestamps), the sync.max_lamport_jump bound
 // and the CLI version recorded with a quarantined event.
 type pullIngest struct {
+	receipt    *pullExchangeTracker
 	stderr     io.Writer
 	now        func() time.Time
 	maxJump    int64

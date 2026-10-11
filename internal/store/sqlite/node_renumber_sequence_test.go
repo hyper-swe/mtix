@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 import (
@@ -67,6 +68,7 @@ func seqNode(id string, seq int) *model.Node {
 // counter of every parent in the moved subtree to the highest number under
 // it. A counter already above keeps its value.
 func TestRenumberSubtree_MovedSubtree_CountersCoverEveryNumber(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		seed map[string]int
@@ -102,6 +104,7 @@ func TestRenumberSubtree_MovedSubtree_CountersCoverEveryNumber(t *testing.T) {
 // the moved subtree, now under RNB-5, to the highest number under it. A
 // root counter already above (20) keeps its value.
 func TestRenumberSubtree_RootNode_CountersCoverRootsAndSubtree(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		seed map[string]int
@@ -138,6 +141,7 @@ func TestRenumberSubtree_RootNode_CountersCoverRootsAndSubtree(t *testing.T) {
 // P-1 with digits, and P-1-9, a root of the prefix P-1. Renumbering P-1.4
 // to 2 leaves P:P-1 at 2.
 func TestRenumberSubtree_NeighbourIDs_NotInParentNamespace(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	for _, n := range []seqEntry{{"P-1", 1}, {"P-1.1", 1}, {"P-1.4", 4}, {"P-123", 123}, {"P-1-9", 9}} {
@@ -155,6 +159,7 @@ func TestRenumberSubtree_NeighbourIDs_NotInParentNamespace(t *testing.T) {
 // RNB-1.4, which has a child RNB-1.4.9999999999, to 5 leaves RNB:RNB-1.5 at
 // 2; renumbering the root RNB-1 to 5 leaves RNB: at 5.
 func TestRenumberSubtree_UncountedIDs_CountersIgnoreThem(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		extra []seqEntry
@@ -187,6 +192,7 @@ func TestRenumberSubtree_UncountedIDs_CountersIgnoreThem(t *testing.T) {
 // exactly and case-sensitively: not a lowercase rnb-50, and not AXB-9 for
 // the prefix A_B, whose '_' is not a wildcard.
 func TestRenumberSubtree_RootNamespace_ExactPrefixOnly(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		nodes []seqEntry
@@ -219,6 +225,7 @@ func TestRenumberSubtree_RootNamespace_ExactPrefixOnly(t *testing.T) {
 // store can hold one, written directly; renumbering its root \u00c9A-1 to 5
 // next to \u00c9A-12 raises the root counter to 12.
 func TestRenumberSubtree_NonASCIIRootPrefix_CountsByCharacters(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	for _, n := range []seqEntry{{"EA-1", 1}, {"EA-12", 12}} {
@@ -240,6 +247,7 @@ func TestRenumberSubtree_NonASCIIRootPrefix_CountsByCharacters(t *testing.T) {
 // .4 and .21, renumbering the leaf .4 to 5 leaves AA:AA-1\u00e9 at 21. (A
 // renumber of a node with children under such a parent hits MTIX-107.66.)
 func TestRenumberSubtree_NonASCIIParent_ChildRaiseCountsByCharacters(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	parent := "AA-1\u00e9"
@@ -258,6 +266,7 @@ func TestRenumberSubtree_NonASCIIParent_ChildRaiseCountsByCharacters(t *testing.
 // renumber of the root AA-1, or of the leaf AA-1.1, to 5 next to
 // AA-2147483647 or AA-1.2147483647 leaves the counter at 2147483647.
 func TestRenumberSubtree_NextToLimitID_CounterAtLimit(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		nodes []seqEntry
@@ -287,6 +296,7 @@ func TestRenumberSubtree_NextToLimitID_CounterAtLimit(t *testing.T) {
 // PRJX-1.2. The counter of PRJX-1.2 covers the moved child, so the next
 // child claimed under PRJX-1.2 is 2.
 func TestRenumberForHubRejection_MovedSubtree_NextChildContinues(t *testing.T) {
+	t.Parallel()
 	s := newUIDTestStore(t)
 	ctx := context.Background()
 	require.NoError(t, s.CreateNode(ctx, mkNode("PRJX-1", "", "PRJX", "parent")))
@@ -311,6 +321,7 @@ func TestRenumberForHubRejection_MovedSubtree_NextChildContinues(t *testing.T) {
 // TestRenumberSubtree_CounterWriteFails_NothingMoves: when a counter cannot
 // be written, the renumber fails and its transaction moves nothing.
 func TestRenumberSubtree_CounterWriteFails_NothingMoves(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedRenumberTree(t, s)

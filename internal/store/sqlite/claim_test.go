@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 import (
@@ -16,6 +17,7 @@ import (
 
 // TestClaim_OpenNode_Succeeds verifies claim on open node.
 func TestClaim_OpenNode_Succeeds(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -35,6 +37,7 @@ func TestClaim_OpenNode_Succeeds(t *testing.T) {
 
 // TestClaim_DeferredPastNode_Succeeds verifies claim on deferred node past defer_until.
 func TestClaim_DeferredPastNode_Succeeds(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -55,6 +58,7 @@ func TestClaim_DeferredPastNode_Succeeds(t *testing.T) {
 
 // TestClaim_DeferredFutureNode_ReturnsStillDeferred verifies future-deferred rejection.
 func TestClaim_DeferredFutureNode_ReturnsStillDeferred(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -71,6 +75,7 @@ func TestClaim_DeferredFutureNode_ReturnsStillDeferred(t *testing.T) {
 
 // TestClaim_InProgressNode_ReturnsAlreadyClaimed verifies double-claim rejection.
 func TestClaim_InProgressNode_ReturnsAlreadyClaimed(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -86,6 +91,7 @@ func TestClaim_InProgressNode_ReturnsAlreadyClaimed(t *testing.T) {
 
 // TestClaim_DoneNode_ReturnsInvalidTransition verifies done node rejection.
 func TestClaim_DoneNode_ReturnsInvalidTransition(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -100,6 +106,7 @@ func TestClaim_DoneNode_ReturnsInvalidTransition(t *testing.T) {
 
 // TestUnclaim_RequiresReason verifies mandatory reason for unclaim.
 func TestUnclaim_RequiresReason(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -115,6 +122,7 @@ func TestUnclaim_RequiresReason(t *testing.T) {
 
 // TestUnclaim_SetsStatusToOpen verifies unclaim sets status to open.
 func TestUnclaim_SetsStatusToOpen(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -135,6 +143,7 @@ func TestUnclaim_SetsStatusToOpen(t *testing.T) {
 
 // TestForceReclaim_StaleAgent_Succeeds verifies force-reclaim from stale agent.
 func TestForceReclaim_StaleAgent_Succeeds(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -164,6 +173,7 @@ func TestForceReclaim_StaleAgent_Succeeds(t *testing.T) {
 
 // TestForceReclaim_ActiveAgent_ReturnsAgentStillActive verifies active agent rejection.
 func TestForceReclaim_ActiveAgent_ReturnsAgentStillActive(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -189,6 +199,7 @@ func TestForceReclaim_ActiveAgent_ReturnsAgentStillActive(t *testing.T) {
 
 // TestUnclaim_NonExistent_ReturnsNotFound verifies ErrNotFound for missing nodes.
 func TestUnclaim_NonExistent_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -198,6 +209,7 @@ func TestUnclaim_NonExistent_ReturnsNotFound(t *testing.T) {
 
 // TestUnclaim_OpenNode_ReturnsInvalidTransition verifies open->unclaim rejection.
 func TestUnclaim_OpenNode_ReturnsInvalidTransition(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -211,6 +223,7 @@ func TestUnclaim_OpenNode_ReturnsInvalidTransition(t *testing.T) {
 
 // TestClaim_NonExistent_ReturnsNotFound verifies ErrNotFound for missing claim.
 func TestClaim_NonExistent_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -220,6 +233,7 @@ func TestClaim_NonExistent_ReturnsNotFound(t *testing.T) {
 
 // TestClaim_BlockedNode_ReturnsNodeBlocked verifies blocked node claim rejection.
 func TestClaim_BlockedNode_ReturnsNodeBlocked(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -234,6 +248,7 @@ func TestClaim_BlockedNode_ReturnsNodeBlocked(t *testing.T) {
 
 // TestClaim_DeferredNoDeferUntil_Succeeds verifies deferred node with no defer_until.
 func TestClaim_DeferredNoDeferUntil_Succeeds(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -252,6 +267,7 @@ func TestClaim_DeferredNoDeferUntil_Succeeds(t *testing.T) {
 
 // TestForceReclaim_NonExistent_ReturnsNotFound verifies missing node rejection.
 func TestForceReclaim_NonExistent_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -261,6 +277,7 @@ func TestForceReclaim_NonExistent_ReturnsNotFound(t *testing.T) {
 
 // TestForceReclaim_OpenNode_ReturnsInvalidTransition verifies open node rejection.
 func TestForceReclaim_OpenNode_ReturnsInvalidTransition(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -274,6 +291,7 @@ func TestForceReclaim_OpenNode_ReturnsInvalidTransition(t *testing.T) {
 
 // TestForceReclaim_NoAgentRecord_TreatsAsStale verifies missing agent treated as stale.
 func TestForceReclaim_NoAgentRecord_TreatsAsStale(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)

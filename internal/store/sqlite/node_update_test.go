@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 import (
@@ -23,6 +24,7 @@ func priorityPtr(p model.Priority) *model.Priority { return &p }
 
 // TestUpdateNode_Title_UpdatesField verifies title update.
 func TestUpdateNode_Title_UpdatesField(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -42,6 +44,7 @@ func TestUpdateNode_Title_UpdatesField(t *testing.T) {
 
 // TestUpdateNode_MultipleFields_AllUpdated verifies multiple field updates.
 func TestUpdateNode_MultipleFields_AllUpdated(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -67,6 +70,7 @@ func TestUpdateNode_MultipleFields_AllUpdated(t *testing.T) {
 
 // TestUpdateNode_RecomputesContentHash verifies hash recomputation per FR-3.7.
 func TestUpdateNode_RecomputesContentHash(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -121,6 +125,7 @@ func TestUpdateNode_SetsUpdatedAt(t *testing.T) {
 
 // TestUpdateNode_NonExistent_ReturnsNotFound verifies ErrNotFound.
 func TestUpdateNode_NonExistent_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -132,6 +137,7 @@ func TestUpdateNode_NonExistent_ReturnsNotFound(t *testing.T) {
 
 // TestUpdateNode_SoftDeleted_ReturnsNotFound verifies deleted nodes cannot be updated.
 func TestUpdateNode_SoftDeleted_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -148,6 +154,7 @@ func TestUpdateNode_SoftDeleted_ReturnsNotFound(t *testing.T) {
 
 // TestUpdateNode_FTSUpdatedViaTrigger verifies FTS index updates when content changes.
 func TestUpdateNode_FTSUpdatedViaTrigger(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -182,6 +189,7 @@ func TestUpdateNode_FTSUpdatedViaTrigger(t *testing.T) {
 // TestUpdateNode_NonContentField_NoHashChange verifies hash is NOT
 // recomputed when only non-content fields change.
 func TestUpdateNode_NonContentField_NoHashChange(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -207,6 +215,7 @@ func TestUpdateNode_NonContentField_NoHashChange(t *testing.T) {
 
 // TestUpdateNode_PromptAndAcceptance_UpdatesFields verifies prompt/acceptance updates.
 func TestUpdateNode_PromptAndAcceptance_UpdatesFields(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -228,6 +237,7 @@ func TestUpdateNode_PromptAndAcceptance_UpdatesFields(t *testing.T) {
 
 // TestUpdateNode_AgentState_UpdatesField verifies agent_state update per FR-10.4.
 func TestUpdateNode_AgentState_UpdatesField(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -250,6 +260,7 @@ func TestUpdateNode_AgentState_UpdatesField(t *testing.T) {
 
 // TestUpdateNode_EmptyUpdate_NoOp verifies no-op update when no fields set.
 func TestUpdateNode_EmptyUpdate_NoOp(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -268,6 +279,7 @@ func TestUpdateNode_EmptyUpdate_NoOp(t *testing.T) {
 
 // TestUpdateNode_StatusViaUpdate_SetsField verifies status update via NodeUpdate.
 func TestUpdateNode_StatusViaUpdate_SetsField(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -288,6 +300,7 @@ func TestUpdateNode_StatusViaUpdate_SetsField(t *testing.T) {
 
 // TestUpdateNode_Labels_UpdatesAndRecomputesHash verifies label updates.
 func TestUpdateNode_Labels_UpdatesAndRecomputesHash(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)

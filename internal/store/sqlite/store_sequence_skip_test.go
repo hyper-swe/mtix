@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 import (
@@ -33,6 +34,7 @@ type seqEntry struct {
 // AA-1's namespace that are not in it: the root AA-123, whose id extends
 // AA-1 with digits, and AA-1-9, a root of the prefix AA-1.
 func TestNextSequence_CounterBehind_SkipsPastHighestInItsNamespace(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		nodes   []seqEntry
@@ -74,6 +76,7 @@ func TestNextSequence_CounterBehind_SkipsPastHighestInItsNamespace(t *testing.T)
 // moved past the taken numbers, NextSequence fails instead of handing out a
 // taken number.
 func TestNextSequence_SkipWriteFails_ReturnsError(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	for _, n := range []seqEntry{{"AA-1", 1}, {"AA-2", 2}, {"AA-3", 3}} {
@@ -103,6 +106,7 @@ type staleEntry struct {
 // of children and of a prefix that only starts the same do not count. For
 // a child key they are the digits after "<parent>." in its children's ids.
 func TestNextSequence_StaleProjectAndSeqColumns_SkipsByIDs(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		nodes []staleEntry
@@ -118,6 +122,7 @@ func TestNextSequence_StaleProjectAndSeqColumns_SkipsByIDs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			s := newTestStore(t)
 			ctx := context.Background()
 			for _, n := range tt.nodes {
@@ -139,6 +144,7 @@ func TestNextSequence_StaleProjectAndSeqColumns_SkipsByIDs(t *testing.T) {
 // not count it: AA-1 is taken, AA-9999999999 is ignored, and the next
 // number is 2.
 func TestNextSequence_NumberAboveBound_IgnoredBySkip(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	for _, n := range []seqEntry{{"AA-1", 1}, {"AA-9999999999", 9999999999}} {
@@ -158,6 +164,7 @@ func TestNextSequence_NumberAboveBound_IgnoredBySkip(t *testing.T) {
 // error naming the limit and leaves the counter as it was, an integer,
 // instead of overflowing it to a real number.
 func TestNextSequence_CounterAtOrPastLimit_FailsClearlyCounterUnchanged(t *testing.T) {
+	t.Parallel()
 	for _, counter := range []int64{2147483647, 9223372036854775807} {
 		t.Run(fmt.Sprintf("counter %d", counter), func(t *testing.T) {
 			s := newTestStore(t)
@@ -185,6 +192,7 @@ func TestNextSequence_CounterAtOrPastLimit_FailsClearlyCounterUnchanged(t *testi
 // above maxSequence, so NextSequence fails with an error naming the limit
 // instead of handing it out.
 func TestNextSequence_SkipPastLimit_FailsClearly(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	require.NoError(t, s.CreateNode(ctx, seqNode("AA-2147483647", 2147483647)))
@@ -203,6 +211,7 @@ func TestNextSequence_SkipPastLimit_FailsClearly(t *testing.T) {
 // leave, cannot hold a number of AA-3's namespace, so the skip does not
 // count it: the next number after AA-3.1 is 2, not 10 or 8.
 func TestNextSequence_ChildOutsideParentNamespace_NotCounted(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	for _, n := range []seqEntry{{"AA-3", 3}, {"AA-3.1", 1}} {
@@ -227,6 +236,7 @@ func TestNextSequence_ChildOutsideParentNamespace_NotCounted(t *testing.T) {
 // than the counter, 10, and never lowers the counter to 3, below a number
 // already handed out. Root and child keys.
 func TestNextSequence_CounterMovedOnBeforeSkip_NeverLowered(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		key   string
 		nodes []seqEntry
@@ -263,6 +273,7 @@ func TestNextSequence_CounterMovedOnBeforeSkip_NeverLowered(t *testing.T) {
 // case is the round-2 reviewer's probe: the counter at 4 hands out 5,
 // which AA-1.5 holds, and the skip hands out 6.
 func TestNextSequence_ChildIDOfAnotherParentRow_Counted(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		counter int
@@ -302,6 +313,7 @@ func TestNextSequence_ChildIDOfAnotherParentRow_Counted(t *testing.T) {
 // AA's namespace, and the '_' of A_B is not a wildcard, so AXB-9 is not in
 // A_B's.
 func TestNextSequence_RootNamespace_ExactPrefixOnly(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		key   string
@@ -343,6 +355,7 @@ func lowerCaseID(t *testing.T, s *sqlite.Store, id string) {
 // counter past the highest number instead of failing with the limit
 // error, which it returns only when that number is at the limit.
 func TestNextSequence_CounterRowDeletedBeforeSkip_NoFalseLimitError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		key       string
@@ -390,6 +403,7 @@ func TestNextSequence_CounterRowDeletedBeforeSkip_NoFalseLimitError(t *testing.T
 // parent AA-1\u00e9, whose children are .1, .2 and .21, the skip hands out
 // 22, not the taken 2.
 func TestNextSequence_NonASCIIParentID_CountsByCharacters(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	parent := "AA-1\u00e9"
@@ -412,6 +426,7 @@ func TestNextSequence_NonASCIIParentID_CountsByCharacters(t *testing.T) {
 // and the skip (a test trigger), AA-2147483646 is taken and the counter
 // is at 2147483645.
 func TestNextSequence_SkipToLimit_HandsOutLimitThenFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		nodes     []seqEntry

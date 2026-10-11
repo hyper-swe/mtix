@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite
 
 import (
@@ -88,6 +89,7 @@ func assertSearchesIndex(t *testing.T, plan []string, table, index string) {
 // that carries one, searches idx_nodes_uid instead of reading every node
 // (MTIX-95.47).
 func TestResolveNodeRef_EventWithUID_PlanSearchesIDXNodesUID(t *testing.T) {
+	t.Parallel()
 	s := newInternalTestStore(t)
 	query := uidLookupIn(t, packageSQLLiterals(t), "resolveNodeRef", nodesUIDTable)
 	assertSearchesIndex(t, queryPlan(t, s, query), "nodes", "idx_nodes_uid")
@@ -99,6 +101,7 @@ func TestResolveNodeRef_EventWithUID_PlanSearchesIDXNodesUID(t *testing.T) {
 // pending or held push event, by uid and, for a creation queued without
 // one, by its own event id.
 func TestUIDLookupQueries_ExplainQueryPlan_SearchIDXNodesUID(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		fn    string
@@ -140,6 +143,7 @@ func lwwQueryByUID(t *testing.T, op model.OpType) string {
 // carries a uid (last-writer-wins); and a node's events that sync repair
 // --status reads.
 func TestSyncEventsUIDLookups_ExplainQueryPlan_SearchIDXSyncEventsUID(t *testing.T) {
+	t.Parallel()
 	s := newInternalTestStore(t)
 	lits := packageSQLLiterals(t)
 	tests := []struct {
@@ -217,6 +221,7 @@ func inTx(t *testing.T, s *Store, f func(tx *sql.Tx) (string, error)) (string, e
 // event carries one, whatever number the event names; by number when it
 // carries none; never a soft-deleted node, and not found for an unknown uid.
 func TestResolveNodeRef_EventKeying_ResolvesTheSameNode(t *testing.T) {
+	t.Parallel()
 	f := newUIDFixture(t)
 	require.NoError(t, f.s.CreateNode(context.Background(),
 		makeTestNode("PROJ-4", "", "PROJ", "pending", 0, 4, time.Date(2026, 9, 26, 9, 0, 0, 0, time.UTC))))
@@ -256,6 +261,7 @@ func TestResolveNodeRef_EventKeying_ResolvesTheSameNode(t *testing.T) {
 // live node, the renumber a live or soft-deleted one; an unknown uid is
 // not found.
 func TestUIDLookupHelpers_ByUID_ResolveTheSameNode(t *testing.T) {
+	t.Parallel()
 	f := newUIDFixture(t)
 	ctx := context.Background()
 	helper := func(uid string) (string, error) { return f.s.ResolveDisplayPathByUID(ctx, uid) }
@@ -304,6 +310,7 @@ func TestUIDLookupHelpers_ByUID_ResolveTheSameNode(t *testing.T) {
 // its node by uid or, carrying none, by number (MTIX-95.47): the uid
 // variant's index term and planner hint change the plan, not the result.
 func TestDetectLWWOutcome_ByUIDOrNumber_SameOutcome(t *testing.T) {
+	t.Parallel()
 	f := newUIDFixture(t)
 	ctx := context.Background()
 	for _, change := range []string{"first", "second"} {

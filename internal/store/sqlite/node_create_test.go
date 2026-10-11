@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 import (
@@ -60,6 +61,7 @@ func makeChildNode(id, parentID, project, title string, depth, seq int, createdA
 
 // TestCreateNode_RootNode_CorrectID verifies root node creation with correct ID.
 func TestCreateNode_RootNode_CorrectID(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -80,6 +82,7 @@ func TestCreateNode_RootNode_CorrectID(t *testing.T) {
 
 // TestCreateNode_ChildNode_CorrectID verifies child node creation under a parent.
 func TestCreateNode_ChildNode_CorrectID(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -102,6 +105,7 @@ func TestCreateNode_ChildNode_CorrectID(t *testing.T) {
 
 // TestCreateNode_SetsDefaults verifies default field values are persisted.
 func TestCreateNode_SetsDefaults(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -119,6 +123,7 @@ func TestCreateNode_SetsDefaults(t *testing.T) {
 
 // TestCreateNode_ComputesContentHash verifies content hash is stored.
 func TestCreateNode_ComputesContentHash(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -139,6 +144,7 @@ func TestCreateNode_ComputesContentHash(t *testing.T) {
 
 // TestCreateNode_UnderOpenParent_Succeeds verifies child creation under an open parent.
 func TestCreateNode_UnderOpenParent_Succeeds(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -154,6 +160,7 @@ func TestCreateNode_UnderOpenParent_Succeeds(t *testing.T) {
 
 // TestCreateNode_UnderCancelledParent_ReturnsInvalidInput per FR-3.9.
 func TestCreateNode_UnderCancelledParent_ReturnsInvalidInput(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -169,6 +176,7 @@ func TestCreateNode_UnderCancelledParent_ReturnsInvalidInput(t *testing.T) {
 
 // TestCreateNode_UnderDoneParent_ReturnsInvalidInput per FR-3.9.
 func TestCreateNode_UnderDoneParent_ReturnsInvalidInput(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -184,6 +192,7 @@ func TestCreateNode_UnderDoneParent_ReturnsInvalidInput(t *testing.T) {
 
 // TestCreateNode_UnderInvalidatedParent_ReturnsInvalidInput per FR-3.9.
 func TestCreateNode_UnderInvalidatedParent_ReturnsInvalidInput(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -200,6 +209,7 @@ func TestCreateNode_UnderInvalidatedParent_ReturnsInvalidInput(t *testing.T) {
 // TestCreateNode_RecalculatesParentProgress verifies parent progress
 // is recalculated when a new child is added per FR-5.7.
 func TestCreateNode_RecalculatesParentProgress(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -230,6 +240,7 @@ func TestCreateNode_RecalculatesParentProgress(t *testing.T) {
 
 // TestCreateNode_CreatesActivityEntry verifies a 'created' activity entry is recorded.
 func TestCreateNode_CreatesActivityEntry(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -250,6 +261,7 @@ func TestCreateNode_CreatesActivityEntry(t *testing.T) {
 
 // TestCreateNode_DuplicateID_ReturnsAlreadyExists verifies duplicate rejection.
 func TestCreateNode_DuplicateID_ReturnsAlreadyExists(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -266,6 +278,7 @@ func TestCreateNode_DuplicateID_ReturnsAlreadyExists(t *testing.T) {
 // TestCreateNode_AutoClaim_WhenParentClaimed verifies auto-claim behavior.
 // When the parent is claimed by an agent, the child inherits the assignee (FR-11.2a).
 func TestCreateNode_AutoClaim_WhenParentClaimed(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -351,6 +364,7 @@ func TestCreateNode_WithAllFields(t *testing.T) {
 
 // TestCreateNode_EmptyTitle_ReturnsInvalidInput verifies title validation.
 func TestCreateNode_EmptyTitle_ReturnsInvalidInput(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -362,6 +376,7 @@ func TestCreateNode_EmptyTitle_ReturnsInvalidInput(t *testing.T) {
 
 // TestCreateNode_NonExistentParent_ReturnsNotFound verifies parent existence check.
 func TestCreateNode_NonExistentParent_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -374,6 +389,7 @@ func TestCreateNode_NonExistentParent_ReturnsNotFound(t *testing.T) {
 
 // TestCreateNode_UnderInProgressParent_Succeeds verifies non-terminal parent acceptance.
 func TestCreateNode_UnderInProgressParent_Succeeds(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)

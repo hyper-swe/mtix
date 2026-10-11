@@ -1789,8 +1789,9 @@ the command is a no-op until new mutations land.
 
 Acquires .mtix/data/sync.push.lock so concurrent agents on one
 machine never stampede the hub. If the lock is held by another
-process, exits cleanly without error (the holder will drain the
-queue). Use --force to bypass the lock (debugging only).
+process, exits cleanly without error; queued work remains pending.
+A drained pusher rechecks after unlocking, up to three passes. A
+non-pusher lock holder does not drain the queue. Use --force to bypass the lock (debugging only).
 
 Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors
 so git pre-push hooks never block code pushes.

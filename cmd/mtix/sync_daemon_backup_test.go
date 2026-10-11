@@ -63,9 +63,9 @@ func TestDaemonPIDFile_StaleIsTreatedAsAbsent(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, live, "non-existent PID treated as stale")
 
-	// File should have been removed.
+	// A diagnostic probe must not delete a marker without ownership.
 	_, statErr := os.Stat(filepath.Join(dir, daemonPIDFilename))
-	require.True(t, os.IsNotExist(statErr))
+	require.NoError(t, statErr)
 }
 
 func TestDaemonPIDFile_GarbageContent(t *testing.T) {
@@ -78,6 +78,9 @@ func TestDaemonPIDFile_GarbageContent(t *testing.T) {
 	live, _, err := daemonPIDFileLive(dir)
 	require.NoError(t, err)
 	require.False(t, live, "garbage content treated as stale")
+	body, err := os.ReadFile(filepath.Join(dir, daemonPIDFilename))
+	require.NoError(t, err)
+	require.Equal(t, "not-a-pid", string(body), "diagnostic probe cannot delete malformed marker")
 }
 
 func TestDaemonPIDFile_LiveSelf(t *testing.T) {
@@ -111,8 +114,9 @@ func TestWriteDaemonPID_ModeIs0600(t *testing.T) {
 }
 
 func TestRemoveDaemonPID_AbsentIsNoop(t *testing.T) {
-	dir := t.TempDir()
-	require.NotPanics(t, func() { removeDaemonPID(dir) })
+	var owner *daemonOwner
+	require.NoError(t, owner.release())
+	require.NoError(t, (&daemonOwner{}).release())
 }
 
 // --- backup ---

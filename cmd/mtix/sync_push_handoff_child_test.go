@@ -66,6 +66,10 @@ func TestPushHandoffProcessHelper(t *testing.T) {
 	require.NoError(t, err)
 	store := newDaemonTestStore(t, dir)
 	app = appContext{mtixDir: dir, store: store}
+	if mode == "release-holder" {
+		pushHandoffReleaseHolder(t)
+		return
+	}
 	if mode == "holder" || mode == "cap-holder" {
 		var output io.Writer = &pushHandoffSummary{t: t}
 		if mode == "cap-holder" {

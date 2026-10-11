@@ -54,7 +54,7 @@ func pullLockSnapshot(t *testing.T) []byte {
 	return raw
 }
 
-func executePullLockCommand(t *testing.T, ctx context.Context) (error, string, string) {
+func executePullLockCommand(t *testing.T, ctx context.Context) (string, string, error) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	cmd := newSyncPullCmd()
@@ -63,7 +63,7 @@ func executePullLockCommand(t *testing.T, ctx context.Context) (error, string, s
 	cmd.SetErr(&stderr)
 	cmd.SetArgs(nil)
 	err := cmd.ExecuteContext(ctx)
-	return err, stdout.String(), stderr.String()
+	return stdout.String(), stderr.String(), err
 }
 
 func TestSyncPullLock_HookContendedOwner_WarnsAndSkips(t *testing.T) {
@@ -75,7 +75,7 @@ func TestSyncPullLock_HookContendedOwner_WarnsAndSkips(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(owner.Close)
 	before := pullLockSnapshot(t)
-	err, stdout, stderr := executePullLockCommand(t, t.Context())
+	stdout, stderr, err := executePullLockCommand(t, t.Context())
 	require.NoError(t, err)
 	require.Zero(t, exitCodeForError(err))
 	require.Empty(t, stdout)
@@ -99,7 +99,7 @@ func TestSyncPullLock_NonhookContendedOwner_ReturnsPullError(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(owner.Close)
 	before := pullLockSnapshot(t)
-	err, stdout, stderr := executePullLockCommand(t, t.Context())
+	stdout, stderr, err := executePullLockCommand(t, t.Context())
 	require.Error(t, err)
 	require.NotZero(t, exitCodeForError(err))
 	require.Contains(t, err.Error(), "mtix sync pull sync lock")
@@ -116,7 +116,7 @@ func TestSyncPullLock_HookFilesystemFailure_RemainsFatal(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "data"), []byte("owned obstruction"), 0600))
 	app.mtixDir = dir
-	err, stdout, stderr := executePullLockCommand(t, t.Context())
+	stdout, stderr, err := executePullLockCommand(t, t.Context())
 	require.Error(t, err)
 	require.Empty(t, stdout)
 	require.Empty(t, stderr)
@@ -131,7 +131,7 @@ func TestSyncPullLock_HookCancellationAndMissingDSN_RemainFatal(t *testing.T) {
 	initTestApp(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	err, stdout, stderr := executePullLockCommand(t, ctx)
+	stdout, stderr, err := executePullLockCommand(t, ctx)
 	require.Error(t, err)
 	require.Empty(t, stdout)
 	require.Empty(t, stderr)
@@ -151,7 +151,7 @@ func TestSyncPullLock_HookPriorReceiptAndJournal_Preserved(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(owner.Close)
 	before := pullLockSnapshot(t)
-	err, stdout, stderr := executePullLockCommand(t, t.Context())
+	stdout, stderr, err := executePullLockCommand(t, t.Context())
 	require.NoError(t, err)
 	require.Empty(t, stdout)
 	require.Contains(t, stderr, "pull not performed")

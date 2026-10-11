@@ -30,6 +30,7 @@ var wakeInlineRE = regexp.MustCompile("`([^`\\n]+)`")
 var wakeAssignmentOriginRE = regexp.MustCompile(`^(?:[({!][ \t]*)*[A-Za-z_][A-Za-z_0-9]*=`)
 var wakeControlPrefixRE = regexp.MustCompile(`^(?:(?:if|elif|while|until|then|do|else|!)[ \t]+|[({!][ \t]*)*$`)
 var wakeCompoundBoundaryRE = regexp.MustCompile(`;|&&|\|\|`)
+var wakeCaseArmPrefixRE = regexp.MustCompile(`^\(?[A-Za-z_0-9*?./-]+(?:[ \t]*\|[ \t]*[A-Za-z_0-9*?./-]+)*\)[ \t]*(?:![ \t]+)?$`)
 
 func wakeShellCaptureOrigin(line string) bool {
 	for _, capture := range wakeCaptureAssignmentRE.FindAllStringSubmatchIndex(line, -1) {
@@ -45,7 +46,7 @@ func wakeCaptureCommandOrigin(line string, offset int) bool {
 		return true
 	}
 	prefix := line[:offset]
-	if wakeControlPrefixRE.MatchString(prefix) {
+	if wakeControlPrefixRE.MatchString(prefix) || wakeCaseArmPrefixRE.MatchString(prefix) {
 		return true
 	}
 	boundaries := wakeCompoundBoundaryRE.FindAllStringIndex(prefix, -1)

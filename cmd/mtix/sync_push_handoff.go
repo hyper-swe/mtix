@@ -16,8 +16,9 @@ import (
 const pushHandoffPassLimit = 3
 
 type pushHandoffOptions struct {
-	mtixDir string
-	force   bool
+	mtixDir       string
+	force         bool
+	beforeRelease func() error
 }
 
 // pushWithHandoff checks for committed arrivals only AFTER releasing ownership.
@@ -41,7 +42,7 @@ func pushWithHandoff(ctx context.Context, stderr io.Writer, store *sqlite.Store,
 		if err != nil {
 			return wrapSyncErr(stderr, "pushlock", err)
 		}
-		drained, err := pushOwnedPass(stderr, lock, pass)
+		drained, err := pushOwnedPass(stderr, lock, opts.beforeRelease, pass)
 		if err != nil || !drained || n == pushHandoffPassLimit-1 {
 			return err
 		}
@@ -56,10 +57,22 @@ func pushWithHandoff(ctx context.Context, stderr io.Writer, store *sqlite.Store,
 	return nil
 }
 
-func pushOwnedPass(stderr io.Writer, lock *pushlock.PushLock, pass func() (bool, error)) (drained bool, err error) {
+// pushBeforeReleaseKey carries an instance-local diagnostic observer for native
+// process tests; production callers never set it. It runs after the pass returns.
+type pushBeforeReleaseKey struct{}
+
+func pushOwnedPass(stderr io.Writer, lock *pushlock.PushLock, beforeRelease func() error, pass func() (bool, error)) (drained bool, err error) {
 	defer func() {
-		if releaseErr := lock.Release(); releaseErr != nil {
-			err = errors.Join(err, wrapSyncErr(stderr, "release pushlock", releaseErr))
+		// A nested defer guarantees actual release even if an observer panics.
+		defer func() {
+			if releaseErr := lock.Release(); releaseErr != nil {
+				err = errors.Join(err, wrapSyncErr(stderr, "release pushlock", releaseErr))
+			}
+		}()
+		if beforeRelease != nil {
+			if observerErr := beforeRelease(); observerErr != nil {
+				err = errors.Join(err, fmt.Errorf("before releasing pushlock: %w", observerErr))
+			}
 		}
 	}()
 	return pass()

@@ -74,7 +74,8 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 		return fmt.Errorf("mtix sync push: local store not initialized")
 	}
 
-	return pushWithHandoff(ctx, stderr, app.store, pushHandoffOptions{mtixDir: app.mtixDir, force: force}, func() (bool, error) {
+	beforeRelease, _ := ctx.Value(pushBeforeReleaseKey{}).(func() error)
+	return pushWithHandoff(ctx, stderr, app.store, pushHandoffOptions{mtixDir: app.mtixDir, force: force, beforeRelease: beforeRelease}, func() (bool, error) {
 		dsn, err := resolveSyncDSN(args)
 		if err != nil {
 			return false, wrapSyncErr(stderr, "dsn", err)

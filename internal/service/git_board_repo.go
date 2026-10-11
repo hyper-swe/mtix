@@ -23,7 +23,7 @@ func boardRepository(root string) (string, error) {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return "", gitBoardError("unsupported Git metadata", nil)
 	}
-	for _, name := range []string{"commondir", "info/grafts"} {
+	for _, name := range []string{"commondir", "info/grafts", "shallow", "objects/info/alternates"} {
 		_, err = os.Lstat(filepath.Join(gitDir, filepath.FromSlash(name)))
 		if err == nil || !os.IsNotExist(err) {
 			return "", gitBoardError("unsupported ancestry metadata", nil)

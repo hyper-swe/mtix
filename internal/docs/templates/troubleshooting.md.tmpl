@@ -10,7 +10,7 @@
 
 ## Ancestor board unavailable
 
-The optional upgrade-service Git reader uses only local committed history and never writes Git or database state, fetches, or prompts. Missing `ORIG_HEAD` or upstream, shallow history, an absent committed `.mtix/tasks.json`, multiple bases, an unsupported Git installation or platform, invalid board data, or time/output limits produce an explained unavailable result. Git-less and mgit-only checkouts fall back cleanly. This reader provides provenance for a later import loss check; it does not change the current import recovery procedure. Keep a refused incoming board and follow the command's printed recovery guidance; do not override refusals or run a repository-provided Git executable.
+The optional upgrade-service Git reader uses only local committed history and never writes Git or database state, fetches, or prompts. Missing `ORIG_HEAD` or upstream, an absent committed `.mtix/tasks.json`, multiple bases, an unsupported Git installation or platform, invalid board data, or time/output limits produce an explained unavailable result. The supported layout is an ordinary self-contained repository: `.git/shallow` and `.git/objects/info/alternates` each cause conservative refusal even when a base is readable. Borrowed-object graphs can be complete; the refusal is a supported-layout boundary, not a claim that their ancestry is always incomplete. Git-less and mgit-only checkouts fall back cleanly. This reader provides provenance for a later import loss check; it does not change the current import recovery procedure. Keep a refused incoming board and follow the command's printed recovery guidance; do not override refusals or run a repository-provided Git executable.
 
 ## Common Errors
 

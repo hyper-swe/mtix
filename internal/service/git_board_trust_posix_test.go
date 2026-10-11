@@ -94,6 +94,8 @@ func TestMergeBaseBoard_Cancellation_ContainsOwnedDescendant(t *testing.T) {
 
 func boardReadyPID(t *testing.T, path string, cancel context.CancelFunc) int {
 	t.Helper()
+	watchdog, stop := boardTestWatchdog(t)
+	defer stop()
 	file, err := os.OpenFile(path, os.O_RDWR, 0)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, file.Close()) }()
@@ -118,7 +120,7 @@ func boardReadyPID(t *testing.T, path string, cancel context.CancelFunc) int {
 	case readErr := <-fail:
 		cancel()
 		t.Fatal(readErr)
-	case <-time.After(3 * time.Second):
+	case <-watchdog.Done():
 		cancel()
 		t.Fatal("owned process readiness unavailable")
 	}
@@ -149,7 +151,7 @@ func TestMergeBaseBoard_Success_ContainsDisconnectedOwnedDescendant(t *testing.T
 	child := boardScript(t, "printf '%s\\n' \"$$\" > '"+ready+"'; printf 'ready\\n' > '"+ack+"'; read value < '"+block+"'")
 	script := boardScript(t, "/bin/sh '"+child+"' </dev/null >/dev/null 2>&1 & read value < '"+ack+"'; printf 'completed\\n'")
 	path := boardTrustedScript(t, script)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := boardTestWatchdog(t)
 	defer cancel()
 	type result struct {
 		data []byte

@@ -19,24 +19,63 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestState_ValidateInputCases(t *testing.T) {
-	for _, name := range []string{"case01", "case02", "case03", "case04", "case05", "case06"} {
+func TestCanonicalExclusion_BackslashNameAndInvalidRoots_PreservesNameOrReturnsCause(t *testing.T) {
+	root := safeFixtureRoot(t)
+	expected, err := filepath.EvalSymlinks(root)
+	require.NoError(t, err)
+	result, err := canonicalExclusion(filepath.Join(root, `input\next`), canonicalExistingPath)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(expected, `input\next`), result)
+	result, err = canonicalExclusion(root, func(string) (string, error) { return "", os.ErrPermission })
+	require.Empty(t, result)
+	require.ErrorIs(t, err, os.ErrPermission)
+	result, err = canonicalExclusion(root, func(string) (string, error) { return "relative", nil })
+	require.Empty(t, result)
+	require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
+	for _, input := range []string{"", root + "\x00", root + string([]byte{0xff})} {
+		result, err = canonicalExclusion(input, canonicalExistingPath)
+		require.Empty(t, result)
+		require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
+	}
+}
+
+func TestState_UnreadableExclusionRoot_SkipsWithDebugLog(t *testing.T) {
+	for _, operation := range stateOperations() {
+		t.Run(operation, func(t *testing.T) {
+			root := safeFixtureRoot(t)
+			excluded := filepath.Join(root, "input")
+			require.NoError(t, os.Mkdir(excluded, 0700))
+			require.NoError(t, os.Chmod(excluded, 0))
+			t.Cleanup(func() { require.NoError(t, os.Chmod(excluded, 0700)) })
+			var log bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&log, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			s := New(Env{GOOS: "linux", Home: root, Values: map[string]string{"XDG_CONFIG_HOME": filepath.Join(root, "config"), "CODEX_HOME": filepath.Join(excluded, "next")}})
+			requireStateOperationAllowed(t, s, operation)
+			require.Contains(t, log.String(), "permission denied")
+		})
+	}
+}
+
+func TestState_UnresolvableExclusionRoot_SkipsWithDebugLog(t *testing.T) {
+	for _, name := range []string{"self_symlink", "dangling_symlink", "nul_byte", "invalid_utf8", "regular_file", "symlink_to_file"} {
 		for _, operation := range stateOperations() {
 			t.Run(name+"/"+operation, func(t *testing.T) {
 				root := safeFixtureRoot(t)
 				input := filepath.Join(root, "input")
 				switch name {
-				case "case01":
+				case "self_symlink":
 					require.NoError(t, os.Symlink(input, input))
-				case "case02":
+				case "dangling_symlink":
 					require.NoError(t, os.Symlink(filepath.Join(root, "absent"), input))
-				case "case03":
+				case "nul_byte":
 					input += "\x00"
-				case "case04":
+				case "invalid_utf8":
 					input += string([]byte{0xff})
-				case "case05":
+				case "regular_file":
 					require.NoError(t, os.WriteFile(input, nil, 0600))
-				case "case06":
+				case "symlink_to_file":
 					file := filepath.Join(root, "file")
 					require.NoError(t, os.WriteFile(file, nil, 0600))
 					require.NoError(t, os.Symlink(file, input))
@@ -47,7 +86,7 @@ func TestState_ValidateInputCases(t *testing.T) {
 				t.Cleanup(func() { slog.SetDefault(previous) })
 				s := New(Env{GOOS: runtime.GOOS, Home: root, Values: map[string]string{"XDG_CONFIG_HOME": filepath.Join(root, "config"), "CODEX_HOME": input}})
 				requireStateOperationAllowed(t, s, operation)
-				requireInputLog(t, log.String(), input)
+				requireExclusionDebugLog(t, log.String(), input)
 			})
 		}
 	}
@@ -75,7 +114,7 @@ func requireStateOperationAllowed(t *testing.T, s *State, operation string) {
 	}
 }
 
-func TestInside_ValidateInputCases(t *testing.T) {
+func TestInside_PlatformCaseRules_MatchesOnlyContainedPaths(t *testing.T) {
 	for _, platform := range []string{"darwin", "windows"} {
 		require.True(t, inside(platform, "/volume/CONFIG/next", "/VOLUME/config"))
 		require.False(t, inside(platform, "/volume/config-next", "/VOLUME/config"))
@@ -83,7 +122,7 @@ func TestInside_ValidateInputCases(t *testing.T) {
 	require.False(t, inside("linux", "/volume/CONFIG/next", "/VOLUME/config"))
 }
 
-func TestState_ValidateInputControls(t *testing.T) {
+func TestState_ProspectiveExclusionRoot_RefusesBeforeAndAfterCreation(t *testing.T) {
 	root := safeFixtureRoot(t)
 	excluded := filepath.Join(root, "later")
 	s := New(Env{GOOS: runtime.GOOS, Home: root, Values: map[string]string{"XDG_CONFIG_HOME": filepath.Join(root, "config"), "CODEX_HOME": excluded}})
@@ -96,7 +135,7 @@ func TestState_ValidateInputControls(t *testing.T) {
 	requireMissingDirectory(t, filepath.Join(excluded, "config"))
 }
 
-func TestState_ValidatePlatformInput(t *testing.T) {
+func TestState_DarwinTemporaryRootCaseAlias_Refuses(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		return
 	}
@@ -109,7 +148,7 @@ func TestState_ValidatePlatformInput(t *testing.T) {
 	}
 }
 
-func TestState_ValidateConfigurationSibling(t *testing.T) {
+func TestState_AliasParentExclusionSibling_AllowsFirstUse(t *testing.T) {
 	root := safeFixtureRoot(t)
 	resolved := filepath.Join(root, "resolved")
 	require.NoError(t, os.MkdirAll(filepath.Join(resolved, "deeper"), 0700))
@@ -120,7 +159,7 @@ func TestState_ValidateConfigurationSibling(t *testing.T) {
 	require.NoError(t, s.WriteJSON("hooks", true))
 }
 
-func requireInputLog(t *testing.T, text, input string) {
+func requireExclusionDebugLog(t *testing.T, text, input string) {
 	t.Helper()
 	found := false
 	for _, line := range strings.Split(strings.TrimSpace(text), "\n") {
@@ -135,7 +174,7 @@ func requireInputLog(t *testing.T, text, input string) {
 	require.True(t, found)
 }
 
-func TestState_ValidateConfigurationCharacters(t *testing.T) {
+func TestState_ExcludedBackslashName_RefusesBeforeCreation(t *testing.T) {
 	root := safeFixtureRoot(t)
 	excluded := filepath.Join(root, `input\next`)
 	for _, operation := range stateOperations() {
@@ -150,7 +189,7 @@ func TestState_ValidateConfigurationCharacters(t *testing.T) {
 	requireMissingDirectory(t, excluded)
 }
 
-func TestInside_ValidateNativeInput(t *testing.T) {
+func TestInside_BackslashSeparatorRules_DistinguishesUnixNameFromWindowsPath(t *testing.T) {
 	require.False(t, inside("darwin", `/volume/input\next/config`, "/volume/input/next"))
 	require.True(t, inside("windows", `C:\volume\input\next\config`, `c:\VOLUME\INPUT\NEXT`))
 	root := safeFixtureRoot(t)

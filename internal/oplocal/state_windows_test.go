@@ -6,7 +6,6 @@
 package oplocal
 
 import (
-	"fmt"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
@@ -93,7 +92,7 @@ func TestEnsure_CanonicalHandleAlias_Refuses(t *testing.T) {
 // These representative rows use Microsoft-documented defaults, not captured ACLs.
 // https://learn.microsoft.com/en-us/archive/msdn-magazine/2008/november/access-control-understanding-windows-file-and-registry-permissions
 // Published root example: Windows Server 2008; defaults vary by OS and provisioning.
-func TestAncestor_ValidateRepresentativeInput(t *testing.T) {
+func TestAncestor_RepresentativeAclRows_AllowSafeAncestorsAndRefuseHostileRights(t *testing.T) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	require.NoError(t, err)
 	sid := user.User.Sid.String()
@@ -104,16 +103,18 @@ func TestAncestor_ValidateRepresentativeInput(t *testing.T) {
 		"O:" + sid + "D:AI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;" + sid + ")",
 		"O:" + sid + "D:(A;;0x6;;;WD)(A;;FA;;;" + ti + ")",
 	}
+	rowNames := []string{"trustedinstaller_owned_volume_root", "administrators_owned_users_root", "current_user_profile", "everyone_add_children_with_trustedinstaller"}
 	for i, text := range rows {
-		t.Run(fmt.Sprintf("case%02d", i+1), func(t *testing.T) {
+		t.Run(rowNames[i], func(t *testing.T) {
 			sd, parseErr := windows.SecurityDescriptorFromString(text)
 			require.NoError(t, parseErr)
 			require.NoError(t, verifyAncestorAccess(sd, user.User.Sid))
 			require.ErrorIs(t, verifyAccess(sd, user.User.Sid), model.ErrOperatorStateUnreadable)
 		})
 	}
+	rightNames := []string{"authenticated_users_delete", "authenticated_users_delete_child", "authenticated_users_write_dacl", "authenticated_users_write_owner", "authenticated_users_generic_write", "authenticated_users_generic_all"}
 	for i, right := range []string{"SD", "0x40", "WD", "WO", "GW", "GA"} {
-		t.Run(fmt.Sprintf("case%02d", i+5), func(t *testing.T) {
+		t.Run(rightNames[i], func(t *testing.T) {
 			sd, parseErr := windows.SecurityDescriptorFromString("O:" + sid + "D:(A;;" + right + ";;;AU)")
 			require.NoError(t, parseErr)
 			require.ErrorIs(t, verifyAncestorAccess(sd, user.User.Sid), model.ErrOperatorStateUnreadable)

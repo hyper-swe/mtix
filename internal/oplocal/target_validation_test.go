@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-func TestState_ValidateTargetInput(t *testing.T) {
+func TestState_TargetParentComponent_RefusesBeforeCreation(t *testing.T) {
 	for _, operation := range stateOperations() {
 		t.Run(operation, func(t *testing.T) {
 			root := safeFixtureRoot(t)
@@ -29,7 +29,7 @@ func TestState_ValidateTargetInput(t *testing.T) {
 	requireMissingDirectory(t, filepath.Join(root, "config"))
 }
 
-func TestCanonicalLocation_ValidateTargetInput(t *testing.T) {
+func TestCanonicalLocation_DanglingAliasOrParentComponent_ReturnsLocationError(t *testing.T) {
 	root := safeFixtureRoot(t)
 	alias := filepath.Join(root, "alias")
 	require.NoError(t, os.Symlink(filepath.Join(root, "absent"), alias))
@@ -42,7 +42,7 @@ func TestCanonicalLocation_ValidateTargetInput(t *testing.T) {
 	require.False(t, missingState(err))
 }
 
-func TestDir_ValidateInputCases(t *testing.T) {
+func TestDir_HomeOrAppDataParentComponent_Refuses(t *testing.T) {
 	for _, env := range []Env{
 		{GOOS: "linux", Home: "/home/component/../operator"},
 		{GOOS: "windows", Values: map[string]string{"APPDATA": `C:\Users\component\..\operator`}},

@@ -22,7 +22,6 @@ jobs:
     timeout-minutes: 15
     env:
       CGO_ENABLED: '1'
-      MTIX_WINDOWS_CAPTURE_DIR: ${{ runner.temp }}/mtix-windows-runtime
       MTIX_WINDOWS_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       MTIX_WINDOWS_RUN_ID: ${{ github.run_id }}
       MTIX_WINDOWS_RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -30,6 +29,8 @@ jobs:
       MTIX_WINDOWS_REF: ${{ github.ref }}
     steps:
       - name: Start attempt accounting
+        env:
+          MTIX_WINDOWS_CAPTURE_DIR: ${{ runner.temp }}/mtix-windows-runtime
         run: |
           $ErrorActionPreference = 'Stop'
           [IO.Directory]::CreateDirectory($env:MTIX_WINDOWS_CAPTURE_DIR) | Out-Null
@@ -43,6 +44,8 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Verify Windows race compiler
+        env:
+          MTIX_WINDOWS_CAPTURE_DIR: ${{ runner.temp }}/mtix-windows-runtime
         run: |
           $ErrorActionPreference = 'Stop'
           $goVersion = & go version
@@ -59,6 +62,8 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or ![IO.Path]::IsPathRooted($library) -or !(Test-Path $library -PathType Leaf)) { throw 'race synchronization library missing' }
           @{ go_version=$goVersion; compiler_version=$gccVersion; mingw_runtime_major=$major; synchronization_library_verified=$true } | ConvertTo-Json | Set-Content -LiteralPath "$env:MTIX_WINDOWS_CAPTURE_DIR/toolchain.json"
       - name: Run required native ACL and hooks status tests
+        env:
+          MTIX_WINDOWS_CAPTURE_DIR: ${{ runner.temp }}/mtix-windows-runtime
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $false
@@ -96,6 +101,8 @@ jobs:
           if (!(Test-Path "$env:MTIX_WINDOWS_CAPTURE_DIR/capture.json" -PathType Leaf)) { throw 'actual native stock capture missing' }
           if ($oplocalExit -ne 0 -or $hooksExit -ne 0) { throw "Native test failure: oplocal=$oplocalExit hooks=$hooksExit" }
       - name: Record attempt duration
+        env:
+          MTIX_WINDOWS_CAPTURE_DIR: ${{ runner.temp }}/mtix-windows-runtime
         if: ${{ always() }}
         run: |
           $ErrorActionPreference = 'Stop'

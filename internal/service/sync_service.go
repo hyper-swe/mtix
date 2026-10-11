@@ -46,6 +46,9 @@ type SyncService struct {
 	// platform directory durability policy. Tests simulate unsupported Sync.
 	directorySync func(string) error
 
+	// wrapExchangeFile is an instance-local receipt writer dependency.
+	wrapExchangeFile func(*os.File) io.WriteCloser
+
 	MaxImportSize int64 // Maximum file size for auto-import per FR-15.2e.
 }
 
@@ -94,8 +97,8 @@ func (s *SyncService) autoImport(ctx context.Context, mtixDir string) error {
 	}
 	start := s.clock()
 
-	// Acquire shared lock for import per FR-15.8.
-	lockFile, lockErr := s.acquireLock(mtixDir, lockShared)
+	// Receipt publication and import share exclusive sync ownership.
+	lockFile, lockErr := s.acquireLock(mtixDir, lockExclusive)
 	if lockErr != nil {
 		s.logger.Warn("could not acquire sync lock, skipping auto-import", "error", lockErr)
 		return nil
@@ -139,40 +142,24 @@ func (s *SyncService) autoImport(ctx context.Context, mtixDir string) error {
 		return s.refuseLossyImport(mtixDir, fileHash, diff)
 	}
 
-	// Step 7: back up, then import in replace mode (FR-15.2d, FR-15.2f).
-	backupPath, err := s.backupDB(ctx, mtixDir, fileHash, local)
-	if err != nil {
-		s.logger.Warn("backup before auto-import failed, skipping import", "error", err)
-		s.recordRefusal(mtixDir, fileHash, refusalBackupFailed,
-			"the local database could not be backed up before the import: "+err.Error())
-		return nil
-	}
-	s.logger.Info("sync_import_triggered", "event", "sync_import_triggered", "file_hash", fileHash,
-		"stored_hash", string(storedHash), "file_size", len(data), "node_count", incoming.NodeCount)
-	// MTIX-95.31.4: nothing is written if the store changed after the loss check.
-	unchanged := sqlite.IfStoreUnchanged(local.Checksum)
-	if _, importErr := s.store.Import(ctx, incoming, sqlite.ImportModeReplace, false, unchanged); importErr != nil {
-		return fmt.Errorf("auto-import: %w", importErr)
-	}
-	s.noticeImported(mtixDir, diff, backupPath) // FR-15.2k: never silent
-	s.forgetBackup(mtixDir)                     // FR-15.2f: the next import backs up anew
-
-	// Step 8: record the file as imported (FR-15.2h).
-	return s.recordImported(ctx, mtixDir, hashPath, fileHash, incoming.NodeCount, start)
+	return s.applyReceivedImport(ctx, mtixDir, hashPath, fileHash, data, storedHash, incoming, local, diff, start)
 }
 
 // recordImported runs after a successful auto-import: it updates the
 // stored hash only then, and the conflict baseline, so the next pull is not
 // a conflict (FR-15.2h), and logs the completion.
 func (s *SyncService) recordImported(
-	ctx context.Context, mtixDir, hashPath, fileHash string, nodeCount int, start time.Time,
+	ctx context.Context, mtixDir, hashPath, fileHash string, incoming *sqlite.ExportData, start time.Time,
 ) error {
 	if hashErr := s.writeHashFile(hashPath, fileHash); hashErr != nil {
 		return hashErr
 	}
 	s.refreshDBHash(ctx, mtixDir)
+	if err := s.recordReceivedImport(ctx, mtixDir, incoming, fileHash); err != nil {
+		return err
+	}
 	s.logger.Info("sync_import_completed", "event", "sync_import_completed", "file_hash", fileHash,
-		"node_count", nodeCount, "duration_ms", s.clock().Sub(start).Milliseconds())
+		"node_count", incoming.NodeCount, "duration_ms", s.clock().Sub(start).Milliseconds())
 	return nil
 }
 
@@ -182,6 +169,7 @@ func (s *SyncService) recordImported(
 func (s *SyncService) readAndHashTasksFile(
 	tasksPath, hashPath string,
 ) (data []byte, fileHash string, storedHash []byte, skip bool, err error) {
+	// #nosec G703 -- the sole production caller constructs fixed tasks.json under the caller-selected local project, not a path from board content.
 	data, err = os.ReadFile(tasksPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -201,6 +189,7 @@ func (s *SyncService) readAndHashTasksFile(
 	hash := sha256.Sum256(data)
 	fileHash = fmt.Sprintf("%x", hash)
 
+	// #nosec G703 -- the sole production caller constructs fixed data/sync.sha256 under the caller-selected local project, not a received path.
 	storedHash, readErr := os.ReadFile(hashPath)
 	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
 		return nil, "", nil, false, fmt.Errorf("read stored hash: %w", readErr)
@@ -277,9 +266,11 @@ func (s *SyncService) writeHashFile(hashPath, fileHash string) error {
 // file.
 func writeFileAtomically(path string, data []byte) error {
 	tmpPath := path + ".tmp"
+	// #nosec G703 -- the sole production caller supplies local tasks.json; tmpPath adds a literal .tmp suffix and never uses a path from board content.
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
 		return fmt.Errorf("write temp tasks.json: %w", err)
 	}
+	// #nosec G703 -- the sole production caller supplies local tasks.json and its literal .tmp companion, not received path values.
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("rename temp to tasks.json: %w", err)
 	}
@@ -332,6 +323,7 @@ func (s *SyncService) hasConflict(mtixDir string, local *sqlite.ExportData) (boo
 	}
 
 	dbHashPath := filepath.Join(mtixDir, "data", "sync-db.sha256")
+	// #nosec G703 -- dbHashPath is fixed data/sync-db.sha256 under the caller-selected local project, not a received board or hub path.
 	storedDBHash, readErr := os.ReadFile(dbHashPath)
 	if readErr != nil {
 		// No stored DB hash → first run or DB hash tracking not set up.

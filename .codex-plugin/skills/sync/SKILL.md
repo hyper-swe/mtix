@@ -11,6 +11,10 @@ The hub is a Postgres database that you and your teammates' agents push task cha
 
 `mtix daemon` and `mtix sync daemon` share a lifetime OS lock at `.mtix/data/sync.daemon.lock` (flock on Unix, LockFileEx on Windows). A concurrent start exits cleanly while the owner keeps running. `.mtix/sync.daemon.pid` is diagnostic: stale or missing PID content cannot grant ownership. The PID is published only after acquiring the lock and removed only by its matching owner while the lock is held. Normal exit and process crash release the OS lock; the lock file stays in place so existing descriptors keep using the same inode. Other filesystem or OS errors are reported. Do not delete daemon lock files to force a second instance.
 
+## Push lock contention
+
+A normal `mtix sync push` that drains its eligible queue releases the push lock, checks for committed arrivals, and reacquires before reading and pushing again. It performs at most three passes. An event arriving after the final pass stays durably pending and is not marked pushed; `mtix sync status` shows its pending count. Run the next explicit `mtix sync push` to deliver it. Held, unresolved deferred or no-progress work does not trigger fruitless repeat passes. `--force` keeps its single lock-free pass, and hook mode keeps its transient-error warning behavior. A contender exits successfully with its event still durable; holder delivery is not promised at the cap. Other non-pusher owners include automatic import, `mtix sync backfill`, and merge-import UID adoption; each can hold the push lock without pushing, so work skipped under any of them remains pending for the next push. The daemon remains a pull/dispatch loop and does not autonomously push these events unless a configured hook invokes push.
+
 ## Pending mirror exports
 
 Mirror exports read nodes, dependencies, agents and sessions from one read-only WAL snapshot, allowing writers to commit while the export reads. The mirror file and its conflict baseline describe that same snapshot; publication writes the file before its hashes. A write committed after the snapshot is handled by a later export.
@@ -22,6 +26,12 @@ A writing command that encounters the mirror sync lock saves its database change
 The upgrade service provides an optional read-only Git ancestor-board reader for an import in your own checkout. It reads the common ancestor of `ORIG_HEAD` and the configured upstream, then reads that commit's `.mtix/tasks.json`; it never changes Git refs, the index, the checkout or the local database, and never fetches or prompts. A trusted supported Git installation, available local history and one unambiguous base are required. Missing history, an absent committed board, unsupported metadata or platform policy, invalid board data and the fixed time/output limits return an explained unavailable result. A Git-less or mgit-only repository has the same clean fallback; do not install a repository-supplied executable or change metadata to force a result.
 
 This reader reports graph and board provenance; it does not establish lineage of an arbitrary incoming file. The upgrade import's last-exchanged-first ancestor selection and three-way loss check are separate consumer work. Existing import refusal and recovery behavior still applies: retain the refused board, follow the printed guidance, and do not overwrite it merely because Git is available.
+
+## Received provenance
+
+Successful automatic import and fully drained eligible hub pull record local received provenance in `.mtix/data/exchange-record.json` on supported Unix systems. Local changes, exports, pushes and partial/refused exchanges do not replace it. `mtix sync status` and the local `sync.exchange-record` doctor check report presence/source/time and omission warnings; the record is not proof of incoming lineage or that local changes reached the hub. Windows receipts remain unsupported pending native verification. A saved omission may be stale after diagnostics failed to clear. An abandoned `.exchange-record-*` temporary artifact requires an operator to stop all project writers and remove only that confirmed individual artifact; readers never promote or delete it. See USERMANUAL received-provenance recovery and EXPORT-FORMAT for the precise receipt contract.
+
+Receipt diagnostics use fixed categories; unknown stored or supplied values report `unknown`. A completed publication failure keeps its specific category. Unexpected, missing or repeated fetched IDs prevent a new receipt without changing valid event application. Pull requires exclusive local sync ownership; retry after a contending owner finishes.
 
 ## Requirements checklist
 

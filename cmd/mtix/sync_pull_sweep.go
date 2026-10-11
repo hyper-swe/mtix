@@ -103,6 +103,7 @@ type lateEventHub interface {
 
 // lateEventSweep is the outcome of one sweep.
 type lateEventSweep struct {
+	Completed bool
 	// Recovered is the number of late events fetched and applied.
 	Recovered int
 	// FullDiff is true when the sweep compared the full hub id history
@@ -147,7 +148,7 @@ func sweepLateEvents(ctx context.Context, in pullIngest, hub lateEventHub,
 		return lateEventSweep{}, err
 	}
 	announceSweep(in.stderr, window)
-	listing, err := listLateEvents(ctx, hub, st, window, limit)
+	listing, err := listLateEvents(ctx, hub, st, window, limit, in.receipt)
 	out := lateEventSweep{FullDiff: window.full}
 	if err != nil {
 		return out, err
@@ -164,6 +165,7 @@ func sweepLateEvents(ctx context.Context, in pullIngest, hub lateEventHub,
 	if err != nil {
 		return out, err
 	}
+	out.Completed = recorded
 	if !recorded {
 		fmt.Fprintln(in.stderr,
 			"late-event sweep: another pull staged events meanwhile; a later pull applies them and records the sweep")
@@ -293,7 +295,7 @@ func (l *sweepListing) notePage(page transport.EventIDPage) error {
 // after the last page it staged; a page with nothing to stage and no page
 // after it writes nothing.
 func listLateEvents(ctx context.Context, hub lateEventHub, st *sqlite.Store,
-	window sweepWindow, limit int,
+	window sweepWindow, limit int, trackers ...*pullExchangeTracker,
 ) (sweepListing, error) {
 	listing := sweepListing{startedAt: window.startedAt}
 	cursor := window.from
@@ -307,6 +309,9 @@ func listLateEvents(ctx context.Context, hub lateEventHub, st *sqlite.Store,
 		}
 		if page.More && len(page.IDs) == 0 {
 			return listing, fmt.Errorf("list hub event ids: hub reported more ids after an empty page")
+		}
+		for _, tracker := range trackers {
+			tracker.observe(page.IDs)
 		}
 		missing, err := missingLocalEventIDs(ctx, st, page.IDs)
 		if err != nil {

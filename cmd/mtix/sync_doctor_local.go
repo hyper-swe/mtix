@@ -22,7 +22,7 @@ func appendLocalStoreChecks(ctx context.Context, r DoctorReport, st *sqlite.Stor
 		r = appendCheck(r, "no orphan applied", orphanOK, detail)
 	}
 	r = appendQuarantineCheck(ctx, r, st)
-	return appendUniqueUIDCheck(ctx, r, st)
+	return appendExchangeRecordCheck(ctx, appendUniqueUIDCheck(ctx, r, st), st)
 }
 
 // uniqueUIDCheckName is the name of the doctor's unique-uid check.

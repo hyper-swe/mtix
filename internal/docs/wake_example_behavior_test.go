@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -95,17 +96,26 @@ func assertWakeInput(t *testing.T, got wakeCapture, input, harness string) {
 	require.Equal(t, "called\n", string(calls))
 }
 
+func wakeInputs() []string {
+	return []string{
+		"Ordinary input", "--fixture-mode\nnext line", "-n", "-e",
+		`C:\new\tab \\ %s %n %%`, `\c`,
+		"spaces 'single' and \"double\" quotes\n\nlast line\n\n",
+		"literal $(touch unexpected) and `touch unexpected`; $HOME | & < >",
+	}
+}
+
 func TestWakeExample_Variants_ReceiveCanonicalInput(t *testing.T) {
 	source := wakeSource(t, "examples/hooks/wake-agent.sh")
-	inputs := []string{"Ordinary input", "--fixture-mode\nnext line", "spaces 'single' and \"double\" quotes\n\nlast line\n\n", "literal $(touch unexpected) and `touch unexpected`; $HOME | & < >"}
+
 	for _, harness := range []string{"claude", "codex"} {
 		t.Run(harness, func(t *testing.T) {
 			variant := source
 			if harness == "codex" {
 				variant = wakeVariant(t, source, harness)
 			}
-			for _, input := range inputs {
-				t.Run(input, func(t *testing.T) { assertWakeInput(t, runWakeFixture(t, variant, input), input, harness) })
+			for i, input := range wakeInputs() {
+				t.Run(strconv.Itoa(i), func(t *testing.T) { assertWakeInput(t, runWakeFixture(t, variant, input), input, harness) })
 			}
 		})
 	}
@@ -145,12 +155,14 @@ func TestWakeExample_ManualVariants_ReceiveCanonicalInput(t *testing.T) {
 	require.Len(t, commands, 2)
 	require.NotEmpty(t, commands["claude"])
 	require.NotEmpty(t, commands["codex"])
-	input := "--fixture-mode\nquotes ' and \"; literal $(touch unexpected)\n\nlast"
+
 	for _, harness := range []string{"claude", "codex"} {
 		for _, snippet := range commands[harness] {
 			t.Run(harness, func(t *testing.T) {
 				source := "set -eu\nPAYLOAD=$(mtix inbox --agent \"$1\" --format prompt)\n" + snippet + "\n"
-				assertWakeInput(t, runWakeFixture(t, source, input), input, harness)
+				for i, input := range wakeInputs() {
+					t.Run(strconv.Itoa(i), func(t *testing.T) { assertWakeInput(t, runWakeFixture(t, source, input), input, harness) })
+				}
 			})
 		}
 	}

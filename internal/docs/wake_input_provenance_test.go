@@ -32,6 +32,12 @@ func wakeInputVariables(lines []string) map[string]bool {
 var wakeBacktickSourceRE = regexp.MustCompile("([A-Za-z_][A-Za-z_0-9]*)=[\"']?`\\s*(?:mtix|\"\\$MTIX_BIN\") inbox[^`\\n]*--format prompt[^`\\n]*`")
 
 func wakeSourceCaptures(line string) [][]string {
-	captures := wakeSourceVariableRE.FindAllStringSubmatch(line, -1)
-	return append(captures, wakeBacktickSourceRE.FindAllStringSubmatch(line, -1)...)
+	var captures [][]string
+	for _, match := range wakeCaptureAssignmentRE.FindAllStringSubmatchIndex(line, -1) {
+		body, ok := wakeCaptureBody(line[match[4]:])
+		if ok && wakeBodyReadsInput(body) {
+			captures = append(captures, []string{line[match[0]:match[1]], line[match[2]:match[3]]})
+		}
+	}
+	return captures
 }

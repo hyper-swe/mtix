@@ -138,14 +138,8 @@ func stockFixtureSIDRecordAssignment(assignment *ast.AssignStmt, qualifier strin
 }
 
 func stockFixtureSIDCallKind(call *ast.CallExpr, method, receiver, qualifier string, aliases map[string]string) string {
-	if receiver == qualifier && method == "SecurityDescriptorFromString" && len(call.Args) == 1 {
-		literal, ok := call.Args[0].(*ast.BasicLit)
-		if ok && literal.Kind == token.STRING {
-			text, err := strconv.Unquote(literal.Value)
-			if err == nil && text == "O:LA" {
-				return "native alias descriptor"
-			}
-		}
+	if stockFixtureSIDNativeAliasCall(call, method, receiver, qualifier) {
+		return "native alias descriptor"
 	}
 	if receiver == qualifier && method == "StringToSid" && len(call.Args) == 1 {
 		text, ok := call.Args[0].(*ast.Ident)
@@ -165,6 +159,18 @@ func stockFixtureSIDCallKind(call *ast.CallExpr, method, receiver, qualifier str
 		return "independent copy"
 	}
 	return ""
+}
+
+func stockFixtureSIDNativeAliasCall(call *ast.CallExpr, method, receiver, qualifier string) bool {
+	if receiver != qualifier || method != "SecurityDescriptorFromString" || len(call.Args) != 1 {
+		return false
+	}
+	literal, ok := call.Args[0].(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return false
+	}
+	text, err := strconv.Unquote(literal.Value)
+	return err == nil && text == "O:LA"
 }
 
 // SYNTHETIC source controls are parsed only; they never execute Windows APIs.

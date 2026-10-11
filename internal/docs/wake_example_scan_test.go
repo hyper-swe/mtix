@@ -23,7 +23,8 @@ var wakeCaptureRE = regexp.MustCompile(`^([A-Za-z_][A-Za-z_0-9]*)="\$\(mtix inbo
 var wakeInputLineRE = regexp.MustCompile(`^printf '%s\\n' "\$(?:[A-Za-z_][A-Za-z_0-9]*|\{[A-Za-z_][A-Za-z_0-9]*\})" \| (?:claude -p|codex exec -)$`)
 var wakeEmptyRE = regexp.MustCompile(`^\[ -z "\$(?:[A-Za-z_][A-Za-z_0-9]*|\{[A-Za-z_][A-Za-z_0-9]*\})" \] && exit 0$`)
 var wakeSourceVariableRE = regexp.MustCompile(`([A-Za-z_][A-Za-z_0-9]*)=[^\n]*mtix inbox`)
-var wakeShellLineRE = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z_0-9]*=|[a-z./][A-Za-z_0-9./-]*[ \t]|"\$\{?[A-Za-z_][A-Za-z_0-9]*\}?"[ \t])`)
+var wakeShellLineRE = regexp.MustCompile(`^(?:(?:[({!][ \t]*)*(?:[A-Za-z_][A-Za-z_0-9]*=|(?:[A-Za-z0-9_./-]+|"[^"\n]+"|'[^'\n]+'|\$\{?[A-Za-z_][A-Za-z_0-9]*\}?)+[ \t])|[<>])`)
+var wakeRawShellLineRE = regexp.MustCompile(`^(?:[({!][ \t]*)*(?:[A-Za-z_][A-Za-z_0-9]*=|(?:[0-9]*[A-Za-z_][A-Za-z_0-9./-]*|[./][A-Za-z_0-9./-]*|"[^"\n]+"|'[^'\n]+')+[ \t])`)
 var wakeInlineRE = regexp.MustCompile("`([^`\\n]+)`")
 
 func wakeCommandLines(text string) []string {
@@ -31,7 +32,7 @@ func wakeCommandLines(text string) []string {
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		plain := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))
-		if wakeShellLineRE.MatchString(plain) && strings.Contains(plain, "$") {
+		if wakeRawShellLineRE.MatchString(plain) && strings.Contains(plain, "$") {
 			lines = append(lines, plain)
 			continue
 		}
@@ -116,39 +117,43 @@ func wakeHasLaunchOperands(line string) bool {
 
 // These finite non-inbox forms describe repository metadata and backup paths.
 var wakeOtherInputForms = map[string]bool{
+	`> mtix config set sync.relay.peer_id "$(cat /persistent/relay-id)"`:                                  true,
+	`> mtix config set sync.relay.dir "$(cat /persistent/relay-dir)"`:                                     true,
+	`> mtix sync relay attach "$(cat /persistent/relay-dir)"`:                                             true,
+	"The default `\"$user\", public` puts a schema named after the role first":                            true,
 	`MTIX_FAULTFS_DIR=$(scripts/faultfs.sh create) go test ./e2e/faultinject/ -tags=faultinject -count=1`: true,
-	`if [ -z "${MTIX_BIN:-}" ]; then`:                                                                    true,
-	`if ! MTIX_BIN="$(command -v mtix)"; then`:                                                           true,
-	`msg="$(git log -1 --format='%B' "${sha}" 2>/dev/null || true)"`:                                     true,
-	`hit="$(printf '%s' "${msg}" | grep -Eo "${PROVISIONAL_RE}" || true)"`:                               true,
-	`if [ -n "${hit}" ]; then`:                                                                           true,
-	`subject="$(git log -1 --format='%s' "${sha}" 2>/dev/null || true)"`:                                 true,
-	`printf '%s %s [%s]\n' "${sha}" "${subject}" "$(printf '%s' "${hit}" | tr '\n' ',' | sed 's/,$//')"`: true,
-	`[ -z "${localsha:-}" ] && continue`:                                                                 true,
-	`[ "${localsha}" = "${ZERO_SHA}" ] && continue`:                                                      true,
-	`if [ "${remotesha:-${ZERO_SHA}}" = "${ZERO_SHA}" ]; then`:                                           true,
-	`offenders="$(scan_range_for_provisional "${localsha}" --not --remotes)"`:                            true,
-	`offenders="$(scan_range_for_provisional "${remotesha}..${localsha}")"`:                              true,
-	`if [ -n "${offenders}" ]; then`:                                                                     true,
-	`printf '%s\n' "${offenders}" >&2`:                                                                   true,
-	`if [ "${PROVISIONAL_FOUND}" = "1" ]; then`:                                                          true,
-	`if [ "${MTIX_BLOCK_PROVISIONAL:-0}" = "1" ]; then`:                                                  true,
-	`if [ -z "${MTIX_SYNC_DSN:-}" ] && [ ! -f ".mtix/secrets" ]; then`:                                   true,
-	`if ! "${MTIX_BIN}" sync push 2>&1; then`:                                                            true,
-	`if [ -f "${TASKS_FILE}" ]; then`:                                                                    true,
-	`PRE_HASH="$(git hash-object "${TASKS_FILE}")"`:                                                      true,
-	`if ! "${MTIX_BIN}" sync --fix >/dev/null 2>&1; then`:                                                true,
-	`POST_HASH="$(git hash-object "${TASKS_FILE}")"`:                                                     true,
-	`if [ "${PRE_HASH}" = "${POST_HASH}" ]; then`:                                                        true,
-	`git add -- "${TASKS_FILE}"`:                                                                         true,
-	`TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"`:                                                         true,
-	`COMMIT_MSG="chore(snapshot): tasks.json refresh @ ${TIMESTAMP}"`:                                    true,
-	`if [ "${MTIX_HOOK_AMEND:-0}" = "1" ]; then`:                                                         true,
-	`git commit --quiet --no-verify -m "${COMMIT_MSG}"`:                                                  true,
-	`NEW_SHA="$(git rev-parse --short HEAD)"`:                                                            true,
-	`printf 'mtix pre-push: sync push + snapshot committed (%s) %s\n' "${NEW_SHA}" "${TASKS_FILE}" >&2`:  true,
-	`DATE=$(date -u +%Y%m%dT%H%M%SZ)`:                                                                    true,
-	`mtix sync backup --output "/tmp/mtix-hub-${DATE}.sql"`:                                              true,
+	`if [ -z "${MTIX_BIN:-}" ]; then`:                                                                     true,
+	`if ! MTIX_BIN="$(command -v mtix)"; then`:                                                            true,
+	`msg="$(git log -1 --format='%B' "${sha}" 2>/dev/null || true)"`:                                      true,
+	`hit="$(printf '%s' "${msg}" | grep -Eo "${PROVISIONAL_RE}" || true)"`:                                true,
+	`if [ -n "${hit}" ]; then`:                                                                            true,
+	`subject="$(git log -1 --format='%s' "${sha}" 2>/dev/null || true)"`:                                  true,
+	`printf '%s %s [%s]\n' "${sha}" "${subject}" "$(printf '%s' "${hit}" | tr '\n' ',' | sed 's/,$//')"`:  true,
+	`[ -z "${localsha:-}" ] && continue`:                                                                  true,
+	`[ "${localsha}" = "${ZERO_SHA}" ] && continue`:                                                       true,
+	`if [ "${remotesha:-${ZERO_SHA}}" = "${ZERO_SHA}" ]; then`:                                            true,
+	`offenders="$(scan_range_for_provisional "${localsha}" --not --remotes)"`:                             true,
+	`offenders="$(scan_range_for_provisional "${remotesha}..${localsha}")"`:                               true,
+	`if [ -n "${offenders}" ]; then`:                                                                      true,
+	`printf '%s\n' "${offenders}" >&2`:                                                                    true,
+	`if [ "${PROVISIONAL_FOUND}" = "1" ]; then`:                                                           true,
+	`if [ "${MTIX_BLOCK_PROVISIONAL:-0}" = "1" ]; then`:                                                   true,
+	`if [ -z "${MTIX_SYNC_DSN:-}" ] && [ ! -f ".mtix/secrets" ]; then`:                                    true,
+	`if ! "${MTIX_BIN}" sync push 2>&1; then`:                                                             true,
+	`if [ -f "${TASKS_FILE}" ]; then`:                                                                     true,
+	`PRE_HASH="$(git hash-object "${TASKS_FILE}")"`:                                                       true,
+	`if ! "${MTIX_BIN}" sync --fix >/dev/null 2>&1; then`:                                                 true,
+	`POST_HASH="$(git hash-object "${TASKS_FILE}")"`:                                                      true,
+	`if [ "${PRE_HASH}" = "${POST_HASH}" ]; then`:                                                         true,
+	`git add -- "${TASKS_FILE}"`:                                                                          true,
+	`TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"`:                                                          true,
+	`COMMIT_MSG="chore(snapshot): tasks.json refresh @ ${TIMESTAMP}"`:                                     true,
+	`if [ "${MTIX_HOOK_AMEND:-0}" = "1" ]; then`:                                                          true,
+	`git commit --quiet --no-verify -m "${COMMIT_MSG}"`:                                                   true,
+	`NEW_SHA="$(git rev-parse --short HEAD)"`:                                                             true,
+	`printf 'mtix pre-push: sync push + snapshot committed (%s) %s\n' "${NEW_SHA}" "${TASKS_FILE}" >&2`:   true,
+	`DATE=$(date -u +%Y%m%dT%H%M%SZ)`:                                                                     true,
+	`mtix sync backup --output "/tmp/mtix-hub-${DATE}.sql"`:                                               true,
 	`<your-upload-tool> "/tmp/mtix-hub-${DATE}.sql" "<bucket>/mtix-hub/${DATE}.sql" # object storage (an S3-compatible API or similar)`: true,
 	`shred -u "/tmp/mtix-hub-${DATE}.sql"`: true,
 	`mtix sync backup --output "hub-$(date -u +%Y%m%dT%H%M%SZ).sql" # pg_dump of every mtix hub table`: true,
@@ -275,6 +280,36 @@ func TestWakeExample_CombinedForms_FollowDocumentedRoutine(t *testing.T) {
 	for i, form := range forms {
 		t.Run(strconv.Itoa(i), func(t *testing.T) { require.NotEmpty(t, wakeLaunchProblems(form), "complete documented form") })
 	}
+}
+
+func TestWakeExample_ExecutableForms_FollowDocumentedRoutine(t *testing.T) {
+	forms := []string{
+		"Use `GEMINI -p \"$MESSAGE\"`.",
+		"Use `\"gemini\" -p \"$MESSAGE\"`.",
+		"`'gemini' -p \"$MESSAGE\"`",
+		"```sh\n(gemini -p \"$MESSAGE\")\n```",
+		`# GEMINI -p "$MESSAGE"`,
+		"`\"new-runtime\" --message \"$MESSAGE\"`",
+	}
+	for i, form := range forms {
+		t.Run(strconv.Itoa(i), func(t *testing.T) { require.NotEmpty(t, wakeLaunchProblems(form), "complete documented form") })
+	}
+}
+
+func TestWakeExample_CompoundForms_KeepCompleteInputChecks(t *testing.T) {
+	forms := []string{
+		`MiXeD-runtime -p "$UNSEEN"`,
+		`"ge"mini -p "$UNSEEN"`,
+		`! ('gemini' -p "$UNSEEN")`,
+		`{ GEMINI -p "$UNSEEN"; }`,
+		`$EXECUTABLE -p "$UNSEEN"`,
+		`>result "gemini" -p "$UNSEEN"`,
+		"GEMINI `printf '%s\\n' \"$UNSEEN\" | claude -p`",
+	}
+	for i, form := range forms {
+		t.Run(strconv.Itoa(i), func(t *testing.T) { require.NotEmpty(t, wakeLaunchProblems(form), "complete documented form") })
+	}
+	require.Empty(t, wakeLaunchProblems("The default `\"$user\", public` puts a schema named after the role first"), "metadata form")
 }
 
 func TestWakeExample_MetadataForms_KeepInputChecks(t *testing.T) {

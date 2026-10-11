@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -93,7 +94,7 @@ Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.`,
 // applied events.
 func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 	args []string, opts transport.Options, limit int,
-) error {
+) (err error) {
 	if app.mtixDir == "" {
 		return fmt.Errorf("mtix sync pull: not in an mtix project (run 'mtix init' first)")
 	}
@@ -103,7 +104,19 @@ func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 	if limit <= 0 {
 		limit = pullDefaultBatchSize
 	}
+	svc := exchangeService(app.store)
+	owner, err := svc.BeginExchangePull(ctx, app.mtixDir)
+	if err != nil {
+		return err
+	}
+	defer owner.Close()
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, owner.Incomplete(ctx))
+		}
+	}()
 	in := newPullIngest(stderr)
+	in.receipt = newPullExchangeTracker(svc.MaxImportSize)
 
 	// A pull into an EMPTY journal is a bootstrap: the events it brings in are
 	// history, not fresh work. Detect it before anything is applied (the
@@ -130,6 +143,9 @@ func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 	}
 	initBootstrapHookFloor(ctx, stderr, bootstrap && res.pulled+res.retried > 0)
 
+	if err := completePullExchange(ctx, owner, in.receipt, res); err != nil {
+		return err
+	}
 	fmt.Fprintf(stdout,
 		"pull complete: %d events applied across %d batches\n", res.pulled, res.batches)
 	printLateEventSweep(stdout, res.sweep)
@@ -230,7 +246,7 @@ func pullThenSweep(ctx context.Context, in pullIngest, hub pullSweepHub,
 	if out.sweep, err = sweepLateEvents(ctx, in, hub, st, limit); err != nil {
 		return out, err
 	}
-	if out.pulled+out.sweep.Recovered == 0 {
+	if in.receipt == nil && out.pulled+out.sweep.Recovered == 0 {
 		return out, nil
 	}
 	retry, err := retryQuarantinedEvents(ctx, in, st, limit)
@@ -264,6 +280,8 @@ func pullLoop(ctx context.Context, in pullIngest,
 		if err != nil {
 			return applied, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
 		}
+		in.receipt.events(events)
+		in.receipt.cursorPage(len(events), hasMore)
 		if len(events) == 0 {
 			break
 		}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -24,13 +25,14 @@ import (
 // It has no count of events in the 'conflicted' status: no sync path
 // sets that status, so the count was always 0 (MTIX-95.7).
 type SyncStatus struct {
-	Pending       int    `json:"pending"`
-	Pushed        int    `json:"pushed"`
-	Applied       int    `json:"applied"`
-	Lamport       int64  `json:"lamport"`
-	LastPulled    int64  `json:"last_pulled_clock"`
-	MachineHash   string `json:"machine_hash,omitempty"`
-	ProjectPrefix string `json:"project_prefix,omitempty"`
+	ExchangeRecord service.ExchangeRecordStatus `json:"exchange_record"`
+	Pending        int                          `json:"pending"`
+	Pushed         int                          `json:"pushed"`
+	Applied        int                          `json:"applied"`
+	Lamport        int64                        `json:"lamport"`
+	LastPulled     int64                        `json:"last_pulled_clock"`
+	MachineHash    string                       `json:"machine_hash,omitempty"`
+	ProjectPrefix  string                       `json:"project_prefix,omitempty"`
 	// OpenConflicts counts the unresolved conflicts: lww rows without a
 	// later manual row for the same node and field (MTIX-95.7).
 	OpenConflicts int `json:"open_conflicts"`
@@ -146,7 +148,8 @@ func readSyncStatus(ctx context.Context, store *sqlite.Store) (SyncStatus, error
 	if err := readStatusSentinels(ctx, store, &st); err != nil {
 		return st, err
 	}
-	return st, nil
+	st.ExchangeRecord, err = readExchangeStatus(ctx, store)
+	return st, err
 }
 
 // readStatusSentinels fills st from the meta.sync.* sentinels, including
@@ -198,6 +201,7 @@ func printStatusJSON(w io.Writer, st SyncStatus) error {
 func printStatusTable(w io.Writer, st SyncStatus) error {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	rows := [][2]string{
+		{"Received record", fmt.Sprintf("present=%t %s %s; omission=%s (may be stale)", st.ExchangeRecord.Present, st.ExchangeRecord.WrittenAt, st.ExchangeRecord.Source, st.ExchangeRecord.Reason)},
 		{"project_prefix", emptyDash(st.ProjectPrefix)},
 		{"machine_hash", emptyDash(st.MachineHash)},
 		{"", ""},

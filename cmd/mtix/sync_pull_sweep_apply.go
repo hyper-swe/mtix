@@ -51,6 +51,7 @@ func applyStagedLateEvents(ctx context.Context, in pullIngest, hub lateEventHub,
 func applyStagedChunk(ctx context.Context, in pullIngest, hub lateEventHub, st *sqlite.Store,
 	chunk []string, limit int,
 ) (int, error) {
+	in.receipt.observe(chunk)
 	missing, err := missingLocalEventIDs(ctx, st, chunk)
 	if err != nil {
 		return 0, err
@@ -59,6 +60,7 @@ func applyStagedChunk(ctx context.Context, in pullIngest, hub lateEventHub, st *
 	if err != nil {
 		return 0, err
 	}
+	in.receipt.events(events)
 	if err := unstageLateEvents(ctx, st, idsNotApplied(chunk, events)); err != nil {
 		return 0, err
 	}

@@ -46,6 +46,9 @@ type SyncService struct {
 	// platform directory durability policy. Tests simulate unsupported Sync.
 	directorySync func(string) error
 
+	// wrapExchangeFile is an instance-local receipt writer dependency.
+	wrapExchangeFile func(*os.File) io.WriteCloser
+
 	MaxImportSize int64 // Maximum file size for auto-import per FR-15.2e.
 }
 
@@ -94,8 +97,8 @@ func (s *SyncService) autoImport(ctx context.Context, mtixDir string) error {
 	}
 	start := s.clock()
 
-	// Acquire shared lock for import per FR-15.8.
-	lockFile, lockErr := s.acquireLock(mtixDir, lockShared)
+	// Receipt publication and import share exclusive sync ownership.
+	lockFile, lockErr := s.acquireLock(mtixDir, lockExclusive)
 	if lockErr != nil {
 		s.logger.Warn("could not acquire sync lock, skipping auto-import", "error", lockErr)
 		return nil
@@ -139,40 +142,24 @@ func (s *SyncService) autoImport(ctx context.Context, mtixDir string) error {
 		return s.refuseLossyImport(mtixDir, fileHash, diff)
 	}
 
-	// Step 7: back up, then import in replace mode (FR-15.2d, FR-15.2f).
-	backupPath, err := s.backupDB(ctx, mtixDir, fileHash, local)
-	if err != nil {
-		s.logger.Warn("backup before auto-import failed, skipping import", "error", err)
-		s.recordRefusal(mtixDir, fileHash, refusalBackupFailed,
-			"the local database could not be backed up before the import: "+err.Error())
-		return nil
-	}
-	s.logger.Info("sync_import_triggered", "event", "sync_import_triggered", "file_hash", fileHash,
-		"stored_hash", string(storedHash), "file_size", len(data), "node_count", incoming.NodeCount)
-	// MTIX-95.31.4: nothing is written if the store changed after the loss check.
-	unchanged := sqlite.IfStoreUnchanged(local.Checksum)
-	if _, importErr := s.store.Import(ctx, incoming, sqlite.ImportModeReplace, false, unchanged); importErr != nil {
-		return fmt.Errorf("auto-import: %w", importErr)
-	}
-	s.noticeImported(mtixDir, diff, backupPath) // FR-15.2k: never silent
-	s.forgetBackup(mtixDir)                     // FR-15.2f: the next import backs up anew
-
-	// Step 8: record the file as imported (FR-15.2h).
-	return s.recordImported(ctx, mtixDir, hashPath, fileHash, incoming.NodeCount, start)
+	return s.applyReceivedImport(ctx, mtixDir, hashPath, fileHash, data, storedHash, incoming, local, diff, start)
 }
 
 // recordImported runs after a successful auto-import: it updates the
 // stored hash only then, and the conflict baseline, so the next pull is not
 // a conflict (FR-15.2h), and logs the completion.
 func (s *SyncService) recordImported(
-	ctx context.Context, mtixDir, hashPath, fileHash string, nodeCount int, start time.Time,
+	ctx context.Context, mtixDir, hashPath, fileHash string, incoming *sqlite.ExportData, start time.Time,
 ) error {
 	if hashErr := s.writeHashFile(hashPath, fileHash); hashErr != nil {
 		return hashErr
 	}
 	s.refreshDBHash(ctx, mtixDir)
+	if err := s.recordReceivedImport(ctx, mtixDir, incoming, fileHash); err != nil {
+		return err
+	}
 	s.logger.Info("sync_import_completed", "event", "sync_import_completed", "file_hash", fileHash,
-		"node_count", nodeCount, "duration_ms", s.clock().Sub(start).Milliseconds())
+		"node_count", incoming.NodeCount, "duration_ms", s.clock().Sub(start).Milliseconds())
 	return nil
 }
 

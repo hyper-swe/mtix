@@ -138,6 +138,7 @@ func TestExchangeRecord_OwnJournalSweepAndDuplicate_Qualifies(t *testing.T) {
 	var applied int
 	require.NoError(t, app.store.QueryRow(t.Context(), `SELECT COUNT(*) FROM applied_events WHERE event_id=?`, own[0].EventID).Scan(&applied))
 	require.Zero(t, applied)
+	require.NoError(t, markPushed(t.Context(), app.store, []string{own[0].EventID}))
 	hub := &fakeLateHub{events: own, hubNows: []time.Time{sweepHubT1}}
 	_, err = finishExchangeTestPull(t, owner, in, hub)
 	require.NoError(t, err)

@@ -13,6 +13,8 @@ import (
 )
 
 type ExchangeBoundary struct {
+	// PendingOutbound is nil for older receipts whose outbound state is unknown.
+	PendingOutbound     *int64 `json:"pending_outbound,omitempty"`
 	LocalSequence       int64  `json:"local_sequence"`
 	PullClock           int64  `json:"pull_clock"`
 	PullEventID         string `json:"pull_event_id"`
@@ -62,9 +64,12 @@ func validateExchangeIDs(ids []string, capBytes int64) error {
 
 func readExchangeBoundary(ctx context.Context, tx *sql.Tx) (ExchangeBoundary, error) {
 	var b ExchangeBoundary
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(rowid),0) FROM sync_events`).Scan(&b.LocalSequence); err != nil {
+	var outbound int64
+	// Count every pending journal row, including held push events, in this WAL read.
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(rowid),0), COUNT(CASE WHEN sync_status='pending' THEN 1 END) FROM sync_events`).Scan(&b.LocalSequence, &outbound); err != nil {
 		return b, err
 	}
+	b.PendingOutbound = &outbound
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_sweep_pending`).Scan(&b.Pending); err != nil {
 		return b, err
 	}

@@ -32,7 +32,14 @@ func appendExchangeRecordCheck(ctx context.Context, r DoctorReport, st *sqlite.S
 	}
 	if status.Reason != "" {
 		check.Warn = true
-		check.Detail += "; recorded omission (may be stale): " + status.Reason
+		if status.Reason == "outbound-boundary-unknown" {
+			check.Detail += "; inferred legacy receipt has unknown outbound state: " + status.Reason
+		} else {
+			check.Detail += "; recorded omission (may be stale): " + status.Reason
+		}
+		if status.Reason == "pending-outbound" || status.Reason == "outbound-boundary-unknown" {
+			check.Fix = "Run mtix sync push, then a new, complete mtix sync pull to record a boundary with no pending outbound events."
+		}
 	}
 	return appendDoctorCheck(r, check)
 }

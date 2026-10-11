@@ -169,6 +169,9 @@ func validateExchangeBoundary(r *ExchangeRecord) error {
 		return nil
 	}
 	b := r.Boundary
+	if b.PendingOutbound != nil && *b.PendingOutbound != 0 {
+		return exchangeUnavailable("boundary", nil)
+	}
 	if b.LocalSequence < 0 || b.PullClock < 0 || b.Pending != 0 || b.Unresolved != 0 {
 		return exchangeUnavailable("boundary", nil)
 	}
@@ -188,7 +191,7 @@ func normalizeExchangeReason(reason string) string {
 		"unsafe-file", "temporary-file", "oversize", "read", "invalid-json", "trailing-json", "format", "time", "hash",
 		"source", "count", "boundary", "task-identity", "task-fields", "historical-form", "board-hash", "task-json",
 		"unsupported-schema", "encode", "publish-failed", "durability-uncertain", "partial-pull", "snapshot-failed",
-		"unapplied-event", "tracking-limit", "unknown-event":
+		"unapplied-event", "tracking-limit", "unknown-event", "pending-outbound", "outbound-boundary-unknown":
 		return reason
 	default:
 		return "unknown"

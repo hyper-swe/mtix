@@ -67,7 +67,7 @@ func readExchangeBoundary(ctx context.Context, tx *sql.Tx) (ExchangeBoundary, er
 	var outbound int64
 	// Count every pending journal row, including held push events, in this WAL read.
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(rowid),0), COUNT(CASE WHEN sync_status='pending' THEN 1 END) FROM sync_events`).Scan(&b.LocalSequence, &outbound); err != nil {
-		return b, err
+		return b, fmt.Errorf("exchange snapshot: read outbound aggregate: %w", err)
 	}
 	b.PendingOutbound = &outbound
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_sweep_pending`).Scan(&b.Pending); err != nil {

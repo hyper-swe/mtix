@@ -63,6 +63,8 @@ func (p *ExchangePull) Complete(ctx context.Context, c ExchangePullCompletion) e
 	if b.Unresolved != 0 || b.Pending != 0 || b.SweepAfterID != "" || b.SweepAfterCreatedAt != "" || b.SweepStartedAt != "" {
 		return p.service.saveExchangeReason(ctx, "unapplied-event")
 	}
+	// A successful current Store snapshot always supplies PendingOutbound;
+	// retain the nil guard to fail closed if an unknown boundary ever reaches us.
 	if b.PendingOutbound == nil || *b.PendingOutbound != 0 {
 		return p.service.saveExchangeReason(ctx, "pending-outbound")
 	}

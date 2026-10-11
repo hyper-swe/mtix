@@ -108,30 +108,42 @@ func TestExportExchangeSnapshot_ConcurrentOutboundChange_UsesBoardSnapshot(t *te
 			finished := make(chan error, 1)
 			t.Cleanup(func() { cancel(); require.NoError(t, <-finished) })
 			go outboundWriter(ctx, s, acknowledge, ready, written, finished)
-			var observed ExchangeBoundary
-			data, err := s.readExportSnapshotWith(ctx, func(tx *sql.Tx) error {
-				close(ready)
-				select {
-				case <-written:
-				case <-ctx.Done():
-					return ctx.Err()
-				}
-				var boundaryErr error
-				observed, boundaryErr = readExchangeBoundary(ctx, tx)
-				return boundaryErr
-			})
+			clearObserver := observeOutboundCommit(ctx, s, ready, written)
+			data, observed, err := s.ExportExchangeSnapshot(ctx, "TEST", "reference", nil, 10000)
+			clearObserver()
 			require.NoError(t, err)
 			before := int64(0)
 			if acknowledge {
 				before = 1
 			}
 			require.Len(t, data.Nodes, int(before))
+			require.Equal(t, int(before), data.NodeCount)
+			require.Equal(t, before, observed.LocalSequence)
 			require.Equal(t, before, outboundWire(t, observed))
-			_, after, err := s.ExportExchangeSnapshot(ctx, "TEST", "reference", nil, 10000)
+			var journalPending int64
+			require.NoError(t, s.QueryRow(ctx, `SELECT COUNT(*) FROM sync_events WHERE sync_status=?`, "pending").Scan(&journalPending))
+			require.Equal(t, 1-before, journalPending, "writer commit changes the journal outside the original board snapshot")
+			later, after, err := s.ExportExchangeSnapshot(ctx, "TEST", "reference", nil, 10000)
 			require.NoError(t, err)
+			require.Len(t, later.Nodes, 1)
+			require.Equal(t, 1, later.NodeCount)
 			require.Equal(t, 1-before, outboundWire(t, after))
 		})
 	}
+}
+
+// observeOutboundCommit pauses only the first export after its board reads.
+// The writer commits without touching the observer; the caller clears it before
+// another export starts, so this fixture never mutates it during an export.
+func observeOutboundCommit(ctx context.Context, s *Store, ready chan<- struct{}, written <-chan struct{}) func() {
+	s.afterExportBoardRead = func() {
+		close(ready)
+		select {
+		case <-written:
+		case <-ctx.Done():
+		}
+	}
+	return func() { s.afterExportBoardRead = nil }
 }
 
 func outboundWriter(ctx context.Context, s *Store, acknowledge bool, ready <-chan struct{}, written chan<- struct{}, finished chan<- error) {

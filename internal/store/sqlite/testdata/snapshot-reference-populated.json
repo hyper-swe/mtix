@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "schema_version": "2.0.0",
+  "exported_at": "2026-10-11T00:00:00Z",
+  "mtix_version": "reference",
+  "project": "SNAP",
+  "nodes": [
+    {
+      "id": "SNAP-1",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 1,
+      "project": "SNAP",
+      "title": "Original coherent task",
+      "description": "",
+      "prompt": "",
+      "acceptance": "",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "",
+      "created_at": "2026-10-11T00:00:00Z",
+      "updated_at": "2026-10-11T00:00:00Z",
+      "uid": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "activity": [
+        {
+          "id": "act-1791676800000000000",
+          "type": "created",
+          "author": "",
+          "text": "Node created",
+          "created_at": "2026-10-11T00:00:00Z"
+        }
+      ]
+    },
+    {
+      "id": "SNAP-2",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 2,
+      "project": "SNAP",
+      "title": "Atomic writer task",
+      "description": "",
+      "prompt": "",
+      "acceptance": "",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 2,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "",
+      "created_at": "2026-10-11T00:00:00Z",
+      "updated_at": "2026-10-11T00:00:00Z",
+      "uid": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    }
+  ],
+  "dependencies": [
+    {
+      "from_id": "SNAP-1",
+      "to_id": "SNAP-2",
+      "dep_type": "blocks",
+      "created_at": "2026-10-11T00:00:00Z"
+    }
+  ],
+  "agents": [
+    {
+      "agent_id": "worker-a",
+      "project": "SNAP",
+      "state": "idle",
+      "current_node_id": "SNAP-1"
+    },
+    {
+      "agent_id": "worker-b",
+      "project": "SNAP",
+      "state": "idle",
+      "current_node_id": "SNAP-2"
+    }
+  ],
+  "sessions": [
+    {
+      "id": "session-a",
+      "agent_id": "worker-a",
+      "project": "SNAP",
+      "started_at": "2026-10-11T00:00:00Z",
+      "status": "active"
+    },
+    {
+      "id": "session-b",
+      "agent_id": "worker-b",
+      "project": "SNAP",
+      "started_at": "2026-10-11T00:00:00Z",
+      "status": "active"
+    }
+  ],
+  "node_count": 2,
+  "checksum": "6a604d6861f4723d452913dded321cbc5852948fc3951a861921c6db20ea767d"
+}

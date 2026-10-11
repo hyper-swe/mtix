@@ -178,3 +178,68 @@ func TestMergeBaseBoard_FormattingAndExportTime_PreserveCanonicalHash(t *testing
 		require.Equal(t, "41589749e35326ce49c3e30ec4aa6cea672b73c5d640d5d7ee56563e2a2aadfb", p.ContentSHA256)
 	}
 }
+
+// Each clone has an available committed board even when its layout is unsupported.
+func boardReadableClone(t *testing.T, layout string) (string, string, []byte, string) {
+	t.Helper()
+	blob := boardBytes(t, "ancestor board")
+	source := boardSingleRepo(t, blob)
+	root := filepath.Join(t.TempDir(), "clone")
+	remote := "file://" + source
+	var flags []string
+	switch layout {
+	case "shallow":
+		flags = []string{"--depth=1"}
+	case "borrowed":
+		flags, remote = []string{"--shared"}, source
+	case "dissociated":
+		flags = []string{"--reference", source, "--dissociate"}
+	}
+	args := append([]string{"clone", "--branch", "main"}, flags...)
+	boardGit(t, filepath.Dir(root), append(args, remote, root)...)
+	boardGit(t, root, "update-ref", "ORIG_HEAD", "HEAD")
+	oid := strings.TrimSpace(boardGit(t, source, "rev-parse", "HEAD"))
+	require.Equal(t, oid, strings.TrimSpace(boardGit(t, root, "merge-base", "--all", "ORIG_HEAD", "@{upstream}")))
+	require.Equal(t, string(blob), boardGit(t, root, "show", oid+":.mtix/tasks.json"))
+	return root, source, blob, oid
+}
+
+func TestMergeBaseBoard_RestrictedCloneLayouts_Refused(t *testing.T) {
+	for _, c := range []struct {
+		name, marker string
+	}{
+		{"shallow", "shallow"},
+		{"borrowed", "objects/info/alternates"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root, source, _, _ := boardReadableClone(t, c.name)
+			marker, err := os.ReadFile(filepath.Join(root, ".git", filepath.FromSlash(c.marker)))
+			require.NoError(t, err)
+			require.NotEmpty(t, marker)
+			before := boardSnapshot(t, source)
+			assertBoardUnavailable(t, NewSyncService(nil, nil, nil), root)
+			require.Equal(t, before, boardSnapshot(t, source))
+		})
+	}
+}
+
+func TestMergeBaseBoard_SelfContainedCloneLayouts_ReturnExactProvenance(t *testing.T) {
+	for _, layout := range []string{"full", "dissociated"} {
+		t.Run(layout, func(t *testing.T) {
+			root, source, blob, oid := boardReadableClone(t, layout)
+			before, sourceBefore := boardSnapshot(t, root), boardSnapshot(t, source)
+			data, p, err := NewSyncService(nil, nil, nil).MergeBaseBoard(t.Context(), root)
+			require.NoError(t, err)
+			require.Equal(t, "ancestor board", data.Nodes[0].Title)
+			require.Equal(t, "PROJ-1", data.Nodes[0].ID)
+			require.Equal(t, oid, p.BaseOID)
+			require.Equal(t, [2]string{"ORIG_HEAD", "@{upstream}"}, p.Candidates)
+			require.Equal(t, "git-merge-base", p.Source)
+			require.Equal(t, "current", p.Form)
+			require.Equal(t, fmt.Sprintf("%x", sha256.Sum256(blob)), p.BlobSHA256)
+			require.Equal(t, "41589749e35326ce49c3e30ec4aa6cea672b73c5d640d5d7ee56563e2a2aadfb", p.ContentSHA256)
+			require.Equal(t, before, boardSnapshot(t, root))
+			require.Equal(t, sourceBefore, boardSnapshot(t, source))
+		})
+	}
+}

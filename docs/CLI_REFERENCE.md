@@ -1500,6 +1500,9 @@ Run health checks against the local store and the BYO Postgres hub:
   Queue draining         - no events older than 1h still in pending
                            (held push events aside; the held push events
                            check lists them)
+  Pending exports        - local mirror requests, count and oldest age;
+                           warns after 1h; run mtix list for protected
+                           import-first recovery (refusals need resolution)
   No orphan applied      - every applied_event has a matching node OR tombstone
   Quarantined events     - no pulled event is held in the local quarantine;
                            each pull retries them ('mtix sync quarantine list')
@@ -2168,7 +2171,8 @@ repair its hub.
 Show local sync state (counts + sentinels)
 
 Show the local sync queue counts plus meta sentinels. Pure local
-read — does not touch the hub. Use 'mtix sync doctor' to verify hub
+read — does not touch the hub or drain mirror requests. Pending exports
+show the logical coalesced count and oldest age separately from hub events. Use 'mtix sync doctor' to verify hub
 reachability and schema currency.
 
 A conflict is unresolved until mtix sync conflicts resolve records a

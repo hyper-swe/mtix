@@ -26,7 +26,10 @@ func markPendingExport(mtixDir string) error {
 // RequestExport records work before a long-running exporter starts its debounce.
 // It performs no inline export and conveys no pulled-board overwrite authority.
 func (s *SyncService) RequestExport(mtixDir string) error {
-	return markPendingExportWithSync(mtixDir, s.syncDirectory)
+	ctx := context.Background()
+	legacyErr := s.migratePendingExports(ctx, mtixDir)
+	markErr := s.store.MarkExportRequest(ctx, s.clock())
+	return errors.Join(legacyErr, markErr)
 }
 
 func (s *SyncService) syncDirectory(path string) error {
@@ -81,29 +84,15 @@ func pendingExportRequests(mtixDir string) ([]string, error) {
 // Contention and pulled-board refusals keep existing requests intact. Callers
 // may invoke this on daemon ticks or after releasing a service import lock.
 func (s *SyncService) DrainPendingExport(ctx context.Context, mtixDir string) error {
-	requests, err := pendingExportRequests(mtixDir)
-	if err != nil || len(requests) == 0 {
+	status, err := s.PendingExports(ctx, mtixDir)
+	if err != nil || status.Count == 0 {
 		return err
 	}
 	return s.runAutoExport(ctx, mtixDir, automaticExportPasses)
 }
 
-// retirePendingExports removes only the request snapshot taken before exporting
-// the store. A writer arriving during publication remains for the next pass.
-func retirePendingExportsWithSync(mtixDir string, requests []string, syncDir func(string) error) error {
-	for _, path := range requests {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("retire pending export request: %w", err)
-		}
-	}
-	if len(requests) == 0 {
-		return nil
-	}
-	return syncDir(pendingExportDir(mtixDir))
-}
-
 // Publication must reach the filesystem before retiring its durable requests.
-// The DB baseline computation remains the existing separate snapshot (130.3).
+// Hashes describe the exact published export snapshot (MTIX-130.3).
 func syncExportPublicationWithSync(mtixDir string, syncDir func(string) error) error {
 	for _, path := range []string{"tasks.json", "data/sync.sha256", "data/sync-db.sha256"} {
 		// #nosec G703 -- path is one of the three literal publication filenames above, joined under the caller-selected local project.

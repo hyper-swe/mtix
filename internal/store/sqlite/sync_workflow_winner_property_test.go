@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Workflow scenarios own their stores and retain every arrival permutation.
 package sqlite
 
 import (
@@ -237,8 +238,10 @@ func TestApply_WorkflowEventPermutations_StatusAndClosedAtConverge(t *testing.T)
 	for name, evs := range wfRandomScenarios() {
 		scenarios[name] = evs
 	}
+	t.Parallel()
 	for name, evs := range scenarios {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			s, raw := applyTestStore(t)
 			exp := wfExpectedFor(wfWinner(evs))
 			for n, perm := range wfPermutations(len(evs)) {

@@ -5,6 +5,7 @@
 // workflow value (status, assignee, agent state, wake time). Written
 // red-first against main 947b7c0, where mergeUnchangedContent dropped a
 // teammate's claim and a teammate's text edit undid a local reopen.
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 import (
@@ -125,6 +126,7 @@ func workflowStores(t *testing.T, tc workflowCase) (*sqlite.Store, *sqlite.Store
 // merge refuses, writing nothing, when any workflow field differs, whichever
 // side changed it (MTIX-95.31.13).
 func TestImportReconcile_WorkflowDiffers_RefusesAndWritesNothing(t *testing.T) {
+	t.Parallel()
 	for _, tc := range workflowCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			local, _, file := workflowStores(t, tc)
@@ -143,6 +145,7 @@ func TestImportReconcile_WorkflowDiffers_RefusesAndWritesNothing(t *testing.T) {
 // TestImportReconcile_ProgressOnlyDifference_MergesSilently verifies a
 // difference in progress alone (recalculated, never a conflict) is merged.
 func TestImportReconcile_ProgressOnlyDifference_MergesSilently(t *testing.T) {
+	t.Parallel()
 	local, _, file := workflowStores(t, workflowCase{name: "none", base: noEdit})
 	file.Nodes[0].Progress = 0.5
 	file.Checksum = sqlite.RecomputeChecksumForTest(t, file)

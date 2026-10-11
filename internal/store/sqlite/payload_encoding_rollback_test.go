@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite
 
 // MTIX-107.25: encoding failures preserve FR-18.3 mutation/event atomicity.
@@ -151,8 +152,10 @@ func allPayloadCases() []payloadFailureCase {
 }
 
 func TestPayloadEncoding_Failure_RollsBackEveryMutation(t *testing.T) {
+	t.Parallel()
 	for _, tc := range allPayloadCases() {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			s := newPayloadTestStore(t)
 			if tc.prepare != nil {
 				tc.prepare(t, s)
@@ -235,8 +238,10 @@ func payloadRows(t *testing.T, db *sql.DB, query string) [][]any {
 }
 
 func TestPayloadEncoding_DefaultEncoder_PreservesTypedPayloads(t *testing.T) {
+	t.Parallel()
 	for _, tc := range allPayloadCases() {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			s := newPayloadTestStore(t)
 			if tc.prepare != nil {
 				tc.prepare(t, s)
@@ -261,6 +266,7 @@ func TestPayloadEncoding_DefaultEncoder_PreservesTypedPayloads(t *testing.T) {
 }
 
 func TestPayloadEncoding_IndependentStores_IsolatedConcurrently(t *testing.T) {
+	t.Parallel()
 	bad, good := newPayloadTestStore(t), newPayloadTestStore(t)
 	cause := errors.New("store-local failure")
 	bad.encodePayloadFn = func(any) (json.RawMessage, error) { return nil, cause }
@@ -294,6 +300,7 @@ func TestPayloadEncoding_IndependentStores_IsolatedConcurrently(t *testing.T) {
 }
 
 func TestPayloadEncoding_NoOp_DoesNotEncode(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		run  func(*Store) error
@@ -312,6 +319,7 @@ func TestPayloadEncoding_NoOp_DoesNotEncode(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			s := newPayloadTestStore(t)
 			before := payloadDatabaseSnapshot(t, s)
 			s.encodePayloadFn = func(any) (json.RawMessage, error) {

@@ -2237,13 +2237,12 @@ hooks:
     deliver: [exec]
     exec:
       command: ["/path/to/wake-agent.sh", "developer"]
-      timeout-seconds: 30
+      timeout-seconds: 86400
 ```
 
 Review and trust the config on that host (`mtix hooks trust`). The
-script exits without launching when the inbox is empty (the idempotency
-check under at-least-once dispatch) and otherwise launches the harness
-CLI with the inbox supplied through standard input. Keep exactly one launch
+script exits without launching when the inbox is empty and otherwise launches
+the harness CLI with the inbox supplied through standard input. Keep exactly one launch
 line enabled in the reference script:
 
 - Claude Code: `printf '%s\n' "$PAYLOAD" | claude -p`
@@ -2254,6 +2253,44 @@ trailing newlines and the launch writes one final newline. Other runtimes need
 a verified standard-input interface before adding a launch line. The reference
 does not provide a Cursor CLI cold-start form; its MCP and context hooks remain
 available.
+
+The script acquires a board-local lease for the agent, host identity and user.
+A concurrent wake marks the lease dirty and exits quietly; the holder rechecks
+eligible inbox events before releasing. A relaunch retains the same owner token,
+so another wake cannot acquire between drain runs. Only the agent acknowledges
+handled events; the script never acknowledges them.
+
+The command idiom is:
+
+```sh
+HOLDER="$(mtix inbox lease acquire --agent developer)"
+mtix inbox lease release --agent developer --holder "$HOLDER"
+```
+
+Acquire prints a 32-character lowercase hexadecimal token. Release prints
+`released`, `relaunch` or `abandoned`; `--json` reports the outcome, pending count
+and high-water mark (expiry only for relaunch). Exit 6 means held or no longer the
+holder; storage failures retain exit 3 or 4. TTL defaults to 15m, accepts 1m through
+24h, and `acquire --holder` renews the same owner. The reference renews every 60s
+while it lives and stops loudly if ownership has changed. The local host identity
+must resolve from operator state outside sandbox-writable roots; it never falls
+back to a replica, hostname or caller-supplied identity.
+
+Set `MTIX_BIN` and `HARNESS_BIN` to executable paths when needed. Under a minimal
+PATH, the script also searches common operator binary directories and resolves
+absolute paths. A missing tool exits 127 with a timestamped diagnostic on stderr
+and in the operator-only `mtix/wake-agent.log` under `XDG_STATE_HOME` (default
+`HOME/.local/state`); `WAKE_AGENT_LOG` overrides that path. Other wake failures exit 1. Catchable termination signals
+stop owned children and abandon the lease. A nonzero harness exit still triggers
+an inbox recheck. `WAKE_MAX_RUNS` defaults to 20 launches per lease; reaching the
+bound abandons and leaves unhandled events durable for the next addressed wake.
+There is no default hourly wake budget.
+
+The hook timeout must exceed the actual run: it kills the script, not a surviving
+harness. Prolonged renewal failure beyond the TTL, or SIGKILL while the harness
+survives, can allow overlapping runs. The reference lease bounds recovery; it is
+not hard process fencing. The POSIX reference is untested on Windows; the lease
+CLI supports Windows user SID identity.
 
 Per-harness support today:
 
@@ -3174,6 +3211,8 @@ mtix exits with structured codes so scripts and agents can react without parsing
 | 3 | Disk full — a write or backup was refused or failed because the volume is out of space; free space and retry |
 | 4 | Database corrupted — an integrity gate failed at open; see "Disk full and corruption recovery" |
 | 5 | Inbox empty — `mtix inbox --wait` timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Note: a harness-hosted (Claude) agent cannot stay parked *between* turns — a dormant session runs no poller, so `mtix_inbox_wait` only watches the inbox *within* a live turn. To wake a dormant agent when work lands, cold-start it with an exec wake hook on the worker host (see "Waking agents: delivery that terminates in the prompt"), or use channel push / a background watcher for a live session |
+
+| 6 | Inbox wake lease held or no longer owned — the reference wake coalesces held runs and stops a stale holder; disk-full 3 and corruption 4 retain priority |
 
 ### Common Issues
 

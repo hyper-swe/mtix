@@ -1,0 +1,89 @@
+// Copyright 2025-2026 HyperSWE
+// SPDX-License-Identifier: Apache-2.0
+
+// Metadata recognition checks command positions, including nested substitutions.
+package docs
+
+import (
+	"regexp"
+	"strings"
+)
+
+var wakeMetadataStartRE = regexp.MustCompile(`(?:^|\|\||[;|]|&&|\s&\s|\$\(|\bthen\b|\bdo\b|\belse\b)\s*(?:[({!]\s*)*([^\s;&|]+)`)
+var wakeMetadataAssignmentRE = regexp.MustCompile(`^[A-Z_][A-Z_0-9]*=`)
+var wakeMetadataFunctionRE = regexp.MustCompile(`^[a-z_][a-z_0-9]*\(\)$`)
+
+func wakeProtocolMetadataLine(line string) bool {
+	if strings.HasPrefix(line, "trap '") {
+		body, _, found := strings.Cut(strings.TrimPrefix(line, "trap '"), "'")
+		return found && wakeProtocolMetadataLine(body)
+	}
+	line = wakeMetadataArithmeticRE.ReplaceAllString(line, "0")
+	// A case arm contributes framing, not an executable command.
+	if before, after, found := strings.Cut(line, ") "); found && !strings.Contains(before, "$(") && !strings.Contains(before, " ") {
+		line = after
+	}
+	if !wakeMetadataSubstitutions(line) {
+		return false
+	}
+	line = wakeMetadataQuotedRE.ReplaceAllStringFunc(line, func(quoted string) string {
+		if quoted == `"$MTIX_BIN"` {
+			return quoted
+		}
+		return "word"
+	})
+	line = wakeMetadataFrameRE.ReplaceAllString(line, " ")
+	starts := wakeMetadataStartRE.FindAllStringSubmatch(line, -1)
+	if len(starts) == 0 {
+		return false
+	}
+	for _, start := range starts {
+		word := strings.Trim(start[1], "'\"")
+		if wakeMetadataAssignmentRE.MatchString(word) || wakeMetadataFunctionRE.MatchString(word) {
+			continue
+		}
+		if word == "$MTIX_BIN" {
+			if !strings.Contains(line, `"$MTIX_BIN" inbox lease `) {
+				return false
+			}
+			continue
+		}
+		if !wakeMetadataCommand(word) {
+			return false
+		}
+	}
+	return true
+}
+
+func wakeMetadataCommand(word string) bool {
+	switch word {
+	case "if", "while", "for", "case", "trap", "[", "then", "else", "fi", "do", "done", "esac", "break", "continue", "exit", "return", ":", "}":
+		return true
+	case "report", "resolve_tool", "stop_children", "cleanup", "interrupted", "lost_lease", "renew_loop":
+		return true
+	case "kill", "wait", "sleep", "printf", "mkdir", "chmod", "date", "dirname", "basename", "cd", "pwd", "command":
+		return true
+	}
+	return false
+}
+
+var wakeMetadataQuotedRE = regexp.MustCompile(`"[^"\n]*"|'[^'\n]*'`)
+var wakeMetadataSubstitutionRE = regexp.MustCompile(`\$\(\s*([^\s)]+)`)
+
+func wakeMetadataSubstitutions(line string) bool {
+	for _, match := range wakeMetadataSubstitutionRE.FindAllStringSubmatch(line, -1) {
+		word := strings.Trim(match[1], "\"'")
+		if word == "$MTIX_BIN" && strings.Contains(line, `"$MTIX_BIN" inbox lease `) {
+			continue
+		}
+		if wakeMetadataAssignmentRE.MatchString(word) || wakeMetadataCommand(word) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+var wakeMetadataArithmeticRE = regexp.MustCompile(`\$\(\([A-Z_0-9 +*/%-]+\)\)`)
+
+var wakeMetadataFrameRE = regexp.MustCompile(`\b(?:if|then|else|while|do)\s+`)

@@ -48,7 +48,11 @@ func main() {
 // DSN, password or URL-shaped DSN reaches the terminal, including from
 // errors cobra builds around an argument (FR-18.17, MTIX-95.15).
 func printFinalError(w io.Writer, err error) {
-	fmt.Fprintf(w, "error: %s\n", scrubSyncText(err.Error()))
+	prefix := "error: "
+	if exitCodeForError(err) == exitCodeLeaseHeld {
+		prefix = ""
+	}
+	fmt.Fprintf(w, "%s%s\n", prefix, scrubSyncText(err.Error()))
 }
 
 func run() error { return runArgs(nil) }

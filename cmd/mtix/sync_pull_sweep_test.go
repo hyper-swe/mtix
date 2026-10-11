@@ -254,7 +254,7 @@ func TestSweepLateEvents_FirstSweep_PagesFullHistoryAndRecordsFirstHubTime(t *te
 			got, err := sweepLateEvents(context.Background(), testIngest(&stderr), hub, app.store, 2)
 
 			require.NoError(t, err)
-			require.Equal(t, lateEventSweep{Recovered: 3, FullDiff: true}, got)
+			require.Equal(t, lateEventSweep{Completed: true, Recovered: 3, FullDiff: true}, got)
 			require.Equal(t, []transport.EventIDCursor{{},
 				{CreatedAt: hub.events[1].CreatedAt, EventID: hub.events[1].EventID}}, hub.calls,
 				"from the zero position, three ids in pages of two: the second page starts after the second id")
@@ -283,7 +283,7 @@ func TestSweepLateEvents_RecordedSweep_ListsWindowFromHubTimeMinusOverlap(t *tes
 	got, err := sweepLateEvents(context.Background(), testIngest(nil), hub, app.store, 100)
 
 	require.NoError(t, err)
-	require.Equal(t, lateEventSweep{Recovered: 1}, got)
+	require.Equal(t, lateEventSweep{Completed: true, Recovered: 1}, got)
 	require.Equal(t, []transport.EventIDCursor{{
 		CreatedAt: time.Date(2026, 9, 24, 8, 45, 0, 500000000, time.UTC),
 	}}, hub.calls, "one page from 15 minutes before the recorded time, never the full history")
@@ -383,7 +383,7 @@ func TestSweepLateEvents_ListingInterrupted_ResumesListingThenApplies(t *testing
 			got, err = sweepLateEvents(ctx, testIngest(&stderr), resumed, app.store, 1)
 
 			require.NoError(t, err)
-			require.Equal(t, lateEventSweep{Recovered: 3, FullDiff: full}, got)
+			require.Equal(t, lateEventSweep{Completed: true, Recovered: 3, FullDiff: full}, got)
 			require.Equal(t, []transport.EventIDCursor{
 				{CreatedAt: events[0].CreatedAt, EventID: ids[0]},
 				{CreatedAt: events[1].CreatedAt, EventID: ids[1]},
@@ -431,7 +431,7 @@ func TestSweepLateEvents_ApplyInterrupted_ResumesWithRemainingStaged(t *testing.
 	got, err = sweepLateEvents(ctx, testIngest(nil), resumed, app.store, 1)
 
 	require.NoError(t, err)
-	require.Equal(t, lateEventSweep{Recovered: 2, FullDiff: true}, got)
+	require.Equal(t, lateEventSweep{Completed: true, Recovered: 2, FullDiff: true}, got)
 	require.Equal(t, []transport.EventIDCursor{{CreatedAt: events[2].CreatedAt, EventID: ids[2]}},
 		resumed.calls, "nothing is listed again")
 	require.Equal(t, [][]string{{ids[1]}, {ids[2]}}, resumed.fetched,
@@ -462,7 +462,7 @@ func TestSweepLateEvents_OwnEditListedBeforeCreate_AppliesInLamportOrder(t *test
 
 	require.NoError(t, err)
 	require.Equal(t, events[2].EventID, hub.calls[1].EventID, "precondition: the last edit is listed first")
-	require.Equal(t, lateEventSweep{Recovered: 3, FullDiff: true}, got)
+	require.Equal(t, lateEventSweep{Completed: true, Recovered: 3, FullDiff: true}, got)
 	require.Equal(t, [][]string{{events[0].EventID}, {events[1].EventID}, {events[2].EventID}}, hub.fetched,
 		"the staged events are fetched in Lamport order, one --limit chunk at a time")
 	node, err := app.store.GetNode(context.Background(), "TEST-9")
@@ -491,7 +491,7 @@ func TestSweepLateEvents_StagedHeldOrGone_UnstagedWithoutApply(t *testing.T) {
 	got, err := sweepLateEvents(ctx, testIngest(nil), hub, app.store, 10)
 
 	require.NoError(t, err)
-	require.Equal(t, lateEventSweep{Recovered: 1}, got, "only the missing staged event applies")
+	require.Equal(t, lateEventSweep{Completed: true, Recovered: 1}, got, "only the missing staged event applies")
 	wantFetched := []string{events[1].EventID, "0193fb00-0000-7000-8000-00000000dead"}
 	sort.Strings(wantFetched)
 	require.Equal(t, [][]string{wantFetched}, hub.fetched, "the held id is not fetched")

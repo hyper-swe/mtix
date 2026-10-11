@@ -71,6 +71,9 @@ func (s *Store) readExportSnapshotWith(ctx context.Context, boundary func(*sql.T
 	if err != nil {
 		return nil, exportReadError("export sessions", err)
 	}
+	if s.afterExportBoardRead != nil {
+		s.afterExportBoardRead()
+	}
 	if boundary != nil {
 		if err := boundary(tx); err != nil {
 			return nil, err

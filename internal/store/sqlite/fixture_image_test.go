@@ -69,6 +69,7 @@ func imageFixtureQueries() map[string]string {
 		"sync_events":          `SELECT * FROM sync_events ORDER BY event_id`,
 		"applied_events":       `SELECT * FROM applied_events ORDER BY event_id`,
 		"sync_sweep_pending":   `SELECT * FROM sync_sweep_pending ORDER BY event_id`,
+		"wake_leases":          `SELECT * FROM wake_leases ORDER BY agent_id,host_id,uid`,
 		"agent_inbox_cursor":   `SELECT * FROM agent_inbox_cursor ORDER BY agent_id`,
 		"agent_inbox_ack":      `SELECT * FROM agent_inbox_ack ORDER BY agent_id,event_seq`,
 		"hook_dispatch_cursor": `SELECT * FROM hook_dispatch_cursor ORDER BY rowid`,

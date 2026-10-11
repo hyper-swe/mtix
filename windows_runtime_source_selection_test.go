@@ -72,15 +72,8 @@ func windowsAvailableTests(directory string) (map[string]string, error) {
 }
 
 func windowsRunnableTest(function *ast.FuncDecl, file *ast.File) bool {
-	name := function.Name.Name
-	if !strings.HasPrefix(name, "Test") {
+	if !windowsTestName(function.Name.Name) {
 		return false
-	}
-	if len(name) > 4 {
-		runeAfterPrefix, _ := utf8.DecodeRuneInString(name[4:])
-		if unicode.IsLower(runeAfterPrefix) {
-			return false
-		}
 	}
 	if function.Recv != nil || function.Body == nil || function.Type.TypeParams != nil || function.Type.Results != nil {
 		return false
@@ -96,10 +89,27 @@ func windowsRunnableTest(function *ast.FuncDecl, file *ast.File) bool {
 	if !isPointer {
 		return false
 	}
-	if identifier, isIdentifier := pointer.X.(*ast.Ident); isIdentifier {
+	return windowsTestingType(pointer.X, file)
+}
+
+func windowsTestName(name string) bool {
+	if !strings.HasPrefix(name, "Test") {
+		return false
+	}
+	if len(name) > 4 {
+		runeAfterPrefix, _ := utf8.DecodeRuneInString(name[4:])
+		if unicode.IsLower(runeAfterPrefix) {
+			return false
+		}
+	}
+	return true
+}
+
+func windowsTestingType(expression ast.Expr, file *ast.File) bool {
+	if identifier, isIdentifier := expression.(*ast.Ident); isIdentifier {
 		return identifier.Name == "T" && windowsTestingImport(file, ".")
 	}
-	selector, isSelector := pointer.X.(*ast.SelectorExpr)
+	selector, isSelector := expression.(*ast.SelectorExpr)
 	if !isSelector || selector.Sel.Name != "T" {
 		return false
 	}

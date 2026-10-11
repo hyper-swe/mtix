@@ -39,19 +39,22 @@ func TestAcquireWakeLease_EntropyUnavailable_PreservesAbsentState(t *testing.T) 
 }
 
 func TestWakeLease_DamagedTimestamps_ReturnsCauseWithoutMutation(t *testing.T) {
-	for _, column := range []string{"acquired_at", "expires_at"} {
-		t.Run(column, func(t *testing.T) {
+	for _, fixture := range []struct{ column, update, query string }{
+		{"acquired_at", "UPDATE wake_leases SET acquired_at=?", "SELECT acquired_at FROM wake_leases"},
+		{"expires_at", "UPDATE wake_leases SET expires_at=?", "SELECT expires_at FROM wake_leases"},
+	} {
+		t.Run(fixture.column, func(t *testing.T) {
 			s := newInternalTestStore(t)
 			lease := internalWakeLease(t, s)
-			_, err := s.writeDB.Exec("UPDATE wake_leases SET " + column + "='unreadable'")
+			_, err := s.writeDB.Exec(fixture.update, "unreadable")
 			require.NoError(t, err)
 			_, err = s.AcquireWakeLease(t.Context(), internalWakeKey(), "", time.Minute)
-			require.ErrorContains(t, err, column)
+			require.ErrorContains(t, err, fixture.column)
 			assert.NotErrorIs(t, err, model.ErrAlreadyClaimed)
 			_, err = s.ReleaseWakeLease(t.Context(), internalWakeKey(), lease.Holder, time.Minute, false)
-			require.ErrorContains(t, err, column)
+			require.ErrorContains(t, err, fixture.column)
 			var value string
-			require.NoError(t, s.readDB.QueryRow("SELECT "+column+" FROM wake_leases").Scan(&value))
+			require.NoError(t, s.readDB.QueryRow(fixture.query).Scan(&value))
 			assert.Equal(t, "unreadable", value)
 		})
 	}
@@ -69,23 +72,21 @@ func TestWakeLease_MissingTable_ReturnsDatabaseError(t *testing.T) {
 }
 
 func TestWakeLease_AbortedWrites_KeepOriginalOwner(t *testing.T) {
-	for _, operation := range []string{"insert", "dirty", "renew", "delete"} {
-		t.Run(operation, func(t *testing.T) {
+	for _, fixture := range []struct{ operation, trigger string }{
+		{"insert", "CREATE TRIGGER stop_wake BEFORE INSERT ON wake_leases BEGIN SELECT RAISE(ABORT,'owned write fault'); END"},
+		{"dirty", "CREATE TRIGGER stop_wake BEFORE UPDATE ON wake_leases BEGIN SELECT RAISE(ABORT,'owned write fault'); END"},
+		{"renew", "CREATE TRIGGER stop_wake BEFORE UPDATE ON wake_leases BEGIN SELECT RAISE(ABORT,'owned write fault'); END"},
+		{"delete", "CREATE TRIGGER stop_wake BEFORE DELETE ON wake_leases BEGIN SELECT RAISE(ABORT,'owned write fault'); END"},
+	} {
+		t.Run(fixture.operation, func(t *testing.T) {
 			s := newInternalTestStore(t)
 			var lease WakeLease
-			if operation != "insert" {
+			if fixture.operation != "insert" {
 				lease = internalWakeLease(t, s)
 			}
-			event := "UPDATE"
-			if operation == "insert" {
-				event = "INSERT"
-			}
-			if operation == "delete" {
-				event = "DELETE"
-			}
-			_, err := s.writeDB.Exec("CREATE TRIGGER stop_wake BEFORE " + event + " ON wake_leases BEGIN SELECT RAISE(ABORT,'owned write fault'); END")
+			_, err := s.writeDB.Exec(fixture.trigger)
 			require.NoError(t, err)
-			switch operation {
+			switch fixture.operation {
 			case "insert", "dirty":
 				_, err = s.AcquireWakeLease(t.Context(), internalWakeKey(), "", time.Minute)
 			case "renew":
@@ -97,7 +98,7 @@ func TestWakeLease_AbortedWrites_KeepOriginalOwner(t *testing.T) {
 			assert.NotErrorIs(t, err, model.ErrAlreadyClaimed)
 			var count int
 			require.NoError(t, s.readDB.QueryRow("SELECT COUNT(*) FROM wake_leases").Scan(&count))
-			if operation == "insert" {
+			if fixture.operation == "insert" {
 				assert.Zero(t, count)
 			} else {
 				assert.Equal(t, 1, count)

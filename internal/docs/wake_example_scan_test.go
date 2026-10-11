@@ -22,7 +22,7 @@ var wakeVariableRE = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z_0-9]*)`)
 var wakeCaptureRE = regexp.MustCompile(`^([A-Za-z_][A-Za-z_0-9]*)="\$\(mtix inbox --agent (?:"\$[A-Za-z_][A-Za-z_0-9]*"|[A-Za-z_][A-Za-z_0-9-]*) --format prompt\)"$`)
 var wakeInputLineRE = regexp.MustCompile(`^printf '%s\\n' "\$(?:[A-Za-z_][A-Za-z_0-9]*|\{[A-Za-z_][A-Za-z_0-9]*\})" \| (?:claude -p|codex exec -)$`)
 var wakeEmptyRE = regexp.MustCompile(`^\[ -z "\$(?:[A-Za-z_][A-Za-z_0-9]*|\{[A-Za-z_][A-Za-z_0-9]*\})" \] && exit 0$`)
-var wakeSourceVariableRE = regexp.MustCompile(`([A-Za-z_][A-Za-z_0-9]*)=[^\n]*(?:mtix|"\$MTIX_BIN") inbox[^\n]*--format prompt`)
+var wakeSourceVariableRE = regexp.MustCompile(`([A-Za-z_][A-Za-z_0-9]*)=["']?\$\(\s*(?:mtix|"\$MTIX_BIN") inbox[^()\n]*--format prompt[^()\n]*\)`)
 var wakeShellLineRE = regexp.MustCompile(`^(?:(?:[({!][ \t]*)*(?:[A-Za-z_][A-Za-z_0-9]*=|(?:[A-Za-z0-9_./-]+|"[^"\n]+"|'[^'\n]+'|\$\{?[A-Za-z_][A-Za-z_0-9]*\}?)+[ \t])|[<>])`)
 var wakeRawShellLineRE = regexp.MustCompile(`^(?:[({!][ \t]*)*(?:[A-Za-z_][A-Za-z_0-9]*=|(?:[0-9]*[A-Za-z_][A-Za-z_0-9./-]*|[./][A-Za-z_0-9./-]*|"[^"\n]+"|'[^'\n]+')+[ \t]|[0-9]*[<>])`)
 var wakeInlineRE = regexp.MustCompile("`([^`\\n]+)`")
@@ -54,12 +54,7 @@ func wakeCommandLines(text string) []string {
 
 func wakeLaunchProblems(text string) []string {
 	lines := wakeCommandLines(text)
-	inputs := map[string]bool{"PAYLOAD": true}
-	for _, line := range lines {
-		if capture := wakeSourceVariableRE.FindStringSubmatch(line); capture != nil {
-			inputs[capture[1]] = true
-		}
-	}
+	inputs := wakeInputVariables(lines)
 	protocol := wakeIsLeaseScript(text)
 	var problems []string
 	for _, line := range lines {
@@ -79,7 +74,7 @@ func wakeLaunchProblems(text string) []string {
 }
 
 func wakeNeedsInputCheck(line string, inputs map[string]bool) bool {
-	if wakeReferencesInput(line, inputs) || wakeSourceVariableRE.MatchString(line) {
+	if wakeReferencesInput(line, inputs) || len(wakeSourceCaptures(line)) > 0 {
 		return true
 	}
 	if wakeOtherInputForms[line] {

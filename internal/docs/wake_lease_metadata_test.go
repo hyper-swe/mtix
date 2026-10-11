@@ -33,17 +33,17 @@ func wakeProtocolMetadataLine(line string) bool {
 		return "word"
 	})
 	line = wakeMetadataFrameRE.ReplaceAllString(line, " ")
-	starts := wakeMetadataStartRE.FindAllStringSubmatch(line, -1)
+	starts := wakeMetadataStartRE.FindAllStringSubmatchIndex(line, -1)
 	if len(starts) == 0 {
 		return false
 	}
 	for _, start := range starts {
-		word := strings.Trim(start[1], "'\"")
+		word := strings.Trim(line[start[2]:start[3]], "'\"")
 		if wakeMetadataAssignmentRE.MatchString(word) || wakeMetadataFunctionRE.MatchString(word) {
 			continue
 		}
 		if word == "$MTIX_BIN" {
-			if !strings.Contains(line, `"$MTIX_BIN" inbox lease `) {
+			if !wakeMetadataLeaseHeadRE.MatchString(line[start[3]:]) {
 				return false
 			}
 			continue
@@ -71,9 +71,12 @@ var wakeMetadataQuotedRE = regexp.MustCompile(`"[^"\n]*"|'[^'\n]*'`)
 var wakeMetadataSubstitutionRE = regexp.MustCompile(`\$\(\s*([^\s)]+)`)
 
 func wakeMetadataSubstitutions(line string) bool {
-	for _, match := range wakeMetadataSubstitutionRE.FindAllStringSubmatch(line, -1) {
-		word := strings.Trim(match[1], "\"'")
-		if word == "$MTIX_BIN" && strings.Contains(line, `"$MTIX_BIN" inbox lease `) {
+	if !wakeMetadataBacktickSubstitutions(line) {
+		return false
+	}
+	for _, match := range wakeMetadataSubstitutionRE.FindAllStringSubmatchIndex(line, -1) {
+		word := strings.Trim(line[match[2]:match[3]], "\"'")
+		if word == "$MTIX_BIN" && wakeMetadataLeaseHeadRE.MatchString(line[match[3]:]) {
 			continue
 		}
 		if wakeMetadataAssignmentRE.MatchString(word) || wakeMetadataCommand(word) {
@@ -87,3 +90,20 @@ func wakeMetadataSubstitutions(line string) bool {
 var wakeMetadataArithmeticRE = regexp.MustCompile(`\$\(\([A-Z_0-9 +*/%-]+\)\)`)
 
 var wakeMetadataFrameRE = regexp.MustCompile(`\b(?:if|then|else|while|do)\s+`)
+
+var wakeMetadataLeaseHeadRE = regexp.MustCompile(`^[ \t]+inbox[ \t]+lease[ \t]+(?:acquire|release)(?:[ \t;&|)]|$)`)
+
+var wakeMetadataBacktickRE = regexp.MustCompile("`([^`\\n]*)`")
+
+func wakeMetadataBacktickSubstitutions(line string) bool {
+	captures := wakeMetadataBacktickRE.FindAllStringSubmatch(line, -1)
+	if strings.Count(line, "`") != 2*len(captures) {
+		return false
+	}
+	for _, capture := range captures {
+		if !wakeProtocolMetadataLine(capture[1]) {
+			return false
+		}
+	}
+	return true
+}

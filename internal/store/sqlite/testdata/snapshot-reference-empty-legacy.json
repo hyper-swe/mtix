@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "schema_version": "1.0.0",
+  "exported_at": "2026-10-11T00:00:00Z",
+  "mtix_version": "reference",
+  "project": "SNAP",
+  "nodes": null,
+  "dependencies": null,
+  "agents": null,
+  "sessions": null,
+  "node_count": 0,
+  "checksum": "5c16ba57d2609c63a81b7c901438adbdd85e84b79e5b4b2a1275349dedad249b"
+}

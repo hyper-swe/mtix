@@ -78,14 +78,22 @@ func TestAcquireWakeLease_ConcurrentAcquire_OneWins(t *testing.T) {
 }
 
 func TestAcquireWakeLease_HeldByOther_SetsDirty(t *testing.T) {
-	s, path := wakeStore(t)
+	s, path := wakeJournalStore(t)
 	first, err := s.AcquireWakeLease(t.Context(), wakeKey(), "", 15*time.Minute)
 	require.NoError(t, err)
 	assert.Regexp(t, "^[0-9a-f]{32}$", first.Holder)
 	other := openWakeStore(t, path, wakeTime())
 	held, err := other.AcquireWakeLease(t.Context(), wakeKey(), "", 15*time.Minute)
 	require.ErrorIs(t, err, model.ErrAlreadyClaimed)
-	assert.Equal(t, first.Holder, held.Holder)
+	assert.Greater(t, first.HighWater, int64(0))
+	assert.Empty(t, held.Holder)
+	assert.Zero(t, held.HighWater)
+	assert.Equal(t, first.ExpiresAt, held.ExpiresAt)
+	var storedHolder string
+	var storedMark int64
+	require.NoError(t, newTestDB(t, path).QueryRow("SELECT holder,high_water FROM wake_leases").Scan(&storedHolder, &storedMark))
+	assert.Equal(t, first.Holder, storedHolder)
+	assert.Equal(t, first.HighWater, storedMark)
 	third := openWakeStore(t, path, wakeTime())
 	_, err = third.AcquireWakeLease(t.Context(), wakeKey(), "", time.Minute)
 	require.ErrorIs(t, err, model.ErrAlreadyClaimed)

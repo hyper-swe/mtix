@@ -53,6 +53,7 @@ func (s *Store) acquireWakeLease(ctx context.Context, key WakeLeaseKey, holder s
 	}
 	// Returning this from the callback would roll back the dirty update.
 	if held {
+		lease.Holder, lease.HighWater = "", 0
 		return lease, fmt.Errorf("wake lease held until %s: %w", lease.ExpiresAt.Format(time.RFC3339Nano), model.ErrAlreadyClaimed)
 	}
 	return lease, nil

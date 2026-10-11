@@ -22,35 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func compat054Repository(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
-	require.NoError(t, err)
-	for {
-		metadata := filepath.Join(dir, ".git")
-		if info, err := os.Stat(metadata); err == nil {
-			if info.IsDir() {
-				return dir
-			}
-			raw, err := os.ReadFile(metadata)
-			require.NoError(t, err)
-			if target, ok := strings.CutPrefix(strings.TrimSpace(string(raw)), "gitdir: "); ok {
-				if !filepath.IsAbs(target) {
-					target = filepath.Join(dir, target)
-				}
-				if info, err := os.Stat(target); err == nil && info.IsDir() {
-					return dir
-				}
-			}
-		} else {
-			require.ErrorIs(t, err, os.ErrNotExist)
-		}
-		parent := filepath.Dir(dir)
-		require.NotEqual(t, dir, parent, "real compatibility tag repository not found")
-		dir = parent
-	}
-}
-
 func compat054Command(t *testing.T, dir string, command string, args ...string) []byte {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), command, args...)
@@ -71,11 +42,25 @@ func compat054Command(t *testing.T, dir string, command string, args ...string) 
 
 func compat054Binary(t *testing.T) string {
 	t.Helper()
-	repo := compat054Repository(t)
-	commit := strings.TrimSpace(string(compat054Command(t, repo, "git", "rev-parse", "v0.5.4-beta^{commit}")))
-	require.Regexp(t, "^[0-9a-f]{40}$", commit)
 	cache, err := os.UserCacheDir()
 	require.NoError(t, err)
+	start, err := os.Getwd()
+	require.NoError(t, err)
+	cached, repo, err := compat054ReaderLocation(start, cache, runtime.GOOS+"-"+runtime.GOARCH)
+	require.NoError(t, err)
+	if cached != "" {
+		raw, err := os.ReadFile(cached)
+		require.NoError(t, err)
+		t.Logf("real reader cached commit=%s sha256=%x", compat054TagCommit, sha256.Sum256(raw))
+		return cached
+	}
+	return compat054TaggedBinary(t, repo, cache)
+}
+
+func compat054TaggedBinary(t *testing.T, repo, cache string) string {
+	t.Helper()
+	commit := strings.TrimSpace(string(compat054Command(t, repo, "git", "rev-parse", "v0.5.4-beta^{commit}")))
+	require.Equal(t, compat054TagCommit, commit)
 	dir := filepath.Join(cache, "mtix-test", "mtix-v0.5.4-beta", commit, runtime.GOOS+"-"+runtime.GOARCH)
 	name := "mtix"
 	if runtime.GOOS == "windows" {

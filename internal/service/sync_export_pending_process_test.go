@@ -235,6 +235,8 @@ func TestPendingExportProcessHelper(t *testing.T) {
 		require.NoError(t, svc.DrainPendingExport(context.Background(), dir))
 	case "importdrainholder":
 		require.NoError(t, svc.AutoImport(context.Background(), dir))
+	case "snapshotwriter":
+		snapshotBaselineWriter(t, store)
 	case "writer", "writerhold", "writer3":
 		seq := 2
 		if mode == "writer3" {

@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 import (
@@ -126,6 +127,7 @@ func requireCommentAt(t *testing.T, n *model.Node, c *model.SyncEvent, want *tim
 // The comment applies, the next event in the same pull batch applies, and
 // GetNode and ListNodes return the node with its annotation.
 func TestApply_CommentEventTime_StoredWithinReadableRange(t *testing.T) {
+	t.Parallel()
 	inRange := foreignWallClock()
 	lastOf9999 := time.Date(9999, 12, 31, 23, 59, 59, 999_000_000, time.UTC)
 	tests := []struct {
@@ -180,6 +182,7 @@ func TestApply_CommentEventTime_StoredWithinReadableRange(t *testing.T) {
 // same value as updated_at) outside it; updated_at is the apply time either
 // way. The node stays readable.
 func TestApply_TerminalTransitionEventTime_ClosedAtWithinReadableRange(t *testing.T) {
+	t.Parallel()
 	walls := []eventTimeWall{{"in range", foreignWallClock().UnixMilli()}}
 	walls = append(walls, wallsOutsideRange()...)
 	for _, to := range []model.Status{model.StatusDone, model.StatusCancelled, model.StatusInvalidated} {
@@ -219,6 +222,7 @@ func TestApply_TerminalTransitionEventTime_ClosedAtWithinReadableRange(t *testin
 // and stores no wake time (NULL, as a defer without an until) otherwise. The
 // defer applies and GetNode and ListNodes read the node.
 func TestApply_DeferWakeTime_StoredWithinReadableRange(t *testing.T) {
+	t.Parallel()
 	minus5 := time.FixedZone("minus5", -5*3600)
 	plus1 := time.FixedZone("plus1", 3600)
 	tests := []struct {
@@ -262,6 +266,7 @@ func TestApply_DeferWakeTime_StoredWithinReadableRange(t *testing.T) {
 // tie-break key, so an update_field whose wall_clock_ts is outside years
 // 1..9999 is ordered like any other, applies, and leaves the node readable.
 func TestApply_UpdateFieldEventTimeOutsideRange_OrderedAndNodeReadable(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	inRange := foreignWallClock().UnixMilli()
 	// localEdit edits the title locally and returns that event's Lamport clock.
@@ -315,6 +320,7 @@ func TestApply_UpdateFieldEventTimeOutsideRange_OrderedAndNodeReadable(t *testin
 // one event of every op type with a wall_clock_ts outside years 1..9999:
 // each applies, and every node stays readable.
 func TestApply_EveryOpTypeWithEventTimeOutsideRange_NodesStayReadable(t *testing.T) {
+	t.Parallel()
 	blocks := &model.LinkDepPayload{DependsOnNodeID: "MTIX-2", DepType: string(model.DepTypeBlocks)}
 	tests := []struct {
 		op      model.OpType
@@ -337,6 +343,7 @@ func TestApply_EveryOpTypeWithEventTimeOutsideRange_NodesStayReadable(t *testing
 	for _, w := range wallsOutsideRange() {
 		for _, tt := range tests {
 			t.Run(string(tt.op)+", "+w.name, func(t *testing.T) {
+				t.Parallel()
 				s, raw := replicaWithNode(t)
 				mustCreateNode(t, s, "MTIX-2", "")
 				markEventsPushed(t, raw)

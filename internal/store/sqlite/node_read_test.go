@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 import (
@@ -17,6 +18,7 @@ import (
 
 // TestGetNode_ExistingNode_ReturnsFullNode verifies full node retrieval.
 func TestGetNode_ExistingNode_ReturnsFullNode(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -38,6 +40,7 @@ func TestGetNode_ExistingNode_ReturnsFullNode(t *testing.T) {
 
 // TestGetNode_NonExistent_ReturnsNotFound verifies ErrNotFound for missing nodes.
 func TestGetNode_NonExistent_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -47,6 +50,7 @@ func TestGetNode_NonExistent_ReturnsNotFound(t *testing.T) {
 
 // TestGetNode_SoftDeleted_ReturnsNotFound verifies deleted nodes are excluded.
 func TestGetNode_SoftDeleted_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -64,6 +68,7 @@ func TestGetNode_SoftDeleted_ReturnsNotFound(t *testing.T) {
 
 // TestGetNode_ComputesChildCount verifies child_count is computed at query time.
 func TestGetNode_ComputesChildCount(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -88,6 +93,7 @@ func TestGetNode_ComputesChildCount(t *testing.T) {
 
 // TestGetNode_ActivityPagination_DefaultLimit verifies activity is returned.
 func TestGetNode_ActivityPagination_DefaultLimit(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -108,6 +114,7 @@ func TestGetNode_ActivityPagination_DefaultLimit(t *testing.T) {
 
 // TestGetDirectChildren_OrderedBySeq verifies children are sorted by sequence.
 func TestGetDirectChildren_OrderedBySeq(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -136,6 +143,7 @@ func TestGetDirectChildren_OrderedBySeq(t *testing.T) {
 
 // TestGetDirectChildren_ExcludesDeleted verifies soft-deleted children are excluded.
 func TestGetDirectChildren_ExcludesDeleted(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -179,6 +187,7 @@ func TestGetDirectChildren_NoChildren_ReturnsEmpty(t *testing.T) {
 
 // TestGetDirectChildren_NonExistentParent_ReturnsEmpty verifies missing parent.
 func TestGetDirectChildren_NonExistentParent_ReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -189,6 +198,7 @@ func TestGetDirectChildren_NonExistentParent_ReturnsEmpty(t *testing.T) {
 
 // TestGetActivity_ExistingNode_ReturnsEntries verifies activity retrieval per FR-3.6.
 func TestGetActivity_ExistingNode_ReturnsEntries(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -211,6 +221,7 @@ func TestGetActivity_ExistingNode_ReturnsEntries(t *testing.T) {
 
 // TestGetActivity_NonExistentNode_ReturnsNotFound verifies ErrNotFound.
 func TestGetActivity_NonExistentNode_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -220,6 +231,7 @@ func TestGetActivity_NonExistentNode_ReturnsNotFound(t *testing.T) {
 
 // TestGetActivity_Pagination_RespectsLimitAndOffset verifies pagination.
 func TestGetActivity_Pagination_RespectsLimitAndOffset(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -252,6 +264,7 @@ func TestGetActivity_Pagination_RespectsLimitAndOffset(t *testing.T) {
 
 // TestGetActivity_EmptyActivity_ReturnsEmptySlice verifies empty activity.
 func TestGetActivity_EmptyActivity_ReturnsEmptySlice(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)

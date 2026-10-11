@@ -71,6 +71,7 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
+  Operator state placement - reports the sandbox placement limitation
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
   Hub triggers           - every function and trigger the hub migrations
                            define exists, every trigger executes the
@@ -194,6 +195,7 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	// Local checks: queue draining, no orphan applied, quarantined events,
 	// unique node uids, held push events, secrets file mode.
 	report = appendLocalChecks(ctx, report)
+	report = appendOperatorPlacementCheck(report)
 
 	// Check 6: every mtix function and trigger the migrations define is
 	// on the hub and enabled, as the restore runbook ends (MTIX-95.7).

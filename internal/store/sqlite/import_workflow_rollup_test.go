@@ -4,6 +4,7 @@
 // Tests for MTIX-95.31.13: the deletion state is a workflow value, a chosen
 // status rolls up to the parents' progress (FR-5.7), and the chosen side's
 // previous status and invalidation fields move with its status.
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 import (
@@ -39,6 +40,7 @@ func wfNodeState(t *testing.T, s *sqlite.Store, id string) nodeState {
 // teammate's delete over unchanged content, and a local delete a
 // teammate's text edit would undo, are refused and settled by the flags.
 func TestImportReconcile_DeletionState_IsAWorkflowConflict(t *testing.T) {
+	t.Parallel()
 	remove := func(t *testing.T, s *sqlite.Store) {
 		t.Helper()
 		require.NoError(t, s.DeleteNode(context.Background(), "REC-1", false, "tester"))
@@ -89,6 +91,7 @@ func TestImportReconcile_DeletionState_IsAWorkflowConflict(t *testing.T) {
 // file's parent row is stale (0), so only the roll-up can fix it. Keeping
 // the local statuses leaves the parent at 0.
 func TestImportReconcile_ChosenStatus_RollsUpToTheParent(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, choice := range []sqlite.WorkflowChoice{sqlite.WorkflowTheirs, sqlite.WorkflowOurs} {
 		t.Run(string(choice), func(t *testing.T) {
@@ -151,6 +154,7 @@ func blockedStores(t *testing.T, claimed bool) (*sqlite.Store, *sqlite.Store) {
 // previous status moves with its blocked status, and that keeping the
 // local values leaves it alone.
 func TestImportReconcile_TheirsPath_TakesPreviousStatus(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		claimed bool
@@ -183,6 +187,7 @@ func TestImportReconcile_TheirsPath_TakesPreviousStatus(t *testing.T) {
 // verifies a schema 1.0.0 file carries neither previous status nor
 // invalidation, so choosing its values keeps the local ones.
 func TestImportReconcile_OlderFileTheirs_KeepsPreviousStatusAndInvalidation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	teammate, local := blockedStores(t, true) // the local store is the blocked one
 	_, err := local.WriteDB().ExecContext(ctx,
@@ -203,6 +208,7 @@ func TestImportReconcile_OlderFileTheirs_KeepsPreviousStatusAndInvalidation(t *t
 // TestImportReconcile_RefusedReport_LeavesConflictsOutOfIdempotentNoOps
 // verifies a conflicting task is not counted as an idempotent no-op.
 func TestImportReconcile_RefusedReport_LeavesConflictsOutOfIdempotentNoOps(t *testing.T) {
+	t.Parallel()
 	local, file := twoTaskStores(t)
 	report, err := mergeWith(local, file, sqlite.WorkflowResolution{})
 	require.ErrorIs(t, err, sqlite.ErrWorkflowConflict)
@@ -247,6 +253,7 @@ func staleParent(t *testing.T, file *sqlite.ExportData, p float64) *sqlite.Expor
 // children keep ours (X1), and a parent taken from the file whose child
 // keeps ours (X5), both end at the local children's progress.
 func TestImportReconcile_RollUp_StartsAtEveryWrittenParent(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	tests := []struct {
 		name string
@@ -283,6 +290,7 @@ func TestImportReconcile_RollUp_StartsAtEveryWrittenParent(t *testing.T) {
 // cancel (the child's own progress stays 0, so only its status moves the
 // parent) and a chosen deletion roll up to the parent (FR-5.4, FR-5.7).
 func TestImportReconcile_RollUp_CancelAndDeleteMoveTheParent(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	tests := []struct {
 		name string
@@ -314,6 +322,7 @@ func TestImportReconcile_RollUp_CancelAndDeleteMoveTheParent(t *testing.T) {
 // recomputed from its live children even when no child changed: the file's
 // stale parent progress must not stand.
 func TestImportReconcile_RollUp_ParentWrittenFromFileFollowsUntouchedChildren(t *testing.T) {
+	t.Parallel()
 	local, teammate := treeStores(t)
 	editTitle("Parent, reworded")(t, teammate)
 	file := exportOf(t, teammate)

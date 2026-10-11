@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 // Backfill must preserve every serialized create field and the durable UID through replay.
@@ -41,9 +42,11 @@ func expectedBackfillPayload(n *model.Node) model.CreateNodePayload {
 }
 
 func TestBackfill_AllCreateFieldsAndUIDSurviveReplicaApply(t *testing.T) {
+	t.Parallel()
 	types := append(model.AllIssueTypes(), model.IssueType(""))
 	for _, issueType := range types {
 		t.Run(string(issueType), func(t *testing.T) {
+			t.Parallel()
 			source, replica := newTestStore(t), newTestStore(t)
 			ctx := context.Background()
 			require.NoError(t, source.CreateNode(ctx, backfillFieldsNode("TEST-1", "", "")))
@@ -83,8 +86,10 @@ func TestBackfill_AllCreateFieldsAndUIDSurviveReplicaApply(t *testing.T) {
 }
 
 func TestBackfill_NullAndEmptyLabelsRemainUnset(t *testing.T) {
+	t.Parallel()
 	for _, labels := range []any{nil, "null", "[]"} {
 		t.Run(stringLabelCase(labels), func(t *testing.T) {
+			t.Parallel()
 			source, replica := newTestStore(t), newTestStore(t)
 			ctx := context.Background()
 			require.NoError(t, source.CreateNode(ctx, backfillFieldsNode("TEST-1", "", "")))
@@ -120,8 +125,10 @@ func stringLabelCase(labels any) string {
 }
 
 func TestBackfill_MalformedLabelsRefusesAtomically(t *testing.T) {
+	t.Parallel()
 	for _, labels := range []string{"[", "{}", "[1]"} {
 		t.Run(labels, func(t *testing.T) {
+			t.Parallel()
 			source := newTestStore(t)
 			ctx := context.Background()
 			require.NoError(t, source.CreateNode(ctx, backfillFieldsNode("TEST-1", "", model.IssueTypeBug)))

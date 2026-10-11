@@ -5,6 +5,7 @@
 // database merged with the tasks.json mirror, producing an importable
 // export with a freshly computed checksum. Written RED-first per
 // TDD-WORKFLOW.md §1.1.
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite
 
 import (
@@ -80,6 +81,7 @@ func importRoundTrip(t *testing.T, data *ExportData) *Store {
 // TestRecover_HealthyDB_FullSalvage: happy path — every row salvaged, no
 // losses, output importable.
 func TestRecover_HealthyDB_FullSalvage(t *testing.T) {
+	t.Parallel()
 	s, dbPath := seedRecoverFixture(t)
 	require.NoError(t, s.Close())
 
@@ -103,6 +105,7 @@ func TestRecover_HealthyDB_FullSalvage(t *testing.T) {
 // page shredded, every ID known to the primary-key index ends up either
 // recovered or explicitly lost; nothing silently vanishes.
 func TestRecover_CorruptPage_PartitionsEveryID(t *testing.T) {
+	t.Parallel()
 	s, dbPath := seedRecoverFixture(t)
 	// Bulk up rows so the table spans pages and a shredded page hits data.
 	ctx := context.Background()
@@ -149,6 +152,7 @@ func TestRecover_CorruptPage_PartitionsEveryID(t *testing.T) {
 // TestRecover_MirrorFillsLostNodes: a node missing from the database but
 // present in the mirror is salvaged from the mirror and labeled as such.
 func TestRecover_MirrorFillsLostNodes(t *testing.T) {
+	t.Parallel()
 	s, dbPath := seedRecoverFixture(t)
 	ctx := context.Background()
 
@@ -180,6 +184,7 @@ func TestRecover_MirrorFillsLostNodes(t *testing.T) {
 // is lost gets a placeholder parent so the foreign-key chain survives a
 // standard import.
 func TestRecover_SynthesizesPlaceholderParents(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	mirror := &ExportData{
 		Version:       1,
@@ -225,6 +230,7 @@ func TestRecover_NoSourcesAtAll(t *testing.T) {
 // dependencies/agents/sessions tables are missing entirely, node salvage
 // proceeds and the losses are reported in Notes.
 func TestRecover_SecondaryTablesGone_NodesStillSalvaged(t *testing.T) {
+	t.Parallel()
 	s, dbPath := seedRecoverFixture(t)
 	ctx := context.Background()
 	for _, stmt := range []string{
@@ -255,6 +261,7 @@ func TestRecomputeExportChecksum_NilInput(t *testing.T) {
 // import path — a hand-reconstructed export with a wrong checksum becomes
 // importable after recomputation (FR-26.5 import --recompute-checksum).
 func TestRecomputeExportChecksum_MakesHandEditedImportable(t *testing.T) {
+	t.Parallel()
 	s, _ := seedRecoverFixture(t)
 	data, err := s.Export(context.Background(), "TEST", "test-version")
 	require.NoError(t, err)

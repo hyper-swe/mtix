@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Classification payload validity precedes idempotency and LWW shortcuts (MTIX-107.60).
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite
 
 import (
@@ -17,6 +18,7 @@ import (
 )
 
 func TestSyncUpdate_IssueType_InvalidBeforeShortcuts_NoWrites(t *testing.T) {
+	t.Parallel()
 	payloads := []struct{ name, raw string }{
 		{"unknown", `{"field_name":"issue_type","new_value":"invalid"}`},
 		{"null", `{"field_name":"issue_type","new_value":null}`},
@@ -27,6 +29,7 @@ func TestSyncUpdate_IssueType_InvalidBeforeShortcuts_NoWrites(t *testing.T) {
 	for _, path := range []string{"winner", "loser", "held", "duplicate"} {
 		for _, payload := range payloads {
 			t.Run(path+"/"+payload.name, func(t *testing.T) {
+				t.Parallel()
 				s, _ := applyTestStore(t)
 				ctx := context.Background()
 				create := makeApplyEvent(t, model.OpCreateNode, "TEST-1", "author", 1, map[string]any{"title": "Classified work", "issue_type": "feature"})
@@ -55,6 +58,7 @@ func TestSyncUpdate_IssueType_InvalidBeforeShortcuts_NoWrites(t *testing.T) {
 }
 
 func TestSyncUpdate_IssueType_ValidLoserAndDuplicateSemantics(t *testing.T) {
+	t.Parallel()
 	s, _ := applyTestStore(t)
 	ctx := context.Background()
 	create := makeApplyEvent(t, model.OpCreateNode, "TEST-1", "author", 1, map[string]any{"title": "Classified work", "issue_type": "feature"})

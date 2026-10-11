@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // AutoExport writes the current DB state to .mtix/tasks.json per FR-15.3
@@ -104,7 +106,7 @@ func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start t
 
 	// Step 4: Update file hash per FR-15.3d.
 	fileHash := fmt.Sprintf("%x", sha256.Sum256(jsonBytes))
-	if err := s.publishExportHashes(ctx, mtixDir, fileHash); err != nil {
+	if err := s.publishExportHashes(ctx, mtixDir, fileHash, exportData); err != nil {
 		return err
 	}
 
@@ -122,8 +124,9 @@ func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start t
 	return nil
 }
 
-// publishExportHashes keeps the existing post-export DB baseline computation.
-func (s *SyncService) publishExportHashes(ctx context.Context, mtixDir, fileHash string) error {
+// publishExportHashes records the baseline from the exact published snapshot,
+// never a second export that could include a later writer commit.
+func (s *SyncService) publishExportHashes(ctx context.Context, mtixDir, fileHash string, data *sqlite.ExportData) error {
 	hashPath := filepath.Join(mtixDir, "data", "sync.sha256")
 	dbHashPath := filepath.Join(mtixDir, "data", "sync-db.sha256")
 	if err := s.writeHashFile(hashPath, fileHash); err != nil {
@@ -140,7 +143,7 @@ func (s *SyncService) publishExportHashes(ctx context.Context, mtixDir, fileHash
 	}
 
 	// Step 5: Update DB hash for conflict detection per FR-15.2h.
-	dbHash, hashErr := s.computeDBHash(ctx)
+	dbHash, hashErr := exportHash(data, formCurrent)
 	if hashErr != nil {
 		return fmt.Errorf("db hash after auto-export: %w", hashErr)
 	}

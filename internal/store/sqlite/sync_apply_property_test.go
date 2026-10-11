@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Property fixtures reuse an immutable empty image while exercising real store opens.
 package sqlite
 
 import (
@@ -8,10 +9,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
@@ -41,15 +40,18 @@ import (
 func TestApply_ReplayDeterminismProperty(t *testing.T) {
 	seeds := propertySeedCount(t)
 	events, nodes := propertyEventCount(t)
+	t.Parallel()
+	image := buildEmptyStoreImage(t)
 
 	for i := 0; i < seeds; i++ {
 		i := i
 		t.Run("seed-"+strconv.Itoa(i), func(t *testing.T) {
+			t.Parallel()
 			rng := rand.New(rand.NewSource(int64(i + 1))) //nolint:gosec // test-only deterministic RNG
 			seq := generateEventSequence(t, rng, events, nodes)
 
-			storeA := propertyStore(t, "A-"+strconv.Itoa(i))
-			storeB := propertyStore(t, "B-"+strconv.Itoa(i))
+			storeA := propertyStore(t, "A-"+strconv.Itoa(i), image)
+			storeB := propertyStore(t, "B-"+strconv.Itoa(i), image)
 
 			applySequence(t, storeA, seq)
 			applySequence(t, storeB, shuffledPreservingCausalOrder(rng, seq))
@@ -98,14 +100,9 @@ func envInt(t *testing.T, key string) int {
 }
 
 // propertyStore opens an isolated store per seed.
-func propertyStore(t *testing.T, suffix string) *Store {
+func propertyStore(t *testing.T, suffix string, image emptyStoreImage) *Store {
 	t.Helper()
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "prop-"+suffix+".db")
-	s, err := New(dbPath, slog.Default())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = s.Close() })
-	return s
+	return image.open(t, "prop-"+suffix+".db")
 }
 
 // generateEventSequence builds a random event sequence respecting

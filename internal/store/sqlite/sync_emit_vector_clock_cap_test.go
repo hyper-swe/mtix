@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite
 
 import (
@@ -54,6 +55,7 @@ func storedVC(t *testing.T, raw *sql.DB) model.VectorClock {
 // TestEmit_ManyAuthors_NeverFails: a local write never fails because of
 // the vector clock's size, however the authors were observed (MTIX-95.16).
 func TestEmit_ManyAuthors_NeverFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		authors int
@@ -70,6 +72,7 @@ func TestEmit_ManyAuthors_NeverFails(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			s, raw := emitTestStore(t)
 			tt.observe(t, s, raw, tt.authors)
 
@@ -100,6 +103,7 @@ func TestApply_ManyAuthors_StoredClockStaysBounded(t *testing.T) {
 }
 
 func TestEmit_ManyAuthors_ConcurrentWritersNeverFail(t *testing.T) {
+	t.Parallel()
 	s, raw := emitTestStore(t)
 	observeAuthorsViaApply(t, s, 120)
 	var wg sync.WaitGroup
@@ -129,6 +133,7 @@ func TestEmit_ManyAuthors_ConcurrentWritersNeverFail(t *testing.T) {
 // an explicit id keeps its counter through a merge that would prune it, so
 // its next event never compares as older than its own earlier events.
 func TestEmit_ExplicitAuthorCounterSurvivesPrune(t *testing.T) {
+	t.Parallel()
 	s, raw := emitTestStore(t)
 	for i := 0; i < 5; i++ {
 		emitOne(t, s, raw, "agent-x")

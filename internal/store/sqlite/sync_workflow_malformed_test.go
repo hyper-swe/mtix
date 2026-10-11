@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Convergence cases own replicas; tests capturing the default logger remain sequential.
 package sqlite_test
 
 import (
@@ -105,9 +106,11 @@ func TestApply_ValidEventAndHigherMalformedWorkflowEvent_BothOrdersConverge(t *t
 	cases = append(cases, malformedTransitions()...)
 	cases = append(cases, malformedClaims()...)
 	cases = append(cases, malformedDefers()...)
+	t.Parallel()
 	for _, v := range valid {
 		for _, c := range cases {
 			t.Run(v.name+" and "+c.name, func(t *testing.T) {
+				t.Parallel()
 				good := foreignWorkflowEvent(t, "MTIX-1", v.op, v.payload, 2, "")
 				bad := malformedEvent(t, "MTIX-1", c, 3)
 				storeA, rawA := replicaWithNode(t)

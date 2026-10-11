@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 import (
@@ -16,6 +17,7 @@ import (
 
 // TestTransition_OpenToInProgress_ViaClaim verifies open→in_progress.
 func TestTransition_OpenToInProgress_ViaClaim(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -33,6 +35,7 @@ func TestTransition_OpenToInProgress_ViaClaim(t *testing.T) {
 
 // TestTransition_InProgressToDone_ViaMarkDone verifies in_progress→done.
 func TestTransition_InProgressToDone_ViaMarkDone(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -52,6 +55,7 @@ func TestTransition_InProgressToDone_ViaMarkDone(t *testing.T) {
 
 // TestTransition_DoneToOpen_ViaReopen verifies done→open via reopen.
 func TestTransition_DoneToOpen_ViaReopen(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -70,6 +74,7 @@ func TestTransition_DoneToOpen_ViaReopen(t *testing.T) {
 
 // TestTransition_AllIdempotentCases_FR7_7a verifies same-status transitions are no-ops.
 func TestTransition_AllIdempotentCases_FR7_7a(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -98,6 +103,7 @@ func TestTransition_AllIdempotentCases_FR7_7a(t *testing.T) {
 
 // TestTransition_SetsClosedAt_OnDoneOrCancelled verifies closed_at is set.
 func TestTransition_SetsClosedAt_OnDoneOrCancelled(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -124,6 +130,7 @@ func TestTransition_SetsClosedAt_OnDoneOrCancelled(t *testing.T) {
 
 // TestTransition_ClearsClosedAt_OnReopen verifies closed_at is cleared.
 func TestTransition_ClearsClosedAt_OnReopen(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -143,6 +150,7 @@ func TestTransition_ClearsClosedAt_OnReopen(t *testing.T) {
 
 // TestTransition_RecordsActivityEntry verifies activity is recorded.
 func TestTransition_RecordsActivityEntry(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -162,6 +170,7 @@ func TestTransition_RecordsActivityEntry(t *testing.T) {
 
 // TestTransition_InvalidTransition_Rejected verifies invalid transitions.
 func TestTransition_InvalidTransition_Rejected(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -192,6 +201,7 @@ func TestTransition_InvalidTransition_Rejected(t *testing.T) {
 
 // TestTransition_DeferIdempotent_SameUntil verifies FR-7.7a for deferred.
 func TestTransition_DeferIdempotent_SameUntil(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -212,12 +222,14 @@ func TestTransition_DeferIdempotent_SameUntil(t *testing.T) {
 // This is handled at the service layer since defer_until isn't part of
 // TransitionStatus. At the store level, same-status = idempotent.
 func TestTransition_DeferNotIdempotent_DifferentUntil(t *testing.T) {
+	t.Parallel()
 	// Placeholder — service layer will differentiate by defer_until value.
 	t.Skip("defer_until differentiation is a service-layer concern")
 }
 
 // TestTransition_NonExistent_ReturnsNotFound verifies ErrNotFound for missing node.
 func TestTransition_NonExistent_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -227,6 +239,7 @@ func TestTransition_NonExistent_ReturnsNotFound(t *testing.T) {
 
 // TestTransition_SavesPreviousStatus_OnBlocked verifies previous_status save.
 func TestTransition_SavesPreviousStatus_OnBlocked(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -247,6 +260,7 @@ func TestTransition_SavesPreviousStatus_OnBlocked(t *testing.T) {
 
 // TestTransition_SavesPreviousStatus_OnInvalidated verifies previous_status save.
 func TestTransition_SavesPreviousStatus_OnInvalidated(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -265,6 +279,7 @@ func TestTransition_SavesPreviousStatus_OnInvalidated(t *testing.T) {
 
 // TestTransition_RecalculatesParentProgress_OnDone verifies FR-5.7.
 func TestTransition_RecalculatesParentProgress_OnDone(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)

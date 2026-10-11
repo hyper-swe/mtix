@@ -35,21 +35,28 @@ AGENT="${1:?usage: wake-agent.sh <agent-id>}"
 WAKE_AGENT_LOG="${WAKE_AGENT_LOG:-${XDG_STATE_HOME:-${HOME:?}/.local/state}/mtix/wake-agent.log}"
 HOLDER= RENEWER= CHILD=
 WAKE_MAX_RUNS="${WAKE_MAX_RUNS:-20}"
-case "$WAKE_MAX_RUNS" in
-    ''|*[!0-9]*) printf '%s\n' 'wake-agent: WAKE_MAX_RUNS must be a positive integer' >&2; exit 1 ;;
-esac
-[ "$WAKE_MAX_RUNS" -gt 0 ] || exit 1
+
+prepare_log() {
+    LOG_DIR=$(dirname "$WAKE_AGENT_LOG")
+    [ -d "$LOG_DIR" ] || mkdir -p -m 700 "$LOG_DIR"
+}
 
 report() {
     MESSAGE="$(date -u '+%Y-%m-%dT%H:%M:%SZ') wake-agent: $*"
     printf '%s\n' "$MESSAGE" >&2
-    LOG_DIR=$(dirname "$WAKE_AGENT_LOG")
-    if mkdir -p "$LOG_DIR" && chmod 700 "$LOG_DIR"; then
+    if prepare_log; then
         printf '%s\n' "$MESSAGE" >> "$WAKE_AGENT_LOG" || printf '%s\n' 'wake-agent: cannot write log' >&2
     else
         printf '%s\n' 'wake-agent: cannot create log directory' >&2
     fi
 }
+
+case "$WAKE_MAX_RUNS" in
+    ''|*[!0-9]*) report 'WAKE_MAX_RUNS must be a positive integer'; exit 1 ;;
+esac
+if ! [ "$WAKE_MAX_RUNS" -gt 0 ] 2>/dev/null; then
+    report 'WAKE_MAX_RUNS must be a positive integer'; exit 1
+fi
 
 resolve_tool() {
     TOOL=$1
@@ -82,7 +89,11 @@ stop_children() {
 cleanup() {
     stop_children
     if [ -n "$HOLDER" ]; then
-        "$MTIX_BIN" inbox lease release --agent "$AGENT" --holder "$HOLDER" --abandon >/dev/null || report 'could not abandon lease'
+        if OUTCOME=$("$MTIX_BIN" inbox lease release --agent "$AGENT" --holder "$HOLDER" --abandon 2>>"$WAKE_AGENT_LOG"); then
+            [ "$OUTCOME" = abandoned ] || report 'unexpected lease abandon outcome'
+        else
+            report 'could not abandon lease'
+        fi
         HOLDER=
     fi
 }
@@ -106,9 +117,14 @@ trap cleanup EXIT
 trap interrupted INT TERM HUP
 trap lost_lease USR1
 
-if HOLDER=$("$MTIX_BIN" inbox lease acquire --agent "$AGENT" --ttl 15m 2>&1); then STATUS=0; else STATUS=$?; fi
+if ! prepare_log; then report 'cannot create log directory'; exit 1; fi
+if HOLDER=$("$MTIX_BIN" inbox lease acquire --agent "$AGENT" --ttl 15m 2>>"$WAKE_AGENT_LOG"); then STATUS=0; else STATUS=$?; fi
 if [ "$STATUS" -eq 6 ]; then HOLDER=; exit 0; fi
-if [ "$STATUS" -ne 0 ]; then report "lease acquisition failed ($STATUS): $HOLDER"; HOLDER=; exit 1; fi
+if [ "$STATUS" -ne 0 ]; then report "lease acquisition failed ($STATUS)"; HOLDER=; exit 1; fi
+case "$HOLDER" in
+    ''|*[!0-9a-f]*) HOLDER=; report 'invalid lease holder'; exit 1 ;;
+esac
+if [ "${#HOLDER}" -ne 32 ]; then HOLDER=; report 'invalid lease holder'; exit 1; fi
 
 PARENT=$$
 stop_renewal_commands() {
@@ -125,7 +141,7 @@ renew_loop() {
         wait "$SLEEP_PID" || return 0
         SLEEP_PID=
         kill -0 "$PARENT" 2>/dev/null || exit 0
-        "$MTIX_BIN" inbox lease acquire --agent "$AGENT" --holder "$HOLDER" --ttl 15m >/dev/null & RENEW_PID=$!
+        "$MTIX_BIN" inbox lease acquire --agent "$AGENT" --holder "$HOLDER" --ttl 15m >/dev/null 2>>"$WAKE_AGENT_LOG" & RENEW_PID=$!
         if [ -n "$STOPPING" ]; then stop_renewal_commands; return 0; fi
         if wait "$RENEW_PID"; then STATUS=0; else STATUS=$?; fi
         RENEW_PID=
@@ -153,8 +169,8 @@ while :; do
         [ "$STATUS" -eq 0 ] || report "harness exited ($STATUS); rechecking pending events"
     fi
     stop_renewal
-    if OUTCOME=$("$MTIX_BIN" inbox lease release --agent "$AGENT" --holder "$HOLDER" --ttl 15m 2>&1); then STATUS=0; else STATUS=$?; fi
-    if [ "$STATUS" -ne 0 ]; then report "lease release failed ($STATUS): $OUTCOME"; exit 1; fi
+    if OUTCOME=$("$MTIX_BIN" inbox lease release --agent "$AGENT" --holder "$HOLDER" --ttl 15m 2>>"$WAKE_AGENT_LOG"); then STATUS=0; else STATUS=$?; fi
+    if [ "$STATUS" -ne 0 ]; then report "lease release failed ($STATUS)"; exit 1; fi
     case "$OUTCOME" in
         relaunch) renew_loop & RENEWER=$! ;;
         released) HOLDER=; exit 0 ;;

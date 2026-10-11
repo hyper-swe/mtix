@@ -70,12 +70,19 @@ func TestAcquireWakeLease_DirtyAfterClose_PersistsOnReopen(t *testing.T) {
 }
 
 func TestAcquireWakeLease_FractionalFutureExpiry_RemainsHeld(t *testing.T) {
-	s, _ := wakeStore(t)
+	s, path := wakeStore(t)
 	s.SetClock(func() time.Time { return wakeTime().Add(-100 * time.Millisecond) })
 	lease, err := s.AcquireWakeLease(t.Context(), wakeKey(), "", time.Minute)
 	require.NoError(t, err)
 	s.SetClock(func() time.Time { return wakeTime().Add(59 * time.Second) })
 	current, err := s.AcquireWakeLease(t.Context(), wakeKey(), "", time.Minute)
 	require.ErrorIs(t, err, model.ErrAlreadyClaimed)
-	assert.Equal(t, lease.Holder, current.Holder)
+	assert.Empty(t, current.Holder)
+	assert.Zero(t, current.HighWater)
+	assert.Equal(t, lease.ExpiresAt, current.ExpiresAt)
+	var holder string
+	var dirty int
+	require.NoError(t, newTestDB(t, path).QueryRow("SELECT holder,dirty FROM wake_leases").Scan(&holder, &dirty))
+	assert.Equal(t, lease.Holder, holder)
+	assert.Equal(t, 1, dirty)
 }

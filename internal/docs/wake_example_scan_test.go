@@ -28,17 +28,35 @@ var wakeRawShellLineRE = regexp.MustCompile(`^(?:[({!][ \t]*)*(?:[A-Za-z_][A-Za-
 var wakeInlineRE = regexp.MustCompile("`([^`\\n]+)`")
 
 var wakeAssignmentOriginRE = regexp.MustCompile(`^(?:[({!][ \t]*)*[A-Za-z_][A-Za-z_0-9]*=`)
+var wakeControlPrefixRE = regexp.MustCompile(`^(?:(?:if|elif|while|until|then|do|else|!)[ \t]+|[({!][ \t]*)*$`)
+var wakeCompoundBoundaryRE = regexp.MustCompile(`;|&&|\|\|`)
 
 func wakeShellCaptureOrigin(line string) bool {
-	if !wakeAssignmentOriginRE.MatchString(line) {
-		return false
-	}
-	for _, capture := range wakeCaptureAssignmentRE.FindAllStringSubmatch(line, -1) {
-		if capture[2] == "`" {
+	for _, capture := range wakeCaptureAssignmentRE.FindAllStringSubmatchIndex(line, -1) {
+		if line[capture[4]:capture[5]] == "`" && wakeCaptureCommandOrigin(line, capture[0]) {
 			return true
 		}
 	}
 	return false
+}
+
+func wakeCaptureCommandOrigin(line string, offset int) bool {
+	if wakeAssignmentOriginRE.MatchString(line) {
+		return true
+	}
+	prefix := line[:offset]
+	if wakeControlPrefixRE.MatchString(prefix) {
+		return true
+	}
+	boundaries := wakeCompoundBoundaryRE.FindAllStringIndex(prefix, -1)
+	if len(boundaries) == 0 {
+		return false
+	}
+	last := boundaries[len(boundaries)-1]
+	if !wakeRawShellLineRE.MatchString(strings.TrimSpace(prefix[:last[0]]) + " ") {
+		return false
+	}
+	return wakeControlPrefixRE.MatchString(strings.TrimLeft(prefix[last[1]:], " \t"))
 }
 
 func wakeCommandLines(text string) []string {

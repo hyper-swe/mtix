@@ -1114,6 +1114,36 @@ mtix stores task data in a local SQLite database (`.mtix/data/mtix.db`). This da
 
 **FR-18.28** (Audit pass 2) MTIX-15.11 MUST re-verify every audit item from the MTIX-15.1 design audit against the shipped code. The sign-off comment on MTIX-15.11 MUST list, for each audit item, the test file path and test name that proves it.
 
+### FR-19: Hooks and Durable Agent Inbox
+
+> These entries state the accepted 0.6.0 requirements. They are not a declaration that every planned capability is available in an installed release. Existing release documentation remains the guide to shipped commands. (ADR-007 §10, §11; D2.)
+
+**FR-19.1** (Durable inbox) Addressed comments and configured inbox deliveries MUST be queryable from the durable event journal. The inbox MUST survive process restarts and support explicit event acknowledgements. Generated agent guidance MUST tell agents to acknowledge after handling. Hook side effects MUST run asynchronously after the originating mutation commits; their failure MUST NOT fail that mutation. (ADR-007 §13; amended FR-19 §2; D2 release scope.)
+
+**FR-19.2** (Hook and adapter consent) Executable hooks MUST require per-hook, operator-local approval on the current host, pinned to the bytes executed. Editing one hook MUST affect only that hook's approval. File adapters MUST enforce their confinement requirements, and webhook adapters MUST enforce confinement and operator-local origin consent. Event content MUST NOT choose a webhook destination. The beta MUST retain the workspace dispatch policy for user hooks. (ADR-007 §5.6, §5.7, §13; D2, D5.)
+
+**FR-19.3** (Subscriptions) Configured subscriptions MUST persist in project hook configuration and select journaled events for one or more delivery adapters: inbox, executable hook, append-file or webhook. Inbox deliveries MUST retain the durable journal-backed semantics of FR-19.1; other adapters MUST follow the asynchronous execution and consent requirements of FR-19.1 and FR-19.2. (ADR-007 §13; amended FR-19 §2, FR-19.2–FR-19.4; D2 release scope.)
+
+### FR-20: Origin-Independent Dispatch and Agent Attach
+
+> These entries state the accepted 0.6.0 requirements. They are not a declaration that every planned capability is available in an installed release. Existing release documentation remains the guide to shipped commands. (ADR-007 §10, §11; D2.)
+
+**FR-20.1** (Registration and wakeability) Event origin MUST NOT determine whether a configured host dispatches an event. Built-in wakes MUST require host registration and wakeability. Channel servers MUST register through the same agent-registration mechanism as other sessions; wake arbitration MUST use those registrations. Local-only boards require no hub confirmation; hub or relay boards MUST require one confirmation per agent, board and host. (ADR-007 §3.2, §3.5, §13; D10, D11.)
+
+**FR-20.2** (Delivery routes) The delivery design MUST distinguish R0 foreground wait, R1 session-start priming, R2 live wake, R3 background wait where supported and R4 opt-in cold start. R0 MUST apply the wake policy. A live wake MUST send a fixed nudge to a validated idle registration, after which the agent pulls its inbox. Event bodies MUST arrive through the pulled envelope or cold-start stdin. Supported live routes MUST have contract checks, a tested R0/R1 fallback and a diagnostic when unavailable. Built-in R4 MUST remain off by default and deferred until protocol-2 home-map and acknowledgement operations ship; it is not in the 0.6.0 scope. (ADR-007 §2.1, §2.8, §11; D1, D8, D9, D12, D20.)
+
+**FR-20.3** (Live defaults and loop guards) Supported live wake MUST default on after setup regardless of session approval mode, with documented off switches per host and per agent. Wake-frequency, sender-volume, remote-awake-time and envelope-size budgets MUST default to unlimited. Separate loop guards MUST remain always on, configurable and never switchable off: `wake.max_hop_depth` defaults to 32 and `wake.backoff_after_unacked` to 5; back-off starts at 1 minute and doubles to a 30-minute ceiling, and any acknowledgement resets it. A guard trip MUST name its cause and exact configuration command and appear in `mtix doctor` text and JSON. Generated guidance MUST support these liberal defaults without routine user tuning. (ADR-007 §5.5, §10; D3, D4, D12; C4.)
+
+**FR-20.4** (Dispatcher and enrollment) One host dispatcher per OS user MUST scan listed boards. Hub contact and user-hook dispatch MUST occur only for enrolled checkouts. Auto-listed boards and unenrolled hub worktrees MUST receive only the local scanner; a worktree needing hub delivery MUST be enrolled separately. Existing per-project services MUST keep their duty until setup migrates them, and doctor MUST identify unmigrated services and unenrolled hub worktrees. (ADR-007 §2.7, §10; D11, D13, D14.)
+
+**FR-20.5** (Board identity) Beta hub wake grants MUST use board identity by default. `inbox.strict_board_identity` MUST default off and, when enabled, additionally require the recorded hub identity. Doctor MUST warn when the observed hub identity changes and print the command to re-confirm or enable strict mode. (ADR-007 §3.5, §10; D6; C5.)
+
+**FR-20.6** (Confirmation and diagnostics) Hub confirmation MUST support interactive and automated setup. Automated confirmation MUST be accepted inside an agent session in the beta. Its detailed record MUST remain in operator-local storage and appear through `mtix doctor` and `mtix doctor --json`. The board MUST receive only the exact line "wake permissions changed on a host (see that host's mtix doctor)", with no host or agent identifiers. A missing confirmation MUST disable automatic wake and doctor MUST print the remedy. (ADR-007 §3.5, §4.2, §5.3, §10; D10; C3, C6.)
+
+**FR-20.7** (Hub defaults and latency) In the beta, any sender on a hub may wake any agent enrolled on that hub board and may extend reply windows. Documentation MUST advise sharing a hub only with trusted principals. New setups MUST default to activity-based hub contact; existing interval wake hosts MUST keep interval contact with a notice. Remote-held awake time and reply-extension frequency MUST be unlimited by default, with optional `wake.remote_awake_daily_cap` and `wake.reply_extensions_per_hour` limits. A parked wait, wait-loop heartbeat or live registration MUST NOT itself count as activity. The first message to a fully idle host may wait until that host's next activity, with no finite latency guarantee. (ADR-007 §6A.4, §10; ADR-006 A1; D4, D17, D18; C1, C2.)
+
+**FR-20.8** (Addressed sends and release boundaries) `sync.push_on_addressed_send` MUST default on for enrolled boards in activity or interval contact mode and off otherwise. An addressed send MUST push that board's whole pending prefix; manual contact mode MUST disable this automatic push, and listed-only boards MUST NOT perform it. Unbounded inbox wait and delivery-status requirements remain in the 0.6.0 plan. Cross-user principal verification and permission refinements are deferred work, and MUST NOT be presented as implemented by this release. The interim rule MUST remain one machine per agent until the protocol-2 home-map and acknowledgement operations ship. (ADR-007 §6A.4–§6A.6, §10, §11; ADR-006 A2; D1, D20, D21; parent 0.6.0 scope.)
+
 ---
 
 ## 3. Non-Functional Requirements

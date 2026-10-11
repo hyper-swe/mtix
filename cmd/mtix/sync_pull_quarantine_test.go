@@ -513,7 +513,7 @@ func TestSweepLateEvents_EventFailsApply_QuarantinedAndSweepCompletes(t *testing
 	got, err := sweepLateEvents(ctx, testIngest(&stderr), hub, app.store, 1)
 
 	require.NoError(t, err)
-	require.Equal(t, lateEventSweep{Recovered: 2, FullDiff: true}, got, "the quarantined event is not counted")
+	require.Equal(t, lateEventSweep{Completed: true, Recovered: 2, FullDiff: true}, got, "the quarantined event is not counted")
 	requireQuarantinedAs(t, &bad, "sweep", "not_a_field")
 	requireNotApplied(t, &bad)
 	require.Empty(t, stagedIDs(t), "the quarantined event is unstaged with the others")

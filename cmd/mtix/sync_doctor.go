@@ -72,6 +72,8 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            each pull retries them ('mtix sync quarantine list')
   Unique node uids       - no two tasks share a uid; names each uid, its tasks
                            and the recovery (see 'mtix verify')
+  sync.exchange-record   - local received provenance and recorded omission;
+                           this check does not contact the hub
   Held push events       - push holds no event the hub would refuse (such as
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix

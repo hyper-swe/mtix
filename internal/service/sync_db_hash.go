@@ -84,6 +84,7 @@ func (f baselineForm) String() string {
 func (s *SyncService) refreshDBHash(ctx context.Context, mtixDir string) {
 	dbHash, err := s.computeDBHash(ctx)
 	if err == nil {
+		// #nosec G703 -- caller selects the local project directory; data/sync-db.sha256 is fixed and board content supplies only hash bytes.
 		err = os.WriteFile(filepath.Join(mtixDir, "data", "sync-db.sha256"), []byte(dbHash), 0o644)
 	}
 	if err != nil {
@@ -232,6 +233,7 @@ func replaceBaseline(path string, data []byte, expected string, wrap func(*os.Fi
 		if err == nil {
 			return
 		}
+		// #nosec G703 -- tmp.Name is this invocation's CreateTemp file in the local baseline directory; cleanup does not take a received path.
 		if rmErr := os.Remove(tmp.Name()); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
 			err = errors.Join(err, fmt.Errorf("remove the temporary baseline: %w", rmErr))
 		}
@@ -247,12 +249,14 @@ func replaceBaseline(path string, data []byte, expected string, wrap func(*os.Fi
 	if writeErr != nil {
 		return fmt.Errorf("write the temporary baseline: %w", writeErr)
 	}
+	// #nosec G703 -- tmp.Name is this call's owned CreateTemp file in the local baseline directory, not a received board or hub path.
 	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
 		return fmt.Errorf("set the temporary baseline's mode: %w", err)
 	}
 	if err := baselineStillHolds(path, expected); err != nil {
 		return err
 	}
+	// #nosec G703 -- rename uses this call's CreateTemp file and the fixed local baseline destination under the caller-selected project.
 	if err := os.Rename(tmp.Name(), path); err != nil {
 		return fmt.Errorf("replace the baseline: %w", err)
 	}
@@ -263,6 +267,7 @@ func replaceBaseline(path string, data []byte, expected string, wrap func(*os.Fi
 // at path holds expected, or the error that kept it from being read
 // (MTIX-95.31.11).
 func baselineStillHolds(path, expected string) error {
+	// #nosec G703 -- the production caller supplies fixed data/sync-db.sha256 under the caller-selected local project, not a received path.
 	onDisk, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read the baseline before replacing it: %w", err)

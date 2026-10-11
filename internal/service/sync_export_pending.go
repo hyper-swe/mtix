@@ -95,6 +95,7 @@ func (s *SyncService) DrainPendingExport(ctx context.Context, mtixDir string) er
 // Hashes describe the exact published export snapshot (MTIX-130.3).
 func syncExportPublicationWithSync(mtixDir string, syncDir func(string) error) error {
 	for _, path := range []string{"tasks.json", "data/sync.sha256", "data/sync-db.sha256"} {
+		// #nosec G703 -- path is one of the three literal publication filenames above, joined under the caller-selected local project.
 		file, err := os.OpenFile(filepath.Join(mtixDir, path), os.O_RDWR, 0)
 		if err != nil {
 			return fmt.Errorf("open export for sync: %w", err)

@@ -147,6 +147,7 @@ func (s *SyncService) publishExportHashes(ctx context.Context, mtixDir, fileHash
 	if hashErr != nil {
 		return fmt.Errorf("db hash after auto-export: %w", hashErr)
 	}
+	// #nosec G703 -- dbHashPath is fixed data/sync-db.sha256 under the caller-selected local project; exported content supplies only hash bytes.
 	if err := os.WriteFile(dbHashPath, []byte(dbHash), 0644); err != nil {
 		return fmt.Errorf("write db hash: %w", err)
 	}

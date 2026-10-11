@@ -103,6 +103,7 @@ func (s *SyncService) writeRefusal(mtixDir string, refusal *AutoImportRefusal) e
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create sync data dir: %w", err)
 	}
+	// #nosec G703 -- caller selects the local project directory; the refusal filename is fixed and not received from the board or hub.
 	if err := os.WriteFile(path, record, 0o644); err != nil {
 		return fmt.Errorf("write the auto-import refusal record: %w", err)
 	}
@@ -138,6 +139,7 @@ func (s *SyncService) refusalPending(mtixDir string, refusal *AutoImportRefusal,
 		return false
 	}
 	current := fmt.Sprintf("%x", sha256.Sum256(fileBytes))
+	// #nosec G703 -- caller selects the local project directory; data/sync.sha256 is fixed local bookkeeping, not a board or hub path.
 	stored, err := os.ReadFile(filepath.Join(mtixDir, "data", "sync.sha256"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		s.logger.Warn("could not read the stored tasks.json hash", "error", err)
@@ -149,6 +151,7 @@ func (s *SyncService) refusalPending(mtixDir string, refusal *AutoImportRefusal,
 // whose reason says the record cannot be read.
 func (s *SyncService) readRefusal(mtixDir string) *AutoImportRefusal {
 	path := filepath.Join(mtixDir, "data", autoImportRefusalFile)
+	// #nosec G703 -- caller selects the local project directory; the refusal filename is fixed and not received from the board or hub.
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

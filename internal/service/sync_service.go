@@ -169,6 +169,7 @@ func (s *SyncService) recordImported(
 func (s *SyncService) readAndHashTasksFile(
 	tasksPath, hashPath string,
 ) (data []byte, fileHash string, storedHash []byte, skip bool, err error) {
+	// #nosec G703 -- the sole production caller constructs fixed tasks.json under the caller-selected local project, not a path from board content.
 	data, err = os.ReadFile(tasksPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -188,6 +189,7 @@ func (s *SyncService) readAndHashTasksFile(
 	hash := sha256.Sum256(data)
 	fileHash = fmt.Sprintf("%x", hash)
 
+	// #nosec G703 -- the sole production caller constructs fixed data/sync.sha256 under the caller-selected local project, not a received path.
 	storedHash, readErr := os.ReadFile(hashPath)
 	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
 		return nil, "", nil, false, fmt.Errorf("read stored hash: %w", readErr)
@@ -264,9 +266,11 @@ func (s *SyncService) writeHashFile(hashPath, fileHash string) error {
 // file.
 func writeFileAtomically(path string, data []byte) error {
 	tmpPath := path + ".tmp"
+	// #nosec G703 -- the sole production caller supplies local tasks.json; tmpPath adds a literal .tmp suffix and never uses a path from board content.
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
 		return fmt.Errorf("write temp tasks.json: %w", err)
 	}
+	// #nosec G703 -- the sole production caller supplies local tasks.json and its literal .tmp companion, not received path values.
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("rename temp to tasks.json: %w", err)
 	}
@@ -319,6 +323,7 @@ func (s *SyncService) hasConflict(mtixDir string, local *sqlite.ExportData) (boo
 	}
 
 	dbHashPath := filepath.Join(mtixDir, "data", "sync-db.sha256")
+	// #nosec G703 -- dbHashPath is fixed data/sync-db.sha256 under the caller-selected local project, not a received board or hub path.
 	storedDBHash, readErr := os.ReadFile(dbHashPath)
 	if readErr != nil {
 		// No stored DB hash → first run or DB hash tracking not set up.

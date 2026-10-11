@@ -6,7 +6,6 @@ package service
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -96,10 +95,7 @@ func (s *SyncService) writeExchangeRecord(ctx context.Context, path string, raw 
 }
 
 func (s *SyncService) saveExchangeReason(ctx context.Context, reason string) error {
-	return s.store.WithTx(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO meta(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, exchangeReasonKey, normalizeExchangeReason(reason))
-		return err
-	})
+	return s.store.SaveExchangeRecordReason(ctx, normalizeExchangeReason(reason))
 }
 
 func (s *SyncService) recordReceivedImport(ctx context.Context, dir string, incoming *sqlite.ExportData, rawHash string) error {

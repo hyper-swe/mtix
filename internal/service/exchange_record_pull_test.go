@@ -235,3 +235,44 @@ func TestExchangeRecord_StoredUnknownReason_IsBoundedWithoutReadMutation(t *test
 	require.NoError(t, err)
 	require.Equal(t, prior, got)
 }
+
+func TestExchangePull_LocalDiagnosticWriteAndClear_DoNotNotifyBoard(t *testing.T) {
+	for _, completion := range []bool{false, true} {
+		t.Run(map[bool]string{false: "write", true: "clear"}[completion], func(t *testing.T) {
+			s, dir := exchangeFixture(t)
+			prior := exchangePublishReference(t, s, dir)
+			require.NoError(t, s.saveExchangeReason(t.Context(), "tracking-limit"))
+			_, err := s.store.WriteDB().ExecContext(t.Context(), `UPDATE meta SET value=? WHERE key=?`, "2026-10-01T00:00:00Z", "meta.sync.last_sweep_at")
+			require.NoError(t, err)
+			owner, err := s.BeginExchangePull(t.Context(), dir)
+			require.NoError(t, err)
+			t.Cleanup(owner.Close)
+			notifications := 0
+			s.store.SetOnCommit(func() { notifications++ })
+			require.NoError(t, s.store.WithTx(t.Context(), func(tx *sql.Tx) error {
+				_, err := tx.ExecContext(t.Context(), `UPDATE meta SET value=? WHERE key=?`, "2026-10-02T00:00:00Z", "meta.sync.last_sweep_at")
+				return err
+			}))
+			require.Equal(t, 1, notifications, "ordinary committed work retains notification wiring")
+			notifications = 0
+			if completion {
+				require.NoError(t, owner.Complete(t.Context(), ExchangePullCompletion{CursorDrained: true, SweepCompleted: true}))
+			} else {
+				require.NoError(t, owner.Incomplete(t.Context()))
+			}
+			owner.Close()
+			status, err := s.ExchangeRecordStatus(t.Context(), dir)
+			require.NoError(t, err)
+			if completion {
+				require.Empty(t, status.Reason)
+				require.Equal(t, "hub-pull", status.Source)
+			} else {
+				require.Equal(t, "partial-pull", status.Reason)
+				got, err := s.LastExchanged(t.Context(), dir)
+				require.NoError(t, err)
+				require.Equal(t, prior, got)
+			}
+			require.Zero(t, notifications, "local receipt diagnostics are not board mutations")
+		})
+	}
+}

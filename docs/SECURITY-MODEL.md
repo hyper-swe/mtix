@@ -1,6 +1,6 @@
 # mtix Security Model
 
-> **Document version:** 1.2
+> **Document version:** 1.5
 > **Applies to:** mtix v0.2.x (SQLite local store + optional BYO Postgres sync hub, FR-18)
 
 This document is the security and trust contract for mtix. It tells you what mtix protects against and — equally important — what it does not. Read it before adopting mtix in any environment beyond a single developer's laptop.
@@ -300,7 +300,11 @@ Default cap is `0` (unlimited). Set explicitly via the `sync.max_queue_size` met
 - **Peer impersonation within a relay fleet** — the shared relay key authenticates the fleet, not the peer; any key-holder can publish under any peer's identity. See "Relay transport trust model" above.
 - **Deletion or truncation of relay files** — anyone who can write the shared directory can destroy its contents. The damage is loud and recoverable (every relay file is re-derivable from a peer's own store), but it is not prevented.
 - **Confidentiality of relay content** — records are authenticated, not encrypted. A relay inside a third-party-synced folder ships the team's event content to that provider.
-- **Prompt injection over the inbox (FR-20)** — with origin-independent dispatch, an addressed comment written by ANY hub participant can cold-start a worker (exec wake) or be pushed into a live agent session (channel push), landing verbatim in that agent's context. Addressed comments are prompt input: only federate the hub with agents and users you trust with that authority — the DSN is effectively the right to speak into every agent's prompt. Mitigations already in place: `exec` runs only for a locally trusted `hooks.yaml` (content hash, per host — placement is designation), commands are argv-only with event data confined to env/stdin, per-node rate limits and via-hook loop guards bound runaway firing, and a fire that errors is never auto-retried.
+- **Agent inbox and wake authority (FR-20)** — addressed inbox content is input from its sender and should be handled with that sender's level of trust. The accepted 0.6.0 design uses a fixed live nudge followed by an inbox pull, with host registration and wakeability. In the beta, **any sender on a hub may wake any enrolled agent; share a hub only with trusted principals**. Supported live wake defaults on after setup regardless of approval mode, with off switches per host and agent. Optional volume and context budgets default to unlimited; separate loop guards remain always on and configurable. These defaults do not create per-user isolation within a shared hub. (ADR-007 §3.5, §10; D3, D4, D12, D17; C4.)
+
+The accepted hook requirements use per-hook operator-local approval pinned to executed bytes, plus confinement and origin-consent requirements for other adapters. Beta user hooks retain the workspace dispatch policy. Confirmation details remain operator-local and are visible in doctor text and JSON; the board receives only "wake permissions changed on a host (see that host's mtix doctor)", without host or agent identifiers. Beta wake grants use board identity by default, with optional strict hub-identity matching and doctor guidance when the hub changes. Processes running as the operator share that operator's authority. (ADR-007 §5.2, §5.6, §5.7, §10; D2, D5, D6, D10; C3, C5, C6.)
+
+New setups are required to use activity-based hub contact; existing interval wake hosts retain their mode with a notice. Any hub sender may extend reply windows in the beta; remote-awake-time and extension limits are optional and default to unlimited. A fully idle host's first message has no finite latency guarantee. Live routes require fallback and diagnostics when unavailable. Built-in cold start remains off by default and outside 0.6.0, pending protocol-2 home-map and acknowledgement operations. Cross-user principal verification is deferred; it is not a guarantee of this release. (ADR-007 §6A.4, §10, §11; ADR-006 A1/A2; D1, D4, D9, D17, D18, D20; C1, C2.)
 
 ---
 
@@ -371,5 +375,6 @@ mtix is a pre-funding open-source project. Triage is best-effort. Critical issue
 | 1.2 | 2026-06 | MTIX-30 / ADR-003 restore-epoch trust model: operator-gated epoch is the un-forgeable Option-B discriminator; client "previously-settled" flag rejected as a forgeable signal on a safety-critical trigger; calibration that a compromised client cannot reach Option B in normal operation |
 | 1.3 | 2026-07 | FR-20 origin-independent dispatch: hooks fire for events of any origin on hosts that configure them (placement is designation); inbox content is prompt input for exec-wake and channel-push delivery; hub write access now implies prompt-injection reach into federated agents |
 | 1.4 | 2026-10 | Corrected claims the code does not meet (MTIX-95.8.4): `audit_log` is never written by mtix and the event record is `sync_events` plus `sync_conflicts`; the owner or a superuser can drop or disable the append-only triggers; the least-privilege block carries the proven grant set as SQL; dedupe is the local `sync_events` row first, `applied_events` second; the pooler mode is not checked by doctor. |
+| 1.5 | unreleased | Recorded the accepted agent-inbox and attach requirements, beta defaults, operator-local confirmation diagnostics and release boundaries. |
 
 Changes that alter the trust model (adding/removing a guarantee, adding a new threat) require a documented version bump and a corresponding `CHANGELOG.md` security note.

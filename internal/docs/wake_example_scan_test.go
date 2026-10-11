@@ -24,7 +24,7 @@ var wakeInputLineRE = regexp.MustCompile(`^printf '%s\\n' "\$(?:[A-Za-z_][A-Za-z
 var wakeEmptyRE = regexp.MustCompile(`^\[ -z "\$(?:[A-Za-z_][A-Za-z_0-9]*|\{[A-Za-z_][A-Za-z_0-9]*\})" \] && exit 0$`)
 var wakeSourceVariableRE = regexp.MustCompile(`([A-Za-z_][A-Za-z_0-9]*)=[^\n]*mtix inbox`)
 var wakeShellLineRE = regexp.MustCompile(`^(?:(?:[({!][ \t]*)*(?:[A-Za-z_][A-Za-z_0-9]*=|(?:[A-Za-z0-9_./-]+|"[^"\n]+"|'[^'\n]+'|\$\{?[A-Za-z_][A-Za-z_0-9]*\}?)+[ \t])|[<>])`)
-var wakeRawShellLineRE = regexp.MustCompile(`^(?:[({!][ \t]*)*(?:[A-Za-z_][A-Za-z_0-9]*=|(?:[0-9]*[A-Za-z_][A-Za-z_0-9./-]*|[./][A-Za-z_0-9./-]*|"[^"\n]+"|'[^'\n]+')+[ \t])`)
+var wakeRawShellLineRE = regexp.MustCompile(`^(?:[({!][ \t]*)*(?:[A-Za-z_][A-Za-z_0-9]*=|(?:[0-9]*[A-Za-z_][A-Za-z_0-9./-]*|[./][A-Za-z_0-9./-]*|"[^"\n]+"|'[^'\n]+')+[ \t]|[0-9]*[<>])`)
 var wakeInlineRE = regexp.MustCompile("`([^`\\n]+)`")
 
 func wakeCommandLines(text string) []string {
@@ -310,6 +310,22 @@ func TestWakeExample_CompoundForms_KeepCompleteInputChecks(t *testing.T) {
 		t.Run(strconv.Itoa(i), func(t *testing.T) { require.NotEmpty(t, wakeLaunchProblems(form), "complete documented form") })
 	}
 	require.Empty(t, wakeLaunchProblems("The default `\"$user\", public` puts a schema named after the role first"), "metadata form")
+}
+
+func TestWakeExample_RedirectForms_KeepCompleteContext(t *testing.T) {
+	forms := []string{
+		">result `printf '%s\\n' \"$PAYLOAD\" | claude -p`",
+		"2>result `printf '%s\\n' \"$PAYLOAD\" | claude -p`",
+		">>result `printf '%s\\n' \"$PAYLOAD\" | claude -p`",
+		"<input `printf '%s\\n' \"$PAYLOAD\" | claude -p`",
+		"(>result `printf '%s\\n' \"$PAYLOAD\" | claude -p`)",
+		">\"result\" `printf '%s\\n' \"$PAYLOAD\" | claude -p`",
+	}
+	for i, form := range forms {
+		t.Run(strconv.Itoa(i), func(t *testing.T) {
+			require.NotEmpty(t, wakeLaunchProblems("```sh\n"+form+"\n```"), "complete documented form")
+		})
+	}
 }
 
 func TestWakeExample_MetadataForms_KeepInputChecks(t *testing.T) {

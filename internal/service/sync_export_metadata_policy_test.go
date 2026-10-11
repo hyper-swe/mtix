@@ -86,7 +86,7 @@ func TestPendingExport_UnsupportedDirectoryPipelineRetiresRequests(t *testing.T)
 				return exportDirectorySyncResult(path, errno, nil)
 			}
 			require.NoError(t, svc.AutoExport(context.Background(), dir))
-			require.GreaterOrEqual(t, calls, 6, "mark, publication and retirement must use directory policy")
+			require.GreaterOrEqual(t, calls, 2, "publication must use directory policy; coalesced mark/retirement use FULL WAL")
 			require.Equal(t, 1, pendingProcessMirrorCount(t, dir))
 			requests, err := pendingExportRequests(dir)
 			require.NoError(t, err)
@@ -109,12 +109,12 @@ func TestPendingExport_FailedDirectorySyncRetainsRequests(t *testing.T) {
 	svc.directorySync = func(string) error { return syscall.EIO }
 	require.ErrorIs(t, svc.AutoExport(context.Background(), dir), syscall.EIO)
 	require.Equal(t, 1, pendingProcessMirrorCount(t, dir), "mark failure must still attempt publication")
-	requests, err := pendingExportRequests(dir)
+	status, err := svc.PendingExports(context.Background(), dir)
 	require.NoError(t, err)
-	require.Len(t, requests, 1, "failed publication durability must retain its request")
+	require.Equal(t, 1, status.Count, "failed publication durability must retain coalesced intent")
 	svc.directorySync = nil
 	require.NoError(t, svc.DrainPendingExport(context.Background(), dir))
-	requests, err = pendingExportRequests(dir)
+	status, err = svc.PendingExports(context.Background(), dir)
 	require.NoError(t, err)
-	require.Empty(t, requests)
+	require.Zero(t, status.Count)
 }

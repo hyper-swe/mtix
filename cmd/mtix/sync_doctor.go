@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -25,12 +26,13 @@ import (
 // and Findings carries the hub-privileges check's findings. The three are
 // omitted when empty, so the other checks marshal as before.
 type DoctorCheck struct {
-	Name     string                       `json:"name"`
-	Pass     bool                         `json:"pass"`
-	Warn     bool                         `json:"warn,omitempty"`
-	Detail   string                       `json:"detail,omitempty"`
-	Fix      string                       `json:"fix,omitempty"`
-	Findings []transport.PrivilegeFinding `json:"findings,omitempty"`
+	PendingExports *service.PendingExportStatus `json:"pending_exports,omitempty"`
+	Name           string                       `json:"name"`
+	Pass           bool                         `json:"pass"`
+	Warn           bool                         `json:"warn,omitempty"`
+	Detail         string                       `json:"detail,omitempty"`
+	Fix            string                       `json:"fix,omitempty"`
+	Findings       []transport.PrivilegeFinding `json:"findings,omitempty"`
 }
 
 // DoctorReport aggregates the health checks per FR-18 / MTIX-15.7.3.
@@ -62,6 +64,9 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
   Queue draining         - no events older than 1h still in pending
                            (held push events aside; the held push events
                            check lists them)
+  Pending exports        - local mirror requests, count and oldest age;
+                           warns after 1h; run mtix list for protected
+                           import-first recovery (refusals need resolution)
   No orphan applied      - every applied_event has a matching node OR tombstone
   Quarantined events     - no pulled event is held in the local quarantine;
                            each pull retries them ('mtix sync quarantine list')
@@ -257,6 +262,7 @@ func appendHubReadyChecks(ctx context.Context, report DoctorReport, dsn string, 
 // sync_doctor_local.go (no orphan applied, quarantined events, unique node
 // uids), held push events (MTIX-95.12) and the secrets file mode.
 func appendLocalChecks(ctx context.Context, report DoctorReport) DoctorReport {
+	report = appendDoctorCheck(report, checkPendingExports(ctx))
 	if app.store == nil {
 		report = appendCheck(report, "queue draining", false, "local store not initialized")
 	} else {

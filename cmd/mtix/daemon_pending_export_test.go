@@ -29,7 +29,7 @@ import (
 )
 
 func TestDaemonPendingExport_ProcessTickAfterWriterExit(t *testing.T) {
-	for _, spelling := range []string{"daemon", "syncdaemon"} {
+	for _, spelling := range []string{"daemon", "syncdaemon", "daemon-off", "syncdaemon-off"} {
 		t.Run(spelling, func(t *testing.T) { testDaemonPendingProcess(t, spelling) })
 	}
 }
@@ -45,9 +45,9 @@ func testDaemonPendingProcess(t *testing.T, spelling string) {
 	require.NoError(t, unix.Flock(int(lock.Fd()), unix.LOCK_SH|unix.LOCK_NB))
 	writer := startDaemonPendingChild(t, "writer", dir)
 	writer.awaitExit(t)
-	requests, err := os.ReadDir(filepath.Join(dir, "data", "export-pending"))
+	status, err := svc.PendingExports(context.Background(), dir)
 	require.NoError(t, err)
-	require.Len(t, requests, 1)
+	require.Equal(t, 1, status.Count)
 	daemon := startDaemonPendingChild(t, spelling, dir)
 	daemon.awaitReady(t) // Its immediate recovery pass encountered the held lock.
 	require.NoError(t, unix.Flock(int(lock.Fd()), unix.LOCK_UN))
@@ -57,9 +57,9 @@ func testDaemonPendingProcess(t *testing.T, spelling string) {
 	var board sqlite.ExportData
 	require.NoError(t, json.Unmarshal(data, &board))
 	require.Equal(t, 1, board.NodeCount, "daemon tick recovers an exited writer without another mutation")
-	requests, err = os.ReadDir(filepath.Join(dir, "data", "export-pending"))
+	status, err = svc.PendingExports(context.Background(), dir)
 	require.NoError(t, err)
-	require.Empty(t, requests)
+	require.Zero(t, status.Count)
 }
 
 type daemonPendingChild struct {
@@ -188,6 +188,9 @@ func TestDaemonPendingExportProcessHelper(t *testing.T) {
 	defer cancel()
 	logger := slog.New(daemonPendingHandler{cancel: cancel})
 	svc := service.NewSyncService(store, logger, time.Now)
+	if mode == "daemon-off" || mode == "syncdaemon-off" {
+		svc.SetAutoSyncConfig(daemonPendingImportOff{})
+	}
 	if mode == "writer" {
 		now := time.Now().UTC()
 		require.NoError(t, store.CreateNode(ctx, &model.Node{ID: "PEND-1", Project: "PEND", Seq: 1,
@@ -198,11 +201,15 @@ func TestDaemonPendingExportProcessHelper(t *testing.T) {
 	}
 	app = appContext{mtixDir: dir, store: store, logger: logger, syncSvc: svc}
 	switch mode {
-	case "daemon":
+	case "daemon", "daemon-off":
 		require.NoError(t, runDaemon(ctx, os.Stdout, os.Stderr, nil, transport.Options{}, 1))
-	case "syncdaemon":
+	case "syncdaemon", "syncdaemon-off":
 		require.NoError(t, runSyncDaemon(ctx, os.Stdout, os.Stderr, nil, transport.Options{}, 1, false))
 	default:
 		t.Fatalf("unknown daemon child mode %s", mode)
 	}
 }
+
+type daemonPendingImportOff struct{}
+
+func (daemonPendingImportOff) AutoSyncSetting() (string, bool, error) { return "false", false, nil }

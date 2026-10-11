@@ -23,6 +23,12 @@ import (
 // disk is exactly the failure that tears the main file), and any fatal
 // I/O error latches the store into fail-stop.
 func (s *Store) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) (err error) {
+	return s.withWriteTx(ctx, fn, true)
+}
+
+// withWriteTx shares all write guards; local export bookkeeping alone suppresses
+// mutation callbacks to avoid recursively marking the metadata transaction.
+func (s *Store) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error, notify bool) (err error) {
 	if pfErr := s.preflightWrite(); pfErr != nil {
 		return pfErr
 	}
@@ -57,11 +63,12 @@ func (s *Store) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) (err erro
 		return s.classifyWriteError(wrapBusyError(fmt.Errorf("commit transaction: %w", err)))
 	}
 
-	s.reportVCPrune(ctx)
-
-	for _, fn := range s.onCommit {
-		if fn != nil {
-			fn()
+	if notify {
+		s.reportVCPrune(ctx)
+		for _, fn := range s.onCommit {
+			if fn != nil {
+				fn()
+			}
 		}
 	}
 

@@ -37,6 +37,12 @@ contains the unchanged 1669-byte `capture.json` from
 [run 38146429820, attempt 1](https://github.com/hyper-swe/mtix/actions/runs/38146429820).
 Its SHA-256 is
 `00c5ddba6676880c9750e03cd2f421578aab15ae891c79529bac240baa4d6fe7`.
+
+The exact fixture path has a `.gitattributes` `-text` rule so Git checkout
+preserves all 1669 captured bytes regardless of text-conversion defaults. The
+fixture and its SHA-256 integrity guard stay unchanged; unrelated text files
+retain their normal checkout conversion.
+
 The capture time is `2026-10-11T14:16:05.2992491Z`; image `win25-vs2026`, version
 `20260925.250.1`, Windows `10.0` build `26100`, Go `go1.26.9`.
 The reviewed PR head is `a52856a10b40cc09fc64daf4882e2ef7471f66ed`; the actual

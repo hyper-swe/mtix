@@ -5,9 +5,13 @@
 package service
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 )
+
+// ErrExchangeLockBusy identifies native nonblocking pull ownership contention.
+var ErrExchangeLockBusy = errors.New("local sync lock busy; pull not performed; retry after the current owner finishes")
 
 func (s *SyncService) openExchangeReadLock(dir string) (*os.File, error) {
 	path := filepath.Join(dir, "data", "sync.lock")

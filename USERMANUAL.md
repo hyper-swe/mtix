@@ -963,6 +963,8 @@ Add `--json` for a machine-readable list (`prefix`, `count`, `is_primary`).
 
 ## Received board provenance
 
+A contended local sync lock makes ordinary `mtix sync pull` fail. With `MTIX_SYNC_HOOK=1`, native lock contention instead warns that the pull was not performed and returns success. Retry after the current owner finishes; no pull was completed or automatically retried. Filesystem acquisition failures and cancellation remain errors. Never delete the sync lock file to bypass its owner.
+
 On supported Unix systems, `.mtix/data/exchange-record.json` is a mode 0600 record of the last successfully received board: a successful automatic tasks-file import, or a completely drained hub pull with no unresolved event encountered by that pull. It is not written by export, push, local task changes, refusals or individual pull pages. An unrelated old quarantine does not prevent a clean receipt; an encountered held event must resolve before completion. Missing fetched events, incomplete cursor/sweep progress, failures and accounting limits preserve the prior record and report an omission.
 
 The record describes received provenance, not a common ancestor, proof of a commit/push, or proof that all local fields reached a hub. A hub receipt describes a coherent observed local board after the pull, which can include local edits. Incoming-lineage matching and upgrade base selection are separate consumer behavior. Valid prior provenance remains readable after local changes or an omitted later receipt; age and omission warnings alone do not invalidate it.
@@ -2261,13 +2263,12 @@ hooks:
     deliver: [exec]
     exec:
       command: ["/path/to/wake-agent.sh", "developer"]
-      timeout-seconds: 30
+      timeout-seconds: 86400
 ```
 
 Review and trust the config on that host (`mtix hooks trust`). The
-script exits without launching when the inbox is empty (the idempotency
-check under at-least-once dispatch) and otherwise launches the harness
-CLI with the inbox supplied through standard input. Keep exactly one launch
+script exits without launching when the inbox is empty and otherwise launches
+the harness CLI with the inbox supplied through standard input. Keep exactly one launch
 line enabled in the reference script:
 
 - Claude Code: `printf '%s\n' "$PAYLOAD" | claude -p`
@@ -2278,6 +2279,44 @@ trailing newlines and the launch writes one final newline. Other runtimes need
 a verified standard-input interface before adding a launch line. The reference
 does not provide a Cursor CLI cold-start form; its MCP and context hooks remain
 available.
+
+The script acquires a board-local lease for the agent, host identity and user.
+A concurrent wake marks the lease dirty and exits quietly; the holder rechecks
+eligible inbox events before releasing. A relaunch retains the same owner token,
+so another wake cannot acquire between drain runs. Only the agent acknowledges
+handled events; the script never acknowledges them.
+
+The command idiom is:
+
+```sh
+HOLDER="$(mtix inbox lease acquire --agent developer)"
+mtix inbox lease release --agent developer --holder "$HOLDER"
+```
+
+Acquire prints a 32-character lowercase hexadecimal token. Release prints
+`released`, `relaunch` or `abandoned`; `--json` reports the outcome, pending count
+and high-water mark (expiry only for relaunch). Exit 6 means held or no longer the
+holder; storage failures retain exit 3 or 4. TTL defaults to 15m, accepts 1m through
+24h, and `acquire --holder` renews the same owner. The reference renews every 60s
+while it lives and stops loudly if ownership has changed. The local host identity
+must resolve from operator state outside sandbox-writable roots; it never falls
+back to a replica, hostname or caller-supplied identity.
+
+Set `MTIX_BIN` and `HARNESS_BIN` to executable paths when needed. Under a minimal
+PATH, the script also searches common operator binary directories and resolves
+absolute paths. A missing tool exits 127 with a timestamped diagnostic on stderr
+and in the operator-only `mtix/wake-agent.log` under `XDG_STATE_HOME` (default
+`HOME/.local/state`); `WAKE_AGENT_LOG` overrides that path. Other wake failures exit 1. Catchable termination signals
+stop owned children and abandon the lease. A nonzero harness exit still triggers
+an inbox recheck. `WAKE_MAX_RUNS` defaults to 20 launches per lease; reaching the
+bound abandons and leaves unhandled events durable for the next addressed wake.
+There is no default hourly wake budget.
+
+The hook timeout must exceed the actual run: it kills the script, not a surviving
+harness. Prolonged renewal failure beyond the TTL, or SIGKILL while the harness
+survives, can allow overlapping runs. The reference lease bounds recovery; it is
+not hard process fencing. The POSIX reference is untested on Windows; the lease
+CLI supports Windows user SID identity.
 
 Per-harness support today:
 
@@ -3199,6 +3238,8 @@ mtix exits with structured codes so scripts and agents can react without parsing
 | 4 | Database corrupted — an integrity gate failed at open; see "Disk full and corruption recovery" |
 | 5 | Inbox empty — `mtix inbox --wait` timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Note: a harness-hosted (Claude) agent cannot stay parked *between* turns — a dormant session runs no poller, so `mtix_inbox_wait` only watches the inbox *within* a live turn. To wake a dormant agent when work lands, cold-start it with an exec wake hook on the worker host (see "Waking agents: delivery that terminates in the prompt"), or use channel push / a background watcher for a live session |
 
+| 6 | Inbox wake lease held or no longer owned — the reference wake coalesces held runs and stops a stale holder; disk-full 3 and corruption 4 retain priority |
+
 ### Common Issues
 
 **"not in an mtix project"**
@@ -3320,4 +3361,3 @@ Regenerates the agent-facing documentation in the `.mtix/docs/` directory.
 Filesystem checks cannot detect sandbox write access granted to an operator-owned directory. Keep operator state outside every sandbox-writable root; the operator must choose that placement. `mtix hooks status` and `mtix sync doctor` report this limitation in text and JSON. On Unix, every ancestor must be owned by root or the operator and must not be writable by a group or other users; a sticky directory is not an exception. On Windows, ancestor owners are limited to the operator, SYSTEM, Administrators and TrustedInstaller. Rights to delete entries, change access rules or ownership, or generic write/full access are limited to those principals; creating files or subdirectories in an ancestor is allowed. The state directory and files still require protected user-only access. Unix refuses group-writable homes and network or directory-service-owned parents that do not meet these ownership rules. Set `XDG_CONFIG_HOME` to an operator-owned directory with root- or operator-owned ancestors and no group or other write access; `mtix hooks status --json` reports the concrete cause and validates the new placement, and `mtix sync doctor` names these placement constraints and the remedy. Atomic replacement does not establish power-loss durability. Filesystems without the required hard-link support are refused with the cause reported.
 
 This directory holds a persistent host identifier and host-specific state records. Other-host records are ignored and reported. Missing records are empty; invalid or inaccessible state is refused. This storage foundation does not move existing hook approvals or enable new grants. To recover, correct the reported path, ownership or access rules manually, then repeat `mtix hooks status --json`; preserve existing state records while correcting permissions.
-

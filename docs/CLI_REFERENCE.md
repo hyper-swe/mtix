@@ -700,6 +700,7 @@ Reads never ack — acknowledgement stays explicit.
 ### Subcommands
 
 - `ack <seq>...` — Acknowledge specific inbox events (selective); --through acks everything up to a seq
+- `lease` — Acquire or release board-local wake ownership
 ---
 
 ## ack
@@ -723,6 +724,63 @@ in order.
 |------|-------|-------------|---------|
 | `--agent` |  | Agent id (required) |  |
 | `--through` |  | Acknowledge every event up to and including the given seq (watermark), not just that seq | false |
+---
+
+## lease
+
+**Usage:** `lease`
+
+Acquire or release board-local wake ownership
+
+### Subcommands
+
+- `acquire` — acquire board-local wake ownership
+- `release` — release board-local wake ownership
+---
+
+## acquire
+
+**Usage:** `acquire`
+
+acquire board-local wake ownership
+
+Coordinate wake runs for this agent on this host and user. TTL defaults to 15m (1m..24h).
+Exit 6 means held or no longer the holder; storage failures retain exit 3/4.
+Acquire prints the owner token; use --holder to renew. Release prints released, relaunch or abandoned.
+Example: HOLDER=$(mtix inbox lease acquire --agent developer)
+mtix inbox lease release --agent developer --holder "$HOLDER"
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--agent` |  | Agent id (required) |  |
+| `--holder` |  | Owner token (required for release; renews acquire) |  |
+| `--json` |  | Print JSON | false |
+| `--ttl` |  | Lease duration, inclusive 1m..24h | 15m |
+---
+
+## release
+
+**Usage:** `release`
+
+release board-local wake ownership
+
+Coordinate wake runs for this agent on this host and user. TTL defaults to 15m (1m..24h).
+Exit 6 means held or no longer the holder; storage failures retain exit 3/4.
+Acquire prints the owner token; use --holder to renew. Release prints released, relaunch or abandoned.
+Example: HOLDER=$(mtix inbox lease acquire --agent developer)
+mtix inbox lease release --agent developer --holder "$HOLDER"
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--abandon` |  | Release ownership without relaunch | false |
+| `--agent` |  | Agent id (required) |  |
+| `--holder` |  | Owner token (required for release; renews acquire) |  |
+| `--json` |  | Print JSON | false |
+| `--ttl` |  | Lease duration, inclusive 1m..24h | 15m |
 ---
 
 ## init
@@ -1785,6 +1843,8 @@ events and recording completed received provenance. A contended local
 sync lock refuses the pull; retry after the current owner finishes.
 
 Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.
+If the local sync lock is busy, hook mode warns that pull was not performed;
+retry after the current owner finishes. Other lock acquisition failures are errors.
 
 ### Flags
 

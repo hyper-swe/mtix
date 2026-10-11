@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Generated guidance tests explain pending and unknown outbound recovery.
 package docs
 
 import (

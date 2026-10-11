@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Legacy boundary tests preserve readable provenance and diagnose unknown state.
 package service
 
 import (

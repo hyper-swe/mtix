@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Command tests preserve outbound work and report truthful received provenance.
 package main
 
 import (

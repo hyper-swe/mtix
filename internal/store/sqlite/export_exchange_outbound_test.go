@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Outbound snapshot tests bind pending journal rows to the board WAL read.
 package sqlite
 
 import (
@@ -170,4 +171,27 @@ func TestReadExchangeBoundary_CanceledAggregate_LeavesOutboundUnknown(t *testing
 	var fields map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(raw, &fields))
 	require.NotContains(t, fields, "pending_outbound", "failed aggregate must not manufacture known zero")
+}
+
+func TestExportExchangeSnapshot_SameIDAppliedAndPending_CountsOutbound(t *testing.T) {
+	s := exchangeSnapshotStore(t)
+	s.SetClock(outboundSnapshotClock)
+	require.NoError(t, s.CreateNode(t.Context(), outboundNode()))
+	pending, err := s.ReadPendingEvents(t.Context(), 2)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	payload := string(pending[0].Payload)
+	require.NoError(t, s.WithTx(t.Context(), func(tx *sql.Tx) error { return s.IdempotentApply(t.Context(), tx, pending[0]) }))
+	var applied int
+	require.NoError(t, s.QueryRow(t.Context(), `SELECT COUNT(*) FROM applied_events WHERE event_id=?`, pending[0].EventID).Scan(&applied))
+	require.Equal(t, 1, applied)
+	var state, retained string
+	require.NoError(t, s.QueryRow(t.Context(), `SELECT sync_status,payload FROM sync_events WHERE event_id=?`, pending[0].EventID).Scan(&state, &retained))
+	require.Equal(t, "pending", state)
+	require.Equal(t, payload, retained)
+	data, boundary, err := s.ExportExchangeSnapshot(t.Context(), "TEST", "reference", []string{pending[0].EventID}, 10000)
+	require.NoError(t, err)
+	require.Equal(t, 1, data.NodeCount)
+	require.Zero(t, boundary.Unresolved, "applied does not mean acknowledged by a push")
+	require.Equal(t, int64(1), outboundWire(t, boundary))
 }

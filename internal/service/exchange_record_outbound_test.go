@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Outbound completion tests preserve receipts while local journal work remains.
 package service
 
 import (
@@ -131,4 +132,36 @@ func TestExchangePull_OutboundSnapshotFailure_PreservesCauseAndReceipt(t *testin
 			require.Equal(t, before, after)
 		})
 	}
+}
+
+func TestExchangePull_SameIDAppliedAndPending_WithholdsReceipt(t *testing.T) {
+	s, dir := exchangeFixture(t)
+	exchangePublishReference(t, s, dir)
+	before, err := os.ReadFile(exchangePath(dir))
+	require.NoError(t, err)
+	require.NoError(t, s.store.CreateNode(t.Context(), &model.Node{ID: "TEST-2", Project: "TEST", Seq: 2, Title: "local", Status: model.StatusOpen, Priority: 3, Weight: 1}))
+	pending, err := s.store.ReadPendingEvents(t.Context(), 2)
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	payload := string(pending[0].Payload)
+	require.NoError(t, s.store.WithTx(t.Context(), func(tx *sql.Tx) error { return s.store.IdempotentApply(t.Context(), tx, pending[0]) }))
+	var applied int
+	require.NoError(t, s.store.QueryRow(t.Context(), `SELECT COUNT(*) FROM applied_events WHERE event_id=?`, pending[0].EventID).Scan(&applied))
+	require.Equal(t, 1, applied)
+	var state, retained string
+	require.NoError(t, s.store.QueryRow(t.Context(), `SELECT sync_status,payload FROM sync_events WHERE event_id=?`, pending[0].EventID).Scan(&state, &retained))
+	require.Equal(t, "pending", state)
+	require.Equal(t, payload, retained)
+	require.NoError(t, setOutboundSweep(t.Context(), s))
+	owner, err := s.BeginExchangePull(t.Context(), dir)
+	require.NoError(t, err)
+	t.Cleanup(owner.Close)
+	require.NoError(t, owner.Complete(t.Context(), ExchangePullCompletion{CursorDrained: true, SweepCompleted: true, Encountered: []string{pending[0].EventID}}))
+	owner.Close()
+	after, err := os.ReadFile(exchangePath(dir))
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	status, err := s.ExchangeRecordStatus(t.Context(), dir)
+	require.NoError(t, err)
+	require.Equal(t, "pending-outbound", status.Reason)
 }

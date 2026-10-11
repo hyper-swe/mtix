@@ -69,6 +69,12 @@ The test resolves an explicitly **SYNTHETIC** owner-only `O:LA` descriptor, chec
 administrator RID 500, and supplies that local alias principal for the unchanged
 raw profile descriptor. It never rewrites `LA`, the captured SID, or an ACL.
 
+The helper validates the canonical numeric local-account shape and RID in the
+owner's string form, then uses `StringToSid` and an explicit independent `Copy`.
+It avoids pointer-returning subauthority getters while retaining race/checkptr.
+Portable source and string controls verify these constraints; native allocation
+and replay remain unproven until the reviewed fixture head's hosted run passes.
+
 An unrelated synthetic numeric principal must be refused for profile write access.
 If the replay-host LA differs from the historical SID, the test also requires the
 historical principal to be refused and records the distinction. Future replay

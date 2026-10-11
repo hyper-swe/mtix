@@ -8,7 +8,6 @@
 package oplocal
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -60,10 +59,21 @@ func stockFixtureLocalAdministrator(t *testing.T) *windows.SID {
 	require.NoError(t, err)
 	require.NotNil(t, owner)
 	require.True(t, owner.IsValid())
-	require.True(t, strings.HasPrefix(owner.String(), "S-1-5-21-"), "LA must resolve to a local account SID")
-	require.Equal(t, uint8(5), owner.SubAuthorityCount())
-	require.Equal(t, uint32(500), owner.SubAuthority(4), "LA must retain administrator RID 500")
-	principal, err := owner.Copy()
+	text := owner.String()
+	require.NoError(t, stockFixtureLocalAdministratorSIDError(text), "LA must retain the canonical local account shape and RID 500")
+	// Reparse through the API and copy its allocation; no pointer-returning SID
+	// getters are needed to validate the canonical numeric account identity.
+	allocated, err := windows.StringToSid(text)
+	require.NoError(t, err, "allocate native local alias SID from its canonical identity")
+	require.NotNil(t, allocated)
+	require.True(t, allocated.IsValid())
+	require.Equal(t, text, allocated.String())
+	principal, err := allocated.Copy()
 	require.NoError(t, err, "retain an independent local alias SID")
+	require.NotNil(t, principal)
+	require.True(t, principal.IsValid())
+	require.NotSame(t, allocated, principal)
+	require.Equal(t, text, principal.String())
+	require.True(t, principal.Equals(allocated))
 	return principal
 }

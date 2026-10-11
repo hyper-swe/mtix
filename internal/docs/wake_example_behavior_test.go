@@ -32,11 +32,11 @@ func wakeVariant(t *testing.T, source, harness string) string {
 	lines := strings.Split(source, "\n")
 	selected := 0
 	for i, line := range lines {
-		if !wakeLaunchRE.MatchString(line) {
+		if !wakeLaunchRE.MatchString(line) && !wakeResolvedLaunchRE.MatchString(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))) {
 			continue
 		}
 		active := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))
-		if strings.Contains(active, harness+" ") {
+		if strings.Contains(active, harness+" ") || strings.Contains(active, `"$HARNESS_BIN" `+wakeHarnessArgs(harness)) {
 			lines[i] = active
 			selected++
 		} else {
@@ -44,7 +44,7 @@ func wakeVariant(t *testing.T, source, harness string) string {
 		}
 	}
 	require.Equal(t, 1, selected, "documented launch variant")
-	return strings.Join(lines, "\n")
+	return strings.ReplaceAll(strings.Join(lines, "\n"), "${HARNESS_BIN:-claude}", "${HARNESS_BIN:-"+harness+"}")
 }
 
 func runWakeFixture(t *testing.T, source, input string) wakeCapture {
@@ -54,7 +54,7 @@ func runWakeFixture(t *testing.T, source, input string) wakeCapture {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o700))
 	}
 	write("input", input)
-	write("mtix", "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$WAKE_DIR/mtix-args\"\ncat \"$WAKE_DIR/input\"\n")
+	write("mtix", "#!/bin/sh\nif [ \"${2:-}\" = lease ]; then\n case \"$3\" in acquire) printf '%s\\n' 0123456789abcdef0123456789abcdef ;; release) printf '%s\\n' released ;; *) exit 1 ;; esac\nelse\n printf '%s\\0' \"$@\" > \"$WAKE_DIR/mtix-args\"\n cat \"$WAKE_DIR/input\"\nfi\n")
 	harness := "#!/bin/sh\nprintf 'called\\n' >> \"$WAKE_DIR/calls\"\nprintf '%s\\0' \"$@\" > \"$WAKE_DIR/args\"\ncat > \"$WAKE_DIR/stdin\"\n"
 	for _, name := range []string{"claude", "codex", "agent"} {
 		write(name, harness)
@@ -64,7 +64,11 @@ func runWakeFixture(t *testing.T, source, input string) wakeCapture {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "/bin/sh", filepath.Join(dir, "wake.sh"), "fixture-worker")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "PATH="+dir+":/usr/bin:/bin", "WAKE_DIR="+dir)
+	harnessName := "claude"
+	if strings.Contains(source, "${HARNESS_BIN:-codex}") {
+		harnessName = "codex"
+	}
+	cmd.Env = append(os.Environ(), "PATH="+dir+":/usr/bin:/bin", "WAKE_DIR="+dir, "WAKE_AGENT_LOG="+filepath.Join(dir, "logs", "wake.log"), "MTIX_BIN="+filepath.Join(dir, "mtix"), "HARNESS_BIN="+filepath.Join(dir, harnessName))
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "owned routine output: %s", output)
 	args, err := os.ReadFile(filepath.Join(dir, "mtix-args"))

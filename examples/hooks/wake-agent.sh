@@ -13,16 +13,14 @@
 #       deliver: [exec]
 #       exec:
 #         command: ["/path/to/wake-agent.sh", "developer"]
-#         timeout-seconds: 30
+#         timeout-seconds: 86400
 #
 # Then review and trust the config on this host: mtix hooks trust
 #
-# IDEMPOTENT BY CONSTRUCTION (safe under at-least-once dispatch — a double
-# wake launches nothing twice):
-#   1. If the inbox has nothing unacked, a previous wake (or a live session)
-#      already handled it -> exit without launching.
-#   2. The launched agent receives the inbox AS ITS PROMPT and acks each
-#      event after handling, which is what makes step 1 true next time.
+# A local lease coalesces concurrent wakes. The agent handles and acknowledges
+# events; the script rechecks before releasing and never acknowledges them.
+# Renewal failures lasting beyond the lease TTL, or SIGKILL with a surviving
+# harness, can permit overlapping runs. This reference is not hard fencing.
 #
 # NOTE (MTIX-56.9): mtix spawns this script DETACHED and does not wait;
 # timeout-seconds is best-effort. Long launches are fine, but self-bound
@@ -32,18 +30,134 @@
 # The launch line is harness-specific; keep exactly one uncommented.
 
 set -eu
-
+umask 077
 AGENT="${1:?usage: wake-agent.sh <agent-id>}"
+WAKE_AGENT_LOG="${WAKE_AGENT_LOG:-${XDG_STATE_HOME:-${HOME:?}/.local/state}/mtix/wake-agent.log}"
+HOLDER= RENEWER= CHILD=
+WAKE_MAX_RUNS="${WAKE_MAX_RUNS:-20}"
+case "$WAKE_MAX_RUNS" in
+    ''|*[!0-9]*) printf '%s\n' 'wake-agent: WAKE_MAX_RUNS must be a positive integer' >&2; exit 1 ;;
+esac
+[ "$WAKE_MAX_RUNS" -gt 0 ] || exit 1
 
-# Nothing unhandled -> nothing to do (empty output means empty inbox).
-PAYLOAD="$(mtix inbox --agent "$AGENT" --format prompt)"
-[ -z "$PAYLOAD" ] && exit 0
+report() {
+    MESSAGE="$(date -u '+%Y-%m-%dT%H:%M:%SZ') wake-agent: $*"
+    printf '%s\n' "$MESSAGE" >&2
+    LOG_DIR=$(dirname "$WAKE_AGENT_LOG")
+    if mkdir -p "$LOG_DIR" && chmod 700 "$LOG_DIR"; then
+        printf '%s\n' "$MESSAGE" >> "$WAKE_AGENT_LOG" || printf '%s\n' 'wake-agent: cannot write log' >&2
+    else
+        printf '%s\n' 'wake-agent: cannot create log directory' >&2
+    fi
+}
 
-# Use a POSIX shell with builtin printf; retain this exact constant-format routine.
-# --- pick ONE launch line for your harness -----------------------------
-# Claude Code (headless; add --channels ... to keep the session push-reachable):
-printf '%s\n' "$PAYLOAD" | claude -p
-# OpenAI Codex CLI:
-# printf '%s\n' "$PAYLOAD" | codex exec -
-# Other runtimes need a verified standard-input interface.
-# Keep the empty-inbox check and pass input through standard input.
+resolve_tool() {
+    TOOL=$1
+    case "$TOOL" in
+        */*) FOUND=$TOOL ;;
+        *) FOUND=$(command -v "$TOOL" 2>/dev/null) || FOUND=
+           if [ -z "$FOUND" ]; then
+               for TOOL_DIR in /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin" "$HOME/go/bin"; do
+                   if [ -x "$TOOL_DIR/$TOOL" ]; then FOUND=$TOOL_DIR/$TOOL; break; fi
+               done
+           fi ;;
+    esac
+    [ -n "$FOUND" ] && [ -f "$FOUND" ] && [ -x "$FOUND" ] || return 1
+    TOOL_DIR=$(CDPATH= cd -- "$(dirname "$FOUND")" && pwd -P) || return 1
+    printf '%s/%s\n' "$TOOL_DIR" "$(basename "$FOUND")"
+}
+
+MTIX_BIN=$(resolve_tool "${MTIX_BIN:-mtix}") || { report 'mtix executable unavailable'; exit 127; }
+HARNESS_BIN=$(resolve_tool "${HARNESS_BIN:-claude}") || { report 'harness executable unavailable'; exit 127; }
+
+stop_renewal() {
+    if [ -n "$RENEWER" ]; then kill "$RENEWER" 2>/dev/null || :; wait "$RENEWER" 2>/dev/null || :; RENEWER=; fi
+}
+
+stop_children() {
+    if [ -n "$CHILD" ]; then kill "$CHILD" 2>/dev/null || :; wait "$CHILD" 2>/dev/null || :; CHILD=; fi
+    stop_renewal
+}
+
+cleanup() {
+    stop_children
+    if [ -n "$HOLDER" ]; then
+        "$MTIX_BIN" inbox lease release --agent "$AGENT" --holder "$HOLDER" --abandon >/dev/null || report 'could not abandon lease'
+        HOLDER=
+    fi
+}
+
+interrupted() {
+    trap '' INT TERM HUP USR1
+    report 'wake interrupted; stopping owned processes'
+    cleanup
+    exit 1
+}
+
+lost_lease() {
+    trap '' INT TERM HUP USR1
+    report 'lease no longer owned; stopping wake'
+    HOLDER=
+    stop_children
+    exit 1
+}
+
+trap cleanup EXIT
+trap interrupted INT TERM HUP
+trap lost_lease USR1
+
+if HOLDER=$("$MTIX_BIN" inbox lease acquire --agent "$AGENT" --ttl 15m 2>&1); then STATUS=0; else STATUS=$?; fi
+if [ "$STATUS" -eq 6 ]; then HOLDER=; exit 0; fi
+if [ "$STATUS" -ne 0 ]; then report "lease acquisition failed ($STATUS): $HOLDER"; HOLDER=; exit 1; fi
+
+PARENT=$$
+stop_renewal_commands() {
+    if [ -n "$SLEEP_PID" ]; then kill "$SLEEP_PID" 2>/dev/null || :; wait "$SLEEP_PID" 2>/dev/null || :; SLEEP_PID=; fi
+    if [ -n "$RENEW_PID" ]; then kill "$RENEW_PID" 2>/dev/null || :; wait "$RENEW_PID" 2>/dev/null || :; RENEW_PID=; fi
+}
+
+renew_loop() {
+    SLEEP_PID= RENEW_PID= STOPPING=
+    trap 'STOPPING=1; stop_renewal_commands' TERM INT HUP
+    while kill -0 "$PARENT" 2>/dev/null; do
+        sleep 60 & SLEEP_PID=$!
+        if [ -n "$STOPPING" ]; then stop_renewal_commands; return 0; fi
+        wait "$SLEEP_PID" || return 0
+        SLEEP_PID=
+        kill -0 "$PARENT" 2>/dev/null || exit 0
+        "$MTIX_BIN" inbox lease acquire --agent "$AGENT" --holder "$HOLDER" --ttl 15m >/dev/null & RENEW_PID=$!
+        if [ -n "$STOPPING" ]; then stop_renewal_commands; return 0; fi
+        if wait "$RENEW_PID"; then STATUS=0; else STATUS=$?; fi
+        RENEW_PID=
+        [ -z "$STOPPING" ] || return 0
+        if [ "$STATUS" -eq 6 ]; then kill -USR1 "$PARENT" 2>/dev/null || :; exit 0; fi
+        [ "$STATUS" -eq 0 ] || report "lease renewal failed ($STATUS); TTL recovery remains available"
+    done
+}
+renew_loop & RENEWER=$!
+
+RUNS=0
+while :; do
+    if PAYLOAD=$("$MTIX_BIN" inbox --agent "$AGENT" --format prompt); then STATUS=0; else STATUS=$?; fi
+    if [ "$STATUS" -ne 0 ]; then report "inbox read failed ($STATUS)"; exit "$STATUS"; fi
+    if [ -n "$PAYLOAD" ]; then
+        if [ "$RUNS" -ge "$WAKE_MAX_RUNS" ]; then report 'drain limit reached; leaving pending events for recovery'; exit 1; fi
+        RUNS=$((RUNS + 1))
+        # Use a POSIX builtin constant-format printf and static harness arguments.
+        printf '%s\n' "$PAYLOAD" | "$HARNESS_BIN" -p &
+        # For a Codex harness, select this static stdin interface instead:
+        # printf '%s\n' "$PAYLOAD" | "$HARNESS_BIN" exec - &
+        CHILD=$!
+        if wait "$CHILD"; then STATUS=0; else STATUS=$?; fi
+        CHILD=
+        [ "$STATUS" -eq 0 ] || report "harness exited ($STATUS); rechecking pending events"
+    fi
+    stop_renewal
+    if OUTCOME=$("$MTIX_BIN" inbox lease release --agent "$AGENT" --holder "$HOLDER" --ttl 15m 2>&1); then STATUS=0; else STATUS=$?; fi
+    if [ "$STATUS" -ne 0 ]; then report "lease release failed ($STATUS): $OUTCOME"; exit 1; fi
+    case "$OUTCOME" in
+        relaunch) renew_loop & RENEWER=$! ;;
+        released) HOLDER=; exit 0 ;;
+        *) report 'unexpected lease release outcome'; exit 1 ;;
+    esac
+done

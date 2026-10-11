@@ -39,6 +39,7 @@ AGENT="${1:?usage: wake-agent.sh <agent-id>}"
 PAYLOAD="$(mtix inbox --agent "$AGENT" --format prompt)"
 [ -z "$PAYLOAD" ] && exit 0
 
+# Use a POSIX shell with builtin printf; retain this exact constant-format routine.
 # --- pick ONE launch line for your harness -----------------------------
 # Claude Code (headless; add --channels ... to keep the session push-reachable):
 printf '%s\n' "$PAYLOAD" | claude -p

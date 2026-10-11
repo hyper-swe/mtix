@@ -75,7 +75,7 @@ func windowsRuntimeExpectedWorkflow() map[string]any {
 
 func windowsRuntimeEnvironment() map[string]any {
 	return map[string]any{
-		"CGO_ENABLED": "1", "MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir,
+		"CGO_ENABLED":           "1",
 		"MTIX_WINDOWS_HEAD_SHA": "${{ github.event.pull_request.head.sha || github.sha }}",
 		"MTIX_WINDOWS_RUN_ID":   "${{ github.run_id }}", "MTIX_WINDOWS_RUN_ATTEMPT": "${{ github.run_attempt }}",
 		"MTIX_WINDOWS_RUN_URL": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
@@ -85,12 +85,12 @@ func windowsRuntimeEnvironment() map[string]any {
 
 func windowsRuntimeSteps() []any {
 	return []any{
-		map[string]any{"name": "Start attempt accounting", "run": windowsRuntimeStartScript},
+		map[string]any{"name": "Start attempt accounting", "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "run": windowsRuntimeStartScript},
 		map[string]any{"name": "Checkout reviewed integration source", "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "with": map[string]any{"persist-credentials": false}},
 		map[string]any{"name": "Set up module Go toolchain", "uses": "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e", "with": map[string]any{"go-version-file": "go.mod"}},
-		map[string]any{"name": "Verify Windows race compiler", "run": windowsRuntimeCompilerScript},
-		map[string]any{"name": "Run required native ACL and hooks status tests", "run": windowsRuntimeTestScript()},
-		map[string]any{"name": "Record attempt duration", "if": "${{ always() }}", "run": windowsRuntimeDurationScript},
+		map[string]any{"name": "Verify Windows race compiler", "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "run": windowsRuntimeCompilerScript},
+		map[string]any{"name": "Run required native ACL and hooks status tests", "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "run": windowsRuntimeTestScript()},
+		map[string]any{"name": "Record attempt duration", "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "if": "${{ always() }}", "run": windowsRuntimeDurationScript},
 		map[string]any{"name": "Preserve explicit runtime evidence", "if": "${{ always() }}", "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9", "with": windowsRuntimeArtifactInputs()},
 	}
 }

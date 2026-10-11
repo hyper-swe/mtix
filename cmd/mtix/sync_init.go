@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/clock"
@@ -325,6 +326,8 @@ func wrapSyncErr(stderr io.Writer, stage string, err error) error {
 		return fmt.Errorf("%s: %w", msg, model.ErrDiskFull)
 	case errors.Is(err, model.ErrCorrupted):
 		return fmt.Errorf("%s: %w", msg, model.ErrCorrupted)
+	case errors.Is(err, service.ErrExchangeLockBusy):
+		return fmt.Errorf("%s: %w", msg, service.ErrExchangeLockBusy)
 	default:
 		return errors.New(msg)
 	}
@@ -354,6 +357,9 @@ func isTransientSyncErr(err error) bool {
 		errors.Is(err, transport.ErrTLSWeakNonLoopback) ||
 		errors.Is(err, transport.ErrTLSWeakWithoutFlag) {
 		return false
+	}
+	if errors.Is(err, service.ErrExchangeLockBusy) {
+		return true
 	}
 	msg := err.Error()
 	// Mirrors transport/retry.go isTransient string fallbacks per

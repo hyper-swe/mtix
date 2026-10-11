@@ -1843,6 +1843,8 @@ events and recording completed received provenance. A contended local
 sync lock refuses the pull; retry after the current owner finishes.
 
 Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.
+If the local sync lock is busy, hook mode warns that pull was not performed;
+retry after the current owner finishes. Other lock acquisition failures are errors.
 
 ### Flags
 

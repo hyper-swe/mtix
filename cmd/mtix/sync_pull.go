@@ -72,7 +72,9 @@ Pull holds nonblocking exclusive local sync ownership while applying
 events and recording completed received provenance. A contended local
 sync lock refuses the pull; retry after the current owner finishes.
 
-Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.`,
+Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors.
+If the local sync lock is busy, hook mode warns that pull was not performed;
+retry after the current owner finishes. Other lock acquisition failures are errors.`,
 		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncPull(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
@@ -107,7 +109,7 @@ func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 	svc := exchangeService(app.store)
 	owner, err := svc.BeginExchangePull(ctx, app.mtixDir)
 	if err != nil {
-		return err
+		return wrapSyncErr(stderr, "pull sync lock", err)
 	}
 	defer owner.Close()
 	completionAttempted := false

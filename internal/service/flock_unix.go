@@ -6,6 +6,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -69,3 +70,8 @@ const lockShared = syscall.LOCK_SH
 
 // lockExclusive is the lock type for exclusive (write) access.
 const lockExclusive = syscall.LOCK_EX
+
+// isSyncLockContention recognizes only the native nonblocking busy result.
+func isSyncLockContention(err error) bool {
+	return errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN)
+}

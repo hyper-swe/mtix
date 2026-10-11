@@ -31,6 +31,9 @@ func (s *SyncService) BeginExchangePull(ctx context.Context, dir string) (*Excha
 	}
 	lock, err := s.acquireLock(dir, lockExclusive)
 	if err != nil {
+		if isSyncLockContention(err) {
+			return nil, exchangeUnavailable("lock-unavailable", ErrExchangeLockBusy)
+		}
 		return nil, exchangeUnavailable("lock-unavailable", nil)
 	}
 	return &ExchangePull{service: s, dir: dir, lock: lock}, nil

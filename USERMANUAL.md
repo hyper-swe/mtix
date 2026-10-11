@@ -963,6 +963,8 @@ Add `--json` for a machine-readable list (`prefix`, `count`, `is_primary`).
 
 ## Received board provenance
 
+A contended local sync lock makes ordinary `mtix sync pull` fail. With `MTIX_SYNC_HOOK=1`, native lock contention instead warns that the pull was not performed and returns success. Retry after the current owner finishes; no pull was completed or automatically retried. Filesystem acquisition failures and cancellation remain errors. Never delete the sync lock file to bypass its owner.
+
 On supported Unix systems, `.mtix/data/exchange-record.json` is a mode 0600 record of the last successfully received board: a successful automatic tasks-file import, or a completely drained hub pull with no unresolved event encountered by that pull. It is not written by export, push, local task changes, refusals or individual pull pages. An unrelated old quarantine does not prevent a clean receipt; an encountered held event must resolve before completion. Missing fetched events, incomplete cursor/sweep progress, failures and accounting limits preserve the prior record and report an omission.
 
 The record describes received provenance, not a common ancestor, proof of a commit/push, or proof that all local fields reached a hub. A hub receipt describes a coherent observed local board after the pull, which can include local edits. Incoming-lineage matching and upgrade base selection are separate consumer behavior. Valid prior provenance remains readable after local changes or an omitted later receipt; age and omission warnings alone do not invalidate it.

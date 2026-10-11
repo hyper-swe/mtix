@@ -9,7 +9,7 @@ import "strings"
 
 // These are executable workflow contracts, not evidence that PowerShell or
 // Windows has run locally. Real Windows provenance comes from the live native
-// capture test. Dated fixture replay is intentionally absent until capture.
+// capture test. Genuine fixture replay requires its own reviewed native head.
 const windowsRuntimeStartScript = `$ErrorActionPreference = 'Stop'
 [IO.Directory]::CreateDirectory($env:MTIX_WINDOWS_CAPTURE_DIR) | Out-Null
 [DateTimeOffset]::UtcNow.ToString('o') | Set-Content -LiteralPath "$env:MTIX_WINDOWS_CAPTURE_DIR/started.txt"

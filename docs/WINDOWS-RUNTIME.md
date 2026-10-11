@@ -6,10 +6,11 @@ It is separate from ordinary CI and never runs the full Windows suite.
 
 ## Capture-ready stage and merge conditions
 
-Native Windows results and genuine stock ACL fixtures are **UNPROVEN** at the
-capture-ready head. Local YAML checks and Windows cross-compilation establish
-static structure and buildability only. They do not prove PowerShell execution,
-stock ACL acceptance, Windows locking, or captured fixtures.
+The original capture head has verified native Windows GREEN and genuine stock
+ACL bytes, recorded below. Native replay at the separately reviewed fixture head
+is still **UNPROVEN** until its deliberate hosted run passes. Local YAML checks
+and Windows cross-compilation establish static structure and buildability only.
+They do not establish native execution or Windows locking.
 
 The approved sequence uses two separately reviewed heads on the same PR:
 
@@ -25,9 +26,51 @@ The approved sequence uses two separately reviewed heads on the same PR:
    not satisfy either condition. Representative ACL examples remain examples;
    do not relabel them as captured data or invent a capture date.
 
-No dated fixture replay test is required by the first head because no genuine
-fixture exists yet. The second head must add its real fixture test to both the
-exact selection and required PASS manifest before the final native run.
+The first head did not require dated fixture replay because no genuine fixture
+existed yet. The second head adds its real fixture test to both the exact
+selection and required PASS manifest before the final native run.
+
+## Genuine dated fixture and replay principal context
+
+The fixture `internal/oplocal/testdata/windows-stock-2026-10-11-38146429820.json`
+contains the unchanged 1669-byte `capture.json` from
+[run 38146429820, attempt 1](https://github.com/hyper-swe/mtix/actions/runs/38146429820).
+Its SHA-256 is
+`00c5ddba6676880c9750e03cd2f421578aab15ae891c79529bac240baa4d6fe7`.
+The capture time is `2026-10-11T14:16:05.2992491Z`; image `win25-vs2026`, version
+`20260925.250.1`, Windows `10.0` build `26100`, Go `go1.26.9`.
+The reviewed PR head is `a52856a10b40cc09fc64daf4882e2ef7471f66ed`; the actual
+integration checkout is `c93d26eb8cbb3f8076b0fc01ec8f3ec1e7e825a1`, merging main
+`79809fe131f7a203131742eb0f14678c2cb7f0d4` with that PR head. The selected ref was
+`refs/pull/78/merge`. The native job succeeded in 105 seconds; all required tests
+and the optional 8.3 alias test passed, with no recorded skips or failures.
+This proves acceptance in the original captured context, not fixture-head replay.
+
+The captured numeric SID remains
+`S-1-5-21-1643835476-1616584234-1346609752-500`. The portable integrity test pins
+the original bytes, identity, provenance, three ordered logical paths and successful
+capture flags. It does not parse native SID/SDDL or execute the ancestor policy.
+Representative ACL rows remain explicitly representative and complement this
+genuine fixture.
+
+`TestAncestor_CapturedStockWindowsFixture_ReplaysPolicy` is selected and requires
+top-level PASS. On Windows it parses the historical numeric SID and each exact raw
+SDDL, then calls the unchanged ancestor policy. Volume and Users rows use the
+captured numeric principal. The profile's raw SDDL contains `LA`, the symbolic
+local administrator alias. Native SDDL conversion resolves that alias in the replay
+host's account context; its numeric SID may differ from the historical capture.
+The test resolves an explicitly **SYNTHETIC** owner-only `O:LA` descriptor, checks
+administrator RID 500, and supplies that local alias principal for the unchanged
+raw profile descriptor. It never rewrites `LA`, the captured SID, or an ACL.
+
+An unrelated synthetic numeric principal must be refused for profile write access.
+If the replay-host LA differs from the historical SID, the test also requires the
+historical principal to be refused and records the distinction. Future replay
+therefore proves symbolic SDDL semantics in that host context, while the original
+run separately proves captured-context acceptance. A cross-host difference is a
+possibility, not an observed result. The live capture remains required and checks
+the actual current process SID separately. Fixture-head native GREEN remains a
+mandatory merge condition.
 
 ## Reviewed runs and spending
 
@@ -103,8 +146,9 @@ capture.json records schema and helper version, actual UTC capture time, Go
 version, ImageOS/ImageVersion, Windows version/build, captured current process
 SID, PR head SHA, actual checked-out SHA, selected ref, run ID/attempt/URL and the
 three logical labels with exact raw SDDL and individual outcomes. The captured
-user SID is replay input. Personal profile paths and usernames do not belong in
-capture metadata or committed fixture provenance. On PR events the checkout is
+user SID is historical replay input; symbolic local aliases use the explicitly
+documented native replay context above. Personal profile paths and usernames do
+not belong in capture metadata or committed fixture provenance. On PR events the checkout is
 the integration merge commit; head SHA and merge SHA are distinct evidence.
 Dispatch records the selected ref and actual checkout SHA.
 

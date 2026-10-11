@@ -1,5 +1,5 @@
-# Capture-ready stage: actual native Windows and captured fixtures remain unproven
-# until a reviewed label-triggered run and a separately reviewed genuine-fixture head.
+# Genuine captured bytes are retained; fixture-head native replay remains unproven
+# until its separately reviewed label-triggered run.
 # Dispatch is available only after this workflow reaches main; see docs/WINDOWS-RUNTIME.md.
 name: Windows operator-local runtime
 on:
@@ -70,11 +70,11 @@ jobs:
           $env:MTIX_WINDOWS_CHECKOUT_SHA = & git rev-parse HEAD
           if ($LASTEXITCODE -ne 0) { throw 'checked-out source SHA unavailable' }
           "MTIX_WINDOWS_CHECKOUT_SHA=$env:MTIX_WINDOWS_CHECKOUT_SHA" | Out-File -FilePath $env:GITHUB_ENV -Append
-          & go test ./internal/oplocal -race -count=1 -timeout=8m -json -run '^Test(State_ProtectedAccess_RoundTrips|ReadJSON_WideAccess_Refuses|Ancestor_TrusteeAndOwnerAccess_ValidatesPlatformPrincipals|Ancestor_RepresentativeAclRows_AllowSafeAncestorsAndRefuseHostileRights|Ensure_CanonicalHandleAlias_Refuses|State_ExclusionPrefixSpellings_RefusesBeforeCreation|OpenDirectory_ProspectiveExclusionRoot_RefusesBeforeCreation|State_DanglingExclusionAlias_AllowsUnrelatedState|State_RelativeDotExclusionSibling_AllowsAbsentReadAndFirstUse|Ancestor_StockWindowsAclCapture_AcceptsPolicy)$' > "$env:MTIX_WINDOWS_CAPTURE_DIR/oplocal.json"
+          & go test ./internal/oplocal -race -count=1 -timeout=8m -json -run '^Test(State_ProtectedAccess_RoundTrips|ReadJSON_WideAccess_Refuses|Ancestor_TrusteeAndOwnerAccess_ValidatesPlatformPrincipals|Ancestor_RepresentativeAclRows_AllowSafeAncestorsAndRefuseHostileRights|Ensure_CanonicalHandleAlias_Refuses|State_ExclusionPrefixSpellings_RefusesBeforeCreation|OpenDirectory_ProspectiveExclusionRoot_RefusesBeforeCreation|State_DanglingExclusionAlias_AllowsUnrelatedState|State_RelativeDotExclusionSibling_AllowsAbsentReadAndFirstUse|Ancestor_StockWindowsAclCapture_AcceptsPolicy|Ancestor_CapturedStockWindowsFixture_ReplaysPolicy)$' > "$env:MTIX_WINDOWS_CAPTURE_DIR/oplocal.json"
           $oplocalExit = $LASTEXITCODE
           & go test ./cmd/mtix -race -count=1 -timeout=8m -json -run '^TestHooksStatus_' > "$env:MTIX_WINDOWS_CAPTURE_DIR/hooks.json"
           $hooksExit = $LASTEXITCODE
-          $requiredOplocal = @('TestState_ProtectedAccess_RoundTrips', 'TestReadJSON_WideAccess_Refuses', 'TestAncestor_TrusteeAndOwnerAccess_ValidatesPlatformPrincipals', 'TestAncestor_RepresentativeAclRows_AllowSafeAncestorsAndRefuseHostileRights', 'TestState_ExclusionPrefixSpellings_RefusesBeforeCreation', 'TestOpenDirectory_ProspectiveExclusionRoot_RefusesBeforeCreation', 'TestState_DanglingExclusionAlias_AllowsUnrelatedState', 'TestState_RelativeDotExclusionSibling_AllowsAbsentReadAndFirstUse', 'TestAncestor_StockWindowsAclCapture_AcceptsPolicy')
+          $requiredOplocal = @('TestState_ProtectedAccess_RoundTrips', 'TestReadJSON_WideAccess_Refuses', 'TestAncestor_TrusteeAndOwnerAccess_ValidatesPlatformPrincipals', 'TestAncestor_RepresentativeAclRows_AllowSafeAncestorsAndRefuseHostileRights', 'TestState_ExclusionPrefixSpellings_RefusesBeforeCreation', 'TestOpenDirectory_ProspectiveExclusionRoot_RefusesBeforeCreation', 'TestState_DanglingExclusionAlias_AllowsUnrelatedState', 'TestState_RelativeDotExclusionSibling_AllowsAbsentReadAndFirstUse', 'TestAncestor_StockWindowsAclCapture_AcceptsPolicy', 'TestAncestor_CapturedStockWindowsFixture_ReplaysPolicy')
           $requiredHooks = @('TestHooksStatus_ValidateInput', 'TestHooksStatus_Output', 'TestHooksStatus_Command', 'TestHooksStatus_Reports', 'TestHooksStatus_HomeInput')
           foreach ($suite in @(@{ file='oplocal.json'; package='github.com/hyper-swe/mtix/internal/oplocal'; names=$requiredOplocal }, @{ file='hooks.json'; package='github.com/hyper-swe/mtix/cmd/mtix'; names=$requiredHooks })) {
             $events = Get-Content -LiteralPath "$env:MTIX_WINDOWS_CAPTURE_DIR/$($suite.file)" | ForEach-Object { $_ | ConvertFrom-Json }

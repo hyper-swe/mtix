@@ -7,6 +7,7 @@
 // task's changes under two uids. Written red-first against the
 // MTIX-95.31.6 code, which left the task's pending events (and a held
 // creation) under the uid the task gave up.
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 import (
@@ -85,9 +86,11 @@ func heldUID(t *testing.T, s *sqlite.Store, id string) string {
 // else: pushed events, another task's events and a pulled quarantine row
 // stay as they were.
 func TestImportReconcile_MergeAdoptingUID_CarriesUIDOntoUnpushedEvents(t *testing.T) {
+	t.Parallel()
 	for _, contentChanges := range []bool{false, true} {
 		for _, op := range allOpTypes {
 			t.Run(fmt.Sprintf("%s, content changes: %v", op, contentChanges), func(t *testing.T) {
+				t.Parallel()
 				ctx := context.Background()
 				local, teammate := newTestStore(t), newTestStore(t)
 				mine := createSameIDTask(t, local, "REC-1", "", 1, backfilledUID(t), "Shared task")
@@ -121,6 +124,7 @@ func TestImportReconcile_MergeAdoptingUID_CarriesUIDOntoUnpushedEvents(t *testin
 // TestImportReconcile_MergeKeepingUID_LeavesEventsAlone checks that a merge
 // that adopts nothing rewrites no event.
 func TestImportReconcile_MergeKeepingUID_LeavesEventsAlone(t *testing.T) {
+	t.Parallel()
 	local, teammate := newTestStore(t), newTestStore(t)
 	uid := taskUID(t)
 	createSameIDTask(t, local, "REC-1", "", 1, uid, "Shared task")
@@ -139,6 +143,7 @@ func TestImportReconcile_MergeKeepingUID_LeavesEventsAlone(t *testing.T) {
 // finds the task (RenumberForHubRejection); and that a creation whose new
 // id is taken keeps its id.
 func TestImportReconcile_MergeAdoptingUID_CreationTakesAdoptedUIDAsEventID(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	local, teammate := newTestStore(t), newTestStore(t)
 	mine := createSameIDTask(t, local, "REC-1", "", 1, backfilledUID(t), "Shared task")
@@ -178,6 +183,7 @@ func TestImportReconcile_MergeAdoptingUID_CreationTakesAdoptedUIDAsEventID(t *te
 // checks a creation is not re-identified when an event already has the
 // adopted uid as its id: its uid column still follows the task.
 func TestImportReconcile_MergeAdoptingUID_AdoptedUIDTakenAsEventID_CreationKeepsItsID(t *testing.T) {
+	t.Parallel()
 	local, teammate := newTestStore(t), newTestStore(t)
 	mine := createSameIDTask(t, local, "REC-1", "", 1, backfilledUID(t), "Shared task")
 	theirs := createSameIDTask(t, teammate, "REC-1", "", 1, backfilledUID(t), "Shared task")
@@ -216,6 +222,7 @@ func quarantineOf(t *testing.T, s *sqlite.Store, id string) (raw, reason string,
 // adopted uid, and a pulled row that has the adopted uid as its id keeps
 // the creation from taking it (the creation keeps its id).
 func TestImportReconcile_MergeAdoptingUID_PulledQuarantineRowsUntouched(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		pulledID     func(mine, theirs string) string // event id of the pulled row
@@ -261,6 +268,7 @@ func TestImportReconcile_MergeAdoptingUID_PulledQuarantineRowsUntouched(t *testi
 // only give a task its first uid, the backfill on open and on import, change
 // no existing uid and leave the events alone.)
 func TestImport_EveryPathThatChangesATasksUID_CarriesItOntoPendingEvents(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		replace     bool

@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 import (
@@ -16,6 +17,7 @@ import (
 
 // TestAutoBlock_AddBlocker_SetsBlocked verifies auto-blocking per FR-3.8.
 func TestAutoBlock_AddBlocker_SetsBlocked(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -46,6 +48,7 @@ func TestAutoBlock_AddBlocker_SetsBlocked(t *testing.T) {
 
 // TestAutoBlock_ResolveBlocker_RestoresPreviousStatus verifies auto-unblock per FR-3.8.
 func TestAutoBlock_ResolveBlocker_RestoresPreviousStatus(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -82,6 +85,7 @@ func TestAutoBlock_ResolveBlocker_RestoresPreviousStatus(t *testing.T) {
 
 // TestAutoBlock_InvalidatedNode_NotAutoBlocked verifies FR-3.8a.
 func TestAutoBlock_InvalidatedNode_NotAutoBlocked(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -110,6 +114,7 @@ func TestAutoBlock_InvalidatedNode_NotAutoBlocked(t *testing.T) {
 // TestAutoBlock_EdgeCase_InProgressBlockedInvalidatedRestore verifies the
 // edge case from FR-3.8a: in_progress → blocked → invalidated → blocker resolves.
 func TestAutoBlock_EdgeCase_InProgressBlockedInvalidatedRestore(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -148,6 +153,7 @@ func TestAutoBlock_EdgeCase_InProgressBlockedInvalidatedRestore(t *testing.T) {
 
 // TestAddDependency_DuplicateReturnsAlreadyExists verifies duplicate rejection.
 func TestAddDependency_DuplicateReturnsAlreadyExists(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -171,6 +177,7 @@ func TestAddDependency_DuplicateReturnsAlreadyExists(t *testing.T) {
 
 // TestAddDependency_CycleDetected verifies cycle prevention per FR-4.3.
 func TestAddDependency_CycleDetected(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -203,6 +210,7 @@ func TestAddDependency_CycleDetected(t *testing.T) {
 
 // TestGetBlockers_ReturnsUnresolved verifies only unresolved blockers are returned.
 func TestGetBlockers_ReturnsUnresolved(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -246,6 +254,7 @@ func TestRemoveDependency_NonExistent_ReturnsNotFound(t *testing.T) {
 
 // TestDetectCycle_SelfCycle_Detected verifies self-referencing dependency per FR-4.3.
 func TestDetectCycle_SelfCycle_Detected(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -263,6 +272,7 @@ func TestDetectCycle_SelfCycle_Detected(t *testing.T) {
 
 // TestDetectCycle_NoCycleWithRelated verifies related deps skip cycle check.
 func TestDetectCycle_NoCycleWithRelated(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -285,6 +295,7 @@ func TestDetectCycle_NoCycleWithRelated(t *testing.T) {
 // TestAutoUnblock_MultipleBlockers_StaysBlocked verifies node stays blocked
 // when only one of multiple blockers is removed per FR-3.8.
 func TestAutoUnblock_MultipleBlockers_StaysBlocked(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -325,6 +336,7 @@ func TestAutoUnblock_MultipleBlockers_StaysBlocked(t *testing.T) {
 
 // TestAutoUnblock_NotBlocked_NoOp verifies non-blocked node is not changed.
 func TestAutoUnblock_NotBlocked_NoOp(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -351,6 +363,7 @@ func TestAutoUnblock_NotBlocked_NoOp(t *testing.T) {
 
 // TestGetBlockers_NoBlockers_ReturnsEmpty verifies empty result for unblocked node.
 func TestGetBlockers_NoBlockers_ReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -364,6 +377,7 @@ func TestGetBlockers_NoBlockers_ReturnsEmpty(t *testing.T) {
 
 // TestAddDependency_BlocksDoneNode_NoAutoBlock verifies done node is not auto-blocked.
 func TestAddDependency_BlocksDoneNode_NoAutoBlock(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)

@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Property fixtures reuse an immutable empty image while exercising real store opens.
 package sqlite
 
 import (
@@ -36,14 +37,17 @@ import (
 // the ADR §10 claim made concrete.
 func TestApply_UIDReplayConvergence_WithRenumber(t *testing.T) {
 	seeds := propertySeedCount(t)
+	t.Parallel()
+	image := buildEmptyStoreImage(t)
 	for i := 0; i < seeds; i++ {
 		i := i
 		t.Run("seed-"+strconv.Itoa(i), func(t *testing.T) {
+			t.Parallel()
 			rng := rand.New(rand.NewSource(int64(i + 1000))) //nolint:gosec // test-only deterministic RNG
 			stream := buildUIDEventStream(t, rng, 5)
 
-			storeA := propertyStore(t, "uidA-"+strconv.Itoa(i))
-			storeB := propertyStore(t, "uidB-"+strconv.Itoa(i))
+			storeA := propertyStore(t, "uidA-"+strconv.Itoa(i), image)
+			storeB := propertyStore(t, "uidB-"+strconv.Itoa(i), image)
 
 			// Apply to A in original order; renumber node #1 partway through.
 			applyUIDStreamWithRenumber(t, storeA, stream, false, rng)

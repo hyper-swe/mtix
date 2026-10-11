@@ -1,6 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 import (
@@ -16,6 +17,7 @@ import (
 
 // TestDeleteNode_SetsDeletedAt verifies soft-delete sets deleted_at.
 func TestDeleteNode_SetsDeletedAt(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -42,6 +44,7 @@ func TestDeleteNode_SetsDeletedAt(t *testing.T) {
 
 // TestDeleteNode_CascadeDefault_DeletesDescendants verifies cascade delete.
 func TestDeleteNode_CascadeDefault_DeletesDescendants(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -73,6 +76,7 @@ func TestDeleteNode_CascadeDefault_DeletesDescendants(t *testing.T) {
 
 // TestDeleteNode_NoCascade_ChildrenBecomeOrphans verifies non-cascade delete.
 func TestDeleteNode_NoCascade_ChildrenBecomeOrphans(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -99,6 +103,7 @@ func TestDeleteNode_NoCascade_ChildrenBecomeOrphans(t *testing.T) {
 
 // TestDeleteNode_RecalculatesParentProgress verifies parent progress update.
 func TestDeleteNode_RecalculatesParentProgress(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -132,6 +137,7 @@ func TestDeleteNode_RecalculatesParentProgress(t *testing.T) {
 // TestDeleteNode_CreatesActivityEntry is a placeholder — activity recording
 // is handled in the service layer for delete operations.
 func TestDeleteNode_CreatesActivityEntry(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -149,6 +155,7 @@ func TestDeleteNode_CreatesActivityEntry(t *testing.T) {
 
 // TestDeleteNode_AlreadyDeleted_ReturnsNotFound verifies double-delete protection.
 func TestDeleteNode_AlreadyDeleted_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -166,6 +173,7 @@ func TestDeleteNode_AlreadyDeleted_ReturnsNotFound(t *testing.T) {
 
 // TestUndeleteNode_RestoresNode verifies undelete restores the node.
 func TestUndeleteNode_RestoresNode(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -192,6 +200,7 @@ func TestUndeleteNode_RestoresNode(t *testing.T) {
 
 // TestUndeleteNode_RestoresDescendants verifies undelete cascades to descendants.
 func TestUndeleteNode_RestoresDescendants(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -224,6 +233,7 @@ func TestUndeleteNode_RestoresDescendants(t *testing.T) {
 
 // TestUndeleteNode_RecalculatesParentProgress verifies progress recalculation.
 func TestUndeleteNode_RecalculatesParentProgress(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -260,6 +270,7 @@ func TestUndeleteNode_RecalculatesParentProgress(t *testing.T) {
 // In this implementation, retention is not yet enforced at the store level.
 // A node that doesn't exist as deleted returns ErrNotFound.
 func TestUndeleteNode_BeyondRetention_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -270,6 +281,7 @@ func TestUndeleteNode_BeyondRetention_ReturnsNotFound(t *testing.T) {
 
 // TestDeleteNode_NonExistent_ReturnsNotFound verifies missing node deletion.
 func TestDeleteNode_NonExistent_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 
@@ -279,6 +291,7 @@ func TestDeleteNode_NonExistent_ReturnsNotFound(t *testing.T) {
 
 // TestUndeleteNode_NotDeleted_ReturnsNotFound verifies undelete of active node.
 func TestUndeleteNode_NotDeleted_ReturnsNotFound(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -295,6 +308,7 @@ func TestUndeleteNode_NotDeleted_ReturnsNotFound(t *testing.T) {
 // When a node is re-run with --delete, it should be invalidated before deletion.
 // This is a service-layer concern; at the store layer, we verify the basic delete.
 func TestDeleteNode_InvalidateBeforeDelete_WhenRerunDelete(t *testing.T) {
+	t.Parallel()
 	s := newTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)

@@ -4,6 +4,7 @@
 // Tests for MTIX-95.31.13: how a merge import settles workflow conflicts
 // (--prefer, --theirs, --ours), what the refusal lists, and what the choice
 // writes.
+// Parallel cases retain owned fixtures and existing behavior assertions.
 package sqlite_test
 
 import (
@@ -42,6 +43,7 @@ func mergeWith(s *sqlite.Store, file *sqlite.ExportData, r sqlite.WorkflowResolu
 // refusal is an ErrWorkflowConflict (and ErrConflict) that lists, per task,
 // the local value, the file's value and an activity hint.
 func TestImportReconcile_WorkflowConflict_ReportListsEveryField(t *testing.T) {
+	t.Parallel()
 	for _, tc := range workflowCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			local, _, file := workflowStores(t, tc)
@@ -73,6 +75,7 @@ func TestImportReconcile_WorkflowConflict_ReportListsEveryField(t *testing.T) {
 // --prefer theirs and --theirs REC-1 take the file's, --prefer ours and
 // --ours REC-1 keep the local ones, and a per-task list wins over --prefer.
 func TestImportReconcile_WorkflowChoice_AppliesExactlyTheChosenSide(t *testing.T) {
+	t.Parallel()
 	resolutions := []struct {
 		name      string
 		r         sqlite.WorkflowResolution
@@ -88,6 +91,7 @@ func TestImportReconcile_WorkflowChoice_AppliesExactlyTheChosenSide(t *testing.T
 	for _, tc := range workflowCases() {
 		for _, res := range resolutions {
 			t.Run(tc.name+"/"+res.name, func(t *testing.T) {
+				t.Parallel()
 				local, teammate, file := workflowStores(t, tc)
 				ls, la, lst, lw := workflowOf(t, local, "REC-1")
 				fs, fa, fst, fw := workflowOf(t, teammate, "REC-1")
@@ -131,6 +135,7 @@ func twoTaskStores(t *testing.T) (*sqlite.Store, *sqlite.ExportData) {
 // choice that leaves a conflicting task unsettled is still refused and
 // writes nothing, and that listing both sides settles each task as listed.
 func TestImportReconcile_WorkflowChoice_MustCoverEveryConflict(t *testing.T) {
+	t.Parallel()
 	local, file := twoTaskStores(t)
 	before := storeSnapshotJSON(t, local)
 
@@ -156,6 +161,7 @@ func TestImportReconcile_WorkflowChoice_MustCoverEveryConflict(t *testing.T) {
 // that does not conflict, a task on both sides and an unknown preference
 // are rejected before anything is written.
 func TestImportReconcile_WorkflowResolution_Invalid_IsRejected(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		r    sqlite.WorkflowResolution
@@ -180,6 +186,7 @@ func TestImportReconcile_WorkflowResolution_Invalid_IsRejected(t *testing.T) {
 // values, and that merging the same file again does not add another entry
 // when the values now agree.
 func TestImportReconcile_WorkflowChoice_IsRecordedInActivity(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	local, file := twoTaskStores(t)
 	fixed := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
@@ -217,6 +224,7 @@ func TestImportReconcile_WorkflowChoice_IsRecordedInActivity(t *testing.T) {
 // status group moves together: taking a file's open status for a task done
 // locally clears the closed time, and keeping the local done status keeps it.
 func TestImportReconcile_WorkflowTheirs_MovesTheWholeStatusGroup(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, choice := range []sqlite.WorkflowChoice{sqlite.WorkflowTheirs, sqlite.WorkflowOurs} {
 		t.Run(string(choice), func(t *testing.T) {
@@ -249,6 +257,7 @@ func TestImportReconcile_WorkflowTheirs_MovesTheWholeStatusGroup(t *testing.T) {
 // difference never conflict, and that a schema 1.0.0 file is checked the
 // same way as a 2.x one.
 func TestImportReconcile_WorkflowValuesAgree_MergeUnchanged(t *testing.T) {
+	t.Parallel()
 	t.Run("same instant in another zone is not a conflict", func(t *testing.T) {
 		local, _, file := workflowStores(t, workflowCase{name: "wake", base: deferUntil(wakeA)})
 		file.Nodes[0].DeferUntil = wakeA.In(time.FixedZone("x", 5*3600)).Format(time.RFC3339)
@@ -274,6 +283,7 @@ func TestImportReconcile_WorkflowValuesAgree_MergeUnchanged(t *testing.T) {
 // describes the activity streams without judging: the file holds a claim
 // entry the local store lacks, and the other way round.
 func TestImportReconcile_ActivityHint_SaysWhatEachSideHolds(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	local, teammate := newTestStore(t), newTestStore(t)
 	uid := taskUID(t)

@@ -74,6 +74,8 @@ func generationProcessHelper(t *testing.T, store *sqlite.Store, dir, mode string
 	switch mode {
 	case "snapshot-holder":
 		generationSnapshotHolder(t, store, svc, dir)
+	case "clean-force-holder":
+		generationCleanForceHolder(t, store, svc, dir)
 	case "generation-writer":
 		pendingProcessNode(t, store, 2)
 		svc.clock = func() time.Time { return pendingProcessClock().Add(time.Hour) }

@@ -74,7 +74,7 @@ func (s *Store) SnapshotExportRequest(ctx context.Context) (int64, error) {
 // Newer marks retain their exact oldest age and require a subsequent export.
 func (s *Store) RetireExportRequest(ctx context.Context, cutoff int64) error {
 	return s.updateExportRequest(ctx, func(state *ExportRequestState) error {
-		if cutoff == state.Covered && state.Requested == state.Covered {
+		if cutoff == state.Covered && state.Active == nil {
 			return nil
 		}
 		if state.Active == nil || *state.Active != cutoff {
@@ -97,11 +97,11 @@ func (s *Store) updateExportRequest(ctx context.Context, update func(*ExportRequ
 		if err != nil {
 			return err
 		}
-		if err := update(&state); err != nil {
-			return err
+		if updateErr := update(&state); updateErr != nil {
+			return updateErr
 		}
-		if err := validateExportRequest(state); err != nil {
-			return err
+		if validationErr := validateExportRequest(state); validationErr != nil {
+			return validationErr
 		}
 		body, err := json.Marshal(state)
 		if err != nil {

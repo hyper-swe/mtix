@@ -152,7 +152,7 @@ func (c *coalescingWriter) readAndWait(stdout io.ReadCloser) {
 		line := scanner.Text()
 		// Assertion diagnostics can exceed the protocol buffer on early parent
 		// failure. Keep draining them; only our two fixed handshake lines queue.
-		if line == "ready" || line == "marked 32" || line == "snapshot-held" || line == "committed 2" || line == "writer-held" {
+		if line == "ready" || line == "marked 32" || line == "snapshot-held" || line == "committed 2" || line == "writer-held" || strings.HasPrefix(line, "force-result ") {
 			c.lines <- line
 		}
 	}

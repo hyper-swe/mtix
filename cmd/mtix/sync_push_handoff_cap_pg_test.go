@@ -33,9 +33,9 @@ func TestRunSyncPush_ProcessCappedHandoffRecovery(t *testing.T) {
 	holder.frame(t, "done")
 	holder.join(t)
 	for _, event := range events[:2] {
-		handoffNativeDelivery(t, store, pool, event, "pushed", 1)
+		handoffNativeDelivery(t, store, pool, event, handoffDeliveryExpected{state: "pushed", hubCount: 1})
 	}
-	handoffNativeDelivery(t, store, pool, events[2], "pending", 0)
+	handoffNativeDelivery(t, store, pool, events[2], handoffDeliveryExpected{state: "pending", hubCount: 0})
 	status := startPushHandoffChild(t, dir, "status")
 	status.frame(t, "ready")
 	status.release(t)
@@ -43,15 +43,21 @@ func TestRunSyncPush_ProcessCappedHandoffRecovery(t *testing.T) {
 	require.NotNil(t, frame.Pending)
 	require.Equal(t, 1, *frame.Pending)
 	status.join(t)
-	handoffNativeDelivery(t, store, pool, events[2], "pending", 0)
+	handoffNativeDelivery(t, store, pool, events[2], handoffDeliveryExpected{state: "pending", hubCount: 0})
 	later := startPushHandoffChild(t, dir, "later-push")
 	later.frame(t, "ready")
 	later.release(t)
 	later.frame(t, "done")
 	later.join(t)
-	handoffNativeDelivery(t, store, pool, events[2], "pushed", 1)
+	handoffNativeDelivery(t, store, pool, events[2], handoffDeliveryExpected{state: "pushed", hubCount: 1})
 }
-func handoffNativeDelivery(t *testing.T, store *sqlite.Store, pool *transport.Pool, event, state string, count int) {
+
+type handoffDeliveryExpected struct {
+	state    string
+	hubCount int
+}
+
+func handoffNativeDelivery(t *testing.T, store *sqlite.Store, pool *transport.Pool, event string, expected handoffDeliveryExpected) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -62,6 +68,6 @@ func handoffNativeDelivery(t *testing.T, store *sqlite.Store, pool *transport.Po
 	// Assert real hub delivery for this event using a bound identifier value.
 	require.NoError(t, pool.Inner().QueryRow(ctx, `SELECT COUNT(*) FROM sync_events WHERE event_id = $1`, event).Scan(&delivered))
 	t.Logf("native cap event=%s local=%s hub_count=%d", event, local, delivered)
-	require.Equal(t, state, local)
-	require.Equal(t, count, delivered)
+	require.Equal(t, expected.state, local)
+	require.Equal(t, expected.hubCount, delivered)
 }

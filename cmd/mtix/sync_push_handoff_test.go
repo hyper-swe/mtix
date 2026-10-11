@@ -50,7 +50,7 @@ func TestPushHandoff_BoundsContinuingArrivals(t *testing.T) {
 	summaries := 0
 	var stderr bytes.Buffer
 	output := handoffSummaryFunc(func() { summaries++; handoffCreate(t, s, summaries, "") })
-	err := pushWithHandoff(context.Background(), &stderr, s, dir, false, func() (bool, error) {
+	err := pushWithHandoff(context.Background(), &stderr, s, pushHandoffOptions{mtixDir: dir}, func() (bool, error) {
 		calls++
 		lock, err := pushlock.Acquire(dir)
 		require.ErrorIs(t, err, pushlock.ErrLockHeld)
@@ -68,7 +68,7 @@ func TestPushHandoff_BoundsContinuingArrivals(t *testing.T) {
 	require.Equal(t, "HAND-3", remaining[0].NodeID)
 	handoffUnlocked(t, dir)
 	laterCalls := 0
-	require.NoError(t, pushWithHandoff(context.Background(), &stderr, s, dir, false, func() (bool, error) {
+	require.NoError(t, pushWithHandoff(context.Background(), &stderr, s, pushHandoffOptions{mtixDir: dir}, func() (bool, error) {
 		laterCalls++
 		return pushAndReportState(context.Background(), io.Discard, &stderr, hub, s)
 	}))
@@ -111,7 +111,7 @@ func handoffTerminal(t *testing.T, mode string) {
 	}
 	calls := 0
 	var stderr bytes.Buffer
-	require.NoError(t, pushWithHandoff(context.Background(), &stderr, s, dir, false, func() (bool, error) {
+	require.NoError(t, pushWithHandoff(context.Background(), &stderr, s, pushHandoffOptions{mtixDir: dir}, func() (bool, error) {
 		calls++
 		return pushAndReportState(context.Background(), io.Discard, &stderr, hub, s)
 	}))
@@ -138,7 +138,7 @@ func TestPushHandoff_ForceBypassesAndRunsOnce(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, lock.Release()) })
 	calls := 0
-	require.NoError(t, pushWithHandoff(context.Background(), io.Discard, s, dir, true, func() (bool, error) {
+	require.NoError(t, pushWithHandoff(context.Background(), io.Discard, s, pushHandoffOptions{mtixDir: dir, force: true}, func() (bool, error) {
 		calls++
 		handoffCreate(t, s, calls, "")
 		return true, nil
@@ -156,7 +156,7 @@ func TestPushHandoff_ContentionDoesNotPromiseDrain(t *testing.T) {
 	defer func() { require.NoError(t, lock.Release()) }()
 	calls := 0
 	var stderr bytes.Buffer
-	require.NoError(t, pushWithHandoff(context.Background(), &stderr, s, dir, false, func() (bool, error) { calls++; return true, nil }))
+	require.NoError(t, pushWithHandoff(context.Background(), &stderr, s, pushHandoffOptions{mtixDir: dir}, func() (bool, error) { calls++; return true, nil }))
 	require.Zero(t, calls)
 	require.Contains(t, stderr.String(), "queued work remains pending")
 	require.Contains(t, stderr.String(), "retry the next mtix sync push")
@@ -169,7 +169,7 @@ func TestPushHandoff_ErrorsReleaseOwnership(t *testing.T) {
 			s := newDaemonTestStore(t, dir)
 			calls := 0
 			var stderr bytes.Buffer
-			err := pushWithHandoff(context.Background(), &stderr, s, dir, false, func() (bool, error) {
+			err := pushWithHandoff(context.Background(), &stderr, s, pushHandoffOptions{mtixDir: dir}, func() (bool, error) {
 				calls++
 				return false, wrapSyncErr(&stderr, "push loop", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused: owned fixture")})
 			})
@@ -190,7 +190,7 @@ func TestPushHandoff_QueueReadFailureStopsAfterUnlock(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	calls := 0
-	err := pushWithHandoff(ctx, io.Discard, s, dir, false, func() (bool, error) { calls++; cancel(); return true, nil })
+	err := pushWithHandoff(ctx, io.Discard, s, pushHandoffOptions{mtixDir: dir}, func() (bool, error) { calls++; cancel(); return true, nil })
 	require.Error(t, err)
 	require.Equal(t, 1, calls)
 	handoffUnlocked(t, dir)
@@ -200,7 +200,7 @@ func TestPushHandoff_LockIOFailureNeverRunsPass(t *testing.T) {
 	s := newDaemonTestStore(t, dir)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "data"), []byte("owned obstruction"), 0o600))
 	calls := 0
-	err := pushWithHandoff(context.Background(), io.Discard, s, dir, false, func() (bool, error) { calls++; return true, nil })
+	err := pushWithHandoff(context.Background(), io.Discard, s, pushHandoffOptions{mtixDir: dir}, func() (bool, error) { calls++; return true, nil })
 	require.Error(t, err)
 	require.Zero(t, calls)
 }

@@ -15,20 +15,25 @@ import (
 
 const pushHandoffPassLimit = 3
 
+type pushHandoffOptions struct {
+	mtixDir string
+	force   bool
+}
+
 // pushWithHandoff checks for committed arrivals only AFTER releasing ownership.
 // Within the pass budget, a contender commits before Acquire: either this check
 // sees its event or it can acquire the unlocked lock itself. At the cap, arrivals
 // remain pending for the next push. A non-pusher holder does not drain events.
 // pass is instance-local and always runs fresh native reads after acquisition.
 func pushWithHandoff(ctx context.Context, stderr io.Writer, store *sqlite.Store,
-	mtixDir string, force bool, pass func() (bool, error),
+	opts pushHandoffOptions, pass func() (bool, error),
 ) error {
-	if force {
+	if opts.force {
 		_, err := pass()
 		return err
 	}
 	for n := 0; n < pushHandoffPassLimit; n++ {
-		lock, err := pushlock.Acquire(mtixDir)
+		lock, err := pushlock.Acquire(opts.mtixDir)
 		if errors.Is(err, pushlock.ErrLockHeld) {
 			fmt.Fprintln(stderr, "mtix sync push: push lock is held; skipping (queued work remains pending; retry the next mtix sync push)")
 			return nil

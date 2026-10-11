@@ -6,6 +6,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -57,3 +58,8 @@ const lockShared = 0
 
 // lockExclusive is the lock type for exclusive (write) access.
 const lockExclusive = 1
+
+// isSyncLockContention recognizes only the native nonblocking busy result.
+func isSyncLockContention(err error) bool {
+	return errors.Is(err, windows.ERROR_LOCK_VIOLATION)
+}

@@ -22,6 +22,10 @@
 
 ## Common Errors
 
+### Pull sync lock is busy
+
+A contended local sync lock makes ordinary `mtix sync pull` fail. With `MTIX_SYNC_HOOK=1`, native lock contention instead warns that the pull was not performed and returns success. Retry after the current owner finishes; no pull was completed or automatically retried. Filesystem acquisition failures and cancellation remain errors. Never delete the sync lock file to bypass its owner.
+
 ### ErrNotFound
 
 **Cause:** The node ID does not exist or has been soft-deleted.

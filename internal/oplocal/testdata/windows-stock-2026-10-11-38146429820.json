@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "helper_version": "stock-acl-v1",
+  "captured_utc": "2026-10-11T14:16:05.2992491Z",
+  "go_version": "go1.26.9",
+  "image_os": "win25-vs2026",
+  "image_version": "20260925.250.1",
+  "windows_version": "10.0",
+  "windows_build": 26100,
+  "user_sid": "S-1-5-21-1643835476-1616584234-1346609752-500",
+  "head_sha": "a52856a10b40cc09fc64daf4882e2ef7471f66ed",
+  "checkout_sha": "c93d26eb8cbb3f8076b0fc01ec8f3ec1e7e825a1",
+  "ref": "refs/pull/78/merge",
+  "run_id": "38146429820",
+  "run_attempt": "1",
+  "run_url": "https://github.com/hyper-swe/mtix/actions/runs/38146429820",
+  "rows": [
+    {
+      "logical_path": "volume_root",
+      "sddl": "O:S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464D:AI(A;;0x1000a1;;;S-1-15-3-65536-1888954469-739942743-1668119174-2468466756-4239452838-1296943325-355587736-700089176)(A;;LC;;;AU)(A;OICIIO;SDGXGWGR;;;AU)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)",
+      "policy_accepted": true,
+      "replay_accepted": true
+    },
+    {
+      "logical_path": "users_root",
+      "sddl": "O:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;0x1200a9;;;BU)(A;OICIIO;GXGR;;;BU)(A;;0x1200a9;;;WD)(A;OICIIO;GXGR;;;WD)(A;;0x100021;;;S-1-15-3-65536-4045685566-1323397456-4055816110-285687253-194181-4019357623-1925838800-191844675)",
+      "policy_accepted": true,
+      "replay_accepted": true
+    },
+    {
+      "logical_path": "runner_profile",
+      "sddl": "O:SYD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;LA)(A;;0x100020;;;S-1-15-3-65536-599108337-2355189375-1353122160-3480128286-3345335107-485756383-4087318168-230526575)",
+      "policy_accepted": true,
+      "replay_accepted": true
+    }
+  ]
+}

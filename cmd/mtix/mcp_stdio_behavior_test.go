@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/mcp"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -205,7 +206,7 @@ func stdioRunChild(t *testing.T, args []string, transcript []byte) []map[string]
 func stdioCheckDiagnostics(t *testing.T, diagnostic []byte) {
 	t.Helper()
 	for _, line := range strings.Split(strings.TrimSpace(string(diagnostic)), "\n") {
-		if line == "" {
+		if line == "" || line == "warning: GOCOVERDIR not set, no coverage data emitted" {
 			continue
 		}
 		require.Contains(t, line, "level=INFO")
@@ -253,13 +254,19 @@ func stdioContent(t *testing.T, result map[string]json.RawMessage) string {
 	return content[0].Text
 }
 
+func stdioCheckInitialize(t *testing.T, response map[string]json.RawMessage) {
+	t.Helper()
+	var result mcp.InitializeResult
+	require.NoError(t, json.Unmarshal(response["result"], &result))
+	require.Equal(t, "2024-11-05", result.ProtocolVersion)
+	require.Equal(t, "mtix", result.ServerInfo.Name)
+	require.Equal(t, version, result.ServerInfo.Version)
+	require.NotNil(t, result.Capabilities.Tools)
+}
+
 func stdioCheckResponses(t *testing.T, responses []map[string]json.RawMessage, seed *model.Node, readOnly bool) {
 	t.Helper()
-	initialize := stdioResult(t, responses[0])
-	require.Contains(t, initialize, "serverInfo")
-	var capabilities map[string]json.RawMessage
-	require.NoError(t, json.Unmarshal(initialize["capabilities"], &capabilities))
-	require.Contains(t, capabilities, "tools")
+	stdioCheckInitialize(t, responses[0])
 	var tools struct {
 		Tools []struct {
 			Name string `json:"name"`

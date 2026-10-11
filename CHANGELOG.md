@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- The reference wake routine supplies inbox text through standard input; the Cursor cold-start example is omitted pending a verified standard-input interface.
 - Building mtix from source now requires Go 1.26+ (MTIX-107.10).
 
 ### Security

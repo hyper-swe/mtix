@@ -5,6 +5,8 @@ package sqlite
 
 import (
 	"errors"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -101,3 +103,25 @@ func TestWriteRefusedError(t *testing.T) {
 
 // sanity: the errors package is used (keeps import if assertions change)
 var _ = errors.Is
+
+func TestFilesystemInspection_ReusesPositiveClassifier(t *testing.T) {
+	cases := []struct {
+		name   string
+		unsafe bool
+	}{{"nfs", true}, {"fuse.sshfs", true}, {"apfs", false}, {"", false}, {"future-fs", false}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, classifyFSName(tc.name).unsafe(), ClassifyFilesystemName(tc.name))
+			require.Equal(t, tc.unsafe, ClassifyFilesystemName(tc.name))
+		})
+	}
+	name, unsafe, err := InspectFilesystem(t.TempDir())
+	require.NoError(t, err)
+	require.Equal(t, ClassifyFilesystemName(name), unsafe)
+	_, _, err = InspectFilesystem(filepath.Join(t.TempDir(), "absent"))
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+		require.Error(t, err)
+	} else {
+		require.NoError(t, err)
+	}
+}

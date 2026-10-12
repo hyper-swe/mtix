@@ -224,8 +224,14 @@ type Store interface {
 	// excluding the node itself and soft-deleted nodes.
 	GetSiblings(ctx context.Context, nodeID string) ([]*model.Node, error)
 
-	// SetAnnotations replaces all annotations on a node per FR-3.4.
-	SetAnnotations(ctx context.Context, nodeID string, annotations []model.Annotation) error
+	// AppendAnnotation atomically appends one annotation to a node per FR-3.4
+	// (read, append and write in one write transaction; MTIX-148).
+	// Returns ErrNotFound if the node does not exist.
+	AppendAnnotation(ctx context.Context, nodeID string, annotation model.Annotation) error
+
+	// ResolveAnnotation atomically sets the resolved flag of one annotation per
+	// FR-3.4. Returns ErrNotFound if the node or the annotation does not exist.
+	ResolveAnnotation(ctx context.Context, nodeID, annotationID string, resolved bool) error
 
 	// Raw query access (for background service operations).
 

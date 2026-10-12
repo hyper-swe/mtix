@@ -52,7 +52,10 @@ type appContext struct {
 	logger     *slog.Logger
 	jsonOutput bool
 	mtixDir    string // Path to .mtix directory, set during initApp.
-	authorID   string // Resolved author identity for this process (MTIX-24): MTIX_AUTHOR_ID > author_id config > "cli".
+	// firstRunErr holds a refused host first-run record until a command that
+	// needs operator state reports it, once per process.
+	firstRunErr error
+	authorID    string // Resolved author identity for this process (MTIX-24): MTIX_AUTHOR_ID > author_id config > "cli".
 	// payloadWarnings collects mutation-time wire-cap warnings when a hub is
 	// configured; nil otherwise (MTIX-95.12, sync_payload_warning.go).
 	payloadWarnings *sqlite.PayloadWarnings
@@ -238,8 +241,9 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 		Level: level,
 	}))
 
-	if firstRunErr := hooks.RecordFirstRun(); firstRunErr != nil {
-		app.logger.Warn("host first run not recorded", "error", firstRunErr)
+	app.firstRunErr = hooks.RecordFirstRun()
+	if app.firstRunErr != nil {
+		app.logger.Debug("host first run not recorded", "error", app.firstRunErr)
 	}
 
 	// Find .mtix directory.

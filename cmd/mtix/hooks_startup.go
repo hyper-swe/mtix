@@ -29,6 +29,11 @@ func initializeHookApprovals(cmd *cobra.Command, dir string) {
 	if cmd.Name() == "trust" {
 		return
 	}
+	if app.firstRunErr != nil {
+		app.logger.Warn("operator state is unusable", "error", app.firstRunErr, "fix", "mtix hooks status --json")
+		app.firstRunErr = nil
+		return
+	}
 	approvals, err := hooks.ProcessApprovals(dir)
 	if err == nil {
 		err = approvals.Migrate()

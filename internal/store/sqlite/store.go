@@ -102,31 +102,7 @@ func newWithRetry(dbPath string, logger *slog.Logger, rt openRetry) (*Store, err
 	}
 
 	if writeRefused {
-		// Read-only store on an unsafe filesystem (MTIX-58): reads/recover/query
-		// work; every write returns writeRefusedError (via preflightWrite). One
-		// shared read-only connection serves both roles. No init — init writes
-		// schema, and creating a store on an unsafe FS is correctly impossible.
-		roDB, err := openDBWith(ctx, dbPath, false, true, rt)
-		if err != nil {
-			return nil, explainOpenError(fmt.Errorf("open read-only db %s: %w", dbPath, err), dbPath)
-		}
-		if checkErr := integrityCheckOnOpenWith(ctx, roDB, dbPath, rt); checkErr != nil {
-			if closeErr := roDB.Close(); closeErr != nil {
-				logger.Error("failed to close read-only db after integrity failure", slog.Any("error", closeErr))
-			}
-			return nil, checkErr
-		}
-		return &Store{
-			writeDB:      roDB,
-			readDB:       roDB,
-			logger:       logger,
-			clock:        func() time.Time { return time.Now().UTC() },
-			dbDir:        filepath.Dir(dbPath),
-			minFreeBytes: minFreeBytes(),
-			writeRefused: true,
-			fsType:       fsType,
-			dbPath:       dbPath,
-		}, nil
+		return openReadOnlyStore(ctx, dbPath, logger, rt, fsType)
 	}
 
 	writeDB, err := openDBWith(ctx, dbPath, true, false, rt)
@@ -490,4 +466,33 @@ func clockOrDefault(clocks ...func() time.Time) func() time.Time {
 		return clocks[0]
 	}
 	return time.Now
+}
+
+// openReadOnlyStore opens the read-only store used on an unsafe filesystem
+// (MTIX-58): reads/recover/query work; every write returns writeRefusedError
+// (via preflightWrite). One shared read-only connection serves both roles. No
+// init: init writes schema, and creating a store on an unsafe FS is impossible.
+func openReadOnlyStore(ctx context.Context, dbPath string, logger *slog.Logger,
+	rt openRetry, fsType string) (*Store, error) {
+	roDB, err := openDBWith(ctx, dbPath, false, true, rt)
+	if err != nil {
+		return nil, explainOpenError(fmt.Errorf("open read-only db %s: %w", dbPath, err), dbPath)
+	}
+	if checkErr := integrityCheckOnOpenWith(ctx, roDB, dbPath, rt); checkErr != nil {
+		if closeErr := roDB.Close(); closeErr != nil {
+			logger.Error("failed to close read-only db after integrity failure", slog.Any("error", closeErr))
+		}
+		return nil, checkErr
+	}
+	return &Store{
+		writeDB:      roDB,
+		readDB:       roDB,
+		logger:       logger,
+		clock:        func() time.Time { return time.Now().UTC() },
+		dbDir:        filepath.Dir(dbPath),
+		minFreeBytes: minFreeBytes(),
+		writeRefused: true,
+		fsType:       fsType,
+		dbPath:       dbPath,
+	}, nil
 }

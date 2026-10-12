@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -43,9 +44,10 @@ func TestIsTransientOpenError_Classification(t *testing.T) {
 		want bool
 	}{
 		{"busy", errors.New("enable WAL: database is locked (5) (SQLITE_BUSY)"), true},
-		{"locked", errors.New("database table is locked (6) (SQLITE_LOCKED)"), true},
-		{"schema changed", errors.New("SQL logic error: schema has changed: nodes_fts (17) (SQLITE_SCHEMA)"), true},
-		{"corrupt", errors.New("database disk image is malformed (11) (SQLITE_CORRUPT)"), false},
+		{"locked", errors.New("database table is locked (6)"), true},
+		{"schema changed", errors.New("SQL logic error: schema has changed: nodes_fts (1)"), true},
+		{"schema changed (17)", errors.New("database schema has changed (17)"), true},
+		{"corrupt", errors.New("database disk image is malformed (11)"), false},
 		{"nil", nil, false},
 		{"other", errors.New("boom"), false},
 	}
@@ -58,9 +60,9 @@ func TestIsTransientOpenError_Classification(t *testing.T) {
 
 func TestIsCorruptionError_TransientCodes_NotCorruption(t *testing.T) {
 	for _, msg := range []string{
-		"schema has changed: nodes_fts (17) (SQLITE_SCHEMA)",
+		"SQL logic error: schema has changed: nodes_fts (1)", "database schema has changed (17)",
 		"database is locked (5) (SQLITE_BUSY)",
-		"database table is locked (6) (SQLITE_LOCKED)",
+		"database table is locked (6)",
 	} {
 		assert.False(t, isCorruptionError(errors.New(msg)), msg)
 	}
@@ -132,7 +134,7 @@ func TestCheckIntegrity_SchemaThenOK_RetriesAndPasses(t *testing.T) {
 	err := checkIntegrity(context.Background(), rt, "x.db", func(context.Context) (string, error) {
 		calls++
 		if calls < 3 {
-			return "", errors.New("SQL logic error: schema has changed: nodes_fts (17) (SQLITE_SCHEMA)")
+			return "", errors.New("SQL logic error: schema has changed: nodes_fts (1)")
 		}
 		return "ok", nil
 	})
@@ -142,7 +144,7 @@ func TestCheckIntegrity_SchemaThenOK_RetriesAndPasses(t *testing.T) {
 
 func TestCheckIntegrity_PersistentTransient_NotCorruption(t *testing.T) {
 	for _, msg := range []string{"database is locked (5) (SQLITE_BUSY)",
-		"schema has changed (17) (SQLITE_SCHEMA)", "table is locked (6) (SQLITE_LOCKED)"} {
+		"database schema has changed (17)", "database table is locked: t (6)"} {
 		rt, _ := recordingRetry(3)
 		err := checkIntegrity(context.Background(), rt, "x.db", func(context.Context) (string, error) {
 			return "", errors.New(msg)
@@ -160,7 +162,7 @@ func TestCheckIntegrity_RealFailures_AreCorruption(t *testing.T) {
 	})
 	assert.ErrorIs(t, err, model.ErrCorrupted)
 	err = checkIntegrity(context.Background(), rt, "x.db", func(context.Context) (string, error) {
-		return "", errors.New("database disk image is malformed (11) (SQLITE_CORRUPT)")
+		return "", errors.New("database disk image is malformed (11)")
 	})
 	assert.ErrorIs(t, err, model.ErrCorrupted)
 }
@@ -245,11 +247,11 @@ func TestCheckIntegrity_NonTransientFailures_AreIncompleteNotCorruption(t *testi
 		err   error
 		cause string
 	}{
-		{"io error", errors.New("disk I/O error (10) (SQLITE_IOERR)"), "I/O error"},
-		{"out of memory", errors.New("out of memory (7) (SQLITE_NOMEM)"), "out of memory"},
-		{"cannot open", errors.New("unable to open database file (14) (SQLITE_CANTOPEN)"), "cannot open"},
-		{"cancelled", context.Canceled, "cancelled"},
-		{"deadline", context.DeadlineExceeded, "cancelled"},
+		{"io error", errors.New("disk I/O error (10)"), "(I/O error)"},
+		{"out of memory", errors.New("out of memory (7)"), "(out of memory)"},
+		{"cannot open", errors.New("unable to open database file (14)"), "(cannot open the database file)"},
+		{"cancelled", context.Canceled, "(cancelled)"},
+		{"deadline", context.DeadlineExceeded, "(cancelled)"},
 		{"unknown", errors.New("something odd"), "something odd"},
 	}
 	for _, tt := range tests {
@@ -267,7 +269,7 @@ func TestCheckIntegrity_NonTransientFailures_AreIncompleteNotCorruption(t *testi
 }
 
 func TestCheckIntegrity_CorruptionSignals_AreCorrupted(t *testing.T) {
-	for _, msg := range []string{"database disk image is malformed (11) (SQLITE_CORRUPT)", "SQLITE_CORRUPT"} {
+	for _, msg := range []string{"database disk image is malformed (11)", "SQLITE_CORRUPT"} {
 		rt, _ := recordingRetry(3)
 		err := checkIntegrity(context.Background(), rt, "x.db", func(context.Context) (string, error) {
 			return "", errors.New(msg)
@@ -277,8 +279,10 @@ func TestCheckIntegrity_CorruptionSignals_AreCorrupted(t *testing.T) {
 	}
 }
 
-// errSchemaChanged is the exact failure from the ticket's false corruption alarm.
-var errSchemaChanged = errors.New("SQL logic error: schema has changed: nodes_fts (17) (SQLITE_SCHEMA)")
+// errSchemaChanged is the driver's real SQLITE_SCHEMA-class text from the
+// ticket's false corruption alarm (modernc 1.35.0 formats errors as
+// "<errstr>: <errmsg> (<rc>)" and adds a name suffix only for BUSY).
+var errSchemaChanged = errors.New("SQL logic error: schema has changed: nodes_fts (1)")
 
 // failFirst injects errSchemaChanged at one stage for the first n calls.
 func failFirst(stage string, n int, calls *int) func(string) error {
@@ -323,4 +327,66 @@ func TestNewWithRetry_PersistentSchemaChange_IsNeverCorruption(t *testing.T) {
 			assert.Equal(t, 3, calls)
 		})
 	}
+}
+
+// A real SQLITE_LOCKED cannot be produced in a test: modernc blocks on
+// unlock_notify for a shared-cache table lock instead of returning it. The
+// LOCKED class is therefore classified by its real text ("database table is
+// locked (6)", see TestIsTransientOpenError_Classification), and its typed
+// code case in isTransientOpenError has no real-error test.
+
+// TestIsTransientOpenError_RealDriverBusySnapshot_ClassifiedByPrimaryCode takes a
+// genuine SQLITE_BUSY_SNAPSHOT (WAL read then write conflict). Whatever code the
+// driver reports, the primary code must classify it as transient.
+func TestIsTransientOpenError_RealDriverBusySnapshot_ClassifiedByPrimaryCode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "snap.db")
+	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(1)")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+	_, err = db.Exec("CREATE TABLE t(x)")
+	require.NoError(t, err)
+	ctx := context.Background()
+	c1, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer func() { _ = c1.Close() }()
+	c2, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer func() { _ = c2.Close() }()
+	_, err = c1.ExecContext(ctx, "BEGIN")
+	require.NoError(t, err)
+	var n int
+	require.NoError(t, c1.QueryRowContext(ctx, "SELECT count(*) FROM t").Scan(&n))
+	_, err = c2.ExecContext(ctx, "INSERT INTO t VALUES (1)")
+	require.NoError(t, err)
+	_, err = c1.ExecContext(ctx, "INSERT INTO t VALUES (2)")
+	require.Error(t, err)
+	var sqErr *sqlite3.Error
+	require.ErrorAs(t, err, &sqErr)
+	assert.Equal(t, sqliteBusy, sqErr.Code()&0xFF, "code %d", sqErr.Code())
+	assert.True(t, isTransientOpenError(opaqueErr{err: err}))
+}
+
+// TestNew_DamagedHeader_ReportsCorruptionNotCouldNotRun drives a real damaged
+// database through New. A genuine SQLITE_CORRUPT must read as corruption and
+// carry the recovery path, and must never read like the transient
+// "integrity check ... could not run" message the runbook says to retry.
+func TestNew_DamagedHeader_ReportsCorruptionNotCouldNotRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store.db")
+	s, err := New(path, slog.New(slog.DiscardHandler))
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+
+	f, err := os.OpenFile(path, os.O_RDWR, 0) //nolint:gosec // test-owned temp file
+	require.NoError(t, err)
+	_, err = f.WriteAt([]byte{200}, 20) // header byte 20: reserved space per page
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	_, err = New(path, slog.New(slog.DiscardHandler))
+	require.Error(t, err)
+	assert.ErrorIs(t, err, model.ErrCorrupted)
+	assert.NotErrorIs(t, err, model.ErrIntegrityCheckIncomplete)
+	assert.NotContains(t, err.Error(), "could not run")
+	assert.Contains(t, err.Error(), "corruption")
+	assert.Contains(t, err.Error(), "mtix recover")
 }

@@ -99,8 +99,14 @@ func isTransientOpenError(err error) bool {
 		}
 	}
 	msg := err.Error()
+	// Real driver texts (modernc 1.35.0 appends a name suffix only for BUSY):
+	// "database table is locked (6)", "database schema has changed (17)" and
+	// "SQL logic error: schema has changed: nodes_fts (1)" (primary code 1, so
+	// only the text identifies it). The typed SCHEMA and LOCKED codes cannot be
+	// produced by this driver on demand (it blocks on unlock_notify instead of
+	// returning LOCKED), so they have no real-error test; the text does.
 	for _, marker := range []string{"SQLITE_BUSY", "SQLITE_LOCKED", "SQLITE_SCHEMA",
-		"database is locked", "schema has changed"} {
+		"database is locked", "table is locked", "schema has changed"} {
 		if strings.Contains(msg, marker) {
 			return true
 		}
@@ -156,8 +162,11 @@ func checkIntegrity(ctx context.Context, rt openRetry, path string,
 			"retry in a moment (this is not corruption): %w (%v)",
 			path, model.ErrIntegrityCheckIncomplete, err)
 	case isCorruptionError(err):
-		return fmt.Errorf("integrity check on %s could not run; %s: %w (%v)",
-			path, recoveryGuidance, model.ErrCorrupted, err)
+		// Deliberately NOT worded "could not run": that phrase means "transient,
+		// retry" in the runbook, and a damaged database must never read that way.
+		return fmt.Errorf("database corruption detected by the integrity check on %s (%v); "+
+			"run 'mtix recover' (read-only salvage) or restore a backup; %s: %w",
+			path, err, recoveryGuidance, model.ErrCorrupted)
 	default:
 		return fmt.Errorf("integrity check on %s could not run (%s); retry, and check for "+
 			"other processes or storage problems (this is not corruption): %w (%v)",

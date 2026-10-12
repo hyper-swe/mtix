@@ -43,7 +43,11 @@ func TestAgentInboxOutput_AgentTransitionJSON(t *testing.T) {
 	register.SetArgs([]string{"worker"})
 	text, err := cliBehaviorOutput(t, register.Execute)
 	require.NoError(t, err)
-	require.JSONEq(t, `{"agent_id":"worker","status":"registered"}`, text)
+	var registered map[string]any
+	require.NoError(t, json.Unmarshal([]byte(text), &registered))
+	// Session fields are additive (MTIX-112.17.4): the original two keys keep their meaning.
+	require.Equal(t, "worker", registered["agent_id"])
+	require.Equal(t, "registered", registered["status"])
 	state := newAgentStateCmd()
 	state.SetArgs([]string{"worker", "--set", "working"})
 	text, err = cliBehaviorOutput(t, state.Execute)
@@ -62,14 +66,14 @@ func TestAgentInboxOutput_AgentTransitionJSON(t *testing.T) {
 func TestAgentInboxOutput_RegistrationRefusals(t *testing.T) {
 	t.Run("missing-service", func(t *testing.T) {
 		saveAndResetApp(t)
-		text, err := cliBehaviorOutput(t, func() error { return runAgentRegister("worker") })
+		text, err := cliBehaviorOutput(t, func() error { return runAgentRegister("worker", sessionOptions{}) })
 		require.ErrorContains(t, err, "not in an mtix project")
 		require.Empty(t, text)
 	})
 	t.Run("missing-project", func(t *testing.T) {
 		initTestApp(t)
 		app.configSvc = nil
-		text, err := cliBehaviorOutput(t, func() error { return runAgentRegister("worker") })
+		text, err := cliBehaviorOutput(t, func() error { return runAgentRegister("worker", sessionOptions{}) })
 		require.ErrorIs(t, err, model.ErrInvalidInput)
 		require.Empty(t, text)
 		_, err = app.agentSvc.GetAgentState(context.Background(), "worker")

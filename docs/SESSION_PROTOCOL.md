@@ -6,7 +6,7 @@
 
 ### Start
 
-Run `mtix agent register <agent-id>` at session boot. Repeat registration on the same board exits 0 with an "already registered" notice and refreshes the heartbeat. It preserves the existing state, work assignment, project, and active session; it does not start or replace a session. With `--json`, the status is `registered` for a new identity or `already_registered` for a repeat. Use a unique ID per agent; registration currently identifies an agent by ID on the board, without a live-session ownership check.
+Run `mtix agent register <agent-id>` at session boot. Repeat registration on the same board exits 0 with an "already registered" notice and refreshes the heartbeat. It preserves the existing state, work assignment, project, and active session; it does not start or replace a session. With `--json`, the status is `registered` for a new identity or `already_registered` for a repeat. Use a unique ID per agent. Registration also records this shell's session for the id (harness and session handle detected from the environment): a restarted lane registers again with no flags, and a still-running session of the same id is refused unless you pass `--take-over` (see "Registration and lanes").
 
 ```
 mtix session start --agent <agent_id>

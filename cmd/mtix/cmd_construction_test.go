@@ -311,7 +311,8 @@ func TestNewReadyCmd_NoFlagsRequired(t *testing.T) {
 func TestNewBlockedCmd_NoFlagsRequired(t *testing.T) {
 	cmd := newBlockedCmd()
 
-	assert.Equal(t, "blocked", cmd.Use)
+	assert.Equal(t, "blocked [id]", cmd.Use, "blocked lists blocked nodes, or takes one optional node id")
+	assert.Equal(t, "blocked", cmd.Name())
 	assert.NotEmpty(t, cmd.Short)
 }
 
@@ -627,7 +628,8 @@ func TestNewSessionSummaryCmd_RequiresExactlyOneArg(t *testing.T) {
 func TestNewInitCmd_HasPrefixFlag(t *testing.T) {
 	cmd := newInitCmd()
 
-	assert.Equal(t, "init", cmd.Use)
+	assert.Equal(t, "init [prefix]", cmd.Use, "init takes one optional positional prefix")
+	assert.Equal(t, "init", cmd.Name())
 	prefixFlag := cmd.Flags().Lookup("prefix")
 	require.NotNil(t, prefixFlag)
 	assert.Equal(t, "PROJ", prefixFlag.DefValue)

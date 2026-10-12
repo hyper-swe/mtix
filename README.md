@@ -180,7 +180,7 @@ mtix list --under PROJ-1,PROJ-2 --status done,cancelled --type epic
 mtix list --priority 1,2 --type issue --assignee agent-a,agent-b
 
 # Search "auth" within two subtrees, restricted to two node types
-mtix search --query auth --under PROJ-1,PROJ-3 --type story,issue
+mtix search auth --under PROJ-1,PROJ-3 --type story,issue
 
 # JSON output for machine consumption
 mtix list --under PROJ-1 --status done --json
@@ -332,7 +332,7 @@ mtix cancel <id> --reason R         Cancel a node
 mtix reopen <id>                    Reopen done/cancelled node
 mtix comment <id> <text>            Add a comment
 mtix dep add <from> <to>            Add dependency
-mtix search [--query Q]             Full-text search (filters accept comma-separated values)
+mtix search [words...]             Text search: every word must appear in title, description or prompt (filters accept comma-separated values)
 mtix ready                          Show nodes ready for work
 mtix blocked                        Show blocked nodes
 mtix stale                          Show stale nodes

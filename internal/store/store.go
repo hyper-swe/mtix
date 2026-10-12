@@ -33,6 +33,12 @@ type NodeFilter struct {
 	Priority  []int             `json:"priority,omitempty"`
 	Labels    []string          `json:"labels,omitempty"`
 
+	// Text restricts results to nodes whose title, description or prompt
+	// contains EVERY word, case-insensitively and literally (MTIX-146). Each
+	// word is one entry; the store binds it as an escaped LIKE parameter, so
+	// '%', '_' and '\' match themselves. Empty means no text filter.
+	Text []string `json:"text,omitempty"`
+
 	// Project restricts results to a single project prefix (FR-MULTI-PROJECT
 	// MP-3). Empty means NO project filter — results span all projects. A
 	// non-empty value restricts results to that exact project prefix. The

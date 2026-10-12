@@ -31,6 +31,9 @@ var exemptCommands = map[string]bool{
 	"docs":    true, // Writes files, no DB.
 	"version": true, // No DB needed.
 	"help":    true, // No DB needed.
+	// search runs locally: the REST search has no text query or the full
+	// filter set, so routing would silently drop the user's words (MTIX-146).
+	"search": true,
 }
 
 // adminRoutes maps CLI admin commands to REST admin endpoints per FR-14.1b.
@@ -202,12 +205,6 @@ func routeStandardCommand(cmd *cobra.Command, args []string, port int) error {
 		method = "GET"
 	case "list":
 		url = fmt.Sprintf("%s/nodes", baseURL)
-		method = "GET"
-	case "search":
-		if len(args) < 1 {
-			return fmt.Errorf("search query required")
-		}
-		url = fmt.Sprintf("%s/nodes/search?q=%s", baseURL, args[0])
 		method = "GET"
 	case "tree":
 		if len(args) < 1 {

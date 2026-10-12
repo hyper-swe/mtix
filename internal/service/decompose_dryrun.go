@@ -49,6 +49,10 @@ func (svc *NodeService) DecomposeDryRun(
 		}
 	}
 
+	// The dry run writes nothing, so a stale parent read here can only give a
+	// stale preview. Proven by
+	// TestDecomposeDryRun_ParentCancelledBetweenReadAndWrite_WritesNothing
+	// (MTIX-151).
 	// Verify parent exists and is not in terminal status (FR-3.9).
 	parent, err := svc.store.GetNode(ctx, parentID)
 	if err != nil {

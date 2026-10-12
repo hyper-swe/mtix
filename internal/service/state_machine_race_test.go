@@ -27,24 +27,32 @@ import (
 // hookStore wraps the SQLite store and fires a one-shot hook after GetNode.
 type hookStore struct {
 	*sqlite.Store
-	mu   sync.Mutex
-	hook func()
+	mu    sync.Mutex
+	hooks []func()
 }
 
-// arm sets the one-shot hook run after the next GetNode call.
+// take pops the next armed hook, or nil.
+func (h *hookStore) take() func() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.hooks) == 0 {
+		return nil
+	}
+	fn := h.hooks[0]
+	h.hooks = h.hooks[1:]
+	return fn
+}
+
+// arm queues a one-shot hook; hooks run in order, one per GetNode call.
 func (h *hookStore) arm(fn func()) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.hook = fn
+	h.hooks = append(h.hooks, fn)
 }
 
 func (h *hookStore) GetNode(ctx context.Context, id string) (*model.Node, error) {
 	n, err := h.Store.GetNode(ctx, id)
-	h.mu.Lock()
-	fn := h.hook
-	h.hook = nil
-	h.mu.Unlock()
-	if fn != nil {
+	if fn := h.take(); fn != nil {
 		fn()
 	}
 	return n, err
@@ -54,11 +62,7 @@ func (h *hookStore) GetNode(ctx context.Context, id string) (*model.Node, error)
 // nothing outside the store transaction any more, so the conflicting write
 // can only land before the transaction begins and must then be honoured.
 func (h *hookStore) RestoreInvalidated(ctx context.Context, id, author string) (model.Status, error) {
-	h.mu.Lock()
-	fn := h.hook
-	h.hook = nil
-	h.mu.Unlock()
-	if fn != nil {
+	if fn := h.take(); fn != nil {
 		fn()
 	}
 	return h.Store.RestoreInvalidated(ctx, id, author)
@@ -347,4 +351,125 @@ func TestStateMachineRaces_ConcurrentCreateChildAndCancelParent_NoChildAfterCanc
 			require.Len(t, kids, 1, "round %d", i)
 		}
 	}
+}
+
+// rerunFrom runs Rerun on id and returns its error.
+func rerunFrom(svc *service.NodeService, id string) error {
+	return svc.Rerun(context.Background(), id, service.RerunAll, "rerun", "admin")
+}
+
+// TestRerun_TerminalChangesToOtherTerminal_ReopensFromNewStatus: a conflict
+// into another terminal status must be re-decided, not swallowed (F2).
+func TestRerun_TerminalChangesToOtherTerminal_ReopensFromNewStatus(t *testing.T) {
+	svc, hs := newRaceService(t)
+	ctx := context.Background()
+	id := raceNode(t, svc, "")
+	mustDo(t, hs.ClaimNode(ctx, id, "agent-1"))
+	mustDo(t, hs.TransitionStatus(ctx, id, model.StatusDone, "", "agent-1"))
+
+	hs.arm(func() {
+		mustDo(t, hs.TransitionStatus(ctx, id, model.StatusOpen, "reopen", "admin"))
+		mustDo(t, hs.CancelNode(ctx, id, "stop", "admin", false))
+	})
+	require.NoError(t, rerunFrom(svc, id))
+	assert.Equal(t, model.StatusOpen, statusOf(t, hs, id))
+}
+
+// terminalFlip leaves a done node cancelled (and a cancelled node done), so
+// the guarded reopen always meets a different terminal status.
+func terminalFlip(t *testing.T, hs *hookStore, id string, from model.Status) func() {
+	ctx := context.Background()
+	return func() {
+		mustDo(t, hs.TransitionStatus(ctx, id, model.StatusOpen, "reopen", "admin"))
+		if from == model.StatusDone {
+			mustDo(t, hs.CancelNode(ctx, id, "stop", "admin", false))
+			return
+		}
+		mustDo(t, hs.ClaimNode(ctx, id, "agent-1"))
+		mustDo(t, hs.TransitionStatus(ctx, id, model.StatusDone, "", "agent-1"))
+	}
+}
+
+// TestRerun_ParentKeepsChanging_FailsWithConflictAfterBound: the conflict
+// budget is finite and its exhaustion is reported as ErrConflict (F1).
+func TestRerun_ParentKeepsChanging_FailsWithConflictAfterBound(t *testing.T) {
+	svc, hs := newRaceService(t)
+	ctx := context.Background()
+	id := raceNode(t, svc, "")
+	mustDo(t, hs.ClaimNode(ctx, id, "agent-1"))
+	mustDo(t, hs.TransitionStatus(ctx, id, model.StatusDone, "", "agent-1"))
+	hs.arm(terminalFlip(t, hs, id, model.StatusDone))
+	hs.arm(terminalFlip(t, hs, id, model.StatusCancelled))
+	hs.arm(terminalFlip(t, hs, id, model.StatusDone))
+
+	err := rerunFrom(svc, id)
+	require.ErrorIs(t, err, model.ErrConflict)
+	assert.Equal(t, model.StatusCancelled, statusOf(t, hs, id), "the rerun must not have reopened it")
+}
+
+// TestRerun_RestoreLosesRaceToCancel_ReopensCancelled: the tolerated
+// ErrInvalidTransition from Restore sends the loop back to re-decide (F3).
+func TestRerun_RestoreLosesRaceToCancel_ReopensCancelled(t *testing.T) {
+	svc, hs := newRaceService(t)
+	ctx := context.Background()
+	id := raceNode(t, svc, "")
+	mustDo(t, hs.TransitionStatus(ctx, id, model.StatusInvalidated, "stale", "system"))
+
+	hs.arm(func() { mustDo(t, hs.CancelNode(ctx, id, "stop", "admin", false)) })
+	require.NoError(t, rerunFrom(svc, id))
+	assert.Equal(t, model.StatusOpen, statusOf(t, hs, id))
+}
+
+// TestRerun_InvalidatedParent_RestoresToPreviousStatusFirst pins FR-3.5c:
+// restore-first, so an in-progress parent stays in progress and keeps its owner (F4).
+func TestRerun_InvalidatedParent_RestoresToPreviousStatusFirst(t *testing.T) {
+	svc, hs := newRaceService(t)
+	ctx := context.Background()
+	id := raceNode(t, svc, "")
+	mustDo(t, hs.ClaimNode(ctx, id, "agent-1"))
+	mustDo(t, hs.TransitionStatus(ctx, id, model.StatusInvalidated, "stale", "system"))
+
+	require.NoError(t, rerunFrom(svc, id))
+	n, err := hs.Store.GetNode(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, model.StatusInProgress, n.Status)
+	assert.Equal(t, "agent-1", n.Assignee)
+}
+
+// TestRerun_RestoreCommitsAfterTwoConflicts_StillSucceeds: a restore that
+// commits is progress and must not be reported as a failure (F8).
+func TestRerun_RestoreCommitsAfterTwoConflicts_StillSucceeds(t *testing.T) {
+	svc, hs := newRaceService(t)
+	ctx := context.Background()
+	id := raceNode(t, svc, "")
+	mustDo(t, hs.ClaimNode(ctx, id, "agent-1"))
+	mustDo(t, hs.TransitionStatus(ctx, id, model.StatusDone, "", "agent-1"))
+
+	hs.arm(terminalFlip(t, hs, id, model.StatusDone)) // read done -> now cancelled
+	hs.arm(func() {                                   // read cancelled -> now invalidated
+		mustDo(t, hs.TransitionStatus(ctx, id, model.StatusInvalidated, "stale", "system"))
+	})
+	require.NoError(t, rerunFrom(svc, id))
+	assert.Equal(t, model.StatusOpen, statusOf(t, hs, id))
+}
+
+// TestRestore_Succeeds_BroadcastsStatusChanged pins the Restore event (F6).
+func TestRestore_Succeeds_BroadcastsStatusChanged(t *testing.T) {
+	s, err := sqlite.New(t.TempDir(), slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	bc := newRecordingBroadcaster()
+	svc := service.NewNodeService(s, bc, &service.StaticConfig{}, slog.Default(),
+		func() time.Time { return time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC) })
+	ctx := context.Background()
+	id := raceNode(t, svc, "")
+	require.NoError(t, s.TransitionStatus(ctx, id, model.StatusInvalidated, "stale", "system"))
+	bc.Reset()
+
+	require.NoError(t, svc.Restore(ctx, id, "admin"))
+	events := bc.Events()
+	require.Len(t, events, 1)
+	assert.Equal(t, service.EventStatusChanged, events[0].Type)
+	assert.Equal(t, id, events[0].NodeID)
+	assert.Equal(t, "admin", events[0].Author)
 }

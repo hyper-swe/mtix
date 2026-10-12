@@ -5,6 +5,7 @@ package sqlite_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -80,4 +81,83 @@ func TestRestoreInvalidated_Cases_DecidesTargetInTransaction(t *testing.T) {
 			assert.Equal(t, tt.want, got.Status)
 		})
 	}
+}
+
+// TestRestoreInvalidated_SoftDeletedNode_ReturnsNotFound pins that a
+// soft-deleted invalidated node is not restored, nor found (F7).
+func TestRestoreInvalidated_SoftDeletedNode_ReturnsNotFound(t *testing.T) {
+	s := newDeferTestStore(t, model.StatusOpen)
+	ctx := context.Background()
+	require.NoError(t, s.TransitionStatus(ctx, "PROJ-1", model.StatusInvalidated, "stale", "admin"))
+	require.NoError(t, s.DeleteNode(ctx, "PROJ-1", false, "admin"))
+
+	_, err := s.RestoreInvalidated(ctx, "PROJ-1", "admin")
+	require.ErrorIs(t, err, model.ErrNotFound)
+	require.NoError(t, s.UndeleteNode(ctx, "PROJ-1"))
+	got, gerr := s.GetNode(ctx, "PROJ-1")
+	require.NoError(t, gerr)
+	assert.Equal(t, model.StatusInvalidated, got.Status)
+}
+
+// TestRestoreInvalidated_ConcurrentReinvalidation_TargetMatchesItsInvalidation
+// runs restores against a writer that keeps re-invalidating the node from
+// different statuses. Every restore must land on the previous_status of the
+// invalidation it consumed, which only holds if previous_status is read in the
+// restore's own write transaction (F5).
+func TestRestoreInvalidated_ConcurrentReinvalidation_TargetMatchesItsInvalidation(t *testing.T) {
+	s := newDeferTestStore(t, model.StatusOpen)
+	ctx := context.Background()
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			n, err := s.GetNode(ctx, "PROJ-1")
+			if err != nil {
+				return
+			}
+			switch {
+			case n.Status == model.StatusOpen && i%2 == 0:
+				_ = s.ClaimNode(ctx, "PROJ-1", "agent-1")
+			case n.Status == model.StatusOpen || n.Status == model.StatusInProgress:
+				_ = s.TransitionStatus(ctx, "PROJ-1", model.StatusInvalidated, "stale", "system")
+			}
+		}
+	}()
+	restores := 0
+	for i := 0; i < 1500; i++ {
+		if _, err := s.RestoreInvalidated(ctx, "PROJ-1", "admin"); err == nil {
+			restores++
+		} else {
+			require.ErrorIs(t, err, model.ErrInvalidTransition)
+		}
+	}
+	close(stop)
+	<-done
+	require.Positive(t, restores)
+
+	entries, err := s.GetActivity(ctx, "PROJ-1", 100000, 0)
+	require.NoError(t, err)
+	checked := 0
+	var invalidatedFrom string
+	for _, e := range entries {
+		if e.Type != model.ActivityTypeStatusChange {
+			continue
+		}
+		var m map[string]string
+		require.NoError(t, json.Unmarshal(e.Metadata, &m))
+		switch {
+		case m["to_status"] == string(model.StatusInvalidated):
+			invalidatedFrom = m["from_status"]
+		case m["from_status"] == string(model.StatusInvalidated) && e.Text == "restored from invalidated":
+			assert.Equal(t, invalidatedFrom, m["to_status"], "restore must return to the status it was invalidated from")
+			checked++
+		}
+	}
+	assert.Equal(t, restores, checked)
 }

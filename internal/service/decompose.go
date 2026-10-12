@@ -46,6 +46,10 @@ func (svc *NodeService) Decompose(
 		}
 	}
 
+	// This parent check is an early, advisory one: CreateNodesAllocated checks
+	// the parent again inside its write transaction (validateParentStatus).
+	// Proven by TestDecompose_ParentCancelledBetweenReadAndWrite_CreatesNothing
+	// (MTIX-151).
 	// Verify parent exists and is not in terminal status (FR-3.9).
 	parent, err := svc.store.GetNode(ctx, parentID)
 	if err != nil {

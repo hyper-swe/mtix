@@ -569,7 +569,10 @@ func (m *mockStore) GetAncestorChain(_ context.Context, _ string) ([]*model.Node
 func (m *mockStore) GetSiblings(_ context.Context, _ string) ([]*model.Node, error) {
 	return nil, nil
 }
-func (m *mockStore) SetAnnotations(_ context.Context, _ string, _ []model.Annotation) error {
+func (m *mockStore) AppendAnnotation(_ context.Context, _ string, _ model.Annotation) error {
+	return nil
+}
+func (m *mockStore) ResolveAnnotation(_ context.Context, _, _ string, _ bool) error {
 	return nil
 }
 func (m *mockStore) SearchNodes(_ context.Context, _ string, _ store.NodeFilter, _ store.ListOptions) ([]*model.Node, int, error) {

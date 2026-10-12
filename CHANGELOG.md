@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Concurrent `mtix comment` calls (and the HTTP annotation append and `resolve-annotation`) no longer lose annotations. Appending or resolving an annotation now reads, changes and writes the node's annotation list inside one write transaction, so parallel writers, in one process or many, each keep their comment. Before, 12 parallel comments could store only 10 while every call reported success (MTIX-148).
+
 ### Changed
 - Preserve received hub provenance while outbound journal work is pending, including held push events. New receipts record a known-zero outbound boundary; older unknown boundaries are reported without rewriting them. Push then a new complete pull establishes a fresh receipt.
 - Record successfully received board provenance separately from local exports, with local status and doctor diagnostics.

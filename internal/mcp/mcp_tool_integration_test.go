@@ -175,7 +175,10 @@ func (m *dbMockStore) GetAncestorChain(_ context.Context, _ string) ([]*model.No
 func (m *dbMockStore) GetSiblings(_ context.Context, _ string) ([]*model.Node, error) {
 	return nil, nil
 }
-func (m *dbMockStore) SetAnnotations(_ context.Context, _ string, _ []model.Annotation) error {
+func (m *dbMockStore) AppendAnnotation(_ context.Context, _ string, _ model.Annotation) error {
+	return nil
+}
+func (m *dbMockStore) ResolveAnnotation(_ context.Context, _, _ string, _ bool) error {
 	return nil
 }
 func (m *dbMockStore) Query(_ context.Context, query string, args ...any) (*sql.Rows, error) {

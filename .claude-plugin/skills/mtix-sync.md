@@ -42,6 +42,17 @@ does not perform either action. Resolve a reported identity disagreement with
 the board owner; preserve existing confirmations until explicit recovery is
 available. Text and JSON reports carry the same status and guidance.
 
+A board also carries a sticky hub-connected mark that records the first
+evidence of a hub or relay: sync or relay keys in `.mtix/config.yaml`, a DSN in
+`.mtix/secrets`, a hub or relay event applied to the board, or a DSN taken from
+the environment by a sync command that actually connected. A DSN that is only
+exported in the shell never marks a board. The mark stays set when the keys or
+credentials are later removed, because the board has already exchanged events.
+Older mtix builds do not set it, so any applied-event record is also treated as
+evidence and sets the mark. `mtix sync doctor` shows it as `board.hub-mark` with
+its source in text and `--json`. A command to clear it, at an interactive
+terminal only, is planned and does not exist in this release.
+
 ## Daemon ownership
 
 `mtix daemon` and `mtix sync daemon` share a lifetime OS lock at `.mtix/data/sync.daemon.lock` (flock on Unix, LockFileEx on Windows). A concurrent start exits cleanly while the owner keeps running. `.mtix/sync.daemon.pid` is diagnostic: stale or missing PID content cannot grant ownership. The PID is published only after acquiring the lock and removed only by its matching owner while the lock is held. Normal exit and process crash release the OS lock; the lock file stays in place so existing descriptors keep using the same inode. Other filesystem or OS errors are reported. Do not delete daemon lock files to force a second instance.

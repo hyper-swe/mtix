@@ -315,6 +315,12 @@ func (a syncApplier) IdempotentApply(ctx context.Context, tx *sql.Tx, event *mod
 		return fmt.Errorf("apply %s: mirror: %w", event.EventID, mirrorErr)
 	}
 
+	// A foreign event is evidence of a hub or relay: set the sticky mark in
+	// this transaction so it rolls back with a failed apply (ADR-007 A9).
+	if _, markErr := setHubMark(ctx, tx, "foreign_event", a.clock()); markErr != nil {
+		return fmt.Errorf("apply %s: hub mark: %w", event.EventID, markErr)
+	}
+
 	if err := a.dispatchWithLWW(ctx, tx, event); err != nil {
 		return err
 	}

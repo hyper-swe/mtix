@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/stretchr/testify/require"
 )
@@ -69,6 +71,7 @@ func imageFixtureQueries() map[string]string {
 		"sync_events":          `SELECT * FROM sync_events ORDER BY event_id`,
 		"applied_events":       `SELECT * FROM applied_events ORDER BY event_id`,
 		"sync_sweep_pending":   `SELECT * FROM sync_sweep_pending ORDER BY event_id`,
+		"wake_leases":          `SELECT * FROM wake_leases ORDER BY agent_id,host_id,uid`,
 		"agent_inbox_cursor":   `SELECT * FROM agent_inbox_cursor ORDER BY agent_id`,
 		"agent_inbox_ack":      `SELECT * FROM agent_inbox_ack ORDER BY agent_id,event_seq`,
 		"hook_dispatch_cursor": `SELECT * FROM hook_dispatch_cursor ORDER BY rowid`,
@@ -147,16 +150,41 @@ func TestEmptyStoreImage_MatchesFreshSchemaAndDefaults(t *testing.T) {
 	image := buildEmptyStoreImage(t)
 	fresh := openImageFixture(t, filepath.Join(t.TempDir(), "fresh.db"))
 	requireEmptyImageFixture(t, fresh)
-	wantState := imageFixtureState(t, fresh)
+	freshID := imageFixtureMeta(t, fresh, "store_instance_id")
+	wantState := imageFixtureComparableState(t, fresh)
+	var copiedID string
 	wantPragmas := map[string]string{"journal_mode": "wal", "synchronous": "2", "foreign_keys": "1",
 		"wal_autocheckpoint": "1000", "busy_timeout": "5000", "quick_check": "ok"}
 	for _, filename := range []string{"a.db", "b.db"} {
 		s := image.open(t, filename)
 		requireEmptyImageFixture(t, s)
-		require.Equal(t, wantState, imageFixtureState(t, s))
+		id := imageFixtureMeta(t, s, "store_instance_id")
+		require.NotEqual(t, freshID, id)
+		if copiedID == "" {
+			copiedID = id
+		}
+		require.Equal(t, copiedID, id, "copies preserve the backed-up creation identity")
+		require.Equal(t, wantState, imageFixtureComparableState(t, s))
 		require.Equal(t, wantPragmas, imageFixturePragmas(t, s.writeDB))
 		require.Equal(t, wantPragmas, imageFixturePragmas(t, s.readDB))
 	}
+}
+
+// imageFixtureComparableState compares every field except separately validated creation identity.
+func imageFixtureComparableState(t *testing.T, s *Store) map[string][][]any {
+	t.Helper()
+	state := imageFixtureState(t, s)
+	id, err := uuid.Parse(imageFixtureMeta(t, s, "store_instance_id"))
+	require.NoError(t, err)
+	require.Equal(t, uuid.Version(4), id.Version())
+	var meta [][]any
+	for _, row := range state["meta"] {
+		if row[0] != "store_instance_id" {
+			meta = append(meta, row)
+		}
+	}
+	state["meta"] = meta
+	return state
 }
 
 func mutateImageFixture(t *testing.T, s *Store, title, author string, at time.Time) *model.Node {

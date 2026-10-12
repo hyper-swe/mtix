@@ -393,7 +393,7 @@ func findMtixDir() (string, error) {
 // as mtix sync init, still auto-imports.
 func shouldSkipAutoImport(commandPath string) bool {
 	switch commandPath {
-	case "init", "export", "import", "help", "version", "migrate", "sync":
+	case "init", "export", "import", "help", "version", "migrate", "sync", "sync status", "sync doctor":
 		return true
 	}
 	return false

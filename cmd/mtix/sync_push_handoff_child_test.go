@@ -11,11 +11,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/stretchr/testify/require"
 )
@@ -65,7 +67,7 @@ func TestPushHandoffProcessHelper(t *testing.T) {
 	dir, err := os.Getwd()
 	require.NoError(t, err)
 	store := newDaemonTestStore(t, dir)
-	app = appContext{mtixDir: dir, store: store}
+	app = appContext{mtixDir: dir, store: store, syncSvc: service.NewSyncService(store, slog.Default(), time.Now)}
 	if mode == "release-holder" {
 		pushHandoffReleaseHolder(t)
 		return

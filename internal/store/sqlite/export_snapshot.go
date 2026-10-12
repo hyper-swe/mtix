@@ -18,6 +18,10 @@ func (s *Store) Export(ctx context.Context, project, mtixVersion string) (*Expor
 	if err != nil {
 		return nil, err
 	}
+	return s.finishExport(data, project, mtixVersion)
+}
+
+func (s *Store) finishExport(data *ExportData, project, mtixVersion string) (*ExportData, error) {
 	sortForChecksum(data.Nodes, data.Dependencies)
 	checksum, err := computeExportChecksum(data.Nodes, data.Dependencies)
 	if err != nil {
@@ -36,6 +40,10 @@ func (s *Store) Export(ctx context.Context, project, mtixVersion string) (*Expor
 }
 
 func (s *Store) readExportSnapshot(ctx context.Context) (data *ExportData, err error) {
+	return s.readExportSnapshotWith(ctx, nil)
+}
+
+func (s *Store) readExportSnapshotWith(ctx context.Context, boundary func(*sql.Tx) error) (data *ExportData, err error) {
 	// The reader pool begins deferred; a WAL snapshot never takes writer ownership.
 	tx, err := s.readDB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -62,6 +70,14 @@ func (s *Store) readExportSnapshot(ctx context.Context) (data *ExportData, err e
 	sessions, err := s.exportSessions(ctx, tx)
 	if err != nil {
 		return nil, exportReadError("export sessions", err)
+	}
+	if s.afterExportBoardRead != nil {
+		s.afterExportBoardRead()
+	}
+	if boundary != nil {
+		if err := boundary(tx); err != nil {
+			return nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, exportReadError("commit export snapshot", err)

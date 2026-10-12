@@ -129,3 +129,17 @@ interactive operator terminal outside agent sessions. Agents never run this
 approval command themselves. Changing one hook or its project script requires
 review of that hook; other hook approvals remain independent.
 
+
+Wake runs use a board-local lease keyed by agent, host identity and user. Acquire
+prints the owner token; release reports `released`, `relaunch` or `abandoned`.
+Exit 6 means held or stale ownership (storage errors retain exit 3/4). The reference
+renews the same token every 60s with a 15m TTL and drains before releasing; only
+the agent acknowledges handled events. TTL accepts 1m through 24h. Use a hook
+`timeout-seconds: 86400` longer than the actual run. Configure executable
+`MTIX_BIN` / `HARNESS_BIN` paths if needed under a minimal PATH; missing tools
+exit 127 and log to the operator-only state log (`WAKE_AGENT_LOG` overrides it).
+Catchable termination abandons the lease and cleans owned processes. The local
+`WAKE_MAX_RUNS` bound defaults to 20 and leaves unhandled events durable. There
+is no default hourly budget. Renewal failures beyond TTL, or SIGKILL leaving a
+harness alive, can permit overlap; this POSIX reference is not hard process
+fencing and is untested on Windows. The lease CLI uses Windows SID identity.

@@ -27,7 +27,7 @@ const schemaVersion = 4
 // the legacy table BEFORE running this SQL — see migrateV1ToV2SQL and
 // the dispatch in store.init. The pulled-event quarantine table is kept in
 // schema_quarantine.go (MTIX-95.11).
-const schemaSQL = schemaCoreSQL + syncQuarantineSQL
+const schemaSQL = schemaCoreSQL + syncQuarantineSQL + wakeLeasesSQL + attachSchemaSQL
 
 // schemaCoreSQL is schemaSQL without the tables kept in their own files.
 const schemaCoreSQL = `

@@ -6,6 +6,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,14 +27,15 @@ func fileFd(f *os.File) int {
 }
 
 // acquireLock acquires a file lock on .mtix/data/sync.lock per FR-15.8.
-// lockType is syscall.LOCK_SH for shared (import) or syscall.LOCK_EX for
-// exclusive (export). Returns the lock file to be closed by the caller.
+// lockType is shared for receipt reads or exclusive for import/pull/export. Returns the lock file to be closed by the caller.
 func (s *SyncService) acquireLock(mtixDir string, lockType int) (*os.File, error) {
 	lockPath := filepath.Join(mtixDir, "data", "sync.lock")
+	// #nosec G703 -- caller selects the local project directory; fixed data/sync.lock has no board or hub path input.
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0755); err != nil {
 		return nil, fmt.Errorf("create lock dir: %w", err)
 	}
 
+	// #nosec G703 -- caller-selected local project capability with fixed data/sync.lock, not a remote filename.
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("open lock file: %w", err)
@@ -68,3 +70,8 @@ const lockShared = syscall.LOCK_SH
 
 // lockExclusive is the lock type for exclusive (write) access.
 const lockExclusive = syscall.LOCK_EX
+
+// isSyncLockContention recognizes only the native nonblocking busy result.
+func isSyncLockContention(err error) bool {
+	return errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN)
+}

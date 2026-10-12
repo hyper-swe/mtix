@@ -20,7 +20,29 @@
 - **ErrDepthWarning**
 <!-- END AUTO-GENERATED -->
 
+## Ancestor board unavailable
+
+The optional upgrade-service Git reader uses only local committed history and never writes Git or database state, fetches, or prompts. Missing `ORIG_HEAD` or upstream, an absent committed `.mtix/tasks.json`, multiple bases, an unsupported Git installation or platform, invalid board data, or time/output limits produce an explained unavailable result. The supported layout is an ordinary self-contained repository: `.git/shallow` and `.git/objects/info/alternates` each cause conservative refusal even when a base is readable. Borrowed-object graphs can be complete; the refusal is a supported-layout boundary, not a claim that their ancestry is always incomplete. Git-less and mgit-only checkouts fall back cleanly. This reader provides provenance for a later import loss check; it does not change the current import recovery procedure. Keep a refused incoming board and follow the command's printed recovery guidance; do not override refusals or run a repository-provided Git executable.
+
+## Received provenance has pending or unknown outbound work
+
+A hub receipt is published only when the completed pull observes no pending outbound journal events, including held push events, in the same board snapshot. Pending work preserves the prior receipt (or its absence) and reports `pending-outbound`. Run `mtix sync push`, resolve any held work it reports, then run a new, complete `mtix sync pull`; push alone does not publish a receipt or clear that warning. Older hub receipts whose outbound boundary is absent or null remain readable, but status and doctor infer `outbound-boundary-unknown` without rewriting them. This is historical uncertainty, not a recorded failed exchange; a later saved omission takes precedence. A fresh receipt with known zero replaces that uncertainty only after a new eligible pull.
+
+Held push events remain pending until resolved. Use `mtix sync quarantine list` and the recovery the push prints; never delete journal rows, edit receipt hashes or rewrite local metadata to obtain a zero boundary. Other saved omission categories retain their existing meaning and may be stale after diagnostics failed to clear.
+
+## Named lock acquisition or dispatch contention
+
+Push and dispatch coordination use `.mtix/data/sync.push.lock` and `.mtix/data/dispatch.lock`. Both require a real data directory and regular lock file owned by the effective OS user; symlinked directories or lock files, Windows reparse points and wrong object types are refused. Do not remove, replace or unlink a lock file to bypass its owner. If acquisition is refused, stop project writers and ask the operator to restore a real, correctly owned local data directory without discarding its data.
+
+Each daemon pass takes `dispatch.lock` before pending-mirror recovery, hub pull, relay and hook dispatch, then releases it before waiting. A contended pass remains alive and retries at its existing cadence; it performs none of that work while another dispatcher holds the pass lock. This differs from a duplicate daemon start, which remains a clean no-op under the separate lifetime `sync.daemon.lock`. The legacy `mtix sync daemon --dispatch-hooks` spelling uses the same pass lock; the daemon without that flag still locks its pull/relay pass.
+
+`mtix sync doctor` reports the local `data filesystem` check in text and JSON. Known network or FUSE mounts produce a passing WARN with local-disk recovery guidance; a failed or unavailable classifier also warns without claiming reliable locking. Only recognized local disk filesystem names (apfs on macOS; ext, xfs, btrfs and similar on Linux) pass; any other name also warns, because an unrecognized filesystem is not a locking guarantee. On Windows the filesystem cannot be classified, so this row always shows a WARN (classification unavailable); it cannot be cleared, it does not fail the doctor, and it does not mean the store is unsafe. The check performs no network contact of its own; the doctor's existing hub checks still contact the hub and can fail independently. Existing unsafe-filesystem write refusal remains in force. Give each machine its own local `.mtix` and use the hub to share changes.
+
 ## Common Errors
+
+### Pull sync lock is busy
+
+A contended local sync lock makes ordinary `mtix sync pull` fail. With `MTIX_SYNC_HOOK=1`, native lock contention instead warns that the pull was not performed and returns success. Retry after the current owner finishes; no pull was completed or automatically retried. Filesystem acquisition failures and cancellation remain errors. Never delete the sync lock file to bypass its owner.
 
 ### ErrNotFound
 

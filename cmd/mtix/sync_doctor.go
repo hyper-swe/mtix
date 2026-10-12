@@ -11,10 +11,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -25,12 +27,13 @@ import (
 // and Findings carries the hub-privileges check's findings. The three are
 // omitted when empty, so the other checks marshal as before.
 type DoctorCheck struct {
-	Name     string                       `json:"name"`
-	Pass     bool                         `json:"pass"`
-	Warn     bool                         `json:"warn,omitempty"`
-	Detail   string                       `json:"detail,omitempty"`
-	Fix      string                       `json:"fix,omitempty"`
-	Findings []transport.PrivilegeFinding `json:"findings,omitempty"`
+	PendingExports *service.PendingExportStatus `json:"pending_exports,omitempty"`
+	Name           string                       `json:"name"`
+	Pass           bool                         `json:"pass"`
+	Warn           bool                         `json:"warn,omitempty"`
+	Detail         string                       `json:"detail,omitempty"`
+	Fix            string                       `json:"fix,omitempty"`
+	Findings       []transport.PrivilegeFinding `json:"findings,omitempty"`
 }
 
 // DoctorReport aggregates the health checks per FR-18 / MTIX-15.7.3.
@@ -62,16 +65,27 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
   Queue draining         - no events older than 1h still in pending
                            (held push events aside; the held push events
                            check lists them)
+  Pending exports        - local mirror requests, count and oldest age;
+                           warns after 1h; run mtix list for protected
+                           import-first recovery (refusals need resolution)
   No orphan applied      - every applied_event has a matching node OR tombstone
   Quarantined events     - no pulled event is held in the local quarantine;
                            each pull retries them ('mtix sync quarantine list')
   Unique node uids       - no two tasks share a uid; names each uid, its tasks
                            and the recovery (see 'mtix verify')
+  sync.exchange-record   - local received provenance and recorded omission;
+                           this check does not contact the hub
   Held push events       - push holds no event the hub would refuse (such as
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
+  board.id               - one committed board identity; a hub board also
+                           needs a known local hub observation
+  board.hub-identity-changed - warns when the observed hub differs from
+                           a recorded confirmation; recovery is planned
   Operator state placement - reports the sandbox placement limitation
+  Data filesystem        - warns on known network/FUSE data mounts; unavailable
+                           classification is reported without claiming safe locks
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
   Hub triggers           - every function and trigger the hub migrations
                            define exists, every trigger executes the
@@ -177,7 +191,7 @@ func newSyncDoctorCmd() *cobra.Command {
 // the budget sync itself uses (MTIX-95.7). Returns errDoctorChecksFailed
 // when a check fails.
 func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
-	args []string, opts transport.Options,
+	args []string, opts transport.Options, inspectors ...func(string) (string, bool, error),
 ) error {
 	if app.mtixDir == "" {
 		return fmt.Errorf("mtix sync doctor: not in an mtix project (run 'mtix init' first)")
@@ -196,6 +210,8 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	// unique node uids, held push events, secrets file mode.
 	report = appendLocalChecks(ctx, report)
 	report = appendOperatorPlacementCheck(report)
+	report = appendDoctorCheck(report, checkDataFilesystem(inspectors))
+	report = appendBoardIdentityChecks(report)
 
 	// Check 6: every mtix function and trigger the migrations define is
 	// on the hub and enabled, as the restore runbook ends (MTIX-95.7).
@@ -257,6 +273,7 @@ func appendHubReadyChecks(ctx context.Context, report DoctorReport, dsn string, 
 // sync_doctor_local.go (no orphan applied, quarantined events, unique node
 // uids), held push events (MTIX-95.12) and the secrets file mode.
 func appendLocalChecks(ctx context.Context, report DoctorReport) DoctorReport {
+	report = appendDoctorCheck(report, checkPendingExports(ctx))
 	if app.store == nil {
 		report = appendCheck(report, "queue draining", false, "local store not initialized")
 	} else {
@@ -400,4 +417,45 @@ func printDoctorTable(w io.Writer, r DoctorReport) {
 	default:
 		fmt.Fprintln(w, "all checks passed")
 	}
+}
+
+func checkDataFilesystem(inspectors []func(string) (string, bool, error)) DoctorCheck {
+	inspect := sqlite.InspectFilesystem
+	if len(inspectors) > 0 && inspectors[0] != nil {
+		inspect = inspectors[0]
+	}
+	name, unsafe, err := inspect(filepath.Join(app.mtixDir, "data"))
+	check := DoctorCheck{Name: "data filesystem", Pass: true}
+	switch {
+	case err != nil:
+		check.Warn = true
+		check.Detail = "classification unavailable: " + err.Error()
+	case name == "":
+		check.Warn = true
+		check.Detail = "classification unavailable; reliable local locking is not verified"
+	case unsafe:
+		check.Warn = true
+		check.Detail = name + ": network/FUSE filesystem; reliable locking is not guaranteed"
+		check.Fix = "Move .mtix to a local disk; give each machine its own local store and sync through the hub"
+	case !isKnownLocalFilesystem(name):
+		check.Warn = true
+		check.Detail = name + ": unrecognized filesystem; reliable local locking is not verified"
+		check.Fix = "Keep .mtix on a local disk filesystem, or give each machine its own local store and sync through the hub"
+	default:
+		check.Detail = name + ": known local filesystem"
+	}
+	return check
+}
+
+// isKnownLocalFilesystem reports whether the classifier name is a local disk
+// filesystem the store classifier emits: apfs and hfs on macOS; ext, xfs,
+// btrfs, tmpfs, zfs and overlay on Linux. Windows classification is always
+// unavailable, so its row always WARNs. Any other name WARNs: an unrecognized
+// filesystem is not proof of reliable locking (FR-20).
+func isKnownLocalFilesystem(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "apfs", "hfs", "ext", "xfs", "btrfs", "zfs", "tmpfs", "overlay":
+		return true
+	}
+	return false
 }

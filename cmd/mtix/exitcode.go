@@ -36,6 +36,9 @@ const (
 	// proposed 3, but that is exitCodeDiskFull here, and a storage error must
 	// never be mistaken for a merely-empty inbox.
 	exitCodeInboxEmpty = 5
+
+	// exitCodeLeaseHeld means another run owns the wake lease or this token is stale.
+	exitCodeLeaseHeld = 6
 )
 
 // exitCodeForError maps an error to its contract exit code.
@@ -47,6 +50,8 @@ func exitCodeForError(err error) int {
 		return exitCodeDiskFull
 	case errors.Is(err, model.ErrCorrupted):
 		return exitCodeCorrupted
+	case errors.Is(err, errLeaseHeld):
+		return exitCodeLeaseHeld
 	case errors.Is(err, errInboxWaitEmpty):
 		return exitCodeInboxEmpty
 	case errors.Is(err, errHardenPending):

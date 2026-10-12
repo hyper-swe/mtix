@@ -41,7 +41,7 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 | `mcp__mtix__mtix_create` | Create a new node |
 | `mcp__mtix__mtix_decompose` | Batch create children |
 | `mcp__mtix__mtix_update` | Update node fields |
-| `mcp__mtix__mtix_search` | Full-text search |
+| `mcp__mtix__mtix_search` | Text search: pass `query` words (all must appear in title, description or prompt; case-insensitive for ASCII letters only) plus optional filters. Unknown arguments are an error, never ignored. CLI: `mtix search <words> [filters]` |
 | `mcp__mtix__mtix_briefing` | **List nodes in briefing format** — labeled text blocks for context. Use instead of writing stub code to parse mtix_list output. Accepts multi-value filters (`under`, `status`, `type`, `fields`). |
 | `mcp__mtix__mtix_annotate` | Add traceability comment |
 | `mcp__mtix__mtix_session_start` | Start work session |
@@ -64,7 +64,7 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 
 - **Prefer MCP tools over CLI** when both are available — MCP tools return structured data
 - **Batch operations** — use `mcp__mtix__mtix_decompose` instead of multiple `mcp__mtix__mtix_create` calls
-- **Search before creating** — use `mcp__mtix__mtix_search` to check for existing similar tasks
+- **Search before creating** — use `mcp__mtix__mtix_search` with `query` to check for existing similar tasks. An empty result means nothing matched: do not retry with a different tool believing the search was skipped
 - **Use briefing format for analysis** — call `mcp__mtix__mtix_briefing` with multi-value filters instead of writing Python/jq post-processing code. Example: `mtix_briefing(under="PROJ-1,PROJ-2", status="done", type="issue", fields="id,title,prompt")`
 - **Progress checks** — use `mcp__mtix__mtix_progress` to verify rollup before reporting completion
 
@@ -86,7 +86,7 @@ Mirror exports read nodes, dependencies, agents and sessions from one read-only 
 
 `mtix daemon` and `mtix sync daemon` share a lifetime OS lock at `.mtix/data/sync.daemon.lock` (flock on Unix, LockFileEx on Windows). A concurrent start exits cleanly while the owner keeps running. `.mtix/sync.daemon.pid` is diagnostic: stale or missing PID content cannot grant ownership. The PID is published only after acquiring the lock and removed only by its matching owner while the lock is held. Normal exit and process crash release the OS lock; the lock file stays in place so existing descriptors keep using the same inode. Other filesystem or OS errors are reported. Do not delete daemon lock files to force a second instance.
 
-Mirror lock contention saves the task change and leaves a durable pending export. Service import lock release, automatic export and daemon ticks retry after restart, with at most three successful passes per trigger; errors, contention and pulled-board refusals stop recovery. Long-running post-commit hooks mark before debounce, but the small commit-to-hook and CLI post-run windows remain. Metadata errors are reported while protected publication is attempted; unreadable snapshots retain requests. Retries protect changed, unreadable or refused pulled boards. Unix directory Sync EINVAL/ENOTSUP is logged as best-effort, and Windows does not sync directory entries; unsupported directory Sync carries no power-loss guarantee. Follow `mtix sync` import guidance and never edit pending request files by hand.
+Mirror exports retain one durable local generation across restart; read count and oldest age with `mtix sync status` or `mtix sync doctor`, retry safely with the doctor's `mtix list` command, and follow the sync skill for pulled-board refusals and migration limits.
 
 ## Sync Hub Privileges
 

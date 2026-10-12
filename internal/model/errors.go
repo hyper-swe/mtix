@@ -80,6 +80,15 @@ var (
 	// recoverable incident into permanent data loss.
 	ErrCorrupted = errors.New("database corrupted")
 
+	// ErrIntegrityCheckIncomplete indicates the open-time integrity check
+	// could not run to a verdict: the database stayed busy, locked or
+	// mid-schema-change after bounded retries, or the check was cut short
+	// (cancellation, I/O error, out of memory, cannot open). It is anything
+	// that is neither a quick_check verdict nor SQLITE_CORRUPT, so it is NOT
+	// corruption: callers must show "retry, check for other processes" and
+	// never ErrCorrupted.
+	ErrIntegrityCheckIncomplete = errors.New("integrity check could not run")
+
 	// ErrDiskFull indicates a write was refused (pre-flight) or failed
 	// (ENOSPC) because the volume is out of space per NFR-2.8. The safe
 	// actions are read, export, and backup-to-another-volume — never

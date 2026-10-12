@@ -258,12 +258,12 @@ func TestRouteStandardCommand_ShowNoArgs_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "node ID required")
 }
 
-// TestRouteStandardCommand_SearchNoArgs_ReturnsError verifies missing search query.
-func TestRouteStandardCommand_SearchNoArgs_ReturnsError(t *testing.T) {
-	cmd := newSearchCmd()
-	err := routeStandardCommand(cmd, []string{}, 8377)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "search query required")
+// TestRouteStandardCommand_Search_NotRoutable verifies search never goes through
+// the REST route: the REST endpoint has no text query, so routing would drop it (MTIX-146).
+func TestRouteStandardCommand_Search_NotRoutable(t *testing.T) {
+	err := routeStandardCommand(newSearchCmd(), []string{"query"}, 8377)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not supported for server routing")
 }
 
 // TestRouteStandardCommand_TreeNoArgs_ReturnsError verifies missing tree args.
@@ -502,42 +502,6 @@ func TestRouteStandardCommand_StatsWithServer_RoutesCorrectly(t *testing.T) {
 
 	assert.NoError(t, resultErr)
 	assert.Contains(t, string(output), "total")
-}
-
-// TestRouteStandardCommand_SearchWithServer_RoutesCorrectly verifies search routing.
-func TestRouteStandardCommand_SearchWithServer_RoutesCorrectly(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "GET", r.Method)
-		assert.Contains(t, r.URL.Path, "/api/v1/nodes/search")
-		assert.Equal(t, "test-query", r.URL.Query().Get("q"))
-
-		w.WriteHeader(200)
-		_, _ = w.Write([]byte(`{"nodes":[]}`))
-	}))
-	defer srv.Close()
-
-	parts := strings.Split(srv.URL, ":")
-	portStr := parts[len(parts)-1]
-	var port int
-	for _, ch := range portStr {
-		port = port*10 + int(ch-'0')
-	}
-
-	cmd := newSearchCmd()
-
-	oldStdout := os.Stdout
-	r, w, err := os.Pipe()
-	require.NoError(t, err)
-	os.Stdout = w
-
-	resultErr := routeStandardCommand(cmd, []string{"test-query"}, port)
-
-	_ = w.Close()
-	os.Stdout = oldStdout
-	output, _ := io.ReadAll(r)
-
-	assert.NoError(t, resultErr)
-	assert.Contains(t, string(output), "nodes")
 }
 
 // TestRouteStandardCommand_TreeWithServer_RoutesCorrectly verifies tree routing.

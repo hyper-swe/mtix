@@ -281,10 +281,11 @@ func registerBlockedTool(reg *ToolRegistry, svc *service.NodeService) {
 func registerSearchTool(reg *ToolRegistry, svc *service.NodeService, primaryProject string) {
 	reg.Register(ToolDef{
 		Name:        "mtix_search",
-		Description: "Search nodes with filters",
+		Description: "Search nodes by text and filters",
 		InputSchema: SchemaObj{
 			Type: "object",
 			Properties: map[string]SchemaProp{
+				"query":    {Type: "string", Description: "Words that must ALL appear (case-insensitive for ASCII letters only; literal) in title, description or prompt"},
 				"status":   {Type: "string", Description: "Filter by status"},
 				"assignee": {Type: "string", Description: "Filter by assignee"},
 				"under":    {Type: "string", Description: "Filter by subtree"},
@@ -294,20 +295,27 @@ func registerSearchTool(reg *ToolRegistry, svc *service.NodeService, primaryProj
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
 		var p struct {
+			Query    string `json:"query"`
 			Status   string `json:"status"`
 			Assignee string `json:"assignee"`
 			Under    string `json:"under"`
 			Project  string `json:"project"`
 			Limit    int    `json:"limit"`
 		}
-		if args != nil {
-			_ = json.Unmarshal(args, &p)
+		if err := decodeStrictArgs(args, &p); err != nil {
+			return nil, err
 		}
 		if p.Limit == 0 {
 			p.Limit = 50
 		}
 
-		filter := service.NodeFilter{Project: resolveScopeProject(p.Project, primaryProject)}
+		filter := service.NodeFilter{
+			Project: resolveScopeProject(p.Project, primaryProject),
+			Text:    service.SplitSearchText(p.Query),
+		}
+		if p.Query != "" && len(filter.Text) == 0 {
+			filter.Text = []string{p.Query} // blank query: let the service reject it
+		}
 		if p.Under != "" {
 			filter.Under = []string{p.Under}
 		}

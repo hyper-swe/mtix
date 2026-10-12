@@ -543,6 +543,12 @@ func (m *mockStore) TransitionStatus(_ context.Context, _ string, _ model.Status
 func (m *mockStore) DeferNode(_ context.Context, _ string, _ *time.Time, _, _ string) error {
 	return nil
 }
+func (m *mockStore) TransitionStatusFrom(_ context.Context, _ string, _, _ model.Status, _, _ string) error {
+	return nil
+}
+func (m *mockStore) RestoreInvalidated(_ context.Context, _, _ string) (model.Status, error) {
+	return model.StatusOpen, nil
+}
 func (m *mockStore) WakeDeferredNode(_ context.Context, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }
@@ -569,7 +575,10 @@ func (m *mockStore) GetAncestorChain(_ context.Context, _ string) ([]*model.Node
 func (m *mockStore) GetSiblings(_ context.Context, _ string) ([]*model.Node, error) {
 	return nil, nil
 }
-func (m *mockStore) SetAnnotations(_ context.Context, _ string, _ []model.Annotation) error {
+func (m *mockStore) AppendAnnotation(_ context.Context, _ string, _ model.Annotation) error {
+	return nil
+}
+func (m *mockStore) ResolveAnnotation(_ context.Context, _, _ string, _ bool) error {
 	return nil
 }
 func (m *mockStore) SearchNodes(_ context.Context, _ string, _ store.NodeFilter, _ store.ListOptions) ([]*model.Node, int, error) {

@@ -36,24 +36,7 @@ func (s *Store) InboxList(ctx context.Context, agentID string) ([]InboxEvent, er
 	// (1) comment events addressed to the agent (addressee in the payload), and
 	// (2) events a hook delivered to this agent's inbox (inbox_deliveries).
 	// UNION (not UNION ALL) dedupes the rare event that is both.
-	rows, err := s.readDB.QueryContext(ctx, `
-		SELECT seq, event_id, node_id, author_id, payload, created_at FROM (
-			SELECT e.rowid AS seq, e.event_id, e.node_id, e.author_id, e.payload, e.created_at
-			  FROM sync_events e
-			 WHERE e.op_type = 'comment'
-			   AND json_valid(e.payload)
-			   AND json_extract(e.payload, '$.to') = ?
-			   AND e.rowid > COALESCE((SELECT cursor FROM agent_inbox_cursor WHERE agent_id = ?), 0)
-			   AND e.rowid NOT IN (SELECT event_seq FROM agent_inbox_ack WHERE agent_id = ?)
-			UNION
-			SELECT e.rowid AS seq, e.event_id, e.node_id, e.author_id, e.payload, e.created_at
-			  FROM sync_events e
-			  JOIN inbox_deliveries d ON d.event_seq = e.rowid
-			 WHERE d.agent_id = ?
-			   AND e.rowid > COALESCE((SELECT cursor FROM agent_inbox_cursor WHERE agent_id = ?), 0)
-			   AND e.rowid NOT IN (SELECT event_seq FROM agent_inbox_ack WHERE agent_id = ?)
-		)
-		ORDER BY seq ASC`, agentID, agentID, agentID, agentID, agentID, agentID)
+	rows, err := queryInboxEligible(ctx, s.readDB, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("inbox list %q: %w", agentID, err)
 	}

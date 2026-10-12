@@ -39,8 +39,8 @@ func (s *SyncService) runAutoExport(ctx context.Context, mtixDir string, passes 
 		if err != nil || !completed {
 			return err
 		}
-		requests, err := pendingExportRequests(mtixDir)
-		if err != nil || len(requests) == 0 {
+		status, err := s.PendingExports(ctx, mtixDir)
+		if err != nil || status.Count == 0 {
 			return err
 		}
 	}
@@ -73,7 +73,7 @@ func (s *SyncService) exportBoardPass(ctx context.Context, mtixDir string, prote
 			return false, err
 		}
 	}
-	requests, snapshotErr := pendingExportRequests(mtixDir)
+	cutoff, snapshotErr := s.snapshotPendingExport(ctx, mtixDir)
 	if err := s.publishExport(ctx, mtixDir, start); err != nil {
 		return false, errors.Join(snapshotErr, err)
 	}
@@ -81,7 +81,26 @@ func (s *SyncService) exportBoardPass(ctx context.Context, mtixDir string, prote
 	if snapshotErr != nil {
 		return true, snapshotErr
 	}
-	return true, retirePendingExportsWithSync(mtixDir, requests, s.syncDirectory)
+	return true, s.retireExportSnapshot(ctx, cutoff)
+}
+
+func (s *SyncService) retireExportSnapshot(ctx context.Context, cutoff int64) error {
+	// Successful publication must finish its durability bookkeeping even when
+	// a shutdown observer cancels the operation at the completed-publication log.
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := s.store.RetireExportRequest(cleanup, cutoff); err != nil {
+		return fmt.Errorf("retire published export cutoff: %w", err)
+	}
+	return nil
+}
+
+func (s *SyncService) snapshotPendingExport(ctx context.Context, mtixDir string) (int64, error) {
+	if err := s.migratePendingExports(ctx, mtixDir); err != nil {
+		return 0, err
+	}
+	// This FULL-WAL metadata commit must finish before Store.Export begins.
+	return s.store.SnapshotExportRequest(ctx)
 }
 
 func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start time.Time) error {
@@ -147,6 +166,7 @@ func (s *SyncService) publishExportHashes(ctx context.Context, mtixDir, fileHash
 	if hashErr != nil {
 		return fmt.Errorf("db hash after auto-export: %w", hashErr)
 	}
+	// #nosec G703 -- dbHashPath is fixed data/sync-db.sha256 under the caller-selected local project; exported content supplies only hash bytes.
 	if err := os.WriteFile(dbHashPath, []byte(dbHash), 0644); err != nil {
 		return fmt.Errorf("write db hash: %w", err)
 	}

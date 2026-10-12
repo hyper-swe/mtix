@@ -409,7 +409,7 @@ func TestNewRootCmd_LogLevelFlag_DefaultEmpty(t *testing.T) {
 
 // TestExemptCommands_Map_ContainsAllExpected verifies exempt map completeness.
 func TestExemptCommands_Map_ContainsAllExpected(t *testing.T) {
-	expected := []string{"config", "init", "migrate", "docs", "version", "help"}
+	expected := []string{"config", "init", "migrate", "docs", "version", "help", "search"}
 	for _, name := range expected {
 		assert.True(t, exemptCommands[name], "%s should be in exemptCommands map", name)
 	}
@@ -456,6 +456,7 @@ func TestRoutingStandardCommand_DoneNotSupported(t *testing.T) {
 // initTestApp sets up a real store and services for integration tests.
 func initTestApp(t *testing.T) {
 	t.Helper()
+	identityOperatorState(t)
 	saveAndResetApp(t)
 
 	tmpDir := t.TempDir()
@@ -515,7 +516,7 @@ func TestRunList_JSONMode_ReturnsJSON(t *testing.T) {
 // TestRunSearch_EmptyProject_ReturnsNoRows verifies search with no nodes.
 func TestRunSearch_EmptyProject_ReturnsNoRows(t *testing.T) {
 	initTestApp(t)
-	err := runSearch("", "", "", "", "", "", "", 50, "", false)
+	err := runSearch(nil, "", "", "", "", "", "", "", 50, "", false)
 	assert.NoError(t, err)
 }
 

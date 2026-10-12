@@ -682,16 +682,30 @@ mtix config set agent.stale_threshold 30m
 
 ## Search and Queries
 
-### Full-Text Search
+### Text Search
 
 ```bash
-mtix search --query "authentication"
+mtix search authentication
+mtix search "login flow" --status open --under PROJ-1
 ```
 
-Uses SQLite FTS5 for full-text search across titles, descriptions, and prompts.
+`mtix search` takes optional positional words. Every word must appear
+(case-insensitive for ASCII letters only, matched literally, so `%` and `_` are ordinary characters; `É` does not match `é`)
+in a node's title, description or prompt. A query that matches nothing returns
+no rows; it never falls back to listing everything. At most 16 words of at most
+256 bytes each are accepted, and a blank word is an error.
 
-`mtix search` accepts the same multi-value filter flags as `mtix list`
-(see below) — they combine with the FTS query.
+With no words, `mtix search` lists by its filters alone. It accepts the same
+multi-value filter flags as `mtix list` (see below), and they combine with the
+words. There is no `--query` flag: the words are positional.
+
+The MCP tool `mtix_search` takes the same text as its `query` argument and
+behaves the same way. It rejects unknown or mistyped arguments with an error
+instead of ignoring them.
+
+Commands that take no positional arguments (for example `mtix ready`,
+`mtix list`, `mtix stats`, `mtix gc`) now reject a stray argument with
+`unknown command ... for ...` rather than silently dropping it.
 
 ### Filtered Listing
 
@@ -960,6 +974,26 @@ PROJ-DEV-OPS         7
 ```
 
 Add `--json` for a machine-readable list (`prefix`, `count`, `is_primary`).
+
+## Received board provenance
+
+A contended local sync lock makes ordinary `mtix sync pull` fail. With `MTIX_SYNC_HOOK=1`, native lock contention instead warns that the pull was not performed and returns success. Retry after the current owner finishes; no pull was completed or automatically retried. Filesystem acquisition failures and cancellation remain errors. Never delete the sync lock file to bypass its owner.
+
+On supported Unix systems, `.mtix/data/exchange-record.json` is a mode 0600 record of the last successfully received board: a successful automatic tasks-file import, or a completely drained hub pull with no unresolved event encountered by that pull. It is not written by export, push, local task changes, refusals or individual pull pages. An unrelated old quarantine does not prevent a clean receipt; an encountered held event must resolve before completion. Missing fetched events, incomplete cursor/sweep progress, failures and accounting limits preserve the prior record and report an omission.
+
+A hub receipt is published only when the completed pull observes no pending outbound journal events, including held push events, in the same board snapshot. Pending work preserves the prior receipt (or its absence) and reports `pending-outbound`. Run `mtix sync push`, resolve any held work it reports, then run a new, complete `mtix sync pull`; push alone does not publish a receipt or clear that warning. Older hub receipts whose outbound boundary is absent or null remain readable, but status and doctor infer `outbound-boundary-unknown` without rewriting them. This is historical uncertainty, not a recorded failed exchange; a later saved omission takes precedence. A fresh receipt with known zero replaces that uncertainty only after a new eligible pull.
+
+The record describes received provenance, not a common ancestor, proof of a commit/push, or proof that all local fields reached a hub. A hub receipt describes a coherent observed local board after the pull, which can include local edits. Incoming-lineage matching and upgrade base selection are separate consumer behavior. Valid prior provenance remains readable after local changes or an omitted later receipt; age and omission warnings alone do not invalidate it.
+
+The `sync.exchange-record` check within `mtix sync doctor` reads local receipt state without contacting the hub; other doctor checks still contact the hub. `mtix sync status` also reports presence, source, time, form and the saved omission category. A saved category can be stale if clearing diagnostics failed after publication; it does not order exchange attempts. Missing records are compatible with older stores and are reported as unavailable, not repaired from current local data. Windows receipt reads/publication report unsupported pending native verification; import ownership uses native Windows locking. No schema version or configuration key is added.
+
+Publication uses a unique same-directory temporary file, complete write, file sync, close, rename and the platform directory policy under exclusive sync ownership. Failures before publication keep the old record; a directory-sync error after rename can leave a complete new record with a durability warning. Database import, existing hash bookkeeping and receipt publication are not one transaction. A failed receipt after a successful import can leave prior provenance; an unchanged-hash automatic-import skip does not synthesize a replacement receipt. Where Unix directory sync is unsupported, directory power-loss durability remains best-effort.
+
+A process crash can leave an unpublished `.exchange-record-*` artifact, which the receipt reader refuses to promote or delete. For recovery, an operator must first stop every process using this project and confirm no import/pull writer is active. Inspect the individual artifact path and preserve it outside the data directory if needed; remove only the confirmed abandoned temporary file, never a lock, database, unrelated artifact or glob of files. A subsequent successful exchange can write a fresh receipt. Do not treat the temporary bytes as a trusted board or edit receipt hashes by hand.
+
+Diagnostic categories are fixed and bounded at both storage and reporting boundaries. Unknown stored or supplied values become `unknown`, without repeating their original text. A failed completed publication retains its specific category instead of becoming an incomplete-pull report. Fetched responses must match their exact requested batch: unexpected, missing, nil or repeated IDs withhold the receipt while existing valid event admission remains unchanged.
+
+Compatible imports whose schema has no defined receipt hash form still import successfully. They preserve any prior receipt and report `unsupported-schema`; no form is guessed. A failure saving that omission remains an error.
 
 ### Sync carries every project in the database
 
@@ -1347,7 +1381,11 @@ A normal `mtix sync push` that drains its eligible queue releases the push lock,
 
 Mirror exports read nodes, dependencies, agents and sessions from one read-only WAL snapshot, allowing writers to commit while the export reads. The mirror file and its conflict baseline describe that same snapshot; publication writes the file before its hashes. A write committed after the snapshot is handled by a later export.
 
-A writing command that encounters the mirror sync lock saves its database change and returns without waiting. A durable request in `.mtix/data/export-pending/` keeps the mirror update pending across process exit or restart. A service import lock holder drains after releasing its lock; the next automatic export or either daemon's next tick also retries, without another task mutation. Each trigger performs at most three successful publication passes, releasing the lock between passes; contention, refusal or errors stop recovery. Requests arriving after a pass's snapshot remain for a later pass or trigger. Publication errors retain requests for recovery. Request creation or enumeration errors are reported while a protected mirror publication is still attempted; an unreadable request snapshot cannot authorize deleting requests. Automatic retries never overwrite a changed, unreadable or refused pulled board: resolve the import refusal using `mtix sync` guidance first. Do not edit or delete pending requests by hand. Long-running interfaces mark the request synchronously in their post-commit hook before starting debounce, and still schedule the export if marking fails. This narrows the debounce crash window; a small commit-to-hook window and the CLI commit-to-post-run window remain outside this guarantee. Request and publication files are synced. Unix directory Sync EINVAL/ENOTSUP is logged and treated as best-effort; other directory errors remain failures. Windows does not sync directory entries. Power-loss durability of directory entries is not promised where directory Sync is unsupported.
+A writing command that encounters the mirror sync lock saves its database change and returns without waiting. New clients keep one coalesced pending-export record in the local database metadata, advancing a monotonic generation on every mark, including when already pending. The cutoff is committed before the board snapshot; only a fully published snapshot is retired, and later requests keep their own oldest age. The record survives process exit and restart. Its fixed size does not bound SQLite WAL size, and marking still requires one guarded FULL-WAL transaction: it adds no request file or directory fsync per commit. Long-running interfaces mark before debounce and still trigger if marking fails; the small commit-to-hook and CLI commit-to-post-run windows remain.
+
+`mtix sync status` and `mtix sync doctor`, including `--json`, read pending mirror exports without draining or importing. They show count, oldest timestamp and age in seconds (`pending_exports.count`, `oldest_at`, `oldest_age_seconds`). With new clients the logical count is zero or one, not the number of mutations; unmigrated legacy `.mtix/data/export-pending/request-*` files temporarily add to that count. Future timestamps show age zero. Doctor warns when the oldest is more than one hour old and prints the exact safe recovery command `mtix list`. This invokes protected import-first recovery; follow any pulled-board refusal it prints, then check `mtix sync status` again. `mtix sync push` drains hub events, not this mirror work. Never delete pending files or edit database metadata, and never use `mtix sync --fix` as an unconditional retry: it discards the pulled board.
+
+A service import lock holder retries after release; the next automatic export or either daemon tick also retries. Each trigger performs at most three successful publication passes, releasing the lock between passes; errors, contention and pulled-board refusals stop it and retain intent. Metadata errors are reported while protected publication is attempted, and unknown requests cannot be retired. Legacy requests are first migrated to durable metadata, then only captured, unchanged files are removed; crashes can temporarily leave duplicate counts and conservative oldest ages. Concurrent old clients may keep adding legacy files, so the storage bound applies to new clients after migration. A final identity check detects a legacy file replacement observed before unlink; an uncoordinated old writer can still replace it after that check. Automatic recovery never overwrites a changed, unreadable or refused pulled board. Publication files are synced; Unix directory Sync EINVAL/ENOTSUP is logged as best-effort and other directory errors remain failures. Windows does not sync directory entries, so unsupported directory Sync carries no power-loss guarantee.
 
 ### Automatic import of `.mtix/tasks.json`
 
@@ -1972,6 +2010,14 @@ release.)
 
 `mtix daemon` and `mtix sync daemon` share a lifetime OS lock at `.mtix/data/sync.daemon.lock` (flock on Unix, LockFileEx on Windows). A concurrent start exits cleanly while the owner keeps running. `.mtix/sync.daemon.pid` is diagnostic: stale or missing PID content cannot grant ownership. The PID is published only after acquiring the lock and removed only by its matching owner while the lock is held. Normal exit and process crash release the OS lock; the lock file stays in place so existing descriptors keep using the same inode. Other filesystem or OS errors are reported. Do not delete daemon lock files to force a second instance.
 
+### Named locks and dispatch contention
+
+Push and dispatch coordination use `.mtix/data/sync.push.lock` and `.mtix/data/dispatch.lock`. Both require a real data directory and regular lock file owned by the effective OS user; symlinked directories or lock files, Windows reparse points and wrong object types are refused. Do not remove, replace or unlink a lock file to bypass its owner. If acquisition is refused, stop project writers and ask the operator to restore a real, correctly owned local data directory without discarding its data.
+
+Each daemon pass takes `dispatch.lock` before pending-mirror recovery, hub pull, relay and hook dispatch, then releases it before waiting. A contended pass remains alive and retries at its existing cadence; it performs none of that work while another dispatcher holds the pass lock. This differs from a duplicate daemon start, which remains a clean no-op under the separate lifetime `sync.daemon.lock`. The legacy `mtix sync daemon --dispatch-hooks` spelling uses the same pass lock; the daemon without that flag still locks its pull/relay pass.
+
+`mtix sync doctor` reports the local `data filesystem` check in text and JSON. Known network or FUSE mounts produce a passing WARN with local-disk recovery guidance; a failed or unavailable classifier also warns without claiming reliable locking. Only recognized local disk filesystem names (apfs on macOS; ext, xfs, btrfs and similar on Linux) pass; any other name also warns, because an unrecognized filesystem is not a locking guarantee. On Windows the filesystem cannot be classified, so this row always shows a WARN (classification unavailable); it cannot be cleared, it does not fail the doctor, and it does not mean the store is unsafe. The check performs no network contact of its own; the doctor's existing hub checks still contact the hub and can fail independently. Existing unsafe-filesystem write refusal remains in force. Give each machine its own local `.mtix` and use the hub to share changes.
+
 Hook dispatch is **origin-independent**: a hook fires for a journaled
 event based only on (a) the event being in the journal and (b) the hook
 not yet having fired for it on this host — never on who wrote the event
@@ -2241,7 +2287,7 @@ hooks:
     deliver: [exec]
     exec:
       command: ["/path/to/wake-agent.sh", "developer"]
-      timeout-seconds: 30
+      timeout-seconds: 86400
 ```
 
 Review the named hook on that host and approve it from an operator terminal
@@ -2249,6 +2295,10 @@ Review the named hook on that host and approve it from an operator terminal
 script exits without launching when the inbox is empty (the idempotency
 check under at-least-once dispatch) and otherwise launches the harness
 CLI with the inbox supplied through standard input. Keep exactly one launch
+
+Review and trust the config on that host (`mtix hooks trust`). The
+script exits without launching when the inbox is empty and otherwise launches
+the harness CLI with the inbox supplied through standard input. Keep exactly one launch
 line enabled in the reference script:
 
 - Claude Code: `printf '%s\n' "$PAYLOAD" | claude -p`
@@ -2259,6 +2309,44 @@ trailing newlines and the launch writes one final newline. Other runtimes need
 a verified standard-input interface before adding a launch line. The reference
 does not provide a Cursor CLI cold-start form; its MCP and context hooks remain
 available.
+
+The script acquires a board-local lease for the agent, host identity and user.
+A concurrent wake marks the lease dirty and exits quietly; the holder rechecks
+eligible inbox events before releasing. A relaunch retains the same owner token,
+so another wake cannot acquire between drain runs. Only the agent acknowledges
+handled events; the script never acknowledges them.
+
+The command idiom is:
+
+```sh
+HOLDER="$(mtix inbox lease acquire --agent developer)"
+mtix inbox lease release --agent developer --holder "$HOLDER"
+```
+
+Acquire prints a 32-character lowercase hexadecimal token. Release prints
+`released`, `relaunch` or `abandoned`; `--json` reports the outcome, pending count
+and high-water mark (expiry only for relaunch). Exit 6 means held or no longer the
+holder; storage failures retain exit 3 or 4. TTL defaults to 15m, accepts 1m through
+24h, and `acquire --holder` renews the same owner. The reference renews every 60s
+while it lives and stops loudly if ownership has changed. The local host identity
+must resolve from operator state outside sandbox-writable roots; it never falls
+back to a replica, hostname or caller-supplied identity.
+
+Set `MTIX_BIN` and `HARNESS_BIN` to executable paths when needed. Under a minimal
+PATH, the script also searches common operator binary directories and resolves
+absolute paths. A missing tool exits 127 with a timestamped diagnostic on stderr
+and in the operator-only `mtix/wake-agent.log` under `XDG_STATE_HOME` (default
+`HOME/.local/state`); `WAKE_AGENT_LOG` overrides that path. Other wake failures exit 1. Catchable termination signals
+stop owned children and abandon the lease. A nonzero harness exit still triggers
+an inbox recheck. `WAKE_MAX_RUNS` defaults to 20 launches per lease; reaching the
+bound abandons and leaves unhandled events durable for the next addressed wake.
+There is no default hourly wake budget.
+
+The hook timeout must exceed the actual run: it kills the script, not a surviving
+harness. Prolonged renewal failure beyond the TTL, or SIGKILL while the harness
+survives, can allow overlapping runs. The reference lease bounds recovery; it is
+not hard process fencing. The POSIX reference is untested on Windows; the lease
+CLI supports Windows user SID identity.
 
 Per-harness support today:
 
@@ -3001,6 +3089,42 @@ dot-path. For the full design see
 [ADR-003](../ADR-003-DISTRIBUTED-NODE-IDENTITY.md) and
 [docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md).
 
+### Board identity
+
+New boards created by `mtix init` have one UUID followed by a newline in
+`.mtix/board-id`. Commit this file with the board and preserve it when cloning;
+it is board data outside `config.yaml`. The tested v0.5.4-beta configuration
+writer preserves its bytes. Existing boards are not assigned an identity by
+pull, doctor or another background command. Do not manufacture or merge IDs
+by editing the file; setup and explicit rekey recovery are planned separately.
+
+A successful `mtix sync pull` records the hub's project prefix and first-event
+hash through its existing authenticated connection. Successful relay attach
+records the verified relay ID. These observations live in operator-local state
+for the checkout, outside committed configuration. A successfully observed
+missing hub row or empty hash clears the current observation to unknown; a
+failed lookup preserves the previous observation. Recording is best-effort: if it
+fails after the pull or attach succeeded, the command prints a WARN and still
+succeeds.
+
+Grant matching defaults to board ID alone. The operator-local
+`inbox.strict_board_identity` setting defaults to false; when true, matching
+also requires the same known hub identity. An unknown identity never matches
+in strict mode. This release reads the setting and existing confirmations;
+setup, reconfirmation, rekey and the host-setting command are planned and do
+not create or update grants here.
+
+`mtix sync doctor` checks the local identity without an additional identity
+connection. For a hub board, multiple identities fail the `board.id` check;
+a missing `.mtix/board-id` or a hub identity no pull has recorded yet is a
+warning (run `mtix sync pull` to record it); a hub identity a pull observed as
+missing or empty fails with `mtix sync init` as its fix.
+A changed recorded hub identity warns through `board.hub-identity-changed`
+and names the planned reconfirmation and strict-setting options. The warning
+does not perform either action. Resolve a reported identity disagreement with
+the board owner; preserve existing confirmations until explicit recovery is
+available. Text and JSON reports carry the same status and guidance.
+
 ### Provisional vs settled IDs
 
 A **settled** ID is fully numeric, like `PRJX-1.4`. It is safe to put in
@@ -3206,8 +3330,10 @@ mtix exits with structured codes so scripts and agents can react without parsing
 | 1 | Generic error |
 | 2 | Attention needed — `mtix sync doctor` found a failing check, or `mtix sync harden` has changes to make (dry run) or access remains (after `--apply`); the report was printed |
 | 3 | Disk full — a write or backup was refused or failed because the volume is out of space; free space and retry |
-| 4 | Database corrupted — an integrity gate failed at open; see "Disk full and corruption recovery" |
+| 4 | Database corrupted — an integrity gate failed at open (a failed open-time integrity gate: truncation or header check, `quick_check`, or `SQLITE_CORRUPT`); see "Disk full and corruption recovery". A busy or locked open (`integrity check … could not run`) is exit 1, not 4 |
 | 5 | Inbox empty — `mtix inbox --wait` timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Note: a harness-hosted (Claude) agent cannot stay parked *between* turns — a dormant session runs no poller, so `mtix_inbox_wait` only watches the inbox *within* a live turn. To wake a dormant agent when work lands, cold-start it with an exec wake hook on the worker host (see "Waking agents: delivery that terminates in the prompt"), or use channel push / a background watcher for a live session |
+
+| 6 | Inbox wake lease held or no longer owned — the reference wake coalesces held runs and stops a stale holder; disk-full 3 and corruption 4 retain priority |
 
 ### Common Issues
 
@@ -3277,7 +3403,9 @@ mtix refuses work it cannot finish safely (NFR-2.8). On a nearly full volume you
 
 If a write fails at the filesystem level anyway (`disk is full`, `disk I/O error`), mtix latches into **fail-stop** for that process: all further writes are refused so a bad situation cannot get worse. Free space (or fix the disk) and start fresh.
 
-If mtix reports `database … is truncated` or `integrity check … failed` at startup:
+**`integrity check … could not run` is not corruption.** When another process holds the database (several mtix processes opening a new store at the same moment, a backup, a sync run), mtix retries the open for a short, bounded time. If the database stays busy, locked or mid-schema-change, or the check is cut short (cancelled, a transient I/O error, out of memory), the open fails with `integrity check on <path> could not run (<cause>) … (this is not corruption)` and exits **1** (generic error). Earlier builds reported such an open as `database corrupted` with exit **4**; exit 4 now means only a failed open-time integrity gate (the truncation or header check, a failed `quick_check`, or a `SQLITE_CORRUPT` result). A real corruption is worded `database corruption detected by the integrity check … run 'mtix recover'` and never says `could not run`. What to do: retry the command in a moment, and check for other mtix processes or tools using `.mtix/data/` (`mtix` daemons, backups, editors that snapshot the folder). If it repeats while nothing else is running, check the volume for I/O errors or low space, then run `mtix verify`. Do not run `mtix recover` or move any files for this message alone.
+
+If mtix reports `database … is truncated`, `integrity check … failed` or `database corruption detected by the …` at startup (exit 4; a damaged file is reported this way on every open path, including `enable WAL`, read-only opens and the integrity check):
 
 1. **Stop. Do not delete anything** — especially not `mtix.db-wal` or `mtix.db-shm`; the WAL may be the only intact copy of your latest commits.
 2. Copy the entire `.mtix/data/` directory to another volume as evidence.
@@ -3301,7 +3429,15 @@ mtix gc
 
 This removes nodes that were soft-deleted longer than the retention period ago.
 
+### Upgrade ancestor reads
+
+The upgrade service provides an optional read-only Git ancestor-board reader for an import in your own checkout. It reads the common ancestor of `ORIG_HEAD` and the configured upstream, then reads that commit's `.mtix/tasks.json`; it never changes Git refs, the index, the checkout or the local database, and never fetches or prompts. A trusted supported Git installation, self-contained ordinary repository metadata, available local history and one unambiguous base are required. Shallow repositories (`.git/shallow`) and borrowed-object repositories (`.git/objects/info/alternates`) are conservatively unavailable even when Git can read a base; this supported-layout boundary does not imply that every borrowed-object graph is incomplete. Missing history, an absent committed board, other unsupported metadata or platform policy, invalid board data and the fixed time/output limits also return an explained unavailable result. A Git-less or mgit-only repository has the same clean fallback; do not install a repository-supplied executable or change metadata to force a result.
+
+This reader reports graph and board provenance; it does not establish lineage of an arbitrary incoming file. The upgrade import's last-exchanged-first ancestor selection and three-way loss check are separate consumer work. Existing import refusal and recovery behavior still applies: retain the refused board, follow the printed guidance, and do not overwrite it merely because Git is available.
+
 ### Database Migration
+
+Coordination tables are added locally without increasing the database schema version. The released v0.5.4-beta client was verified for `list`, `create`, and `sync pull`, with these additive local coordination tables preserved. Newly created stores have a stable random `store_instance_id`; reopening a store never replaces it, and upgrading a legacy store does not assign one automatically. The `min_dispatch_protocol` metadata key is reserved for planned dispatch compatibility; these schema foundations do not enable an attached dispatcher.
 
 The database schema is auto-migrated on startup. If needed:
 

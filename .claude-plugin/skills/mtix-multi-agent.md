@@ -119,3 +119,13 @@ preserves interior newlines, removes trailing newlines during collection and
 writes one final newline. Handle each event, reply when needed, then ack that
 event; an unacked event remains available on the next inbox read. See the user
 manual's Waking agents section for placement and the complete routine.
+
+## Exec hook approvals
+
+Exec approvals belong to the local operator. Use `mtix hooks status` to inspect
+per-hook decisions and the exact command to request review. An agent asks the
+operator to review the named hook, then run `mtix hooks trust <hook>` from an
+interactive operator terminal outside agent sessions. Agents never run this
+approval command themselves. Changing one hook or its project script requires
+review of that hook; other hook approvals remain independent.
+

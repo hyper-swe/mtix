@@ -73,7 +73,7 @@ hooks:
     deliver: [exec]
     exec: { command: `+string(command)+`, timeout-seconds: 180 }
 `)
-	require.NoError(t, hooks.SaveTrust(g.dir, hooks.ConfigHash(g.dir)))
+	approveTestHooks(t, g.dir)
 	return g
 }
 

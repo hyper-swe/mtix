@@ -31,11 +31,8 @@ const defaultExecTimeout = 30 * time.Second
 // it); the fabric's true success signal is the inbox getting acked. The child
 // runs in its own session, so it survives an ephemeral CLI parent exiting.
 //
-// This adapter is the sharp security edge, so the dispatcher gates it behind
-// the content-hash trust (see trust.go / ExecTrusted) and the local
-// exec-dispatch policy (policy.go): it fires ONLY for a hooks.yaml the local
-// operator has explicitly trusted, so a synced or edited config can never run
-// code unbidden. The adapter itself assumes those gates have already passed.
+// The dispatcher checks this hook's operator-local approval and host dispatch
+// policy before delivery (FR-19). The adapter receives an approved hook stanza.
 type ExecAdapter struct{}
 
 // NewExecAdapter constructs the exec adapter.

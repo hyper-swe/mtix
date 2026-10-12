@@ -14,6 +14,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/hooks"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil"
 )
 
 // TestOutputWriter_HumanRendering exercises the human writer's WriteHuman and
@@ -59,11 +60,12 @@ hooks:
     exec: { command: ["/bin/true"] }
 `), 0o600))
 
+	approvals := hooks.NewApprovals(app.mtixDir, testutil.OperatorState(t), false)
 	assert.False(t, hooks.ExecTrusted(app.mtixDir), "untrusted before")
-	out := captureStdout(t, func() { require.NoError(t, runHooksTrust(false)) })
+	out := captureStdout(t, func() { require.NoError(t, runHooksTrustInput(approvals, "wake", false, true)) })
 	assert.Contains(t, out, "trusted")
 	assert.True(t, hooks.ExecTrusted(app.mtixDir), "trusted after")
 
-	status := captureStdout(t, func() { require.NoError(t, runHooksTrust(true)) })
+	status := captureStdout(t, func() { require.NoError(t, runHooksTrustInput(approvals, "wake", true, true)) })
 	assert.Contains(t, status, "trusted")
 }

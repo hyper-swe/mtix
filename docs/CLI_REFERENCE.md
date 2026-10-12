@@ -551,8 +551,8 @@ Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 - `fire` — Test hooks.yaml against a sample event (dry-run only, for now)
 - `list` — List configured hooks with their events and delivery adapters
 - `log` — Show recent hook firings (audit trail, newest first)
-- `status` — Validate operator-local state
-- `trust` — Trust the current .mtix/hooks.yaml to run exec hooks (content-hash pinned, local)
+- `status` — Show operator-local state and per-hook approvals
+- `trust <hook>` — Review and approve one exec hook on this host
 ---
 
 ## exec-dispatch
@@ -616,30 +616,24 @@ Show recent hook firings (audit trail, newest first)
 
 **Usage:** `status`
 
-Validate operator-local state
+Show operator-local state and per-hook approvals
 
-Validate operator-local state and report its path, availability, and corrective guidance. This command does not create state or grant hook approval.
+Validate operator-local state and report its path, availability, per-hook approvals, legacy workspace records, and exact corrective commands. This command does not create state or grant hook approval.
 ---
 
 ## trust
 
-**Usage:** `trust`
+**Usage:** `trust <hook>`
 
-Trust the current .mtix/hooks.yaml to run exec hooks (content-hash pinned, local)
+Review and approve one exec hook on this host
 
-Record the current .mtix/hooks.yaml as trusted to run its exec hooks.
-
-The trust pin covers hooks.yaml AND the content of every local script an
-exec hook runs (MTIX-49). Editing either the config or a wake-script voids
-trust — exec is skipped until you review and re-run 'mtix hooks trust' —
-so an approve-then-swap-the-payload change cannot ride a stale approval.
-The pin is local, gitignored, and never synced.
+Review one configured exec hook and save its host-specific approval outside the project. Requires terminal stdin outside an agent session. Editing that hook or its project scripts requires another review. Use hooks status --json for corrective guidance.
 
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--status` |  | Show whether the current hooks.yaml is trusted, without changing it | false |
+| `--status` |  | Show this hook's approval without changing it | false |
 ---
 
 ## import

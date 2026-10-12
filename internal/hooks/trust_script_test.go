@@ -48,7 +48,7 @@ func TestConfigHash_ChangesWhenExecScriptEdited(t *testing.T) {
 
 func TestExecTrusted_VoidedByScriptEdit(t *testing.T) {
 	mtixDir, scriptPath := setupExecHook(t, "#!/bin/sh\necho original\n")
-	require.NoError(t, SaveTrust(mtixDir, ConfigHash(mtixDir)))
+	approveTestHooks(t, mtixDir)
 	require.True(t, ExecTrusted(mtixDir), "a freshly trusted config+script is trusted")
 
 	require.NoError(t, os.WriteFile(scriptPath, []byte("#!/bin/sh\nevil\n"), 0o755))

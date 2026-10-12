@@ -154,6 +154,12 @@ func (m *dbMockStore) TransitionStatus(_ context.Context, _ string, _ model.Stat
 func (m *dbMockStore) DeferNode(_ context.Context, _ string, _ *time.Time, _, _ string) error {
 	return nil
 }
+func (m *dbMockStore) TransitionStatusFrom(_ context.Context, _ string, _, _ model.Status, _, _ string) error {
+	return nil
+}
+func (m *dbMockStore) RestoreInvalidated(_ context.Context, _, _ string) (model.Status, error) {
+	return model.StatusOpen, nil
+}
 func (m *dbMockStore) WakeDeferredNode(_ context.Context, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }

@@ -543,6 +543,12 @@ func (m *mockStore) TransitionStatus(_ context.Context, _ string, _ model.Status
 func (m *mockStore) DeferNode(_ context.Context, _ string, _ *time.Time, _, _ string) error {
 	return nil
 }
+func (m *mockStore) TransitionStatusFrom(_ context.Context, _ string, _, _ model.Status, _, _ string) error {
+	return nil
+}
+func (m *mockStore) RestoreInvalidated(_ context.Context, _, _ string) (model.Status, error) {
+	return model.StatusOpen, nil
+}
 func (m *mockStore) WakeDeferredNode(_ context.Context, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }

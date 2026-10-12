@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -139,33 +140,42 @@ func (svc *NodeService) rerunReviewNode(
 	return svc.store.TransitionStatus(ctx, node.ID, model.StatusInvalidated, reason, author)
 }
 
+// maxEnsureAttempts bounds how often ensureNonTerminal re-reads a node that
+// keeps changing under it.
+const maxEnsureAttempts = 3
+
 // ensureNonTerminal implements FR-3.5c: auto-reopen terminal parents before rerun.
 // If the node is invalidated, restore first, then reopen if still terminal.
+// Each write is guarded by the status it was decided on (MTIX-151): if another
+// writer changed the node in between, the node is re-read and re-decided, so a
+// reopen is never applied over a node someone else already moved.
 func (svc *NodeService) ensureNonTerminal(ctx context.Context, nodeID, author string) error {
-	node, err := svc.store.GetNode(ctx, nodeID)
-	if err != nil {
-		return err
-	}
-
-	// FR-3.5c: If invalidated, restore first.
-	if node.Status == model.StatusInvalidated {
-		if restoreErr := svc.Restore(ctx, nodeID, author); restoreErr != nil {
-			return fmt.Errorf("restore invalidated %s: %w", nodeID, restoreErr)
-		}
-		// Re-read after restore to check if still terminal.
-		node, err = svc.store.GetNode(ctx, nodeID)
+	for attempt := 0; attempt < maxEnsureAttempts; attempt++ {
+		node, err := svc.store.GetNode(ctx, nodeID)
 		if err != nil {
 			return err
 		}
-	}
 
-	// If still terminal (done/cancelled), auto-reopen.
-	if node.Status.IsTerminal() {
-		return svc.store.TransitionStatus(
-			ctx, nodeID, model.StatusOpen,
-			"auto-reopened by rerun", author,
-		)
+		switch {
+		case node.Status == model.StatusInvalidated:
+			// FR-3.5c: If invalidated, restore first; the restore may leave a
+			// terminal status, so decide again on a fresh read.
+			if restoreErr := svc.Restore(ctx, nodeID, author); restoreErr != nil &&
+				!errors.Is(restoreErr, model.ErrInvalidTransition) {
+				return fmt.Errorf("restore invalidated %s: %w", nodeID, restoreErr)
+			}
+		case node.Status.IsTerminal():
+			// If terminal (done/cancelled), auto-reopen from exactly that status.
+			err = svc.store.TransitionStatusFrom(
+				ctx, nodeID, node.Status, model.StatusOpen,
+				"auto-reopened by rerun", author,
+			)
+			if err == nil || !errors.Is(err, model.ErrConflict) {
+				return err
+			}
+		default:
+			return nil
+		}
 	}
-
-	return nil
+	return fmt.Errorf("node %s kept changing while preparing rerun: %w", nodeID, model.ErrConflict)
 }

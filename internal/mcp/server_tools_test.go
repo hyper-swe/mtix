@@ -492,6 +492,12 @@ func (m *mcpMockStore) TransitionStatus(_ context.Context, _ string, _ model.Sta
 func (m *mcpMockStore) DeferNode(_ context.Context, _ string, _ *time.Time, _, _ string) error {
 	return nil
 }
+func (m *mcpMockStore) TransitionStatusFrom(_ context.Context, _ string, _, _ model.Status, _, _ string) error {
+	return nil
+}
+func (m *mcpMockStore) RestoreInvalidated(_ context.Context, _, _ string) (model.Status, error) {
+	return model.StatusOpen, nil
+}
 func (m *mcpMockStore) WakeDeferredNode(_ context.Context, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }

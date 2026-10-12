@@ -2309,10 +2309,11 @@ hooks:
       timeout-seconds: 86400
 ```
 
-Review and trust the config on that host (`mtix hooks trust`). The
-script exits without launching when the inbox is empty and otherwise launches
-the harness CLI with the inbox supplied through standard input. Keep exactly one launch
-line enabled in the reference script:
+Review the named hook on that host and approve it from an operator terminal
+(`mtix hooks trust -- 'wake-developer'`). The script exits without launching
+when the inbox is empty and otherwise launches the harness CLI with the inbox
+supplied through standard input. Keep exactly one launch line enabled in the
+reference script:
 
 - Claude Code: `printf '%s\n' "$PAYLOAD" | claude -p`
 - OpenAI Codex CLI: `printf '%s\n' "$PAYLOAD" | codex exec -`
@@ -2382,13 +2383,42 @@ The channel server also holds an mtix session for the agent while it
 runs, so wake scripts can prefer pushing to a live session over
 cold-starting a duplicate.
 
-**Security notes.** `exec` runs only for a `hooks.yaml` the local
-operator trusted by content hash (`mtix hooks trust`) — a synced or
-edited config never runs code unbidden. Addressed comments are **prompt
+**Security notes.** `exec` requires a validated operator approval for the
+selected hook and its project scripts. Addressed comments are **prompt
 input**: with push and cold-start wakes, any agent that can write to
 your hub puts text directly into another agent's context — only
 federate the hub with agents and users you trust, exactly as you would
 a shared terminal.
+
+## Exec hook approvals
+
+Exec approvals belong to the local operator. Use `mtix hooks status` to inspect
+per-hook decisions and the exact command to request review. An agent asks the
+operator to review the named hook, then run `mtix hooks trust <hook>` from an
+interactive operator terminal outside agent sessions. Agents never run this
+approval command themselves. Changing one hook or its project script requires
+review of that hook; other hook approvals remain independent.
+
+The approval records are stored outside the project, bound to the local host
+and canonical project identity. Each record pins the selected hook stanza and
+its project script contents. For example, after reviewing the `wake` hook:
+
+```sh
+mtix hooks status --json
+mtix hooks trust -- 'wake'
+```
+
+Standard input must be a real terminal. Pipes, redirected input, and agent
+session markers refuse new approvals. Existing validated approvals remain
+usable in agent sessions. Status commands report decisions without writing
+approval state; `mtix hooks trust <hook> --status` inspects one hook.
+
+On the first eligible run outside an agent session, an untracked legacy
+`.mtix/hooks.trust` with a matching content hash can be converted once. A
+tracked, changed, or unverifiable legacy record requires individual hook
+review. An eligible refusal is recorded and later runs do not retry conversion;
+an agent session defers it without recording an attempt. New `mtix init`
+projects exclude `.mtix/hooks.trust` in `.gitignore`.
 
 ### Conflict handling
 
@@ -3314,7 +3344,7 @@ mtix exits with structured codes so scripts and agents can react without parsing
 | 1 | Generic error |
 | 2 | Attention needed — `mtix sync doctor` found a failing check, or `mtix sync harden` has changes to make (dry run) or access remains (after `--apply`); the report was printed |
 | 3 | Disk full — a write or backup was refused or failed because the volume is out of space; free space and retry |
-| 4 | Database corrupted — an integrity gate failed at open; see "Disk full and corruption recovery" |
+| 4 | Database corrupted — an integrity gate failed at open (a failed open-time integrity gate: truncation or header check, `quick_check`, or `SQLITE_CORRUPT`); see "Disk full and corruption recovery". A busy or locked open (`integrity check … could not run`) is exit 1, not 4 |
 | 5 | Inbox empty — `mtix inbox --wait` timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Note: a harness-hosted (Claude) agent cannot stay parked *between* turns — a dormant session runs no poller, so `mtix_inbox_wait` only watches the inbox *within* a live turn. To wake a dormant agent when work lands, cold-start it with an exec wake hook on the worker host (see "Waking agents: delivery that terminates in the prompt"), or use channel push / a background watcher for a live session |
 
 | 6 | Inbox wake lease held or no longer owned — the reference wake coalesces held runs and stops a stale holder; disk-full 3 and corruption 4 retain priority |
@@ -3387,7 +3417,9 @@ mtix refuses work it cannot finish safely (NFR-2.8). On a nearly full volume you
 
 If a write fails at the filesystem level anyway (`disk is full`, `disk I/O error`), mtix latches into **fail-stop** for that process: all further writes are refused so a bad situation cannot get worse. Free space (or fix the disk) and start fresh.
 
-If mtix reports `database … is truncated` or `integrity check … failed` at startup:
+**`integrity check … could not run` is not corruption.** When another process holds the database (several mtix processes opening a new store at the same moment, a backup, a sync run), mtix retries the open for a short, bounded time. If the database stays busy, locked or mid-schema-change, or the check is cut short (cancelled, a transient I/O error, out of memory), the open fails with `integrity check on <path> could not run (<cause>) … (this is not corruption)` and exits **1** (generic error). Earlier builds reported such an open as `database corrupted` with exit **4**; exit 4 now means only a failed open-time integrity gate (the truncation or header check, a failed `quick_check`, or a `SQLITE_CORRUPT` result). A real corruption is worded `database corruption detected by the integrity check … run 'mtix recover'` and never says `could not run`. What to do: retry the command in a moment, and check for other mtix processes or tools using `.mtix/data/` (`mtix` daemons, backups, editors that snapshot the folder). If it repeats while nothing else is running, check the volume for I/O errors or low space, then run `mtix verify`. Do not run `mtix recover` or move any files for this message alone.
+
+If mtix reports `database … is truncated`, `integrity check … failed` or `database corruption detected by the …` at startup (exit 4; a damaged file is reported this way on every open path, including `enable WAL`, read-only opens and the integrity check):
 
 1. **Stop. Do not delete anything** — especially not `mtix.db-wal` or `mtix.db-shm`; the WAL may be the only intact copy of your latest commits.
 2. Copy the entire `.mtix/data/` directory to another volume as evidence.
@@ -3441,4 +3473,4 @@ Regenerates the agent-facing documentation in the `.mtix/docs/` directory.
 
 Filesystem checks cannot detect sandbox write access granted to an operator-owned directory. Keep operator state outside every sandbox-writable root; the operator must choose that placement. `mtix hooks status` and `mtix sync doctor` report this limitation in text and JSON. On Unix, every ancestor must be owned by root or the operator and must not be writable by a group or other users; a sticky directory is not an exception. On Windows, ancestor owners are limited to the operator, SYSTEM, Administrators and TrustedInstaller. Rights to delete entries, change access rules or ownership, or generic write/full access are limited to those principals; creating files or subdirectories in an ancestor is allowed. The state directory and files still require protected user-only access. Unix refuses group-writable homes and network or directory-service-owned parents that do not meet these ownership rules. Set `XDG_CONFIG_HOME` to an operator-owned directory with root- or operator-owned ancestors and no group or other write access; `mtix hooks status --json` reports the concrete cause and validates the new placement, and `mtix sync doctor` names these placement constraints and the remedy. Atomic replacement does not establish power-loss durability. Filesystems without the required hard-link support are refused with the cause reported.
 
-This directory holds a persistent host identifier and host-specific state records. Other-host records are ignored and reported. Missing records are empty; invalid or inaccessible state is refused. This storage foundation does not move existing hook approvals or enable new grants. To recover, correct the reported path, ownership or access rules manually, then repeat `mtix hooks status --json`; preserve existing state records while correcting permissions.
+This directory holds a persistent host identifier and host-specific state records. Other-host records are ignored and reported. Missing records are empty; invalid or inaccessible state is refused. This storage API validates records; hook approval and legacy conversion follow the operator workflow. To recover, correct the reported path, ownership or access rules manually, then repeat `mtix hooks status --json`; preserve existing state records while correcting permissions.

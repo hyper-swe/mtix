@@ -84,84 +84,60 @@ func runHooksLog(limit int) error {
 	return nil
 }
 
-// newHooksTrustCmd creates `mtix hooks trust` (MTIX-47.5): record the current
-// .mtix/hooks.yaml as trusted to run its exec hooks. Exec runs local commands,
-// so it is OFF until trusted; trust binds to the file's content hash and is
-// LOCAL to this machine (never committed or synced), so any later edit — yours
-// or a teammate's arriving via sync — voids it until you review and re-trust.
+// newHooksTrustCmd creates per-hook operator approval commands (FR-19).
 func newHooksTrustCmd() *cobra.Command {
 	var status bool
 	cmd := &cobra.Command{
-		Use:   "trust",
-		Short: "Trust the current .mtix/hooks.yaml to run exec hooks (content-hash pinned, local)",
-		Long: `Record the current .mtix/hooks.yaml as trusted to run its exec hooks.
-
-The trust pin covers hooks.yaml AND the content of every local script an
-exec hook runs (MTIX-49). Editing either the config or a wake-script voids
-trust — exec is skipped until you review and re-run 'mtix hooks trust' —
-so an approve-then-swap-the-payload change cannot ride a stale approval.
-The pin is local, gitignored, and never synced.`,
-		Args: cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runHooksTrust(status)
+		Use: "trust <hook>", Short: "Review and approve one exec hook on this host",
+		Long: "Review one configured exec hook and save its host-specific approval outside the project. Requires terminal stdin outside an agent session. Editing that hook or its project scripts requires another review. Use hooks status --json for corrective guidance.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if app.mtixDir == "" {
+				return fmt.Errorf("not in an mtix project")
+			}
+			approvals, err := hooks.ProcessApprovals(app.mtixDir)
+			if err != nil {
+				return err
+			}
+			return runHooksTrustInput(approvals, args[0], status, hookStdinTerminal())
 		},
 	}
-	cmd.Flags().BoolVar(&status, "status", false, "Show whether the current hooks.yaml is trusted, without changing it")
+	cmd.Flags().BoolVar(&status, "status", false, "Show this hook's approval without changing it")
 	return cmd
 }
 
-func runHooksTrust(status bool) error {
-	if app.mtixDir == "" {
-		return fmt.Errorf("not in an mtix project")
+func runHooksTrustInput(approvals *hooks.Approvals, name string, status, terminal bool) error {
+	cfg, warnings := hooks.Load(app.mtixDir)
+	printHookWarnings(warnings)
+	var selected *hooks.Hook
+	for i := range cfg.Hooks {
+		if cfg.Hooks[i].Name == name && slices.Contains(cfg.Hooks[i].Deliver, hooks.AdapterExec) {
+			selected = &cfg.Hooks[i]
+			break
+		}
 	}
-	cur := hooks.ConfigHash(app.mtixDir)
-	if cur == "" {
-		return fmt.Errorf("no .mtix/hooks.yaml to trust")
+	if selected == nil {
+		return fmt.Errorf("configured exec hook %q not found", name)
 	}
 	out := NewOutputWriter(app.jsonOutput)
-
-	if status {
-		trusted := hooks.ExecTrusted(app.mtixDir)
-		printExecHooks(app.mtixDir)
-		if app.jsonOutput {
-			return out.WriteJSON(map[string]any{"trusted": trusted, "hash": cur})
+	if !status {
+		if _, err := fmt.Fprintf(os.Stderr, "exec hook %q: %v (events: %s)\n", name, selected.Exec.Command, strings.Join(selected.Match.Events, ", ")); err != nil {
+			return fmt.Errorf("show hook: %w", err)
 		}
-		if trusted {
-			out.WriteHuman("✓ hooks.yaml is trusted for exec (hash %s)\n", cur[:12])
-		} else {
-			out.WriteHuman("✗ hooks.yaml is NOT trusted for exec — review the above and run 'mtix hooks trust'\n")
+		if err := approvals.ApproveSelected(*selected, terminal); err != nil {
+			return err
 		}
-		return nil
 	}
-
-	// Show the exec hooks being trusted (for review) BEFORE pinning the hash.
-	printExecHooks(app.mtixDir)
-	if err := hooks.SaveTrust(app.mtixDir, cur); err != nil {
-		return fmt.Errorf("save trust: %w", err)
+	decisions, err := approvals.Check()
+	if err != nil {
+		return err
 	}
+	decision := decisions[name]
 	if app.jsonOutput {
-		return out.WriteJSON(map[string]any{"trusted": true, "hash": cur})
+		return out.WriteJSON(decision)
 	}
-	out.WriteHuman("✓ trusted .mtix/hooks.yaml for exec (hash %s). Re-run 'mtix hooks trust' after any edit.\n", cur[:12])
+	out.WriteHuman("%s: trusted=%t\nFix: %s\n", name, decision.Trusted, decision.Fix)
 	return nil
-}
-
-// printExecHooks lists the exec hooks in hooks.yaml (argv + events) on stderr so
-// the operator reviews exactly what they are trusting before it can run.
-func printExecHooks(mtixDir string) {
-	cfg, _ := hooks.Load(mtixDir)
-	n := 0
-	for _, h := range cfg.Hooks {
-		if !slices.Contains(h.Deliver, hooks.AdapterExec) || h.Exec == nil {
-			continue
-		}
-		n++
-		fmt.Fprintf(os.Stderr, "  exec hook %q: %v  (events: %s)\n",
-			h.Name, h.Exec.Command, strings.Join(h.Match.Events, ", "))
-	}
-	if n == 0 {
-		fmt.Fprintln(os.Stderr, "  (no exec hooks in this config)")
-	}
 }
 
 // newHooksListCmd creates `mtix hooks list`, which loads .mtix/hooks.yaml and

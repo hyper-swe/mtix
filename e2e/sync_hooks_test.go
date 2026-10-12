@@ -15,7 +15,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/hyper-swe/mtix/internal/hooks"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 )
@@ -251,7 +250,7 @@ hooks:
       timeout-seconds: 10
 `, script)
 	require.NoError(t, os.WriteFile(filepath.Join(b.mtixDir, "hooks.yaml"), []byte(hookYAML), 0o600))
-	require.NoError(t, hooks.SaveTrust(b.mtixDir, hooks.ConfigHash(b.mtixDir)))
+	approveTestHooks(t, b.mtixDir)
 
 	// Shared node, then the cross-machine handoff. Comments ride a cumulative
 	// annotation thread (SetAnnotations replaces the list; only a NEW entry

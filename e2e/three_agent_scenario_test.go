@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/channel"
-	"github.com/hyper-swe/mtix/internal/hooks"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 )
@@ -143,7 +142,7 @@ hooks:
       timeout-seconds: %d
 `, script, wakeHookTimeoutSeconds, script, wakeHookTimeoutSeconds)), 0o600))
 	// The operator reviews and trusts the config on this host (MTIX-49).
-	require.NoError(t, hooks.SaveTrust(host.mtixDir, hooks.ConfigHash(host.mtixDir)))
+	approveTestHooks(t, host.mtixDir)
 
 	disp := service.NewHooksDispatcher(host.store, host.mtixDir, e2eLogger())
 	host.createNode(t, "FLOW-1", "the planned feature task")

@@ -238,7 +238,9 @@ func TestNew_SkipEnvBypassesIntegrityGates(t *testing.T) {
 // TestNew_SkipEnvOnTruncatedDB: on truncation-class damage the hatch
 // bypasses OUR refusal, and the open then fails inside SQLite itself —
 // the pre-existing behavior, with no evidence destroyed. There must be no
-// "is truncated" refusal in that path.
+// "is truncated" refusal in that path. SQLite's own "cannot read this as a
+// database" failure is reported as corruption (MTIX-147: a file that cannot
+// be read as a database is corruption on every open path).
 func TestNew_SkipEnvOnTruncatedDB(t *testing.T) {
 	s, dbPath := newDurabilityTestStore(t)
 	seedRows(t, s)
@@ -253,7 +255,8 @@ func TestNew_SkipEnvOnTruncatedDB(t *testing.T) {
 	require.Error(t, err, "SQLite itself cannot open a file truncated this deeply")
 	assert.NotContains(t, err.Error(), "is truncated",
 		"the hatch must bypass mtix's own refusal")
-	assert.NotErrorIs(t, err, model.ErrCorrupted)
+	assert.ErrorIs(t, err, model.ErrCorrupted)
+	assert.NotContains(t, err.Error(), "could not run")
 }
 
 // TestNextSequence_GuardedByPreflight: NextSequence writes outside WithTx

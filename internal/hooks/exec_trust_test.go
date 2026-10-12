@@ -60,15 +60,15 @@ func TestExecTrust_ContentHashPinning(t *testing.T) {
 	write := func(s string) {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "hooks.yaml"), []byte(s), 0o600))
 	}
-	write("hooks: []\n")
+	write("hooks:\n  - name: wake\n    match: {events: [comment.addressed]}\n    deliver: [exec]\n    exec: {command: [/bin/true]}\n")
 	require.False(t, ExecTrusted(dir), "present but not yet trusted")
 
-	require.NoError(t, SaveTrust(dir, ConfigHash(dir)))
+	approveTestHooks(t, dir)
 	require.True(t, ExecTrusted(dir), "trusted after pinning the current hash")
 
-	write("hooks: []\n# a teammate edited this\n")
+	write("hooks:\n  - name: wake\n    match: {events: [comment.addressed]}\n    deliver: [exec]\n    exec: {command: [/bin/true, changed]}\n")
 	require.False(t, ExecTrusted(dir), "any edit voids trust until re-trusted")
 
-	require.NoError(t, SaveTrust(dir, ConfigHash(dir)))
+	approveTestHooks(t, dir)
 	require.True(t, ExecTrusted(dir), "re-trust restores it")
 }

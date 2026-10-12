@@ -78,3 +78,12 @@ Catchable termination abandons the lease and cleans owned processes. The local
 is no default hourly budget. Renewal failures beyond TTL, or SIGKILL leaving a
 harness alive, can permit overlap; this POSIX reference is not hard process
 fencing and is untested on Windows. The lease CLI uses Windows SID identity.
+
+## Exec hook approvals
+
+Exec approvals belong to the local operator. Use `mtix hooks status` to inspect
+per-hook decisions and the exact command to request review. An agent asks the
+operator to review the named hook, then run `mtix hooks trust <hook>` from an
+interactive operator terminal outside agent sessions. Agents never run this
+approval command themselves. Changing one hook or its project script requires
+review of that hook; other hook approvals remain independent.

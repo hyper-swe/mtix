@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Board identity foundations (MTIX-112.17.2).** `mtix init` creates a committed `.mtix/board-id` for new boards; existing boards keep their identity. `mtix sync pull` and `mtix sync relay attach` record the authenticated hub identity in operator-local state, and `mtix sync doctor` gains `board.id` and `board.hub-identity-changed` checks (text and `--json`). An existing hub board without `.mtix/board-id` is reported as a warning, not a failure. Recording the hub identity is best-effort: a failure prints a warning and never fails a pull that already applied data.
+
 ### Changed
 - Preserve received hub provenance while outbound journal work is pending, including held push events. New receipts record a known-zero outbound boundary; older unknown boundaries are reported without rewriting them. Push then a new complete pull establishes a fresh receipt.
 - Record successfully received board provenance separately from local exports, with local status and doctor diagnostics.

@@ -429,6 +429,11 @@ func TestWindowsNamedLockWorkflow_IndependentHostileControls(t *testing.T) {
 		{"accepted SKIP", "$nativeSkipped.Count -ne 0", "$false"},
 		{"wrong package", "tests=$namedLockRequired", "tests=$dispatchLockRequired"},
 		{"unavailable declaration", "TestNamedLock_WindowsMetadata_ValidatesTypeAndOwner", "TestUnavailableNativeDeclaration"},
+		{"unavailable owner-policy declaration", "TestNamedLock_WindowsOwnerPolicy_AcceptsUserAndElevatedAdministrators", "TestUnavailableNativeDeclaration"},
+		{"unavailable real-owner declaration", "TestNamedLock_WindowsOwner_RealObjectsOwnedByUser", "TestUnavailableNativeDeclaration"},
+		{"unavailable admin-gate declaration", "TestNamedLock_WindowsAdminGate_ElevationAndOwnerFlags", "TestUnavailableNativeDeclaration"},
+		{"unavailable lock-file-access declaration", "TestNamedLock_WindowsLockFile_UserOnlyAccessAndNoDelete", "TestUnavailableNativeDeclaration"},
+		{"unavailable legacy-directory declaration", "TestNamedLock_WindowsLegacyDirectoryAndForeignDirectory", "TestUnavailableNativeDeclaration"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

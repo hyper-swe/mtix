@@ -48,6 +48,8 @@ func TestSyncDoctor_FilesystemFixtures_TextAndJSON(t *testing.T) {
 	}{
 		{"local", "apfs", false, nil, false}, {"network", "nfs", true, nil, true}, {"fuse", "fuse", true, nil, true},
 		{"unavailable", "", false, nil, true}, {"error", "", false, errors.New("classification failed"), true},
+		{"known-local-ext", "ext", false, nil, false}, {"known-local-xfs", "xfs", false, nil, false},
+		{"unrecognized-name", "someunknownfs", false, nil, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -97,5 +99,15 @@ func assertFilesystemDoctorOutput(t *testing.T, output []byte, row DoctorCheck, 
 		}
 		require.Contains(t, string(output), "["+mark+"] data filesystem")
 		require.Contains(t, string(output), "FAILED")
+	}
+}
+
+func TestIsKnownLocalFilesystem_EmittedNamesOnly(t *testing.T) {
+	cases := map[string]bool{
+		"apfs": true, "hfs": true, "ext": true, "xfs": true, "btrfs": true, "tmpfs": true, "zfs": true, "overlay": true,
+		"ext4": false, "ntfs": false, "refs": false, "f2fs": false, "": false, "nfs": false, "someunknownfs": false,
+	}
+	for name, want := range cases {
+		require.Equal(t, want, isKnownLocalFilesystem(name), name)
 	}
 }

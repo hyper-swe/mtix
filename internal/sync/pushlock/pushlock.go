@@ -41,11 +41,6 @@ const pushLockFilename = "sync.push.lock"
 // lives. Mirrors FR-15.8 (sync_service uses .mtix/data/sync.lock).
 const pushLockSubdir = "data"
 
-// pushLockMode is the file permission mode used when creating the lock
-// file. 0600 keeps it user-readable only — the lock file is local
-// process coordination, never a credential.
-const pushLockMode os.FileMode = 0o600
-
 // Acquire attempts to take the exclusive, non-blocking push lock under
 // mtixDir/data/sync.push.lock. Returns the held lock on success;
 // ErrLockHeld if another process owns it.
@@ -67,7 +62,7 @@ func AcquireNamed(mtixDir, name string) (*PushLock, error) {
 		return nil, err
 	}
 	dir := filepath.Join(mtixDir, pushLockSubdir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := platformEnsureDir(dir); err != nil {
 		return nil, fmt.Errorf("create lock dir: %w", err)
 	}
 	f, err := platformOpenLock(dir, name)

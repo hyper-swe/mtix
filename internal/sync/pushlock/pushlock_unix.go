@@ -51,7 +51,26 @@ func fdInt(f *os.File) int {
 	return int(fd) //nolint:gosec // bounds-checked above
 }
 
-func platformOpenLock(path, name string) (held *os.File, err error) {
+// pushLockMode is the file permission mode used when creating the lock
+// file. 0600 keeps it user-readable only; the lock file is local process
+// coordination, never a credential.
+const pushLockMode os.FileMode = 0o600
+
+// platformEnsureDir creates the lock data directory when it is absent.
+// Unix ownership follows the effective user through the process umask.
+func platformEnsureDir(dir string) error {
+	return os.MkdirAll(dir, 0o755)
+}
+
+func platformOpenLock(path, name string) (*os.File, error) {
+	return openLockWith(path, name, verifyLockObject)
+}
+
+// openLockWith opens the data directory and lock file without following
+// symlinks, verifying each opened object through verify (directory=true for the
+// directory, false for the lock file). The seam is a parameter, never state, so
+// production always passes verifyLockObject.
+func openLockWith(path, name string, verify func(*os.File, bool) error) (held *os.File, err error) {
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open real data directory: %w", err)
@@ -61,7 +80,7 @@ func platformOpenLock(path, name string) (held *os.File, err error) {
 		return nil, err
 	}
 	defer finishLockOpen(dir, &held, &err)
-	if verifyErr := verifyLockObject(dir, true); verifyErr != nil {
+	if verifyErr := verify(dir, true); verifyErr != nil {
 		return nil, verifyErr
 	}
 	fd, err = openNamedLockAt(fd, name)
@@ -72,7 +91,7 @@ func platformOpenLock(path, name string) (held *os.File, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := verifyLockObject(f, false); err != nil {
+	if err := verify(f, false); err != nil {
 		return nil, errors.Join(err, f.Close())
 	}
 	return f, nil

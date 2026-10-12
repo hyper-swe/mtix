@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -83,6 +84,10 @@ func (s *Store) GetSiblings(ctx context.Context, nodeID string) ([]*model.Node, 
 // SetAnnotations replaces all annotations on a node per FR-3.4.
 // The annotations are stored as a JSON array.
 //
+// It is not part of store.Store (MTIX-148): it seeds or restores a whole array
+// and is not safe for concurrent add or resolve; services use AppendAnnotation
+// and ResolveAnnotation instead.
+//
 // MTIX-15.2.3 wraps this in WithTx so the comment sync_event commits
 // atomically with the annotations row. The emitted op_type is comment
 // (SYNC-DESIGN section 3.3); when the new annotations slice grew by
@@ -158,4 +163,93 @@ func reverseNodes(nodes []*model.Node) {
 	for i, j := 0, len(nodes)-1; i < j; i, j = i+1, j-1 {
 		nodes[i], nodes[j] = nodes[j], nodes[i]
 	}
+}
+
+// AppendAnnotation appends one annotation to a node per FR-3.4 inside a single
+// write transaction, so concurrent writers never overwrite each other's
+// annotations (MTIX-148). The read of the current array, the append, the write
+// and the comment sync event commit together.
+//
+// Returns ErrNotFound if the node does not exist or is soft-deleted.
+func (s *Store) AppendAnnotation(ctx context.Context, nodeID string, annotation model.Annotation) error {
+	return s.mutateAnnotations(ctx, nodeID, func(current []model.Annotation) ([]model.Annotation, error) {
+		next := make([]model.Annotation, 0, len(current)+1)
+		next = append(next, current...)
+		return append(next, annotation), nil
+	})
+}
+
+// ResolveAnnotation sets the resolved flag of one annotation, identified by
+// its ID, per FR-3.4. The read-modify-write runs in one write transaction so a
+// concurrent append or resolve is never overwritten (MTIX-148).
+//
+// Returns ErrNotFound if the node or the annotation does not exist.
+func (s *Store) ResolveAnnotation(ctx context.Context, nodeID, annotationID string, resolved bool) error {
+	return s.mutateAnnotations(ctx, nodeID, func(current []model.Annotation) ([]model.Annotation, error) {
+		next := make([]model.Annotation, len(current))
+		copy(next, current)
+		for i := range next {
+			if next[i].ID == annotationID {
+				next[i].Resolved = resolved
+				return next, nil
+			}
+		}
+		return nil, fmt.Errorf("annotation %s on node %s: %w", annotationID, nodeID, model.ErrNotFound)
+	})
+}
+
+// mutateAnnotations loads a node's annotations, applies change and stores the
+// result plus the comment sync event, all inside one write transaction. The
+// single write connection serializes writers; BEGIN IMMEDIATE (see New) makes
+// other processes wait on busy_timeout instead of reading a stale array.
+func (s *Store) mutateAnnotations(
+	ctx context.Context, nodeID string,
+	change func([]model.Annotation) ([]model.Annotation, error),
+) error {
+	return s.WithTx(ctx, func(tx *sql.Tx) error {
+		// Read the current annotations inside the write transaction (no stale read).
+		var prevJSON sql.NullString
+		err := tx.QueryRowContext(ctx,
+			`SELECT annotations FROM nodes WHERE id = ? AND deleted_at IS NULL`,
+			nodeID,
+		).Scan(&prevJSON)
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("node %s: %w", nodeID, model.ErrNotFound)
+		}
+		if err != nil {
+			return fmt.Errorf("read annotations for %s: %w", nodeID, err)
+		}
+
+		var current []model.Annotation
+		if prevJSON.Valid && prevJSON.String != "" {
+			if decodeErr := json.Unmarshal([]byte(prevJSON.String), &current); decodeErr != nil {
+				return fmt.Errorf("decode annotations for %s: %w", nodeID, decodeErr)
+			}
+		}
+
+		next, err := change(current)
+		if err != nil {
+			return err
+		}
+		data, err := json.Marshal(next)
+		if err != nil {
+			return fmt.Errorf("marshal annotations for %s: %w", nodeID, err)
+		}
+
+		// Write the full array back in the same transaction as the read above.
+		if _, execErr := tx.ExecContext(ctx,
+			`UPDATE nodes SET annotations = ? WHERE id = ? AND deleted_at IS NULL`,
+			string(data), nodeID,
+		); execErr != nil {
+			return fmt.Errorf("set annotations for %s: %w", nodeID, execErr)
+		}
+
+		body, author, to := newCommentForSyncEvent(prevJSON.String, next)
+		return s.emitPayload(ctx, tx, emitParams{
+			NodeID:      nodeID,
+			ProjectCode: projectPrefixFromNodeID(nodeID),
+			OpType:      model.OpComment,
+			Author:      author,
+		}, &model.CommentPayload{AuthorID: author, Body: body, To: to})
+	})
 }

@@ -59,12 +59,8 @@ func (svc *NodeService) CancelNode(ctx context.Context, id, reason, author strin
 // AppendAnnotation appends an existing annotation and broadcasts per FR-3.4/FR-19.1.
 // The caller-supplied ID, clock and author remain unchanged in the HTTP response.
 func (svc *NodeService) AppendAnnotation(ctx context.Context, id string, annotation model.Annotation) error {
-	node, err := svc.store.GetNode(ctx, id)
-	if err != nil {
-		return wrapAPIOperation(fmt.Sprintf("get node %s for annotation", id), err)
-	}
-	annotations := append(append([]model.Annotation(nil), node.Annotations...), annotation)
-	if err := svc.store.SetAnnotations(ctx, id, annotations); err != nil {
+	// Atomic store append (MTIX-148): no read-modify-write outside a transaction.
+	if err := svc.store.AppendAnnotation(ctx, id, annotation); err != nil {
 		return wrapAPIOperation(fmt.Sprintf("append annotation to %s", id), err)
 	}
 	svc.broadcastEvent(ctx, EventNodeUpdated, id, annotation.Author, nil)

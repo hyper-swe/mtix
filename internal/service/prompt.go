@@ -116,11 +116,6 @@ func (svc *PromptService) AddAnnotation(ctx context.Context, nodeID, text, autho
 		addressee = ParseAddressee(text)
 	}
 
-	node, err := svc.store.GetNode(ctx, nodeID)
-	if err != nil {
-		return fmt.Errorf("get node %s for annotation: %w", nodeID, err)
-	}
-
 	now := svc.clock()
 	id, err := ulid.New(ulid.Timestamp(now), rand.Reader)
 	if err != nil {
@@ -136,11 +131,9 @@ func (svc *PromptService) AddAnnotation(ctx context.Context, nodeID, text, autho
 		Addressee: addressee,
 	}
 
-	annotations := make([]model.Annotation, 0, len(node.Annotations)+1)
-	annotations = append(annotations, node.Annotations...)
-	annotations = append(annotations, annotation)
-	if err := svc.store.SetAnnotations(ctx, nodeID, annotations); err != nil {
-		return fmt.Errorf("set annotations for %s: %w", nodeID, err)
+	// One atomic store append: no read-modify-write outside a transaction (MTIX-148).
+	if err := svc.store.AppendAnnotation(ctx, nodeID, annotation); err != nil {
+		return fmt.Errorf("append annotation to %s: %w", nodeID, err)
 	}
 
 	svc.broadcastPromptEvent(ctx, EventNodeUpdated, nodeID, author, nil)
@@ -152,27 +145,9 @@ func (svc *PromptService) AddAnnotation(ctx context.Context, nodeID, text, autho
 func (svc *PromptService) ResolveAnnotation(
 	ctx context.Context, nodeID, annotationID string, resolved bool,
 ) error {
-	node, err := svc.store.GetNode(ctx, nodeID)
-	if err != nil {
-		return fmt.Errorf("get node %s for resolve: %w", nodeID, err)
-	}
-
-	found := false
-	for i := range node.Annotations {
-		if node.Annotations[i].ID == annotationID {
-			node.Annotations[i].Resolved = resolved
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return fmt.Errorf("annotation %s on node %s: %w",
-			annotationID, nodeID, model.ErrNotFound)
-	}
-
-	if err := svc.store.SetAnnotations(ctx, nodeID, node.Annotations); err != nil {
-		return fmt.Errorf("set annotations for %s: %w", nodeID, err)
+	// One atomic store update by annotation ID (MTIX-148).
+	if err := svc.store.ResolveAnnotation(ctx, nodeID, annotationID, resolved); err != nil {
+		return fmt.Errorf("resolve annotation %s on node %s: %w", annotationID, nodeID, err)
 	}
 
 	svc.broadcastPromptEvent(ctx, EventNodeUpdated, nodeID, "", nil)

@@ -519,8 +519,11 @@ func (m *mcpMockStore) GetAncestorChain(_ context.Context, _ string) ([]*model.N
 func (m *mcpMockStore) GetSiblings(_ context.Context, _ string) ([]*model.Node, error) {
 	return nil, nil
 }
-func (m *mcpMockStore) SetAnnotations(_ context.Context, _ string, _ []model.Annotation) error {
+func (m *mcpMockStore) AppendAnnotation(_ context.Context, _ string, _ model.Annotation) error {
 	return nil
+}
+func (m *mcpMockStore) ResolveAnnotation(_ context.Context, _, _ string, _ bool) error {
+	return model.ErrNotFound
 }
 func (m *mcpMockStore) Query(_ context.Context, _ string, _ ...any) (*sql.Rows, error) {
 	return nil, nil

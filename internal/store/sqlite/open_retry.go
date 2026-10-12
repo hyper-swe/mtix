@@ -37,6 +37,28 @@ type openRetry struct {
 	// that is genuinely locked still fails in about busy_timeout, not N times it.
 	now      func() time.Time
 	patience time.Duration
+	// inject is a test seam: when set it is called at the start of each retried
+	// step (stageInit, stageIntegrity) and may return an error to simulate a
+	// transient failure. It is nil in production.
+	inject func(stage string) error
+}
+
+// Names of the open steps that run under the retry policy.
+const (
+	stageInit      = "init"
+	stageIntegrity = "integrity"
+)
+
+// step wraps fn so the injected fault, if any, runs first on every attempt.
+func (rt openRetry) step(stage string, fn func() error) func() error {
+	return func() error {
+		if rt.inject != nil {
+			if err := rt.inject(stage); err != nil {
+				return err
+			}
+		}
+		return fn()
+	}
 }
 
 // defaultOpenRetry returns the production policy: 12 attempts, backoff
@@ -118,11 +140,11 @@ func retryTransient(ctx context.Context, rt openRetry, fn func() error) error {
 func checkIntegrity(ctx context.Context, rt openRetry, path string,
 	check func(context.Context) (string, error)) error {
 	var result string
-	err := retryTransient(ctx, rt, func() error {
+	err := retryTransient(ctx, rt, rt.step(stageIntegrity, func() error {
 		var cerr error
 		result, cerr = check(ctx)
 		return cerr
-	})
+	}))
 	switch {
 	case err == nil && result == "ok":
 		return nil
@@ -133,8 +155,29 @@ func checkIntegrity(ctx context.Context, rt openRetry, path string,
 		return fmt.Errorf("integrity check on %s could not run because the database stayed busy; "+
 			"retry in a moment (this is not corruption): %w (%v)",
 			path, model.ErrIntegrityCheckIncomplete, err)
-	default:
+	case isCorruptionError(err):
 		return fmt.Errorf("integrity check on %s could not run; %s: %w (%v)",
 			path, recoveryGuidance, model.ErrCorrupted, err)
+	default:
+		return fmt.Errorf("integrity check on %s could not run (%s); retry, and check for "+
+			"other processes or storage problems (this is not corruption): %w (%v)",
+			path, describeIntegrityCause(err), model.ErrIntegrityCheckIncomplete, err)
+	}
+}
+
+// describeIntegrityCause names, in words, why an integrity check could not run.
+func describeIntegrityCause(err error) string {
+	msg := err.Error()
+	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return "cancelled"
+	case strings.Contains(msg, "SQLITE_IOERR"), strings.Contains(msg, "I/O error"):
+		return "I/O error"
+	case strings.Contains(msg, "SQLITE_NOMEM"), strings.Contains(msg, "out of memory"):
+		return "out of memory"
+	case strings.Contains(msg, "SQLITE_CANTOPEN"), strings.Contains(msg, "unable to open"):
+		return "cannot open the database file"
+	default:
+		return msg
 	}
 }

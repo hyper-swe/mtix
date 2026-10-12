@@ -78,6 +78,11 @@ type Store struct {
 // connection is opened (opening a torn database can reset the WAL that
 // would otherwise repair it), and quick_check runs before any write.
 func New(dbPath string, logger *slog.Logger) (*Store, error) {
+	return newWithRetry(dbPath, logger, defaultOpenRetry())
+}
+
+// newWithRetry is New with an injected open-retry policy (MTIX-147).
+func newWithRetry(dbPath string, logger *slog.Logger, rt openRetry) (*Store, error) {
 	dbPath = resolveDBPath(dbPath)
 	ctx := context.Background()
 
@@ -101,11 +106,11 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 		// work; every write returns writeRefusedError (via preflightWrite). One
 		// shared read-only connection serves both roles. No init — init writes
 		// schema, and creating a store on an unsafe FS is correctly impossible.
-		roDB, err := openDB(ctx, dbPath, false, true)
+		roDB, err := openDBWith(ctx, dbPath, false, true, rt)
 		if err != nil {
 			return nil, explainOpenError(fmt.Errorf("open read-only db %s: %w", dbPath, err), dbPath)
 		}
-		if checkErr := integrityCheckOnOpen(ctx, roDB, dbPath); checkErr != nil {
+		if checkErr := integrityCheckOnOpenWith(ctx, roDB, dbPath, rt); checkErr != nil {
 			if closeErr := roDB.Close(); closeErr != nil {
 				logger.Error("failed to close read-only db after integrity failure", slog.Any("error", closeErr))
 			}
@@ -124,12 +129,12 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 		}, nil
 	}
 
-	writeDB, err := openDB(ctx, dbPath, true, false)
+	writeDB, err := openDBWith(ctx, dbPath, true, false, rt)
 	if err != nil {
 		return nil, explainOpenError(fmt.Errorf("open write db %s: %w", dbPath, err), dbPath)
 	}
 
-	if checkErr := integrityCheckOnOpen(ctx, writeDB, dbPath); checkErr != nil {
+	if checkErr := integrityCheckOnOpenWith(ctx, writeDB, dbPath, rt); checkErr != nil {
 		if closeErr := writeDB.Close(); closeErr != nil {
 			logger.Error("failed to close write db after integrity failure",
 				slog.Any("error", closeErr))
@@ -137,7 +142,7 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 		return nil, checkErr
 	}
 
-	readDB, err := openDB(ctx, dbPath, false, false)
+	readDB, err := openDBWith(ctx, dbPath, false, false, rt)
 	if err != nil {
 		if closeErr := writeDB.Close(); closeErr != nil {
 			logger.Error("failed to close write db after read db open failure",
@@ -159,7 +164,7 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 
 	// init is idempotent; a concurrent first open can change the schema under
 	// it (SQLITE_SCHEMA) or hold the write lock, so retry transient errors.
-	if err := retryTransient(ctx, defaultOpenRetry(), func() error { return s.init(ctx) }); err != nil {
+	if err := retryTransient(ctx, rt, rt.step(stageInit, func() error { return s.init(ctx) })); err != nil {
 		if closeErr := s.Close(); closeErr != nil {
 			logger.Error("failed to close store after init failure",
 				slog.Any("error", closeErr))

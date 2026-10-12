@@ -72,9 +72,10 @@ func prepareConcurrentCreation(t *testing.T, path string, legacy bool) {
 	db, err := sql.Open("sqlite", path)
 	require.NoError(t, err)
 	defer func() { require.NoError(t, db.Close()) }()
-	var mode string
-	require.NoError(t, db.QueryRow("PRAGMA journal_mode=WAL").Scan(&mode))
-	require.Equal(t, "wal", mode)
+	// No WAL pre-step (MTIX-147): enabling WAL here hid SQLITE_BUSY on the
+	// journal_mode switch. The simultaneous opens must perform the switch
+	// themselves; TestNew_ConcurrentFirstOpenNoWALPrestep_AllSucceedWithOneIdentity
+	// covers the brand-new-file case.
 	expectedTables := 0
 	if legacy {
 		_, err := db.Exec("CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)")

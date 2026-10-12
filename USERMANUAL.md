@@ -3295,7 +3295,7 @@ mtix exits with structured codes so scripts and agents can react without parsing
 | 1 | Generic error |
 | 2 | Attention needed — `mtix sync doctor` found a failing check, or `mtix sync harden` has changes to make (dry run) or access remains (after `--apply`); the report was printed |
 | 3 | Disk full — a write or backup was refused or failed because the volume is out of space; free space and retry |
-| 4 | Database corrupted — an integrity gate failed at open; see "Disk full and corruption recovery" |
+| 4 | Database corrupted — an integrity gate failed at open (a failed open-time integrity gate: truncation or header check, `quick_check`, or `SQLITE_CORRUPT`); see "Disk full and corruption recovery". A busy or locked open (`integrity check … could not run`) is exit 1, not 4 |
 | 5 | Inbox empty — `mtix inbox --wait` timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Note: a harness-hosted (Claude) agent cannot stay parked *between* turns — a dormant session runs no poller, so `mtix_inbox_wait` only watches the inbox *within* a live turn. To wake a dormant agent when work lands, cold-start it with an exec wake hook on the worker host (see "Waking agents: delivery that terminates in the prompt"), or use channel push / a background watcher for a live session |
 
 | 6 | Inbox wake lease held or no longer owned — the reference wake coalesces held runs and stops a stale holder; disk-full 3 and corruption 4 retain priority |
@@ -3368,7 +3368,9 @@ mtix refuses work it cannot finish safely (NFR-2.8). On a nearly full volume you
 
 If a write fails at the filesystem level anyway (`disk is full`, `disk I/O error`), mtix latches into **fail-stop** for that process: all further writes are refused so a bad situation cannot get worse. Free space (or fix the disk) and start fresh.
 
-If mtix reports `database … is truncated` or `integrity check … failed` at startup:
+**`integrity check … could not run` is not corruption.** When another process holds the database (several mtix processes opening a new store at the same moment, a backup, a sync run), mtix retries the open for a short, bounded time. If the database stays busy, locked or mid-schema-change, or the check is cut short (cancelled, a transient I/O error, out of memory), the open fails with `integrity check on <path> could not run (<cause>) … (this is not corruption)` and exits **1** (generic error). Earlier builds reported such an open as `database corrupted` with exit **4**; exit 4 now means only a failed open-time integrity gate (the truncation or header check, a failed `quick_check`, or a `SQLITE_CORRUPT` result). A real corruption is worded `database corruption detected by the integrity check … run 'mtix recover'` and never says `could not run`. What to do: retry the command in a moment, and check for other mtix processes or tools using `.mtix/data/` (`mtix` daemons, backups, editors that snapshot the folder). If it repeats while nothing else is running, check the volume for I/O errors or low space, then run `mtix verify`. Do not run `mtix recover` or move any files for this message alone.
+
+If mtix reports `database … is truncated`, `integrity check … failed` or `database corruption detected by the …` at startup (exit 4; a damaged file is reported this way on every open path, including `enable WAL`, read-only opens and the integrity check):
 
 1. **Stop. Do not delete anything** — especially not `mtix.db-wal` or `mtix.db-shm`; the WAL may be the only intact copy of your latest commits.
 2. Copy the entire `.mtix/data/` directory to another volume as evidence.

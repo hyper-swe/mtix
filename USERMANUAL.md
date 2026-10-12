@@ -626,11 +626,30 @@ Agents (typically LLM coding agents) have a lifecycle managed through heartbeats
 
 #### Registration
 
-Run `mtix agent register <agent-id>` at session boot. Repeat registration on the same board exits 0 with an "already registered" notice and refreshes the heartbeat. It preserves the existing state, work assignment, project, and active session; it does not start or replace a session. With `--json`, the status is `registered` for a new identity or `already_registered` for a repeat. Use a unique ID per agent; registration currently identifies an agent by ID on the board, without a live-session ownership check.
+Run `mtix agent register <agent-id>` at session boot. Repeat registration on the same board exits 0 with an "already registered" notice and refreshes the heartbeat. It preserves the existing state, work assignment, project, and active session; it does not start or replace a session. With `--json`, the status is `registered` for a new identity or `already_registered` for a repeat. Use a unique ID per agent. Registration also records this shell's session for the id (harness and session handle detected from the environment): a restarted lane registers again with no flags, and a still-running session of the same id is refused unless you pass `--take-over` (see "Registration and lanes").
 
 ```bash
 mtix agent register worker-1
 mtix agent register worker-1 --json
+```
+
+#### Registration and lanes
+
+`mtix agent register <agent-id>` also records the calling session so the id can be reached later. It stores the harness and session handle detected from the environment (`CLAUDE_CODE_MESSAGING_SOCKET`, `CODEX_THREAD_ID`, `PI_SESSION_ID`); `--harness` and `--session` override them, and a typed `--session` is recorded as origin `manual`. Registering never marks existing inbox events as new: it starts from the current end of the journal, so backlog reaches you through `mtix inbox`, not a wake.
+
+- **Restart a lane:** run `mtix agent register <agent-id>` again. A row whose session has exited is replaced silently, with no flag.
+- **Take over a live lane:** `mtix agent register <agent-id> --take-over`. It bumps the epoch, leaves one fixed notice in the id's inbox when it has a current work item (at most one per displaced session per 10 minutes), and is limited to 3 per id per hour; after that it needs a terminal. Take over only when you are replacing that session on purpose.
+- **Move a lane:** run `mtix agent unregister <agent-id>` from the owning session. `--force` removes another live session's row (operator use).
+- **Inspect:** `mtix agent list --registrations [--json]` shows harness, origin, mode, liveness (`alive`, `dead` or `unknown`; unknown is treated as live), live route and hold.
+- **MCP-only rows:** registering through an MCP tool records origin `mcp`, which has no session handle and no live route. Register from the session shell to get a route.
+- **last_seen** moves only when the registered session runs `mtix agent register` or `mtix inbox` (list, `--wait`, `ack`) with its own session handle in the environment.
+- **Verify:** `mtix sync doctor` reports `agents.stale` (dead sessions; a row unseen for 24 hours with a dead session is deleted) and `agents.mcp-only`, each with the exact fix; add `--json` for tools.
+- **Never** register under another agent's id to "see" its inbox, and never pass `--take-over` to get around a refusal you do not understand: ask the operator.
+
+```bash
+mtix agent register worker-1 --take-over
+mtix agent unregister worker-1
+mtix agent list --registrations --json
 ```
 
 #### Commands

@@ -22,6 +22,8 @@ func newAgentCmd() *cobra.Command {
 
 	cmd.AddCommand(
 		newAgentRegisterCmd(),
+		newAgentUnregisterCmd(),
+		newAgentListCmd(),
 		newAgentStateCmd(),
 		newAgentHeartbeatCmd(),
 		newAgentWorkCmd(),
@@ -29,22 +31,38 @@ func newAgentCmd() *cobra.Command {
 	return cmd
 }
 
-// newAgentRegisterCmd creates the mtix agent register command per FR-10.1a.
+// newAgentRegisterCmd creates the mtix agent register command per FR-10.1a
+// and ADR-007 §3.3 (session registration).
 func newAgentRegisterCmd() *cobra.Command {
-	return &cobra.Command{
+	var opts sessionOptions
+	cmd := &cobra.Command{
 		Use:   "register <agent-id>",
-		Short: "Register an agent or refresh its heartbeat",
+		Short: "Register an agent and this session, or refresh them",
 		Long: `Register an agent on this board. Repeat registration succeeds with an
 "already registered" notice and refreshes its heartbeat, preserving its state,
-work assignment, project, and active session. Registration does not start a session.`,
+work assignment, project, and active session. Registration does not start a session.
+
+It also records this shell's session for the id: the harness and session handle
+are detected from the environment (CLAUDE_CODE_MESSAGING_SOCKET, CODEX_THREAD_ID,
+PI_SESSION_ID); --harness and --session override them (a typed --session is
+recorded as origin "manual"). A row whose session has exited is replaced
+silently, so a restarted lane registers with no flags. A row whose session is
+still running is refused unless you pass --take-over: that bumps the epoch,
+leaves one fixed notice for the displaced session, and is limited to 3 per id
+per hour, after which it needs a terminal. Registering never wakes the agent
+on events that already exist.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runAgentRegister(args[0])
+			return runAgentRegister(args[0], opts)
 		},
 	}
+	cmd.Flags().StringVar(&opts.Harness, "harness", "", "Harness name (detected from the environment when omitted)")
+	cmd.Flags().StringVar(&opts.Session, "session", "", "Session handle (detected from the environment when omitted)")
+	cmd.Flags().BoolVar(&opts.TakeOver, "take-over", false, "Replace a live session registered for this id")
+	return cmd
 }
 
-func runAgentRegister(agentID string) error {
+func runAgentRegister(agentID string, opts sessionOptions) error {
 	if app.agentSvc == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -65,12 +83,19 @@ func runAgentRegister(agentID string) error {
 	if !created {
 		status = "already_registered"
 	}
+	session, err := registerCurrentSession(ctx, agentID, opts)
+	if err != nil {
+		return err
+	}
+	return printAgentRegistration(agentID, status, created, session)
+}
 
+func printAgentRegistration(agentID, status string, created bool, session *sessionReport) error {
 	switch {
 	case app.jsonOutput:
-		data, err := json.Marshal(map[string]string{
-			"agent_id": agentID, "status": status,
-		})
+		out := map[string]any{"agent_id": agentID, "status": status}
+		session.addTo(out)
+		data, err := json.Marshal(out)
 		if err != nil {
 			return fmt.Errorf("encode registration result: %w", err)
 		}
@@ -79,6 +104,9 @@ func runAgentRegister(agentID string) error {
 		fmt.Printf("Registered agent %s\n", agentID)
 	default:
 		fmt.Printf("Agent %s already registered; heartbeat refreshed\n", agentID)
+	}
+	if !app.jsonOutput {
+		session.print()
 	}
 	return nil
 }

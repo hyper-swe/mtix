@@ -10,9 +10,23 @@ Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whit
 ## Agent Registration
 
 ```bash
+mtix agent register <agent-name>
 mtix claim <id> --agent <agent-name>
 mtix session start <agent-name>
 ```
+
+## Registration and lanes
+
+`mtix agent register <agent-id>` also records the calling session so the id can be reached later. It stores the harness and session handle detected from the environment (`CLAUDE_CODE_MESSAGING_SOCKET`, `CODEX_THREAD_ID`, `PI_SESSION_ID`); `--harness` and `--session` override them, and a typed `--session` is recorded as origin `manual`. Registering never marks existing inbox events as new: it starts from the current end of the journal, so backlog reaches you through `mtix inbox`, not a wake.
+
+- **Restart a lane:** run `mtix agent register <agent-id>` again. A row whose session has exited is replaced silently, with no flag.
+- **Take over a live lane:** `mtix agent register <agent-id> --take-over`. It bumps the epoch, leaves one fixed notice in the id's inbox when it has a current work item (at most one per displaced session per 10 minutes), and is limited to 3 per id per hour; after that it needs a terminal. Take over only when you are replacing that session on purpose.
+- **Move a lane:** run `mtix agent unregister <agent-id>` from the owning session. `--force` removes another live session's row (operator use).
+- **Inspect:** `mtix agent list --registrations [--json]` shows harness, origin, mode, liveness (`alive`, `dead` or `unknown`; unknown is treated as live), live route and hold.
+- **MCP-only rows:** registering through an MCP tool records origin `mcp`, which has no session handle and no live route. Register from the session shell to get a route.
+- **last_seen** moves only when the registered session runs `mtix agent register` or `mtix inbox` (list, `--wait`, `ack`) with its own session handle in the environment.
+- **Verify:** `mtix sync doctor` reports `agents.stale` (dead sessions; a row unseen for 24 hours with a dead session is deleted) and `agents.mcp-only`, each with the exact fix; add `--json` for tools.
+- **Never** register under another agent's id to "see" its inbox, and never pass `--take-over` to get around a refusal you do not understand: ask the operator.
 
 ## Finding Work
 

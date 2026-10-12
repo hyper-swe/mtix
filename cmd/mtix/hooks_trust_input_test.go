@@ -57,7 +57,7 @@ func TestRunHooksTrust_NonTerminalInput_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestHooksStatus_ConfiguredHook_ReportsExactFix(t *testing.T) {
+func TestStatusCommand_ConfiguredHook_ReportsExactFix(t *testing.T) {
 	saveAndResetApp(t)
 	root := t.TempDir()
 	app.mtixDir = filepath.Join(root, ".mtix")

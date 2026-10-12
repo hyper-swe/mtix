@@ -33,6 +33,12 @@ type NodeFilter struct {
 	Priority  []int             `json:"priority,omitempty"`
 	Labels    []string          `json:"labels,omitempty"`
 
+	// Text restricts results to nodes whose title, description or prompt
+	// contains EVERY word, case-insensitively and literally (MTIX-146). Each
+	// word is one entry; the store binds it as an escaped LIKE parameter, so
+	// '%', '_' and '\' match themselves. Empty means no text filter.
+	Text []string `json:"text,omitempty"`
+
 	// Project restricts results to a single project prefix (FR-MULTI-PROJECT
 	// MP-3). Empty means NO project filter — results span all projects. A
 	// non-empty value restricts results to that exact project prefix. The
@@ -159,6 +165,17 @@ type Store interface {
 	// Returns ErrInvalidTransition if the transition is not allowed.
 	TransitionStatus(ctx context.Context, id string, toStatus model.Status, reason, author string) error
 
+	// TransitionStatusFrom is TransitionStatus guarded by the status the caller
+	// decided on: inside the write transaction it re-reads the status and
+	// returns ErrConflict if it is no longer expectedFrom (MTIX-151).
+	TransitionStatusFrom(ctx context.Context, id string, expectedFrom, toStatus model.Status, reason, author string) error
+
+	// RestoreInvalidated returns an invalidated node to its previous_status
+	// (open when that is empty or unreachable), deciding the target inside the
+	// write transaction (FR-3.5, MTIX-151). Returns the status restored to,
+	// or ErrInvalidTransition if the node is not invalidated.
+	RestoreInvalidated(ctx context.Context, id, author string) (model.Status, error)
+
 	// DeferNode transitions a node to deferred and stores its wake time
 	// (defer_until) in the same transaction (FR-3.8, FR-3.8b, MTIX-95.22).
 	// A nil until stores NULL, clearing any earlier wake time. The sync event
@@ -218,8 +235,14 @@ type Store interface {
 	// excluding the node itself and soft-deleted nodes.
 	GetSiblings(ctx context.Context, nodeID string) ([]*model.Node, error)
 
-	// SetAnnotations replaces all annotations on a node per FR-3.4.
-	SetAnnotations(ctx context.Context, nodeID string, annotations []model.Annotation) error
+	// AppendAnnotation atomically appends one annotation to a node per FR-3.4
+	// (read, append and write in one write transaction; MTIX-148).
+	// Returns ErrNotFound if the node does not exist.
+	AppendAnnotation(ctx context.Context, nodeID string, annotation model.Annotation) error
+
+	// ResolveAnnotation atomically sets the resolved flag of one annotation per
+	// FR-3.4. Returns ErrNotFound if the node or the annotation does not exist.
+	ResolveAnnotation(ctx context.Context, nodeID, annotationID string, resolved bool) error
 
 	// Raw query access (for background service operations).
 

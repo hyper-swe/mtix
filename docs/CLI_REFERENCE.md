@@ -20,7 +20,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `agent` — Manage agent lifecycle
 - `annotate <id> <text>` — Add an annotation to a node
 - `backup <path>` — Create a backup of the mtix database
-- `blocked` — List nodes blocked by dependencies
+- `blocked [id]` — List nodes blocked by dependencies, or show the blockers of one node
 - `cancel <id>` — Cancel a node with mandatory reason
 - `claim <id>` — Claim a node for an agent
 - `comment <id> <text>` — Add a comment annotation to a node
@@ -39,7 +39,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `hooks` — Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 - `import <file>` — Import nodes from JSON export
 - `inbox` — Show events addressed to an agent
-- `init` — Initialize a new mtix project
+- `init [prefix]` — Initialize a new mtix project
 - `list` — List nodes with filters
 - `mcp` — Run as MCP server over stdio (for LLM agent integration)
 - `micro <title>` — Create a micro task (requires --under)
@@ -55,7 +55,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `rerun <id>` — Invalidate and reprocess descendants of a node
 - `resolve-annotation <node-id> <annotation-id>` — Resolve an annotation on a node
 - `restore <id>` — Restore an invalidated node to its previous status
-- `search` — Search nodes with advanced filters
+- `search [words...]` — Search nodes by text (positional words) and advanced filters
 - `serve` — Start the mtix HTTP and WebSocket server
 - `session` — Manage agent sessions
 - `show <id>` — Show a node's details and annotations
@@ -138,9 +138,14 @@ Create a backup of the mtix database
 
 ## blocked
 
-**Usage:** `blocked`
+**Usage:** `blocked [id]`
 
-List nodes blocked by dependencies
+List nodes blocked by dependencies, or show the blockers of one node
+
+Without an argument, list blocked nodes. With a node ID, show what blocks
+that node: the same view as mtix dep show <id>, but an unknown id is a
+not-found error. With --json the id form prints the blocking dependency
+edges, not a node list. The project scope flags apply only to the list form.
 
 ### Flags
 
@@ -287,9 +292,11 @@ With no hub configured the daemon still runs, tailing the local journal
 only — cross-process writes into this .mtix keep dispatching.
 
 Foreground process; intended for launchd/systemd supervision (see
---install). Idempotent start: .mtix/sync.daemon.pid marks the running
-instance — shared with 'mtix sync daemon', so the two never run
-together. Transient pull errors are logged and retried, never fatal.
+--install). Idempotent start: a lifetime OS lock at .mtix/data/sync.daemon.lock
+is shared with 'mtix sync daemon', so the two never run together.
+The PID file is diagnostic and removed only by its matching owner. Each pull/relay/dispatch pass takes
+.mtix/data/dispatch.lock; contention idles and retries at the existing cadence.
+Push and dispatch lock files and their data directory must be real and user-owned. Transient pull errors are logged and retried, never fatal.
 
 ### Flags
 
@@ -785,14 +792,17 @@ mtix inbox lease release --agent developer --holder "$HOLDER"
 
 ## init
 
-**Usage:** `init`
+**Usage:** `init [prefix]`
 
 Initialize a new mtix project
 
 Initialize a new mtix project in the current directory.
 
 Creates .mtix/ directory structure with config, database, and logs.
+Creates .mtix/board-id with one stable UUID; commit it with the board.
 Generates agent documentation in .mtix/docs/.
+
+The prefix may be given as an argument (mtix init MYPROJ) or with --prefix.
 
 ### Flags
 
@@ -922,12 +932,12 @@ Supported targets: claude-code (default), codex, pi.
 
 ### Subcommands
 
-- `install` — Install skill files and MCP configuration
+- `install [target]` — Install skill files and MCP configuration
 ---
 
 ## install
 
-**Usage:** `install`
+**Usage:** `install [target]`
 
 Install skill files and MCP configuration
 
@@ -950,6 +960,9 @@ the stanza to add is printed instead.
 pi: AGENTS.md at the project root (or ~/.pi/agent/ with --global); pi
 loads it natively. pi has no built-in MCP — setup guidance for the
 community pi-mcp-adapter extension is printed.
+
+The target may be given as an argument (mtix plugin install codex) or with
+--target.
 
 ### Flags
 
@@ -1061,9 +1074,13 @@ Restore an invalidated node to its previous status
 
 ## search
 
-**Usage:** `search`
+**Usage:** `search [words...]`
 
-Search nodes with advanced filters
+Search nodes by text (positional words) and advanced filters
+
+Search nodes. Optional positional words must ALL appear (case-insensitive for
+ASCII letters only, and literal) in a node's title, description or prompt; filter flags narrow the
+result further. With no words, only the filters apply.
 
 ### Flags
 
@@ -1521,9 +1538,9 @@ Run a foreground process that pulls events from the BYO Postgres
 hub every N seconds (default 30) until killed. Intended for systemd
 or launchd supervision; this command does NOT fork itself.
 
-Idempotent start: a .mtix/sync.daemon.pid file marks the running
-instance. If a live PID is found, this command exits with a
-non-error message. The PID file is removed on graceful shutdown.
+Idempotent start: a lifetime OS lock at .mtix/data/sync.daemon.lock
+excludes both daemon spellings. Lock contention exits cleanly. The
+PID file is diagnostic and removed only by its matching owner.
 
 Use --install to print a systemd unit (linux) or launchd plist
 (darwin) ready to be installed by the user.
@@ -1572,7 +1589,13 @@ Run health checks against the local store and the BYO Postgres hub:
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
+  board.id               - one committed board identity; a hub board also
+                           needs a known local hub observation
+  board.hub-identity-changed - warns when the observed hub differs from
+                           a recorded confirmation; recovery is planned
   Operator state placement - reports the sandbox placement limitation
+  Data filesystem        - warns on known network/FUSE data mounts; unavailable
+                           classification is reported without claiming safe locks
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
   Hub triggers           - every function and trigger the hub migrations
                            define exists, every trigger executes the

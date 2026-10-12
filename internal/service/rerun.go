@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -139,33 +140,56 @@ func (svc *NodeService) rerunReviewNode(
 	return svc.store.TransitionStatus(ctx, node.ID, model.StatusInvalidated, reason, author)
 }
 
+// maxEnsureConflicts bounds how many times ensureNonTerminal re-decides after
+// another writer changed the node between its read and its write;
+// maxEnsureSteps bounds the total reads, so successful restores cannot loop it
+// forever either.
+const (
+	maxEnsureConflicts = 3
+	maxEnsureSteps     = 8
+)
+
 // ensureNonTerminal implements FR-3.5c: auto-reopen terminal parents before rerun.
 // If the node is invalidated, restore first, then reopen if still terminal.
+// Each write is guarded by the status it was decided on (MTIX-151): if another
+// writer changed the node in between, the node is re-read and re-decided, so a
+// reopen is never applied over a node someone else already moved. A restore
+// that commits is progress, not a conflict, and does not use up the conflict
+// budget.
 func (svc *NodeService) ensureNonTerminal(ctx context.Context, nodeID, author string) error {
-	node, err := svc.store.GetNode(ctx, nodeID)
-	if err != nil {
-		return err
-	}
-
-	// FR-3.5c: If invalidated, restore first.
-	if node.Status == model.StatusInvalidated {
-		if restoreErr := svc.Restore(ctx, nodeID, author); restoreErr != nil {
-			return fmt.Errorf("restore invalidated %s: %w", nodeID, restoreErr)
-		}
-		// Re-read after restore to check if still terminal.
-		node, err = svc.store.GetNode(ctx, nodeID)
+	conflicts := 0
+	for step := 0; step < maxEnsureSteps && conflicts < maxEnsureConflicts; step++ {
+		node, err := svc.store.GetNode(ctx, nodeID)
 		if err != nil {
 			return err
 		}
-	}
 
-	// If still terminal (done/cancelled), auto-reopen.
-	if node.Status.IsTerminal() {
-		return svc.store.TransitionStatus(
-			ctx, nodeID, model.StatusOpen,
-			"auto-reopened by rerun", author,
-		)
+		switch {
+		case node.Status == model.StatusInvalidated:
+			// FR-3.5c: If invalidated, restore first; the restore may leave a
+			// terminal status, so decide again on a fresh read.
+			restoreErr := svc.Restore(ctx, nodeID, author)
+			if restoreErr != nil {
+				if !errors.Is(restoreErr, model.ErrInvalidTransition) {
+					return fmt.Errorf("restore invalidated %s: %w", nodeID, restoreErr)
+				}
+				conflicts++ // Another writer took it out of invalidated first.
+			}
+		case node.Status.IsTerminal():
+			// If terminal (done/cancelled), auto-reopen from exactly that status.
+			err = svc.store.TransitionStatusFrom(
+				ctx, nodeID, node.Status, model.StatusOpen,
+				"auto-reopened by rerun", author,
+			)
+			if err == nil || !errors.Is(err, model.ErrConflict) {
+				return err
+			}
+			conflicts++
+		default:
+			return nil
+		}
 	}
-
-	return nil
+	return fmt.Errorf(
+		"node %s kept changing while preparing rerun; the rerun did not start, retry it: %w",
+		nodeID, model.ErrConflict)
 }

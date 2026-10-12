@@ -17,6 +17,7 @@ import (
 func newStatsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stats",
+		Args:  cobra.NoArgs,
 		Short: "Show project statistics",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runStats()

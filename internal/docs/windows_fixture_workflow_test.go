@@ -9,7 +9,13 @@ package docs
 import (
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/build"
+	"go/parser"
+	"go/token"
 	"os"
+	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -26,6 +32,7 @@ func TestWindowsFixtureWorkflow_ActualSource_RequiresReplayAndLiveCapture(t *tes
 	source, err := os.ReadFile("../../.github/workflows/windows-runtime.yml")
 	require.NoError(t, err)
 	require.NoError(t, stockFixtureWorkflowError(source))
+	require.NoError(t, namedLockWorkflowError(source, "../.."))
 }
 
 func stockFixtureWorkflowError(source []byte) error {
@@ -166,4 +173,282 @@ func TestWindowsFixtureWorkflow_SYNTHETICYAMLControls_RejectInvalidSource(t *tes
 			require.Error(t, stockFixtureWorkflowError([]byte(tt.source)))
 		})
 	}
+}
+
+// Named-lock checks independently inspect actual workflow selection, step env,
+// evaluation and native source declarations; none proves hosted execution.
+func namedLockWorkflowError(source []byte, root string) error {
+	var wf struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name string
+				Run  string
+				Env  map[string]string
+			}
+		}
+	}
+	if err := yaml.Unmarshal(source, &wf); err != nil {
+		return fmt.Errorf("named workflow parse: %w", err)
+	}
+	run, evaluation := "", ""
+	matches := 0
+	for _, step := range wf.Jobs["windows-runtime"].Steps {
+		if step.Name == "Run required native named-lock tests" {
+			matches++
+			run = step.Run
+			if !reflect.DeepEqual(step.Env, map[string]string{"MTIX_WINDOWS_CAPTURE_DIR": "${{ runner.temp }}/mtix-windows-runtime"}) {
+				return errors.New("named step requires exact capture env")
+			}
+		}
+		if step.Name == stockNativeTestStepName {
+			evaluation = step.Run
+		}
+	}
+	if matches != 1 {
+		return errors.New("one named native step required")
+	}
+	selected, err := namedLockCommands(run)
+	if err != nil {
+		return err
+	}
+	manifests, err := namedLockManifests(evaluation)
+	if err != nil {
+		return err
+	}
+	for directory, names := range selected {
+		if !reflect.DeepEqual(names, manifests[directory]) {
+			return errors.New("native selection and PASS manifest differ")
+		}
+		if err := namedLockSourceNames(root, directory, names); err != nil {
+			return err
+		}
+	}
+	return namedLockEvaluation(run, evaluation)
+}
+
+func namedLockCommands(run string) (map[string][]string, error) {
+	pattern := regexp.MustCompile(`(?m)^& go test (\./[A-Za-z0-9_/]+) -race -count=1 -timeout=8m -json -run '([^']+)' > "\$env:MTIX_WINDOWS_CAPTURE_DIR/([A-Za-z0-9_-]+\.json)"$`)
+	matches := pattern.FindAllStringSubmatch(run, -1)
+	if len(matches) != 2 || strings.Count(run, "& go test ") != 2 {
+		return nil, errors.New("two executable bounded native commands required")
+	}
+	expected := map[string]string{"./internal/sync/pushlock": "named-locks.json", "./cmd/mtix": "dispatch-lock.json"}
+	result := map[string][]string{}
+	for _, match := range matches {
+		if expected[match[1]] != match[3] || result[match[1]] != nil {
+			return nil, errors.New("wrong or duplicate named package/capture")
+		}
+		names, err := namedLockLiteralNames(match[2])
+		if err != nil {
+			return nil, err
+		}
+		result[match[1]] = names
+	}
+	return result, nil
+}
+
+func namedLockLiteralNames(filter string) ([]string, error) {
+	if !strings.HasPrefix(filter, "^(") || !strings.HasSuffix(filter, ")$") {
+		if filter == "^TestDispatchLock_HeldByOther_DaemonIdlesNotExits$" {
+			return []string{"TestDispatchLock_HeldByOther_DaemonIdlesNotExits"}, nil
+		}
+		return nil, errors.New("anchored literal native selector required")
+	}
+	names := strings.Split(strings.TrimSuffix(strings.TrimPrefix(filter, "^("), ")$"), "|")
+	used := map[string]bool{}
+	literal := regexp.MustCompile(`^Test[A-Za-z0-9_]+$`)
+	for _, name := range names {
+		if !literal.MatchString(name) || used[name] {
+			return nil, errors.New("literal unique native names required")
+		}
+		used[name] = true
+	}
+	return names, nil
+}
+
+func namedLockManifests(evaluation string) (map[string][]string, error) {
+	pattern := regexp.MustCompile(`(?m)^\$(namedLockRequired|dispatchLockRequired) = @\(([^\r\n()]*)\)$`)
+	matches := pattern.FindAllStringSubmatch(evaluation, -1)
+	if len(matches) != 2 {
+		return nil, errors.New("named PASS manifests required")
+	}
+	result := map[string][]string{}
+	for _, match := range matches {
+		names := []string{}
+		for _, part := range strings.Split(match[2], ",") {
+			part = strings.TrimSpace(part)
+			if !regexp.MustCompile(`^'Test[A-Za-z0-9_/]+'$`).MatchString(part) {
+				return nil, errors.New("literal PASS manifest required")
+			}
+			names = append(names, strings.Trim(part, "'"))
+		}
+		directory := "./internal/sync/pushlock"
+		if match[1] == "dispatchLockRequired" {
+			directory = "./cmd/mtix"
+			required := []string{"TestDispatchLock_HeldByOther_DaemonIdlesNotExits", "TestDispatchLock_HeldByOther_DaemonIdlesNotExits/daemon", "TestDispatchLock_HeldByOther_DaemonIdlesNotExits/syncdaemon"}
+			if !reflect.DeepEqual(names, required) {
+				return nil, errors.New("both daemon subcase PASS/no SKIP manifests required")
+			}
+			names = names[:1]
+		} else {
+			for _, minimum := range []string{"TestAcquireNamed_SymlinkedLockFile_Refused", "TestAcquireNamed_SymlinkedDataDir_Refused", "TestAcquire_PushLockName_Unchanged"} {
+				found := 0
+				for _, name := range names {
+					if name == minimum {
+						found++
+					}
+				}
+				if found != 1 {
+					return nil, errors.New("minimum named-lock PASS manifest required")
+				}
+			}
+		}
+		if result[directory] != nil {
+			return nil, errors.New("duplicate named manifest")
+		}
+		result[directory] = names
+	}
+	return result, nil
+}
+
+func namedLockSourceNames(root, directory string, names []string) error {
+	context := build.Default
+	context.GOOS = "windows"
+	context.GOARCH = "amd64"
+	context.CgoEnabled = true
+	context.BuildTags = []string{"race"}
+	context.UseAllFiles = false
+	entries, err := os.ReadDir(filepath.Join(root, directory))
+	if err != nil {
+		return fmt.Errorf("native source directory: %w", err)
+	}
+	available := map[string]bool{}
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		included, err := context.MatchFile(filepath.Join(root, directory), entry.Name())
+		if err != nil {
+			return fmt.Errorf("native build match: %w", err)
+		}
+		if !included {
+			continue
+		}
+		parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, directory, entry.Name()), nil, 0)
+		if err != nil {
+			return fmt.Errorf("native source parse: %w", err)
+		}
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if ok && namedLockRunnableTest(fn, parsed) {
+				available[fn.Name.Name] = true
+			}
+		}
+	}
+	for _, name := range names {
+		if !available[name] {
+			return fmt.Errorf("selected native test declaration unavailable: %s", name)
+		}
+	}
+	return nil
+}
+
+func namedLockRunnableTest(fn *ast.FuncDecl, file *ast.File) bool {
+	if !namedLockTestShape(fn) {
+		return false
+	}
+	parameter := fn.Type.Params.List[0]
+	if len(parameter.Names) != 1 {
+		return false
+	}
+	pointer, ok := parameter.Type.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+	selected, ok := pointer.X.(*ast.SelectorExpr)
+	if !ok || selected.Sel.Name != "T" {
+		return false
+	}
+	qualifier, ok := selected.X.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	for _, imported := range file.Imports {
+		if imported.Path.Value == `"testing"` {
+			name := "testing"
+			if imported.Name != nil {
+				name = imported.Name.Name
+			}
+			return qualifier.Name == name
+		}
+	}
+	return false
+}
+
+func namedLockEvaluation(run, evaluation string) error {
+	requiredRun := []string{"$namedLockExit = $LASTEXITCODE", "$dispatchLockExit = $LASTEXITCODE", `if ($namedLockExit -ne 0 -or $dispatchLockExit -ne 0) { throw 'Named-lock native test failure' }`, `$env:MTIX_SYNC_DSN = ''`, `$env:MTIX_PG_TEST_DSN = ''`}
+	requiredEvaluation := []string{
+		`foreach ($namedSuite in @(@{ file='named-locks.json'; package='github.com/hyper-swe/mtix/internal/sync/pushlock'; tests=$namedLockRequired }, @{ file='dispatch-lock.json'; package='github.com/hyper-swe/mtix/cmd/mtix'; tests=$dispatchLockRequired })) {`,
+		`$nativeEvents = Get-Content -LiteralPath "$env:MTIX_WINDOWS_CAPTURE_DIR/$($namedSuite.file)" | ForEach-Object { $_ | ConvertFrom-Json }`,
+		`$nativePassed = @($nativeEvents | Where-Object { $_.Package -eq $namedSuite.package -and $_.Test -eq $nativeTest -and $_.Action -eq 'pass' })`,
+		`$nativeSkipped = @($nativeEvents | Where-Object { $_.Package -eq $namedSuite.package -and $_.Test -eq $nativeTest -and $_.Action -eq 'skip' })`,
+		`if ($nativePassed.Count -ne 1 -or $nativeSkipped.Count -ne 0) { throw "Required named-lock native test did not PASS: $nativeTest" }`,
+		`$nativePackagePassed = @($nativeEvents | Where-Object { $_.Package -eq $namedSuite.package -and !$_.Test -and $_.Action -eq 'pass' })`,
+		`if ($nativePackagePassed.Count -ne 1) { throw 'Named-lock native package did not PASS' }`,
+		`if ($null -eq $nativeExits.named_lock -or $null -eq $nativeExits.dispatch_lock -or $nativeExits.named_lock -ne 0 -or $nativeExits.dispatch_lock -ne 0) { throw 'Named-lock native exits missing or failed' }`,
+	}
+	for _, pair := range []struct {
+		script string
+		lines  []string
+	}{{run, requiredRun}, {evaluation, requiredEvaluation}} {
+		for _, expected := range pair.lines {
+			count := 0
+			for _, line := range strings.Split(pair.script, "\n") {
+				if strings.TrimSpace(line) == expected {
+					count++
+				}
+			}
+			if count != 1 {
+				return errors.New("exact executable native result/exit evaluation required")
+			}
+		}
+	}
+	return nil
+}
+
+func TestWindowsNamedLockWorkflow_IndependentHostileControls(t *testing.T) {
+	source, err := os.ReadFile("../../.github/workflows/windows-runtime.yml")
+	require.NoError(t, err)
+	cases := []struct{ name, old, replacement string }{
+		{"selector omitted", "^TestDispatchLock_HeldByOther_DaemonIdlesNotExits$", "^TestAbsent$"},
+		{"selector broadened", "^TestDispatchLock_HeldByOther_DaemonIdlesNotExits$", "^TestDispatchLock_.*$"},
+		{"list no-op", "-json -run '^TestDispatchLock", "-list '^TestDispatchLock"},
+		{"missing public subcase", "'TestDispatchLock_HeldByOther_DaemonIdlesNotExits/syncdaemon'", "'TestAbsent/syncdaemon'"},
+		{"ignored exit", "$namedLockExit = $LASTEXITCODE", "$namedLockExit = 0"},
+		{"ignored PASS", "$nativePassed.Count -ne 1", "$false"},
+		{"accepted SKIP", "$nativeSkipped.Count -ne 0", "$false"},
+		{"wrong package", "tests=$namedLockRequired", "tests=$dispatchLockRequired"},
+		{"unavailable declaration", "TestNamedLock_WindowsMetadata_ValidatesTypeAndOwner", "TestUnavailableNativeDeclaration"},
+		{"unavailable owner-policy declaration", "TestNamedLock_WindowsOwnerPolicy_AcceptsUserAndElevatedAdministrators", "TestUnavailableNativeDeclaration"},
+		{"unavailable real-owner declaration", "TestNamedLock_WindowsOwner_RealObjectsOwnedByUser", "TestUnavailableNativeDeclaration"},
+		{"unavailable admin-gate declaration", "TestNamedLock_WindowsAdminGate_ElevationAndOwnerFlags", "TestUnavailableNativeDeclaration"},
+		{"unavailable lock-file-access declaration", "TestNamedLock_WindowsLockFile_UserOnlyAccessAndNoDelete", "TestUnavailableNativeDeclaration"},
+		{"unavailable legacy-directory declaration", "TestNamedLock_WindowsLegacyDirectoryAndForeignDirectory", "TestUnavailableNativeDeclaration"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Contains(t, string(source), tc.old)
+			mutant := strings.ReplaceAll(string(source), tc.old, tc.replacement)
+			require.Error(t, namedLockWorkflowError([]byte(mutant), "../.."))
+		})
+	}
+	t.Run("new step wrong env", func(t *testing.T) {
+		marker := "- name: Run required native named-lock tests\n        env:\n          MTIX_WINDOWS_CAPTURE_DIR: ${{ runner.temp }}/mtix-windows-runtime"
+		require.Contains(t, string(source), marker)
+		require.Error(t, namedLockWorkflowError([]byte(strings.Replace(string(source), marker, strings.Replace(marker, "runner.temp", "github.workspace", 1), 1)), "../.."))
+	})
+}
+
+func namedLockTestShape(fn *ast.FuncDecl) bool {
+	return fn.Recv == nil && fn.Body != nil && len(fn.Body.List) > 0 && fn.Type.Results == nil && fn.Type.TypeParams == nil && fn.Type.Params != nil && len(fn.Type.Params.List) == 1
 }

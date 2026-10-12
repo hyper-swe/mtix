@@ -682,16 +682,30 @@ mtix config set agent.stale_threshold 30m
 
 ## Search and Queries
 
-### Full-Text Search
+### Text Search
 
 ```bash
-mtix search --query "authentication"
+mtix search authentication
+mtix search "login flow" --status open --under PROJ-1
 ```
 
-Uses SQLite FTS5 for full-text search across titles, descriptions, and prompts.
+`mtix search` takes optional positional words. Every word must appear
+(case-insensitive for ASCII letters only, matched literally, so `%` and `_` are ordinary characters; `É` does not match `é`)
+in a node's title, description or prompt. A query that matches nothing returns
+no rows; it never falls back to listing everything. At most 16 words of at most
+256 bytes each are accepted, and a blank word is an error.
 
-`mtix search` accepts the same multi-value filter flags as `mtix list`
-(see below) — they combine with the FTS query.
+With no words, `mtix search` lists by its filters alone. It accepts the same
+multi-value filter flags as `mtix list` (see below), and they combine with the
+words. There is no `--query` flag: the words are positional.
+
+The MCP tool `mtix_search` takes the same text as its `query` argument and
+behaves the same way. It rejects unknown or mistyped arguments with an error
+instead of ignoring them.
+
+Commands that take no positional arguments (for example `mtix ready`,
+`mtix list`, `mtix stats`, `mtix gc`) now reject a stray argument with
+`unknown command ... for ...` rather than silently dropping it.
 
 ### Filtered Listing
 
@@ -1996,6 +2010,14 @@ release.)
 
 `mtix daemon` and `mtix sync daemon` share a lifetime OS lock at `.mtix/data/sync.daemon.lock` (flock on Unix, LockFileEx on Windows). A concurrent start exits cleanly while the owner keeps running. `.mtix/sync.daemon.pid` is diagnostic: stale or missing PID content cannot grant ownership. The PID is published only after acquiring the lock and removed only by its matching owner while the lock is held. Normal exit and process crash release the OS lock; the lock file stays in place so existing descriptors keep using the same inode. Other filesystem or OS errors are reported. Do not delete daemon lock files to force a second instance.
 
+### Named locks and dispatch contention
+
+Push and dispatch coordination use `.mtix/data/sync.push.lock` and `.mtix/data/dispatch.lock`. Both require a real data directory and regular lock file owned by the effective OS user; symlinked directories or lock files, Windows reparse points and wrong object types are refused. Do not remove, replace or unlink a lock file to bypass its owner. If acquisition is refused, stop project writers and ask the operator to restore a real, correctly owned local data directory without discarding its data.
+
+Each daemon pass takes `dispatch.lock` before pending-mirror recovery, hub pull, relay and hook dispatch, then releases it before waiting. A contended pass remains alive and retries at its existing cadence; it performs none of that work while another dispatcher holds the pass lock. This differs from a duplicate daemon start, which remains a clean no-op under the separate lifetime `sync.daemon.lock`. The legacy `mtix sync daemon --dispatch-hooks` spelling uses the same pass lock; the daemon without that flag still locks its pull/relay pass.
+
+`mtix sync doctor` reports the local `data filesystem` check in text and JSON. Known network or FUSE mounts produce a passing WARN with local-disk recovery guidance; a failed or unavailable classifier also warns without claiming reliable locking. Only recognized local disk filesystem names (apfs on macOS; ext, xfs, btrfs and similar on Linux) pass; any other name also warns, because an unrecognized filesystem is not a locking guarantee. On Windows the filesystem cannot be classified, so this row always shows a WARN (classification unavailable); it cannot be cleared, it does not fail the doctor, and it does not mean the store is unsafe. The check performs no network contact of its own; the doctor's existing hub checks still contact the hub and can fail independently. Existing unsafe-filesystem write refusal remains in force. Give each machine its own local `.mtix` and use the hub to share changes.
+
 Hook dispatch is **origin-independent**: a hook fires for a journaled
 event based only on (a) the event being in the journal and (b) the hook
 not yet having fired for it on this host — never on who wrote the event
@@ -3031,6 +3053,42 @@ This works because each node also has a stable internal identity (its
 dot-path. For the full design see
 [ADR-003](../ADR-003-DISTRIBUTED-NODE-IDENTITY.md) and
 [docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md).
+
+### Board identity
+
+New boards created by `mtix init` have one UUID followed by a newline in
+`.mtix/board-id`. Commit this file with the board and preserve it when cloning;
+it is board data outside `config.yaml`. The tested v0.5.4-beta configuration
+writer preserves its bytes. Existing boards are not assigned an identity by
+pull, doctor or another background command. Do not manufacture or merge IDs
+by editing the file; setup and explicit rekey recovery are planned separately.
+
+A successful `mtix sync pull` records the hub's project prefix and first-event
+hash through its existing authenticated connection. Successful relay attach
+records the verified relay ID. These observations live in operator-local state
+for the checkout, outside committed configuration. A successfully observed
+missing hub row or empty hash clears the current observation to unknown; a
+failed lookup preserves the previous observation. Recording is best-effort: if it
+fails after the pull or attach succeeded, the command prints a WARN and still
+succeeds.
+
+Grant matching defaults to board ID alone. The operator-local
+`inbox.strict_board_identity` setting defaults to false; when true, matching
+also requires the same known hub identity. An unknown identity never matches
+in strict mode. This release reads the setting and existing confirmations;
+setup, reconfirmation, rekey and the host-setting command are planned and do
+not create or update grants here.
+
+`mtix sync doctor` checks the local identity without an additional identity
+connection. For a hub board, multiple identities fail the `board.id` check;
+a missing `.mtix/board-id` or a hub identity no pull has recorded yet is a
+warning (run `mtix sync pull` to record it); a hub identity a pull observed as
+missing or empty fails with `mtix sync init` as its fix.
+A changed recorded hub identity warns through `board.hub-identity-changed`
+and names the planned reconfirmation and strict-setting options. The warning
+does not perform either action. Resolve a reported identity disagreement with
+the board owner; preserve existing confirmations until explicit recovery is
+available. Text and JSON reports carry the same status and guidance.
 
 ### Provisional vs settled IDs
 

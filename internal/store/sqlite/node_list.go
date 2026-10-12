@@ -150,6 +150,18 @@ func buildFilterClausesWithPrefix(filter store.NodeFilter, prefix string) ([]str
 		args = append(args, label)
 	}
 
+	// Text filter (MTIX-146): every word must appear in the title, description
+	// or prompt. Each word binds three escaped LIKE parameters; LIKE is
+	// case-insensitive for ASCII in SQLite, and '%', '_' and '\' match
+	// themselves because the word is escaped and paired with ESCAPE '\'.
+	for _, word := range filter.Text {
+		clauses = append(clauses, fmt.Sprintf(
+			"(%stitle LIKE ? ESCAPE '\\' OR %sdescription LIKE ? ESCAPE '\\' OR %sprompt LIKE ? ESCAPE '\\')",
+			prefix, prefix, prefix))
+		pattern := "%" + escapeLIKEPrefix(word) + "%"
+		args = append(args, pattern, pattern, pattern)
+	}
+
 	// ChangedSince filter (MTIX-6.1): nodes updated strictly after the given
 	// instant. updated_at is stored as UTC RFC3339, so the bound parameter is
 	// formatted identically and the comparison is a correct lexical/chronological

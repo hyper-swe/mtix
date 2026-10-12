@@ -150,7 +150,7 @@ func TestRunSearch_DefaultScope_PrimaryOnly(t *testing.T) {
 	t.Cleanup(func() { app.jsonOutput = false })
 
 	out := captureStdout(t, func() {
-		require.NoError(t, runSearch("", "", "", "", "", "", "", 50, "", false))
+		require.NoError(t, runSearch(nil, "", "", "", "", "", "", "", 50, "", false))
 	})
 	ids := extractNodeIDs(t, out)
 	require.Len(t, ids, 2)
@@ -165,7 +165,7 @@ func TestRunSearch_ProjectFlag_OtherOnly(t *testing.T) {
 	t.Cleanup(func() { app.jsonOutput = false })
 
 	out := captureStdout(t, func() {
-		require.NoError(t, runSearch("", "", "", "", "", "", "", 50, "OTHER", false))
+		require.NoError(t, runSearch(nil, "", "", "", "", "", "", "", 50, "OTHER", false))
 	})
 	ids := extractNodeIDs(t, out)
 	require.Len(t, ids, 1)
@@ -180,7 +180,7 @@ func TestRunSearch_AllProjects_ReturnsAll(t *testing.T) {
 	t.Cleanup(func() { app.jsonOutput = false })
 
 	out := captureStdout(t, func() {
-		require.NoError(t, runSearch("", "", "", "", "", "", "", 50, "", true))
+		require.NoError(t, runSearch(nil, "", "", "", "", "", "", "", 50, "", true))
 	})
 	ids := extractNodeIDs(t, out)
 	require.Len(t, ids, 3)

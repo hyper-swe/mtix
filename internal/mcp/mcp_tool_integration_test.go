@@ -154,6 +154,12 @@ func (m *dbMockStore) TransitionStatus(_ context.Context, _ string, _ model.Stat
 func (m *dbMockStore) DeferNode(_ context.Context, _ string, _ *time.Time, _, _ string) error {
 	return nil
 }
+func (m *dbMockStore) TransitionStatusFrom(_ context.Context, _ string, _, _ model.Status, _, _ string) error {
+	return nil
+}
+func (m *dbMockStore) RestoreInvalidated(_ context.Context, _, _ string) (model.Status, error) {
+	return model.StatusOpen, nil
+}
 func (m *dbMockStore) WakeDeferredNode(_ context.Context, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }
@@ -175,7 +181,10 @@ func (m *dbMockStore) GetAncestorChain(_ context.Context, _ string) ([]*model.No
 func (m *dbMockStore) GetSiblings(_ context.Context, _ string) ([]*model.Node, error) {
 	return nil, nil
 }
-func (m *dbMockStore) SetAnnotations(_ context.Context, _ string, _ []model.Annotation) error {
+func (m *dbMockStore) AppendAnnotation(_ context.Context, _ string, _ model.Annotation) error {
+	return nil
+}
+func (m *dbMockStore) ResolveAnnotation(_ context.Context, _, _ string, _ bool) error {
 	return nil
 }
 func (m *dbMockStore) Query(_ context.Context, query string, args ...any) (*sql.Rows, error) {

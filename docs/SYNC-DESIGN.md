@@ -463,6 +463,14 @@ The actual event transport (NATS? Postgres LISTEN/NOTIFY on the existing hub? Fi
 **Considered alternative:** Long-running daemon process.
 **Why:** Daemons are a deployment liability — they have to be installed, started, monitored, restarted on crash. flock is kernel-level, requires zero install, and is auto-released on process exit. The opt-in `mtix sync daemon` exists for real-time UX (every-30s pull) but is never required for correctness.
 
+The implemented push-lock path is `.mtix/data/sync.push.lock`; named `dispatch.lock` coordinates each existing daemon pass while the separate `sync.daemon.lock` retains lifetime ownership.
+
+Push and dispatch coordination use `.mtix/data/sync.push.lock` and `.mtix/data/dispatch.lock`. Both require a real data directory and regular lock file owned by the effective OS user; symlinked directories or lock files, Windows reparse points and wrong object types are refused. Do not remove, replace or unlink a lock file to bypass its owner. If acquisition is refused, stop project writers and ask the operator to restore a real, correctly owned local data directory without discarding its data.
+
+Each daemon pass takes `dispatch.lock` before pending-mirror recovery, hub pull, relay and hook dispatch, then releases it before waiting. A contended pass remains alive and retries at its existing cadence; it performs none of that work while another dispatcher holds the pass lock. This differs from a duplicate daemon start, which remains a clean no-op under the separate lifetime `sync.daemon.lock`. The legacy `mtix sync daemon --dispatch-hooks` spelling uses the same pass lock; the daemon without that flag still locks its pull/relay pass.
+
+`mtix sync doctor` reports the local `data filesystem` check in text and JSON. Known network or FUSE mounts produce a passing WARN with local-disk recovery guidance; a failed or unavailable classifier also warns without claiming reliable locking. Only recognized local disk filesystem names (apfs on macOS; ext, xfs, btrfs and similar on Linux) pass; any other name also warns, because an unrecognized filesystem is not a locking guarantee. On Windows the filesystem cannot be classified, so this row always shows a WARN (classification unavailable); it cannot be cleared, it does not fail the doctor, and it does not mean the store is unsafe. The check performs no network contact of its own; the doctor's existing hub checks still contact the hub and can fail independently. Existing unsafe-filesystem write refusal remains in force. Give each machine its own local `.mtix` and use the hub to share changes.
+
 ### D14. Hooks are advisory; server-side enforcement is the real gate
 **Decision:** Pre-push hooks ship as documented examples. Safety-critical adopters configure server-side enforcement (pre-receive on self-hosted git, GitHub Action on github.com).
 **Considered alternative:** Mandatory client-side hook installation as part of `mtix sync init`.

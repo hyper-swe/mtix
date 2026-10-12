@@ -39,7 +39,7 @@ func windowsRuntimeTestScript() string {
 		}
 	}
 	hooks := []string{"TestHooksStatus_ValidateInput", "TestHooksStatus_Output", "TestHooksStatus_Command", "TestHooksStatus_Reports", "TestHooksStatus_HomeInput"}
-	return strings.NewReplacer("@ACL_FILTER@", windowsRuntimeACLFilter, "@ACL_NAMES@", windowsRuntimeQuotedNames(oplocal), "@HOOK_NAMES@", windowsRuntimeQuotedNames(hooks)).Replace(windowsRuntimeTestTemplate)
+	return strings.NewReplacer("@ACL_FILTER@", windowsRuntimeACLFilter, "@ACL_NAMES@", windowsRuntimeQuotedNames(oplocal), "@HOOK_NAMES@", windowsRuntimeQuotedNames(hooks)).Replace(windowsRuntimeTestTemplate) + windowsRuntimeNamedEvaluationScript
 }
 
 func windowsRuntimeQuotedNames(names []string) string {
@@ -94,4 +94,32 @@ if (Test-Path $startFile -PathType Leaf) {
   $elapsed = ($completed - $started).TotalSeconds
 }
 @{ schema=1; started_utc=$started; completed_utc=$completed.ToString('o'); elapsed_seconds=$elapsed; run_id=$env:MTIX_WINDOWS_RUN_ID; attempt=$env:MTIX_WINDOWS_RUN_ATTEMPT; run_url=$env:MTIX_WINDOWS_RUN_URL; head_sha=$env:MTIX_WINDOWS_HEAD_SHA; checkout_sha=$env:MTIX_WINDOWS_CHECKOUT_SHA; image_os=$env:ImageOS; image_version=$env:ImageVersion; authoritative_job_duration='maintainer records Actions started_at/completed_at for every attempt, including setup failure and cancellation' } | ConvertTo-Json | Set-Content -LiteralPath "$env:MTIX_WINDOWS_CAPTURE_DIR/duration.json"
+`
+
+const windowsRuntimeNamedTestScript = `$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
+$env:MTIX_SYNC_DSN = ''
+$env:MTIX_PG_TEST_DSN = ''
+& go test ./internal/sync/pushlock -race -count=1 -timeout=8m -json -run '^(TestAcquireNamed_SymlinkedLockFile_Refused|TestAcquireNamed_SymlinkedDataDir_Refused|TestAcquire_PushLockName_Unchanged|TestAcquireNamed_InvalidFilename_Refused|TestAcquireNamed_DataOrFileType_Refused|TestNamedLock_WindowsMetadata_ValidatesTypeAndOwner|TestNamedLock_WindowsOwnerPolicy_AcceptsUserAndElevatedAdministrators|TestNamedLock_WindowsOwner_RealObjectsOwnedByUser|TestNamedLock_WindowsLegacyDirectoryAndForeignDirectory|TestNamedLock_WindowsAdminGate_ElevationAndOwnerFlags|TestNamedLock_WindowsLockFile_UserOnlyAccessAndNoDelete)$' > "$env:MTIX_WINDOWS_CAPTURE_DIR/named-locks.json"
+$namedLockExit = $LASTEXITCODE
+& go test ./cmd/mtix -race -count=1 -timeout=8m -json -run '^TestDispatchLock_HeldByOther_DaemonIdlesNotExits$' > "$env:MTIX_WINDOWS_CAPTURE_DIR/dispatch-lock.json"
+$dispatchLockExit = $LASTEXITCODE
+@{ named_lock=$namedLockExit; dispatch_lock=$dispatchLockExit } | ConvertTo-Json | Set-Content -LiteralPath "$env:MTIX_WINDOWS_CAPTURE_DIR/named-lock-exits.json"
+if ($namedLockExit -ne 0 -or $dispatchLockExit -ne 0) { throw 'Named-lock native test failure' }
+`
+
+const windowsRuntimeNamedEvaluationScript = `$namedLockRequired = @('TestAcquireNamed_SymlinkedLockFile_Refused', 'TestAcquireNamed_SymlinkedDataDir_Refused', 'TestAcquire_PushLockName_Unchanged', 'TestAcquireNamed_InvalidFilename_Refused', 'TestAcquireNamed_DataOrFileType_Refused', 'TestNamedLock_WindowsMetadata_ValidatesTypeAndOwner', 'TestNamedLock_WindowsOwnerPolicy_AcceptsUserAndElevatedAdministrators', 'TestNamedLock_WindowsOwner_RealObjectsOwnedByUser', 'TestNamedLock_WindowsLegacyDirectoryAndForeignDirectory', 'TestNamedLock_WindowsAdminGate_ElevationAndOwnerFlags', 'TestNamedLock_WindowsLockFile_UserOnlyAccessAndNoDelete')
+$dispatchLockRequired = @('TestDispatchLock_HeldByOther_DaemonIdlesNotExits', 'TestDispatchLock_HeldByOther_DaemonIdlesNotExits/daemon', 'TestDispatchLock_HeldByOther_DaemonIdlesNotExits/syncdaemon')
+foreach ($namedSuite in @(@{ file='named-locks.json'; package='github.com/hyper-swe/mtix/internal/sync/pushlock'; tests=$namedLockRequired }, @{ file='dispatch-lock.json'; package='github.com/hyper-swe/mtix/cmd/mtix'; tests=$dispatchLockRequired })) {
+  $nativeEvents = Get-Content -LiteralPath "$env:MTIX_WINDOWS_CAPTURE_DIR/$($namedSuite.file)" | ForEach-Object { $_ | ConvertFrom-Json }
+  foreach ($nativeTest in $namedSuite.tests) {
+    $nativePassed = @($nativeEvents | Where-Object { $_.Package -eq $namedSuite.package -and $_.Test -eq $nativeTest -and $_.Action -eq 'pass' })
+    $nativeSkipped = @($nativeEvents | Where-Object { $_.Package -eq $namedSuite.package -and $_.Test -eq $nativeTest -and $_.Action -eq 'skip' })
+    if ($nativePassed.Count -ne 1 -or $nativeSkipped.Count -ne 0) { throw "Required named-lock native test did not PASS: $nativeTest" }
+  }
+  $nativePackagePassed = @($nativeEvents | Where-Object { $_.Package -eq $namedSuite.package -and !$_.Test -and $_.Action -eq 'pass' })
+  if ($nativePackagePassed.Count -ne 1) { throw 'Named-lock native package did not PASS' }
+}
+$nativeExits = Get-Content -LiteralPath "$env:MTIX_WINDOWS_CAPTURE_DIR/named-lock-exits.json" -Raw | ConvertFrom-Json
+if ($null -eq $nativeExits.named_lock -or $null -eq $nativeExits.dispatch_lock -or $nativeExits.named_lock -ne 0 -or $nativeExits.dispatch_lock -ne 0) { throw 'Named-lock native exits missing or failed' }
 `

@@ -287,9 +287,11 @@ With no hub configured the daemon still runs, tailing the local journal
 only — cross-process writes into this .mtix keep dispatching.
 
 Foreground process; intended for launchd/systemd supervision (see
---install). Idempotent start: .mtix/sync.daemon.pid marks the running
-instance — shared with 'mtix sync daemon', so the two never run
-together. Transient pull errors are logged and retried, never fatal.
+--install). Idempotent start: a lifetime OS lock at .mtix/data/sync.daemon.lock
+is shared with 'mtix sync daemon', so the two never run together.
+The PID file is diagnostic and removed only by its matching owner. Each pull/relay/dispatch pass takes
+.mtix/data/dispatch.lock; contention idles and retries at the existing cadence.
+Push and dispatch lock files and their data directory must be real and user-owned. Transient pull errors are logged and retried, never fatal.
 
 ### Flags
 
@@ -1522,9 +1524,9 @@ Run a foreground process that pulls events from the BYO Postgres
 hub every N seconds (default 30) until killed. Intended for systemd
 or launchd supervision; this command does NOT fork itself.
 
-Idempotent start: a .mtix/sync.daemon.pid file marks the running
-instance. If a live PID is found, this command exits with a
-non-error message. The PID file is removed on graceful shutdown.
+Idempotent start: a lifetime OS lock at .mtix/data/sync.daemon.lock
+excludes both daemon spellings. Lock contention exits cleanly. The
+PID file is diagnostic and removed only by its matching owner.
 
 Use --install to print a systemd unit (linux) or launchd plist
 (darwin) ready to be installed by the user.
@@ -1578,6 +1580,8 @@ Run health checks against the local store and the BYO Postgres hub:
   board.hub-identity-changed - warns when the observed hub differs from
                            a recorded confirmation; recovery is planned
   Operator state placement - reports the sandbox placement limitation
+  Data filesystem        - warns on known network/FUSE data mounts; unavailable
+                           classification is reported without claiming safe locks
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
   Hub triggers           - every function and trigger the hub migrations
                            define exists, every trigger executes the

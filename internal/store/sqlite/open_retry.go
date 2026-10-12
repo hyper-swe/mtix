@@ -5,6 +5,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -162,11 +163,7 @@ func checkIntegrity(ctx context.Context, rt openRetry, path string,
 			"retry in a moment (this is not corruption): %w (%v)",
 			path, model.ErrIntegrityCheckIncomplete, err)
 	case isCorruptionError(err):
-		// Deliberately NOT worded "could not run": that phrase means "transient,
-		// retry" in the runbook, and a damaged database must never read that way.
-		return fmt.Errorf("database corruption detected by the integrity check on %s (%v); "+
-			"run 'mtix recover' (read-only salvage) or restore a backup; %s: %w",
-			path, err, recoveryGuidance, model.ErrCorrupted)
+		return corruptionError(path, "integrity check", err)
 	default:
 		return fmt.Errorf("integrity check on %s could not run (%s); retry, and check for "+
 			"other processes or storage problems (this is not corruption): %w (%v)",
@@ -189,4 +186,39 @@ func describeIntegrityCause(err error) string {
 	default:
 		return msg
 	}
+}
+
+// corruptionError reports damage found while opening a store as ErrCorrupted
+// with the recovery path. It is deliberately NOT worded "could not run": that
+// phrase means "transient, retry" in the runbook, and a damaged database must
+// never read that way. Every open path (pragmas such as the WAL switch, the
+// integrity check, the read-only open) uses it (MTIX-147).
+func corruptionError(path, stage string, cause error) error {
+	return fmt.Errorf("database corruption detected by the %s on %s (%v); "+
+		"run 'mtix recover' (read-only salvage) or restore a backup; %s: %w",
+		stage, path, cause, recoveryGuidance, model.ErrCorrupted)
+}
+
+// pragma is one connection setup statement and a short description for errors.
+type pragma struct{ stmt, what string }
+
+// applyPragmas runs each pragma under the retry policy and closes db on
+// failure. A pragma that fails because the file is damaged (for example the
+// WAL switch reading page 1) is reported as ErrCorrupted (MTIX-147).
+func applyPragmas(ctx context.Context, db *sql.DB, path string, pragmas []pragma, rt openRetry) error {
+	for _, p := range pragmas {
+		if err := retryTransient(ctx, rt, func() error {
+			_, execErr := db.ExecContext(ctx, p.stmt)
+			return execErr
+		}); err != nil {
+			if closeErr := db.Close(); closeErr != nil {
+				return fmt.Errorf("close after pragma failure: %w", closeErr)
+			}
+			if isCorruptionError(err) {
+				return corruptionError(path, p.what, err)
+			}
+			return fmt.Errorf("%s: %w", p.what, err)
+		}
+	}
+	return nil
 }

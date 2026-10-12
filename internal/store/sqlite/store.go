@@ -184,7 +184,6 @@ func openDBWith(ctx context.Context, path string, isWriter, readOnly bool, rt op
 	// PRAGMA foreign_keys = ON and busy_timeout on ALL connections
 	// (NFR-2.1); busy_timeout prevents immediate SQLITE_BUSY failures
 	// during concurrent access from multiple processes or agents.
-	type pragma struct{ stmt, what string }
 	pragmas := []pragma{
 		{"PRAGMA foreign_keys = ON", "enable foreign keys"},
 		{"PRAGMA busy_timeout = 5000", "set busy_timeout"},
@@ -217,16 +216,8 @@ func openDBWith(ctx context.Context, path string, isWriter, readOnly bool, rt op
 		)
 	}
 
-	for _, p := range pragmas {
-		if err := retryTransient(ctx, rt, func() error {
-			_, execErr := db.ExecContext(ctx, p.stmt)
-			return execErr
-		}); err != nil {
-			if closeErr := db.Close(); closeErr != nil {
-				return nil, fmt.Errorf("close after pragma failure: %w", closeErr)
-			}
-			return nil, fmt.Errorf("%s: %w", p.what, err)
-		}
+	if err := applyPragmas(ctx, db, path, pragmas, rt); err != nil {
+		return nil, err
 	}
 
 	return db, nil

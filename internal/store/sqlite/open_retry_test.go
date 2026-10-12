@@ -348,10 +348,10 @@ func TestIsTransientOpenError_RealDriverBusySnapshot_ClassifiedByPrimaryCode(t *
 	ctx := context.Background()
 	c1, err := db.Conn(ctx)
 	require.NoError(t, err)
-	defer func() { _ = c1.Close() }()
+	defer func() { require.NoError(t, c1.Close()) }()
 	c2, err := db.Conn(ctx)
 	require.NoError(t, err)
-	defer func() { _ = c2.Close() }()
+	defer func() { require.NoError(t, c2.Close()) }()
 	_, err = c1.ExecContext(ctx, "BEGIN")
 	require.NoError(t, err)
 	var n int

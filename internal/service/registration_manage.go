@@ -54,8 +54,12 @@ func (s *RegistrationService) Unregister(ctx context.Context, agentID string, wh
 		if !force && !who.matches(&rows[i]) && !hasNoRoute(&rows[i]) && s.Liveness.Probe(ctx, rows[i]) != LiveDead {
 			return fmt.Errorf("agent %q belongs to another live session; use --force to remove it: %w", agentID, model.ErrAgentStillActive)
 		}
-		if _, err := s.Store.DeleteRegistration(ctx, s.key(agentID)); err != nil {
+		n, err := s.Store.DeleteRegistrationIf(ctx, s.key(agentID), snapshotOf(&rows[i]))
+		if err != nil {
 			return err
+		}
+		if n == 0 { // a register committed after the row was read
+			return fmt.Errorf("registration for %q changed while it was being removed; retry: %w", agentID, model.ErrConflict)
 		}
 		return nil
 	}
@@ -79,7 +83,7 @@ func (s *RegistrationService) ExpireStale(ctx context.Context) ([]sqlite.Registr
 		if s.Liveness.Probe(ctx, rows[i]) != LiveDead {
 			continue
 		}
-		n, derr := s.Store.DeleteRegistration(ctx, s.key(rows[i].AgentID))
+		n, derr := s.Store.DeleteRegistrationIf(ctx, s.key(rows[i].AgentID), snapshotOf(&rows[i]))
 		if derr != nil {
 			return expired, derr
 		}
@@ -88,4 +92,8 @@ func (s *RegistrationService) ExpireStale(ctx context.Context) ([]sqlite.Registr
 		}
 	}
 	return expired, nil
+}
+
+func snapshotOf(r *sqlite.Registration) sqlite.RegistrationSnapshot {
+	return sqlite.RegistrationSnapshot{Epoch: r.Epoch, LastSeen: r.LastSeen}
 }

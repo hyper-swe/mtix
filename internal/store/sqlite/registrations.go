@@ -149,17 +149,33 @@ func (s *Store) ListRegistrations(ctx context.Context, hostID, uid string) ([]Re
 	return out, nil
 }
 
-// DeleteRegistration removes the row for key and reports how many rows went.
-func (s *Store) DeleteRegistration(ctx context.Context, key RegistrationKey) (int64, error) {
-	res, err := s.writeDB.ExecContext(ctx,
-		`DELETE FROM agent_registrations WHERE agent_id = ? AND host_id = ? AND uid = ?`,
-		key.AgentID, key.HostID, key.UID)
+// RegistrationSnapshot is the version of a row a caller examined: a delete
+// applies only while the row still has this epoch and last_seen.
+type RegistrationSnapshot struct {
+	Epoch    int64
+	LastSeen string
+}
+
+// DeleteRegistrationIf removes the row for key only if it still has the
+// snapshot's epoch and last_seen, inside one guarded write transaction, and
+// reports how many rows went. A register that committed after the caller read
+// the row changes both fields, so the fresh row survives (zero rows).
+func (s *Store) DeleteRegistrationIf(ctx context.Context, key RegistrationKey, seen RegistrationSnapshot) (int64, error) {
+	var n int64
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		// Compare-and-delete: epoch and last_seen identify the exact row version examined.
+		res, err := tx.ExecContext(ctx,
+			`DELETE FROM agent_registrations
+			  WHERE agent_id = ? AND host_id = ? AND uid = ? AND epoch = ? AND last_seen = ?`,
+			key.AgentID, key.HostID, key.UID, seen.Epoch, seen.LastSeen)
+		if err != nil {
+			return err
+		}
+		n, err = res.RowsAffected()
+		return err
+	})
 	if err != nil {
 		return 0, fmt.Errorf("delete registration %q: %w", key.AgentID, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("count deleted registrations: %w", err)
 	}
 	return n, nil
 }
@@ -171,16 +187,20 @@ func (s *Store) TouchRegistration(ctx context.Context, key RegistrationKey, hand
 	if handle == "" {
 		return 0, nil
 	}
-	res, err := s.writeDB.ExecContext(ctx,
-		`UPDATE agent_registrations SET last_seen = ?
-		  WHERE agent_id = ? AND host_id = ? AND uid = ? AND session_handle = ?`,
-		now, key.AgentID, key.HostID, key.UID, handle)
+	var n int64
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE agent_registrations SET last_seen = ?
+			  WHERE agent_id = ? AND host_id = ? AND uid = ? AND session_handle = ?`,
+			now, key.AgentID, key.HostID, key.UID, handle)
+		if err != nil {
+			return err
+		}
+		n, err = res.RowsAffected()
+		return err
+	})
 	if err != nil {
 		return 0, fmt.Errorf("touch registration %q: %w", key.AgentID, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("count touched registrations: %w", err)
 	}
 	return n, nil
 }
@@ -208,6 +228,9 @@ func (s *Store) touchFromContext(ctx context.Context, agentID string) {
 	t, ok := ctx.Value(sessionTouchKey{}).(SessionTouch)
 	if !ok || t.Handle == "" {
 		return
+	}
+	if s.preflightWrite() != nil {
+		return // writes are refused (unsafe filesystem, fail-stop, full disk): a read path must not write
 	}
 	key := RegistrationKey{AgentID: agentID, HostID: t.HostID, UID: t.UID}
 	if _, err := s.TouchRegistration(ctx, key, t.Handle, s.clock().UTC().Format(time.RFC3339)); err != nil {

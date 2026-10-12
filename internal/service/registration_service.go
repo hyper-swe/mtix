@@ -50,7 +50,7 @@ type RegistrationStore interface {
 	RegisterSessionAtomic(ctx context.Context, key sqlite.RegistrationKey,
 		decide func(existing *sqlite.Registration, journalMax int64) (*sqlite.Registration, error)) (*sqlite.Registration, error)
 	ListRegistrations(ctx context.Context, hostID, uid string) ([]sqlite.Registration, error)
-	DeleteRegistration(ctx context.Context, key sqlite.RegistrationKey) (int64, error)
+	DeleteRegistrationIf(ctx context.Context, key sqlite.RegistrationKey, seen sqlite.RegistrationSnapshot) (int64, error)
 }
 
 // TakeOverRecord is one operator-local audit entry for a take-over.
@@ -214,6 +214,9 @@ func (s *RegistrationService) RegisterSession(ctx context.Context, req RegisterS
 			next := *existing
 			next.LastSeen = s.Clock().UTC().Format(time.RFC3339)
 			next.Harness, next.PermissionMode, next.Origin = req.Harness, req.PermissionMode, req.Origin
+			// A resumed session keeps its handle in a new process: the row must
+			// follow it, or a probe sees the old, dead pid and replaces a live lane.
+			next.PID, next.PIDStartTime = int64(req.PID), req.PIDStartTime
 			return &next, nil
 		case hasNoRoute(existing) || s.Liveness.Probe(ctx, *existing) == LiveDead:
 			res.Outcome = OutcomeReplacedDead

@@ -44,13 +44,15 @@ type detectedSession struct {
 // origin manual; a handle found in the environment is session-env (ADR-007 §3.3).
 func detectSession(getenv func(string) string, opts sessionOptions) detectedSession {
 	harness, handle := "unknown", ""
+	// Most specific first: a child harness inherits its parent's variables, so a
+	// pi or Codex lane started from a Claude Code shell sees the Claude socket too.
 	switch {
-	case getenv("CLAUDE_CODE_MESSAGING_SOCKET") != "":
-		harness, handle = "claude-code", getenv("CLAUDE_CODE_MESSAGING_SOCKET")
-	case getenv("CODEX_THREAD_ID") != "":
-		harness, handle = "codex", getenv("CODEX_THREAD_ID")
 	case getenv("PI_SESSION_ID") != "":
 		harness, handle = "pi", getenv("PI_SESSION_ID")
+	case getenv("CODEX_THREAD_ID") != "":
+		harness, handle = "codex", getenv("CODEX_THREAD_ID")
+	case getenv("CLAUDE_CODE_MESSAGING_SOCKET") != "":
+		harness, handle = "claude-code", getenv("CLAUDE_CODE_MESSAGING_SOCKET")
 	}
 	origin := "manual"
 	if handle != "" {

@@ -46,6 +46,9 @@ func TestDetectSession_Environment_PicksHarnessAndOrigin(t *testing.T) {
 		{"pi session", map[string]string{"PI_SESSION_ID": "pi-9"}, sessionOptions{}, "pi", "pi-9", "session-env"},
 		{"typed session is manual", map[string]string{"CODEX_THREAD_ID": "th-1"}, sessionOptions{Session: "typed"}, "codex", "typed", "manual"},
 		{"typed harness wins", map[string]string{"CODEX_THREAD_ID": "th-1"}, sessionOptions{Harness: "pi", Session: "x"}, "pi", "x", "manual"},
+		{"codex started from a claude shell", map[string]string{"CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/outer", "CODEX_THREAD_ID": "th-inner"}, sessionOptions{}, "codex", "th-inner", "session-env"},
+		{"pi started from a claude shell", map[string]string{"CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/outer", "PI_SESSION_ID": "pi-inner"}, sessionOptions{}, "pi", "pi-inner", "session-env"},
+		{"pi started from a codex shell", map[string]string{"CODEX_THREAD_ID": "th-outer", "PI_SESSION_ID": "pi-inner"}, sessionOptions{}, "pi", "pi-inner", "session-env"},
 		{"nothing detected", map[string]string{}, sessionOptions{}, "unknown", "", "manual"},
 	}
 	for _, tt := range tests {

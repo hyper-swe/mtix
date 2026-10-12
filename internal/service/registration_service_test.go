@@ -4,10 +4,12 @@
 package service_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -508,4 +510,193 @@ func TestUnregisterAndExpire_StoreFailure_Wrapped(t *testing.T) {
 	assert.Error(t, err)
 	_, err = f.svc.ListRegistrations(ctx)
 	assert.Error(t, err)
+}
+
+func TestRegisterSession_ResumedSessionNewProcess_RecordsNewPID(t *testing.T) {
+	f := newRegFixture(t)
+	ctx := context.Background()
+	_, err := f.svc.RegisterSession(ctx, req("w", 100))
+	require.NoError(t, err)
+	f.live[100] = service.LiveDead
+
+	resumed := req("w", 200) // same handle? req derives the handle from the pid, so pin it
+	resumed.SessionHandle = "h100"
+	resumed.PIDStartTime = "t2"
+	res, err := f.svc.RegisterSession(ctx, resumed)
+	require.NoError(t, err)
+	assert.Equal(t, service.OutcomeRefreshed, res.Outcome)
+	assert.EqualValues(t, 200, res.Registration.PID, "a refresh moves the row to the live process")
+	assert.Equal(t, "t2", res.Registration.PIDStartTime)
+
+	f.live[200] = service.LiveAlive
+	_, err = f.svc.RegisterSession(ctx, req("w", 300))
+	require.ErrorIs(t, err, model.ErrAgentStillActive, "the resumed lane is live and must not be replaced silently")
+}
+
+func TestRegisterSession_ReusedPIDWithOtherStartTime_IsNotMine(t *testing.T) {
+	f := newRegFixture(t)
+	ctx := context.Background()
+	first := service.RegisterSessionRequest{AgentID: "w", Origin: "manual", PID: 100, PIDStartTime: "t1"}
+	_, err := f.svc.RegisterSession(ctx, first)
+	require.NoError(t, err)
+	f.live[100] = service.LiveAlive
+	reused := first
+	reused.PIDStartTime = "t2"
+	_, err = f.svc.RegisterSession(ctx, reused)
+	require.ErrorIs(t, err, model.ErrAgentStillActive)
+}
+
+func TestRegisterSession_SameDisplacedSessionAfterTenMinutes_NoticedAgain(t *testing.T) {
+	f := newRegFixture(t)
+	ctx := context.Background()
+	f.log.recs = append(f.log.recs, service.TakeOverRecord{AgentID: "w", At: f.now.Add(-11 * time.Minute), DisplacedSession: "h100", NoticeAttempted: true})
+	_, err := f.svc.RegisterSession(ctx, req("w", 100))
+	require.NoError(t, err)
+	f.live[100] = service.LiveAlive
+	r := req("w", 200)
+	r.TakeOver = true
+	res, err := f.svc.RegisterSession(ctx, r)
+	require.NoError(t, err)
+	assert.True(t, res.NoticeSent, "the 10-minute window has passed for the same displaced session")
+}
+
+func TestRegisterSession_NoticeSuppressed_AuditRecordsNoAttempt(t *testing.T) {
+	f := newRegFixture(t)
+	ctx := context.Background()
+	f.log.recs = append(f.log.recs, service.TakeOverRecord{AgentID: "w", At: f.now.Add(-time.Minute), DisplacedSession: "h100", NoticeAttempted: true})
+	_, err := f.svc.RegisterSession(ctx, req("w", 100))
+	require.NoError(t, err)
+	f.live[100] = service.LiveAlive
+	r := req("w", 200)
+	r.TakeOver = true
+	_, err = f.svc.RegisterSession(ctx, r)
+	require.NoError(t, err)
+	assert.False(t, f.log.recs[len(f.log.recs)-1].NoticeAttempted)
+}
+
+func TestRegisterSession_RouteLessManualRow_ReplacedSilently(t *testing.T) {
+	f := newRegFixture(t)
+	ctx := context.Background()
+	_, err := f.svc.RegisterSession(ctx, service.RegisterSessionRequest{AgentID: "w", Origin: "manual"})
+	require.NoError(t, err)
+	res, err := f.svc.RegisterSession(ctx, req("w", 200))
+	require.NoError(t, err, "a row with neither handle nor pid holds nothing live")
+	assert.Equal(t, service.OutcomeReplacedDead, res.Outcome)
+}
+
+func TestRegisterSession_ConcurrentSessions_OneWinsOthersRefused(t *testing.T) {
+	f := newRegFixture(t)
+	ctx := context.Background()
+	const racers = 10
+	for pid := 1; pid <= racers; pid++ {
+		f.live[pid] = service.LiveAlive
+	}
+	var wg sync.WaitGroup
+	results := make(chan error, racers)
+	for pid := 1; pid <= racers; pid++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := f.svc.RegisterSession(ctx, req("w", pid))
+			results <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	ok, refused := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, model.ErrAgentStillActive):
+			refused++
+		}
+	}
+	assert.Equal(t, 1, ok)
+	assert.Equal(t, racers-1, refused)
+}
+
+// midProbeLiveness lets a test commit a fresh registration while a probe is in flight.
+type midProbeLiveness struct {
+	state service.LiveState
+	hook  func()
+}
+
+func (m *midProbeLiveness) Probe(context.Context, sqlite.Registration) service.LiveState {
+	if hook := m.hook; hook != nil {
+		m.hook = nil // clear first: the hook registers a session, which probes again
+		hook()
+	}
+	return m.state
+}
+
+func TestExpireStale_RegisterCommitsDuringProbe_FreshRowSurvives(t *testing.T) {
+	f := newRegFixture(t)
+	ctx := context.Background()
+	_, err := f.svc.RegisterSession(ctx, req("w", 100))
+	require.NoError(t, err)
+	_, err = f.store.WriteDB().Exec(`UPDATE agent_registrations SET last_seen='2020-01-01T00:00:00Z'`)
+	require.NoError(t, err)
+	probe := &midProbeLiveness{state: service.LiveDead}
+	probe.hook = func() {
+		_, e := f.svc.RegisterSession(ctx, req("w", 200)) // a new session registers while doctor probes
+		require.NoError(t, e)
+	}
+	f.svc.Liveness = probe
+
+	expired, err := f.svc.ExpireStale(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, expired, "the row changed after it was read, so it is not expired")
+	rows, _ := f.store.ListRegistrations(ctx, "host-a", "501")
+	require.Len(t, rows, 1)
+	assert.EqualValues(t, 200, rows[0].PID)
+}
+
+func TestUnregister_RegisterCommitsDuringProbe_ReportsConflictAndKeepsRow(t *testing.T) {
+	f := newRegFixture(t)
+	ctx := context.Background()
+	_, err := f.svc.RegisterSession(ctx, req("w", 100))
+	require.NoError(t, err)
+	probe := &midProbeLiveness{state: service.LiveDead}
+	probe.hook = func() {
+		_, e := f.svc.RegisterSession(ctx, req("w", 200))
+		require.NoError(t, e)
+	}
+	f.svc.Liveness = probe
+	err = f.svc.Unregister(ctx, "w", service.SessionIdentity{}, false)
+	require.ErrorIs(t, err, model.ErrConflict)
+	rows, _ := f.store.ListRegistrations(ctx, "host-a", "501")
+	require.Len(t, rows, 1)
+	assert.EqualValues(t, 200, rows[0].PID)
+}
+
+type failDeleteStore struct{ *sqlite.Store }
+
+func (failDeleteStore) DeleteRegistrationIf(context.Context, sqlite.RegistrationKey, sqlite.RegistrationSnapshot) (int64, error) {
+	return 0, errors.New("delete failed")
+}
+
+func TestUnregisterAndExpire_DeleteFailure_Propagates(t *testing.T) {
+	f := newRegFixture(t)
+	ctx := context.Background()
+	_, err := f.svc.RegisterSession(ctx, req("a", 1))
+	require.NoError(t, err)
+	_, err = f.svc.RegisterSession(ctx, req("b", 2)) // a second agent: Unregister must skip rows that are not its target
+	require.NoError(t, err)
+	_, err = f.store.WriteDB().Exec(`UPDATE agent_registrations SET last_seen='2020-01-01T00:00:00Z'`)
+	require.NoError(t, err)
+	f.live[1], f.live[2] = service.LiveDead, service.LiveDead
+	f.svc.Store = failDeleteStore{f.store}
+
+	require.ErrorContains(t, f.svc.Unregister(ctx, "b", service.SessionIdentity{}, true), "delete failed")
+	_, err = f.svc.ExpireStale(ctx)
+	require.ErrorContains(t, err, "delete failed")
+}
+
+func TestRegisterSession_AgentIDTooLong_Rejected(t *testing.T) {
+	f := newRegFixture(t)
+	r := req(string(make([]byte, 70)), 1)
+	r.AgentID = "x" + string(bytes.Repeat([]byte("y"), 70))
+	_, err := f.svc.RegisterSession(context.Background(), r)
+	require.ErrorIs(t, err, model.ErrInvalidInput)
 }

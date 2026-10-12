@@ -6,7 +6,9 @@ package sqlite_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -117,10 +119,15 @@ func TestDeleteRegistration_RemovesRowAndReportsCount(t *testing.T) {
 			RegisteredAt: "r", LastSeen: "l", RegistrarVersion: "t", AttachProtocol: 1}, nil
 	})
 	require.NoError(t, err)
-	n, err := s.DeleteRegistration(ctx, keyFor("w"))
+	stale := sqlite.RegistrationSnapshot{Epoch: 0, LastSeen: "other"}
+	n, err := s.DeleteRegistrationIf(ctx, keyFor("w"), stale)
+	require.NoError(t, err)
+	assert.Zero(t, n, "a row that changed since it was read survives")
+	snap := sqlite.RegistrationSnapshot{Epoch: 0, LastSeen: "l"}
+	n, err = s.DeleteRegistrationIf(ctx, keyFor("w"), snap)
 	require.NoError(t, err)
 	assert.EqualValues(t, 1, n)
-	n, err = s.DeleteRegistration(ctx, keyFor("w"))
+	n, err = s.DeleteRegistrationIf(ctx, keyFor("w"), snap)
 	require.NoError(t, err)
 	assert.Zero(t, n)
 }
@@ -199,10 +206,38 @@ func TestRegistrationStore_ClosedStore_ReturnsWrappedErrors(t *testing.T) {
 	ctx := context.Background()
 	_, err := s.ListRegistrations(ctx, "h", "1")
 	assert.Error(t, err)
-	_, err = s.DeleteRegistration(ctx, keyFor("w"))
+	_, err = s.DeleteRegistrationIf(ctx, keyFor("w"), sqlite.RegistrationSnapshot{})
 	assert.Error(t, err)
 	_, err = s.TouchRegistration(ctx, keyFor("w"), "h", "now")
 	assert.Error(t, err)
 	_, err = s.RegisterSessionAtomic(ctx, keyFor("w"), func(*sqlite.Registration, int64) (*sqlite.Registration, error) { return nil, nil })
 	assert.Error(t, err)
+}
+
+func TestRegisterSessionAtomic_ConcurrentSessions_ExactlyOneWins(t *testing.T) {
+	s := newRegistrationStore(t)
+	ctx := context.Background()
+	const racers = 12
+	var wg sync.WaitGroup
+	wins := make(chan string, racers)
+	for i := 0; i < racers; i++ {
+		handle := fmt.Sprintf("h%d", i)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := s.RegisterSessionAtomic(ctx, keyFor("w"), func(existing *sqlite.Registration, _ int64) (*sqlite.Registration, error) {
+				if existing != nil {
+					return nil, errors.New("live row")
+				}
+				return &sqlite.Registration{AgentID: "w", HostID: "host-a", UID: "501", Harness: "codex", Origin: "manual", SessionHandle: handle,
+					RegisteredAt: "r", LastSeen: "l", RegistrarVersion: "t", AttachProtocol: 1}, nil
+			})
+			if err == nil {
+				wins <- handle
+			}
+		}()
+	}
+	wg.Wait()
+	close(wins)
+	assert.Len(t, wins, 1, "the existing row is read inside the write transaction, so exactly one racer sees an empty slot")
 }

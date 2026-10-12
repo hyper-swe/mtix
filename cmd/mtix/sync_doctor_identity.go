@@ -43,7 +43,7 @@ func appendBoardIdentityChecks(report DoctorReport) DoctorReport {
 	}
 	connected := identityBoardConnected(observation)
 	if connected && !observation.Hub.Known() {
-		return appendDoctorCheck(report, boardIdentityFailure("hub identity is unknown", "mtix sync init"))
+		return appendDoctorCheck(report, unknownHubCheck(observation))
 	}
 	report = appendDoctorCheck(report, DoctorCheck{Name: "board.id", Pass: true, Detail: "one committed board identity"})
 	return appendIdentityChangeCheck(report, ids[0], observation, grants)
@@ -70,6 +70,15 @@ func readDoctorBoardIDs(observation oplocal.BoardObservation) ([]string, *Doctor
 		return nil, &check
 	}
 	return ids, nil
+}
+
+// unknownHubCheck separates "no pull has recorded the hub yet" (a warning that
+// one pull clears) from "a pull observed no hub row or an empty hash" (a failure).
+func unknownHubCheck(observation oplocal.BoardObservation) DoctorCheck {
+	if observation.Checkout == "" {
+		return DoctorCheck{Name: "board.id", Pass: true, Warn: true, Detail: "hub identity not recorded yet; no pull has observed it", Fix: "mtix sync pull"}
+	}
+	return boardIdentityFailure("hub identity is unknown", "mtix sync init")
 }
 
 func boardIdentityFailure(detail, fix string) DoctorCheck {

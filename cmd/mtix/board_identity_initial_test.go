@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,17 +53,56 @@ func identityDoctorReport(t *testing.T, raw string) DoctorReport {
 	return report
 }
 
-func TestDoctorBoardID_MissingHubRow_FailsWithSyncInitFix(t *testing.T) {
-	report := identityDoctorReport(t, "0c6f03d9-3633-4ab7-bcc9-b8da8d966023\n")
-	var found bool
-	for _, check := range report.Checks {
-		if check.Name == "board.id" {
-			found = true
-			assert.False(t, check.Pass)
-			assert.Equal(t, "mtix sync init", check.Fix)
-		}
+func TestDoctorBoardID_NeverObservedHub_WarnsWithPullFix(t *testing.T) {
+	initTestApp(t)
+	identityOperatorState(t)
+	_, configErr := app.configSvc.Set("sync.enabled", "true")
+	require.NoError(t, configErr)
+	t.Setenv(transport.EnvDSN, "")
+	require.NoError(t, os.WriteFile(filepath.Join(app.mtixDir, "board-id"), []byte("0c6f03d9-3633-4ab7-bcc9-b8da8d966023\n"), 0600))
+	report := appendBoardIdentityChecks(DoctorReport{OverallPass: true})
+	assert.True(t, report.OverallPass, "doctor before the first pull must not fail a fresh board")
+	require.NotEmpty(t, report.Checks)
+	check := report.Checks[0]
+	assert.Equal(t, "board.id", check.Name)
+	assert.True(t, check.Warn)
+	assert.Equal(t, "mtix sync pull", check.Fix)
+}
+
+func TestDoctorBoardID_FreshBoardRunbookOrder_DoctorThenPullIsNotStuck(t *testing.T) {
+	initTestApp(t)
+	state := identityOperatorState(t)
+	_, configErr := app.configSvc.Set("sync.enabled", "true")
+	require.NoError(t, configErr)
+	t.Setenv(transport.EnvDSN, "")
+	id := "0c6f03d9-3633-4ab7-bcc9-b8da8d966023"
+	require.NoError(t, os.WriteFile(filepath.Join(app.mtixDir, "board-id"), []byte(id+"\n"), 0600))
+	assert.True(t, appendBoardIdentityChecks(DoctorReport{OverallPass: true}).OverallPass)
+	query := identityQuery{rows: &identityRows{found: true, prefix: "TEST", hash: "first"}, t: t}
+	require.NoError(t, cachePulledIdentityFrom(t.Context(), query))
+	after := appendBoardIdentityChecks(DoctorReport{OverallPass: true})
+	assert.True(t, after.OverallPass)
+	for _, check := range after.Checks {
+		assert.False(t, check.Warn, "a recorded hub identity clears the warning: %s", check.Name)
 	}
-	assert.True(t, found, "existing doctor reports board identity")
+	observed, _, err := state.BoardObservation(filepath.Dir(app.mtixDir))
+	require.NoError(t, err)
+	assert.True(t, observed.Hub.Known())
+}
+
+func TestDoctorBoardID_ObservedMissingHubRow_FailsWithSyncInitFix(t *testing.T) {
+	initTestApp(t)
+	state := identityOperatorState(t)
+	_, configErr := app.configSvc.Set("sync.enabled", "true")
+	require.NoError(t, configErr)
+	t.Setenv(transport.EnvDSN, "")
+	require.NoError(t, os.WriteFile(filepath.Join(app.mtixDir, "board-id"), []byte("0c6f03d9-3633-4ab7-bcc9-b8da8d966023\n"), 0600))
+	require.NoError(t, state.ObserveBoard(filepath.Dir(app.mtixDir), "", oplocal.HubIdentity{}))
+	report := appendBoardIdentityChecks(DoctorReport{OverallPass: true})
+	assert.False(t, report.OverallPass)
+	require.NotEmpty(t, report.Checks)
+	assert.Equal(t, "board.id", report.Checks[0].Name)
+	assert.Equal(t, "mtix sync init", report.Checks[0].Fix)
 }
 
 func TestDoctorBoardID_TwoMintedIDs_Detected(t *testing.T) {

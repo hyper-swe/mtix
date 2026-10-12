@@ -17,7 +17,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/stretchr/testify/assert"
@@ -94,7 +93,7 @@ func TestHubIdentity_CachedFromPull_NoExtraDial(t *testing.T) {
 	assert.Equal(t, id, observed.BoardID)
 }
 
-func TestHubIdentity_PullCacheRefusal_PreservesPreviousObservation(t *testing.T) {
+func TestHubIdentity_PullCacheRefusal_WarnsAndPreservesPreviousObservation(t *testing.T) {
 	hub := openCmdHub(t)
 	initTestApp(t)
 	state := identityOperatorState(t)
@@ -111,7 +110,8 @@ func TestHubIdentity_PullCacheRefusal_PreservesPreviousObservation(t *testing.T)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	var out, diagnostic bytes.Buffer
 	err := runSyncPull(t.Context(), &out, &diagnostic, nil, transport.Options{InsecureTLS: true}, 100)
-	assert.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
+	require.NoError(t, err, "caching is best-effort: data was applied")
+	assert.Contains(t, diagnostic.String(), "WARN")
 	assert.Equal(t, int64(1), connections.Load())
 	requireAppliedOnce(t, events[0])
 	observed, _, err := state.BoardObservation(checkout)

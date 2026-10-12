@@ -56,3 +56,15 @@ func TestAppendBoardIdentityChecks_ConnectedBoardWithoutBoardID_WarnsAndPasses(t
 	assert.Empty(t, check.Fix)
 	assert.NotContains(t, check.Detail, "mtix setup")
 }
+
+func TestAppendIdentityChangeCheck_GrantForAnotherBoard_NoWarning(t *testing.T) {
+	current := "0c6f03d9-3633-4ab7-bcc9-b8da8d966023"
+	other := "4549495e-f331-4ac3-86af-decd9cbcbda6"
+	recorded := oplocal.HubIdentity{Kind: "postgres", ProjectPrefix: "TEST", FirstEventHash: "first"}
+	observed := oplocal.BoardObservation{Hub: oplocal.HubIdentity{Kind: "postgres", ProjectPrefix: "TEST", FirstEventHash: "second"}}
+	report := appendIdentityChangeCheck(DoctorReport{OverallPass: true}, current, observed, []oplocal.Grant{{BoardID: other, Hub: recorded}})
+	assert.Empty(t, report.Checks, "a confirmation for a different board says nothing about this board")
+	report = appendIdentityChangeCheck(DoctorReport{OverallPass: true}, current, observed, []oplocal.Grant{{BoardID: current, Hub: recorded}})
+	require.Len(t, report.Checks, 1)
+	assert.Equal(t, "board.hub-identity-changed", report.Checks[0].Name)
+}

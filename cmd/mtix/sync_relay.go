@@ -244,9 +244,8 @@ func newRelayAttachCmd() *cobra.Command {
 			if err != nil {
 				return relayAttachHint(err)
 			}
-			if cacheErr := cacheVerifiedRelay(args[0], res.Relay.RelayID); cacheErr != nil {
-				return cacheErr
-			}
+			// The attach already succeeded: caching the identity is best-effort.
+			cacheIdentityBestEffort(cmd.ErrOrStderr(), func() error { return cacheVerifiedRelay(args[0], res.Relay.RelayID) })
 			fmt.Fprintf(cmd.OutOrStdout(), "attached to relay %s\n", res.Relay.RelayID)
 			fmt.Fprintf(cmd.OutOrStdout(), "shared projects: %v\n", res.SharedProjects)
 			fmt.Fprintf(cmd.OutOrStdout(), "next: mtix config set sync.relay.dir %s\n", args[0])

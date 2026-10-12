@@ -3046,7 +3046,9 @@ hash through its existing authenticated connection. Successful relay attach
 records the verified relay ID. These observations live in operator-local state
 for the checkout, outside committed configuration. A successfully observed
 missing hub row or empty hash clears the current observation to unknown; a
-failed lookup reports an error and preserves the previous observation.
+failed lookup preserves the previous observation. Recording is best-effort: if it
+fails after the pull or attach succeeded, the command prints a WARN and still
+succeeds.
 
 Grant matching defaults to board ID alone. The operator-local
 `inbox.strict_board_identity` setting defaults to false; when true, matching
@@ -3056,8 +3058,10 @@ setup, reconfirmation, rekey and the host-setting command are planned and do
 not create or update grants here.
 
 `mtix sync doctor` checks the local identity without an additional identity
-connection. For a hub board, missing or multiple identities fail the
-`board.id` check; an unknown hub identity gives `mtix sync init` as its fix.
+connection. For a hub board, multiple identities fail the `board.id` check;
+a missing `.mtix/board-id` or a hub identity no pull has recorded yet is a
+warning (run `mtix sync pull` to record it); a hub identity a pull observed as
+missing or empty fails with `mtix sync init` as its fix.
 A changed recorded hub identity warns through `board.hub-identity-changed`
 and names the planned reconfirmation and strict-setting options. The warning
 does not perform either action. Resolve a reported identity disagreement with

@@ -38,40 +38,86 @@ func collectHubEvidence() service.HubEvidence {
 }
 
 // noteHubConnection records that a sync or relay command reached a hub for
-// this board, and mirrors a flip operator-local. It is best effort: a failure
+// this board, then brings the operator-local mirror up to date. It is best effort: a failure
 // is reported on stderr and never fails the sync that already succeeded.
 func noteHubConnection(ctx context.Context, stderr io.Writer) {
 	if app.store == nil || app.mtixDir == "" {
 		return
 	}
 	svc := service.NewHubMarkService(app.store)
-	var status service.HubStatus
 	var err error
 	if os.Getenv(transport.EnvDSN) != "" {
-		var flipped bool
-		flipped, err = svc.RecordEnvConnection(ctx)
-		status = service.HubStatus{Connected: true, Source: "env_dsn", Flipped: flipped}
+		_, err = svc.RecordEnvConnection(ctx)
 	} else {
-		status, err = svc.HubConnected(ctx, service.HubEvidence{SecretsDSN: true})
+		_, err = svc.HubConnected(ctx, service.HubEvidence{SecretsDSN: true})
 	}
 	if err != nil {
 		fmt.Fprintf(stderr, "warning: could not record the hub-connected mark: %v\n", err)
 		return
 	}
-	if status.Flipped {
-		mirrorHubMark(stderr, status.Source)
+	// Whatever flipped the mark (this call, a foreign event applied earlier,
+	// an inference), the operator-local mirror follows the store.
+	if err := reconcileHubMarkMirror(); err != nil {
+		fmt.Fprintf(stderr, "warning: could not mirror the hub-connected mark: %v\n", err)
 	}
 }
 
-// mirrorHubMark writes the operator-local copy of the mark for this checkout.
-func mirrorHubMark(stderr io.Writer, source string) {
-	env, err := oplocal.FromProcess()
-	if err == nil {
-		err = oplocal.New(env).MirrorHubMark(filepath.Clean(filepath.Dir(app.mtixDir)), source)
+// reconcileHubMarkMirror makes the operator-local mirror equal the store's
+// mark: it writes the source when the store is marked and the mirror differs,
+// and clears the mirror when the store is not marked. The store is the
+// authority, so the two cannot drift (ADR-007 §3.5).
+func reconcileHubMarkMirror() error {
+	if app.store == nil || app.mtixDir == "" {
+		return nil
 	}
+	mark, err := app.store.HubMark(context.Background())
 	if err != nil {
-		fmt.Fprintf(stderr, "warning: could not mirror the hub-connected mark: %v\n", err)
+		return fmt.Errorf("reconcile hub mark mirror: %w", err)
 	}
+	env, err := oplocal.FromProcess()
+	if err != nil {
+		return fmt.Errorf("reconcile hub mark mirror: %w", err)
+	}
+	state := oplocal.New(env)
+	checkout := filepath.Clean(filepath.Dir(app.mtixDir))
+	mirror, _, err := state.HubMarkMirror(checkout)
+	if err != nil {
+		return fmt.Errorf("reconcile hub mark mirror: %w", err)
+	}
+	switch {
+	case mark.Set && mirror.Source != mark.Source:
+		return state.MirrorHubMark(checkout, mark.Source)
+	case !mark.Set && mirror.Source != "":
+		return state.ClearHubMarkMirror(checkout)
+	}
+	return nil
+}
+
+// resetHubMark clears the mark and its operator-local mirror together and
+// records the applied_events floor. The caller enforces the interactive-
+// terminal rule (the reset command is planned: MTIX-112.19.2).
+func resetHubMark(ctx context.Context, stderr io.Writer) error {
+	if app.store == nil {
+		return fmt.Errorf("reset hub mark: local store not initialized")
+	}
+	if _, err := service.NewHubMarkService(app.store).ResetHubMark(ctx); err != nil {
+		return err
+	}
+	if err := reconcileHubMarkMirror(); err != nil {
+		fmt.Fprintf(stderr, "warning: could not clear the hub-connected mirror: %v\n", err)
+	}
+	return nil
+}
+
+// shouldReconcileHubMark reports whether a command path can change the
+// mark through applied events: the sync, relay and daemon commands.
+func shouldReconcileHubMark(commandPath string) bool {
+	for _, part := range []string{" sync", " relay", " daemon"} {
+		if strings.Contains(commandPath, part) {
+			return true
+		}
+	}
+	return false
 }
 
 // appendHubMarkCheck reports the sticky mark and its source (ADR-007 A9). It

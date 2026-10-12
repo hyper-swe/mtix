@@ -93,14 +93,14 @@ func boardIdentityFailure(detail, fix string) DoctorCheck {
 	return DoctorCheck{Name: "board.id", Detail: detail, Fix: fix}
 }
 
-// identityBoardConnected answers "is this board connected to a hub or relay".
-// Beyond the live observation it asks the sticky hub mark (collectHubEvidence
-// plus HubMarkService), so doctor and the mark cannot disagree (ADR-007 A9).
+// identityBoardConnected answers "is this board connected to a hub or relay"
+// for board.id. A hub observation a pull recorded counts, because it is
+// evidence of its own (the mark follows at the next sync). Otherwise the
+// answer is the hub mark's: the stored mark, applied events above the reset
+// floor, sync or relay config, or a secrets DSN. A DSN that is only exported
+// never counts, so board.id and board.hub-mark agree on it (ADR-007 A9).
 func identityBoardConnected(observation oplocal.BoardObservation) bool {
-	if observation.Checkout != "" || relayDir() != "" || hubConfigured(app.mtixDir) {
-		return true
-	}
-	return hubMarkConnected()
+	return observation.Checkout != "" || hubMarkConnected()
 }
 
 func appendIdentityChangeCheck(report DoctorReport, id string, observation oplocal.BoardObservation, grants []oplocal.Grant) DoctorReport {

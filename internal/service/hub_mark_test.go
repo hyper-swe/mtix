@@ -208,3 +208,22 @@ func (partialFailStore) InferHubMark(context.Context) (bool, error) { return fal
 func (partialFailStore) AppliedEventsAboveFloor(context.Context) (bool, error) {
 	return false, nil
 }
+
+// readFailStore reads the mark cleanly but fails the applied-events probe.
+type readFailStore struct{ failingMarkStore }
+
+func (readFailStore) HubMark(context.Context) (sqlite.HubMark, error) { return sqlite.HubMark{}, nil }
+
+func TestInspectHubMark_AppliedEventsProbeFails_Propagates(t *testing.T) {
+	boom := errors.New("probe failed")
+	svc := service.NewHubMarkService(readFailStore{failingMarkStore{err: boom}})
+	_, err := svc.Inspect(context.Background(), service.HubEvidence{})
+	require.ErrorIs(t, err, boom)
+}
+
+func TestHubConnected_InferenceFails_Propagates(t *testing.T) {
+	boom := errors.New("infer failed")
+	svc := service.NewHubMarkService(readFailStore{failingMarkStore{err: boom}})
+	_, err := svc.HubConnected(context.Background(), service.HubEvidence{})
+	require.ErrorIs(t, err, boom)
+}

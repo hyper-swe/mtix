@@ -182,3 +182,158 @@ func TestDoctorHubMark_JSON_CarriesNameAndDetail(t *testing.T) {
 	}
 	assert.True(t, found)
 }
+
+func TestCollectHubEvidence_ConfigKeys_Table(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		val  string
+		want bool
+	}{
+		{"sync enabled true", "sync.enabled", "true", true},
+		{"sync enabled false", "sync.enabled", "false", false},
+		{"sync endpoint set", "sync.endpoint", "https://hub.example.invalid", true},
+		{"relay dir set", "sync.relay.dir", "relay-dir", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			initTestApp(t)
+			t.Setenv(transport.EnvDSN, "")
+			assert.False(t, collectHubEvidence().ConfigKeys, "defaults are not evidence")
+			_, err := app.configSvc.Set(tt.key, tt.val)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, collectHubEvidence().ConfigKeys)
+		})
+	}
+}
+
+// An exported DSN alone is not evidence for the doctor either: the board.id
+// "connected" answer and the hub mark agree (ADR-007 A9).
+func TestIdentityBoardConnected_ExportedDSNOnly_AgreesWithHubMark(t *testing.T) {
+	initTestApp(t)
+	t.Setenv(transport.EnvDSN, "postgres://exported.invalid/db")
+	assert.False(t, identityBoardConnected(oplocal.BoardObservation{}))
+	assert.False(t, hubMarkConnected())
+	assert.Contains(t, hubMarkCheck(t).Detail, "not set")
+}
+
+func TestIdentityBoardConnected_RecordedObservation_IsConnected(t *testing.T) {
+	initTestApp(t)
+	t.Setenv(transport.EnvDSN, "")
+	assert.True(t, identityBoardConnected(oplocal.BoardObservation{Checkout: "/x"}),
+		"a hub observation a pull recorded is evidence of its own")
+}
+
+func TestHubMarkMirror_FollowsStore_NeverDrifts(t *testing.T) {
+	initTestApp(t)
+	t.Setenv(transport.EnvDSN, "")
+	state := identityOperatorState(t)
+	checkout := filepath.Dir(app.mtixDir)
+	ctx := context.Background()
+	mirror := func() oplocal.HubMarkMirror {
+		m, _, err := state.HubMarkMirror(checkout)
+		require.NoError(t, err)
+		return m
+	}
+
+	// A flip the store made on its own (a foreign event applied in
+	// IdempotentApply, an inference) reaches the mirror on reconcile.
+	_, err := app.store.MarkHubConnected(ctx, "foreign_event")
+	require.NoError(t, err)
+	assert.Equal(t, oplocal.HubMarkMirror{}, mirror())
+	require.NoError(t, reconcileHubMarkMirror())
+	assert.Equal(t, oplocal.HubMarkMirror{Checkout: checkout, Source: "foreign_event"}, mirror())
+
+	// A reset clears the store mark and the mirror together.
+	var stderr bytes.Buffer
+	require.NoError(t, resetHubMark(ctx, &stderr))
+	assert.Equal(t, oplocal.HubMarkMirror{}, mirror())
+	mark, err := app.store.HubMark(ctx)
+	require.NoError(t, err)
+	assert.False(t, mark.Set)
+	require.NoError(t, reconcileHubMarkMirror())
+	assert.Equal(t, oplocal.HubMarkMirror{}, mirror())
+}
+
+func TestShouldReconcileHubMark_SyncRelayAndDaemonCommands(t *testing.T) {
+	tests := map[string]bool{
+		"mtix sync pull": true, "mtix sync relay pass": true, "mtix daemon": true,
+		"mtix sync daemon": true, "mtix list": false, "mtix create": false,
+	}
+	for path, want := range tests {
+		assert.Equal(t, want, shouldReconcileHubMark(path), path)
+	}
+}
+
+func TestReconcileHubMarkMirror_NoStore_IsNoop(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, app.store.Close())
+	app.store = nil
+	require.NoError(t, reconcileHubMarkMirror())
+}
+
+func TestAppendHubMarkCheck_UnreadableStore_FailsWithRemedy(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, app.store.Close())
+	report := appendHubMarkCheck(context.Background(), DoctorReport{OverallPass: true})
+	check := findCheck(t, report, "board.hub-mark")
+	assert.False(t, check.Pass)
+	assert.False(t, report.OverallPass)
+	assert.NotEmpty(t, check.Fix)
+}
+
+func TestAppendHubMarkCheck_NoStore_Warns(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, app.store.Close())
+	app.store = nil
+	check := findCheck(t, appendHubMarkCheck(context.Background(), DoctorReport{OverallPass: true}), "board.hub-mark")
+	assert.True(t, check.Pass)
+	assert.True(t, check.Warn)
+	assert.False(t, hubMarkConnected())
+}
+
+func TestNoteHubConnection_StoreError_WarnsAndContinues(t *testing.T) {
+	initTestApp(t)
+	t.Setenv(transport.EnvDSN, "postgres://exported.invalid/db")
+	require.NoError(t, app.store.Close())
+	var stderr bytes.Buffer
+	noteHubConnection(context.Background(), &stderr)
+	assert.Contains(t, stderr.String(), "warning: could not record the hub-connected mark")
+}
+
+func TestMirrorHubMark_UnusableOperatorState_WarnsOnly(t *testing.T) {
+	initTestApp(t)
+	t.Setenv("XDG_CONFIG_HOME", "relative-not-absolute")
+	t.Setenv("APPDATA", "relative-not-absolute")
+	var stderr bytes.Buffer
+	t.Setenv(transport.EnvDSN, "postgres://exported.invalid/db")
+	noteHubConnection(context.Background(), &stderr)
+	assert.Contains(t, stderr.String(), "warning: could not mirror the hub-connected mark")
+}
+
+func TestResetHubMark_NoStoreOrClosedStore_ReportsError(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, app.store.Close())
+	require.ErrorContains(t, resetHubMark(context.Background(), &bytes.Buffer{}), "reset hub mark")
+	app.store = nil
+	require.ErrorContains(t, resetHubMark(context.Background(), &bytes.Buffer{}), "not initialized")
+}
+
+func TestReconcileHubMarkMirror_StoreOrStateErrors_AreWrapped(t *testing.T) {
+	initTestApp(t)
+	t.Setenv("XDG_CONFIG_HOME", "relative-not-absolute")
+	t.Setenv("APPDATA", "relative-not-absolute")
+	require.ErrorContains(t, reconcileHubMarkMirror(), "reconcile hub mark mirror")
+	require.NoError(t, app.store.Close())
+	require.ErrorContains(t, reconcileHubMarkMirror(), "reconcile hub mark mirror")
+}
+
+func TestResetHubMark_MirrorFailure_WarnsAfterStoreReset(t *testing.T) {
+	initTestApp(t)
+	t.Setenv(transport.EnvDSN, "")
+	t.Setenv("XDG_CONFIG_HOME", "relative-not-absolute")
+	t.Setenv("APPDATA", "relative-not-absolute")
+	var stderr bytes.Buffer
+	require.NoError(t, resetHubMark(context.Background(), &stderr))
+	assert.Contains(t, stderr.String(), "could not clear the hub-connected mirror")
+}

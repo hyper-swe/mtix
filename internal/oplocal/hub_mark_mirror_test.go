@@ -48,3 +48,21 @@ func TestHubMarkMirror_ClearMirror_RemovesRecord(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, HubMarkMirror{}, got)
 }
+
+func TestHubMarkMirror_RelativeCheckout_ClearAndReadFail(t *testing.T) {
+	s := identityState(t)
+	require.Error(t, s.ClearHubMarkMirror("relative/path"))
+	_, _, err := s.HubMarkMirror("relative/path")
+	require.Error(t, err)
+}
+
+func TestHubMarkMirror_RecordForAnotherCheckout_IsIgnored(t *testing.T) {
+	s := identityState(t)
+	path := t.TempDir()
+	name, err := hubMarkRecordName(path)
+	require.NoError(t, err)
+	require.NoError(t, s.WriteJSON(name, HubMarkMirror{Checkout: filepath.Join(path, "elsewhere"), Source: "config"}))
+	got, _, err := s.HubMarkMirror(path)
+	require.NoError(t, err)
+	assert.Equal(t, HubMarkMirror{}, got)
+}

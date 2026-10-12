@@ -214,3 +214,77 @@ func TestResetHubMark_EmptyAppliedEvents_FloorZero(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), floor)
 }
+
+// Error paths: a closed store fails every read and write with a wrapped error.
+func TestHubMark_ClosedStore_ReturnsWrappedErrors(t *testing.T) {
+	s, _ := applyTestStore(t)
+	ctx := context.Background()
+	require.NoError(t, s.Close())
+
+	_, err := s.HubMark(ctx)
+	require.ErrorContains(t, err, "read hub mark")
+	_, err = s.MarkHubConnected(ctx, "config")
+	require.ErrorContains(t, err, "mark hub connected")
+	_, err = s.AppliedEventsAboveFloor(ctx)
+	require.ErrorContains(t, err, "applied events above floor")
+	_, err = s.InferHubMark(ctx)
+	require.ErrorContains(t, err, "applied events above floor")
+	_, err = s.ResetHubMark(ctx)
+	require.ErrorContains(t, err, "reset hub mark")
+}
+
+// Failures inside the transaction body: the flag table is gone, so each
+// statement fails and the error names the step.
+func TestHubMark_MissingFlagTable_ReturnsStepErrors(t *testing.T) {
+	s, raw := applyTestStore(t)
+	ctx := context.Background()
+	_, err := raw.Exec(`DROP TABLE board_flags`)
+	require.NoError(t, err)
+
+	_, err = s.MarkHubConnected(ctx, "config")
+	require.ErrorContains(t, err, "write hub mark")
+	_, err = s.ResetHubMark(ctx)
+	require.ErrorContains(t, err, "clear hub mark")
+	err = applyOnce(t, s, foreignCreate(t, "MTIX-1", 1))
+	require.ErrorContains(t, err, "hub mark")
+}
+
+func TestResetHubMark_MissingAppliedEvents_ReportsFloorRead(t *testing.T) {
+	s, raw := applyTestStore(t)
+	_, err := raw.Exec(`DROP TABLE applied_events`)
+	require.NoError(t, err)
+	_, err = s.ResetHubMark(context.Background())
+	require.ErrorContains(t, err, "read applied events floor")
+}
+
+func TestResetHubMark_FloorWriteFails_RollsBackTheClear(t *testing.T) {
+	s, raw := applyTestStore(t)
+	ctx := context.Background()
+	_, err := s.MarkHubConnected(ctx, "config")
+	require.NoError(t, err)
+	// Reject the floor row so the second statement of the reset fails.
+	_, err = raw.Exec(`CREATE TRIGGER no_floor BEFORE INSERT ON board_flags WHEN NEW.key = 'hub_mark_floor'
+		BEGIN SELECT RAISE(ABORT, 'floor rejected'); END`)
+	require.NoError(t, err)
+	_, err = s.ResetHubMark(ctx)
+	require.ErrorContains(t, err, "record hub mark floor")
+	mark, err := s.HubMark(ctx)
+	require.NoError(t, err)
+	require.True(t, mark.Set, "a failed reset leaves the mark in place")
+}
+
+// The failure lands in dispatch, after the mark was written: the whole apply
+// rolls back, including the mark.
+func TestIdempotentApply_DispatchFails_MarkRolledBack(t *testing.T) {
+	s, _ := applyTestStore(t)
+	ctx := context.Background()
+	e := foreignCreate(t, "MTIX-1", 1)
+	e.Payload = []byte(`{"title":`) // invalid JSON: the create payload cannot decode
+	err := s.WithTx(ctx, func(tx *sql.Tx) error { return s.IdempotentApply(ctx, tx, e) })
+	if err == nil {
+		t.Skip("payload accepted at this layer; the rollback is covered by FailedApply_MarkRolledBack")
+	}
+	mark, markErr := s.HubMark(ctx)
+	require.NoError(t, markErr)
+	require.False(t, mark.Set)
+}

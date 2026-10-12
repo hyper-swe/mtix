@@ -25,7 +25,7 @@ import (
 func TestAddToGitignore_NewFile_CreatesWithEntry(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	addToGitignore(tmpDir, "docs/")
+	require.NoError(t, addToGitignore(tmpDir, "docs/"))
 
 	content, err := os.ReadFile(filepath.Join(tmpDir, ".gitignore"))
 	require.NoError(t, err)
@@ -38,7 +38,7 @@ func TestAddToGitignore_ExistingFile_AppendsEntry(t *testing.T) {
 	gitignorePath := filepath.Join(tmpDir, ".gitignore")
 	require.NoError(t, os.WriteFile(gitignorePath, []byte("build/\n"), 0o644))
 
-	addToGitignore(tmpDir, "docs/")
+	require.NoError(t, addToGitignore(tmpDir, "docs/"))
 
 	content, err := os.ReadFile(gitignorePath)
 	require.NoError(t, err)
@@ -52,7 +52,7 @@ func TestAddToGitignore_AlreadyPresent_NoChange(t *testing.T) {
 	gitignorePath := filepath.Join(tmpDir, ".gitignore")
 	require.NoError(t, os.WriteFile(gitignorePath, []byte("docs/\n"), 0o644))
 
-	addToGitignore(tmpDir, "docs/")
+	require.NoError(t, addToGitignore(tmpDir, "docs/"))
 
 	content, err := os.ReadFile(gitignorePath)
 	require.NoError(t, err)
@@ -65,7 +65,7 @@ func TestAddToGitignore_FileWithoutTrailingNewline_AddsNewline(t *testing.T) {
 	gitignorePath := filepath.Join(tmpDir, ".gitignore")
 	require.NoError(t, os.WriteFile(gitignorePath, []byte("build/"), 0o644))
 
-	addToGitignore(tmpDir, "docs/")
+	require.NoError(t, addToGitignore(tmpDir, "docs/"))
 
 	content, err := os.ReadFile(gitignorePath)
 	require.NoError(t, err)

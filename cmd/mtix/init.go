@@ -4,6 +4,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -56,6 +57,10 @@ func runInit(prefix string) error {
 	// Check if already initialized.
 	if _, statErr := os.Stat(mtixDir); statErr == nil {
 		return fmt.Errorf("project already initialized at %s", mtixDir)
+	}
+
+	if ignoreErr := addToGitignore(cwd, ".mtix/hooks.trust"); ignoreErr != nil {
+		return fmt.Errorf("initialize exclusion: %w", ignoreErr)
 	}
 
 	// Create config service and initialize directory structure.
@@ -122,32 +127,37 @@ func generateInitDocs(docsDir, prefix, ver string) []docs.GenerateResult {
 }
 
 // addToGitignore appends an entry to .gitignore if not already present.
-func addToGitignore(dir, entry string) {
+func addToGitignore(dir, entry string) (err error) {
 	gitignorePath := filepath.Join(dir, ".gitignore")
 
 	// Read existing content.
 	content, err := os.ReadFile(gitignorePath)
 	if err != nil && !os.IsNotExist(err) {
-		return
+		return fmt.Errorf("read gitignore: %w", err)
 	}
 
 	// Check if entry already present.
 	lines := string(content)
 	if contains(lines, entry) {
-		return
+		return nil
 	}
 
 	// Append entry.
 	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return
+		return fmt.Errorf("open gitignore: %w", err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() { err = errors.Join(err, f.Close()) }()
 
 	if len(content) > 0 && content[len(content)-1] != '\n' {
-		_, _ = f.WriteString("\n")
+		if _, err := f.WriteString("\n"); err != nil {
+			return fmt.Errorf("write gitignore separator: %w", err)
+		}
 	}
-	_, _ = f.WriteString(entry + "\n")
+	if _, err := f.WriteString(entry + "\n"); err != nil {
+		return fmt.Errorf("write gitignore entry: %w", err)
+	}
+	return nil
 }
 
 // contains checks if a string contains a line matching the given entry.

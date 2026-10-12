@@ -221,7 +221,7 @@ func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error 
 }
 
 // initApp initializes the application context: logger, store, services.
-func initApp(_ *cobra.Command, logLevel string) error {
+func initApp(cmd *cobra.Command, logLevel string) error {
 	// Configure logger.
 	level := slog.LevelInfo
 	switch logLevel {
@@ -293,6 +293,7 @@ func initApp(_ *cobra.Command, logLevel string) error {
 	app.bgSvc = service.NewBackgroundService(app.store, app.configSvc, app.logger, clock)
 	app.syncSvc = newSyncService(clock)
 	app.hooksDisp = service.NewHooksDispatcher(app.store, mtixDir, app.logger)
+	initializeHookApprovals(cmd, mtixDir)
 	setProjectDir(mtixDir) // app.mtixDir and, with a hub, app.payloadWarnings (MTIX-95.12)
 
 	return nil

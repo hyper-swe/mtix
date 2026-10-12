@@ -187,7 +187,7 @@ hooks:
 
 	// Phase B — TRUSTED: record trust for the current config, then a fresh
 	// transition fires exec (the Phase-A events are already past the cursor).
-	require.NoError(t, hooks.SaveTrust(mtixDir, hooks.ConfigHash(mtixDir)))
+	approveTestHooks(t, mtixDir)
 
 	n2, err := svc.CreateNode(ctx, &service.CreateNodeRequest{Project: "PROJ", Title: "two", Creator: "worker"})
 	require.NoError(t, err)
@@ -309,7 +309,7 @@ hooks:
       command: `+string(command)+`
       timeout-seconds: 5
 `)
-	require.NoError(t, hooks.SaveTrust(mtixDir, hooks.ConfigHash(mtixDir)))
+	approveTestHooks(t, mtixDir)
 	t.Cleanup(func() { gate.releaseIfParked(t) })
 
 	node, err := svc.CreateNode(ctx, &service.CreateNodeRequest{Project: "PROJ", Title: "gated", Creator: "worker"})

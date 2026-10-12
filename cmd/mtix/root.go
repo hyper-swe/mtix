@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/hooks"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -236,6 +237,10 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 	app.logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: level,
 	}))
+
+	if firstRunErr := hooks.RecordFirstRun(); firstRunErr != nil {
+		app.logger.Warn("host first run not recorded", "error", firstRunErr)
+	}
 
 	// Find .mtix directory.
 	mtixDir, err := findMtixDir()

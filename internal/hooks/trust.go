@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // trustFileName names the legacy workspace record used only during migration.
@@ -70,25 +71,49 @@ func readTrustedScript(root, arg string) ([]byte, bool) {
 // legacyRecordLimit bounds the legacy workspace record read (FR-19).
 const legacyRecordLimit = 4096
 
+// legacyRecord is the content and inode change time of the legacy record.
+type legacyRecord struct {
+	Pin     string
+	Changed time.Time
+	// Refusal explains why a present record was not accepted; empty if usable or absent.
+	Refusal string
+}
+
 // TrustedHash returns a legacy workspace comparison value for migration (FR-19).
 // Only a small regular file is read; links, special files and oversize
 // records yield an empty value.
-func TrustedHash(mtixDir string) string {
+func TrustedHash(mtixDir string) string { return readLegacyRecord(mtixDir).Pin }
+
+// readLegacyRecord reads the legacy record through one checked descriptor and
+// reports its inode change time (FR-19).
+func readLegacyRecord(mtixDir string) legacyRecord {
+	const refused = "legacy workspace record is not a small regular file"
 	path := filepath.Join(mtixDir, trustFileName)
 	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > legacyRecordLimit {
-		return ""
+	if err != nil {
+		return legacyRecord{}
+	}
+	if !info.Mode().IsRegular() || info.Size() > legacyRecordLimit {
+		return legacyRecord{Refusal: refused}
 	}
 	f, err := os.Open(path) //nolint:gosec // path is the fixed legacy record inside the operator's hooks directory
 	if err != nil {
-		return ""
+		return legacyRecord{Refusal: refused}
 	}
 	defer func() { _ = f.Close() }()
+	opened, err := f.Stat()
+	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		return legacyRecord{Refusal: refused}
+	}
+	changed, err := changeTime(f)
+	if err != nil {
+		return legacyRecord{Refusal: "legacy workspace record change time cannot be read"}
+	}
 	data, err := io.ReadAll(io.LimitReader(f, legacyRecordLimit+1))
 	if err != nil || len(data) > legacyRecordLimit {
-		return ""
+		return legacyRecord{Refusal: refused}
 	}
-	return strings.TrimSpace(string(data))
+	return legacyRecord{Pin: strings.TrimSpace(string(data)), Changed: changed}
 }
 
 // ExecTrusted reports whether all configured exec hooks have current host approval (FR-19).

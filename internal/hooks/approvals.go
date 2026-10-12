@@ -34,7 +34,7 @@ type Approvals struct {
 	state   *oplocal.State
 	session bool
 	// readLegacy reads the legacy workspace record; injectable for tests.
-	readLegacy func(string) string
+	readLegacy func(string) legacyRecord
 	// clock supplies the current time for the migration window (FR-19).
 	clock func() time.Time
 }
@@ -52,7 +52,7 @@ type migrationRecord struct {
 
 // NewApprovals uses explicit operator state and process eligibility inputs.
 func NewApprovals(dir string, state *oplocal.State, session bool) *Approvals {
-	return &Approvals{dir: dir, state: state, session: session, readLegacy: TrustedHash, clock: time.Now}
+	return &Approvals{dir: dir, state: state, session: session, readLegacy: readLegacyRecord, clock: time.Now}
 }
 
 // SessionMarked reports process markers that defer operator approval (FR-19).
@@ -72,6 +72,21 @@ func ProcessApprovals(dir string) (*Approvals, error) {
 		return nil, fmt.Errorf("operator inputs: %w", err)
 	}
 	return NewApprovals(dir, oplocal.New(env), SessionMarked()), nil
+}
+
+// RecordFirstRun records the time of the binary's first run on this host, if
+// not yet recorded; the first writer wins (FR-19). It is independent of any
+// project and of whether any approval is eligible for migration.
+func RecordFirstRun() error {
+	env, err := oplocal.FromProcess()
+	if err != nil {
+		return fmt.Errorf("operator inputs: %w", err)
+	}
+	a := &Approvals{state: oplocal.New(env), clock: time.Now}
+	if _, err := a.firstRun(); err != nil {
+		return fmt.Errorf("record first run: %w", err)
+	}
+	return nil
 }
 
 func recordKey(kind, project, hook string) string {
@@ -324,37 +339,30 @@ func (a *Approvals) ApproveSelected(selected Hook, terminal bool) error {
 	return a.approve(selected.Name, string(stanza), terminal)
 }
 
-const firstRunKey = "migration-first-run"
-
-type firstRunRecord struct {
-	At time.Time `json:"at"`
-}
-
-// beforeFirstRun records the first migration time on this host and reports
-// whether the legacy record predates it (FR-19).
-func (a *Approvals) beforeFirstRun() bool {
-	var first firstRunRecord
-	present, reports, err := readApprovalRecord(a.state, firstRunKey, &first)
-	if err != nil || len(reports) != 0 {
-		return false
-	}
-	if !present || first.At.IsZero() {
-		first.At = a.clock().UTC()
-		if writeErr := a.state.WriteJSON(firstRunKey, first); writeErr != nil {
-			return false
-		}
-	}
-	info, err := os.Lstat(filepath.Join(a.dir, trustFileName))
-	return err == nil && !info.ModTime().After(first.At)
-}
-
 // applyLegacyPin converts an eligible untracked legacy record into pins (FR-19).
+// A record whose inode change time is after the host's first run is refused.
 func (a *Approvals) applyLegacyPin(rec *migrationRecord) {
-	pin := a.readLegacy(a.dir)
-	if !a.beforeFirstRun() && pin != "" {
-		rec.Detail = "legacy workspace record is newer than the first run on this host"
+	legacy := a.readLegacy(a.dir)
+	if legacy.Refusal != "" {
+		rec.Detail = legacy.Refusal
 		return
 	}
+	if legacy.Pin == "" {
+		return
+	}
+	first, err := a.firstRun()
+	if err != nil {
+		rec.Detail = "first run time on this host cannot be read; review hooks individually"
+		return
+	}
+	if legacy.Changed.After(first) {
+		rec.Detail = "legacy workspace record changed after the first run on this host"
+		return
+	}
+	a.migrateSnapshot(rec, legacy.Pin)
+}
+
+func (a *Approvals) migrateSnapshot(rec *migrationRecord, pin string) {
 	if !validDigest(pin) {
 		return
 	}
@@ -371,4 +379,36 @@ func (a *Approvals) applyLegacyPin(rec *migrationRecord) {
 	default:
 		rec.Detail = "legacy approval differs from current hooks"
 	}
+}
+
+const firstRunKey = "migration-first-run"
+
+type firstRunRecord struct {
+	At time.Time `json:"at"`
+}
+
+// firstRun returns the time of the binary's first run on this host, recording
+// it if absent. The first writer wins (FR-19).
+func (a *Approvals) firstRun() (time.Time, error) {
+	var first firstRunRecord
+	present, reports, err := readApprovalRecord(a.state, firstRunKey, &first)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if len(reports) != 0 {
+		return time.Time{}, fmt.Errorf("first run record: %s", reports[0].Reason)
+	}
+	if !present {
+		if _, err = a.state.CreateJSON(firstRunKey, firstRunRecord{At: a.clock().UTC()}); err != nil {
+			return time.Time{}, fmt.Errorf("record first run: %w", err)
+		}
+		present, reports, err = readApprovalRecord(a.state, firstRunKey, &first)
+		if err != nil || !present || len(reports) != 0 {
+			return time.Time{}, fmt.Errorf("first run record is unavailable")
+		}
+	}
+	if first.At.IsZero() {
+		return time.Time{}, fmt.Errorf("first run record is invalid")
+	}
+	return first.At, nil
 }

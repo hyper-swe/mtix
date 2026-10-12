@@ -2291,15 +2291,10 @@ hooks:
 ```
 
 Review the named hook on that host and approve it from an operator terminal
-(`mtix hooks trust -- 'wake-developer'`). The
-script exits without launching when the inbox is empty (the idempotency
-check under at-least-once dispatch) and otherwise launches the harness
-CLI with the inbox supplied through standard input. Keep exactly one launch
-
-Review and trust the config on that host (`mtix hooks trust`). The
-script exits without launching when the inbox is empty and otherwise launches
-the harness CLI with the inbox supplied through standard input. Keep exactly one launch
-line enabled in the reference script:
+(`mtix hooks trust -- 'wake-developer'`). The script exits without launching
+when the inbox is empty and otherwise launches the harness CLI with the inbox
+supplied through standard input. Keep exactly one launch line enabled in the
+reference script:
 
 - Claude Code: `printf '%s\n' "$PAYLOAD" | claude -p`
 - OpenAI Codex CLI: `printf '%s\n' "$PAYLOAD" | codex exec -`

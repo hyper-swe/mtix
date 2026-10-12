@@ -22,6 +22,8 @@ const isolatedOperatorEnv = "MTIX_TEST_OPERATOR_ISOLATED"
 // this test binary's path, so helper processes that re-execute the binary share
 // it even when they are started with a reduced environment. Only the process
 // that created the directory removes it, so an abandoned helper leaves nothing.
+// A binary built to a fixed path with `go test -c` and run twice concurrently
+// shares the directory, and only the first run removes it.
 func TestMain(m *testing.M) {
 	if os.Getenv(isolatedOperatorEnv) != "" {
 		os.Exit(m.Run())

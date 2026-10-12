@@ -227,28 +227,7 @@ func registerProjectOnHub(ctx context.Context, pool *transport.Pool, prefix, has
 // Either case is treated as "fresh hub" so init can proceed without a
 // false-positive divergence error.
 func readHubFirstEventHash(ctx context.Context, pool *transport.Pool, prefix string) (string, string, error) {
-	rows, err := pool.Inner().Query(ctx,
-		`SELECT project_prefix, first_event_hash FROM sync_projects WHERE project_prefix = $1`, prefix)
-	if err != nil {
-		return "", "", err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return "", "", nil
-	}
-	var p, h string
-	if scanErr := rows.Scan(&p, &h); scanErr != nil {
-		return "", "", scanErr
-	}
-	if rowsErr := rows.Err(); rowsErr != nil {
-		return "", "", rowsErr
-	}
-	if h == "" {
-		// Degenerate: row exists but hash is empty. Treat as fresh
-		// hub; the next register call will populate it.
-		return "", "", nil
-	}
-	return p, h, nil
+	return queryHubIdentity(ctx, pool.Inner(), prefix)
 }
 
 // resolveSyncDSN returns the hub DSN per FR-18.16 from transport.Source,
@@ -328,6 +307,8 @@ func wrapSyncErr(stderr io.Writer, stage string, err error) error {
 		return fmt.Errorf("%s: %w", msg, model.ErrCorrupted)
 	case errors.Is(err, service.ErrExchangeLockBusy):
 		return fmt.Errorf("%s: %w", msg, service.ErrExchangeLockBusy)
+	case errors.Is(err, model.ErrOperatorStateUnreadable):
+		return fmt.Errorf("%s: %w", msg, err)
 	default:
 		return errors.New(msg)
 	}

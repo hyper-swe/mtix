@@ -456,6 +456,7 @@ func TestRoutingStandardCommand_DoneNotSupported(t *testing.T) {
 // initTestApp sets up a real store and services for integration tests.
 func initTestApp(t *testing.T) {
 	t.Helper()
+	identityOperatorState(t)
 	saveAndResetApp(t)
 
 	tmpDir := t.TempDir()

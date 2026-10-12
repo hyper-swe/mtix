@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Board identity foundations (MTIX-112.17.2).** `mtix init` creates a committed `.mtix/board-id` for new boards; existing boards keep their identity. `mtix sync pull` and `mtix sync relay attach` record the authenticated hub identity in operator-local state, and `mtix sync doctor` gains `board.id` and `board.hub-identity-changed` checks (text and `--json`). An existing hub board without `.mtix/board-id` is reported as a warning, not a failure. Recording the hub identity is best-effort: a failure prints a warning and never fails a pull that already applied data.
+
 ### Changed
 - Named push and dispatch locks validate real user-owned directory/file handles. Both daemon spellings idle and retry contended dispatch passes, and sync doctor reports network/FUSE or unavailable filesystem classification.
 - The legacy `pushlock.Acquire` now shares the named-lock implementation, with three intended behavior changes. Contention returns an error that wraps `ErrLockHeld` (callers must use `errors.Is`, not `==`). Acquisition failures carry the prefix `acquire named lock:` instead of `acquire push lock:`. A symlinked or foreign-owned data directory or lock file is now refused instead of followed.

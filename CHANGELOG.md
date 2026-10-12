@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Add protected local counted-alert storage and show recent diagnostics in `mtix sync doctor`; hourly counts survive log rotation without changing the board journal or wake state.
 - Record successfully received board provenance separately from local exports, with local status and doctor diagnostics.
 - The reference wake routine supplies inbox text through standard input; the Cursor cold-start example is omitted pending a verified standard-input interface.
 - Building mtix from source now requires Go 1.26+ (MTIX-107.10).

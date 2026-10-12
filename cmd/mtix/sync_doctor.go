@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -26,6 +27,7 @@ import (
 // and Findings carries the hub-privileges check's findings. The three are
 // omitted when empty, so the other checks marshal as before.
 type DoctorCheck struct {
+	Recent         []oplocal.Alert              `json:"recent,omitempty"`
 	PendingExports *service.PendingExportStatus `json:"pending_exports,omitempty"`
 	Name           string                       `json:"name"`
 	Pass           bool                         `json:"pass"`
@@ -78,6 +80,9 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
+  alerts.recent          - latest 20 operator-local counted diagnostics;
+                           never wake anyone or write the board journal;
+                           this check creates no state and contacts no hub
   Operator state placement - reports the sandbox placement limitation
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
   Hub triggers           - every function and trigger the hub migrations
@@ -203,6 +208,7 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	// unique node uids, held push events, secrets file mode.
 	report = appendLocalChecks(ctx, report)
 	report = appendOperatorPlacementCheck(report)
+	report = appendAlertsCheck(ctx, report)
 
 	// Check 6: every mtix function and trigger the migrations define is
 	// on the hub and enabled, as the restore runbook ends (MTIX-95.7).

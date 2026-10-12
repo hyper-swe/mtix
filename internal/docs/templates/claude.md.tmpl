@@ -106,6 +106,8 @@ If `mtix sync status` shows a `pending` count that does not go down across pushe
 
 Operator-local state: `mtix hooks status --json` validates its path and access rules without creating state or granting approval. Follow the admin skill for recovery; never commit or dotfile-sync operator-local state.
 
+Operator alerts: inspect `alerts.recent` with `mtix sync doctor --json`, follow its exact fix and surface the diagnostic to the operator. Alerts never wake anyone and never address the concerned agent; do not repost them to that agent. The admin skill describes protected storage and recovery.
+
 <!-- AUTO-GENERATED: WAKE_ROUTINE -->
 
 ## Reference Wake Routine

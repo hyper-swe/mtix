@@ -3342,6 +3342,8 @@ This reader reports graph and board provenance; it does not establish lineage of
 
 ### Database Migration
 
+Coordination tables are added locally without increasing the database schema version. The released v0.5.4-beta client was verified for `list`, `create`, and `sync pull`, with these additive local coordination tables preserved. Newly created stores have a stable random `store_instance_id`; reopening a store never replaces it, and upgrading a legacy store does not assign one automatically. The `min_dispatch_protocol` metadata key is reserved for planned dispatch compatibility; these schema foundations do not enable an attached dispatcher.
+
 The database schema is auto-migrated on startup. If needed:
 
 ```bash

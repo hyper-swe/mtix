@@ -34,8 +34,8 @@ ALTER TABLE sync_quarantine_widened RENAME TO sync_quarantine;
 // createSchema runs schemaSQL (every CREATE ... IF NOT EXISTS and meta
 // default) and then widenQuarantineSource.
 func (s *Store) createSchema(ctx context.Context) error {
-	if _, err := s.writeDB.ExecContext(ctx, schemaSQL); err != nil {
-		return fmt.Errorf("create schema: %w", err)
+	if err := s.initializeSchema(ctx); err != nil {
+		return err
 	}
 	return s.widenQuarantineSource(ctx)
 }

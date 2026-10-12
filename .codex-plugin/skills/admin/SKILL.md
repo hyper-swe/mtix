@@ -5,6 +5,10 @@ description: Administrative operations for mtix projects. Backup, export, import
 
 # MTIX — Administration
 
+## Local coordination schema
+
+Coordination tables are added locally without increasing the database schema version. The released v0.5.4-beta client was verified for `list`, `create`, and `sync pull`, with these additive local coordination tables preserved. Newly created stores have a stable random `store_instance_id`; reopening a store never replaces it, and upgrading a legacy store does not assign one automatically. The `min_dispatch_protocol` metadata key is reserved for planned dispatch compatibility; these schema foundations do not enable an attached dispatcher.
+
 ## Pending mirror export diagnostics
 
 `mtix sync status` and `mtix sync doctor --json` report local `pending_exports.count`, `oldest_at` and `oldest_age_seconds` without importing, draining or contacting the hub for that check. Doctor warns after one hour and prints `mtix list`: it retries protected import-first mirror recovery, and a pulled-board refusal still needs its printed resolution. Then verify with `mtix sync status`. Do not delete markers or recommend `mtix sync --fix` automatically; it intentionally discards the pulled board. New clients coalesce requests into one durable metadata record, while legacy files can temporarily add to the count and conservative age; old clients can keep creating them. This bounds live intent metadata, not the WAL. See the sync skill's Pending mirror exports section for cutoff, durability and upgrade limits.

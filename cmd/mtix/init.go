@@ -24,6 +24,7 @@ func newInitCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "init",
+		Args:  cobra.NoArgs,
 		Short: "Initialize a new mtix project",
 		Long: `Initialize a new mtix project in the current directory.
 

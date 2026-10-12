@@ -55,7 +55,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `rerun <id>` — Invalidate and reprocess descendants of a node
 - `resolve-annotation <node-id> <annotation-id>` — Resolve an annotation on a node
 - `restore <id>` — Restore an invalidated node to its previous status
-- `search` — Search nodes with advanced filters
+- `search [words...]` — Search nodes by text (positional words) and advanced filters
 - `serve` — Start the mtix HTTP and WebSocket server
 - `session` — Manage agent sessions
 - `show <id>` — Show a node's details and annotations
@@ -287,9 +287,9 @@ With no hub configured the daemon still runs, tailing the local journal
 only — cross-process writes into this .mtix keep dispatching.
 
 Foreground process; intended for launchd/systemd supervision (see
---install). Idempotent start: .mtix/sync.daemon.pid marks the running
-instance — shared with 'mtix sync daemon', so the two never run
-together. Transient pull errors are logged and retried, never fatal.
+--install). Idempotent start: a lifetime OS lock at .mtix/data/sync.daemon.lock
+is shared with 'mtix sync daemon', so the two never run together.
+The PID file is diagnostic and removed only by its matching owner. Transient pull errors are logged and retried, never fatal.
 
 ### Flags
 
@@ -1062,9 +1062,13 @@ Restore an invalidated node to its previous status
 
 ## search
 
-**Usage:** `search`
+**Usage:** `search [words...]`
 
-Search nodes with advanced filters
+Search nodes by text (positional words) and advanced filters
+
+Search nodes. Optional positional words must ALL appear (case-insensitive,
+literal) in a node's title, description or prompt; filter flags narrow the
+result further. With no words, only the filters apply.
 
 ### Flags
 
@@ -1522,9 +1526,9 @@ Run a foreground process that pulls events from the BYO Postgres
 hub every N seconds (default 30) until killed. Intended for systemd
 or launchd supervision; this command does NOT fork itself.
 
-Idempotent start: a .mtix/sync.daemon.pid file marks the running
-instance. If a live PID is found, this command exits with a
-non-error message. The PID file is removed on graceful shutdown.
+Idempotent start: a lifetime OS lock at .mtix/data/sync.daemon.lock
+excludes both daemon spellings. Lock contention exits cleanly. The
+PID file is diagnostic and removed only by its matching owner.
 
 Use --install to print a systemd unit (linux) or launchd plist
 (darwin) ready to be installed by the user.

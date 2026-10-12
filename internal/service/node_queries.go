@@ -28,8 +28,12 @@ func (svc *NodeService) ApplyUpdate(ctx context.Context, id string, update *Node
 	return svc.UpdateNode(ctx, id, (*store.NodeUpdate)(update))
 }
 
-// ListNodes queries filtered nodes per FR-17.1 and FR-7.6.
+// ListNodes queries filtered nodes per FR-17.1 and FR-7.6. A text query
+// (filter.Text) is validated here and matched by the store (MTIX-146).
 func (svc *NodeService) ListNodes(ctx context.Context, filter NodeFilter, opts ListOptions) ([]*model.Node, int, error) {
+	if err := validateSearchText(filter.Text); err != nil {
+		return nil, 0, err
+	}
 	nodes, total, err := svc.store.ListNodes(ctx, store.NodeFilter(filter), store.ListOptions(opts))
 	if err != nil {
 		return nil, 0, wrapAPIOperation("list nodes", err)

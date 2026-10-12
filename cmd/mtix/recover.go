@@ -31,6 +31,7 @@ const recoverNextStep = "Next: review the file, then run 'mtix import --mode rep
 func newRecoverCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "recover",
+		Args:  cobra.NoArgs,
 		Short: "Salvage data from a damaged database into an importable export",
 		Long: `Reads the project database read-only — even when it fails integrity
 checks — salvaging every readable row individually, fills gaps from the

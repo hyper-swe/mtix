@@ -39,6 +39,7 @@ func newPluginInstallCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "install",
+		Args:  cobra.NoArgs,
 		Short: "Install skill files and MCP configuration",
 		Long: `Install agent integration files for the target AI coding agent.
 

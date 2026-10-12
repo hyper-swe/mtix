@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/hyper-swe/mtix/internal/oplocal"
 )
@@ -32,6 +33,10 @@ type Approvals struct {
 	dir     string
 	state   *oplocal.State
 	session bool
+	// readLegacy reads the legacy workspace record; injectable for tests.
+	readLegacy func(string) string
+	// clock supplies the current time for the migration window (FR-19).
+	clock func() time.Time
 }
 type approvalRecord struct {
 	Project string `json:"project"`
@@ -47,7 +52,7 @@ type migrationRecord struct {
 
 // NewApprovals uses explicit operator state and process eligibility inputs.
 func NewApprovals(dir string, state *oplocal.State, session bool) *Approvals {
-	return &Approvals{dir: dir, state: state, session: session}
+	return &Approvals{dir: dir, state: state, session: session, readLegacy: TrustedHash, clock: time.Now}
 }
 
 // SessionMarked reports process markers that defer operator approval (FR-19).
@@ -238,22 +243,8 @@ func (a *Approvals) migrateLocked(project string) error {
 	rec := migrationRecord{Project: project, Attempted: true, Pins: map[string]string{}, Detail: "legacy approval not migrated"}
 	tracked, reason := legacyTracked(filepath.Dir(a.dir))
 	rec.Detail = reason
-	pin := ""
 	if !tracked {
-		pin = TrustedHash(a.dir)
-	}
-	if !tracked && validDigest(pin) {
-		snap, snapshotErr := approvalSnapshot(a.dir)
-		if snapshotErr != nil {
-			rec.Detail = snapshotErr.Error()
-		} else if snapshotErr = snap.combinedError(); snapshotErr != nil {
-			rec.Detail = snapshotErr.Error()
-		} else if pin == snap.legacy {
-			rec.Pins = snap.digests
-			rec.Detail = "legacy approval migrated"
-		} else {
-			rec.Detail = "legacy approval differs from current hooks"
-		}
+		a.applyLegacyPin(&rec)
 	}
 	if err := a.state.WriteJSON(key, rec); err != nil {
 		return fmt.Errorf("save migration decision: %w", err)
@@ -331,4 +322,53 @@ func (a *Approvals) ApproveSelected(selected Hook, terminal bool) error {
 		return fmt.Errorf("selected hook: %w", err)
 	}
 	return a.approve(selected.Name, string(stanza), terminal)
+}
+
+const firstRunKey = "migration-first-run"
+
+type firstRunRecord struct {
+	At time.Time `json:"at"`
+}
+
+// beforeFirstRun records the first migration time on this host and reports
+// whether the legacy record predates it (FR-19).
+func (a *Approvals) beforeFirstRun() bool {
+	var first firstRunRecord
+	present, reports, err := readApprovalRecord(a.state, firstRunKey, &first)
+	if err != nil || len(reports) != 0 {
+		return false
+	}
+	if !present || first.At.IsZero() {
+		first.At = a.clock().UTC()
+		if writeErr := a.state.WriteJSON(firstRunKey, first); writeErr != nil {
+			return false
+		}
+	}
+	info, err := os.Lstat(filepath.Join(a.dir, trustFileName))
+	return err == nil && !info.ModTime().After(first.At)
+}
+
+// applyLegacyPin converts an eligible untracked legacy record into pins (FR-19).
+func (a *Approvals) applyLegacyPin(rec *migrationRecord) {
+	pin := a.readLegacy(a.dir)
+	if !a.beforeFirstRun() && pin != "" {
+		rec.Detail = "legacy workspace record is newer than the first run on this host"
+		return
+	}
+	if !validDigest(pin) {
+		return
+	}
+	snap, err := approvalSnapshot(a.dir)
+	if err == nil {
+		err = snap.combinedError()
+	}
+	switch {
+	case err != nil:
+		rec.Detail = err.Error()
+	case pin == snap.legacy:
+		rec.Pins = snap.digests
+		rec.Detail = "legacy approval migrated"
+	default:
+		rec.Detail = "legacy approval differs from current hooks"
+	}
 }

@@ -6,6 +6,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -127,32 +128,40 @@ func generateInitDocs(docsDir, prefix, ver string) []docs.GenerateResult {
 }
 
 // addToGitignore appends an entry to .gitignore if not already present.
+// Only a regular, non-link file is read or extended; anything else is refused.
 func addToGitignore(dir, entry string) (err error) {
 	gitignorePath := filepath.Join(dir, ".gitignore")
-
-	// Read existing content.
-	content, err := os.ReadFile(gitignorePath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read gitignore: %w", err)
+	flags := os.O_RDWR | os.O_APPEND
+	info, statErr := os.Lstat(gitignorePath)
+	switch {
+	case os.IsNotExist(statErr):
+		flags |= os.O_CREATE | os.O_EXCL
+		info = nil
+	case statErr != nil:
+		return fmt.Errorf("inspect gitignore: %w", statErr)
+	case !info.Mode().IsRegular():
+		return fmt.Errorf("gitignore is not a regular file; leave it unchanged and add %q by hand", entry)
 	}
-
-	// Check if entry already present.
-	lines := string(content)
-	if contains(lines, entry) {
-		return nil
-	}
-
-	// Append entry.
-	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(gitignorePath, flags, 0o644) //nolint:gosec // operator-owned project file, type checked above and re-checked on the descriptor
 	if err != nil {
 		return fmt.Errorf("open gitignore: %w", err)
 	}
 	defer func() { err = errors.Join(err, f.Close()) }()
-
-	if len(content) > 0 && content[len(content)-1] != '\n' {
-		if _, err := f.WriteString("\n"); err != nil {
-			return fmt.Errorf("write gitignore separator: %w", err)
+	if info != nil {
+		opened, openedErr := f.Stat()
+		if openedErr != nil || !os.SameFile(info, opened) || !opened.Mode().IsRegular() {
+			return fmt.Errorf("gitignore changed while opening; leave it unchanged and add %q by hand", entry)
 		}
+	}
+	content, err := io.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("read gitignore: %w", err)
+	}
+	if contains(string(content), entry) {
+		return nil
+	}
+	if len(content) > 0 && content[len(content)-1] != '\n' {
+		entry = "\n" + entry
 	}
 	if _, err := f.WriteString(entry + "\n"); err != nil {
 		return fmt.Errorf("write gitignore entry: %w", err)

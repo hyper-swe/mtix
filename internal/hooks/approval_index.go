@@ -17,9 +17,10 @@ import (
 const maxApprovalIndex = 16 << 20
 
 func legacyTracked(root string) (bool, string) {
-	git, relative, err := approvalGitLocation(root)
+	const unverified = "git location cannot be verified; review hooks individually"
+	git, relative, err := resolvedGitLocation(root)
 	if err != nil {
-		return true, "git location cannot be verified; review hooks individually"
+		return true, unverified
 	}
 	if git == "" {
 		return false, "workspace is not git tracked"
@@ -198,4 +199,35 @@ func approvalGitLocation(root string) (string, string, error) {
 			return "", "", nil
 		}
 	}
+}
+
+// sameLocation reports whether two repository locations are the same place
+// once links are resolved; two absent locations agree.
+func sameLocation(given, resolved string) bool {
+	if given == "" || resolved == "" {
+		return given == resolved
+	}
+	linked, err := filepath.EvalSymlinks(given)
+	return err == nil && linked == resolved
+}
+
+// resolvedGitLocation finds the repository for the project root after
+// resolving links, and fails when the given and resolved paths disagree.
+func resolvedGitLocation(root string) (string, string, error) {
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", "", err
+	}
+	git, relative, err := approvalGitLocation(resolved)
+	if err != nil {
+		return "", "", err
+	}
+	given, _, err := approvalGitLocation(root)
+	if err != nil {
+		return "", "", err
+	}
+	if !sameLocation(given, git) {
+		return "", "", fmt.Errorf("repository location differs by path")
+	}
+	return git, relative, nil
 }

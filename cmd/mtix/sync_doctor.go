@@ -78,6 +78,10 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
+  board.id               - one committed board identity; a hub board also
+                           needs a known local hub observation
+  board.hub-identity-changed - warns when the observed hub differs from
+                           a recorded confirmation; recovery is planned
   Operator state placement - reports the sandbox placement limitation
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
   Hub triggers           - every function and trigger the hub migrations
@@ -203,6 +207,7 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	// unique node uids, held push events, secrets file mode.
 	report = appendLocalChecks(ctx, report)
 	report = appendOperatorPlacementCheck(report)
+	report = appendBoardIdentityChecks(report)
 
 	// Check 6: every mtix function and trigger the migrations define is
 	// on the hub and enabled, as the restore runbook ends (MTIX-95.7).

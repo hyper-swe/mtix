@@ -792,6 +792,7 @@ Initialize a new mtix project
 Initialize a new mtix project in the current directory.
 
 Creates .mtix/ directory structure with config, database, and logs.
+Creates .mtix/board-id with one stable UUID; commit it with the board.
 Generates agent documentation in .mtix/docs/.
 
 ### Flags
@@ -1572,6 +1573,10 @@ Run health checks against the local store and the BYO Postgres hub:
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
+  board.id               - one committed board identity; a hub board also
+                           needs a known local hub observation
+  board.hub-identity-changed - warns when the observed hub differs from
+                           a recorded confirmation; recovery is planned
   Operator state placement - reports the sandbox placement limitation
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
   Hub triggers           - every function and trigger the hub migrations

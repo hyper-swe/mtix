@@ -43,6 +43,10 @@ type Store struct {
 	clock           func() time.Time
 	encodePayloadFn payloadEncoder // fixed per Store before concurrent use
 
+	// afterExportBoardRead is a nil-by-default test observer, set only before
+	// an isolated synchronous export; concurrent writers never access it.
+	afterExportBoardRead func()
+
 	// Durability state per NFR-2.8.
 	dbDir        string     // directory holding the DB, for free-space checks
 	minFreeBytes uint64     // write pre-flight floor; 0 disables

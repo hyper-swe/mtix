@@ -12,6 +12,12 @@
 
 The optional upgrade-service Git reader uses only local committed history and never writes Git or database state, fetches, or prompts. Missing `ORIG_HEAD` or upstream, an absent committed `.mtix/tasks.json`, multiple bases, an unsupported Git installation or platform, invalid board data, or time/output limits produce an explained unavailable result. The supported layout is an ordinary self-contained repository: `.git/shallow` and `.git/objects/info/alternates` each cause conservative refusal even when a base is readable. Borrowed-object graphs can be complete; the refusal is a supported-layout boundary, not a claim that their ancestry is always incomplete. Git-less and mgit-only checkouts fall back cleanly. This reader provides provenance for a later import loss check; it does not change the current import recovery procedure. Keep a refused incoming board and follow the command's printed recovery guidance; do not override refusals or run a repository-provided Git executable.
 
+## Received provenance has pending or unknown outbound work
+
+A hub receipt is published only when the completed pull observes no pending outbound journal events, including held push events, in the same board snapshot. Pending work preserves the prior receipt (or its absence) and reports `pending-outbound`. Run `mtix sync push`, resolve any held work it reports, then run a new, complete `mtix sync pull`; push alone does not publish a receipt or clear that warning. Older hub receipts whose outbound boundary is absent or null remain readable, but status and doctor infer `outbound-boundary-unknown` without rewriting them. This is historical uncertainty, not a recorded failed exchange; a later saved omission takes precedence. A fresh receipt with known zero replaces that uncertainty only after a new eligible pull.
+
+Held push events remain pending until resolved. Use `mtix sync quarantine list` and the recovery the push prints; never delete journal rows, edit receipt hashes or rewrite local metadata to obtain a zero boundary. Other saved omission categories retain their existing meaning and may be stale after diagnostics failed to clear.
+
 ## Common Errors
 
 ### Pull sync lock is busy

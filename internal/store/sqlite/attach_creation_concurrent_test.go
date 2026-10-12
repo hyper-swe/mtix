@@ -4,6 +4,7 @@
 package sqlite_test
 
 import (
+	"database/sql"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,10 +19,7 @@ func TestStoreInstanceID_ConcurrentOpen_PreservesSingleIdentity(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		t.Run(map[bool]string{false: "fresh", true: "legacy"}[legacy], func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "store.db")
-			if legacy {
-				_, err := newTestDB(t, path).Exec("CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)")
-				require.NoError(t, err)
-			}
+			prepareConcurrentCreation(t, path, legacy)
 			start := make(chan struct{})
 			ids := make(chan string, 4)
 			errs := make(chan error, 8)
@@ -50,7 +48,9 @@ func TestStoreInstanceID_ConcurrentOpen_PreservesSingleIdentity(t *testing.T) {
 				require.NoError(t, err)
 			}
 			var first string
+			observed := 0
 			for id := range ids {
+				observed++
 				if legacy {
 					assert.Empty(t, id)
 				} else {
@@ -61,6 +61,30 @@ func TestStoreInstanceID_ConcurrentOpen_PreservesSingleIdentity(t *testing.T) {
 					assert.Equal(t, first, id)
 				}
 			}
+			require.Equal(t, 4, observed)
 		})
 	}
+}
+
+// Prepare journal state without assigning a creation identity or opening the Store.
+func prepareConcurrentCreation(t *testing.T, path string, legacy bool) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, db.Close()) }()
+	var mode string
+	require.NoError(t, db.QueryRow("PRAGMA journal_mode=WAL").Scan(&mode))
+	require.Equal(t, "wal", mode)
+	expectedTables := 0
+	if legacy {
+		_, err := db.Exec("CREATE TABLE meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)")
+		require.NoError(t, err)
+		expectedTables = 1
+		var identities int
+		require.NoError(t, db.QueryRow("SELECT count(*) FROM meta WHERE key='store_instance_id'").Scan(&identities))
+		require.Zero(t, identities)
+	}
+	var tables int
+	require.NoError(t, db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table'").Scan(&tables))
+	require.Equal(t, expectedTables, tables)
 }

@@ -78,6 +78,11 @@ type Store struct {
 // connection is opened (opening a torn database can reset the WAL that
 // would otherwise repair it), and quick_check runs before any write.
 func New(dbPath string, logger *slog.Logger) (*Store, error) {
+	return newWithRetry(dbPath, logger, defaultOpenRetry())
+}
+
+// newWithRetry is New with an injected open-retry policy (MTIX-147).
+func newWithRetry(dbPath string, logger *slog.Logger, rt openRetry) (*Store, error) {
 	dbPath = resolveDBPath(dbPath)
 	ctx := context.Background()
 
@@ -97,39 +102,15 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 	}
 
 	if writeRefused {
-		// Read-only store on an unsafe filesystem (MTIX-58): reads/recover/query
-		// work; every write returns writeRefusedError (via preflightWrite). One
-		// shared read-only connection serves both roles. No init — init writes
-		// schema, and creating a store on an unsafe FS is correctly impossible.
-		roDB, err := openDB(ctx, dbPath, false, true)
-		if err != nil {
-			return nil, explainOpenError(fmt.Errorf("open read-only db %s: %w", dbPath, err), dbPath)
-		}
-		if checkErr := integrityCheckOnOpen(ctx, roDB, dbPath); checkErr != nil {
-			if closeErr := roDB.Close(); closeErr != nil {
-				logger.Error("failed to close read-only db after integrity failure", slog.Any("error", closeErr))
-			}
-			return nil, checkErr
-		}
-		return &Store{
-			writeDB:      roDB,
-			readDB:       roDB,
-			logger:       logger,
-			clock:        func() time.Time { return time.Now().UTC() },
-			dbDir:        filepath.Dir(dbPath),
-			minFreeBytes: minFreeBytes(),
-			writeRefused: true,
-			fsType:       fsType,
-			dbPath:       dbPath,
-		}, nil
+		return openReadOnlyStore(ctx, dbPath, logger, rt, fsType)
 	}
 
-	writeDB, err := openDB(ctx, dbPath, true, false)
+	writeDB, err := openDBWith(ctx, dbPath, true, false, rt)
 	if err != nil {
 		return nil, explainOpenError(fmt.Errorf("open write db %s: %w", dbPath, err), dbPath)
 	}
 
-	if checkErr := integrityCheckOnOpen(ctx, writeDB, dbPath); checkErr != nil {
+	if checkErr := integrityCheckOnOpenWith(ctx, writeDB, dbPath, rt); checkErr != nil {
 		if closeErr := writeDB.Close(); closeErr != nil {
 			logger.Error("failed to close write db after integrity failure",
 				slog.Any("error", closeErr))
@@ -137,7 +118,7 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 		return nil, checkErr
 	}
 
-	readDB, err := openDB(ctx, dbPath, false, false)
+	readDB, err := openDBWith(ctx, dbPath, false, false, rt)
 	if err != nil {
 		if closeErr := writeDB.Close(); closeErr != nil {
 			logger.Error("failed to close write db after read db open failure",
@@ -157,7 +138,9 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 		fsType:       fsType,
 	}
 
-	if err := s.init(context.Background()); err != nil {
+	// init is idempotent; a concurrent first open can change the schema under
+	// it (SQLITE_SCHEMA) or hold the write lock, so retry transient errors.
+	if err := retryTransient(ctx, rt, rt.step(stageInit, func() error { return s.init(ctx) })); err != nil {
 		if closeErr := s.Close(); closeErr != nil {
 			logger.Error("failed to close store after init failure",
 				slog.Any("error", closeErr))
@@ -174,6 +157,13 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 // lock upgrade). Both read and write connections set busy_timeout = 5000ms
 // to prevent immediate failures during concurrent access.
 func openDB(ctx context.Context, path string, isWriter, readOnly bool) (*sql.DB, error) {
+	return openDBWith(ctx, path, isWriter, readOnly, defaultOpenRetry())
+}
+
+// openDBWith is openDB with an injected retry policy. Switching a brand-new
+// file to WAL needs a lock that concurrent first opens contend for, so each
+// pragma runs under retryTransient (MTIX-147).
+func openDBWith(ctx context.Context, path string, isWriter, readOnly bool, rt openRetry) (*sql.DB, error) {
 	dsn := path
 	switch {
 	case readOnly:
@@ -194,7 +184,6 @@ func openDB(ctx context.Context, path string, isWriter, readOnly bool) (*sql.DB,
 	// PRAGMA foreign_keys = ON and busy_timeout on ALL connections
 	// (NFR-2.1); busy_timeout prevents immediate SQLITE_BUSY failures
 	// during concurrent access from multiple processes or agents.
-	type pragma struct{ stmt, what string }
 	pragmas := []pragma{
 		{"PRAGMA foreign_keys = ON", "enable foreign keys"},
 		{"PRAGMA busy_timeout = 5000", "set busy_timeout"},
@@ -227,13 +216,8 @@ func openDB(ctx context.Context, path string, isWriter, readOnly bool) (*sql.DB,
 		)
 	}
 
-	for _, p := range pragmas {
-		if _, err := db.ExecContext(ctx, p.stmt); err != nil {
-			if closeErr := db.Close(); closeErr != nil {
-				return nil, fmt.Errorf("close after pragma failure: %w", closeErr)
-			}
-			return nil, fmt.Errorf("%s: %w", p.what, err)
-		}
+	if err := applyPragmas(ctx, db, path, pragmas, rt); err != nil {
+		return nil, err
 	}
 
 	return db, nil
@@ -473,4 +457,33 @@ func clockOrDefault(clocks ...func() time.Time) func() time.Time {
 		return clocks[0]
 	}
 	return time.Now
+}
+
+// openReadOnlyStore opens the read-only store used on an unsafe filesystem
+// (MTIX-58): reads/recover/query work; every write returns writeRefusedError
+// (via preflightWrite). One shared read-only connection serves both roles. No
+// init: init writes schema, and creating a store on an unsafe FS is impossible.
+func openReadOnlyStore(ctx context.Context, dbPath string, logger *slog.Logger,
+	rt openRetry, fsType string) (*Store, error) {
+	roDB, err := openDBWith(ctx, dbPath, false, true, rt)
+	if err != nil {
+		return nil, explainOpenError(fmt.Errorf("open read-only db %s: %w", dbPath, err), dbPath)
+	}
+	if checkErr := integrityCheckOnOpenWith(ctx, roDB, dbPath, rt); checkErr != nil {
+		if closeErr := roDB.Close(); closeErr != nil {
+			logger.Error("failed to close read-only db after integrity failure", slog.Any("error", closeErr))
+		}
+		return nil, checkErr
+	}
+	return &Store{
+		writeDB:      roDB,
+		readDB:       roDB,
+		logger:       logger,
+		clock:        func() time.Time { return time.Now().UTC() },
+		dbDir:        filepath.Dir(dbPath),
+		minFreeBytes: minFreeBytes(),
+		writeRefused: true,
+		fsType:       fsType,
+		dbPath:       dbPath,
+	}, nil
 }

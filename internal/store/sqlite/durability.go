@@ -162,20 +162,19 @@ func quickCheck(ctx context.Context, db *sql.DB) (string, error) {
 // integrityCheckOnOpen runs quickCheck on the freshly opened write
 // connection, before init or any mutation.
 func integrityCheckOnOpen(ctx context.Context, db *sql.DB, path string) error {
+	return integrityCheckOnOpenWith(ctx, db, path, defaultOpenRetry())
+}
+
+// integrityCheckOnOpenWith is integrityCheckOnOpen with an injected retry
+// policy. BUSY, LOCKED and SCHEMA are retried and never classed as
+// corruption (MTIX-147).
+func integrityCheckOnOpenWith(ctx context.Context, db *sql.DB, path string, rt openRetry) error {
 	if integrityChecksSkipped() {
 		return nil
 	}
-
-	result, err := quickCheck(ctx, db)
-	if err != nil {
-		return fmt.Errorf("integrity check on %s could not run; %s: %w (%v)",
-			path, recoveryGuidance, model.ErrCorrupted, err)
-	}
-	if result != "ok" {
-		return fmt.Errorf("integrity check on %s failed (%s); %s: %w",
-			path, result, recoveryGuidance, model.ErrCorrupted)
-	}
-	return nil
+	return checkIntegrity(ctx, rt, path, func(c context.Context) (string, error) {
+		return quickCheck(c, db)
+	})
 }
 
 // explainOpenError enriches a database-open failure with free-space
@@ -324,22 +323,29 @@ func fatalIOSentinel(err error) error {
 	return model.ErrDiskFull
 }
 
-// isCorruptionError reports whether a fatal storage error is a corruption
-// (SQLITE_CORRUPT / malformed image) rather than a disk-space/I/O failure.
+// isCorruptionError reports whether a storage error means the file itself is
+// damaged: SQLITE_CORRUPT (and every CORRUPT_* extended code, which share the
+// primary code) or SQLITE_NOTADB ("file is not a database"), rather than a
+// disk-space/I/O failure or a transient lock (MTIX-147).
 func isCorruptionError(err error) bool {
 	var sqErr *sqlite3.Error
-	if errors.As(err, &sqErr) && sqErr.Code()&0xFF == sqliteCorrupt {
-		return true
+	if errors.As(err, &sqErr) {
+		if code := sqErr.Code() & 0xFF; code == sqliteCorrupt || code == sqliteNotADB {
+			return true
+		}
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "database disk image is malformed") ||
-		strings.Contains(msg, "SQLITE_CORRUPT")
+		strings.Contains(msg, "file is not a database") ||
+		strings.Contains(msg, "SQLITE_CORRUPT") ||
+		strings.Contains(msg, "SQLITE_NOTADB")
 }
 
 // SQLite primary result codes that mean the filesystem failed under us.
 const (
 	sqliteIOErr   = 10 // SQLITE_IOERR
 	sqliteCorrupt = 11 // SQLITE_CORRUPT
+	sqliteNotADB  = 26 // SQLITE_NOTADB
 	sqliteFull    = 13 // SQLITE_FULL
 )
 

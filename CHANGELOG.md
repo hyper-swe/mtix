@@ -13,7 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Several processes or goroutines opening the same brand-new store at once no longer fail with `enable WAL: SQLITE_BUSY`, and a transient `schema has changed` (SQLITE_SCHEMA) during open no longer raises a false `database corrupted` alarm. The WAL switch, store initialisation and the open-time integrity check retry busy, locked and schema-change errors for a bounded time (MTIX-147).
+
 ### Changed
+- Exit code change: an open whose integrity check cannot run because the database stays busy or locked, or is cut short by a transient I/O error, out-of-memory or cancellation, now fails with `integrity check … could not run (… this is not corruption)` and exits 1 (it used to report `database corrupted` and exit 4). Exit 4 is reserved for a failed open-time integrity gate (truncation or header check, `quick_check`, `SQLITE_CORRUPT`); a real corruption now reads `database corruption detected by the integrity check … run 'mtix recover'`. No new exit code; retry, and check for other processes using `.mtix/data/` (MTIX-147).
 - Preserve received hub provenance while outbound journal work is pending, including held push events. New receipts record a known-zero outbound boundary; older unknown boundaries are reported without rewriting them. Push then a new complete pull establishes a fresh receipt.
 - Record successfully received board provenance separately from local exports, with local status and doctor diagnostics.
 - The reference wake routine supplies inbox text through standard input; the Cursor cold-start example is omitted pending a verified standard-input interface.

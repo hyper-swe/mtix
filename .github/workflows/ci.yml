@@ -110,6 +110,8 @@ jobs:
           # value, so it augments those two jobs rather than adding any.
           - pkg: ./e2e/...
             verbose: -v
+          - pkg: ./cmd/mtix/
+            verbose: -v
     services:
       postgres:
         image: postgres:${{ matrix.pg }}

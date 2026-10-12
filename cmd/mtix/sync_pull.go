@@ -201,6 +201,12 @@ func connectAndPull(ctx context.Context, in pullIngest, args []string,
 	// as one pushed late by an offline teammate (ADR-006 D5): after it, sweep
 	// for them.
 	res, err := pullThenSweep(ctx, in, pool, app.store, since, limit)
+	if err == nil {
+		if identityErr := cachePulledIdentity(ctx, pool); identityErr != nil {
+			res.stage = "identity"
+			err = identityErr
+		}
+	}
 	noteSyncResult(ctx, app.store, err == nil)
 	return res, err
 }

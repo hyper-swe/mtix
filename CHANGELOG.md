@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Upgraded `golang.org/x/crypto` to v0.56.0 to clear SSH advisories GO-2026-6354 and GO-2026-6355 (MTIX-107.10). The unfixed, deprecated OpenPGP advisory GO-2026-5932 remains module-only; a repository import guard prevents OpenPGP imports.
 
 ### Fixed
+- **State-machine races (MTIX-151).** Restore and the rerun auto-reopen no longer act on a stale read: a node cancelled or reopened and claimed by another writer in the meantime is left alone. Restore decides its target status inside the write transaction. A rerun whose parent keeps changing now fails with a conflict (HTTP 409) and can be retried. The other status checks were proven safe by concurrency tests.
 - Hook-mode pull warns and skips native local sync-lock contention, with an explicit retry-after-owner instruction; ordinary pull and other acquisition failures remain errors.
 - **Upgrade ancestor reads (MTIX-95.31.20).** Refuse shallow and borrowed-object repository metadata conservatively, and use the test deadline for owned process startup readiness while retaining bounded cancellation cleanup.
 - **Agent identity validation (MTIX-125).** Existing create, claim, reclaim, assignment update and unclaim inputs reject nonempty whitespace-only IDs, IDs over 64 UTF-8 bytes, and control or invisible formatting characters before writes. Accepted IDs remain unchanged; empty create assignees retain parent auto-claim behavior, and explicit empty CLI update assignees clear the assignment.

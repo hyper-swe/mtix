@@ -241,6 +241,12 @@ func (svc *NodeService) UndeleteNode(ctx context.Context, id string) error {
 func (svc *NodeService) TransitionStatus(
 	ctx context.Context, id string, toStatus model.Status, reason, author string,
 ) error {
+	// This read is an early, advisory check only. The store re-reads and
+	// re-validates the status inside its write transaction (executeTransitionTx),
+	// so a transition that slips in between is rejected there. Proven by
+	// TestTransitionStatus_CancelBetweenReadAndWrite_RejectsDone and
+	// TestStateMachineRaces_ConcurrentDoneAndCancel_OneWinnerMatchesFinalState
+	// (MTIX-151).
 	// Read current status to validate the transition.
 	node, err := svc.store.GetNode(ctx, id)
 	if err != nil {
@@ -304,6 +310,11 @@ func (svc *NodeService) buildNode(
 
 	if req.ParentID != "" {
 		parentID = req.ParentID
+		// Used for the prefix and depth only. The parent's status is checked
+		// again inside the store's create transaction (validateParentStatus).
+		// Proven by TestCreateNode_ParentCancelledBetweenReadAndWrite_CreatesNothing
+		// and TestStateMachineRaces_ConcurrentCreateChildAndCancelParent_NoChildAfterCancel
+		// (MTIX-151).
 		parent, getErr := svc.store.GetNode(ctx, parentID)
 		if getErr != nil {
 			return nil, fmt.Errorf("parent %s: %w", parentID, getErr)

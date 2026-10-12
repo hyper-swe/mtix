@@ -159,6 +159,17 @@ type Store interface {
 	// Returns ErrInvalidTransition if the transition is not allowed.
 	TransitionStatus(ctx context.Context, id string, toStatus model.Status, reason, author string) error
 
+	// TransitionStatusFrom is TransitionStatus guarded by the status the caller
+	// decided on: inside the write transaction it re-reads the status and
+	// returns ErrConflict if it is no longer expectedFrom (MTIX-151).
+	TransitionStatusFrom(ctx context.Context, id string, expectedFrom, toStatus model.Status, reason, author string) error
+
+	// RestoreInvalidated returns an invalidated node to its previous_status
+	// (open when that is empty or unreachable), deciding the target inside the
+	// write transaction (FR-3.5, MTIX-151). Returns the status restored to,
+	// or ErrInvalidTransition if the node is not invalidated.
+	RestoreInvalidated(ctx context.Context, id, author string) (model.Status, error)
+
 	// DeferNode transitions a node to deferred and stores its wake time
 	// (defer_until) in the same transaction (FR-3.8, FR-3.8b, MTIX-95.22).
 	// A nil until stores NULL, clearing any earlier wake time. The sync event

@@ -60,6 +60,11 @@ func (svc *NodeService) DeferNode(
 	if until != nil && !model.IsStorableTime(*until) {
 		return fmt.Errorf("defer %s: until's UTC year must be 1 to 9999: %w", id, model.ErrInvalidInput)
 	}
+	// Advisory early check: the store re-validates the transition inside its
+	// write transaction (executeDeferTx). Proven by
+	// TestDeferNode_CancelBetweenReadAndWrite_RejectsDefer and
+	// TestStateMachineRaces_ConcurrentDeferAndCancel_CancelAlwaysSticks
+	// (MTIX-151).
 	node, err := svc.store.GetNode(ctx, id)
 	if err != nil {
 		return fmt.Errorf("get node for defer: %w", err)

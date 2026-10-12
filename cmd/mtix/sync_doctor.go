@@ -443,11 +443,13 @@ func checkDataFilesystem(inspectors []func(string) (string, bool, error)) Doctor
 }
 
 // isKnownLocalFilesystem reports whether the classifier name is a local disk
-// filesystem. Any other name WARNs: an unrecognized filesystem is not proof of
-// reliable locking (FR-20).
+// filesystem the store classifier emits: apfs and hfs on macOS; ext, xfs,
+// btrfs, tmpfs, zfs and overlay on Linux. Windows classification is always
+// unavailable, so its row always WARNs. Any other name WARNs: an unrecognized
+// filesystem is not proof of reliable locking (FR-20).
 func isKnownLocalFilesystem(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "apfs", "hfs", "ext", "ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "f2fs", "tmpfs", "overlay", "ntfs", "refs":
+	case "apfs", "hfs", "ext", "xfs", "btrfs", "zfs", "tmpfs", "overlay":
 		return true
 	}
 	return false

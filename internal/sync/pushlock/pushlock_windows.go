@@ -120,7 +120,7 @@ func openRelativeLock(parent windows.Handle, name string) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("lock filename: %w", err)
 	}
-	sd, err := oplocal.OwnerDescriptor()
+	sd, err := oplocal.ProtectedUserDescriptor()
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func openRelativeLock(parent windows.Handle, name string) (*os.File, error) {
 	var result windows.IO_STATUS_BLOCK
 	err = windows.NtCreateFile(&handle, windows.GENERIC_READ|windows.GENERIC_WRITE|windows.READ_CONTROL|windows.SYNCHRONIZE,
 		&attrs, &result, nil, windows.FILE_ATTRIBUTE_NORMAL,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, windows.FILE_OPEN_IF,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, windows.FILE_OPEN_IF, // no FILE_SHARE_DELETE: a held lock cannot be renamed or deleted
 		windows.FILE_NON_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT|windows.FILE_SYNCHRONOUS_IO_NONALERT, 0, 0)
 	if err != nil {
 		var status windows.NTStatus
@@ -186,21 +186,12 @@ func currentLockIdentity() (lockIdentity, error) {
 	if err != nil {
 		return lockIdentity{}, fmt.Errorf("administrators identity: %w", err)
 	}
-	identity := lockIdentity{user: user.User.Sid, admin: admin}
-	if !token.IsElevated() {
-		return identity, nil
-	}
 	groups, err := token.GetTokenGroups()
 	if err != nil {
 		return lockIdentity{}, fmt.Errorf("token groups: %w", err)
 	}
-	const needed = windows.SE_GROUP_ENABLED | windows.SE_GROUP_OWNER
-	for _, group := range groups.AllGroups() {
-		if group.Sid.Equals(admin) && group.Attributes&needed == needed {
-			identity.adminOwnerAllowed = true
-		}
-	}
-	return identity, nil
+	return lockIdentity{user: user.User.Sid, admin: admin,
+		adminOwnerAllowed: adminOwnerAllowed(token.IsElevated(), groups.AllGroups(), admin)}, nil
 }
 
 func validateLockMetadata(attributes uint32, owner *windows.SID, identity lockIdentity, directory bool) error {
@@ -215,4 +206,22 @@ func validateLockMetadata(attributes uint32, owner *windows.SID, identity lockId
 func lockOwnerAccepted(owner *windows.SID, identity lockIdentity) bool {
 	return owner.Equals(identity.user) ||
 		(identity.adminOwnerAllowed && identity.admin != nil && owner.Equals(identity.admin))
+}
+
+// adminOwnerAllowed reports whether BUILTIN\Administrators may own an existing
+// lock object: only for an elevated token whose Administrators group is enabled
+// and marked owner, and not a deny-only group. It is a pure function of the
+// token inputs so each gate is table-tested (FR-18.18).
+func adminOwnerAllowed(elevated bool, groups []windows.SIDAndAttributes, admin *windows.SID) bool {
+	if !elevated || admin == nil {
+		return false
+	}
+	const needed = windows.SE_GROUP_ENABLED | windows.SE_GROUP_OWNER
+	for _, group := range groups {
+		if group.Sid != nil && group.Sid.Equals(admin) &&
+			group.Attributes&needed == needed && group.Attributes&windows.SE_GROUP_USE_FOR_DENY_ONLY == 0 {
+			return true
+		}
+	}
+	return false
 }

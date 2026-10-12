@@ -101,3 +101,13 @@ func assertFilesystemDoctorOutput(t *testing.T, output []byte, row DoctorCheck, 
 		require.Contains(t, string(output), "FAILED")
 	}
 }
+
+func TestIsKnownLocalFilesystem_EmittedNamesOnly(t *testing.T) {
+	cases := map[string]bool{
+		"apfs": true, "hfs": true, "ext": true, "xfs": true, "btrfs": true, "tmpfs": true, "zfs": true, "overlay": true,
+		"ext4": false, "ntfs": false, "refs": false, "f2fs": false, "": false, "nfs": false, "someunknownfs": false,
+	}
+	for name, want := range cases {
+		require.Equal(t, want, isKnownLocalFilesystem(name), name)
+	}
+}

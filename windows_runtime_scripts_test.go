@@ -100,7 +100,7 @@ const windowsRuntimeNamedTestScript = `$ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 $env:MTIX_SYNC_DSN = ''
 $env:MTIX_PG_TEST_DSN = ''
-& go test ./internal/sync/pushlock -race -count=1 -timeout=8m -json -run '^(TestAcquireNamed_SymlinkedLockFile_Refused|TestAcquireNamed_SymlinkedDataDir_Refused|TestAcquire_PushLockName_Unchanged|TestAcquireNamed_InvalidFilename_Refused|TestAcquireNamed_DataOrFileType_Refused|TestNamedLock_WindowsMetadata_ValidatesTypeAndOwner|TestNamedLock_WindowsOwnerPolicy_AcceptsUserAndElevatedAdministrators|TestNamedLock_WindowsOwner_RealObjectsOwnedByUser|TestNamedLock_WindowsLegacyDirectoryAndForeignDirectory)$' > "$env:MTIX_WINDOWS_CAPTURE_DIR/named-locks.json"
+& go test ./internal/sync/pushlock -race -count=1 -timeout=8m -json -run '^(TestAcquireNamed_SymlinkedLockFile_Refused|TestAcquireNamed_SymlinkedDataDir_Refused|TestAcquire_PushLockName_Unchanged|TestAcquireNamed_InvalidFilename_Refused|TestAcquireNamed_DataOrFileType_Refused|TestNamedLock_WindowsMetadata_ValidatesTypeAndOwner|TestNamedLock_WindowsOwnerPolicy_AcceptsUserAndElevatedAdministrators|TestNamedLock_WindowsOwner_RealObjectsOwnedByUser|TestNamedLock_WindowsLegacyDirectoryAndForeignDirectory|TestNamedLock_WindowsAdminGate_ElevationAndOwnerFlags|TestNamedLock_WindowsLockFile_UserOnlyAccessAndNoDelete)$' > "$env:MTIX_WINDOWS_CAPTURE_DIR/named-locks.json"
 $namedLockExit = $LASTEXITCODE
 & go test ./cmd/mtix -race -count=1 -timeout=8m -json -run '^TestDispatchLock_HeldByOther_DaemonIdlesNotExits$' > "$env:MTIX_WINDOWS_CAPTURE_DIR/dispatch-lock.json"
 $dispatchLockExit = $LASTEXITCODE
@@ -108,7 +108,7 @@ $dispatchLockExit = $LASTEXITCODE
 if ($namedLockExit -ne 0 -or $dispatchLockExit -ne 0) { throw 'Named-lock native test failure' }
 `
 
-const windowsRuntimeNamedEvaluationScript = `$namedLockRequired = @('TestAcquireNamed_SymlinkedLockFile_Refused', 'TestAcquireNamed_SymlinkedDataDir_Refused', 'TestAcquire_PushLockName_Unchanged', 'TestAcquireNamed_InvalidFilename_Refused', 'TestAcquireNamed_DataOrFileType_Refused', 'TestNamedLock_WindowsMetadata_ValidatesTypeAndOwner', 'TestNamedLock_WindowsOwnerPolicy_AcceptsUserAndElevatedAdministrators', 'TestNamedLock_WindowsOwner_RealObjectsOwnedByUser', 'TestNamedLock_WindowsLegacyDirectoryAndForeignDirectory')
+const windowsRuntimeNamedEvaluationScript = `$namedLockRequired = @('TestAcquireNamed_SymlinkedLockFile_Refused', 'TestAcquireNamed_SymlinkedDataDir_Refused', 'TestAcquire_PushLockName_Unchanged', 'TestAcquireNamed_InvalidFilename_Refused', 'TestAcquireNamed_DataOrFileType_Refused', 'TestNamedLock_WindowsMetadata_ValidatesTypeAndOwner', 'TestNamedLock_WindowsOwnerPolicy_AcceptsUserAndElevatedAdministrators', 'TestNamedLock_WindowsOwner_RealObjectsOwnedByUser', 'TestNamedLock_WindowsLegacyDirectoryAndForeignDirectory', 'TestNamedLock_WindowsAdminGate_ElevationAndOwnerFlags', 'TestNamedLock_WindowsLockFile_UserOnlyAccessAndNoDelete')
 $dispatchLockRequired = @('TestDispatchLock_HeldByOther_DaemonIdlesNotExits', 'TestDispatchLock_HeldByOther_DaemonIdlesNotExits/daemon', 'TestDispatchLock_HeldByOther_DaemonIdlesNotExits/syncdaemon')
 foreach ($namedSuite in @(@{ file='named-locks.json'; package='github.com/hyper-swe/mtix/internal/sync/pushlock'; tests=$namedLockRequired }, @{ file='dispatch-lock.json'; package='github.com/hyper-swe/mtix/cmd/mtix'; tests=$dispatchLockRequired })) {
   $nativeEvents = Get-Content -LiteralPath "$env:MTIX_WINDOWS_CAPTURE_DIR/$($namedSuite.file)" | ForEach-Object { $_ | ConvertFrom-Json }

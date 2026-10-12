@@ -43,6 +43,18 @@ func userDescriptor() (*windows.SECURITY_DESCRIPTOR, error) {
 	return windows.SecurityDescriptorFromString("O:" + sid + "D:P(A;;FA;;;" + sid + ")")
 }
 
+// ProtectedUserDescriptor returns a security descriptor naming the current
+// token user as owner with a protected access list that grants only that user
+// full access ("O:<sid>D:P(A;;FA;;;<sid>)"). Lock files use it so no other
+// principal can open, rename or delete them (FR-18.18).
+func ProtectedUserDescriptor() (*windows.SECURITY_DESCRIPTOR, error) {
+	sd, err := userDescriptor()
+	if err != nil {
+		return nil, fmt.Errorf("current user identity: %w", err)
+	}
+	return sd, nil
+}
+
 // OwnerDescriptor returns a security descriptor that names the current token
 // user as owner ("O:<user sid>") and sets no access list, so the object keeps
 // its inherited default access. Elevated Administrators tokens otherwise create

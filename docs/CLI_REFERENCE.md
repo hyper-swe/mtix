@@ -121,8 +121,11 @@ Register an agent on this board. Repeat registration succeeds with an
 work assignment, project, and active session. Registration does not start a session.
 
 It also records this shell's session for the id: the harness and session handle
-are detected from the environment, most specific first (PI_SESSION_ID,
-CODEX_THREAD_ID, CLAUDE_CODE_MESSAGING_SOCKET); --harness and --session override them (a typed --session is
+are detected by identity: the harness is the one that owns this session's
+process (claude, codex or pi), and the handle is read only from that harness's
+own variable (CLAUDE_CODE_MESSAGING_SOCKET, CODEX_THREAD_ID, PI_SESSION_ID).
+If that cannot be established the session has no handle and unknown liveness
+(never replaced silently; --take-over still works). --harness and --session override them (a typed --session is
 recorded as origin "manual"). A row whose session has exited is replaced
 silently, so a restarted lane registers with no flags. A row whose session is
 still running is refused unless you pass --take-over: that bumps the epoch,

@@ -80,3 +80,14 @@ func TestInfo_OwnProcess_HasParentAndName(t *testing.T) {
 	assert.NotEmpty(t, p.Name)
 	assert.NotEmpty(t, p.StartTime)
 }
+
+func TestFindSession_ReturnsProcessName(t *testing.T) {
+	procs := table{60: {PPID: 50, Name: "-zsh", StartTime: "a"}, 50: {PPID: 10, Name: "/usr/local/bin/codex", StartTime: "s50"}}
+	found, sure := procinfo.FindSession(procs.read, 60)
+	assert.True(t, sure)
+	assert.Equal(t, procinfo.SessionProcess{PID: 50, Name: "/usr/local/bin/codex", StartTime: "s50"}, found)
+
+	found, sure = procinfo.FindSession(table{}.read, 60)
+	assert.False(t, sure)
+	assert.Equal(t, procinfo.SessionProcess{PID: 60}, found, "an unsure walk names nothing")
+}

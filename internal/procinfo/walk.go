@@ -29,29 +29,43 @@ func isWrapper(name string) bool {
 	return wrapperNames[path.Base(name)]
 }
 
-// FindSessionProcess walks up from start (the parent of the calling process)
-// to the nearest ancestor that is not a shell or wrapper, and returns its pid
-// and start time with sure true. When the walk cannot be sure (depth bound,
-// a read error, pid 1, or no readable start time) it returns the starting pid
-// with an empty start time and sure false, so the row probes as unknown and
-// fails safe: no silent replacement, and --take-over still works.
-func FindSessionProcess(read func(pid int) (Proc, error), start int) (pid int, startTime string, sure bool) {
+// SessionProcess is the process found by the ancestor walk.
+type SessionProcess struct {
+	PID       int
+	Name      string
+	StartTime string
+}
+
+// FindSession walks up from start (the parent of the calling process) to the
+// nearest ancestor that is not a shell or wrapper and returns it with sure
+// true. When the walk cannot be sure (depth bound, a read error, pid 1, or no
+// readable start time) it returns only the starting pid, with no name and no
+// start time, and sure false.
+func FindSession(read func(pid int) (Proc, error), start int) (found SessionProcess, sure bool) {
 	cur := start
 	for depth := 0; depth < maxWalkDepth; depth++ {
 		if cur <= 1 {
-			return start, "", false
+			return SessionProcess{PID: start}, false
 		}
 		p, err := read(cur)
 		if err != nil {
-			return start, "", false
+			return SessionProcess{PID: start}, false
 		}
 		if !isWrapper(p.Name) {
 			if p.StartTime == "" {
-				return start, "", false
+				return SessionProcess{PID: start}, false
 			}
-			return cur, p.StartTime, true
+			return SessionProcess{PID: cur, Name: p.Name, StartTime: p.StartTime}, true
 		}
 		cur = p.PPID
 	}
-	return start, "", false
+	return SessionProcess{PID: start}, false
+}
+
+// FindSessionProcess is FindSession reduced to pid and start time: an unsure
+// walk returns the starting pid with an empty start time, which probes as
+// unknown and fails safe (never replaced silently, --take-over still works).
+func FindSessionProcess(read func(pid int) (Proc, error), start int) (pid int, startTime string, sure bool) {
+	found, sure := FindSession(read, start)
+	return found.PID, found.StartTime, sure
 }

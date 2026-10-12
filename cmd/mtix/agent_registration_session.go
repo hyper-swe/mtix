@@ -9,7 +9,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/oplocal"
@@ -33,52 +35,71 @@ type sessionOptions struct {
 	TakeOver bool
 }
 
-// detectedSession is the harness and handle read from flags and environment.
+// detectedSession is the harness and handle for the calling session.
+// Uncertain means the harness could not be established from the process that
+// owns the session: no handle is recorded and liveness stays unknown.
 type detectedSession struct {
-	Harness string
-	Handle  string
-	Origin  string
+	Harness   string
+	Handle    string
+	Origin    string
+	Uncertain bool
 }
 
-// detectSession resolves the harness and session handle. A typed --session is
-// origin manual; a handle found in the environment is session-env (ADR-007 §3.3).
-func detectSession(getenv func(string) string, opts sessionOptions) detectedSession {
-	harness, handle := "unknown", ""
-	// Most specific first: a child harness inherits its parent's variables, so a
-	// pi or Codex lane started from a Claude Code shell sees the Claude socket too.
-	switch {
-	case getenv("PI_SESSION_ID") != "":
-		harness, handle = "pi", getenv("PI_SESSION_ID")
-	case getenv("CODEX_THREAD_ID") != "":
-		harness, handle = "codex", getenv("CODEX_THREAD_ID")
-	case getenv("CLAUDE_CODE_MESSAGING_SOCKET") != "":
-		harness, handle = "claude-code", getenv("CLAUDE_CODE_MESSAGING_SOCKET")
-	}
-	origin := "manual"
-	if handle != "" {
-		origin = "session-env"
+// harnessByProcess maps the executable name of the session process to its
+// harness and to the one environment variable that harness owns.
+var harnessByProcess = map[string]struct{ harness, envVar string }{
+	"claude": {"claude-code", "CLAUDE_CODE_MESSAGING_SOCKET"},
+	"codex":  {"codex", "CODEX_THREAD_ID"},
+	"pi":     {"pi", "PI_SESSION_ID"},
+}
+
+// walkedSession is the session process found by the ancestor walk.
+type walkedSession = procinfo.SessionProcess
+
+// sessionWalker finds the session process; tests replace it with a process table.
+var sessionWalker = func() (walkedSession, bool) {
+	return procinfo.FindSession(procinfo.Info, os.Getppid())
+}
+
+// detectSession resolves the harness and session handle by identity, never by
+// environment order: the harness is the one that owns the walked session
+// process, and the handle is read only from that harness's own variable (a
+// child harness inherits its parent's variables, so any other variable may
+// belong to an outer session). If the walk is unsure, the process is not a
+// known harness, or its variable is absent, the session is uncertain and no
+// handle is borrowed. A typed --session is origin manual (ADR-007 §3.3).
+func detectSession(getenv func(string) string, opts sessionOptions, proc walkedSession, sure bool) detectedSession {
+	det := detectedSession{Harness: "unknown", Origin: "manual", Uncertain: true}
+	if known, ok := harnessByProcess[strings.ToLower(path.Base(strings.TrimPrefix(proc.Name, "-")))]; ok && sure {
+		if handle := getenv(known.envVar); handle != "" {
+			det = detectedSession{Harness: known.harness, Handle: handle, Origin: "session-env"}
+		} else {
+			det.Harness = known.harness
+		}
 	}
 	if opts.Harness != "" {
-		harness = opts.Harness
+		det.Harness = opts.Harness
 	}
 	if opts.Session != "" {
-		handle, origin = opts.Session, "manual"
+		det.Handle, det.Origin, det.Uncertain = opts.Session, "manual", false
 	}
-	return detectedSession{Harness: harness, Handle: handle, Origin: origin}
+	return det
 }
 
-// callerProcess records the session's long-lived process: the nearest ancestor
-// of this command that is not a shell or wrapper (the harness that runs each
-// command in a short-lived shell). When the walk is unsure, the start time is
-// empty, which probes as unknown and fails safe (never replaced silently).
-func callerProcess() (pid int, start string) {
-	pid, start, _ = procinfo.FindSessionProcess(procinfo.Info, os.Getppid())
-	return pid, start
+// currentSession detects the calling session and records its process. An
+// uncertain session keeps the pid but no start time, so it probes as unknown.
+func currentSession(opts sessionOptions) (det detectedSession, pid int, start string) {
+	proc, sure := sessionWalker()
+	det = detectSession(os.Getenv, opts, proc, sure)
+	if det.Uncertain {
+		return det, proc.PID, ""
+	}
+	return det, proc.PID, proc.StartTime
 }
 
 func currentIdentity() service.SessionIdentity {
-	pid, start := callerProcess()
-	return service.SessionIdentity{Handle: detectSession(os.Getenv, sessionOptions{}).Handle, PID: pid, PIDStartTime: start}
+	det, pid, start := currentSession(sessionOptions{})
+	return service.SessionIdentity{Handle: det.Handle, PID: pid, PIDStartTime: start}
 }
 
 // newRegistrationService builds the service for this host and user.
@@ -109,7 +130,8 @@ func newRegistrationService() (*service.RegistrationService, error) {
 // sessionContext attaches the caller's session identity so inbox list, wait and
 // ack refresh last_seen of the matching registration (ADR-007 §3.3).
 func sessionContext(ctx context.Context) context.Context {
-	handle := detectSession(os.Getenv, sessionOptions{}).Handle
+	det, _, _ := currentSession(sessionOptions{})
+	handle := det.Handle
 	if handle == "" {
 		return ctx
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/procinfo"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
@@ -30,35 +31,138 @@ func initRegistrationApp(t *testing.T) {
 		t.Setenv(name, "")
 	}
 	initTestApp(t)
+	fakeSessionProcess(t, "codex")
+}
+
+// fakeSessionProcess makes the ancestor walk report a session process with the
+// given executable name: the real parent of the test binary (alive, with its
+// real start time), so liveness probes behave as in production.
+func fakeSessionProcess(t *testing.T, name string) {
+	t.Helper()
+	pid := os.Getppid()
+	start, err := procinfo.StartTime(pid)
+	require.NoError(t, err)
+	old := sessionWalker
+	t.Cleanup(func() { sessionWalker = old })
+	sessionWalker = func() (walkedSession, bool) {
+		return walkedSession{PID: pid, Name: name, StartTime: start}, true
+	}
 }
 
 func envFrom(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 
-func TestDetectSession_Environment_PicksHarnessAndOrigin(t *testing.T) {
+var harnessEnv = map[string]string{"claude": "CLAUDE_CODE_MESSAGING_SOCKET", "codex": "CODEX_THREAD_ID", "pi": "PI_SESSION_ID"}
+var harnessName = map[string]string{"claude": "claude-code", "codex": "codex", "pi": "pi"}
+
+func sessionProc(name string) walkedSession {
+	return walkedSession{PID: 50, Name: name, StartTime: "s50"}
+}
+
+func TestDetectSession_ByProcessIdentity_PicksOwnHarnessAndHandle(t *testing.T) {
 	tests := []struct {
 		name                    string
 		env                     map[string]string
 		opts                    sessionOptions
+		proc                    walkedSession
+		sure                    bool
 		harness, handle, origin string
+		uncertain               bool
 	}{
-		{"claude socket", map[string]string{"CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/s1"}, sessionOptions{}, "claude-code", "/tmp/s1", "session-env"},
-		{"codex thread", map[string]string{"CODEX_THREAD_ID": "th-1"}, sessionOptions{}, "codex", "th-1", "session-env"},
-		{"pi session", map[string]string{"PI_SESSION_ID": "pi-9"}, sessionOptions{}, "pi", "pi-9", "session-env"},
-		{"typed session is manual", map[string]string{"CODEX_THREAD_ID": "th-1"}, sessionOptions{Session: "typed"}, "codex", "typed", "manual"},
-		{"typed harness wins", map[string]string{"CODEX_THREAD_ID": "th-1"}, sessionOptions{Harness: "pi", Session: "x"}, "pi", "x", "manual"},
-		{"codex started from a claude shell", map[string]string{"CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/outer", "CODEX_THREAD_ID": "th-inner"}, sessionOptions{}, "codex", "th-inner", "session-env"},
-		{"pi started from a claude shell", map[string]string{"CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/outer", "PI_SESSION_ID": "pi-inner"}, sessionOptions{}, "pi", "pi-inner", "session-env"},
-		{"pi started from a codex shell", map[string]string{"CODEX_THREAD_ID": "th-outer", "PI_SESSION_ID": "pi-inner"}, sessionOptions{}, "pi", "pi-inner", "session-env"},
-		{"nothing detected", map[string]string{}, sessionOptions{}, "unknown", "", "manual"},
+		{"claude process", map[string]string{"CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/s1"}, sessionOptions{}, sessionProc("claude"), true, "claude-code", "/tmp/s1", "session-env", false},
+		{"codex process", map[string]string{"CODEX_THREAD_ID": "th-1"}, sessionOptions{}, sessionProc("/usr/bin/codex"), true, "codex", "th-1", "session-env", false},
+		{"pi process", map[string]string{"PI_SESSION_ID": "pi-9"}, sessionOptions{}, sessionProc("pi"), true, "pi", "pi-9", "session-env", false},
+		{"login-style name", map[string]string{"CODEX_THREAD_ID": "th-1"}, sessionOptions{}, sessionProc("-Codex"), true, "codex", "th-1", "session-env", false},
+		{"typed session is manual", map[string]string{"CODEX_THREAD_ID": "th-1"}, sessionOptions{Session: "typed"}, sessionProc("codex"), true, "codex", "typed", "manual", false},
+		{"typed harness wins", map[string]string{"CODEX_THREAD_ID": "th-1"}, sessionOptions{Harness: "pi", Session: "x"}, sessionProc("codex"), true, "pi", "x", "manual", false},
+		{"typed session rescues an unknown process", map[string]string{}, sessionOptions{Session: "x"}, sessionProc("node"), true, "unknown", "x", "manual", false},
+		{"known process without its variable", map[string]string{"CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/outer"}, sessionOptions{}, sessionProc("codex"), true, "codex", "", "manual", true},
+		{"unknown process borrows nothing", map[string]string{"CODEX_THREAD_ID": "th", "CLAUDE_CODE_MESSAGING_SOCKET": "/s"}, sessionOptions{}, sessionProc("node"), true, "unknown", "", "manual", true},
+		{"unsure walk borrows nothing", map[string]string{"CODEX_THREAD_ID": "th"}, sessionOptions{}, sessionProc("codex"), false, "unknown", "", "manual", true},
+		{"nothing detected", map[string]string{}, sessionOptions{}, walkedSession{PID: 50}, false, "unknown", "", "manual", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := detectSession(envFrom(tt.env), tt.opts)
+			got := detectSession(envFrom(tt.env), tt.opts, tt.proc, tt.sure)
 			assert.Equal(t, tt.harness, got.Harness)
 			assert.Equal(t, tt.handle, got.Handle)
 			assert.Equal(t, tt.origin, got.Origin)
+			assert.Equal(t, tt.uncertain, got.Uncertain)
 		})
 	}
+}
+
+// Every ordered pair of harnesses nested in each other: the environment holds
+// both variables (the inner one inherited the outer's), and the inner harness
+// owns the process, so detection must return the inner harness and handle.
+func TestDetectSession_NestedHarnesses_EveryPairBothOrders_UsesInnerHandle(t *testing.T) {
+	for outer := range harnessEnv {
+		for inner := range harnessEnv {
+			if outer == inner {
+				continue
+			}
+			t.Run(outer+" outer, "+inner+" inner", func(t *testing.T) {
+				env := map[string]string{harnessEnv[outer]: "outer-handle", harnessEnv[inner]: "inner-handle"}
+				got := detectSession(envFrom(env), sessionOptions{}, sessionProc(inner), true)
+				assert.Equal(t, harnessName[inner], got.Harness)
+				assert.Equal(t, "inner-handle", got.Handle)
+				assert.False(t, got.Uncertain)
+			})
+			t.Run(outer+" outer, "+inner+" inner without its own variable", func(t *testing.T) {
+				got := detectSession(envFrom(map[string]string{harnessEnv[outer]: "outer-handle"}), sessionOptions{}, sessionProc(inner), true)
+				assert.Empty(t, got.Handle, "the outer harness's handle is never borrowed")
+				assert.True(t, got.Uncertain)
+			})
+		}
+	}
+}
+
+func TestCurrentSession_UncertainSession_RecordsNoStartTime(t *testing.T) {
+	old := sessionWalker
+	t.Cleanup(func() { sessionWalker = old })
+	sessionWalker = func() (walkedSession, bool) { return sessionProc("node"), true }
+	det, pid, start := currentSession(sessionOptions{})
+	assert.True(t, det.Uncertain)
+	assert.Equal(t, 50, pid)
+	assert.Empty(t, start, "an uncertain session probes as unknown")
+
+	t.Setenv("CODEX_THREAD_ID", "th")
+	sessionWalker = func() (walkedSession, bool) { return sessionProc("codex"), true }
+	det, _, start = currentSession(sessionOptions{})
+	assert.False(t, det.Uncertain)
+	assert.Equal(t, "s50", start)
+}
+
+func TestAgentRegister_NestedLanesSharingOuterHandle_SecondIsRefused(t *testing.T) {
+	initRegistrationApp(t)
+	// Two Claude lanes started from one Codex shell: both inherit CODEX_THREAD_ID.
+	t.Setenv("CODEX_THREAD_ID", "th-outer")
+	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/lane-a")
+	fakeSessionProcess(t, "claude")
+	captureStdout(t, func() { require.NoError(t, runAgentRegister("lane", sessionOptions{})) })
+	rows := registrationJSON(t)
+	assert.Equal(t, "claude-code", rows[0]["harness"])
+	assert.Equal(t, "/tmp/lane-a", rows[0]["session_handle"])
+
+	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/lane-b")
+	err := runAgentRegister("lane", sessionOptions{})
+	require.ErrorIs(t, err, model.ErrAgentStillActive, "a sibling lane must not displace the first")
+}
+
+func TestAgentRegister_UncertainSession_NoHandleAndTakeOverStillWorks(t *testing.T) {
+	initRegistrationApp(t)
+	t.Setenv("CODEX_THREAD_ID", "th-outer")
+	fakeSessionProcess(t, "node")
+	captureStdout(t, func() { require.NoError(t, runAgentRegister("lane", sessionOptions{})) })
+	rows := registrationJSON(t)
+	assert.NotContains(t, rows[0], "session_handle")
+	assert.Equal(t, "unknown", rows[0]["liveness"])
+
+	captureStdout(t, func() { require.NoError(t, runAgentRegister("lane", sessionOptions{})) }) // same caller: a repeat
+
+	sessionWalker = func() (walkedSession, bool) { return walkedSession{PID: 4242, Name: "node", StartTime: "x"}, true }
+	err := runAgentRegister("lane", sessionOptions{})
+	require.ErrorIs(t, err, model.ErrAgentStillActive, "unknown liveness is never replaced silently by another process")
+	captureStdout(t, func() { require.NoError(t, runAgentRegister("lane", sessionOptions{TakeOver: true})) })
 }
 
 func registrationJSON(t *testing.T) []map[string]any {

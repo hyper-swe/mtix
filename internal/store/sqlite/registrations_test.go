@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -240,4 +241,54 @@ func TestRegisterSessionAtomic_ConcurrentSessions_ExactlyOneWins(t *testing.T) {
 	wg.Wait()
 	close(wins)
 	assert.Len(t, wins, 1, "the existing row is read inside the write transaction, so exactly one racer sees an empty slot")
+}
+
+// A deterministic barrier, not timing: racer A holds the write transaction
+// open inside its decide function until racer B is provably blocked waiting
+// for the single write connection (the pool's WaitCount rises). Whatever B
+// reads before it blocks was read while A's row did not exist yet, so a
+// decide that reads outside the transaction sees an empty slot and both win.
+func TestRegisterSessionAtomic_SecondRacerBlockedBehindFirst_SeesFirstRow(t *testing.T) {
+	s := newRegistrationStore(t)
+	ctx := context.Background()
+	row := func(handle string) *sqlite.Registration {
+		return &sqlite.Registration{AgentID: "w", HostID: "host-a", UID: "501", Harness: "codex", Origin: "manual", SessionHandle: handle,
+			RegisteredAt: "r", LastSeen: "l", RegistrarVersion: "t", AttachProtocol: 1}
+	}
+	inside, release := make(chan struct{}), make(chan struct{})
+	aErr := make(chan error, 1)
+	go func() {
+		_, err := s.RegisterSessionAtomic(ctx, keyFor("w"), func(existing *sqlite.Registration, _ int64) (*sqlite.Registration, error) {
+			close(inside)
+			<-release
+			return row("a"), nil
+		})
+		aErr <- err
+	}()
+	<-inside
+
+	before := s.WriteDB().Stats().WaitCount
+	var seenByB *sqlite.Registration
+	bErr := make(chan error, 1)
+	go func() {
+		_, err := s.RegisterSessionAtomic(ctx, keyFor("w"), func(existing *sqlite.Registration, _ int64) (*sqlite.Registration, error) {
+			seenByB = existing
+			if existing != nil {
+				return nil, errors.New("live row")
+			}
+			return row("b"), nil
+		})
+		bErr <- err
+	}()
+	deadline := time.Now().Add(30 * time.Second)
+	for s.WriteDB().Stats().WaitCount == before {
+		require.True(t, time.Now().Before(deadline), "racer B never blocked on the write connection")
+		runtime.Gosched()
+	}
+	close(release)
+
+	require.NoError(t, <-aErr)
+	require.Error(t, <-bErr, "B must see A's committed row and be refused")
+	require.NotNil(t, seenByB)
+	assert.Equal(t, "a", seenByB.SessionHandle)
 }

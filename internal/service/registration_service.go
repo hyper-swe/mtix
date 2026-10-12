@@ -133,7 +133,14 @@ func (s SessionIdentity) matches(r *sqlite.Registration) bool {
 	if s.Handle != "" && r.SessionHandle != "" {
 		return s.Handle == r.SessionHandle // two handles decide alone: one process can host several sessions
 	}
-	return s.PID > 0 && int64(s.PID) == r.PID && s.PIDStartTime != "" && s.PIDStartTime == r.PIDStartTime
+	if s.PID <= 0 || int64(s.PID) != r.PID {
+		return false
+	}
+	// Same pid: with both start times known they must agree (a reused pid is
+	// another process); when either is unknown the pid alone decides. That is
+	// safe both ways: the same pid is either the same session, or the old
+	// process died and its pid was reused, in which case replacing is right.
+	return s.PIDStartTime == "" || r.PIDStartTime == "" || s.PIDStartTime == r.PIDStartTime
 }
 
 func (r RegisterSessionRequest) identity() SessionIdentity {

@@ -62,8 +62,7 @@ func registerCurrentSession(ctx context.Context, agentID string, opts sessionOpt
 	if err != nil {
 		return &sessionReport{Warning: err.Error()}, nil //nolint:nilerr // identity gaps downgrade to a warning by design
 	}
-	det := detectSession(os.Getenv, opts)
-	pid, start := callerProcess()
+	det, pid, start := currentSession(opts)
 	res, err := svc.RegisterSession(ctx, service.RegisterSessionRequest{
 		AgentID: agentID, Harness: det.Harness, SessionHandle: det.Handle, Origin: det.Origin,
 		PID: pid, PIDStartTime: start, TakeOver: opts.TakeOver, HasTTY: destructiveStdinIsTerminal(),

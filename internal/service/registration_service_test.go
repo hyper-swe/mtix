@@ -700,3 +700,23 @@ func TestRegisterSession_AgentIDTooLong_Rejected(t *testing.T) {
 	_, err := f.svc.RegisterSession(context.Background(), r)
 	require.ErrorIs(t, err, model.ErrInvalidInput)
 }
+
+func TestRegisterSession_UnknownStartTime_SamePIDRefreshesOtherPIDRefused(t *testing.T) {
+	f := newRegFixture(t)
+	ctx := context.Background()
+	uncertain := service.RegisterSessionRequest{AgentID: "w", Origin: "manual", PID: 100}
+	_, err := f.svc.RegisterSession(ctx, uncertain)
+	require.NoError(t, err)
+
+	res, err := f.svc.RegisterSession(ctx, uncertain)
+	require.NoError(t, err, "the same caller re-registering is not another session")
+	assert.Equal(t, service.OutcomeRefreshed, res.Outcome)
+
+	other := uncertain
+	other.PID = 200
+	_, err = f.svc.RegisterSession(ctx, other)
+	require.ErrorIs(t, err, model.ErrAgentStillActive, "unknown liveness is never replaced silently by another process")
+	other.TakeOver = true
+	_, err = f.svc.RegisterSession(ctx, other)
+	require.NoError(t, err)
+}

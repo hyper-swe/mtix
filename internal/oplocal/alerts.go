@@ -70,7 +70,10 @@ func (s *State) recordAlertLocked(dir *os.File, host string, input Alert, now ti
 	if writeErr := s.writeAlertRecord(dir, "alerts-pending.json", host, pending); writeErr != nil {
 		return row, writeErr
 	}
-	return row, s.finishAlert(dir, host, pending, segments)
+	if finishErr := s.finishAlert(dir, host, pending, segments); finishErr != nil {
+		return row, finishErr
+	}
+	return row, pruneAlertRates(dir, host, now)
 }
 
 // RecentAlerts returns newest-first logical diagnostics; zero selects all,

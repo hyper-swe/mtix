@@ -10,6 +10,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -132,4 +133,61 @@ func TestNamedLock_UnixDirectoryCloseFailure_ClosesOwnedLock(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestNamedLock_UnixOpenLock_VerifiesDirectoryThenFile kills the mutant that
+// skips the lock-file verification: the verifier seam must see the opened
+// directory (directory=true) and then the opened lock file (directory=false),
+// and a verifier refusal for the file must close the file and refuse.
+func TestNamedLock_UnixOpenLock_VerifiesDirectoryThenFile(t *testing.T) {
+	dir := t.TempDir()
+	var calls []bool
+	held, err := openLockWith(dir, "seam.lock", func(f *os.File, directory bool) error {
+		calls = append(calls, directory)
+		require.NoError(t, verifyLockObject(f, directory), "seam receives real opened objects")
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotNil(t, held)
+	require.NoError(t, held.Close())
+	require.Equal(t, []bool{true, false}, calls, "directory is verified before the lock file, and the file is always verified")
+
+	refusal := errors.New("file refused")
+	before := openDescriptorCount(t)
+	held, err = openLockWith(dir, "seam.lock", func(_ *os.File, directory bool) error {
+		if directory {
+			return nil
+		}
+		return refusal
+	})
+	require.ErrorIs(t, err, refusal)
+	require.Nil(t, held)
+	require.Equal(t, before, openDescriptorCount(t), "refused lock file is closed")
+}
+
+// TestAcquireNamed_ContentionRefusal_ClosesDescriptor kills the mutant that
+// drops f.Close when the kernel lock attempt fails.
+func TestAcquireNamed_ContentionRefusal_ClosesDescriptor(t *testing.T) {
+	defer debug.SetGCPercent(debug.SetGCPercent(-1)) // a finalizer must not hide a leaked descriptor
+	dir := t.TempDir()
+	first, err := AcquireNamed(dir, "contended.lock")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, first.Release()) })
+	before := openDescriptorCount(t)
+	for range 20 {
+		second, acquireErr := AcquireNamed(dir, "contended.lock")
+		require.ErrorIs(t, acquireErr, ErrLockHeld)
+		require.Nil(t, second)
+	}
+	require.Equal(t, before, openDescriptorCount(t), "every refused acquisition closes its descriptor")
+}
+
+func openDescriptorCount(t *testing.T) int {
+	t.Helper()
+	dir, err := os.Open("/dev/fd")
+	require.NoError(t, err)
+	names, err := dir.Readdirnames(-1)
+	require.NoError(t, err)
+	require.NoError(t, dir.Close())
+	return len(names)
 }

@@ -27,13 +27,33 @@ func ntError(err error) error {
 	return err
 }
 
-func userDescriptor() (*windows.SECURITY_DESCRIPTOR, error) {
+func userSID() (string, error) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return "", err
+	}
+	return user.User.Sid.String(), nil
+}
+
+func userDescriptor() (*windows.SECURITY_DESCRIPTOR, error) {
+	sid, err := userSID()
 	if err != nil {
 		return nil, err
 	}
-	sid := user.User.Sid.String()
 	return windows.SecurityDescriptorFromString("O:" + sid + "D:P(A;;FA;;;" + sid + ")")
+}
+
+// OwnerDescriptor returns a security descriptor that names the current token
+// user as owner ("O:<user sid>") and sets no access list, so the object keeps
+// its inherited default access. Elevated Administrators tokens otherwise create
+// objects owned by BUILTIN\Administrators; callers that validate ownership
+// against the token user create their objects with this descriptor (FR-18.18).
+func OwnerDescriptor() (*windows.SECURITY_DESCRIPTOR, error) {
+	sid, err := userSID()
+	if err != nil {
+		return nil, fmt.Errorf("current user identity: %w", err)
+	}
+	return windows.SecurityDescriptorFromString("O:" + sid)
 }
 
 func relativeOpen(parent *os.File, name string, kind, disposition, access uint32) (*os.File, error) {

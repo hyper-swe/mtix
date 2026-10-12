@@ -48,6 +48,8 @@ func TestSyncDoctor_FilesystemFixtures_TextAndJSON(t *testing.T) {
 	}{
 		{"local", "apfs", false, nil, false}, {"network", "nfs", true, nil, true}, {"fuse", "fuse", true, nil, true},
 		{"unavailable", "", false, nil, true}, {"error", "", false, errors.New("classification failed"), true},
+		{"known-local-ext", "ext", false, nil, false}, {"known-local-xfs", "xfs", false, nil, false},
+		{"unrecognized-name", "someunknownfs", false, nil, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

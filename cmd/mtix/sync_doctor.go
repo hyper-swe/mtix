@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -431,8 +432,23 @@ func checkDataFilesystem(inspectors []func(string) (string, bool, error)) Doctor
 		check.Warn = true
 		check.Detail = name + ": network/FUSE filesystem; reliable locking is not guaranteed"
 		check.Fix = "Move .mtix to a local disk; give each machine its own local store and sync through the hub"
+	case !isKnownLocalFilesystem(name):
+		check.Warn = true
+		check.Detail = name + ": unrecognized filesystem; reliable local locking is not verified"
+		check.Fix = "Keep .mtix on a local disk filesystem, or give each machine its own local store and sync through the hub"
 	default:
-		check.Detail = name + ": no known network/FUSE classification; locking behavior is not verified"
+		check.Detail = name + ": known local filesystem"
 	}
 	return check
+}
+
+// isKnownLocalFilesystem reports whether the classifier name is a local disk
+// filesystem. Any other name WARNs: an unrecognized filesystem is not proof of
+// reliable locking (FR-20).
+func isKnownLocalFilesystem(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "apfs", "hfs", "ext", "ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "f2fs", "tmpfs", "overlay", "ntfs", "refs":
+		return true
+	}
+	return false
 }

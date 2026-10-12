@@ -45,7 +45,7 @@ func fakeSessionProcess(t *testing.T, name string) {
 	old := sessionWalker
 	t.Cleanup(func() { sessionWalker = old })
 	sessionWalker = func() (walkedSession, bool) {
-		return walkedSession{PID: pid, Name: name, StartTime: start}, true
+		return walkedSession{PID: pid, Name: name, Harness: procinfo.Identify(procinfo.Proc{Name: name, Argv0: name}), StartTime: start}, true
 	}
 }
 
@@ -55,7 +55,7 @@ var harnessEnv = map[string]string{"claude": "CLAUDE_CODE_MESSAGING_SOCKET", "co
 var harnessName = map[string]string{"claude": "claude-code", "codex": "codex", "pi": "pi"}
 
 func sessionProc(name string) walkedSession {
-	return walkedSession{PID: 50, Name: name, StartTime: "s50"}
+	return walkedSession{PID: 50, Name: name, Harness: procinfo.Identify(procinfo.Proc{Name: name, Argv0: name}), StartTime: "s50"}
 }
 
 func TestDetectSession_ByProcessIdentity_PicksOwnHarnessAndHandle(t *testing.T) {
@@ -116,14 +116,55 @@ func TestDetectSession_NestedHarnesses_EveryPairBothOrders_UsesInnerHandle(t *te
 	}
 }
 
-func TestCurrentSession_UncertainSession_RecordsNoStartTime(t *testing.T) {
+// Real values observed on macOS: the kernel name of Claude Code is its version
+// string; argv[0] and the exec path identify it. A lane started from a Codex
+// session sits below codex's node child and must resolve to codex.
+func TestDetectSession_RealObservedProcessTables_ResolveHarness(t *testing.T) {
+	claude := table{
+		91: {PPID: 26, Name: "/bin/bash", StartTime: "b"},
+		26: {PPID: 10, Name: "2.1.296", Argv0: "claude", Exe: "/Users/u/.local/bin/claude", StartTime: "s26"},
+	}
+	proc, sure := procinfo.FindSession(claude.read, 91)
+	got := detectSession(envFrom(map[string]string{"CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/claude-sock"}), sessionOptions{}, proc, sure)
+	assert.Equal(t, "claude-code", got.Harness)
+	assert.Equal(t, "/tmp/claude-sock", got.Handle)
+	assert.False(t, got.Uncertain)
+
+	codex := table{
+		91: {PPID: 80, Name: "bash", StartTime: "b"},
+		80: {PPID: 50, Name: "node", Argv0: "node", StartTime: "n"},
+		50: {PPID: 10, Name: "codex", Argv0: "codex", StartTime: "s50"},
+	}
+	proc, sure = procinfo.FindSession(codex.read, 91)
+	got = detectSession(envFrom(map[string]string{"CODEX_THREAD_ID": "th-1"}), sessionOptions{}, proc, sure)
+	assert.Equal(t, "codex", got.Harness)
+	assert.Equal(t, 50, proc.PID, "the codex process, not its node child")
+	assert.Equal(t, "th-1", got.Handle)
+}
+
+type table map[int]procinfo.Proc
+
+func (t table) read(pid int) (procinfo.Proc, error) {
+	p, ok := t[pid]
+	if !ok {
+		return procinfo.Proc{}, procinfo.ErrNoProcess
+	}
+	return p, nil
+}
+
+func TestCurrentSession_UncertainSession_RecordsUnverifiedStartTime(t *testing.T) {
 	old := sessionWalker
 	t.Cleanup(func() { sessionWalker = old })
 	sessionWalker = func() (walkedSession, bool) { return sessionProc("node"), true }
 	det, pid, start := currentSession(sessionOptions{})
 	assert.True(t, det.Uncertain)
 	assert.Equal(t, 50, pid)
-	assert.Empty(t, start, "an uncertain session probes as unknown")
+	assert.Equal(t, service.UnverifiedStartPrefix+"s50", start, "a real but unidentified process probes as unknown")
+
+	sessionWalker = func() (walkedSession, bool) { return walkedSession{PID: 77}, false }
+	_, pid, start = currentSession(sessionOptions{})
+	assert.Equal(t, 77, pid)
+	assert.Empty(t, start, "an unsure walk recorded a short-lived parent: no start time at all")
 
 	t.Setenv("CODEX_THREAD_ID", "th")
 	sessionWalker = func() (walkedSession, bool) { return sessionProc("codex"), true }

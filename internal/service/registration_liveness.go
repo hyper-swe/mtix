@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/hyper-swe/mtix/internal/procinfo"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -36,6 +37,12 @@ func (l LiveState) String() string {
 	}
 }
 
+// UnverifiedStartPrefix marks a recorded start time whose process is a real,
+// running process that could not be identified as a harness. It identifies the
+// process for "same caller" checks but never proves the session alive or dead,
+// so a probe reports unknown.
+const UnverifiedStartPrefix = "unverified:"
+
 // Liveness probes whether a registration's session is still running. Harness
 // adapters implement it later (ADR-007 §2.2); the default is pid plus start time.
 type Liveness interface {
@@ -58,6 +65,9 @@ func NewProcessLiveness(startTime func(pid int) (string, error)) *ProcessLivenes
 // recorded start time, or a platform that cannot read start times, is unknown.
 func (p *ProcessLiveness) Probe(_ context.Context, reg sqlite.Registration) LiveState {
 	if reg.PID <= 0 || reg.PIDStartTime == "" {
+		return LiveUnknown
+	}
+	if strings.HasPrefix(reg.PIDStartTime, UnverifiedStartPrefix) {
 		return LiveUnknown
 	}
 	start, err := p.startTime(int(reg.PID))

@@ -9,9 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/oplocal"
@@ -45,12 +43,13 @@ type detectedSession struct {
 	Uncertain bool
 }
 
-// harnessByProcess maps the executable name of the session process to its
-// harness and to the one environment variable that harness owns.
-var harnessByProcess = map[string]struct{ harness, envVar string }{
-	"claude": {"claude-code", "CLAUDE_CODE_MESSAGING_SOCKET"},
-	"codex":  {"codex", "CODEX_THREAD_ID"},
-	"pi":     {"pi", "PI_SESSION_ID"},
+// harnessEnvVar is the one environment variable each harness owns. A child
+// harness inherits its parent's variables, so only the identified harness's
+// own variable may supply the handle.
+var harnessEnvVar = map[string]string{
+	procinfo.HarnessClaude: "CLAUDE_CODE_MESSAGING_SOCKET",
+	procinfo.HarnessCodex:  "CODEX_THREAD_ID",
+	procinfo.HarnessPi:     "PI_SESSION_ID",
 }
 
 // walkedSession is the session process found by the ancestor walk.
@@ -70,11 +69,11 @@ var sessionWalker = func() (walkedSession, bool) {
 // handle is borrowed. A typed --session is origin manual (ADR-007 §3.3).
 func detectSession(getenv func(string) string, opts sessionOptions, proc walkedSession, sure bool) detectedSession {
 	det := detectedSession{Harness: "unknown", Origin: "manual", Uncertain: true}
-	if known, ok := harnessByProcess[strings.ToLower(path.Base(strings.TrimPrefix(proc.Name, "-")))]; ok && sure {
-		if handle := getenv(known.envVar); handle != "" {
-			det = detectedSession{Harness: known.harness, Handle: handle, Origin: "session-env"}
+	if envVar, ok := harnessEnvVar[proc.Harness]; ok && sure {
+		if handle := getenv(envVar); handle != "" {
+			det = detectedSession{Harness: proc.Harness, Handle: handle, Origin: "session-env"}
 		} else {
-			det.Harness = known.harness
+			det.Harness = proc.Harness
 		}
 	}
 	if opts.Harness != "" {
@@ -91,10 +90,18 @@ func detectSession(getenv func(string) string, opts sessionOptions, proc walkedS
 func currentSession(opts sessionOptions) (det detectedSession, pid int, start string) {
 	proc, sure := sessionWalker()
 	det = detectSession(os.Getenv, opts, proc, sure)
-	if det.Uncertain {
+	switch {
+	case !det.Uncertain:
+		return det, proc.PID, proc.StartTime
+	case sure && proc.StartTime != "":
+		// An unidentified but real process: keep its start time marked unverified,
+		// so a repeat from the same process refreshes while liveness stays unknown.
+		return det, proc.PID, service.UnverifiedStartPrefix + proc.StartTime
+	default:
+		// An unsure walk recorded the immediate (short-lived) parent: no start time,
+		// so nothing can ever treat the same pid as the same session.
 		return det, proc.PID, ""
 	}
-	return det, proc.PID, proc.StartTime
 }
 
 func currentIdentity() service.SessionIdentity {

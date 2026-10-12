@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strings"
 	"time"
 	"unicode"
 
@@ -133,14 +134,12 @@ func (s SessionIdentity) matches(r *sqlite.Registration) bool {
 	if s.Handle != "" && r.SessionHandle != "" {
 		return s.Handle == r.SessionHandle // two handles decide alone: one process can host several sessions
 	}
-	if s.PID <= 0 || int64(s.PID) != r.PID {
+	if s.PID <= 0 || int64(s.PID) != r.PID || s.PIDStartTime == "" || r.PIDStartTime == "" {
+		// No start time on either side (an unsure walk recorded a short-lived
+		// parent): the same pid proves nothing, a reused pid is another session.
 		return false
 	}
-	// Same pid: with both start times known they must agree (a reused pid is
-	// another process); when either is unknown the pid alone decides. That is
-	// safe both ways: the same pid is either the same session, or the old
-	// process died and its pid was reused, in which case replacing is right.
-	return s.PIDStartTime == "" || r.PIDStartTime == "" || s.PIDStartTime == r.PIDStartTime
+	return strings.TrimPrefix(s.PIDStartTime, UnverifiedStartPrefix) == strings.TrimPrefix(r.PIDStartTime, UnverifiedStartPrefix)
 }
 
 func (r RegisterSessionRequest) identity() SessionIdentity {
@@ -260,7 +259,7 @@ func displacedKey(r *sqlite.Registration) string {
 // due for the displaced session.
 func (s *RegistrationService) authoriseTakeOver(ctx context.Context, req RegisterSessionRequest, displaced string) (bool, error) {
 	if !req.TakeOver {
-		return false, fmt.Errorf("agent %q has a live session on this host; re-run with --take-over to replace it: %w",
+		return false, fmt.Errorf("agent %q has a live or unverifiable session on this host; re-run with --take-over to replace it: %w",
 			req.AgentID, model.ErrAgentStillActive)
 	}
 	now := s.Clock().UTC()

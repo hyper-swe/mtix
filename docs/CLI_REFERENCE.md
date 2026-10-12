@@ -122,13 +122,15 @@ work assignment, project, and active session. Registration does not start a sess
 
 It also records this shell's session for the id: the harness and session handle
 are detected by identity: the harness is the one that owns this session's
-process (claude, codex or pi), and the handle is read only from that harness's
+process (Claude Code, Codex or pi, recognized by argv[0], executable name or
+install path), and the handle is read only from that harness's
 own variable (CLAUDE_CODE_MESSAGING_SOCKET, CODEX_THREAD_ID, PI_SESSION_ID).
 If that cannot be established the session has no handle and unknown liveness
 (never replaced silently; --take-over still works). --harness and --session override them (a typed --session is
-recorded as origin "manual"). A row whose session has exited is replaced
-silently, so a restarted lane registers with no flags. A row whose session is
-still running is refused unless you pass --take-over: that bumps the epoch,
+recorded as origin "manual"). For a recognized harness a row whose session has
+exited is replaced silently, so a restarted lane registers with no flags; an
+unrecognized session has unknown liveness and another process needs --take-over. A row whose session is
+still running (or unverifiable) is refused unless you pass --take-over: that bumps the epoch,
 leaves one fixed notice for the displaced session, and is limited to 3 per id
 per hour, after which it needs a terminal. Registering never wakes the agent
 on events that already exist.

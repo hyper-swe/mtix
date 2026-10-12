@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // StartTime returns the process start time as clock ticks since boot, read
@@ -45,20 +46,30 @@ func parseStatStart(data []byte) (string, error) {
 	return string(fields[19]), nil
 }
 
-// Info reads the parent pid, command name and start time of pid from
-// /proc/<pid>/stat.
+// Info reads the parent pid, command name, start time, executable path and
+// argv[0] of pid from /proc. The executable and argv[0] are best effort: they
+// stay empty when the process belongs to another user.
 func Info(pid int) (Proc, error) {
 	if pid <= 0 {
 		return Proc{}, ErrNoProcess
 	}
-	data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat") // #nosec G304 -- pid is an integer
+	dir := "/proc/" + strconv.Itoa(pid)
+	data, err := os.ReadFile(dir + "/stat") // #nosec G304 -- pid is an integer
 	if errors.Is(err, fs.ErrNotExist) {
 		return Proc{}, ErrNoProcess
 	}
 	if err != nil {
 		return Proc{}, fmt.Errorf("read process stat: %w", err)
 	}
-	return parseStatInfo(data)
+	p, err := parseStatInfo(data)
+	if err != nil {
+		return Proc{}, err
+	}
+	p.Exe, _ = os.Readlink(dir + "/exe")                             // best effort: another user's process is unreadable
+	if cmdline, rerr := os.ReadFile(dir + "/cmdline"); rerr == nil { // #nosec G304 -- pid is an integer
+		p.Argv0, _, _ = strings.Cut(string(cmdline), "\x00")
+	}
+	return p, nil
 }
 
 func parseStatInfo(data []byte) (Proc, error) {

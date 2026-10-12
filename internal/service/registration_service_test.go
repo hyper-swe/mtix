@@ -701,22 +701,50 @@ func TestRegisterSession_AgentIDTooLong_Rejected(t *testing.T) {
 	require.ErrorIs(t, err, model.ErrInvalidInput)
 }
 
-func TestRegisterSession_UnknownStartTime_SamePIDRefreshesOtherPIDRefused(t *testing.T) {
+func TestRegisterSession_UnverifiedStartTime_SamePIDRefreshesOtherPIDRefused(t *testing.T) {
 	f := newRegFixture(t)
 	ctx := context.Background()
-	uncertain := service.RegisterSessionRequest{AgentID: "w", Origin: "manual", PID: 100}
-	_, err := f.svc.RegisterSession(ctx, uncertain)
+	unverified := service.RegisterSessionRequest{AgentID: "w", Origin: "manual", PID: 100, PIDStartTime: service.UnverifiedStartPrefix + "t1"}
+	_, err := f.svc.RegisterSession(ctx, unverified)
 	require.NoError(t, err)
 
-	res, err := f.svc.RegisterSession(ctx, uncertain)
-	require.NoError(t, err, "the same caller re-registering is not another session")
+	res, err := f.svc.RegisterSession(ctx, unverified)
+	require.NoError(t, err, "the same real process re-registering is not another session")
 	assert.Equal(t, service.OutcomeRefreshed, res.Outcome)
 
-	other := uncertain
+	reused := unverified
+	reused.PIDStartTime = service.UnverifiedStartPrefix + "t2"
+	_, err = f.svc.RegisterSession(ctx, reused)
+	require.ErrorIs(t, err, model.ErrAgentStillActive, "a reused pid has another start time")
+
+	other := unverified
 	other.PID = 200
 	_, err = f.svc.RegisterSession(ctx, other)
 	require.ErrorIs(t, err, model.ErrAgentStillActive, "unknown liveness is never replaced silently by another process")
 	other.TakeOver = true
 	_, err = f.svc.RegisterSession(ctx, other)
 	require.NoError(t, err)
+}
+
+// An unsure walk records the short-lived parent shell with no start time: the
+// same pid later may belong to a different live session and proves nothing.
+func TestRegisterSession_NoStartTimeAnywhere_SamePIDIsNotTheSameSession(t *testing.T) {
+	f := newRegFixture(t)
+	ctx := context.Background()
+	unsure := service.RegisterSessionRequest{AgentID: "w", Origin: "manual", PID: 100}
+	_, err := f.svc.RegisterSession(ctx, unsure)
+	require.NoError(t, err)
+	_, err = f.svc.RegisterSession(ctx, unsure)
+	require.ErrorIs(t, err, model.ErrAgentStillActive)
+
+	// Row side empty, request side present (and the mirror image): neither is a match.
+	known := unsure
+	known.PIDStartTime = "t1"
+	_, err = f.svc.RegisterSession(ctx, known)
+	require.ErrorIs(t, err, model.ErrAgentStillActive)
+}
+
+func TestProcessLiveness_UnverifiedStartTime_IsUnknown(t *testing.T) {
+	p := service.NewProcessLiveness(func(int) (string, error) { return "t1", nil })
+	assert.Equal(t, service.LiveUnknown, p.Probe(context.Background(), sqlite.Registration{PID: 5, PIDStartTime: service.UnverifiedStartPrefix + "t1"}))
 }

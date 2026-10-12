@@ -59,6 +59,12 @@ func Info(pid int) (Proc, error) {
 		}
 	}
 	st := info.Proc.P_starttime
-	return Proc{PPID: int(info.Eproc.Ppid), Name: string(comm),
-		StartTime: strconv.FormatInt(int64(st.Sec), 10) + "." + strconv.FormatInt(int64(st.Usec), 10)}, nil
+	p := Proc{PPID: int(info.Eproc.Ppid), Name: string(comm),
+		StartTime: strconv.FormatInt(int64(st.Sec), 10) + "." + strconv.FormatInt(int64(st.Usec), 10)}
+	// Best effort: another user's process refuses its arguments, and the
+	// identity then stays unknown (fail safe).
+	if raw, rerr := unix.SysctlRaw("kern.procargs2", pid); rerr == nil {
+		p.Exe, p.Argv0, _ = ParseProcArgs2(raw)
+	}
+	return p, nil
 }

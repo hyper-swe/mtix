@@ -132,7 +132,7 @@ func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 		}
 	}
 
-	return runDaemonPassLoop(ctx, stdout, stderr, "mtix sync daemon", intervalSec, pullThenDispatch, control)
+	return runDaemonPassLoop(ctx, stdout, stderr, daemonLoopPlan{label: "mtix sync daemon", interval: intervalSec, pass: pullThenDispatch, controls: control})
 }
 
 // syncDaemonPreflight holds the checks mtix sync daemon makes before it

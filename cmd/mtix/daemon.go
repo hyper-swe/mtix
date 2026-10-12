@@ -121,7 +121,7 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 		}
 	}
 
-	return runDaemonPassLoop(ctx, stdout, stderr, "mtix daemon", intervalSec, pass, control)
+	return runDaemonPassLoop(ctx, stdout, stderr, daemonLoopPlan{label: "mtix daemon", interval: intervalSec, pass: pass, controls: control})
 }
 
 func daemonPreflight(args []string) (bool, error) {
@@ -147,18 +147,25 @@ type daemonPassControl struct {
 	observed func(bool)
 }
 
-func runDaemonPassLoop(ctx context.Context, stdout, stderr io.Writer, label string, interval int, pass func(), controls []daemonPassControl) error {
+type daemonLoopPlan struct {
+	label    string
+	interval int
+	pass     func()
+	controls []daemonPassControl
+}
+
+func runDaemonPassLoop(ctx context.Context, stdout, stderr io.Writer, plan daemonLoopPlan) error {
 	var control daemonPassControl
-	if len(controls) > 0 {
-		control = controls[0]
+	if len(plan.controls) > 0 {
+		control = plan.controls[0]
 	}
 	if control.ticks == nil {
-		ticker := time.NewTicker(time.Duration(interval) * time.Second)
+		ticker := time.NewTicker(time.Duration(plan.interval) * time.Second)
 		defer ticker.Stop()
 		control.ticks = ticker.C
 	}
 	run := func() {
-		acquired := runLockedDaemonPass(ctx, stderr, pass)
+		acquired := runLockedDaemonPass(ctx, stderr, plan.pass)
 		if control.observed != nil {
 			control.observed(acquired)
 		}
@@ -167,11 +174,11 @@ func runDaemonPassLoop(ctx context.Context, stdout, stderr io.Writer, label stri
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Fprintf(stdout, "%s: shutting down\n", label)
+			fmt.Fprintf(stdout, "%s: shutting down\n", plan.label)
 			return nil
 		case _, open := <-control.ticks:
 			if !open {
-				return fmt.Errorf("%s: cadence closed", label)
+				return fmt.Errorf("%s: cadence closed", plan.label)
 			}
 			run()
 		}

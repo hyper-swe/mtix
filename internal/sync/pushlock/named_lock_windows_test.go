@@ -8,9 +8,10 @@
 package pushlock
 
 import (
+	"testing"
+
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/windows"
-	"testing"
 )
 
 func TestNamedLock_WindowsMetadata_ValidatesTypeAndOwner(t *testing.T) {

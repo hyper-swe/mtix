@@ -60,15 +60,7 @@ func platformOpenLock(path, name string) (held *os.File, err error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if closeErr := dir.Close(); closeErr != nil {
-			err = errors.Join(err, closeErr)
-			if held != nil {
-				err = errors.Join(err, held.Close())
-				held = nil
-			}
-		}
-	}()
+	defer finishLockOpen(dir, &held, &err)
 	if verifyErr := verifyLockObject(dir, true); verifyErr != nil {
 		return nil, verifyErr
 	}
@@ -122,4 +114,16 @@ func openNamedLockAt(parent int, name string) (int, error) {
 		return unix.Openat(parent, name, flags, 0)
 	}
 	return fd, err
+}
+
+// finishLockOpen preserves directory-close errors and disposes of any lock
+// handle whose acquisition cannot be returned successfully.
+func finishLockOpen(dir *os.File, held **os.File, retErr *error) {
+	if closeErr := dir.Close(); closeErr != nil {
+		*retErr = errors.Join(*retErr, closeErr)
+		if *held != nil {
+			*retErr = errors.Join(*retErr, (*held).Close())
+			*held = nil
+		}
+	}
 }

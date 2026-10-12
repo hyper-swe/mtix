@@ -16,11 +16,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/pushlock"
-	"github.com/stretchr/testify/require"
 )
 
 func TestDispatchLock_HeldByOther_DaemonIdlesNotExits(t *testing.T) {

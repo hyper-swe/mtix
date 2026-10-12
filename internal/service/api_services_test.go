@@ -136,7 +136,7 @@ func TestAPINodeQueries_ResultsAndBackendErrors(t *testing.T) {
 
 type apiAnnotationFailure struct{ store.Store }
 
-func (apiAnnotationFailure) SetAnnotations(context.Context, string, []model.Annotation) error {
+func (apiAnnotationFailure) AppendAnnotation(context.Context, string, model.Annotation) error {
 	return model.ErrConflict
 }
 func TestAPIWorkflowServices_BackendFailuresDoNotBroadcast(t *testing.T) {
@@ -148,7 +148,7 @@ func TestAPIWorkflowServices_BackendFailuresDoNotBroadcast(t *testing.T) {
 	bc.events = nil
 	require.ErrorIs(t, failing.AppendAnnotation(ctx, n.ID, model.Annotation{Text: "hello"}), model.ErrConflict)
 	require.Empty(t, bc.events)
-	require.ErrorIs(t, failing.AppendAnnotation(ctx, "TEST-999", model.Annotation{}), model.ErrNotFound)
+	require.ErrorIs(t, svc.AppendAnnotation(ctx, "TEST-999", model.Annotation{}), model.ErrNotFound)
 	require.ErrorIs(t, svc.UnclaimNode(ctx, "TEST-999", "reason", "writer"), model.ErrNotFound)
 	require.ErrorIs(t, svc.ForceReclaimNode(ctx, "TEST-999", "writer", time.Hour), model.ErrNotFound)
 	require.ErrorIs(t, svc.CancelNode(ctx, "TEST-999", "reason", "writer", false), model.ErrNotFound)

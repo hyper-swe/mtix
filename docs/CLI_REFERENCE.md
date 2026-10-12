@@ -143,8 +143,9 @@ Create a backup of the mtix database
 List nodes blocked by dependencies, or show the blockers of one node
 
 Without an argument, list blocked nodes. With a node ID, show what blocks
-that node (the same view as mtix dep show <id>). The project scope flags
-apply only to the list form.
+that node: the same view as mtix dep show <id>, but an unknown id is a
+not-found error. With --json the id form prints the blocking dependency
+edges, not a node list. The project scope flags apply only to the list form.
 
 ### Flags
 

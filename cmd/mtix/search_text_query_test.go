@@ -58,6 +58,7 @@ func TestSearchCmd_PositionalQuery_FiltersRows(t *testing.T) {
 		{"percent alone is not a wildcard", []string{"%"}, []string{"TEST-3"}},
 		{"underscore is literal", []string{"work_item"}, []string{"TEST-3"}},
 		{"underscore is not a wildcard", []string{"work?item"}, []string{}},
+		{"quoted multi-word argument is split into words", []string{"template alpha"}, []string{"TEST-1"}},
 		{"filters combine with the query", []string{"--status", "done", "template"}, []string{}},
 	}
 	for _, tt := range tests {

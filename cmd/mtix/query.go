@@ -242,20 +242,34 @@ func newBlockedCmd() *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		Short: "List nodes blocked by dependencies, or show the blockers of one node",
 		Long: `Without an argument, list blocked nodes. With a node ID, show what blocks
-that node (the same view as mtix dep show <id>). The project scope flags
-apply only to the list form.`,
+that node: the same view as mtix dep show <id>, but an unknown id is a
+not-found error. With --json the id form prints the blocking dependency
+edges, not a node list. The project scope flags apply only to the list form.`,
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) == 1 {
 				if project != "" || allProjects {
 					return fmt.Errorf("--project and --all-projects do not apply to blocked <id>: %w", model.ErrInvalidInput)
 				}
-				return runDepShow(args[0])
+				return runBlockersOf(args[0])
 			}
 			return runBlocked(project, allProjects)
 		},
 	}
 	addProjectScopeFlags(cmd, &project, &allProjects)
 	return cmd
+}
+
+// runBlockersOf shows what blocks one node (mtix blocked <id>, MTIX-146).
+// Unlike the bare dependency view it refuses an unknown id with ErrNotFound,
+// so a typo is never reported as "no blockers".
+func runBlockersOf(id string) error {
+	if app.nodeSvc == nil {
+		return fmt.Errorf("not in an mtix project")
+	}
+	if _, err := app.nodeSvc.GetNode(context.Background(), id); err != nil {
+		return fmt.Errorf("blockers of %s: %w", id, err)
+	}
+	return runDepShow(id)
 }
 
 func runBlocked(project string, allProjects bool) error {

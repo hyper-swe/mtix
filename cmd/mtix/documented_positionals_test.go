@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 func chdirTemp(t *testing.T) string {
@@ -133,4 +136,29 @@ func TestShippedDocs_BlockedInitPluginInstall_ParseAgainstCommandTree(t *testing
 		require.NoError(t, cmd.ParseFlags(rest), inv)
 		assert.NoError(t, cmd.Args(cmd, cmd.Flags().Args()), "documented invocation does not parse: %q", inv)
 	}
+}
+
+func TestBlockedCmd_UnknownID_ReturnsNotFound(t *testing.T) {
+	initTestApp(t)
+	_, err := executeCmd(newBlockedCmd(), "TEST-999")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, model.ErrNotFound)
+}
+
+func TestBlockedCmd_PositionalID_JSONIsDependencyEdges(t *testing.T) {
+	initTestApp(t)
+	app.jsonOutput = true
+	t.Cleanup(func() { app.jsonOutput = false })
+	require.NoError(t, runCreate("Blocker", "", "", 3, "", "", "", "", ""))
+	require.NoError(t, runCreate("Blocked", "", "", 3, "", "", "", "", ""))
+	require.NoError(t, runDepAdd("TEST-1", "TEST-2", "blocks"))
+	var err error
+	out := captureStdout(t, func() { _, err = executeCmd(newBlockedCmd(), "TEST-2") })
+	require.NoError(t, err)
+	var edges []struct {
+		FromID string `json:"from_id"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &edges))
+	require.Len(t, edges, 1)
+	assert.Equal(t, "TEST-1", edges[0].FromID)
 }

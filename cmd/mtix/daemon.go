@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
+	"github.com/hyper-swe/mtix/internal/sync/pushlock"
 )
 
 // daemonDispatchDefaultIntervalSec is the FR-20 §4.3 dispatch cadence: the
@@ -47,7 +48,9 @@ only — cross-process writes into this .mtix keep dispatching.
 Foreground process; intended for launchd/systemd supervision (see
 --install). Idempotent start: a lifetime OS lock at .mtix/data/sync.daemon.lock
 is shared with 'mtix sync daemon', so the two never run together.
-The PID file is diagnostic and removed only by its matching owner. Transient pull errors are logged and retried, never fatal.`,
+The PID file is diagnostic and removed only by its matching owner. Each pull/relay/dispatch pass takes
+.mtix/data/dispatch.lock; contention idles and retries at the existing cadence.
+Push and dispatch lock files and their data directory must be real and user-owned. Transient pull errors are logged and retried, never fatal.`,
 		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if install {
@@ -70,29 +73,14 @@ The PID file is diagnostic and removed only by its matching owner. Transient pul
 
 // runDaemon executes the pull-then-dispatch loop until ctx is cancelled.
 func runDaemon(ctx context.Context, stdout, stderr io.Writer,
-	args []string, opts transport.Options, intervalSec int,
+	args []string, opts transport.Options, intervalSec int, control ...daemonPassControl,
 ) (retErr error) {
-	if app.mtixDir == "" {
-		return fmt.Errorf("mtix daemon: not in an mtix project (run 'mtix init' first)")
-	}
-	if app.store == nil {
-		return fmt.Errorf("mtix daemon: local store not initialized")
+	hub, err := daemonPreflight(args)
+	if err != nil {
+		return err
 	}
 	if intervalSec <= 0 {
 		intervalSec = daemonDispatchDefaultIntervalSec
-	}
-
-	// Hub detection: ErrDSNNotConfigured means solo/local-only — a supported
-	// mode, not an error. Any OTHER failure (a DSN on the command line,
-	// fail-closed tracked-config refusal, bad secrets-file permissions) must
-	// abort loudly, before the daemon takes its PID file, rather than
-	// silently degrade to a daemon that never pulls (FR-18.16, MTIX-95.15).
-	hub := true
-	if _, err := resolveSyncDSN(args); err != nil {
-		if !errors.Is(err, transport.ErrDSNNotConfigured) {
-			return fmt.Errorf("mtix daemon: hub DSN: %w", err)
-		}
-		hub = false
 	}
 
 	owner, err := startDaemonOwnership(stderr, "mtix daemon", app.mtixDir)
@@ -133,17 +121,79 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 		}
 	}
 
-	tick := time.NewTicker(time.Duration(intervalSec) * time.Second)
-	defer tick.Stop()
+	return runDaemonPassLoop(ctx, stdout, stderr, "mtix daemon", intervalSec, pass, control)
+}
 
-	pass() // one immediate pass so a pending wake lands in seconds, not a tick
+func daemonPreflight(args []string) (bool, error) {
+	if app.mtixDir == "" {
+		return false, fmt.Errorf("mtix daemon: not in an mtix project (run 'mtix init' first)")
+	}
+	if app.store == nil {
+		return false, fmt.Errorf("mtix daemon: local store not initialized")
+	}
+	if _, err := resolveSyncDSN(args); err != nil {
+		if !errors.Is(err, transport.ErrDSNNotConfigured) {
+			return false, fmt.Errorf("mtix daemon: hub DSN: %w", err)
+		}
+		return false, nil
+	}
+	return true, nil
+}
+
+// daemonPassControl is optional, instance-scoped cadence/observation input.
+// Commands use no override, so production always retains its timer cadence.
+type daemonPassControl struct {
+	ticks    <-chan time.Time
+	observed func(bool)
+}
+
+func runDaemonPassLoop(ctx context.Context, stdout, stderr io.Writer, label string, interval int, pass func(), controls []daemonPassControl) error {
+	var control daemonPassControl
+	if len(controls) > 0 {
+		control = controls[0]
+	}
+	if control.ticks == nil {
+		ticker := time.NewTicker(time.Duration(interval) * time.Second)
+		defer ticker.Stop()
+		control.ticks = ticker.C
+	}
+	run := func() {
+		acquired := runLockedDaemonPass(ctx, stderr, pass)
+		if control.observed != nil {
+			control.observed(acquired)
+		}
+	}
+	run()
 	for {
 		select {
 		case <-ctx.Done():
-			fmt.Fprintln(stdout, "mtix daemon: shutting down")
+			fmt.Fprintf(stdout, "%s: shutting down\n", label)
 			return nil
-		case <-tick.C:
-			pass()
+		case _, open := <-control.ticks:
+			if !open {
+				return fmt.Errorf("%s: cadence closed", label)
+			}
+			run()
 		}
 	}
+}
+
+func runLockedDaemonPass(ctx context.Context, stderr io.Writer, pass func()) bool {
+	lock, err := pushlock.AcquireNamed(app.mtixDir, "dispatch.lock")
+	if errors.Is(err, pushlock.ErrLockHeld) {
+		return false
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "daemon: dispatch lock error (will retry): %s\n", err)
+		return false
+	}
+	defer func() {
+		if err := lock.Release(); err != nil {
+			fmt.Fprintf(stderr, "daemon: release dispatch lock: %s\n", err)
+		}
+	}()
+	if ctx.Err() == nil {
+		pass()
+	}
+	return true
 }

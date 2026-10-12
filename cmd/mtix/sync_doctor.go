@@ -79,6 +79,8 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
   Operator state placement - reports the sandbox placement limitation
+  Data filesystem        - warns on known network/FUSE data mounts; unavailable
+                           classification is reported without claiming safe locks
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
   Hub triggers           - every function and trigger the hub migrations
                            define exists, every trigger executes the
@@ -184,7 +186,7 @@ func newSyncDoctorCmd() *cobra.Command {
 // the budget sync itself uses (MTIX-95.7). Returns errDoctorChecksFailed
 // when a check fails.
 func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
-	args []string, opts transport.Options,
+	args []string, opts transport.Options, inspectors ...func(string) (string, bool, error),
 ) error {
 	if app.mtixDir == "" {
 		return fmt.Errorf("mtix sync doctor: not in an mtix project (run 'mtix init' first)")
@@ -203,6 +205,7 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	// unique node uids, held push events, secrets file mode.
 	report = appendLocalChecks(ctx, report)
 	report = appendOperatorPlacementCheck(report)
+	report = appendDoctorCheck(report, checkDataFilesystem(inspectors))
 
 	// Check 6: every mtix function and trigger the migrations define is
 	// on the hub and enabled, as the restore runbook ends (MTIX-95.7).
@@ -408,4 +411,28 @@ func printDoctorTable(w io.Writer, r DoctorReport) {
 	default:
 		fmt.Fprintln(w, "all checks passed")
 	}
+}
+
+func checkDataFilesystem(inspectors []func(string) (string, bool, error)) DoctorCheck {
+	inspect := sqlite.InspectFilesystem
+	if len(inspectors) > 0 && inspectors[0] != nil {
+		inspect = inspectors[0]
+	}
+	name, unsafe, err := inspect(filepath.Join(app.mtixDir, "data"))
+	check := DoctorCheck{Name: "data filesystem", Pass: true}
+	switch {
+	case err != nil:
+		check.Warn = true
+		check.Detail = "classification unavailable: " + err.Error()
+	case name == "":
+		check.Warn = true
+		check.Detail = "classification unavailable; reliable local locking is not verified"
+	case unsafe:
+		check.Warn = true
+		check.Detail = name + ": network/FUSE filesystem; reliable locking is not guaranteed"
+		check.Fix = "Move .mtix to a local disk; give each machine its own local store and sync through the hub"
+	default:
+		check.Detail = name + ": no known network/FUSE classification; locking behavior is not verified"
+	}
+	return check
 }

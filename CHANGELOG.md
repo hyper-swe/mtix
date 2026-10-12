@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Named push and dispatch locks validate real user-owned directory/file handles. Both daemon spellings idle and retry contended dispatch passes, and sync doctor reports network/FUSE or unavailable filesystem classification.
 - Preserve received hub provenance while outbound journal work is pending, including held push events. New receipts record a known-zero outbound boundary; older unknown boundaries are reported without rewriting them. Push then a new complete pull establishes a fresh receipt.
 - Record successfully received board provenance separately from local exports, with local status and doctor diagnostics.
 - The reference wake routine supplies inbox text through standard input; the Cursor cold-start example is omitted pending a verified standard-input interface.

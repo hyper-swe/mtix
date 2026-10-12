@@ -162,20 +162,19 @@ func quickCheck(ctx context.Context, db *sql.DB) (string, error) {
 // integrityCheckOnOpen runs quickCheck on the freshly opened write
 // connection, before init or any mutation.
 func integrityCheckOnOpen(ctx context.Context, db *sql.DB, path string) error {
+	return integrityCheckOnOpenWith(ctx, db, path, defaultOpenRetry())
+}
+
+// integrityCheckOnOpenWith is integrityCheckOnOpen with an injected retry
+// policy. BUSY, LOCKED and SCHEMA are retried and never classed as
+// corruption (MTIX-147).
+func integrityCheckOnOpenWith(ctx context.Context, db *sql.DB, path string, rt openRetry) error {
 	if integrityChecksSkipped() {
 		return nil
 	}
-
-	result, err := quickCheck(ctx, db)
-	if err != nil {
-		return fmt.Errorf("integrity check on %s could not run; %s: %w (%v)",
-			path, recoveryGuidance, model.ErrCorrupted, err)
-	}
-	if result != "ok" {
-		return fmt.Errorf("integrity check on %s failed (%s); %s: %w",
-			path, result, recoveryGuidance, model.ErrCorrupted)
-	}
-	return nil
+	return checkIntegrity(ctx, rt, path, func(c context.Context) (string, error) {
+		return quickCheck(c, db)
+	})
 }
 
 // explainOpenError enriches a database-open failure with free-space

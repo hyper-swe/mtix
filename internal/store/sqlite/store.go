@@ -157,7 +157,9 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 		fsType:       fsType,
 	}
 
-	if err := s.init(context.Background()); err != nil {
+	// init is idempotent; a concurrent first open can change the schema under
+	// it (SQLITE_SCHEMA) or hold the write lock, so retry transient errors.
+	if err := retryTransient(ctx, defaultOpenRetry(), func() error { return s.init(ctx) }); err != nil {
 		if closeErr := s.Close(); closeErr != nil {
 			logger.Error("failed to close store after init failure",
 				slog.Any("error", closeErr))
@@ -174,6 +176,13 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 // lock upgrade). Both read and write connections set busy_timeout = 5000ms
 // to prevent immediate failures during concurrent access.
 func openDB(ctx context.Context, path string, isWriter, readOnly bool) (*sql.DB, error) {
+	return openDBWith(ctx, path, isWriter, readOnly, defaultOpenRetry())
+}
+
+// openDBWith is openDB with an injected retry policy. Switching a brand-new
+// file to WAL needs a lock that concurrent first opens contend for, so each
+// pragma runs under retryTransient (MTIX-147).
+func openDBWith(ctx context.Context, path string, isWriter, readOnly bool, rt openRetry) (*sql.DB, error) {
 	dsn := path
 	switch {
 	case readOnly:
@@ -228,7 +237,10 @@ func openDB(ctx context.Context, path string, isWriter, readOnly bool) (*sql.DB,
 	}
 
 	for _, p := range pragmas {
-		if _, err := db.ExecContext(ctx, p.stmt); err != nil {
+		if err := retryTransient(ctx, rt, func() error {
+			_, execErr := db.ExecContext(ctx, p.stmt)
+			return execErr
+		}); err != nil {
 			if closeErr := db.Close(); closeErr != nil {
 				return nil, fmt.Errorf("close after pragma failure: %w", closeErr)
 			}

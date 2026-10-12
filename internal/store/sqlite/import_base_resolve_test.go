@@ -135,6 +135,7 @@ func TestResolveWithBase_FileUnchanged_KeepsLocalChange(t *testing.T) {
 	res := resolveFor(t, base, local, file)
 	assert.False(t, res.Diff.Lossy(), "%+v", res.Diff.Losses)
 	assert.Equal(t, "Renamed", resolvedNode(t, res, "PROJ-1")["title"])
+	assert.Equal(t, "2026-10-02T09:00:00Z", resolvedNode(t, res, "PROJ-1")["updated_at"], "the later copy's time")
 	assert.Equal(t, "bob", resolvedNode(t, res, "PROJ-2")["assignee"])
 	assert.Equal(t, 1, res.Kept.LocalChanges)
 }
@@ -276,4 +277,121 @@ func TestResolveWithBase_ResolvedBoard_ChecksumVerifies(t *testing.T) {
 	base := board(t, "1.0.0", p1)
 	res := resolveFor(t, base, board(t, "2.0.0", withKeys(p1, "activity", localActivity)), board(t, "2.0.0", p1))
 	require.NoError(t, sqlite.ValidateExport(res.Resolved))
+}
+
+func TestResolveWithBase_KeptLocalStatus_KeepsLocalProgress(t *testing.T) {
+	p1 := boardNode("PROJ-1", uidOne, "open", "")
+	base := board(t, "1.0.0", p1)
+	local := board(t, "2.0.0", withKeys(p1, "status", "done", "progress", 1.0))
+	file := board(t, "2.0.0", withKeys(p1, "title", "Retitled by the teammate"))
+	res := resolveFor(t, base, local, file)
+	assert.False(t, res.Diff.Lossy(), "%+v", res.Diff.Losses)
+	n := resolvedNode(t, res, "PROJ-1")
+	assert.Equal(t, "done", n["status"])
+	assert.EqualValues(t, 1.0, n["progress"])
+	assert.Equal(t, "Retitled by the teammate", n["title"])
+}
+
+func TestResolveWithBase_LocalClear_IsKeptWhenFileEqualsBase(t *testing.T) {
+	p1 := boardNode("PROJ-1", uidOne, "in_progress", "alice")
+	base := board(t, "1.0.0", p1)
+	local := board(t, "2.0.0", withKeys(p1, "status", "open", "assignee", ""))
+	file := board(t, "2.0.0", withKeys(p1, "description", "edited by the teammate"))
+	res := resolveFor(t, base, local, file)
+	assert.False(t, res.Diff.Lossy(), "%+v", res.Diff.Losses)
+	n := resolvedNode(t, res, "PROJ-1")
+	assert.Equal(t, "", n["assignee"], "the local unclaim is kept")
+	assert.Equal(t, "edited by the teammate", n["description"])
+}
+
+// previous_status is a field of its own: it is resolved against the base, and a kept
+// local status never silently takes the file's previous_status.
+func TestResolveWithBase_PreviousStatus_ResolvedAgainstTheBase(t *testing.T) {
+	p1 := boardNode("PROJ-1", uidOne, "open", "")
+	base := board(t, "1.0.0", p1)
+	deferredHere := withKeys(p1, "status", "deferred", "previous_status", "open")
+	tests := []struct {
+		name         string
+		local, file  map[string]any
+		wantConflict bool
+		wantPrevious string
+		wantStatus   string
+	}{
+		{"kept local status keeps its previous_status when the file holds none", deferredHere, p1, false, "open", "deferred"},
+		{"kept local status and a different previous_status in the file is a conflict", deferredHere,
+			withKeys(p1, "previous_status", "in_progress"), true, "", ""},
+		{"status taken from the file takes the file's previous_status (the teammate's transition)",
+			withKeys(p1, "previous_status", "open"),
+			withKeys(p1, "status", "done", "previous_status", "in_progress"), false, "in_progress", "done"},
+		{"unchanged status and two different previous_status values is a conflict",
+			withKeys(p1, "previous_status", "blocked"), withKeys(p1, "previous_status", "deferred"), true, "", ""},
+		{"file holds none, local value kept", withKeys(p1, "previous_status", "blocked"), p1, false, "blocked", "open"},
+		{"local holds none, file value taken", p1, withKeys(p1, "previous_status", "deferred"), false, "deferred", "open"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := resolveFor(t, base, board(t, "2.0.0", tt.local), board(t, "2.0.0", tt.file))
+			if tt.wantConflict {
+				require.True(t, res.Diff.Lossy())
+				assert.Equal(t, []string{"previous_status"}, res.Diff.Losses[0].BothChanged)
+				return
+			}
+			assert.False(t, res.Diff.Lossy(), "%+v", res.Diff.Losses)
+			n := resolvedNode(t, res, "PROJ-1")
+			assert.Equal(t, tt.wantStatus, n["status"])
+			assert.Equal(t, tt.wantPrevious, n["previous_status"])
+		})
+	}
+}
+
+// The three invalidation fields are one fact: they are taken or kept together.
+func TestResolveWithBase_InvalidationFields_AreResolvedTogether(t *testing.T) {
+	p1 := boardNode("PROJ-1", uidOne, "open", "")
+	base := board(t, "1.0.0", p1)
+	invalid := withKeys(p1, "invalidated_at", "2026-10-02T09:00:00Z", "invalidated_by", "alice", "invalidation_reason", "stale")
+	res := resolveFor(t, base, board(t, "2.0.0", invalid), board(t, "2.0.0", p1))
+	assert.False(t, res.Diff.Lossy(), "%+v", res.Diff.Losses)
+	n := resolvedNode(t, res, "PROJ-1")
+	assert.Equal(t, "alice", n["invalidated_by"])
+	assert.Equal(t, "stale", n["invalidation_reason"])
+	// The file holds a different invalidation: a mix of the two would be a third fact.
+	other := withKeys(p1, "invalidated_at", "2026-10-03T09:00:00Z", "invalidated_by", "bob")
+	res = resolveFor(t, base, board(t, "2.0.0", invalid), board(t, "2.0.0", other))
+	require.True(t, res.Diff.Lossy())
+	assert.Equal(t, []string{"invalidated_at"}, res.Diff.Losses[0].BothChanged)
+}
+
+func TestResolveWithBase_LocalTaskDependencies_AreKept(t *testing.T) {
+	p1 := boardNode("PROJ-1", uidOne, "open", "")
+	p3 := boardNode("PROJ-3", "01995a1e-8c00-7a11-8b22-000000000003", "open", "")
+	p4 := withKeys(boardNode("PROJ-4", "01995a1e-8c00-7a11-8b22-000000000004", "open", ""), "seq", 4)
+	dep := func(from, to string) any {
+		return map[string]any{"from_id": from, "to_id": to, "dep_type": "blocks", "created_at": "2026-10-02T09:00:00Z"}
+	}
+	base := board(t, "1.0.0", p1)
+	local := boardWithDeps(t, "2.0.0", []any{dep("PROJ-3", "PROJ-1"), dep("PROJ-3", "PROJ-4")}, p1, p3, p4)
+	res := resolveFor(t, base, local, board(t, "2.0.0", p1))
+	assert.False(t, res.Diff.Lossy(), "%+v", res.Diff.Losses)
+	raw, err := json.Marshal(res.Resolved)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"from_id":"PROJ-3","to_id":"PROJ-1"`, "a local task's dependency on a file task")
+	assert.Contains(t, string(raw), `"from_id":"PROJ-3","to_id":"PROJ-4"`, "a dependency between two local tasks")
+	// A dependency between tasks the base held is not a local task's: it is still a loss.
+	p2 := boardNode("PROJ-2", uidTwo, "open", "")
+	res = resolveFor(t, board(t, "1.0.0", p1, p2), boardWithDeps(t, "2.0.0", []any{dep("PROJ-1", "PROJ-2")}, p1, p2),
+		board(t, "2.0.0", p1, p2))
+	assert.True(t, res.Diff.Lossy())
+}
+
+// Without uids the base matches a task by id only while the title still agrees:
+// another task under the same id must not read as the same task.
+func TestResolveWithBase_BaseWithoutUIDs_DifferentTaskUnderTheId_IsNotTakenAsTheSame(t *testing.T) {
+	baseTask := withKeys(boardNode("PROJ-1", "", "open", ""), "title", "X")
+	base := board(t, "1.0.0", baseTask)
+	localTask := withKeys(boardNode("PROJ-1", uidOne, "open", ""), "title", "Y") // description as in the base task
+	fileTask := withKeys(boardNode("PROJ-1", uidOne, "open", ""), "title", "Y", "description", "theirs")
+	res := resolveFor(t, base, board(t, "2.0.0", localTask), board(t, "2.0.0", fileTask))
+	require.True(t, res.Diff.Lossy())
+	assert.Contains(t, res.Diff.Losses[0].BothChanged, "description")
+	assert.Equal(t, "theirs", resolvedNode(t, res, "PROJ-1")["description"], "nothing taken from the local copy on a guess")
 }

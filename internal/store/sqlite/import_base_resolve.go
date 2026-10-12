@@ -56,14 +56,6 @@ var threeWayKeys = []string{
 // contentKeys are the fields content_hash derives from.
 var contentKeys = map[string]bool{"title": true, "description": true, "prompt": true, "acceptance": true, "labels": true}
 
-// carriedKeys are the node fields schema 2.0.0 added, other than the
-// annotation and activity streams. Their absence from a 1.x board means
-// "not carried", never "cleared".
-var carriedKeys = []string{
-	"previous_status", "estimate_min", "actual_min", "code_refs", "commit_refs", "invalidated_at",
-	"invalidated_by", "invalidation_reason", "deleted_by", "metadata", "session_id",
-}
-
 // ResolveWithBase resolves the pulled board file against the local store
 // using base, the board the two last exchanged, when that board is in an
 // older form (MTIX-95.31.15.1, FR-15.2i). Per task, matched as DiffReplace
@@ -188,7 +180,7 @@ func (r *baseResolver) resolveNode(l, in *exportNode, bt *BaseTask) (*exportNode
 			conflicts = append(conflicts, key)
 		}
 	}
-	conflicts = append(conflicts, r.mergeCarried(out, lraw, fdig, ldig)...)
+	conflicts = append(conflicts, r.mergeCarried(out, lraw, fdig, ldig, statusSideOf(ldig, fdig, bt))...)
 	merged, err := decodeFields(out)
 	if err != nil {
 		return nil, nil, err
@@ -199,26 +191,79 @@ func (r *baseResolver) resolveNode(l, in *exportNode, bt *BaseTask) (*exportNode
 	return merged, conflicts, nil
 }
 
-// mergeCarried sets in out each 2.0.0-only field the file leaves empty to
-// the local value, and returns the fields both hold with different values
-// (previous_status follows the file's status, so it never conflicts).
-func (r *baseResolver) mergeCarried(out, lraw map[string]json.RawMessage, fdig, ldig map[string]string) []string {
+// carriedUnits are the 2.0.0-only fields resolved as one unit each. The three
+// invalidation fields describe one fact, so they are taken or kept together.
+var carriedUnits = [][]string{
+	{"previous_status"}, {"estimate_min"}, {"actual_min"}, {"code_refs"}, {"commit_refs"},
+	{"invalidated_at", "invalidated_by", "invalidation_reason"}, {"deleted_by"}, {"metadata"}, {"session_id"},
+}
+
+// Which side supplied the node's status (statusSide).
+const (
+	statusSame  = "same"  // both hold the same status
+	statusFile  = "file"  // the local status is the base's: the teammate's change applies
+	statusLocal = "local" // the file's status is the base's: the local change is kept
+)
+
+// mergeCarried resolves each 2.0.0-only field unit against the file: a unit
+// the file leaves empty takes the local value, one the local copy leaves empty
+// or holds the same keeps the file's, and two different values are a conflict
+// (the first differing key is returned). previous_status records the
+// transition into the status, so when the status came from the file it
+// follows the file (the teammate's transition); otherwise it is resolved like
+// any other field, so a kept local status never loses its previous_status. A
+// deleted_by is dropped when the file holds the task live.
+func (r *baseResolver) mergeCarried(out, lraw map[string]json.RawMessage, fdig, ldig map[string]string, statusSide string) []string {
 	var conflicts []string
-	for _, key := range carriedKeys {
-		lv, fv := lraw[key], out[key]
+	for _, unit := range carriedUnits {
+		localEmpty, fileEmpty, same := true, true, true
+		for _, key := range unit {
+			localEmpty = localEmpty && isEmptyValue(key, lraw[key])
+			fileEmpty = fileEmpty && isEmptyValue(key, out[key])
+			same = same && ldig[key] == fdig[key]
+		}
 		switch {
-		case isEmptyValue(key, lv) || ldig[key] == fdig[key]:
-		case isEmptyValue(key, fv):
-			out[key] = lv
-			r.kept.Fields++
-		case key != "previous_status":
-			conflicts = append(conflicts, key)
+		case localEmpty || same:
+		case fileEmpty:
+			for _, key := range unit {
+				setField(out, lraw, key)
+				if !isEmptyValue(key, lraw[key]) {
+					r.kept.Fields++
+				}
+			}
+		case unit[0] == "previous_status" && statusSide == statusFile:
+		default:
+			conflicts = append(conflicts, firstDifferent(unit, ldig, fdig))
 		}
 	}
 	if isEmptyValue("deleted_at", out["deleted_at"]) && !isEmptyValue("deleted_by", out["deleted_by"]) {
 		delete(out, "deleted_by") // a teammate's undelete clears who deleted it
 	}
 	return conflicts
+}
+
+// firstDifferent returns the first key of unit whose digests differ.
+func firstDifferent(unit []string, ldig, fdig map[string]string) string {
+	for _, key := range unit {
+		if ldig[key] != fdig[key] {
+			return key
+		}
+	}
+	return unit[0]
+}
+
+// statusSideOf says which side supplied the status of the node: the file when
+// the local status is the base's, the local store when the file's is.
+func statusSideOf(ldig, fdig map[string]string, bt *BaseTask) string {
+	switch {
+	case ldig["status"] == fdig["status"]:
+		return statusSame
+	case bt != nil && ldig["status"] == bt.Fields["status"]:
+		return statusFile
+	case bt != nil && fdig["status"] == bt.Fields["status"]:
+		return statusLocal
+	}
+	return statusSame
 }
 
 // mergeHistory sets merged's annotations and activity to their union with

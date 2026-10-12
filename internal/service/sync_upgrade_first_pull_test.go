@@ -203,3 +203,36 @@ func TestAutoImportUpgrade_053LargerStore_KeepsDeletedTaskAndHistory(t *testing.
 	assert.Equal(t, "in_progress", st2)
 	assert.Equal(t, "bob", as2)
 }
+
+// A record in the current form is the last exchange: the older-form rule does
+// not apply, the merge-base board is not consulted, and a lossy pull is refused
+// as it was before this change.
+func TestAutoImportUpgrade_CurrentFormRecord_KeepsTodaysRefusal(t *testing.T) {
+	r := newUpgradeRig(t, releasedMtix(t, tag053, tag053Commit))
+	a := r.setupSequence()
+	r.pull(a)
+	first := upgrade(t, a)
+	require.NoError(t, first.svc.AutoImport(context.Background(), first.mtixDir), first.notices.String())
+	rec, err := first.svc.LastExchanged(context.Background(), first.mtixDir)
+	require.NoError(t, err)
+	require.Equal(t, "current", rec.BoardForm, "the 2.0.0 board just imported is the last exchange")
+	require.NoError(t, first.store.Close())
+
+	// The teammate reopens PROJ-2 from a store that never held A's comment; the merge-base
+	// board (A's original 1.x commit) would settle the pull if it were consulted.
+	b := r.clone()
+	teammate := upgrade(t, b)
+	require.NoError(t, teammate.svc.AutoImport(context.Background(), teammate.mtixDir))
+	require.NoError(t, teammate.store.UnclaimNode(context.Background(), "PROJ-2", "released", "bob"))
+	require.NoError(t, teammate.svc.AutoExport(context.Background(), teammate.mtixDir))
+	r.publish(b, "teammate reopens PROJ-2")
+	r.pull(a)
+	second := upgrade(t, a)
+	before := second.export(t)
+
+	err = second.svc.AutoImport(context.Background(), second.mtixDir)
+
+	require.ErrorIs(t, err, service.ErrAutoImportRefused, second.notices.String())
+	assert.False(t, mentions(second.notices, "told your changes"), second.notices.String())
+	assert.Equal(t, before.Checksum, second.export(t).Checksum, "nothing was written")
+}

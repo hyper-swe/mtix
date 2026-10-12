@@ -98,8 +98,8 @@ func newSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search [words...]",
 		Short: "Search nodes by text (positional words) and advanced filters",
-		Long: `Search nodes. Optional positional words must ALL appear (case-insensitive,
-literal) in a node's title, description or prompt; filter flags narrow the
+		Long: `Search nodes. Optional positional words must ALL appear (case-insensitive for
+ASCII letters only, and literal) in a node's title, description or prompt; filter flags narrow the
 result further. With no words, only the filters apply.`,
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runSearch(args, status, assignee, nodeType, under, priority, fields, changedSince, limit, project, allProjects)
@@ -238,10 +238,19 @@ func newBlockedCmd() *cobra.Command {
 		allProjects bool
 	)
 	cmd := &cobra.Command{
-		Use:   "blocked",
-		Args:  cobra.NoArgs,
-		Short: "List nodes blocked by dependencies",
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Use:   "blocked [id]",
+		Args:  cobra.MaximumNArgs(1),
+		Short: "List nodes blocked by dependencies, or show the blockers of one node",
+		Long: `Without an argument, list blocked nodes. With a node ID, show what blocks
+that node (the same view as mtix dep show <id>). The project scope flags
+apply only to the list form.`,
+		RunE: func(_ *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				if project != "" || allProjects {
+					return fmt.Errorf("--project and --all-projects do not apply to blocked <id>: %w", model.ErrInvalidInput)
+				}
+				return runDepShow(args[0])
+			}
 			return runBlocked(project, allProjects)
 		},
 	}

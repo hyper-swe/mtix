@@ -84,3 +84,14 @@ func TestSearchCmd_OverlongQuery_ReturnsInvalidInput(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid input")
 }
+
+// A blank positional argument is a mistake, not "no filter".
+func TestSearchCmd_BlankArgument_ReturnsInvalidInput(t *testing.T) {
+	initTestApp(t)
+	seedSearchCorpus(t)
+	for _, blank := range []string{"", "   "} {
+		_, err := executeCmd(newSearchCmd(), blank)
+		require.Error(t, err, "%q", blank)
+		assert.Contains(t, err.Error(), "invalid input")
+	}
+}

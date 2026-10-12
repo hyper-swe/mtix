@@ -249,7 +249,7 @@ Call `mtix_discover` to inspect this build's registry. Tree views, backup, expor
 | `mtix_rerun` | Invalidate and reprocess |
 | `mtix_ready` | List nodes ready for pickup |
 | `mtix_blocked` | List blocked nodes |
-| `mtix_search` | Text search: `query` words must all appear in title, description or prompt; filters combine; unknown arguments are rejected |
+| `mtix_search` | Text search: `query` words must all appear in title, description or prompt (ASCII-case-insensitive); filters combine; unknown arguments are rejected |
 
 ### Context & Prompts
 | Tool | Description |

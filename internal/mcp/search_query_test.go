@@ -62,3 +62,24 @@ func TestToolQuery_SearchBadArguments_ReturnError(t *testing.T) {
 		})
 	}
 }
+
+// Words are split on whitespace, so order does not matter and each word
+// matches on its own.
+func TestToolQuery_SearchQuery_SplitsWords(t *testing.T) {
+	env := newBehaviorTools(t)
+	behaviorNode(t, env, "Alpha template", "")
+	assert.Equal(t, []string{"Alpha template"}, searchTitles(t, env, `{"query":"template alpha"}`))
+}
+
+// A blank query is an error, not "no filter".
+func TestToolQuery_SearchQuery_BlankIsError(t *testing.T) {
+	env := newBehaviorTools(t)
+	behaviorNode(t, env, "Alpha template", "")
+	for _, args := range []string{`{"query":"   "}`, `{"query":" \t "}`} {
+		res, err := env.reg.Call(t.Context(), "mtix_search", json.RawMessage(args))
+		if err == nil {
+			require.NotNil(t, res)
+			assert.True(t, res.IsError, "%s", args)
+		}
+	}
+}

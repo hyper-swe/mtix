@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `mtix search <words>` applied no text filter: the words were dropped and unfiltered rows came back. It now matches every word, case-insensitively and literally, against title, description and prompt (MTIX-146). MCP `mtix_search` takes the same `query` and rejects unknown arguments. Commands that take no positional arguments now reject stray ones.
+- `mtix search <words>` applied no text filter: the words were dropped and unfiltered rows came back. It now matches every word, case-insensitively and literally, against title, description and prompt (MTIX-146). MCP `mtix_search` takes the same `query` and rejects unknown arguments. Commands that take no positional arguments now reject stray ones. The documented forms `mtix init <prefix>`, `mtix plugin install <target>` and `mtix blocked <id>` keep working: the positional is the same as `--prefix`, `--target` and `mtix dep show <id>`, and a positional that contradicts its flag is refused. Text matching is case-insensitive for ASCII letters only.
 
 ### Added
 - **Board identity foundations (MTIX-112.17.2).** `mtix init` creates a committed `.mtix/board-id` for new boards; existing boards keep their identity. `mtix sync pull` and `mtix sync relay attach` record the authenticated hub identity in operator-local state, and `mtix sync doctor` gains `board.id` and `board.hub-identity-changed` checks (text and `--json`). An existing hub board without `.mtix/board-id` is reported as a warning, not a failure. Recording the hub identity is best-effort: a failure prints a warning and never fails a pull that already applied data.

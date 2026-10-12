@@ -690,7 +690,7 @@ mtix search "login flow" --status open --under PROJ-1
 ```
 
 `mtix search` takes optional positional words. Every word must appear
-(case-insensitive, matched literally, so `%` and `_` are ordinary characters)
+(case-insensitive for ASCII letters only, matched literally, so `%` and `_` are ordinary characters; `É` does not match `é`)
 in a node's title, description or prompt. A query that matches nothing returns
 no rows; it never falls back to listing everything. At most 16 words of at most
 256 bytes each are accepted, and a blank word is an error.

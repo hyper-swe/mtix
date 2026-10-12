@@ -20,7 +20,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `agent` — Manage agent lifecycle
 - `annotate <id> <text>` — Add an annotation to a node
 - `backup <path>` — Create a backup of the mtix database
-- `blocked` — List nodes blocked by dependencies
+- `blocked [id]` — List nodes blocked by dependencies, or show the blockers of one node
 - `cancel <id>` — Cancel a node with mandatory reason
 - `claim <id>` — Claim a node for an agent
 - `comment <id> <text>` — Add a comment annotation to a node
@@ -39,7 +39,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `hooks` — Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 - `import <file>` — Import nodes from JSON export
 - `inbox` — Show events addressed to an agent
-- `init` — Initialize a new mtix project
+- `init [prefix]` — Initialize a new mtix project
 - `list` — List nodes with filters
 - `mcp` — Run as MCP server over stdio (for LLM agent integration)
 - `micro <title>` — Create a micro task (requires --under)
@@ -138,9 +138,13 @@ Create a backup of the mtix database
 
 ## blocked
 
-**Usage:** `blocked`
+**Usage:** `blocked [id]`
 
-List nodes blocked by dependencies
+List nodes blocked by dependencies, or show the blockers of one node
+
+Without an argument, list blocked nodes. With a node ID, show what blocks
+that node (the same view as mtix dep show <id>). The project scope flags
+apply only to the list form.
 
 ### Flags
 
@@ -785,7 +789,7 @@ mtix inbox lease release --agent developer --holder "$HOLDER"
 
 ## init
 
-**Usage:** `init`
+**Usage:** `init [prefix]`
 
 Initialize a new mtix project
 
@@ -794,6 +798,8 @@ Initialize a new mtix project in the current directory.
 Creates .mtix/ directory structure with config, database, and logs.
 Creates .mtix/board-id with one stable UUID; commit it with the board.
 Generates agent documentation in .mtix/docs/.
+
+The prefix may be given as an argument (mtix init MYPROJ) or with --prefix.
 
 ### Flags
 
@@ -923,12 +929,12 @@ Supported targets: claude-code (default), codex, pi.
 
 ### Subcommands
 
-- `install` — Install skill files and MCP configuration
+- `install [target]` — Install skill files and MCP configuration
 ---
 
 ## install
 
-**Usage:** `install`
+**Usage:** `install [target]`
 
 Install skill files and MCP configuration
 
@@ -951,6 +957,9 @@ the stanza to add is printed instead.
 pi: AGENTS.md at the project root (or ~/.pi/agent/ with --global); pi
 loads it natively. pi has no built-in MCP — setup guidance for the
 community pi-mcp-adapter extension is printed.
+
+The target may be given as an argument (mtix plugin install codex) or with
+--target.
 
 ### Flags
 
@@ -1066,8 +1075,8 @@ Restore an invalidated node to its previous status
 
 Search nodes by text (positional words) and advanced filters
 
-Search nodes. Optional positional words must ALL appear (case-insensitive,
-literal) in a node's title, description or prompt; filter flags narrow the
+Search nodes. Optional positional words must ALL appear (case-insensitive for
+ASCII letters only, and literal) in a node's title, description or prompt; filter flags narrow the
 result further. With no words, only the filters apply.
 
 ### Flags

@@ -23,16 +23,22 @@ func newInitCmd() *cobra.Command {
 	var prefix string
 
 	cmd := &cobra.Command{
-		Use:   "init",
-		Args:  cobra.NoArgs,
+		Use:   "init [prefix]",
+		Args:  cobra.MaximumNArgs(1),
 		Short: "Initialize a new mtix project",
 		Long: `Initialize a new mtix project in the current directory.
 
 Creates .mtix/ directory structure with config, database, and logs.
 Creates .mtix/board-id with one stable UUID; commit it with the board.
-Generates agent documentation in .mtix/docs/.`,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runInit(prefix)
+Generates agent documentation in .mtix/docs/.
+
+The prefix may be given as an argument (mtix init MYPROJ) or with --prefix.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			chosen, err := positionalOrFlag(cmd, "prefix", prefix, args)
+			if err != nil {
+				return err
+			}
+			return runInit(chosen)
 		},
 	}
 

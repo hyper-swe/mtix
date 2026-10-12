@@ -23,11 +23,8 @@ func TestZeroArgCommands_StrayPositional_ReturnsError(t *testing.T) {
 		{"migrate", newMigrateCmd},
 		{"serve", newServeCmd},
 		{"docs generate", newDocsGenerateCmd},
-		{"init", newInitCmd},
 		{"mcp", newMCPCmd},
-		{"plugin install", newPluginInstallCmd},
 		{"ready", newReadyCmd},
-		{"blocked", newBlockedCmd},
 		{"stale", newStaleCmd},
 		{"orphans", newOrphansCmd},
 		{"recover", newRecoverCmd},
@@ -42,6 +39,20 @@ func TestZeroArgCommands_StrayPositional_ReturnsError(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "unknown command")
 			assert.NoError(t, c.Args(c, nil))
+		})
+	}
+}
+
+// Commands whose single positional is documented accept it and refuse a second.
+func TestOptionalOneArgCommands_ExtraPositional_ReturnsError(t *testing.T) {
+	for name, ctor := range map[string]func() *cobra.Command{
+		"init": newInitCmd, "plugin install": newPluginInstallCmd, "blocked": newBlockedCmd,
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := ctor()
+			require.NoError(t, c.Args(c, nil))
+			require.NoError(t, c.Args(c, []string{"one"}))
+			require.Error(t, c.Args(c, []string{"one", "two"}))
 		})
 	}
 }

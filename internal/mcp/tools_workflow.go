@@ -285,7 +285,7 @@ func registerSearchTool(reg *ToolRegistry, svc *service.NodeService, primaryProj
 		InputSchema: SchemaObj{
 			Type: "object",
 			Properties: map[string]SchemaProp{
-				"query":    {Type: "string", Description: "Words that must ALL appear (case-insensitive, literal) in title, description or prompt"},
+				"query":    {Type: "string", Description: "Words that must ALL appear (case-insensitive for ASCII letters only; literal) in title, description or prompt"},
 				"status":   {Type: "string", Description: "Filter by status"},
 				"assignee": {Type: "string", Description: "Filter by assignee"},
 				"under":    {Type: "string", Description: "Filter by subtree"},

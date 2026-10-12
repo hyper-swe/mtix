@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -30,6 +31,15 @@ func recordPullObservation(state *oplocal.State, checkout, boardID string, looku
 		return fmt.Errorf("cache hub identity: %w", err)
 	}
 	return nil
+}
+
+// cacheIdentityBestEffort runs cache and, on failure, writes a WARN to stderr
+// without failing the caller (MTIX-112.17.2: data already applied by the pull
+// is never rolled into a failure by identity caching).
+func cacheIdentityBestEffort(stderr io.Writer, cache func() error) {
+	if err := cache(); err != nil {
+		warnSync(stderr, "WARN mtix sync pull: hub identity not cached", err)
+	}
 }
 
 func cachePulledIdentity(ctx context.Context, pool *transport.Pool) error {

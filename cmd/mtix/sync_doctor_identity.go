@@ -37,22 +37,39 @@ func appendBoardIdentityChecks(report DoctorReport) DoctorReport {
 	if _, _, err = state.StrictBoardIdentity(); err != nil {
 		return appendDoctorCheck(report, boardIdentityFailure(err.Error(), "mtix hooks status --json"))
 	}
-	ids, err := service.ReadBoardIDs(app.mtixDir)
+	ids, early := readDoctorBoardIDs(observation)
+	if early != nil {
+		return appendDoctorCheck(report, *early)
+	}
 	connected := identityBoardConnected(observation)
-	if errors.Is(err, os.ErrNotExist) && !connected {
-		return appendDoctorCheck(report, DoctorCheck{Name: "board.id", Pass: true, Detail: "not required for a board without a hub observation"})
-	}
-	if err != nil {
-		return appendDoctorCheck(report, boardIdentityFailure(err.Error(), "commit one valid .mtix/board-id"))
-	}
-	if len(ids) != 1 {
-		return appendDoctorCheck(report, boardIdentityFailure("multiple board identities; retain one committed identity before re-confirming grants", "resolve .mtix/board-id to one committed UUID"))
-	}
 	if connected && !observation.Hub.Known() {
 		return appendDoctorCheck(report, boardIdentityFailure("hub identity is unknown", "mtix sync init"))
 	}
 	report = appendDoctorCheck(report, DoctorCheck{Name: "board.id", Pass: true, Detail: "one committed board identity"})
 	return appendIdentityChangeCheck(report, ids[0], observation, grants)
+}
+
+// readDoctorBoardIDs returns the committed ids, or the single check that ends the doctor pass.
+func readDoctorBoardIDs(observation oplocal.BoardObservation) ([]string, *DoctorCheck) {
+	ids, err := service.ReadBoardIDs(app.mtixDir)
+	connected := identityBoardConnected(observation)
+	if errors.Is(err, os.ErrNotExist) && !connected {
+		return nil, &DoctorCheck{Name: "board.id", Pass: true, Detail: "not required for a board without a hub observation"}
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		// This build cannot create the file (setup arrives in a later release), so an
+		// existing hub board without it is advisory, never an un-clearable failure.
+		return nil, &DoctorCheck{Name: "board.id", Pass: true, Warn: true, Detail: "no committed board identity (.mtix/board-id) yet; this mtix build does not create one for an existing board, and it must not be created by hand"}
+	}
+	if err != nil {
+		check := boardIdentityFailure(err.Error(), "commit one valid .mtix/board-id")
+		return nil, &check
+	}
+	if len(ids) != 1 {
+		check := boardIdentityFailure("multiple board identities; retain one committed identity before re-confirming grants", "resolve .mtix/board-id to one committed UUID")
+		return nil, &check
+	}
+	return ids, nil
 }
 
 func boardIdentityFailure(detail, fix string) DoctorCheck {
@@ -76,7 +93,7 @@ func appendIdentityChangeCheck(report DoctorReport, id string, observation oploc
 	}
 	for _, grant := range grants {
 		if grant.BoardID == id && grant.Hub != observation.Hub {
-			return appendDoctorCheck(report, DoctorCheck{Name: "board.hub-identity-changed", Pass: true, Warn: true, Detail: "observed hub identity differs from the recorded confirmation", Fix: "mtix setup in this checkout to re-confirm the hub, or mtix config set inbox.strict_board_identity true"})
+			return appendDoctorCheck(report, DoctorCheck{Name: "board.hub-identity-changed", Pass: true, Warn: true, Detail: "observed hub identity differs from the recorded confirmation; re-confirmation of the hub is not available in this build, and the optional strict matching setting inbox.strict_board_identity is not settable by a command in this build"})
 		}
 	}
 	return report

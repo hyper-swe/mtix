@@ -30,4 +30,6 @@ func TestGrantMatch_StrictOn_UnknownHubIdentity_NoMatch(t *testing.T) {
 		assert.False(t, grant.Matches(testBoardID, observed, true))
 	}
 	assert.False(t, (Grant{BoardID: testBoardID}).Matches(testBoardID, hub, true))
+	assert.False(t, (Grant{BoardID: testBoardID}).Matches(testBoardID, HubIdentity{}, true), "unknown recorded and unknown cached hub never match under strict")
+	assert.True(t, (Grant{BoardID: testBoardID}).Matches(testBoardID, HubIdentity{}, false))
 }

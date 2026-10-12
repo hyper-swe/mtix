@@ -39,8 +39,9 @@ func TestDoctorHubIdentityChanged_Warns(t *testing.T) {
 			found = true
 			assert.True(t, check.Pass)
 			assert.True(t, check.Warn)
-			assert.Contains(t, check.Fix, "mtix setup")
-			assert.Contains(t, check.Fix, "mtix config set inbox.strict_board_identity true")
+			assert.Empty(t, check.Fix, "no command in this build re-confirms a hub")
+			assert.NotContains(t, check.Detail, "mtix setup")
+			assert.NotContains(t, check.Detail, "mtix config set")
 		}
 	}
 	assert.True(t, found, "identity changes are reported")
@@ -48,8 +49,8 @@ func TestDoctorHubIdentityChanged_Warns(t *testing.T) {
 	out.Reset()
 	require.ErrorIs(t, runSyncDoctor(t.Context(), &out, &diagnostic, nil, transport.Options{}), errDoctorChecksFailed)
 	assert.Contains(t, out.String(), "[WARN] board.hub-identity-changed")
-	assert.Contains(t, out.String(), "mtix setup")
-	assert.Contains(t, out.String(), "mtix config set inbox.strict_board_identity true")
+	assert.NotContains(t, out.String(), "mtix setup")
+	assert.NotContains(t, out.String(), "mtix config set")
 	grants, _, err := state.BoardGrants()
 	require.NoError(t, err)
 	assert.Equal(t, original, grants[0].Hub)

@@ -202,10 +202,9 @@ func connectAndPull(ctx context.Context, in pullIngest, args []string,
 	// for them.
 	res, err := pullThenSweep(ctx, in, pool, app.store, since, limit)
 	if err == nil {
-		if identityErr := cachePulledIdentity(ctx, pool); identityErr != nil {
-			res.stage = "identity"
-			err = identityErr
-		}
+		// Caching is best-effort: the data is already applied, so a cache failure
+		// is reported and never fails the pull; doctor reports the missing cache.
+		cacheIdentityBestEffort(in.stderr, func() error { return cachePulledIdentity(ctx, pool) })
 	}
 	noteSyncResult(ctx, app.store, err == nil)
 	return res, err

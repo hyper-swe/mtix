@@ -38,7 +38,8 @@ func newPluginInstallCmd() *cobra.Command {
 	var global bool
 
 	cmd := &cobra.Command{
-		Use:   "install",
+		Use:   "install [target]",
+		Args:  cobra.MaximumNArgs(1),
 		Short: "Install skill files and MCP configuration",
 		Long: `Install agent integration files for the target AI coding agent.
 
@@ -58,9 +59,16 @@ the stanza to add is printed instead.
 
 pi: AGENTS.md at the project root (or ~/.pi/agent/ with --global); pi
 loads it natively. pi has no built-in MCP — setup guidance for the
-community pi-mcp-adapter extension is printed.`,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runPluginInstall(target, global)
+community pi-mcp-adapter extension is printed.
+
+The target may be given as an argument (mtix plugin install codex) or with
+--target.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			chosen, err := positionalOrFlag(cmd, "target", target, args)
+			if err != nil {
+				return err
+			}
+			return runPluginInstall(chosen, global)
 		},
 	}
 

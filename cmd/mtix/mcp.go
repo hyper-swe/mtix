@@ -33,6 +33,7 @@ func newMCPCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "mcp",
+		Args:  cobra.NoArgs,
 		Short: "Run as MCP server over stdio (for LLM agent integration)",
 		Long: `Starts mtix as a Model Context Protocol (MCP) server using
 stdio transport. JSON-RPC 2.0 messages are read from stdin and

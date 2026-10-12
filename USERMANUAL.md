@@ -682,16 +682,30 @@ mtix config set agent.stale_threshold 30m
 
 ## Search and Queries
 
-### Full-Text Search
+### Text Search
 
 ```bash
-mtix search --query "authentication"
+mtix search authentication
+mtix search "login flow" --status open --under PROJ-1
 ```
 
-Uses SQLite FTS5 for full-text search across titles, descriptions, and prompts.
+`mtix search` takes optional positional words. Every word must appear
+(case-insensitive for ASCII letters only, matched literally, so `%` and `_` are ordinary characters; `É` does not match `é`)
+in a node's title, description or prompt. A query that matches nothing returns
+no rows; it never falls back to listing everything. At most 16 words of at most
+256 bytes each are accepted, and a blank word is an error.
 
-`mtix search` accepts the same multi-value filter flags as `mtix list`
-(see below) — they combine with the FTS query.
+With no words, `mtix search` lists by its filters alone. It accepts the same
+multi-value filter flags as `mtix list` (see below), and they combine with the
+words. There is no `--query` flag: the words are positional.
+
+The MCP tool `mtix_search` takes the same text as its `query` argument and
+behaves the same way. It rejects unknown or mistyped arguments with an error
+instead of ignoring them.
+
+Commands that take no positional arguments (for example `mtix ready`,
+`mtix list`, `mtix stats`, `mtix gc`) now reject a stray argument with
+`unknown command ... for ...` rather than silently dropping it.
 
 ### Filtered Listing
 

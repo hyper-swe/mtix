@@ -13,6 +13,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store"
 )
 
@@ -95,10 +96,13 @@ func newSearchCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "search",
-		Short: "Search nodes with advanced filters",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runSearch(status, assignee, nodeType, under, priority, fields, changedSince, limit, project, allProjects)
+		Use:   "search [words...]",
+		Short: "Search nodes by text (positional words) and advanced filters",
+		Long: `Search nodes. Optional positional words must ALL appear (case-insensitive for
+ASCII letters only, and literal) in a node's title, description or prompt; filter flags narrow the
+result further. With no words, only the filters apply.`,
+		RunE: func(_ *cobra.Command, args []string) error {
+			return runSearch(args, status, assignee, nodeType, under, priority, fields, changedSince, limit, project, allProjects)
 		},
 	}
 
@@ -115,8 +119,8 @@ func newSearchCmd() *cobra.Command {
 	return cmd
 }
 
-func runSearch(status, assignee, nodeType, under, priority, fields, changedSince string, limit int, project string, allProjects bool) error {
-	if app.store == nil {
+func runSearch(words []string, status, assignee, nodeType, under, priority, fields, changedSince string, limit int, project string, allProjects bool) error {
+	if app.nodeSvc == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
 
@@ -135,7 +139,8 @@ func runSearch(status, assignee, nodeType, under, priority, fields, changedSince
 		return err
 	}
 
-	filter := store.NodeFilter{
+	filter := service.NodeFilter{
+		Text:         searchWords(words),
 		Assignee:     splitCSV(assignee),
 		NodeType:     splitCSV(nodeType),
 		Under:        splitCSV(under),
@@ -148,12 +153,28 @@ func runSearch(status, assignee, nodeType, under, priority, fields, changedSince
 	}
 
 	ctx := context.Background()
-	nodes, total, err := app.store.ListNodes(ctx, filter, store.ListOptions{Limit: limit})
+	nodes, total, err := app.nodeSvc.ListNodes(ctx, filter, service.ListOptions{Limit: limit})
 	if err != nil {
 		return err
 	}
 
 	return printNodeList(nodes, total, splitCSV(fields))
+}
+
+// searchWords flattens positional arguments into query words, so both
+// `search a b` and `search "a b"` mean the same query (MTIX-146).
+func searchWords(args []string) []string {
+	var words []string
+	for _, a := range args {
+		w := service.SplitSearchText(a)
+		if len(w) == 0 {
+			// A blank argument is a mistake, not "no filter": keep it so the
+			// service rejects it instead of dropping it silently.
+			w = []string{a}
+		}
+		words = append(words, w...)
+	}
+	return words
 }
 
 // newReadyCmd creates the mtix ready command per FR-6.3.
@@ -164,6 +185,7 @@ func newReadyCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "ready",
+		Args:  cobra.NoArgs,
 		Short: "List nodes ready for work (unblocked, unassigned)",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runReady(project, allProjects)
@@ -216,14 +238,38 @@ func newBlockedCmd() *cobra.Command {
 		allProjects bool
 	)
 	cmd := &cobra.Command{
-		Use:   "blocked",
-		Short: "List nodes blocked by dependencies",
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Use:   "blocked [id]",
+		Args:  cobra.MaximumNArgs(1),
+		Short: "List nodes blocked by dependencies, or show the blockers of one node",
+		Long: `Without an argument, list blocked nodes. With a node ID, show what blocks
+that node: the same view as mtix dep show <id>, but an unknown id is a
+not-found error. With --json the id form prints the blocking dependency
+edges, not a node list. The project scope flags apply only to the list form.`,
+		RunE: func(_ *cobra.Command, args []string) error {
+			if len(args) == 1 {
+				if project != "" || allProjects {
+					return fmt.Errorf("--project and --all-projects do not apply to blocked <id>: %w", model.ErrInvalidInput)
+				}
+				return runBlockersOf(args[0])
+			}
 			return runBlocked(project, allProjects)
 		},
 	}
 	addProjectScopeFlags(cmd, &project, &allProjects)
 	return cmd
+}
+
+// runBlockersOf shows what blocks one node (mtix blocked <id>, MTIX-146).
+// Unlike the bare dependency view it refuses an unknown id with ErrNotFound,
+// so a typo is never reported as "no blockers".
+func runBlockersOf(id string) error {
+	if app.nodeSvc == nil {
+		return fmt.Errorf("not in an mtix project")
+	}
+	if _, err := app.nodeSvc.GetNode(context.Background(), id); err != nil {
+		return fmt.Errorf("blockers of %s: %w", id, err)
+	}
+	return runDepShow(id)
 }
 
 func runBlocked(project string, allProjects bool) error {
@@ -258,6 +304,7 @@ func newStaleCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "stale",
+		Args:  cobra.NoArgs,
 		Short: "List nodes with stale agent assignments",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runStale(project, allProjects)
@@ -311,6 +358,7 @@ func newOrphansCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "orphans",
+		Args:  cobra.NoArgs,
 		Short: "List root-level nodes (no parent)",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runOrphans(project, allProjects)

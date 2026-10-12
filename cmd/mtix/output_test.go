@@ -757,7 +757,7 @@ func TestSplitAndTrim_SpecialCharacters_PreservedInLabels(t *testing.T) {
 // TestIsExemptCommand_AllExemptCommands_ReturnsTrue verifies all exempt commands.
 func TestIsExemptCommand_AllExemptCommands_ReturnsTrue(t *testing.T) {
 	tests := []string{
-		"config", "init", "migrate", "docs", "version", "help",
+		"config", "init", "migrate", "docs", "version", "help", "search",
 	}
 
 	for _, cmdName := range tests {
@@ -771,7 +771,7 @@ func TestIsExemptCommand_AllExemptCommands_ReturnsTrue(t *testing.T) {
 // TestIsExemptCommand_NonExemptCommands_ReturnsFalse verifies non-exempt commands.
 func TestIsExemptCommand_NonExemptCommands_ReturnsFalse(t *testing.T) {
 	tests := []string{
-		"create", "show", "list", "update", "delete", "claim", "search",
+		"create", "show", "list", "update", "delete", "claim",
 	}
 
 	for _, cmdName := range tests {

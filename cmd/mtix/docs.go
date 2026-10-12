@@ -38,6 +38,7 @@ func newDocsGenerateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "generate",
+		Args:  cobra.NoArgs,
 		Short: "Generate agent-facing documentation",
 		Long: `Generate all 11 documentation files in the project's .mtix/docs/ directory.
 

@@ -3032,6 +3032,42 @@ dot-path. For the full design see
 [ADR-003](../ADR-003-DISTRIBUTED-NODE-IDENTITY.md) and
 [docs/SYNC-DESIGN.md](docs/SYNC-DESIGN.md).
 
+### Board identity
+
+New boards created by `mtix init` have one UUID followed by a newline in
+`.mtix/board-id`. Commit this file with the board and preserve it when cloning;
+it is board data outside `config.yaml`. The tested v0.5.4-beta configuration
+writer preserves its bytes. Existing boards are not assigned an identity by
+pull, doctor or another background command. Do not manufacture or merge IDs
+by editing the file; setup and explicit rekey recovery are planned separately.
+
+A successful `mtix sync pull` records the hub's project prefix and first-event
+hash through its existing authenticated connection. Successful relay attach
+records the verified relay ID. These observations live in operator-local state
+for the checkout, outside committed configuration. A successfully observed
+missing hub row or empty hash clears the current observation to unknown; a
+failed lookup preserves the previous observation. Recording is best-effort: if it
+fails after the pull or attach succeeded, the command prints a WARN and still
+succeeds.
+
+Grant matching defaults to board ID alone. The operator-local
+`inbox.strict_board_identity` setting defaults to false; when true, matching
+also requires the same known hub identity. An unknown identity never matches
+in strict mode. This release reads the setting and existing confirmations;
+setup, reconfirmation, rekey and the host-setting command are planned and do
+not create or update grants here.
+
+`mtix sync doctor` checks the local identity without an additional identity
+connection. For a hub board, multiple identities fail the `board.id` check;
+a missing `.mtix/board-id` or a hub identity no pull has recorded yet is a
+warning (run `mtix sync pull` to record it); a hub identity a pull observed as
+missing or empty fails with `mtix sync init` as its fix.
+A changed recorded hub identity warns through `board.hub-identity-changed`
+and names the planned reconfirmation and strict-setting options. The warning
+does not perform either action. Resolve a reported identity disagreement with
+the board owner; preserve existing confirmations until explicit recovery is
+available. Text and JSON reports carry the same status and guidance.
+
 ### Provisional vs settled IDs
 
 A **settled** ID is fully numeric, like `PRJX-1.4`. It is safe to put in

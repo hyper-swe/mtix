@@ -28,6 +28,7 @@ func newInitCmd() *cobra.Command {
 		Long: `Initialize a new mtix project in the current directory.
 
 Creates .mtix/ directory structure with config, database, and logs.
+Creates .mtix/board-id with one stable UUID; commit it with the board.
 Generates agent documentation in .mtix/docs/.`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runInit(prefix)
@@ -66,6 +67,10 @@ func runInit(prefix string) error {
 
 	if initErr := configSvc.InitConfig(cwd, prefix); initErr != nil {
 		return fmt.Errorf("initialize config: %w", initErr)
+	}
+
+	if _, identityErr := service.CreateBoardID(mtixDir); identityErr != nil {
+		return fmt.Errorf("initialize board identity: %w", identityErr)
 	}
 
 	// Initialize SQLite database.

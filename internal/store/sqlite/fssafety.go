@@ -198,3 +198,18 @@ func linuxFSMagicName(magic int64) string {
 // (allowUnsafeFS and filesystemSafetyError were retired in MTIX-58: the write
 // override is gone, so there is no "allow" path and no open-refusal error —
 // unsafe filesystems open read-only and refuse writes via writeRefusedError.)
+
+// InspectFilesystem reports the existing store classifier without opening or
+// modifying a database (FR-20). An empty type means classification unavailable;
+// unknown types are not proof that a filesystem supplies reliable locking.
+func InspectFilesystem(path string) (name string, unsafe bool, err error) {
+	name, class, err := detectFS(path)
+	if err != nil {
+		return "", false, fmt.Errorf("inspect filesystem: %w", err)
+	}
+	return name, class.unsafe(), nil
+}
+
+// ClassifyFilesystemName reuses the store's positive network/FUSE classifier.
+// Unknown names return false; that result does not verify local-disk safety.
+func ClassifyFilesystemName(name string) bool { return classifyFSName(name).unsafe() }

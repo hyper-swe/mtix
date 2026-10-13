@@ -734,7 +734,7 @@ func TestRunSearch_WithResults_HumanOutput(t *testing.T) {
 	err := runCreate("Searchable Node", "", "", 3, "", "", "", "", "")
 	require.NoError(t, err)
 
-	err = runSearch("", "", "", "", "", "", "", 50, "", false)
+	err = runSearch(nil, "", "", "", "", "", "", "", 50, "", false)
 	assert.NoError(t, err)
 }
 
@@ -746,7 +746,7 @@ func TestRunSearch_WithResults_JSONOutput(t *testing.T) {
 	err := runCreate("Search JSON Node", "", "", 3, "", "", "", "", "")
 	require.NoError(t, err)
 
-	err = runSearch("", "", "", "", "", "", "", 50, "", false)
+	err = runSearch(nil, "", "", "", "", "", "", "", 50, "", false)
 	assert.NoError(t, err)
 }
 
@@ -757,7 +757,7 @@ func TestRunSearch_WithStatusFilter_HasResults(t *testing.T) {
 	err := runCreate("Open Node", "", "", 3, "", "", "", "", "")
 	require.NoError(t, err)
 
-	err = runSearch("open", "", "", "", "", "", "", 50, "", false)
+	err = runSearch(nil, "open", "", "", "", "", "", "", 50, "", false)
 	assert.NoError(t, err)
 }
 

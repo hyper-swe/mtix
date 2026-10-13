@@ -7,9 +7,67 @@ description: Set up, use, verify and recover the mtix sync hub, the shared Postg
 
 The hub is a Postgres database that you and your teammates' agents push task changes to and pull each other's changes from. Each machine keeps its own local store; the hub carries the event log between them. This skill is the full runbook: requirements, setup from zero, daily use, verification, troubleshooting and recovery. The short routine is in the managed SYNC section of `CLAUDE.md` and `AGENTS.md`.
 
+## Board identity
+
+New boards created by `mtix init` have one UUID followed by a newline in
+`.mtix/board-id`. Commit this file with the board and preserve it when cloning;
+it is board data outside `config.yaml`. The tested v0.5.4-beta configuration
+writer preserves its bytes. Existing boards are not assigned an identity by
+pull, doctor or another background command. Do not manufacture or merge IDs
+by editing the file; setup and explicit rekey recovery are planned separately.
+
+A successful `mtix sync pull` records the hub's project prefix and first-event
+hash through its existing authenticated connection. Successful relay attach
+records the verified relay ID. These observations live in operator-local state
+for the checkout, outside committed configuration. A successfully observed
+missing hub row or empty hash clears the current observation to unknown; a
+failed lookup preserves the previous observation. Recording is best-effort: if it
+fails after the pull or attach succeeded, the command prints a WARN and still
+succeeds.
+
+Grant matching defaults to board ID alone. The operator-local
+`inbox.strict_board_identity` setting defaults to false; when true, matching
+also requires the same known hub identity. An unknown identity never matches
+in strict mode. This release reads the setting and existing confirmations;
+setup, reconfirmation, rekey and the host-setting command are planned and do
+not create or update grants here.
+
+`mtix sync doctor` checks the local identity without an additional identity
+connection. For a hub board, multiple identities fail the `board.id` check;
+a missing `.mtix/board-id` or a hub identity no pull has recorded yet is a
+warning (run `mtix sync pull` to record it); a hub identity a pull observed as
+missing or empty fails with `mtix sync init` as its fix.
+A changed recorded hub identity warns through `board.hub-identity-changed`
+and names the planned reconfirmation and strict-setting options. The warning
+does not perform either action. Resolve a reported identity disagreement with
+the board owner; preserve existing confirmations until explicit recovery is
+available. Text and JSON reports carry the same status and guidance.
+
+A board also carries a sticky hub-connected mark that records the first
+evidence of a hub or relay: sync or relay keys in `.mtix/config.yaml`, a DSN in
+`.mtix/secrets`, a hub or relay event applied to the board, or a DSN taken from
+the environment by a sync command that actually connected. A DSN that is only
+exported in the shell never marks a board. The mark stays set when the keys or
+credentials are later removed, because the board has already exchanged events.
+The mark is stored the first time `mtix sync doctor` or a sync command sees
+the config keys, the secrets DSN or an applied-event record; until one of them
+runs, nothing is stored.
+Older mtix builds do not set it, so any applied-event record is also treated as
+evidence and sets the mark. `mtix sync doctor` shows it as `board.hub-mark` with
+its source in text and `--json`. A command to clear it, at an interactive
+terminal only, is planned and does not exist in this release.
+
 ## Daemon ownership
 
 `mtix daemon` and `mtix sync daemon` share a lifetime OS lock at `.mtix/data/sync.daemon.lock` (flock on Unix, LockFileEx on Windows). A concurrent start exits cleanly while the owner keeps running. `.mtix/sync.daemon.pid` is diagnostic: stale or missing PID content cannot grant ownership. The PID is published only after acquiring the lock and removed only by its matching owner while the lock is held. Normal exit and process crash release the OS lock; the lock file stays in place so existing descriptors keep using the same inode. Other filesystem or OS errors are reported. Do not delete daemon lock files to force a second instance.
+
+## Named locks and dispatch contention
+
+Push and dispatch coordination use `.mtix/data/sync.push.lock` and `.mtix/data/dispatch.lock`. Both require a real data directory and regular lock file owned by the effective OS user; symlinked directories or lock files, Windows reparse points and wrong object types are refused. Do not remove, replace or unlink a lock file to bypass its owner. If acquisition is refused, stop project writers and ask the operator to restore a real, correctly owned local data directory without discarding its data.
+
+Each daemon pass takes `dispatch.lock` before pending-mirror recovery, hub pull, relay and hook dispatch, then releases it before waiting. A contended pass remains alive and retries at its existing cadence; it performs none of that work while another dispatcher holds the pass lock. This differs from a duplicate daemon start, which remains a clean no-op under the separate lifetime `sync.daemon.lock`. The legacy `mtix sync daemon --dispatch-hooks` spelling uses the same pass lock; the daemon without that flag still locks its pull/relay pass.
+
+`mtix sync doctor` reports the local `data filesystem` check in text and JSON. Known network or FUSE mounts produce a passing WARN with local-disk recovery guidance; a failed or unavailable classifier also warns without claiming reliable locking. Only recognized local disk filesystem names (apfs on macOS; ext, xfs, btrfs and similar on Linux) pass; any other name also warns, because an unrecognized filesystem is not a locking guarantee. On Windows the filesystem cannot be classified, so this row always shows a WARN (classification unavailable); it cannot be cleared, it does not fail the doctor, and it does not mean the store is unsafe. The check performs no network contact of its own; the doctor's existing hub checks still contact the hub and can fail independently. Existing unsafe-filesystem write refusal remains in force. Give each machine its own local `.mtix` and use the hub to share changes.
 
 ## Push lock contention
 
@@ -34,6 +92,8 @@ This reader reports graph and board provenance; it does not establish lineage of
 ## Received provenance
 
 Successful automatic import and fully drained eligible hub pull record local received provenance in `.mtix/data/exchange-record.json` on supported Unix systems. Local changes, exports, pushes and partial/refused exchanges do not replace it. `mtix sync status` and the local `sync.exchange-record` doctor check report presence/source/time and omission warnings; the record is not proof of incoming lineage or that local changes reached the hub. Windows receipts remain unsupported pending native verification. A saved omission may be stale after diagnostics failed to clear. An abandoned `.exchange-record-*` temporary artifact requires an operator to stop all project writers and remove only that confirmed individual artifact; readers never promote or delete it. See USERMANUAL received-provenance recovery and EXPORT-FORMAT for the precise receipt contract.
+
+A hub receipt is published only when the completed pull observes no pending outbound journal events, including held push events, in the same board snapshot. Pending work preserves the prior receipt (or its absence) and reports `pending-outbound`. Run `mtix sync push`, resolve any held work it reports, then run a new, complete `mtix sync pull`; push alone does not publish a receipt or clear that warning. Older hub receipts whose outbound boundary is absent or null remain readable, but status and doctor infer `outbound-boundary-unknown` without rewriting them. This is historical uncertainty, not a recorded failed exchange; a later saved omission takes precedence. A fresh receipt with known zero replaces that uncertainty only after a new eligible pull.
 
 Receipt diagnostics use fixed categories; unknown stored or supplied values report `unknown`. A completed publication failure keeps its specific category. Unexpected, missing or repeated fetched IDs prevent a new receipt without changing valid event application. Pull requires exclusive local sync ownership; retry after a contending owner finishes.
 

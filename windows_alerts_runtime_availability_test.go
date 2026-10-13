@@ -124,7 +124,7 @@ func TestCI_WindowsAlertsAvailability_InvalidLiteralBindingsRejected(t *testing.
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			wf := windowsRuntimeExpectedWorkflow()
-			step := windowsRuntimeJob(wf)["steps"].([]any)[5].(map[string]any)
+			step := windowsRuntimeStepNamed(t, wf, windowsAlertsStepName)
 			run := step["run"].(string)
 			require.Contains(t, run, tc.old)
 			step["run"] = strings.Replace(run, tc.old, tc.next, 1)
@@ -133,4 +133,15 @@ func TestCI_WindowsAlertsAvailability_InvalidLiteralBindingsRejected(t *testing.
 			require.Error(t, windowsAlertsActualAvailabilityError(".", src))
 		})
 	}
+}
+
+func windowsRuntimeStepNamed(t *testing.T, wf map[string]any, name string) map[string]any {
+	t.Helper()
+	for _, raw := range windowsRuntimeJob(wf)["steps"].([]any) {
+		if step := raw.(map[string]any); step["name"] == name {
+			return step
+		}
+	}
+	t.Fatalf("workflow step %q not found", name)
+	return nil
 }

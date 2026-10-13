@@ -27,7 +27,8 @@ import (
 //
 // Returns ErrNotFound if the node does not exist or is already deleted.
 func (s *Store) DeleteNode(ctx context.Context, id string, cascade bool, deletedBy string) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.2: withHistoryTx appends the task_history entries (cascade included) in this transaction.
+	return s.withHistoryTx(ctx, historyScope{id: id, cascade: cascade, actor: deletedBy}, func(tx *sql.Tx) error {
 		now := s.clock().UTC().Format(time.RFC3339)
 
 		parentID, err := loadDeleteTarget(ctx, tx, id)
@@ -199,7 +200,8 @@ func cascadeDelete(ctx context.Context, tx *sql.Tx, parentID, deletedBy, now str
 //
 // Returns ErrNotFound if the node does not exist or is not deleted.
 func (s *Store) UndeleteNode(ctx context.Context, id string) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.2: undelete restores the cascade too, so its history scope includes descendants.
+	return s.withHistoryTx(ctx, historyScope{id: id, cascade: true}, func(tx *sql.Tx) error {
 		now := s.clock().UTC().Format(time.RFC3339)
 
 		target, err := loadUndeleteTarget(ctx, tx, id)

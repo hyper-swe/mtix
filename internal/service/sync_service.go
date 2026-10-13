@@ -135,14 +135,19 @@ func (s *SyncService) autoImport(ctx context.Context, mtixDir string) error {
 	if err != nil {
 		return fmt.Errorf("auto-import: compare tasks.json with the local store: %w", err)
 	}
-	if conflict {
-		return s.refuseConflict(mtixDir, fileHash, diff)
+	ri := &receivedImport{mtixDir: mtixDir, hashPath: hashPath, fileHash: fileHash, data: data,
+		storedHash: storedHash, incoming: incoming, local: local, diff: diff, written: incoming, start: start}
+	if conflict || diff.Lossy() {
+		// MTIX-95.31.15.1: the base order (last-exchanged record, then the git
+		// merge-base board) may tell the teammate's changes from the local ones.
+		res, err := s.refuseLossyImport(ctx, mtixDir, fileHash, &importCheck{
+			local: local, incoming: incoming, diff: diff, conflict: conflict})
+		if err != nil || res == nil {
+			return err
+		}
+		ri.diff, ri.written, ri.resolution = res.Diff, res.Resolved, res
 	}
-	if diff.Lossy() {
-		return s.refuseLossyImport(mtixDir, fileHash, diff)
-	}
-
-	return s.applyReceivedImport(ctx, mtixDir, hashPath, fileHash, data, storedHash, incoming, local, diff, start)
+	return s.applyReceivedImport(ctx, ri)
 }
 
 // recordImported runs after a successful auto-import: it updates the

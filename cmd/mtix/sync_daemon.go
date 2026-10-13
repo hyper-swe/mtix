@@ -83,7 +83,7 @@ Use --install to print a systemd unit (linux) or launchd plist
 }
 
 func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
-	args []string, opts transport.Options, intervalSec int, dispatchHooks bool,
+	args []string, opts transport.Options, intervalSec int, dispatchHooks bool, control ...daemonPassControl,
 ) (retErr error) {
 	if err := syncDaemonPreflight(stderr, args); err != nil {
 		return err
@@ -111,9 +111,6 @@ func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 	fmt.Fprintf(stdout, "mtix sync daemon: started (PID %d, interval %ds)\n",
 		os.Getpid(), intervalSec)
 
-	tick := time.NewTicker(time.Duration(intervalSec) * time.Second)
-	defer tick.Stop()
-
 	// pullThenDispatch runs one pull then one ledger dispatch pass (FR-20):
 	// hooks configured on THIS host fire for the events the pull just brought
 	// in — and any other undispatched events, whatever their origin — deduped
@@ -135,19 +132,7 @@ func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 		}
 	}
 
-	// Run one immediate pull before settling into the timer cadence
-	// so the user sees state move within seconds, not minutes.
-	pullThenDispatch()
-
-	for {
-		select {
-		case <-ctx.Done():
-			fmt.Fprintln(stdout, "mtix sync daemon: shutting down")
-			return nil
-		case <-tick.C:
-			pullThenDispatch()
-		}
-	}
+	return runDaemonPassLoop(ctx, stdout, stderr, daemonLoopPlan{label: "mtix sync daemon", interval: intervalSec, pass: pullThenDispatch, controls: control})
 }
 
 // syncDaemonPreflight holds the checks mtix sync daemon makes before it

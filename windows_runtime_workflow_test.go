@@ -89,6 +89,7 @@ func windowsRuntimeSteps() []any {
 		map[string]any{"name": "Checkout reviewed integration source", "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "with": map[string]any{"persist-credentials": false}},
 		map[string]any{"name": "Set up module Go toolchain", "uses": "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e", "with": map[string]any{"go-version-file": "go.mod"}},
 		map[string]any{"name": "Verify Windows race compiler", "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "run": windowsRuntimeCompilerScript},
+		map[string]any{"name": "Run required native named-lock tests", "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "run": windowsRuntimeNamedTestScript},
 		map[string]any{"name": "Run required native ACL and hooks status tests", "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "run": windowsRuntimeTestScript()},
 		map[string]any{"name": windowsAlertsStepName, "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "run": windowsAlertsScript()},
 		map[string]any{"name": "Record attempt duration", "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "if": "${{ always() }}", "run": windowsRuntimeDurationScript},
@@ -97,7 +98,7 @@ func windowsRuntimeSteps() []any {
 }
 
 func windowsRuntimeArtifactInputs() map[string]any {
-	paths := []string{"capture.json", "oplocal.json", "hooks.json", "toolchain.json", "duration.json", "started.txt", "alerts.json", "alerts-doctor.json"}
+	paths := []string{"capture.json", "oplocal.json", "hooks.json", "toolchain.json", "duration.json", "started.txt", "named-locks.json", "dispatch-lock.json", "named-lock-exits.json", "alerts.json", "alerts-doctor.json"}
 	for i := range paths {
 		paths[i] = windowsRuntimeDir + "/" + paths[i]
 	}
@@ -150,14 +151,14 @@ func windowsRuntimeExecutionMutations() []windowsRuntimeMutation {
 		{"persistent credentials", func(w map[string]any) {
 			windowsRuntimeStep(w, 1)["with"].(map[string]any)["persist-credentials"] = true
 		}},
-		{"floating action", func(w map[string]any) { windowsRuntimeStep(w, 6)["uses"] = "actions/upload-artifact@v7" }},
+		{"floating action", func(w map[string]any) { windowsRuntimeStep(w, 7)["uses"] = "actions/upload-artifact@v7" }},
 		{"toolchain override", func(w map[string]any) { windowsRuntimeStep(w, 2)["with"].(map[string]any)["go-version"] = "1.25" }},
-		{"test skip", func(w map[string]any) { windowsRuntimeStep(w, 4)["if"] = false }},
-		{"test failure mask", func(w map[string]any) { windowsRuntimeStep(w, 4)["continue-on-error"] = true }},
-		{"duration skipped on failure", func(w map[string]any) { delete(windowsRuntimeStep(w, 5), "if") }},
-		{"raw capture not preserved", func(w map[string]any) { delete(windowsRuntimeStep(w, 6), "if") }},
+		{"test skip", func(w map[string]any) { windowsRuntimeStep(w, 5)["if"] = false }},
+		{"test failure mask", func(w map[string]any) { windowsRuntimeStep(w, 5)["continue-on-error"] = true }},
+		{"duration skipped on failure", func(w map[string]any) { delete(windowsRuntimeStep(w, 6), "if") }},
+		{"raw capture not preserved", func(w map[string]any) { delete(windowsRuntimeStep(w, 7), "if") }},
 		{"arbitrary artifact dump", func(w map[string]any) {
-			windowsRuntimeStep(w, 6)["with"].(map[string]any)["path"] = "${{ github.workspace }}/**"
+			windowsRuntimeStep(w, 7)["with"].(map[string]any)["path"] = "${{ github.workspace }}/**"
 		}},
 		{"missing provenance", func(w map[string]any) { delete(windowsRuntimeJob(w)["env"].(map[string]any), "MTIX_WINDOWS_HEAD_SHA") }},
 	}
@@ -182,7 +183,7 @@ func windowsRuntimeJob(wf map[string]any) map[string]any {
 
 func windowsRuntimeStep(wf map[string]any, index int) map[string]any {
 	// Existing contract controls retain their original duration/artifact identities.
-	if index >= 5 {
+	if index >= 6 {
 		index++
 	}
 	return windowsRuntimeJob(wf)["steps"].([]any)[index].(map[string]any)
@@ -194,26 +195,26 @@ func TestCI_WindowsRuntimeWorkflow_HostileScriptsRejected(t *testing.T) {
 		step             int
 		old, replacement string
 	}{
-		{"comment-only native invocation", 4, "& go test", "# & go test"},
-		{"full suite expansion", 4, "./internal/oplocal", "./..."},
-		{"broad Hooks selection", 4, "^TestHooksStatus_", "Hooks"},
-		{"capture omitted", 4, "|Ancestor_StockWindowsAclCapture_AcceptsPolicy", ""},
-		{"native exit ignored", 4, "$oplocalExit = $LASTEXITCODE", "$oplocalExit = 0"},
-		{"race omitted", 4, "-race -count=1", "-count=1"},
-		{"package timeout omitted", 4, "-timeout=8m", ""},
-		{"only list tests", 4, "-json -run", "-list"},
-		{"required top-level PASS omitted", 4, "Action -eq 'pass'", "Action -ne 'fail'"},
-		{"package completion ignored", 4, "$packagePassed.Count -ne 1", "$false"},
-		{"malformed JSON tolerated", 4, "ConvertFrom-Json", "ConvertFrom-Json -ErrorAction SilentlyContinue"},
-		{"hooks exit ignored", 4, "$hooksExit = $LASTEXITCODE", "$hooksExit = 0"},
-		{"package binding omitted", 4, "Package -eq $package", "Package -ne ''"},
-		{"empty capture accepted", 4, "if (!(Test-Path", "if ($false -and !(Test-Path"},
+		{"comment-only native invocation", 5, "& go test", "# & go test"},
+		{"full suite expansion", 5, "./internal/oplocal", "./..."},
+		{"broad Hooks selection", 5, "^TestHooksStatus_", "Hooks"},
+		{"capture omitted", 5, "|Ancestor_StockWindowsAclCapture_AcceptsPolicy", ""},
+		{"native exit ignored", 5, "$oplocalExit = $LASTEXITCODE", "$oplocalExit = 0"},
+		{"race omitted", 5, "-race -count=1", "-count=1"},
+		{"package timeout omitted", 5, "-timeout=8m", ""},
+		{"only list tests", 5, "-json -run", "-list"},
+		{"required top-level PASS omitted", 5, "Action -eq 'pass'", "Action -ne 'fail'"},
+		{"package completion ignored", 5, "$packagePassed.Count -ne 1", "$false"},
+		{"malformed JSON tolerated", 5, "ConvertFrom-Json", "ConvertFrom-Json -ErrorAction SilentlyContinue"},
+		{"hooks exit ignored", 5, "$hooksExit = $LASTEXITCODE", "$hooksExit = 0"},
+		{"package binding omitted", 5, "Package -eq $package", "Package -ne ''"},
+		{"empty capture accepted", 5, "if (!(Test-Path", "if ($false -and !(Test-Path"},
 		{"compiler library unverified", 3, "Test-Path $library", "$true"},
 		{"compiler runtime floor weakened", 3, "-lt 8", "-lt 1"},
 		{"Go compiler exit ignored", 3, "if ($LASTEXITCODE -ne 0)", "if ($false)"},
-		{"checkout provenance faked", 4, "& git rev-parse HEAD", "'fake-sha'"},
-		{"duration artifact not written", 5, "Set-Content", "Write-Output"},
-		{"unbounded retries", 4, "$ErrorActionPreference = 'Stop'", "while ($true) {"},
+		{"checkout provenance faked", 5, "& git rev-parse HEAD", "'fake-sha'"},
+		{"duration artifact not written", 6, "Set-Content", "Write-Output"},
+		{"unbounded retries", 5, "$ErrorActionPreference = 'Stop'", "while ($true) {"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -250,7 +251,7 @@ func TestCI_WindowsRuntimeWorkflow_OptionalAliasContractRejected(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			wf := windowsRuntimeExpectedWorkflow()
-			step := windowsRuntimeStep(wf, 4)
+			step := windowsRuntimeStep(wf, 5)
 			run := step["run"].(string)
 			require.Contains(t, run, tc.old)
 			step["run"] = strings.Replace(run, tc.old, tc.replacement, 1)

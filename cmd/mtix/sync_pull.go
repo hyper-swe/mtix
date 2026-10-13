@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -191,6 +192,8 @@ func connectAndPull(ctx context.Context, in pullIngest, args []string,
 		return pullOutcome{stage: "connect"}, err
 	}
 	defer pool.Close()
+	// The hub accepted this connection: sticky evidence for the board (ADR-007 A9).
+	noteHubConnection(ctx, os.Stderr)
 
 	since, err := readLastPulledClock(ctx, app.store)
 	if err != nil {
@@ -200,7 +203,19 @@ func connectAndPull(ctx context.Context, in pullIngest, args []string,
 	// The cursor loop never returns an event stamped below the cursor, such
 	// as one pushed late by an offline teammate (ADR-006 D5): after it, sweep
 	// for them.
-	res, err := pullThenSweep(ctx, in, pool, app.store, since, limit)
+	return pullAndCacheIdentity(ctx, in, pool, since, limit, func() error { return cachePulledIdentity(ctx, pool) })
+}
+
+// pullAndCacheIdentity runs pullThenSweep, then records the hub identity. The
+// pull's data is already applied when caching runs, so a cache failure
+// (reported as a WARN) never decides the pull's outcome.
+func pullAndCacheIdentity(ctx context.Context, in pullIngest, hub pullSweepHub,
+	since transport.PullCursor, limit int, cache func() error,
+) (pullOutcome, error) {
+	res, err := pullThenSweep(ctx, in, hub, app.store, since, limit)
+	if err == nil {
+		cacheIdentityBestEffort(in.stderr, cache)
+	}
 	noteSyncResult(ctx, app.store, err == nil)
 	return res, err
 }

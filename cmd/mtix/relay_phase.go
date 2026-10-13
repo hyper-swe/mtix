@@ -49,6 +49,10 @@ func runRelayPhase(ctx context.Context, stderr io.Writer) {
 		fmt.Fprintf(stderr, "mtix daemon: relay stalled on %s (%s): %s\n  fix: %s\n",
 			s.PeerID, s.Code, s.Reason, relayStallRecovery(s.Code))
 	}
+	// A relay ingest applies foreign events, which set the hub mark.
+	if err := reconcileHubMarkMirror(); err != nil {
+		fmt.Fprintf(stderr, "mtix daemon: could not mirror the hub-connected mark: %s\n", err)
+	}
 }
 
 // relayPollDisabled reports whether this peer has declared itself

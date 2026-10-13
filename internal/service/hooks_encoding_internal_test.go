@@ -62,7 +62,7 @@ func TestHooksDispatcher_EncoderError_RecordsErrorWithoutDelivery(t *testing.T) 
 			require.NoError(t, err)
 			require.True(t, won)
 
-			d.finishClaim(ctx, h, evt, je, true, hooks.ExecDispatchAny)
+			d.finishClaim(ctx, h, evt, je, map[string]hooks.Decision{h.Name: {Trusted: true}}, hooks.ExecDispatchAny)
 
 			assert.Equal(t, 1, calls)
 			for _, adapter := range adapters {
@@ -98,7 +98,7 @@ func TestHooksDispatcher_DefaultEncoder_DeliversCompletePayload(t *testing.T) {
 	h := hooks.Hook{Name: "encoded", Deliver: []string{adapter.name}}
 	je := sqlite.JournalEvent{Seq: 7}
 	evt := hooks.Event{Seq: je.Seq, Name: hooks.EventStatusChanged, NodeID: "TEST-1", Author: "worker", ToAgent: "reviewer", StatusTo: "done", Synced: true}
-	require.Equal(t, sqlite.OutcomeDelivered, d.fire(context.Background(), h, evt, je, true, hooks.ExecDispatchAny))
+	require.Equal(t, sqlite.OutcomeDelivered, d.fire(context.Background(), h, evt, je, map[string]hooks.Decision{h.Name: {Trusted: true}}, hooks.ExecDispatchAny))
 	require.Len(t, adapter.deliveries, 1)
 	assert.Equal(t, h, adapter.deliveries[0].Hook)
 	assert.Equal(t, evt, adapter.deliveries[0].Event)

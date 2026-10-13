@@ -91,7 +91,24 @@ func (s *State) readRecord(name string) (data json.RawMessage, reports []Report,
 }
 
 // WriteJSON durably replaces a host-specific record using a private temporary file.
-func (s *State) WriteJSON(name string, v any) (err error) {
+func (s *State) WriteJSON(name string, v any) error { return s.writeJSON(name, v, false) }
+
+// CreateJSON stores a host-specific record only if none exists; the first
+// writer wins. It reports whether this call created the record.
+func (s *State) CreateJSON(name string, v any) (bool, error) {
+	err := s.writeJSON(name, v, true)
+	if err == nil {
+		return true, nil
+	}
+	var existing json.RawMessage
+	reports, readErr := s.ReadJSON(name, &existing)
+	if readErr == nil && len(reports) == 0 && existing != nil {
+		return false, nil
+	}
+	return false, err
+}
+
+func (s *State) writeJSON(name string, v any, exclusive bool) (err error) {
 	file, err := recordName(name)
 	if err != nil {
 		return err
@@ -116,5 +133,5 @@ func (s *State) WriteJSON(name string, v any) (err error) {
 	if len(data) > maxRecordSize {
 		return invalid("record is too large")
 	}
-	return writeData(dir, file, data, false, s.beforeCommit, s.syncDirectory)
+	return writeData(dir, file, data, exclusive, s.beforeCommit, s.syncDirectory)
 }

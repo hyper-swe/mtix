@@ -30,7 +30,7 @@ Every completed (`done`) task must have:
 Read the comments and review verdicts already on a node with `mtix show <id>`: it prints every annotation, oldest first, with its author and timestamp, and marks resolved ones. It normalizes the text it prints (control characters removed, whitespace trimmed), so quote a verdict exactly from `--json`, which gives the complete, unaltered record. `mtix context` includes only unresolved annotations.
 
 ### Finding Incomplete Tasks
-Use `mcp__mtix__mtix_search` to find tasks with missing fields:
+Use `mcp__mtix__mtix_search` (filters such as `status`, plus `query` words matched against title, description and prompt) to find tasks with missing fields:
 - Search for tasks in `done` status that lack comments (missing verification evidence)
 - Search for tasks with empty `prompt` or `acceptance` fields (incomplete decomposition)
 

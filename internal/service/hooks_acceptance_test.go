@@ -38,6 +38,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil"
 )
 
 // projectDirs returns a project root and its .mtix subdir. append-file/exec
@@ -157,7 +158,10 @@ func TestFR19Acceptance_ExecWake(t *testing.T) {
 	outFile := filepath.Join(proj, "exec-out.json")
 
 	// The command writes the event JSON (delivered via env) to outFile. argv is
-	// exec'd without a shell; sh is the program, the redirect is in its script.
+	// exec'd without a shell; sh is the program, the redirect is in its script
+	// file (a command-string option cannot be pinned).
+	wakeScript := filepath.Join(proj, "wake.sh")
+	require.NoError(t, os.WriteFile(wakeScript, []byte("printf '%s' \"$MTIX_EVENT\" > "+outFile+"\n"), 0o700))
 	writeHooks(t, mtixDir, `
 hooks:
   - name: exec-wake
@@ -166,7 +170,7 @@ hooks:
       status-to: [done]
     deliver: [exec]
     exec:
-      command: ["sh", "-c", "printf '%s' \"$MTIX_EVENT\" > `+outFile+`"]
+      command: ["sh", "`+wakeScript+`"]
       timeout-seconds: 5
 `)
 
@@ -187,7 +191,7 @@ hooks:
 
 	// Phase B — TRUSTED: record trust for the current config, then a fresh
 	// transition fires exec (the Phase-A events are already past the cursor).
-	require.NoError(t, hooks.SaveTrust(mtixDir, hooks.ConfigHash(mtixDir)))
+	approveTestHooks(t, mtixDir)
 
 	n2, err := svc.CreateNode(ctx, &service.CreateNodeRequest{Project: "PROJ", Title: "two", Creator: "worker"})
 	require.NoError(t, err)
@@ -296,7 +300,9 @@ func TestAwaitEventJSON_ExecOutputCreatedBeforeWritten_WaitsForCompleteJSON(t *t
 
 	// JSON is valid YAML flow syntax, so the argv (script, then $0 $1 $2) is
 	// embedded without hand-quoting.
-	command, err := json.Marshal([]string{"sh", "-c", gatedHookScript, "sh", gate.path, outFile})
+	gatedScript := filepath.Join(proj, "gated.sh")
+	require.NoError(t, os.WriteFile(gatedScript, []byte(gatedHookScript+"\n"), 0o700))
+	command, err := json.Marshal([]string{"sh", gatedScript, gate.path, outFile})
 	require.NoError(t, err)
 	writeHooks(t, mtixDir, `
 hooks:
@@ -309,7 +315,7 @@ hooks:
       command: `+string(command)+`
       timeout-seconds: 5
 `)
-	require.NoError(t, hooks.SaveTrust(mtixDir, hooks.ConfigHash(mtixDir)))
+	approveTestHooks(t, mtixDir)
 	t.Cleanup(func() { gate.releaseIfParked(t) })
 
 	node, err := svc.CreateNode(ctx, &service.CreateNodeRequest{Project: "PROJ", Title: "gated", Creator: "worker"})
@@ -327,7 +333,7 @@ hooks:
 }
 
 // gatedHookScript is the gated exec hook, run as
-// `sh -c gatedHookScript sh GATE OUT` (MTIX-107.23). It creates OUT, then parks
+// `sh gated.sh GATE OUT` (MTIX-107.23). It creates OUT, then parks
 // on the FIFO GATE until something opens it, and only then writes $MTIX_EVENT
 // to OUT: mkfifo runs first, so GATE exists whenever OUT does.
 //
@@ -467,6 +473,7 @@ hooks:
 // to end through the MCP tools an agent actually calls — mtix_annotate with a
 // `to` param, then mtix_inbox and mtix_inbox_ack (FR-19 §4/§5).
 func TestFR19Acceptance_ViaMCP(t *testing.T) {
+	testutil.OperatorState(t)
 	svc, store, _ := newTestNodeService(t)
 	ctx := context.Background()
 
@@ -491,11 +498,12 @@ func TestFR19Acceptance_ViaMCP(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, res.IsError)
 	require.Len(t, res.Content, 1)
-	var events []sqlite.InboxEvent
-	require.NoError(t, json.Unmarshal([]byte(res.Content[0].Text), &events))
+	events, err := store.InboxList(ctx, "opus")
+	require.NoError(t, err)
 	require.Len(t, events, 1)
-	assert.Equal(t, node.ID, events[0].NodeID)
-	assert.Equal(t, "proceed", events[0].Body)
+	assert.Contains(t, res.Content[0].Text, `task: "`+node.ID+`"`)
+	assert.Contains(t, res.Content[0].Text, `body: "proceed"`)
+	assert.Contains(t, res.Content[0].Text, "as claimed, not verified")
 
 	// mtix_inbox_ack clears it, just as it would for the CLI/store path.
 	ackArg, _ := json.Marshal(map[string]any{"agent": "opus", "seq": events[0].Seq})
@@ -504,7 +512,5 @@ func TestFR19Acceptance_ViaMCP(t *testing.T) {
 
 	after, err := reg.Call(ctx, "mtix_inbox", json.RawMessage(`{"agent":"opus"}`))
 	require.NoError(t, err)
-	var afterEvents []sqlite.InboxEvent
-	require.NoError(t, json.Unmarshal([]byte(after.Content[0].Text), &afterEvents))
-	assert.Empty(t, afterEvents, "inbox clears after MCP ack")
+	assert.Equal(t, "[]", after.Content[0].Text, "inbox clears after MCP ack")
 }

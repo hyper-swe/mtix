@@ -80,7 +80,7 @@ func waitHarnessGate(t *testing.T, root string) {
 }
 
 func ackHarnessInput(t *testing.T, root string, input []byte) {
-	for _, match := range regexp.MustCompile(`\[seq ([0-9]+)\]`).FindAllSubmatch(input, -1) {
+	for _, match := range regexp.MustCompile(`(?m)^ack: mtix inbox ack ([1-9][0-9]*) --agent 'TEST-agent'$`).FindAllSubmatch(input, -1) {
 		seq := string(match[1])
 		cmd := exec.Command(os.Getenv("MTIX_BIN"), "inbox", "ack", seq, "--agent", "TEST-agent")
 		output, err := cmd.CombinedOutput()

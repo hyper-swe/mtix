@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,8 +58,13 @@ func TestRunSyncDoctor_NoOperatorAlerts_PreservesLocalChecks(t *testing.T) {
 	require.True(t, check.Warn)
 	dir, err := state.Path()
 	require.NoError(t, err)
-	_, err = os.Stat(dir)
-	require.ErrorIs(t, err, os.ErrNotExist, "reading absent operator state creates nothing")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		require.ErrorIs(t, err, os.ErrNotExist)
+	}
+	for _, entry := range entries {
+		require.False(t, strings.HasPrefix(entry.Name(), "alert"), "reading absent alert state creates no alert files: %s", entry.Name())
+	}
 }
 
 func alertDoctorFixture(t *testing.T) *oplocal.State {

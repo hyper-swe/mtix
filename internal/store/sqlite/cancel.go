@@ -26,7 +26,8 @@ func (s *Store) CancelNode(ctx context.Context, id, reason, author string, casca
 		return fmt.Errorf("cancel reason is required: %w", model.ErrInvalidInput)
 	}
 
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.2: withHistoryTx appends the task_history entries (cascade included) in this transaction.
+	return s.withHistoryTx(ctx, historyScope{id: id, cascade: cascade, actor: author}, func(tx *sql.Tx) error {
 		return s.executeCancelTx(ctx, tx, transitionRequest{id: id, reason: reason, author: author}, cascade)
 	})
 }

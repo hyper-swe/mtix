@@ -24,6 +24,7 @@ import (
 func newGCCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "gc",
+		Args:  cobra.NoArgs,
 		Short: "Run garbage collection (clean expired soft-deletes)",
 		RunE: withAutoExport(func(_ *cobra.Command, _ []string) error {
 			return runGC()
@@ -134,6 +135,7 @@ func newExportCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "export",
+		Args:  cobra.NoArgs,
 		Short: "Export nodes to JSON",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runExport(format)
@@ -360,6 +362,7 @@ func writeRemapFile(path string, report *sqlite.ImportReconcileReport) error {
 func newMigrateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "migrate",
+		Args:  cobra.NoArgs,
 		Short: "Run database migrations",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			fmt.Println("Database is auto-migrated on startup")
@@ -379,6 +382,7 @@ func newServeCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "serve",
+		Args:  cobra.NoArgs,
 		Short: "Start the mtix HTTP and WebSocket server",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runServe(addr, port)

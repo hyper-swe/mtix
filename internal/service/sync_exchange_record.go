@@ -55,17 +55,8 @@ func exchangeUnavailable(category string, cause error) error {
 
 // LastExchanged only loads received provenance, without judging incoming lineage.
 func (s *SyncService) LastExchanged(ctx context.Context, dir string) (*ExchangeRecord, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, exchangeUnavailable("context", err)
-	}
-	if !exchangePlatformSupported() {
-		return nil, exchangeUnavailable("unsupported", nil)
-	}
-	if s.MaxImportSize <= 0 {
-		return nil, exchangeUnavailable("invalid-cap", nil)
-	}
-	if _, err := os.Lstat(exchangePath(dir)); err != nil {
-		return nil, exchangeUnavailable("missing", nil)
+	if err := s.exchangePrecheck(ctx, dir); err != nil {
+		return nil, err
 	}
 	lock, err := s.openExchangeReadLock(dir)
 	if err != nil {
@@ -73,6 +64,33 @@ func (s *SyncService) LastExchanged(ctx context.Context, dir string) (*ExchangeR
 	}
 	defer s.releaseLock(lock)
 	return s.readExchangeRecord(ctx, dir)
+}
+
+// lastExchangedHeld is LastExchanged for a caller that already holds the
+// exclusive sync lock (the automatic import, MTIX-95.31.15.1): the same
+// checks and reader, without taking the read lock the caller's lock excludes.
+func (s *SyncService) lastExchangedHeld(ctx context.Context, dir string) (*ExchangeRecord, error) {
+	if err := s.exchangePrecheck(ctx, dir); err != nil {
+		return nil, err
+	}
+	return s.readExchangeRecord(ctx, dir)
+}
+
+// exchangePrecheck applies the checks that come before any read of the record.
+func (s *SyncService) exchangePrecheck(ctx context.Context, dir string) error {
+	if err := ctx.Err(); err != nil {
+		return exchangeUnavailable("context", err)
+	}
+	if !exchangePlatformSupported() {
+		return exchangeUnavailable("unsupported", nil)
+	}
+	if s.MaxImportSize <= 0 {
+		return exchangeUnavailable("invalid-cap", nil)
+	}
+	if _, err := os.Lstat(exchangePath(dir)); err != nil {
+		return exchangeUnavailable("missing", nil)
+	}
+	return nil
 }
 
 func (s *SyncService) readExchangeRecord(ctx context.Context, dir string) (*ExchangeRecord, error) {
@@ -169,6 +187,9 @@ func validateExchangeBoundary(r *ExchangeRecord) error {
 		return nil
 	}
 	b := r.Boundary
+	if b.PendingOutbound != nil && *b.PendingOutbound != 0 {
+		return exchangeUnavailable("boundary", nil)
+	}
 	if b.LocalSequence < 0 || b.PullClock < 0 || b.Pending != 0 || b.Unresolved != 0 {
 		return exchangeUnavailable("boundary", nil)
 	}
@@ -188,7 +209,7 @@ func normalizeExchangeReason(reason string) string {
 		"unsafe-file", "temporary-file", "oversize", "read", "invalid-json", "trailing-json", "format", "time", "hash",
 		"source", "count", "boundary", "task-identity", "task-fields", "historical-form", "board-hash", "task-json",
 		"unsupported-schema", "encode", "publish-failed", "durability-uncertain", "partial-pull", "snapshot-failed",
-		"unapplied-event", "tracking-limit", "unknown-event":
+		"unapplied-event", "tracking-limit", "unknown-event", "pending-outbound", "outbound-boundary-unknown":
 		return reason
 	default:
 		return "unknown"

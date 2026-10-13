@@ -50,7 +50,8 @@ func (s *Store) DeferNode(ctx context.Context, id string, until *time.Time, reas
 		author: author,
 		now:    s.clock(),
 	}
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.2: withHistoryTx appends the task_history entries in this transaction.
+	return s.withHistoryTx(ctx, historyScope{id: id, actor: author}, func(tx *sql.Tx) error {
 		return s.executeDeferTx(ctx, tx, req)
 	})
 }

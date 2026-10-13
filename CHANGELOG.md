@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- The shipped example wake script (`examples/hooks/wake-agent.sh`) could hang on Linux, where `/bin/sh` is dash: stopping its lease renewer relied on a signal that can be lost while the renewer starts, leaving a 60-second `sleep` holding the script's output open and the renewer looping. The renewer now also stops through a marker file and sleeps in one-second steps, so it exits whether or not the signal arrives (MTIX-163).
+
 - Several processes or goroutines opening the same brand-new store at once no longer fail with `enable WAL: SQLITE_BUSY`, and a transient `schema has changed` (SQLITE_SCHEMA) during open no longer raises a false `database corrupted` alarm. The WAL switch, store initialisation and the open-time integrity check retry busy, locked and schema-change errors for a bounded time (MTIX-147).
 
 - `mtix search <words>` applied no text filter: the words were dropped and unfiltered rows came back. It now matches every word, case-insensitively and literally, against title, description and prompt (MTIX-146). MCP `mtix_search` takes the same `query` and rejects unknown arguments. Commands that take no positional arguments now reject stray ones. The documented forms `mtix init <prefix>`, `mtix plugin install <target>` and `mtix blocked <id>` keep working: the positional is the same as `--prefix`, `--target` and `mtix dep show <id>` (but `mtix blocked <id>` reports an unknown id as not found), and a positional that contradicts its flag is refused. Text matching is case-insensitive for ASCII letters only.

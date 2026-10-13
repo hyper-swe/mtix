@@ -34,6 +34,9 @@ umask 077
 AGENT="${1:?usage: wake-agent.sh <agent-id>}"
 WAKE_AGENT_LOG="${WAKE_AGENT_LOG:-${XDG_STATE_HOME:-${HOME:?}/.local/state}/mtix/wake-agent.log}"
 HOLDER= RENEWER= CHILD=
+# The renewer also stops when this marker exists, so stopping it never depends
+# on a signal reaching it in time (a TERM sent while it starts can be lost).
+STOP_FILE="$WAKE_AGENT_LOG.stop.$$"
 WAKE_MAX_RUNS="${WAKE_MAX_RUNS:-20}"
 
 prepare_log() {
@@ -78,7 +81,11 @@ MTIX_BIN=$(resolve_tool "${MTIX_BIN:-mtix}") || { report 'mtix executable unavai
 HARNESS_BIN=$(resolve_tool "${HARNESS_BIN:-claude}") || { report 'harness executable unavailable'; exit 127; }
 
 stop_renewal() {
-    if [ -n "$RENEWER" ]; then kill "$RENEWER" 2>/dev/null || :; wait "$RENEWER" 2>/dev/null || :; RENEWER=; fi
+    if [ -n "$RENEWER" ]; then
+        : > "$STOP_FILE" 2>/dev/null || :
+        kill "$RENEWER" 2>/dev/null || :; wait "$RENEWER" 2>/dev/null || :; RENEWER=
+        rm -f "$STOP_FILE" 2>/dev/null || :
+    fi
 }
 
 stop_children() {
@@ -135,12 +142,17 @@ stop_renewal_commands() {
 renew_loop() {
     SLEEP_PID= RENEW_PID= STOPPING=
     trap 'STOPPING=1; stop_renewal_commands' TERM INT HUP
-    while kill -0 "$PARENT" 2>/dev/null; do
-        sleep 60 & SLEEP_PID=$!
-        if [ -n "$STOPPING" ]; then stop_renewal_commands; return 0; fi
-        wait "$SLEEP_PID" || return 0
-        SLEEP_PID=
+    while kill -0 "$PARENT" 2>/dev/null && [ ! -e "$STOP_FILE" ]; do
+        TICKS=0
+        while [ "$TICKS" -lt 60 ]; do
+            [ ! -e "$STOP_FILE" ] || return 0
+            sleep 1 >/dev/null 2>&1 </dev/null & SLEEP_PID=$!
+            if [ -n "$STOPPING" ]; then stop_renewal_commands; return 0; fi
+            wait "$SLEEP_PID" || return 0
+            SLEEP_PID= TICKS=$((TICKS + 1))
+        done
         kill -0 "$PARENT" 2>/dev/null || exit 0
+        [ ! -e "$STOP_FILE" ] || return 0
         "$MTIX_BIN" inbox lease acquire --agent "$AGENT" --holder "$HOLDER" --ttl 15m >/dev/null 2>>"$WAKE_AGENT_LOG" & RENEW_PID=$!
         if [ -n "$STOPPING" ]; then stop_renewal_commands; return 0; fi
         if wait "$RENEW_PID"; then STATUS=0; else STATUS=$?; fi

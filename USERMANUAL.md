@@ -2342,7 +2342,9 @@ Acquire prints a 32-character lowercase hexadecimal token. Release prints
 and high-water mark (expiry only for relaunch). Exit 6 means held or no longer the
 holder; storage failures retain exit 3 or 4. TTL defaults to 15m, accepts 1m through
 24h, and `acquire --holder` renews the same owner. The reference renews every 60s
-while it lives and stops loudly if ownership has changed. The local host identity
+while it lives and stops loudly if ownership has changed. The renewer stops through a marker file next to the log
+(`<log>.stop.<pid>`, removed when the renewer has stopped) as well as by signal, so a
+lost signal cannot leave it running or hold the script's output open. The local host identity
 must resolve from operator state outside sandbox-writable roots; it never falls
 back to a replica, hostname or caller-supplied identity.
 

@@ -68,7 +68,7 @@ func wakeMetadataCommand(word string) bool {
 		return true
 	case "report", "resolve_tool", "stop_children", "stop_renewal", "stop_renewal_commands", "cleanup", "interrupted", "lost_lease", "renew_loop":
 		return true
-	case "kill", "wait", "sleep", "printf", "mkdir", "chmod", "date", "dirname", "basename", "cd", "pwd":
+	case "kill", "wait", "sleep", "printf", "mkdir", "rm", "chmod", "date", "dirname", "basename", "cd", "pwd":
 		return true
 	}
 	return false

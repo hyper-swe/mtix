@@ -35,7 +35,7 @@ func TestAppendBoardIdentityChecks_RecordedIdentity_ReportsConsistency(t *testin
 	require.NoError(t, state.ObserveBoard(checkout, other, hub))
 	report = appendBoardIdentityChecks(DoctorReport{OverallPass: true})
 	assert.False(t, report.OverallPass)
-	assert.Contains(t, report.Checks[len(report.Checks)-1].Detail, "multiple board identities")
+	assert.Contains(t, findFailingCheck(t, report).Detail, "multiple board identities")
 }
 
 func TestAppendBoardIdentityChecks_RelayConfigurationChanged_ReportsUnknown(t *testing.T) {
@@ -52,7 +52,7 @@ func TestAppendBoardIdentityChecks_RelayConfigurationChanged_ReportsUnknown(t *t
 	require.NoError(t, err)
 	report := appendBoardIdentityChecks(DoctorReport{OverallPass: true})
 	assert.False(t, report.OverallPass)
-	assert.Equal(t, "mtix sync init", report.Checks[len(report.Checks)-1].Fix)
+	assert.Equal(t, "mtix sync init", findFailingCheck(t, report).Fix)
 	observed, _, err := state.BoardObservation(filepath.Dir(app.mtixDir))
 	require.NoError(t, err)
 	assert.Equal(t, relay, observed.RelayPath)

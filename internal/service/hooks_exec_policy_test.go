@@ -70,7 +70,7 @@ hooks:
     deliver: [exec]
     exec: { command: ["`+filepath.Join(dir, "does-not-exist.sh")+`"], timeout-seconds: 5 }
 `)
-	require.NoError(t, hooks.SaveTrust(dir, hooks.ConfigHash(dir)))
+	approveTestHooks(t, dir)
 
 	makeDoneEvent(t, svc)
 	d := service.NewHooksDispatcher(store, dir, slog.Default())
@@ -144,7 +144,7 @@ hooks:
     deliver: [inbox, exec]
     exec: { command: ["`+script+`"], timeout-seconds: 5 }
 `)
-	require.NoError(t, hooks.SaveTrust(dir, hooks.ConfigHash(dir)))
+	approveTestHooks(t, dir)
 	require.NoError(t, hooks.SaveExecDispatchMode(dir, hooks.ExecDispatchOff))
 
 	makeDoneEvent(t, svc)

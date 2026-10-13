@@ -115,3 +115,14 @@ standard-input launch routine and empty-inbox check. Handle and ack each event
 before reading the inbox again; use only a verified runtime input interface.
 
 <!-- END AUTO-GENERATED -->
+
+## Exec hook approvals
+
+<!-- AUTO-GENERATED: HOOK_APPROVALS -->
+Exec approvals belong to the local operator. Use `mtix hooks status` to inspect
+per-hook decisions and the exact command to request review. An agent asks the
+operator to review the named hook, then run `mtix hooks trust <hook>` from an
+interactive operator terminal outside agent sessions. Agents never run this
+approval command themselves. Changing one hook or its project script requires
+review of that hook; other hook approvals remain independent.
+<!-- END AUTO-GENERATED -->

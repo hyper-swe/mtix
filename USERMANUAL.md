@@ -626,11 +626,30 @@ Agents (typically LLM coding agents) have a lifecycle managed through heartbeats
 
 #### Registration
 
-Run `mtix agent register <agent-id>` at session boot. Repeat registration on the same board exits 0 with an "already registered" notice and refreshes the heartbeat. It preserves the existing state, work assignment, project, and active session; it does not start or replace a session. With `--json`, the status is `registered` for a new identity or `already_registered` for a repeat. Use a unique ID per agent; registration currently identifies an agent by ID on the board, without a live-session ownership check.
+Run `mtix agent register <agent-id>` at session boot. Repeat registration on the same board exits 0 with an "already registered" notice and refreshes the heartbeat. It preserves the existing state, work assignment, project, and active session; it does not start or replace a session. With `--json`, the status is `registered` for a new identity or `already_registered` for a repeat. Use a unique ID per agent. Registration also records this shell's session for the id (harness and session handle detected from the environment): a restarted lane registers again with no flags, and a still-running session of the same id is refused unless you pass `--take-over` (see "Registration and lanes").
 
 ```bash
 mtix agent register worker-1
 mtix agent register worker-1 --json
+```
+
+#### Registration and lanes
+
+`mtix agent register <agent-id>` also records the calling session so the id can be reached later. It stores the harness and session handle detected by identity: the harness is the one that owns the session's process (Claude Code, Codex or pi, found by walking up past shells and recognized by its argv[0], executable name or install path, because the kernel name of Claude Code can be its version string), and the handle comes only from that harness's own variable (`CLAUDE_CODE_MESSAGING_SOCKET`, `CODEX_THREAD_ID` or `PI_SESSION_ID`), never from an outer harness's inherited variable. If the process or its variable cannot be identified, the session is registered without a handle and with unknown liveness: it is never replaced silently, a repeat from the same process refreshes it, and another session needs `--take-over`; `--harness` and `--session` override them, and a typed `--session` is recorded as origin `manual`. Registering never marks existing inbox events as new: it starts from the current end of the journal, so backlog reaches you through `mtix inbox`, not a wake.
+
+- **Restart a lane:** run `mtix agent register <agent-id>` again. For a recognized harness (Claude Code, Codex, pi) a row whose session has exited is replaced silently, with no flag. A session registered without a verified process (an unrecognized harness, or a plain terminal) has unknown liveness: re-registering from the same process refreshes it, but any other process needs `--take-over`, and the refusal says "live or unverifiable session".
+- **Take over a live lane:** `mtix agent register <agent-id> --take-over`. It bumps the epoch, leaves one fixed notice in the id's inbox when it has a current work item (at most one per displaced session per 10 minutes), and is limited to 3 per id per hour; after that it needs a terminal. Take over only when you are replacing that session on purpose.
+- **Move a lane:** run `mtix agent unregister <agent-id>` from the owning session. `--force` removes another live session's row (operator use).
+- **Inspect:** `mtix agent list --registrations [--json]` shows harness, origin, mode, liveness (`alive`, `dead` or `unknown`; unknown is treated as live), live route and hold.
+- **MCP-only rows:** origin `mcp` (no session handle, no live route) is reserved in this build: no MCP tool records a registration yet, so register from the session shell with `mtix agent register`. `agents.mcp-only` reports any such row that exists.
+- **last_seen** moves only when the registered session runs `mtix agent register` or `mtix inbox` (list, `--wait`, `ack`) with its own session handle in the environment.
+- **Verify:** `mtix sync doctor` reports `agents.stale` (dead sessions; a row unseen for 24 hours with a dead session is deleted) and `agents.mcp-only`, each with the exact fix; add `--json` for tools.
+- **Never** register under another agent's id to "see" its inbox, and never pass `--take-over` to get around a refusal you do not understand: ask the operator.
+
+```bash
+mtix agent register worker-1 --take-over
+mtix agent unregister worker-1
+mtix agent list --registrations --json
 ```
 
 #### Commands
@@ -2292,10 +2311,11 @@ hooks:
       timeout-seconds: 86400
 ```
 
-Review and trust the config on that host (`mtix hooks trust`). The
-script exits without launching when the inbox is empty and otherwise launches
-the harness CLI with the inbox supplied through standard input. Keep exactly one launch
-line enabled in the reference script:
+Review the named hook on that host and approve it from an operator terminal
+(`mtix hooks trust -- 'wake-developer'`). The script exits without launching
+when the inbox is empty and otherwise launches the harness CLI with the inbox
+supplied through standard input. Keep exactly one launch line enabled in the
+reference script:
 
 - Claude Code: `printf '%s\n' "$PAYLOAD" | claude -p`
 - OpenAI Codex CLI: `printf '%s\n' "$PAYLOAD" | codex exec -`
@@ -2365,13 +2385,42 @@ The channel server also holds an mtix session for the agent while it
 runs, so wake scripts can prefer pushing to a live session over
 cold-starting a duplicate.
 
-**Security notes.** `exec` runs only for a `hooks.yaml` the local
-operator trusted by content hash (`mtix hooks trust`) — a synced or
-edited config never runs code unbidden. Addressed comments are **prompt
+**Security notes.** `exec` requires a validated operator approval for the
+selected hook and its project scripts. Addressed comments are **prompt
 input**: with push and cold-start wakes, any agent that can write to
 your hub puts text directly into another agent's context — only
 federate the hub with agents and users you trust, exactly as you would
 a shared terminal.
+
+## Exec hook approvals
+
+Exec approvals belong to the local operator. Use `mtix hooks status` to inspect
+per-hook decisions and the exact command to request review. An agent asks the
+operator to review the named hook, then run `mtix hooks trust <hook>` from an
+interactive operator terminal outside agent sessions. Agents never run this
+approval command themselves. Changing one hook or its project script requires
+review of that hook; other hook approvals remain independent.
+
+The approval records are stored outside the project, bound to the local host
+and canonical project identity. Each record pins the selected hook stanza and
+its project script contents. For example, after reviewing the `wake` hook:
+
+```sh
+mtix hooks status --json
+mtix hooks trust -- 'wake'
+```
+
+Standard input must be a real terminal. Pipes, redirected input, and agent
+session markers refuse new approvals. Existing validated approvals remain
+usable in agent sessions. Status commands report decisions without writing
+approval state; `mtix hooks trust <hook> --status` inspects one hook.
+
+On the first eligible run outside an agent session, an untracked legacy
+`.mtix/hooks.trust` with a matching content hash can be converted once. A
+tracked, changed, or unverifiable legacy record requires individual hook
+review. An eligible refusal is recorded and later runs do not retry conversion;
+an agent session defers it without recording an attempt. New `mtix init`
+projects exclude `.mtix/hooks.trust` in `.gitignore`.
 
 ### Conflict handling
 
@@ -3426,4 +3475,4 @@ Regenerates the agent-facing documentation in the `.mtix/docs/` directory.
 
 Filesystem checks cannot detect sandbox write access granted to an operator-owned directory. Keep operator state outside every sandbox-writable root; the operator must choose that placement. `mtix hooks status` and `mtix sync doctor` report this limitation in text and JSON. On Unix, every ancestor must be owned by root or the operator and must not be writable by a group or other users; a sticky directory is not an exception. On Windows, ancestor owners are limited to the operator, SYSTEM, Administrators and TrustedInstaller. Rights to delete entries, change access rules or ownership, or generic write/full access are limited to those principals; creating files or subdirectories in an ancestor is allowed. The state directory and files still require protected user-only access. Unix refuses group-writable homes and network or directory-service-owned parents that do not meet these ownership rules. Set `XDG_CONFIG_HOME` to an operator-owned directory with root- or operator-owned ancestors and no group or other write access; `mtix hooks status --json` reports the concrete cause and validates the new placement, and `mtix sync doctor` names these placement constraints and the remedy. Atomic replacement does not establish power-loss durability. Filesystems without the required hard-link support are refused with the cause reported.
 
-This directory holds a persistent host identifier and host-specific state records. Other-host records are ignored and reported. Missing records are empty; invalid or inaccessible state is refused. This storage foundation does not move existing hook approvals or enable new grants. To recover, correct the reported path, ownership or access rules manually, then repeat `mtix hooks status --json`; preserve existing state records while correcting permissions.
+This directory holds a persistent host identifier and host-specific state records. Other-host records are ignored and reported. Missing records are empty; invalid or inaccessible state is refused. This storage API validates records; hook approval and legacy conversion follow the operator workflow. To recover, correct the reported path, ownership or access rules manually, then repeat `mtix hooks status --json`; preserve existing state records while correcting permissions.

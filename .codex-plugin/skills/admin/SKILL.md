@@ -378,4 +378,35 @@ An event can reach the hub without this replica recording it: push marks an even
 
 Filesystem checks cannot detect sandbox write access granted to an operator-owned directory. Keep operator state outside every sandbox-writable root; the operator must choose that placement. `mtix hooks status` and `mtix sync doctor` report this limitation in text and JSON. On Unix, every ancestor must be owned by root or the operator and must not be writable by a group or other users; a sticky directory is not an exception. On Windows, ancestor owners are limited to the operator, SYSTEM, Administrators and TrustedInstaller. Rights to delete entries, change access rules or ownership, or generic write/full access are limited to those principals; creating files or subdirectories in an ancestor is allowed. The state directory and files still require protected user-only access. Unix refuses group-writable homes and network or directory-service-owned parents that do not meet these ownership rules. Set `XDG_CONFIG_HOME` to an operator-owned directory with root- or operator-owned ancestors and no group or other write access; `mtix hooks status --json` reports the concrete cause and validates the new placement, and `mtix sync doctor` names these placement constraints and the remedy. Atomic replacement does not establish power-loss durability. Filesystems without the required hard-link support are refused with the cause reported.
 
-This directory holds a persistent host identifier and host-specific state records. Other-host records are ignored and reported. Missing records are empty; invalid or inaccessible state is refused. This storage foundation does not move existing hook approvals or enable new grants. To recover, correct the reported path, ownership or access rules manually, then repeat `mtix hooks status --json`; preserve existing state records while correcting permissions.
+This directory holds a persistent host identifier and host-specific state records. Other-host records are ignored and reported. Missing records are empty; invalid or inaccessible state is refused. This storage API validates records; hook approval and legacy conversion follow the workflow below. To recover, correct the reported path, ownership or access rules manually, then repeat `mtix hooks status --json`; preserve existing state records while correcting permissions.
+
+## Exec hook approvals
+
+Exec approvals belong to the local operator. Use `mtix hooks status` to inspect
+per-hook decisions and the exact command to request review. An agent asks the
+operator to review the named hook, then run `mtix hooks trust <hook>` from an
+interactive operator terminal outside agent sessions. Agents never run this
+approval command themselves. Changing one hook or its project script requires
+review of that hook; other hook approvals remain independent.
+
+The approval records are stored outside the project, bound to the local host
+and canonical project identity. Each record pins the selected hook stanza and
+its project script contents. For example, after reviewing the `wake` hook:
+
+```sh
+mtix hooks status --json
+mtix hooks trust -- 'wake'
+```
+
+Standard input must be a real terminal. Pipes, redirected input, and agent
+session markers refuse new approvals. Existing validated approvals remain
+usable in agent sessions. Status commands report decisions without writing
+approval state; `mtix hooks trust <hook> --status` inspects one hook.
+
+On the first eligible run outside an agent session, an untracked legacy
+`.mtix/hooks.trust` with a matching content hash can be converted once. A
+tracked, changed, or unverifiable legacy record requires individual hook
+review. An eligible refusal is recorded and later runs do not retry conversion;
+an agent session defers it without recording an attempt. New `mtix init`
+projects exclude `.mtix/hooks.trust` in `.gitignore`.
+

@@ -79,8 +79,10 @@ Manage agent lifecycle
 ### Subcommands
 
 - `heartbeat <agent-id>` — Send a heartbeat for an agent
-- `register <agent-id>` — Register an agent or refresh its heartbeat
+- `list --registrations` — List session registrations on this host
+- `register <agent-id>` — Register an agent and this session, or refresh them
 - `state <agent-id>` — Get or set agent state
+- `unregister <agent-id>` — Remove this host's session registration for an agent id
 - `work <agent-id>` — Show current work assignment for an agent
 ---
 
@@ -91,15 +93,55 @@ Manage agent lifecycle
 Send a heartbeat for an agent
 ---
 
+## list
+
+**Usage:** `list --registrations`
+
+List session registrations on this host
+
+List the session registrations for this host and user: harness, origin,
+permission mode, liveness (alive, dead or unknown), whether a live route
+exists and whether the row is held. Use --json for machine-readable output.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--registrations` |  | List session registrations | false |
+---
+
 ## register
 
 **Usage:** `register <agent-id>`
 
-Register an agent or refresh its heartbeat
+Register an agent and this session, or refresh them
 
 Register an agent on this board. Repeat registration succeeds with an
 "already registered" notice and refreshes its heartbeat, preserving its state,
 work assignment, project, and active session. Registration does not start a session.
+
+It also records this shell's session for the id: the harness and session handle
+are detected by identity: the harness is the one that owns this session's
+process (Claude Code, Codex or pi, recognized by argv[0], executable name or
+install path), and the handle is read only from that harness's
+own variable (CLAUDE_CODE_MESSAGING_SOCKET, CODEX_THREAD_ID, PI_SESSION_ID).
+If that cannot be established the session has no handle and unknown liveness
+(never replaced silently; --take-over still works). --harness and --session override them (a typed --session is
+recorded as origin "manual"). For a recognized harness a row whose session has
+exited is replaced silently, so a restarted lane registers with no flags; an
+unrecognized session has unknown liveness and another process needs --take-over. A row whose session is
+still running (or unverifiable) is refused unless you pass --take-over: that bumps the epoch,
+leaves one fixed notice for the displaced session, and is limited to 3 per id
+per hour, after which it needs a terminal. Registering never wakes the agent
+on events that already exist.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness name (detected from the environment when omitted) |  |
+| `--session` |  | Session handle (detected from the environment when omitted) |  |
+| `--take-over` |  | Replace a live session registered for this id | false |
 ---
 
 ## state
@@ -113,6 +155,23 @@ Get or set agent state
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--set` |  | Set state (idle, working, stuck, done) |  |
+---
+
+## unregister
+
+**Usage:** `unregister <agent-id>`
+
+Remove this host's session registration for an agent id
+
+Remove the session registration for an agent id on this host. Run it from the
+owning session when you move a lane. A row whose session has exited can be
+removed by anyone; a live row of another session needs --force (operator).
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--force` |  | Remove even a live session's registration | false |
 ---
 
 ## work
@@ -558,8 +617,8 @@ Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 - `fire` — Test hooks.yaml against a sample event (dry-run only, for now)
 - `list` — List configured hooks with their events and delivery adapters
 - `log` — Show recent hook firings (audit trail, newest first)
-- `status` — Validate operator-local state
-- `trust` — Trust the current .mtix/hooks.yaml to run exec hooks (content-hash pinned, local)
+- `status` — Show operator-local state and per-hook approvals
+- `trust <hook>` — Review and approve one exec hook on this host
 ---
 
 ## exec-dispatch
@@ -623,30 +682,24 @@ Show recent hook firings (audit trail, newest first)
 
 **Usage:** `status`
 
-Validate operator-local state
+Show operator-local state and per-hook approvals
 
-Validate operator-local state and report its path, availability, and corrective guidance. This command does not create state or grant hook approval.
+Validate operator-local state and report its path, availability, per-hook approvals, legacy workspace records, and exact corrective commands. This command does not create state or grant hook approval.
 ---
 
 ## trust
 
-**Usage:** `trust`
+**Usage:** `trust <hook>`
 
-Trust the current .mtix/hooks.yaml to run exec hooks (content-hash pinned, local)
+Review and approve one exec hook on this host
 
-Record the current .mtix/hooks.yaml as trusted to run its exec hooks.
-
-The trust pin covers hooks.yaml AND the content of every local script an
-exec hook runs (MTIX-49). Editing either the config or a wake-script voids
-trust — exec is skipped until you review and re-run 'mtix hooks trust' —
-so an approve-then-swap-the-payload change cannot ride a stale approval.
-The pin is local, gitignored, and never synced.
+Review one configured exec hook and save its host-specific approval outside the project. Requires terminal stdin outside an agent session. Editing that hook or its project scripts requires another review. Use hooks status --json for corrective guidance.
 
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--status` |  | Show whether the current hooks.yaml is trusted, without changing it | false |
+| `--status` |  | Show this hook's approval without changing it | false |
 ---
 
 ## import

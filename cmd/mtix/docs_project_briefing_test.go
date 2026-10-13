@@ -169,3 +169,20 @@ func TestRunDocsGenerate_NoConfiguredPrefix_UsesFallback(t *testing.T) {
 	require.NoError(t, runDocsGenerate(false))
 	require.Contains(t, readProjectDoc(t, dir, "MTIX.md"), "> **Project:** PROJ")
 }
+
+func TestGenerateInitDocs_ArbitraryOutput_KeepsSelfContainedReferences(t *testing.T) {
+	root := t.TempDir()
+	output := filepath.Join(root, "custom", "references")
+	results := generateInitDocs(output, "TEST", "test")
+	require.NotEmpty(t, results)
+	require.NoFileExists(t, filepath.Join(root, "MTIX.md"))
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+		content, readErr := os.ReadFile(filepath.Join(output, name))
+		require.NoError(t, readErr)
+		require.NotContains(t, string(content), "[MTIX.md](")
+	}
+	claude, readErr := os.ReadFile(filepath.Join(output, "CLAUDE.md"))
+	require.NoError(t, readErr)
+	require.Contains(t, string(claude), "](AGENTS.md)")
+	require.FileExists(t, filepath.Join(output, "AGENTS.md"))
+}

@@ -193,13 +193,10 @@ func (g *Generator) SetProjectRoot(root string) { g.projectDir = root }
 // results are reported with the "workflows/" prefix in their File field
 // so callers can distinguish them from top-level docs.
 func (g *Generator) Generate(force bool) ([]GenerateResult, error) {
-	var results []GenerateResult
-	if g.projectDir != "" {
-		briefing, err := generateProjectBriefing(g.projectDir, g.templates, g.data)
-		if err != nil {
-			return nil, fmt.Errorf("generate project briefing: %w", err)
-		}
-		results = append(results, briefing...)
+	renderer := *g
+	results, prepareErr := renderer.prepareProject()
+	if prepareErr != nil {
+		return nil, fmt.Errorf("prepare documentation: %w", prepareErr)
 	}
 	// Ensure output directory exists.
 	if err := os.MkdirAll(g.outputDir, 0o755); err != nil {
@@ -207,7 +204,7 @@ func (g *Generator) Generate(force bool) ([]GenerateResult, error) {
 	}
 
 	for _, doc := range allDocFiles {
-		result, err := g.generateFile(doc, force)
+		result, err := renderer.generateFile(doc, force)
 		if err != nil {
 			return results, fmt.Errorf("generate %s: %w", doc.Name, err)
 		}
@@ -222,7 +219,7 @@ func (g *Generator) Generate(force bool) ([]GenerateResult, error) {
 		return results, fmt.Errorf("create workflows dir %s: %w", workflowDir, err)
 	}
 	for _, doc := range workflowDocFiles {
-		result, err := g.generateFileIn(doc, workflowDir, force)
+		result, err := renderer.generateFileIn(doc, workflowDir, force)
 		if err != nil {
 			return results, fmt.Errorf("generate workflows/%s: %w", doc.Name, err)
 		}

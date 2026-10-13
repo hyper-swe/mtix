@@ -294,6 +294,23 @@ These are **operator/admin** actions, not part of the normal agent loop. Recogni
 - A pending queue that never drains: if `mtix sync status` shows a `pending` count that does not go down across pushes, or `mtix sync doctor` fails its `queue draining` check, run `mtix sync push`: it acknowledges the events an earlier push already delivered (a lost confirmation, a crash before the local mark), counts them as `already on the hub` next to `inserted` in its output, and pushes the rest; `pending` then reaches 0 apart from held push events. After a lost confirmation a push's `conflicts` count can read 0; `mtix sync conflicts list` shows the conflicts. **Never** mark events pushed by hand or discard them to make the queue drain.
 - **Hub privileges.** `mtix sync doctor` shows a `hub-privileges` check. A **WARN** (exit 0) means roles other than the owner can use the sync tables, or a TRUNCATE guard is missing or disabled; that can be fine when the database is reachable only from a private network, and it never blocks sync. It is a **FAIL** only in strict mode (`sync.keep_roles` set). To restrict access the table owner runs `mtix sync harden` (a dry run that lists every role it would change), and only after the user approves that role list, `mtix sync harden --apply --keep-role <role>`. **Never** pass `--apply` without that approval, and never run `mtix sync harden` from a hook, a push or the daemon.
 
+<!-- AUTO-GENERATED: WAKE_ROUTINE -->
+
+## Reference Wake Routine
+
+See the multi-agent skill and mtix's `examples/hooks/wake-agent.sh` for the
+standard-input launch routine and empty-inbox check. Handle and ack each event
+before reading the inbox again; use only a verified runtime input interface.
+
+An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
+zero has no limit, and already pending events return immediately. Events mean
+exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+A negative timeout is refused. Keep foreground waits within the harness's tool
+limits; use an indefinite park only where background tasks are supported. Handle
+and ack events explicitly before parking again.
+
+<!-- END AUTO-GENERATED -->
+
 ## Exec hook approvals
 
 <!-- AUTO-GENERATED: HOOK_APPROVALS -->

@@ -9,21 +9,18 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
-// maxInboxWaitSeconds caps mtix_inbox_wait's long-poll. A single MCP tool call
-// cannot block indefinitely, so the wait is bounded to a safe ceiling and the
-// caller re-invokes on an empty return to keep parking (FR-19.5).
+// maxInboxWaitSeconds is the default and positive-wait ceiling for bounded
+// foreground calls. Explicit zero remains unbounded until cancellation (FR-19).
 const maxInboxWaitSeconds = 60
 
-// clampInboxWaitSeconds bounds a requested long-poll to the ceiling. A single
-// mtix_inbox_wait call cannot block indefinitely — a harness-hosted agent
-// re-invokes on an empty return to keep parking (FR-19.5) — so an unset
-// (<= 0) or over-cap request collapses to maxInboxWaitSeconds; an in-range
-// request passes through.
+// clampInboxWaitSeconds caps positive requests; explicit zero has no limit.
+// The handler rejects negative requests before calling this helper (FR-19).
 func clampInboxWaitSeconds(secs int) int {
-	if secs <= 0 || secs > maxInboxWaitSeconds {
+	if secs > maxInboxWaitSeconds {
 		return maxInboxWaitSeconds
 	}
 	return secs
@@ -68,41 +65,53 @@ func registerInboxTool(reg *ToolRegistry, svc *service.InboxService) {
 
 func registerInboxWaitTool(reg *ToolRegistry, svc *service.InboxService) {
 	reg.Register(ToolDef{
-		Name: "mtix_inbox_wait",
+		Name:            "mtix_inbox_wait",
+		CancellableWait: true,
 		Description: fmt.Sprintf(
 			"Long-poll an agent's inbox: block until an addressed comment lands or the timeout elapses, returning the events (empty JSON array on timeout). "+
-				"The wait is capped at %d seconds because a tool call cannot block indefinitely — RE-INVOKE this tool on an empty return to keep parking.",
+				"Positive waits are capped at %d seconds (also the omitted default). Explicit timeout_seconds=0 waits without a limit until an event or caller cancellation. Use bounded foreground waits within harness tool limits; negative timeouts are refused.",
 			maxInboxWaitSeconds),
 		InputSchema: SchemaObj{
 			Type: "object",
 			Properties: map[string]SchemaProp{
 				"agent":           {Type: "string", Description: "Agent ID whose inbox to wait on"},
-				"timeout_seconds": {Type: "number", Description: fmt.Sprintf("Seconds to wait before returning empty (capped at %d)", maxInboxWaitSeconds)},
+				"timeout_seconds": {Type: "number", Description: fmt.Sprintf("Seconds to wait: default 60 when omitted, 0 = no limit until cancellation; positive values capped at %d; negative values refused", maxInboxWaitSeconds)},
 			},
 			Required: []string{"agent"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		var p struct {
-			Agent          string `json:"agent"`
-			TimeoutSeconds int    `json:"timeout_seconds"`
-		}
-		if err := json.Unmarshal(args, &p); err != nil {
-			return nil, fmt.Errorf("parse inbox_wait args: %w", err)
-		}
-
-		secs := clampInboxWaitSeconds(p.TimeoutSeconds)
-
-		events, err := svc.InboxWait(ctx, p.Agent, time.Duration(secs)*time.Second)
-		if err != nil {
-			return nil, err
-		}
-		if events == nil {
-			events = []service.InboxEvent{} // marshal an empty [] rather than null on timeout
-		}
-
-		data, _ := json.MarshalIndent(events, "", "  ")
-		return SuccessResult(string(data)), nil
+		return callInboxWait(ctx, args, svc)
 	})
+}
+
+// callInboxWait preserves explicit zero and caller cancellation (FR-19).
+func callInboxWait(ctx context.Context, args json.RawMessage, svc *service.InboxService) (*ToolsCallResult, error) {
+	var p struct {
+		Agent          string `json:"agent"`
+		TimeoutSeconds *int   `json:"timeout_seconds"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return nil, fmt.Errorf("parse inbox_wait args: %w", err)
+	}
+
+	secs := maxInboxWaitSeconds
+	if p.TimeoutSeconds != nil {
+		if *p.TimeoutSeconds < 0 {
+			return nil, fmt.Errorf("inbox_wait: negative timeout_seconds: %w", model.ErrInvalidInput)
+		}
+		secs = clampInboxWaitSeconds(*p.TimeoutSeconds)
+	}
+
+	events, err := svc.InboxWait(ctx, p.Agent, time.Duration(secs)*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	if events == nil {
+		events = []service.InboxEvent{} // marshal an empty [] rather than null on timeout
+	}
+
+	data, _ := json.MarshalIndent(events, "", "  ")
+	return SuccessResult(string(data)), nil
 }
 
 func registerInboxAckTool(reg *ToolRegistry, svc *service.InboxService) {

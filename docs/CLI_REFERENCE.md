@@ -733,9 +733,12 @@ Show comments addressed to an agent (via 'mtix comment --to <agent>'),
 oldest first, past the agent's ack cursor.
 
 With --wait, block until a new addressed event arrives — the primitive a worker's
-outer loop parks on between tasks — or until --timeout seconds elapse. Exit 0
-when events are returned; exit 5 on an empty timeout (so a loop can distinguish
-"woke with work" from "nothing yet").
+outer loop parks on between tasks — or until --timeout seconds elapse (default 300).
+Use --timeout 0 for no limit: wait until an event or a signal. A negative timeout
+or a value too large to represent a duration is refused. Returned events mean
+exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+Use bounded waits within foreground tool limits; an indefinite park suits a
+background task whose harness supports it.
 
 --format emits agent-ready text instead of the plain listing (FR-20 §9,
 "delivery terminates in the prompt"):
@@ -754,7 +757,7 @@ Reads never ack — acknowledgement stays explicit.
 |------|-------|-------------|---------|
 | `--agent` |  | Agent id whose inbox to read (required) |  |
 | `--format` |  | Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection) |  |
-| `--timeout` |  | Max seconds to block with --wait | 300 |
+| `--timeout` |  | Max seconds to block with --wait (0 = no limit; negative refused) | 300 |
 | `--wait` |  | Long-poll: block until an event arrives or --timeout | false |
 
 ### Subcommands

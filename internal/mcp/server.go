@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,6 +23,7 @@ type Server struct {
 	logger *slog.Logger
 	tools  *ToolRegistry
 	mu     sync.Mutex // Serializes writes to stdout.
+	waits  *inboxWaitSession
 
 	// initialized tracks whether the client has completed handshake.
 	initialized bool
@@ -68,8 +70,26 @@ func (s *Server) Registry() *ToolRegistry {
 	return s.tools
 }
 
-// Serve reads and processes JSON-RPC messages until EOF or ctx cancellation.
-func (s *Server) Serve(ctx context.Context) error {
+// Serve reads messages until EOF, a read error, or ctx cancellation and joins
+// admitted inbox waits. Other tools execute inline. Closable input/output
+// streams are owned by this session and closed on shutdown to interrupt Read
+// and Write; callers must not share them, and Close must unblock pending I/O.
+// Nonclosable streams must themselves unblock I/O on cancellation. Serve joins
+// its I/O watcher and workers and never detaches a scanner goroutine.
+func (s *Server) Serve(ctx context.Context) (err error) {
+	ctx, cancel := context.WithCancel(ctx)
+	s.waits = newInboxWaitSession(ctx)
+	joinIO := s.interruptIO(ctx)
+	defer func() {
+		cancel()
+		closeErr := joinIO()
+		s.waits.workers.Wait()
+		err = errors.Join(err, closeErr)
+	}()
+	return s.serveScanner(ctx)
+}
+
+func (s *Server) serveScanner(ctx context.Context) error {
 	scanner := bufio.NewScanner(s.reader)
 
 	// MCP uses newline-delimited JSON-RPC over stdio.
@@ -83,6 +103,9 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 
 		if !scanner.Scan() {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if err := scanner.Err(); err != nil {
 				return fmt.Errorf("read input: %w", err)
 			}
@@ -115,6 +138,9 @@ func (s *Server) handleMessage(ctx context.Context, data []byte) error {
 	if req.ID == nil {
 		return s.handleNotification(ctx, &req)
 	}
+	if s.waits != nil && s.waits.hasID(req.ID) {
+		return s.sendError(req.ID, ErrCodeInvalidRequest, "duplicate active request ID")
+	}
 
 	return s.handleRequest(ctx, &req)
 }
@@ -127,6 +153,9 @@ func (s *Server) handleRequest(ctx context.Context, req *Request) error {
 	case MethodToolsList:
 		return s.handleToolsList(ctx, req)
 	case MethodToolsCall:
+		if s.waits != nil && s.isWaitRequest(req) {
+			return s.dispatchInboxWait(req)
+		}
 		return s.handleToolsCall(ctx, req)
 	case MethodPing:
 		return s.sendResult(req.ID, map[string]string{})
@@ -141,6 +170,11 @@ func (s *Server) handleNotification(_ context.Context, req *Request) error {
 	switch req.Method {
 	case MethodInitialized:
 		s.logger.Info("client initialized")
+		return nil
+	case MethodCancelled:
+		if s.waits != nil {
+			s.waits.cancelRequest(req.Params)
+		}
 		return nil
 	default:
 		s.logger.Debug("unknown notification", "method", req.Method)

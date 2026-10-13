@@ -158,7 +158,8 @@ func storedDeferUntil(until *time.Time) any {
 func (s *Store) WakeDeferredNode(ctx context.Context, id string, now time.Time) (bool, error) {
 	nowStr := now.UTC().Format(time.RFC3339)
 	woken := false
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	// The wake pass is automatic, so its history entries have origin system.
+	err := s.withHistoryTx(ctx, historyScope{id: id, actor: "system", origin: model.HistoryOriginSystem}, func(tx *sql.Tx) error {
 		var due int
 		// Is the node still deferred with a wake time at or before now?
 		// Both sides are UTC RFC 3339 text in whole seconds.

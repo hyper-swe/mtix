@@ -9,8 +9,9 @@ package sqlite
 // removed task and a redaction can arrive before its entry).
 //
 // Entry shape (model.HistoryEntry): entry_id is an immutable ULID; task_uid is
-// the task's durable uid (its id for a legacy task with none); ts is the
-// injected clock in UTC RFC 3339; actor and origin (local|import|hub|system)
+// the task's durable uid (its id for a legacy task with none: a known limit
+// until MTIX-95.31.19.3 rewrites task_uid on uid backfill and renumber); ts is
+// the injected clock in fixed-width UTC with nanoseconds, so it sorts as text; actor and origin (local|import|hub|system)
 // say who and where; kind is change|redaction|retention_drop; field names the
 // changed field; old_value and new_value are JSON text for a structured field
 // (SQL NULL = absent, the text 'null' = explicit null) and always SQL NULL for

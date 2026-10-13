@@ -72,19 +72,15 @@ const (
 	HistoryFieldStructured
 )
 
-// structuredHistoryFields is the explicit registry of fields that keep values
-// (ADR-006 A3 parent contract). A field is added here only after it is
-// classified as structured; free text is never added.
-var structuredHistoryFields = map[string]struct{}{
-	"status": {}, "assignee": {}, "priority": {}, "labels": {}, "node_type": {},
-	"issue_type": {}, "parent": {}, "defer_until": {}, "deleted_at": {}, "agent_state": {},
-}
-
-// HistoryFieldClassOf returns how a field is recorded. Unknown fields are
-// value-free, so a future free-text field is safe by default.
+// HistoryFieldClassOf returns how a field is recorded. Only the explicit
+// structured fields keep values (ADR-006 A3 parent contract); every other
+// field, including every free-text field and any future one, is value-free.
 func HistoryFieldClassOf(field string) HistoryFieldClass {
-	if _, ok := structuredHistoryFields[field]; ok {
+	switch field {
+	case "status", "assignee", "priority", "labels", "node_type",
+		"issue_type", "parent", "defer_until", "deleted_at", "agent_state":
 		return HistoryFieldStructured
+	default:
+		return HistoryFieldValueFree
 	}
-	return HistoryFieldValueFree
 }

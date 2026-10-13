@@ -141,7 +141,7 @@ func TestTaskHistory_WritePaths_AppendOneEntryPerChangedField(t *testing.T) {
 			for _, r := range f.rows(t, tt.node) {
 				assert.Equal(t, "change", r.kind)
 				assert.Equal(t, "local", r.origin)
-				assert.Equal(t, "2026-10-13T09:00:00Z", r.ts)
+				assert.Equal(t, "2026-10-13T09:00:00.000000000Z", r.ts)
 				assert.NotEmpty(t, r.actor)
 			}
 		})

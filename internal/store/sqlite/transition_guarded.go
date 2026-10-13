@@ -22,7 +22,8 @@ import (
 func (s *Store) TransitionStatusFrom(
 	ctx context.Context, id string, expectedFrom, toStatus model.Status, reason, author string,
 ) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.2: withHistoryTx appends the task_history entries in this transaction.
+	return s.withHistoryTx(ctx, historyScope{id: id, actor: author}, func(tx *sql.Tx) error {
 		current, _, err := readNodeStatus(ctx, tx, id)
 		if err != nil {
 			return err
@@ -44,7 +45,7 @@ func (s *Store) TransitionStatusFrom(
 // ErrNotFound if it does not exist or is soft-deleted.
 func (s *Store) RestoreInvalidated(ctx context.Context, id, author string) (model.Status, error) {
 	restoreTo := model.StatusOpen
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withHistoryTx(ctx, historyScope{id: id, actor: author}, func(tx *sql.Tx) error {
 		// Read status and previous_status in the write transaction, so a
 		// concurrent cancel or restore is seen before the restore is decided.
 		var status string

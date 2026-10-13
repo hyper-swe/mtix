@@ -18,24 +18,59 @@ import (
 
 // historyScope names the tasks a write may change: the task, and with
 // cascade its descendants. Actor is the explicit author, or empty to resolve
-// the default author as emitted events do (MTIX-24).
+// the default author as emitted events do (MTIX-24). Origin defaults to local.
 type historyScope struct {
 	id      string
 	cascade bool
 	actor   string
+	origin  model.HistoryOrigin
 }
 
-// historyColumns maps each recorded history field to its nodes column.
-// Free-text fields are listed so a change is noticed; their values are never
-// stored (model.HistoryFieldClassOf).
-var historyColumns = map[string]string{
-	"title": "title", "description": "description", "prompt": "prompt",
-	"acceptance": "acceptance", "annotations": "annotations",
-	"status": "status", "assignee": "assignee", "priority": "priority",
-	"labels": "labels", "node_type": "node_type", "issue_type": "issue_type",
-	"parent": "parent_id", "defer_until": "defer_until",
-	"deleted_at": "deleted_at", "agent_state": "agent_state",
+// historyFieldNames returns the recorded history fields in the order of the
+// columns of historySnapshotSQL. Free-text fields are listed so a change is
+// noticed; their values are never stored (model.HistoryFieldClassOf).
+func historyFieldNames() []string {
+	return []string{
+		"acceptance", "agent_state", "annotations", "assignee", "defer_until",
+		"deleted_at", "description", "issue_type", "labels", "node_type",
+		"parent", "priority", "prompt", "status", "title",
+	}
 }
+
+// historyExcludedColumns names every nodes column that is deliberately not a
+// history field, with the reason (MTIX-95.31.19.2). A test requires every
+// nodes column to be recorded or listed here, so a new column cannot be
+// forgotten. Called, not cached, so no package state holds the list.
+func historyExcludedColumns() map[string]string {
+	return map[string]string{
+		"id": "identity", "uid": "identity", "project": "identity", "depth": "derived from id",
+		"seq": "derived from id", "creator": "set once at create", "created_at": "bookkeeping timestamp",
+		"updated_at": "bookkeeping timestamp", "closed_at": "derived from status", "progress": "derived rollup",
+		"content_hash": "derived", "activity": "own stream (ActivityEntry)", "previous_status": "bookkeeping of status",
+		"invalidated_at": "derived from status", "invalidated_by": "derived from status",
+		"invalidation_reason": "free text, covered by status", "estimate_min": "A2: effort fields", "actual_min": "A2: effort fields",
+		"weight": "A2: effort fields", "code_refs": "A2: reference lists", "commit_refs": "A2: reference lists",
+		"metadata": "A2: free-form map", "session_id": "bookkeeping", "deleted_by": "covered by deleted_at",
+	}
+}
+
+// historySnapshotSQL reads the recorded columns of one task, soft-deleted
+// rows included so delete and undelete are seen. Primary-key lookup. The
+// column order is historyFieldNames, with parent read from parent_id.
+const historySnapshotSQL = `SELECT id, COALESCE(uid, ''),
+	acceptance, agent_state, annotations, assignee, defer_until,
+	deleted_at, description, issue_type, labels, node_type,
+	parent_id, priority, prompt, status, title
+	FROM nodes WHERE id = ?`
+
+// historySubtreeSQL reads the same columns for the descendants of a task, as
+// an id range (">= prefix." and "< prefix/", '/' being '.' + 1) so the primary
+// key index serves it; a LIKE pattern would scan the table.
+const historySubtreeSQL = `SELECT id, COALESCE(uid, ''),
+	acceptance, agent_state, annotations, assignee, defer_until,
+	deleted_at, description, issue_type, labels, node_type,
+	parent_id, priority, prompt, status, title
+	FROM nodes WHERE id >= ? AND id < ?`
 
 // historySnapshot is the recorded field values of one task.
 type historySnapshot struct {
@@ -60,27 +95,30 @@ func (s *Store) withHistoryTx(ctx context.Context, scope historyScope, fn func(t
 	})
 }
 
-// snapshotTasks reads the recorded fields of the scoped tasks, soft-deleted
-// ones included, keyed by node id.
+// snapshotTasks reads the recorded fields of the scoped tasks keyed by node
+// id: one primary-key lookup, plus one indexed range read when cascading.
 func snapshotTasks(ctx context.Context, tx *sql.Tx, scope historyScope) (map[string]historySnapshot, error) {
-	names := historyFieldNames()
-	cols := ""
-	for _, n := range names {
-		cols += ", " + historyColumns[n]
+	out := map[string]historySnapshot{}
+	if err := readSnapshots(ctx, tx, out, historySnapshotSQL, scope.id); err != nil {
+		return nil, err
 	}
-	// Read the scoped tasks (the task, plus its descendants on cascade) with
-	// every recorded column; deleted rows are included so delete and undelete
-	// are seen. Parameterized; the column list is a fixed registry.
-	rows, err := tx.QueryContext(ctx,
-		`SELECT id, COALESCE(uid, '')`+cols+` FROM nodes
-		 WHERE id = ? OR (? = 1 AND id LIKE ? ESCAPE '\')`,
-		scope.id, boolInt(scope.cascade), escapeLIKEPrefix(scope.id)+".%")
+	if scope.cascade {
+		if err := readSnapshots(ctx, tx, out, historySubtreeSQL, scope.id+".", scope.id+"/"); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// readSnapshots runs one of the fixed snapshot statements into out.
+func readSnapshots(ctx context.Context, tx *sql.Tx, out map[string]historySnapshot, query string, args ...any) error {
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("snapshot history fields for %s: %w", scope.id, err)
+		return fmt.Errorf("snapshot history fields: %w", err)
 	}
 	defer func() { _ = rows.Close() }() //nolint:errcheck // read-only cursor, close error carries no data
 
-	out := map[string]historySnapshot{}
+	names := historyFieldNames()
 	for rows.Next() {
 		var id string
 		snap := historySnapshot{values: map[string]sql.NullString{}}
@@ -90,20 +128,20 @@ func snapshotTasks(ctx context.Context, tx *sql.Tx, scope historyScope) (map[str
 			dest = append(dest, &vals[i])
 		}
 		if err := rows.Scan(dest...); err != nil {
-			return nil, fmt.Errorf("scan history snapshot: %w", err)
+			return fmt.Errorf("scan history snapshot: %w", err)
 		}
 		for i, n := range names {
 			snap.values[n] = vals[i]
 		}
 		if snap.uid == "" {
-			snap.uid = id
+			snap.uid = id // known limit: a uid-less legacy task keys on its id until A2 rewrites it
 		}
 		out[id] = snap
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate history snapshot: %w", err)
+		return fmt.Errorf("iterate history snapshot: %w", err)
 	}
-	return out, nil
+	return nil
 }
 
 // recordHistory diffs the scoped tasks against before and appends the entries.
@@ -121,6 +159,9 @@ func (s *Store) recordHistory(ctx context.Context, tx *sql.Tx, scope historyScop
 	for _, id := range ids {
 		for _, e := range diffSnapshots(before[id], after[id]) {
 			e.Actor, e.Timestamp = actor, s.clock().UTC()
+			if scope.origin != "" {
+				e.Origin = scope.origin
+			}
 			if err := appendHistoryEntry(ctx, tx, e); err != nil {
 				return err
 			}
@@ -165,6 +206,10 @@ func jsonValue(v sql.NullString) *string {
 	return &text
 }
 
+// historyTimeLayout is fixed-width UTC with nanoseconds, so ts sorts as text
+// and entries written in one second keep their order.
+const historyTimeLayout = "2006-01-02T15:04:05.000000000Z"
+
 // appendHistoryEntry mints the entry id and inserts the row.
 func appendHistoryEntry(ctx context.Context, tx *sql.Tx, e model.HistoryEntry) error {
 	id, err := ulid.New(ulid.Timestamp(e.Timestamp), rand.Reader)
@@ -175,26 +220,9 @@ func appendHistoryEntry(ctx context.Context, tx *sql.Tx, e model.HistoryEntry) e
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO task_history (entry_id, task_uid, ts, actor, origin, kind, field, old_value, new_value, event_id)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''))`,
-		id.String(), e.TaskUID, e.Timestamp.Format("2006-01-02T15:04:05Z"), e.Actor,
+		id.String(), e.TaskUID, e.Timestamp.UTC().Format(historyTimeLayout), e.Actor,
 		string(e.Origin), string(e.Kind), e.Field, e.Old, e.New, e.EventID); err != nil {
 		return fmt.Errorf("append history entry for %s: %w", e.TaskUID, err)
 	}
 	return nil
-}
-
-// historyFieldNames returns the recorded fields in a fixed order.
-func historyFieldNames() []string {
-	names := make([]string, 0, len(historyColumns))
-	for n := range historyColumns {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
-}
-
-func boolInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }

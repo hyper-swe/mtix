@@ -224,23 +224,52 @@ func TestAlertPrune_NonRateOrInvalidRecords_AreNeverRemoved(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(dir, alertRateName(first.Agent, first.Class)), "the genuine expired record is still removed")
 }
 
-func TestAlertPrune_ClosedDirectory_ReportsListingFailure(t *testing.T) {
+func TestAlertPrune_StateDirectoryAbsent_ReportsListingFailure(t *testing.T) {
 	s := alertFixture(t)
 	_, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
 	require.NoError(t, err)
 	dir, err := s.directory(false)
 	require.NoError(t, err)
-	require.NoError(t, closeFile(dir))
-	require.Error(t, s.pruneAlertRates(dir, "host", alertTime()))
+	t.Cleanup(func() { require.NoError(t, closeFile(dir)) })
+	absent := alertFixture(t)
+	require.Error(t, absent.pruneAlertRates(dir, "host", alertTime()))
 }
 
-func TestAlertPrune_ExactWindowBoundary_RemovesClosedRecord(t *testing.T) {
+func TestAlertPrune_SecondCallOnSameHandle_ListsAgain(t *testing.T) {
 	s := alertFixture(t)
 	first, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
 	require.NoError(t, err)
-	other := alertInput()
-	other.Agent = "other-agent"
-	_, err = s.RecordAlert(t.Context(), other, alertTime().Add(time.Hour))
+	dir, err := s.directory(false)
 	require.NoError(t, err)
-	require.NoFileExists(t, filepath.Join(mustPath(t, s), alertRateName(first.Agent, first.Class)), "a window closes exactly one hour after it opened")
+	t.Cleanup(func() { require.NoError(t, closeFile(dir)) })
+	later := alertTime().Add(2 * time.Hour)
+	require.NoError(t, s.pruneAlertRates(dir, first.HostID, later))
+	require.NoFileExists(t, filepath.Join(mustPath(t, s), alertRateName(first.Agent, first.Class)))
+	stale := first
+	stale.Agent = "second-agent"
+	require.NoError(t, s.writeAlertRecord(dir, alertRateName(stale.Agent, stale.Class), stale.HostID, stale))
+	require.NoError(t, s.pruneAlertRates(dir, first.HostID, later))
+	require.NoFileExists(t, filepath.Join(mustPath(t, s), alertRateName(stale.Agent, stale.Class)), "a shared handle must not turn the second listing into a silent no-op")
+}
+
+func TestAlertRaise_RateGoesMissingMidWindow_WarnsAndCountsFresh(t *testing.T) {
+	s := alertFixture(t)
+	row, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(mustPath(t, s), alertRateName(row.Agent, row.Class))))
+	warnings := captureWarnings(t)
+	fresh, err := s.RecordAlert(t.Context(), alertInput(), alertTime().Add(time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), fresh.Count)
+	require.Contains(t, warnings.String(), "operator alert rate record missing")
+}
+
+func TestAlertRaise_NoPriorRow_DoesNotWarnAboutMissingRate(t *testing.T) {
+	s := alertFixture(t)
+	warnings := captureWarnings(t)
+	_, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	_, err = s.RecordAlert(t.Context(), alertInput(), alertTime().Add(2*time.Hour))
+	require.NoError(t, err)
+	require.Empty(t, warnings.String())
 }

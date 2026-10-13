@@ -3,6 +3,7 @@
 package oplocal
 
 import (
+	"log/slog"
 	"math"
 	"os"
 	"time"
@@ -64,4 +65,19 @@ func validateAcceptedAlertTransition(previous, row Alert) error {
 		return invalid("accepted alert predates rate state")
 	}
 	return nil
+}
+
+// warnMissingAlertRate reports a retained row whose window is still open
+// although its rate record is gone (pruned, lost or a clock step back). The
+// occurrence is still counted as a fresh window; the warning makes the
+// restarted count visible instead of refusing the alert.
+func warnMissingAlertRate(input Alert, now time.Time, segments [3]alertSegment) {
+	for _, segment := range segments {
+		for _, row := range segment.rows {
+			if row.Agent == input.Agent && row.Class == input.Class && now.Before(row.FirstAt.Add(time.Hour)) {
+				slog.Warn("operator alert rate record missing; count restarts", "class", input.Class)
+				return
+			}
+		}
+	}
 }

@@ -18,9 +18,16 @@ import (
 // prefix is an equivalent mutation. Cleanup is best effort for the caller.
 // Records that cannot be read or validated are left in place: the normal
 // read paths refuse them visibly and deleting unknown data is never safe.
-func (s *State) pruneAlertRates(dir *os.File, host string, now time.Time) error {
-	entries, err := dir.ReadDir(-1)
+func (s *State) pruneAlertRates(dir *os.File, host string, now time.Time) (err error) {
+	// A directory handle yields its entries once, so listing uses a fresh
+	// handle and never consumes the caller's shared one.
+	listing, err := s.directory(false)
 	if err != nil {
+		return err
+	}
+	defer closeWith(listing, &err)
+	entries, err := listing.ReadDir(-1)
+	if err != nil { // a fresh verified handle failing to list is not reproducible in tests
 		return failure("alert rate listing failed", err)
 	}
 	var pruneErr error

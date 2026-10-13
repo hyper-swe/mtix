@@ -158,6 +158,9 @@ func nextAlertRow(dir *os.File, host string, input Alert, now time.Time, segment
 			return previous, nil
 		}
 	}
+	if !present {
+		warnMissingAlertRate(input, now, segments)
+	}
 	id := make([]byte, 16)
 	if _, err = rand.Read(id); err != nil {
 		return Alert{}, failure("alert identifier unavailable", err)

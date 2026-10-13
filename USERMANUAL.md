@@ -2401,6 +2401,24 @@ review. An eligible refusal is recorded and later runs do not retry conversion;
 an agent session defers it without recording an attempt. New `mtix init`
 projects exclude `.mtix/hooks.trust` in `.gitignore`.
 
+An approved exec hook launches from the project root, whatever the working
+directory of the process that dispatches it. Each existing project file named
+as the program or its first operand runs as a private copy made from the same
+bytes that were checked against the approval; the copy's path is `$0`, and the
+original path is in `MTIX_HOOK_SCRIPT_PATH`. Copies live in the `exec-copies`
+directory inside the operator state directory, one directory per content and
+executable bit. File mode is not part of the
+approval: after `chmod` on the original, the next launch uses a matching copy
+with no new review. Scripts must not locate sibling files relative to `$0`;
+use paths from the project root. A script that differs from its approval at
+launch time starts nothing and is logged as an error, and so does a project
+path in those positions that had no regular file at approval time: create the
+file and approve the hook again. A bare program name, such as `python3`, is
+resolved to an absolute path at launch and recorded in the hook log; a name
+that resolves to a file inside the project is refused, so name that script by
+its project path. Programs outside the project are not part of the approval,
+so upgrading an interpreter needs no new review.
+
 ### Conflict handling
 
 When two teammates edit the same field concurrently, Last-Write-Wins

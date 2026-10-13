@@ -31,6 +31,11 @@ const defaultExecTimeout = 30 * time.Second
 // it); the fabric's true success signal is the inbox getting acked. The child
 // runs in its own session, so it survives an ephemeral CLI parent exiting.
 //
+// The launch runs a PreparedExec plan (Delivery.Exec): the project root as the
+// working directory and verified private copies of the approved scripts, with
+// the original path in MTIX_HOOK_SCRIPT_PATH. A delivery without a plan starts
+// nothing.
+//
 // The dispatcher checks this hook's operator-local approval and host dispatch
 // policy before delivery (FR-19). The adapter receives an approved hook stanza.
 type ExecAdapter struct{}
@@ -49,6 +54,10 @@ func (a *ExecAdapter) Deliver(_ context.Context, d Delivery) error {
 	if cfg == nil || len(cfg.Command) == 0 {
 		return fmt.Errorf("exec adapter: hook %q has no command", d.Hook.Name)
 	}
+	plan := d.Exec
+	if plan == nil || len(plan.Argv) == 0 {
+		return fmt.Errorf("exec adapter: hook %q has no verified launch plan", d.Hook.Name)
+	}
 	timeout := time.Duration(cfg.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = defaultExecTimeout
@@ -60,17 +69,19 @@ func (a *ExecAdapter) Deliver(_ context.Context, d Delivery) error {
 	// Deliberately NOT CommandContext: the child must survive dispatch/daemon
 	// context cancellation and an ephemeral parent's exit (own session below);
 	// the best-effort timeout below is the only kill switch.
-	cmd := exec.Command(cfg.Command[0], cfg.Command[1:]...) //nolint:noctx // detached by design (MTIX-56.9): ctx cancellation must not kill an in-flight wake
+	cmd := exec.Command(plan.Argv[0], plan.Argv[1:]...) //nolint:noctx // detached by design (MTIX-56.9): ctx cancellation must not kill an in-flight wake
 	// MTIX_HOOK_ORIGIN lets any mtix mutation the command runs stamp its events
 	// with this hook's name, so they never re-trigger it (loop prevention, 47.7).
+	cmd.Dir = plan.Dir
 	cmd.Env = append(cmd.Environ(),
+		"MTIX_HOOK_SCRIPT_PATH="+plan.ScriptPath,
 		"MTIX_EVENT="+string(d.EventJSON),
 		"MTIX_HOOK_ORIGIN="+d.Hook.Name)
 	cmd.Stdin = bytes.NewReader(d.EventJSON)
 	cmd.SysProcAttr = detachedSysProcAttr() // own session: parent exit never kills the wake
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("exec adapter: hook %q spawn %v failed: %w", d.Hook.Name, cfg.Command, err)
+		return fmt.Errorf("exec adapter: hook %q spawn %v failed: %w", d.Hook.Name, plan.Argv, err)
 	}
 
 	// Best-effort supervision while THIS process lives: enforce the timeout

@@ -91,6 +91,7 @@ func scrubDoctorReport(r DoctorReport) DoctorReport {
 	for i, c := range r.Checks {
 		c.Detail = scrubSyncText(c.Detail)
 		c.Fix = scrubSyncText(c.Fix)
+		c.Recent = scrubRecentAlerts(c.Recent)
 		checks[i] = c
 	}
 	r.Checks = checks

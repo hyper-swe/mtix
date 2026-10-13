@@ -1,0 +1,275 @@
+// Copyright 2025-2026 HyperSWE
+// SPDX-License-Identifier: Apache-2.0
+
+// Tests that operator alert rate records stay bounded and text guards hold.
+package oplocal
+
+import (
+	"bytes"
+	"errors"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/model"
+)
+
+func rateRecordNames(t *testing.T, s *State) []string {
+	t.Helper()
+	dir, err := s.Path()
+	require.NoError(t, err)
+	names, err := filepath.Glob(filepath.Join(dir, "alert-rate-*.json"))
+	require.NoError(t, err)
+	return names
+}
+
+func TestAlertRaise_ExpiredRateRecords_ArePruned(t *testing.T) {
+	s := alertFixture(t)
+	stale := alertInput()
+	_, err := s.RecordAlert(t.Context(), stale, alertTime())
+	require.NoError(t, err)
+	live := alertInput()
+	live.Class = AlertClassWakeBackoff
+	_, err = s.RecordAlert(t.Context(), live, alertTime().Add(30*time.Minute))
+	require.NoError(t, err)
+	require.Len(t, rateRecordNames(t, s), 2, "both windows are still open")
+
+	later := alertTime().Add(time.Hour + 31*time.Minute)
+	third := alertInput()
+	third.Agent = "other-agent"
+	_, err = s.RecordAlert(t.Context(), third, later)
+	require.NoError(t, err)
+
+	dir, err := s.Path()
+	require.NoError(t, err)
+	require.NoFileExists(t, filepath.Join(dir, alertRateName(stale.Agent, stale.Class)), "expired record is removed")
+	require.NoFileExists(t, filepath.Join(dir, alertRateName(live.Agent, live.Class)), "second expired record is removed")
+	require.FileExists(t, filepath.Join(dir, alertRateName(third.Agent, third.Class)), "current record stays")
+	rows, err := s.RecentAlerts(t.Context(), 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 3, "pruning never drops retained diagnostics")
+}
+
+func TestAlertRaise_UnexpiredRateRecord_SurvivesPrune(t *testing.T) {
+	s := alertFixture(t)
+	_, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	other := alertInput()
+	other.Agent = "other-agent"
+	_, err = s.RecordAlert(t.Context(), other, alertTime().Add(time.Hour-time.Nanosecond))
+	require.NoError(t, err)
+	require.Len(t, rateRecordNames(t, s), 2)
+	again, err := s.RecordAlert(t.Context(), alertInput(), alertTime().Add(time.Hour-time.Nanosecond))
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), again.Count)
+}
+
+func TestAlertPrune_UnreadableRateRecord_IsLeftForVisibleRefusal(t *testing.T) {
+	s := alertFixture(t)
+	_, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	dir, err := s.Path()
+	require.NoError(t, err)
+	foreign := filepath.Join(dir, "alert-rate-00000000000000000000000000000000.json")
+	require.NoError(t, os.WriteFile(foreign, []byte("not json"), 0o600))
+	other := alertInput()
+	other.Agent = "other-agent"
+	_, err = s.RecordAlert(t.Context(), other, alertTime().Add(2*time.Hour))
+	require.NoError(t, err)
+	require.FileExists(t, foreign, "unreadable records are never deleted blindly")
+}
+
+func TestAlertRaise_FormatCharactersInDetailAndFix_AreRefused(t *testing.T) {
+	for _, tc := range []struct{ name, text string }{{"bidi override", "safe\u202etext"}, {"zero width space", "safe\u200btext"}} {
+		for _, field := range []string{"detail", "fix"} {
+			t.Run(tc.name+" in "+field, func(t *testing.T) {
+				s := alertFixture(t)
+				in := alertInput()
+				if field == "detail" {
+					in.Detail = tc.text
+				} else {
+					in.Fix = tc.text
+				}
+				_, err := s.RecordAlert(t.Context(), in, alertTime())
+				require.ErrorIs(t, err, model.ErrInvalidInput)
+				dir, pathErr := s.Path()
+				require.NoError(t, pathErr)
+				_, err = os.Stat(dir)
+				require.ErrorIs(t, err, os.ErrNotExist, "refusal creates no state")
+			})
+		}
+	}
+}
+
+func TestRemoveData_ExistingAndAbsentRecord_ReportsOutcome(t *testing.T) {
+	s := alertFixture(t)
+	_, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	dir, err := s.directory(false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, closeFile(dir)) })
+	name := alertRateName(alertInput().Agent, alertInput().Class)
+	require.NoError(t, removeData(dir, name))
+	require.ErrorIs(t, removeData(dir, name), os.ErrNotExist)
+	path, err := s.Path()
+	require.NoError(t, err)
+	require.NoFileExists(t, filepath.Join(path, name))
+}
+
+func TestAlertRaise_BackwardClockAfterPrune_CountsFresh(t *testing.T) {
+	s := alertFixture(t)
+	first, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	other := alertInput()
+	other.Agent = "other-agent"
+	_, err = s.RecordAlert(t.Context(), other, alertTime().Add(2*time.Hour))
+	require.NoError(t, err)
+	require.NoFileExists(t, filepath.Join(mustPath(t, s), alertRateName(first.Agent, first.Class)))
+	back, err := s.RecordAlert(t.Context(), alertInput(), alertTime().Add(30*time.Minute))
+	require.NoError(t, err, "a clock step back must not refuse the occurrence")
+	require.Equal(t, uint64(1), back.Count)
+	again, err := s.RecordAlert(t.Context(), alertInput(), alertTime().Add(40*time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), again.Count)
+	require.Equal(t, back.ID, again.ID)
+}
+
+func mustPath(t *testing.T, s *State) string {
+	t.Helper()
+	dir, err := s.Path()
+	require.NoError(t, err)
+	return dir
+}
+
+func captureWarnings(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var out bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&out, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	return &out
+}
+
+func TestAlertRaise_PruneFailure_KeepsDurableOccurrenceAndWarns(t *testing.T) {
+	s := alertFixture(t)
+	_, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	warnings := captureWarnings(t)
+	s.alertStage = func(stage string) error {
+		if strings.HasPrefix(stage, "prune:") {
+			return errors.New("injected removal failure")
+		}
+		return nil
+	}
+	other := alertInput()
+	other.Agent = "other-agent"
+	row, err := s.RecordAlert(t.Context(), other, alertTime().Add(2*time.Hour))
+	require.NoError(t, err, "cleanup failure never fails a durable occurrence")
+	require.Equal(t, uint64(1), row.Count)
+	require.Contains(t, warnings.String(), "operator alert cleanup failed")
+	require.FileExists(t, filepath.Join(mustPath(t, s), alertRateName(alertInput().Agent, alertInput().Class)))
+	rows, err := s.RecentAlerts(t.Context(), 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 2)
+}
+
+func TestAlertPrune_RecordVanishesBeforeRemoval_IsTolerated(t *testing.T) {
+	s := alertFixture(t)
+	_, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	warnings := captureWarnings(t)
+	dir := mustPath(t, s)
+	s.alertStage = func(stage string) error {
+		if strings.HasPrefix(stage, "prune:") {
+			return os.Remove(filepath.Join(dir, strings.TrimPrefix(stage, "prune:")))
+		}
+		return nil
+	}
+	other := alertInput()
+	other.Agent = "other-agent"
+	_, err = s.RecordAlert(t.Context(), other, alertTime().Add(2*time.Hour))
+	require.NoError(t, err)
+	require.Empty(t, warnings.String(), "an already-removed record is not a failure")
+}
+
+func TestAlertPrune_NonRateOrInvalidRecords_AreNeverRemoved(t *testing.T) {
+	s := alertFixture(t)
+	first, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	dir := mustPath(t, s)
+	host := first.HostID
+	copyName := "alert-rate-ffffffffffffffffffffffffffffffff.json"
+	invalid := first
+	invalid.Count = 0
+	invalid.Agent, invalid.Class = "invalid-agent", AlertClassWakeBackoff
+	invalidName := alertRateName(invalid.Agent, invalid.Class)
+	handle, err := s.directory(false)
+	require.NoError(t, err)
+	require.NoError(t, s.writeAlertRecord(handle, copyName, host, first))
+	require.NoError(t, s.writeAlertRecord(handle, invalidName, host, invalid))
+	require.NoError(t, s.writeAlertRecord(handle, "alert-other.json", host, first))
+	require.NoError(t, closeFile(handle))
+	other := alertInput()
+	other.Agent = "other-agent"
+	_, err = s.RecordAlert(t.Context(), other, alertTime().Add(2*time.Hour))
+	require.NoError(t, err)
+	require.FileExists(t, filepath.Join(dir, copyName), "valid JSON under the wrong name is not a rate record")
+	require.FileExists(t, filepath.Join(dir, invalidName), "an invalid record is left for visible refusal")
+	require.FileExists(t, filepath.Join(dir, "alert-other.json"), "only alert-rate files are considered")
+	require.NoFileExists(t, filepath.Join(dir, alertRateName(first.Agent, first.Class)), "the genuine expired record is still removed")
+}
+
+func TestAlertPrune_StateDirectoryAbsent_ReportsListingFailure(t *testing.T) {
+	s := alertFixture(t)
+	_, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	dir, err := s.directory(false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, closeFile(dir)) })
+	absent := alertFixture(t)
+	require.Error(t, absent.pruneAlertRates(dir, "host", alertTime()))
+}
+
+func TestAlertPrune_SecondCallOnSameHandle_ListsAgain(t *testing.T) {
+	s := alertFixture(t)
+	first, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	dir, err := s.directory(false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, closeFile(dir)) })
+	later := alertTime().Add(2 * time.Hour)
+	require.NoError(t, s.pruneAlertRates(dir, first.HostID, later))
+	require.NoFileExists(t, filepath.Join(mustPath(t, s), alertRateName(first.Agent, first.Class)))
+	stale := first
+	stale.Agent = "second-agent"
+	require.NoError(t, s.writeAlertRecord(dir, alertRateName(stale.Agent, stale.Class), stale.HostID, stale))
+	require.NoError(t, s.pruneAlertRates(dir, first.HostID, later))
+	require.NoFileExists(t, filepath.Join(mustPath(t, s), alertRateName(stale.Agent, stale.Class)), "a shared handle must not turn the second listing into a silent no-op")
+}
+
+func TestAlertRaise_RateGoesMissingMidWindow_WarnsAndCountsFresh(t *testing.T) {
+	s := alertFixture(t)
+	row, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(mustPath(t, s), alertRateName(row.Agent, row.Class))))
+	warnings := captureWarnings(t)
+	fresh, err := s.RecordAlert(t.Context(), alertInput(), alertTime().Add(time.Minute))
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), fresh.Count)
+	require.Contains(t, warnings.String(), "operator alert rate record missing")
+}
+
+func TestAlertRaise_NoPriorRow_DoesNotWarnAboutMissingRate(t *testing.T) {
+	s := alertFixture(t)
+	warnings := captureWarnings(t)
+	_, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	_, err = s.RecordAlert(t.Context(), alertInput(), alertTime().Add(2*time.Hour))
+	require.NoError(t, err)
+	require.Empty(t, warnings.String())
+}

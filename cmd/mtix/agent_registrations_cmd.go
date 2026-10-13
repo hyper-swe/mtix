@@ -7,7 +7,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -163,10 +162,5 @@ func dash(s string) string {
 }
 
 func printJSON(v any) error {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Errorf("encode output: %w", err)
-	}
-	fmt.Println(string(data))
-	return nil
+	return NewOutputWriter(true).WriteJSON(v)
 }

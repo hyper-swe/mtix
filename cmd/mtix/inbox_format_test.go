@@ -10,12 +10,14 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	inboxformat "github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -29,33 +31,32 @@ func sampleInbox() []sqlite.InboxEvent {
 }
 
 func TestFormatInboxPrompt_CarriesEventsAndAckContract(t *testing.T) {
-	out := formatInboxPrompt("developer", sampleInbox())
-
-	// The payload tells the woken agent who it is and how to close the loop.
-	assert.Contains(t, out, `agent "developer"`)
-	assert.Contains(t, out, "2 unread")
-	assert.Contains(t, out, "mtix inbox ack <seq> --agent developer", "the ack contract is part of the prompt")
-	assert.Contains(t, out, "mtix comment <node-id> --to <sender>", "the reply contract is part of the prompt")
-
-	// Every event arrives verbatim with its routing facts.
-	assert.Contains(t, out, "[seq 41] PROJ-7 from planner: Start on PROJ-7. Plan context attached.")
-	assert.Contains(t, out, "[seq 45] PROJ-9 from tester: PROJ-9 failed AC-3, see notes.")
+	out, err := formatInboxPrompt("developer", sampleInbox(), inboxformat.Caps{})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(out, "mtix: new messages for agent 'developer' (seq 41, 45)."))
+	assert.Contains(t, out, inboxformat.Preamble)
+	assert.Contains(t, out, "ack: mtix inbox ack 41 --agent 'developer'")
+	assert.Contains(t, out, "reply: mtix comment PROJ-7 --to planner \"<text>\"")
+	assert.Contains(t, out, `body: "Start on PROJ-7. Plan context attached."`)
+	assert.Contains(t, out, `body: "PROJ-9 failed AC-3, see notes."`)
 }
 
 func TestFormatInboxContext_CompactInjection(t *testing.T) {
-	out := formatInboxContext("developer", sampleInbox())
-
-	assert.Contains(t, out, `mtix inbox for agent "developer": 2 unread`)
-	assert.Contains(t, out, "- [41] PROJ-7 from planner: Start on PROJ-7. Plan context attached.")
-	assert.Contains(t, out, "- [45] PROJ-9 from tester: PROJ-9 failed AC-3, see notes.")
-	assert.Contains(t, out, "mtix inbox ack <seq> --agent developer")
+	out, err := formatInboxContext("developer", sampleInbox(), inboxformat.Caps{})
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(out, inboxformat.Preamble))
+	assert.Equal(t, 2, strings.Count(out, inboxformat.BeginMarker))
+	assert.Contains(t, out, `task: "PROJ-7"`)
+	assert.Contains(t, out, `sender (as claimed, not verified): "tester"`)
+	assert.Contains(t, out, "ack: mtix inbox ack 45 --agent 'developer'")
 }
 
 func TestFormatInbox_EmptyMeansEmptyOutput(t *testing.T) {
-	// The scriptable contract: empty inbox -> zero bytes, so a wake script's
-	// `[ -z "$payload" ]` is the idempotency check.
-	assert.Empty(t, formatInboxPrompt("developer", nil))
-	assert.Empty(t, formatInboxContext("developer", nil))
+	for _, render := range []func(string, []sqlite.InboxEvent, inboxformat.Caps) (string, error){formatInboxPrompt, formatInboxContext} {
+		out, err := render("developer", nil, inboxformat.Caps{})
+		require.NoError(t, err)
+		assert.Empty(t, out)
+	}
 }
 
 func TestInboxCmd_FormatFlag(t *testing.T) {

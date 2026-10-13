@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestScriptOperandIndex(t *testing.T) {
+func TestScriptOperand(t *testing.T) {
 	cases := []struct {
 		command []string
 		want    int
@@ -22,26 +22,76 @@ func TestScriptOperandIndex(t *testing.T) {
 		{[]string{"scripts/run.sh"}, 0},
 		{[]string{"sh", "run.sh"}, 1},
 		{[]string{"sh", "-e", "run.sh"}, 2},
+		{[]string{"sh", "-ex", "run.sh"}, 2},
+		{[]string{"sh", "+x", "run.sh"}, 2},
+		{[]string{"sh", "+ex", "run.sh"}, 2},
 		{[]string{"sh", "-o", "pipefail", "run.sh"}, 3},
+		{[]string{"sh", "+o", "pipefail", "run.sh"}, 3},
+		{[]string{"bash", "--norc", "--noprofile", "run.sh"}, 3},
 		{[]string{"bash", "--", "run.sh"}, 2},
 		{[]string{"env", "sh", "run.sh"}, 2},
-		{[]string{"env", "-u", "X", "A=b", "sh", "run.sh"}, 5},
+		{[]string{"env", "-i", "A=b", "-u", "X", "sh", "run.sh"}, 6},
+		{[]string{"env", "--", "sh", "run.sh"}, 3},
 		{[]string{"env", "./tool"}, 1},
 		{[]string{"/usr/bin/env", "python3", "-W", "ignore", "run.py"}, 4},
-		{[]string{"python3.12", "run.py"}, 1},
-		{[]string{"node", "-r", "mod", "run.js"}, 3},
-		{[]string{"perl", "run.pl"}, 1},
-		{[]string{"ruby", "run.rb"}, 1},
+		{[]string{"python3.12", "-B", "run.py"}, 2},
+		{[]string{"node", "--no-warnings", "run.js"}, 2},
+		{[]string{"perl", "-w", "run.pl"}, 2},
+		{[]string{"ruby", "-W2", "run.rb"}, 2},
 		{[]string{"zsh", "run.zsh"}, 1},
-		{[]string{"sh", "-c", "echo hi"}, -1},
-		{[]string{"sh", "-ec", "echo hi"}, -1},
-		{[]string{"python3", "-m", "pkg"}, -1},
-		{[]string{"node", "-e", "1"}, -1},
 		{[]string{"cat", "file"}, -1},
 		{[]string{"sh"}, -1},
 	}
 	for _, c := range cases {
-		require.Equal(t, c.want, scriptOperandIndex(c.command), strings.Join(c.command, " "))
+		got, err := scriptOperand(c.command)
+		require.NoError(t, err, strings.Join(c.command, " "))
+		require.Equal(t, c.want, got, strings.Join(c.command, " "))
+	}
+}
+
+func TestScriptOperand_UnknownOptionRefusedByName(t *testing.T) {
+	cases := []struct {
+		command []string
+		option  string
+	}{
+		{[]string{"bash", "--rcfile", "scripts/run.sh", "scripts/later.sh"}, "--rcfile"},
+		{[]string{"sh", "--init-file", "x", "later.sh"}, "--init-file"},
+		{[]string{"sh", "-c", "echo hi"}, "-c"},
+		{[]string{"bash", "-ec", "echo hi"}, "-ec"},
+		{[]string{"python3", "-c", "1"}, "-c"},
+		{[]string{"python3", "-m", "pkg"}, "-m"},
+		{[]string{"node", "-e", "1"}, "-e"},
+		{[]string{"node", "-r", "mod", "run.js"}, "-r"},
+		{[]string{"perl", "-e", "1"}, "-e"},
+		{[]string{"ruby", "-e", "1"}, "-e"},
+		{[]string{"env", "-P", "/bin", "sh", "later.sh"}, "-P"},
+		{[]string{"env", "-S", "sh later.sh"}, "-S"},
+		{[]string{"env", "-C", "/tmp", "sh", "x.sh"}, "-C"},
+		{[]string{"env", "-a", "name", "sh", "x.sh"}, "-a"},
+	}
+	for _, c := range cases {
+		_, err := scriptOperand(c.command)
+		require.Error(t, err, strings.Join(c.command, " "))
+		require.Contains(t, err.Error(), `"`+c.option+`"`, "the error names the option")
+	}
+}
+
+func TestApprove_UnknownOptionRefused(t *testing.T) {
+	for _, command := range []string{
+		"[bash, --rcfile, scripts/run.sh, scripts/later.sh]",
+		"[env, -P, /bin, sh, later.sh]",
+		"[env, -S, 'sh later.sh']",
+		"[sh, -c, echo hi]",
+	} {
+		t.Run(command, func(t *testing.T) {
+			f := newFixture(t, command, fixtureOptions{unapproved: true})
+			require.Error(t, f.approvals.Approve("wake", true), "the hook cannot be approved")
+			decisions, _ := f.approvals.Check()
+			require.False(t, decisions["wake"].Trusted)
+			plan, err := f.approvals.PrepareExec(f.hook(t))
+			require.Error(t, err)
+			require.Nil(t, plan)
+		})
 	}
 }
 
@@ -50,6 +100,7 @@ func TestPrepareExec_ScriptPositionAlwaysPinned(t *testing.T) {
 		"[scripts/later.sh]",
 		"[sh, scripts/later.sh]",
 		"[sh, -e, scripts/later.sh]",
+		"[sh, +x, scripts/later.sh]",
 		"[env, sh, scripts/later.sh]",
 		"[env, -u, FOO, A=b, sh, later.sh]",
 		"[sh, later.sh]",
@@ -67,8 +118,8 @@ func TestPrepareExec_ScriptPositionAlwaysPinned(t *testing.T) {
 func TestPrepareExec_ScriptPositionApprovedFileRuns(t *testing.T) {
 	for _, command := range []string{
 		"[sh, -o, pipefail, scripts/run.sh]",
+		"[sh, +x, scripts/run.sh]",
 		"[env, A=b, sh, scripts/run.sh]",
-		"[sh, -c, echo hi]",
 	} {
 		t.Run(command, func(t *testing.T) {
 			f := newPrepareFixture(t, command)
@@ -89,17 +140,37 @@ func TestPrepareExec_NonScriptOperandsPassUnchanged(t *testing.T) {
 	}
 }
 
-func TestPrepareExec_OptionValueFileIsPinned(t *testing.T) {
-	f := newPrepareFixture(t, "[cat, --config=scripts/run.sh]")
-	plan, err := f.approvals.PrepareExec(f.hook(t))
-	require.NoError(t, err)
-	require.True(t, strings.HasPrefix(plan.Argv[1], "--config="))
-	copyPath := strings.TrimPrefix(plan.Argv[1], "--config=")
-	require.NotEqual(t, f.script, copyPath)
-	require.FileExists(t, copyPath)
-	require.NoError(t, os.WriteFile(f.script, []byte("# edited\n"), 0o700))
-	_, err = f.approvals.PrepareExec(f.hook(t))
-	require.Error(t, err, "an edited option-value file needs a new approval")
+func TestPrepareExec_OptionAndEnvValueFilesArePinned(t *testing.T) {
+	for _, tc := range []struct{ command, prefix string }{
+		{"[cat, --config=scripts/run.sh]", "--config="},
+		{"[env, CONFIG=scripts/run.sh, cat]", "CONFIG="},
+	} {
+		t.Run(tc.prefix, func(t *testing.T) {
+			f := newPrepareFixture(t, tc.command)
+			plan, err := f.approvals.PrepareExec(f.hook(t))
+			require.NoError(t, err)
+			var pinned string
+			for _, arg := range plan.Argv {
+				if strings.HasPrefix(arg, tc.prefix) {
+					pinned = strings.TrimPrefix(arg, tc.prefix)
+				}
+			}
+			require.NotEmpty(t, pinned)
+			require.NotEqual(t, f.script, pinned)
+			require.FileExists(t, pinned)
+			require.NoError(t, os.WriteFile(f.script, []byte("# edited\n"), 0o700))
+			_, err = f.approvals.PrepareExec(f.hook(t))
+			require.Error(t, err, "an edited value file needs a new approval")
+		})
+	}
+}
+
+func TestPrepareExec_EnvValueNamingUnapprovedFileRefused(t *testing.T) {
+	f := newPrepareFixture(t, "[env, CONFIG=data/new.txt, sh, scripts/run.sh]")
+	require.NoError(t, os.Mkdir(filepath.Join(f.root, "data"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(f.root, "data", "new.txt"), []byte("new"), 0o600))
+	_, err := f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err)
 }
 
 func TestPrepareExec_ExistingUnapprovedOperandFileRefused(t *testing.T) {
@@ -124,6 +195,38 @@ func TestPrepareExec_OperandLinkIntoProjectRefused(t *testing.T) {
 	require.NoError(t, os.Symlink(g.script, link2))
 	_, err = g.approvals.PrepareExec(g.hook(t))
 	require.Error(t, err, "also in a non-script position")
+}
+
+func TestPrepareExec_DanglingOperandLinkIntoProjectRefused(t *testing.T) {
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	link := filepath.Join(outside, "link.sh")
+	f := newPrepareFixture(t, "[sh, "+link+"]")
+	require.NoError(t, os.Symlink(filepath.Join(f.root, "scripts", "later.sh"), link))
+	_, err = f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err, "a link to a project file that does not exist yet is refused")
+}
+
+func TestPrepareExec_LogicalRootPathsAreProjectPaths(t *testing.T) {
+	for _, command := range []string{
+		`[sh, "{L}/scripts/later.sh"]`,
+		`["{L}/scripts/later2.sh"]`,
+	} {
+		t.Run(command, func(t *testing.T) {
+			f := newFixture(t, command, fixtureOptions{linked: true})
+			plan, err := f.approvals.PrepareExec(f.hook(t))
+			require.Error(t, err, "an unapproved script reached through the entered path is refused")
+			require.Nil(t, plan)
+		})
+	}
+}
+
+func TestPrepareExec_LogicalRootApprovedScriptIsPinned(t *testing.T) {
+	f := newFixture(t, `[sh, "{L}/scripts/run.sh"]`, fixtureOptions{linked: true})
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err)
+	require.NotEqual(t, filepath.Join(f.logical, "scripts", "run.sh"), plan.Argv[1])
+	require.FileExists(t, plan.Argv[1])
 }
 
 func TestPrepareExec_PathLinkIntoProjectRefusedWithResolvedTarget(t *testing.T) {

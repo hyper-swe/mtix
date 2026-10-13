@@ -84,7 +84,7 @@ func (a *Approvals) approvedInputs(h Hook) (*hookInputs, string, error) {
 }
 
 func buildPlan(h Hook, in *hookInputs, root, copies string, st stager) (*ExecPlan, error) {
-	if err := checkOperands(h, in, root); err != nil {
+	if err := checkOperands(h, in); err != nil {
 		return nil, err
 	}
 	plan := &ExecPlan{Dir: root, Resolved: map[string]string{}}
@@ -103,7 +103,7 @@ func buildPlan(h Hook, in *hookInputs, root, copies string, st stager) (*ExecPla
 		resolved := arg
 		if i == 0 {
 			var err error
-			if resolved, err = launchProgram(h.Name, root, arg); err != nil {
+			if resolved, err = launchProgram(h.Name, in, arg); err != nil {
 				return nil, err
 			}
 			if resolved != arg {
@@ -117,12 +117,12 @@ func buildPlan(h Hook, in *hookInputs, root, copies string, st stager) (*ExecPla
 
 // launchProgram makes the program (index 0) absolute and refuses one that
 // resolves into the project.
-func launchProgram(hook, root, arg string) (string, error) {
-	resolved, err := resolveLauncher(root, arg)
+func launchProgram(hook string, in *hookInputs, arg string) (string, error) {
+	resolved, err := resolveLauncher(in.root, arg)
 	if err != nil {
 		return "", err
 	}
-	if target, inside := insideRoot(root, resolved); inside {
+	if target, _, inside := projectPath(in.logical, in.root, resolved); inside {
 		return "", fmt.Errorf("exec launch refused for hook %q: %q resolves to %q inside the project; name the script by its project path", hook, arg, target)
 	}
 	return resolved, nil

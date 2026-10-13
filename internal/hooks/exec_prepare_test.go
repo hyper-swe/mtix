@@ -23,40 +23,61 @@ import (
 const prepareScript = "#!/bin/sh\npwd -P > out.cwd\nprintf %s \"$0\" > out.zero\nprintf %s \"$MTIX_HOOK_SCRIPT_PATH\" > out.orig\ncat > out.stdin\n"
 
 type prepareFixture struct {
-	root, mtixDir, script string
-	state                 *oplocal.State
-	approvals             *Approvals
+	// root is the resolved project root; logical is the path the project is
+	// entered through (a link to root in linked fixtures, else root).
+	root, logical, mtixDir, script string
+	state                          *oplocal.State
+	approvals                      *Approvals
 }
 
-// newPrepareFixture builds an approved exec hook whose command is the given
-// argv template ("{script}" expands to the project script's relative path).
+type fixtureOptions struct {
+	extra      map[string]string // extra project files, written before approval
+	linked     bool              // enter the project through a symlink
+	unapproved bool              // do not approve the hook
+}
+
+// newPrepareFixture builds an approved exec hook with the given flow-style
+// command ("{L}" expands to the logical project root).
 func newPrepareFixture(t *testing.T, command string) prepareFixture {
 	t.Helper()
-	return newPrepareFixtureWith(t, command, nil)
+	return newFixture(t, command, fixtureOptions{})
 }
 
-// newPrepareFixtureWith also writes extra project files (path to content)
-// before the hook is approved.
 func newPrepareFixtureWith(t *testing.T, command string, extra map[string]string) prepareFixture {
+	t.Helper()
+	return newFixture(t, command, fixtureOptions{extra: extra})
+}
+
+func newFixture(t *testing.T, command string, opts fixtureOptions) prepareFixture {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	mtixDir := filepath.Join(root, ".mtix")
+	logical := root
+	if opts.linked {
+		parent, perr := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, perr)
+		logical = filepath.Join(parent, "entered")
+		require.NoError(t, os.Symlink(root, logical))
+	}
+	mtixDir := filepath.Join(logical, ".mtix")
 	require.NoError(t, os.Mkdir(mtixDir, 0o700))
 	require.NoError(t, os.Mkdir(filepath.Join(root, "scripts"), 0o700))
 	script := filepath.Join(root, "scripts", "run.sh")
 	require.NoError(t, os.WriteFile(script, []byte(prepareScript), 0o700))
-	for name, content := range extra {
+	for name, content := range opts.extra {
 		path := filepath.Join(root, name)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 		require.NoError(t, os.WriteFile(path, []byte(content), 0o700))
 	}
+	command = strings.ReplaceAll(command, "{L}", logical)
 	yaml := "hooks:\n  - name: wake\n    match: {events: [comment.addressed]}\n    deliver: [exec]\n    exec: {command: " + command + "}\n"
 	require.NoError(t, os.WriteFile(filepath.Join(mtixDir, "hooks.yaml"), []byte(yaml), 0o600))
 	state := testutil.OperatorState(t)
 	approvals := NewApprovals(mtixDir, state, false)
-	require.NoError(t, approvals.Approve("wake", true))
-	return prepareFixture{root: root, mtixDir: mtixDir, script: script, state: state, approvals: approvals}
+	if !opts.unapproved {
+		require.NoError(t, approvals.Approve("wake", true))
+	}
+	return prepareFixture{root: root, logical: logical, mtixDir: mtixDir, script: script, state: state, approvals: approvals}
 }
 
 func (f prepareFixture) hook(t *testing.T) Hook {

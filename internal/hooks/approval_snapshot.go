@@ -90,6 +90,10 @@ type legacyPart struct {
 
 // hookInputs is everything an approval digest covers, read once.
 type hookInputs struct {
+	// logical is the project root as entered, root the symlink-resolved one.
+	logical, root string
+	// script is the command index run as code, or -1.
+	script int
 	stanza string
 	digest string
 	legacy []legacyPart
@@ -118,7 +122,11 @@ func collectHookInputs(h Hook, logicalRoot, root string) (*hookInputs, error) {
 	}
 	digest := sha256.New()
 	digest.Write(own)
-	in := &hookInputs{stanza: string(own), scripts: map[int]scriptInput{}}
+	script, err := scriptOperand(h.Exec.Command)
+	if err != nil {
+		return nil, err
+	}
+	in := &hookInputs{logical: logicalRoot, root: root, script: script, stanza: string(own), scripts: map[int]scriptInput{}}
 	for i, arg := range h.Exec.Command {
 		value, prefix := splitOption(arg)
 		rel, inside, err := projectScriptLocation(logicalRoot, root, value)

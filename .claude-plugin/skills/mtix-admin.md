@@ -415,22 +415,34 @@ An approved exec hook launches from the project root, whatever the working
 directory of the process that dispatches it. Launch rules:
 
 - The script is always pinned. The program itself, or the first non-option
-  argument of `sh`, `bash`, `zsh`, `python`, `node`, `ruby` or `perl` (also
-  when reached through `env`, skipping its options and `NAME=VALUE` pairs), must
-  be a project file that was approved. If it is not approved, the launch is
-  refused, even when the file does not exist yet: create it and approve the
-  hook again. A command-string option such as `sh -c` has no script operand.
+  argument of `sh`, `bash`, `zsh`, `dash`, `ksh`, `ash`, `python`, `node`,
+  `ruby` or `perl` (also when reached through `env`), must be a project file
+  that was approved. If it is not approved, the launch is refused, even when
+  the file does not exist yet: create it and approve the hook again. Paths are
+  judged both as entered and after following links, so a link into the project
+  counts as a project path.
+- Options before the script must be in this list; anything else is refused when
+  the hook is approved and again at launch, because the script position is
+  never guessed. `sh`, `bash`, `zsh`, `dash`, `ksh`, `ash`: `-o NAME`,
+  `+o NAME`, `-O NAME`, `+O NAME`, `--posix`, `--noprofile`, `--norc`, and
+  clusters of `-` or `+` with the letters `a e f h m n u v x b C`. `python`:
+  `-W VALUE`, `-X VALUE`, and clusters of `-` with `B E I O q s S u v x`.
+  `node`: `--no-warnings`, `--enable-source-maps`, `--trace-warnings`,
+  `--no-deprecation`. `perl`: clusters of `-` with `w W T t`. `ruby`: `-w`,
+  `-W0`, `-W1`, `-W2`. `env`: `-i`, `-u NAME`, `--` and `NAME=VALUE`. Options
+  that run program text (`-c`, `-e`, `-m`) or load other code (`--rcfile`,
+  `--init-file`, `-r`, `-I`) are refused; put the logic in a script file.
 - Any other argument that names a project file at approval time, in any
-  position and including the value of `--opt=VALUE`, is pinned and replaced by
-  a private verified copy made from the bytes that were checked against the
-  approval. Pass output or data files that the hook writes through the
-  environment or stdin, not as project-file arguments. The copy's path is `$0`
-  for the script, and the original path is in `MTIX_HOOK_SCRIPT_PATH`.
+  position and including the value of `--opt=VALUE` or `NAME=VALUE`, is pinned
+  and replaced by a private verified copy made from the bytes that were checked
+  against the approval. Pass output or data files that the hook writes through
+  the environment or stdin, not as project-file arguments. The copy's path is
+  `$0` for the script, and the original path is in `MTIX_HOOK_SCRIPT_PATH`.
 - An argument that names an existing project file that was not approved is
   refused, and so is an argument outside the project that is a link to such a
-  file.
-- URLs, plain words and paths that do not exist pass unchanged unless they are
-  in the script position.
+  file, even a link whose target does not exist yet.
+- URLs, plain words, directories and paths that do not exist pass unchanged
+  unless they are in the script position.
 
 Copies live in the `exec-copies` directory inside the operator state
 directory, one directory per content and executable bit; they are not pruned

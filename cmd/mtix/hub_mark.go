@@ -44,13 +44,12 @@ func noteHubConnection(ctx context.Context, stderr io.Writer) {
 	if app.store == nil || app.mtixDir == "" {
 		return
 	}
-	svc := service.NewHubMarkService(app.store)
-	var err error
-	if os.Getenv(transport.EnvDSN) != "" {
-		_, err = svc.RecordEnvConnection(ctx)
-	} else {
-		_, err = svc.HubConnected(ctx, service.HubEvidence{SecretsDSN: true})
-	}
+	// The connect succeeded, so the DSN that was used counts as evidence now:
+	// the environment one, or else the secrets file (transport.Source order).
+	ev := collectHubEvidence()
+	ev.EnvDSNConnected = os.Getenv(transport.EnvDSN) != ""
+	ev.SecretsDSN = ev.SecretsDSN || !ev.EnvDSNConnected
+	_, err := service.NewHubMarkService(app.store).HubConnected(ctx, ev)
 	if err != nil {
 		fmt.Fprintf(stderr, "warning: could not record the hub-connected mark: %v\n", err)
 		return
@@ -120,24 +119,29 @@ func shouldReconcileHubMark(commandPath string) bool {
 	return false
 }
 
-// appendHubMarkCheck reports the sticky mark and its source (ADR-007 A9). It
-// only reads: inspection never writes the mark.
+// appendHubMarkCheck reports the sticky mark and its source (ADR-007 A9).
+// Evidence it finds (config keys, a secrets DSN, applied events) is stored
+// and mirrored, so what it reports as sticky is stored. An exported DSN
+// that never connected is not evidence.
 func appendHubMarkCheck(ctx context.Context, report DoctorReport) DoctorReport {
 	if app.store == nil {
 		return appendDoctorCheck(report, DoctorCheck{Name: "board.hub-mark", Pass: true, Warn: true,
 			Detail: "local store not initialized; the hub-connected mark was not read"})
 	}
-	status, err := service.NewHubMarkService(app.store).Inspect(ctx, collectHubEvidence())
+	status, err := service.NewHubMarkService(app.store).HubConnected(ctx, collectHubEvidence())
 	if err != nil {
 		return appendDoctorCheck(report, DoctorCheck{Name: "board.hub-mark",
-			Detail: fmt.Sprintf("cannot read the hub-connected mark: %v", err), Fix: "mtix sync doctor"})
+			Detail: fmt.Sprintf("cannot read or store the hub-connected mark: %v", err), Fix: "mtix sync doctor"})
 	}
 	if !status.Connected {
 		return appendDoctorCheck(report, DoctorCheck{Name: "board.hub-mark", Pass: true,
 			Detail: "hub-connected mark not set; no hub or relay evidence"})
 	}
-	return appendDoctorCheck(report, DoctorCheck{Name: "board.hub-mark", Pass: true,
-		Detail: "hub-connected mark set (source: " + status.Source + "); it is sticky and does not revert when config changes"})
+	detail := "hub-connected mark set (source: " + status.Source + "); it is stored and does not revert when config changes"
+	if mirrorErr := reconcileHubMarkMirror(); mirrorErr != nil {
+		detail += "; the operator-local copy could not be updated: " + mirrorErr.Error()
+	}
+	return appendDoctorCheck(report, DoctorCheck{Name: "board.hub-mark", Pass: true, Detail: detail})
 }
 
 // hubMarkConnected is the read-only answer of the hub mark: the stored mark,

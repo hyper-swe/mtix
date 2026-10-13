@@ -337,3 +337,72 @@ func TestResetHubMark_MirrorFailure_WarnsAfterStoreReset(t *testing.T) {
 	require.NoError(t, resetHubMark(context.Background(), &stderr))
 	assert.Contains(t, stderr.String(), "could not clear the hub-connected mirror")
 }
+
+// Config evidence is persisted by doctor and by the sync commands, so the
+// mark is sticky for it as well (ADR-007 §3.5): removing the keys later does
+// not unmark the board, a reset clears it, and fresh evidence marks again.
+func TestHubMark_ConfigEvidence_PersistsAndSurvivesKeyRemoval(t *testing.T) {
+	initTestApp(t)
+	t.Setenv(transport.EnvDSN, "")
+	state := identityOperatorState(t)
+	checkout := filepath.Dir(app.mtixDir)
+	ctx := context.Background()
+	stored := func() (bool, string) {
+		mark, err := app.store.HubMark(ctx)
+		require.NoError(t, err)
+		return mark.Set, mark.Source
+	}
+
+	set, _ := stored()
+	require.False(t, set)
+	_, err := app.configSvc.Set("sync.enabled", "true")
+	require.NoError(t, err)
+	check := hubMarkCheck(t)
+	assert.Contains(t, check.Detail, "source: config")
+	set, source := stored()
+	assert.True(t, set, "doctor persists the mark it reports as sticky")
+	assert.Equal(t, "config", source)
+	mirror, _, err := state.HubMarkMirror(checkout)
+	require.NoError(t, err)
+	assert.Equal(t, "config", mirror.Source, "the mirror follows the store")
+
+	// The keys go away; the mark stays.
+	_, err = app.configSvc.Set("sync.enabled", "false")
+	require.NoError(t, err)
+	assert.Contains(t, hubMarkCheck(t).Detail, "source: config")
+	set, _ = stored()
+	assert.True(t, set)
+
+	// A reset clears it and it stays cleared until fresh evidence appears.
+	require.NoError(t, resetHubMark(ctx, &bytes.Buffer{}))
+	assert.Contains(t, hubMarkCheck(t).Detail, "not set")
+	set, _ = stored()
+	assert.False(t, set)
+	_, err = app.configSvc.Set("sync.enabled", "true")
+	require.NoError(t, err)
+	assert.Contains(t, hubMarkCheck(t).Detail, "source: config")
+	set, _ = stored()
+	assert.True(t, set)
+}
+
+func TestNoteHubConnection_ConfigEvidenceAndEnvDSN_MarkWithConfigSource(t *testing.T) {
+	initTestApp(t)
+	_, err := app.configSvc.Set("sync.enabled", "true")
+	require.NoError(t, err)
+	t.Setenv(transport.EnvDSN, "")
+	noteHubConnection(context.Background(), &bytes.Buffer{})
+	mark, err := app.store.HubMark(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "config", mark.Source)
+}
+
+func TestHubMarkCheck_UnpersistableMark_FailsWithRemedy(t *testing.T) {
+	initTestApp(t)
+	t.Setenv(transport.EnvDSN, "")
+	_, err := app.configSvc.Set("sync.enabled", "true")
+	require.NoError(t, err)
+	require.NoError(t, app.store.Close())
+	check := hubMarkCheck(t)
+	assert.False(t, check.Pass)
+	assert.NotEmpty(t, check.Fix)
+}

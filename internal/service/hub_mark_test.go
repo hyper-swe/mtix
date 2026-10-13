@@ -227,3 +227,23 @@ func TestHubConnected_InferenceFails_Propagates(t *testing.T) {
 	_, err := svc.HubConnected(context.Background(), service.HubEvidence{})
 	require.ErrorIs(t, err, boom)
 }
+
+func TestResetHubMark_ConfigEvidenceGone_StaysClearedUntilFreshEvidence(t *testing.T) {
+	svc, _, _ := hubMarkFixture(t)
+	ctx := context.Background()
+	got, err := svc.HubConnected(ctx, service.HubEvidence{ConfigKeys: true})
+	require.NoError(t, err)
+	require.True(t, got.Flipped)
+
+	_, err = svc.ResetHubMark(ctx)
+	require.NoError(t, err)
+	for range 2 {
+		got, err = svc.HubConnected(ctx, service.HubEvidence{})
+		require.NoError(t, err)
+		require.False(t, got.Connected, "no evidence, no mark")
+	}
+	got, err = svc.HubConnected(ctx, service.HubEvidence{ConfigKeys: true})
+	require.NoError(t, err)
+	require.True(t, got.Connected)
+	require.True(t, got.Flipped, "fresh evidence marks again and reports the flip")
+}

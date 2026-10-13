@@ -281,9 +281,7 @@ func TestIdempotentApply_DispatchFails_MarkRolledBack(t *testing.T) {
 	e := foreignCreate(t, "MTIX-1", 1)
 	e.Payload = []byte(`{"title":`) // invalid JSON: the create payload cannot decode
 	err := s.WithTx(ctx, func(tx *sql.Tx) error { return s.IdempotentApply(ctx, tx, e) })
-	if err == nil {
-		t.Skip("payload accepted at this layer; the rollback is covered by FailedApply_MarkRolledBack")
-	}
+	require.Error(t, err, "an undecodable create payload must fail the apply")
 	mark, markErr := s.HubMark(ctx)
 	require.NoError(t, markErr)
 	require.False(t, mark.Set)

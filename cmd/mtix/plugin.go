@@ -47,19 +47,17 @@ claude-code: 6 skill files + 4 compliance reference checklists into
 .claude/skills/ (or ~/.claude/skills/ with --global). Skills include
 safety-critical operating procedures as baseline — context chain
 traversal, independent verification, traceability, anomaly reporting.
-Project-local installs also write CLAUDE.md at the project root, the
-top-level briefing Claude Code reads; an existing CLAUDE.md is never
-modified — the install reports a skip naming .mtix/docs/CLAUDE.md as
-the copy to merge from.
+Project-local installs regenerate root MTIX.md and append one pointer to each
+native instruction file (CLAUDE.md and AGENTS.md), preserving user content.
+Valid mtix marker blocks migrate; malformed pairs are refused. HYPERSWE.md
+suppresses new pointers and native-file creation; existing pointers remain.
 
-codex: AGENTS.md (Codex's native instruction file) at the project root
-and an MCP server entry in .codex/config.toml (or ~/.codex/ with
---global). Existing files are never modified — if config.toml exists,
-the stanza to add is printed instead.
+codex: MCP server entry in .codex/config.toml; --global uses ~/.codex/
+and an AGENTS.md briefing. Existing config.toml is preserved and the stanza
+to add is printed instead.
 
-pi: AGENTS.md at the project root (or ~/.pi/agent/ with --global); pi
-loads it natively. pi has no built-in MCP — setup guidance for the
-community pi-mcp-adapter extension is printed.
+pi: pi-mcp-adapter guidance; --global uses ~/.pi/agent/AGENTS.md.
+Global installs retain their previous write-if-absent instruction behavior.
 
 The target may be given as an argument (mtix plugin install codex) or with
 --target.`,

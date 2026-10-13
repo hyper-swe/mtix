@@ -21,6 +21,9 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
+// historyEnvAuthor is the default author the paths without an explicit one record.
+const historyEnvAuthor = "env-author"
+
 var historyTestTime = time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC)
 
 // historyFixture is a store with a fixed clock and a raw handle for reading task_history.
@@ -32,6 +35,7 @@ type historyFixture struct {
 
 func newHistoryFixture(t *testing.T) *historyFixture {
 	t.Helper()
+	t.Setenv("MTIX_AUTHOR_ID", historyEnvAuthor) // the default author of paths with no explicit one
 	path := filepath.Join(t.TempDir(), "h.db")
 	s, err := sqlite.New(path, slog.Default())
 	require.NoError(t, err)
@@ -80,6 +84,15 @@ func (f *historyFixture) fields(t *testing.T, id string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// writePathActors pins the actor each path records: the explicit author or
+// agent where the API carries one, otherwise the default author.
+var writePathActors = map[string]string{
+	"update title and priority": historyEnvAuthor, "claim": "agent-7", "unclaim": "agent-7",
+	"transition": "alice", "defer": "alice", "cancel without cascade": "alice",
+	"cancel cascade reaches child": "alice", "delete cascade reaches child": "alice",
+	"undelete cascade restores child": historyEnvAuthor,
 }
 
 func TestTaskHistory_WritePaths_AppendOneEntryPerChangedField(t *testing.T) {
@@ -139,10 +152,10 @@ func TestTaskHistory_WritePaths_AppendOneEntryPerChangedField(t *testing.T) {
 			tt.act(t, f)
 			assert.Equal(t, tt.fields, f.fields(t, tt.node))
 			for _, r := range f.rows(t, tt.node) {
+				assert.Equal(t, writePathActors[tt.name], r.actor, "actor")
 				assert.Equal(t, "change", r.kind)
 				assert.Equal(t, "local", r.origin)
 				assert.Equal(t, "2026-10-13T09:00:00.000000000Z", r.ts)
-				assert.NotEmpty(t, r.actor)
 			}
 		})
 	}
@@ -162,6 +175,9 @@ func TestTaskHistory_Transition_RecordsStructuredValuesAndActor(t *testing.T) {
 func TestTaskHistory_CreateNode_RecordsInitialFieldsOncePerField(t *testing.T) {
 	f := newHistoryFixture(t)
 	require.NoError(t, f.s.CreateNode(context.Background(), ccNode(ccRoot, model.StatusOpen)))
+	for _, r := range f.rows(t, ccRoot) {
+		assert.Equal(t, "test-agent", r.actor, "create records the creator")
+	}
 	got := f.fields(t, ccRoot)
 	assert.Contains(t, got, "status")
 	assert.Contains(t, got, "title")
@@ -214,6 +230,7 @@ func TestHistoryFieldClassOf_Registry(t *testing.T) {
 		{"priority", model.HistoryFieldStructured}, {"labels", model.HistoryFieldStructured},
 		{"node_type", model.HistoryFieldStructured}, {"issue_type", model.HistoryFieldStructured},
 		{"parent", model.HistoryFieldStructured}, {"defer_until", model.HistoryFieldStructured},
+		{"agent_state", model.HistoryFieldStructured}, {"deleted_at", model.HistoryFieldStructured},
 		{"title", model.HistoryFieldValueFree}, {"description", model.HistoryFieldValueFree},
 		{"prompt", model.HistoryFieldValueFree}, {"acceptance", model.HistoryFieldValueFree},
 		{"notes", model.HistoryFieldValueFree}, {"annotations", model.HistoryFieldValueFree},
@@ -272,4 +289,32 @@ func TestTaskHistory_Migration_IsAdditiveAndIdempotent(t *testing.T) {
 	require.NoError(t, raw.QueryRow("SELECT count(*) FROM task_history").Scan(&n))
 	assert.Equal(t, 1, n, "reopen keeps existing history")
 	f.s = s3 // the cleanup closes the first store; Close is idempotent
+}
+
+// TestTaskHistory_NullContract_SQLNullIsAbsentAndJSONNullIsExplicit pins the
+// documented old/new contract: SQL NULL means absent, the text 'null' an
+// explicit null.
+func TestTaskHistory_NullContract_SQLNullIsAbsentAndJSONNullIsExplicit(t *testing.T) {
+	f := newHistoryFixture(t)
+	f.seed(t)
+	ctx := context.Background()
+	require.NoError(t, f.s.ClaimNode(ctx, ccRoot, "agent-7"))
+	f.clearHistory(t)
+	require.NoError(t, f.s.UnclaimNode(ctx, ccRoot, "stop", "agent-7"))
+	var assignee historyRow
+	for _, r := range f.rows(t, ccRoot) {
+		if r.field == "assignee" {
+			assignee = r
+		}
+	}
+	assert.Equal(t, `"agent-7"`, assignee.old.String)
+	assert.True(t, assignee.new.Valid, "a cleared assignee is an explicit null, not absent")
+	assert.Equal(t, "null", assignee.new.String)
+
+	f.clearHistory(t)
+	require.NoError(t, f.s.UpdateNode(ctx, ccRoot, &store.NodeUpdate{Title: strPtr("new title")}))
+	rows := f.rows(t, ccRoot)
+	require.Len(t, rows, 1)
+	assert.False(t, rows[0].old.Valid, "free text has no old value (SQL NULL)")
+	assert.False(t, rows[0].new.Valid, "free text has no new value (SQL NULL)")
 }

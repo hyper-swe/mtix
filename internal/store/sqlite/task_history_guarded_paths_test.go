@@ -70,8 +70,16 @@ func TestTaskHistory_GuardedAndBackgroundPaths_AppendEntries(t *testing.T) {
 			f.seed(t)
 			tt.act(t, f)
 			assert.Equal(t, tt.fields, f.fields(t, tt.node))
+			for _, r := range f.rows(t, tt.node) {
+				assert.Equal(t, guardedPathActors[tt.name], r.actor, "actor")
+			}
 		})
 	}
+}
+
+// guardedPathActors pins who each path records.
+var guardedPathActors = map[string]string{
+	"guarded transition": "alice", "restore invalidated": "alice", "wake deferred": "system", "force reclaim": "agent-2",
 }
 
 func TestTaskHistory_AllocatedCreates_RecordInitialFieldsPerNode(t *testing.T) {
@@ -100,6 +108,10 @@ func TestTaskHistory_AllocatedCreates_RecordInitialFieldsPerNode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newHistoryFixture(t)
 			for _, n := range tt.run(t, f) {
+				for _, r := range f.rows(t, n.ID) {
+					assert.Equal(t, n.Creator, r.actor, "create records the creator")
+					assert.Equal(t, "local", r.origin)
+				}
 				fields := f.fields(t, n.ID)
 				assert.Contains(t, fields, "title", n.ID)
 				assert.Contains(t, fields, "status", n.ID)

@@ -20,8 +20,7 @@ const historyBoardSize = 100000
 
 // TestTaskHistory_LargeBoard_WritesStayWithinBudget proves UpdateNode and
 // CreateNode keep their latency on a 100k-task board (NFR-1.1, F2). The
-// budget is 20 ms median: twice the 10 ms target, to absorb the race detector
-// and shared CI; a full scan of nodes costs 30 to 60 ms.
+// budget is historyWriteBudget: 10 ms without the race detector, 20 ms with it.
 func TestTaskHistory_LargeBoard_WritesStayWithinBudget(t *testing.T) {
 	if testing.Short() {
 		t.Skip("seeds a 100k-task board")
@@ -43,8 +42,8 @@ func TestTaskHistory_LargeBoard_WritesStayWithinBudget(t *testing.T) {
 		return f.s.CreateNode(ctx, n)
 	})
 	t.Logf("100k board: UpdateNode median %v, CreateNode median %v", update, create)
-	require.Less(t, update, 20*time.Millisecond, "UpdateNode median")
-	require.Less(t, create, 20*time.Millisecond, "CreateNode median")
+	require.Less(t, update, historyWriteBudget, "UpdateNode median")
+	require.Less(t, create, historyWriteBudget, "CreateNode median")
 }
 
 func medianLatency(t *testing.T, n int, op func(i int) error) time.Duration {

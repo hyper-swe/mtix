@@ -5,144 +5,90 @@ package sqlite_test
 
 import (
 	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
-	"sort"
-	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// updateSite is one "UPDATE nodes ... SET" statement and its enclosing function.
-type updateSite struct{ file, fn string }
-
-// updateNodesRE matches the statement however the SQL is wrapped or cased.
-var updateNodesRE = regexp.MustCompile(`(?is)UPDATE\s+nodes\s+SET`)
-
-// parseDir parses the non-test Go files of dir.
-func parseDir(t *testing.T, dir string) map[string]*ast.File {
-	t.Helper()
-	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
-	require.NoError(t, err)
-	fset := token.NewFileSet()
-	out := map[string]*ast.File{}
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
-		src, err := os.ReadFile(f)
-		require.NoError(t, err)
-		parsed, err := parser.ParseFile(fset, f, src, 0)
-		require.NoError(t, err)
-		out[filepath.Base(f)] = parsed
-	}
-	return out
-}
-
-// funcName names a declaration as Func or Type.Method.
-func funcName(d *ast.FuncDecl) string {
-	if d.Recv == nil || len(d.Recv.List) == 0 {
-		return d.Name.Name
-	}
-	typ := d.Recv.List[0].Type
-	if star, ok := typ.(*ast.StarExpr); ok {
-		typ = star.X
-	}
-	if id, ok := typ.(*ast.Ident); ok {
-		return id.Name + "." + d.Name.Name
-	}
-	return d.Name.Name
-}
-
-// scanUpdateStatements lists every UPDATE nodes statement (whitespace and case
-// insensitive, in any string literal) with its enclosing function.
-func scanUpdateStatements(t *testing.T, dir string) []updateSite {
-	t.Helper()
-	var out []updateSite
-	for name, file := range parseDir(t, dir) {
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				lit, ok := n.(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
-					return true
-				}
-				text, err := strconv.Unquote(lit.Value)
-				if err != nil {
-					return true
-				}
-				for range updateNodesRE.FindAllString(text, -1) {
-					out = append(out, updateSite{file: name, fn: funcName(fn)})
-				}
-				return true
-			})
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].file+out[i].fn < out[j].file+out[j].fn
-	})
-	return out
-}
+// Census states: wired (every path records through withHistoryTx or
+// createNodeTx), pending (A2 will wire it), excluded (writes only columns that
+// are not history fields: activity, derived progress).
+const (
+	censusWired    = "wired"
+	censusPending  = "pending"
+	censusExcluded = "excluded"
+)
 
 // historyCensus maps "file:Func" to the number of UPDATE nodes statements in
 // that function and whether it is still pending MTIX-95.31.19.3 (A2). A
 // non-pending function runs only inside withHistoryTx or createNodeTx
 // (MTIX-95.31.19.2); an unlisted function, or a changed count, fails.
 var historyCensus = map[string]struct {
-	count   int
-	pending bool
+	count int
+	state string
 }{
-	"node_update.go:execUpdateQuery": {1, false}, "claim.go:Store.claimNodeTx": {1, false},
-	"claim.go:Store.UnclaimNode": {1, false}, "claim.go:Store.ForceReclaimNode": {1, false},
-	"transition.go:applyTransitionUpdate": {1, false}, "transition.go:appendActivityEntry": {1, false},
-	"defer.go:Store.executeDeferTx": {1, false}, "defer.go:redeferTx": {1, false},
-	"cancel.go:applyCancelUpdate": {1, false}, "cancel.go:cancelDescendants": {1, false},
-	"node_delete.go:Store.DeleteNode": {1, false}, "node_delete.go:cascadeDelete": {1, false},
-	"node_delete.go:restoreNodes": {1, false},
+	"node_update.go:execUpdateQuery": {1, censusWired}, "claim.go:Store.claimNodeTx": {1, censusWired},
+	"claim.go:Store.UnclaimNode": {1, censusWired}, "claim.go:Store.ForceReclaimNode": {1, censusWired},
+	"transition.go:applyTransitionUpdate": {1, censusWired}, "transition.go:appendActivityEntry": {1, censusExcluded},
+	"defer.go:Store.executeDeferTx": {1, censusWired}, "defer.go:redeferTx": {1, censusWired},
+	"cancel.go:applyCancelUpdate": {1, censusWired}, "cancel.go:cancelDescendants": {1, censusWired},
+	"node_delete.go:Store.DeleteNode": {1, censusWired}, "node_delete.go:cascadeDelete": {1, censusWired},
+	"node_delete.go:restoreNodes": {1, censusWired},
 	// Pending A2: every remaining write path.
-	"context.go:Store.SetAnnotations": {1, true}, "context.go:Store.mutateAnnotations": {1, true},
-	"progress.go:recomputeNodeProgress":                 {1, true},
-	"dependency.go:autoBlockNode":                       {1, true},
-	"dependency.go:restoreUnblockedNode":                {1, true},
-	"import_merge_keep.go:mergeUnchangedContent":        {1, true},
-	"import_merge_streams.go:writeNodeStreams":          {1, true},
-	"import_title_identity.go:stampNewUIDs":             {1, true},
-	"import_workflow_conflict.go:writeWorkflowGroup":    {1, true},
-	"import.go:updateExportNode":                        {1, true},
-	"node_renumber.go:rewriteSubtreeIDs":                {2, true},
-	"node_uid_unique.go:duplicateUIDMessage":            {1, true},
-	"node_uid.go:setBackfillUID":                        {1, true},
-	"node_uid.go:Store.backfillUIDsFromCreateEvents":    {1, true},
-	"store.go:Store.UpdateProgress":                     {1, true},
-	"sync_apply.go:recomputeContentHashRow":             {1, true},
-	"sync_apply.go:syncApplier.applyComment":            {1, true},
-	"sync_apply.go:syncApplier.applyDelete":             {1, true},
-	"sync_apply.go:syncApplier.applySetAcceptance":      {1, true},
-	"sync_apply.go:syncApplier.applySetPrompt":          {1, true},
-	"sync_apply.go:syncApplier.applyUpdateField":        {1, true},
-	"sync_reconcile.go:assignParentToFormerRoots":       {1, true},
-	"sync_reconcile.go:renameNodeRow":                   {2, true},
-	"sync_update_classification.go:applyIssueTypeField": {1, true},
-	"sync_workflow_write.go:writeWorkflowColumns":       {1, true},
+	"context.go:Store.SetAnnotations": {1, censusPending}, "context.go:Store.mutateAnnotations": {1, censusPending},
+	"progress.go:recomputeNodeProgress":                 {1, censusPending},
+	"dependency.go:autoBlockNode":                       {1, censusPending},
+	"dependency.go:restoreUnblockedNode":                {1, censusPending},
+	"import_merge_keep.go:mergeUnchangedContent":        {1, censusPending},
+	"import_merge_streams.go:writeNodeStreams":          {1, censusPending},
+	"import_title_identity.go:stampNewUIDs":             {1, censusPending},
+	"import_workflow_conflict.go:writeWorkflowGroup":    {1, censusPending},
+	"import.go:updateExportNode":                        {1, censusPending},
+	"node_renumber.go:rewriteSubtreeIDs":                {2, censusPending},
+	"node_uid_unique.go:duplicateUIDMessage":            {1, censusPending},
+	"node_uid.go:setBackfillUID":                        {1, censusPending},
+	"node_uid.go:Store.backfillUIDsFromCreateEvents":    {1, censusPending},
+	"store.go:Store.UpdateProgress":                     {1, censusPending},
+	"sync_apply.go:recomputeContentHashRow":             {1, censusPending},
+	"sync_apply.go:syncApplier.applyComment":            {1, censusPending},
+	"sync_apply.go:syncApplier.applyDelete":             {1, censusPending},
+	"sync_apply.go:syncApplier.applySetAcceptance":      {1, censusPending},
+	"sync_apply.go:syncApplier.applySetPrompt":          {1, censusPending},
+	"sync_apply.go:syncApplier.applyUpdateField":        {1, censusPending},
+	"sync_reconcile.go:assignParentToFormerRoots":       {1, censusPending},
+	"sync_reconcile.go:renameNodeRow":                   {2, censusPending},
+	"sync_update_classification.go:applyIssueTypeField": {1, censusPending},
+	"sync_workflow_write.go:writeWorkflowColumns":       {1, censusPending},
 }
 
 func siteKey(s updateSite) string { return s.file + ":" + s.fn }
 
-func TestTaskHistoryCensus_Scanner_FindsMultiLineAndLowercaseStatements(t *testing.T) {
-	dir := t.TempDir()
-	src := "package x\n\nfunc Multi() string {\n\treturn `UPDATE nodes\n\t   SET status = 'done'`\n}\n\nfunc Lower() string { return \"update  nodes set title = ''\" }\n"
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "fixture.go"), []byte(src), 0o600))
-	got := scanUpdateStatements(t, dir)
-	assert.ElementsMatch(t, []updateSite{{"fixture.go", "Multi"}, {"fixture.go", "Lower"}}, got)
+func TestTaskHistoryCensus_Scanner_FindsEveryStatementShape(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []updateSite
+	}{
+		{"multi-line raw string", "package x\n\nfunc Multi() string {\n\treturn `UPDATE nodes\n\t   SET status = 'done'`\n}\n", []updateSite{{"f.go", "Multi"}}},
+		{"lowercase and extra spaces", "package x\n\nfunc Lower() string { return \"update  nodes set title = ''\" }\n", []updateSite{{"f.go", "Lower"}}},
+		{"package const used by a method", "package x\n\ntype S struct{}\n\nconst q = \"UPDATE nodes SET status = ?\"\n\nfunc (s *S) Use() string { return q }\n", []updateSite{{"f.go", "S.Use"}}},
+		{"unreferenced package const", "package x\n\nconst orphan = \"UPDATE nodes SET status = ?\"\n", []updateSite{{"f.go", "const orphan"}}},
+		{"concatenated literal", "package x\n\nfunc Cat() string { return \"UPDATE nodes \" + \"SET status = ?\" }\n", []updateSite{{"f.go", "Cat"}}},
+		{"concatenated consts", "package x\n\nconst a = \"UPDATE nodes \"\nconst b = a + \"SET x = 1\"\n\nfunc Use() string { return b }\n", []updateSite{{"f.go", "Use"}}},
+		{"package func literal var", "package x\n\nvar run = func() string { return \"UPDATE nodes SET status = ?\" }\n", []updateSite{{"f.go", "var run"}}},
+		{"func literal inside a method", "package x\n\ntype S struct{}\n\nfunc (s *S) M() func() string { return func() string { return \"UPDATE nodes SET a = 1\" } }\n", []updateSite{{"f.go", "S.M"}}},
+		{"no statement", "package x\n\nfunc None() string { return \"SELECT 1 FROM nodes\" }\n", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "f.go"), []byte(tt.src), 0o600))
+			assert.ElementsMatch(t, tt.want, scanUpdateStatements(t, dir))
+		})
+	}
 }
 
 func TestTaskHistoryCensus_UpdateNodesStatements_AreAllListed(t *testing.T) {

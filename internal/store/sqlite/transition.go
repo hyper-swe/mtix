@@ -29,7 +29,8 @@ type transitionRequest struct {
 // Returns ErrInvalidTransition if the transition is not allowed.
 // Returns ErrNotFound if the node does not exist or is soft-deleted.
 func (s *Store) TransitionStatus(ctx context.Context, id string, toStatus model.Status, reason, author string) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.2: withHistoryTx appends the task_history entries in this transaction.
+	return s.withHistoryTx(ctx, historyScope{id: id, actor: author}, func(tx *sql.Tx) error {
 		return s.executeTransitionTx(ctx, tx, transitionRequest{id: id, toStatus: toStatus, reason: reason, author: author})
 	})
 }

@@ -65,6 +65,7 @@ func (s *Store) InboxList(ctx context.Context, agentID string) ([]InboxEvent, er
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("inbox iterate %q: %w", agentID, err)
 	}
+	s.touchFromContext(ctx, agentID) // last_seen moves only for the registered session (ADR-007 §3.3)
 	return out, nil
 }
 
@@ -95,7 +96,7 @@ func (s *Store) InboxAck(ctx context.Context, agentID string, seq int64) error {
 	if agentID == "" {
 		return fmt.Errorf("inbox ack: agent id required: %w", model.ErrInvalidInput)
 	}
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
 		tail, err := journalTail(ctx, tx)
 		if err != nil {
 			return err
@@ -110,6 +111,10 @@ func (s *Store) InboxAck(ctx context.Context, agentID string, seq int64) error {
 			agentID, seq, s.clock().Format(time.RFC3339Nano))
 		return err
 	})
+	if err == nil {
+		s.touchFromContext(ctx, agentID)
+	}
+	return err
 }
 
 // InboxAckThrough is the explicit CUMULATIVE ack for a caller that DID process
@@ -126,7 +131,7 @@ func (s *Store) InboxAckThrough(ctx context.Context, agentID string, seq int64) 
 	if agentID == "" {
 		return fmt.Errorf("inbox ack: agent id required: %w", model.ErrInvalidInput)
 	}
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
 		tail, err := journalTail(ctx, tx)
 		if err != nil {
 			return err
@@ -150,6 +155,10 @@ func (s *Store) InboxAckThrough(ctx context.Context, agentID string, seq int64) 
 			agentID, agentID)
 		return err
 	})
+	if err == nil {
+		s.touchFromContext(ctx, agentID)
+	}
+	return err
 }
 
 // inboxPollInterval is how often InboxWait re-queries while blocked. Small

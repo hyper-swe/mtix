@@ -17,7 +17,7 @@ import (
 // TestRunAgentRegister registers an agent through the command path.
 func TestRunAgentRegister(t *testing.T) {
 	initTestApp(t)
-	out := captureStdout(t, func() { require.NoError(t, runAgentRegister("worker-1")) })
+	out := captureStdout(t, func() { require.NoError(t, runAgentRegister("worker-1", sessionOptions{})) })
 	assert.Contains(t, out, "worker-1")
 }
 

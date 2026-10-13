@@ -151,7 +151,7 @@ func TestInboxWaitMCPStdio_ZeroCancellationPingAndEOF(t *testing.T) {
 	child.response(t, 3)
 	child.send(t, 4, "tools/call", map[string]any{"name": "mtix_inbox", "arguments": map[string]any{"agent": "worker"}})
 	response := child.response(t, 4)
-	require.JSONEq(t, "null", stdioContent(t, stdioResult(t, response)), "ordinary inbox preserves its existing empty-list shape")
+	require.JSONEq(t, "[]", stdioContent(t, stdioResult(t, response)), "ordinary empty inbox follows the upstream envelope empty-array contract")
 	child.finish(t)
 	assert.Empty(t, child.frames, "cancelled wait must not emit a later response")
 }
@@ -162,7 +162,7 @@ func TestInboxWaitMCPStdio_OrdinaryInboxEmptyExistingShape(t *testing.T) {
 	stdioCheckInitialize(t, child.response(t, 1))
 	child.send(t, 2, "tools/call", map[string]any{"name": "mtix_inbox", "arguments": map[string]any{"agent": "worker"}})
 	response := child.response(t, 2)
-	require.JSONEq(t, "null", stdioContent(t, stdioResult(t, response)))
+	require.JSONEq(t, "[]", stdioContent(t, stdioResult(t, response)))
 	child.finish(t)
 }
 

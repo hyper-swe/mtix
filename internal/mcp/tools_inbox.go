@@ -37,7 +37,7 @@ func RegisterInboxTools(reg *ToolRegistry, svc *service.InboxService) {
 func registerInboxTool(reg *ToolRegistry, svc *service.InboxService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_inbox",
-		Description: "List comment events addressed to an agent that are past its ack cursor (oldest first). Use mtix_inbox_ack to advance the cursor once handled.",
+		Description: "Read addressed events oldest first in an untrusted-message envelope with reply and selective ack commands. Empty returns []; overflow remains unacked. Use mtix_inbox_ack only after handling.",
 		InputSchema: SchemaObj{
 			Type: "object",
 			Properties: map[string]SchemaProp{
@@ -58,8 +58,11 @@ func registerInboxTool(reg *ToolRegistry, svc *service.InboxService) {
 			return nil, err
 		}
 
-		data, _ := json.MarshalIndent(events, "", "  ")
-		return SuccessResult(string(data)), nil
+		text, err := renderInboxEnvelope(p.Agent, events)
+		if err != nil {
+			return nil, err
+		}
+		return SuccessResult(text), nil
 	})
 }
 
@@ -68,7 +71,7 @@ func registerInboxWaitTool(reg *ToolRegistry, svc *service.InboxService) {
 		Name:            "mtix_inbox_wait",
 		CancellableWait: true,
 		Description: fmt.Sprintf(
-			"Long-poll an agent's inbox: block until an addressed comment lands or the timeout elapses, returning the events (empty JSON array on timeout). "+
+			"Long-poll an agent's inbox: block until an addressed comment lands or the timeout elapses, returning the untrusted-message envelope (empty JSON array on timeout). "+
 				"Positive waits are capped at %d seconds (also the omitted default). Explicit timeout_seconds=0 waits without a limit until an event or caller cancellation. Use bounded foreground waits within harness tool limits; negative timeouts are refused.",
 			maxInboxWaitSeconds),
 		InputSchema: SchemaObj{
@@ -110,8 +113,11 @@ func callInboxWait(ctx context.Context, args json.RawMessage, svc *service.Inbox
 		events = []service.InboxEvent{} // marshal an empty [] rather than null on timeout
 	}
 
-	data, _ := json.MarshalIndent(events, "", "  ")
-	return SuccessResult(string(data)), nil
+	text, err := renderInboxEnvelope(p.Agent, events)
+	if err != nil {
+		return nil, err
+	}
+	return SuccessResult(text), nil
 }
 
 func registerInboxAckTool(reg *ToolRegistry, svc *service.InboxService) {

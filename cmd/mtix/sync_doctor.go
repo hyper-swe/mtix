@@ -84,6 +84,9 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
   board.hub-identity-changed - warns when the observed hub differs from
                            a recorded confirmation; recovery is planned
   Operator state placement - reports the sandbox placement limitation
+  Inbox envelope caps    - validates operator-local wake.json without hub contact;
+                           missing or zero caps are unlimited; invalid settings
+                           report the exact file-edit remedy
   Data filesystem        - warns on known network/FUSE data mounts; unavailable
                            classification is reported without claiming safe locks
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
@@ -274,6 +277,7 @@ func appendHubReadyChecks(ctx context.Context, report DoctorReport, dsn string, 
 // sync_doctor_local.go (no orphan applied, quarantined events, unique node
 // uids), held push events (MTIX-95.12) and the secrets file mode.
 func appendLocalChecks(ctx context.Context, report DoctorReport) DoctorReport {
+	report = appendEnvelopeCapsCheck(report)
 	report = appendDoctorCheck(report, checkPendingExports(ctx))
 	if app.store == nil {
 		report = appendCheck(report, "queue draining", false, "local store not initialized")

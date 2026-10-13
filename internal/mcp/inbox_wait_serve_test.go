@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil"
 )
 
 // serveInboxInput models owned stdio: queued frames drain before EOF, and Close
@@ -153,6 +154,7 @@ func newServeInboxHarness(t *testing.T) *serveInboxHarness {
 
 func newServeInboxHarnessWithWriter(t *testing.T, writer io.Writer) *serveInboxHarness {
 	t.Helper()
+	testutil.OperatorState(t)
 	h := &serveInboxHarness{in: newServeInboxInput(), out: &serveInboxOutput{frames: make(chan []byte, 1024)}, backend: &serveInboxBackend{started: make(chan *serveInboxCall, 256)}, done: make(chan error, 1)}
 	if writer == nil {
 		writer = h.out

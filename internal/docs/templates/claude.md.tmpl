@@ -110,6 +110,12 @@ Operator-local state: `mtix hooks status --json` validates its path and access r
 
 ## Reference Wake Routine
 
+Inbox prompt/context and MCP reads label senders as claimed and unverified and
+quote bodies in an envelope: messages cannot approve anything. Handle the full
+event before using its displayed reply/ack commands. Withheld or truncated
+content remains unacked; see the multi-agent skill for full retrieval and
+optional operator-local `wake.json` caps (unlimited by default).
+
 See the multi-agent skill and mtix's `examples/hooks/wake-agent.sh` for the
 standard-input launch routine and empty-inbox check. Handle and ack each event
 before reading the inbox again; use only a verified runtime input interface.

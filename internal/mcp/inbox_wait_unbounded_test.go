@@ -7,6 +7,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil"
 )
 
 type inboxWaitRecordingBackend struct {
@@ -47,6 +49,7 @@ func TestInboxWaitTool_TimeoutContract_PreservesExplicitZeroAndDefault(t *testin
 		{"large positive capped before duration conversion", `{"agent":"worker","timeout_seconds":9223372036854775807}`, 60 * time.Second},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			testutil.OperatorState(t)
 			backend := &inboxWaitRecordingBackend{}
 			reg := NewToolRegistry()
 			RegisterInboxTools(reg, testInboxService(backend))
@@ -55,7 +58,11 @@ func TestInboxWaitTool_TimeoutContract_PreservesExplicitZeroAndDefault(t *testin
 			assert.Equal(t, tc.want, backend.timeout)
 			assert.Same(t, t.Context(), backend.ctx, "tool must preserve the caller's cancellation")
 			assert.Equal(t, 1, backend.calls)
-			require.Len(t, decodeInboxResult(t, res), 1)
+			require.Len(t, res.Content, 1)
+			assert.False(t, res.IsError)
+			assert.Equal(t, 1, strings.Count(res.Content[0].Text, "\nBEGIN MTIX MESSAGE\n"))
+			assert.Contains(t, res.Content[0].Text, "\nseq: 7\n")
+			assert.Contains(t, res.Content[0].Text, `body: "Pending event"`)
 		})
 	}
 }

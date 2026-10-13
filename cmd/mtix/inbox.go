@@ -11,13 +11,14 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	inboxformat "github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -56,7 +57,7 @@ background task whose harness supports it.
 --format emits agent-ready text instead of the plain listing (FR-20 §9,
 "delivery terminates in the prompt"):
   prompt   a complete opening prompt for a cold-started agent — the events
-           verbatim plus the ack/reply contract. A wake exec launches the
+           quoted in an untrusted-message envelope plus the ack/reply contract. A wake exec launches the
            harness CLI with this as the prompt.
   context  a compact block for harness context-injection hooks
            (session-start / prompt-submit).
@@ -158,61 +159,71 @@ func waitInbox(ctx context.Context, agent string, timeout time.Duration) ([]sqli
 // (MTIX-56.8), JSON, or the human listing.
 func writeInbox(agent, format string, events []sqlite.InboxEvent) error {
 	out := NewOutputWriter(app.jsonOutput)
-	switch {
-	case format == "prompt":
-		out.WriteHuman("%s", formatInboxPrompt(agent, events))
-	case format == "context":
-		out.WriteHuman("%s", formatInboxContext(agent, events))
-	case app.jsonOutput:
+	if format != "" {
+		caps, err := loadInboxEnvelopeCaps()
+		if err != nil {
+			return err
+		}
+		var text string
+		if format == "prompt" {
+			text, err = formatInboxPrompt(agent, events, caps)
+		} else {
+			text, err = formatInboxContext(agent, events, caps)
+		}
+		if err != nil {
+			return fmt.Errorf("render inbox: %w", err)
+		}
+		out.WriteHuman("%s", text)
+		return nil
+	}
+	if app.jsonOutput {
 		if events == nil {
 			events = []sqlite.InboxEvent{}
 		}
 		return out.WriteJSON(events)
-	case len(events) == 0:
-		out.WriteHuman("(inbox empty)\n")
-	default:
-		for _, e := range events {
-			out.WriteHuman("[%d] %s  %s: %s\n", e.Seq, e.NodeID, e.Author, e.Body)
-		}
-		out.WriteHuman("\nack with: mtix inbox ack %d --agent %s\n", events[len(events)-1].Seq, agent)
 	}
+	if len(events) == 0 {
+		out.WriteHuman("(inbox empty)\n")
+		return nil
+	}
+	for _, e := range events {
+		out.WriteHuman("[%d] %s  %s: %s\n", e.Seq, e.NodeID, e.Author, e.Body)
+	}
+	out.WriteHuman("\nack with: mtix inbox ack %d --agent %s\n", events[len(events)-1].Seq, agent)
 	return nil
 }
 
-// formatInboxPrompt renders the inbox as a complete opening prompt for a
-// cold-started agent (FR-20 §9 rung 1): the events verbatim plus the ack and
-// reply contracts, so handling terminates in the store, not in a human relay.
-// Empty inbox -> empty string (the wake script's idempotency check).
-func formatInboxPrompt(agent string, events []sqlite.InboxEvent) string {
-	if len(events) == 0 {
-		return ""
+func loadInboxEnvelopeCaps() (inboxformat.Caps, error) {
+	env, err := oplocal.FromProcess()
+	if err != nil {
+		return inboxformat.Caps{}, fmt.Errorf("inbox operator state: %w", err)
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "You are agent %q. You have %d unread event(s) in your mtix inbox.\n", agent, len(events))
-	fmt.Fprintf(&b, "Handle each event, then acknowledge it: mtix inbox ack <seq> --agent %s\n", agent)
-	b.WriteString("Reply to a sender when needed: mtix comment <node-id> --to <sender> \"<message>\"\n")
-	b.WriteString("Inspect a task and its context chain: mtix show <node-id>; mtix context <node-id>\n\n")
-	for _, e := range events {
-		fmt.Fprintf(&b, "[seq %d] %s from %s: %s\n", e.Seq, e.NodeID, e.Author, e.Body)
+	state := oplocal.New(env)
+	caps, reports, err := state.EnvelopeCaps()
+	if err != nil {
+		return inboxformat.Caps{}, fmt.Errorf("inbox envelope configuration: %w; %s", err, state.EnvelopeCapsRemedy(reports...))
 	}
-	return b.String()
+	return caps, nil
 }
 
-// formatInboxContext renders the inbox as a compact block for harness
-// context-injection hooks (FR-20 §9 rung 2) — one line per event plus the ack
-// contract. Empty inbox -> empty string, so hooks inject nothing when there is
-// nothing to say.
-func formatInboxContext(agent string, events []sqlite.InboxEvent) string {
-	if len(events) == 0 {
-		return ""
+func inboxEnvelopeEvents(events []sqlite.InboxEvent) []inboxformat.Event {
+	out := make([]inboxformat.Event, len(events))
+	for i, event := range events {
+		out[i] = inboxformat.Event{Seq: event.Seq, Task: event.NodeID, Sender: event.Author, Body: event.Body}
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "mtix inbox for agent %q: %d unread event(s). Ack after handling: mtix inbox ack <seq> --agent %s\n",
-		agent, len(events), agent)
-	for _, e := range events {
-		fmt.Fprintf(&b, "- [%d] %s from %s: %s\n", e.Seq, e.NodeID, e.Author, e.Body)
-	}
-	return b.String()
+	return out
+}
+
+// formatInboxPrompt composes only a fixed nudge and the quoted envelope
+// (FR-20.2, ADR-007 I33). Empty inbox remains empty for wake-script checks.
+func formatInboxPrompt(agent string, events []sqlite.InboxEvent, caps inboxformat.Caps) (string, error) {
+	return inboxformat.RenderPrompt(agent, inboxEnvelopeEvents(events), caps)
+}
+
+// formatInboxContext uses the shared envelope and revalidated command tokens
+// (FR-20.2, ADR-007 I12/I13), without acknowledging or changing the inbox.
+func formatInboxContext(agent string, events []sqlite.InboxEvent, caps inboxformat.Caps) (string, error) {
+	return inboxformat.RenderEnvelope(agent, inboxEnvelopeEvents(events), caps)
 }
 
 func runInboxAck(agent string, seqs []string, through bool) error {

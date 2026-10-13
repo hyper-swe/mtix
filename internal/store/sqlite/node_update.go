@@ -22,7 +22,8 @@ import (
 //
 // Returns ErrNotFound if the node does not exist or is soft-deleted.
 func (s *Store) UpdateNode(ctx context.Context, id string, updates *store.NodeUpdate) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.2: withHistoryTx appends the task_history entries in this transaction.
+	return s.withHistoryTx(ctx, historyScope{id: id}, func(tx *sql.Tx) error {
 		return s.executeUpdateTx(ctx, tx, id, updates)
 	})
 }

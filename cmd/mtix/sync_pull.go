@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -191,6 +192,8 @@ func connectAndPull(ctx context.Context, in pullIngest, args []string,
 		return pullOutcome{stage: "connect"}, err
 	}
 	defer pool.Close()
+	// The hub accepted this connection: sticky evidence for the board (ADR-007 A9).
+	noteHubConnection(ctx, os.Stderr)
 
 	since, err := readLastPulledClock(ctx, app.store)
 	if err != nil {

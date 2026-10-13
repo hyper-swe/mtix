@@ -129,6 +129,8 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 		return wrapSyncErr(stderr, "connect", err)
 	}
 	defer pool.Close()
+	// The hub accepted this connection: sticky evidence for the board (ADR-007 A9).
+	noteHubConnection(ctx, stderr)
 
 	since, err := readCloneCheckpoint(ctx, app.store, resume)
 	if err != nil {

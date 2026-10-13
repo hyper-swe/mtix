@@ -626,11 +626,30 @@ Agents (typically LLM coding agents) have a lifecycle managed through heartbeats
 
 #### Registration
 
-Run `mtix agent register <agent-id>` at session boot. Repeat registration on the same board exits 0 with an "already registered" notice and refreshes the heartbeat. It preserves the existing state, work assignment, project, and active session; it does not start or replace a session. With `--json`, the status is `registered` for a new identity or `already_registered` for a repeat. Use a unique ID per agent; registration currently identifies an agent by ID on the board, without a live-session ownership check.
+Run `mtix agent register <agent-id>` at session boot. Repeat registration on the same board exits 0 with an "already registered" notice and refreshes the heartbeat. It preserves the existing state, work assignment, project, and active session; it does not start or replace a session. With `--json`, the status is `registered` for a new identity or `already_registered` for a repeat. Use a unique ID per agent. Registration also records this shell's session for the id (harness and session handle detected from the environment): a restarted lane registers again with no flags, and a still-running session of the same id is refused unless you pass `--take-over` (see "Registration and lanes").
 
 ```bash
 mtix agent register worker-1
 mtix agent register worker-1 --json
+```
+
+#### Registration and lanes
+
+`mtix agent register <agent-id>` also records the calling session so the id can be reached later. It stores the harness and session handle detected by identity: the harness is the one that owns the session's process (Claude Code, Codex or pi, found by walking up past shells and recognized by its argv[0], executable name or install path, because the kernel name of Claude Code can be its version string), and the handle comes only from that harness's own variable (`CLAUDE_CODE_MESSAGING_SOCKET`, `CODEX_THREAD_ID` or `PI_SESSION_ID`), never from an outer harness's inherited variable. If the process or its variable cannot be identified, the session is registered without a handle and with unknown liveness: it is never replaced silently, a repeat from the same process refreshes it, and another session needs `--take-over`; `--harness` and `--session` override them, and a typed `--session` is recorded as origin `manual`. Registering never marks existing inbox events as new: it starts from the current end of the journal, so backlog reaches you through `mtix inbox`, not a wake.
+
+- **Restart a lane:** run `mtix agent register <agent-id>` again. For a recognized harness (Claude Code, Codex, pi) a row whose session has exited is replaced silently, with no flag. A session registered without a verified process (an unrecognized harness, or a plain terminal) has unknown liveness: re-registering from the same process refreshes it, but any other process needs `--take-over`, and the refusal says "live or unverifiable session".
+- **Take over a live lane:** `mtix agent register <agent-id> --take-over`. It bumps the epoch, leaves one fixed notice in the id's inbox when it has a current work item (at most one per displaced session per 10 minutes), and is limited to 3 per id per hour; after that it needs a terminal. Take over only when you are replacing that session on purpose.
+- **Move a lane:** run `mtix agent unregister <agent-id>` from the owning session. `--force` removes another live session's row (operator use).
+- **Inspect:** `mtix agent list --registrations [--json]` shows harness, origin, mode, liveness (`alive`, `dead` or `unknown`; unknown is treated as live), live route and hold.
+- **MCP-only rows:** origin `mcp` (no session handle, no live route) is reserved in this build: no MCP tool records a registration yet, so register from the session shell with `mtix agent register`. `agents.mcp-only` reports any such row that exists.
+- **last_seen** moves only when the registered session runs `mtix agent register` or `mtix inbox` (list, `--wait`, `ack`) with its own session handle in the environment.
+- **Verify:** `mtix sync doctor` reports `agents.stale` (dead sessions; a row unseen for 24 hours with a dead session is deleted) and `agents.mcp-only`, each with the exact fix; add `--json` for tools.
+- **Never** register under another agent's id to "see" its inbox, and never pass `--take-over` to get around a refusal you do not understand: ask the operator.
+
+```bash
+mtix agent register worker-1 --take-over
+mtix agent unregister worker-1
+mtix agent list --registrations --json
 ```
 
 #### Commands
@@ -1429,6 +1448,8 @@ Run the command you choose from the project root. `mtix import` and `mtix sync` 
 | `mtix import .mtix/tasks.json --mode replace` | The file exactly | Everything the refusal listed. Needs the ticket count typed at an interactive terminal (no flag supplies it), so it cannot run unattended; a verified snapshot is written first, and `mtix backup <file>` is an extra copy |
 
 To choose: when the file came from a client older than 0.5.4, use `mtix sync --fix` or merge, and ask the teammate to upgrade. When a teammate's board is stale, find out which changes are newer (for example with `git log -p .mtix/tasks.json`); merge keeps every comment, activity entry and value the refusal lists but lists each task whose status, assignee, agent state, wake time or deletion state differs from the file's and writes nothing until you choose a side for it, and decides the other field values per task, so it can undo the teammate's field changes or your own edits (see the merge rule under "Conflict baseline" above), and replace keeps theirs but deletes what the refusal listed. If you cannot tell, ask before choosing.
+
+**First pull after upgrading from 0.5.3 or earlier.** A board written by 0.5.3 or earlier cannot carry comments, activity or the fields 2.0.0 added (previous status, estimates, who deleted a task, metadata and the rest), so a teammate's newer board always lacks yours. mtix does not count that as a loss. Before it refuses an import, it looks for the board you and your teammate last exchanged: first the last-exchanged record (`.mtix/data/exchange-record.json`, written after each import by the release that adds it and later ones; a board last imported by 0.5.4 or earlier has none), then the git merge-base board (the committed `.mtix/tasks.json` that `ORIG_HEAD` and the branch's upstream both descend from). When that board is in the 1.x form, mtix decides task by task and field by field. A value unchanged here since the exchange takes the file's value (the teammate's change, a claim included). A value unchanged in the file keeps your change, so an unpushed pre-upgrade edit survives. Comments, activity and 2.0.0-only fields the older form could not carry are kept, and so are tasks you made since. The import prints which source it used and what it kept. It still refuses, and lists the task, when both sides changed the same field (`changed both here and in the file since the last exchange`), when the file lacks a task you hold, when a dependency between tasks you both already had differs in either direction (an older board holds none, so mtix cannot tell who changed it; a dependency of a task you made since, or of a task new in the file, is not a difference, because its author is known), or when neither source exists. Where the other task was renumbered on the other side, the import is still refused; run `mtix import .mtix/tasks.json --mode merge` from the project root, the way out the refusal names. A refusal with no source names what was missing and why, and the choices are the ones above (merge, `mtix sync --fix`, replace). Nothing is deleted by the refusal. `mtix sync` shows it again.
 
 **Writes never overwrite a pulled board.** A write exports the store to `.mtix/tasks.json` only when the file on disk is the one mtix last wrote or imported. When it changed on disk and was not imported (a pull while `mtix mcp`, `mtix serve` or the daemon runs, a pull with automatic import off, or a board mtix refused), the export first runs the automatic import. If that imports the board, the export goes ahead. Otherwise the board is left as it is, the write stays in the local store, the refusal is recorded as pending, and one line says so, with the way out for that kind of refusal:
 
@@ -3176,6 +3197,20 @@ and names the planned reconfirmation and strict-setting options. The warning
 does not perform either action. Resolve a reported identity disagreement with
 the board owner; preserve existing confirmations until explicit recovery is
 available. Text and JSON reports carry the same status and guidance.
+
+A board also carries a sticky hub-connected mark that records the first
+evidence of a hub or relay: sync or relay keys in `.mtix/config.yaml`, a DSN in
+`.mtix/secrets`, a hub or relay event applied to the board, or a DSN taken from
+the environment by a sync command that actually connected. A DSN that is only
+exported in the shell never marks a board. The mark stays set when the keys or
+credentials are later removed, because the board has already exchanged events.
+The mark is stored the first time `mtix sync doctor` or a sync command sees
+the config keys, the secrets DSN or an applied-event record; until one of them
+runs, nothing is stored.
+Older mtix builds do not set it, so any applied-event record is also treated as
+evidence and sets the mark. `mtix sync doctor` shows it as `board.hub-mark` with
+its source in text and `--json`. A command to clear it, at an interactive
+terminal only, is planned and does not exist in this release.
 
 ### Provisional vs settled IDs
 

@@ -212,6 +212,7 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	report = appendOperatorPlacementCheck(report)
 	report = appendDoctorCheck(report, checkDataFilesystem(inspectors))
 	report = appendBoardIdentityChecks(report)
+	report = appendRegistrationChecks(ctx, report)
 
 	// Check 6: every mtix function and trigger the migrations define is
 	// on the hub and enabled, as the restore runbook ends (MTIX-95.7).

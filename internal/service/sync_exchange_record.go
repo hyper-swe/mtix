@@ -55,17 +55,8 @@ func exchangeUnavailable(category string, cause error) error {
 
 // LastExchanged only loads received provenance, without judging incoming lineage.
 func (s *SyncService) LastExchanged(ctx context.Context, dir string) (*ExchangeRecord, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, exchangeUnavailable("context", err)
-	}
-	if !exchangePlatformSupported() {
-		return nil, exchangeUnavailable("unsupported", nil)
-	}
-	if s.MaxImportSize <= 0 {
-		return nil, exchangeUnavailable("invalid-cap", nil)
-	}
-	if _, err := os.Lstat(exchangePath(dir)); err != nil {
-		return nil, exchangeUnavailable("missing", nil)
+	if err := s.exchangePrecheck(ctx, dir); err != nil {
+		return nil, err
 	}
 	lock, err := s.openExchangeReadLock(dir)
 	if err != nil {
@@ -73,6 +64,33 @@ func (s *SyncService) LastExchanged(ctx context.Context, dir string) (*ExchangeR
 	}
 	defer s.releaseLock(lock)
 	return s.readExchangeRecord(ctx, dir)
+}
+
+// lastExchangedHeld is LastExchanged for a caller that already holds the
+// exclusive sync lock (the automatic import, MTIX-95.31.15.1): the same
+// checks and reader, without taking the read lock the caller's lock excludes.
+func (s *SyncService) lastExchangedHeld(ctx context.Context, dir string) (*ExchangeRecord, error) {
+	if err := s.exchangePrecheck(ctx, dir); err != nil {
+		return nil, err
+	}
+	return s.readExchangeRecord(ctx, dir)
+}
+
+// exchangePrecheck applies the checks that come before any read of the record.
+func (s *SyncService) exchangePrecheck(ctx context.Context, dir string) error {
+	if err := ctx.Err(); err != nil {
+		return exchangeUnavailable("context", err)
+	}
+	if !exchangePlatformSupported() {
+		return exchangeUnavailable("unsupported", nil)
+	}
+	if s.MaxImportSize <= 0 {
+		return exchangeUnavailable("invalid-cap", nil)
+	}
+	if _, err := os.Lstat(exchangePath(dir)); err != nil {
+		return exchangeUnavailable("missing", nil)
+	}
+	return nil
 }
 
 func (s *SyncService) readExchangeRecord(ctx context.Context, dir string) (*ExchangeRecord, error) {

@@ -20,7 +20,8 @@ import (
 // Returns ErrStillDeferred if the node is deferred with future defer_until.
 // Returns ErrInvalidTransition for other invalid states.
 func (s *Store) ClaimNode(ctx context.Context, id, agentID string) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.2: withHistoryTx appends the task_history entries in this transaction.
+	return s.withHistoryTx(ctx, historyScope{id: id, actor: agentID}, func(tx *sql.Tx) error {
 		return s.claimNodeTx(ctx, tx, id, agentID)
 	})
 }
@@ -131,7 +132,7 @@ func (s *Store) UnclaimNode(ctx context.Context, id, reason, author string) erro
 		return fmt.Errorf("unclaim reason is required: %w", model.ErrInvalidInput)
 	}
 
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	return s.withHistoryTx(ctx, historyScope{id: id, actor: author}, func(tx *sql.Tx) error {
 		if err := validateUnclaimStatus(ctx, tx, id); err != nil {
 			return err
 		}
@@ -214,7 +215,7 @@ func validateUnclaimStatus(ctx context.Context, tx *sql.Tx, id string) error {
 //
 // Returns ErrAgentStillActive if the current agent is not stale.
 func (s *Store) ForceReclaimNode(ctx context.Context, id, agentID string, staleThreshold time.Duration) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	return s.withHistoryTx(ctx, historyScope{id: id, actor: agentID}, func(tx *sql.Tx) error {
 		currentAssignee, err := s.validateForceReclaim(ctx, tx, id, staleThreshold)
 		if err != nil {
 			return err

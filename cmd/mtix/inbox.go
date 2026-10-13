@@ -102,7 +102,7 @@ func runInbox(agent string, wait bool, timeout int, format string) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project (run 'mtix init' first)")
 	}
-	ctx := context.Background()
+	ctx := sessionContext(context.Background()) // refreshes last_seen for the registered session
 
 	var (
 		events []sqlite.InboxEvent
@@ -205,7 +205,7 @@ func runInboxAck(agent string, seqs []string, through bool) error {
 			maxSeq = n
 		}
 	}
-	ctx := context.Background()
+	ctx := sessionContext(context.Background()) // refreshes last_seen for the registered session
 	out := NewOutputWriter(app.jsonOutput)
 
 	if through {

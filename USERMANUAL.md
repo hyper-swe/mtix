@@ -3090,6 +3090,20 @@ does not perform either action. Resolve a reported identity disagreement with
 the board owner; preserve existing confirmations until explicit recovery is
 available. Text and JSON reports carry the same status and guidance.
 
+A board also carries a sticky hub-connected mark that records the first
+evidence of a hub or relay: sync or relay keys in `.mtix/config.yaml`, a DSN in
+`.mtix/secrets`, a hub or relay event applied to the board, or a DSN taken from
+the environment by a sync command that actually connected. A DSN that is only
+exported in the shell never marks a board. The mark stays set when the keys or
+credentials are later removed, because the board has already exchanged events.
+The mark is stored the first time `mtix sync doctor` or a sync command sees
+the config keys, the secrets DSN or an applied-event record; until one of them
+runs, nothing is stored.
+Older mtix builds do not set it, so any applied-event record is also treated as
+evidence and sets the mark. `mtix sync doctor` shows it as `board.hub-mark` with
+its source in text and `--json`. A command to clear it, at an interactive
+terminal only, is planned and does not exist in this release.
+
 ### Provisional vs settled IDs
 
 A **settled** ID is fully numeric, like `PRJX-1.4`. It is safe to put in

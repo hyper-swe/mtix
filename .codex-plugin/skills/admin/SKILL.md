@@ -434,10 +434,24 @@ directory of the process that dispatches it. Launch rules:
   loading are refused, per interpreter: `sh`, `bash` and the other shells `-c`,
   `--rcfile` and `--init-file`; `python` `-c` and `-m`; `node` `-e`, `-r` and
   `--require`; `perl` `-e` and `-I`; `ruby` `-e`, `-r` and `-I`. Move the logic
-  into a script file in the project and approve it. Assignments of
-  `BASH_ENV`, `ENV`, `NODE_OPTIONS`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`,
-  `RUBYLIB`, `PYTHONPATH` or `PYTHONSTARTUP` through `env` are refused, and
-  those variables are removed from the environment of every hook.
+  into a script file in the project and approve it.
+  Environment assignments through `env` follow an allowlist. Every argument
+  containing `=` before the program is an assignment, and its name must be a
+  valid identifier. Allowed: `LANG`, `LANGUAGE`, `TZ`, `TERM`, `NO_COLOR`,
+  `LC_*`, `MTIX_*`, and project-specific names matching `^[A-Z][A-Z0-9_]*$`
+  that are not in a loader family. Refused by name family: `BASH_ENV`, `ENV`,
+  `ZDOTDIR`, `SHELLOPTS`, `BASHOPTS`, `PS4`, `PROMPT_COMMAND`, `IFS`, `CDPATH`,
+  `GCONV_PATH`, `BASH_*`, `ZSH*`, `PYTHON*`, `NODE_*`, `PERL*`, `RUBY*`,
+  `GEM_*`, `LD_*` and `DYLD_*`. `PATH` cannot be set by a hook: the scrubbed
+  environment provides it. `HOME` is accepted only when its value is outside
+  the project (also after following links). The refusal message names the
+  variable and the rule. The loader variables `BASH_ENV`, `ENV`, `NODE_OPTIONS`,
+  `PERL5OPT`, `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `PYTHONPATH`, `PYTHONSTARTUP`,
+  `ZDOTDIR`, `PYTHONUSERBASE`, `PYTHONHOME`, `LD_PRELOAD`, `LD_LIBRARY_PATH`,
+  `DYLD_INSERT_LIBRARIES` and `DYLD_LIBRARY_PATH` are also removed from the
+  environment of every hook. The `-b` option ends option processing for every
+  shell name (the argument after it is the script), because `sh` can be `zsh`;
+  python `-X pycache_prefix=...` is refused.
 - Any other argument that names a project file at approval time, in any
   position except the program and the script, and including the value of
   `--opt=VALUE` or `NAME=VALUE`, is pinned

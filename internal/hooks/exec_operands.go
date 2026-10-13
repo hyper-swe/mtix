@@ -25,6 +25,12 @@ const (
 type interpreter struct {
 	name     string
 	classify func(option string) optionKind
+	// endsOptions reports an option after which the next argument is the
+	// script even when it starts with a dash (-b, as zsh reads it). It applies
+	// to every shell name, because sh can be zsh.
+	endsOptions func(option string) bool
+	// checkValue vets the value of an option that takes one.
+	checkValue func(option, value string) error
 }
 
 var envAssignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
@@ -86,22 +92,24 @@ func interpreterFor(program string) (interpreter, bool) {
 	case shellName.MatchString(base):
 		letters := cluster("-+", "aefhmnuvxbC")
 		long := oneOf("--posix", "--noprofile", "--norc")
-		return interpreter{base, classifier(func(o string) bool { return letters(o) || long(o) }, oneOf("-o", "+o", "-O", "+O"))}, true
+		ip := interpreter{name: base, classify: classifier(func(o string) bool { return letters(o) || long(o) }, oneOf("-o", "+o", "-O", "+O"))}
+		ip.endsOptions = func(o string) bool { return letters(o) && strings.Contains(o, "b") }
+		return ip, true
 	case pythonName.MatchString(base):
-		return interpreter{base, classifier(cluster("-", "BEIOqsSuvx"), oneOf("-W", "-X"))}, true
+		return interpreter{name: base, classify: classifier(cluster("-", "BEIOqsSuvx"), oneOf("-W", "-X")), checkValue: pythonOptionValue}, true
 	case nodeName.MatchString(base):
-		return interpreter{base, classifier(oneOf("--no-warnings", "--enable-source-maps", "--trace-warnings", "--no-deprecation"), nil)}, true
+		return interpreter{name: base, classify: classifier(oneOf("--no-warnings", "--enable-source-maps", "--trace-warnings", "--no-deprecation"), nil)}, true
 	case perlName.MatchString(base):
-		return interpreter{base, classifier(cluster("-", "wWTt"), nil)}, true
+		return interpreter{name: base, classify: classifier(cluster("-", "wWTt"), nil)}, true
 	case rubyName.MatchString(base):
-		return interpreter{base, classifier(oneOf("-w", "-W0", "-W1", "-W2"), nil)}, true
+		return interpreter{name: base, classify: classifier(oneOf("-w", "-W0", "-W1", "-W2"), nil)}, true
 	}
 	return interpreter{}, false
 }
 
-// codeLoadingVariables are startup-file and module-path variables that make an
-// interpreter load code the approval does not cover.
-var codeLoadingVariables = []string{"BASH_ENV", "ENV", "NODE_OPTIONS", "PERL5OPT", "PERL5LIB", "RUBYOPT", "RUBYLIB", "PYTHONPATH", "PYTHONSTARTUP"}
+// codeLoadingVariables are startup-file and library variables removed from the
+// environment every hook inherits.
+var codeLoadingVariables = []string{"BASH_ENV", "ENV", "NODE_OPTIONS", "PERL5OPT", "PERL5LIB", "RUBYOPT", "RUBYLIB", "PYTHONPATH", "PYTHONSTARTUP", "ZDOTDIR", "PYTHONUSERBASE", "PYTHONHOME", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH"}
 
 func codeLoadingVariable(name string) bool {
 	for _, v := range codeLoadingVariables {
@@ -110,6 +118,71 @@ func codeLoadingVariable(name string) bool {
 		}
 	}
 	return false
+}
+
+var (
+	identifier     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	projectVarName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+)
+
+// loaderExact and loaderPrefixes name the variables that make an interpreter
+// or the dynamic loader read startup files, modules or libraries, by family.
+var (
+	loaderExact    = []string{"BASH_ENV", "ENV", "ZDOTDIR", "SHELLOPTS", "BASHOPTS", "PS4", "PROMPT_COMMAND", "IFS", "CDPATH", "GCONV_PATH", "PATH"}
+	loaderPrefixes = []string{"PYTHON", "NODE_", "PERL", "RUBY", "GEM_", "LD_", "DYLD_", "BASH_", "ZSH"}
+)
+
+func loaderFamily(name string) bool {
+	for _, v := range loaderExact {
+		if v == name {
+			return true
+		}
+	}
+	for _, p := range loaderPrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// allowedAssignment is the environment allowlist for an exec hook: plain data
+// variables (LANG, LC_*, TZ, TERM, NO_COLOR, MTIX_*) and project-specific names
+// shaped like ^[A-Z][A-Z0-9_]*$ that are not in a loader family. HOME is
+// accepted by name and checked by value (it must not point into the project).
+func allowedAssignment(name string) bool {
+	switch {
+	case name == "HOME":
+		return true
+	case loaderFamily(name):
+		return false
+	case name == "LANG" || name == "LANGUAGE" || name == "TZ" || name == "TERM" || name == "NO_COLOR":
+		return true
+	}
+	return strings.HasPrefix(name, "LC_") || strings.HasPrefix(name, "MTIX_") || projectVarName.MatchString(name)
+}
+
+// checkAssignment vets one env NAME=VALUE argument against the allowlist.
+func checkAssignment(arg string) error {
+	name, _, _ := strings.Cut(arg, "=")
+	if !identifier.MatchString(name) {
+		return fmt.Errorf("env assignment %q is refused: %q is not a valid identifier (env treats every argument with \"=\" before the program as an assignment)", arg, name)
+	}
+	if name == "PATH" {
+		return fmt.Errorf("env assignment %q is refused: PATH is provided by the scrubbed environment and cannot be set by a hook", arg)
+	}
+	if !allowedAssignment(name) {
+		return fmt.Errorf("env assignment %q is refused: %s is not on the environment allowlist (plain data variables, LC_*, MTIX_*, and project names matching ^[A-Z][A-Z0-9_]*$ outside the interpreter and loader families)", arg, name)
+	}
+	return nil
+}
+
+// pythonOptionValue refuses the -X values that relocate cache files.
+func pythonOptionValue(option, value string) error {
+	if option == "-X" && strings.HasPrefix(value, "pycache_prefix") {
+		return fmt.Errorf("python option -X %q is refused: it relocates files the interpreter loads", value)
+	}
+	return nil
 }
 
 // scrubbedEnviron returns env without the code-loading variables.
@@ -125,7 +198,8 @@ func scrubbedEnviron(env []string) []string {
 }
 
 // programIndex returns the index of the program, looking through env and the
-// only env forms accepted: -i, -u NAME, -- and NAME=VALUE.
+// only env forms accepted: -i, -u NAME, -- and assignments. As env does, every
+// other argument containing "=" before the program is an assignment.
 func programIndex(command []string) (int, error) {
 	if len(command) == 0 {
 		return -1, nil
@@ -143,13 +217,13 @@ func programIndex(command []string) (int, error) {
 			return -1, nil
 		case arg == "-u":
 			j++
-		case envAssignment.MatchString(arg):
-			if name, _, _ := strings.Cut(arg, "="); codeLoadingVariable(name) {
-				return -1, fmt.Errorf("env assignment %q is refused: %s makes the interpreter load code that is not approved", arg, name)
-			}
 		case arg == "-i":
 		case strings.HasPrefix(arg, "-"):
 			return -1, fmt.Errorf("env option %q is not supported; only -i, -u NAME, -- and NAME=VALUE are accepted", arg)
+		case strings.Contains(arg, "="):
+			if err := checkAssignment(arg); err != nil {
+				return -1, err
+			}
 		default:
 			return j, nil
 		}
@@ -173,19 +247,35 @@ func scriptOperand(command []string) (int, error) {
 		}
 		return -1, nil
 	}
-	for j := pi + 1; j < len(command); j++ {
+	return scanOptions(ip, command, pi+1)
+}
+
+// nextOperand is the index j when it exists in the command, else -1.
+func nextOperand(command []string, j int) (int, error) {
+	if j < len(command) {
+		return j, nil
+	}
+	return -1, nil
+}
+
+// scanOptions walks the options after the interpreter and returns the index of
+// the script operand.
+func scanOptions(ip interpreter, command []string, start int) (int, error) {
+	for j := start; j < len(command); j++ {
 		arg := command[j]
-		if arg == "--" {
-			if j+1 < len(command) {
-				return j + 1, nil
-			}
-			return -1, nil
-		}
-		if arg == "" || (arg[0] != '-' && arg[0] != '+') {
+		switch {
+		case arg == "--" || (ip.endsOptions != nil && ip.endsOptions(arg)):
+			return nextOperand(command, j+1)
+		case arg == "" || (arg[0] != '-' && arg[0] != '+'):
 			return j, nil
 		}
 		switch ip.classify(arg) {
 		case optValue:
+			if ip.checkValue != nil && j+1 < len(command) {
+				if err := ip.checkValue(arg, command[j+1]); err != nil {
+					return -1, err
+				}
+			}
 			j++
 		case optFlag:
 		default:
@@ -277,6 +367,24 @@ func checkOperands(h Hook, in *hookInputs) error {
 			return fmt.Errorf("exec launch refused for hook %q: script %q is not an approved project file; create it and approve the hook again", h.Name, arg)
 		case inside && !lexical:
 			return fmt.Errorf("exec launch refused for hook %q: %q resolves to %q inside the project and is not an approved file", h.Name, arg, resolved)
+		}
+	}
+	return nil
+}
+
+// checkEnvAssignments refuses a HOME assignment through env whose value lies
+// inside the project: shells and interpreters read startup files from HOME.
+func checkEnvAssignments(command []string, program int, logical, root string) error {
+	if program < 0 {
+		return nil
+	}
+	for _, arg := range command[:program] {
+		name, value, found := strings.Cut(arg, "=")
+		if !found || name != "HOME" {
+			continue
+		}
+		if _, _, inside := projectPath(logical, root, value); inside {
+			return fmt.Errorf("env assignment %q is refused: HOME inside the project makes interpreters read startup files that are not approved", arg)
 		}
 	}
 	return nil

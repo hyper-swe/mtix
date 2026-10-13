@@ -382,3 +382,175 @@ func TestPrepareExec_LinkChainIntoProjectRefused(t *testing.T) {
 	_, err = f.approvals.PrepareExec(f.hook(t))
 	require.Error(t, err)
 }
+
+func TestApprove_StartupRelocationVariablesRefused(t *testing.T) {
+	for _, name := range []string{"ZDOTDIR", "PYTHONUSERBASE", "PYTHONHOME", "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH"} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, "[env, "+name+"=., sh, scripts/run.sh]", fixtureOptions{unapproved: true})
+			err := f.approvals.Approve("wake", true)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), name)
+		})
+	}
+}
+
+func TestApprove_HomeAssignmentInsideProjectRefused(t *testing.T) {
+	for _, value := range []string{".", "scripts", "{ROOT}", "{ROOT}/scripts"} {
+		t.Run(value, func(t *testing.T) {
+			value = strings.ReplaceAll(value, "{ROOT}", "{L}")
+			f := newFixture(t, `[env, "HOME=`+value+`", zsh, scripts/run.sh]`, fixtureOptions{unapproved: true})
+			err := f.approvals.Approve("wake", true)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "HOME")
+		})
+	}
+}
+
+func TestApprove_HomeAssignmentOutsideProjectAllowed(t *testing.T) {
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	f := newFixture(t, `[env, "HOME=`+outside+`", sh, scripts/run.sh]`, fixtureOptions{})
+	_, err = f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err)
+}
+
+func TestExecAdapter_ScrubsStartupRelocationVariables(t *testing.T) {
+	probe := "#!/bin/sh\nprintf '%s|%s|%s|%s' \"${ZDOTDIR-unset}\" \"${PYTHONUSERBASE-unset}\" \"${LD_PRELOAD-unset}\" \"${KEEP-unset}\" > out.env\ncat > /dev/null\n"
+	f := newPrepareFixtureWith(t, "[sh, scripts/envprobe.sh]", map[string]string{"scripts/envprobe.sh": probe})
+	t.Setenv("ZDOTDIR", f.root)
+	t.Setenv("PYTHONUSERBASE", f.root)
+	t.Setenv("LD_PRELOAD", filepath.Join(f.root, "x.so"))
+	t.Setenv("KEEP", "kept")
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err)
+	require.NoError(t, NewExecAdapter().Deliver(context.Background(), Delivery{Hook: f.hook(t), EventJSON: []byte(`{}`), Exec: plan}))
+	require.Eventually(t, func() bool {
+		data, readErr := os.ReadFile(filepath.Join(f.root, "out.env"))
+		return readErr == nil && len(data) > 0
+	}, 10*time.Second, 20*time.Millisecond)
+	require.Equal(t, "unset|unset|unset|kept", readOut(t, f.root, "out.env"))
+}
+
+func TestScriptOperand_ZshOptionBEndsOptions(t *testing.T) {
+	cases := []struct {
+		command []string
+		want    int
+	}{
+		{[]string{"zsh", "-f", "-b", "-e"}, 3},
+		{[]string{"zsh", "-fb", "-e"}, 2},
+		{[]string{"zsh", "-b", "run.zsh"}, 2},
+		{[]string{"zsh", "-b"}, -1},
+		{[]string{"/bin/Zsh5", "-b", "-x"}, 2},
+		{[]string{"bash", "-b", "run.sh"}, 2},
+		{[]string{"sh", "-b", "-e"}, 2},
+		{[]string{"dash", "-b", "-e"}, 2},
+	}
+	for _, c := range cases {
+		got, err := scriptOperand(c.command)
+		require.NoError(t, err, strings.Join(c.command, " "))
+		require.Equal(t, c.want, got, strings.Join(c.command, " "))
+	}
+}
+
+func TestPrepareExec_ZshOptionBOperandIsScriptPosition(t *testing.T) {
+	f := newPrepareFixture(t, "[zsh, -f, -b, -e]")
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err, "the operand after -b is the script and was never approved")
+	require.Nil(t, plan)
+}
+
+func TestPrepareExec_AssignmentShapedProgramNameIsNotPinned(t *testing.T) {
+	f := newPrepareFixtureWith(t, "[X=tool]", map[string]string{"tool": "#!/bin/sh\nexit 0\n"})
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err, "the program is a literal name, never rewritten to X=<copy>")
+	require.Nil(t, plan)
+}
+
+func TestApprove_EveryEqualsArgumentBeforeProgramIsAnAssignment(t *testing.T) {
+	for _, command := range []string{
+		"[env, A.B=1, HOME=., zsh, scripts/run.sh]",
+		"[env, A.B=1, ZDOTDIR=., zsh, scripts/run.sh]",
+		`[env, "A%=1", sh, -c, ". ./evil.sh"]`,
+		`[env, A.B=1, python3, -c, "exec(1)"]`,
+		"[env, A.B=1, sh, scripts/later.sh]",
+		"[env, =x, sh, scripts/run.sh]",
+	} {
+		t.Run(command, func(t *testing.T) {
+			f := newFixture(t, command, fixtureOptions{unapproved: true})
+			err := f.approvals.Approve("wake", true)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "identifier", "the refusal names the rule")
+		})
+	}
+}
+
+func TestApprove_EnvAssignmentAllowlist(t *testing.T) {
+	for _, name := range []string{"LANG", "LC_ALL", "LC_TIME", "TZ", "TERM", "NO_COLOR", "MTIX_FLAG", "MY_SETTING", "WAKE_MODE2"} {
+		t.Run("allowed "+name, func(t *testing.T) {
+			f := newFixture(t, "[env, "+name+"=value, sh, scripts/run.sh]", fixtureOptions{})
+			_, err := f.approvals.PrepareExec(f.hook(t))
+			require.NoError(t, err)
+		})
+	}
+	for _, name := range []string{
+		"PERLLIB", "NODE_PATH", "RUBYGEMS_GEMDEPS", "SHELLOPTS", "BASHOPTS", "PS4", "PROMPT_COMMAND", "IFS",
+		"GEM_PATH", "GEM_HOME", "PYTHONPYCACHEPREFIX", "__PYVENV_LAUNCHER__", "PYTHONEXECUTABLE", "LD_AUDIT",
+		"GCONV_PATH", "DYLD_FRAMEWORK_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_FALLBACK_FRAMEWORK_PATH",
+		"DYLD_VERSIONED_LIBRARY_PATH", "BASH_FUNC_x", "http_proxy", "my_setting", "ZSH_VERSION", "CDPATH",
+	} {
+		t.Run("refused "+name, func(t *testing.T) {
+			f := newFixture(t, "[env, "+name+"=value, sh, scripts/run.sh]", fixtureOptions{unapproved: true})
+			err := f.approvals.Approve("wake", true)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), name, "the refusal names the variable")
+			require.Contains(t, err.Error(), "allowlist", "and the rule")
+		})
+	}
+}
+
+func TestApprove_PathAssignmentRefused(t *testing.T) {
+	for _, command := range []string{
+		"[env, PATH=/nonexistent:bin:/usr/bin, sh, scripts/run.sh]",
+		`[env, "PATH={L}/bin:/usr/bin:/bin", sh, scripts/run.sh]`,
+	} {
+		t.Run(command, func(t *testing.T) {
+			f := newFixture(t, command, fixtureOptions{unapproved: true})
+			err := f.approvals.Approve("wake", true)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "scrubbed environment", "PATH is refused by its own rule")
+		})
+	}
+}
+
+func TestPrepareExec_ProgramAfterEnvIsResolvedAndCheckedLikeTheProgram(t *testing.T) {
+	f := newPrepareFixture(t, "[env, sh, scripts/run.sh]")
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err)
+	require.True(t, filepath.IsAbs(plan.Argv[1]), "the program after env is made absolute")
+
+	bin := filepath.Join(f.root, "bin")
+	require.NoError(t, os.Mkdir(bin, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "sh"), []byte("#!/bin/sh\nexit 0\n"), 0o700))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	_, err = f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err, "an interpreter that resolves into the project is refused")
+}
+
+func TestApprove_HomeThroughLinkIntoProjectRefused(t *testing.T) {
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	link := filepath.Join(outside, "home")
+	f := newFixture(t, `[env, "HOME=`+link+`", zsh, scripts/run.sh]`, fixtureOptions{unapproved: true})
+	require.NoError(t, os.Symlink(f.root, link))
+	err = f.approvals.Approve("wake", true)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "HOME")
+}
+
+func TestScriptOperand_PythonPycachePrefixRefused(t *testing.T) {
+	_, err := scriptOperand([]string{"python3", "-X", "pycache_prefix=.", "scripts/run.py"})
+	require.Error(t, err)
+	got, err := scriptOperand([]string{"python3", "-X", "utf8", "scripts/run.py"})
+	require.NoError(t, err)
+	require.Equal(t, 3, got)
+}

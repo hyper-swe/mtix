@@ -13,12 +13,19 @@ var wakeMetadataStartRE = regexp.MustCompile(`(?:^|\|\||[;|]|&&|\s&\s|\$\(|\bthe
 var wakeMetadataAssignmentRE = regexp.MustCompile(`^[A-Z_][A-Z_0-9]*=`)
 var wakeMetadataFunctionRE = regexp.MustCompile(`^[a-z_][a-z_0-9]*\(\)$`)
 
-// wakeStopFileLines are the only commands that touch the renewer stop marker
-// (MTIX-163); everything else, including any other rm, is not metadata.
-var wakeStopFileLineRE = regexp.MustCompile(`^(?:rm -f -- "\$STOP_FILE" 2>/dev/null \|\| :|\(set -C; : > "\$STOP_FILE"\) 2>/dev/null \|\| :)(?:;|$)`)
+// wakeStopMarkerLines are the only whole lines allowed to touch the renewer stop
+// marker and its recorded sleep pid (MTIX-163). They match exactly, so nothing
+// may follow them after ;, && or ||, and any other rm is not metadata.
+var wakeStopMarkerLines = map[string]bool{
+	`rm -f -- "$STOP_FILE" "$SLEEP_FILE" 2>/dev/null || :`:                  true,
+	`rm -f -- "$SLEEP_FILE" 2>/dev/null || :`:                               true,
+	`(set -C; : > "$STOP_FILE") 2>/dev/null || :`:                           true,
+	`(set -C; printf '%s\n' "$SLEEP_PID" > "$SLEEP_FILE") 2>/dev/null || :`: true,
+	`read -r SLEEP_RECORDED < "$SLEEP_FILE" 2>/dev/null || :`:               true,
+}
 
 func wakeProtocolMetadataLine(line string) bool {
-	if wakeStopFileLineRE.MatchString(strings.TrimSpace(line)) {
+	if wakeStopMarkerLines[strings.TrimSpace(line)] {
 		return true
 	}
 	if strings.HasPrefix(line, "trap '") {

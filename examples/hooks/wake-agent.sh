@@ -37,6 +37,7 @@ HOLDER= RENEWER= CHILD=
 # The renewer also stops when this marker exists, so stopping it never depends
 # on a signal reaching it in time (a TERM sent while it starts can be lost).
 STOP_FILE="$WAKE_AGENT_LOG.stop.$$"
+SLEEP_FILE="$STOP_FILE.sleep"
 WAKE_MAX_RUNS="${WAKE_MAX_RUNS:-20}"
 
 prepare_log() {
@@ -80,11 +81,22 @@ resolve_tool() {
 MTIX_BIN=$(resolve_tool "${MTIX_BIN:-mtix}") || { report 'mtix executable unavailable'; exit 127; }
 HARNESS_BIN=$(resolve_tool "${HARNESS_BIN:-claude}") || { report 'harness executable unavailable'; exit 127; }
 
+kill_renewer_sleep() {
+    SLEEP_RECORDED=
+    read -r SLEEP_RECORDED < "$SLEEP_FILE" 2>/dev/null || :
+    if [ "$SLEEP_RECORDED" -gt 0 ] 2>/dev/null; then kill -KILL "$SLEEP_RECORDED" 2>/dev/null || :; fi
+}
+
+# Create the marker first, then read the sleep pid: the renewer stores the pid
+# first, then checks the marker, so one side always sees the other and neither
+# a lost nor an ignored TERM can leave the renewer waiting on its sleep.
 stop_renewal() {
     if [ -n "$RENEWER" ]; then
         (set -C; : > "$STOP_FILE") 2>/dev/null || :
-        kill "$RENEWER" 2>/dev/null || :; wait "$RENEWER" 2>/dev/null || :; RENEWER=
-        rm -f -- "$STOP_FILE" 2>/dev/null || :
+        kill "$RENEWER" 2>/dev/null || :
+        kill_renewer_sleep
+        wait "$RENEWER" 2>/dev/null || :; RENEWER=
+        rm -f -- "$STOP_FILE" "$SLEEP_FILE" 2>/dev/null || :
     fi
 }
 
@@ -135,7 +147,7 @@ if [ "${#HOLDER}" -ne 32 ]; then HOLDER=; report 'invalid lease holder'; exit 1;
 
 PARENT=$$
 stop_renewal_commands() {
-    if [ -n "$SLEEP_PID" ]; then kill "$SLEEP_PID" 2>/dev/null || :; wait "$SLEEP_PID" 2>/dev/null || :; SLEEP_PID=; fi
+    if [ -n "$SLEEP_PID" ]; then kill -KILL "$SLEEP_PID" 2>/dev/null || :; wait "$SLEEP_PID" 2>/dev/null || :; SLEEP_PID=; fi
     if [ -n "$RENEW_PID" ]; then kill "$RENEW_PID" 2>/dev/null || :; wait "$RENEW_PID" 2>/dev/null || :; RENEW_PID=; fi
 }
 
@@ -144,9 +156,12 @@ renew_loop() {
     trap 'STOPPING=1; stop_renewal_commands' TERM INT HUP
     while kill -0 "$PARENT" 2>/dev/null && [ ! -e "$STOP_FILE" ]; do
         sleep 60 >/dev/null 2>&1 </dev/null & SLEEP_PID=$!
-        if [ -n "$STOPPING" ]; then stop_renewal_commands; return 0; fi
+        rm -f -- "$SLEEP_FILE" 2>/dev/null || :
+        (set -C; printf '%s\n' "$SLEEP_PID" > "$SLEEP_FILE") 2>/dev/null || :
+        if [ -n "$STOPPING" ] || [ -e "$STOP_FILE" ]; then stop_renewal_commands; return 0; fi
         wait "$SLEEP_PID" || return 0
         SLEEP_PID=
+        rm -f -- "$SLEEP_FILE" 2>/dev/null || :
         kill -0 "$PARENT" 2>/dev/null || exit 0
         [ ! -e "$STOP_FILE" ] || return 0
         "$MTIX_BIN" inbox lease acquire --agent "$AGENT" --holder "$HOLDER" --ttl 15m >/dev/null 2>>"$WAKE_AGENT_LOG" & RENEW_PID=$!
@@ -158,7 +173,7 @@ renew_loop() {
         [ "$STATUS" -eq 0 ] || report "lease renewal failed ($STATUS); TTL recovery remains available"
     done
 }
-rm -f -- "$STOP_FILE" 2>/dev/null || :
+rm -f -- "$STOP_FILE" "$SLEEP_FILE" 2>/dev/null || :
 renew_loop & RENEWER=$!
 
 RUNS=0
@@ -182,7 +197,7 @@ while :; do
     if [ "$STATUS" -ne 0 ]; then report "lease release failed ($STATUS)"; exit 1; fi
     case "$OUTCOME" in
         relaunch)
-            rm -f -- "$STOP_FILE" 2>/dev/null || :
+            rm -f -- "$STOP_FILE" "$SLEEP_FILE" 2>/dev/null || :
             renew_loop & RENEWER=$! ;;
         released) HOLDER=; exit 0 ;;
         *) report 'unexpected lease release outcome'; exit 1 ;;

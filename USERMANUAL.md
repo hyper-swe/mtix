@@ -2402,22 +2402,41 @@ an agent session defers it without recording an attempt. New `mtix init`
 projects exclude `.mtix/hooks.trust` in `.gitignore`.
 
 An approved exec hook launches from the project root, whatever the working
-directory of the process that dispatches it. Each existing project file named
-as the program or its first operand runs as a private copy made from the same
-bytes that were checked against the approval; the copy's path is `$0`, and the
-original path is in `MTIX_HOOK_SCRIPT_PATH`. Copies live in the `exec-copies`
-directory inside the operator state directory, one directory per content and
-executable bit. File mode is not part of the
-approval: after `chmod` on the original, the next launch uses a matching copy
-with no new review. Scripts must not locate sibling files relative to `$0`;
-use paths from the project root. A script that differs from its approval at
-launch time starts nothing and is logged as an error, and so does a project
-path in those positions that had no regular file at approval time: create the
-file and approve the hook again. A bare program name, such as `python3`, is
-resolved to an absolute path at launch and recorded in the hook log; a name
-that resolves to a file inside the project is refused, so name that script by
-its project path. Programs outside the project are not part of the approval,
-so upgrading an interpreter needs no new review.
+directory of the process that dispatches it. Launch rules:
+
+- The script is always pinned. The program itself, or the first non-option
+  argument of `sh`, `bash`, `zsh`, `python`, `node`, `ruby` or `perl` (also
+  when reached through `env`, skipping its options and `NAME=VALUE` pairs), must
+  be a project file that was approved. If it is not approved, the launch is
+  refused, even when the file does not exist yet: create it and approve the
+  hook again. A command-string option such as `sh -c` has no script operand.
+- Any other argument that names a project file at approval time, in any
+  position and including the value of `--opt=VALUE`, is pinned and replaced by
+  a private verified copy made from the bytes that were checked against the
+  approval. Pass output or data files that the hook writes through the
+  environment or stdin, not as project-file arguments. The copy's path is `$0`
+  for the script, and the original path is in `MTIX_HOOK_SCRIPT_PATH`.
+- An argument that names an existing project file that was not approved is
+  refused, and so is an argument outside the project that is a link to such a
+  file.
+- URLs, plain words and paths that do not exist pass unchanged unless they are
+  in the script position.
+
+Copies live in the `exec-copies` directory inside the operator state
+directory, one directory per content and executable bit; they are not pruned
+automatically. File mode is not part of the approval: after `chmod` on the
+original, the next launch uses a matching copy with no new review. Scripts must
+not locate sibling files relative to `$0`; use paths from the project root. A
+script that differs from its approval at launch time starts nothing and is
+logged as an error. A bare program name, such as `python3`, is resolved to an
+absolute path at launch and recorded in the hook log; a name that resolves to a
+file inside the project is refused, so name that script by its project path.
+Programs outside the project are not part of the approval, so upgrading an
+interpreter needs no new review.
+
+Residual: a file that appears at a non-script position between the launch check
+and the moment the interpreter opens it is not covered, because only files that
+existed at approval are pinned there.
 
 ### Conflict handling
 

@@ -76,6 +76,8 @@ func scriptComponents(root, rel string) error {
 
 // scriptInput is one project script's bytes as read for a hook.
 type scriptInput struct {
+	// prefix is the "--opt=" part when the file is an option's value.
+	prefix  string
 	path    string
 	content []byte
 	mode    os.FileMode
@@ -118,7 +120,8 @@ func collectHookInputs(h Hook, logicalRoot, root string) (*hookInputs, error) {
 	digest.Write(own)
 	in := &hookInputs{stanza: string(own), scripts: map[int]scriptInput{}}
 	for i, arg := range h.Exec.Command {
-		rel, inside, err := projectScriptLocation(logicalRoot, root, arg)
+		value, prefix := splitOption(arg)
+		rel, inside, err := projectScriptLocation(logicalRoot, root, value)
 		if err != nil {
 			return nil, err
 		}
@@ -127,19 +130,21 @@ func collectHookInputs(h Hook, logicalRoot, root string) (*hookInputs, error) {
 				return nil, err
 			}
 		}
-		content, mode, ok, readErr := readSnapshotScript(root, arg, inside)
+		content, mode, ok, readErr := readSnapshotScript(root, value, inside)
 		if readErr != nil {
 			return nil, readErr
 		}
 		if !ok {
 			continue
 		}
-		in.legacy = append(in.legacy, legacyPart{arg: arg, content: content})
+		if prefix == "" {
+			in.legacy = append(in.legacy, legacyPart{arg: arg, content: content})
+		}
 		if !inside {
 			continue
 		}
 		path := filepath.Join(root, rel)
-		in.scripts[i] = scriptInput{path: path, content: content, mode: mode}
+		in.scripts[i] = scriptInput{prefix: prefix, path: path, content: content, mode: mode}
 		digest.Write([]byte{0})
 		digest.Write([]byte(path))
 		digest.Write([]byte{0})

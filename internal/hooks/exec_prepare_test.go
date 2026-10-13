@@ -32,6 +32,13 @@ type prepareFixture struct {
 // argv template ("{script}" expands to the project script's relative path).
 func newPrepareFixture(t *testing.T, command string) prepareFixture {
 	t.Helper()
+	return newPrepareFixtureWith(t, command, nil)
+}
+
+// newPrepareFixtureWith also writes extra project files (path to content)
+// before the hook is approved.
+func newPrepareFixtureWith(t *testing.T, command string, extra map[string]string) prepareFixture {
+	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	mtixDir := filepath.Join(root, ".mtix")
@@ -39,6 +46,11 @@ func newPrepareFixture(t *testing.T, command string) prepareFixture {
 	require.NoError(t, os.Mkdir(filepath.Join(root, "scripts"), 0o700))
 	script := filepath.Join(root, "scripts", "run.sh")
 	require.NoError(t, os.WriteFile(script, []byte(prepareScript), 0o700))
+	for name, content := range extra {
+		path := filepath.Join(root, name)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o700))
+	}
 	yaml := "hooks:\n  - name: wake\n    match: {events: [comment.addressed]}\n    deliver: [exec]\n    exec: {command: " + command + "}\n"
 	require.NoError(t, os.WriteFile(filepath.Join(mtixDir, "hooks.yaml"), []byte(yaml), 0o600))
 	state := testutil.OperatorState(t)
@@ -184,7 +196,7 @@ func TestStageScript_ReplacesWrongOrLinkedTarget(t *testing.T) {
 	content := []byte("#!/bin/sh\nexit 0\n")
 	base := filepath.Join(t.TempDir(), "copies")
 	script := scriptInput{path: "/p/run.sh", content: content, mode: 0o700}
-	good, err := stageScript(base, script)
+	good, err := stager{}.stage(base, script)
 	require.NoError(t, err)
 	outside := filepath.Join(t.TempDir(), "same-bytes")
 	require.NoError(t, os.WriteFile(outside, content, 0o600))
@@ -194,7 +206,7 @@ func TestStageScript_ReplacesWrongOrLinkedTarget(t *testing.T) {
 	} {
 		require.NoError(t, os.Remove(good))
 		plant()
-		got, err := stageScript(base, script)
+		got, err := stager{}.stage(base, script)
 		require.NoError(t, err)
 		info, err := os.Lstat(got)
 		require.NoError(t, err)
@@ -206,8 +218,7 @@ func TestStageScript_ReplacesWrongOrLinkedTarget(t *testing.T) {
 }
 
 func TestStageScript_DetectsCopyChangedAfterWrite(t *testing.T) {
-	stagedHook = func(path string) { require.NoError(t, os.WriteFile(path, []byte("tampered"), 0o700)) }
-	t.Cleanup(func() { stagedHook = nil })
-	_, err := stageScript(filepath.Join(t.TempDir(), "copies"), scriptInput{path: "/p/run.sh", content: []byte("#!/bin/sh\n"), mode: 0o700})
+	st := stager{afterWrite: func(path string) { require.NoError(t, os.WriteFile(path, []byte("tampered"), 0o700)) }}
+	_, err := st.stage(filepath.Join(t.TempDir(), "copies"), scriptInput{path: "/p/run.sh", content: []byte("#!/bin/sh\n"), mode: 0o700})
 	require.Error(t, err)
 }

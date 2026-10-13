@@ -5,14 +5,16 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/hyper-swe/mtix/internal/model"
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // Init and automatic mirror import use the same local creation identity boundary.

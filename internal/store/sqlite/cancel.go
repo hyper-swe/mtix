@@ -73,7 +73,7 @@ func (s *Store) executeCancelTx(ctx context.Context, tx *sql.Tx, req transitionR
 	}
 
 	if cascade {
-		cancelled, err := cascadeCancel(ctx, tx, id, author, nowStr)
+		cancelled, err := cascadeCancel(ctx, tx, s, id, author, nowStr)
 		if err != nil {
 			return fmt.Errorf("cascade cancel from %s: %w", id, err)
 		}
@@ -94,7 +94,7 @@ func (s *Store) executeCancelTx(ctx context.Context, tx *sql.Tx, req transitionR
 	// this node is the blocker. Auto-unblock dependents. Mirrors the
 	// hook in executeTransitionTx so the cancel path produces the
 	// same unblock semantics as a done transition.
-	if err := unblockDependents(ctx, tx, id, author); err != nil {
+	if err := unblockDependents(ctx, tx, s, id, author); err != nil {
 		return fmt.Errorf("auto-unblock dependents of cancelled %s: %w", id, err)
 	}
 
@@ -173,13 +173,13 @@ type cancelledNode struct {
 // it restores. They never see the descendants cancelled: there the
 // descendants keep their previous status, and a dependent restored here
 // shows unblocked while the descendant that blocked it is not cancelled.
-func cascadeCancel(ctx context.Context, tx *sql.Tx, rootID, author, nowStr string) ([]cancelledNode, error) {
+func cascadeCancel(ctx context.Context, tx *sql.Tx, h historyToucher, rootID, author, nowStr string) ([]cancelledNode, error) {
 	cancelled, err := cancelDescendants(ctx, tx, rootID, nowStr)
 	if err != nil {
 		return nil, err
 	}
 	for _, n := range cancelled {
-		if err := unblockDependents(ctx, tx, n.id, author); err != nil {
+		if err := unblockDependents(ctx, tx, h, n.id, author); err != nil {
 			return nil, fmt.Errorf("auto-unblock dependents of cascade-cancelled %s: %w", n.id, err)
 		}
 	}

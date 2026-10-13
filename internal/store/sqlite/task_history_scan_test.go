@@ -149,6 +149,19 @@ func countStatements(root ast.Node, strs map[string]string, used map[string]bool
 		n += len(updateNodesRE.FindAllString(v, -1))
 		return false
 	})
+	// Fragments joined at run time: the literals in source order, spaced.
+	var lits []string
+	ast.Inspect(root, func(node ast.Node) bool {
+		if lit, ok := node.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+			if v, err := strconv.Unquote(lit.Value); err == nil {
+				lits = append(lits, v)
+			}
+		}
+		return true
+	})
+	if joined := len(updateNodesRE.FindAllString(strings.Join(lits, " "), -1)); joined > n {
+		n = joined
+	}
 	return n
 }
 
@@ -180,9 +193,14 @@ func scanUpdateStatements(t *testing.T, dir string) []updateSite {
 			add(d.file, "var "+ident, countStatements(d.expr, strs, used))
 			continue
 		}
-		if v, ok := strs[ident]; ok && !used[ident] {
-			add(d.file, d.kind+" "+ident, len(updateNodesRE.FindAllString(v, -1)))
+		if v, ok := strs[ident]; ok {
+			if !used[ident] {
+				add(d.file, d.kind+" "+ident, len(updateNodesRE.FindAllString(v, -1)))
+			}
+			continue
 		}
+		// A composite literal (slice, map) of statements.
+		add(d.file, "var "+ident, countStatements(d.expr, strs, used))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].file+out[i].fn < out[j].file+out[j].fn })
 	return out

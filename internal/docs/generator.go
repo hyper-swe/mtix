@@ -83,10 +83,11 @@ func WorkflowSubdir() string { return workflowSubdir }
 
 // Generator produces documentation files per FR-13.1.
 type Generator struct {
-	outputDir string
-	templates *template.Template
-	data      *TemplateData
-	logger    *slog.Logger
+	outputDir  string
+	projectDir string
+	templates  *template.Template
+	data       *TemplateData
+	logger     *slog.Logger
 }
 
 // GenerateResult describes the outcome of generating a single file.
@@ -179,6 +180,10 @@ func EmbeddedTemplatesFS() fs.FS {
 	return embeddedTemplates
 }
 
+// SetProjectRoot enables the MTIX.md briefing and user-file pointers per FR-13.1.
+// Reference-only generators retain their existing FR-13.2 behavior.
+func (g *Generator) SetProjectRoot(root string) { g.projectDir = root }
+
 // Generate produces all 11 top-level documentation files per FR-13.1
 // plus the BYO PG reference workflow docs from MTIX-14.4 under
 // <outputDir>/workflows/.
@@ -188,12 +193,18 @@ func EmbeddedTemplatesFS() fs.FS {
 // results are reported with the "workflows/" prefix in their File field
 // so callers can distinguish them from top-level docs.
 func (g *Generator) Generate(force bool) ([]GenerateResult, error) {
+	var results []GenerateResult
+	if g.projectDir != "" {
+		briefing, err := generateProjectBriefing(g.projectDir, g.templates, g.data)
+		if err != nil {
+			return nil, fmt.Errorf("generate project briefing: %w", err)
+		}
+		results = append(results, briefing...)
+	}
 	// Ensure output directory exists.
 	if err := os.MkdirAll(g.outputDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create docs dir %s: %w", g.outputDir, err)
 	}
-
-	var results []GenerateResult
 
 	for _, doc := range allDocFiles {
 		result, err := g.generateFile(doc, force)

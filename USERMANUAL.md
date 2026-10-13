@@ -2401,6 +2401,63 @@ review. An eligible refusal is recorded and later runs do not retry conversion;
 an agent session defers it without recording an attempt. New `mtix init`
 projects exclude `.mtix/hooks.trust` in `.gitignore`.
 
+An approved exec hook launches from the project root, whatever the working
+directory of the process that dispatches it. Launch rules:
+
+- The script is always pinned. The program itself, or the first non-option
+  argument of `sh`, `bash`, `zsh`, `dash`, `ksh`, `ash`, `python`, `node`,
+  `ruby` or `perl` (also when reached through `env`), must be a project file
+  that was approved. If it is not approved, the launch is refused, even when
+  the file does not exist yet: create it and approve the hook again. Paths are
+  judged both as entered and after following links, so a link into the project
+  counts as a project path.
+- Options before the script must be in this list; anything else is refused when
+  the hook is approved and again at launch, because the script position is
+  never guessed. `sh`, `bash`, `zsh`, `dash`, `ksh`, `ash`: `-o NAME`,
+  `+o NAME`, `-O NAME`, `+O NAME`, `--posix`, `--noprofile`, `--norc`, and
+  clusters of `-` or `+` with the letters `a e f h m n u v x b C`. `python`:
+  `-W VALUE`, `-X VALUE`, and clusters of `-` with `B E I O q s S u v x`.
+  `node`: `--no-warnings`, `--enable-source-maps`, `--trace-warnings`,
+  `--no-deprecation`. `perl`: clusters of `-` with `w W T t`. `ruby`: `-w`,
+  `-W0`, `-W1`, `-W2`. `env`: `-i`, `-u NAME`, `--` and `NAME=VALUE`.
+  Interpreters are matched by name without regard to case or version suffix
+  (`SH`, `bash5`, `python3.12`, `nodejs`, `perl5.34`). Inline code and code
+  loading are refused, per interpreter: `sh`, `bash` and the other shells `-c`,
+  `--rcfile` and `--init-file`; `python` `-c` and `-m`; `node` `-e`, `-r` and
+  `--require`; `perl` `-e` and `-I`; `ruby` `-e`, `-r` and `-I`. Move the logic
+  into a script file in the project and approve it. Assignments of
+  `BASH_ENV`, `ENV`, `NODE_OPTIONS`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`,
+  `RUBYLIB`, `PYTHONPATH` or `PYTHONSTARTUP` through `env` are refused, and
+  those variables are removed from the environment of every hook.
+- Any other argument that names a project file at approval time, in any
+  position except the program and the script, and including the value of
+  `--opt=VALUE` or `NAME=VALUE`, is pinned
+  and replaced by a private verified copy made from the bytes that were checked
+  against the approval. Pass output or data files that the hook writes through
+  the environment or stdin, not as project-file arguments. The copy's path is
+  `$0` for the script, and the original path is in `MTIX_HOOK_SCRIPT_PATH`.
+- An argument that names an existing project file that was not approved is
+  refused, and so is an argument outside the project that is a link to such a
+  file, even a link whose target does not exist yet.
+- URLs, plain words, directories and paths that do not exist pass unchanged
+  unless they are in the script position.
+
+Copies live in the `exec-copies` directory inside the operator state
+directory, one directory per content and executable bit; they are not pruned
+automatically. File mode is not part of the approval: after `chmod` on the
+original, the next launch uses a matching copy with no new review. Scripts must
+not locate sibling files relative to `$0`; use paths from the project root. A
+script that differs from its approval at launch time starts nothing and is
+logged as an error. A bare program name, such as `python3`, is resolved to an
+absolute path at launch and recorded in the hook log; a name that resolves to a
+file inside the project is refused, so name that script by its project path.
+Programs outside the project are not part of the approval, so upgrading an
+interpreter needs no new review.
+
+Residual: a file that appears at a non-script position between the launch check
+and the moment the interpreter opens it is not covered, because only files that
+existed at approval are pinned there.
+
 ### Conflict handling
 
 When two teammates edit the same field concurrently, Last-Write-Wins

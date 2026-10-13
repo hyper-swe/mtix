@@ -81,10 +81,15 @@ resolve_tool() {
 MTIX_BIN=$(resolve_tool "${MTIX_BIN:-mtix}") || { report 'mtix executable unavailable'; exit 127; }
 HARNESS_BIN=$(resolve_tool "${HARNESS_BIN:-claude}") || { report 'harness executable unavailable'; exit 127; }
 
+# Kill the renewer's sleep by its stored pid, but only while that process is
+# still a child of the live renewer: a stale or planted pid is never signalled.
 kill_renewer_sleep() {
-    SLEEP_RECORDED=
-    read -r SLEEP_RECORDED < "$SLEEP_FILE" 2>/dev/null || :
-    if [ "$SLEEP_RECORDED" -gt 0 ] 2>/dev/null; then kill -KILL "$SLEEP_RECORDED" 2>/dev/null || :; fi
+    SLEEP_RECORDED= PPID_OF=
+    { read -r SLEEP_RECORDED < "$SLEEP_FILE"; } 2>/dev/null || :
+    if [ "$SLEEP_RECORDED" -gt 0 ] 2>/dev/null; then
+        PPID_OF=$(ps -o ppid= -p "$SLEEP_RECORDED" 2>/dev/null) || PPID_OF=
+        if [ "${PPID_OF:-0}" -eq "$RENEWER" ] 2>/dev/null; then kill -KILL "$SLEEP_RECORDED" 2>/dev/null || :; fi
+    fi
 }
 
 # Create the marker first, then read the sleep pid: the renewer stores the pid
@@ -151,7 +156,7 @@ stop_renewal_commands() {
     if [ -n "$RENEW_PID" ]; then kill "$RENEW_PID" 2>/dev/null || :; wait "$RENEW_PID" 2>/dev/null || :; RENEW_PID=; fi
 }
 
-renew_loop() {
+renew_cycles() {
     SLEEP_PID= RENEW_PID= STOPPING=
     trap 'STOPPING=1; stop_renewal_commands' TERM INT HUP
     while kill -0 "$PARENT" 2>/dev/null && [ ! -e "$STOP_FILE" ]; do
@@ -159,19 +164,25 @@ renew_loop() {
         rm -f -- "$SLEEP_FILE" 2>/dev/null || :
         (set -C; printf '%s\n' "$SLEEP_PID" > "$SLEEP_FILE") 2>/dev/null || :
         if [ -n "$STOPPING" ] || [ -e "$STOP_FILE" ]; then stop_renewal_commands; return 0; fi
-        wait "$SLEEP_PID" || return 0
+        wait "$SLEEP_PID" 2>/dev/null || return 0
         SLEEP_PID=
         rm -f -- "$SLEEP_FILE" 2>/dev/null || :
-        kill -0 "$PARENT" 2>/dev/null || exit 0
+        kill -0 "$PARENT" 2>/dev/null || return 0
         [ ! -e "$STOP_FILE" ] || return 0
         "$MTIX_BIN" inbox lease acquire --agent "$AGENT" --holder "$HOLDER" --ttl 15m >/dev/null 2>>"$WAKE_AGENT_LOG" & RENEW_PID=$!
         if [ -n "$STOPPING" ]; then stop_renewal_commands; return 0; fi
         if wait "$RENEW_PID"; then STATUS=0; else STATUS=$?; fi
         RENEW_PID=
         [ -z "$STOPPING" ] || return 0
-        if [ "$STATUS" -eq 6 ]; then kill -USR1 "$PARENT" 2>/dev/null || :; exit 0; fi
+        if [ "$STATUS" -eq 6 ]; then kill -USR1 "$PARENT" 2>/dev/null || :; return 0; fi
         [ "$STATUS" -eq 0 ] || report "lease renewal failed ($STATUS); TTL recovery remains available"
     done
+}
+
+# Whatever way the cycles end, the stored sleep pid goes with them.
+renew_loop() {
+    renew_cycles
+    rm -f -- "$SLEEP_FILE" 2>/dev/null || :
 }
 rm -f -- "$STOP_FILE" "$SLEEP_FILE" 2>/dev/null || :
 renew_loop & RENEWER=$!

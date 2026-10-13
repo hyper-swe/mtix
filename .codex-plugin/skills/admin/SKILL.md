@@ -69,6 +69,7 @@ If an export, or the automatic import of a changed `.mtix/tasks.json`, fails bec
 When a `git pull` or checkout changes `.mtix/tasks.json`, the next mtix CLI command replace-imports it before it runs. The MCP server imports only when it starts, and its stderr is not shown to you. After a pull, run a CLI command that auto-imports, for example `mtix list`, then check with `mtix sync`. The MCP server protects itself too: its writes never overwrite a board that changed on disk; they import it first, or keep it and record why.
 
 - **Applied.** An import that loses nothing prints one line: `mtix: imported the changed .mtix/tasks.json: nodes N added, N updated, N removed; dependencies N added, N removed (local database backed up to .mtix/data/backups/pre-sync-<time>.db)`. The newest 5 pre-import backups are kept; a file that fails a check or is refused takes none. A field a teammate cleared on purpose (unclaim, reopen, undefer, undelete, a later update) applies: their copy of that task holds all of its activity and is not older. The rule fails open in one direction: a teammate's copy with a later `updated_at` counts as current even when it missed your `mtix update` or `mtix delete` (neither records activity), after a concurrent edit to the same task or with a teammate's clock ahead, so a field it leaves empty is applied as cleared; the pre-import backup keeps the state before. The replace re-checks, in its own transaction, that the store is still the one it compared: a write that lands in between (another process, or the MCP server) is kept, nothing is imported, and the next command checks the file again.
+- **First pull after upgrading from 0.5.3 or earlier.** The import finds the board you and your teammate last exchanged (the last-exchanged record, then the git merge-base board) and decides task by task: unchanged here takes the teammate's value, unchanged in the file keeps yours, history the older board could not carry is kept. It refuses only when both sides changed the same field, the file lacks a task you hold, a dependency between tasks you both already had differs in either direction (a dependency of a task you made since, or of a task new in the file, is resolved; if the other task was renumbered on the other side the import is still refused, and `mtix import .mtix/tasks.json --mode merge` is the way out the refusal names), or no such board exists; the refusal then names what was missing. The notice says which source was used and what was kept.
 - **Refused.** If the file lacks a node, an annotation, an annotation's resolution, an activity entry or a dependency the store holds, or leaves a field empty in a copy of a task that is not current (it lacks some of the task's local activity or its `updated_at` is older: a stale board, or one from an mtix client older than 0.5.4), the import is refused and nothing changes. A teammate's deliberate `mtix dep remove` is refused too. The refusal starts `mtix: auto-import of .mtix/tasks.json refused`, lists the loss node by node, and repeats on every command until someone chooses. Until then, writes save to the store but do not rewrite `.mtix/tasks.json` (one line says so). Choose, from the project root:
   - `mtix import .mtix/tasks.json --mode merge` backs up the database, keeps every value the refusal lists (every local node, annotation, activity entry and dependency, and every listed field value, with the task's local status when the value is part of it) and adds the file's changes. Where a task's status, assignee, agent state, wake time or deletion state differs from the file's, it writes nothing and lists each conflict (yours, the file's, an activity hint) until you rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`; the choice is recorded in the task's activity. Where they agree, the other field values are decided per task by its content (title, description, prompt, acceptance, labels): where it matches the file's, the local values win; where it differs, the file's copy wins, so your own edits to that task (a prompt edit, for example) are undone. Check `git log -p .mtix/tasks.json` afterwards and reapply what it undid. A task the file holds under another id with the same uid (another clone renumbered it) moves there without `--confirm`; two copies under different uids are one task only when they share a creation time and one uid was given to the task more than an hour after it was created, by a clone that upgraded from before uids were shared (the file's uid is then adopted); every other pair, such as tasks two clones created in the same second, stays two tasks; without a uid to compare, another title is another task. A local task whose id the board gives to another local task (a clone moved it there) is listed as a different task too, and the merge renumbers it with `--confirm`. A merge that would change nothing takes no backup. A task listed as `a different task under this id` (you and a teammate each created that id, or you created it while the refusal was pending) is never overwritten: merge renumbers your task and its subtree to the next number free in both the store and the file, keeping its uid, and the file's task keeps the id. It prints the renumbering (uid, old id, new id; `--remap-file <path>` saves it) and applies it only when you rerun it with `--confirm`.
   - `mtix sync --fix` keeps the local store and rewrites `.mtix/tasks.json` from it; every change in the file is dropped.
@@ -409,3 +410,59 @@ review. An eligible refusal is recorded and later runs do not retry conversion;
 an agent session defers it without recording an attempt. New `mtix init`
 projects exclude `.mtix/hooks.trust` in `.gitignore`.
 
+An approved exec hook launches from the project root, whatever the working
+directory of the process that dispatches it. Launch rules:
+
+- The script is always pinned. The program itself, or the first non-option
+  argument of `sh`, `bash`, `zsh`, `dash`, `ksh`, `ash`, `python`, `node`,
+  `ruby` or `perl` (also when reached through `env`), must be a project file
+  that was approved. If it is not approved, the launch is refused, even when
+  the file does not exist yet: create it and approve the hook again. Paths are
+  judged both as entered and after following links, so a link into the project
+  counts as a project path.
+- Options before the script must be in this list; anything else is refused when
+  the hook is approved and again at launch, because the script position is
+  never guessed. `sh`, `bash`, `zsh`, `dash`, `ksh`, `ash`: `-o NAME`,
+  `+o NAME`, `-O NAME`, `+O NAME`, `--posix`, `--noprofile`, `--norc`, and
+  clusters of `-` or `+` with the letters `a e f h m n u v x b C`. `python`:
+  `-W VALUE`, `-X VALUE`, and clusters of `-` with `B E I O q s S u v x`.
+  `node`: `--no-warnings`, `--enable-source-maps`, `--trace-warnings`,
+  `--no-deprecation`. `perl`: clusters of `-` with `w W T t`. `ruby`: `-w`,
+  `-W0`, `-W1`, `-W2`. `env`: `-i`, `-u NAME`, `--` and `NAME=VALUE`.
+  Interpreters are matched by name without regard to case or version suffix
+  (`SH`, `bash5`, `python3.12`, `nodejs`, `perl5.34`). Inline code and code
+  loading are refused, per interpreter: `sh`, `bash` and the other shells `-c`,
+  `--rcfile` and `--init-file`; `python` `-c` and `-m`; `node` `-e`, `-r` and
+  `--require`; `perl` `-e` and `-I`; `ruby` `-e`, `-r` and `-I`. Move the logic
+  into a script file in the project and approve it. Assignments of
+  `BASH_ENV`, `ENV`, `NODE_OPTIONS`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`,
+  `RUBYLIB`, `PYTHONPATH` or `PYTHONSTARTUP` through `env` are refused, and
+  those variables are removed from the environment of every hook.
+- Any other argument that names a project file at approval time, in any
+  position except the program and the script, and including the value of
+  `--opt=VALUE` or `NAME=VALUE`, is pinned
+  and replaced by a private verified copy made from the bytes that were checked
+  against the approval. Pass output or data files that the hook writes through
+  the environment or stdin, not as project-file arguments. The copy's path is
+  `$0` for the script, and the original path is in `MTIX_HOOK_SCRIPT_PATH`.
+- An argument that names an existing project file that was not approved is
+  refused, and so is an argument outside the project that is a link to such a
+  file, even a link whose target does not exist yet.
+- URLs, plain words, directories and paths that do not exist pass unchanged
+  unless they are in the script position.
+
+Copies live in the `exec-copies` directory inside the operator state
+directory, one directory per content and executable bit; they are not pruned
+automatically. File mode is not part of the approval: after `chmod` on the
+original, the next launch uses a matching copy with no new review. Scripts must
+not locate sibling files relative to `$0`; use paths from the project root. A
+script that differs from its approval at launch time starts nothing and is
+logged as an error. A bare program name, such as `python3`, is resolved to an
+absolute path at launch and recorded in the hook log; a name that resolves to a
+file inside the project is refused, so name that script by its project path.
+Programs outside the project are not part of the approval, so upgrading an
+interpreter needs no new review.
+
+Residual: a file that appears at a non-script position between the launch check
+and the moment the interpreter opens it is not covered, because only files that
+existed at approval are pinned there.

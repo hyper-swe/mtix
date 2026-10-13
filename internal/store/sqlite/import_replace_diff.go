@@ -60,6 +60,9 @@ type NodeLoss struct {
 	// copy of the node is not known to be current (see DiffReplace). A
 	// cleared field in a current copy is a deliberate change, not a loss.
 	Fields []string
+	// BothChanged names, sorted, the fields changed in both the local store
+	// and the file since the base they last exchanged (MTIX-95.31.15.1).
+	BothChanged []string
 	// Dependencies are the local dependencies from this node the file
 	// lacks, as "<type> <to>".
 	Dependencies []string
@@ -93,7 +96,7 @@ func (d *ReplaceDiff) Lossy() bool { return len(d.Losses) > 0 }
 // MTIX-95.31.9).
 func (l *NodeLoss) lossy() bool {
 	return l.WholeNode || len(l.Annotations) > 0 || len(l.Unresolved) > 0 ||
-		l.Activity > 0 || len(l.Fields) > 0 || len(l.Dependencies) > 0 || l.SameTaskAtUpgrade ||
+		l.Activity > 0 || len(l.Fields) > 0 || len(l.BothChanged) > 0 || len(l.Dependencies) > 0 || l.SameTaskAtUpgrade ||
 		l.DifferentTitleNoUID
 }
 
@@ -155,7 +158,15 @@ func DiffReplace(local, file *ExportData) (*ReplaceDiff, error) {
 	if local == nil || file == nil {
 		return nil, fmt.Errorf("compare exports for a replace import: missing export: %w", model.ErrInvalidInput)
 	}
-	fileCarriesActivity := carriesNodeColumns(file.SchemaVersion)
+	return diffReplace(local, file, carriesNodeColumns(file.SchemaVersion))
+}
+
+// diffReplace is DiffReplace with the file's currency given: fileCarriesActivity
+// true reads a field the file's copy leaves empty as a deliberate change when
+// the copy holds every local activity entry. ResolveWithBase passes true for
+// the board it resolved, because it decided each field against the base
+// (MTIX-95.31.15.1).
+func diffReplace(local, file *ExportData, fileCarriesActivity bool) (*ReplaceDiff, error) {
 	idx := newReplaceIndex(local, file)
 	matched := make(map[*exportNode]bool, len(file.Nodes))
 	sameTaskAt := make(map[string]string, len(local.Nodes)) // local id -> the file's id of that task

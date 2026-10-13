@@ -38,6 +38,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil"
 )
 
 // projectDirs returns a project root and its .mtix subdir. append-file/exec
@@ -472,6 +473,7 @@ hooks:
 // to end through the MCP tools an agent actually calls — mtix_annotate with a
 // `to` param, then mtix_inbox and mtix_inbox_ack (FR-19 §4/§5).
 func TestFR19Acceptance_ViaMCP(t *testing.T) {
+	testutil.OperatorState(t)
 	svc, store, _ := newTestNodeService(t)
 	ctx := context.Background()
 
@@ -496,11 +498,12 @@ func TestFR19Acceptance_ViaMCP(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, res.IsError)
 	require.Len(t, res.Content, 1)
-	var events []sqlite.InboxEvent
-	require.NoError(t, json.Unmarshal([]byte(res.Content[0].Text), &events))
+	events, err := store.InboxList(ctx, "opus")
+	require.NoError(t, err)
 	require.Len(t, events, 1)
-	assert.Equal(t, node.ID, events[0].NodeID)
-	assert.Equal(t, "proceed", events[0].Body)
+	assert.Contains(t, res.Content[0].Text, `task: "`+node.ID+`"`)
+	assert.Contains(t, res.Content[0].Text, `body: "proceed"`)
+	assert.Contains(t, res.Content[0].Text, "as claimed, not verified")
 
 	// mtix_inbox_ack clears it, just as it would for the CLI/store path.
 	ackArg, _ := json.Marshal(map[string]any{"agent": "opus", "seq": events[0].Seq})
@@ -509,7 +512,5 @@ func TestFR19Acceptance_ViaMCP(t *testing.T) {
 
 	after, err := reg.Call(ctx, "mtix_inbox", json.RawMessage(`{"agent":"opus"}`))
 	require.NoError(t, err)
-	var afterEvents []sqlite.InboxEvent
-	require.NoError(t, json.Unmarshal([]byte(after.Content[0].Text), &afterEvents))
-	assert.Empty(t, afterEvents, "inbox clears after MCP ack")
+	assert.Equal(t, "[]", after.Content[0].Text, "inbox clears after MCP ack")
 }

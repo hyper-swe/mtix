@@ -745,7 +745,7 @@ when events are returned; exit 5 on an empty timeout (so a loop can distinguish
 --format emits agent-ready text instead of the plain listing (FR-20 §9,
 "delivery terminates in the prompt"):
   prompt   a complete opening prompt for a cold-started agent — the events
-           verbatim plus the ack/reply contract. A wake exec launches the
+           quoted in an untrusted-message envelope plus the ack/reply contract. A wake exec launches the
            harness CLI with this as the prompt.
   context  a compact block for harness context-injection hooks
            (session-start / prompt-submit).
@@ -1651,6 +1651,9 @@ Run health checks against the local store and the BYO Postgres hub:
   board.hub-identity-changed - warns when the observed hub differs from
                            a recorded confirmation; recovery is planned
   Operator state placement - reports the sandbox placement limitation
+  Inbox envelope caps    - validates operator-local wake.json without hub contact;
+                           missing or zero caps are unlimited; invalid settings
+                           report the exact file-edit remedy
   Data filesystem        - warns on known network/FUSE data mounts; unavailable
                            classification is reported without claiming safe locks
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)

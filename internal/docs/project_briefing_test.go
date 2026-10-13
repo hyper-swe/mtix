@@ -62,7 +62,8 @@ func TestProjectBriefing_ShippedGuidance_ExplainsOwnership(t *testing.T) {
 func TestAppendProjectPointer_IncidentalMentions_AppendsRealPointer(t *testing.T) {
 	for _, input := range []string{"# MTIX.md is obsolete\n", "MTIX.md is a filename\n", "```md\n" + agentsPointer + "\n```\n"} {
 		t.Run(input, func(t *testing.T) {
-			got := appendProjectPointer([]byte(input), agentsPointer, "AGENTS.md")
+			got, err := appendProjectPointer([]byte(input), agentsPointer, "AGENTS.md")
+			require.NoError(t, err)
 			require.Equal(t, input+agentsPointer+"\n", string(got))
 		})
 	}
@@ -122,7 +123,9 @@ func TestAppendProjectPointer_DetachSentences_PreservesVerbatim(t *testing.T) {
 	for _, line := range []string{agentsPointer, "See MTIX.md for mtix instructions.", "Read `MTIX.md` for mtix instructions."} {
 		t.Run(line, func(t *testing.T) {
 			original := "custom\r\n" + line
-			require.Equal(t, original, string(appendProjectPointer([]byte(original), agentsPointer, "AGENTS.md")))
+			got, err := appendProjectPointer([]byte(original), agentsPointer, "AGENTS.md")
+			require.NoError(t, err)
+			require.Equal(t, original, string(got))
 		})
 	}
 }

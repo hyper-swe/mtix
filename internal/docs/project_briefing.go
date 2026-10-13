@@ -103,7 +103,10 @@ func planProjectDocs(root string, owned map[string]string) ([]projectDoc, error)
 			pointer = agentsPointer
 		}
 		if hsErr != nil {
-			clean = appendProjectPointer(clean, pointer, plans[i].name)
+			clean, err = appendProjectPointer(clean, pointer, plans[i].name)
+			if err != nil {
+				return nil, fmt.Errorf("prepare %s: %w", plans[i].name, err)
+			}
 		}
 		if plans[i].exists || hsErr != nil {
 			plans[i].after = clean
@@ -112,23 +115,19 @@ func planProjectDocs(root string, owned map[string]string) ([]projectDoc, error)
 	return plans, nil
 }
 
-func appendProjectPointer(content []byte, pointer, name string) []byte {
-	fenced := false
-	for _, line := range strings.Split(string(content), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
-			fenced = !fenced
-			continue
-		}
-		if !fenced && (line == pointer || (name == "AGENTS.md" && isAgentsPointer(line))) {
-			return content
-		}
+func appendProjectPointer(content []byte, pointer, name string) ([]byte, error) {
+	live, unclosed := projectPointerInText(content, pointer, name)
+	if live {
+		return content, nil
+	}
+	if unclosed {
+		return nil, fmt.Errorf("unclosed code fence prevents appending project pointer")
 	}
 	out := append([]byte(nil), content...)
 	if len(out) > 0 && out[len(out)-1] != '\n' {
 		out = append(out, '\n')
 	}
-	return append(out, []byte(pointer+"\n")...)
+	return append(out, []byte(pointer+"\n")...), nil
 }
 
 func isAgentsPointer(line string) bool {

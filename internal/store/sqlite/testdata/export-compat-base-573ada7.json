@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "schema_version": "2.0.0",
+  "exported_at": "",
+  "mtix_version": "test",
+  "project": "PROJ",
+  "nodes": [
+    {
+      "id": "PROJ-1",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 1,
+      "project": "PROJ",
+      "title": "Task PROJ-1",
+      "description": "",
+      "prompt": "",
+      "acceptance": "",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "h-PROJ-1",
+      "created_at": "2026-10-01T08:00:00Z",
+      "updated_at": "2026-10-01T08:00:00Z",
+      "uid": "01995a1e-8c00-7a11-8b22-000000000001",
+      "previous_status": "open",
+      "annotations": [
+        {
+          "id": "01J9COMPAT0000000000000001",
+          "author": "reviewer",
+          "text": "evidence",
+          "created_at": "2026-10-01T08:00:00Z",
+          "resolved": false
+        }
+      ],
+      "activity": [
+        {
+          "id": "01J9COMPAT0000000000000002",
+          "type": "comment",
+          "author": "lead",
+          "text": "seen",
+          "created_at": "2026-10-01T08:01:00Z"
+        }
+      ]
+    },
+    {
+      "id": "PROJ-2",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 2,
+      "project": "PROJ",
+      "title": "Task PROJ-2",
+      "description": "",
+      "prompt": "",
+      "acceptance": "",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "h-PROJ-2",
+      "created_at": "2026-10-01T08:00:00Z",
+      "updated_at": "2026-10-01T08:00:00Z",
+      "uid": "01995a1e-8c00-7a11-8b22-000000000002",
+      "activity": [
+        {
+          "id": "act-1790841600000000000",
+          "type": "created",
+          "author": "",
+          "text": "Node created",
+          "created_at": "2026-10-01T08:00:00Z"
+        }
+      ]
+    }
+  ],
+  "dependencies": null,
+  "agents": null,
+  "sessions": null,
+  "node_count": 2,
+  "checksum": "b18eb564f29430696345c5de6c3cd1719bb03b2017886b592a539a4d314d449b"
+}

@@ -18,8 +18,10 @@ import (
 
 // TestTaskHistory_RandomImports_NeverMoveHistoryOntoAnUnpairedTask runs many
 // random imports and checks the rule of task_history_import_nomove_test.go on
-// each: no earlier entry changes key, and an entry the importer writes with an
-// Old value sits only under a task that already had history. The generator
+// each: no earlier entry changes key or is deleted, every entry the importer
+// writes matches what its own key's task held (structured Old and New values,
+// and a real text change for the value-free fields), and every task new to the
+// store gets its creation entries. The generator
 // moves tasks between ids, adds unrelated tasks, uses titles that collide, makes
 // local tasks uid-less, and puts one uid into two file slots.
 func TestTaskHistory_RandomImports_NeverMoveHistoryOntoAnUnpairedTask(t *testing.T) {

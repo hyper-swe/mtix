@@ -304,8 +304,6 @@ func (s *Store) ImportReconcile(
 		}
 		defer release()
 	}
-	// MTIX-95.31.19.3: Import records field changes only for tasks whose uid is unchanged
-	// on both sides; no history moves or is attributed across keys, whatever this reconcile adopted or stamped.
 	result, err := s.Import(ctx, data, opts.Mode, opts.Force, writeOpts...)
 	if err != nil {
 		report.noteWorkflowConflicts(err)

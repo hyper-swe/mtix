@@ -31,8 +31,14 @@ import (
 // field before the import.
 type importSnapshot struct {
 	keyOf map[string]string            // entry id -> key
-	held  map[string]map[string]string // key -> field -> value as an Old value is encoded
+	held  map[string]map[string]string // key -> structured field -> value as an Old value is encoded
+	text  map[string]map[string]string // key -> value-free field -> its text
+	uidls map[string]bool              // keys of tasks that have no uid
 }
+
+// valueFreeFields are the recorded fields whose entries carry no value; a
+// change to one is judged by comparing the task's text before and after.
+var valueFreeFields = []string{"title", "description", "prompt", "acceptance", "annotations", "metadata", "code_refs", "commit_refs"}
 
 // structuredOldFields are the fields whose entries carry an Old value, with the
 // nodes column each is read from.
@@ -67,7 +73,7 @@ func eachRow(t *testing.T, db *sql.DB, query string, scan func(rows *sql.Rows)) 
 
 func snapImport(t *testing.T, db *sql.DB) importSnapshot {
 	t.Helper()
-	snap := importSnapshot{keyOf: map[string]string{}, held: map[string]map[string]string{}}
+	snap := importSnapshot{keyOf: map[string]string{}, held: map[string]map[string]string{}, text: map[string]map[string]string{}, uidls: map[string]bool{}}
 	eachRow(t, db, `SELECT entry_id, task_uid FROM task_history`, func(rows *sql.Rows) {
 		var e, k string
 		require.NoError(t, rows.Scan(&e, &k))
@@ -85,6 +91,24 @@ func snapImport(t *testing.T, db *sql.DB) importSnapshot {
 			snap.held[key][field] = encodeOld(v)
 		})
 	}
+	for _, field := range valueFreeFields {
+		eachRow(t, db, `SELECT COALESCE(NULLIF(uid, ''), id), COALESCE(`+field+`, '') FROM nodes`, func(rows *sql.Rows) {
+			var key, v string
+			require.NoError(t, rows.Scan(&key, &v))
+			if snap.text[key] == nil {
+				snap.text[key] = map[string]string{}
+			}
+			if v == "[]" {
+				v = ""
+			}
+			snap.text[key][field] = v
+		})
+	}
+	eachRow(t, db, `SELECT id FROM nodes WHERE COALESCE(uid, '') = ''`, func(rows *sql.Rows) {
+		var id string
+		require.NoError(t, rows.Scan(&id))
+		snap.uidls[id] = true
+	})
 	return snap
 }
 
@@ -96,37 +120,73 @@ func snapImport(t *testing.T, db *sql.DB) importSnapshot {
 // of one task is written onto another, whether or not the key had history.
 func assertImportMovedNothing(t *testing.T, db *sql.DB, before importSnapshot) {
 	t.Helper()
-	live := map[string]bool{}
-	eachRow(t, db, `SELECT COALESCE(NULLIF(uid, ''), id) FROM nodes`, func(rows *sql.Rows) {
-		var k string
-		require.NoError(t, rows.Scan(&k))
-		live[k] = true
-	})
-
-	rows, err := db.Query(`SELECT entry_id, task_uid, field, old_value FROM task_history`)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
-	seen := map[string]bool{}
-	for rows.Next() {
+	after := snapImport(t, db)
+	newEntries := map[string]map[string]sql.NullString{} // key -> field -> Old, for entries new in this import
+	eachRow(t, db, `SELECT entry_id, task_uid, field, old_value FROM task_history`, func(rows *sql.Rows) {
 		var entry, key, field string
 		var oldV sql.NullString
 		require.NoError(t, rows.Scan(&entry, &key, &field, &oldV))
-		seen[entry] = true
 		if was, ok := before.keyOf[entry]; ok {
 			assert.Equal(t, was, key, "an earlier entry (%s) moved from %s to %s", field, was, key)
-			continue
+			delete(before.keyOf, entry)
+			return
 		}
-		assert.True(t, live[key], "a new entry (%s) sits under %s, which no task holds", field, key)
-		if !oldV.Valid {
-			continue
+		if newEntries[key] == nil {
+			newEntries[key] = map[string]sql.NullString{}
 		}
-		want, held := before.held[key][field]
-		assert.True(t, held, "a new entry (%s) carries an Old value under %s, a task that held none", field, key)
-		assert.Equal(t, want, oldV.String, "the Old value of %s under %s is not that task's own earlier value", field, key)
-	}
-	require.NoError(t, rows.Err())
+		newEntries[key][field] = oldV
+	})
 	for entry, key := range before.keyOf {
-		assert.True(t, seen[entry], "an earlier entry of %s was deleted", key)
+		assert.Fail(t, "an earlier entry was deleted", "entry %s of %s", entry, key)
+	}
+	for key, fields := range newEntries {
+		_, existed := before.held[key]
+		_, live := after.held[key]
+		assert.True(t, live, "a new entry sits under %s, which no task holds", key)
+		for field, oldV := range fields {
+			judgeNewEntry(t, before, after, key, field, oldV, existed)
+		}
+	}
+	assertCreationEntries(t, before, after, newEntries)
+}
+
+// judgeNewEntry checks one entry the import wrote against what its key's task
+// held before (structured fields: the Old value, and a New that matches the
+// task now; value-free fields: the text really changed; a task new to the
+// store: only creation entries, with no Old value).
+func judgeNewEntry(t *testing.T, before, after importSnapshot, key, field string, oldV sql.NullString, existed bool) {
+	t.Helper()
+	if _, structured := structuredOldFields[field]; structured {
+		if !existed {
+			assert.False(t, oldV.Valid, "a new entry (%s) carries an Old value under %s, a task new to the store", field, key)
+			return
+		}
+		assert.True(t, oldV.Valid, "a creation-style entry (%s) was written under %s, a task that already existed", field, key)
+		assert.Equal(t, before.held[key][field], oldV.String, "the Old value of %s under %s is not that task's own earlier value", field, key)
+		assert.NotEqual(t, before.held[key][field], after.held[key][field], "%s under %s records a change that did not happen", field, key)
+		return
+	}
+	assert.False(t, oldV.Valid, "a value-free entry (%s) carries a value", field)
+	if existed {
+		assert.NotEqual(t, before.text[key][field], after.text[key][field], "%s under %s records a text change that did not happen", field, key)
+	}
+}
+
+// assertCreationEntries requires every task new to the store (and with a uid)
+// to have a creation entry for each structured field it holds.
+func assertCreationEntries(t *testing.T, before, after importSnapshot, newEntries map[string]map[string]sql.NullString) {
+	t.Helper()
+	for key, fields := range after.held {
+		if _, existed := before.held[key]; existed || after.uidls[key] {
+			continue
+		}
+		for field, v := range fields {
+			if field == "display_path" || v == "null" {
+				continue
+			}
+			_, ok := newEntries[key][field]
+			assert.True(t, ok, "the new task %s has no creation entry for %s", key, field)
+		}
 	}
 }
 
@@ -228,6 +288,12 @@ func nomoveCases() []nomoveCase {
 			file.Nodes[0].Title = "Renamed in the file"
 			require.NoError(t, sqlite.RecomputeExportChecksum(file))
 			return local, file, sqlite.ImportModeReplace, false
+		}},
+		{"identical structured values, different text: a graft would write only value-free entries", func(t *testing.T) (*sqlite.Store, *sqlite.ExportData, sqlite.ImportMode, bool) {
+			local, mate := newTestStore(t), newTestStore(t)
+			createSameIDTask(t, local, "REC-1", "", 1, taskUID(t), "Alpha")
+			createSameIDTask(t, mate, "REC-1", "", 1, taskUID(t), "Beta")
+			return local, exportOf(t, mate), sqlite.ImportModeReplace, false
 		}},
 		{"replace over a uid-less local task", func(t *testing.T) (*sqlite.Store, *sqlite.ExportData, sqlite.ImportMode, bool) {
 			local, file := two(t, taskUID(t), taskUID(t), "", func(l *sqlite.Store) { legacyHistory(t, l.WriteDB()) })

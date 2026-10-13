@@ -66,7 +66,9 @@ func (s *InboxService) InboxList(ctx context.Context, agent string) ([]InboxEven
 	return inboxEvents(events), nil
 }
 
-// InboxWait owns bounded caller-supplied long-poll reads per FR-19.5.
+// InboxWait owns caller-supplied long-poll reads (FR-19.5): zero has no
+// timeout, positive durations are finite, and negative durations are invalid.
+// Caller cancellation and backend failures propagate through the error chain.
 func (s *InboxService) InboxWait(ctx context.Context, agent string, timeout time.Duration) ([]InboxEvent, error) {
 	if s.reader == nil {
 		return nil, wrapAPIOperation("wait inbox", model.ErrInvalidInput)

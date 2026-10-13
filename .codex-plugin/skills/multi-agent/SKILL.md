@@ -49,6 +49,20 @@ mtix stale          # Tasks with inactive agents
 - Never modify tasks claimed by other agents
 - Use comments to coordinate: `mtix comment <id> "message"`
 
+## Waiting for inbox events
+
+An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
+zero has no limit, and already pending events return immediately. Events mean
+exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+A negative timeout is refused. Keep foreground waits within the harness's tool
+limits; use an indefinite park only where background tasks are supported. Handle
+and ack events explicitly before parking again.
+
+For MCP `mtix_inbox_wait`, explicit `timeout_seconds=0` waits without a limit
+until an event or caller cancellation. Omission uses default 60 seconds;
+positive values are capped at 60 seconds, and negative values are refused.
+Cancellation is an error, and an empty positive timeout returns `[]`.
+
 ## Reference Wake Routine
 
 The mtix reference `examples/hooks/wake-agent.sh` reads the unhandled inbox

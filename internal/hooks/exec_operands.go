@@ -62,25 +62,66 @@ func classifier(flags, values func(string) bool) func(string) optionKind {
 	}
 }
 
+var (
+	shellName  = regexp.MustCompile(`^(sh|bash|zsh|dash|ksh|ash)[0-9.]*$`)
+	pythonName = regexp.MustCompile(`^python[0-9.]*$`)
+	nodeName   = regexp.MustCompile(`^(node|nodejs)[0-9.]*$`)
+	perlName   = regexp.MustCompile(`^perl[0-9.]*$`)
+	rubyName   = regexp.MustCompile(`^ruby[0-9.]*$`)
+)
+
+// programBase is the lowercased base name without a Windows extension, so
+// case and version variants (SH, Bash, perl5.34, nodejs) match their family.
+func programBase(program string) string {
+	return strings.TrimSuffix(strings.ToLower(filepath.Base(program)), ".exe")
+}
+
+func isEnv(program string) bool { return programBase(program) == "env" }
+
 // interpreterFor recognizes sh/bash/zsh/python/node/ruby/perl by program name.
 // The known options are listed in the admin skill.
 func interpreterFor(program string) (interpreter, bool) {
-	base := filepath.Base(program)
+	base := programBase(program)
 	switch {
-	case oneOf("sh", "bash", "zsh", "dash", "ksh", "ash")(base):
+	case shellName.MatchString(base):
 		letters := cluster("-+", "aefhmnuvxbC")
 		long := oneOf("--posix", "--noprofile", "--norc")
 		return interpreter{base, classifier(func(o string) bool { return letters(o) || long(o) }, oneOf("-o", "+o", "-O", "+O"))}, true
-	case strings.HasPrefix(base, "python"):
+	case pythonName.MatchString(base):
 		return interpreter{base, classifier(cluster("-", "BEIOqsSuvx"), oneOf("-W", "-X"))}, true
-	case base == "node":
+	case nodeName.MatchString(base):
 		return interpreter{base, classifier(oneOf("--no-warnings", "--enable-source-maps", "--trace-warnings", "--no-deprecation"), nil)}, true
-	case base == "perl":
+	case perlName.MatchString(base):
 		return interpreter{base, classifier(cluster("-", "wWTt"), nil)}, true
-	case base == "ruby":
+	case rubyName.MatchString(base):
 		return interpreter{base, classifier(oneOf("-w", "-W0", "-W1", "-W2"), nil)}, true
 	}
 	return interpreter{}, false
+}
+
+// codeLoadingVariables are startup-file and module-path variables that make an
+// interpreter load code the approval does not cover.
+var codeLoadingVariables = []string{"BASH_ENV", "ENV", "NODE_OPTIONS", "PERL5OPT", "PERL5LIB", "RUBYOPT", "RUBYLIB", "PYTHONPATH", "PYTHONSTARTUP"}
+
+func codeLoadingVariable(name string) bool {
+	for _, v := range codeLoadingVariables {
+		if v == name {
+			return true
+		}
+	}
+	return false
+}
+
+// scrubbedEnviron returns env without the code-loading variables.
+func scrubbedEnviron(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !codeLoadingVariable(name) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // programIndex returns the index of the program, looking through env and the
@@ -89,7 +130,7 @@ func programIndex(command []string) (int, error) {
 	if len(command) == 0 {
 		return -1, nil
 	}
-	if filepath.Base(command[0]) != "env" {
+	if !isEnv(command[0]) {
 		return 0, nil
 	}
 	for j := 1; j < len(command); j++ {
@@ -102,7 +143,11 @@ func programIndex(command []string) (int, error) {
 			return -1, nil
 		case arg == "-u":
 			j++
-		case arg == "-i" || envAssignment.MatchString(arg):
+		case envAssignment.MatchString(arg):
+			if name, _, _ := strings.Cut(arg, "="); codeLoadingVariable(name) {
+				return -1, fmt.Errorf("env assignment %q is refused: %s makes the interpreter load code that is not approved", arg, name)
+			}
+		case arg == "-i":
 		case strings.HasPrefix(arg, "-"):
 			return -1, fmt.Errorf("env option %q is not supported; only -i, -u NAME, -- and NAME=VALUE are accepted", arg)
 		default:
@@ -222,7 +267,10 @@ func checkOperands(h Hook, in *hookInputs) error {
 		if _, staged := in.scripts[i]; staged {
 			continue
 		}
-		value, _ := splitOption(arg)
+		value := arg
+		if i != in.program && i != in.script {
+			value, _ = splitOption(arg)
+		}
 		resolved, lexical, inside := projectPath(in.logical, in.root, value)
 		switch {
 		case i == in.script && inside:

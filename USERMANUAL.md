@@ -2419,11 +2419,19 @@ directory of the process that dispatches it. Launch rules:
   `-W VALUE`, `-X VALUE`, and clusters of `-` with `B E I O q s S u v x`.
   `node`: `--no-warnings`, `--enable-source-maps`, `--trace-warnings`,
   `--no-deprecation`. `perl`: clusters of `-` with `w W T t`. `ruby`: `-w`,
-  `-W0`, `-W1`, `-W2`. `env`: `-i`, `-u NAME`, `--` and `NAME=VALUE`. Options
-  that run program text (`-c`, `-e`, `-m`) or load other code (`--rcfile`,
-  `--init-file`, `-r`, `-I`) are refused; put the logic in a script file.
+  `-W0`, `-W1`, `-W2`. `env`: `-i`, `-u NAME`, `--` and `NAME=VALUE`.
+  Interpreters are matched by name without regard to case or version suffix
+  (`SH`, `bash5`, `python3.12`, `nodejs`, `perl5.34`). Inline code and code
+  loading are refused, per interpreter: `sh`, `bash` and the other shells `-c`,
+  `--rcfile` and `--init-file`; `python` `-c` and `-m`; `node` `-e`, `-r` and
+  `--require`; `perl` `-e` and `-I`; `ruby` `-e`, `-r` and `-I`. Move the logic
+  into a script file in the project and approve it. Assignments of
+  `BASH_ENV`, `ENV`, `NODE_OPTIONS`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`,
+  `RUBYLIB`, `PYTHONPATH` or `PYTHONSTARTUP` through `env` are refused, and
+  those variables are removed from the environment of every hook.
 - Any other argument that names a project file at approval time, in any
-  position and including the value of `--opt=VALUE` or `NAME=VALUE`, is pinned
+  position except the program and the script, and including the value of
+  `--opt=VALUE` or `NAME=VALUE`, is pinned
   and replaced by a private verified copy made from the bytes that were checked
   against the approval. Pass output or data files that the hook writes through
   the environment or stdin, not as project-file arguments. The copy's path is

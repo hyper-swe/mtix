@@ -73,7 +73,7 @@ func (a *ExecAdapter) Deliver(_ context.Context, d Delivery) error {
 	// MTIX_HOOK_ORIGIN lets any mtix mutation the command runs stamp its events
 	// with this hook's name, so they never re-trigger it (loop prevention, 47.7).
 	cmd.Dir = plan.Dir
-	cmd.Env = append(cmd.Environ(),
+	cmd.Env = append(scrubbedEnviron(cmd.Environ()),
 		"MTIX_HOOK_SCRIPT_PATH="+plan.ScriptPath,
 		"MTIX_EVENT="+string(d.EventJSON),
 		"MTIX_HOOK_ORIGIN="+d.Hook.Name)

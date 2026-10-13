@@ -6,10 +6,12 @@
 package hooks
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -264,4 +266,119 @@ func TestPrepareExec_ScriptPathIsFirstScript(t *testing.T) {
 	plan, err := f.approvals.PrepareExec(f.hook(t))
 	require.NoError(t, err)
 	require.Equal(t, f.script, plan.ScriptPath)
+}
+
+func TestScriptOperand_NameVariantsAreInterpreters(t *testing.T) {
+	cases := []struct {
+		command []string
+		want    int
+	}{
+		{[]string{"SH", "scripts/later.sh"}, 1},
+		{[]string{"Bash", "scripts/later.sh"}, 1},
+		{[]string{"bash5", "scripts/later.sh"}, 1},
+		{[]string{"env", "SH", "scripts/later.sh"}, 2},
+		{[]string{"perl5.34", "scripts/later.sh"}, 1},
+		{[]string{"nodejs", "scripts/later.sh"}, 1},
+		{[]string{"node22", "scripts/later.sh"}, 1},
+		{[]string{"/usr/bin/Python3.12", "-B", "scripts/later.py"}, 2},
+		{[]string{"ruby3.3", "scripts/later.rb"}, 1},
+		{[]string{"ENV", "sh", "scripts/later.sh"}, 2},
+	}
+	for _, c := range cases {
+		got, err := scriptOperand(c.command)
+		require.NoError(t, err, strings.Join(c.command, " "))
+		require.Equal(t, c.want, got, strings.Join(c.command, " "))
+	}
+	for _, command := range [][]string{
+		{"ENV", "-S", "sh later.sh"},
+		{"SH", "-c", "scripts/later.sh"},
+		{"perl5.34", "-e", "1"},
+		{"nodejs", "-e", "1"},
+		{"/usr/bin/ENV", "-P", "/bin", "sh", "x.sh"},
+	} {
+		_, err := scriptOperand(command)
+		require.Error(t, err, strings.Join(command, " "))
+	}
+}
+
+func TestPrepareExec_NameVariantProbesRefused(t *testing.T) {
+	for _, command := range []string{
+		"[SH, scripts/later.sh]",
+		"[Bash, scripts/later.sh]",
+		"[env, SH, scripts/later.sh]",
+	} {
+		t.Run(command, func(t *testing.T) {
+			f := newPrepareFixture(t, command)
+			_, err := f.approvals.PrepareExec(f.hook(t))
+			require.Error(t, err, "an unapproved script behind a name variant starts nothing")
+		})
+	}
+}
+
+func TestPrepareExec_AssignmentShapeAtProgramOrScriptIsLiteralPath(t *testing.T) {
+	for _, command := range []string{"[sh, X=scripts/run.sh]", "[X=scripts/run.sh]", "[sh, X=/usr/bin/true]"} {
+		t.Run(command, func(t *testing.T) {
+			f := newPrepareFixture(t, command)
+			plan, err := f.approvals.PrepareExec(f.hook(t))
+			require.Error(t, err, "the argument is a path, not an assignment, and no such file was approved")
+			require.Nil(t, plan)
+		})
+	}
+}
+
+func TestApprove_CodeLoadingEnvAssignmentRefused(t *testing.T) {
+	for _, name := range []string{"BASH_ENV", "ENV", "NODE_OPTIONS", "PERL5OPT", "PERL5LIB", "RUBYOPT", "RUBYLIB", "PYTHONPATH", "PYTHONSTARTUP"} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, "[env, "+name+"=scripts/later.sh, bash, scripts/run.sh]", fixtureOptions{unapproved: true})
+			err := f.approvals.Approve("wake", true)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), name)
+		})
+	}
+}
+
+func TestExecAdapter_ScrubsCodeLoadingVariables(t *testing.T) {
+	probe := "#!/bin/sh\nprintf '%s|%s|%s' \"${BASH_ENV-unset}\" \"${NODE_OPTIONS-unset}\" \"${KEEP-unset}\" > out.env\ncat > /dev/null\n"
+	f := newPrepareFixtureWith(t, "[sh, scripts/envprobe.sh]", map[string]string{"scripts/envprobe.sh": probe})
+	t.Setenv("BASH_ENV", filepath.Join(f.root, "startup.sh"))
+	t.Setenv("NODE_OPTIONS", "--require x")
+	t.Setenv("KEEP", "kept")
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err)
+	require.NoError(t, NewExecAdapter().Deliver(context.Background(), Delivery{Hook: f.hook(t), EventJSON: []byte(`{}`), Exec: plan}))
+	require.Eventually(t, func() bool {
+		data, readErr := os.ReadFile(filepath.Join(f.root, "out.env"))
+		return readErr == nil && len(data) > 0
+	}, 10*time.Second, 20*time.Millisecond)
+	require.Equal(t, "unset|unset|kept", readOut(t, f.root, "out.env"))
+}
+
+func TestResolveDeepest_FollowsChainsAndStopsOnCycles(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	target := filepath.Join(dir, "missing", "later.sh")
+	require.NoError(t, os.Symlink(target, filepath.Join(dir, "l2")))
+	require.NoError(t, os.Symlink(filepath.Join(dir, "l2"), filepath.Join(dir, "l1")))
+	require.Equal(t, target, resolveDeepest(filepath.Join(dir, "l1"), 0), "a chain of two dangling links is followed to its target")
+
+	require.NoError(t, os.Symlink(filepath.Join(dir, "self"), filepath.Join(dir, "self")))
+	done := make(chan string, 1)
+	go func() { done <- resolveDeepest(filepath.Join(dir, "self"), 0) }()
+	select {
+	case got := <-done:
+		require.NotEmpty(t, got)
+	case <-time.After(5 * time.Second):
+		t.Fatal("a self-referencing link must not loop")
+	}
+}
+
+func TestPrepareExec_LinkChainIntoProjectRefused(t *testing.T) {
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	l1 := filepath.Join(outside, "l1")
+	f := newPrepareFixture(t, "[sh, "+l1+"]")
+	require.NoError(t, os.Symlink(filepath.Join(outside, "l2"), l1))
+	require.NoError(t, os.Symlink(filepath.Join(f.root, "scripts", "later.sh"), filepath.Join(outside, "l2")))
+	_, err = f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err)
 }

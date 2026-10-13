@@ -92,11 +92,12 @@ type legacyPart struct {
 type hookInputs struct {
 	// logical is the project root as entered, root the symlink-resolved one.
 	logical, root string
-	// script is the command index run as code, or -1.
-	script int
-	stanza string
-	digest string
-	legacy []legacyPart
+	// program and script are the command indexes of the program and of the
+	// argument run as code (-1 if none); both are literal paths.
+	program, script int
+	stanza          string
+	digest          string
+	legacy          []legacyPart
 	// scripts maps a command index to the project script it names.
 	scripts map[int]scriptInput
 }
@@ -126,40 +127,59 @@ func collectHookInputs(h Hook, logicalRoot, root string) (*hookInputs, error) {
 	if err != nil {
 		return nil, err
 	}
-	in := &hookInputs{logical: logicalRoot, root: root, script: script, stanza: string(own), scripts: map[int]scriptInput{}}
+	program, err := programIndex(h.Exec.Command)
+	if err != nil {
+		return nil, err
+	}
+	in := &hookInputs{logical: logicalRoot, root: root, program: program, script: script, stanza: string(own), scripts: map[int]scriptInput{}}
 	for i, arg := range h.Exec.Command {
-		value, prefix := splitOption(arg)
-		rel, inside, err := projectScriptLocation(logicalRoot, root, value)
+		part, ok, err := in.readArgument(i, arg)
 		if err != nil {
 			return nil, err
-		}
-		if inside {
-			if err := scriptComponents(root, rel); err != nil {
-				return nil, err
-			}
-		}
-		content, mode, ok, readErr := readSnapshotScript(root, value, inside)
-		if readErr != nil {
-			return nil, readErr
 		}
 		if !ok {
 			continue
 		}
-		if prefix == "" {
-			in.legacy = append(in.legacy, legacyPart{arg: arg, content: content})
-		}
-		if !inside {
-			continue
-		}
-		path := filepath.Join(root, rel)
-		in.scripts[i] = scriptInput{prefix: prefix, path: path, content: content, mode: mode}
 		digest.Write([]byte{0})
-		digest.Write([]byte(path))
+		digest.Write([]byte(part.path))
 		digest.Write([]byte{0})
-		digest.Write(content)
+		digest.Write(part.content)
 	}
 	in.digest = hex.EncodeToString(digest.Sum(nil))
 	return in, nil
+}
+
+// readArgument reads the project file an argument names, if any, recording it
+// in the inputs. ok is true only for a file inside the project, which is the
+// part the digest covers. The program and the script are literal paths; any
+// other argument may carry an --opt=VALUE or NAME=VALUE file.
+func (in *hookInputs) readArgument(i int, arg string) (scriptInput, bool, error) {
+	value, prefix := arg, ""
+	if i != in.program && i != in.script {
+		value, prefix = splitOption(arg)
+	}
+	rel, inside, err := projectScriptLocation(in.logical, in.root, value)
+	if err != nil {
+		return scriptInput{}, false, err
+	}
+	if inside {
+		if linkErr := scriptComponents(in.root, rel); linkErr != nil {
+			return scriptInput{}, false, linkErr
+		}
+	}
+	content, mode, ok, err := readSnapshotScript(in.root, value, inside)
+	if err != nil || !ok {
+		return scriptInput{}, false, err
+	}
+	if prefix == "" {
+		in.legacy = append(in.legacy, legacyPart{arg: arg, content: content})
+	}
+	if !inside {
+		return scriptInput{}, false, nil
+	}
+	part := scriptInput{prefix: prefix, path: filepath.Join(in.root, rel), content: content, mode: mode}
+	in.scripts[i] = part
+	return part, true, nil
 }
 
 func captureHookSnapshot(snap *hookSnapshot, legacy hash.Hash, h Hook, logicalRoot, root string) error {

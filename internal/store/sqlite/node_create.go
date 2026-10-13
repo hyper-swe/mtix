@@ -23,7 +23,7 @@ import (
 // Returns ErrAlreadyExists if a node with the given ID already exists.
 // Returns ErrInvalidInput if the parent has a terminal status.
 func (s *Store) CreateNode(ctx context.Context, node *model.Node) error {
-	return s.createNode(ctx, node, "")
+	return s.createNodeWithHistory(ctx, node, "")
 }
 
 // CreateNodeAndClaim inserts an open node and performs the normal claim in one
@@ -33,15 +33,15 @@ func (s *Store) CreateNodeAndClaim(ctx context.Context, node *model.Node, assign
 	if assignee == "" || node.Status != model.StatusOpen || node.Assignee != "" {
 		return fmt.Errorf("explicit creation claim requires an unassigned open node and assignee: %w", model.ErrInvalidInput)
 	}
-	if err := s.createNode(ctx, node, assignee); err != nil {
+	if err := s.createNodeWithHistory(ctx, node, assignee); err != nil {
 		return err
 	}
 	applyInitialClaim(node, assignee)
 	return nil
 }
 
-// createNode keeps creation and optional explicit claim under the same write lock.
-func (s *Store) createNode(ctx context.Context, node *model.Node, assignee string) error {
+// createNodeWithHistory keeps creation and optional explicit claim under the same write lock.
+func (s *Store) createNodeWithHistory(ctx context.Context, node *model.Node, assignee string) error {
 	if err := node.Validate(); err != nil {
 		return fmt.Errorf("create node validate: %w", err)
 	}
@@ -50,6 +50,7 @@ func (s *Store) createNode(ctx context.Context, node *model.Node, assignee strin
 		return err
 	}
 
+	// MTIX-95.31.19.2: createNodeTx records the initial task_history entries in this transaction.
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
 		return s.createNodeTx(ctx, tx, node, assignee)
 	})
@@ -156,6 +157,16 @@ func applyInitialClaim(node *model.Node, assignee string) {
 
 // createNodeTx shares fixed-ID and allocated insertion, event and claim writes.
 func (s *Store) createNodeTx(ctx context.Context, tx *sql.Tx, node *model.Node, assignee string) error {
+	if err := s.insertAndClaimNode(ctx, tx, node, assignee); err != nil {
+		return err
+	}
+	// MTIX-95.31.19.2: record the initial fields (and any explicit claim) as
+	// history entries; the task did not exist before, so every set field is new.
+	return s.recordHistory(ctx, tx, historyScope{id: node.ID, actor: node.Creator}, nil)
+}
+
+// insertAndClaimNode inserts the node, emits its create event and applies the optional claim.
+func (s *Store) insertAndClaimNode(ctx context.Context, tx *sql.Tx, node *model.Node, assignee string) error {
 	if node.ParentID != "" {
 		if err := validateParentStatus(ctx, tx, node.ParentID); err != nil {
 			return err

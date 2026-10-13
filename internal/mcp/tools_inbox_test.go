@@ -17,12 +17,14 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil"
 )
 
 // newInboxTestStore opens a real on-disk SQLite store (with migrations) so the
 // inbox tools query the same event journal the annotate tool writes to.
 func newInboxTestStore(t *testing.T) *sqlite.Store {
 	t.Helper()
+	testutil.OperatorState(t)
 	dbPath := filepath.Join(t.TempDir(), "inbox.db")
 	s, err := sqlite.New(dbPath, slog.Default())
 	require.NoError(t, err)
@@ -41,15 +43,13 @@ func inboxSeedNode(t *testing.T, s *sqlite.Store, id string) {
 	}))
 }
 
-// decodeInboxResult unpacks a tool result's text payload into inbox events.
-func decodeInboxResult(t *testing.T, res *ToolsCallResult) []sqlite.InboxEvent {
+// inboxEnvelopeResult reads the tool's text contract, not a raw event array.
+func inboxEnvelopeResult(t *testing.T, res *ToolsCallResult) string {
 	t.Helper()
 	require.NotNil(t, res)
 	require.False(t, res.IsError)
 	require.Len(t, res.Content, 1)
-	var events []sqlite.InboxEvent
-	require.NoError(t, json.Unmarshal([]byte(res.Content[0].Text), &events))
-	return events
+	return res.Content[0].Text
 }
 
 // TestInboxTools_AnnotateTo_ListAck: mtix_annotate with `to` lands in the
@@ -79,24 +79,24 @@ func TestInboxTools_AnnotateTo_ListAck(t *testing.T) {
 	// mtix_inbox surfaces the same event.
 	res, err := reg.Call(ctx, "mtix_inbox", json.RawMessage(`{"agent":"opus"}`))
 	require.NoError(t, err)
-	events := decodeInboxResult(t, res)
-	require.Len(t, events, 1)
-	assert.Equal(t, "PROJ-1", events[0].NodeID)
-	assert.Positive(t, events[0].Seq)
+	text := inboxEnvelopeResult(t, res)
+	assert.Contains(t, text, `task: "PROJ-1"`)
+	assert.Contains(t, text, `body: "ruling: proceed"`)
+	assert.Contains(t, text, "as claimed, not verified")
 
 	// A different agent sees nothing.
 	other, err := reg.Call(ctx, "mtix_inbox", json.RawMessage(`{"agent":"someone-else"}`))
 	require.NoError(t, err)
-	assert.Empty(t, decodeInboxResult(t, other))
+	assert.Equal(t, "[]", inboxEnvelopeResult(t, other))
 
 	// Ack advances the cursor; the inbox then clears.
-	seqArg, _ := json.Marshal(map[string]any{"agent": "opus", "seq": events[0].Seq})
+	seqArg, _ := json.Marshal(map[string]any{"agent": "opus", "seq": direct[0].Seq})
 	_, err = reg.Call(ctx, "mtix_inbox_ack", seqArg)
 	require.NoError(t, err)
 
 	after, err := reg.Call(ctx, "mtix_inbox", json.RawMessage(`{"agent":"opus"}`))
 	require.NoError(t, err)
-	assert.Empty(t, decodeInboxResult(t, after))
+	assert.Equal(t, "[]", inboxEnvelopeResult(t, after))
 }
 
 // TestInboxTools_Annotate_WithoutTo_NoInbox: an ordinary comment (no `to`) does
@@ -134,7 +134,7 @@ func TestInboxWaitTool_TimesOutEmpty(t *testing.T) {
 
 	require.Len(t, res.Content, 1)
 	assert.Equal(t, "[]", res.Content[0].Text) // empty array, never null
-	assert.Empty(t, decodeInboxResult(t, res))
+	assert.Equal(t, "[]", inboxEnvelopeResult(t, res))
 }
 
 // TestInboxWaitTool_ReturnsAddressedEvent: a comment already waiting is returned
@@ -156,9 +156,9 @@ func TestInboxWaitTool_ReturnsAddressedEvent(t *testing.T) {
 	res, err := reg.Call(ctx, "mtix_inbox_wait",
 		json.RawMessage(`{"agent":"opus","timeout_seconds":5}`))
 	require.NoError(t, err)
-	events := decodeInboxResult(t, res)
-	require.Len(t, events, 1)
-	assert.Equal(t, "wake up", events[0].Body)
+	text := inboxEnvelopeResult(t, res)
+	assert.Contains(t, text, `body: "wake up"`)
+	assert.Contains(t, text, "ack: mtix inbox ack")
 }
 
 // TestRegisterInboxTools_RegistersExpectedTools verifies inbox tool registration.

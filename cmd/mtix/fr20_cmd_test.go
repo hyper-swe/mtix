@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	inboxformat "github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -36,6 +37,7 @@ func TestHooksExecDispatchCmd_GetSetRoundTrip(t *testing.T) {
 // TestWriteInbox_AllFormats exercises every rendering branch of writeInbox:
 // the two agent-ready formats, JSON, the human listing, and the empty inbox.
 func TestWriteInbox_AllFormats(t *testing.T) {
+	initTestApp(t)
 	events := []sqlite.InboxEvent{
 		{Seq: 7, NodeID: "TEST-1", Author: "planner", Body: "start on TEST-1"},
 	}
@@ -47,7 +49,13 @@ func TestWriteInbox_AllFormats(t *testing.T) {
 	})
 	t.Run("context", func(t *testing.T) {
 		out := captureStdout(t, func() { require.NoError(t, writeInbox("dev", "context", events)) })
-		assert.Contains(t, out, "[7] TEST-1")
+		assert.Contains(t, out, inboxformat.Preamble)
+		assert.Contains(t, out, `sender (as claimed, not verified): "planner"`)
+		assert.Contains(t, out, `task: "TEST-1"`)
+		assert.Contains(t, out, "seq: 7")
+		assert.Contains(t, out, `body: "start on TEST-1"`)
+		assert.Contains(t, out, `reply: mtix comment TEST-1 --to planner "<text>"`)
+		assert.Contains(t, out, "ack: mtix inbox ack 7 --agent 'dev'")
 	})
 	t.Run("human", func(t *testing.T) {
 		app.jsonOutput = false

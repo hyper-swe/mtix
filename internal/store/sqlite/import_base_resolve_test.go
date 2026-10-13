@@ -361,26 +361,84 @@ func TestResolveWithBase_InvalidationFields_AreResolvedTogether(t *testing.T) {
 	assert.Equal(t, []string{"invalidated_at"}, res.Diff.Losses[0].BothChanged)
 }
 
-func TestResolveWithBase_LocalTaskDependencies_AreKept(t *testing.T) {
+// The base holds no dependencies, so a dependency that differs between the store and
+// the file cannot be told from the teammate's change: it is refused, never resolved.
+func TestResolveWithBase_DependencyDifference_IsRefusedNotResolved(t *testing.T) {
 	p1 := boardNode("PROJ-1", uidOne, "open", "")
-	p3 := boardNode("PROJ-3", "01995a1e-8c00-7a11-8b22-000000000003", "open", "")
-	p4 := withKeys(boardNode("PROJ-4", "01995a1e-8c00-7a11-8b22-000000000004", "open", ""), "seq", 4)
-	dep := func(from, to string) any {
-		return map[string]any{"from_id": from, "to_id": to, "dep_type": "blocks", "created_at": "2026-10-02T09:00:00Z"}
-	}
-	base := board(t, "1.0.0", p1)
-	local := boardWithDeps(t, "2.0.0", []any{dep("PROJ-3", "PROJ-1"), dep("PROJ-3", "PROJ-4")}, p1, p3, p4)
-	res := resolveFor(t, base, local, board(t, "2.0.0", p1))
-	assert.False(t, res.Diff.Lossy(), "%+v", res.Diff.Losses)
-	raw, err := json.Marshal(res.Resolved)
-	require.NoError(t, err)
-	assert.Contains(t, string(raw), `"from_id":"PROJ-3","to_id":"PROJ-1"`, "a local task's dependency on a file task")
-	assert.Contains(t, string(raw), `"from_id":"PROJ-3","to_id":"PROJ-4"`, "a dependency between two local tasks")
-	// A dependency between tasks the base held is not a local task's: it is still a loss.
 	p2 := boardNode("PROJ-2", uidTwo, "open", "")
-	res = resolveFor(t, board(t, "1.0.0", p1, p2), boardWithDeps(t, "2.0.0", []any{dep("PROJ-1", "PROJ-2")}, p1, p2),
-		board(t, "2.0.0", p1, p2))
+	dep := map[string]any{"from_id": "PROJ-1", "to_id": "PROJ-2", "dep_type": "blocks", "created_at": "2026-10-02T09:00:00Z"}
+	base := board(t, "1.0.0", p1, p2)
+	tests := []struct {
+		name        string
+		local, file *sqlite.ExportData
+	}{
+		{"a dependency only the store holds", boardWithDeps(t, "2.0.0", []any{dep}, p1, p2), board(t, "2.0.0", p1, p2)},
+		{"a dependency only the file holds, which the store may have removed",
+			board(t, "2.0.0", p1, p2), boardWithDeps(t, "2.0.0", []any{dep}, p1, p2)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := resolveFor(t, base, tt.local, tt.file)
+			require.True(t, res.Diff.Lossy(), "a dependency difference must be refused")
+			raw, err := json.Marshal(res.Resolved)
+			require.NoError(t, err)
+			if len(tt.file.Dependencies) == 0 {
+				assert.NotContains(t, string(raw), `"from_id":"PROJ-1"`, "the local dependency is not written")
+			}
+		})
+	}
+	// A task made since the exchange is kept, but a dependency of it is a difference too.
+	p3 := boardNode("PROJ-3", "01995a1e-8c00-7a11-8b22-000000000003", "open", "")
+	dep3 := map[string]any{"from_id": "PROJ-3", "to_id": "PROJ-1", "dep_type": "blocks", "created_at": "2026-10-02T09:00:00Z"}
+	res := resolveFor(t, board(t, "1.0.0", p1), boardWithDeps(t, "2.0.0", []any{dep3}, p1, p3), board(t, "2.0.0", p1))
 	assert.True(t, res.Diff.Lossy())
+}
+
+// A local undelete, reopen or undefer clears an omitempty field. While the file equals the
+// base the clear is kept: the field must be absent in the resolved task, not restored.
+func TestResolveWithBase_LocalClearOfOptionalField_IsKept(t *testing.T) {
+	tests := []struct {
+		name, field string
+		base        map[string]any
+		local       map[string]any
+	}{
+		{"undelete", "deleted_at", withKeys(boardNode("PROJ-1", uidOne, "open", ""), "deleted_at", "2026-10-02T09:00:00Z"),
+			boardNode("PROJ-1", uidOne, "open", "")},
+		{"reopen", "closed_at", withKeys(boardNode("PROJ-1", uidOne, "done", ""), "closed_at", "2026-10-02T09:00:00Z"),
+			boardNode("PROJ-1", uidOne, "open", "")},
+		{"undefer", "defer_until", withKeys(boardNode("PROJ-1", uidOne, "deferred", ""), "defer_until", "2026-11-02T09:00:00Z"),
+			boardNode("PROJ-1", uidOne, "open", "")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := resolveFor(t, board(t, "1.0.0", tt.base), board(t, "2.0.0", tt.local), board(t, "2.0.0", tt.base))
+			assert.False(t, res.Diff.Lossy(), "%+v", res.Diff.Losses)
+			assert.NotContains(t, resolvedNode(t, res, "PROJ-1"), tt.field, "the local %s is kept", tt.name)
+		})
+	}
+}
+
+func TestResolveWithBase_StatusFromFile_ReplacesAStalePreviousStatus(t *testing.T) {
+	p1 := boardNode("PROJ-1", uidOne, "open", "")
+	base := board(t, "1.0.0", p1)
+	local := board(t, "2.0.0", withKeys(p1, "previous_status", "in_progress"))
+	file := board(t, "2.0.0", withKeys(p1, "status", "blocked")) // a 0.5.3 teammate's board carries no previous_status
+	res := resolveFor(t, base, local, file)
+	assert.False(t, res.Diff.Lossy(), "%+v", res.Diff.Losses)
+	n := resolvedNode(t, res, "PROJ-1")
+	assert.Equal(t, "blocked", n["status"])
+	assert.NotContains(t, n, "previous_status", "the stale value pointed into the replaced status: a later unblock restores open")
+	assert.Zero(t, res.Kept.Fields)
+}
+
+func TestResolveWithBase_InvalidationUnitDiffersInOneKey_NamesThatKey(t *testing.T) {
+	p1 := boardNode("PROJ-1", uidOne, "open", "")
+	base := board(t, "1.0.0", p1)
+	mine := withKeys(p1, "invalidated_at", "2026-10-02T09:00:00Z", "invalidated_by", "alice", "invalidation_reason", "stale")
+	theirs := withKeys(p1, "invalidated_at", "2026-10-02T09:00:00Z", "invalidated_by", "bob", "invalidation_reason", "stale")
+	res := resolveFor(t, base, board(t, "2.0.0", mine), board(t, "2.0.0", theirs))
+	require.True(t, res.Diff.Lossy())
+	assert.Equal(t, []string{"invalidated_by"}, res.Diff.Losses[0].BothChanged)
 }
 
 // Without uids the base matches a task by id only while the title still agrees:

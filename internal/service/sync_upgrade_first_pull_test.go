@@ -236,3 +236,28 @@ func TestAutoImportUpgrade_CurrentFormRecord_KeepsTodaysRefusal(t *testing.T) {
 	assert.False(t, mentions(second.notices, "told your changes"), second.notices.String())
 	assert.Equal(t, before.Checksum, second.export(t).Checksum, "nothing was written")
 }
+
+// A dependency the store removed since the exchange must not come back from the file:
+// the base holds no dependencies, so the difference is refused, as it was before.
+func TestAutoImportUpgrade_LocalDependencyRemoval_IsRefusedNotRestored(t *testing.T) {
+	r := newUpgradeRig(t, releasedMtix(t, tag053, tag053Commit))
+	a := r.clone()
+	r.startOldProject(a)
+	r.old(a, "dep", "add", "PROJ-2", "PROJ-1")
+	r.publish(a, "board with a dependency")
+	b := r.clone()
+	r.old(b, "list")
+	r.old(a, "dep", "remove", "PROJ-2", "PROJ-1") // never pushed
+	r.discardBoard(a)
+	r.teammateUpgrades(b, "PROJ-2")
+	r.pull(a)
+	cur := upgrade(t, a)
+	before := cur.export(t)
+	require.Empty(t, before.Dependencies, "the released version removed the dependency from the store")
+
+	err := cur.svc.AutoImport(context.Background(), cur.mtixDir)
+
+	require.ErrorIs(t, err, service.ErrAutoImportRefused, cur.notices.String())
+	assert.True(t, mentions(cur.notices, "PROJ-2", "dependency"), cur.notices.String())
+	assert.Empty(t, cur.export(t).Dependencies, "the dependency was not restored")
+}

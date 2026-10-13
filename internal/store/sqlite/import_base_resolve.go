@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -88,17 +89,17 @@ func ResolveWithBase(local, file *ExportData, base *ImportBase) (*BaseResolution
 	for i := range resolved.Nodes {
 		at[resolved.Nodes[i].ID] = i
 	}
-	added := map[string]bool{}
 	for i := range local.Nodes {
 		l, err := asTheMergeSeesIt(&local.Nodes[i])
 		if err != nil {
 			return nil, err
 		}
-		if err := r.place(&resolved, at, added, l); err != nil {
+		if err := r.place(&resolved, at, l); err != nil {
 			return nil, err
 		}
 	}
-	resolved.Dependencies = keepLocalTaskDeps(file.Dependencies, local.Dependencies, added)
+	// The base holds no dependencies, so a difference cannot be attributed: the file's
+	// are written and every difference is listed below as a loss.
 	if err := RecomputeExportChecksum(&resolved); err != nil {
 		return nil, err
 	}
@@ -110,6 +111,7 @@ func ResolveWithBase(local, file *ExportData, base *ImportBase) (*BaseResolution
 		sort.Strings(keys)
 		diff.lossOf(id).BothChanged = keys
 	}
+	listFileOnlyDependencies(diff)
 	diff.sort()
 	return &BaseResolution{Resolved: &resolved, Diff: diff, Source: base.Source, Kept: r.kept}, nil
 }
@@ -125,7 +127,7 @@ type baseResolver struct {
 
 // place resolves local node l into resolved: the merged copy over the file's
 // node, or l itself as a task made since the exchange.
-func (r *baseResolver) place(resolved *ExportData, at map[string]int, added map[string]bool, l *exportNode) error {
+func (r *baseResolver) place(resolved *ExportData, at map[string]int, l *exportNode) error {
 	in, other := r.idx.match(l)
 	switch {
 	case other != nil:
@@ -133,7 +135,6 @@ func (r *baseResolver) place(resolved *ExportData, at map[string]int, added map[
 	case in == nil:
 		if r.base.taskFor(l, nil) == nil {
 			resolved.Nodes = append(resolved.Nodes, *l)
-			added[l.ID] = true
 			r.kept.LocalTasks++
 		}
 		return nil
@@ -224,6 +225,10 @@ func (r *baseResolver) mergeCarried(out, lraw map[string]json.RawMessage, fdig, 
 		}
 		switch {
 		case localEmpty || same:
+		case unit[0] == "previous_status" && statusSide == statusFile:
+			// The status is the teammate's: its previous_status goes with it, even when the
+			// file holds none (a 0.5.3 teammate's board never does). A stale local value
+			// would send a later unblock or restore to a status the transition never left.
 		case fileEmpty:
 			for _, key := range unit {
 				setField(out, lraw, key)
@@ -231,7 +236,6 @@ func (r *baseResolver) mergeCarried(out, lraw map[string]json.RawMessage, fdig, 
 					r.kept.Fields++
 				}
 			}
-		case unit[0] == "previous_status" && statusSide == statusFile:
 		default:
 			conflicts = append(conflicts, firstDifferent(unit, ldig, fdig))
 		}
@@ -326,19 +330,18 @@ func decodeFields(fields map[string]json.RawMessage) (*exportNode, error) {
 	return &n, nil
 }
 
-// keepLocalTaskDeps returns the file's dependencies plus the local ones that
-// touch a task made since the exchange (added).
-func keepLocalTaskDeps(file, local []exportDep, added map[string]bool) []exportDep {
-	out := append([]exportDep(nil), file...)
-	held := make(map[string]bool, len(file))
-	key := func(d *exportDep) string { return d.FromID + "\x00" + d.ToID + "\x00" + d.DepType }
-	for i := range file {
-		held[key(&file[i])] = true
-	}
-	for i := range local {
-		if d := &local[i]; (added[d.FromID] || added[d.ToID]) && !held[key(d)] {
-			out = append(out, *d)
+// listFileOnlyDependencies lists, as conflicts of the task they start from, the
+// dependencies only the file holds. The store may have removed them since the
+// exchange, and the base cannot say (it holds no dependencies), so writing the
+// file's would silently restore them. A dependency only the store holds is
+// already a loss (compareDependencies).
+func listFileOnlyDependencies(diff *ReplaceDiff) {
+	for _, entry := range diff.DepsAdded {
+		parts := strings.SplitN(entry, " ", 3) // "<from> <type> <to>"
+		if len(parts) != 3 {
+			continue
 		}
+		loss := diff.lossOf(parts[0])
+		loss.BothChanged = append(loss.BothChanged, "dependency "+parts[1]+" "+parts[2]+" (only in the file)")
 	}
-	return out
 }

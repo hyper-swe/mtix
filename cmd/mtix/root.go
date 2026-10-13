@@ -96,6 +96,14 @@ prompt chain propagation, and multi-agent orchestration.`,
 			return persistentPreRun(cmd, args, logLevel)
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
+			// Sync, relay and daemon commands apply foreign events, which set
+			// the hub mark inside the apply transaction: bring the operator-
+			// local mirror up to date (MTIX-112.17.3, ADR-007 A9).
+			if shouldReconcileHubMark(cmd.CommandPath()) {
+				if err := reconcileHubMarkMirror(); err != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not mirror the hub-connected mark: %v\n", err)
+				}
+			}
 			// Auto-export after mutation commands per FR-15.3, with the
 			// interval-gated rolling backup riding the same trigger
 			// (FR-26.6).

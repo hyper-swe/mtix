@@ -120,6 +120,8 @@ func runSyncInit(ctx context.Context, stdout, stderr io.Writer, args []string, o
 		return wrapSyncErr(stderr, "connect", err)
 	}
 	defer pool.Close()
+	// The hub accepted this connection: sticky evidence for the board (ADR-007 A9).
+	noteHubConnection(ctx, stderr)
 
 	// On a hub without the registry index whose projects hold duplicate
 	// creates, migration 009 cannot build the index: the refusal names the

@@ -90,6 +90,8 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 			return false, wrapSyncErr(stderr, "connect", err)
 		}
 		defer pool.Close()
+		// The hub accepted this connection: sticky evidence for the board (ADR-007 A9).
+		noteHubConnection(ctx, stderr)
 
 		// Report this CLI's build version into each push so the
 		// version-negotiation gate (ADR-003 §7 Phase 1.5/3) sees the latest

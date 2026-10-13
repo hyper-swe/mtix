@@ -17,11 +17,11 @@ func TestRunAgentRegister_Repeat_SucceedsWithNotice(t *testing.T) {
 		t.Run(map[bool]string{false: "text", true: "json"}[jsonOutput], func(t *testing.T) {
 			initTestApp(t)
 			app.jsonOutput = jsonOutput
-			first := captureStdout(t, func() { require.NoError(t, runAgentRegister("test-worker")) })
-			repeated := captureStdout(t, func() { require.NoError(t, runAgentRegister("test-worker")) })
+			first := captureStdout(t, func() { require.NoError(t, runAgentRegister("test-worker", sessionOptions{})) })
+			repeated := captureStdout(t, func() { require.NoError(t, runAgentRegister("test-worker", sessionOptions{})) })
 			if jsonOutput {
 				for _, tc := range []struct{ out, status string }{{first, "registered"}, {repeated, "already_registered"}} {
-					var got map[string]string
+					var got map[string]any
 					require.NoError(t, json.Unmarshal([]byte(tc.out), &got))
 					assert.Equal(t, "test-worker", got["agent_id"])
 					assert.Equal(t, tc.status, got["status"])

@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/hooks"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -51,7 +52,10 @@ type appContext struct {
 	logger     *slog.Logger
 	jsonOutput bool
 	mtixDir    string // Path to .mtix directory, set during initApp.
-	authorID   string // Resolved author identity for this process (MTIX-24): MTIX_AUTHOR_ID > author_id config > "cli".
+	// firstRunErr holds a refused host first-run record until a command that
+	// needs operator state reports it, once per process.
+	firstRunErr error
+	authorID    string // Resolved author identity for this process (MTIX-24): MTIX_AUTHOR_ID > author_id config > "cli".
 	// payloadWarnings collects mutation-time wire-cap warnings when a hub is
 	// configured; nil otherwise (MTIX-95.12, sync_payload_warning.go).
 	payloadWarnings *sqlite.PayloadWarnings
@@ -229,7 +233,7 @@ func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error 
 }
 
 // initApp initializes the application context: logger, store, services.
-func initApp(_ *cobra.Command, logLevel string) error {
+func initApp(cmd *cobra.Command, logLevel string) error {
 	// Configure logger.
 	level := slog.LevelInfo
 	switch logLevel {
@@ -244,6 +248,11 @@ func initApp(_ *cobra.Command, logLevel string) error {
 	app.logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: level,
 	}))
+
+	app.firstRunErr = hooks.RecordFirstRun()
+	if app.firstRunErr != nil {
+		app.logger.Debug("host first run not recorded", "error", app.firstRunErr)
+	}
 
 	// Find .mtix directory.
 	mtixDir, err := findMtixDir()
@@ -301,6 +310,7 @@ func initApp(_ *cobra.Command, logLevel string) error {
 	app.bgSvc = service.NewBackgroundService(app.store, app.configSvc, app.logger, clock)
 	app.syncSvc = newSyncService(clock)
 	app.hooksDisp = service.NewHooksDispatcher(app.store, mtixDir, app.logger)
+	initializeHookApprovals(cmd, mtixDir)
 	setProjectDir(mtixDir) // app.mtixDir and, with a hub, app.payloadWarnings (MTIX-95.12)
 
 	return nil

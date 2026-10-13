@@ -59,7 +59,7 @@ type Match struct {
 }
 
 // ExecConfig configures the exec adapter (FR-19.3). Argv only — never a shell
-// string — and a mandatory timeout. Gated by the content-hash trust in 47.5.
+// string — and a mandatory timeout. Requires a per-hook operator approval (FR-19.5).
 type ExecConfig struct {
 	Command        []string `yaml:"command"`
 	TimeoutSeconds int      `yaml:"timeout-seconds"`

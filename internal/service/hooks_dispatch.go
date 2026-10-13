@@ -6,9 +6,11 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -44,6 +46,7 @@ type HooksDispatcher struct {
 	logger   *slog.Logger
 	// encodeEvent is per-dispatcher so encoding failures can be exercised in tests.
 	encodeEvent func(any) ([]byte, error)
+	approvals   *hooks.Approvals
 
 	// isDaemon marks this dispatcher as the daemon trigger — the only trigger
 	// allowed to run passes on a host whose local exec-dispatch policy is
@@ -68,8 +71,7 @@ func NewHooksDispatcher(store *sqlite.Store, mtixDir string, logger *slog.Logger
 	// append-file paths resolve under the PROJECT root (the parent of .mtix), so
 	// a hook can write a human-readable audit trail like FRONTIER-INBOX.md at the
 	// project top level (FR-19.3); the adapter clamps traversal to that base. The
-	// exec adapter is registered but gated per-Dispatch by the content-hash trust
-	// (fire() skips it unless the operator has trusted the current hooks.yaml).
+	// exec adapter is registered with independent per-hook approval decisions.
 	reg := hooks.NewRegistry(
 		&inboxAdapter{store: store},
 		hooks.NewWebhookAdapter(nil),
@@ -109,11 +111,10 @@ func (d *HooksDispatcher) Dispatch(ctx context.Context) {
 		return
 	}
 
-	// exec runs only for a hooks.yaml the operator has trusted by content hash
-	// (MTIX-49). Evaluated once per pass; a config change since the last trust
-	// silently disables exec (fire() logs the skip). Placement of a hook on a
-	// host plus that host's trust is the fleet-level designation (FR-20 §5).
-	execTrusted := hooks.ExecTrusted(d.mtixDir)
+	// Each exec hook requires its own validated operator approval (FR-19).
+	// Decisions are evaluated once per pass and used for ordinary and recovery
+	// deliveries; fire records corrective guidance for a refused hook.
+	execTrusted := d.hookDecisions(cfg)
 
 	d.refireStaleClaims(ctx, cfg, execTrusted, execMode)
 
@@ -147,7 +148,7 @@ func (d *HooksDispatcher) Dispatch(ctx context.Context) {
 
 // claimAndFireMatching normalizes one journal event and, for every configured
 // hook it matches, races the ledger claim and fires on a win.
-func (d *HooksDispatcher) claimAndFireMatching(ctx context.Context, cfg hooks.Config, je sqlite.JournalEvent, execTrusted bool, execMode string) {
+func (d *HooksDispatcher) claimAndFireMatching(ctx context.Context, cfg hooks.Config, je sqlite.JournalEvent, execTrusted map[string]hooks.Decision, execMode string) {
 	if len(cfg.Hooks) == 0 {
 		return
 	}
@@ -200,7 +201,7 @@ func (d *HooksDispatcher) OnCommitDispatch() func() {
 // narrow advance race, and this scan is what still finds it. A stale claim
 // whose event or hook no longer exists is closed as an error (with the reason
 // in the audit log) so it cannot park the scan floor forever.
-func (d *HooksDispatcher) refireStaleClaims(ctx context.Context, cfg hooks.Config, execTrusted bool, execMode string) {
+func (d *HooksDispatcher) refireStaleClaims(ctx context.Context, cfg hooks.Config, execTrusted map[string]hooks.Decision, execMode string) {
 	claims, err := d.store.StaleHookClaims(ctx, hookClaimLease)
 	if err != nil {
 		d.logger.Error("hook dispatch: stale-claim scan", "error", err)
@@ -232,7 +233,7 @@ func (d *HooksDispatcher) refireStaleClaims(ctx context.Context, cfg hooks.Confi
 
 // finishClaim completes a claim the caller just won: apply the rate limit,
 // fire the adapters, and finalize the ledger row with the aggregate outcome.
-func (d *HooksDispatcher) finishClaim(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent, execTrusted bool, execMode string) {
+func (d *HooksDispatcher) finishClaim(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent, execTrusted map[string]hooks.Decision, execMode string) {
 	outcome := sqlite.OutcomeRateLimited
 	if !d.rateLimited(ctx, h, evt) {
 		outcome = d.fire(ctx, h, evt, je, execTrusted, execMode)
@@ -265,7 +266,7 @@ func hookByName(cfg hooks.Config, name string) (hooks.Hook, bool) {
 // the audit log; adapter errors are logged and never propagated (FR-19.3).
 // The outcome is terminal either way — a fire that ran and failed is never
 // auto-retried (FR-20 §14.3).
-func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent, execTrusted bool, execMode string) string {
+func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent, execTrusted map[string]hooks.Decision, execMode string) string {
 	del, ok := d.encodeDelivery(ctx, h, evt, je)
 	if !ok {
 		return sqlite.OutcomeError
@@ -279,10 +280,10 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 			anySkippedPolicy = true
 			continue
 		}
-		if name == hooks.AdapterExec && !execTrusted {
-			d.logger.Warn("hook dispatch: exec skipped — hooks.yaml is not trusted; review it and run 'mtix hooks trust'",
-				"hook", h.Name)
-			d.logFiring(ctx, h, evt, name, "skipped-untrusted", "")
+		if name == hooks.AdapterExec && !execTrusted[h.Name].Trusted {
+			d.logger.Warn("hook dispatch: exec approval required",
+				"hook", h.Name, "fix", hooks.TrustFix(h.Name), "detail", execTrusted[h.Name].Detail)
+			d.logFiring(ctx, h, evt, name, "skipped-untrusted", hooks.TrustFix(h.Name))
 			anySkipped = true
 			continue
 		}
@@ -410,4 +411,33 @@ func (a *inboxAdapter) Deliver(ctx context.Context, d hooks.Delivery) error {
 		return fmt.Errorf("inbox adapter: hook %q names no to-agent and event has no addressee", d.Hook.Name)
 	}
 	return a.store.RecordInboxDelivery(ctx, agent, d.Event.Seq, d.Hook.Name)
+}
+
+// SetApprovals supplies explicit operator state for an assembled dispatcher (FR-19).
+func (d *HooksDispatcher) SetApprovals(approvals *hooks.Approvals) { d.approvals = approvals }
+
+func (d *HooksDispatcher) hookDecisions(cfg hooks.Config) map[string]hooks.Decision {
+	decisions := map[string]hooks.Decision{}
+	for _, h := range cfg.Hooks {
+		if h.Exec != nil && slices.Contains(h.Deliver, hooks.AdapterExec) {
+			decisions[h.Name] = hooks.Decision{Name: h.Name, Fix: hooks.TrustFix(h.Name)}
+		}
+	}
+	if len(decisions) == 0 {
+		return decisions
+	}
+	approvals := d.approvals
+	var err error
+	if approvals == nil {
+		approvals, err = hooks.ProcessApprovals(d.mtixDir)
+	}
+	if err == nil {
+		migrationErr := approvals.Migrate()
+		decisions, err = approvals.CheckConfig(cfg)
+		err = errors.Join(migrationErr, err)
+	}
+	if err != nil {
+		d.logger.Warn("hook approval state refused", "error", err, "fix", "mtix hooks status --json")
+	}
+	return decisions
 }

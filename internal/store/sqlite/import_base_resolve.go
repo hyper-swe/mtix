@@ -72,9 +72,14 @@ var contentKeys = map[string]bool{"title": true, "description": true, "prompt": 
 //     values are a conflict (previous_status follows the file's status).
 //
 // A local task the file lacks and the base never held was made since the
-// exchange and is kept with its dependencies. Everything else the replace
-// would delete stays a loss (a task the base held, a local dependency, a
-// different task under an id). Nothing is changed in local or file.
+// exchange and is kept. The base holds no dependencies, so a dependency is
+// resolved only when its author is certain: one touching a task made locally
+// since the exchange is kept from the store, one touching a task new in the
+// file is taken from the file; when the other task was renumbered on the other side
+// the dependency is still refused (merge import is the way out). Every other dependency that differs, between
+// tasks the base held, in either direction, is a loss and refused. So is
+// everything else the replace would delete (a task the base held, a different
+// task under an id). Nothing is changed in local or file.
 // Returns ErrInvalidInput for a missing export or a base that is not in an
 // older form.
 func ResolveWithBase(local, file *ExportData, base *ImportBase) (*BaseResolution, error) {
@@ -82,7 +87,8 @@ func ResolveWithBase(local, file *ExportData, base *ImportBase) (*BaseResolution
 		return nil, fmt.Errorf("resolve against the base: need both exports and a base in an older form: %w",
 			model.ErrInvalidInput)
 	}
-	r := &baseResolver{base: base, idx: newReplaceIndex(local, file), conflicts: map[string][]string{}}
+	r := &baseResolver{base: base, idx: newReplaceIndex(local, file), conflicts: map[string][]string{},
+		done: map[string]bool{}, localNew: map[string]bool{}, fileNew: map[string]bool{}}
 	resolved := *file
 	resolved.Nodes = append([]exportNode(nil), file.Nodes...)
 	at := make(map[string]int, len(file.Nodes))
@@ -98,8 +104,14 @@ func ResolveWithBase(local, file *ExportData, base *ImportBase) (*BaseResolution
 			return nil, err
 		}
 	}
-	// The base holds no dependencies, so a difference cannot be attributed: the file's
-	// are written and every difference is listed below as a loss.
+	for i := range file.Nodes {
+		if n := &file.Nodes[i]; !r.done[n.ID] && r.base.taskFor(n, nil) == nil {
+			r.fileNew[n.ID] = true
+		}
+	}
+	// The base holds no dependencies. A difference whose author is certain is resolved
+	// here; the file's are written and every other difference is listed below as a loss.
+	resolved.Dependencies = r.resolveDependencies(file, local)
 	if err := RecomputeExportChecksum(&resolved); err != nil {
 		return nil, err
 	}
@@ -111,7 +123,7 @@ func ResolveWithBase(local, file *ExportData, base *ImportBase) (*BaseResolution
 		sort.Strings(keys)
 		diff.lossOf(id).BothChanged = keys
 	}
-	listFileOnlyDependencies(diff)
+	listFileOnlyDependencies(diff, r.fileNew)
 	diff.sort()
 	return &BaseResolution{Resolved: &resolved, Diff: diff, Source: base.Source, Kept: r.kept}, nil
 }
@@ -123,6 +135,9 @@ type baseResolver struct {
 	conflicts map[string][]string
 	done      map[string]bool
 	kept      KeptHistory
+	// localNew holds the ids of the local tasks made since the exchange; fileNew the ids
+	// of the file's tasks that are new to both the base and the store.
+	localNew, fileNew map[string]bool
 }
 
 // place resolves local node l into resolved: the merged copy over the file's
@@ -131,21 +146,20 @@ func (r *baseResolver) place(resolved *ExportData, at map[string]int, l *exportN
 	in, other := r.idx.match(l)
 	switch {
 	case other != nil:
+		r.seen(other.ID)
 		return nil // a different task under the id: DiffReplace lists it
 	case in == nil:
 		if r.base.taskFor(l, nil) == nil {
 			resolved.Nodes = append(resolved.Nodes, *l)
 			r.kept.LocalTasks++
+			r.localNew[l.ID] = true
 		}
 		return nil
-	}
-	if r.done == nil {
-		r.done = map[string]bool{}
 	}
 	if r.done[in.ID] {
 		return nil
 	}
-	r.done[in.ID] = true
+	r.seen(in.ID)
 	merged, keys, err := r.resolveNode(l, keptUIDCopy(l, in), r.base.taskFor(l, in))
 	if err != nil {
 		return err
@@ -155,6 +169,27 @@ func (r *baseResolver) place(resolved *ExportData, at map[string]int, l *exportN
 		r.conflicts[l.ID] = keys
 	}
 	return nil
+}
+
+// seen records that the file's task id matched a local task.
+func (r *baseResolver) seen(id string) { r.done[id] = true }
+
+// resolveDependencies returns the file's dependencies plus the local ones that touch a
+// task made since the exchange: only the store can have made those (MTIX-95.31.15.1).
+// The file's dependencies of a task new in the file are the teammate's and stay.
+func (r *baseResolver) resolveDependencies(file, local *ExportData) []exportDep {
+	out := append([]exportDep(nil), file.Dependencies...)
+	key := func(d *exportDep) string { return d.FromID + "\x00" + d.ToID + "\x00" + d.DepType }
+	held := make(map[string]bool, len(out))
+	for i := range out {
+		held[key(&out[i])] = true
+	}
+	for i := range local.Dependencies {
+		if d := &local.Dependencies[i]; (r.localNew[d.FromID] || r.localNew[d.ToID]) && !held[key(d)] {
+			out = append(out, *d)
+		}
+	}
+	return out
 }
 
 // resolveNode returns the file's copy in of local node l with the local
@@ -210,40 +245,56 @@ const (
 // the file leaves empty takes the local value, one the local copy leaves empty
 // or holds the same keeps the file's, and two different values are a conflict
 // (the first differing key is returned). previous_status records the
-// transition into the status, so when the status came from the file it
-// follows the file (the teammate's transition); otherwise it is resolved like
-// any other field, so a kept local status never loses its previous_status. A
+// transition into the status, so it goes with the side that supplied the
+// status: the file's when the status came from the file (the teammate's
+// transition), the store's when the local status is kept, even if the file
+// holds a different one. Otherwise it is resolved like any other field. A
 // deleted_by is dropped when the file holds the task live.
 func (r *baseResolver) mergeCarried(out, lraw map[string]json.RawMessage, fdig, ldig map[string]string, statusSide string) []string {
 	var conflicts []string
 	for _, unit := range carriedUnits {
-		localEmpty, fileEmpty, same := true, true, true
-		for _, key := range unit {
-			localEmpty = localEmpty && isEmptyValue(key, lraw[key])
-			fileEmpty = fileEmpty && isEmptyValue(key, out[key])
-			same = same && ldig[key] == fdig[key]
-		}
-		switch {
-		case localEmpty || same:
-		case unit[0] == "previous_status" && statusSide == statusFile:
-			// The status is the teammate's: its previous_status goes with it, even when the
-			// file holds none (a 0.5.3 teammate's board never does). A stale local value
-			// would send a later unblock or restore to a status the transition never left.
-		case fileEmpty:
-			for _, key := range unit {
-				setField(out, lraw, key)
-				if !isEmptyValue(key, lraw[key]) {
-					r.kept.Fields++
-				}
-			}
-		default:
-			conflicts = append(conflicts, firstDifferent(unit, ldig, fdig))
+		if key := r.mergeUnit(unit, out, lraw, fdig, ldig, statusSide); key != "" {
+			conflicts = append(conflicts, key)
 		}
 	}
 	if isEmptyValue("deleted_at", out["deleted_at"]) && !isEmptyValue("deleted_by", out["deleted_by"]) {
 		delete(out, "deleted_by") // a teammate's undelete clears who deleted it
 	}
 	return conflicts
+}
+
+// mergeUnit resolves one carried unit into out; it returns the first differing
+// key when the unit is a conflict, else "".
+func (r *baseResolver) mergeUnit(unit []string, out, lraw map[string]json.RawMessage, fdig, ldig map[string]string,
+	statusSide string) string {
+	localEmpty, fileEmpty, same := true, true, true
+	for _, key := range unit {
+		localEmpty = localEmpty && isEmptyValue(key, lraw[key])
+		fileEmpty = fileEmpty && isEmptyValue(key, out[key])
+		same = same && ldig[key] == fdig[key]
+	}
+	// previous_status goes with the side that supplied the status: the teammate's
+	// transition when the file's, the store's when the local status is kept.
+	theirs := unit[0] == "previous_status" && statusSide == statusFile
+	ours := unit[0] == "previous_status" && statusSide == statusLocal
+	switch {
+	case same, theirs:
+		// Even when the file holds none (a 0.5.3 teammate's board never does), a stale local
+		// previous_status would send a later unblock or restore to a status never left.
+		return ""
+	case localEmpty && !ours:
+		return ""
+	case fileEmpty, ours:
+		// A different (stale) value in the file belongs to the status the store replaced.
+		for _, key := range unit {
+			setField(out, lraw, key)
+			if !isEmptyValue(key, lraw[key]) {
+				r.kept.Fields++
+			}
+		}
+		return ""
+	}
+	return firstDifferent(unit, ldig, fdig)
 }
 
 // firstDifferent returns the first key of unit whose digests differ.
@@ -331,15 +382,18 @@ func decodeFields(fields map[string]json.RawMessage) (*exportNode, error) {
 }
 
 // listFileOnlyDependencies lists, as conflicts of the task they start from, the
-// dependencies only the file holds. The store may have removed them since the
+// dependencies only the file holds, except those of a task new in the file (fileNew). The store may have removed them since the
 // exchange, and the base cannot say (it holds no dependencies), so writing the
 // file's would silently restore them. A dependency only the store holds is
 // already a loss (compareDependencies).
-func listFileOnlyDependencies(diff *ReplaceDiff) {
+func listFileOnlyDependencies(diff *ReplaceDiff, fileNew map[string]bool) {
 	for _, entry := range diff.DepsAdded {
 		parts := strings.SplitN(entry, " ", 3) // "<from> <type> <to>"
 		if len(parts) != 3 {
 			continue
+		}
+		if fileNew[parts[0]] || fileNew[parts[2]] {
+			continue // a task new in the file: the teammate made its dependencies
 		}
 		loss := diff.lossOf(parts[0])
 		loss.BothChanged = append(loss.BothChanged, "dependency "+parts[1]+" "+parts[2]+" (only in the file)")

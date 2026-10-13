@@ -81,19 +81,6 @@ func ImportBaseFromBoard(board *ExportData, source string) (*ImportBase, error) 
 	return NewImportBase(source, !carriesNodeColumns(board.SchemaVersion), tasks), nil
 }
 
-// Fields returns the field digests of the base's task of the given kind and
-// identity, nil when the base holds none.
-func (b *ImportBase) Fields(kind, identity string) map[string]string {
-	index := b.byID
-	if kind == "uid" {
-		index = b.byUID
-	}
-	if t := index[identity]; t != nil {
-		return t.Fields
-	}
-	return nil
-}
-
 // ExchangeFieldKeys lists the node fields a base digests, in export order.
 func ExchangeFieldKeys() []string {
 	return strings.Fields("id parent_id depth seq project title description prompt acceptance node_type issue_type " +
@@ -157,7 +144,7 @@ func (b *ImportBase) taskFor(l, in *exportNode) *BaseTask {
 			continue
 		}
 		t := b.byID[n.ID]
-		if in == nil || t.Fields["title"] == titleDigest(l) || t.Fields["title"] == titleDigest(in) {
+		if in == nil || (l != nil && t.Fields["title"] == titleDigest(l)) || (in != nil && t.Fields["title"] == titleDigest(in)) {
 			return t
 		}
 	}

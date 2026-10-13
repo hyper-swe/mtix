@@ -318,8 +318,8 @@ func TestResolveWithBase_PreviousStatus_ResolvedAgainstTheBase(t *testing.T) {
 		wantStatus   string
 	}{
 		{"kept local status keeps its previous_status when the file holds none", deferredHere, p1, false, "open", "deferred"},
-		{"kept local status and a different previous_status in the file is a conflict", deferredHere,
-			withKeys(p1, "previous_status", "in_progress"), true, "", ""},
+		{"kept local status and a different previous_status in the file: the local one goes with its status", deferredHere,
+			withKeys(p1, "previous_status", "in_progress"), false, "open", "deferred"},
 		{"status taken from the file takes the file's previous_status (the teammate's transition)",
 			withKeys(p1, "previous_status", "open"),
 			withKeys(p1, "status", "done", "previous_status", "in_progress"), false, "in_progress", "done"},
@@ -387,11 +387,112 @@ func TestResolveWithBase_DependencyDifference_IsRefusedNotResolved(t *testing.T)
 			}
 		})
 	}
-	// A task made since the exchange is kept, but a dependency of it is a difference too.
+}
+
+// depDoc builds a dependency document.
+func depDoc(from, to string) map[string]any {
+	return map[string]any{"from_id": from, "to_id": to, "dep_type": "blocks", "created_at": "2026-10-02T09:00:00Z"}
+}
+
+func resolvedDeps(t *testing.T, res *sqlite.BaseResolution) []string {
+	t.Helper()
+	raw, err := json.Marshal(res.Resolved)
+	require.NoError(t, err)
+	var doc struct {
+		Dependencies []struct {
+			FromID string `json:"from_id"`
+			ToID   string `json:"to_id"`
+		} `json:"dependencies"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &doc))
+	var out []string
+	for _, d := range doc.Dependencies {
+		out = append(out, d.FromID+">"+d.ToID)
+	}
+	return out
+}
+
+// A dependency whose author is certain is resolved: one touching a task made locally since the
+// exchange is the store's, one touching a task new in the file is the teammate's.
+func TestResolveWithBase_DependencyOfANewTask_IsResolvedByItsAuthor(t *testing.T) {
+	p1 := boardNode("PROJ-1", uidOne, "open", "")
 	p3 := boardNode("PROJ-3", "01995a1e-8c00-7a11-8b22-000000000003", "open", "")
-	dep3 := map[string]any{"from_id": "PROJ-3", "to_id": "PROJ-1", "dep_type": "blocks", "created_at": "2026-10-02T09:00:00Z"}
-	res := resolveFor(t, board(t, "1.0.0", p1), boardWithDeps(t, "2.0.0", []any{dep3}, p1, p3), board(t, "2.0.0", p1))
-	assert.True(t, res.Diff.Lossy())
+	p4 := boardNode("PROJ-4", "01995a1e-8c00-7a11-8b22-000000000004", "open", "")
+	p5 := boardNode("PROJ-5", "01995a1e-8c00-7a11-8b22-000000000005", "open", "")
+	base := board(t, "1.0.0", p1)
+	tests := []struct {
+		name        string
+		local, file *sqlite.ExportData
+		want        []string
+	}{
+		{"both ends made locally: kept from the store",
+			boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-3", "PROJ-4")}, p1, p3, p4), board(t, "2.0.0", p1), []string{"PROJ-3>PROJ-4"}},
+		{"a local task and a pre-existing one: kept from the store (only the store can have made it)",
+			boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-3", "PROJ-1")}, p1, p3), board(t, "2.0.0", p1), []string{"PROJ-3>PROJ-1"}},
+		{"a task new in the file: the dependency is taken from the file",
+			board(t, "2.0.0", p1), boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-5", "PROJ-1")}, p1, p5), []string{"PROJ-5>PROJ-1"}},
+		{"an existing task blocks a local task: kept from the store",
+			boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-1", "PROJ-3")}, p1, p3), board(t, "2.0.0", p1), []string{"PROJ-1>PROJ-3"}},
+		{"an existing task blocks a task new in the file: taken from the file",
+			board(t, "2.0.0", p1), boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-1", "PROJ-5")}, p1, p5), []string{"PROJ-1>PROJ-5"}},
+		{"a local task's dependency the file also holds is written once",
+			boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-3", "PROJ-1")}, p1, p3),
+			boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-3", "PROJ-1")}, p1), []string{"PROJ-3>PROJ-1"}},
+		{"both kinds at once",
+			boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-3", "PROJ-4")}, p1, p3, p4),
+			boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-5", "PROJ-1")}, p1, p5), []string{"PROJ-5>PROJ-1", "PROJ-3>PROJ-4"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := resolveFor(t, base, tt.local, tt.file)
+			assert.False(t, res.Diff.Lossy(), "%+v", res.Diff.Losses)
+			assert.ElementsMatch(t, tt.want, resolvedDeps(t, res))
+		})
+	}
+}
+
+// Everything else that differs stays refused: an ambiguous author is never guessed, and a
+// resolvable dependency does not excuse an ambiguous one beside it.
+func TestResolveWithBase_DependencyBetweenExistingTasks_StaysRefused(t *testing.T) {
+	p1 := boardNode("PROJ-1", uidOne, "open", "")
+	p2 := boardNode("PROJ-2", uidTwo, "open", "")
+	p5 := boardNode("PROJ-5", "01995a1e-8c00-7a11-8b22-000000000005", "open", "")
+	base := board(t, "1.0.0", p1, p2)
+	tests := []struct {
+		name        string
+		local, file *sqlite.ExportData
+	}{
+		{"a file-only dependency between pre-existing tasks (the store may have removed it)",
+			board(t, "2.0.0", p1, p2), boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-1", "PROJ-2")}, p1, p2)},
+		{"a store-only dependency between pre-existing tasks",
+			boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-1", "PROJ-2")}, p1, p2), board(t, "2.0.0", p1, p2)},
+		{"a new file task's dependency does not excuse a file-only one between existing tasks",
+			board(t, "2.0.0", p1, p2),
+			boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-5", "PROJ-1"), depDoc("PROJ-1", "PROJ-2")}, p1, p2, p5)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := resolveFor(t, base, tt.local, tt.file)
+			require.True(t, res.Diff.Lossy(), "an ambiguous dependency difference must be refused")
+			if len(tt.file.Dependencies) == 0 {
+				assert.Empty(t, resolvedDeps(t, res), "the local dependency is not written")
+			}
+		})
+	}
+}
+
+// With the status kept from the store the previous_status goes with it, even when the
+// file holds a stale one.
+func TestResolveWithBase_KeptLocalStatus_DropsAStaleFilePreviousStatus(t *testing.T) {
+	p1 := boardNode("PROJ-1", uidOne, "in_progress", "")
+	base := board(t, "1.0.0", p1)
+	local := board(t, "2.0.0", withKeys(p1, "status", "open"))
+	file := board(t, "2.0.0", withKeys(p1, "previous_status", "blocked"))
+	res := resolveFor(t, base, local, file)
+	assert.False(t, res.Diff.Lossy(), "%+v", res.Diff.Losses)
+	n := resolvedNode(t, res, "PROJ-1")
+	assert.Equal(t, "open", n["status"])
+	assert.NotContains(t, n, "previous_status")
 }
 
 // A local undelete, reopen or undefer clears an omitempty field. While the file equals the
@@ -452,4 +553,56 @@ func TestResolveWithBase_BaseWithoutUIDs_DifferentTaskUnderTheId_IsNotTakenAsThe
 	require.True(t, res.Diff.Lossy())
 	assert.Contains(t, res.Diff.Losses[0].BothChanged, "description")
 	assert.Equal(t, "theirs", resolvedNode(t, res, "PROJ-1")["description"], "nothing taken from the local copy on a guess")
+}
+
+// A base without uids (a 0.3.x board) holds its tasks by id. A task the base and the file hold
+// but the store lacks (deleted and purged) is not new in the file: no panic, and its
+// dependencies stay ambiguous and refused.
+func TestResolveWithBase_UIDlessBase_TaskTheStoreLacks_IsNotNewInTheFile(t *testing.T) {
+	p1 := boardNode("PROJ-1", "", "open", "")
+	p2 := boardNode("PROJ-2", "", "open", "")
+	base := board(t, "1.0.0", p1, p2)
+	local := board(t, "2.0.0", p1)
+	tests := []struct {
+		name string
+		file *sqlite.ExportData
+	}{
+		{"1.x file", boardWithDeps(t, "1.0.0", []any{depDoc("PROJ-2", "PROJ-1")}, p1, p2)},
+		{"2.0.0 file", boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-2", "PROJ-1")}, p1, p2)},
+		{"retitled by the teammate", boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-2", "PROJ-1")}, p1,
+			withKeys(p2, "title", "Retitled"))},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var res *sqlite.BaseResolution
+			require.NotPanics(t, func() { res = resolveFor(t, base, local, tt.file) })
+			require.True(t, res.Diff.Lossy(), "the dependency of a task the base held is ambiguous")
+		})
+	}
+}
+
+// A different task under the id is not new in the file either: its dependency stays listed.
+func TestResolveWithBase_DifferentTaskUnderTheId_KeepsItsDependencyListed(t *testing.T) {
+	p1 := boardNode("PROJ-1", uidOne, "open", "")
+	p2 := boardNode("PROJ-2", uidTwo, "open", "")
+	other := withKeys(boardNode("PROJ-1", "01995a1e-8c00-7a11-8b22-000000000009", "open", ""), "title", "Another task")
+	base := board(t, "1.0.0", p1, p2)
+	res := resolveFor(t, base, board(t, "2.0.0", p1, p2), boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-1", "PROJ-2")}, other, p2))
+	require.True(t, res.Diff.Lossy())
+	var listed []string
+	for _, l := range res.Diff.Losses {
+		listed = append(listed, l.BothChanged...)
+	}
+	assert.Contains(t, listed, "dependency blocks PROJ-2 (only in the file)")
+}
+
+// A local task's dependency on a task the file renumbered cannot be written under the store's id:
+// the import is refused, not resolved.
+func TestResolveWithBase_DependencyOnARenumberedTask_IsRefused(t *testing.T) {
+	p1 := boardNode("PROJ-1", uidOne, "open", "")
+	p3 := boardNode("PROJ-3", "01995a1e-8c00-7a11-8b22-000000000003", "open", "")
+	moved := withKeys(p1, "id", "PROJ-7")
+	res := resolveFor(t, board(t, "1.0.0", p1), boardWithDeps(t, "2.0.0", []any{depDoc("PROJ-3", "PROJ-1")}, p1, p3),
+		board(t, "2.0.0", moved))
+	assert.True(t, res.Diff.Lossy(), "%+v", res.Diff.Losses)
 }

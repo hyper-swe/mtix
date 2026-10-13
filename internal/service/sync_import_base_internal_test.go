@@ -31,19 +31,15 @@ func TestImportBase_RecordAndBoard_DigestTheSameFields(t *testing.T) {
 			require.NoError(t, sqlite.RecomputeExportChecksum(data))
 			rec, err := buildExchangeRecord(data, "git-import", receivedDigest([]byte("raw")), "2026-10-13T00:00:00Z")
 			require.NoError(t, err)
-			fromBoard, err := sqlite.ImportBaseFromBoard(data, "board")
+			fromBoard, err := sqlite.ImportBaseFromBoard(data, "base")
 			require.NoError(t, err)
 			tasks := make([]sqlite.BaseTask, 0, len(rec.Tasks))
 			for _, task := range rec.Tasks {
 				tasks = append(tasks, sqlite.BaseTask{Kind: task.Kind, Identity: task.Identity, ID: task.ID, Fields: task.Fields})
 			}
-			fromRecord := sqlite.NewImportBase("record", schema == "1.0.0", tasks)
-			assert.Equal(t, fromBoard.Older, fromRecord.Older)
-			for _, task := range rec.Tasks {
-				assert.Equal(t, fromBoard.Fields(task.Kind, task.Identity), fromRecord.Fields(task.Kind, task.Identity),
-					"%s digests by source", task.ID)
-				assert.NotEmpty(t, fromBoard.Fields(task.Kind, task.Identity))
-			}
+			fromRecord := sqlite.NewImportBase("base", schema == "1.0.0", tasks)
+			require.NotEmpty(t, rec.Tasks)
+			assert.Equal(t, fromBoard, fromRecord, "the same tasks and digests by source")
 			// A local copy of the same task resolves to no change against either base.
 			res1, err1 := sqlite.ResolveWithBase(data, data, fromBoard)
 			res2, err2 := sqlite.ResolveWithBase(data, data, fromRecord)

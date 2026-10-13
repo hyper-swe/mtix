@@ -241,18 +241,15 @@ func runAgentWork(agentID string) error {
 
 	if node == nil {
 		if app.jsonOutput {
-			fmt.Println("{\"node\": null}")
-		} else {
-			fmt.Printf("No current work for %s\n", agentID)
+			return NewOutputWriter(true).WriteJSON(map[string]any{"node": nil})
 		}
+		fmt.Printf("No current work for %s\n", agentID)
 		return nil
 	}
 
 	if app.jsonOutput {
-		data, _ := json.MarshalIndent(node, "", "  ")
-		fmt.Println(string(data))
-	} else {
-		fmt.Printf("%s is working on: %s — %s\n", agentID, node.ID, node.Title)
+		return NewOutputWriter(true).WriteJSON(node)
 	}
+	fmt.Printf("%s is working on: %s — %s\n", agentID, node.ID, node.Title)
 	return nil
 }

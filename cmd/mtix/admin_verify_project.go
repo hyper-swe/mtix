@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/hyper-swe/mtix/internal/store"
@@ -43,27 +42,22 @@ func runVerifyProject(ctx context.Context) error {
 		if uidReport != "" {
 			out["uid_unique_recovery"] = uidReport
 		}
-		data, err := json.Marshal(out)
-		if err != nil {
-			return fmt.Errorf("encode verify result: %w", err)
-		}
-		fmt.Println(string(data))
-	} else {
+		return NewOutputWriter(true).WriteJSON(out)
+	}
 
-		fmt.Printf("Verified %d nodes\n", len(nodes))
-		if len(mismatches) > 0 {
-			fmt.Printf("INTEGRITY FAILURE: %d nodes with hash mismatches:\n", len(mismatches))
-			for _, id := range mismatches {
-				fmt.Printf("  - %s\n", id)
-			}
-		} else {
-			fmt.Println("All content hashes verified OK")
+	fmt.Printf("Verified %d nodes\n", len(nodes))
+	if len(mismatches) > 0 {
+		fmt.Printf("INTEGRITY FAILURE: %d nodes with hash mismatches:\n", len(mismatches))
+		for _, id := range mismatches {
+			fmt.Printf("  - %s\n", id)
 		}
-		if uidReport != "" {
-			fmt.Printf("INTEGRITY FAILURE: %s\n", uidReport)
-		} else {
-			fmt.Println("All node uids unique")
-		}
+	} else {
+		fmt.Println("All content hashes verified OK")
+	}
+	if uidReport != "" {
+		fmt.Printf("INTEGRITY FAILURE: %s\n", uidReport)
+	} else {
+		fmt.Println("All node uids unique")
 	}
 	return nil
 }

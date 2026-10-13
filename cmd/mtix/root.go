@@ -39,19 +39,20 @@ func isRouted(ctx context.Context) bool {
 // appContext holds shared state for all commands.
 // Initialized in PersistentPreRunE, available to all subcommands.
 type appContext struct {
-	store      *sqlite.Store
-	nodeSvc    *service.NodeService
-	ctxSvc     *service.ContextService
-	promptSvc  *service.PromptService
-	agentSvc   *service.AgentService
-	sessionSvc *service.SessionService
-	bgSvc      *service.BackgroundService
-	configSvc  *service.ConfigService
-	syncSvc    *service.SyncService
-	hooksDisp  *service.HooksDispatcher
-	logger     *slog.Logger
-	jsonOutput bool
-	mtixDir    string // Path to .mtix directory, set during initApp.
+	store       *sqlite.Store
+	nodeSvc     *service.NodeService
+	ctxSvc      *service.ContextService
+	promptSvc   *service.PromptService
+	agentSvc    *service.AgentService
+	sessionSvc  *service.SessionService
+	bgSvc       *service.BackgroundService
+	configSvc   *service.ConfigService
+	syncSvc     *service.SyncService
+	hooksDisp   *service.HooksDispatcher
+	logger      *slog.Logger
+	jsonOutput  bool
+	staleReason string // command-local unverified auto-import freshness, reset on each pre-run
+	mtixDir     string // Path to .mtix directory, set during initApp.
 	// firstRunErr holds a refused host first-run record until a command that
 	// needs operator state reports it, once per process.
 	firstRunErr error
@@ -192,6 +193,7 @@ prompt chain propagation, and multi-agent orchestration.`,
 // persistentPreRun handles the PersistentPreRunE logic for the root command.
 // Extracted from newRootCmd to reduce cognitive complexity.
 func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error {
+	app.staleReason = ""
 	// Skip store init for commands that don't need it. recover (MTIX-26.5)
 	// must run when the database is too damaged for the store to open.
 	if cmd.Name() == "version" || cmd.Name() == "help" || cmd.Name() == "recover" {
@@ -221,12 +223,7 @@ func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error 
 	// Auto-import tasks.json if hash changed (FR-15.2).
 	// Skip for excluded commands per FR-15.2c.
 	if app.syncSvc != nil && app.mtixDir != "" && !shouldSkipAutoImport(autoImportCommandPath(cmd)) {
-		// A refusal (MTIX-95.31.2) has already been printed by AutoImport,
-		// once for this command; logging it again would print it twice.
-		err := app.syncSvc.AutoImport(cmd.Context(), app.mtixDir)
-		if err != nil && !errors.Is(err, service.ErrAutoImportRefused) {
-			app.logger.Warn("auto-import failed", "error", err)
-		}
+		runCommandAutoImport(cmd)
 	}
 
 	return nil

@@ -1513,6 +1513,28 @@ INTEGRITY FAILURE: 2 nodes with hash mismatches:
 
 ### JSON Output
 
+#### CLI read freshness
+
+CLI board reads retry a busy local sync lock briefly, with a total wait budget of
+500 ms. If ownership becomes available during the retry, auto-import checks the
+board normally. Persistent contention lets the command read the local cache but
+marks JSON responses with `"stale": true` and
+`"stale_reason": "sync_lock_busy"`. Object responses retain their existing fields;
+array, scalar and null responses are wrapped as
+`{"data": <original response>, "stale": true, "stale_reason": "sync_lock_busy"}`.
+Fresh responses keep their original shape and omit these fields. One possibly
+stale notice also goes to stderr, including protocol and daemon startup when
+`--json` is supplied. CLI JSON stdout remains one valid response.
+
+Check freshness before using task state or assembled context to take an action.
+When stale is true, retry the same read after the current owner finishes. Never
+delete, replace or unlink `.mtix/data/sync.lock` to bypass its owner, and do not
+use `mtix sync --fix` to force a fresh read: it rewrites the pulled board from the
+local cache. These fields describe sync-lock contention only; still follow any
+other auto-import refusal or warning. Commands that skip automatic import,
+including `mtix sync status` and `mtix sync doctor`, do not make this check.
+
+
 ```bash
 mtix verify --json
 ```

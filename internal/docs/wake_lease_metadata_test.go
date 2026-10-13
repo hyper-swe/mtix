@@ -13,7 +13,22 @@ var wakeMetadataStartRE = regexp.MustCompile(`(?:^|\|\||[;|]|&&|\s&\s|\$\(|\bthe
 var wakeMetadataAssignmentRE = regexp.MustCompile(`^[A-Z_][A-Z_0-9]*=`)
 var wakeMetadataFunctionRE = regexp.MustCompile(`^[a-z_][a-z_0-9]*\(\)$`)
 
+// wakeStopMarkerLines are the only whole lines allowed to touch the renewer stop
+// marker and its recorded sleep pid (MTIX-163). They match exactly, so nothing
+// may follow them after ;, && or ||, and any other rm is not metadata.
+var wakeStopMarkerLines = map[string]bool{
+	`PPID_OF=$(ps -o ppid= -p "$SLEEP_RECORDED" 2>/dev/null) || PPID_OF=`:   true,
+	`rm -f -- "$STOP_FILE" "$SLEEP_FILE" 2>/dev/null || :`:                  true,
+	`rm -f -- "$SLEEP_FILE" 2>/dev/null || :`:                               true,
+	`(set -C; : > "$STOP_FILE") 2>/dev/null || :`:                           true,
+	`(set -C; printf '%s\n' "$SLEEP_PID" > "$SLEEP_FILE") 2>/dev/null || :`: true,
+	`{ read -r SLEEP_RECORDED < "$SLEEP_FILE"; } 2>/dev/null || :`:          true,
+}
+
 func wakeProtocolMetadataLine(line string) bool {
+	if wakeStopMarkerLines[strings.TrimSpace(line)] {
+		return true
+	}
 	if strings.HasPrefix(line, "trap '") {
 		body, _, found := strings.Cut(strings.TrimPrefix(line, "trap '"), "'")
 		return found && wakeProtocolMetadataLine(body)
@@ -66,7 +81,7 @@ func wakeMetadataCommand(word string) bool {
 	switch word {
 	case "if", "while", "for", "case", "trap", "[", "then", "else", "fi", "do", "done", "esac", "break", "continue", "exit", "return", ":", "}":
 		return true
-	case "report", "resolve_tool", "stop_children", "stop_renewal", "stop_renewal_commands", "cleanup", "interrupted", "lost_lease", "renew_loop":
+	case "report", "resolve_tool", "stop_children", "stop_renewal", "stop_renewal_commands", "cleanup", "interrupted", "lost_lease", "renew_loop", "renew_cycles":
 		return true
 	case "kill", "wait", "sleep", "printf", "mkdir", "chmod", "date", "dirname", "basename", "cd", "pwd":
 		return true

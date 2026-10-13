@@ -287,6 +287,11 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 			anySkipped = true
 			continue
 		}
+		adapterDel, detail, prepared := d.prepareAdapterDelivery(ctx, h, evt, name, del)
+		if !prepared {
+			anyError = true
+			continue
+		}
 		adapter, ok := d.registry.Lookup(name)
 		if !ok {
 			d.logger.Warn("hook dispatch: unknown adapter", "hook", h.Name, "adapter", name)
@@ -294,7 +299,7 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 			anyError = true
 			continue
 		}
-		if err := adapter.Deliver(ctx, del); err != nil {
+		if err := adapter.Deliver(ctx, adapterDel); err != nil {
 			d.logger.Warn("hook dispatch: adapter failed", "hook", h.Name, "adapter", name, "error", err)
 			d.logFiring(ctx, h, evt, name, "error", err.Error())
 			anyError = true
@@ -302,7 +307,7 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 		}
 		d.logger.Info("hook dispatch: delivered",
 			"hook", h.Name, "adapter", name, "event", evt.Name, "node", evt.NodeID, "seq", je.Seq)
-		d.logFiring(ctx, h, evt, name, "delivered", "")
+		d.logFiring(ctx, h, evt, name, "delivered", detail)
 	}
 	switch {
 	case anyError:
@@ -314,6 +319,29 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 	default:
 		return sqlite.OutcomeDelivered
 	}
+}
+
+// prepareAdapterDelivery attaches the verified launch plan to an exec
+// delivery. It reports the audit detail (bare names resolved to absolute
+// paths) and false, after logging an error outcome, when nothing may start.
+func (d *HooksDispatcher) prepareAdapterDelivery(ctx context.Context, h hooks.Hook, evt hooks.Event, adapter string, del hooks.Delivery) (hooks.Delivery, string, bool) {
+	if adapter != hooks.AdapterExec {
+		return del, "", true
+	}
+	approvals := d.approvals
+	var err error
+	if approvals == nil {
+		approvals, err = hooks.ProcessApprovals(d.mtixDir)
+	}
+	if err == nil {
+		del.Exec, err = approvals.PrepareExec(h)
+	}
+	if err != nil {
+		d.logger.Warn("hook dispatch: exec launch not prepared", "hook", h.Name, "error", err)
+		d.logFiring(ctx, h, evt, adapter, sqlite.OutcomeError, err.Error())
+		return del, "", false
+	}
+	return del, del.Exec.Audit(), true
 }
 
 // encodeDelivery rejects an encoding error before any adapter sees the payload.

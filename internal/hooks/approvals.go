@@ -37,6 +37,8 @@ type Approvals struct {
 	readLegacy func(string) legacyRecord
 	// clock supplies the current time for the migration window (FR-19).
 	clock func() time.Time
+	// stager writes verified script copies; tests inject a seam.
+	stager stager
 }
 type approvalRecord struct {
 	Project string `json:"project"`

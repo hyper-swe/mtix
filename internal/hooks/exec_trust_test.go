@@ -27,6 +27,7 @@ func TestExecAdapter_EventOnStdinAndEnv(t *testing.T) {
 		}},
 		EventJSON: []byte(`{"event":"status.changed","node_id":"HP-1"}`),
 	}
+	d.Exec = &ExecPlan{Argv: d.Hook.Exec.Command, Dir: dir}
 	require.NoError(t, a.Deliver(context.Background(), d))
 
 	// MTIX-56.9: delivery is a detached spawn — the command completes after
@@ -44,9 +45,9 @@ func TestExecAdapter_FailureAndMissingCommand(t *testing.T) {
 	// MTIX-56.9: outcome is decided at SPAWN. A command that starts and exits
 	// non-zero is a successful delivery (scripts self-report; inbox ack is the
 	// fabric's success signal) — only a failed spawn is an error.
-	require.NoError(t, a.Deliver(context.Background(), Delivery{Hook: Hook{Name: "h", Exec: &ExecConfig{Command: []string{"false"}}}}),
+	require.NoError(t, a.Deliver(context.Background(), Delivery{Hook: Hook{Name: "h", Exec: &ExecConfig{Command: []string{"false"}}}, Exec: &ExecPlan{Argv: []string{"false"}, Dir: t.TempDir()}}),
 		"a spawned command's non-zero exit is the script's own concern")
-	require.Error(t, a.Deliver(context.Background(), Delivery{Hook: Hook{Name: "h", Exec: &ExecConfig{Command: []string{"/nonexistent/definitely-missing"}}}}),
+	require.Error(t, a.Deliver(context.Background(), Delivery{Hook: Hook{Name: "h", Exec: &ExecConfig{Command: []string{"/nonexistent/definitely-missing"}}}, Exec: &ExecPlan{Argv: []string{"/nonexistent/definitely-missing"}, Dir: t.TempDir()}}),
 		"a spawn that cannot start is an error")
 	require.Error(t, a.Deliver(context.Background(), Delivery{Hook: Hook{Name: "h"}}),
 		"a hook with no command is an error")

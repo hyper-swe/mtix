@@ -13,7 +13,14 @@ var wakeMetadataStartRE = regexp.MustCompile(`(?:^|\|\||[;|]|&&|\s&\s|\$\(|\bthe
 var wakeMetadataAssignmentRE = regexp.MustCompile(`^[A-Z_][A-Z_0-9]*=`)
 var wakeMetadataFunctionRE = regexp.MustCompile(`^[a-z_][a-z_0-9]*\(\)$`)
 
+// wakeStopFileLines are the only commands that touch the renewer stop marker
+// (MTIX-163); everything else, including any other rm, is not metadata.
+var wakeStopFileLineRE = regexp.MustCompile(`^(?:rm -f -- "\$STOP_FILE" 2>/dev/null \|\| :|\(set -C; : > "\$STOP_FILE"\) 2>/dev/null \|\| :)(?:;|$)`)
+
 func wakeProtocolMetadataLine(line string) bool {
+	if wakeStopFileLineRE.MatchString(strings.TrimSpace(line)) {
+		return true
+	}
 	if strings.HasPrefix(line, "trap '") {
 		body, _, found := strings.Cut(strings.TrimPrefix(line, "trap '"), "'")
 		return found && wakeProtocolMetadataLine(body)
@@ -68,7 +75,7 @@ func wakeMetadataCommand(word string) bool {
 		return true
 	case "report", "resolve_tool", "stop_children", "stop_renewal", "stop_renewal_commands", "cleanup", "interrupted", "lost_lease", "renew_loop":
 		return true
-	case "kill", "wait", "sleep", "printf", "mkdir", "rm", "chmod", "date", "dirname", "basename", "cd", "pwd":
+	case "kill", "wait", "sleep", "printf", "mkdir", "chmod", "date", "dirname", "basename", "cd", "pwd":
 		return true
 	}
 	return false

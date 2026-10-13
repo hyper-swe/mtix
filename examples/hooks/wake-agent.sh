@@ -82,9 +82,9 @@ HARNESS_BIN=$(resolve_tool "${HARNESS_BIN:-claude}") || { report 'harness execut
 
 stop_renewal() {
     if [ -n "$RENEWER" ]; then
-        : > "$STOP_FILE" 2>/dev/null || :
+        (set -C; : > "$STOP_FILE") 2>/dev/null || :
         kill "$RENEWER" 2>/dev/null || :; wait "$RENEWER" 2>/dev/null || :; RENEWER=
-        rm -f "$STOP_FILE" 2>/dev/null || :
+        rm -f -- "$STOP_FILE" 2>/dev/null || :
     fi
 }
 
@@ -143,14 +143,10 @@ renew_loop() {
     SLEEP_PID= RENEW_PID= STOPPING=
     trap 'STOPPING=1; stop_renewal_commands' TERM INT HUP
     while kill -0 "$PARENT" 2>/dev/null && [ ! -e "$STOP_FILE" ]; do
-        TICKS=0
-        while [ "$TICKS" -lt 60 ]; do
-            [ ! -e "$STOP_FILE" ] || return 0
-            sleep 1 >/dev/null 2>&1 </dev/null & SLEEP_PID=$!
-            if [ -n "$STOPPING" ]; then stop_renewal_commands; return 0; fi
-            wait "$SLEEP_PID" || return 0
-            SLEEP_PID= TICKS=$((TICKS + 1))
-        done
+        sleep 60 >/dev/null 2>&1 </dev/null & SLEEP_PID=$!
+        if [ -n "$STOPPING" ]; then stop_renewal_commands; return 0; fi
+        wait "$SLEEP_PID" || return 0
+        SLEEP_PID=
         kill -0 "$PARENT" 2>/dev/null || exit 0
         [ ! -e "$STOP_FILE" ] || return 0
         "$MTIX_BIN" inbox lease acquire --agent "$AGENT" --holder "$HOLDER" --ttl 15m >/dev/null 2>>"$WAKE_AGENT_LOG" & RENEW_PID=$!
@@ -162,6 +158,7 @@ renew_loop() {
         [ "$STATUS" -eq 0 ] || report "lease renewal failed ($STATUS); TTL recovery remains available"
     done
 }
+rm -f -- "$STOP_FILE" 2>/dev/null || :
 renew_loop & RENEWER=$!
 
 RUNS=0
@@ -184,7 +181,9 @@ while :; do
     if OUTCOME=$("$MTIX_BIN" inbox lease release --agent "$AGENT" --holder "$HOLDER" --ttl 15m 2>>"$WAKE_AGENT_LOG"); then STATUS=0; else STATUS=$?; fi
     if [ "$STATUS" -ne 0 ]; then report "lease release failed ($STATUS)"; exit 1; fi
     case "$OUTCOME" in
-        relaunch) renew_loop & RENEWER=$! ;;
+        relaunch)
+            rm -f -- "$STOP_FILE" 2>/dev/null || :
+            renew_loop & RENEWER=$! ;;
         released) HOLDER=; exit 0 ;;
         *) report 'unexpected lease release outcome'; exit 1 ;;
     esac

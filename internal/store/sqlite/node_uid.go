@@ -80,8 +80,18 @@ func (s *Store) BackfillUIDs(ctx context.Context) error {
 // backfill on open, which the free-space pre-flight may postpone without
 // keeping the store from opening (NFR-2.8).
 func (s *Store) backfillUIDsFromCreateEvents(ctx context.Context) error {
-	// Step 1: deterministic fill from each node's create_node event.
-	if _, err := s.writeDB.ExecContext(ctx, `
+	// Step 1: deterministic fill from each node's create_node event, and the
+	// history keyed by those nodes' ids moved to their uids, in one transaction.
+	tx, err := s.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("backfill uids from create events: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck // rollback after commit is a no-op
+	ids, err := uidlessNodeIDs(ctx, tx)  // the nodes this backfill may fill, and so the only history it may rekey
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE nodes
 		   SET uid = (
 		     SELECT e.event_id FROM sync_events e
@@ -93,6 +103,12 @@ func (s *Store) backfillUIDsFromCreateEvents(ctx context.Context) error {
 		     WHERE e2.node_id = nodes.id AND e2.op_type = 'create_node')`,
 	); err != nil {
 		return fmt.Errorf("backfill uids from create events: %w", err)
+	}
+	if err := rekeyFilledHistory(ctx, tx, ids); err != nil { // MTIX-95.31.19.3
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("backfill uids from create events: commit: %w", err)
 	}
 	return nil
 }
@@ -237,7 +253,10 @@ func setBackfillUID(ctx context.Context, tx *sql.Tx, id string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("set local uid for %s: %w", id, err)
 	}
-	return n == 1, nil
+	if n == 1 { // MTIX-95.31.19.3: history keyed by the id moves to the new uid
+		return true, rekeyHistoryExact(ctx, tx, id, uid)
+	}
+	return false, nil
 }
 
 // uidForInsert returns the uid an import writes for a node it inserts

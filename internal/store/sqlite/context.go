@@ -103,7 +103,8 @@ func (s *Store) SetAnnotations(ctx context.Context, nodeID string, annotations [
 		annotJSON = string(data)
 	}
 
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.3: the annotations change is recorded as a value-free history entry.
+	return s.withHistoryTx(ctx, historyScope{id: nodeID}, func(tx *sql.Tx) error {
 		var prevJSON sql.NullString
 		_ = tx.QueryRowContext(ctx,
 			`SELECT annotations FROM nodes WHERE id = ? AND deleted_at IS NULL`,
@@ -206,7 +207,8 @@ func (s *Store) mutateAnnotations(
 	ctx context.Context, nodeID string,
 	change func([]model.Annotation) ([]model.Annotation, error),
 ) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.3: the annotations change is recorded as a value-free history entry.
+	return s.withHistoryTx(ctx, historyScope{id: nodeID}, func(tx *sql.Tx) error {
 		// Read the current annotations inside the write transaction (no stale read).
 		var prevJSON sql.NullString
 		err := tx.QueryRowContext(ctx,

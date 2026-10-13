@@ -23,6 +23,7 @@ type historyGraph struct {
 	callers      map[string][]callEdge
 	stmtInside   map[string]int
 	stmtPlain    map[string]int
+	declared     map[string]bool   // names of the package functions and methods
 	funcsByKey   map[string]string // "file:Func" -> bare name
 	recordedMemo map[string]bool
 }
@@ -42,7 +43,18 @@ func buildHistoryGraph(t *testing.T, dir string) *historyGraph {
 	t.Helper()
 	files := parseDir(t, dir)
 	strs, _ := packageStrings(files)
-	g := &historyGraph{callers: map[string][]callEdge{}, stmtInside: map[string]int{}, stmtPlain: map[string]int{}, funcsByKey: map[string]string{}}
+	g := &historyGraph{callers: map[string][]callEdge{}, stmtInside: map[string]int{}, stmtPlain: map[string]int{}, funcsByKey: map[string]string{}, declared: map[string]bool{}}
+	for _, f := range files {
+		for _, d := range f.Decls {
+			if fn, ok := d.(*ast.FuncDecl); ok {
+				g.declared[fn.Name.Name] = true
+			}
+		}
+	}
+	_, decls := packageStrings(files)
+	for ident, d := range decls { // package-level values may call or reference a leaf
+		g.visit(d.expr, "var "+ident, false, strs)
+	}
 	for file, f := range files {
 		for _, d := range f.Decls {
 			fn, ok := d.(*ast.FuncDecl)
@@ -62,34 +74,62 @@ func (g *historyGraph) visit(n ast.Node, owner string, inside bool, strs map[str
 	ast.Inspect(n, func(c ast.Node) bool {
 		switch x := c.(type) {
 		case *ast.CallExpr:
-			if bareCallee(x.Fun) == "withHistoryTx" {
-				g.visit(x.Fun, owner, inside, strs)
-				for _, arg := range x.Args {
-					if lit, isLit := arg.(*ast.FuncLit); isLit {
-						g.visit(lit.Body, owner, true, strs)
-					} else {
-						g.visit(arg, owner, inside, strs)
-					}
-				}
+			if name := bareCallee(x.Fun); name == "withHistoryTx" || name == "inTxHistory" || name == "recordRename" {
+				g.visitRecorded(x, owner, inside, strs)
 				return false
 			}
-			if name := bareCallee(x.Fun); name != "" {
-				g.callers[name] = append(g.callers[name], callEdge{from: owner, inside: inside})
-			}
-		case *ast.BinaryExpr, *ast.BasicLit, *ast.Ident:
-			if v, ok := foldString(x.(ast.Expr), strs); ok {
-				if cnt := len(updateNodesRE.FindAllString(v, -1)); cnt > 0 {
-					if inside {
-						g.stmtInside[owner] += cnt
-					} else {
-						g.stmtPlain[owner] += cnt
-					}
-					return false
-				}
-			}
+			g.addEdge(bareCallee(x.Fun), owner, inside)
+		case *ast.Ident:
+			g.addEdge(x.Name, owner, inside) // a function used as a value (f := leaf; run(leaf))
+			return !g.foldedSQL(x, owner, inside, strs)
+		case *ast.SelectorExpr:
+			g.addEdge(x.Sel.Name, owner, inside)
+		case *ast.BinaryExpr, *ast.BasicLit:
+			return !g.foldedSQL(x.(ast.Expr), owner, inside, strs)
 		}
 		return true
 	})
+}
+
+// visitRecorded visits a withHistoryTx/inTxHistory call: its func-literal
+// arguments run inside the recorder.
+func (g *historyGraph) visitRecorded(call *ast.CallExpr, owner string, inside bool, strs map[string]string) {
+	g.visit(call.Fun, owner, inside, strs)
+	for _, arg := range call.Args {
+		if lit, isLit := arg.(*ast.FuncLit); isLit {
+			g.visit(lit.Body, owner, true, strs)
+		} else {
+			g.visit(arg, owner, inside, strs)
+		}
+	}
+}
+
+// addEdge records that owner reaches the declared function name.
+func (g *historyGraph) addEdge(name, owner string, inside bool) {
+	if g.declared[name] {
+		g.callers[name] = append(g.callers[name], callEdge{from: owner, inside: inside})
+	}
+}
+
+// foldedSQL records an UPDATE nodes statement held by a foldable expression.
+func (g *historyGraph) foldedSQL(e ast.Expr, owner string, inside bool, strs map[string]string) bool {
+	v, ok := foldString(e, strs)
+	return ok && g.countSQL(v, owner, inside)
+}
+
+// countSQL records the UPDATE nodes statements in folded text, and reports
+// whether it found any.
+func (g *historyGraph) countSQL(v, owner string, inside bool) bool {
+	cnt := len(updateNodesRE.FindAllString(v, -1))
+	if cnt == 0 {
+		return false
+	}
+	if inside {
+		g.stmtInside[owner] += cnt
+	} else {
+		g.stmtPlain[owner] += cnt
+	}
+	return true
 }
 
 // recorded reports whether every path to the function's statements runs
@@ -102,7 +142,7 @@ func (g *historyGraph) recorded(name string, onPath map[string]bool) bool {
 	defer delete(onPath, name)
 	considered := 0
 	for _, e := range g.callers[name] {
-		if e.inside || e.from == "createNodeTx" {
+		if e.inside || e.from == "createNodeTx" || rolledBackEntry()[e.from] {
 			considered++
 			continue
 		}
@@ -135,4 +175,11 @@ func TestTaskHistoryCensus_WiredAndPendingFlags_MatchTheCallGraph(t *testing.T) 
 			assert.False(t, got, "%s is marked pending A2 but every path to it is recorded: mark it wired", key)
 		}
 	}
+}
+
+// rolledBackEntry names the functions that run a write path in a transaction
+// they always roll back (a dry run), so nothing is persisted and nothing needs
+// recording.
+func rolledBackEntry() map[string]bool {
+	return map[string]bool{"countImportChanges": true}
 }

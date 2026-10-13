@@ -13,6 +13,8 @@ type Delivery struct {
 	Hook      Hook
 	Event     Event
 	EventJSON []byte
+	// Exec is the verified launch plan, required by the exec adapter.
+	Exec *ExecPlan
 }
 
 // Adapter performs one delivery side effect (FR-19.3). Adapters run

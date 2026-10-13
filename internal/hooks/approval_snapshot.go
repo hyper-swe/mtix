@@ -37,13 +37,9 @@ func approvalSnapshot(dir string) (*hookSnapshot, error) {
 	legacy := sha256.New()
 	legacy.Write(raw)
 	snap := &hookSnapshot{errors: map[string]error{}, digests: map[string]string{}, stanzas: map[string]string{}}
-	logicalRoot, err := filepath.Abs(filepath.Dir(dir))
+	logicalRoot, root, err := projectRoots(dir)
 	if err != nil {
-		return nil, fmt.Errorf("project path: %w", err)
-	}
-	root, err := filepath.EvalSymlinks(logicalRoot)
-	if err != nil {
-		return nil, fmt.Errorf("project location: %w", err)
+		return nil, err
 	}
 	for _, h := range cfg.Hooks {
 		if h.Exec == nil {
@@ -78,45 +74,128 @@ func scriptComponents(root, rel string) error {
 	return nil
 }
 
-func captureHookSnapshot(snap *hookSnapshot, legacy hash.Hash, h Hook, logicalRoot, root string) error {
+// scriptInput is one project script's bytes as read for a hook.
+type scriptInput struct {
+	// prefix is the "--opt=" part when the file is an option's value.
+	prefix  string
+	path    string
+	content []byte
+	mode    os.FileMode
+}
+
+type legacyPart struct {
+	arg     string
+	content []byte
+}
+
+// hookInputs is everything an approval digest covers, read once.
+type hookInputs struct {
+	// logical is the project root as entered, root the symlink-resolved one.
+	logical, root string
+	// program and script are the command indexes of the program and of the
+	// argument run as code (-1 if none); both are literal paths.
+	program, script int
+	stanza          string
+	digest          string
+	legacy          []legacyPart
+	// scripts maps a command index to the project script it names.
+	scripts map[int]scriptInput
+}
+
+func projectRoots(dir string) (logical, root string, err error) {
+	logical, err = filepath.Abs(filepath.Dir(dir))
+	if err != nil {
+		return "", "", fmt.Errorf("project path: %w", err)
+	}
+	root, err = filepath.EvalSymlinks(logical)
+	if err != nil {
+		return "", "", fmt.Errorf("project location: %w", err)
+	}
+	return logical, root, nil
+}
+
+// collectHookInputs reads a hook's stanza and project scripts once and
+// computes the digest over exactly the bytes it returns.
+func collectHookInputs(h Hook, logicalRoot, root string) (*hookInputs, error) {
 	own, err := marshalHook(h)
 	if err != nil {
-		return fmt.Errorf("encode hook: %w", err)
+		return nil, fmt.Errorf("encode hook: %w", err)
 	}
 	digest := sha256.New()
 	digest.Write(own)
-	for _, arg := range h.Exec.Command {
-		rel, inside, err := projectScriptLocation(logicalRoot, root, arg)
+	script, err := scriptOperand(h.Exec.Command)
+	if err != nil {
+		return nil, err
+	}
+	program, err := programIndex(h.Exec.Command)
+	if err != nil {
+		return nil, err
+	}
+	in := &hookInputs{logical: logicalRoot, root: root, program: program, script: script, stanza: string(own), scripts: map[int]scriptInput{}}
+	for i, arg := range h.Exec.Command {
+		part, ok, err := in.readArgument(i, arg)
 		if err != nil {
-			return err
-		}
-		if inside {
-			if err := scriptComponents(root, rel); err != nil {
-				return err
-			}
-		}
-		content, ok, readErr := readSnapshotScript(root, arg, inside)
-		if readErr != nil {
-			return readErr
+			return nil, err
 		}
 		if !ok {
 			continue
 		}
-		legacy.Write([]byte{0})
-		legacy.Write([]byte(arg))
-		legacy.Write([]byte{0})
-		legacy.Write(content)
-		if !inside {
-			continue
+		digest.Write([]byte{0})
+		digest.Write([]byte(part.path))
+		digest.Write([]byte{0})
+		digest.Write(part.content)
+	}
+	in.digest = hex.EncodeToString(digest.Sum(nil))
+	return in, nil
+}
+
+// readArgument reads the project file an argument names, if any, recording it
+// in the inputs. ok is true only for a file inside the project, which is the
+// part the digest covers. The program and the script are literal paths; any
+// other argument may carry an --opt=VALUE or NAME=VALUE file.
+func (in *hookInputs) readArgument(i int, arg string) (scriptInput, bool, error) {
+	value, prefix := arg, ""
+	if i != in.program && i != in.script {
+		value, prefix = splitOption(arg)
+	}
+	rel, inside, err := projectScriptLocation(in.logical, in.root, value)
+	if err != nil {
+		return scriptInput{}, false, err
+	}
+	if inside {
+		if linkErr := scriptComponents(in.root, rel); linkErr != nil {
+			return scriptInput{}, false, linkErr
 		}
-		digest.Write([]byte{0})
-		digest.Write([]byte(filepath.Join(root, rel)))
-		digest.Write([]byte{0})
-		digest.Write(content)
+	}
+	content, mode, ok, err := readSnapshotScript(in.root, value, inside)
+	if err != nil || !ok {
+		return scriptInput{}, false, err
+	}
+	if prefix == "" {
+		in.legacy = append(in.legacy, legacyPart{arg: arg, content: content})
+	}
+	if !inside {
+		return scriptInput{}, false, nil
+	}
+	part := scriptInput{prefix: prefix, path: filepath.Join(in.root, rel), content: content, mode: mode}
+	in.scripts[i] = part
+	return part, true, nil
+}
+
+func captureHookSnapshot(snap *hookSnapshot, legacy hash.Hash, h Hook, logicalRoot, root string) error {
+	in, err := collectHookInputs(h, logicalRoot, root)
+	if err != nil {
+		return err
+	}
+	for _, part := range in.legacy {
+		legacy.Write([]byte{0})
+		legacy.Write([]byte(part.arg))
+		legacy.Write([]byte{0})
+		legacy.Write(part.content)
 	}
 	if slices.Contains(h.Deliver, AdapterExec) {
-		snap.digests[h.Name] = hex.EncodeToString(digest.Sum(nil))
-		snap.stanzas[h.Name] = string(own)
+		snap.digests[h.Name] = in.digest
+		snap.stanzas[h.Name] = in.stanza
 	}
 	return nil
 }
@@ -144,28 +223,28 @@ func (s *hookSnapshot) combinedError() error {
 	return result
 }
 
-func readSnapshotScript(root, arg string, inside bool) ([]byte, bool, error) {
+func readSnapshotScript(root, arg string, inside bool) ([]byte, os.FileMode, bool, error) {
 	if !inside {
 		content, ok := readTrustedScript(root, arg)
-		return content, ok, nil
+		return content, 0, ok, nil
 	}
 	path := arg
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(root, arg)
+		path = filepath.Join(root, path)
 	}
 	info, err := os.Stat(path)
 	if os.IsNotExist(err) {
-		return nil, false, nil
+		return nil, 0, false, nil
 	}
 	if err != nil {
-		return nil, false, fmt.Errorf("project script metadata: %w", err)
+		return nil, 0, false, fmt.Errorf("project script metadata: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, false, nil
+		return nil, 0, false, nil
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return nil, false, fmt.Errorf("read project script: %w", err)
+		return nil, 0, false, fmt.Errorf("read project script: %w", err)
 	}
-	return content, true, nil
+	return content, info.Mode(), true, nil
 }

@@ -157,7 +157,10 @@ func TestFR19Acceptance_ExecWake(t *testing.T) {
 	outFile := filepath.Join(proj, "exec-out.json")
 
 	// The command writes the event JSON (delivered via env) to outFile. argv is
-	// exec'd without a shell; sh is the program, the redirect is in its script.
+	// exec'd without a shell; sh is the program, the redirect is in its script
+	// file (a command-string option cannot be pinned).
+	wakeScript := filepath.Join(proj, "wake.sh")
+	require.NoError(t, os.WriteFile(wakeScript, []byte("printf '%s' \"$MTIX_EVENT\" > "+outFile+"\n"), 0o700))
 	writeHooks(t, mtixDir, `
 hooks:
   - name: exec-wake
@@ -166,7 +169,7 @@ hooks:
       status-to: [done]
     deliver: [exec]
     exec:
-      command: ["sh", "-c", "printf '%s' \"$MTIX_EVENT\" > `+outFile+`"]
+      command: ["sh", "`+wakeScript+`"]
       timeout-seconds: 5
 `)
 
@@ -296,7 +299,9 @@ func TestAwaitEventJSON_ExecOutputCreatedBeforeWritten_WaitsForCompleteJSON(t *t
 
 	// JSON is valid YAML flow syntax, so the argv (script, then $0 $1 $2) is
 	// embedded without hand-quoting.
-	command, err := json.Marshal([]string{"sh", "-c", gatedHookScript, "sh", gate.path, outFile})
+	gatedScript := filepath.Join(proj, "gated.sh")
+	require.NoError(t, os.WriteFile(gatedScript, []byte(gatedHookScript+"\n"), 0o700))
+	command, err := json.Marshal([]string{"sh", gatedScript, gate.path, outFile})
 	require.NoError(t, err)
 	writeHooks(t, mtixDir, `
 hooks:
@@ -327,7 +332,7 @@ hooks:
 }
 
 // gatedHookScript is the gated exec hook, run as
-// `sh -c gatedHookScript sh GATE OUT` (MTIX-107.23). It creates OUT, then parks
+// `sh gated.sh GATE OUT` (MTIX-107.23). It creates OUT, then parks
 // on the FIFO GATE until something opens it, and only then writes $MTIX_EVENT
 // to OUT: mkfifo runs first, so GATE exists whenever OUT does.
 //

@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"math"
 	"os"
 	"sort"
@@ -73,7 +74,12 @@ func (s *State) recordAlertLocked(dir *os.File, host string, input Alert, now ti
 	if finishErr := s.finishAlert(dir, host, pending, segments); finishErr != nil {
 		return row, finishErr
 	}
-	return row, pruneAlertRates(dir, host, now)
+	// The occurrence is durable; closing-window cleanup is best effort and a
+	// failure must not make a caller retry and double-count it.
+	if pruneErr := s.pruneAlertRates(dir, host, now); pruneErr != nil {
+		slog.Warn("operator alert cleanup failed", "error", pruneErr)
+	}
+	return row, nil
 }
 
 // RecentAlerts returns newest-first logical diagnostics; zero selects all,
@@ -150,11 +156,6 @@ func nextAlertRow(dir *os.File, host string, input Alert, now time.Time, segment
 			previous.Detail = input.Detail
 			previous.Fix = input.Fix
 			return previous, nil
-		}
-	}
-	if !present {
-		if missingErr := validateMissingAlertRate(input, now, segments); missingErr != nil {
-			return Alert{}, missingErr
 		}
 	}
 	id := make([]byte, 16)

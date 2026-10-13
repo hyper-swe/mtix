@@ -65,14 +65,3 @@ func validateAcceptedAlertTransition(previous, row Alert) error {
 	}
 	return nil
 }
-
-func validateMissingAlertRate(input Alert, now time.Time, segments [3]alertSegment) error {
-	for _, segment := range segments {
-		for _, row := range segment.rows {
-			if row.Agent == input.Agent && row.Class == input.Class && now.Before(row.FirstAt.Add(time.Hour)) {
-				return invalid("unexpired alert rate is unavailable")
-			}
-		}
-	}
-	return nil
-}

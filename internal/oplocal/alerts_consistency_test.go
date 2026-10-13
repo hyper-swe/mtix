@@ -107,17 +107,20 @@ func TestAlertRaise_RateBehindRetainedCount_RefusesBeforePrepare(t *testing.T) {
 	require.Equal(t, before, alertStateSnapshot(t, s))
 }
 
-func TestAlertRaise_MissingUnexpiredRate_RefusesBeforePrepare(t *testing.T) {
+func TestAlertRaise_MissingRate_CountsFreshOccurrence(t *testing.T) {
 	s := alertFixture(t)
 	row, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
 	require.NoError(t, err)
 	path, err := s.Path()
 	require.NoError(t, err)
 	require.NoError(t, os.Rename(filepath.Join(path, alertRateName(row.Agent, row.Class)), filepath.Join(path, "saved-rate.json")))
-	before := alertStateSnapshot(t, s)
-	_, err = s.RecordAlert(t.Context(), alertInput(), alertTime())
-	require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)
-	require.Equal(t, before, alertStateSnapshot(t, s))
+	fresh, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err, "a missing rate record means no recent rate")
+	require.Equal(t, uint64(1), fresh.Count)
+	require.NotEqual(t, row.ID, fresh.ID)
+	rows, err := s.RecentAlerts(t.Context(), 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 2, "the earlier diagnostic stays retained")
 }
 
 func TestAlertDecode_OutsideRollingWindow_Refuses(t *testing.T) {

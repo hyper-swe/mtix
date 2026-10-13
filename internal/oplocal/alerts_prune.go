@@ -13,9 +13,12 @@ import (
 // (MTIX-112.17.11), so operator-local alert state stays bounded by recent
 // activity. An absent rate record is already a valid state for an expired
 // window, so removal never changes what a later Raise or Recent accepts.
+// The alert-rate- prefix test only avoids reading unrelated files; the
+// name-equals-hash check below is the authoritative gate, so widening the
+// prefix is an equivalent mutation. Cleanup is best effort for the caller.
 // Records that cannot be read or validated are left in place: the normal
 // read paths refuse them visibly and deleting unknown data is never safe.
-func pruneAlertRates(dir *os.File, host string, now time.Time) error {
+func (s *State) pruneAlertRates(dir *os.File, host string, now time.Time) error {
 	entries, err := dir.ReadDir(-1)
 	if err != nil {
 		return failure("alert rate listing failed", err)
@@ -33,6 +36,12 @@ func pruneAlertRates(dir *os.File, host string, now time.Time) error {
 		}
 		if now.Before(rate.FirstAt.Add(time.Hour)) {
 			continue
+		}
+		if s.alertStage != nil {
+			if stageErr := s.alertStage("prune:" + name); stageErr != nil {
+				pruneErr = errors.Join(pruneErr, stageErr)
+				continue
+			}
 		}
 		if removeErr := removeData(dir, name); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 			pruneErr = errors.Join(pruneErr, removeErr)

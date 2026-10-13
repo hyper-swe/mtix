@@ -2342,7 +2342,16 @@ Acquire prints a 32-character lowercase hexadecimal token. Release prints
 and high-water mark (expiry only for relaunch). Exit 6 means held or no longer the
 holder; storage failures retain exit 3 or 4. TTL defaults to 15m, accepts 1m through
 24h, and `acquire --holder` renews the same owner. The reference renews every 60s
-while it lives and stops loudly if ownership has changed. The local host identity
+while it lives and stops loudly if ownership has changed. Stopping the renewer creates a marker file next to the log (`<log>.stop.<pid>`), sends
+the renewer TERM, and then kills the renewer's `sleep` by the pid it stored beside the
+marker (`<log>.stop.<pid>.sleep`), but only while that process is still a child of the
+renewer. The renewer checks the marker before and after each sleep, and its sleep never
+holds the script's output open, so cleanup does not depend on the signal arriving. Killing the sleep needs a POSIX `ps` that supports `-o ppid= -p`; without one, cleanup can wait up to one 60-second cycle when the signal is ignored. A
+lease renewal already in flight finishes first. Both files are removed before each
+renewer launch and when the renewer ends. A marker or stored pid planted in the log
+directory while the script runs can stop renewal without a message, or delay cleanup by
+up to one 60-second cycle, and the lease can then expire while the harness still runs, so
+keep the log directory private to the operator account (the default is created mode 0700). The local host identity
 must resolve from operator state outside sandbox-writable roots; it never falls
 back to a replica, hostname or caller-supplied identity.
 

@@ -31,73 +31,101 @@ func TestInboxWait_TimeoutZero_SignalExitsDocumentedCode(t *testing.T) {
 		{"SIGINT", os.Interrupt}, {"SIGTERM", syscall.SIGTERM},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			child := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestInboxWaitSignalProcessHelper$") //nolint:gosec // only re-executes this test binary
-			child.Env = append(os.Environ(), "MTIX_TEST_INBOX_SIGNAL=1")
-			pipe, err := child.StdoutPipe()
-			require.NoError(t, err)
-			control, err := child.StdinPipe()
-			require.NoError(t, err)
-			t.Cleanup(func() {
-				if err := control.Close(); err != nil {
-					assert.ErrorIs(t, err, os.ErrClosed)
-				}
-			})
-			var stderr bytes.Buffer
-			child.Stderr = &stderr
-			require.NoError(t, child.Start())
-			finished := make(chan struct{})
-			scanned := make(chan struct{})
-			done := make(chan error, 1)
-			go func() { done <- child.Wait(); close(finished) }()
-			t.Cleanup(func() {
-				select {
-				case <-finished:
-				default:
-					if err := child.Process.Kill(); err != nil {
-						assert.ErrorIs(t, err, os.ErrProcessDone)
-					}
-					<-finished
-				}
-				<-scanned
-			})
-			ready := make(chan bool, 1)
-			go func() {
-				defer close(scanned)
-				scanner := bufio.NewScanner(pipe)
-				for scanner.Scan() {
-					if scanner.Text() == "INBOX_POLL_READY" {
-						ready <- true
-						return
-					}
-				}
-				ready <- false
-			}()
+			child := newInboxSignalChild(t)
+			signalInboxChildAfterReady(t, child, tc.signal)
 			select {
-			case got := <-ready:
-				require.True(t, got, "child never polled")
-			case <-time.After(5 * time.Second):
-				t.Fatal("child did not become ready")
-			}
-			// The ready marker is emitted from the first real InboxList query,
-			// after production signal setup, rather than guessing startup timing.
-			signalErr := child.Process.Signal(tc.signal)
-			if signalErr != nil {
-				assert.ErrorIs(t, signalErr, os.ErrProcessDone)
-			}
-			// Release the first-poll barrier after delivering the signal. A
-			// missing handler kills the old child here instead of timing out.
-			if _, err := control.Write([]byte{1}); err != nil {
-				t.Logf("child exited before first-poll release: %v", err)
-			}
-			select {
-			case err := <-done:
+			case err := <-child.done:
 				require.Error(t, err)
-				assert.Equal(t, 7, child.ProcessState.ExitCode(), "signal must exit cleanly, distinct from success and empty timeout: %s", stderr.String())
-				assert.NotContains(t, stderr.String(), "panic")
+				assert.Equal(t, 7, child.cmd.ProcessState.ExitCode(), "signal must exit cleanly, distinct from success and empty timeout: %s", child.stderr.String())
+				assert.NotContains(t, child.stderr.String(), "panic")
 			case <-time.After(5 * time.Second):
 				t.Fatal("signal did not stop the waiter")
 			}
 		})
+	}
+}
+
+type inboxSignalChild struct {
+	cmd      *exec.Cmd
+	control  io.WriteCloser
+	stderr   bytes.Buffer
+	finished chan struct{}
+	scanned  chan struct{}
+	done     chan error
+	ready    chan bool
+}
+
+func newInboxSignalChild(t *testing.T) *inboxSignalChild {
+	t.Helper()
+	child := &inboxSignalChild{finished: make(chan struct{}), scanned: make(chan struct{}), done: make(chan error, 1), ready: make(chan bool, 1)}
+	child.cmd = exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestInboxWaitSignalProcessHelper$") //nolint:gosec // only re-executes this test binary
+	child.cmd.Env = append(os.Environ(), "MTIX_TEST_INBOX_SIGNAL=1")
+	pipe, err := child.cmd.StdoutPipe()
+	require.NoError(t, err)
+	child.control, err = child.cmd.StdinPipe()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if err := child.control.Close(); err != nil {
+			assert.ErrorIs(t, err, os.ErrClosed)
+		}
+	})
+	child.cmd.Stderr = &child.stderr
+	require.NoError(t, child.cmd.Start())
+	go func() { child.done <- child.cmd.Wait(); close(child.finished) }()
+	t.Cleanup(func() { child.cleanup(t) })
+	go child.scanReady(pipe)
+	return child
+}
+
+func (child *inboxSignalChild) cleanup(t *testing.T) {
+	t.Helper()
+	select {
+	case <-child.finished:
+	default:
+		if err := child.cmd.Process.Kill(); err != nil {
+			assert.ErrorIs(t, err, os.ErrProcessDone)
+		}
+		select {
+		case <-child.finished:
+		case <-time.After(3 * time.Second):
+			t.Error("owned signal child Wait did not join")
+		}
+	}
+	select {
+	case <-child.scanned:
+	case <-time.After(time.Second):
+		t.Error("owned signal child scanner did not join")
+	}
+}
+
+func (child *inboxSignalChild) scanReady(pipe io.Reader) {
+	defer close(child.scanned)
+	scanner := bufio.NewScanner(pipe)
+	for scanner.Scan() {
+		if scanner.Text() == "INBOX_POLL_READY" {
+			child.ready <- true
+			return
+		}
+	}
+	child.ready <- false
+}
+
+func signalInboxChildAfterReady(t *testing.T, child *inboxSignalChild, signal os.Signal) {
+	t.Helper()
+	select {
+	case got := <-child.ready:
+		require.True(t, got, "child never polled")
+	case <-time.After(5 * time.Second):
+		t.Fatal("child did not become ready")
+	}
+	// Marker is from the first real query, after production signal setup.
+	if err := child.cmd.Process.Signal(signal); err != nil {
+		assert.ErrorIs(t, err, os.ErrProcessDone)
+	}
+	// Release the first-poll barrier after signal delivery. Missing handlers
+	// kill the old child here instead of timing out.
+	if _, err := child.control.Write([]byte{1}); err != nil {
+		t.Logf("child exited before first-poll release: %v", err)
 	}
 }
 

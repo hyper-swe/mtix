@@ -65,7 +65,8 @@ func registerInboxTool(reg *ToolRegistry, svc *service.InboxService) {
 
 func registerInboxWaitTool(reg *ToolRegistry, svc *service.InboxService) {
 	reg.Register(ToolDef{
-		Name: "mtix_inbox_wait",
+		Name:            "mtix_inbox_wait",
+		CancellableWait: true,
 		Description: fmt.Sprintf(
 			"Long-poll an agent's inbox: block until an addressed comment lands or the timeout elapses, returning the events (empty JSON array on timeout). "+
 				"Positive waits are capped at %d seconds (also the omitted default). Explicit timeout_seconds=0 waits without a limit until an event or caller cancellation. Use bounded foreground waits within harness tool limits; negative timeouts are refused.",

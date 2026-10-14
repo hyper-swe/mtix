@@ -70,8 +70,6 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger
 		mergeMirrorRows(nodes, db, mirror.data, res)
 	}
 
-	carryRecoveredHistory(nodes, db, mirror.data, res)
-
 	// IDs the database knew about but neither source could produce.
 	res.LostIDs = subtract(res.LostIDs, slices.Collect(maps.Keys(nodes)))
 
@@ -82,6 +80,9 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger
 	}
 
 	res.Placeholders = synthesizePlaceholderParents(nodes)
+	// After the placeholders: history of a lost task without a uid is keyed on
+	// its id, and a placeholder parent may now hold that id (MTIX-95.31.19.5).
+	carryRecoveredHistory(nodes, db, mirror.data, res)
 	return finishRecover(res, nodes, db, mtixVersion)
 }
 
@@ -154,9 +155,10 @@ type dbSalvage struct {
 
 	// history is every task_history row the database still yielded; orphans
 	// and historyKept are set by carryRecoveredHistory (MTIX-95.31.19.5).
-	history     []exportHistoryEntry
-	orphans     []exportHistoryEntry
-	historyKept int
+	history      []exportHistoryEntry
+	historyNotes []string
+	orphans      []exportHistoryEntry
+	historyKept  int
 }
 
 // salvageFromDB opens dbPath read-only, walks the primary-key index and
@@ -192,7 +194,7 @@ func salvageFromDB(ctx context.Context, dbPath string, res *RecoverResult) (*dbS
 	// Secondary tables, best effort: their loss never blocks node salvage.
 	out.deps = salvageDeps(ctx, db, res)
 	out.agents, out.sessions = salvageAgentsSessions(ctx, db, res)
-	out.history = salvageHistory(ctx, db)
+	salvageHistory(ctx, db, out)
 	return out, nil
 }
 

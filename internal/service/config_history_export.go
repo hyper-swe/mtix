@@ -4,8 +4,11 @@
 package service
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // HistoryExport reports the history.export switch (default off;
@@ -28,4 +31,13 @@ func (cs *ConfigService) HistoryExport() bool {
 	}
 	on, err := strconv.ParseBool(strings.TrimSpace(raw))
 	return err == nil && on
+}
+
+// validateHistoryExport accepts only true or false for history.export; a
+// mistyped value is refused rather than read as off (MTIX-95.31.19.5).
+func validateHistoryExport(v string) error {
+	if _, err := strconv.ParseBool(strings.TrimSpace(v)); err != nil {
+		return fmt.Errorf("history.export must be true or false, not %q: %w", v, model.ErrInvalidInput)
+	}
+	return nil
 }

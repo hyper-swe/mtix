@@ -150,13 +150,11 @@ func runGetAgentState(agentID string) error {
 	}
 
 	if app.jsonOutput {
-		data, _ := json.Marshal(map[string]string{
+		return NewOutputWriter(true).WriteJSON(map[string]string{
 			"agent_id": agentID, "state": string(state),
 		})
-		fmt.Println(string(data))
-	} else {
-		fmt.Printf("%s: %s\n", agentID, state)
 	}
+	fmt.Printf("%s: %s\n", agentID, state)
 	return nil
 }
 

@@ -7,6 +7,45 @@ description: Coordinate multiple agents working on mtix tasks. Manage claiming, 
 
 Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim and unclaim keep their existing required/default actor rules. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
 
+## Health checks
+
+Run `mtix doctor` for registered checkout and host diagnostics, or
+`mtix doctor --json` for an array containing exactly `id`, `status`, `detail`
+and `fix` on every row. Status is `pass`, `warn`, `fail` or `info`. Exit 0
+means no FAIL; WARN and INFO are advisory. Exit 2 means at least one FAIL.
+An empty applicable registry is `[]` in JSON. Windows reports
+`platform.windows` as INFO because built-in wakes are unavailable.
+
+The sync result rows use a `sync.` prefix and run only for configured
+transports. A relay-only checkout does not run unused Postgres checks.
+The separate `mtix sync doctor` command keeps its existing report and behavior.
+
+Use `mtix doctor --fix` only when you want explicitly registered non-grant
+repairs to run; each successful repair is checked again. Grant commands and
+other advisory remedies are printed for you to run yourself, never executed
+by this flag. Existing sync checks currently register no automatic repairs.
+Follow each printed remedy and rerun doctor. All report fields and diagnostics
+are redacted before output; never put credentials into a command argument.
+
+Setup completion (`setup.done`, MTIX-112.19.2) and document freshness
+(`docs.stale`, MTIX-112.32.1) are FUTURE registrations, not checks available
+in this version. Do not infer that setup or generated documents are current
+from the absence of those rows.
+
+## Waiting for inbox events
+
+An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
+zero has no limit, and already pending events return immediately. Events mean
+exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+A negative timeout is refused. Keep foreground waits within the harness's tool
+limits; use an indefinite park only where background tasks are supported. Handle
+and ack events explicitly before parking again.
+
+For MCP `mtix_inbox_wait`, explicit `timeout_seconds=0` waits without a limit
+until an event or caller cancellation. Omission uses default 60 seconds;
+positive values are capped at 60 seconds, and negative values are refused.
+Cancellation is an error, and an empty positive timeout returns `[]`.
+
 ## Inbox envelopes and replies
 
 Read agent-ready messages with `mtix inbox --agent <agent-id> --format context`.

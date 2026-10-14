@@ -71,8 +71,8 @@ func TestPluginInstaller_ClaudeCode_Writes6Skills(t *testing.T) {
 	results, err := installer.Install("claude-code", false)
 	require.NoError(t, err)
 
-	// Root CLAUDE.md + 6 skill files + 4 reference files = 11 total.
-	assert.Len(t, results, 11)
+	// MTIX.md + both native pointers + 6 skills + 4 references = 13 total.
+	assert.Len(t, results, 13)
 
 	// Verify skill files exist in .claude/skills/.
 	skillDir := filepath.Join(projectDir, ".claude", "skills")

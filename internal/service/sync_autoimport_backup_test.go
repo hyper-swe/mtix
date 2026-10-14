@@ -293,7 +293,8 @@ func TestAutoImport_SameFileAfterSuccessfulImport_TakesNewBackup(t *testing.T) {
 	f.now = time.Date(2026, 9, 24, 19, 0, 0, 0, time.UTC)
 	f.pull(t, x)
 	require.NoError(t, f.svc.AutoImport(ctx, f.mtixDir))
-	require.NoError(t, f.svc.AutoExport(ctx, f.mtixDir)) // a writing command rewrites the board
+	// Explicit rewriting ensures X is a new disk checkout while the store stays unchanged.
+	require.NoError(t, f.svc.ForceExport(ctx, f.mtixDir))
 
 	f.now = time.Date(2026, 9, 24, 19, 5, 0, 0, time.UTC)
 	f.pull(t, x) // X checked out again

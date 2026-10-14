@@ -28,9 +28,9 @@ func TestDoctorHubIdentityChanged_Warns(t *testing.T) {
 	observed.FirstEventHash = "second"
 	require.NoError(t, state.WriteJSON("grants", map[string]any{"board_grants": []oplocal.Grant{{BoardID: id, Hub: original}}}))
 	require.NoError(t, state.ObserveBoard(filepath.Dir(app.mtixDir), id, observed))
-	var out, diagnostic bytes.Buffer
+	var out bytes.Buffer
 	app.jsonOutput = true
-	require.ErrorIs(t, runSyncDoctor(t.Context(), &out, &diagnostic, nil, transport.Options{}), errDoctorChecksFailed)
+	require.ErrorIs(t, runSyncDoctor(t.Context(), &out, nil, transport.Options{}), errDoctorChecksFailed)
 	var report DoctorReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	found := false
@@ -47,7 +47,7 @@ func TestDoctorHubIdentityChanged_Warns(t *testing.T) {
 	assert.True(t, found, "identity changes are reported")
 	app.jsonOutput = false
 	out.Reset()
-	require.ErrorIs(t, runSyncDoctor(t.Context(), &out, &diagnostic, nil, transport.Options{}), errDoctorChecksFailed)
+	require.ErrorIs(t, runSyncDoctor(t.Context(), &out, nil, transport.Options{}), errDoctorChecksFailed)
 	assert.Contains(t, out.String(), "[WARN] board.hub-identity-changed")
 	assert.NotContains(t, out.String(), "mtix setup")
 	assert.NotContains(t, out.String(), "mtix config set")

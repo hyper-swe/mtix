@@ -366,10 +366,10 @@ func TestInboxList_SessionHandleInEnv_RefreshesLastSeen(t *testing.T) {
 func doctorChecks(t *testing.T) map[string]DoctorCheck {
 	t.Helper()
 	t.Setenv(transport.EnvDSN, "")
-	var out, diag bytes.Buffer
+	var out bytes.Buffer
 	app.jsonOutput = true
 	defer func() { app.jsonOutput = false }()
-	_ = runSyncDoctor(t.Context(), &out, &diag, nil, transport.Options{})
+	_ = runSyncDoctor(t.Context(), &out, nil, transport.Options{})
 	var report DoctorReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	got := map[string]DoctorCheck{}

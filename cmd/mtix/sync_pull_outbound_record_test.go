@@ -111,8 +111,8 @@ func outboundCLILegacy(t *testing.T, null bool) []byte {
 func outboundDoctor(ctx context.Context, t *testing.T) DoctorCheck {
 	t.Helper()
 	app.jsonOutput = true
-	var stdout, stderr bytes.Buffer
-	require.ErrorIs(t, runSyncDoctor(ctx, &stdout, &stderr, nil, transport.Options{}), errDoctorChecksFailed)
+	var stdout bytes.Buffer
+	require.ErrorIs(t, runSyncDoctor(ctx, &stdout, nil, transport.Options{}), errDoctorChecksFailed)
 	var report DoctorReport
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
 	for _, check := range report.Checks {

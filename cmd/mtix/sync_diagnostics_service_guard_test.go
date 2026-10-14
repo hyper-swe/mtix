@@ -23,7 +23,7 @@ func TestSyncDiagnostics_MissingServiceFailsWithoutPanic(t *testing.T) {
 				if mode == "status" {
 					err = runSyncStatus(context.Background(), &out, &errOut)
 				} else {
-					err = runSyncDoctor(context.Background(), &out, &errOut, nil, transport.Options{})
+					err = runSyncDoctor(context.Background(), &out, nil, transport.Options{})
 				}
 			})
 			if mode == "status" {

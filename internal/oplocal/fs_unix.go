@@ -217,3 +217,14 @@ func descriptorFile(fd int, name string) *os.File {
 	}
 	return os.NewFile(uintptr(fd), name)
 }
+
+// removeData deletes one state record relative to the verified directory.
+func removeData(dir *os.File, name string) error {
+	if _, err := readData(dir, name); err != nil {
+		return err
+	}
+	if err := unix.Unlinkat(checkedFD(dir), name, 0); err != nil {
+		return failure("remove state record", err)
+	}
+	return dir.Sync()
+}

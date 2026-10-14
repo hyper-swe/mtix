@@ -66,11 +66,11 @@ func TestRunSyncDoctor_HappyPath(t *testing.T) {
 	_ = openCmdHub(t)
 	initTestApp(t)
 
-	var stdout, stderr bytes.Buffer
+	var stdout bytes.Buffer
 	// Doctor returns errDoctorChecksFailed if any check fails; we
 	// accept either nil (all-pass) or that sentinel as the
 	// "completed normally" outcome. Other errors are failures.
-	err := runSyncDoctor(context.Background(), &stdout, &stderr,
+	err := runSyncDoctor(context.Background(), &stdout,
 		nil, transport.Options{InsecureTLS: true})
 	if err != nil && !errors.Is(err, errDoctorChecksFailed) {
 		t.Fatalf("doctor errored unexpectedly: %v", err)

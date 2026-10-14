@@ -105,7 +105,10 @@ func ValidateExport(data *ExportData) error {
 	// Reject a time value no reader could parse back (not RFC 3339, or a
 	// UTC year outside 1..9999, model.IsStorableTime) before anything is
 	// written (MTIX-95.31.1).
-	return validateExportTimes(data)
+	if err := validateExportTimes(data); err != nil {
+		return err
+	}
+	return validateExportHistory(data)
 }
 
 // Import loads data from an ExportData structure per FR-7.8.
@@ -146,6 +149,9 @@ func (s *Store) Import(
 		var applyErr error
 		if mode == ImportModeReplace {
 			result, applyErr = replaceAllData(ctx, tx, data)
+			if applyErr == nil {
+				applyErr = insertExportHistory(ctx, tx, data)
+			}
 		} else {
 			result, applyErr = mergeAllData(ctx, tx, data, workflowPolicy{cfg.workflow, s.clock()})
 		}

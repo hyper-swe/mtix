@@ -159,16 +159,20 @@ func TestRunInit_ValidPrefix_AlreadyInit_ReturnsError(t *testing.T) {
 
 // --- init.go: generateInitDocs ---
 
-// TestGenerateInitDocs_WithEmbeddedTemplates_ProducesFiles verifies embedded
-// template generation. Total file count is the 11 top-level docs plus the
-// BYO PG reference workflow docs added by MTIX-14.4.
+// TestGenerateInitDocs_WithEmbeddedTemplates_ProducesFiles verifies arbitrary
+// output paths retain reference-only generation for embedded templates.
 func TestGenerateInitDocs_WithEmbeddedTemplates_ProducesFiles(t *testing.T) {
 	docsDir := filepath.Join(t.TempDir(), "docs")
 	result := generateInitDocs(docsDir, "PROJ", "dev")
-	assert.NotNil(t, result, "embedded templates should always produce results")
+	require.NotNil(t, result, "embedded templates should always produce results")
 	expected := len(docs.AllDocFiles()) + len(docs.WorkflowDocFiles())
-	assert.Len(t, result, expected,
-		"should produce 11 top-level docs plus workflow reference docs")
+	assert.Len(t, result, expected, "top-level plus workflow reference docs")
+	for _, doc := range docs.AllDocFiles() {
+		assert.FileExists(t, filepath.Join(docsDir, doc.Name))
+	}
+	for _, doc := range docs.WorkflowDocFiles() {
+		assert.FileExists(t, filepath.Join(docsDir, docs.WorkflowSubdir(), doc.Name))
+	}
 }
 
 // --- routing.go: routeToServer non-admin path ---
@@ -409,7 +413,7 @@ func TestNewRootCmd_LogLevelFlag_DefaultEmpty(t *testing.T) {
 
 // TestExemptCommands_Map_ContainsAllExpected verifies exempt map completeness.
 func TestExemptCommands_Map_ContainsAllExpected(t *testing.T) {
-	expected := []string{"config", "init", "migrate", "docs", "version", "help", "search"}
+	expected := []string{"config", "init", "migrate", "docs", "version", "help", "search", "doctor"}
 	for _, name := range expected {
 		assert.True(t, exemptCommands[name], "%s should be in exemptCommands map", name)
 	}

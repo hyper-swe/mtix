@@ -34,8 +34,8 @@ func runDoctorAs(t *testing.T, f *hardenFixture, role string) (doctorJSON, map[s
 	t.Helper()
 	t.Setenv(transport.EnvDSN, f.dsnAs(role))
 	app.jsonOutput = true
-	var stdout, stderr bytes.Buffer
-	err := runSyncDoctor(context.Background(), &stdout, &stderr, nil, transport.Options{InsecureTLS: true})
+	var stdout bytes.Buffer
+	err := runSyncDoctor(context.Background(), &stdout, nil, transport.Options{InsecureTLS: true})
 	var report doctorJSON
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report), stdout.String())
 	var raw struct {

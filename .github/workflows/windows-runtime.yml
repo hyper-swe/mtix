@@ -126,6 +126,34 @@ jobs:
           }
           $nativeExits = Get-Content -LiteralPath "$env:MTIX_WINDOWS_CAPTURE_DIR/named-lock-exits.json" -Raw | ConvertFrom-Json
           if ($null -eq $nativeExits.named_lock -or $null -eq $nativeExits.dispatch_lock -or $nativeExits.named_lock -ne 0 -or $nativeExits.dispatch_lock -ne 0) { throw 'Named-lock native exits missing or failed' }
+      - name: Run required native operator alerts tests
+        env:
+          MTIX_WINDOWS_CAPTURE_DIR: ${{ runner.temp }}/mtix-windows-runtime
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          & go test ./internal/oplocal -race -count=1 -timeout=5m -json -run '^TestAlert(Raise_(SameClassWithinHour_CountIncrements|ClockBoundaries_PreservesWindows|DistinctKeys_IsolatesCounts|EvictedWindow_PreservesCount|ProjectionBoundaries_ReplaysWithoutExtraCount|ConcurrentProcesses_PreservesEveryCount|ProcessDeath_ReleasesLockAndRecoversAcceptedRow)|Log_(Rotation_KeepsThree|CountGrowthAtLimit_ReintroducesLogicalRow)|State_ProtectedACL_RefusesBeforePrepare|Recent_AbsentAndLimits_ReadOnly)$' > "$env:MTIX_WINDOWS_CAPTURE_DIR/alerts.json"
+          $alertsExit = $LASTEXITCODE
+          & go test ./cmd/mtix -race -count=1 -timeout=5m -json -run '^Test(RunSyncDoctor_OperatorAlerts_ReportsRecent|RunSyncDoctor_NoOperatorAlerts_PreservesLocalChecks|ScrubDoctorReport_RecentAlerts_MasksNestedDiagnostic)$' > "$env:MTIX_WINDOWS_CAPTURE_DIR/alerts-doctor.json"
+          $doctorExit = $LASTEXITCODE
+          $requiredAlerts = @('TestAlertRaise_SameClassWithinHour_CountIncrements', 'TestAlertRaise_ClockBoundaries_PreservesWindows', 'TestAlertRaise_DistinctKeys_IsolatesCounts', 'TestAlertRaise_EvictedWindow_PreservesCount', 'TestAlertRaise_ProjectionBoundaries_ReplaysWithoutExtraCount', 'TestAlertRaise_ConcurrentProcesses_PreservesEveryCount', 'TestAlertRaise_ProcessDeath_ReleasesLockAndRecoversAcceptedRow', 'TestAlertLog_Rotation_KeepsThree', 'TestAlertLog_CountGrowthAtLimit_ReintroducesLogicalRow', 'TestAlertState_ProtectedACL_RefusesBeforePrepare', 'TestAlertRecent_AbsentAndLimits_ReadOnly')
+          $requiredDoctor = @('TestRunSyncDoctor_OperatorAlerts_ReportsRecent', 'TestRunSyncDoctor_NoOperatorAlerts_PreservesLocalChecks', 'TestScrubDoctorReport_RecentAlerts_MasksNestedDiagnostic')
+          $mandatoryAlerts = @('TestAlertRaise_ProjectionBoundaries_ReplaysWithoutExtraCount/before:alerts-pending.json', 'TestAlertRaise_ProjectionBoundaries_ReplaysWithoutExtraCount/after:alerts-pending.json', 'TestAlertRaise_ProjectionBoundaries_ReplaysWithoutExtraCount/before:alerts.2.jsonl', 'TestAlertRaise_ProjectionBoundaries_ReplaysWithoutExtraCount/after:alerts.2.jsonl', 'TestAlertRaise_ProjectionBoundaries_ReplaysWithoutExtraCount/before:alerts.1.jsonl', 'TestAlertRaise_ProjectionBoundaries_ReplaysWithoutExtraCount/after:alerts.1.jsonl', 'TestAlertRaise_ProjectionBoundaries_ReplaysWithoutExtraCount/before:alerts.jsonl', 'TestAlertRaise_ProjectionBoundaries_ReplaysWithoutExtraCount/after:alerts.jsonl', 'TestAlertRaise_ProjectionBoundaries_ReplaysWithoutExtraCount/before:rate', 'TestAlertRaise_ProjectionBoundaries_ReplaysWithoutExtraCount/after:rate', 'TestAlertRaise_ProjectionBoundaries_ReplaysWithoutExtraCount/before:clear', 'TestAlertRaise_ProjectionBoundaries_ReplaysWithoutExtraCount/after:clear', 'TestAlertRaise_ClockBoundaries_PreservesWindows/before', 'TestAlertRaise_ClockBoundaries_PreservesWindows/exact', 'TestAlertRaise_ClockBoundaries_PreservesWindows/backward', 'TestAlertRaise_ProcessDeath_ReleasesLockAndRecoversAcceptedRow/hold', 'TestAlertRaise_ProcessDeath_ReleasesLockAndRecoversAcceptedRow/crash', 'TestAlertLog_CountGrowthAtLimit_ReintroducesLogicalRow/0', 'TestAlertLog_CountGrowthAtLimit_ReintroducesLogicalRow/1', 'TestAlertLog_CountGrowthAtLimit_ReintroducesLogicalRow/2', 'TestAlertState_ProtectedACL_RefusesBeforePrepare/alerts.jsonl', 'TestAlertState_ProtectedACL_RefusesBeforePrepare/alerts.1.jsonl', 'TestAlertState_ProtectedACL_RefusesBeforePrepare/alerts.2.jsonl', 'TestAlertState_ProtectedACL_RefusesBeforePrepare/alerts-pending.json', 'TestAlertState_ProtectedACL_RefusesBeforePrepare/alerts.lock', 'TestAlertState_ProtectedACL_RefusesBeforePrepare/rate')
+          $mandatoryDoctor = @('TestRunSyncDoctor_OperatorAlerts_ReportsRecent/json', 'TestRunSyncDoctor_OperatorAlerts_ReportsRecent/text')
+          foreach ($suite in @(@{ file='alerts.json'; package='github.com/hyper-swe/mtix/internal/oplocal'; names=$requiredAlerts; subcases=$mandatoryAlerts }, @{ file='alerts-doctor.json'; package='github.com/hyper-swe/mtix/cmd/mtix'; names=$requiredDoctor; subcases=$mandatoryDoctor })) {
+            $events = Get-Content -LiteralPath "$env:MTIX_WINDOWS_CAPTURE_DIR/$($suite.file)" | ForEach-Object { $_ | ConvertFrom-Json }
+            $package = $suite.package
+            $badEvents = @($events | Where-Object { $_.Package -eq $package -and ($_.Action -eq 'fail' -or $_.Action -eq 'skip') })
+            if ($badEvents.Count -ne 0) { throw "Native alerts FAIL or SKIP: $package" }
+            foreach ($test in @($suite.names) + @($suite.subcases)) {
+              $ran = @($events | Where-Object { $_.Package -eq $package -and $_.Test -eq $test -and $_.Action -eq 'run' })
+              $passed = @($events | Where-Object { $_.Package -eq $package -and $_.Test -eq $test -and $_.Action -eq 'pass' })
+              if ($ran.Count -ne 1 -or $passed.Count -ne 1) { throw "Required native alerts test did not execute and PASS: $package/$test" }
+            }
+            $packagePassed = @($events | Where-Object { $_.Package -eq $package -and !$_.Test -and $_.Action -eq 'pass' })
+            if ($packagePassed.Count -ne 1) { throw "Required native alerts package did not PASS: $package" }
+          }
+          if ($alertsExit -ne 0 -or $doctorExit -ne 0) { throw "Native alert test failure: alerts=$alertsExit doctor=$doctorExit" }
       - name: Record attempt duration
         env:
           MTIX_WINDOWS_CAPTURE_DIR: ${{ runner.temp }}/mtix-windows-runtime
@@ -159,3 +187,5 @@ jobs:
             ${{ runner.temp }}/mtix-windows-runtime/named-locks.json
             ${{ runner.temp }}/mtix-windows-runtime/dispatch-lock.json
             ${{ runner.temp }}/mtix-windows-runtime/named-lock-exits.json
+            ${{ runner.temp }}/mtix-windows-runtime/alerts.json
+            ${{ runner.temp }}/mtix-windows-runtime/alerts-doctor.json

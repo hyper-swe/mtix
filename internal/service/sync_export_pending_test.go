@@ -34,6 +34,7 @@ func TestPendingExport_LateRequestRetainedThenDrained(t *testing.T) {
 	svc := NewSyncService(store, slog.Default(), pendingProcessClock)
 	require.NoError(t, svc.AutoExport(context.Background(), dir))
 	require.NoError(t, markPendingExport(dir))
+	pendingPublicationChange(t, store)
 	called := false
 	svc.logger = slog.New(pendingExportHandler{callback: func() {
 		if called {
@@ -247,6 +248,7 @@ func pendingBoundedArrivals(t *testing.T, trigger string) {
 	svc := NewSyncService(store, slog.Default(), pendingProcessClock)
 	require.NoError(t, svc.AutoExport(context.Background(), dir))
 	require.NoError(t, markPendingExport(dir))
+	pendingPublicationChange(t, store)
 	completed := 0
 	svc.logger = slog.New(pendingExportHandler{callback: func() {
 		completed++

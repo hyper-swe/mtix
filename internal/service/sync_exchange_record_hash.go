@@ -41,7 +41,7 @@ func buildExchangeRecord(data *sqlite.ExportData, source, rawHash, stamp string)
 		owned = *old
 		form = form100
 		tag = "schema-1.0.0"
-	} else if data.SchemaVersion != "2.0.0" {
+	} else if data.SchemaVersion != "2.0.0" && data.SchemaVersion != sqlite.SchemaVersionHistory {
 		return nil, exchangeUnavailable("unsupported-schema", nil)
 	}
 	digest, err := exportHash(data, form)

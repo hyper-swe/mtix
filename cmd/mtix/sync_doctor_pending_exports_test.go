@@ -26,8 +26,8 @@ func TestSyncDoctor_StalePendingExport_Warns(t *testing.T) {
 		t.Run(map[bool]string{true: "json", false: "text"}[jsonOutput], func(t *testing.T) {
 			pendingExportDoctorFixture(t)
 			app.jsonOutput = jsonOutput
-			var out, errOut bytes.Buffer
-			err := runSyncDoctor(context.Background(), &out, &errOut, nil, transport.Options{})
+			var out bytes.Buffer
+			err := runSyncDoctor(context.Background(), &out, nil, transport.Options{})
 			require.ErrorIs(t, err, errDoctorChecksFailed, "existing no-DSN hub checks fail independently of the new local warning")
 			if jsonOutput {
 				assertPendingExportDoctorJSON(t, out.Bytes())

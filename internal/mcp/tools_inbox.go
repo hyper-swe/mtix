@@ -13,11 +13,12 @@ import (
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
-// maxInboxWaitSeconds is the default and positive-wait ceiling for bounded
-// foreground calls. Explicit zero remains unbounded until cancellation (FR-19).
+// maxInboxWaitSeconds is the default and ceiling for waiting for new events.
+// The initial pending lookup uses caller context; zero has no limit (FR-19).
 const maxInboxWaitSeconds = 60
 
-// clampInboxWaitSeconds caps positive requests; explicit zero has no limit.
+// clampInboxWaitSeconds caps positive budgets for waiting for new events;
+// explicit zero has no limit.
 // The handler rejects negative requests before calling this helper (FR-19).
 func clampInboxWaitSeconds(secs int) int {
 	if secs > maxInboxWaitSeconds {
@@ -71,14 +72,14 @@ func registerInboxWaitTool(reg *ToolRegistry, svc *service.InboxService) {
 		Name:            "mtix_inbox_wait",
 		CancellableWait: true,
 		Description: fmt.Sprintf(
-			"Long-poll an agent's inbox: block until an addressed comment lands or the timeout elapses, returning the untrusted-message envelope (empty JSON array on timeout). "+
-				"Positive waits are capped at %d seconds (also the omitted default). Explicit timeout_seconds=0 waits without a limit until an event or caller cancellation. Use bounded foreground waits within harness tool limits; negative timeouts are refused.",
+			"Long-poll an agent's inbox, returning the untrusted-message envelope (empty JSON array on timeout). The initial pending lookup uses caller context and remains client-cancellable even after the local timeout. Readers do not wait on writers, so this lookup is normally fast. "+
+				"After an empty lookup, waiting for new events uses the remaining budget measured from entry, capped at %d seconds (also the omitted default). Explicit timeout_seconds=0 waits without a limit until an event or caller cancellation. Use bounded foreground waits within harness tool limits; negative timeouts are refused.",
 			maxInboxWaitSeconds),
 		InputSchema: SchemaObj{
 			Type: "object",
 			Properties: map[string]SchemaProp{
 				"agent":           {Type: "string", Description: "Agent ID whose inbox to wait on"},
-				"timeout_seconds": {Type: "number", Description: fmt.Sprintf("Seconds to wait: default 60 when omitted, 0 = no limit until cancellation; positive values capped at %d; negative values refused", maxInboxWaitSeconds)},
+				"timeout_seconds": {Type: "number", Description: fmt.Sprintf("Budget for waiting for new events, measured from entry; only the remaining budget is used after an empty initial lookup. The initial lookup uses caller context and may outlast this budget. default 60 when omitted, 0 = no limit until cancellation; positive values capped at %d; negative values refused", maxInboxWaitSeconds)},
 			},
 			Required: []string{"agent"},
 		},

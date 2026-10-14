@@ -442,6 +442,9 @@ func TestScriptOperand_ZshOptionBEndsOptions(t *testing.T) {
 		{[]string{"zsh", "-b"}, -1},
 		{[]string{"/bin/Zsh5", "-b", "-x"}, 2},
 		{[]string{"bash", "-b", "run.sh"}, 2},
+		// sh can be zsh (macOS selects the shell for /bin/sh), where -b ends option
+		// processing; every shell name reads -b that way so the script cannot be
+		// misplaced.
 		{[]string{"sh", "-b", "-e"}, 2},
 		{[]string{"dash", "-b", "-e"}, 2},
 	}
@@ -655,6 +658,8 @@ func TestApprove_EnvClearingAndUnsettingTheLoopGuardRefused(t *testing.T) {
 		"[env, -i, sh, scripts/run.sh]",
 		"[env, -u, MTIX_HOOK_ORIGIN, sh, scripts/run.sh]",
 		"[env, -u, MTIX_ANYTHING, sh, scripts/run.sh]",
+		"[env, -u, mtix_hook_origin, sh, scripts/run.sh]",
+		"[env, -u, Mtix_Anything, sh, scripts/run.sh]",
 	} {
 		t.Run(command, func(t *testing.T) {
 			f := newFixture(t, command, fixtureOptions{unapproved: true})
@@ -733,4 +738,34 @@ func TestApprove_RuntimeStartupVariablesRefused(t *testing.T) {
 			require.Contains(t, err.Error(), "allowlist")
 		})
 	}
+}
+
+func TestApprove_RuntimeFamiliesAndCommandNamingVariablesRefused(t *testing.T) {
+	for _, name := range []string{
+		"DOTNET_STARTUP_HOOKS", "CORECLR_PROFILER_PATH", "COR_PROFILER", "ERL_AFLAGS", "JULIA_DEPOT_PATH", "R_PROFILE_USER",
+		"R_ENVIRON_USER", "R_LIBS_USER", "TCLLIBPATH", "CLASSPATH", "MAVEN_OPTS", "GRADLE_OPTS", "GOMODCACHE", "GOCACHE",
+		"GOPROXY", "GOTOOLCHAIN", "CGO_CFLAGS", "RUSTC_WRAPPER", "CARGO_HOME", "NPM_CONFIG_USERCONFIG",
+		"LESSOPEN", "PAGER", "EDITOR", "VISUAL", "SHELL", "COMSPEC", "PATHEXT",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, "[env, "+name+"=value, sh, scripts/run.sh]", fixtureOptions{unapproved: true})
+			err := f.approvals.Approve("wake", true)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), name)
+			require.Contains(t, err.Error(), "allowlist")
+		})
+	}
+}
+
+func TestApprove_HomeThroughRelativeLinkIntoProjectRefused(t *testing.T) {
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	link := filepath.Join(outside, "home")
+	f := newFixture(t, `[env, "HOME=`+link+`", zsh, scripts/run.sh]`, fixtureOptions{unapproved: true})
+	rel, err := filepath.Rel(outside, filepath.Join(f.root, "scripts"))
+	require.NoError(t, err)
+	require.NoError(t, os.Symlink(rel, link))
+	err = f.approvals.Approve("wake", true)
+	require.Error(t, err, "a relative link from outside into a project directory is still the project")
+	require.Contains(t, err.Error(), "HOME")
 }

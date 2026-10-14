@@ -169,8 +169,8 @@ var (
 // loaderExact and loaderPrefixes name the variables that make an interpreter
 // or the dynamic loader read startup files, modules or libraries, by family.
 var (
-	loaderExact    = []string{"BASH_ENV", "ENV", "ZDOTDIR", "SHELLOPTS", "BASHOPTS", "PS4", "PROMPT_COMMAND", "IFS", "CDPATH", "GCONV_PATH", "PATH", "FPATH", "fpath", "MODULE_PATH", "module_path", "GOFLAGS", "GOENV", "GOROOT", "GOPATH", "APPDATA", "LOCALAPPDATA", "USERPROFILE", "PHPRC", "PHP_INI_SCAN_DIR"}
-	loaderPrefixes = []string{"PYTHON", "NODE_", "PERL", "RUBY", "GEM_", "LD_", "DYLD_", "BASH_", "ZSH", "OPENSSL_", "MTIX_", "XDG_", "GIT_", "JAVA_", "JDK_", "LUA_"}
+	loaderExact    = []string{"BASH_ENV", "ENV", "ZDOTDIR", "SHELLOPTS", "BASHOPTS", "PS4", "PROMPT_COMMAND", "IFS", "CDPATH", "GCONV_PATH", "PATH", "FPATH", "fpath", "MODULE_PATH", "module_path", "GOFLAGS", "GOENV", "GOROOT", "GOPATH", "APPDATA", "LOCALAPPDATA", "USERPROFILE", "PHPRC", "PHP_INI_SCAN_DIR", "TCLLIBPATH", "CLASSPATH", "MAVEN_OPTS", "GRADLE_OPTS", "LESSOPEN", "PAGER", "EDITOR", "VISUAL", "SHELL", "COMSPEC", "PATHEXT"}
+	loaderPrefixes = []string{"PYTHON", "NODE_", "PERL", "RUBY", "GEM_", "LD_", "DYLD_", "BASH_", "ZSH", "OPENSSL_", "MTIX_", "XDG_", "GIT_", "JAVA_", "JDK_", "LUA_", "DOTNET_", "CORECLR_", "COR_", "ERL_", "JULIA_", "R_PROFILE", "R_ENVIRON", "R_LIBS", "GO", "CGO_", "RUSTC_", "CARGO_", "NPM_CONFIG_"}
 )
 
 func loaderFamily(name string) bool {
@@ -281,7 +281,7 @@ func envOption(command []string, j int) (int, error) {
 	arg := command[j]
 	switch arg {
 	case "-u":
-		if j+1 < len(command) && strings.HasPrefix(command[j+1], "MTIX_") {
+		if j+1 < len(command) && strings.HasPrefix(strings.ToUpper(command[j+1]), "MTIX_") {
 			return 0, fmt.Errorf("env option -u %s is refused: it would remove a variable mtix sets for loop prevention and identity", command[j+1])
 		}
 		return 1, nil

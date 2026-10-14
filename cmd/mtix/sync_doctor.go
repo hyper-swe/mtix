@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -27,6 +28,7 @@ import (
 // and Findings carries the hub-privileges check's findings. The three are
 // omitted when empty, so the other checks marshal as before.
 type DoctorCheck struct {
+	Recent         []oplocal.Alert              `json:"recent,omitempty"`
 	PendingExports *service.PendingExportStatus `json:"pending_exports,omitempty"`
 	Name           string                       `json:"name"`
 	Pass           bool                         `json:"pass"`
@@ -83,6 +85,9 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            needs a known local hub observation
   board.hub-identity-changed - warns when the observed hub differs from
                            a recorded confirmation; recovery is planned
+  alerts.recent          - latest 20 operator-local counted diagnostics;
+                           never wake anyone or write the board journal;
+                           this check creates no state and contacts no hub
   Operator state placement - reports the sandbox placement limitation
   Inbox envelope caps    - validates operator-local wake.json without hub contact;
                            missing or zero caps are unlimited; invalid settings
@@ -216,6 +221,7 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	report = appendDoctorCheck(report, checkDataFilesystem(inspectors))
 	report = appendBoardIdentityChecks(report)
 	report = appendRegistrationChecks(ctx, report)
+	report = appendAlertsCheck(ctx, report)
 
 	// Check 6: every mtix function and trigger the migrations define is
 	// on the hub and enabled, as the restore runbook ends (MTIX-95.7).

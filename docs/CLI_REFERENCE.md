@@ -1646,6 +1646,9 @@ Run health checks against the local store and the BYO Postgres hub:
                            needs a known local hub observation
   board.hub-identity-changed - warns when the observed hub differs from
                            a recorded confirmation; recovery is planned
+  alerts.recent          - latest 20 operator-local counted diagnostics;
+                           never wake anyone or write the board journal;
+                           this check creates no state and contacts no hub
   Operator state placement - reports the sandbox placement limitation
   Inbox envelope caps    - validates operator-local wake.json without hub contact;
                            missing or zero caps are unlimited; invalid settings

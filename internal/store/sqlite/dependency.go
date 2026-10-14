@@ -25,7 +25,8 @@ func (s *Store) AddDependency(ctx context.Context, dep *model.Dependency) error 
 		return err
 	}
 
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.3: the auto-block of the target is recorded as a system change.
+	return s.withHistoryTx(ctx, historyScope{id: dep.ToID, actor: dep.CreatedBy, origin: model.HistoryOriginSystem}, func(tx *sql.Tx) error {
 		now := time.Now().UTC().Format(time.RFC3339)
 
 		// For blocks dependencies, check for cycles (FR-4.3).
@@ -53,7 +54,7 @@ func (s *Store) AddDependency(ctx context.Context, dep *model.Dependency) error 
 
 		// FR-3.8: Auto-block the target node if it's open or in_progress.
 		if dep.DepType == model.DepTypeBlocks {
-			if err := autoBlockNode(ctx, tx, dep.ToID); err != nil {
+			if err := autoBlockNode(ctx, tx, s, dep.ToID); err != nil {
 				return fmt.Errorf("auto-block %s: %w", dep.ToID, err)
 			}
 		}
@@ -74,7 +75,8 @@ func (s *Store) AddDependency(ctx context.Context, dep *model.Dependency) error 
 // For 'blocks' type, checks if the target node should be auto-unblocked
 // (no remaining unresolved blockers) per FR-3.8.
 func (s *Store) RemoveDependency(ctx context.Context, fromID, toID string, depType model.DepType) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.3: the auto-unblock of the target is recorded as a system change.
+	return s.withHistoryTx(ctx, historyScope{id: toID, origin: model.HistoryOriginSystem}, func(tx *sql.Tx) error {
 		result, err := tx.ExecContext(ctx,
 			`DELETE FROM dependencies
 			 WHERE from_id = ? AND to_id = ? AND dep_type = ?`,
@@ -95,7 +97,7 @@ func (s *Store) RemoveDependency(ctx context.Context, fromID, toID string, depTy
 
 		// FR-3.8: Auto-unblock if this was the last blocker.
 		if depType == model.DepTypeBlocks {
-			if err := autoUnblockNode(ctx, tx, toID); err != nil {
+			if err := autoUnblockNode(ctx, tx, s, toID); err != nil {
 				return fmt.Errorf("auto-unblock %s: %w", toID, err)
 			}
 		}
@@ -156,7 +158,10 @@ func (s *Store) GetBlockers(ctx context.Context, nodeID string) ([]*model.Depend
 // autoBlockNode auto-sets a node to blocked if it's open or in_progress per FR-3.8.
 // Saves previous_status for auto-restore.
 // Does NOT auto-block deferred, done, canceled, or invalidated nodes.
-func autoBlockNode(ctx context.Context, tx *sql.Tx, nodeID string, clocks ...func() time.Time) error {
+func autoBlockNode(ctx context.Context, tx *sql.Tx, h historyToucher, nodeID string, clocks ...func() time.Time) error {
+	if err := h.touchHistory(ctx, tx, nodeID); err != nil {
+		return err
+	}
 	var currentStatus string
 	err := tx.QueryRowContext(ctx,
 		`SELECT status FROM nodes WHERE id = ? AND deleted_at IS NULL`,
@@ -196,7 +201,10 @@ func autoBlockNode(ctx context.Context, tx *sql.Tx, nodeID string, clocks ...fun
 
 // autoUnblockNode checks if a blocked node has no more unresolved blockers
 // and auto-restores it to previous_status per FR-3.8.
-func autoUnblockNode(ctx context.Context, tx *sql.Tx, nodeID string, clocks ...func() time.Time) error {
+func autoUnblockNode(ctx context.Context, tx *sql.Tx, h historyToucher, nodeID string, clocks ...func() time.Time) error {
+	if err := h.touchHistory(ctx, tx, nodeID); err != nil {
+		return err
+	}
 	var currentStatus, previousStatus sql.NullString
 	err := tx.QueryRowContext(ctx,
 		`SELECT status, previous_status FROM nodes

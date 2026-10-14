@@ -209,7 +209,8 @@ func (s *Store) RepairNodeStatus(ctx context.Context, id, author string, force b
 		listed  *StatusRepairDiff
 		applied bool
 	)
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.3: the repaired status (and any dependents it unblocks) is recorded as a system change.
+	err := s.withHistoryTx(ctx, historyScope{id: id, actor: author, origin: model.HistoryOriginSystem}, func(tx *sql.Tx) error {
 		row, err := readWorkflowRow(ctx, tx, id)
 		if err != nil {
 			return err
@@ -225,7 +226,7 @@ func (s *Store) RepairNodeStatus(ctx context.Context, id, author string, force b
 			return nil
 		}
 		applied = true
-		return applyStatusRepair(ctx, tx, plan, author, now)
+		return applyStatusRepair(ctx, tx, s, plan, author, now)
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("status repair %s: %w", id, err)
@@ -239,7 +240,7 @@ func (s *Store) RepairNodeStatus(ctx context.Context, id, author string, force b
 // winner's wall clock, repairEventWallClock) and the dependents unblocked. A repair that leaves
 // the status alone records a system activity entry and emits nothing. The
 // parent's progress is recomputed either way.
-func applyStatusRepair(ctx context.Context, tx *sql.Tx, plan statusPlan, author string, now time.Time) error {
+func applyStatusRepair(ctx context.Context, tx *sql.Tx, h historyToucher, plan statusPlan, author string, now time.Time) error {
 	id, from, to := plan.row.id, plan.row.status, plan.write.status
 	if err := writeWorkflowColumns(ctx, tx, id, plan.write); err != nil {
 		return err
@@ -263,7 +264,7 @@ func applyStatusRepair(ctx context.Context, tx *sql.Tx, plan statusPlan, author 
 		return fmt.Errorf("recalculate progress after repair: %w", err)
 	}
 	if from != to && isResolvingStatus(to) {
-		if err := unblockDependents(ctx, tx, id, author); err != nil {
+		if err := unblockDependents(ctx, tx, h, id, author); err != nil {
 			return fmt.Errorf("auto-unblock dependents after repair: %w", err)
 		}
 	}

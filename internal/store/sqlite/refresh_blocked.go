@@ -6,6 +6,8 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // RefreshBlocked re-derives a node's blocked status from its current blockers
@@ -20,7 +22,8 @@ import (
 // blocked->open/in_progress are AutoOnly), so without this there is no way to
 // clear a wrongly-stuck node short of canceling it.
 func (s *Store) RefreshBlocked(ctx context.Context, id string) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		return autoUnblockNode(ctx, tx, id)
+	// MTIX-95.31.19.3: the unblock is recorded as a system change.
+	return s.withHistoryTx(ctx, historyScope{id: id, origin: model.HistoryOriginSystem}, func(tx *sql.Tx) error {
+		return autoUnblockNode(ctx, tx, s, id)
 	})
 }

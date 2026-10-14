@@ -5,6 +5,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 
@@ -60,6 +61,7 @@ func TestHistoryFields_EveryNodesColumnIsRecordedOrExcluded(t *testing.T) {
 		recorded[f] = true
 	}
 	recorded["parent_id"] = true // field "parent"
+	recorded["id"] = true        // field "display_path"
 	excluded := historyExcludedColumns()
 	for rows.Next() {
 		var col string
@@ -79,12 +81,60 @@ func TestHistoryFields_EveryNodesColumnIsRecordedOrExcluded(t *testing.T) {
 	want := historyFieldNames()
 	require.Len(t, selected, len(want))
 	for i, c := range selected {
-		if want[i] == "parent" {
+		switch want[i] {
+		case "parent":
 			assert.Equal(t, "parent_id", c)
-		} else {
+		case "display_path":
+			assert.Equal(t, "id", c)
+		default:
 			assert.Equal(t, want[i], c)
 		}
 	}
 	assert.Equal(t, strings.TrimSpace(historySnapshotSQL[:strings.Index(historySnapshotSQL, "FROM nodes")]),
 		strings.TrimSpace(historySubtreeSQL[:strings.Index(historySubtreeSQL, "FROM nodes")]), "both statements read the same columns")
+}
+
+func TestSameHistoryValue_EmptyForms_AreOneValue(t *testing.T) {
+	null, empty, list := sql.NullString{}, sql.NullString{Valid: true}, sql.NullString{String: "[]", Valid: true}
+	tests := []struct {
+		field    string
+		old, cur sql.NullString
+		same     bool
+	}{
+		{"assignee", null, empty, true},
+		{"title", empty, null, true},
+		{"labels", null, list, true},
+		{"code_refs", null, list, true},
+		{"commit_refs", list, empty, true},
+		{"annotations", list, null, true},
+		{"assignee", null, list, false}, // "[]" is only an empty list for a list field
+		{"status", empty, sql.NullString{String: "open", Valid: true}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.field, func(t *testing.T) {
+			assert.Equal(t, tt.same, sameHistoryValue(tt.field, tt.old, tt.cur))
+		})
+	}
+}
+
+// TestInTxHistory_Nested_JoinsTheOuterTrackerAndRecordsTheInnerTask: a nested
+// recording call must track its own task, or its change is lost.
+func TestInTxHistory_Nested_JoinsTheOuterTrackerAndRecordsTheInnerTask(t *testing.T) {
+	s, raw, _ := reconcileTestStore(t)
+	seedTree(t, s)
+	_, err := raw.Exec(`DELETE FROM task_history`)
+	require.NoError(t, err)
+	ctx := context.Background()
+	err = s.WithTx(ctx, func(tx *sql.Tx) error {
+		return s.inTxHistory(ctx, tx, historyScope{id: "MTIX-1"}, func() error {
+			return s.inTxHistory(ctx, tx, historyScope{id: "MTIX-2"}, func() error {
+				_, e := tx.ExecContext(ctx, `UPDATE nodes SET priority = 1 WHERE id = 'MTIX-2'`)
+				return e
+			})
+		})
+	})
+	require.NoError(t, err)
+	var n int
+	require.NoError(t, raw.QueryRow(`SELECT COUNT(*) FROM task_history h JOIN nodes x ON x.uid = h.task_uid WHERE x.id = 'MTIX-2' AND h.field = 'priority'`).Scan(&n))
+	assert.Equal(t, 1, n)
 }

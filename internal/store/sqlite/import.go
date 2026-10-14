@@ -133,7 +133,8 @@ func (s *Store) Import(
 	cfg := collectImportOptions(opts)
 
 	var result ImportResult
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.3: every task the import changes is recorded with origin import.
+	err := s.withHistoryTx(ctx, historyScope{all: true, origin: model.HistoryOriginImport}, func(tx *sql.Tx) error {
 		// MTIX-95.31.4: the store must still be the one the caller checked.
 		if err := s.verifyStoreUnchanged(ctx, tx, cfg); err != nil {
 			return err

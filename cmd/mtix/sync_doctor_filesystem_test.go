@@ -26,8 +26,8 @@ func TestSyncDoctor_FilesystemRow_PublicProducer(t *testing.T) {
 	saved := app
 	app = appContext{mtixDir: dir, store: store, logger: slog.Default(), jsonOutput: true}
 	t.Cleanup(func() { app = saved })
-	var stdout, stderr bytes.Buffer
-	require.ErrorIs(t, runSyncDoctor(context.Background(), &stdout, &stderr, nil, transport.Options{}), errDoctorChecksFailed, "existing missing hub still fails overall")
+	var stdout bytes.Buffer
+	require.ErrorIs(t, runSyncDoctor(context.Background(), &stdout, nil, transport.Options{}), errDoctorChecksFailed, "existing missing hub still fails overall")
 	var report DoctorReport
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report))
 	found := false
@@ -69,8 +69,8 @@ func TestSyncDoctor_FilesystemFixtures_TextAndJSON(t *testing.T) {
 			require.True(t, appendDoctorCheck(DoctorReport{OverallPass: true}, row).OverallPass, "WARN never changes successful report to FAIL")
 			for _, jsonOutput := range []bool{false, true} {
 				app.jsonOutput = jsonOutput
-				var stdout, stderr bytes.Buffer
-				require.ErrorIs(t, runSyncDoctor(context.Background(), &stdout, &stderr, nil, transport.Options{}, inspect), errDoctorChecksFailed, "missing hub is existing overall failure")
+				var stdout bytes.Buffer
+				require.ErrorIs(t, runSyncDoctor(context.Background(), &stdout, nil, transport.Options{}, inspect), errDoctorChecksFailed, "missing hub is existing overall failure")
 				assertFilesystemDoctorOutput(t, stdout.Bytes(), row, jsonOutput)
 
 			}

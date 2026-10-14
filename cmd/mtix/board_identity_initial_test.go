@@ -46,8 +46,8 @@ func identityDoctorReport(t *testing.T, raw string) DoctorReport {
 	t.Setenv(transport.EnvDSN, "")
 	require.NoError(t, os.WriteFile(filepath.Join(app.mtixDir, "board-id"), []byte(raw), 0600))
 	app.jsonOutput = true
-	var out, diagnostic bytes.Buffer
-	require.ErrorIs(t, runSyncDoctor(t.Context(), &out, &diagnostic, nil, transport.Options{}), errDoctorChecksFailed)
+	var out bytes.Buffer
+	require.ErrorIs(t, runSyncDoctor(t.Context(), &out, nil, transport.Options{}), errDoctorChecksFailed)
 	var report DoctorReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report), out.String())
 	return report

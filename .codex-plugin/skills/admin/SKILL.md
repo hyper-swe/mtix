@@ -5,6 +5,31 @@ description: Administrative operations for mtix projects. Backup, export, import
 
 # MTIX — Administration
 
+## Health checks
+
+Run `mtix doctor` for registered checkout and host diagnostics, or
+`mtix doctor --json` for an array containing exactly `id`, `status`, `detail`
+and `fix` on every row. Status is `pass`, `warn`, `fail` or `info`. Exit 0
+means no FAIL; WARN and INFO are advisory. Exit 2 means at least one FAIL.
+An empty applicable registry is `[]` in JSON. Windows reports
+`platform.windows` as INFO because built-in wakes are unavailable.
+
+The sync result rows use a `sync.` prefix and run only for configured
+transports. A relay-only checkout does not run unused Postgres checks.
+The separate `mtix sync doctor` command keeps its existing report and behavior.
+
+Use `mtix doctor --fix` only when you want explicitly registered non-grant
+repairs to run; each successful repair is checked again. Grant commands and
+other advisory remedies are printed for you to run yourself, never executed
+by this flag. Existing sync checks currently register no automatic repairs.
+Follow each printed remedy and rerun doctor. All report fields and diagnostics
+are redacted before output; never put credentials into a command argument.
+
+Setup completion (`setup.done`, MTIX-112.19.2) and document freshness
+(`docs.stale`, MTIX-112.32.1) are FUTURE registrations, not checks available
+in this version. Do not infer that setup or generated documents are current
+from the absence of those rows.
+
 ## Local coordination schema
 
 Coordination tables are added locally without increasing the database schema version. The released v0.5.4-beta client was verified for `list`, `create`, and `sync pull`, with these additive local coordination tables preserved. Newly created stores have a stable random `store_instance_id`; reopening a store never replaces it, and upgrading a legacy store does not assign one automatically. The `min_dispatch_protocol` metadata key is reserved for planned dispatch compatibility; these schema foundations do not enable an attached dispatcher.

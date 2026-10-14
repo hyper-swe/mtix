@@ -167,9 +167,9 @@ func TestNoteHubConnection_NoStore_IsNoop(t *testing.T) {
 func TestDoctorHubMark_JSON_CarriesNameAndDetail(t *testing.T) {
 	initTestApp(t)
 	t.Setenv(transport.EnvDSN, "")
-	var out, diagnostic bytes.Buffer
+	var out bytes.Buffer
 	app.jsonOutput = true
-	_ = runSyncDoctor(t.Context(), &out, &diagnostic, nil, transport.Options{})
+	_ = runSyncDoctor(t.Context(), &out, nil, transport.Options{})
 	var report DoctorReport
 	require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 	found := false

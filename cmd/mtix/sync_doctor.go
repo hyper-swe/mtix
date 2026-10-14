@@ -175,7 +175,7 @@ func newSyncDoctorCmd() *cobra.Command {
 		Long:  syncDoctorLong,
 		Args:  syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			err := runSyncDoctor(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
+			err := runSyncDoctor(cmd.Context(), cmd.OutOrStdout(),
 				args, transport.Options{InsecureTLS: insecureTLS})
 			if errors.Is(err, errDoctorChecksFailed) {
 				// Distinguish failed health checks (exit 2) from
@@ -198,45 +198,16 @@ func newSyncDoctorCmd() *cobra.Command {
 // (FR-18, MTIX-15.7.3). The hub checks connect within syncConnectBudget,
 // the budget sync itself uses (MTIX-95.7). Returns errDoctorChecksFailed
 // when a check fails.
-func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
+func runSyncDoctor(ctx context.Context, stdout io.Writer,
 	args []string, opts transport.Options, inspectors ...func(string) (string, bool, error),
 ) error {
 	if app.mtixDir == "" {
 		return fmt.Errorf("mtix sync doctor: not in an mtix project (run 'mtix init' first)")
 	}
 
-	report := DoctorReport{OverallPass: true}
-
-	// Try resolve DSN first; if fails, the PG checks are skipped but
-	// local checks still run.
 	dsn, dsnErr := resolveSyncDSN(args)
-
-	// Checks 1 and 2: PG reachable, schema current.
-	report, hubReady := appendHubReadyChecks(ctx, report, dsn, dsnErr, opts)
-
-	// Local checks: queue draining, no orphan applied, quarantined events,
-	// unique node uids, held push events, secrets file mode.
-	report = appendLocalChecks(ctx, report)
-	report = appendOperatorPlacementCheck(report)
-	report = appendDoctorCheck(report, checkDataFilesystem(inspectors))
-	report = appendBoardIdentityChecks(report)
-	report = appendRegistrationChecks(ctx, report)
-	report = appendAlertsCheck(ctx, report)
-
-	// Check 6: every mtix function and trigger the migrations define is
-	// on the hub and enabled, as the restore runbook ends (MTIX-95.7).
-	report = appendDoctorCheck(report, checkHubObjects(ctx, dsn, hubReady, opts))
-
-	// Check 7: hub privileges, the verification mtix sync harden runs (MTIX-95.1).
-	report = appendDoctorCheck(report, checkHubPrivileges(ctx, dsn, hubReady, opts))
-
-	// No detail may carry the DSN or its password (FR-18.17, MTIX-95.15).
-	report = scrubDoctorReport(report)
-
-	// FR-21 §9: the relay transport's checks. A store with no relay
-	// configured reports one passing row and nothing else — not
-	// configured is not unhealthy.
-	report = appendRelayChecks(ctx, report)
+	report := collectSyncDoctor(ctx, syncDoctorCollection{DSN: dsn, DSNErr: dsnErr,
+		Postgres: true, Relay: true, Options: opts, Inspectors: inspectors})
 
 	if app.jsonOutput {
 		body, _ := json.MarshalIndent(report, "", "  ")
@@ -246,7 +217,6 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	}
 
 	if !report.OverallPass {
-		_ = stderr // already wrote details above
 		return errDoctorChecksFailed
 	}
 	return nil

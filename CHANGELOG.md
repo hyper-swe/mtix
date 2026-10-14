@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Concurrent `mtix comment` calls (and the HTTP annotation append and `resolve-annotation`) no longer lose annotations. Appending or resolving an annotation now reads, changes and writes the node's annotation list inside one write transaction, so parallel writers, in one process or many, each keep their comment. Before, 12 parallel comments could store only 10 while every call reported success (MTIX-148).
 ### Added
+- **Experimental: task history in `.mtix/tasks.json` (MTIX-95.31.19.5).** New config key `history.export` (default `false`). Off, the file is byte-for-byte what earlier versions write. On, it is export format 2.1.0: each node carries its change history, history of tasks that no longer exist goes in an optional top-level `history` list covered by the checksum, and the version of the mtix that last wrote the file is recorded. mtix 0.5.4 and earlier cannot read such a file, so leave it off unless every machine that touches the board runs this version or later. `mtix recover` keeps history when the mirror carries it. A replace import stores the entries; the merge union and the doctor guard follow in later releases.
+
 
 - Add top-level `mtix doctor` with ordered feature registration, four-field JSON,
   configured transport diagnostics and explicitly registered non-grant repairs.

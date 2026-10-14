@@ -100,8 +100,14 @@ func (s *Store) storeChecksumTx(ctx context.Context, tx *sql.Tx) (string, error)
 	if err != nil {
 		return "", err
 	}
+	// With history.export on, Export's checksum covers the history too.
+	history, err := s.readExportHistory(ctx, tx)
+	if err != nil {
+		return "", err
+	}
+	orphans := attachHistory(nodes, history)
 	sortForChecksum(nodes, deps)
-	return computeExportChecksum(nodes, deps)
+	return computeExportChecksumH(nodes, deps, orphans)
 }
 
 // refuseEmptyImport rejects importing zero nodes into a non-empty database

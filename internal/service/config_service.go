@@ -36,6 +36,7 @@ var validConfigKeys = map[string]bool{
 	"mcp.transport":                true,
 	"data.dir":                     true,
 	"data.soft_delete_retention":   true,
+	"history.export":               true,
 	"sync.enabled":                 true,
 	"sync.endpoint":                true,
 	"sync.team_id":                 true,
@@ -92,6 +93,14 @@ var valueValidators = map[string]func(string) error{
 		_, err := parseAutoSync(v)
 		return err
 	},
+	// MTIX-95.31.19.5: history.export is a switch; a mistyped value is
+	// refused rather than read as off.
+	"history.export": func(v string) error {
+		if _, err := strconv.ParseBool(strings.TrimSpace(v)); err != nil {
+			return fmt.Errorf("history.export must be true or false, not %q: %w", v, model.ErrInvalidInput)
+		}
+		return nil
+	},
 }
 
 // serverRestartKeys are keys that affect a running server and require restart.
@@ -119,6 +128,7 @@ var configDefaults = map[string]string{
 	"mcp.transport":              "stdio",
 	"data.dir":                   ".mtix/data",
 	"data.soft_delete_retention": "30d",
+	"history.export":             "false",
 	"sync.enabled":               "false",
 	"sync.endpoint":              "",
 	"sync.team_id":               "",
@@ -301,6 +311,17 @@ func parseAutoSync(value string) (bool, error) {
 		return false, fmt.Errorf("sync.auto_sync must be true or false, not %q: %w", value, model.ErrInvalidInput)
 	}
 	return on, nil
+}
+
+// HistoryExport reports the history.export switch (default off;
+// MTIX-95.31.19.5, ADR-006 A3.1): whether tasks.json carries each task's
+// change history in export format 2.1.0. EXPERIMENTAL until the doctor guard
+// (MTIX-95.31.19.6) lands: a released mtix refuses a board that carries
+// history. An unreadable value counts as off.
+func (cs *ConfigService) HistoryExport() bool {
+	raw, _ := cs.Get("history.export")
+	on, err := strconv.ParseBool(strings.TrimSpace(raw))
+	return err == nil && on
 }
 
 // AuthorID returns the configured default author identity for emitted sync

@@ -23,12 +23,18 @@ func (s *Store) Export(ctx context.Context, project, mtixVersion string) (*Expor
 
 func (s *Store) finishExport(data *ExportData, project, mtixVersion string) (*ExportData, error) {
 	sortForChecksum(data.Nodes, data.Dependencies)
-	checksum, err := computeExportChecksum(data.Nodes, data.Dependencies)
+	checksum, err := computeExportChecksumH(data.Nodes, data.Dependencies, data.History)
 	if err != nil {
 		return nil, fmt.Errorf("compute checksum: %w", err)
 	}
 	data.Version = 1
 	data.SchemaVersion = SchemaVersionV1
+	if data.historyOn {
+		data.SchemaVersion = SchemaVersionHistory
+		if mtixVersion == "" {
+			mtixVersion = s.writerVersion
+		}
+	}
 	// Keep the injected clock: unchanged stores with a fixed clock export the
 	// same bytes; production's default clock retains its existing timestamp.
 	data.ExportedAt = s.clock().UTC().Format(time.RFC3339)
@@ -71,6 +77,10 @@ func (s *Store) readExportSnapshotWith(ctx context.Context, boundary func(*sql.T
 	if err != nil {
 		return nil, exportReadError("export sessions", err)
 	}
+	history, err := s.readExportHistory(ctx, tx)
+	if err != nil {
+		return nil, exportReadError("export history", err)
+	}
 	if s.afterExportBoardRead != nil {
 		s.afterExportBoardRead()
 	}
@@ -82,5 +92,10 @@ func (s *Store) readExportSnapshotWith(ctx context.Context, boundary func(*sql.T
 	if err := tx.Commit(); err != nil {
 		return nil, exportReadError("commit export snapshot", err)
 	}
-	return &ExportData{Nodes: nodes, Dependencies: deps, Agents: agents, Sessions: sessions}, nil
+	out := &ExportData{Nodes: nodes, Dependencies: deps, Agents: agents, Sessions: sessions}
+	if history != nil {
+		out.historyOn = true
+		out.History = attachHistory(out.Nodes, history)
+	}
+	return out, nil
 }

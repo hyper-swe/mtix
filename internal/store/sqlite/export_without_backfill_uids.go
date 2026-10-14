@@ -47,7 +47,7 @@ func withoutUIDsWhere(data *ExportData, drop func(uid string) bool) (*ExportData
 			form.Nodes[i].UID = ""
 		}
 	}
-	checksum, err := computeExportChecksum(form.Nodes, form.Dependencies)
+	checksum, err := computeExportChecksumH(form.Nodes, form.Dependencies, form.History)
 	if err != nil {
 		return nil, fmt.Errorf("compute checksum without the uids: %w", err)
 	}

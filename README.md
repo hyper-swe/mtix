@@ -100,18 +100,18 @@ go install github.com/hyper-swe/mtix/cmd/mtix@latest
 ### OpenAI Codex
 
 ```bash
-mtix plugin install --target codex   # AGENTS.md briefing + MCP server in .codex/config.toml
+mtix plugin install --target codex   # MTIX.md briefing + native pointers + .codex/config.toml
 ```
 
-Existing files are never modified — add `--global` for `~/.codex/`. Details: [MCP Setup Guide](docs/MCP-SETUP.md).
+Project-local installs fully regenerate `MTIX.md` and append one pointer in root `CLAUDE.md` and `AGENTS.md`, preserving other user content. Valid old mtix marker blocks migrate; malformed pairs are refused. `HYPERSWE.md` suppresses new pointers and native-file creation; existing pointers remain. Existing MCP config is preserved. Add `--global` for the unchanged global instruction/config install in `~/.codex/`. Details: [MCP Setup Guide](docs/MCP-SETUP.md).
 
 ### pi
 
 ```bash
-mtix plugin install --target pi      # AGENTS.md briefing (pi loads it natively)
+mtix plugin install --target pi      # MTIX.md briefing + AGENTS.md pointer (pi loads it natively)
 ```
 
-pi drives the mtix CLI through its shell tool; for MCP tools the install prints [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter) setup guidance. Details: [MCP Setup Guide](docs/MCP-SETUP.md).
+Add `--global` for the unchanged global briefing install in `~/.pi/agent/`. pi drives the mtix CLI through its shell tool; for MCP tools the install prints [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter) setup guidance. Details: [MCP Setup Guide](docs/MCP-SETUP.md).
 
 ## Quick Start
 

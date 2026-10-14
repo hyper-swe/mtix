@@ -1,0 +1,100 @@
+# MTIX-167: run a review-loop tree's committed bar on GitHub-hosted runners.
+#
+# Dispatched only by scripts/remote-bar.sh, from main (a workflow can be
+# dispatched only when its file is on the default branch). The tree under
+# test arrives as a ci-scratch/* branch name; the job proves the checkout is
+# the exact tree the wrapper snapshotted before running anything.
+#
+# Lab tooling: Linux only (ubuntu-22.04, like ci.yml) and PostgreSQL 16 only
+# (CI also covers 17). macOS and Windows coverage comes from PR CI. No secrets are used and the token is read-only.
+name: remote-bar
+
+run-name: remote-bar ${{ inputs.scratch_ref }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      scratch_ref:
+        description: "ci-scratch/* branch holding the snapshot"
+        required: true
+        type: string
+      expected_tree:
+        description: "git tree hash the checkout must have"
+        required: true
+        type: string
+      wrapper_version:
+        description: "scripts/remote-bar.sh version that dispatched this run"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bar:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: mtix_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MTIX_PG_TEST_DSN: "postgres://postgres:ci@localhost:5432/mtix_ci?sslmode=disable"
+      MTIX_PG_TEST_REQUIRE_SUPERUSER: "1"
+      WRAPPER_VERSION: ${{ inputs.wrapper_version }}
+      SCRATCH_REF: ${{ inputs.scratch_ref }}
+      EXPECTED_TREE: ${{ inputs.expected_tree }}
+    steps:
+      - name: Identify run
+        run: |
+          echo "remote-bar runner=$RUNNER_NAME os=$RUNNER_OS run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID wrapper=$WRAPPER_VERSION ref=$SCRATCH_REF"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.scratch_ref }}
+          # The bookkeeping gate reads git history; a shallow clone makes it
+          # hard-fail (see ci.yml).
+          fetch-depth: 0
+          # Scratch code must not be able to read the token from .git/config.
+          persist-credentials: false
+      - name: Verify snapshot tree
+        run: |
+          actual="$(git rev-parse 'HEAD^{tree}')"
+          if [ "$actual" != "$EXPECTED_TREE" ]; then
+            echo "tree mismatch: expected $EXPECTED_TREE, checked out $actual" >&2
+            exit 1
+          fi
+          echo "tree verified: $actual"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.11.4
+          install-only: true
+          verify: false
+      - run: go mod verify
+      - name: Serialize packages
+        # The PG-gated suites drop and re-migrate one shared database, so
+        # packages must not run concurrently (same reason as ci.yml's -p 1).
+        # Written with go env -w, not job env: the Makefile assigns
+        # GOFLAGS := -trimpath, and make exports that to go test whenever
+        # GOFLAGS is already in the environment, which breaks the tests that
+        # locate the repository through runtime.Caller.
+        run: go env -w GOFLAGS=-p=1
+      - name: Run committed bar
+        run: make lint-go && make test-race
+      - name: Run govulncheck
+        # Pinned like release.yml (MTIX-83, MTIX-116).
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          go list ./... | grep -v node_modules | xargs "$(go env GOPATH)/bin/govulncheck"

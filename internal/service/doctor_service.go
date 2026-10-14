@@ -151,7 +151,12 @@ func validateDoctorRows(rows []DoctorResult) error {
 func (s *DoctorService) scrubRows(rows []DoctorResult) []DoctorResult {
 	for i := range rows {
 		rows[i].ID = s.scrub(rows[i].ID)
-		rows[i].Status = DoctorStatus(s.scrub(string(rows[i].Status)))
+		// Valid outcomes are protocol constants, not credential-bearing text.
+		switch rows[i].Status {
+		case DoctorPass, DoctorWarn, DoctorFail, DoctorInfo:
+		default:
+			rows[i].Status = DoctorStatus(s.scrub(string(rows[i].Status)))
+		}
 		rows[i].Detail = s.scrub(rows[i].Detail)
 		rows[i].Fix = s.scrub(rows[i].Fix)
 	}

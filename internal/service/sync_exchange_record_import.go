@@ -37,12 +37,15 @@ func (s *SyncService) applyReceivedImport(ctx context.Context, ri *receivedImpor
 		"stored_hash", string(ri.storedHash), "file_size", len(ri.data), "node_count", ri.incoming.NodeCount)
 	// MTIX-95.31.4: nothing is written if the store changed after the loss check.
 	unchanged := sqlite.IfStoreUnchanged(ri.local.Checksum)
-	if _, importErr := s.store.Import(ctx, ri.written, sqlite.ImportModeReplace, false, unchanged); importErr != nil {
+	importRes, importErr := s.store.Import(ctx, ri.written, sqlite.ImportModeReplace, false, unchanged)
+	if importErr != nil {
 		return fmt.Errorf("auto-import: %w", importErr)
 	}
 	s.noticeImported(ri.mtixDir, ri.diff, backupPath) // FR-15.2k: never silent
 	s.noticeResolved(ri.resolution)
-	s.forgetBackup(ri.mtixDir) // FR-15.2f: the next import backs up anew
+	s.noticeHistoryImport(importRes)
+	s.noticeOlderWriter(ri.incoming.MtixVersion) // MTIX-95.31.19.9: once per imported file
+	s.forgetBackup(ri.mtixDir)                   // FR-15.2f: the next import backs up anew
 
 	// Step 8: record the file as imported (FR-15.2h).
 	return s.recordImported(ctx, ri.mtixDir, ri.hashPath, ri.fileHash, ri.incoming, ri.start)

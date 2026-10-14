@@ -122,15 +122,3 @@ func TestExportHistory_OrphanOrderIsTaskTimeID(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 }
-
-// TestImportMerge_HistoryNotTakenYet pins the documented limit: a merge
-// import does not take a file's history (the union is MTIX-95.31.19.9).
-func TestImportMerge_HistoryNotTakenYet(t *testing.T) {
-	_, file := historyFile(t)
-	dst := newHistoryFixture(t)
-	_, err := dst.s.Import(context.Background(), file, sqlite.ImportModeMerge, true)
-	require.NoError(t, err)
-	var n int
-	require.NoError(t, dst.db.QueryRow(`SELECT COUNT(*) FROM task_history WHERE entry_id LIKE '01H0000000000000000000F%'`).Scan(&n))
-	require.Equal(t, 0, n)
-}

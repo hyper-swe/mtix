@@ -191,34 +191,23 @@ func checkHistoryEntry(e exportHistoryEntry) error {
 	return nil
 }
 
-// insertExportHistory stores the history a file carries, per node and in the
-// top-level list, keeping an entry the store already holds (INSERT OR IGNORE
-// on the entry id, and on the event key) as is. It is the replace-import half
-// of history round trips; the merge union is MTIX-95.31.19.9.
-func insertExportHistory(ctx context.Context, tx *sql.Tx, data *ExportData) error {
-	write := func(e exportHistoryEntry) error {
-		// Keep the entry as the file states it; a repeated entry id is a no-op.
-		_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO task_history
-			(entry_id, task_uid, ts, actor, origin, kind, field, old_value, new_value, event_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			e.ID, e.TaskUID, e.TS, e.Actor, e.Origin, e.Kind, e.Field, e.Old, e.New, nullIfEmpty(e.EventID))
-		if err != nil {
-			return fmt.Errorf("import history entry %s: %w", e.ID, err)
-		}
-		return nil
-	}
-	for i := range data.Nodes {
-		for _, e := range data.Nodes[i].History {
-			if err := write(e); err != nil {
-				return err
-			}
-		}
-	}
-	for _, e := range data.History {
-		if err := write(e); err != nil {
+// insertExportHistory unions the history a file carries, per node and in the
+// top-level list, into the store by entry id, and records the outcome on
+// result (MTIX-95.31.19.9, ADR-006 A3). Replace and merge imports share it: a
+// local entry is never dropped or changed, an entry the store holds
+// identically is counted as skipped, one it holds with other content keeps
+// the local row and counts as a conflict, and one keyed by a legacy dot id
+// (not a task uid) is skipped and counted. The union is idempotent and does
+// not depend on the order of the entries; an entry id the file itself repeats
+// with different content is skipped whole (see uniqueEntries).
+func insertExportHistory(ctx context.Context, tx *sql.Tx, data *ExportData, result *ImportResult) error {
+	u := historyUnion{}
+	for _, e := range u.uniqueEntries(data) {
+		if err := u.add(ctx, tx, e); err != nil {
 			return err
 		}
 	}
+	u.report(result)
 	return nil
 }
 

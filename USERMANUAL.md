@@ -1094,8 +1094,14 @@ mtix config delete auto_claim
 | `session.timeout` | `4h` | Max session duration before auto-end |
 | `data.soft_delete_retention` | `720h` (30 days) | Time before soft-deleted nodes are purged |
 | `sync.keep_roles` | (none) | Comma-separated hub roles that `mtix sync harden` leaves with their access (see "Hub privileges"); PUBLIC, data-API and `pg_` roles are refused. Setting it turns on strict mode: the doctor's `hub-privileges` check then fails, instead of warning, whenever `mtix sync harden` would report a finding, or when the check cannot run |
+| `history.export` | `false` | EXPERIMENTAL. `true` writes `.mtix/tasks.json` in export format 2.1.0 with each task's change history (see "Task history in tasks.json"); mtix 0.5.4 and earlier cannot read such a file, so turn it on only when every machine and daemon that touches the board runs this version or later. A running process follows a change without a restart. `mtix config set` accepts only true or false. |
 | `progress.weighted` | `false` | Use weight field in progress calculation |
 | `sync.auto_sync` | `true` | Automatic import of a changed `.mtix/tasks.json` (after `git pull`); `false` turns it off, except for a store that holds no tasks. `mtix config set` accepts only true or false. Tracked in git with `.mtix/config.yaml`, so it applies to every clone. Writes keep exporting, but never over a pulled board that was not imported. See "Automatic import of `.mtix/tasks.json`" |
+
+
+### Task history in tasks.json (experimental)
+
+mtix records a change log per task (field, old and new value for structured fields, actor, origin, time). By default `.mtix/tasks.json` omits it and stays readable by every released mtix. `mtix config set history.export true` writes the file in export format 2.1.0 with the log: each node carries a `history` list, and the history of tasks that no longer exist travels in an optional top-level `history` list; the checksum covers both (see `docs/EXPORT-FORMAT.md`). mtix 0.5.4 and earlier cannot read such a file: their import fails with `checksum verification failed`, and their automatic import loads nothing. Turn the switch on only when every machine and daemon that touches the board runs this version or later; no doctor check verifies that yet. `mtix config set history.export false` returns to 2.0.0 at the next write. `mtix import` in replace mode stores every entry in the file; merge mode does not take history yet. The switch is experimental until a later release adds the doctor check.
 
 ---
 

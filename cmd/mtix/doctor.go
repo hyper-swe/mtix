@@ -106,5 +106,11 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 			return doctorSyncRows(collectSyncDoctor(ctx, request)), nil
 		}
 	}
-	return service.NewDoctorService(opts), nil
+	svc := service.NewDoctorService(opts)
+	if hooksFileExists(app.mtixDir) {
+		if err := svc.Register(hooksProgramsCheck(app.mtixDir)); err != nil {
+			return nil, fmt.Errorf("register hook program check: %w", err)
+		}
+	}
+	return svc, nil
 }

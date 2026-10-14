@@ -546,3 +546,20 @@ interpreter needs no new review.
 Residual: a file that appears at a non-script position between the launch check
 and the moment the interpreter opens it is not covered, because only files that
 existed at approval are pinned there.
+
+Program review notice: when you approve an exec hook whose program is neither
+a pinned project script nor a known interpreter running one, `mtix hooks trust`
+prints a "Program review" notice, and its `--json` result carries a
+`program_review` object with `class`, `review_needed`, `program`, `detail` and
+`fix`. A known interpreter means an exact interpreter name (for example `sh`,
+`bash`, `python3`, `node`; case-insensitive, with `.exe`, `.cmd` or `.bat`
+accepted) as a bare name or as an absolute path in a PATH directory, running a
+pinned project script; any other path or name is reported with its
+symlink-resolved path. A hook that cannot be classified is reported as
+`unknown` and needs review. `mtix hooks status` reports the same object for
+each hook, and `mtix doctor` shows the `hooks.programs` check: WARN with the
+exact fix lists the approved hooks that need review and any `hooks.yaml` load
+problem, PASS means none do (no row appears when there is no `hooks.yaml`).
+The notice is advisory: the hook still runs as written and launch behaviour
+does not change. To clear it, run the program through a pinned project script
+and approve the hook again.

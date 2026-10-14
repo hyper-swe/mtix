@@ -22,6 +22,9 @@ func projectPointerInText(content []byte, pointer, name string) (bool, bool) {
 			delimiter, length = char, run
 			continue
 		}
+		if !projectPointerIndentEligible(line) {
+			continue
+		}
 		text := strings.TrimSpace(line)
 		if text == pointer || (name == "AGENTS.md" && isAgentsPointer(text)) {
 			return true, false
@@ -49,4 +52,14 @@ func projectFenceLine(line string) (byte, int, string) {
 		end++
 	}
 	return char, end - indent, line[end:]
+}
+
+// projectPointerIndentEligible recognizes standalone instructions rather than
+// deeper examples or paragraph continuations; it is not a Markdown block parser.
+func projectPointerIndentEligible(line string) bool {
+	indent := 0
+	for indent < len(line) && line[indent] == ' ' {
+		indent++
+	}
+	return indent <= 3 && (indent == len(line) || line[indent] != '\t')
 }

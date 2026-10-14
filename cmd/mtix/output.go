@@ -67,12 +67,17 @@ type jsonWriter struct {
 // Color output is enabled only when stdout is a TTY per FR-6.2.
 func NewOutputWriter(jsonMode bool) OutputWriter {
 	if jsonMode {
-		return &jsonWriter{w: os.Stdout, staleReason: app.staleReason}
+		return newJSONOutputWriter(os.Stdout)
 	}
 	return &humanWriter{
 		w:     os.Stdout,
 		color: isTerminal(os.Stdout),
 	}
+}
+
+// newJSONOutputWriter retains the supplied stream and snapshots read freshness.
+func newJSONOutputWriter(w io.Writer) *jsonWriter {
+	return &jsonWriter{w: w, staleReason: app.staleReason}
 }
 
 // --- Human writer ---

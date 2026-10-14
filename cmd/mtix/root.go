@@ -201,6 +201,11 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 
+	// MTIX-95.31.19.5: history.export (default off) decides whether exports
+	// carry task history; the store reads it per export.
+	app.store.SetHistoryExportSource(app.configSvc.HistoryExport)
+	app.store.SetWriterVersion(version)
+
 	// Resolve this process's author identity (MTIX-24): MTIX_AUTHOR_ID env >
 	// author_id config > "cli". An explicitly-set-but-invalid value is rejected
 	// loudly. The config-derived default is persisted into the store's meta so

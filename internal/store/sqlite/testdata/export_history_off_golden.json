@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "schema_version": "2.0.0",
+  "exported_at": "2026-03-14T12:00:00Z",
+  "mtix_version": "0.0.0-golden",
+  "project": "PROJ",
+  "nodes": [
+    {
+      "id": "PROJ-1",
+      "parent_id": "",
+      "depth": 0,
+      "seq": 1,
+      "project": "PROJ",
+      "title": "golden root",
+      "description": "",
+      "prompt": "",
+      "acceptance": "",
+      "node_type": "epic",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "test-agent",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "b599eb3a1b36a282eb8420e1d531e689012680052528b26611b1b33a4e5af96f",
+      "created_at": "2026-03-14T12:00:00Z",
+      "updated_at": "2026-03-14T12:00:00Z",
+      "uid": "01a137e6-c5d6-77c0-922f-6b727c8dd6fd",
+      "activity": [
+        {
+          "id": "act-1773489600000000000",
+          "type": "created",
+          "author": "test-agent",
+          "text": "Node created",
+          "created_at": "2026-03-14T12:00:00Z"
+        }
+      ]
+    },
+    {
+      "id": "PROJ-1.1",
+      "parent_id": "PROJ-1",
+      "depth": 1,
+      "seq": 1,
+      "project": "PROJ",
+      "title": "golden child",
+      "description": "",
+      "prompt": "",
+      "acceptance": "",
+      "node_type": "story",
+      "issue_type": "",
+      "priority": 3,
+      "labels": "[]",
+      "status": "open",
+      "progress": 0,
+      "assignee": "",
+      "creator": "test-agent",
+      "agent_state": "",
+      "weight": 1,
+      "content_hash": "b83fd763157fd832d76a6811bc59a84359894f4ae897d2bb2ef7222ac34fda9a",
+      "created_at": "2026-03-14T12:00:00Z",
+      "updated_at": "2026-03-14T12:00:00Z",
+      "uid": "01a137e6-c5d7-734f-ae27-e7257d6789af",
+      "activity": [
+        {
+          "id": "act-1773489600000000000",
+          "type": "created",
+          "author": "test-agent",
+          "text": "Node created",
+          "created_at": "2026-03-14T12:00:00Z"
+        }
+      ]
+    }
+  ],
+  "dependencies": null,
+  "agents": null,
+  "sessions": null,
+  "node_count": 2,
+  "checksum": "f698f1b0a388b2f3936ea542a1cd01d7a0e796364d501b66bc7ee98566e948a3"
+}

@@ -6,6 +6,15 @@ description: "Set up, use, verify and recover the MTIX sync hub, the shared Post
 
 The hub is a Postgres database that you and your teammates' agents push task changes to and pull each other's changes from. Each machine keeps its own local store; the hub carries the event log between them. This skill is the full runbook: requirements, setup from zero, daily use, verification, troubleshooting and recovery. The short routine is in the managed SYNC section of `CLAUDE.md` and `AGENTS.md`.
 
+## Automatic export activity
+
+An unchanged board keeps `.mtix/tasks.json` bytes, mtime and `exported_at`,
+including across idle daemon ticks. Treat these as publication metadata, not a
+daemon heartbeat. A real content change publishes the new snapshot once;
+pending export recovery still completes when the file already matches.
+`sync_export_completed` is Debug-only: use `--log-level debug` to inspect actual
+publications. Quiet idle ticks produce no completed-publication record.
+
 ## Board identity
 
 New boards created by `mtix init` have one UUID followed by a newline in

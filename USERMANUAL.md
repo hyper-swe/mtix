@@ -1355,6 +1355,24 @@ The export includes every node with every stored field, dependencies, agents, se
 
 **Mixed versions on one board.** A client older than 0.5.4 supports only `schema_version` 1.x, so its automatic import skips a file written by 0.5.4 and logs `tasks.json schema version is newer than supported — upgrade mtix`; its `mtix import` of the file fails with `checksum verification failed`. That protects its store only until its next writing command: every write re-exports `.mtix/tasks.json` from that store, which lacks everything the client skipped and every annotation, and committing that file reverts every change made upstream. On a client older than 0.5.4, even an `mtix import` that fails rewrites `.mtix/tasks.json` from that client's store, so `mtix import .mtix/tasks.json` is no remedy there either. Until every teammate who shares a board runs 0.5.4 or later, do not run writing commands or `mtix import` on an older client and do not commit its `.mtix/tasks.json`. If such a file was committed, restore `.mtix/tasks.json` from the last good commit in git history, or restore the store of a machine that imported it from the backup taken before that import: `.mtix/data/backups/pre-sync-<time>.db` (0.5.4 and later) or `.mtix/data/pre-sync-backup.db` (0.5.3 and earlier); to restore it, stop every mtix process (the MCP server, `mtix serve` and the sync daemon), copy it over `.mtix/data/mtix.db`, delete `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm` (a stale write-ahead log would replay old writes onto the restored file), then continue. A 0.5.4 store is protected from such a file by the auto-import guard (MTIX-95.31.2): the file carries no annotations or activity, so the automatic import is refused and nothing changes (see "Automatic import of `.mtix/tasks.json`" below). 0.5.4 reads files written by older clients.
 
+### Automatic exports
+
+Automatic publication after a mutation or a daemon tick compares board content
+without `exported_at`. When content is unchanged, `.mtix/tasks.json` keeps its
+exact bytes, modification time and timestamp. A real content change publishes
+the new snapshot; repeated triggers for that same content do not publish again.
+An unchanged timestamp is therefore not a daemon heartbeat.
+
+Pending export recovery still completes its bookkeeping when no file write is
+needed. File hashes continue to describe the exact published bytes, and the
+export schema and content checksum remain compatible with 0.5.4 readers.
+
+Successful publications log `sync_export_completed` at Debug level. Use
+`--log-level debug` to inspect actual publications; idle ticks emit no completed
+publication record and default logging prints no export-completed INFO lines.
+`mtix export` produces its requested artifact, and `mtix sync --fix` performs its
+explicit rewrite.
+
 ### Import
 
 Import data from a JSON export:

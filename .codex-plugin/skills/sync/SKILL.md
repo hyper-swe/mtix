@@ -28,6 +28,15 @@ local cache. These fields describe sync-lock contention only; still follow any
 other auto-import refusal or warning. Commands that skip automatic import,
 including `mtix sync status` and `mtix sync doctor`, do not make this check.
 
+## Automatic export activity
+
+An unchanged board keeps `.mtix/tasks.json` bytes, mtime and `exported_at`,
+including across idle daemon ticks. Treat these as publication metadata, not a
+daemon heartbeat. A real content change publishes the new snapshot once;
+pending export recovery still completes when the file already matches.
+`sync_export_completed` is Debug-only: use `--log-level debug` to inspect actual
+publications. Quiet idle ticks produce no completed-publication record.
+
 ## Board identity
 
 New boards created by `mtix init` have one UUID followed by a newline in

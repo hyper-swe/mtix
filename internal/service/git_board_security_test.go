@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -26,10 +25,12 @@ func boardScript(t *testing.T, body string) string {
 
 func boardPositiveControl(t *testing.T, path, marker string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := boardTestWatchdog(t)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, path)
-	require.NoError(t, cmd.Run())
+	err := cmd.Run()
+	require.NoError(t, ctx.Err(), "positive canary watchdog expired")
+	require.NoError(t, err)
 	require.FileExists(t, marker)
 	require.NoError(t, os.Remove(marker))
 }
@@ -111,9 +112,13 @@ func TestMergeBaseBoard_PromisorObjects_DoNotFetch(t *testing.T) {
 
 func boardPositiveFailure(t *testing.T, path, marker string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := boardTestWatchdog(t)
 	defer cancel()
-	require.Error(t, exec.CommandContext(ctx, path).Run())
+	err := exec.CommandContext(ctx, path).Run()
+	require.NoError(t, ctx.Err(), "negative canary watchdog expired")
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr)
+	require.Equal(t, 1, exitErr.ExitCode(), "negative canary must finish its intended exit")
 	require.FileExists(t, marker)
 	require.NoError(t, os.Remove(marker))
 }

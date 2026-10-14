@@ -33,6 +33,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `delete <id>` — Soft-delete a node
 - `dep` — Manage node dependencies
 - `docs` — Manage agent-facing documentation
+- `doctor` — Run registered checkout and host health checks
 - `done <id>` — Mark a node as done
 - `export` — Export nodes to JSON
 - `gc` — Run garbage collection (clean expired soft-deletes)
@@ -576,6 +577,32 @@ unless --force is used.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--force` |  | Force regeneration of all files including template-based ones | false |
+---
+
+## doctor
+
+**Usage:** `doctor`
+
+Run registered checkout and host health checks
+
+Run registered health checks for this checkout and host.
+
+Sync checks run only for configured transports. An unused Postgres transport is
+not checked on a relay-only board. WARN and INFO are advisory: exit 0 when no
+check fails, or 2 when any check reports FAIL.
+
+--json emits an array with exactly id, status, detail and fix for each check.
+--fix performs only explicitly registered non-grant repairs and rechecks them.
+Grant commands are printed for you to run yourself; they are never executed.
+
+Setup and document-freshness checks will be registered by their future features;
+they are not available in this version.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--fix` |  | Perform explicitly registered non-grant repairs, then recheck | false |
 ---
 
 ## done

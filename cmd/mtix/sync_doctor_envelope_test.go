@@ -33,16 +33,16 @@ func TestSyncDoctorEnvelope_InvalidCaps_ReportsExactRemedy(t *testing.T) {
 			initTestApp(t)
 			envelopeWakeConfig(t, tt.caps)
 			t.Setenv(transport.EnvDSN, "")
-			var out, errOut bytes.Buffer
+			var out bytes.Buffer
 			app.jsonOutput = true
-			require.ErrorIs(t, runSyncDoctor(context.Background(), &out, &errOut, nil, transport.Options{}), errDoctorChecksFailed)
+			require.ErrorIs(t, runSyncDoctor(context.Background(), &out, nil, transport.Options{}), errDoctorChecksFailed)
 			check := doctorCheckFromJSON(t, out.Bytes(), "inbox envelope caps")
 			assert.False(t, check.Pass)
 			assert.Contains(t, check.Fix, "wake.json")
 			assert.Contains(t, check.Fix, "0")
 			app.jsonOutput = false
 			out.Reset()
-			require.ErrorIs(t, runSyncDoctor(context.Background(), &out, &errOut, nil, transport.Options{}), errDoctorChecksFailed)
+			require.ErrorIs(t, runSyncDoctor(context.Background(), &out, nil, transport.Options{}), errDoctorChecksFailed)
 			assert.Contains(t, out.String(), "[FAIL] inbox envelope caps")
 			assert.Contains(t, out.String(), check.Fix)
 		})

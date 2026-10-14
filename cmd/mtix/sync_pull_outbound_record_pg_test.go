@@ -60,8 +60,8 @@ func outboundPGRemote(ctx context.Context, t *testing.T, pool *transport.Pool) e
 
 func outboundPGDoctor(ctx context.Context, opts transport.Options) (DoctorCheck, error) {
 	app.jsonOutput = true
-	var stdout, stderr bytes.Buffer
-	if err := runSyncDoctor(ctx, &stdout, &stderr, nil, opts); err != nil && !errors.Is(err, errDoctorChecksFailed) {
+	var stdout bytes.Buffer
+	if err := runSyncDoctor(ctx, &stdout, nil, opts); err != nil && !errors.Is(err, errDoctorChecksFailed) {
 		return DoctorCheck{}, err
 	}
 	var report DoctorReport

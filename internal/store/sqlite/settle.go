@@ -156,7 +156,7 @@ func (s *Store) RenumberForHubRejection(ctx context.Context, uid string) (string
 		}
 		newID := model.BuildID(target.project, target.parentID, seq)
 		renErr := s.WithTx(ctx, func(tx *sql.Tx) error {
-			return renumberAndRequeue(ctx, tx, target, seq, newID)
+			return s.renumberAndRequeue(ctx, tx, target, seq, newID)
 		})
 		switch {
 		case renErr == nil:
@@ -174,12 +174,12 @@ func (s *Store) RenumberForHubRejection(ctx context.Context, uid string) (string
 // renumberAndRequeue moves target's subtree to sibling number seq (newID)
 // and requeues its events in one transaction (MTIX-95.37): the numbers and
 // the events that name them change together or not at all.
-func renumberAndRequeue(ctx context.Context, tx *sql.Tx, target settleTarget, seq int, newID string) error {
+func (s *Store) renumberAndRequeue(ctx context.Context, tx *sql.Tx, target settleTarget, seq int, newID string) error {
 	node, err := lockAnyNodeForRenumber(ctx, tx, target.id)
 	if err != nil {
 		return err
 	}
-	if err := renumberSubtreeTx(ctx, tx, target.id, node, seq); err != nil {
+	if err := s.renumberRecorded(ctx, tx, target.id, node, seq, model.HistoryOriginSystem); err != nil {
 		return err
 	}
 	if err := requeueRenumberedEvents(ctx, tx, target.uid, target.id, newID); err != nil {

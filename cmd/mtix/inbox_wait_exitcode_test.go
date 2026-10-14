@@ -29,9 +29,8 @@ func TestRunInbox_WaitEmpty_JSON_ReturnsWaitEmptyErrorAndEmptyArray(t *testing.T
 
 	var err error
 	out := captureStdout(t, func() {
-		// timeout 0 collapses InboxWait to an immediate empty return, so the
-		// test does not block; the empty-timeout path is identical.
-		err = runInbox("nobody", true, 0, "")
+		// A positive timeout preserves the bounded empty-timeout contract.
+		err = runInbox("nobody", true, 1, "")
 	})
 
 	require.ErrorIs(t, err, errInboxWaitEmpty, "an empty --wait timeout is the exit-5 sentinel, not success")
@@ -46,7 +45,7 @@ func TestRunInbox_WaitEmpty_Human_ReturnsWaitEmptyError(t *testing.T) {
 	app.jsonOutput = false
 
 	var err error
-	out := captureStdout(t, func() { err = runInbox("nobody", true, 0, "") })
+	out := captureStdout(t, func() { err = runInbox("nobody", true, 1, "") })
 
 	require.ErrorIs(t, err, errInboxWaitEmpty)
 	assert.Equal(t, exitCodeInboxEmpty, exitCodeForError(err))

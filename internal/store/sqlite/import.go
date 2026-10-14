@@ -105,7 +105,10 @@ func ValidateExport(data *ExportData) error {
 	// Reject a time value no reader could parse back (not RFC 3339, or a
 	// UTC year outside 1..9999, model.IsStorableTime) before anything is
 	// written (MTIX-95.31.1).
-	return validateExportTimes(data)
+	if err := validateExportTimes(data); err != nil {
+		return err
+	}
+	return validateExportHistory(data)
 }
 
 // Import loads data from an ExportData structure per FR-7.8.
@@ -133,7 +136,8 @@ func (s *Store) Import(
 	cfg := collectImportOptions(opts)
 
 	var result ImportResult
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	// MTIX-95.31.19.3: every task the import changes is recorded with origin import.
+	err := s.withHistoryTx(ctx, historyScope{all: true, origin: model.HistoryOriginImport}, func(tx *sql.Tx) error {
 		// MTIX-95.31.4: the store must still be the one the caller checked.
 		if err := s.verifyStoreUnchanged(ctx, tx, cfg); err != nil {
 			return err
@@ -145,6 +149,9 @@ func (s *Store) Import(
 		var applyErr error
 		if mode == ImportModeReplace {
 			result, applyErr = replaceAllData(ctx, tx, data)
+			if applyErr == nil {
+				applyErr = insertExportHistory(ctx, tx, data)
+			}
 		} else {
 			result, applyErr = mergeAllData(ctx, tx, data, workflowPolicy{cfg.workflow, s.clock()})
 		}

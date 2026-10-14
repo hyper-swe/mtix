@@ -177,8 +177,10 @@ func TestTaskHistory_CreateNode_RecordsInitialFieldsOncePerField(t *testing.T) {
 	require.NoError(t, f.s.CreateNode(context.Background(), ccNode(ccRoot, model.StatusOpen)))
 	for _, r := range f.rows(t, ccRoot) {
 		assert.Equal(t, "test-agent", r.actor, "create records the creator")
+		assert.Equal(t, "local", r.origin, "a create is a local write")
 	}
 	got := f.fields(t, ccRoot)
+	assert.NotContains(t, got, "display_path", "a new task has its path from the start; only a move is recorded")
 	assert.Contains(t, got, "status")
 	assert.Contains(t, got, "title")
 	seen := map[string]bool{}
@@ -231,6 +233,9 @@ func TestHistoryFieldClassOf_Registry(t *testing.T) {
 		{"node_type", model.HistoryFieldStructured}, {"issue_type", model.HistoryFieldStructured},
 		{"parent", model.HistoryFieldStructured}, {"defer_until", model.HistoryFieldStructured},
 		{"agent_state", model.HistoryFieldStructured}, {"deleted_at", model.HistoryFieldStructured},
+		{"estimate_min", model.HistoryFieldStructured}, {"actual_min", model.HistoryFieldStructured},
+		{"weight", model.HistoryFieldStructured}, {"code_refs", model.HistoryFieldValueFree},
+		{"commit_refs", model.HistoryFieldValueFree}, {"display_path", model.HistoryFieldStructured}, {"metadata", model.HistoryFieldValueFree},
 		{"title", model.HistoryFieldValueFree}, {"description", model.HistoryFieldValueFree},
 		{"prompt", model.HistoryFieldValueFree}, {"acceptance", model.HistoryFieldValueFree},
 		{"notes", model.HistoryFieldValueFree}, {"annotations", model.HistoryFieldValueFree},

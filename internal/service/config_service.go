@@ -36,6 +36,7 @@ var validConfigKeys = map[string]bool{
 	"mcp.transport":                true,
 	"data.dir":                     true,
 	"data.soft_delete_retention":   true,
+	"history.export":               true,
 	"sync.enabled":                 true,
 	"sync.endpoint":                true,
 	"sync.team_id":                 true,
@@ -92,6 +93,7 @@ var valueValidators = map[string]func(string) error{
 		_, err := parseAutoSync(v)
 		return err
 	},
+	"history.export": validateHistoryExport, // MTIX-95.31.19.5
 }
 
 // serverRestartKeys are keys that affect a running server and require restart.
@@ -119,6 +121,7 @@ var configDefaults = map[string]string{
 	"mcp.transport":              "stdio",
 	"data.dir":                   ".mtix/data",
 	"data.soft_delete_retention": "30d",
+	"history.export":             "false",
 	"sync.enabled":               "false",
 	"sync.endpoint":              "",
 	"sync.team_id":               "",
@@ -439,7 +442,7 @@ func (cs *ConfigService) saveToFile() error {
 	var buf strings.Builder
 	sections := []string{
 		"", "api", "mcp", "data", "sync",
-		"agent", "context", "logging", "progress", "ui",
+		"agent", "context", "logging", "progress", "ui", "history",
 	}
 
 	for _, section := range sections {
@@ -458,31 +461,7 @@ func (cs *ConfigService) saveToFile() error {
 		}
 	}
 
-	return os.WriteFile(cs.path, []byte(buf.String()), 0o644)
-}
-
-// parseDuration parses a duration string with support for "d" (days) suffix.
-func parseDuration(s string, fallback time.Duration) time.Duration {
-	if s == "" {
-		return fallback
-	}
-	// Handle "30d" format.
-	if strings.HasSuffix(s, "d") {
-		s = strings.TrimSuffix(s, "d")
-		days := 0
-		for _, c := range s {
-			if c < '0' || c > '9' {
-				return fallback
-			}
-			days = days*10 + int(c-'0')
-		}
-		return time.Duration(days) * 24 * time.Hour
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return fallback
-	}
-	return d
+	return writeFileAtomic(cs.path, []byte(buf.String()))
 }
 
 // ValidConfigKeys returns all valid config key names for documentation introspection.

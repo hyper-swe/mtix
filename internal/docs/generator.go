@@ -83,10 +83,11 @@ func WorkflowSubdir() string { return workflowSubdir }
 
 // Generator produces documentation files per FR-13.1.
 type Generator struct {
-	outputDir string
-	templates *template.Template
-	data      *TemplateData
-	logger    *slog.Logger
+	outputDir  string
+	projectDir string
+	templates  *template.Template
+	data       *TemplateData
+	logger     *slog.Logger
 }
 
 // GenerateResult describes the outcome of generating a single file.
@@ -179,6 +180,10 @@ func EmbeddedTemplatesFS() fs.FS {
 	return embeddedTemplates
 }
 
+// SetProjectRoot enables the MTIX.md briefing and user-file pointers per FR-13.1.
+// Reference-only generators retain their existing FR-13.2 behavior.
+func (g *Generator) SetProjectRoot(root string) { g.projectDir = root }
+
 // Generate produces all 11 top-level documentation files per FR-13.1
 // plus the BYO PG reference workflow docs from MTIX-14.4 under
 // <outputDir>/workflows/.
@@ -188,15 +193,18 @@ func EmbeddedTemplatesFS() fs.FS {
 // results are reported with the "workflows/" prefix in their File field
 // so callers can distinguish them from top-level docs.
 func (g *Generator) Generate(force bool) ([]GenerateResult, error) {
+	renderer := *g
+	results, prepareErr := renderer.prepareProject()
+	if prepareErr != nil {
+		return nil, fmt.Errorf("prepare documentation: %w", prepareErr)
+	}
 	// Ensure output directory exists.
 	if err := os.MkdirAll(g.outputDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create docs dir %s: %w", g.outputDir, err)
 	}
 
-	var results []GenerateResult
-
 	for _, doc := range allDocFiles {
-		result, err := g.generateFile(doc, force)
+		result, err := renderer.generateFile(doc, force)
 		if err != nil {
 			return results, fmt.Errorf("generate %s: %w", doc.Name, err)
 		}
@@ -211,7 +219,7 @@ func (g *Generator) Generate(force bool) ([]GenerateResult, error) {
 		return results, fmt.Errorf("create workflows dir %s: %w", workflowDir, err)
 	}
 	for _, doc := range workflowDocFiles {
-		result, err := g.generateFileIn(doc, workflowDir, force)
+		result, err := renderer.generateFileIn(doc, workflowDir, force)
 		if err != nil {
 			return results, fmt.Errorf("generate workflows/%s: %w", doc.Name, err)
 		}

@@ -26,7 +26,7 @@ func TestPendingExports_RenderedRecoveryGuidance(t *testing.T) {
 			require.Contains(t, string(body), phrase, name)
 		}
 	}
-	for _, name := range []string{"CLAUDE.md", "AGENTS.md"} {
+	for _, name := range []string{"MTIX.md"} {
 		body, err := os.ReadFile(filepath.Join(dir, name))
 		require.NoError(t, err)
 		require.Contains(t, string(body), "Mirror exports retain one durable local generation")

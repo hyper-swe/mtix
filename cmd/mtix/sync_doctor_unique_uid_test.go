@@ -42,9 +42,9 @@ func TestRunSyncDoctor_DuplicateNodeUIDs_FailsNamingThemAndTheFix(t *testing.T) 
 		}))
 	}
 	run := func() DoctorCheck {
-		var out, errOut bytes.Buffer
+		var out bytes.Buffer
 		app.jsonOutput = true
-		_ = runSyncDoctor(ctx, &out, &errOut, nil, transport.Options{})
+		_ = runSyncDoctor(ctx, &out, nil, transport.Options{})
 		return doctorCheckFromJSON(t, out.Bytes(), uniqueUIDCheckName)
 	}
 	assert.True(t, run().Pass)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -165,32 +166,48 @@ func (s *Store) InboxAckThrough(ctx context.Context, agentID string, seq int64) 
 // enough to feel instant to a parked worker, large enough not to spin the DB.
 const inboxPollInterval = 250 * time.Millisecond
 
-// InboxWait long-polls the inbox: it returns immediately if the query is
-// non-empty, otherwise blocks until a new addressed event lands or the timeout
-// elapses (FR-19.4). This is the primitive a worker's outer loop parks on
-// between tasks. A timeout returns (nil, nil) — the caller distinguishes it
-// from a hit by the slice length (and, at the CLI, a distinct exit code).
+// InboxWait returns pending events immediately, then polls without holding a
+// transaction between queries (FR-19.4). Zero waits until an event or caller
+// cancellation; a positive timeout returns (nil, nil) when its own deadline
+// expires. Parent cancellation, parent deadlines and database errors propagate.
+// Negative durations return ErrInvalidInput before reading the inbox.
 func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Duration) ([]InboxEvent, error) {
-	deadline := time.Now().Add(timeout)
+	if timeout < 0 {
+		return nil, fmt.Errorf("inbox wait: negative timeout: %w", model.ErrInvalidInput)
+	}
+	waitCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	ticker := time.NewTicker(inboxPollInterval)
+	defer ticker.Stop()
 	for {
-		events, err := s.InboxList(ctx, agentID)
+		events, err := s.InboxList(waitCtx, agentID)
 		if err != nil {
-			return nil, err
+			return nil, inboxWaitError(ctx, waitCtx, err)
 		}
 		if len(events) > 0 {
 			return events, nil
 		}
-		if !time.Now().Before(deadline) {
-			return nil, nil // timed out with an empty inbox
-		}
-		wait := inboxPollInterval
-		if remaining := time.Until(deadline); remaining < wait {
-			wait = remaining
-		}
 		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(wait):
+		case <-waitCtx.Done():
+			return nil, inboxWaitError(ctx, waitCtx, waitCtx.Err())
+		case <-ticker.C:
 		}
 	}
+}
+
+// Only the wait's own elapsed timeout is an empty success; cancellation from
+// its caller remains an error. Timers use scheduler time, so a frozen injected
+// timestamp clock never prevents a finite wait from expiring.
+func inboxWaitError(parent, waiter context.Context, err error) error {
+	if parent.Err() != nil {
+		return fmt.Errorf("inbox wait interrupted: %w", parent.Err())
+	}
+	if errors.Is(err, context.DeadlineExceeded) && waiter.Err() == context.DeadlineExceeded {
+		return nil
+	}
+	return fmt.Errorf("inbox wait: %w", err)
 }

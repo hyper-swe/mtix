@@ -72,9 +72,15 @@ func TestTaskHistory_GuardedAndBackgroundPaths_AppendEntries(t *testing.T) {
 			assert.Equal(t, tt.fields, f.fields(t, tt.node))
 			for _, r := range f.rows(t, tt.node) {
 				assert.Equal(t, guardedPathActors[tt.name], r.actor, "actor")
+				assert.Equal(t, guardedPathOrigins[tt.name], r.origin, "origin")
 			}
 		})
 	}
+}
+
+// guardedPathOrigins pins where each path's change came from.
+var guardedPathOrigins = map[string]string{
+	"guarded transition": "local", "restore invalidated": "local", "wake deferred": "system", "force reclaim": "local",
 }
 
 // guardedPathActors pins who each path records.

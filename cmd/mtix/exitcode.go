@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 )
 
 // Structured exit codes per MTIX-26.8: storage failure classes are part
@@ -39,6 +40,9 @@ const (
 
 	// exitCodeLeaseHeld means another run owns the wake lease or this token is stale.
 	exitCodeLeaseHeld = 6
+
+	// exitCodeInboxInterrupted means SIGINT/SIGTERM cleanly stopped an inbox wait.
+	exitCodeInboxInterrupted = 7
 )
 
 // exitCodeForError maps an error to its contract exit code.
@@ -52,9 +56,11 @@ func exitCodeForError(err error) int {
 		return exitCodeCorrupted
 	case errors.Is(err, errLeaseHeld):
 		return exitCodeLeaseHeld
+	case errors.Is(err, errInboxWaitInterrupted):
+		return exitCodeInboxInterrupted
 	case errors.Is(err, errInboxWaitEmpty):
 		return exitCodeInboxEmpty
-	case errors.Is(err, errHardenPending):
+	case errors.Is(err, errHardenPending), errors.Is(err, service.ErrDoctorChecksFailed):
 		return exitCodeHardenPending
 	default:
 		return exitCodeGeneric

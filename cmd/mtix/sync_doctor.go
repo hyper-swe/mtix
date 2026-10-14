@@ -16,6 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -27,6 +28,7 @@ import (
 // and Findings carries the hub-privileges check's findings. The three are
 // omitted when empty, so the other checks marshal as before.
 type DoctorCheck struct {
+	Recent         []oplocal.Alert              `json:"recent,omitempty"`
 	PendingExports *service.PendingExportStatus `json:"pending_exports,omitempty"`
 	Name           string                       `json:"name"`
 	Pass           bool                         `json:"pass"`
@@ -83,7 +85,13 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            needs a known local hub observation
   board.hub-identity-changed - warns when the observed hub differs from
                            a recorded confirmation; recovery is planned
+  alerts.recent          - latest 20 operator-local counted diagnostics;
+                           never wake anyone or write the board journal;
+                           this check creates no state and contacts no hub
   Operator state placement - reports the sandbox placement limitation
+  Inbox envelope caps    - validates operator-local wake.json without hub contact;
+                           missing or zero caps are unlimited; invalid settings
+                           report the exact file-edit remedy
   Data filesystem        - warns on known network/FUSE data mounts; unavailable
                            classification is reported without claiming safe locks
   DSN secrets file mode  - .mtix/secrets is mode 0600 (when present)
@@ -167,7 +175,7 @@ func newSyncDoctorCmd() *cobra.Command {
 		Long:  syncDoctorLong,
 		Args:  syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			err := runSyncDoctor(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
+			err := runSyncDoctor(cmd.Context(), cmd.OutOrStdout(),
 				args, transport.Options{InsecureTLS: insecureTLS})
 			if errors.Is(err, errDoctorChecksFailed) {
 				// Distinguish failed health checks (exit 2) from
@@ -190,44 +198,16 @@ func newSyncDoctorCmd() *cobra.Command {
 // (FR-18, MTIX-15.7.3). The hub checks connect within syncConnectBudget,
 // the budget sync itself uses (MTIX-95.7). Returns errDoctorChecksFailed
 // when a check fails.
-func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
+func runSyncDoctor(ctx context.Context, stdout io.Writer,
 	args []string, opts transport.Options, inspectors ...func(string) (string, bool, error),
 ) error {
 	if app.mtixDir == "" {
 		return fmt.Errorf("mtix sync doctor: not in an mtix project (run 'mtix init' first)")
 	}
 
-	report := DoctorReport{OverallPass: true}
-
-	// Try resolve DSN first; if fails, the PG checks are skipped but
-	// local checks still run.
 	dsn, dsnErr := resolveSyncDSN(args)
-
-	// Checks 1 and 2: PG reachable, schema current.
-	report, hubReady := appendHubReadyChecks(ctx, report, dsn, dsnErr, opts)
-
-	// Local checks: queue draining, no orphan applied, quarantined events,
-	// unique node uids, held push events, secrets file mode.
-	report = appendLocalChecks(ctx, report)
-	report = appendOperatorPlacementCheck(report)
-	report = appendDoctorCheck(report, checkDataFilesystem(inspectors))
-	report = appendBoardIdentityChecks(report)
-	report = appendRegistrationChecks(ctx, report)
-
-	// Check 6: every mtix function and trigger the migrations define is
-	// on the hub and enabled, as the restore runbook ends (MTIX-95.7).
-	report = appendDoctorCheck(report, checkHubObjects(ctx, dsn, hubReady, opts))
-
-	// Check 7: hub privileges, the verification mtix sync harden runs (MTIX-95.1).
-	report = appendDoctorCheck(report, checkHubPrivileges(ctx, dsn, hubReady, opts))
-
-	// No detail may carry the DSN or its password (FR-18.17, MTIX-95.15).
-	report = scrubDoctorReport(report)
-
-	// FR-21 §9: the relay transport's checks. A store with no relay
-	// configured reports one passing row and nothing else — not
-	// configured is not unhealthy.
-	report = appendRelayChecks(ctx, report)
+	report := collectSyncDoctor(ctx, syncDoctorCollection{DSN: dsn, DSNErr: dsnErr,
+		Postgres: true, Relay: true, Options: opts, Inspectors: inspectors})
 
 	if app.jsonOutput {
 		body, _ := json.MarshalIndent(report, "", "  ")
@@ -237,7 +217,6 @@ func runSyncDoctor(ctx context.Context, stdout, stderr io.Writer,
 	}
 
 	if !report.OverallPass {
-		_ = stderr // already wrote details above
 		return errDoctorChecksFailed
 	}
 	return nil
@@ -274,6 +253,7 @@ func appendHubReadyChecks(ctx context.Context, report DoctorReport, dsn string, 
 // sync_doctor_local.go (no orphan applied, quarantined events, unique node
 // uids), held push events (MTIX-95.12) and the secrets file mode.
 func appendLocalChecks(ctx context.Context, report DoctorReport) DoctorReport {
+	report = appendEnvelopeCapsCheck(report)
 	report = appendDoctorCheck(report, checkPendingExports(ctx))
 	if app.store == nil {
 		report = appendCheck(report, "queue draining", false, "local store not initialized")

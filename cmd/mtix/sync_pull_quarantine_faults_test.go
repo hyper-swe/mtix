@@ -100,7 +100,7 @@ func TestRunSyncDoctorAndStatus_QuarantineUnreadable_ReportFailure(t *testing.T)
 	var out bytes.Buffer
 
 	app.jsonOutput = true
-	require.ErrorIs(t, runSyncDoctor(ctx, &out, &bytes.Buffer{}, nil, transport.Options{}), errDoctorChecksFailed)
+	require.ErrorIs(t, runSyncDoctor(ctx, &out, nil, transport.Options{}), errDoctorChecksFailed)
 	check := doctorCheckFromJSON(t, out.Bytes(), "quarantined events")
 	require.False(t, check.Pass)
 	require.Contains(t, check.Detail, "count quarantined events")

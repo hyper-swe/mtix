@@ -15,6 +15,7 @@ import (
 // State operates on one operator directory using injected path inputs.
 type State struct {
 	env           Env
+	alertStage    func(string) error
 	beforeCommit  func() error
 	syncDirectory func(*os.File) error
 }

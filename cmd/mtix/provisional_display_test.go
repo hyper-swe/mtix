@@ -15,7 +15,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/format"
 )
 
-// TestGeneratedAgentsGuide_HasNodeIDSemantics verifies the generated AGENTS.md
+// TestGeneratedAgentsGuide_HasNodeIDSemantics follows the native pointer to MTIX.md
 // teaches dot-path-only references and the provisional-vs-settled
 // externalization rule, without leaking internal uid mechanics (ADR-003 §8,
 // §14).
@@ -26,6 +26,9 @@ func TestGeneratedAgentsGuide_HasNodeIDSemantics(t *testing.T) {
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
 	body, err := os.ReadFile(filepath.Join(cwd, "AGENTS.md"))
+	require.NoError(t, err)
+	require.Equal(t, "Read [MTIX.md](MTIX.md) for mtix instructions.\n", string(body))
+	body, err = os.ReadFile(filepath.Join(cwd, "MTIX.md"))
 	require.NoError(t, err)
 	guide := string(body)
 

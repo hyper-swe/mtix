@@ -131,7 +131,7 @@ func sweepDoctor(pos []string) string {
 		return errorsAsText(err)
 	}
 	var stdout, stderr bytes.Buffer
-	err := runSyncDoctor(context.Background(), &stdout, &stderr, pos, transport.Options{})
+	err := runSyncDoctor(context.Background(), &stdout, pos, transport.Options{})
 	return errorsAsText(err, stdout.String(), stderr.String())
 }
 

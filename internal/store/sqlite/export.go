@@ -43,8 +43,16 @@ type ExportData struct {
 	Dependencies  []exportDep     `json:"dependencies"`
 	Agents        []exportAgent   `json:"agents"`
 	Sessions      []exportSession `json:"sessions"`
-	NodeCount     int             `json:"node_count"`
-	Checksum      string          `json:"checksum"`
+	// History carries the change history of tasks that no longer exist
+	// (format 2.1.0, ADR-006 A3.1): optional, covered by the checksum,
+	// omitted when empty, never a placeholder task (MTIX-95.31.19.5).
+	History   []exportHistoryEntry `json:"history,omitempty"`
+	NodeCount int                  `json:"node_count"`
+	Checksum  string               `json:"checksum"`
+
+	// historyOn records that this export was produced with history.export
+	// on; it is never written to the file.
+	historyOn bool
 }
 
 // exportNode is the JSON representation of a node in the export (FR-7.8,
@@ -115,6 +123,10 @@ type exportNode struct {
 	DeletedBy          string                `json:"deleted_by,omitempty"`
 	Metadata           string                `json:"metadata,omitempty"`
 	SessionID          string                `json:"session_id,omitempty"`
+
+	// History is the task's change history (format 2.1.0, history.export on),
+	// omitted when empty so a node encodes and hashes as in 2.0.0.
+	History []exportHistoryEntry `json:"history,omitempty"`
 }
 
 // exportDep is the JSON representation of a dependency in the export.
@@ -332,8 +344,9 @@ func (s *Store) exportSessions(ctx context.Context, q queryable) ([]exportSessio
 // exportChecksumDoc is the canonical document the export checksum hashes:
 // the nodes and dependencies, sorted by primary key (FR-7.8).
 type exportChecksumDoc struct {
-	Nodes []exportNode `json:"nodes"`
-	Deps  []exportDep  `json:"deps"`
+	Nodes   []exportNode         `json:"nodes"`
+	Deps    []exportDep          `json:"deps"`
+	History []exportHistoryEntry `json:"history,omitempty"`
 }
 
 // computeExportChecksum computes the SHA-256 checksum of the canonical JSON
@@ -349,8 +362,8 @@ type exportChecksumDoc struct {
 // JSON is therefore encoded, decoded and encoded again, so the writer and
 // every reader hash the same bytes. For valid UTF-8 the second encoding
 // equals the first, so the checksum of every other export is unchanged.
-func computeExportChecksum(nodes []exportNode, deps []exportDep) (string, error) {
-	first, err := json.Marshal(exportChecksumDoc{Nodes: nodes, Deps: deps})
+func computeExportChecksumH(nodes []exportNode, deps []exportDep, history []exportHistoryEntry) (string, error) {
+	first, err := json.Marshal(exportChecksumDoc{Nodes: nodes, Deps: deps, History: history})
 	if err != nil {
 		return "", fmt.Errorf("marshal for checksum: %w", err)
 	}
@@ -367,7 +380,16 @@ func computeExportChecksum(nodes []exportNode, deps []exportDep) (string, error)
 	return fmt.Sprintf("%x", hash), nil
 }
 
-// legacyReplacementChecksum returns the checksum mtix 0.5.3 and earlier
+// computeExportChecksum is computeExportChecksumH for an export without
+// history. Production code calls computeExportChecksumH directly; this
+// two-argument form is kept as the stable entry point of the FR-7.8 checksum
+// (the symbol the review stories and the checksum tests are written against),
+// so it is called from tests only.
+func computeExportChecksum(nodes []exportNode, deps []exportDep) (string, error) {
+	return computeExportChecksumH(nodes, deps, nil)
+}
+
+// legacyReplacementChecksumH returns the checksum mtix 0.5.3 and earlier
 // wrote for this content when its text held invalid UTF-8 (MTIX-107.39), or
 // "" when the content holds no U+FFFD and so has no such alternative. Those
 // versions hashed the first encoding, in which each invalid byte appeared
@@ -375,8 +397,8 @@ func computeExportChecksum(nodes []exportNode, deps []exportDep) (string, error)
 // U+FFFD. Spelling every U+FFFD of the canonical JSON as that escape
 // restores the bytes they hashed, provided the stored text held no genuine
 // U+FFFD; a file holding both still fails verification.
-func legacyReplacementChecksum(nodes []exportNode, deps []exportDep) (string, error) {
-	canonical, err := json.Marshal(exportChecksumDoc{Nodes: nodes, Deps: deps})
+func legacyReplacementChecksumH(nodes []exportNode, deps []exportDep, history []exportHistoryEntry) (string, error) {
+	canonical, err := json.Marshal(exportChecksumDoc{Nodes: nodes, Deps: deps, History: history})
 	if err != nil {
 		return "", fmt.Errorf("marshal for legacy checksum: %w", err)
 	}
@@ -408,9 +430,10 @@ func RecomputeExportChecksum(export *ExportData) error {
 		}
 		return export.Dependencies[i].ToID < export.Dependencies[j].ToID
 	})
+	sortHistory(export.History)
 	export.NodeCount = len(export.Nodes)
 
-	checksum, err := computeExportChecksum(export.Nodes, export.Dependencies)
+	checksum, err := computeExportChecksumH(export.Nodes, export.Dependencies, export.History)
 	if err != nil {
 		return fmt.Errorf("compute checksum: %w", err)
 	}
@@ -422,14 +445,14 @@ func RecomputeExportChecksum(export *ExportData) error {
 // Used during import to verify data integrity per FR-7.8. It also accepts
 // the checksum mtix 0.5.3 and earlier wrote for text holding invalid UTF-8
 // (MTIX-107.39): the same decoded content under the spelling those
-// versions hashed (legacyReplacementChecksum). Any edit to the content
+// versions hashed (legacyReplacementChecksumH). Any edit to the content
 // fails both.
 func VerifyExportChecksum(export *ExportData) (bool, error) {
 	if export == nil {
 		return false, fmt.Errorf("nil export data: %w", model.ErrInvalidInput)
 	}
 
-	computed, err := computeExportChecksum(export.Nodes, export.Dependencies)
+	computed, err := computeExportChecksumH(export.Nodes, export.Dependencies, export.History)
 	if err != nil {
 		return false, fmt.Errorf("compute checksum: %w", err)
 	}
@@ -437,7 +460,7 @@ func VerifyExportChecksum(export *ExportData) (bool, error) {
 		return true, nil
 	}
 
-	legacy, err := legacyReplacementChecksum(export.Nodes, export.Dependencies)
+	legacy, err := legacyReplacementChecksumH(export.Nodes, export.Dependencies, export.History)
 	if err != nil {
 		return false, fmt.Errorf("compute legacy checksum: %w", err)
 	}

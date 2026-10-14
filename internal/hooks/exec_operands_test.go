@@ -32,7 +32,7 @@ func TestScriptOperand(t *testing.T) {
 		{[]string{"bash", "--norc", "--noprofile", "run.sh"}, 3},
 		{[]string{"bash", "--", "run.sh"}, 2},
 		{[]string{"env", "sh", "run.sh"}, 2},
-		{[]string{"env", "-i", "A=b", "-u", "X", "sh", "run.sh"}, 6},
+		{[]string{"env", "A=b", "-u", "X", "sh", "run.sh"}, 5},
 		{[]string{"env", "--", "sh", "run.sh"}, 3},
 		{[]string{"env", "./tool"}, 1},
 		{[]string{"/usr/bin/env", "python3", "-W", "ignore", "run.py"}, 4},
@@ -485,7 +485,7 @@ func TestApprove_EveryEqualsArgumentBeforeProgramIsAnAssignment(t *testing.T) {
 }
 
 func TestApprove_EnvAssignmentAllowlist(t *testing.T) {
-	for _, name := range []string{"LANG", "LC_ALL", "LC_TIME", "TZ", "TERM", "NO_COLOR", "MTIX_FLAG", "MY_SETTING", "WAKE_MODE2"} {
+	for _, name := range []string{"LANG", "LC_ALL", "LC_TIME", "TZ", "TERM", "NO_COLOR", "MY_SETTING", "WAKE_MODE2"} {
 		t.Run("allowed "+name, func(t *testing.T) {
 			f := newFixture(t, "[env, "+name+"=value, sh, scripts/run.sh]", fixtureOptions{})
 			_, err := f.approvals.PrepareExec(f.hook(t))
@@ -496,7 +496,9 @@ func TestApprove_EnvAssignmentAllowlist(t *testing.T) {
 		"PERLLIB", "NODE_PATH", "RUBYGEMS_GEMDEPS", "SHELLOPTS", "BASHOPTS", "PS4", "PROMPT_COMMAND", "IFS",
 		"GEM_PATH", "GEM_HOME", "PYTHONPYCACHEPREFIX", "__PYVENV_LAUNCHER__", "PYTHONEXECUTABLE", "LD_AUDIT",
 		"GCONV_PATH", "DYLD_FRAMEWORK_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_FALLBACK_FRAMEWORK_PATH",
-		"DYLD_VERSIONED_LIBRARY_PATH", "BASH_FUNC_x", "http_proxy", "my_setting", "ZSH_VERSION", "CDPATH",
+		"DYLD_VERSIONED_LIBRARY_PATH", "BASH_FUNC_x", "http_proxy", "my_setting", "ZSH_VERSION", "CDPATH", "FPATH", "fpath", "MODULE_PATH", "module_path", "OPENSSL_CONF", "OPENSSL_MODULES", "OPENSSL_ENGINES",
+		"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CONFIG_DIRS", "XDG_DATA_DIRS", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_COUNT", "GIT_EXEC_PATH", "GIT_TEMPLATE_DIR",
+		"MTIX_FLAG", "MTIX_HOOK_ORIGIN", "MTIX_HOOK_SCRIPT_PATH", "MTIX_EVENT", "MTIX_SYNC_DSN", "MTIX_AUTHOR_ID",
 	} {
 		t.Run("refused "+name, func(t *testing.T) {
 			f := newFixture(t, "[env, "+name+"=value, sh, scripts/run.sh]", fixtureOptions{unapproved: true})
@@ -553,4 +555,182 @@ func TestScriptOperand_PythonPycachePrefixRefused(t *testing.T) {
 	got, err := scriptOperand([]string{"python3", "-X", "utf8", "scripts/run.py"})
 	require.NoError(t, err)
 	require.Equal(t, 3, got)
+}
+
+func TestApprove_NestedAndOtherWrappersRefused(t *testing.T) {
+	cases := []struct{ command, wrapper string }{
+		{"[env, env, HOME=., zsh, scripts/run.sh]", "env"},
+		{"[env, env, ZDOTDIR=., zsh, scripts/run.sh]", "env"},
+		{`[env, env, sh, -c, ". ./evil.sh"]`, "env"},
+		{"[env, A=1, env, sh, scripts/later.sh]", "env"},
+		{"[env, env, A.B=1, HOME=., zsh, scripts/run.sh]", "env"},
+		{`[nohup, sh, -c, ". ./evil.sh"]`, "nohup"},
+		{`[nice, zsh, -c, ". ./evil.sh"]`, "nice"},
+		{`[/usr/bin/arch, -arm64, zsh, -c, ". ./evil.sh"]`, "arch"},
+		{`[xargs, -0, sh, -c, ". ./evil.sh"]`, "xargs"},
+		{"[env, nohup, sh, scripts/run.sh]", "nohup"},
+		{"[env, FOO=1, timeout, 5, sh, scripts/run.sh]", "timeout"},
+		{"[sudo, sh, scripts/run.sh]", "sudo"},
+		{"[exec, sh, scripts/run.sh]", "exec"},
+		{"[busybox, sh, scripts/run.sh]", "busybox"},
+	}
+	for _, c := range cases {
+		t.Run(c.command, func(t *testing.T) {
+			f := newFixture(t, c.command, fixtureOptions{unapproved: true})
+			err := f.approvals.Approve("wake", true)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), c.wrapper, "the refusal names the wrapper")
+			require.Contains(t, err.Error(), "wrapper", "and the rule")
+		})
+	}
+}
+
+func TestScriptOperand_ProjectScriptNamedLikeAWrapperIsNotAWrapper(t *testing.T) {
+	got, err := scriptOperand([]string{"./nice"})
+	require.NoError(t, err)
+	require.Equal(t, 0, got)
+}
+
+func TestScriptOperand_InterpreterNameSuffixes(t *testing.T) {
+	for _, command := range [][]string{
+		{"python3.11-intel64", "-c", "open('PWNED','w')"},
+		{"python3-intel64", "-c", "1"},
+		{"zsh-5.9", "-c", "1"},
+		{"/usr/local/bin/Python3.12-arm64", "-m", "pkg"},
+		{"bash-5.2", "--rcfile", "x", "y.sh"},
+		{"node-22", "-e", "1"},
+	} {
+		_, err := scriptOperand(command)
+		require.Error(t, err, strings.Join(command, " "))
+	}
+	got, err := scriptOperand([]string{"python3-intel64", "scripts/run.py"})
+	require.NoError(t, err)
+	require.Equal(t, 1, got)
+	got, err = scriptOperand([]string{"zsh-5.9", "-b", "-e"})
+	require.NoError(t, err)
+	require.Equal(t, 2, got)
+	for _, name := range []string{"shred", "bashful", "perlman", "nodemon", "rubyist", "dasher"} {
+		got, err = scriptOperand([]string{name, "-c", "x"})
+		require.NoError(t, err, name)
+		require.Equal(t, -1, got, name+" is not an interpreter")
+	}
+}
+
+func TestApprove_EnvDashDashProgramIsChecked(t *testing.T) {
+	for _, command := range []string{
+		"[env, --, env, HOME=., zsh, scripts/run.sh]",
+		"[env, --, env, ZDOTDIR=., zsh, scripts/run.sh]",
+		`[env, --, nohup, sh, -c, ". ./evil.sh"]`,
+		`[env, --, env, sh, -c, ". ./evil.sh"]`,
+		`[env, FOO=1, --, xargs, sh, -c, ". ./evil.sh"]`,
+		"[env, --, HOME=., zsh, scripts/run.sh]",
+		"[env, --, A=1, sh, -c, x]",
+		"[env, --, X=1]",
+	} {
+		t.Run(command, func(t *testing.T) {
+			f := newFixture(t, command, fixtureOptions{unapproved: true})
+			require.Error(t, f.approvals.Approve("wake", true))
+		})
+	}
+}
+
+func TestApprove_RelativePathLeavingTheProjectIsNotAProjectFile(t *testing.T) {
+	up := strings.Repeat("../", 30)
+	for _, c := range []struct{ command, wrapper string }{
+		{"[" + up + "usr/bin/nohup, sh, -c, x]", "nohup"},
+		{"[env, " + up + "usr/bin/env, HOME=., zsh, scripts/run.sh]", "env"},
+		{"[" + up + "usr/bin/env, " + up + "usr/bin/env, HOME=., zsh, scripts/run.sh]", "env"},
+	} {
+		t.Run(c.command, func(t *testing.T) {
+			f := newFixture(t, c.command, fixtureOptions{unapproved: true})
+			err := f.approvals.Approve("wake", true)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), c.wrapper)
+		})
+	}
+}
+
+func TestApprove_EnvClearingAndUnsettingTheLoopGuardRefused(t *testing.T) {
+	for _, command := range []string{
+		"[env, -i, sh, scripts/run.sh]",
+		"[env, -u, MTIX_HOOK_ORIGIN, sh, scripts/run.sh]",
+		"[env, -u, MTIX_ANYTHING, sh, scripts/run.sh]",
+	} {
+		t.Run(command, func(t *testing.T) {
+			f := newFixture(t, command, fixtureOptions{unapproved: true})
+			err := f.approvals.Approve("wake", true)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "loop")
+		})
+	}
+	f := newFixture(t, "[env, -u, FOO, sh, scripts/run.sh]", fixtureOptions{})
+	_, err := f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err, "unsetting an unrelated variable is allowed")
+}
+
+func TestScriptOperand_MoreInterpreterNamesAndExeSuffix(t *testing.T) {
+	for _, name := range []string{"pythonw", "pythonw3", "pypy", "pypy3", "tcsh", "csh", "fish", "Python3.EXE", "/opt/x/BASH.exe"} {
+		_, err := scriptOperand([]string{name, "-c", "x"})
+		require.Error(t, err, name+" -c is refused")
+	}
+	got, err := scriptOperand([]string{"fish", "scripts/run.fish"})
+	require.NoError(t, err)
+	require.Equal(t, 1, got)
+	_, err = scriptOperand([]string{"nohup.exe", "sh", "x"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "nohup")
+}
+
+// expectedWrappers is a fixed literal: it is deliberately not derived from
+// commandWrappers or from the interpreter list, so removing an entry from
+// either fails a test.
+var expectedWrappers = []string{
+	"env", "nohup", "nice", "ionice", "xargs", "arch", "timeout", "stdbuf", "unbuffer", "setsid", "sudo", "doas",
+	"command", "exec", "builtin", "time", "chrt", "taskset", "script", "flock", "watch", "caffeinate", "busybox",
+}
+
+func TestCommandWrappers_MatchTheFixedTable(t *testing.T) {
+	require.Len(t, commandWrappers, len(expectedWrappers))
+	require.ElementsMatch(t, expectedWrappers, commandWrappers)
+}
+
+func TestApprove_EveryListedWrapperIsRefused(t *testing.T) {
+	for _, w := range expectedWrappers {
+		t.Run(w, func(t *testing.T) {
+			first := "[" + w + ", sh, scripts/run.sh]"
+			if w == "env" {
+				first = "[env, env, sh, scripts/run.sh]"
+			}
+			for _, command := range []string{first, "[env, " + w + ", sh, scripts/run.sh]"} {
+				f := newFixture(t, command, fixtureOptions{unapproved: true})
+				err := f.approvals.Approve("wake", true)
+				require.Error(t, err, command)
+				require.Contains(t, err.Error(), w, command)
+			}
+		})
+	}
+}
+
+func TestProgramIndex_AfterDashesEveryArgumentIsProgramOrAssignment(t *testing.T) {
+	got, err := programIndex([]string{"env", "--", "-u", "x"})
+	require.NoError(t, err)
+	require.Equal(t, 2, got, "after -- an option-shaped word is the program")
+	got, err = programIndex([]string{"env", "A=1", "--", "sh", "x.sh"})
+	require.NoError(t, err)
+	require.Equal(t, 3, got)
+}
+
+func TestApprove_RuntimeStartupVariablesRefused(t *testing.T) {
+	for _, name := range []string{
+		"JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "JAVA_OPTS", "LUA_INIT", "LUA_INIT_5_4", "LUA_INIT_5_3", "LUA_PATH", "LUA_CPATH",
+		"GOFLAGS", "GOENV", "GOROOT", "GOPATH", "APPDATA", "LOCALAPPDATA", "USERPROFILE", "PHPRC", "PHP_INI_SCAN_DIR",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, "[env, "+name+"=value, sh, scripts/run.sh]", fixtureOptions{unapproved: true})
+			err := f.approvals.Approve("wake", true)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), name)
+			require.Contains(t, err.Error(), "allowlist")
+		})
+	}
 }

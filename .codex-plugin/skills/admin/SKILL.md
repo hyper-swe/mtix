@@ -428,9 +428,26 @@ directory of the process that dispatches it. Launch rules:
   `-W VALUE`, `-X VALUE`, and clusters of `-` with `B E I O q s S u v x`.
   `node`: `--no-warnings`, `--enable-source-maps`, `--trace-warnings`,
   `--no-deprecation`. `perl`: clusters of `-` with `w W T t`. `ruby`: `-w`,
-  `-W0`, `-W1`, `-W2`. `env`: `-i`, `-u NAME`, `--` and `NAME=VALUE`.
+  `-W0`, `-W1`, `-W2`. `env`: `-u NAME`, `--` and `NAME=VALUE`.
   Interpreters are matched by name without regard to case or version suffix
-  (`SH`, `bash5`, `python3.12`, `nodejs`, `perl5.34`). Inline code and code
+  (`SH`, `bash5`, `python3.12`, `python3.11-intel64`, `zsh-5.9`, `nodejs`,
+  `perl5.34`): a family name followed by a version or architecture suffix that
+  starts with a digit, dot, underscore or hyphen. A hook may use at most one
+  top-level `env`; a second `env` or any other command wrapper (`nohup`,
+  `nice`, `ionice`, `xargs`, `arch`, `timeout`, `stdbuf`, `unbuffer`, `setsid`,
+  `sudo`, `doas`, `command`, `exec`, `builtin`, `time`, `chrt`, `taskset`,
+  `script`, `flock`, `watch`, `caffeinate`, `busybox`) is refused, naming the
+  wrapper. The csh, tcsh and fish families use the same option table as the
+  other shells, so options outside it are refused. After `env --` the next argument is the program and gets the same
+  checks. The rule covers the listed wrappers and the interpreters named here
+  (`sh`, `bash`, `zsh`, `dash`, `ksh`, `ash`, `tcsh`, `csh`, `fish`, `python`,
+  `pythonw`, `pypy`, `node`, `nodejs`, `perl`, `ruby`, also with a `.exe`
+  suffix). A relative path that leaves the project (`../../usr/bin/nohup`) is
+  a PATH-style program, not a project file. An approved hook runs as written:
+  pinning covers project script files, and a hook that makes some other
+  program run project files is the operator's responsibility. `env -i` and
+  `env -u MTIX_*` are refused, because they remove the loop guard variable
+  that mtix sets. Inline code and code
   loading are refused, per interpreter: `sh`, `bash` and the other shells `-c`,
   `--rcfile` and `--init-file`; `python` `-c` and `-m`; `node` `-e`, `-r` and
   `--require`; `perl` `-e` and `-I`; `ruby` `-e`, `-r` and `-I`. Move the logic
@@ -438,11 +455,16 @@ directory of the process that dispatches it. Launch rules:
   Environment assignments through `env` follow an allowlist. Every argument
   containing `=` before the program is an assignment, and its name must be a
   valid identifier. Allowed: `LANG`, `LANGUAGE`, `TZ`, `TERM`, `NO_COLOR`,
-  `LC_*`, `MTIX_*`, and project-specific names matching `^[A-Z][A-Z0-9_]*$`
-  that are not in a loader family. Refused by name family: `BASH_ENV`, `ENV`,
-  `ZDOTDIR`, `SHELLOPTS`, `BASHOPTS`, `PS4`, `PROMPT_COMMAND`, `IFS`, `CDPATH`,
-  `GCONV_PATH`, `BASH_*`, `ZSH*`, `PYTHON*`, `NODE_*`, `PERL*`, `RUBY*`,
-  `GEM_*`, `LD_*` and `DYLD_*`. `PATH` cannot be set by a hook: the scrubbed
+  `LC_*`, and project-specific names matching `^[A-Z][A-Z0-9_]*$` that are not
+  in a loader family. Refused by name family: `BASH_ENV`, `ENV`, `ZDOTDIR`,
+  `FPATH`, `MODULE_PATH`, `SHELLOPTS`, `BASHOPTS`, `PS4`, `PROMPT_COMMAND`,
+  `IFS`, `CDPATH`, `GCONV_PATH`, `BASH_*`, `ZSH*`, `PYTHON*`, `NODE_*`,
+  `PERL*`, `RUBY*`, `GEM_*`, `LD_*`, `DYLD_*` and `OPENSSL_*`, `XDG_*`, `GIT_*`, `JAVA_*`, `JDK_*`, `LUA_*`, `GOFLAGS`, `GOENV`,
+  `GOROOT`, `GOPATH`, `APPDATA`, `LOCALAPPDATA`, `USERPROFILE`, `PHPRC` and
+  `PHP_INI_SCAN_DIR`. All `MTIX_*`
+  names are refused too: mtix sets its own (loop prevention, identity, sync
+  credentials). Lowercase names such as `http_proxy` are refused; inherited
+  values still reach the hook, and a script can set them itself. `PATH` cannot be set by a hook: the scrubbed
   environment provides it. `HOME` is accepted only when its value is outside
   the project (also after following links). The refusal message names the
   variable and the rule. The loader variables `BASH_ENV`, `ENV`, `NODE_OPTIONS`,

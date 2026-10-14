@@ -68,13 +68,25 @@ func classifier(flags, values func(string) bool) func(string) optionKind {
 	}
 }
 
-var (
-	shellName  = regexp.MustCompile(`^(sh|bash|zsh|dash|ksh|ash)[0-9.]*$`)
-	pythonName = regexp.MustCompile(`^python[0-9.]*$`)
-	nodeName   = regexp.MustCompile(`^(node|nodejs)[0-9.]*$`)
-	perlName   = regexp.MustCompile(`^perl[0-9.]*$`)
-	rubyName   = regexp.MustCompile(`^ruby[0-9.]*$`)
-)
+// interpreterFamilies are matched by prefix, longest names first.
+var interpreterFamilies = []string{"nodejs", "node", "pythonw", "python", "pypy", "bash", "zsh", "dash", "ksh", "ash", "tcsh", "csh", "fish", "sh", "perl", "ruby"}
+
+// interpreterFamily maps a lowercased base name to its family. The name is the
+// family or the family followed by a version or architecture suffix that
+// starts with a digit, dot, underscore or hyphen (bash5, python3.11-intel64,
+// zsh-5.9), so name variants cannot escape recognition.
+func interpreterFamily(base string) string {
+	for _, family := range interpreterFamilies {
+		rest, ok := strings.CutPrefix(base, family)
+		if !ok {
+			continue
+		}
+		if rest == "" || (strings.ContainsRune("0123456789._-", rune(rest[0])) && strings.Trim(rest, "abcdefghijklmnopqrstuvwxyz0123456789._-") == "") {
+			return family
+		}
+	}
+	return ""
+}
 
 // programBase is the lowercased base name without a Windows extension, so
 // case and version variants (SH, Bash, perl5.34, nodejs) match their family.
@@ -84,24 +96,53 @@ func programBase(program string) string {
 
 func isEnv(program string) bool { return programBase(program) == "env" }
 
+// commandWrappers launch another program with options mtix does not verify.
+// One top-level env is looked through; every other wrapper is refused.
+var commandWrappers = []string{"env", "nohup", "nice", "ionice", "xargs", "arch", "timeout", "stdbuf", "unbuffer", "setsid", "sudo", "doas", "command", "exec", "builtin", "time", "chrt", "taskset", "script", "flock", "watch", "caffeinate", "busybox"}
+
+// projectRelative reports a relative path with a separator that stays inside
+// the project after cleaning; ../ paths that leave it are PATH-style programs.
+func projectRelative(program string) bool {
+	if filepath.IsAbs(program) || !strings.ContainsRune(program, filepath.Separator) {
+		return false
+	}
+	cleaned := filepath.Clean(program)
+	return cleaned != ".." && !strings.HasPrefix(cleaned, ".."+string(filepath.Separator))
+}
+
+// wrapperError reports a program that is a command wrapper, or nil. A
+// project-relative path is a project file, never a wrapper.
+func wrapperError(program string) error {
+	if projectRelative(program) {
+		return nil
+	}
+	base := programBase(program)
+	for _, w := range commandWrappers {
+		if base == w {
+			return fmt.Errorf("wrapper %q is refused: a hook may use at most one top-level env and no other command wrapper, because the wrapped program and its options cannot be verified", w)
+		}
+	}
+	return nil
+}
+
 // interpreterFor recognizes sh/bash/zsh/python/node/ruby/perl by program name.
 // The known options are listed in the admin skill.
 func interpreterFor(program string) (interpreter, bool) {
 	base := programBase(program)
-	switch {
-	case shellName.MatchString(base):
+	switch interpreterFamily(base) {
+	case "sh", "bash", "zsh", "dash", "ksh", "ash", "tcsh", "csh", "fish":
 		letters := cluster("-+", "aefhmnuvxbC")
 		long := oneOf("--posix", "--noprofile", "--norc")
 		ip := interpreter{name: base, classify: classifier(func(o string) bool { return letters(o) || long(o) }, oneOf("-o", "+o", "-O", "+O"))}
 		ip.endsOptions = func(o string) bool { return letters(o) && strings.Contains(o, "b") }
 		return ip, true
-	case pythonName.MatchString(base):
+	case "python", "pythonw", "pypy":
 		return interpreter{name: base, classify: classifier(cluster("-", "BEIOqsSuvx"), oneOf("-W", "-X")), checkValue: pythonOptionValue}, true
-	case nodeName.MatchString(base):
+	case "node", "nodejs":
 		return interpreter{name: base, classify: classifier(oneOf("--no-warnings", "--enable-source-maps", "--trace-warnings", "--no-deprecation"), nil)}, true
-	case perlName.MatchString(base):
+	case "perl":
 		return interpreter{name: base, classify: classifier(cluster("-", "wWTt"), nil)}, true
-	case rubyName.MatchString(base):
+	case "ruby":
 		return interpreter{name: base, classify: classifier(oneOf("-w", "-W0", "-W1", "-W2"), nil)}, true
 	}
 	return interpreter{}, false
@@ -128,8 +169,8 @@ var (
 // loaderExact and loaderPrefixes name the variables that make an interpreter
 // or the dynamic loader read startup files, modules or libraries, by family.
 var (
-	loaderExact    = []string{"BASH_ENV", "ENV", "ZDOTDIR", "SHELLOPTS", "BASHOPTS", "PS4", "PROMPT_COMMAND", "IFS", "CDPATH", "GCONV_PATH", "PATH"}
-	loaderPrefixes = []string{"PYTHON", "NODE_", "PERL", "RUBY", "GEM_", "LD_", "DYLD_", "BASH_", "ZSH"}
+	loaderExact    = []string{"BASH_ENV", "ENV", "ZDOTDIR", "SHELLOPTS", "BASHOPTS", "PS4", "PROMPT_COMMAND", "IFS", "CDPATH", "GCONV_PATH", "PATH", "FPATH", "fpath", "MODULE_PATH", "module_path", "GOFLAGS", "GOENV", "GOROOT", "GOPATH", "APPDATA", "LOCALAPPDATA", "USERPROFILE", "PHPRC", "PHP_INI_SCAN_DIR"}
+	loaderPrefixes = []string{"PYTHON", "NODE_", "PERL", "RUBY", "GEM_", "LD_", "DYLD_", "BASH_", "ZSH", "OPENSSL_", "MTIX_", "XDG_", "GIT_", "JAVA_", "JDK_", "LUA_"}
 )
 
 func loaderFamily(name string) bool {
@@ -147,7 +188,7 @@ func loaderFamily(name string) bool {
 }
 
 // allowedAssignment is the environment allowlist for an exec hook: plain data
-// variables (LANG, LC_*, TZ, TERM, NO_COLOR, MTIX_*) and project-specific names
+// variables (LANG, LC_*, TZ, TERM, NO_COLOR) and project-specific names
 // shaped like ^[A-Z][A-Z0-9_]*$ that are not in a loader family. HOME is
 // accepted by name and checked by value (it must not point into the project).
 func allowedAssignment(name string) bool {
@@ -159,7 +200,7 @@ func allowedAssignment(name string) bool {
 	case name == "LANG" || name == "LANGUAGE" || name == "TZ" || name == "TERM" || name == "NO_COLOR":
 		return true
 	}
-	return strings.HasPrefix(name, "LC_") || strings.HasPrefix(name, "MTIX_") || projectVarName.MatchString(name)
+	return strings.HasPrefix(name, "LC_") || projectVarName.MatchString(name)
 }
 
 // checkAssignment vets one env NAME=VALUE argument against the allowlist.
@@ -171,8 +212,11 @@ func checkAssignment(arg string) error {
 	if name == "PATH" {
 		return fmt.Errorf("env assignment %q is refused: PATH is provided by the scrubbed environment and cannot be set by a hook", arg)
 	}
+	if strings.HasPrefix(name, "MTIX_") {
+		return fmt.Errorf("env assignment %q is refused: %s is not on the environment allowlist, because MTIX_* variables are set by mtix (loop prevention, identity and sync credentials)", arg, name)
+	}
 	if !allowedAssignment(name) {
-		return fmt.Errorf("env assignment %q is refused: %s is not on the environment allowlist (plain data variables, LC_*, MTIX_*, and project names matching ^[A-Z][A-Z0-9_]*$ outside the interpreter and loader families)", arg, name)
+		return fmt.Errorf("env assignment %q is refused: %s is not on the environment allowlist (plain data variables, LC_*, and project names matching ^[A-Z][A-Z0-9_]*$ outside the interpreter and loader families)", arg, name)
 	}
 	return nil
 }
@@ -198,37 +242,53 @@ func scrubbedEnviron(env []string) []string {
 }
 
 // programIndex returns the index of the program, looking through env and the
-// only env forms accepted: -i, -u NAME, -- and assignments. As env does, every
+// only env forms accepted: -u NAME, -- and assignments. As env does, every
 // other argument containing "=" before the program is an assignment.
 func programIndex(command []string) (int, error) {
 	if len(command) == 0 {
 		return -1, nil
 	}
 	if !isEnv(command[0]) {
-		return 0, nil
+		return 0, wrapperError(command[0])
 	}
+	afterDashes := false
 	for j := 1; j < len(command); j++ {
 		arg := command[j]
 		switch {
-		case arg == "--":
-			if j+1 < len(command) {
-				return j + 1, nil
+		case !afterDashes && arg == "--":
+			afterDashes = true
+		case !afterDashes && strings.HasPrefix(arg, "-"):
+			skip, err := envOption(command, j)
+			if err != nil {
+				return -1, err
 			}
-			return -1, nil
-		case arg == "-u":
-			j++
-		case arg == "-i":
-		case strings.HasPrefix(arg, "-"):
-			return -1, fmt.Errorf("env option %q is not supported; only -i, -u NAME, -- and NAME=VALUE are accepted", arg)
+			j += skip
 		case strings.Contains(arg, "="):
 			if err := checkAssignment(arg); err != nil {
 				return -1, err
 			}
 		default:
-			return j, nil
+			return j, wrapperError(arg)
 		}
 	}
-	return -1, nil
+	return -1, fmt.Errorf("env names no program to run; a hook command must end in the program and its arguments")
+}
+
+// envOption vets one env option at command[j] and returns how many following
+// arguments it consumes. Only -u NAME is accepted: -i and unsetting an MTIX_
+// variable would remove what mtix sets for loop prevention and identity.
+func envOption(command []string, j int) (int, error) {
+	arg := command[j]
+	switch arg {
+	case "-u":
+		if j+1 < len(command) && strings.HasPrefix(command[j+1], "MTIX_") {
+			return 0, fmt.Errorf("env option -u %s is refused: it would remove a variable mtix sets for loop prevention and identity", command[j+1])
+		}
+		return 1, nil
+	case "-i":
+		return 0, fmt.Errorf("env option %q is refused: it would remove the MTIX_HOOK_ORIGIN loop guard", arg)
+	}
+	return 0, fmt.Errorf("env option %q is not supported; only -u NAME, -- and NAME=VALUE are accepted", arg)
 }
 
 // scriptOperand returns the index of the argument a launch runs as code: the

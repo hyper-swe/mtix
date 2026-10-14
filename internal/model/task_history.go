@@ -42,8 +42,11 @@ const (
 // durable uid (its dot-path id for a legacy task without one); Timestamp comes
 // from the store's injected clock; Actor is the resolved author; EventID
 // optionally names the causal sync event. Old and New are JSON text for a
-// structured field, with nil meaning absent (the task had no value or the
-// entry carries none) and the JSON text "null" meaning an explicit null. For a
+// structured field. nil means the entry carries no value: a free-text field,
+// or the Old of a task's first entries (it had no earlier state). The JSON
+// text "null" is a stored NULL: a structured field the task had cleared or
+// never set. A stored NULL and an empty string are the same empty value, and
+// for a list field so is "[]", so rewriting one as the other is not a change. For a
 // free-text field Old and New are always nil: neither the text nor a hash of
 // it is stored, because a hash of a short secret can be brute-forced.
 type HistoryEntry struct {
@@ -78,7 +81,8 @@ const (
 func HistoryFieldClassOf(field string) HistoryFieldClass {
 	switch field {
 	case "status", "assignee", "priority", "labels", "node_type",
-		"issue_type", "parent", "defer_until", "deleted_at", "agent_state":
+		"issue_type", "parent", "defer_until", "deleted_at", "agent_state",
+		"estimate_min", "actual_min", "weight", "display_path":
 		return HistoryFieldStructured
 	default:
 		return HistoryFieldValueFree

@@ -62,7 +62,7 @@ func (s *Store) renumberSubtree(ctx context.Context, id string, newSeq int,
 		if err != nil {
 			return err
 		}
-		return renumberSubtreeTx(ctx, tx, id, node, newSeq)
+		return s.renumberRecorded(ctx, tx, id, node, newSeq, model.HistoryOriginLocal)
 	})
 }
 
@@ -215,4 +215,19 @@ func rewriteDependencyRefs(ctx context.Context, tx *sql.Tx, oldID, newID string)
 		}
 	}
 	return nil
+}
+
+// renumberRecorded renumbers a subtree and records the move (MTIX-95.31.19.3):
+// one display_path entry per moved task, and a parent entry for each moved
+// descendant, whose parent id changed with the prefix.
+func (s *Store) renumberRecorded(ctx context.Context, tx *sql.Tx, id string, node renumberTarget, newSeq int, origin model.HistoryOrigin) error {
+	newID := model.BuildID(node.project, node.parentID, newSeq)
+	return s.inTxHistory(ctx, tx, historyScope{id: id, cascade: true, origin: origin}, func() error {
+		s.noteRenumber(tx, id, newID)
+		if err := renumberSubtreeTx(ctx, tx, id, node, newSeq); err != nil {
+			return err
+		}
+		// The store renumbered this one task: a task keyed by its id keeps its history under the new id.
+		return rekeyHistorySubtree(ctx, tx, id, newID)
+	})
 }

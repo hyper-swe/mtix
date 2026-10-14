@@ -59,6 +59,7 @@ func pendingFollowupProcess(t *testing.T, mode string, passes int) {
 	svc := NewSyncService(store, slog.Default(), pendingProcessClock)
 	require.NoError(t, svc.AutoExport(context.Background(), dir))
 	require.NoError(t, markPendingExport(dir))
+	pendingPublicationChange(t, store)
 	holder := startPendingProcess(t, mode, dir)
 	for pass := 1; pass <= passes; pass++ {
 		holder.awaitLine(t, fmt.Sprintf("published-%d", pass))

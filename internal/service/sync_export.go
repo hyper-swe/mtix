@@ -16,7 +16,8 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
-// AutoExport writes the current DB state to .mtix/tasks.json per FR-15.3
+// AutoExport publishes changed DB content to .mtix/tasks.json per FR-15.3,
+// retaining the existing bytes and timestamp when content is unchanged,
 // (exportBoard), unless that would overwrite a board that changed on disk
 // and was not imported (MTIX-95.31.2, keepPulledBoard): it then runs the
 // automatic import first, and when that does not import the board, keeps
@@ -74,7 +75,7 @@ func (s *SyncService) exportBoardPass(ctx context.Context, mtixDir string, prote
 		}
 	}
 	cutoff, snapshotErr := s.snapshotPendingExport(ctx, mtixDir)
-	if err := s.publishExport(ctx, mtixDir, start); err != nil {
+	if err := s.publishExport(ctx, mtixDir, start, protect); err != nil {
 		return false, errors.Join(snapshotErr, err)
 	}
 	// An unreadable request snapshot cannot authorize deleting any requests.
@@ -103,7 +104,7 @@ func (s *SyncService) snapshotPendingExport(ctx context.Context, mtixDir string)
 	return s.store.SnapshotExportRequest(ctx)
 }
 
-func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start time.Time) error {
+func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start time.Time, automatic bool) error {
 	tasksPath := filepath.Join(mtixDir, "tasks.json")
 
 	// Step 1: Export current DB state.
@@ -116,6 +117,18 @@ func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start t
 	jsonBytes, err := json.MarshalIndent(exportData, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal export data: %w", err)
+	}
+
+	// FR-15.3 (MTIX-150): elapsed time alone is not a board change. Keep
+	// exact published bytes while completing the same durability bookkeeping.
+	if automatic {
+		published, err := matchingPublishedExport(tasksPath, exportData)
+		if err != nil {
+			return err
+		}
+		if published != nil {
+			return s.recordUnchangedExport(ctx, mtixDir, published, exportData)
+		}
 	}
 
 	// Step 3: Atomic write via temp file + rename per FR-15.3c.
@@ -133,7 +146,7 @@ func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start t
 		return err
 	}
 	elapsed := time.Since(start)
-	s.logger.Info("sync_export_completed",
+	s.logger.Debug("sync_export_completed",
 		"event", "sync_export_completed",
 		"file_hash", fileHash,
 		"node_count", exportData.NodeCount,

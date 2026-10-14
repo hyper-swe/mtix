@@ -39,6 +39,7 @@ func collectSyncDoctor(ctx context.Context, req syncDoctorCollection) DoctorRepo
 	report = appendDoctorCheck(report, checkDataFilesystem(req.Inspectors))
 	report = appendBoardIdentityChecks(report)
 	report = appendRegistrationChecks(ctx, report)
+	report = appendAlertsCheck(ctx, report)
 	if req.Postgres {
 		report = appendDoctorCheck(report, checkHubObjects(ctx, req.DSN, hubReady, req.Options))
 		report = appendDoctorCheck(report, checkHubPrivileges(ctx, req.DSN, hubReady, req.Options))

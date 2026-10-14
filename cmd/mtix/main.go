@@ -34,12 +34,12 @@ func main() {
 	if err := run(); err != nil {
 		// An empty `inbox --wait` timeout is an expected non-zero outcome, not a
 		// failure — surface it via the exit code only, no scary "error:" line.
-		// So are harden's pending changes: its report is already printed.
-		if !errors.Is(err, errInboxWaitEmpty) && !errors.Is(err, errHardenPending) && !errors.Is(err, service.ErrDoctorChecksFailed) {
+		// Interruption and already-printed harden/doctor reports also exit quietly.
+		if !errors.Is(err, errInboxWaitEmpty) && !errors.Is(err, errInboxWaitInterrupted) && !errors.Is(err, errHardenPending) && !errors.Is(err, service.ErrDoctorChecksFailed) {
 			printFinalError(os.Stderr, err)
 		}
-		// Structured exit codes per MTIX-26.8 (2 = harden pending,
-		// 3 = disk full, 4 = corrupted, 5 = inbox-empty, 1 = generic).
+		// Structured exit codes per MTIX-26.8: 0 success, 1 generic, 2 harden/doctor,
+		// 3 disk full, 4 corrupted, 5 inbox-empty, 6 lease-held, 7 inbox-interrupted.
 		os.Exit(exitCodeForError(err)) //nolint:gocritic // intentional: errors flow here without panic; defer covers the panic path
 	}
 }

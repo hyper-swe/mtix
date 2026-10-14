@@ -5,8 +5,6 @@ package main
 
 import (
 	"bytes"
-	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -14,6 +12,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // The cmd PostgreSQL matrix also exercises the real released-reader store fixture.

@@ -42,6 +42,20 @@ Setup completion (`setup.done`, MTIX-112.19.2) and document freshness
 in this version. Do not infer that setup or generated documents are current
 from the absence of those rows.
 
+## Waiting for inbox events
+
+An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
+zero has no limit, and already pending events return immediately. Events mean
+exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+A negative timeout is refused. Keep foreground waits within the harness's tool
+limits; use an indefinite park only where background tasks are supported. Handle
+and ack events explicitly before parking again.
+
+For MCP `mtix_inbox_wait`, explicit `timeout_seconds=0` waits without a limit
+until an event or caller cancellation. Omission uses default 60 seconds;
+positive values are capped at 60 seconds, and negative values are refused.
+Cancellation is an error, and an empty positive timeout returns `[]`.
+
 ## Inbox envelopes and replies
 
 Read agent-ready messages with `mtix inbox --agent <agent-id> --format context`.

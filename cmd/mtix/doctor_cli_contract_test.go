@@ -53,7 +53,7 @@ func doctorCLIEnv(args string, dsn string) []string {
 	var env []string
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
-		if strings.HasPrefix(key, "MTIX_") || key == "GOCOVERDIR" {
+		if (strings.HasPrefix(key, "MTIX_") && key != isolatedOperatorEnv) || key == "GOCOVERDIR" {
 			continue
 		}
 		env = append(env, value)

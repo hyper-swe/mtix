@@ -37,6 +37,20 @@ Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whit
 
 This skill enables AI agents to work on the **PROJ** project using mtix task management. Safety-critical operating procedures are baked in as the baseline standard.
 
+## Waiting for inbox events
+
+An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
+zero has no limit, and already pending events return immediately. Events mean
+exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+A negative timeout is refused. Keep foreground waits within the harness's tool
+limits; use an indefinite park only where background tasks are supported. Handle
+and ack events explicitly before parking again.
+
+For MCP `mtix_inbox_wait`, explicit `timeout_seconds=0` waits without a limit
+until an event or caller cancellation. Omission uses default 60 seconds;
+positive values are capped at 60 seconds, and negative values are refused.
+Cancellation is an error, and an empty positive timeout returns `[]`.
+
 ## Project prefixes
 
 Project prefixes for local create (CLI, REST, gRPC and MCP) and `mtix init` must match `^[A-Z][A-Z0-9-]{0,19}$`: 1–20 uppercase letters, digits or hyphens, starting with a letter. An underscore or other invalid character returns `INVALID_INPUT` (gRPC: `InvalidArgument`) before a node or sequence is written.
@@ -53,8 +67,7 @@ CLI, REST and MCP use the configured primary project when no project is supplied
 
 Sync carries classification on `create_node` and on `update_field` with `field_name: "issue_type"` and a JSON string `new_value`; `""` clears it. Apply validates values before writes, deduplication, held-event acknowledgement and LWW comparison, rejecting unknown types and non-string values even when an event loses or is already held. The hub stores and forwards these field events under its envelope checks. Upgrade every replica before emitting classification updates. A 0.5.4 replica quarantines `issue_type` updates and continues pulling other events. These updates remain quarantined until the replica is upgraded. After upgrading, run `mtix sync pull` to retry them automatically; retry runs locally before contacting the hub. Updates that apply successfully leave the quarantine. Use `mtix sync quarantine list` to inspect any events still held.
 
-
-`mtix create --assign <agent>` creates an open node and claims it atomically, yielding `in_progress` with normal claim activity and agent state. The creator remains the resolved author (`MTIX_AUTHOR_ID`, configured author, then `cli`). An explicit assignee overrides parent auto-claim; without it, the existing parent auto-claim setting applies. A failed explicit claim rolls back the node and its creation/claim activity and sync events.
+`mtix create --assign <agent>` creates an open node and claims it atomically, yielding `in_progress` with normal claim activity and agent state. The creator remains the resolved author (`MTIX_AUTHOR_ID`, configured author, then `cli`). An explicit assignee overrides parent auto-claim; without it, the existing parent auto-claim setting applies. Creation, its sequence allocation and either explicit or parent auto-claim commit together. Any refused create leaves the counter unchanged; a failed claim leaves no node, creation/claim activity or sync events. The next accepted create takes the next consecutive number.
 
 MCP `mtix_create`, REST create and gRPC create accept `issue_type` and `assignee` with the same behavior. MCP accepts an optional `creator` (default `mcp`), REST retains the `X-Agent-ID` author, and gRPC retains `creator`; none uses the assignee as creator. Sync carries issue type as an optional create payload field; older payloads leave the issue type unset. Upgrade every replica before relying on synchronized issue type. A node created while a 0.5.4 replica is attached stays unclassified on that replica after upgrade; already-applied create events are not replayed. Assignment uses the ordinary claim event.
 

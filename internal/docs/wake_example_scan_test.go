@@ -414,7 +414,7 @@ func TestWakeExample_RenderedGuidance_MatchesShippedRoutine(t *testing.T) {
 	}
 	_, err = installer.Install("codex", false)
 	require.NoError(t, err)
-	for _, name := range []string{"CLAUDE.md", "AGENTS.md"} {
+	for _, name := range []string{"MTIX.md"} {
 		b, err := os.ReadFile(filepath.Join(out, name))
 		require.NoError(t, err)
 		require.Contains(t, string(b), "standard-input launch routine")

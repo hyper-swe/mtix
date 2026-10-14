@@ -45,7 +45,7 @@ func TestPluginInstall_AgentsMD_LinksReferenceDotMtixDocs(t *testing.T) {
 	_, err := installer.Install("codex", false)
 	require.NoError(t, err)
 
-	content, err := os.ReadFile(filepath.Join(projectDir, "AGENTS.md"))
+	content, err := os.ReadFile(filepath.Join(projectDir, "MTIX.md"))
 	require.NoError(t, err)
 	s := string(content)
 
@@ -113,7 +113,7 @@ func TestPluginInstall_ClaudeMD_LinksReferenceDotMtixDocs(t *testing.T) {
 	assert.Equal(t, "installed", reported.Action)
 	assert.Equal(t, claudePath, reported.Path)
 
-	content, err := os.ReadFile(claudePath)
+	content, err := os.ReadFile(filepath.Join(projectDir, "MTIX.md"))
 	require.NoError(t, err)
 	s := string(content)
 
@@ -167,7 +167,7 @@ func TestPluginInstall_ClaudeMD_NeverClobbersExisting(t *testing.T) {
 
 	after, err := os.ReadFile(claudePath)
 	require.NoError(t, err)
-	assert.Equal(t, handEdited, string(after), "an existing CLAUDE.md must never be modified")
+	assert.Equal(t, handEdited+"@MTIX.md\n", string(after), "user bytes survive before the appended pointer")
 
 	var reported *InstallResult
 	for i := range results {
@@ -176,9 +176,6 @@ func TestPluginInstall_ClaudeMD_NeverClobbersExisting(t *testing.T) {
 		}
 	}
 	require.NotNil(t, reported, "a silent skip is indistinguishable from a write — report it")
-	assert.Equal(t, "skipped", reported.Action)
-	assert.Contains(t, reported.Note, ".mtix/docs/CLAUDE.md",
-		"the skip note must name the always-current copy to merge from")
-	assert.Contains(t, reported.Note, "mtix docs generate",
-		"the skip note must name the command that refreshes that copy")
+	assert.Equal(t, "updated", reported.Action)
+
 }

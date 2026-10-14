@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/sync/redact"
 )
 
@@ -34,7 +35,7 @@ func main() {
 		// An empty `inbox --wait` timeout is an expected non-zero outcome, not a
 		// failure — surface it via the exit code only, no scary "error:" line.
 		// So are harden's pending changes: its report is already printed.
-		if !errors.Is(err, errInboxWaitEmpty) && !errors.Is(err, errHardenPending) {
+		if !errors.Is(err, errInboxWaitEmpty) && !errors.Is(err, errHardenPending) && !errors.Is(err, service.ErrDoctorChecksFailed) {
 			printFinalError(os.Stderr, err)
 		}
 		// Structured exit codes per MTIX-26.8 (2 = harden pending,

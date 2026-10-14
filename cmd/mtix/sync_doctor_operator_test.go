@@ -26,9 +26,9 @@ func TestSyncDoctor_PlacementLimit_WarnsWithoutChangingPass(t *testing.T) {
 func TestRunSyncDoctor_MissingDSN_ReportsPlacementLimit(t *testing.T) {
 	initTestApp(t)
 	t.Setenv(transport.EnvDSN, "")
-	var out, errOut bytes.Buffer
+	var out bytes.Buffer
 	app.jsonOutput = true
-	require.ErrorIs(t, runSyncDoctor(context.Background(), &out, &errOut, nil, transport.Options{}), errDoctorChecksFailed)
+	require.ErrorIs(t, runSyncDoctor(context.Background(), &out, nil, transport.Options{}), errDoctorChecksFailed)
 	check := doctorCheckFromJSON(t, out.Bytes(), "operator state placement")
 	require.Equal(t, oplocal.PlacementLimit, check.Detail)
 	require.True(t, check.Pass)
@@ -36,7 +36,7 @@ func TestRunSyncDoctor_MissingDSN_ReportsPlacementLimit(t *testing.T) {
 	require.Contains(t, check.Fix, "mtix hooks status --json")
 	app.jsonOutput = false
 	out.Reset()
-	require.ErrorIs(t, runSyncDoctor(context.Background(), &out, &errOut, nil, transport.Options{}), errDoctorChecksFailed)
+	require.ErrorIs(t, runSyncDoctor(context.Background(), &out, nil, transport.Options{}), errDoctorChecksFailed)
 	require.Contains(t, out.String(), "[WARN] operator state placement")
 	require.Contains(t, out.String(), oplocal.PlacementLimit)
 }

@@ -66,32 +66,37 @@ func TestRunSyncDoctor_Quarantined_FailsWithRetryAndInspectDetail(t *testing.T) 
 			ctx := context.Background()
 			quarantineN(t, tt.n)
 
-			var out, errOut bytes.Buffer
+			var out bytes.Buffer
 			app.jsonOutput = true
-			require.ErrorIs(t, runSyncDoctor(ctx, &out, &errOut, nil, transport.Options{}), errDoctorChecksFailed)
+			require.ErrorIs(t, runSyncDoctor(ctx, &out, nil, transport.Options{}), errDoctorChecksFailed)
 			check := doctorCheckFromJSON(t, out.Bytes(), "quarantined events")
 			require.Equal(t, tt.wantPass, check.Pass)
 			for _, want := range tt.wantDetail {
 				require.Contains(t, check.Detail, want)
 			}
-			var raw struct {
-				Checks []map[string]any `json:"checks"`
-			}
-			require.NoError(t, json.Unmarshal(out.Bytes(), &raw))
-			for _, c := range raw.Checks {
-				if c["name"] == "quarantined events" {
-					for key := range c {
-						require.Contains(t, []string{"name", "pass", "detail"}, key,
-							"the check uses only the existing DoctorCheck fields")
-					}
-				}
-			}
+			assertDoctorQuarantineJSONFields(t, out.Bytes())
 
 			out.Reset()
 			app.jsonOutput = false
-			require.ErrorIs(t, runSyncDoctor(ctx, &out, &errOut, nil, transport.Options{}), errDoctorChecksFailed)
+			require.ErrorIs(t, runSyncDoctor(ctx, &out, nil, transport.Options{}), errDoctorChecksFailed)
 			require.Regexp(t, tt.wantLine, out.String())
 		})
+	}
+}
+
+func assertDoctorQuarantineJSONFields(t *testing.T, data []byte) {
+	t.Helper()
+	var raw struct {
+		Checks []map[string]any `json:"checks"`
+	}
+	require.NoError(t, json.Unmarshal(data, &raw))
+	for _, c := range raw.Checks {
+		if c["name"] == "quarantined events" {
+			for key := range c {
+				require.Contains(t, []string{"name", "pass", "detail"}, key,
+					"the check uses only the existing DoctorCheck fields")
+			}
+		}
 	}
 }
 

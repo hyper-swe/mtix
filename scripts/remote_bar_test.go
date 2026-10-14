@@ -655,3 +655,23 @@ func TestRemoteBar_Snapshot_WarnsAboutFilesHiddenOnlyByInfoExclude(t *testing.T)
 	require.NotContains(t, out, "gitignored.txt", "files the worktree .gitignore hides are expected")
 	require.NotContains(t, out, "CLAUDE.md", "known loop-injected files are not reported")
 }
+
+// Make assigns GOFLAGS := -trimpath and exports it to go whenever GOFLAGS is
+// already in the environment, which breaks every runtime.Caller-based test.
+// The -p=1 setting therefore goes through go env -w, never through env.
+func TestRemoteBarWorkflow_GoFlags_NeverSetInAnyEnvBlock(t *testing.T) {
+	for i, line := range strings.Split(readWorkflow(t), "\n") {
+		code := strings.TrimSpace(strings.SplitN(line, "#", 2)[0])
+		if strings.HasPrefix(code, "GOFLAGS:") || strings.HasPrefix(code, "GOFLAGS=") {
+			t.Errorf("workflow line %d sets GOFLAGS in an env block: %q", i+1, line)
+		}
+	}
+}
+
+func TestRemoteBarWorkflow_GoEnvWrite_PrecedesTheBar(t *testing.T) {
+	wf := readWorkflow(t)
+	write := strings.Index(wf, "go env -w GOFLAGS=-p=1")
+	bar := strings.Index(wf, "- name: Run committed bar")
+	require.GreaterOrEqual(t, write, 0, "the -p=1 setting must be written with go env -w")
+	require.Greater(t, bar, write, "go env -w must run before the committed bar")
+}

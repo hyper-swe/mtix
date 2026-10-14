@@ -110,16 +110,34 @@ type InstallResult struct {
 // If global is true, writes to the agent's home-directory locations
 // instead of project-local ones.
 func (p *PluginInstaller) Install(target string, global bool) ([]InstallResult, error) {
-	switch target {
-	case "claude-code":
-		return p.installClaudeCode(global)
-	case "codex":
-		return p.installCodex(global)
-	case "pi":
-		return p.installPi(global)
-	default:
+	if target != "claude-code" && target != "codex" && target != "pi" {
 		return nil, fmt.Errorf("unsupported target: %s (supported: claude-code, codex, pi)", target)
 	}
+	var results []InstallResult
+	if !global {
+		briefing, err := generateProjectBriefing(p.projectDir, p.templates, p.data)
+		if err != nil {
+			return nil, fmt.Errorf("install project briefing: %w", err)
+		}
+		for _, item := range briefing {
+			action := item.Action
+			if action == "generated" {
+				action = "installed"
+			}
+			results = append(results, InstallResult{File: item.File, Path: filepath.Join(p.projectDir, item.File), Action: action, Note: item.Message})
+		}
+	}
+	var installed []InstallResult
+	var err error
+	switch target {
+	case "claude-code":
+		installed, err = p.installClaudeCode(global)
+	case "codex":
+		installed, err = p.installCodex(global)
+	case "pi":
+		installed, err = p.installPi(global)
+	}
+	return append(results, installed...), err
 }
 
 // installClaudeCode writes skill files for Claude Code.
@@ -138,19 +156,6 @@ func (p *PluginInstaller) installClaudeCode(global bool) ([]InstallResult, error
 	}
 
 	var results []InstallResult
-
-	// Claude Code reads a CLAUDE.md at the project root, so that is where
-	// this target installs one — the skill files alone never gave the agent
-	// a top-level briefing. Project-local only: a global CLAUDE.md would
-	// have no project .mtix/docs/ for its links to point at, and picking a
-	// placement for that case is a separate question.
-	if !global {
-		claudeResult, err := p.installRootDocIfAbsent(p.projectDir, "CLAUDE.md", "claude.md.tmpl")
-		if err != nil {
-			return results, fmt.Errorf("install CLAUDE.md: %w", err)
-		}
-		results = append(results, claudeResult)
-	}
 
 	// Write skill files.
 	for _, doc := range skillDocFiles {

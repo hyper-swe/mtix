@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	storeapi "github.com/hyper-swe/mtix/internal/store"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -49,6 +50,14 @@ func pendingProcessNode(t *testing.T, store *sqlite.Store, seq int) {
 		Priority: model.PriorityMedium, Weight: 1, NodeType: model.NodeTypeEpic,
 		CreatedAt: now, UpdatedAt: now,
 	}))
+}
+
+// A publication barrier needs changed content; an idle request is now a no-op.
+func pendingPublicationChange(t *testing.T, db *sqlite.Store) {
+	t.Helper()
+	description := "Changed content for the publication barrier"
+	require.NoError(t, db.UpdateNode(context.Background(), "TEST-1",
+		&storeapi.NodeUpdate{Description: &description}))
 }
 
 func TestPendingExport_ProcessHolderRelease_CatchesUpAfterWriterExit(t *testing.T) {

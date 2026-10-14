@@ -98,9 +98,9 @@ func TestRunSyncDoctor_HeldPushEvents_ListedWithGuidance(t *testing.T) {
 				require.NoError(t, err)
 			}
 
-			var out, errOut bytes.Buffer
+			var out bytes.Buffer
 			app.jsonOutput = true
-			err := runSyncDoctor(ctx, &out, &errOut, nil, transport.Options{})
+			err := runSyncDoctor(ctx, &out, nil, transport.Options{})
 			require.ErrorIs(t, err, errDoctorChecksFailed, "no hub is reachable in this test")
 			check := doctorCheckFromJSON(t, out.Bytes(), "held push events")
 			require.Equal(t, tt.wantPass, check.Pass, check.Detail)
@@ -117,7 +117,7 @@ func TestRunSyncDoctor_HeldPushEvents_ListedWithGuidance(t *testing.T) {
 
 			out.Reset()
 			app.jsonOutput = false
-			_ = runSyncDoctor(ctx, &out, &errOut, nil, transport.Options{})
+			_ = runSyncDoctor(ctx, &out, nil, transport.Options{})
 			mark := "PASS"
 			if !tt.wantPass {
 				mark = "FAIL"

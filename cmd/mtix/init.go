@@ -32,7 +32,8 @@ func newInitCmd() *cobra.Command {
 
 Creates .mtix/ directory structure with config, database, and logs.
 Creates .mtix/board-id with one stable UUID; commit it with the board.
-Generates agent documentation in .mtix/docs/.
+Generates root MTIX.md, native instruction pointers and .mtix/docs/ references.
+HYPERSWE.md suppresses new pointers and native instruction file creation.
 
 The prefix may be given as an argument (mtix init MYPROJ) or with --prefix.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -92,15 +93,18 @@ func runInit(prefix string) error {
 	if err != nil {
 		return fmt.Errorf("initialize database: %w", err)
 	}
-	if err := store.Close(); err != nil {
-		return fmt.Errorf("close database: %w", err)
+	if closeErr := store.Close(); closeErr != nil {
+		return fmt.Errorf("close database: %w", closeErr)
 	}
 
 	// Generate agent documentation per FR-13.4.
 	// Docs go to .mtix/docs/ — already gitignored via .mtix/ pattern.
 	// Per FR-13.2: init MUST NOT add docs/ to .gitignore.
 	docsDir := filepath.Join(cwd, ".mtix", "docs")
-	docResults := generateInitDocs(docsDir, prefix, version)
+	docResults, err := generateInitDocsStrict(docsDir, prefix, version)
+	if err != nil {
+		return fmt.Errorf("initialize docs: %w", err)
+	}
 
 	fmt.Printf("Initialized mtix project with prefix %s\n", prefix)
 	fmt.Printf("  Config:   %s\n", filepath.Join(mtixDir, "config.yaml"))
@@ -118,25 +122,34 @@ func runInit(prefix string) error {
 // generateInitDocs creates agent documentation during init per FR-13.4.
 // Uses embedded templates compiled into the binary.
 func generateInitDocs(docsDir, prefix, ver string) []docs.GenerateResult {
-	rootCmd := newRootCmd()
-	reg := mcp.NewToolRegistry()
-
-	data := docs.BuildTemplateData(rootCmd, reg, prefix, ver)
-	data.SyncHubConfigured = hubConfigured(filepath.Dir(docsDir)) // MTIX-95.8.1
-
-	gen, err := docs.NewEmbeddedGenerator(docsDir, data, slog.Default())
-	if err != nil {
-		slog.Warn("doc generation skipped", "error", err)
-		return nil
-	}
-
-	results, err := gen.Generate(false)
+	results, err := generateInitDocsStrict(docsDir, prefix, ver)
 	if err != nil {
 		slog.Warn("doc generation failed", "error", err)
 		return nil
 	}
-
 	return results
+}
+
+// generateInitDocsStrict propagates briefing migration errors to init.
+func generateInitDocsStrict(docsDir, prefix, ver string) ([]docs.GenerateResult, error) {
+	rootCmd := newRootCmd()
+	reg := mcp.NewToolRegistry()
+	data := docs.BuildTemplateData(rootCmd, reg, prefix, ver)
+	data.SyncHubConfigured = hubConfigured(filepath.Dir(docsDir))
+	gen, err := docs.NewEmbeddedGenerator(docsDir, data, slog.Default())
+	if err != nil {
+		return nil, fmt.Errorf("create doc generator: %w", err)
+	}
+	cleanDir := filepath.Clean(docsDir)
+	// Arbitrary-output helper callers retain reference-only generation.
+	if filepath.Base(cleanDir) == "docs" && filepath.Base(filepath.Dir(cleanDir)) == ".mtix" {
+		gen.SetProjectRoot(filepath.Dir(filepath.Dir(cleanDir)))
+	}
+	results, err := gen.Generate(false)
+	if err != nil {
+		return nil, fmt.Errorf("generate init docs: %w", err)
+	}
+	return results, nil
 }
 
 // addToGitignore appends an entry to .gitignore if not already present.

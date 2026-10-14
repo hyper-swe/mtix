@@ -31,6 +31,7 @@ var exemptCommands = map[string]bool{
 	"docs":    true, // Writes files, no DB.
 	"version": true, // No DB needed.
 	"help":    true, // No DB needed.
+	"doctor":  true, // Host and configured transports are diagnosed locally.
 	// search runs locally: the REST search has no text query or the full
 	// filter set, so routing would silently drop the user's words (MTIX-146).
 	"search": true,

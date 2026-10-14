@@ -5,6 +5,31 @@ description: Administrative operations for mtix projects. Backup, export, import
 
 # MTIX — Administration
 
+## Health checks
+
+Run `mtix doctor` for registered checkout and host diagnostics, or
+`mtix doctor --json` for an array containing exactly `id`, `status`, `detail`
+and `fix` on every row. Status is `pass`, `warn`, `fail` or `info`. Exit 0
+means no FAIL; WARN and INFO are advisory. Exit 2 means at least one FAIL.
+An empty applicable registry is `[]` in JSON. Windows reports
+`platform.windows` as INFO because built-in wakes are unavailable.
+
+The sync result rows use a `sync.` prefix and run only for configured
+transports. A relay-only checkout does not run unused Postgres checks.
+The separate `mtix sync doctor` command keeps its existing report and behavior.
+
+Use `mtix doctor --fix` only when you want explicitly registered non-grant
+repairs to run; each successful repair is checked again. Grant commands and
+other advisory remedies are printed for you to run yourself, never executed
+by this flag. Existing sync checks currently register no automatic repairs.
+Follow each printed remedy and rerun doctor. All report fields and diagnostics
+are redacted before output; never put credentials into a command argument.
+
+Setup completion (`setup.done`, MTIX-112.19.2) and document freshness
+(`docs.stale`, MTIX-112.32.1) are FUTURE registrations, not checks available
+in this version. Do not infer that setup or generated documents are current
+from the absence of those rows.
+
 ## Local coordination schema
 
 Coordination tables are added locally without increasing the database schema version. The released v0.5.4-beta client was verified for `list`, `create`, and `sync pull`, with these additive local coordination tables preserved. Newly created stores have a stable random `store_instance_id`; reopening a store never replaces it, and upgrading a legacy store does not assign one automatically. The `min_dispatch_protocol` metadata key is reserved for planned dispatch compatibility; these schema foundations do not enable an attached dispatcher.
@@ -380,6 +405,14 @@ An event can reach the hub without this replica recording it: push marks an even
 Filesystem checks cannot detect sandbox write access granted to an operator-owned directory. Keep operator state outside every sandbox-writable root; the operator must choose that placement. `mtix hooks status` and `mtix sync doctor` report this limitation in text and JSON. On Unix, every ancestor must be owned by root or the operator and must not be writable by a group or other users; a sticky directory is not an exception. On Windows, ancestor owners are limited to the operator, SYSTEM, Administrators and TrustedInstaller. Rights to delete entries, change access rules or ownership, or generic write/full access are limited to those principals; creating files or subdirectories in an ancestor is allowed. The state directory and files still require protected user-only access. Unix refuses group-writable homes and network or directory-service-owned parents that do not meet these ownership rules. Set `XDG_CONFIG_HOME` to an operator-owned directory with root- or operator-owned ancestors and no group or other write access; `mtix hooks status --json` reports the concrete cause and validates the new placement, and `mtix sync doctor` names these placement constraints and the remedy. Atomic replacement does not establish power-loss durability. Filesystems without the required hard-link support are refused with the cause reported.
 
 This directory holds a persistent host identifier and host-specific state records. Other-host records are ignored and reported. Missing records are empty; invalid or inaccessible state is refused. This storage API validates records; hook approval and legacy conversion follow the workflow below. To recover, correct the reported path, ownership or access rules manually, then repeat `mtix hooks status --json`; preserve existing state records while correcting permissions.
+
+### Recent operator alerts
+
+`mtix sync doctor` and `mtix sync doctor --json` show the `alerts.recent` check, sampling the latest 20 logical diagnostics on this host. A recent diagnostic is a WARN and does not fail an otherwise passing doctor; absent alert state passes without creating files. This check reads only operator-local state; other checks in the same doctor still contact a configured hub, and a missing hub configuration can independently fail the overall report. Alerts never wake anyone, never address the concerned agent and never enter the board journal. Surface the diagnostic to the operator and follow the exact fix it prints; do not repost it to the agent named in the row.
+
+The log carries one logical row per agent and class per rolling hour, with a count and first/last timestamps. Another occurrence increments the count; exactly one hour after the first occurrence opens another window, and while the rate record exists a backward clock step does not reset the count and never refuses a raise. `alerts.jsonl` and two numbered archives retain three segments of at most 1 MiB each. Rate records retain the current count across restarts and log eviction: one bounded host-specific record per distinct agent/class pair, and a record whose hour window has closed is removed automatically on the next alert write. Their disk usage is therefore bounded by the number of distinct agent/class pairs raised in the last hour, not by a fixed cap. A pruned or lost rate record restarts the count from zero: the next occurrence is counted as a fresh window and a warning (`operator alert rate record missing; count restarts`) is logged when a row for that pair is still inside its hour; the raise is never refused. This is separate from wake-frequency policy. Interrupted writes may leave duplicate physical log rows, which doctor reconciles by stable row identifier and greatest compatible count.
+
+A diagnostic can be accepted durably before its log projection finishes. An I/O error may therefore leave an accepted occurrence, and retrying a raise can count another occurrence. The next writer replays pending projection without incrementing its count. Doctor displays accepted pending diagnostics without repairing state or creating a host identifier or lock. Diagnostic text is bounded plain UTF-8; JSON rows carry `id`, `host_id`, `agent`, `class`, `first_at`, `last_at`, `count`, `detail` and `fix`. A failed `alerts.recent` check means state could not be validated: preserve all existing logs, rate and pending records, run `mtix hooks status --json`, and correct the reported path or access rules. Do not delete a pending record, unlink the alert lock or copy records from another host to clear a warning. Existing permissions and placement constraints still apply; atomic replacement does not promise power-loss durability.
 
 ## Exec hook approvals
 

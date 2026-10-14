@@ -114,8 +114,8 @@ func TestRunSyncDoctor_HubUnavailable_HubPrivilegesSkippedAsWarn(t *testing.T) {
 			initTestApp(t)
 			t.Setenv(transport.EnvDSN, tt.dsn)
 			app.jsonOutput = true
-			var stdout, stderr bytes.Buffer
-			err := runSyncDoctor(context.Background(), &stdout, &stderr, nil, transport.Options{InsecureTLS: true})
+			var stdout bytes.Buffer
+			err := runSyncDoctor(context.Background(), &stdout, nil, transport.Options{InsecureTLS: true})
 			require.ErrorIs(t, err, errDoctorChecksFailed, "PG reachable fails")
 			var report DoctorReport
 			require.NoError(t, json.Unmarshal(stdout.Bytes(), &report), stdout.String())

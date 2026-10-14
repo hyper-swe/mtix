@@ -1311,7 +1311,7 @@ The gRPC service mirrors the REST API with strongly-typed request/response messa
 
 mtix registers as an MCP (Model Context Protocol) tool provider for LLM agent frameworks. When running as a server, agents can discover and invoke tools programmatically.
 
-Client setup for Claude Desktop, Claude Code, Cursor, Windsurf, OpenAI Codex, and pi is covered in [docs/MCP-SETUP.md](docs/MCP-SETUP.md). For Claude Code, Codex, and pi, `mtix plugin install --target <agent>` performs the setup (a project-root CLAUDE.md briefing plus skills for Claude Code; AGENTS.md briefing plus MCP config for Codex; AGENTS.md plus pi-mcp-adapter guidance for pi). Installs are non-destructive: existing files are never modified.
+Client setup for Claude Desktop, Claude Code, Cursor, Windsurf, OpenAI Codex, and pi is covered in [docs/MCP-SETUP.md](docs/MCP-SETUP.md). `mtix plugin install --target <agent>` writes the project briefing to `MTIX.md` and appends native instruction pointers, plus skills for Claude Code, MCP config for Codex or adapter guidance for pi. Existing MCP config is preserved. Global installs retain their previous behavior.
 
 ### Tool Categories
 
@@ -2304,6 +2304,26 @@ because no process was sitting there to be woken.
 > state differs from the snapshot's, `mtix sync relay clone` writes nothing and
 > lists each conflict; rerun it with `--prefer theirs|ours`, or `--theirs ID,ID`
 > and `--ours ID,ID` (the same rules as `mtix import --mode merge`).
+
+### Waiting for inbox events
+
+An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
+zero has no limit, and already pending events return immediately. Events mean
+exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+A negative timeout is refused. Keep foreground waits within the harness's tool
+limits; use an indefinite park only where background tasks are supported. Handle
+and ack events explicitly before parking again.
+
+For MCP `mtix_inbox_wait`, explicit `timeout_seconds=0` waits without a limit
+until an event or caller cancellation. Omission uses default 60 seconds;
+positive values are capped at 60 seconds, and negative values are refused.
+Cancellation is an error, and an empty positive timeout returns `[]`.
+
+The CLI default remains 300 seconds. A timeout too large to represent a duration
+is refused. Waiting uses a 250-millisecond polling cadence after the initial
+query and releases database connections between queries; events arriving from a
+sync pull or a hook are found on the next poll. Closing the store or a migration
+that makes the journal unavailable is reported as an error. Reads never ack.
 
 ### Inbox envelopes and replies
 
@@ -3520,9 +3540,10 @@ mtix exits with structured codes so scripts and agents can react without parsing
 | 2 | Attention needed — `mtix sync doctor` found a failing check, or `mtix sync harden` has changes to make (dry run) or access remains (after `--apply`); the report was printed |
 | 3 | Disk full — a write or backup was refused or failed because the volume is out of space; free space and retry |
 | 4 | Database corrupted — an integrity gate failed at open (a failed open-time integrity gate: truncation or header check, `quick_check`, or `SQLITE_CORRUPT`); see "Disk full and corruption recovery". A busy or locked open (`integrity check … could not run`) is exit 1, not 4 |
-| 5 | Inbox empty — `mtix inbox --wait` timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Note: a harness-hosted (Claude) agent cannot stay parked *between* turns — a dormant session runs no poller, so `mtix_inbox_wait` only watches the inbox *within* a live turn. To wake a dormant agent when work lands, cold-start it with an exec wake hook on the worker host (see "Waking agents: delivery that terminates in the prompt"), or use channel push / a background watcher for a live session |
+| 5 | Inbox empty — `mtix inbox --wait` with a positive timeout timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Note: a harness-hosted (Claude) agent cannot stay parked *between* turns — a dormant session runs no poller, so `mtix_inbox_wait` only watches the inbox *within* a live turn. To wake a dormant agent when work lands, cold-start it with an exec wake hook on the worker host (see "Waking agents: delivery that terminates in the prompt"), or use channel push / a background watcher for a live session |
 
 | 6 | Inbox wake lease held or no longer owned — the reference wake coalesces held runs and stops a stale holder; disk-full 3 and corruption 4 retain priority |
+| 7 | Inbox wait interrupted cleanly by SIGINT or SIGTERM; distinct from exit 0 (events) and exit 5 (empty positive timeout) |
 
 ### Common Issues
 
@@ -3640,7 +3661,11 @@ mtix migrate
 mtix docs generate --force
 ```
 
-Regenerates the agent-facing documentation in the `.mtix/docs/` directory.
+The project briefing lives in root `MTIX.md`, owned by mtix and fully regenerated by `mtix docs generate` (user edits there are replaced). Its project header and examples use the configured prefix, with `PROJ` as the fallback. Root `CLAUDE.md` contains only the mtix import `@MTIX.md` alongside user content; root `AGENTS.md` carries a sentence linking to `MTIX.md`. Init, generation and project-local plugin installs append each pointer once and migrate valid mtix marker blocks while preserving all other bytes. Malformed marker pairs are refused: repair the pairs and rerun `mtix docs generate`. When `HYPERSWE.md` exists, no new pointers are added and no absent native instruction files are created; existing pointers remain and valid old mtix blocks are removed. HyperSWE links `MTIX.md` itself. Global plugin installs retain their existing behavior.
+
+Other reference files remain in `.mtix/docs/`: auto-generated files always refresh; template-based files are created only when missing, unless `--force` refreshes their managed blocks (or rewrites a marker-free file).
+
+`MTIX.md` defaults to tracked. Every generation run checks all existing root `CLAUDE.md` and `AGENTS.md` files, including unchanged pointers. If all are ignored or locally excluded, mtix adds one marked block (`# mtix: managed local briefing` followed by `/MTIX.md`) to Git’s local `info/exclude`, including Git worktrees. Any tracked or otherwise non-ignored pointer, or no pointer files, removes only that mtix-owned block. All user and unmarked exclude rules survive byte-for-byte, including a missing final newline. If a user rule still ignores `MTIX.md` when a pointer is tracked, generation prints a one-line notice. No Git repository means no exclude write. The committed `.gitignore` is never edited for `MTIX.md`.
 
 ## Operator-local state
 
@@ -3649,3 +3674,11 @@ Regenerates the agent-facing documentation in the `.mtix/docs/` directory.
 Filesystem checks cannot detect sandbox write access granted to an operator-owned directory. Keep operator state outside every sandbox-writable root; the operator must choose that placement. `mtix hooks status` and `mtix sync doctor` report this limitation in text and JSON. On Unix, every ancestor must be owned by root or the operator and must not be writable by a group or other users; a sticky directory is not an exception. On Windows, ancestor owners are limited to the operator, SYSTEM, Administrators and TrustedInstaller. Rights to delete entries, change access rules or ownership, or generic write/full access are limited to those principals; creating files or subdirectories in an ancestor is allowed. The state directory and files still require protected user-only access. Unix refuses group-writable homes and network or directory-service-owned parents that do not meet these ownership rules. Set `XDG_CONFIG_HOME` to an operator-owned directory with root- or operator-owned ancestors and no group or other write access; `mtix hooks status --json` reports the concrete cause and validates the new placement, and `mtix sync doctor` names these placement constraints and the remedy. Atomic replacement does not establish power-loss durability. Filesystems without the required hard-link support are refused with the cause reported.
 
 This directory holds a persistent host identifier and host-specific state records. Other-host records are ignored and reported. Missing records are empty; invalid or inaccessible state is refused. This storage API validates records; hook approval and legacy conversion follow the operator workflow. To recover, correct the reported path, ownership or access rules manually, then repeat `mtix hooks status --json`; preserve existing state records while correcting permissions.
+
+### Recent operator alerts
+
+`mtix sync doctor` and `mtix sync doctor --json` show the `alerts.recent` check, sampling the latest 20 logical diagnostics on this host. A recent diagnostic is a WARN and does not fail an otherwise passing doctor; absent alert state passes without creating files. This check reads only operator-local state; other checks in the same doctor still contact a configured hub, and a missing hub configuration can independently fail the overall report. Alerts never wake anyone, never address the concerned agent and never enter the board journal. Surface the diagnostic to the operator and follow the exact fix it prints; do not repost it to the agent named in the row.
+
+The log carries one logical row per agent and class per rolling hour, with a count and first/last timestamps. Another occurrence increments the count; exactly one hour after the first occurrence opens another window, and while the rate record exists a backward clock step does not reset the count and never refuses a raise. `alerts.jsonl` and two numbered archives retain three segments of at most 1 MiB each. Rate records retain the current count across restarts and log eviction: one bounded host-specific record per distinct agent/class pair, and a record whose hour window has closed is removed automatically on the next alert write. Their disk usage is therefore bounded by the number of distinct agent/class pairs raised in the last hour, not by a fixed cap. A pruned or lost rate record restarts the count from zero: the next occurrence is counted as a fresh window and a warning (`operator alert rate record missing; count restarts`) is logged when a row for that pair is still inside its hour; the raise is never refused. This is separate from wake-frequency policy. Interrupted writes may leave duplicate physical log rows, which doctor reconciles by stable row identifier and greatest compatible count.
+
+A diagnostic can be accepted durably before its log projection finishes. An I/O error may therefore leave an accepted occurrence, and retrying a raise can count another occurrence. The next writer replays pending projection without incrementing its count. Doctor displays accepted pending diagnostics without repairing state or creating a host identifier or lock. Diagnostic text is bounded plain UTF-8; JSON rows carry `id`, `host_id`, `agent`, `class`, `first_at`, `last_at`, `count`, `detail` and `fix`. A failed `alerts.recent` check means state could not be validated: preserve all existing logs, rate and pending records, run `mtix hooks status --json`, and correct the reported path or access rules. Do not delete a pending record, unlink the alert lock or copy records from another host to clear a warning. Existing permissions and placement constraints still apply; atomic replacement does not promise power-loss durability.

@@ -58,6 +58,20 @@ local cache. These fields describe sync-lock contention only; still follow any
 other auto-import refusal or warning. Commands that skip automatic import,
 including `mtix sync status` and `mtix sync doctor`, do not make this check.
 
+## Waiting for inbox events
+
+An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
+zero has no limit, and already pending events return immediately. Events mean
+exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+A negative timeout is refused. Keep foreground waits within the harness's tool
+limits; use an indefinite park only where background tasks are supported. Handle
+and ack events explicitly before parking again.
+
+For MCP `mtix_inbox_wait`, explicit `timeout_seconds=0` waits without a limit
+until an event or caller cancellation. Omission uses default 60 seconds;
+positive values are capped at 60 seconds, and negative values are refused.
+Cancellation is an error, and an empty positive timeout returns `[]`.
+
 ## Project prefixes
 
 Project prefixes for local create (CLI, REST, gRPC and MCP) and `mtix init` must match `^[A-Z][A-Z0-9-]{0,19}$`: 1–20 uppercase letters, digits or hyphens, starting with a letter. An underscore or other invalid character returns `INVALID_INPUT` (gRPC: `InvalidArgument`) before a node or sequence is written.

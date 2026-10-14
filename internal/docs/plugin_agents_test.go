@@ -60,7 +60,7 @@ func TestPluginInstaller_Codex_WritesAgentsAndConfig(t *testing.T) {
 }
 
 // TestPluginInstaller_Codex_NeverClobbersExistingFiles: error path — a
-// user's existing AGENTS.md and config.toml must remain byte-identical;
+// user's AGENTS.md content survives before its pointer; config.toml stays byte-identical;
 // the config result downgrades to manual guidance carrying the stanza.
 func TestPluginInstaller_Codex_NeverClobbersExistingFiles(t *testing.T) {
 	projectDir := filepath.Join(t.TempDir(), "project")
@@ -78,14 +78,14 @@ func TestPluginInstaller_Codex_NeverClobbersExistingFiles(t *testing.T) {
 
 	gotAgents, err := os.ReadFile(filepath.Join(projectDir, "AGENTS.md"))
 	require.NoError(t, err)
-	assert.Equal(t, userAgents, string(gotAgents), "existing AGENTS.md must not be touched")
+	assert.Equal(t, userAgents+agentsPointer+"\n", string(gotAgents), "user content survives before the pointer")
 
 	gotConf, err := os.ReadFile(filepath.Join(codexDir, "config.toml"))
 	require.NoError(t, err)
 	assert.Equal(t, userConf, string(gotConf), "existing config.toml must not be touched")
 
 	byFile := resultByFile(results)
-	assert.Equal(t, "skipped", byFile["AGENTS.md"].Action)
+	assert.Equal(t, "updated", byFile["AGENTS.md"].Action)
 	assert.Equal(t, "manual", byFile["config.toml"].Action)
 	assert.Contains(t, byFile["config.toml"].Note, "[mcp_servers.mtix]",
 		"manual guidance must carry the exact stanza to add")
@@ -102,6 +102,7 @@ func TestPluginInstaller_Codex_Global(t *testing.T) {
 	_, err := installer.Install("codex", true)
 	require.NoError(t, err)
 
+	require.NoFileExists(t, filepath.Join(projectDir, "MTIX.md"))
 	assert.FileExists(t, filepath.Join(home, ".codex", "config.toml"))
 	assert.FileExists(t, filepath.Join(home, ".codex", "AGENTS.md"),
 		"global Codex instructions live at ~/.codex/AGENTS.md")
@@ -139,11 +140,11 @@ func TestPluginInstaller_Pi_Global(t *testing.T) {
 	_, err := installer.Install("pi", true)
 	require.NoError(t, err)
 
+	require.NoFileExists(t, filepath.Join(projectDir, "MTIX.md"))
 	assert.FileExists(t, filepath.Join(home, ".pi", "agent", "AGENTS.md"))
 }
 
-// TestPluginInstaller_Pi_ExistingAgentsPreserved: write-if-absent applies
-// to pi as well.
+// TestPluginInstaller_Pi_ExistingAgentsPreserved: pi appends only its pointer.
 func TestPluginInstaller_Pi_ExistingAgentsPreserved(t *testing.T) {
 	projectDir := filepath.Join(t.TempDir(), "project")
 	require.NoError(t, os.MkdirAll(projectDir, 0o755))
@@ -156,8 +157,8 @@ func TestPluginInstaller_Pi_ExistingAgentsPreserved(t *testing.T) {
 
 	got, err := os.ReadFile(filepath.Join(projectDir, "AGENTS.md"))
 	require.NoError(t, err)
-	assert.Equal(t, user, string(got))
-	assert.Equal(t, "skipped", resultByFile(results)["AGENTS.md"].Action)
+	assert.Equal(t, user+agentsPointer+"\n", string(got))
+	assert.Equal(t, "updated", resultByFile(results)["AGENTS.md"].Action)
 }
 
 // TestPluginInstaller_UnsupportedTarget_ListsRealTargets: the error must

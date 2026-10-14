@@ -18,9 +18,9 @@ import (
 // users reach MCP servers through the community pi-mcp-adapter
 // extension, so the pi install emits guidance instead of config.
 //
-// Both installs are strictly non-destructive: existing user files are
-// never modified. AGENTS.md is write-if-absent (action "skipped" when
-// present); an existing config.toml downgrades to action "manual" with
+// Local installs migrate mtix sections and append one MTIX.md pointer.
+// Global AGENTS.md remains write-if-absent. An existing config.toml
+// downgrades to action "manual" with
 // the exact stanza to add, because merging TOML without a parser risks
 // corrupting user configuration.
 
@@ -53,11 +53,13 @@ func (p *PluginInstaller) installCodex(global bool) ([]InstallResult, error) {
 
 	var results []InstallResult
 
-	agentsResult, err := p.installAgentsFile(agentsDir)
-	if err != nil {
-		return results, err
+	if global {
+		agentsResult, err := p.installAgentsFile(agentsDir)
+		if err != nil {
+			return results, err
+		}
+		results = append(results, agentsResult)
 	}
-	results = append(results, agentsResult)
 
 	confResult, err := installConfigIfAbsent(
 		filepath.Join(codexDir, "config.toml"),
@@ -81,11 +83,13 @@ func (p *PluginInstaller) installPi(global bool) ([]InstallResult, error) {
 
 	var results []InstallResult
 
-	agentsResult, err := p.installAgentsFile(agentsDir)
-	if err != nil {
-		return results, err
+	if global {
+		agentsResult, err := p.installAgentsFile(agentsDir)
+		if err != nil {
+			return results, err
+		}
+		results = append(results, agentsResult)
 	}
-	results = append(results, agentsResult)
 
 	results = append(results, InstallResult{
 		File:   "mcp",

@@ -2283,6 +2283,26 @@ because no process was sitting there to be woken.
 > lists each conflict; rerun it with `--prefer theirs|ours`, or `--theirs ID,ID`
 > and `--ours ID,ID` (the same rules as `mtix import --mode merge`).
 
+### Waiting for inbox events
+
+An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
+zero has no limit, and already pending events return immediately. Events mean
+exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+A negative timeout is refused. Keep foreground waits within the harness's tool
+limits; use an indefinite park only where background tasks are supported. Handle
+and ack events explicitly before parking again.
+
+For MCP `mtix_inbox_wait`, explicit `timeout_seconds=0` waits without a limit
+until an event or caller cancellation. Omission uses default 60 seconds;
+positive values are capped at 60 seconds, and negative values are refused.
+Cancellation is an error, and an empty positive timeout returns `[]`.
+
+The CLI default remains 300 seconds. A timeout too large to represent a duration
+is refused. Waiting uses a 250-millisecond polling cadence after the initial
+query and releases database connections between queries; events arriving from a
+sync pull or a hook are found on the next poll. Closing the store or a migration
+that makes the journal unavailable is reported as an error. Reads never ack.
+
 ### Inbox envelopes and replies
 
 Read agent-ready messages with `mtix inbox --agent <agent-id> --format context`.
@@ -3498,9 +3518,10 @@ mtix exits with structured codes so scripts and agents can react without parsing
 | 2 | Attention needed — `mtix sync doctor` found a failing check, or `mtix sync harden` has changes to make (dry run) or access remains (after `--apply`); the report was printed |
 | 3 | Disk full — a write or backup was refused or failed because the volume is out of space; free space and retry |
 | 4 | Database corrupted — an integrity gate failed at open (a failed open-time integrity gate: truncation or header check, `quick_check`, or `SQLITE_CORRUPT`); see "Disk full and corruption recovery". A busy or locked open (`integrity check … could not run`) is exit 1, not 4 |
-| 5 | Inbox empty — `mtix inbox --wait` timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Note: a harness-hosted (Claude) agent cannot stay parked *between* turns — a dormant session runs no poller, so `mtix_inbox_wait` only watches the inbox *within* a live turn. To wake a dormant agent when work lands, cold-start it with an exec wake hook on the worker host (see "Waking agents: delivery that terminates in the prompt"), or use channel push / a background watcher for a live session |
+| 5 | Inbox empty — `mtix inbox --wait` with a positive timeout timed out with no addressed events; a worker's poll loop treats this as "nothing yet, loop again" (distinct from 0 = woke with work). Only `--wait` returns this; a plain `mtix inbox` list exits 0 even when empty. Note: a harness-hosted (Claude) agent cannot stay parked *between* turns — a dormant session runs no poller, so `mtix_inbox_wait` only watches the inbox *within* a live turn. To wake a dormant agent when work lands, cold-start it with an exec wake hook on the worker host (see "Waking agents: delivery that terminates in the prompt"), or use channel push / a background watcher for a live session |
 
 | 6 | Inbox wake lease held or no longer owned — the reference wake coalesces held runs and stops a stale holder; disk-full 3 and corruption 4 retain priority |
+| 7 | Inbox wait interrupted cleanly by SIGINT or SIGTERM; distinct from exit 0 (events) and exit 5 (empty positive timeout) |
 
 ### Common Issues
 

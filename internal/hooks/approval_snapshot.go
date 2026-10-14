@@ -131,6 +131,9 @@ func collectHookInputs(h Hook, logicalRoot, root string) (*hookInputs, error) {
 	if err != nil {
 		return nil, err
 	}
+	if envErr := checkEnvAssignments(h.Exec.Command, program, logicalRoot, root); envErr != nil {
+		return nil, envErr
+	}
 	in := &hookInputs{logical: logicalRoot, root: root, program: program, script: script, stanza: string(own), scripts: map[int]scriptInput{}}
 	for i, arg := range h.Exec.Command {
 		part, ok, err := in.readArgument(i, arg)

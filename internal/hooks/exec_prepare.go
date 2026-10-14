@@ -101,7 +101,7 @@ func buildPlan(h Hook, in *hookInputs, root, copies string, st stager) (*ExecPla
 			continue
 		}
 		resolved := arg
-		if i == 0 {
+		if i == 0 || i == in.program {
 			var err error
 			if resolved, err = launchProgram(h.Name, in, arg); err != nil {
 				return nil, err

@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 )
 
 // Structured exit codes per MTIX-26.8: storage failure classes are part
@@ -59,7 +60,7 @@ func exitCodeForError(err error) int {
 		return exitCodeInboxInterrupted
 	case errors.Is(err, errInboxWaitEmpty):
 		return exitCodeInboxEmpty
-	case errors.Is(err, errHardenPending):
+	case errors.Is(err, errHardenPending), errors.Is(err, service.ErrDoctorChecksFailed):
 		return exitCodeHardenPending
 	default:
 		return exitCodeGeneric

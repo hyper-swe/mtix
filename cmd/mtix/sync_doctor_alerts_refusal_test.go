@@ -26,8 +26,8 @@ func TestRunSyncDoctor_OperatorAlerts_UnreadableStateFailsClosed(t *testing.T) {
 			before, err := os.ReadFile(filepath.Join(path, "alerts.jsonl"))
 			require.NoError(t, err)
 			app.jsonOutput = format == "json"
-			var out, errOut bytes.Buffer
-			require.ErrorIs(t, runSyncDoctor(t.Context(), &out, &errOut, nil, transport.Options{}), errDoctorChecksFailed)
+			var out bytes.Buffer
+			require.ErrorIs(t, runSyncDoctor(t.Context(), &out, nil, transport.Options{}), errDoctorChecksFailed)
 			if app.jsonOutput {
 				check := doctorCheckFromJSON(t, out.Bytes(), "alerts.recent")
 				require.False(t, check.Pass)

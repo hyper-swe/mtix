@@ -333,8 +333,8 @@ func TestSyncDoctor_RegistryIndexNotValidOrNotReady_FailsWithTheFix(t *testing.T
 			h.setIndexFlags(t, tc.valid, tc.ready)
 			t.Setenv(transport.EnvDSN, h.dsn)
 			app.jsonOutput = true
-			var stdout, stderr bytes.Buffer
-			err := runSyncDoctor(h.ctx, &stdout, &stderr, nil, transport.Options{InsecureTLS: true})
+			var stdout bytes.Buffer
+			err := runSyncDoctor(h.ctx, &stdout, nil, transport.Options{InsecureTLS: true})
 			var report doctorJSON
 			require.NoError(t, json.Unmarshal(stdout.Bytes(), &report), stdout.String())
 
@@ -402,8 +402,8 @@ func TestSyncDoctor_RegistryIndexMissing_ReportsTheFix(t *testing.T) {
 	h.f.ddlAs(h.owner, "DROP INDEX IF EXISTS public.%I", registryIndex)
 	t.Setenv(transport.EnvDSN, h.dsn)
 	app.jsonOutput = true
-	var stdout, stderr bytes.Buffer
-	_ = runSyncDoctor(h.ctx, &stdout, &stderr, nil, transport.Options{InsecureTLS: true})
+	var stdout bytes.Buffer
+	_ = runSyncDoctor(h.ctx, &stdout, nil, transport.Options{InsecureTLS: true})
 	var report doctorJSON
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report), stdout.String())
 

@@ -413,7 +413,7 @@ func TestNewRootCmd_LogLevelFlag_DefaultEmpty(t *testing.T) {
 
 // TestExemptCommands_Map_ContainsAllExpected verifies exempt map completeness.
 func TestExemptCommands_Map_ContainsAllExpected(t *testing.T) {
-	expected := []string{"config", "init", "migrate", "docs", "version", "help", "search"}
+	expected := []string{"config", "init", "migrate", "docs", "version", "help", "search", "doctor"}
 	for _, name := range expected {
 		assert.True(t, exemptCommands[name], "%s should be in exemptCommands map", name)
 	}

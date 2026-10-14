@@ -39,9 +39,9 @@ func TestPull_CreateWhoseUIDALocalTaskHolds_QuarantinedThenAppliedAfterRepair(t 
 	requireNotApplied(t, &theirs)
 	requireQuarantinedAs(t, &theirs, "pull", "uid "+localUID+" is held by local task TEST-1")
 
-	var out, errOut bytes.Buffer
+	var out bytes.Buffer
 	app.jsonOutput = true
-	_ = runSyncDoctor(ctx, &out, &errOut, nil, transport.Options{})
+	_ = runSyncDoctor(ctx, &out, nil, transport.Options{})
 	assert.False(t, doctorCheckFromJSON(t, out.Bytes(), quarantineCheckName).Pass)
 
 	// The owner repairs the duplicate; the next pull retries the event.

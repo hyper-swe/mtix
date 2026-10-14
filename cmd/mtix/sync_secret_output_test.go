@@ -155,7 +155,7 @@ func TestDoctorJSON_MalformedDSN_NoSecretInOutput(t *testing.T) {
 					args := configureSyncDSN(t, app.mtixDir, source, d.dsn)
 
 					var stdout, stderr bytes.Buffer
-					err := runSyncDoctor(context.Background(), &stdout, &stderr,
+					err := runSyncDoctor(context.Background(), &stdout,
 						args, transport.Options{})
 					require.ErrorIs(t, err, errDoctorChecksFailed)
 
@@ -191,7 +191,7 @@ func TestDoctor_UnparsableConnectionSettings_NoSecretInOutput(t *testing.T) {
 			configureSyncDSN(t, app.mtixDir, sourceEnv, d.dsn)
 
 			var stdout, stderr bytes.Buffer
-			err := runSyncDoctor(context.Background(), &stdout, &stderr, nil, transport.Options{})
+			err := runSyncDoctor(context.Background(), &stdout, nil, transport.Options{})
 			require.ErrorIs(t, err, errDoctorChecksFailed)
 			out := stdout.String() + stderr.String()
 			require.Contains(t, out, "check the DSN's connection parameters", "the fixed message is reported")
@@ -553,7 +553,7 @@ func TestDoctor_DetailQuotingSecret_Scrubbed(t *testing.T) {
 				[]byte(d.dsn+"\n"), 0o644))
 
 			var stdout, stderr bytes.Buffer
-			err := runSyncDoctor(context.Background(), &stdout, &stderr, nil, transport.Options{})
+			err := runSyncDoctor(context.Background(), &stdout, nil, transport.Options{})
 			require.ErrorIs(t, err, errDoctorChecksFailed)
 			out := stdout.String() + stderr.String()
 			require.Contains(t, out, "p-REDACTED", "the path is shown with the password removed")

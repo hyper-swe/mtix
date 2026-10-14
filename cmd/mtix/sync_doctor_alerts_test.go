@@ -29,8 +29,8 @@ func TestRunSyncDoctor_OperatorAlerts_ReportsRecent(t *testing.T) {
 			state := alertDoctorFixture(t)
 			seedDoctorAlert(t, state)
 			app.jsonOutput = tc.json
-			var out, errOut bytes.Buffer
-			err := runSyncDoctor(context.Background(), &out, &errOut, nil, transport.Options{})
+			var out bytes.Buffer
+			err := runSyncDoctor(context.Background(), &out, nil, transport.Options{})
 			require.ErrorIs(t, err, errDoctorChecksFailed, "unconfigured hub fails independently of local alerts")
 			if tc.json {
 				check := doctorCheckFromJSON(t, out.Bytes(), "alerts.recent")
@@ -51,8 +51,8 @@ func TestRunSyncDoctor_OperatorAlerts_ReportsRecent(t *testing.T) {
 func TestRunSyncDoctor_NoOperatorAlerts_PreservesLocalChecks(t *testing.T) {
 	state := alertDoctorFixture(t)
 	app.jsonOutput = true
-	var out, errOut bytes.Buffer
-	require.ErrorIs(t, runSyncDoctor(t.Context(), &out, &errOut, nil, transport.Options{}), errDoctorChecksFailed)
+	var out bytes.Buffer
+	require.ErrorIs(t, runSyncDoctor(t.Context(), &out, nil, transport.Options{}), errDoctorChecksFailed)
 	check := doctorCheckFromJSON(t, out.Bytes(), "operator state placement")
 	require.True(t, check.Pass)
 	require.True(t, check.Warn)

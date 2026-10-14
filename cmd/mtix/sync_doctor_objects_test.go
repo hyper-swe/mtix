@@ -20,8 +20,8 @@ func runDoctorReport(t *testing.T) (doctorJSON, error) {
 	t.Helper()
 	app.jsonOutput = true
 	defer func() { app.jsonOutput = false }()
-	var stdout, stderr bytes.Buffer
-	err := runSyncDoctor(context.Background(), &stdout, &stderr, nil, cloudOpts)
+	var stdout bytes.Buffer
+	err := runSyncDoctor(context.Background(), &stdout, nil, cloudOpts)
 	var report doctorJSON
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report), stdout.String())
 	return report, err
@@ -223,8 +223,8 @@ func TestRunSyncDoctor_HubUnreachable_ReportsHubTriggersSkipped(t *testing.T) {
 	t.Setenv(transport.EnvDSN, "postgres://doctor_user:Qx7doctorSecret@hub.example.invalid:5432/hub?connect_timeout=2")
 	app.jsonOutput = true
 	defer func() { app.jsonOutput = false }()
-	var stdout, stderr bytes.Buffer
-	err := runSyncDoctor(context.Background(), &stdout, &stderr, nil, transport.Options{})
+	var stdout bytes.Buffer
+	err := runSyncDoctor(context.Background(), &stdout, nil, transport.Options{})
 	require.ErrorIs(t, err, errDoctorChecksFailed, "PG reachable fails")
 	var report doctorJSON
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &report), stdout.String())

@@ -36,3 +36,22 @@ func TestCheckSchemaVersion_AcceptsFormat210AndStill200(t *testing.T) {
 	require.Error(t, service.CheckSchemaVersion("3.0.0"))
 	require.Equal(t, "2.1.0", sqlite.SchemaVersionHistory)
 }
+
+// TestConfig_HistoryExport_FollowsAChangeMadeByAnotherProcess: a long-running
+// process picks up `config set history.export` without a restart.
+func TestConfig_HistoryExport_FollowsAChangeMadeByAnotherProcess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	daemon, err := service.NewConfigService(path)
+	require.NoError(t, err)
+	require.False(t, daemon.HistoryExport())
+
+	cli, err := service.NewConfigService(path)
+	require.NoError(t, err)
+	_, err = cli.Set("history.export", "true")
+	require.NoError(t, err)
+	require.True(t, daemon.HistoryExport(), "the daemon re-reads the file")
+
+	_, err = cli.Set("history.export", "false")
+	require.NoError(t, err)
+	require.False(t, daemon.HistoryExport())
+}

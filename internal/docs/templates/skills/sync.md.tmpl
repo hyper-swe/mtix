@@ -98,6 +98,18 @@ Receipt diagnostics use fixed categories; unknown stored or supplied values repo
 
 A contended local sync lock makes ordinary `mtix sync pull` fail. With `MTIX_SYNC_HOOK=1`, native lock contention instead warns that the pull was not performed and returns success. Retry after the current owner finishes; no pull was completed or automatically retried. Filesystem acquisition failures and cancellation remain errors. Never delete the sync lock file to bypass its owner.
 
+## Task history in tasks.json (experimental)
+
+Each task carries a change log (field, old and new value for structured fields, actor, origin, time). By default `.mtix/tasks.json` does not include it, so every released mtix can still read the file. The switch is `history.export`:
+
+1. **Configure.** `mtix config set history.export true` turns it on; `mtix config set history.export false` turns it off. Turn it on only when the user asks and every machine and daemon that reads or writes this board runs this version or later: mtix 0.5.4 and earlier fail the checksum of a file that carries history. No doctor check verifies that yet, so ask the user.
+2. **Verify.** `mtix config get history.export` shows the setting. After the next change, `.mtix/tasks.json` has `schema_version` `2.1.0` and a `history` list on the tasks that have entries; with the switch off it stays `2.0.0` with no history keys.
+3. **Use.** History of tasks that no longer exist travels in an optional top-level `history` list, covered by the checksum. `mtix import` in replace mode stores every entry the file carries; merge mode does not take history yet.
+4. **Troubleshoot.** An older mtix reporting `checksum verification failed` on a file with `schema_version` `2.1.0` is not corruption: that binary cannot read history. Upgrade it, or turn the switch off and let the next change rewrite the file as 2.0.0.
+5. **Recover.** `mtix config set history.export false`, then run any writing command (for example `mtix sync push`) so the file is rewritten without history. The local change log is kept in the store either way.
+
+Never edit history entries in `.mtix/tasks.json` by hand (the checksum covers them), and never turn the switch on to work around a sync problem.
+
 ## Requirements checklist
 
 Before setup, confirm each item with the user or the database administrator:

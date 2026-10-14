@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
@@ -131,9 +132,16 @@ func sortHistory(h []exportHistoryEntry) {
 }
 
 // validateExportHistory refuses a file whose history entries cannot be stored
-// (a missing identity, time, actor, origin, kind or field, or a node entry
-// that names another task), before anything is written.
+// (a missing identity, actor or field, a kind, origin or time outside the
+// forms mtix writes), a node entry that names another task, and a top-level
+// (orphan) entry that names a task the file holds: a task's history lives on
+// its node, and an orphan entry must not move onto a live task. It runs
+// before anything is written.
 func validateExportHistory(data *ExportData) error {
+	live := make(map[string]bool, len(data.Nodes))
+	for i := range data.Nodes {
+		live[taskHistoryKey(&data.Nodes[i])] = true
+	}
 	for i := range data.Nodes {
 		n := &data.Nodes[i]
 		for _, e := range n.History {
@@ -146,6 +154,10 @@ func validateExportHistory(data *ExportData) error {
 		}
 	}
 	for _, e := range data.History {
+		if live[e.TaskUID] {
+			return fmt.Errorf("history entry %q in the top-level list names task %s, which the file holds: %w",
+				e.ID, e.TaskUID, model.ErrInvalidInput)
+		}
 		if err := checkHistoryEntry(e); err != nil {
 			return err
 		}
@@ -153,12 +165,28 @@ func validateExportHistory(data *ExportData) error {
 	return nil
 }
 
+// checkHistoryEntry validates one entry's own fields: all present, kind and
+// origin among the values mtix writes, ts in the fixed-width UTC form that
+// task_history stores (it sorts as text).
 func checkHistoryEntry(e exportHistoryEntry) error {
 	for name, v := range map[string]string{"id": e.ID, "task_uid": e.TaskUID, "ts": e.TS,
 		"actor": e.Actor, "origin": e.Origin, "kind": e.Kind, "field": e.Field} {
 		if v == "" {
 			return fmt.Errorf("history entry %q has no %s: %w", e.ID, name, model.ErrInvalidInput)
 		}
+	}
+	switch model.HistoryKind(e.Kind) {
+	case model.HistoryKindChange, model.HistoryKindRedaction, model.HistoryKindRetentionDrop:
+	default:
+		return fmt.Errorf("history entry %q has unknown kind %q: %w", e.ID, e.Kind, model.ErrInvalidInput)
+	}
+	switch model.HistoryOrigin(e.Origin) {
+	case model.HistoryOriginLocal, model.HistoryOriginImport, model.HistoryOriginHub, model.HistoryOriginSystem:
+	default:
+		return fmt.Errorf("history entry %q has unknown origin %q: %w", e.ID, e.Origin, model.ErrInvalidInput)
+	}
+	if t, err := time.Parse(historyTimeLayout, e.TS); err != nil || t.Format(historyTimeLayout) != e.TS {
+		return fmt.Errorf("history entry %q has ts %q, not %s: %w", e.ID, e.TS, historyTimeLayout, model.ErrInvalidInput)
 	}
 	return nil
 }

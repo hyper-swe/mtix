@@ -83,8 +83,9 @@ records locally.
   this switch existed: `schema_version` stays `2.0.0`, no node has a
   `history` key and there is no top-level `history` list. Released readers
   keep working with it.
-- **On.** `schema_version` is `2.1.0` and the envelope's version field (the
-  mtix that wrote the file) is always filled in and names the last writer, so a reader can tell that an older writer may
+- **On.** `schema_version` is `2.1.0` and the envelope's writer-version key (see the table above) names the
+  mtix that last wrote the file (this build fills it in even when the caller
+  names none), so a reader can tell that an older writer may
   have dropped history. Each node carries its entries in a `history` list
   (omitted when it has none), oldest first: `id`, `task_uid`, `ts`,
   `actor`, `origin`, `kind`, `field`, `old` and `new` (structured fields
@@ -99,8 +100,16 @@ records locally.
   verification.
 - **Reading.** mtix accepts 2.1.0 and 2.0.0 files alike. A replace import
   stores every entry the file carries, orphans included, and keeps entries
-  it already has (entry ids are unique); the merge union of entries is
-  MTIX-95.31.19.9 and is not part of this format change.
+  it already has (entry ids are unique). A merge import does not take the
+  file's history yet; the merge union of entries is MTIX-95.31.19.9. A file
+  is refused when an entry has a kind, origin or time outside what mtix
+  writes, or when a top-level entry names a task the file holds.
+- **Conflict detection.** For a 2.1.0 file the writer-version key is left
+  out of the hash used to detect conflicts, so an upgrade does not look like
+  a change to the board.
+- **A running process** follows `mtix config set history.export` without a
+  restart. `mtix recover` labels its output 2.1.0 and keeps the history when
+  the mirror carries it.
 - **Older readers.** A released mtix (0.5.4 and earlier) drops the fields it
   does not know, so a file with history fails its checksum there: `mtix
   import` fails with `checksum verification failed` and the automatic import

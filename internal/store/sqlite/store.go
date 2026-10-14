@@ -71,7 +71,8 @@ type Store struct {
 
 	// historyExport reports whether exports carry task history (config key
 	// history.export, default off; MTIX-95.31.19.5). Nil means off. It is
-	// read once per export, so a changed setting applies to the next one.
+	// called once per export, so a changed setting applies to the next export
+	// (the config service re-reads the file for it).
 	historyExport func() bool
 
 	// writerVersion is the mtix version recorded as the last writer of an

@@ -381,7 +381,10 @@ func computeExportChecksumH(nodes []exportNode, deps []exportDep, history []expo
 }
 
 // computeExportChecksum is computeExportChecksumH for an export without
-// history.
+// history. Production code calls computeExportChecksumH directly; this
+// two-argument form is kept as the stable entry point of the FR-7.8 checksum
+// (the symbol the review stories and the checksum tests are written against),
+// so it is called from tests only.
 func computeExportChecksum(nodes []exportNode, deps []exportDep) (string, error) {
 	return computeExportChecksumH(nodes, deps, nil)
 }

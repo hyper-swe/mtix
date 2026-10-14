@@ -313,17 +313,6 @@ func parseAutoSync(value string) (bool, error) {
 	return on, nil
 }
 
-// HistoryExport reports the history.export switch (default off;
-// MTIX-95.31.19.5, ADR-006 A3.1): whether tasks.json carries each task's
-// change history in export format 2.1.0. EXPERIMENTAL until the doctor guard
-// (MTIX-95.31.19.6) lands: a released mtix refuses a board that carries
-// history. An unreadable value counts as off.
-func (cs *ConfigService) HistoryExport() bool {
-	raw, _ := cs.Get("history.export")
-	on, err := strconv.ParseBool(strings.TrimSpace(raw))
-	return err == nil && on
-}
-
 // AuthorID returns the configured default author identity for emitted sync
 // events (MTIX-24), or "" when unset. The MTIX_AUTHOR_ID env overrides this
 // per-process; see resolveEmitAuthor in the sqlite store.
@@ -460,7 +449,7 @@ func (cs *ConfigService) saveToFile() error {
 	var buf strings.Builder
 	sections := []string{
 		"", "api", "mcp", "data", "sync",
-		"agent", "context", "logging", "progress", "ui",
+		"agent", "context", "logging", "progress", "ui", "history",
 	}
 
 	for _, section := range sections {

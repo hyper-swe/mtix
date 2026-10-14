@@ -52,6 +52,9 @@ func gitBoardError(reason string, cause error) error {
 	if errors.Is(cause, context.DeadlineExceeded) {
 		return fmt.Errorf("%w: %s: %w", ErrNoMergeBase, reason, context.DeadlineExceeded)
 	}
+	if diagnostic, ok := cause.(boardGitDiagnostic); ok {
+		return fmt.Errorf("%w: %s: %w", ErrNoMergeBase, reason, diagnostic)
+	}
 	return fmt.Errorf("%w: %s", ErrNoMergeBase, reason)
 }
 

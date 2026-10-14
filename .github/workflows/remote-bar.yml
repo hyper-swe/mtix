@@ -50,9 +50,6 @@ jobs:
     env:
       MTIX_PG_TEST_DSN: "postgres://postgres:ci@localhost:5432/mtix_ci?sslmode=disable"
       MTIX_PG_TEST_REQUIRE_SUPERUSER: "1"
-      # The PG-gated suites drop and re-migrate one shared database, so
-      # packages must not run concurrently (same reason as ci.yml's -p 1).
-      GOFLAGS: "-p=1"
       WRAPPER_VERSION: ${{ inputs.wrapper_version }}
       SCRATCH_REF: ${{ inputs.scratch_ref }}
       EXPECTED_TREE: ${{ inputs.expected_tree }}
@@ -86,6 +83,14 @@ jobs:
           install-only: true
           verify: false
       - run: go mod verify
+      - name: Serialize packages
+        # The PG-gated suites drop and re-migrate one shared database, so
+        # packages must not run concurrently (same reason as ci.yml's -p 1).
+        # Written with go env -w, not job env: the Makefile assigns
+        # GOFLAGS := -trimpath, and make exports that to go test whenever
+        # GOFLAGS is already in the environment, which breaks the tests that
+        # locate the repository through runtime.Caller.
+        run: go env -w GOFLAGS=-p=1
       - name: Run committed bar
         run: make lint-go && make test-race
       - name: Run govulncheck

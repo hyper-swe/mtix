@@ -98,12 +98,26 @@ records locally.
   list is part of the hashed document (`{"nodes", "deps", "history"}`; the
   last key is absent when the list is empty), so an edit to any entry fails
   verification.
-- **Reading.** mtix accepts 2.1.0 and 2.0.0 files alike. A replace import
-  stores every entry the file carries, orphans included, and keeps entries
-  it already has (entry ids are unique). A merge import does not take the
-  file's history yet; the merge union of entries is MTIX-95.31.19.9. A file
-  is refused when an entry has a kind, origin or time outside what mtix
-  writes, or when a top-level entry names a task the file holds.
+- **Reading.** mtix accepts 2.1.0 and 2.0.0 files alike. A replace or merge
+  import (and the automatic import) unions the file's history into the store
+  by entry id, node lists and the top-level list alike. The union is
+  idempotent and does not depend on entry order; a local entry is never
+  dropped or changed. An entry the store holds identically counts as
+  `history_skipped`; one stored under a different entry id but the same
+  event key (`task_uid`, `event_id`, `field`) is the same event and counts
+  the same way. An entry id the store holds with other content (any field,
+  `task_uid` included) is a conflict: the local row is kept, the entry counts
+  in `history_conflicts` and a warning names the count and the first few
+  entry ids, never the content; the import still succeeds. An entry keyed by
+  a legacy dot id instead of a task uid is skipped and counted in
+  `history_skipped_legacy_key`. New entries count in `history_added`. An
+  entry id the file itself repeats with different content is stored in neither
+  copy and counts as a conflict. While `history.export` is on and the
+  envelope's writer-version key is older than 0.6.0 (the first release that
+  keeps task history) or empty, the import warns that history may be
+  incomplete; it is silent otherwise. A file is refused
+  when an entry has a kind, origin or time outside what mtix writes, or
+  when a top-level entry names a task the file holds.
 - **Conflict detection.** For a 2.1.0 file the writer-version key is left
   out of the hash used to detect conflicts, so an upgrade does not look like
   a change to the board.

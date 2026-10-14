@@ -55,7 +55,15 @@ func mergeAllData(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 	if err := rollUpMerged(ctx, tx, touched); err != nil {
 		return result, err
 	}
-	return result, nil
+	// MTIX-95.31.19.9: task history unions by entry id, never dropping a local entry.
+	return withHistoryUnion(ctx, tx, data, result)
+}
+
+// withHistoryUnion unions the file's task history into the store and returns
+// result with the history counts and warnings added (MTIX-95.31.19.9).
+func withHistoryUnion(ctx context.Context, tx *sql.Tx, data *ExportData, result ImportResult) (ImportResult, error) {
+	err := insertExportHistory(ctx, tx, data, &result)
+	return result, err
 }
 
 // importAction represents the result of merging a single node.

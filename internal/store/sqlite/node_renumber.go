@@ -171,15 +171,16 @@ func assertTargetNamespaceFree(ctx context.Context, tx *sql.Tx, newID string) er
 // each descendant's relative suffix, depth, and seq (ADR-003 §5).
 func rewriteSubtreeIDs(ctx context.Context, tx *sql.Tx, oldID, newID string, newSeq int) error {
 	// Descendants: id and parent_id both begin with oldID + "." so substituting
-	// the oldID prefix with newID rewrites both consistently. SUBSTR is 1-based.
+	// the oldID prefix with newID rewrites both consistently. SUBSTR is 1-based
+	// and counts characters, so the offset is computed in SQL from LENGTH(oldID),
+	// not from the Go byte length (a non-ASCII id differs).
 	descLike := escapeLIKEPrefix(oldID) + ".%"
-	prefixLen := len(oldID)
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE nodes
-		   SET id        = ? || SUBSTR(id, ?),
-		       parent_id = ? || SUBSTR(parent_id, ?)
+		   SET id        = ? || SUBSTR(id, LENGTH(?) + 1),
+		       parent_id = ? || SUBSTR(parent_id, LENGTH(?) + 1)
 		 WHERE id LIKE ? ESCAPE '\'`,
-		newID, prefixLen+1, newID, prefixLen+1, descLike,
+		newID, oldID, newID, oldID, descLike,
 	); err != nil {
 		return fmt.Errorf("renumber: rewrite descendants of %s: %w", oldID, err)
 	}
@@ -198,7 +199,6 @@ func rewriteSubtreeIDs(ctx context.Context, tx *sql.Tx, oldID, newID string, new
 // that equals oldID or sits under it is rewritten by the same oldID -> newID
 // prefix substitution used for the nodes table.
 func rewriteDependencyRefs(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
-	prefixLen := len(oldID)
 	like := escapeLIKEPrefix(oldID) + ".%"
 	for _, col := range []string{"from_id", "to_id"} {
 		// Column names are package-internal constants, not user input, so the
@@ -206,10 +206,10 @@ func rewriteDependencyRefs(ctx context.Context, tx *sql.Tx, oldID, newID string)
 		// bound parameters (SQL Rule #1).
 		stmt := fmt.Sprintf(`
 			UPDATE dependencies
-			   SET %[1]s = ? || SUBSTR(%[1]s, ?)
+			   SET %[1]s = ? || SUBSTR(%[1]s, LENGTH(?) + 1)
 			 WHERE %[1]s = ? OR %[1]s LIKE ? ESCAPE '\'`, col)
 		if _, err := tx.ExecContext(ctx, stmt,
-			newID, prefixLen+1, oldID, like,
+			newID, oldID, oldID, like,
 		); err != nil {
 			return fmt.Errorf("renumber: rewrite dependency %s of %s: %w", col, oldID, err)
 		}

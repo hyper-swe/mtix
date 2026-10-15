@@ -50,16 +50,16 @@ func rekeyHistorySubtree(ctx context.Context, tx *sql.Tx, oldID, newID string) e
 		`DELETE FROM task_history
 		  WHERE (task_uid = ? OR (task_uid >= ? AND task_uid < ?)) AND event_id IS NOT NULL
 		    AND EXISTS (SELECT 1 FROM task_history n
-		                 WHERE n.task_uid = ? || SUBSTR(task_history.task_uid, ?)
+		                 WHERE n.task_uid = ? || SUBSTR(task_history.task_uid, LENGTH(?) + 1)
 		                   AND n.event_id = task_history.event_id AND n.field = task_history.field)`,
-		oldID, oldID+".", oldID+"/", newID, len(oldID)+1); err != nil {
+		oldID, oldID+".", oldID+"/", newID, oldID); err != nil {
 		return fmt.Errorf("rekey history subtree %s -> %s: drop duplicates: %w", oldID, newID, err)
 	}
 	// Rows keyed by the subtree's ids: the root, and "oldID." descendants.
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE task_history SET task_uid = ? || SUBSTR(task_uid, ?)
+		`UPDATE task_history SET task_uid = ? || SUBSTR(task_uid, LENGTH(?) + 1)
 		  WHERE task_uid = ? OR (task_uid >= ? AND task_uid < ?)`,
-		newID, len(oldID)+1, oldID, oldID+".", oldID+"/"); err != nil {
+		newID, oldID, oldID, oldID+".", oldID+"/"); err != nil {
 		return fmt.Errorf("rekey history subtree %s -> %s: %w", oldID, newID, err)
 	}
 	return nil

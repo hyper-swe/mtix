@@ -64,3 +64,19 @@ func TestEnsureRegistryIndex_CancelledWhileLocked_ReleasesSessionLock(t *testing
 	require.True(t, res.Added)
 	require.Zero(t, heldSessionLocks(t, dsn))
 }
+
+// TestReleaseSessionLock_LockNotHeld_ClosesConnection releases a session
+// lock the connection does not hold, so pg_advisory_unlock returns false,
+// and proves the failure is reported and the connection is closed rather
+// than returned to the pool (MTIX-107.85).
+func TestReleaseSessionLock_LockNotHeld_ClosesConnection(t *testing.T) {
+	requireTestDSN(t)
+	pool := poolFor(t, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	closed, err := transport.ReleaseUnheldSessionLockForTest(ctx, pool)
+	require.ErrorContains(t, err, "did not hold the lock")
+	require.True(t, closed, "a connection whose unlock failed is closed")
+	require.NoError(t, pool.HealthCheck(ctx), "the pool opens a new connection")
+}

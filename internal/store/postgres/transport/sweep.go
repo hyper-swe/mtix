@@ -5,12 +5,14 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
 	syncpkg "github.com/hyper-swe/mtix/internal/sync"
 	"github.com/hyper-swe/mtix/internal/sync/redact"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // SweepReport is the structured outcome of one Phase 1 dedup sweep
@@ -405,15 +407,23 @@ func (p *Pool) EnsureRegistryIndex(ctx context.Context, projectPrefix string) (I
 		return IndexResult{}, fmt.Errorf("EnsureRegistryIndex: acquire conn: %s", redact.DSN(err.Error()))
 	}
 	defer conn.Release()
+	return p.buildUnderSessionLock(ctx, conn, res)
+}
 
-	if _, err := conn.Exec(ctx,
+// buildUnderSessionLock takes the session advisory lock on conn, builds
+// the registry index and releases the lock. The session lock is NOT
+// auto-released, so the release runs on the same conn even when ctx is
+// already cancelled, and a failed release is reported (MTIX-107.85).
+func (p *Pool) buildUnderSessionLock(ctx context.Context, conn *pgxpool.Conn, res IndexResult) (_ IndexResult, err error) {
+	if _, lockErr := conn.Exec(ctx,
 		`SELECT pg_advisory_lock(hashtext($1))`, AdvisoryLockKey,
-	); err != nil {
-		return IndexResult{}, fmt.Errorf("EnsureRegistryIndex: lock: %s", redact.DSN(err.Error()))
+	); lockErr != nil {
+		return IndexResult{}, fmt.Errorf("EnsureRegistryIndex: lock: %s", redact.DSN(lockErr.Error()))
 	}
 	defer func() {
-		// Session lock is NOT auto-released; unlock on the same conn.
-		_, _ = conn.Exec(ctx, `SELECT pg_advisory_unlock(hashtext($1))`, AdvisoryLockKey)
+		if relErr := releaseSessionLock(ctx, conn); relErr != nil {
+			err = errors.Join(err, fmt.Errorf("EnsureRegistryIndex: %w", relErr))
+		}
 	}()
 	if p.afterSessionLock != nil {
 		p.afterSessionLock()

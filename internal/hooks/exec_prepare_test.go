@@ -34,6 +34,7 @@ type fixtureOptions struct {
 	extra      map[string]string // extra project files, written before approval
 	linked     bool              // enter the project through a symlink
 	unapproved bool              // do not approve the hook
+	toAgent    string            // match.to-agent of the hook
 }
 
 // newPrepareFixture builds an approved exec hook with the given flow-style
@@ -46,6 +47,13 @@ func newPrepareFixture(t *testing.T, command string) prepareFixture {
 func newPrepareFixtureWith(t *testing.T, command string, extra map[string]string) prepareFixture {
 	t.Helper()
 	return newFixture(t, command, fixtureOptions{extra: extra})
+}
+
+// newFixtureWithScript writes an extra executable project script before the
+// hook is approved. command is a flow sequence or a flow mapping.
+func newFixtureWithScript(t *testing.T, command, path, content string) prepareFixture {
+	t.Helper()
+	return newFixture(t, command, fixtureOptions{extra: map[string]string{path: content}})
 }
 
 func newFixture(t *testing.T, command string, opts fixtureOptions) prepareFixture {
@@ -70,7 +78,11 @@ func newFixture(t *testing.T, command string, opts fixtureOptions) prepareFixtur
 		require.NoError(t, os.WriteFile(path, []byte(content), 0o700))
 	}
 	command = strings.ReplaceAll(command, "{L}", logical)
-	yaml := "hooks:\n  - name: wake\n    match: {events: [comment.addressed]}\n    deliver: [exec]\n    exec: {command: " + command + "}\n"
+	match := "{events: [comment.addressed]}"
+	if opts.toAgent != "" {
+		match = "{events: [comment.addressed], to-agent: " + opts.toAgent + "}"
+	}
+	yaml := "hooks:\n  - name: wake\n    match: " + match + "\n    deliver: [exec]\n    exec: " + execValue(command) + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(mtixDir, "hooks.yaml"), []byte(yaml), 0o600))
 	state := testutil.OperatorState(t)
 	approvals := NewApprovals(mtixDir, state, false)
@@ -242,4 +254,12 @@ func TestStageScript_DetectsCopyChangedAfterWrite(t *testing.T) {
 	st := stager{afterWrite: func(path string) { require.NoError(t, os.WriteFile(path, []byte("tampered"), 0o700)) }}
 	_, err := st.stage(filepath.Join(t.TempDir(), "copies"), scriptInput{path: "/p/run.sh", content: []byte("#!/bin/sh\n"), mode: 0o700})
 	require.Error(t, err)
+}
+
+// execValue turns a flow sequence into {command: [...]}; a flow mapping is used as is.
+func execValue(command string) string {
+	if strings.HasPrefix(command, "{") {
+		return command
+	}
+	return "{command: " + command + "}"
 }

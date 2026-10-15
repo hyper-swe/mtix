@@ -75,6 +75,11 @@ type Store struct {
 	// (the config service re-reads the file for it).
 	historyExport func() bool
 
+	// historyLimit returns the history.max_entries_per_task limit (0 = unset,
+	// nothing is trimmed; MTIX-95.31.19.4). Nil means unset. It is called once
+	// per write that records history.
+	historyLimit func() int
+
 	// writerVersion is the mtix version recorded as the last writer of an
 	// export that carries history.
 	writerVersion string

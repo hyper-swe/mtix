@@ -207,6 +207,7 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 	// MTIX-95.31.19.5: history.export (default off) decides whether exports
 	// carry task history; the store reads it per export.
 	app.store.SetHistoryExportSource(app.configSvc.HistoryExport)
+	app.store.SetHistoryLimitSource(app.configSvc.HistoryMaxEntries) // MTIX-95.31.19.4: unset by default
 	app.store.SetWriterVersion(version)
 
 	// Resolve this process's author identity (MTIX-24): MTIX_AUTHOR_ID env >

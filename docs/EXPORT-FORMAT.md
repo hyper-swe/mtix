@@ -10,7 +10,9 @@ page describes that document: what it carries, how its checksum is
 computed, and how `mtix import` and the automatic import read it back.
 
 The current format is `schema_version` **2.0.0**, written by mtix 0.5.4 and
-later. mtix 0.5.3 and earlier wrote 1.0.0.
+later. mtix 0.5.3 and earlier wrote 1.0.0. With the experimental
+`history.export` switch on, the file is **2.1.0** and also carries task
+history (see [Task history in the export](#task-history-in-the-export-experimental)).
 
 ## Envelope
 
@@ -25,6 +27,7 @@ later. mtix 0.5.3 and earlier wrote 1.0.0.
 | `dependencies` | Every dependency, sorted by `from_id`, then `to_id`. |
 | `agents` | Agent records. |
 | `sessions` | Session records. |
+| `history` | Only in a 2.1.0 file, and only when it has entries: the change history of tasks that no longer exist (see below). Covered by the checksum. |
 | `node_count` | Number of entries in `nodes`; an import refuses a file where they differ. |
 | `checksum` | SHA-256 of the canonical JSON of `nodes` and `dependencies` (see [Checksum](#checksum)). |
 
@@ -66,10 +69,71 @@ an import rebuilds the full-text search index from the rows it writes.
 Local-only tables (the sync event log, hook and inbox state, the
 cascade-delete records) are not part of the export.
 
+## Task history in the export (experimental)
+
+> **Experimental, off by default.** Until the doctor guard for this switch
+> ships (MTIX-95.31.19.6), do not turn it on for a board that any older
+> mtix binary or daemon reads or writes.
+
+The config key `history.export` (`true` or `false`, default `false`)
+decides whether the file carries the per-task change history that mtix
+records locally.
+
+- **Off (the default).** The file is byte-for-byte what mtix wrote before
+  this switch existed: `schema_version` stays `2.0.0`, no node has a
+  `history` key and there is no top-level `history` list. Released readers
+  keep working with it.
+- **On.** `schema_version` is `2.1.0` and the envelope's writer-version key (see the table above) names the
+  mtix that last wrote the file (this build fills it in even when the caller
+  names none), so a reader can tell that an older writer may
+  have dropped history. Each node carries its entries in a `history` list
+  (omitted when it has none), oldest first: `id`, `task_uid`, `ts`,
+  `actor`, `origin`, `kind`, `field`, `old` and `new` (structured fields
+  only; free text is never recorded) and `event_id`. History of a task that
+  no longer exists goes in the optional top-level `history` list, sorted by
+  `task_uid`, `ts`, `id`; the list is omitted when empty, and no
+  placeholder task ever stands in for such a task. `task_uid` is the task's
+  `uid`, or its `id` when it has none.
+- **Checksum.** The node lists are part of each node, and the top-level
+  list is part of the hashed document (`{"nodes", "deps", "history"}`; the
+  last key is absent when the list is empty), so an edit to any entry fails
+  verification.
+- **Reading.** mtix accepts 2.1.0 and 2.0.0 files alike. A replace or merge
+  import (and the automatic import) unions the file's history into the store
+  by entry id, node lists and the top-level list alike. The union is
+  idempotent and does not depend on entry order; a local entry is never
+  dropped or changed. An entry the store holds identically counts as
+  `history_skipped`; one stored under a different entry id but the same
+  event key (`task_uid`, `event_id`, `field`) is the same event and counts
+  the same way. An entry id the store holds with other content (any field,
+  `task_uid` included) is a conflict: the local row is kept, the entry counts
+  in `history_conflicts` and a warning names the count and the first few
+  entry ids, never the content; the import still succeeds. An entry keyed by
+  a legacy dot id instead of a task uid is skipped and counted in
+  `history_skipped_legacy_key`. New entries count in `history_added`. An
+  entry id the file itself repeats with different content is stored in neither
+  copy and counts as a conflict. While `history.export` is on and the
+  envelope's writer-version key is older than 0.6.0 (the first release that
+  keeps task history) or empty, the import warns that history may be
+  incomplete; it is silent otherwise. A file is refused
+  when an entry has a kind, origin or time outside what mtix writes, or
+  when a top-level entry names a task the file holds.
+- **Conflict detection.** For a 2.1.0 file the writer-version key is left
+  out of the hash used to detect conflicts, so an upgrade does not look like
+  a change to the board.
+- **A running process** follows `mtix config set history.export` without a
+  restart. `mtix recover` labels its output 2.1.0 and keeps the history when
+  the mirror carries it.
+- **Older readers.** A released mtix (0.5.4 and earlier) drops the fields it
+  does not know, so a file with history fails its checksum there: `mtix
+  import` fails with `checksum verification failed` and the automatic import
+  loads no nodes. That is why the switch is off by default.
+
 ## Checksum
 
 The checksum is the SHA-256, in lowercase hex, of the JSON document
-`{"nodes": [...], "deps": [...]}`, with nodes sorted by `id` and
+`{"nodes": [...], "deps": [...]}` (plus `"history": [...]` in a 2.1.0 file
+whose top-level list is not empty), with nodes sorted by `id` and
 dependencies by `from_id`, then `to_id`. It covers every node field above,
 annotations included, so a file edited after mtix wrote it fails
 verification. The envelope fields, agents and sessions are not covered.

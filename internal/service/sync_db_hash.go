@@ -125,6 +125,12 @@ func exportHash(data *sqlite.ExportData, form baselineForm) (string, error) {
 	}
 	content := *data
 	content.ExportedAt = ""
+	// In format 2.1.0 the writer's version is metadata about the file, not
+	// board content: an upgrade or a different build must not make the store
+	// look changed (MTIX-95.31.19.5). 2.0.0 hashes are unchanged.
+	if content.SchemaVersion == sqlite.SchemaVersionHistory {
+		content.MtixVersion = ""
+	}
 	switch {
 	case form&formWithoutUIDs != 0:
 		older, err := sqlite.WithoutUIDs(&content)

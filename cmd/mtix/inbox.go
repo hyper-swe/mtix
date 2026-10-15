@@ -7,12 +7,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	inboxformat "github.com/hyper-swe/mtix/internal/format"
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -21,6 +26,9 @@ import (
 // It is silenced (root SilenceErrors) and mapped to exitCodeInboxEmpty so a
 // worker loop can branch on the exit code without parsing output (FR-19.4).
 var errInboxWaitEmpty = errors.New("inbox: wait timed out with no events")
+
+// errInboxWaitInterrupted maps SIGINT/SIGTERM during a wait to exit 7 (FR-19).
+var errInboxWaitInterrupted = errors.New("inbox: wait interrupted by signal")
 
 // newInboxCmd creates the mtix inbox command (FR-19.4 / MTIX-47.1): a per-agent
 // view of comments addressed to it, DERIVED from the event journal (not a
@@ -53,7 +61,7 @@ func newInboxCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&count, "count", false, "Print pending count without acknowledging or touching sessions")
 	cmd.Flags().BoolVar(&all, "all", false, "With --count, print total retained events including acknowledged events")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Long-poll: block until an event arrives or --timeout")
-	cmd.Flags().IntVar(&timeout, "timeout", 300, "Max seconds to block with --wait")
+	cmd.Flags().IntVar(&timeout, "timeout", 300, "Wait budget in seconds from entry; initial pending read may take longer (0 = no limit; negative refused)")
 	cmd.Flags().StringVar(&format, "format", "",
 		"Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection)")
 	_ = cmd.MarkFlagRequired("agent")
@@ -90,6 +98,9 @@ in order.`,
 }
 
 func runInbox(agent string, wait bool, timeout int, format string) error {
+	if timeout < 0 || int64(timeout) > math.MaxInt64/int64(time.Second) {
+		return fmt.Errorf("inbox: --timeout must be non-negative and fit a duration: %w", model.ErrInvalidInput)
+	}
 	if format != "" && format != "prompt" && format != "context" {
 		return fmt.Errorf("unknown --format %q (want 'prompt' or 'context')", format)
 	}
@@ -103,7 +114,7 @@ func runInbox(agent string, wait bool, timeout int, format string) error {
 		err    error
 	)
 	if wait {
-		events, err = app.store.InboxWait(ctx, agent, time.Duration(timeout)*time.Second)
+		events, err = waitInbox(ctx, agent, time.Duration(timeout)*time.Second)
 	} else {
 		events, err = app.store.InboxList(ctx, agent)
 	}
@@ -120,6 +131,18 @@ func runInbox(agent string, wait bool, timeout int, format string) error {
 		return errInboxWaitEmpty
 	}
 	return nil
+}
+
+// waitInbox translates OS signal cancellation to the documented exit-7
+// sentinel while preserving storage failures (FR-19).
+func waitInbox(ctx context.Context, agent string, timeout time.Duration) ([]sqlite.InboxEvent, error) {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	events, err := app.store.InboxWait(ctx, agent, timeout)
+	if errors.Is(err, context.Canceled) && ctx.Err() == context.Canceled {
+		return nil, errInboxWaitInterrupted
+	}
+	return events, err
 }
 
 // writeInbox renders the inbox in the selected shape: agent-ready formats

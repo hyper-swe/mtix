@@ -102,6 +102,8 @@ func (h Hook) deliverProblem() string {
 	switch {
 	case contains(h.Deliver, AdapterExec) && (h.Exec == nil || len(h.Exec.Command) == 0):
 		return "exec adapter requires exec.command (argv)"
+	case contains(h.Deliver, AdapterExec) && envPassCheck(h) != "":
+		return envPassCheck(h)
 	case contains(h.Deliver, AdapterWebhook) && (h.Webhook == nil || h.Webhook.URL == ""):
 		return "webhook adapter requires webhook.url"
 	case contains(h.Deliver, AdapterAppendFile) && (h.AppendFile == nil || h.AppendFile.Path == ""):

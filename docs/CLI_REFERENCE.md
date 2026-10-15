@@ -19,6 +19,7 @@ prompt chain propagation, and multi-agent orchestration.
 
 - `agent` — Manage agent lifecycle
 - `annotate <id> <text>` — Add an annotation to a node
+- `attach` — Harness glue entry points (internal; called through the attach shim)
 - `backup <path>` — Create a backup of the mtix database
 - `blocked [id]` — List nodes blocked by dependencies, or show the blockers of one node
 - `cancel <id>` — Cancel a node with mandatory reason
@@ -33,6 +34,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `delete <id>` — Soft-delete a node
 - `dep` — Manage node dependencies
 - `docs` — Manage agent-facing documentation
+- `doctor` — Run registered checkout and host health checks
 - `done <id>` — Mark a node as done
 - `export` — Export nodes to JSON
 - `gc` — Run garbage collection (clean expired soft-deletes)
@@ -186,6 +188,83 @@ Show current work assignment for an agent
 **Usage:** `annotate <id> <text>`
 
 Add an annotation to a node
+---
+
+## attach
+
+**Usage:** `attach`
+
+Harness glue entry points (internal; called through the attach shim)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+
+### Subcommands
+
+- `prompt-submit --harness <harness> --protocol <n>` — Attach verb prompt-submit (internal)
+- `session-end --harness <harness> --protocol <n>` — Attach verb session-end (internal)
+- `session-start --harness <harness> --protocol <n>` — Attach verb session-start (internal)
+- `wait --harness <harness> --protocol <n>` — Attach verb wait (internal)
+---
+
+## prompt-submit
+
+**Usage:** `prompt-submit --harness <harness> --protocol <n>`
+
+Attach verb prompt-submit (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+---
+
+## session-end
+
+**Usage:** `session-end --harness <harness> --protocol <n>`
+
+Attach verb session-end (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+---
+
+## session-start
+
+**Usage:** `session-start --harness <harness> --protocol <n>`
+
+Attach verb session-start (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+---
+
+## wait
+
+**Usage:** `wait --harness <harness> --protocol <n>`
+
+Attach verb wait (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
 ---
 
 ## backup
@@ -550,7 +629,8 @@ Manage agent-facing documentation
 
 Generate and manage agent-facing documentation files.
 
-Produces markdown files in the project's .mtix/docs/ directory that LLM agents
+Produces root MTIX.md plus native instruction pointers and reference markdown
+files in the project's .mtix/docs/ directory that LLM agents
 read to understand how to use mtix. Generated from runtime introspection
 of CLI commands, state machine, MCP tools, and configuration.
 
@@ -565,7 +645,12 @@ of CLI commands, state machine, MCP tools, and configuration.
 
 Generate agent-facing documentation
 
-Generate all 11 documentation files in the project's .mtix/docs/ directory.
+Fully regenerate the root MTIX.md briefing and append one native instruction
+pointer in CLAUDE.md and AGENTS.md, preserving other user content. Keep the
+first live owned pointer and remove later duplicates. Valid old
+mtix marker blocks are migrated; malformed pairs are refused. HYPERSWE.md
+suppresses new pointers and native-file creation; existing pointers remain.
+Also generate all 11 reference files in the project's .mtix/docs/ directory.
 
 Auto-generated files (CLI_REFERENCE.md, STATUS_MACHINE.md, TROUBLESHOOTING.md)
 are always regenerated. Template-based files are only created if missing,
@@ -576,6 +661,35 @@ unless --force is used.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--force` |  | Force regeneration of all files including template-based ones | false |
+---
+
+## doctor
+
+**Usage:** `doctor`
+
+Run registered checkout and host health checks
+
+Run registered health checks for this checkout and host.
+
+Sync checks run only for configured transports. An unused Postgres transport is
+not checked on a relay-only board. WARN and INFO are advisory: exit 0 when no
+check fails, or 2 when any check reports FAIL.
+
+--json emits an array with exactly id, status, detail and fix for each check.
+--fix performs only explicitly registered non-grant repairs and rechecks them.
+Grant commands are printed for you to run yourself; they are never executed.
+
+The read-only docs.stale check compares board-root MTIX.md with this binary
+and checks live native pointers. WARN prints mtix -C <board-root> docs generate;
+run that command and rerun doctor. --fix never writes these documents.
+HYPERSWE.md suppresses missing native pointers, but MTIX.md is still checked.
+Setup checks will be registered by their future features.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--fix` |  | Perform explicitly registered non-grant repairs, then recheck | false |
 ---
 
 ## done
@@ -743,10 +857,15 @@ including --wait=false or --format=. Any --all flag requires active --count;
 --count=false alone keeps listing behavior. Count flags apply only to inbox,
 not its ack or lease subcommands.
 
-With --wait, block until a new addressed event arrives — the primitive a worker's
-outer loop parks on between tasks — or until --timeout seconds elapse. Exit 0
-when events are returned; exit 5 on an empty timeout (so a loop can distinguish
-"woke with work" from "nothing yet").
+With --wait, return already pending events even if the initial database lookup
+outlasts --timeout. That lookup remains interruptible by SIGINT or SIGTERM.
+After an empty lookup, wait for new addressed events using only the remaining
+--timeout budget measured from entry (default 300 seconds).
+Use --timeout 0 for no limit: wait until an event or a signal. A negative timeout
+or a value too large to represent a duration is refused. Returned events mean
+exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+Use bounded waits within foreground tool limits; an indefinite park suits a
+background task whose harness supports it.
 
 --format emits agent-ready text instead of the plain listing (FR-20 §9,
 "delivery terminates in the prompt"):
@@ -767,7 +886,7 @@ Reads never ack — acknowledgement stays explicit.
 | `--all` |  | With --count, print total retained events including acknowledged events | false |
 | `--count` |  | Print pending count without acknowledging or touching sessions | false |
 | `--format` |  | Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection) |  |
-| `--timeout` |  | Max seconds to block with --wait | 300 |
+| `--timeout` |  | Wait budget in seconds from entry; initial pending read may take longer (0 = no limit; negative refused) | 300 |
 | `--wait` |  | Long-poll: block until an event arrives or --timeout | false |
 
 ### Subcommands
@@ -866,7 +985,8 @@ Initialize a new mtix project in the current directory.
 
 Creates .mtix/ directory structure with config, database, and logs.
 Creates .mtix/board-id with one stable UUID; commit it with the board.
-Generates agent documentation in .mtix/docs/.
+Generates root MTIX.md, native instruction pointers and .mtix/docs/ references.
+HYPERSWE.md suppresses new pointers and native instruction file creation.
 
 The prefix may be given as an argument (mtix init MYPROJ) or with --prefix.
 
@@ -1013,19 +1133,17 @@ claude-code: 6 skill files + 4 compliance reference checklists into
 .claude/skills/ (or ~/.claude/skills/ with --global). Skills include
 safety-critical operating procedures as baseline — context chain
 traversal, independent verification, traceability, anomaly reporting.
-Project-local installs also write CLAUDE.md at the project root, the
-top-level briefing Claude Code reads; an existing CLAUDE.md is never
-modified — the install reports a skip naming .mtix/docs/CLAUDE.md as
-the copy to merge from.
+Project-local installs regenerate root MTIX.md and append one pointer to each
+native instruction file (CLAUDE.md and AGENTS.md), preserving user content.
+Valid mtix marker blocks migrate; malformed pairs are refused. HYPERSWE.md
+suppresses new pointers and native-file creation; existing pointers remain.
 
-codex: AGENTS.md (Codex's native instruction file) at the project root
-and an MCP server entry in .codex/config.toml (or ~/.codex/ with
---global). Existing files are never modified — if config.toml exists,
-the stanza to add is printed instead.
+codex: MCP server entry in .codex/config.toml; --global uses ~/.codex/
+and an AGENTS.md briefing. Existing config.toml is preserved and the stanza
+to add is printed instead.
 
-pi: AGENTS.md at the project root (or ~/.pi/agent/ with --global); pi
-loads it natively. pi has no built-in MCP — setup guidance for the
-community pi-mcp-adapter extension is printed.
+pi: pi-mcp-adapter guidance; --global uses ~/.pi/agent/AGENTS.md.
+Global installs retain their previous write-if-absent instruction behavior.
 
 The target may be given as an argument (mtix plugin install codex) or with
 --target.
@@ -1659,6 +1777,9 @@ Run health checks against the local store and the BYO Postgres hub:
                            needs a known local hub observation
   board.hub-identity-changed - warns when the observed hub differs from
                            a recorded confirmation; recovery is planned
+  alerts.recent          - latest 20 operator-local counted diagnostics;
+                           never wake anyone or write the board journal;
+                           this check creates no state and contacts no hub
   Operator state placement - reports the sandbox placement limitation
   Inbox envelope caps    - validates operator-local wake.json without hub contact;
                            missing or zero caps are unlimited; invalid settings

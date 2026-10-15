@@ -68,6 +68,16 @@ type Store struct {
 	// — and (MTIX-53) dispatch hooks host-side. Registered once during wiring,
 	// before any traffic, so the slice needs no lock.
 	onCommit []func()
+
+	// historyExport reports whether exports carry task history (config key
+	// history.export, default off; MTIX-95.31.19.5). Nil means off. It is
+	// called once per export, so a changed setting applies to the next export
+	// (the config service re-reads the file for it).
+	historyExport func() bool
+
+	// writerVersion is the mtix version recorded as the last writer of an
+	// export that carries history.
+	writerVersion string
 }
 
 // New creates a new Store with the given database path.

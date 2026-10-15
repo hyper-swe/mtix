@@ -6,6 +6,15 @@ description: "Set up, use, verify and recover the MTIX sync hub, the shared Post
 
 The hub is a Postgres database that you and your teammates' agents push task changes to and pull each other's changes from. Each machine keeps its own local store; the hub carries the event log between them. This skill is the full runbook: requirements, setup from zero, daily use, verification, troubleshooting and recovery. The short routine is in the managed SYNC section of `CLAUDE.md` and `AGENTS.md`.
 
+## Automatic export activity
+
+An unchanged board keeps `.mtix/tasks.json` bytes, mtime and `exported_at`,
+including across idle daemon ticks. Treat these as publication metadata, not a
+daemon heartbeat. A real content change publishes the new snapshot once;
+pending export recovery still completes when the file already matches.
+`sync_export_completed` is Debug-only: use `--log-level debug` to inspect actual
+publications. Quiet idle ticks produce no completed-publication record.
+
 ## Board identity
 
 New boards created by `mtix init` have one UUID followed by a newline in
@@ -97,6 +106,18 @@ A hub receipt is published only when the completed pull observes no pending outb
 Receipt diagnostics use fixed categories; unknown stored or supplied values report `unknown`. A completed publication failure keeps its specific category. Unexpected, missing or repeated fetched IDs prevent a new receipt without changing valid event application. Pull requires exclusive local sync ownership; retry after a contending owner finishes.
 
 A contended local sync lock makes ordinary `mtix sync pull` fail. With `MTIX_SYNC_HOOK=1`, native lock contention instead warns that the pull was not performed and returns success. Retry after the current owner finishes; no pull was completed or automatically retried. Filesystem acquisition failures and cancellation remain errors. Never delete the sync lock file to bypass its owner.
+
+## Task history in tasks.json (experimental)
+
+Each task carries a change log (field, old and new value for structured fields, actor, origin, time). By default `.mtix/tasks.json` does not include it, so every released mtix can still read the file. The switch is `history.export`:
+
+1. **Configure.** `mtix config set history.export true` turns it on; `mtix config set history.export false` turns it off. Turn it on only when the user asks and every machine and daemon that reads or writes this board runs this version or later: mtix 0.5.4 and earlier fail the checksum of a file that carries history. No doctor check verifies that yet, so ask the user.
+2. **Verify.** `mtix config get history.export` shows the setting. After the next change, `.mtix/tasks.json` has `schema_version` `2.1.0` and a `history` list on the tasks that have entries; with the switch off it stays `2.0.0` with no history keys.
+3. **Use.** History of tasks that no longer exist travels in an optional top-level `history` list, covered by the checksum. `mtix import` (replace or merge) and the automatic import union the file's history into the store by entry id: a local entry is never dropped or changed, an entry the store already holds is counted as skipped, and the union is idempotent, so importing the same file twice adds nothing. The import result (`--json`) carries `history_added`, `history_skipped`, `history_conflicts` and `history_skipped_legacy_key`. A conflict is an entry id the store holds with other content: the local entry is kept, the import still succeeds and a warning names the count and the first few entry ids, never the content. Entries keyed by an old dot id rather than a task uid are skipped and counted, because the dot id could name a different task on another machine. The automatic import reports conflicts and skipped legacy-key entries once per imported file on stderr (with `--json`: one JSON line with `"warning":"history_import"` and the counts). An entry id the file repeats with different content is stored in neither copy and counts as a conflict. The older-writer warning applies only while `history.export` is on: when the file's last writer is older than the first mtix release that keeps task history (0.6.0 today; the threshold rises whenever the history format changes in a way older writers would lose) or recorded no version, the import prints the warning "history may be incomplete: board last written by mtix X; upgrade mtix on that machine" (for a file with no recorded version: "...written by mtix of an unrecorded version; upgrade mtix on that machine") on stderr, prefixed `warning:` for `mtix import` and `mtix: warning:` for the automatic import (with `--json`: a `warnings` list in the result, and a one-line JSON `{"warning":"history_incomplete",...}` on stderr for the automatic import). A writer at or above that release, a development build and a board with `history.export` off never warn. Upgrade that machine and let it write the board again; do not hand-edit entries. Experimental until the doctor guard (MTIX-95.31.19.6) ships.
+4. **Troubleshoot.** An older mtix reporting `checksum verification failed` on a file with `schema_version` `2.1.0` is not corruption: that binary cannot read history. Upgrade it, or turn the switch off and let the next change rewrite the file as 2.0.0.
+5. **Recover.** `mtix config set history.export false`, then run any writing command (for example `mtix sync push`) so the file is rewritten without history. The local change log is kept in the store either way.
+
+Never edit history entries in `.mtix/tasks.json` by hand (the checksum covers them), and never turn the switch on to work around a sync problem.
 
 ## Requirements checklist
 
@@ -218,7 +239,7 @@ Use the writer's DSN for daily sync. The owner's DSN is for the commands in the 
 4. Ask the administrator to run the writer's GRANT statements from the previous section, then ask the user to switch `MTIX_SYNC_DSN` (or `.mtix/secrets`) to the **writer's** DSN.
 5. Run `mtix sync doctor` and fix every FAIL it reports (see "Verify with doctor").
 6. Run `mtix sync push`, then `mtix sync pull`. A second machine runs `mtix init` for the same project prefix, receives the writer's DSN the same way, and runs `mtix sync clone` to rebuild the local store from the hub.
-7. Run `mtix docs generate --force` in a process that can see the DSN source (`MTIX_SYNC_DSN` set, or `.mtix/secrets` present); without one, the SYNC section stays the one-line pointer. It writes `.mtix/docs/CLAUDE.md` and `.mtix/docs/AGENTS.md`; the project-root `CLAUDE.md` and `AGENTS.md` that `mtix plugin install` writes only when absent are not refreshed by it and point at the `.mtix/docs/` copy, which is the one mtix keeps current: read the SYNC section there. In a file that already has generated marker blocks, `--force` refreshes those blocks and appends any block the file lacks (the SYNC section included) after your own text, and changes nothing else. A file with no markers is rewritten whole, so ask the user first if they edited it.
+7. Run `mtix docs generate` in a process that can see the DSN source (`MTIX_SYNC_DSN` set, or `.mtix/secrets` present); without one, the SYNC section stays the one-line pointer. This fully refreshes the root `MTIX.md` briefing, replacing edits to that mtix-owned file. Native root `CLAUDE.md` and `AGENTS.md` get only one pointer; valid old mtix marker blocks are migrated without changing other user bytes, and malformed pairs are refused. `HYPERSWE.md` suppresses new pointers and native-file creation; existing pointers remain. Git exclusion is reconciled from all existing root pointer files on every run: all ignored adds one marked mtix block in `info/exclude`; tracked/default or no pointers removes only that owned block, preserving user rules. A user rule still ignoring `MTIX.md` with a tracked pointer produces a notice. Reference files in `.mtix/docs/` retain their existing regeneration policy: `--force` refreshes marked sections of template-based files and appends missing blocks, or rewrites a marker-free template file whole. Ask the user first if they edited a reference file that will be rewritten.
 
 For a development hub on this machine (loopback or a local socket only), `--insecure-tls` on the sync commands allows a weaker `sslmode`; never use it for a remote hub.
 

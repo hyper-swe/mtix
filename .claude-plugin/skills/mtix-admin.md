@@ -7,6 +7,93 @@ allowed-tools:
 
 # MTIX — Administration
 
+## Health checks
+
+Run `mtix doctor` for registered checkout and host diagnostics, or
+`mtix doctor --json` for an array containing exactly `id`, `status`, `detail`
+and `fix` on every row. Status is `pass`, `warn`, `fail` or `info`. Exit 0
+means no FAIL; WARN and INFO are advisory. Exit 2 means at least one FAIL.
+An empty applicable registry is `[]` in JSON. Windows reports
+`platform.windows` as INFO because built-in wakes are unavailable.
+
+The sync result rows use a `sync.` prefix and run only for configured
+transports. A relay-only checkout does not run unused Postgres checks.
+The separate `mtix sync doctor` command keeps its existing report and behavior.
+
+Use `mtix doctor --fix` only when you want explicitly registered non-grant
+repairs to run; each successful repair is checked again. Grant commands and
+other advisory remedies are printed for you to run yourself, never executed
+by this flag. Existing sync checks currently register no automatic repairs.
+Follow each printed remedy and rerun doctor. All report fields and diagnostics
+are redacted before output; never put credentials into a command argument.
+
+The read-only `docs.stale` check compares the board-root `MTIX.md` with
+this binary's generated instructions and checks live native pointer lines.
+Missing or stale instructions and missing or duplicate pointers produce WARN.
+Fenced and indented examples do not count as live pointers. `HYPERSWE.md`
+suppresses the missing-pointer requirement; existing pointers are allowed and
+`MTIX.md` is still checked. Follow the exact printed command,
+`mtix -C <board-root> docs generate`, then rerun doctor. Generation keeps the
+first live owned pointer and removes later duplicates, preserving other bytes.
+This check never writes documents or Git exclusions, including with `--fix`.
+
+Setup completion (`setup.done`, MTIX-112.19.2) remains a FUTURE registration.
+Do not infer that setup is current from the absence of that row.
+
+### Attach checks
+
+The operator-local directory can hold release-defined attach artifacts. The
+attach shim (`mtix-shim`) is a POSIX shell script that records the unresolved
+mtix path and the operator's uid. On every run, with a fixed `PATH`, it walks
+that path one component at a time from `/`, following at most 32 symbolic
+links (to files or directories) and resolving `..` physically. It refuses
+unless every directory it enters (so every ancestor and the directory holding
+each link), every link and the final file are owned by the operator or root
+and not writable by group or others (a root-owned sticky directory such as
+`/tmp` is allowed). It then runs the fully resolved path it checked, never a
+path through a link. The Go check behind `setup.shim` applies the same rule.
+This version installs no shim, harness glue or host
+dispatcher service; it checks and repairs those artifacts when they exist.
+Doctor shows these rows only when they apply:
+
+- `setup.shim`: PASS when the shim matches this release. WARN with the fix
+  `mtix doctor --fix` when its bytes are out of date; the repair rewrites
+  only the shim and its record. FAIL when its target is refused or its record is
+  missing; the fix names the refused component (for example `chmod go-w`
+  on the writable directory or file, or removing a link owned by another
+  user). Windows has no shim,
+  and `platform.windows` says so.
+- `glue.<harness>`: harness glue called mtix with an attach protocol other
+  than this release's. The previous protocol is still served and the glue is
+  marked for refresh; any other protocol makes that session inbox-only, so
+  read messages with `mtix inbox`. The fix names `mtix doctor --fix` only
+  when this build can rewrite that glue; glue newer than this mtix needs an
+  mtix upgrade (compare `mtix version`), and older glue this build cannot
+  rewrite must be corrected or removed in the harness configuration. The
+  attach verb's stderr line and alert name the same fix.
+- `attach.failures`: recent `attach.protocol-skew` and `attach.verb-failure`
+  operator alerts from the hidden attach verbs, with counts. These verbs are
+  entry points for harness glue, not for agents. They always exit 0, even on
+  arguments they cannot parse or a verb this build does not know, print one
+  line on stderr and nothing on stdout, and record every failure as an
+  operator alert that carries its own fix (for example the glue fix above for
+  protocol skew, or upgrading mtix for an unknown verb).
+- `attach.state`: INFO when operator state cannot be read at all (for example
+  `HOME` is unset); the attach rows are skipped and the row names the remedy.
+  Doctor itself still runs.
+- `skew.dispatchers`: a host dispatcher heartbeat on this board that is older
+  than this mtix, or below the board's `min_dispatch_protocol`. This version
+  installs no dispatcher service, so mtix cannot restart it; the fix names
+  the PID to stop and start. `mtix agent register` prints the same notice.
+  It never restarts a dispatcher from inside a harness session, and restarts
+  one at most once per hour. Until a restart has really happened, every check
+  reports the older dispatcher again and raises an operator alert; mtix never
+  claims a restart it did not make.
+
+Any unsandboxed mtix command, and `mtix doctor --fix`, rewrites an
+out-of-date shim without a terminal. These repairs never change a grant,
+approval or confirmation.
+
 ## Local coordination schema
 
 Coordination tables are added locally without increasing the database schema version. The released v0.5.4-beta client was verified for `list`, `create`, and `sync pull`, with these additive local coordination tables preserved. Newly created stores have a stable random `store_instance_id`; reopening a store never replaces it, and upgrading a legacy store does not assign one automatically. The `min_dispatch_protocol` metadata key is reserved for planned dispatch compatibility; these schema foundations do not enable an attached dispatcher.
@@ -108,6 +195,7 @@ Key configuration options:
 - `session_timeout` — maximum session duration (default: 8h)
 - `data.soft_delete_retention` — how long to keep deleted data (default: 720h/30 days)
 - `sync.keep_roles` — comma-separated hub roles that `mtix sync harden` leaves with their access (default: none; see Hub Privileges). Setting it turns on strict mode for the doctor's `hub-privileges` check, which then fails whenever `mtix sync harden` would report a finding, or when the check cannot run
+- `history.export` — EXPERIMENTAL, default `false`. When `true`, `.mtix/tasks.json` is written in export format 2.1.0 with each task's change history; mtix 0.5.4 and earlier cannot read such a file (their import fails its checksum, and their automatic import loads nothing). Turn it on only when the user asks and every machine and daemon that touches the board runs this version or later; no doctor check verifies that yet, so ask the user. A running process follows `mtix config set history.export` without a restart
 
 ## Hub Privileges (Sync Hub Owners)
 
@@ -382,6 +470,14 @@ Filesystem checks cannot detect sandbox write access granted to an operator-owne
 
 This directory holds a persistent host identifier and host-specific state records. Other-host records are ignored and reported. Missing records are empty; invalid or inaccessible state is refused. This storage API validates records; hook approval and legacy conversion follow the workflow below. To recover, correct the reported path, ownership or access rules manually, then repeat `mtix hooks status --json`; preserve existing state records while correcting permissions.
 
+### Recent operator alerts
+
+`mtix sync doctor` and `mtix sync doctor --json` show the `alerts.recent` check, sampling the latest 20 logical diagnostics on this host. A recent diagnostic is a WARN and does not fail an otherwise passing doctor; absent alert state passes without creating files. This check reads only operator-local state; other checks in the same doctor still contact a configured hub, and a missing hub configuration can independently fail the overall report. Alerts never wake anyone, never address the concerned agent and never enter the board journal. Surface the diagnostic to the operator and follow the exact fix it prints; do not repost it to the agent named in the row.
+
+The log carries one logical row per agent and class per rolling hour, with a count and first/last timestamps. Another occurrence increments the count; exactly one hour after the first occurrence opens another window, and while the rate record exists a backward clock step does not reset the count and never refuses a raise. `alerts.jsonl` and two numbered archives retain three segments of at most 1 MiB each. Rate records retain the current count across restarts and log eviction: one bounded host-specific record per distinct agent/class pair, and a record whose hour window has closed is removed automatically on the next alert write. Their disk usage is therefore bounded by the number of distinct agent/class pairs raised in the last hour, not by a fixed cap. A pruned or lost rate record restarts the count from zero: the next occurrence is counted as a fresh window and a warning (`operator alert rate record missing; count restarts`) is logged when a row for that pair is still inside its hour; the raise is never refused. This is separate from wake-frequency policy. Interrupted writes may leave duplicate physical log rows, which doctor reconciles by stable row identifier and greatest compatible count.
+
+A diagnostic can be accepted durably before its log projection finishes. An I/O error may therefore leave an accepted occurrence, and retrying a raise can count another occurrence. The next writer replays pending projection without incrementing its count. Doctor displays accepted pending diagnostics without repairing state or creating a host identifier or lock. Diagnostic text is bounded plain UTF-8; JSON rows carry `id`, `host_id`, `agent`, `class`, `first_at`, `last_at`, `count`, `detail` and `fix`. A failed `alerts.recent` check means state could not be validated: preserve all existing logs, rate and pending records, run `mtix hooks status --json`, and correct the reported path or access rules. Do not delete a pending record, unlink the alert lock or copy records from another host to clear a warning. Existing permissions and placement constraints still apply; atomic replacement does not promise power-loss durability.
+
 ## Exec hook approvals
 
 Exec approvals belong to the local operator. Use `mtix hooks status` to inspect
@@ -422,24 +518,100 @@ directory of the process that dispatches it. Launch rules:
   the file does not exist yet: create it and approve the hook again. Paths are
   judged both as entered and after following links, so a link into the project
   counts as a project path.
-- Options before the script must be in this list; anything else is refused when
-  the hook is approved and again at launch, because the script position is
-  never guessed. `sh`, `bash`, `zsh`, `dash`, `ksh`, `ash`: `-o NAME`,
-  `+o NAME`, `-O NAME`, `+O NAME`, `--posix`, `--noprofile`, `--norc`, and
-  clusters of `-` or `+` with the letters `a e f h m n u v x b C`. `python`:
-  `-W VALUE`, `-X VALUE`, and clusters of `-` with `B E I O q s S u v x`.
-  `node`: `--no-warnings`, `--enable-source-maps`, `--trace-warnings`,
-  `--no-deprecation`. `perl`: clusters of `-` with `w W T t`. `ruby`: `-w`,
-  `-W0`, `-W1`, `-W2`. `env`: `-i`, `-u NAME`, `--` and `NAME=VALUE`.
-  Interpreters are matched by name without regard to case or version suffix
-  (`SH`, `bash5`, `python3.12`, `nodejs`, `perl5.34`). Inline code and code
-  loading are refused, per interpreter: `sh`, `bash` and the other shells `-c`,
-  `--rcfile` and `--init-file`; `python` `-c` and `-m`; `node` `-e`, `-r` and
-  `--require`; `perl` `-e` and `-I`; `ruby` `-e`, `-r` and `-I`. Move the logic
-  into a script file in the project and approve it. Assignments of
-  `BASH_ENV`, `ENV`, `NODE_OPTIONS`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`,
-  `RUBYLIB`, `PYTHONPATH` or `PYTHONSTARTUP` through `env` are refused, and
-  those variables are removed from the environment of every hook.
+- Options before the script must be in this list; anything else is refused
+  when the hook is approved and again at launch, because the script position
+  is never guessed.
+  - `sh`, `bash`, `zsh`, `dash`, `ksh`, `ash`, `tcsh`, `csh` and `fish` share
+    one table: `-o NAME`, `+o NAME`, `-O NAME`, `+O NAME`, `--posix`,
+    `--noprofile`, `--norc`, and clusters of `-` or `+` with the letters
+    `a e f h m n u v x b C`. The option `-b` ends option processing for every
+    shell name (the argument after it is the script), because `sh` can be
+    `zsh`. Options outside the table are refused.
+  - `python`: `-W VALUE`, `-X VALUE`, and clusters of `-` with
+    `B E I O q s S u v x`. `-X pycache_prefix=...` is refused.
+  - `node`: `--no-warnings`, `--enable-source-maps`, `--trace-warnings`,
+    `--no-deprecation`. `perl`: clusters of `-` with `w W T t`. `ruby`: `-w`,
+    `-W0`, `-W1`, `-W2`.
+  - `env`: `-u NAME`, `--` and `NAME=VALUE`. `env -i`, and `env -u` of any
+    `MTIX_*` name (in any letter case), are refused, because they remove
+    variables that mtix sets for loop prevention. After `env --` the next
+    argument is the program and gets the same checks.
+  - Interpreters are matched by name without regard to case or version suffix
+    (`SH`, `bash5`, `python3.12`, `python3.11-intel64`, `zsh-5.9`, `nodejs`,
+    `perl5.34`, also with a `.exe` suffix): a family name followed by a
+    version or architecture suffix that starts with a digit, dot, underscore
+    or hyphen. Also covered: `pythonw`, `pypy`.
+  - Inline code and code loading are refused, per interpreter: `sh`, `bash`
+    and the other shells `-c`, `--rcfile` and `--init-file`; `python` `-c` and
+    `-m`; `node` `-e`, `-r` and `--require`; `perl` `-e` and `-I`; `ruby`
+    `-e`, `-r` and `-I`. Move the logic into a script file in the project and
+    approve it.
+  - A hook may use at most one top-level `env`; a second `env` or any other
+    command wrapper (`nohup`, `nice`, `ionice`, `xargs`, `arch`, `timeout`,
+    `stdbuf`, `unbuffer`, `setsid`, `sudo`, `doas`, `command`, `exec`,
+    `builtin`, `time`, `chrt`, `taskset`, `script`, `flock`, `watch`,
+    `caffeinate`, `busybox`) is refused, naming the wrapper. A relative path
+    that leaves the project (`../../usr/bin/nohup`) is a PATH-style program,
+    not a project file. An approved hook runs as written: pinning covers
+    project script files, and a hook that makes some other program run
+    project files is the operator's responsibility.
+  - Environment assignments through `env` follow an allowlist. Every argument
+    containing `=` before the program is an assignment, and its name must be
+    a valid identifier. Allowed: `LANG`, `LANGUAGE`, `TZ`, `TERM`, `NO_COLOR`,
+    `LC_*`, and project-specific names matching `^[A-Z][A-Z0-9_]*$` that are
+    not in a loader family. Refused by name or family: `BASH_ENV`, `ENV`,
+    `ZDOTDIR`, `FPATH`, `MODULE_PATH`, `SHELLOPTS`, `BASHOPTS`, `PS4`,
+    `PROMPT_COMMAND`, `IFS`, `CDPATH`, `GCONV_PATH`, `GOFLAGS`, `GOENV`,
+    `GOROOT`, `GOPATH`, `APPDATA`, `LOCALAPPDATA`, `USERPROFILE`, `PHPRC`,
+    `PHP_INI_SCAN_DIR`, `TCLLIBPATH`, `CLASSPATH`, `MAVEN_OPTS`,
+    `GRADLE_OPTS`, `BASH_*`, `ZSH*`, `PYTHON*`, `NODE_*`, `PERL*`, `RUBY*`,
+    `GEM_*`, `LD_*`, `DYLD_*`, `OPENSSL_*`, `XDG_*`, `GIT_*`, `JAVA_*`,
+    `JDK_*`, `LUA_*`, `DOTNET_*`, `CORECLR_*`, `COR_*`, `ERL_*`, `JULIA_*`,
+    `R_PROFILE*`, `R_ENVIRON*`, `R_LIBS*`, `GO*`, `CGO_*`, `RUSTC_*`,
+    `CARGO_*` and `NPM_CONFIG_*`, and the variables that name a command to
+    run: `LESSOPEN`, `PAGER`, `EDITOR`, `VISUAL`, `SHELL`, `COMSPEC` and
+    `PATHEXT`. All `MTIX_*` names are refused too: mtix sets its own (loop
+    prevention, identity, sync credentials). Lowercase names such as
+    `http_proxy` are refused. `PATH` cannot be set by a hook: mtix provides a
+    fixed one. `HOME` is accepted only when its value is outside the project
+    (also after following links). The refusal message names the variable and
+    the rule.
+  - The environment a hook runs in is explicit. The dispatcher's environment
+    is not inherited: the hook receives only `HOME`, `USER`, `LOGNAME`,
+    `LANG`, `TZ`, `TMPDIR`, `TERM`, `NO_COLOR` and the exact locale names
+    `LC_ALL`, `LC_CTYPE`, `LC_COLLATE`, `LC_MESSAGES`, `LC_MONETARY`,
+    `LC_NUMERIC`, `LC_TIME`, `LC_ADDRESS`, `LC_IDENTIFICATION`,
+    `LC_MEASUREMENT`, `LC_NAME`, `LC_PAPER` and `LC_TELEPHONE` (other `LC_`
+    names are not passed), and the deny rules below apply to every name. On
+    Windows the hook also receives `SystemRoot`, `ComSpec`, `PATHEXT`,
+    `USERPROFILE`, `TEMP` and `TMP`; `ComSpec`, `PATHEXT` and `USERPROFILE`
+    are the one exception to the deny rules, because the system needs them.
+    It also receives the
+    variables named in the hook's `exec.env-pass` list, and the mtix markers
+    `MTIX_EVENT`, `MTIX_HOOK_ORIGIN` and `MTIX_HOOK_SCRIPT_PATH`. Credentials
+    such as `MTIX_SYNC_DSN` and relay keys never reach a hook.
+    `MTIX_AUTHOR_ID` is the hook's `to-agent`, or unset; the dispatcher's
+    author id is never passed on.
+  - `exec.env-pass` is a list of variable names in the hook stanza, so the
+    operator approves it with the hook. Names must be valid variable names
+    and must not be credential-shaped (`*_KEY`, `*_TOKEN`, `*_SECRET`,
+    `*_PASSWORD`, anything with `DSN`), an `MTIX_*` name, `PATH`, or in a
+    loader or startup family; such a name disables the hook with a warning
+    that names it. To give a hook a secret, read it from an operator-owned
+    file inside the script. The list holds at most 32 names of at most 128
+    bytes each; a longer list or name is refused the same way, at load and
+    when you run `mtix hooks approve`, which names the variable and the
+    reason.
+  - The `PATH` of a hook is fixed: the directory of the running `mtix`
+    binary (unless it is inside the project), then system directories
+    (in this order: `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`,
+    `/sbin`; on macOS `/opt/homebrew/bin` and `/opt/homebrew/sbin` come
+    first, then `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`;
+    on Windows `System32` and the Windows directory under `C:\Windows`; the dispatcher's
+    `SystemRoot` is not used for the hook `PATH`). It has no relative entry and no project
+    directory. The program and the interpreter are resolved against it, never
+    against the dispatcher's `PATH`, so use an absolute program path for tools
+    installed elsewhere.
 - Any other argument that names a project file at approval time, in any
   position except the program and the script, and including the value of
   `--opt=VALUE` or `NAME=VALUE`, is pinned
@@ -468,3 +640,20 @@ interpreter needs no new review.
 Residual: a file that appears at a non-script position between the launch check
 and the moment the interpreter opens it is not covered, because only files that
 existed at approval are pinned there.
+
+Program review notice: when you approve an exec hook whose program is neither
+a pinned project script nor a known interpreter running one, `mtix hooks trust`
+prints a "Program review" notice, and its `--json` result carries a
+`program_review` object with `class`, `review_needed`, `program`, `detail` and
+`fix`. A known interpreter means an exact interpreter name (for example `sh`,
+`bash`, `python3`, `node`; case-insensitive, with `.exe`, `.cmd` or `.bat`
+accepted) as a bare name or as an absolute path in a PATH directory, running a
+pinned project script; any other path or name is reported with its
+symlink-resolved path. A hook that cannot be classified is reported as
+`unknown` and needs review. `mtix hooks status` reports the same object for
+each hook, and `mtix doctor` shows the `hooks.programs` check: WARN with the
+exact fix lists the approved hooks that need review and any `hooks.yaml` load
+problem, PASS means none do (no row appears when there is no `hooks.yaml`).
+The notice is advisory: the hook still runs as written and launch behaviour
+does not change. To clear it, run the program through a pinned project script
+and approve the hook again.

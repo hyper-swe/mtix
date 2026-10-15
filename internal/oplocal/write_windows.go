@@ -86,3 +86,16 @@ func renameFile(dir, f *os.File, name string, exclusive bool) error {
 	var result windows.IO_STATUS_BLOCK
 	return ntError(windows.NtSetInformationFile(windows.Handle(f.Fd()), &result, (*byte)(unsafe.Pointer(&info)), size, windows.FileRenameInformation))
 }
+
+// removeData deletes one state record relative to the verified directory.
+func removeData(dir *os.File, name string) (err error) {
+	f, err := relativeOpen(dir, name, windows.FILE_NON_DIRECTORY_FILE, windows.FILE_OPEN, windows.GENERIC_READ|windows.DELETE)
+	if err != nil {
+		return fmt.Errorf("open state record: %w: %w", err, invalid("remove failed"))
+	}
+	defer closeWith(f, &err)
+	if err = verifyFile(f, false); err != nil {
+		return err
+	}
+	return discardFile(f)
+}

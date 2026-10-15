@@ -74,6 +74,18 @@ type ImportResult struct {
 	// WorkflowResolved lists the tasks whose differing workflow values the
 	// merge settled with the caller's choice (MTIX-95.31.13).
 	WorkflowResolved []WorkflowConflict `json:"workflow_resolved,omitempty"`
+	// HistoryAdded counts the task-history entries the import stored;
+	// HistorySkipped those the store already held identically;
+	// HistoryConflicts those whose entry id the store holds with other
+	// content (the local row is kept); HistorySkippedLegacyKey those keyed by
+	// a legacy dot id rather than a task uid (MTIX-95.31.19.9, ADR-006 A3).
+	HistoryAdded            int `json:"history_added,omitempty"`
+	HistorySkipped          int `json:"history_skipped,omitempty"`
+	HistoryConflicts        int `json:"history_conflicts,omitempty"`
+	HistorySkippedLegacyKey int `json:"history_skipped_legacy_key,omitempty"`
+	// Warnings are human-readable notices about the import that do not fail
+	// it, such as history entries that conflicted or were skipped.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // ValidateExport runs the checks every import makes before it writes
@@ -105,7 +117,10 @@ func ValidateExport(data *ExportData) error {
 	// Reject a time value no reader could parse back (not RFC 3339, or a
 	// UTC year outside 1..9999, model.IsStorableTime) before anything is
 	// written (MTIX-95.31.1).
-	return validateExportTimes(data)
+	if err := validateExportTimes(data); err != nil {
+		return err
+	}
+	return validateExportHistory(data)
 }
 
 // Import loads data from an ExportData structure per FR-7.8.
@@ -146,6 +161,9 @@ func (s *Store) Import(
 		var applyErr error
 		if mode == ImportModeReplace {
 			result, applyErr = replaceAllData(ctx, tx, data)
+			if applyErr == nil {
+				applyErr = insertExportHistory(ctx, tx, data, &result)
+			}
 		} else {
 			result, applyErr = mergeAllData(ctx, tx, data, workflowPolicy{cfg.workflow, s.clock()})
 		}
@@ -157,12 +175,12 @@ func (s *Store) Import(
 
 	// Rebuild sequences from imported data per FR-7.8.x.
 	if err := s.rebuildSequences(ctx); err != nil {
-		return nil, fmt.Errorf("rebuild sequences: %w: %w", ErrImportIncomplete, err)
+		return &result, fmt.Errorf("rebuild sequences: %w: %w", ErrImportIncomplete, err)
 	}
 
 	// Rebuild FTS index after bulk import per FR-7.8.
 	if err := s.rebuildFTS(ctx); err != nil {
-		return nil, fmt.Errorf("rebuild FTS: %w: %w", ErrImportIncomplete, err)
+		return &result, fmt.Errorf("rebuild FTS: %w: %w", ErrImportIncomplete, err)
 	}
 	result.FTSRebuilt = true
 

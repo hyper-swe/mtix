@@ -88,40 +88,14 @@ prompt chain propagation, and multi-agent orchestration.`,
 			// resolves .mtix (store init, recover, plugin install), so a
 			// polyglot agent can target any project without cd and relative
 			// paths in hook configs resolve against the target project.
-			if projectDir != "" {
-				if err := os.Chdir(projectDir); err != nil {
-					return fmt.Errorf("--project-dir: %w", err)
-				}
+			if err := applyProjectDir(cmd, projectDir); err != nil {
+				return err
 			}
 			return persistentPreRun(cmd, args, logLevel)
 		},
-		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
-			// Sync, relay and daemon commands apply foreign events, which set
-			// the hub mark inside the apply transaction: bring the operator-
-			// local mirror up to date (MTIX-112.17.3, ADR-007 A9).
-			if shouldReconcileHubMark(cmd.CommandPath()) {
-				if err := reconcileHubMarkMirror(); err != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not mirror the hub-connected mark: %v\n", err)
-				}
-			}
-			// Auto-export after mutation commands per FR-15.3, with the
-			// interval-gated rolling backup riding the same trigger
-			// (FR-26.6).
-			if app.syncSvc != nil && app.mtixDir != "" && isMutationCommand(cmd.Name()) {
-				if err := app.syncSvc.AutoExport(cmd.Context(), app.mtixDir); err != nil {
-					app.logger.Warn("auto-export failed", "error", err)
-				}
-				maybeAutoBackup()
-				// FR-19.3: fire hooks for events this command journaled. Runs
-				// post-commit — never blocks or fails the mutation; adapter
-				// errors are logged inside Dispatch. Events from a command that
-				// errored (skipping this path) are picked up by the next one.
-				app.hooksDisp.Dispatch(cmd.Context())
-			}
-			return finishCommand(cmd) // payload warnings (MTIX-95.12), then closeApp
-		},
-		SilenceUsage:  true,
-		SilenceErrors: true,
+		PersistentPostRunE: rootPostRun,
+		SilenceUsage:       true,
+		SilenceErrors:      true,
 	}
 
 	rootCmd.PersistentFlags().BoolVar(&app.jsonOutput, "json", false,
@@ -131,62 +105,27 @@ prompt chain propagation, and multi-agent orchestration.`,
 	rootCmd.PersistentFlags().StringVarP(&projectDir, "project-dir", "C", "",
 		"Run as if mtix was started in <dir> (the project containing .mtix/), like git -C")
 
-	// Register all subcommands.
-	rootCmd.AddCommand(
-		newInitCmd(),
-		newConfigCmd(),
-		newCreateCmd(),
-		newMicroCmd(),
-		newShowCmd(),
-		newListCmd(),
-		newTreeCmd(),
-		newUpdateCmd(),
-		newClaimCmd(),
-		newUnclaimCmd(),
-		newDoneCmd(),
-		newDeferCmd(),
-		newCancelCmd(),
-		newReopenCmd(),
-		newUnblockCmd(),
-		newDecomposeCmd(),
-		newCommentCmd(),
-		newInboxCmd(),
-		newDepCmd(),
-		newSearchCmd(),
-		newReadyCmd(),
-		newBlockedCmd(),
-		newStaleCmd(),
-		newOrphansCmd(),
-		newProjectsCmd(),
-		newStatsCmd(),
-		newProgressCmd(),
-		newPromptCmd(),
-		newAnnotateCmd(),
-		newResolveAnnotationCmd(),
-		newRerunCmd(),
-		newRestoreCmd(),
-		newDeleteCmd(),
-		newUndeleteCmd(),
-		newContextCmd(),
-		newAgentCmd(),
-		newSessionCmd(),
-		newGCCmd(),
-		newVerifyCmd(),
-		newBackupCmd(),
-		newExportCmd(),
-		newImportCmd(),
-		newRecoverCmd(),
-		newMigrateCmd(),
-		newServeCmd(),
-		newMCPCmd(),
-		newDocsCmd(),
-		newPluginCmd(),
-		newSyncCmd(),
-		newDaemonCmd(),
-		newHooksCmd(),
-	)
+	registerRootCommands(rootCmd)
 
 	return rootCmd
+}
+
+// applyProjectDir applies the global -C/--project-dir. An attach verb never
+// fails on it (hooks always exit 0, ADR-007 §6.5): the failure is reported
+// and alerted, and the verb is skipped.
+func applyProjectDir(cmd *cobra.Command, projectDir string) error {
+	if projectDir == "" {
+		return nil
+	}
+	err := os.Chdir(projectDir)
+	if err == nil {
+		return nil
+	}
+	if isAttachCommand(cmd) {
+		abortAttachVerb(cmd, fmt.Sprintf("mtix attach %s: --project-dir: %v; messages stay in the inbox (mtix inbox)", cmd.Name(), err))
+		return nil
+	}
+	return fmt.Errorf("--project-dir: %w", err)
 }
 
 // persistentPreRun handles the PersistentPreRunE logic for the root command.
@@ -197,7 +136,7 @@ func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error 
 	}
 	// Skip store init for commands that don't need it. recover (MTIX-26.5)
 	// must run when the database is too damaged for the store to open.
-	if cmd.Name() == "version" || cmd.Name() == "help" || cmd.Name() == "recover" {
+	if skipsStoreInit(cmd) {
 		return nil
 	}
 
@@ -239,6 +178,17 @@ func autoImportForCommand(cmd *cobra.Command) {
 			app.logger.Warn("auto-import failed", "error", err)
 		}
 	}
+}
+
+// skipsStoreInit names commands that never open a store. Attach verbs run in
+// any directory a harness opens; they never open or create a store, and they
+// always exit 0 (ADR-007 §6.5, A5).
+func skipsStoreInit(cmd *cobra.Command) bool {
+	switch cmd.Name() {
+	case "version", "help", "recover":
+		return true
+	}
+	return isAttachCommand(cmd)
 }
 
 // initApp initializes the application context: logger, store, services.
@@ -290,6 +240,11 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 
+	// MTIX-95.31.19.5: history.export (default off) decides whether exports
+	// carry task history; the store reads it per export.
+	app.store.SetHistoryExportSource(app.configSvc.HistoryExport)
+	app.store.SetWriterVersion(version)
+
 	// Resolve this process's author identity (MTIX-24): MTIX_AUTHOR_ID env >
 	// author_id config > "cli". An explicitly-set-but-invalid value is rejected
 	// loudly. The config-derived default is persisted into the store's meta so
@@ -331,6 +286,9 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 func newSyncService(clock func() time.Time) *service.SyncService {
 	svc := service.NewSyncService(app.store, app.logger, clock)
 	svc.SetAutoSyncConfig(app.configSvc)
+	svc.SetBinaryVersion(version)
+	svc.SetHistoryExportSource(app.configSvc.HistoryExport)
+	svc.SetJSONNotices(app.jsonOutput)
 	return svc
 }
 
@@ -410,7 +368,7 @@ func findMtixDir() (string, error) {
 // as mtix sync init, still auto-imports.
 func shouldSkipAutoImport(commandPath string) bool {
 	switch commandPath {
-	case "init", "export", "import", "help", "version", "migrate", "sync", "sync status", "sync doctor":
+	case "init", "export", "import", "help", "version", "migrate", "sync", "sync status", "sync doctor", "doctor":
 		return true
 	}
 	return false

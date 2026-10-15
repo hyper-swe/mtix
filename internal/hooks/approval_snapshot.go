@@ -33,6 +33,7 @@ func approvalSnapshot(dir string) (*hookSnapshot, error) {
 	if parseErr := yaml.Unmarshal(raw, &cfg); parseErr != nil {
 		return nil, fmt.Errorf("parse hooks: %w", parseErr)
 	}
+	refused := envPassRefusals(cfg)
 	cfg, _ = validate(cfg)
 	legacy := sha256.New()
 	legacy.Write(raw)
@@ -40,6 +41,9 @@ func approvalSnapshot(dir string) (*hookSnapshot, error) {
 	logicalRoot, root, err := projectRoots(dir)
 	if err != nil {
 		return nil, err
+	}
+	for name, refusal := range refused {
+		snap.errors[name] = refusal
 	}
 	for _, h := range cfg.Hooks {
 		if h.Exec == nil {
@@ -130,6 +134,9 @@ func collectHookInputs(h Hook, logicalRoot, root string) (*hookInputs, error) {
 	program, err := programIndex(h.Exec.Command)
 	if err != nil {
 		return nil, err
+	}
+	if envErr := checkEnvAssignments(h.Exec.Command, program, logicalRoot, root); envErr != nil {
+		return nil, envErr
 	}
 	in := &hookInputs{logical: logicalRoot, root: root, program: program, script: script, stanza: string(own), scripts: map[int]scriptInput{}}
 	for i, arg := range h.Exec.Command {
@@ -247,4 +254,20 @@ func readSnapshotScript(root, arg string, inside bool) ([]byte, os.FileMode, boo
 		return nil, 0, false, fmt.Errorf("read project script: %w", err)
 	}
 	return content, info.Mode(), true, nil
+}
+
+// envPassRefusals maps each exec hook that validation drops for its env-pass
+// list to the reason, so approval explains the refusal instead of reporting
+// the hook as not found.
+func envPassRefusals(cfg Config) map[string]error {
+	out := map[string]error{}
+	for _, h := range cfg.Hooks {
+		if h.Name == "" || !contains(h.Deliver, AdapterExec) {
+			continue
+		}
+		if problem := envPassCheck(h); problem != "" {
+			out[h.Name] = fmt.Errorf("hook %q cannot be approved: %s", h.Name, problem)
+		}
+	}
+	return out
 }

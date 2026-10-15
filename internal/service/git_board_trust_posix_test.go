@@ -283,14 +283,6 @@ func (op *boardExchange) cleanup(t *testing.T) {
 	}
 }
 
-func boardTestWatchdog(t *testing.T) (context.Context, context.CancelFunc) {
-	t.Helper()
-	if deadline, ok := t.Deadline(); ok {
-		return context.WithDeadline(context.Background(), deadline.Add(-3*time.Second))
-	}
-	return context.WithCancel(context.Background())
-}
-
 func (op *boardExchange) next(t *testing.T) (int, error) {
 	t.Helper()
 	watchdog, stop := boardTestWatchdog(t)

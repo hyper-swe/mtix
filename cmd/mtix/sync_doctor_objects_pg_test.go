@@ -166,8 +166,8 @@ func TestDoctorText_DisabledTrigger_ShowsFixWithOwnerAndStatement(t *testing.T) 
 	require.NoError(t, err)
 
 	app.jsonOutput = false
-	var stdout, stderr bytes.Buffer
-	require.NoError(t, runSyncDoctor(context.Background(), &stdout, &stderr, nil, cloudOpts), "a WARN exits 0")
+	var stdout bytes.Buffer
+	require.NoError(t, runSyncDoctor(context.Background(), &stdout, nil, cloudOpts), "a WARN exits 0")
 	out := stdout.String()
 	require.Contains(t, out, "[WARN] hub-triggers")
 	require.Contains(t, out,

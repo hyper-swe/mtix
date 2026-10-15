@@ -122,3 +122,9 @@ func (r *ToolRegistry) Count() int {
 	defer r.mu.RUnlock()
 	return len(r.tools)
 }
+
+func (r *ToolRegistry) isCancellableWait(name string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.tools[name].def.CancellableWait
+}

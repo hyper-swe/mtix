@@ -53,6 +53,7 @@ const (
 const (
 	MethodInitialize  = "initialize"
 	MethodInitialized = "notifications/initialized"
+	MethodCancelled   = "notifications/cancelled"
 	MethodToolsList   = "tools/list"
 	MethodToolsCall   = "tools/call"
 	MethodPing        = "ping"
@@ -134,6 +135,10 @@ type ToolDef struct {
 	// to gate a read-only client. Left empty at registration, it is filled in
 	// from the tool's name by the registry.
 	Scope ToolScope `json:"-"`
+
+	// CancellableWait lets stdio dispatch this wait independently of ordinary
+	// requests. Set only for inbox waits; this scheduling detail is not on wire.
+	CancellableWait bool `json:"-"`
 }
 
 // SchemaObj is a JSON Schema object for tool input validation.

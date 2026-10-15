@@ -24,11 +24,15 @@ type TemplateData struct {
 	// generated reference docs, including a trailing slash when non-empty.
 	// "" when the file is rendered into .mtix/docs/ itself (the generator's
 	// output dir, where sibling links like WORKFLOWS.md resolve); usually
-	// ".mtix/docs/" when the same template is installed at the project root
+	// the actual reference output path (normally ".mtix/docs/") at the project root
 	// or a global agent dir (plugin targets), where bare sibling links
 	// dangle. Templates must write cross-doc links as
 	// [NAME.md]({{ .DocsPath }}NAME.md).
 	DocsPath string
+
+	// BriefingPath links from the rendered file to a generated project MTIX.md.
+	// Empty means reference-only rendering, which must not link a missing guide.
+	BriefingPath string
 
 	// Version is the mtix binary version.
 	Version string

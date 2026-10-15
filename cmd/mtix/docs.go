@@ -22,7 +22,8 @@ func newDocsCmd() *cobra.Command {
 		Short: "Manage agent-facing documentation",
 		Long: `Generate and manage agent-facing documentation files.
 
-Produces markdown files in the project's .mtix/docs/ directory that LLM agents
+Produces root MTIX.md plus native instruction pointers and reference markdown
+files in the project's .mtix/docs/ directory that LLM agents
 read to understand how to use mtix. Generated from runtime introspection
 of CLI commands, state machine, MCP tools, and configuration.`,
 	}
@@ -40,7 +41,12 @@ func newDocsGenerateCmd() *cobra.Command {
 		Use:   "generate",
 		Args:  cobra.NoArgs,
 		Short: "Generate agent-facing documentation",
-		Long: `Generate all 11 documentation files in the project's .mtix/docs/ directory.
+		Long: `Fully regenerate the root MTIX.md briefing and append one native instruction
+pointer in CLAUDE.md and AGENTS.md, preserving other user content. Keep the
+first live owned pointer and remove later duplicates. Valid old
+mtix marker blocks are migrated; malformed pairs are refused. HYPERSWE.md
+suppresses new pointers and native-file creation; existing pointers remain.
+Also generate all 11 reference files in the project's .mtix/docs/ directory.
 
 Auto-generated files (CLI_REFERENCE.md, STATUS_MACHINE.md, TROUBLESHOOTING.md)
 are always regenerated. Template-based files are only created if missing,
@@ -84,15 +90,7 @@ func runDocsGenerate(force bool) error {
 		}
 	}
 
-	// Build template data from runtime introspection per FR-13.2.
-	rootCmd := newRootCmd()
-	reg := mcp.NewToolRegistry()
-
-	data := docs.BuildTemplateData(rootCmd, reg, "PROJ", version)
-	// A hub DSN source (MTIX_SYNC_DSN or .mtix/secrets) selects the full SYNC
-	// section of CLAUDE.md and AGENTS.md; the DSN itself is never read here
-	// (MTIX-95.8.1).
-	data.SyncHubConfigured = hubConfigured(mtixDir)
+	data := projectDocTemplateData(mtixDir)
 
 	// Use embedded templates compiled into the binary.
 	gen, err := docs.NewEmbeddedGenerator(docsDir, data, slog.Default())
@@ -100,6 +98,7 @@ func runDocsGenerate(force bool) error {
 		return fmt.Errorf("create doc generator: %w", err)
 	}
 
+	gen.SetProjectRoot(cwd)
 	results, err := gen.Generate(force)
 	if err != nil {
 		return fmt.Errorf("generate docs: %w", err)
@@ -113,7 +112,27 @@ func runDocsGenerate(force bool) error {
 		fmt.Println()
 	}
 
-	fmt.Printf("\nGenerated %d files in %s\n", len(results), docsDir)
+	fmt.Printf("\nProcessed %d documentation items (project root: %s; references: %s)\n", len(results), cwd, docsDir)
 
 	return nil
+}
+
+// projectDocTemplateData shares the exact FR-13 rendering inputs with doctor.
+func projectDocTemplateData(mtixDir string) *docs.TemplateData {
+	rootCmd := newRootCmd()
+	reg := mcp.NewToolRegistry()
+
+	prefix := "PROJ"
+	if app.configSvc != nil {
+		if configured, configErr := app.configSvc.Get("prefix"); configErr == nil && configured != "" {
+			prefix = configured
+		}
+	}
+	data := docs.BuildTemplateData(rootCmd, reg, prefix, version)
+	// A hub DSN source (MTIX_SYNC_DSN or .mtix/secrets) selects the full SYNC
+	// section of CLAUDE.md and AGENTS.md; the DSN itself is never read here
+	// (MTIX-95.8.1).
+	data.SyncHubConfigured = hubConfigured(mtixDir)
+
+	return data
 }

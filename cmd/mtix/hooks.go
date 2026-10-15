@@ -124,8 +124,14 @@ func runHooksTrustInput(approvals *hooks.Approvals, name string, status, termina
 		if _, err := fmt.Fprintf(os.Stderr, "exec hook %q: %v (events: %s)\n", name, selected.Exec.Command, strings.Join(selected.Match.Events, ", ")); err != nil {
 			return fmt.Errorf("show hook: %w", err)
 		}
-		if err := approvals.ApproveSelected(*selected, terminal); err != nil {
+		review, err := approvals.ApproveSelected(*selected, terminal)
+		if err != nil {
 			return err
+		}
+		if review.Needed {
+			if _, err := fmt.Fprintf(os.Stderr, "Program review: %s\nFix: %s\n", review.Detail, review.Fix); err != nil {
+				return fmt.Errorf("show program review: %w", err)
+			}
 		}
 	}
 	decisions, err := approvals.Check()

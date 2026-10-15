@@ -18,10 +18,15 @@ including --wait=false or --format=. Any --all flag requires active --count;
 --count=false alone keeps listing behavior. Count flags apply only to inbox,
 not its ack or lease subcommands.
 
-With --wait, block until a new addressed event arrives — the primitive a worker's
-outer loop parks on between tasks — or until --timeout seconds elapse. Exit 0
-when events are returned; exit 5 on an empty timeout (so a loop can distinguish
-"woke with work" from "nothing yet").
+With --wait, return already pending events even if the initial database lookup
+outlasts --timeout. That lookup remains interruptible by SIGINT or SIGTERM.
+After an empty lookup, wait for new addressed events using only the remaining
+--timeout budget measured from entry (default 300 seconds).
+Use --timeout 0 for no limit: wait until an event or a signal. A negative timeout
+or a value too large to represent a duration is refused. Returned events mean
+exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+Use bounded waits within foreground tool limits; an indefinite park suits a
+background task whose harness supports it.
 
 --format emits agent-ready text instead of the plain listing (FR-20 §9,
 "delivery terminates in the prompt"):

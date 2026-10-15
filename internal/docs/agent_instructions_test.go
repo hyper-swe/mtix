@@ -42,7 +42,7 @@ func TestAgentInstructions_ConciseBootAndDeferredScope(t *testing.T) {
 		installed := t.TempDir()
 		_, err = NewPluginInstaller(installed, data, nil).Install("claude-code", false)
 		require.NoError(t, err)
-		require.Contains(t, readAgentInstruction(t, filepath.Join(installed, "CLAUDE.md")), conciseRegistrationRule)
+		require.Contains(t, readAgentInstruction(t, filepath.Join(installed, "MTIX.md")), conciseRegistrationRule)
 	}
 }
 

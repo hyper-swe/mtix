@@ -22,20 +22,35 @@ import (
 func checkedFD(f *os.File) int { return int(f.Fd()) } //nolint:gosec // File descriptors originate from operating system opens.
 
 func verifyFile(f *os.File, directory bool) error {
+	if directory {
+		return verifyKind(f, 0700, unix.S_IFDIR)
+	}
+	return verifyKind(f, recordMode, unix.S_IFREG)
+}
+
+// recordMode is the mode of every operator-local record; executableMode is
+// the mode of a release-defined executable such as the attach shim.
+const (
+	recordMode     = 0600
+	executableMode = 0700
+)
+
+func verifyKind(f *os.File, mode, kind uint32) error {
 	var stat unix.Stat_t
 	if err := unix.Fstat(checkedFD(f), &stat); err != nil {
 		return failure("metadata is unavailable", err)
 	}
-	return validateMetadata(stat.Uid, uint32(stat.Mode), directory)
+	return validateKind(stat.Uid, uint32(stat.Mode), mode, kind)
 }
 
 func validateMetadata(uid, actual uint32, directory bool) error {
-	mode := uint32(0600)
-	kind := uint32(unix.S_IFREG)
 	if directory {
-		mode = 0700
-		kind = unix.S_IFDIR
+		return validateKind(uid, actual, 0700, unix.S_IFDIR)
 	}
+	return validateKind(uid, actual, recordMode, unix.S_IFREG)
+}
+
+func validateKind(uid, actual, mode, kind uint32) error {
 	effective := os.Geteuid()
 	if effective < 0 || effective > math.MaxUint32 {
 		return invalid("user identity is invalid")
@@ -123,14 +138,18 @@ func openComponent(parent *os.File, name string, create bool) (*os.File, error) 
 	return descriptorFile(fd, filepath.Join(parent.Name(), name)), nil
 }
 
-func readData(dir *os.File, name string) (data []byte, err error) {
+func readData(dir *os.File, name string) ([]byte, error) {
+	return readDataMode(dir, name, recordMode)
+}
+
+func readDataMode(dir *os.File, name string, mode uint32) (data []byte, err error) {
 	fd, err := unix.Openat(checkedFD(dir), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open state record: %w: %w", err, invalid("validate input"))
 	}
 	f := descriptorFile(fd, name)
 	defer closeWith(f, &err)
-	if verifyErr := verifyFile(f, false); verifyErr != nil {
+	if verifyErr := verifyKind(f, mode, unix.S_IFREG); verifyErr != nil {
 		return nil, verifyErr
 	}
 	data, err = io.ReadAll(io.LimitReader(f, maxRecordSize+1))
@@ -143,8 +162,19 @@ func readData(dir *os.File, name string) (data []byte, err error) {
 	return data, nil
 }
 
-func writeData(dir *os.File, name string, data []byte, exclusive bool, before func() error, syncDirectory func(*os.File) error) (err error) {
-	if validateErr := validateExisting(dir, name); validateErr != nil {
+func writeData(dir *os.File, name string, data []byte, exclusive bool, before func() error, syncDirectory func(*os.File) error) error {
+	return writeDataMode(dir, name, data, writeOptions{exclusive: exclusive, before: before, syncDirectory: syncDirectory, mode: recordMode})
+}
+
+type writeOptions struct {
+	exclusive     bool
+	before        func() error
+	syncDirectory func(*os.File) error
+	mode          uint32
+}
+
+func writeDataMode(dir *os.File, name string, data []byte, opts writeOptions) (err error) {
+	if validateErr := validateExistingMode(dir, name, opts.mode); validateErr != nil {
 		return validateErr
 	}
 	random := make([]byte, 16)
@@ -152,7 +182,7 @@ func writeData(dir *os.File, name string, data []byte, exclusive bool, before fu
 		return failure("temporary name is unavailable", err)
 	}
 	temp := ".state-" + hex.EncodeToString(random)
-	fd, err := unix.Openat(checkedFD(dir), temp, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+	fd, err := unix.Openat(checkedFD(dir), temp, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, opts.mode)
 	if err != nil {
 		return fmt.Errorf("create state: %w: %w", err, invalid("write failed"))
 	}
@@ -165,18 +195,18 @@ func writeData(dir *os.File, name string, data []byte, exclusive bool, before fu
 		}
 	}()
 	f := descriptorFile(fd, temp)
-	if err = verifyFile(f, false); err == nil {
+	if err = verifyKind(f, opts.mode, unix.S_IFREG); err == nil {
 		_, err = f.Write(data)
 	}
 	if err == nil {
 		err = f.Sync()
 	}
 	err = errors.Join(err, closeFile(f))
-	if err == nil && before != nil {
-		err = before()
+	if err == nil && opts.before != nil {
+		err = opts.before()
 	}
 	if err == nil {
-		err = commitData(dir, temp, name, exclusive, syncDirectory)
+		err = commitData(dir, temp, name, opts.exclusive, opts.syncDirectory)
 	}
 	if err != nil {
 		return fmt.Errorf("write state: %w: %w", err, invalid("write failed"))
@@ -184,8 +214,8 @@ func writeData(dir *os.File, name string, data []byte, exclusive bool, before fu
 	return nil
 }
 
-func validateExisting(dir *os.File, name string) error {
-	_, err := readData(dir, name)
+func validateExistingMode(dir *os.File, name string, mode uint32) error {
+	_, err := readDataMode(dir, name, mode)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -216,4 +246,15 @@ func descriptorFile(fd int, name string) *os.File {
 		return nil
 	}
 	return os.NewFile(uintptr(fd), name)
+}
+
+// removeData deletes one state record relative to the verified directory.
+func removeData(dir *os.File, name string) error {
+	if _, err := readData(dir, name); err != nil {
+		return err
+	}
+	if err := unix.Unlinkat(checkedFD(dir), name, 0); err != nil {
+		return failure("remove state record", err)
+	}
+	return dir.Sync()
 }

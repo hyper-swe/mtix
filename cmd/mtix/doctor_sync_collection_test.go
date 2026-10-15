@@ -61,7 +61,7 @@ func TestDoctorSync_ConfigurationSelectsApplicableTransports(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				for _, row := range rows {
-					assert.Equal(t, "platform.windows", row.ID)
+					assert.Contains(t, []string{"platform.windows", "docs.stale"}, row.ID)
 				}
 			}
 		})

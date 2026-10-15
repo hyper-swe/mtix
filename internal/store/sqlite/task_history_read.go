@@ -92,6 +92,9 @@ type HistorySizeReport struct {
 	// ahead of this one). They are neither counted toward the limit nor trimmed
 	// until the clock passes them.
 	Ahead int `json:"ahead_of_clock"`
+	// CutoffsAhead counts retention cutoffs later than the store clock (recorded
+	// while the clock ran ahead). The union treats them as the clock.
+	CutoffsAhead int `json:"cutoffs_ahead_of_clock"`
 }
 
 // The history size statements. Each is served by an index: the grouping runs
@@ -110,6 +113,8 @@ const (
 	// dated at or before the clock, as the trim does.
 	historyOversizeSQL = `SELECT COUNT(*) FROM (SELECT task_uid FROM task_history
 		WHERE kind = 'change' AND ts <= ? GROUP BY task_uid HAVING COUNT(*) > ?)`
+	// Retention cutoffs later than the clock.
+	historyCutoffsAheadSQL = `SELECT COUNT(*) FROM history_retention_cutoff WHERE cutoff_ts > ?`
 	// Change entries dated after the clock.
 	historyAheadSQL = `SELECT COUNT(*) FROM task_history WHERE kind = 'change' AND ts > ?`
 )
@@ -133,6 +138,9 @@ func (s *Store) HistorySize(ctx context.Context, top, limit int) (HistorySizeRep
 	nowText := s.clock().UTC().Format(historyTimeLayout)
 	if err := s.readDB.QueryRowContext(ctx, historyAheadSQL, nowText).Scan(&rep.Ahead); err != nil {
 		return rep, fmt.Errorf("count history dated ahead of the clock: %w", err)
+	}
+	if err := s.readDB.QueryRowContext(ctx, historyCutoffsAheadSQL, nowText).Scan(&rep.CutoffsAhead); err != nil {
+		return rep, fmt.Errorf("count history cutoffs ahead of the clock: %w", err)
 	}
 	if limit < 1 {
 		return rep, nil

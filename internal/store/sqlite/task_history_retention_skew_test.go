@@ -144,8 +144,11 @@ func TestRetention_ManyEntriesDatedAhead_DoNotEatTheLocalChanges(t *testing.T) {
 		historyTestTime.Add(time.Hour).Format(skewTestLayout)).Scan(&local))
 	require.NoError(t, f.db.QueryRow(`SELECT COUNT(*) FROM task_history WHERE kind = 'change' AND entry_id LIKE '01U0000000000000000000N%'`).Scan(&ahead))
 	assert.Equal(t, 20, ahead, "entries dated ahead are never dropped")
-	assert.GreaterOrEqual(t, local-20, 9, "the local changes survive up to the keep count")
-	assert.LessOrEqual(t, f.count(t, "retention_drop"), 16, "markers stay bounded")
+	assert.Equal(t, 10, local-20, "the local changes survive at the limit")
+	assert.Equal(t, 10, f.count(t, "retention_drop"), "the first trim at the 11th change, then one every second change")
+	var other int
+	require.NoError(t, f.db.QueryRow(`SELECT COUNT(*) FROM task_history WHERE kind = 'retention_drop' AND new_value <> '2'`).Scan(&other))
+	assert.Zero(t, other, "every trim drops exactly 2 entries")
 }
 
 // The size report counts entries dated ahead of the clock apart from the
@@ -164,4 +167,66 @@ func TestHistorySizeReport_EntriesDatedAhead_AreReportedAndNotCountedOversize(t 
 	require.NoError(t, err)
 	assert.Equal(t, 5, rep.Ahead)
 	assert.Zero(t, rep.Oversize, "only the 2 entries at or before the clock count")
+}
+
+// A cutoff recorded while this machine's clock ran ahead must not outlive the
+// correction of the clock: a peer entry dated just after the true now is kept.
+func TestImportHistory_CutoffRecordedWhileTheClockRanAhead_IsTreatedAsTheClock(t *testing.T) {
+	f := retentionFixture(t, 2)
+	trueNow := historyTestTime
+	year := trueNow.AddDate(1, 0, 0)
+	tick := year
+	f.s.SetClock(func() time.Time { tick = tick.Add(time.Millisecond); return tick })
+	f.bump(t, 4) // trims with the clock a year ahead
+	uid := f.rootUID(t)
+	require.Greater(t, f.cutoffOf(t, uid), trueNow.Add(time.Hour).Format(skewTestLayout), "the stored cutoff is ahead")
+	f.s.SetClock(func() time.Time { return trueNow })
+	f.s.SetHistoryExportSource(func() bool { return true })
+	data, err := f.s.Export(context.Background(), "PROJ", "0.6.0")
+	require.NoError(t, err)
+	e := entry("01U0000000000000000000Q001", uid, "status")
+	e["ts"] = trueNow.Add(time.Minute).Format(skewTestLayout)
+	file := editFile(t, data, func(m map[string]any) {
+		for _, n := range m["nodes"].([]any) {
+			if n.(map[string]any)["uid"] == uid {
+				n.(map[string]any)["history"] = []any{e}
+			}
+		}
+	})
+	res := importMode(t, f.s, file, "merge")
+	assert.Equal(t, 1, res.HistoryAdded, "the peer entry just after the true now is stored")
+	assert.Equal(t, []string{"01U0000000000000000000Q001"}, historyIDs(t, f.db))
+}
+
+// The size report counts cutoffs later than the clock.
+func TestHistorySizeReport_CutoffsLaterThanTheClock_AreCounted(t *testing.T) {
+	f := retentionFixture(t, 2)
+	f.bump(t, 4)
+	uid := f.rootUID(t)
+	rep, err := f.s.HistorySize(context.Background(), 3, 2)
+	require.NoError(t, err)
+	assert.Zero(t, rep.CutoffsAhead)
+	_, err = f.db.Exec(`UPDATE history_retention_cutoff SET cutoff_ts = ? WHERE task_uid = ?`, historyTestTime.Add(time.Hour).Format(skewTestLayout), uid)
+	require.NoError(t, err)
+	rep, err = f.s.HistorySize(context.Background(), 3, 2)
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.CutoffsAhead)
+}
+
+// An exempt kind dated ahead, and an entry exactly at the clock, are not ahead.
+func TestHistorySizeReport_AheadCountsOnlyChangeEntriesAfterTheClock(t *testing.T) {
+	f := retentionFixture(t, 0)
+	f.s.SetClock(func() time.Time { return historyTestTime })
+	uid := f.rootUID(t)
+	add := func(id, kind string, at time.Time) {
+		_, err := f.db.Exec(`INSERT INTO task_history (entry_id, task_uid, ts, actor, origin, kind, field)
+			VALUES (?, ?, ?, 'tester', 'local', ?, 'x')`, id, uid, at.Format(skewTestLayout), kind)
+		require.NoError(t, err)
+	}
+	add("01U0000000000000000000R001", "redaction", historyTestTime.Add(time.Hour))
+	add("01U0000000000000000000R002", "change", historyTestTime)
+	add("01U0000000000000000000R003", "change", historyTestTime.Add(time.Nanosecond))
+	rep, err := f.s.HistorySize(context.Background(), 3, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, rep.Ahead, "only the change entry after the clock")
 }

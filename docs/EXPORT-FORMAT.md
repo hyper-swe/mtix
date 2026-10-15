@@ -126,7 +126,7 @@ records locally.
   before the cutoff this copy of the board recorded when it trimmed the task is
   skipped (counted in `history_skipped`), so an older export does not bring
   trimmed entries back. An entry dated more than 24 hours ahead of the reading machine's clock is
-  skipped and counted, and a cutoff is never later than that clock. A change entry dated ahead of that clock (inside the allowance) is neither counted toward the limit nor trimmed until the clock passes it. That cutoff is a local record of each copy, never part
+  skipped and counted, and a cutoff is never later than that clock. A change entry dated ahead of that clock (inside the allowance) is neither counted toward the limit nor trimmed until the clock passes it. A stored cutoff later than the clock counts as the clock when reading. That cutoff is a local record of each copy, never part
   of the export, so trimming on one machine does not trim the others. A marker
   from another replica is stored as history but is never a cutoff, so a board
   that never trimmed keeps the grow-only union; a marker whose `old` is not a stored-form time or whose

@@ -60,14 +60,23 @@ func historySizeRow(rep sqlite.HistorySizeReport, limit int, err error) service.
 	row := service.DoctorResult{Status: service.DoctorInfo,
 		Detail: fmt.Sprintf("%d history rows across %d tasks", rep.Rows, rep.Tasks),
 		Data: map[string]any{"rows": rep.Rows, "tasks": rep.Tasks, "largest_tasks": rep.Largest,
-			"max_entries_per_task": configured, "oversize_tasks": rep.Oversize, "ahead_of_clock": rep.Ahead}}
+			"max_entries_per_task": configured, "oversize_tasks": rep.Oversize, "ahead_of_clock": rep.Ahead, "cutoffs_ahead_of_clock": rep.CutoffsAhead}}
 	if rep.Ahead > 0 {
 		row.Detail += fmt.Sprintf("; %d change entries are dated after this machine's clock (not counted toward the limit or trimmed until the clock passes them)", rep.Ahead)
+	}
+	if rep.CutoffsAhead > 0 {
+		row.Status = service.DoctorWarn
+		row.Detail += fmt.Sprintf("; %d retention cutoffs are later than this machine's clock (recorded while it ran ahead); they are treated as the current time, so entries trimmed meanwhile may return from a peer", rep.CutoffsAhead)
+		row.Fix = "set the system clock right (check NTP); no mtix command is needed: the cutoffs stop mattering once the clock passes them"
 	}
 	if rep.Oversize > 0 {
 		row.Status = service.DoctorWarn
 		row.Detail += fmt.Sprintf("; %d tasks hold more than %d change entries (each is trimmed at its next change)", rep.Oversize, limit)
-		row.Fix = "no action is needed: the next change to each task trims it; to keep more entries, raise the limit with mtix config set history.max_entries_per_task <N>"
+		fix := "no action is needed: the next change to each task trims it; to keep more entries, raise the limit with mtix config set history.max_entries_per_task <N>"
+		if row.Fix != "" {
+			fix = row.Fix + "; " + fix
+		}
+		row.Fix = fix
 	}
 	return row
 }

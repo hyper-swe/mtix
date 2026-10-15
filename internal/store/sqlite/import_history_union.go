@@ -30,6 +30,7 @@ const maxHistoryWarningIDs = 3
 type historyUnion struct {
 	added, present, legacy, conflicts int
 	conflictIDs                       []string
+	now                               string            // the store clock; a stored cutoff later than it counts as it
 	latest                            string            // the newest ts accepted: the store clock plus historyFutureSkew
 	future                            int               // entries dated beyond latest
 	cutoffs                           map[string]string // task key -> newest local retention cutoff, read before the union
@@ -305,6 +306,9 @@ func (u *historyUnion) loadCutoffs(ctx context.Context, tx *sql.Tx) (err error) 
 		var uid, cutoff string
 		if err := rows.Scan(&uid, &cutoff); err != nil {
 			return fmt.Errorf("scan history retention cutoff: %w", err)
+		}
+		if u.now != "" && cutoff > u.now {
+			cutoff = u.now // recorded while this clock ran ahead: never later than the clock
 		}
 		u.cutoffs[uid] = cutoff
 	}

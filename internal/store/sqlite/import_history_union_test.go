@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -452,6 +453,9 @@ func TestImportHistory_EntriesAtOrBeforeTheLocalCutoff_AreSkippedNotResurrected(
 // history and the store-local cutoff that alone drives the union's skip rule.
 func localMarker(t *testing.T, f *historyFixture, id, uid, ts, cutoff string) {
 	t.Helper()
+	// A cutoff is never later than the clock, so the store clock runs past the
+	// fixture's cutoffs (all in the minute 2026-03-14T12:00).
+	f.s.SetClock(func() time.Time { return time.Date(2026, 3, 14, 13, 0, 0, 0, time.UTC) })
 	_, err := f.db.Exec(`INSERT INTO task_history (entry_id, task_uid, ts, actor, origin, kind, field, old_value, new_value)
 		VALUES (?, ?, ?, 'a', 'system', 'retention_drop', 'retention', ?, '3')`, id, uid, ts, cutoff)
 	require.NoError(t, err)

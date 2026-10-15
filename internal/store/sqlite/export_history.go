@@ -203,6 +203,7 @@ func checkHistoryEntry(e exportHistoryEntry) error {
 func insertExportHistory(ctx context.Context, tx *sql.Tx, data *ExportData, result *ImportResult, now time.Time) error {
 	u := historyUnion{}
 	if !now.IsZero() { // a caller with no clock applies no skew limit
+		u.now = now.UTC().Format(historyTimeLayout)
 		u.latest = now.UTC().Add(historyFutureSkew).Format(historyTimeLayout)
 	}
 	if err := u.loadCutoffs(ctx, tx); err != nil {

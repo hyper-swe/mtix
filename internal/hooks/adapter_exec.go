@@ -8,7 +8,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
+	"runtime"
 	"time"
 )
 
@@ -73,10 +75,11 @@ func (a *ExecAdapter) Deliver(_ context.Context, d Delivery) error {
 	// MTIX_HOOK_ORIGIN lets any mtix mutation the command runs stamp its events
 	// with this hook's name, so they never re-trigger it (loop prevention, 47.7).
 	cmd.Dir = plan.Dir
-	cmd.Env = append(scrubbedEnviron(cmd.Environ()),
-		"MTIX_HOOK_SCRIPT_PATH="+plan.ScriptPath,
-		"MTIX_EVENT="+string(d.EventJSON),
-		"MTIX_HOOK_ORIGIN="+d.Hook.Name)
+	pathValue := plan.Path
+	if pathValue == "" {
+		pathValue = FixedHookPath(plan.Dir)
+	}
+	cmd.Env = childEnvironment(os.Environ(), runtime.GOOS, d.Hook, d.EventJSON, plan.ScriptPath, pathValue)
 	cmd.Stdin = bytes.NewReader(d.EventJSON)
 	cmd.SysProcAttr = detachedSysProcAttr() // own session: parent exit never kills the wake
 

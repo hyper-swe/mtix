@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -188,11 +189,38 @@ func writeInbox(agent, format string, events []sqlite.InboxEvent) error {
 		out.WriteHuman("(inbox empty)\n")
 		return nil
 	}
+	boardArg, err := inboxformat.BoardSelection(inboxBoardRoot())
+	if err != nil {
+		return fmt.Errorf("render inbox: %w", err)
+	}
 	for _, e := range events {
 		out.WriteHuman("[%d] %s  %s: %s\n", e.Seq, e.NodeID, e.Author, e.Body)
 	}
-	out.WriteHuman("\nack with: mtix inbox ack %d --agent %s\n", events[len(events)-1].Seq, agent)
+	out.WriteHuman("\nack with: mtix inbox ack %d --agent %s%s\n", events[len(events)-1].Seq, agent, boardArg)
 	return nil
+}
+
+// inboxBoardRoot is the absolute project root of the board this command opened
+// (after any -C), or "" when no board is open. Inbox output pins every printed
+// mtix command to it, so an agent acting from another repository, which has
+// its own .mtix, still acts on the board it read (MTIX-189).
+func inboxBoardRoot() string {
+	if app.mtixDir == "" {
+		return ""
+	}
+	return filepath.Dir(app.mtixDir)
+}
+
+// explainAckBoard names the board an ack checked when the seq is outside its
+// journal (MTIX-189): such a seq almost always came from reading another
+// board, for example through -C, while the ack ran from a repository with its
+// own .mtix. The wrapped error keeps its class and exit code.
+func explainAckBoard(err error) error {
+	if !errors.Is(err, sqlite.ErrSeqOutsideJournal) {
+		return err
+	}
+	return fmt.Errorf("%w\nboard checked: %s\nthe event may belong to another board: read and ack with the same board selection, for example mtix -C <board> inbox ack <seq> --agent <id>",
+		err, inboxBoardRoot())
 }
 
 func loadInboxEnvelopeCaps() (inboxformat.Caps, error) {
@@ -219,13 +247,13 @@ func inboxEnvelopeEvents(events []sqlite.InboxEvent) []inboxformat.Event {
 // formatInboxPrompt composes only a fixed nudge and the quoted envelope
 // (FR-20.2, ADR-007 I33). Empty inbox remains empty for wake-script checks.
 func formatInboxPrompt(agent string, events []sqlite.InboxEvent, caps inboxformat.Caps) (string, error) {
-	return inboxformat.RenderPrompt(agent, inboxEnvelopeEvents(events), caps)
+	return inboxformat.RenderPromptOn(agent, inboxBoardRoot(), inboxEnvelopeEvents(events), caps)
 }
 
 // formatInboxContext uses the shared envelope and revalidated command tokens
 // (FR-20.2, ADR-007 I12/I13), without acknowledging or changing the inbox.
 func formatInboxContext(agent string, events []sqlite.InboxEvent, caps inboxformat.Caps) (string, error) {
-	return inboxformat.RenderEnvelope(agent, inboxEnvelopeEvents(events), caps)
+	return inboxformat.RenderEnvelopeOn(agent, inboxBoardRoot(), inboxEnvelopeEvents(events), caps)
 }
 
 func runInboxAck(agent string, seqs []string, through bool) error {
@@ -250,7 +278,7 @@ func runInboxAck(agent string, seqs []string, through bool) error {
 	if through {
 		// Cumulative: mark everything up to the highest given seq as seen.
 		if err := app.store.InboxAckThrough(ctx, agent, maxSeq); err != nil {
-			return err
+			return explainAckBoard(err)
 		}
 		if app.jsonOutput {
 			return out.WriteJSON(map[string]any{"agent": agent, "acked_through": maxSeq})
@@ -262,7 +290,7 @@ func runInboxAck(agent string, seqs []string, through bool) error {
 	// Selective (default): ack exactly the given seq(s); unacked events resurface.
 	for _, n := range parsed {
 		if err := app.store.InboxAck(ctx, agent, n); err != nil {
-			return err
+			return explainAckBoard(err)
 		}
 	}
 	if app.jsonOutput {

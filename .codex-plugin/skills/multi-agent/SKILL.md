@@ -16,6 +16,14 @@ means no FAIL; WARN and INFO are advisory. Exit 2 means at least one FAIL.
 An empty applicable registry is `[]` in JSON. Windows reports
 `platform.windows` as INFO because built-in wakes are unavailable.
 
+On an opened local board, `wake.ledger` reports retained wake rows, claimed
+rows and rejected completions as INFO, including when all counts are zero.
+A board requiring a dispatch protocol newer than this binary supports reports
+FAIL. Install a compatible binary, restart the dispatcher and rerun doctor;
+never lower the board's protocol floor to bypass refusal. This check is
+read-only: `mtix doctor --fix` does not prune wake rows, reset claims, lower
+the protocol floor or grant permissions.
+
 The sync result rows use a `sync.` prefix and run only for configured
 transports. A relay-only checkout does not run unused Postgres checks.
 The separate `mtix sync doctor` command keeps its existing report and behavior.
@@ -31,6 +39,31 @@ Setup completion (`setup.done`, MTIX-112.19.2) and document freshness
 (`docs.stale`, MTIX-112.32.1) are FUTURE registrations, not checks available
 in this version. Do not infer that setup or generated documents are current
 from the absence of those rows.
+
+## Guarded wake ledger
+
+The local wake ledger and callable guarded wake service provide the foundation
+for host dispatch. Host-dispatcher discovery, enrollment and setup wiring are
+not supplied by this feature. The guarded service supports dispatch protocol 1
+and reads the board's minimum protocol before every pass, even an empty pass.
+A newer floor stops the pass before any claim or send and raises an
+operator-local `wake.version-skew` alert. Follow the alert's compatible-binary
+remedy rather than lowering the floor.
+
+Each claim covers an agent, host, user, event and registration epoch. A live
+claim holds a 60-second lease; an expired claim can be reclaimed with a fresh
+attempt token. Only the current attempt can finish the claim. A stale
+completion is refused and recorded without replacing the newer attempt.
+An attempted send error is terminal for that claim and is not retried by lease
+expiry. A crash after sending but before recording delivery can still lead to
+a duplicate wake: delivery is at least once. Handle inbox work idempotently and
+acknowledge events explicitly after handling them.
+
+The shared scan cursor is an optimization. Live claims limit new cursor
+progress, expired claims remain discoverable independently of the cursor, and
+held registrations do not stop it. Retained wake rows protect deduplication
+and are not automatically pruned. Use `mtix doctor --json` to inspect the
+`wake.ledger` counts and protocol remedy; `--fix` preserves the retained rows.
 
 ## Waiting for inbox events
 

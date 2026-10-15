@@ -53,9 +53,10 @@ func doctorCLIEnv(args string, dsn string) []string {
 	var env []string
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
-		if (strings.HasPrefix(key, "MTIX_") && key != isolatedOperatorEnv) || key == "GOCOVERDIR" {
+		if strings.HasPrefix(key, "MTIX_") && key != isolatedOperatorEnv {
 			continue
 		}
+		// Preserve GOCOVERDIR for instrumented stock-main children.
 		env = append(env, value)
 	}
 	return append(env, "MTIX_STDIO_BEHAVIOR_CHILD=1", "MTIX_STDIO_BEHAVIOR_ARGS="+args,
@@ -112,7 +113,7 @@ func TestDoctorCLI_Help_DocumentsJSONFixAndExitCodes(t *testing.T) {
 	assert.Empty(t, out.stderr)
 }
 
-func TestDoctorCLI_Unconfigured_EmptyArrayExitZero(t *testing.T) {
+func TestDoctorCLI_Unconfigured_RetainedWakeInfoExitZero(t *testing.T) {
 	for _, flags := range [][]string{{"--json"}, {"--json", "--fix"}} {
 		t.Run(strings.Join(flags, " "), func(t *testing.T) {
 			root := doctorCLIBoard(t, "")
@@ -120,13 +121,19 @@ func TestDoctorCLI_Unconfigured_EmptyArrayExitZero(t *testing.T) {
 			assert.Equal(t, 0, out.exit, out.stderr)
 			rows := doctorCLIRows(t, out.stdout)
 			if runtime.GOOS == "windows" {
-				require.Len(t, rows, 1)
+				require.Len(t, rows, 2)
 				assert.Equal(t, "platform.windows", rows[0]["id"])
 				assert.Equal(t, "info", rows[0]["status"])
 			} else {
-				assert.Empty(t, rows)
-				assert.JSONEq(t, "[]", out.stdout)
+				require.Len(t, rows, 1)
 			}
+			wakeRows := 0
+			for _, row := range rows {
+				if assertEmptyWakeDoctorInfo(t, row["id"], row["status"], row["detail"], row["fix"]) {
+					wakeRows++
+				}
+			}
+			assert.Equal(t, 1, wakeRows)
 			assert.Empty(t, out.stderr)
 		})
 	}
@@ -139,6 +146,9 @@ func TestDoctorCLI_BrokenRelay_OnlyApplicableRowsExitTwo(t *testing.T) {
 	rows := doctorCLIRows(t, out.stdout)
 	var relayFailure bool
 	for _, row := range rows {
+		if assertEmptyWakeDoctorInfo(t, row["id"], row["status"], row["detail"], row["fix"]) {
+			continue
+		}
 		if runtime.GOOS == "windows" && row["id"] == "platform.windows" {
 			assert.Equal(t, "info", row["status"])
 			assert.Empty(t, row["fix"])

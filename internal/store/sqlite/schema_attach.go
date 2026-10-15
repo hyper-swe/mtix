@@ -36,9 +36,21 @@ CREATE TABLE IF NOT EXISTS wake_ledger (
     epoch INTEGER NOT NULL,
     claimed_at TEXT NOT NULL,
     outcome TEXT NOT NULL,
+    attempt_token TEXT NOT NULL DEFAULT '',
     PRIMARY KEY(agent_id,host_id,uid,event_seq,epoch)
 );
 CREATE INDEX IF NOT EXISTS idx_wake_ledger_claims ON wake_ledger(outcome,claimed_at);
+CREATE TABLE IF NOT EXISTS wake_outcome_rejections (
+    agent_id TEXT NOT NULL,
+    host_id TEXT NOT NULL,
+    uid TEXT NOT NULL,
+    event_seq INTEGER NOT NULL,
+    epoch INTEGER NOT NULL,
+    attempt_token TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    rejected_at TEXT NOT NULL,
+    PRIMARY KEY(agent_id,host_id,uid,event_seq,epoch,attempt_token,outcome)
+);
 CREATE TABLE IF NOT EXISTS wake_scan_cursor (
     host_id TEXT NOT NULL,
     uid TEXT NOT NULL,

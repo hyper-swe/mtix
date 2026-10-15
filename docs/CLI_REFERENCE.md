@@ -19,6 +19,7 @@ prompt chain propagation, and multi-agent orchestration.
 
 - `agent` — Manage agent lifecycle
 - `annotate <id> <text>` — Add an annotation to a node
+- `attach` — Harness glue entry points (internal; called through the attach shim)
 - `backup <path>` — Create a backup of the mtix database
 - `blocked [id]` — List nodes blocked by dependencies, or show the blockers of one node
 - `cancel <id>` — Cancel a node with mandatory reason
@@ -187,6 +188,83 @@ Show current work assignment for an agent
 **Usage:** `annotate <id> <text>`
 
 Add an annotation to a node
+---
+
+## attach
+
+**Usage:** `attach`
+
+Harness glue entry points (internal; called through the attach shim)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+
+### Subcommands
+
+- `prompt-submit --harness <harness> --protocol <n>` — Attach verb prompt-submit (internal)
+- `session-end --harness <harness> --protocol <n>` — Attach verb session-end (internal)
+- `session-start --harness <harness> --protocol <n>` — Attach verb session-start (internal)
+- `wait --harness <harness> --protocol <n>` — Attach verb wait (internal)
+---
+
+## prompt-submit
+
+**Usage:** `prompt-submit --harness <harness> --protocol <n>`
+
+Attach verb prompt-submit (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+---
+
+## session-end
+
+**Usage:** `session-end --harness <harness> --protocol <n>`
+
+Attach verb session-end (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+---
+
+## session-start
+
+**Usage:** `session-start --harness <harness> --protocol <n>`
+
+Attach verb session-start (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+---
+
+## wait
+
+**Usage:** `wait --harness <harness> --protocol <n>`
+
+Attach verb wait (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
 ---
 
 ## backup

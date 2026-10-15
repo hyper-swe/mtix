@@ -29,6 +29,9 @@ func executeRenameTx(
 	if err != nil {
 		return count, err
 	}
+	if err := realignMovedColumns(ctx, tx, mapping); err != nil { // MTIX-107.58
+		return count, err
+	}
 	if err := updateSentinelsAfterReconcile(ctx, tx, newPrefix); err != nil {
 		return count, err
 	}

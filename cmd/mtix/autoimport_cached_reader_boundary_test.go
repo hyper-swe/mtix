@@ -17,37 +17,39 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
 )
 
 type cachedBoundaryCase struct {
 	name    string
 	path    string
+	cliArgs []string
 	run     func(io.Writer) error
 	payload func(*testing.T) any
 }
 
 func cachedBoundaryCases() []cachedBoundaryCase {
 	cases := []cachedBoundaryCase{
-		{"agent-state", "agent state", func(_ io.Writer) error { return runGetAgentState("reader") }, func(t *testing.T) any {
+		{"agent-state", "agent state", []string{"reader"}, func(_ io.Writer) error { return runGetAgentState("reader") }, func(t *testing.T) any {
 			state, err := app.agentSvc.GetAgentState(context.Background(), "reader")
 			require.NoError(t, err)
 			return map[string]string{"agent_id": "reader", "state": string(state)}
 		}},
-		{"session-summary", "session summary", func(_ io.Writer) error { return runSessionSummary("reader") }, func(t *testing.T) any {
+		{"session-summary", "session summary", []string{"reader"}, func(_ io.Writer) error { return runSessionSummary("reader") }, func(t *testing.T) any {
 			summary, err := app.sessionSvc.SessionSummary(context.Background(), "reader")
 			require.NoError(t, err)
 			return summary
 		}},
-		{"repair-status-preview", "sync repair", func(w io.Writer) error { return runSyncRepair(context.Background(), w, syncRepairFlags{status: true}) }, func(t *testing.T) any {
+		{"repair-status-preview", "sync repair", []string{"--status"}, func(w io.Writer) error { return runSyncRepair(context.Background(), w, syncRepairFlags{status: true}) }, func(t *testing.T) any {
 			report, err := app.syncSvc.RepairStatus(context.Background(), app.mtixDir, service.StatusRepairOptions{}, app.authorID)
 			require.NoError(t, err)
 			report.Reminder = pullFirstReminder(report)
 			return report
 		}},
-		{"backfill-dry-run", "sync backfill", func(w io.Writer) error { return runSyncBackfill(context.Background(), w, io.Discard, true, false) }, func(t *testing.T) any {
+		{"backfill-dry-run", "sync backfill", []string{"--dry-run"}, func(w io.Writer) error { return runSyncBackfill(context.Background(), w, io.Discard, true, false) }, func(t *testing.T) any {
 			result, err := app.store.BackfillDryRun(context.Background())
 			require.NoError(t, err)
 			return map[string]any{"dry_run": true, "result": result}
@@ -62,7 +64,7 @@ func cachedBoundaryCases() []cachedBoundaryCase {
 		{"import-as-default", reconcileFlags{importAs: "TEST-1"}},
 	} {
 		f := variant.flags
-		cases = append(cases, cachedBoundaryCase{"reconcile-" + variant.name, "sync reconcile", func(w io.Writer) error {
+		cases = append(cases, cachedBoundaryCase{"reconcile-" + variant.name, "sync reconcile", cachedReconcileCLIArgs(f), func(w io.Writer) error {
 			return runSyncReconcile(context.Background(), w, io.Discard, f)
 		}, func(t *testing.T) any {
 			plan, err := computePlan(context.Background(), app.store, f)
@@ -75,16 +77,17 @@ func cachedBoundaryCases() []cachedBoundaryCase {
 
 // Use the real nested command path: a synthetic rootless "sync" command
 // would exercise the auto-import exclusion instead of the preview boundary.
-func cachedBoundaryPreRun(t *testing.T, path string) string {
+func cachedBoundaryPreRun(t *testing.T, path string, cliArgs ...string) string {
 	t.Helper()
 	root := newRootCmd()
 	cmd, _, err := root.Find(strings.Fields(path))
 	require.NoError(t, err)
 	require.NotEqual(t, root, cmd)
 	require.Equal(t, "mtix "+path, cmd.CommandPath())
+	require.NoError(t, cmd.ParseFlags(cliArgs))
 	cmd.SetContext(testContext(t))
 	app.jsonOutput = true
-	return captureStderr(t, func() { require.NoError(t, persistentPreRun(cmd, nil, "")) })
+	return captureStderr(t, func() { require.NoError(t, persistentPreRun(cmd, cmd.Flags().Args(), "")) })
 }
 
 func cachedBoundaryFixture(t *testing.T, busy bool) {
@@ -127,7 +130,7 @@ func TestCachedReaderBoundary_BusyJSON(t *testing.T) {
 	for _, tc := range cachedBoundaryCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			cachedBoundaryFixture(t, true)
-			notice := cachedBoundaryPreRun(t, tc.path)
+			notice := cachedBoundaryPreRun(t, tc.path, tc.cliArgs...)
 			require.Equal(t, "sync_lock_busy", app.staleReason)
 			require.Equal(t, 1, strings.Count(notice, "possibly stale"), notice)
 			require.NotContains(t, notice, "auto-import failed")
@@ -163,7 +166,7 @@ func TestCachedReaderBoundary_FreshJSONShape(t *testing.T) {
 	for _, tc := range cachedBoundaryCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			cachedBoundaryFixture(t, false)
-			notice := cachedBoundaryPreRun(t, tc.path)
+			notice := cachedBoundaryPreRun(t, tc.path, tc.cliArgs...)
 			require.Empty(t, app.staleReason)
 			require.NotContains(t, notice, "possibly stale")
 			cachedBoundarySeedReaders(t)
@@ -199,7 +202,7 @@ func TestCachedReaderBoundary_ReportWriterErrors(t *testing.T) {
 		}
 		t.Run(tc.name, func(t *testing.T) {
 			cachedBoundaryFixture(t, false)
-			cachedBoundaryPreRun(t, tc.path)
+			cachedBoundaryPreRun(t, tc.path, tc.cliArgs...)
 			app.staleReason = "sync_lock_busy"
 			sentinel := errors.New("report output unavailable")
 			writer := &cachedBoundaryFailWriter{err: sentinel}
@@ -281,4 +284,25 @@ func TestCachedReaderBoundary_BackfillHumanWriterError(t *testing.T) {
 	saveAndResetApp(t)
 	sentinel := errors.New("backfill text output unavailable")
 	require.ErrorIs(t, printBackfillResult(&cachedBoundaryFailWriter{err: sentinel}, sqlite.BackfillResult{}, true), sentinel)
+}
+
+// Keep the real command flags aligned with the report handler under test.
+func cachedReconcileCLIArgs(f reconcileFlags) []string {
+	var args []string
+	if f.discardLocal {
+		args = append(args, "--discard-local")
+	}
+	if f.renameTo != "" {
+		args = append(args, "--rename-to", f.renameTo)
+	}
+	if f.importAs != "" {
+		args = append(args, "--import-as", f.importAs)
+	}
+	if f.dryRun {
+		args = append(args, "--dry-run")
+	}
+	if f.yes {
+		args = append(args, "--yes")
+	}
+	return args
 }

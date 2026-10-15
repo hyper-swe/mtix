@@ -51,8 +51,9 @@ type appContext struct {
 	hooksDisp   *service.HooksDispatcher
 	logger      *slog.Logger
 	jsonOutput  bool
-	staleReason string // command-local unverified auto-import freshness, reset on each pre-run
-	mtixDir     string // Path to .mtix directory, set during initApp.
+	staleReason string         // command-local unverified auto-import freshness, reset on each pre-run
+	outputScope freshnessScope // explicit command mode; unknown commands receive no read metadata
+	mtixDir     string         // Path to .mtix directory, set during initApp.
 	// firstRunErr holds a refused host first-run record until a command that
 	// needs operator state reports it, once per process.
 	firstRunErr error
@@ -109,6 +110,7 @@ prompt chain propagation, and multi-agent orchestration.`,
 		"Run as if mtix was started in <dir> (the project containing .mtix/), like git -C")
 
 	registerRootCommands(rootCmd)
+	wrapFreshnessCompletion(rootCmd)
 
 	return rootCmd
 }
@@ -117,6 +119,7 @@ prompt chain propagation, and multi-agent orchestration.`,
 // Extracted from newRootCmd to reduce cognitive complexity.
 func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error {
 	app.staleReason = ""
+	app.outputScope = commandFreshness(cmd, args)
 	// Skip store init for commands that don't need it. recover (MTIX-26.5)
 	// must run when the database is too damaged for the store to open.
 	if cmd.Name() == "version" || cmd.Name() == "help" || cmd.Name() == "recover" {

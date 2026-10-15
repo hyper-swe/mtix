@@ -21,7 +21,10 @@ func TestAutoImportFreshness_Guidance_ExplainsBusyReadRecovery(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			body, err := os.ReadFile(path)
 			require.NoError(t, err)
-			for _, phrase := range []string{"stale", "stale_reason", "sync_lock_busy", "retry"} {
+			for _, phrase := range []string{
+				"stale", "stale_reason", "sync_lock_busy", "retry",
+				"read responses only", "never repeat a successful write",
+			} {
 				require.Contains(t, string(body), phrase)
 			}
 		})

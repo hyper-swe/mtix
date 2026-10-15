@@ -7,11 +7,14 @@ Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whit
 
 ## CLI read freshness
 
-Before acting on a CLI read, check `stale` in `--json` output. If it is true with
-`stale_reason: "sync_lock_busy"`, auto-import could not check the pulled board:
-retry the same command after the current owner finishes. Text mode prints a
-possibly stale notice on stderr. See the sync skill for response shapes and
-safe recovery; never delete the sync lock file to force freshness.
+Freshness fields describe read responses only. Before acting on a CLI read,
+check `stale` in `--json` output. If it is true with
+`stale_reason: "sync_lock_busy"`, retry the same read after the current owner
+finishes. Successful mutation acknowledgements omit these fields. A busy-lock
+completion notice says when a write succeeded: never repeat a successful write.
+Text mode prints a possibly stale read notice on stderr. See the sync skill for
+response shapes and safe recovery; never delete the sync lock file to force
+freshness.
 
 ## Creating work
 

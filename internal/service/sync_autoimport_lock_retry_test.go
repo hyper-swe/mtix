@@ -59,7 +59,7 @@ func writeRetryIncoming(t *testing.T, target string) {
 }
 
 func TestAutoImport_SyncLockBusy_RetryBudgetIsBounded(t *testing.T) {
-	for _, clockStep := range []time.Duration{0, autoImportLockRetryInterval, -time.Second, time.Second} {
+	for _, clockStep := range []time.Duration{0, autoImportLockRetryInterval, -time.Second, 500 * time.Millisecond, time.Second} {
 		t.Run(clockStep.String(), func(t *testing.T) {
 			svc, dir := retryImportFixture(t)
 			writeRetryIncoming(t, dir)
@@ -80,6 +80,10 @@ func TestAutoImport_SyncLockBusy_RetryBudgetIsBounded(t *testing.T) {
 			require.LessOrEqual(t, elapsed, 500*time.Millisecond)
 			if clockStep <= autoImportLockRetryInterval {
 				require.Equal(t, 500*time.Millisecond, elapsed)
+			}
+			if clockStep >= autoImportLockRetryBudget {
+				require.Equal(t, 1, waits, "wall clock advancement must shorten the scheduled wait budget")
+				require.Equal(t, autoImportLockRetryInterval, elapsed)
 			}
 			_, err = svc.store.GetNode(context.Background(), "TEST-1")
 			require.ErrorIs(t, err, model.ErrNotFound)

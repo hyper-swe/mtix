@@ -565,3 +565,22 @@ problem, PASS means none do (no row appears when there is no `hooks.yaml`).
 The notice is advisory: the hook still runs as written and launch behaviour
 does not change. To clear it, run the program through a pinned project script
 and approve the hook again.
+
+Append-file hooks: an `append-file` hook writes only to a regular file inside
+the project. Its `append-file.path` must be relative. The file is opened
+through a handle on the project directory, so a path that leads outside the
+project, including through a symlinked directory, is refused at open time. A
+final component that is a symlink, a file that is not a regular file, and a
+file with more than one hard link are refused, and nothing is written through
+them; a pipe never blocks delivery. A new file is created with mode 0600. An
+existing file keeps its mode: `mtix hooks status` warns when it is readable or
+writable by group or others and prints `chmod 600 <file>`, and delivery still
+writes to it. An event whose name or node id holds a control or line-separator
+character, or whose payload holds a line break, is refused, so one event is one
+line. `mtix hooks status` lists each configured `append-file` path that
+delivery would refuse, with the reason and the exact fix: text output prints
+`Fix:` lines and `--json` carries an `append_file` list of `hook`, `path`,
+`reason`, `fix` and `refused`. On Windows the same confinement and
+same-file checks apply and a multiply linked file is refused at delivery (as is a file whose
+link count cannot be read), but
+`mtix hooks status` does not list it and permission bits are not reported.

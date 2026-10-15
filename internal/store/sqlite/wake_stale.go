@@ -24,7 +24,11 @@ func (s *Store) StaleWakeClaims(ctx context.Context, lease time.Duration) (out [
 	if err != nil {
 		return nil, fmt.Errorf("read stale wake claims: %w", err)
 	}
-	defer closeWakeRows(rows, &err)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close wake claim rows: %w", closeErr))
+		}
+	}()
 	cutoff := s.clock().UTC().Add(-lease)
 	for rows.Next() {
 		attempt, scanErr := scanWakeAttempt(rows)
@@ -54,10 +58,4 @@ func scanWakeAttempt(rows *sql.Rows) (model.WakeAttempt, error) {
 	}
 	attempt.ClaimedAt = when.UTC()
 	return attempt, nil
-}
-
-func closeWakeRows(rows *sql.Rows, target *error) {
-	if err := rows.Close(); err != nil {
-		*target = errors.Join(*target, fmt.Errorf("close wake claim rows: %w", err))
-	}
 }

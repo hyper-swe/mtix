@@ -50,7 +50,11 @@ func liveWakeScanTarget(ctx context.Context, tx *sql.Tx, request wakeCursorReque
 	if err != nil {
 		return 0, fmt.Errorf("read live wake claims: %w", err)
 	}
-	defer closeWakeRows(rows, &err)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close wake claim rows: %w", closeErr))
+		}
+	}()
 	target = request.target
 	for rows.Next() {
 		attempt, scanErr := scanWakeAttempt(rows)

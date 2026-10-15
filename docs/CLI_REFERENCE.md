@@ -1253,7 +1253,7 @@ Show a node's details and annotations as labeled lines, in this order:
   Assignee     current assignee (only when set)
   Desc         full description (only when set; omitted when it holds only
                whitespace or control characters), further lines indented
-  Annotations  every annotation, oldest first: its ISO-8601 UTC timestamp
+  Annotations  every annotation, oldest first (equal times by id): its ISO-8601 UTC timestamp
                ("unknown time" when none was recorded), author, addressee
                and resolved marker when present, then the text, with
                further lines indented and "(empty)" for an empty text;

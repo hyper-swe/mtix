@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strconv"
 	"time"
 
@@ -352,12 +351,7 @@ func (a syncApplier) applyComment(ctx context.Context, tx *sql.Tx, e *model.Sync
 	// Sort by (CreatedAt, ID) so the on-disk list order is independent
 	// of apply order. Two replicas converging on the same set of
 	// comments produce byte-identical annotations columns.
-	sort.SliceStable(annotations, func(i, j int) bool {
-		if annotations[i].CreatedAt.Equal(annotations[j].CreatedAt) {
-			return annotations[i].ID < annotations[j].ID
-		}
-		return annotations[i].CreatedAt.Before(annotations[j].CreatedAt)
-	})
+	annotations = model.SortAnnotations(annotations)
 	encoded, err := json.Marshal(annotations)
 	if err != nil {
 		return fmt.Errorf("encode annotations: %w", err)

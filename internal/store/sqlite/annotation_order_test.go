@@ -26,14 +26,6 @@ func outOfOrderAnnotations() []model.Annotation {
 	}
 }
 
-func annotationIDs(as []model.Annotation) []string {
-	ids := make([]string, 0, len(as))
-	for _, a := range as {
-		ids = append(ids, a.ID)
-	}
-	return ids
-}
-
 func TestSetAnnotations_OutOfOrder_StoredInCanonicalOrder(t *testing.T) {
 	s, raw := applyTestStore(t)
 	require.NoError(t, applyOnce(t, s, makeApplyEvent(t, model.OpCreateNode, "MTIX-1", "alice", 1,

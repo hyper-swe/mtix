@@ -36,7 +36,7 @@ func TestWakeAgentScript_Terminated_AbandonsAndReaps(t *testing.T) {
 	f := newWakeScriptFixture(t)
 	f.event(t, "Unhandled event")
 	p := f.start(t, "WAKE_HARNESS_GATE=1")
-	waitWakeFile(t, filepath.Join(f.root, "started"))
+	p.waitFile(t, "started")
 	require.NoError(t, p.cmd.Process.Signal(syscall.SIGTERM))
 	require.Error(t, p.wait(t), "wake: %s", p.output)
 	assert.Equal(t, 1, p.cmd.ProcessState.ExitCode())
@@ -72,8 +72,8 @@ func TestWakeAgentScript_Renewal_UsesSameHolderAndSixtySeconds(t *testing.T) {
 	text := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$WAKE_DIR/operations\"\nif [ \"$4\" = '--holder' ] || [ \"${6:-}\" = '--holder' ]; then : > \"$WAKE_DIR/renewed\"; fi\nexec \"$WAKE_REAL_MTIX\" \"$@\"\n"
 	require.NoError(t, os.WriteFile(wrapper, []byte(text), 0700))
 	p := f.start(t, "WAKE_HARNESS_GATE=1", "MTIX_BIN="+wrapper, "WAKE_REAL_MTIX="+f.binary)
-	waitWakeFile(t, filepath.Join(f.root, "started"))
-	waitWakeFile(t, filepath.Join(f.root, "renewed"))
+	p.waitFile(t, "started")
+	p.waitFile(t, "renewed")
 	require.NoError(t, os.WriteFile(filepath.Join(f.root, "continue"), []byte("continue"), 0600))
 	require.NoError(t, p.wait(t), "wake: %s", p.output)
 	intervals, err := os.ReadFile(filepath.Join(f.root, "intervals"))
@@ -109,7 +109,7 @@ func TestWakeAgentScript_RenewalLosesOwnership_StopsAndKeepsReplacement(t *testi
 	text = "#!/bin/sh\nif [ \"$1 $2 $3\" = 'inbox lease acquire' ]; then\n TOKEN=$(\"$WAKE_REAL_MTIX\" \"$@\") || exit $?\n printf '%s\\n' \"$TOKEN\" > \"$WAKE_DIR/token\"\n printf '%s\\n' \"$TOKEN\"\nelse\n exec \"$WAKE_REAL_MTIX\" \"$@\"\nfi\n"
 	require.NoError(t, os.WriteFile(wrapper, []byte(text), 0700))
 	p := f.start(t, "WAKE_HARNESS_GATE=1", "MTIX_BIN="+wrapper, "WAKE_REAL_MTIX="+f.binary)
-	waitWakeFile(t, filepath.Join(f.root, "started"))
+	p.waitFile(t, "started")
 	token, err := os.ReadFile(filepath.Join(f.root, "token"))
 	require.NoError(t, err)
 	f.cli(t, "inbox", "lease", "release", "--agent", "TEST-agent", "--holder", strings.TrimSpace(string(token)), "--abandon")

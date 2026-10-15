@@ -34,7 +34,7 @@ func TestWakeAgentScript_OwnershipReleased_StopsWithoutRelaunch(t *testing.T) {
 	text := "#!/bin/sh\nif [ \"$1 $2 $3\" = 'inbox lease acquire' ]; then\n TOKEN=$(\"$WAKE_REAL_MTIX\" \"$@\") || exit $?\n printf '%s\\n' \"$TOKEN\" > \"$WAKE_DIR/token\"\n printf '%s\\n' \"$TOKEN\"\nelse\n exec \"$WAKE_REAL_MTIX\" \"$@\"\nfi\n"
 	require.NoError(t, os.WriteFile(wrapper, []byte(text), 0700))
 	p := f.start(t, "WAKE_HARNESS_GATE=1", "MTIX_BIN="+wrapper, "WAKE_REAL_MTIX="+f.binary)
-	waitWakeFile(t, filepath.Join(f.root, "started"))
+	p.waitFile(t, "started")
 	token, err := os.ReadFile(filepath.Join(f.root, "token"))
 	require.NoError(t, err)
 	f.cli(t, "inbox", "lease", "release", "--agent", "TEST-agent", "--holder", strings.TrimSpace(string(token)), "--abandon")
@@ -50,7 +50,7 @@ func TestWakeAgentScript_DrainBound_LeavesPendingAndAbandons(t *testing.T) {
 	f := newWakeScriptFixture(t)
 	f.event(t, "First event")
 	p := f.start(t, "WAKE_HARNESS_GATE=1", "WAKE_MAX_RUNS=1")
-	waitWakeFile(t, filepath.Join(f.root, "started"))
+	p.waitFile(t, "started")
 	f.event(t, "New event")
 	require.NoError(t, os.WriteFile(filepath.Join(f.root, "continue"), []byte("continue"), 0600))
 	require.Error(t, p.wait(t))

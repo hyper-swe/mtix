@@ -8,7 +8,6 @@ package main
 // Real CLI fixtures isolate project and operator state and reap each owned wake process.
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -68,7 +67,8 @@ func (f wakeScriptFixture) event(t *testing.T, text string) {
 
 type wakeScriptProcess struct {
 	cmd    *exec.Cmd
-	output *bytes.Buffer
+	root   string
+	output *syncBuffer
 	done   chan struct{}
 	err    error
 }
@@ -81,10 +81,10 @@ func (f wakeScriptFixture) start(t *testing.T, extra ...string) *wakeScriptProce
 	cmd.Dir = f.project
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = append(append([]string{}, f.env...), extra...)
-	output := new(bytes.Buffer)
+	output := new(syncBuffer)
 	cmd.Stdout, cmd.Stderr = output, output
 	require.NoError(t, cmd.Start())
-	p := &wakeScriptProcess{cmd: cmd, output: output, done: make(chan struct{})}
+	p := &wakeScriptProcess{cmd: cmd, root: f.root, output: output, done: make(chan struct{})}
 	go func() { p.err = cmd.Wait(); close(p.done) }()
 	watcherDone := watchWakeCancellation(ctx, t, p)
 	t.Cleanup(func() {
@@ -111,20 +111,6 @@ func (p *wakeScriptProcess) wait(t *testing.T) error {
 		t.Fatal("owned wake process did not finish")
 		return nil
 	}
-}
-
-func waitWakeFile(t *testing.T, path string) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		_, err := os.Stat(path)
-		if err == nil {
-			return
-		}
-		require.ErrorIs(t, err, os.ErrNotExist)
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("owned wake fixture did not create %s", filepath.Base(path))
 }
 
 func watchWakeCancellation(ctx context.Context, t *testing.T, p *wakeScriptProcess) <-chan struct{} {

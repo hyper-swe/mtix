@@ -38,6 +38,11 @@ const EnvDSN = "MTIX_SYNC_DSN"
 // require this; the workflow docs in MTIX-15.12 show how to fetch it.
 const EnvSSLRootCert = "MTIX_SYNC_SSLROOTCERT"
 
+// EnvPassword names the env var that supplies the hub password outside
+// the DSN, so the password needs no quoting or encoding. A password in
+// the DSN takes precedence.
+const EnvPassword = "MTIX_SYNC_PASSWORD"
+
 // SecretsFilename is the per-project credential file. Mode 0600
 // enforced; gitignore rule auto-installed by mtix sync init in
 // MTIX-15.7.

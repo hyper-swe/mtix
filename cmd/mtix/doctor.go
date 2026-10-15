@@ -101,13 +101,12 @@ func writeDoctorRows(out io.Writer, rows []service.DoctorResult, jsonOutput bool
 func newConfiguredDoctorService() (*service.DoctorService, error) {
 	known := knownSyncDSNs()
 	opts := service.DoctorOptions{Platform: runtime.GOOS, Scrub: func(text string) string { return redact.Known(text, known...) }}
-	if app.mtixDir == "" {
-		return service.NewDoctorService(opts), nil
-	}
-	request := configuredDoctorCollection()
-	if request.Postgres || request.Relay {
-		opts.CollectSync = func(ctx context.Context) ([]service.DoctorResult, error) {
-			return doctorSyncRows(collectSyncDoctor(ctx, request)), nil
+	if app.mtixDir != "" {
+		request := configuredDoctorCollection()
+		if request.Postgres || request.Relay {
+			opts.CollectSync = func(ctx context.Context) ([]service.DoctorResult, error) {
+				return doctorSyncRows(collectSyncDoctor(ctx, request)), nil
+			}
 		}
 	}
 	svc := service.NewDoctorService(opts)
@@ -118,6 +117,15 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 		if err := svc.Register(hooksProgramsCheck(app.mtixDir)); err != nil {
 			return nil, fmt.Errorf("register hook program check: %w", err)
 		}
+	}
+	// Attach rows (setup.shim, glue.<h>, attach.failures, skew.dispatchers)
+	// appear only when something is installed, marked, alerted or beating.
+	deps, err := productionAttachDoctorDeps(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if err := registerAttachDoctorChecks(context.Background(), svc, deps); err != nil {
+		return nil, fmt.Errorf("register attach doctor checks: %w", err)
 	}
 	return svc, nil
 }

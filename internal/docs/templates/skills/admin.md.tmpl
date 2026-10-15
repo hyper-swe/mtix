@@ -40,6 +40,60 @@ This check never writes documents or Git exclusions, including with `--fix`.
 Setup completion (`setup.done`, MTIX-112.19.2) remains a FUTURE registration.
 Do not infer that setup is current from the absence of that row.
 
+### Attach checks
+
+The operator-local directory can hold release-defined attach artifacts. The
+attach shim (`mtix-shim`) is a POSIX shell script that records the unresolved
+mtix path and the operator's uid. On every run, with a fixed `PATH`, it walks
+that path one component at a time from `/`, following at most 32 symbolic
+links (to files or directories) and resolving `..` physically. It refuses
+unless every directory it enters (so every ancestor and the directory holding
+each link), every link and the final file are owned by the operator or root
+and not writable by group or others (a root-owned sticky directory such as
+`/tmp` is allowed). It then runs the fully resolved path it checked, never a
+path through a link. The Go check behind `setup.shim` applies the same rule.
+This version installs no shim, harness glue or host
+dispatcher service; it checks and repairs those artifacts when they exist.
+Doctor shows these rows only when they apply:
+
+- `setup.shim`: PASS when the shim matches this release. WARN with the fix
+  `mtix doctor --fix` when its bytes are out of date; the repair rewrites
+  only the shim and its record. FAIL when its target is refused or its record is
+  missing; the fix names the refused component (for example `chmod go-w`
+  on the writable directory or file, or removing a link owned by another
+  user). Windows has no shim,
+  and `platform.windows` says so.
+- `glue.<harness>`: harness glue called mtix with an attach protocol other
+  than this release's. The previous protocol is still served and the glue is
+  marked for refresh; any other protocol makes that session inbox-only, so
+  read messages with `mtix inbox`. The fix names `mtix doctor --fix` only
+  when this build can rewrite that glue; glue newer than this mtix needs an
+  mtix upgrade (compare `mtix version`), and older glue this build cannot
+  rewrite must be corrected or removed in the harness configuration. The
+  attach verb's stderr line and alert name the same fix.
+- `attach.failures`: recent `attach.protocol-skew` and `attach.verb-failure`
+  operator alerts from the hidden attach verbs, with counts. These verbs are
+  entry points for harness glue, not for agents. They always exit 0, even on
+  arguments they cannot parse or a verb this build does not know, print one
+  line on stderr and nothing on stdout, and record every failure as an
+  operator alert that carries its own fix (for example the glue fix above for
+  protocol skew, or upgrading mtix for an unknown verb).
+- `attach.state`: INFO when operator state cannot be read at all (for example
+  `HOME` is unset); the attach rows are skipped and the row names the remedy.
+  Doctor itself still runs.
+- `skew.dispatchers`: a host dispatcher heartbeat on this board that is older
+  than this mtix, or below the board's `min_dispatch_protocol`. This version
+  installs no dispatcher service, so mtix cannot restart it; the fix names
+  the PID to stop and start. `mtix agent register` prints the same notice.
+  It never restarts a dispatcher from inside a harness session, and restarts
+  one at most once per hour. Until a restart has really happened, every check
+  reports the older dispatcher again and raises an operator alert; mtix never
+  claims a restart it did not make.
+
+Any unsandboxed mtix command, and `mtix doctor --fix`, rewrites an
+out-of-date shim without a terminal. These repairs never change a grant,
+approval or confirmation.
+
 ## Local coordination schema
 
 Coordination tables are added locally without increasing the database schema version. The released v0.5.4-beta client was verified for `list`, `create`, and `sync pull`, with these additive local coordination tables preserved. Newly created stores have a stable random `store_instance_id`; reopening a store never replaces it, and upgrading a legacy store does not assign one automatically. The `min_dispatch_protocol` metadata key is reserved for planned dispatch compatibility; these schema foundations do not enable an attached dispatcher.

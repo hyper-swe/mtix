@@ -118,6 +118,19 @@ records locally.
   incomplete; it is silent otherwise. A file is refused
   when an entry has a kind, origin or time outside what mtix writes, or
   when a top-level entry names a task the file holds.
+- **Retention.** With `history.max_entries_per_task` set, a task's oldest
+  change entries are trimmed and one `retention_drop` entry is written (field
+  `retention`, `new` the count dropped as a decimal string, `old` the time of
+  the newest dropped entry, in the `ts` form). Such entries are exempt from
+  trimming and travel like any other. When reading, a change entry at or
+  before the cutoff this copy of the board recorded when it trimmed the task is
+  skipped (counted in `history_skipped`), so an older export does not bring
+  trimmed entries back. An entry dated more than 24 hours ahead of the reading machine's clock is
+  skipped and counted, and a cutoff is never later than that clock. A change entry dated ahead of that clock (inside the allowance) is neither counted toward the limit nor trimmed until the clock passes it. That cutoff is a local record of each copy, never part
+  of the export, so trimming on one machine does not trim the others. A marker
+  from another replica is stored as history but is never a cutoff, so a board
+  that never trimmed keeps the grow-only union; a marker whose `old` is not a stored-form time or whose
+  `new` is not a positive whole number is skipped with a warning.
 - **Conflict detection.** For a 2.1.0 file the writer-version key is left
   out of the hash used to detect conflicts, so an upgrade does not look like
   a change to the board.

@@ -11,3 +11,11 @@ package transport
 func SetAfterCommitForTest(p *Pool, hook func() error) {
 	p.afterCommit = hook
 }
+
+// SetAfterSessionLockForTest sets the session-lock seam of p (MTIX-107.85):
+// hook runs right after EnsureRegistryIndex takes its session advisory
+// lock. Compiled into tests only; the seam is a field of this Pool, never
+// package state.
+func SetAfterSessionLockForTest(p *Pool, hook func()) {
+	p.afterSessionLock = hook
+}

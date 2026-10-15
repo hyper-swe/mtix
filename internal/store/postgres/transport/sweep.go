@@ -415,6 +415,9 @@ func (p *Pool) EnsureRegistryIndex(ctx context.Context, projectPrefix string) (I
 		// Session lock is NOT auto-released; unlock on the same conn.
 		_, _ = conn.Exec(ctx, `SELECT pg_advisory_unlock(hashtext($1))`, AdvisoryLockKey)
 	}()
+	if p.afterSessionLock != nil {
+		p.afterSessionLock()
+	}
 
 	return buildRegistryIndex(ctx, conn, res)
 }

@@ -2637,16 +2637,46 @@ directory of the process that dispatches it. Launch rules:
     run: `LESSOPEN`, `PAGER`, `EDITOR`, `VISUAL`, `SHELL`, `COMSPEC` and
     `PATHEXT`. All `MTIX_*` names are refused too: mtix sets its own (loop
     prevention, identity, sync credentials). Lowercase names such as
-    `http_proxy` are refused; inherited values still reach the hook, and a
-    script can set them itself. `PATH` cannot be set by a hook: the scrubbed
-    environment provides it. `HOME` is accepted only when its value is
-    outside the project (also after following links). The refusal message
-    names the variable and the rule.
-  - The loader variables `BASH_ENV`, `ENV`, `NODE_OPTIONS`, `PERL5OPT`,
-    `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `PYTHONPATH`, `PYTHONSTARTUP`,
-    `ZDOTDIR`, `PYTHONUSERBASE`, `PYTHONHOME`, `LD_PRELOAD`,
-    `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES` and `DYLD_LIBRARY_PATH` are
-    also removed from the environment of every hook.
+    `http_proxy` are refused. `PATH` cannot be set by a hook: mtix provides a
+    fixed one. `HOME` is accepted only when its value is outside the project
+    (also after following links). The refusal message names the variable and
+    the rule.
+  - The environment a hook runs in is explicit. The dispatcher's environment
+    is not inherited: the hook receives only `HOME`, `USER`, `LOGNAME`,
+    `LANG`, `TZ`, `TMPDIR`, `TERM`, `NO_COLOR` and the exact locale names
+    `LC_ALL`, `LC_CTYPE`, `LC_COLLATE`, `LC_MESSAGES`, `LC_MONETARY`,
+    `LC_NUMERIC`, `LC_TIME`, `LC_ADDRESS`, `LC_IDENTIFICATION`,
+    `LC_MEASUREMENT`, `LC_NAME`, `LC_PAPER` and `LC_TELEPHONE` (other `LC_`
+    names are not passed), and the deny rules below apply to every name. On
+    Windows the hook also receives `SystemRoot`, `ComSpec`, `PATHEXT`,
+    `USERPROFILE`, `TEMP` and `TMP`; `ComSpec`, `PATHEXT` and `USERPROFILE`
+    are the one exception to the deny rules, because the system needs them.
+    It also receives the
+    variables named in the hook's `exec.env-pass` list, and the mtix markers
+    `MTIX_EVENT`, `MTIX_HOOK_ORIGIN` and `MTIX_HOOK_SCRIPT_PATH`. Credentials
+    such as `MTIX_SYNC_DSN` and relay keys never reach a hook.
+    `MTIX_AUTHOR_ID` is the hook's `to-agent`, or unset; the dispatcher's
+    author id is never passed on.
+  - `exec.env-pass` is a list of variable names in the hook stanza, so the
+    operator approves it with the hook. Names must be valid variable names
+    and must not be credential-shaped (`*_KEY`, `*_TOKEN`, `*_SECRET`,
+    `*_PASSWORD`, anything with `DSN`), an `MTIX_*` name, `PATH`, or in a
+    loader or startup family; such a name disables the hook with a warning
+    that names it. To give a hook a secret, read it from an operator-owned
+    file inside the script. The list holds at most 32 names of at most 128
+    bytes each; a longer list or name is refused the same way, at load and
+    when you run `mtix hooks approve`, which names the variable and the
+    reason.
+  - The `PATH` of a hook is fixed: the directory of the running `mtix`
+    binary (unless it is inside the project), then system directories
+    (in this order: `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`,
+    `/sbin`; on macOS `/opt/homebrew/bin` and `/opt/homebrew/sbin` come
+    first, then `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`;
+    on Windows `System32` and the Windows directory under `C:\Windows`; the dispatcher's
+    `SystemRoot` is not used for the hook `PATH`). It has no relative entry and no project
+    directory. The program and the interpreter are resolved against it, never
+    against the dispatcher's `PATH`, so use an absolute program path for tools
+    installed elsewhere.
 - Any other argument that names a project file at approval time, in any
   position except the program and the script, and including the value of
   `--opt=VALUE` or `NAME=VALUE`, is pinned

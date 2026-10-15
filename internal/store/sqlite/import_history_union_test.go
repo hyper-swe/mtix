@@ -286,12 +286,7 @@ func TestImportHistory_ConcurrentMergeImports_EndWithOneCopyOfEachEntry(t *testi
 	wg.Wait()
 	close(errs)
 	for err := range errs {
-		// The index rebuild after the import's transaction is not serialized
-		// (a separate defect: concurrent imports can collide on sequences);
-		// the history union itself must still hold.
-		if err != nil {
-			require.ErrorIs(t, err, sqlite.ErrImportIncomplete)
-		}
+		require.NoError(t, err) // MTIX-95.31.27: no import may fail
 	}
 	ids := historyIDs(t, dst.db)
 	sort.Strings(ids)
@@ -406,8 +401,8 @@ func TestImportHistory_InFileEventKeyCollision_OrderIndependent(t *testing.T) {
 func TestImportReconcile_AppliedButIncomplete_ReportIsMarkedApplied(t *testing.T) {
 	file, _ := unionFile(t)
 	dst, _ := unionDest(t)
-	_, err := dst.db.Exec(`CREATE TRIGGER test_fail_sequence_rebuild BEFORE INSERT ON sequences
-		BEGIN SELECT RAISE(ABORT, 'test: sequence rebuild fails'); END`)
+	_, err := dst.db.Exec(`CREATE TRIGGER test_fail_fts_rebuild BEFORE DELETE ON nodes_fts_data
+		BEGIN SELECT RAISE(ABORT, 'test: fts rebuild fails'); END`)
 	require.NoError(t, err)
 	report, res, err := dst.s.ImportReconcile(context.Background(), file, sqlite.ImportReconcileOptions{
 		Mode: sqlite.ImportModeMerge, Force: true, Confirm: true})

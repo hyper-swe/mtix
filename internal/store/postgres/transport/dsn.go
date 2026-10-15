@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -249,24 +248,6 @@ func EnforceTLSPosture(dsn string, opts Options) (string, error) {
 		return "", err
 	}
 	return approval.dsn, nil
-}
-
-// parseDSN parses a postgres:// or postgresql:// URL form and rejects
-// anything else (FR-18.15). ApproveDSN is its only caller. Every
-// failure is a fixed message wrapping ErrDSNMalformed that quotes no
-// part of the DSN; the parser's own error is discarded, since it may
-// quote the DSN (FR-18.17, MTIX-95.15).
-func parseDSN(dsn string) (*url.URL, error) {
-	if !strings.HasPrefix(dsn, "postgres://") && !strings.HasPrefix(dsn, "postgresql://") {
-		return nil, fmt.Errorf("%w: it must start with postgres:// or postgresql://", ErrDSNMalformed)
-	}
-	u, err := url.Parse(dsn)
-	if err != nil {
-		// Deliberately not wrapped: err may quote the DSN.
-		return nil, fmt.Errorf(
-			"%w: percent-encode reserved characters in the user name and password", ErrDSNMalformed)
-	}
-	return u, nil
 }
 
 // isLoopback reports whether host is a loopback host: the name

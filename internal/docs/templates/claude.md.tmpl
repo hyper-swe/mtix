@@ -150,6 +150,8 @@ review of that hook; other hook approvals remain independent.
 ## Health diagnostics
 
 <!-- AUTO-GENERATED: HEALTH_DIAGNOSTICS -->
+On an opened local board, `wake.ledger` reports retained rows and protocol refusal;
+`--fix` preserves wake state. See the multi-agent skill for lease and retry behavior.
 Run `mtix doctor --json` for registered health checks. Exit 2 means a FAIL;
 WARN and INFO keep exit 0. Only configured transports are checked.
 `mtix doctor --fix` runs explicitly registered non-grant repairs; grants stay

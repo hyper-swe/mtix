@@ -28,6 +28,11 @@ check fails, or 2 when any check reports FAIL.
 --fix performs only explicitly registered non-grant repairs and rechecks them.
 Grant commands are printed for you to run yourself; they are never executed.
 
+On an opened local board, wake.ledger reports retained wake rows, claimed rows
+and rejected completions. A newer dispatch protocol reports FAIL: install a
+compatible binary, restart the dispatcher and rerun doctor. This read-only check
+never prunes wake rows or lowers the protocol floor, including with --fix.
+
 Setup and document-freshness checks will be registered by their future features;
 they are not available in this version.`
 
@@ -112,5 +117,5 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 			return nil, fmt.Errorf("register hook program check: %w", err)
 		}
 	}
-	return svc, nil
+	return svc, registerConfiguredWakeLedgerDoctor(svc)
 }

@@ -465,9 +465,10 @@ left. To release a task that is still `blocked` (see `mtix blocked`)
 although every blocker shown by `mtix dep show <id>` is resolved, run
 `mtix unblock <id>`: it
 re-derives the task's status from its current blockers and never
-overrides a blocker that is still unresolved. No command recomputes
-stale progress; a node's progress is recomputed the next time one of
-its children changes status.
+overrides a blocker that is still unresolved. No command repairs stale progress. A node's progress is recomputed
+when one of its children is created, deleted, undeleted, cancelled, or
+moved through a status transition such as `done` or
+`reopen`. `claim` and `unclaim` do not recompute progress.
 
 ### Reopen (Reverse Terminal State)
 

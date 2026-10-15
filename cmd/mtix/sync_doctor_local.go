@@ -10,8 +10,9 @@ import (
 )
 
 // appendLocalStoreChecks adds the doctor's checks that read only the local
-// store and follow the queue check: "no orphan applied" (check 4) and
-// "quarantined events" (check 5, MTIX-95.11). Each fails with "local store
+// store and follow the queue check: "no orphan applied" (check 4),
+// "quarantined events" (check 5, MTIX-95.11), "valid node ids" (MTIX-187),
+// "unique node uids" and the exchange record. Each fails with "local store
 // not initialized" when there is no store. Kept out of runSyncDoctor so it
 // stays within the function length limit.
 func appendLocalStoreChecks(ctx context.Context, r DoctorReport, st *sqlite.Store) DoctorReport {
@@ -22,6 +23,7 @@ func appendLocalStoreChecks(ctx context.Context, r DoctorReport, st *sqlite.Stor
 		r = appendCheck(r, "no orphan applied", orphanOK, detail)
 	}
 	r = appendQuarantineCheck(ctx, r, st)
+	r = appendNodeIDCheck(ctx, r, st)
 	return appendExchangeRecordCheck(ctx, appendUniqueUIDCheck(ctx, r, st), st)
 }
 

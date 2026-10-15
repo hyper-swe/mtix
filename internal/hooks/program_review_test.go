@@ -165,9 +165,9 @@ func TestReviewProgram_ProgramLinkIsReportedByItsResolvedPath(t *testing.T) {
 	require.NoError(t, err)
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	require.NoError(t, os.Symlink(want, filepath.Join(dir, "mytool")))
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	review := reviewOf(t, "[mytool, data/x]")
+	link := filepath.Join(dir, "mytool")
+	require.NoError(t, os.Symlink(want, link))
+	review := reviewOf(t, "["+link+", data/x]")
 	require.Equal(t, ClassOther, review.Class)
 	require.Equal(t, want, review.Program, "a link outside the project is reported on its resolved path, not the link")
 }

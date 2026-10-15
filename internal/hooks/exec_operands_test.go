@@ -231,21 +231,6 @@ func TestPrepareExec_LogicalRootApprovedScriptIsPinned(t *testing.T) {
 	require.FileExists(t, plan.Argv[1])
 }
 
-func TestPrepareExec_PathLinkIntoProjectRefusedWithResolvedTarget(t *testing.T) {
-	f := newPrepareFixture(t, "[tool]")
-	bin := filepath.Join(f.root, "bin")
-	require.NoError(t, os.Mkdir(bin, 0o700))
-	target := filepath.Join(bin, "tool")
-	require.NoError(t, os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0o700))
-	outside, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
-	require.NoError(t, os.Symlink(target, filepath.Join(outside, "tool")))
-	t.Setenv("PATH", outside+string(os.PathListSeparator)+os.Getenv("PATH"))
-	_, err = f.approvals.PrepareExec(f.hook(t))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), target, "the message names the resolved target")
-}
-
 func TestPrepareExec_LinkedCopiesDirectoryRefused(t *testing.T) {
 	f := newPrepareFixture(t, "[scripts/run.sh]")
 	require.NoError(t, f.state.Ensure())
@@ -350,7 +335,7 @@ func TestExecAdapter_ScrubsCodeLoadingVariables(t *testing.T) {
 		data, readErr := os.ReadFile(filepath.Join(f.root, "out.env"))
 		return readErr == nil && len(data) > 0
 	}, 10*time.Second, 20*time.Millisecond)
-	require.Equal(t, "unset|unset|kept", readOut(t, f.root, "out.env"))
+	require.Equal(t, "unset|unset|unset", readOut(t, f.root, "out.env"), "KEEP is not on the allowlist either")
 }
 
 func TestResolveDeepest_FollowsChainsAndStopsOnCycles(t *testing.T) {
@@ -428,7 +413,7 @@ func TestExecAdapter_ScrubsStartupRelocationVariables(t *testing.T) {
 		data, readErr := os.ReadFile(filepath.Join(f.root, "out.env"))
 		return readErr == nil && len(data) > 0
 	}, 10*time.Second, 20*time.Millisecond)
-	require.Equal(t, "unset|unset|unset|kept", readOut(t, f.root, "out.env"))
+	require.Equal(t, "unset|unset|unset|unset", readOut(t, f.root, "out.env"))
 }
 
 func TestScriptOperand_ZshOptionBEndsOptions(t *testing.T) {
@@ -527,20 +512,21 @@ func TestApprove_PathAssignmentRefused(t *testing.T) {
 	}
 }
 
-func TestPrepareExec_ProgramAfterEnvIsResolvedAndCheckedLikeTheProgram(t *testing.T) {
+func TestPrepareExec_ProgramAfterEnvIsResolvedAgainstTheFixedPath(t *testing.T) {
 	f := newPrepareFixture(t, "[env, sh, scripts/run.sh]")
 	plan, err := f.approvals.PrepareExec(f.hook(t))
 	require.NoError(t, err)
+	require.True(t, filepath.IsAbs(plan.Argv[0]), "env is made absolute")
 	require.True(t, filepath.IsAbs(plan.Argv[1]), "the program after env is made absolute")
 
 	bin := filepath.Join(f.root, "bin")
 	require.NoError(t, os.Mkdir(bin, 0o700))
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "sh"), []byte("#!/bin/sh\nexit 0\n"), 0o700))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	_, err = f.approvals.PrepareExec(f.hook(t))
-	require.Error(t, err, "an interpreter that resolves into the project is refused")
+	plan, err = f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err, "the dispatcher PATH is not consulted")
+	require.False(t, strings.HasPrefix(plan.Argv[1], bin), "a project interpreter on the dispatcher PATH is never used")
 }
-
 func TestApprove_HomeThroughLinkIntoProjectRefused(t *testing.T) {
 	outside, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

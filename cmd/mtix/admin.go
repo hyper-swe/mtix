@@ -257,6 +257,9 @@ func runImport(filePath string, f importFlags) error {
 		// Every import error but ErrImportIncomplete leaves the store
 		// unchanged (MTIX-95.31.1), so the auto-export is skipped for it.
 		if errors.Is(err, sqlite.ErrImportIncomplete) {
+			if result != nil {
+				reportImportResult(result, exportData.MtixVersion) // it applied: its warnings still show
+			}
 			return fmt.Errorf("import failed: %w", err)
 		}
 		return nothingWritten(fmt.Errorf("import failed: %w", err))
@@ -271,15 +274,33 @@ func runImport(filePath string, f importFlags) error {
 		}
 	}
 
+	reportImportResult(result, exportData.MtixVersion)
+	return nil
+}
+
+// reportImportResult prints the outcome of an import. The warnings (history
+// entries that conflicted or were skipped, and a file last written by an
+// older mtix) go to stderr as text lines, or into the --json result's
+// warnings list (MTIX-95.31.19.9).
+func reportImportResult(result *sqlite.ImportResult, writerVersion string) {
+	if msg, older := service.OlderWriterWarning(writerVersion, version, app.configSvc.HistoryExport()); older {
+		result.Warnings = append(result.Warnings, msg)
+	}
 	if app.jsonOutput {
 		out, _ := json.Marshal(result)
 		fmt.Println(string(out))
-	} else {
-		fmt.Printf("Import complete: %d created, %d updated, %d skipped, %d deps\n",
-			result.NodesCreated, result.NodesUpdated,
-			result.NodesSkipped, result.DepsImported)
+		return
 	}
-	return nil
+	for _, w := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
+	fmt.Printf("Import complete: %d created, %d updated, %d skipped, %d deps\n",
+		result.NodesCreated, result.NodesUpdated,
+		result.NodesSkipped, result.DepsImported)
+	if n := result.HistoryAdded + result.HistorySkipped + result.HistoryConflicts + result.HistorySkippedLegacyKey; n > 0 {
+		fmt.Printf("History: %d added, %d already present, %d conflicts, %d skipped (legacy key)\n",
+			result.HistoryAdded, result.HistorySkipped, result.HistoryConflicts, result.HistorySkippedLegacyKey)
+	}
 }
 
 // importOptions returns the reconciliation options of an import. A merge

@@ -78,6 +78,9 @@ func renderHookStatus(out OutputWriter, report hookStatusReport) {
 	}
 	for _, decision := range report.Hooks {
 		out.WriteHuman("%s: trusted=%t (%s)\nFix: %s\n", decision.Name, decision.Trusted, decision.Detail, decision.Fix)
+		if review := decision.ProgramReview; review != nil && review.Needed {
+			out.WriteHuman("%s: program review needed (%s)\nFix: %s\n", decision.Name, review.Detail, review.Fix)
+		}
 	}
 	if report.Legacy != "" {
 		out.WriteHuman("%s\n", report.Legacy)

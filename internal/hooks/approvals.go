@@ -26,6 +26,8 @@ type Decision struct {
 	Trusted bool   `json:"trusted"`
 	Detail  string `json:"detail"`
 	Fix     string `json:"fix"`
+	// ProgramReview is the advisory classification of the hook's program.
+	ProgramReview *ProgramReview `json:"program_review,omitempty"`
 }
 
 // Approvals accesses host-specific per-hook records (FR-19).
@@ -39,6 +41,8 @@ type Approvals struct {
 	clock func() time.Time
 	// stager writes verified script copies; tests inject a seam.
 	stager stager
+	// classify overrides ReviewProgram; tests inject a failure.
+	classify func(Hook) (ProgramReview, error)
 }
 type approvalRecord struct {
 	Project string `json:"project"`
@@ -164,6 +168,7 @@ func (a *Approvals) Check() (map[string]Decision, error) {
 			continue
 		}
 		decision.Stanza = snap.stanzas[name]
+		decision.ProgramReview = a.reviewFor(cfg, name)
 		decision.Trusted, decision.Detail, err = a.readDecision(project, name, snap.digests[name])
 		out[name] = decision
 		reports = errors.Join(reports, err)
@@ -333,12 +338,18 @@ func (a *Approvals) CheckConfig(cfg Config) (map[string]Decision, error) {
 }
 
 // ApproveSelected validates the operator's selected hook before writing (FR-19).
-func (a *Approvals) ApproveSelected(selected Hook, terminal bool) error {
+// After a successful approval it returns the advisory program review so the
+// caller can show a notice when the program is neither a pinned script nor a
+// known interpreter running one; the notice never affects the approval.
+func (a *Approvals) ApproveSelected(selected Hook, terminal bool) (ProgramReview, error) {
 	stanza, err := marshalHook(selected)
 	if err != nil {
-		return fmt.Errorf("selected hook: %w", err)
+		return ProgramReview{}, fmt.Errorf("selected hook: %w", err)
 	}
-	return a.approve(selected.Name, string(stanza), terminal)
+	if approveErr := a.approve(selected.Name, string(stanza), terminal); approveErr != nil {
+		return ProgramReview{}, approveErr
+	}
+	return a.reviewOrUnknown(selected), nil
 }
 
 // applyLegacyPin converts an eligible untracked legacy record into pins (FR-19).
@@ -413,4 +424,17 @@ func (a *Approvals) firstRun() (time.Time, error) {
 		return time.Time{}, fmt.Errorf("first run record is invalid")
 	}
 	return first.At, nil
+}
+
+// reviewFor classifies the named configured hook; an unclassifiable hook gets
+// a review that asks the operator to look at it.
+func (a *Approvals) reviewFor(cfg Config, name string) *ProgramReview {
+	for _, h := range cfg.Hooks {
+		if h.Name != name {
+			continue
+		}
+		review := a.reviewOrUnknown(h)
+		return &review
+	}
+	return nil
 }

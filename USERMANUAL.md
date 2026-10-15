@@ -1101,7 +1101,7 @@ mtix config delete auto_claim
 
 ### Task history in tasks.json (experimental)
 
-mtix records a change log per task (field, old and new value for structured fields, actor, origin, time). By default `.mtix/tasks.json` omits it and stays readable by every released mtix. `mtix config set history.export true` writes the file in export format 2.1.0 with the log: each node carries a `history` list, and the history of tasks that no longer exist travels in an optional top-level `history` list; the checksum covers both (see `docs/EXPORT-FORMAT.md`). mtix 0.5.4 and earlier cannot read such a file: their import fails with `checksum verification failed`, and their automatic import loads nothing. Turn the switch on only when every machine and daemon that touches the board runs this version or later; no doctor check verifies that yet. `mtix config set history.export false` returns to 2.0.0 at the next write. `mtix import` in replace mode stores every entry in the file; merge mode does not take history yet. The switch is experimental until a later release adds the doctor check.
+mtix records a change log per task (field, old and new value for structured fields, actor, origin, time). By default `.mtix/tasks.json` omits it and stays readable by every released mtix. `mtix config set history.export true` writes the file in export format 2.1.0 with the log: each node carries a `history` list, and the history of tasks that no longer exist travels in an optional top-level `history` list; the checksum covers both (see `docs/EXPORT-FORMAT.md`). mtix 0.5.4 and earlier cannot read such a file: their import fails with `checksum verification failed`, and their automatic import loads nothing. Turn the switch on only when every machine and daemon that touches the board runs this version or later; no doctor check verifies that yet. `mtix config set history.export false` returns to 2.0.0 at the next write. `mtix import` (replace or merge) and the automatic import union the file's history into the store by entry id: a local entry is never dropped or changed, importing the same file twice adds nothing, an entry id the store holds with other content keeps the local entry and is reported as a conflict (count and first entry ids, no content), and entries keyed by an old dot id rather than a task uid are skipped and counted. `mtix import --json` reports `history_added`, `history_skipped`, `history_conflicts` and `history_skipped_legacy_key`. An entry id the file repeats with different content is stored in neither copy and counts as a conflict. The automatic import reports conflicts and skipped legacy-key entries once per imported file on stderr. While `history.export` is on, a file last written by an mtix older than the first mtix release that keeps task history (0.6.0 today), or by one that recorded no version, makes the import warn "history may be incomplete: board last written by mtix X; upgrade mtix on that machine" ("of an unrecorded version" in place of "X" when none was recorded); a writer at or above that release, a development build and a board with `history.export` off never warn. Upgrade that machine and let it write the board again. The switch is experimental until a later release adds the doctor check.
 
 ---
 
@@ -2359,8 +2359,12 @@ because no process was sitting there to be woken.
 ### Waiting for inbox events
 
 An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
-zero has no limit, and already pending events return immediately. Events mean
-exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+zero has no limit, and already pending events return even if the initial
+database lookup outlasts a positive timeout. That lookup remains interruptible
+by caller cancellation (CLI SIGINT or SIGTERM). After an empty lookup, waiting
+for new events uses only the remaining timeout budget measured from entry.
+Events mean exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM
+means exit 7.
 A negative timeout is refused. Keep foreground waits within the harness's tool
 limits; use an indefinite park only where background tasks are supported. Handle
 and ack events explicitly before parking again.
@@ -2697,6 +2701,23 @@ interpreter needs no new review.
 Residual: a file that appears at a non-script position between the launch check
 and the moment the interpreter opens it is not covered, because only files that
 existed at approval are pinned there.
+
+Program review notice: when you approve an exec hook whose program is neither
+a pinned project script nor a known interpreter running one, `mtix hooks trust`
+prints a "Program review" notice, and its `--json` result carries a
+`program_review` object with `class`, `review_needed`, `program`, `detail` and
+`fix`. A known interpreter means an exact interpreter name (for example `sh`,
+`bash`, `python3`, `node`; case-insensitive, with `.exe`, `.cmd` or `.bat`
+accepted) as a bare name or as an absolute path in a PATH directory, running a
+pinned project script; any other path or name is reported with its
+symlink-resolved path. A hook that cannot be classified is reported as
+`unknown` and needs review. `mtix hooks status` reports the same object for
+each hook, and `mtix doctor` shows the `hooks.programs` check: WARN with the
+exact fix lists the approved hooks that need review and any `hooks.yaml` load
+problem, PASS means none do (no row appears when there is no `hooks.yaml`).
+The notice is advisory: the hook still runs as written and launch behaviour
+does not change. To clear it, run the program through a pinned project script
+and approve the hook again.
 
 ### Conflict handling
 

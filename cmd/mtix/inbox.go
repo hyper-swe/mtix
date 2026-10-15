@@ -46,8 +46,10 @@ func newInboxCmd() *cobra.Command {
 		Long: `Show comments addressed to an agent (via 'mtix comment --to <agent>'),
 oldest first, past the agent's ack cursor.
 
-With --wait, block until a new addressed event arrives — the primitive a worker's
-outer loop parks on between tasks — or until --timeout seconds elapse (default 300).
+With --wait, return already pending events even if the initial database lookup
+outlasts --timeout. That lookup remains interruptible by SIGINT or SIGTERM.
+After an empty lookup, wait for new addressed events using only the remaining
+--timeout budget measured from entry (default 300 seconds).
 Use --timeout 0 for no limit: wait until an event or a signal. A negative timeout
 or a value too large to represent a duration is refused. Returned events mean
 exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
@@ -71,7 +73,7 @@ Reads never ack — acknowledgement stays explicit.`,
 	}
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent id whose inbox to read (required)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Long-poll: block until an event arrives or --timeout")
-	cmd.Flags().IntVar(&timeout, "timeout", 300, "Max seconds to block with --wait (0 = no limit; negative refused)")
+	cmd.Flags().IntVar(&timeout, "timeout", 300, "Wait budget in seconds from entry; initial pending read may take longer (0 = no limit; negative refused)")
 	cmd.Flags().StringVar(&format, "format", "",
 		"Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection)")
 	_ = cmd.MarkFlagRequired("agent")

@@ -77,19 +77,16 @@ func readGit(ctx context.Context, path, dir string, limit int64, args ...string)
 	}
 	err := cmd.Run()
 	cleanupErr := cleanupBoardProcess(cmd)
-	if err == nil {
-		err = cleanupErr
-	}
 	data, over := out.result()
-	_, errOver := stderr.result()
+	errData, errOver := stderr.result()
 	if over || errOver {
 		return nil, gitBoardError("output size limit", nil)
 	}
 	if ctx.Err() != nil {
 		return nil, gitBoardError("operation canceled", ctx.Err())
 	}
-	if err != nil {
-		return nil, gitBoardError("Git operation failed", nil)
+	if err != nil || cleanupErr != nil {
+		return nil, boardGitFailure(cmd, err, cleanupErr, errData, args)
 	}
 	return data, nil
 }

@@ -247,6 +247,9 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 func newSyncService(clock func() time.Time) *service.SyncService {
 	svc := service.NewSyncService(app.store, app.logger, clock)
 	svc.SetAutoSyncConfig(app.configSvc)
+	svc.SetBinaryVersion(version)
+	svc.SetHistoryExportSource(app.configSvc.HistoryExport)
+	svc.SetJSONNotices(app.jsonOutput)
 	return svc
 }
 

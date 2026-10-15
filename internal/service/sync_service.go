@@ -33,8 +33,13 @@ type SyncService struct {
 	retrySleep func(context.Context, time.Duration) error // injected wait for bounded import ownership retry
 	autoSync   AutoSyncConfig                             // sync.auto_sync; nil reads as the default, on (MTIX-95.31.2)
 	notices    io.Writer                                  // user-facing auto-import notices, stderr by default (MTIX-95.31.2)
-	mu         sync.Mutex                                 // guards noticed
-	noticed    map[string]bool
+	// binaryVersion is this mtix build's version; the older-writer warning
+	// compares the imported file's last writer with it (MTIX-95.31.19.9).
+	binaryVersion string
+	historyExport func() bool // history.export reader; nil = off
+	jsonNotices   bool        // the older-writer warning is one JSON line (--json)
+	mu            sync.Mutex  // guards noticed
+	noticed       map[string]bool
 	// olderForms are the older conflict baseline forms hasConflict tries,
 	// in order; nil means olderBaselineForms() (MTIX-95.31.11). Tests set it.
 	olderForms []baselineForm

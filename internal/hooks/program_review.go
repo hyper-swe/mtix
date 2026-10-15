@@ -5,8 +5,6 @@ package hooks
 
 import (
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -75,7 +73,7 @@ func classifyProgram(h Hook, in *hookInputs) ProgramReview {
 	if _, pinned := in.scripts[in.program]; pinned {
 		return ProgramReview{Class: ClassPinnedScript, Program: command[in.program], Detail: "the program is a pinned project script"}
 	}
-	if knownInterpreterProgram(command[in.program]) && in.script >= 0 {
+	if knownInterpreterProgram(in.root, command[in.program]) && in.script >= 0 {
 		if _, pinned := in.scripts[in.script]; pinned {
 			return ProgramReview{Class: ClassInterpreterScript, Program: command[in.program], Detail: "a known interpreter runs a pinned project script"}
 		}
@@ -97,8 +95,8 @@ func reviewProgramPath(root, program string) string {
 	switch {
 	case filepath.IsAbs(program):
 	case filepath.Base(program) == program:
-		found, err := exec.LookPath(program)
-		if err != nil {
+		found, ok := lookPathFixed(filepath.SplitList(FixedHookPath(root)), program)
+		if !ok {
 			return program
 		}
 		path = found
@@ -131,18 +129,18 @@ func reviewBaseName(program string) string {
 // exact name AND is a bare name or an absolute path in one of the PATH
 // directories at approval time. Any other path (relative, or an absolute
 // path outside PATH) is not trusted by its name.
-func knownInterpreterProgram(program string) bool {
+func knownInterpreterProgram(root, program string) bool {
 	if !reviewInterpreterName.MatchString(reviewBaseName(program)) {
 		return false
 	}
 	if filepath.IsAbs(program) {
-		return inPathDirectory(filepath.Dir(program))
+		return inPathDirectory(root, filepath.Dir(program))
 	}
 	return !strings.ContainsRune(program, filepath.Separator)
 }
 
-func inPathDirectory(dir string) bool {
-	for _, entry := range filepath.SplitList(os.Getenv("PATH")) {
+func inPathDirectory(root, dir string) bool {
+	for _, entry := range filepath.SplitList(FixedHookPath(root)) {
 		if entry != "" && sameDirectory(entry, dir) {
 			return true
 		}

@@ -846,6 +846,17 @@ Show events addressed to an agent
 Show comments addressed to an agent (via 'mtix comment --to <agent>'),
 oldest first, past the agent's ack cursor.
 
+--count prints the pending event count; --count --all prints every retained
+addressed event, including acknowledged events. --json returns an object with agent and integer
+pending and total fields. Zero is success (exit 0). Comments and hook deliveries
+count once per journal event. Count never acknowledges, moves the cursor or
+refreshes session last_seen; it skips auto-import and makes no hub contact.
+Ordinary project startup, including schema/index installation, still applies.
+Do not combine active --count with explicitly supplied --wait or --format,
+including --wait=false or --format=. Any --all flag requires active --count;
+--count=false alone keeps listing behavior. Count flags apply only to inbox,
+not its ack or lease subcommands.
+
 With --wait, return already pending events even if the initial database lookup
 outlasts --timeout. That lookup remains interruptible by SIGINT or SIGTERM.
 After an empty lookup, wait for new addressed events using only the remaining
@@ -872,6 +883,8 @@ Reads never ack — acknowledgement stays explicit.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--agent` |  | Agent id whose inbox to read (required) |  |
+| `--all` |  | With --count, print total retained events including acknowledged events | false |
+| `--count` |  | Print pending count without acknowledging or touching sessions | false |
 | `--format` |  | Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection) |  |
 | `--timeout` |  | Wait budget in seconds from entry; initial pending read may take longer (0 = no limit; negative refused) | 300 |
 | `--wait` |  | Long-poll: block until an event arrives or --timeout | false |

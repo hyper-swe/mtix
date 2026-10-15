@@ -111,6 +111,16 @@ Operator alerts: inspect `alerts.recent` with `mtix sync doctor --json`, follow 
 
 <!-- AUTO-GENERATED: WAKE_ROUTINE -->
 
+## Read-only inbox counts
+
+Use `mtix inbox --agent <agent-id> --count` for pending work, or
+`mtix inbox --agent <agent-id> --count --all` for total retained local events,
+including acknowledged events. `--json` returns integer pending/total counts.
+Count makes no hub contact, never acknowledges or refreshes session `last_seen`,
+and skips automatic board import. It is not a heartbeat. Do not combine count
+with explicitly supplied wait/format flags; `--all` requires active count.
+See the multi-agent skill for the complete polling contract and startup limits.
+
 ## Reference Wake Routine
 
 Inbox prompt/context and MCP reads label senders as claimed and unverified and

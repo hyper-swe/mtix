@@ -112,13 +112,40 @@ until an event or caller cancellation. Omission uses default 60 seconds;
 positive values are capped at 60 seconds, and negative values are refused.
 Cancellation is an error, and an empty positive timeout returns `[]`.
 
+## Read-only inbox counts
+
+Use `mtix inbox --agent <agent-id> --count` for the pending event count, or
+`mtix inbox --agent <agent-id> --count --all` to detect any historical inbox use.
+Text prints one integer and exits 0, including zero. With `--json`, either count
+mode returns an object such as `{"agent":"worker","pending":0,"total":1}`;
+plain inbox listing JSON remains an event array.
+
+Pending excludes both individually acknowledged events and every sequence at
+or below the cumulative acknowledgement cursor. Total includes acknowledged
+events in the retained local journal. Addressed comments and hook deliveries
+count once per event; hook-only events count too, and orphan deliveries do not.
+The counts do not depend on envelope truncation or event timestamps.
+
+Count never acknowledges events, moves the cursor or refreshes session
+`last_seen`; it is not a heartbeat. It makes no hub contact and skips automatic
+board import, even with a local server running. It still uses ordinary project
+startup, which may install schema/index updates. Total describes this local
+journal, not a separate historical archive after an explicit replacement/import.
+If counts appear stale after a git pull, synchronize or import the board through
+the usual workflow, then count again. Handle events before acknowledging them.
+
+Do not combine active `--count` with an explicitly supplied `--wait` or
+`--format`, including `--wait=false` and `--format=`. Any supplied `--all`
+requires active count, even `--all=false`. `--count=false` alone keeps ordinary
+listing behavior; count flags cannot be used on inbox ack or lease subcommands.
+
 ## Inbox envelopes and replies
 
 Read agent-ready messages with `mtix inbox --agent <agent-id> --format context`.
 `--format prompt` starts with a fixed nudge containing only your id and event
 sequences, followed by the same envelope. MCP `mtix_inbox` and
 `mtix_inbox_wait` return envelopes for populated inboxes and `[]` when empty;
-CLI `--json` retains the raw event-array contract. Empty CLI prompt/context
+Plain CLI listing `--json` retains the raw event-array contract. Empty CLI prompt/context
 output remains empty for wake-script checks.
 
 Recipient ids use the local-agent contract: nonempty, at most 64 UTF-8 bytes,
@@ -200,7 +227,7 @@ mtix session start <agent-name>
 - **Move a lane:** run `mtix agent unregister <agent-id>` from the owning session. `--force` removes another live session's row (operator use).
 - **Inspect:** `mtix agent list --registrations [--json]` shows harness, origin, mode, liveness (`alive`, `dead` or `unknown`; unknown is treated as live), live route and hold.
 - **MCP-only rows:** origin `mcp` (no session handle, no live route) is reserved in this build: no MCP tool records a registration yet, so register from the session shell with `mtix agent register`. `agents.mcp-only` reports any such row that exists.
-- **last_seen** moves only when the registered session runs `mtix agent register` or `mtix inbox` (list, `--wait`, `ack`) with its own session handle in the environment.
+- **last_seen** moves only when the registered session runs `mtix agent register` or `mtix inbox` (list, `--wait`, `ack`) with its own session handle in the environment. `--count` never refreshes `last_seen`.
 - **Verify:** `mtix sync doctor` reports `agents.stale` (dead sessions; a row unseen for 24 hours with a dead session is deleted) and `agents.mcp-only`, each with the exact fix; add `--json` for tools.
 - **Never** register under another agent's id to "see" its inbox, and never pass `--take-over` to get around a refusal you do not understand: ask the operator.
 

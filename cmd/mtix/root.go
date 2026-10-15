@@ -131,6 +131,9 @@ func applyProjectDir(cmd *cobra.Command, projectDir string) error {
 // persistentPreRun handles the PersistentPreRunE logic for the root command.
 // Extracted from newRootCmd to reduce cognitive complexity.
 func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error {
+	if err := validateInboxCountFlags(cmd); err != nil {
+		return err
+	}
 	// Skip store init for commands that don't need it. recover (MTIX-26.5)
 	// must run when the database is too damaged for the store to open.
 	if skipsStoreInit(cmd) {
@@ -157,9 +160,17 @@ func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error 
 		return err
 	}
 
+	autoImportForCommand(cmd)
+
+	return nil
+}
+
+// autoImportForCommand retains ordinary startup import handling while count
+// polls the current durable journal without reconciling board data (FR-15.2).
+func autoImportForCommand(cmd *cobra.Command) {
 	// Auto-import tasks.json if hash changed (FR-15.2).
 	// Skip for excluded commands per FR-15.2c.
-	if app.syncSvc != nil && app.mtixDir != "" && !shouldSkipAutoImport(autoImportCommandPath(cmd)) {
+	if app.syncSvc != nil && app.mtixDir != "" && !shouldSkipAutoImport(autoImportCommandPath(cmd)) && !isInboxCountCommand(cmd) {
 		// A refusal (MTIX-95.31.2) has already been printed by AutoImport,
 		// once for this command; logging it again would print it twice.
 		err := app.syncSvc.AutoImport(cmd.Context(), app.mtixDir)
@@ -167,8 +178,6 @@ func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error 
 			app.logger.Warn("auto-import failed", "error", err)
 		}
 	}
-
-	return nil
 }
 
 // skipsStoreInit names commands that never open a store. Attach verbs run in

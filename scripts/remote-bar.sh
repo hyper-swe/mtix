@@ -148,12 +148,19 @@ rb_snapshot_tree() {
 	dir="$(cd "$dir" && pwd -P)"
 	gitdir="$(git rev-parse --absolute-git-dir)"
 	idx="$RB_TMPDIR/index"
-	spec=(':(exclude).git' ':(exclude).hyperswe' ':(exclude).mgit')
 	loop_files="$(rb_loop_files "$parent")"
 	(
 		cd "$dir"
 		export GIT_DIR="$gitdir" GIT_WORK_TREE="$dir" GIT_INDEX_FILE="$idx"
 		git read-tree "$parent" >/dev/null
+		# git add refuses the whole add (exit 1) when an exclude pathspec names
+		# a path the worktree .gitignore already ignores (MTIX-183). Ignored
+		# paths stay out of the add anyway, so only the others get a pathspec.
+		spec=()
+		for f in .git .hyperswe .mgit; do
+			git -c core.excludesFile=/dev/null check-ignore -q --no-index -- "$f" ||
+				spec+=(":(exclude)$f")
+		done
 		git -c core.excludesFile=/dev/null add -A -- . "${spec[@]}" >/dev/null || return 1
 		# Loop-injected root files main does not track are dropped from the
 		# index (not by pathspec, which makes git complain about ignored paths).

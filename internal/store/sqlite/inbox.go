@@ -166,10 +166,12 @@ func (s *Store) InboxAckThrough(ctx context.Context, agentID string, seq int64) 
 // enough to feel instant to a parked worker, large enough not to spin the DB.
 const inboxPollInterval = 250 * time.Millisecond
 
-// InboxWait returns pending events immediately, then polls without holding a
-// transaction between queries (FR-19.4). Zero waits until an event or caller
-// cancellation; a positive timeout returns (nil, nil) when its own deadline
-// expires. Parent cancellation, parent deadlines and database errors propagate.
+// InboxWait first reads pending events using the caller context, then polls
+// without holding a transaction between queries (FR-19.4). The initial read
+// remains caller-interruptible even after the local timeout expires. A positive
+// timeout is measured from entry and bounds only the subsequent wait for future
+// events; expiration returns (nil, nil). Zero waits until an event or caller
+// cancellation. Parent cancellation, deadlines and database errors propagate.
 // Negative durations return ErrInvalidInput before reading the inbox.
 func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Duration) ([]InboxEvent, error) {
 	if timeout < 0 {
@@ -183,11 +185,13 @@ func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Dura
 	}
 	ticker := time.NewTicker(inboxPollInterval)
 	defer ticker.Stop()
+	queryCtx := ctx
 	for {
-		events, err := s.InboxList(waitCtx, agentID)
+		events, err := s.InboxList(queryCtx, agentID)
 		if err != nil {
-			return nil, inboxWaitError(ctx, waitCtx, err)
+			return nil, inboxWaitError(ctx, queryCtx, err)
 		}
+		queryCtx = waitCtx
 		if len(events) > 0 {
 			return events, nil
 		}

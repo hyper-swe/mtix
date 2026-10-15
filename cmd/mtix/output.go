@@ -77,7 +77,11 @@ func NewOutputWriter(jsonMode bool) OutputWriter {
 
 // newJSONOutputWriter retains the supplied stream and snapshots read freshness.
 func newJSONOutputWriter(w io.Writer) *jsonWriter {
-	return &jsonWriter{w: w, staleReason: app.staleReason}
+	reason := ""
+	if app.outputScope == freshnessRead {
+		reason = app.staleReason
+	}
+	return &jsonWriter{w: w, staleReason: reason}
 }
 
 // --- Human writer ---

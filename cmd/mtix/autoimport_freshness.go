@@ -5,7 +5,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -15,14 +14,16 @@ import (
 // runCommandAutoImport records unverified cache freshness (FR-15.2, MTIX-149).
 // A refusal has already been printed once by AutoImport (MTIX-95.31.2), so
 // logging it again would duplicate the notice. JSON readers carry metadata
-// through their writer. Every caller gets one stderr notice, including protocol
-// startup commands whose stdout is not CLI JSON even when --json is supplied.
+// through their writer. Reads and protocol startup get one stderr notice;
+// mutation guidance is emitted only after its handler succeeds.
 func runCommandAutoImport(cmd *cobra.Command) {
 	err := app.syncSvc.AutoImport(cmd.Context(), app.mtixDir)
 	switch {
 	case errors.Is(err, service.ErrAutoImportLockBusy):
 		app.staleReason = "sync_lock_busy"
-		fmt.Fprintln(cmd.ErrOrStderr(), "mtix: possibly stale data: sync lock busy; auto-import was skipped after a short retry; retry this command after the current owner finishes")
+		if app.outputScope != freshnessWrite {
+			writeFreshnessNotice(cmd, "mtix: possibly stale data: sync lock busy; auto-import was skipped after a short retry; retry reads after the current owner finishes; never repeat a successful write")
+		}
 	case err != nil && !errors.Is(err, service.ErrAutoImportRefused):
 		app.logger.Warn("auto-import failed", "error", err)
 	}

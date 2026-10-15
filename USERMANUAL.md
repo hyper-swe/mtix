@@ -1573,9 +1573,17 @@ marks JSON responses with `"stale": true` and
 `"stale_reason": "sync_lock_busy"`. Object responses retain their existing fields;
 array, scalar and null responses are wrapped as
 `{"data": <original response>, "stale": true, "stale_reason": "sync_lock_busy"}`.
-Fresh responses keep their original shape and omit these fields. One possibly
-stale notice also goes to stderr, including protocol and daemon startup when
-`--json` is supplied. CLI JSON stdout remains one valid response.
+Fresh reads keep their original shape and omit these fields. One possibly stale
+notice also goes to stderr, including protocol and daemon startup when `--json`
+is supplied. CLI JSON stdout remains one valid response.
+
+These fields describe read responses only. Successful mutation acknowledgements
+omit `stale` and `stale_reason`; their absence on an acknowledgement does not
+verify cached read freshness. When a write succeeds despite busy auto-import
+ownership, one completion notice says the write succeeded and must not be
+repeated. Follow that notice: never repeat a successful write. When the write
+itself fails, no completion notice claims it succeeded. A later export or cleanup
+error does not undo a successful write.
 
 Check freshness before using task state or assembled context to take an action.
 When stale is true, retry the same read after the current owner finishes. Never

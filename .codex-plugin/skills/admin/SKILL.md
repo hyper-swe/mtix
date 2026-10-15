@@ -579,5 +579,6 @@ line. `mtix hooks status` lists each configured `append-file` path that
 delivery would refuse, with the reason and the exact fix: text output prints
 `Fix:` lines and `--json` carries an `append_file` list of `hook`, `path`,
 `reason`, `fix` and `refused`. On Windows the same confinement and
-same-file checks apply, but hard links are not detected and permission bits are
-not reported.
+same-file checks apply and a multiply linked file is refused at delivery (as is a file whose
+link count cannot be read), but
+`mtix hooks status` does not list it and permission bits are not reported.

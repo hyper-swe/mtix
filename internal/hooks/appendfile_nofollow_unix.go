@@ -34,3 +34,6 @@ func linkCount(info os.FileInfo) uint64 {
 
 // wideMode reports an existing file readable or writable by group or others.
 func wideMode(info os.FileInfo) bool { return info.Mode().Perm()&0o077 != 0 }
+
+// openedLinkCount returns the hard-link count of the opened file.
+func openedLinkCount(_ *os.File, info os.FileInfo) (uint64, error) { return linkCount(info), nil }

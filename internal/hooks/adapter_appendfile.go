@@ -93,6 +93,16 @@ func openAppendFile(root *os.Root, name string, pre os.FileInfo) (*os.File, erro
 		flags |= os.O_CREATE | os.O_EXCL
 	}
 	f, err := root.OpenFile(name, flags, 0o600)
+	if err != nil && pre == nil && os.IsExist(err) {
+		// Another writer created the file first. Treat it as an existing target:
+		// inspect it afresh and append, so no line is dropped.
+		info, lerr := root.Lstat(name)
+		if lerr != nil || !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("append-file: %s: changed while it was being opened; refused", name)
+		}
+		pre = info
+		f, err = root.OpenFile(name, os.O_APPEND|os.O_WRONLY|nonBlockFlag, 0o600)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("append-file: open %s inside the project: %w", name, err)
 	}
@@ -111,12 +121,18 @@ func openAppendFile(root *os.Root, name string, pre os.FileInfo) (*os.File, erro
 // than one link, or is not the file that was inspected before the open.
 func verifyOpened(f *os.File, pre os.FileInfo) error {
 	info, err := f.Stat()
-	switch {
-	case err != nil:
+	if err != nil {
 		return fmt.Errorf("inspect opened file: %w", err)
-	case !info.Mode().IsRegular():
+	}
+	if !info.Mode().IsRegular() {
 		return fmt.Errorf("not a regular file; refused")
-	case linkCount(info) > 1:
+	}
+	links, err := openedLinkCount(f, info)
+	if err != nil {
+		return fmt.Errorf("cannot read the link count of the opened file, so it is refused: %w", err)
+	}
+	switch {
+	case links > 1:
 		return fmt.Errorf("has more than one hard link; refused")
 	case pre != nil && !os.SameFile(pre, info):
 		return fmt.Errorf("changed while it was being opened; refused")

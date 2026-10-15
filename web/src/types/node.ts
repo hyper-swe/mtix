@@ -62,6 +62,7 @@ export interface Annotation {
   text: string;
   created_at: string;
   resolved: boolean;
+  addressee?: string;
 }
 
 /** Activity log entry per FR-3.6. */
@@ -69,7 +70,8 @@ export interface ActivityEntry {
   id: string;
   type: string;
   author: string;
-  text: string;
+  addressee?: string;
+  text?: string;
   created_at: string;
 }
 

@@ -89,6 +89,9 @@ type ActivityEntry struct {
 	// Author is the agent ID or human email.
 	Author string `json:"author"`
 
+	// Addressee identifies the recipient of a projected annotation per FR-19.1.
+	Addressee string `json:"addressee,omitempty"`
+
 	// Text is the content (required for comment, note, unclaim; optional for others).
 	Text string `json:"text,omitempty"`
 

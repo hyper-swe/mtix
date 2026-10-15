@@ -6,9 +6,10 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"time"
 )
 
 // InboxAckStore persists selective inbox acknowledgements per FR-19.5.
@@ -20,8 +21,9 @@ type InboxAckStore interface {
 // InboxService owns durable list/wait reads and selective acknowledgements
 // without inventing domain broadcasts (FR-19.4/FR-19.5, Commandment 7).
 type InboxService struct {
-	store  InboxAckStore
-	reader InboxReadStore
+	store   InboxAckStore
+	reader  InboxReadStore
+	counter InboxCountStore
 }
 
 // InboxEvent is the per-agent event contract per FR-19.4, with unchanged JSON.
@@ -42,7 +44,11 @@ func NewInboxService(st InboxAckStore) *InboxService {
 // NewInboxServiceWithReads injects separate durable read/ack capabilities per
 // FR-19.4/FR-19.5, preserving ack-only backends and selective acknowledgement.
 func NewInboxServiceWithReads(st InboxAckStore, reader InboxReadStore) *InboxService {
-	return &InboxService{store: st, reader: reader}
+	counter, ok := reader.(InboxCountStore)
+	if !ok {
+		counter, _ = st.(InboxCountStore)
+	}
+	return &InboxService{store: st, reader: reader, counter: counter}
 }
 
 // InboxAck acknowledges only the requested event, preserving backend validation,

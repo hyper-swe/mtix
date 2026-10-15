@@ -5,7 +5,6 @@ package hooks
 
 import (
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -25,6 +24,8 @@ type ExecPlan struct {
 	ScriptPath string
 	// Resolved maps each bare command name to the absolute path it resolved to.
 	Resolved map[string]string
+	// Path is the fixed PATH of the child (FixedHookPath).
+	Path string
 }
 
 // Audit renders the resolved bare names for the firing log, or "".
@@ -87,7 +88,7 @@ func buildPlan(h Hook, in *hookInputs, root, copies string, st stager) (*ExecPla
 	if err := checkOperands(h, in); err != nil {
 		return nil, err
 	}
-	plan := &ExecPlan{Dir: root, Resolved: map[string]string{}}
+	plan := &ExecPlan{Dir: root, Resolved: map[string]string{}, Path: FixedHookPath(root)}
 	for i, arg := range h.Exec.Command {
 		if script, ok := in.scripts[i]; ok {
 			staged, err := st.stage(copies, script)
@@ -135,11 +136,11 @@ func resolveLauncher(root, name string) (string, error) {
 	case filepath.IsAbs(name):
 		return name, nil
 	case filepath.Base(name) == name:
-		path, err := exec.LookPath(name)
-		if err != nil {
-			return "", fmt.Errorf("exec launch: resolve %q: %w", name, err)
+		path, found := lookPathFixed(filepath.SplitList(FixedHookPath(root)), name)
+		if !found {
+			return "", fmt.Errorf("exec launch: %q was not found on the fixed hook PATH; use an absolute program path", name)
 		}
-		return filepath.Abs(path)
+		return path, nil
 	default:
 		return filepath.Join(root, name), nil
 	}

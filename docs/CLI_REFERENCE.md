@@ -568,7 +568,8 @@ of CLI commands, state machine, MCP tools, and configuration.
 Generate agent-facing documentation
 
 Fully regenerate the root MTIX.md briefing and append one native instruction
-pointer in CLAUDE.md and AGENTS.md, preserving other user content. Valid old
+pointer in CLAUDE.md and AGENTS.md, preserving other user content. Keep the
+first live owned pointer and remove later duplicates. Valid old
 mtix marker blocks are migrated; malformed pairs are refused. HYPERSWE.md
 suppresses new pointers and native-file creation; existing pointers remain.
 Also generate all 11 reference files in the project's .mtix/docs/ directory.
@@ -600,8 +601,11 @@ check fails, or 2 when any check reports FAIL.
 --fix performs only explicitly registered non-grant repairs and rechecks them.
 Grant commands are printed for you to run yourself; they are never executed.
 
-Setup and document-freshness checks will be registered by their future features;
-they are not available in this version.
+The read-only docs.stale check compares board-root MTIX.md with this binary
+and checks live native pointers. WARN prints mtix -C <board-root> docs generate;
+run that command and rerun doctor. --fix never writes these documents.
+HYPERSWE.md suppresses missing native pointers, but MTIX.md is still checked.
+Setup checks will be registered by their future features.
 
 ### Flags
 

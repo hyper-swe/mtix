@@ -22,10 +22,18 @@ by this flag. Existing sync checks currently register no automatic repairs.
 Follow each printed remedy and rerun doctor. All report fields and diagnostics
 are redacted before output; never put credentials into a command argument.
 
-Setup completion (`setup.done`, MTIX-112.19.2) and document freshness
-(`docs.stale`, MTIX-112.32.1) are FUTURE registrations, not checks available
-in this version. Do not infer that setup or generated documents are current
-from the absence of those rows.
+The read-only `docs.stale` check compares the board-root `MTIX.md` with
+this binary's generated instructions and checks live native pointer lines.
+Missing or stale instructions and missing or duplicate pointers produce WARN.
+Fenced and indented examples do not count as live pointers. `HYPERSWE.md`
+suppresses the missing-pointer requirement; existing pointers are allowed and
+`MTIX.md` is still checked. Follow the exact printed command,
+`mtix -C <board-root> docs generate`, then rerun doctor. Generation keeps the
+first live owned pointer and removes later duplicates, preserving other bytes.
+This check never writes documents or Git exclusions, including with `--fix`.
+
+Setup completion (`setup.done`, MTIX-112.19.2) remains a FUTURE registration.
+Do not infer that setup is current from the absence of that row.
 
 ## Error Codes
 

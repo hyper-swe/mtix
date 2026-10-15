@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -28,8 +29,11 @@ check fails, or 2 when any check reports FAIL.
 --fix performs only explicitly registered non-grant repairs and rechecks them.
 Grant commands are printed for you to run yourself; they are never executed.
 
-Setup and document-freshness checks will be registered by their future features;
-they are not available in this version.`
+The read-only docs.stale check compares board-root MTIX.md with this binary
+and checks live native pointers. WARN prints mtix -C <board-root> docs generate;
+run that command and rerun doctor. --fix never writes these documents.
+HYPERSWE.md suppresses missing native pointers, but MTIX.md is still checked.
+Setup checks will be registered by their future features.`
 
 func newDoctorCmd() *cobra.Command { return newDoctorCommand(newConfiguredDoctorService) }
 
@@ -97,20 +101,31 @@ func writeDoctorRows(out io.Writer, rows []service.DoctorResult, jsonOutput bool
 func newConfiguredDoctorService() (*service.DoctorService, error) {
 	known := knownSyncDSNs()
 	opts := service.DoctorOptions{Platform: runtime.GOOS, Scrub: func(text string) string { return redact.Known(text, known...) }}
-	if app.mtixDir == "" {
-		return service.NewDoctorService(opts), nil
-	}
-	request := configuredDoctorCollection()
-	if request.Postgres || request.Relay {
-		opts.CollectSync = func(ctx context.Context) ([]service.DoctorResult, error) {
-			return doctorSyncRows(collectSyncDoctor(ctx, request)), nil
+	if app.mtixDir != "" {
+		request := configuredDoctorCollection()
+		if request.Postgres || request.Relay {
+			opts.CollectSync = func(ctx context.Context) ([]service.DoctorResult, error) {
+				return doctorSyncRows(collectSyncDoctor(ctx, request)), nil
+			}
 		}
 	}
 	svc := service.NewDoctorService(opts)
+	if err := svc.Register(documentFreshnessCheck(filepath.Dir(app.mtixDir))); err != nil {
+		return nil, fmt.Errorf("register documentation check: %w", err)
+	}
 	if hooksFileExists(app.mtixDir) {
 		if err := svc.Register(hooksProgramsCheck(app.mtixDir)); err != nil {
 			return nil, fmt.Errorf("register hook program check: %w", err)
 		}
+	}
+	// Attach rows (setup.shim, glue.<h>, attach.failures, skew.dispatchers)
+	// appear only when something is installed, marked, alerted or beating.
+	deps, err := productionAttachDoctorDeps(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if err := registerAttachDoctorChecks(context.Background(), svc, deps); err != nil {
+		return nil, fmt.Errorf("register attach doctor checks: %w", err)
 	}
 	return svc, nil
 }

@@ -102,7 +102,10 @@ func planProjectDocs(root string, owned map[string]string) ([]projectDoc, error)
 		if plans[i].name == "AGENTS.md" {
 			pointer = agentsPointer
 		}
-		if hsErr != nil {
+		if hsErr == nil {
+			spans, _ := projectPointerSpans(clean, pointer, plans[i].name)
+			clean = removeProjectPointerDuplicates(clean, spans)
+		} else {
 			clean, err = appendProjectPointer(clean, pointer, plans[i].name)
 			if err != nil {
 				return nil, fmt.Errorf("prepare %s: %w", plans[i].name, err)
@@ -116,9 +119,9 @@ func planProjectDocs(root string, owned map[string]string) ([]projectDoc, error)
 }
 
 func appendProjectPointer(content []byte, pointer, name string) ([]byte, error) {
-	live, unclosed := projectPointerInText(content, pointer, name)
-	if live {
-		return content, nil
+	spans, unclosed := projectPointerSpans(content, pointer, name)
+	if len(spans) > 0 {
+		return removeProjectPointerDuplicates(content, spans), nil
 	}
 	if unclosed {
 		return nil, fmt.Errorf("unclosed code fence prevents appending project pointer")

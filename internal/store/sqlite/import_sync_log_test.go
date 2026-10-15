@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -80,6 +81,13 @@ func TestImport_ReplaceOnSyncedStore_KeepsNodesTheLogHolds(t *testing.T) {
 			pullEvents(t, s, evs)
 			return evs
 		}, "MTIX-2", true},
+		{"hub-connected mark, node the file lacks", func(t *testing.T, s *sqlite.Store, _ *sql.DB) []*model.SyncEvent {
+			mustCreateNode(t, s, "MTIX-1", "")
+			mustCreateNode(t, s, "MTIX-2", "")
+			_, err := s.MarkHubConnected(context.Background(), "config")
+			require.NoError(t, err)
+			return nil
+		}, "MTIX-2", true},
 		{"synced store, file holds every node", func(t *testing.T, s *sqlite.Store, raw *sql.DB) []*model.SyncEvent {
 			mustCreateNode(t, s, "MTIX-1", "")
 			return pushPendingOwnEvents(t, raw)
@@ -110,13 +118,71 @@ func TestImport_ReplaceOnSyncedStore_KeepsNodesTheLogHolds(t *testing.T) {
 				require.True(t, nodeExists(t, raw, tt.drop),
 					"the replace dropped %s, and the pull after it did not restore it", tt.drop)
 			}
-			require.Error(t, err, "the replace would drop %s while the sync log keeps its events", tt.drop)
+			require.ErrorIs(t, err, sqlite.ErrReplaceOnSyncedStore,
+				"the replace would drop %s while the sync log keeps its events", tt.drop)
 			assert.Contains(t, err.Error(), tt.drop, "the refusal names the node")
 			assert.Contains(t, err.Error(), "mtix sync reconcile --discard-local", "the refusal names the recovery")
 			require.True(t, nodeExists(t, raw, tt.drop), "a refused replace changes nothing")
 
 			pullEvents(t, s, pulled) // the next pull returns the held events
 			assert.True(t, nodeExists(t, raw, tt.drop), "the node is still on the board after the pull")
+		})
+	}
+}
+
+func TestMissingLoggedNodes_DroppedNode_Reported(t *testing.T) {
+	tests := []struct {
+		name string
+		// lose removes MTIX-2 from the board in some way.
+		lose func(t *testing.T, s *sqlite.Store, raw *sql.DB)
+		want []string
+	}{
+		{"row deleted without an event", func(t *testing.T, _ *sqlite.Store, raw *sql.DB) {
+			_, err := raw.Exec(`DELETE FROM nodes WHERE id = 'MTIX-2'`)
+			require.NoError(t, err)
+		}, []string{"MTIX-2"}},
+		{"deleted, then purged", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
+			require.NoError(t, s.DeleteNode(context.Background(), "MTIX-2", false, "u"))
+			_, err := raw.Exec(`DELETE FROM nodes WHERE id = 'MTIX-2'`) // gc purges a deleted node
+			require.NoError(t, err)
+		}, nil},
+		{"renumbered, same uid", func(t *testing.T, _ *sqlite.Store, raw *sql.DB) {
+			_, err := raw.Exec(`UPDATE nodes SET id = 'MTIX-9' WHERE id = 'MTIX-2'`)
+			require.NoError(t, err)
+		}, nil},
+		{"still on the board", func(*testing.T, *sqlite.Store, *sql.DB) {}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, raw := mutationTestStore(t)
+			mustCreateNode(t, s, "MTIX-1", "")
+			mustCreateNode(t, s, "MTIX-2", "")
+			pushPendingOwnEvents(t, raw)
+			tt.lose(t, s, raw)
+
+			got, err := s.MissingLoggedNodes(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestNameNodes_ManyIDs_CapsTheList(t *testing.T) {
+	tests := []struct {
+		name string
+		n    int
+		want string
+	}{
+		{"two", 2, "A-1, A-2"},
+		{"twelve", 12, "A-1, A-2, A-3, A-4, A-5, A-6, A-7, A-8, A-9, A-10 and 2 more"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ids := make([]string, tt.n)
+			for i := range ids {
+				ids[i] = "A-" + strconv.Itoa(i+1)
+			}
+			assert.Equal(t, tt.want, sqlite.NameNodes(ids))
 		})
 	}
 }

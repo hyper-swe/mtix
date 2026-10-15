@@ -49,6 +49,13 @@ func pullHeldEvents(t *testing.T, evs []*model.SyncEvent) {
 	}))
 }
 
+// configureHub sets a hub DSN for the test, with nothing pushed yet.
+func configureHub(t *testing.T) []*model.SyncEvent {
+	t.Helper()
+	t.Setenv("MTIX_SYNC_DSN", "postgres://hub.invalid/mtix")
+	return nil
+}
+
 func TestRunImport_ReplaceOnSyncedStore_RefusesAndKeepsTickets(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -56,10 +63,7 @@ func TestRunImport_ReplaceOnSyncedStore_RefusesAndKeepsTickets(t *testing.T) {
 		refused bool
 	}{
 		{"events pushed to a hub", markEventsPushed, true},
-		{"hub configured, nothing pushed yet", func(t *testing.T) []*model.SyncEvent {
-			t.Setenv("MTIX_SYNC_DSN", "postgres://hub.invalid/mtix")
-			return nil
-		}, true},
+		{"hub configured, nothing pushed yet", configureHub, true},
 		{"no hub", func(*testing.T) []*model.SyncEvent { return nil }, false},
 	}
 	for _, tt := range tests {
@@ -82,7 +86,7 @@ func TestRunImport_ReplaceOnSyncedStore_RefusesAndKeepsTickets(t *testing.T) {
 				pullHeldEvents(t, pulled)
 				require.Equal(t, 3, allNodeCount(t), "the replace dropped a ticket the sync log holds, and the pull did not restore it")
 			}
-			require.Error(t, err)
+			require.ErrorIs(t, err, sqlite.ErrReplaceOnSyncedStore)
 			assert.Contains(t, err.Error(), "mtix sync reconcile --discard-local", "the refusal names the recovery")
 			assert.Equal(t, 3, allNodeCount(t), "a refused replace changes nothing")
 			assert.Empty(t, preDestroySnapshots(t, "import-replace"), "the refusal comes before the snapshot")
@@ -91,4 +95,20 @@ func TestRunImport_ReplaceOnSyncedStore_RefusesAndKeepsTickets(t *testing.T) {
 			assert.Equal(t, 3, allNodeCount(t), "every ticket is still on the board after the pull")
 		})
 	}
+}
+
+// TestRunImport_ReplaceIntoEmptyStoreWithHub_Proceeds keeps the restore into
+// a fresh data directory working on a project that syncs: the replace
+// deletes nothing.
+func TestRunImport_ReplaceIntoEmptyStoreWithHub_Proceeds(t *testing.T) {
+	t.Setenv("MTIX_SYNC_DSN", "")
+	initTestApp(t)
+	seedTickets(t, 2)
+	path := writeExportOf(t)
+	initTestApp(t) // a fresh, empty store
+	configureHub(t)
+	answerDestructive(t, "", false)
+
+	require.NoError(t, runImport(path, importFlags{mode: "replace"}))
+	assert.Equal(t, 2, allNodeCount(t))
 }

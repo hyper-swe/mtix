@@ -12,14 +12,12 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/attach"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/procinfo"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
-
-// attachProtocol is the registration record's attach protocol version.
-const attachProtocol = 1
 
 // takeOverNoticeText is the one fixed take-over notice. It carries no host,
 // user or agent identifiers (D10).
@@ -109,19 +107,31 @@ func currentIdentity() service.SessionIdentity {
 	return service.SessionIdentity{Handle: det.Handle, PID: pid, PIDStartTime: start}
 }
 
-// newRegistrationService builds the service for this host and user.
-func newRegistrationService() (*service.RegistrationService, error) {
+// registrationHostIdentity returns this host's operator-local host id and the
+// current user id: the key of registrations and dispatcher heartbeats.
+func registrationHostIdentity() (host, uid string, err error) {
 	env, err := oplocal.FromProcess()
 	if err != nil {
-		return nil, fmt.Errorf("session identity: %w", err)
+		return "", "", fmt.Errorf("session identity: %w", err)
 	}
-	host, err := oplocal.New(env).HostID()
+	host, err = oplocal.New(env).HostID()
 	if err != nil {
-		return nil, fmt.Errorf("session host identity: %w", err)
+		return "", "", fmt.Errorf("session host identity: %w", err)
 	}
-	uid, err := currentUserID()
+	uid, err = currentUserID()
 	if err != nil {
-		return nil, fmt.Errorf("session user identity: %w", err)
+		return "", "", fmt.Errorf("session user identity: %w", err)
+	}
+	return host, uid, nil
+}
+
+// newRegistrationService builds the service for this host and user. Sessions
+// register at this binary's attach protocol, the version a newer CLI compares
+// dispatcher heartbeats against (ADR-007 §6.4).
+func newRegistrationService() (*service.RegistrationService, error) {
+	host, uid, err := registrationHostIdentity()
+	if err != nil {
+		return nil, err
 	}
 	takeOvers, err := newOperatorTakeOverLog()
 	if err != nil {
@@ -130,7 +140,7 @@ func newRegistrationService() (*service.RegistrationService, error) {
 	return service.NewRegistrationService(service.RegistrationDeps{
 		Store: app.store, Liveness: service.NewProcessLiveness(procinfo.StartTime), TakeOvers: takeOvers,
 		Notices: inboxNoticeSender{}, Logger: app.logger, Clock: func() time.Time { return time.Now().UTC() },
-		Host: service.RegistrationHost{HostID: host, UID: uid, Version: version, Protocol: attachProtocol},
+		Host: service.RegistrationHost{HostID: host, UID: uid, Version: version, Protocol: attach.Protocol},
 	}), nil
 }
 

@@ -2392,9 +2392,13 @@ Rendering itself never acknowledges anything.
 
 Every command that CLI `mtix inbox --format prompt` or `--format context`
 displays (ack, reply, read and the prompt nudge), and the plain listing's ack
-hint, ends with `-C '<board>'`, the absolute root of the board the events were
-read from. MCP envelopes print commands without `-C`; use MCP inbox operations
-against the same server instead of pasting them into a shell in another project. Read and ack with the same board selection: run the displayed lines as
+hint, carries `-C '<board>'`, the absolute root of the board the events were
+read from. The word ends each command line; in the overflow notice it follows
+the read command, before "or increase the caps". MCP envelopes print commands
+without `-C`; use MCP inbox operations against the same server instead of
+pasting them into a shell in another project.
+
+Read and ack with the same board selection: run the displayed commands as
 printed, keeping the `-C` word, even from another repository that has its own
 `.mtix`. If `mtix inbox ack` reports that a seq is outside the journal, the ack
 checked a different board from the one you read; the error names the board it

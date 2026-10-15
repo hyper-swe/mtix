@@ -106,6 +106,11 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 		}
 	}
 	svc := service.NewDoctorService(opts)
+	if hooksFileExists(app.mtixDir) {
+		if err := svc.Register(hooksProgramsCheck(app.mtixDir)); err != nil {
+			return nil, fmt.Errorf("register hook program check: %w", err)
+		}
+	}
 	// Attach rows (setup.shim, glue.<h>, attach.failures, skew.dispatchers)
 	// appear only when something is installed, marked, alerted or beating.
 	deps, err := productionAttachDoctorDeps(context.Background())

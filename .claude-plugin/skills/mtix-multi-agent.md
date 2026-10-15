@@ -99,8 +99,12 @@ approval or confirmation.
 ## Waiting for inbox events
 
 An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
-zero has no limit, and already pending events return immediately. Events mean
-exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+zero has no limit, and already pending events return even if the initial
+database lookup outlasts a positive timeout. That lookup remains interruptible
+by caller cancellation (CLI SIGINT or SIGTERM). After an empty lookup, waiting
+for new events uses only the remaining timeout budget measured from entry.
+Events mean exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM
+means exit 7.
 A negative timeout is refused. Keep foreground waits within the harness's tool
 limits; use an indefinite park only where background tasks are supported. Handle
 and ack events explicitly before parking again.

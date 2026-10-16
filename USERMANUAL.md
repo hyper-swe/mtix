@@ -681,6 +681,8 @@ Prompts are instructions for LLM agents working on a node:
 mtix prompt PROJ-1.1 "Implement the OAuth2 login endpoint using the existing auth middleware. Use the /auth/login path. Return a JWT access token and a refresh token cookie."
 ```
 
+Prompt edits are serialized with other node writes. Their `node.updated` notification includes `old_prompt_hash` and `new_prompt_hash` for the stored content immediately before and after that prompt transaction. These hashes cover the node's content fields, including title and description, rather than only the prompt text. A failed store update emits no update notification.
+
 When a parent's prompt changes, all descendant nodes are automatically invalidated (moved to `invalidated` status) since their context may have changed.
 
 ### Context Assembly

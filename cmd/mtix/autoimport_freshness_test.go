@@ -63,7 +63,7 @@ func TestReadCommand_SyncLockHeld_JSONReportsStale(t *testing.T) {
 	for _, tc := range busyReadCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			pulledProject(t, "prefix: TEST\n")
-			holdCLIImportLock(t)
+			holdFastCLIImportLock(t)
 			app.jsonOutput = true
 			stderr := runPreRun(t, tc.name)
 			if tc.name == "agent work" {
@@ -95,7 +95,7 @@ func TestCommandStartup_SyncLockHeld_ProtocolAndDaemonSurfacesProceed(t *testing
 		for _, jsonMode := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/json=%t", spelling, jsonMode), func(t *testing.T) {
 				pulledProject(t, "prefix: TEST\n")
-				holdCLIImportLock(t)
+				holdFastCLIImportLock(t)
 				root := newRootCmd()
 				app.jsonOutput = jsonMode
 				cmd, _, err := root.Find(strings.Fields(spelling))
@@ -123,7 +123,7 @@ func TestDaemon_SyncLockHeld_RunsPassAndKeepsCachedData(t *testing.T) {
 		t.Run(spelling, func(t *testing.T) {
 			pulledProject(t, "prefix: TEST\n")
 			t.Setenv(transport.EnvDSN, "")
-			holdCLIImportLock(t)
+			holdFastCLIImportLock(t)
 			runPreRun(t, "daemon")
 			ctx, cancel := context.WithTimeout(testContext(t), 5*time.Second)
 			defer cancel()
@@ -161,7 +161,7 @@ func TestReadCommand_SyncLockHeld_TextPrintsOneNotice(t *testing.T) {
 
 func TestPersistentPreRun_BusyThenFresh_ClearsFreshnessMetadata(t *testing.T) {
 	pulledProject(t, "prefix: TEST\n")
-	lock := holdCLIImportLock(t)
+	lock := holdFastCLIImportLock(t)
 	app.jsonOutput = true
 	runPreRun(t, "show")
 	require.Equal(t, "sync_lock_busy", app.staleReason)

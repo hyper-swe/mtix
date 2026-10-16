@@ -48,6 +48,7 @@ type appContext struct {
 	bgSvc       *service.BackgroundService
 	configSvc   *service.ConfigService
 	syncSvc     *service.SyncService
+	syncOptions syncServiceOptions // constructor dependencies for focused CLI tests
 	hooksDisp   *service.HooksDispatcher
 	logger      *slog.Logger
 	jsonOutput  bool
@@ -243,11 +244,16 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 	return nil
 }
 
+// The zero value retains production dependencies; tests may override retry elapsed time.
+type syncServiceOptions struct {
+	retryClock func() time.Time
+}
+
 // newSyncService wires the tasks.json sync service (FR-15) for the opened
 // store, reading the sync.auto_sync switch from the project config
 // (MTIX-95.31.2).
-func newSyncService(clock func() time.Time) *service.SyncService {
-	svc := service.NewSyncService(app.store, app.logger, clock)
+func newSyncService(clock func() time.Time, options syncServiceOptions) *service.SyncService {
+	svc := service.NewSyncService(app.store, app.logger, clock, options.retryClock)
 	svc.SetAutoSyncConfig(app.configSvc)
 	svc.SetBinaryVersion(version)
 	svc.SetHistoryExportSource(app.configSvc.HistoryExport)

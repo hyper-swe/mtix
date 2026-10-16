@@ -72,7 +72,7 @@ func TestCommandMode_BusyFreshnessMatchesParsedReadOrWrite(t *testing.T) {
 func checkCommandModeFreshness(t *testing.T, tc freshnessModeCase) {
 	t.Helper()
 	pulledProject(t, "prefix: TEST\n")
-	holdCLIImportLock(t)
+	holdFastCLIImportLock(t)
 	root := newRootCmd()
 	if tc.path == "future-output" {
 		root.AddCommand(&cobra.Command{Use: "future-output", RunE: func(*cobra.Command, []string) error { return nil }})

@@ -98,6 +98,7 @@ func cachedBoundaryFixture(t *testing.T, busy bool) {
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, lock.Close()) })
 		require.NoError(t, syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB))
+		useFastCLIImportClock(t)
 		return
 	}
 	// Fresh control uses the exact cached export, avoiding the fixture's

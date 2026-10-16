@@ -1249,6 +1249,10 @@ Open `http://127.0.0.1:8377` in your browser.
 - **Stale Board** — Lists stale agents and tasks needing attention.
 - **Agent Activity** — Real-time agent status and current work.
 
+### Ticket Comments
+
+With `mtix serve`, open a ticket's **Activity** tab. **All** includes comments and other events, newest first; **Comments** filters the loaded activity pages to plain and addressed comments. Each comment shows its author and, when present, recipient. Bodies use sanitized Markdown; identities stay literal text. Use **Load more** for older entries and refresh the ticket after comments arrive from another process. Viewing a comment does not acknowledge an inbox event: acknowledge explicitly after handling it.
+
 ### Creating Issues
 
 Press **`c`** or click the **New** button in the top bar to open the create modal. Fill in:

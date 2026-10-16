@@ -94,4 +94,30 @@ func TestAutoImport_SyncedStoreLosslessConflict_LogsRebuildNotReplace(t *testing
 	assert.Contains(t, warn, "rebuild this store from the hub")
 	assert.Contains(t, warn, sqlite.SyncLogRecovery)
 	assert.NotContains(t, warn, "--mode replace")
+
+	report, err := f.svc.Compare(ctx, f.mtixDir)
+	require.NoError(t, err)
+	require.NotNil(t, report.AutoImport.LastRefusal)
+	assert.Equal(t, "conflict", report.AutoImport.LastRefusal.Kind)
+	assert.True(t, report.AutoImport.LastRefusal.Synced, "the record keeps that the store syncs")
+}
+
+// When the store cannot say whether it syncs, the lossy auto-import fails
+// closed: it returns the wrapped error, imports nothing, and keeps the file.
+func TestAutoImport_StoreSyncsUnreadable_FailsClosedAndKeepsTheFile(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	board := f.teammateBoard(t, func(d *sqlite.ExportData) { d.Nodes[nodeIndex(t, d, "PROJ-1")].Annotations = nil })
+	f.pull(t, board)
+	before := f.storeSnapshot(t)
+	// The check reads applied_events; without the table it cannot be answered.
+	_, err := f.store.WriteDB().ExecContext(ctx, `DROP TABLE applied_events`)
+	require.NoError(t, err)
+
+	err = f.svc.AutoImport(ctx, f.mtixDir)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, service.ErrAutoImportRefused, "the failure is not reported as a refusal")
+	assert.Contains(t, err.Error(), "read whether the store syncs with a hub")
+	assert.Equal(t, before, f.storeSnapshot(t), "nothing was imported")
+	assert.Equal(t, string(board), string(f.read(t, "tasks.json")), "the file is kept")
 }

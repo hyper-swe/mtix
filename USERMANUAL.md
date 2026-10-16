@@ -1663,7 +1663,7 @@ Last auto-import refusal: 2026-09-24T10:15:00Z (pending): a replace import would
 
 `mtix sync` never reports `In sync` while an automatic import of the file is pending, or while the file holds an id under another uid than the store (listed under `Another uid in tasks.json`).
 
-`mtix sync --json` reports `in_sync` and those ids as `different_uid`, and the rest under `auto_import`: `enabled`, `setting`, `setting_error`, and `last_refusal` with `refused_at`, `file_hash`, `kind`, `reason`, `loss` (what a replace of the file would delete, when known), `resolved_at` and `pending`. The record is kept in `.mtix/data/auto-import-refusal.json`, next to the other local sync state.
+`mtix sync --json` reports `in_sync` and those ids as `different_uid`, and the rest under `auto_import`: `enabled`, `setting`, `setting_error`, and `last_refusal` with `refused_at`, `file_hash`, `kind`, `reason`, `loss` (what a replace of the file would delete, when known), `synced` (true when the store synced with a hub or relay when it was refused, so the way out mtix names rebuilds from the hub instead of offering a replace import), `resolved_at` and `pending`. The record is kept in `.mtix/data/auto-import-refusal.json`, next to the other local sync state.
 
 ---
 

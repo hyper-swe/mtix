@@ -101,3 +101,26 @@ func TestInboxAck_RejectsBeyondTailAndNonPositive(t *testing.T) {
 	// In-journal seqs remain ackable.
 	require.NoError(t, s.InboxAck(ctx, "opus", s3))
 }
+
+// TestInboxAck_OutsideJournal_IsMarkedForBoardHint: both ack forms mark the
+// refusal with ErrSeqOutsideJournal (still an ErrInvalidInput), so the CLI
+// can name the board it checked (MTIX-189); other refusals are not marked.
+func TestInboxAck_OutsideJournal_IsMarkedForBoardHint(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	_, _, s3 := addressThree(t, s, "opus")
+	for name, ack := range map[string]func() error{
+		"single":  func() error { return s.InboxAck(ctx, "opus", s3+1) },
+		"through": func() error { return s.InboxAckThrough(ctx, "opus", s3+1) },
+		"zero":    func() error { return s.InboxAck(ctx, "opus", 0) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := ack()
+			require.ErrorIs(t, err, sqlite.ErrSeqOutsideJournal)
+			require.ErrorIs(t, err, model.ErrInvalidInput)
+		})
+	}
+	err := s.InboxAck(ctx, "", s3)
+	require.ErrorIs(t, err, model.ErrInvalidInput)
+	require.NotErrorIs(t, err, sqlite.ErrSeqOutsideJournal, "a missing agent id is not a journal refusal")
+}

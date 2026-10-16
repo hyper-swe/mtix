@@ -21,7 +21,7 @@ const AlertClassWakeBackoff = "wake.backoff"
 
 func knownAlertClass(class string) bool {
 	switch class {
-	case AlertClassWakeHopDepth, AlertClassWakeBackoff, "wake.binary", "wake.contract-probe", "wake.probe-no-cold", "wake.cold-exit", "wake.nothing-acked", "wake.budget", "hooks.exec-untrusted", "hooks.webhook-untrusted", "wake.takeover", "wake.counter-rewind", "hooks.pin-placement", "wake.unconfirmed", "wake.version-skew":
+	case AlertClassWakeHopDepth, AlertClassWakeBackoff, "wake.binary", "wake.contract-probe", "wake.probe-no-cold", "wake.cold-exit", "wake.nothing-acked", "wake.budget", "hooks.exec-untrusted", "hooks.webhook-untrusted", "wake.takeover", "wake.counter-rewind", "hooks.pin-placement", "wake.unconfirmed", "wake.version-skew", "attach.protocol-skew", "attach.verb-failure":
 		return true
 	default:
 		return false

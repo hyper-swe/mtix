@@ -119,7 +119,10 @@ func TestInboxWaitEnvelopeMerge_CLIZeroLaterDelivery_ReturnsEnvelopeUnacked(t *t
 			assertMergedWaitEnvelope(t, text.String(), events[0])
 			if format == "prompt" {
 				first, _, _ := strings.Cut(text.String(), "\n")
-				assert.Equal(t, "mtix: new messages for agent "+mergeEnvelopeQuotedAgent+" (seq "+strconv.FormatInt(events[0].Seq, 10)+"). Run: mtix inbox --agent "+mergeEnvelopeQuotedAgent+" --format context", first)
+				board, err := filepath.EvalSymlinks(filepath.Dir(app.mtixDir))
+				require.NoError(t, err)
+				// The nudge's read command pins the board it was read from (MTIX-189).
+				assert.Equal(t, "mtix: new messages for agent "+mergeEnvelopeQuotedAgent+" (seq "+strconv.FormatInt(events[0].Seq, 10)+"). Run: mtix inbox --agent "+mergeEnvelopeQuotedAgent+" --format context -C '"+board+"'", first)
 			}
 		})
 	}

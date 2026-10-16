@@ -367,7 +367,7 @@ func TestUpdateProgress_ValidProgress_Updates(t *testing.T) {
 // executes queries on the read database.
 // This tests query.go's QueryRow function.
 func TestQueryRow_SelectsFromReadDB(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -389,7 +389,7 @@ func TestQueryRow_SelectsFromReadDB(t *testing.T) {
 // TestQueryRow_NoRows_ReturnsErrNoRows verifies that QueryRow correctly
 // returns sql.ErrNoRows when no rows match.
 func TestQueryRow_NoRows_ReturnsErrNoRows(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 
 	// Query for a non-existent node.
@@ -407,7 +407,7 @@ func TestQueryRow_NoRows_ReturnsErrNoRows(t *testing.T) {
 // executes queries on the read database and returns multiple rows.
 // This tests query.go's Query function.
 func TestQuery_MultipleRows_ReturnsRows(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -451,7 +451,7 @@ func TestQuery_MultipleRows_ReturnsRows(t *testing.T) {
 // returns a valid write database connection.
 // This tests query.go's WriteDB function.
 func TestWriteDB_ReturnsWriteConnection(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 
 	// Call WriteDB and verify it returns a non-nil *sql.DB.
@@ -468,7 +468,7 @@ func TestWriteDB_ReturnsWriteConnection(t *testing.T) {
 // TestWriteDB_CanInsertAndSelect verifies that the WriteDB connection
 // supports both writes and reads (for validation after writes).
 func TestWriteDB_CanInsertAndSelect(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 

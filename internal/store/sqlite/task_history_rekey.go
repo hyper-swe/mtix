@@ -53,9 +53,9 @@ func rekeyHistorySubtree(ctx context.Context, tx *sql.Tx, oldID, newID string) e
 		`DELETE FROM task_history
 		  WHERE (task_uid = ? OR (task_uid >= ? AND task_uid < ?)) AND event_id IS NOT NULL
 		    AND EXISTS (SELECT 1 FROM task_history n
-		                 WHERE n.task_uid = ? || SUBSTR(task_history.task_uid, ?)
+		                 WHERE n.task_uid = ? || SUBSTR(task_history.task_uid, LENGTH(?) + 1)
 		                   AND n.event_id = task_history.event_id AND n.field = task_history.field)`,
-		oldID, oldID+".", oldID+"/", newID, len(oldID)+1); err != nil {
+		oldID, oldID+".", oldID+"/", newID, oldID); err != nil {
 		return fmt.Errorf("rekey history subtree %s -> %s: drop duplicates: %w", oldID, newID, err)
 	}
 	if err := rekeyCutoffSubtree(ctx, tx, oldID, newID); err != nil {
@@ -63,9 +63,9 @@ func rekeyHistorySubtree(ctx context.Context, tx *sql.Tx, oldID, newID string) e
 	}
 	// Rows keyed by the subtree's ids: the root, and "oldID." descendants.
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE task_history SET task_uid = ? || SUBSTR(task_uid, ?)
+		`UPDATE task_history SET task_uid = ? || SUBSTR(task_uid, LENGTH(?) + 1)
 		  WHERE task_uid = ? OR (task_uid >= ? AND task_uid < ?)`,
-		newID, len(oldID)+1, oldID, oldID+".", oldID+"/"); err != nil {
+		newID, oldID, oldID, oldID+".", oldID+"/"); err != nil {
 		return fmt.Errorf("rekey history subtree %s -> %s: %w", oldID, newID, err)
 	}
 	return nil
@@ -119,10 +119,10 @@ func rekeyCutoffExact(ctx context.Context, tx *sql.Tx, oldKey, newKey string) er
 func rekeyCutoffSubtree(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
 	// Carry each cutoff of the subtree to its substituted key, the newer one winning.
 	if _, err := tx.ExecContext(ctx, `INSERT INTO history_retention_cutoff (task_uid, cutoff_ts, updated_at)
-		SELECT ? || SUBSTR(task_uid, ?), cutoff_ts, updated_at FROM history_retention_cutoff
+		SELECT ? || SUBSTR(task_uid, LENGTH(?) + 1), cutoff_ts, updated_at FROM history_retention_cutoff
 		WHERE task_uid = ? OR (task_uid >= ? AND task_uid < ?)
 		ON CONFLICT (task_uid) DO UPDATE SET cutoff_ts = MAX(cutoff_ts, excluded.cutoff_ts)`,
-		newID, len(oldID)+1, oldID, oldID+".", oldID+"/"); err != nil {
+		newID, oldID, oldID, oldID+".", oldID+"/"); err != nil {
 		return fmt.Errorf("rekey history cutoffs %s -> %s: %w", oldID, newID, err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM history_retention_cutoff WHERE task_uid = ? OR (task_uid >= ? AND task_uid < ?)`,

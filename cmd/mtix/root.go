@@ -39,19 +39,22 @@ func isRouted(ctx context.Context) bool {
 // appContext holds shared state for all commands.
 // Initialized in PersistentPreRunE, available to all subcommands.
 type appContext struct {
-	store      *sqlite.Store
-	nodeSvc    *service.NodeService
-	ctxSvc     *service.ContextService
-	promptSvc  *service.PromptService
-	agentSvc   *service.AgentService
-	sessionSvc *service.SessionService
-	bgSvc      *service.BackgroundService
-	configSvc  *service.ConfigService
-	syncSvc    *service.SyncService
-	hooksDisp  *service.HooksDispatcher
-	logger     *slog.Logger
-	jsonOutput bool
-	mtixDir    string // Path to .mtix directory, set during initApp.
+	store       *sqlite.Store
+	nodeSvc     *service.NodeService
+	ctxSvc      *service.ContextService
+	promptSvc   *service.PromptService
+	agentSvc    *service.AgentService
+	sessionSvc  *service.SessionService
+	bgSvc       *service.BackgroundService
+	configSvc   *service.ConfigService
+	syncSvc     *service.SyncService
+	syncOptions syncServiceOptions // constructor dependencies for focused CLI tests
+	hooksDisp   *service.HooksDispatcher
+	logger      *slog.Logger
+	jsonOutput  bool
+	staleReason string         // command-local unverified auto-import freshness, reset on each pre-run
+	outputScope freshnessScope // explicit command mode; unknown commands receive no read metadata
+	mtixDir     string         // Path to .mtix directory, set during initApp.
 	// firstRunErr holds a refused host first-run record until a command that
 	// needs operator state reports it, once per process.
 	firstRunErr error
@@ -106,6 +109,7 @@ prompt chain propagation, and multi-agent orchestration.`,
 		"Run as if mtix was started in <dir> (the project containing .mtix/), like git -C")
 
 	registerRootCommands(rootCmd)
+	wrapFreshnessCompletion(rootCmd)
 
 	return rootCmd
 }
@@ -131,6 +135,8 @@ func applyProjectDir(cmd *cobra.Command, projectDir string) error {
 // persistentPreRun handles the PersistentPreRunE logic for the root command.
 // Extracted from newRootCmd to reduce cognitive complexity.
 func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error {
+	app.staleReason = ""
+	app.outputScope = commandFreshness(cmd, args)
 	if err := validateInboxCountFlags(cmd); err != nil {
 		return err
 	}
@@ -171,12 +177,7 @@ func autoImportForCommand(cmd *cobra.Command) {
 	// Auto-import tasks.json if hash changed (FR-15.2).
 	// Skip for excluded commands per FR-15.2c.
 	if app.syncSvc != nil && app.mtixDir != "" && !shouldSkipAutoImport(autoImportCommandPath(cmd)) && !isInboxCountCommand(cmd) {
-		// A refusal (MTIX-95.31.2) has already been printed by AutoImport,
-		// once for this command; logging it again would print it twice.
-		err := app.syncSvc.AutoImport(cmd.Context(), app.mtixDir)
-		if err != nil && !errors.Is(err, service.ErrAutoImportRefused) {
-			app.logger.Warn("auto-import failed", "error", err)
-		}
+		runCommandAutoImport(cmd)
 	}
 }
 
@@ -243,11 +244,16 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 	return nil
 }
 
+// The zero value retains production dependencies; tests may override retry elapsed time.
+type syncServiceOptions struct {
+	retryClock func() time.Time
+}
+
 // newSyncService wires the tasks.json sync service (FR-15) for the opened
 // store, reading the sync.auto_sync switch from the project config
 // (MTIX-95.31.2).
-func newSyncService(clock func() time.Time) *service.SyncService {
-	svc := service.NewSyncService(app.store, app.logger, clock)
+func newSyncService(clock func() time.Time, options syncServiceOptions) *service.SyncService {
+	svc := service.NewSyncService(app.store, app.logger, clock, options.retryClock)
 	svc.SetAutoSyncConfig(app.configSvc)
 	svc.SetBinaryVersion(version)
 	svc.SetHistoryExportSource(app.configSvc.HistoryExport)

@@ -50,30 +50,30 @@ func requeueRenumberedEvents(ctx context.Context, tx *sql.Tx, uid, oldID, newID 
 		// names its task by number only: swap the old prefix for the new.
 		{"events by number", `
 			UPDATE sync_events
-			   SET node_id = ? || SUBSTR(node_id, ?)
+			   SET node_id = ? || SUBSTR(node_id, LENGTH(?) + 1)
 			 WHERE sync_status = 'pending' AND (uid IS NULL OR uid = '')
 			   AND (node_id = ? OR node_id LIKE ? ESCAPE '\')`,
-			[]any{newID, len(oldID) + 1, oldID, oldLike}},
+			[]any{newID, oldID, oldID, oldLike}},
 		// The creation of a child names its parent in its payload.
 		{"child creations", `
 			UPDATE sync_events
 			   SET payload = json_set(payload, '$.parent_id',
-			         ? || SUBSTR(json_extract(payload, '$.parent_id'), ?))
+			         ? || SUBSTR(json_extract(payload, '$.parent_id'), LENGTH(?) + 1))
 			 WHERE sync_status = 'pending' AND op_type = 'create_node'
 			   AND node_id LIKE ? ESCAPE '\' AND json_valid(payload)
 			   AND (json_extract(payload, '$.parent_id') = ?
 			        OR json_extract(payload, '$.parent_id') LIKE ? ESCAPE '\')`,
-			[]any{newID, len(oldID) + 1, newLike, oldID, oldLike}},
+			[]any{newID, oldID, newLike, oldID, oldLike}},
 		// A link or unlink names the task it points to in its payload.
 		{"links into the subtree", `
 			UPDATE sync_events
 			   SET payload = json_set(payload, '$.depends_on_node_id',
-			         ? || SUBSTR(json_extract(payload, '$.depends_on_node_id'), ?))
+			         ? || SUBSTR(json_extract(payload, '$.depends_on_node_id'), LENGTH(?) + 1))
 			 WHERE sync_status = 'pending' AND op_type IN ('link_dep', 'unlink_dep')
 			   AND json_valid(payload)
 			   AND (json_extract(payload, '$.depends_on_node_id') = ?
 			        OR json_extract(payload, '$.depends_on_node_id') LIKE ? ESCAPE '\')`,
-			[]any{newID, len(oldID) + 1, oldID, oldLike}},
+			[]any{newID, oldID, oldID, oldLike}},
 		// The rejected creation is sent again, under the new number.
 		{"the rejected creation", `
 			UPDATE sync_events SET node_id = ?, sync_status = 'pending'

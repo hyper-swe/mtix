@@ -6,6 +6,35 @@ description: "Set up, use, verify and recover the MTIX sync hub, the shared Post
 
 The hub is a Postgres database that you and your teammates' agents push task changes to and pull each other's changes from. Each machine keeps its own local store; the hub carries the event log between them. This skill is the full runbook: requirements, setup from zero, daily use, verification, troubleshooting and recovery. The short routine is in the managed SYNC section of `CLAUDE.md` and `AGENTS.md`.
 
+## CLI read freshness
+
+CLI board reads retry a busy local sync lock briefly, with a total wait budget of
+500 ms. If ownership becomes available during the retry, auto-import checks the
+board normally. Persistent contention lets the command read the local cache but
+marks JSON responses with `"stale": true` and
+`"stale_reason": "sync_lock_busy"`. Object responses retain their existing fields;
+array, scalar and null responses are wrapped as
+`{"data": <original response>, "stale": true, "stale_reason": "sync_lock_busy"}`.
+Fresh reads keep their original shape and omit these fields. One possibly stale
+notice also goes to stderr, including protocol and daemon startup when `--json`
+is supplied. CLI JSON stdout remains one valid response.
+
+These fields describe read responses only. Successful mutation acknowledgements
+omit `stale` and `stale_reason`; their absence on an acknowledgement does not
+verify cached read freshness. When a write succeeds despite busy auto-import
+ownership, one completion notice says the write succeeded and must not be
+repeated. Follow that notice: never repeat a successful write. When the write
+itself fails, no completion notice claims it succeeded. A later export or cleanup
+error does not undo a successful write.
+
+Check freshness before using task state or assembled context to take an action.
+When stale is true, retry the same read after the current owner finishes. Never
+delete, replace or unlink `.mtix/data/sync.lock` to bypass its owner, and do not
+use `mtix sync --fix` to force a fresh read: it rewrites the pulled board from the
+local cache. These fields describe sync-lock contention only; still follow any
+other auto-import refusal or warning. Commands that skip automatic import,
+including `mtix sync status` and `mtix sync doctor`, do not make this check.
+
 ## Automatic export activity
 
 An unchanged board keeps `.mtix/tasks.json` bytes, mtime and `exported_at`,

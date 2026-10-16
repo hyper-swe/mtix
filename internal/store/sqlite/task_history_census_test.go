@@ -62,6 +62,7 @@ var historyCensus = map[string]struct {
 	"sync_apply_ops_more.go:syncApplier.applySetPrompt":     {1, censusWired},
 	"sync_apply_ops.go:syncApplier.applyUpdateField":        {1, censusWired},
 	"sync_reconcile.go:assignParentToFormerRoots":           {1, censusWired},
+	"sync_reconcile_columns.go:realignMovedColumns":         {1, censusExcluded},
 	"sync_reconcile_rename.go:renameNodeRow":                {2, censusExcluded},
 	"sync_update_classification.go:applyIssueTypeField":     {1, censusWired},
 	"sync_workflow_write.go:writeWorkflowColumns":           {1, censusWired},

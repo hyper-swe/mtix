@@ -165,6 +165,8 @@ func parseScannedJSON(n *model.Node, d *scanDest) error {
 	if err := unmarshalJSONField(d.annotationsJSON, &n.Annotations); err != nil {
 		return fmt.Errorf("parse annotations: %w", err)
 	}
+	// Rows written before MTIX-100.2 may be stored in insertion order.
+	n.Annotations = model.SortAnnotations(n.Annotations)
 	if d.metadataJSON.Valid && d.metadataJSON.String != "" {
 		n.Metadata = json.RawMessage(d.metadataJSON.String)
 	}

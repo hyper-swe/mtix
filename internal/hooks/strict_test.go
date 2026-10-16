@@ -222,12 +222,18 @@ func TestApproveProgram_CaseVariantPathToProjectFileIsRefused(t *testing.T) {
 }
 
 func TestStrict_PinnedProgramIsRecordedInTheFiringAudit(t *testing.T) {
-	f := strictFixture(t, "[cat, data/x]")
-	program, err := f.approvals.ApproveProgram(f.hook(t), true)
+	cat, err := exec.LookPath("cat")
+	require.NoError(t, err)
+	target, err := filepath.EvalSymlinks(cat)
+	require.NoError(t, err)
+	link := filepath.Join(t.TempDir(), "mycat")
+	require.NoError(t, os.Symlink(target, link))
+	f := strictFixture(t, "["+link+", data/x]")
+	_, err = f.approvals.ApproveProgram(f.hook(t), true)
 	require.NoError(t, err)
 	plan, err := f.approvals.PrepareExec(f.hook(t))
 	require.NoError(t, err)
-	require.Contains(t, plan.Audit(), "cat="+program, "the audit shows the path that ran")
+	require.Contains(t, plan.Audit(), link+"="+target, "the audit maps the written link to the path that ran")
 }
 
 func TestStrictStatus_UnreadableRecordHasATerminalFix(t *testing.T) {
@@ -259,4 +265,33 @@ func corruptStrictRecord(t *testing.T, f prepareFixture) {
 		}
 	}
 	require.Equal(t, 1, hit)
+}
+
+func TestUnderRoot_DecidesByFileIdentityWithoutSkipping(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	root := filepath.Join(base, "project")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "bin"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "bin", "tool"), []byte("x"), 0o600))
+	sibling := filepath.Join(base, "sibling")
+	require.NoError(t, os.Mkdir(sibling, 0o700))
+	for name, tc := range map[string]struct {
+		path string
+		want bool
+	}{
+		"root itself":                  {root, true},
+		"existing file under root":     {filepath.Join(root, "bin", "tool"), true},
+		"missing path under root":      {filepath.Join(root, "bin", "missing", "deeper"), true},
+		"unclean path under root":      {filepath.Join(root, "bin") + "/../bin/tool", true},
+		"sibling of root":              {sibling, false},
+		"missing path in sibling":      {filepath.Join(sibling, "nope"), false},
+		"parent of root (ancestor)":    {base, false},
+		"filesystem root":              {string(filepath.Separator), false},
+		"missing path beside the root": {filepath.Join(base, "projectX", "bin"), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.want, underRoot(root, tc.path))
+		})
+	}
+	require.False(t, underRoot(filepath.Join(base, "absent-root"), root), "an unreadable root is never reported as containing anything")
 }

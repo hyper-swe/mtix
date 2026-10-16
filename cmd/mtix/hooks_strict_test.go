@@ -62,7 +62,7 @@ func TestHooksTrustProgram_ApprovesOnTerminalOnly(t *testing.T) {
 	require.Contains(t, text, "approved=true")
 }
 
-func TestHooksStatus_ReportsStrictModeInJSONAndText(t *testing.T) {
+func TestHooksReport_StrictModeInJSONAndText(t *testing.T) {
 	state := reviewProject(t)
 	captureStdout(t, func() { require.NoError(t, runHooksStrict(state, "on", true, false)) })
 	app.jsonOutput = true

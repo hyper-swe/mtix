@@ -145,3 +145,13 @@ func TestDoctor_StrictCheckFailsWhenTheRecordIsUnreadable(t *testing.T) {
 	}
 	t.Fatal("hooks.strict row missing")
 }
+
+func TestHooksTrustProgram_UsesTheSameHookSelectorAsHookApproval(t *testing.T) {
+	state := reviewProject(t)
+	config := "hooks:\n  - name: logonly\n    match: {events: [comment.addressed]}\n    deliver: [inbox]\n    exec: {command: [find, ., -maxdepth, \"0\"]}\n"
+	require.NoError(t, os.WriteFile(filepath.Join(app.mtixDir, "hooks.yaml"), []byte(config), 0o600))
+	approvals := hooks.NewApprovals(app.mtixDir, state, false)
+	err := runHooksTrustProgram(approvals, "logonly", false, true)
+	require.Error(t, err, "a hook that does not deliver through exec is not selectable, as for hooks trust")
+	require.Contains(t, err.Error(), "not found")
+}

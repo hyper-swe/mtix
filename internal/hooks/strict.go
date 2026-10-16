@@ -79,8 +79,8 @@ func (a *Approvals) SetStrict(on, terminal bool) error {
 // strictProgram returns the program's symlink-resolved absolute path. It
 // refuses a program that does not resolve or that resolves inside the project:
 // that is a script and must be pinned instead.
-func strictProgram(h Hook, in *hookInputs) (string, error) {
-	launcher, err := resolveLauncher(in.root, h.Exec.Command[in.program])
+func strictProgram(h Hook, in *hookInputs, index int) (string, error) {
+	launcher, err := resolveLauncher(in.root, h.Exec.Command[index])
 	if err != nil {
 		return "", err
 	}
@@ -92,6 +92,33 @@ func strictProgram(h Hook, in *hookInputs) (string, error) {
 		return "", fmt.Errorf("program %q resolves to %q inside the project; a project file is a script and must be pinned instead", launcher, resolved)
 	}
 	return resolved, nil
+}
+
+// strictTarget returns the command index whose program strict mode must have
+// approved, and whether any approval is needed. A launch wrapper that is not
+// the known env in a PATH directory is itself the program to approve (index 0),
+// whatever it runs; otherwise only a program of class other needs approval.
+func strictTarget(h Hook, in *hookInputs) (index int, needed bool) {
+	if in.program > 0 && !knownEnvWrapper(in.root, h.Exec.Command[0]) {
+		return 0, true
+	}
+	if classifyProgram(h, in).Class == ClassOther {
+		return in.program, true
+	}
+	return 0, false
+}
+
+// knownEnvWrapper reports a program that is env by exact name and is a bare
+// name or an absolute path in one of the fixed PATH directories. A name alone
+// is not trusted: a relative path, or a path outside PATH, is some other file.
+func knownEnvWrapper(root, program string) bool {
+	if !isEnv(program) {
+		return false
+	}
+	if filepath.IsAbs(program) {
+		return inPathDirectory(root, filepath.Dir(program))
+	}
+	return !strings.ContainsRune(program, filepath.Separator)
 }
 
 // ApproveProgram approves the hook's program for strict mode and returns the
@@ -106,10 +133,11 @@ func (a *Approvals) ApproveProgram(h Hook, terminal bool) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if class := classifyProgram(h, in).Class; class != ClassOther {
-		return "", fmt.Errorf("hook %q runs a %s and needs no program approval", h.Name, class)
+	index, needed := strictTarget(h, in)
+	if !needed {
+		return "", fmt.Errorf("hook %q runs a %s and needs no program approval", h.Name, classifyProgram(h, in).Class)
 	}
-	program, err := strictProgram(h, in)
+	program, err := strictProgram(h, in, index)
 	if err != nil {
 		return "", fmt.Errorf("hook %q: %w", h.Name, err)
 	}
@@ -144,7 +172,10 @@ func (a *Approvals) programApproved(project, hook, program, digest string) (bool
 	if err != nil {
 		return false, err
 	}
-	if !present || len(reports) != 0 {
+	if len(reports) != 0 {
+		return false, fmt.Errorf("program approval record: %s", reports[0].Reason)
+	}
+	if !present {
 		return false, nil
 	}
 	return rec.Project == project && rec.Hook == hook && rec.Program == program && rec.Digest == digest, nil
@@ -158,13 +189,14 @@ func (a *Approvals) enforceStrict(h Hook, in *hookInputs, plan *ExecPlan) error 
 	if err != nil {
 		return fmt.Errorf("exec launch refused for hook %q: strict program mode state cannot be read: %w", h.Name, err)
 	}
-	if !on || classifyProgram(h, in).Class != ClassOther {
+	index, needed := strictTarget(h, in)
+	if !on || !needed {
 		return nil
 	}
 	refuse := func(why string) error {
 		return fmt.Errorf("exec launch refused for hook %q: strict program mode is on and %s; approve it on a terminal: %s", h.Name, why, ProgramTrustFix(h.Name))
 	}
-	program, err := strictProgram(h, in)
+	program, err := strictProgram(h, in, index)
 	if err != nil {
 		return refuse(err.Error())
 	}
@@ -179,8 +211,8 @@ func (a *Approvals) enforceStrict(h Hook, in *hookInputs, plan *ExecPlan) error 
 	if !ok {
 		return refuse(fmt.Sprintf("program %q is not approved", program))
 	}
-	plan.Argv[in.program] = program
-	plan.Resolved[h.Exec.Command[in.program]] = program
+	plan.Argv[index] = program
+	plan.Resolved[h.Exec.Command[index]] = program
 	return nil
 }
 
@@ -230,12 +262,13 @@ func (a *Approvals) programApproval(h Hook) (ProgramApproval, bool) {
 		entry.Detail = "the hook cannot be inspected: " + err.Error()
 		return entry, true
 	}
-	if classifyProgram(h, in).Class != ClassOther {
+	index, needed := strictTarget(h, in)
+	if !needed {
 		return entry, false
 	}
-	program, err := strictProgram(h, in)
+	program, err := strictProgram(h, in, index)
 	if err != nil {
-		entry.Program = h.Exec.Command[in.program]
+		entry.Program = h.Exec.Command[index]
 		entry.Detail = err.Error()
 		return entry, true
 	}

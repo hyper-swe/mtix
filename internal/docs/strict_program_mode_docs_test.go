@@ -28,7 +28,9 @@ func TestStrictProgramModeDocs_NameSwitchApprovalAndCheck(t *testing.T) {
 		"`mtix hooks strict status`",
 		"`hooks.strict`",
 		"refused under an\nagent session",
+		"An approval binds the program's resolved path, not its file content",
 		"approve only programs in locations that\nagents and other untrusted processes cannot write",
+		"A launch wrapper other than\nthe known env",
 	}
 	for _, rel := range files {
 		t.Run(rel, func(t *testing.T) {

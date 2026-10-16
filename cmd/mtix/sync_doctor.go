@@ -73,6 +73,8 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
   No orphan applied      - every applied_event has a matching node OR tombstone
   Quarantined events     - no pulled event is held in the local quarantine;
                            each pull retries them ('mtix sync quarantine list')
+  Valid node ids         - warns when a local task id is outside the node id
+                           grammar; names each task, its uid and the fix
   Unique node uids       - no two tasks share a uid; names each uid, its tasks
                            and the recovery (see 'mtix verify')
   sync.exchange-record   - local received provenance and recorded omission;

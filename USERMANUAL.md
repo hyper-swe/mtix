@@ -2895,9 +2895,11 @@ agent session. `mtix hooks strict status` works without a terminal and has
 carries the same object under `strict`, and `mtix doctor` shows the
 `hooks.strict` check (PASS when the mode is off or nothing needs approval, WARN
 with the exact approval commands otherwise). An unreadable strict record
-refuses launches rather than allowing them. The program file's contents are not
-pinned, only its resolved path, so approve only programs in locations that
-agents and other untrusted processes cannot write.
+refuses launches rather than allowing them. An approval binds the program's resolved path, not its file content: the
+contents are not pinned, so approve only programs in locations that
+agents and other untrusted processes cannot write. A launch wrapper other than
+the known env, found by name in a PATH directory, is itself the program that
+needs approval.
 
 Append-file hooks: an `append-file` hook writes only to a regular file inside
 the project. Its `append-file.path` must be relative. The file is opened

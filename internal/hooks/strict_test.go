@@ -295,3 +295,140 @@ func TestUnderRoot_DecidesByFileIdentityWithoutSkipping(t *testing.T) {
 	}
 	require.False(t, underRoot(filepath.Join(base, "absent-root"), root), "an unreadable root is never reported as containing anything")
 }
+
+// fakeEnv writes an executable named env outside every PATH directory that
+// runs whatever follows it, as a real env does.
+func fakeEnv(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "env")
+	require.NoError(t, os.WriteFile(path, []byte("#!/bin/sh\nexec \"$@\"\n"), 0o700)) //nolint:gosec // test launcher
+	return path
+}
+
+func TestStrict_On_WrapperThatIsNotAKnownEnvNeedsProgramApproval(t *testing.T) {
+	target, err := filepath.EvalSymlinks(fakeEnv(t))
+	require.NoError(t, err)
+	link := filepath.Join(t.TempDir(), "env")
+	require.NoError(t, os.Symlink(target, link))
+	f := strictFixture(t, "["+link+", sh, scripts/run.sh]")
+	_, err = f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err, "a program named env outside the PATH directories is not the known env")
+	require.Contains(t, err.Error(), "strict program mode")
+	program, err := f.approvals.ApproveProgram(f.hook(t), true)
+	require.NoError(t, err, "the wrapper itself is what the operator approves")
+	require.Equal(t, target, program, "the approval is bound to the symlink-resolved wrapper")
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err)
+	require.Equal(t, target, plan.Argv[0], "the wrapper slot is pinned to the resolved path")
+	wrapped, err := resolveLauncher(f.root, "sh")
+	require.NoError(t, err)
+	require.Equal(t, wrapped, plan.Argv[1], "the wrapped program is left as launched, never overwritten by the pin")
+	require.Contains(t, plan.Audit(), link+"="+target)
+}
+
+func TestStrict_On_KnownEnvInAPathDirectoryNeedsNoApproval(t *testing.T) {
+	env, err := exec.LookPath("env")
+	require.NoError(t, err)
+	for _, command := range []string{"[env, sh, scripts/run.sh]", "[" + env + ", sh, scripts/run.sh]"} {
+		t.Run(command, func(t *testing.T) {
+			f := strictFixture(t, command)
+			_, err := f.approvals.PrepareExec(f.hook(t))
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestStrict_On_RelativeWrapperNamedEnvIsNotTrustedByName(t *testing.T) {
+	f := strictFixture(t, "[../env, sh, scripts/run.sh]")
+	_, err := f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err)
+}
+
+// recordFilesContaining returns operator-state files whose body has marker.
+func recordFilesContaining(t *testing.T, f prepareFixture, marker string) []string {
+	t.Helper()
+	dir, err := f.state.Path()
+	require.NoError(t, err)
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	var out []string
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		data, rerr := os.ReadFile(path) //nolint:gosec // test reads its own state dir
+		require.NoError(t, rerr)
+		if strings.Contains(string(data), marker) {
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+func TestStrict_PermissiveStrictRecordFailsClosed(t *testing.T) {
+	f := strictFixture(t, "[cat, data/x]")
+	files := recordFilesContaining(t, f, `"enabled"`)
+	require.Len(t, files, 1)
+	require.NoError(t, os.Chmod(files[0], 0o666)) //nolint:gosec // test makes the record too permissive
+	_, err := f.approvals.StrictEnabled()
+	require.Error(t, err, "an operator-state report on the strict record is an error, never off")
+	_, err = f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err, "launches are refused while the strict record cannot be trusted")
+}
+
+func TestStrict_UnreadableProgramRecordRefusesLaunch(t *testing.T) {
+	for name, damage := range map[string]func(t *testing.T, path string){
+		"corrupt":    func(t *testing.T, path string) { require.NoError(t, os.WriteFile(path, []byte("{garbage"), 0o600)) },
+		"permissive": func(t *testing.T, path string) { require.NoError(t, os.Chmod(path, 0o666)) }, //nolint:gosec // test
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := strictFixture(t, "[cat, data/x]")
+			_, err := f.approvals.ApproveProgram(f.hook(t), true)
+			require.NoError(t, err)
+			files := recordFilesContaining(t, f, `"program"`)
+			require.Len(t, files, 1)
+			damage(t, files[0])
+			_, err = f.approvals.PrepareExec(f.hook(t))
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "cannot be read", "the refusal says the record is unusable, not merely absent")
+		})
+	}
+}
+
+// foreignHost rewrites a record so it claims to belong to another host, which
+// the operator-state reader reports instead of returning data.
+func foreignHost(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path) //nolint:gosec // test reads its own state dir
+	require.NoError(t, err)
+	var rec map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &rec))
+	rec["host_id"] = json.RawMessage(`"00000000000000000000000000000000"`)
+	out, err := json.Marshal(rec)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, out, 0o600))
+}
+
+func TestStrict_RecordFromAnotherHostFailsClosed(t *testing.T) {
+	f := strictFixture(t, "[cat, data/x]")
+	files := recordFilesContaining(t, f, `"enabled"`)
+	require.Len(t, files, 1)
+	foreignHost(t, files[0])
+	_, err := f.approvals.StrictEnabled()
+	require.Error(t, err, "a reported record is an error, never off")
+	_, err = f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err)
+}
+
+func TestStrict_ProgramRecordFromAnotherHostIsUnreadableNotAbsent(t *testing.T) {
+	f := strictFixture(t, "[cat, data/x]")
+	_, err := f.approvals.ApproveProgram(f.hook(t), true)
+	require.NoError(t, err)
+	files := recordFilesContaining(t, f, `"program"`)
+	require.Len(t, files, 1)
+	foreignHost(t, files[0])
+	_, err = f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot be read")
+}

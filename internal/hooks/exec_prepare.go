@@ -142,7 +142,7 @@ func resolveLauncher(root, name string) (string, error) {
 	switch {
 	case filepath.IsAbs(name):
 		return name, nil
-	case filepath.Base(name) == name:
+	case isBareName(name):
 		path, found := lookPathFixed(filepath.SplitList(FixedHookPath(root)), name)
 		if !found {
 			return "", fmt.Errorf("exec launch: %q was not found on the fixed hook PATH; use an absolute program path", name)

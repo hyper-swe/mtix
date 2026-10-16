@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/spf13/cobra"
 
@@ -72,7 +73,7 @@ func runHooksTrustProgram(approvals *hooks.Approvals, name string, status, termi
 	printHookWarnings(warnings)
 	var selected *hooks.Hook
 	for i := range cfg.Hooks {
-		if cfg.Hooks[i].Name == name && cfg.Hooks[i].Exec != nil {
+		if cfg.Hooks[i].Name == name && cfg.Hooks[i].Exec != nil && slices.Contains(cfg.Hooks[i].Deliver, hooks.AdapterExec) {
 			selected = &cfg.Hooks[i]
 			break
 		}

@@ -64,6 +64,7 @@ var invisibleClasses = []struct {
 	{"word joiner U+2060", '\u2060'},
 	{"byte order mark U+FEFF", '\ufeff'},
 	{"tag space U+E0020", '\U000e0020'},
+	{"language tag U+E0001", '\U000e0001'},
 	{"tag letter U+E0041", '\U000e0041'},
 	{"cancel tag U+E007F", '\U000e007f'},
 }
@@ -108,8 +109,10 @@ func TestStripControlChars_OrdinaryFormatAndSpaceChars_Kept(t *testing.T) {
 }
 
 // TestStripControlChars_DirectionalMarks_Kept pins that the left-to-right
-// mark, right-to-left mark and Arabic letter mark stay: they cannot reorder
-// or hide text, and right-to-left text needs them (MTIX-100.7).
+// mark, right-to-left mark and Arabic letter mark stay: right-to-left text
+// needs them and they are not overrides. Known limit, not a guarantee: a lone
+// U+200F can still change the order of digits and the neutrals between them,
+// so show cannot promise a faithful reading order; --json is exact (MTIX-100.7).
 func TestStripControlChars_DirectionalMarks_Kept(t *testing.T) {
 	for _, r := range []rune{'\u200e', '\u200f', '\u061c'} {
 		in := "a" + string(r) + "b"

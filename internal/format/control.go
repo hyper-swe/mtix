@@ -14,8 +14,12 @@ import (
 // (U+202A-U+202E, U+2066-U+2069), zero-width characters (U+200B-U+200D,
 // U+2060, U+FEFF) and the tag characters (U+E0001, U+E0020-U+E007F), which
 // hide text from a reader. The directional marks (U+061C, U+200E, U+200F)
-// are kept: they cannot reorder or hide text the way an override does, and
-// right-to-left text needs them. Other format characters, such as the soft
+// are kept because right-to-left text needs them and they are not overrides:
+// they do not force a whole run to display reversed, and they cannot reorder
+// Latin letters. Known limit: a lone U+200F or U+061C can still change how
+// digits and the neutral characters between them are ordered, so a number
+// pair such as 0 / 12 can display as 12 / 0 in a bidirectional terminal; use
+// --json for the exact text. Other format characters, such as the soft
 // hyphen and variation selectors, are kept too.
 func isInvisibleFormat(r rune) bool {
 	switch {

@@ -58,7 +58,9 @@ separator and paragraph separator (U+2028, U+2029) become newlines, and
 leading blank lines and trailing whitespace are trimmed, so stored text
 cannot overwrite a line, restyle the terminal or display in a misleading
 order. Title and assignee still print as stored, control characters and
-newlines included. Quote exact text from --json.
+newlines included. The directional marks (U+200E, U+200F, U+061C) are
+kept, so a lone mark can still change how digits are ordered. Quote
+exact text from --json.
 
 Acceptance criteria, labels, dependencies, activity and the full prompt are
 not printed. Use --json for the complete node record, including every

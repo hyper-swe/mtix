@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -95,15 +96,17 @@ func historyValues(e model.HistoryEntry) string {
 }
 
 // plainText removes every control character, newlines and escapes included,
-// from imported history text before it reaches the terminal (MTIX-100.1);
-// --json keeps the exact text.
+// and every invisible format character (bidirectional controls, zero-width
+// and tag characters, line and paragraph separators) from imported history
+// text before it reaches the terminal (MTIX-100.1, MTIX-100.7); --json keeps
+// the exact text.
 func plainText(s string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return -1
 		}
 		return r
-	}, s)
+	}, format.StripControlChars(s))
 }
 
 func displayValue(v *string) string {

@@ -1,0 +1,276 @@
+// Copyright 2025-2026 HyperSWE
+// SPDX-License-Identifier: Apache-2.0
+
+package sqlite_test
+
+import (
+	"context"
+	"database/sql"
+	"log/slog"
+	"path/filepath"
+	"strconv"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
+)
+
+// MTIX-107.31: a replace import must not drop a node whose events the local
+// sync log holds on a store that has exchanged events with a hub. The node
+// would be gone locally while its events stay in the log, and a later pull
+// acknowledges those events as held (MTIX-95.2) instead of applying them, so
+// the node never comes back.
+
+// exportWithout returns the store's export without the node id, with its
+// node count and checksum recomputed: an older board that predates id.
+func exportWithout(t *testing.T, s *sqlite.Store, id string) *sqlite.ExportData {
+	t.Helper()
+	data, err := s.Export(context.Background(), "", "")
+	require.NoError(t, err)
+	kept := data.Nodes[:0]
+	for _, n := range data.Nodes {
+		if n.ID != id {
+			kept = append(kept, n)
+		}
+	}
+	data.Nodes = kept
+	data.NodeCount = len(kept)
+	require.NoError(t, sqlite.RecomputeExportChecksum(data))
+	return data
+}
+
+// teammateCreateEvents returns the events of a node a teammate created in
+// its own store, as the hub returns them on pull.
+func teammateCreateEvents(t *testing.T, id string) []*model.SyncEvent {
+	t.Helper()
+	other, err := sqlite.New(filepath.Join(t.TempDir(), "teammate.db"), slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = other.Close() })
+	mustCreateNode(t, other, id, "")
+	evs, err := other.ReadPendingEvents(context.Background(), 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, evs)
+	return evs
+}
+
+func nodeExists(t *testing.T, raw *sql.DB, id string) bool {
+	t.Helper()
+	return countRows(t, raw, `SELECT COUNT(*) FROM nodes WHERE id = ?`, id) == 1
+}
+
+func TestImport_ReplaceOnSyncedStore_KeepsNodesTheLogHolds(t *testing.T) {
+	tests := []struct {
+		name string
+		// setup prepares the store and returns the events a later pull
+		// returns, nil for a store that never synced.
+		setup     func(t *testing.T, s *sqlite.Store, raw *sql.DB) []*model.SyncEvent
+		drop      string
+		wantError bool
+	}{
+		{"own pushed node the file lacks", func(t *testing.T, s *sqlite.Store, raw *sql.DB) []*model.SyncEvent {
+			mustCreateNode(t, s, "MTIX-1", "")
+			mustCreateNode(t, s, "MTIX-2", "")
+			return pushPendingOwnEvents(t, raw)
+		}, "MTIX-2", true},
+		{"pulled node the file lacks", func(t *testing.T, s *sqlite.Store, _ *sql.DB) []*model.SyncEvent {
+			mustCreateNode(t, s, "MTIX-1", "")
+			evs := teammateCreateEvents(t, "MTIX-2")
+			pullEvents(t, s, evs)
+			return evs
+		}, "MTIX-2", true},
+		{"hub-connected mark, node the file lacks", func(t *testing.T, s *sqlite.Store, _ *sql.DB) []*model.SyncEvent {
+			mustCreateNode(t, s, "MTIX-1", "")
+			mustCreateNode(t, s, "MTIX-2", "")
+			_, err := s.MarkHubConnected(context.Background(), "config")
+			require.NoError(t, err)
+			return nil
+		}, "MTIX-2", true},
+		{"synced store, file holds every node", func(t *testing.T, s *sqlite.Store, raw *sql.DB) []*model.SyncEvent {
+			mustCreateNode(t, s, "MTIX-1", "")
+			return pushPendingOwnEvents(t, raw)
+		}, "", false},
+		{"store that never synced", func(t *testing.T, s *sqlite.Store, _ *sql.DB) []*model.SyncEvent {
+			mustCreateNode(t, s, "MTIX-1", "")
+			mustCreateNode(t, s, "MTIX-2", "")
+			return nil
+		}, "MTIX-2", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			s, raw := mutationTestStore(t)
+			pulled := tt.setup(t, s, raw)
+			board := exportWithout(t, s, tt.drop)
+
+			_, err := s.Import(ctx, board, sqlite.ImportModeReplace, false)
+			if !tt.wantError {
+				require.NoError(t, err)
+				if tt.drop != "" {
+					assert.False(t, nodeExists(t, raw, tt.drop), "a store that never synced takes the file whole")
+				}
+				return
+			}
+			if err == nil {
+				pullEvents(t, s, pulled)
+				require.True(t, nodeExists(t, raw, tt.drop),
+					"the replace dropped %s, and the pull after it did not restore it", tt.drop)
+			}
+			require.ErrorIs(t, err, sqlite.ErrReplaceOnSyncedStore,
+				"the replace would drop %s while the sync log keeps its events", tt.drop)
+			assert.Contains(t, err.Error(), tt.drop, "the refusal names the node")
+			assert.Contains(t, err.Error(), "mtix sync reconcile --discard-local", "the refusal names the recovery")
+			require.True(t, nodeExists(t, raw, tt.drop), "a refused replace changes nothing")
+
+			pullEvents(t, s, pulled) // the next pull returns the held events
+			assert.True(t, nodeExists(t, raw, tt.drop), "the node is still on the board after the pull")
+		})
+	}
+}
+
+func TestMissingLoggedNodes_DroppedNode_Reported(t *testing.T) {
+	tests := []struct {
+		name string
+		// lose removes MTIX-2 from the board in some way.
+		lose func(t *testing.T, s *sqlite.Store, raw *sql.DB)
+		want []string
+	}{
+		{"row deleted without an event", func(t *testing.T, _ *sqlite.Store, raw *sql.DB) {
+			_, err := raw.Exec(`DELETE FROM nodes WHERE id = 'MTIX-2'`)
+			require.NoError(t, err)
+		}, []string{"MTIX-2"}},
+		{"deleted, then purged", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
+			require.NoError(t, s.DeleteNode(context.Background(), "MTIX-2", false, "u"))
+			_, err := raw.Exec(`DELETE FROM nodes WHERE id = 'MTIX-2'`) // gc purges a deleted node
+			require.NoError(t, err)
+		}, nil},
+		{"renumbered, same uid", func(t *testing.T, _ *sqlite.Store, raw *sql.DB) {
+			_, err := raw.Exec(`UPDATE nodes SET id = 'MTIX-9' WHERE id = 'MTIX-2'`)
+			require.NoError(t, err)
+		}, nil},
+		{"still on the board", func(*testing.T, *sqlite.Store, *sql.DB) {}, nil},
+		{"same number, uid replaced", func(_ *testing.T, _ *sqlite.Store, raw *sql.DB) {
+			_, err := raw.Exec(`UPDATE nodes SET uid = '01900000-0000-7000-8000-000000000abc' WHERE id = 'MTIX-2'`)
+			require.NoError(t, err)
+		}, []string{"MTIX-2"}},
+		{"same number, uid dropped", func(_ *testing.T, _ *sqlite.Store, raw *sql.DB) {
+			_, err := raw.Exec(`UPDATE nodes SET uid = '' WHERE id = 'MTIX-2'`)
+			require.NoError(t, err)
+		}, []string{"MTIX-2"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, raw := mutationTestStore(t)
+			mustCreateNode(t, s, "MTIX-1", "")
+			mustCreateNode(t, s, "MTIX-2", "")
+			pushPendingOwnEvents(t, raw)
+			tt.lose(t, s, raw)
+
+			got, err := s.MissingLoggedNodes(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestNameNodes_ManyIDs_CapsTheList(t *testing.T) {
+	tests := []struct {
+		name string
+		n    int
+		want string
+	}{
+		{"two", 2, "A-1, A-2"},
+		{"twelve", 12, "A-1, A-2, A-3, A-4, A-5, A-6, A-7, A-8, A-9, A-10 and 2 more"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ids := make([]string, tt.n)
+			for i := range ids {
+				ids[i] = "A-" + strconv.Itoa(i+1)
+			}
+			assert.Equal(t, tt.want, sqlite.NameNodes(ids))
+		})
+	}
+}
+
+// nodeUID returns the uid of node id on the board.
+func nodeUID(t *testing.T, raw *sql.DB, id string) string {
+	t.Helper()
+	var uid sql.NullString
+	require.NoError(t, raw.QueryRow(`SELECT uid FROM nodes WHERE id = ?`, id).Scan(&uid))
+	return uid.String
+}
+
+// A task is the same task by its uid. A replace that keeps a logged task's
+// id but drops or changes its uid leaves the logged creation without a task
+// (a pull then fails with not found), so it is refused; a board that only
+// renumbers the task keeps its uid and imports, as it does on a store that
+// never synced.
+func TestImport_ReplaceOnSyncedStore_MatchesTasksByUID(t *testing.T) {
+	tests := []struct {
+		name      string
+		edit      func(d *sqlite.ExportData, i int)
+		wantError bool
+		wantID    string
+	}{
+		{"same id, uid dropped", func(d *sqlite.ExportData, i int) { d.Nodes[i].UID = "" }, true, "MTIX-2"},
+		{"same id, uid changed", func(d *sqlite.ExportData, i int) { d.Nodes[i].UID = "01900000-0000-7000-8000-000000000abc" }, true, "MTIX-2"},
+		{"teammate renumbers, same uid", func(d *sqlite.ExportData, i int) { d.Nodes[i].ID, d.Nodes[i].Seq = "MTIX-9", 9 }, false, "MTIX-9"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			s, raw := mutationTestStore(t)
+			mustCreateNode(t, s, "MTIX-1", "")
+			mustCreateNode(t, s, "MTIX-2", "")
+			pushed := pushPendingOwnEvents(t, raw)
+			uid := nodeUID(t, raw, "MTIX-2")
+			require.NotEmpty(t, uid)
+
+			board, err := s.Export(ctx, "", "")
+			require.NoError(t, err)
+			for i := range board.Nodes {
+				if board.Nodes[i].ID == "MTIX-2" {
+					tt.edit(board, i)
+				}
+			}
+			require.NoError(t, sqlite.RecomputeExportChecksum(board))
+
+			_, err = s.Import(ctx, board, sqlite.ImportModeReplace, false)
+			if tt.wantError {
+				require.ErrorIs(t, err, sqlite.ErrReplaceOnSyncedStore)
+				assert.Equal(t, uid, nodeUID(t, raw, "MTIX-2"), "a refused replace changes nothing")
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, uid, nodeUID(t, raw, tt.wantID), "the renumbered task keeps its uid")
+				assert.False(t, nodeExists(t, raw, "MTIX-2"))
+			}
+			pullEvents(t, s, pushed)
+			missing, err := s.MissingLoggedNodes(ctx)
+			require.NoError(t, err)
+			assert.Empty(t, missing, "no logged creation is left without its task")
+		})
+	}
+}
+
+// A store that only pulled events (it holds a hub event in applied_events,
+// has pushed nothing and carries no hub mark) syncs with a hub: a replace
+// that drops a logged node is refused.
+func TestImport_ReplaceOnStoreThatOnlyPulled_RefusesToDropALoggedNode(t *testing.T) {
+	ctx := context.Background()
+	s, raw := mutationTestStore(t)
+	mustCreateNode(t, s, "MTIX-1", "")
+	mustCreateNode(t, s, "MTIX-2", "")
+	_, err := raw.Exec(`INSERT INTO applied_events (event_id, applied_at, applied_by_lamport)
+		VALUES ('01900000-0000-7000-8000-0000000000aa', '2026-10-16T09:00:00Z', 1)`)
+	require.NoError(t, err)
+	synced, err := s.HasSyncedWithHub(ctx)
+	require.NoError(t, err)
+	require.True(t, synced, "a pulled event alone means the store syncs")
+
+	_, err = s.Import(ctx, exportWithout(t, s, "MTIX-2"), sqlite.ImportModeReplace, false)
+	require.ErrorIs(t, err, sqlite.ErrReplaceOnSyncedStore)
+	assert.True(t, nodeExists(t, raw, "MTIX-2"))
+}

@@ -25,7 +25,7 @@ import (
 
 // TestVerify_EmptyDatabase_AllPass verifies verification passes on empty DB per FR-6.3.
 func TestVerify_EmptyDatabase_AllPass(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	result, err := s.Verify(context.Background())
 	require.NoError(t, err)
 	assert.True(t, result.AllPassed)
@@ -39,7 +39,7 @@ func TestVerify_EmptyDatabase_AllPass(t *testing.T) {
 
 // TestVerify_AfterHierarchy_AllPass verifies verification after CRUD per FR-6.3.
 func TestVerify_AfterHierarchy_AllPass(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -62,7 +62,7 @@ func TestVerify_AfterHierarchy_AllPass(t *testing.T) {
 
 // TestVerify_AfterTransitions_ProgressConsistent verifies progress after status changes per FR-6.3.
 func TestVerify_AfterTransitions_ProgressConsistent(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -89,7 +89,7 @@ func TestVerify_AfterTransitions_ProgressConsistent(t *testing.T) {
 
 // TestVerify_AfterImportCycle_AllPass verifies verification after export+import per FR-6.3.
 func TestVerify_AfterImportCycle_AllPass(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -384,7 +384,7 @@ func TestImport_ReplaceMode_WithDeps(t *testing.T) {
 
 // TestBackup_EmptyDatabase_Succeeds verifies backup of empty DB per FR-6.3a.
 func TestBackup_EmptyDatabase_Succeeds(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	destPath := filepath.Join(t.TempDir(), "backup.db")
 	result, err := s.Backup(context.Background(), destPath)
 	require.NoError(t, err)
@@ -394,7 +394,7 @@ func TestBackup_EmptyDatabase_Succeeds(t *testing.T) {
 
 // TestBackup_WithData_Readable verifies backup with data per FR-6.3a.
 func TestBackup_WithData_Readable(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 	require.NoError(t, s.CreateNode(ctx, makeRootNode("BK-1", "BK", "Backup Test", now)))
@@ -415,7 +415,7 @@ func TestBackup_WithData_Readable(t *testing.T) {
 
 // TestBackup_EmptyPath_ReturnsError verifies empty path per FR-6.3a.
 func TestBackup_EmptyPath_ReturnsError(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	_, err := s.Backup(context.Background(), "")
 	assert.Error(t, err)
 }

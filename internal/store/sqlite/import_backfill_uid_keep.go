@@ -16,11 +16,16 @@ import (
 // takes the file's uid has its pending events carried to it
 // (carryReplacedUIDs, MTIX-95.31.16); the caller holds the push lock. A node of the file without a uid, at an
 // id whose local node carries a marked backfill uid, keeps that uid
-// (keepLocalBackfillUIDs, MTIX-95.31.9).
+// (keepLocalBackfillUIDs, MTIX-95.31.9). On a store that syncs with a hub,
+// a replace that would delete a node the sync log holds is refused
+// (refuseDroppingLoggedNodes, MTIX-107.31).
 func replaceAllData(ctx context.Context, tx *sql.Tx, data *ExportData) (ImportResult, error) {
 	kept, err := keepLocalBackfillUIDs(ctx, tx, data)
 	if err != nil {
 		return ImportResult{}, err
+	}
+	if refuseErr := refuseDroppingLoggedNodes(ctx, tx, kept); refuseErr != nil {
+		return ImportResult{}, refuseErr
 	}
 	before, err := localUIDsByID(ctx, tx)
 	if err != nil {

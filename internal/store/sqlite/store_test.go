@@ -20,9 +20,9 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
-// newTestStore creates a fresh SQLite store for testing.
+// newFreshTestStore exercises New creating a database from an absent file.
 // Uses t.TempDir() for file-based DB (not :memory:) per EXECUTION-PLAN.md.
-func newTestStore(t *testing.T) *sqlite.Store {
+func newFreshTestStore(t *testing.T) *sqlite.Store {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
@@ -34,6 +34,13 @@ func newTestStore(t *testing.T) *sqlite.Store {
 	})
 
 	return s
+}
+
+// newTestStore isolates operation tests with a private verified empty image.
+// Creation, opening, schema and integrity tests use newFreshTestStore.
+func newTestStore(t *testing.T) *sqlite.Store {
+	t.Helper()
+	return sqlite.FixtureStoreForTest(t, filepath.Join(t.TempDir(), "test.db"))
 }
 
 // newTestDB opens a raw database connection for verification queries.
@@ -55,7 +62,7 @@ func newTestDB(t *testing.T, dbPath string) *sql.DB {
 
 // TestNew_CreatesDB verifies the store creates a database file.
 func TestNew_CreatesDB(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	require.NotNil(t, s)
 }
 

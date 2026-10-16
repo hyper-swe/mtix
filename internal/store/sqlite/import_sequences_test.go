@@ -164,3 +164,69 @@ func TestImport_MergeImport_RaisesNestedAndRootCounters(t *testing.T) {
 	assert.Equal(t, 3, counter("PRE:PRE-1"), "child counter raised to the highest child number")
 	assert.Equal(t, 1, counter("PRE:"), "root counter raised to the highest root number")
 }
+
+// TestImportReconcile_Renumber_DoesNotKeepTemporaryNumberInCounter verifies
+// that the temporary number a renumbered local task is parked at does not
+// stay in the counter. A local child numbered 40 under another parent must
+// not push the root counter: after the renumber the next root number is 7
+// (the moved task holds REC-6), as before the counters were never lowered
+// (MTIX-95.31.27, FR-7.8.x).
+func TestImportReconcile_Renumber_DoesNotKeepTemporaryNumberInCounter(t *testing.T) {
+	ctx := context.Background()
+	local, file, _, _ := sameIDStores(t)
+	createSameIDTask(t, local, "REC-1.40", "REC-1", 40, taskUID(t), "High child under another parent")
+
+	_, _, err := local.ImportReconcile(ctx, file(), sqlite.ImportReconcileOptions{
+		Mode: sqlite.ImportModeMerge, Confirm: true,
+	})
+	require.NoError(t, err)
+
+	var root, other int
+	require.NoError(t, local.ReadDB().QueryRowContext(ctx,
+		"SELECT value FROM sequences WHERE key = 'REC:'").Scan(&root))
+	assert.Equal(t, 6, root, "the root counter is the highest root number, not the parking number")
+	require.NoError(t, local.ReadDB().QueryRowContext(ctx,
+		"SELECT value FROM sequences WHERE key = 'REC:REC-1'").Scan(&other))
+	assert.Equal(t, 40, other, "the child counter keeps the highest child number")
+	next, err := local.NextSequence(ctx, "REC:")
+	require.NoError(t, err)
+	assert.Equal(t, 7, next)
+}
+
+// TestImportReconcile_Renumber_KeepsHigherExistingCounter verifies the
+// restore after a renumber never lowers a counter that was above the
+// highest number under its parent before the import.
+func TestImportReconcile_Renumber_KeepsHigherExistingCounter(t *testing.T) {
+	ctx := context.Background()
+	local, file, _, _ := sameIDStores(t)
+	_, err := local.WriteDB().ExecContext(ctx,
+		"INSERT INTO sequences (key, value) VALUES ('REC:', 20) ON CONFLICT(key) DO UPDATE SET value = 20")
+	require.NoError(t, err)
+	_, _, err = local.ImportReconcile(ctx, file(), sqlite.ImportReconcileOptions{
+		Mode: sqlite.ImportModeMerge, Confirm: true,
+	})
+	require.NoError(t, err)
+	var root int
+	require.NoError(t, local.ReadDB().QueryRowContext(ctx,
+		"SELECT value FROM sequences WHERE key = 'REC:'").Scan(&root))
+	assert.Equal(t, 20, root, "a counter above the highest number is kept")
+}
+
+// TestImport_MergeImport_SoftDeletedNodeReservesItsNumber verifies a
+// soft-deleted node in the file still sets the counter: the rebuild counts
+// deleted rows, so its number is never handed out again (MTIX-95.31.27).
+func TestImport_MergeImport_SoftDeletedNodeReservesItsNumber(t *testing.T) {
+	ctx := context.Background()
+	src := newTestStore(t)
+	makeTestExport(t, src) // IMP-1, IMP-2
+	require.NoError(t, src.DeleteNode(ctx, "IMP-2", false, "agent-test"))
+	data, err := src.Export(ctx, "IMP", "0.1.0")
+	require.NoError(t, err)
+	dst := newTestStore(t)
+	_, err = dst.Import(ctx, data, sqlite.ImportModeMerge, true)
+	require.NoError(t, err)
+	var value int
+	require.NoError(t, dst.ReadDB().QueryRowContext(ctx,
+		"SELECT value FROM sequences WHERE key = 'IMP:'").Scan(&value))
+	assert.Equal(t, 2, value, "the soft-deleted IMP-2 still reserves number 2")
+}

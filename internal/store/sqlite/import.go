@@ -45,9 +45,9 @@ func DecodeExportData(r io.Reader) (*ExportData, error) {
 }
 
 // ErrImportIncomplete marks an import error raised after the import's
-// transaction committed, while rebuilding the sequence counters or the
-// search index (MTIX-95.31.1). Every other import error leaves the store
-// unchanged.
+// transaction committed, while rebuilding the search index (MTIX-95.31.1).
+// The sequence counters are raised inside the transaction, so a failure
+// there leaves the store unchanged, like every other import error.
 var ErrImportIncomplete = errors.New("import applied, but rebuilding its indexes failed")
 
 // ImportMode controls how import handles existing data per FR-7.8.
@@ -126,8 +126,9 @@ func ValidateExport(data *ExportData) error {
 // Import loads data from an ExportData structure per FR-7.8.
 // Verifies node_count, checksum and every time value (ValidateExport,
 // MTIX-95.31.1) before importing, so a rejected file writes nothing.
-// Supports replace and merge modes. Rebuilds sequences and FTS index after
-// bulk import. If force is false, importing zero nodes into a non-empty
+// Supports replace and merge modes. The sequence counters are raised inside
+// the import transaction (rebuildSequencesTx); the FTS index is rebuilt
+// after the commit. If force is false, importing zero nodes into a non-empty
 // database is rejected.
 // MTIX-95.31.4: one transaction writes everything, after it re-checks the
 // store (IfStoreUnchanged) and renumbers the local tasks ImportReconcile

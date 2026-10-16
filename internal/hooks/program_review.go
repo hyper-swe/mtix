@@ -136,8 +136,14 @@ func knownInterpreterProgram(root, program string) bool {
 	if filepath.IsAbs(program) {
 		return inPathDirectory(root, filepath.Dir(program))
 	}
-	return !strings.ContainsRune(program, filepath.Separator)
+	return isBareName(program)
 }
+
+// isBareName reports a program written without any path separator, using the
+// rule resolveLauncher uses to look a name up on PATH: filepath.Base returns
+// it unchanged. On Windows that counts a forward slash as a separator, as
+// the launcher does, so a relative spelling is never trusted by its name.
+func isBareName(program string) bool { return filepath.Base(program) == program }
 
 func inPathDirectory(root, dir string) bool {
 	for _, entry := range filepath.SplitList(FixedHookPath(root)) {

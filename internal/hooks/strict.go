@@ -118,7 +118,7 @@ func knownEnvWrapper(root, program string) bool {
 	if filepath.IsAbs(program) {
 		return inPathDirectory(root, filepath.Dir(program))
 	}
-	return !strings.ContainsRune(program, filepath.Separator)
+	return isBareName(program)
 }
 
 // ApproveProgram approves the hook's program for strict mode and returns the

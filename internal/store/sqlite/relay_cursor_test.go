@@ -441,7 +441,7 @@ func TestReadRelayJournalSince_RefusesADamagedVectorClock(t *testing.T) {
 // asks its one question with: are the events this peer already published
 // still in its journal, in the same order?
 func TestLookupRelayJournalSeqs(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 	require.NoError(t, s.CreateNode(ctx, makeRootNode("PROJ-1", "PROJ", "first", now)))
@@ -508,7 +508,7 @@ func TestRepublishRelayFrom_OnAPeerThatNeverPublished(t *testing.T) {
 // TestRepublishRelayFrom_Refusals keeps the floor inside the journal and
 // reports a medium failure as itself.
 func TestRepublishRelayFrom_Refusals(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	require.Error(t, s.RepublishRelayFrom(context.Background(), -1))
 
 	closed, err := sqlite.New(filepath.Join(t.TempDir(), "closed.db"), slog.Default())

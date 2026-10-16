@@ -328,6 +328,9 @@ func executeImportAsTx(
 	if err := assignParentToFormerRoots(ctx, tx, mapping, parentID); err != nil {
 		return count, err
 	}
+	if err := realignMovedColumns(ctx, tx, mapping); err != nil { // MTIX-107.58
+		return count, err
+	}
 	newRootPrefix, _ := splitProjectPrefix(parentID)
 	if err := updateSentinelsAfterReconcile(ctx, tx, newRootPrefix); err != nil {
 		return count, err

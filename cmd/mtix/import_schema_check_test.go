@@ -133,16 +133,16 @@ func TestImportCmd_Applied_StillAutoExports(t *testing.T) {
 
 // TestImportCmd_FailsAfterCommit_StillAutoExports verifies the judgment
 // behind the skip: an import that fails after its transaction committed
-// (rebuilding the sequence counters fails, sqlite.ErrImportIncomplete) did
+// (rebuilding the search index fails, sqlite.ErrImportIncomplete) did
 // change the store, so the board is still re-exported (MTIX-95.31.1).
 func TestImportCmd_FailsAfterCommit_StillAutoExports(t *testing.T) {
 	initTestApp(t)
 	require.NoError(t, runCreate("In the store", "", "", 3, "", "", "", "", ""))
 	path := writeExportWithSchema(t, "2.0.0")
-	// Fixed DDL, test only: make the post-commit sequence rebuild fail.
+	// Fixed DDL, test only: make the post-commit search-index rebuild fail.
 	_, err := app.store.WriteDB().ExecContext(t.Context(),
-		`CREATE TRIGGER test_fail_sequence_rebuild BEFORE INSERT ON sequences
-		 BEGIN SELECT RAISE(ABORT, 'test: sequence rebuild fails'); END`)
+		`CREATE TRIGGER test_fail_fts_rebuild BEFORE DELETE ON nodes_fts_data
+		 BEGIN SELECT RAISE(ABORT, 'test: fts rebuild fails'); END`)
 	require.NoError(t, err)
 
 	tasksPath := filepath.Join(app.mtixDir, "tasks.json")

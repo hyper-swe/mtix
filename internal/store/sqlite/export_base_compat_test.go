@@ -27,7 +27,7 @@ const exportCompatGolden = "testdata/export-compat-base-573ada7.json"
 // activity, with every value fixed.
 func exportCompatStore(t *testing.T) []byte {
 	t.Helper()
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := t.Context()
 	at := time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)
 	for i, id := range []string{"PROJ-1", "PROJ-2"} {

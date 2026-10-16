@@ -6,17 +6,10 @@
 package main
 
 import (
-	"math"
+	"github.com/hyper-swe/mtix/internal/oplocal"
 	"os"
-
-	"golang.org/x/sys/unix"
 )
 
 func hookStdinTerminal() bool {
-	fd := os.Stdin.Fd()
-	if fd > math.MaxInt {
-		return false
-	}
-	_, err := unix.IoctlGetTermios(int(fd), terminalRequest)
-	return err == nil
+	return oplocal.OperatorTerminal(os.Stdin)
 }

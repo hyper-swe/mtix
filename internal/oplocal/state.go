@@ -12,18 +12,22 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // State operates on one operator directory using injected path inputs.
 type State struct {
-	env           Env
-	alertStage    func(string) error
-	beforeCommit  func() error
-	syncDirectory func(*os.File) error
+	env                   Env
+	alertStage            func(string) error
+	permissionReadStage   func(string)
+	permissionClock       func() time.Time
+	permissionNoticeProbe func(context.Context, PermissionBatch) (bool, error)
+	beforeCommit          func() error
+	syncDirectory         func(*os.File) error
 }
 
 // New constructs a state accessor without creating any files.
-func New(env Env) *State { return &State{env: env} }
+func New(env Env) *State { return NewWithPermissionClock(env, time.Now) }
 
 func (s *State) resolve() (string, error) {
 	logical, err := Dir(s.env)

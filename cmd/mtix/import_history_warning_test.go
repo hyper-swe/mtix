@@ -103,8 +103,8 @@ func TestRunImport_AppliedButIncomplete_StillReportsWarnings(t *testing.T) {
 	require.NoError(t, runCreate("Round trip", "", "", 3, "", "", "", "", ""))
 	path := writeExportBy(t, "0.5.4")
 	_, err := app.store.WriteDB().ExecContext(t.Context(),
-		`CREATE TRIGGER test_fail_sequence_rebuild BEFORE INSERT ON sequences
-		 BEGIN SELECT RAISE(ABORT, 'test: sequence rebuild fails'); END`)
+		`CREATE TRIGGER test_fail_fts_rebuild BEFORE DELETE ON nodes_fts_data
+		 BEGIN SELECT RAISE(ABORT, 'test: fts rebuild fails'); END`)
 	require.NoError(t, err)
 	var runErr error
 	errOut := captureStderr(t, func() {

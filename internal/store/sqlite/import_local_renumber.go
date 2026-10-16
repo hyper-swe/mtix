@@ -400,8 +400,7 @@ func (p *localMovePlan) finish() []localRenumber {
 // each found by its uid: first to a temporary number above every number in
 // use, then to its final number, which must give the planned id. So moves
 // that trade ids (two tasks the file swapped) never meet an occupied id.
-// The sequence counters follow the final numbers when Import rebuilds them
-// after the transaction.
+// The temporary numbers do not stay in the counters (restoreRenumberCounters).
 func applyLocalRenumbers(ctx context.Context, tx *sql.Tx, w localWrites) error {
 	if err := stampNewUIDs(ctx, tx, w.stamps); err != nil { // MTIX-95.31.9
 		return err
@@ -420,6 +419,10 @@ func applyLocalRenumbers(ctx context.Context, tx *sql.Tx, w localWrites) error {
 				"was planned, run the import again: %w", m.oldID, id, model.ErrConflict)
 		}
 	}
+	before, err := snapshotCounters(ctx, tx)
+	if err != nil {
+		return err
+	}
 	base, err := temporarySeqBase(ctx, tx, moves)
 	if err != nil {
 		return err
@@ -434,7 +437,7 @@ func applyLocalRenumbers(ctx context.Context, tx *sql.Tx, w localWrites) error {
 			return err
 		}
 	}
-	return nil
+	return restoreRenumberCounters(ctx, tx, before)
 }
 
 // idOfUID returns the id of the one node (live or soft-deleted) that holds

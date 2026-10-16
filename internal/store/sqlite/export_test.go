@@ -49,7 +49,7 @@ func TestExport_ProducesValidJSON(t *testing.T) {
 // TestExport_IncludesSchemaVersion verifies schema_version field exists per FR-15.1/FR-15.2g.
 // The schema_version enables auto-import to reject incompatible export files.
 func TestExport_IncludesSchemaVersion(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 

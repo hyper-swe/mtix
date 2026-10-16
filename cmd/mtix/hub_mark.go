@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -79,14 +80,34 @@ func reconcileHubMarkMirror() error {
 	}
 	state := oplocal.New(env)
 	checkout := filepath.Clean(filepath.Dir(app.mtixDir))
+	mirrorErr := reconcileStoredHubMirror(state, checkout, mark.Set, mark.Source)
+	var permissionErr error
+	if mark.Set {
+		permissionErr = observePermissionHubTransition()
+	}
+	return errors.Join(mirrorErr, permissionErr)
+}
+
+func observePermissionHubTransition() error {
+	permissions, board, err := configuredPermissions()
+	if err != nil {
+		return fmt.Errorf("observe wake permission transition: %w", err)
+	}
+	if err = permissions.ObserveHub(context.Background(), board); err != nil {
+		return fmt.Errorf("observe wake permission transition: %w", err)
+	}
+	return nil
+}
+
+func reconcileStoredHubMirror(state *oplocal.State, checkout string, marked bool, source string) error {
 	mirror, _, err := state.HubMarkMirror(checkout)
 	if err != nil {
 		return fmt.Errorf("reconcile hub mark mirror: %w", err)
 	}
 	switch {
-	case mark.Set && mirror.Source != mark.Source:
-		return state.MirrorHubMark(checkout, mark.Source)
-	case !mark.Set && mirror.Source != "":
+	case marked && mirror.Source != source:
+		return state.MirrorHubMark(checkout, source)
+	case !marked && mirror.Source != "":
 		return state.ClearHubMarkMirror(checkout)
 	}
 	return nil
@@ -124,6 +145,12 @@ func shouldReconcileHubMark(commandPath string) bool {
 // and mirrored, so what it reports as sticky is stored. An exported DSN
 // that never connected is not evidence.
 func appendHubMarkCheck(ctx context.Context, report DoctorReport) DoctorReport {
+	return appendHubMarkCheckMode(ctx, report, true)
+}
+
+// Board mark persistence is shared; operator mirror and permission observation
+// run only for the legacy collector and actual sync actions.
+func appendHubMarkCheckMode(ctx context.Context, report DoctorReport, operatorWrites bool) DoctorReport {
 	if app.store == nil {
 		return appendDoctorCheck(report, DoctorCheck{Name: "board.hub-mark", Pass: true, Warn: true,
 			Detail: "local store not initialized; the hub-connected mark was not read"})
@@ -138,8 +165,10 @@ func appendHubMarkCheck(ctx context.Context, report DoctorReport) DoctorReport {
 			Detail: "hub-connected mark not set; no hub or relay evidence"})
 	}
 	detail := "hub-connected mark set (source: " + status.Source + "); it is stored and does not revert when config changes"
-	if mirrorErr := reconcileHubMarkMirror(); mirrorErr != nil {
-		detail += "; the operator-local copy could not be updated: " + mirrorErr.Error()
+	if operatorWrites {
+		if mirrorErr := reconcileHubMarkMirror(); mirrorErr != nil {
+			detail += "; the operator-local copy could not be updated: " + mirrorErr.Error()
+		}
 	}
 	return appendDoctorCheck(report, DoctorCheck{Name: "board.hub-mark", Pass: true, Detail: detail})
 }

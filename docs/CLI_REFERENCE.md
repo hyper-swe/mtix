@@ -738,6 +738,7 @@ Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 - `list` — List configured hooks with their events and delivery adapters
 - `log` — Show recent hook firings (audit trail, newest first)
 - `status` — Show operator-local state and per-hook approvals
+- `strict <on|off|status>` — Show or change strict program mode for exec hooks on this host
 - `trust <hook>` — Review and approve one exec hook on this host
 ---
 
@@ -807,18 +808,28 @@ Show operator-local state and per-hook approvals
 Validate operator-local state and report its path, availability, per-hook approvals, legacy workspace records, and exact corrective commands. This command does not create state or grant hook approval.
 ---
 
+## strict
+
+**Usage:** `strict <on|off|status>`
+
+Show or change strict program mode for exec hooks on this host
+
+Strict program mode is an opt-in, host-level setting stored in operator-local state. When on, an exec hook whose program is not a pinned project script or a known interpreter running one launches only after the operator approves that program with: mtix hooks trust --program <hook>. on and off require terminal stdin outside an agent session. status works without a terminal and supports --json.
+---
+
 ## trust
 
 **Usage:** `trust <hook>`
 
 Review and approve one exec hook on this host
 
-Review one configured exec hook and save its host-specific approval outside the project. Requires terminal stdin outside an agent session. Editing that hook or its project scripts requires another review. Use hooks status --json for corrective guidance.
+Review one configured exec hook and save its host-specific approval outside the project. Requires terminal stdin outside an agent session. Editing that hook or its project scripts requires another review. With --program, instead approve the hook's program for strict program mode (see mtix hooks strict); the approval is bound to the symlink-resolved program path, the hook and the project. Use hooks status --json for corrective guidance.
 
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
+| `--program` |  | Approve the hook's program for strict program mode | false |
 | `--status` |  | Show this hook's approval without changing it | false |
 ---
 

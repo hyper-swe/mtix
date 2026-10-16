@@ -357,7 +357,29 @@ func projectPath(logical, root, value string) (resolved string, lexical, inside 
 	}
 	resolved = resolveDeepest(path, 0)
 	rel, err := filepath.Rel(root, resolved)
-	return resolved, lexical, lexical || (err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+	byName := err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return resolved, lexical, lexical || byName || underRoot(root, resolved)
+}
+
+// underRoot reports whether path is the project root or lies under it by file
+// identity: some existing ancestor of path is the same file as root. A string
+// comparison alone is wrong on a case-insensitive volume, where a case-variant
+// spelling names the same file.
+func underRoot(root, path string) bool {
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return false
+	}
+	for current := filepath.Clean(path); ; {
+		if info, statErr := os.Stat(current); statErr == nil && os.SameFile(rootInfo, info) {
+			return true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
 }
 
 // resolveDeepest resolves links up to the deepest existing parent and

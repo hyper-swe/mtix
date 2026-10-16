@@ -38,6 +38,11 @@ func resolutionFor(refusal *AutoImportRefusal) string {
 		replace += ", which deletes " + refusal.Loss
 	}
 	replace += " (" + replaceNeedsTypedCount + ")"
+	keepFile := "keep the file with " + replace
+	if refusal.Synced {
+		// A replace import is refused on a store that syncs (MTIX-107.31).
+		replace, keepFile = syncedReplaceWays, syncedReplaceWays
+	}
 	switch refusal.Kind {
 	case refusalNewerSchema:
 		return "It was written by a newer mtix: upgrade mtix, then run any mtix command. " +
@@ -45,7 +50,7 @@ func resolutionFor(refusal *AutoImportRefusal) string {
 	case refusalConflict:
 		return "Both it and the local store changed since the last sync: merge them with " +
 			"mtix import .mtix/tasks.json --mode merge (" + mergeKeeps + "), keep the local store with " +
-			"mtix sync --fix, or keep the file with " + replace + "; " + unchangedRecovery
+			"mtix sync --fix, or " + keepFile + "; " + unchangedRecovery
 	case refusalInvalidFile:
 		return "It fails its checks (mtix sync shows why): if it was edited or merged by hand, repair and check it, " +
 			"then run mtix import .mtix/tasks.json --recompute-checksum; to keep the local board, run mtix sync --fix"

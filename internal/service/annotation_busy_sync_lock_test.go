@@ -50,7 +50,8 @@ func TestAnnotation_BusySyncLock_ExportAndImportSkipsKeepAnnotation(t *testing.T
 
 	require.NoError(t, promptSvc.AddAnnotation(ctx, node.ID, "written while locked", "agent", ""))
 	require.NoError(t, syncSvc.AutoExport(ctx, dir), "a busy lock skips the export without failing the command")
-	require.NoError(t, syncSvc.AutoImport(ctx, dir), "a busy lock skips the import without failing the command")
+	require.ErrorIs(t, syncSvc.AutoImport(ctx, dir), service.ErrAutoImportLockBusy,
+		"a busy lock signals unverified freshness; the CLI still reads its local cache")
 	pending, err := syncSvc.PendingExports(ctx, dir)
 	require.NoError(t, err)
 	require.Equal(t, 1, pending.Count, "the skipped export must stay recorded as pending")

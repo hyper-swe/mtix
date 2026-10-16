@@ -7,6 +7,35 @@ description: Set up, use, verify and recover the mtix sync hub, the shared Postg
 
 The hub is a Postgres database that you and your teammates' agents push task changes to and pull each other's changes from. Each machine keeps its own local store; the hub carries the event log between them. This skill is the full runbook: requirements, setup from zero, daily use, verification, troubleshooting and recovery. The short routine is in the managed SYNC section of `CLAUDE.md` and `AGENTS.md`.
 
+## CLI read freshness
+
+CLI board reads retry a busy local sync lock briefly, with a total wait budget of
+500 ms. If ownership becomes available during the retry, auto-import checks the
+board normally. Persistent contention lets the command read the local cache but
+marks JSON responses with `"stale": true` and
+`"stale_reason": "sync_lock_busy"`. Object responses retain their existing fields;
+array, scalar and null responses are wrapped as
+`{"data": <original response>, "stale": true, "stale_reason": "sync_lock_busy"}`.
+Fresh reads keep their original shape and omit these fields. One possibly stale
+notice also goes to stderr, including protocol and daemon startup when `--json`
+is supplied. CLI JSON stdout remains one valid response.
+
+These fields describe read responses only. Successful mutation acknowledgements
+omit `stale` and `stale_reason`; their absence on an acknowledgement does not
+verify cached read freshness. When a write succeeds despite busy auto-import
+ownership, one completion notice says the write succeeded and must not be
+repeated. Follow that notice: never repeat a successful write. When the write
+itself fails, no completion notice claims it succeeded. A later export or cleanup
+error does not undo a successful write.
+
+Check freshness before using task state or assembled context to take an action.
+When stale is true, retry the same read after the current owner finishes. Never
+delete, replace or unlink `.mtix/data/sync.lock` to bypass its owner, and do not
+use `mtix sync --fix` to force a fresh read: it rewrites the pulled board from the
+local cache. These fields describe sync-lock contention only; still follow any
+other auto-import refusal or warning. Commands that skip automatic import,
+including `mtix sync status` and `mtix sync doctor`, do not make this check.
+
 ## Automatic export activity
 
 An unchanged board keeps `.mtix/tasks.json` bytes, mtime and `exported_at`,
@@ -275,6 +304,7 @@ Run `mtix sync doctor`, or `mtix sync doctor --json` for machine-readable output
 | `held push events` | push holds no event the hub would refuse |
 | `valid node ids` | every local task id is inside the node id grammar (WARN, naming each task and its uid, when one is not) |
 | `unique node uids` | no two tasks share a uid |
+| `board matches sync log` | on a project that syncs, the board holds every task the local sync log creates |
 | `secrets file mode` | `.mtix/secrets` is mode 0600 (passes when the file is absent) |
 | `hub-triggers` | every hub function and trigger exists, is bound correctly and is enabled |
 | `hub-privileges` | which roles besides the owner can use the sync tables |
@@ -299,6 +329,8 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 | `quarantined events` names an `invalid node id` | a pulled event names a task id outside the node id grammar, such as `AA-1é.4`; it is never applied | Run `mtix sync quarantine list` and give the user the event ids, nodes and reasons to report to whoever runs the hub. No retry applies these events. |
 | `valid node ids` WARN | an earlier sync brought in a task whose id is outside the node id grammar | The task stays readable and editable here (`mtix show <uid>`), but other replicas quarantine its changes. Recreate each task you still need with `mtix create` and stop using the old one. |
 | `unique node uids` fails | two tasks share a uid | Do not edit the database. Follow the recovery the check names, and ask the user. |
+| `board matches sync log` fails | a replace import of an earlier version deleted tasks whose events stay in the local sync log; a pull acknowledges those events instead of applying them, so it cannot restore the tasks | Tell the user. The steps the check prints rebuild the board from the hub, run one at a time: `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull`. The discard deletes every local task and unpushed change, which is why `pending` 0 comes first; it asks for the ticket count typed at an interactive terminal, so the user runs it. |
+| `mtix import --mode replace` fails with `this store syncs with a hub` | a replace would delete tasks and changes whose events stay in the local sync log, and a pull could not restore them; the replace needs the ticket count typed at an interactive terminal, so an agent never runs it | Run `mtix sync pull` to receive teammates' changes. To rebuild the board from the hub, ask the user to run the commands the refusal names. A replace into an empty store, such as a restore into a fresh data directory, still runs. |
 | `hub-triggers` WARN or FAIL | a hub function or trigger is missing, rebound or disabled | Ask the table owner to run `mtix sync init` or the `ALTER TABLE ... ENABLE TRIGGER` statement the check prints. |
 | `hub-privileges` WARN | roles besides the owner can use the sync tables | Acceptable on a private network. To restrict, the owner runs `mtix sync harden` (dry run) and, with the user's approval of its role list, `--apply`. |
 | `mtix sync conflicts list` shows conflicts | two machines changed the same field | `mtix sync conflicts resolve <id>` records a decision and changes no task: apply the chosen value with `mtix update`, then push. |

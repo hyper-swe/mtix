@@ -785,6 +785,66 @@ hook journal's `Synced` flag keeps its semantics: it is still derived
 from `applied_events`, and an own event returned by a pull is recorded
 there, as it was before this rule.
 
+## Replace import and the sync log
+
+A replace import (`mtix import --mode replace`, and the automatic import
+of a changed `.mtix/tasks.json`) deletes the local nodes and writes the
+file's. It writes no sync event and deletes none, so on a replica that
+syncs it can leave events in the local log whose effect is no longer on
+the board: a node the file lacks is gone while its `create_node` event
+stays. A later pull cannot repair that. The cursor is already past those
+events, and the own-event rule acknowledges any event the log holds
+instead of applying it, so the board stays behind the hub for good
+(projection drift, ADR-006 section 5.3; MTIX-107.31).
+
+**Decision: refuse.** Of the three ways to keep the board and the log
+consistent (refuse the replace on a replica that syncs; clear
+`sync_events` and `applied_events` and reset the pull cursor in the
+replace's transaction, so the next pull rebuilds from the hub; or
+re-derive the missing nodes from the held events), mtix refuses. Clearing
+the log would also discard unpushed local events and rewind the inbox,
+hook and relay cursors keyed to it, which is what `mtix sync reconcile
+--discard-local` does on purpose, behind its own confirmation.
+Re-deriving nodes from events would make an import write sync state.
+Refusing changes nothing and names the way out.
+
+- **`mtix import --mode replace`** is refused, before the typed
+  confirmation and with nothing written, when the store holds nodes and
+  syncs with a hub or relay: it carries the hub-connected mark, holds an
+  event it pulled (`applied_events`) or pushed (a `sync_events` row past
+  `pending`), a DSN is configured, or local config shows a hub or relay.
+  The error wraps `sqlite.ErrReplaceOnSyncedStore` and names the
+  recovery: `mtix sync push`, check that `mtix sync status` shows
+  `pending` 0, then `mtix sync reconcile --discard-local --yes`, then
+  `mtix sync pull`. A replace into an empty store, such as
+  a restore into a fresh data directory, deletes nothing and runs as
+  before.
+- **Every replace** (the store's `Import` in replace mode, which the
+  automatic import also uses) is refused in its own transaction, before
+  anything is deleted, when the store has synced and the file does not
+  hold, as the same task, a local node that has an event in
+  `sync_events`. A task is the same task by its uid, as the comparison of
+  the automatic import (`DiffReplace`) takes it: a file that keeps a
+  task's number but drops or changes its uid loses the task, because the
+  logged creation is left without a task and a later pull fails with
+  `not found`. A task that keeps its number and title and takes the
+  file's uid is not refused while its creation is still pending: its
+  pending events are carried to the new uid (MTIX-95.31.16). The same holds for a task
+  whose uid is a marked backfill uid, which a board written before uids
+  were shared replaces with the file's. A board that only renumbers
+  a task keeps its uid and imports, as before, and so does a teammate's
+  board that adds tasks.
+
+**Doctor.** `mtix sync doctor` (and `mtix doctor`) runs the `board
+matches sync log` check on a replica that syncs. It fails while the log
+holds a `create_node` event whose task is not on the board by uid (by
+number only for an event that carries no uid) and has no `delete` event
+(`mtix gc` purges deleted nodes, which is not drift), names the nodes, and
+prints the steps to run one at a time: `mtix sync push`, check that `mtix
+sync status` shows `pending` 0, then `mtix sync reconcile --discard-local
+--yes`, then `mtix sync pull`. A renumbered task is not drift; a task
+whose uid was replaced under its number is.
+
 ## Migration single-flight
 
 Schema migration on the hub is gated by

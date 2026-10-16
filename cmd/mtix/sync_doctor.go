@@ -71,6 +71,10 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            warns after 1h; run mtix list for protected
                            import-first recovery (refusals need resolution)
   No orphan applied      - every applied_event has a matching node OR tombstone
+  Board matches sync log - on a project that syncs, the board holds every
+                           task the local sync log creates; a pull cannot
+                           restore a missing one, so the fix rebuilds the
+                           board from the hub
   Quarantined events     - no pulled event is held in the local quarantine;
                            each pull retries them ('mtix sync quarantine list')
   Valid node ids         - warns when a local task id is outside the node id

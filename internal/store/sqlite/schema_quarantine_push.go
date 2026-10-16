@@ -37,6 +37,9 @@ func (s *Store) createSchema(ctx context.Context) error {
 	if err := s.initializeSchema(ctx); err != nil {
 		return err
 	}
+	if err := s.initializeWakeLedger(ctx); err != nil {
+		return err
+	}
 	if err := s.widenQuarantineSource(ctx); err != nil {
 		return err
 	}

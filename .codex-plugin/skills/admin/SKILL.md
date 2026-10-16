@@ -14,6 +14,14 @@ means no FAIL; WARN and INFO are advisory. Exit 2 means at least one FAIL.
 An empty applicable registry is `[]` in JSON. Windows reports
 `platform.windows` as INFO because built-in wakes are unavailable.
 
+On an opened local board, `wake.ledger` reports retained wake rows, claimed
+rows and rejected completions as INFO, including when all counts are zero.
+A board requiring a dispatch protocol newer than this binary supports reports
+FAIL. Install a compatible binary, restart the dispatcher and rerun doctor;
+never lower the board's protocol floor to bypass refusal. This check is
+read-only: `mtix doctor --fix` does not prune wake rows, reset claims, lower
+the protocol floor or grant permissions.
+
 The sync result rows use a `sync.` prefix and run only for configured
 transports. A relay-only checkout does not run unused Postgres checks.
 The separate `mtix sync doctor` command keeps its existing report and behavior.

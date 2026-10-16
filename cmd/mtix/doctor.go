@@ -30,6 +30,7 @@ a data object of machine-readable numbers (the history.size row does), and rows
 without one have exactly the four fields.
 --fix performs only explicitly registered non-grant repairs and rechecks them.
 Grant commands are printed for you to run yourself; they are never executed.
+Without --fix, operator-local files, including attach artifacts, stay unchanged.
 
 The read-only docs.stale check compares board-root MTIX.md with this binary
 and checks live native pointers. WARN prints mtix -C <board-root> docs generate;
@@ -137,6 +138,9 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	}
 	if err := registerAttachDoctorChecks(context.Background(), svc, deps); err != nil {
 		return nil, fmt.Errorf("register attach doctor checks: %w", err)
+	}
+	if err := registerPermissionDoctor(svc); err != nil {
+		return nil, fmt.Errorf("register wake permission diagnostics: %w", err)
 	}
 	return svc, registerConfiguredWakeLedgerDoctor(svc)
 }

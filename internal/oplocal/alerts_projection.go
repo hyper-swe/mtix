@@ -133,6 +133,9 @@ func validateAlertPending(p alertPending, host string) error {
 	if err := validateStoredAlert(*p.Row, host); err != nil {
 		return err
 	}
+	if err := validatePermissionAlertPending(p); err != nil {
+		return err
+	}
 	if p.Target < 0 || p.Target > 2 {
 		return invalid("alert projection target is invalid")
 	}
@@ -174,7 +177,7 @@ func validateAlertUpdatePreimage(p alertPending) error {
 }
 
 func validateEmptyAlertPending(p alertPending) error {
-	if p.Kind != "" || p.Target != 0 || p.ActiveHash != "" || p.ArchiveHash != "" || p.TargetHash != "" {
+	if p.Kind != "" || p.Target != 0 || p.ActiveHash != "" || p.ArchiveHash != "" || p.TargetHash != "" || p.PermissionOccurrence != nil {
 		return invalid("empty alert transaction is invalid")
 	}
 	return nil

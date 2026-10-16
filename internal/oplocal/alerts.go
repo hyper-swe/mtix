@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"log/slog"
 	"math"
 	"os"
 	"sort"
@@ -40,15 +39,21 @@ func (s *State) RecordAlert(ctx context.Context, input Alert, now time.Time) (Al
 	var row Alert
 	operationErr := s.withAlerts(ctx, true, func(dir *os.File, host string) error {
 		var recordErr error
-		row, recordErr = s.recordAlertLocked(dir, host, input, now.UTC())
+		row, recordErr = s.recordAlertLocked(dir, host, input, now.UTC(), nil)
 		return recordErr
 	})
 	return row, operationErr
 }
 
-func (s *State) recordAlertLocked(dir *os.File, host string, input Alert, now time.Time) (Alert, error) {
+func (s *State) recordAlertLocked(dir *os.File, host string, input Alert, now time.Time, occ *PermissionAlertOccurrence) (Alert, error) {
 	if recoveryErr := s.recoverAlert(dir, host); recoveryErr != nil {
 		return Alert{}, recoveryErr
+	}
+	if occ != nil {
+		row, present, err := readPermissionAlertReceipt(dir, host, *occ, input)
+		if err != nil || present {
+			return row, err
+		}
 	}
 	segments, err := readAlertSegments(dir, host)
 	if err != nil {
@@ -61,25 +66,7 @@ func (s *State) recordAlertLocked(dir *os.File, host string, input Alert, now ti
 	if err != nil {
 		return row, err
 	}
-	if proposedErr := validateProposedAlert(row, segments); proposedErr != nil {
-		return row, proposedErr
-	}
-	pending, err := prepareAlertProjection(row, segments)
-	if err != nil {
-		return row, err
-	}
-	if writeErr := s.writeAlertRecord(dir, "alerts-pending.json", host, pending); writeErr != nil {
-		return row, writeErr
-	}
-	if finishErr := s.finishAlert(dir, host, pending, segments); finishErr != nil {
-		return row, finishErr
-	}
-	// The occurrence is durable; closing-window cleanup is best effort and a
-	// failure must not make a caller retry and double-count it.
-	if pruneErr := s.pruneAlertRates(dir, host, now); pruneErr != nil {
-		slog.Warn("operator alert cleanup failed", "error", pruneErr)
-	}
-	return row, nil
+	return s.acceptCountedAlert(dir, host, alertAcceptance{row: row, segments: segments, occ: occ, now: now})
 }
 
 // RecentAlerts returns newest-first logical diagnostics; zero selects all,
@@ -121,6 +108,9 @@ func readRecentAlertsLocked(dir *os.File, host string) ([]Alert, error) {
 	}
 	if pendingErr := validateAlertPending(pending, host); pendingErr != nil {
 		return nil, pendingErr
+	}
+	if preimageErr := validatePermissionAlertReceiptPreimage(dir, host, pending); preimageErr != nil {
+		return nil, preimageErr
 	}
 	if pending.Row != nil {
 		if acceptedErr := validateAcceptedAlertRate(dir, host, *pending.Row); acceptedErr != nil {
@@ -208,6 +198,9 @@ func (s *State) recoverAlert(dir *os.File, host string) error {
 }
 
 func (s *State) finishAlert(dir *os.File, host string, pending alertPending, segments [3]alertSegment) error {
+	if err := validatePermissionAlertReceiptPreimage(dir, host, pending); err != nil {
+		return err
+	}
 	if err := validateAcceptedAlertRate(dir, host, *pending.Row); err != nil {
 		return err
 	}
@@ -218,6 +211,9 @@ func (s *State) finishAlert(dir *os.File, host string, pending alertPending, seg
 		return err
 	}
 	if err := s.writeAlertRecord(dir, alertRateName(pending.Row.Agent, pending.Row.Class), host, *pending.Row); err != nil {
+		return err
+	}
+	if err := s.finishPermissionAlertReceipt(dir, host, pending); err != nil {
 		return err
 	}
 	return s.writeAlertRecord(dir, "alerts-pending.json", host, alertPending{})

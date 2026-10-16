@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **CLI read freshness (MTIX-149).** Successful write acknowledgements omit read freshness fields, and busy-lock completion guidance says the write succeeded and must not be repeated. Cached reads retain freshness metadata and read-only retry guidance.
 - Web ticket Activity and Comments include plain and addressed annotations with author and recipient details and hardened markdown rendering (MTIX-171).
 - Prompt-update notifications now return content hashes from the same committed prompt transaction, including concurrent title or description edits. Stored content-hash consistency, history, search indexing, and sync events retain their existing transactional behavior (MTIX-152).
 - `mtix inbox --format prompt` and `--format context` now end every displayed mtix command (ack, reply, read and the nudge) with `-C '<board>'`, the board the events were read from, and the plain listing's ack hint does too. An agent that read its inbox through `-C` and acked from another repository with its own `.mtix` was refused with a misleading outside-the-journal error and could never clear the events. That refusal now names the board it checked and gives the `mtix -C <board> inbox ack` remedy (MTIX-189).

@@ -50,8 +50,8 @@ Diff the surface area since the last tag and verify each item is documented:
       critical level including dev dependencies (the release builds the
       bundle with those build tools); release artifacts updated. The full
       npm audit is reported but non-blocking: triage and ticket high and
-      lower dev-tooling advisories (braces chain: MTIX-113, Tailwind 4;
-      moderate @vitest/mocker: MTIX-114) (MTIX-95.53).
+      lower dev-tooling advisories (moderate @vitest/mocker: MTIX-114)
+      (MTIX-95.53).
 - [ ] CI fully green on the exact commit to be tagged (all jobs,
       including `test-fault-injection` and the postgres contract suite).
 

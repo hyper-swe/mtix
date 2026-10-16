@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The web app build moved from Tailwind CSS 3 to Tailwind CSS 4, using Tailwind's own Vite plugin (`@tailwindcss/vite`) and CSS-first configuration in `web/src/index.css` in place of `tailwind.config.js` and PostCSS. `postcss` and `autoprefixer` are no longer direct dependencies. This clears the last `npm audit` findings (the `braces` chain), so a full `npm audit` of `web/` reports 0 vulnerabilities. The rendered UI is unchanged; the embedded bundle is rebuilt (MTIX-186).
+
 ### Fixed
 - Web ticket Activity and Comments include plain and addressed annotations with author and recipient details and hardened markdown rendering (MTIX-171).
 - Prompt-update notifications now return content hashes from the same committed prompt transaction, including concurrent title or description edits. Stored content-hash consistency, history, search indexing, and sync events retain their existing transactional behavior (MTIX-152).

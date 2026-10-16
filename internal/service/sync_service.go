@@ -30,6 +30,7 @@ type SyncService struct {
 	store      *sqlite.Store
 	logger     *slog.Logger
 	clock      func() time.Time
+	retryClock func() time.Time                           // optional retry elapsed clock; nil uses the current domain clock
 	retrySleep func(context.Context, time.Duration) error // injected wait for bounded import ownership retry
 	autoSync   AutoSyncConfig                             // sync.auto_sync; nil reads as the default, on (MTIX-95.31.2)
 	notices    io.Writer                                  // user-facing auto-import notices, stderr by default (MTIX-95.31.2)
@@ -61,8 +62,8 @@ type SyncService struct {
 // NewSyncService creates a SyncService per FR-15.2. Auto-import notices and
 // refusals go to stderr (SetNoticeWriter changes that), and auto-import is
 // on until SetAutoSyncConfig wires the sync.auto_sync switch.
-func NewSyncService(store *sqlite.Store, logger *slog.Logger, clock func() time.Time) *SyncService {
-	return &SyncService{
+func NewSyncService(store *sqlite.Store, logger *slog.Logger, clock func() time.Time, retryClocks ...func() time.Time) *SyncService {
+	svc := &SyncService{
 		store:         store,
 		logger:        logger,
 		clock:         clock,
@@ -70,6 +71,10 @@ func NewSyncService(store *sqlite.Store, logger *slog.Logger, clock func() time.
 		notices:       os.Stderr,
 		MaxImportSize: DefaultMaxImportSize,
 	}
+	if len(retryClocks) > 0 {
+		svc.retryClock = retryClocks[0]
+	}
+	return svc
 }
 
 // AutoImport reads .mtix/tasks.json, computes its hash, and imports it in

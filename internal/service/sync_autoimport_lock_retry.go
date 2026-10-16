@@ -26,7 +26,11 @@ const (
 // Scheduled time is counted as well as elapsed time: even a frozen or backwards
 // injected clock cannot cause an unbounded loop. Cancellation interrupts waits.
 func (s *SyncService) acquireAutoImportLock(ctx context.Context, dir string) (*os.File, error) {
-	start := s.clock()
+	retryClock := s.clock
+	if s.retryClock != nil {
+		retryClock = s.retryClock
+	}
+	start := retryClock()
 	remaining := autoImportLockRetryBudget
 	for {
 		if err := ctx.Err(); err != nil {
@@ -39,7 +43,7 @@ func (s *SyncService) acquireAutoImportLock(ctx context.Context, dir string) (*o
 		if !isSyncLockContention(err) {
 			return nil, fmt.Errorf("auto-import ownership: %w", err)
 		}
-		remaining = min(remaining, autoImportLockRetryBudget-s.clock().Sub(start))
+		remaining = min(remaining, autoImportLockRetryBudget-retryClock().Sub(start))
 		if remaining <= 0 {
 			return nil, fmt.Errorf("auto-import ownership: %w: %w", ErrAutoImportLockBusy, err)
 		}

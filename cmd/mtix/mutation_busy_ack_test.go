@@ -53,7 +53,7 @@ func TestMutationBusyLock_CobraAcknowledgements(t *testing.T) {
 func checkMutationBusyCase(t *testing.T, tc mutationBusyCase) {
 	t.Helper()
 	pulledProject(t, "prefix: TEST\n")
-	holdCLIImportLock(t)
+	holdFastCLIImportLock(t)
 	root := newRootCmd()
 	cmd, _, err := root.Find(tc.args)
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func checkMutationBusyCreateOnce(ctx context.Context, t *testing.T) {
 // An execution error must never receive the successful-write completion notice.
 func TestMutationBusyLock_FailedCobraWriteDoesNotClaimSuccess(t *testing.T) {
 	pulledProject(t, "prefix: TEST\n")
-	holdCLIImportLock(t)
+	holdFastCLIImportLock(t)
 	root := newRootCmd()
 	var notice bytes.Buffer
 	root.SetErr(&notice)

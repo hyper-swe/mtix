@@ -31,9 +31,9 @@ import (
 //   - mtix sync reconcile --rename-to and --import-as
 //     (advanceRenamedCounters, advanceImportedCounters).
 //
-// An import rebuilds every counter from the nodes after its transaction
-// (rebuildSequences), which can lower one. A counter that is behind anyway
-// is corrected by NextSequence when it reaches a taken number
+// An import raises every counter to the nodes' numbers in its own
+// transaction (rebuildSequencesTx) and never lowers one (MTIX-95.31.27).
+// A counter that is behind anyway is corrected by NextSequence when it reaches a taken number
 // (skipTakenSequence). The taken numbers are read from the ids themselves:
 // reconcile leaves the project, seq and depth columns stale (MTIX-107.58).
 
@@ -179,7 +179,7 @@ func advanceChildCounters(ctx context.Context, tx *sql.Tx, parentID, subtreePref
 // ids of its namespace ns hold: the ids in [lo, hi) whose rest after ns
 // (SUBSTR and LENGTH both count characters) is all digits and at most
 // maxSequence. It is an upsert, so it also works when the counter row was
-// removed after the allocation (an import's rebuild deletes every counter,
+// removed after the allocation (a replace import clears every counter,
 // MTIX-107.56): the counter becomes max(counter, n) + 1, or n + 1 when the
 // row is missing, so it never drops below a number already handed out.
 // It writes nothing, and returns no row, only when max(counter, n) is at

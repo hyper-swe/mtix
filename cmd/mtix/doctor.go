@@ -106,5 +106,9 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 			return doctorSyncRows(collectSyncDoctor(ctx, request)), nil
 		}
 	}
-	return service.NewDoctorService(opts), nil
+	svc := service.NewDoctorService(opts)
+	if err := registerPermissionDoctor(svc); err != nil {
+		return nil, fmt.Errorf("register wake permission diagnostics: %w", err)
+	}
+	return svc, nil
 }

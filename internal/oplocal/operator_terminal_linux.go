@@ -3,8 +3,8 @@
 
 //go:build linux
 
-package main
+package oplocal
 
 import "golang.org/x/sys/unix"
 
-const terminalRequest = unix.TCGETS
+const operatorTerminalRequest = unix.TCGETS

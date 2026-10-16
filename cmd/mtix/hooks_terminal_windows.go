@@ -8,10 +8,9 @@ package main
 import (
 	"os"
 
-	"golang.org/x/sys/windows"
+	"github.com/hyper-swe/mtix/internal/oplocal"
 )
 
 func hookStdinTerminal() bool {
-	var mode uint32
-	return windows.GetConsoleMode(windows.Handle(os.Stdin.Fd()), &mode) == nil
+	return oplocal.OperatorTerminal(os.Stdin)
 }

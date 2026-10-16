@@ -59,12 +59,7 @@ func NewApprovals(dir string, state *oplocal.State, session bool) *Approvals {
 
 // SessionMarked reports process markers that defer operator approval (FR-19).
 func SessionMarked() bool {
-	for _, key := range []string{"CODEX_THREAD_ID", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CLAUDECODE", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_ENV_FILE", "PI_SESSION_ID", "PI_SESSION_FILE", "PI_CODING_AGENT"} {
-		if os.Getenv(key) != "" {
-			return true
-		}
-	}
-	return false
+	return oplocal.LegacyHarnessSessionMarked(os.Environ())
 }
 
 // ProcessApprovals resolves state from the operator process, without creating it.

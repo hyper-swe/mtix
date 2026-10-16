@@ -56,7 +56,14 @@ func (a *Approvals) PrepareExec(h Hook) (*ExecPlan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("exec launch: %w", err)
 	}
-	return buildPlan(h, in, root, filepath.Join(opDir, execCopiesDir), a.stager)
+	plan, err := buildPlan(h, in, root, filepath.Join(opDir, execCopiesDir), a.stager)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.enforceStrict(h, in, plan); err != nil {
+		return nil, err
+	}
+	return plan, nil
 }
 
 // approvedInputs reads the hook's inputs once and requires their digest to

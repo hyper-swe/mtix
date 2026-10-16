@@ -27,6 +27,9 @@ func newAgentCmd() *cobra.Command {
 		newAgentStateCmd(),
 		newAgentHeartbeatCmd(),
 		newAgentWorkCmd(),
+		newAgentPermissionCmd("allow"),
+		newAgentPermissionCmd("deny"),
+		newAgentPermissionsCmd(),
 	)
 	return cmd
 }

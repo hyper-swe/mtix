@@ -35,7 +35,10 @@ func rootPostRun(cmd *cobra.Command, _ []string) error {
 	}
 	// Rewrite stale or marked release-defined attach artifacts (shim, glue)
 	// without a terminal; grants are never rewritten (ADR-007 §6.5).
-	refreshAttachArtifacts(cmd.Context(), app.logger)
+	// Top-level doctor repairs attach artifacts only through its registered --fix fixers.
+	if !isTopLevelDoctor(cmd) {
+		refreshAttachArtifacts(cmd.Context(), app.logger)
+	}
 	return finishCommand(cmd) // payload warnings (MTIX-95.12), then closeApp
 }
 

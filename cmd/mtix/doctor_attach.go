@@ -237,11 +237,11 @@ func productionAttachDoctorDeps(ctx context.Context) (attachDoctorDeps, error) {
 	if dir, pathErr := st.Path(); pathErr != nil || !pathExists(dir) {
 		return deps, nil //nolint:nilerr // an unusable operator directory is reported by the shim and alert rows
 	}
-	host, uid, err := registrationHostIdentity()
-	if err != nil {
+	host, err := existingRegistrationDoctorHost()
+	if err != nil || host.HostID == "" {
 		return deps, nil //nolint:nilerr // without a host identity no heartbeat can be ours; the registration checks report the identity gap
 	}
-	deps.dispatchers, deps.dispatchersErr = service.NewDispatcherSkew(app.store, host, uid, attach.Protocol).Statuses(ctx)
+	deps.dispatchers, deps.dispatchersErr = service.NewDispatcherSkew(app.store, host.HostID, host.UID, attach.Protocol).Statuses(ctx)
 	return deps, nil
 }
 

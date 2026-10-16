@@ -41,13 +41,18 @@ func (svc *NodeService) ListNodes(ctx context.Context, filter NodeFilter, opts L
 	return nodes, total, nil
 }
 
-// GetActivity retrieves activity entries per FR-3.6.
+// GetActivity projects activity and annotations in newest-first order per FR-3.6.
+// Pagination follows the merge, so comments participate in the same page bounds.
 func (svc *NodeService) GetActivity(ctx context.Context, id string, limit, offset int) ([]model.ActivityEntry, error) {
-	entries, err := svc.store.GetActivity(ctx, id, limit, offset)
+	activity, err := svc.store.GetActivity(ctx, id, 0, 0)
 	if err != nil {
 		return nil, wrapAPIOperation(fmt.Sprintf("get activity for %s", id), err)
 	}
-	return entries, nil
+	node, err := svc.store.GetNode(ctx, id)
+	if err != nil {
+		return nil, wrapAPIOperation(fmt.Sprintf("get activity for %s", id), err)
+	}
+	return activityPage(mergeNodeActivity(activity, node.Annotations), limit, offset), nil
 }
 
 // GetDirectChildren retrieves child nodes per FR-7.3.

@@ -38,6 +38,10 @@ The sync result rows use a `sync.` prefix and run only for configured
 transports. A relay-only checkout does not run unused Postgres checks.
 The separate `mtix sync doctor` command keeps its existing report and behavior.
 
+Plain `mtix doctor` preserves operator-local files, including stale attach shims
+and records. Use `mtix doctor --fix` for registered shim and glue repairs;
+other commands retain automatic attach refresh.
+
 Use `mtix doctor --fix` only when you want explicitly registered non-grant
 repairs to run; each successful repair is checked again. Grant commands and
 other advisory remedies are printed for you to run yourself, never executed
@@ -108,8 +112,8 @@ Doctor shows these rows only when they apply:
   reports the older dispatcher again and raises an operator alert; mtix never
   claims a restart it did not make.
 
-Any unsandboxed mtix command, and `mtix doctor --fix`, rewrites an
-out-of-date shim without a terminal. These repairs never change a grant,
+Unsandboxed commands other than plain `mtix doctor`, and registered
+`mtix doctor --fix` repairs, rewrite an out-of-date shim without a terminal. These repairs never change a grant,
 approval or confirmation.
 
 ## Guarded wake ledger

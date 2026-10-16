@@ -19,6 +19,7 @@ prompt chain propagation, and multi-agent orchestration.
 
 - `agent` — Manage agent lifecycle
 - `annotate <id> <text>` — Add an annotation to a node
+- `attach` — Harness glue entry points (internal; called through the attach shim)
 - `backup <path>` — Create a backup of the mtix database
 - `blocked [id]` — List nodes blocked by dependencies, or show the blockers of one node
 - `cancel <id>` — Cancel a node with mandatory reason
@@ -187,6 +188,83 @@ Show current work assignment for an agent
 **Usage:** `annotate <id> <text>`
 
 Add an annotation to a node
+---
+
+## attach
+
+**Usage:** `attach`
+
+Harness glue entry points (internal; called through the attach shim)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+
+### Subcommands
+
+- `prompt-submit --harness <harness> --protocol <n>` — Attach verb prompt-submit (internal)
+- `session-end --harness <harness> --protocol <n>` — Attach verb session-end (internal)
+- `session-start --harness <harness> --protocol <n>` — Attach verb session-start (internal)
+- `wait --harness <harness> --protocol <n>` — Attach verb wait (internal)
+---
+
+## prompt-submit
+
+**Usage:** `prompt-submit --harness <harness> --protocol <n>`
+
+Attach verb prompt-submit (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+---
+
+## session-end
+
+**Usage:** `session-end --harness <harness> --protocol <n>`
+
+Attach verb session-end (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+---
+
+## session-start
+
+**Usage:** `session-start --harness <harness> --protocol <n>`
+
+Attach verb session-start (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+---
+
+## wait
+
+**Usage:** `wait --harness <harness> --protocol <n>`
+
+Attach verb wait (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
 ---
 
 ## backup
@@ -568,7 +646,8 @@ of CLI commands, state machine, MCP tools, and configuration.
 Generate agent-facing documentation
 
 Fully regenerate the root MTIX.md briefing and append one native instruction
-pointer in CLAUDE.md and AGENTS.md, preserving other user content. Valid old
+pointer in CLAUDE.md and AGENTS.md, preserving other user content. Keep the
+first live owned pointer and remove later duplicates. Valid old
 mtix marker blocks are migrated; malformed pairs are refused. HYPERSWE.md
 suppresses new pointers and native-file creation; existing pointers remain.
 Also generate all 11 reference files in the project's .mtix/docs/ directory.
@@ -600,8 +679,17 @@ check fails, or 2 when any check reports FAIL.
 --fix performs only explicitly registered non-grant repairs and rechecks them.
 Grant commands are printed for you to run yourself; they are never executed.
 
-Setup and document-freshness checks will be registered by their future features;
-they are not available in this version.
+The read-only docs.stale check compares board-root MTIX.md with this binary
+and checks live native pointers. WARN prints mtix -C <board-root> docs generate;
+run that command and rerun doctor. --fix never writes these documents.
+HYPERSWE.md suppresses missing native pointers, but MTIX.md is still checked.
+
+On an opened local board, wake.ledger reports retained wake rows, claimed rows
+and rejected completions. A newer dispatch protocol reports FAIL: install a
+compatible binary, restart the dispatcher and rerun doctor. This read-only check
+never prunes wake rows or lowers the protocol floor, including with --fix.
+
+Setup checks will be registered by their future features.
 
 ### Flags
 
@@ -764,8 +852,21 @@ Show events addressed to an agent
 Show comments addressed to an agent (via 'mtix comment --to <agent>'),
 oldest first, past the agent's ack cursor.
 
-With --wait, block until a new addressed event arrives — the primitive a worker's
-outer loop parks on between tasks — or until --timeout seconds elapse (default 300).
+--count prints the pending event count; --count --all prints every retained
+addressed event, including acknowledged events. --json returns an object with agent and integer
+pending and total fields. Zero is success (exit 0). Comments and hook deliveries
+count once per journal event. Count never acknowledges, moves the cursor or
+refreshes session last_seen; it skips auto-import and makes no hub contact.
+Ordinary project startup, including schema/index installation, still applies.
+Do not combine active --count with explicitly supplied --wait or --format,
+including --wait=false or --format=. Any --all flag requires active --count;
+--count=false alone keeps listing behavior. Count flags apply only to inbox,
+not its ack or lease subcommands.
+
+With --wait, return already pending events even if the initial database lookup
+outlasts --timeout. That lookup remains interruptible by SIGINT or SIGTERM.
+After an empty lookup, wait for new addressed events using only the remaining
+--timeout budget measured from entry (default 300 seconds).
 Use --timeout 0 for no limit: wait until an event or a signal. A negative timeout
 or a value too large to represent a duration is refused. Returned events mean
 exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
@@ -788,8 +889,10 @@ Reads never ack — acknowledgement stays explicit.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--agent` |  | Agent id whose inbox to read (required) |  |
+| `--all` |  | With --count, print total retained events including acknowledged events | false |
+| `--count` |  | Print pending count without acknowledging or touching sessions | false |
 | `--format` |  | Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection) |  |
-| `--timeout` |  | Max seconds to block with --wait (0 = no limit; negative refused) | 300 |
+| `--timeout` |  | Wait budget in seconds from entry; initial pending read may take longer (0 = no limit; negative refused) | 300 |
 | `--wait` |  | Long-poll: block until an event arrives or --timeout | false |
 
 ### Subcommands

@@ -305,8 +305,12 @@ standard-input launch routine and empty-inbox check. Handle and ack each event
 before reading the inbox again; use only a verified runtime input interface.
 
 An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
-zero has no limit, and already pending events return immediately. Events mean
-exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+zero has no limit, and already pending events return even if the initial
+database lookup outlasts a positive timeout. That lookup remains interruptible
+by caller cancellation (CLI SIGINT or SIGTERM). After an empty lookup, waiting
+for new events uses only the remaining timeout budget measured from entry.
+Events mean exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM
+means exit 7.
 A negative timeout is refused. Keep foreground waits within the harness's tool
 limits; use an indefinite park only where background tasks are supported. Handle
 and ack events explicitly before parking again.
@@ -327,6 +331,8 @@ review of that hook; other hook approvals remain independent.
 ## Health diagnostics
 
 <!-- AUTO-GENERATED: HEALTH_DIAGNOSTICS -->
+On an opened local board, `wake.ledger` reports retained rows and protocol refusal;
+`--fix` preserves wake state. See the multi-agent skill for lease and retry behavior.
 Run `mtix doctor --json` for registered health checks. Exit 2 means a FAIL;
 WARN and INFO keep exit 0. Only configured transports are checked.
 `mtix doctor --fix` runs explicitly registered non-grant repairs; grants stay

@@ -229,18 +229,6 @@ func pythonOptionValue(option, value string) error {
 	return nil
 }
 
-// scrubbedEnviron returns env without the code-loading variables.
-func scrubbedEnviron(env []string) []string {
-	out := make([]string, 0, len(env))
-	for _, kv := range env {
-		name, _, _ := strings.Cut(kv, "=")
-		if !codeLoadingVariable(name) {
-			out = append(out, kv)
-		}
-	}
-	return out
-}
-
 // programIndex returns the index of the program, looking through env and the
 // only env forms accepted: -u NAME, -- and assignments. As env does, every
 // other argument containing "=" before the program is an assignment.

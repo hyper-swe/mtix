@@ -18,12 +18,13 @@ type alertSegment struct {
 	rows []Alert
 }
 type alertPending struct {
-	Row         *Alert `json:"row"`
-	Kind        string `json:"kind"`
-	Target      int    `json:"target"`
-	ActiveHash  string `json:"active_hash"`
-	ArchiveHash string `json:"archive_hash"`
-	TargetHash  string `json:"target_hash"`
+	Row                  *Alert                  `json:"row"`
+	PermissionOccurrence *permissionAlertPending `json:"permission_occurrence,omitempty"`
+	Kind                 string                  `json:"kind"`
+	Target               int                     `json:"target"`
+	ActiveHash           string                  `json:"active_hash"`
+	ArchiveHash          string                  `json:"archive_hash"`
+	TargetHash           string                  `json:"target_hash"`
 }
 
 func alertFilename(index int) string {

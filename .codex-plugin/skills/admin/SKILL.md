@@ -1,6 +1,8 @@
 ---
-name: admin
-description: Administrative operations for mtix projects. Backup, export, import, verification, statistics, sync hub privileges, sync hub backup and restore, and sync conflicts.
+description: "Administer MTIX project using mtix. Use when backing up data, exporting/importing tasks, running garbage collection, managing configuration, verifying data integrity, restricting who can use a sync hub's tables (mtix sync harden), backing up or restoring a sync hub (mtix sync backup), resolving sync conflicts, repairing workflow state that an older sync pull reverted, handling events that sync pull quarantined, tasks that share a uid (doctor check unique node uids), events that sync push holds because a field is over the sync limit, or a sync push pending queue that never drains."
+allowed-tools:
+  - Bash(mtix *)
+  - mcp__mtix__mtix_stats
 ---
 
 # MTIX — Administration
@@ -25,6 +27,10 @@ the protocol floor or grant permissions.
 The sync result rows use a `sync.` prefix and run only for configured
 transports. A relay-only checkout does not run unused Postgres checks.
 The separate `mtix sync doctor` command keeps its existing report and behavior.
+
+Plain `mtix doctor` preserves operator-local files, including stale attach shims
+and records. Use `mtix doctor --fix` for registered shim and glue repairs;
+other commands retain automatic attach refresh.
 
 Use `mtix doctor --fix` only when you want explicitly registered non-grant
 repairs to run; each successful repair is checked again. Grant commands and
@@ -96,9 +102,19 @@ Doctor shows these rows only when they apply:
   reports the older dispatcher again and raises an operator alert; mtix never
   claims a restart it did not make.
 
-Any unsandboxed mtix command, and `mtix doctor --fix`, rewrites an
-out-of-date shim without a terminal. These repairs never change a grant,
+Unsandboxed commands other than plain `mtix doctor`, and registered
+`mtix doctor --fix` repairs, rewrite an out-of-date shim without a terminal. These repairs never change a grant,
 approval or confirmation.
+
+## Trust and grants
+
+On a board never connected to a hub or relay, registered ids are implicitly wakeable unless explicitly denied. A hub or relay board requires one confirmation per agent, board and host. To confirm an id, run `mtix agent allow dev`; terminal stdin is required. For automation use `mtix agent allow dev --yes`. The beta accepts this under harness session markers, records their names without values and flags them in doctor; it does not refuse the confirmation. `mtix agent deny dev` needs no terminal and explicitly holds that id, including on local-only boards. Both commands assign a missing board identity when upgrading a legacy board. You can allow a valid id before registration: its preconfirmation stays pending for this host, board and exact id. It becomes usable when that id registers here, without a second confirmation; denial revokes it immediately. On a hub board, a preconfirmation also needs the same known hub identity. Doctor shows the current pending registration count and each exact `mtix agent deny ID` revoke command.
+
+Grants and the protected `confirmations.jsonl` log live in the operator-local mtix configuration directory, outside the project. The log records action, source, time, mode and harness marker names with private file access. `mtix doctor` and `mtix doctor --json` show `agents.unconfirmed` with the real allow command and `agents.confirmations` with the retained audit history. `mtix doctor --fix` never confirms an id. Uncommitted allows stay ineffective while publication is pending; accepted denies remain effective. Use `mtix agent permissions recover` to list stuck batches and `mtix agent permissions recover --cancel <batch-id>` to cancel one with durable audit. Cancellation preserves prior committed grants and accepted denies, and permanently refuses the cancelled caller id. A new operator deny cancels older uncommitted allows for that id and quarantines other pending allows so unavailable publication cannot block denial. Removed notice targets are retained as `undeliverable`. Recovery never grants permission. A legacy pending allow without a committed preimage becomes a quarantine hold, separate from an operator deny. It stays held after cancellation and registration, and file requests leave it unchanged with `quarantined_requires_operator`. Only a fresh `mtix agent allow <agent-id>` confirmation in that board checkout clears the hold (use `--yes` for automation). Doctor reports each hold and its exact clearing command; `mtix agent permissions recover` lists pending batches and holds. A completed receipt stays committed if only cleanup fails and cannot be cancelled. The reusable file batch API remembers supplied ids and accepted time/registration metadata, so identical retries never regrant an older allow after a later deny. Its protected `permissions-replays.json` retains at most 1024 batches within 1 MiB. New batches evict the oldest completed receipts by completion time; pending batches are never evicted. Retained completed ids replay their accepted result, while an evicted completed id is treated as a new request. Cancelled or quarantined ids remain terminal in separate protected audit records even after replay-receipt eviction. File-mode allow never clears an explicit deny: that agent is unchanged with outcome `denied_requires_operator`, and the rest of the batch applies. Only the actual operator command `mtix agent allow <agent-id>` at a terminal, or `--yes` with logged harness markers, clears the deny. Doctor shows receipt count and bytes and retained denied file-allow outcomes. Explicit denials are informational with their time and source; doctor gives no allow remedy for an operator denial. The reusable `PermissionReplayResult` accessor returns a complete retained completed batch or an explicit unavailable result after receipt eviction; it never reconstructs partial counts from rotated history. There is no apply/setup command for this API.
+
+Each committed change batch publishes one unaddressed neutral board line with a separately generated UUIDv7 event identity, independent of caller batch ids: wake permissions changed on a host (see that host's mtix doctor). It contains no host or agent id, path or user name; ordinary sync provenance remains unchanged. An empty board receives no new task or line: the local log and doctor show `skipped_no_node`. When a board first becomes hub-connected, implicitly eligible ids become held and operator-local Alerts report the required confirmation.
+
+Grants match board identity by default; optional strict hub-identity matching remains off by default. No sender allowlist is added in this beta: share a hub only with trusted principals. The reusable file-batch API supports orchestration; the full setup and file-application commands belong to a future setup release and are not shipped here. Confirmation selection facts remain separate and start unchecked.
 
 ## Local coordination schema
 

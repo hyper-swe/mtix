@@ -177,6 +177,8 @@ func TestImportReconcile_SameIDDifferentUID_RenumbersLocalSubtreeOnlyWithConfirm
 
 	next, err := local.NextSequence(ctx, "REC:")
 	require.NoError(t, err)
+	// The temporary number the renumber parks the task at does not stay in
+	// the counter (MTIX-95.31.27): REC-6 is the highest root, so the next is 7.
 	assert.Equal(t, 7, next, "a later create does not reuse the renumbered task's number")
 }
 

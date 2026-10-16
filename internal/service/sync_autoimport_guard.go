@@ -185,7 +185,7 @@ func (s *SyncService) refuse(mtixDir, fileHash string, c *importCheck, diff *sql
 	}
 	loss := lossList(diff.Losses, "; ")
 	reason := "a replace import would delete local data the file lacks: " + loss + note
-	fmt.Fprint(s.notices, refusalMessage(filepath.Dir(mtixDir), lossyCause, diff.Losses)+noteLine(note))
+	fmt.Fprint(s.notices, refusalMessage(filepath.Dir(mtixDir), lossyCause, diff.Losses, s.storeSyncs())+noteLine(note))
 	s.recordLossyRefusal(mtixDir, fileHash, refusalLossy, reason, loss)
 	s.logger.Info("sync_import_refused", "event", "sync_import_refused",
 		"file_hash", fileHash, "nodes_losing_data", len(diff.Losses))
@@ -221,7 +221,7 @@ func (s *SyncService) refuseConflict(mtixDir, fileHash string, diff *sqlite.Repl
 	}
 	loss := lossList(diff.Losses, "; ")
 	reason += ", and a replace import would also delete local data the file lacks: " + loss + note
-	fmt.Fprint(s.notices, refusalMessage(filepath.Dir(mtixDir), conflictCause, diff.Losses)+noteLine(note))
+	fmt.Fprint(s.notices, refusalMessage(filepath.Dir(mtixDir), conflictCause, diff.Losses, s.storeSyncs())+noteLine(note))
 	s.recordLossyRefusal(mtixDir, fileHash, refusalConflict, reason, loss)
 	s.logger.Info("sync_import_refused", "event", "sync_import_refused", "kind", refusalConflict,
 		"file_hash", fileHash, "nodes_losing_data", len(diff.Losses))
@@ -243,7 +243,7 @@ func (s *SyncService) refuseConflict(mtixDir, fileHash string, diff *sqlite.Repl
 // and either has no uid to compare, the merge option says the merge takes
 // them for different tasks and renumbers the local one with --confirm, and
 // what to do when they are one task retitled (MTIX-95.31.9).
-func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss) string {
+func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss, synced bool) string {
 	upgradeMatched := sameTaskAtUpgrade(losses) // MTIX-95.31.6
 	keeps := "keeps every value the refusal lists"
 	if len(upgradeMatched) > 0 {
@@ -272,10 +272,28 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss) string 
 	}
 	b.WriteString("  mtix sync --fix                              keep the local store and rewrite " +
 		".mtix/tasks.json from it; every change in the file is dropped\n")
-	b.WriteString("  mtix import .mtix/tasks.json --mode replace  make the file win and delete the local " +
-		"data listed above (" + replaceNeedsTypedCount + "; a verified snapshot is written first)\n")
+	if synced {
+		b.WriteString(syncedReplaceNote)
+	} else {
+		b.WriteString("  mtix import .mtix/tasks.json --mode replace  make the file win and delete the local " +
+			"data listed above (" + replaceNeedsTypedCount + "; a verified snapshot is written first)\n")
+	}
 	b.WriteString("mtix sync shows this refusal.\n")
 	return b.String()
+}
+
+// syncedReplaceNote stands in the refusal for the replace option on a store
+// that syncs with a hub: a replace import is refused there (MTIX-107.31), so
+// it is not offered, and the way to take the hub's board is named instead.
+const syncedReplaceNote = "  A replace import of the file is refused on a project that syncs with a hub: the sync log keeps the " +
+	"events of the tasks it would delete. To rebuild this store from the hub instead, run " +
+	sqlite.SyncLogRecovery + "\n"
+
+// storeSyncs reports whether the local store syncs with a hub or relay
+// (MTIX-107.31): the condition under which a replace import is refused.
+func (s *SyncService) storeSyncs() bool {
+	synced, err := s.store.HasSyncedWithHub(context.Background())
+	return err == nil && synced
 }
 
 // holdsDifferentTask reports whether any loss is a local task that the file

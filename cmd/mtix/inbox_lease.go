@@ -13,7 +13,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/service"
 )
 
 var errLeaseHeld = errors.New("inbox lease held")
@@ -70,33 +70,26 @@ func newLeaseOperationCmd(verb string) *cobra.Command {
 }
 
 func parseLeaseTTL(value string) (time.Duration, error) {
-	ttl, err := time.ParseDuration(value)
-	if err != nil {
-		return 0, fmt.Errorf("invalid lease ttl %q (%v): %w", value, err, model.ErrInvalidInput)
-	}
-	if ttl < time.Minute || ttl > 24*time.Hour {
-		return 0, fmt.Errorf("lease ttl must be between 1m and 24h: %w", model.ErrInvalidInput)
-	}
-	return ttl, nil
+	return service.ParseWakeLeaseTTL(value)
 }
 
-func leaseIdentity(agent string) (sqlite.WakeLeaseKey, error) {
+func leaseIdentity(agent string) (service.WakeLeaseKey, error) {
 	if agent == "" {
-		return sqlite.WakeLeaseKey{}, fmt.Errorf("lease agent required: %w", model.ErrInvalidInput)
+		return service.WakeLeaseKey{}, fmt.Errorf("lease agent required: %w", model.ErrInvalidInput)
 	}
 	env, err := oplocal.FromProcess()
 	if err != nil {
-		return sqlite.WakeLeaseKey{}, fmt.Errorf("lease identity: %w", err)
+		return service.WakeLeaseKey{}, fmt.Errorf("lease identity: %w", err)
 	}
 	host, err := oplocal.New(env).HostID()
 	if err != nil {
-		return sqlite.WakeLeaseKey{}, fmt.Errorf("lease host identity: %w", err)
+		return service.WakeLeaseKey{}, fmt.Errorf("lease host identity: %w", err)
 	}
 	uid, err := currentUserID()
 	if err != nil {
-		return sqlite.WakeLeaseKey{}, fmt.Errorf("lease user identity: %w", err)
+		return service.WakeLeaseKey{}, fmt.Errorf("lease user identity: %w", err)
 	}
-	return sqlite.WakeLeaseKey{AgentID: agent, HostID: host, UID: uid}, nil
+	return service.WakeLeaseKey{AgentID: agent, HostID: host, UID: uid}, nil
 }
 
 func runLeaseOperation(cmd *cobra.Command, verb string, opts leaseOptions) error {
@@ -111,8 +104,15 @@ func runLeaseOperation(cmd *cobra.Command, verb string, opts leaseOptions) error
 	if err != nil {
 		return err
 	}
+	svc := service.NewWakeLeaseService(app.store)
 	if verb == "acquire" {
-		lease, acquireErr := app.store.AcquireWakeLease(cmd.Context(), key, opts.holder, ttl)
+		var lease service.WakeLease
+		var acquireErr error
+		if opts.holder == "" {
+			lease, acquireErr = svc.Acquire(cmd.Context(), key, ttl)
+		} else {
+			lease, acquireErr = svc.Renew(cmd.Context(), key, opts.holder, ttl)
+		}
 		if acquireErr != nil {
 			if errors.Is(acquireErr, model.ErrAlreadyClaimed) {
 				return &leaseHeldError{agent: opts.agent, expires: lease.ExpiresAt, cause: acquireErr}
@@ -121,7 +121,12 @@ func runLeaseOperation(cmd *cobra.Command, verb string, opts leaseOptions) error
 		}
 		return writeLeaseOutput(cmd, opts.json || app.jsonOutput, lease, lease.Holder)
 	}
-	result, err := app.store.ReleaseWakeLease(cmd.Context(), key, opts.holder, ttl, opts.abandon)
+	var result service.WakeLeaseReleaseResult
+	if opts.abandon {
+		result, err = svc.Abandon(cmd.Context(), key, opts.holder, ttl)
+	} else {
+		result, err = svc.Release(cmd.Context(), key, opts.holder, ttl)
+	}
 	if err != nil {
 		if errors.Is(err, model.ErrAlreadyClaimed) {
 			return &leaseHeldError{stale: true, cause: err}

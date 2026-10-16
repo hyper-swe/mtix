@@ -35,6 +35,16 @@ Or MCP: `mtix_session_end`
 - Records session summary (nodes created, completed, time spent)
 - Releases any claimed nodes
 
+## Read-only inbox counts
+
+Use `mtix inbox --agent <agent-id> --count` for pending work, or
+`mtix inbox --agent <agent-id> --count --all` for total retained local events,
+including acknowledged events. `--json` returns integer pending/total counts.
+Count makes no hub contact, never acknowledges or refreshes session `last_seen`,
+and skips automatic board import. It is not a heartbeat. Do not combine count
+with explicitly supplied wait/format flags; `--all` requires active count.
+See the multi-agent skill for the complete polling contract and startup limits.
+
 ## Handoff Protocol
 
 When transferring work to another agent:

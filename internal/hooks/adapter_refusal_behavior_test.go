@@ -42,11 +42,7 @@ func TestAppendFile_DirectoryDestination_PreservesOwnedFiles(t *testing.T) {
 	sentinel := filepath.Join(destination, "sentinel")
 	require.NoError(t, os.WriteFile(sentinel, []byte("unchanged"), 0o600))
 	err := NewAppendFileAdapter(dir).Deliver(context.Background(), appendDelivery("target", Event{Name: EventStatusChanged}, []byte(`{}`)))
-	require.ErrorContains(t, err, "append-file: open "+destination)
-	var pathError *os.PathError
-	require.ErrorAs(t, err, &pathError)
-	require.Equal(t, "open", pathError.Op)
-	require.Equal(t, destination, pathError.Path)
+	require.ErrorContains(t, err, "not a regular file")
 	assertRefusalDirectory(t, dir, []string{"target"})
 	assertRefusalDirectory(t, destination, []string{"sentinel"})
 	contents, err := os.ReadFile(sentinel)

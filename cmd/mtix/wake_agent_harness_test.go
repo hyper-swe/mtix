@@ -80,9 +80,11 @@ func waitHarnessGate(t *testing.T, root string) {
 }
 
 func ackHarnessInput(t *testing.T, root string, input []byte) {
-	for _, match := range regexp.MustCompile(`(?m)^ack: mtix inbox ack ([1-9][0-9]*) --agent 'TEST-agent'$`).FindAllSubmatch(input, -1) {
+	// The displayed ack line pins the board it was read from (MTIX-189); the
+	// fake harness acks with that same board selection, as an agent would.
+	for _, match := range regexp.MustCompile(`(?m)^ack: mtix inbox ack ([1-9][0-9]*) --agent 'TEST-agent' -C '([^']+)'$`).FindAllSubmatch(input, -1) {
 		seq := string(match[1])
-		cmd := exec.Command(os.Getenv("MTIX_BIN"), "inbox", "ack", seq, "--agent", "TEST-agent")
+		cmd := exec.Command(os.Getenv("MTIX_BIN"), "inbox", "ack", seq, "--agent", "TEST-agent", "-C", string(match[2]))
 		output, err := cmd.CombinedOutput()
 		require.NoError(t, err, "harness ACK: %s", output)
 		appendWakeRecord(t, filepath.Join(root, "acked"), seq)

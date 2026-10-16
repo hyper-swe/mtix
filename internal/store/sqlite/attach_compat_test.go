@@ -65,7 +65,7 @@ func attachSeedLocalState(t *testing.T, s *sqlite.Store) {
 	t.Helper()
 	for _, query := range []string{
 		"INSERT INTO agent_registrations(agent_id,harness,uid,host_id,origin,registered_at,last_seen,registrar_version,attach_protocol,returned_seq_mark) VALUES('worker','local','uid','host','manual','now','now','v',1,7)",
-		"INSERT INTO wake_ledger VALUES('worker','host','uid',7,1,'now','claimed')",
+		"INSERT INTO wake_ledger(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome) VALUES('worker','host','uid',7,1,'now','claimed')",
 		"INSERT INTO wake_scan_cursor VALUES('host','uid',7)",
 		"INSERT INTO dispatcher_heartbeat VALUES('host','uid',123,1,'v','now')",
 		"INSERT INTO board_flags VALUES('flag','kept','now','local')",
@@ -82,7 +82,7 @@ func attachLocalState(t *testing.T, s *sqlite.Store) map[string]string {
 	t.Helper()
 	state := map[string]string{}
 	for _, query := range []string{
-		"SELECT * FROM agent_registrations", "SELECT * FROM wake_ledger", "SELECT * FROM wake_scan_cursor",
+		"SELECT * FROM agent_registrations", "SELECT * FROM wake_ledger", "SELECT * FROM wake_scan_cursor", "SELECT * FROM wake_outcome_rejections",
 		"SELECT * FROM dispatcher_heartbeat", "SELECT * FROM board_flags", "SELECT * FROM attach_pending", "SELECT * FROM wake_leases",
 		"SELECT key,value FROM meta WHERE key IN ('store_instance_id','min_dispatch_protocol','schema_version') ORDER BY key",
 	} {

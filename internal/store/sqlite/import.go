@@ -45,9 +45,9 @@ func DecodeExportData(r io.Reader) (*ExportData, error) {
 }
 
 // ErrImportIncomplete marks an import error raised after the import's
-// transaction committed, while rebuilding the sequence counters or the
-// search index (MTIX-95.31.1). Every other import error leaves the store
-// unchanged.
+// transaction committed, while rebuilding the search index (MTIX-95.31.1).
+// The sequence counters are raised inside the transaction, so a failure
+// there leaves the store unchanged, like every other import error.
 var ErrImportIncomplete = errors.New("import applied, but rebuilding its indexes failed")
 
 // ImportMode controls how import handles existing data per FR-7.8.
@@ -126,8 +126,9 @@ func ValidateExport(data *ExportData) error {
 // Import loads data from an ExportData structure per FR-7.8.
 // Verifies node_count, checksum and every time value (ValidateExport,
 // MTIX-95.31.1) before importing, so a rejected file writes nothing.
-// Supports replace and merge modes. Rebuilds sequences and FTS index after
-// bulk import. If force is false, importing zero nodes into a non-empty
+// Supports replace and merge modes. The sequence counters are raised inside
+// the import transaction (rebuildSequencesTx); the FTS index is rebuilt
+// after the commit. If force is false, importing zero nodes into a non-empty
 // database is rejected.
 // MTIX-95.31.4: one transaction writes everything, after it re-checks the
 // store (IfStoreUnchanged) and renumbers the local tasks ImportReconcile
@@ -167,15 +168,15 @@ func (s *Store) Import(
 		} else {
 			result, applyErr = mergeAllData(ctx, tx, data, workflowPolicy{cfg.workflow, s.clock()})
 		}
-		return applyErr
+		if applyErr != nil {
+			return applyErr
+		}
+		// Rebuild sequences from imported data per FR-7.8.x, in this
+		// transaction: a failure rolls the import back (MTIX-95.31.27).
+		return rebuildSequencesTx(ctx, tx)
 	})
 	if err != nil {
 		return nil, err
-	}
-
-	// Rebuild sequences from imported data per FR-7.8.x.
-	if err := s.rebuildSequences(ctx); err != nil {
-		return &result, fmt.Errorf("rebuild sequences: %w: %w", ErrImportIncomplete, err)
 	}
 
 	// Rebuild FTS index after bulk import per FR-7.8.
@@ -363,40 +364,24 @@ func insertExportSession(ctx context.Context, tx *sql.Tx, s *exportSession) erro
 	return err
 }
 
-// rebuildSequences recalculates sequence counters from existing node data per FR-7.8.x.
-func (s *Store) rebuildSequences(ctx context.Context) error {
-	_, err := s.writeDB.ExecContext(ctx, "DELETE FROM sequences")
-	if err != nil {
-		return fmt.Errorf("clear sequences: %w", err)
-	}
-
-	// Rebuild from max seq per parent per project.
-	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT project || ':' || COALESCE(parent_id, ''), MAX(seq)
+// rebuildSequencesTx raises every sequence counter to the highest seq of the
+// nodes under its parent, inside tx (FR-7.8.x, MTIX-95.31.27). It is one
+// idempotent upsert that never lowers a counter, so it cannot collide with a
+// concurrent import and cannot leave a counter behind a node that holds a
+// number; a replace import has already cleared the table.
+func rebuildSequencesTx(ctx context.Context, tx *sql.Tx) error {
+	// Counter key is project:parent_id; value is the max seq under that
+	// parent. Existing counters keep the larger value.
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO sequences (key, value)
+		 SELECT project || ':' || COALESCE(parent_id, ''), MAX(seq)
 		 FROM nodes
-		 GROUP BY project, COALESCE(parent_id, '')`)
-	if err != nil {
-		return fmt.Errorf("query max sequences: %w", err)
+		 GROUP BY project, COALESCE(parent_id, '')
+		 ON CONFLICT(key) DO UPDATE SET value = max(value, excluded.value)`,
+	); err != nil {
+		return fmt.Errorf("rebuild sequences: %w", err)
 	}
-	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			s.logger.Error("failed to close sequence rows", "error", closeErr)
-		}
-	}()
-
-	for rows.Next() {
-		var key string
-		var maxSeq int
-		if err := rows.Scan(&key, &maxSeq); err != nil {
-			return fmt.Errorf("scan sequence: %w", err)
-		}
-		_, err := s.writeDB.ExecContext(ctx,
-			"INSERT INTO sequences (key, value) VALUES (?, ?)", key, maxSeq)
-		if err != nil {
-			return fmt.Errorf("insert sequence %s: %w", key, err)
-		}
-	}
-	return rows.Err()
+	return nil
 }
 
 // rebuildFTS rebuilds the FTS5 search index per FR-7.8.

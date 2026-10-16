@@ -13,17 +13,18 @@ import (
 )
 
 type syncDoctorCollection struct {
-	DSN        string
-	DSNErr     error
-	Postgres   bool
-	Relay      bool
-	Options    transport.Options
-	Inspectors []func(string) (string, bool, error)
+	ReadOnlyOperator bool
+	DSN              string
+	DSNErr           error
+	Postgres         bool
+	Relay            bool
+	Options          transport.Options
+	Inspectors       []func(string) (string, bool, error)
 }
 
 func configuredDoctorCollection() syncDoctorCollection {
 	dsn, err := resolveSyncDSN(nil)
-	return syncDoctorCollection{DSN: dsn, DSNErr: err, Postgres: !errors.Is(err, transport.ErrDSNNotConfigured), Relay: relayDir() != ""}
+	return syncDoctorCollection{ReadOnlyOperator: true, DSN: dsn, DSNErr: err, Postgres: !errors.Is(err, transport.ErrDSNNotConfigured), Relay: relayDir() != ""}
 }
 
 // collectSyncDoctor is shared with the legacy report renderer. Applicability is
@@ -37,8 +38,14 @@ func collectSyncDoctor(ctx context.Context, req syncDoctorCollection) DoctorRepo
 	report = appendLocalChecks(ctx, report)
 	report = appendOperatorPlacementCheck(report)
 	report = appendDoctorCheck(report, checkDataFilesystem(req.Inspectors))
-	report = appendBoardIdentityChecks(report)
-	report = appendRegistrationChecks(ctx, report)
+	if req.ReadOnlyOperator {
+		report = appendBoardIDChecks(report)
+		report = appendHubMarkCheckMode(ctx, report, false)
+		report = appendReadOnlyRegistrationChecks(ctx, report)
+	} else {
+		report = appendBoardIdentityChecks(report)
+		report = appendRegistrationChecks(ctx, report)
+	}
 	report = appendAlertsCheck(ctx, report)
 	if req.Postgres {
 		report = appendDoctorCheck(report, checkHubObjects(ctx, req.DSN, hubReady, req.Options))

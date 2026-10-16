@@ -79,8 +79,9 @@ func TestDoctor_DiagnosticInit_PreservesMirrorAndParsedFlags(t *testing.T) {
 		if assertEmptyWakeDoctorInfo(t, row["id"], row["status"], row["detail"], row["fix"]) {
 			continue
 		}
-		assert.Equal(t, "platform.windows", row["id"])
+		assert.Contains(t, []string{"platform.windows", "docs.stale"}, row["id"])
 	}
+	assert.Equal(t, "warn", doctorDocsRow(t, out.String())["status"])
 	data, err := os.ReadFile(mirror)
 	require.NoError(t, err)
 	assert.Equal(t, sentinel, string(data))

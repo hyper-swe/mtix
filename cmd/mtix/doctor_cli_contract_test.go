@@ -53,6 +53,7 @@ func doctorCLIEnv(args string, dsn string) []string {
 	var env []string
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
+		// Preserve GOCOVERDIR so instrumented child main writes coverage without warnings.
 		if strings.HasPrefix(key, "MTIX_") && key != isolatedOperatorEnv {
 			continue
 		}
@@ -113,20 +114,23 @@ func TestDoctorCLI_Help_DocumentsJSONFixAndExitCodes(t *testing.T) {
 	assert.Empty(t, out.stderr)
 }
 
-func TestDoctorCLI_Unconfigured_RetainedWakeInfoExitZero(t *testing.T) {
+func TestDoctorCLI_Unconfigured_DocumentAndRetainedWakeInfoExitZero(t *testing.T) {
 	for _, flags := range [][]string{{"--json"}, {"--json", "--fix"}} {
 		t.Run(strings.Join(flags, " "), func(t *testing.T) {
 			root := doctorCLIBoard(t, "")
 			out := doctorCLIExecute(t, root, "", append([]string{"doctor"}, flags...)...)
 			assert.Equal(t, 0, out.exit, out.stderr)
 			rows := doctorCLIRows(t, out.stdout)
+			wantRows := 2
 			if runtime.GOOS == "windows" {
-				require.Len(t, rows, 2)
+				wantRows++
 				assert.Equal(t, "platform.windows", rows[0]["id"])
 				assert.Equal(t, "info", rows[0]["status"])
-			} else {
-				require.Len(t, rows, 1)
 			}
+			require.Len(t, rows, wantRows)
+			assert.Equal(t, "docs.stale", rows[len(rows)-2]["id"])
+			assert.Equal(t, "warn", rows[len(rows)-2]["status"])
+
 			wakeRows := 0
 			for _, row := range rows {
 				if assertEmptyWakeDoctorInfo(t, row["id"], row["status"], row["detail"], row["fix"]) {
@@ -134,6 +138,7 @@ func TestDoctorCLI_Unconfigured_RetainedWakeInfoExitZero(t *testing.T) {
 				}
 			}
 			assert.Equal(t, 1, wakeRows)
+			assert.Equal(t, "wake.ledger", rows[len(rows)-1]["id"])
 			assert.Empty(t, out.stderr)
 		})
 	}
@@ -152,6 +157,10 @@ func TestDoctorCLI_BrokenRelay_OnlyApplicableRowsExitTwo(t *testing.T) {
 		if runtime.GOOS == "windows" && row["id"] == "platform.windows" {
 			assert.Equal(t, "info", row["status"])
 			assert.Empty(t, row["fix"])
+			continue
+		}
+		if row["id"] == "docs.stale" {
+			assert.Equal(t, "warn", row["status"])
 			continue
 		}
 		assert.True(t, strings.HasPrefix(row["id"], "sync."), row)

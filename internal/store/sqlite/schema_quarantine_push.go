@@ -32,7 +32,7 @@ ALTER TABLE sync_quarantine_widened RENAME TO sync_quarantine;
 `
 
 // createSchema runs schemaSQL (every CREATE ... IF NOT EXISTS and meta
-// default) and then widenQuarantineSource.
+// default), widens quarantine and installs the guarded inbox count index.
 func (s *Store) createSchema(ctx context.Context) error {
 	if err := s.initializeSchema(ctx); err != nil {
 		return err
@@ -40,7 +40,10 @@ func (s *Store) createSchema(ctx context.Context) error {
 	if err := s.initializeWakeLedger(ctx); err != nil {
 		return err
 	}
-	return s.widenQuarantineSource(ctx)
+	if err := s.widenQuarantineSource(ctx); err != nil {
+		return err
+	}
+	return s.ensureInboxCountIndex(ctx)
 }
 
 // widenQuarantineSource lets a sync_quarantine table created before push

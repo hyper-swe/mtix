@@ -64,7 +64,7 @@ func TestDoctorSync_ConfigurationSelectsApplicableTransports(t *testing.T) {
 					if assertEmptyWakeDoctorInfo(t, row.ID, string(row.Status), row.Detail, row.Fix) {
 						continue
 					}
-					assert.Equal(t, "platform.windows", row.ID)
+					assert.Contains(t, []string{"platform.windows", "docs.stale"}, row.ID)
 				}
 			}
 		})
@@ -142,7 +142,7 @@ func TestDoctor_RoutingAndAutoImport_ExplicitlyLocalDiagnostic(t *testing.T) {
 	for _, cmd := range root.Commands() {
 		names = append(names, cmd.Name())
 	}
-	assert.Len(t, names, 52, strings.Join(names, ","))
+	assert.Len(t, names, 53, strings.Join(names, ",")) // 53 with the hidden attach group (MTIX-112.19.3)
 }
 
 func TestDoctor_JSONFlagErrorAndOutsideProject(t *testing.T) {

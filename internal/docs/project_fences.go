@@ -5,12 +5,20 @@ package docs
 
 import "strings"
 
-// projectPointerInText excludes fenced examples without changing any user bytes.
-func projectPointerInText(content []byte, pointer, name string) (bool, bool) {
+type projectPointerSpan struct{ start, end int }
+
+// projectPointerSpans shares live instruction recognition with diagnosis and
+// normalization. Spans include only their own original line terminators.
+func projectPointerSpans(content []byte, pointer, name string) ([]projectPointerSpan, bool) {
+	var spans []projectPointerSpan
 	var delimiter byte
 	var length int
-	lines := strings.FieldsFunc(string(content), func(r rune) bool { return r == '\n' || r == '\r' })
-	for _, line := range lines {
+	text := string(content)
+	for offset := 0; offset < len(text); {
+		start := offset
+		end, next := projectLineEnd(text, offset)
+		line := text[offset:end]
+		offset = next
 		char, run, suffix := projectFenceLine(line)
 		if delimiter != 0 {
 			if char == delimiter && run >= length && strings.Trim(suffix, " \t") == "" {
@@ -22,15 +30,42 @@ func projectPointerInText(content []byte, pointer, name string) (bool, bool) {
 			delimiter, length = char, run
 			continue
 		}
-		if !projectPointerIndentEligible(line) {
-			continue
-		}
-		text := strings.TrimSpace(line)
-		if text == pointer || (name == "AGENTS.md" && isAgentsPointer(text)) {
-			return true, false
+		if projectPointerIndentEligible(line) && isProjectPointer(line, pointer, name) {
+			spans = append(spans, projectPointerSpan{start, next})
 		}
 	}
-	return false, delimiter != 0
+	return spans, delimiter != 0
+}
+
+func projectLineEnd(text string, start int) (int, int) {
+	end := strings.IndexAny(text[start:], "\r\n")
+	if end < 0 {
+		return len(text), len(text)
+	}
+	end += start
+	next := end + 1
+	if text[end] == '\r' && next < len(text) && text[next] == '\n' {
+		next++
+	}
+	return end, next
+}
+
+func isProjectPointer(line, pointer, name string) bool {
+	text := strings.TrimSpace(line)
+	return text == pointer || (name == "AGENTS.md" && isAgentsPointer(text))
+}
+
+func removeProjectPointerDuplicates(content []byte, spans []projectPointerSpan) []byte {
+	if len(spans) < 2 {
+		return content
+	}
+	out := make([]byte, 0, len(content))
+	offset := 0
+	for _, span := range spans[1:] {
+		out = append(out, content[offset:span.start]...)
+		offset = span.end
+	}
+	return append(out, content[offset:]...)
 }
 
 // projectFenceLine applies CommonMark's three-space indentation limit and counts

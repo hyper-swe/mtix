@@ -675,3 +675,60 @@ func TestRemoteBarWorkflow_GoEnvWrite_PrecedesTheBar(t *testing.T) {
 	require.GreaterOrEqual(t, write, 0, "the -p=1 setting must be written with go env -w")
 	require.Greater(t, bar, write, "go env -w must run before the committed bar")
 }
+
+// writeSnapFiles creates the given relative files (content "x\n") under dir.
+func writeSnapFiles(t *testing.T, dir string, rel ...string) {
+	t.Helper()
+	for _, r := range rel {
+		p := filepath.Join(dir, r)
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o750))
+		require.NoError(t, os.WriteFile(p, []byte("x\n"), 0o600))
+	}
+}
+
+// snapshotFiles dry-runs the script on snap and returns the snapshot's files.
+func snapshotFiles(t *testing.T, work, snap string) string {
+	t.Helper()
+	out, code := bash(t, work, `bash "$RB_SCRIPT" --dry-run "$S"`, "S="+snap)
+	require.Equal(t, 0, code, out)
+	return git(t, work, "ls-tree", "-r", "--name-only", dryRunTree(t, out))
+}
+
+func TestRemoteBar_Snapshot_ExcludesIgnoredAndPresentLoopMetadataDirs(t *testing.T) {
+	cases := []struct {
+		name      string
+		gitignore string
+	}{
+		{"ignored .mgit and .hyperswe", ".mgit/\n.hyperswe/\n"},
+		{"ignored .mgit only", ".mgit/\n"},
+		{"present but not ignored", "\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			work, _ := repoWithRemote(t)
+			snap := t.TempDir()
+			writeSnapFiles(t, snap, "b.txt", ".mgit/store/x", ".hyperswe/receipts/r")
+			require.NoError(t, os.WriteFile(filepath.Join(snap, ".gitignore"), []byte(tc.gitignore), 0o600))
+			files := snapshotFiles(t, work, snap)
+			require.Contains(t, files, "b.txt")
+			require.NotContains(t, files, ".mgit")
+			require.NotContains(t, files, ".hyperswe")
+		})
+	}
+}
+
+func TestRemoteBar_Snapshot_LoopRoundWorktreeLayout_SnapshotsCleanly(t *testing.T) {
+	work, _ := repoWithRemote(t)
+	snap := t.TempDir()
+	// A loop round worktree: mgit store, hyperswe state, the repository
+	// .gitignore listing them, and the injected root files.
+	writeSnapFiles(t, snap, "b.txt", "sub/c.go", ".mgit/objects/o", ".hyperswe/data/d", "CLAUDE.md", "AGENTS.md")
+	require.NoError(t, os.WriteFile(filepath.Join(snap, ".gitignore"), []byte("# mgit local store\n.mgit/\n.hyperswe/\n"), 0o600))
+	files := snapshotFiles(t, work, snap)
+	for _, keep := range []string{"b.txt", "sub/c.go", ".gitignore"} {
+		require.Contains(t, files, keep)
+	}
+	for _, drop := range []string{".mgit", ".hyperswe", ".git/", "CLAUDE.md", "AGENTS.md"} {
+		require.NotContains(t, files, drop)
+	}
+}

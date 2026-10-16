@@ -77,6 +77,18 @@ func TestAutoImport_SyncedStore_KeepsTasksTheLogHolds(t *testing.T) {
 			require.NoError(t, b.svc.AutoExport(context.Background(), b.mtixDir))
 			return b.read(t, "tasks.json")
 		}, nil, []string{"PROJ-1", "PROJ-2", "PROJ-3", "PROJ-4"}},
+		{"same id and title, uid dropped", func(t *testing.T, a *guardFixture, _ []byte) []byte {
+			return a.teammateBoard(t, func(d *sqlite.ExportData) { setUID(d, "PROJ-3", "") })
+		}, sqlite.ErrReplaceOnSyncedStore, []string{"PROJ-1", "PROJ-2", "PROJ-3"}},
+		{"same id and title, uid changed", func(t *testing.T, a *guardFixture, _ []byte) []byte {
+			return a.teammateBoard(t, func(d *sqlite.ExportData) { setUID(d, "PROJ-3", "01900000-0000-7000-8000-000000000abc") })
+		}, sqlite.ErrReplaceOnSyncedStore, []string{"PROJ-1", "PROJ-2", "PROJ-3"}},
+		{"teammate renumbers a task", func(t *testing.T, a *guardFixture, _ []byte) []byte {
+			b := teammateClone(t, a)
+			require.NoError(t, b.store.RenumberSubtree(context.Background(), "PROJ-3", 7))
+			require.NoError(t, b.svc.AutoExport(context.Background(), b.mtixDir))
+			return b.read(t, "tasks.json")
+		}, nil, []string{"PROJ-1", "PROJ-2", "PROJ-7"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -87,9 +99,12 @@ func TestAutoImport_SyncedStore_KeepsTasksTheLogHolds(t *testing.T) {
 			createTask(t, a, "PROJ-3", 3)
 			require.NoError(t, a.svc.AutoExport(ctx, a.mtixDir))
 			pushed := pushAll(t, a)
+			created, err := a.store.GetNode(ctx, "PROJ-3")
+			require.NoError(t, err)
+			require.NotEmpty(t, created.UID)
 
 			a.pull(t, tt.board(t, a, older))
-			err := a.svc.AutoImport(ctx, a.mtixDir)
+			err = a.svc.AutoImport(ctx, a.mtixDir)
 			if tt.wantErr != nil {
 				require.ErrorIs(t, err, tt.wantErr)
 			} else {
@@ -100,9 +115,22 @@ func TestAutoImport_SyncedStore_KeepsTasksTheLogHolds(t *testing.T) {
 				_, getErr := a.store.GetNode(ctx, id)
 				assert.NoError(t, getErr, "%s is on the board after the pull", id)
 			}
+			var heldByUID int
+			require.NoError(t, a.store.WriteDB().QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM nodes WHERE uid = ?`, created.UID).Scan(&heldByUID))
+			assert.Equal(t, 1, heldByUID, "the task the log creates still holds its uid")
 			missing, err := a.store.MissingLoggedNodes(ctx)
 			require.NoError(t, err)
 			assert.Empty(t, missing, "no event in the sync log is left without its task")
 		})
+	}
+}
+
+// setUID gives the node id of d the uid uid.
+func setUID(d *sqlite.ExportData, id, uid string) {
+	for i := range d.Nodes {
+		if d.Nodes[i].ID == id {
+			d.Nodes[i].UID = uid
+		}
 	}
 }

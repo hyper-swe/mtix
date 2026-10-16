@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,6 +27,15 @@ func TestAppendLoggedNodesCheck_Drift_FailsWithFixCommand(t *testing.T) {
 		{"synced store, board holds every task", func(t *testing.T) { markEventsPushed(t) }, true, "ok", ""},
 		{"synced store, task dropped", func(t *testing.T) {
 			markEventsPushed(t)
+			dropNodeRow(t, "TEST-2")
+		}, false, "the board lacks 1 of the tasks the local sync log creates: TEST-2", loggedNodesFix},
+		{"hub configured, nothing pushed, task dropped", func(t *testing.T) {
+			configureHub(t)
+			dropNodeRow(t, "TEST-2")
+		}, false, "the board lacks 1 of the tasks the local sync log creates: TEST-2", loggedNodesFix},
+		{"hub config key only, task dropped", func(t *testing.T) {
+			_, err := app.configSvc.Set("sync.enabled", "true")
+			require.NoError(t, err)
 			dropNodeRow(t, "TEST-2")
 		}, false, "the board lacks 1 of the tasks the local sync log creates: TEST-2", loggedNodesFix},
 		{"store that does not sync", func(t *testing.T) { dropNodeRow(t, "TEST-2") },
@@ -59,4 +69,15 @@ func dropNodeRow(t *testing.T, id string) {
 		_, err := tx.ExecContext(ctx, `DELETE FROM nodes WHERE id = ?`, id)
 		return err
 	}))
+}
+
+// The printed fix is the safe sequence: reconcile drops what is not pushed
+// yet, so the pending-0 check comes before the discard, and the steps are
+// not chained into one command.
+func TestLoggedNodesFix_NamesThePendingZeroCheckBeforeTheDiscard(t *testing.T) {
+	pending := strings.Index(loggedNodesFix, "pending 0")
+	discard := strings.Index(loggedNodesFix, "--discard-local")
+	require.GreaterOrEqual(t, pending, 0, "the fix names the pending-0 check")
+	assert.Less(t, pending, discard, "the check comes before the discard")
+	assert.NotContains(t, loggedNodesFix, "&&", "the discard is not chained after the push")
 }

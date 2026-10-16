@@ -795,25 +795,36 @@ Refusing changes nothing and names the way out.
   event it pulled (`applied_events`) or pushed (a `sync_events` row past
   `pending`), a DSN is configured, or local config shows a hub or relay.
   The error wraps `sqlite.ErrReplaceOnSyncedStore` and names the
-  recovery: `mtix sync push`, then `mtix sync reconcile --discard-local
-  --yes`, then `mtix sync pull`. A replace into an empty store, such as
+  recovery: `mtix sync push`, check that `mtix sync status` shows
+  `pending` 0, then `mtix sync reconcile --discard-local --yes`, then
+  `mtix sync pull`. A replace into an empty store, such as
   a restore into a fresh data directory, deletes nothing and runs as
   before.
 - **Every replace** (the store's `Import` in replace mode, which the
   automatic import also uses) is refused in its own transaction, before
-  anything is deleted, when the store has synced and the file lacks a
-  local node that has an event in `sync_events`. The automatic import
-  already refuses any replace that would delete local data (FR-15.2i),
-  so this check is a backstop for callers that skip that comparison.
-  An automatic import that keeps every local node, such as a teammate's
-  board that adds tasks, still runs.
+  anything is deleted, when the store has synced and the file does not
+  hold, as the same task, a local node that has an event in
+  `sync_events`. A task is the same task by its uid, as the comparison of
+  the automatic import (`DiffReplace`) takes it: a file that keeps a
+  task's number but drops or changes its uid loses the task, because the
+  logged creation is left without a task and a later pull fails with
+  `not found`. A task that keeps its number and title and takes the
+  file's uid is not refused while its creation is still pending: its
+  pending events are carried to the new uid (MTIX-95.31.16). The same holds for a task
+  whose uid is a marked backfill uid, which a board written before uids
+  were shared replaces with the file's. A board that only renumbers
+  a task keeps its uid and imports, as before, and so does a teammate's
+  board that adds tasks.
 
 **Doctor.** `mtix sync doctor` (and `mtix doctor`) runs the `board
 matches sync log` check on a replica that syncs. It fails while the log
-holds a `create_node` event whose node is on the board neither by id nor
-by uid and has no `delete` event (`mtix gc` purges deleted nodes, which
-is not drift), names the nodes, and prints the fix `mtix sync push &&
-mtix sync reconcile --discard-local --yes && mtix sync pull`.
+holds a `create_node` event whose task is not on the board by uid (by
+number only for an event that carries no uid) and has no `delete` event
+(`mtix gc` purges deleted nodes, which is not drift), names the nodes, and
+prints the steps to run one at a time: `mtix sync push`, check that `mtix
+sync status` shows `pending` 0, then `mtix sync reconcile --discard-local
+--yes`, then `mtix sync pull`. A renumbered task is not drift; a task
+whose uid was replaced under its number is.
 
 ## Migration single-flight
 

@@ -3003,10 +3003,14 @@ mtix sync doctor             # health checks: PG reachable, schema current,
 The `board matches sync log` check runs on a project that syncs. It
 fails while the local sync log creates a task that the board lacks, with
 no delete event for it, as a replace import of an earlier version could
-leave. A pull cannot restore such a task, because it treats the task's
-events as already held. The detail names the tasks, and the fix is
-`mtix sync push && mtix sync reconcile --discard-local --yes && mtix sync
-pull`, which rebuilds the board and the sync log from the hub.
+leave. A task is matched by its uid first, so a task whose uid was
+replaced under the same number is reported, and a task that was only
+renumbered is not. A pull cannot restore such a task, because it treats
+the task's events as already held. The detail names the tasks, and the fix
+is these steps, run one at a time: `mtix sync push`, check that `mtix sync
+status` shows `pending` 0 (reconcile drops what is not pushed), then `mtix
+sync reconcile --discard-local --yes`, then `mtix sync pull`. They
+rebuild the board and the sync log from the hub.
 
 Exit code 0 on all-pass, including a check that passes with a WARN; exit
 code 2 if any check fails (operators can gate CI / monitoring on this).
@@ -3549,7 +3553,7 @@ change the node's status with the normal commands instead.
 | `mtix sync push` errors with "tls handshake timeout" | TLS misconfiguration | Verify `MTIX_SYNC_SSLROOTCERT` if managed-PG requires it |
 | A sync command fails with a message containing "check the DSN's connection parameters" | The DSN's settings, or a CA, client-certificate or key file they name (`sslrootcert`, `MTIX_SYNC_SSLROOTCERT`, `PGSSLROOTCERT`, `PGSSLCERT`/`PGSSLKEY`, or the driver's defaults in `~/.postgresql/` (`%APPDATA%\postgresql\` on Windows): `root.crt` when it exists, and `postgresql.crt` with `postgresql.key` only when both exist), could not be parsed or loaded. The message never repeats the path or the DSN | Check the DSN's parameters and that each named file exists, is readable and holds PEM data; then run `mtix sync doctor` |
 | `ErrSyncDivergentHistory` on `mtix sync init` | Hub already has a different lineage for this prefix | Run `mtix sync clone` to join, OR `mtix sync reconcile --import-as PARENT-ID` |
-| `mtix sync doctor` fails `board matches sync log` | A replace import of an earlier version deleted tasks whose events stay in the local sync log; a pull cannot restore them | Run the fix the check prints: `mtix sync push && mtix sync reconcile --discard-local --yes && mtix sync pull` (the discard needs the ticket count typed at an interactive terminal) |
+| `mtix sync doctor` fails `board matches sync log` | A replace import of an earlier version deleted tasks whose events stay in the local sync log; a pull cannot restore them | Run the steps the check prints, one at a time: `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull` (the discard needs the ticket count typed at an interactive terminal) |
 | `mtix import --mode replace` fails with `this store syncs with a hub` | A replace would delete tasks and changes whose events stay in the local sync log | Run `mtix sync pull` to receive teammates' changes, or rebuild the board from the hub with the commands the error names |
 | `ErrSyncQueueFull` from `mtix create` / `update` | Local pending queue at the cap | `mtix sync push --force`, or raise `sync.max_queue_size` |
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |

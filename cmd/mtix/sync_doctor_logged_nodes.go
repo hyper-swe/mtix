@@ -14,8 +14,10 @@ import (
 // holds every task the local sync log creates (MTIX-107.31).
 const loggedNodesCheckName = "board matches sync log"
 
-// loggedNodesFix rebuilds the board and the sync log from the hub.
-const loggedNodesFix = "mtix sync push && mtix sync reconcile --discard-local --yes && mtix sync pull"
+// loggedNodesFix rebuilds the board and the sync log from the hub: the
+// steps run one at a time, because reconcile drops what is not pushed yet,
+// so mtix sync status must show pending 0 before the discard.
+const loggedNodesFix = sqlite.SyncLogRecovery
 
 // appendLoggedNodesCheck adds the doctor's "board matches sync log" check
 // (MTIX-107.31): on a store that syncs with a hub it fails while the sync

@@ -20,11 +20,11 @@ import (
 // a replace that would delete a node the sync log holds is refused
 // (refuseDroppingLoggedNodes, MTIX-107.31).
 func replaceAllData(ctx context.Context, tx *sql.Tx, data *ExportData) (ImportResult, error) {
-	if err := refuseDroppingLoggedNodes(ctx, tx, data); err != nil {
-		return ImportResult{}, err
-	}
 	kept, err := keepLocalBackfillUIDs(ctx, tx, data)
 	if err != nil {
+		return ImportResult{}, err
+	}
+	if err = refuseDroppingLoggedNodes(ctx, tx, kept); err != nil {
 		return ImportResult{}, err
 	}
 	before, err := localUIDsByID(ctx, tx)

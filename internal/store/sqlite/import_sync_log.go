@@ -20,7 +20,7 @@ var ErrReplaceOnSyncedStore = errors.New("replace import refused on a store that
 // SyncLogRecovery names the commands that rebuild a synced store's board
 // from the hub: unpushed changes go to the hub first, then the local board
 // and sync log are dropped together and pulled again (MTIX-107.31).
-const SyncLogRecovery = "mtix sync push, then mtix sync reconcile --discard-local --yes, then mtix sync pull"
+const SyncLogRecovery = "mtix sync push, check that mtix sync status shows pending 0, then mtix sync reconcile --discard-local --yes, then mtix sync pull"
 
 // maxNamedNodes caps how many node ids a refusal or a doctor check names.
 const maxNamedNodes = 10
@@ -52,54 +52,130 @@ func syncedWithHub(ctx context.Context, q rowQuerier) (bool, error) {
 	return synced, nil
 }
 
+// loggedNode is a local node the sync log holds an event for.
+type loggedNode struct {
+	id, uid, title string
+	// pushed is true when the creation of the node is past pending: the hub
+	// knows the task by its uid, so a pending-only carry (carryReplacedUIDs)
+	// cannot move it.
+	pushed bool
+}
+
+// loggedNodeMatch is the SQL condition tying sync event se to node n: by
+// uid when the node has one (the event carries it, or it is the creation
+// whose event id is the uid, ADR-003 section 2), and by number for an event
+// without a uid.
+const loggedNodeMatch = `((COALESCE(n.uid, '') <> '' AND (se.uid = n.uid
+		OR (se.op_type = 'create_node' AND se.event_id = n.uid)))
+	 OR ((se.uid IS NULL OR se.uid = '') AND se.node_id = n.id))`
+
+// loggedNodes returns the local nodes the sync log holds an event for,
+// read through q.
+func loggedNodes(ctx context.Context, q rowQuerier) (nodes []loggedNode, err error) {
+	// Each node with an event of the log, and whether its creation is past
+	// pending. Matched by uid first, as the comparison of an
+	// automatic import is (DiffReplace, MTIX-95.31.4).
+	rows, err := q.QueryContext(ctx, `SELECT n.id, COALESCE(n.uid, ''), n.title,
+		EXISTS (SELECT 1 FROM sync_events se WHERE `+loggedNodeMatch+`
+			AND se.op_type = 'create_node' AND se.sync_status <> 'pending')
+		FROM nodes n
+		WHERE EXISTS (SELECT 1 FROM sync_events se WHERE `+loggedNodeMatch+`)
+		ORDER BY n.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
+	for rows.Next() {
+		var n loggedNode
+		if err := rows.Scan(&n.id, &n.uid, &n.title, &n.pushed); err != nil {
+			return nil, err
+		}
+		nodes = append(nodes, n)
+	}
+	return nodes, rows.Err()
+}
+
+// keepsLoggedNode reports whether the file data holds the task of local
+// node l: by its uid under any number (a renumber is a move, not a loss,
+// MTIX-95.31.4), or, for a node without a uid, by its number. A task that
+// keeps its number and title but takes the file's uid has its pending
+// events carried to it (carryReplacedUIDs, MTIX-95.31.16); that is not a
+// loss unless the creation of the task was already pushed, except when the
+// task's uid is a marked backfill uid: the hub never knew the task by it,
+// and a board written before uids were shared adopts the file's uid.
+func keepsLoggedNode(l loggedNode, byUID map[string]bool, byID map[string]*exportNode) bool {
+	f := byID[l.id]
+	if l.uid == "" {
+		return f != nil
+	}
+	if byUID[l.uid] {
+		return true
+	}
+	return f != nil && f.UID != "" && f.Title == l.title && (!l.pushed || model.IsBackfillUID(l.uid))
+}
+
 // refuseDroppingLoggedNodes returns an error wrapping
 // ErrReplaceOnSyncedStore when the store has synced with a hub and the
-// replace of data would delete a local node whose events the sync log
-// holds (MTIX-107.31). The pull would acknowledge those events as held
-// (MTIX-95.2) instead of applying them, so the node would never come back.
-// It runs in the import's transaction tx, before anything is deleted.
+// replace of data (the file as the replace writes it) would leave a local
+// task whose events the sync log holds without its task (MTIX-107.31). A
+// task is the same task by its uid: dropping it, or keeping its number
+// while dropping or changing its uid, loses it. The pull would acknowledge
+// the logged events as held (MTIX-95.2) instead of applying them, so the
+// task would never come back. A renumbered task keeps its uid and is not
+// refused. It runs in the import's transaction tx, before anything is
+// deleted.
 func refuseDroppingLoggedNodes(ctx context.Context, tx *sql.Tx, data *ExportData) error {
 	synced, err := syncedWithHub(ctx, tx)
 	if err != nil || !synced {
 		return err
 	}
-	inFile := make(map[string]bool, len(data.Nodes))
+	byUID := make(map[string]bool, len(data.Nodes))
+	byID := make(map[string]*exportNode, len(data.Nodes))
 	for i := range data.Nodes {
-		inFile[data.Nodes[i].ID] = true
+		n := &data.Nodes[i]
+		byID[n.ID] = n
+		if n.UID != "" {
+			byUID[n.UID] = true
+		}
 	}
-	// Local nodes the sync log holds an event for, by id.
-	logged, err := queryIDs(ctx, tx, `SELECT DISTINCT n.id FROM nodes n
-		JOIN sync_events se ON se.node_id = n.id ORDER BY n.id`)
+	logged, err := loggedNodes(ctx, tx)
 	if err != nil {
 		return fmt.Errorf("read the nodes the sync log holds: %w", err)
 	}
 	var dropped []string
-	for _, id := range logged {
-		if !inFile[id] {
-			dropped = append(dropped, id)
+	for _, l := range logged {
+		if !keepsLoggedNode(l, byUID, byID) {
+			dropped = append(dropped, l.id)
 		}
 	}
 	if len(dropped) == 0 {
 		return nil
 	}
-	return fmt.Errorf("%w: the file lacks %s, whose events stay in the local sync log, so a pull cannot "+
-		"restore them; nothing was imported. To rebuild the board from the hub, run %s: %w",
+	return fmt.Errorf("%w: the file does not hold %s as the same task (a task is matched by its uid), and "+
+		"their events stay in the local sync log, so a pull cannot restore them; nothing was imported. "+
+		"To rebuild the board from the hub, run %s: %w",
 		ErrReplaceOnSyncedStore, nameNodes(dropped), SyncLogRecovery, model.ErrInvalidInput)
 }
 
 // MissingLoggedNodes returns the ids of the nodes the local sync log
 // creates that the board lacks, with no delete event for them: projection
 // drift a pull cannot repair, because it acknowledges the held events
-// instead of applying them (MTIX-107.31, ADR-006 section 5.3). A node is
-// matched by id or by uid, so a renumbered node is not reported.
+// instead of applying them (MTIX-107.31, ADR-006 section 5.3). A creation is
+// matched by its uid first (the uid of the event, or its event id), so a
+// renumbered task is not reported and a task whose uid was replaced under
+// the same number is; a creation without a uid falls back to the number.
 func (s *Store) MissingLoggedNodes(ctx context.Context) ([]string, error) {
-	// create_node events whose node is on the board neither by id nor by
-	// uid, and that no delete event of the same node follows (gc purges
-	// deleted nodes).
+	// create_node events whose task is not on the board by uid (by number
+	// when the event carries none), and that no delete event of the same
+	// node follows (gc purges deleted nodes).
 	ids, err := queryIDs(ctx, s.writeDB, `SELECT DISTINCT se.node_id FROM sync_events se
 		WHERE se.op_type = 'create_node'
-		  AND NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id = se.node_id)
 		  AND NOT EXISTS (SELECT 1 FROM nodes n WHERE n.uid <> '' AND n.uid = COALESCE(NULLIF(se.uid, ''), se.event_id))
+		  AND (COALESCE(se.uid, '') <> '' OR NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id = se.node_id))
 		  AND NOT EXISTS (SELECT 1 FROM sync_events d WHERE d.node_id = se.node_id AND d.op_type = 'delete')
 		ORDER BY se.node_id`)
 	if err != nil {

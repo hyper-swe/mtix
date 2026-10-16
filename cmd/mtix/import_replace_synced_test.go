@@ -64,6 +64,11 @@ func TestRunImport_ReplaceOnSyncedStore_RefusesAndKeepsTickets(t *testing.T) {
 	}{
 		{"events pushed to a hub", markEventsPushed, true},
 		{"hub configured, nothing pushed yet", configureHub, true},
+		{"hub config key only, nothing pushed yet", func(t *testing.T) []*model.SyncEvent {
+			_, err := app.configSvc.Set("sync.enabled", "true")
+			require.NoError(t, err)
+			return nil
+		}, true},
 		{"no hub", func(*testing.T) []*model.SyncEvent { return nil }, false},
 	}
 	for _, tt := range tests {

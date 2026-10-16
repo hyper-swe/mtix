@@ -111,7 +111,7 @@ and project administration via the Model Context Protocol.
 ## Health diagnostics
 
 Plain `mtix doctor` preserves operator-local files, including stale attach shims
-and records. Use `mtix doctor --fix` for registered shim and glue repairs;
+and records. Use `--fix` for registered shim and glue repairs;
 other commands retain automatic attach refresh.
 
 ## Trust and grants

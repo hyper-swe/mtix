@@ -169,8 +169,8 @@ Doctor shows these rows only when they apply:
   reports the older dispatcher again and raises an operator alert; mtix never
   claims a restart it did not make.
 
-Any unsandboxed mtix command, and `mtix doctor --fix`, rewrites an
-out-of-date shim without a terminal. These repairs never change a grant,
+Unsandboxed commands other than plain `mtix doctor`, and registered
+`mtix doctor --fix` repairs, rewrite an out-of-date shim without a terminal. These repairs never change a grant,
 approval or confirmation.
 
 ## Guarded wake ledger

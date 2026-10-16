@@ -28,6 +28,9 @@ func permissionDoctorFailure(err error) permissionDoctorContext {
 }
 
 func readPermissionDoctorContext() permissionDoctorContext {
+	if app.store == nil || app.mtixDir == "" {
+		return permissionDoctorContext{}
+	}
 	board, err := permissionDoctorIdentity()
 	if err != nil {
 		return permissionDoctorFailure(err)

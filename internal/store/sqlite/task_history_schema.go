@@ -33,4 +33,13 @@ CREATE TABLE IF NOT EXISTS task_history (
 );
 CREATE INDEX IF NOT EXISTS idx_task_history_uid_ts ON task_history(task_uid, ts);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_task_history_event ON task_history(task_uid, event_id, field) WHERE event_id IS NOT NULL;
+-- history_retention_cutoff is local to this copy of the board (MTIX-95.31.19.4):
+-- the newest ts this store trimmed each task's change entries up to. Written only
+-- by this store's own trim, in the trim's transaction; never exported, imported
+-- or synced. The import union skips an incoming change entry at or before it.
+CREATE TABLE IF NOT EXISTS history_retention_cutoff (
+    task_uid   TEXT PRIMARY KEY,
+    cutoff_ts  TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 `

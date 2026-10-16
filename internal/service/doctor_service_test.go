@@ -57,6 +57,7 @@ func TestDoctorService_EmptyAndWindowsInfo(t *testing.T) {
 			assert.Equal(t, "platform.windows", rows[0].ID)
 			assert.Equal(t, DoctorInfo, rows[0].Status)
 			assert.Contains(t, rows[0].Detail, "Built-in wakes unavailable")
+			assert.Contains(t, rows[0].Detail, "attach shim is not supported on Windows")
 			assert.Empty(t, rows[0].Fix)
 		})
 	}

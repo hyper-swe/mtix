@@ -121,8 +121,20 @@ func (m *dbMockStore) ResolveDisplayPathByUID(_ context.Context, _ string) (stri
 	return "MOCK-1", nil
 }
 func (m *dbMockStore) UpdateNode(_ context.Context, _ string, _ *store.NodeUpdate) error { return nil }
-func (m *dbMockStore) DeleteNode(_ context.Context, _ string, _ bool, _ string) error    { return nil }
-func (m *dbMockStore) UndeleteNode(_ context.Context, _ string) error                    { return nil }
+
+// UpdatePrompt supplies a synthetic hash pair for transport-only fixtures.
+// Transaction semantics are tested against the real SQLite Store.
+func (m *dbMockStore) UpdatePrompt(ctx context.Context, id, text string) (string, string, error) {
+	n, err := m.GetNode(ctx, id)
+	if err != nil {
+		return "", "", err
+	}
+	oldHash := n.ComputeHash()
+	n.Prompt = text
+	return oldHash, n.ComputeHash(), nil
+}
+func (m *dbMockStore) DeleteNode(_ context.Context, _ string, _ bool, _ string) error { return nil }
+func (m *dbMockStore) UndeleteNode(_ context.Context, _ string) error                 { return nil }
 func (m *dbMockStore) ListNodes(_ context.Context, _ store.NodeFilter, _ store.ListOptions) ([]*model.Node, int, error) {
 	return nil, 0, nil
 }

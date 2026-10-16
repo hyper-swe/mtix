@@ -209,6 +209,7 @@ func (s *Store) recordHistory(ctx context.Context, tx *sql.Tx, scope historyScop
 	}
 	sort.Strings(ids)
 	pr := newPairing(tr, scope.all)
+	touchedUIDs := map[string]bool{} // tasks that got entries, to trim (MTIX-95.31.19.4)
 	for _, id := range ids {
 		prev := pr.before(id, after[id])
 		if scope.all && after[id].uid == id && prev.values == nil {
@@ -220,9 +221,10 @@ func (s *Store) recordHistory(ctx context.Context, tx *sql.Tx, scope historyScop
 			if err := appendHistoryEntry(ctx, tx, e); err != nil {
 				return err
 			}
+			touchedUIDs[e.TaskUID] = true
 		}
 	}
-	return nil
+	return s.trimHistory(ctx, tx, touchedUIDs, actor)
 }
 
 // readTouched adds to after the tasks the transaction touched that the scope's

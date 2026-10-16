@@ -6,6 +6,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 
 	"github.com/hyper-swe/mtix/internal/hooks"
@@ -28,6 +29,8 @@ type hookStatusReport struct {
 	Hooks    []hooks.Decision `json:"hooks"`
 	Legacy   string           `json:"legacy,omitempty"`
 	Warnings []string         `json:"warnings"`
+	// AppendFile lists append-file paths delivery would refuse or that are too open.
+	AppendFile []hooks.AppendFileIssue `json:"append_file"`
 }
 
 func runHooksStatus(state *oplocal.State) error {
@@ -61,11 +64,12 @@ func inspectHookStatus(state *oplocal.State) (hookStatusReport, error) {
 		decision := decisions[name]
 		entries = append(entries, decision)
 	}
-	_, warnings := hooks.Load(app.mtixDir)
+	cfg, warnings := hooks.Load(app.mtixDir)
+	appendIssues := appendFileIssues(cfg)
 	if warnings == nil {
 		warnings = []string{}
 	}
-	return hookStatusReport{Status: status, Hooks: entries, Legacy: hooks.LegacyStatus(app.mtixDir), Warnings: warnings}, errors.Join(err, hookErr)
+	return hookStatusReport{Status: status, Hooks: entries, Legacy: hooks.LegacyStatus(app.mtixDir), Warnings: warnings, AppendFile: appendIssues}, errors.Join(err, hookErr)
 }
 
 func renderHookStatus(out OutputWriter, report hookStatusReport) {
@@ -88,7 +92,21 @@ func renderHookStatus(out OutputWriter, report hookStatusReport) {
 	for _, item := range report.Reports {
 		out.WriteHuman("%s: %s\n", item.Name, item.Reason)
 	}
+	for _, issue := range report.AppendFile {
+		out.WriteHuman("hook %q append-file: %s\nFix: %s\n", issue.Hook, issue.Reason, issue.Fix)
+	}
 	for _, warning := range report.Warnings {
 		out.WriteHuman("%s\nFix: edit .mtix/hooks.yaml, then run mtix hooks status --json\n", warning)
 	}
+}
+
+// appendFileIssues reports each configured append-file path delivery would
+// refuse, or that is wider than owner-only (TM I34), with the exact fix.
+func appendFileIssues(cfg hooks.Config) []hooks.AppendFileIssue {
+	base := filepath.Dir(app.mtixDir)
+	out := []hooks.AppendFileIssue{}
+	for _, h := range cfg.Hooks {
+		out = append(out, hooks.AppendFileIssues(base, h)...)
+	}
+	return out
 }

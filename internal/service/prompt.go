@@ -48,31 +48,11 @@ func NewPromptService(
 }
 
 // UpdatePrompt updates a node's prompt field per FR-12.1.
-// Recomputes content_hash (FR-3.7), sets updated_at, creates prompt_edit activity entry.
+// The store commits the prompt and its hashes atomically (FR-3.7), then the
+// service broadcasts that transaction-specific pair (FR-7.5).
 func (svc *PromptService) UpdatePrompt(ctx context.Context, nodeID, text, author string) error {
-	node, err := svc.store.GetNode(ctx, nodeID)
+	oldHash, newHash, err := svc.store.UpdatePrompt(ctx, nodeID, text)
 	if err != nil {
-		return fmt.Errorf("get node %s for prompt update: %w", nodeID, err)
-	}
-
-	oldHash := node.ContentHash
-
-	// Update the prompt and recompute hash.
-	node.Prompt = text
-	node.UpdatedAt = svc.clock()
-	newHash := node.ComputeHash()
-
-	// Build update.
-	promptPtr := &text
-	hashPtr := &newHash
-	updatedAt := node.UpdatedAt.UTC().Format(time.RFC3339)
-	update := &store.NodeUpdate{
-		Prompt:      promptPtr,
-		ContentHash: hashPtr,
-		UpdatedAt:   &updatedAt,
-	}
-
-	if err := svc.store.UpdateNode(ctx, nodeID, update); err != nil {
 		return fmt.Errorf("update prompt for %s: %w", nodeID, err)
 	}
 

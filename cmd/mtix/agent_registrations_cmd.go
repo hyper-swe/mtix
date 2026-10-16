@@ -69,6 +69,8 @@ func registerCurrentSession(ctx context.Context, agentID string, opts sessionOpt
 	if err != nil {
 		return nil, fmt.Errorf("register session for %s: %w", agentID, err)
 	}
+	// A newer CLI that meets an older dispatcher restarts it or says why not (ADR-007 §6.4).
+	productionDispatcherRestart(ctx, os.Stderr)
 	r := res.Registration
 	return &sessionReport{Outcome: res.Outcome, Harness: r.Harness, Origin: r.Origin, Epoch: r.Epoch, NoticeSent: res.NoticeSent}, nil
 }

@@ -683,6 +683,12 @@ The read-only docs.stale check compares board-root MTIX.md with this binary
 and checks live native pointers. WARN prints mtix -C <board-root> docs generate;
 run that command and rerun doctor. --fix never writes these documents.
 HYPERSWE.md suppresses missing native pointers, but MTIX.md is still checked.
+
+On an opened local board, wake.ledger reports retained wake rows, claimed rows
+and rejected completions. A newer dispatch protocol reports FAIL: install a
+compatible binary, restart the dispatcher and rerun doctor. This read-only check
+never prunes wake rows or lowers the protocol floor, including with --fix.
+
 Setup checks will be registered by their future features.
 
 ### Flags

@@ -61,6 +61,9 @@ func TestDoctorSync_ConfigurationSelectsApplicableTransports(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				for _, row := range rows {
+					if assertEmptyWakeDoctorInfo(t, row.ID, string(row.Status), row.Detail, row.Fix) {
+						continue
+					}
 					assert.Contains(t, []string{"platform.windows", "docs.stale"}, row.ID)
 				}
 			}

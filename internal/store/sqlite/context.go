@@ -177,7 +177,7 @@ func (s *Store) AppendAnnotation(ctx context.Context, nodeID string, annotation 
 		next := make([]model.Annotation, 0, len(current)+1)
 		next = append(next, current...)
 		return append(next, annotation), nil
-	})
+	}, "")
 }
 
 // ResolveAnnotation sets the resolved flag of one annotation, identified by
@@ -196,16 +196,15 @@ func (s *Store) ResolveAnnotation(ctx context.Context, nodeID, annotationID stri
 			}
 		}
 		return nil, fmt.Errorf("annotation %s on node %s: %w", annotationID, nodeID, model.ErrNotFound)
-	})
+	}, "")
 }
 
 // mutateAnnotations loads a node's annotations, applies change and stores the
 // result plus the comment sync event, all inside one write transaction. The
 // single write connection serializes writers; BEGIN IMMEDIATE (see New) makes
 // other processes wait on busy_timeout instead of reading a stale array.
-func (s *Store) mutateAnnotations(
-	ctx context.Context, nodeID string,
-	change func([]model.Annotation) ([]model.Annotation, error),
+func (s *Store) mutateAnnotations(ctx context.Context, nodeID string,
+	change func([]model.Annotation) ([]model.Annotation, error), eventID string,
 ) error {
 	// MTIX-95.31.19.3: the annotations change is recorded as a value-free history entry.
 	return s.withHistoryTx(ctx, historyScope{id: nodeID}, func(tx *sql.Tx) error {
@@ -252,6 +251,7 @@ func (s *Store) mutateAnnotations(
 			ProjectCode: projectPrefixFromNodeID(nodeID),
 			OpType:      model.OpComment,
 			Author:      author,
+			EventID:     eventID,
 		}, &model.CommentPayload{AuthorID: author, Body: body, To: to})
 	})
 }

@@ -67,7 +67,7 @@ func undelNode(spec undelSpec) *model.Node {
 // whose clock is frozen at undelDeleteTime.
 func seedUndeleteTree(t *testing.T, specs ...undelSpec) *sqlite.Store {
 	t.Helper()
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	s.SetClock(func() time.Time { return undelDeleteTime })
 	for _, spec := range specs {
 		require.NoError(t, s.CreateNode(context.Background(), undelNode(spec)), "seed %s", spec.id)

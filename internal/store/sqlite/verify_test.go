@@ -16,7 +16,7 @@ import (
 
 // TestVerify_CleanDB_AllChecksPassing verifies all checks pass on a clean DB.
 func TestVerify_CleanDB_AllChecksPassing(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -45,7 +45,7 @@ func TestVerify_CleanDB_AllChecksPassing(t *testing.T) {
 
 // TestVerify_EmptyDB_AllChecksPassing verifies all checks pass on empty DB.
 func TestVerify_EmptyDB_AllChecksPassing(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 
 	result, err := s.Verify(ctx)
@@ -56,7 +56,7 @@ func TestVerify_EmptyDB_AllChecksPassing(t *testing.T) {
 
 // TestVerify_SequenceInconsistency_Detected verifies stale sequences are detected.
 func TestVerify_SequenceInconsistency_Detected(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -92,7 +92,7 @@ func TestVerify_SequenceInconsistency_Detected(t *testing.T) {
 
 // TestVerify_ProgressInconsistency_Detected verifies mismatched progress detection.
 func TestVerify_ProgressInconsistency_Detected(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -123,7 +123,7 @@ func TestVerify_ProgressInconsistency_Detected(t *testing.T) {
 
 // TestVerify_IntegrityAndFKChecksWork verifies PRAGMA checks work.
 func TestVerify_IntegrityAndFKChecksWork(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 
 	result, err := s.Verify(ctx)
@@ -136,7 +136,7 @@ func TestVerify_IntegrityAndFKChecksWork(t *testing.T) {
 
 // TestVerify_MissingSequence_Detected verifies missing sequence entry detection.
 func TestVerify_MissingSequence_Detected(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -160,7 +160,7 @@ func TestVerify_MissingSequence_Detected(t *testing.T) {
 
 // TestVerify_FTSConsistent_AfterOperations verifies FTS consistency post-CRUD.
 func TestVerify_FTSConsistent_AfterOperations(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -180,7 +180,7 @@ func TestVerify_FTSConsistent_AfterOperations(t *testing.T) {
 
 // TestVerify_ForeignKeyViolation_Detected verifies FK check detects violations.
 func TestVerify_ForeignKeyViolation_Detected(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -217,7 +217,7 @@ func TestVerify_ForeignKeyViolation_Detected(t *testing.T) {
 
 // TestVerify_ProgressConsistent_WithCancelledChildren verifies FR-5.4 progress.
 func TestVerify_ProgressConsistent_WithCancelledChildren(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 

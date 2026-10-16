@@ -10,11 +10,17 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
+
+// historyFutureSkew is how far ahead of the store clock an incoming history
+// entry may be dated. Entries beyond it come from a clock far ahead or a
+// crafted file; they are skipped and counted, never stored (MTIX-95.31.19.4).
+const historyFutureSkew = 24 * time.Hour
 
 // maxHistoryWarningIDs is how many conflicting entry ids a warning names.
 const maxHistoryWarningIDs = 3
@@ -24,7 +30,12 @@ const maxHistoryWarningIDs = 3
 type historyUnion struct {
 	added, present, legacy, conflicts int
 	conflictIDs                       []string
-	fileConflicts                     int // entry ids the file repeats with different content
+	now                               string            // the store clock; a stored cutoff later than it counts as it
+	latest                            string            // the newest ts accepted: the store clock plus historyFutureSkew
+	future                            int               // entries dated beyond latest
+	cutoffs                           map[string]string // task key -> newest local retention cutoff, read before the union
+	malformed                         int               // retention markers with an unreadable cutoff or count
+	fileConflicts                     int               // entry ids the file repeats with different content
 	fileConflictIDs                   []string
 }
 
@@ -146,8 +157,16 @@ func isLegacyHistoryKey(key string) bool {
 // add unions one entry. The store's row is only ever read or inserted, never
 // updated or deleted.
 func (u *historyUnion) add(ctx context.Context, tx *sql.Tx, e exportHistoryEntry) error {
+	if u.latest != "" && e.TS > u.latest {
+		u.future++ // dated beyond the allowed clock skew
+		return nil
+	}
 	if isLegacyHistoryKey(e.TaskUID) {
 		u.legacy++
+		return nil
+	}
+	if e.Kind == string(model.HistoryKindRetentionDrop) && !validRetentionMarker(e.Field, e.Old, e.New) {
+		u.malformed++ // never stored, never a cutoff
 		return nil
 	}
 	local, err := readHistoryEntry(ctx, tx, e.ID)
@@ -157,6 +176,10 @@ func (u *historyUnion) add(ctx context.Context, tx *sql.Tx, e exportHistoryEntry
 		return nil
 	case !errors.Is(err, sql.ErrNoRows):
 		return err
+	}
+	if u.trimmedByRetention(e) {
+		u.present++ // a trimmed entry coming back stays gone (MTIX-95.31.19.4)
+		return nil
 	}
 	// Absent by entry id: insert. The unique event key can still match an
 	// entry with another id, which is the same event already recorded.
@@ -246,8 +269,56 @@ func (u *historyUnion) report(r *ImportResult) {
 			"history: %d entry ids appear more than once within the import file with different content; none of those entries was stored (first: %s)",
 			u.fileConflicts, strings.Join(u.fileConflictIDs, ", ")))
 	}
+	if u.future > 0 {
+		r.HistorySkipped += u.future
+		r.Warnings = append(r.Warnings, fmt.Sprintf(
+			"history: %d entries dated more than %s in the future were skipped", u.future, historyFutureSkew))
+	}
+	if u.malformed > 0 {
+		r.HistorySkipped += u.malformed
+		r.Warnings = append(r.Warnings, fmt.Sprintf(
+			"history: %d retention markers with an unreadable cutoff or count were skipped", u.malformed))
+	}
 	if u.legacy > 0 {
 		r.Warnings = append(r.Warnings, fmt.Sprintf(
 			"history: %d entries keyed by a legacy task id rather than a task uid were skipped", u.legacy))
 	}
+}
+
+// loadCutoffs reads, before anything is unioned, the cutoff of each task from
+// the store-local history_retention_cutoff table, which only this store's own
+// trim writes. A retention_drop marker, whether it arrived in a file or not, is
+// plain history and never a cutoff. Reading them first keeps the outcome
+// independent of the order of the file and of earlier imports.
+func (u *historyUnion) loadCutoffs(ctx context.Context, tx *sql.Tx) (err error) {
+	u.cutoffs = map[string]string{}
+	// The ts each task's change entries were trimmed up to by this store.
+	rows, err := tx.QueryContext(ctx, `SELECT task_uid, cutoff_ts FROM history_retention_cutoff`)
+	if err != nil {
+		return fmt.Errorf("read history retention cutoffs: %w", err)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close history retention cutoffs: %w", closeErr)
+		}
+	}()
+	for rows.Next() {
+		var uid, cutoff string
+		if err := rows.Scan(&uid, &cutoff); err != nil {
+			return fmt.Errorf("scan history retention cutoff: %w", err)
+		}
+		if u.now != "" && cutoff > u.now {
+			cutoff = u.now // recorded while this clock ran ahead: never later than the clock
+		}
+		u.cutoffs[uid] = cutoff
+	}
+	return rows.Err()
+}
+
+// trimmedByRetention reports whether e is a change entry at or before the
+// cutoff of its task's newest local retention marker: an entry the store
+// trimmed, which another replica's older export would bring back.
+func (u *historyUnion) trimmedByRetention(e exportHistoryEntry) bool {
+	cutoff, ok := u.cutoffs[e.TaskUID]
+	return ok && e.Kind == string(model.HistoryKindChange) && e.TS <= cutoff
 }

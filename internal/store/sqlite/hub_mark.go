@@ -5,9 +5,11 @@ package sqlite
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"strconv"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 const (
 	hubMarkKey  = "hub_connected"
 	hubFloorKey = "hub_mark_floor"
+	hubEpochKey = "hub_connected_epoch"
 )
 
 // hubMarkSources are the only evidence kinds a mark may record.
@@ -31,6 +34,7 @@ type HubMark struct {
 	Set    bool
 	Source string
 	SetAt  string
+	Epoch  string
 }
 
 // HubMark reads the sticky hub-connected mark (MTIX-112.17.3, ADR-007 A9).
@@ -47,6 +51,12 @@ func (s *Store) HubMark(ctx context.Context) (HubMark, error) {
 		return HubMark{}, fmt.Errorf("read hub mark: %w", err)
 	}
 	mark.Set = true
+	err = s.readDB.QueryRowContext(ctx, `SELECT value FROM board_flags WHERE key = ?`, hubEpochKey).Scan(&mark.Epoch)
+	if errors.Is(err, sql.ErrNoRows) {
+		mark.Epoch = "legacy:" + mark.Source + ":" + mark.SetAt
+	} else if err != nil {
+		return HubMark{}, fmt.Errorf("read hub mark epoch: %w", err)
+	}
 	return mark, nil
 }
 
@@ -71,6 +81,18 @@ func (s *Store) MarkHubConnected(ctx context.Context, source string) (bool, erro
 
 // setHubMark writes the mark once inside the caller's transaction.
 func setHubMark(ctx context.Context, tx *sql.Tx, source string, now time.Time) (bool, error) {
+	return setHubMarkEpoch(ctx, tx, source, now, uuid.NewRandom)
+}
+
+func setForeignHubMark(ctx context.Context, tx *sql.Tx, eventID string, now time.Time) (bool, error) {
+	return setHubMarkEpoch(ctx, tx, "foreign_event", now, func() (uuid.UUID, error) {
+		sum := sha256.Sum256([]byte("mtix hub epoch:" + eventID))
+		sum[6], sum[8] = (sum[6]&0x0f)|0x80, (sum[8]&0x3f)|0x80
+		return uuid.FromBytes(sum[:16])
+	})
+}
+
+func setHubMarkEpoch(ctx context.Context, tx *sql.Tx, source string, now time.Time, mint func() (uuid.UUID, error)) (bool, error) {
 	// Insert the mark only when absent: the first evidence wins and the
 	// mark is never rewritten.
 	res, err := tx.ExecContext(ctx,
@@ -84,7 +106,20 @@ func setHubMark(ctx context.Context, tx *sql.Tx, source string, now time.Time) (
 	if err != nil {
 		return false, fmt.Errorf("hub mark rows: %w", err)
 	}
-	return n > 0, nil
+	if n == 0 {
+		return false, nil
+	}
+	epoch, err := mint()
+	if err != nil {
+		return false, fmt.Errorf("mint hub mark epoch: %w", err)
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO board_flags(key, value, set_at, source) VALUES(?, ?, ?, ?)
+	 ON CONFLICT(key) DO UPDATE SET value = excluded.value, set_at = excluded.set_at, source = excluded.source`,
+		hubEpochKey, epoch.String(), now.UTC().Format(time.RFC3339), source)
+	if err != nil {
+		return false, fmt.Errorf("store hub mark epoch: %w", err)
+	}
+	return true, nil
 }
 
 // AppliedEventsAboveFloor reports whether an applied_events row exists above
@@ -123,7 +158,7 @@ func (s *Store) ResetHubMark(ctx context.Context) (int64, error) {
 			`SELECT COALESCE(MAX(rowid), 0) FROM applied_events`).Scan(&floor); err != nil {
 			return fmt.Errorf("read applied events floor: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM board_flags WHERE key = ?`, hubMarkKey); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM board_flags WHERE key IN (?, ?)`, hubMarkKey, hubEpochKey); err != nil {
 			return fmt.Errorf("clear hub mark: %w", err)
 		}
 		// Record the floor; later resets overwrite it.

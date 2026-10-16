@@ -20,6 +20,7 @@ export function NodeDetailView({ nodeId, nodeStore, onNavigate }: NodeDetailView
   const [children, setChildren] = useState<Node[]>([]);
   const [contextChain] = useState<ContextEntry[]>([]);
   const [activityEntries, setActivityEntries] = useState<ActivityEntry[]>([]);
+  const [activityOffset, setActivityOffset] = useState(0);
   const [activityHasMore, setActivityHasMore] = useState(false);
   const [activityLoading, setActivityLoading] = useState(false);
   const [dependencies, setDependencies] = useState<Dependency[]>([]);
@@ -39,6 +40,7 @@ export function NodeDetailView({ nodeId, nodeStore, onNavigate }: NodeDetailView
       setNode(nodeData);
       setChildren(childData);
       setActivityEntries(activityData);
+      setActivityOffset(activityData.length);
       setActivityHasMore(activityData.length >= 20);
       setDependencies(depsData);
     } catch (err) {
@@ -51,15 +53,25 @@ export function NodeDetailView({ nodeId, nodeStore, onNavigate }: NodeDetailView
   const loadMoreActivity = useCallback(async () => {
     setActivityLoading(true);
     try {
-      const more = await api.getActivity(nodeId, { limit: 20, offset: activityEntries.length });
-      setActivityEntries((prev) => [...prev, ...more]);
+      const more = await api.getActivity(nodeId, { limit: 20, offset: activityOffset });
+      setActivityEntries((prev) => {
+        const seen = new Set(prev.map((entry) => entry.id));
+        return [...prev, ...more.filter((entry) => {
+          if (!entry.id) return true;
+          if (seen.has(entry.id)) return false;
+          seen.add(entry.id);
+          return true;
+        })];
+      });
+      // Advance by the raw page size even when concurrent writes cause overlap.
+      setActivityOffset((offset) => offset + more.length);
       setActivityHasMore(more.length >= 20);
     } catch {
       // Silently fail.
     } finally {
       setActivityLoading(false);
     }
-  }, [nodeId, activityEntries.length]);
+  }, [nodeId, activityOffset]);
 
   useEffect(() => {
     loadNode();

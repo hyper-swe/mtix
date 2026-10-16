@@ -145,16 +145,14 @@ func runDepShow(id string) error {
 	}
 
 	if app.jsonOutput {
-		data, _ := json.MarshalIndent(blockers, "", "  ")
-		fmt.Println(string(data))
+		return NewOutputWriter(true).WriteJSON(blockers)
+	}
+	if len(blockers) == 0 {
+		fmt.Printf("No blockers for %s\n", id)
 	} else {
-		if len(blockers) == 0 {
-			fmt.Printf("No blockers for %s\n", id)
-		} else {
-			fmt.Printf("Blockers for %s:\n", id)
-			for _, b := range blockers {
-				fmt.Printf("  %s (%s)\n", b.FromID, b.DepType)
-			}
+		fmt.Printf("Blockers for %s:\n", id)
+		for _, b := range blockers {
+			fmt.Printf("  %s (%s)\n", b.FromID, b.DepType)
 		}
 	}
 	return nil

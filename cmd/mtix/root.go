@@ -39,19 +39,22 @@ func isRouted(ctx context.Context) bool {
 // appContext holds shared state for all commands.
 // Initialized in PersistentPreRunE, available to all subcommands.
 type appContext struct {
-	store      *sqlite.Store
-	nodeSvc    *service.NodeService
-	ctxSvc     *service.ContextService
-	promptSvc  *service.PromptService
-	agentSvc   *service.AgentService
-	sessionSvc *service.SessionService
-	bgSvc      *service.BackgroundService
-	configSvc  *service.ConfigService
-	syncSvc    *service.SyncService
-	hooksDisp  *service.HooksDispatcher
-	logger     *slog.Logger
-	jsonOutput bool
-	mtixDir    string // Path to .mtix directory, set during initApp.
+	store       *sqlite.Store
+	nodeSvc     *service.NodeService
+	ctxSvc      *service.ContextService
+	promptSvc   *service.PromptService
+	agentSvc    *service.AgentService
+	sessionSvc  *service.SessionService
+	bgSvc       *service.BackgroundService
+	configSvc   *service.ConfigService
+	syncSvc     *service.SyncService
+	syncOptions syncServiceOptions // constructor dependencies for focused CLI tests
+	hooksDisp   *service.HooksDispatcher
+	logger      *slog.Logger
+	jsonOutput  bool
+	staleReason string         // command-local unverified auto-import freshness, reset on each pre-run
+	outputScope freshnessScope // explicit command mode; unknown commands receive no read metadata
+	mtixDir     string         // Path to .mtix directory, set during initApp.
 	// firstRunErr holds a refused host first-run record until a command that
 	// needs operator state reports it, once per process.
 	firstRunErr error
@@ -106,6 +109,7 @@ prompt chain propagation, and multi-agent orchestration.`,
 		"Run as if mtix was started in <dir> (the project containing .mtix/), like git -C")
 
 	registerRootCommands(rootCmd)
+	wrapFreshnessCompletion(rootCmd)
 
 	return rootCmd
 }
@@ -131,6 +135,8 @@ func applyProjectDir(cmd *cobra.Command, projectDir string) error {
 // persistentPreRun handles the PersistentPreRunE logic for the root command.
 // Extracted from newRootCmd to reduce cognitive complexity.
 func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error {
+	app.staleReason = ""
+	app.outputScope = commandFreshness(cmd, args)
 	if err := validateInboxCountFlags(cmd); err != nil {
 		return err
 	}
@@ -171,12 +177,7 @@ func autoImportForCommand(cmd *cobra.Command) {
 	// Auto-import tasks.json if hash changed (FR-15.2).
 	// Skip for excluded commands per FR-15.2c.
 	if app.syncSvc != nil && app.mtixDir != "" && !shouldSkipAutoImport(autoImportCommandPath(cmd)) && !isInboxCountCommand(cmd) {
-		// A refusal (MTIX-95.31.2) has already been printed by AutoImport,
-		// once for this command; logging it again would print it twice.
-		err := app.syncSvc.AutoImport(cmd.Context(), app.mtixDir)
-		if err != nil && !errors.Is(err, service.ErrAutoImportRefused) {
-			app.logger.Warn("auto-import failed", "error", err)
-		}
+		runCommandAutoImport(cmd)
 	}
 }
 
@@ -193,24 +194,12 @@ func skipsStoreInit(cmd *cobra.Command) bool {
 
 // initApp initializes the application context: logger, store, services.
 func initApp(cmd *cobra.Command, logLevel string) error {
-	// Configure logger.
-	level := slog.LevelInfo
-	switch logLevel {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-
-	app.logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: level,
-	}))
-
-	app.firstRunErr = hooks.RecordFirstRun()
-	if app.firstRunErr != nil {
-		app.logger.Debug("host first run not recorded", "error", app.firstRunErr)
+	initializeAppLogger(logLevel)
+	if !isTopLevelDoctor(cmd) {
+		app.firstRunErr = hooks.RecordFirstRun()
+		if app.firstRunErr != nil {
+			app.logger.Debug("host first run not recorded", "error", app.firstRunErr)
+		}
 	}
 
 	// Find .mtix directory.
@@ -243,48 +232,28 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 	// MTIX-95.31.19.5: history.export (default off) decides whether exports
 	// carry task history; the store reads it per export.
 	app.store.SetHistoryExportSource(app.configSvc.HistoryExport)
+	app.store.SetHistoryLimitSource(app.configSvc.HistoryMaxEntries) // MTIX-95.31.19.4: unset by default
 	app.store.SetWriterVersion(version)
 
-	// Resolve this process's author identity (MTIX-24): MTIX_AUTHOR_ID env >
-	// author_id config > "cli". An explicitly-set-but-invalid value is rejected
-	// loudly. The config-derived default is persisted into the store's meta so
-	// emits default to it; the env override is applied per-emit in the store.
-	appAuthor, metaAuthor, authErr := resolveProcessAuthor(app.configSvc.AuthorID())
-	if authErr != nil {
+	if authErr := initializeProcessAuthor(); authErr != nil {
 		return authErr
 	}
-	app.authorID = appAuthor
-	if metaAuthor != "" {
-		if setErr := app.store.SetDefaultAuthor(context.Background(), metaAuthor); setErr != nil {
-			app.logger.Warn("could not persist author_id to the store; emits use it only via env",
-				"error", setErr)
-		}
-	}
 
-	// Create broadcaster.
-	broadcaster := service.NewHub(app.logger)
-	clock := func() time.Time { return time.Now().UTC() }
-
-	// Wire services.
-	app.nodeSvc = service.NewNodeService(app.store, broadcaster, app.configSvc, app.logger, clock)
-	app.ctxSvc = service.NewContextService(app.store, app.configSvc, app.logger)
-	app.promptSvc = service.NewPromptService(app.store, broadcaster, app.logger, clock)
-	app.agentSvc = service.NewAgentService(app.store, broadcaster, app.configSvc, app.logger, clock)
-	app.sessionSvc = service.NewSessionService(app.store, app.configSvc, app.logger, clock)
-	app.bgSvc = service.NewBackgroundService(app.store, app.configSvc, app.logger, clock)
-	app.syncSvc = newSyncService(clock)
-	app.hooksDisp = service.NewHooksDispatcher(app.store, mtixDir, app.logger)
-	initializeHookApprovals(cmd, mtixDir)
-	setProjectDir(mtixDir) // app.mtixDir and, with a hub, app.payloadWarnings (MTIX-95.12)
+	initializeProjectServices(cmd, mtixDir)
 
 	return nil
+}
+
+// The zero value retains production dependencies; tests may override retry elapsed time.
+type syncServiceOptions struct {
+	retryClock func() time.Time
 }
 
 // newSyncService wires the tasks.json sync service (FR-15) for the opened
 // store, reading the sync.auto_sync switch from the project config
 // (MTIX-95.31.2).
-func newSyncService(clock func() time.Time) *service.SyncService {
-	svc := service.NewSyncService(app.store, app.logger, clock)
+func newSyncService(clock func() time.Time, options syncServiceOptions) *service.SyncService {
+	svc := service.NewSyncService(app.store, app.logger, clock, options.retryClock)
 	svc.SetAutoSyncConfig(app.configSvc)
 	svc.SetBinaryVersion(version)
 	svc.SetHistoryExportSource(app.configSvc.HistoryExport)

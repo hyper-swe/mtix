@@ -42,6 +42,10 @@ type AutoImportRefusal struct {
 	// would lose data, MTIX-95.31.4), so the way out mtix names says what
 	// the replace option deletes.
 	Loss string `json:"loss,omitempty"`
+	// Synced is true when the store synced with a hub or relay at the time
+	// of the refusal (MTIX-107.31): a replace import is refused there, so the
+	// way out mtix names does not offer it.
+	Synced bool `json:"synced,omitempty"`
 	// ResolvedAt is when the user resolved it deliberately (mtix sync
 	// --fix, or mtix import of that file), or empty.
 	ResolvedAt string `json:"resolved_at,omitempty"`
@@ -78,14 +82,13 @@ func (s *SyncService) recordRefusal(mtixDir, fileHash, kind, reason string) {
 // recordLossyRefusal records a refusal as recordRefusal does, with the
 // local data a replace of the file would delete (loss, MTIX-95.31.4).
 func (s *SyncService) recordLossyRefusal(mtixDir, fileHash, kind, reason, loss string) {
-	err := s.writeRefusal(mtixDir, &AutoImportRefusal{
-		RefusedAt: s.clock().UTC().Format(time.RFC3339),
-		FileHash:  fileHash,
-		Kind:      kind,
-		Reason:    reason,
-		Loss:      loss,
-	})
-	if err != nil {
+	s.recordRefusalOf(mtixDir, &AutoImportRefusal{FileHash: fileHash, Kind: kind, Reason: reason, Loss: loss})
+}
+
+// recordRefusalOf records refusal r, stamping the time it happened.
+func (s *SyncService) recordRefusalOf(mtixDir string, r *AutoImportRefusal) {
+	r.RefusedAt = s.clock().UTC().Format(time.RFC3339)
+	if err := s.writeRefusal(mtixDir, r); err != nil {
 		s.logger.Warn("could not record the auto-import refusal for mtix sync", "error", err)
 	}
 }

@@ -53,7 +53,7 @@ func checksumAs053(t *testing.T, data *sqlite.ExportData) string {
 // are left out (deleted_by beside deleted_at included), the envelope says
 // 1.0.0 and is otherwise unchanged, and the export passed in is not changed.
 func TestSchema100Form_EveryColumnNode_KeepsOnlyThe100Fields(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	createEveryColumnNode(t, s, "COL-1", 1)
 	_, err := s.WriteDB().ExecContext(context.Background(),
 		`UPDATE nodes SET deleted_at = ?, deleted_by = ? WHERE id = 'COL-1'`,
@@ -101,7 +101,7 @@ func TestSchema100Form_Checksum_ComputedAs053(t *testing.T) {
 		store func(t *testing.T) *sqlite.Store
 	}{
 		{"valid UTF-8", func(t *testing.T) *sqlite.Store {
-			s := newTestStore(t)
+			s := newFreshTestStore(t)
 			createEveryColumnNode(t, s, "COL-1", 1)
 			return s
 		}},
@@ -123,7 +123,7 @@ func TestSchema100Form_Checksum_ComputedAs053(t *testing.T) {
 // TestSchema100Form_StoreWithoutNodes_NodesStayNull verifies a store without
 // nodes keeps "nodes": null, as 0.5.3 encoded it, never an empty list.
 func TestSchema100Form_StoreWithoutNodes_NodesStayNull(t *testing.T) {
-	data, err := newTestStore(t).Export(context.Background(), "", "")
+	data, err := newFreshTestStore(t).Export(context.Background(), "", "")
 	require.NoError(t, err)
 	require.Nil(t, data.Nodes)
 

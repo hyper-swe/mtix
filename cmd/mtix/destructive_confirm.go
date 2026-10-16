@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hyper-swe/mtix/internal/oplocal"
 	"io"
 	"os"
 	"path/filepath"
@@ -52,11 +53,7 @@ var destructiveInput io.Reader = os.Stdin
 var destructiveStdinIsTerminal = stdinIsTerminal
 
 func stdinIsTerminal() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	return oplocal.OperatorTerminal(os.Stdin)
 }
 
 // errDestructiveRefused is the sentinel for every refusal the guard

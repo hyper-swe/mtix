@@ -50,7 +50,12 @@ func TestRunShow_DeferUntil_PrintsOnlyDeferredWakeTime(t *testing.T) {
 			require.NoError(t, err)
 			app.jsonOutput = true
 			gotJSON := captureStdout(t, func() { require.NoError(t, runShow(id)) })
-			assert.JSONEq(t, string(wantJSON), gotJSON)
+			var got map[string]any
+			require.NoError(t, json.Unmarshal([]byte(gotJSON), &got))
+			delete(got, "history") // the entries are checked in show_history_test.go
+			gotJSON2, err := json.Marshal(got)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(wantJSON), string(gotJSON2))
 		})
 	}
 }

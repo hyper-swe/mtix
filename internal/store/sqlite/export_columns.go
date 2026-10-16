@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // errUnreadableNodeColumn marks a nodes JSON column whose text does not
@@ -108,7 +110,9 @@ func encodeNodeColumns(n *exportNode) (exportNodeColumnValues, error) {
 	var errs [4]error
 	v.codeRefs, errs[0] = marshalJSONField(n.CodeRefs)
 	v.commitRefs, errs[1] = marshalJSONField(n.CommitRefs)
-	v.annotations, errs[2] = marshalJSONField(n.Annotations)
+	// Annotations are stored in the canonical (created_at, id) order
+	// (MTIX-100.2), whatever order the file lists them in.
+	v.annotations, errs[2] = marshalJSONField(model.SortAnnotations(n.Annotations))
 	v.activity, errs[3] = marshalJSONField(n.Activity)
 	if err := errors.Join(errs[:]...); err != nil {
 		return v, fmt.Errorf("encode columns of node %s: %w", n.ID, err)

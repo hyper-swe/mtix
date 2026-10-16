@@ -2994,6 +2994,11 @@ closed instead of wiping a store. A verified snapshot is written to
 deleted. The same rule applies to `mtix import --mode replace`. See
 `docs/DESTRUCTIVE-COMMANDS.md` for the full inventory.
 
+`--rename-to` and `--import-as` move every local ticket to its new id in
+one transaction. Each moved ticket takes the project, number and depth
+of its new id, so `--project` filters, `mtix projects`, `mtix tree` and
+new child tickets see it in its new place.
+
 **Audit-trail note:** when two CLIs share `authorID="cli"` (the
 default), their concurrent edits produce vector clocks that are
 `Equal()` rather than `Concurrent()`. LWW still resolves the

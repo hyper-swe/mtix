@@ -185,7 +185,7 @@ func TestHookScanFloor_ClampedBelowClaims(t *testing.T) {
 // TestHookLedger_Prune: compaction deletes terminal rows at/below the floor,
 // keeps rows above it, and NEVER deletes a 'claimed' row (its re-fire evidence).
 func TestHookLedger_Prune(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 
 	for seq := int64(1); seq <= 4; seq++ {

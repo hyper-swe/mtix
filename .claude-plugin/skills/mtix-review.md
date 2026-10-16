@@ -27,7 +27,7 @@ Every completed (`done`) task must have:
 3. **Context chain completeness** — the assembled prompt from root→node provides enough detail for independent execution
 4. **Traceability comment** — linking task → requirement → test → result
 
-Read the comments and review verdicts already on a node with `mtix show <id>`: it prints every annotation, oldest first, with its author and timestamp, and marks resolved ones. It normalizes the text it prints (control characters removed, whitespace trimmed), so quote a verdict exactly from `--json`, which gives the complete, unaltered record. `mtix context` includes only unresolved annotations.
+Read the comments and review verdicts already on a node with `mtix show <id>`: it prints every annotation, oldest first, with its author and timestamp, and marks resolved ones. It normalizes the text it prints (control characters, bidirectional controls and zero-width characters removed, whitespace trimmed), so quote a verdict exactly from `--json`, which gives the complete, unaltered record. `mtix context` includes only unresolved annotations.
 
 ### Finding Incomplete Tasks
 Use `mcp__mtix__mtix_search` (filters such as `status`, plus `query` words matched against title, description and prompt) to find tasks with missing fields:

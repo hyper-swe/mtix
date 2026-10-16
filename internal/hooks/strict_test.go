@@ -306,18 +306,24 @@ func fakeEnv(t *testing.T) string {
 }
 
 func TestStrict_On_WrapperThatIsNotAKnownEnvNeedsProgramApproval(t *testing.T) {
-	wrapper, err := filepath.EvalSymlinks(fakeEnv(t))
+	target, err := filepath.EvalSymlinks(fakeEnv(t))
 	require.NoError(t, err)
-	f := strictFixture(t, "["+wrapper+", sh, scripts/run.sh]")
+	link := filepath.Join(t.TempDir(), "env")
+	require.NoError(t, os.Symlink(target, link))
+	f := strictFixture(t, "["+link+", sh, scripts/run.sh]")
 	_, err = f.approvals.PrepareExec(f.hook(t))
 	require.Error(t, err, "a program named env outside the PATH directories is not the known env")
 	require.Contains(t, err.Error(), "strict program mode")
 	program, err := f.approvals.ApproveProgram(f.hook(t), true)
 	require.NoError(t, err, "the wrapper itself is what the operator approves")
-	require.Equal(t, wrapper, program)
+	require.Equal(t, target, program, "the approval is bound to the symlink-resolved wrapper")
 	plan, err := f.approvals.PrepareExec(f.hook(t))
 	require.NoError(t, err)
-	require.Equal(t, wrapper, plan.Argv[0])
+	require.Equal(t, target, plan.Argv[0], "the wrapper slot is pinned to the resolved path")
+	wrapped, err := resolveLauncher(f.root, "sh")
+	require.NoError(t, err)
+	require.Equal(t, wrapped, plan.Argv[1], "the wrapped program is left as launched, never overwritten by the pin")
+	require.Contains(t, plan.Audit(), link+"="+target)
 }
 
 func TestStrict_On_KnownEnvInAPathDirectoryNeedsNoApproval(t *testing.T) {

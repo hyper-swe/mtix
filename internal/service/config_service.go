@@ -37,6 +37,7 @@ var validConfigKeys = map[string]bool{
 	"data.dir":                     true,
 	"data.soft_delete_retention":   true,
 	"history.export":               true,
+	"history.max_entries_per_task": true,
 	"sync.enabled":                 true,
 	"sync.endpoint":                true,
 	"sync.team_id":                 true,
@@ -93,7 +94,8 @@ var valueValidators = map[string]func(string) error{
 		_, err := parseAutoSync(v)
 		return err
 	},
-	"history.export": validateHistoryExport, // MTIX-95.31.19.5
+	"history.export":               validateHistoryExport,     // MTIX-95.31.19.5
+	"history.max_entries_per_task": validateHistoryMaxEntries, // MTIX-95.31.19.4
 }
 
 // serverRestartKeys are keys that affect a running server and require restart.
@@ -110,25 +112,26 @@ var serverRestartKeys = map[string]bool{
 
 // configDefaults contains default values for all 38 keys per FR-11.2.
 var configDefaults = map[string]string{
-	"prefix":                     "PROJ",
-	"author_id":                  "",
-	"mcp.read_only":              "false",
-	"api.bind":                   "127.0.0.1",
-	"api.http_port":              "6849",
-	"api.grpc_port":              "6850",
-	"api.rate_limit":             "100",
-	"mcp.enabled":                "true",
-	"mcp.transport":              "stdio",
-	"data.dir":                   ".mtix/data",
-	"data.soft_delete_retention": "30d",
-	"history.export":             "false",
-	"sync.enabled":               "false",
-	"sync.endpoint":              "",
-	"sync.team_id":               "",
-	"sync.max_lamport_jump":      maxLamportJumpDefault,
-	"sync.auto_sync":             "true",
-	"sync.interval":              "30s",
-	"sync.keep_roles":            "",
+	"prefix":                       "PROJ",
+	"author_id":                    "",
+	"mcp.read_only":                "false",
+	"api.bind":                     "127.0.0.1",
+	"api.http_port":                "6849",
+	"api.grpc_port":                "6850",
+	"api.rate_limit":               "100",
+	"mcp.enabled":                  "true",
+	"mcp.transport":                "stdio",
+	"data.dir":                     ".mtix/data",
+	"data.soft_delete_retention":   "30d",
+	"history.export":               "false",
+	"history.max_entries_per_task": "",
+	"sync.enabled":                 "false",
+	"sync.endpoint":                "",
+	"sync.team_id":                 "",
+	"sync.max_lamport_jump":        maxLamportJumpDefault,
+	"sync.auto_sync":               "true",
+	"sync.interval":                "30s",
+	"sync.keep_roles":              "",
 	// EXPERIMENTAL, opt-in file relay. An empty relay directory means no
 	// relay is configured; every relay phase is then a no-op rather than
 	// an error.

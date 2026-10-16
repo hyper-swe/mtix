@@ -675,7 +675,9 @@ Sync checks run only for configured transports. An unused Postgres transport is
 not checked on a relay-only board. WARN and INFO are advisory: exit 0 when no
 check fails, or 2 when any check reports FAIL.
 
---json emits an array with exactly id, status, detail and fix for each check.
+--json emits an array with id, status, detail and fix for each check; a check may add
+a data object of machine-readable numbers (the history.size row does), and rows
+without one have exactly the four fields.
 --fix performs only explicitly registered non-grant repairs and rechecks them.
 Grant commands are printed for you to run yourself; they are never executed.
 
@@ -1364,6 +1366,11 @@ Show a node's details and annotations as labeled lines, in this order:
                whitespace or control characters), further lines indented
   Progress     progress bar
   Created      creation time
+  History      with --history: the change history, newest first, at most
+               --history-limit entries (default 50), one line each with the
+               UTC time, field, actor, origin and, for a structured field,
+               the old and new value; free-text fields show no text.
+               --json always includes the same list as "history"
 
 Annotation text, author and addressee, the description and the prompt are
 normalized for the terminal: control characters other than newline and tab
@@ -1378,6 +1385,13 @@ text from --json.
 Acceptance criteria, labels, dependencies, activity and the full prompt are
 not printed. Use --json for the complete node record, including every
 annotation.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--history` |  | Also list the task's change history, newest first (always included in --json) | false |
+| `--history-limit` |  | Most history entries to list with --history and in --json | 50 |
 ---
 
 ## stale

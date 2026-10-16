@@ -13,11 +13,15 @@ import (
 )
 
 func openAlertLock(dir *os.File, create bool) (*os.File, error) {
+	return openNamedLock(dir, "alerts.lock", create)
+}
+
+func openNamedLock(dir *os.File, name string, create bool) (*os.File, error) {
 	disposition := uint32(windows.FILE_OPEN)
 	if create {
 		disposition = windows.FILE_OPEN_IF
 	}
-	f, err := relativeOpen(dir, "alerts.lock", windows.FILE_NON_DIRECTORY_FILE, disposition, windows.GENERIC_READ|windows.GENERIC_WRITE)
+	f, err := relativeOpen(dir, name, windows.FILE_NON_DIRECTORY_FILE, disposition, windows.GENERIC_READ|windows.GENERIC_WRITE)
 	if err != nil {
 		return nil, err
 	}

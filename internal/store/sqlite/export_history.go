@@ -200,8 +200,15 @@ func checkHistoryEntry(e exportHistoryEntry) error {
 // (not a task uid) is skipped and counted. The union is idempotent and does
 // not depend on the order of the entries; an entry id the file itself repeats
 // with different content is skipped whole (see uniqueEntries).
-func insertExportHistory(ctx context.Context, tx *sql.Tx, data *ExportData, result *ImportResult) error {
+func insertExportHistory(ctx context.Context, tx *sql.Tx, data *ExportData, result *ImportResult, now time.Time) error {
 	u := historyUnion{}
+	if !now.IsZero() { // a caller with no clock applies no skew limit
+		u.now = now.UTC().Format(historyTimeLayout)
+		u.latest = now.UTC().Add(historyFutureSkew).Format(historyTimeLayout)
+	}
+	if err := u.loadCutoffs(ctx, tx); err != nil {
+		return err
+	}
 	for _, e := range u.uniqueEntries(data) {
 		if err := u.add(ctx, tx, e); err != nil {
 			return err

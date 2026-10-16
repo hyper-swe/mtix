@@ -162,7 +162,7 @@ func (s *Store) Import(
 		if mode == ImportModeReplace {
 			result, applyErr = replaceAllData(ctx, tx, data)
 			if applyErr == nil {
-				applyErr = insertExportHistory(ctx, tx, data, &result)
+				applyErr = insertExportHistory(ctx, tx, data, &result, s.clock())
 			}
 		} else {
 			result, applyErr = mergeAllData(ctx, tx, data, workflowPolicy{cfg.workflow, s.clock()})

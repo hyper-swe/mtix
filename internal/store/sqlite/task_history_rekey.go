@@ -32,6 +32,9 @@ func rekeyHistoryExact(ctx context.Context, tx *sql.Tx, oldKey, newKey string) e
 		oldKey, newKey); err != nil {
 		return fmt.Errorf("rekey history %s -> %s: drop duplicates: %w", oldKey, newKey, err)
 	}
+	if err := rekeyCutoffExact(ctx, tx, oldKey, newKey); err != nil {
+		return err
+	}
 	// Rows of a task keyed by its id move with the id.
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE task_history SET task_uid = ? WHERE task_uid = ?`, newKey, oldKey); err != nil {
@@ -54,6 +57,9 @@ func rekeyHistorySubtree(ctx context.Context, tx *sql.Tx, oldID, newID string) e
 		                   AND n.event_id = task_history.event_id AND n.field = task_history.field)`,
 		oldID, oldID+".", oldID+"/", newID, len(oldID)+1); err != nil {
 		return fmt.Errorf("rekey history subtree %s -> %s: drop duplicates: %w", oldID, newID, err)
+	}
+	if err := rekeyCutoffSubtree(ctx, tx, oldID, newID); err != nil {
+		return err
 	}
 	// Rows keyed by the subtree's ids: the root, and "oldID." descendants.
 	if _, err := tx.ExecContext(ctx,
@@ -88,6 +94,40 @@ func rekeyFilledHistory(ctx context.Context, tx *sql.Tx, ids []string) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+// rekeyCutoffExact moves the store-local retention cutoff of oldKey to newKey
+// with the task's history, keeping the newer cutoff when newKey has one
+// (MTIX-95.31.19.4), so the task keeps its resurrection protection.
+func rekeyCutoffExact(ctx context.Context, tx *sql.Tx, oldKey, newKey string) error {
+	// Carry the cutoff to the new key, the newer one winning.
+	if _, err := tx.ExecContext(ctx, `INSERT INTO history_retention_cutoff (task_uid, cutoff_ts, updated_at)
+		SELECT ?, cutoff_ts, updated_at FROM history_retention_cutoff WHERE task_uid = ?
+		ON CONFLICT (task_uid) DO UPDATE SET cutoff_ts = MAX(cutoff_ts, excluded.cutoff_ts)`, newKey, oldKey); err != nil {
+		return fmt.Errorf("rekey history cutoff %s -> %s: %w", oldKey, newKey, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM history_retention_cutoff WHERE task_uid = ?`, oldKey); err != nil {
+		return fmt.Errorf("rekey history cutoff %s -> %s: drop old: %w", oldKey, newKey, err)
+	}
+	return nil
+}
+
+// rekeyCutoffSubtree is rekeyCutoffExact for oldID and every descendant id,
+// by the same prefix substitution as the history.
+func rekeyCutoffSubtree(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
+	// Carry each cutoff of the subtree to its substituted key, the newer one winning.
+	if _, err := tx.ExecContext(ctx, `INSERT INTO history_retention_cutoff (task_uid, cutoff_ts, updated_at)
+		SELECT ? || SUBSTR(task_uid, ?), cutoff_ts, updated_at FROM history_retention_cutoff
+		WHERE task_uid = ? OR (task_uid >= ? AND task_uid < ?)
+		ON CONFLICT (task_uid) DO UPDATE SET cutoff_ts = MAX(cutoff_ts, excluded.cutoff_ts)`,
+		newID, len(oldID)+1, oldID, oldID+".", oldID+"/"); err != nil {
+		return fmt.Errorf("rekey history cutoffs %s -> %s: %w", oldID, newID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM history_retention_cutoff WHERE task_uid = ? OR (task_uid >= ? AND task_uid < ?)`,
+		oldID, oldID+".", oldID+"/"); err != nil {
+		return fmt.Errorf("rekey history cutoffs %s -> %s: drop old: %w", oldID, newID, err)
 	}
 	return nil
 }

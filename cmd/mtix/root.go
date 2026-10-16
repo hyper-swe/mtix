@@ -193,24 +193,12 @@ func skipsStoreInit(cmd *cobra.Command) bool {
 
 // initApp initializes the application context: logger, store, services.
 func initApp(cmd *cobra.Command, logLevel string) error {
-	// Configure logger.
-	level := slog.LevelInfo
-	switch logLevel {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-
-	app.logger = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: level,
-	}))
-
-	app.firstRunErr = hooks.RecordFirstRun()
-	if app.firstRunErr != nil {
-		app.logger.Debug("host first run not recorded", "error", app.firstRunErr)
+	initializeAppLogger(logLevel)
+	if !isTopLevelDoctor(cmd) {
+		app.firstRunErr = hooks.RecordFirstRun()
+		if app.firstRunErr != nil {
+			app.logger.Debug("host first run not recorded", "error", app.firstRunErr)
+		}
 	}
 
 	// Find .mtix directory.
@@ -243,39 +231,14 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 	// MTIX-95.31.19.5: history.export (default off) decides whether exports
 	// carry task history; the store reads it per export.
 	app.store.SetHistoryExportSource(app.configSvc.HistoryExport)
+	app.store.SetHistoryLimitSource(app.configSvc.HistoryMaxEntries) // MTIX-95.31.19.4: unset by default
 	app.store.SetWriterVersion(version)
 
-	// Resolve this process's author identity (MTIX-24): MTIX_AUTHOR_ID env >
-	// author_id config > "cli". An explicitly-set-but-invalid value is rejected
-	// loudly. The config-derived default is persisted into the store's meta so
-	// emits default to it; the env override is applied per-emit in the store.
-	appAuthor, metaAuthor, authErr := resolveProcessAuthor(app.configSvc.AuthorID())
-	if authErr != nil {
+	if authErr := initializeProcessAuthor(); authErr != nil {
 		return authErr
 	}
-	app.authorID = appAuthor
-	if metaAuthor != "" {
-		if setErr := app.store.SetDefaultAuthor(context.Background(), metaAuthor); setErr != nil {
-			app.logger.Warn("could not persist author_id to the store; emits use it only via env",
-				"error", setErr)
-		}
-	}
 
-	// Create broadcaster.
-	broadcaster := service.NewHub(app.logger)
-	clock := func() time.Time { return time.Now().UTC() }
-
-	// Wire services.
-	app.nodeSvc = service.NewNodeService(app.store, broadcaster, app.configSvc, app.logger, clock)
-	app.ctxSvc = service.NewContextService(app.store, app.configSvc, app.logger)
-	app.promptSvc = service.NewPromptService(app.store, broadcaster, app.logger, clock)
-	app.agentSvc = service.NewAgentService(app.store, broadcaster, app.configSvc, app.logger, clock)
-	app.sessionSvc = service.NewSessionService(app.store, app.configSvc, app.logger, clock)
-	app.bgSvc = service.NewBackgroundService(app.store, app.configSvc, app.logger, clock)
-	app.syncSvc = newSyncService(clock)
-	app.hooksDisp = service.NewHooksDispatcher(app.store, mtixDir, app.logger)
-	initializeHookApprovals(cmd, mtixDir)
-	setProjectDir(mtixDir) // app.mtixDir and, with a hub, app.payloadWarnings (MTIX-95.12)
+	initializeProjectServices(cmd, mtixDir)
 
 	return nil
 }

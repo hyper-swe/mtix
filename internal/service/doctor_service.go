@@ -33,6 +33,10 @@ type DoctorResult struct {
 	Status DoctorStatus `json:"status"`
 	Detail string       `json:"detail"`
 	Fix    string       `json:"fix"`
+	// Data carries optional machine-readable detail of a check, such as sizes
+	// and counts (MTIX-95.31.19.4). Omitted when empty, so every row without it
+	// keeps exactly the four fields above.
+	Data map[string]any `json:"data,omitempty"`
 }
 
 // DoctorCheck registers one feature's diagnostic and optional typed repair.

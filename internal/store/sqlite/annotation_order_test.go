@@ -112,18 +112,26 @@ func TestCreateNode_AnnotationsOutOfOrder_StoredInCanonicalOrder(t *testing.T) {
 	require.Equal(t, []string{"A", "B", "C", "D"}, rawAnnotationIDs(t, raw, "MTIX-1"))
 }
 
+// legacyOrderFile puts the annotations of the file's first node in
+// insertion order, as a file written by an older mtix lists them, and
+// refreshes the checksum.
+func legacyOrderFile(t *testing.T, data *ExportData) {
+	t.Helper()
+	data.Nodes[0].Annotations = outOfOrderAnnotations()
+	require.NoError(t, RecomputeExportChecksum(data))
+}
+
 // TestImport_AnnotationsStoredOutOfOrder_StoredInCanonicalOrder verifies the
-// import insert path stores the canonical order in the raw column. The
-// source holds the annotations in insertion order, as the export reads the
-// raw column.
+// import insert path stores the canonical order in the raw column, whatever
+// order the file lists the annotations in.
 func TestImport_AnnotationsStoredOutOfOrder_StoredInCanonicalOrder(t *testing.T) {
 	ctx := context.Background()
 	src, _ := applyTestStore(t)
 	require.NoError(t, applyOnce(t, src, makeApplyEvent(t, model.OpCreateNode, "MTIX-1", "alice", 1,
 		&model.CreateNodePayload{Title: "x"})))
-	storeInsertionOrder(t, src, "MTIX-1")
 	data, err := src.Export(ctx, "MTIX", "0.1.0")
 	require.NoError(t, err)
+	legacyOrderFile(t, data) // a file an older mtix wrote
 	dst, raw := applyTestStore(t)
 	_, err = dst.Import(ctx, data, ImportModeReplace, true)
 	require.NoError(t, err)
@@ -152,4 +160,90 @@ func TestGetNode_AnnotationsStoredInInsertionOrder_ListedCanonically(t *testing.
 	n, err := s.GetNode(ctx, "MTIX-1")
 	require.NoError(t, err)
 	require.Equal(t, []string{"A", "B", "C", "D"}, annotationIDs(n.Annotations))
+}
+
+// exportJSONNoTime returns the store's export as JSON without its export time.
+func exportJSONNoTime(t *testing.T, s *Store) string {
+	t.Helper()
+	data, err := s.Export(context.Background(), "", "")
+	require.NoError(t, err)
+	data.ExportedAt = ""
+	b, err := json.Marshal(data)
+	require.NoError(t, err)
+	return string(b)
+}
+
+// TestImport_ReplaceOfUnchangedFile_LegacyOrderedRow_IsNoOp verifies a replace
+// import (the mode sync auto-import uses) of an unchanged export over a row
+// whose annotations are stored out of order writes no history entry and
+// leaves the export byte-identical (MTIX-100.2).
+func TestImport_ReplaceOfUnchangedFile_LegacyOrderedRow_IsNoOp(t *testing.T) {
+	ctx := context.Background()
+	s, _ := applyTestStore(t)
+	require.NoError(t, applyOnce(t, s, makeApplyEvent(t, model.OpCreateNode, "MTIX-1", "alice", 1,
+		&model.CreateNodePayload{Title: "x"})))
+	storeInsertionOrder(t, s, "MTIX-1")
+	var before int
+	require.NoError(t, s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM task_history`).Scan(&before))
+	first := exportJSONNoTime(t, s)
+	data, err := s.Export(ctx, "", "")
+	require.NoError(t, err)
+
+	_, err = s.Import(ctx, data, ImportModeReplace, true)
+	require.NoError(t, err)
+
+	var after int
+	require.NoError(t, s.ReadDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM task_history`).Scan(&after))
+	require.Equal(t, before, after, "an unchanged file records no history entry")
+	require.Equal(t, first, exportJSONNoTime(t, s), "the export is byte-identical")
+}
+
+// mergeFixture returns a store dst holding MTIX-1 with legacy-ordered
+// annotations, and an export of a copy of the same task (same uid) after
+// change ran on that copy's row, for a merge import into dst.
+func mergeFixture(t *testing.T, change string) (*Store, *sql.DB, *ExportData) {
+	t.Helper()
+	ctx := context.Background()
+	dst, raw := applyTestStore(t)
+	require.NoError(t, applyOnce(t, dst, makeApplyEvent(t, model.OpCreateNode, "MTIX-1", "alice", 1,
+		&model.CreateNodePayload{Title: "x"})))
+	storeInsertionOrder(t, dst, "MTIX-1")
+	base, err := dst.Export(ctx, "", "")
+	require.NoError(t, err)
+	src, _ := applyTestStore(t)
+	_, err = src.Import(ctx, base, ImportModeReplace, true)
+	require.NoError(t, err)
+	_, err = src.WriteDB().ExecContext(ctx, change)
+	require.NoError(t, err)
+	data, err := src.Export(ctx, "", "")
+	require.NoError(t, err)
+	legacyOrderFile(t, data)
+	return dst, raw, data
+}
+
+// TestImport_MergeUpdatePath_StoresCanonicalAnnotationOrder verifies a merge
+// import that takes the file's newer content stores the annotations in
+// canonical order in the raw column (updateExportNode), though the union
+// kept the local list unchanged.
+func TestImport_MergeUpdatePath_StoresCanonicalAnnotationOrder(t *testing.T) {
+	dst, raw, data := mergeFixture(t,
+		`UPDATE nodes SET title = 'changed', content_hash = 'h-changed', updated_at = '2099-01-01T00:00:00Z' WHERE id = 'MTIX-1'`)
+	_, err := dst.Import(context.Background(), data, ImportModeMerge, true)
+	require.NoError(t, err)
+	n, err := dst.GetNode(context.Background(), "MTIX-1")
+	require.NoError(t, err)
+	require.Equal(t, "changed", n.Title, "the update path ran")
+	require.Equal(t, []string{"A", "B", "C", "D"}, rawAnnotationIDs(t, raw, "MTIX-1"))
+}
+
+// TestImport_MergeStreamsPath_StoresCanonicalAnnotationOrder verifies a merge
+// import that changes only the activity stream stores the annotations in
+// canonical order in the raw column (writeNodeStreams).
+func TestImport_MergeStreamsPath_StoresCanonicalAnnotationOrder(t *testing.T) {
+	dst, raw, data := mergeFixture(t,
+		`UPDATE nodes SET activity = '[{"id":"ACT-NEW","type":"comment","author":"bob","created_at":"2026-09-02T09:00:00Z"}]' WHERE id = 'MTIX-1'`)
+	_, err := dst.Import(context.Background(), data, ImportModeMerge, true)
+	require.NoError(t, err)
+	require.Contains(t, readNodeColumn(t, raw, "MTIX-1", "activity"), "ACT-NEW", "the streams path ran")
+	require.Equal(t, []string{"A", "B", "C", "D"}, rawAnnotationIDs(t, raw, "MTIX-1"))
 }

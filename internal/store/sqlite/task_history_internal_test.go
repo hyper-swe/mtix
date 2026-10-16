@@ -94,6 +94,9 @@ func TestHistoryFields_EveryNodesColumnIsRecordedOrExcluded(t *testing.T) {
 		strings.TrimSpace(historySubtreeSQL[:strings.Index(historySubtreeSQL, "FROM nodes")]), "both statements read the same columns")
 }
 
+// ann returns a valid annotations column value holding text.
+func ann(text string) sql.NullString { return sql.NullString{String: text, Valid: true} }
+
 func TestSameHistoryValue_EmptyForms_AreOneValue(t *testing.T) {
 	null, empty, list := sql.NullString{}, sql.NullString{Valid: true}, sql.NullString{String: "[]", Valid: true}
 	tests := []struct {
@@ -107,6 +110,11 @@ func TestSameHistoryValue_EmptyForms_AreOneValue(t *testing.T) {
 		{"code_refs", null, list, true},
 		{"commit_refs", list, empty, true},
 		{"annotations", list, null, true},
+		{"annotations", ann(`[{"id":"B","created_at":"2026-09-01T09:00:00Z"},{"id":"A","created_at":"2026-09-01T09:00:00Z"}]`),
+			ann(`[{"id":"A","created_at":"2026-09-01T09:00:00Z"},{"id":"B","created_at":"2026-09-01T09:00:00Z"}]`), true}, // MTIX-100.2: order alone is no change
+		{"annotations", ann(`[{"id":"A","created_at":"2026-09-01T09:00:00Z","text":"x"}]`),
+			ann(`[{"id":"A","created_at":"2026-09-01T09:00:00Z","text":"y"}]`), false},
+		{"annotations", ann(`not json`), ann(`[]`), false},
 		{"assignee", null, list, false}, // "[]" is only an empty list for a list field
 		{"status", empty, sql.NullString{String: "open", Valid: true}, false},
 	}

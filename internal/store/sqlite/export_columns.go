@@ -60,12 +60,17 @@ type exportNodeJSON struct {
 func (j *exportNodeJSON) decodeInto(n *exportNode) error {
 	n.EstimateMin = nullIntPtr(j.estimateMin)
 	n.ActualMin = nullIntPtr(j.actualMin)
-	return errors.Join(
+	err := errors.Join(
 		decodeNodeColumn(n.ID, columnCodeRefs, j.codeRefs, &n.CodeRefs),
 		decodeNodeColumn(n.ID, columnCommitRefs, j.commitRefs, &n.CommitRefs),
 		decodeNodeColumn(n.ID, columnAnnotations, j.annotations, &n.Annotations),
 		decodeNodeColumn(n.ID, columnActivity, j.activity, &n.Activity),
 	)
+	// A row saved before MTIX-100.2 may hold annotations in insertion order;
+	// the export lists them in the canonical (created_at, id) order, as every
+	// store now writes them, so importing the file back changes nothing.
+	n.Annotations = model.SortAnnotations(n.Annotations)
+	return err
 }
 
 // decodeNodeColumn decodes one JSON-array column of node id into dest

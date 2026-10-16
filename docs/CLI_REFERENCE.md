@@ -80,12 +80,41 @@ Manage agent lifecycle
 
 ### Subcommands
 
+- `allow <agent-id>` — allow this host's wake permission for an agent
+- `deny <agent-id>` — deny this host's wake permission for an agent
 - `heartbeat <agent-id>` — Send a heartbeat for an agent
 - `list --registrations` — List session registrations on this host
+- `permissions` — Inspect and recover this host's wake permission batches
 - `register <agent-id>` — Register an agent and this session, or refresh them
 - `state <agent-id>` — Get or set agent state
 - `unregister <agent-id>` — Remove this host's session registration for an agent id
 - `work <agent-id>` — Show current work assignment for an agent
+---
+
+## allow
+
+**Usage:** `allow <agent-id>`
+
+allow this host's wake permission for an agent
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--yes` |  | Record a non-interactive confirmation, including in a harness session | false |
+---
+
+## deny
+
+**Usage:** `deny <agent-id>`
+
+deny this host's wake permission for an agent
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--yes` |  | Record a non-interactive confirmation, including in a harness session | false |
 ---
 
 ## heartbeat
@@ -110,6 +139,32 @@ exists and whether the row is held. Use --json for machine-readable output.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--registrations` |  | List session registrations | false |
+---
+
+## permissions
+
+**Usage:** `permissions`
+
+Inspect and recover this host's wake permission batches
+
+### Subcommands
+
+- `recover` — List stuck batches and quarantine holds, or cancel an uncommitted batch with audit
+---
+
+## recover
+
+**Usage:** `recover`
+
+List stuck batches and quarantine holds, or cancel an uncommitted batch with audit
+
+List this host's pending wake permission batches and legacy quarantine holds. A quarantine hold is cleared only by a fresh operator allow in that board checkout; the file API cannot clear it. Use --cancel <batch-id> to cancel or quarantine its uncommitted allows, preserve accepted denies and committed state, and permanently refuse stale caller retries. Cancellation never grants permission.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--cancel` |  | Cancel this pending caller batch id with durable audit; never grants permission |  |
 ---
 
 ## register
@@ -680,6 +735,7 @@ a data object of machine-readable numbers (the history.size row does), and rows
 without one have exactly the four fields.
 --fix performs only explicitly registered non-grant repairs and rechecks them.
 Grant commands are printed for you to run yourself; they are never executed.
+Without --fix, operator-local files, including attach artifacts, stay unchanged.
 
 The read-only docs.stale check compares board-root MTIX.md with this binary
 and checks live native pointers. WARN prints mtix -C <board-root> docs generate;

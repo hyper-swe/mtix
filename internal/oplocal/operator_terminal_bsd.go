@@ -3,8 +3,8 @@
 
 //go:build darwin || freebsd || openbsd || netbsd || dragonfly
 
-package main
+package oplocal
 
 import "golang.org/x/sys/unix"
 
-const terminalRequest = unix.TIOCGETA
+const operatorTerminalRequest = unix.TIOCGETA

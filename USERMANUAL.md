@@ -3452,7 +3452,7 @@ evidence of a hub or relay: sync or relay keys in `.mtix/config.yaml`, a DSN in
 the environment by a sync command that actually connected. A DSN that is only
 exported in the shell never marks a board. The mark stays set when the keys or
 credentials are later removed, because the board has already exchanged events.
-The mark is stored the first time `mtix sync doctor` finds evidence (sync or
+The mark is stored the first time `mtix doctor` or `mtix sync doctor` finds evidence (sync or
 relay keys, a secrets DSN or an applied-event record), or the first time
 `mtix sync init`, `clone`, `pull` or `push` connects to the hub. A hub event
 applied to the board also stores it. `mtix sync relay attach`, `mtix sync status`

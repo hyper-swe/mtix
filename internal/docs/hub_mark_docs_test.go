@@ -6,6 +6,7 @@ package docs
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -17,6 +18,10 @@ import (
 // after a successful hub connection. Relay attach, sync status and a failed
 // connect do not store it, so the docs must not claim that any sync command
 // does, nor that doctor stores it on every run.
+// Both the top-level doctor and the sync doctor run appendHubMarkCheck, so both
+// store the mark when they find evidence.
+var doctorStoresMark = regexp.MustCompile("`mtix doctor` (?:or|and) `mtix sync doctor` (?:finds|store the mark the first time they find) evidence \\(sync or relay keys, a secrets DSN or an applied-event record\\)")
+
 func TestHubMarkDocs_StoredBy_NamesTheCommandsThatStoreIt(t *testing.T) {
 	files := []string{
 		"USERMANUAL.md",
@@ -32,7 +37,6 @@ func TestHubMarkDocs_StoredBy_NamesTheCommandsThatStoreIt(t *testing.T) {
 		"`mtix sync doctor` stores the mark the first time it runs",
 	}
 	required := []string{
-		"finds evidence (sync or relay keys, a secrets DSN or an applied-event record)",
 		"`mtix sync init`, `clone`, `pull` and `push` ",
 		"`mtix sync relay attach`, `mtix sync status` and a failed connection do not",
 	}
@@ -44,6 +48,7 @@ func TestHubMarkDocs_StoredBy_NamesTheCommandsThatStoreIt(t *testing.T) {
 			for _, f := range forbidden {
 				require.NotContains(t, text, f, "overclaim about which commands store the mark")
 			}
+			require.Truef(t, doctorStoresMark.MatchString(text), "doctor sentence missing or wrong")
 			for _, r := range required {
 				alt := strings.NewReplacer(" and `push` ", " or `push` ", " and a failed connection do not", " and a connection that fails do not").Replace(r)
 				require.Truef(t, strings.Contains(text, r) || strings.Contains(text, alt), "missing %q", r)

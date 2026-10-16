@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -18,7 +19,8 @@ import (
 type DrainAttachPendingResult struct{ Processed, Dropped int }
 
 // DrainAttachPending validates untrusted routing requests before any operator
-// write. A failed write or alert leaves the row available for an honest retry.
+// write. Transient write or alert failures keep retry rows without blocking later
+// requests. Permanent routing conflicts are rejected with an alert.
 func (s *RegistrationService) DrainAttachPending(ctx context.Context, board AttachBoard) (DrainAttachPendingResult, error) {
 	var result DrainAttachPendingResult
 	if s.Routing == nil || board != s.Routing.Board {
@@ -35,11 +37,13 @@ func (s *RegistrationService) DrainAttachPending(ctx context.Context, board Atta
 	if err != nil {
 		return result, err
 	}
+	var drainErr error
 	for _, row := range rows {
-		dropped, removed, rowErr := s.drainAttachRow(ctx, store, row)
-		if rowErr != nil {
-			return result, rowErr
+		if contextErr := ctx.Err(); contextErr != nil {
+			return result, fmt.Errorf("drain attach pending: %w", errors.Join(drainErr, contextErr))
 		}
+		dropped, removed, rowErr := s.drainAttachRow(ctx, store, row)
+		drainErr = errors.Join(drainErr, rowErr)
 		if removed {
 			if dropped {
 				result.Dropped++
@@ -48,17 +52,19 @@ func (s *RegistrationService) DrainAttachPending(ctx context.Context, board Atta
 			}
 		}
 	}
-	return result, nil
+	return result, drainErr
 }
 
 func (s *RegistrationService) drainAttachRow(ctx context.Context, store AttachPendingStore, row sqlite.AttachPending) (bool, bool, error) {
-	payload, err := s.validateAttachRow(row)
-	dropped := err != nil
+	payload, validationErr := s.validateAttachRow(row)
+	err := validationErr
+	if err == nil {
+		err = s.applyAttach(ctx, row.Kind, payload)
+	}
+	dropped := validationErr != nil || errors.Is(err, model.ErrConflict)
 	if dropped {
 		_, err = s.Routing.State.RecordAlert(ctx, oplocal.Alert{Agent: "attach", Class: oplocal.AlertClassAttachPendingRejected,
-			Detail: "Rejected an attach queue entry outside its board or lane.", Fix: "Run mtix agent register with your assigned id again."}, s.Clock())
-	} else {
-		err = s.applyAttach(ctx, row.Kind, payload)
+			Detail: "Rejected an attach queue entry with invalid or conflicting board or lane routing.", Fix: "Verify the assigned id and board; ask your operator to reconcile conflicting listed-board identities before registering again."}, s.Clock())
 	}
 	if err != nil {
 		return dropped, false, fmt.Errorf("attach pending row %d remains queued: %w", row.ID, err)

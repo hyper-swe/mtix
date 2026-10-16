@@ -245,11 +245,11 @@ func (s *RegistrationService) RegisterSession(ctx context.Context, req RegisterS
 		return nil, err
 	}
 	res.Registration = row
-	if err := s.recordAttach(ctx, req); err != nil {
-		return res, err
-	}
 	if res.Outcome == OutcomeTakenOver {
 		res.NoticeSent = s.sendNotice(ctx, req.AgentID, noticeDue)
+	}
+	if err := s.recordAttach(ctx, req); err != nil {
+		return res, err
 	}
 	return res, nil
 }

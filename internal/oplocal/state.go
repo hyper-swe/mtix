@@ -133,7 +133,7 @@ func (s *State) ListBoard(ctx context.Context, key, path string) error {
 		for _, row := range rows {
 			if row.Path == path {
 				if row.Key != key {
-					return invalid("listed board identity changed")
+					return fmt.Errorf("listed board identity changed: %w", model.ErrConflict)
 				}
 				return nil
 			}

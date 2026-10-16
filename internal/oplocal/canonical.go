@@ -88,11 +88,12 @@ func lanePaths(loc LaneLocation) (root, relative, common string, main bool, err 
 	}
 	root, err = filepath.EvalSymlinks(loc.Root)
 	if err != nil {
+		err = fmt.Errorf("resolve lane worktree root: %w", err)
 		return
 	}
 	path, pathErr := filepath.EvalSymlinks(loc.Path)
 	if pathErr != nil {
-		err = pathErr
+		err = fmt.Errorf("resolve lane working path: %w", pathErr)
 		return
 	}
 	relative, err = filepath.Rel(root, path)

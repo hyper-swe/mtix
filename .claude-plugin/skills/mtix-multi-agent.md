@@ -301,25 +301,27 @@ During work, the agent:
 Call `mcp__mtix__mtix_session_end` when work is complete.
 
 <!-- learned-lane-identity:start -->
-Hands-free identity uses `MTIX_AGENT_ID` first, then the resumed session handle.
-A learned lane id is reused silently only when exactly one id was ever learned
-for that harness, repository and relative working directory, and it has no live
-local registration. Two learned ids remain ambiguous after restart: they are
-proposals, never an automatic choice. A registration with unknown liveness also
-prevents silent reuse. In a first session, register the id supplied by your
-instructions or operator; do not guess one.
+In this release, agents pass their id explicitly to `mtix agent register <agent-id>`, using the id supplied by their instructions or operator.
+Callable identity resolution and `DrainAttachPending` are service APIs for
+future harness integration. Their command, glue and dispatcher wiring is deferred.
+No shipped command reads `MTIX_AGENT_ID` or automatically chooses a learned id.
+
+The callable identity service accepts an explicit identity intended for
+`MTIX_AGENT_ID`, then the resumed session handle, then a learned lane id.
+A learned id is eligible only when exactly one id was ever learned for that
+harness, repository and relative working directory, and it has no live local
+registration. Two learned ids remain proposals, never an automatic choice.
+A registration with unknown liveness also prevents silent reuse.
 
 A new worktree can reuse the main checkout's lane at the same relative path
 only after its common-directory metadata and matching back-link are verified.
-This learned-lane and listed-board routing state grants nothing: it does
-not enroll a board, approve a program, confirm wakeability or create a grant.
+This routing state grants nothing: it does not
+enroll a board, approve a program, confirm wakeability or create a grant.
 
-The attach service queues denied operator-local lane and list side writes in
-its own board. Its callable `DrainAttachPending` validates the board, path and
+Registration through the service can queue denied operator-local lane and list
+side writes in its own board. The callable drain validates the board, path and
 worktree membership before copying routing state, and rejects forged entries
-with an operator-local alert. Automatic glue and dispatcher wiring is deferred;
-this release adds the callable service, without a new drain command. Continue
-explicit registration until your harness integration uses it.
+with an operator-local alert. There is no drain command in this release.
 <!-- learned-lane-identity:end -->
 
 ## Registration and lanes

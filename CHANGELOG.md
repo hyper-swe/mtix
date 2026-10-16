@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Learned lane identity resolution and a callable, board-scoped attach side-write drain preserve ambiguous identities as proposals and reject forged routing requests with operator-local alerts. Automatic glue and dispatcher drain wiring remains deferred (MTIX-112.17.5).
+- Callable service APIs for learned lane identity resolution and a board-scoped attach side-write drain preserve ambiguous identities as proposals and reject forged routing requests with operator-local alerts. Agents still pass their id explicitly to `mtix agent register`; identity selection and drain command, glue and dispatcher wiring remain deferred (MTIX-112.17.5).
 
 ### Fixed
 - Web ticket Activity and Comments include plain and addressed annotations with author and recipient details and hardened markdown rendering (MTIX-171).

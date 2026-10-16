@@ -20,8 +20,9 @@ import (
 // opening that board. Pending rows never choose their own destination.
 type AttachBoard struct{ Key, Path string }
 
-// AttachRouting supplies routing-only side writes for a registration. Glue
-// and dispatcher call the drain explicitly; it is not a CLI or grant API.
+// AttachRouting supplies routing-only side writes for a registration. Callers
+// can invoke the drain explicitly; command, glue and dispatcher wiring is
+// deferred. These APIs never create a grant.
 type AttachRouting struct {
 	State    *oplocal.State
 	Board    AttachBoard

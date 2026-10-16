@@ -23,6 +23,8 @@ const (
 // commandFreshness follows the parsed mode of the full command path (FR-6.2).
 func commandFreshness(cmd *cobra.Command, args []string) freshnessScope {
 	switch autoImportCommandPath(cmd) {
+	case "agent permissions recover":
+		return scopeForWrite(freshnessFlag(cmd, "cancel") != "", freshnessRead)
 	case "agent state":
 		return scopeForWrite(freshnessFlag(cmd, "set") != "", freshnessRead)
 	case "sync backfill":
@@ -72,7 +74,7 @@ func fixedCommandFreshness(path string) freshnessScope {
 	case "attach", "attach prompt-submit", "attach session-end", "attach session-start",
 		"attach wait", "serve", "mcp":
 		return freshnessProtocol
-	case "agent heartbeat", "agent register", "agent unregister", "annotate",
+	case "agent allow", "agent deny", "agent heartbeat", "agent register", "agent unregister", "annotate",
 		"backup", "cancel", "claim", "comment", "config delete", "config set",
 		"create", "daemon install", "daemon start", "daemon stop", "daemon uninstall",
 		"decompose", "defer", "delete", "dep add", "dep remove", "docs generate",

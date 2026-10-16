@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"sort"
+	"time"
 )
 
 // mergeAllData merges imported data with existing using content_hash per
@@ -56,13 +57,13 @@ func mergeAllData(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 		return result, err
 	}
 	// MTIX-95.31.19.9: task history unions by entry id, never dropping a local entry.
-	return withHistoryUnion(ctx, tx, data, result)
+	return withHistoryUnion(ctx, tx, data, result, policy.now)
 }
 
 // withHistoryUnion unions the file's task history into the store and returns
 // result with the history counts and warnings added (MTIX-95.31.19.9).
-func withHistoryUnion(ctx context.Context, tx *sql.Tx, data *ExportData, result ImportResult) (ImportResult, error) {
-	err := insertExportHistory(ctx, tx, data, &result)
+func withHistoryUnion(ctx context.Context, tx *sql.Tx, data *ExportData, result ImportResult, now time.Time) (ImportResult, error) {
+	err := insertExportHistory(ctx, tx, data, &result, now)
 	return result, err
 }
 

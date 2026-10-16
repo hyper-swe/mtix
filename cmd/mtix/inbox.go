@@ -38,41 +38,29 @@ func newInboxCmd() *cobra.Command {
 	var (
 		agent   string
 		wait    bool
+		count   bool
+		all     bool
 		timeout int
 		format  string
 	)
 	cmd := &cobra.Command{
 		Use:   "inbox",
 		Short: "Show events addressed to an agent",
-		Long: `Show comments addressed to an agent (via 'mtix comment --to <agent>'),
-oldest first, past the agent's ack cursor.
-
-With --wait, return already pending events even if the initial database lookup
-outlasts --timeout. That lookup remains interruptible by SIGINT or SIGTERM.
-After an empty lookup, wait for new addressed events using only the remaining
---timeout budget measured from entry (default 300 seconds).
-Use --timeout 0 for no limit: wait until an event or a signal. A negative timeout
-or a value too large to represent a duration is refused. Returned events mean
-exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
-Use bounded waits within foreground tool limits; an indefinite park suits a
-background task whose harness supports it.
-
---format emits agent-ready text instead of the plain listing (FR-20 §9,
-"delivery terminates in the prompt"):
-  prompt   a complete opening prompt for a cold-started agent — the events
-           quoted in an untrusted-message envelope plus the ack/reply contract. A wake exec launches the
-           harness CLI with this as the prompt.
-  context  a compact block for harness context-injection hooks
-           (session-start / prompt-submit).
-Both print NOTHING when the inbox is empty, so a wake script's idempotency
-check is: payload=$(mtix inbox --agent X --format prompt); [ -z "$payload" ].
-Reads never ack — acknowledgement stays explicit.`,
-		Args: cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Long:  inboxLongHelp,
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateInboxCountFlags(cmd); err != nil {
+				return err
+			}
+			if count {
+				return runInboxCount(cmd, agent, all)
+			}
 			return runInbox(agent, wait, timeout, format)
 		},
 	}
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent id whose inbox to read (required)")
+	cmd.Flags().BoolVar(&count, "count", false, "Print pending count without acknowledging or touching sessions")
+	cmd.Flags().BoolVar(&all, "all", false, "With --count, print total retained events including acknowledged events")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Long-poll: block until an event arrives or --timeout")
 	cmd.Flags().IntVar(&timeout, "timeout", 300, "Wait budget in seconds from entry; initial pending read may take longer (0 = no limit; negative refused)")
 	cmd.Flags().StringVar(&format, "format", "",

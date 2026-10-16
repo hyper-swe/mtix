@@ -464,3 +464,8 @@ before stepping away from the machine.
 - [safety-critical.md](safety-critical.md) — hardened deployment with
   server-side enforcement and long retention.
 - [solo.md](solo.md) — the SQLite-only solo alternative.
+
+For local inbox polling, use `mtix inbox --agent <agent-id> --count`; use
+`mtix inbox --agent <agent-id> --count --all` to include acknowledged events.
+Count does not acknowledge or refresh session liveness; consult the multi-agent
+skill before adding it to a wake routine.

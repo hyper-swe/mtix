@@ -35,7 +35,8 @@ func TestDoctorCLI_MergeProjectBriefing_DiscoversDoctorPreservesPointers(t *test
 	assert.Contains(t, string(briefing), "mtix doctor --json")
 	assert.Contains(t, string(briefing), "mtix doctor --fix")
 	assert.Contains(t, string(briefing), "MTIX-112.19.2")
-	assert.Contains(t, string(briefing), "MTIX-112.32.1")
+	assert.Contains(t, string(briefing), "docs.stale")
+	assert.Contains(t, string(briefing), "mtix -C <board-root> docs generate")
 	for name, value := range custom {
 		assert.Equal(t, []byte(value), doctorMergeReadProjectDoc(t, root, name))
 	}

@@ -13,8 +13,8 @@ import (
 // counters of the namespaces the rename created (MTIX-95.38): the root
 // namespace of newPrefix and the child namespace of every node now in it,
 // each to the highest number its ids hold. It reuses the counter helpers
-// of a renumber (sequence_advance.go). The project, seq and depth columns
-// stay as they were (MTIX-107.58).
+// of a renumber (sequence_advance.go). It runs after realignMovedColumns,
+// so a child key names the new project (MTIX-107.58).
 func advanceRenamedCounters(ctx context.Context, tx *sql.Tx, newPrefix string) error {
 	if err := advanceRootCounter(ctx, tx, newPrefix); err != nil {
 		return fmt.Errorf("rename-to %s: %w", newPrefix, err)

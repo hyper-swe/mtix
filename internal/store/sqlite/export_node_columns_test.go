@@ -230,7 +230,7 @@ func TestVerifyExportChecksum_SchemaV100File_VerifiesAndImports(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, valid, "a schema 1.0.0 file must verify against its original checksum")
 
-			s := newTestStore(t)
+			s := newFreshTestStore(t)
 			_, err = s.Import(context.Background(), data, mode, false)
 			require.NoError(t, err)
 			node, err := s.GetNode(context.Background(), "LEG-1")

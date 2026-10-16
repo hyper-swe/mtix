@@ -228,7 +228,7 @@ func TestListNodes_EmptySliceFilters_NoFilterApplied(t *testing.T) {
 // Since we use bound parameters, the value is treated as a literal and
 // matches no rows.
 func TestListNodes_MultiUnder_SQLInjectionResistance(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 

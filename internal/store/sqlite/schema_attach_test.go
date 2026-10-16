@@ -96,10 +96,10 @@ func TestAttachSchema_LedgerKey_DistinguishesEpochAndRejectsDuplicate(t *testing
 	require.NoError(t, s.Close())
 	db := newTestDB(t, path)
 	for _, epoch := range []int{1, 2} {
-		_, err = db.Exec("INSERT INTO wake_ledger VALUES('worker','host','uid',1,?,'now','claimed')", epoch)
+		_, err = db.Exec("INSERT INTO wake_ledger(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome) VALUES('worker','host','uid',1,?,'now','claimed')", epoch)
 		require.NoError(t, err)
 	}
-	_, err = db.Exec("INSERT INTO wake_ledger VALUES('worker','host','uid',1,1,'later','error')")
+	_, err = db.Exec("INSERT INTO wake_ledger(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome) VALUES('worker','host','uid',1,1,'later','error')")
 	assert.Error(t, err)
 	var nullable int
 	require.NoError(t, db.QueryRow("SELECT [notnull] FROM pragma_table_info('agent_registrations') WHERE name='principal_id'").Scan(&nullable))

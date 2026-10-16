@@ -228,7 +228,8 @@ func (r *ImportReconcileReport) String() string {
 // listed in the report, applied or not, and in the result (MTIX-95.31.6).
 // The returned report is always non-nil when data is non-nil, even on error, so
 // callers can surface the loud report. The ImportResult is nil unless the import
-// was applied.
+// was applied; it is also returned with ErrImportIncomplete, which means
+// the import applied but an index rebuild failed.
 func (s *Store) ImportReconcile(
 	ctx context.Context,
 	data *ExportData,
@@ -306,14 +307,34 @@ func (s *Store) ImportReconcile(
 	}
 	result, err := s.Import(ctx, data, opts.Mode, opts.Force, writeOpts...)
 	if err != nil {
-		report.noteWorkflowConflicts(err)
-		return report, nil, err
+		return finishFailedImport(report, result, err)
 	}
-	report.WorkflowConflicts = result.WorkflowResolved // MTIX-95.31.13
+	markApplied(report, result)
+	return report, result, nil
+}
+
+// markApplied records on the report and the result that the import applied:
+// the workflow resolutions (MTIX-95.31.13), the no-op count and the uid
+// adoptions (MTIX-95.31.6, listed in --json too).
+func markApplied(report *ImportReconcileReport, result *ImportResult) {
+	report.WorkflowConflicts = result.WorkflowResolved
 	report.Idempotent -= countIdempotent(result.WorkflowResolved)
 	report.Applied = true
-	result.UIDAdoptions = report.UIDAdoptions // MTIX-95.31.6: --json lists them too
-	return report, result, nil
+	result.UIDAdoptions = report.UIDAdoptions
+}
+
+// finishFailedImport returns what ImportReconcile returns when Import failed.
+// An error wrapping ErrImportIncomplete means the import applied and only an
+// index rebuild failed, so the result is returned with it and the report is
+// marked applied; the caller still reports the result's warnings
+// (MTIX-95.31.19.9). Any other error returns no result.
+func finishFailedImport(report *ImportReconcileReport, result *ImportResult, err error) (*ImportReconcileReport, *ImportResult, error) {
+	if errors.Is(err, ErrImportIncomplete) && result != nil {
+		markApplied(report, result) // the same bookkeeping as a complete import
+		return report, result, err
+	}
+	report.noteWorkflowConflicts(err)
+	return report, nil, err
 }
 
 // exportDuplicateUIDConflicts returns a conflict for every uid that appears on

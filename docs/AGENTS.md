@@ -305,8 +305,12 @@ standard-input launch routine and empty-inbox check. Handle and ack each event
 before reading the inbox again; use only a verified runtime input interface.
 
 An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
-zero has no limit, and already pending events return immediately. Events mean
-exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+zero has no limit, and already pending events return even if the initial
+database lookup outlasts a positive timeout. That lookup remains interruptible
+by caller cancellation (CLI SIGINT or SIGTERM). After an empty lookup, waiting
+for new events uses only the remaining timeout budget measured from entry.
+Events mean exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM
+means exit 7.
 A negative timeout is refused. Keep foreground waits within the harness's tool
 limits; use an indefinite park only where background tasks are supported. Handle
 and ack events explicitly before parking again.
@@ -327,10 +331,21 @@ review of that hook; other hook approvals remain independent.
 ## Health diagnostics
 
 <!-- AUTO-GENERATED: HEALTH_DIAGNOSTICS -->
+On an opened local board, `wake.ledger` reports retained rows and protocol refusal;
+`--fix` preserves wake state. See the multi-agent skill for lease and retry behavior.
+Plain `mtix doctor` preserves operator-local files, including stale attach shims
+and records. Use `mtix doctor --fix` for registered shim and glue repairs;
+other commands retain automatic attach refresh.
+
 Run `mtix doctor --json` for registered health checks. Exit 2 means a FAIL;
 WARN and INFO keep exit 0. Only configured transports are checked.
 `mtix doctor --fix` runs explicitly registered non-grant repairs; grants stay
-manual. Setup completion (MTIX-112.19.2) and document freshness (MTIX-112.32.1)
-checks are FUTURE features.
+manual. The read-only `docs.stale` check warns about stale board-root
+`MTIX.md` or missing/duplicate live native pointers; follow its printed
+`mtix -C <board-root> docs generate` command and rerun doctor. It never
+writes documents, even with `--fix`. `HYPERSWE.md` suppresses missing pointers
+but not `MTIX.md` freshness checks. Setup completion (MTIX-112.19.2) remains
+a FUTURE feature.
+
 Registered local-only ids are implicitly wakeable unless denied. Hub/relay ids require operator-local confirmation: use `mtix agent allow dev` at a terminal, or `mtix agent allow dev --yes` for automation. `mtix agent deny dev` never needs a terminal. The beta records and flags harness-session confirmations without refusing them. The doctor checks above show unconfirmed ids and retained source/time/marker audit in operator-local `confirmations.jsonl`; `--fix` never grants permission. Empty boards log `skipped_no_node` instead of creating a task. There is no sender allowlist in this beta: share a hub only with trusted principals. Allow may precede registration: doctor counts active pending ids and prints their exact deny commands; a matching local registration activates the existing grant, while a hub preconfirmation still needs matching known hub identity. Uncommitted allows remain held. Use `mtix agent permissions recover` to list stuck batches and `mtix agent permissions recover --cancel <batch-id>` to cancel with audit; accepted denies and committed grants survive, and cancelled caller ids cannot retry. A new deny quarantines older unfinished allows instead of waiting on publication. Legacy allows without committed preimages remain quarantine holds after cancellation; registration and file requests cannot clear them. Doctor and recovery list these holds; only a fresh operator allow in the matching board clears one. Setup commands remain future work.
 <!-- END AUTO-GENERATED -->

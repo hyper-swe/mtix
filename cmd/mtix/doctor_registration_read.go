@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/attach"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/procinfo"
 	"github.com/hyper-swe/mtix/internal/service"
@@ -47,5 +48,5 @@ func existingRegistrationDoctorHost() (service.RegistrationHost, error) {
 	if err != nil {
 		return service.RegistrationHost{}, fmt.Errorf("session user identity: %w", err)
 	}
-	return service.RegistrationHost{HostID: host, UID: uid, Version: version, Protocol: attachProtocol}, nil
+	return service.RegistrationHost{HostID: host, UID: uid, Version: version, Protocol: attach.Protocol}, nil
 }

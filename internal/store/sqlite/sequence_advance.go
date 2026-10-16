@@ -31,8 +31,8 @@ import (
 //   - mtix sync reconcile --rename-to and --import-as
 //     (advanceRenamedCounters, advanceImportedCounters).
 //
-// An import rebuilds every counter from the nodes after its transaction
-// (rebuildSequences), which can lower one. A counter that is behind anyway
+// An import raises every counter to the nodes' numbers in its own
+// transaction (rebuildSequencesTx) and never lowers one (MTIX-95.31.27). A counter that is behind anyway
 // is corrected by NextSequence when it reaches a taken number
 // (skipTakenSequence). The taken numbers are read from the ids themselves:
 // reconcile leaves the project, seq and depth columns stale (MTIX-107.58).

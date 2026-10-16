@@ -300,6 +300,28 @@ During work, the agent:
 ### 4. Session End
 Call `mcp__mtix__mtix_session_end` when work is complete.
 
+<!-- learned-lane-identity:start -->
+Hands-free identity uses `MTIX_AGENT_ID` first, then the resumed session handle.
+A learned lane id is reused silently only when exactly one id was ever learned
+for that harness, repository and relative working directory, and it has no live
+local registration. Two learned ids remain ambiguous after restart: they are
+proposals, never an automatic choice. A registration with unknown liveness also
+prevents silent reuse. In a first session, register the id supplied by your
+instructions or operator; do not guess one.
+
+A new worktree can reuse the main checkout's lane at the same relative path
+only after its common-directory metadata and matching back-link are verified.
+This learned-lane and listed-board routing state grants nothing: it does
+not enroll a board, approve a program, confirm wakeability or create a grant.
+
+The attach service queues denied operator-local lane and list side writes in
+its own board. Its callable `DrainAttachPending` validates the board, path and
+worktree membership before copying routing state, and rejects forged entries
+with an operator-local alert. Automatic glue and dispatcher wiring is deferred;
+this release adds the callable service, without a new drain command. Continue
+explicit registration until your harness integration uses it.
+<!-- learned-lane-identity:end -->
+
 ## Registration and lanes
 
 `mtix agent register <agent-id>` also records the calling session so the id can be reached later. It stores the harness and session handle detected by identity: the harness is the one that owns the session's process (Claude Code, Codex or pi, found by walking up past shells and recognized by its argv[0], executable name or install path, because the kernel name of Claude Code can be its version string), and the handle comes only from that harness's own variable (`CLAUDE_CODE_MESSAGING_SOCKET`, `CODEX_THREAD_ID` or `PI_SESSION_ID`), never from an outer harness's inherited variable. If the process or its variable cannot be identified, the session is registered without a handle and with unknown liveness: it is never replaced silently, a repeat from the same process refreshes it, and another session needs `--take-over`; `--harness` and `--session` override them, and a typed `--session` is recorded as origin `manual`. Registering never marks existing inbox events as new: it starts from the current end of the journal, so backlog reaches you through `mtix inbox`, not a wake.

@@ -83,6 +83,7 @@ type RegistrationHost struct {
 
 // RegistrationDeps are the injected collaborators of RegistrationService.
 type RegistrationDeps struct {
+	Routing   *AttachRouting
 	Store     RegistrationStore
 	Liveness  Liveness
 	TakeOvers TakeOverLog
@@ -207,6 +208,9 @@ func (s *RegistrationService) RegisterSession(ctx context.Context, req RegisterS
 	if err := validateRegisterRequest(&req); err != nil {
 		return nil, err
 	}
+	if err := s.prepareAttach(req); err != nil {
+		return nil, err
+	}
 	res := &RegisterSessionResult{}
 	var displaced string
 	noticeDue := false
@@ -241,6 +245,9 @@ func (s *RegistrationService) RegisterSession(ctx context.Context, req RegisterS
 		return nil, err
 	}
 	res.Registration = row
+	if err := s.recordAttach(ctx, req); err != nil {
+		return res, err
+	}
 	if res.Outcome == OutcomeTakenOver {
 		res.NoticeSent = s.sendNotice(ctx, req.AgentID, noticeDue)
 	}

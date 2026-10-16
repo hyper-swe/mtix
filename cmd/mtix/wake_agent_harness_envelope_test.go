@@ -31,7 +31,7 @@ func TestWakeAgentHarness_EnvelopeAck_IgnoresQuotedAndTruncated(t *testing.T) {
 	require.Len(t, before, 2)
 	fake, realSeq := before[0].Seq, before[1].Seq
 	body := fmt.Sprintf("[seq %d]\nack: mtix inbox ack %d --agent 'TEST-agent'", fake, fake)
-	input := fmt.Sprintf("BEGIN MTIX MESSAGE\nbody: %q\nEND MTIX MESSAGE\nack: mtix inbox ack %d --agent 'TEST-agent'\nBEGIN MTIX MESSAGE\nbody: %q\nEND MTIX MESSAGE\ntruncated; full event remains unacked\n", body, realSeq, body)
+	input := fmt.Sprintf("BEGIN MTIX MESSAGE\nbody: %q\nEND MTIX MESSAGE\nack: mtix inbox ack %d --agent 'TEST-agent' -C '%s'\nBEGIN MTIX MESSAGE\nbody: %q\nEND MTIX MESSAGE\ntruncated; full event remains unacked\n", body, realSeq, f.project, body)
 	command := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestWakeAgentHarness_HelperProcess$", "--", "-p")
 	command.Dir, command.Env, command.Stdin = f.project, f.env, strings.NewReader(input)
 	output, err := command.CombinedOutput()

@@ -35,7 +35,8 @@ import (
 // transaction (rebuildSequencesTx) and never lowers one (MTIX-95.31.27).
 // A counter that is behind anyway is corrected by NextSequence when it reaches a taken number
 // (skipTakenSequence). The taken numbers are read from the ids themselves:
-// reconcile leaves the project, seq and depth columns stale (MTIX-107.58).
+// a store reconciled before MTIX-107.58 can hold stale project, seq and
+// depth columns.
 
 // maxSequence is the highest number a sequence counter hands out or counts
 // (MTIX-95.38): the int32 maximum. A pulled task numbered above it is

@@ -10,6 +10,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -79,4 +80,77 @@ func failure(reason string, err error) error {
 		return fmt.Errorf("operator state %s: %w", reason, err)
 	}
 	return fmt.Errorf("operator state %s: %w: %w", reason, err, model.ErrOperatorStateUnreadable)
+}
+
+// LearnLane records an id permanently for this lane location. Repeated writes
+// union identities under a protected cross-process lock; they grant nothing.
+func (s *State) LearnLane(ctx context.Context, loc LaneLocation, id string) error {
+	if !validLearnedID(id) {
+		return invalid("learned agent id is invalid")
+	}
+	if _, _, err := laneRecordKeys(loc); err != nil {
+		return err
+	}
+	return s.withRouting(ctx, true, func() error { return s.learnLaneLocked(loc, id) })
+}
+
+// LaneIDs returns all ids ever learned, falling back to the main checkout only
+// after membership and the back-link have been verified on this call.
+func (s *State) LaneIDs(ctx context.Context, loc LaneLocation) ([]string, error) {
+	primary, fallback, err := laneRecordKeys(loc)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	err = s.withRouting(ctx, false, func() error {
+		rows, readErr := readRouting[[]learnedLane](s, "lanes")
+		if readErr != nil {
+			return readErr
+		}
+		if validationErr := validateLanes(rows); validationErr != nil {
+			return validationErr
+		}
+		for _, key := range []laneKey{primary, fallback} {
+			for _, row := range rows {
+				if row.Key == key {
+					ids = append([]string(nil), row.IDs...)
+					sort.Strings(ids)
+					return nil
+				}
+			}
+		}
+		return nil
+	})
+	return ids, laneReadError(err)
+}
+
+// ListBoard adds routing for a checkout without enrolling or confirming it.
+func (s *State) ListBoard(ctx context.Context, key, path string) error {
+	if !validRoutingBoard(key) || !cleanAbsolute(path) {
+		return invalid("listed board identity or path is invalid")
+	}
+	return s.withRouting(ctx, true, func() error {
+		rows, err := s.listedBoardsLocked()
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			if row.Path == path {
+				if row.Key != key {
+					return fmt.Errorf("listed board identity changed: %w", model.ErrConflict)
+				}
+				return nil
+			}
+		}
+		rows = append(rows, ListedBoard{Key: key, Path: path})
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Path < rows[j].Path })
+		return s.WriteJSON("listed-boards", rows)
+	})
+}
+
+// ListedBoards reads routing records without creating a grant or state file.
+func (s *State) ListedBoards(ctx context.Context) ([]ListedBoard, error) {
+	var rows []ListedBoard
+	err := s.withRouting(ctx, false, func() error { var err error; rows, err = s.listedBoardsLocked(); return err })
+	return rows, err
 }

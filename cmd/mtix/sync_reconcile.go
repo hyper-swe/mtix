@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -130,12 +129,7 @@ func runReconcileDryRun(ctx context.Context, stdout, stderr io.Writer, f reconci
 		return wrapSyncErr(stderr, "dry-run", err)
 	}
 	if app.jsonOutput {
-		body, mErr := json.MarshalIndent(plan, "", "  ")
-		if mErr != nil {
-			return mErr
-		}
-		_, err = fmt.Fprintln(stdout, string(body))
-		return err
+		return newJSONOutputWriter(stdout).WriteJSON(plan)
 	}
 	printReconcilePlan(stdout, plan, !f.yes)
 	return nil

@@ -117,6 +117,9 @@ func TestImport_ReplaceOnSyncedStore_BackfillUIDKeepAndAdopt_Imports(t *testing.
 			got := uidAtID(t, local, "REC-1")
 			assert.Equal(t, tt.wantKept, got == uid)
 			assert.True(t, model.IsBackfillUID(got) || !tt.wantKept)
+			if !tt.wantKept {
+				assert.Equal(t, file.Nodes[0].UID, got, "the task holds the file's uid")
+			}
 		})
 	}
 }

@@ -30,7 +30,7 @@ import (
 func seedInvalidUTF8Store(t *testing.T) *sqlite.Store {
 	t.Helper()
 	ctx := context.Background()
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ts := columnTestTime()
 	require.NoError(t, s.CreateNode(ctx, &model.Node{
 		ID: "UTF-1", Project: "UTF", Depth: 0, Seq: 1, Title: "bad\xffbyte title",

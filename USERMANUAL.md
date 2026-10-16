@@ -761,6 +761,30 @@ mtix agent register worker-1
 mtix agent register worker-1 --json
 ```
 
+<!-- learned-lane-identity:start -->
+In this release, agents pass their id explicitly to `mtix agent register <agent-id>`, using the id supplied by their instructions or operator.
+Callable identity resolution and `DrainAttachPending` are service APIs for
+future harness integration. Their command, glue and dispatcher wiring is deferred.
+No shipped command reads `MTIX_AGENT_ID` or automatically chooses a learned id.
+
+The callable identity service accepts an explicit identity intended for
+`MTIX_AGENT_ID`, then the resumed session handle, then a learned lane id.
+A learned id is eligible only when exactly one id was ever learned for that
+harness, repository and relative working directory, and it has no live local
+registration. Two learned ids remain proposals, never an automatic choice.
+A registration with unknown liveness also prevents silent reuse.
+
+A new worktree can reuse the main checkout's lane at the same relative path
+only after its common-directory metadata and matching back-link are verified.
+This routing state grants nothing: it does not
+enroll a board, approve a program, confirm wakeability or create a grant.
+
+Registration through the service can queue denied operator-local lane and list
+side writes in its own board. The callable drain validates the board, path and
+worktree membership before copying routing state, and rejects forged entries
+with an operator-local alert. There is no drain command in this release.
+<!-- learned-lane-identity:end -->
+
 #### Registration and lanes
 
 `mtix agent register <agent-id>` also records the calling session so the id can be reached later. It stores the harness and session handle detected by identity: the harness is the one that owns the session's process (Claude Code, Codex or pi, found by walking up past shells and recognized by its argv[0], executable name or install path, because the kernel name of Claude Code can be its version string), and the handle comes only from that harness's own variable (`CLAUDE_CODE_MESSAGING_SOCKET`, `CODEX_THREAD_ID` or `PI_SESSION_ID`), never from an outer harness's inherited variable. If the process or its variable cannot be identified, the session is registered without a handle and with unknown liveness: it is never replaced silently, a repeat from the same process refreshes it, and another session needs `--take-over`; `--harness` and `--session` override them, and a typed `--session` is recorded as origin `manual`. Registering never marks existing inbox events as new: it starts from the current end of the journal, so backlog reaches you through `mtix inbox`, not a wake.
@@ -1696,6 +1720,36 @@ INTEGRITY FAILURE: 2 nodes with hash mismatches:
 ```
 
 ### JSON Output
+
+#### CLI read freshness
+
+CLI board reads retry a busy local sync lock briefly, with a total wait budget of
+500 ms. If ownership becomes available during the retry, auto-import checks the
+board normally. Persistent contention lets the command read the local cache but
+marks JSON responses with `"stale": true` and
+`"stale_reason": "sync_lock_busy"`. Object responses retain their existing fields;
+array, scalar and null responses are wrapped as
+`{"data": <original response>, "stale": true, "stale_reason": "sync_lock_busy"}`.
+Fresh reads keep their original shape and omit these fields. One possibly stale
+notice also goes to stderr, including protocol and daemon startup when `--json`
+is supplied. CLI JSON stdout remains one valid response.
+
+These fields describe read responses only. Successful mutation acknowledgements
+omit `stale` and `stale_reason`; their absence on an acknowledgement does not
+verify cached read freshness. When a write succeeds despite busy auto-import
+ownership, one completion notice says the write succeeded and must not be
+repeated. Follow that notice: never repeat a successful write. When the write
+itself fails, no completion notice claims it succeeded. A later export or cleanup
+error does not undo a successful write.
+
+Check freshness before using task state or assembled context to take an action.
+When stale is true, retry the same read after the current owner finishes. Never
+delete, replace or unlink `.mtix/data/sync.lock` to bypass its owner, and do not
+use `mtix sync --fix` to force a fresh read: it rewrites the pulled board from the
+local cache. These fields describe sync-lock contention only; still follow any
+other auto-import refusal or warning. Commands that skip automatic import,
+including `mtix sync status` and `mtix sync doctor`, do not make this check.
+
 
 ```bash
 mtix verify --json
@@ -2995,6 +3049,11 @@ closed instead of wiping a store. A verified snapshot is written to
 deleted. The same rule applies to `mtix import --mode replace`. See
 `docs/DESTRUCTIVE-COMMANDS.md` for the full inventory.
 
+`--rename-to` and `--import-as` move every local ticket to its new id in
+one transaction. Each moved ticket takes the project, number and depth
+of its new id, so `--project` filters, `mtix projects`, `mtix tree` and
+new child tickets see it in its new place.
+
 **Audit-trail note:** when two CLIs share `authorID="cli"` (the
 default), their concurrent edits produce vector clocks that are
 `Equal()` rather than `Concurrent()`. LWW still resolves the
@@ -4014,4 +4073,3 @@ Grants and the protected `confirmations.jsonl` log live in the operator-local mt
 Each committed change batch publishes one unaddressed neutral board line with a separately generated UUIDv7 event identity, independent of caller batch ids: wake permissions changed on a host (see that host's mtix doctor). It contains no host or agent id, path or user name; ordinary sync provenance remains unchanged. An empty board receives no new task or line: the local log and doctor show `skipped_no_node`. When a board first becomes hub-connected, implicitly eligible ids become held and operator-local Alerts report the required confirmation.
 
 Grants match board identity by default; optional strict hub-identity matching remains off by default. No sender allowlist is added in this beta: share a hub only with trusted principals. The reusable file-batch API supports orchestration; the full setup and file-application commands belong to a future setup release and are not shipped here. Confirmation selection facts remain separate and start unchecked.
-

@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 
@@ -132,11 +131,11 @@ func writeStatusRepairReport(w io.Writer, report *service.StatusRepairReport) er
 		return nil
 	}
 	report.Reminder = pullFirstReminder(report)
-	data, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal repair report: %w", err)
+	writer := newJSONOutputWriter(w)
+	if report.Apply {
+		writer.staleReason = "" // Applied work is a mutation acknowledgement.
 	}
-	if _, err := fmt.Fprintln(w, string(data)); err != nil {
+	if err := writer.WriteJSON(report); err != nil {
 		return fmt.Errorf("print repair report: %w", err)
 	}
 	return nil

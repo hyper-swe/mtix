@@ -37,6 +37,35 @@ Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whit
 
 This skill enables AI agents to work on the **PROJ** project using mtix task management. Safety-critical operating procedures are baked in as the baseline standard.
 
+## CLI read freshness
+
+CLI board reads retry a busy local sync lock briefly, with a total wait budget of
+500 ms. If ownership becomes available during the retry, auto-import checks the
+board normally. Persistent contention lets the command read the local cache but
+marks JSON responses with `"stale": true` and
+`"stale_reason": "sync_lock_busy"`. Object responses retain their existing fields;
+array, scalar and null responses are wrapped as
+`{"data": <original response>, "stale": true, "stale_reason": "sync_lock_busy"}`.
+Fresh reads keep their original shape and omit these fields. One possibly stale
+notice also goes to stderr, including protocol and daemon startup when `--json`
+is supplied. CLI JSON stdout remains one valid response.
+
+These fields describe read responses only. Successful mutation acknowledgements
+omit `stale` and `stale_reason`; their absence on an acknowledgement does not
+verify cached read freshness. When a write succeeds despite busy auto-import
+ownership, one completion notice says the write succeeded and must not be
+repeated. Follow that notice: never repeat a successful write. When the write
+itself fails, no completion notice claims it succeeded. A later export or cleanup
+error does not undo a successful write.
+
+Check freshness before using task state or assembled context to take an action.
+When stale is true, retry the same read after the current owner finishes. Never
+delete, replace or unlink `.mtix/data/sync.lock` to bypass its owner, and do not
+use `mtix sync --fix` to force a fresh read: it rewrites the pulled board from the
+local cache. These fields describe sync-lock contention only; still follow any
+other auto-import refusal or warning. Commands that skip automatic import,
+including `mtix sync status` and `mtix sync doctor`, do not make this check.
+
 ## Waiting for inbox events
 
 An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:

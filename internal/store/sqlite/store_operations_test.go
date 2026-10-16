@@ -104,7 +104,7 @@ func TestGetDirectChildren_MultipleChildren_CountMatches(t *testing.T) {
 
 // TestVerify_WithMultipleNodes_AllPass verifies comprehensive check on real data.
 func TestVerify_WithMultipleNodes_AllPass(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -134,7 +134,7 @@ func TestVerify_WithMultipleNodes_AllPass(t *testing.T) {
 
 // TestVerify_ProgressInconsistency_MultipleChildren_Detected verifies with weights.
 func TestVerify_ProgressInconsistency_MultipleChildren_Detected(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -186,7 +186,7 @@ func TestVerify_ProgressInconsistency_MultipleChildren_Detected(t *testing.T) {
 
 // TestBackup_PathWithSingleQuote_Succeeds verifies paths with quotes work.
 func TestBackup_PathWithSingleQuote_Succeeds(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 
 	// Create a dir with a quote in the name.

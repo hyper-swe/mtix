@@ -66,7 +66,7 @@ func TestAttachSchema_ReleasedStoreUpgrade_PreservesLegacyIdentityAbsence(t *tes
 func TestStoreInstanceID_IndependentCreations_UseDifferentIDs(t *testing.T) {
 	var previous string
 	for range 2 {
-		s := newTestStore(t)
+		s := newFreshTestStore(t)
 		id, err := s.StoreInstanceID(t.Context())
 		require.NoError(t, err)
 		require.NotEmpty(t, id)

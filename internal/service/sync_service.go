@@ -27,11 +27,13 @@ const DefaultMaxImportSize = 50 * 1024 * 1024
 // It reads the export file exactly once into memory, computes its SHA-256 hash,
 // and compares against a stored hash to detect changes from git operations.
 type SyncService struct {
-	store    *sqlite.Store
-	logger   *slog.Logger
-	clock    func() time.Time
-	autoSync AutoSyncConfig // sync.auto_sync; nil reads as the default, on (MTIX-95.31.2)
-	notices  io.Writer      // user-facing auto-import notices, stderr by default (MTIX-95.31.2)
+	store      *sqlite.Store
+	logger     *slog.Logger
+	clock      func() time.Time
+	retryClock func() time.Time                           // optional retry elapsed clock; nil uses the current domain clock
+	retrySleep func(context.Context, time.Duration) error // injected wait for bounded import ownership retry
+	autoSync   AutoSyncConfig                             // sync.auto_sync; nil reads as the default, on (MTIX-95.31.2)
+	notices    io.Writer                                  // user-facing auto-import notices, stderr by default (MTIX-95.31.2)
 	// binaryVersion is this mtix build's version; the older-writer warning
 	// compares the imported file's last writer with it (MTIX-95.31.19.9).
 	binaryVersion string
@@ -60,14 +62,19 @@ type SyncService struct {
 // NewSyncService creates a SyncService per FR-15.2. Auto-import notices and
 // refusals go to stderr (SetNoticeWriter changes that), and auto-import is
 // on until SetAutoSyncConfig wires the sync.auto_sync switch.
-func NewSyncService(store *sqlite.Store, logger *slog.Logger, clock func() time.Time) *SyncService {
-	return &SyncService{
+func NewSyncService(store *sqlite.Store, logger *slog.Logger, clock func() time.Time, retryClocks ...func() time.Time) *SyncService {
+	svc := &SyncService{
 		store:         store,
 		logger:        logger,
 		clock:         clock,
+		retrySleep:    waitAutoImportRetry,
 		notices:       os.Stderr,
 		MaxImportSize: DefaultMaxImportSize,
 	}
+	if len(retryClocks) > 0 {
+		svc.retryClock = retryClocks[0]
+	}
+	return svc
 }
 
 // AutoImport reads .mtix/tasks.json, computes its hash, and imports it in
@@ -91,9 +98,18 @@ func NewSyncService(store *sqlite.Store, logger *slog.Logger, clock func() time.
 // (carryReplacedUIDs) while no push runs. If a push runs, the automatic
 // import is skipped with a one-line notice, does not fail the command and
 // does not record the file as imported: the next command imports it.
+// MTIX-149: busy sync ownership is retried for at most 500 ms of waits.
+// Persistent contention returns ErrAutoImportLockBusy, allowing the caller to
+// mark cache reads as possibly stale. Cancellation and filesystem errors retain
+// their error chains; contention leaves the board and stored import hash intact.
 func (s *SyncService) AutoImport(ctx context.Context, mtixDir string) error {
-	defer s.drainAfterImport(ctx, mtixDir)
-	return s.autoImport(ctx, mtixDir)
+	err := s.autoImport(ctx, mtixDir)
+	// A busy read already spent its retry budget. Recovery must not re-enter
+	// auto-import and spend it again while the same owner holds the lock.
+	if !errors.Is(err, ErrAutoImportLockBusy) && ctx.Err() == nil {
+		s.drainAfterImport(ctx, mtixDir)
+	}
+	return err
 }
 
 func (s *SyncService) autoImport(ctx context.Context, mtixDir string) error {
@@ -103,10 +119,9 @@ func (s *SyncService) autoImport(ctx context.Context, mtixDir string) error {
 	start := s.clock()
 
 	// Receipt publication and import share exclusive sync ownership.
-	lockFile, lockErr := s.acquireLock(mtixDir, lockExclusive)
+	lockFile, lockErr := s.acquireAutoImportLock(ctx, mtixDir)
 	if lockErr != nil {
-		s.logger.Warn("could not acquire sync lock, skipping auto-import", "error", lockErr)
-		return nil
+		return lockErr
 	}
 	defer s.releaseLock(lockFile)
 

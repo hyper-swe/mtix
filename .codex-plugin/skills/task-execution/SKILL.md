@@ -57,3 +57,7 @@ Connect a WebSocket client to the local server's `/ws/events` endpoint and send
 for that task and its descendants. Verify the watch with an event for the named
 task or a child; a lookalike sibling must not appear. If expected events are
 missing, check both `under` and the non-empty event whitelist before retrying.
+
+## Reading Ticket Comments
+
+With `mtix serve`, open a ticket's **Activity** tab. **All** includes comments and other events, newest first; **Comments** filters the loaded activity pages to plain and addressed comments. Each comment shows its author and, when present, recipient. Bodies use sanitized Markdown; identities stay literal text. Use **Load more** for older entries and refresh the ticket after comments arrive from another process. Viewing a comment does not acknowledge an inbox event: acknowledge explicitly after handling it.

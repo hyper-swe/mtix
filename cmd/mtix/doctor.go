@@ -25,9 +25,12 @@ Sync checks run only for configured transports. An unused Postgres transport is
 not checked on a relay-only board. WARN and INFO are advisory: exit 0 when no
 check fails, or 2 when any check reports FAIL.
 
---json emits an array with exactly id, status, detail and fix for each check.
+--json emits an array with id, status, detail and fix for each check; a check may add
+a data object of machine-readable numbers (the history.size row does), and rows
+without one have exactly the four fields.
 --fix performs only explicitly registered non-grant repairs and rechecks them.
 Grant commands are printed for you to run yourself; they are never executed.
+Without --fix, operator-local files, including attach artifacts, stay unchanged.
 
 The read-only docs.stale check compares board-root MTIX.md with this binary
 and checks live native pointers. WARN prints mtix -C <board-root> docs generate;
@@ -116,6 +119,9 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 		}
 	}
 	svc := service.NewDoctorService(opts)
+	if err := registerHistorySizeCheck(svc); err != nil { // MTIX-95.31.19.4
+		return nil, fmt.Errorf("register history size check: %w", err)
+	}
 	if err := svc.Register(documentFreshnessCheck(filepath.Dir(app.mtixDir))); err != nil {
 		return nil, fmt.Errorf("register documentation check: %w", err)
 	}
@@ -135,6 +141,9 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	}
 	if err := registerAttachDoctorChecks(context.Background(), svc, deps); err != nil {
 		return nil, fmt.Errorf("register attach doctor checks: %w", err)
+	}
+	if err := registerPermissionDoctor(svc); err != nil {
+		return nil, fmt.Errorf("register wake permission diagnostics: %w", err)
 	}
 	return svc, registerConfiguredWakeLedgerDoctor(svc)
 }

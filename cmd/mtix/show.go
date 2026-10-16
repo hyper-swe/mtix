@@ -14,6 +14,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store"
 )
 
@@ -41,6 +42,11 @@ const showLongHelp = `Show a node's details and annotations as labeled lines, in
                whitespace or control characters), further lines indented
   Progress     progress bar
   Created      creation time
+  History      with --history: the change history, newest first, at most
+               --history-limit entries (default 50), one line each with the
+               UTC time, field, actor, origin and, for a structured field,
+               the old and new value; free-text fields show no text.
+               --json always includes the same list as "history"
 
 Annotation text, author and addressee, the description and the prompt are
 normalized for the terminal: control characters other than newline and tab
@@ -58,15 +64,18 @@ annotation.`
 
 // newShowCmd creates the mtix show command per FR-6.3.
 func newShowCmd() *cobra.Command {
+	opts := showOptions{historyLimit: service.DefaultHistoryLimit}
 	cmd := &cobra.Command{
 		Use:   "show <id>",
 		Short: "Show a node's details and annotations",
 		Long:  showLongHelp,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runShow(args[0])
+			return runShowWith(args[0], opts)
 		},
 	}
+	cmd.Flags().BoolVar(&opts.history, "history", false, "Also list the task's change history, newest first (always included in --json)")
+	cmd.Flags().IntVar(&opts.historyLimit, "history-limit", service.DefaultHistoryLimit, "Most history entries to list with --history and in --json")
 	return cmd
 }
 
@@ -136,6 +145,11 @@ func newTreeCmd() *cobra.Command {
 
 // runShow displays full details of a single node with status icons and progress bars.
 func runShow(id string) error {
+	return runShowWith(id, showOptions{historyLimit: service.DefaultHistoryLimit})
+}
+
+// runShowWith is runShow with the history options (MTIX-95.31.19.4).
+func runShowWith(id string, opts showOptions) error {
 	if app.nodeSvc == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -152,7 +166,7 @@ func runShow(id string) error {
 	out := NewOutputWriter(app.jsonOutput)
 
 	if app.jsonOutput {
-		return out.WriteJSON(node)
+		return writeShowJSON(ctx, out, node, opts)
 	}
 
 	// A provisional id is flagged so the reader knows its number is not yet
@@ -180,6 +194,9 @@ func runShow(id string) error {
 	}
 	out.WriteHuman("Progress: %s\n", ProgressBar(node.Progress, 15))
 	out.WriteHuman("Created:  %s\n", node.CreatedAt.Format("2006-01-02 15:04"))
+	if opts.history {
+		return writeShowHistory(ctx, out, node.ID, opts.historyLimit)
+	}
 	return nil
 }
 

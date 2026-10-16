@@ -62,6 +62,7 @@ __pycache__/
 
 # Database files (local dev)
 *.db
+!cmd/mtix/testdata/agent-permissions/*.db
 *.db-wal
 *.db-shm
 

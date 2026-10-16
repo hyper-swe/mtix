@@ -101,6 +101,12 @@ type Store interface {
 	// Returns ErrNotFound if the node does not exist.
 	UpdateNode(ctx context.Context, id string, updates *NodeUpdate) error
 
+	// UpdatePrompt commits a prompt edit and returns its immediate before/after
+	// content hashes from the same write transaction (FR-12.1, FR-3.7).
+	// Preserves update history, FTS and sync events. Returns empty hashes on any
+	// error, including commit failure; missing or soft-deleted nodes return ErrNotFound.
+	UpdatePrompt(ctx context.Context, id, text string) (oldHash, newHash string, err error)
+
 	// DeleteNode soft-deletes a node.
 	// If cascade is true, all descendants are also soft-deleted.
 	// Returns ErrNotFound if the node does not exist.

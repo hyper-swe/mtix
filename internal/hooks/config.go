@@ -63,6 +63,9 @@ type Match struct {
 type ExecConfig struct {
 	Command        []string `yaml:"command"`
 	TimeoutSeconds int      `yaml:"timeout-seconds"`
+	// EnvPass names inherited variables the hook child may receive in addition
+	// to the allowlist. It is part of the approved stanza; the deny list wins.
+	EnvPass []string `yaml:"env-pass,omitempty"`
 }
 
 // WebhookConfig configures the webhook adapter (FR-19.3).

@@ -370,12 +370,9 @@ CREATE TABLE IF NOT EXISTS hook_event_origin (
     via_hook TEXT NOT NULL
 );
 
--- Narrow the inbox scan to comment events. The addressee itself lives in the
--- JSON payload and is filtered at query time (guarded by json_valid); an
--- expression index on json_extract(payload) is deliberately avoided — it would
--- evaluate on every comment INSERT and reject a malformed payload before the
--- apply layer's own decode check can report it. Denormalizing the addressee to
--- a real indexed column is a future optimization if inbox volume warrants it.
+-- Retain the legacy op-type index for other event queries. Inbox counting
+-- adds a guarded partial addressee expression index in inbox_count.go;
+-- malformed JSON remains insertable and is excluded from direct comments.
 CREATE INDEX IF NOT EXISTS idx_sync_events_op_type ON sync_events(op_type);
 
 -- Local sync_projects mirror per FR-18.13 / MTIX-15.6.

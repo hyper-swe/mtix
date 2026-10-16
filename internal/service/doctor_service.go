@@ -77,7 +77,7 @@ func NewDoctorService(opts DoctorOptions) *DoctorService {
 	}
 	if opts.Platform == "windows" {
 		s.checks = append(s.checks, DoctorCheck{ID: "platform.windows", Run: func(context.Context) DoctorResult {
-			return DoctorResult{Status: DoctorInfo, Detail: "Built-in wakes unavailable on Windows; use explicit inbox reads and acknowledgements."}
+			return DoctorResult{Status: DoctorInfo, Detail: "Built-in wakes unavailable on Windows; use explicit inbox reads and acknowledgements. The attach shim is not supported on Windows, because it is a POSIX shell script."}
 		}})
 	}
 	return s

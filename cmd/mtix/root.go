@@ -88,10 +88,8 @@ prompt chain propagation, and multi-agent orchestration.`,
 			// resolves .mtix (store init, recover, plugin install), so a
 			// polyglot agent can target any project without cd and relative
 			// paths in hook configs resolve against the target project.
-			if projectDir != "" {
-				if err := os.Chdir(projectDir); err != nil {
-					return fmt.Errorf("--project-dir: %w", err)
-				}
+			if err := applyProjectDir(cmd, projectDir); err != nil {
+				return err
 			}
 			return persistentPreRun(cmd, args, logLevel)
 		},
@@ -112,12 +110,33 @@ prompt chain propagation, and multi-agent orchestration.`,
 	return rootCmd
 }
 
+// applyProjectDir applies the global -C/--project-dir. An attach verb never
+// fails on it (hooks always exit 0, ADR-007 §6.5): the failure is reported
+// and alerted, and the verb is skipped.
+func applyProjectDir(cmd *cobra.Command, projectDir string) error {
+	if projectDir == "" {
+		return nil
+	}
+	err := os.Chdir(projectDir)
+	if err == nil {
+		return nil
+	}
+	if isAttachCommand(cmd) {
+		abortAttachVerb(cmd, fmt.Sprintf("mtix attach %s: --project-dir: %v; messages stay in the inbox (mtix inbox)", cmd.Name(), err))
+		return nil
+	}
+	return fmt.Errorf("--project-dir: %w", err)
+}
+
 // persistentPreRun handles the PersistentPreRunE logic for the root command.
 // Extracted from newRootCmd to reduce cognitive complexity.
 func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error {
+	if err := validateInboxCountFlags(cmd); err != nil {
+		return err
+	}
 	// Skip store init for commands that don't need it. recover (MTIX-26.5)
 	// must run when the database is too damaged for the store to open.
-	if cmd.Name() == "version" || cmd.Name() == "help" || cmd.Name() == "recover" {
+	if skipsStoreInit(cmd) {
 		return nil
 	}
 
@@ -141,9 +160,17 @@ func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error 
 		return err
 	}
 
+	autoImportForCommand(cmd)
+
+	return nil
+}
+
+// autoImportForCommand retains ordinary startup import handling while count
+// polls the current durable journal without reconciling board data (FR-15.2).
+func autoImportForCommand(cmd *cobra.Command) {
 	// Auto-import tasks.json if hash changed (FR-15.2).
 	// Skip for excluded commands per FR-15.2c.
-	if app.syncSvc != nil && app.mtixDir != "" && !shouldSkipAutoImport(autoImportCommandPath(cmd)) {
+	if app.syncSvc != nil && app.mtixDir != "" && !shouldSkipAutoImport(autoImportCommandPath(cmd)) && !isInboxCountCommand(cmd) {
 		// A refusal (MTIX-95.31.2) has already been printed by AutoImport,
 		// once for this command; logging it again would print it twice.
 		err := app.syncSvc.AutoImport(cmd.Context(), app.mtixDir)
@@ -151,8 +178,17 @@ func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error 
 			app.logger.Warn("auto-import failed", "error", err)
 		}
 	}
+}
 
-	return nil
+// skipsStoreInit names commands that never open a store. Attach verbs run in
+// any directory a harness opens; they never open or create a store, and they
+// always exit 0 (ADR-007 §6.5, A5).
+func skipsStoreInit(cmd *cobra.Command) bool {
+	switch cmd.Name() {
+	case "version", "help", "recover":
+		return true
+	}
+	return isAttachCommand(cmd)
 }
 
 // initApp initializes the application context: logger, store, services.

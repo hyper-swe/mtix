@@ -94,10 +94,72 @@ by this flag. Existing sync checks currently register no automatic repairs.
 Follow each printed remedy and rerun doctor. All report fields and diagnostics
 are redacted before output; never put credentials into a command argument.
 
-Setup completion (`setup.done`, MTIX-112.19.2) and document freshness
-(`docs.stale`, MTIX-112.32.1) are FUTURE registrations, not checks available
-in this version. Do not infer that setup or generated documents are current
-from the absence of those rows.
+The read-only `docs.stale` check compares the board-root `MTIX.md` with
+this binary's generated instructions and checks live native pointer lines.
+Missing or stale instructions and missing or duplicate pointers produce WARN.
+Fenced and indented examples do not count as live pointers. `HYPERSWE.md`
+suppresses the missing-pointer requirement; existing pointers are allowed and
+`MTIX.md` is still checked. Follow the exact printed command,
+`mtix -C <board-root> docs generate`, then rerun doctor. Generation keeps the
+first live owned pointer and removes later duplicates, preserving other bytes.
+This check never writes documents or Git exclusions, including with `--fix`.
+
+Setup completion (`setup.done`, MTIX-112.19.2) remains a FUTURE registration.
+Do not infer that setup is current from the absence of that row.
+
+### Attach checks
+
+The operator-local directory can hold release-defined attach artifacts. The
+attach shim (`mtix-shim`) is a POSIX shell script that records the unresolved
+mtix path and the operator's uid. On every run, with a fixed `PATH`, it walks
+that path one component at a time from `/`, following at most 32 symbolic
+links (to files or directories) and resolving `..` physically. It refuses
+unless every directory it enters (so every ancestor and the directory holding
+each link), every link and the final file are owned by the operator or root
+and not writable by group or others (a root-owned sticky directory such as
+`/tmp` is allowed). It then runs the fully resolved path it checked, never a
+path through a link. The Go check behind `setup.shim` applies the same rule.
+This version installs no shim, harness glue or host
+dispatcher service; it checks and repairs those artifacts when they exist.
+Doctor shows these rows only when they apply:
+
+- `setup.shim`: PASS when the shim matches this release. WARN with the fix
+  `mtix doctor --fix` when its bytes are out of date; the repair rewrites
+  only the shim and its record. FAIL when its target is refused or its record is
+  missing; the fix names the refused component (for example `chmod go-w`
+  on the writable directory or file, or removing a link owned by another
+  user). Windows has no shim,
+  and `platform.windows` says so.
+- `glue.<harness>`: harness glue called mtix with an attach protocol other
+  than this release's. The previous protocol is still served and the glue is
+  marked for refresh; any other protocol makes that session inbox-only, so
+  read messages with `mtix inbox`. The fix names `mtix doctor --fix` only
+  when this build can rewrite that glue; glue newer than this mtix needs an
+  mtix upgrade (compare `mtix version`), and older glue this build cannot
+  rewrite must be corrected or removed in the harness configuration. The
+  attach verb's stderr line and alert name the same fix.
+- `attach.failures`: recent `attach.protocol-skew` and `attach.verb-failure`
+  operator alerts from the hidden attach verbs, with counts. These verbs are
+  entry points for harness glue, not for agents. They always exit 0, even on
+  arguments they cannot parse or a verb this build does not know, print one
+  line on stderr and nothing on stdout, and record every failure as an
+  operator alert that carries its own fix (for example the glue fix above for
+  protocol skew, or upgrading mtix for an unknown verb).
+- `attach.state`: INFO when operator state cannot be read at all (for example
+  `HOME` is unset); the attach rows are skipped and the row names the remedy.
+  Doctor itself still runs.
+- `skew.dispatchers`: a host dispatcher heartbeat on this board that is older
+  than this mtix, or below the board's `min_dispatch_protocol`. This version
+  installs no dispatcher service, so mtix cannot restart it; the fix names
+  the PID to stop and start. `mtix agent register` prints the same notice.
+  It never restarts a dispatcher from inside a harness session, and restarts
+  one at most once per hour. Until a restart has really happened, every check
+  reports the older dispatcher again and raises an operator alert; mtix never
+  claims a restart it did not make.
+
+Any unsandboxed mtix command, and `mtix doctor --fix`, rewrites an
+out-of-date shim without a terminal. These repairs never change a grant,
+approval or confirmation.
 
 ## Project Initialization
 
@@ -669,7 +731,7 @@ mtix agent register worker-1 --json
 - **Move a lane:** run `mtix agent unregister <agent-id>` from the owning session. `--force` removes another live session's row (operator use).
 - **Inspect:** `mtix agent list --registrations [--json]` shows harness, origin, mode, liveness (`alive`, `dead` or `unknown`; unknown is treated as live), live route and hold.
 - **MCP-only rows:** origin `mcp` (no session handle, no live route) is reserved in this build: no MCP tool records a registration yet, so register from the session shell with `mtix agent register`. `agents.mcp-only` reports any such row that exists.
-- **last_seen** moves only when the registered session runs `mtix agent register` or `mtix inbox` (list, `--wait`, `ack`) with its own session handle in the environment.
+- **last_seen** moves only when the registered session runs `mtix agent register` or `mtix inbox` (list, `--wait`, `ack`) with its own session handle in the environment. `--count` never refreshes `last_seen`.
 - **Verify:** `mtix sync doctor` reports `agents.stale` (dead sessions; a row unseen for 24 hours with a dead session is deleted) and `agents.mcp-only`, each with the exact fix; add `--json` for tools.
 - **Never** register under another agent's id to "see" its inbox, and never pass `--take-over` to get around a refusal you do not understand: ask the operator.
 
@@ -725,6 +787,33 @@ mtix config set agent.stale_threshold 30m
 ```
 
 ---
+
+## Read-only inbox counts
+
+Use `mtix inbox --agent <agent-id> --count` for the pending event count, or
+`mtix inbox --agent <agent-id> --count --all` to detect any historical inbox use.
+Text prints one integer and exits 0, including zero. With `--json`, either count
+mode returns an object such as `{"agent":"worker","pending":0,"total":1}`;
+plain inbox listing JSON remains an event array.
+
+Pending excludes both individually acknowledged events and every sequence at
+or below the cumulative acknowledgement cursor. Total includes acknowledged
+events in the retained local journal. Addressed comments and hook deliveries
+count once per event; hook-only events count too, and orphan deliveries do not.
+The counts do not depend on envelope truncation or event timestamps.
+
+Count never acknowledges events, moves the cursor or refreshes session
+`last_seen`; it is not a heartbeat. It makes no hub contact and skips automatic
+board import, even with a local server running. It still uses ordinary project
+startup, which may install schema/index updates. Total describes this local
+journal, not a separate historical archive after an explicit replacement/import.
+If counts appear stale after a git pull, synchronize or import the board through
+the usual workflow, then count again. Handle events before acknowledging them.
+
+Do not combine active `--count` with an explicitly supplied `--wait` or
+`--format`, including `--wait=false` and `--format=`. Any supplied `--all`
+requires active count, even `--all=false`. `--count=false` alone keeps ordinary
+listing behavior; count flags cannot be used on inbox ack or lease subcommands.
 
 ## Search and Queries
 
@@ -2338,8 +2427,12 @@ because no process was sitting there to be woken.
 ### Waiting for inbox events
 
 An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
-zero has no limit, and already pending events return immediately. Events mean
-exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
+zero has no limit, and already pending events return even if the initial
+database lookup outlasts a positive timeout. That lookup remains interruptible
+by caller cancellation (CLI SIGINT or SIGTERM). After an empty lookup, waiting
+for new events uses only the remaining timeout budget measured from entry.
+Events mean exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM
+means exit 7.
 A negative timeout is refused. Keep foreground waits within the harness's tool
 limits; use an indefinite park only where background tasks are supported. Handle
 and ack events explicitly before parking again.
@@ -2361,7 +2454,7 @@ Read agent-ready messages with `mtix inbox --agent <agent-id> --format context`.
 `--format prompt` starts with a fixed nudge containing only your id and event
 sequences, followed by the same envelope. MCP `mtix_inbox` and
 `mtix_inbox_wait` return envelopes for populated inboxes and `[]` when empty;
-CLI `--json` retains the raw event-array contract. Empty CLI prompt/context
+Plain CLI listing `--json` retains the raw event-array contract. Empty CLI prompt/context
 output remains empty for wake-script checks.
 
 Recipient ids use the local-agent contract: nonempty, at most 64 UTF-8 bytes,
@@ -2638,16 +2731,46 @@ directory of the process that dispatches it. Launch rules:
     run: `LESSOPEN`, `PAGER`, `EDITOR`, `VISUAL`, `SHELL`, `COMSPEC` and
     `PATHEXT`. All `MTIX_*` names are refused too: mtix sets its own (loop
     prevention, identity, sync credentials). Lowercase names such as
-    `http_proxy` are refused; inherited values still reach the hook, and a
-    script can set them itself. `PATH` cannot be set by a hook: the scrubbed
-    environment provides it. `HOME` is accepted only when its value is
-    outside the project (also after following links). The refusal message
-    names the variable and the rule.
-  - The loader variables `BASH_ENV`, `ENV`, `NODE_OPTIONS`, `PERL5OPT`,
-    `PERL5LIB`, `RUBYOPT`, `RUBYLIB`, `PYTHONPATH`, `PYTHONSTARTUP`,
-    `ZDOTDIR`, `PYTHONUSERBASE`, `PYTHONHOME`, `LD_PRELOAD`,
-    `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES` and `DYLD_LIBRARY_PATH` are
-    also removed from the environment of every hook.
+    `http_proxy` are refused. `PATH` cannot be set by a hook: mtix provides a
+    fixed one. `HOME` is accepted only when its value is outside the project
+    (also after following links). The refusal message names the variable and
+    the rule.
+  - The environment a hook runs in is explicit. The dispatcher's environment
+    is not inherited: the hook receives only `HOME`, `USER`, `LOGNAME`,
+    `LANG`, `TZ`, `TMPDIR`, `TERM`, `NO_COLOR` and the exact locale names
+    `LC_ALL`, `LC_CTYPE`, `LC_COLLATE`, `LC_MESSAGES`, `LC_MONETARY`,
+    `LC_NUMERIC`, `LC_TIME`, `LC_ADDRESS`, `LC_IDENTIFICATION`,
+    `LC_MEASUREMENT`, `LC_NAME`, `LC_PAPER` and `LC_TELEPHONE` (other `LC_`
+    names are not passed), and the deny rules below apply to every name. On
+    Windows the hook also receives `SystemRoot`, `ComSpec`, `PATHEXT`,
+    `USERPROFILE`, `TEMP` and `TMP`; `ComSpec`, `PATHEXT` and `USERPROFILE`
+    are the one exception to the deny rules, because the system needs them.
+    It also receives the
+    variables named in the hook's `exec.env-pass` list, and the mtix markers
+    `MTIX_EVENT`, `MTIX_HOOK_ORIGIN` and `MTIX_HOOK_SCRIPT_PATH`. Credentials
+    such as `MTIX_SYNC_DSN` and relay keys never reach a hook.
+    `MTIX_AUTHOR_ID` is the hook's `to-agent`, or unset; the dispatcher's
+    author id is never passed on.
+  - `exec.env-pass` is a list of variable names in the hook stanza, so the
+    operator approves it with the hook. Names must be valid variable names
+    and must not be credential-shaped (`*_KEY`, `*_TOKEN`, `*_SECRET`,
+    `*_PASSWORD`, anything with `DSN`), an `MTIX_*` name, `PATH`, or in a
+    loader or startup family; such a name disables the hook with a warning
+    that names it. To give a hook a secret, read it from an operator-owned
+    file inside the script. The list holds at most 32 names of at most 128
+    bytes each; a longer list or name is refused the same way, at load and
+    when you run `mtix hooks approve`, which names the variable and the
+    reason.
+  - The `PATH` of a hook is fixed: the directory of the running `mtix`
+    binary (unless it is inside the project), then system directories
+    (in this order: `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`,
+    `/sbin`; on macOS `/opt/homebrew/bin` and `/opt/homebrew/sbin` come
+    first, then `/usr/local/bin`, `/usr/bin`, `/bin`, `/usr/sbin`, `/sbin`;
+    on Windows `System32` and the Windows directory under `C:\Windows`; the dispatcher's
+    `SystemRoot` is not used for the hook `PATH`). It has no relative entry and no project
+    directory. The program and the interpreter are resolved against it, never
+    against the dispatcher's `PATH`, so use an absolute program path for tools
+    installed elsewhere.
 - Any other argument that names a project file at approval time, in any
   position except the program and the script, and including the value of
   `--opt=VALUE` or `NAME=VALUE`, is pinned
@@ -2676,6 +2799,42 @@ interpreter needs no new review.
 Residual: a file that appears at a non-script position between the launch check
 and the moment the interpreter opens it is not covered, because only files that
 existed at approval are pinned there.
+
+Program review notice: when you approve an exec hook whose program is neither
+a pinned project script nor a known interpreter running one, `mtix hooks trust`
+prints a "Program review" notice, and its `--json` result carries a
+`program_review` object with `class`, `review_needed`, `program`, `detail` and
+`fix`. A known interpreter means an exact interpreter name (for example `sh`,
+`bash`, `python3`, `node`; case-insensitive, with `.exe`, `.cmd` or `.bat`
+accepted) as a bare name or as an absolute path in a PATH directory, running a
+pinned project script; any other path or name is reported with its
+symlink-resolved path. A hook that cannot be classified is reported as
+`unknown` and needs review. `mtix hooks status` reports the same object for
+each hook, and `mtix doctor` shows the `hooks.programs` check: WARN with the
+exact fix lists the approved hooks that need review and any `hooks.yaml` load
+problem, PASS means none do (no row appears when there is no `hooks.yaml`).
+The notice is advisory: the hook still runs as written and launch behaviour
+does not change. To clear it, run the program through a pinned project script
+and approve the hook again.
+
+Append-file hooks: an `append-file` hook writes only to a regular file inside
+the project. Its `append-file.path` must be relative. The file is opened
+through a handle on the project directory, so a path that leads outside the
+project, including through a symlinked directory, is refused at open time. A
+final component that is a symlink, a file that is not a regular file, and a
+file with more than one hard link are refused, and nothing is written through
+them; a pipe never blocks delivery. A new file is created with mode 0600. An
+existing file keeps its mode: `mtix hooks status` warns when it is readable or
+writable by group or others and prints `chmod 600 <file>`, and delivery still
+writes to it. An event whose name or node id holds a control or line-separator
+character, or whose payload holds a line break, is refused, so one event is one
+line. `mtix hooks status` lists each configured `append-file` path that
+delivery would refuse, with the reason and the exact fix: text output prints
+`Fix:` lines and `--json` carries an `append_file` list of `hook`, `path`,
+`reason`, `fix` and `refused`. On Windows the same confinement and
+same-file checks apply and a multiply linked file is refused at delivery (as is a file whose
+link count cannot be read), but
+`mtix hooks status` does not list it and permission bits are not reported.
 
 ### Conflict handling
 

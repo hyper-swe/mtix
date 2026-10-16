@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewR1_CancellationCrashRetryPreservesCommittedStateAndDenies(t *testing.T) {
+func TestCancelPermissionBatch_CrashRetry_PreservesCommittedStateAndDenies(t *testing.T) {
 	journal := permissionCancellationName(replayIntent().ID)
 	for _, stage := range []string{"before:" + journal, "after:" + journal, "after:grants.json", "after:cancel:confirmations.jsonl", "after:permission-replay-cancelled", "after:permissions-clear"} {
 		t.Run(stage, func(t *testing.T) { reviewR1CancellationCrash(t, stage) })
@@ -66,7 +66,7 @@ func reviewR1CancellationCrash(t *testing.T, stage string) {
 	require.ErrorContains(t, New(s.env).ApplyPermissionIntent(t.Context(), intent, replayPrepare, nil), "cancelled or quarantined")
 }
 
-func TestReviewR1_EncodingErrorsReturnWithoutGrantMutation(t *testing.T) {
+func TestApplyPermissions_EncodingError_PreservesGrants(t *testing.T) {
 	s := alertFixture(t)
 	require.NoError(t, s.ApplyPermissions(t.Context(), permissionFixtureBatch(), nil))
 	before := alertStateSnapshot(t, s)
@@ -80,7 +80,7 @@ func TestReviewR1_EncodingErrorsReturnWithoutGrantMutation(t *testing.T) {
 	require.Equal(t, before, alertStateSnapshot(t, s))
 }
 
-func TestReviewR1_LegacyCompletedReceiptPreservesCommittedGrant(t *testing.T) {
+func TestApplyPermissions_LegacyCompletedReceipt_PreservesCommittedGrant(t *testing.T) {
 	s := alertFixture(t)
 	s.alertStage = func(stage string) error {
 		if stage == "before:permissions-clear" {
@@ -132,7 +132,7 @@ func reviewR1CompletedNoticePending(t *testing.T) (*State, PermissionBatch) {
 	return s, intent
 }
 
-func TestReviewR1_CompletedReceiptHistoryIsFinalDespiteCleanupFailure(t *testing.T) {
+func TestPermissionReplayResult_CleanupFailure_PreservesCompletedHistory(t *testing.T) {
 	s, _ := reviewR1CompletedNoticePending(t)
 	rows, err := s.Confirmations(t.Context())
 	require.NoError(t, err)
@@ -141,7 +141,7 @@ func TestReviewR1_CompletedReceiptHistoryIsFinalDespiteCleanupFailure(t *testing
 	assert.Equal(t, "published", rows[0].BoardLine)
 }
 
-func TestReviewR1_CompletedReceiptCleanupCannotBlockForeignBoardDeny(t *testing.T) {
+func TestApplyPermissions_CompletedReceiptCleanup_DoesNotBlockForeignBoardDeny(t *testing.T) {
 	s, intent := reviewR1CompletedNoticePending(t)
 	deny := permissionFixtureBatch()
 	deny.BoardID = "22222222-2222-4222-8222-222222222222"

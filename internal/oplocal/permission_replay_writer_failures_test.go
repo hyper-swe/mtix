@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewR1_ReplayWriterCompletionClockFailureDoesNotPartiallyCommit(t *testing.T) {
+func TestWritePermissionReplay_CompletionClockFailure_DoesNotPartiallyCommit(t *testing.T) {
 	s, _ := contractAcceptedPending(t, "after:permissions-pending.json")
 	s.alertStage = nil
 	p := generationPending(t, s)
@@ -31,7 +31,7 @@ func TestReviewR1_ReplayWriterCompletionClockFailureDoesNotPartiallyCommit(t *te
 	}))
 }
 
-func TestReviewR1_ReplayWriterRefusesUnencodableCanonicalBatchWithoutWriting(t *testing.T) {
+func TestWritePermissionReplay_UnencodableCanonicalBatch_RefusesWithoutWriting(t *testing.T) {
 	s, _ := contractAcceptedPending(t, "after:permissions-pending.json")
 	s.alertStage = nil
 	b := *generationPending(t, s).Batch
@@ -47,7 +47,7 @@ func TestReviewR1_ReplayWriterRefusesUnencodableCanonicalBatchWithoutWriting(t *
 
 // This is the storage writer's capacity contract, not a claim that the public
 // host-global transaction API permits several simultaneously pending batches.
-func TestReviewR1_ReplayWriterFullInflightLedgerRefusesWithoutEviction(t *testing.T) {
+func TestWritePermissionReplay_FullInflightLedger_RefusesWithoutEviction(t *testing.T) {
 	s := alertFixture(t)
 	require.NoError(t, s.withPermissions(t.Context(), func(dir *os.File, host string) error {
 		rows := make([]permissionReplay, maxPermissionReplays)

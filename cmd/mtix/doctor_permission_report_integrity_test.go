@@ -31,7 +31,7 @@ func reviewR1DoctorFailureRows(t *testing.T, out doctorCLIOutput) {
 	assert.Greater(t, unrelated, 0, "permission failures must retain other health checks")
 }
 
-func TestReviewR1_DoctorConflictedBoardIdentityKeepsReport(t *testing.T) {
+func TestDoctorPermissions_ConflictedBoardIdentity_KeepsReport(t *testing.T) {
 	root := doctorCLIBoard(t, filepath.Join(t.TempDir(), "unavailable-relay"))
 	ids := "11111111-1111-4111-8111-111111111111\n22222222-2222-4222-8222-222222222222\n"
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".mtix", "board-id"), []byte(ids), 0600))
@@ -39,7 +39,7 @@ func TestReviewR1_DoctorConflictedBoardIdentityKeepsReport(t *testing.T) {
 	reviewR1DoctorFailureRows(t, out)
 }
 
-func TestReviewR1_DoctorUnusableStateKeepsReport(t *testing.T) {
+func TestDoctorPermissions_UnusableOperatorState_KeepsReport(t *testing.T) {
 	root := doctorCLIBoard(t, filepath.Join(t.TempDir(), "unavailable-relay"))
 	_, dir := permissionDraftState(t)
 	require.NoError(t, os.MkdirAll(filepath.Dir(dir), 0700))
@@ -51,7 +51,7 @@ func TestReviewR1_DoctorUnusableStateKeepsReport(t *testing.T) {
 	assert.Equal(t, "synthetic non-directory state", string(data))
 }
 
-func TestReviewR1_DoctorCreatesNoOperatorState(t *testing.T) {
+func TestDoctorPermissions_MissingOperatorState_CreatesNoFiles(t *testing.T) {
 	root := doctorCLIBoard(t, "")
 	_, dir := permissionDraftState(t)
 	_, err := os.Stat(dir)
@@ -63,7 +63,7 @@ func TestReviewR1_DoctorCreatesNoOperatorState(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "a diagnostic must not create any operator state")
 }
 
-func TestReviewR1_DoctorDeniedDecisionHasNoAllowRemedy(t *testing.T) {
+func TestDoctorPermissions_DeniedDecision_HasNoAllowRemedy(t *testing.T) {
 	root := doctorCLIBoard(t, "")
 	permissionDraftClearMarkers(t)
 	permissionDraftRegister(t, root, "review-denied")

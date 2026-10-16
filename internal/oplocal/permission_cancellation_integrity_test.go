@@ -29,7 +29,7 @@ func reviewR1CanceledPending(t *testing.T) (*State, PermissionBatch, string) {
 	return s, intent, strings.TrimSuffix(permissionCancellationName(intent.ID), ".json")
 }
 
-func TestReviewR1_CancellationAuditCorruptionCannotReviveCaller(t *testing.T) {
+func TestCancelPermissionBatch_CorruptAudit_CannotReviveCaller(t *testing.T) {
 	kinds := []string{"malformed", "foreign-host", "null", "reason", "state", "caller", "pending-marker", "intent", "preimage", "canonical-time", "symlink"}
 	for _, kind := range kinds {
 		t.Run(kind, func(t *testing.T) { reviewR1CorruptCancellation(t, kind) })
@@ -91,7 +91,7 @@ func reviewR1CorruptCancellationFile(t *testing.T, s *State, name, kind string, 
 	}
 }
 
-func TestReviewR1_CancellationRejectsInvalidClockWithoutChangingAcceptedState(t *testing.T) {
+func TestCancelPermissionBatch_InvalidClock_PreservesAcceptedState(t *testing.T) {
 	s, intent := contractAcceptedPending(t, "after:grants.json")
 	s.alertStage = nil
 	before := alertStateSnapshot(t, s)

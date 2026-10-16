@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewR1_CommittedPreimageTamperingNeverReconstructsGrants(t *testing.T) {
+func TestPendingPermissionBatches_TamperedCommittedPreimage_RefusesWithoutReconstruction(t *testing.T) {
 	for _, kind := range []string{"missing", "digest", "duplicate", "board", "agent", "host", "deny-pending", "hold-identity", "hold-conflicts-deny"} {
 		t.Run(kind, func(t *testing.T) {
 			s, _ := contractAcceptedPending(t, "after:grants.json")

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewR1_WireEquivalencePreservesOffsetAndIgnoresTransientFields(t *testing.T) {
+func TestSamePermissionBatch_TimeOffsetAndTransientFields_PreservesWireEquivalence(t *testing.T) {
 	utc := alertTime().UTC()
 	offset := utc.In(time.FixedZone("synthetic-offset", 19800))
 	sameWire := utc.In(time.FixedZone("synthetic-utc", 0))

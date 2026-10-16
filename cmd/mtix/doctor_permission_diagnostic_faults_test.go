@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewR1_DoctorOrphanPermissionStateKeepsReportWithoutMintingHost(t *testing.T) {
+func TestDoctorPermissions_OrphanState_KeepsReportWithoutMintingHost(t *testing.T) {
 	for _, badType := range []bool{false, true} {
 		t.Run(map[bool]string{false: "present-record", true: "unreadable-record"}[badType], func(t *testing.T) {
 			root := doctorCLIBoard(t, filepath.Join(t.TempDir(), "unavailable-relay"))
@@ -34,7 +34,7 @@ func TestReviewR1_DoctorOrphanPermissionStateKeepsReportWithoutMintingHost(t *te
 	}
 }
 
-func TestReviewR1_DoctorInvalidEnvironmentStillProducesPermissionFailureRows(t *testing.T) {
+func TestDoctorPermissions_InvalidEnvironment_ProducesFailureRows(t *testing.T) {
 	root := doctorCLIBoard(t, filepath.Join(t.TempDir(), "unavailable-relay"))
 	t.Setenv("XDG_CONFIG_HOME", "relative-config")
 	t.Setenv("APPDATA", "relative-config")
@@ -42,7 +42,7 @@ func TestReviewR1_DoctorInvalidEnvironmentStillProducesPermissionFailureRows(t *
 	reviewR1DoctorFailureRows(t, output)
 }
 
-func TestReviewR1_DoctorUnreadableBoardObservationRetainsOtherChecks(t *testing.T) {
+func TestDoctorPermissions_UnreadableBoardObservation_RetainsOtherChecks(t *testing.T) {
 	root := doctorCLIBoard(t, filepath.Join(t.TempDir(), "unavailable-relay"))
 	canonical, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)
@@ -64,7 +64,7 @@ func TestReviewR1_DoctorUnreadableBoardObservationRetainsOtherChecks(t *testing.
 	reviewR1DoctorFailureRows(t, output)
 }
 
-func TestReviewR1_RecoveryJSONWriteFailureIsReturned(t *testing.T) {
+func TestPermissionRecoveryCLI_JSONWriteFailure_ReturnsError(t *testing.T) {
 	saveAndResetApp(t)
 	state := identityOperatorState(t)
 	_, err := state.HostID()
@@ -77,7 +77,7 @@ func TestReviewR1_RecoveryJSONWriteFailureIsReturned(t *testing.T) {
 	require.ErrorIs(t, command.ExecuteContext(t.Context()), cause)
 }
 
-func TestReviewR1_RecoveryInvalidEnvironmentAndUnreadableStateAreReported(t *testing.T) {
+func TestPermissionRecoveryCLI_InvalidEnvironmentOrUnreadableState_ReportsError(t *testing.T) {
 	t.Run("environment", func(t *testing.T) {
 		saveAndResetApp(t)
 		t.Setenv("XDG_CONFIG_HOME", "relative-config")

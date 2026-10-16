@@ -14,7 +14,7 @@ import (
 
 // These exercise encoding boundaries directly: invalid Go values cannot be
 // represented in a persisted JSON fixture, so a reader test cannot reach them.
-func TestReviewR1_CheckedEncodersReturnErrorsWithoutPartialOutput(t *testing.T) {
+func TestEncodeConfirmationsAndReplays_InvalidValues_ReturnsErrorWithoutPartialOutput(t *testing.T) {
 	b := permissionFixtureBatch()
 	b.ID = replayIntent().ID
 	b.Time = time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -33,7 +33,7 @@ func TestReviewR1_CheckedEncodersReturnErrorsWithoutPartialOutput(t *testing.T) 
 	}
 }
 
-func TestReviewR1_ProjectionEncodingFailureLeavesInputsUnchanged(t *testing.T) {
+func TestPermissionGrantProjection_EncodingFailure_PreservesInputs(t *testing.T) {
 	for _, kind := range []string{"grant-time", "inherited-json", "size"} {
 		t.Run(kind, func(t *testing.T) {
 			data := map[string]json.RawMessage{"future": json.RawMessage(`true`)}
@@ -58,7 +58,7 @@ func TestReviewR1_ProjectionEncodingFailureLeavesInputsUnchanged(t *testing.T) {
 	}
 }
 
-func TestReviewR1_RecordEncoderRefusesUnsupportedAndOversizedValuesWithoutWriting(t *testing.T) {
+func TestCommitPermissionRecord_UnsupportedOrOversizedValue_RefusesWithoutWriting(t *testing.T) {
 	s := alertFixture(t)
 	require.NoError(t, s.withPermissions(t.Context(), func(dir *os.File, host string) error {
 		for _, value := range []any{func() {}, strings.Repeat("x", maxRecordSize)} {
@@ -70,7 +70,7 @@ func TestReviewR1_RecordEncoderRefusesUnsupportedAndOversizedValuesWithoutWritin
 	}))
 }
 
-func TestReviewR1_PreimageEncoderDoesNotAcceptUnserializableCommitTime(t *testing.T) {
+func TestValidatePermissionBefore_InvalidCommitTime_RefusesEncoding(t *testing.T) {
 	grants := []AgentGrant{{ConfirmedAt: time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)}}
 	b := permissionFixtureBatch()
 	p := permissionPending{Batch: &b, BeforeGrants: &grants}

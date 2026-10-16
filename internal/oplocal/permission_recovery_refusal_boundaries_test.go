@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewR1_RecoveryRefusesMalformedReceiptAndPendingWithoutWrites(t *testing.T) {
+func TestApplyPermissionIntent_MalformedReceiptOrPending_RefusesWithoutWrites(t *testing.T) {
 	for _, kind := range []string{"pending", "replay", "wrong-caller", "notice", "orphan-notice", "publication"} {
 		t.Run(kind, func(t *testing.T) {
 			s, intent := contractAcceptedPending(t, "after:grants.json")
@@ -52,7 +52,7 @@ func TestReviewR1_RecoveryRefusesMalformedReceiptAndPendingWithoutWrites(t *test
 	}
 }
 
-func TestReviewR1_CancelledCallerRefusesOperatorAndCompletedLookup(t *testing.T) {
+func TestPermissionReplayResult_CancelledCaller_RefusesOperatorAndCompletedLookup(t *testing.T) {
 	s, intent := contractAcceptedPending(t, "after:grants.json")
 	s.alertStage = nil
 	require.NoError(t, s.CancelPermissionBatch(t.Context(), intent.ID))
@@ -67,7 +67,7 @@ func TestReviewR1_CancelledCallerRefusesOperatorAndCompletedLookup(t *testing.T)
 	require.Equal(t, before, alertStateSnapshot(t, s))
 }
 
-func TestReviewR1_CancellationBodyMustBeAnAuditObject(t *testing.T) {
+func TestReadPermissionCancellation_NonObjectBody_Refuses(t *testing.T) {
 	s, intent := contractAcceptedPending(t, "after:grants.json")
 	s.alertStage = nil
 	name := strings.TrimSuffix(permissionCancellationName(intent.ID), ".json")
@@ -78,7 +78,7 @@ func TestReviewR1_CancellationBodyMustBeAnAuditObject(t *testing.T) {
 	require.Equal(t, before, alertStateSnapshot(t, s))
 }
 
-func TestReviewR1_CancellationLogWriteFailureIsReportedAndResumes(t *testing.T) {
+func TestCancelPermissionBatch_LogWriteFailure_ReportsAndResumes(t *testing.T) {
 	s, intent := contractAcceptedPending(t, "after:permissions-pending.json")
 	cause := errors.New("confirmation storage unavailable")
 	s.alertStage = func(stage string) error {
@@ -99,7 +99,7 @@ func TestReviewR1_CancellationLogWriteFailureIsReportedAndResumes(t *testing.T) 
 	require.Equal(t, "quarantined", rows[0].BoardLine)
 }
 
-func TestReviewR1_CancellationInvalidCompletionClockRetainsTerminalAudit(t *testing.T) {
+func TestCancelPermissionBatch_InvalidCompletionClock_RetainsTerminalAudit(t *testing.T) {
 	s, intent := contractAcceptedPending(t, "after:grants.json")
 	s.alertStage = nil
 	calls := 0
@@ -129,7 +129,7 @@ func (c *reviewR1CancelOnSecondCheck) Err() error {
 	return nil
 }
 
-func TestReviewR1_ReplayReadCancellationAfterIdentityLookupDoesNotWrite(t *testing.T) {
+func TestPermissionReplayResult_CancelledAfterIdentityLookup_DoesNotWrite(t *testing.T) {
 	s := alertFixture(t)
 	intent := replayIntent()
 	require.NoError(t, s.ApplyPermissionIntent(t.Context(), intent, replayPrepare, nil))
@@ -141,7 +141,7 @@ func TestReviewR1_ReplayReadCancellationAfterIdentityLookupDoesNotWrite(t *testi
 	require.Equal(t, before, alertStateSnapshot(t, s))
 }
 
-func TestReviewR1_UnreadableReplayRecordDoesNotBecomeEmptySuccessfulLookup(t *testing.T) {
+func TestPermissionReplayResult_UnreadableRecord_ReturnsError(t *testing.T) {
 	s := alertFixture(t)
 	intent := replayIntent()
 	require.NoError(t, s.ApplyPermissionIntent(t.Context(), intent, replayPrepare, nil))
@@ -154,7 +154,7 @@ func TestReviewR1_UnreadableReplayRecordDoesNotBecomeEmptySuccessfulLookup(t *te
 	require.Equal(t, before, alertStateSnapshot(t, s))
 }
 
-func TestReviewR1_CancellationReaderRejectsInvalidPrivateIdentity(t *testing.T) {
+func TestReadPermissionCancellation_InvalidPrivateIdentity_Refuses(t *testing.T) {
 	s := alertFixture(t)
 	require.NoError(t, s.withPermissions(t.Context(), func(dir *os.File, host string) error {
 		_, err := readPermissionCancellation(dir, host, "../../outside")

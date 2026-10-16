@@ -14,7 +14,7 @@ import (
 
 // Validate the upgrade boundary independently of its caller's preliminary
 // checks. Refusal must leave the accepted legacy generation byte exact.
-func TestReviewR1_LegacyUpgradeRefusesInvalidContextScopeAndPreimages(t *testing.T) {
+func TestValidateLegacyGenerationUpgrade_InvalidContextScopeOrPreimages_Refuses(t *testing.T) {
 	for _, kind := range []string{"context", "metadata", "publisher", "replay", "log", "grants", "scope"} {
 		t.Run(kind, func(t *testing.T) { reviewR1LegacyUpgradeRefusal(t, kind) })
 	}
@@ -60,7 +60,7 @@ func reviewR1LegacyUpgradeRefusal(t *testing.T, kind string) {
 	require.Equal(t, before, alertStateSnapshot(t, s))
 }
 
-func TestReviewR1_PrepareFinishDoesNotUpgradeWrongBoardOrCancelledContext(t *testing.T) {
+func TestPreparePermissionFinish_WrongBoardOrCancelledContext_DoesNotUpgrade(t *testing.T) {
 	s, _ := contractAcceptedPending(t, "after:permissions-pending.json")
 	p := generationPending(t, s)
 	before := alertStateSnapshot(t, s)
@@ -79,7 +79,7 @@ func TestReviewR1_PrepareFinishDoesNotUpgradeWrongBoardOrCancelledContext(t *tes
 	require.Equal(t, before, alertStateSnapshot(t, s))
 }
 
-func TestReviewR1_LegacyPreProjectionHoldDoesNotNeedAnExistingGrant(t *testing.T) {
+func TestApplyPermissionIntent_LegacyPreProjectionHold_RequiresNoExistingGrant(t *testing.T) {
 	s, intent := contractAcceptedPending(t, "after:permissions-pending.json")
 	s.alertStage = nil
 	p := generationPending(t, s)
@@ -99,7 +99,7 @@ func TestReviewR1_LegacyPreProjectionHoldDoesNotNeedAnExistingGrant(t *testing.T
 	require.Equal(t, grants, after)
 }
 
-func TestReviewR1_LegacyPendingAllowCannotReplaceAnExistingDeny(t *testing.T) {
+func TestApplyPermissionIntent_LegacyPendingAllow_PreservesExistingDeny(t *testing.T) {
 	s, intent := contractAcceptedPending(t, "after:permissions-pending.json")
 	s.alertStage = nil
 	p := generationPending(t, s)
@@ -118,7 +118,7 @@ func TestReviewR1_LegacyPendingAllowCannotReplaceAnExistingDeny(t *testing.T) {
 	require.Equal(t, []AgentGrant{deny}, grants)
 }
 
-func TestReviewR1_RetainedReplayInvariantsRejectImpossibleTerminalStates(t *testing.T) {
+func TestValidatePermissionReplays_ImpossibleTerminalState_Refuses(t *testing.T) {
 	s := alertFixture(t)
 	intent := replayIntent()
 	require.NoError(t, s.ApplyPermissionIntent(t.Context(), intent, replayPrepare, nil))

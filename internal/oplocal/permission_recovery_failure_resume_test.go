@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewR1_CancelBeforeProjectionPreservesAcceptedDenyAndTerminalCaller(t *testing.T) {
+func TestCancelPermissionBatch_BeforeProjection_PreservesAcceptedDenyAndTerminalCaller(t *testing.T) {
 	for _, stage := range []string{"after:permissions-pending.json", "after:permission-replay-accepted", "before:grants.json"} {
 		t.Run(stage, func(t *testing.T) {
 			s := alertFixture(t)
@@ -43,7 +43,7 @@ func TestReviewR1_CancelBeforeProjectionPreservesAcceptedDenyAndTerminalCaller(t
 	}
 }
 
-func TestReviewR1_UndeliverableNoticeRecoveryRetainsOutcomeAndNeverRepublishes(t *testing.T) {
+func TestApplyPermissionIntent_UndeliverableNotice_RetainsOutcomeWithoutRepublishing(t *testing.T) {
 	for _, stage := range []string{"after:permissions-pending.json", "before:final:confirmations.jsonl", "after:final:confirmations.jsonl", "before:permission-replay-completed", "before:permissions-clear"} {
 		t.Run(stage, func(t *testing.T) { reviewR1UndeliverableStage(t, stage) })
 	}

@@ -27,7 +27,7 @@ func (s *reviewR1PublicationLookupStore) PermissionPublicationExists(context.Con
 	return true, s.failure
 }
 
-func TestReviewR1_PublicationIdentityLookupRefusesBeforeAcceptingGrants(t *testing.T) {
+func TestApplyBatch_PublicationIdentityLookupFailure_RefusesBeforeGrantAcceptance(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "collisions", true: "unreadable"}[fail], func(t *testing.T) {
 			f := newWakePermissionFixture(t)
@@ -81,7 +81,7 @@ func (s *reviewR1NoticeReadStore) AppendAnnotationOnce(ctx context.Context, id s
 	return s.PermissionStore.AppendAnnotationOnce(ctx, id, annotation)
 }
 
-func TestReviewR1_UnreadableNoticeTargetHoldsAllowUntilStableRetry(t *testing.T) {
+func TestApplyBatch_UnreadableNoticeTarget_HoldsAllowUntilStableRetry(t *testing.T) {
 	f := newWakePermissionFixture(t)
 	reviewR1Hub(t, f, "first")
 	sentinel := errors.New("synthetic target unreadable")
@@ -101,7 +101,7 @@ func TestReviewR1_UnreadableNoticeTargetHoldsAllowUntilStableRetry(t *testing.T)
 	assert.Equal(t, 1, permissionWireEventCount(t, f.store, publication))
 }
 
-func TestReviewR1_TargetDeletedBetweenProbeAndAppendIsUndeliverable(t *testing.T) {
+func TestApplyBatch_TargetDeletedAfterProbe_RecordsUndeliverable(t *testing.T) {
 	f := newWakePermissionFixture(t)
 	reviewR1Hub(t, f, "first")
 	f.svc.Store = &reviewR1NoticeReadStore{PermissionStore: f.store, deleteAtAppend: true}

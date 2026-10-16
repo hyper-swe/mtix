@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewR1_ApplyBatchInvalidModeBeforeDependencies(t *testing.T) {
+func TestApplyBatch_InvalidMode_RefusesBeforeDependencies(t *testing.T) {
 	svc := service.NewWakePermissions(service.PermissionDeps{})
 	batch := oplocal.PermissionBatch{Mode: "untrusted-mode", Source: "review fixture", Changes: []oplocal.PermissionChange{{AgentID: "first", Action: "allow"}}}
 	var err error
@@ -24,7 +24,7 @@ func TestReviewR1_ApplyBatchInvalidModeBeforeDependencies(t *testing.T) {
 	assert.ErrorIs(t, err, model.ErrInvalidInput)
 }
 
-func TestReviewR1_PublicationIdentityIndependentAcrossHostsAndRetries(t *testing.T) {
+func TestApplyBatch_AcrossHostsAndRetries_KeepsPublicationIdentityIndependent(t *testing.T) {
 	batch := oplocal.PermissionBatch{ID: "0123456789abcdef0123456789abcdef", Mode: "file", Source: "same orchestrator file", Changes: []oplocal.PermissionChange{{AgentID: "first", Action: "allow"}}}
 	var notices []string
 	var hosts []string
@@ -53,7 +53,7 @@ func TestReviewR1_PublicationIdentityIndependentAcrossHostsAndRetries(t *testing
 	assert.NotEqual(t, notices[0], notices[1], "a shared caller id must not correlate host publications")
 }
 
-func TestReviewR1_DedicatedFileEntryCannotClearOperatorDeny(t *testing.T) {
+func TestApplyFileBatch_ExistingOperatorDeny_DoesNotClear(t *testing.T) {
 	f := newWakePermissionFixture(t)
 	reviewR1Hub(t, f, "first")
 	require.NoError(t, reviewR1Apply(t, f, "first", "deny"))

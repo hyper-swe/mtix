@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewR1_CancellationResumesAfterReportedProtectedRecordRepair(t *testing.T) {
+func TestCancelPermissionBatch_ProtectedRecordRepaired_Resumes(t *testing.T) {
 	for _, name := range []string{"grants.json", "confirmations.jsonl", "permissions-replays.json"} {
 		t.Run(name, func(t *testing.T) { reviewR1RepairCancellation(t, name) })
 	}

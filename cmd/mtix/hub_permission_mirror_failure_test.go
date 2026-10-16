@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewR1_PermissionFailureDoesNotBlockHubMirror(t *testing.T) {
+func TestObserveHub_PermissionFailure_PreservesHubMirror(t *testing.T) {
 	initTestApp(t)
 	state := identityOperatorState(t)
 	_, err := app.store.MarkHubConnected(context.Background(), "config")

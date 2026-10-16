@@ -51,7 +51,7 @@ func reviewR1Denied(t *testing.T, f *wakePermissionFixture, agent string) {
 	assert.Equal(t, "denied", reason)
 }
 
-func TestReviewR1_PendingAllowRequiresCommit(t *testing.T) {
+func TestWakeable_PendingAllow_RequiresCommit(t *testing.T) {
 	f := newWakePermissionFixture(t)
 	reviewR1Hub(t, f, "pending")
 	f.svc.Store = &reviewR1NoticeStore{PermissionStore: f.store}
@@ -66,7 +66,7 @@ func TestReviewR1_PendingAllowRequiresCommit(t *testing.T) {
 	assert.True(t, rows[0].Pending)
 }
 
-func TestReviewR1_DeletedNoticeTargetDoesNotBlockDeny(t *testing.T) {
+func TestApplyBatch_DeletedNoticeTarget_DoesNotBlockDeny(t *testing.T) {
 	f := newWakePermissionFixture(t)
 	reviewR1Hub(t, f, "first")
 	f.svc.Store = &reviewR1NoticeStore{PermissionStore: f.store}
@@ -85,7 +85,7 @@ func TestReviewR1_DeletedNoticeTargetDoesNotBlockDeny(t *testing.T) {
 	assert.GreaterOrEqual(t, len(rows), 2, "retain both operator decisions")
 }
 
-func TestReviewR1_DenyIndependentOfEarlierPublication(t *testing.T) {
+func TestApplyBatch_EarlierPublicationFailure_DoesNotBlockDeny(t *testing.T) {
 	for _, foreign := range []bool{false, true} {
 		t.Run(map[bool]string{false: "same_board", true: "other_board"}[foreign], func(t *testing.T) {
 			owner := newWakePermissionFixture(t)

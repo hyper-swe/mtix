@@ -35,7 +35,7 @@ func reviewR1PendingCLI(t *testing.T) (string, *oplocal.State, oplocal.Permissio
 	return root, state, batch
 }
 
-func TestReviewR1_RecoveryCLIListsCancelsAndPermanentlyRefusesCaller(t *testing.T) {
+func TestPermissionRecoveryCLI_CancelledCaller_ListsAndPermanentlyRefusesRetry(t *testing.T) {
 	root, state, batch := reviewR1PendingCLI(t)
 	listed := doctorCLIExecute(t, root, "", "agent", "permissions", "recover", "--json")
 	require.Equal(t, 0, listed.exit, listed.stderr)
@@ -59,7 +59,7 @@ func TestReviewR1_RecoveryCLIListsCancelsAndPermanentlyRefusesCaller(t *testing.
 	assert.Equal(t, "quarantined", rows[1].BoardLine)
 }
 
-func TestReviewR1_RecoveryCLIReferenceMatchesActualHelp(t *testing.T) {
+func TestPermissionRecoveryCLI_GeneratedReference_MatchesActualHelp(t *testing.T) {
 	actual, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI_REFERENCE.md"))
 	require.NoError(t, err)
 	cmd := newAgentPermissionRecoveryCmd()
@@ -72,7 +72,7 @@ func TestReviewR1_RecoveryCLIReferenceMatchesActualHelp(t *testing.T) {
 	require.NoError(t, command.ParseFlags([]string{"--cancel", "33333333333333333333333333333333"}))
 }
 
-func TestReviewR1_DoctorPendingFixNamesActualRecoveryCommand(t *testing.T) {
+func TestDoctorPermissions_PendingPublication_NamesRecoveryCommand(t *testing.T) {
 	root, _, _ := reviewR1PendingCLI(t)
 	output := doctorCLIExecute(t, root, "", "doctor", "--json")
 	rows := doctorCLIRows(t, output.stdout)
@@ -99,7 +99,7 @@ func reviewR1LegacyPendingCLI(t *testing.T) (string, *oplocal.State, oplocal.Per
 	return root, state, batch
 }
 
-func TestReviewR1_LegacyHoldDoctorAndRecoveryListExactOperatorClear(t *testing.T) {
+func TestDoctorPermissions_LegacyHold_PrintsExactOperatorClear(t *testing.T) {
 	root, state, batch := reviewR1LegacyPendingCLI(t)
 	plain := doctorCLIExecute(t, root, "", "agent", "permissions", "recover")
 	require.Equal(t, 0, plain.exit, plain.stderr)
@@ -148,7 +148,7 @@ func reviewR1DoctorHold(t *testing.T, root string) {
 	require.True(t, found)
 }
 
-func TestReviewR1_RecoveryCLIEmptyAndInvalidCancellation(t *testing.T) {
+func TestPermissionRecoveryCLI_EmptyOrInvalidCancellation_ReportsResult(t *testing.T) {
 	root := doctorCLIBoard(t, "")
 	empty := doctorCLIExecute(t, root, "", "agent", "permissions", "recover")
 	require.Equal(t, 0, empty.exit, empty.stderr)

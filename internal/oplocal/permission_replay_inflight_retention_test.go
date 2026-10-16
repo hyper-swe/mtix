@@ -11,7 +11,7 @@ import (
 
 // Exercise the durable writer with a nonpinned inflight receipt. The public
 // transaction layer separately enforces one active pending batch.
-func TestReviewR1_ReplayWriterPreservesInflightAtCapacity(t *testing.T) {
+func TestWritePermissionReplay_AtCapacity_PreservesInflightReceipts(t *testing.T) {
 	s := alertFixture(t)
 	rows := replayCapacityReceipts(t, s, maxPermissionReplays)
 	for i := range rows {

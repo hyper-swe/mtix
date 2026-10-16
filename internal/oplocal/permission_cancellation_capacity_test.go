@@ -12,7 +12,7 @@ import (
 
 // Retained completed history is synthetic; cancellation uses the actual public
 // transaction and protected writer at the real byte limit.
-func TestReviewR1_CancellationAtReplayByteLimitPreservesTerminalCaller(t *testing.T) {
+func TestCancelPermissionBatch_ReplayByteLimit_PreservesTerminalCaller(t *testing.T) {
 	s, intent := contractAcceptedPending(t, "after:permission-replay-accepted")
 	s.alertStage = nil
 	host, err := s.HostID()

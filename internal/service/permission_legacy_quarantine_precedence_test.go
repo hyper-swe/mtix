@@ -69,7 +69,7 @@ func reviewR1InterruptedLegacyAllow(t *testing.T, hub bool) *wakePermissionFixtu
 	return f
 }
 
-func TestReviewR1_LegacyPendingAllowCannotFallThroughLocalImplicitEligibility(t *testing.T) {
+func TestWakeable_LegacyPendingAllow_DoesNotUseLocalImplicitEligibility(t *testing.T) {
 	for _, hub := range []bool{false, true} {
 		t.Run(map[bool]string{false: "local", true: "hub"}[hub], func(t *testing.T) {
 			f := reviewR1InterruptedLegacyAllow(t, hub)
@@ -81,7 +81,7 @@ func TestReviewR1_LegacyPendingAllowCannotFallThroughLocalImplicitEligibility(t 
 	}
 }
 
-func TestReviewR1_LegacyQuarantineCannotReenableAnEarlierDeniedLocalID(t *testing.T) {
+func TestWakeable_LegacyQuarantine_PreservesEarlierLocalDeny(t *testing.T) {
 	f := reviewR1InterruptedLegacyAllow(t, false)
 	f.register(t, "second")
 	// Other-agent denial must complete while the older publication stays unavailable.
@@ -93,7 +93,7 @@ func TestReviewR1_LegacyQuarantineCannotReenableAnEarlierDeniedLocalID(t *testin
 	assert.NotEqual(t, "implicit local registration", reason)
 }
 
-func TestReviewR1_LegacyUnrelatedAllowCannotFinishAndClearOldHold(t *testing.T) {
+func TestApplyBatch_UnrelatedAllow_DoesNotClearLegacyHold(t *testing.T) {
 	f := reviewR1InterruptedLegacyAllow(t, false)
 	f.svc.Store = f.store
 	require.NoError(t, reviewR1Apply(t, f, "other", "allow"))
@@ -103,7 +103,7 @@ func TestReviewR1_LegacyUnrelatedAllowCannotFinishAndClearOldHold(t *testing.T) 
 	assert.Equal(t, "quarantined", reason)
 }
 
-func TestReviewR1_LegacyOriginalCallerRetryCannotClearHold(t *testing.T) {
+func TestApplyBatch_OriginalCallerRetry_DoesNotClearLegacyHold(t *testing.T) {
 	f := reviewR1InterruptedLegacyAllow(t, false)
 	pending, err := f.state.PendingPermissionBatches(t.Context())
 	require.NoError(t, err)
@@ -140,7 +140,7 @@ func reviewR1LegacyReplay(t *testing.T, f *wakePermissionFixture, id string, bat
 	}
 }
 
-func TestReviewR1_LegacyHoldSurvivesCancelAndFileUntilFreshOperatorAllow(t *testing.T) {
+func TestApplyBatch_LegacyHold_RequiresFreshOperatorAllow(t *testing.T) {
 	f := reviewR1InterruptedLegacyAllow(t, false)
 	pending, err := f.state.PendingPermissionBatches(t.Context())
 	require.NoError(t, err)
@@ -171,7 +171,7 @@ func TestReviewR1_LegacyHoldSurvivesCancelAndFileUntilFreshOperatorAllow(t *test
 	require.True(t, ok)
 }
 
-func TestReviewR1_RegistrationCannotActivateLegacyQuarantine(t *testing.T) {
+func TestWakeable_NewRegistration_DoesNotActivateLegacyQuarantine(t *testing.T) {
 	f := newWakePermissionFixture(t)
 	permissionRoot(t, f, "TEST-1")
 	f.svc.Store = &reviewR1NoticeStore{PermissionStore: f.store}
@@ -187,7 +187,7 @@ func TestReviewR1_RegistrationCannotActivateLegacyQuarantine(t *testing.T) {
 	require.Equal(t, "quarantined", reason)
 }
 
-func TestReviewR1_LegacyQuarantinePreservesUntouchedPriorGrantsAndDenies(t *testing.T) {
+func TestApplyBatch_LegacyQuarantine_PreservesPriorGrantsAndDenies(t *testing.T) {
 	f := newWakePermissionFixture(t)
 	permissionRoot(t, f, "TEST-1")
 	for _, agent := range []string{"first", "kept-allow", "kept-deny"} {
@@ -216,7 +216,7 @@ func TestReviewR1_LegacyQuarantinePreservesUntouchedPriorGrantsAndDenies(t *test
 	assert.True(t, byAgent["first"].Quarantined)
 }
 
-func TestReviewR1_LegacyDenyRecoversOriginalPublicationIdentity(t *testing.T) {
+func TestApplyBatch_LegacyDeny_UsesOriginalPublicationIdentity(t *testing.T) {
 	f := newWakePermissionFixture(t)
 	permissionRoot(t, f, "TEST-1")
 	f.svc.Store = &permissionFaultStore{PermissionStore: f.store, fail: true}

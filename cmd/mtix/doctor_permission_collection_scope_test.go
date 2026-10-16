@@ -26,7 +26,7 @@ func reviewR1OperatorFiles(t *testing.T, dir string) map[string]string {
 	return files
 }
 
-func TestReviewR1_DoctorPreservesBoardMarkPersistenceWithoutCreatingOperatorFiles(t *testing.T) {
+func TestDoctorStartup_BoardMark_PersistsWithoutOperatorFiles(t *testing.T) {
 	for _, existing := range []bool{false, true} {
 		t.Run(map[bool]string{false: "absent-state", true: "existing-state"}[existing], func(t *testing.T) {
 			root := doctorCLIBoard(t, filepath.Join(t.TempDir(), "unavailable-relay"))
@@ -57,7 +57,7 @@ func TestReviewR1_DoctorPreservesBoardMarkPersistenceWithoutCreatingOperatorFile
 	}
 }
 
-func TestReviewR1_TopLevelDoctorReportsDeadRegistrationWithoutExpiringIt(t *testing.T) {
+func TestDoctorStartup_DeadRegistration_ReportsWithoutExpiring(t *testing.T) {
 	testutil.OperatorState(t)
 	initRegistrationApp(t)
 	captureStdout(t, func() { require.NoError(t, runAgentRegister("stale-lane", sessionOptions{Session: "synthetic"})) })
@@ -90,7 +90,7 @@ func TestReviewR1_TopLevelDoctorReportsDeadRegistrationWithoutExpiringIt(t *test
 	require.Equal(t, files, reviewR1OperatorFiles(t, dir))
 }
 
-func TestReviewR1_DoctorStartupScopeIsTopLevelOnly(t *testing.T) {
+func TestIsTopLevelDoctor_NestedDoctor_LeavesStartupUnchanged(t *testing.T) {
 	root := newRootCmd()
 	doctor, _, err := root.Find([]string{"doctor"})
 	require.NoError(t, err)

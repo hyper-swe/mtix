@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewR1_MarkerAgreementIncludesClaudeEnvironment(t *testing.T) {
+func TestHarnessSessionMarkers_ClaudeEnvironment_AgreesWithHookPredicate(t *testing.T) {
 	t.Setenv("CLAUDE_ENV_FILE", "synthetic-marker-value")
 	require.True(t, hooks.SessionMarked())
 	assert.Contains(t, oplocal.HarnessSessionMarkers(os.Environ()), "CLAUDE_ENV_FILE")

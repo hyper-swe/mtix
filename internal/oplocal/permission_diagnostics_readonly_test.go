@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewR1_PermissionDiagnosticsReadOnlyMissingAndOrphanState(t *testing.T) {
+func TestPermissionStatePresent_MissingOrOrphanState_DoesNotWrite(t *testing.T) {
 	s := alertFixture(t)
 	path, err := s.Path()
 	require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestReviewR1_PermissionDiagnosticsReadOnlyMissingAndOrphanState(t *testing.
 	require.Equal(t, before, alertStateSnapshot(t, s))
 }
 
-func TestReviewR1_DiagnosticUnreadableStateAndCanceledReadsNeverInitialize(t *testing.T) {
+func TestReadHostID_UnreadableStateOrCancelledRead_DoesNotInitialize(t *testing.T) {
 	s := alertFixture(t)
 	path, err := s.Path()
 	require.NoError(t, err)
@@ -71,7 +71,7 @@ func TestReviewR1_DiagnosticUnreadableStateAndCanceledReadsNeverInitialize(t *te
 	require.Equal(t, "synthetic non-directory", string(data))
 }
 
-func TestReviewR1_OrphanPresenceRefusesInvalidProtectedRecordType(t *testing.T) {
+func TestPermissionStatePresent_InvalidProtectedRecordType_Refuses(t *testing.T) {
 	s := alertFixture(t)
 	require.NoError(t, s.Ensure())
 	path, err := s.Path()

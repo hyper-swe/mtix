@@ -180,3 +180,57 @@ func TestShowParity_MCPShowReturnsSameAnnotationsAsCLI(t *testing.T) {
 		assert.Contains(t, cliOut, a.CreatedAt.UTC().Format(time.RFC3339))
 	}
 }
+
+func TestShowParity_OutOfOrderStoredAnnotations_SameOrderInCLIJSONAndMCP(t *testing.T) {
+	initTestApp(t)
+	id := createShowNode(t, "A description")
+
+	older := time.Date(2026, 9, 1, 9, 30, 0, 0, time.UTC)
+	newer := time.Date(2026, 9, 2, 14, 5, 0, 0, time.UTC)
+	// Stored newest-first, with two equal timestamps whose ids are out of order.
+	require.NoError(t, app.store.SetAnnotations(context.Background(), id, []model.Annotation{
+		{ID: "01K0000000000000000000000D", Author: "r", Text: "text-d", CreatedAt: newer},
+		{ID: "01K0000000000000000000000C", Author: "r", Text: "text-c", CreatedAt: older},
+		{ID: "01K0000000000000000000000B", Author: "r", Text: "text-b", CreatedAt: older},
+		{ID: "01K0000000000000000000000A", Author: "r", Text: "text-a", CreatedAt: older.Add(-time.Hour)},
+	}))
+	want := []string{"text-a", "text-b", "text-c", "text-d"}
+
+	cliOut := showOutput(t, id)
+	last := -1
+	for _, text := range want {
+		pos := strings.Index(cliOut, text)
+		require.NotEqual(t, -1, pos, "CLI prints %q\n%s", text, cliOut)
+		assert.Greater(t, pos, last, "CLI order")
+		last = pos
+	}
+
+	texts := func(as []model.Annotation) []string {
+		out := make([]string, 0, len(as))
+		for _, a := range as {
+			out = append(out, a.Text)
+		}
+		return out
+	}
+
+	app.jsonOutput = true
+	t.Cleanup(func() { app.jsonOutput = false })
+	jsonOut := captureStdout(t, func() { require.NoError(t, runShow(id)) })
+	var fromJSON struct {
+		Annotations []model.Annotation `json:"annotations"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(jsonOut), &fromJSON))
+	assert.Equal(t, want, texts(fromJSON.Annotations), "--json order")
+
+	reg := mcp.NewToolRegistry()
+	mcp.RegisterNodeTools(reg, app.nodeSvc)
+	args, err := json.Marshal(map[string]string{"id": id})
+	require.NoError(t, err)
+	res, err := reg.Call(context.Background(), "mtix_show", args)
+	require.NoError(t, err)
+	var fromMCP struct {
+		Annotations []model.Annotation `json:"annotations"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(res.Content[0].Text), &fromMCP))
+	assert.Equal(t, want, texts(fromMCP.Annotations), "MCP order")
+}

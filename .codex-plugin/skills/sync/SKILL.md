@@ -300,7 +300,7 @@ For a development hub on this machine (loopback or a local socket only), `--inse
 
 - At session start run `mtix sync push`, then `mtix sync pull`. Push first, so a pull never runs while local changes are unpushed.
 - After you change tasks, run `mtix sync push`.
-- `mtix sync status` shows the local queue (`pending`, quarantined and held events, open conflicts) and does not contact the hub.
+- `mtix sync status` shows the local queue (`pending`, quarantined and held events, open conflicts), the quarantined events refused for an invalid node id and the local tasks with such an id, and does not contact the hub.
 - In a git hook or script, set `MTIX_SYNC_HOOK=1`: a transient hub error then prints a warning and the command continues. A busy local sync lock also warns that pull was not performed; retry after the current owner finishes.
 - After a pull, read the output for `conflicts`, `quarantined` and `renumbered`. A task number can change once when two agents created the same number; re-resolve by title, as the operating guide says.
 
@@ -321,6 +321,7 @@ Run `mtix sync doctor`, or `mtix sync doctor --json` for machine-readable output
 | `queue draining` | no event waits in `pending` for over an hour |
 | `quarantined events` | no pulled event is held in the local quarantine |
 | `held push events` | push holds no event the hub would refuse |
+| `valid node ids` | every local task id is inside the node id grammar (WARN, naming each task and its uid, when one is not) |
 | `unique node uids` | no two tasks share a uid |
 | `board matches sync log` | on a project that syncs, the board holds every task the local sync log creates |
 | `secrets file mode` | `.mtix/secrets` is mode 0600 (passes when the file is absent) |
@@ -344,9 +345,11 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 | `pending` never goes down; `queue draining` fails | an earlier push delivered events whose confirmation was lost | Run `mtix sync push`: it acknowledges events already on the hub (the `already on the hub` count) and pushes the rest. |
 | `quarantined events` fails | `mtix sync pull` held events it could not validate or apply | Run `mtix sync pull` again. If events remain, run `mtix sync quarantine list` and give the user the event ids and reasons. Never delete quarantine rows or raise `sync.max_lamport_jump`. |
 | `held push events` fails, or a `WARN: ... over the 65536-byte sync limit` line | push holds an event the hub would refuse | Follow the fix doctor prints for each event: shorten or split the field and save it again; for a held task creation, stop editing that task and tell the user. |
+| `quarantined events` names an `invalid node id` | a pulled event names a task id outside the node id grammar, such as `AA-1é.4`; it is never applied | Run `mtix sync quarantine list` and give the user the event ids, nodes and reasons to report to whoever runs the hub. No retry applies these events. |
+| `valid node ids` WARN | an earlier sync brought in a task whose id is outside the node id grammar | The task stays readable and editable here (`mtix show <uid>`), but other replicas quarantine its changes. Recreate each task you still need with `mtix create` and stop using the old one. |
 | `unique node uids` fails | two tasks share a uid | Do not edit the database. Follow the recovery the check names, and ask the user. |
 | `board matches sync log` fails | a replace import of an earlier version deleted tasks whose events stay in the local sync log; a pull acknowledges those events instead of applying them, so it cannot restore the tasks | Tell the user. The steps the check prints rebuild the board from the hub, run one at a time: `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull`. The discard deletes every local task and unpushed change, which is why `pending` 0 comes first; it asks for the ticket count typed at an interactive terminal, so the user runs it. |
-| `mtix import --mode replace` fails with `this store syncs with a hub` | a replace would delete tasks and changes whose events stay in the local sync log, and a pull could not restore them; the replace needs the ticket count typed at an interactive terminal, so an agent never runs it | Run `mtix sync pull` to receive teammates' changes. To rebuild the board from the hub, ask the user to run the commands the refusal names. A replace into an empty store, such as a restore into a fresh data directory, still runs. |
+| `mtix import --mode replace` fails with `this store syncs with a hub` | a replace would delete tasks and changes whose events stay in the local sync log, and a pull could not restore them; the replace needs the ticket count typed at an interactive terminal, so an agent never runs it | Run `mtix sync pull` to receive teammates' changes. To rebuild the board from the hub, ask the user to run the commands the refusal names. A replace into an empty store, such as a restore into a fresh data directory, still runs. On a project that never synced a replace is allowed and discards the pending events of the tasks it drops, so a later first push cannot create them; a project that published to or ingested from a file relay counts as synced. |
 | `hub-triggers` WARN or FAIL | a hub function or trigger is missing, rebound or disabled | Ask the table owner to run `mtix sync init` or the `ALTER TABLE ... ENABLE TRIGGER` statement the check prints. |
 | `hub-privileges` WARN | roles besides the owner can use the sync tables | Acceptable on a private network. To restrict, the owner runs `mtix sync harden` (dry run) and, with the user's approval of its role list, `--apply`. |
 | `mtix sync conflicts list` shows conflicts | two machines changed the same field | `mtix sync conflicts resolve <id>` records a decision and changes no task: apply the chosen value with `mtix update`, then push. |

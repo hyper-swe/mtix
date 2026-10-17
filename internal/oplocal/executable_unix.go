@@ -28,7 +28,7 @@ func (s *State) WriteExecutable(name string, data []byte) (path string, err erro
 		return "", err
 	}
 	defer closeWith(dir, &err)
-	opts := writeOptions{before: s.beforeCommit, syncDirectory: s.syncDirectory, mode: executableMode}
+	opts := writeOptions{before: s.beforeCommit, syncDirectory: s.syncDirectory, mode: executableMode, flushNative: s.flushNative}
 	if err = writeDataMode(dir, file, data, opts); err != nil {
 		return "", fmt.Errorf("write executable %s: %w", file, err)
 	}

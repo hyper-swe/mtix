@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,4 +41,28 @@ func TestRunShow_HistoryText_RemovesInvisibleFormatCharacters(t *testing.T) {
 	app.jsonOutput = true
 	js := captureStdout(t, func() { require.NoError(t, runShowWith(id, showOptions{historyLimit: 10})) })
 	assert.Contains(t, js, "x\u202eSSAP\u202cy", "JSON keeps the exact text")
+}
+
+// A line or paragraph separator in an imported actor, field or value must not
+// start a new line in show --history: like singleLine, the history text shows
+// it as a space, so every entry stays on one line (MTIX-100.7).
+func TestRunShow_HistoryText_LineSeparatorsStayOnOneLineAsSpaces(t *testing.T) {
+	initTestApp(t)
+	id := createShowNode(t, "d")
+	node, err := app.store.GetNode(context.Background(), id)
+	require.NoError(t, err)
+	_, err = app.store.WriteDB().Exec(`INSERT INTO task_history (entry_id, task_uid, ts, actor, origin, kind, field, old_value, new_value)
+		VALUES ('01U0000000000000000000A003', ?, '2999-01-01T00:00:00.000000000Z', ?, 'import', 'change', ?, ?, ?)`,
+		node.UID, "act\u2028or", "fi\u2029eld", "\"v\u2028x\"", "\"a\u2029b\"")
+	require.NoError(t, err)
+
+	app.jsonOutput = false
+	out := captureStdout(t, func() { require.NoError(t, runShowWith(id, showOptions{history: true, historyLimit: 10})) })
+
+	assert.Contains(t, out, "fi eld  act or (import)", "separators in history text show as spaces")
+	assert.Contains(t, out, "\"v x\" -> \"a b\"")
+	history := out[strings.Index(out, "History:"):]
+	for _, line := range strings.Split(strings.TrimRight(history, "\n"), "\n")[1:] {
+		assert.True(t, strings.HasPrefix(line, "  2"), "every history entry stays on one line, got %q", line)
+	}
 }

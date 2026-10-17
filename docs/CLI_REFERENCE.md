@@ -1433,14 +1433,16 @@ Show a node's details and annotations as labeled lines, in this order:
 Annotation text, author and addressee, the description and the prompt are
 normalized for the terminal: control characters other than newline and tab
 are removed (so CRLF becomes LF), bidirectional controls (such as
-overrides and isolates) and zero-width characters are removed, the line
-separator and paragraph separator (U+2028, U+2029) become newlines, and
+overrides and isolates), zero-width characters and tag characters
+(U+E0001, U+E0020-U+E007F) are removed, the line separator and
+paragraph separator (U+2028, U+2029) become newlines, and
 leading blank lines and trailing whitespace are trimmed, so stored text
 cannot overwrite a line, restyle the terminal or display in a misleading
 order. Title and assignee still print as stored, control characters and
 newlines included. The directional marks (U+200E, U+200F, U+061C) are
-kept, so a lone mark can still change how digits are ordered. Quote
-exact text from --json.
+kept, so a lone mark can still change how digits are ordered. The
+--history list follows the same rule and prints each entry on one line,
+with line breaks shown as spaces. Quote exact text from --json.
 
 Acceptance criteria, labels, dependencies, activity and the full prompt are
 not printed. Use --json for the complete node record, including every

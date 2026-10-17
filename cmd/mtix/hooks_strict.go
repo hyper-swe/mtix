@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"slices"
 
@@ -70,6 +71,12 @@ func renderStrictStatus(out OutputWriter, status hooks.StrictStatus) {
 // mode (or, with status, only reports it). The hook itself is approved
 // separately by mtix hooks trust <hook>.
 func runHooksTrustProgram(approvals *hooks.Approvals, name string, status, terminal bool) error {
+	return runHooksTrustProgramTo(os.Stderr, approvals, name, status, terminal)
+}
+
+// runHooksTrustProgramTo is runHooksTrustProgram with the notice writer
+// injected, so a test can observe when the notice is written.
+func runHooksTrustProgramTo(notice io.Writer, approvals *hooks.Approvals, name string, status, terminal bool) error {
 	cfg, warnings := hooks.Load(app.mtixDir)
 	printHookWarnings(warnings)
 	var selected *hooks.Hook
@@ -84,7 +91,7 @@ func runHooksTrustProgram(approvals *hooks.Approvals, name string, status, termi
 	}
 	if !status {
 		show := func(program string) error {
-			if _, err := fmt.Fprintf(os.Stderr, "Program to approve for hook %q: %s\n", name, program); err != nil {
+			if _, err := fmt.Fprintf(notice, "Program to approve for hook %q: %s\n", name, program); err != nil {
 				return fmt.Errorf("show program: %w", err)
 			}
 			return nil

@@ -585,3 +585,37 @@ func TestApproveProgramShowing_ShowsTheBoundProgramBeforeTheWrite(t *testing.T) 
 	_, err = f.approvals.ApproveProgramShowing(f.hook(t), false, func(string) error { t.Fatal("shown although refused"); return nil })
 	require.Error(t, err)
 }
+
+// repointLink replaces the link at path with one to a directory that holds a
+// planted program of the given name.
+func repointLink(t *testing.T, path, name string) {
+	t.Helper()
+	other := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(other, name), []byte("#!/bin/sh\n"), 0o700)) //nolint:gosec // test program
+	require.NoError(t, os.Remove(path))
+	require.NoError(t, os.Symlink(other, path))
+}
+
+func TestStrict_On_WrapperChangedBetweenTheJudgementAndThePinIsRefused(t *testing.T) {
+	envLink, _ := linkedPathDir(t, "env")
+	f := strictFixture(t, "["+filepath.Join(envLink, "env")+", cat, data/x]")
+	_, err := f.approvals.ApproveProgram(f.hook(t), true)
+	require.NoError(t, err)
+	f.approvals.afterJudge = func() { repointLink(t, envLink, "env") }
+	_, err = f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "changed location")
+}
+
+func TestStrict_On_InterpreterChangedBetweenTheJudgementAndThePinIsRefused(t *testing.T) {
+	wrapper, err := filepath.EvalSymlinks(fakeEnv(t))
+	require.NoError(t, err)
+	shLink, _ := linkedPathDir(t, "sh")
+	f := strictFixture(t, "["+wrapper+", "+filepath.Join(shLink, "sh")+", scripts/run.sh]")
+	_, err = f.approvals.ApproveProgram(f.hook(t), true)
+	require.NoError(t, err)
+	f.approvals.afterJudge = func() { repointLink(t, shLink, "sh") }
+	_, err = f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "changed location")
+}

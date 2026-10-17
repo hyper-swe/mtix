@@ -94,18 +94,54 @@ func strictProgram(h Hook, in *hookInputs, index int) (string, error) {
 	return resolved, nil
 }
 
-// strictTarget returns the command index whose program strict mode must have
-// approved, and whether any approval is needed. A launch wrapper that is not
-// the known env in a PATH directory is itself the program to approve (index 0),
+// strictJudgement is the single judgement of one launch: which slot needs a
+// program approval (if any), and the pin of every known slot, each decided by
+// one resolution that the pin step then carries forward.
+type strictJudgement struct {
+	index  int
+	needed bool
+	// pins maps a command index to the path to launch: the physical directory
+	// judged plus the program's own name.
+	pins map[int]string
+}
+
+// judgeStrict judges each slot once, against argv (the written command at
+// approval time, the prepared argv at launch). A launch wrapper that is not the
+// known env in a PATH directory is itself the program to approve (index 0),
 // whatever it runs; otherwise only a program of class other needs approval.
+func judgeStrict(in *hookInputs, argv []string) strictJudgement {
+	j := strictJudgement{pins: map[int]string{}}
+	envKnown := false
+	if in.program > 0 {
+		if pin, ok := knownEnvPin(in.root, argv[0]); ok {
+			j.pins[0], envKnown = pin, true
+		}
+	}
+	_, pinnedScript := in.scripts[in.program]
+	interpreterShape := false
+	if in.script >= 0 {
+		_, interpreterShape = in.scripts[in.script]
+	}
+	interpreterKnown := false
+	if !pinnedScript && interpreterShape {
+		if pin, ok := knownInterpreterPin(in.root, argv[in.program]); ok {
+			j.pins[in.program], interpreterKnown = pin, true
+		}
+	}
+	switch {
+	case in.program > 0 && !envKnown:
+		j.index, j.needed = 0, true
+	case !pinnedScript && !interpreterKnown:
+		j.index, j.needed = in.program, true
+	}
+	return j
+}
+
+// strictTarget returns the command index whose program strict mode must have
+// approved, and whether any approval is needed, for the command as written.
 func strictTarget(h Hook, in *hookInputs) (index int, needed bool) {
-	if in.program > 0 && !knownEnvWrapper(in.root, h.Exec.Command[0]) {
-		return 0, true
-	}
-	if classifyProgram(h, in).Class == ClassOther {
-		return in.program, true
-	}
-	return 0, false
+	j := judgeStrict(in, h.Exec.Command)
+	return j.index, j.needed
 }
 
 // knownEnvWrapper reports a program that is env by exact name and is a bare
@@ -202,18 +238,18 @@ func (a *Approvals) enforceStrict(h Hook, in *hookInputs, plan *ExecPlan) error 
 	if err != nil {
 		return fmt.Errorf("exec launch refused for hook %q: strict program mode state cannot be read: %w", h.Name, err)
 	}
-	index, needed := strictTarget(h, in)
 	if !on {
 		return nil
 	}
+	j := judgeStrict(in, plan.Argv)
+	index, needed := j.index, j.needed
 	refuse := func(why string) error {
 		return fmt.Errorf("exec launch refused for hook %q: strict program mode is on and %s; approve it on a terminal: %s", h.Name, why, ProgramTrustFix(h.Name))
 	}
-	skip := -1
-	if needed {
-		skip = index
+	if a.afterJudge != nil {
+		a.afterJudge()
 	}
-	if pinErr := pinKnownSlots(h, in, plan, skip); pinErr != nil {
+	if pinErr := pinKnownSlots(j, plan); pinErr != nil {
 		return refuse(pinErr.Error())
 	}
 	if !needed {
@@ -239,25 +275,22 @@ func (a *Approvals) enforceStrict(h Hook, in *hookInputs, plan *ExecPlan) error 
 	return nil
 }
 
-// pinKnownSlots pins every launch wrapper (env) and known interpreter slot to
-// the physical directory it is judged in, in every strict-mode launch, so a
-// link in the written path cannot be re-pointed between the check and the
-// launch. The slot at skip is pinned as the approved program instead. Each
-// slot is resolved once: the directory judged is the directory launched.
-func pinKnownSlots(h Hook, in *hookInputs, plan *ExecPlan, skip int) error {
-	if in.program > 0 && skip != 0 {
-		pin, ok := knownEnvPin(in.root, plan.Argv[0])
-		if !ok {
-			return fmt.Errorf("launch wrapper %q is not the known env in a fixed PATH directory", plan.Argv[0])
+// pinKnownSlots pins every known launch wrapper (env) and known interpreter
+// slot to the physical directory it was judged in, in every strict-mode launch,
+// so a link in the written path cannot be re-pointed between the check and the
+// launch. The judgement is carried forward, not repeated: each slot's directory
+// is resolved again only to confirm it is still the directory that was judged,
+// and the launch is refused if it changed. The slot that needs an approval is
+// pinned as the approved program instead.
+func pinKnownSlots(j strictJudgement, plan *ExecPlan) error {
+	for slot, pin := range j.pins {
+		if j.needed && slot == j.index {
+			continue
 		}
-		plan.Argv[0] = pin
-	}
-	if skip != in.program && classifyProgram(h, in).Class == ClassInterpreterScript {
-		pin, ok := knownInterpreterPin(in.root, plan.Argv[in.program])
-		if !ok {
-			return fmt.Errorf("interpreter %q is not a known interpreter in a fixed PATH directory", plan.Argv[in.program])
+		if filepath.IsAbs(plan.Argv[slot]) && programDirectory(plan.Argv[slot]) != filepath.Dir(pin) {
+			return fmt.Errorf("program %q changed location between the check and the launch", plan.Argv[slot])
 		}
-		plan.Argv[in.program] = pin
+		plan.Argv[slot] = pin
 	}
 	return nil
 }

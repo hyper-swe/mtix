@@ -79,3 +79,28 @@ func programsUnavailable(err error) service.DoctorResult {
 		Fix:    "mtix hooks status --json",
 	}
 }
+
+const hooksStrictCheckID = "hooks.strict"
+
+// hooksStrictCheck reports strict program mode. It passes when the mode is off
+// or every hook program is accounted for, and warns, with the exact approval
+// commands, when the mode is on and a hook program is not approved (such a
+// hook is refused at launch).
+func hooksStrictCheck(mtixDir string) service.DoctorCheck {
+	return service.DoctorCheck{ID: hooksStrictCheckID, Run: func(context.Context) service.DoctorResult {
+		approvals, err := hooks.ProcessApprovals(mtixDir)
+		if err != nil {
+			return programsUnavailable(err)
+		}
+		cfg, _ := hooks.Load(mtixDir)
+		st := approvals.StrictStatus(cfg)
+		if !st.Enabled && st.Fix != "" {
+			// An unreadable strict record refuses every exec launch.
+			return service.DoctorResult{Status: service.DoctorFail, Detail: st.Detail, Fix: st.Fix}
+		}
+		if st.Fix != "" {
+			return service.DoctorResult{Status: service.DoctorWarn, Detail: st.Detail, Fix: st.Fix}
+		}
+		return service.DoctorResult{Status: service.DoctorPass, Detail: st.Detail}
+	}}
+}

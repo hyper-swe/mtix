@@ -49,6 +49,18 @@ suppresses the missing-pointer requirement; existing pointers are allowed and
 first live owned pointer and removes later duplicates, preserving other bytes.
 This check never writes documents or Git exclusions, including with `--fix`.
 
+Every write (for example `mtix create`) re-exports `.mtix/tasks.json` in this
+binary's export schema: `2.0.0`, or `2.1.0` with `history.export`. The first
+write after an mtix upgrade can change a committed file's `schema_version` and
+add fields, which breaks a reader that rejects unknown fields.
+`sync.auto_sync` does not stop this re-export: it turns off automatic import
+only. The read-only `export.schema` check reports PASS when the file declares
+the schema this binary writes and WARN with the fix when it declares another.
+To upgrade deliberately, run `mtix sync` and, when it reports no pending import,
+`mtix sync --fix`, then commit `.mtix/tasks.json` and update the strict reader.
+To keep the older schema, write to the board only with the mtix version that
+wrote it. The check never writes the file, including with `--fix`.
+
 Setup completion (`setup.done`, MTIX-112.19.2) remains a FUTURE registration.
 Do not infer that setup is current from the absence of that row.
 
@@ -191,6 +203,7 @@ When a `git pull` or checkout changes `.mtix/tasks.json`, the next mtix CLI comm
 - **Never** run the replace import (it needs the ticket count typed at an interactive terminal, it cannot run unattended) to silence a refusal that lists annotations, activity entries or nodes: they hold review verdicts and close receipts. If you cannot tell whose changes are newer, stop and ask the user.
 - **Verify.** `mtix sync` never prints `In sync` while an import of the board is pending or an id carries another uid in the file (`OUT OF SYNC: tasks.json changed and has not been imported`, `Another uid in tasks.json`). It prints `Auto-import: enabled (sync.auto_sync: <value>)` or `disabled`, and `Last auto-import refusal: <time> (pending|resolved <time>|no longer pending): <reason>` or `none`; `mtix sync --json` reports the same under `auto_import`. After you resolve a refusal, it must no longer read `pending`.
 - **Switch.** `sync.auto_sync` (default `true`) switches only the automatic import; `mtix config set sync.auto_sync false` turns it off, and `mtix config set` accepts only true or false. `.mtix/config.yaml` is tracked in git, so the switch applies to every clone, but a store with no tasks (a fresh clone) is always imported. With it off, a pulled board is not overwritten by writes; import it with `mtix import .mtix/tasks.json --mode merge` (the merge writes nothing while a task's status, assignee, agent state, wake time or deletion state differs from the file's: it lists each conflict, and you rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`, which it records in the task's activity; where they agree, your other field values win when the task's content (title, description, prompt, acceptance, labels) matches the file's, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid), or keep your board with `mtix sync --fix`.
+- **Export schema.** Every write re-exports `.mtix/tasks.json` in this binary's export schema, with `sync.auto_sync` on or off, so the first write after an mtix upgrade can change a committed file's `schema_version` and break a reader that rejects unknown fields. `mtix doctor`'s `export.schema` row warns about a mismatch and prints the fix (see Health checks).
 
 ## Garbage Collection
 

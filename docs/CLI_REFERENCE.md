@@ -747,6 +747,10 @@ and rejected completions. A newer dispatch protocol reports FAIL: install a
 compatible binary, restart the dispatcher and rerun doctor. This read-only check
 never prunes wake rows or lowers the protocol floor, including with --fix.
 
+The read-only export.schema check compares the schema_version .mtix/tasks.json
+declares with the one this binary writes. Every write re-exports the file in
+this binary's schema; sync.auto_sync does not stop that. WARN prints the fix.
+
 Setup checks will be registered by their future features.
 
 ### Flags

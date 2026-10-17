@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Export schema doctor check (MTIX-168).** `mtix doctor` adds an `export.schema` row (text and `--json`). It reports PASS when `.mtix/tasks.json` declares the export schema this binary writes (`2.0.0`, or `2.1.0` with `history.export`) and WARN when it declares another, because every write re-exports the file in this binary's schema and a reader that rejects unknown fields can break. The fix says that `sync.auto_sync` does not stop the re-export (it turns off automatic import only), how to upgrade deliberately (`mtix sync`, then `mtix sync --fix`, then commit the file) and how to keep the older schema. The user manual, the instruction templates and the admin skill describe this behaviour. The export format is unchanged.
 - Callable service APIs for learned lane identity resolution and a board-scoped attach side-write drain preserve ambiguous identities as proposals and reject forged routing requests with operator-local alerts. Agents still pass their id explicitly to `mtix agent register`; identity selection and drain command, glue and dispatcher wiring remain deferred (MTIX-112.17.5).
 
 ### Fixed

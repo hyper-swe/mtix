@@ -185,6 +185,10 @@ func damagedIndexFixture(t *testing.T, tc *damagedIndexCase) (dbPath, mirrorPath
 	return dbPath, mirrorPath
 }
 
+// indexEntryNoteText is in every note recover writes about a damaged
+// primary-key index entry (MTIX-107.80).
+const indexEntryNoteText = "index entr"
+
 // notesContaining returns the notes that contain text.
 func notesContaining(notes []string, text string) []string {
 	var out []string
@@ -299,6 +303,43 @@ func TestRecover_IndexEntryPointsAtAnotherRow_ExportHoldsEachIDOnceAndImports(t 
 				"RC-3": "third task", "RC-4": "fourth task",
 			},
 		},
+		{
+			name:       "two RC-2 entries point at the rows of RC-1 and RC-3 (RC-4's entry renamed); mirror lacks RC-2",
+			rc4:        true,
+			editMirror: dropRC2,
+			patches: map[string]indexPatch{
+				"RC-2": point("RC-1"), "RC-4": {renameTo: "RC-2", pointAt: "RC-3"},
+			},
+			wantNotes: []string{
+				"node RC-2: the index entry for RC-2 points at the row of RC-1; " +
+					"the entry of RC-1 reaches that row, so it is not salvaged again",
+				"node RC-2: the index entry for RC-2 points at the row of RC-3; " +
+					"the entry of RC-3 reaches that row, so it is not salvaged again",
+				"1 row(s) were unreadable in the database and absent from the mirror",
+			},
+			wantRecovered: []string{"RC-1", "RC-3"},
+			wantMirror:    []string{"RC-4"},
+			wantLost:      []string{"RC-2"},
+			wantTitles: map[string]string{
+				"RC-1": "reviewed task with a comment", "RC-3": "third task", "RC-4": "fourth task",
+			},
+		},
+		{
+			name:       "a duplicated RC-2 entry that points at RC-1's row (RC-3's entry renamed); mirror lacks RC-2",
+			editMirror: dropRC2,
+			patches: map[string]indexPatch{
+				"RC-2": point("RC-1"), "RC-3": {renameTo: "RC-2", pointAt: "RC-1"},
+			},
+			wantNotes: []string{
+				"node RC-2: the index entry for RC-2 points at the row of RC-1; " +
+					"the entry of RC-1 reaches that row, so it is not salvaged again",
+				"1 row(s) were unreadable in the database and absent from the mirror",
+			},
+			wantRecovered: []string{"RC-1"},
+			wantMirror:    []string{"RC-3"},
+			wantLost:      []string{"RC-2"},
+			wantTitles:    map[string]string{"RC-1": "reviewed task with a comment", "RC-3": "third task"},
+		},
 	}
 	for i := range tests {
 		tc := &tests[i]
@@ -319,6 +360,14 @@ func assertDamagedIndexSalvage(t *testing.T, tc *damagedIndexCase, res *RecoverR
 	for _, want := range tc.wantNotes {
 		assert.Len(t, notesContaining(res.Notes, want), 1, "note %q; notes: %v", want, res.Notes)
 	}
+	var wantIndexNotes []string
+	for _, want := range tc.wantNotes {
+		if strings.Contains(want, indexEntryNoteText) {
+			wantIndexNotes = append(wantIndexNotes, want)
+		}
+	}
+	assert.Len(t, notesContaining(res.Notes, indexEntryNoteText), len(wantIndexNotes),
+		"the index-entry notes are exactly the wanted ones; notes: %v", res.Notes)
 	assert.Empty(t, notesContaining(res.Notes, "could not be read"), "no note claims a row could not be read")
 	for _, n := range notesContaining(res.Notes, "index entry for") {
 		assert.NotContains(t, n, "restored")

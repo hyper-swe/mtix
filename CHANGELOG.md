@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Callable service APIs for learned lane identity resolution and a board-scoped attach side-write drain preserve ambiguous identities as proposals and reject forged routing requests with operator-local alerts. Agents still pass their id explicitly to `mtix agent register`; identity selection and drain command, glue and dispatcher wiring remain deferred (MTIX-112.17.5).
 
+### Changed
+- The web app build moved from Tailwind CSS 3 to Tailwind CSS 4, using Tailwind's own Vite plugin (`@tailwindcss/vite`) and CSS-first configuration in `web/src/index.css` in place of `tailwind.config.js` and PostCSS. `postcss` and `autoprefixer` are no longer direct dependencies. This clears the last `npm audit` findings (the `braces` chain), so a full `npm audit` of `web/` reports 0 vulnerabilities. The rendered UI is unchanged; the embedded bundle is rebuilt (MTIX-186).
+
 ### Fixed
 - **CLI read freshness (MTIX-149).** Successful write acknowledgements omit read freshness fields, and busy-lock completion guidance says the write succeeded and must not be repeated. Cached reads retain freshness metadata and read-only retry guidance.
 - Web ticket Activity and Comments include plain and addressed annotations with author and recipient details and hardened markdown rendering (MTIX-171).

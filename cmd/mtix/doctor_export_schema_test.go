@@ -113,17 +113,16 @@ func TestDoctor_ExportSchemaCheck_MismatchWarnsWithFix(t *testing.T) {
 	text, _ := runExportSchemaDoctor(t, false)
 	assert.Contains(t, text, "[WARN] export.schema")
 	assert.Contains(t, text, "fix: ")
-	assert.Contains(t, text, "mtix export")
+	assert.Contains(t, text, "mtix sync --fix")
 
 	_, row := runExportSchemaDoctor(t, true)
 	require.NotNil(t, row)
 	assert.Equal(t, "warn", row.Status)
 	assert.Contains(t, row.Detail, "1.0.0")
 	assert.Contains(t, row.Detail, sqlite.SchemaVersionV1)
-	assert.Contains(t, row.Fix, "mtix export")
+	assert.Contains(t, row.Fix, "mtix sync --fix")
 	assert.Contains(t, row.Fix, "sync.auto_sync")
-	assert.Equal(t, "1.0.0", row.Data["file_schema_version"])
-	assert.Equal(t, sqlite.SchemaVersionV1, row.Data["export_schema_version"])
+	assert.Nil(t, row.Data, "the row keeps exactly id, status, detail and fix")
 }
 
 // TestDoctor_ExportSchemaCheck_MatchPasses verifies doctor passes when
@@ -141,6 +140,24 @@ func TestDoctor_ExportSchemaCheck_MatchPasses(t *testing.T) {
 	assert.Empty(t, row.Fix)
 }
 
+// TestDoctor_ExportSchemaCheck_SyncFixUpgrades_ThenPasses verifies the
+// printed fix rewrites the board in this binary's schema (MTIX-168).
+func TestDoctor_ExportSchemaCheck_SyncFixUpgrades_ThenPasses(t *testing.T) {
+	initTestApp(t)
+	executeCreate(t, "first")
+	setBoardSchemaVersion(t, "1.0.0")
+
+	cmd := newSyncCmd()
+	cmd.SetArgs([]string{"--fix"})
+	cmd.SilenceUsage = true
+	require.NoError(t, cmd.Execute())
+
+	assert.Equal(t, sqlite.SchemaVersionV1, boardSchemaVersion(t))
+	_, row := runExportSchemaDoctor(t, true)
+	require.NotNil(t, row)
+	assert.Equal(t, "pass", row.Status)
+}
+
 // TestDoctor_ExportSchemaCheck_HistoryExportExpectsHistorySchema verifies
 // the expected schema follows history.export (MTIX-168).
 func TestDoctor_ExportSchemaCheck_HistoryExportExpectsHistorySchema(t *testing.T) {
@@ -153,7 +170,7 @@ func TestDoctor_ExportSchemaCheck_HistoryExportExpectsHistorySchema(t *testing.T
 
 	require.NotNil(t, row)
 	assert.Equal(t, "warn", row.Status)
-	assert.Equal(t, sqlite.SchemaVersionHistory, row.Data["export_schema_version"])
+	assert.Contains(t, row.Detail, "this binary writes schema "+sqlite.SchemaVersionHistory)
 }
 
 // TestDoctor_ExportSchemaCheck_NoBoardFile_NoRow verifies doctor adds no row
@@ -165,4 +182,22 @@ func TestDoctor_ExportSchemaCheck_NoBoardFile_NoRow(t *testing.T) {
 	_, row := runExportSchemaDoctor(t, true)
 
 	assert.Nil(t, row)
+}
+
+// TestDoctor_ExportSchemaCheck_UnreadableBoard_WarnsWithoutRewrite verifies a
+// board file without valid JSON is reported, not rewritten (MTIX-168).
+func TestDoctor_ExportSchemaCheck_UnreadableBoard_WarnsWithoutRewrite(t *testing.T) {
+	initTestApp(t)
+	path := filepath.Join(app.mtixDir, "tasks.json")
+	require.NoError(t, os.WriteFile(path, []byte("not json"), 0o600))
+
+	_, row := runExportSchemaDoctor(t, true)
+
+	require.NotNil(t, row)
+	assert.Equal(t, "warn", row.Status)
+	assert.Contains(t, row.Detail, "could not read")
+	assert.NotContains(t, row.Fix, "mtix sync --fix")
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "not json", string(data))
 }

@@ -210,3 +210,29 @@ func TestKnown_ShortPassword_MaskedOnlyWhereItStandsAsPassword(t *testing.T) {
 		})
 	}
 }
+
+// TestKnown_BareKeyValuePassword_RemovedWhereverItIsPrinted verifies the
+// password candidates Known derives from a key=value DSN follow the parser:
+// a bare value ends at ASCII white space, so an ampersand is part of it, and
+// a backslash escapes the next character, so the real password is the
+// unescaped text (MTIX-87).
+func TestKnown_BareKeyValuePassword_RemovedWhereverItIsPrinted(t *testing.T) {
+	for name, tt := range map[string]struct{ dsn, printed string }{
+		"ampersand":       {"host=h user=u password=abc&TAILSECRET sslmode=disable", "abc&TAILSECRET"},
+		"escaped space":   {`host=h user=u password=ab\ cdTAILSECRET sslmode=disable`, "ab cdTAILSECRET"},
+		"escaped quote":   {`host=h user=u password=ab\'cdTAILSECRET sslmode=disable`, "ab'cdTAILSECRET"},
+		"escaped slash":   {`host=h user=u password=ab\\cdTAILSECRET sslmode=disable`, `ab\cdTAILSECRET`},
+		"spaced equals":   {"host=h user=u password = abc&TAILSECRET sslmode=disable", "abc&TAILSECRET"},
+		"query ampersand": {"postgres://u@h/db?password=abcTAILSECRET&sslmode=disable", "abcTAILSECRET"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := redact.Known("failed to log in with "+tt.printed+" today", tt.dsn)
+			require.NotContains(t, got, "TAILSECRET")
+			require.Contains(t, got, "failed to log in with ")
+		})
+	}
+	// A known URL query password still ends at the ampersand: the next
+	// setting is not a password.
+	got := redact.Known("sslmode=disable seen", "postgres://u@h/db?password=abcTAILSECRET&sslmode=disable")
+	require.Contains(t, got, "sslmode=disable")
+}

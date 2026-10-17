@@ -295,7 +295,7 @@ func TestRedactDSN_KeyValueFormsAllRedacted(t *testing.T) {
 		"quoted":       "dial password='Sekr3tPW' host=db",
 		"spaced":       "dial password = Sekr3tPW host=db",
 		"spaced quote": "dial password = 'Sekr3tPW' host=db",
-		"escaped":      `dial password='Sekr3t\'PW' host=db`,
+		"escaped":      `dial password='ab\'TAILESC' host=db`,
 		"with spaces":  "dial password='Sekr3tPW and more' host=db",
 		"upper":        "dial PASSWORD=Sekr3tPW host=db",
 		"unterminated": "dial host=db password='Sekr3tPW tail",
@@ -304,6 +304,7 @@ func TestRedactDSN_KeyValueFormsAllRedacted(t *testing.T) {
 			got := RedactDSN(in)
 			assert.NotContains(t, got, "Sekr3tPW")
 			assert.NotContains(t, got, "and more")
+			assert.NotContains(t, got, "TAILESC", "nothing after an escaped quote stays visible")
 			assert.Contains(t, got, dsnReplacement)
 		})
 	}

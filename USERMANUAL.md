@@ -1927,6 +1927,22 @@ after the last batch it applied, never after one it did not.
   hub owner's DSN to add the hub index pull reads by; the same item in
   the next section says when to run it and what it costs.
 
+Each pull also registers this client with the hub, so a client that
+only pulls, such as a daemon, shows up for the version gate and for any
+stale-client report. Right after it connects, and before it reads events,
+the pull writes one row to `sync_project_clients`: the board's sync
+project prefix (set by `mtix sync init`), this machine's hash and the
+CLI version. It is one statement on the connection the pull already
+opened: no extra connection, no timer, and no contact with a hub that no
+pull was going to reach. A role that only pulls needs the same INSERT and
+UPDATE on `sync_project_clients` as one that pushes (the least-privilege
+list in the sync skill and in `docs/SECURITY-MODEL.md` already has them).
+If the write fails, the pull completes as usual and prints one
+`WARN: pull client registration skipped` line that names the grant; the
+client stays invisible to the version gate until the grant is fixed. A
+board that has never run `mtix sync init` has no sync project prefix and
+skips the registration quietly.
+
 ### Late changes from offline teammates
 
 Each `mtix sync pull` first fetches the events past its cursor, then
@@ -3673,6 +3689,7 @@ change the node's status with the normal commands instead.
 | `mtix sync doctor` fails `quarantined events` | Pulled events failed their checks or their apply and are held, not applied | Run `mtix sync pull` (it retries them); if they remain, list them with `mtix sync quarantine list` (see [Quarantined events](#quarantined-events)) and report the reasons to whoever runs the hub |
 | `mtix sync doctor` warns in `valid node ids` | An earlier sync brought in a task whose id is outside the node id grammar | The task stays readable and editable (`mtix show <uid>`); recreate it with `mtix create` if you still need it (see [Quarantined events](#quarantined-events)) |
 | A command prints `WARN: ... over the 65536-byte sync limit`, or `mtix sync doctor` fails `held push events` | Push holds events the hub would refuse (and the events of a held task creation's subtree, and links made while one is held), and pushes the rest | Follow the fix doctor names for each held event: shorten or split a field edit; escalate a held task creation, without editing it; check the clock for a clock hold (see [Held push events](#held-push-events)) |
+| `mtix sync push` fails with `hold invalid events of batch N: another mtix operation is in progress, retry in a moment` | While deciding which events to hold, push waited more than 5 seconds for the local database's write lock, which another mtix process (a pull applying a backlog, another agent) kept. The batches before the failing one were already sent and marked pushed; the events of the failing batch and later were not sent and stay pending. Nothing is lost and nothing is sent twice | Let the other mtix command finish, then run `mtix sync push` again to send the rest |
 | `mtix sync status` shows a `pending` count that never goes down, `mtix sync doctor` fails `queue draining`, yet `mtix sync push` reports success | On a client older than 0.5.4: events an earlier push delivered but never marked pushed (a lost commit confirmation, a crash or disk failure before the local mark, a retry after a network drop) sit at the head of the queue, and push stops at them | Upgrade and run `mtix sync push`: it confirms the events already on the hub (`already on the hub` in its output) and pushes the rest; check `pending` 0 (see [Events already on the hub](#events-already-on-the-hub)) |
 | A node shows an older state than its history after a pull on a client older than 0.5.4 (for example `in_progress` after `mtix done`) | That pull replayed an older event of this machine | Upgrade, run `mtix sync pull`, then `mtix sync repair --status` and review the list; run `mtix sync pull` again, then `mtix sync repair --status --apply` and `mtix sync push`; a flagged node needs review and `--force` (see above). Pulling first matters: a repair made on a stale log can revert a teammate's newer change on every machine |
 | `mtix sync doctor` shows `[WARN] hub-privileges` | Roles other than the table owner can use the sync tables, or a TRUNCATE guard is missing or disabled. Nothing is blocked, and this may be fine on a private network | To restrict access, the table owner runs `mtix sync harden` (a dry run), then, after reviewing its role list, `mtix sync harden --apply --keep-role <role>`; see "Hub privileges" |

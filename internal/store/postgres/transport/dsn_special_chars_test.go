@@ -168,3 +168,28 @@ func TestKnown_KeyValueDSN_RemovesSpecialCharPassword(t *testing.T) {
 		})
 	}
 }
+
+// TestApproveDSN_KeyValuePasswordHoldingScheme_Accepted verifies a key=value
+// DSN whose password contains :// is accepted: the scheme guard applies to
+// text that is not a key=value DSN (MTIX-87).
+func TestApproveDSN_KeyValuePasswordHoldingScheme_Accepted(t *testing.T) {
+	const pw = "ab://cd"
+	dsn := "host=127.0.0.1 port=5432 dbname=hub user=mtix sslmode=disable password=" + kvQuote(pw)
+	require.Equal(t, pw, approvedPassword(t, dsn))
+	_, err := transport.ApproveDSN("mysql://u:p@127.0.0.1/hub", transport.Options{InsecureTLS: true})
+	require.ErrorIs(t, err, transport.ErrDSNMalformed, "a foreign scheme is still refused")
+}
+
+// TestApproveDSN_DuplicateKeys_LastWins verifies the last of two equal
+// settings is the one the approval reports and the driver reads, as libpq
+// reads them (MTIX-87).
+func TestApproveDSN_DuplicateKeys_LastWins(t *testing.T) {
+	first, _ := writeTestCA(t)
+	last, _ := writeTestCA(t)
+	dsn := "host=hub.example.com dbname=hub user=mtix password=first password=second" +
+		" sslrootcert=" + kvQuote(first) + " sslrootcert=" + kvQuote(last)
+	a, err := transport.ApproveDSN(dsn, transport.Options{})
+	require.NoError(t, err)
+	require.Equal(t, last, a.SSLRootCert, "the last sslrootcert is the one reported")
+	require.Equal(t, "second", a.Config.ConnConfig.Password)
+}

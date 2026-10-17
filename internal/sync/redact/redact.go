@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"strings"
+	"unicode"
 )
 
 // SecretSentinel is a stable, well-known string used by tests across
@@ -56,6 +58,79 @@ var dsnPatterns = []struct {
 	},
 }
 
+// passwordKey matches the start of a password setting (MTIX-87): the key,
+// also as the tail of an environment variable name such as
+// MTIX_SYNC_PASSWORD, and the equals sign with any white space around it.
+// Group 1 is the key and the sign as written.
+var passwordKey = regexp.MustCompile(`(?i)\b([a-z0-9_]*password\s*=\s*)`)
+
+// maskPasswordSettings masks the value of every password setting in s
+// (MTIX-87). A value in a URL query ends at '&' or white space. In the
+// libpq key=value form it is single-quoted, with backslash escapes (an
+// unterminated quote runs to the end of s, so nothing of it stays
+// visible), or bare, ended by unescaped white space. A value that is
+// already REDACTED is left alone, so the masking is idempotent.
+func maskPasswordSettings(s string) string {
+	var out strings.Builder
+	last := 0
+	for _, m := range passwordKey.FindAllStringSubmatchIndex(s, -1) {
+		valueStart := m[3]
+		if valueStart < last {
+			continue
+		}
+		if alreadyMasked(s, valueStart) {
+			continue
+		}
+		inQuery := m[0] > 0 && (s[m[0]-1] == '?' || s[m[0]-1] == '&')
+		end := passwordValueEnd(s, valueStart, inQuery)
+		out.WriteString(s[last:valueStart])
+		out.WriteString("REDACTED")
+		last = end
+	}
+	out.WriteString(s[last:])
+	return out.String()
+}
+
+// alreadyMasked reports whether the value at s[start] is exactly REDACTED,
+// as an earlier pass wrote it.
+func alreadyMasked(s string, start int) bool {
+	rest := s[start:]
+	if !strings.HasPrefix(rest, "REDACTED") {
+		return false
+	}
+	rest = rest[len("REDACTED"):]
+	return rest == "" || rest[0] == '&' || rest[0] == '\'' || unicode.IsSpace(rune(rest[0]))
+}
+
+// passwordValueEnd returns the index just after the value that starts at
+// s[start].
+func passwordValueEnd(s string, start int, inQuery bool) int {
+	i := start
+	if inQuery {
+		for i < len(s) && s[i] != '&' && !unicode.IsSpace(rune(s[i])) {
+			i++
+		}
+		return i
+	}
+	quoted := i < len(s) && s[i] == '\''
+	if quoted {
+		i++
+	}
+	for i < len(s) {
+		switch c := s[i]; {
+		case c == '\\' && i+1 < len(s):
+			i += 2
+		case quoted && c == '\'':
+			return i + 1
+		case !quoted && unicode.IsSpace(rune(c)):
+			return i
+		default:
+			i++
+		}
+	}
+	return i
+}
+
 // DSN returns s with every DSN-shaped substring credential masked.
 // Safe to call on already-redacted strings — idempotent. Empty input
 // is returned unchanged.
@@ -70,7 +145,7 @@ func DSN(s string) string {
 	for _, p := range dsnPatterns {
 		s = p.re.ReplaceAllString(s, p.repl)
 	}
-	return s
+	return maskPasswordSettings(s)
 }
 
 // Recover is the canonical defer-recover wrapper for sync code.

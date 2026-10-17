@@ -128,9 +128,9 @@ func parseDSN(dsn string) (*dsnSettings, error) {
 		}
 		return &dsnSettings{u: u, q: u.Query()}, nil
 	}
-	if strings.Contains(dsn, "://") {
-		return nil, fmt.Errorf("%w: %s", ErrDSNMalformed, reasonScheme)
-	}
+	// Text that is a key=value DSN is judged as one even when a value holds
+	// "://", as a password may (MTIX-87); only text that is not key=value
+	// is refused as a foreign scheme.
 	pairs, err := parseKeyValue(dsn)
 	switch {
 	case errors.Is(err, errKeyValueSyntax):

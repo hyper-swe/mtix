@@ -187,9 +187,11 @@ func TestKnown_ShortPassword_MaskedOnlyWhereItStandsAsPassword(t *testing.T) {
 		{"short password removed at the end of a setting",
 			"postgres://u@hub.invalid/mtix?password=onn", "... password=onn",
 			"... password=REDACTED"},
-		{"a longer setting value is not the password",
+		// Every password setting is masked by DSN, whatever the known
+		// password is (MTIX-87), so a longer value is masked too.
+		{"a longer setting value is masked as a password setting",
 			"postgres://u:onn@hub.invalid/mtix", "password=onnx",
-			"password=onnx"},
+			"password=REDACTED"},
 		{"short fragment before an unescaped at-sign kept in words",
 			"postgres://u:Kq8v@Z3xW9mRt@hub.invalid/mtix", "Kq8v alone; u:Kq8v@x",
 			"Kq8v alone; u:REDACTED@x"},

@@ -216,3 +216,60 @@ func TestRecover_StripsDSNFromPanicError(t *testing.T) {
 type errorWithDSN string
 
 func (e errorWithDSN) Error() string { return string(e) }
+
+// keyValueSecrets are hostile key=value password forms (MTIX-87): bare,
+// single-quoted with escaped quotes and backslashes, spaced around =, in
+// an environment-variable style, unterminated, and with text that looks
+// like other settings. Each secret must vanish and the other settings stay.
+var keyValueSecrets = []struct {
+	name, in, secret string
+}{
+	{"bare", "dial host=db.example.com password=Sekr3tPW user=u", "Sekr3tPW"},
+	{"quoted", "dial host=db.example.com password='Sekr3tPW' user=u", "Sekr3tPW"},
+	{"spaced bare", "dial host=db.example.com password = Sekr3tPW user=u", "Sekr3tPW"},
+	{"spaced quoted", "dial host=db.example.com password = 'Sekr3tPW' user=u", "Sekr3tPW"},
+	{"escaped quote and backslash", `dial host=db.example.com password='Sekr3t\'PW\\x' user=u`, "Sekr3t"},
+	{"quoted with spaces", "dial host=db.example.com password='Sekr3tPW and more' user=u", "and more"},
+	{"upper case key", "dial host=db.example.com PASSWORD=Sekr3tPW user=u", "Sekr3tPW"},
+	{"env style", "env MTIX_SYNC_PASSWORD=Sekr3tPW host=db.example.com user=u", "Sekr3tPW"},
+	{"escaped space unquoted", `dial host=db.example.com password=Sekr3t\ PW user=u`, "PW"},
+	{"unterminated quote", "dial host=db.example.com user=u password='Sekr3tPW tail", "Sekr3tPW"},
+	{"hostile settings inside", "dial host=db.example.com password='x sslmode=disable host=evil Sekr3tPW' user=u", "Sekr3tPW"},
+	{"in a url query", "dial postgres://u@db.example.com/db?password=Sekr3tPW&sslmode=verify-full", "Sekr3tPW"},
+}
+
+func TestDSN_KeyValuePassword_Masked(t *testing.T) {
+	for _, tt := range keyValueSecrets {
+		t.Run(tt.name, func(t *testing.T) {
+			got := redact.DSN(tt.in)
+			require.NotContains(t, got, tt.secret)
+			require.Contains(t, got, "REDACTED")
+			require.Equal(t, got, redact.DSN(got), "redaction is idempotent")
+		})
+	}
+	require.Contains(t, redact.DSN("dial host=db.example.com password=Sekr3tPW user=u"), "host=db.example.com",
+		"the other settings stay readable")
+}
+
+func TestRecover_KeyValuePassword_PanicValueMasked(t *testing.T) {
+	for _, tt := range keyValueSecrets {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&buf, nil))
+			func() {
+				defer redact.RecoverNoRepanic(logger)
+				panic(tt.in)
+			}()
+			require.NotContains(t, buf.String(), tt.secret)
+			var repanic any
+			func() {
+				defer func() { repanic = recover() }()
+				func() {
+					defer redact.Recover(logger)
+					panic(tt.in)
+				}()
+			}()
+			require.NotContains(t, repanic, tt.secret)
+		})
+	}
+}

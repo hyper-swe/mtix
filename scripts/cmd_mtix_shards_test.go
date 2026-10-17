@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -111,6 +112,7 @@ func TestCmdMtixShards_InvalidInputs_Fail(t *testing.T) {
 	}{
 		{"list failure", text, "7", []string{"check"}, "cannot list"},
 		{"empty listing", "ok  \tx\t0.1s\n", "0", []string{"check"}, "no tests"},
+		{"listed test with a name the filter cannot represent", text + "TestCaf\u00e9_Works\n", "0", []string{"check"}, "unsupported test name"},
 		{"too few tests to fill every shard", "TestA\nTestB\n", "0", []string{"check"}, "empty shard"},
 		{"shard zero", text, "0", []string{"pattern", "0"}, "usage:"},
 		{"shard out of range", text, "0", []string{"pattern", fmt.Sprint(cmdShardCount + 1)}, "usage:"},
@@ -189,4 +191,28 @@ func TestMakefile_TestRaceCore_IsTestRaceWithoutCmdMtix(t *testing.T) {
 		}
 	}
 	require.Equal(t, withoutCmd, core)
+}
+
+// A guard that only compared a summed hit count with the test total would pass
+// when one test is selected twice and another not at all. Mutate the real
+// assignment that way and require the guard to name both.
+func TestCmdMtixShards_NameSelectedTwiceAndAnotherNever_FailsTheGuard(t *testing.T) {
+	names, text := fakeListing(60)
+	root := cmdShardFixture(t, text, "0")
+	path := filepath.Join(root, "scripts", "cmd-mtix-shards.sh")
+	source, err := os.ReadFile(path) //nolint:gosec // test-owned path
+	require.NoError(t, err)
+	original := "print (h % n) + 1, $0"
+	require.Contains(t, string(source), original)
+	mutated := strings.Replace(string(source), original,
+		"if (NR == 1) { print 1, $0; print 2, $0 } else if (NR != 2) print (h % n) + 1, $0", 1)
+	require.NoError(t, os.WriteFile(path, []byte(mutated), 0o600))
+	out, err := runCmdShards(root, "check")
+	require.Error(t, err, out)
+	sorted := append([]string(nil), names...)
+	sort.Strings(sorted)
+	require.Contains(t, out, "selected by more than one shard")
+	require.Contains(t, out, sorted[0])
+	require.Contains(t, out, "selected by no shard")
+	require.Contains(t, out, sorted[1])
 }

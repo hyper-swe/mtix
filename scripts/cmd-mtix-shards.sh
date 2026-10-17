@@ -43,7 +43,8 @@ esac
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/mtix-cmd-shards.XXXXXX")
 cleanup() {
-	rm -f "$scratch/listing" "$scratch/names" "$scratch/assigned"
+	rm -f "$scratch/listing" "$scratch/names" "$scratch/assigned" "$scratch/odd" \
+		"$scratch/selected" "$scratch/twice" "$scratch/never"
 	rmdir "$scratch"
 }
 trap cleanup EXIT
@@ -53,6 +54,14 @@ trap 'exit 143' TERM
 # List every test the binary can run (tests, examples, fuzz seeds). The list
 # is read from a file so that a failed go test is not hidden by a pipe.
 go test -list '.*' ./cmd/mtix/ >"$scratch/listing" || die 'cannot list the cmd/mtix tests'
+# A listed test whose name falls outside the safe character set would be in no
+# shard, so refuse it instead of dropping it silently.
+grep -E '^(Test|Example|Fuzz)' "$scratch/listing" | grep -vE '^(Test|Example|Fuzz)[A-Za-z0-9_]*$' >"$scratch/odd" || true
+if [ -s "$scratch/odd" ]; then
+	printf 'cmd-mtix-shards: unsupported test name (cannot be selected by an exact -run pattern):\n' >&2
+	cat "$scratch/odd" >&2
+	exit 1
+fi
 grep -E '^(Test|Example|Fuzz)[A-Za-z0-9_]*$' "$scratch/listing" | sort -u >"$scratch/names" || true
 [ -s "$scratch/names" ] || die 'no tests listed for cmd/mtix'
 
@@ -81,15 +90,28 @@ if [ "$mode" = pattern ]; then
 fi
 
 # check: every shard is non-empty and each name is selected by exactly one
-# shard's real run pattern.
+# shard's real run pattern. The names each shard selects are collected, then
+# compared per name: a name in two shards and a name in none both fail, even
+# when the counts happen to add up.
 total=$(wc -l <"$scratch/names" | tr -d ' ')
-selected=0
+: >"$scratch/selected"
 for s in $(seq 1 "$SHARDS"); do
 	p=$(pattern_of "$s")
 	[ -n "$p" ] || die "empty shard $s"
-	hits=$(grep -cE "$p" "$scratch/names" || true)
-	selected=$((selected + hits))
+	grep -E "$p" "$scratch/names" >>"$scratch/selected" || true
 done
-[ "$selected" -eq "$total" ] || die "shards select $selected of $total tests; the split is not exact"
-grep -vE '^[0-9]+ ' "$scratch/assigned" >/dev/null && die 'unassigned test'
+sort "$scratch/selected" | uniq -d >"$scratch/twice"
+sort -u "$scratch/selected" | comm -23 "$scratch/names" - >"$scratch/never"
+problems=0
+if [ -s "$scratch/twice" ]; then
+	printf 'cmd-mtix-shards: tests selected by more than one shard:\n' >&2
+	cat "$scratch/twice" >&2
+	problems=1
+fi
+if [ -s "$scratch/never" ]; then
+	printf 'cmd-mtix-shards: tests selected by no shard:\n' >&2
+	cat "$scratch/never" >&2
+	problems=1
+fi
+[ "$problems" -eq 0 ] || exit 1
 printf 'cmd-mtix-shards: %s tests in %s shards, split is exact\n' "$total" "$SHARDS"

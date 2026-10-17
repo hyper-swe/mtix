@@ -60,6 +60,14 @@ type SyncStatus struct {
 	// HeldPushEvents counts own events push holds (sync_quarantine source
 	// push, MTIX-95.12); they are also counted in Pending.
 	HeldPushEvents int `json:"held_push_events"`
+	// QuarantinedInvalidIDs counts the quarantined pulled events that name
+	// a task id outside the node id grammar (MTIX-187); they are also
+	// counted in QuarantinedEvents.
+	QuarantinedInvalidIDs int `json:"quarantined_invalid_ids"`
+	// InvalidNodeIDs counts the local tasks whose id is outside the node id
+	// grammar, brought in by a sync before MTIX-187 (`mtix sync doctor`
+	// names them and the fix).
+	InvalidNodeIDs int `json:"invalid_node_ids"`
 }
 
 // newSyncStatusCmd creates `mtix sync status` per FR-18 / MTIX-15.7.3.
@@ -222,6 +230,8 @@ func printStatusTable(w io.Writer, st SyncStatus) error {
 		{"unresolved conflicts", strconv.Itoa(st.OpenConflicts)},
 		{"quarantined events", strconv.Itoa(st.QuarantinedEvents)},
 		{"held push events", strconv.Itoa(st.HeldPushEvents)},
+		{"quarantined invalid ids", strconv.Itoa(st.QuarantinedInvalidIDs)},
+		{"invalid local ids", strconv.Itoa(st.InvalidNodeIDs)},
 		{"", ""},
 		{"local lamport", strconv.FormatInt(st.Lamport, 10)},
 		{"last pulled clock", strconv.FormatInt(st.LastPulled, 10)},

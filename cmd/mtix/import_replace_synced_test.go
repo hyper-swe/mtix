@@ -64,6 +64,11 @@ func TestRunImport_ReplaceOnSyncedStore_RefusesAndKeepsTickets(t *testing.T) {
 	}{
 		{"events pushed to a hub", markEventsPushed, true},
 		{"hub configured, nothing pushed yet", configureHub, true},
+		{"file relay peer that published, no hub", func(t *testing.T) []*model.SyncEvent {
+			_, err := app.store.WriteDB().Exec(`INSERT INTO relay_push_cursor (id, cursor, pub_epoch, next_rs) VALUES (1, 0, 1, 7)`)
+			require.NoError(t, err)
+			return nil
+		}, true},
 		{"hub config key only, nothing pushed yet", func(t *testing.T) []*model.SyncEvent {
 			_, err := app.configSvc.Set("sync.enabled", "true")
 			require.NoError(t, err)

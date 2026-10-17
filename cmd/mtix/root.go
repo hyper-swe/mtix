@@ -256,6 +256,7 @@ func newSyncService(clock func() time.Time, options syncServiceOptions) *service
 	svc := service.NewSyncService(app.store, app.logger, clock, options.retryClock)
 	svc.SetAutoSyncConfig(app.configSvc)
 	svc.SetBinaryVersion(version)
+	svc.SetHubEvidenceSource(collectHubEvidence) // MTIX-107.31.7
 	svc.SetHistoryExportSource(app.configSvc.HistoryExport)
 	svc.SetJSONNotices(app.jsonOutput)
 	return svc

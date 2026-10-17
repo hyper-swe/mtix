@@ -35,6 +35,12 @@ type Pool struct {
 	// envelope runs the whole transaction again. Nil in production; only
 	// tests set it (export_for_test.go).
 	afterCommit func() error
+
+	// afterSessionLock is a test seam (MTIX-107.85). When set, it runs
+	// right after EnsureRegistryIndex takes its session advisory lock, so
+	// a test can cancel the caller's context while the lock is held. Nil
+	// in production; only tests set it (export_for_test.go).
+	afterSessionLock func()
 }
 
 // SetClientIdentity records the calling CLI's machine hash and build

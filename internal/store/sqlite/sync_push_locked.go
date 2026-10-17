@@ -30,14 +30,24 @@ func (r readPool) QueryContext(ctx context.Context, query string, args ...any) (
 // them. Push uses it for the last attempt of a batch, which then needs no
 // check that the store stayed put.
 type PushLocked struct {
-	s  *Store
-	tx *sql.Tx
+	s        *Store
+	tx       *sql.Tx
+	recorded *bool
 }
 
 // WithPushLock runs fn in one write transaction and gives it the PushLocked
-// view. A nil error from fn commits it; an error rolls it back.
+// view. A nil error from fn commits it; an error rolls it back. The
+// on-commit callbacks run only when fn recorded a hold: a transaction that
+// changed nothing does not ask for an export or dispatch a hook.
 func (s *Store) WithPushLock(ctx context.Context, fn func(PushLocked) error) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error { return fn(PushLocked{s: s, tx: tx}) })
+	recorded := false
+	err := s.withWriteTx(ctx, func(tx *sql.Tx) error {
+		return fn(PushLocked{s: s, tx: tx, recorded: &recorded})
+	}, false)
+	if err == nil && recorded {
+		s.notifyCommitted(ctx)
+	}
+	return err
 }
 
 // Now returns the store's clock reading in UTC, as Store.Now does.
@@ -69,6 +79,7 @@ func (l PushLocked) HoldPushEvents(ctx context.Context, holds []QuarantinedEvent
 	if len(holds) == 0 {
 		return nil
 	}
+	*l.recorded = true
 	return holdPushEvents(ctx, l.tx, l.s.Now(), holds, cliVersion)
 }
 

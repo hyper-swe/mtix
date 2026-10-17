@@ -18,16 +18,44 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
-// commitFromAnotherConnection commits an unrelated change to the board from a
-// second connection, as a pull applying a backlog or another agent does.
-func commitFromAnotherConnection(t *testing.T) {
+// writerStore opens a second connection to the board, as a pull or another
+// agent holds, with a short busy timeout so a write that the push's lock
+// keeps out fails at once instead of waiting (MTIX-95.39).
+func writerStore(t *testing.T) *sqlite.Store {
 	t.Helper()
 	other, err := sqlite.New(filepath.Join(app.mtixDir, "data"), app.logger)
 	require.NoError(t, err)
-	_, err = other.WriteDB().ExecContext(context.Background(),
-		`UPDATE nodes SET updated_at = updated_at WHERE id = 'TEST-2'`)
+	t.Cleanup(func() { require.NoError(t, other.Close()) })
+	_, err = other.WriteDB().ExecContext(context.Background(), `PRAGMA busy_timeout = 50`)
 	require.NoError(t, err)
-	require.NoError(t, other.Close())
+	return other
+}
+
+// commitFrom commits an unrelated change to the board from other.
+func commitFrom(t *testing.T, other *sqlite.Store) {
+	t.Helper()
+	require.NoError(t, probeWrite(other), "the writer commits")
+}
+
+// probeWrite tries one small write from other and returns its error.
+func probeWrite(other *sqlite.Store) error {
+	_, err := other.WriteDB().ExecContext(context.Background(),
+		`UPDATE nodes SET updated_at = updated_at WHERE id = 'TEST-2'`)
+	return err
+}
+
+// heldChildSetup creates a held task TEST-1 (a payload over the wire cap), a
+// task TEST-2, and, after one push, a child TEST-1.1 with an edit: the two
+// events the subtree rule must hold. It returns the held creation's event id.
+func heldChildSetup(t *testing.T, hub *fakePushHub) string {
+	t.Helper()
+	require.NoError(t, runCreate("held", "", "", 3, "", overWireCap(), "", "", ""))
+	require.NoError(t, runCreate("other", "", "", 3, "", "", "", "", ""))
+	root := eventIDFor(t, "TEST-1", model.OpCreateNode)
+	require.NoError(t, pushWith(t, hub))
+	require.NoError(t, runCreate("child", "TEST-1", "", 3, "", "", "", "", ""))
+	require.NoError(t, runUpdate("TEST-1.1", "child edit", "", "", "", 0, "", ""))
+	return root
 }
 
 // TestPushLoop_WriterCommitsBeforeEveryRead_PushStillCompletes (MTIX-95.39):
@@ -39,28 +67,132 @@ func commitFromAnotherConnection(t *testing.T) {
 // rest. No timing is involved: the writer runs on every read.
 func TestPushLoop_WriterCommitsBeforeEveryRead_PushStillCompletes(t *testing.T) {
 	initTestApp(t)
-	require.NoError(t, runCreate("held", "", "", 3, "", overWireCap(), "", "", ""))
-	require.NoError(t, runCreate("other", "", "", 3, "", "", "", "", ""))
-	root := eventIDFor(t, "TEST-1", model.OpCreateNode)
 	hub := newFakePushHub()
-	require.NoError(t, pushWith(t, hub))
-	otherEdits(t, "TEST-2", pushBatchSize)
-	require.NoError(t, runCreate("child", "TEST-1", "", 3, "", "", "", "", ""))
-	require.NoError(t, runUpdate("TEST-1.1", "child edit", "", "", "", 0, "", ""))
+	root := heldChildSetup(t, hub)
+	other := writerStore(t)
 	calls := 0
 	ctx := context.WithValue(context.Background(), pushSubjectsHookKey{}, func() {
 		calls++
-		commitFromAnotherConnection(t)
+		commitFrom(t, other)
 	})
 
 	var stderr bytes.Buffer
 	_, err := pushLoop(ctx, &stderr, hub, app.store)
 
 	require.NoError(t, err, "push completes though a writer commits before every read")
-	require.GreaterOrEqual(t, calls, maxIndexReads-1, "the writer ran before every read, up to the locked attempt")
+	require.Equal(t, maxIndexReads-1, calls, "the writer ran before every read, up to the locked attempt")
 	requireHeldDependent(t, hub, "TEST-1.1", model.OpCreateNode, root)
 	requireHeldDependent(t, hub, "TEST-1.1", model.OpUpdateField, eventIDFor(t, "TEST-1.1", model.OpCreateNode))
 	require.NotContains(t, stderr.String(), "kept changing")
+}
+
+// TestPushLoop_RenumberCommittedBeforeLockedAttempt_DependentsStayHeld: a
+// renumber of the held task's subtree committed on the last read before the
+// locked attempt makes the index built before it stale. The locked attempt
+// rebuilds the index inside the lock, so the child's creation and edit are
+// still held and never sent. A locked attempt that decided on the older
+// index would send them.
+func TestPushLoop_RenumberCommittedBeforeLockedAttempt_DependentsStayHeld(t *testing.T) {
+	initTestApp(t)
+	hub := newFakePushHub()
+	root := heldChildSetup(t, hub)
+	other := writerStore(t)
+	calls := 0
+	ctx := context.WithValue(context.Background(), pushSubjectsHookKey{}, func() {
+		calls++
+		if calls < maxIndexReads-1 {
+			commitFrom(t, other)
+			return
+		}
+		require.NoError(t, other.RenumberSubtree(context.Background(), "TEST-1", 5))
+	})
+
+	var stderr bytes.Buffer
+	_, err := pushLoop(ctx, &stderr, hub, app.store)
+
+	require.NoError(t, err)
+	require.Equal(t, maxIndexReads-1, calls)
+	requireHeldDependent(t, hub, "TEST-1.1", model.OpCreateNode, root)
+	requireHeldDependent(t, hub, "TEST-1.1", model.OpUpdateField, eventIDFor(t, "TEST-1.1", model.OpCreateNode))
+}
+
+// TestPushLoop_LockedAttempt_KeepsOtherWritersOutAndNamesHoldsAfterCommit: a
+// write from another connection fails (the database is locked) while the
+// locked attempt rebuilds its index, so the decision and the holds it records
+// stand on one state; and the lines naming the holds are printed only after
+// the transaction has committed, when the same write succeeds.
+func TestPushLoop_LockedAttempt_KeepsOtherWritersOutAndNamesHoldsAfterCommit(t *testing.T) {
+	initTestApp(t)
+	hub := newFakePushHub()
+	heldChildSetup(t, hub)
+	other := writerStore(t)
+	var lockedErr, namedErr error
+	named := 0
+	ctx := context.WithValue(context.Background(), pushSubjectsHookKey{}, func() { commitFrom(t, other) })
+	locked := 0
+	ctx = context.WithValue(ctx, pushLockedHookKey{}, func() {
+		locked++
+		lockedErr = probeWrite(other)
+	})
+	stderr := &probingWriter{onLine: func() {
+		named++
+		namedErr = probeWrite(other)
+	}}
+
+	_, err := pushLoop(ctx, stderr, hub, app.store)
+
+	require.NoError(t, err)
+	require.Equal(t, 1, locked, "the batch's last attempt ran under the lock")
+	require.Error(t, lockedErr, "no other connection can write inside the lock")
+	require.Contains(t, lockedErr.Error(), "locked")
+	require.Equal(t, 2, named, "the child's creation and edit are named")
+	require.NoError(t, namedErr, "the holds are named after the lock is released")
+}
+
+// probingWriter calls onLine for each line starting with "push: held event".
+type probingWriter struct{ onLine func() }
+
+// Write implements io.Writer.
+func (w *probingWriter) Write(p []byte) (int, error) {
+	for _, line := range strings.Split(string(p), "\n") {
+		if strings.HasPrefix(line, "push: held event") {
+			w.onLine()
+		}
+	}
+	return len(p), nil
+}
+
+// TestHeldIndex_HoldBatchLocked_SkipsTheLockWhenNothingIsHeld: with no
+// creation held and a batch that holds nothing, the last attempt decides
+// without opening the write lock, so a long write by another process cannot
+// make it fail; with a creation held it takes the lock.
+func TestHeldIndex_HoldBatchLocked_SkipsTheLockWhenNothingIsHeld(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, runCreate("plain", "", "", 3, "", "", "", "", ""))
+	require.NoError(t, runCreate("other", "", "", 3, "", "", "", "", ""))
+	events, err := readPendingBatch(context.Background(), app.store, pushBatchSize)
+	require.NoError(t, err)
+	require.NotEmpty(t, events)
+	locked := 0
+	ctx := context.WithValue(context.Background(), pushLockedHookKey{}, func() { locked++ })
+
+	idx, err := newHeldIndex(ctx, &bytes.Buffer{}, app.store)
+	require.NoError(t, err)
+	valid, held, err := idx.holdBatchLocked(ctx, &bytes.Buffer{}, app.store, events)
+	require.NoError(t, err)
+	require.Len(t, valid, len(events), "nothing is held")
+	require.Zero(t, held)
+	require.Zero(t, locked, "no lock was opened")
+
+	require.NoError(t, runCreate("held", "", "", 3, "", overWireCap(), "", "", ""))
+	events, err = readPendingBatch(context.Background(), app.store, pushBatchSize)
+	require.NoError(t, err)
+	idx, err = newHeldIndex(ctx, &bytes.Buffer{}, app.store)
+	require.NoError(t, err)
+	_, held, err = idx.holdBatchLocked(ctx, &bytes.Buffer{}, app.store, events)
+	require.NoError(t, err)
+	require.Equal(t, 1, held, "the oversized creation is held")
+	require.Equal(t, 1, locked, "a batch that holds something decides under the lock")
 }
 
 // TestHeldPushCreations_ReadsOnlyHeldCreationsWithoutPayloads (MTIX-95.39):
@@ -133,44 +265,32 @@ func seedHeldCreations(t *testing.T, n int) {
 }
 
 // TestPushLoop_ManyHeldCreationsAndAWriter_PushStillCompletes (MTIX-95.39):
-// with 501 and with 3001 held creations on the board and a writer
-// committing before every read, push completes and holds what the subtree
-// rule holds. The sizes are the ticket's probe sizes; the backlog is seeded
-// in bulk and the writer runs on every read, so the case is deterministic
-// and takes a fraction of a second.
+// with 501 held creations on the board and a writer committing before every
+// read, push completes and holds what the subtree rule holds. The backlog is
+// seeded in bulk and the writer runs on every read, so the case is
+// deterministic. The 3001-creation case of the ticket's probe is the store
+// level TestWithPushLock_ThreeThousandHeldCreations_ReadsStayCheap, since the
+// reread cost grows with the backlog and the race suite runs this package.
 func TestPushLoop_ManyHeldCreationsAndAWriter_PushStillCompletes(t *testing.T) {
-	for _, held := range []int{501, 3001} {
-		t.Run(fmt.Sprintf("%d held", held), func(t *testing.T) {
-			initTestApp(t)
-			require.NoError(t, runCreate("held", "", "", 3, "", overWireCap(), "", "", ""))
-			require.NoError(t, runCreate("other", "", "", 3, "", "", "", "", ""))
-			root := eventIDFor(t, "TEST-1", model.OpCreateNode)
-			hub := newFakePushHub()
-			require.NoError(t, pushWith(t, hub))
-			otherEdits(t, "TEST-2", pushBatchSize)
-			require.NoError(t, runCreate("child", "TEST-1", "", 3, "", "", "", "", ""))
-			require.NoError(t, runUpdate("TEST-1.1", "child edit", "", "", "", 0, "", ""))
-			seedHeldCreations(t, held)
-			before := pushHoldCount(t)
-			calls := 0
-			ctx := context.WithValue(context.Background(), pushSubjectsHookKey{}, func() {
-				calls++
-				commitFromAnotherConnection(t)
-			})
+	const held = 501
+	initTestApp(t)
+	hub := newFakePushHub()
+	root := heldChildSetup(t, hub)
+	seedHeldCreations(t, held)
+	before := pushHoldCount(t)
+	other := writerStore(t)
+	ctx := context.WithValue(context.Background(), pushSubjectsHookKey{}, func() { commitFrom(t, other) })
 
-			var stderr bytes.Buffer
-			_, err := pushLoop(ctx, &stderr, hub, app.store)
+	var stderr bytes.Buffer
+	_, err := pushLoop(ctx, &stderr, hub, app.store)
 
-			require.NoError(t, err)
-			require.GreaterOrEqual(t, calls, maxIndexReads-1)
-			requireHeldUnder(t, hub, "TEST-1.1", model.OpCreateNode, root)
-			requireHeldUnder(t, hub, "TEST-1.1", model.OpUpdateField, eventIDFor(t, "TEST-1.1", model.OpCreateNode))
-			require.Equal(t, before+2, pushHoldCount(t), "the seeded holds stay and the child's two events join them")
-			for _, ids := range hub.calls {
-				for _, id := range ids {
-					require.False(t, strings.HasPrefix(id, "held-"), "no seeded held event is ever sent")
-				}
-			}
-		})
+	require.NoError(t, err)
+	requireHeldUnder(t, hub, "TEST-1.1", model.OpCreateNode, root)
+	requireHeldUnder(t, hub, "TEST-1.1", model.OpUpdateField, eventIDFor(t, "TEST-1.1", model.OpCreateNode))
+	require.Equal(t, before+2, pushHoldCount(t), "the seeded holds stay and the child's two events join them")
+	for _, ids := range hub.calls {
+		for _, id := range ids {
+			require.False(t, strings.HasPrefix(id, "held-"), fmt.Sprintf("seeded held event %s is never sent", id))
+		}
 	}
 }

@@ -131,6 +131,18 @@ type holdWriter interface {
 // how many it newly held.
 func recordBatch(ctx context.Context, stderr io.Writer, store holdWriter, d batchHolds,
 ) ([]*model.SyncEvent, int, error) {
+	valid, held, err := recordHolds(ctx, store, d)
+	if err != nil {
+		return nil, 0, err
+	}
+	reportHolds(stderr, d.holds)
+	return valid, held, nil
+}
+
+// recordHolds records the holds of d and returns the events to send and how
+// many it newly held, saying nothing: the locked attempt names the holds
+// only once its transaction has committed (MTIX-95.39).
+func recordHolds(ctx context.Context, store holdWriter, d batchHolds) ([]*model.SyncEvent, int, error) {
 	if len(d.holds) == 0 {
 		return d.valid, 0, nil
 	}
@@ -138,11 +150,15 @@ func recordBatch(ctx context.Context, stderr io.Writer, store holdWriter, d batc
 	if err != nil {
 		return nil, 0, err
 	}
-	for _, h := range d.holds {
+	return d.valid, held, nil
+}
+
+// reportHolds names each of holds on stderr.
+func reportHolds(stderr io.Writer, holds []sqlite.QuarantinedEvent) {
+	for _, h := range holds {
 		fmt.Fprintf(stderr, "push: held event %s (%s %s), not pushed: %s. See mtix sync doctor\n",
 			oneLine(h.EventID), oneLine(h.NodeID), oneLine(h.OpType), h.Reason)
 	}
-	return d.valid, held, nil
 }
 
 // pushSubjectsHookKey is the context key of a test seam (MTIX-95.12): a

@@ -328,48 +328,89 @@ func (h *heldIndex) holdBatch(ctx context.Context, stderr io.Writer, store *sqli
 	return h.holdBatchLocked(ctx, stderr, store, events)
 }
 
-// holdBatchLocked is the last attempt of holdBatch: the index, the decision
-// and the recorded holds all stand in one write transaction, so the batch is
-// decided against exactly the state it records its holds in. The index is
-// left at the data version read inside the lock. The test seam of the
-// subjects read is not run here: under the lock no other connection can
-// commit.
+// pushLockedHookKey is the context key of a test seam (MTIX-95.39): a func()
+// under it runs inside the locked attempt, just after the index is rebuilt
+// there, so a test can try a write from another connection at exactly that
+// point and see the lock keep it out. Push never sets it.
+type pushLockedHookKey struct{}
+
+// holdBatchLocked is the last attempt of holdBatch. When no creation is held
+// and the batch holds nothing, its decision reads nothing a commit could
+// change, so it stands without a lock and without waiting for one. Otherwise
+// the index, the decision and the recorded holds all stand in one write
+// transaction, so the batch is decided against exactly the state it records
+// its holds in; the holds are named on stderr after that transaction has
+// committed. The index is left at the data version it was read at. The
+// subjects test seam is not run in the lock: no other connection can commit
+// there.
 func (h *heldIndex) holdBatchLocked(ctx context.Context, stderr io.Writer, store *sqlite.Store,
 	events []*model.SyncEvent,
-) (valid []*model.SyncEvent, newly int, err error) {
+) ([]*model.SyncEvent, int, error) {
+	if valid, ok, err := h.decideUnlocked(ctx, store, events); err != nil || ok {
+		return valid, 0, err
+	}
 	locked := context.WithValue(ctx, pushSubjectsHookKey{}, nil)
-	err = store.WithPushLock(locked, func(l sqlite.PushLocked) error {
-		valid, newly, err = h.decideLocked(locked, stderr, l, events)
+	var d batchHolds
+	var valid []*model.SyncEvent
+	var newly int
+	err := store.WithPushLock(locked, func(l sqlite.PushLocked) error {
+		var err error
+		d, valid, newly, err = h.decideLocked(locked, l, events)
 		return err
 	})
 	if err != nil {
 		return nil, 0, err
 	}
+	reportHolds(stderr, d.holds)
 	return valid, newly, nil
+}
+
+// decideUnlocked decides the batch without the write lock when it can stand
+// without one: no creation is held, so the subtree rule cannot hold
+// anything, and the events pass the hub's rules, so no hold is recorded. It
+// reports whether it decided; the index is then left at the data version
+// read before it was rebuilt.
+func (h *heldIndex) decideUnlocked(ctx context.Context, store *sqlite.Store, events []*model.SyncEvent,
+) ([]*model.SyncEvent, bool, error) {
+	blocked, version, err := readIndex(ctx, store, func() (*blockers, error) {
+		return readCreations(ctx, store)
+	})
+	if err != nil || !blocked.empty() {
+		return nil, false, err
+	}
+	d, err := decideBatch(ctx, store, events, blocked)
+	if err != nil || len(d.holds) > 0 {
+		return nil, false, err
+	}
+	h.blocked, h.version, h.stale = blocked, version, false
+	return d.valid, true, nil
 }
 
 // decideLocked rebuilds the index, decides the batch and records its holds
 // with the write lock l, and leaves the index at the data version read
-// inside the lock.
-func (h *heldIndex) decideLocked(ctx context.Context, stderr io.Writer, l sqlite.PushLocked,
-	events []*model.SyncEvent,
-) ([]*model.SyncEvent, int, error) {
+// inside the lock. It returns the decision, the events to send and how many
+// holds are new; naming the holds is left to the caller, after the commit.
+func (h *heldIndex) decideLocked(ctx context.Context, l sqlite.PushLocked, events []*model.SyncEvent,
+) (batchHolds, []*model.SyncEvent, int, error) {
 	blocked, err := readCreations(ctx, l)
 	if err != nil {
-		return nil, 0, err
+		return batchHolds{}, nil, 0, err
+	}
+	if hook, ok := ctx.Value(pushLockedHookKey{}).(func()); ok {
+		hook()
 	}
 	d, err := decideBatch(ctx, l, events, blocked)
 	if err != nil {
-		return nil, 0, err
+		return batchHolds{}, nil, 0, err
 	}
-	valid, newly, err := recordBatch(ctx, stderr, l, d)
+	valid, newly, err := recordHolds(ctx, l, d)
 	if err != nil {
-		return nil, 0, err
+		return batchHolds{}, nil, 0, err
 	}
 	version, err := l.DataVersion(ctx)
 	if err != nil {
-		return nil, 0, err
+		return batchHolds{}, nil, 0, err
 	}
 	h.blocked, h.version, h.stale = blocked, version, false
-	return valid, newly, nil
+	return d, valid, newly, nil
 }

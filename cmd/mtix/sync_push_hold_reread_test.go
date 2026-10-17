@@ -265,32 +265,34 @@ func seedHeldCreations(t *testing.T, n int) {
 }
 
 // TestPushLoop_ManyHeldCreationsAndAWriter_PushStillCompletes (MTIX-95.39):
-// with 501 held creations on the board and a writer committing before every
-// read, push completes and holds what the subtree rule holds. The backlog is
-// seeded in bulk and the writer runs on every read, so the case is
-// deterministic. The 3001-creation case of the ticket's probe is the store
-// level TestWithPushLock_ThreeThousandHeldCreations_ReadsStayCheap, since the
-// reread cost grows with the backlog and the race suite runs this package.
+// with 501 and with 3001 held creations on the board, the ticket's probe
+// sizes, and a writer committing before every read, push completes and holds
+// what the subtree rule holds. The backlog is seeded in bulk and the writer
+// runs on every read, so the case is deterministic; it fails against the
+// MTIX-95.12 code at both sizes.
 func TestPushLoop_ManyHeldCreationsAndAWriter_PushStillCompletes(t *testing.T) {
-	const held = 501
-	initTestApp(t)
-	hub := newFakePushHub()
-	root := heldChildSetup(t, hub)
-	seedHeldCreations(t, held)
-	before := pushHoldCount(t)
-	other := writerStore(t)
-	ctx := context.WithValue(context.Background(), pushSubjectsHookKey{}, func() { commitFrom(t, other) })
+	for _, held := range []int{501, 3001} {
+		t.Run(fmt.Sprintf("%d held", held), func(t *testing.T) {
+			initTestApp(t)
+			hub := newFakePushHub()
+			root := heldChildSetup(t, hub)
+			seedHeldCreations(t, held)
+			before := pushHoldCount(t)
+			other := writerStore(t)
+			ctx := context.WithValue(context.Background(), pushSubjectsHookKey{}, func() { commitFrom(t, other) })
 
-	var stderr bytes.Buffer
-	_, err := pushLoop(ctx, &stderr, hub, app.store)
+			var stderr bytes.Buffer
+			_, err := pushLoop(ctx, &stderr, hub, app.store)
 
-	require.NoError(t, err)
-	requireHeldUnder(t, hub, "TEST-1.1", model.OpCreateNode, root)
-	requireHeldUnder(t, hub, "TEST-1.1", model.OpUpdateField, eventIDFor(t, "TEST-1.1", model.OpCreateNode))
-	require.Equal(t, before+2, pushHoldCount(t), "the seeded holds stay and the child's two events join them")
-	for _, ids := range hub.calls {
-		for _, id := range ids {
-			require.False(t, strings.HasPrefix(id, "held-"), fmt.Sprintf("seeded held event %s is never sent", id))
-		}
+			require.NoError(t, err)
+			requireHeldUnder(t, hub, "TEST-1.1", model.OpCreateNode, root)
+			requireHeldUnder(t, hub, "TEST-1.1", model.OpUpdateField, eventIDFor(t, "TEST-1.1", model.OpCreateNode))
+			require.Equal(t, before+2, pushHoldCount(t), "the seeded holds stay and the child's two events join them")
+			for _, ids := range hub.calls {
+				for _, id := range ids {
+					require.False(t, strings.HasPrefix(id, "held-"), fmt.Sprintf("seeded held event %s is never sent", id))
+				}
+			}
+		})
 	}
 }

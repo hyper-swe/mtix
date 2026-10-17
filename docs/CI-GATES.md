@@ -48,6 +48,28 @@ and check the OS/shard matrix, flags and check count. The package-guard tests
 include an unlisted package that must fail until it is explicitly assigned,
 as well as duplicate membership and failed inventory enumeration.
 
+## Remote bar
+
+`scripts/remote-bar.sh` runs a tree's committed bar (`make lint-go && make
+test-race`, then `govulncheck`) on GitHub-hosted runners, by dispatching
+`.github/workflows/remote-bar.yml` from `main` for a throwaway `ci-scratch/*`
+snapshot branch. It is the default way to run a full bar for a change; it does
+not replace the pull request checks above.
+
+| Option | Effect |
+| --- | --- |
+| (none) | Go bar on `ubuntu-22.04` with PostgreSQL 16 |
+| `--os macos-latest` | Go bar on a macOS runner, for native Darwin checks. Runners offer no PostgreSQL service on macOS, so the PG-gated suites skip |
+| `--web` | Adds the web job: `npm ci`, `npm audit` (dev dependencies included, any advisory fails), `npm run lint`, `npx tsc -b`, `npx vitest run`, `npm run build`, then `diff -r web/dist internal/web/dist`. Any difference fails the job |
+
+`--os` accepts only `ubuntu-22.04` (default) and `macos-latest`; any other
+value exits 2 before anything is pushed. The options combine. Exit codes are
+unchanged: 0 green, 1 bar red (including the web checks), 2 infrastructure or
+usage failure, 3 tree mismatch. Default runs send no extra dispatch inputs.
+
+Because the workflow is dispatched from `main`, a change to it takes effect
+only after it is merged; contract tests and `--dry-run` cover it before then.
+
 ## Release gates
 
 Run [the release checklist](RELEASE-CHECKLIST.md) on the exact CI-green commit

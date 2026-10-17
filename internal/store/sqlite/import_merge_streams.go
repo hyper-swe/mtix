@@ -84,9 +84,7 @@ func mergeAnnotations(local, incoming []model.Annotation) ([]model.Annotation, b
 	merged, changed := streamUnion(local, incoming, annotationKey,
 		func(l, in *model.Annotation) bool { return in.Resolved && !l.Resolved })
 	if changed {
-		slices.SortStableFunc(merged, func(a, b model.Annotation) int {
-			return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.ID, b.ID))
-		})
+		merged = model.SortAnnotations(merged)
 	}
 	return merged, changed
 }

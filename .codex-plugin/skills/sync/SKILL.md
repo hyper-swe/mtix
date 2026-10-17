@@ -201,6 +201,20 @@ export MTIX_SYNC_SSLROOTCERT="/path/to/ca-bundle.crt"   # only for a private CA
 export MTIX_SYNC_DSN="postgresql://<user>:<pw>@<host>:5432/<db>?sslmode=verify-full"
 ```
 
+- **Special characters in the password.** The URL form needs a password with
+  `/`, `?`, `#`, `%` or a space percent-encoded. To avoid encoding, give the
+  DSN in the libpq key=value form and single-quote the password, escaping `'`
+  and `\` with a backslash. Or leave the password out of the DSN and set
+  `MTIX_SYNC_PASSWORD`; a password in the DSN takes precedence. The TLS rules
+  are the same for both forms.
+
+```bash
+export MTIX_SYNC_DSN="host=<host> port=5432 dbname=<db> user=<user> password='<pw>' sslmode=verify-full"
+# or keep the password out of the DSN:
+export MTIX_SYNC_DSN="postgresql://<user>@<host>:5432/<db>?sslmode=verify-full"
+export MTIX_SYNC_PASSWORD="<pw>"
+```
+
 ## Least-privilege roles
 
 Two roles keep the daily credential small. **The owner** creates and owns the sync tables, so it runs `mtix sync init`, `mtix sync repair-uids`, `mtix sync mark-restored`, `mtix sync harden` and `mtix sync migrate --yes`. **The writer** is the role every agent uses for `mtix sync push`, `pull`, `clone`, `status` and `doctor`; it cannot create, alter, drop or truncate anything.

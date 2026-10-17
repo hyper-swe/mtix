@@ -10,10 +10,13 @@ permissions:
   contents: read
 
 jobs:
-  test-go:
+  test-go-shards:
+    name: test-go-shard (${{ matrix.os }}, ${{ matrix.shard }})
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-22.04, macos-latest]
+        shard: [sqlite, cli, other]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,16 +31,37 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go mod verify
-      # MTIX-72: an explicit budget, chosen rather than inherited. This is
-      # the heaviest invocation in CI and was the only one on Go's 10m
-      # default while the others carry 8m/12m. internal/store/sqlite alone
-      # runs ~312s here under -race (~104s locally), so a 2x runner blip
-      # killed the job with no test having failed — a timeout that reads
-      # as a test failure in the summary, and trains people to re-run
-      # instead of read. 20m keeps ~4x headroom over the observed cost
-      # while still killing a genuine hang: the package completes, so
-      # this is duration, not deadlock.
-      - run: go test $(go list ./... | grep -v node_modules) -race -count=1 -timeout 20m
+      # MTIX-112.17.22: sqlite and CLI each approached the unchanged 20m
+      # per-package budget while sharing a runner. Give them separate
+      # runners; every other package remains in the third explicit list.
+      # Every OS validates the complete partition before selecting a shard.
+      - name: Verify exact package coverage
+        run: bash scripts/ci-go-shards.sh check
+      - name: Run shard race tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          package_list=$(bash scripts/ci-go-shards.sh list "$SHARD")
+          packages=()
+          while IFS= read -r package; do
+            packages+=("$package")
+          done <<< "$package_list"
+          go test "${packages[@]}" -race -count=1 -timeout 20m
+
+  test-go:
+    name: test-go
+    needs: [test-go-shards]
+    if: ${{ always() }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Require every Go shard to succeed
+        env:
+          SHARD_RESULT: ${{ needs.test-go-shards.result }}
+        run: |
+          if [ "$SHARD_RESULT" != success ]; then
+            echo "Go race shards did not all succeed: $SHARD_RESULT" >&2
+            exit 1
+          fi
 
   test-web:
     runs-on: ubuntu-22.04
@@ -167,6 +191,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: Check quiet relay reference and benchmarks
+        run: go test ./benchmarks -run '^TestRelayPublish_MeetsTheLatencyTarget$' -bench '^BenchmarkRelay(Publish|Ingest)$' -benchtime=200x -count=1 -timeout=5m -v -args -relay-quiet
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"

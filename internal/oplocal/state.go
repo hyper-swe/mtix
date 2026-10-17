@@ -24,6 +24,7 @@ type State struct {
 	permissionNoticeProbe func(context.Context, PermissionBatch) (bool, error)
 	beforeCommit          func() error
 	syncDirectory         func(*os.File) error
+	flushNative           func(*os.File) error
 }
 
 // New constructs a state accessor without creating any files.
@@ -76,7 +77,7 @@ func closeWith(f *os.File, err *error) { *err = errors.Join(*err, closeFile(f)) 
 func (s *State) Path() (string, error) { return s.resolve() }
 
 func failure(reason string, err error) error {
-	if errors.Is(err, model.ErrOperatorStateUnreadable) {
+	if errors.Is(err, model.ErrOperatorStateUnreadable) || isNativeFlushFailure(err) {
 		return fmt.Errorf("operator state %s: %w", reason, err)
 	}
 	return fmt.Errorf("operator state %s: %w: %w", reason, err, model.ErrOperatorStateUnreadable)

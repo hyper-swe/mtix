@@ -4073,6 +4073,14 @@ Filesystem checks cannot detect sandbox write access granted to an operator-owne
 
 This directory holds a persistent host identifier and host-specific state records. Other-host records are ignored and reported. Missing records are empty; invalid or inaccessible state is refused. This storage API validates records; hook approval and legacy conversion follow the operator workflow. To recover, correct the reported path, ownership or access rules manually, then repeat `mtix hooks status --json`; preserve existing state records while correcting permissions.
 
+### Write durability
+
+Atomic record publication uses complete private temporary bytes and retains the existing access checks. On macOS, writes request `F_FULLFSYNC` for the file and parent directory; `ENOTSUP` produces a warning and an `fsync` fallback. Other flush errors fail the write. Linux and other Unix targets retain file and directory `Sync` calls.
+
+On Windows, verified write-through file handles use `FlushFileBuffers` before and after handle-relative publication. These request Windows and filesystem cache handling; the read-only parent handle is not separately flushed. Successful calls acknowledge OS requests, not a power-loss guarantee: filesystem and device behavior still matter.
+
+A failure before publication preserves the previous record. A flush failure after publication can leave complete new content visible, including after create-once publication. Always preserve these files and surface the I/O error to the operator; do not assume rollback or delete and recreate grants or the host identifier. `mtix hooks status --json` checks placement and access without writing state; it does not prove physical durability. Follow the existing operator workflow to reconcile the intended state after the storage error is resolved.
+
 ### Recent operator alerts
 
 `mtix sync doctor` and `mtix sync doctor --json` show the `alerts.recent` check, sampling the latest 20 logical diagnostics on this host. A recent diagnostic is a WARN and does not fail an otherwise passing doctor; absent alert state passes without creating files. This check reads only operator-local state; other checks in the same doctor still contact a configured hub, and a missing hub configuration can independently fail the overall report. Alerts never wake anyone, never address the concerned agent and never enter the board journal. Surface the diagnostic to the operator and follow the exact fix it prints; do not repost it to the agent named in the row.

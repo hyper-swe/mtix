@@ -134,9 +134,28 @@ func knownInterpreterProgram(root, program string) bool {
 		return false
 	}
 	if filepath.IsAbs(program) {
-		return inPathDirectory(root, filepath.Dir(program))
+		return inPathDirectory(root, programDirectory(program))
 	}
 	return isBareName(program)
+}
+
+// programDirectory returns the physical directory that holds the program: the
+// text before the last separator, resolved link by link, so a parent-directory
+// segment after a link is applied where the OS applies it. The final component
+// is left alone, so a program that is itself a link (a multi-call binary) keeps
+// the name it is run by.
+func programDirectory(program string) string {
+	cut := strings.LastIndexAny(program, "/"+string(filepath.Separator))
+	if cut <= 0 {
+		return resolveDeepest(program[:cut+1], 0)
+	}
+	return resolveDeepest(program[:cut], 0)
+}
+
+// pinnedProgramPath is the program as launched under strict mode: the physical
+// directory it was judged in, plus its own name.
+func pinnedProgramPath(program string) string {
+	return filepath.Join(programDirectory(program), filepath.Base(program))
 }
 
 // isBareName reports a program written without any path separator, using the

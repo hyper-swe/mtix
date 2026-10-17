@@ -116,7 +116,7 @@ func knownEnvWrapper(root, program string) bool {
 		return false
 	}
 	if filepath.IsAbs(program) {
-		return inPathDirectory(root, filepath.Dir(program))
+		return inPathDirectory(root, programDirectory(program))
 	}
 	return isBareName(program)
 }
@@ -190,7 +190,11 @@ func (a *Approvals) enforceStrict(h Hook, in *hookInputs, plan *ExecPlan) error 
 		return fmt.Errorf("exec launch refused for hook %q: strict program mode state cannot be read: %w", h.Name, err)
 	}
 	index, needed := strictTarget(h, in)
-	if !on || !needed {
+	if !on {
+		return nil
+	}
+	if !needed {
+		pinKnownSlots(h, in, plan)
 		return nil
 	}
 	refuse := func(why string) error {
@@ -214,6 +218,37 @@ func (a *Approvals) enforceStrict(h Hook, in *hookInputs, plan *ExecPlan) error 
 	plan.Argv[index] = program
 	plan.Resolved[h.Exec.Command[index]] = program
 	return nil
+}
+
+// pinKnownSlots pins the launch wrapper (env) and a known interpreter to the
+// physical directory they were judged in, so a link in the written path cannot
+// be re-pointed between the check and the launch.
+func pinKnownSlots(h Hook, in *hookInputs, plan *ExecPlan) {
+	if in.program > 0 {
+		plan.Argv[0] = pinnedProgramPath(plan.Argv[0])
+	}
+	if classifyProgram(h, in).Class == ClassInterpreterScript && filepath.IsAbs(plan.Argv[in.program]) {
+		plan.Argv[in.program] = pinnedProgramPath(plan.Argv[in.program])
+	}
+}
+
+// ProgramToApprove returns the symlink-resolved program ApproveProgram would
+// bind the approval to, without writing anything, so the operator can see it
+// first.
+func (a *Approvals) ProgramToApprove(h Hook) (string, error) {
+	in, _, err := a.strictInputs(h)
+	if err != nil {
+		return "", err
+	}
+	index, needed := strictTarget(h, in)
+	if !needed {
+		return "", fmt.Errorf("hook %q runs a %s and needs no program approval", h.Name, classifyProgram(h, in).Class)
+	}
+	program, err := strictProgram(h, in, index)
+	if err != nil {
+		return "", fmt.Errorf("hook %q: %w", h.Name, err)
+	}
+	return program, nil
 }
 
 // StrictStatus reports strict mode for the configured exec hooks, with the

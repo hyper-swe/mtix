@@ -432,3 +432,121 @@ func TestStrict_ProgramRecordFromAnotherHostIsUnreadableNotAbsent(t *testing.T) 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "cannot be read")
 }
+
+// linkedPathDir returns a directory of links: dir/usrbin points at the
+// directory that holds a real env and sh, so dir/usrbin/env names the same file
+// as the PATH entry but through a link.
+func linkedPathDir(t *testing.T) (linkDir, realDir string) {
+	t.Helper()
+	env, err := exec.LookPath("env")
+	require.NoError(t, err)
+	realDir = filepath.Dir(env)
+	linkDir = filepath.Join(t.TempDir(), "usrbin")
+	require.NoError(t, os.Symlink(realDir, linkDir))
+	return linkDir, realDir
+}
+
+// escapeChain builds a link whose lexical clean lands on realDir but whose
+// physical target is a planted copy elsewhere in the project, and returns the
+// program path text for name.
+func escapeChain(t *testing.T, root, realDir, name string) string {
+	t.Helper()
+	climb := len(splitPathComponents(root)) + 1
+	chain := filepath.Join(root, "planted")
+	for i := 0; i < climb; i++ {
+		chain = filepath.Join(chain, "k")
+	}
+	require.NoError(t, os.MkdirAll(chain, 0o700))
+	require.NoError(t, os.Symlink(chain, filepath.Join(root, "lnk")))
+	landing := filepath.Join(root, "planted")
+	dir := filepath.Join(landing, filepath.FromSlash(realDir[1:]))
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0o700)) //nolint:gosec // test program
+	text := root + "/lnk"
+	for i := 0; i < climb; i++ {
+		text += "/.."
+	}
+	return text + realDir + "/" + name
+}
+
+func TestStrict_KnownWrapperAndInterpreterAreJudgedByThePhysicalDirectory(t *testing.T) {
+	linkDir, realDir := linkedPathDir(t)
+	for _, name := range []string{"env", "sh"} {
+		root, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		probe := escapeChain(t, root, realDir, name)
+		known := knownEnvWrapper
+		if name == "sh" {
+			known = knownInterpreterProgram
+		}
+		require.False(t, known(root, probe), "a path that reads like a PATH location but lands elsewhere is not known: %s", name)
+		require.True(t, known(root, filepath.Join(linkDir, name)), "a link to the PATH directory is the PATH directory: %s", name)
+		require.True(t, known(root, name), "a bare name is looked up on the fixed PATH")
+		require.True(t, known(root, filepath.Join(realDir, name)))
+	}
+}
+
+func TestStrict_On_KnownEnvAndInterpreterSlotsArePinnedToThePhysicalDirectory(t *testing.T) {
+	linkDir, realDir := linkedPathDir(t)
+	f := strictFixture(t, "["+filepath.Join(linkDir, "env")+", "+filepath.Join(linkDir, "sh")+", scripts/run.sh]")
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err)
+	realReal, err := filepath.EvalSymlinks(realDir)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(realReal, "env"), plan.Argv[0], "the env slot is pinned")
+	require.Equal(t, filepath.Join(realReal, "sh"), plan.Argv[1], "the interpreter slot is pinned")
+	off := newPrepareFixture(t, "["+filepath.Join(linkDir, "env")+", "+filepath.Join(linkDir, "sh")+", scripts/run.sh]")
+	plan, err = off.approvals.PrepareExec(off.hook(t))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(linkDir, "env"), plan.Argv[0], "strict off leaves the launch as written")
+}
+
+func TestStrict_ProgramRecordForAnotherProjectIsRefused(t *testing.T) {
+	f := strictFixture(t, "[cat, data/x]")
+	_, err := f.approvals.ApproveProgram(f.hook(t), true)
+	require.NoError(t, err)
+	files := recordFilesContaining(t, f, `"program"`)
+	require.Len(t, files, 1)
+	data, err := os.ReadFile(files[0]) //nolint:gosec // test reads its own state dir
+	require.NoError(t, err)
+	var rec struct {
+		HostID string          `json:"host_id"`
+		Data   json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(data, &rec))
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Data, &body))
+	body["project"] = "another-project"
+	rec.Data, err = json.Marshal(body)
+	require.NoError(t, err)
+	out, err := json.Marshal(rec)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(files[0], out, 0o600))
+	_, err = f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err, "a record whose project field differs is not this project's approval")
+}
+
+func TestStrict_RecordsLiveOutsideTheProject(t *testing.T) {
+	f := strictFixture(t, "[cat, data/x]")
+	_, err := f.approvals.ApproveProgram(f.hook(t), true)
+	require.NoError(t, err)
+	dir, err := f.state.Path()
+	require.NoError(t, err)
+	for _, marker := range []string{`"enabled"`, `"program"`} {
+		for _, file := range recordFilesContaining(t, f, marker) {
+			rel, relErr := filepath.Rel(f.root, file)
+			require.NoError(t, relErr)
+			require.True(t, strings.HasPrefix(rel, ".."), "%s is outside the project root", file)
+			require.True(t, strings.HasPrefix(file, dir))
+		}
+	}
+	require.Len(t, recordFilesContaining(t, f, `"enabled"`), 1)
+}
+
+func TestProgramToApprove_ReportsTheResolvedProgramWithoutWriting(t *testing.T) {
+	f := strictFixture(t, "[cat, data/x]")
+	program, err := f.approvals.ProgramToApprove(f.hook(t))
+	require.NoError(t, err)
+	require.True(t, filepath.IsAbs(program))
+	require.Empty(t, recordFilesContaining(t, f, `"program"`), "nothing is written before the operator approves")
+}

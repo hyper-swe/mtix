@@ -5,6 +5,7 @@
 #
 # Usage:
 #   scripts/remote-bar.sh [--ticket MTIX-N] [--dry-run] [--allow-workflow-diff] \
+#                         [--os ubuntu-22.04|macos-latest] [--web] \
 #                         <worktree-or-checkout>
 #   scripts/remote-bar.sh --help
 #
@@ -27,10 +28,19 @@
 #      the scratch branch on every exit path (success, failure, interrupt).
 #
 # The bar is the committed one: make lint-go && make test-race, then
-# govulncheck. It runs on Linux (ubuntu-22.04) only. macOS and Windows
-# coverage comes from PR CI (CI also covers PostgreSQL 17; this runs 16 only).
-# Security-sensitive tickets (MTIX-112.9.x to
-# 112.13, 112.34) stay on the local heavy slot and must not use this script.
+# govulncheck. By default it runs on ubuntu-22.04 with PostgreSQL 16 (CI also
+# covers 17). Options (MTIX-203; they take effect once the workflow carrying
+# the matching inputs is on main):
+#   --os macos-latest   run the Go bar on a macOS runner instead. Allowlist:
+#                       ubuntu-22.04 (default) and macos-latest; anything else
+#                       exits 2. macOS runners have no PostgreSQL service, so
+#                       the PG-gated suites skip there.
+#   --web               also run the web job: npm ci, npm audit (dev
+#                       dependencies included, any advisory fails), lint,
+#                       tsc -b, vitest, build, then a byte compare of the
+#                       rebuilt bundle against internal/web/dist.
+# Default runs send no new dispatch inputs, so they work against a workflow
+# on main that predates the options. Windows coverage comes from PR CI.
 #
 # Needs: git, gh with existing auth (scopes repo and workflow). No secrets.
 #
@@ -47,6 +57,8 @@
 set -euo pipefail
 
 RB_VERSION="1"
+RB_OS_DEFAULT="ubuntu-22.04"
+RB_OS_ALLOWED="ubuntu-22.04 macos-latest"
 RB_REPO_SLUG="hyper-swe/mtix"
 RB_WORKFLOW="remote-bar.yml"
 RB_REMOTE="${RB_REMOTE:-origin}"
@@ -60,6 +72,7 @@ RB_LOOP_FILES="CLAUDE.md AGENTS.md"
 RB_STEP_VERIFY="Verify snapshot tree"
 RB_STEP_BAR="Run committed bar"
 RB_STEP_VULN="Run govulncheck"
+RB_STEP_WEB="Run web checks"
 
 RB_BRANCH=""
 RB_PUSHED=0
@@ -227,7 +240,7 @@ rb_classify() {
 	failure)
 		case "|$steps|" in
 		*"|$RB_STEP_VERIFY|"*) echo 3 ;;
-		*"|$RB_STEP_BAR|"* | *"|$RB_STEP_VULN|"*) echo 1 ;;
+		*"|$RB_STEP_BAR|"* | *"|$RB_STEP_VULN|"* | *"|$RB_STEP_WEB|"*) echo 1 ;;
 		*) echo 2 ;;
 		esac
 		;;
@@ -281,12 +294,21 @@ rb_wait_run() {
 	done
 }
 
+# rb_os_ok <os>: succeeds only for a runner on the allowlist.
+rb_os_ok() {
+	local o
+	for o in $RB_OS_ALLOWED; do
+		[ "${1:-}" = "$o" ] && return 0
+	done
+	return 1
+}
+
 rb_usage() {
 	sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
 }
 
 rb_run() {
-	local ticket="adhoc" dry=0 allow_wf=0 dir="" a
+	local ticket="adhoc" dry=0 allow_wf=0 dir="" a os="$RB_OS_DEFAULT" web=false
 	while [ $# -gt 0 ]; do
 		a="$1"
 		case "$a" in
@@ -294,6 +316,9 @@ rb_run() {
 		--ticket) [ $# -ge 2 ] || rb_die 2 "--ticket needs a value"; ticket="$2"; shift ;;
 		--dry-run) dry=1 ;;
 		--allow-workflow-diff) allow_wf=1 ;;
+		--os) [ $# -ge 2 ] || rb_die 2 "--os needs a value"; os="$2"; shift
+			rb_os_ok "$os" || rb_die 2 "--os must be one of: $RB_OS_ALLOWED (got: $os)" ;;
+		--web) web=true ;;
 		-*) rb_die 2 "unknown option: $a" ;;
 		*) [ -z "$dir" ] || rb_die 2 "one directory only"; dir="$a" ;;
 		esac
@@ -316,13 +341,19 @@ rb_run() {
 	fi
 	stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 	RB_BRANCH="$(rb_branch_name "$ticket" "$stamp" "$tree")" || rb_die 2 "cannot name branch"
-	echo "remote-bar $RB_VERSION: tree=$tree branch=$RB_BRANCH"
+	echo "remote-bar $RB_VERSION: tree=$tree branch=$RB_BRANCH os=$os web=$web"
 	[ "$dry" = 0 ] || { echo "dry run: nothing pushed"; return 0; }
 
 	commit="$(rb_commit_tree "$tree" "$parent")"
 	rb_push "$commit" "$RB_BRANCH" || rb_die 2 "push failed"
+	# Optional inputs are sent only when asked for, so a default run still
+	# dispatches against a workflow on main that predates them.
+	local opts=()
+	[ "$os" = "$RB_OS_DEFAULT" ] || opts+=(-f "os=$os")
+	[ "$web" = false ] || opts+=(-f "web=true")
 	gh workflow run "$RB_WORKFLOW" --repo "$RB_REPO_SLUG" --ref main \
-		-f "scratch_ref=$RB_BRANCH" -f "expected_tree=$tree" -f "wrapper_version=$RB_VERSION" ||
+		-f "scratch_ref=$RB_BRANCH" -f "expected_tree=$tree" -f "wrapper_version=$RB_VERSION" \
+		"${opts[@]+"${opts[@]}"}" ||
 		rb_die 2 "dispatch failed"
 	rb_find_run "$RB_BRANCH" || rb_die 2 "dispatched run not found"
 	echo "run: https://github.com/$RB_REPO_SLUG/actions/runs/$RB_RUN_ID"

@@ -96,7 +96,8 @@ func (s *Store) GetSiblings(ctx context.Context, nodeID string) ([]*model.Node, 
 func (s *Store) SetAnnotations(ctx context.Context, nodeID string, annotations []model.Annotation) error {
 	var annotJSON string
 	if len(annotations) > 0 {
-		data, err := json.Marshal(annotations)
+		// Stored in the canonical (created_at, id) order (MTIX-100.2).
+		data, err := json.Marshal(model.SortAnnotations(annotations))
 		if err != nil {
 			return fmt.Errorf("marshal annotations for %s: %w", nodeID, err)
 		}
@@ -232,7 +233,9 @@ func (s *Store) mutateAnnotations(ctx context.Context, nodeID string,
 		if err != nil {
 			return err
 		}
-		data, err := json.Marshal(next)
+		// Stored in the canonical (created_at, id) order (MTIX-100.2); the
+		// comment event below still names the entry the caller appended.
+		data, err := json.Marshal(model.SortAnnotations(next))
 		if err != nil {
 			return fmt.Errorf("marshal annotations for %s: %w", nodeID, err)
 		}

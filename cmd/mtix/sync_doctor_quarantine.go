@@ -52,6 +52,13 @@ func checkQuarantinedEvents(ctx context.Context, st *sqlite.Store) (bool, string
 	if held {
 		detail += heldUIDAction
 	}
+	invalid, err := st.CountQuarantinedInvalidIDs(ctx)
+	if err != nil {
+		return false, detail + " (" + err.Error() + ")"
+	}
+	if invalid > 0 {
+		detail += fmt.Sprintf(" (%d of them for an invalid node id)", invalid) + invalidIDQuarantineAction
+	}
 	return false, detail
 }
 

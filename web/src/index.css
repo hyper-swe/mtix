@@ -83,6 +83,17 @@
 }
 
 /*
+ * Tailwind 4 preflight no longer gives buttons the pointer cursor (Tailwind 3
+ * did). This is the official compatibility rule; it keeps the Tailwind 3 look.
+ */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+/*
  * mtix design system — Linear-inspired, refined industrial aesthetic.
  * All colors reference CSS variables so themes swap via .dark class on <html>.
  */
@@ -136,6 +147,11 @@
   --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
 
   /* Radii */
+  /*
+   * The rounded-sm and rounded-lg utilities compile to var(--radius-sm) and
+   * var(--radius-lg), so editing these tokens changes every such utility.
+   * Tailwind 3 emitted fixed rem values (0.25rem and 0.5rem, the same 4px and 8px).
+   */
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;

@@ -28,4 +28,16 @@ describe("Tailwind 4 build", () => {
       expect(lockPackages[`node_modules/${name}`], name).toBeUndefined();
     }
   });
+
+  it("keeps the Tailwind 3 pointer cursor on buttons", () => {
+    const css = readFileSync("src/index.css", "utf8");
+    expect(css).toMatch(
+      /button:not\(:disabled\),\s*\[role="button"\]:not\(:disabled\)\s*\{\s*cursor:\s*pointer;/,
+    );
+  });
+
+  it("carries no override for a package that left the tree", () => {
+    expect(manifest.overrides?.["postcss-selector-parser"]).toBeUndefined();
+    expect(lockPackages["node_modules/postcss-selector-parser"]).toBeUndefined();
+  });
 });

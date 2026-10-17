@@ -1,7 +1,7 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
 
-// Local race-budget guards inspect the actual Make target and CI test-go steps.
+// Local race-budget guards inspect the actual Make target and CI shard executor steps.
 package mtix_test
 
 import (
@@ -36,9 +36,9 @@ func raceTimeoutError(makefile, ci []byte) error {
 	if err := yaml.Unmarshal(ci, &workflow); err != nil {
 		return fmt.Errorf("CI workflow: %w", err)
 	}
-	job, exists := workflow.Jobs["test-go"]
+	job, exists := workflow.Jobs["test-go-shards"]
 	if !exists {
-		return fmt.Errorf("CI test-go job missing")
+		return fmt.Errorf("CI test-go-shards job missing")
 	}
 	var commands []string
 	for _, step := range job.Steps {
@@ -46,7 +46,7 @@ func raceTimeoutError(makefile, ci []byte) error {
 	}
 	hosted, err := singleGoTestTimeout(commands)
 	if err != nil {
-		return fmt.Errorf("CI test-go step: %w", err)
+		return fmt.Errorf("CI test-go-shards step: %w", err)
 	}
 	if local != hosted || local != 20*time.Minute {
 		return fmt.Errorf("race timeout must match CI and equal 20m: local=%s CI=%s", local, hosted)
@@ -97,11 +97,11 @@ func singleGoTestTimeout(lines []string) (time.Duration, error) {
 }
 
 // Accept shipped race/count flags, literal package forms and an explicit timeout.
-// Only the two shipped package-list expansions are replaced with package tokens.
+// Only shipped package-list and quoted shard-array expansions become package tokens.
 // Unsupported compound or quoted command shapes fail instead of being interpreted.
 func explicitTestTimeout(command string) (time.Duration, error) {
 	command, _, _ = strings.Cut(command, "#")
-	for _, expansion := range []string{"$(GO_PKGS)", "$(go list ./... | grep -v node_modules)"} {
+	for _, expansion := range []string{"$(GO_PKGS)", "$(go list ./... | grep -v node_modules)", `"${packages[@]}"`} {
 		command = strings.ReplaceAll(command, expansion, "packages")
 	}
 	if strings.ContainsAny(command, "\"'`$;|&<>\\") {
@@ -137,7 +137,7 @@ func explicitTestTimeout(command string) (time.Duration, error) {
 
 func TestMakefile_TestRaceTimeout_DriftAndRemovalRejected(t *testing.T) {
 	makefile := "test-race:\n\tgo test $(GO_PKGS) -race -count=1 -timeout 20m\n"
-	ci := "jobs:\n  test-go:\n    steps:\n      - run: go test $(go list ./... | grep -v node_modules) -race -count=1 -timeout 20m\n"
+	ci := "jobs:\n  test-go-shards:\n    steps:\n      - run: go test $(go list ./... | grep -v node_modules) -race -count=1 -timeout 20m\n"
 	cases := []struct{ name, makefile, ci string }{
 		{"local drift", strings.Replace(makefile, "20m", "19m", 1), ci},
 		{"CI drift", makefile, strings.Replace(ci, "20m", "19m", 1)},
@@ -150,7 +150,7 @@ func TestMakefile_TestRaceTimeout_DriftAndRemovalRejected(t *testing.T) {
 		{"no value", strings.Replace(makefile, " 20m", "", 1), ci},
 		{"no target", strings.Replace(makefile, "test-race:", "test-cover:", 1), ci},
 		{"duplicate target", makefile + makefile, ci},
-		{"no CI job", makefile, strings.Replace(ci, "test-go:", "test-go-postgres-docker:", 1)},
+		{"no CI job", makefile, strings.Replace(ci, "test-go-shards:", "test-go-postgres-docker:", 1)},
 		{"duplicate command", makefile, ci + "      - run: go test ./... -timeout 20m\n"},
 		{"comment decoy", "test-race:\n\tgo test ./... # -timeout 20m\n", ci},
 		{"substitution decoy", "test-race:\n\tgo test $(printf ' -timeout 20m')\n", ci},
@@ -166,13 +166,13 @@ func TestMakefile_TestRaceTimeout_DriftAndRemovalRejected(t *testing.T) {
 
 func TestMakefile_TestRaceTimeout_RealBlocksIgnoreDecoys(t *testing.T) {
 	makefile := ".PHONY: test-race\n# test-race: go test -timeout 1m\ntest-cover:\n\tgo test ./... -timeout 2m\ntest-race:\n\t# go test ./... -timeout 3m\n\tgo test $(GO_PKGS) -race -count=1 -timeout=20m # -timeout 4m\nhelp:\n\techo 'test-race: -timeout 5m'\n"
-	ci := "jobs:\n  test-go:\n    steps:\n      - run: |\n          # go test ./... -timeout 6m\n          go test $(go list ./... | grep -v node_modules) -race -count=1 -timeout 20m\n  test-go-postgres-docker:\n    steps:\n      - run: go test ./... -timeout 7m\n  test-fault-injection:\n    steps:\n      - run: go test ./e2e/faultinject -timeout 12m\n"
+	ci := "jobs:\n  test-go-shards:\n    steps:\n      - run: |\n          # go test ./... -timeout 6m\n          go test $(go list ./... | grep -v node_modules) -race -count=1 -timeout 20m\n  test-go-postgres-docker:\n    steps:\n      - run: go test ./... -timeout 7m\n  test-fault-injection:\n    steps:\n      - run: go test ./e2e/faultinject -timeout 12m\n"
 	require.NoError(t, raceTimeoutError([]byte(makefile), []byte(ci)))
 }
 
 func TestMakefile_TestRaceTimeout_FlagValuesRejected(t *testing.T) {
 	makefile := "test-race:\n\tgo test $(GO_PKGS) -race -count=1 -timeout 20m\n"
-	ci := "jobs:\n  test-go:\n    steps:\n      - run: go test $(go list ./... | grep -v node_modules) -race -count=1 -timeout 20m\n"
+	ci := "jobs:\n  test-go-shards:\n    steps:\n      - run: go test $(go list ./... | grep -v node_modules) -race -count=1 -timeout 20m\n"
 	for _, flag := range []string{"-run", "-bench", "-args"} {
 		decoy := flag + " -timeout=20m"
 		t.Run(flag+"/local", func(t *testing.T) {
@@ -181,6 +181,26 @@ func TestMakefile_TestRaceTimeout_FlagValuesRejected(t *testing.T) {
 		})
 		t.Run(flag+"/CI", func(t *testing.T) {
 			changed := strings.Replace(ci, "-timeout 20m", decoy, 1)
+			require.Error(t, raceTimeoutError([]byte(makefile), []byte(changed)))
+		})
+	}
+}
+
+func TestMakefile_TestRaceTimeout_ShardArrayIgnoresAggregateDecoy(t *testing.T) {
+	makefile := "test-race:\n\tgo test $(GO_PKGS) -race -count=1 -timeout 20m\n"
+	ci := `jobs:
+  test-go-shards:
+    steps:
+      - run: go test "${packages[@]}" -race -count=1 -timeout 20m
+  test-go:
+    steps:
+      - run: go test ./... -timeout 19m
+`
+	require.NoError(t, raceTimeoutError([]byte(makefile), []byte(ci)))
+	require.Error(t, raceTimeoutError([]byte(makefile), []byte(strings.Replace(ci, "20m", "19m", 1))))
+	for _, decoy := range []string{`${packages[@]}`, `"${other[@]}"`, `"packages"`} {
+		t.Run(decoy, func(t *testing.T) {
+			changed := strings.Replace(ci, `"${packages[@]}"`, decoy, 1)
 			require.Error(t, raceTimeoutError([]byte(makefile), []byte(changed)))
 		})
 	}

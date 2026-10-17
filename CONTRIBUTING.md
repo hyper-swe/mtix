@@ -391,9 +391,9 @@ provider-specific quirks.
 
 ### CI
 
-- Every PR runs `test-pg-docker` (hermetic, no secrets).
-- Every release tag (`v*.*.*`) runs `test-pg-supabase` and
-  `test-pg-neon` in matrix; failure blocks the release.
+Every PR and main push must pass all 17 checks, including six Go race shards
+and the strict `test-go` aggregate. See [CI and release gates](docs/CI-GATES.md)
+for package coverage, failure handling, merge checks and release gates.
 
 ### Releasing
 
@@ -497,3 +497,8 @@ table.
 ## License
 
 By contributing to mtix, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
+
+Relay performance changes must retain the default paired guard in race and
+short runs and the blocking quiet reference check in the existing Linux build
+job. See [relay calibration](benchmarks/README.md#fr-21-relay-publish-guard-mtix-165)
+for the exact command and measured calibration limits. The job count remains 17.

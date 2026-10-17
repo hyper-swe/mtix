@@ -1840,6 +1840,25 @@ export MTIX_SYNC_SSLROOTCERT="/path/to/ca-bundle.crt"   # only for a private CA
 export MTIX_SYNC_DSN="postgresql://<user>:<pw>@<host>:5432/<db>?sslmode=verify-full"
 ```
 
+- **Special characters in the password.** The URL form needs a password with
+  `/`, `?`, `#`, `%` or a space percent-encoded. To avoid encoding, give the
+  DSN in the libpq key=value form and single-quote the password, escaping `'`
+  and `\` with a backslash. Or leave the password out of the DSN and set
+  `MTIX_SYNC_PASSWORD`; a password in the DSN takes precedence. The TLS rules
+  are the same for both forms.
+
+```bash
+# Shell single quotes pass the DSN through unchanged. This form suits a password
+# with no space, quote or backslash in it; for any other password use the second form:
+export MTIX_SYNC_DSN='host=<host> port=5432 dbname=<db> user=<user> password=<pw> sslmode=verify-full'
+# Or keep the password out of the DSN and read it without echo, so the shell
+# never expands $, backticks or backslashes in it:
+export MTIX_SYNC_DSN='postgresql://<user>@<host>:5432/<db>?sslmode=verify-full'
+IFS= read -r -s MTIX_SYNC_PASSWORD && export MTIX_SYNC_PASSWORD
+```
+Do not put a generated password inside shell double quotes: the shell rewrites
+`\`, `$` and backticks in it before mtix sees it.
+
 ### Setup (every other teammate)
 
 ```bash
@@ -2955,6 +2974,13 @@ problem, PASS means none do (no row appears when there is no `hooks.yaml`).
 The notice is advisory: the hook still runs as written and launch behaviour
 does not change. To clear it, run the program through a pinned project script
 and approve the hook again.
+
+Hook program paths must be clean: a program written with a parent-directory
+segment ("..") is refused at launch, naming the hook, because the checked path
+and the file the operating system runs can differ once a link comes before the
+segment. Write the program as an absolute path without ".." or as a
+project-relative path (scripts/run.sh and ./scripts/run.sh are fine). Paths are
+resolved link by link, so a script operand is judged where it actually lands.
 
 Append-file hooks: an `append-file` hook writes only to a regular file inside
 the project. Its `append-file.path` must be relative. The file is opened

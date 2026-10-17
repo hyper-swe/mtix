@@ -395,6 +395,12 @@ Every PR and main push must pass all 17 checks, including six Go race shards
 and the strict `test-go` aggregate. See [CI and release gates](docs/CI-GATES.md)
 for package coverage, failure handling, merge checks and release gates.
 
+To run the full bar on hosted runners instead of your machine, use
+`scripts/remote-bar.sh --ticket MTIX-<id> <checkout>`. Add `--os macos-latest`
+for native macOS checks and `--web` for the web npm checks plus the
+`internal/web/dist` byte compare. See the "Remote bar" section of the same
+page.
+
 ### Releasing
 
 Before pushing any release tag, run

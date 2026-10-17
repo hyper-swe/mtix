@@ -3,7 +3,11 @@
 
 package model
 
-import "time"
+import (
+	"cmp"
+	"slices"
+	"time"
+)
 
 // Annotation represents a human annotation on a node's prompt per FR-3.4.
 type Annotation struct {
@@ -27,4 +31,15 @@ type Annotation struct {
 	// comment. Carried onto the emitted comment event's payload so the
 	// addressee's inbox (a query over the journal) surfaces it.
 	Addressee string `json:"addressee,omitempty"`
+}
+
+// SortAnnotations returns a copy of annotations ordered by (CreatedAt, ID),
+// oldest first, with equal timestamps ordered by id. Every path that stores
+// or presents annotations uses it, so replicas and outputs agree on the order.
+func SortAnnotations(annotations []Annotation) []Annotation {
+	sorted := slices.Clone(annotations)
+	slices.SortStableFunc(sorted, func(a, b Annotation) int {
+		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.ID, b.ID))
+	})
+	return sorted
 }

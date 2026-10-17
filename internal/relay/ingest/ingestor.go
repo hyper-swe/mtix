@@ -339,6 +339,11 @@ func (in *Ingestor) applyRecord(ctx context.Context, peerID string, header segme
 	if err := validator.Validate(&e, time.Now().UTC(), nil); err != nil {
 		return in.refuse(stats, peerID, header, rec, e.EventID, err)
 	}
+	// Every node id the record names must be inside the node id grammar,
+	// as at pull (MTIX-187).
+	if err := validator.ValidateEventNodeIDs(&e); err != nil {
+		return in.refuse(stats, peerID, header, rec, e.EventID, err)
+	}
 	if err := in.checkUID(ctx, &e); err != nil {
 		return in.refuse(stats, peerID, header, rec, e.EventID, err)
 	}

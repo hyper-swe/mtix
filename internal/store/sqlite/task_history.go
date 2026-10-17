@@ -338,10 +338,30 @@ func sameHistoryValue(field string, old, cur sql.NullString) bool {
 		return true
 	}
 	switch field {
-	case "labels", "annotations", "code_refs", "commit_refs":
+	case "labels", "code_refs", "commit_refs":
 		return emptyList(old) && emptyList(cur)
+	case "annotations":
+		return emptyList(old) && emptyList(cur) || sameAnnotationSet(old.String, cur.String)
 	}
 	return false
+}
+
+// sameAnnotationSet reports whether two annotations columns hold the same
+// annotations, whatever their order: both decode, and their canonical
+// (created_at, id) orderings encode alike. Reordering alone is no change
+// (MTIX-100.2). Text that does not decode is never the same set.
+func sameAnnotationSet(a, b string) bool {
+	canon := func(text string) (string, bool) {
+		var list []model.Annotation
+		if err := json.Unmarshal([]byte(text), &list); err != nil {
+			return "", false
+		}
+		out, err := json.Marshal(model.SortAnnotations(list))
+		return string(out), err == nil
+	}
+	ca, okA := canon(a)
+	cb, okB := canon(b)
+	return okA && okB && ca == cb
 }
 
 func emptyList(v sql.NullString) bool { return v.String == "" || v.String == "[]" }

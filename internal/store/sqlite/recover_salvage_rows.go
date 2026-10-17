@@ -65,9 +65,10 @@ type salvagedRow struct {
 // mirror merge when the mirror holds A, or listed as lost (A is added to
 // LostIDs here, and Recover drops it from that list once A is salvaged). An
 // entry that repeats the id and rowid of a row already kept (a duplicated
-// index cell) is skipped with a note, so each row is read once. So Export
-// never holds two nodes with one id, and a mirror copy never reaches a row
-// through another node's entry.
+// index cell) is skipped with a note, so each row is read once; a
+// duplicated misread cell is handled once, so it writes one note
+// (MTIX-107.80). So Export never holds two nodes with one id, and a mirror
+// copy never reaches a row through another node's entry.
 func salvageRows(ctx context.Context, db *sql.DB, keys []salvageKey, out *dbSalvage, res *RecoverResult) {
 	ownEntry := map[int64]bool{} // rowids kept through their own index entry
 	var misread []salvagedRow
@@ -89,7 +90,12 @@ func salvageRows(ctx context.Context, db *sql.DB, keys []salvageKey, out *dbSalv
 		keepSalvagedRow(out, res, row)
 		ownEntry[k.rowid] = true
 	}
+	seen := map[salvageKey]bool{} // misread entries already handled
 	for _, row := range misread {
+		if seen[row.key] {
+			continue // a duplicated misread cell: its note is already written (MTIX-107.80)
+		}
+		seen[row.key] = true
 		keepMisreadRow(out, res, row, ownEntry[row.key.rowid])
 	}
 }

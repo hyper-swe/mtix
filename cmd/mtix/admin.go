@@ -82,13 +82,11 @@ func runVerify(id string) error {
 		}
 
 		if app.jsonOutput {
-			data, _ := json.Marshal(map[string]any{
+			return NewOutputWriter(true).WriteJSON(map[string]any{
 				"id": id, "content_hash": node.ContentHash, "verified": true,
 			})
-			fmt.Println(string(data))
-		} else {
-			fmt.Printf("%s: hash=%s (verified)\n", id, node.ContentHash)
 		}
+		fmt.Printf("%s: hash=%s (verified)\n", id, node.ContentHash)
 	} else {
 		// Full project verification: content hashes and uid uniqueness.
 		return runVerifyProject(ctx)

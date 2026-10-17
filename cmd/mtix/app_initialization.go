@@ -55,7 +55,7 @@ func initializeProjectServices(cmd *cobra.Command, mtixDir string) {
 	app.agentSvc = service.NewAgentService(app.store, broadcaster, app.configSvc, app.logger, clock)
 	app.sessionSvc = service.NewSessionService(app.store, app.configSvc, app.logger, clock)
 	app.bgSvc = service.NewBackgroundService(app.store, app.configSvc, app.logger, clock)
-	app.syncSvc = newSyncService(clock)
+	app.syncSvc = newSyncService(clock, app.syncOptions)
 	app.hooksDisp = service.NewHooksDispatcher(app.store, mtixDir, app.logger)
 	if !isTopLevelDoctor(cmd) {
 		initializeHookApprovals(cmd, mtixDir)

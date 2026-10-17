@@ -117,7 +117,8 @@ func TestExchangeRecord_ConcurrentImporters_NoInterleave(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "tasks.json"), []byte(exchangeCurrentJSON), 0o644))
 	child := startExchangeChild(t, dir)
-	require.NoError(t, s.AutoImport(t.Context(), dir), "contended importer skips without interleaving")
+	require.ErrorIs(t, s.AutoImport(t.Context(), dir), ErrAutoImportLockBusy,
+		"contended importer signals unverified freshness without interleaving")
 	after, err := os.ReadFile(exchangePath(dir))
 	require.NoError(t, err)
 	require.Equal(t, before, after)

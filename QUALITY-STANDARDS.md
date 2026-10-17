@@ -93,6 +93,18 @@ Tests gated on `MTIX_PG_TEST_DSN` skip when it is unset, so a plain `go test ./.
 
 The PG-gated cmd tests create a unique disposable database per test (MTIX-107.67). The login configured through `MTIX_PG_TEST_DSN` therefore needs `CREATE DATABASE` permission on the disposable server. Repeated fixture lookups within one test reuse that database; cleanup closes its connections and drops only that owned database. Other test packages and processes may share the configured server without a cmd fixture resetting their hub tables. A missing privilege fails fixture setup rather than silently skipping coverage.
 
+### 3.2b Go race shards and merge checks (MTIX-112.17.22)
+
+Ordinary CI runs three explicit package shards on each supported OS. SQLite
+and CLI have separate runners; the third shard covers all remaining packages.
+Every OS checks that the manifests cover `go list ./...` excluding
+`node_modules` exactly once. Missing, duplicate or stale entries fail the
+guard. Race detection, count 1 and the 20-minute per-package limit remain
+unchanged, with no new test skips. The aggregate `test-go` job must reject
+failed, cancelled or skipped shard results. All 17 CI checks must succeed
+before merge or release; see [CI and release gates](docs/CI-GATES.md).
+The release preflight keeps its serialized, PostgreSQL-enabled full suite.
+
 ### 3.3 Test Naming Convention
 
 ```go

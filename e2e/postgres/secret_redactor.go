@@ -26,7 +26,7 @@ import (
 // with `<REDACTED:postgres-dsn>` so structure-aware grepping still works.
 var dsnPattern = regexp.MustCompile(
 	`postgres(?:ql)?://[^\s'"<>]+` +
-		`|(?i:[a-z0-9_]*password)\s*=\s*(?:'(?:[^'\\]|\\.)*(?:'|$)|(?:[^\s'"<>;\\]|\\.)+)` +
+		`|(?i:[a-z0-9_]*password)\s*=\s*(?:'(?:[^'\\]|\\.)*(?:'|$)|(?:[^\s\\]|\\.)+)` +
 		`|user=[^\s'"<>;]+@[^\s'"<>;]+`,
 )
 

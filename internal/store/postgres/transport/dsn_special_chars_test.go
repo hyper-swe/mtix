@@ -193,3 +193,14 @@ func TestApproveDSN_DuplicateKeys_LastWins(t *testing.T) {
 	require.Equal(t, last, a.SSLRootCert, "the last sslrootcert is the one reported")
 	require.Equal(t, "second", a.Config.ConnConfig.Password)
 }
+
+// TestApproveDSN_SpacesAroundEquals_Accepted verifies a key=value DSN with
+// white space around each equals sign, a form libpq accepts, is approved
+// and keeps its values byte for byte (MTIX-87).
+func TestApproveDSN_SpacesAroundEquals_Accepted(t *testing.T) {
+	dsn := "host = 127.0.0.1 port = 5432 dbname = hub user = mtix sslmode = disable password = " + kvQuote("p w/?#%")
+	require.Equal(t, "p w/?#%", approvedPassword(t, dsn))
+	a, err := transport.ApproveDSN(dsn, transport.Options{InsecureTLS: true})
+	require.NoError(t, err)
+	require.Equal(t, "disable", a.SSLMode)
+}

@@ -178,9 +178,11 @@ func TestKnown_ShortPassword_MaskedOnlyWhereItStandsAsPassword(t *testing.T) {
 		{"short password removed in user info",
 			"postgres://u:onn@hub.invalid/mtix", "dial u:onn@hub.invalid",
 			"dial u:REDACTED@hub.invalid"},
+		// In a URL query the ampersand ends the value; in the key=value form
+		// it is part of a bare password (MTIX-87).
 		{"short password removed in a password setting",
-			"postgres://u:onn@hub.invalid/mtix", "password=onn&sslmode=verify-full",
-			"password=REDACTED&sslmode=verify-full"},
+			"postgres://u:onn@hub.invalid/mtix", "?password=onn&sslmode=verify-full",
+			"?password=REDACTED&sslmode=verify-full"},
 		{"short password removed in a quoted, spaced setting",
 			"host=hub.invalid password=onn", "PASSWORD = 'onn' dbname=mtix",
 			"PASSWORD = REDACTED dbname=mtix"},

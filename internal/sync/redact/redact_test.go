@@ -273,3 +273,66 @@ func TestRecover_KeyValuePassword_PanicValueMasked(t *testing.T) {
 		})
 	}
 }
+
+// TestDSN_PasswordValueEnd_SetByTheParserNotByUnicode verifies a bare value
+// ends only where libpq ends it, at ASCII white space (MTIX-87): a letter
+// whose UTF-8 bytes include 0x85 or 0xA0, or a vertical tab, is part of the
+// password and the whole value is masked.
+func TestDSN_PasswordValueEnd_SetByTheParserNotByUnicode(t *testing.T) {
+	for name, pw := range map[string]string{
+		"a grave":         "p\u00e0ssTAIL1",
+		"a ring":          "\u00c5saTAIL2",
+		"y diaeresis":     "x\u00ffTAIL3",
+		"vertical tab":    "ab\vTAIL4",
+		"no break space":  "ab\u00a0TAIL5",
+		"next line mark":  "ab\u0085TAIL6",
+		"letters in a q":  "'p\u00e0ss TAIL7'",
+		"escaped nbsp":    "ab\\\u00a0TAIL8",
+		"after the value": "x\u00e0\u00c5TAIL9",
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := "dial host=db.example.com password=" + pw + " user=u"
+			got := redact.DSN(in)
+			require.NotContains(t, got, "TAIL")
+			require.Contains(t, got, "user=u", "the next setting stays readable")
+			var buf bytes.Buffer
+			func() {
+				defer redact.RecoverNoRepanic(slog.New(slog.NewTextHandler(&buf, nil)))
+				panic(in)
+			}()
+			require.NotContains(t, buf.String(), "TAIL")
+		})
+	}
+}
+
+// TestDSN_BarePasswordStartingWithRedacted_TailMasked verifies a bare
+// password that begins with the mask text is masked whole: only an exact
+// mask followed by white space or the end counts as already masked, and
+// in a URL query also one followed by an ampersand.
+func TestDSN_BarePasswordStartingWithRedacted_TailMasked(t *testing.T) {
+	for name, in := range map[string]string{
+		"quote tail":     "dial password=REDACTED'SECRETTAIL user=u",
+		"ampersand tail": "dial password=REDACTED&SECRETTAIL user=u",
+		"letters tail":   "dial password=REDACTEDSECRETTAIL user=u",
+		"quoted":         "dial password='REDACTED SECRETTAIL' user=u",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := redact.DSN(in)
+			require.NotContains(t, got, "SECRETTAIL")
+			require.Equal(t, got, redact.DSN(got), "still idempotent")
+		})
+	}
+	for _, already := range []string{"dial password=REDACTED user=u", "dial password=REDACTED", "x?password=REDACTED&sslmode=verify-full"} {
+		require.Equal(t, already, redact.DSN(already), "an exact mask is left alone")
+	}
+}
+
+// TestDSN_URLQueryPassword_EndsAtAmpersand verifies the settings after a
+// URL query password stay readable (MTIX-87).
+func TestDSN_URLQueryPassword_EndsAtAmpersand(t *testing.T) {
+	got := redact.DSN("dial postgres://u@db.example.com/db?password=Sekr3tPW&sslmode=verify-full&connect_timeout=2")
+	require.NotContains(t, got, "Sekr3tPW")
+	require.Contains(t, got, "password=REDACTED&sslmode=verify-full&connect_timeout=2")
+	got = redact.DSN("dial host=db.example.com password=Sekr3tPW&tail user=u")
+	require.NotContains(t, got, "tail", "outside a URL query an ampersand is part of the password")
+}

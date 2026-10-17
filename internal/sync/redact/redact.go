@@ -19,7 +19,6 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
-	"unicode"
 )
 
 // SecretSentinel is a stable, well-known string used by tests across
@@ -78,10 +77,10 @@ func maskPasswordSettings(s string) string {
 		if valueStart < last {
 			continue
 		}
-		if alreadyMasked(s, valueStart) {
+		inQuery := m[0] > 0 && (s[m[0]-1] == '?' || s[m[0]-1] == '&')
+		if alreadyMasked(s, valueStart, inQuery) {
 			continue
 		}
-		inQuery := m[0] > 0 && (s[m[0]-1] == '?' || s[m[0]-1] == '&')
 		end := passwordValueEnd(s, valueStart, inQuery)
 		out.WriteString(s[last:valueStart])
 		out.WriteString("REDACTED")
@@ -92,14 +91,23 @@ func maskPasswordSettings(s string) string {
 }
 
 // alreadyMasked reports whether the value at s[start] is exactly REDACTED,
-// as an earlier pass wrote it.
-func alreadyMasked(s string, start int) bool {
+// as an earlier pass wrote it: followed by white space or the end, or, in
+// a URL query, by the '&' that ends the value. Anywhere else the text after
+// REDACTED belongs to a password that merely starts with that word.
+func alreadyMasked(s string, start int, inQuery bool) bool {
 	rest := s[start:]
 	if !strings.HasPrefix(rest, "REDACTED") {
 		return false
 	}
 	rest = rest[len("REDACTED"):]
-	return rest == "" || rest[0] == '&' || rest[0] == '\'' || unicode.IsSpace(rune(rest[0]))
+	return rest == "" || isSpaceByte(rest[0]) || (inQuery && rest[0] == '&')
+}
+
+// isSpaceByte reports whether c ends a bare value in the key=value form:
+// the white space libpq and the transport parser use, which is ASCII only.
+// A byte of a multi-byte letter, or a vertical tab, is part of the value.
+func isSpaceByte(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f'
 }
 
 // passwordValueEnd returns the index just after the value that starts at
@@ -107,7 +115,7 @@ func alreadyMasked(s string, start int) bool {
 func passwordValueEnd(s string, start int, inQuery bool) int {
 	i := start
 	if inQuery {
-		for i < len(s) && s[i] != '&' && !unicode.IsSpace(rune(s[i])) {
+		for i < len(s) && s[i] != '&' && !isSpaceByte(s[i]) {
 			i++
 		}
 		return i
@@ -122,7 +130,7 @@ func passwordValueEnd(s string, start int, inQuery bool) int {
 			i += 2
 		case quoted && c == '\'':
 			return i + 1
-		case !quoted && unicode.IsSpace(rune(c)):
+		case !quoted && isSpaceByte(c):
 			return i
 		default:
 			i++

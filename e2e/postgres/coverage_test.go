@@ -307,6 +307,20 @@ func TestRedactDSN_KeyValueFormsAllRedacted(t *testing.T) {
 			assert.Contains(t, got, dsnReplacement)
 		})
 	}
+	for name, in := range map[string]string{
+		"semicolon":     "dial password=ab;TAILONE host=db",
+		"double quote":  `dial password=ab"TAILTWO host=db`,
+		"single quote":  "dial password=ab'TAILTHREE host=db",
+		"angle bracket": "dial password=ab<TAILFOUR>x host=db",
+		"closing angle": "dial password=ab>TAILFIVE host=db",
+		"backslash":     `dial password=ab\ TAILSIX host=db`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := RedactDSN(in)
+			assert.NotContains(t, got, "TAIL")
+			assert.Contains(t, got, "host=db", "the next setting stays readable")
+		})
+	}
 	out := captureRedacted(func(w io.Writer) { _, _ = w.Write([]byte("dial password = 'Sekr3tPW' host=db")) })
 	assert.NotContains(t, out, "Sekr3tPW", "the redacting writer masks the spaced form too")
 }

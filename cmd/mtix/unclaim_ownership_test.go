@@ -87,3 +87,30 @@ func lastCLIUnclaimEntry(t *testing.T) model.ActivityEntry {
 	require.NotNil(t, found, "no unclaim activity entry")
 	return *found
 }
+
+// TestUnclaimCmd_AgentFlagForce_ReleasesAndAudits verifies --agent overrides
+// the process identity and --force releases another agent's claim with an
+// audit entry (MTIX-169).
+func TestUnclaimCmd_AgentFlagForce_ReleasesAndAudits(t *testing.T) {
+	initUnclaimTestApp(t, "")
+
+	require.NoError(t, executeUnclaim(t, "--agent", "agent-b", "--force"))
+
+	got, err := app.store.GetNode(context.Background(), "TEST-1")
+	require.NoError(t, err)
+	assert.Empty(t, got.Assignee)
+	entry := lastCLIUnclaimEntry(t)
+	assert.Equal(t, "agent-b", entry.Author)
+	assert.Contains(t, entry.Text, "agent-a")
+	assert.Contains(t, entry.Text, "handoff")
+}
+
+// TestUnclaimCmd_AgentFlagAssignee_Succeeds verifies the assignee named by
+// --agent releases its own claim without --force (MTIX-169).
+func TestUnclaimCmd_AgentFlagAssignee_Succeeds(t *testing.T) {
+	initUnclaimTestApp(t, "agent-b")
+
+	require.NoError(t, executeUnclaim(t, "--agent", "agent-a"))
+
+	assert.Equal(t, "agent-a", lastCLIUnclaimEntry(t).Author)
+}

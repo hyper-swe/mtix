@@ -31,7 +31,7 @@ func TestUnclaimNode_NonAssignee_ReturnsErrAlreadyClaimed(t *testing.T) {
 	ctx := context.Background()
 	id := claimedTestNode(t, svc, "agent-a")
 
-	err := svc.UnclaimNode(ctx, id, "taking over", "agent-b")
+	err := svc.UnclaimNode(ctx, id, "taking over", "agent-b", false)
 
 	require.ErrorIs(t, err, model.ErrAlreadyClaimed)
 	assert.Contains(t, err.Error(), "agent-a")
@@ -49,7 +49,7 @@ func TestUnclaimNode_EmptyActor_ReturnsErrInvalidInput(t *testing.T) {
 	ctx := context.Background()
 	id := claimedTestNode(t, svc, "agent-a")
 
-	err := svc.UnclaimNode(ctx, id, "release", "")
+	err := svc.UnclaimNode(ctx, id, "release", "", false)
 
 	require.ErrorIs(t, err, model.ErrInvalidInput)
 	got, getErr := st.GetNode(ctx, id)
@@ -64,7 +64,7 @@ func TestUnclaimNode_Assignee_RecordsActor(t *testing.T) {
 	ctx := context.Background()
 	id := claimedTestNode(t, svc, "agent-a")
 
-	require.NoError(t, svc.UnclaimNode(ctx, id, "handing back", "agent-a"))
+	require.NoError(t, svc.UnclaimNode(ctx, id, "handing back", "agent-a", false))
 
 	got, err := st.GetNode(ctx, id)
 	require.NoError(t, err)
@@ -87,4 +87,54 @@ func lastUnclaimActivity(t *testing.T, svc *service.NodeService, id string) mode
 	}
 	require.NotNil(t, found, "no unclaim activity entry")
 	return *found
+}
+
+// TestUnclaimNode_ForceByNonAssignee_RecordsAuditEntry verifies a forced
+// unclaim releases the claim and names the actor, the previous assignee and
+// the reason in the activity log (MTIX-169).
+func TestUnclaimNode_ForceByNonAssignee_RecordsAuditEntry(t *testing.T) {
+	svc, st, bc := newTestNodeService(t)
+	ctx := context.Background()
+	id := claimedTestNode(t, svc, "agent-a")
+	bc.Reset()
+
+	require.NoError(t, svc.UnclaimNode(ctx, id, "agent-a is gone", "agent-b", true))
+
+	got, err := st.GetNode(ctx, id)
+	require.NoError(t, err)
+	assert.Empty(t, got.Assignee)
+	assert.Equal(t, model.StatusOpen, got.Status)
+	entry := lastUnclaimActivity(t, svc, id)
+	assert.Equal(t, "agent-b", entry.Author)
+	assert.Contains(t, entry.Text, "agent-a")
+	assert.Contains(t, entry.Text, "agent-a is gone")
+	assert.Equal(t, "agent-b", bc.Events()[0].Author)
+}
+
+// TestUnclaimNode_RefusalCases_ReturnSentinel verifies the remaining refusals
+// keep their sentinels and leave the claim in place (MTIX-169).
+func TestUnclaimNode_RefusalCases_ReturnSentinel(t *testing.T) {
+	tests := []struct {
+		name   string
+		reason string
+		actor  string
+		force  bool
+		want   error
+	}{
+		{"empty_actor_with_force", "release", "", true, model.ErrInvalidInput},
+		{"empty_reason_with_force", "", "agent-b", true, model.ErrInvalidInput},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, st, _ := newTestNodeService(t)
+			ctx := context.Background()
+			id := claimedTestNode(t, svc, "agent-a")
+
+			require.ErrorIs(t, svc.UnclaimNode(ctx, id, tc.reason, tc.actor, tc.force), tc.want)
+
+			got, err := st.GetNode(ctx, id)
+			require.NoError(t, err)
+			assert.Equal(t, "agent-a", got.Assignee)
+		})
+	}
 }

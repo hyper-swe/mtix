@@ -22,11 +22,27 @@ func TestHandleUnclaim_NonAssignee_ReturnsFailedPrecondition(t *testing.T) {
 	_, err = s.HandleClaim(ctx, n.ID, "agent-a", false)
 	require.NoError(t, err)
 
-	_, err = s.HandleUnclaim(ctx, n.ID, "taking over", "agent-b")
+	_, err = s.HandleUnclaim(ctx, n.ID, "taking over", "agent-b", false)
 
 	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 	require.Contains(t, err.Error(), "agent-a")
 	got, getErr := s.store.GetNode(ctx, n.ID)
 	require.NoError(t, getErr)
 	require.Equal(t, "agent-a", got.Assignee)
+}
+
+// TestHandleUnclaim_ForceByNonAssignee_Releases verifies force releases
+// another agent's claim over gRPC (MTIX-169).
+func TestHandleUnclaim_ForceByNonAssignee_Releases(t *testing.T) {
+	s := testGRPCServer(t)
+	ctx := context.Background()
+	n, err := s.HandleCreateNode(ctx, &CreateNodeReq{Project: "TEST", Title: "claimed"})
+	require.NoError(t, err)
+	_, err = s.HandleClaim(ctx, n.ID, "agent-a", false)
+	require.NoError(t, err)
+
+	got, err := s.HandleUnclaim(ctx, n.ID, "taking over", "agent-b", true)
+
+	require.NoError(t, err)
+	require.Empty(t, got.Assignee)
 }

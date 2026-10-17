@@ -46,6 +46,23 @@ func TestUnclaimNode_REST_RefusesNonAssigneeAndMissingAgent(t *testing.T) {
 	}
 }
 
+// TestUnclaimNode_REST_ForceByNonAssignee_Returns200 verifies force releases
+// another agent's claim over REST (MTIX-169).
+func TestUnclaimNode_REST_ForceByNonAssignee_Returns200(t *testing.T) {
+	s := testServer(t)
+	ctx := context.Background()
+	n, err := s.nodeWriter.CreateNode(ctx, &service.CreateNodeRequest{Project: "TEST", Title: "claimed"})
+	require.NoError(t, err)
+	require.NoError(t, s.store.ClaimNode(ctx, n.ID, "agent-a"))
+
+	res := restUnclaim(t, s, n.ID, "agent-b", `{"reason":"taking over","force":true}`)
+
+	require.Equal(t, http.StatusOK, res.Code, res.Body.String())
+	got, err := s.store.GetNode(ctx, n.ID)
+	require.NoError(t, err)
+	require.Empty(t, got.Assignee)
+}
+
 // restUnclaim posts body to the unclaim route as agent (no header when empty).
 func restUnclaim(t *testing.T, s *serverFixture, id, agent, body string) *httptest.ResponseRecorder {
 	t.Helper()

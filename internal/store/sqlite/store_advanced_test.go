@@ -192,7 +192,7 @@ func TestGetStats_WithTransitions_ProgressCalculated(t *testing.T) {
 
 // TestBackup_WithNodes_VerifiesIntegrity verifies backup verification per FR-6.3a.
 func TestBackup_WithNodes_VerifiesIntegrity(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -210,7 +210,7 @@ func TestBackup_WithNodes_VerifiesIntegrity(t *testing.T) {
 
 // TestBackup_InvalidDestination_ReturnsError verifies error on invalid path per FR-6.3a.
 func TestBackup_InvalidDestination_ReturnsError(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 
 	_, err := s.Backup(ctx, "/nonexistent/deep/path/backup.db")
@@ -836,7 +836,7 @@ func TestCreateNode_WithDeferUntil_RoundTrips(t *testing.T) {
 
 // TestVerify_EmptyStore_AllFieldsTrue verifies empty store verification per FR-6.3.
 func TestVerify_EmptyStore_AllFieldsTrue(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 
 	result, err := s.Verify(ctx)

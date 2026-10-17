@@ -466,7 +466,7 @@ func TestParseNullableTime_InvalidTime_ReturnsError(t *testing.T) {
 }
 
 // =============================================================================
-// rebuildSequences / rebuildFTS coverage
+// rebuildSequencesTx / rebuildFTS coverage
 // =============================================================================
 
 // TestRebuildSequences_Empty_NoError verifies empty rebuild per FR-7.8.
@@ -474,7 +474,7 @@ func TestRebuildSequences_Empty_NoError(t *testing.T) {
 	s := newInternalTestStore(t)
 	ctx := context.Background()
 
-	err := s.rebuildSequences(ctx)
+	err := s.WithTx(ctx, func(tx *sql.Tx) error { return rebuildSequencesTx(ctx, tx) })
 	require.NoError(t, err)
 }
 
@@ -496,7 +496,7 @@ func TestRebuildSequences_WithData_RebuildsCorrectly(t *testing.T) {
 	require.NoError(t, err)
 
 	// Rebuild.
-	require.NoError(t, s.rebuildSequences(ctx))
+	require.NoError(t, s.WithTx(ctx, func(tx *sql.Tx) error { return rebuildSequencesTx(ctx, tx) }))
 
 	// Verify sequence for RS:RS-1 is 2 (max seq).
 	var val int

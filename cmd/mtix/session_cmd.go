@@ -124,19 +124,17 @@ func runSessionSummary(agentID string) error {
 	}
 
 	if app.jsonOutput {
-		data, _ := json.MarshalIndent(summary, "", "  ")
-		fmt.Println(string(data))
-	} else {
-		fmt.Printf("Session: %s (%s)\n", summary.SessionID, summary.Status)
-		fmt.Printf("Started: %s\n", summary.StartedAt.Format("2006-01-02 15:04"))
-		if summary.EndedAt != nil {
-			fmt.Printf("Ended:   %s\n", summary.EndedAt.Format("2006-01-02 15:04"))
-		}
-		fmt.Printf("Created: %d  Completed: %d  Deferred: %d\n",
-			summary.NodesCreated, summary.NodesCompleted, summary.NodesDeferred)
-		if summary.SummaryText != "" {
-			fmt.Printf("Summary: %s\n", summary.SummaryText)
-		}
+		return NewOutputWriter(true).WriteJSON(summary)
+	}
+	fmt.Printf("Session: %s (%s)\n", summary.SessionID, summary.Status)
+	fmt.Printf("Started: %s\n", summary.StartedAt.Format("2006-01-02 15:04"))
+	if summary.EndedAt != nil {
+		fmt.Printf("Ended:   %s\n", summary.EndedAt.Format("2006-01-02 15:04"))
+	}
+	fmt.Printf("Created: %d  Completed: %d  Deferred: %d\n",
+		summary.NodesCreated, summary.NodesCompleted, summary.NodesDeferred)
+	if summary.SummaryText != "" {
+		fmt.Printf("Summary: %s\n", summary.SummaryText)
 	}
 	return nil
 }

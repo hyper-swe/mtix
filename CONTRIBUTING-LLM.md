@@ -388,6 +388,15 @@ mcp/ ──┘
 - **Default rule:** Narrow, single-consumer interfaces SHOULD be defined in the package that USES them (consumer side). For example, a `NodeCreator` interface used only in a specific test or a single handler belongs in that consumer's package.
 - **Shared contract exception:** Interfaces consumed by multiple packages (service, CLI, API, MCP, gRPC) live in their own package as the canonical contract. The `store.Store` interface lives in `internal/store/store.go` because it is the central data access contract shared across all layers — not a narrow consumer-side interface.
 - The `service` package defines any interfaces it needs from external systems (e.g., `EventBroadcaster`)
+- Wake lease handlers use `service.WakeLeaseService` for acquire, renew, release
+  and abandon. The service owns request validation (agent/host/user identity,
+  TTL and holder token) and operation intent through its narrow `WakeLeaseStore`
+  consumer interface. CLI code derives process identity and handles flags,
+  diagnostics and output. SQLite retains defensive validation and the atomic
+  ownership, contention, fencing and same-owner rearm invariants inside its
+  transaction, using the store's injected clock. Do not split those operations
+  into a service-side read/check/write sequence. Existing lease JSON shapes,
+  diagnostics and exit codes remain the CLI compatibility contract.
 - **Rule of thumb:** If only one package imports an interface, define it in that package. If multiple packages import it, give it its own package or place it at the provider.
 
 ---

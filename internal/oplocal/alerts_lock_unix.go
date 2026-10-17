@@ -14,17 +14,21 @@ import (
 )
 
 func openAlertLock(dir *os.File, create bool) (*os.File, error) {
+	return openNamedLock(dir, "alerts.lock", create)
+}
+
+func openNamedLock(dir *os.File, name string, create bool) (*os.File, error) {
 	if create {
-		if err := publishAlertLock(dir); err != nil {
+		if err := publishNamedLock(dir, name); err != nil {
 			return nil, err
 		}
 	}
 	flags := unix.O_RDWR | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
-	fd, err := unix.Openat(checkedFD(dir), "alerts.lock", flags, 0600)
+	fd, err := unix.Openat(checkedFD(dir), name, flags, 0600)
 	if err != nil {
 		return nil, err
 	}
-	f := descriptorFile(fd, filepath.Join(dir.Name(), "alerts.lock"))
+	f := descriptorFile(fd, filepath.Join(dir.Name(), name))
 	if err = verifyFile(f, false); err != nil {
 		return nil, errors.Join(err, closeFile(f))
 	}
@@ -38,8 +42,8 @@ func unlockAlert(f *os.File) error {
 	return errors.Join(unix.Flock(checkedFD(f), unix.LOCK_UN), closeFile(f))
 }
 
-func publishAlertLock(dir *os.File) error {
-	_, err := readData(dir, "alerts.lock")
+func publishNamedLock(dir *os.File, name string) error {
+	_, err := readData(dir, name)
 	if err == nil {
 		return nil
 	}
@@ -47,7 +51,7 @@ func publishAlertLock(dir *os.File) error {
 		return err
 	}
 	// Exclusive protected publication creates one stable inode; existing locks are never replaced.
-	err = writeData(dir, "alerts.lock", []byte{}, true, nil, nil)
+	err = writeData(dir, name, []byte{}, true, nil, nil)
 	if errors.Is(err, os.ErrExist) {
 		return nil
 	}

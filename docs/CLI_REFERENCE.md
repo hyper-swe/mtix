@@ -80,12 +80,41 @@ Manage agent lifecycle
 
 ### Subcommands
 
+- `allow <agent-id>` — allow this host's wake permission for an agent
+- `deny <agent-id>` — deny this host's wake permission for an agent
 - `heartbeat <agent-id>` — Send a heartbeat for an agent
 - `list --registrations` — List session registrations on this host
+- `permissions` — Inspect and recover this host's wake permission batches
 - `register <agent-id>` — Register an agent and this session, or refresh them
 - `state <agent-id>` — Get or set agent state
 - `unregister <agent-id>` — Remove this host's session registration for an agent id
 - `work <agent-id>` — Show current work assignment for an agent
+---
+
+## allow
+
+**Usage:** `allow <agent-id>`
+
+allow this host's wake permission for an agent
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--yes` |  | Record a non-interactive confirmation, including in a harness session | false |
+---
+
+## deny
+
+**Usage:** `deny <agent-id>`
+
+deny this host's wake permission for an agent
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--yes` |  | Record a non-interactive confirmation, including in a harness session | false |
 ---
 
 ## heartbeat
@@ -110,6 +139,32 @@ exists and whether the row is held. Use --json for machine-readable output.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--registrations` |  | List session registrations | false |
+---
+
+## permissions
+
+**Usage:** `permissions`
+
+Inspect and recover this host's wake permission batches
+
+### Subcommands
+
+- `recover` — List stuck batches and quarantine holds, or cancel an uncommitted batch with audit
+---
+
+## recover
+
+**Usage:** `recover`
+
+List stuck batches and quarantine holds, or cancel an uncommitted batch with audit
+
+List this host's pending wake permission batches and legacy quarantine holds. A quarantine hold is cleared only by a fresh operator allow in that board checkout; the file API cannot clear it. Use --cancel <batch-id> to cancel or quarantine its uncommitted allows, preserve accepted denies and committed state, and permanently refuse stale caller retries. Cancellation never grants permission.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--cancel` |  | Cancel this pending caller batch id with durable audit; never grants permission |  |
 ---
 
 ## register
@@ -675,9 +730,12 @@ Sync checks run only for configured transports. An unused Postgres transport is
 not checked on a relay-only board. WARN and INFO are advisory: exit 0 when no
 check fails, or 2 when any check reports FAIL.
 
---json emits an array with exactly id, status, detail and fix for each check.
+--json emits an array with id, status, detail and fix for each check; a check may add
+a data object of machine-readable numbers (the history.size row does), and rows
+without one have exactly the four fields.
 --fix performs only explicitly registered non-grant repairs and rechecks them.
 Grant commands are printed for you to run yourself; they are never executed.
+Without --fix, operator-local files, including attach artifacts, stay unchanged.
 
 The read-only docs.stale check compares board-root MTIX.md with this binary
 and checks live native pointers. WARN prints mtix -C <board-root> docs generate;
@@ -1364,6 +1422,11 @@ Show a node's details and annotations as labeled lines, in this order:
                whitespace or control characters), further lines indented
   Progress     progress bar
   Created      creation time
+  History      with --history: the change history, newest first, at most
+               --history-limit entries (default 50), one line each with the
+               UTC time, field, actor, origin and, for a structured field,
+               the old and new value; free-text fields show no text.
+               --json always includes the same list as "history"
 
 Annotation text, author and addressee, the description and the prompt are
 normalized for the terminal: control characters other than newline and tab
@@ -1378,6 +1441,13 @@ text from --json.
 Acceptance criteria, labels, dependencies, activity and the full prompt are
 not printed. Use --json for the complete node record, including every
 annotation.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--history` |  | Also list the task's change history, newest first (always included in --json) | false |
+| `--history-limit` |  | Most history entries to list with --history and in --json | 50 |
 ---
 
 ## stale
@@ -1769,6 +1839,10 @@ Run health checks against the local store and the BYO Postgres hub:
                            warns after 1h; run mtix list for protected
                            import-first recovery (refusals need resolution)
   No orphan applied      - every applied_event has a matching node OR tombstone
+  Board matches sync log - on a project that syncs, the board holds every
+                           task the local sync log creates; a pull cannot
+                           restore a missing one, so the fix rebuilds the
+                           board from the hub
   Quarantined events     - no pulled event is held in the local quarantine;
                            each pull retries them ('mtix sync quarantine list')
   Unique node uids       - no two tasks share a uid; names each uid, its tasks

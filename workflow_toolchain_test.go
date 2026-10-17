@@ -40,7 +40,7 @@ type toolchainWorkflowCase struct {
 
 func toolchainWorkflowCases() []toolchainWorkflowCase {
 	return []toolchainWorkflowCase{
-		{"ci.yml", []string{"test-go", "lint", "test-go-postgres-docker", "test-fault-injection", "build"}},
+		{"ci.yml", []string{"test-go-shards", "lint", "test-go-postgres-docker", "test-fault-injection", "build"}},
 		{"release.yml", []string{"preflight", "release"}},
 		{"cloud-contract.yml", []string{"cloud-contract"}},
 	}

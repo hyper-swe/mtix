@@ -292,7 +292,7 @@ mtix show PROJ-1
 mtix show PROJ-1 --json
 ```
 
-`mtix show` prints the node's details as labeled lines, then every annotation (oldest first, equal times ordered by id, with its UTC timestamp and author), then the prompt cut to 100 characters. Annotation text, author and addressee, the description and the prompt are normalized for the terminal: control characters other than newline and tab are removed, leading blank lines and trailing whitespace are trimmed, and continuation lines are indented, so stored text cannot overwrite a line, restyle the terminal or pass for a label. Title and assignee print as stored, and invisible Unicode formatting characters (such as bidirectional overrides) are not removed yet. `mtix show --json` and the MCP `mtix_show` tool list annotations in the same order. When you need the exact stored text, for example to quote a review verdict, use `--json`: it prints the raw record, unchanged. `mtix show --history` also lists the task's change history, newest first (`--history-limit`, default 50), and `--json` includes it as `history` (an empty list when the task has none).
+`mtix show` prints the node's details as labeled lines, then every annotation (oldest first, equal times ordered by id, with its UTC timestamp and author), then the prompt cut to 100 characters. Annotation text, author and addressee, the description and the prompt are normalized for the terminal: control characters other than newline and tab are removed, bidirectional controls (such as overrides and isolates), zero-width characters and tag characters (U+E0001, U+E0020-U+E007F) are removed, the Unicode line and paragraph separators (U+2028, U+2029) become newlines, leading blank lines and trailing whitespace are trimmed, and continuation lines are indented, so stored text cannot overwrite a line, restyle the terminal, display in a misleading order or pass for a label. Title and assignee print as stored. The directional marks (U+200E, U+200F, U+061C) are kept, so a lone mark can still change how digits are ordered. `mtix show --json` and the MCP `mtix_show` tool list annotations in the same order. `mtix show --history` follows the same rule and prints each entry on one line, with line breaks shown as spaces. When you need the exact stored text, for example to quote a review verdict, use `--json`: it prints the raw record, unchanged. `mtix show --history` also lists the task's change history, newest first (`--history-limit`, default 50), and `--json` includes it as `history` (an empty list when the task has none).
 
 ### Update a Node
 
@@ -1022,7 +1022,11 @@ ACCEPTANCE:
 
 Each node block is separated by `=` characters. Single-line fields use
 `LABEL: value`. Multi-line fields use `LABEL:\n  indented body`. Control
-characters are sanitized (replaced with U+FFFD). Fields containing
+characters, bidirectional embedding, override and isolate controls,
+zero-width characters, tag characters and the line and paragraph
+separators (U+2028, U+2029) are sanitized (each replaced with U+FFFD). The
+directional marks (U+200E, U+200F, U+061C) and other format characters,
+such as variation selectors, are kept. Fields containing
 newlines in normally single-line positions are auto-promoted to multi-line
 to prevent label injection.
 
@@ -1577,7 +1581,7 @@ mtix import project-data.json --mode replace
 
 **Replace mode** deletes every node, dependency, agent and session, then writes the file's content with every field, annotations and activity included. An export followed by a replace import leaves the store as it was. The automatic import of a changed `.mtix/tasks.json` (after a `git pull` or checkout) is a replace import, but it is refused when it would delete local data (see "Automatic import of `.mtix/tasks.json`" below); `mtix import --mode replace` is gated since 0.5.4 (MTIX-90): it prints the ticket count and needs that count typed at an interactive terminal, so an agent never runs it: ask the user (see `docs/DESTRUCTIVE-COMMANDS.md`). A file written before 0.5.4 (`schema_version` 1.0.0) carries no annotations or activity, so a replace import of it leaves every node without them.
 
-**Replace import on a project that syncs.** `mtix import --mode replace` is refused, before the typed confirmation and with nothing written, when the local store holds tasks and syncs with a hub or relay: it has pushed or pulled events, carries the hub-connected mark, or a hub DSN or relay is configured (MTIX-107.31). A replace deletes tasks and changes whose events stay in the local sync log, and `mtix sync pull` treats those events as already held, so it would never restore them. To take the board on the hub, run `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull` (the discard asks for the ticket count typed at an interactive terminal). To load the file as it is, import it into a project that does not sync. A replace into an empty store, such as a restore into a fresh data directory, still runs. The automatic import never deletes a task whose events the sync log holds either: it refuses any replace that would delete local data, as described below. A project that never synced has shared nothing, so a replace there discards the pending events of the tasks it drops (and the pending links that point at them) in the same transaction; otherwise the first push after a hub is configured would create tasks the board does not hold. A store that published to or ingested from a file relay counts as synced.
+**Replace import on a project that syncs.** `mtix import --mode replace` is refused, before the typed confirmation and with nothing written, when the local store holds tasks and syncs with a hub or relay: it has pushed or pulled events, carries the hub-connected mark, or a hub DSN or relay is configured (MTIX-107.31). A replace deletes tasks and changes whose events stay in the local sync log, and `mtix sync pull` treats those events as already held, so it would never restore them. To take the board on the hub, run `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull` (the discard asks for the ticket count typed at an interactive terminal). To load the file as it is, import it into a project that does not sync. A replace into an empty store, such as a restore into a fresh data directory, still runs. The automatic import never deletes a task whose events the sync log holds either: it refuses any replace that would delete local data, as described below. A project that never synced has shared nothing, so a replace there discards the pending events of the tasks it drops (and the pending links that point at them) in the same transaction; otherwise the first push after a hub is configured would create tasks the board does not hold. A store that published to or ingested from a file relay counts as synced. The automatic import also records a configured relay directory, hub endpoint or stored hub DSN as the hub-connected mark before it imports, so a relay whose first publish did not finish (the records are on the medium but the publish cursor was not written) counts as synced too, and a replace that would discard events readers may hold is refused; a project with a relay configured but never published is therefore refused at the automatic import, as `mtix import --mode replace` already was.
 
 **Merge mode**:
 - A node the store does not have is created as exported.
@@ -1922,6 +1926,22 @@ after the last batch it applied, never after one it did not.
 - **Hub owner, after upgrading.** Run `mtix sync init` once with the
   hub owner's DSN to add the hub index pull reads by; the same item in
   the next section says when to run it and what it costs.
+
+Each pull also registers this client with the hub, so a client that
+only pulls, such as a daemon, shows up for the version gate and for any
+stale-client report. Right after it connects, and before it reads events,
+the pull writes one row to `sync_project_clients`: the board's sync
+project prefix (set by `mtix sync init`), this machine's hash and the
+CLI version. It is one statement on the connection the pull already
+opened: no extra connection, no timer, and no contact with a hub that no
+pull was going to reach. A role that only pulls needs the same INSERT and
+UPDATE on `sync_project_clients` as one that pushes (the least-privilege
+list in the sync skill and in `docs/SECURITY-MODEL.md` already has them).
+If the write fails, the pull completes as usual and prints one
+`WARN: pull client registration skipped` line that names the grant; the
+client stays invisible to the version gate until the grant is fixed. A
+board that has never run `mtix sync init` has no sync project prefix and
+skips the registration quietly.
 
 ### Late changes from offline teammates
 
@@ -3669,6 +3689,7 @@ change the node's status with the normal commands instead.
 | `mtix sync doctor` fails `quarantined events` | Pulled events failed their checks or their apply and are held, not applied | Run `mtix sync pull` (it retries them); if they remain, list them with `mtix sync quarantine list` (see [Quarantined events](#quarantined-events)) and report the reasons to whoever runs the hub |
 | `mtix sync doctor` warns in `valid node ids` | An earlier sync brought in a task whose id is outside the node id grammar | The task stays readable and editable (`mtix show <uid>`); recreate it with `mtix create` if you still need it (see [Quarantined events](#quarantined-events)) |
 | A command prints `WARN: ... over the 65536-byte sync limit`, or `mtix sync doctor` fails `held push events` | Push holds events the hub would refuse (and the events of a held task creation's subtree, and links made while one is held), and pushes the rest | Follow the fix doctor names for each held event: shorten or split a field edit; escalate a held task creation, without editing it; check the clock for a clock hold (see [Held push events](#held-push-events)) |
+| `mtix sync push` fails with `hold invalid events of batch N: another mtix operation is in progress, retry in a moment` | While deciding which events to hold, push waited more than 5 seconds for the local database's write lock, which another mtix process (a pull applying a backlog, another agent) kept. The batches before the failing one were already sent and marked pushed; the events of the failing batch and later were not sent and stay pending. Nothing is lost and nothing is sent twice | Let the other mtix command finish, then run `mtix sync push` again to send the rest |
 | `mtix sync status` shows a `pending` count that never goes down, `mtix sync doctor` fails `queue draining`, yet `mtix sync push` reports success | On a client older than 0.5.4: events an earlier push delivered but never marked pushed (a lost commit confirmation, a crash or disk failure before the local mark, a retry after a network drop) sit at the head of the queue, and push stops at them | Upgrade and run `mtix sync push`: it confirms the events already on the hub (`already on the hub` in its output) and pushes the rest; check `pending` 0 (see [Events already on the hub](#events-already-on-the-hub)) |
 | A node shows an older state than its history after a pull on a client older than 0.5.4 (for example `in_progress` after `mtix done`) | That pull replayed an older event of this machine | Upgrade, run `mtix sync pull`, then `mtix sync repair --status` and review the list; run `mtix sync pull` again, then `mtix sync repair --status --apply` and `mtix sync push`; a flagged node needs review and `--force` (see above). Pulling first matters: a repair made on a stale log can revert a teammate's newer change on every machine |
 | `mtix sync doctor` shows `[WARN] hub-privileges` | Roles other than the table owner can use the sync tables, or a TRUNCATE guard is missing or disabled. Nothing is blocked, and this may be fine on a private network | To restrict access, the table owner runs `mtix sync harden` (a dry run), then, after reviewing its role list, `mtix sync harden --apply --keep-role <role>`; see "Hub privileges" |

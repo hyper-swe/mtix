@@ -308,6 +308,16 @@ func TestImport_EveryPathThatChangesATasksUID_CarriesItOntoPendingEvents(t *test
 				mergeFile(t, local, exportOf(t, teammate))
 			}
 
+			if tt.replace && tt.retitled {
+				// Another title is another task: the replaced task is dropped, and a
+				// store that never synced discards its pending events with it
+				// (MTIX-107.31.3) instead of moving them onto the file's task.
+				var n int
+				require.NoError(t, local.WriteDB().QueryRowContext(ctx,
+					`SELECT COUNT(*) FROM sync_events WHERE event_id = 'pending-edit'`).Scan(&n))
+				assert.Zero(t, n, "the dropped task's pending event is discarded, not carried")
+				return
+			}
 			want := evUID
 			if tt.wantCarried {
 				want = theirs

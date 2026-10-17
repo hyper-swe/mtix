@@ -89,7 +89,7 @@ No production code may be written without a corresponding test written first.
 
 ### 3.2a PostgreSQL-gated suites in CI (MTIX-95.51)
 
-Tests gated on `MTIX_PG_TEST_DSN` skip when it is unset, so a plain `go test ./...` does not exercise them. Every push to `main` and every pull request runs them with `-race` on PostgreSQL 16 and 17 service containers, in the `test-go-postgres-docker` job of `.github/workflows/ci.yml`: one job per version and package (`./cmd/mtix/`, `./internal/store/postgres/transport/`, `./e2e/...`), each with its own database, `-p 1 -count=1 -timeout 20m`. The service image, credentials, DSN and timeout match the `test-go` job of `release.yml`, which keeps running every package on a tag. To reproduce one job locally, point `MTIX_PG_TEST_DSN` at a disposable database and run the same `go test` command.
+Tests gated on `MTIX_PG_TEST_DSN` skip when it is unset, so a plain `go test ./...` does not exercise them. Every push to `main` and every pull request runs them with `-race` on PostgreSQL 16 and 17 service containers, in the `test-go-postgres-docker` job of `.github/workflows/ci.yml`: one job per version and package (`./internal/store/postgres/transport/`, `./e2e/...`), plus three deterministic shards of `./cmd/mtix/` per version (`test-go-postgres-cmd`, MTIX-112.17.24), each with its own database, `-p 1 -count=1 -timeout 20m`. The service image, credentials, DSN and timeout match the `test-go` job of `release.yml`, which keeps running every package on a tag. To reproduce one job locally, point `MTIX_PG_TEST_DSN` at a disposable database and run the same `go test` command.
 
 The PG-gated cmd tests create a unique disposable database per test (MTIX-107.67). The login configured through `MTIX_PG_TEST_DSN` therefore needs `CREATE DATABASE` permission on the disposable server. Repeated fixture lookups within one test reuse that database; cleanup closes its connections and drops only that owned database. Other test packages and processes may share the configured server without a cmd fixture resetting their hub tables. A missing privilege fails fixture setup rather than silently skipping coverage.
 
@@ -101,7 +101,7 @@ Every OS checks that the manifests cover `go list ./...` excluding
 `node_modules` exactly once. Missing, duplicate or stale entries fail the
 guard. Race detection, count 1 and the 20-minute per-package limit remain
 unchanged, with no new test skips. The aggregate `test-go` job must reject
-failed, cancelled or skipped shard results. All 17 CI checks must succeed
+failed, cancelled or skipped shard results. All 21 CI checks must succeed
 before merge or release; see [CI and release gates](docs/CI-GATES.md).
 The release preflight keeps its serialized, PostgreSQL-enabled full suite.
 

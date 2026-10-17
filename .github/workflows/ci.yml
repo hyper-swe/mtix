@@ -104,8 +104,10 @@ jobs:
     # always set here. Service image, credentials, DSN and the 20m go test
     # timeout mirror release.yml's test-go job.
     #
+    # MTIX-112.17.24: cmd/mtix runs in test-go-postgres-cmd below, in shards.
+    #
     # One job per (PG version, package): pg and pkg are both real matrix axes
-    # (2 x 3 = 6 jobs; an include entry that carries only one of them would be
+    # (2 x 2 = 4 jobs; an include entry that carries only one of them would be
     # merged into every combination and collapse the matrix, so none is used
     # for pg or pkg). Each job has its own service container, so packages
     # never share a database concurrently: the gated tests in cmd/mtix and e2e
@@ -126,15 +128,12 @@ jobs:
       matrix:
         pg: ["16", "17"]
         pkg:
-          - ./cmd/mtix/
           - ./internal/store/postgres/transport/
           - ./e2e/...
         include:
           # Extra flag for the e2e package only; it matches an existing pkg
-          # value, so it augments those two jobs rather than adding any.
+          # value, so it augments that job rather than adding any.
           - pkg: ./e2e/...
-            verbose: -v
-          - pkg: ./cmd/mtix/
             verbose: -v
     services:
       postgres:
@@ -162,6 +161,54 @@ jobs:
       - name: Run ${{ matrix.pkg }} against PostgreSQL ${{ matrix.pg }}
         run: go test ${{ matrix.pkg }} ${{ matrix.verbose }} -race -count=1 -p 1 -timeout 20m
 
+  test-go-postgres-cmd:
+    # MTIX-112.17.24: cmd/mtix took 900-1200s of the 20m per-package budget in
+    # one pg job. Its tests are split into three deterministic shards by a
+    # stable hash of the test name (scripts/cmd-mtix-shards.sh), per PostgreSQL
+    # version: 2 x 3 = 6 jobs, each with its own service container, so no two
+    # shards share a database. The guard fails unless every test is selected by
+    # exactly one shard. -race, -count=1, -p 1 and the 20m timeout are
+    # unchanged and nothing is skipped; each shard keeps -v.
+    name: pg-${{ matrix.pg }} cmd/mtix shard ${{ matrix.shard }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: ["16", "17"]
+        shard: ["1", "2", "3"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.pg }}
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: mtix_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MTIX_PG_TEST_DSN: "postgres://postgres:ci@localhost:5432/mtix_ci?sslmode=disable"
+      MTIX_PG_TEST_REQUIRE_SUPERUSER: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Verify exact cmd/mtix test coverage
+        run: bash scripts/cmd-mtix-shards.sh check
+      - name: Run cmd/mtix shard ${{ matrix.shard }} against PostgreSQL ${{ matrix.pg }}
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          pattern=$(bash scripts/cmd-mtix-shards.sh pattern "$SHARD")
+          go test ./cmd/mtix/ -v -race -count=1 -p 1 -timeout 20m -run "$pattern"
+
   test-fault-injection:
     # NFR-2.8 conformance (MTIX-26.7): storage must survive disk-full and
     # kill -9 mid-write — either complete safely or fail-stop, never
@@ -184,7 +231,7 @@ jobs:
         run: go test ./e2e/faultinject/ -tags=faultinject -count=1 -timeout=12m -v
 
   build:
-    needs: [test-go, test-web, lint, test-go-postgres-docker, test-fault-injection]
+    needs: [test-go, test-web, lint, test-go-postgres-docker, test-go-postgres-cmd, test-fault-injection]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

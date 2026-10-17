@@ -337,6 +337,12 @@ Plain `mtix doctor` preserves operator-local files, including stale attach shims
 and records. Use `--fix` for registered shim and glue repairs;
 other commands retain automatic attach refresh.
 
+An operator-local flush failure can follow publication of a complete record:
+preserve its files and surface the I/O error to the operator. Read-only
+`mtix hooks status --json` checks placement and access; it does not prove
+power-loss durability or undo a published write. The admin skill explains
+per-OS flush behavior and recovery.
+
 Run `mtix doctor --json` for registered health checks. Exit 2 means a FAIL;
 WARN and INFO keep exit 0. Only configured transports are checked.
 `mtix doctor --fix` runs explicitly registered non-grant repairs; grants stay

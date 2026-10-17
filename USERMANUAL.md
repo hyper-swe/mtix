@@ -1840,6 +1840,25 @@ export MTIX_SYNC_SSLROOTCERT="/path/to/ca-bundle.crt"   # only for a private CA
 export MTIX_SYNC_DSN="postgresql://<user>:<pw>@<host>:5432/<db>?sslmode=verify-full"
 ```
 
+- **Special characters in the password.** The URL form needs a password with
+  `/`, `?`, `#`, `%` or a space percent-encoded. To avoid encoding, give the
+  DSN in the libpq key=value form and single-quote the password, escaping `'`
+  and `\` with a backslash. Or leave the password out of the DSN and set
+  `MTIX_SYNC_PASSWORD`; a password in the DSN takes precedence. The TLS rules
+  are the same for both forms.
+
+```bash
+# Shell single quotes pass the DSN through unchanged. This form suits a password
+# with no space, quote or backslash in it; for any other password use the second form:
+export MTIX_SYNC_DSN='host=<host> port=5432 dbname=<db> user=<user> password=<pw> sslmode=verify-full'
+# Or keep the password out of the DSN and read it without echo, so the shell
+# never expands $, backticks or backslashes in it:
+export MTIX_SYNC_DSN='postgresql://<user>@<host>:5432/<db>?sslmode=verify-full'
+IFS= read -r -s MTIX_SYNC_PASSWORD && export MTIX_SYNC_PASSWORD
+```
+Do not put a generated password inside shell double quotes: the shell rewrites
+`\`, `$` and backticks in it before mtix sees it.
+
 ### Setup (every other teammate)
 
 ```bash

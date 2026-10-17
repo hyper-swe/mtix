@@ -9,27 +9,34 @@ import (
 )
 
 // SetHubEvidenceSource installs the reader of the local hub or relay
-// evidence (a configured relay directory, hub endpoint or stored DSN), the
-// same evidence the sticky hub-connected mark accepts (MTIX-107.31.7). The
-// automatic import records it as the mark before it imports, so the replace
-// guard counts a relay whose first publish did not finish. nil, the default,
-// means no evidence.
-func (s *SyncService) SetHubEvidenceSource(read func() HubEvidence) { s.hubEvidence = read }
+// evidence (a configured relay directory, hub endpoint or stored DSN, or an
+// exported DSN), the same evidence the replace guard of the command line
+// counts (MTIX-107.31.7, MTIX-107.31.8). The automatic import records the
+// durable part as the sticky hub-connected mark before it imports, so the
+// replace guard counts a relay whose first publish did not finish, and treats
+// the store as synced while an exported DSN is set. A source that returns an
+// error stops the automatic import. nil, the default, means no evidence.
+func (s *SyncService) SetHubEvidenceSource(read func() (HubEvidence, error)) { s.hubEvidence = read }
 
-// noteHubEvidence records the local hub or relay evidence as the sticky
-// hub-connected mark (HubMarkService.HubConnected), as the replace guards of
-// the CLI count it, so the store-level guard sees a store whose relay
-// publisher wrote its records but not its cursor (the push cursor is written
-// only after the append, so a crash or a failed advance leaves the store
-// reading as never synced). With no source installed it does nothing. It
-// fails closed: when the evidence or the mark cannot be read or written the
-// automatic import stops, importing nothing (MTIX-107.31.7).
-func (s *SyncService) noteHubEvidence(ctx context.Context) error {
+// noteHubEvidence records the durable local hub or relay evidence as the
+// sticky hub-connected mark (HubMarkService.HubConnected), so the store-level
+// guard sees a store whose relay publisher wrote its records but not its
+// cursor (the push cursor is written only after the append). It reports
+// whether the evidence is only transient: an exported or refused DSN makes the
+// automatic import treat the store as synced for this import, and writes no
+// mark. With no source installed it does nothing. It fails closed: when the
+// evidence cannot be read, or the mark cannot be read or written, the
+// automatic import stops, importing nothing (MTIX-107.31.7, MTIX-107.31.8).
+func (s *SyncService) noteHubEvidence(ctx context.Context) (transient bool, err error) {
 	if s.hubEvidence == nil {
-		return nil
+		return false, nil
 	}
-	if _, err := NewHubMarkService(s.store).HubConnected(ctx, s.hubEvidence()); err != nil {
-		return fmt.Errorf("auto-import: record the hub evidence: %w", err)
+	ev, err := s.hubEvidence()
+	if err != nil {
+		return false, fmt.Errorf("auto-import: read the hub evidence: %w", err)
 	}
-	return nil
+	if _, err := NewHubMarkService(s.store).HubConnected(ctx, ev); err != nil {
+		return false, fmt.Errorf("auto-import: record the hub evidence: %w", err)
+	}
+	return ev.EnvDSNExported || ev.DSNRefused, nil
 }

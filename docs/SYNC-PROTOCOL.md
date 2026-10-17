@@ -828,6 +828,23 @@ Refusing changes nothing and names the way out.
   configured relay directory, hub endpoint or stored DSN) as the
   hub-connected mark before it imports, and fails closed, importing
   nothing, if that evidence cannot be read or stored (MTIX-107.31.7).
+  One helper gathers the evidence for the automatic import, the
+  command-line replace guard and the doctor check (MTIX-107.31.8): the
+  config keys (`sync.relay.dir`, `sync.enabled`, `sync.endpoint`), a DSN
+  in the secrets file, one that `transport.Source` refuses, and an
+  exported `MTIX_SYNC_DSN`. The exported DSN is transient: it makes the
+  automatic import treat the store as synced for that import
+  (`sqlite.AsSyncedStore`), so a replace that would delete local data or
+  drop a task the sync log holds is refused, and `mtix import --mode
+  replace` is refused while it is set; it is never recorded as the mark.
+  A refused DSN (a DSN key in a tracked config file, or a secrets file
+  with the wrong mode, even an empty one) is transient in the same way,
+  as before this change; only a DSN in the secrets file, whatever its
+  mode, is recorded as the mark. Unreadable evidence (a
+  secrets file that is not a regular file or cannot be opened, a config
+  key that cannot be read) is an error: the automatic import stops, and
+  the command-line guards refuse, naming the cause. A missing secrets
+  file is no evidence.
 - **On a store that never synced** nothing was shared, so every event
   is still pending, and a replace that drops a task discards, in the
   same transaction, the pending events of that task (matched by uid, as

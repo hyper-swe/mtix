@@ -25,7 +25,9 @@ import (
 
 // relayConfigured is the local evidence the command layer passes: a relay
 // directory is configured.
-func relayConfigured() service.HubEvidence { return service.HubEvidence{ConfigKeys: true} }
+func relayConfigured() (service.HubEvidence, error) {
+	return service.HubEvidence{ConfigKeys: true}, nil
+}
 
 func pendingEventCount(t *testing.T, f *guardFixture, node string) int {
 	t.Helper()
@@ -39,12 +41,12 @@ func TestAutoImport_RelayConfiguredFirstPublishUnrecorded_RefusesAndDiscardsNoth
 	tests := []struct {
 		name string
 		// evidence is what the command layer reports; nil leaves the source unset.
-		evidence func() service.HubEvidence
+		evidence func() (service.HubEvidence, error)
 		// refused is whether the replace must be refused.
 		refused bool
 	}{
 		{"relay configured, first publish's cursor advance failed", relayConfigured, true},
-		{"nothing configured, nothing published", func() service.HubEvidence { return service.HubEvidence{} }, false},
+		{"nothing configured, nothing published", func() (service.HubEvidence, error) { return service.HubEvidence{}, nil }, false},
 		{"no evidence source installed", nil, false},
 	}
 	for _, tt := range tests {
@@ -104,4 +106,110 @@ func TestAutoImport_HubEvidenceUnreadable_FailsClosed(t *testing.T) {
 	assert.Contains(t, err.Error(), "hub evidence")
 	_, getErr := f.store.GetNode(ctx, "PROJ-3")
 	assert.Error(t, getErr, "nothing was imported")
+}
+
+// MTIX-107.31.8: an exported hub DSN is transient evidence. The automatic
+// import refuses a replace that would discard events while it is set, and
+// writes no sticky mark, so a project that merely has the variable exported
+// is not trapped once it is unset.
+func TestAutoImport_ExportedDSN_RefusesWhileSetAndWritesNoMark(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	exported := true
+	f.svc.SetHubEvidenceSource(func() (service.HubEvidence, error) {
+		return service.HubEvidence{EnvDSNExported: exported}, nil
+	})
+	require.NoError(t, f.svc.AutoExport(ctx, f.mtixDir))
+	createTask(t, f, "PROJ-3", 3)
+	require.NoError(t, f.svc.AutoExport(ctx, f.mtixDir))
+	before := pendingEventCount(t, f, "PROJ-3")
+	require.NotZero(t, before)
+	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) { setUID(d, "PROJ-3", "") }))
+
+	err := f.svc.AutoImport(ctx, f.mtixDir)
+	require.ErrorIs(t, err, sqlite.ErrReplaceOnSyncedStore, "an exported DSN refuses the replace")
+	assert.Equal(t, before, pendingEventCount(t, f, "PROJ-3"), "nothing readers may hold is discarded")
+	mark, markErr := f.store.HubMark(ctx)
+	require.NoError(t, markErr)
+	assert.False(t, mark.Set, "an exported DSN never writes the sticky mark")
+
+	exported = false // the variable is unset: the same file imports
+	require.NoError(t, f.svc.AutoImport(ctx, f.mtixDir))
+	assert.Zero(t, pendingEventCount(t, f, "PROJ-3"), "a store that shared nothing discards the dropped task's events")
+}
+
+// Durable evidence still records the mark, and exported evidence beside it
+// does not change that.
+func TestAutoImport_DurableEvidence_RecordsTheMarkEvenWithAnExportedDSN(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	f.svc.SetHubEvidenceSource(func() (service.HubEvidence, error) {
+		return service.HubEvidence{ConfigKeys: true, EnvDSNExported: true}, nil
+	})
+	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) { addTeammateNode(t, d, "PROJ-2", "PROJ-3", 3) }))
+	require.NoError(t, f.svc.AutoImport(ctx, f.mtixDir))
+	mark, err := f.store.HubMark(ctx)
+	require.NoError(t, err)
+	assert.True(t, mark.Set)
+}
+
+// Evidence that cannot be read stops the automatic import: nothing is
+// imported, and the cause is kept in the error chain.
+func TestAutoImport_HubEvidenceSourceFails_StopsAndKeepsTheCause(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	cause := errors.New("secrets file unreadable")
+	f.svc.SetHubEvidenceSource(func() (service.HubEvidence, error) { return service.HubEvidence{}, cause })
+	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) { addTeammateNode(t, d, "PROJ-2", "PROJ-3", 3) }))
+
+	err := f.svc.AutoImport(ctx, f.mtixDir)
+	require.ErrorIs(t, err, cause)
+	assert.Contains(t, err.Error(), "read the hub evidence")
+	_, getErr := f.store.GetNode(ctx, "PROJ-3")
+	assert.Error(t, getErr, "nothing was imported")
+}
+
+// While an exported DSN is set, a lossy refusal of the automatic import is
+// the synced one: it names the rebuild from the hub instead of a replace
+// import, and the record keeps that the store was treated as synced.
+func TestAutoImport_ExportedDSN_LossyRefusalIsTheSyncedOne(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	f.svc.SetHubEvidenceSource(func() (service.HubEvidence, error) {
+		return service.HubEvidence{EnvDSNExported: true}, nil
+	})
+	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) { d.Nodes[nodeIndex(t, d, "PROJ-1")].Annotations = nil }))
+
+	require.ErrorIs(t, f.svc.AutoImport(ctx, f.mtixDir), service.ErrAutoImportRefused)
+	assertNoReplaceOffer(t, f.notices.String(), "the lossy refusal under an exported DSN")
+	report, err := f.svc.Compare(ctx, f.mtixDir)
+	require.NoError(t, err)
+	require.NotNil(t, report.AutoImport.LastRefusal)
+	assert.True(t, report.AutoImport.LastRefusal.Synced)
+	mark, markErr := f.store.HubMark(ctx)
+	require.NoError(t, markErr)
+	assert.False(t, mark.Set, "and no mark is written")
+}
+
+// A DSN the command layer reports as refused (a DSN key in a tracked config, a
+// secrets file with the wrong mode) is transient like an exported one: the
+// automatic import refuses a replace that would discard events while it is
+// reported, and writes no mark.
+func TestAutoImport_RefusedDSN_RefusesAndWritesNoMark(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	f.svc.SetHubEvidenceSource(func() (service.HubEvidence, error) {
+		return service.HubEvidence{DSNRefused: true}, nil
+	})
+	require.NoError(t, f.svc.AutoExport(ctx, f.mtixDir))
+	createTask(t, f, "PROJ-3", 3)
+	require.NoError(t, f.svc.AutoExport(ctx, f.mtixDir))
+	before := pendingEventCount(t, f, "PROJ-3")
+	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) { setUID(d, "PROJ-3", "") }))
+
+	require.ErrorIs(t, f.svc.AutoImport(ctx, f.mtixDir), sqlite.ErrReplaceOnSyncedStore)
+	assert.Equal(t, before, pendingEventCount(t, f, "PROJ-3"))
+	mark, err := f.store.HubMark(ctx)
+	require.NoError(t, err)
+	assert.False(t, mark.Set)
 }

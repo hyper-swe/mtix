@@ -1,6 +1,6 @@
 # mtix User Manual
 
-Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim and unclaim keep their existing required/default actor rules. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
+Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent (CLI `--agent`, MCP `agent_id`, REST `X-Agent-ID`), else `MTIX_AUTHOR_ID`, else the `author_id` config key, and is refused when none is set; only the assignee can release a claim unless force is given. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
 
 A complete guide to using mtix for hierarchical task management.
 
@@ -459,10 +459,18 @@ Transitions the node from `open` → `in_progress` and assigns the agent.
 ### Unclaim (Release Work)
 
 ```bash
-mtix unclaim PROJ-1.1.1 --reason "Need more context from parent task"
+mtix unclaim PROJ-1.1.1 --agent agent-claude --reason "Need more context from parent task"
 ```
 
 Returns the node to `open` and clears the assignee. A reason is required.
+
+Only the assignee can release a claim. mtix acts as `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key, and records that agent in the activity log. When none of them is set, the command exits non-zero and tells you to pass `--agent` or set `MTIX_AUTHOR_ID`. When another agent holds the claim, the command exits non-zero with an error that names the current assignee and the `--force` flag.
+
+```bash
+mtix unclaim PROJ-1.1.1 --agent agent-lead --force --reason "agent-claude stopped responding"
+```
+
+`--force` releases a claim another agent holds. The activity entry names you, the previous assignee and the reason. The REST route (`force` in the body, the agent in `X-Agent-ID`), the gRPC `Unclaim` call (`force`) and the MCP `mtix_unclaim` tool (`force`, `agent_id`) apply the same check. The stuck-timeout auto-unclaim (`agent.stuck_timeout`) is a system action and is not subject to it.
 
 ### Done (Complete Work)
 

@@ -29,7 +29,7 @@ func TestMCPWorkflowMutations_InvokeServicesAndBroadcast(t *testing.T) {
 		args  string
 	}{
 		{"mtix_claim", service.EventNodeClaimed, `{"id":"PROJ-1","agent_id":"worker"}`},
-		{"mtix_unclaim", service.EventNodeUnclaimed, `{"id":"PROJ-1","reason":"release"}`},
+		{"mtix_unclaim", service.EventNodeUnclaimed, `{"id":"PROJ-1","reason":"release","agent_id":"worker"}`},
 		{"mtix_cancel", service.EventNodeCancelled, `{"id":"PROJ-1","reason":"cancel"}`},
 	}
 	for _, tt := range cases {
@@ -116,7 +116,7 @@ func TestMCPInboxAck_InvokesService(t *testing.T) {
 func TestMCPMutations_FailedWritesPreserveErrorWithoutBroadcast(t *testing.T) {
 	cases := []struct{ name, args string }{
 		{"mtix_claim", `{"id":"MISSING-1","agent_id":"worker"}`},
-		{"mtix_unclaim", `{"id":"MISSING-1","reason":"release"}`},
+		{"mtix_unclaim", `{"id":"MISSING-1","reason":"release","agent_id":"worker"}`},
 		{"mtix_cancel", `{"id":"MISSING-1","reason":"cancel"}`},
 		{"mtix_dep_add", `{"from_id":"MISSING-1","to_id":"MISSING-2","dep_type":"related"}`},
 		{"mtix_dep_remove", `{"from_id":"MISSING-1","to_id":"MISSING-2","dep_type":"related"}`},

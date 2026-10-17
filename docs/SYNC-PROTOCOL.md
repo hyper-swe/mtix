@@ -821,7 +821,13 @@ Refusing changes nothing and names the way out.
   before. A store counts as synced when it carries the hub-connected
   mark, holds a pulled event or an event past `pending`, or has
   published to or ingested from a file relay (a relay publish keeps the
-  journal events pending, so the relay cursors are read too).
+  journal events pending, so the relay cursors are read too). The
+  relay publisher writes its cursor only after the append, so a first
+  publish that crashed or failed to advance leaves no cursor: the
+  automatic import therefore records the local hub or relay evidence (a
+  configured relay directory, hub endpoint or stored DSN) as the
+  hub-connected mark before it imports, and fails closed, importing
+  nothing, if that evidence cannot be read or stored (MTIX-107.31.7).
 - **On a store that never synced** nothing was shared, so every event
   is still pending, and a replace that drops a task discards, in the
   same transaction, the pending events of that task (matched by uid, as

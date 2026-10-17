@@ -39,8 +39,11 @@ type SyncService struct {
 	binaryVersion string
 	historyExport func() bool // history.export reader; nil = off
 	jsonNotices   bool        // the older-writer warning is one JSON line (--json)
-	mu            sync.Mutex  // guards noticed
-	noticed       map[string]bool
+	// hubEvidence reports the local hub or relay evidence the command layer
+	// holds (a configured relay or hub); nil means none (MTIX-107.31.7).
+	hubEvidence func() HubEvidence
+	mu          sync.Mutex // guards noticed
+	noticed     map[string]bool
 	// olderForms are the older conflict baseline forms hasConflict tries,
 	// in order; nil means olderBaselineForms() (MTIX-95.31.11). Tests set it.
 	olderForms []baselineForm
@@ -141,6 +144,12 @@ func (s *SyncService) autoImport(ctx context.Context, mtixDir string) error {
 		return nil
 	}
 	defer releasePush()
+
+	// MTIX-107.31.7: count a configured relay or hub before anything is
+	// replaced, even when its first publish left no record in this store.
+	if evidenceErr := s.noteHubEvidence(ctx); evidenceErr != nil {
+		return evidenceErr
+	}
 
 	// Step 5: parse and validate the whole file; export the local store.
 	incoming, local, conflict, err := s.parseAndValidateExport(ctx, data, mtixDir, fileHash)

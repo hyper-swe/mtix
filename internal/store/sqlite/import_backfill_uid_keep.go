@@ -27,6 +27,9 @@ func replaceAllData(ctx context.Context, tx *sql.Tx, data *ExportData) (ImportRe
 	if refuseErr := refuseDroppingLoggedNodes(ctx, tx, kept); refuseErr != nil {
 		return ImportResult{}, refuseErr
 	}
+	if discardErr := discardUnsharedEvents(ctx, tx, kept); discardErr != nil {
+		return ImportResult{}, discardErr
+	}
 	before, err := localUIDsByID(ctx, tx)
 	if err != nil {
 		return ImportResult{}, err

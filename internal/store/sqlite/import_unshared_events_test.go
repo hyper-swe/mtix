@@ -144,6 +144,10 @@ func TestImport_ReplaceOnRelaySyncedStore_Refused(t *testing.T) {
 	}{
 		{"published events to a relay", `INSERT INTO relay_push_cursor (id, cursor, next_rs) VALUES (1, 3, 4)`},
 		{"ingested events from a relay", `INSERT INTO relay_ingest_cursor (peer_id, segment_no, rs, pub_epoch) VALUES ('peer-a', 1, 5, 1)`},
+		// Gap repair or reset-peer rewound the cursor to its floor and the next publish
+		// did not land: the sequence or the epoch still show the peer published.
+		{"cursor rewound by gap repair, next sequence past one", `INSERT INTO relay_push_cursor (id, cursor, pub_epoch, next_rs) VALUES (1, 0, 1, 7)`},
+		{"cursor rewound by reset-peer, epoch past one", `INSERT INTO relay_push_cursor (id, cursor, pub_epoch, next_rs) VALUES (1, 0, 2, 1)`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -214,4 +218,70 @@ func renumberExportNode(d *sqlite.ExportData, id, to string, seq int) {
 			d.Dependencies[i].ToID = to
 		}
 	}
+}
+
+// A relay that is configured but never published has a cursor row at its
+// defaults (cursor 0, epoch 1, next sequence 1): nothing was shared, so the
+// store is not synced and the replace runs and discards the dropped task's
+// events.
+func TestImport_ReplaceOnConfiguredRelayThatNeverPublished_DiscardsAndRuns(t *testing.T) {
+	ctx := context.Background()
+	s, raw := mutationTestStore(t)
+	mustCreateNode(t, s, "MTIX-1", "")
+	mustCreateNode(t, s, "MTIX-3", "")
+	_, err := raw.Exec(`INSERT INTO relay_push_cursor (id, cursor, pub_epoch, next_rs) VALUES (1, 0, 1, 1)`)
+	require.NoError(t, err)
+	synced, err := s.HasSyncedWithHub(ctx)
+	require.NoError(t, err)
+	require.False(t, synced, "a relay that never published has shared nothing")
+
+	_, err = s.Import(ctx, exportWithout(t, s, "MTIX-3"), sqlite.ImportModeReplace, false)
+	require.NoError(t, err)
+	assert.False(t, nodeExists(t, raw, "MTIX-3"))
+	assert.Zero(t, pendingFor(t, raw, "MTIX-3"), "the dropped task's events are discarded")
+}
+
+// insertUnsharedEvent writes a pending event with the given uid (empty for
+// none) naming node.
+func insertUnsharedEvent(t *testing.T, raw *sql.DB, eventID, node, uid string) {
+	t.Helper()
+	var uidArg any
+	if uid != "" {
+		uidArg = uid
+	}
+	_, err := raw.Exec(`INSERT INTO sync_events
+		(event_id, project_prefix, node_id, op_type, payload, wall_clock_ts, lamport_clock, vector_clock,
+		 author_id, author_machine_hash, sync_status, created_at, uid)
+		VALUES (?, 'MTIX', ?, 'update_field', '{}', 1, 1, '{}', 'alice', '0123456789abcdef', 'pending',
+		        '2026-10-16T09:00:00Z', ?)`, eventID, node, uidArg)
+	require.NoError(t, err)
+}
+
+// The events a dropped task loses are matched by its uid, and by its number
+// for an event without a uid: a uid-bearing event whose number no longer
+// matches goes too, a uid-less event naming the dropped number goes too, and
+// a held copy that did not come from a push is not touched.
+func TestImport_ReplaceOnNeverSyncedStore_MatchesEventsByUIDThenNumber(t *testing.T) {
+	ctx := context.Background()
+	s, raw := mutationTestStore(t)
+	mustCreateNode(t, s, "MTIX-1", "")
+	mustCreateNode(t, s, "MTIX-3", "")
+	uid := nodeUID(t, raw, "MTIX-3")
+	insertUnsharedEvent(t, raw, "ev-by-uid-old-number", "MTIX-OLD", uid)
+	insertUnsharedEvent(t, raw, "ev-by-number-only", "MTIX-3", "")
+	insertUnsharedEvent(t, raw, "ev-of-kept-task", "MTIX-1", nodeUID(t, raw, "MTIX-1"))
+	// A held copy from a pull shares the event id of a pending event: it is not a push hold.
+	_, err := raw.Exec(`INSERT INTO sync_quarantine (event_id, source, raw_event, reason, first_seen, last_attempt)
+		VALUES ('ev-by-number-only', 'pull', '{}', 'held', '2026-10-16T09:00:00Z', '2026-10-16T09:00:00Z')`)
+	require.NoError(t, err)
+
+	_, err = s.Import(ctx, exportWithout(t, s, "MTIX-3"), sqlite.ImportModeReplace, false)
+	require.NoError(t, err)
+	for _, id := range []string{"ev-by-uid-old-number", "ev-by-number-only"} {
+		assert.Zero(t, countRows(t, raw, `SELECT COUNT(*) FROM sync_events WHERE event_id = ?`, id), id+" is discarded")
+	}
+	assert.Equal(t, 1, countRows(t, raw, `SELECT COUNT(*) FROM sync_events WHERE event_id = 'ev-of-kept-task'`),
+		"a kept task's event stays")
+	assert.Equal(t, 1, countRows(t, raw, `SELECT COUNT(*) FROM sync_quarantine WHERE event_id = 'ev-by-number-only' AND source = 'pull'`),
+		"a held copy from a pull is not a push hold and stays")
 }

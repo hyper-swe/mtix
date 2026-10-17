@@ -44,12 +44,16 @@ func syncedWithHub(ctx context.Context, q rowQuerier) (bool, error) {
 	// The sticky mark, any pulled event, or any own event past pending
 	// (pushed or conflicted).
 	// A file relay peer shares events too, though its events stay pending in
-	// the journal: one that published (a push cursor past zero) or ingested
-	// (a cursor for a peer) counts as synced.
+	// the journal: one that published or ingested counts as synced. A publisher
+	// published when its cursor is past zero, or its next relay sequence is past
+	// one, or its epoch is past one: gap repair (RepublishRelayFrom) and
+	// reset-peer (ResetRelayPublisher) rewind the cursor to a floor, and the
+	// sequence and the epoch only ever advance on a publish and a reset. An
+	// ingestor has a cursor row for a peer.
 	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM board_flags WHERE key = ?)
 		OR EXISTS (SELECT 1 FROM applied_events)
 		OR EXISTS (SELECT 1 FROM sync_events WHERE sync_status <> 'pending')
-		OR EXISTS (SELECT 1 FROM relay_push_cursor WHERE cursor > 0)
+		OR EXISTS (SELECT 1 FROM relay_push_cursor WHERE cursor > 0 OR next_rs > 1 OR pub_epoch > 1)
 		OR EXISTS (SELECT 1 FROM relay_ingest_cursor)`, hubMarkKey).Scan(&synced)
 	if err != nil {
 		return false, fmt.Errorf("read whether the store syncs with a hub: %w", err)

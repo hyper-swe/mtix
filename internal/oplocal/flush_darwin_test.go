@@ -4,7 +4,11 @@
 package oplocal
 
 import (
+	"bytes"
+	"encoding/json"
+	"log/slog"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -65,19 +69,18 @@ func TestWriteJSON_Darwin_UsesFullFsync(t *testing.T) {
 	require.NoError(t, err)
 	var directories []bool
 	full, fallback, warnings := 0, 0, 0
+	platform := darwinPlatformCalls(func(string, ...any) { warnings++ })
+	requireDarwinPlatformBindings(t, platform)
 	s.flushNative = func(f *os.File) error {
 		stat, err := f.Stat()
 		if err != nil {
 			return err
 		}
 		directories = append(directories, stat.IsDir())
-		return withFileHandle(f, func(fd uintptr) error {
-			return flushDarwinHandle(fd, darwinFlushCalls{
-				fullSync: func(fd uintptr) error { full++; return fullSyncFD(fd) },
-				fileSync: func(fd uintptr) error { fallback++; return fileSyncFD(fd) },
-				warn:     func(error) { warnings++ },
-			})
-		})
+		calls := platform
+		calls.fullSync = func(fd uintptr) error { full++; return platform.fullSync(fd) }
+		calls.fileSync = func(fd uintptr) error { fallback++; return platform.fileSync(fd) }
+		return withFileHandle(f, func(fd uintptr) error { return flushDarwinHandle(fd, calls) })
 	}
 	require.NoError(t, s.WriteJSON("hooks", "native flush observation"))
 	require.Equal(t, []bool{false, true}, directories)
@@ -89,13 +92,12 @@ func TestWriteJSON_Darwin_UsesFullFsync(t *testing.T) {
 func TestDarwinFlush_RawFallback_UsesRealDescriptor(t *testing.T) {
 	f := flushTestFile(t)
 	calls, warnings := 0, 0
-	err := withFileHandle(f, func(fd uintptr) error {
-		return flushDarwinHandle(fd, darwinFlushCalls{
-			fullSync: func(uintptr) error { return unix.ENOTSUP },
-			fileSync: func(fd uintptr) error { calls++; return fileSyncFD(fd) },
-			warn:     func(error) { warnings++ },
-		})
-	})
+	platform := darwinPlatformCalls(func(string, ...any) { warnings++ })
+	requireDarwinPlatformBindings(t, platform)
+	injected := platform
+	injected.fullSync = func(uintptr) error { return unix.ENOTSUP }
+	injected.fileSync = func(fd uintptr) error { calls++; return platform.fileSync(fd) }
+	err := withFileHandle(f, func(fd uintptr) error { return flushDarwinHandle(fd, injected) })
 	require.NoError(t, err)
 	require.Equal(t, 1, calls)
 	require.Equal(t, 1, warnings)
@@ -105,4 +107,26 @@ func TestDarwinFlush_InvalidDescriptor_PreservesCause(t *testing.T) {
 	for _, flush := range []func(uintptr) error{fullSyncFD, fileSyncFD} {
 		require.ErrorIs(t, flush(^uintptr(0)), unix.EBADF)
 	}
+}
+
+func requireDarwinPlatformBindings(t *testing.T, calls darwinFlushCalls) {
+	t.Helper()
+	require.NotNil(t, calls.fullSync)
+	require.NotNil(t, calls.fileSync)
+	require.Equal(t, reflect.ValueOf(fullSyncFD).Pointer(), reflect.ValueOf(calls.fullSync).Pointer(), "production full sync must select F_FULLFSYNC")
+	require.Equal(t, reflect.ValueOf(fileSyncFD).Pointer(), reflect.ValueOf(calls.fileSync).Pointer(), "production fallback must select raw fsync")
+}
+
+func TestDarwinPlatformCalls_WarningClosure_RecordsError(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&output, nil))
+	calls := darwinPlatformCalls(logger.Warn)
+	calls.warn(unix.ENOTSUP)
+	require.Equal(t, 1, bytes.Count(output.Bytes(), []byte("\n")))
+	var event map[string]any
+	require.NoError(t, json.Unmarshal(output.Bytes(), &event))
+	require.Equal(t, "WARN", event["level"])
+	require.Equal(t, "operator state full sync unsupported; attempting fsync", event["msg"])
+	require.Equal(t, unix.ENOTSUP.Error(), event["error"])
+	require.Len(t, event, 4)
 }

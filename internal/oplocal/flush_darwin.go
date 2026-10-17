@@ -18,10 +18,14 @@ type darwinFlushCalls struct {
 	warn     func(error)
 }
 
-func platformFlush(f *os.File) error {
-	calls := darwinFlushCalls{fullSync: fullSyncFD, fileSync: fileSyncFD, warn: func(err error) {
-		slog.Warn("operator state full sync unsupported; attempting fsync", "error", err)
+func darwinPlatformCalls(warn func(string, ...any)) darwinFlushCalls {
+	return darwinFlushCalls{fullSync: fullSyncFD, fileSync: fileSyncFD, warn: func(err error) {
+		warn("operator state full sync unsupported; attempting fsync", "error", err)
 	}}
+}
+
+func platformFlush(f *os.File) error {
+	calls := darwinPlatformCalls(slog.Warn)
 	return withFileHandle(f, func(fd uintptr) error { return flushDarwinHandle(fd, calls) })
 }
 

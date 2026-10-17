@@ -155,6 +155,10 @@ func (s *Store) Import(
 		if err := s.verifyStoreUnchanged(ctx, tx, cfg); err != nil {
 			return err
 		}
+		// MTIX-187: no task id outside the node id grammar enters the store.
+		if err := refuseInvalidImportIDs(ctx, tx, data); err != nil {
+			return err
+		}
 		// MTIX-95.31.4: move each local task the file's task takes the id of.
 		if err := applyLocalRenumbers(ctx, tx, cfg.localMoves); err != nil {
 			return err

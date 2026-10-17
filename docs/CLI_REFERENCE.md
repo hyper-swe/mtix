@@ -1412,7 +1412,7 @@ Show a node's details and annotations as labeled lines, in this order:
   Assignee     current assignee (only when set)
   Desc         full description (only when set; omitted when it holds only
                whitespace or control characters), further lines indented
-  Annotations  every annotation, oldest first: its ISO-8601 UTC timestamp
+  Annotations  every annotation, oldest first (equal times by id): its ISO-8601 UTC timestamp
                ("unknown time" when none was recorded), author, addressee
                and resolved marker when present, then the text, with
                further lines indented and "(empty)" for an empty text;
@@ -1845,6 +1845,8 @@ Run health checks against the local store and the BYO Postgres hub:
                            board from the hub
   Quarantined events     - no pulled event is held in the local quarantine;
                            each pull retries them ('mtix sync quarantine list')
+  Valid node ids         - warns when a local task id is outside the node id
+                           grammar; names each task, its uid and the fix
   Unique node uids       - no two tasks share a uid; names each uid, its tasks
                            and the recovery (see 'mtix verify')
   sync.exchange-record   - local received provenance and recorded omission;

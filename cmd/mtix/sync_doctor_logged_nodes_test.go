@@ -33,6 +33,11 @@ func TestAppendLoggedNodesCheck_Drift_FailsWithFixCommand(t *testing.T) {
 			configureHub(t)
 			dropNodeRow(t, "TEST-2")
 		}, false, "the board lacks 1 of the tasks the local sync log creates: TEST-2", loggedNodesFix},
+		{"file relay peer that published, task dropped", func(t *testing.T) {
+			_, err := app.store.WriteDB().Exec(`INSERT INTO relay_push_cursor (id, cursor, pub_epoch, next_rs) VALUES (1, 0, 1, 7)`)
+			require.NoError(t, err)
+			dropNodeRow(t, "TEST-2")
+		}, false, "the board lacks 1 of the tasks the local sync log creates: TEST-2", loggedNodesFix},
 		{"hub config key only, task dropped", func(t *testing.T) {
 			_, err := app.configSvc.Set("sync.enabled", "true")
 			require.NoError(t, err)

@@ -589,6 +589,25 @@ it, in this order:
    an event at push, but at ingest this machine's clock may be the wrong
    one, and refusing a hub event would make this replica diverge from its
    peers.
+3. **Task ids** (`validator.ValidateEventNodeIDs`, MTIX-187). The
+   event's `node_id`, a `create_node` payload's `parent_id` (when set)
+   and a `link_dep` or `unlink_dep` payload's `depends_on_node_id`
+   (always) must match the node id grammar (`model.ValidateSyncNodeID`):
+   `PREFIX-<root>` followed by `.<segment>` parts, a numeric root,
+   numeric or uid child segments, ASCII only and no empty segment. The
+   prefix follows the sync `project_prefix` grammar, which admits `_`
+   (MTIX-95.17). mtix never creates any other id, so an event that names
+   one came from another client or a hub row changed by hand. It is
+   refused with `validator.ErrInvalidNodeID` (the reason contains
+   `invalid node id`, the field and the id), and no retry applies it.
+   Push does not run this check, so a replica that already holds such a
+   task can still push its changes; the relay ingest runs it after its
+   envelope check, and `Store.Import` refuses a file that names such an
+   id unless the store already holds a task with that id. `mtix sync
+   status` counts these quarantined events (`quarantined_invalid_ids`)
+   and the local tasks with such an id (`invalid_node_ids`), and `mtix
+   sync doctor` warns in its `valid node ids` check, naming each local
+   task and its uid.
 
 An admitted event is applied through `IdempotentApply` inside its own
 savepoint. An event that fails a check or its apply has the savepoint
@@ -799,7 +818,18 @@ Refusing changes nothing and names the way out.
   `pending` 0, then `mtix sync reconcile --discard-local --yes`, then
   `mtix sync pull`. A replace into an empty store, such as
   a restore into a fresh data directory, deletes nothing and runs as
-  before.
+  before. A store counts as synced when it carries the hub-connected
+  mark, holds a pulled event or an event past `pending`, or has
+  published to or ingested from a file relay (a relay publish keeps the
+  journal events pending, so the relay cursors are read too).
+- **On a store that never synced** nothing was shared, so every event
+  is still pending, and a replace that drops a task discards, in the
+  same transaction, the pending events of that task (matched by uid, as
+  the synced-store guard matches), their held copies in
+  `sync_quarantine`, and the pending link events whose target is the
+  dropped task. Without that, the first push after a hub or relay is
+  configured would create a task the board does not hold. A retained or
+  renumbered task keeps its events (MTIX-107.31.3).
 - **Every replace** (the store's `Import` in replace mode, which the
   automatic import also uses) is refused in its own transaction, before
   anything is deleted, when the store has synced and the file does not

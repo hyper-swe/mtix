@@ -1923,6 +1923,22 @@ after the last batch it applied, never after one it did not.
   hub owner's DSN to add the hub index pull reads by; the same item in
   the next section says when to run it and what it costs.
 
+Each pull also registers this client with the hub, so a client that
+only pulls, such as a daemon, shows up for the version gate and for any
+stale-client report. Right after it connects, and before it reads events,
+the pull writes one row to `sync_project_clients`: the board's sync
+project prefix (set by `mtix sync init`), this machine's hash and the
+CLI version. It is one statement on the connection the pull already
+opened: no extra connection, no timer, and no contact with a hub that no
+pull was going to reach. A role that only pulls needs the same INSERT and
+UPDATE on `sync_project_clients` as one that pushes (the least-privilege
+list in the sync skill and in `docs/SECURITY-MODEL.md` already has them).
+If the write fails, the pull completes as usual and prints one
+`WARN: pull client registration skipped` line that names the grant; the
+client stays invisible to the version gate until the grant is fixed. A
+board that has never run `mtix sync init` has no sync project prefix and
+skips the registration quietly.
+
 ### Late changes from offline teammates
 
 Each `mtix sync pull` first fetches the events past its cursor, then

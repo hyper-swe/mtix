@@ -201,15 +201,8 @@ func TestEnforceTLS_DoesNotOverrideExplicitSSLROOTCERT(t *testing.T) {
 		"explicit DSN value beats env var")
 }
 
-func TestEnforceTLS_RejectsUnknownFormDSN(t *testing.T) {
-	_, err := transport.EnforceTLSPosture("foo/bar", transport.Options{})
+func TestEnforceTLS_RejectsNonURLDSN(t *testing.T) {
+	_, err := transport.EnforceTLSPosture("host=foo dbname=bar", transport.Options{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "postgres://")
-	require.Contains(t, err.Error(), "key=value")
-}
-
-func TestEnforceTLS_AcceptsKeyValueDSN(t *testing.T) {
-	out, err := transport.EnforceTLSPosture("host=foo dbname=bar", transport.Options{})
-	require.NoError(t, err)
-	require.Contains(t, out, "sslmode='verify-full'")
 }

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -38,11 +37,6 @@ func knownSyncDSNs() []string {
 	}
 	if v, ok := readSecretsForScrub(scrubMtixDir()); ok {
 		dsns = append(dsns, v)
-	}
-	// A password supplied only through MTIX_SYNC_PASSWORD is in no DSN; it
-	// is scrubbed as the password setting of a key=value DSN (MTIX-87).
-	if v := os.Getenv(transport.EnvPassword); v != "" {
-		dsns = append(dsns, "password='"+strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v)+"'")
 	}
 	return dsns
 }

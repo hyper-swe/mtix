@@ -818,18 +818,7 @@ Refusing changes nothing and names the way out.
   `pending` 0, then `mtix sync reconcile --discard-local --yes`, then
   `mtix sync pull`. A replace into an empty store, such as
   a restore into a fresh data directory, deletes nothing and runs as
-  before. A store counts as synced when it carries the hub-connected
-  mark, holds a pulled event or an event past `pending`, or has
-  published to or ingested from a file relay (a relay publish keeps the
-  journal events pending, so the relay cursors are read too).
-- **On a store that never synced** nothing was shared, so every event
-  is still pending, and a replace that drops a task discards, in the
-  same transaction, the pending events of that task (matched by uid, as
-  the synced-store guard matches), their held copies in
-  `sync_quarantine`, and the pending link events whose target is the
-  dropped task. Without that, the first push after a hub or relay is
-  configured would create a task the board does not hold. A retained or
-  renumbered task keeps its events (MTIX-107.31.3).
+  before.
 - **Every replace** (the store's `Import` in replace mode, which the
   automatic import also uses) is refused in its own transaction, before
   anything is deleted, when the store has synced and the file does not

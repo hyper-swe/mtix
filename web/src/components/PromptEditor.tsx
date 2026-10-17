@@ -166,7 +166,7 @@ export function PromptEditor({
 
   return (
     <div
-      className={`rounded border ${className}`}
+      className={`rounded-sm border ${className}`}
       style={{
         borderColor: "var(--color-border)",
         backgroundColor: "var(--color-surface)",
@@ -188,7 +188,7 @@ export function PromptEditor({
       <div className="p-3">
         <textarea
           ref={textareaRef}
-          className="w-full rounded border p-2 text-sm font-mono resize-y"
+          className="w-full rounded-sm border p-2 text-sm font-mono resize-y"
           style={{
             backgroundColor: "var(--color-bg)",
             borderColor: "var(--color-border)",
@@ -203,14 +203,14 @@ export function PromptEditor({
 
         {/* Human Addition block */}
         <div
-          className="mt-3 rounded border p-2"
+          className="mt-3 rounded-sm border p-2"
           style={{
             backgroundColor: "var(--color-status-in-progress)",
             opacity: 0.1,
           }}
         />
         <div
-          className="mt-2 rounded border p-2"
+          className="mt-2 rounded-sm border p-2"
           style={{
             borderColor: "var(--color-status-in-progress)",
             backgroundColor: "rgba(59, 130, 246, 0.05)",
@@ -224,7 +224,7 @@ export function PromptEditor({
             Human Addition
           </label>
           <textarea
-            className="w-full rounded border p-2 text-sm font-mono resize-y"
+            className="w-full rounded-sm border p-2 text-sm font-mono resize-y"
             style={{
               backgroundColor: "var(--color-bg)",
               borderColor: "var(--color-status-in-progress)",
@@ -253,7 +253,7 @@ export function PromptEditor({
 
             {showDiff && (
               <div
-                className="mt-2 rounded border p-2 text-xs font-mono overflow-x-auto"
+                className="mt-2 rounded-sm border p-2 text-xs font-mono overflow-x-auto"
                 style={{
                   borderColor: "var(--color-border)",
                   backgroundColor: "var(--color-bg)",
@@ -295,7 +295,7 @@ export function PromptEditor({
         {/* Action buttons */}
         <div className="mt-3 flex items-center gap-2">
           <button
-            className="px-3 py-1.5 text-xs font-medium rounded cursor-pointer"
+            className="px-3 py-1.5 text-xs font-medium rounded-sm cursor-pointer"
             style={{
               backgroundColor: "var(--color-accent)",
               color: "#FFFFFF",
@@ -309,7 +309,7 @@ export function PromptEditor({
           {/* Save & Rerun dropdown */}
           <div className="relative" ref={rerunMenuRef}>
             <button
-              className="px-3 py-1.5 text-xs font-medium rounded cursor-pointer"
+              className="px-3 py-1.5 text-xs font-medium rounded-sm cursor-pointer"
               style={{
                 backgroundColor: "var(--color-status-in-progress)",
                 color: "#FFFFFF",
@@ -322,7 +322,7 @@ export function PromptEditor({
 
             {showRerunMenu && (
               <div
-                className="absolute left-0 top-full mt-1 w-52 rounded border shadow-lg z-10"
+                className="absolute left-0 top-full mt-1 w-52 rounded-sm border shadow-[0_10px_15px_-3px_rgb(0_0_0/0.1),0_4px_6px_-4px_rgb(0_0_0/0.1)] z-10"
                 style={{
                   backgroundColor: "var(--color-surface)",
                   borderColor: "var(--color-border)",
@@ -345,7 +345,7 @@ export function PromptEditor({
           </div>
 
           <button
-            className="px-3 py-1.5 text-xs font-medium rounded cursor-pointer"
+            className="px-3 py-1.5 text-xs font-medium rounded-sm cursor-pointer"
             style={{
               color: "var(--color-text-secondary)",
               border: "1px solid var(--color-border)",
@@ -384,7 +384,7 @@ export function PromptEditor({
         {showAnnotationInput && (
           <div className="flex gap-2 mb-2" data-testid="annotation-input">
             <input
-              className="flex-1 rounded border px-2 py-1 text-xs"
+              className="flex-1 rounded-sm border px-2 py-1 text-xs"
               style={{
                 backgroundColor: "var(--color-bg)",
                 borderColor: "var(--color-border)",
@@ -399,7 +399,7 @@ export function PromptEditor({
               }}
             />
             <button
-              className="px-2 py-1 text-xs rounded cursor-pointer"
+              className="px-2 py-1 text-xs rounded-sm cursor-pointer"
               style={{
                 backgroundColor: "var(--color-accent)",
                 color: "#FFFFFF",

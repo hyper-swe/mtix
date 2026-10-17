@@ -195,7 +195,7 @@ export function DependencyGraph({
         data-testid="zoom-controls"
       >
         <button
-          className="w-7 h-7 rounded border flex items-center justify-center text-sm cursor-pointer"
+          className="w-7 h-7 rounded-sm border flex items-center justify-center text-sm cursor-pointer"
           style={{
             backgroundColor: "var(--color-surface)",
             borderColor: "var(--color-border)",
@@ -207,7 +207,7 @@ export function DependencyGraph({
           +
         </button>
         <button
-          className="w-7 h-7 rounded border flex items-center justify-center text-sm cursor-pointer"
+          className="w-7 h-7 rounded-sm border flex items-center justify-center text-sm cursor-pointer"
           style={{
             backgroundColor: "var(--color-surface)",
             borderColor: "var(--color-border)",

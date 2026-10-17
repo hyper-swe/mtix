@@ -432,3 +432,190 @@ func TestStrict_ProgramRecordFromAnotherHostIsUnreadableNotAbsent(t *testing.T) 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "cannot be read")
 }
+
+// linkedPathDir returns a directory holding one link to the PATH directory that
+// contains the named program, so linkDir/name names the same file as the PATH
+// entry but through a link.
+func linkedPathDir(t *testing.T, name string) (linkDir, realDir string) {
+	t.Helper()
+	program, err := exec.LookPath(name)
+	require.NoError(t, err)
+	realDir, err = filepath.EvalSymlinks(filepath.Dir(program))
+	require.NoError(t, err)
+	linkDir = filepath.Join(t.TempDir(), "pathdir")
+	require.NoError(t, os.Symlink(realDir, linkDir))
+	return linkDir, realDir
+}
+
+// escapeChain returns a program path written through a link and parent-directory
+// segments whose textual clean and physical location differ, with a program
+// of that name placed at the physical location.
+func escapeChain(t *testing.T, root, realDir, name string) string {
+	t.Helper()
+	climb := len(splitPathComponents(root)) + 1
+	chain := filepath.Join(root, "planted")
+	for i := 0; i < climb; i++ {
+		chain = filepath.Join(chain, "k")
+	}
+	require.NoError(t, os.MkdirAll(chain, 0o700))
+	require.NoError(t, os.Symlink(chain, filepath.Join(root, "lnk")))
+	landing := filepath.Join(root, "planted")
+	dir := filepath.Join(landing, filepath.FromSlash(realDir[1:]))
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"), 0o700)) //nolint:gosec // test program
+	text := root + "/lnk"
+	for i := 0; i < climb; i++ {
+		text += "/.."
+	}
+	return text + realDir + "/" + name
+}
+
+func TestStrict_KnownWrapperAndInterpreterAreJudgedByThePhysicalDirectory(t *testing.T) {
+	for _, name := range []string{"env", "sh"} {
+		linkDir, realDir := linkedPathDir(t, name)
+		root, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		probe := escapeChain(t, root, realDir, name)
+		known := knownEnvWrapper
+		if name == "sh" {
+			known = knownInterpreterProgram
+		}
+		require.False(t, known(root, probe), "a path that reads like a PATH location but lands elsewhere is not known: %s", name)
+		require.True(t, known(root, filepath.Join(linkDir, name)), "a link to the PATH directory is the PATH directory: %s", name)
+		require.True(t, known(root, name), "a bare name is looked up on the fixed PATH")
+		require.True(t, known(root, filepath.Join(realDir, name)))
+	}
+}
+
+func TestStrict_On_KnownEnvAndInterpreterSlotsArePinnedToThePhysicalDirectory(t *testing.T) {
+	envLink, envReal := linkedPathDir(t, "env")
+	shLink, shReal := linkedPathDir(t, "sh")
+	command := "[" + filepath.Join(envLink, "env") + ", " + filepath.Join(shLink, "sh") + ", scripts/run.sh]"
+	f := strictFixture(t, command)
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(envReal, "env"), plan.Argv[0], "the env slot is pinned")
+	require.Equal(t, filepath.Join(shReal, "sh"), plan.Argv[1], "the interpreter slot is pinned")
+	off := newPrepareFixture(t, command)
+	plan, err = off.approvals.PrepareExec(off.hook(t))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(envLink, "env"), plan.Argv[0], "strict off leaves the launch as written")
+}
+
+// The known slots are pinned in every strict launch, including when another
+// slot is the approved program.
+func TestStrict_On_KnownWrapperBeforeAnApprovedProgramIsPinned(t *testing.T) {
+	envLink, envReal := linkedPathDir(t, "env")
+	f := strictFixture(t, "["+filepath.Join(envLink, "env")+", cat, data/x]")
+	_, err := f.approvals.ApproveProgram(f.hook(t), true)
+	require.NoError(t, err)
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(envReal, "env"), plan.Argv[0], "the wrapper slot is pinned beside the approved program")
+}
+
+func TestStrict_On_KnownInterpreterBehindAnApprovedWrapperIsPinned(t *testing.T) {
+	wrapper, err := filepath.EvalSymlinks(fakeEnv(t))
+	require.NoError(t, err)
+	shLink, shReal := linkedPathDir(t, "sh")
+	f := strictFixture(t, "["+wrapper+", "+filepath.Join(shLink, "sh")+", scripts/run.sh]")
+	_, err = f.approvals.ApproveProgram(f.hook(t), true)
+	require.NoError(t, err)
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err)
+	require.Equal(t, wrapper, plan.Argv[0])
+	require.Equal(t, filepath.Join(shReal, "sh"), plan.Argv[1], "the interpreter slot is pinned beside the approved wrapper")
+}
+
+func TestStrict_ProgramRecordForAnotherProjectIsRefused(t *testing.T) {
+	f := strictFixture(t, "[cat, data/x]")
+	_, err := f.approvals.ApproveProgram(f.hook(t), true)
+	require.NoError(t, err)
+	files := recordFilesContaining(t, f, `"program"`)
+	require.Len(t, files, 1)
+	data, err := os.ReadFile(files[0]) //nolint:gosec // test reads its own state dir
+	require.NoError(t, err)
+	var rec struct {
+		HostID string          `json:"host_id"`
+		Data   json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(data, &rec))
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Data, &body))
+	body["project"] = "another-project"
+	rec.Data, err = json.Marshal(body)
+	require.NoError(t, err)
+	out, err := json.Marshal(rec)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(files[0], out, 0o600))
+	_, err = f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err, "a record whose project field differs is not this project's approval")
+}
+
+func TestStrict_RecordsLiveOutsideTheProject(t *testing.T) {
+	f := strictFixture(t, "[cat, data/x]")
+	_, err := f.approvals.ApproveProgram(f.hook(t), true)
+	require.NoError(t, err)
+	dir, err := f.state.Path()
+	require.NoError(t, err)
+	for _, marker := range []string{`"enabled"`, `"program"`} {
+		for _, file := range recordFilesContaining(t, f, marker) {
+			rel, relErr := filepath.Rel(f.root, file)
+			require.NoError(t, relErr)
+			require.True(t, strings.HasPrefix(rel, ".."), "%s is outside the project root", file)
+			require.True(t, strings.HasPrefix(file, dir))
+		}
+	}
+	require.Len(t, recordFilesContaining(t, f, `"enabled"`), 1)
+}
+
+func TestApproveProgramShowing_ShowsTheBoundProgramBeforeTheWrite(t *testing.T) {
+	f := strictFixture(t, "[cat, data/x]")
+	var shown string
+	written := -1
+	program, err := f.approvals.ApproveProgramShowing(f.hook(t), true, func(p string) error {
+		shown = p
+		written = len(recordFilesContaining(t, f, `"program"`))
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0, written, "the program is shown before anything is written")
+	require.Equal(t, program, shown, "what is shown is what is bound")
+	require.Len(t, recordFilesContaining(t, f, `"program"`), 1)
+	_, err = f.approvals.ApproveProgramShowing(f.hook(t), false, func(string) error { t.Fatal("shown although refused"); return nil })
+	require.Error(t, err)
+}
+
+// repointLink replaces the link at path with one to a directory that holds a
+// planted program of the given name.
+func repointLink(t *testing.T, path, name string) {
+	t.Helper()
+	other := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(other, name), []byte("#!/bin/sh\n"), 0o700)) //nolint:gosec // test program
+	require.NoError(t, os.Remove(path))
+	require.NoError(t, os.Symlink(other, path))
+}
+
+func TestStrict_On_WrapperChangedBetweenTheJudgementAndThePinIsRefused(t *testing.T) {
+	envLink, _ := linkedPathDir(t, "env")
+	f := strictFixture(t, "["+filepath.Join(envLink, "env")+", cat, data/x]")
+	_, err := f.approvals.ApproveProgram(f.hook(t), true)
+	require.NoError(t, err)
+	f.approvals.afterJudge = func() { repointLink(t, envLink, "env") }
+	_, err = f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "changed location")
+}
+
+func TestStrict_On_InterpreterChangedBetweenTheJudgementAndThePinIsRefused(t *testing.T) {
+	wrapper, err := filepath.EvalSymlinks(fakeEnv(t))
+	require.NoError(t, err)
+	shLink, _ := linkedPathDir(t, "sh")
+	f := strictFixture(t, "["+wrapper+", "+filepath.Join(shLink, "sh")+", scripts/run.sh]")
+	_, err = f.approvals.ApproveProgram(f.hook(t), true)
+	require.NoError(t, err)
+	f.approvals.afterJudge = func() { repointLink(t, shLink, "sh") }
+	_, err = f.approvals.PrepareExec(f.hook(t))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "changed location")
+}

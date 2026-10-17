@@ -178,18 +178,22 @@ func TestKnown_ShortPassword_MaskedOnlyWhereItStandsAsPassword(t *testing.T) {
 		{"short password removed in user info",
 			"postgres://u:onn@hub.invalid/mtix", "dial u:onn@hub.invalid",
 			"dial u:REDACTED@hub.invalid"},
+		// In a URL query the ampersand ends the value; in the key=value form
+		// it is part of a bare password (MTIX-87).
 		{"short password removed in a password setting",
-			"postgres://u:onn@hub.invalid/mtix", "password=onn&sslmode=verify-full",
-			"password=REDACTED&sslmode=verify-full"},
+			"postgres://u:onn@hub.invalid/mtix", "?password=onn&sslmode=verify-full",
+			"?password=REDACTED&sslmode=verify-full"},
 		{"short password removed in a quoted, spaced setting",
 			"host=hub.invalid password=onn", "PASSWORD = 'onn' dbname=mtix",
 			"PASSWORD = REDACTED dbname=mtix"},
 		{"short password removed at the end of a setting",
 			"postgres://u@hub.invalid/mtix?password=onn", "... password=onn",
 			"... password=REDACTED"},
-		{"a longer setting value is not the password",
+		// Every password setting is masked by DSN, whatever the known
+		// password is (MTIX-87), so a longer value is masked too.
+		{"a longer setting value is masked as a password setting",
 			"postgres://u:onn@hub.invalid/mtix", "password=onnx",
-			"password=onnx"},
+			"password=REDACTED"},
 		{"short fragment before an unescaped at-sign kept in words",
 			"postgres://u:Kq8v@Z3xW9mRt@hub.invalid/mtix", "Kq8v alone; u:Kq8v@x",
 			"Kq8v alone; u:REDACTED@x"},
@@ -205,4 +209,30 @@ func TestKnown_ShortPassword_MaskedOnlyWhereItStandsAsPassword(t *testing.T) {
 			require.Equal(t, tt.want, redact.Known(tt.in, tt.dsn))
 		})
 	}
+}
+
+// TestKnown_BareKeyValuePassword_RemovedWhereverItIsPrinted verifies the
+// password candidates Known derives from a key=value DSN follow the parser:
+// a bare value ends at ASCII white space, so an ampersand is part of it, and
+// a backslash escapes the next character, so the real password is the
+// unescaped text (MTIX-87).
+func TestKnown_BareKeyValuePassword_RemovedWhereverItIsPrinted(t *testing.T) {
+	for name, tt := range map[string]struct{ dsn, printed string }{
+		"ampersand":       {"host=h user=u password=abc&TAILSECRET sslmode=disable", "abc&TAILSECRET"},
+		"escaped space":   {`host=h user=u password=ab\ cdTAILSECRET sslmode=disable`, "ab cdTAILSECRET"},
+		"escaped quote":   {`host=h user=u password=ab\'cdTAILSECRET sslmode=disable`, "ab'cdTAILSECRET"},
+		"escaped slash":   {`host=h user=u password=ab\\cdTAILSECRET sslmode=disable`, `ab\cdTAILSECRET`},
+		"spaced equals":   {"host=h user=u password = abc&TAILSECRET sslmode=disable", "abc&TAILSECRET"},
+		"query ampersand": {"postgres://u@h/db?password=abcTAILSECRET&sslmode=disable", "abcTAILSECRET"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := redact.Known("failed to log in with "+tt.printed+" today", tt.dsn)
+			require.NotContains(t, got, "TAILSECRET")
+			require.Contains(t, got, "failed to log in with ")
+		})
+	}
+	// A known URL query password still ends at the ampersand: the next
+	// setting is not a password.
+	got := redact.Known("sslmode=disable seen", "postgres://u@h/db?password=abcTAILSECRET&sslmode=disable")
+	require.Contains(t, got, "sslmode=disable")
 }

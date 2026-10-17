@@ -110,7 +110,7 @@ function AgentCard({ agent, onNavigate }: AgentCardProps) {
 
   return (
     <div
-      className="rounded border p-4"
+      className="rounded-sm border p-4"
       style={{
         borderColor: isStuck
           ? "var(--color-status-blocked)"
@@ -132,7 +132,7 @@ function AgentCard({ agent, onNavigate }: AgentCardProps) {
             {agent.agent_id}
           </span>
           <span
-            className="text-xs px-1.5 py-0.5 rounded font-bold uppercase"
+            className="text-xs px-1.5 py-0.5 rounded-sm font-bold uppercase"
             style={{
               backgroundColor:
                 agent.state === "working"
@@ -148,7 +148,7 @@ function AgentCard({ agent, onNavigate }: AgentCardProps) {
           </span>
           {isStuck && (
             <span
-              className="text-xs px-1 py-0.5 rounded"
+              className="text-xs px-1 py-0.5 rounded-sm"
               style={{
                 backgroundColor: "var(--color-status-blocked)",
                 color: "#FFFFFF",

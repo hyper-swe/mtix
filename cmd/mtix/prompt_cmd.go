@@ -141,21 +141,19 @@ func runContext(id string, maxTokens int) error {
 	}
 
 	if app.jsonOutput {
-		data, _ := json.MarshalIndent(resp, "", "  ")
-		fmt.Println(string(data))
-	} else {
-		fmt.Println("=== Context Chain ===")
-		for _, entry := range resp.Chain {
-			indent := ""
-			for i := 0; i < entry.Depth; i++ {
-				indent += "  "
-			}
-			fmt.Printf("%s%s [%s] %s\n", indent, entry.ID, entry.Status, entry.Title)
+		return NewOutputWriter(true).WriteJSON(resp)
+	}
+	fmt.Println("=== Context Chain ===")
+	for _, entry := range resp.Chain {
+		indent := ""
+		for i := 0; i < entry.Depth; i++ {
+			indent += "  "
 		}
-		if resp.AssembledPrompt != "" {
-			fmt.Printf("\n=== Assembled Prompt (%d chars) ===\n%s\n",
-				len(resp.AssembledPrompt), resp.AssembledPrompt)
-		}
+		fmt.Printf("%s%s [%s] %s\n", indent, entry.ID, entry.Status, entry.Title)
+	}
+	if resp.AssembledPrompt != "" {
+		fmt.Printf("\n=== Assembled Prompt (%d chars) ===\n%s\n",
+			len(resp.AssembledPrompt), resp.AssembledPrompt)
 	}
 	return nil
 }

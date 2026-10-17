@@ -59,19 +59,29 @@ type humanWriter struct {
 
 // jsonWriter outputs machine-readable JSON.
 type jsonWriter struct {
-	w io.Writer
+	w           io.Writer
+	staleReason string
 }
 
 // NewOutputWriter creates the appropriate writer based on --json flag.
 // Color output is enabled only when stdout is a TTY per FR-6.2.
 func NewOutputWriter(jsonMode bool) OutputWriter {
 	if jsonMode {
-		return &jsonWriter{w: os.Stdout}
+		return newJSONOutputWriter(os.Stdout)
 	}
 	return &humanWriter{
 		w:     os.Stdout,
 		color: isTerminal(os.Stdout),
 	}
+}
+
+// newJSONOutputWriter retains the supplied stream and snapshots read freshness.
+func newJSONOutputWriter(w io.Writer) *jsonWriter {
+	reason := ""
+	if app.outputScope == freshnessRead {
+		reason = app.staleReason
+	}
+	return &jsonWriter{w: w, staleReason: reason}
 }
 
 // --- Human writer ---
@@ -142,11 +152,20 @@ func (h *humanWriter) writeTableSeparator(widths []int) {
 // --- JSON writer ---
 
 func (j *jsonWriter) WriteJSON(v any) error {
+	if j.staleReason != "" {
+		value, err := staleJSONValue(v, j.staleReason)
+		if err != nil {
+			return err
+		}
+		v = value
+	}
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal JSON output: %w", err)
 	}
-	fmt.Fprintln(j.w, string(data))
+	if _, err := fmt.Fprintln(j.w, string(data)); err != nil {
+		return fmt.Errorf("write JSON output: %w", err)
+	}
 	return nil
 }
 

@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -97,8 +96,7 @@ func runSyncBackfill(ctx context.Context, stdout, stderr io.Writer, dryRun, forc
 		if err != nil {
 			return formatBackfillError(stderr, err)
 		}
-		printBackfillResult(stdout, result, true)
-		return nil
+		return printBackfillResult(stdout, result, true)
 	}
 
 	result, err := app.store.Backfill(ctx, force)
@@ -106,7 +104,9 @@ func runSyncBackfill(ctx context.Context, stdout, stderr io.Writer, dryRun, forc
 		return formatBackfillError(stderr, err)
 	}
 
-	printBackfillResult(stdout, result, false)
+	if err := printBackfillResult(stdout, result, false); err != nil {
+		return err
+	}
 	if !app.jsonOutput {
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Next: run 'mtix sync push' to ship events to the hub.")
@@ -143,20 +143,22 @@ func formatBackfillError(stderr io.Writer, err error) error {
 }
 
 // printBackfillResult renders a structured summary or JSON.
-func printBackfillResult(stdout io.Writer, result sqlite.BackfillResult, dryRun bool) {
+func printBackfillResult(stdout io.Writer, result sqlite.BackfillResult, dryRun bool) error {
 	if app.jsonOutput {
-		body, _ := json.MarshalIndent(map[string]any{
+		writer := newJSONOutputWriter(stdout)
+		if !dryRun {
+			writer.staleReason = "" // Applied work is a mutation acknowledgement.
+		}
+		return writer.WriteJSON(map[string]any{
 			"dry_run": dryRun,
 			"result":  result,
-		}, "", "  ")
-		fmt.Fprintln(stdout, string(body))
-		return
+		})
 	}
 	prefix := "backfill complete:"
 	if dryRun {
 		prefix = "backfill dry-run:"
 	}
-	fmt.Fprintf(stdout,
+	_, err := fmt.Fprintf(stdout,
 		"%s %d nodes walked → %d events emitted (%d create_node, %d update_field, %d transition, %d annotate, %d link_dep)\n",
 		prefix,
 		result.NodeCount,
@@ -167,4 +169,5 @@ func printBackfillResult(stdout io.Writer, result sqlite.BackfillResult, dryRun 
 		result.AnnotateEvents,
 		result.LinkDepEvents,
 	)
+	return err
 }

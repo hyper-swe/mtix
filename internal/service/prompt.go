@@ -12,8 +12,6 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/oklog/ulid/v2"
-
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
 )
@@ -24,6 +22,7 @@ type PromptService struct {
 	broadcaster EventBroadcaster
 	logger      *slog.Logger
 	clock       func() time.Time
+	ids         *annotationIDs
 }
 
 // NewPromptService creates a PromptService with required dependencies.
@@ -44,6 +43,7 @@ func NewPromptService(
 		broadcaster: broadcaster,
 		logger:      logger,
 		clock:       clock,
+		ids:         newAnnotationIDs(rand.Reader),
 	}
 }
 
@@ -97,13 +97,13 @@ func (svc *PromptService) AddAnnotation(ctx context.Context, nodeID, text, autho
 	}
 
 	now := svc.clock()
-	id, err := ulid.New(ulid.Timestamp(now), rand.Reader)
+	id, err := svc.ids.next(now)
 	if err != nil {
-		return fmt.Errorf("generate annotation ULID: %w", err)
+		return err
 	}
 
 	annotation := model.Annotation{
-		ID:        id.String(),
+		ID:        id,
 		Author:    author,
 		Text:      text,
 		CreatedAt: now,

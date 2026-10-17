@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -353,48 +354,82 @@ func projectPath(logical, root, value string) (resolved string, lexical, inside 
 	lexical = err == nil && in
 	path := value
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(root, path)
+		// Not Join: cleaning would apply a parent segment to link text.
+		path = root + string(filepath.Separator) + value
 	}
 	resolved = resolveDeepest(path, 0)
 	rel, err := filepath.Rel(root, resolved)
 	return resolved, lexical, lexical || (err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
-// resolveDeepest resolves links up to the deepest existing parent and
-// re-attaches the rest, following a dangling link by its target.
+// maxLinkExpansions bounds how many links one resolution follows, so a cycle
+// ends (the OS refuses such a path, so nothing runs through it).
+const maxLinkExpansions = 64
+
+// resolveDeepest resolves path the way the OS does: component by component,
+// following each link before the next component is applied, so a parent-
+// directory segment after a link goes to the link target's parent, not to the
+// parent of the link's text. Components that do not exist yet are attached
+// lexically, so a path is judged where it would land; a dangling link is
+// followed by its target. depth is the number of links already followed.
 func resolveDeepest(path string, depth int) string {
-	if depth > 32 {
-		return path
+	if !filepath.IsAbs(path) {
+		return filepath.Clean(path)
 	}
-	current, rest := filepath.Clean(path), ""
-	for {
-		if _, err := os.Lstat(current); err == nil {
-			return filepath.Join(resolveExisting(current, depth), rest)
+	vol := filepath.VolumeName(path)
+	root := vol + string(filepath.Separator)
+	todo := splitPathComponents(path[len(vol):])
+	cur, links := root, depth
+	for len(todo) > 0 {
+		comp := todo[0]
+		todo = todo[1:]
+		switch comp {
+		case "", ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			continue
 		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return path
+		next := filepath.Join(cur, comp)
+		info, err := os.Lstat(next)
+		if err != nil {
+			return finishResolved(cur, append([]string{comp}, todo...))
 		}
-		rest = filepath.Join(filepath.Base(current), rest)
-		current = parent
+		if info.Mode()&os.ModeSymlink == 0 {
+			cur = next
+			continue
+		}
+		links++
+		target, readErr := os.Readlink(next)
+		if links > maxLinkExpansions || readErr != nil {
+			return finishResolved(next, todo)
+		}
+		if filepath.IsAbs(target) {
+			targetVol := filepath.VolumeName(target)
+			cur = targetVol + string(filepath.Separator)
+			target = target[len(targetVol):]
+		}
+		todo = append(splitPathComponents(target), todo...)
 	}
+	return finishResolved(cur, nil)
 }
 
-// resolveExisting resolves a path that exists; a dangling link is followed by
-// its target.
-func resolveExisting(current string, depth int) string {
-	if info, err := os.Lstat(current); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		if target, rerr := os.Readlink(current); rerr == nil {
-			if !filepath.IsAbs(target) {
-				target = filepath.Join(filepath.Dir(current), target)
-			}
-			return resolveDeepest(target, depth+1)
-		}
+// finishResolved canonicalizes the part that exists and attaches the rest.
+func finishResolved(existing string, rest []string) string {
+	if resolved, err := filepath.EvalSymlinks(existing); err == nil {
+		existing = resolved
 	}
-	if resolved, err := filepath.EvalSymlinks(current); err == nil {
-		return resolved
-	}
-	return current
+	return filepath.Join(append([]string{existing}, rest...)...)
+}
+
+// splitPathComponents splits on every separator the platform accepts.
+func splitPathComponents(p string) []string {
+	return strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == filepath.Separator })
+}
+
+// hasParentSegment reports a ".." component in a program path as written.
+func hasParentSegment(p string) bool {
+	return slices.Contains(splitPathComponents(p), "..")
 }
 
 // checkOperands refuses a launch that would run, by path, a file that is not

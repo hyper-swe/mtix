@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -33,7 +32,7 @@ const showLongHelp = `Show a node's details and annotations as labeled lines, in
   Desc         full description (only when set; omitted when it holds only
                whitespace, control characters or invisible formatting
                characters), further lines indented
-  Annotations  every annotation, oldest first: its ISO-8601 UTC timestamp
+  Annotations  every annotation, oldest first (equal times by id): its ISO-8601 UTC timestamp
                ("unknown time" when none was recorded), author, addressee
                and resolved marker when present, then the text, with
                further lines indented and "(empty)" for an empty text;
@@ -206,8 +205,9 @@ func runShowWith(id string, opts showOptions) error {
 	return nil
 }
 
-// writeAnnotations prints every annotation of a node for `mtix show`, oldest
-// first, each headed by its UTC timestamp and author (FR-3.4, MTIX-98).
+// writeAnnotations prints every annotation of a node for `mtix show`, ordered
+// by (created_at, id) as model.SortAnnotations defines, the order the store,
+// `--json` and the MCP show tool use too, each headed by its UTC timestamp and author (FR-3.4, MTIX-98).
 // Absence is stated as "Annotations: none", never left silent, so a reader can
 // tell "no verdict" from "verdict not shown". Text is normalized first
 // (MTIX-100.1): control characters removed, CRLF normalized, leading blank
@@ -220,7 +220,7 @@ func writeAnnotations(out OutputWriter, annotations []model.Annotation) {
 		return
 	}
 	out.WriteHuman("Annotations:\n")
-	for _, a := range sortedAnnotations(annotations) {
+	for _, a := range model.SortAnnotations(annotations) {
 		lines := strings.Split(indentContinuation(annotationText(a.Text), annotationTextIndent), "\n")
 		out.WriteHuman("  [%s] %s: %s\n", annotationTime(a.CreatedAt), annotationByline(a), lines[0])
 		for _, line := range lines[1:] {
@@ -241,18 +241,6 @@ func annotationByline(a model.Annotation) string {
 		byline += " (resolved)"
 	}
 	return byline
-}
-
-// sortedAnnotations returns a copy ordered oldest first. The sort is stable,
-// so annotations with equal timestamps keep their stored order, which is the
-// order they were added in.
-func sortedAnnotations(annotations []model.Annotation) []model.Annotation {
-	sorted := make([]model.Annotation, len(annotations))
-	copy(sorted, annotations)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
-	})
-	return sorted
 }
 
 // runList displays nodes with status icons and aligned columns.

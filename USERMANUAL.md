@@ -292,7 +292,7 @@ mtix show PROJ-1
 mtix show PROJ-1 --json
 ```
 
-`mtix show` prints the node's details as labeled lines, then every annotation (oldest first, with its UTC timestamp and author), then the prompt cut to 100 characters. Annotation text, author and addressee, the description and the prompt are normalized for the terminal: control characters other than newline and tab are removed, bidirectional controls (such as overrides and isolates), zero-width characters and tag characters (U+E0001, U+E0020-U+E007F) are removed, the Unicode line and paragraph separators (U+2028, U+2029) become newlines, leading blank lines and trailing whitespace are trimmed, and continuation lines are indented, so stored text cannot overwrite a line, restyle the terminal, display in a misleading order or pass for a label. Title and assignee print as stored. The directional marks (U+200E, U+200F, U+061C) are kept, so a lone mark can still change how digits are ordered. `mtix show --history` follows the same rule and prints each entry on one line, with line breaks shown as spaces. When you need the exact stored text, for example to quote a review verdict, use `--json`: it prints the raw record, unchanged. `mtix show --history` also lists the task's change history, newest first (`--history-limit`, default 50), and `--json` includes it as `history` (an empty list when the task has none).
+`mtix show` prints the node's details as labeled lines, then every annotation (oldest first, equal times ordered by id, with its UTC timestamp and author), then the prompt cut to 100 characters. Annotation text, author and addressee, the description and the prompt are normalized for the terminal: control characters other than newline and tab are removed, bidirectional controls (such as overrides and isolates), zero-width characters and tag characters (U+E0001, U+E0020-U+E007F) are removed, the Unicode line and paragraph separators (U+2028, U+2029) become newlines, leading blank lines and trailing whitespace are trimmed, and continuation lines are indented, so stored text cannot overwrite a line, restyle the terminal, display in a misleading order or pass for a label. Title and assignee print as stored. The directional marks (U+200E, U+200F, U+061C) are kept, so a lone mark can still change how digits are ordered. `mtix show --json` and the MCP `mtix_show` tool list annotations in the same order. `mtix show --history` follows the same rule and prints each entry on one line, with line breaks shown as spaces. When you need the exact stored text, for example to quote a review verdict, use `--json`: it prints the raw record, unchanged. `mtix show --history` also lists the task's change history, newest first (`--history-limit`, default 50), and `--json` includes it as `history` (an empty list when the task has none).
 
 ### Update a Node
 
@@ -760,6 +760,30 @@ Run `mtix agent register <agent-id>` at session boot. Repeat registration on the
 mtix agent register worker-1
 mtix agent register worker-1 --json
 ```
+
+<!-- learned-lane-identity:start -->
+In this release, agents pass their id explicitly to `mtix agent register <agent-id>`, using the id supplied by their instructions or operator.
+Callable identity resolution and `DrainAttachPending` are service APIs for
+future harness integration. Their command, glue and dispatcher wiring is deferred.
+No shipped command reads `MTIX_AGENT_ID` or automatically chooses a learned id.
+
+The callable identity service accepts an explicit identity intended for
+`MTIX_AGENT_ID`, then the resumed session handle, then a learned lane id.
+A learned id is eligible only when exactly one id was ever learned for that
+harness, repository and relative working directory, and it has no live local
+registration. Two learned ids remain proposals, never an automatic choice.
+A registration with unknown liveness also prevents silent reuse.
+
+A new worktree can reuse the main checkout's lane at the same relative path
+only after its common-directory metadata and matching back-link are verified.
+This routing state grants nothing: it does not
+enroll a board, approve a program, confirm wakeability or create a grant.
+
+Registration through the service can queue denied operator-local lane and list
+side writes in its own board. The callable drain validates the board, path and
+worktree membership before copying routing state, and rejects forged entries
+with an operator-local alert. There is no drain command in this release.
+<!-- learned-lane-identity:end -->
 
 #### Registration and lanes
 
@@ -1557,6 +1581,8 @@ mtix import project-data.json --mode replace
 
 **Replace mode** deletes every node, dependency, agent and session, then writes the file's content with every field, annotations and activity included. An export followed by a replace import leaves the store as it was. The automatic import of a changed `.mtix/tasks.json` (after a `git pull` or checkout) is a replace import, but it is refused when it would delete local data (see "Automatic import of `.mtix/tasks.json`" below); `mtix import --mode replace` is gated since 0.5.4 (MTIX-90): it prints the ticket count and needs that count typed at an interactive terminal, so an agent never runs it: ask the user (see `docs/DESTRUCTIVE-COMMANDS.md`). A file written before 0.5.4 (`schema_version` 1.0.0) carries no annotations or activity, so a replace import of it leaves every node without them.
 
+**Replace import on a project that syncs.** `mtix import --mode replace` is refused, before the typed confirmation and with nothing written, when the local store holds tasks and syncs with a hub or relay: it has pushed or pulled events, carries the hub-connected mark, or a hub DSN or relay is configured (MTIX-107.31). A replace deletes tasks and changes whose events stay in the local sync log, and `mtix sync pull` treats those events as already held, so it would never restore them. To take the board on the hub, run `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull` (the discard asks for the ticket count typed at an interactive terminal). To load the file as it is, import it into a project that does not sync. A replace into an empty store, such as a restore into a fresh data directory, still runs. The automatic import never deletes a task whose events the sync log holds either: it refuses any replace that would delete local data, as described below. A project that never synced has shared nothing, so a replace there discards the pending events of the tasks it drops (and the pending links that point at them) in the same transaction; otherwise the first push after a hub is configured would create tasks the board does not hold. A store that published to or ingested from a file relay counts as synced.
+
 **Merge mode**:
 - A node the store does not have is created as exported.
 - For a node the store has, annotations merge as a union by annotation id: no local annotation is dropped, so a file without annotations keeps the local ones. Annotations are keyed by id alone: for an id both sides hold, the local copy wins unless the incoming copy is resolved and the local one is not, so a resolution never regresses. The activity stream merges as a union of distinct entries: an entry is identified by its id, type, author, text and time together, so two different entries that share an id are both kept, and an entry both sides hold is kept once.
@@ -1665,7 +1691,7 @@ Last auto-import refusal: 2026-09-24T10:15:00Z (pending): a replace import would
 
 `mtix sync` never reports `In sync` while an automatic import of the file is pending, or while the file holds an id under another uid than the store (listed under `Another uid in tasks.json`).
 
-`mtix sync --json` reports `in_sync` and those ids as `different_uid`, and the rest under `auto_import`: `enabled`, `setting`, `setting_error`, and `last_refusal` with `refused_at`, `file_hash`, `kind`, `reason`, `loss` (what a replace of the file would delete, when known), `resolved_at` and `pending`. The record is kept in `.mtix/data/auto-import-refusal.json`, next to the other local sync state.
+`mtix sync --json` reports `in_sync` and those ids as `different_uid`, and the rest under `auto_import`: `enabled`, `setting`, `setting_error`, and `last_refusal` with `refused_at`, `file_hash`, `kind`, `reason`, `loss` (what a replace of the file would delete, when known), `synced` (true when the store synced with a hub or relay when it was refused, so the way out mtix names rebuilds from the hub instead of offering a replace import), `resolved_at` and `pending`. The record is kept in `.mtix/data/auto-import-refusal.json`, next to the other local sync state.
 
 ---
 
@@ -1700,6 +1726,36 @@ INTEGRITY FAILURE: 2 nodes with hash mismatches:
 ```
 
 ### JSON Output
+
+#### CLI read freshness
+
+CLI board reads retry a busy local sync lock briefly, with a total wait budget of
+500 ms. If ownership becomes available during the retry, auto-import checks the
+board normally. Persistent contention lets the command read the local cache but
+marks JSON responses with `"stale": true` and
+`"stale_reason": "sync_lock_busy"`. Object responses retain their existing fields;
+array, scalar and null responses are wrapped as
+`{"data": <original response>, "stale": true, "stale_reason": "sync_lock_busy"}`.
+Fresh reads keep their original shape and omit these fields. One possibly stale
+notice also goes to stderr, including protocol and daemon startup when `--json`
+is supplied. CLI JSON stdout remains one valid response.
+
+These fields describe read responses only. Successful mutation acknowledgements
+omit `stale` and `stale_reason`; their absence on an acknowledgement does not
+verify cached read freshness. When a write succeeds despite busy auto-import
+ownership, one completion notice says the write succeeded and must not be
+repeated. Follow that notice: never repeat a successful write. When the write
+itself fails, no completion notice claims it succeeded. A later export or cleanup
+error does not undo a successful write.
+
+Check freshness before using task state or assembled context to take an action.
+When stale is true, retry the same read after the current owner finishes. Never
+delete, replace or unlink `.mtix/data/sync.lock` to bypass its owner, and do not
+use `mtix sync --fix` to force a fresh read: it rewrites the pulled board from the
+local cache. These fields describe sync-lock contention only; still follow any
+other auto-import refusal or warning. Commands that skip automatic import,
+including `mtix sync status` and `mtix sync doctor`, do not make this check.
+
 
 ```bash
 mtix verify --json
@@ -1787,6 +1843,25 @@ below; each one maps to one mtix setting.
 export MTIX_SYNC_SSLROOTCERT="/path/to/ca-bundle.crt"   # only for a private CA
 export MTIX_SYNC_DSN="postgresql://<user>:<pw>@<host>:5432/<db>?sslmode=verify-full"
 ```
+
+- **Special characters in the password.** The URL form needs a password with
+  `/`, `?`, `#`, `%` or a space percent-encoded. To avoid encoding, give the
+  DSN in the libpq key=value form and single-quote the password, escaping `'`
+  and `\` with a backslash. Or leave the password out of the DSN and set
+  `MTIX_SYNC_PASSWORD`; a password in the DSN takes precedence. The TLS rules
+  are the same for both forms.
+
+```bash
+# Shell single quotes pass the DSN through unchanged. This form suits a password
+# with no space, quote or backslash in it; for any other password use the second form:
+export MTIX_SYNC_DSN='host=<host> port=5432 dbname=<db> user=<user> password=<pw> sslmode=verify-full'
+# Or keep the password out of the DSN and read it without echo, so the shell
+# never expands $, backticks or backslashes in it:
+export MTIX_SYNC_DSN='postgresql://<user>@<host>:5432/<db>?sslmode=verify-full'
+IFS= read -r -s MTIX_SYNC_PASSWORD && export MTIX_SYNC_PASSWORD
+```
+Do not put a generated password inside shell double quotes: the shell rewrites
+`\`, `$` and backticks in it before mtix sees it.
 
 ### Setup (every other teammate)
 
@@ -1921,6 +1996,12 @@ same way the hub checks an event when it is pushed:
 - **Size and shape.** A payload of at most 64 KB and at most 10 levels
   of nesting, clocks below 2^53, at most 100 entries in the vector
   clock, and well-formed author, machine and project ids.
+- **Task ids.** Every task id the event names (its task, a creation's
+  parent, a link's or unlink's target) must be inside the node id
+  grammar: `PREFIX-<number>` followed by `.<number>` segments, ASCII only,
+  with no empty segment. mtix never creates any other id, so an event
+  that names one, such as `AA-1é.4`, came from another client or a hub
+  row changed by hand; see "Task ids outside the grammar" below.
 - **Clock jump.** The event's Lamport clock may be at most
   `sync.max_lamport_jump` above your local clock (default 4294967296,
   that is 2^32; far above any real team's history). One extreme event
@@ -1969,6 +2050,21 @@ pull's position either, so later changes keep arriving.
   Raise the bound, `mtix config set sync.max_lamport_jump <positive
   integer>`, only if you know the hub's clocks are legitimately that far
   ahead. Do not delete quarantine rows or edit the database by hand.
+- **Task ids outside the grammar.**
+  An event quarantined for a task id outside the node id grammar has a
+  reason that contains `invalid node id`, the field and the id. No
+  retry applies it: report the event id, its node and its reason to whoever runs
+  the hub. `mtix sync status` counts these events as `quarantined invalid
+  ids` (`quarantined_invalid_ids` in `--json`). `mtix import` refuses, and
+  writes nothing, when the file names such an id that your store does not
+  already hold. A task with such an id that an earlier sync brought in
+  stays in your store: you can read and edit it (`mtix show` takes its
+  uid in place of the id), and `mtix sync status` counts it as `invalid
+  local ids` (`invalid_node_ids` in `--json`). Other replicas quarantine
+  every change to it that they pull, and `mtix sync doctor` warns in its
+  `valid node ids` check, naming each task and its uid. Recreate each task
+  you still need with `mtix create` and stop using the old one; no mtix
+  command renames a task in this version.
 - **Rebuilding from the hub deletes local work.** `mtix sync reconcile
   --discard-local` deletes your local tasks and unpushed changes (it asks for
   the ticket count, typed at an interactive terminal; no flag supplies it, so
@@ -2883,6 +2979,13 @@ The notice is advisory: the hook still runs as written and launch behaviour
 does not change. To clear it, run the program through a pinned project script
 and approve the hook again.
 
+Hook program paths must be clean: a program written with a parent-directory
+segment ("..") is refused at launch, naming the hook, because the checked path
+and the file the operating system runs can differ once a link comes before the
+segment. Write the program as an absolute path without ".." or as a
+project-relative path (scripts/run.sh and ./scripts/run.sh are fine). Paths are
+resolved link by link, so a script operand is judged where it actually lands.
+
 Append-file hooks: an `append-file` hook writes only to a regular file inside
 the project. Its `append-file.path` must be relative. The file is opened
 through a handle on the project directory, so a path that leads outside the
@@ -3001,10 +3104,23 @@ for the full tradeoff.
 ```bash
 mtix sync doctor             # health checks: PG reachable, schema current,
                              #   queue draining, no orphan applied,
-                             #   quarantined events, unique node uids,
-                             #   held push events, secrets file mode,
-                             #   hub triggers, hub privileges
+                             #   board matches sync log, quarantined
+                             #   events, valid node ids, unique node
+                             #   uids, held push events, secrets file
+                             #   mode, hub triggers, hub privileges
 ```
+
+The `board matches sync log` check runs on a project that syncs. It
+fails while the local sync log creates a task that the board lacks, with
+no delete event for it, as a replace import of an earlier version could
+leave. A task is matched by its uid first, so a task whose uid was
+replaced under the same number is reported, and a task that was only
+renumbered is not. A pull cannot restore such a task, because it treats
+the task's events as already held. The detail names the tasks, and the fix
+is these steps, run one at a time: `mtix sync push`, check that `mtix sync
+status` shows `pending` 0 (reconcile drops what is not pushed), then `mtix
+sync reconcile --discard-local --yes`, then `mtix sync pull`. They
+rebuild the board and the sync log from the hub.
 
 Exit code 0 on all-pass, including a check that passes with a WARN; exit
 code 2 if any check fails (operators can gate CI / monitoring on this).
@@ -3547,12 +3663,15 @@ change the node's status with the normal commands instead.
 | `mtix sync push` errors with "tls handshake timeout" | TLS misconfiguration | Verify `MTIX_SYNC_SSLROOTCERT` if managed-PG requires it |
 | A sync command fails with a message containing "check the DSN's connection parameters" | The DSN's settings, or a CA, client-certificate or key file they name (`sslrootcert`, `MTIX_SYNC_SSLROOTCERT`, `PGSSLROOTCERT`, `PGSSLCERT`/`PGSSLKEY`, or the driver's defaults in `~/.postgresql/` (`%APPDATA%\postgresql\` on Windows): `root.crt` when it exists, and `postgresql.crt` with `postgresql.key` only when both exist), could not be parsed or loaded. The message never repeats the path or the DSN | Check the DSN's parameters and that each named file exists, is readable and holds PEM data; then run `mtix sync doctor` |
 | `ErrSyncDivergentHistory` on `mtix sync init` | Hub already has a different lineage for this prefix | Run `mtix sync clone` to join, OR `mtix sync reconcile --import-as PARENT-ID` |
+| `mtix sync doctor` fails `board matches sync log` | A replace import of an earlier version deleted tasks whose events stay in the local sync log; a pull cannot restore them | Run the steps the check prints, one at a time: `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull` (the discard needs the ticket count typed at an interactive terminal) |
+| `mtix import --mode replace` fails with `this store syncs with a hub` | A replace would delete tasks and changes whose events stay in the local sync log | Run `mtix sync pull` to receive teammates' changes, or rebuild the board from the hub with the commands the error names |
 | `ErrSyncQueueFull` from `mtix create` / `update` | Local pending queue at the cap | `mtix sync push --force`, or raise `sync.max_queue_size` |
 | `mtix sync status` shows pending count climbing | Daemon not running or hub unreachable | `systemctl status mtix-sync`; `mtix sync doctor` |
 | A teammate's change is missing after `mtix sync pull` | They have not pushed yet, the late-event sweep failed (the pull reports the error), or the change is quarantined | Ask them to run `mtix sync push`, then pull again; `mtix sync status` shows `last sweep` and `quarantined events` |
 | `mtix verify` prints `INTEGRITY FAILURE` for uids, or `mtix sync doctor` fails `unique node uids` | An older mtix left two tasks with one uid; the local database now refuses a second holder, so it keeps the old index until they are gone | Back up (`mtix backup .mtix/data/backups/pre-uid-fix.db`), keep the uid on the original task, and for every other task named in the detail run `UPDATE nodes SET uid = '' WHERE id = '<id>';` on `.mtix/data/mtix.db` with no mtix running; the next mtix command gives it a fresh uid and creates the unique index. Never delete the row. On a project that syncs (`mtix sync status` shows a `project_prefix` other than `-` or a `pushed` or `applied` count above 0, `MTIX_SYNC_DSN` is set, or `.mtix/secrets` exists), the project maintainer decides: the re-uid'd task has no create event at any peer and queued events under the shared uid go to the other holder, so run `mtix sync push` until `pending` is 0 first; no mtix command repairs a synced project in this version (MTIX-95.31.8.1) |
 | `mtix sync quarantine list` shows `uid <u> is held by local task <id>` | A pulled create carries a uid another local task holds; it is held, not dropped, and retried on every pull | Compare `mtix show <id>` with the event. The same uid is the same task (ADR-003); no mtix command resolves this in this version (`mtix sync reconcile` keeps uids; tracked as MTIX-95.31.8.1), so ask the user with the uid, the task id and the event id. Never delete the local task |
 | `mtix sync doctor` fails `quarantined events` | Pulled events failed their checks or their apply and are held, not applied | Run `mtix sync pull` (it retries them); if they remain, list them with `mtix sync quarantine list` (see [Quarantined events](#quarantined-events)) and report the reasons to whoever runs the hub |
+| `mtix sync doctor` warns in `valid node ids` | An earlier sync brought in a task whose id is outside the node id grammar | The task stays readable and editable (`mtix show <uid>`); recreate it with `mtix create` if you still need it (see [Quarantined events](#quarantined-events)) |
 | A command prints `WARN: ... over the 65536-byte sync limit`, or `mtix sync doctor` fails `held push events` | Push holds events the hub would refuse (and the events of a held task creation's subtree, and links made while one is held), and pushes the rest | Follow the fix doctor names for each held event: shorten or split a field edit; escalate a held task creation, without editing it; check the clock for a clock hold (see [Held push events](#held-push-events)) |
 | `mtix sync status` shows a `pending` count that never goes down, `mtix sync doctor` fails `queue draining`, yet `mtix sync push` reports success | On a client older than 0.5.4: events an earlier push delivered but never marked pushed (a lost commit confirmation, a crash or disk failure before the local mark, a retry after a network drop) sit at the head of the queue, and push stops at them | Upgrade and run `mtix sync push`: it confirms the events already on the hub (`already on the hub` in its output) and pushes the rest; check `pending` 0 (see [Events already on the hub](#events-already-on-the-hub)) |
 | A node shows an older state than its history after a pull on a client older than 0.5.4 (for example `in_progress` after `mtix done`) | That pull replayed an older event of this machine | Upgrade, run `mtix sync pull`, then `mtix sync repair --status` and review the list; run `mtix sync pull` again, then `mtix sync repair --status --apply` and `mtix sync push`; a flagged node needs review and `--force` (see above). Pulling first matters: a repair made on a stale log can revert a teammate's newer change on every machine |
@@ -4001,4 +4120,3 @@ Grants and the protected `confirmations.jsonl` log live in the operator-local mt
 Each committed change batch publishes one unaddressed neutral board line with a separately generated UUIDv7 event identity, independent of caller batch ids: wake permissions changed on a host (see that host's mtix doctor). It contains no host or agent id, path or user name; ordinary sync provenance remains unchanged. An empty board receives no new task or line: the local log and doctor show `skipped_no_node`. When a board first becomes hub-connected, implicitly eligible ids become held and operator-local Alerts report the required confirmation.
 
 Grants match board identity by default; optional strict hub-identity matching remains off by default. No sender allowlist is added in this beta: share a hub only with trusted principals. The reusable file-batch API supports orchestration; the full setup and file-application commands belong to a future setup release and are not shipped here. Confirmation selection facts remain separate and start unchecked.
-

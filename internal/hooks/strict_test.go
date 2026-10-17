@@ -433,22 +433,23 @@ func TestStrict_ProgramRecordFromAnotherHostIsUnreadableNotAbsent(t *testing.T) 
 	require.Contains(t, err.Error(), "cannot be read")
 }
 
-// linkedPathDir returns a directory of links: dir/usrbin points at the
-// directory that holds a real env and sh, so dir/usrbin/env names the same file
-// as the PATH entry but through a link.
-func linkedPathDir(t *testing.T) (linkDir, realDir string) {
+// linkedPathDir returns a directory holding one link to the PATH directory that
+// contains the named program, so linkDir/name names the same file as the PATH
+// entry but through a link.
+func linkedPathDir(t *testing.T, name string) (linkDir, realDir string) {
 	t.Helper()
-	env, err := exec.LookPath("env")
+	program, err := exec.LookPath(name)
 	require.NoError(t, err)
-	realDir = filepath.Dir(env)
-	linkDir = filepath.Join(t.TempDir(), "usrbin")
+	realDir, err = filepath.EvalSymlinks(filepath.Dir(program))
+	require.NoError(t, err)
+	linkDir = filepath.Join(t.TempDir(), "pathdir")
 	require.NoError(t, os.Symlink(realDir, linkDir))
 	return linkDir, realDir
 }
 
-// escapeChain builds a link whose lexical clean lands on realDir but whose
-// physical target is a planted copy elsewhere in the project, and returns the
-// program path text for name.
+// escapeChain returns a program path written through a link and parent-directory
+// segments whose textual clean and physical location differ, with a program
+// of that name placed at the physical location.
 func escapeChain(t *testing.T, root, realDir, name string) string {
 	t.Helper()
 	climb := len(splitPathComponents(root)) + 1
@@ -470,8 +471,8 @@ func escapeChain(t *testing.T, root, realDir, name string) string {
 }
 
 func TestStrict_KnownWrapperAndInterpreterAreJudgedByThePhysicalDirectory(t *testing.T) {
-	linkDir, realDir := linkedPathDir(t)
 	for _, name := range []string{"env", "sh"} {
+		linkDir, realDir := linkedPathDir(t, name)
 		root, err := filepath.EvalSymlinks(t.TempDir())
 		require.NoError(t, err)
 		probe := escapeChain(t, root, realDir, name)
@@ -487,18 +488,43 @@ func TestStrict_KnownWrapperAndInterpreterAreJudgedByThePhysicalDirectory(t *tes
 }
 
 func TestStrict_On_KnownEnvAndInterpreterSlotsArePinnedToThePhysicalDirectory(t *testing.T) {
-	linkDir, realDir := linkedPathDir(t)
-	f := strictFixture(t, "["+filepath.Join(linkDir, "env")+", "+filepath.Join(linkDir, "sh")+", scripts/run.sh]")
+	envLink, envReal := linkedPathDir(t, "env")
+	shLink, shReal := linkedPathDir(t, "sh")
+	command := "[" + filepath.Join(envLink, "env") + ", " + filepath.Join(shLink, "sh") + ", scripts/run.sh]"
+	f := strictFixture(t, command)
 	plan, err := f.approvals.PrepareExec(f.hook(t))
 	require.NoError(t, err)
-	realReal, err := filepath.EvalSymlinks(realDir)
-	require.NoError(t, err)
-	require.Equal(t, filepath.Join(realReal, "env"), plan.Argv[0], "the env slot is pinned")
-	require.Equal(t, filepath.Join(realReal, "sh"), plan.Argv[1], "the interpreter slot is pinned")
-	off := newPrepareFixture(t, "["+filepath.Join(linkDir, "env")+", "+filepath.Join(linkDir, "sh")+", scripts/run.sh]")
+	require.Equal(t, filepath.Join(envReal, "env"), plan.Argv[0], "the env slot is pinned")
+	require.Equal(t, filepath.Join(shReal, "sh"), plan.Argv[1], "the interpreter slot is pinned")
+	off := newPrepareFixture(t, command)
 	plan, err = off.approvals.PrepareExec(off.hook(t))
 	require.NoError(t, err)
-	require.Equal(t, filepath.Join(linkDir, "env"), plan.Argv[0], "strict off leaves the launch as written")
+	require.Equal(t, filepath.Join(envLink, "env"), plan.Argv[0], "strict off leaves the launch as written")
+}
+
+// The known slots are pinned in every strict launch, including when another
+// slot is the approved program.
+func TestStrict_On_KnownWrapperBeforeAnApprovedProgramIsPinned(t *testing.T) {
+	envLink, envReal := linkedPathDir(t, "env")
+	f := strictFixture(t, "["+filepath.Join(envLink, "env")+", cat, data/x]")
+	_, err := f.approvals.ApproveProgram(f.hook(t), true)
+	require.NoError(t, err)
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(envReal, "env"), plan.Argv[0], "the wrapper slot is pinned beside the approved program")
+}
+
+func TestStrict_On_KnownInterpreterBehindAnApprovedWrapperIsPinned(t *testing.T) {
+	wrapper, err := filepath.EvalSymlinks(fakeEnv(t))
+	require.NoError(t, err)
+	shLink, shReal := linkedPathDir(t, "sh")
+	f := strictFixture(t, "["+wrapper+", "+filepath.Join(shLink, "sh")+", scripts/run.sh]")
+	_, err = f.approvals.ApproveProgram(f.hook(t), true)
+	require.NoError(t, err)
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err)
+	require.Equal(t, wrapper, plan.Argv[0])
+	require.Equal(t, filepath.Join(shReal, "sh"), plan.Argv[1], "the interpreter slot is pinned beside the approved wrapper")
 }
 
 func TestStrict_ProgramRecordForAnotherProjectIsRefused(t *testing.T) {
@@ -543,10 +569,19 @@ func TestStrict_RecordsLiveOutsideTheProject(t *testing.T) {
 	require.Len(t, recordFilesContaining(t, f, `"enabled"`), 1)
 }
 
-func TestProgramToApprove_ReportsTheResolvedProgramWithoutWriting(t *testing.T) {
+func TestApproveProgramShowing_ShowsTheBoundProgramBeforeTheWrite(t *testing.T) {
 	f := strictFixture(t, "[cat, data/x]")
-	program, err := f.approvals.ProgramToApprove(f.hook(t))
+	var shown string
+	written := -1
+	program, err := f.approvals.ApproveProgramShowing(f.hook(t), true, func(p string) error {
+		shown = p
+		written = len(recordFilesContaining(t, f, `"program"`))
+		return nil
+	})
 	require.NoError(t, err)
-	require.True(t, filepath.IsAbs(program))
-	require.Empty(t, recordFilesContaining(t, f, `"program"`), "nothing is written before the operator approves")
+	require.Equal(t, 0, written, "the program is shown before anything is written")
+	require.Equal(t, program, shown, "what is shown is what is bound")
+	require.Len(t, recordFilesContaining(t, f, `"program"`), 1)
+	_, err = f.approvals.ApproveProgramShowing(f.hook(t), false, func(string) error { t.Fatal("shown although refused"); return nil })
+	require.Error(t, err)
 }

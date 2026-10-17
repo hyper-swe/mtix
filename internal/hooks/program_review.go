@@ -130,13 +130,37 @@ func reviewBaseName(program string) string {
 // directories at approval time. Any other path (relative, or an absolute
 // path outside PATH) is not trusted by its name.
 func knownInterpreterProgram(root, program string) bool {
-	if !reviewInterpreterName.MatchString(reviewBaseName(program)) {
-		return false
+	_, ok := knownInterpreterPin(root, program)
+	return ok
+}
+
+// knownInterpreterPin is knownInterpreterProgram that also returns the path to
+// launch: the physical directory it was judged in plus the program's own name.
+// The directory is resolved once, so the judged and the launched directory are
+// the same.
+func knownInterpreterPin(root, program string) (string, bool) {
+	return knownProgramPin(root, program, func(p string) bool { return reviewInterpreterName.MatchString(reviewBaseName(p)) })
+}
+
+// knownProgramPin decides a program by name and by the physical directory that
+// holds it (a fixed PATH directory), and returns that directory joined with the
+// program's own name. A bare name is looked up on the fixed PATH and is
+// returned as written.
+func knownProgramPin(root, program string, nameKnown func(string) bool) (string, bool) {
+	if !nameKnown(program) {
+		return "", false
 	}
 	if filepath.IsAbs(program) {
-		return inPathDirectory(root, programDirectory(program))
+		dir := programDirectory(program)
+		if !inPathDirectory(root, dir) {
+			return "", false
+		}
+		return filepath.Join(dir, filepath.Base(program)), true
 	}
-	return isBareName(program)
+	if isBareName(program) {
+		return program, true
+	}
+	return "", false
 }
 
 // programDirectory returns the physical directory that holds the program: the
@@ -150,12 +174,6 @@ func programDirectory(program string) string {
 		return resolveDeepest(program[:cut+1], 0)
 	}
 	return resolveDeepest(program[:cut], 0)
-}
-
-// pinnedProgramPath is the program as launched under strict mode: the physical
-// directory it was judged in, plus its own name.
-func pinnedProgramPath(program string) string {
-	return filepath.Join(programDirectory(program), filepath.Base(program))
 }
 
 // isBareName reports a program written without any path separator, using the

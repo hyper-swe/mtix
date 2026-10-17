@@ -2996,6 +2996,10 @@ contents are not pinned, so approve only programs in locations that
 agents and other untrusted processes cannot write. A launch wrapper other than
 the known env, found by name in a PATH directory, is itself the program that
 needs approval.
+Whether a wrapper or an interpreter is the known one is decided by the
+physical directory that holds it, after links are followed; under strict mode
+those slots always launch from that directory. `mtix hooks trust --program`
+prints the program it will approve before it writes the approval.
 
 Hook program paths must be clean: a program written with a parent-directory
 segment ("..") is refused at launch, naming the hook, because the checked path

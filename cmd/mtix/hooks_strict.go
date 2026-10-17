@@ -83,12 +83,13 @@ func runHooksTrustProgram(approvals *hooks.Approvals, name string, status, termi
 		return fmt.Errorf("configured exec hook %q not found", name)
 	}
 	if !status {
-		if program, err := approvals.ProgramToApprove(*selected); err == nil {
-			if _, werr := fmt.Fprintf(os.Stderr, "Program to approve for hook %q: %s\n", name, program); werr != nil {
-				return fmt.Errorf("show program: %w", werr)
+		show := func(program string) error {
+			if _, err := fmt.Fprintf(os.Stderr, "Program to approve for hook %q: %s\n", name, program); err != nil {
+				return fmt.Errorf("show program: %w", err)
 			}
+			return nil
 		}
-		if _, err := approvals.ApproveProgram(*selected, terminal); err != nil {
+		if _, err := approvals.ApproveProgramShowing(*selected, terminal, show); err != nil {
 			return err
 		}
 	}

@@ -112,13 +112,14 @@ func strictTarget(h Hook, in *hookInputs) (index int, needed bool) {
 // name or an absolute path in one of the fixed PATH directories. A name alone
 // is not trusted: a relative path, or a path outside PATH, is some other file.
 func knownEnvWrapper(root, program string) bool {
-	if !isEnv(program) {
-		return false
-	}
-	if filepath.IsAbs(program) {
-		return inPathDirectory(root, programDirectory(program))
-	}
-	return isBareName(program)
+	_, ok := knownEnvPin(root, program)
+	return ok
+}
+
+// knownEnvPin is knownEnvWrapper that also returns the path to launch: the
+// physical directory the wrapper was judged in plus its own name.
+func knownEnvPin(root, program string) (string, bool) {
+	return knownProgramPin(root, program, isEnv)
 }
 
 // ApproveProgram approves the hook's program for strict mode and returns the
@@ -126,6 +127,13 @@ func knownEnvWrapper(root, program string) bool {
 // refused under an agent session marker, and applies to a program of class
 // other only.
 func (a *Approvals) ApproveProgram(h Hook, terminal bool) (string, error) {
+	return a.ApproveProgramShowing(h, terminal, nil)
+}
+
+// ApproveProgramShowing is ApproveProgram that first resolves the program once,
+// calls show with it, and then writes that same value, so what the operator is
+// shown is what the record binds. show is not called when the gate refuses.
+func (a *Approvals) ApproveProgramShowing(h Hook, terminal bool, show func(program string) error) (string, error) {
 	if !terminal || a.session {
 		return "", fmt.Errorf("program approval requires terminal stdin outside an agent session")
 	}
@@ -140,6 +148,11 @@ func (a *Approvals) ApproveProgram(h Hook, terminal bool) (string, error) {
 	program, err := strictProgram(h, in, index)
 	if err != nil {
 		return "", fmt.Errorf("hook %q: %w", h.Name, err)
+	}
+	if show != nil {
+		if err := show(program); err != nil {
+			return "", err
+		}
 	}
 	rec := programRecord{Project: project, Hook: h.Name, Program: program, Digest: in.digest}
 	if err := a.state.WriteJSON(recordKey("prog-", project, h.Name), rec); err != nil {
@@ -193,12 +206,18 @@ func (a *Approvals) enforceStrict(h Hook, in *hookInputs, plan *ExecPlan) error 
 	if !on {
 		return nil
 	}
-	if !needed {
-		pinKnownSlots(h, in, plan)
-		return nil
-	}
 	refuse := func(why string) error {
 		return fmt.Errorf("exec launch refused for hook %q: strict program mode is on and %s; approve it on a terminal: %s", h.Name, why, ProgramTrustFix(h.Name))
+	}
+	skip := -1
+	if needed {
+		skip = index
+	}
+	if pinErr := pinKnownSlots(h, in, plan, skip); pinErr != nil {
+		return refuse(pinErr.Error())
+	}
+	if !needed {
+		return nil
 	}
 	program, err := strictProgram(h, in, index)
 	if err != nil {
@@ -220,35 +239,27 @@ func (a *Approvals) enforceStrict(h Hook, in *hookInputs, plan *ExecPlan) error 
 	return nil
 }
 
-// pinKnownSlots pins the launch wrapper (env) and a known interpreter to the
-// physical directory they were judged in, so a link in the written path cannot
-// be re-pointed between the check and the launch.
-func pinKnownSlots(h Hook, in *hookInputs, plan *ExecPlan) {
-	if in.program > 0 {
-		plan.Argv[0] = pinnedProgramPath(plan.Argv[0])
+// pinKnownSlots pins every launch wrapper (env) and known interpreter slot to
+// the physical directory it is judged in, in every strict-mode launch, so a
+// link in the written path cannot be re-pointed between the check and the
+// launch. The slot at skip is pinned as the approved program instead. Each
+// slot is resolved once: the directory judged is the directory launched.
+func pinKnownSlots(h Hook, in *hookInputs, plan *ExecPlan, skip int) error {
+	if in.program > 0 && skip != 0 {
+		pin, ok := knownEnvPin(in.root, plan.Argv[0])
+		if !ok {
+			return fmt.Errorf("launch wrapper %q is not the known env in a fixed PATH directory", plan.Argv[0])
+		}
+		plan.Argv[0] = pin
 	}
-	if classifyProgram(h, in).Class == ClassInterpreterScript && filepath.IsAbs(plan.Argv[in.program]) {
-		plan.Argv[in.program] = pinnedProgramPath(plan.Argv[in.program])
+	if skip != in.program && classifyProgram(h, in).Class == ClassInterpreterScript {
+		pin, ok := knownInterpreterPin(in.root, plan.Argv[in.program])
+		if !ok {
+			return fmt.Errorf("interpreter %q is not a known interpreter in a fixed PATH directory", plan.Argv[in.program])
+		}
+		plan.Argv[in.program] = pin
 	}
-}
-
-// ProgramToApprove returns the symlink-resolved program ApproveProgram would
-// bind the approval to, without writing anything, so the operator can see it
-// first.
-func (a *Approvals) ProgramToApprove(h Hook) (string, error) {
-	in, _, err := a.strictInputs(h)
-	if err != nil {
-		return "", err
-	}
-	index, needed := strictTarget(h, in)
-	if !needed {
-		return "", fmt.Errorf("hook %q runs a %s and needs no program approval", h.Name, classifyProgram(h, in).Class)
-	}
-	program, err := strictProgram(h, in, index)
-	if err != nil {
-		return "", fmt.Errorf("hook %q: %w", h.Name, err)
-	}
-	return program, nil
+	return nil
 }
 
 // StrictStatus reports strict mode for the configured exec hooks, with the

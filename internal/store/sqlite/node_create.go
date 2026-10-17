@@ -264,7 +264,8 @@ func marshalNodeFields(node *model.Node) (*nodeJSONFields, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal commit_refs: %w", err)
 	}
-	annotationsJSON, err := marshalJSONField(node.Annotations)
+	// Stored in the canonical (created_at, id) order (MTIX-100.2).
+	annotationsJSON, err := marshalJSONField(model.SortAnnotations(node.Annotations))
 	if err != nil {
 		return nil, fmt.Errorf("marshal annotations: %w", err)
 	}

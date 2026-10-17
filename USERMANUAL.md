@@ -292,7 +292,7 @@ mtix show PROJ-1
 mtix show PROJ-1 --json
 ```
 
-`mtix show` prints the node's details as labeled lines, then every annotation (oldest first, equal times ordered by id, with its UTC timestamp and author), then the prompt cut to 100 characters. Annotation text, author and addressee, the description and the prompt are normalized for the terminal: control characters other than newline and tab are removed, leading blank lines and trailing whitespace are trimmed, and continuation lines are indented, so stored text cannot overwrite a line, restyle the terminal or pass for a label. Title and assignee print as stored, and invisible Unicode formatting characters (such as bidirectional overrides) are not removed yet. `mtix show --json` and the MCP `mtix_show` tool list annotations in the same order. When you need the exact stored text, for example to quote a review verdict, use `--json`: it prints the raw record, unchanged. `mtix show --history` also lists the task's change history, newest first (`--history-limit`, default 50), and `--json` includes it as `history` (an empty list when the task has none).
+`mtix show` prints the node's details as labeled lines, then every annotation (oldest first, equal times ordered by id, with its UTC timestamp and author), then the prompt cut to 100 characters. Annotation text, author and addressee, the description and the prompt are normalized for the terminal: control characters other than newline and tab are removed, bidirectional controls (such as overrides and isolates), zero-width characters and tag characters (U+E0001, U+E0020-U+E007F) are removed, the Unicode line and paragraph separators (U+2028, U+2029) become newlines, leading blank lines and trailing whitespace are trimmed, and continuation lines are indented, so stored text cannot overwrite a line, restyle the terminal, display in a misleading order or pass for a label. Title and assignee print as stored. The directional marks (U+200E, U+200F, U+061C) are kept, so a lone mark can still change how digits are ordered. `mtix show --json` and the MCP `mtix_show` tool list annotations in the same order. `mtix show --history` follows the same rule and prints each entry on one line, with line breaks shown as spaces. When you need the exact stored text, for example to quote a review verdict, use `--json`: it prints the raw record, unchanged. `mtix show --history` also lists the task's change history, newest first (`--history-limit`, default 50), and `--json` includes it as `history` (an empty list when the task has none).
 
 ### Update a Node
 
@@ -1022,7 +1022,11 @@ ACCEPTANCE:
 
 Each node block is separated by `=` characters. Single-line fields use
 `LABEL: value`. Multi-line fields use `LABEL:\n  indented body`. Control
-characters are sanitized (replaced with U+FFFD). Fields containing
+characters, bidirectional embedding, override and isolate controls,
+zero-width characters, tag characters and the line and paragraph
+separators (U+2028, U+2029) are sanitized (each replaced with U+FFFD). The
+directional marks (U+200E, U+200F, U+061C) and other format characters,
+such as variation selectors, are kept. Fields containing
 newlines in normally single-line positions are auto-promoted to multi-line
 to prevent label injection.
 

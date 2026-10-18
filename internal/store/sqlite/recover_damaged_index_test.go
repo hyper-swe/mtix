@@ -114,6 +114,53 @@ func patchIndexEntries(t *testing.T, dbPath string, patches map[string]indexPatc
 	require.NoError(t, os.WriteFile(dbPath, raw, 0o600))
 }
 
+// renameTableRows rewrites the id that each row of the nodes table carries,
+// keyed by the id it carries now, in the closed database at dbPath
+// (MTIX-107.78): the damage that leaves the table holding two rows with one
+// id. The index is left as it is. It folds the write-ahead log into the file,
+// then rewrites the rows in the table's root page, which must be a leaf page
+// (a small store) whose cells hold their whole payload; id is the table's
+// first column, and a renamed row keeps its id's length.
+func renameTableRows(t *testing.T, dbPath string, renames map[string]string) {
+	t.Helper()
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", dbPath)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `PRAGMA journal_mode = DELETE`)
+	require.NoError(t, err)
+	var root, pageSize int64
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT rootpage FROM sqlite_master WHERE type = 'table' AND name = ?`, "nodes").Scan(&root))
+	require.NoError(t, db.QueryRowContext(ctx, `PRAGMA page_size`).Scan(&pageSize))
+	require.NoError(t, db.Close())
+
+	raw, err := os.ReadFile(dbPath)
+	require.NoError(t, err)
+	page := raw[(root-1)*pageSize : root*pageSize]
+	require.Equal(t, byte(0x0d), page[0], "the table root is a leaf page")
+	renamed := 0
+	for i := 0; i < int(binary.BigEndian.Uint16(page[3:5])); i++ {
+		cell := int(binary.BigEndian.Uint16(page[8+2*i:]))
+		payload, n := sqliteVarint(page[cell:])
+		require.Less(t, payload, uint64(pageSize-35), "the row's payload fits in its cell")
+		_, n2 := sqliteVarint(page[cell+n:]) // rowid
+		rec := cell + n + n2
+		headerLen, n := sqliteVarint(page[rec:])
+		idType, _ := sqliteVarint(page[rec+n:])
+		idStart := rec + int(headerLen)
+		id := string(page[idStart : idStart+int((idType-13)/2)])
+		to, ok := renames[id]
+		if !ok {
+			continue
+		}
+		require.Len(t, to, len(id), "a renamed row keeps its id's length")
+		copy(page[idStart:], to)
+		renamed++
+	}
+	require.Equal(t, len(renames), renamed, "every row to rename was found")
+	require.NoError(t, os.WriteFile(dbPath, raw, 0o600))
+}
+
 // repointIndexEntries makes the primary-key index entry of each node id in
 // repoint point at the row of the node it maps to (patchIndexEntries).
 func repointIndexEntries(t *testing.T, dbPath string, repoint map[string]string) {
@@ -131,9 +178,11 @@ type damagedIndexCase struct {
 	name          string
 	editMirror    func(t *testing.T, m *ExportData)
 	patches       map[string]indexPatch
-	rc4           bool     // also seed RC-4
-	tearRC2       bool     // also tear RC-2's annotations cell
-	wantNotes     []string // each exactly once
+	renameRows    map[string]string // ids of table rows to rewrite (renameTableRows)
+	rc4           bool              // also seed RC-4
+	tearRC2       bool              // also tear RC-2's annotations cell
+	tearRC3       bool              // also tear RC-3's annotations cell
+	wantNotes     []string          // each exactly once
 	wantRecovered []string
 	wantMirror    []string
 	wantLost      []string
@@ -180,8 +229,15 @@ func damagedIndexFixture(t *testing.T, tc *damagedIndexCase) (dbPath, mirrorPath
 		_, err = s.WriteDB().ExecContext(context.Background(), corruptColumnSQL(t, "annotations"), tornJSON, "RC-2")
 		require.NoError(t, err)
 	}
+	if tc.tearRC3 {
+		_, err = s.WriteDB().ExecContext(context.Background(), corruptColumnSQL(t, "annotations"), tornJSON, "RC-3")
+		require.NoError(t, err)
+	}
 	corruptAndClose(t, s, "annotations")
 	patchIndexEntries(t, dbPath, tc.patches)
+	if tc.renameRows != nil {
+		renameTableRows(t, dbPath, tc.renameRows)
+	}
 	return dbPath, mirrorPath
 }
 
@@ -299,6 +355,54 @@ func TestRecover_IndexEntryPointsAtAnotherRow_ExportHoldsEachIDOnceAndImports(t 
 				"RC-3": "third task", "RC-4": "fourth task",
 			},
 		},
+		{
+			name:       "the table holds two RC-2 rows (RC-3's row renamed), each reached by its own RC-2 entry",
+			patches:    map[string]indexPatch{"RC-3": {renameTo: "RC-2"}},
+			renameRows: map[string]string{"RC-3": "RC-2"},
+			wantNotes: []string{
+				"node RC-2: the table holds two rows with id RC-2: the row at rowid 2 is salvaged as RC-2, " +
+					"and the row at rowid 3 is not salvaged; its content is ",
+				`"title":"third task"`,
+			},
+			wantRecovered: []string{"RC-1", "RC-2"},
+			wantMirror:    []string{"RC-3"},
+			wantTitles:    all3,
+		},
+		{
+			name:       "the table holds two RC-2 rows (RC-3's row renamed), the second reached by RC-3's entry",
+			patches:    map[string]indexPatch{},
+			renameRows: map[string]string{"RC-3": "RC-2"},
+			wantNotes: []string{
+				"node RC-3: the index entry for RC-3 points at the row of RC-2; " +
+					"the table holds two rows with id RC-2, so it is not salvaged (see the note on RC-2)",
+				"node RC-2: the table holds two rows with id RC-2: the row at rowid 2 is salvaged as RC-2, " +
+					"and the row at rowid 3 is not salvaged; its content is ",
+				`"title":"third task"`,
+			},
+			wantRecovered: []string{"RC-1", "RC-2"},
+			wantMirror:    []string{"RC-3"},
+			wantTitles:    all3,
+		},
+		{
+			name:       "two entries reach the one extra RC-2 row (RC-3 renamed RC-2, RC-4's entry points at it): reported once",
+			rc4:        true,
+			patches:    map[string]indexPatch{"RC-4": point("RC-3")},
+			renameRows: map[string]string{"RC-3": "RC-2"},
+			wantNotes: []string{
+				"node RC-3: the index entry for RC-3 points at the row of RC-2; " +
+					"the table holds two rows with id RC-2, so it is not salvaged (see the note on RC-2)",
+				"node RC-4: the index entry for RC-4 points at the row of RC-2; " +
+					"the table holds two rows with id RC-2, so it is not salvaged (see the note on RC-2)",
+				"node RC-2: the table holds two rows with id RC-2: the row at rowid 2 is salvaged as RC-2, " +
+					"and the row at rowid 3 is not salvaged; its content is ",
+			},
+			wantRecovered: []string{"RC-1", "RC-2"},
+			wantMirror:    []string{"RC-3", "RC-4"},
+			wantTitles: map[string]string{
+				"RC-1": "reviewed task with a comment", "RC-2": "unaffected neighbour task",
+				"RC-3": "third task", "RC-4": "fourth task",
+			},
+		},
 	}
 	for i := range tests {
 		tc := &tests[i]
@@ -353,4 +457,26 @@ func assertDamagedIndexSalvage(t *testing.T, tc *damagedIndexCase, res *RecoverR
 	t.Cleanup(func() { _ = fresh.Close() })
 	_, err = fresh.Import(context.Background(), res.Export, ImportModeReplace, false)
 	require.NoError(t, err, "the salvage file imports with a replace import")
+}
+
+// TestRecover_TableDuplicateRowWithTornColumn_NoteNamesTheColumn covers the
+// unreadable-column part of the duplicate-row note (MTIX-107.78): when the row
+// that is not salvaged has a JSON column that does not parse, the one note for
+// that row names the column and the cause, after its content.
+func TestRecover_TableDuplicateRowWithTornColumn_NoteNamesTheColumn(t *testing.T) {
+	tc := &damagedIndexCase{
+		patches:    map[string]indexPatch{"RC-3": {renameTo: "RC-2"}},
+		renameRows: map[string]string{"RC-3": "RC-2"},
+		tearRC3:    true,
+	}
+	dbPath, mirrorPath := damagedIndexFixture(t, tc)
+
+	res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", slog.Default())
+	require.NoError(t, err)
+
+	dup := notesContaining(res.Notes, "the table holds two rows with id RC-2")
+	require.Len(t, dup, 1, "notes: %v", res.Notes)
+	assert.Contains(t, dup[0], "the row at rowid 3 is not salvaged; its content is ")
+	assert.Contains(t, dup[0], "; its annotations column could not be read: ")
+	assert.Equal(t, []string{"RC-1", "RC-2"}, res.RecoveredIDs, "the id is listed once")
 }

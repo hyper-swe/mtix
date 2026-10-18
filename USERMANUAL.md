@@ -116,6 +116,18 @@ suppresses the missing-pointer requirement; existing pointers are allowed and
 first live owned pointer and removes later duplicates, preserving other bytes.
 This check never writes documents or Git exclusions, including with `--fix`.
 
+Every write (for example `mtix create`) re-exports `.mtix/tasks.json` in this
+binary's export schema: `2.0.0`, or `2.1.0` with `history.export`. The first
+write after an mtix upgrade can change a committed file's `schema_version` and
+add fields, which breaks a reader that rejects unknown fields.
+`sync.auto_sync` does not stop this re-export: it turns off automatic import
+only. The read-only `export.schema` check reports PASS when the file declares
+the schema this binary writes and WARN with the fix when it declares another.
+To upgrade deliberately, run `mtix sync` and, when it reports no pending import,
+`mtix sync --fix`, then commit `.mtix/tasks.json` and update the strict reader.
+To keep the older schema, write to the board only with the mtix version that
+wrote it. The check never writes the file, including with `--fix`.
+
 Setup completion (`setup.done`, MTIX-112.19.2) remains a FUTURE registration.
 Do not infer that setup is current from the absence of that row.
 
@@ -1253,7 +1265,7 @@ mtix config delete auto_claim
 | `history.export` | `false` | EXPERIMENTAL. `true` writes `.mtix/tasks.json` in export format 2.1.0 with each task's change history (see "Task history in tasks.json"); mtix 0.5.4 and earlier cannot read such a file, so turn it on only when every machine and daemon that touches the board runs this version or later. A running process follows a change without a restart. `mtix config set` accepts only true or false. |
 | `history.max_entries_per_task` | unset | EXPERIMENTAL. A positive whole number keeps at most that many change entries per task: when a task goes over, its next change trims the oldest down to 90% of the limit (at least one stays) and records one `retention_drop` marker. Unset keeps everything; `mtix config set history.max_entries_per_task ""` unsets it; 0, negative and non-integer values are refused. A running process (daemon, MCP server) picks up a changed limit when it restarts. See "Task history in tasks.json". |
 | `progress.weighted` | `false` | Use weight field in progress calculation |
-| `sync.auto_sync` | `true` | Automatic import of a changed `.mtix/tasks.json` (after `git pull`); `false` turns it off, except for a store that holds no tasks. `mtix config set` accepts only true or false. Tracked in git with `.mtix/config.yaml`, so it applies to every clone. Writes keep exporting, but never over a pulled board that was not imported. See "Automatic import of `.mtix/tasks.json`" |
+| `sync.auto_sync` | `true` | Automatic import of a changed `.mtix/tasks.json` (after `git pull`); `false` turns it off, except for a store that holds no tasks. `mtix config set` accepts only true or false. Tracked in git with `.mtix/config.yaml`, so it applies to every clone. Writes keep exporting, in this binary's export schema, but never over a pulled board that was not imported; this switch does not stop that re-export (see the `export.schema` doctor check). See "Automatic import of `.mtix/tasks.json`" |
 
 
 ### Task history in tasks.json (experimental)
@@ -1677,7 +1689,7 @@ To choose: when the file came from a client older than 0.5.4, use `mtix sync --f
 | `backup_failed` | The backup before the import could not be written | Free disk space; the next command retries |
 | `not_imported` | The file changed on disk and was not imported, for example with automatic import off | `mtix import .mtix/tasks.json --mode merge` (the merge writes nothing while a task's status, assignee, agent state, wake time or deletion state differs from the file's: it lists each conflict, and you rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`, which it records in the task's activity; where they agree, your other field values win when the task's content (title, description, prompt, acceptance, labels) matches the file's, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid), or keep the local board with `mtix sync --fix` |
 
-**Turning it off.** `sync.auto_sync: false` (`mtix config set sync.auto_sync false`) turns automatic import off. `mtix config set` accepts only true or false (in any form Go's `strconv.ParseBool` reads, such as `true`, `1`, `false`, `0`) and rejects anything else. A value written by hand that is neither true nor false leaves automatic import on, the default, with a one-line warning. `.mtix/config.yaml` is tracked in git, so the switch applies to every clone of the project. A store that holds no tasks, such as a fresh clone's, is always imported whatever the switch says, since nothing in it can be lost. With the switch off, writes keep exporting the store as long as `.mtix/tasks.json` is the file mtix last wrote; after a pull, the file is not overwritten (kind `not_imported`) until you import it with `mtix import .mtix/tasks.json --mode merge` or keep your board with `mtix sync --fix`. The merge writes nothing while a task's status, assignee, agent state, wake time or deletion state differs from the file's: it lists each conflict, and you rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`. Where they agree, when the task's content (title, description, prompt, acceptance, labels) matches the file's, your field values win, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid.
+**Turning it off.** `sync.auto_sync: false` (`mtix config set sync.auto_sync false`) turns automatic import off. `mtix config set` accepts only true or false (in any form Go's `strconv.ParseBool` reads, such as `true`, `1`, `false`, `0`) and rejects anything else. A value written by hand that is neither true nor false leaves automatic import on, the default, with a one-line warning. `.mtix/config.yaml` is tracked in git, so the switch applies to every clone of the project. A store that holds no tasks, such as a fresh clone's, is always imported whatever the switch says, since nothing in it can be lost. With the switch off, writes keep exporting the store, in this binary's export schema, as long as `.mtix/tasks.json` is the file mtix last wrote; after a pull, the file is not overwritten (kind `not_imported`) until you import it with `mtix import .mtix/tasks.json --mode merge` or keep your board with `mtix sync --fix`. The merge writes nothing while a task's status, assignee, agent state, wake time or deletion state differs from the file's: it lists each conflict, and you rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`. Where they agree, when the task's content (title, description, prompt, acceptance, labels) matches the file's, your field values win, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid.
 
 **State.** `mtix sync` shows the `sync.auto_sync` value as configured, whether automatic import is on, and the last automatic import mtix refused or skipped for you to decide, with its time, its reason and whether it is pending, resolved or no longer pending:
 

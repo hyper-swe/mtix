@@ -12,7 +12,7 @@ not a passing check.
 | `lint` | 1 | Pinned Go lint |
 | `pg-16 package`, `pg-17 package` | 6 | CLI, transport and end-to-end suites against each PostgreSQL version |
 | `test-fault-injection` | 1 | Disk-full and crash durability conformance |
-| `build` | 1 | Build and verify the binary after its prerequisite checks |
+| `build` | 1 | Check the quiet relay reference and both relay benchmarks, then build and verify the binary |
 
 ## Go race shards
 
@@ -82,3 +82,8 @@ coverage invocations with `-p 1`, unchanged test flags and the 20-minute
 per-package timeout. Its PostgreSQL-enabled packages share a database and
 remain serialized. Sharding ordinary CI does not replace the release
 preflight, security scans, coverage gate, fault-injection or cloud contracts.
+
+The existing Linux `build` job also runs the blocking non-race, non-short
+relay quiet check and both relay benchmarks. The ordinary Go race shards
+retain the default paired relative guard. See [relay calibration and exact
+command](../benchmarks/README.md#fr-21-relay-publish-guard-mtix-165).

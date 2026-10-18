@@ -92,13 +92,14 @@ func windowsRuntimeSteps() []any {
 		map[string]any{"name": "Run required native named-lock tests", "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "run": windowsRuntimeNamedTestScript},
 		map[string]any{"name": "Run required native ACL and hooks status tests", "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "run": windowsRuntimeTestScript()},
 		map[string]any{"name": windowsAlertsStepName, "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "run": windowsAlertsScript()},
+		windowsDurabilityStep(),
 		map[string]any{"name": "Record attempt duration", "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "if": "${{ always() }}", "run": windowsRuntimeDurationScript},
 		map[string]any{"name": "Preserve explicit runtime evidence", "if": "${{ always() }}", "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9", "with": windowsRuntimeArtifactInputs()},
 	}
 }
 
 func windowsRuntimeArtifactInputs() map[string]any {
-	paths := []string{"capture.json", "oplocal.json", "hooks.json", "toolchain.json", "duration.json", "started.txt", "named-locks.json", "dispatch-lock.json", "named-lock-exits.json", "alerts.json", "alerts-doctor.json"}
+	paths := []string{"capture.json", "oplocal.json", "hooks.json", "toolchain.json", "duration.json", "started.txt", "named-locks.json", "dispatch-lock.json", "named-lock-exits.json", "alerts.json", "alerts-doctor.json", "durability.json", "durability.cover", "durability-process.json", "durability-runtime.json"}
 	for i := range paths {
 		paths[i] = windowsRuntimeDir + "/" + paths[i]
 	}
@@ -182,9 +183,9 @@ func windowsRuntimeJob(wf map[string]any) map[string]any {
 }
 
 func windowsRuntimeStep(wf map[string]any, index int) map[string]any {
-	// Existing contract controls retain their original duration/artifact identities.
+	// Existing controls retain duration/artifact identities after alerts and durability.
 	if index >= 6 {
-		index++
+		index += 2
 	}
 	return windowsRuntimeJob(wf)["steps"].([]any)[index].(map[string]any)
 }

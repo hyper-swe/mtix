@@ -28,13 +28,6 @@ func verifyFile(f *os.File, directory bool) error {
 	return verifyKind(f, recordMode, unix.S_IFREG)
 }
 
-// recordMode is the mode of every operator-local record; executableMode is
-// the mode of a release-defined executable such as the attach shim.
-const (
-	recordMode     = 0600
-	executableMode = 0700
-)
-
 func verifyKind(f *os.File, mode, kind uint32) error {
 	var stat unix.Stat_t
 	if err := unix.Fstat(checkedFD(f), &stat); err != nil {
@@ -166,13 +159,6 @@ func writeData(dir *os.File, name string, data []byte, exclusive bool, before fu
 	return writeDataMode(dir, name, data, writeOptions{exclusive: exclusive, before: before, syncDirectory: syncDirectory, mode: recordMode})
 }
 
-type writeOptions struct {
-	exclusive     bool
-	before        func() error
-	syncDirectory func(*os.File) error
-	mode          uint32
-}
-
 func writeDataMode(dir *os.File, name string, data []byte, opts writeOptions) (err error) {
 	if validateErr := validateExistingMode(dir, name, opts.mode); validateErr != nil {
 		return validateErr
@@ -199,17 +185,17 @@ func writeDataMode(dir *os.File, name string, data []byte, opts writeOptions) (e
 		_, err = f.Write(data)
 	}
 	if err == nil {
-		err = f.Sync()
+		err = flushStateFile(f, opts.flushNative)
 	}
 	err = errors.Join(err, closeFile(f))
 	if err == nil && opts.before != nil {
 		err = opts.before()
 	}
 	if err == nil {
-		err = commitData(dir, temp, name, opts.exclusive, opts.syncDirectory)
+		err = commitData(dir, temp, name, opts)
 	}
 	if err != nil {
-		return fmt.Errorf("write state: %w: %w", err, invalid("write failed"))
+		return writeStateError(err)
 	}
 	return nil
 }
@@ -222,23 +208,23 @@ func validateExistingMode(dir *os.File, name string, mode uint32) error {
 	return err
 }
 
-func commitData(dir *os.File, temp, name string, exclusive bool, syncDirectory func(*os.File) error) error {
+func commitData(dir *os.File, temp, name string, opts writeOptions) error {
 	var err error
-	if exclusive {
+	if opts.exclusive {
 		err = unix.Linkat(checkedFD(dir), temp, checkedFD(dir), name, 0)
 	} else {
 		err = unix.Renameat(checkedFD(dir), temp, checkedFD(dir), name)
 	}
 	if err != nil {
-		if exclusive {
+		if opts.exclusive {
 			return failure("create exclusive state record using a hard link", err)
 		}
 		return failure("commit state record", err)
 	}
-	if syncDirectory != nil {
-		return syncDirectory(dir)
+	if opts.syncDirectory != nil {
+		return opts.syncDirectory(dir)
 	}
-	return dir.Sync()
+	return flushStateFile(dir, opts.flushNative)
 }
 
 func descriptorFile(fd int, name string) *os.File {

@@ -199,6 +199,7 @@ func TestRecover_CommentCellCorrupted_RestoresCommentFromMirror(t *testing.T) {
 	assert.Contains(t, note, mirrorPath, "the note names the mirror file")
 	assert.Contains(t, note, "1 entry")
 	assert.NotContains(t, note, "dropped")
+	assert.Empty(t, notesContaining(res.Notes, indexEntryNoteText), "a healthy index yields no index-entry note")
 
 	fresh := importRoundTrip(t, res.Export)
 	got, err := fresh.GetNode(context.Background(), "RC-1")

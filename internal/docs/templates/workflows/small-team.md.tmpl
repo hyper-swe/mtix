@@ -56,6 +56,13 @@ the tables needs this least-privilege list:
   `mtix sync migrate --yes` on a hub without a valid node-number registry
   index.
 
+A pull also records this client on the hub, with one write to
+`sync_project_clients` right after it connects, so a role that only pulls
+needs the same INSERT and UPDATE on that table as a role that pushes. A
+failed write only prints a `WARN: pull client registration skipped` line;
+the pull completes. The write is one statement on the connection the pull
+already opened.
+
 On a hub without a valid node-number registry index, `mtix sync migrate
 --yes` also builds that index when the version gate is open, that is, when
 the project has at least one active client and every active client runs a

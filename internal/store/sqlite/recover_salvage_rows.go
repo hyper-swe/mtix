@@ -6,6 +6,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -68,8 +69,13 @@ type salvagedRow struct {
 // index cell) is skipped with a note, so each row is read once. So Export
 // never holds two nodes with one id, and a mirror copy never reaches a row
 // through another node's entry.
+//
+// When the table itself holds two rows with id B (MTIX-107.78), the first
+// row read is kept as B and the other is reported by reportDuplicateRow,
+// with its content, so B is listed once in RecoveredIDs and no row is
+// dropped without a note.
 func salvageRows(ctx context.Context, db *sql.DB, keys []salvageKey, out *dbSalvage, res *RecoverResult) {
-	ownEntry := map[int64]bool{} // rowids kept through their own index entry
+	st := &salvageState{ownEntry: map[int64]bool{}, keptAt: map[string]int64{}, reported: map[int64]bool{}}
 	var misread []salvagedRow
 	for _, k := range keys {
 		row, err := readSalvageRow(ctx, db, k)
@@ -81,17 +87,31 @@ func salvageRows(ctx context.Context, db *sql.DB, keys []salvageKey, out *dbSalv
 			misread = append(misread, row)
 			continue
 		}
-		if ownEntry[k.rowid] {
+		if st.ownEntry[k.rowid] {
 			res.Notes = append(res.Notes, fmt.Sprintf(
 				"node %s: a second index entry for %s points at the same row, which is salvaged once", k.id, k.id))
 			continue
 		}
-		keepSalvagedRow(out, res, row)
-		ownEntry[k.rowid] = true
+		if _, kept := st.keptAt[k.id]; kept {
+			reportDuplicateRow(st, res, row)
+			continue
+		}
+		keepSalvagedRow(out, st, res, row)
+		st.ownEntry[k.rowid] = true
 	}
 	for _, row := range misread {
-		keepMisreadRow(out, res, row, ownEntry[row.key.rowid])
+		keepMisreadRow(out, st, res, row)
 	}
+}
+
+// salvageState is what salvageRows knows about the rows it has handled
+// (MTIX-107.78): the rowids kept through their own index entry, the rowid of
+// the row kept as each id, and the rowids reported as a second row with an
+// id that is already kept.
+type salvageState struct {
+	ownEntry map[int64]bool
+	keptAt   map[string]int64
+	reported map[int64]bool
 }
 
 // readSalvageRow reads the row index entry k points at, by rowid
@@ -112,9 +132,10 @@ func readSalvageRow(ctx context.Context, db *sql.DB, k salvageKey) (salvagedRow,
 
 // keepSalvagedRow keeps row in out under the id it carries and lists it as
 // recovered, with its unreadable JSON columns (MTIX-95.31.3).
-func keepSalvagedRow(out *dbSalvage, res *RecoverResult, row salvagedRow) {
+func keepSalvagedRow(out *dbSalvage, st *salvageState, res *RecoverResult, row salvagedRow) {
 	out.nodes[row.node.ID] = row.node
 	out.unreadable = append(out.unreadable, row.cols...)
+	st.keptAt[row.node.ID] = row.key.rowid
 	res.RecoveredIDs = append(res.RecoveredIDs, row.node.ID)
 }
 
@@ -123,21 +144,55 @@ func keepSalvagedRow(out *dbSalvage, res *RecoverResult, row salvagedRow) {
 // under A, and A is listed in LostIDs until Recover finds it salvaged
 // another way (see salvageRows). The row is kept once, as B, unless it is
 // already kept: through B's own entry (ownEntry), or as B through another
-// entry. The note says only what is known: the entry for A points at the
-// row of B, and what happened to that row.
-func keepMisreadRow(out *dbSalvage, res *RecoverResult, row salvagedRow, ownEntry bool) {
+// entry. A different row already kept as B means the table holds two rows
+// with id B: this one is reported by reportDuplicateRow (MTIX-107.78). The
+// note says only what is known: the entry for A points at the row of B, and
+// what happened to that row.
+func keepMisreadRow(out *dbSalvage, st *salvageState, res *RecoverResult, row salvagedRow) {
 	a, b := row.key.id, row.node.ID
 	res.LostIDs = append(res.LostIDs, a)
 	note := fmt.Sprintf("node %s: the index entry for %s points at the row of %s; ", a, a, b)
-	_, already := out.nodes[b]
+	keptAt, already := st.keptAt[b]
+	duplicate := false
 	switch {
-	case ownEntry:
+	case st.ownEntry[row.key.rowid]:
 		note += fmt.Sprintf("the entry of %s reaches that row, so it is not salvaged again", b)
-	case already:
+	case already && keptAt == row.key.rowid:
 		note += fmt.Sprintf("a row is already salvaged as %s, so this one is not salvaged again", b)
+	case already:
+		duplicate = true
+		note += fmt.Sprintf("the table holds two rows with id %s, so it is not salvaged (see the note on %s)", b, b)
 	default:
-		keepSalvagedRow(out, res, row)
+		keepSalvagedRow(out, st, res, row)
 		note += fmt.Sprintf("no entry of %s reaches that row, so it is salvaged once, as %s", b, b)
+	}
+	res.Notes = append(res.Notes, note)
+	if duplicate {
+		reportDuplicateRow(st, res, row)
+	}
+}
+
+// reportDuplicateRow writes one note for a row that carries an id already
+// kept from another row (MTIX-107.78): the table holds two rows with that
+// id. The note names both rowids and holds the content of the row that is
+// not salvaged, as exported JSON, and names its unreadable JSON columns, so
+// nothing from it is dropped without a note. A row is reported once.
+func reportDuplicateRow(st *salvageState, res *RecoverResult, row salvagedRow) {
+	if st.reported[row.key.rowid] {
+		return
+	}
+	st.reported[row.key.rowid] = true
+	b := row.node.ID
+	note := fmt.Sprintf("node %s: the table holds two rows with id %s: the row at rowid %d is salvaged as %s, "+
+		"and the row at rowid %d is not salvaged; ", b, b, st.keptAt[b], b, row.key.rowid)
+	content, err := json.Marshal(row.node)
+	if err != nil {
+		note += fmt.Sprintf("its content could not be encoded: %v", err)
+	} else {
+		note += "its content is " + string(content)
+	}
+	for _, col := range row.cols {
+		note += fmt.Sprintf("; its %s column could not be read: %v", col.column, col.cause)
 	}
 	res.Notes = append(res.Notes, note)
 }

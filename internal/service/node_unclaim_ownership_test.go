@@ -42,6 +42,22 @@ func TestUnclaimNode_NonAssignee_ReturnsErrAlreadyClaimed(t *testing.T) {
 	assert.Equal(t, model.StatusInProgress, got.Status)
 }
 
+// TestUnclaimNode_CaseVariantActor_ReturnsErrAlreadyClaimed verifies identity
+// comparison is exact: an actor differing from the assignee only by case is
+// refused without force (MTIX-169).
+func TestUnclaimNode_CaseVariantActor_ReturnsErrAlreadyClaimed(t *testing.T) {
+	svc, st, _ := newTestNodeService(t)
+	ctx := context.Background()
+	id := claimedTestNode(t, svc, "agent-a")
+
+	err := svc.UnclaimNode(ctx, id, "case variant", "Agent-A", false)
+
+	require.ErrorIs(t, err, model.ErrAlreadyClaimed)
+	got, getErr := st.GetNode(ctx, id)
+	require.NoError(t, getErr)
+	assert.Equal(t, "agent-a", got.Assignee)
+}
+
 // TestUnclaimNode_EmptyActor_ReturnsErrInvalidInput verifies an unclaim
 // without an acting agent identity is refused (MTIX-169).
 func TestUnclaimNode_EmptyActor_ReturnsErrInvalidInput(t *testing.T) {

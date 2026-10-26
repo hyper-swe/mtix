@@ -18,7 +18,7 @@ func TestCryptoDependency_ApprovedVersions_ArePinned(t *testing.T) {
 	content := readCryptoDocument(t, "go.mod")
 	tests := []struct{ name, line string }{
 		{"minimum Go", "go 1.26.0"},
-		{"patched toolchain", "toolchain go1.26.9"},
+		{"patched toolchain", "toolchain go1.26.10"},
 		{"approved crypto dependency", "\tgolang.org/x/crypto v0.57.0 // indirect"},
 	}
 	for _, tt := range tests {

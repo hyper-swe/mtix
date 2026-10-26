@@ -50,11 +50,11 @@ Diff the surface area since the last tag and verify each item is documented:
       critical level including dev dependencies (the release builds the
       bundle with those build tools); release artifacts updated. The full
       npm audit is reported but non-blocking: triage and ticket high and
-      lower dev-tooling advisories (braces chain: MTIX-113, Tailwind 4;
-      moderate @vitest/mocker: MTIX-114) (MTIX-95.53).
-- [ ] All 17 ordinary CI checks successful on the exact commit to be tagged:
+      lower dev-tooling advisories (moderate @vitest/mocker: MTIX-114)
+      (MTIX-95.53).
+- [ ] All 21 ordinary CI checks successful on the exact commit to be tagged:
       six Go race shards (three per OS), the strict `test-go` aggregate,
-      web, lint, six PostgreSQL checks, fault injection and build. Skipped
+      web, lint, four PostgreSQL package checks, six PostgreSQL `cmd/mtix` shard checks, fault injection and build. Skipped
       or cancelled jobs do not count as passing. See [CI gates](CI-GATES.md).
       The release workflow's serialized PostgreSQL-enabled preflight remains
       required; ordinary CI sharding does not replace it.

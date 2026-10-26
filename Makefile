@@ -25,7 +25,7 @@ TASKS_DB     := .mtix/data/mtix.db
 
 # ─── Phony targets ───
 .PHONY: all build build-go build-web install install-web test test-go test-web \
-        test-race test-cover test-all lint lint-go lint-web fmt-check \
+        test-race test-race-core test-cover test-all lint lint-go lint-web fmt-check \
         security-scan security-audit bench fuzz e2e proto-gen docs-gen \
         release-artifacts clean verify preflight embed-check help \
         setup tasks-export tasks-import tasks-sync \
@@ -146,6 +146,12 @@ test-all: test-go test-web
 ## test-race: Run Go tests with race detector
 test-race:
 	go test $(GO_PKGS) -race -count=1 -timeout 20m
+
+## test-race-core: test-race without cmd/mtix (MTIX-112.17.24). The remote bar
+## runs cmd/mtix in deterministic shards (scripts/cmd-mtix-shards.sh) in
+## parallel jobs; core plus those shards equal test-race.
+test-race-core:
+	go test $(filter-out github.com/hyper-swe/mtix/cmd/mtix,$(GO_PKGS)) -race -count=1 -timeout 20m
 
 ## test-cover: Run Go tests with coverage report
 test-cover:

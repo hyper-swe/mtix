@@ -109,7 +109,7 @@ func (b *agentIDCLIEvents) Broadcast(_ context.Context, e service.Event) error {
 	return nil
 }
 
-func TestAgentID_CLIClaimUnclaim_UseServiceAndFixedAuthor(t *testing.T) {
+func TestAgentID_CLIClaimUnclaim_UseServiceAndActingAgent(t *testing.T) {
 	initTestApp(t)
 	ctx := context.Background()
 	bus := &agentIDCLIEvents{}
@@ -120,9 +120,9 @@ func TestAgentID_CLIClaimUnclaim_UseServiceAndFixedAuthor(t *testing.T) {
 	require.NoError(t, runClaim(n.ID, "worker"))
 	require.Len(t, bus.events, 1)
 	require.Equal(t, service.EventNodeClaimed, bus.events[0].Type)
-	require.NoError(t, runUnclaim(n.ID, "release"))
+	require.NoError(t, runUnclaim(n.ID, "release", "worker", false))
 	require.Len(t, bus.events, 2)
-	require.Equal(t, "cli", bus.events[1].Author)
+	require.Equal(t, "worker", bus.events[1].Author)
 }
 
 func TestAgentID_CLIValidRawAndEmptyCreate_Preserved(t *testing.T) {
@@ -136,7 +136,7 @@ func TestAgentID_CLIValidRawAndEmptyCreate_Preserved(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, agent, n.Assignee)
 			if agent != "" {
-				require.NoError(t, runUnclaim(n.ID, "release"))
+				require.NoError(t, runUnclaim(n.ID, "release", agent, false))
 				claim := newClaimCmd()
 				claim.SetArgs([]string{n.ID, "--agent", agent})
 				require.NoError(t, claim.Execute())

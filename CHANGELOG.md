@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - The web app build moved from Tailwind CSS 3 to Tailwind CSS 4, using Tailwind's own Vite plugin (`@tailwindcss/vite`) and CSS-first configuration in `web/src/index.css` in place of `tailwind.config.js` and PostCSS. `postcss` and `autoprefixer` are no longer direct dependencies. This clears the last `npm audit` findings (the `braces` chain), so a full `npm audit` of `web/` reports 0 vulnerabilities. The rendered UI is unchanged apart from one Tailwind 4 behaviour: hover styles (underline and opacity changes) now apply only on devices that can hover, so they no longer apply on touch-only devices; the embedded bundle is rebuilt (MTIX-186).
+- Build/tooling (MTIX-178.1): web dev tooling bumped to vite 7.3.7 and vitest 4.1.12 (within their current majors) to pick up upstream advisory fixes. The built web output is unchanged; no application code change.
 
 ### Fixed
 - **`mtix recover` lists a lost id once (MTIX-107.80).** When two index entries for one id both point at other rows and the mirror lacks the id, recover listed it twice, and the report printed `LOST : 2` with the id repeated. The id is now listed once and the LOST count matches the list. A duplicated misread index cell is handled once and writes one note. The salvage file is unchanged and still imports with a replace import.

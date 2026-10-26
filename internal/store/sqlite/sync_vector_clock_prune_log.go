@@ -88,10 +88,12 @@ func (s *Store) reportVCPrune(ctx context.Context) {
 // one transaction. It reports whether this call recorded the key, so only
 // one caller (even across processes) logs the Warn.
 func (s *Store) claimVCPruneNotice(ctx context.Context, at string) (first bool, err error) {
-	tx, err := s.writeDB.BeginTx(ctx, nil)
+	wtx, err := s.beginWriterTx(ctx) // pinned until Release: MTIX-198
 	if err != nil {
 		return false, fmt.Errorf("begin prune notice: %w", err)
 	}
+	defer wtx.Release(ctx)
+	tx := wtx.Tx
 	res, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)`, vcPrunedKey, at)
 	if err != nil {
 		_ = tx.Rollback() //nolint:errcheck // the exec error is the one reported
@@ -101,8 +103,8 @@ func (s *Store) claimVCPruneNotice(ctx context.Context, at string) (first bool, 
 		_ = tx.Rollback() //nolint:errcheck // the exec error is the one reported
 		return false, fmt.Errorf("clear prune mark: %w", err)
 	}
-	if err = tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit prune notice: %w", err)
+	if err = wtx.Commit(); err != nil {
+		return false, wtx.RecoverAfterCommit(ctx, fmt.Errorf("commit prune notice: %w", err)) // MTIX-198
 	}
 	n, err := res.RowsAffected()
 	return n == 1, err

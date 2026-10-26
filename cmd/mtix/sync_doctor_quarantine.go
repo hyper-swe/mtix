@@ -26,25 +26,42 @@ func appendQuarantineCheck(ctx context.Context, r DoctorReport, st *sqlite.Store
 		return appendCheck(r, quarantineCheckName, false, "local store not initialized")
 	}
 	ok, detail := checkQuarantinedEvents(ctx, st)
-	return appendCheck(r, quarantineCheckName, ok, detail)
+	check := DoctorCheck{Name: quarantineCheckName, Pass: ok, Detail: detail}
+	if !ok && strings.Contains(detail, quarantineInspectCmd) {
+		fix, err := quarantineAcknowledgementFix(ctx, st)
+		if err != nil {
+			check.Detail += "; " + err.Error()
+		} else {
+			check.Fix = fix
+		}
+	}
+	return appendDoctorCheck(r, check)
 }
 
-// checkQuarantinedEvents passes when no pulled event is quarantined. It
-// fails while any is: those events are not applied, so this replica lacks
-// them. The detail gives the count, says every pull retries them, the next
-// step (pull, which retries them) and the read-only command that lists
-// them with their reasons.
+// checkQuarantinedEvents passes when no unacknowledged pulled event remains.
+// Acknowledged events are still retained and unapplied, and their count is shown.
+// Read errors and every unresolved quarantine remain failures.
 func checkQuarantinedEvents(ctx context.Context, st *sqlite.Store) (bool, string) {
-	n, err := st.CountQuarantined(ctx)
+	counts, err := st.CountQuarantineAcknowledgements(ctx)
 	if err != nil {
 		return false, err.Error()
 	}
-	if n == 0 {
+	if counts.Total == 0 {
 		return true, "ok"
 	}
+	if counts.Unacknowledged == 0 {
+		return true, fmt.Sprintf("%d acknowledged pulled events retained, not applied; 0 unacknowledged", counts.Acknowledged)
+	}
+	return quarantineFailureDetail(ctx, st, counts)
+}
+
+func quarantineFailureDetail(ctx context.Context, st *sqlite.Store, counts sqlite.QuarantineCounts) (bool, string) {
 	detail := fmt.Sprintf(
 		"%d pulled events quarantined, not applied; retried on every pull, so run 'mtix sync pull' first. If they remain, list them with their reasons: %s",
-		n, quarantineInspectCmd)
+		counts.Total, quarantineInspectCmd)
+	if counts.Acknowledged > 0 {
+		detail += fmt.Sprintf("; %d acknowledged, %d unacknowledged", counts.Acknowledged, counts.Unacknowledged)
+	}
 	held, err := uidHeldReasonQuarantined(ctx, st)
 	if err != nil {
 		return false, detail + " (" + err.Error() + ")"

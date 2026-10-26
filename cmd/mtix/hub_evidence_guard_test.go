@@ -292,3 +292,21 @@ func TestHubMarkCheck_UnreadableEvidence_FailsWithTheCause(t *testing.T) {
 	assert.Contains(t, c.Detail, "cannot read the hub evidence")
 	assert.Contains(t, c.Detail, "secrets")
 }
+
+// board.hub-mark fails when the evidence cannot be read, and still records the
+// durable part it did read, as before this change.
+func TestHubMarkCheck_PartialEvidence_FailsAndRecordsTheConfigMark(t *testing.T) {
+	t.Setenv(transport.EnvDSN, "")
+	initTestApp(t)
+	_, err := app.configSvc.Set("sync.enabled", "true")
+	require.NoError(t, err)
+	require.NoError(t, os.Mkdir(filepath.Join(app.mtixDir, transport.SecretsFilename), 0o700))
+
+	c := hubMarkCheck(t)
+	assert.False(t, c.Pass)
+	assert.Contains(t, c.Detail, "cannot read the hub evidence")
+	mark, markErr := app.store.HubMark(context.Background())
+	require.NoError(t, markErr)
+	assert.True(t, mark.Set)
+	assert.Equal(t, "config", mark.Source)
+}

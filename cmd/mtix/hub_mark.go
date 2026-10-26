@@ -239,11 +239,13 @@ func appendHubMarkCheckMode(ctx context.Context, report DoctorReport, operatorWr
 			Detail: "local store not initialized; the hub-connected mark was not read"})
 	}
 	evidence, evidenceErr := collectHubEvidence()
+	// The durable evidence read so far is recorded even when the rest cannot be
+	// read, as before; the check then fails with the cause.
+	status, err := service.NewHubMarkService(app.store).HubConnected(ctx, evidence)
 	if evidenceErr != nil {
 		return appendDoctorCheck(report, DoctorCheck{Name: "board.hub-mark",
 			Detail: fmt.Sprintf("cannot read the hub evidence: %v", evidenceErr), Fix: "mtix sync doctor"})
 	}
-	status, err := service.NewHubMarkService(app.store).HubConnected(ctx, evidence)
 	if err != nil {
 		return appendDoctorCheck(report, DoctorCheck{Name: "board.hub-mark",
 			Detail: fmt.Sprintf("cannot read or store the hub-connected mark: %v", err), Fix: "mtix sync doctor"})

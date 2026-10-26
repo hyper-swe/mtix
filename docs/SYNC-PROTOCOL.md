@@ -837,10 +837,11 @@ Refusing changes nothing and names the way out.
   (`sqlite.AsSyncedStore`), so a replace that would delete local data or
   drop a task the sync log holds is refused, and `mtix import --mode
   replace` is refused while it is set; it is never recorded as the mark.
-  A refused DSN (a DSN key in a tracked config file, or a secrets file
-  with the wrong mode, even an empty one) is transient in the same way,
-  as before this change; only a DSN in the secrets file, whatever its
-  mode, is recorded as the mark. Unreadable evidence (a
+  The command-line guard already counted a refused DSN (a DSN key in a
+  tracked config file, or a secrets file with the wrong mode, even an
+  empty one); the automatic import now counts it too, transiently, and
+  does not record it. Only a DSN in the secrets file, whatever its mode,
+  is recorded as the mark, by its content. Unreadable evidence (a
   secrets file that is not a regular file or cannot be opened, a config
   key that cannot be read) is an error: the automatic import stops, and
   the command-line guards refuse, naming the cause. A missing secrets

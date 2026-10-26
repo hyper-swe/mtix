@@ -213,3 +213,25 @@ func TestAutoImport_RefusedDSN_RefusesAndWritesNoMark(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, mark.Set)
 }
+
+// When part of the evidence cannot be read, the automatic import stops, but
+// the durable part that was read (a config key) is still recorded as the
+// mark, as before this change; the cause stays in the error chain.
+func TestAutoImport_HubEvidencePartiallyRead_StopsAndRecordsTheDurablePart(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	cause := errors.New("secrets file unreadable")
+	f.svc.SetHubEvidenceSource(func() (service.HubEvidence, error) {
+		return service.HubEvidence{ConfigKeys: true}, cause
+	})
+	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) { addTeammateNode(t, d, "PROJ-2", "PROJ-3", 3) }))
+
+	err := f.svc.AutoImport(ctx, f.mtixDir)
+	require.ErrorIs(t, err, cause)
+	_, getErr := f.store.GetNode(ctx, "PROJ-3")
+	assert.Error(t, getErr, "nothing was imported")
+	mark, markErr := f.store.HubMark(ctx)
+	require.NoError(t, markErr)
+	assert.True(t, mark.Set, "the durable evidence already read is recorded")
+	assert.Equal(t, "config", mark.Source)
+}

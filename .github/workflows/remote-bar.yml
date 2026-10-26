@@ -111,12 +111,72 @@ jobs:
         # locate the repository through runtime.Caller.
         run: go env -w GOFLAGS=-p=1
       - name: Run committed bar
-        run: make lint-go && make test-race
+        # MTIX-112.17.24: cmd/mtix runs in the bar-cmd shards below; core plus
+        # those shards cover exactly what make test-race covers.
+        run: make lint-go && make test-race-core
       - name: Run govulncheck
         # Pinned like release.yml (MTIX-83, MTIX-116).
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           go list ./... | grep -v node_modules | xargs "$(go env GOPATH)/bin/govulncheck"
+
+  bar-cmd:
+    # MTIX-112.17.24: the cmd/mtix tests in three deterministic shards (see
+    # scripts/cmd-mtix-shards.sh), each with its own PostgreSQL service. Same
+    # flags as test-race: -race, -count=1, 20m, nothing skipped.
+    if: ${{ inputs.os != 'macos-latest' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1", "2", "3"]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: mtix_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MTIX_PG_TEST_DSN: "postgres://postgres:ci@localhost:5432/mtix_ci?sslmode=disable"
+      MTIX_PG_TEST_REQUIRE_SUPERUSER: "1"
+      WRAPPER_VERSION: ${{ inputs.wrapper_version }}
+      SCRATCH_REF: ${{ inputs.scratch_ref }}
+      EXPECTED_TREE: ${{ inputs.expected_tree }}
+      SHARD: ${{ matrix.shard }}
+    steps:
+      - name: Identify run
+        run: |
+          echo "remote-bar runner=$RUNNER_NAME os=$RUNNER_OS run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID wrapper=$WRAPPER_VERSION ref=$SCRATCH_REF job=bar-cmd shard=$SHARD"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.scratch_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify snapshot tree
+        run: |
+          actual="$(git rev-parse 'HEAD^{tree}')"
+          if [ "$actual" != "$EXPECTED_TREE" ]; then
+            echo "tree mismatch: expected $EXPECTED_TREE, checked out $actual" >&2
+            exit 1
+          fi
+          echo "tree verified: $actual"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Verify exact cmd/mtix test coverage
+        run: bash scripts/cmd-mtix-shards.sh check
+      - name: Run cmd/mtix shard
+        run: |
+          pattern=$(bash scripts/cmd-mtix-shards.sh pattern "$SHARD")
+          go test ./cmd/mtix/ -race -count=1 -p 1 -timeout 20m -run "$pattern"
 
   bar-macos:
     # Native macOS bar (Darwin durability, macOS race timings). No service

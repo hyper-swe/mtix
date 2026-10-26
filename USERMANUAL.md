@@ -2055,7 +2055,7 @@ pull's position either, so later changes keep arriving.
   the end, `quarantine: N pulled events held, not applied`. `mtix sync
   status` shows `quarantined events` (`quarantined_events` in `--json`).
   `mtix sync doctor` fails its `quarantined events` check while any
-  remain.
+  pulled event remains unacknowledged.
 - **Inspect it** (read-only; it changes nothing and does not contact the
   hub):
 
@@ -2074,6 +2074,25 @@ pull's position either, so later changes keep arriving.
   Raise the bound, `mtix config set sync.max_lamport_jump <positive
   integer>`, only if you know the hub's clocks are legitimately that far
   ahead. Do not delete quarantine rows or edit the database by hand.
+- **Acknowledge a reviewed invalid-node-id event.** Inspect and report it to
+  whoever runs the hub, then run
+  `mtix sync quarantine acknowledge <event-id> --reason <text>` on this replica.
+  Only invalid-node-id pull/sweep events are eligible; push holds, unrelated
+  failures, malformed raw events and missing or blank reasons are refused.
+  No terminal or hub connection is required. An immutable local receipt records
+  the resolved author, required reason, UTC time and exact raw-event SHA256;
+  repeated valid calls return the first receipt. Reasons are limited to 500 UTF-8 bytes.
+  Repeat text says the supplied reason was not recorded; JSON adds
+  `already_acknowledged` (`true` for a repeat, `false` for a new receipt). The event stays retained and
+  unapplied, with its original reason; retries, sync clocks, cursors and the hub
+  are unchanged. This does not acknowledge another replica. A different raw
+  event with the same id requires a fresh receipt. Verify with `mtix sync doctor`:
+  its quarantine check passes only when no unacknowledged pulled event remains,
+  and reports retained acknowledged events. Other checks retain their results.
+  Status preserves `quarantined_events` and adds `acknowledged_quarantined_events`
+  and `unacknowledged_quarantined_events`; list text marks acknowledgements and
+  list JSON includes `acknowledgement` metadata. The retained total need not be
+  zero, and acknowledged events need not disappear from the list.
 - **Task ids outside the grammar.**
   An event quarantined for a task id outside the node id grammar has a
   reason that contains `invalid node id`, the field and the id. No

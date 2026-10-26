@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- **Audited quarantine recovery (MTIX-187.2).** `mtix sync quarantine acknowledge <event-id> --reason <text>` records an immutable receipt on this replica for a reviewed invalid-node-id pulled event. It stays retained and unapplied; retries and the hub are unchanged. Doctor passes its quarantine check when no unacknowledged pulled event remains. Status keeps the retained total and adds acknowledged/unacknowledged counts; list shows receipt metadata. Push holds, unrelated failures and missing reasons are refused. Reasons are limited to 500 UTF-8 bytes; repeat text explains that the first receipt stands and JSON reports `already_acknowledged`.
 - Callable service APIs for learned lane identity resolution and a board-scoped attach side-write drain preserve ambiguous identities as proposals and reject forged routing requests with operator-local alerts. Agents still pass their id explicitly to `mtix agent register`; identity selection and drain command, glue and dispatcher wiring remain deferred (MTIX-112.17.5).
 
 ### Changed

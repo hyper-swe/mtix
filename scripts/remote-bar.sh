@@ -28,7 +28,9 @@
 #      the scratch branch on every exit path (success, failure, interrupt).
 #
 # The bar is the committed one: make lint-go && make test-race, then
-# govulncheck. By default it runs on ubuntu-22.04 with PostgreSQL 16 (CI also
+# govulncheck. On Linux the race tests run as make test-race-core plus three
+# parallel cmd/mtix shards (scripts/cmd-mtix-shards.sh, MTIX-112.17.24), which
+# together cover exactly what make test-race covers. By default it runs on ubuntu-22.04 with PostgreSQL 16 (CI also
 # covers 17). Options (MTIX-203; they take effect once the workflow carrying
 # the matching inputs is on main):
 #   --os macos-latest   run the Go bar on a macOS runner instead. Allowlist:
@@ -73,6 +75,8 @@ RB_STEP_VERIFY="Verify snapshot tree"
 RB_STEP_BAR="Run committed bar"
 RB_STEP_VULN="Run govulncheck"
 RB_STEP_WEB="Run web checks"
+RB_STEP_CMD="Run cmd/mtix shard"
+RB_STEP_CMD_GUARD="Verify exact cmd/mtix test coverage"
 
 RB_BRANCH=""
 RB_PUSHED=0
@@ -240,7 +244,7 @@ rb_classify() {
 	failure)
 		case "|$steps|" in
 		*"|$RB_STEP_VERIFY|"*) echo 3 ;;
-		*"|$RB_STEP_BAR|"* | *"|$RB_STEP_VULN|"* | *"|$RB_STEP_WEB|"*) echo 1 ;;
+		*"|$RB_STEP_BAR|"* | *"|$RB_STEP_VULN|"* | *"|$RB_STEP_WEB|"* | *"|$RB_STEP_CMD|"* | *"|$RB_STEP_CMD_GUARD|"*) echo 1 ;;
 		*) echo 2 ;;
 		esac
 		;;

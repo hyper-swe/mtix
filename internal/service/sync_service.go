@@ -41,7 +41,7 @@ type SyncService struct {
 	jsonNotices   bool        // the older-writer warning is one JSON line (--json)
 	// hubEvidence reports the local hub or relay evidence the command layer
 	// holds (a configured relay or hub); nil means none (MTIX-107.31.7).
-	hubEvidence func() HubEvidence
+	hubEvidence func() (HubEvidence, error)
 	mu          sync.Mutex // guards noticed
 	noticed     map[string]bool
 	// olderForms are the older conflict baseline forms hasConflict tries,
@@ -147,7 +147,8 @@ func (s *SyncService) autoImport(ctx context.Context, mtixDir string) error {
 
 	// MTIX-107.31.7: count a configured relay or hub before anything is
 	// replaced, even when its first publish left no record in this store.
-	if evidenceErr := s.noteHubEvidence(ctx); evidenceErr != nil {
+	transient, evidenceErr := s.noteHubEvidence(ctx)
+	if evidenceErr != nil {
 		return evidenceErr
 	}
 
@@ -165,12 +166,13 @@ func (s *SyncService) autoImport(ctx context.Context, mtixDir string) error {
 		return fmt.Errorf("auto-import: compare tasks.json with the local store: %w", err)
 	}
 	ri := &receivedImport{mtixDir: mtixDir, hashPath: hashPath, fileHash: fileHash, data: data,
-		storedHash: storedHash, incoming: incoming, local: local, diff: diff, written: incoming, start: start}
+		storedHash: storedHash, incoming: incoming, local: local, diff: diff, written: incoming, start: start,
+		assumeSynced: transient}
 	if conflict || diff.Lossy() {
 		// MTIX-95.31.15.1: the base order (last-exchanged record, then the git
 		// merge-base board) may tell the teammate's changes from the local ones.
 		res, err := s.refuseLossyImport(ctx, mtixDir, fileHash, &importCheck{
-			local: local, incoming: incoming, diff: diff, conflict: conflict})
+			local: local, incoming: incoming, diff: diff, conflict: conflict, synced: transient})
 		if err != nil || res == nil {
 			return err
 		}

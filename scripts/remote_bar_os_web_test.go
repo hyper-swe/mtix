@@ -246,3 +246,43 @@ func TestRemoteBarWorkflow_WebChecks_FailOnDistDifferenceOrAuditFinding(t *testi
 		})
 	}
 }
+
+// MTIX-112.17.24: the Linux bar runs cmd/mtix as three PostgreSQL-backed
+// shards next to the core packages.
+func TestRemoteBarWorkflow_CmdShards_CoverCmdMtixWithUnchangedFlags(t *testing.T) {
+	wf := readWorkflow(t)
+	core := jobBlock(t, wf, "bar")
+	require.Contains(t, core, "run: make lint-go && make test-race-core")
+	require.NotContains(t, core, "make test-race\n")
+
+	cmd := jobBlock(t, wf, "bar-cmd")
+	require.Contains(t, cmd, "if: ${{ inputs.os != 'macos-latest' }}")
+	require.Contains(t, cmd, `shard: ["1", "2", "3"]`)
+	require.Contains(t, cmd, "fail-fast: false")
+	require.Contains(t, cmd, "postgres:16")
+	require.Contains(t, cmd, "persist-credentials: false")
+	require.Contains(t, cmd, "- name: Verify snapshot tree")
+	require.Contains(t, cmd, "- name: Verify exact cmd/mtix test coverage")
+	require.Contains(t, cmd, "- name: Run cmd/mtix shard")
+	run := stepRun(t, cmd, "Run cmd/mtix shard")
+	require.Contains(t, run, `bash scripts/cmd-mtix-shards.sh pattern "$SHARD"`)
+	require.Contains(t, run, `go test ./cmd/mtix/ -race -count=1 -p 1 -timeout 20m -run "$pattern"`)
+	require.NotContains(t, run, "-skip")
+	require.Less(t, strings.Index(cmd, "Verify snapshot tree"), strings.Index(cmd, "Run cmd/mtix shard"))
+	// The macOS job still runs the whole package set.
+	require.Contains(t, jobBlock(t, wf, "bar-macos"), "run: make lint-go && make test-race\n")
+}
+
+func TestRemoteBar_Classify_CmdShardFailureIsABarFailure(t *testing.T) {
+	for steps, want := range map[string]string{
+		"Run cmd/mtix shard":                      "1",
+		"Verify exact cmd/mtix test coverage":     "1",
+		"Verify snapshot tree|Run cmd/mtix shard": "3",
+		"Run committed bar|Run cmd/mtix shard":    "1",
+		"Run cmd/mtix":                            "2",
+	} {
+		out, code := bash(t, t.TempDir(), `source "$RB_SCRIPT"; rb_classify failure "$B"`, "B="+steps)
+		require.Equal(t, 0, code, out)
+		require.Equal(t, want, strings.TrimSpace(out), steps)
+	}
+}

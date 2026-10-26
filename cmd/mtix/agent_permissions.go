@@ -91,7 +91,7 @@ func configuredPermissions() (*service.WakePermissions, service.PermissionBoard,
 }
 
 func permissionBoard(state *oplocal.State) (service.PermissionBoard, error) {
-	board := service.PermissionBoard{Checkout: filepath.Clean(filepath.Dir(app.mtixDir)), Evidence: collectHubEvidence()}
+	board := service.PermissionBoard{Checkout: filepath.Clean(filepath.Dir(app.mtixDir)), Evidence: lenientHubEvidence()}
 	ids, err := service.ReadBoardIDs(app.mtixDir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return board, err

@@ -18,4 +18,4 @@ Justification for all five:
 - Every one of them is a devDependency path (`tailwindcss` build tooling and its file watchers/globbers). `npm audit --omit=dev` reports 0 vulnerabilities, so none is in the production dependency tree.
 - The embedded bundle (`internal/web/dist`) is static output; none of these packages is included in it or runs at mtix runtime.
 - The only inputs `braces` expands at build time are glob patterns from the repository's own `tailwind.config.js` (`content` globs), written by maintainers, not attacker-controlled. The advisory needs an attacker-supplied, deeply nested pattern.
-- A tailwindcss 4 migration is a separate, larger change and out of scope here; re-check this note when it lands or when a patched `braces` is published.
+- A tailwindcss 4 migration is a separate, larger change and out of scope here. It landed in MTIX-186: `tailwindcss` 4 no longer pulls in `braces`, `micromatch`, `fast-glob` or `chokidar`, and `npm audit` (with dev dependencies) reports 0 vulnerabilities.

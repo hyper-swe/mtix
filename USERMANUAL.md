@@ -1,6 +1,6 @@
 # mtix User Manual
 
-Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim and unclaim keep their existing required/default actor rules. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
+Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
 
 A complete guide to using mtix for hierarchical task management.
 
@@ -292,7 +292,7 @@ mtix show PROJ-1
 mtix show PROJ-1 --json
 ```
 
-`mtix show` prints the node's details as labeled lines, then every annotation (oldest first, equal times ordered by id, with its UTC timestamp and author), then the prompt cut to 100 characters. Annotation text, author and addressee, the description and the prompt are normalized for the terminal: control characters other than newline and tab are removed, leading blank lines and trailing whitespace are trimmed, and continuation lines are indented, so stored text cannot overwrite a line, restyle the terminal or pass for a label. Title and assignee print as stored, and invisible Unicode formatting characters (such as bidirectional overrides) are not removed yet. `mtix show --json` and the MCP `mtix_show` tool list annotations in the same order. When you need the exact stored text, for example to quote a review verdict, use `--json`: it prints the raw record, unchanged. `mtix show --history` also lists the task's change history, newest first (`--history-limit`, default 50), and `--json` includes it as `history` (an empty list when the task has none).
+`mtix show` prints the node's details as labeled lines, then every annotation (oldest first, equal times ordered by id, with its UTC timestamp and author), then the prompt cut to 100 characters. Annotation text, author and addressee, the description and the prompt are normalized for the terminal: control characters other than newline and tab are removed, bidirectional controls (such as overrides and isolates), zero-width characters and tag characters (U+E0001, U+E0020-U+E007F) are removed, the Unicode line and paragraph separators (U+2028, U+2029) become newlines, leading blank lines and trailing whitespace are trimmed, and continuation lines are indented, so stored text cannot overwrite a line, restyle the terminal, display in a misleading order or pass for a label. Title and assignee print as stored. The directional marks (U+200E, U+200F, U+061C) are kept, so a lone mark can still change how digits are ordered. `mtix show --json` and the MCP `mtix_show` tool list annotations in the same order. `mtix show --history` follows the same rule and prints each entry on one line, with line breaks shown as spaces. When you need the exact stored text, for example to quote a review verdict, use `--json`: it prints the raw record, unchanged. `mtix show --history` also lists the task's change history, newest first (`--history-limit`, default 50), and `--json` includes it as `history` (an empty list when the task has none).
 
 ### Update a Node
 
@@ -459,10 +459,18 @@ Transitions the node from `open` → `in_progress` and assigns the agent.
 ### Unclaim (Release Work)
 
 ```bash
-mtix unclaim PROJ-1.1.1 --reason "Need more context from parent task"
+mtix unclaim PROJ-1.1.1 --agent agent-claude --reason "Need more context from parent task"
 ```
 
 Returns the node to `open` and clears the assignee. A reason is required.
+
+Only the assignee can release a claim. mtix acts as `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key, and records that agent in the activity log. When none of them is set, the command exits non-zero and tells you to pass `--agent` or set `MTIX_AUTHOR_ID`. When another agent holds the claim, the command exits non-zero with an error that names the current assignee and the `--force` flag.
+
+```bash
+mtix unclaim PROJ-1.1.1 --agent agent-lead --force --reason "agent-claude stopped responding"
+```
+
+`--force` releases a claim another agent holds. The activity entry names you, the previous assignee and the reason. The REST route (`force` in the body, the agent in `X-Agent-ID`), the gRPC `Unclaim` call (`force`) and the MCP `mtix_unclaim` tool (`force`, `agent_id`) apply the same check (REST needs `X-Agent-ID` and returns 400 without it; gRPC has no fallback). The check is a coordination guard on a self-asserted identity, not authorization. The stuck-timeout auto-unclaim (`agent.stuck_timeout`) is a system action and is not subject to it.
 
 ### Done (Complete Work)
 
@@ -1022,7 +1030,11 @@ ACCEPTANCE:
 
 Each node block is separated by `=` characters. Single-line fields use
 `LABEL: value`. Multi-line fields use `LABEL:\n  indented body`. Control
-characters are sanitized (replaced with U+FFFD). Fields containing
+characters, bidirectional embedding, override and isolate controls,
+zero-width characters, tag characters and the line and paragraph
+separators (U+2028, U+2029) are sanitized (each replaced with U+FFFD). The
+directional marks (U+200E, U+200F, U+061C) and other format characters,
+such as variation selectors, are kept. Fields containing
 newlines in normally single-line positions are auto-promoted to multi-line
 to prevent label injection.
 
@@ -1577,7 +1589,7 @@ mtix import project-data.json --mode replace
 
 **Replace mode** deletes every node, dependency, agent and session, then writes the file's content with every field, annotations and activity included. An export followed by a replace import leaves the store as it was. The automatic import of a changed `.mtix/tasks.json` (after a `git pull` or checkout) is a replace import, but it is refused when it would delete local data (see "Automatic import of `.mtix/tasks.json`" below); `mtix import --mode replace` is gated since 0.5.4 (MTIX-90): it prints the ticket count and needs that count typed at an interactive terminal, so an agent never runs it: ask the user (see `docs/DESTRUCTIVE-COMMANDS.md`). A file written before 0.5.4 (`schema_version` 1.0.0) carries no annotations or activity, so a replace import of it leaves every node without them.
 
-**Replace import on a project that syncs.** `mtix import --mode replace` is refused, before the typed confirmation and with nothing written, when the local store holds tasks and syncs with a hub or relay: it has pushed or pulled events, carries the hub-connected mark, or a hub DSN or relay is configured (MTIX-107.31). A replace deletes tasks and changes whose events stay in the local sync log, and `mtix sync pull` treats those events as already held, so it would never restore them. To take the board on the hub, run `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull` (the discard asks for the ticket count typed at an interactive terminal). To load the file as it is, import it into a project that does not sync. A replace into an empty store, such as a restore into a fresh data directory, still runs. The automatic import never deletes a task whose events the sync log holds either: it refuses any replace that would delete local data, as described below. A project that never synced has shared nothing, so a replace there discards the pending events of the tasks it drops (and the pending links that point at them) in the same transaction; otherwise the first push after a hub is configured would create tasks the board does not hold. A store that published to or ingested from a file relay counts as synced.
+**Replace import on a project that syncs.** `mtix import --mode replace` is refused, before the typed confirmation and with nothing written, when the local store holds tasks and syncs with a hub or relay: it has pushed or pulled events, carries the hub-connected mark, or a hub DSN or relay is configured (MTIX-107.31). A replace deletes tasks and changes whose events stay in the local sync log, and `mtix sync pull` treats those events as already held, so it would never restore them. To take the board on the hub, run `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull` (the discard asks for the ticket count typed at an interactive terminal). To load the file as it is, import it into a project that does not sync. A replace into an empty store, such as a restore into a fresh data directory, still runs. The automatic import never deletes a task whose events the sync log holds either: it refuses any replace that would delete local data, as described below. A project that never synced has shared nothing, so a replace there discards the pending events of the tasks it drops (and the pending links that point at them) in the same transaction; otherwise the first push after a hub is configured would create tasks the board does not hold. A store that published to or ingested from a file relay counts as synced. The automatic import also records a configured relay directory, hub endpoint or stored hub DSN as the hub-connected mark before it imports, so a relay whose first publish did not finish (the records are on the medium but the publish cursor was not written) counts as synced too, and a replace that would discard events readers may hold is refused; a project with a relay configured but never published is therefore refused at the automatic import, as `mtix import --mode replace` already was.
 
 **Merge mode**:
 - A node the store does not have is created as exported.
@@ -1840,6 +1852,25 @@ export MTIX_SYNC_SSLROOTCERT="/path/to/ca-bundle.crt"   # only for a private CA
 export MTIX_SYNC_DSN="postgresql://<user>:<pw>@<host>:5432/<db>?sslmode=verify-full"
 ```
 
+- **Special characters in the password.** The URL form needs a password with
+  `/`, `?`, `#`, `%` or a space percent-encoded. To avoid encoding, give the
+  DSN in the libpq key=value form and single-quote the password, escaping `'`
+  and `\` with a backslash. Or leave the password out of the DSN and set
+  `MTIX_SYNC_PASSWORD`; a password in the DSN takes precedence. The TLS rules
+  are the same for both forms.
+
+```bash
+# Shell single quotes pass the DSN through unchanged. This form suits a password
+# with no space, quote or backslash in it; for any other password use the second form:
+export MTIX_SYNC_DSN='host=<host> port=5432 dbname=<db> user=<user> password=<pw> sslmode=verify-full'
+# Or keep the password out of the DSN and read it without echo, so the shell
+# never expands $, backticks or backslashes in it:
+export MTIX_SYNC_DSN='postgresql://<user>@<host>:5432/<db>?sslmode=verify-full'
+IFS= read -r -s MTIX_SYNC_PASSWORD && export MTIX_SYNC_PASSWORD
+```
+Do not put a generated password inside shell double quotes: the shell rewrites
+`\`, `$` and backticks in it before mtix sees it.
+
 ### Setup (every other teammate)
 
 ```bash
@@ -1903,6 +1934,22 @@ after the last batch it applied, never after one it did not.
 - **Hub owner, after upgrading.** Run `mtix sync init` once with the
   hub owner's DSN to add the hub index pull reads by; the same item in
   the next section says when to run it and what it costs.
+
+Each pull also registers this client with the hub, so a client that
+only pulls, such as a daemon, shows up for the version gate and for any
+stale-client report. Right after it connects, and before it reads events,
+the pull writes one row to `sync_project_clients`: the board's sync
+project prefix (set by `mtix sync init`), this machine's hash and the
+CLI version. It is one statement on the connection the pull already
+opened: no extra connection, no timer, and no contact with a hub that no
+pull was going to reach. A role that only pulls needs the same INSERT and
+UPDATE on `sync_project_clients` as one that pushes (the least-privilege
+list in the sync skill and in `docs/SECURITY-MODEL.md` already has them).
+If the write fails, the pull completes as usual and prints one
+`WARN: pull client registration skipped` line that names the grant; the
+client stays invisible to the version gate until the grant is fixed. A
+board that has never run `mtix sync init` has no sync project prefix and
+skips the registration quietly.
 
 ### Late changes from offline teammates
 
@@ -2956,6 +3003,13 @@ The notice is advisory: the hook still runs as written and launch behaviour
 does not change. To clear it, run the program through a pinned project script
 and approve the hook again.
 
+Hook program paths must be clean: a program written with a parent-directory
+segment ("..") is refused at launch, naming the hook, because the checked path
+and the file the operating system runs can differ once a link comes before the
+segment. Write the program as an absolute path without ".." or as a
+project-relative path (scripts/run.sh and ./scripts/run.sh are fine). Paths are
+resolved link by link, so a script operand is judged where it actually lands.
+
 Append-file hooks: an `append-file` hook writes only to a regular file inside
 the project. Its `append-file.path` must be relative. The file is opened
 through a handle on the project directory, so a path that leads outside the
@@ -3643,6 +3697,7 @@ change the node's status with the normal commands instead.
 | `mtix sync doctor` fails `quarantined events` | Pulled events failed their checks or their apply and are held, not applied | Run `mtix sync pull` (it retries them); if they remain, list them with `mtix sync quarantine list` (see [Quarantined events](#quarantined-events)) and report the reasons to whoever runs the hub |
 | `mtix sync doctor` warns in `valid node ids` | An earlier sync brought in a task whose id is outside the node id grammar | The task stays readable and editable (`mtix show <uid>`); recreate it with `mtix create` if you still need it (see [Quarantined events](#quarantined-events)) |
 | A command prints `WARN: ... over the 65536-byte sync limit`, or `mtix sync doctor` fails `held push events` | Push holds events the hub would refuse (and the events of a held task creation's subtree, and links made while one is held), and pushes the rest | Follow the fix doctor names for each held event: shorten or split a field edit; escalate a held task creation, without editing it; check the clock for a clock hold (see [Held push events](#held-push-events)) |
+| `mtix sync push` fails with `hold invalid events of batch N: another mtix operation is in progress, retry in a moment` | While deciding which events to hold, push waited more than 5 seconds for the local database's write lock, which another mtix process (a pull applying a backlog, another agent) kept. The batches before the failing one were already sent and marked pushed; the events of the failing batch and later were not sent and stay pending. Nothing is lost and nothing is sent twice | Let the other mtix command finish, then run `mtix sync push` again to send the rest |
 | `mtix sync status` shows a `pending` count that never goes down, `mtix sync doctor` fails `queue draining`, yet `mtix sync push` reports success | On a client older than 0.5.4: events an earlier push delivered but never marked pushed (a lost commit confirmation, a crash or disk failure before the local mark, a retry after a network drop) sit at the head of the queue, and push stops at them | Upgrade and run `mtix sync push`: it confirms the events already on the hub (`already on the hub` in its output) and pushes the rest; check `pending` 0 (see [Events already on the hub](#events-already-on-the-hub)) |
 | A node shows an older state than its history after a pull on a client older than 0.5.4 (for example `in_progress` after `mtix done`) | That pull replayed an older event of this machine | Upgrade, run `mtix sync pull`, then `mtix sync repair --status` and review the list; run `mtix sync pull` again, then `mtix sync repair --status --apply` and `mtix sync push`; a flagged node needs review and `--force` (see above). Pulling first matters: a repair made on a stale log can revert a teammate's newer change on every machine |
 | `mtix sync doctor` shows `[WARN] hub-privileges` | Roles other than the table owner can use the sync tables, or a TRUNCATE guard is missing or disabled. Nothing is blocked, and this may be fine on a private network | To restrict access, the table owner runs `mtix sync harden` (a dry run), then, after reviewing its role list, `mtix sync harden --apply --keep-role <role>`; see "Hub privileges" |
@@ -4018,7 +4073,7 @@ If mtix reports `database … is truncated`, `integrity check … failed` or `da
 1. **Stop. Do not delete anything** — especially not `mtix.db-wal` or `mtix.db-shm`; the WAL may be the only intact copy of your latest commits.
 2. Copy the entire `.mtix/data/` directory to another volume as evidence.
 3. Run `mtix recover`. It reads the damaged database read-only — salvaging every readable row individually — fills gaps from the `.mtix/tasks.json` mirror, synthesizes placeholders for lost parents, and writes an importable export to `.mtix/recovered-<timestamp>.json` together with a salvage report (recovered / from-mirror / lost IDs). It never modifies the damaged files.
-   A task whose row is readable but whose comments (annotations), activity, `code_refs` or `commit_refs` cannot be parsed (the case `mtix export` and the automatic import report, naming the task, the field and `mtix recover`) is salvaged from the database, and that field is taken from the task's copy in `.mtix/tasks.json` when the copy is usable: the file holds exactly one task under that ID, with the same uid when both carry one; the file's `schema_version` is 2.0.0 or later (a file written before 0.5.4 carries none of these fields); and the copy's times pass the checks import applies. The report then prints, for that task and field, `restored from the mirror <path>` with the number of entries the copy held. The copy is whatever `.mtix/tasks.json` holds: the last export, or a file a `git pull` or checkout put there (for example one whose automatic import was refused), which is another clone's copy of the task and can hold that clone's comments and lack yours. Compare each restored field with the local history (for example `git log -p .mtix/tasks.json`) before you import the salvage file. When the file's checksum does not verify, the copy is still used, as salvage of last resort, and the note ends `(the mirror checksum did not verify)`: the file may have been edited by hand, so check that field with particular care. Otherwise the note says the field is dropped and why (for example `the mirror holds no copy of this node`, or `a different task` when the uids differ), and the task is salvaged without that field. `mtix recover` reads every row by the rowid its primary-key index entry points at, so a row keeps its own ID and the salvage file holds each task once. When a damaged index entry for task A points at task B's row, the report says `node A: the index entry for A points at the row of B` and what happened to that row: it is salvaged once, as B, and not again when another entry already salvaged it. Nothing from that row is salvaged as A. A itself ends up exactly one way: salvaged from the database when another index entry reaches A's own row (counted under from database), taken from `.mtix/tasks.json` when the mirror holds it (counted under from mirror), or listed as lost (on the LOST line). A second index entry for the same task that points at the same row is skipped with a note, so the task is read and counted once. Check such tasks with particular care before you import the salvage file.
+   A task whose row is readable but whose comments (annotations), activity, `code_refs` or `commit_refs` cannot be parsed (the case `mtix export` and the automatic import report, naming the task, the field and `mtix recover`) is salvaged from the database, and that field is taken from the task's copy in `.mtix/tasks.json` when the copy is usable: the file holds exactly one task under that ID, with the same uid when both carry one; the file's `schema_version` is 2.0.0 or later (a file written before 0.5.4 carries none of these fields); and the copy's times pass the checks import applies. The report then prints, for that task and field, `restored from the mirror <path>` with the number of entries the copy held. The copy is whatever `.mtix/tasks.json` holds: the last export, or a file a `git pull` or checkout put there (for example one whose automatic import was refused), which is another clone's copy of the task and can hold that clone's comments and lack yours. Compare each restored field with the local history (for example `git log -p .mtix/tasks.json`) before you import the salvage file. When the file's checksum does not verify, the copy is still used, as salvage of last resort, and the note ends `(the mirror checksum did not verify)`: the file may have been edited by hand, so check that field with particular care. Otherwise the note says the field is dropped and why (for example `the mirror holds no copy of this node`, or `a different task` when the uids differ), and the task is salvaged without that field. `mtix recover` reads every row by the rowid its primary-key index entry points at, so a row keeps its own ID and the salvage file holds each task once. When a damaged index entry for task A points at task B's row, the report says `node A: the index entry for A points at the row of B` and what happened to that row: it is salvaged once, as B, and not again when another entry already salvaged it. Nothing from that row is salvaged as A. A itself ends up exactly one way: salvaged from the database when another index entry reaches A's own row (counted under from database), taken from `.mtix/tasks.json` when the mirror holds it (counted under from mirror), or listed as lost (on the LOST line). A second index entry for the same task that points at the same row is skipped with a note, so the task is read and counted once. When the table itself holds two rows with the ID of task B, `mtix recover` salvages the first row it reads as B, lists B once, and does not salvage the other row: the report says `node B: the table holds two rows with id B`, names the rowid of each row, and holds the content of the row that is not salvaged as exported JSON, so no row is dropped without a note. Show that note to the user and have them decide which content to keep before importing the salvage file. Check such tasks with particular care before you import the salvage file.
 4. Review the report, then restore (the replace import needs the ticket count typed at an interactive terminal): `mtix import --mode replace .mtix/recovered-<timestamp>.json` into a fresh `mtix init` project (or this one, after moving the damaged `data/` aside). Alternatively restore a `mtix backup` snapshot if you have a newer one: stop every mtix process, copy the snapshot over `.mtix/data/mtix.db`, delete `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm`, then continue (this is a restore, unlike the corrupted store in step 1, whose WAL you keep).
 5. For hand-reconstructed export files (e.g., rebuilt from session transcripts), `mtix import --recompute-checksum` replaces the stale integrity checksum — loudly — so the standard import accepts them.
 6. `MTIX_SKIP_INTEGRITY_CHECK=1` bypasses the open-time integrity gates (both the truncation check and quick_check) so `mtix verify`, `mtix backup`, and `mtix export` can reach a damaged file during recovery. mtix logs a loud DANGER line while it is set. Never use it to keep writing.

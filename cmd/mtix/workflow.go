@@ -52,32 +52,46 @@ func runClaim(id, agentID string) error {
 	return nil
 }
 
-// newUnclaimCmd creates the mtix unclaim command per FR-10.4.
+// newUnclaimCmd creates the mtix unclaim command per FR-10.4. Only the
+// assignee may release a claim unless --force is given (MTIX-169).
 func newUnclaimCmd() *cobra.Command {
-	var reason string
+	var reason, agentID string
+	var force bool
 
 	cmd := &cobra.Command{
 		Use:   "unclaim <id>",
 		Short: "Release a node assignment",
-		Args:  cobra.ExactArgs(1),
+		Long: `Release a node assignment. Only the assignee can release a claim.
+The acting agent is --agent, else MTIX_AUTHOR_ID, else the author_id config key.
+Use --force to release a claim another agent holds; the activity log records
+you, the previous assignee and the reason.`,
+		Args: cobra.ExactArgs(1),
 		RunE: withAutoExport(func(_ *cobra.Command, args []string) error {
-			return runUnclaim(args[0], reason)
+			return runUnclaim(args[0], reason, agentID, force)
 		}),
 	}
 
 	cmd.Flags().StringVar(&reason, "reason", "", "Reason for unclaiming (required)")
 	_ = cmd.MarkFlagRequired("reason")
+	cmd.Flags().StringVar(&agentID, "agent", "", "Acting agent ID (default: MTIX_AUTHOR_ID, then the author_id config key)")
+	cmd.Flags().BoolVar(&force, "force", false, "Release a claim held by another agent")
 
 	return cmd
 }
 
-func runUnclaim(id, reason string) error {
+func runUnclaim(id, reason, agentID string, force bool) error {
 	if app.nodeSvc == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
+	if agentID == "" {
+		agentID = configuredAuthorID()
+	}
+	if agentID == "" {
+		return fmt.Errorf("unclaim %s: no agent identity; pass --agent or set MTIX_AUTHOR_ID: %w", id, model.ErrInvalidInput)
+	}
 
 	ctx := mutationContext()
-	if err := app.nodeSvc.UnclaimNode(ctx, id, reason, "cli"); err != nil {
+	if err := app.nodeSvc.UnclaimNode(ctx, id, reason, agentID, force); err != nil {
 		return err
 	}
 

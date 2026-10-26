@@ -82,7 +82,7 @@ func agentIDServiceOperation(ctx context.Context, svc *service.NodeService, op, 
 	case "reclaim":
 		return svc.ForceReclaimNode(ctx, id, agent, time.Hour)
 	case "unclaim":
-		return svc.UnclaimNode(ctx, id, "release", agent)
+		return svc.UnclaimNode(ctx, id, "release", agent, false)
 	case "apply_update":
 		return svc.ApplyUpdate(ctx, id, &service.NodeUpdate{Assignee: &agent})
 	default:
@@ -115,8 +115,11 @@ func TestAgentID_ServiceValidWorkflowRaw_Preserved(t *testing.T) {
 					svc, st, bc := newTestNodeService(t)
 					ctx := context.Background()
 					req := &service.CreateNodeRequest{Project: "TEST", Title: "existing"}
-					if op == "reclaim" || op == "unclaim" {
+					if op == "reclaim" {
 						req.Assignee = "old"
+					}
+					if op == "unclaim" {
+						req.Assignee = agent
 					}
 					n, err := svc.CreateNode(ctx, req)
 					require.NoError(t, err)

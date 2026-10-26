@@ -113,7 +113,7 @@ func TestGoWorkflow_Aggregate_RejectsEveryNonSuccessResult(t *testing.T) {
 	}
 }
 
-func TestGoWorkflow_CheckCount_MatchesSeventeenChecks(t *testing.T) {
+func TestGoWorkflow_CheckCount_MatchesTwentyOneChecks(t *testing.T) {
 	count := 0
 	for _, job := range readCIJobs(t) {
 		combinations := 1
@@ -125,5 +125,38 @@ func TestGoWorkflow_CheckCount_MatchesSeventeenChecks(t *testing.T) {
 		}
 		count += combinations
 	}
-	require.Equal(t, 17, count)
+	require.Equal(t, 21, count)
+}
+
+// MTIX-112.17.24: cmd/mtix runs as three shards per PostgreSQL version.
+func TestGoWorkflow_PostgresCmdShards_RunEveryShardOnBothVersionsWithUnchangedFlags(t *testing.T) {
+	jobs := readCIJobs(t)
+	job, ok := jobs["test-go-postgres-cmd"]
+	require.True(t, ok)
+	require.Equal(t, "pg-${{ matrix.pg }} cmd/mtix shard ${{ matrix.shard }}", job.Name)
+	require.Equal(t, []string{"16", "17"}, job.Strategy.Matrix.PG)
+	require.Equal(t, []string{"1", "2", "3"}, job.Strategy.Matrix.Shard)
+	require.Empty(t, job.Strategy.Matrix.Include)
+	require.Empty(t, job.Strategy.Matrix.Exclude)
+	require.False(t, *job.Strategy.FailFast)
+	require.Empty(t, job.If)
+	require.Nil(t, job.ContinueOnError)
+	require.Contains(t, jobs["build"].Needs, "test-go-postgres-cmd")
+	var guard, run bool
+	for _, step := range job.Steps {
+		require.Empty(t, step.If)
+		require.Nil(t, step.ContinueOnError)
+		guard = guard || step.Run == "bash scripts/cmd-mtix-shards.sh check"
+		if strings.Contains(step.Run, "go test") {
+			run = true
+			require.Equal(t, "${{ matrix.shard }}", step.Env["SHARD"])
+			require.Contains(t, step.Run, `bash scripts/cmd-mtix-shards.sh pattern "$SHARD"`)
+			require.Contains(t, step.Run, `-race -count=1 -p 1 -timeout 20m -run "$pattern"`)
+			require.NotContains(t, step.Run, "-skip")
+		}
+	}
+	require.True(t, guard)
+	require.True(t, run)
+	// The unsharded jobs must no longer run cmd/mtix, or it would run twice.
+	require.NotContains(t, jobs["test-go-postgres-docker"].Strategy.Matrix.Pkg, "./cmd/mtix/")
 }

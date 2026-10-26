@@ -507,4 +507,4 @@ By contributing to mtix, you agree that your contributions will be licensed unde
 Relay performance changes must retain the default paired guard in race and
 short runs and the blocking quiet reference check in the existing Linux build
 job. See [relay calibration](benchmarks/README.md#fr-21-relay-publish-guard-mtix-165)
-for the exact command and measured calibration limits. The job count remains 17.
+for the exact command and measured calibration limits. The job count remains 21.

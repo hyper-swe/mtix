@@ -259,6 +259,8 @@ GRANT USAGE ON SEQUENCE sync_conflicts_conflict_id_seq TO mtix_writer;
 GRANT EXECUTE ON FUNCTION record_restore_collision TO mtix_writer;
 ```
 
+A pull also records this client on the hub. Right after `mtix sync pull` (and each daemon pull) connects, and before it reads any events, it writes one row to `sync_project_clients`: the board's sync project prefix (set by `mtix sync init`), this machine's hash and the CLI version. That one statement uses the connection the pull already opened, so it adds no connection and no timer and wakes a hub only when a pull was going to contact it anyway. It is what lets the version gate and any stale-client report see a client that only pulls. A role that only pulls therefore needs the same INSERT and UPDATE on `sync_project_clients` as a role that pushes. If the write fails, for instance for a role without those grants, the pull still completes with the same exit status, result and cursor, and prints one `WARN: pull client registration skipped` line that names the grant; the client then stays invisible to the version gate. To verify, after a pull the owner finds the client in `SELECT project_prefix, cli_version, last_seen_at FROM sync_project_clients ORDER BY last_seen_at DESC;`, or checks the role with `SELECT has_table_privilege('ROLE', 'sync_project_clients', 'INSERT') AND has_table_privilege('ROLE', 'sync_project_clients', 'UPDATE');`, which must return true (replace `ROLE` with the pulling role's name).
+
 Three more grants are for a writer that also runs the command named in the comment; leave them out otherwise:
 
 ```sql

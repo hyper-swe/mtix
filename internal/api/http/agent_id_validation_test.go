@@ -82,9 +82,7 @@ func TestAgentID_RESTValidRawAndEmptyCreate_Preserved(t *testing.T) {
 					req := newLocalRequest(http.MethodPost, "/api/v1/nodes/"+n.ID+"/"+action, strings.NewReader(`{"reason":"release"}`))
 					req.Header.Set("Content-Type", "application/json")
 					req.Header.Set("X-Requested-With", "mtix")
-					if action == "claim" {
-						req.Header.Set("X-Agent-ID", agent)
-					}
+					req.Header.Set("X-Agent-ID", agent)
 					res := httptest.NewRecorder()
 					s.Router().ServeHTTP(res, req)
 					require.Equal(t, http.StatusOK, res.Code, res.Body.String())

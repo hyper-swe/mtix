@@ -152,7 +152,7 @@ func knownProgramPin(root, program string, nameKnown func(string) bool) (string,
 	}
 	if filepath.IsAbs(program) {
 		dir := programDirectory(program)
-		if !inPathDirectory(root, dir) {
+		if !physicalDirectory(dir) || !inPathDirectory(root, dir) {
 			return "", false
 		}
 		return filepath.Join(dir, filepath.Base(program)), true
@@ -174,6 +174,14 @@ func programDirectory(program string) string {
 		return resolveDeepest(program[:cut+1], 0)
 	}
 	return resolveDeepest(program[:cut], 0)
+}
+
+// physicalDirectory reports a directory path with no link left in it: its own
+// resolution is itself. A slot is known only in such a directory, so the path
+// that is pinned cannot be re-pointed after the check.
+func physicalDirectory(dir string) bool {
+	resolved, err := filepath.EvalSymlinks(dir)
+	return err == nil && resolved == dir
 }
 
 // isBareName reports a program written without any path separator, using the

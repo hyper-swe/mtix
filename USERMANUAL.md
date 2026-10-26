@@ -3017,8 +3017,11 @@ agents and other untrusted processes cannot write. A launch wrapper other than
 the known env, found by name in a PATH directory, is itself the program that
 needs approval.
 Whether a wrapper or an interpreter is the known one is decided by the
-physical directory that holds it, after links are followed; under strict mode
-those slots always launch from that directory. `mtix hooks trust --program`
+physical directory that holds it, after links are followed. A slot is the known
+one only when that directory has no link left in it (a path that still passes
+through a link, such as a chain of links too long to follow, is not known and
+needs approval); under strict mode a known slot launches from that directory.
+`mtix hooks trust --program`
 prints the program it will approve before it writes the approval.
 
 Hook program paths must be clean: a program written with a parent-directory

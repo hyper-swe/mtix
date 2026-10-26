@@ -290,6 +290,9 @@ func pinKnownSlots(j strictJudgement, plan *ExecPlan) error {
 		if filepath.IsAbs(plan.Argv[slot]) && programDirectory(plan.Argv[slot]) != filepath.Dir(pin) {
 			return fmt.Errorf("program %q changed location between the check and the launch", plan.Argv[slot])
 		}
+		if filepath.IsAbs(pin) && !physicalDirectory(filepath.Dir(pin)) {
+			return fmt.Errorf("program %q is still reached through a link at the launch", plan.Argv[slot])
+		}
 		plan.Argv[slot] = pin
 	}
 	return nil

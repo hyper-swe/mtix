@@ -32,6 +32,7 @@ func TestStrictProgramModeDocs_NameSwitchApprovalAndCheck(t *testing.T) {
 		"approve only programs in locations that\nagents and other untrusted processes cannot write",
 		"A launch wrapper other than\nthe known env",
 		"decided by the\nphysical directory that holds it",
+		"one only when that directory has no link left in it",
 		"prints the program it will approve before it writes the approval",
 	}
 	for _, rel := range files {

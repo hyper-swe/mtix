@@ -905,7 +905,7 @@ func TestRunClaim_NonExistent_ReturnsError(t *testing.T) {
 // TestRunUnclaim_NonExistent_ReturnsError verifies unclaim for missing node.
 func TestRunUnclaim_NonExistent_ReturnsError(t *testing.T) {
 	initTestApp(t)
-	err := runUnclaim("NONEXIST-1", "reason")
+	err := runUnclaim("NONEXIST-1", "reason", "agent-1", false)
 	assert.Error(t, err)
 }
 

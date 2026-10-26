@@ -2587,10 +2587,17 @@ remains, the node stays blocked.
 
 Release a node assignment
 
+Release a node assignment. Only the assignee can release a claim.
+The acting agent is --agent, else MTIX_AUTHOR_ID, else the author_id config key.
+Use --force to release a claim another agent holds; the activity log records
+you, the previous assignee and the reason.
+
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
+| `--agent` |  | Acting agent ID (default: MTIX_AUTHOR_ID, then the author_id config key) |  |
+| `--force` |  | Release a claim held by another agent | false |
 | `--reason` |  | Reason for unclaiming (required) |  |
 ---
 

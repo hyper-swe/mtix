@@ -38,6 +38,20 @@ type importConfig struct {
 	localMoves localWrites
 	// workflow settles the tasks whose workflow values differ (MTIX-95.31.13).
 	workflow WorkflowResolution
+	// asSynced makes the replace guards treat the store as synced although it
+	// holds no mark or cursor yet (AsSyncedStore, MTIX-107.31.8).
+	asSynced bool
+}
+
+// AsSyncedStore makes a replace import treat the store as one that syncs
+// with a hub or relay, whatever the store itself records: the replace is
+// refused when it would drop a task whose events the sync log holds, and
+// the pending events of dropped tasks are not discarded (MTIX-107.31.8).
+// The caller passes it for evidence that is only transient, such as an
+// exported hub DSN, which must refuse a replace while it is set but must not
+// write the sticky hub-connected mark.
+func AsSyncedStore() ImportOption {
+	return func(c *importConfig) { c.asSynced = true }
 }
 
 // IfStoreUnchanged makes the import write nothing, and return
@@ -154,7 +168,7 @@ func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode I
 		}
 		var applyErr error
 		if mode == ImportModeReplace {
-			_, applyErr = replaceAllData(ctx, tx, &dry)
+			_, applyErr = replaceAllData(ctx, tx, &dry, false)
 		} else {
 			_, applyErr = mergeAllData(ctx, tx, &dry, workflowPolicy{workflow, s.clock()})
 		}

@@ -201,25 +201,6 @@ export MTIX_SYNC_SSLROOTCERT="/path/to/ca-bundle.crt"   # only for a private CA
 export MTIX_SYNC_DSN="postgresql://<user>:<pw>@<host>:5432/<db>?sslmode=verify-full"
 ```
 
-- **Special characters in the password.** The URL form needs a password with
-  `/`, `?`, `#`, `%` or a space percent-encoded. To avoid encoding, give the
-  DSN in the libpq key=value form and single-quote the password, escaping `'`
-  and `\` with a backslash. Or leave the password out of the DSN and set
-  `MTIX_SYNC_PASSWORD`; a password in the DSN takes precedence. The TLS rules
-  are the same for both forms.
-
-```bash
-# Shell single quotes pass the DSN through unchanged. This form suits a password
-# with no space, quote or backslash in it; for any other password use the second form:
-export MTIX_SYNC_DSN='host=<host> port=5432 dbname=<db> user=<user> password=<pw> sslmode=verify-full'
-# Or keep the password out of the DSN and read it without echo, so the shell
-# never expands $, backticks or backslashes in it:
-export MTIX_SYNC_DSN='postgresql://<user>@<host>:5432/<db>?sslmode=verify-full'
-IFS= read -r -s MTIX_SYNC_PASSWORD && export MTIX_SYNC_PASSWORD
-```
-Do not put a generated password inside shell double quotes: the shell rewrites
-`\`, `$` and backticks in it before mtix sees it.
-
 ## Least-privilege roles
 
 Two roles keep the daily credential small. **The owner** creates and owns the sync tables, so it runs `mtix sync init`, `mtix sync repair-uids`, `mtix sync mark-restored`, `mtix sync harden` and `mtix sync migrate --yes`. **The writer** is the role every agent uses for `mtix sync push`, `pull`, `clone`, `status` and `doctor`; it cannot create, alter, drop or truncate anything.
@@ -258,8 +239,6 @@ GRANT UPDATE ON TABLE sync_project_clients TO mtix_writer;
 GRANT USAGE ON SEQUENCE sync_conflicts_conflict_id_seq TO mtix_writer;
 GRANT EXECUTE ON FUNCTION record_restore_collision TO mtix_writer;
 ```
-
-A pull also records this client on the hub. Right after `mtix sync pull` (and each daemon pull) connects, and before it reads any events, it writes one row to `sync_project_clients`: the board's sync project prefix (set by `mtix sync init`), this machine's hash and the CLI version. That one statement uses the connection the pull already opened, so it adds no connection and no timer and wakes a hub only when a pull was going to contact it anyway. It is what lets the version gate and any stale-client report see a client that only pulls. A role that only pulls therefore needs the same INSERT and UPDATE on `sync_project_clients` as a role that pushes. If the write fails, for instance for a role without those grants, the pull still completes with the same exit status, result and cursor, and prints one `WARN: pull client registration skipped` line that names the grant; the client then stays invisible to the version gate. To verify, after a pull the owner finds the client in `SELECT project_prefix, cli_version, last_seen_at FROM sync_project_clients ORDER BY last_seen_at DESC;`, or checks the role with `SELECT has_table_privilege('ROLE', 'sync_project_clients', 'INSERT') AND has_table_privilege('ROLE', 'sync_project_clients', 'UPDATE');`, which must return true (replace `ROLE` with the pulling role's name).
 
 Three more grants are for a writer that also runs the command named in the comment; leave them out otherwise:
 
@@ -351,7 +330,7 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 | `valid node ids` WARN | an earlier sync brought in a task whose id is outside the node id grammar | The task stays readable and editable here (`mtix show <uid>`), but other replicas quarantine its changes. Recreate each task you still need with `mtix create` and stop using the old one. |
 | `unique node uids` fails | two tasks share a uid | Do not edit the database. Follow the recovery the check names, and ask the user. |
 | `board matches sync log` fails | a replace import of an earlier version deleted tasks whose events stay in the local sync log; a pull acknowledges those events instead of applying them, so it cannot restore the tasks | Tell the user. The steps the check prints rebuild the board from the hub, run one at a time: `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull`. The discard deletes every local task and unpushed change, which is why `pending` 0 comes first; it asks for the ticket count typed at an interactive terminal, so the user runs it. |
-| `mtix import --mode replace` fails with `this store syncs with a hub` | a replace would delete tasks and changes whose events stay in the local sync log, and a pull could not restore them; the replace needs the ticket count typed at an interactive terminal, so an agent never runs it | Run `mtix sync pull` to receive teammates' changes. To rebuild the board from the hub, ask the user to run the commands the refusal names. A replace into an empty store, such as a restore into a fresh data directory, still runs. On a project that never synced a replace is allowed and discards the pending events of the tasks it drops, so a later first push cannot create them; a project that published to or ingested from a file relay counts as synced, and the automatic import records a configured relay or hub as the hub-connected mark before it imports, so a project with a relay configured is refused too. |
+| `mtix import --mode replace` fails with `this store syncs with a hub` | a replace would delete tasks and changes whose events stay in the local sync log, and a pull could not restore them; the replace needs the ticket count typed at an interactive terminal, so an agent never runs it | Run `mtix sync pull` to receive teammates' changes. To rebuild the board from the hub, ask the user to run the commands the refusal names. A replace into an empty store, such as a restore into a fresh data directory, still runs. |
 | `hub-triggers` WARN or FAIL | a hub function or trigger is missing, rebound or disabled | Ask the table owner to run `mtix sync init` or the `ALTER TABLE ... ENABLE TRIGGER` statement the check prints. |
 | `hub-privileges` WARN | roles besides the owner can use the sync tables | Acceptable on a private network. To restrict, the owner runs `mtix sync harden` (dry run) and, with the user's approval of its role list, `--apply`. |
 | `mtix sync conflicts list` shows conflicts | two machines changed the same field | `mtix sync conflicts resolve <id>` records a decision and changes no task: apply the chosen value with `mtix update`, then push. |

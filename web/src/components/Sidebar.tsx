@@ -32,7 +32,7 @@ export function Sidebar({ nodeStore, onClose }: SidebarProps) {
         <div className="flex justify-end p-2">
           <button
             onClick={onClose}
-            className="p-1 rounded-sm cursor-pointer"
+            className="p-1 rounded cursor-pointer"
             style={{ color: "var(--color-text-tertiary)" }}
             onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--color-hover)")}
             onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
@@ -85,7 +85,7 @@ export function Sidebar({ nodeStore, onClose }: SidebarProps) {
         <div className="flex items-center justify-between mb-1">
           <SectionLabel>Tree</SectionLabel>
           <button
-            className="text-[10px] px-1.5 py-0.5 rounded-sm cursor-pointer"
+            className="text-[10px] px-1.5 py-0.5 rounded cursor-pointer"
             style={{
               color: nodeStore.hideDone ? "var(--color-accent)" : "var(--color-text-tertiary)",
               backgroundColor: nodeStore.hideDone ? "var(--color-accent-muted)" : "transparent",
@@ -140,7 +140,7 @@ function NavItem({
 }) {
   return (
     <button
-      className="w-full flex items-center gap-2 text-left text-sm px-2 py-1.5 rounded-sm cursor-pointer"
+      className="w-full flex items-center gap-2 text-left text-sm px-2 py-1.5 rounded cursor-pointer"
       style={{
         color: active ? "var(--color-text-primary)" : "var(--color-text-secondary)",
         backgroundColor: active ? "var(--color-accent-muted)" : "transparent",

@@ -15,7 +15,7 @@ allowed-tools:
 
 # MTIX — Multi-Agent Coordination
 
-Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
+Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim and unclaim keep their existing required/default actor rules. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
 
 ## Health checks
 
@@ -363,9 +363,8 @@ Heartbeats prove agent liveness. Without them, the system assumes the agent has 
 When unclaiming a node (via `mcp__mtix__mtix_unclaim`):
 
 1. **Always provide a reason** — the next agent needs context on why you stopped
-2. **Release only your own claim** — pass your `agent_id`; mtix refuses an unclaim of another agent's claim (`ErrAlreadyClaimed`) and names the current assignee. Pass `force: true` only when that agent is stale or gone; the activity log records you, the previous assignee and your reason
-3. **Document progress** — use `mcp__mtix__mtix_annotate` to record what was completed, what remains, and any issues discovered
-4. **Clean state** — ensure no partial changes are left that would confuse the next agent
+2. **Document progress** — use `mcp__mtix__mtix_annotate` to record what was completed, what remains, and any issues discovered
+3. **Clean state** — ensure no partial changes are left that would confuse the next agent
 
 ## Independent Verification
 
@@ -386,7 +385,7 @@ When `mcp__mtix__mtix_stale` reports stale agents:
 1. **Investigate first** — is the agent truly dead, or just temporarily unresponsive?
 2. **Check partial work** — use `mcp__mtix__mtix_agent_work` to see what the stale agent was working on
 3. **Document** — add a comment to affected nodes explaining the stale detection
-4. **Reclaim if needed** — unclaim the node with `force: true` and a reason so it becomes available for other agents
+4. **Reclaim if needed** — unclaim the node so it becomes available for other agents
 5. **Never delete agent records** — they are part of the audit trail
 
 ## Parallel Work Coordination

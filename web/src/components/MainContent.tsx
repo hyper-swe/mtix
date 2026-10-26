@@ -90,7 +90,7 @@ function StaleView(_props: { onNavigate: (nodeId: string) => void }) {
           {staleAgents.map((agentId) => (
             <div
               key={agentId}
-              className="flex items-center gap-3 px-3 py-2 rounded-sm border"
+              className="flex items-center gap-3 px-3 py-2 rounded border"
               style={{
                 borderColor: "var(--color-status-blocked)",
                 backgroundColor: "var(--color-surface)",
@@ -107,7 +107,7 @@ function StaleView(_props: { onNavigate: (nodeId: string) => void }) {
                 Agent: {agentId}
               </span>
               <span
-                className="text-xs px-1.5 py-0.5 rounded-sm"
+                className="text-xs px-1.5 py-0.5 rounded"
                 style={{
                   backgroundColor: "var(--color-status-blocked)",
                   color: "#FFFFFF",
@@ -187,7 +187,7 @@ function AgentsView({ onNavigate }: { onNavigate: (nodeId: string) => void }) {
           {agents.map((agent) => (
             <div
               key={agent.id}
-              className="rounded-sm border p-4"
+              className="rounded border p-4"
               style={{
                 borderColor: "var(--color-border)",
                 backgroundColor: "var(--color-surface)",
@@ -201,7 +201,7 @@ function AgentsView({ onNavigate }: { onNavigate: (nodeId: string) => void }) {
                   {agent.id}
                 </span>
                 <span
-                  className="text-xs px-1.5 py-0.5 rounded-sm font-bold uppercase"
+                  className="text-xs px-1.5 py-0.5 rounded font-bold uppercase"
                   style={{
                     backgroundColor: "var(--color-status-in-progress)",
                     color: "#FFFFFF",

@@ -44,7 +44,7 @@ export function ContextChain({
 
   return (
     <div
-      className={`rounded-sm border ${className}`}
+      className={`rounded border ${className}`}
       style={{
         borderColor: "var(--color-border)",
         backgroundColor: "var(--color-surface)",
@@ -81,7 +81,7 @@ export function ContextChain({
             >
               {/* Level indicator */}
               <span
-                className="shrink-0 w-5 h-5 flex items-center justify-center rounded-sm text-xs font-bold"
+                className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-xs font-bold"
                 style={{
                   backgroundColor: isCurrent
                     ? "var(--color-accent)"
@@ -123,7 +123,7 @@ export function ContextChain({
 
                   {/* Source attribution marker */}
                   <span
-                    className="text-xs shrink-0 px-1 rounded-sm"
+                    className="text-xs shrink-0 px-1 rounded"
                     style={{
                       backgroundColor:
                         attribution === "human"
@@ -143,7 +143,7 @@ export function ContextChain({
                 {/* Expanded: show full prompt */}
                 {expanded && entry.prompt && (
                   <div
-                    className="mt-1 text-xs whitespace-pre-wrap rounded-sm p-2"
+                    className="mt-1 text-xs whitespace-pre-wrap rounded p-2"
                     style={{
                       color: "var(--color-text-secondary)",
                       backgroundColor: "var(--color-bg)",

@@ -64,23 +64,15 @@ func (s *Store) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error, noti
 	}
 
 	if notify {
-		s.notifyCommitted(ctx)
+		s.reportVCPrune(ctx)
+		for _, fn := range s.onCommit {
+			if fn != nil {
+				fn()
+			}
+		}
 	}
 
 	return nil
-}
-
-// notifyCommitted runs what follows a committed write: the version-clock
-// prune report and the on-commit callbacks (auto-export request, hook
-// dispatch). WithPushLock calls it itself, and only when the lock recorded
-// something (MTIX-95.39).
-func (s *Store) notifyCommitted(ctx context.Context) {
-	s.reportVCPrune(ctx)
-	for _, fn := range s.onCommit {
-		if fn != nil {
-			fn()
-		}
-	}
 }
 
 // wrapBusyError checks if an error is a SQLite busy/locked error and wraps

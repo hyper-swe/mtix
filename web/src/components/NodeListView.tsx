@@ -102,7 +102,7 @@ export function NodeListView({ onSelectNode }: NodeListViewProps) {
           {STATUSES.map((s) => (
             <button
               key={s.key || "all"}
-              className="px-2 py-1 text-xs rounded-sm cursor-pointer"
+              className="px-2 py-1 text-xs rounded cursor-pointer"
               style={{
                 backgroundColor: statusFilter === s.key ? "var(--color-accent-muted)" : "transparent",
                 color: statusFilter === s.key ? "var(--color-accent)" : "var(--color-text-tertiary)",
@@ -138,7 +138,7 @@ export function NodeListView({ onSelectNode }: NodeListViewProps) {
               {error}
             </span>
             <button
-              className="text-xs cursor-pointer px-3 py-1 rounded-sm"
+              className="text-xs cursor-pointer px-3 py-1 rounded"
               style={{
                 color: "var(--color-accent)",
                 border: "1px solid var(--color-border)",

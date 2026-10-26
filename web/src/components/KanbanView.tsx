@@ -231,7 +231,7 @@ export function KanbanView({ nodeStore }: KanbanViewProps) {
               style={{ color: "var(--color-text-secondary)" }}
             />
             <button
-              className="p-1 rounded-sm cursor-pointer"
+              className="p-1 rounded cursor-pointer"
               style={{ color: "var(--color-text-tertiary)" }}
               onClick={() => setSelectedId(null)}
               data-testid="kanban-detail-close"
@@ -279,7 +279,7 @@ function KanbanColumn({
     >
       {/* Column accent bar */}
       <div
-        className="h-[3px] rounded-t-sm"
+        className="h-[3px] rounded-t"
         style={{ backgroundColor: STATUS_COLORS[status] }}
       />
 
@@ -349,7 +349,7 @@ function KanbanCard({
   const isHighlighted = focused || selected;
   return (
     <button
-      className="w-full text-left rounded-sm cursor-pointer p-2.5 animate-fade-in"
+      className="w-full text-left rounded cursor-pointer p-2.5 animate-fade-in"
       style={{
         backgroundColor: selected ? "var(--color-accent-muted)" : "var(--color-surface)",
         border: isHighlighted
@@ -400,7 +400,7 @@ function KanbanCard({
       {/* Invalidated badge per FR-UI-21b */}
       {node.status === "invalidated" && (
         <span
-          className="inline-block text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded-sm mb-1.5"
+          className="inline-block text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded mb-1.5"
           style={{
             backgroundColor: "var(--color-status-invalidated-bg)",
             color: "var(--color-status-invalidated)",

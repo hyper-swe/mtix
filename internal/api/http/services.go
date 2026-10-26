@@ -31,7 +31,7 @@ type NodeWriter interface {
 	DeferNode(context.Context, string, *time.Time, string, string) error
 	ClaimNode(context.Context, string, string) error
 	ForceReclaimNode(context.Context, string, string, time.Duration) error
-	UnclaimNode(context.Context, string, string, string, bool) error
+	UnclaimNode(context.Context, string, string, string) error
 	CancelNode(context.Context, string, string, string, bool) error
 	AppendAnnotation(context.Context, string, model.Annotation) error
 }

@@ -49,13 +49,11 @@ func (s *Server) claimNode(c *gin.Context) {
 }
 
 // unclaimNode handles POST /api/v1/nodes/:id/unclaim per FR-10.4.
-// Requires reason in body and the acting agent in X-Agent-ID; only the
-// assignee may release a claim unless force is set (MTIX-169).
+// Requires reason in body.
 func (s *Server) unclaimNode(c *gin.Context) {
 	nodeID := c.Param("id")
 	var req struct {
 		Reason string `json:"reason" binding:"required"`
-		Force  bool   `json:"force"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		HandleValidationError(c, "reason is required")
@@ -64,10 +62,9 @@ func (s *Server) unclaimNode(c *gin.Context) {
 
 	agentID := c.GetHeader("X-Agent-ID")
 	if agentID == "" {
-		HandleValidationError(c, "X-Agent-ID header required for unclaim")
-		return
+		agentID = "api"
 	}
-	if err := s.nodeWriter.UnclaimNode(c.Request.Context(), nodeID, req.Reason, agentID, req.Force); err != nil {
+	if err := s.nodeWriter.UnclaimNode(c.Request.Context(), nodeID, req.Reason, agentID); err != nil {
 		HandleError(c, err)
 		return
 	}

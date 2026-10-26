@@ -49,7 +49,7 @@ func TestAgentID_GRPCBoundaries_RejectInvalidArgument(t *testing.T) {
 					case "create":
 						_, err = s.HandleCreateNode(ctx, &CreateNodeReq{Project: "TEST", Title: "refused", Assignee: tc.id})
 					case "unclaim":
-						_, err = s.HandleUnclaim(ctx, n.ID, "release", tc.id, false)
+						_, err = s.HandleUnclaim(ctx, n.ID, "release", tc.id)
 					default:
 						_, err = s.HandleClaim(ctx, n.ID, tc.id, op == "reclaim")
 					}
@@ -72,7 +72,7 @@ func TestAgentID_GRPCValidRawAndEmptyCreate_Preserved(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, agent, n.Assignee)
 			if agent != "" {
-				_, err = s.HandleUnclaim(context.Background(), n.ID, "release", agent, false)
+				_, err = s.HandleUnclaim(context.Background(), n.ID, "release", "actor")
 				require.NoError(t, err)
 				got, err := s.HandleClaim(context.Background(), n.ID, agent, false)
 				require.NoError(t, err)

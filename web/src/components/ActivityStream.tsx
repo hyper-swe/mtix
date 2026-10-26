@@ -28,7 +28,7 @@ function ActivityFilters({ filter, onChange }: {
   return (
     <div className="flex gap-1 mb-3 pb-2 border-b" style={{ borderColor: "var(--color-border)" }}>
       {filters.map((item) => (
-        <button key={item.value} className="px-2 py-1 text-xs rounded-sm cursor-pointer"
+        <button key={item.value} className="px-2 py-1 text-xs rounded cursor-pointer"
           style={{ backgroundColor: filter === item.value ? "var(--color-accent)" : "transparent",
             color: filter === item.value ? "#FFFFFF" : "var(--color-text-secondary)" }}
           onClick={() => onChange(item.value)} data-testid={`filter-${item.value}`}>

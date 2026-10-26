@@ -5,7 +5,7 @@ description: Coordinate multiple agents working on mtix tasks. Manage claiming, 
 
 # Multi-Agent Coordination with mtix
 
-Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
+Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim and unclaim keep their existing required/default actor rules. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
 
 ## Health checks
 
@@ -326,7 +326,6 @@ mtix stale          # Tasks with inactive agents
 
 - Check task status before claiming: `mtix show <id>`
 - Never modify tasks claimed by other agents
-- Release only your own claim: `mtix unclaim <id> --agent <agent-name> --reason "..."`. mtix refuses to release another agent's claim and names the current assignee; add `--force` only when that agent is stale or gone, and the activity log records you, the previous assignee and the reason
 - Use comments to coordinate: `mtix comment <id> "message"`
 
 ## Reference Wake Routine

@@ -30,8 +30,7 @@ const showLongHelp = `Show a node's details and annotations as labeled lines, in
   Type         node type
   Assignee     current assignee (only when set)
   Desc         full description (only when set; omitted when it holds only
-               whitespace, control characters or invisible formatting
-               characters), further lines indented
+               whitespace or control characters), further lines indented
   Annotations  every annotation, oldest first (equal times by id): its ISO-8601 UTC timestamp
                ("unknown time" when none was recorded), author, addressee
                and resolved marker when present, then the text, with
@@ -39,8 +38,7 @@ const showLongHelp = `Show a node's details and annotations as labeled lines, in
                "Annotations: none" when the node has none
   Prompt       the prompt, cut to 100 characters ending in "..." when
                longer (only when set; omitted when it holds only
-               whitespace, control characters or invisible formatting
-               characters), further lines indented
+               whitespace or control characters), further lines indented
   Progress     progress bar
   Created      creation time
   History      with --history: the change history, newest first, at most
@@ -51,17 +49,13 @@ const showLongHelp = `Show a node's details and annotations as labeled lines, in
 
 Annotation text, author and addressee, the description and the prompt are
 normalized for the terminal: control characters other than newline and tab
-are removed (so CRLF becomes LF), bidirectional controls (such as
-overrides and isolates), zero-width characters and tag characters
-(U+E0001, U+E0020-U+E007F) are removed, the line separator and
-paragraph separator (U+2028, U+2029) become newlines, and
-leading blank lines and trailing whitespace are trimmed, so stored text
-cannot overwrite a line, restyle the terminal or display in a misleading
-order. Title and assignee still print as stored, control characters and
-newlines included. The directional marks (U+200E, U+200F, U+061C) are
-kept, so a lone mark can still change how digits are ordered. The
---history list follows the same rule and prints each entry on one line,
-with line breaks shown as spaces. Quote exact text from --json.
+are removed (so CRLF becomes LF), and leading blank lines and trailing
+whitespace are trimmed, so a stored carriage return or escape sequence
+cannot overwrite a line or restyle the terminal. Title and assignee still
+print as stored, control characters and newlines included. Invisible
+Unicode formatting characters, such as bidirectional overrides, are not
+removed yet, so text can still display in a misleading order; quote exact
+text from --json.
 
 Acceptance criteria, labels, dependencies, activity and the full prompt are
 not printed. Use --json for the complete node record, including every

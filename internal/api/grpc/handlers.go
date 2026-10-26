@@ -146,10 +146,9 @@ func (s *Server) HandleClaim(ctx context.Context, id, agent string, force bool) 
 	return s.nodeSvc.GetNode(ctx, id)
 }
 
-// HandleUnclaim implements the Unclaim RPC per FR-8.2. Only the assignee may
-// release a claim unless force is set (MTIX-169).
-func (s *Server) HandleUnclaim(ctx context.Context, id, reason, agent string, force bool) (*model.Node, error) {
-	if err := s.nodeSvc.UnclaimNode(ctx, id, reason, agent, force); err != nil {
+// HandleUnclaim implements the Unclaim RPC per FR-8.2.
+func (s *Server) HandleUnclaim(ctx context.Context, id, reason, agent string) (*model.Node, error) {
+	if err := s.nodeSvc.UnclaimNode(ctx, id, reason, agent); err != nil {
 		return nil, mapError(err)
 	}
 	return s.nodeSvc.GetNode(ctx, id)

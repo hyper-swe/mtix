@@ -1,97 +1,6 @@
-@import "tailwindcss" source(none);
-
-/* Scan the same files the Tailwind 3 content globs covered. */
-@source "../index.html";
-@source "./**/*.{js,ts,jsx,tsx}";
-
-/* Dark mode follows the .dark class on <html>, as before. */
-@custom-variant dark (&:where(.dark, .dark *));
-
-/*
- * Tailwind theme tokens. The color tokens use `inline` so the utilities keep
- * the fixed values below and never pick up the runtime --color-* variables
- * that the theme blocks further down swap between light and dark.
- */
-@theme inline {
-  /* mtix design system colors per requirement-ui.md section 9. */
-  --color-surface-light: #ffffff;
-  --color-surface-dark: #222244;
-  --color-background-light: #fafafa;
-  --color-background-dark: #1a1a2e;
-  --color-accent: #6366f1;
-  --color-accent-light: #6366f1;
-  --color-accent-dark: #818cf8;
-  --color-status-done-light: #10b981;
-  --color-status-done-dark: #34d399;
-  --color-status-in-progress-light: #3b82f6;
-  --color-status-in-progress-dark: #60a5fa;
-  --color-status-blocked-light: #ef4444;
-  --color-status-blocked-dark: #f87171;
-  --color-status-open-light: #6b7280;
-  --color-status-open-dark: #9ca3af;
-  --color-status-invalidated-light: #f59e0b;
-  --color-status-invalidated-dark: #fbbf24;
-  --color-status-deferred-light: #8b5cf6;
-  --color-status-deferred-dark: #a78bfa;
-  --color-status-cancelled-light: #9ca3af;
-  --color-status-cancelled-dark: #6b7280;
-}
-
-@theme {
-  --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, monospace;
-
-  /* Tailwind 3 used fixed line heights, which children of a sized parent
-     inherit as lengths. Tailwind 4 uses ratios, so pin the old values. */
-  --text-xs--line-height: 1rem;
-  --text-sm--line-height: 1.25rem;
-  --text-base--line-height: 1.5rem;
-  --text-lg--line-height: 1.75rem;
-  --text-xl--line-height: 1.75rem;
-  --text-2xl--line-height: 2rem;
-  --text-3xl--line-height: 2.25rem;
-  --text-4xl--line-height: 2.5rem;
-  --text-5xl--line-height: 1;
-  --text-6xl--line-height: 1;
-  --text-7xl--line-height: 1;
-  --text-8xl--line-height: 1;
-  --text-9xl--line-height: 1;
-
-  --text-node-title: 14px;
-  --text-node-title--line-height: 20px;
-  --text-node-title--font-weight: 500;
-  --text-node-prompt: 13px;
-  --text-node-prompt--line-height: 18px;
-  --text-node-prompt--font-weight: 400;
-  --text-node-id: 12px;
-  --text-node-id--line-height: 16px;
-  --text-node-id--font-weight: 400;
-  --text-status-badge: 11px;
-  --text-status-badge--line-height: 16px;
-  --text-status-badge--font-weight: 700;
-}
-
-/* Tailwind 4 defaults borders to currentColor; keep the Tailwind 3 default. */
-@layer base {
-  *,
-  ::after,
-  ::before,
-  ::backdrop,
-  ::file-selector-button {
-    border-color: var(--color-gray-200, currentColor);
-  }
-}
-
-/*
- * Tailwind 4 preflight no longer gives buttons the pointer cursor (Tailwind 3
- * did). This is the official compatibility rule; it keeps the Tailwind 3 look.
- */
-@layer base {
-  button:not(:disabled),
-  [role="button"]:not(:disabled) {
-    cursor: pointer;
-  }
-}
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 /*
  * mtix design system — Linear-inspired, refined industrial aesthetic.
@@ -147,11 +56,6 @@
   --shadow-overlay: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
 
   /* Radii */
-  /*
-   * The rounded-sm and rounded-lg utilities compile to var(--radius-sm) and
-   * var(--radius-lg), so editing these tokens changes every such utility.
-   * Tailwind 3 emitted fixed rem values (0.25rem and 0.5rem, the same 4px and 8px).
-   */
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
@@ -227,31 +131,25 @@
   --spacing-section: 0.5rem;
 }
 
-/*
- * Element-level rules live in the base layer so utility classes keep
- * overriding them, as they did before the Tailwind 4 upgrade.
- */
-@layer base {
-  /* ─── Global resets ─── */
-  *,
-  *::before,
-  *::after {
-    box-sizing: border-box;
-  }
+/* ─── Global resets ─── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
 
-  body {
-    margin: 0;
-    min-width: 320px;
-    min-height: 100vh;
-    background-color: var(--color-bg);
-    color: var(--color-text-primary);
-  }
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+}
 
-  #root {
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-  }
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ─── Focus styles ─── */
@@ -261,31 +159,29 @@
   border-radius: var(--radius-sm);
 }
 
-@layer base {
-  /* ─── Selection ─── */
-  ::selection {
-    background-color: var(--color-accent-subtle);
-    color: var(--color-text-primary);
-  }
+/* ─── Selection ─── */
+::selection {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-text-primary);
+}
 
-  /* ─── Scrollbar ─── */
-  ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
 
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
+::-webkit-scrollbar-track {
+  background: transparent;
+}
 
-  ::-webkit-scrollbar-thumb {
-    background: var(--color-border);
-    border-radius: 3px;
-  }
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
 
-  ::-webkit-scrollbar-thumb:hover {
-    background: var(--color-text-tertiary);
-  }
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
 }
 
 /* ─── Animations ─── */
@@ -341,45 +237,43 @@
   font-feature-settings: "liga" 1, "calt" 1;
 }
 
-@layer base {
-  /* ─── Input resets ─── */
-  input, textarea, select {
-    font-family: inherit;
-  }
+/* ─── Input resets ─── */
+input, textarea, select {
+  font-family: inherit;
+}
 
-  input::placeholder,
-  textarea::placeholder {
-    color: var(--color-text-tertiary);
-  }
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-text-tertiary);
+}
 
-  /* ─── Table resets ─── */
-  table {
-    border-collapse: collapse;
-  }
+/* ─── Table resets ─── */
+table {
+  border-collapse: collapse;
+}
 
-  /* ─── Transitions for interactive elements ─── */
-  button, a, [role="button"] {
-    transition: background-color var(--transition-fast),
-                color var(--transition-fast),
-                border-color var(--transition-fast),
-                opacity var(--transition-fast),
-                box-shadow var(--transition-fast);
-  }
+/* ─── Transitions for interactive elements ─── */
+button, a, [role="button"] {
+  transition: background-color var(--transition-fast),
+              color var(--transition-fast),
+              border-color var(--transition-fast),
+              opacity var(--transition-fast),
+              box-shadow var(--transition-fast);
+}
 
-  /* ─── Kbd styling ─── */
-  kbd {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 20px;
-    height: 20px;
-    padding: 0 4px;
-    font-size: 11px;
-    font-family: inherit;
-    line-height: 1;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--color-border);
-    background: var(--color-bg);
-    color: var(--color-text-tertiary);
-  }
+/* ─── Kbd styling ─── */
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-tertiary);
 }

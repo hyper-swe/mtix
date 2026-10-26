@@ -20,7 +20,7 @@ export function TopBar({ onToggleSidebar, sidebarCollapsed, onOpenPalette, onCre
 
   return (
     <header
-      className="flex items-center px-3 shrink-0"
+      className="flex items-center px-3 flex-shrink-0"
       style={{
         height: density === "compact" ? 36 : 44,
         backgroundColor: "var(--color-surface)",
@@ -50,7 +50,7 @@ export function TopBar({ onToggleSidebar, sidebarCollapsed, onOpenPalette, onCre
       {/* Create button */}
       {onCreateNode && (
         <button
-          className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-sm cursor-pointer mr-2"
+          className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded cursor-pointer mr-2"
           style={{
             color: "#ffffff",
             backgroundColor: "var(--color-accent)",
@@ -73,7 +73,7 @@ export function TopBar({ onToggleSidebar, sidebarCollapsed, onOpenPalette, onCre
 
       {/* Cmd+K search */}
       <button
-        className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-sm cursor-pointer mr-2"
+        className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded cursor-pointer mr-2"
         style={{
           color: "var(--color-text-tertiary)",
           border: "1px solid var(--color-border)",
@@ -168,7 +168,7 @@ function IconButton({
     <div className={`relative inline-flex ${className}`}>
       <button
         onClick={onClick}
-        className="p-1.5 rounded-sm cursor-pointer"
+        className="p-1.5 rounded cursor-pointer"
         style={{ color: "var(--color-text-tertiary)" }}
         onMouseEnter={(e) => {
           e.currentTarget.style.backgroundColor = "var(--color-hover)";
@@ -184,7 +184,7 @@ function IconButton({
       </button>
       {showTooltip && (
         <div
-          className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 px-2 py-1 rounded-sm text-[11px] whitespace-nowrap z-50 pointer-events-none"
+          className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 px-2 py-1 rounded text-[11px] whitespace-nowrap z-50 pointer-events-none"
           style={{
             backgroundColor: "var(--color-surface-overlay)",
             color: "var(--color-text-primary)",

@@ -43,18 +43,9 @@ func syncedWithHub(ctx context.Context, q rowQuerier) (bool, error) {
 	var synced bool
 	// The sticky mark, any pulled event, or any own event past pending
 	// (pushed or conflicted).
-	// A file relay peer shares events too, though its events stay pending in
-	// the journal: one that published or ingested counts as synced. A publisher
-	// published when its cursor is past zero, or its next relay sequence is past
-	// one, or its epoch is past one: gap repair (RepublishRelayFrom) and
-	// reset-peer (ResetRelayPublisher) rewind the cursor to a floor, and the
-	// sequence and the epoch only ever advance on a publish and a reset. An
-	// ingestor has a cursor row for a peer.
 	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM board_flags WHERE key = ?)
 		OR EXISTS (SELECT 1 FROM applied_events)
-		OR EXISTS (SELECT 1 FROM sync_events WHERE sync_status <> 'pending')
-		OR EXISTS (SELECT 1 FROM relay_push_cursor WHERE cursor > 0 OR next_rs > 1 OR pub_epoch > 1)
-		OR EXISTS (SELECT 1 FROM relay_ingest_cursor)`, hubMarkKey).Scan(&synced)
+		OR EXISTS (SELECT 1 FROM sync_events WHERE sync_status <> 'pending')`, hubMarkKey).Scan(&synced)
 	if err != nil {
 		return false, fmt.Errorf("read whether the store syncs with a hub: %w", err)
 	}
@@ -142,26 +133,6 @@ func refuseDroppingLoggedNodes(ctx context.Context, tx *sql.Tx, data *ExportData
 	if err != nil || !synced {
 		return err
 	}
-	droppedNodes, err := droppedLoggedNodes(ctx, tx, data)
-	if err != nil {
-		return err
-	}
-	dropped := make([]string, 0, len(droppedNodes))
-	for _, l := range droppedNodes {
-		dropped = append(dropped, l.id)
-	}
-	if len(dropped) == 0 {
-		return nil
-	}
-	return fmt.Errorf("%w: the file does not hold %s as the same task (a task is matched by its uid), and "+
-		"their events stay in the local sync log, so a pull cannot restore them; nothing was imported. "+
-		"To rebuild the board from the hub, run %s: %w",
-		ErrReplaceOnSyncedStore, nameNodes(dropped), SyncLogRecovery, model.ErrInvalidInput)
-}
-
-// droppedLoggedNodes returns the local nodes the sync log holds an event for
-// that the replace of data would lose (keepsLoggedNode), read through tx.
-func droppedLoggedNodes(ctx context.Context, tx *sql.Tx, data *ExportData) ([]loggedNode, error) {
 	byUID := make(map[string]bool, len(data.Nodes))
 	byID := make(map[string]*exportNode, len(data.Nodes))
 	for i := range data.Nodes {
@@ -173,61 +144,22 @@ func droppedLoggedNodes(ctx context.Context, tx *sql.Tx, data *ExportData) ([]lo
 	}
 	logged, err := loggedNodes(ctx, tx)
 	if err != nil {
-		return nil, fmt.Errorf("read the nodes the sync log holds: %w", err)
+		return fmt.Errorf("read the nodes the sync log holds: %w", err)
 	}
-	var dropped []loggedNode
+	var dropped []string
 	for _, l := range logged {
 		if !keepsLoggedNode(l, byUID, byID) {
-			dropped = append(dropped, l)
+			dropped = append(dropped, l.id)
 		}
 	}
-	return dropped, nil
+	if len(dropped) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: the file does not hold %s as the same task (a task is matched by its uid), and "+
+		"their events stay in the local sync log, so a pull cannot restore them; nothing was imported. "+
+		"To rebuild the board from the hub, run %s: %w",
+		ErrReplaceOnSyncedStore, nameNodes(dropped), SyncLogRecovery, model.ErrInvalidInput)
 }
-
-// discardUnsharedEvents deletes, on a store that never synced, the pending
-// events of every task the replace of data drops, the held copies of those
-// events, and the pending link events that point at the dropped tasks
-// (MTIX-107.31.3). A store that never synced has shared nothing (every event
-// is pending, no relay peer published or ingested), so the events of a task
-// the new board lacks would otherwise reach a hub or relay with the first
-// push, creating a task this board does not hold. A synced store is refused
-// before this runs (refuseDroppingLoggedNodes); it does nothing for one.
-func discardUnsharedEvents(ctx context.Context, tx *sql.Tx, data *ExportData) error {
-	synced, err := syncedWithHub(ctx, tx)
-	if err != nil || synced {
-		return err
-	}
-	dropped, err := droppedLoggedNodes(ctx, tx, data)
-	if err != nil {
-		return err
-	}
-	for _, l := range dropped {
-		// The pending events of the dropped task, and of the links to it:
-		// first the held copies, then the events themselves.
-		for _, stmt := range []string{deleteHeldCopiesOfDropped, deleteEventsOfDropped} {
-			if _, err := tx.ExecContext(ctx, stmt, l.id); err != nil {
-				return fmt.Errorf("discard the unshared events of %s: %w", l.id, err)
-			}
-		}
-	}
-	return nil
-}
-
-// droppedEventIDs selects the ids of the pending events of the node bound as
-// ?1 (matched by uid first, loggedNodeMatch) and of the pending link events
-// that name it as their target.
-const droppedEventIDs = `SELECT se.event_id FROM sync_events se
-	WHERE se.sync_status = 'pending' AND (
-	  EXISTS (SELECT 1 FROM nodes n WHERE n.id = ?1 AND ` + loggedNodeMatch + `)
-	  OR (se.op_type IN ('link_dep', 'unlink_dep') AND json_valid(se.payload)
-	      AND json_extract(se.payload, '$.depends_on_node_id') = ?1))`
-
-// deleteHeldCopiesOfDropped removes the push-hold copies (sync_quarantine)
-// of the events droppedEventIDs selects.
-const deleteHeldCopiesOfDropped = `DELETE FROM sync_quarantine WHERE source = 'push' AND event_id IN (` + droppedEventIDs + `)`
-
-// deleteEventsOfDropped removes the pending events droppedEventIDs selects.
-const deleteEventsOfDropped = `DELETE FROM sync_events WHERE sync_status = 'pending' AND event_id IN (` + droppedEventIDs + `)`
 
 // MissingLoggedNodes returns the ids of the nodes the local sync log
 // creates that the board lacks, with no delete event for them: projection

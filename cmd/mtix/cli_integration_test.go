@@ -81,7 +81,7 @@ func TestRunUnclaim_HappyPath_HumanOutput(t *testing.T) {
 	err = runClaim("TEST-1", "agent-1")
 	require.NoError(t, err)
 
-	err = runUnclaim("TEST-1", "done with it", "agent-1", false)
+	err = runUnclaim("TEST-1", "done with it")
 	assert.NoError(t, err)
 }
 
@@ -96,7 +96,7 @@ func TestRunUnclaim_HappyPath_JSONOutput(t *testing.T) {
 	err = runClaim("TEST-1", "agent-1")
 	require.NoError(t, err)
 
-	err = runUnclaim("TEST-1", "done", "agent-1", false)
+	err = runUnclaim("TEST-1", "done")
 	assert.NoError(t, err)
 }
 

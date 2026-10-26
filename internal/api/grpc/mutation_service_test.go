@@ -67,7 +67,7 @@ func TestGRPCMutations_InvokeServicesAndBroadcast(t *testing.T) {
 			case "force_claim":
 				_, err = s.HandleClaim(ctx, node.ID, "worker", true)
 			case "unclaim":
-				_, err = s.HandleUnclaim(ctx, node.ID, "release", "previous", false)
+				_, err = s.HandleUnclaim(ctx, node.ID, "release", "worker")
 			case "cancel":
 				_, err = s.HandleCancel(ctx, node.ID, "cancel", "worker")
 			case "dep_add":
@@ -95,7 +95,7 @@ func TestGRPCMutations_FailedWritesPreserveMappingWithoutBroadcast(t *testing.T)
 			case "force_claim":
 				_, err = s.HandleClaim(ctx, "MISSING-1", "worker", true)
 			case "unclaim":
-				_, err = s.HandleUnclaim(ctx, "MISSING-1", "release", "worker", false)
+				_, err = s.HandleUnclaim(ctx, "MISSING-1", "release", "worker")
 			case "cancel":
 				_, err = s.HandleCancel(ctx, "MISSING-1", "cancel", "worker")
 			case "dep_add":

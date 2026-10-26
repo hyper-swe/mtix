@@ -107,7 +107,7 @@ export function Dashboard({
 
       {/* Overall progress */}
       <div
-        className="rounded-sm border p-4"
+        className="rounded border p-4"
         style={{
           borderColor: "var(--color-border)",
           backgroundColor: "var(--color-surface)",
@@ -131,7 +131,7 @@ export function Dashboard({
 
       {/* Status breakdown — stacked bar */}
       <div
-        className="rounded-sm border p-4"
+        className="rounded border p-4"
         style={{
           borderColor: "var(--color-border)",
           backgroundColor: "var(--color-surface)",
@@ -188,7 +188,7 @@ export function Dashboard({
 
       {/* Time range selector + Burndown chart */}
       <div
-        className="rounded-sm border p-4"
+        className="rounded border p-4"
         style={{
           borderColor: "var(--color-border)",
           backgroundColor: "var(--color-surface)",
@@ -206,7 +206,7 @@ export function Dashboard({
             {timeRanges.map((tr) => (
               <button
                 key={tr.value}
-                className="px-2 py-0.5 text-xs rounded-sm cursor-pointer"
+                className="px-2 py-0.5 text-xs rounded cursor-pointer"
                 style={{
                   backgroundColor:
                     timeRange === tr.value
@@ -247,7 +247,7 @@ export function Dashboard({
               return (
                 <div
                   key={i}
-                  className="flex-1 rounded-t-sm"
+                  className="flex-1 rounded-t"
                   style={{
                     height: `${Math.max(height, 2)}%`,
                     backgroundColor: "var(--color-status-done)",
@@ -264,7 +264,7 @@ export function Dashboard({
 
       {/* Per-story progress */}
       <div
-        className="rounded-sm border p-4"
+        className="rounded border p-4"
         style={{
           borderColor: "var(--color-border)",
           backgroundColor: "var(--color-surface)",
@@ -317,7 +317,7 @@ export function Dashboard({
 
       {/* Agent productivity */}
       <div
-        className="rounded-sm border p-4"
+        className="rounded border p-4"
         style={{
           borderColor: "var(--color-border)",
           backgroundColor: "var(--color-surface)",

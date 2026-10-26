@@ -74,7 +74,7 @@ export function ShortcutsOverlay({ isOpen, onClose }: ShortcutsOverlayProps) {
                 {s.description}
               </span>
               <kbd
-                className="text-xs font-mono px-1.5 py-0.5 rounded-sm border"
+                className="text-xs font-mono px-1.5 py-0.5 rounded border"
                 style={{
                   color: "var(--color-text-secondary)",
                   borderColor: "var(--color-border)",

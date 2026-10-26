@@ -264,8 +264,7 @@ func TestImportReconcile_MergeAdoptingUID_PulledQuarantineRowsUntouched(t *testi
 // it changed, the merge of a task that had no uid (a backfill uid is stamped
 // first), and the replace the automatic import runs. Each moves the task's
 // pending events to the new uid; a replace that leaves another title at the
-// id is a different task: the replaced task is dropped, and on a store that
-// never synced its pending events are discarded with it (MTIX-107.31.3). (The paths that
+// id is a different task, and its events keep their uid. (The paths that
 // only give a task its first uid, the backfill on open and on import, change
 // no existing uid and leave the events alone.)
 func TestImport_EveryPathThatChangesATasksUID_CarriesItOntoPendingEvents(t *testing.T) {
@@ -275,7 +274,7 @@ func TestImport_EveryPathThatChangesATasksUID_CarriesItOntoPendingEvents(t *test
 		replace     bool
 		retitled    bool // the file's copy has another title (and content)
 		localNoUID  bool
-		wantCarried bool // false: the replace drops the task (checked as discarded below)
+		wantCarried bool
 	}{
 		{"merge, content unchanged", false, false, false, true},
 		{"merge, content changed", false, true, false, true},
@@ -309,16 +308,6 @@ func TestImport_EveryPathThatChangesATasksUID_CarriesItOntoPendingEvents(t *test
 				mergeFile(t, local, exportOf(t, teammate))
 			}
 
-			if tt.replace && tt.retitled {
-				// Another title is another task: the replaced task is dropped, and a
-				// store that never synced discards its pending events with it
-				// (MTIX-107.31.3) instead of moving them onto the file's task.
-				var n int
-				require.NoError(t, local.WriteDB().QueryRowContext(ctx,
-					`SELECT COUNT(*) FROM sync_events WHERE event_id = 'pending-edit'`).Scan(&n))
-				assert.Zero(t, n, "the dropped task's pending event is discarded, not carried")
-				return
-			}
 			want := evUID
 			if tt.wantCarried {
 				want = theirs

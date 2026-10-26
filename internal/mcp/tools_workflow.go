@@ -17,7 +17,7 @@ import (
 func RegisterWorkflowTools(reg *ToolRegistry, nodeSvc *service.NodeService, bgSvc *service.BackgroundService, opts ...ToolOption) {
 	cfg := applyToolOptions(opts)
 	registerClaimTool(reg, nodeSvc)
-	registerUnclaimTool(reg, nodeSvc, cfg.author)
+	registerUnclaimTool(reg, nodeSvc)
 	registerDoneTool(reg, nodeSvc)
 	registerDeferTool(reg, nodeSvc, cfg.author)
 	registerCancelTool(reg, nodeSvc)
@@ -57,38 +57,28 @@ func registerClaimTool(reg *ToolRegistry, svc *service.NodeService) {
 	})
 }
 
-// registerUnclaimTool registers mtix_unclaim (FR-10.4). The actor is agent_id
-// when given, otherwise the server process identity (WithAuthor); only the
-// assignee may release a claim unless force is set (MTIX-169).
-func registerUnclaimTool(reg *ToolRegistry, svc *service.NodeService, author string) {
+func registerUnclaimTool(reg *ToolRegistry, svc *service.NodeService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_unclaim",
-		Description: "Release a node assignment. Only the assignee can release it unless force is true.",
+		Description: "Release a node assignment",
 		InputSchema: SchemaObj{
 			Type: "object",
 			Properties: map[string]SchemaProp{
-				"id":       {Type: "string", Description: "Node ID"},
-				"reason":   {Type: "string", Description: "Reason for release"},
-				"agent_id": {Type: "string", Description: "Acting agent ID; defaults to the server's MTIX_AUTHOR_ID or author_id"},
-				"force":    {Type: "boolean", Description: "Release a claim held by another agent; the activity log names you, the previous assignee and the reason"},
+				"id":     {Type: "string", Description: "Node ID"},
+				"reason": {Type: "string", Description: "Reason for release"},
 			},
 			Required: []string{"id", "reason"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
 		var p struct {
-			ID      string `json:"id"`
-			Reason  string `json:"reason"`
-			AgentID string `json:"agent_id"`
-			Force   bool   `json:"force"`
+			ID     string `json:"id"`
+			Reason string `json:"reason"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse unclaim args: %w", err)
 		}
-		if p.AgentID == "" {
-			p.AgentID = author
-		}
 
-		if err := svc.UnclaimNode(ctx, p.ID, p.Reason, p.AgentID, p.Force); err != nil {
+		if err := svc.UnclaimNode(ctx, p.ID, p.Reason, "mcp"); err != nil {
 			return nil, err
 		}
 

@@ -31,7 +31,7 @@ export function Breadcrumb() {
 
   return (
     <footer
-      className="flex items-center h-7 px-4 text-[11px] shrink-0"
+      className="flex items-center h-7 px-4 text-[11px] flex-shrink-0"
       style={{
         backgroundColor: "var(--color-surface)",
         borderTop: "1px solid var(--color-border)",

@@ -36,13 +36,6 @@ type PushSubject struct {
 // creation whose uid no node has, the task found another way, see
 // PushSubject).
 func (s *Store) PushSubjects(ctx context.Context, eventIDs []string) (map[string]PushSubject, error) {
-	return pushSubjects(ctx, readPool{s}, eventIDs)
-}
-
-// pushSubjects is PushSubjects over q: the store's read pool, or the write
-// transaction of a PushLocked, which then sees the held rows and the tasks
-// in one state (MTIX-95.39).
-func pushSubjects(ctx context.Context, q pushQuerier, eventIDs []string) (map[string]PushSubject, error) {
 	out := make(map[string]PushSubject, len(eventIDs))
 	if len(eventIDs) == 0 {
 		return out, nil
@@ -57,7 +50,7 @@ func pushSubjects(ctx context.Context, q pushQuerier, eventIDs []string) (map[st
 	// f by the number the event names; idx_nodes_uid and the primary key).
 	// "uid <> ''" lets the partial idx_nodes_uid serve n and s; without it s
 	// is found through an index built over every node (MTIX-95.47).
-	rows, err := q.QueryContext(ctx, `
+	rows, err := s.Query(ctx, `
 		SELECT e.event_id, COALESCE(e.uid, ''), COALESCE(n.id, ''),
 		       CASE WHEN e.op_type = 'create_node' THEN COALESCE(n.id, s.id, f.id, '') ELSE '' END
 		FROM sync_events e

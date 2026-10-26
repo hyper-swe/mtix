@@ -20,14 +20,11 @@ import (
 //	postgres://user:pass@host:5432/db?...
 //	postgresql://user:pass@host/db
 //	host=... user=... password=... ...
-//	password = 'quoted \' value'  (any spacing, quoting and case)
 //
 // The regex captures the entire token; the redactor replaces it wholesale
 // with `<REDACTED:postgres-dsn>` so structure-aware grepping still works.
 var dsnPattern = regexp.MustCompile(
-	`postgres(?:ql)?://[^\s'"<>]+` +
-		`|(?i:[a-z0-9_]*password)\s*=\s*(?:'(?:[^'\\]|\\.)*(?:'|$)|(?:[^\s\\]|\\.)+)` +
-		`|user=[^\s'"<>;]+@[^\s'"<>;]+`,
+	`postgres(?:ql)?://[^\s'"<>]+|password=[^\s'"<>;]+|user=[^\s'"<>;]+@[^\s'"<>;]+`,
 )
 
 const dsnReplacement = "<REDACTED:postgres-dsn>"
@@ -47,7 +44,7 @@ func RedactDSN(s string) string {
 func mayContainDSN(s string) bool {
 	return strings.Contains(s, "postgres://") ||
 		strings.Contains(s, "postgresql://") ||
-		strings.Contains(strings.ToLower(s), "password")
+		strings.Contains(s, "password=")
 }
 
 // RedactingWriter wraps an io.Writer and applies RedactDSN to every chunk

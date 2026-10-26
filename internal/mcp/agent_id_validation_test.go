@@ -78,7 +78,7 @@ func TestAgentID_MCPValidRawAndEmptyCreate_Preserved(t *testing.T) {
 			require.NoError(t, json.Unmarshal([]byte(result.Content[0].Text), &n))
 			require.Equal(t, agent, n.Assignee)
 			if agent != "" {
-				raw, err = json.Marshal(map[string]string{"id": n.ID, "reason": "release", "agent_id": agent})
+				raw, err = json.Marshal(map[string]string{"id": n.ID, "reason": "release"})
 				require.NoError(t, err)
 				_, err = reg.Call(context.Background(), "mtix_unclaim", raw)
 				require.NoError(t, err)

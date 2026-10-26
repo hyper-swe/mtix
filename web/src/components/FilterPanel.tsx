@@ -163,7 +163,7 @@ function FilterCheckbox({
         type="checkbox"
         checked={checked}
         onChange={onChange}
-        className="w-3 h-3 rounded-sm"
+        className="w-3 h-3 rounded"
         style={{ accentColor: "var(--color-accent)" }}
       />
       <span style={{ color: "var(--color-text-primary)" }}>{label}</span>

@@ -47,6 +47,8 @@ func FixtureStoreForTest(t *testing.T, path string) *Store {
 }
 
 func TestFixtureStore_MatchesFreshDefaultsAndPragmas(t *testing.T) {
+	requireFreshFixtureRoutes(t)
+
 	fresh := openImageFixture(t, filepath.Join(t.TempDir(), "fresh.db"))
 	a := FixtureStoreForTest(t, filepath.Join(t.TempDir(), "a.db"))
 	b := FixtureStoreForTest(t, filepath.Join(t.TempDir(), "b.db"))

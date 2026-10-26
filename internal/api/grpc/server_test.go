@@ -449,7 +449,7 @@ func TestGRPC_Unclaim_Success(t *testing.T) {
 	_, err := s.HandleClaim(ctx, created.ID, "agent-1", false)
 	require.NoError(t, err)
 
-	node, err := s.HandleUnclaim(ctx, created.ID, "done with it", "agent-1", false)
+	node, err := s.HandleUnclaim(ctx, created.ID, "done with it", "agent-1")
 	require.NoError(t, err)
 	assert.Empty(t, node.Assignee)
 }
@@ -1010,7 +1010,7 @@ func TestHandleUnclaim_NonExistentNode_ReturnsError(t *testing.T) {
 	s := testGRPCServer(t)
 	ctx := context.Background()
 
-	_, err := s.HandleUnclaim(ctx, "NONEXISTENT-1", "reason", "agent-1", false)
+	_, err := s.HandleUnclaim(ctx, "NONEXISTENT-1", "reason", "agent-1")
 	assert.Error(t, err)
 }
 

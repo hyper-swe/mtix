@@ -24,9 +24,7 @@ const annotationTextIndent = "      "
 // displayText normalizes stored text for `mtix show` per FR-6.3 (MTIX-100.1):
 // every control character except LF and TAB is removed, so a stray CR cannot
 // overwrite a line, an escape sequence cannot restyle the terminal, and CRLF
-// becomes LF; bidirectional controls and zero-width characters are removed
-// and U+2028 and U+2029 become newlines (MTIX-100.7); then leading blank
-// lines and trailing whitespace are trimmed.
+// becomes LF; then leading blank lines and trailing whitespace are trimmed.
 // Whitespace here is unicode.IsSpace throughout, so text that is only
 // whitespace normalizes to "". The stored value is untouched; --json prints
 // it raw.

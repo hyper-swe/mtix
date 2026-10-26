@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"unicode"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
@@ -92,13 +94,16 @@ func historyValues(e model.HistoryEntry) string {
 	return fmt.Sprintf(": %s -> %s", displayValue(e.Old), displayValue(e.New))
 }
 
-// plainText renders imported history text for the terminal (MTIX-100.1,
-// MTIX-100.7): singleLine removes every control character and every invisible
-// format character (bidirectional controls, zero-width and tag characters) and
-// shows a newline, tab, line separator or paragraph separator as a space, so an
-// entry always stays on one line; --json keeps the exact text.
+// plainText removes every control character, newlines and escapes included,
+// from imported history text before it reaches the terminal (MTIX-100.1);
+// --json keeps the exact text.
 func plainText(s string) string {
-	return singleLine(s)
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 func displayValue(v *string) string {

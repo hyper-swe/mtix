@@ -35,35 +35,15 @@ func (svc *NodeService) ForceReclaimNode(ctx context.Context, id, agent string, 
 	return nil
 }
 
-// UnclaimNode releases an assignment with its reason per FR-10.4. Only the
-// assignee may release a claim unless force is set (MTIX-169); actor is the
-// acting agent and is recorded on the activity entry. A forced unclaim of
-// another agent's claim names the previous assignee in that entry.
-func (svc *NodeService) UnclaimNode(ctx context.Context, id, reason, actor string, force bool) error {
-	if err := validateAgentID(actor); err != nil {
+// UnclaimNode releases an assignment with its reason per FR-10.4.
+func (svc *NodeService) UnclaimNode(ctx context.Context, id, reason, author string) error {
+	if err := validateAgentID(author); err != nil {
 		return err
 	}
-	if actor == "" {
-		return fmt.Errorf("unclaim node %s: no acting agent identity: %w", id, model.ErrInvalidInput)
-	}
-	if reason == "" {
-		return fmt.Errorf("unclaim reason is required: %w", model.ErrInvalidInput)
-	}
-	node, err := svc.store.GetNode(ctx, id)
-	if err != nil {
+	if err := svc.store.UnclaimNode(ctx, id, reason, author); err != nil {
 		return wrapAPIOperation(fmt.Sprintf("unclaim node %s", id), err)
 	}
-	if node.Assignee != "" && node.Assignee != actor {
-		if !force {
-			return fmt.Errorf("unclaim node %s: claimed by %s, not %s; pass --force to release it: %w",
-				id, node.Assignee, actor, model.ErrAlreadyClaimed)
-		}
-		reason = fmt.Sprintf("forced unclaim by %s of claim held by %s: %s", actor, node.Assignee, reason)
-	}
-	if err := svc.store.UnclaimNode(ctx, id, reason, actor); err != nil {
-		return wrapAPIOperation(fmt.Sprintf("unclaim node %s", id), err)
-	}
-	svc.broadcastEvent(ctx, EventNodeUnclaimed, id, actor, nil)
+	svc.broadcastEvent(ctx, EventNodeUnclaimed, id, author, nil)
 	return nil
 }
 

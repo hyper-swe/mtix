@@ -376,7 +376,7 @@ func TestPackageSQL_UIDLookups_CarryIndexTerm(t *testing.T) {
 	}{
 		{nodesUIDTable, []string{
 			"resolveNodeRef", "Store.ResolveDisplayPathByUID", "Store.loadSettleTarget",
-			"idOfUID", "pushSubjects", "Store.HeldPushEvents", "heldPushCreations",
+			"idOfUID", "Store.PushSubjects", "Store.HeldPushEvents",
 		}},
 		{syncEventsUIDTable, []string{"heldWorkflowQuery", "readNodeEvents", "lwwPriorQuery"}},
 	}

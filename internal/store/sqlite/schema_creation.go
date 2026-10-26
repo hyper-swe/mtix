@@ -45,7 +45,7 @@ func (s *Store) populateSchema(ctx context.Context, conn *sql.Tx, randomID func(
 	if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT GLOB 'sqlite_*'").Scan(&existing); err != nil {
 		return fmt.Errorf("inspect existing schema: %w", err)
 	}
-	if _, err := conn.ExecContext(ctx, schemaSQL); err != nil {
+	if _, err := conn.ExecContext(ctx, schemaSQL+quarantineAcknowledgementDDL); err != nil {
 		return fmt.Errorf("create schema: %w", err)
 	}
 	if existing != 0 {

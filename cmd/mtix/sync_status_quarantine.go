@@ -17,11 +17,13 @@ import (
 // st.InvalidNodeIDs too: the quarantined pulled events and the local tasks
 // that name a task id outside the node id grammar (MTIX-187).
 func readQuarantineStatus(ctx context.Context, store *sqlite.Store, st *SyncStatus) error {
-	n, err := store.CountQuarantined(ctx)
+	counts, err := store.CountQuarantineAcknowledgements(ctx)
 	if err != nil {
 		return err
 	}
-	st.QuarantinedEvents = n
+	st.QuarantinedEvents = counts.Total
+	st.AcknowledgedQuarantinedEvents = counts.Acknowledged
+	st.UnacknowledgedQuarantinedEvents = counts.Unacknowledged
 	held, err := store.CountHeldPushEvents(ctx)
 	if err != nil {
 		return err

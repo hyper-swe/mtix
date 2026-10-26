@@ -26,8 +26,8 @@ func (s *Store) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) (err erro
 	return s.withWriteTx(ctx, fn, true)
 }
 
-// withWriteTx shares all write guards; local export bookkeeping alone suppresses
-// mutation callbacks to avoid recursively marking the metadata transaction.
+// withWriteTx shares all write guards. Local bookkeeping suppresses mutation
+// callbacks so export metadata and quarantine receipts cannot schedule task exports.
 func (s *Store) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error, notify bool) (err error) {
 	if pfErr := s.preflightWrite(); pfErr != nil {
 		return pfErr

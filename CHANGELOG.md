@@ -82,6 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 - Security model updated for agent wake and hook trust (0.6.0 design).
 - Updated the Go toolchain to 1.26.9 and `golang.org/x/net` to v0.60.0 to clear reachable standard-library and networking vulnerabilities. CI selects the patched toolchain from `go.mod` (MTIX-139).
+- Updated the Go toolchain to go1.26.10 to clear a standard-library `crypto/x509` advisory (GO-2026-6809) reachable through the HTTP server. CI selects the patched toolchain from `go.mod` (MTIX-207).
 - Upgraded `golang.org/x/crypto` to v0.56.0 to clear SSH advisories GO-2026-6354 and GO-2026-6355 (MTIX-107.10). The unfixed, deprecated OpenPGP advisory GO-2026-5932 remains module-only; a repository import guard prevents OpenPGP imports.
 
 ### Fixed

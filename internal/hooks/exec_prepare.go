@@ -119,6 +119,9 @@ func buildPlan(h Hook, in *hookInputs, root, copies string, st stager) (*ExecPla
 // launchProgram makes the program (index 0) absolute and refuses one that
 // resolves into the project.
 func launchProgram(hook string, in *hookInputs, arg string) (string, error) {
+	if hasParentSegment(arg) {
+		return "", fmt.Errorf("exec launch refused for hook %q: program %q contains a parent-directory segment; write its absolute path without \"..\" or a project-relative path", hook, arg)
+	}
 	resolved, err := resolveLauncher(in.root, arg)
 	if err != nil {
 		return "", err

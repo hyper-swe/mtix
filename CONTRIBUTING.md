@@ -391,9 +391,15 @@ provider-specific quirks.
 
 ### CI
 
-Every PR and main push must pass all 17 checks, including six Go race shards
+Every PR and main push must pass all 21 checks, including six Go race shards
 and the strict `test-go` aggregate. See [CI and release gates](docs/CI-GATES.md)
 for package coverage, failure handling, merge checks and release gates.
+
+To run the full bar on hosted runners instead of your machine, use
+`scripts/remote-bar.sh --ticket MTIX-<id> <checkout>`. Add `--os macos-latest`
+for native macOS checks and `--web` for the web npm checks plus the
+`internal/web/dist` byte compare. See the "Remote bar" section of the same
+page.
 
 ### Releasing
 
@@ -497,3 +503,8 @@ table.
 ## License
 
 By contributing to mtix, you agree that your contributions will be licensed under the [Apache License 2.0](LICENSE).
+
+Relay performance changes must retain the default paired guard in race and
+short runs and the blocking quiet reference check in the existing Linux build
+job. See [relay calibration](benchmarks/README.md#fr-21-relay-publish-guard-mtix-165)
+for the exact command and measured calibration limits. The job count remains 21.

@@ -28,7 +28,7 @@ import (
 type RecoverResult struct {
 	Export       *ExportData
 	RecoveredIDs []string // rows read from the damaged database, by the id each row carries
-	LostIDs      []string // unreadable in the database and absent from the mirror
+	LostIDs      []string // unreadable in the database and absent from the mirror, each id once
 	FromMirror   []string // unreadable or missing in the database, salvaged from the mirror
 	Placeholders []string // synthesized parents for orphaned survivors
 	Notes        []string // human-readable salvage diagnostics
@@ -133,6 +133,8 @@ func finishRecover(
 
 	sort.Strings(res.RecoveredIDs)
 	sort.Strings(res.LostIDs)
+	// Two misread index entries for one id list it twice (MTIX-107.80).
+	res.LostIDs = slices.Compact(res.LostIDs)
 	sort.Strings(res.FromMirror)
 	sort.Strings(res.Placeholders)
 	if len(res.LostIDs) > 0 {

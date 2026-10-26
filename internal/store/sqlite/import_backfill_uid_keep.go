@@ -18,14 +18,19 @@ import (
 // id whose local node carries a marked backfill uid, keeps that uid
 // (keepLocalBackfillUIDs, MTIX-95.31.9). On a store that syncs with a hub,
 // a replace that would delete a node the sync log holds is refused
-// (refuseDroppingLoggedNodes, MTIX-107.31).
-func replaceAllData(ctx context.Context, tx *sql.Tx, data *ExportData) (ImportResult, error) {
+// (refuseDroppingLoggedNodes, MTIX-107.31); asSynced (AsSyncedStore,
+// MTIX-107.31.8) makes that guard treat a store as synced that records no
+// mark yet.
+func replaceAllData(ctx context.Context, tx *sql.Tx, data *ExportData, asSynced bool) (ImportResult, error) {
 	kept, err := keepLocalBackfillUIDs(ctx, tx, data)
 	if err != nil {
 		return ImportResult{}, err
 	}
-	if refuseErr := refuseDroppingLoggedNodes(ctx, tx, kept); refuseErr != nil {
+	if refuseErr := refuseDroppingLoggedNodes(ctx, tx, kept, asSynced); refuseErr != nil {
 		return ImportResult{}, refuseErr
+	}
+	if discardErr := discardUnsharedEvents(ctx, tx, kept, asSynced); discardErr != nil {
+		return ImportResult{}, discardErr
 	}
 	before, err := localUIDsByID(ctx, tx)
 	if err != nil {

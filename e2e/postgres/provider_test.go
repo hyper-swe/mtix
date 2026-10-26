@@ -157,13 +157,14 @@ func TestCI_E2EJobConfigured(t *testing.T) {
 	// Expand the matrix the way GitHub Actions does: a bare include entry
 	// that carries only one axis is merged into every combination and
 	// collapses the matrix (the S1 this guard exists for), so assert that all
-	// six (pg, pkg) pairs survive expansion.
+	// four (pg, pkg) pairs survive expansion. cmd/mtix runs in the sharded
+	// test-go-postgres-cmd job (MTIX-112.17.24).
 	got := map[string]bool{}
 	for _, c := range expandMatrix(job.Strategy.Matrix) {
 		got[fmt.Sprint(c["pg"])+"|"+fmt.Sprint(c["pkg"])] = true
 	}
 	for _, pg := range []string{"16", "17"} {
-		for _, pkg := range []string{"./cmd/mtix/",
+		for _, pkg := range []string{
 			"./internal/store/postgres/transport/", "./e2e/..."} {
 			assert.True(t, got[pg+"|"+pkg], "no job for pg %s, package %s", pg, pkg)
 		}

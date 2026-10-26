@@ -818,7 +818,42 @@ Refusing changes nothing and names the way out.
   `pending` 0, then `mtix sync reconcile --discard-local --yes`, then
   `mtix sync pull`. A replace into an empty store, such as
   a restore into a fresh data directory, deletes nothing and runs as
-  before.
+  before. A store counts as synced when it carries the hub-connected
+  mark, holds a pulled event or an event past `pending`, or has
+  published to or ingested from a file relay (a relay publish keeps the
+  journal events pending, so the relay cursors are read too). The
+  relay publisher writes its cursor only after the append, so a first
+  publish that crashed or failed to advance leaves no cursor: the
+  automatic import therefore records the local hub or relay evidence (a
+  configured relay directory, hub endpoint or stored DSN) as the
+  hub-connected mark before it imports, and fails closed, importing
+  nothing, if that evidence cannot be read or stored (MTIX-107.31.7).
+  One helper gathers the evidence for the automatic import, the
+  command-line replace guard and the doctor check (MTIX-107.31.8): the
+  config keys (`sync.relay.dir`, `sync.enabled`, `sync.endpoint`), a DSN
+  in the secrets file, one that `transport.Source` refuses, and an
+  exported `MTIX_SYNC_DSN`. The exported DSN is transient: it makes the
+  automatic import treat the store as synced for that import
+  (`sqlite.AsSyncedStore`), so a replace that would delete local data or
+  drop a task the sync log holds is refused, and `mtix import --mode
+  replace` is refused while it is set; it is never recorded as the mark.
+  The command-line guard already counted a refused DSN (a DSN key in a
+  tracked config file, or a secrets file with the wrong mode, even an
+  empty one); the automatic import now counts it too, transiently, and
+  does not record it. Only a DSN in the secrets file, whatever its mode,
+  is recorded as the mark, by its content. Unreadable evidence (a
+  secrets file that is not a regular file or cannot be opened, a config
+  key that cannot be read) is an error: the automatic import stops, and
+  the command-line guards refuse, naming the cause. A missing secrets
+  file is no evidence.
+- **On a store that never synced** nothing was shared, so every event
+  is still pending, and a replace that drops a task discards, in the
+  same transaction, the pending events of that task (matched by uid, as
+  the synced-store guard matches), their held copies in
+  `sync_quarantine`, and the pending link events whose target is the
+  dropped task. Without that, the first push after a hub or relay is
+  configured would create a task the board does not hold. A retained or
+  renumbered task keeps its events (MTIX-107.31.3).
 - **Every replace** (the store's `Import` in replace mode, which the
   automatic import also uses) is refused in its own transaction, before
   anything is deleted, when the store has synced and the file does not

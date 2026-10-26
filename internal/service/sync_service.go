@@ -39,8 +39,11 @@ type SyncService struct {
 	binaryVersion string
 	historyExport func() bool // history.export reader; nil = off
 	jsonNotices   bool        // the older-writer warning is one JSON line (--json)
-	mu            sync.Mutex  // guards noticed
-	noticed       map[string]bool
+	// hubEvidence reports the local hub or relay evidence the command layer
+	// holds (a configured relay or hub); nil means none (MTIX-107.31.7).
+	hubEvidence func() (HubEvidence, error)
+	mu          sync.Mutex // guards noticed
+	noticed     map[string]bool
 	// olderForms are the older conflict baseline forms hasConflict tries,
 	// in order; nil means olderBaselineForms() (MTIX-95.31.11). Tests set it.
 	olderForms []baselineForm
@@ -142,6 +145,13 @@ func (s *SyncService) autoImport(ctx context.Context, mtixDir string) error {
 	}
 	defer releasePush()
 
+	// MTIX-107.31.7: count a configured relay or hub before anything is
+	// replaced, even when its first publish left no record in this store.
+	transient, evidenceErr := s.noteHubEvidence(ctx)
+	if evidenceErr != nil {
+		return evidenceErr
+	}
+
 	// Step 5: parse and validate the whole file; export the local store.
 	incoming, local, conflict, err := s.parseAndValidateExport(ctx, data, mtixDir, fileHash)
 	if err != nil || incoming == nil {
@@ -156,12 +166,13 @@ func (s *SyncService) autoImport(ctx context.Context, mtixDir string) error {
 		return fmt.Errorf("auto-import: compare tasks.json with the local store: %w", err)
 	}
 	ri := &receivedImport{mtixDir: mtixDir, hashPath: hashPath, fileHash: fileHash, data: data,
-		storedHash: storedHash, incoming: incoming, local: local, diff: diff, written: incoming, start: start}
+		storedHash: storedHash, incoming: incoming, local: local, diff: diff, written: incoming, start: start,
+		assumeSynced: transient}
 	if conflict || diff.Lossy() {
 		// MTIX-95.31.15.1: the base order (last-exchanged record, then the git
 		// merge-base board) may tell the teammate's changes from the local ones.
 		res, err := s.refuseLossyImport(ctx, mtixDir, fileHash, &importCheck{
-			local: local, incoming: incoming, diff: diff, conflict: conflict})
+			local: local, incoming: incoming, diff: diff, conflict: conflict, synced: transient})
 		if err != nil || res == nil {
 			return err
 		}

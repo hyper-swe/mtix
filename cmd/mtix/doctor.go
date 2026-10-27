@@ -37,7 +37,9 @@ and checks live native pointers. WARN prints mtix -C <board-root> docs generate;
 run that command and rerun doctor. --fix never writes these documents.
 HYPERSWE.md suppresses missing native pointers, but MTIX.md is still checked.
 
-On an opened local board, wake.ledger reports retained wake rows, claimed rows
+On an opened local board, budget.rewind reports counters below their protected
+mirror and retained rewind diagnostics. It never resets allowance, even with --fix.
+wake.ledger reports retained wake rows, claimed rows
 and rejected completions. A newer dispatch protocol reports FAIL: install a
 compatible binary, restart the dispatcher and rerun doctor. This read-only check
 never prunes wake rows or lowers the protocol floor, including with --fix.
@@ -153,11 +155,21 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	if err := registerAttachDoctorChecks(context.Background(), svc, deps); err != nil {
 		return nil, fmt.Errorf("register attach doctor checks: %w", err)
 	}
+	if err := registerWakeDoctorChecks(svc); err != nil {
+		return nil, err
+	}
+	return svc, nil
+}
+
+func registerWakeDoctorChecks(svc *service.DoctorService) error {
 	if err := registerPermissionDoctor(svc); err != nil {
-		return nil, fmt.Errorf("register wake permission diagnostics: %w", err)
+		return fmt.Errorf("register wake permission diagnostics: %w", err)
 	}
 	if err := registerWakeSettingsDoctor(svc); err != nil {
-		return nil, fmt.Errorf("register wake settings diagnostics: %w", err)
+		return fmt.Errorf("register wake settings diagnostics: %w", err)
 	}
-	return svc, registerConfiguredWakeLedgerDoctor(svc)
+	if err := registerConfiguredWakeBudgetDoctor(svc); err != nil {
+		return fmt.Errorf("register wake budget diagnostics: %w", err)
+	}
+	return registerConfiguredWakeLedgerDoctor(svc)
 }

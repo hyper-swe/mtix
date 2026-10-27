@@ -20,6 +20,7 @@ import (
 	inboxformat "github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -266,10 +267,11 @@ func runInboxAck(agent string, seqs []string, through bool) error {
 	}
 	ctx := sessionContext(context.Background()) // refreshes last_seen for the registered session
 	out := NewOutputWriter(app.jsonOutput)
+	inbox := service.NewInboxService(app.store)
 
 	if through {
 		// Cumulative: mark everything up to the highest given seq as seen.
-		if err := app.store.InboxAckThrough(ctx, agent, maxSeq); err != nil {
+		if err := inbox.InboxAckThrough(ctx, agent, maxSeq); err != nil {
 			return explainAckBoard(err)
 		}
 		if app.jsonOutput {
@@ -281,7 +283,7 @@ func runInboxAck(agent string, seqs []string, through bool) error {
 
 	// Selective (default): ack exactly the given seq(s); unacked events resurface.
 	for _, n := range parsed {
-		if err := app.store.InboxAck(ctx, agent, n); err != nil {
+		if err := inbox.InboxAck(ctx, agent, n); err != nil {
 			return explainAckBoard(err)
 		}
 	}

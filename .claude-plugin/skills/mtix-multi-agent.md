@@ -474,6 +474,16 @@ hop; absent or malformed context starts at zero, with a warning for malformed
 context. A hook nudge into an already-running session carries no environment
 change, so replies there start at zero. The hop guard is an accident net, not
 an adversarial control. The scanner will leave a held wake unacknowledged and its alert will name
-the exact config command. Scanner discovery, budget/back-off enforcement and
-hold re-arm are separate features; configuring settings does not install a route.
+the exact config command. The callable dispatcher enforces recipient budgets
+across boards and durable backoff; scanner discovery and hold re-arm remain
+separate features. Configuring settings does not install a wake route.
+
+Ack after handling keeps backoff quiet. Each new acknowledgement on any board
+resets this host recipient's delay; repeating an already acknowledged event or
+prefix does not reset it or return rate allowance. After five unacknowledged
+wakes, the next waits 1 minute, doubling to a 30-minute ceiling. A configured
+recipient limit holds before claim or send, preserving inbox events. The
+protected mirror retains spent allowance across restart or restore;
+`budget.rewind` in doctor text and JSON reports a rewound counter without
+resetting allowance, even with `--fix`.
 

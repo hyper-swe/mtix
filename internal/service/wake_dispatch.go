@@ -30,12 +30,14 @@ type WakeAlertWriter interface {
 // WakeDispatcherOptions supplies already-selected candidates' delivery capabilities.
 // Candidate discovery, enrollment and host-dispatcher wiring belong to their own features.
 type WakeDispatcherOptions struct {
-	Store      WakeStore
-	Alerts     WakeAlertWriter
-	Send       func(context.Context, model.WakeAttempt) error
-	AlertAgent string
-	Settings   WakeSettingsReader
-	Held       func(string)
+	Store       WakeStore
+	Alerts      WakeAlertWriter
+	Send        func(context.Context, model.WakeAttempt) error
+	AlertAgent  string
+	Settings    WakeSettingsReader
+	Held        func(string)
+	BudgetState *oplocal.State
+	Clock       func() time.Time
 }
 
 // WakeDispatcher guards each callable pass before issuing any fenced send (ADR-007 §6.4).
@@ -46,6 +48,7 @@ type WakeDispatcher struct {
 	alertAgent string
 	settings   WakeSettingsReader
 	held       func(string)
+	budgets    *wakeBudgets
 }
 
 // NewWakeDispatcher requires storage, delivery and durable alert capabilities.
@@ -62,7 +65,11 @@ func NewWakeDispatcher(opts WakeDispatcherOptions) (*WakeDispatcher, error) {
 	if opts.Held == nil {
 		opts.Held = func(line string) { slog.Warn(line) }
 	}
-	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, send: opts.Send, alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held}, nil
+	budgets, err := newWakeBudgets(opts)
+	if err != nil {
+		return nil, err
+	}
+	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, send: opts.Send, alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets}, nil
 }
 
 // Pass re-reads the protocol floor even when there are no candidates.

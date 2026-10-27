@@ -70,12 +70,16 @@ func seedWakeDoctorBoard(t *testing.T, protocol int) (string, *sqlite.Store) {
 
 func assertEmptyWakeDoctorInfo(t *testing.T, id, status, detail, fix string) bool {
 	t.Helper()
-	if id != "wake.ledger" {
+	switch id {
+	case "wake.ledger":
+		require.Contains(t, detail, "0 wake rows")
+		require.Contains(t, detail, "0 claimed")
+	case "budget.rewind":
+		require.Equal(t, "No protected recipient accounting exists.", detail)
+	default:
 		return false
 	}
 	require.Equal(t, "info", status)
-	require.Contains(t, detail, "0 wake rows")
-	require.Contains(t, detail, "0 claimed")
 	require.Empty(t, fix)
 	return true
 }

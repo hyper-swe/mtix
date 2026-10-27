@@ -8,7 +8,9 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
+	"github.com/hyper-swe/mtix/internal/testutil"
 	"github.com/stretchr/testify/require"
 	"strconv"
 	"testing"
@@ -24,8 +26,9 @@ func runHopChain(t *testing.T, last int, held bool) {
 	node, err := nodes.CreateNode(t.Context(), &service.CreateNodeRequest{Project: "TEST", Title: "hop chain", Creator: "sender"})
 	require.NoError(t, err)
 	alerts := service.NewAlerts(operatorAlertsFixture(t), fixedClock(node.CreatedAt))
+	state := hopDepthOperatorState(t)
 	sent := 0
-	dispatcher, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: store, Alerts: alerts, Send: func(context.Context, model.WakeAttempt) error { sent++; return nil }})
+	dispatcher, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: store, Alerts: alerts, BudgetState: state, Settings: state, Send: func(context.Context, model.WakeAttempt) error { sent++; return nil }})
 	require.NoError(t, err)
 	for depth := 0; depth <= last; depth++ {
 		require.NoError(t, prompts.AddAnnotation(t.Context(), node.ID, "chain event", "sender", "worker"))
@@ -63,4 +66,13 @@ func runHopChain(t *testing.T, last int, held bool) {
 	entries, err := store.InboxList(t.Context(), "worker")
 	require.NoError(t, err)
 	require.Len(t, entries, last+1, "holding or waking never acknowledges events")
+}
+
+func hopDepthOperatorState(t *testing.T) *oplocal.State {
+	t.Helper()
+	state := testutil.OperatorState(t)
+	// This chain isolates depth; independent backoff tests exercise the default 5.
+	threshold := "1000"
+	require.NoError(t, state.UpdateWakeSetting(t.Context(), oplocal.WakeSettingUpdate{Key: "wake.backoff_after_unacked", Value: &threshold}, nil))
+	return state
 }

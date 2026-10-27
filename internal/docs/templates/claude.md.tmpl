@@ -183,9 +183,16 @@ stdin; tightening and live-off do not. The health report lists effective
 values and sources in `wake.settings` and ignored workspace authority keys in
 `settings.ignored-workspace-key`. Read the admin skill before changing limits;
 you should not need routine tuning. Handle and ack each event explicitly.
+The callable dispatcher enforces recipient budgets across boards and durable
+backoff. A new acknowledgement resets the host recipient's delay; already
+acknowledged events do not reset it or return rate allowance. `budget.rewind`
+reports protected accounting after a restore. Scanner discovery and hold
+re-arm remain separate; settings do not install a route.
 
 On an opened local board, `wake.ledger` reports retained rows and protocol refusal;
 `--fix` preserves wake state. See the multi-agent skill for lease and retry behavior.
+`budget.rewind` compares local counters with protected recipient accounting.
+It retains spent allowance after a restore; `--fix` never resets that accounting.
 Plain `mtix doctor` preserves operator-local files, including stale attach shims
 and records. Use `--fix` for registered shim and glue repairs;
 other commands retain automatic attach refresh.

@@ -333,6 +333,8 @@ review of that hook; other hook approvals remain independent.
 <!-- AUTO-GENERATED: HEALTH_DIAGNOSTICS -->
 On an opened local board, `wake.ledger` reports retained rows and protocol refusal;
 `--fix` preserves wake state. See the multi-agent skill for lease and retry behavior.
+`budget.rewind` compares local counters with protected recipient accounting.
+It retains spent allowance after a restore; `--fix` never resets that accounting.
 Plain `mtix doctor` preserves operator-local files, including stale attach shims
 and records. Use `--fix` for registered shim and glue repairs;
 other commands retain automatic attach refresh.

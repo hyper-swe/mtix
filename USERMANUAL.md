@@ -1283,15 +1283,15 @@ Existing flat envelope and strict-identity settings remain readable.
 | Key | Default | Meaning |
 |---|---|---|
 | `wake.live` | `true` | Live wake on/off setting for the scanner |
-| `wake.wakes_per_hour` | unset, unlimited | Recipient wakes per hour |
-| `wake.per_sender_per_hour` | unset, unlimited | Sender events per hour |
-| `wake.remote_awake_daily_cap` | unset, unlimited | Remote-induced awake seconds per day |
-| `wake.reply_extensions_per_hour` | unset, unlimited | Reply-window extensions per hour |
+| `wake.wakes_per_hour` | unset, unlimited | Enforced by the callable dispatcher: recipient wakes across boards per rolling hour |
+| `wake.per_sender_per_hour` | unset, unlimited | stored, not yet enforced: sender events per hour |
+| `wake.remote_awake_daily_cap` | unset, unlimited | stored, not yet enforced: remote-induced awake seconds per day |
+| `wake.reply_extensions_per_hour` | unset, unlimited | stored, not yet enforced: reply-window extensions per hour |
 | `wake.envelope_max_events` | unset, unlimited | Events in one pulled envelope |
 | `wake.envelope_max_body_bytes` | unset, unlimited | Bytes per event body |
 | `wake.envelope_max_total_bytes` | unset, unlimited | Total envelope bytes |
 | `wake.max_hop_depth` | `32` | Scanner hop guard; depth 32 will be allowed, 33 held |
-| `wake.backoff_after_unacked` | `5` | Always-on unacknowledged-wake guard setting |
+| `wake.backoff_after_unacked` | `5` | Enforced by the callable dispatcher: durable unacknowledged-wake backoff |
 | `inbox.strict_board_identity` | `false` | Also require matching hub identity |
 
 Read a value with `mtix config get wake.max_hop_depth`, or append `--agent worker`.
@@ -1322,9 +1322,25 @@ session's environment, so its sends start at zero. This is an accident net,
 not an adversarial control. The scanner's held diagnostic will name the depth and
 exact configuration command; changing a guard never acknowledges the event.
 
-These settings do not install a wake route. Scanner discovery, budget and
-back-off enforcement, and hold re-arm remain separate features; only the
-settings, envelope/identity readers, hop metadata and delivery foundations are supplied here.
+These settings do not install a wake route. The callable dispatcher enforces
+recipient budgets and durable backoff; scanner discovery and hold re-arm remain
+separate features. A configured limit of 12 holds the 13th attempt in a rolling
+hour, before claim or send, across boards for the same agent, host and user.
+Duplicate claims and held events spend no allowance; transport failures do.
+
+After five consecutive wakes without a new acknowledgement, the next wake
+waits 1 minute; each further unacknowledged attempt doubles the delay up to
+30 minutes. Ack after handling keeps backoff quiet. A new acknowledgement on
+any board resets this host recipient's backoff, including a lower selective
+sequence or newly covered cumulative prefix. Repeating an already acknowledged
+event or prefix does not reset it. Acknowledgements do not return rate allowance.
+
+The protected mirror retains spent allowance across restarts and store restores.
+`budget.rewind` in `mtix doctor` text and JSON reports a lower local counter or
+retained rewind diagnostic. It is read-only, even with `--fix`; doctor never
+repairs counters or resets allowance. Interrupted accepted attempts remain
+conservatively charged. Budget and backoff holds retain inbox events and name
+their cause and exact configuration command.
 
 ### Configuration Reference
 

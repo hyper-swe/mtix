@@ -154,15 +154,15 @@ func TestDoctorCLI_Unconfigured_DocumentAndRetainedWakeInfoExitZero(t *testing.T
 			out := doctorCLIExecute(t, root, "", append([]string{"doctor"}, flags...)...)
 			assert.Equal(t, 0, out.exit, out.stderr)
 			rows := doctorCLIRows(t, out.stdout)
-			wantRows := 4
+			wantRows := 5
 			if runtime.GOOS == "windows" {
 				wantRows++
 				assert.Equal(t, "platform.windows", rows[0]["id"])
 				assert.Equal(t, "info", rows[0]["status"])
 			}
 			require.Len(t, rows, wantRows)
-			assert.Equal(t, "docs.stale", rows[len(rows)-4]["id"])
-			assert.Equal(t, "warn", rows[len(rows)-4]["status"])
+			assert.Equal(t, "docs.stale", rows[len(rows)-5]["id"])
+			assert.Equal(t, "warn", rows[len(rows)-5]["status"])
 
 			wakeRows := 0
 			for _, row := range rows {
@@ -170,7 +170,7 @@ func TestDoctorCLI_Unconfigured_DocumentAndRetainedWakeInfoExitZero(t *testing.T
 					wakeRows++
 				}
 			}
-			assert.Equal(t, 1, wakeRows)
+			assert.Equal(t, 2, wakeRows)
 			assert.Equal(t, "wake.ledger", rows[len(rows)-1]["id"])
 			assert.Empty(t, out.stderr)
 		})

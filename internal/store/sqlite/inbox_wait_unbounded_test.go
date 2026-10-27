@@ -178,21 +178,46 @@ func TestInboxWait_NegativeTimeout_Refused(t *testing.T) {
 
 func TestInboxWait_TimeoutZero_NoBusyLoop(t *testing.T) {
 	s := inboxWaitStore(t)
-	ctx, calls, first := observeInboxWait(t, s)
+	ctx := WithSessionTouch(t.Context(), SessionTouch{HostID: "test-host", UID: "test-user", Handle: "test-session"})
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	polls := make(chan time.Time)
+	s.SetClock(func() time.Time {
+		// Observe each actual query at its session touch. Cancellation also
+		// releases a sender if the test fails before receiving the next poll.
+		select {
+		case polls <- time.Now():
+		case <-ctx.Done():
+		}
+		return inboxWaitTime()
+	})
+	started := time.Now()
 	out := startInboxWait(ctx, t, s, 0)
-	awaitInboxPoll(t, first)
+	guard := time.NewTimer(30 * time.Second) // failure ceiling, never a sampling window
+	defer guard.Stop()
+	const wantPolls = 5
+	var lastPoll time.Time
+	for poll := 1; poll <= wantPolls; poll++ {
+		select {
+		case lastPoll = <-polls:
+		case result := <-out:
+			t.Fatalf("unbounded wait returned before poll %d: %+v", poll, result)
+		case <-guard.C:
+			t.Fatalf("unbounded wait did not reach poll %d", poll)
+		}
+	}
+	// Four 250 ms ticks must separate the immediate query from the fifth
+	// poll. Scheduling delays only increase elapsed time; they cannot reduce
+	// the observed count as they did in the old fixed 875 ms sample.
+	assert.GreaterOrEqual(t, lastPoll.Sub(started), time.Duration(wantPolls-1)*250*time.Millisecond, "250ms polling must not spin")
+	cancel()
 	select {
 	case result := <-out:
-		t.Fatalf("unbounded wait returned: %+v", result)
-	case <-time.After(875 * time.Millisecond):
+		require.ErrorIs(t, result.err, context.Canceled)
+		assert.Empty(t, result.events)
+	case <-guard.C:
+		t.Fatal("unbounded wait did not return after cancellation")
 	}
-	assert.GreaterOrEqual(t, calls.Load(), int64(2), "must continue polling after the immediate query")
-	assert.LessOrEqual(t, calls.Load(), int64(6), "250ms polling must not spin")
-	cancel()
-	result := <-out
-	require.ErrorIs(t, result.err, context.Canceled)
 }
 
 func TestInboxWait_TimeoutZero_ReleasesReadAndWriteLocks(t *testing.T) {

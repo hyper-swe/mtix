@@ -43,6 +43,9 @@ type Approvals struct {
 	stager stager
 	// classify overrides ReviewProgram; tests inject a failure.
 	classify func(Hook) (ProgramReview, error)
+	// afterJudge runs between the strict-mode judgement and the pin step; tests
+	// use it to change a slot in that window.
+	afterJudge func()
 }
 type approvalRecord struct {
 	Project string `json:"project"`

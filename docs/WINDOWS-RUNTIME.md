@@ -149,7 +149,7 @@ not evidence for either ticket.
 ## Artifacts, provenance and failed runs
 
 Download the artifact named for the exact run ID and attempt. It contains only
-capture.json, oplocal.json, hooks.json, toolchain.json, duration.json and
+capture.json, oplocal.json, hooks.json, hooks-launch.json, toolchain.json, duration.json and
 started.txt; it never dumps a directory or the process environment. Preserve the
 original bytes and their hashes before deriving a fixture.
 

@@ -37,6 +37,8 @@ func commandFreshness(cmd *cobra.Command, args []string) freshnessScope {
 		return scopeForWrite(freshnessFlag(cmd, "fix") == "true", freshnessRead)
 	case "hooks exec-dispatch":
 		return scopeForWrite(len(args) > 0, freshnessRead)
+	case "hooks strict":
+		return scopeForWrite(len(args) > 0 && args[0] != "status", freshnessRead)
 	case "hooks trust":
 		return scopeForWrite(freshnessFlag(cmd, "status") != "true", freshnessRead)
 	case "daemon", "sync daemon":

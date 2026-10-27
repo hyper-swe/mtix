@@ -136,6 +136,9 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 		if err := svc.Register(hooksProgramsCheck(app.mtixDir)); err != nil {
 			return nil, fmt.Errorf("register hook program check: %w", err)
 		}
+		if err := svc.Register(hooksStrictCheck(app.mtixDir)); err != nil {
+			return nil, fmt.Errorf("register hook strict check: %w", err)
+		}
 	}
 	// Attach rows (setup.shim, glue.<h>, attach.failures, skew.dispatchers)
 	// appear only when something is installed, marked, alerted or beating.

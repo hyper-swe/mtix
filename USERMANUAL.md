@@ -3035,6 +3035,35 @@ The notice is advisory: the hook still runs as written and launch behaviour
 does not change. To clear it, run the program through a pinned project script
 and approve the hook again.
 
+Strict program mode (opt-in, off by default): on a host where you want more
+than the advisory notice, run `mtix hooks strict on` at a terminal. With it on,
+an exec hook whose program is not a pinned project script or a known
+interpreter running one launches only after you approve that program with
+`mtix hooks trust --program <hook>`. The approval is bound to the
+symlink-resolved program path, the hook name and the project, and a changed
+program path or hook configuration voids it; a program that resolves inside
+the project is refused because it is a script and must be pinned instead. A
+refused launch reports the rule and the exact approval command. The setting
+and the approvals are operator-local state outside the project: `strict on`,
+`strict off` and `trust --program` need terminal stdin and are refused under an
+agent session. `mtix hooks strict status` works without a terminal and has
+`--json` (`enabled`, `detail`, `fix`, `programs`); `mtix hooks status --json`
+carries the same object under `strict`, and `mtix doctor` shows the
+`hooks.strict` check (PASS when the mode is off or nothing needs approval, WARN
+with the exact approval commands otherwise). An unreadable strict record
+refuses launches rather than allowing them. An approval binds the program's resolved path, not its file content: the
+contents are not pinned, so approve only programs in locations that
+agents and other untrusted processes cannot write. A launch wrapper other than
+the known env, found by name in a PATH directory, is itself the program that
+needs approval.
+Whether a wrapper or an interpreter is the known one is decided by the
+physical directory that holds it, after links are followed. A slot is the known
+one only when that directory has no link left in it (a path that still passes
+through a link, such as a chain of links too long to follow, is not known and
+needs approval); under strict mode a known slot launches from that directory.
+`mtix hooks trust --program`
+prints the program it will approve before it writes the approval.
+
 Hook program paths must be clean: a program written with a parent-directory
 segment ("..") is refused at launch, naming the hook, because the checked path
 and the file the operating system runs can differ once a link comes before the

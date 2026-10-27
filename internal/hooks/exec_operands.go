@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 )
 
@@ -359,7 +358,29 @@ func projectPath(logical, root, value string) (resolved string, lexical, inside 
 	}
 	resolved = resolveDeepest(path, 0)
 	rel, err := filepath.Rel(root, resolved)
-	return resolved, lexical, lexical || (err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+	byName := err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return resolved, lexical, lexical || byName || underRoot(root, resolved)
+}
+
+// underRoot reports whether path is the project root or lies under it by file
+// identity: some existing ancestor of path is the same file as root. A string
+// comparison alone is wrong on a case-insensitive volume, where a case-variant
+// spelling names the same file.
+func underRoot(root, path string) bool {
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return false
+	}
+	for current := filepath.Clean(path); ; {
+		if info, statErr := os.Stat(current); statErr == nil && os.SameFile(rootInfo, info) {
+			return true
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+		current = parent
+	}
 }
 
 // maxLinkExpansions bounds how many links one resolution follows, so a cycle
@@ -400,8 +421,14 @@ func resolveDeepest(path string, depth int) string {
 			continue
 		}
 		links++
+		if links > maxLinkExpansions {
+			// Past the limit the path is not resolved: it keeps the link it
+			// stopped at, so it never equals its own resolution and is never
+			// taken for a physical directory.
+			return filepath.Join(append([]string{next}, todo...)...)
+		}
 		target, readErr := os.Readlink(next)
-		if links > maxLinkExpansions || readErr != nil {
+		if readErr != nil {
 			return finishResolved(next, todo)
 		}
 		if filepath.IsAbs(target) {
@@ -412,24 +439,6 @@ func resolveDeepest(path string, depth int) string {
 		todo = append(splitPathComponents(target), todo...)
 	}
 	return finishResolved(cur, nil)
-}
-
-// finishResolved canonicalizes the part that exists and attaches the rest.
-func finishResolved(existing string, rest []string) string {
-	if resolved, err := filepath.EvalSymlinks(existing); err == nil {
-		existing = resolved
-	}
-	return filepath.Join(append([]string{existing}, rest...)...)
-}
-
-// splitPathComponents splits on every separator the platform accepts.
-func splitPathComponents(p string) []string {
-	return strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == filepath.Separator })
-}
-
-// hasParentSegment reports a ".." component in a program path as written.
-func hasParentSegment(p string) bool {
-	return slices.Contains(splitPathComponents(p), "..")
 }
 
 // checkOperands refuses a launch that would run, by path, a file that is not

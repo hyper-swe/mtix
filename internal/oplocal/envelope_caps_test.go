@@ -87,3 +87,17 @@ func TestEnvelopeCaps_InvalidSettings_ReturnsError(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, s.EnvelopeCapsRemedy(), "Restore an operator-owned")
 }
+
+func TestEnvelopeCapsRemedy_CoversScopedAndLegacyOverrides(t *testing.T) {
+	s := identityState(t)
+	require.NoError(t, s.WriteJSON("wake", map[string]any{
+		"host":   map[string]any{"wake.envelope_max_total_bytes": 1},
+		"agents": map[string]any{"worker": map[string]any{"wake.envelope_max_body_bytes": -1}},
+	}))
+	_, _, err := s.EnvelopeCapsForAgent("worker")
+	require.Error(t, err)
+	fix := s.EnvelopeCapsRemedy()
+	for _, required := range []string{"data.host", "data.agents", "wake.envelope_max_events", "wake.envelope_max_body_bytes", "wake.envelope_max_total_bytes", "max_events", "preserving host_id"} {
+		assert.Contains(t, fix, required)
+	}
+}

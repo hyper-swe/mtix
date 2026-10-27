@@ -6,7 +6,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -14,7 +17,7 @@ import (
 
 // quarantineAcknowledgementFix only names acknowledgement when an actual
 // unacknowledged raw event is eligible. Stored reason text is not authority.
-func quarantineAcknowledgementFix(ctx context.Context, st *sqlite.Store) (string, error) {
+func quarantineAcknowledgementFix(ctx context.Context, st *sqlite.Store, jsonOutput bool) (string, error) {
 	var after *sqlite.QuarantineKey
 	var firstID string
 	eligible := 0
@@ -24,7 +27,7 @@ func quarantineAcknowledgementFix(ctx context.Context, st *sqlite.Store) (string
 			return "", fmt.Errorf("scan acknowledgement fixes: list quarantines: %w", err)
 		}
 		if len(page) == 0 {
-			return quarantineAcknowledgementCommand(firstID, eligible), nil
+			return quarantineAcknowledgementCommand(firstID, eligible, jsonOutput), nil
 		}
 		for _, q := range page {
 			if !service.QuarantineAcknowledgementEligible(q) {
@@ -46,12 +49,28 @@ func quarantineAcknowledgementFix(ctx context.Context, st *sqlite.Store) (string
 	}
 }
 
-// quarantineAcknowledgementCommand quotes the event id as one POSIX shell
-// argument after --, including ids that begin with a flag prefix (MTIX-187.2.6).
-func quarantineAcknowledgementCommand(eventID string, eligible int) string {
+// quarantineAcknowledgementCommand formats a hint for the selected output mode,
+// preserving the JSON contract and ordinary text hints (MTIX-187.2.6.2).
+func quarantineAcknowledgementCommand(eventID string, eligible int, jsonOutput bool) string {
 	if eligible == 0 {
 		return ""
 	}
+	if !jsonOutput && recoveryHintNeedsInspection(eventID) {
+		return fmt.Sprintf("Inspect retained events (%d eligible unacknowledged; first id %s): mtix sync quarantine list --json; this id cannot be included in a text recovery command.", eligible, strconv.QuoteToASCII(eventID))
+	}
 	quotedID := "'" + strings.ReplaceAll(eventID, "'", "'\"'\"'") + "'"
 	return fmt.Sprintf("Inspect and report retained events (%d eligible unacknowledged; first shown), then: mtix sync quarantine acknowledge --reason 'reviewed invalid node id; accepted as unapplied' -- %s", eligible, quotedID)
+}
+
+// recoveryHintNeedsInspection classifies values needing a visible text label.
+func recoveryHintNeedsInspection(id string) bool {
+	if !utf8.ValidString(id) {
+		return true
+	}
+	for _, r := range id {
+		if unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
 }

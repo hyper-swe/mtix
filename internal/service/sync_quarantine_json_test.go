@@ -48,21 +48,25 @@ func requireServiceOutputType(t *testing.T, typ reflect.Type) {
 
 func TestSyncQuarantineJSON_Golden(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		calls       int
-		list, empty bool
+		name, source string
+		calls        int
+		list, empty  bool
 	}{
-		{"empty_list", 0, true, true},
-		{"unacknowledged_list", 0, true, false},
-		{"first_acknowledgement", 1, false, false},
-		{"acknowledged_list", 1, true, false},
-		{"repeat_acknowledgement", 2, false, false},
-		{"repeat_list", 2, true, false},
+		{"empty_list", "pull", 0, true, true},
+		{"unacknowledged_list", "pull", 0, true, false},
+		{"first_acknowledgement", "pull", 1, false, false},
+		{"acknowledged_list", "pull", 1, true, false},
+		{"repeat_acknowledgement", "pull", 2, false, false},
+		{"repeat_list", "pull", 2, true, false},
+		{"sweep_first_acknowledgement", "sweep", 1, false, false},
+		{"sweep_acknowledged_list", "sweep", 1, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			svc, st, _ := newTestSyncService(t)
 			if !tc.empty {
-				seedQuarantineAck(t, st, quarantineAckEligibilityCases()[0])
+				fixture := quarantineAckEligibilityCases()[0]
+				fixture.source = tc.source
+				seedQuarantineAck(t, st, fixture)
 			}
 			var output any
 			for n := 0; n < tc.calls; n++ {

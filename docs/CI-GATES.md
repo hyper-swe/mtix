@@ -91,6 +91,31 @@ value exits 2 before anything is pushed. The options combine. Exit codes are
 unchanged: 0 green, 1 bar red (including the web checks), 2 infrastructure or
 usage failure, 3 tree mismatch. Default runs send no extra dispatch inputs.
 
+### Reuse of an identical green run (MTIX-112.17.26)
+
+Before dispatching, the script looks for a completed, successful remote-bar
+run of the same snapshot tree, the same main commit the snapshot was cut from,
+the same `--os`, `--web` setting and wrapper version. `remote-bar.yml` writes
+them into the run name as `tree=... base=... os=... web=... wrapper=...`, and
+its `validate` job fails any run whose values are not strictly well formed
+(40 hex digits, a fixed os set, true or false, digits), so a title cannot be
+forged. The script matches the whole title against one anchored pattern and
+compares every field exactly; branch names are never used. The run must also
+have used a workflow file whose blob equals the one on `main` now.
+
+A run is reused only if it is at most 12 hours old (`RB_REUSE_MAX_AGE_SECS`,
+a positive integer, default 43200). The limit is short on purpose:
+`govulncheck`, `npm audit` and floating runner images can turn red within
+days with no change to the tree. Many baselines cut from the same main commit
+within the day still share one run. A reuse prints `REUSED run: <url> tree=...
+base=... os=... web=...` and `verdict=REUSED`, exits 0 and pushes and
+dispatches nothing. Failed, cancelled, queued and in-progress runs are never
+reused, and any mismatch or lookup failure dispatches a fresh run. `--no-reuse`
+forces a fresh run; a snapshot run with `--allow-workflow-diff` never reuses.
+If main's workflow predates the `base_commit` input the dispatch is retried
+without it, and such runs carry no match data. Runs started before the
+run-name change are not reused.
+
 Because the workflow is dispatched from `main`, a change to it takes effect
 only after it is merged; contract tests and `--dry-run` cover it before then.
 

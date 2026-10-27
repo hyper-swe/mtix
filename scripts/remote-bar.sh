@@ -5,6 +5,7 @@
 #
 # Usage:
 #   scripts/remote-bar.sh [--ticket MTIX-N] [--dry-run] [--allow-workflow-diff] \
+#                         [--no-reuse] \
 #                         [--os ubuntu-22.04|macos-latest] [--web] \
 #                         <worktree-or-checkout>
 #   scripts/remote-bar.sh --help
@@ -44,6 +45,15 @@
 # Default runs send no new dispatch inputs, so they work against a workflow
 # on main that predates the options. Windows coverage comes from PR CI.
 #
+# Reuse (MTIX-112.17.26): before dispatching, the wrapper looks for a completed
+# successful remote-bar run of the same snapshot tree, main base commit, os, web option and
+# wrapper version (remote-bar.yml puts them in the run-name), at most
+# RB_REUSE_MAX_AGE_SECS old (default 12 hours), whose workflow file blob equals
+# main's. If one exists it prints "REUSED run: <url> tree=... os=... web=..."
+# and "verdict=REUSED", exits 0, and pushes and dispatches nothing. Failed,
+# cancelled, queued and in-progress runs are never reused. --no-reuse forces a
+# fresh run; a snapshot with --allow-workflow-diff never reuses.
+#
 # Needs: git, gh with existing auth (scopes repo and workflow). No secrets.
 #
 # Exit codes:
@@ -58,7 +68,7 @@
 
 set -euo pipefail
 
-RB_VERSION="1"
+RB_VERSION="2"
 RB_OS_DEFAULT="ubuntu-22.04"
 RB_OS_ALLOWED="ubuntu-22.04 macos-latest"
 RB_REPO_SLUG="hyper-swe/mtix"
@@ -67,6 +77,7 @@ RB_REMOTE="${RB_REMOTE:-origin}"
 RB_TIMEOUT_SECS="${RB_TIMEOUT_SECS:-5400}"
 RB_POLL_SECS="${RB_POLL_SECS:-20}"
 RB_FIND_SECS="${RB_FIND_SECS:-5}"
+RB_REUSE_MAX_AGE_SECS="${RB_REUSE_MAX_AGE_SECS:-43200}"
 # Files the review loop injects at the worktree root. They are left out of the
 # snapshot when origin/main does not track them, whatever the caller's config.
 RB_LOOP_FILES="CLAUDE.md AGENTS.md"
@@ -298,6 +309,42 @@ rb_wait_run() {
 	done
 }
 
+# rb_blob <ref>: prints the blob sha of the workflow file at <ref> (a branch or
+# a commit sha), read from the GitHub API. Fails when it cannot be read.
+rb_blob() {
+	local sha
+	sha="$(gh api "repos/$RB_REPO_SLUG/contents/.github/workflows/$RB_WORKFLOW?ref=$1" --jq .sha 2>/dev/null)" || return 1
+	[ -n "$sha" ] && [ "$sha" != null ] || return 1
+	printf '%s\n' "$sha"
+}
+
+# rb_find_reusable <tree> <base> <os> <web>: sets RB_REUSED to "<id> <url>" of a
+# completed, successful remote-bar run whose WHOLE run-name (written by
+# remote-bar.yml, whose validate job pins every field to a strict pattern)
+# matches one anchored pattern and whose captured tree, base (the main commit
+# the snapshot was cut from), os, web and wrapper equal the wanted values
+# exactly. The run must be at most RB_REUSE_MAX_AGE_SECS old (default 12
+# hours, because scans and floating images can turn red within days) and have
+# run a workflow file whose blob equals main's now. Returns 1 when nothing
+# qualifies or when any lookup fails (then a fresh run is dispatched). Queued,
+# in-progress, failed and cancelled runs never qualify (MTIX-112.17.26).
+rb_find_reusable() {
+	local tree="$1" base="$2" os="$3" web="$4" main_blob id sha url re want
+	re='^remote-bar ci-scratch/[A-Za-z0-9._-]+ tree=(?<t>[0-9a-f]{40}) base=(?<b>[0-9a-f]{40}) os=(?<o>ubuntu-22[.]04|macos-latest) web=(?<w>true|false) wrapper=(?<v>[0-9]+)$'
+	want=".t == \"$tree\" and .b == \"$base\" and .o == \"$os\" and .w == \"$web\" and .v == \"$RB_VERSION\""
+	RB_REUSED=""
+	main_blob="$(rb_blob main)" || return 1
+	while IFS=' ' read -r id sha url; do
+		[ -n "$id" ] || continue
+		[ "$(rb_blob "$sha" 2>/dev/null || true)" = "$main_blob" ] || continue
+		RB_REUSED="$id $url"
+		return 0
+	done < <(gh run list --repo "$RB_REPO_SLUG" --workflow "$RB_WORKFLOW" --event workflow_dispatch \
+		--status success --limit 100 --json databaseId,displayTitle,createdAt,headSha,url,status,conclusion \
+		--jq ".[] | select(.status == \"completed\" and .conclusion == \"success\" and (now - (.createdAt | fromdateiso8601) <= $RB_REUSE_MAX_AGE_SECS) and ((.displayTitle | capture(\"$re\") // {}) | $want)) | \"\(.databaseId) \(.headSha) \(.url)\"" 2>/dev/null || true)
+	return 1
+}
+
 # rb_os_ok <os>: succeeds only for a runner on the allowlist.
 rb_os_ok() {
 	local o
@@ -312,7 +359,7 @@ rb_usage() {
 }
 
 rb_run() {
-	local ticket="adhoc" dry=0 allow_wf=0 dir="" a os="$RB_OS_DEFAULT" web=false
+	local ticket="adhoc" dry=0 allow_wf=0 reuse=1 dir="" a os="$RB_OS_DEFAULT" web=false
 	while [ $# -gt 0 ]; do
 		a="$1"
 		case "$a" in
@@ -320,6 +367,7 @@ rb_run() {
 		--ticket) [ $# -ge 2 ] || rb_die 2 "--ticket needs a value"; ticket="$2"; shift ;;
 		--dry-run) dry=1 ;;
 		--allow-workflow-diff) allow_wf=1 ;;
+		--no-reuse) reuse=0 ;;
 		--os) [ $# -ge 2 ] || rb_die 2 "--os needs a value"; os="$2"; shift
 			rb_os_ok "$os" || rb_die 2 "--os must be one of: $RB_OS_ALLOWED (got: $os)" ;;
 		--web) web=true ;;
@@ -328,6 +376,7 @@ rb_run() {
 		esac
 		shift
 	done
+	[[ "$RB_REUSE_MAX_AGE_SECS" =~ ^[1-9][0-9]*$ ]] || rb_die 2 "RB_REUSE_MAX_AGE_SECS must be a positive integer (got: $RB_REUSE_MAX_AGE_SECS)"
 	[ -n "$dir" ] || rb_die 2 "missing <worktree-or-checkout>; see --help"
 	git rev-parse --git-dir >/dev/null 2>&1 || rb_die 2 "run from inside a git checkout of mtix"
 
@@ -345,9 +394,16 @@ rb_run() {
 	fi
 	stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 	RB_BRANCH="$(rb_branch_name "$ticket" "$stamp" "$tree")" || rb_die 2 "cannot name branch"
-	echo "remote-bar $RB_VERSION: tree=$tree branch=$RB_BRANCH os=$os web=$web"
+	echo "remote-bar $RB_VERSION: tree=$tree base=$parent branch=$RB_BRANCH os=$os web=$web"
 	[ "$dry" = 0 ] || { echo "dry run: nothing pushed"; return 0; }
 
+	# A snapshot that changes .github never reuses: the workflow under change is
+	# not the one a past run exercised (MTIX-112.17.26).
+	if [ "$reuse" = 1 ] && [ "$allow_wf" = 0 ] && rb_find_reusable "$tree" "$parent" "$os" "$web"; then
+		echo "REUSED run: https://github.com/$RB_REPO_SLUG/actions/runs/${RB_REUSED%% *} tree=$tree os=$os web=$web base=$parent wrapper=$RB_VERSION (--no-reuse forces a fresh run)"
+		echo "conclusion=success verdict=REUSED exit=0"
+		return 0
+	fi
 	commit="$(rb_commit_tree "$tree" "$parent")"
 	rb_push "$commit" "$RB_BRANCH" || rb_die 2 "push failed"
 	# Optional inputs are sent only when asked for, so a default run still
@@ -355,10 +411,25 @@ rb_run() {
 	local opts=()
 	[ "$os" = "$RB_OS_DEFAULT" ] || opts+=(-f "os=$os")
 	[ "$web" = false ] || opts+=(-f "web=true")
-	gh workflow run "$RB_WORKFLOW" --repo "$RB_REPO_SLUG" --ref main \
+	# base_commit feeds the run-name used for reuse. A workflow on main that
+	# predates it rejects the unknown input; only that rejection falls back to
+	# a dispatch without it, and such a run is not reusable. Any other
+	# dispatch error is a dispatch failure.
+	local derr
+	if ! derr="$(gh workflow run "$RB_WORKFLOW" --repo "$RB_REPO_SLUG" --ref main \
 		-f "scratch_ref=$RB_BRANCH" -f "expected_tree=$tree" -f "wrapper_version=$RB_VERSION" \
-		"${opts[@]+"${opts[@]}"}" ||
-		rb_die 2 "dispatch failed"
+		-f "base_commit=$parent" "${opts[@]+"${opts[@]}"}" 2>&1)"; then
+		case "$derr" in
+		*"Unexpected inputs"*base_commit*)
+			echo "remote-bar: main's workflow does not accept base_commit; dispatching without a base (this run is not reusable)" >&2
+			gh workflow run "$RB_WORKFLOW" --repo "$RB_REPO_SLUG" --ref main \
+				-f "scratch_ref=$RB_BRANCH" -f "expected_tree=$tree" -f "wrapper_version=$RB_VERSION" \
+				"${opts[@]+"${opts[@]}"}" || rb_die 2 "dispatch failed" ;;
+		*)
+			printf '%s\n' "$derr" >&2
+			rb_die 2 "dispatch failed" ;;
+		esac
+	fi
 	rb_find_run "$RB_BRANCH" || rb_die 2 "dispatched run not found"
 	echo "run: https://github.com/$RB_REPO_SLUG/actions/runs/$RB_RUN_ID"
 	rb_wait_run "$RB_RUN_ID" || rb_die 2 "lost contact with the run"

@@ -108,6 +108,7 @@ func TestQuarantineAcknowledgementsFor_ReadOnlyLegacy(t *testing.T) {
 			got, err := ro.QuarantineAcknowledgementsFor(t.Context(), []QuarantinedEvent{q})
 			require.NoError(t, err)
 			if legacy {
+				require.NotNil(t, got)
 				require.Empty(t, got)
 			} else {
 				require.Equal(t, map[string]QuarantineAcknowledgement{q.EventID: a}, got)

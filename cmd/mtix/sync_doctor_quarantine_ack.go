@@ -50,7 +50,7 @@ func quarantineAcknowledgementFix(ctx context.Context, st *sqlite.Store, jsonOut
 }
 
 // quarantineAcknowledgementCommand formats a hint for the selected output mode,
-// preserving the JSON contract and ordinary text hints (MTIX-187.2.6.2).
+// requiring an operator reason while preserving id presentation (MTIX-187.2.6.3).
 func quarantineAcknowledgementCommand(eventID string, eligible int, jsonOutput bool) string {
 	if eligible == 0 {
 		return ""
@@ -59,7 +59,7 @@ func quarantineAcknowledgementCommand(eventID string, eligible int, jsonOutput b
 		return fmt.Sprintf("Inspect retained events (%d eligible unacknowledged; first id %s): mtix sync quarantine list --json; this id cannot be included in a text recovery command.", eligible, strconv.QuoteToASCII(eventID))
 	}
 	quotedID := "'" + strings.ReplaceAll(eventID, "'", "'\"'\"'") + "'"
-	return fmt.Sprintf("Inspect and report retained events (%d eligible unacknowledged; first shown), then: mtix sync quarantine acknowledge --reason 'reviewed invalid node id; accepted as unapplied' -- %s", eligible, quotedID)
+	return fmt.Sprintf("Inspect and report retained events (%d eligible unacknowledged; first shown); add --reason '<your explanation>' before --, then: mtix sync quarantine acknowledge -- %s", eligible, quotedID)
 }
 
 // recoveryHintNeedsInspection classifies values needing a visible text label.

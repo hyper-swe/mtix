@@ -2157,7 +2157,7 @@ pull's position either, so later changes keep arriving.
 - **Acknowledge a reviewed invalid-node-id event.** Inspect and report it to
   whoever runs the hub, then run
   `mtix sync quarantine acknowledge <event-id> --reason <text>` on this replica.
-  Doctor's Fix supplies the first eligible event id and eligible count in a shell-quoted acknowledgement command; review its reason, then run doctor again after each acknowledgement. Text recovery hints use an escaped label and an inspect command when an id needs special handling. Use `mtix sync quarantine list --json` and report the original id to the operator. JSON retains its existing hint data.
+  Doctor's Fix supplies the first eligible event id and eligible count in a shell-quoted acknowledgement command. Add `--reason '<your explanation>'` before `--` in the printed command; replace `<your explanation>` in the `--reason` value with why this event is safe to accept as unapplied. Without that flag, the printed command is refused until you supply it. Then run doctor again after each acknowledgement. Text recovery hints use an escaped label and an inspect command when an id needs special handling. Use `mtix sync quarantine list --json` and report the original id to the operator. JSON retains the original id data and also requires an operator explanation.
   Only invalid-node-id pull/sweep events are eligible; push holds, unrelated
   failures, malformed raw events and missing or blank reasons are refused.
   No terminal or hub connection is required. An immutable local receipt records

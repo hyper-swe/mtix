@@ -252,8 +252,11 @@ func TestRemoteBarWorkflow_WebChecks_FailOnDistDifferenceOrAuditFinding(t *testi
 func TestRemoteBarWorkflow_CmdShards_CoverCmdMtixWithUnchangedFlags(t *testing.T) {
 	wf := readWorkflow(t)
 	core := jobBlock(t, wf, "bar")
-	require.Contains(t, core, "run: make lint-go && make test-race-core")
-	require.NotContains(t, core, "make test-race\n")
+	// MTIX-112.17.27: the core job keeps the lint and runs the PostgreSQL
+	// packages serially; the other packages run in bar-parallel and bar-shard.
+	require.Contains(t, core, "make lint-go")
+	require.Contains(t, core, "list serial")
+	require.NotContains(t, core, "run: make lint-go && make test-race")
 
 	cmd := jobBlock(t, wf, "bar-cmd")
 	require.Contains(t, cmd, "if: ${{ inputs.os != 'macos-latest' }}")

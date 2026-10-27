@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -41,7 +42,7 @@ func TestSyncQuarantineAcknowledge_ActualProcess_NoDSNNoTTYSkipsUnrelatedImport(
 	before := readPeerState(t, &sweepFixture{})
 	out := f.run(t, "sync", "quarantine", "acknowledge", ackCLIEventID, "--reason", "reviewed", "--json")
 	require.Zero(t, out.exitCode, "%s", out.stderr)
-	var receipt sqlite.QuarantineAcknowledgement
+	var receipt service.QuarantineAcknowledgement
 	require.NoError(t, json.Unmarshal([]byte(out.stdout), &receipt))
 	require.Equal(t, "cli-operator", receipt.Actor)
 	require.Equal(t, "reviewed", receipt.Reason)

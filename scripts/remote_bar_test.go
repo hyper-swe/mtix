@@ -495,6 +495,9 @@ case "$1 $2" in
   esac ;;
 "run view")
   case "$*" in
+  *"--json headBranch"*)
+    [ -n "$STUB_FAIL_SOURCE" ] && exit 1
+    emit "{\"headBranch\":\"${STUB_WORKFLOW_REF-main}\",\"headSha\":\"${STUB_WORKFLOW_SHA-1111111111111111111111111111111111111111}\"}" ;;
   *"--json status"*)
     st="${STUB_STATE:-completed success}"; status="${st%% *}"; concl="${st#* }"; [ "$concl" = "$st" ] && concl=""
     if [ -n "$concl" ]; then emit "{\"status\":\"$status\",\"conclusion\":\"$concl\"}"; else emit "{\"status\":\"$status\",\"conclusion\":null}"; fi ;;
@@ -540,6 +543,8 @@ func TestRemoteBar_Run_MapsRunOutcomesToExitCodesAndDeletesBranch(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			out, code, bare, logPath := runWithStub(t, tc.env...)
 			require.Equal(t, tc.want, code, out)
+			require.Contains(t, out, " workflow_ref=main workflow_sha=")
+			require.Contains(t, out, "workflow_sha="+strings.Repeat("1", 40))
 			require.Contains(t, out, tc.extra)
 			require.Empty(t, git(t, bare, "for-each-ref", "refs/heads/ci-scratch"), "scratch branch must be deleted")
 			logged, err := os.ReadFile(logPath) //nolint:gosec // test-owned path
@@ -558,6 +563,8 @@ func TestRemoteBar_Run_MapsRunOutcomesToExitCodesAndDeletesBranch(t *testing.T) 
 func TestRemoteBar_Run_TimeoutCancelsTheRunAndReportsInfraFailure(t *testing.T) {
 	out, code, bare, logPath := runWithStub(t, "STUB_STATE=in_progress ", "RB_TIMEOUT_SECS=1")
 	require.Equal(t, 2, code, out)
+	require.Contains(t, out, " workflow_ref=main workflow_sha=")
+	require.Contains(t, out, "workflow_sha="+strings.Repeat("1", 40))
 	require.Empty(t, git(t, bare, "for-each-ref", "refs/heads/ci-scratch"))
 	logged, err := os.ReadFile(logPath) //nolint:gosec // test-owned path
 	require.NoError(t, err)

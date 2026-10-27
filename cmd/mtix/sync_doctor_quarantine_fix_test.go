@@ -54,7 +54,7 @@ func TestDoctorQuarantineFix_FirstEligibleAndCountAcrossPages(t *testing.T) {
 	for n := 0; n < 501; n++ {
 		seedDoctorFixCandidate(t, fmt.Sprintf("event-%04d", n), "sweep")
 	}
-	fix, err := quarantineAcknowledgementFix(t.Context(), app.store)
+	fix, err := quarantineAcknowledgementFix(t.Context(), app.store, false)
 	require.NoError(t, err)
 	require.Equal(t, "Inspect and report retained events (501 eligible unacknowledged; first shown), then: mtix sync quarantine acknowledge --reason 'reviewed invalid node id; accepted as unapplied' -- 'event-0000'", fix)
 }
@@ -64,7 +64,7 @@ func TestDoctorQuarantineFix_HostileIDsAreSingleShellArguments(t *testing.T) {
 		t.Run(id, func(t *testing.T) {
 			initTestApp(t)
 			seedDoctorFixCandidate(t, id, "pull")
-			fix, err := quarantineAcknowledgementFix(t.Context(), app.store)
+			fix, err := quarantineAcknowledgementFix(t.Context(), app.store, false)
 			require.NoError(t, err)
 			_, command, ok := strings.Cut(fix, ", then: ")
 			require.True(t, ok)
@@ -92,7 +92,7 @@ func TestDoctorQuarantineFix_NoEligibleEventsHasNoCommand(t *testing.T) {
 					require.NoError(t, err)
 				}
 			}
-			fix, err := quarantineAcknowledgementFix(t.Context(), app.store)
+			fix, err := quarantineAcknowledgementFix(t.Context(), app.store, false)
 			require.NoError(t, err)
 			require.Empty(t, fix)
 		})

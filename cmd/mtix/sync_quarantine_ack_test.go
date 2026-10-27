@@ -91,7 +91,7 @@ func TestSyncQuarantineAcknowledge_AuditReadFailure_NeverDoctorPass(t *testing.T
 	require.Contains(t, detail, "sync_quarantine_acknowledgements")
 	var out bytes.Buffer
 	require.Error(t, runSyncQuarantineList(t.Context(), &out))
-	fix, hintErr := quarantineAcknowledgementFix(t.Context(), app.store)
+	fix, hintErr := quarantineAcknowledgementFix(t.Context(), app.store, false)
 	require.ErrorContains(t, hintErr, "scan acknowledgement fixes: read receipt")
 	require.Empty(t, fix)
 	require.Error(t, readQuarantineStatus(t.Context(), app.store, &SyncStatus{}))
@@ -140,7 +140,7 @@ func TestSyncQuarantineAcknowledge_DoctorHint_OnlyEligibleUnacknowledgedRaw(t *t
 	require.Empty(t, report.Checks[0].Fix, "an acknowledged raw event or forged stored wording cannot supply a recovery hint")
 	require.NotContains(t, report.Checks[0].Detail, "mtix sync quarantine acknowledge", "stored wording cannot supply a second acknowledgement hint")
 	require.NoError(t, app.store.Close())
-	fix, err := quarantineAcknowledgementFix(t.Context(), app.store)
+	fix, err := quarantineAcknowledgementFix(t.Context(), app.store, false)
 	require.ErrorContains(t, err, "scan acknowledgement fixes: list quarantines")
 	require.Empty(t, fix)
 }

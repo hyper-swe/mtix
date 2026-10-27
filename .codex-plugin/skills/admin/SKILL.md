@@ -493,7 +493,7 @@ A task id has the form `PREFIX-<number>` followed by `.<number>` segments: an up
 mtix sync quarantine acknowledge <event-id> --reason '<why this event is accepted as unapplied>'
 ```
 
-Doctor's Fix supplies the first eligible event id and eligible count in a shell-quoted acknowledgement command; review its reason, then run doctor again after each acknowledgement. For example, a Fix for a reviewed event can name its concrete id:
+Doctor's Fix supplies the first eligible event id and eligible count in a shell-quoted acknowledgement command; review its reason, then run doctor again after each acknowledgement. Text recovery hints use an escaped label and an inspect command when an id needs special handling. Use `mtix sync quarantine list --json` and report the original id to the operator. JSON retains its existing hint data. For example, a Fix for a reviewed event can name its concrete id:
 
 ```bash
 mtix sync quarantine acknowledge --reason 'reviewed invalid node id; accepted as unapplied' -- '0193fb00-0000-7000-8000-000000000001'

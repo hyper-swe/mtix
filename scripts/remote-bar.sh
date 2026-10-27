@@ -21,6 +21,8 @@
 #      A snapshot whose .github subtree differs from origin/main is refused,
 #      because GitHub runs push-event workflows from the pushed commit; pass
 #      --allow-workflow-diff to accept that knowingly (a warning is printed).
+#   A changed remote-bar.yml is always refused, even with the opt-in flag.
+#   Every verdict names its actual workflow_ref and workflow_sha.
 #   3. Dispatches .github/workflows/remote-bar.yml from main (a workflow can
 #      be dispatched only when its file is on the default branch) with the
 #      scratch branch and the expected tree hash as inputs. The job checks
@@ -102,12 +104,12 @@ RB_TMPDIR=""
 RB_NAP_PID=""
 RB_CONCLUSION=""
 
-rb_die() {
-	local code="$1"
-	shift
-	echo "remote-bar: $*" >&2
-	exit "$code"
-}
+RB_WORKFLOW_REF=not-run
+RB_WORKFLOW_SHA=none
+RB_REQUESTED_WORKFLOW_REF=none
+RB_VERDICT_PRINTED=0
+# shellcheck source=remote-bar-workflow.sh
+source "$(dirname "${BASH_SOURCE[0]}")/remote-bar-workflow.sh"
 
 # rb_remote_ok <url>: succeeds only for the hyper-swe/mtix GitHub repository.
 rb_remote_ok() {
@@ -345,10 +347,12 @@ rb_find_reusable() {
 		[ -n "$id" ] || continue
 		[ "$(rb_blob "$sha" 2>/dev/null || true)" = "$main_blob" ] || continue
 		RB_REUSED="$id $url"
+		RB_WORKFLOW_REF=main
+		RB_WORKFLOW_SHA="$sha"
 		return 0
 	done < <(gh run list --repo "$RB_REPO_SLUG" --workflow "$RB_WORKFLOW" --event workflow_dispatch \
-		--status success --limit 100 --json databaseId,displayTitle,createdAt,headSha,url,status,conclusion \
-		--jq ".[] | select(.status == \"completed\" and .conclusion == \"success\" and (now - (.createdAt | fromdateiso8601) <= $RB_REUSE_MAX_AGE_SECS) and ((.displayTitle | capture(\"$re\") // {}) | $want)) | \"\(.databaseId) \(.headSha) \(.url)\"" 2>/dev/null || true)
+		--status success --limit 100 --json databaseId,displayTitle,createdAt,headSha,headBranch,url,status,conclusion \
+		--jq ".[] | select(.status == \"completed\" and .conclusion == \"success\" and .headBranch == \"main\" and ((.headSha // \"\") | test(\"^[0-9a-f]{40}$\")) and (now - (.createdAt | fromdateiso8601) <= $RB_REUSE_MAX_AGE_SECS) and ((.displayTitle | capture(\"$re\") // {}) | $want)) | \"\(.databaseId) \(.headSha) \(.url)\"" 2>/dev/null || true)
 	return 1
 }
 
@@ -395,20 +399,22 @@ rb_run() {
 	fi
 	parent="$(git rev-parse --verify "refs/remotes/$RB_REMOTE/main^{commit}" 2>/dev/null)" || rb_die 2 "no $RB_REMOTE/main"
 	tree="$(rb_snapshot_tree "$dir" "$parent")" || rb_die 2 "snapshot failed for $dir"
+	rb_bar_workflow_unchanged "$parent" "$tree" ||
+		rb_die 2 "cannot judge a changed remote-bar.yml; no workflow ran (--allow-workflow-diff does not override this refusal)"
 	if ! rb_workflows_unchanged "$parent" "$tree"; then
 		[ "$allow_wf" = 1 ] || rb_die 2 "snapshot changes .github relative to $RB_REMOTE/main; pushing it would run unreviewed workflow code. Use --allow-workflow-diff only if that is intended"
-		echo "remote-bar: WARNING snapshot changes .github relative to $RB_REMOTE/main (--allow-workflow-diff)" >&2
+		echo "remote-bar: WARNING snapshot changes .github relative to $RB_REMOTE/main (--allow-workflow-diff); main remote-bar.yml runs the tree, but changed workflows are not exercised" >&2
 	fi
 	stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 	RB_BRANCH="$(rb_branch_name "$ticket" "$stamp" "$tree")" || rb_die 2 "cannot name branch"
 	echo "remote-bar $RB_VERSION: tree=$tree base=$parent branch=$RB_BRANCH os=$os web=$web"
-	[ "$dry" = 0 ] || { echo "dry run: nothing pushed"; return 0; }
+	[ "$dry" = 0 ] || { echo "dry run: nothing pushed"; rb_verdict not_run none 0 DRY_RUN; return 0; }
 
 	# A snapshot that changes .github never reuses: the workflow under change is
 	# not the one a past run exercised (MTIX-112.17.26).
 	if [ "$reuse" = 1 ] && [ "$allow_wf" = 0 ] && rb_find_reusable "$tree" "$parent" "$os" "$web"; then
 		echo "REUSED run: https://github.com/$RB_REPO_SLUG/actions/runs/${RB_REUSED%% *} tree=$tree os=$os web=$web base=$parent wrapper=$RB_VERSION (--no-reuse forces a fresh run)"
-		echo "conclusion=success verdict=REUSED exit=0"
+		rb_verdict success none 0 REUSED
 		return 0
 	fi
 	commit="$(rb_commit_tree "$tree" "$parent")"
@@ -423,6 +429,9 @@ rb_run() {
 	# a dispatch without it, and such a run is not reusable. Any other
 	# dispatch error is a dispatch failure.
 	local derr
+	RB_REQUESTED_WORKFLOW_REF=main
+	RB_WORKFLOW_REF=unknown
+	RB_WORKFLOW_SHA=unknown
 	if ! derr="$(gh workflow run "$RB_WORKFLOW" --repo "$RB_REPO_SLUG" --ref main \
 		-f "scratch_ref=$RB_BRANCH" -f "expected_tree=$tree" -f "wrapper_version=$RB_VERSION" \
 		-f "base_commit=$parent" "${opts[@]+"${opts[@]}"}" 2>&1)"; then
@@ -438,6 +447,7 @@ rb_run() {
 		esac
 	fi
 	rb_find_run "$RB_BRANCH" || rb_die 2 "dispatched run not found"
+	rb_workflow_source || rb_die 2 "workflow source metadata is unavailable or contradicts requested ref main"
 	echo "run: https://github.com/$RB_REPO_SLUG/actions/runs/$RB_RUN_ID"
 	rb_wait_run "$RB_RUN_ID" || rb_die 2 "lost contact with the run"
 	[ "$RB_CONCLUSION" = timed_out ] || RB_RUN_DONE=1
@@ -445,7 +455,7 @@ rb_run() {
 	steps="$(gh run view "$RB_RUN_ID" --repo "$RB_REPO_SLUG" --json jobs \
 		--jq '[.jobs[].steps[] | select(.conclusion == "failure") | .name] | join("|")' 2>/dev/null || true)"
 	code="$(rb_classify "$RB_CONCLUSION" "$steps")"
-	echo "conclusion=$RB_CONCLUSION failed_steps=${steps:-none} exit=$code"
+	rb_verdict "$RB_CONCLUSION" "$steps" "$code"
 	if [ "$code" != 0 ]; then
 		gh run view "$RB_RUN_ID" --repo "$RB_REPO_SLUG" --log-failed 2>&1 | tail -n 200 || true
 	fi
@@ -455,6 +465,7 @@ rb_run() {
 rb_on_exit() {
 	local status=$?
 	trap - EXIT
+	if [ "$status" != 0 ] && [ "$RB_VERDICT_PRINTED" != 1 ]; then rb_verdict error none "$status"; fi
 	rb_cleanup
 	exit "$status"
 }

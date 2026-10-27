@@ -101,6 +101,18 @@ func TestWithTx_CallbackAndRollbackFail_PreservesBothErrors(t *testing.T) {
 
 	assert.ErrorIs(t, err, callbackErr, "the callback error must remain in the chain")
 	assert.ErrorIs(t, err, sql.ErrTxDone, "the rollback error must remain in the chain")
-	require.NoError(t, s.WithTx(ctx, func(*sql.Tx) error { return nil }),
-		"the writer must remain usable after both errors")
+	require.NoError(t, s.WithTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			"INSERT INTO meta (key, value) VALUES (?, ?)",
+			"rollback_recovery_key", "committed_after_errors",
+		)
+		return err
+	}), "the writer must commit a real write after both errors")
+
+	var value string
+	err = s.QueryRow(ctx,
+		"SELECT value FROM meta WHERE key = ?", "rollback_recovery_key",
+	).Scan(&value)
+	require.NoError(t, err)
+	assert.Equal(t, "committed_after_errors", value)
 }

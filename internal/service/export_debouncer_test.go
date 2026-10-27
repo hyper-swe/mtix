@@ -37,7 +37,7 @@ func TestExportDebouncer_CoalescesBurst(t *testing.T) {
 	}
 
 	require.Eventually(t, func() bool { return count.Load() == 1 },
-		2*time.Second, 10*time.Millisecond)
+		serviceCompletionHangBound, 10*time.Millisecond)
 
 	// Quiet afterwards: no further exports.
 	time.Sleep(150 * time.Millisecond)

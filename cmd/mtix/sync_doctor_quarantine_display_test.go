@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"unicode"
 
 	"github.com/stretchr/testify/require"
 
@@ -30,6 +29,7 @@ func doctorDisplayCases() []doctorDisplayCase {
 		{"quoted", "evt-'quote", false},
 		{"leading", "-evt-1", false},
 		{"unicode", "evt-α🙂", false},
+		{"mixed_display", "evt-α\x1b🙂", true},
 	}
 	for r := rune(0); r <= 0x1f; r++ {
 		cases = append(cases, doctorDisplayCase{fmt.Sprintf("format_%04x", r), "evt-" + string(r) + "-1", true})
@@ -37,6 +37,13 @@ func doctorDisplayCases() []doctorDisplayCase {
 	for r := rune(0x7f); r <= 0x9f; r++ {
 		cases = append(cases, doctorDisplayCase{fmt.Sprintf("format_%04x", r), "evt-" + string(r) + "-1", true})
 	}
+	for _, r := range []rune{'\u2028', '\u2029', '\u202e', '\u200b', '\u2060', '\u2066', '\u00a0'} {
+		cases = append(cases, doctorDisplayCase{fmt.Sprintf("format_%04x", r), "evt-" + string(r) + "-1", true})
+	}
+	cases = append(cases,
+		doctorDisplayCase{"ascii_space", "evt-a b", false},
+		doctorDisplayCase{"printable_mark", "evt-e\u0301", false},
+	)
 	return cases
 }
 
@@ -96,14 +103,14 @@ func assertDoctorDisplayJSON(t *testing.T, report DoctorReport, id string) {
 
 func assertDoctorInspectHint(t *testing.T, id, fix string) {
 	t.Helper()
+	for _, r := range fix {
+		if r < 0x20 || r > 0x7e {
+			t.Fatalf("text hint contains a value outside printable ASCII: %U", r)
+		}
+	}
 	require.Contains(t, fix, "mtix sync quarantine list --json")
 	require.Contains(t, fix, strconv.QuoteToASCII(id))
 	require.NotContains(t, fix, "mtix sync quarantine acknowledge")
-	for _, r := range fix {
-		if unicode.IsControl(r) {
-			t.Fatalf("text hint contains a non-display value: %U", r)
-		}
-	}
 }
 
 func TestDoctorRecoveryHint_ByteDisplay(t *testing.T) {

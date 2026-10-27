@@ -79,6 +79,10 @@ func (s *Store) QuarantineAcknowledgementsFor(ctx context.Context, page []Quaran
 	return out, nil
 }
 
+// quarantineReceiptLookups uses hex to preserve arbitrary stored bytes.
+// Hex costs twice the raw bytes plus JSON overhead, trading a larger bound
+// parameter for fewer database round trips. The caller caps each page at
+// QuarantineAcknowledgementPageSize (500 rows).
 func quarantineReceiptLookups(page []QuarantinedEvent) []quarantineReceiptLookup {
 	keys := make([]quarantineReceiptLookup, 0, len(page))
 	for _, q := range page {

@@ -68,7 +68,7 @@ func recoveryHintNeedsInspection(id string) bool {
 		return true
 	}
 	for _, r := range id {
-		if unicode.IsControl(r) {
+		if !unicode.IsPrint(r) {
 			return true
 		}
 	}

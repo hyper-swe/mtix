@@ -3,7 +3,7 @@
 
 package main
 
-// Quarantine Fix tests pin concrete, safely runnable text and JSON commands.
+// Quarantine Fix tests pin concrete text and JSON commands requiring operator input.
 
 import (
 	"bytes"
@@ -18,8 +18,6 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
-const doctorFixReason = "reviewed invalid node id; accepted as unapplied"
-
 func seedDoctorFixCandidate(t *testing.T, id, source string) {
 	t.Helper()
 	var event model.SyncEvent
@@ -33,7 +31,7 @@ func seedDoctorFixCandidate(t *testing.T, id, source string) {
 func TestDoctorQuarantineFix_ExactTextAndJSON(t *testing.T) {
 	initAckCLI(t)
 	report := appendQuarantineCheck(t.Context(), DoctorReport{OverallPass: true}, app.store)
-	want := "Inspect and report retained events (1 eligible unacknowledged; first shown), then: mtix sync quarantine acknowledge --reason 'reviewed invalid node id; accepted as unapplied' -- '" + ackCLIEventID + "'"
+	want := "Inspect and report retained events (1 eligible unacknowledged; first shown); add --reason '<your explanation>' before --, then: mtix sync quarantine acknowledge -- '" + ackCLIEventID + "'"
 	require.Equal(t, want, report.Checks[0].Fix)
 	var text bytes.Buffer
 	printDoctorTable(&text, report)
@@ -56,7 +54,7 @@ func TestDoctorQuarantineFix_FirstEligibleAndCountAcrossPages(t *testing.T) {
 	}
 	fix, err := quarantineAcknowledgementFix(t.Context(), app.store, false)
 	require.NoError(t, err)
-	require.Equal(t, "Inspect and report retained events (501 eligible unacknowledged; first shown), then: mtix sync quarantine acknowledge --reason 'reviewed invalid node id; accepted as unapplied' -- 'event-0000'", fix)
+	require.Equal(t, "Inspect and report retained events (501 eligible unacknowledged; first shown); add --reason '<your explanation>' before --, then: mtix sync quarantine acknowledge -- 'event-0000'", fix)
 }
 
 func TestDoctorQuarantineFix_HostileIDsAreSingleShellArguments(t *testing.T) {
@@ -72,7 +70,7 @@ func TestDoctorQuarantineFix_HostileIDsAreSingleShellArguments(t *testing.T) {
 			out, err := exec.CommandContext(t.Context(), "sh", "-c", `mtix() { printf '%s\000' "$@"; }; `+command).CombinedOutput()
 			require.NoError(t, err, "%s", out)
 			got := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
-			require.Equal(t, []string{"sync", "quarantine", "acknowledge", "--reason", doctorFixReason, "--", id}, got)
+			require.Equal(t, []string{"sync", "quarantine", "acknowledge", "--", id}, got)
 		})
 	}
 }

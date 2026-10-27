@@ -140,7 +140,7 @@ func scopedConfig(key, agent string) (*service.ConfigService, error) {
 		if err != nil {
 			return nil, err
 		}
-		cs = cs.WithWakeSettings(service.WakeConfigOptions{State: oplocal.New(env), Agent: agent})
+		cs = cs.WithWakeSettings(service.WakeConfigOptions{State: oplocal.New(env), Agent: agent, RequireTTY: func() error { return oplocal.RequireOperatorTTY(os.Stdin) }})
 	}
 	if keys := cs.IgnoredWorkspaceKeys(); len(keys) > 0 {
 		if _, err := fmt.Fprintf(os.Stderr, "Ignored workspace authority keys %q; remove them from .mtix/config.yaml and use mtix config set for host settings.\n", strings.Join(keys, ", ")); err != nil {

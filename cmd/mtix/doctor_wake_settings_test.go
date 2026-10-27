@@ -36,7 +36,7 @@ func TestDoctorWakeSettings_TextAndJSON_ReportsValuesSourcesAndIgnoredKey(t *tes
 		require.Contains(t, out.String(), "wake.settings")
 		require.Contains(t, out.String(), "settings.ignored-workspace-key")
 		require.Contains(t, out.String(), "wake.max_hop_depth")
-		require.Contains(t, out.String(), "mtix config set wake.max_hop_depth 32")
+		require.Contains(t, out.String(), "mtix config set wake.max_hop_depth 99")
 		if jsonOutput {
 			var rows []service.DoctorResult
 			require.NoError(t, json.Unmarshal(out.Bytes(), &rows))
@@ -57,4 +57,23 @@ func TestDoctorWakeSettings_TextAndJSON_ReportsValuesSourcesAndIgnoredKey(t *tes
 	after, err := os.ReadFile(filepath.Join(dir, "wake.json"))
 	require.NoError(t, err)
 	require.Equal(t, before, after)
+}
+
+func TestIgnoredWorkspaceSettings_RemedyUsesCommittedValuesAndRemoveOnly(t *testing.T) {
+	initTestApp(t)
+	testutil.OperatorState(t)
+	path := filepath.Join(app.mtixDir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("wake:\n  live: false\n  max_hop_depth: 17\n  wakes_per_hour: 12\n  mystery: secret-untrusted-value\n  backoff_after_unacked: broken\n"), 0600))
+	cs, err := service.NewConfigService(path)
+	require.NoError(t, err)
+	row := ignoredWorkspaceSettingsRow(cs)
+	for _, command := range []string{"mtix config set wake.live false", "mtix config set wake.max_hop_depth 17", "mtix config set wake.wakes_per_hour 12"} {
+		require.Contains(t, row.Fix, command)
+	}
+	require.NotContains(t, row.Fix, "mtix config set wake.live true")
+	require.NotContains(t, row.Fix, "mtix config set wake.mystery")
+	require.NotContains(t, row.Fix, "mtix config set wake.backoff_after_unacked")
+	require.Contains(t, row.Fix, "Remove-only")
+	require.Contains(t, row.Fix, "operator terminal")
+	require.NotContains(t, row.Fix, "secret-untrusted-value")
 }

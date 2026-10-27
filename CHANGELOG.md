@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Host-local wake settings and agent overrides, read-only doctor diagnostics, and additive hop-depth guards with released-reader compatibility (MTIX-112.17.10.1).
+- Host-local wake settings and agent overrides, read-only doctor diagnostics, and additive hop metadata with released-reader compatibility; live control and hop delivery await the wake scanner (MTIX-112.17.10.1).
 
 ### Added
 - **Export schema doctor check (MTIX-168).** `mtix doctor` adds an `export.schema` row (text and `--json`). It reports PASS when `.mtix/tasks.json` declares the export schema this binary writes (`2.0.0`, or `2.1.0` with `history.export`) and WARN when it declares another, because every write re-exports the file in this binary's schema and a reader that rejects unknown fields can break. The fix says that `sync.auto_sync` does not stop the re-export (it turns off automatic import only), how to upgrade deliberately (`mtix sync`, then `mtix sync --fix`, then commit the file) and how to keep the older schema; for a file schema newer than the binary it says to upgrade mtix. The user manual, the instruction templates and the admin skill describe this behaviour. The export format is unchanged.

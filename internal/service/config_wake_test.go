@@ -43,8 +43,7 @@ func TestWakeSettings_Defaults_UnlimitedBudgetsAndAlwaysOnGuards(t *testing.T) {
 }
 
 func TestConfigSetWake_GuardOff_Refused(t *testing.T) {
-	cs, err := service.NewConfigService("")
-	require.NoError(t, err)
+	cs := wakeConfig(t, testutil.OperatorState(t), "", false)
 	for _, key := range []string{"wake.max_hop_depth", "wake.backoff_after_unacked"} {
 		for _, value := range []string{"0", "-1", "off", "", "1.5"} {
 			t.Run(key+"/"+value, func(t *testing.T) {
@@ -189,6 +188,8 @@ func TestWakeSettings_DefaultProcessScopeAndAgentDiagnostics(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "true", value)
 	_, err = cs.Set("wake.live", "off")
+	require.ErrorIs(t, err, model.ErrInvalidInput)
+	_, err = wakeConfig(t, state, "", false).Set("wake.live", "off")
 	require.NoError(t, err)
 	agents, err := cs.WakeAgentSettings()
 	require.NoError(t, err)
@@ -204,4 +205,38 @@ func TestConfigSetWake_EnvelopeBelowMinimumFraming_Refused(t *testing.T) {
 	got, err := cs.Get("wake.envelope_max_total_bytes")
 	require.NoError(t, err)
 	require.Empty(t, got)
+}
+
+func TestWakeSettings_UnscopedMutations_RequireCLIContext(t *testing.T) {
+	state := testutil.OperatorState(t)
+	authorized := wakeConfig(t, state, "", true)
+	_, err := authorized.Set("wake.live", "off")
+	require.NoError(t, err)
+	cs, err := service.NewConfigService("")
+	require.NoError(t, err)
+	for _, tt := range []struct{ key, value string }{
+		{"wake.max_hop_depth", "4096"}, {"wake.max_hop_depth", "8"}, {"wake.live", "on"}, {"wake.live", "off"}, {"inbox.strict_board_identity", "true"},
+	} {
+		_, err = cs.Set(tt.key, tt.value)
+		require.ErrorIs(t, err, model.ErrInvalidInput)
+		require.ErrorContains(t, err, "mtix config set")
+	}
+	require.ErrorIs(t, cs.Delete("wake.live"), model.ErrInvalidInput)
+	got, err := authorized.Get("wake.live")
+	require.NoError(t, err)
+	require.Equal(t, "false", got)
+}
+
+func TestWakeSettings_InjectedStateWithoutOperatorProof_CannotLoosen(t *testing.T) {
+	state := testutil.OperatorState(t)
+	_, err := wakeConfig(t, state, "", true).Set("wake.max_hop_depth", "8")
+	require.NoError(t, err)
+	cs, err := service.NewConfigService("")
+	require.NoError(t, err)
+	cs = cs.WithWakeSettings(service.WakeConfigOptions{State: state})
+	_, err = cs.Set("wake.max_hop_depth", "4096")
+	require.ErrorIs(t, err, model.ErrInvalidInput)
+	require.ErrorContains(t, err, "operator terminal")
+	_, err = cs.Set("wake.max_hop_depth", "4")
+	require.NoError(t, err, "tightening needs no operator proof")
 }

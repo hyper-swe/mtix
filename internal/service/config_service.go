@@ -20,7 +20,7 @@ import (
 // workspace values use .mtix/config.yaml with dot-notation key access.
 type ConfigService struct {
 	wake        *WakeConfigOptions
-	ignoredWake []string
+	ignoredWake map[string]string
 	values      map[string]string
 	path        string // Path to config file.
 }
@@ -374,7 +374,10 @@ func quoteIfNeeded(s string) string {
 
 func (cs *ConfigService) loadWorkspaceKey(key, value string) {
 	if ignoredWorkspaceKey(key) {
-		cs.ignoredWake = append(cs.ignoredWake, key)
+		if cs.ignoredWake == nil {
+			cs.ignoredWake = map[string]string{}
+		}
+		cs.ignoredWake[key] = value
 		return
 	}
 	if validConfigKeys[key] {

@@ -55,7 +55,7 @@ func wakeSettingsDoctorRow(cs *service.ConfigService) service.DoctorResult {
 		}
 	}
 	sort.Strings(descriptions)
-	return service.DoctorResult{Status: service.DoctorInfo, Detail: strings.Join(descriptions, "; "), Data: map[string]any{"host": host, "agents": agents}, Fix: "No routine tuning is needed. To stop live wakes: mtix config set wake.live off"}
+	return service.DoctorResult{Status: service.DoctorInfo, Detail: strings.Join(descriptions, "; "), Data: map[string]any{"host": host, "agents": agents}, Fix: "No routine tuning is needed. Store the off setting for when the wake scanner ships: mtix config set wake.live off"}
 }
 
 func ignoredWorkspaceSettingsRow(cs *service.ConfigService) service.DoctorResult {
@@ -63,15 +63,26 @@ func ignoredWorkspaceSettingsRow(cs *service.ConfigService) service.DoctorResult
 	if len(keys) == 0 {
 		return service.DoctorResult{Status: service.DoctorInfo, Detail: "No workspace wake authority keys are used."}
 	}
-	var fixes []string
-	defaults := model.WakeSettingDefaults()
+	var fixes, removeOnly []string
+	values := cs.IgnoredWorkspaceSettings()
 	for _, key := range keys {
-		if value, ok := defaults[key]; ok {
-			if value == "" {
-				value = "unset"
-			}
-			fixes = append(fixes, "mtix config set "+key+" "+value)
+		value := strings.TrimSpace(values[key])
+		normalized, err := model.NormalizeWakeSetting(key, value)
+		if err != nil {
+			removeOnly = append(removeOnly, key)
+			continue
 		}
+		if normalized == "" {
+			value = "unset"
+		}
+		fixes = append(fixes, "mtix config set "+key+" "+value)
 	}
-	return service.DoctorResult{Status: service.DoctorWarn, Detail: fmt.Sprintf("Ignored workspace authority keys: %q", keys), Fix: "Remove those keys from .mtix/config.yaml; configure desired values operator-locally, for example " + strings.Join(fixes, "; "), Data: map[string]any{"keys": keys}}
+	fix := "Remove those keys from .mtix/config.yaml."
+	if len(fixes) > 0 {
+		fix += " Configure desired values operator-locally: " + strings.Join(fixes, "; ") + ". Loosening requires an operator terminal."
+	}
+	if len(removeOnly) > 0 {
+		fix += " Remove-only (unknown or invalid setting): " + strings.Join(removeOnly, ", ") + "."
+	}
+	return service.DoctorResult{Status: service.DoctorWarn, Detail: fmt.Sprintf("Ignored workspace authority keys: %q", keys), Fix: fix, Data: map[string]any{"keys": keys}}
 }

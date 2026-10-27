@@ -24,12 +24,19 @@ func (s *Store) WakeEventHop(ctx context.Context, key model.WakeKey) (int64, err
 	if err != nil {
 		return 0, fmt.Errorf("read wake event hop: %w", err)
 	}
-	var payload model.CommentPayload
+	var payload struct {
+		To  string          `json:"to"`
+		Hop json.RawMessage `json:"hop"`
+	}
 	if err = json.Unmarshal(raw, &payload); err != nil {
 		return 0, fmt.Errorf("decode wake event hop: %w", err)
 	}
 	if payload.To == "" {
 		return 0, nil
 	}
-	return payload.Hop, nil
+	hop, err := model.ParseCommentHop(payload.Hop)
+	if err != nil {
+		return 0, fmt.Errorf("validate wake event hop: %w", err)
+	}
+	return hop, nil
 }

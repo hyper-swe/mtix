@@ -31,3 +31,18 @@ func TestWakeSettingsGuidance_ManagedBriefings_ExplainControls(t *testing.T) {
 		require.Contains(t, body, "wake.settings")
 	}
 }
+
+func TestWakeSettingsGuidance_CurrentBuild_StatesScannerAvailability(t *testing.T) {
+	paths := []string{"internal/docs/templates/skills/admin.md.tmpl", ".claude-plugin/skills/mtix-admin.md", ".codex-plugin/skills/admin/SKILL.md", "USERMANUAL.md", "internal/docs/templates/agents.md.tmpl", "internal/docs/templates/claude.md.tmpl", "internal/docs/templates/skills/multi_agent.md.tmpl", ".claude-plugin/skills/mtix-multi-agent.md", ".codex-plugin/skills/multi-agent/SKILL.md"}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			body := readAgentInstruction(t, filepath.Join("..", "..", path))
+			require.Contains(t, body, "This build stores and reports")
+			require.Contains(t, body, "when the wake scanner ships")
+			require.Contains(t, body, "wake.live")
+			require.Contains(t, body, "wake.max_hop_depth")
+			require.Contains(t, body, "MTIX_WAKE_HOP")
+			require.NotContains(t, body, "`mtix config set wake.live off` stops live wakes")
+		})
+	}
+}

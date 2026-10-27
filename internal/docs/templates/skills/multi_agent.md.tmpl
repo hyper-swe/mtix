@@ -456,19 +456,24 @@ review of that hook; other hook approvals remain independent.
 
 ## Wake process context and host controls
 
-Use `mtix config set wake.live off` to stop live wake on the host, or append
+This build stores and reports `wake.live` and `wake.max_hop_depth`.
+Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect
+when the wake scanner ships. They do not control live delivery in this build.
+
+Set `mtix config set wake.live off` for the future scanner, or append
 `--agent worker` for one agent. `wake.settings` in `mtix doctor --json` shows
 effective policy and source; the admin skill lists every key and default.
 Wake and envelope budgets default unlimited. Hop depth defaults to 32 and the
 unacked threshold to 5; the guards are always on. Handle messages, reply, then
 ack after handling. You should not need to tune these settings.
 
-A wake exec child carries `MTIX_WAKE_HOP` (maximum covered-event hop) and
+When the scanner ships, a wake exec child will carry `MTIX_WAKE_HOP`
+(maximum covered-event hop) and
 `MTIX_WAKE_ATTEMPT` (audit only). Addressed replies increment the inherited
 hop; absent or malformed context starts at zero, with a warning for malformed
 context. A hook nudge into an already-running session carries no environment
 change, so replies there start at zero. The hop guard is an accident net, not
-an adversarial control. A held wake stays unacknowledged and its alert names
+an adversarial control. The scanner will leave a held wake unacknowledged and its alert will name
 the exact config command. Scanner discovery, budget/back-off enforcement and
 hold re-arm are separate features; configuring settings does not install a route.
 

@@ -6,7 +6,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -64,13 +63,18 @@ func (cs *ConfigService) getWakeSetting(key string) (string, error) {
 }
 
 func (cs *ConfigService) changeWakeSetting(key string, value *string) error {
+	if cs.wake == nil {
+		return fmt.Errorf("host wake settings require mtix config set or mtix config delete: %w", model.ErrInvalidInput)
+	}
 	options, err := cs.wakeOptions()
 	if err != nil {
 		return err
 	}
 	tty := options.RequireTTY
 	if tty == nil {
-		tty = func() error { return oplocal.RequireOperatorTTY(os.Stdin) }
+		tty = func() error {
+			return fmt.Errorf("use mtix config set from an operator terminal: %w", model.ErrInvalidInput)
+		}
 	}
 	authorize := func(before, after string) error {
 		if model.WakeSettingLoosens(key, before, after) {
@@ -103,7 +107,10 @@ func (cs *ConfigService) setWakeSetting(key, value string) (string, error) {
 
 // IgnoredWorkspaceKeys lists authority settings ignored in config.yaml.
 func (cs *ConfigService) IgnoredWorkspaceKeys() []string {
-	keys := append([]string{}, cs.ignoredWake...)
+	keys := make([]string, 0, len(cs.ignoredWake))
+	for key := range cs.ignoredWake {
+		keys = append(keys, key)
+	}
 	sort.Strings(keys)
 	return keys
 }
@@ -136,4 +143,14 @@ func (cs *ConfigService) WakeAgentSettings() (map[string]map[string]model.WakeSe
 		out[agent] = values
 	}
 	return out, nil
+}
+
+// IgnoredWorkspaceSettings returns a copy of ignored values for exact operator remedies.
+// Values are untrusted; callers must validate them before including commands.
+func (cs *ConfigService) IgnoredWorkspaceSettings() map[string]string {
+	values := make(map[string]string, len(cs.ignoredWake))
+	for key, value := range cs.ignoredWake {
+		values[key] = value
+	}
+	return values
 }

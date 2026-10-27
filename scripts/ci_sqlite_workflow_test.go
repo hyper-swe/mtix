@@ -148,3 +148,14 @@ func TestSQLiteShards_CompiledInventory_EachNameSelectedExactlyOnce(t *testing.T
 	require.NoError(t, err, string(check))
 	require.Contains(t, string(check), fmt.Sprintf("%d tests in 3 shards, split is exact", len(unique)))
 }
+
+// The workflow hardcodes SQLite rather than consuming sqlite.txt.
+func TestGoWorkflow_SQLiteManifest_ContainsOnlySQLite(t *testing.T) {
+	raw, err := os.ReadFile("ci-go-shards/sqlite.txt")
+	require.NoError(t, err)
+	require.Equal(t, []string{shardModule + "/internal/store/sqlite"}, strings.Fields(string(raw)))
+}
+
+func TestGoWorkflow_PackageOwnership_CoversEveryPackage(t *testing.T) {
+	requirePRPackageOwnership(t)
+}

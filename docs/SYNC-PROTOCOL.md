@@ -725,7 +725,7 @@ that the first receipt stands and the supplied reason was not recorded; response
 JSON includes `already_acknowledged` (`true` for repeats, `false` for new receipts).
 A different raw event with the same id needs a fresh receipt.
 
-Doctor's Fix supplies the first eligible event id and eligible count in a shell-quoted acknowledgement command; review its reason, then run doctor again after each acknowledgement. Text recovery hints use an escaped label and an inspect command when an id needs special handling. Use `mtix sync quarantine list --json` and report the original id to the operator. JSON retains its existing hint data.
+Doctor's Fix supplies the first eligible event id and eligible count in a shell-quoted acknowledgement command. Add `--reason '<your explanation>'` before `--` in the printed command; replace `<your explanation>` in the `--reason` value with why this event is safe to accept as unapplied. Without that flag, the printed command is refused until you supply it. Then run doctor again after each acknowledgement. Text recovery hints use an escaped label and an inspect command when an id needs special handling. Use `mtix sync quarantine list --json` and report the original id to the operator. JSON retains the original id data and also requires an operator explanation.
 
 The additive `sync_quarantine_acknowledgements` table is local only, outside
 exports/imports and the sync protocol, with no schema version bump. Receipts

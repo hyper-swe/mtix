@@ -43,6 +43,12 @@ type boardGitRunFunc func(bin, dir, home string, bound time.Duration, args ...st
 func runBoardGit(bin, dir, home string, bound time.Duration, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
+	return runBoardGitCtx(ctx, bin, dir, home, bound, args...)
+}
+
+// runBoardGitCtx is runBoardGit under a caller-owned context; bound is only
+// reported in the failure text. Cancelling ctx kills the call's whole group.
+func runBoardGitCtx(ctx context.Context, bin, dir, home string, bound time.Duration, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = dir
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=Fixture", "GIT_AUTHOR_EMAIL=fixture@example.invalid", "GIT_COMMITTER_NAME=Fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid", "GIT_TERMINAL_PROMPT=0"}

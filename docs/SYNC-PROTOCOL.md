@@ -725,6 +725,8 @@ that the first receipt stands and the supplied reason was not recorded; response
 JSON includes `already_acknowledged` (`true` for repeats, `false` for new receipts).
 A different raw event with the same id needs a fresh receipt.
 
+Doctor's Fix supplies the first eligible event id and eligible count in a shell-quoted acknowledgement command; review its reason, then run doctor again after each acknowledgement.
+
 The additive `sync_quarantine_acknowledgements` table is local only, outside
 exports/imports and the sync protocol, with no schema version bump. Receipts
 survive later quarantine removal. The guarded transaction rechecks source and

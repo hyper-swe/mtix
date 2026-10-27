@@ -128,8 +128,13 @@ func (w *WriterTx) settle(ctx context.Context) error {
 // RecoverAfterCommit cleans the pinned connection after a failed COMMIT. It
 // returns commitErr unchanged when the connection was left clean, and
 // otherwise commitErr joined with the recovery error, both wrapped with %w.
+// A bad-connection COMMIT already discards the connection in database/sql;
+// recovery errors consisting only of closed-connection causes add no detail.
 func (w *WriterTx) RecoverAfterCommit(ctx context.Context, commitErr error) error {
 	if recErr := w.settle(ctx); recErr != nil {
+		if (errors.Is(commitErr, driver.ErrBadConn) || errors.Is(commitErr, sql.ErrConnDone)) && isOnlyClosedConnError(recErr) {
+			return commitErr
+		}
 		return fmt.Errorf("%w; writer recovery failed: %w", commitErr, recErr)
 	}
 	return commitErr

@@ -414,6 +414,12 @@ Get, set, or delete configuration values using dot-notation keys.
 **Usage:** `delete <key>`
 
 Delete a configuration value (revert to default)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--agent` |  | Select an agent override for host-local wake settings |  |
 ---
 
 ## get
@@ -421,6 +427,12 @@ Delete a configuration value (revert to default)
 **Usage:** `get <key>`
 
 Get a configuration value
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--agent` |  | Select an agent override for host-local wake settings |  |
 ---
 
 ## set
@@ -428,6 +440,12 @@ Get a configuration value
 **Usage:** `set <key> <value>`
 
 Set a configuration value
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--agent` |  | Select an agent override for host-local wake settings |  |
 ---
 
 ## context
@@ -750,6 +768,10 @@ never prunes wake rows or lowers the protocol floor, including with --fix.
 The read-only export.schema check compares the schema_version .mtix/tasks.json
 declares with the one this binary writes. Every write re-exports the file in
 this binary's schema; sync.auto_sync does not stop that. WARN prints the fix.
+
+wake.settings reports effective host/agent wake values and sources.
+settings.ignored-workspace-key reports authority keys ignored in config.yaml
+and prints exact host-local config commands. These checks never change settings.
 
 Setup checks will be registered by their future features.
 

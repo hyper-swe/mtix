@@ -7,6 +7,67 @@ allowed-tools:
 
 # MTIX — Administration
 
+
+## Host wake settings
+
+**To stop live wakes on this host: `mtix config set wake.live off`.**
+For one agent use `mtix config set wake.live off --agent worker`.
+Live wake defaults on after setup, regardless of session approval mode.
+You should not need to tune these settings: use the normal handle, reply and ack routine.
+
+These keys belong to this host's operator-local `wake.json`, never to
+`.mtix/config.yaml`. The host-bound JSON envelope stores scopes in
+`data.host` and `data.agents`. Without `--agent` the config commands select
+the host scope; `--agent worker` selects that agent's override. An omitted
+agent key inherits the host value, then the default. Host live-off always
+holds live wakes even if an agent override says on. Settings in a committed
+workspace file are ignored and reported; they never grant wake authority.
+Existing flat envelope and strict-identity settings remain readable.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `wake.live` | `true` | Live wake on/off switch |
+| `wake.wakes_per_hour` | unset, unlimited | Recipient wakes per hour |
+| `wake.per_sender_per_hour` | unset, unlimited | Sender events per hour |
+| `wake.remote_awake_daily_cap` | unset, unlimited | Remote-induced awake seconds per day |
+| `wake.reply_extensions_per_hour` | unset, unlimited | Reply-window extensions per hour |
+| `wake.envelope_max_events` | unset, unlimited | Events in one pulled envelope |
+| `wake.envelope_max_body_bytes` | unset, unlimited | Bytes per event body |
+| `wake.envelope_max_total_bytes` | unset, unlimited | Total envelope bytes |
+| `wake.max_hop_depth` | `32` | Always-on hop guard; depth 32 is allowed, 33 held |
+| `wake.backoff_after_unacked` | `5` | Always-on unacknowledged-wake guard setting |
+| `inbox.strict_board_identity` | `false` | Also require matching hub identity |
+
+Read a value with `mtix config get wake.max_hop_depth`, or append `--agent worker`.
+Set an optional limit with `mtix config set wake.wakes_per_hour 12`.
+Optional limits accept a nonnegative whole number; `0`, `off` or `unset`
+means unlimited. Guards are always on: zero, negative, empty and off values
+are refused. Tightening a limit, enabling strict identity or turning live
+wake off needs no terminal. Loosening a limit, disabling strict identity or
+turning live wake on requires terminal stdin. Deleting an override follows
+the same rule when the inherited value would loosen it.
+
+`mtix doctor` and `mtix doctor --json` report effective values and their
+source under `wake.settings`, including configured agent overrides.
+`settings.ignored-workspace-key` lists ignored workspace keys and exact
+`mtix config set` remedies. Remove those keys from `.mtix/config.yaml` and
+configure desired values operator-locally. Doctor is read-only, including
+with `--fix`; it never changes these settings or grants permission.
+
+Addressed-comment payloads carry optional nonnegative integer `hop` context;
+missing means zero. A wake exec child receives `MTIX_WAKE_HOP`, the maximum
+hop of its covered events, and `MTIX_WAKE_ATTEMPT`, an audit-only attempt token.
+Its addressed sends carry one more hop. Other sends start at zero; malformed
+process context logs a warning and starts at zero without failing the send.
+Context injected by a hook into an already-running session cannot change that
+session's environment, so its sends start at zero. This is an accident net,
+not an adversarial control. The guard's held diagnostic names the depth and
+exact configuration command; changing a guard never acknowledges the event.
+
+These settings do not install a wake route. Scanner discovery, budget and
+back-off enforcement, and hold re-arm remain separate features; only the
+settings, envelope/identity readers and guarded wake delivery are supplied here.
+
 ## Health checks
 
 Run `mtix doctor` for registered checkout and host diagnostics, or

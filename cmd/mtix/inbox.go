@@ -151,7 +151,7 @@ func waitInbox(ctx context.Context, agent string, timeout time.Duration) ([]sqli
 func writeInbox(agent, format string, events []sqlite.InboxEvent) error {
 	out := NewOutputWriter(app.jsonOutput)
 	if format != "" {
-		caps, err := loadInboxEnvelopeCaps()
+		caps, err := loadInboxEnvelopeCaps(agent)
 		if err != nil {
 			return err
 		}
@@ -211,13 +211,17 @@ func explainAckBoard(err error) error {
 		err, inboxBoardRoot())
 }
 
-func loadInboxEnvelopeCaps() (inboxformat.Caps, error) {
+func loadInboxEnvelopeCaps(agents ...string) (inboxformat.Caps, error) {
 	env, err := oplocal.FromProcess()
 	if err != nil {
 		return inboxformat.Caps{}, fmt.Errorf("inbox operator state: %w", err)
 	}
 	state := oplocal.New(env)
-	caps, reports, err := state.EnvelopeCaps()
+	agent := ""
+	if len(agents) > 0 {
+		agent = agents[0]
+	}
+	caps, reports, err := state.EnvelopeCapsForAgent(agent)
 	if err != nil {
 		return inboxformat.Caps{}, fmt.Errorf("inbox envelope configuration: %w; %s", err, state.EnvelopeCapsRemedy(reports...))
 	}

@@ -80,7 +80,7 @@ func (s *WakePermissions) Wakeable(ctx context.Context, board PermissionBoard, a
 	if !status.Connected {
 		return true, "implicit local registration", nil
 	}
-	strict, reports, err := s.State.StrictBoardIdentity()
+	strict, reports, err := s.State.StrictBoardIdentityForAgent(agent)
 	if err != nil || len(reports) != 0 {
 		return false, "operator state unreadable", err
 	}

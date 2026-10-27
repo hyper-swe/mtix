@@ -39,7 +39,7 @@ func (s *Store) AppendAnnotationOnce(ctx context.Context, nodeID string, annotat
 		}
 		result := append([]model.Annotation{}, current...)
 		return append(result, annotation), nil
-	}, annotation.ID)
+	}, annotation.ID, annotation.Hop)
 	if errors.Is(err, errAnnotationAlreadyPresent) {
 		return nil
 	}

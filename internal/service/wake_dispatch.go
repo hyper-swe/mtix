@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -16,6 +17,7 @@ import (
 // WakeStore is the fenced delivery capability needed by a guarded wake pass.
 type WakeStore interface {
 	MinDispatchProtocol(context.Context) (int, error)
+	WakeEventHop(context.Context, model.WakeKey) (int64, error)
 	ClaimWake(context.Context, model.WakeKey, time.Duration) (model.WakeAttempt, bool, error)
 	RecordWakeOutcome(context.Context, model.WakeAttempt, model.WakeOutcome) error
 }
@@ -32,6 +34,8 @@ type WakeDispatcherOptions struct {
 	Alerts     WakeAlertWriter
 	Send       func(context.Context, model.WakeAttempt) error
 	AlertAgent string
+	Settings   WakeSettingsReader
+	Held       func(string)
 }
 
 // WakeDispatcher guards each callable pass before issuing any fenced send (ADR-007 §6.4).
@@ -40,6 +44,8 @@ type WakeDispatcher struct {
 	alerts     WakeAlertWriter
 	send       func(context.Context, model.WakeAttempt) error
 	alertAgent string
+	settings   WakeSettingsReader
+	held       func(string)
 }
 
 // NewWakeDispatcher requires storage, delivery and durable alert capabilities.
@@ -53,7 +59,10 @@ func NewWakeDispatcher(opts WakeDispatcherOptions) (*WakeDispatcher, error) {
 	if err := validateAgentID(opts.AlertAgent); err != nil {
 		return nil, fmt.Errorf("validate wake diagnostic agent: %w", err)
 	}
-	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, send: opts.Send, alertAgent: opts.AlertAgent}, nil
+	if opts.Held == nil {
+		opts.Held = func(line string) { slog.Warn(line) }
+	}
+	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, send: opts.Send, alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held}, nil
 }
 
 // Pass re-reads the protocol floor even when there are no candidates.
@@ -75,7 +84,14 @@ func (d *WakeDispatcher) Pass(ctx context.Context, keys []model.WakeKey) error {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(failures, fmt.Errorf("continue wake pass: %w", err))
 		}
-		failures = errors.Join(failures, d.sendWake(ctx, key))
+		hop, held, err := d.guardWakeHop(ctx, key)
+		if err != nil {
+			failures = errors.Join(failures, err)
+			continue
+		}
+		if !held {
+			failures = errors.Join(failures, d.sendWake(ctx, key, hop))
+		}
 	}
 	return failures
 }

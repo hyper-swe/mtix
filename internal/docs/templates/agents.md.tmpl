@@ -387,6 +387,15 @@ review of that hook; other hook approvals remain independent.
 ## Health diagnostics
 
 <!-- AUTO-GENERATED: HEALTH_DIAGNOSTICS -->
+
+Wake controls are host-local: `mtix config set wake.live off` stops live wakes;
+append `--agent worker` for one agent. Limits default unlimited and the guards
+stay always on (hop depth 32, unacked threshold 5). Loosening requires terminal
+stdin; tightening and live-off do not. The health report lists effective
+values and sources in `wake.settings` and ignored workspace authority keys in
+`settings.ignored-workspace-key`. Read the admin skill before changing limits;
+you should not need routine tuning. Handle and ack each event explicitly.
+
 On an opened local board, `wake.ledger` reports retained rows and protocol refusal;
 `--fix` preserves wake state. See the multi-agent skill for lease and retry behavior.
 Plain `mtix doctor` preserves operator-local files, including stale attach shims

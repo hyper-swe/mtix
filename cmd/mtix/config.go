@@ -6,6 +6,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/oplocal"
+	"github.com/hyper-swe/mtix/internal/service"
+	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -24,46 +29,40 @@ func newConfigCmd() *cobra.Command {
 
 // newConfigGetCmd creates the mtix config get command.
 func newConfigGetCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "get <key>",
-		Short: "Get a configuration value",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return runConfigGet(args[0])
-		},
-	}
+	var agent string
+	cmd := &cobra.Command{Use: "get <key>", Short: "Get a configuration value", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error { return runConfigGetForAgent(args[0], agent) }}
+	cmd.Flags().StringVar(&agent, "agent", "", "Select an agent override for host-local wake settings")
+	return cmd
 }
 
 // newConfigSetCmd creates the mtix config set command.
 func newConfigSetCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "set <key> <value>",
-		Short: "Set a configuration value",
-		Args:  cobra.ExactArgs(2),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return runConfigSet(args[0], args[1])
-		},
-	}
+	var agent string
+	cmd := &cobra.Command{Use: "set <key> <value>", Short: "Set a configuration value", Args: cobra.ExactArgs(2), RunE: func(_ *cobra.Command, args []string) error { return runConfigSetForAgent(args[0], args[1], agent) }}
+	cmd.Flags().StringVar(&agent, "agent", "", "Select an agent override for host-local wake settings")
+	return cmd
 }
 
 // newConfigDeleteCmd creates the mtix config delete command.
 func newConfigDeleteCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "delete <key>",
-		Short: "Delete a configuration value (revert to default)",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return runConfigDelete(args[0])
-		},
-	}
+	var agent string
+	cmd := &cobra.Command{Use: "delete <key>", Short: "Delete a configuration value (revert to default)", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error { return runConfigDeleteForAgent(args[0], agent) }}
+	cmd.Flags().StringVar(&agent, "agent", "", "Select an agent override for host-local wake settings")
+	return cmd
 }
 
-func runConfigGet(key string) error {
+func runConfigGet(key string) error { return runConfigGetForAgent(key, "") }
+
+func runConfigGetForAgent(key, agent string) error {
 	if app.configSvc == nil {
 		return fmt.Errorf("not in an mtix project (run 'mtix init' first)")
 	}
 
-	v, err := app.configSvc.Get(key)
+	cs, err := scopedConfig(key, agent)
+	if err != nil {
+		return err
+	}
+	v, err := cs.Get(key)
 	if err != nil {
 		return err
 	}
@@ -77,12 +76,18 @@ func runConfigGet(key string) error {
 	return nil
 }
 
-func runConfigSet(key, value string) error {
+func runConfigSet(key, value string) error { return runConfigSetForAgent(key, value, "") }
+
+func runConfigSetForAgent(key, value, agent string) error {
 	if app.configSvc == nil {
 		return fmt.Errorf("not in an mtix project (run 'mtix init' first)")
 	}
 
-	warning, err := app.configSvc.Set(key, value)
+	cs, err := scopedConfig(key, agent)
+	if err != nil {
+		return err
+	}
+	warning, err := cs.Set(key, value)
 	if err != nil {
 		return err
 	}
@@ -101,12 +106,18 @@ func runConfigSet(key, value string) error {
 	return nil
 }
 
-func runConfigDelete(key string) error {
+func runConfigDelete(key string) error { return runConfigDeleteForAgent(key, "") }
+
+func runConfigDeleteForAgent(key, agent string) error {
 	if app.configSvc == nil {
 		return fmt.Errorf("not in an mtix project (run 'mtix init' first)")
 	}
 
-	if err := app.configSvc.Delete(key); err != nil {
+	cs, err := scopedConfig(key, agent)
+	if err != nil {
+		return err
+	}
+	if err := cs.Delete(key); err != nil {
 		return err
 	}
 
@@ -117,4 +128,24 @@ func runConfigDelete(key string) error {
 		fmt.Printf("Deleted %s (reverted to default)\n", key)
 	}
 	return nil
+}
+
+func scopedConfig(key, agent string) (*service.ConfigService, error) {
+	if agent != "" && !model.IsWakeSetting(key) {
+		return nil, fmt.Errorf("--agent applies only to host wake settings: %w", model.ErrInvalidInput)
+	}
+	cs := app.configSvc
+	if model.IsWakeSetting(key) {
+		env, err := oplocal.FromProcess()
+		if err != nil {
+			return nil, err
+		}
+		cs = cs.WithWakeSettings(service.WakeConfigOptions{State: oplocal.New(env), Agent: agent})
+	}
+	if keys := cs.IgnoredWorkspaceKeys(); len(keys) > 0 {
+		if _, err := fmt.Fprintf(os.Stderr, "Ignored workspace authority keys %q; remove them from .mtix/config.yaml and use mtix config set for host settings.\n", strings.Join(keys, ", ")); err != nil {
+			return nil, fmt.Errorf("report ignored configuration: %w", err)
+		}
+	}
+	return cs, nil
 }

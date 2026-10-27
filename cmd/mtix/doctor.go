@@ -42,6 +42,10 @@ and rejected completions. A newer dispatch protocol reports FAIL: install a
 compatible binary, restart the dispatcher and rerun doctor. This read-only check
 never prunes wake rows or lowers the protocol floor, including with --fix.
 
+The read-only export.schema check compares the schema_version .mtix/tasks.json
+declares with the one this binary writes. Every write re-exports the file in
+this binary's schema; sync.auto_sync does not stop that. WARN prints the fix.
+
 Setup checks will be registered by their future features.`
 
 func newDoctorCmd() *cobra.Command { return newDoctorCommand(newConfiguredDoctorService) }
@@ -121,6 +125,9 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	svc := service.NewDoctorService(opts)
 	if err := registerHistorySizeCheck(svc); err != nil { // MTIX-95.31.19.4
 		return nil, fmt.Errorf("register history size check: %w", err)
+	}
+	if err := registerExportSchemaCheck(svc); err != nil { // MTIX-168
+		return nil, fmt.Errorf("register export schema check: %w", err)
 	}
 	if err := svc.Register(documentFreshnessCheck(filepath.Dir(app.mtixDir))); err != nil {
 		return nil, fmt.Errorf("register documentation check: %w", err)

@@ -35,6 +35,14 @@ func (r wakeBudgetPolicyReader) WakeSettings(string) (map[string]model.WakeSetti
 	return r.values, r.reports, r.err
 }
 
+type unsafeWakeFixtureChange struct {
+	state    *oplocal.State
+	key      model.WakeRecipient
+	source   string
+	now      *time.Time
+	proposal *model.WakeBudgetProposal
+}
+
 func TestWakeBudget_UnsafeAdmissionPreservesProtectedState(t *testing.T) {
 	for _, name := range []string{"clock", "source", "negative total", "negative ack", "fence", "unacked overflow", "credit overflow", "rewind overflow", "counter exhausted"} {
 		t.Run(name, func(t *testing.T) {
@@ -43,7 +51,8 @@ func TestWakeBudget_UnsafeAdmissionPreservesProtectedState(t *testing.T) {
 			now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 			p := model.WakeBudgetProposal{Snapshot: model.WakeBudgetSnapshot{Source: source, Total: 5}, Claimable: true,
 				Attempt: model.WakeAttempt{Key: key, Token: "fresh"}}
-			mutateUnsafeWakeFixture(t, state, recipient, source, name, &now, &p)
+			change := &unsafeWakeFixtureChange{state: state, key: recipient, source: source, now: &now, proposal: &p}
+			mutateUnsafeWakeFixture(t, name, change)
 			before, _, err := state.ReadWakeBudget(recipient)
 			require.NoError(t, err)
 			b := &wakeBudgets{state: state, store: wakeAdmissionBackend{p}, clock: func() time.Time { return now },
@@ -62,14 +71,13 @@ func TestWakeBudget_UnsafeAdmissionPreservesProtectedState(t *testing.T) {
 	}
 }
 
-func mutateUnsafeWakeFixture(t *testing.T, state *oplocal.State, key model.WakeRecipient, source, name string,
-	now *time.Time, p *model.WakeBudgetProposal,
-) {
+func mutateUnsafeWakeFixture(t *testing.T, name string, change *unsafeWakeFixtureChange) {
 	t.Helper()
-	require.NoError(t, state.UpdateWakeBudget(t.Context(), key, func(m *oplocal.WakeBudgetMirror, save func() error) error {
+	p := change.proposal
+	require.NoError(t, change.state.UpdateWakeBudget(t.Context(), change.key, func(m *oplocal.WakeBudgetMirror, save func() error) error {
 		switch name {
 		case "clock":
-			*now = time.Time{}
+			*change.now = time.Time{}
 		case "source":
 			p.Snapshot.Source = ""
 		case "negative total":
@@ -86,7 +94,7 @@ func mutateUnsafeWakeFixture(t *testing.T, state *oplocal.State, key model.WakeR
 		case "rewind overflow":
 			m.Rewinds, p.Snapshot.Total = math.MaxUint64, 0
 		case "counter exhausted":
-			m.Sources[source] = oplocal.WakeBudgetSource{Total: math.MaxInt64, Committed: math.MaxInt64}
+			m.Sources[change.source] = oplocal.WakeBudgetSource{Total: math.MaxInt64, Committed: math.MaxInt64}
 			p.Snapshot.Total = math.MaxInt64
 		}
 		return save()

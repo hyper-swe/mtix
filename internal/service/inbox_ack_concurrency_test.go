@@ -12,23 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
-
-type synchronizedAckReads struct {
-	*sqlite.Store
-	reads atomic.Int64
-	ready sync.WaitGroup
-}
-
-func (s *synchronizedAckReads) WakeAckMark(ctx context.Context, agent string) (int64, error) {
-	mark, err := s.Store.WakeAckMark(ctx, agent)
-	if s.reads.Add(1) <= 2 {
-		s.ready.Done()
-		s.ready.Wait()
-	}
-	return mark, err
-}
 
 type atomicAckPublicationCount struct{ calls atomic.Int64 }
 
@@ -40,10 +24,8 @@ func (p *atomicAckPublicationCount) Observe(context.Context, string, int64, int6
 func TestInboxWakeAck_ConcurrentSameEvent_PublishesOneEffectiveAck(t *testing.T) {
 	f := newWakeBudgetFixture(t, "")
 	b := f.board(t, 1)
-	backend := &synchronizedAckReads{Store: b.store}
-	backend.ready.Add(2)
 	publisher := &atomicAckPublicationCount{}
-	svc := service.NewInboxServiceWithWakeAcks(backend, nil, publisher)
+	svc := service.NewInboxServiceWithWakeAcks(b.store, nil, publisher)
 	results := make(chan error, 2)
 	var workers sync.WaitGroup
 	for range 2 {

@@ -49,6 +49,11 @@ func newWakeBudgets(opts WakeDispatcherOptions) (*wakeBudgets, error) {
 }
 
 type wakeAdmission struct {
+	key     model.WakeKey
+	policy  wakeBudgetPolicy
+	now     time.Time
+	mirror  *oplocal.WakeBudgetMirror
+	save    func() error
 	result  model.WakeBudgetResult
 	held    string
 	fix     string
@@ -61,9 +66,10 @@ func (b *wakeBudgets) claim(ctx context.Context, key model.WakeKey) (model.WakeA
 	if err != nil {
 		return model.WakeAttempt{}, false, err
 	}
-	var admission wakeAdmission
+	admission := wakeAdmission{key: key, policy: policy}
 	err = b.state.UpdateWakeBudget(ctx, key.Recipient(), func(m *oplocal.WakeBudgetMirror, save func() error) error {
-		return b.claimLocked(ctx, key, policy, m, save, &admission)
+		admission.mirror, admission.save = m, save
+		return b.claimLocked(ctx, &admission)
 	})
 	alertErr := b.reportAdmission(ctx, key.AgentID, admission)
 	if err != nil || alertErr != nil {
@@ -72,24 +78,21 @@ func (b *wakeBudgets) claim(ctx context.Context, key model.WakeKey) (model.WakeA
 	return admission.result.Attempt, admission.result.Won, nil
 }
 
-func (b *wakeBudgets) claimLocked(ctx context.Context, key model.WakeKey, policy wakeBudgetPolicy,
-	m *oplocal.WakeBudgetMirror, save func() error, a *wakeAdmission,
-) error {
-	now, err := wakeBudgetNow(b.clock(), m)
+func (b *wakeBudgets) claimLocked(ctx context.Context, a *wakeAdmission) error {
+	now, err := wakeBudgetNow(b.clock(), a.mirror)
 	if err != nil {
 		return err
 	}
-	trimWakeBudgetCredits(m, now)
-	a.result, err = b.store.ClaimWakeBudget(ctx, key, time.Minute, func(p model.WakeBudgetProposal) (model.WakeBudgetDecision, error) {
-		return prepareWakeAdmission(key, p, policy, now, m, save, a)
-	})
+	a.now = now
+	trimWakeBudgetCredits(a.mirror, now)
+	a.result, err = b.store.ClaimWakeBudget(ctx, a.key, time.Minute, a.prepareWakeAdmission)
 	if err != nil {
 		return fmt.Errorf("persist accounted wake claim: %w", err)
 	}
-	if a.result.Won && (a.result.Attempt.Token == "" || a.result.Attempt.Key != key) {
+	if a.result.Won && (a.result.Attempt.Token == "" || a.result.Attempt.Key != a.key) {
 		return fmt.Errorf("accounted wake attempt fence is mismatched: %w", model.ErrConflict)
 	}
-	row := m.Sources[a.result.Snapshot.Source]
+	row := a.mirror.Sources[a.result.Snapshot.Source]
 	if a.result.Won && row.Pending != a.result.Attempt.Token {
 		return fmt.Errorf("wake fence has no matching protected admission: %w", model.ErrConflict)
 	}
@@ -97,6 +100,6 @@ func (b *wakeBudgets) claimLocked(ctx context.Context, key model.WakeKey, policy
 		return fmt.Errorf("accepted wake counter differs from protected intent: %w", model.ErrConflict)
 	}
 	row.Committed, row.Pending = row.Total, ""
-	m.Sources[a.result.Snapshot.Source] = row
-	return save()
+	a.mirror.Sources[a.result.Snapshot.Source] = row
+	return a.save()
 }

@@ -62,6 +62,10 @@ func reconcileWakeBudget(m *oplocal.WakeBudgetMirror, snap model.WakeBudgetSnaps
 		return oplocal.WakeBudgetSource{}, fmt.Errorf("wake accounting snapshot is invalid: %w", model.ErrInvalidInput)
 	}
 	row, known := m.Sources[snap.Source]
+	if !known {
+		// A moved board's lifetime counter is a baseline, not new attempts.
+		row.Total, row.Committed = snap.Total, snap.Total
+	}
 	if known && snap.Total < row.Committed {
 		if m.Rewinds == math.MaxUint64 {
 			return row, fmt.Errorf("wake rewind counter is exhausted: %w", model.ErrInvalidInput)
@@ -83,40 +87,54 @@ func reconcileWakeBudget(m *oplocal.WakeBudgetMirror, snap model.WakeBudgetSnaps
 	return row, nil
 }
 
-func prepareWakeAdmission(key model.WakeKey, p model.WakeBudgetProposal, policy wakeBudgetPolicy,
-	now time.Time, m *oplocal.WakeBudgetMirror, save func() error, a *wakeAdmission,
-) (model.WakeBudgetDecision, error) {
-	row, err := reconcileWakeBudget(m, p.Snapshot, now, a)
+func (a *wakeAdmission) prepareWakeAdmission(p model.WakeBudgetProposal) (model.WakeBudgetDecision, error) {
+	m := a.mirror
+	row, err := reconcileWakeBudget(m, p.Snapshot, a.now, a)
 	d := model.WakeBudgetDecision{Floor: row.Total}
+	if err == nil {
+		err = checkpointWakeRewind(a, a.save)
+	}
 	if err != nil || !p.Claimable {
 		return d, err
 	}
-	if p.Attempt.Token == "" || p.Attempt.Key != key {
+	if p.Attempt.Token == "" || p.Attempt.Key != a.key {
 		return d, fmt.Errorf("proposed wake fence is mismatched: %w", model.ErrConflict)
 	}
-	if policy.limit > 0 && wakeBudgetUsed(m) >= policy.limit {
+	if a.policy.limit > 0 && wakeBudgetUsed(m) >= a.policy.limit {
 		a.class = "wake.budget"
-		a.fix = wakeBudgetFix(key.AgentID, policy.limit)
-		a.held = fmt.Sprintf("held wake: recipient rolling-hour budget %d is spent; %s", policy.limit, a.fix)
+		a.fix = wakeBudgetFix(a.key.AgentID, a.policy.limit)
+		a.held = fmt.Sprintf("held wake: recipient rolling-hour budget %d is spent; %s", a.policy.limit, a.fix)
 		return d, nil
 	}
-	if holdWakeBackoff(key.AgentID, policy, now, m, a) {
+	if holdWakeBackoff(a.key.AgentID, a.policy, a.now, m, a) {
 		return d, nil
 	}
 	if row.Total == math.MaxInt64 {
 		return d, fmt.Errorf("protected wake counter is exhausted: %w", model.ErrInvalidInput)
 	}
-	if err := chargeWakeBudget(m, now, 1); err != nil {
+	if err := chargeWakeBudget(m, a.now, 1); err != nil {
 		return d, err
 	}
 	row.Total++
 	row.Pending = p.Attempt.Token
 	m.Sources[p.Snapshot.Source] = row
-	setWakeBackoffDeadline(policy, m)
+	setWakeBackoffDeadline(a.policy, m)
 	// A failed or interrupted SQL commit cannot erase this pending charge.
-	if err := save(); err != nil {
+	if err := a.save(); err != nil {
 		return d, fmt.Errorf("persist pending wake acceptance: %w", err)
 	}
 	d.Allow = true
 	return d, nil
+}
+
+func checkpointWakeRewind(a *wakeAdmission, save func() error) error {
+	if !a.rewound {
+		return nil
+	}
+	// Persist evidence before the claim transaction can heal the store floor,
+	// including decisions that hold a wake or lose to an existing claim.
+	if err := save(); err != nil {
+		return fmt.Errorf("persist wake rewind diagnostic: %w", err)
+	}
+	return nil
 }

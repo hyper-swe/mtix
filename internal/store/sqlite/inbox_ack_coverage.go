@@ -59,13 +59,19 @@ func (s *Store) writeInboxAcknowledgement(ctx context.Context, tx *sql.Tx, agent
 	if !through {
 		_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO agent_inbox_ack(agent_id,event_seq,acked_at) VALUES(?,?,?)`,
 			agent, seq, s.clock().Format(time.RFC3339Nano))
-		return err
+		if err != nil {
+			return fmt.Errorf("record selective inbox acknowledgement: %w", err)
+		}
+		return nil
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_inbox_cursor(agent_id,cursor) VALUES(?,?)
 		ON CONFLICT(agent_id) DO UPDATE SET cursor=MAX(cursor,excluded.cursor)`, agent, seq); err != nil {
-		return err
+		return fmt.Errorf("advance cumulative inbox acknowledgement: %w", err)
 	}
 	_, err := tx.ExecContext(ctx, `DELETE FROM agent_inbox_ack WHERE agent_id=?
 		AND event_seq<=(SELECT cursor FROM agent_inbox_cursor WHERE agent_id=?)`, agent, agent)
-	return err
+	if err != nil {
+		return fmt.Errorf("prune selectively acknowledged prefix: %w", err)
+	}
+	return nil
 }

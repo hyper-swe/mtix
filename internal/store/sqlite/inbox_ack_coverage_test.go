@@ -7,16 +7,17 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	sqliteDriver "modernc.org/sqlite"
 )
 
 func TestInboxAckCoverage_FailedWriteRollsBackEffect(t *testing.T) {
 	for _, tc := range []struct {
-		name, table, operation string
-		through                bool
+		name, table, operation, context string
+		through                         bool
 	}{
-		{"selective insert", "agent_inbox_ack", "INSERT", false},
-		{"cursor insert", "agent_inbox_cursor", "INSERT", true},
-		{"selective prune", "agent_inbox_ack", "DELETE", true},
+		{"selective insert", "agent_inbox_ack", "INSERT", "record selective inbox acknowledgement", false},
+		{"cursor insert", "agent_inbox_cursor", "INSERT", "advance cumulative inbox acknowledgement", true},
+		{"selective prune", "agent_inbox_ack", "DELETE", "prune selectively acknowledged prefix", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, _ := budgetDataStore(t)
@@ -35,6 +36,9 @@ func TestInboxAckCoverage_FailedWriteRollsBackEffect(t *testing.T) {
 			require.NoError(t, err)
 			_, _, err = s.InboxAckCoverage(t.Context(), "worker", last, tc.through)
 			require.Error(t, err)
+			require.ErrorContains(t, err, tc.context)
+			var cause *sqliteDriver.Error
+			require.ErrorAs(t, err, &cause)
 			after, err := s.WakeAckMark(t.Context(), "worker")
 			require.NoError(t, err)
 			require.Equal(t, before, after, "neither cursor nor selective effect may survive a failed transaction")

@@ -51,7 +51,7 @@ func processWakeAckState() (*oplocal.State, string, error) {
 	}
 	uid, err := wakeAckUserID()
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("resolve acknowledgement user identity: %w", err)
 	}
 	return oplocal.New(env), uid, nil
 }
@@ -62,18 +62,25 @@ func (p *wakeAckPublisher) Observe(ctx context.Context, agent string, before, af
 	}
 	state, uid, err := p.state()
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve acknowledgement operator state: %w", err)
 	}
 	if state == nil || p.store == nil {
 		return fmt.Errorf("acknowledgement accounting dependencies are missing: %w", model.ErrInvalidInput)
 	}
 	host, err := state.ReadHostID()
-	if err != nil || host == "" {
-		return err
+	if err != nil {
+		return fmt.Errorf("read acknowledgement host identity: %w", err)
+	}
+	if host == "" {
+		return nil
 	}
 	key := model.WakeRecipient{AgentID: agent, HostID: host, UID: uid}
-	if _, present, budgetErr := state.ReadWakeBudget(key); budgetErr != nil || !present {
-		return budgetErr // A normal acknowledgement never initializes operator accounting.
+	_, present, budgetErr := state.ReadWakeBudget(key)
+	if budgetErr != nil {
+		return fmt.Errorf("read acknowledgement wake accounting: %w", budgetErr)
+	}
+	if !present {
+		return nil // A normal acknowledgement never initializes operator accounting.
 	}
 	source, err := p.store.WakeBudgetSource(ctx)
 	if err != nil {
@@ -91,11 +98,14 @@ func (p *wakeAckPublisher) publish(ctx context.Context, state *oplocal.State, ke
 		if after > current {
 			return fmt.Errorf("acknowledgement was rewound during publication: %w", model.ErrConflict)
 		}
-		row := m.Sources[source]
 		// The acknowledgement transaction proved this call made a new effect.
 		// Ordinal equality after restore is not evidence of an idempotent call.
-		row.AckMark = current
-		m.Sources[source] = row
+		if row, known := m.Sources[source]; known {
+			row.AckMark = current
+			m.Sources[source] = row
+		}
+		// Only admission establishes a wake-counter baseline. An ACK on an
+		// unseen board still resets this recipient without inventing a zero floor.
 		m.Unacked, m.NextWakeAt = 0, time.Time{}
 		return save()
 	})

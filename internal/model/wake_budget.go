@@ -18,21 +18,24 @@ func (k WakeKey) Recipient() WakeRecipient {
 // WakeBudgetSnapshot is a transaction-consistent local accounting observation.
 type WakeBudgetSnapshot struct {
 	Source  string
+	BoardID string
 	Total   int64
 	AckMark int64
 }
 
 // WakeBudgetProposal includes the fence before the admission decision is made.
 type WakeBudgetProposal struct {
-	Snapshot  WakeBudgetSnapshot
-	Attempt   WakeAttempt
-	Claimable bool
+	Snapshot       WakeBudgetSnapshot
+	BoardCandidate string
+	Attempt        WakeAttempt
+	Claimable      bool
 }
 
 // WakeBudgetDecision supplies the protected counter floor and send admission.
 type WakeBudgetDecision struct {
-	Floor int64
-	Allow bool
+	BoardID string
+	Floor   int64
+	Allow   bool
 }
 
 // WakeBudgetResult returns only after the local transaction commits.
@@ -47,5 +50,6 @@ type WakeBudgetResult struct {
 type WakeBudgetCounter struct {
 	Recipient WakeRecipient
 	Source    string
+	BoardID   string
 	Total     int64
 }

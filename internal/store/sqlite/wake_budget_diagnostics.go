@@ -15,7 +15,11 @@ import (
 func (s *Store) WakeBudgetCounters(ctx context.Context) (result []model.WakeBudgetCounter, err error) {
 	source, err := s.WakeBudgetSource(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("identify diagnostic wake source: %w", err)
+	}
+	boardID, err := s.WakeBudgetBoardID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("identify diagnostic wake board: %w", err)
 	}
 	rows, err := s.readDB.QueryContext(ctx, `SELECT agent_id,host_id,uid,total FROM wake_budget_counters
 		ORDER BY agent_id,host_id,uid`)
@@ -29,7 +33,7 @@ func (s *Store) WakeBudgetCounters(ctx context.Context) (result []model.WakeBudg
 		if err = rows.Scan(&row.Recipient.AgentID, &row.Recipient.HostID, &row.Recipient.UID, &row.Total); err != nil {
 			return nil, fmt.Errorf("scan wake budget counter: %w", err)
 		}
-		row.Source = source
+		row.Source, row.BoardID = source, boardID
 		if row.Total < 0 || row.Source == "" {
 			return nil, fmt.Errorf("wake budget counter metadata is invalid: %w", model.ErrInvalidInput)
 		}

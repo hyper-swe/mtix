@@ -6,6 +6,7 @@ package oplocal
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -34,17 +35,23 @@ func validateWakeBudgetMirror(m WakeBudgetMirror) error {
 		return invalid("wake budget mirror metadata is invalid")
 	}
 	if _, err := wakeBudgetName(m.Recipient); err != nil {
-		return err
+		return fmt.Errorf("validate protected wake budget mirror: %w", err)
 	}
 	for source, row := range m.Sources {
 		if err := validateWakeBudgetSource(source, row); err != nil {
-			return err
+			return fmt.Errorf("validate protected wake budget mirror: %w", err)
 		}
 	}
-	if err := validateWakeBudgetCredits(m.Credits); err != nil {
-		return err
+	if err := validateWakeBudgetBoards(m); err != nil {
+		return fmt.Errorf("validate protected wake budget mirror: %w", err)
 	}
-	return validateWakeBudgetTimes(m)
+	if err := validateWakeBudgetCredits(m.Credits); err != nil {
+		return fmt.Errorf("validate protected wake budget mirror: %w", err)
+	}
+	if err := validateWakeBudgetTimes(m); err != nil {
+		return fmt.Errorf("validate protected wake budget timestamps: %w", err)
+	}
+	return nil
 }
 
 func validateWakeBudgetTimes(m WakeBudgetMirror) error {
@@ -58,6 +65,9 @@ func validateWakeBudgetTimes(m WakeBudgetMirror) error {
 }
 
 func validateWakeBudgetSource(source string, row WakeBudgetSource) error {
+	if row.BoardID != "" && !wakeBudgetUUID(row.BoardID) {
+		return invalid("wake budget board identity is invalid")
+	}
 	id, err := uuid.Parse(source)
 	if err != nil || id == uuid.Nil || id.String() != source || row.Total < 0 || row.Committed < 0 || row.Committed > row.Total || row.AckMark < 0 {
 		return invalid("wake budget source is invalid")
@@ -85,4 +95,28 @@ func validateWakeBudgetCredits(credits []WakeBudgetCredit) error {
 func wakeBudgetTime(value time.Time) bool {
 	_, offset := value.Zone()
 	return !value.IsZero() && value.Year() >= 1 && value.Year() <= 9999 && offset == 0
+}
+
+func wakeBudgetUUID(value string) bool {
+	id, err := uuid.Parse(value)
+	return err == nil && id != uuid.Nil && id.String() == value
+}
+
+func validateWakeBudgetBoards(m WakeBudgetMirror) error {
+	for id, board := range m.Boards {
+		row := WakeBudgetSource{Total: board.Total, Committed: board.Committed, Pending: board.Pending}
+		if err := validateWakeBudgetSource(id, row); err != nil {
+			return failure("wake budget board floor is invalid", err)
+		}
+	}
+	for _, row := range m.Sources {
+		if row.BoardID == "" {
+			continue
+		} // Legacy mirrors establish an uncharged baseline.
+		board, ok := m.Boards[row.BoardID]
+		if !ok || row.Total > board.Total || row.Committed > board.Committed {
+			return invalid("wake budget path binding conflicts with board floor")
+		}
+	}
+	return nil
 }

@@ -1335,6 +1335,14 @@ any board resets this host recipient's backoff, including a lower selective
 sequence or newly covered cumulative prefix. Repeating an already acknowledged
 event or prefix does not reset it. Acknowledgements do not return rate allowance.
 
+A local board identity keeps moved boards and ordinary database copies on the
+same protected counter floor, including moves back to an earlier path. Each
+fresh fenced attempt still spends one credit. The identity stays local; exports
+and sync do not carry it. Identity-less restores at an unseen path, and legacy
+mirrors without an identity, may under-count history, never over-count. They
+establish an uncharged history baseline while retaining existing recipient
+credits and unacked debt. Doctor reads this state without creating an identity.
+
 The protected mirror retains spent allowance across restarts and store restores.
 `budget.rewind` in `mtix doctor` text and JSON reports a lower local counter or
 retained rewind diagnostic. It is read-only, even with `--fix`; doctor never

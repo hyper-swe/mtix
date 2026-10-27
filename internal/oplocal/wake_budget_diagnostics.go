@@ -6,6 +6,7 @@ package oplocal
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"strings"
 )
 
@@ -20,7 +21,7 @@ func (s *State) WakeBudgetMirrors(ctx context.Context) (result []WakeBudgetMirro
 		return result, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read protected wake budget diagnostics: %w", err)
 	}
 	defer closeWith(dir, &err)
 	entries, err := dir.ReadDir(-1)
@@ -37,7 +38,7 @@ func (s *State) WakeBudgetMirrors(ctx context.Context) (result []WakeBudgetMirro
 		}
 		mirror, present, err := s.readWakeBudgetRecord(name)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read protected wake budget diagnostics: %w", err)
 		}
 		if present {
 			result = append(result, mirror)

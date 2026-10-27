@@ -16,9 +16,13 @@ func registerConfiguredWakeBudgetDoctor(svc *service.DoctorService) error {
 		return nil
 	}
 	store := app.store
-	return svc.Register(service.DoctorCheck{ID: "budget.rewind", Run: func(ctx context.Context) service.DoctorResult {
+	err := svc.Register(service.DoctorCheck{ID: "budget.rewind", Run: func(ctx context.Context) service.DoctorResult {
 		return configuredWakeBudgetRow(ctx, store)
 	}})
+	if err != nil {
+		return fmt.Errorf("register wake budget diagnostic: %w", err)
+	}
+	return nil
 }
 
 func configuredWakeBudgetRow(ctx context.Context, store service.WakeBudgetReader) service.DoctorResult {

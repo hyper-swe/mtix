@@ -22,11 +22,17 @@ func (s *InboxService) acknowledgeWithWake(ctx context.Context, agent string, se
 	if backend, ok := s.store.(inboxAtomicAcker); ok && s.wakeAcks != nil {
 		before, after, err := backend.InboxAckCoverage(ctx, agent, seq, through)
 		if err != nil {
-			return err
+			return wrapAPIOperation("acknowledge inbox atomically", err)
 		}
-		return s.publishAckEffect(ctx, agent, before, after)
+		if err := s.publishAckEffect(ctx, agent, before, after); err != nil {
+			return wrapAPIOperation("publish inbox acknowledgement effect", err)
+		}
+		return nil
 	}
-	return s.ackWithWake(ctx, agent, write)
+	if err := s.ackWithWake(ctx, agent, write); err != nil {
+		return wrapAPIOperation("acknowledge inbox with coverage observation", err)
+	}
+	return nil
 }
 
 // NewInboxServiceWithWakeAcks injects acknowledgement publication for a host.
@@ -56,7 +62,10 @@ func (s *InboxService) InboxAckThrough(ctx context.Context, agent string, seq in
 func (s *InboxService) ackWithWake(ctx context.Context, agent string, write func() error) error {
 	coverage, ok := s.store.(inboxAckCoverage)
 	if !ok || s.wakeAcks == nil {
-		return write()
+		if err := write(); err != nil {
+			return wrapAPIOperation("write inbox acknowledgement without coverage", err)
+		}
+		return nil
 	}
 	before, err := coverage.WakeAckMark(ctx, agent)
 	if err != nil {
@@ -64,13 +73,16 @@ func (s *InboxService) ackWithWake(ctx context.Context, agent string, write func
 	}
 	// No protected accounting lock spans the store's synchronous callbacks.
 	if writeErr := write(); writeErr != nil {
-		return writeErr
+		return wrapAPIOperation("write inbox acknowledgement", writeErr)
 	}
 	after, err := coverage.WakeAckMark(ctx, agent)
 	if err != nil {
 		return fmt.Errorf("observe inbox after acknowledgement: %w", err)
 	}
-	return s.publishAckEffect(ctx, agent, before, after)
+	if err := s.publishAckEffect(ctx, agent, before, after); err != nil {
+		return wrapAPIOperation("publish inbox acknowledgement effect", err)
+	}
+	return nil
 }
 
 func (s *InboxService) publishAckEffect(ctx context.Context, agent string, before, after int64) error {

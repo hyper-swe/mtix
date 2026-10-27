@@ -16,20 +16,23 @@ import (
 func (s *State) ReadWakeBudget(key model.WakeRecipient) (WakeBudgetMirror, bool, error) {
 	name, err := wakeBudgetName(key)
 	if err != nil {
-		return WakeBudgetMirror{}, false, err
+		return WakeBudgetMirror{}, false, fmt.Errorf("read protected wake budget record: %w", err)
 	}
 	mirror, present, err := s.readWakeBudgetRecord(name)
 	if err == nil && present && mirror.Recipient != key {
 		err = invalid("wake budget record belongs to another recipient")
 	}
-	return mirror, present, err
+	if err != nil {
+		return mirror, present, fmt.Errorf("validate protected wake budget ownership: %w", err)
+	}
+	return mirror, present, nil
 }
 
 func (s *State) readWakeBudgetRecord(name string) (WakeBudgetMirror, bool, error) {
 	var raw json.RawMessage
 	reports, err := s.ReadJSON(name, &raw)
 	if err != nil {
-		return WakeBudgetMirror{}, false, err
+		return WakeBudgetMirror{}, false, fmt.Errorf("read protected wake budget record: %w", err)
 	}
 	if len(reports) != 0 {
 		return WakeBudgetMirror{}, false, invalid("wake budget belongs to another host")
@@ -42,7 +45,7 @@ func (s *State) readWakeBudgetRecord(name string) (WakeBudgetMirror, bool, error
 		return mirror, true, failure("wake budget data is invalid", decodeErr)
 	}
 	if validationErr := validateWakeBudgetMirror(mirror); validationErr != nil {
-		return mirror, true, validationErr
+		return mirror, true, fmt.Errorf("validate protected wake budget data: %w", validationErr)
 	}
 	expected, err := wakeBudgetName(mirror.Recipient)
 	if err != nil || expected != name {
@@ -62,14 +65,14 @@ func (s *State) UpdateWakeBudget(ctx context.Context, key model.WakeRecipient,
 	}
 	name, err := wakeBudgetName(key)
 	if err != nil {
-		return err
+		return fmt.Errorf("update protected wake budget: %w", err)
 	}
 	if fn == nil {
 		return invalid("wake budget update is required")
 	}
 	dir, err := s.directory(true)
 	if err != nil {
-		return err
+		return fmt.Errorf("update protected wake budget: %w", err)
 	}
 	defer closeWith(dir, &err)
 	lock, err := openNamedLock(dir, "wake-budgets.lock", true)
@@ -77,13 +80,16 @@ func (s *State) UpdateWakeBudget(ctx context.Context, key model.WakeRecipient,
 		return failure("wake budget lock unavailable", err)
 	}
 	if err = awaitAlertLock(ctx, lock); err != nil {
-		return errors.Join(err, closeFile(lock))
+		return fmt.Errorf("acquire protected wake budget lock: %w", errors.Join(err, closeFile(lock)))
 	}
 	defer func() { err = errors.Join(err, unlockAlert(lock)) }()
 	if _, err = s.hostID(dir, true); err != nil {
-		return err
+		return fmt.Errorf("update protected wake budget: %w", err)
 	}
-	return s.updateWakeBudgetLocked(ctx, key, name, fn)
+	if err := s.updateWakeBudgetLocked(ctx, key, name, fn); err != nil {
+		return fmt.Errorf("apply locked wake budget update: %w", err)
+	}
+	return nil
 }
 
 func (s *State) updateWakeBudgetLocked(ctx context.Context, key model.WakeRecipient, name string,
@@ -91,7 +97,7 @@ func (s *State) updateWakeBudgetLocked(ctx context.Context, key model.WakeRecipi
 ) error {
 	mirror, present, err := s.ReadWakeBudget(key)
 	if err != nil {
-		return err
+		return fmt.Errorf("update protected wake budget: %w", err)
 	}
 	if !present {
 		mirror = WakeBudgetMirror{Version: 1, Recipient: key, Sources: map[string]WakeBudgetSource{}, Credits: []WakeBudgetCredit{}}
@@ -101,9 +107,15 @@ func (s *State) updateWakeBudgetLocked(ctx context.Context, key model.WakeRecipi
 			return fmt.Errorf("persist wake budget: %w", err)
 		}
 		if err := validateWakeBudgetMirror(mirror); err != nil {
-			return err
+			return fmt.Errorf("update protected wake budget: %w", err)
 		}
-		return s.WriteJSON(name, mirror)
+		if err := s.WriteJSON(name, mirror); err != nil {
+			return fmt.Errorf("write protected wake budget checkpoint: %w", err)
+		}
+		return nil
 	}
-	return fn(&mirror, save)
+	if err := fn(&mirror, save); err != nil {
+		return fmt.Errorf("apply protected wake budget callback: %w", err)
+	}
+	return nil
 }

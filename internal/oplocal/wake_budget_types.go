@@ -17,9 +17,17 @@ type WakeBudgetCredit struct {
 
 // WakeBudgetSource preserves both accepted and conservatively pending counters.
 type WakeBudgetSource struct {
+	BoardID   string `json:"board_id,omitempty"`
 	Total     int64  `json:"total"`
 	Committed int64  `json:"committed"`
 	AckMark   int64  `json:"ack_mark"`
+	Pending   string `json:"pending,omitempty"`
+}
+
+// WakeBudgetBoard is the shared counter floor across paths and database copies.
+type WakeBudgetBoard struct {
+	Total     int64  `json:"total"`
+	Committed int64  `json:"committed"`
 	Pending   string `json:"pending,omitempty"`
 }
 
@@ -28,6 +36,7 @@ type WakeBudgetMirror struct {
 	Version      int                         `json:"version"`
 	Recipient    model.WakeRecipient         `json:"recipient"`
 	Sources      map[string]WakeBudgetSource `json:"sources"`
+	Boards       map[string]WakeBudgetBoard  `json:"boards,omitempty"`
 	Credits      []WakeBudgetCredit          `json:"credits"`
 	Unacked      int64                       `json:"unacked"`
 	NextWakeAt   time.Time                   `json:"next_wake_at,omitempty"`

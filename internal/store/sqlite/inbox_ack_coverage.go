@@ -20,29 +20,35 @@ func (s *Store) InboxAckCoverage(ctx context.Context, agent string, seq int64, t
 	}
 	err = s.WithTx(ctx, func(tx *sql.Tx) error {
 		if targetErr := validateInboxAckTarget(ctx, tx, seq, through); targetErr != nil {
-			return targetErr
+			return fmt.Errorf("validate inbox acknowledgement target: %w", targetErr)
 		}
 		var readErr error
 		before, readErr = readWakeAckMark(ctx, tx, agent)
 		if readErr != nil {
-			return readErr
+			return fmt.Errorf("read inbox acknowledgement coverage: %w", readErr)
 		}
 		if writeErr := s.writeInboxAcknowledgement(ctx, tx, agent, seq, through); writeErr != nil {
-			return writeErr
+			return fmt.Errorf("write inbox acknowledgement coverage: %w", writeErr)
 		}
 		after, readErr = readWakeAckMark(ctx, tx, agent)
-		return readErr
+		if readErr != nil {
+			return fmt.Errorf("read resulting inbox acknowledgement coverage: %w", readErr)
+		}
+		return nil
 	})
 	if err == nil {
 		s.touchFromContext(ctx, agent)
 	}
-	return before, after, err
+	if err != nil {
+		return before, after, fmt.Errorf("commit inbox acknowledgement coverage: %w", err)
+	}
+	return before, after, nil
 }
 
 func validateInboxAckTarget(ctx context.Context, tx *sql.Tx, seq int64, through bool) error {
 	tail, err := journalTail(ctx, tx)
 	if err != nil {
-		return err
+		return fmt.Errorf("read journal bounds for inbox acknowledgement: %w", err)
 	}
 	if seq >= 1 && seq <= tail {
 		return nil

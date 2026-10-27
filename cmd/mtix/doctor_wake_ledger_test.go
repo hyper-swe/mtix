@@ -75,7 +75,7 @@ func assertEmptyWakeDoctorInfo(t *testing.T, id, status, detail, fix string) boo
 		require.Contains(t, detail, "0 wake rows")
 		require.Contains(t, detail, "0 claimed")
 	case "budget.rewind":
-		require.Equal(t, "No protected recipient accounting exists.", detail)
+		require.Equal(t, "No protected recipient accounting exists. Identity-less restores may under-count history, never over-count; existing recipient credits and debt are retained.", detail)
 	default:
 		return false
 	}

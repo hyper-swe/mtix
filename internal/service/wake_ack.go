@@ -86,11 +86,14 @@ func (p *wakeAckPublisher) Observe(ctx context.Context, agent string, before, af
 	if err != nil {
 		return fmt.Errorf("identify acknowledged board: %w", err)
 	}
-	return p.publish(ctx, state, key, source, after)
+	if err := p.publish(ctx, state, key, source, after); err != nil {
+		return fmt.Errorf("publish acknowledged wake budget reset: %w", err)
+	}
+	return nil
 }
 
 func (p *wakeAckPublisher) publish(ctx context.Context, state *oplocal.State, key model.WakeRecipient, source string, after int64) error {
-	return state.UpdateWakeBudget(ctx, key, func(m *oplocal.WakeBudgetMirror, save func() error) error {
+	err := state.UpdateWakeBudget(ctx, key, func(m *oplocal.WakeBudgetMirror, save func() error) error {
 		current, err := p.store.WakeAckMark(ctx, key.AgentID)
 		if err != nil {
 			return fmt.Errorf("observe acknowledgement during publication: %w", err)
@@ -107,6 +110,13 @@ func (p *wakeAckPublisher) publish(ctx context.Context, state *oplocal.State, ke
 		// Only admission establishes a wake-counter baseline. An ACK on an
 		// unseen board still resets this recipient without inventing a zero floor.
 		m.Unacked, m.NextWakeAt = 0, time.Time{}
-		return save()
+		if err := save(); err != nil {
+			return fmt.Errorf("persist acknowledged wake budget reset: %w", err)
+		}
+		return nil
 	})
+	if err != nil {
+		return fmt.Errorf("update acknowledged wake budget: %w", err)
+	}
+	return nil
 }

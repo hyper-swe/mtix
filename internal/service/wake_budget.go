@@ -64,16 +64,19 @@ type wakeAdmission struct {
 func (b *wakeBudgets) claim(ctx context.Context, key model.WakeKey) (model.WakeAttempt, bool, error) {
 	policy, err := b.policy(key.AgentID)
 	if err != nil {
-		return model.WakeAttempt{}, false, err
+		return model.WakeAttempt{}, false, fmt.Errorf("load wake admission policy: %w", err)
 	}
 	admission := wakeAdmission{key: key, policy: policy}
 	err = b.state.UpdateWakeBudget(ctx, key.Recipient(), func(m *oplocal.WakeBudgetMirror, save func() error) error {
 		admission.mirror, admission.save = m, save
-		return b.claimLocked(ctx, &admission)
+		if claimErr := b.claimLocked(ctx, &admission); claimErr != nil {
+			return fmt.Errorf("apply protected wake admission: %w", claimErr)
+		}
+		return nil
 	})
 	alertErr := b.reportAdmission(ctx, key.AgentID, admission)
 	if err != nil || alertErr != nil {
-		return model.WakeAttempt{}, false, errors.Join(err, alertErr)
+		return model.WakeAttempt{}, false, fmt.Errorf("admit protected wake attempt: %w", errors.Join(err, alertErr))
 	}
 	return admission.result.Attempt, admission.result.Won, nil
 }
@@ -81,7 +84,7 @@ func (b *wakeBudgets) claim(ctx context.Context, key model.WakeKey) (model.WakeA
 func (b *wakeBudgets) claimLocked(ctx context.Context, a *wakeAdmission) error {
 	now, err := wakeBudgetNow(b.clock(), a.mirror)
 	if err != nil {
-		return err
+		return fmt.Errorf("observe wake admission time: %w", err)
 	}
 	a.now = now
 	trimWakeBudgetCredits(a.mirror, now)
@@ -101,5 +104,9 @@ func (b *wakeBudgets) claimLocked(ctx context.Context, a *wakeAdmission) error {
 	}
 	row.Committed, row.Pending = row.Total, ""
 	a.mirror.Sources[a.result.Snapshot.Source] = row
-	return a.save()
+	a.mirror.Boards[row.BoardID] = oplocal.WakeBudgetBoard{Total: row.Total, Committed: row.Total}
+	if err := a.save(); err != nil {
+		return fmt.Errorf("persist committed wake accounting: %w", err)
+	}
+	return nil
 }

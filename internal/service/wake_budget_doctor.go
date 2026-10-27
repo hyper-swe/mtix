@@ -27,12 +27,12 @@ func WakeBudgetDoctorCheck(store WakeBudgetReader, state *oplocal.State) DoctorC
 		if err != nil {
 			return wakeBudgetDoctorFailure(err)
 		}
-		row := DoctorResult{Status: DoctorInfo, Detail: "No protected recipient accounting exists."}
+		row := DoctorResult{Status: DoctorInfo, Detail: "No protected recipient accounting exists. " + wakeBudgetIdentityCaveat}
 		if stats.recipients == 0 {
 			return row
 		}
 		row.Detail = fmt.Sprintf("Protected recipient accounting: %d recipients; %d local counters below their protected floor; %d recipients retain rewind diagnostics; %d interrupted acceptances remain charged.",
-			stats.recipients, stats.lower, stats.recorded, stats.pending)
+			stats.recipients, stats.lower, stats.recorded, stats.pending) + " " + wakeBudgetIdentityCaveat
 		row.Data = map[string]any{"recipients": stats.recipients, "lower_store_counters": stats.lower,
 			"recorded_rewind_recipients": stats.recorded, "pending_acceptances": stats.pending}
 		if stats.lower > 0 || stats.recorded > 0 {
@@ -48,18 +48,25 @@ type wakeBudgetDiagnostics struct{ recipients, lower, recorded, pending int }
 func inspectWakeBudget(ctx context.Context, store WakeBudgetReader, state *oplocal.State) (wakeBudgetDiagnostics, error) {
 	var stats wakeBudgetDiagnostics
 	mirrors, err := state.WakeBudgetMirrors(ctx)
-	if err != nil || len(mirrors) == 0 {
-		return stats, err
+	if err != nil {
+		return stats, fmt.Errorf("inspect protected wake mirrors: %w", err)
+	}
+	if len(mirrors) == 0 {
+		return stats, nil
 	}
 	source, err := store.WakeBudgetSource(ctx)
 	if err != nil {
-		return stats, err
+		return stats, fmt.Errorf("inspect local wake accounting: %w", err)
 	}
 	rows, err := store.WakeBudgetCounters(ctx)
 	if err != nil {
-		return stats, err
+		return stats, fmt.Errorf("inspect local wake accounting: %w", err)
 	}
 	local := map[model.WakeRecipient]int64{}
+	boardID, err := wakeBudgetDiagnosticID(ctx, store)
+	if err != nil {
+		return stats, fmt.Errorf("inspect wake board identity: %w", err)
+	}
 	for _, row := range rows {
 		if row.Source != source || row.Total < 0 {
 			return stats, fmt.Errorf("local wake counter metadata conflicts: %w", model.ErrInvalidInput)
@@ -68,7 +75,7 @@ func inspectWakeBudget(ctx context.Context, store WakeBudgetReader, state *oploc
 	}
 	stats.recipients = len(mirrors)
 	for _, mirror := range mirrors {
-		if mirror.Sources[source].Committed > local[mirror.Recipient] {
+		if wakeBudgetDiagnosticFloor(mirror, source, boardID) > local[mirror.Recipient] {
 			stats.lower++
 		}
 		if mirror.Rewinds > 0 {
@@ -86,4 +93,30 @@ func inspectWakeBudget(ctx context.Context, store WakeBudgetReader, state *oploc
 func wakeBudgetDoctorFailure(err error) DoctorResult {
 	return DoctorResult{Status: DoctorFail, Detail: "Wake accounting cannot be read: " + err.Error(),
 		Fix: "Preserve protected budget records; repair the reported access or data problem, then run mtix doctor --json. Never delete the mirror to return allowance."}
+}
+
+const wakeBudgetIdentityCaveat = "Identity-less restores may under-count history, never over-count; existing recipient credits and debt are retained."
+
+func wakeBudgetDiagnosticFloor(m oplocal.WakeBudgetMirror, source, boardID string) int64 {
+	row := m.Sources[source]
+	if boardID == "" {
+		boardID = row.BoardID
+	}
+	if row.BoardID != "" && row.BoardID != boardID {
+		return m.Boards[boardID].Committed
+	}
+	return max(row.Committed, m.Boards[boardID].Committed)
+}
+
+func wakeBudgetDiagnosticID(ctx context.Context, store WakeBudgetReader) (string, error) {
+	if reader, ok := store.(interface {
+		WakeBudgetBoardID(context.Context) (string, error)
+	}); ok {
+		id, err := reader.WakeBudgetBoardID(ctx)
+		if err != nil {
+			return "", fmt.Errorf("read diagnostic wake board identity: %w", err)
+		}
+		return id, nil
+	}
+	return "", nil
 }

@@ -22,7 +22,7 @@ func (s *Store) ClaimWakeBudget(ctx context.Context, key model.WakeKey, lease ti
 	admit func(model.WakeBudgetProposal) (model.WakeBudgetDecision, error),
 ) (model.WakeBudgetResult, error) {
 	if err := validateWakeClaimInput(key, lease); err != nil {
-		return model.WakeBudgetResult{}, err
+		return model.WakeBudgetResult{}, fmt.Errorf("validate accounted wake claim: %w", err)
 	}
 	if admit == nil {
 		return model.WakeBudgetResult{}, fmt.Errorf("wake admission is required: %w", model.ErrInvalidInput)
@@ -31,14 +31,17 @@ func (s *Store) ClaimWakeBudget(ctx context.Context, key model.WakeKey, lease ti
 	err := s.withWriteTx(ctx, func(tx *sql.Tx) error {
 		proposal, err := s.wakeBudgetProposal(ctx, tx, key, lease)
 		if err != nil {
-			return err
+			return fmt.Errorf("read local wake accounting proposal: %w", err)
 		}
 		decision, err := admit(proposal)
 		if err != nil {
 			return fmt.Errorf("admit wake claim: %w", err)
 		}
 		result, err = applyWakeBudgetDecision(ctx, tx, key, proposal, decision)
-		return err
+		if err != nil {
+			return fmt.Errorf("apply accounted wake decision: %w", err)
+		}
+		return nil
 	}, false)
 	if err != nil {
 		return model.WakeBudgetResult{}, fmt.Errorf("claim accounted wake: %w", err)
@@ -50,11 +53,19 @@ func (s *Store) wakeBudgetProposal(ctx context.Context, tx *sql.Tx, key model.Wa
 	var p model.WakeBudgetProposal
 	var err error
 	if p.Snapshot, err = s.readWakeBudgetSnapshot(ctx, tx, key.Recipient()); err != nil {
-		return p, err
+		return p, fmt.Errorf("prepare local wake accounting proposal: %w", err)
+	}
+	p.BoardCandidate = p.Snapshot.BoardID
+	if p.BoardCandidate == "" {
+		id, identityErr := uuid.NewRandom()
+		if identityErr != nil {
+			return p, fmt.Errorf("generate local wake board identity: %w", identityErr)
+		}
+		p.BoardCandidate = id.String()
 	}
 	previous, outcome, found, err := readWakeAttempt(ctx, tx, key)
 	if err != nil {
-		return p, err
+		return p, fmt.Errorf("prepare local wake accounting proposal: %w", err)
 	}
 	now := s.clock().UTC()
 	if found && (outcome != model.WakeClaimed || now.Sub(previous.ClaimedAt) < lease) {
@@ -79,6 +90,11 @@ func applyWakeBudgetDecision(ctx context.Context, tx *sql.Tx, key model.WakeKey,
 	if d.Floor < 0 {
 		return r, fmt.Errorf("protected wake counter floor is negative: %w", model.ErrInvalidInput)
 	}
+	id, err := acceptWakeBudgetBoardID(ctx, tx, p, d.BoardID)
+	if err != nil {
+		return r, fmt.Errorf("accept wake board identity: %w", err)
+	}
+	r.Snapshot.BoardID = id
 	r.Snapshot.Total = max(r.Snapshot.Total, d.Floor)
 	if p.Claimable && d.Allow {
 		if r.Snapshot.Total == math.MaxInt64 {
@@ -86,13 +102,13 @@ func applyWakeBudgetDecision(ctx context.Context, tx *sql.Tx, key model.WakeKey,
 		}
 		r.Snapshot.Total++
 		if err := writeWakeAttempt(ctx, tx, p.Attempt); err != nil {
-			return r, err
+			return r, fmt.Errorf("apply local wake accounting writes: %w", err)
 		}
 		r.Attempt, r.Won = p.Attempt, true
 	}
 	if r.Snapshot.Total != p.Snapshot.Total {
 		if err := writeWakeBudgetTotal(ctx, tx, key.Recipient(), r.Snapshot.Total); err != nil {
-			return r, err
+			return r, fmt.Errorf("apply local wake accounting writes: %w", err)
 		}
 	}
 	return r, nil
@@ -102,5 +118,8 @@ func writeWakeBudgetTotal(ctx context.Context, tx *sql.Tx, key model.WakeRecipie
 	result, err := tx.ExecContext(ctx, `INSERT INTO wake_budget_counters(agent_id,host_id,uid,total) VALUES(?,?,?,?)
 		ON CONFLICT(agent_id,host_id,uid) DO UPDATE SET total=MAX(total,excluded.total)`,
 		key.AgentID, key.HostID, key.UID, total)
-	return checkWakeWrite(result, err, "persist wake counter")
+	if writeErr := checkWakeWrite(result, err, "persist wake counter"); writeErr != nil {
+		return fmt.Errorf("write local wake budget total: %w", writeErr)
+	}
+	return nil
 }

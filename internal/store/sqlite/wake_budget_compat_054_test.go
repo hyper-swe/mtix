@@ -24,6 +24,7 @@ func TestWakeBudget_054ReaderMutatesWithoutChangingAccounting(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, before, 1)
 	require.Equal(t, int64(1), before[0].Total)
+	require.NotEmpty(t, before[0].BoardID)
 	ledger, err := f.store.WakeLedgerStats(t.Context())
 	require.NoError(t, err)
 	var version string

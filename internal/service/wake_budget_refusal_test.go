@@ -49,9 +49,10 @@ func TestWakeBudget_UnsafeAdmissionPreservesProtectedState(t *testing.T) {
 			state, recipient, source := wakePublisherFixture(t)
 			key := model.WakeKey{AgentID: recipient.AgentID, HostID: recipient.HostID, UID: recipient.UID, EventSeq: 1}
 			now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
-			p := model.WakeBudgetProposal{Snapshot: model.WakeBudgetSnapshot{Source: source, Total: 5}, Claimable: true,
+			p := model.WakeBudgetProposal{Snapshot: model.WakeBudgetSnapshot{Source: source, BoardID: source, Total: 5}, BoardCandidate: source, Claimable: true,
 				Attempt: model.WakeAttempt{Key: key, Token: "fresh"}}
 			change := &unsafeWakeFixtureChange{state: state, key: recipient, source: source, now: &now, proposal: &p}
+			bindUnsafeWakeFixture(t, change)
 			mutateUnsafeWakeFixture(t, name, change)
 			before, _, err := state.ReadWakeBudget(recipient)
 			require.NoError(t, err)
@@ -94,7 +95,8 @@ func mutateUnsafeWakeFixture(t *testing.T, name string, change *unsafeWakeFixtur
 		case "rewind overflow":
 			m.Rewinds, p.Snapshot.Total = math.MaxUint64, 0
 		case "counter exhausted":
-			m.Sources[change.source] = oplocal.WakeBudgetSource{Total: math.MaxInt64, Committed: math.MaxInt64}
+			m.Sources[change.source] = oplocal.WakeBudgetSource{BoardID: change.source, Total: math.MaxInt64, Committed: math.MaxInt64}
+			m.Boards[change.source] = oplocal.WakeBudgetBoard{Total: math.MaxInt64, Committed: math.MaxInt64}
 			p.Snapshot.Total = math.MaxInt64
 		}
 		return save()
@@ -128,4 +130,15 @@ func TestWakeBudget_InvalidPolicyStopsBeforeAccounting(t *testing.T) {
 			require.False(t, won)
 		})
 	}
+}
+
+func bindUnsafeWakeFixture(t *testing.T, c *unsafeWakeFixtureChange) {
+	t.Helper()
+	require.NoError(t, c.state.UpdateWakeBudget(t.Context(), c.key, func(m *oplocal.WakeBudgetMirror, save func() error) error {
+		row := m.Sources[c.source]
+		row.BoardID = c.source
+		m.Sources[c.source] = row
+		m.Boards = map[string]oplocal.WakeBudgetBoard{c.source: {Total: row.Total, Committed: row.Committed}}
+		return save()
+	}))
 }

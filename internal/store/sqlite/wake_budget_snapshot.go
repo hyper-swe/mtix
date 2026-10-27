@@ -24,7 +24,11 @@ type wakeBudgetQuery interface {
 // WakeAckMark counts effective covered sequence positions without mutation.
 // Selective rows below the cumulative cursor do not add coverage twice.
 func (s *Store) WakeAckMark(ctx context.Context, agent string) (int64, error) {
-	return readWakeAckMark(ctx, s.readDB, agent)
+	mark, err := readWakeAckMark(ctx, s.readDB, agent)
+	if err != nil {
+		return 0, fmt.Errorf("read local wake acknowledgement mark: %w", err)
+	}
+	return mark, nil
 }
 
 func readWakeAckMark(ctx context.Context, q wakeBudgetQuery, agent string) (int64, error) {
@@ -82,11 +86,17 @@ func (s *Store) readWakeBudgetSnapshot(ctx context.Context, tx *sql.Tx, key mode
 	var snap model.WakeBudgetSnapshot
 	var err error
 	if snap.Source, err = s.WakeBudgetSource(ctx); err != nil {
-		return snap, err
+		return snap, fmt.Errorf("read local wake accounting snapshot: %w", err)
 	}
 	if snap.Total, err = readWakeBudgetTotal(ctx, tx, key); err != nil {
-		return snap, err
+		return snap, fmt.Errorf("read local wake accounting snapshot: %w", err)
+	}
+	if snap.BoardID, err = readWakeBudgetBoardID(ctx, tx); err != nil {
+		return snap, fmt.Errorf("read wake snapshot identity: %w", err)
 	}
 	snap.AckMark, err = readWakeAckMark(ctx, tx, key.AgentID)
-	return snap, err
+	if err != nil {
+		return snap, fmt.Errorf("read snapshot acknowledgement coverage: %w", err)
+	}
+	return snap, nil
 }

@@ -478,6 +478,14 @@ the exact config command. The callable dispatcher enforces recipient budgets
 across boards and durable backoff; scanner discovery and hold re-arm remain
 separate features. Configuring settings does not install a wake route.
 
+A local board identity keeps moved boards and ordinary database copies on the
+same protected counter floor, including moves back to an earlier path. Each
+fresh fenced attempt still spends one credit. The identity stays local; exports
+and sync do not carry it. Identity-less restores at an unseen path, and legacy
+mirrors without an identity, may under-count history, never over-count. They
+establish an uncharged history baseline while retaining existing recipient
+credits and unacked debt. Doctor reads this state without creating an identity.
+
 Ack after handling keeps backoff quiet. Each new acknowledgement on any board
 resets this host recipient's delay; repeating an already acknowledged event or
 prefix does not reset it or return rate allowance. After five unacknowledged

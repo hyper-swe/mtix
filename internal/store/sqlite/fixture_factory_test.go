@@ -46,9 +46,17 @@ func FixtureStoreForTest(t *testing.T, path string) *Store {
 	return s
 }
 
-func TestFixtureStore_MatchesFreshDefaultsAndPragmas(t *testing.T) {
+// TestFreshFixtureRoutes_RealTree_UseFreshConstructor runs the source-routing
+// policy independently and proves the guard still rejects an image-backed route.
+func TestFreshFixtureRoutes_RealTree_UseFreshConstructor(t *testing.T) {
 	requireFreshFixtureRoutes(t)
+	if os.Getenv("MTIX_TEST_FRESH_ROUTES_CHILD") == "1" {
+		return
+	}
+	requireFreshFixtureRoutesRejectsImage(t)
+}
 
+func TestFixtureStore_MatchesFreshDefaultsAndPragmas(t *testing.T) {
 	fresh := openImageFixture(t, filepath.Join(t.TempDir(), "fresh.db"))
 	a := FixtureStoreForTest(t, filepath.Join(t.TempDir(), "a.db"))
 	b := FixtureStoreForTest(t, filepath.Join(t.TempDir(), "b.db"))

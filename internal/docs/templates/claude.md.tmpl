@@ -108,7 +108,7 @@ A `hub-privileges` **WARN** from `mtix sync doctor` is acceptable for everyday u
 
 If you encounter an error, check [TROUBLESHOOTING.md]({{ .DocsPath }}TROUBLESHOOTING.md) for common solutions. If a command prints `mtix: auto-import of .mtix/tasks.json refused`, nothing was imported: never run the `--mode replace` import it names just to silence it, because that deletes the comments, activity and tasks it lists and needs the ticket count typed at an interactive terminal, it cannot run unattended; follow the "Auto-import of .mtix/tasks.json Refused" procedure in [AGENTS.md]({{ .DocsPath }}AGENTS.md). If blocked, record the reason with `mtix_annotate`, then call `mtix_defer` (with an optional `until` wake time) rather than abandoning the task. Always document anomalies with `mtix_annotate`.
 
-If `mtix sync doctor` fails its `quarantined events` check, `mtix sync pull` has held pulled events it could not validate or apply; every pull retries them. Run `mtix sync pull` again; if events remain, list them with `mtix sync quarantine list` (read-only) and give the operator the event ids and reasons. **Never** delete quarantine rows, edit the local database, or raise `sync.max_lamport_jump` without the user's confirmation. After reviewing an invalid-node-id event with source `pull` or `sweep`, run `mtix sync quarantine acknowledge <event-id> --reason <text>`; the admin skill has the recovery runbook. Doctor passes this check only when no unacknowledged pulled event remains; acknowledged events stay retained and unapplied. Doctor's Fix supplies the first eligible event id and eligible count in a shell-quoted acknowledgement command; review its reason, then run doctor again after each acknowledgement.
+If `mtix sync doctor` fails its `quarantined events` check, `mtix sync pull` has held pulled events it could not validate or apply; every pull retries them. Run `mtix sync pull` again; if events remain, list them with `mtix sync quarantine list` (read-only) and give the operator the event ids and reasons. **Never** delete quarantine rows, edit the local database, or raise `sync.max_lamport_jump` without the user's confirmation. After reviewing an invalid-node-id event with source `pull` or `sweep`, run `mtix sync quarantine acknowledge <event-id> --reason <text>`; the admin skill has the recovery runbook. Doctor passes this check only when no unacknowledged pulled event remains; acknowledged events stay retained and unapplied. Doctor's Fix supplies the first eligible event id and eligible count in a shell-quoted acknowledgement command; review its reason, then run doctor again after each acknowledgement. Text recovery hints use an escaped label and an inspect command when an id needs special handling. Use `mtix sync quarantine list --json` and report the original id to the operator. JSON retains its existing hint data.
 
 If a command prints `WARN: ... over the 65536-byte sync limit`, or `mtix sync doctor` fails its `held push events` check, `mtix sync push` holds events the hub would refuse (and every change of the subtree of a task whose creation is held, and every dependency link or unlink made while a task creation is held) and pushes the rest. Follow the fix doctor names for each held event: shorten or split a field edit and save it again; for a held task creation, stop editing that task and tell the operator; a dependent resolves with the held creation it depends on, and a held link pushes once no creation made before it is held; a clock hold needs this machine's clock checked. **Never** delete quarantine rows or use `mtix sync reconcile --discard-local` (it deletes local tasks and unpushed changes, needs `mtix sync push` and `pending` 0 first, and asks for the ticket count at an interactive terminal) to clear held events.
 
@@ -171,6 +171,19 @@ review of that hook; other hook approvals remain independent.
 ## Health diagnostics
 
 <!-- AUTO-GENERATED: HEALTH_DIAGNOSTICS -->
+
+This build stores and reports `wake.live` and `wake.max_hop_depth`.
+Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect
+when the wake scanner ships. They do not control live delivery in this build.
+
+Store the host-local off setting with `mtix config set wake.live off`;
+append `--agent worker` for one agent. Limits default unlimited and the guards
+stay always on (hop depth 32, unacked threshold 5). Loosening requires terminal
+stdin; tightening and live-off do not. The health report lists effective
+values and sources in `wake.settings` and ignored workspace authority keys in
+`settings.ignored-workspace-key`. Read the admin skill before changing limits;
+you should not need routine tuning. Handle and ack each event explicitly.
+
 On an opened local board, `wake.ledger` reports retained rows and protocol refusal;
 `--fix` preserves wake state. See the multi-agent skill for lease and retry behavior.
 Plain `mtix doctor` preserves operator-local files, including stale attach shims

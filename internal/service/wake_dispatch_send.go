@@ -12,7 +12,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
-func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey) error {
+func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop int64) error {
 	attempt, won, err := d.store.ClaimWake(ctx, key, time.Minute)
 	if err != nil {
 		return fmt.Errorf("claim wake candidate: %w", err)
@@ -23,6 +23,7 @@ func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey) error 
 	if attempt.Token == "" || attempt.Key != key {
 		return fmt.Errorf("wake attempt fence is missing or mismatched: %w", model.ErrConflict)
 	}
+	attempt.Hop = hop
 	sendErr := d.send(ctx, attempt)
 	outcome := model.WakeDelivered
 	if sendErr != nil {

@@ -56,7 +56,7 @@ func (s *Store) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error, noti
 	if err = fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			// Both the original error and rollback error matter.
-			return s.classifyWriteError(fmt.Errorf("rollback failed (%v) after error: %w", rbErr, err))
+			return s.classifyWriteError(fmt.Errorf("rollback failed (%w) after error: %w", rbErr, err))
 		}
 		return s.classifyWriteError(err)
 	}

@@ -22,17 +22,17 @@ const quarantineListPage = 500
 // failed, when it was first seen and last attempted, and the version of
 // mtix that first quarantined it.
 type QuarantinedEvent struct {
-	EventID         string                            `json:"event_id"`
-	NodeID          string                            `json:"node_id"`
-	OpType          string                            `json:"op_type"`
-	LamportClock    int64                             `json:"lamport_clock"`
-	Source          string                            `json:"source"`
-	Reason          string                            `json:"reason"`
-	Attempts        int                               `json:"attempts"`
-	FirstSeen       string                            `json:"first_seen"`
-	LastAttempt     string                            `json:"last_attempt"`
-	CLIVersion      string                            `json:"cli_version"`
-	Acknowledgement *sqlite.QuarantineAcknowledgement `json:"acknowledgement,omitempty"`
+	EventID         string                     `json:"event_id"`
+	NodeID          string                     `json:"node_id"`
+	OpType          string                     `json:"op_type"`
+	LamportClock    int64                      `json:"lamport_clock"`
+	Source          string                     `json:"source"`
+	Reason          string                     `json:"reason"`
+	Attempts        int                        `json:"attempts"`
+	FirstSeen       string                     `json:"first_seen"`
+	LastAttempt     string                     `json:"last_attempt"`
+	CLIVersion      string                     `json:"cli_version"`
+	Acknowledgement *QuarantineAcknowledgement `json:"acknowledgement,omitempty"`
 }
 
 // ListQuarantined returns every quarantined event, held push events
@@ -56,11 +56,16 @@ func (s *SyncService) ListQuarantined(ctx context.Context) ([]QuarantinedEvent, 
 			if err != nil {
 				return nil, fmt.Errorf("list quarantine acknowledgements: %w", err)
 			}
+			var receipt *QuarantineAcknowledgement
+			if ack != nil {
+				converted := quarantineAcknowledgementOutput(*ack)
+				receipt = &converted
+			}
 			out = append(out, QuarantinedEvent{
 				EventID: q.EventID, NodeID: q.NodeID, OpType: q.OpType, LamportClock: q.Lamport,
 				Source: q.Source, Reason: q.Reason, Attempts: q.Attempts,
 				FirstSeen: q.FirstSeen, LastAttempt: q.LastAttempt, CLIVersion: q.CLIVersion,
-				Acknowledgement: ack,
+				Acknowledgement: receipt,
 			})
 		}
 		last := page[len(page)-1]

@@ -46,6 +46,10 @@ The read-only export.schema check compares the schema_version .mtix/tasks.json
 declares with the one this binary writes. Every write re-exports the file in
 this binary's schema; sync.auto_sync does not stop that. WARN prints the fix.
 
+wake.settings reports effective host/agent wake values and sources.
+settings.ignored-workspace-key reports authority keys ignored in config.yaml
+and prints exact host-local config commands. These checks never change settings.
+
 Setup checks will be registered by their future features.`
 
 func newDoctorCmd() *cobra.Command { return newDoctorCommand(newConfiguredDoctorService) }
@@ -151,6 +155,9 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	}
 	if err := registerPermissionDoctor(svc); err != nil {
 		return nil, fmt.Errorf("register wake permission diagnostics: %w", err)
+	}
+	if err := registerWakeSettingsDoctor(svc); err != nil {
+		return nil, fmt.Errorf("register wake settings diagnostics: %w", err)
 	}
 	return svc, registerConfiguredWakeLedgerDoctor(svc)
 }

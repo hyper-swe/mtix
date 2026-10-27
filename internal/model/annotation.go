@@ -31,6 +31,8 @@ type Annotation struct {
 	// comment. Carried onto the emitted comment event's payload so the
 	// addressee's inbox (a query over the journal) surfaces it.
 	Addressee string `json:"addressee,omitempty"`
+	// Hop is transient send metadata, retained only in the comment event payload.
+	Hop int64 `json:"-"`
 }
 
 // SortAnnotations returns a copy of annotations ordered by (CreatedAt, ID),

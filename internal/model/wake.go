@@ -22,6 +22,8 @@ type WakeAttempt struct {
 	Key       WakeKey
 	Token     string
 	ClaimedAt time.Time
+	// Hop is the maximum covered-event hop carried into this wake process.
+	Hop int64
 }
 
 // WakeOutcome is claimed until a send completes; both send outcomes are terminal.

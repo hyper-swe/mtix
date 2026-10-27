@@ -32,6 +32,7 @@ type Config struct {
 // Hook is one subscription: a match predicate plus one or more delivery
 // adapters. All Match fields compose with AND (FR-19.2).
 type Hook struct {
+	wakeEnv []string
 	Name    string   `yaml:"name"`
 	Match   Match    `yaml:"match"`
 	Deliver []string `yaml:"deliver"`

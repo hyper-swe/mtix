@@ -109,6 +109,7 @@ func (svc *PromptService) AddAnnotation(ctx context.Context, nodeID, text, autho
 		CreatedAt: now,
 		Resolved:  false,
 		Addressee: addressee,
+		Hop:       addressedCommentHop(addressee, svc.logger),
 	}
 
 	// One atomic store append: no read-modify-write outside a transaction (MTIX-148).

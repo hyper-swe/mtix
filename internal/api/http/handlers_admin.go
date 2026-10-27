@@ -5,6 +5,7 @@ package http
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -34,6 +35,14 @@ func (s *Server) setConfig(c *gin.Context) {
 		return
 	}
 
+	// Operator authority cannot come from the server process terminal.
+	// Validate the entire request before applying any workspace changes.
+	for key := range req {
+		if model.IsWakeSetting(key) {
+			HandleError(c, fmt.Errorf("host wake settings require mtix config set: %w", model.ErrInvalidInput))
+			return
+		}
+	}
 	results := make(map[string]string)
 	for key, value := range req {
 		prev, err := s.configWriter.Set(key, value)

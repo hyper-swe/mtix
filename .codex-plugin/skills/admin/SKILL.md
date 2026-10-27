@@ -426,6 +426,12 @@ A task id has the form `PREFIX-<number>` followed by `.<number>` segments: an up
 mtix sync quarantine acknowledge <event-id> --reason '<why this event is accepted as unapplied>'
 ```
 
+Doctor's Fix supplies the first eligible event id and eligible count in a shell-quoted acknowledgement command; review its reason, then run doctor again after each acknowledgement. For example, a Fix for a reviewed event can name its concrete id:
+
+```bash
+mtix sync quarantine acknowledge --reason 'reviewed invalid node id; accepted as unapplied' -- '0193fb00-0000-7000-8000-000000000001'
+```
+
 Only retained events with `source` `pull` or `sweep` whose raw event fails the node-id validator are eligible. Stored reason text alone cannot grant eligibility. A missing or blank reason, a held push event, an unrelated failure, malformed raw JSON or a raw event-id mismatch is refused. No terminal or hub connection is required. The resolved process author, required reason, UTC time and exact raw-event SHA256 form an immutable local receipt; repeating a valid acknowledgement returns the first receipt. Reasons are limited to 500 UTF-8 bytes. On a repeat, text explains that the first receipt stands and the supplied reason was not recorded; JSON sets `already_acknowledged` to `true` (`false` for a new receipt). The receipt is local to this replica and is never exported, imported or synced.
 
 The command retains the raw quarantine and original reason. It never applies, removes or repairs the event, changes sync clocks or cursors, changes the hub, or acknowledges another replica. Every pull still retries the event. A different raw event reusing the same id needs a fresh acknowledgement. Do not try to apply the invalid event.

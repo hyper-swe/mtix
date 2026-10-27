@@ -478,12 +478,21 @@ for a in "$@"; do
 done
 emit() { if [ -n "$jqexpr" ]; then printf '%s' "$1" | jq -r "$jqexpr"; else printf '%s\n' "$1"; fi; }
 case "$1 $2" in
-"workflow run") exit 0 ;;
+"workflow run")
+  [ -n "$STUB_FAIL_DISPATCH" ] && { echo "HTTP 502 bad gateway" >&2; exit 1; }
+  case "$*" in *base_commit=*) [ -n "$STUB_REJECT_BASE" ] && { echo "Unexpected inputs provided: base_commit" >&2; exit 1; } ;; esac
+  exit 0 ;;
 "run list")
+  case "$*" in *"--status success"*) emit "${STUB_REUSE_RUNS:-[]}"; exit 0 ;; esac
   n=$(cat "$D/lists" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$D/lists"
   if [ -n "$STUB_LIST_EMPTY_FIRST" ] && [ "$n" -eq 1 ]; then emit '[]'; exit 0; fi
   emit "[{\"databaseId\":1111,\"displayTitle\":\"remote-bar ci-scratch/other\"},{\"databaseId\":4242,\"displayTitle\":\"remote-bar $(cat "$D/ref")\"}]" ;;
 "run cancel") exit 0 ;;
+"api repos/hyper-swe/mtix/contents/.github/workflows/remote-bar.yml"*)
+  case "$*" in
+  *"ref=main"*) [ -n "$STUB_MAIN_BLOB" ] && emit "{\"sha\":\"$STUB_MAIN_BLOB\"}" ;;
+  *) [ -n "$STUB_RUN_BLOB" ] && emit "{\"sha\":\"$STUB_RUN_BLOB\"}" ;;
+  esac ;;
 "run view")
   case "$*" in
   *"--json status"*)

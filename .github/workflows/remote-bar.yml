@@ -14,7 +14,9 @@
 # token is read-only.
 name: remote-bar
 
-run-name: remote-bar ${{ inputs.scratch_ref }}
+# The run-name carries the match data scripts/remote-bar.sh uses to reuse a
+# green run for an identical tree, os, web option and wrapper (MTIX-112.17.26).
+run-name: remote-bar ${{ inputs.scratch_ref }} tree=${{ inputs.expected_tree }} base=${{ inputs.base_commit }} os=${{ inputs.os }} web=${{ inputs.web }} wrapper=${{ inputs.wrapper_version }}
 
 on:
   workflow_dispatch:
@@ -31,6 +33,11 @@ on:
         description: "scripts/remote-bar.sh version that dispatched this run"
         required: true
         type: string
+      base_commit:
+        description: "main commit the snapshot was cut from (40 hex); lets a green run be reused only on the same main"
+        required: false
+        type: string
+        default: ""
       os:
         description: "runner for the Go bar"
         required: false
@@ -49,7 +56,68 @@ permissions:
   contents: read
 
 jobs:
+  validate:
+    # Every value written into the run-name above is checked against a strict
+    # pattern, so the title cannot be forged to look like another run's. A run
+    # whose title was not valid fails here and is never reused (MTIX-112.17.26).
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    env:
+      SCRATCH_REF: ${{ inputs.scratch_ref }}
+      EXPECTED_TREE: ${{ inputs.expected_tree }}
+      BASE_COMMIT: ${{ inputs.base_commit }}
+      RUN_OS: ${{ inputs.os }}
+      RUN_WEB: ${{ inputs.web }}
+      WRAPPER_VERSION: ${{ inputs.wrapper_version }}
+    steps:
+      - name: Identify run
+        run: |
+          echo "remote-bar runner=$RUNNER_NAME os=$RUNNER_OS run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID wrapper=$WRAPPER_VERSION ref=$SCRATCH_REF job=validate"
+      - name: Validate run metadata
+        # Each value is checked as a whole string: a newline or carriage
+        # return is refused first, because line-based tools match one line.
+        run: |
+          fail() { echo "invalid run metadata: $1" >&2; exit 1; }
+          check() {
+            case "$2" in *$'\n'* | *$'\r'*) fail "$1" ;; esac
+            [[ "$2" =~ $3 ]] || fail "$1"
+          }
+          check scratch_ref "$SCRATCH_REF" '^ci-scratch/[A-Za-z0-9._-]+$'
+          check expected_tree "$EXPECTED_TREE" '^[0-9a-f]{40}$'
+          [ -z "$BASE_COMMIT" ] || check base_commit "$BASE_COMMIT" '^[0-9a-f]{40}$'
+          check os "$RUN_OS" '^(ubuntu-22[.]04|macos-latest)$'
+          check web "$RUN_WEB" '^(true|false)$'
+          check wrapper_version "$WRAPPER_VERSION" '^[0-9]+$'
+          echo "run metadata valid"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.scratch_ref }}
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify snapshot tree
+        run: |
+          actual="$(git rev-parse 'HEAD^{tree}')"
+          if [ "$actual" != "$EXPECTED_TREE" ]; then
+            echo "tree mismatch: expected $EXPECTED_TREE, checked out $actual" >&2
+            exit 1
+          fi
+          echo "tree verified: $actual"
+          if [ -n "${BASE_COMMIT:-}" ]; then
+            parents="$(git rev-list --parents -n 1 HEAD | wc -w)"
+            if [ "$parents" -ne 2 ]; then
+              echo "base mismatch: the snapshot must have exactly one parent" >&2
+              exit 1
+            fi
+            actual_base="$(git rev-parse 'HEAD^')"
+            if [ "$actual_base" != "$BASE_COMMIT" ]; then
+              echo "base mismatch: expected $BASE_COMMIT, parent is $actual_base" >&2
+              exit 1
+            fi
+            echo "base verified: $actual_base"
+          fi
+
   bar:
+    needs: validate
     if: ${{ inputs.os != 'macos-latest' }}
     runs-on: ubuntu-22.04
     timeout-minutes: 90
@@ -72,6 +140,7 @@ jobs:
       WRAPPER_VERSION: ${{ inputs.wrapper_version }}
       SCRATCH_REF: ${{ inputs.scratch_ref }}
       EXPECTED_TREE: ${{ inputs.expected_tree }}
+      BASE_COMMIT: ${{ inputs.base_commit }}
     steps:
       - name: Identify run
         run: |
@@ -92,6 +161,22 @@ jobs:
             exit 1
           fi
           echo "tree verified: $actual"
+          # The run-name claims base_commit, so the snapshot's single parent
+          # must really be that commit, or a green run could be reused for a
+          # different main (MTIX-112.17.26).
+          if [ -n "${BASE_COMMIT:-}" ]; then
+            parents="$(git rev-list --parents -n 1 HEAD | wc -w)"
+            if [ "$parents" -ne 2 ]; then
+              echo "base mismatch: the snapshot must have exactly one parent" >&2
+              exit 1
+            fi
+            actual_base="$(git rev-parse 'HEAD^')"
+            if [ "$actual_base" != "$BASE_COMMIT" ]; then
+              echo "base mismatch: expected $BASE_COMMIT, parent is $actual_base" >&2
+              exit 1
+            fi
+            echo "base verified: $actual_base"
+          fi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -121,6 +206,7 @@ jobs:
           go list ./... | grep -v node_modules | xargs "$(go env GOPATH)/bin/govulncheck"
 
   bar-cmd:
+    needs: validate
     # MTIX-112.17.24: the cmd/mtix tests in three deterministic shards (see
     # scripts/cmd-mtix-shards.sh), each with its own PostgreSQL service. Same
     # flags as test-race: -race, -count=1, 20m, nothing skipped.
@@ -150,6 +236,7 @@ jobs:
       WRAPPER_VERSION: ${{ inputs.wrapper_version }}
       SCRATCH_REF: ${{ inputs.scratch_ref }}
       EXPECTED_TREE: ${{ inputs.expected_tree }}
+      BASE_COMMIT: ${{ inputs.base_commit }}
       SHARD: ${{ matrix.shard }}
     steps:
       - name: Identify run
@@ -168,6 +255,22 @@ jobs:
             exit 1
           fi
           echo "tree verified: $actual"
+          # The run-name claims base_commit, so the snapshot's single parent
+          # must really be that commit, or a green run could be reused for a
+          # different main (MTIX-112.17.26).
+          if [ -n "${BASE_COMMIT:-}" ]; then
+            parents="$(git rev-list --parents -n 1 HEAD | wc -w)"
+            if [ "$parents" -ne 2 ]; then
+              echo "base mismatch: the snapshot must have exactly one parent" >&2
+              exit 1
+            fi
+            actual_base="$(git rev-parse 'HEAD^')"
+            if [ "$actual_base" != "$BASE_COMMIT" ]; then
+              echo "base mismatch: expected $BASE_COMMIT, parent is $actual_base" >&2
+              exit 1
+            fi
+            echo "base verified: $actual_base"
+          fi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -179,6 +282,7 @@ jobs:
           go test ./cmd/mtix/ -race -count=1 -p 1 -timeout 20m -run "$pattern"
 
   bar-macos:
+    needs: validate
     # Native macOS bar (Darwin durability, macOS race timings). No service
     # containers on macOS, so no PostgreSQL: the PG-gated suites skip.
     if: ${{ inputs.os == 'macos-latest' }}
@@ -188,6 +292,7 @@ jobs:
       WRAPPER_VERSION: ${{ inputs.wrapper_version }}
       SCRATCH_REF: ${{ inputs.scratch_ref }}
       EXPECTED_TREE: ${{ inputs.expected_tree }}
+      BASE_COMMIT: ${{ inputs.base_commit }}
     steps:
       - name: Identify run
         run: |
@@ -208,6 +313,22 @@ jobs:
             exit 1
           fi
           echo "tree verified: $actual"
+          # The run-name claims base_commit, so the snapshot's single parent
+          # must really be that commit, or a green run could be reused for a
+          # different main (MTIX-112.17.26).
+          if [ -n "${BASE_COMMIT:-}" ]; then
+            parents="$(git rev-list --parents -n 1 HEAD | wc -w)"
+            if [ "$parents" -ne 2 ]; then
+              echo "base mismatch: the snapshot must have exactly one parent" >&2
+              exit 1
+            fi
+            actual_base="$(git rev-parse 'HEAD^')"
+            if [ "$actual_base" != "$BASE_COMMIT" ]; then
+              echo "base mismatch: expected $BASE_COMMIT, parent is $actual_base" >&2
+              exit 1
+            fi
+            echo "base verified: $actual_base"
+          fi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -235,6 +356,7 @@ jobs:
           go list ./... | grep -v node_modules | xargs "$(go env GOPATH)/bin/govulncheck"
 
   web:
+    needs: validate
     # Optional (input web): the web checks CI and release run, plus a byte
     # compare of a fresh build against the committed internal/web/dist.
     if: ${{ inputs.web }}
@@ -244,6 +366,7 @@ jobs:
       WRAPPER_VERSION: ${{ inputs.wrapper_version }}
       SCRATCH_REF: ${{ inputs.scratch_ref }}
       EXPECTED_TREE: ${{ inputs.expected_tree }}
+      BASE_COMMIT: ${{ inputs.base_commit }}
     steps:
       - name: Identify run
         run: |
@@ -251,6 +374,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.scratch_ref }}
+          fetch-depth: 2
           persist-credentials: false
       - name: Verify snapshot tree
         run: |
@@ -260,6 +384,22 @@ jobs:
             exit 1
           fi
           echo "tree verified: $actual"
+          # The run-name claims base_commit, so the snapshot's single parent
+          # must really be that commit, or a green run could be reused for a
+          # different main (MTIX-112.17.26).
+          if [ -n "${BASE_COMMIT:-}" ]; then
+            parents="$(git rev-list --parents -n 1 HEAD | wc -w)"
+            if [ "$parents" -ne 2 ]; then
+              echo "base mismatch: the snapshot must have exactly one parent" >&2
+              exit 1
+            fi
+            actual_base="$(git rev-parse 'HEAD^')"
+            if [ "$actual_base" != "$BASE_COMMIT" ]; then
+              echo "base mismatch: expected $BASE_COMMIT, parent is $actual_base" >&2
+              exit 1
+            fi
+            echo "base verified: $actual_base"
+          fi
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"

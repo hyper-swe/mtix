@@ -16,7 +16,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, macos-latest]
-        shard: [sqlite, cli, other]
+        shard: [cli, other]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -31,10 +31,9 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go mod verify
-      # MTIX-112.17.22: sqlite and CLI each approached the unchanged 20m
-      # per-package budget while sharing a runner. Give them separate
-      # runners; every other package remains in the third explicit list.
-      # Every OS validates the complete partition before selecting a shard.
+      # MTIX-112.17.29: SQLite runs in three test shards below. CLI and
+      # the remaining packages keep their explicit package lists. Every
+      # OS validates the complete package partition before selection.
       - name: Verify exact package coverage
         run: bash scripts/ci-go-shards.sh check
       - name: Run shard race tests
@@ -48,18 +47,48 @@ jobs:
           done <<< "$package_list"
           go test "${packages[@]}" -race -count=1 -timeout 20m
 
+  test-go-sqlite:
+    # MTIX-112.17.29: the unsharded SQLite race run approached 20m on macOS.
+    # Reuse the remote bar's three exact test-name shards on each OS.
+    name: test-go-sqlite (${{ matrix.os }}, shard ${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+        shard: ["1", "2", "3"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go mod verify
+      - name: Verify exact package coverage
+        run: bash scripts/ci-go-shards.sh check
+      - name: Verify exact SQLite test coverage
+        run: bash scripts/ci-go-shards.sh test-check internal/store/sqlite 3
+      - name: Run SQLite shard race tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          pattern=$(bash scripts/ci-go-shards.sh test-pattern internal/store/sqlite 3 "$SHARD")
+          go test ./internal/store/sqlite/ -race -count=1 -timeout 20m -run "$pattern"
+
   test-go:
     name: test-go
-    needs: [test-go-shards]
+    needs: [test-go-shards, test-go-sqlite]
     if: ${{ always() }}
     runs-on: ubuntu-22.04
     steps:
       - name: Require every Go shard to succeed
         env:
           SHARD_RESULT: ${{ needs.test-go-shards.result }}
+          SQLITE_RESULT: ${{ needs.test-go-sqlite.result }}
         run: |
-          if [ "$SHARD_RESULT" != success ]; then
-            echo "Go race shards did not all succeed: $SHARD_RESULT" >&2
+          if [ "$SHARD_RESULT" != success ] || [ "$SQLITE_RESULT" != success ]; then
+            echo "Go race shards did not all succeed: packages=$SHARD_RESULT sqlite=$SQLITE_RESULT" >&2
             exit 1
           fi
 

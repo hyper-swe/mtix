@@ -60,7 +60,7 @@ func TestGoWorkflow_Shards_CoverBothOSesWithoutOptionalCases(t *testing.T) {
 	require.Equal(t, "test-go-shard (${{ matrix.os }}, ${{ matrix.shard }})", job.Name)
 	require.Equal(t, "${{ matrix.os }}", job.RunsOn)
 	require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, job.Strategy.Matrix.OS)
-	require.Equal(t, []string{"sqlite", "cli", "other"}, job.Strategy.Matrix.Shard)
+	require.Equal(t, []string{"cli", "other"}, job.Strategy.Matrix.Shard)
 	require.Empty(t, job.Strategy.Matrix.Include)
 	require.Empty(t, job.Strategy.Matrix.Exclude)
 	require.NotNil(t, job.Strategy.FailFast)
@@ -91,7 +91,7 @@ func TestGoWorkflow_Shards_CoverBothOSesWithoutOptionalCases(t *testing.T) {
 func TestGoWorkflow_Aggregate_RejectsEveryNonSuccessResult(t *testing.T) {
 	job := readCIJobs(t)["test-go"]
 	require.Equal(t, "test-go", job.Name)
-	require.Equal(t, []string{"test-go-shards"}, job.Needs)
+	require.Equal(t, []string{"test-go-shards", "test-go-sqlite"}, job.Needs)
 	require.Equal(t, "${{ always() }}", job.If)
 	require.Nil(t, job.ContinueOnError)
 	require.Len(t, job.Steps, 1)
@@ -99,21 +99,25 @@ func TestGoWorkflow_Aggregate_RejectsEveryNonSuccessResult(t *testing.T) {
 	require.Empty(t, step.If)
 	require.Nil(t, step.ContinueOnError)
 	require.Equal(t, "${{ needs.test-go-shards.result }}", step.Env["SHARD_RESULT"])
-	for _, result := range []string{"success", "failure", "cancelled", "skipped", "", "unknown"} {
-		t.Run("result="+result, func(t *testing.T) {
-			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", step.Run)
-			cmd.Env = append(os.Environ(), "SHARD_RESULT="+result)
-			out, err := cmd.CombinedOutput()
-			if result == "success" {
-				require.NoError(t, err, string(out))
-			} else {
-				require.Error(t, err, string(out))
-			}
-		})
+	require.Equal(t, "${{ needs.test-go-sqlite.result }}", step.Env["SQLITE_RESULT"])
+	results := []string{"success", "failure", "cancelled", "skipped", "", "unknown"}
+	for _, shard := range results {
+		for _, sqlite := range results {
+			t.Run("shards="+shard+"/sqlite="+sqlite, func(t *testing.T) {
+				cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", step.Run)
+				cmd.Env = append(os.Environ(), "SHARD_RESULT="+shard, "SQLITE_RESULT="+sqlite)
+				out, err := cmd.CombinedOutput()
+				if shard == "success" && sqlite == "success" {
+					require.NoError(t, err, string(out))
+				} else {
+					require.Error(t, err, string(out))
+				}
+			})
+		}
 	}
 }
 
-func TestGoWorkflow_CheckCount_MatchesTwentyOneChecks(t *testing.T) {
+func TestGoWorkflow_CheckCount_MatchesTwentyFiveChecks(t *testing.T) {
 	count := 0
 	for _, job := range readCIJobs(t) {
 		combinations := 1
@@ -125,7 +129,7 @@ func TestGoWorkflow_CheckCount_MatchesTwentyOneChecks(t *testing.T) {
 		}
 		count += combinations
 	}
-	require.Equal(t, 21, count)
+	require.Equal(t, 25, count)
 }
 
 // MTIX-112.17.24: cmd/mtix runs as three shards per PostgreSQL version.

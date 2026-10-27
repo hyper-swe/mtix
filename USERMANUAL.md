@@ -1602,7 +1602,7 @@ mtix import project-data.json --mode replace
 
 **Replace mode** deletes every node, dependency, agent and session, then writes the file's content with every field, annotations and activity included. An export followed by a replace import leaves the store as it was. The automatic import of a changed `.mtix/tasks.json` (after a `git pull` or checkout) is a replace import, but it is refused when it would delete local data (see "Automatic import of `.mtix/tasks.json`" below); `mtix import --mode replace` is gated since 0.5.4 (MTIX-90): it prints the ticket count and needs that count typed at an interactive terminal, so an agent never runs it: ask the user (see `docs/DESTRUCTIVE-COMMANDS.md`). A file written before 0.5.4 (`schema_version` 1.0.0) carries no annotations or activity, so a replace import of it leaves every node without them.
 
-**Replace import on a project that syncs.** `mtix import --mode replace` is refused, before the typed confirmation and with nothing written, when the local store holds tasks and syncs with a hub or relay: it has pushed or pulled events, carries the hub-connected mark, or a hub DSN or relay is configured (MTIX-107.31). A replace deletes tasks and changes whose events stay in the local sync log, and `mtix sync pull` treats those events as already held, so it would never restore them. To take the board on the hub, run `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull` (the discard asks for the ticket count typed at an interactive terminal). To load the file as it is, import it into a project that does not sync. A replace into an empty store, such as a restore into a fresh data directory, still runs. The automatic import never deletes a task whose events the sync log holds either: it refuses any replace that would delete local data, as described below. A project that never synced has shared nothing, so a replace there discards the pending events of the tasks it drops (and the pending links that point at them) in the same transaction; otherwise the first push after a hub is configured would create tasks the board does not hold. A store that published to or ingested from a file relay counts as synced. The automatic import also records a configured relay directory, hub endpoint or stored hub DSN as the hub-connected mark before it imports, so a relay whose first publish did not finish (the records are on the medium but the publish cursor was not written) counts as synced too, and a replace that would discard events readers may hold is refused; a project with a relay configured but never published is therefore refused at the automatic import, as `mtix import --mode replace` already was.
+**Replace import on a project that syncs.** `mtix import --mode replace` is refused, before the typed confirmation and with nothing written, when the local store holds tasks and syncs with a hub or relay: it has pushed or pulled events, carries the hub-connected mark, or a hub DSN or relay is configured (MTIX-107.31). A replace deletes tasks and changes whose events stay in the local sync log, and `mtix sync pull` treats those events as already held, so it would never restore them. To take the board on the hub, run `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull` (the discard asks for the ticket count typed at an interactive terminal). To load the file as it is, import it into a project that does not sync. A replace into an empty store, such as a restore into a fresh data directory, still runs. The automatic import never deletes a task whose events the sync log holds either: it refuses any replace that would delete local data, as described below. A project that never synced has shared nothing, so a replace there discards the pending events of the tasks it drops (and the pending links that point at them) in the same transaction; otherwise the first push after a hub is configured would create tasks the board does not hold. A store that published to or ingested from a file relay counts as synced. The automatic import also records a configured relay directory, hub endpoint or stored hub DSN as the hub-connected mark before it imports, so a relay whose first publish did not finish (the records are on the medium but the publish cursor was not written) counts as synced too, and a replace that would discard events readers may hold is refused; a project with a relay configured but never published is therefore refused at the automatic import, as `mtix import --mode replace` already was. The evidence is the same everywhere (the automatic import, `mtix import --mode replace` and the `board matches sync log` check): the stored hub-connected mark, a pulled event, a pushed event, a relay cursor, a relay directory, `sync.enabled` or `sync.endpoint` in the config, a DSN in `.mtix/secrets`, a DSN that is refused (a DSN key in a tracked config file, or a secrets file with the wrong mode, even an empty one), and an exported `MTIX_SYNC_DSN`. Only a DSN in the secrets file is recorded as the mark, by its content and whatever its mode, so fixing the mode of a secrets file that holds a DSN does not lift a refusal. The exported variable, a DSN key in a tracked config file and an empty wrong-mode secrets file are only transient: while any of them is present, `mtix import --mode replace` is refused and an automatic replace is refused when it would delete local data or drop a task the sync log holds (an automatic import that deletes nothing still runs), and nothing is recorded, so a project that never synced is not trapped once it is unset. Evidence that cannot be read, such as a secrets file that is not a regular file, a dangling link or one over the size cap, stops the automatic import without importing anything, and makes `mtix import --mode replace` and the check refuse, naming the cause; a missing secrets file is no evidence.
 
 **Merge mode**:
 - A node the store does not have is created as exported.
@@ -2068,7 +2068,7 @@ pull's position either, so later changes keep arriving.
   the end, `quarantine: N pulled events held, not applied`. `mtix sync
   status` shows `quarantined events` (`quarantined_events` in `--json`).
   `mtix sync doctor` fails its `quarantined events` check while any
-  remain.
+  pulled event remains unacknowledged.
 - **Inspect it** (read-only; it changes nothing and does not contact the
   hub):
 
@@ -2087,6 +2087,25 @@ pull's position either, so later changes keep arriving.
   Raise the bound, `mtix config set sync.max_lamport_jump <positive
   integer>`, only if you know the hub's clocks are legitimately that far
   ahead. Do not delete quarantine rows or edit the database by hand.
+- **Acknowledge a reviewed invalid-node-id event.** Inspect and report it to
+  whoever runs the hub, then run
+  `mtix sync quarantine acknowledge <event-id> --reason <text>` on this replica.
+  Only invalid-node-id pull/sweep events are eligible; push holds, unrelated
+  failures, malformed raw events and missing or blank reasons are refused.
+  No terminal or hub connection is required. An immutable local receipt records
+  the resolved author, required reason, UTC time and exact raw-event SHA256;
+  repeated valid calls return the first receipt. Reasons are limited to 500 UTF-8 bytes.
+  Repeat text says the supplied reason was not recorded; JSON adds
+  `already_acknowledged` (`true` for a repeat, `false` for a new receipt). The event stays retained and
+  unapplied, with its original reason; retries, sync clocks, cursors and the hub
+  are unchanged. This does not acknowledge another replica. A different raw
+  event with the same id requires a fresh receipt. Verify with `mtix sync doctor`:
+  its quarantine check passes only when no unacknowledged pulled event remains,
+  and reports retained acknowledged events. Other checks retain their results.
+  Status preserves `quarantined_events` and adds `acknowledged_quarantined_events`
+  and `unacknowledged_quarantined_events`; list text marks acknowledgements and
+  list JSON includes `acknowledgement` metadata. The retained total need not be
+  zero, and acknowledged events need not disappear from the list.
 - **Task ids outside the grammar.**
   An event quarantined for a task id outside the node id grammar has a
   reason that contains `invalid node id`, the field and the id. No

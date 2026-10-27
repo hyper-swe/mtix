@@ -63,10 +63,12 @@ func (s *Store) widenQuarantineSource(ctx context.Context) error {
 	if strings.Contains(ddl, "'push'") {
 		return nil
 	}
-	tx, err := s.writeDB.BeginTx(ctx, nil)
+	wtx, err := s.beginWriterTx(ctx) // pinned until Release: MTIX-198
 	if err != nil {
 		return fmt.Errorf("widen sync_quarantine: begin: %w", err)
 	}
+	defer wtx.Release(ctx)
+	tx := wtx.Tx
 	// Copy the table under the widened CHECK, keeping every row.
 	if _, err := tx.ExecContext(ctx, widenQuarantineSQL); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
@@ -74,8 +76,8 @@ func (s *Store) widenQuarantineSource(ctx context.Context) error {
 		}
 		return fmt.Errorf("widen sync_quarantine: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("widen sync_quarantine: commit: %w", err)
+	if err := wtx.Commit(); err != nil {
+		return wtx.RecoverAfterCommit(ctx, fmt.Errorf("widen sync_quarantine: commit: %w", err)) // MTIX-198
 	}
 	s.logger.Info("schema_migrated", "event", "sync_quarantine_widened", "source_added", "push")
 	return nil

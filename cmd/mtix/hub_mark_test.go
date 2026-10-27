@@ -88,7 +88,7 @@ func TestIdentityBoardConnected_AgreesWithHubMark(t *testing.T) {
 			initTestApp(t)
 			t.Setenv(transport.EnvDSN, "")
 			tt.setup(t)
-			status, err := service.NewHubMarkService(app.store).Inspect(context.Background(), collectHubEvidence())
+			status, err := service.NewHubMarkService(app.store).Inspect(context.Background(), mustCollectHubEvidence(t))
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, status.Connected)
 			assert.Equal(t, status.Connected, identityBoardConnected(oplocal.BoardObservation{}),
@@ -100,17 +100,17 @@ func TestIdentityBoardConnected_AgreesWithHubMark(t *testing.T) {
 func TestCollectHubEvidence_ConfigAndSecrets_AreSeen(t *testing.T) {
 	initTestApp(t)
 	t.Setenv(transport.EnvDSN, "")
-	assert.Equal(t, service.HubEvidence{}, collectHubEvidence(), "a local board has no evidence")
+	assert.Equal(t, service.HubEvidence{}, mustCollectHubEvidence(t), "a local board has no evidence")
 
 	require.NoError(t, os.WriteFile(filepath.Join(app.mtixDir, transport.SecretsFilename), []byte("postgres://placeholder\n"), 0o600))
-	assert.True(t, collectHubEvidence().SecretsDSN)
+	assert.True(t, mustCollectHubEvidence(t).SecretsDSN)
 }
 
 func TestCollectHubEvidence_ExportedDSN_IsNotEvidence(t *testing.T) {
 	initTestApp(t)
 	t.Setenv(transport.EnvDSN, "postgres://exported.invalid/db")
-	assert.False(t, collectHubEvidence().EnvDSNConnected, "a DSN that was never used to connect proves nothing")
-	assert.False(t, collectHubEvidence().SecretsDSN)
+	assert.False(t, mustCollectHubEvidence(t).EnvDSNConnected, "a DSN that was never used to connect proves nothing")
+	assert.False(t, mustCollectHubEvidence(t).SecretsDSN)
 }
 
 func TestDoctorHubMark_LocalBoard_ReportsNotSet(t *testing.T) {
@@ -199,10 +199,10 @@ func TestCollectHubEvidence_ConfigKeys_Table(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			initTestApp(t)
 			t.Setenv(transport.EnvDSN, "")
-			assert.False(t, collectHubEvidence().ConfigKeys, "defaults are not evidence")
+			assert.False(t, mustCollectHubEvidence(t).ConfigKeys, "defaults are not evidence")
 			_, err := app.configSvc.Set(tt.key, tt.val)
 			require.NoError(t, err)
-			assert.Equal(t, tt.want, collectHubEvidence().ConfigKeys)
+			assert.Equal(t, tt.want, mustCollectHubEvidence(t).ConfigKeys)
 		})
 	}
 }
@@ -405,4 +405,13 @@ func TestHubMarkCheck_UnpersistableMark_FailsWithRemedy(t *testing.T) {
 	check := hubMarkCheck(t)
 	assert.False(t, check.Pass)
 	assert.NotEmpty(t, check.Fix)
+}
+
+// mustCollectHubEvidence is collectHubEvidence for a test whose evidence is
+// readable.
+func mustCollectHubEvidence(t *testing.T) service.HubEvidence {
+	t.Helper()
+	ev, err := collectHubEvidence()
+	require.NoError(t, err)
+	return ev
 }

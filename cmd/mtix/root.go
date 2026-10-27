@@ -256,7 +256,7 @@ func newSyncService(clock func() time.Time, options syncServiceOptions) *service
 	svc := service.NewSyncService(app.store, app.logger, clock, options.retryClock)
 	svc.SetAutoSyncConfig(app.configSvc)
 	svc.SetBinaryVersion(version)
-	svc.SetHubEvidenceSource(collectHubEvidence) // MTIX-107.31.7
+	svc.SetHubEvidenceSource(collectHubEvidence) // MTIX-107.31.7, MTIX-107.31.8
 	svc.SetHistoryExportSource(app.configSvc.HistoryExport)
 	svc.SetJSONNotices(app.jsonOutput)
 	return svc
@@ -338,6 +338,9 @@ func findMtixDir() (string, error) {
 // as mtix sync init, still auto-imports.
 func shouldSkipAutoImport(commandPath string) bool {
 	switch commandPath {
+	case "sync quarantine acknowledge":
+		// The local receipt must not import unrelated board changes.
+		return true
 	case "init", "export", "import", "help", "version", "migrate", "sync", "sync status", "sync doctor", "doctor":
 		return true
 	}

@@ -83,7 +83,7 @@ func fixedCommandFreshness(path string) freshnessScope {
 		"prompt", "recover", "reopen", "rerun", "resolve-annotation", "restore",
 		"session end", "session start", "sync backup", "sync clone",
 		"sync collisions resolve", "sync conflicts resolve", "sync init", "sync mark-restored",
-		"sync migrate", "sync pull", "sync push", "sync relay attach", "sync relay clone",
+		"sync migrate", "sync pull", "sync push", "sync quarantine acknowledge", "sync relay attach", "sync relay clone",
 		"sync relay init", "sync relay republish", "sync relay reset-peer", "sync relay retire-peer",
 		"sync relay rotate-key", "sync relay tick", "sync repair-uids", "unblock", "unclaim",
 		"undelete", "update":

@@ -16,13 +16,13 @@ import (
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
-// newSyncQuarantineCmd creates `mtix sync quarantine`, the read-only view of
+// newSyncQuarantineCmd creates `mtix sync quarantine`, inspection and local audit of
 // the pulled events `mtix sync pull` holds in the local quarantine
 // (MTIX-95.11) and of the own events `mtix sync push` holds (MTIX-95.12).
 func newSyncQuarantineCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "quarantine",
-		Short: "Inspect events held in the local quarantine",
+		Short: "Inspect retained events and acknowledge invalid-id pulled events",
 		Long: `Inspect the events held in the local quarantine: pulled events that
 'mtix sync pull' could not take (they failed the pull's checks, the FR-18.7
 caps and the sync.max_lamport_jump bound, or their apply), and events of
@@ -31,10 +31,13 @@ this replica that 'mtix sync push' holds because the hub would refuse them
 every pull retries them. Held push events are not pushed. A hold for the
 clock is released automatically once the event's stamp is within 24 h of
 this machine's clock, together with the events of its task's subtree
-that the hub would accept; every other push hold stays.`,
+that the hub would accept; every other push hold stays.
+
+Acknowledge records a local audit receipt for a reviewed invalid-node-id
+pulled event, with a required reason; it stays retained and unapplied.`,
 		Args: cobra.NoArgs,
 	}
-	cmd.AddCommand(newSyncQuarantineListCmd())
+	cmd.AddCommand(newSyncQuarantineListCmd(), newSyncQuarantineAcknowledgeCmd())
 	return cmd
 }
 
@@ -47,7 +50,8 @@ func newSyncQuarantineListCmd() *cobra.Command {
 then event id: event id, node, op, failed attempts, first seen, last
 attempt and the reason the event was quarantined. --json adds the Lamport
 clock, the source (pull or sweep for a pulled event, push for an event
-push holds) and the mtix version that recorded it.
+push holds) and the mtix version that recorded it. Acknowledged rows show
+their retained local receipt, including author, reason, time and raw SHA256.
 
 Read-only and local: it never retries, removes or changes an event and
 does not contact the hub. 'mtix sync pull' retries every quarantined
@@ -103,7 +107,7 @@ func printQuarantineTable(w io.Writer, events []service.QuarantinedEvent) error 
 	for _, q := range events {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			oneLine(q.EventID), oneLine(q.NodeID), oneLine(q.OpType), strconv.Itoa(q.Attempts),
-			oneLine(q.FirstSeen), oneLine(q.LastAttempt), oneLine(q.Reason))
+			oneLine(q.FirstSeen), oneLine(q.LastAttempt), oneLine(quarantineDisplayReason(q)))
 	}
 	return tw.Flush()
 }

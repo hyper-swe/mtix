@@ -57,6 +57,9 @@ type SyncStatus struct {
 	// quarantine, not applied (sync_quarantine, MTIX-95.11). Every pull
 	// retries them.
 	QuarantinedEvents int `json:"quarantined_events"`
+	// Retained receipts do not reduce the total above.
+	AcknowledgedQuarantinedEvents   int `json:"acknowledged_quarantined_events"`
+	UnacknowledgedQuarantinedEvents int `json:"unacknowledged_quarantined_events"`
 	// HeldPushEvents counts own events push holds (sync_quarantine source
 	// push, MTIX-95.12); they are also counted in Pending.
 	HeldPushEvents int `json:"held_push_events"`
@@ -229,6 +232,8 @@ func printStatusTable(w io.Writer, st SyncStatus) error {
 		{"applied", strconv.Itoa(st.Applied)},
 		{"unresolved conflicts", strconv.Itoa(st.OpenConflicts)},
 		{"quarantined events", strconv.Itoa(st.QuarantinedEvents)},
+		{"acknowledged quarantined events", strconv.Itoa(st.AcknowledgedQuarantinedEvents)},
+		{"unacknowledged quarantined events", strconv.Itoa(st.UnacknowledgedQuarantinedEvents)},
 		{"held push events", strconv.Itoa(st.HeldPushEvents)},
 		{"quarantined invalid ids", strconv.Itoa(st.QuarantinedInvalidIDs)},
 		{"invalid local ids", strconv.Itoa(st.InvalidNodeIDs)},

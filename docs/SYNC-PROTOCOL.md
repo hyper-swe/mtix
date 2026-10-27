@@ -704,12 +704,43 @@ sync status` shows `quarantined events` (`quarantined_events` in
 every quarantined event read-only through the service layer: event id,
 node, op, attempts, first seen, last attempt and reason, and in JSON
 also the Lamport clock, source and CLI version. `mtix sync doctor` has a
-`quarantined events` check that fails while the table is not empty; its
+`quarantined events` check that fails while any pulled event is unacknowledged; its
 detail says the events are retried on every pull, to run `mtix sync
 pull` first, and to list them with `mtix sync quarantine list`.
 
 The table is created with `CREATE TABLE IF NOT EXISTS` the next time
 mtix opens the store (no schema version change) and is local only.
+
+**Audited invalid-node-id recovery.** After inspection and reporting to the hub
+maintainer, `mtix sync quarantine acknowledge <event-id> --reason <text>` records
+an immutable local receipt accepting one pulled invalid-node-id event as
+unapplied. Eligibility is based on the retained raw event and the node-id
+validator, not the stored reason: only `pull`/`sweep` sources are eligible.
+Push holds, unrelated failures, malformed raw JSON, event-id mismatches and
+missing or blank reasons are refused. No terminal or hub connection is needed.
+The first receipt records the resolved process author, reason, UTC
+time and SHA256 of the exact retained raw bytes; a valid repeat returns that
+receipt unchanged. Reasons are limited to 500 UTF-8 bytes. Repeats explicitly report
+that the first receipt stands and the supplied reason was not recorded; response
+JSON includes `already_acknowledged` (`true` for repeats, `false` for new receipts).
+A different raw event with the same id needs a fresh receipt.
+
+The additive `sync_quarantine_acknowledgements` table is local only, outside
+exports/imports and the sync protocol, with no schema version bump. Receipts
+survive later quarantine removal. The guarded transaction rechecks source and
+raw bytes before persisting; any write/read error fails closed. A legacy store
+opened read-only without the additive table treats every pulled event as
+unacknowledged and refuses acknowledgement writes.
+
+Acknowledgement never applies or removes the retained event, changes its original
+reason, clocks, cursors, nodes, sync/applied logs or hub, or acknowledges another
+replica. Every pull still retries it. Status retains the unapplied total and
+adds `acknowledged_quarantined_events` and `unacknowledged_quarantined_events`.
+List text marks acknowledged rows, and JSON adds optional `acknowledgement`
+metadata (`actor`, `reason`, `acknowledged_at`, `raw_event_sha256`). Doctor passes
+its quarantine check only at zero unacknowledged pulled rows and reports the
+retained acknowledged count; other failures retain their results. Verify those
+counts and receipts, rather than expecting the retained total to become zero.
 
 The same table holds the events push holds back, with source `push`
 (see [Push: held events](#push-held-events)). The pull side leaves those
@@ -828,6 +859,24 @@ Refusing changes nothing and names the way out.
   configured relay directory, hub endpoint or stored DSN) as the
   hub-connected mark before it imports, and fails closed, importing
   nothing, if that evidence cannot be read or stored (MTIX-107.31.7).
+  One helper gathers the evidence for the automatic import, the
+  command-line replace guard and the doctor check (MTIX-107.31.8): the
+  config keys (`sync.relay.dir`, `sync.enabled`, `sync.endpoint`), a DSN
+  in the secrets file, one that `transport.Source` refuses, and an
+  exported `MTIX_SYNC_DSN`. The exported DSN is transient: it makes the
+  automatic import treat the store as synced for that import
+  (`sqlite.AsSyncedStore`), so a replace that would delete local data or
+  drop a task the sync log holds is refused, and `mtix import --mode
+  replace` is refused while it is set; it is never recorded as the mark.
+  The command-line guard already counted a refused DSN (a DSN key in a
+  tracked config file, or a secrets file with the wrong mode, even an
+  empty one); the automatic import now counts it too, transiently, and
+  does not record it. Only a DSN in the secrets file, whatever its mode,
+  is recorded as the mark, by its content. Unreadable evidence (a
+  secrets file that is not a regular file or cannot be opened, a config
+  key that cannot be read) is an error: the automatic import stops, and
+  the command-line guards refuse, naming the cause. A missing secrets
+  file is no evidence.
 - **On a store that never synced** nothing was shared, so every event
   is still pending, and a replace that drops a task discards, in the
   same transaction, the pending events of that task (matched by uid, as

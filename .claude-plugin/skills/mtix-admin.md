@@ -373,7 +373,7 @@ mtix sync push
 
 `mtix sync pull` checks every event it receives before applying it: first its Lamport clock (below 2^53, and at most `sync.max_lamport_jump` above the local clock; default 4294967296, that is 2^32), then the same size, shape and id rules the hub applies at push (payload at most 64 KB and 10 levels deep, at most 100 vector-clock entries, well-formed author, machine and project ids, a hub row that decodes), and then every task id the event names (its task, a creation's parent, a link's or unlink's target) against the node id grammar. An event stamped more than 24 hours ahead of this machine's clock is applied with a `WARN`. Each event applies on its own: an event that fails a check or its apply (for example a dependency whose target has not arrived) is rolled back and kept in the local table `sync_quarantine` (in `.mtix/data/mtix.db`), and the pull goes on. A quarantined event never changes the local clock and is never lost, and one refused for its clock never moves the pull cursor. Every pull retries the quarantine at its start, before it contacts the hub, and again at its end when it applied events; an event that applies, or that the store has already applied, leaves the quarantine. Retries are local and add no hub query, so they do not keep a scale-to-zero database awake; an event refused for its clock is downloaded again by each pull.
 
-**Recognize:** `mtix sync doctor` fails its `quarantined events` check (exit 2; with `--json` the check has `"pass": false` and the detail); `mtix sync status` shows `quarantined events` above 0 (`quarantined_events` in `--json`); a pull prints `quarantined event <id> (<pass> pass): <reason>` on stderr and `quarantine: N pulled events held, not applied` at the end.
+**Recognize:** `mtix sync doctor` fails its `quarantined events` check while any pulled event remains unacknowledged (exit 2; with `--json` the check has `"pass": false` and the detail); `mtix sync status` shows `quarantined events` above 0 (`quarantined_events` in `--json`); a pull prints `quarantined event <id> (<pass> pass): <reason>` on stderr and `quarantine: N pulled events held, not applied` at the end.
 
 **Routine:**
 1. Run `mtix sync pull` again. Events that were waiting for a task or a dependency target apply once it has arrived.
@@ -389,7 +389,7 @@ mtix sync push
    - `lamport_clock at or above 2^53`: the event's clock is past the overflow guard. It will never apply; show it to the user, for whoever runs the hub.
    - `sync.max_lamport_jump`: the event's Lamport clock is far above this replica's. If the user confirms the hub's clocks are legitimately that high, raise the bound: `mtix config set sync.max_lamport_jump <positive integer>` (only a positive integer is accepted; `mtix config delete sync.max_lamport_jump` restores the default). The next pull retries the event with the new bound.
 
-**Verify:** `mtix sync doctor` passes the `quarantined events` check, `mtix sync status` shows `quarantined events 0`, and `mtix sync quarantine list --json` has no event with `source` `pull` or `sweep` (events with `source` `push` are held push events: see Sync Recovery: Held Push Events).
+**Verify:** `mtix sync doctor` passes the `quarantined events` check when no unacknowledged pulled event remains. Events that applied leave the quarantine; reviewed invalid-node-id events may stay retained with their local acknowledgement (see the invalid-node-id routine below). Check `unacknowledged quarantined events 0` in `mtix sync status`; the retained `quarantined events` total need not be zero. Events with `source` `push` are held push events: see Sync Recovery: Held Push Events.
 
 **Recover:**
 - **A refused clone on a fresh store:** run `mtix sync pull` alone. It quarantines the event and applies the rest. Clone has no quarantine: it runs the same checks on every hub event before it writes anything and refuses the whole clone, naming the event and the reason, while the hub holds an event that fails them; a clone that completes empties the quarantine because every hub event passed.
@@ -420,13 +420,21 @@ A task id has the form `PREFIX-<number>` followed by `.<number>` segments: an up
 
 **Recognize:** `mtix sync status` shows `quarantined invalid ids` above 0 (`quarantined_invalid_ids` in `--json`), and the doctor's `quarantined events` check says how many of the quarantined events are for an invalid node id.
 
-**Routine:** run `mtix sync quarantine list` and give the user the event ids, the nodes and the reasons, to report to whoever runs the hub. Do not try to apply the events.
+**Routine:** run `mtix sync quarantine list --json` and report the event ids, nodes and reasons to whoever runs the hub. After reviewing an invalid-node-id pulled event, record that this replica accepts it as unapplied:
+
+```bash
+mtix sync quarantine acknowledge <event-id> --reason '<why this event is accepted as unapplied>'
+```
+
+Only retained events with `source` `pull` or `sweep` whose raw event fails the node-id validator are eligible. Stored reason text alone cannot grant eligibility. A missing or blank reason, a held push event, an unrelated failure, malformed raw JSON or a raw event-id mismatch is refused. No terminal or hub connection is required. The resolved process author, required reason, UTC time and exact raw-event SHA256 form an immutable local receipt; repeating a valid acknowledgement returns the first receipt. Reasons are limited to 500 UTF-8 bytes. On a repeat, text explains that the first receipt stands and the supplied reason was not recorded; JSON sets `already_acknowledged` to `true` (`false` for a new receipt). The receipt is local to this replica and is never exported, imported or synced.
+
+The command retains the raw quarantine and original reason. It never applies, removes or repairs the event, changes sync clocks or cursors, changes the hub, or acknowledges another replica. Every pull still retries the event. A different raw event reusing the same id needs a fresh acknowledgement. Do not try to apply the invalid event.
 
 **Tasks this store already holds.** A sync from before this check could bring such a task in. It stays in the store: you can read and edit it here, and `mtix list` shows it; `mtix show` takes its uid in place of the id. Other replicas quarantine every change to it that they pull, and the doctor's `valid node ids` check warns, naming each task and its uid (`mtix sync status` counts them as `invalid local ids`). Recreate each task you still need with `mtix create` and stop using the old one; no mtix command renames a task in this version.
 
 **Never:** edit `sync_quarantine` rows or the `nodes` table to change an id, and never create a task id by hand.
 
-**Verify:** `mtix sync status` shows `quarantined invalid ids 0` once the quarantine no longer holds such an event, and `mtix sync doctor` passes `valid node ids` without a warning once no local task has such an id.
+**Verify:** `mtix sync doctor` passes `quarantined events` only when zero unacknowledged pulled events remain, and reports the retained acknowledged count. Any unrelated or unacknowledged quarantine still fails that check; all other doctor failures need their own fixes. `mtix sync status` retains the unapplied total and adds `acknowledged quarantined events` and `unacknowledged quarantined events` (`acknowledged_quarantined_events` and `unacknowledged_quarantined_events` in JSON). `quarantined invalid ids` can remain above zero. `mtix sync quarantine list` marks acknowledged rows; `--json` includes their `acknowledgement` with `actor`, `reason`, `acknowledged_at` and `raw_event_sha256`. Retained acknowledged events need not disappear. The separate `valid node ids` check passes without a warning only once no local task has such an id.
 
 ## Recovery: Duplicate Task UIDs
 

@@ -42,6 +42,7 @@ type WSHub struct {
 	broadcast  chan service.Event
 	logger     *slog.Logger
 	done       chan struct{}
+	closeOnce  sync.Once
 }
 
 // NewWSHub creates a new WebSocket hub.
@@ -104,9 +105,12 @@ func (h *WSHub) Broadcast(_ context.Context, event service.Event) error {
 	return nil
 }
 
-// Close shuts down the hub and closes all connections.
+// Close signals the hub to shut down and close its connections.
+// Repeated and concurrent calls are safe.
 func (h *WSHub) Close() {
-	close(h.done)
+	h.closeOnce.Do(func() {
+		close(h.done)
+	})
 }
 
 // ClientCount returns the number of connected clients.

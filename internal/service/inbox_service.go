@@ -21,9 +21,10 @@ type InboxAckStore interface {
 // InboxService owns durable list/wait reads and selective acknowledgements
 // without inventing domain broadcasts (FR-19.4/FR-19.5, Commandment 7).
 type InboxService struct {
-	store   InboxAckStore
-	reader  InboxReadStore
-	counter InboxCountStore
+	store    InboxAckStore
+	reader   InboxReadStore
+	counter  InboxCountStore
+	wakeAcks WakeAckPublisher
 }
 
 // InboxEvent is the per-agent event contract per FR-19.4, with unchanged JSON.
@@ -44,17 +45,13 @@ func NewInboxService(st InboxAckStore) *InboxService {
 // NewInboxServiceWithReads injects separate durable read/ack capabilities per
 // FR-19.4/FR-19.5, preserving ack-only backends and selective acknowledgement.
 func NewInboxServiceWithReads(st InboxAckStore, reader InboxReadStore) *InboxService {
-	counter, ok := reader.(InboxCountStore)
-	if !ok {
-		counter, _ = st.(InboxCountStore)
-	}
-	return &InboxService{store: st, reader: reader, counter: counter}
+	return NewInboxServiceWithWakeAcks(st, reader, defaultWakeAckPublisher(st))
 }
 
 // InboxAck acknowledges only the requested event, preserving backend validation,
 // idempotency and cancellation errors through wrapping (FR-19.5).
 func (s *InboxService) InboxAck(ctx context.Context, agent string, seq int64) error {
-	if err := s.store.InboxAck(ctx, agent, seq); err != nil {
+	if err := s.acknowledgeWithWake(ctx, agent, seq, false, func() error { return s.store.InboxAck(ctx, agent, seq) }); err != nil {
 		return wrapAPIOperation(fmt.Sprintf("ack inbox event %d for %s", seq, agent), err)
 	}
 	return nil

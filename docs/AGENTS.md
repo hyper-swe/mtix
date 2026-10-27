@@ -333,6 +333,13 @@ review of that hook; other hook approvals remain independent.
 <!-- AUTO-GENERATED: HEALTH_DIAGNOSTICS -->
 On an opened local board, `wake.ledger` reports retained rows and protocol refusal;
 `--fix` preserves wake state. See the multi-agent skill for lease and retry behavior.
+`budget.rewind` compares local counters with protected recipient accounting.
+It retains spent allowance after a restore; `--fix` never resets that accounting.
+Moved boards and database copies share a local identity and protected floor.
+Identity-less restores at an unseen path may under-count history, never
+over-count. An identity-less database at a previously used path is treated as
+that path's board and can charge its own history. Existing recipient credits
+and debt remain. Doctor never creates that identity.
 Plain `mtix doctor` preserves operator-local files, including stale attach shims
 and records. Use `--fix` for registered shim and glue repairs;
 other commands retain automatic attach refresh.

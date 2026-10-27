@@ -13,7 +13,7 @@ import (
 )
 
 func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop int64) error {
-	attempt, won, err := d.store.ClaimWake(ctx, key, time.Minute)
+	attempt, won, err := d.budgets.claim(ctx, key)
 	if err != nil {
 		return fmt.Errorf("claim wake candidate: %w", err)
 	}

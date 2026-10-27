@@ -171,14 +171,14 @@ func newServeInboxHarnessWithWriter(t *testing.T, writer io.Writer) *serveInboxH
 			select {
 			case <-h.done:
 				h.joined = true
-			case <-time.After(2 * time.Second):
+			case <-time.After(inboxWaitCompletionHangBound):
 				t.Error("Serve goroutine did not join during cleanup")
 			}
 		}
 		for _, call := range h.observed {
 			select {
 			case <-call.exited:
-			case <-time.After(time.Second):
+			case <-time.After(inboxWaitCompletionHangBound):
 				t.Error("observed wait worker did not exit during cleanup")
 			}
 		}
@@ -187,7 +187,7 @@ func newServeInboxHarnessWithWriter(t *testing.T, writer io.Writer) *serveInboxH
 			case call := <-h.backend.started:
 				select {
 				case <-call.exited:
-				case <-time.After(time.Second):
+				case <-time.After(inboxWaitCompletionHangBound):
 					t.Error("admitted wait worker did not exit during cleanup")
 				}
 			default:
@@ -205,7 +205,7 @@ func (h *serveInboxHarness) wait(t *testing.T, id any, args map[string]any) *ser
 	case call := <-h.backend.started:
 		h.observed = append(h.observed, call)
 		return call
-	case <-time.After(time.Second):
+	case <-time.After(inboxWaitCompletionHangBound):
 		t.Fatal("inbox wait was not dispatched")
 		return nil
 	}
@@ -215,7 +215,7 @@ func (h *serveInboxHarness) response(t *testing.T, id any) Response {
 	t.Helper()
 	want, err := json.Marshal(id)
 	require.NoError(t, err)
-	deadline := time.NewTimer(time.Second)
+	deadline := time.NewTimer(inboxWaitCompletionHangBound)
 	defer deadline.Stop()
 	for {
 		select {
@@ -237,7 +237,7 @@ func requireServeInboxExited(t *testing.T, call *serveInboxCall) {
 	t.Helper()
 	select {
 	case <-call.exited:
-	case <-time.After(time.Second):
+	case <-time.After(inboxWaitCompletionHangBound):
 		t.Fatal("targeted wait did not release its worker")
 	}
 }
@@ -252,7 +252,7 @@ func (h *serveInboxHarness) finish(t *testing.T, want error) {
 		} else {
 			require.ErrorIs(t, err, want)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(inboxWaitCompletionHangBound):
 		t.Fatal("Serve did not stop and join its wait workers")
 	}
 }
@@ -309,7 +309,7 @@ func TestInboxWaitServe_ZeroDoesNotBlockPingOrdinaryToolOrNotifications(t *testi
 			select {
 			case err := <-notifyDone:
 				assert.NoError(t, err)
-			case <-time.After(time.Second):
+			case <-time.After(inboxWaitCompletionHangBound):
 				t.Error("notification sender did not join")
 			}
 		}
@@ -321,7 +321,7 @@ func TestInboxWaitServe_ZeroDoesNotBlockPingOrdinaryToolOrNotifications(t *testi
 	case err := <-notifyDone:
 		joined = true
 		require.NoError(t, err)
-	case <-time.After(time.Second):
+	case <-time.After(inboxWaitCompletionHangBound):
 		t.Fatal("notification sender did not finish")
 	}
 	requireServeInboxExited(t, call)
@@ -475,7 +475,7 @@ func TestInboxWaitServe_AdmissionBoundKeepsPingResponsiveAndJoinsWorkers(t *test
 
 func (h *serveInboxHarness) requireAdmissionRefusals(t *testing.T) {
 	t.Helper()
-	deadline := time.NewTimer(time.Second)
+	deadline := time.NewTimer(inboxWaitCompletionHangBound)
 	defer deadline.Stop()
 	refused := 0
 	for {
@@ -551,7 +551,7 @@ func (h *serveInboxHarness) raceCompletionAndCancellation(t *testing.T, call *se
 
 func (h *serveInboxHarness) requireRacePing(t *testing.T, id int, seen map[string]int) {
 	t.Helper()
-	deadline := time.NewTimer(time.Second)
+	deadline := time.NewTimer(inboxWaitCompletionHangBound)
 	defer deadline.Stop()
 	want := string(mustServeInboxJSON(t, id))
 	for {
@@ -599,7 +599,7 @@ func TestInboxWaitServe_OrdinaryToolsRemainInlineAndOrdered(t *testing.T) {
 	select {
 	case n := <-entered:
 		require.EqualValues(t, 1, n)
-	case <-time.After(time.Second):
+	case <-time.After(inboxWaitCompletionHangBound):
 		t.Fatal("ordinary handler did not start")
 	}
 	h.in.send(t, 2, MethodToolsCall, map[string]any{"name": "mtix_ordinary"})

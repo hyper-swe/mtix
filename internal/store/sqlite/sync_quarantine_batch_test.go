@@ -108,6 +108,7 @@ func TestQuarantineAcknowledgementsFor_ReadOnlyLegacy(t *testing.T) {
 			got, err := ro.QuarantineAcknowledgementsFor(t.Context(), []QuarantinedEvent{q})
 			require.NoError(t, err)
 			if legacy {
+				require.NotNil(t, got)
 				require.Empty(t, got)
 			} else {
 				require.Equal(t, map[string]QuarantineAcknowledgement{q.EventID: a}, got)
@@ -181,4 +182,25 @@ func TestQuarantineAcknowledgementsFor_CorruptAuditReadFails(t *testing.T) {
 			require.Nil(t, got)
 		})
 	}
+}
+
+func TestQuarantineAcknowledgementsFor_ReadOnlyPushSkipsSchemaInspection(t *testing.T) {
+	s, q, _ := newQuarantineAckStore(t)
+	path := s.dbPath
+	require.NoError(t, s.Close())
+	ro, err := openReadOnlyStore(t.Context(), path, slog.Default(), defaultOpenRetry(), "macfuse")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, ro.Close()) })
+	require.NoError(t, ro.ReadDB().Close())
+
+	push := q
+	push.Source = "push"
+	got, err := ro.QuarantineAcknowledgementsFor(t.Context(), []QuarantinedEvent{push})
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Empty(t, got)
+
+	got, err = ro.QuarantineAcknowledgementsFor(t.Context(), []QuarantinedEvent{q})
+	require.ErrorContains(t, err, "inspect quarantine acknowledgements")
+	require.Nil(t, got)
 }

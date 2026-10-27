@@ -265,7 +265,7 @@ func TestCreateNode_NonBlocking(t *testing.T) {
 	select {
 	case <-done:
 		// good: create returned without waiting on the (blocked) settler.
-	case <-time.After(2 * time.Second):
+	case <-time.After(serviceCompletionHangBound):
 		t.Fatal("CreateNode blocked on hub settlement — must be non-blocking")
 	}
 	close(block) // release the background settler

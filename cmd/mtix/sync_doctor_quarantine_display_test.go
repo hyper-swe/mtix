@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"unicode"
 
 	"github.com/stretchr/testify/require"
 
@@ -30,6 +29,7 @@ func doctorDisplayCases() []doctorDisplayCase {
 		{"quoted", "evt-'quote", false},
 		{"leading", "-evt-1", false},
 		{"unicode", "evt-α🙂", false},
+		{"mixed_display", "evt-α\x1b🙂", true},
 	}
 	for r := rune(0); r <= 0x1f; r++ {
 		cases = append(cases, doctorDisplayCase{fmt.Sprintf("format_%04x", r), "evt-" + string(r) + "-1", true})
@@ -37,13 +37,20 @@ func doctorDisplayCases() []doctorDisplayCase {
 	for r := rune(0x7f); r <= 0x9f; r++ {
 		cases = append(cases, doctorDisplayCase{fmt.Sprintf("format_%04x", r), "evt-" + string(r) + "-1", true})
 	}
+	for _, r := range []rune{'\u2028', '\u2029', '\u202e', '\u200b', '\u2060', '\u2066', '\u00a0'} {
+		cases = append(cases, doctorDisplayCase{fmt.Sprintf("format_%04x", r), "evt-" + string(r) + "-1", true})
+	}
+	cases = append(cases,
+		doctorDisplayCase{"ascii_space", "evt-a b", false},
+		doctorDisplayCase{"printable_mark", "evt-e\u0301", false},
+	)
 	return cases
 }
 
-// legacyDoctorDisplayHint pins the established JSON hint data independently of
-// the formatter under test, including its existing quoting and reason text.
-func legacyDoctorDisplayHint(id string) string {
-	return "Inspect and report retained events (1 eligible unacknowledged; first shown), then: mtix sync quarantine acknowledge --reason 'reviewed invalid node id; accepted as unapplied' -- '" + strings.ReplaceAll(id, "'", "'\"'\"'") + "'"
+// expectedDoctorDisplayHint pins the required-explanation command independently
+// of the formatter under test, including its event-id quoting.
+func expectedDoctorDisplayHint(id string) string {
+	return "Inspect and report retained events (1 eligible unacknowledged; first shown); add --reason '<your explanation>' before --, then: mtix sync quarantine acknowledge -- '" + strings.ReplaceAll(id, "'", "'\"'\"'") + "'"
 }
 
 func TestDoctorRecoveryHint_DisplayContract(t *testing.T) {
@@ -66,7 +73,7 @@ func TestDoctorRecoveryHint_DisplayContract(t *testing.T) {
 					if tc.inspect {
 						assertDoctorInspectHint(t, tc.id, fix)
 					} else {
-						require.Equal(t, legacyDoctorDisplayHint(tc.id), fix)
+						require.Equal(t, expectedDoctorDisplayHint(tc.id), fix)
 					}
 					var out bytes.Buffer
 					printDoctorTable(&out, report)
@@ -79,7 +86,7 @@ func TestDoctorRecoveryHint_DisplayContract(t *testing.T) {
 
 func assertDoctorDisplayJSON(t *testing.T, report DoctorReport, id string) {
 	t.Helper()
-	require.Equal(t, legacyDoctorDisplayHint(id), report.Checks[0].Fix)
+	require.Equal(t, expectedDoctorDisplayHint(id), report.Checks[0].Fix)
 	raw, err := json.Marshal(report)
 	require.NoError(t, err)
 	var parsed struct {
@@ -89,21 +96,21 @@ func assertDoctorDisplayJSON(t *testing.T, report DoctorReport, id string) {
 	}
 	require.NoError(t, json.Unmarshal(raw, &parsed))
 	require.Len(t, parsed.Checks, 1)
-	want, err := json.Marshal(legacyDoctorDisplayHint(id))
+	want, err := json.Marshal(expectedDoctorDisplayHint(id))
 	require.NoError(t, err)
 	require.Equal(t, want, []byte(parsed.Checks[0].Fix))
 }
 
 func assertDoctorInspectHint(t *testing.T, id, fix string) {
 	t.Helper()
+	for _, r := range fix {
+		if r < 0x20 || r > 0x7e {
+			t.Fatalf("text hint contains a value outside printable ASCII: %U", r)
+		}
+	}
 	require.Contains(t, fix, "mtix sync quarantine list --json")
 	require.Contains(t, fix, strconv.QuoteToASCII(id))
 	require.NotContains(t, fix, "mtix sync quarantine acknowledge")
-	for _, r := range fix {
-		if unicode.IsControl(r) {
-			t.Fatalf("text hint contains a non-display value: %U", r)
-		}
-	}
 }
 
 func TestDoctorRecoveryHint_ByteDisplay(t *testing.T) {

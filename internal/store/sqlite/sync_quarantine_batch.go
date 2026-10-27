@@ -43,6 +43,8 @@ func (s *Store) QuarantineAcknowledgementsFor(ctx context.Context, page []Quaran
 		return nil, fmt.Errorf("quarantine receipt page exceeds %d rows: %w", QuarantineAcknowledgementPageSize, model.ErrInvalidInput)
 	}
 	keys := quarantineReceiptLookups(page)
+	// Empty and push-only pages need no receipt lookup. Avoid inspecting audit
+	// metadata so unrelated read-only schema errors cannot fail these pages.
 	if len(keys) == 0 {
 		return out, nil
 	}
@@ -79,6 +81,10 @@ func (s *Store) QuarantineAcknowledgementsFor(ctx context.Context, page []Quaran
 	return out, nil
 }
 
+// quarantineReceiptLookups uses hex to preserve arbitrary stored bytes.
+// Hex costs twice the raw bytes plus JSON overhead, trading a larger bound
+// parameter for fewer database round trips. The caller caps each page at
+// QuarantineAcknowledgementPageSize (500 rows).
 func quarantineReceiptLookups(page []QuarantinedEvent) []quarantineReceiptLookup {
 	keys := make([]quarantineReceiptLookup, 0, len(page))
 	for _, q := range page {

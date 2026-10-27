@@ -519,11 +519,13 @@ A task id has the form `PREFIX-<number>` followed by `.<number>` segments: an up
 mtix sync quarantine acknowledge <event-id> --reason '<why this event is accepted as unapplied>'
 ```
 
-Doctor's Fix supplies the first eligible event id and eligible count in a shell-quoted acknowledgement command; review its reason, then run doctor again after each acknowledgement. Text recovery hints use an escaped label and an inspect command when an id needs special handling. Use `mtix sync quarantine list --json` and report the original id to the operator. JSON retains its existing hint data. For example, a Fix for a reviewed event can name its concrete id:
+Doctor's Fix supplies the first eligible event id and eligible count in a shell-quoted acknowledgement command. Add `--reason '<your explanation>'` before `--` in the printed command; replace `<your explanation>` in the `--reason` value with why this event is safe to accept as unapplied. Without that flag, the printed command is refused until you supply it. Then run doctor again after each acknowledgement. Text recovery hints use an escaped label and an inspect command when an id needs special handling. Use `mtix sync quarantine list --json` and report the original id to the operator. JSON retains the original id data and also requires an operator explanation. For example, with one eligible event, doctor prints this full Fix line:
 
-```bash
-mtix sync quarantine acknowledge --reason 'reviewed invalid node id; accepted as unapplied' -- '0193fb00-0000-7000-8000-000000000001'
+```text
+fix: Inspect and report retained events (1 eligible unacknowledged; first shown); add --reason '<your explanation>' before --, then: mtix sync quarantine acknowledge -- '0193fb00-0000-7000-8000-000000000001'
 ```
+
+The command starts after `then:`; add `--reason` and your own explanation before `--` as described above.
 
 Only retained events with `source` `pull` or `sweep` whose raw event fails the node-id validator are eligible. Stored reason text alone cannot grant eligibility. A missing or blank reason, a held push event, an unrelated failure, malformed raw JSON or a raw event-id mismatch is refused. No terminal or hub connection is required. The resolved process author, required reason, UTC time and exact raw-event SHA256 form an immutable local receipt; repeating a valid acknowledgement returns the first receipt. Reasons are limited to 500 UTF-8 bytes. On a repeat, text explains that the first receipt stands and the supplied reason was not recorded; JSON sets `already_acknowledged` to `true` (`false` for a new receipt). The receipt is local to this replica and is never exported, imported or synced.
 

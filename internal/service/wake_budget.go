@@ -43,7 +43,7 @@ func newWakeBudgets(opts WakeDispatcherOptions) (*wakeBudgets, error) {
 	}
 	clock := opts.Clock
 	if clock == nil {
-		clock = time.Now
+		return nil, fmt.Errorf("injected wake accounting clock is required: %w", model.ErrInvalidInput)
 	}
 	return &wakeBudgets{store: store, state: state, settings: settings, alerts: opts.Alerts, clock: clock, held: opts.Held}, nil
 }

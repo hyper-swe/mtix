@@ -37,7 +37,7 @@ func wakeServiceKey() model.WakeKey {
 
 func wakeDispatcher(t *testing.T, backend service.WakeStore, alerts *service.Alerts, send func(context.Context, model.WakeAttempt) error) *service.WakeDispatcher {
 	t.Helper()
-	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: backend, Alerts: alerts, Send: send, BudgetState: testutil.OperatorState(t)})
+	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: backend, Alerts: alerts, Send: send, BudgetState: testutil.OperatorState(t), Clock: time.Now})
 	require.NoError(t, err)
 	return d
 }

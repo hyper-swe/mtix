@@ -415,7 +415,9 @@ fresh fenced attempt still spends one credit. The identity stays local; exports
 and sync do not carry it. Identity-less restores at an unseen path, and legacy
 mirrors without an identity, may under-count history, never over-count. They
 establish an uncharged history baseline while retaining existing recipient
-credits and unacked debt. Doctor reads this state without creating an identity.
+credits and unacked debt. An identity-less database at a previously used path
+is treated as that path's board and can charge its own history. Doctor reads
+this state without creating an identity.
 
 Ack after handling keeps backoff quiet. Each new acknowledgement on any board
 resets this host recipient's delay; repeating an already acknowledged event or

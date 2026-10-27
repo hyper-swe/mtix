@@ -89,7 +89,9 @@ fresh fenced attempt still spends one credit. The identity stays local; exports
 and sync do not carry it. Identity-less restores at an unseen path, and legacy
 mirrors without an identity, may under-count history, never over-count. They
 establish an uncharged history baseline while retaining existing recipient
-credits and unacked debt. Doctor reads this state without creating an identity.
+credits and unacked debt. An identity-less database at a previously used path
+is treated as that path's board and can charge its own history. Doctor reads
+this state without creating an identity.
 
 The protected mirror retains spent allowance across restarts and store restores.
 `budget.rewind` in `mtix doctor` text and JSON reports a lower local counter or

@@ -31,7 +31,7 @@ func startWakeCompatSender(t *testing.T, f *wakeCompatFixture) *wakeCompatRun {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	run := &wakeCompatRun{entered: make(chan model.WakeAttempt, 1), release: make(chan struct{}), result: make(chan error, 1), done: make(chan struct{})}
-	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: f.store, Alerts: f.alerts, BudgetState: testutil.OperatorState(t),
+	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: f.store, Alerts: f.alerts, BudgetState: testutil.OperatorState(t), Clock: time.Now,
 		Send: func(ctx context.Context, attempt model.WakeAttempt) error {
 			f.sent.Add(1)
 			run.entered <- attempt

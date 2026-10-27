@@ -95,7 +95,7 @@ func wakeBudgetDoctorFailure(err error) DoctorResult {
 		Fix: "Preserve protected budget records; repair the reported access or data problem, then run mtix doctor --json. Never delete the mirror to return allowance."}
 }
 
-const wakeBudgetIdentityCaveat = "Identity-less restores may under-count history, never over-count; existing recipient credits and debt are retained."
+const wakeBudgetIdentityCaveat = "Identity-less restores at an unseen path may under-count history, never over-count. An identity-less database at a previously used path is treated as that path's board and can charge its own history. Existing recipient credits and debt are retained."
 
 func wakeBudgetDiagnosticFloor(m oplocal.WakeBudgetMirror, source, boardID string) int64 {
 	row := m.Sources[source]

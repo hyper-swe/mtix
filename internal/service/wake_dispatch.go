@@ -67,7 +67,7 @@ func NewWakeDispatcher(opts WakeDispatcherOptions) (*WakeDispatcher, error) {
 	}
 	budgets, err := newWakeBudgets(opts)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("construct wake accounting: %w", err)
 	}
 	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, send: opts.Send, alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets}, nil
 }

@@ -52,7 +52,7 @@ func TestDispatcher_ProtocolAlertFailure_PreservesBothCauses(t *testing.T) {
 	require.NoError(t, s.SetMinDispatchProtocol(t.Context(), 2))
 	cause := errors.New("operator alert refused")
 	sent := 0
-	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: s, Alerts: wakeAlertFault{cause}, BudgetState: testutil.OperatorState(t),
+	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: s, Alerts: wakeAlertFault{cause}, BudgetState: testutil.OperatorState(t), Clock: time.Now,
 		Send: func(context.Context, model.WakeAttempt) error { sent++; return nil }})
 	require.NoError(t, err)
 	err = d.Pass(t.Context(), nil)
@@ -71,9 +71,10 @@ func TestNewWakeDispatcher_InvalidCapabilities_Refuses(t *testing.T) {
 		{"alerts", func(o *service.WakeDispatcherOptions) { o.Alerts = nil }},
 		{"sender", func(o *service.WakeDispatcherOptions) { o.Send = nil }},
 		{"agent", func(o *service.WakeDispatcherOptions) { o.AlertAgent = " " }},
+		{"clock", func(o *service.WakeDispatcherOptions) { o.Clock = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			opts := service.WakeDispatcherOptions{Store: s, Alerts: alerts, Send: func(context.Context, model.WakeAttempt) error { return nil }}
+			opts := service.WakeDispatcherOptions{Store: s, Alerts: alerts, Clock: time.Now, Send: func(context.Context, model.WakeAttempt) error { return nil }}
 			tc.change(&opts)
 			_, err := service.NewWakeDispatcher(opts)
 			require.ErrorIs(t, err, model.ErrInvalidInput)
@@ -185,7 +186,7 @@ func TestDispatcher_OneSendFails_OtherCandidateStillRuns(t *testing.T) {
 func TestDispatcher_ReadableOpaqueAgentIDs_PreserveExistingPolicy(t *testing.T) {
 	s, _, alerts := wakeServiceStore(t)
 	sent := 0
-	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: s, Alerts: alerts, BudgetState: testutil.OperatorState(t), AlertAgent: "agent/diagnostic",
+	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: s, Alerts: alerts, BudgetState: testutil.OperatorState(t), Clock: time.Now, AlertAgent: "agent/diagnostic",
 		Send: func(context.Context, model.WakeAttempt) error { sent++; return nil }})
 	require.NoError(t, err)
 	key := wakeServiceKey()

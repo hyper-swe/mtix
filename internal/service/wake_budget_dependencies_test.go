@@ -24,3 +24,17 @@ func TestWakeBudget_MissingProtectedState_RefusesConstructor(t *testing.T) {
 	})
 	require.ErrorIs(t, err, model.ErrInvalidInput)
 }
+
+func TestWakeBudget_MissingInjectedClock_RefusesConstructor(t *testing.T) {
+	f := newWakeBudgetFixture(t, "12")
+	b := f.board(t, 1)
+	_, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{
+		Store: b.store, Alerts: f.alerts, BudgetState: f.state, Settings: f.state,
+		Send: func(context.Context, model.WakeAttempt) error {
+			t.Error("a dispatcher without an injected clock must never send")
+			return nil
+		},
+	})
+	require.ErrorIs(t, err, model.ErrInvalidInput)
+	require.ErrorContains(t, err, "clock")
+}

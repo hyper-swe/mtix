@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"strconv"
 	"testing"
+	"time"
 )
 
 func TestHopDepth_33HopChain_Held(t *testing.T)  { runHopChain(t, 33, true) }
@@ -28,7 +29,7 @@ func runHopChain(t *testing.T, last int, held bool) {
 	alerts := service.NewAlerts(operatorAlertsFixture(t), fixedClock(node.CreatedAt))
 	state := hopDepthOperatorState(t)
 	sent := 0
-	dispatcher, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: store, Alerts: alerts, BudgetState: state, Settings: state, Send: func(context.Context, model.WakeAttempt) error { sent++; return nil }})
+	dispatcher, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: store, Alerts: alerts, BudgetState: state, Settings: state, Clock: time.Now, Send: func(context.Context, model.WakeAttempt) error { sent++; return nil }})
 	require.NoError(t, err)
 	for depth := 0; depth <= last; depth++ {
 		require.NoError(t, prompts.AddAnnotation(t.Context(), node.ID, "chain event", "sender", "worker"))

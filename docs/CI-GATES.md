@@ -67,9 +67,8 @@ Each shard keeps `-race -count=1 -p 1 -timeout 20m` with nothing skipped, and
 has its own database service. The branch-protection required checks change
 from the single `pg-16 ./cmd/mtix/` and `pg-17 ./cmd/mtix/` names to the six
 `cmd/mtix shard N` names, so the merge rule is now 21 of 21 checks (it was 17
-of 17). The remote bar's Linux run is `make lint-go && make test-race-core`
-(every package except `cmd/mtix`) plus the three `cmd/mtix` shards; together
-they cover exactly what `make test-race` covers. The `--os macos-latest` run
+of 17). The remote bar's Linux run covers exactly what `make test-race` covers,
+split into parallel jobs (see "Remote bar package sets" below). The `--os macos-latest` run
 still uses `make test-race`.
 
 ## Remote bar
@@ -90,6 +89,54 @@ not replace the pull request checks above.
 value exits 2 before anything is pushed. The options combine. Exit codes are
 unchanged: 0 green, 1 bar red (including the web checks), 2 infrastructure or
 usage failure, 3 tree mismatch. Default runs send no extra dispatch inputs.
+
+### Remote bar package sets (MTIX-112.17.27)
+
+The Linux remote bar used to run every package in one job under `-p 1`
+(run 40368214334: core job 38m20s). The time was in packages that need no
+PostgreSQL, not in the serialization, so the packages are now split by whether
+they touch the single shared PostgreSQL database. Every job keeps `-race
+-count=1 -timeout 20m` and skips nothing.
+
+| Job | Packages | Flags | PostgreSQL |
+| --- | --- | --- | --- |
+| `bar` | the PostgreSQL consumers (`scripts/remote-bar-packages/serial.txt`: `internal/store/postgres/transport`, `e2e`, `benchmarks`), plus `make lint-go` and `govulncheck` | `-p 1` | one service, one DSN |
+| `bar-parallel` | every other package (`parallel.txt`) | `-p 4` | none |
+| `bar-shard` | `internal/store/sqlite` (3 shards), `internal/service` (2 shards) (`sharded.txt`) | per shard | none |
+| `bar-cmd` | `cmd/mtix`, 3 shards (unchanged) | `-p 1` | one service per shard |
+
+A PostgreSQL consumer is a package whose `*_test.go` reads `MTIX_PG_TEST_DSN`
+(`e2e/postgres` only checks the workflow text and sits behind the `e2e` build
+tag, so it is not in `go list ./...`). Those packages drop and re-migrate the
+shared database, so they never run at the same time. `scripts/ci-go-shards.sh bar-check`
+fails unless the three manifests plus the `cmd/mtix` shards equal `go list ./...`
+exactly (no package missing, repeated or stale), and `scripts/ci-go-shards.sh
+test-check <dir> <N>` fails unless every test of a sharded package is selected by
+exactly one shard. The guard `scripts/ci_go_shards_test.go` scans the
+repository for PostgreSQL consumers and fails if one sits in the parallel or
+sharded set. A new package must be added to one manifest; if its tests read
+`MTIX_PG_TEST_DSN`, it goes in `serial.txt`.
+
+```bash
+bash scripts/ci-go-shards.sh bar-check
+bash scripts/ci-go-shards.sh bar-list serial
+bash scripts/ci-go-shards.sh test-check internal/service 2
+bash scripts/ci-go-shards.sh test-pattern internal/service 2 1   # -run regex of shard 1
+```
+
+Wall time of the Linux bar (whole run, slowest job decides):
+
+| Layout | Slowest job | Whole run |
+| --- | --- | --- |
+| Before (run 40368214334): one `bar` job, all packages `-p 1` | `bar` 38m20s | 38m20s plus `bar-cmd` in parallel (6.0, 6.1, 7.9 min) |
+| After (run 40452661218) | `bar-cmd` shard 2, 8m33s | 8m46s |
+
+Per job in run 40452661218: `bar` (lint, PG serial, govulncheck) 3m59s;
+`bar-parallel` 5m30s; `bar-shard` sqlite 1/3 5m38s, 2/3 7m33s, 3/3 5m33s;
+`bar-shard` service 1/2 4m35s, 2/2 5m06s; `bar-cmd` 1 7m51s, 2 8m33s, 3 5m56s.
+The critical path is now the existing `cmd/mtix` shard 2. The measurement
+dispatched the branch's own workflow, because `remote-bar.sh` dispatches the
+workflow on `main` (MTIX-112.17.30).
 
 ### Reuse of an identical green run (MTIX-112.17.26)
 

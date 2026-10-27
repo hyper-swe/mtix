@@ -335,8 +335,8 @@ func TestRemoteBarWorkflow_VerifyStep_FailsWhenTheParentIsNotTheClaimedBase(t *t
 	mergeTree := tree
 	merge := git(t, repo, "commit-tree", mergeTree, "-p", snapCommit, "-p", newMain, "-m", "m")
 
-	// every job's verify step carries the check (validate, bar, bar-cmd, bar-macos, web)
-	require.Equal(t, 5, strings.Count(wf, "base mismatch: expected $BASE_COMMIT"))
+	// every job's verify step carries the check (validate, bar, bar-parallel, bar-shard, bar-cmd, bar-macos, web)
+	require.Equal(t, 7, strings.Count(wf, "base mismatch: expected $BASE_COMMIT"))
 	run := stepRun(t, wf, "Verify snapshot tree")
 	out, code := bash(t, repo, run, "EXPECTED_TREE="+tree, "BASE_COMMIT="+oldMain)
 	require.Equal(t, 0, code, out)
@@ -354,8 +354,8 @@ func TestRemoteBarWorkflow_VerifyStep_FailsWhenTheParentIsNotTheClaimedBase(t *t
 
 func TestRemoteBarWorkflow_ValidateJobGatesAllJobsAndVerifiesTheSnapshot(t *testing.T) {
 	wf := readWorkflow(t)
-	for _, job := range []string{"bar", "bar-cmd", "bar-macos", "web"} {
+	for _, job := range []string{"bar", "bar-parallel", "bar-shard", "bar-cmd", "bar-macos", "web"} {
 		require.Regexp(t, regexp.MustCompile(`(?m)^  `+job+`:\n(    [^\n]*\n)*?    needs: validate\n`), wf, job)
 	}
-	require.Equal(t, 5, strings.Count(wf, "BASE_COMMIT: ${{ inputs.base_commit }}"), "every job that checks out the snapshot reads the claimed base")
+	require.Equal(t, 7, strings.Count(wf, "BASE_COMMIT: ${{ inputs.base_commit }}"), "every job that checks out the snapshot reads the claimed base")
 }

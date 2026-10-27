@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -47,26 +48,20 @@ func TestExportDebouncer_CoalescesBurst(t *testing.T) {
 // (re-triggering faster than the quiet period) cannot postpone the export
 // beyond maxDelay.
 func TestExportDebouncer_MaxDelayBoundsStarvation(t *testing.T) {
-	var count atomic.Int64
-	d := service.NewExportDebouncer(countingExport(&count), slog.Default(),
-		100*time.Millisecond, 300*time.Millisecond)
+	synctest.Test(t, func(t *testing.T) {
+		var count atomic.Int64
+		const maxDelay = 300 * time.Millisecond
+		d := service.NewExportDebouncer(countingExport(&count), slog.Default(),
+			100*time.Millisecond, maxDelay)
+		defer d.Close()
 
-	stop := time.After(time.Second)
-	tick := time.NewTicker(30 * time.Millisecond) // always inside quiet period
-	defer tick.Stop()
-
-burst:
-	for {
-		select {
-		case <-stop:
-			break burst
-		case <-tick.C:
-			d.Trigger()
+		for flush := int64(1); flush <= 2; flush++ {
+			assertDebouncerMaxDelayWindow(t, d, &count, maxDelay, flush)
 		}
-	}
 
-	assert.GreaterOrEqual(t, count.Load(), int64(2),
-		"maxDelay must force exports during a sustained burst")
+		assert.GreaterOrEqual(t, count.Load(), int64(2),
+			"maxDelay must force exports during a sustained burst")
+	})
 }
 
 // TestExportDebouncer_FlushExportsPendingImmediately.

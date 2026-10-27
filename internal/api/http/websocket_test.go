@@ -30,7 +30,7 @@ func wsTestServer(t *testing.T) (*serverFixture, *httptest.Server) {
 
 	ts := httptest.NewServer(s.Router())
 	t.Cleanup(func() {
-		s.wsHub.Close()
+		closeWSTestHub(s.wsHub)
 		ts.Close()
 	})
 
@@ -50,10 +50,10 @@ func wsConnect(t *testing.T, ts *httptest.Server) *websocket.Conn {
 }
 
 // readWSMessage reads a single JSON message from the WebSocket
-// with a short timeout. Returns decoded event.
-func readWSMessage(t *testing.T, conn *websocket.Conn, timeout time.Duration) service.Event {
+// with a generous failure ceiling. Returns decoded event.
+func readWSMessage(t *testing.T, conn *websocket.Conn) service.Event {
 	t.Helper()
-	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	_ = conn.SetReadDeadline(time.Now().Add(wsCompletionHangBound))
 	_, msg, err := conn.ReadMessage()
 	require.NoError(t, err, "should receive a WS message within timeout")
 	var event service.Event
@@ -94,7 +94,7 @@ func TestWebSocket_ReceivesEvents(t *testing.T) {
 	require.NoError(t, err)
 
 	// Read the event from the WS connection.
-	received := readWSMessage(t, conn, 2*time.Second)
+	received := readWSMessage(t, conn)
 	assert.Equal(t, service.EventNodeCreated, received.Type)
 	assert.Equal(t, "PROJ-1", received.NodeID)
 	assert.Equal(t, "agent-1", received.Author)
@@ -103,7 +103,7 @@ func TestWebSocket_ReceivesEvents(t *testing.T) {
 // TestWebSocket_GracefulClose_OnShutdown verifies the hub sends close
 // frames to connected clients when the hub is closed.
 func TestWebSocket_GracefulClose_OnShutdown(t *testing.T) {
-	_, ts := wsTestServer(t)
+	s, ts := wsTestServer(t)
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/events"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	require.NoError(t, err)
@@ -112,13 +112,16 @@ func TestWebSocket_GracefulClose_OnShutdown(t *testing.T) {
 	// Wait for registration.
 	time.Sleep(50 * time.Millisecond)
 
-	// Close the test server (which triggers hub.Close via cleanup).
+	// Exercise the real server shutdown path, including the WebSocket hub.
+	require.NoError(t, s.Shutdown(t.Context()))
 	ts.Close()
 
 	// The client should receive a close message or read error.
-	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(wsCompletionHangBound))
 	_, _, readErr := conn.ReadMessage()
 	assert.Error(t, readErr, "should get an error after server shutdown")
+	var closeErr *websocket.CloseError
+	require.ErrorAs(t, readErr, &closeErr, "shutdown must produce a close error rather than a read deadline")
 }
 
 // TestWebSocket_Keepalive_PingPong verifies the pong handler is configured
@@ -138,7 +141,7 @@ func TestWebSocket_Keepalive_PingPong(t *testing.T) {
 		return nil
 	})
 
-	// Read to trigger the pong handler (need to read for pong to be processed).
+	// The 2s read/pong probe is an observation window, not a required completion.
 	go func() {
 		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
 		// ReadMessage will process control frames including pong.
@@ -176,8 +179,8 @@ func TestWebSocket_MultipleClients_AllReceive(t *testing.T) {
 	require.NoError(t, err)
 
 	// Both clients should receive the event.
-	e1 := readWSMessage(t, conn1, 2*time.Second)
-	e2 := readWSMessage(t, conn2, 2*time.Second)
+	e1 := readWSMessage(t, conn1)
+	e2 := readWSMessage(t, conn2)
 	assert.Equal(t, service.EventNodeUpdated, e1.Type)
 	assert.Equal(t, service.EventNodeUpdated, e2.Type)
 }
@@ -219,7 +222,7 @@ func TestEvent_NodeCreated_BroadcastOnCreate(t *testing.T) {
 	}
 	require.NoError(t, s.wsHub.Broadcast(context.Background(), event))
 
-	received := readWSMessage(t, conn, 2*time.Second)
+	received := readWSMessage(t, conn)
 	assert.Equal(t, service.EventNodeCreated, received.Type)
 	assert.Equal(t, "PROJ-1", received.NodeID)
 	assert.Contains(t, string(received.Data), "New Task")
@@ -240,7 +243,7 @@ func TestEvent_NodeUpdated_IncludesChangedFields(t *testing.T) {
 	}
 	require.NoError(t, s.wsHub.Broadcast(context.Background(), event))
 
-	received := readWSMessage(t, conn, 2*time.Second)
+	received := readWSMessage(t, conn)
 	assert.Equal(t, service.EventNodeUpdated, received.Type)
 	assert.Contains(t, string(received.Data), "title")
 	assert.Contains(t, string(received.Data), "description")
@@ -259,7 +262,7 @@ func TestEvent_NodeDeleted_PerNodeEvent(t *testing.T) {
 	}
 	require.NoError(t, s.wsHub.Broadcast(context.Background(), event))
 
-	received := readWSMessage(t, conn, 2*time.Second)
+	received := readWSMessage(t, conn)
 	assert.Equal(t, service.EventNodeDeleted, received.Type)
 	assert.Equal(t, "PROJ-3", received.NodeID)
 }
@@ -279,7 +282,7 @@ func TestEvent_NodesDeleted_BatchCascadeEvent(t *testing.T) {
 	}
 	require.NoError(t, s.wsHub.Broadcast(context.Background(), event))
 
-	received := readWSMessage(t, conn, 2*time.Second)
+	received := readWSMessage(t, conn)
 	assert.Contains(t, string(received.Data), "parent_id")
 	assert.Contains(t, string(received.Data), "count")
 }
@@ -298,7 +301,7 @@ func TestEvent_ProgressChanged_OnStatusTransition(t *testing.T) {
 	}
 	require.NoError(t, s.wsHub.Broadcast(context.Background(), event))
 
-	received := readWSMessage(t, conn, 2*time.Second)
+	received := readWSMessage(t, conn)
 	assert.Equal(t, service.EventProgressChanged, received.Type)
 	assert.Contains(t, string(received.Data), "0.75")
 }
@@ -318,7 +321,7 @@ func TestEvent_NodesInvalidated_BatchRerunEvent(t *testing.T) {
 	}
 	require.NoError(t, s.wsHub.Broadcast(context.Background(), event))
 
-	received := readWSMessage(t, conn, 2*time.Second)
+	received := readWSMessage(t, conn)
 	assert.Equal(t, service.EventNodesInvalidated, received.Type)
 	assert.Contains(t, string(received.Data), "parent_id")
 	assert.Contains(t, string(received.Data), "count")
@@ -340,7 +343,7 @@ func TestEvent_AgentStuck_Broadcast(t *testing.T) {
 	}
 	require.NoError(t, s.wsHub.Broadcast(context.Background(), event))
 
-	received := readWSMessage(t, conn, 2*time.Second)
+	received := readWSMessage(t, conn)
 	assert.Equal(t, service.EventAgentStuck, received.Type)
 	assert.Contains(t, string(received.Data), "agent-3")
 }
@@ -365,7 +368,7 @@ func TestSubscription_Default_AllEvents(t *testing.T) {
 	}
 
 	for i, expected := range events {
-		received := readWSMessage(t, conn, 2*time.Second)
+		received := readWSMessage(t, conn)
 		assert.Equal(t, expected.Type, received.Type, "event %d type mismatch", i)
 		assert.Equal(t, expected.NodeID, received.NodeID, "event %d nodeID mismatch", i)
 	}
@@ -406,11 +409,11 @@ func TestSubscription_UnderFilter_SubtreeOnly(t *testing.T) {
 	require.NoError(t, s.wsHub.Broadcast(context.Background(), exactEvent))
 
 	// Should receive the inside event first (outside was filtered).
-	received1 := readWSMessage(t, conn, 2*time.Second)
+	received1 := readWSMessage(t, conn)
 	assert.Equal(t, "PROJ-42.1.3", received1.NodeID)
 
 	// Then the exact match.
-	received2 := readWSMessage(t, conn, 2*time.Second)
+	received2 := readWSMessage(t, conn)
 	assert.Equal(t, "PROJ-42.1", received2.NodeID)
 
 	// Verify no more messages (the outside event was filtered).
@@ -451,11 +454,11 @@ func TestSubscription_EventTypeFilter_WhitelistOnly(t *testing.T) {
 	}))
 
 	// Should receive node.updated first.
-	received1 := readWSMessage(t, conn, 2*time.Second)
+	received1 := readWSMessage(t, conn)
 	assert.Equal(t, service.EventNodeUpdated, received1.Type)
 
 	// Then progress.changed.
-	received2 := readWSMessage(t, conn, 2*time.Second)
+	received2 := readWSMessage(t, conn)
 	assert.Equal(t, service.EventProgressChanged, received2.Type)
 
 	// No more messages.
@@ -489,7 +492,7 @@ func TestSubscription_FilterHeartbeat_Excluded(t *testing.T) {
 		NodeID: "PROJ-1",
 	}))
 
-	received := readWSMessage(t, conn, 2*time.Second)
+	received := readWSMessage(t, conn)
 	assert.Equal(t, service.EventNodeCreated, received.Type)
 	assert.Equal(t, "PROJ-1", received.NodeID)
 
@@ -525,7 +528,7 @@ func TestSubscription_InvalidMessage_Ignored(t *testing.T) {
 		NodeID: "STILL-ALIVE",
 	}))
 
-	received := readWSMessage(t, conn, 2*time.Second)
+	received := readWSMessage(t, conn)
 	assert.Equal(t, "STILL-ALIVE", received.NodeID)
 }
 
@@ -560,7 +563,7 @@ func TestSubscription_CombinedFilter_UnderAndEvents(t *testing.T) {
 		NodeID: "PROJ-5.2.1",
 	}))
 
-	received := readWSMessage(t, conn, 2*time.Second)
+	received := readWSMessage(t, conn)
 	assert.Equal(t, service.EventProgressChanged, received.Type)
 	assert.Equal(t, "PROJ-5.2.1", received.NodeID)
 
@@ -673,7 +676,7 @@ func TestWSHub_Close_StopsRun(t *testing.T) {
 	select {
 	case <-done:
 		// Run exited — success.
-	case <-time.After(2 * time.Second):
+	case <-time.After(wsCompletionHangBound):
 		t.Fatal("hub.Run did not exit after Close")
 	}
 }

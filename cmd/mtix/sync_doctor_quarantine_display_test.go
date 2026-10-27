@@ -40,10 +40,10 @@ func doctorDisplayCases() []doctorDisplayCase {
 	return cases
 }
 
-// legacyDoctorDisplayHint pins the established JSON hint data independently of
-// the formatter under test, including its existing quoting and reason text.
-func legacyDoctorDisplayHint(id string) string {
-	return "Inspect and report retained events (1 eligible unacknowledged; first shown), then: mtix sync quarantine acknowledge --reason 'reviewed invalid node id; accepted as unapplied' -- '" + strings.ReplaceAll(id, "'", "'\"'\"'") + "'"
+// expectedDoctorDisplayHint pins the required-explanation command independently
+// of the formatter under test, including its event-id quoting.
+func expectedDoctorDisplayHint(id string) string {
+	return "Inspect and report retained events (1 eligible unacknowledged; first shown); add --reason '<your explanation>' before --, then: mtix sync quarantine acknowledge -- '" + strings.ReplaceAll(id, "'", "'\"'\"'") + "'"
 }
 
 func TestDoctorRecoveryHint_DisplayContract(t *testing.T) {
@@ -66,7 +66,7 @@ func TestDoctorRecoveryHint_DisplayContract(t *testing.T) {
 					if tc.inspect {
 						assertDoctorInspectHint(t, tc.id, fix)
 					} else {
-						require.Equal(t, legacyDoctorDisplayHint(tc.id), fix)
+						require.Equal(t, expectedDoctorDisplayHint(tc.id), fix)
 					}
 					var out bytes.Buffer
 					printDoctorTable(&out, report)
@@ -79,7 +79,7 @@ func TestDoctorRecoveryHint_DisplayContract(t *testing.T) {
 
 func assertDoctorDisplayJSON(t *testing.T, report DoctorReport, id string) {
 	t.Helper()
-	require.Equal(t, legacyDoctorDisplayHint(id), report.Checks[0].Fix)
+	require.Equal(t, expectedDoctorDisplayHint(id), report.Checks[0].Fix)
 	raw, err := json.Marshal(report)
 	require.NoError(t, err)
 	var parsed struct {
@@ -89,7 +89,7 @@ func assertDoctorDisplayJSON(t *testing.T, report DoctorReport, id string) {
 	}
 	require.NoError(t, json.Unmarshal(raw, &parsed))
 	require.Len(t, parsed.Checks, 1)
-	want, err := json.Marshal(legacyDoctorDisplayHint(id))
+	want, err := json.Marshal(expectedDoctorDisplayHint(id))
 	require.NoError(t, err)
 	require.Equal(t, want, []byte(parsed.Checks[0].Fix))
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -21,8 +22,12 @@ func TestQuarantineDoctorFix_InstructionsNameFirstEventAndCount(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			body, err := os.ReadFile(filepath.Join("..", "..", path))
 			require.NoError(t, err)
+			require.False(t, strings.Contains(string(body), "reviewed invalid node id; accepted as unapplied"), "canned acknowledgement reason in %s", path)
 			require.Contains(t, string(body), "first eligible event id and eligible count")
 			require.Contains(t, string(body), "run doctor again after each acknowledgement")
+			require.Contains(t, string(body), "Add `--reason '<your explanation>'` before `--` in the printed command")
+			require.Contains(t, string(body), "the printed command is refused until you supply it")
+			require.Contains(t, string(body), "replace `<your explanation>` in the `--reason` value")
 		})
 	}
 }

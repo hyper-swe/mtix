@@ -747,6 +747,10 @@ and rejected completions. A newer dispatch protocol reports FAIL: install a
 compatible binary, restart the dispatcher and rerun doctor. This read-only check
 never prunes wake rows or lowers the protocol floor, including with --fix.
 
+The read-only export.schema check compares the schema_version .mtix/tasks.json
+declares with the one this binary writes. Every write re-exports the file in
+this binary's schema; sync.auto_sync does not stop that. WARN prints the fix.
+
 Setup checks will be registered by their future features.
 
 ### Flags
@@ -1513,7 +1517,7 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.
 - `migrate` — Drive the ADR-003 §7 node-identity migration phases
 - `pull` — Pull events from the sync hub and apply locally (FR-18)
 - `push` — Push pending events to the sync hub (FR-18)
-- `quarantine` — Inspect events held in the local quarantine
+- `quarantine` — Inspect retained events and acknowledge invalid-id pulled events
 - `reconcile` — Resolve divergent history (FR-18.13)
 - `relay` — EXPERIMENTAL: manage the file-based sync relay (FR-21)
 - `repair` — Repair local state from the local sync event log (--status)
@@ -2186,7 +2190,7 @@ so git pre-push hooks never block code pushes.
 
 **Usage:** `quarantine`
 
-Inspect events held in the local quarantine
+Inspect retained events and acknowledge invalid-id pulled events
 
 Inspect the events held in the local quarantine: pulled events that
 'mtix sync pull' could not take (they failed the pull's checks, the FR-18.7
@@ -2198,9 +2202,39 @@ clock is released automatically once the event's stamp is within 24 h of
 this machine's clock, together with the events of its task's subtree
 that the hub would accept; every other push hold stays.
 
+Acknowledge records a local audit receipt for a reviewed invalid-node-id
+pulled event, with a required reason; it stays retained and unapplied.
+
 ### Subcommands
 
+- `acknowledge <event-id> --reason <text>` — Record a local receipt accepting an invalid-id pulled event as unapplied
 - `list` — List quarantined and held events (read-only)
+---
+
+## acknowledge
+
+**Usage:** `acknowledge <event-id> --reason <text>`
+
+Record a local receipt accepting an invalid-id pulled event as unapplied
+
+Acknowledge one retained pull or sweep event refused for an invalid node id.
+The required reason and resolved author, UTC time and exact raw-event SHA256
+are recorded in an immutable local receipt. Repeating the command returns
+the first receipt, marking already_acknowledged in JSON or explaining that
+the supplied reason was not recorded in text. The reason is limited to
+500 UTF-8 bytes. No terminal or hub connection is required.
+
+The event stays quarantined and unapplied; every pull still retries it.
+This does not repair or remove it, change the hub or acknowledge another
+replica. Push holds, unrelated failures and malformed retained events are
+refused. Doctor passes its quarantine check only when no unacknowledged
+pulled event remains; other checks keep their own results.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--reason` |  | Required explanation for accepting this event as unapplied |  |
 ---
 
 ## list
@@ -2213,7 +2247,8 @@ List the events held in the local quarantine, in Lamport clock order,
 then event id: event id, node, op, failed attempts, first seen, last
 attempt and the reason the event was quarantined. --json adds the Lamport
 clock, the source (pull or sweep for a pulled event, push for an event
-push holds) and the mtix version that recorded it.
+push holds) and the mtix version that recorded it. Acknowledged rows show
+their retained local receipt, including author, reason, time and raw SHA256.
 
 Read-only and local: it never retries, removes or changes an event and
 does not contact the hub. 'mtix sync pull' retries every quarantined

@@ -338,6 +338,9 @@ func findMtixDir() (string, error) {
 // as mtix sync init, still auto-imports.
 func shouldSkipAutoImport(commandPath string) bool {
 	switch commandPath {
+	case "sync quarantine acknowledge":
+		// The local receipt must not import unrelated board changes.
+		return true
 	case "init", "export", "import", "help", "version", "migrate", "sync", "sync status", "sync doctor", "doctor":
 		return true
 	}

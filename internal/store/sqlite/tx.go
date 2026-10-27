@@ -26,17 +26,19 @@ func (s *Store) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) (err erro
 	return s.withWriteTx(ctx, fn, true)
 }
 
-// withWriteTx shares all write guards; local export bookkeeping alone suppresses
-// mutation callbacks to avoid recursively marking the metadata transaction.
+// withWriteTx shares all write guards. Local bookkeeping suppresses mutation
+// callbacks so export metadata and quarantine receipts cannot schedule task exports.
 func (s *Store) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error, notify bool) (err error) {
 	if pfErr := s.preflightWrite(); pfErr != nil {
 		return pfErr
 	}
 
-	tx, err := s.writeDB.BeginTx(ctx, nil)
+	wtx, err := s.beginWriterTx(ctx) // pinned until Release: MTIX-198
 	if err != nil {
 		return s.classifyWriteError(wrapBusyError(fmt.Errorf("begin transaction: %w", err)))
 	}
+	defer wtx.Release(ctx)
+	tx := wtx.Tx
 
 	defer func() {
 		if p := recover(); p != nil {
@@ -59,10 +61,12 @@ func (s *Store) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error, noti
 		return s.classifyWriteError(err)
 	}
 
-	if err = tx.Commit(); err != nil {
-		return s.classifyWriteError(wrapBusyError(fmt.Errorf("commit transaction: %w", err)))
+	if err = wtx.Commit(); err != nil {
+		err = wtx.RecoverAfterCommit(ctx, fmt.Errorf("commit transaction: %w", err)) // MTIX-198
+		return s.classifyWriteError(wrapBusyError(err))
 	}
 
+	wtx.Release(ctx) // the callbacks below write on the pool, so the connection must be free
 	if notify {
 		s.notifyCommitted(ctx)
 	}

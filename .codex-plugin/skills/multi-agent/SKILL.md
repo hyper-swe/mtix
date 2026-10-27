@@ -49,6 +49,19 @@ suppresses the missing-pointer requirement; existing pointers are allowed and
 first live owned pointer and removes later duplicates, preserving other bytes.
 This check never writes documents or Git exclusions, including with `--fix`.
 
+Every write (for example `mtix create`) re-exports `.mtix/tasks.json` in this
+binary's export schema: `2.0.0`, or `2.1.0` with `history.export`. The first
+write after an mtix upgrade can change a committed file's `schema_version` and
+add fields, which breaks a reader that rejects unknown fields.
+`sync.auto_sync` does not stop this re-export: it turns off automatic import
+only. The read-only `export.schema` check reports PASS when the file declares
+the schema this binary writes and WARN with the fix when it declares another.
+To upgrade deliberately, run `mtix sync` and, when it reports no pending import,
+`mtix sync --fix`, then commit `.mtix/tasks.json` and update the strict reader.
+To keep the older schema, write to the board only with the mtix version that
+wrote it. When the file declares a NEWER schema than this binary writes, the
+fix says to upgrade mtix instead. The check never writes the file, including with `--fix`.
+
 Setup completion (`setup.done`, MTIX-112.19.2) remains a FUTURE registration.
 Do not infer that setup is current from the absence of that row.
 

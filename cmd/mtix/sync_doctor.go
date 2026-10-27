@@ -268,6 +268,9 @@ func appendLocalChecks(ctx context.Context, report DoctorReport) DoctorReport {
 		report = appendCheck(report, "queue draining", drainOK, detail)
 	}
 	report = appendLocalStoreChecks(ctx, report, app.store)
+	if app.store != nil {
+		report = appendWakeBudgetRewindCheck(ctx, report, app.store)
+	}
 	report = appendHeldPushCheck(ctx, report, app.store)
 	modeOK, detail := checkSecretsFileMode(app.mtixDir)
 	return appendCheck(report, "secrets file mode", modeOK, detail)

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fixedHopStore struct {
@@ -34,7 +35,7 @@ func TestWakeHopGuard_AgentOverrideAndHeldDiagnostic(t *testing.T) {
 			store, _, alerts := wakeServiceStore(t)
 			var lines []string
 			sent := 0
-			d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: fixedHopStore{store, 3}, Alerts: alerts, Settings: state, Held: func(line string) { lines = append(lines, line) }, Send: func(_ context.Context, attempt model.WakeAttempt) error {
+			d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: fixedHopStore{store, 3}, Alerts: alerts, Settings: state, BudgetState: state, Clock: time.Now, Held: func(line string) { lines = append(lines, line) }, Send: func(_ context.Context, attempt model.WakeAttempt) error {
 				require.Equal(t, int64(3), attempt.Hop)
 				sent++
 				return nil
@@ -78,7 +79,7 @@ func TestWakeHopGuard_UnreadableInvalidOrUnrecordable_ClaimsNothing(t *testing.T
 		t.Run(name, func(t *testing.T) {
 			store, _, alerts := wakeServiceStore(t)
 			var backend service.WakeStore = fixedHopStore{store, 33}
-			options := service.WakeDispatcherOptions{Store: backend, Alerts: alerts, Send: func(context.Context, model.WakeAttempt) error { t.Error("must not send"); return nil }}
+			options := service.WakeDispatcherOptions{Store: backend, Alerts: alerts, BudgetState: testutil.OperatorState(t), Clock: time.Now, Send: func(context.Context, model.WakeAttempt) error { t.Error("must not send"); return nil }}
 			switch name {
 			case "event read":
 				options.Store = faultHopStore{store, cause}

@@ -17,6 +17,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil"
 )
 
 func wakeServiceStore(t *testing.T) (*sqlite.Store, *time.Time, *service.Alerts) {
@@ -36,7 +37,7 @@ func wakeServiceKey() model.WakeKey {
 
 func wakeDispatcher(t *testing.T, backend service.WakeStore, alerts *service.Alerts, send func(context.Context, model.WakeAttempt) error) *service.WakeDispatcher {
 	t.Helper()
-	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: backend, Alerts: alerts, Send: send})
+	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: backend, Alerts: alerts, Send: send, BudgetState: testutil.OperatorState(t), Clock: time.Now})
 	require.NoError(t, err)
 	return d
 }
@@ -107,8 +108,10 @@ func TestDispatcher_SendFailureAfterCancellation_RemainsTerminal(t *testing.T) {
 
 type emptyWakeFence struct{ *sqlite.Store }
 
-func (s emptyWakeFence) ClaimWake(_ context.Context, key model.WakeKey, _ time.Duration) (model.WakeAttempt, bool, error) {
-	return model.WakeAttempt{Key: key}, true, nil
+func (s emptyWakeFence) ClaimWakeBudget(_ context.Context, key model.WakeKey, _ time.Duration,
+	_ func(model.WakeBudgetProposal) (model.WakeBudgetDecision, error),
+) (model.WakeBudgetResult, error) {
+	return model.WakeBudgetResult{Attempt: model.WakeAttempt{Key: key}, Won: true}, nil
 }
 
 func TestDispatcher_EmptyAttemptFence_RefusesBeforeSend(t *testing.T) {

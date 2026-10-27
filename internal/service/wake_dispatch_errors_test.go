@@ -16,6 +16,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil"
 )
 
 type wakeProtocolFault struct {
@@ -51,7 +52,7 @@ func TestDispatcher_ProtocolAlertFailure_PreservesBothCauses(t *testing.T) {
 	require.NoError(t, s.SetMinDispatchProtocol(t.Context(), 2))
 	cause := errors.New("operator alert refused")
 	sent := 0
-	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: s, Alerts: wakeAlertFault{cause},
+	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: s, Alerts: wakeAlertFault{cause}, BudgetState: testutil.OperatorState(t), Clock: time.Now,
 		Send: func(context.Context, model.WakeAttempt) error { sent++; return nil }})
 	require.NoError(t, err)
 	err = d.Pass(t.Context(), nil)
@@ -70,9 +71,10 @@ func TestNewWakeDispatcher_InvalidCapabilities_Refuses(t *testing.T) {
 		{"alerts", func(o *service.WakeDispatcherOptions) { o.Alerts = nil }},
 		{"sender", func(o *service.WakeDispatcherOptions) { o.Send = nil }},
 		{"agent", func(o *service.WakeDispatcherOptions) { o.AlertAgent = " " }},
+		{"clock", func(o *service.WakeDispatcherOptions) { o.Clock = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			opts := service.WakeDispatcherOptions{Store: s, Alerts: alerts, Send: func(context.Context, model.WakeAttempt) error { return nil }}
+			opts := service.WakeDispatcherOptions{Store: s, Alerts: alerts, Clock: time.Now, Send: func(context.Context, model.WakeAttempt) error { return nil }}
 			tc.change(&opts)
 			_, err := service.NewWakeDispatcher(opts)
 			require.ErrorIs(t, err, model.ErrInvalidInput)
@@ -127,8 +129,10 @@ type wakeClaimFault struct {
 	cause error
 }
 
-func (s wakeClaimFault) ClaimWake(context.Context, model.WakeKey, time.Duration) (model.WakeAttempt, bool, error) {
-	return model.WakeAttempt{}, false, s.cause
+func (s wakeClaimFault) ClaimWakeBudget(context.Context, model.WakeKey, time.Duration,
+	func(model.WakeBudgetProposal) (model.WakeBudgetDecision, error),
+) (model.WakeBudgetResult, error) {
+	return model.WakeBudgetResult{}, s.cause
 }
 
 type wakeCompletionFault struct {
@@ -182,7 +186,7 @@ func TestDispatcher_OneSendFails_OtherCandidateStillRuns(t *testing.T) {
 func TestDispatcher_ReadableOpaqueAgentIDs_PreserveExistingPolicy(t *testing.T) {
 	s, _, alerts := wakeServiceStore(t)
 	sent := 0
-	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: s, Alerts: alerts, AlertAgent: "agent/diagnostic",
+	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: s, Alerts: alerts, BudgetState: testutil.OperatorState(t), Clock: time.Now, AlertAgent: "agent/diagnostic",
 		Send: func(context.Context, model.WakeAttempt) error { sent++; return nil }})
 	require.NoError(t, err)
 	key := wakeServiceKey()
@@ -199,9 +203,11 @@ func TestDispatcher_ReadableOpaqueAgentIDs_PreserveExistingPolicy(t *testing.T) 
 
 type wakeMismatchedFence struct{ *sqlite.Store }
 
-func (s wakeMismatchedFence) ClaimWake(_ context.Context, key model.WakeKey, _ time.Duration) (model.WakeAttempt, bool, error) {
+func (s wakeMismatchedFence) ClaimWakeBudget(_ context.Context, key model.WakeKey, _ time.Duration,
+	_ func(model.WakeBudgetProposal) (model.WakeBudgetDecision, error),
+) (model.WakeBudgetResult, error) {
 	key.EventSeq++
-	return model.WakeAttempt{Key: key, Token: "another-key-fence"}, true, nil
+	return model.WakeBudgetResult{Attempt: model.WakeAttempt{Key: key, Token: "another-key-fence"}, Won: true}, nil
 }
 
 func TestDispatcher_MismatchedOrInvalidMetadata_Refuses(t *testing.T) {

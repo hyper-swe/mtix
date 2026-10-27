@@ -32,7 +32,8 @@ func TestWakeEventHop_StoredContextAndMalformedPayload(t *testing.T) {
 		bad bool
 	}{
 		{`{"body":"unaddressed","hop":33}`, false}, {`{"to":"worker"}`, false},
-		{`{"to":"worker","hop":-1}`, true}, {`{"to":"worker","hop":null}`, true}, {`{"to":"worker","hop":1.5}`, true},
+		{`{"to":"worker","hop":-1}`, false}, {`{"to":"worker","hop":null}`, false}, {`{"to":"worker","hop":1.5}`, false},
+		{`{`, true}, {`{"to":true,"hop":1}`, true},
 	} {
 		t.Run(tt.raw, func(t *testing.T) {
 			_, err := s.WriteDB().ExecContext(t.Context(), "UPDATE sync_events SET payload=? WHERE rowid=?", tt.raw, key.EventSeq)

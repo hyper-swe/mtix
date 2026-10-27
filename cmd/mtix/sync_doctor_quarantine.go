@@ -28,7 +28,7 @@ func appendQuarantineCheck(ctx context.Context, r DoctorReport, st *sqlite.Store
 	ok, detail := checkQuarantinedEvents(ctx, st)
 	check := DoctorCheck{Name: quarantineCheckName, Pass: ok, Detail: detail}
 	if !ok && strings.Contains(detail, quarantineInspectCmd) {
-		fix, err := quarantineAcknowledgementFix(ctx, st)
+		fix, err := quarantineAcknowledgementFix(ctx, st, app.jsonOutput)
 		if err != nil {
 			check.Detail += "; " + err.Error()
 		} else {

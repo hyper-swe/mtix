@@ -85,3 +85,22 @@ func TestWithTx_Panic_RollbacksAndRePanics(t *testing.T) {
 	).Scan(&value)
 	assert.ErrorIs(t, err, sql.ErrNoRows, "panicked transaction should be rolled back")
 }
+
+// TestWithTx_CallbackAndRollbackFail_PreservesBothErrors verifies that the
+// callback error and the later rollback error both remain discoverable.
+func TestWithTx_CallbackAndRollbackFail_PreservesBothErrors(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	callbackErr := errors.New("callback failed")
+
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		// End the real transaction so WithTx's rollback returns ErrTxDone.
+		require.NoError(t, tx.Rollback())
+		return callbackErr
+	})
+
+	assert.ErrorIs(t, err, callbackErr, "the callback error must remain in the chain")
+	assert.ErrorIs(t, err, sql.ErrTxDone, "the rollback error must remain in the chain")
+	require.NoError(t, s.WithTx(ctx, func(*sql.Tx) error { return nil }),
+		"the writer must remain usable after both errors")
+}

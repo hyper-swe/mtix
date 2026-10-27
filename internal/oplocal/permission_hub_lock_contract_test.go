@@ -33,7 +33,7 @@ func TestPermissions_HubTransitionCancelContentionAndRelease(t *testing.T) {
 		select {
 		case err := <-done:
 			require.ErrorContains(t, err, "observer failed")
-		case <-time.After(time.Second):
+		case <-time.After(oplocalCompletionHangBound):
 			t.Error("holder did not join after release and cancel")
 		}
 	}()
@@ -76,7 +76,7 @@ func TestPermissions_HubTransitionErrorReleasesAndSafeReentry(t *testing.T) {
 		select {
 		case <-done:
 			t.Fatal("observer exceeded deadline; joined after cancellation")
-		case <-time.After(time.Second):
+		case <-time.After(oplocalCompletionHangBound):
 			t.Fatal("observer did not join after cancellation")
 		}
 	}

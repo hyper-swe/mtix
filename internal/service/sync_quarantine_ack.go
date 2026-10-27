@@ -24,8 +24,8 @@ const maxQuarantineAcknowledgementReasonBytes = 500
 // AcknowledgeQuarantine accepts one invalid-node-id pull/sweep as unapplied on
 // this replica. It preserves the raw quarantine, retries and every sync clock
 // and reports valid repeats without replacing the first receipt (MTIX-187.2).
-func (s *SyncService) AcknowledgeQuarantine(ctx context.Context, eventID, actor, reason string) (sqlite.QuarantineAcknowledgementResult, error) {
-	var empty sqlite.QuarantineAcknowledgementResult
+func (s *SyncService) AcknowledgeQuarantine(ctx context.Context, eventID, actor, reason string) (QuarantineAcknowledgementResult, error) {
+	var empty QuarantineAcknowledgementResult
 	if strings.TrimSpace(eventID) == "" {
 		return empty, fmt.Errorf("event id is required: %w", model.ErrInvalidInput)
 	}
@@ -39,7 +39,7 @@ func (s *SyncService) AcknowledgeQuarantine(ctx context.Context, eventID, actor,
 	if err != nil {
 		return empty, fmt.Errorf("read acknowledgement candidate: %w", err)
 	}
-	if err := validateQuarantineAcknowledgement(q); err != nil {
+	if err = validateQuarantineAcknowledgement(q); err != nil {
 		return empty, fmt.Errorf("validate acknowledgement candidate: %w", err)
 	}
 	sum := sha256.Sum256([]byte(q.RawEvent))
@@ -47,7 +47,14 @@ func (s *SyncService) AcknowledgeQuarantine(ctx context.Context, eventID, actor,
 		EventID: eventID, RawEventSHA256: hex.EncodeToString(sum[:]), Source: q.Source,
 		Actor: actor, Reason: reason, AcknowledgedAt: s.clock().UTC().Format(time.RFC3339Nano),
 	}
-	return s.store.RecordQuarantineAcknowledgement(ctx, q, receipt)
+	result, err := s.store.RecordQuarantineAcknowledgement(ctx, q, receipt)
+	if err != nil {
+		return empty, fmt.Errorf("record quarantine acknowledgement: %w", err)
+	}
+	return QuarantineAcknowledgementResult{
+		QuarantineAcknowledgement: quarantineAcknowledgementOutput(result.QuarantineAcknowledgement),
+		AlreadyAcknowledged:       result.AlreadyAcknowledged,
+	}, nil
 }
 
 func validateQuarantineAcknowledgement(q sqlite.QuarantinedEvent) error {

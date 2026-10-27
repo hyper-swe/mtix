@@ -37,7 +37,7 @@ func (k reuseKey) title() string {
 // reuseRun renders one gh run list entry as the stub returns it.
 func reuseRun(id int, title, concl, status string, age time.Duration) string {
 	created := time.Now().Add(-age).UTC().Format(time.RFC3339)
-	return fmt.Sprintf(`{"databaseId":%d,"displayTitle":%q,"conclusion":%q,"status":%q,"createdAt":%q,"headSha":"abc%d","url":"https://github.com/hyper-swe/mtix/actions/runs/%d"}`,
+	return fmt.Sprintf(`{"databaseId":%d,"displayTitle":%q,"conclusion":%q,"status":%q,"createdAt":%q,"headBranch":"main","headSha":"%040x","url":"https://github.com/hyper-swe/mtix/actions/runs/%d"}`,
 		id, title, concl, status, created, id, id)
 }
 
@@ -66,8 +66,8 @@ func (c reuseCase) run(t *testing.T) (out string, code int, logged string) {
 	snap := t.TempDir()
 	require.NoError(t, os.WriteFile(snap+"/b.txt", []byte("b"), 0o600))
 	if c.withFlow {
-		require.NoError(t, os.MkdirAll(snap+"/.github", 0o750))
-		require.NoError(t, os.WriteFile(snap+"/.github/x.yml", []byte("x"), 0o600))
+		require.NoError(t, os.MkdirAll(snap+"/.github/workflows", 0o750))
+		require.NoError(t, os.WriteFile(snap+"/.github/workflows/ci.yml", []byte("name: fixture\non: push\njobs: {}\n"), 0o600))
 	}
 	pathEnv := "PATH=" + bin + ":" + os.Getenv("PATH")
 	dry, dcode := bash(t, work, `bash "$RB_SCRIPT" --dry-run --allow-workflow-diff "$S"`, "S="+snap, pathEnv)

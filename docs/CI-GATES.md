@@ -207,8 +207,57 @@ If main's workflow predates the `base_commit` input the dispatch is retried
 without it, and such runs carry no match data. Runs started before the
 run-name change are not reused.
 
-Because the workflow is dispatched from `main`, a change to it takes effect
-only after it is merged; contract tests and `--dry-run` cover it before then.
+### Workflow source and changes (MTIX-112.17.30)
+
+Every final verdict records `workflow_ref` and `workflow_sha`, identifying the
+workflow source rather than the snapshot checkout. Fresh runs use the actual
+`headBranch` and `headSha` reported for the dispatch. Reused runs identify their
+original workflow source; reuse requires a `main` source and a valid commit in
+addition to the existing tree, base, options, age and workflow-blob checks.
+Missing or contradictory source metadata cannot yield green or reuse.
+
+A refusal before dispatch reports `workflow_ref=not-run workflow_sha=none`.
+If dispatch was attempted but the source cannot be established, the verdict
+reports `workflow_ref=unknown workflow_sha=unknown` and exits 2; the separate
+`requested_workflow_ref=main` is only the requested source, not proof it ran.
+Dry-run reports that no workflow ran.
+
+Any difference in `.github/workflows/remote-bar.yml`, including adding or
+deleting it, is refused with exit 2 before push, dispatch or reuse. This also
+applies to `--dry-run` and **cannot be overridden by
+`--allow-workflow-diff`**. Other `.github` changes retain that explicit opt-in;
+the warning states that main's remote-bar workflow runs the tree and that the
+changed workflow itself is not exercised. For example, changed `ci.yml` still
+needs actual PR CI evidence.
+
+To measure a change to `remote-bar.yml` before merge, first obtain independent
+review of the change and approval for a one-off hosted measurement of that
+exact reviewed commit. This is an operator step, not a script feature or a
+way to bypass the refusal. The approved operator creates a unique
+`ci-scratch/*` snapshot with the reviewed tree and current `origin/main` as
+its sole parent, then selects that snapshot's own workflow for dispatch.
+Replace the uppercase placeholders below with the exact approved values.
+The first commands print the current main commit, reviewed tree and new
+snapshot commit; use those printed hashes for the corresponding placeholders.
+`ci-scratch/APPROVED_NAME` must be the approved, unused scratch ref:
+
+```bash
+git fetch origin main
+git rev-parse origin/main
+git rev-parse "REVIEWED_COMMIT_SHA^{tree}"
+git commit-tree REVIEWED_TREE_SHA -p MAIN_COMMIT_SHA -m "approved workflow measurement"
+git push origin SNAPSHOT_COMMIT_SHA:refs/heads/ci-scratch/APPROVED_NAME
+gh workflow run remote-bar.yml --repo hyper-swe/mtix --ref ci-scratch/APPROVED_NAME \
+  -f scratch_ref=ci-scratch/APPROVED_NAME -f expected_tree=REVIEWED_TREE_SHA \
+  -f base_commit=MAIN_COMMIT_SHA -f wrapper_version=2
+```
+
+The operator verifies the actual workflow source ref and commit and the
+expected checkout tree, waits for all jobs, and records the run URL, ref,
+commit, tree and measurements in the review evidence. Delete only that owned
+scratch ref after the measurement is complete. This is the route used for
+the MTIX-112.17.27 measurement; a normal main-workflow bar is never evidence
+that a changed remote-bar workflow ran.
 
 ## Release gates
 

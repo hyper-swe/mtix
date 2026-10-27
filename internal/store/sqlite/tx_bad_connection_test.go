@@ -85,6 +85,7 @@ func TestWriterTx_BadCommit_ReportsOnlyMeaningfulErrors(t *testing.T) {
 	other := errors.New("rollback storage failure")
 	tests := []badCommitCase{
 		{"bad connection", driver.ErrBadConn, nil, true},
+		{"closed connection commit", sql.ErrConnDone, sql.ErrConnDone, true},
 		{"wrapped bad connection", fmt.Errorf("driver commit: %w", driver.ErrBadConn), nil, true},
 		{"bad connection rollback", driver.ErrBadConn, driver.ErrBadConn, true},
 		{"wrapped closed rollback", driver.ErrBadConn, fmt.Errorf("rollback: %w", sql.ErrConnDone), true},

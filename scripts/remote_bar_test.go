@@ -678,7 +678,9 @@ func TestRemoteBarWorkflow_GoFlags_NeverSetInAnyEnvBlock(t *testing.T) {
 }
 
 func TestRemoteBarWorkflow_GoEnvWrite_PrecedesTheBar(t *testing.T) {
-	wf := readWorkflow(t)
+	// MTIX-112.17.27: only the macOS job still runs make test-race and so still
+	// serializes through go env -w; the Linux jobs pass -p explicitly.
+	wf := jobBlock(t, readWorkflow(t), "bar-macos")
 	write := strings.Index(wf, "go env -w GOFLAGS=-p=1")
 	bar := strings.Index(wf, "- name: Run committed bar")
 	require.GreaterOrEqual(t, write, 0, "the -p=1 setting must be written with go env -w")

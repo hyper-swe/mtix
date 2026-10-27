@@ -1,13 +1,14 @@
 # CI and release gates
 
-Every pull request and push to `main` runs **21 CI checks**. Merge only the
+Every pull request and push to `main` runs **25 CI checks**. Merge only the
 reviewed commit with every check successful; a skipped or cancelled check is
 not a passing check.
 
 | Checks | Count | Purpose |
 | --- | ---: | --- |
-| `test-go-shard (OS, shard)` | 6 | Three package shards on each of `ubuntu-22.04` and `macos-latest` |
-| `test-go` | 1 | Require all six Go shard jobs to succeed |
+| `test-go-shard (OS, shard)` | 4 | CLI and other-package shards on each of `ubuntu-22.04` and `macos-latest` |
+| `test-go-sqlite (OS, shard N)` | 6 | Three SQLite test shards on each OS |
+| `test-go` | 1 | Require all ten Go shard jobs from both matrices to succeed |
 | `test-web` | 1 | Web tests |
 | `lint` | 1 | Pinned Go lint |
 | `pg-16 package`, `pg-17 package` | 4 | Transport and end-to-end suites against each PostgreSQL version |
@@ -19,7 +20,7 @@ not a passing check.
 
 The explicit package lists are in `scripts/ci-go-shards/`:
 
-- `sqlite.txt`: `internal/store/sqlite` on its own runner.
+- `sqlite.txt`: `internal/store/sqlite`, run in the separate three-test-shard matrix on each OS.
 - `cli.txt`: `cmd/mtix` on a different runner.
 - `other.txt`: every remaining selected package.
 
@@ -38,16 +39,59 @@ per package. No test is skipped by the shard command; the existing
 `node_modules` package exclusion is unchanged. Full Git history remains
 available, including to the bookkeeping test.
 
-The shard matrix has `fail-fast: false`, so one failed shard does not cancel
-the others. The aggregate job named exactly `test-go` needs the entire matrix
-and uses `always()` so failed or skipped dependencies cannot skip the gate.
-It accepts only a dependency result of `success`; failure, cancellation and
-skipping all fail the aggregate. The build continues to depend on this gate.
+Both shard matrices have `fail-fast: false`, so one failed shard does not
+cancel the others. The aggregate job named exactly `test-go` needs both
+`test-go-shards` and `test-go-sqlite` and uses `always()` so failed or skipped
+dependencies cannot skip the gate. It accepts only `success` from both
+matrices; failure, cancellation, skipping or a missing result from either
+fails the aggregate. The build continues to depend on this gate.
 
 The workflow tests execute the aggregate's actual shell for those outcomes
 and check the OS/shard matrix, flags and check count. The package-guard tests
 include an unlisted package that must fail until it is explicitly assigned,
 as well as duplicate membership and failed inventory enumeration.
+
+## SQLite test shards (MTIX-112.17.29)
+
+The SQLite race package approached the unchanged 20-minute timeout on macOS.
+PR CI runs it in three hash shards on each OS, using the same
+`scripts/ci-go-shards.sh` modes as the remote bar:
+
+```bash
+bash scripts/ci-go-shards.sh test-check internal/store/sqlite 3
+bash scripts/ci-go-shards.sh test-pattern internal/store/sqlite 3 2   # the -run regex of shard 2
+```
+
+The workflow passes the printed anchored pattern directly to `go test -run`,
+retaining `-race -count=1 -timeout 20m`. The script lists the compiled tests,
+examples and fuzz seeds, assigns names
+by a stable hash, and checks that each name matches exactly one emitted
+pattern. New tests are assigned automatically; subtests remain with their
+parent. Internal and external tests with the same name share a selector and
+run in the same shard. Each OS verifies the full package partition and the
+exact test partition before running its shard. The real-package test in
+`scripts/ci_sqlite_workflow_test.go` independently checks every compiled
+registration against all three patterns. No assertion, test body, race flag
+or timeout is weakened, and no skip flag is added.
+
+The two old SQLite job names are replaced by six `test-go-sqlite` checks.
+Together with the four CLI/other jobs, the aggregate and the remaining checks,
+this changes the merge requirement from 21 successful checks to **25 of 25**.
+
+Before the split, the last five completed main CI runs measured these SQLite
+package times (seconds from the original Go output; setup is excluded):
+
+| Main CI run | macOS | Ubuntu |
+| --- | ---: | ---: |
+| [40441320798](https://github.com/hyper-swe/mtix/actions/runs/40441320798) | 802.467 | 1024.239 |
+| [40429608472](https://github.com/hyper-swe/mtix/actions/runs/40429608472) | 822.772 | 853.764 |
+| [40419953566](https://github.com/hyper-swe/mtix/actions/runs/40419953566) | 914.026 | 922.439 |
+| [40418804538](https://github.com/hyper-swe/mtix/actions/runs/40418804538) | 651.540 | 954.145 |
+| [40418645578](https://github.com/hyper-swe/mtix/actions/runs/40418645578) | 827.778 | 986.447 |
+
+Validate the resulting shard times on two real PR CI runs and record the run
+links and per-shard durations in the PR evidence before merging. The remote
+bar dispatches `remote-bar.yml` from main; it does not exercise `ci.yml`.
 
 ## cmd/mtix shards
 
@@ -66,8 +110,8 @@ bash scripts/cmd-mtix-shards.sh pattern 2   # the -run regex of shard 2
 Each shard keeps `-race -count=1 -p 1 -timeout 20m` with nothing skipped, and
 has its own database service. The branch-protection required checks change
 from the single `pg-16 ./cmd/mtix/` and `pg-17 ./cmd/mtix/` names to the six
-`cmd/mtix shard N` names, so the merge rule is now 21 of 21 checks (it was 17
-of 17). The remote bar's Linux run covers exactly what `make test-race` covers,
+`cmd/mtix shard N` names. That raised the count from 17 to 21; the SQLite
+PR split above raises it to 25. The remote bar's Linux run covers exactly what `make test-race` covers,
 split into parallel jobs (see "Remote bar package sets" below). The `--os macos-latest` run
 still uses `make test-race`.
 
@@ -169,7 +213,7 @@ only after it is merged; contract tests and `--dry-run` cover it before then.
 ## Release gates
 
 Run [the release checklist](RELEASE-CHECKLIST.md) on the exact CI-green commit
-before tagging. All 21 ordinary CI checks, including the six shards and
+before tagging. All 25 ordinary CI checks, including the ten race shards and
 `test-go` aggregate, must pass alongside independent review and the other
 documented quality gates.
 

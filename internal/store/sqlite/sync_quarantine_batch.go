@@ -43,6 +43,8 @@ func (s *Store) QuarantineAcknowledgementsFor(ctx context.Context, page []Quaran
 		return nil, fmt.Errorf("quarantine receipt page exceeds %d rows: %w", QuarantineAcknowledgementPageSize, model.ErrInvalidInput)
 	}
 	keys := quarantineReceiptLookups(page)
+	// Empty and push-only pages need no receipt lookup. Avoid inspecting audit
+	// metadata so unrelated read-only schema errors cannot fail these pages.
 	if len(keys) == 0 {
 		return out, nil
 	}

@@ -187,23 +187,153 @@ jobs:
           install-only: true
           verify: false
       - run: go mod verify
-      - name: Serialize packages
-        # The PG-gated suites drop and re-migrate one shared database, so
-        # packages must not run concurrently (same reason as ci.yml's -p 1).
-        # Written with go env -w, not job env: the Makefile assigns
-        # GOFLAGS := -trimpath, and make exports that to go test whenever
-        # GOFLAGS is already in the environment, which breaks the tests that
-        # locate the repository through runtime.Caller.
-        run: go env -w GOFLAGS=-p=1
+      - name: Verify exact package sets
+        # MTIX-112.17.27: serial, parallel and sharded manifests plus the
+        # cmd/mtix shards equal go list ./... exactly.
+        run: bash scripts/ci-go-shards.sh bar-check
       - name: Run committed bar
-        # MTIX-112.17.24: cmd/mtix runs in the bar-cmd shards below; core plus
-        # those shards cover exactly what make test-race covers.
-        run: make lint-go && make test-race-core
+        # MTIX-112.17.27: the PostgreSQL packages (those whose tests read
+        # MTIX_PG_TEST_DSN) share one database, so they run one at a time
+        # (-p 1). Every other package runs in the bar-parallel and bar-shard
+        # jobs, cmd/mtix in the bar-cmd shards; together they cover exactly
+        # what make test-race covers. The flags are passed directly, not by
+        # GOFLAGS: the Makefile assigns GOFLAGS := -trimpath, and make exports
+        # that to go test whenever GOFLAGS is already in the environment.
+        run: |
+          make lint-go
+          list=$(bash scripts/ci-go-shards.sh bar-list serial)
+          mapfile -t pkgs <<<"$list"
+          [ "${#pkgs[@]}" -gt 0 ] && [ -n "${pkgs[0]}" ] || { echo "empty serial package list" >&2; exit 1; }
+          go test "${pkgs[@]}" -race -count=1 -p 1 -timeout 20m
       - name: Run govulncheck
         # Pinned like release.yml (MTIX-83, MTIX-116).
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           go list ./... | grep -v node_modules | xargs "$(go env GOPATH)/bin/govulncheck"
+
+  bar-parallel:
+    needs: validate
+    # MTIX-112.17.27: every package that is neither a PostgreSQL consumer nor sharded, in parallel (-p 4), -race, nothing skipped. No PostgreSQL service and no MTIX_PG_TEST_DSN: PG tests skip when it is unset, so a misplaced PG package would skip silently; only the package-set guard test (scripts/ci_go_shards_test.go) keeps PG consumers out of this job.
+    if: ${{ inputs.os != 'macos-latest' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    env:
+      WRAPPER_VERSION: ${{ inputs.wrapper_version }}
+      SCRATCH_REF: ${{ inputs.scratch_ref }}
+      EXPECTED_TREE: ${{ inputs.expected_tree }}
+      BASE_COMMIT: ${{ inputs.base_commit }}
+    steps:
+      - name: Identify run
+        run: |
+          echo "remote-bar runner=$RUNNER_NAME os=$RUNNER_OS run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID wrapper=$WRAPPER_VERSION ref=$SCRATCH_REF job=bar-parallel"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.scratch_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify snapshot tree
+        run: |
+          actual="$(git rev-parse 'HEAD^{tree}')"
+          if [ "$actual" != "$EXPECTED_TREE" ]; then
+            echo "tree mismatch: expected $EXPECTED_TREE, checked out $actual" >&2
+            exit 1
+          fi
+          echo "tree verified: $actual"
+          # The run-name claims base_commit, so the snapshot's single parent
+          # must really be that commit, or a green run could be reused for a
+          # different main (MTIX-112.17.26).
+          if [ -n "${BASE_COMMIT:-}" ]; then
+            parents="$(git rev-list --parents -n 1 HEAD | wc -w)"
+            if [ "$parents" -ne 2 ]; then
+              echo "base mismatch: the snapshot must have exactly one parent" >&2
+              exit 1
+            fi
+            actual_base="$(git rev-parse 'HEAD^')"
+            if [ "$actual_base" != "$BASE_COMMIT" ]; then
+              echo "base mismatch: expected $BASE_COMMIT, parent is $actual_base" >&2
+              exit 1
+            fi
+            echo "base verified: $actual_base"
+          fi
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Verify exact package sets
+        run: bash scripts/ci-go-shards.sh bar-check
+      - name: Run committed bar
+        run: |
+          list=$(bash scripts/ci-go-shards.sh bar-list parallel)
+          mapfile -t pkgs <<<"$list"
+          [ "${#pkgs[@]}" -gt 0 ] && [ -n "${pkgs[0]}" ] || { echo "empty parallel package list" >&2; exit 1; }
+          go test "${pkgs[@]}" -race -count=1 -p 4 -timeout 20m
+
+  bar-shard:
+    needs: validate
+    # MTIX-112.17.27: the slow packages that need no PostgreSQL, each split into hash shards by test name (scripts/ci-go-shards.sh). Every test is selected by exactly one shard; -race and the 20m budget are unchanged.
+    if: ${{ inputs.os != 'macos-latest' }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {pkg: internal/store/sqlite, shards: "3", shard: "1"}
+          - {pkg: internal/store/sqlite, shards: "3", shard: "2"}
+          - {pkg: internal/store/sqlite, shards: "3", shard: "3"}
+          - {pkg: internal/service, shards: "2", shard: "1"}
+          - {pkg: internal/service, shards: "2", shard: "2"}
+    env:
+      WRAPPER_VERSION: ${{ inputs.wrapper_version }}
+      SCRATCH_REF: ${{ inputs.scratch_ref }}
+      EXPECTED_TREE: ${{ inputs.expected_tree }}
+      BASE_COMMIT: ${{ inputs.base_commit }}
+      PKG: ${{ matrix.pkg }}
+      SHARDS: ${{ matrix.shards }}
+      SHARD: ${{ matrix.shard }}
+    steps:
+      - name: Identify run
+        run: |
+          echo "remote-bar runner=$RUNNER_NAME os=$RUNNER_OS run=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID wrapper=$WRAPPER_VERSION ref=$SCRATCH_REF job=bar-shard pkg=$PKG shard=$SHARD/$SHARDS"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.scratch_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify snapshot tree
+        run: |
+          actual="$(git rev-parse 'HEAD^{tree}')"
+          if [ "$actual" != "$EXPECTED_TREE" ]; then
+            echo "tree mismatch: expected $EXPECTED_TREE, checked out $actual" >&2
+            exit 1
+          fi
+          echo "tree verified: $actual"
+          # The run-name claims base_commit, so the snapshot's single parent
+          # must really be that commit, or a green run could be reused for a
+          # different main (MTIX-112.17.26).
+          if [ -n "${BASE_COMMIT:-}" ]; then
+            parents="$(git rev-list --parents -n 1 HEAD | wc -w)"
+            if [ "$parents" -ne 2 ]; then
+              echo "base mismatch: the snapshot must have exactly one parent" >&2
+              exit 1
+            fi
+            actual_base="$(git rev-parse 'HEAD^')"
+            if [ "$actual_base" != "$BASE_COMMIT" ]; then
+              echo "base mismatch: expected $BASE_COMMIT, parent is $actual_base" >&2
+              exit 1
+            fi
+            echo "base verified: $actual_base"
+          fi
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Verify exact package sets
+        run: bash scripts/ci-go-shards.sh bar-check
+      - name: Verify exact package test coverage
+        run: bash scripts/ci-go-shards.sh test-check "$PKG" "$SHARDS"
+      - name: Run package shard
+        run: |
+          pattern=$(bash scripts/ci-go-shards.sh test-pattern "$PKG" "$SHARDS" "$SHARD")
+          go test "./$PKG/" -race -count=1 -timeout 20m -run "$pattern"
 
   bar-cmd:
     needs: validate

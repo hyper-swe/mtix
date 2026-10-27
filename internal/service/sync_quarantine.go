@@ -12,7 +12,7 @@ import (
 
 // quarantineListPage is how many quarantine rows ListQuarantined reads per
 // query.
-const quarantineListPage = 500
+const quarantineListPage = sqlite.QuarantineAcknowledgementPageSize
 
 // QuarantinedEvent is one event held in the local quarantine
 // (sync_quarantine) as `mtix sync quarantine list` shows it: a pulled event
@@ -51,14 +51,14 @@ func (s *SyncService) ListQuarantined(ctx context.Context) ([]QuarantinedEvent, 
 		if len(page) == 0 {
 			return out, nil
 		}
+		acks, err := s.store.QuarantineAcknowledgementsFor(ctx, page)
+		if err != nil {
+			return nil, fmt.Errorf("list quarantine acknowledgements: %w", err)
+		}
 		for _, q := range page {
-			ack, err := s.store.QuarantineAcknowledgementFor(ctx, q)
-			if err != nil {
-				return nil, fmt.Errorf("list quarantine acknowledgements: %w", err)
-			}
 			var receipt *QuarantineAcknowledgement
-			if ack != nil {
-				converted := quarantineAcknowledgementOutput(*ack)
+			if ack, ok := acks[q.EventID]; ok {
+				converted := quarantineAcknowledgementOutput(ack)
 				receipt = &converted
 			}
 			out = append(out, QuarantinedEvent{

@@ -1,0 +1,14 @@
+[
+  {
+    "event_id": "0193fb00-0000-7000-8000-000000000001",
+    "node_id": "TEST-1é",
+    "op_type": "create_node",
+    "lamport_clock": 1,
+    "source": "pull",
+    "reason": "invalid node id",
+    "attempts": 1,
+    "first_seen": "2026-03-14T10:00:00Z",
+    "last_attempt": "2026-03-14T10:00:00Z",
+    "cli_version": ""
+  }
+]

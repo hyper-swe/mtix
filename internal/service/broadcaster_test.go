@@ -186,35 +186,30 @@ func TestBroadcaster_ConcurrentBroadcast_ThreadSafe(t *testing.T) {
 		channels[i] = hub.Subscribe(service.SubscriptionFilter{})
 	}
 
+	const producers, batchSize = 10, 20
+	want := concurrentBroadcastIDs(producers * batchSize)
 	// Broadcast from multiple goroutines concurrently.
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := 0; i < producers; i++ {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			for j := 0; j < 20; j++ {
+			for j := 0; j < batchSize; j++ {
 				_ = hub.Broadcast(context.Background(), service.Event{
 					Type:   service.EventNodeCreated,
-					NodeID: "PROJ-1",
+					NodeID: want[idx*batchSize+j],
 				})
 			}
 		}(i)
 	}
 	wg.Wait()
 
-	// Drain all channels to verify no deadlock.
+	// Producers have joined, so every delivery is already buffered.
 	for _, ch := range channels {
-		count := 0
-		for {
-			select {
-			case <-ch:
-				count++
-			case <-time.After(100 * time.Millisecond):
-				goto done
-			}
-		}
-	done:
+		got := drainConcurrentBroadcastIDs(t, ch)
+		count := len(got)
 		assert.Greater(t, count, 0, "subscriber should have received some events")
+		assert.ElementsMatch(t, want, got, "each subscriber must receive every broadcast exactly once")
 	}
 }
 

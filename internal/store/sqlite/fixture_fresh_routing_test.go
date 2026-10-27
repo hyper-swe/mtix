@@ -506,7 +506,7 @@ func requireFreshFixtureRoutes(t *testing.T) {
 		}
 		sources[entry.Name()] = raw
 	}
-	problems := freshFixtureRoutingProblems(sources, freshFixtureSubjects)
+	problems := requiredFreshFixtureRoutingProblems(sources, freshFixtureSubjects)
 	for _, problem := range problems {
 		t.Errorf("fresh fixture routing: %s", problem)
 	}

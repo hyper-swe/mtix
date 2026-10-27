@@ -38,21 +38,21 @@ func TestBroadcaster_BroadcastEvent_AllSubscribersReceive(t *testing.T) {
 	select {
 	case e := <-ch1:
 		assert.Equal(t, service.EventNodeCreated, e.Type)
-	case <-time.After(time.Second):
+	case <-time.After(serviceCompletionHangBound):
 		t.Fatal("ch1 timed out")
 	}
 
 	select {
 	case e := <-ch2:
 		assert.Equal(t, service.EventNodeCreated, e.Type)
-	case <-time.After(time.Second):
+	case <-time.After(serviceCompletionHangBound):
 		t.Fatal("ch2 timed out")
 	}
 
 	select {
 	case e := <-ch3:
 		assert.Equal(t, service.EventNodeCreated, e.Type)
-	case <-time.After(time.Second):
+	case <-time.After(serviceCompletionHangBound):
 		t.Fatal("ch3 timed out")
 	}
 }
@@ -82,7 +82,7 @@ func TestBroadcaster_SubscriptionFilter_UnderPrefix(t *testing.T) {
 	select {
 	case e := <-ch:
 		assert.Equal(t, "PROJ-1.2", e.NodeID)
-	case <-time.After(time.Second):
+	case <-time.After(serviceCompletionHangBound):
 		t.Fatal("timed out waiting for event")
 	}
 
@@ -118,7 +118,7 @@ func TestBroadcaster_SubscriptionFilter_EventTypeWhitelist(t *testing.T) {
 	select {
 	case e := <-ch:
 		assert.Equal(t, service.EventNodeCreated, e.Type)
-	case <-time.After(time.Second):
+	case <-time.After(serviceCompletionHangBound):
 		t.Fatal("timed out")
 	}
 

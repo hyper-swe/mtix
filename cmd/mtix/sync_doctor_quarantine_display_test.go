@@ -37,6 +37,13 @@ func doctorDisplayCases() []doctorDisplayCase {
 	for r := rune(0x7f); r <= 0x9f; r++ {
 		cases = append(cases, doctorDisplayCase{fmt.Sprintf("format_%04x", r), "evt-" + string(r) + "-1", true})
 	}
+	for _, r := range []rune{'\u2028', '\u2029', '\u202e', '\u200b', '\u2060', '\u2066', '\u00a0'} {
+		cases = append(cases, doctorDisplayCase{fmt.Sprintf("format_%04x", r), "evt-" + string(r) + "-1", true})
+	}
+	cases = append(cases,
+		doctorDisplayCase{"ascii_space", "evt-a b", false},
+		doctorDisplayCase{"printable_mark", "evt-e\u0301", false},
+	)
 	return cases
 }
 

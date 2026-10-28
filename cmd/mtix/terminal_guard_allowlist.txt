@@ -28,7 +28,6 @@ cmd/mtix/sync_conflicts.go:printResolveResult:Fprintln:962426f84fe2becc | prints
 cmd/mtix/sync_doctor_node_ids.go:invalidNodeIDDetail:Sprintf:442957adbffebb5c | tracked: MTIX-187.7.25
 cmd/mtix/sync_pull_quarantine.go:retryQuarantinedEvents:Fprintf:2712cc30509683b2 | integer counts from a tuple result; no stored text is printed.
 cmd/mtix/sync_pull_quarantine.go:retryQuarantinedEvents:Fprintf:94549611c9be9ede | integer counts from a tuple result; no stored text is printed.
-cmd/mtix/sync_pull_sweep_apply.go:applyStagedChunk:Errorf:22a7764a7a370313 | tracked: MTIX-187.7.25
 cmd/mtix/sync_quarantine_ack.go:quarantineDisplayReason:Sprintf:83b7a4f3b112c295 | its only caller, printQuarantineTable, passes the result through oneLine (sync_quarantine_cmd.go); no other caller.
 cmd/mtix/sync_relay.go:printRelayPass:Fprintf:b452dc5aa4dc6cda | tracked: MTIX-187.7.25
 cmd/mtix/sync_relay.go:printRelayPass:Fprintf:d7500dda6a3ad741 | tracked: MTIX-187.7.25

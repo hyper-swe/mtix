@@ -2666,7 +2666,7 @@ records are authenticated but not encrypted. See
 
 ### Terminal display security
 
-Sync event IDs are opaque stored values. Human output quotes them as printable
+Sync event IDs are opaque stored values. Terminal output quotes them as printable
 ASCII with backslash escapes; titles and assignees use the existing single-line
 sanitizer, and multiline ticket prose is sanitized before display. The terminal
 guard tests run the real binary over shared hostile fixtures for board queries,

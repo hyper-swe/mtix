@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -68,7 +69,7 @@ func applyWorkflowWinner(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, in
 			"event_id", e.EventID, "status", string(in.to))
 	}
 	if err := writeWorkflowColumns(ctx, tx, id, w); err != nil {
-		return "", fmt.Errorf("apply %s %s: %w", e.OpType, e.EventID, err)
+		return "", fmt.Errorf("apply %s %s: %w", e.OpType, format.EventID(e.EventID), err)
 	}
 	return id, nil
 }

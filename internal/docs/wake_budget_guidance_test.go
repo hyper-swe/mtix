@@ -50,3 +50,16 @@ func TestWakeBudgetGuidance_AckRoutineAndScannerBoundary(t *testing.T) {
 		})
 	}
 }
+
+func TestWakeHoldGuidance_GuardTripsAndRearmDocumented(t *testing.T) {
+	paths := []string{"internal/docs/templates/skills/admin.md.tmpl", ".claude-plugin/skills/mtix-admin.md", ".codex-plugin/skills/admin/SKILL.md", "USERMANUAL.md",
+		"internal/docs/templates/skills/multi_agent.md.tmpl", ".claude-plugin/skills/mtix-multi-agent.md", ".codex-plugin/skills/multi-agent/SKILL.md"}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			body := readAgentInstruction(t, filepath.Join("..", "..", path))
+			require.Contains(t, body, "wake.guard-trips")
+			require.Contains(t, body, "high-water mark")
+			require.NotContains(t, body, "hold re-arm remain")
+		})
+	}
+}

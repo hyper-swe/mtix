@@ -41,3 +41,12 @@ type WakeLedgerStats struct {
 	Claimed  int64
 	Rejected int64
 }
+
+// WakeRegistrationMark is a registration's own edge-trigger state (ADR-007 §5.4, I10).
+type WakeRegistrationMark struct {
+	// Found is false when no registration row exists for the key's agent, host and uid.
+	Found     bool
+	Epoch     int64
+	HighWater int64
+	Held      bool
+}

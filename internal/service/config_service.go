@@ -20,6 +20,7 @@ import (
 // workspace values use .mtix/config.yaml with dot-notation key access.
 type ConfigService struct {
 	wake        *WakeConfigOptions
+	reevaluator WakeReevaluator
 	ignoredWake map[string]string
 	values      map[string]string
 	path        string // Path to config file.

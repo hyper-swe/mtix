@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -111,7 +112,7 @@ func TestSyncQuarantineAcknowledge_RequiredReason_AndActionableDoctorFix(t *test
 	report := appendQuarantineCheck(t.Context(), DoctorReport{OverallPass: true}, app.store)
 	require.Len(t, report.Checks, 1)
 	require.False(t, report.Checks[0].Pass)
-	require.Contains(t, report.Checks[0].Fix, "mtix sync quarantine acknowledge -- '"+ackCLIEventID+"'")
+	require.Contains(t, report.Checks[0].Fix, "mtix sync quarantine acknowledge --handle "+service.QuarantineHandle(ackCLIEventID))
 	counts, err := app.store.CountQuarantineAcknowledgements(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, 0, counts.Acknowledged)

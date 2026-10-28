@@ -49,6 +49,9 @@ type ExportData struct {
 	History   []exportHistoryEntry `json:"history,omitempty"`
 	NodeCount int                  `json:"node_count"`
 	Checksum  string               `json:"checksum"`
+	// IDsChecksum covers the uid_hex, task_uid_hex and event_id_hex fields
+	// (export_ids.go); present only when the export holds one.
+	IDsChecksum string `json:"ids_checksum,omitempty"`
 
 	// historyOn records that this export was produced with history.export
 	// on; it is never written to the file.
@@ -127,6 +130,13 @@ type exportNode struct {
 	// History is the task's change history (format 2.1.0, history.export on),
 	// omitted when empty so a node encodes and hashes as in 2.0.0.
 	History []exportHistoryEntry `json:"history,omitempty"`
+
+	// readerView marks a copy that encodes as a v0.5.4 reader sees it (see
+	// export_ids.go). Never written to the file.
+	readerView bool
+	// plainUID marks the 1.0.0 form: the raw uid is kept and no hex field is
+	// written, so the node encodes exactly as mtix 0.5.3 wrote it.
+	plainUID bool
 }
 
 // exportDep is the JSON representation of a dependency in the export.
@@ -363,7 +373,7 @@ type exportChecksumDoc struct {
 // every reader hash the same bytes. For valid UTF-8 the second encoding
 // equals the first, so the checksum of every other export is unchanged.
 func computeExportChecksumH(nodes []exportNode, deps []exportDep, history []exportHistoryEntry) (string, error) {
-	first, err := json.Marshal(exportChecksumDoc{Nodes: nodes, Deps: deps, History: history})
+	first, err := json.Marshal(exportChecksumDoc{Nodes: readerViewNodes(nodes), Deps: deps, History: readerViewHistory(history)})
 	if err != nil {
 		return "", fmt.Errorf("marshal for checksum: %w", err)
 	}
@@ -398,7 +408,7 @@ func computeExportChecksum(nodes []exportNode, deps []exportDep) (string, error)
 // restores the bytes they hashed, provided the stored text held no genuine
 // U+FFFD; a file holding both still fails verification.
 func legacyReplacementChecksumH(nodes []exportNode, deps []exportDep, history []exportHistoryEntry) (string, error) {
-	canonical, err := json.Marshal(exportChecksumDoc{Nodes: nodes, Deps: deps, History: history})
+	canonical, err := json.Marshal(exportChecksumDoc{Nodes: readerViewNodes(nodes), Deps: deps, History: readerViewHistory(history)})
 	if err != nil {
 		return "", fmt.Errorf("marshal for legacy checksum: %w", err)
 	}
@@ -438,6 +448,9 @@ func RecomputeExportChecksum(export *ExportData) error {
 		return fmt.Errorf("compute checksum: %w", err)
 	}
 	export.Checksum = checksum
+	if export.IDsChecksum, err = computeIDsChecksum(export.Nodes, export.History); err != nil {
+		return fmt.Errorf("compute ids checksum: %w", err)
+	}
 	return nil
 }
 
@@ -456,13 +469,20 @@ func VerifyExportChecksum(export *ExportData) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("compute checksum: %w", err)
 	}
-	if computed == export.Checksum {
-		return true, nil
+	if computed != export.Checksum {
+		legacy, legacyErr := legacyReplacementChecksumH(export.Nodes, export.Dependencies, export.History)
+		if legacyErr != nil {
+			return false, fmt.Errorf("compute legacy checksum: %w", legacyErr)
+		}
+		if legacy == "" || legacy != export.Checksum {
+			return false, nil
+		}
 	}
-
-	legacy, err := legacyReplacementChecksumH(export.Nodes, export.Dependencies, export.History)
+	// The hex fields (MTIX-187.7.15.1) are covered by ids_checksum: one
+	// without it, or it without one, or a changed one, fails.
+	ids, err := computeIDsChecksum(export.Nodes, export.History)
 	if err != nil {
-		return false, fmt.Errorf("compute legacy checksum: %w", err)
+		return false, fmt.Errorf("compute ids checksum: %w", err)
 	}
-	return legacy != "" && legacy == export.Checksum, nil
+	return ids == export.IDsChecksum, nil
 }

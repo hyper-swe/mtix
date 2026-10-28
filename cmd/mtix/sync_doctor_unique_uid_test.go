@@ -7,14 +7,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
+	"github.com/hyper-swe/mtix/internal/testutil"
 )
 
 // TestAppendUniqueUIDCheck_NoStore_Fails verifies the doctor's unique-uid
@@ -86,7 +89,7 @@ func TestRunVerify_DuplicateNodeUIDs_ReportsRecoveryTextAndJSON(t *testing.T) {
 	require.NoError(t, err)
 
 	text := captureStdout(t, func() { require.NoError(t, runVerify("")) })
-	for _, want := range []string{"INTEGRITY FAILURE", "TEST-1, TEST-2", "UPDATE nodes SET uid = ''"} {
+	for _, want := range []string{"INTEGRITY FAILURE", `"TEST-1", "TEST-2"`, "UPDATE nodes SET uid = ''"} {
 		assert.Contains(t, text, want)
 	}
 
@@ -153,4 +156,41 @@ func TestSyncDoctorHelp_ListsTheUniqueUIDCheck(t *testing.T) {
 	long := newSyncDoctorCmd().Long
 	assert.Contains(t, long, "Run health checks")
 	assert.Contains(t, long, "Unique node uids")
+}
+
+// TestRunSyncDoctor_HostileHolderIDs checks JSON detail and the human doctor output.
+func TestRunSyncDoctor_HostileHolderIDs(t *testing.T) {
+	for _, fixture := range testutil.HostileIDs() {
+		t.Run(fixture.Name, func(t *testing.T) {
+			initTestApp(t)
+			t.Setenv(transport.EnvDSN, "")
+			ctx := context.Background()
+			// A cached peer identity keeps this display test independent of host networking.
+			_, err := app.store.WriteDB().ExecContext(ctx, `INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)`, "meta.sync.machine_hash", "0123456789abcdef")
+			require.NoError(t, err)
+			duplicateUIDRecoveryForTest(t)
+			_, err = app.store.WriteDB().ExecContext(ctx, `UPDATE nodes SET id = ? WHERE id = ?`, fixture.Value, "TEST-1")
+			require.NoError(t, err)
+			var out bytes.Buffer
+			app.jsonOutput = true
+			require.Error(t, runSyncDoctor(ctx, &out, nil, transport.Options{}))
+			check := doctorCheckFromJSON(t, out.Bytes(), uniqueUIDCheckName)
+			assert.False(t, check.Pass)
+			assert.NotContains(t, check.Detail, "\n")
+			assert.Equal(t, check.Detail, strings.Map(func(r rune) rune {
+				if r < 0x20 || r > 0x7e {
+					return -1
+				}
+				return r
+			}, check.Detail), "detail must be printable ASCII")
+			assert.Contains(t, check.Detail, format.EventID(fixture.Value))
+			out.Reset()
+			app.jsonOutput = false
+			require.Error(t, runSyncDoctor(ctx, &out, nil, transport.Options{}))
+			assert.Contains(t, out.String(), check.Detail)
+			var stored string
+			require.NoError(t, app.store.WriteDB().QueryRowContext(ctx, `SELECT id FROM nodes WHERE id = ?`, fixture.Value).Scan(&stored))
+			assert.Equal(t, fixture.Value, stored)
+		})
+	}
 }

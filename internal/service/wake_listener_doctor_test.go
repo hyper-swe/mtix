@@ -23,6 +23,7 @@ type doctorFixture struct {
 	dispatcher  bool
 	dispErr     error
 	rows        []model.WakeStatusRow
+	agentRows   map[string][]model.WakeStatusRow // per-agent override of rows
 	rowsErr     error
 	settingsErr error
 	live        bool
@@ -34,8 +35,13 @@ func (f *doctorFixture) rowsByID(t *testing.T) map[string]service.DoctorResult {
 		Settings:   func(string) (bool, time.Duration, error) { return true, 30 * time.Second, f.settingsErr },
 		Registered: func(context.Context, string) (bool, error) { return true, nil },
 		Dispatcher: func(context.Context) (bool, error) { return f.dispatcher, f.dispErr },
-		Rows:       func(context.Context, string, int) ([]model.WakeStatusRow, error) { return f.rows, f.rowsErr },
-		Clock:      func() time.Time { return statusNow },
+		Rows: func(_ context.Context, agent string, _ int) ([]model.WakeStatusRow, error) {
+			if r, ok := f.agentRows[agent]; ok {
+				return r, f.rowsErr
+			}
+			return f.rows, f.rowsErr
+		},
+		Clock: func() time.Time { return statusNow },
 	})
 	checks := service.WakeListenerDoctorChecks(service.WakeListenerDoctorDeps{
 		Agents:     func(context.Context) ([]string, error) { return f.agents, f.agentsErr },
@@ -175,6 +181,10 @@ func TestWakeListenerDoctor_UnconfirmedRate_BoundaryAndMinimumSample(t *testing.
 		{"5 nudges all unconfirmed meets the minimum", 5, 0, service.DoctorWarn},
 		{"21 percent of 100 warns", 21, 79, service.DoctorWarn},
 		{"20 percent of 100 does not", 20, 80, service.DoctorInfo},
+		{"10 of 48 is 20.8 percent: truncating division would hide it", 10, 38, service.DoctorWarn},
+		{"9 of 48 is 18.75 percent", 9, 39, service.DoctorInfo},
+		{"exactly 20 percent of 50", 10, 40, service.DoctorInfo},
+		{"11 of 50 is 22 percent", 11, 39, service.DoctorWarn},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -200,4 +210,27 @@ func TestWakeListenerDoctor_FailedSource_FixDoesNotDependOnTheFailingSource(t *t
 	f = &doctorFixture{agentsErr: errors.New("reg down")}
 	require.Equal(t, "mtix doctor --json", f.rowsByID(t)["wake.listener.dispatcher"].Fix)
 	require.Equal(t, "mtix doctor --json", f.rowsByID(t)["wake.listener.unconfirmed-rate"].Fix)
+}
+
+func TestWakeListenerDoctor_UnconfirmedRate_FixNamesTheAgentWithMostUnconfirmed(t *testing.T) {
+	ago := func(d time.Duration) string { return statusNow.Add(-d).Format(time.RFC3339Nano) }
+	stale := func(n int) []model.WakeStatusRow {
+		var rows []model.WakeStatusRow
+		for i := 0; i < n; i++ {
+			rows = append(rows, model.WakeStatusRow{EventSeq: int64(i + 1), Outcome: model.WakeSent, OutcomeAt: ago(time.Hour)})
+		}
+		return rows
+	}
+	f := &doctorFixture{agents: []string{"first", "second", "third"}, dispatcher: true,
+		agentRows: map[string][]model.WakeStatusRow{"first": stale(1), "second": stale(4), "third": stale(2)}}
+	r := f.rowsByID(t)["wake.listener.unconfirmed-rate"]
+	require.Equal(t, service.DoctorWarn, r.Status)
+	require.Contains(t, r.Fix, "mtix inbox status --agent second --json")
+	require.Contains(t, r.Fix, "--agent second")
+	require.NotContains(t, r.Fix, "--agent first")
+	require.NotContains(t, r.Fix, "--agent third")
+
+	// A tie goes to the first agent in registration order.
+	f.agentRows = map[string][]model.WakeStatusRow{"first": stale(3), "second": stale(3), "third": stale(3)}
+	require.Contains(t, f.rowsByID(t)["wake.listener.unconfirmed-rate"].Fix, "--agent first")
 }

@@ -153,3 +153,14 @@ func TestWakeStatusUnreadable_ReturnsUnknownWithCause(t *testing.T) {
 	require.Contains(t, got.Reason, "wake.json is corrupt")
 	require.NotEmpty(t, got.Fix)
 }
+
+func TestWakeStatusRecent_FutureLedgerTime_NeverShowsNegativeAge(t *testing.T) {
+	f := okFixture()
+	future := statusNow.Add(10 * time.Minute).Format(time.RFC3339Nano)
+	f.rows = []model.WakeStatusRow{{EventSeq: 1, Outcome: model.WakeSent, Route: "hook-waiter", OutcomeAt: future}}
+	got, err := f.svc().Recent(t.Context(), "worker", 5)
+	require.NoError(t, err)
+	require.Equal(t, model.WakeStateNudged, got[0].State, "a nudge dated in the future is still inside its window")
+	require.Equal(t, int64(0), got[0].AgeSeconds, "clock skew must not produce a negative age")
+	require.Equal(t, future, got[0].Since)
+}

@@ -15,7 +15,7 @@ import (
 const (
 	listenerRateWindow  = 24 * time.Hour
 	listenerRateMinimum = 5  // fewer nudges than this are too few to judge
-	listenerRatePercent = 20 // unconfirmed share above this warns
+	listenerRatePercent = 20 // unconfirmed share above this warns; compared by cross-multiplication, never by truncating division
 )
 
 // WakeListenerDoctorDeps feed the wake.listener doctor rows (MTIX-112.40.6).
@@ -121,20 +121,24 @@ func listenerRateRow(ctx context.Context, deps WakeListenerDoctorDeps) DoctorRes
 	}
 	cutoff := deps.Clock().Add(-listenerRateWindow)
 	counts := map[model.WakeState]int{}
-	worst := ""
+	worst, worstCount := "", 0 // the agent with the most unconfirmed nudges; the first wins a tie
 	for _, agent := range agents {
 		recent, err := deps.Status.Recent(ctx, agent, 1000)
 		if err != nil {
 			return DoctorResult{Status: DoctorFail, Detail: "Cannot read wake status for " + agent + ": " + err.Error(), Fix: listenerFailureFix(err)}
 		}
+		agentUnconfirmed := 0
 		for _, r := range recent {
 			if at, perr := time.Parse(time.RFC3339Nano, r.Since); perr != nil || at.Before(cutoff) {
 				continue
 			}
 			counts[r.State]++
-			if r.State == model.WakeStateUnconfirmed && worst == "" {
-				worst = agent
+			if r.State == model.WakeStateUnconfirmed {
+				agentUnconfirmed++
 			}
+		}
+		if agentUnconfirmed > worstCount {
+			worst, worstCount = agent, agentUnconfirmed
 		}
 	}
 	total := counts[model.WakeStateNudged] + counts[model.WakeStateUnconfirmed] + counts[model.WakeStateConfirmed]
@@ -144,7 +148,7 @@ func listenerRateRow(ctx context.Context, deps WakeListenerDoctorDeps) DoctorRes
 	}
 	unconfirmed := counts[model.WakeStateUnconfirmed]
 	detail := fmt.Sprintf("%d of %d nudges in the last 24 hours were not confirmed.", unconfirmed, total)
-	if total >= listenerRateMinimum && unconfirmed*100/total > listenerRatePercent {
+	if total >= listenerRateMinimum && unconfirmed*100 > listenerRatePercent*total {
 		fix := "mtix inbox status --agent " + worst + " --json; mtix config set wake.confirm_window 60 --agent " + worst
 		return DoctorResult{Status: DoctorWarn, Detail: detail, Data: data, Fix: fix}
 	}

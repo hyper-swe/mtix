@@ -30,9 +30,12 @@ type WakeAlertWriter interface {
 // WakeDispatcherOptions supplies already-selected candidates' delivery capabilities.
 // Candidate discovery, enrollment and host-dispatcher wiring belong to their own features.
 type WakeDispatcherOptions struct {
-	Store       WakeStore
-	Alerts      WakeAlertWriter
-	Send        func(context.Context, model.WakeAttempt) error
+	Store  WakeStore
+	Alerts WakeAlertWriter
+	Send   func(context.Context, model.WakeAttempt) error
+	// Adapters are the delivery routes, selected per registration in route order.
+	// Send, when set, joins them as the legacy route. At least one of the two is required.
+	Adapters    []WakeAdapter
 	AlertAgent  string
 	Settings    WakeSettingsReader
 	Held        func(string)
@@ -51,7 +54,7 @@ type WakeDispatcherOptions struct {
 type WakeDispatcher struct {
 	store      WakeStore
 	alerts     WakeAlertWriter
-	send       func(context.Context, model.WakeAttempt) error
+	adapters   []WakeAdapter
 	alertAgent string
 	settings   WakeSettingsReader
 	held       func(string)
@@ -62,7 +65,7 @@ type WakeDispatcher struct {
 
 // NewWakeDispatcher requires storage, delivery and durable alert capabilities.
 func NewWakeDispatcher(opts WakeDispatcherOptions) (*WakeDispatcher, error) {
-	if opts.Store == nil || opts.Alerts == nil || opts.Send == nil {
+	if opts.Store == nil || opts.Alerts == nil || (opts.Send == nil && len(opts.Adapters) == 0) {
 		return nil, fmt.Errorf("wake dispatcher capabilities are required: %w", model.ErrInvalidInput)
 	}
 	if opts.AlertAgent == "" {
@@ -78,7 +81,11 @@ func NewWakeDispatcher(opts WakeDispatcherOptions) (*WakeDispatcher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct wake accounting: %w", err)
 	}
-	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, send: opts.Send, alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets, holds: holdStore(opts.Store), reeval: reevaluationScope{host: opts.HostID, uid: opts.UID, filter: opts.CandidateFilter}}, nil
+	adapters := append([]WakeAdapter(nil), opts.Adapters...)
+	if opts.Send != nil {
+		adapters = append(adapters, legacyAdapter{send: opts.Send})
+	}
+	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, adapters: orderAdapters(adapters), alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets, holds: holdStore(opts.Store), reeval: reevaluationScope{host: opts.HostID, uid: opts.UID, filter: opts.CandidateFilter}}, nil
 }
 
 func holdStore(store WakeStore) WakeHoldStore {

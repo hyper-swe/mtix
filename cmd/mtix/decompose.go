@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
@@ -136,14 +137,11 @@ func printDryRunResult(parentID string, proposed []service.ProposedNode) error {
 	} else {
 		fmt.Printf("Dry-run: %d proposed children under %s\n", len(proposed), parentID)
 		for _, p := range proposed {
-			desc := p.Description
-			if len(desc) > 80 {
-				desc = desc[:77] + "..."
-			}
+			desc := Truncate(format.SafeLine(p.Description), 80)
 			if desc != "" {
-				fmt.Printf("  %s  %s  (%s)\n", p.ID, p.Title, desc)
+				fmt.Printf("  %s  %s  (%s)\n", p.ID, format.SafeLine(p.Title), desc)
 			} else {
-				fmt.Printf("  %s  %s\n", p.ID, p.Title)
+				fmt.Printf("  %s  %s\n", p.ID, format.SafeLine(p.Title))
 			}
 		}
 	}

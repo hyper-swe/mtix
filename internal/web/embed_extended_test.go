@@ -6,6 +6,7 @@
 package web
 
 import (
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,15 +37,15 @@ func TestEmbed_SPAHandler_ServesSPARoutes(t *testing.T) {
 		t.Skip("no SPA handler available")
 	}
 
-	// SPA routes may redirect — accept either 200 or 301
+	// SPA routes must serve the entry point without a redirect.
 	req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
-	assert.Contains(t, []int{http.StatusOK, http.StatusMovedPermanently}, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-// TestEmbed_SPAHandler_RootRedirectsToIndex verifies "/" is served as index.html.
-func TestEmbed_SPAHandler_RootRedirectsToIndex(t *testing.T) {
+// TestEmbed_SPAHandler_RootServesIndex verifies "/" is served as index.html.
+func TestEmbed_SPAHandler_RootServesIndex(t *testing.T) {
 	handler, err := SPAHandler()
 	if err != nil && !strings.Contains(err.Error(), "pattern") {
 		t.Skipf("embed not available: %v", err)
@@ -148,7 +149,7 @@ func TestEmbed_SPAHandler_NonExistentFileServesSPA(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/nonexistent-route", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
-	assert.Contains(t, []int{http.StatusOK, http.StatusMovedPermanently, http.StatusNotFound}, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 // TestEmbed_SPAHandler_DeepRouteServesSPA verifies deep SPA routes work.
@@ -164,5 +165,62 @@ func TestEmbed_SPAHandler_DeepRouteServesSPA(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/nodes/TEST-1.1.1/edit", nil)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
-	assert.Contains(t, []int{http.StatusOK, http.StatusMovedPermanently, http.StatusNotFound}, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestEmbed_SPAHandler_DeepTicketsReturnIndex covers FR-9.1 without redirects or listings.
+func TestEmbed_SPAHandler_DeepTicketsReturnIndex(t *testing.T) {
+	handler, err := SPAHandler()
+	require.NoError(t, err)
+	index, err := distFS.ReadFile("dist/index.html")
+	require.NoError(t, err)
+	for _, path := range []string{"/ticket/TEST-1", "/ticket/TEST-1/", "/ticket/TEST-1.2?view=detail", "/assets", "/assets/"} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			original := req.URL.String()
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Empty(t, w.Header().Get("Location"))
+			assert.Equal(t, string(index), w.Body.String())
+			assert.Contains(t, w.Header().Get("Content-Type"), "text/html")
+			assert.Contains(t, w.Header().Get("Cache-Control"), "no-cache")
+			assert.Equal(t, original, req.URL.String())
+		})
+	}
+}
+
+// TestEmbed_SPAHandler_StaticAssetsRemainFiles verifies exact bytes and asset caching.
+func TestEmbed_SPAHandler_StaticAssetsRemainFiles(t *testing.T) {
+	handler, err := SPAHandler()
+	require.NoError(t, err)
+	paths, err := fs.Glob(distFS, "dist/assets/*")
+	require.NoError(t, err)
+	require.NotEmpty(t, paths)
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			content, err := distFS.ReadFile(path)
+			require.NoError(t, err)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, strings.TrimPrefix(path, "dist"), nil))
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, string(content), w.Body.String())
+			assert.Contains(t, w.Header().Get("Cache-Control"), "immutable")
+		})
+	}
+}
+
+// TestEmbed_SPAHandler_UnknownAPIReturns404 keeps API misses out of client routing.
+func TestEmbed_SPAHandler_UnknownAPIReturns404(t *testing.T) {
+	handler, err := SPAHandler()
+	require.NoError(t, err)
+	for _, path := range []string{"/api", "/api/unknown", "/api/v1/unknown"} {
+		t.Run(path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+			assert.Equal(t, http.StatusNotFound, w.Code)
+			assert.Empty(t, w.Header().Get("Location"))
+			assert.NotContains(t, w.Body.String(), `<div id="root">`)
+		})
+	}
 }

@@ -11,13 +11,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 // TestMain keeps the binary until every test has finished and preserves m.Run's
 // exact exit code even if cleanup is refused. The assigned build path owns only
 // its newly allocated parent; historical same-prefix directories are not scanned.
 func TestMain(m *testing.M) {
-	code := m.Run()
+	code := hostguard.Run(m)
 	if err := cleanupBuiltBinary(mtixBinaryPath); err != nil {
 		fmt.Fprintf(os.Stderr, "clean up shared CLI binary: %v\n", err)
 	}

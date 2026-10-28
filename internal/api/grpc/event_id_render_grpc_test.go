@@ -62,10 +62,10 @@ func TestMapError_HostileEventID_StatusMessageIsPrintableASCII(t *testing.T) {
 	}
 }
 
-// TestMapError_RawEventID_IsDetected pins the oracle for the mutation check.
-func TestMapError_RawEventID_IsDetected(t *testing.T) {
+// TestMapError_RawEventID_IsEscapedAtTheBoundary pins the boundary contract
+// (MTIX-187.7.8): mapError escapes a raw id that reaches a status message.
+func TestMapError_RawEventID_IsEscapedAtTheBoundary(t *testing.T) {
 	for _, id := range hostileEventIDs {
-		st, _ := status.FromError(mapError(fmt.Errorf("event %s rejected", id)))
-		assert.False(t, isPrintableASCII(st.Message()), "%q", id)
+		requirePrintableStatus(t, mapError(fmt.Errorf("event %s rejected: %w", id, model.ErrInvalidInput)))
 	}
 }

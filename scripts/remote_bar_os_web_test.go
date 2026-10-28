@@ -272,6 +272,19 @@ func TestRemoteBarWorkflow_CmdShards_CoverCmdMtixWithUnchangedFlags(t *testing.T
 	require.Contains(t, run, `go test ./cmd/mtix/ -race -count=1 -p 1 -timeout 20m -run "$pattern"`)
 	require.NotContains(t, run, "-skip")
 	require.Less(t, strings.Index(cmd, "Verify snapshot tree"), strings.Index(cmd, "Run cmd/mtix shard"))
+	// MTIX-112.17.22.1: ordinary CI runs the same shard script, shard list and
+	// flags (without the PostgreSQL-only -p 1), so a shard count change must
+	// be made in both places.
+	ci := readCIJobs(t)["test-go-cmd"]
+	require.Equal(t, []string{"1", "2", "3"}, ci.Strategy.Matrix.Shard)
+	var ciRun string
+	for _, step := range ci.Steps {
+		if strings.Contains(step.Run, "go test") {
+			ciRun = step.Run
+		}
+	}
+	require.Contains(t, ciRun, `bash scripts/cmd-mtix-shards.sh pattern "$SHARD"`)
+	require.Contains(t, ciRun, `-race -count=1 -timeout 20m -run "$pattern"`)
 	// The macOS job still runs the whole package set.
 	require.Contains(t, jobBlock(t, wf, "bar-macos"), "run: make lint-go && make test-race\n")
 }

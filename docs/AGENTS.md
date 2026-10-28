@@ -13,6 +13,20 @@ Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whit
 
 
 
+## Every action item becomes a ticket
+
+When you find or promise an action item (a follow-up, cleanup, promised check or open question), file an mtix ticket right away. Do not leave it in chat, notes or a state file. A ticket keeps the item traceable, findable later and auditable.
+
+```bash
+mtix create "Add retry to the export check" --under PROJ-12 --type chore \
+  --description "Why the item exists and its scope" \
+  --prompt "Exact files, functions and edge cases" \
+  --acceptance "Testable outcome"
+mtix create "Cleanup after the migration" --description "..." --prompt "..." --acceptance "..."
+```
+
+Use `--under <id>` to place the item under related work. Omit it for a new root ticket.
+
 ## Overview
 
 This document is the primary operating guide for AI agents working on the **PROJ** project managed by mtix. Safety-critical operating procedures are the baseline standard — not optional, not domain-specific, always enforced.

@@ -24,6 +24,20 @@ Project prefixes for local create (CLI, REST, gRPC and MCP) and `mtix init` must
 A child also requires a valid prefix in its parent’s ID; choose a valid-prefix parent when a historical ID contains an underscore.
 
 
+## Every action item becomes a ticket
+
+When you find or promise an action item (a follow-up, cleanup, promised check or open question), file an mtix ticket right away. Do not leave it in chat, notes or a state file. A ticket keeps the item traceable, findable later and auditable.
+
+```bash
+mtix create "Add retry to the export check" --under PROJ-12 --type chore \
+  --description "Why the item exists and its scope" \
+  --prompt "Exact files, functions and edge cases" \
+  --acceptance "Testable outcome"
+mtix create "Cleanup after the migration" --description "..." --prompt "..." --acceptance "..."
+```
+
+Use `--under <id>` to place the item under related work. Omit it for a new root ticket.
+
 ## Instructions for Claude
 
 You are working on the **{{ .ProjectPrefix }}** project managed by mtix. {{ if .BriefingPath }}Read the current project briefing in [MTIX.md]({{ .BriefingPath }}).{{ else }}Read [AGENTS.md]({{ .DocsPath }}AGENTS.md) for the operating guide.{{ end }} The [AGENTS.md]({{ .DocsPath }}AGENTS.md) reference remains available alongside the other reference docs.

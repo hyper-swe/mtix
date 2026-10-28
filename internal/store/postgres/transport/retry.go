@@ -115,28 +115,7 @@ func isTransient(err error) bool {
 	// pgx PG-side errors carry an SQLSTATE.
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		switch pgErr.Code {
-		case "57014": // statement_timeout
-			return true
-		case "08000", "08003", "08006", "08001", "08004": // connection exception family
-			return true
-		case "40001", "40P01": // serialization_failure, deadlock_detected
-			return true
-		case "23505": // unique_violation
-			// The node registry (ADR-003 §6) is a partial unique index
-			// over the append-only log. Two concurrent pushers can both
-			// pass the in-tx pre-check for the same number before either
-			// commits; the index then aborts the second committer with
-			// 23505. Retrying is correct and convergent: on the next
-			// attempt the in-tx pre-check sees the now-committed winner
-			// and converts the loser to a renumber-required outcome (no
-			// node lost). Every other unique key on the push path
-			// (event_id PK) is handled by ON CONFLICT DO NOTHING and so
-			// never surfaces 23505 here.
-			return true
-		default:
-			return false
-		}
+		return isTransientSQLState(pgErr.Code)
 	}
 	// Network errors (Temporary or Timeout) are transient.
 	var netErr net.Error
@@ -153,4 +132,34 @@ func isTransient(err error) bool {
 		return true
 	}
 	return false
+}
+
+// isTransientSQLState reports whether a hub SQLSTATE is worth retrying.
+func isTransientSQLState(code string) bool {
+	switch code {
+	case "57014": // statement_timeout
+		return true
+	case "08000", "08003", "08006", "08001", "08004": // connection exception family
+		return true
+	case "40001", "40P01": // serialization_failure, deadlock_detected
+		return true
+	case "25P03", "25P04": // idle_in_transaction_session_timeout, transaction_timeout (MTIX-107.29)
+		// The hub aborted a stalled or over-long push; nothing committed,
+		// and the retry re-pushes idempotently, so it must not wedge push.
+		return true
+	case "23505": // unique_violation
+		// The node registry (ADR-003 §6) is a partial unique index
+		// over the append-only log. Two concurrent pushers can both
+		// pass the in-tx pre-check for the same number before either
+		// commits; the index then aborts the second committer with
+		// 23505. Retrying is correct and convergent: on the next
+		// attempt the in-tx pre-check sees the now-committed winner
+		// and converts the loser to a renumber-required outcome (no
+		// node lost). Every other unique key on the push path
+		// (event_id PK) is handled by ON CONFLICT DO NOTHING and so
+		// never surfaces 23505 here.
+		return true
+	default:
+		return false
+	}
 }

@@ -46,9 +46,9 @@ type terminalBinaryCommand struct {
 	args        []string
 	stdin, want string
 	wantError   bool
-	// wantIDs requires at least one hostile event id, rendered by
-	// format.EventID, in the output.
-	wantIDs bool
+	// wantHandle requires the acknowledgement hint to name the event by
+	// its typeable hex handle, never by the raw or rendered event id.
+	wantHandle bool
 }
 
 func terminalBinaryCommands(t *testing.T) []terminalBinaryCommand {
@@ -74,7 +74,7 @@ func terminalBinaryCommands(t *testing.T) []terminalBinaryCommand {
 		{args: []string{"decompose", "TEST-1", "--file", "-", "--dry-run"}, stdin: plan.String(), want: "TEST-1"},
 		{args: []string{"sync", "status"}, want: "quarantined"},
 		{args: []string{"sync", "quarantine", "list"}, want: "EVENT ID"},
-		{args: []string{"sync", "doctor"}, want: "quarantined events", wantError: true, wantIDs: true},
+		{args: []string{"sync", "doctor"}, want: "quarantined events", wantError: true, wantHandle: true},
 		{args: []string{"sync", "quarantine", "acknowledge", "missing\x1b]0;evil\a", "--reason", "reviewed"}, want: "quarantined event: not found", wantError: true},
 		{args: []string{"create", "Created\x1b]0;evil\a title\r\ntext", "--under", "TEST-1"}, want: "Created"},
 	}
@@ -102,8 +102,9 @@ func runTerminalBinary(t *testing.T, binary string, command terminalBinaryComman
 	require.Empty(t, binaryTerminalViolation(stdout.Bytes()), "stdout")
 	require.Empty(t, binaryTerminalViolation(stderr.Bytes()), "stderr")
 	require.Contains(t, stdout.String()+stderr.String(), command.want)
-	if command.wantIDs {
-		require.True(t, terminalHasRenderedID(stdout.String()+stderr.String()), "no rendered hostile event id in output")
+	if command.wantHandle {
+		require.Regexp(t, `acknowledge --handle [0-9a-f]{12,}`, stdout.String()+stderr.String(), "doctor hint must use the handle form")
+		require.False(t, terminalHasRenderedID(stdout.String()+stderr.String()), "doctor hint must not print a hostile event id")
 	}
 	if len(command.args) == 3 && command.args[1] == "quarantine" {
 		for _, f := range testutil.HostileIDs() {

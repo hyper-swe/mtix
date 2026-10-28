@@ -2,8 +2,7 @@
 # Review each reason when a call changes; stale entries fail the test.
 cmd/mtix/output.go:TreeLine:Sprintf:24104b50ef0477fb | title is reassigned through format.SafeLine before either branch; real-binary tree test covers the helper.
 cmd/mtix/output.go:TreeLine:Sprintf:a9df3c512d273616 | title is reassigned through format.SafeLine before either branch; real-binary tree test covers the helper.
-cmd/mtix/sync_doctor_quarantine_ack.go:quarantineAcknowledgementCommand:Sprintf:238a65bf030c271a | text mode uses QuoteToASCII or requires recoveryHintNeedsInspection=false before shell quoting; JSON preserves the command record. Safe handles belong to child C.
-cmd/mtix/sync_doctor_quarantine_ack.go:quarantineAcknowledgementCommand:Sprintf:362e77280acd3a4a | text mode uses QuoteToASCII or requires recoveryHintNeedsInspection=false before shell quoting; JSON preserves the command record. Safe handles belong to child C.
+cmd/mtix/sync_doctor_quarantine_ack.go:quarantineAcknowledgementCommand:Sprintf:9402b0f8f7624797 | the event is named only by service.QuarantineHandleAmong, a hex handle; no event-id bytes reach the terminal.
 cmd/mtix/sync_harden.go:printHardenFindings:Fprintln:3d559c98a0af9044 | title is a static section heading supplied only by the four literal call sites in this file, not ticket text.
 cmd/mtix/sync_push_hold_rule.go:linkReason:Errorf:cdf3145a14b6759b | internal persisted dependency marker must preserve event-id bytes for heldDependencyID; quarantineReason bounds it and terminal quarantine/status writers sanitize it.
 cmd/mtix/sync_push_hold_rule.go:reason:Errorf:89d8af62092a342a | internal persisted dependency marker must preserve event-id bytes for heldDependencyID; quarantineReason bounds it and terminal quarantine/status writers sanitize it.

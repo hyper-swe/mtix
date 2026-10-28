@@ -59,10 +59,10 @@ func TestHandleError_HostileEventID_ResponseIsASCIIAndRoundTrips(t *testing.T) {
 	}
 }
 
-// TestHandleError_RawEventIDInMessage_IsDetected pins the test oracle: a raw
-// id in a message is JSON-encoded on the wire (valid) but fails the
-// ASCII check once decoded, which is what a bypass of the helper would do.
-func TestHandleError_RawEventIDInMessage_IsDetected(t *testing.T) {
+// TestHandleError_RawEventIDInMessage_IsEscapedAtTheBoundary pins the boundary
+// contract (MTIX-187.7.8): a raw id that reaches a message is escaped by
+// HandleError, so the decoded text holds no control or invisible character.
+func TestHandleError_RawEventIDInMessage_IsEscapedAtTheBoundary(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, id := range hostileEventIDs {
 		err := fmt.Errorf("event %s: %w", id, model.ErrInvalidInput)
@@ -71,7 +71,7 @@ func TestHandleError_RawEventIDInMessage_IsDetected(t *testing.T) {
 		HandleError(c, err)
 		var resp ErrorResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-		assert.False(t, isPrintableASCII(resp.Error.Message), "decoded message of %q", id)
+		assertPrintableMessage(t, resp.Error.Message)
 	}
 }
 

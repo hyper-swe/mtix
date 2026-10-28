@@ -66,7 +66,7 @@ func registerDepAddTool(reg *ToolRegistry, svc *service.DependencyService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Dependency added: %s -[%s]-> %s", p.FromID, p.DepType, p.ToID)), nil
+		return SuccessResult(textDepAdded(p.FromID, p.DepType, p.ToID)), nil
 	})
 }
 
@@ -97,7 +97,7 @@ func registerDepRemoveTool(reg *ToolRegistry, svc *service.DependencyService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Dependency removed: %s -[%s]-> %s", p.FromID, p.DepType, p.ToID)), nil
+		return SuccessResult(textDepRemoved(p.FromID, p.DepType, p.ToID)), nil
 	})
 }
 

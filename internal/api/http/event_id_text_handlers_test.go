@@ -22,7 +22,7 @@ import (
 // hostileSyncID is a sync event id with a terminal escape, a newline and a
 // bidirectional override. A pulled create event becomes a node uid and a
 // pulled comment event an annotation id (ADR-003).
-const hostileSyncID = "evt\x1b[31mred\x1b[0m\nINJECTED-\u202eg"
+const hostileSyncID = "evt\x1b[31mred\x1b[0m\nINJECTED-\u202eg-\u00e9\u4e16"
 
 const hostileAnnotationID = hostileSyncID + "-note"
 
@@ -136,4 +136,6 @@ func TestAdmin_Verify_HostileDuplicateUID_RecoveryTextIsPrintableASCII(t *testin
 	require.NotEmpty(t, recovery)
 	assert.True(t, isASCIIText(recovery), "%q", recovery)
 	assert.Contains(t, recovery, `\x1b[31m`)
+	assert.Contains(t, recovery, `\u00e9`)
+	assert.Contains(t, recovery, `\u4e16`)
 }

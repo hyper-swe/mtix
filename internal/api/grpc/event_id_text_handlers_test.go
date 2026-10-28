@@ -16,7 +16,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
-const hostileSyncID = "evt\x1b[31mred\x1b[0m\nINJECTED-\u202eg"
+const hostileSyncID = "evt\x1b[31mred\x1b[0m\nINJECTED-\u202eg-\u00e9\u4e16"
 
 const hostileAnnotationID = hostileSyncID + "-note"
 
@@ -66,12 +66,17 @@ func TestHandlers_HostileUIDAndAnnotationID_StatusTextIsSafeAndNodeExact(t *test
 	_, err = s.HandleGetContext(ctx, "HS-1")
 	require.NoError(t, err)
 
-	// Stored-id carriers on the error paths of the node's own routes: the
-	// node exists, so a claim by an unknown agent still names only the node id.
+	// Unconditional error paths on the node's own routes: a second claim by
+	// another agent and a lookup of a missing node must both fail, and their
+	// status text must be printable ASCII. No gRPC route here names a stored
+	// uid or annotation id in an error; story 2 for stored ids rests on the
+	// mapError unit test.
 	_, err = s.HandleClaim(ctx, "HS-1", "agent", false)
-	if err != nil {
-		statusTextASCII(t, err)
-	}
+	require.NoError(t, err)
+	_, err = s.HandleClaim(ctx, "HS-1", "other-agent", false)
+	statusTextASCII(t, err)
+	_, err = s.HandleClaim(ctx, "HS-404", "agent", false)
+	statusTextASCII(t, err)
 	err = s.HandleComment(ctx, "HS-1", "text", "author", "")
 	require.NoError(t, err)
 }

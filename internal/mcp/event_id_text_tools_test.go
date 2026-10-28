@@ -21,7 +21,7 @@ import (
 // hostileSyncID is a sync event id with a terminal escape, a newline and a
 // bidirectional override. A pulled create event becomes a node uid and a
 // pulled comment event becomes an annotation id (ADR-003), so both carry it.
-const hostileSyncID = "evt\x1b[31mred\x1b[0m\nINJECTED-\u202eg"
+const hostileSyncID = "evt\x1b[31mred\x1b[0m\nINJECTED-\u202eg-\u00e9\u4e16"
 
 // hostileAnnotationID is the id of a pulled comment event.
 const hostileAnnotationID = hostileSyncID + "-note"
@@ -109,6 +109,8 @@ func TestResolveAnnotation_HostileID_TextIsQuotedAndRoundTrips(t *testing.T) {
 	assert.Equal(t, "Annotation "+format.EventID(hostileAnnotationID)+" resolved on "+id, out)
 	assert.Contains(t, out, `\x1b[31m`)
 	assert.Contains(t, out, `\u202e`)
+	assert.Contains(t, out, `\u00e9`)
+	assert.Contains(t, out, `\u4e16`)
 	n, err := env.store.GetNode(context.Background(), id)
 	require.NoError(t, err)
 	require.Len(t, n.Annotations, 1)

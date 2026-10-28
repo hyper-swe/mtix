@@ -22,6 +22,7 @@ type faultyHoldStore struct {
 	hopTableStore
 	claimFailsFor int64
 	markFailsFor  int64
+	heldLookupErr error
 }
 
 func (s *faultyHoldStore) ClaimWakeBudget(ctx context.Context, key model.WakeKey, ttl time.Duration,
@@ -40,6 +41,13 @@ func (s *faultyHoldStore) WakeRegistrationMark(ctx context.Context, key model.Wa
 		return model.WakeRegistrationMark{}, errors.New("injected mark read failure")
 	}
 	return s.Store.WakeRegistrationMark(ctx, key)
+}
+
+func (s *faultyHoldStore) HeldWakeEvent(ctx context.Context, key model.WakeKey, above int64) (int64, bool, error) {
+	if s.heldLookupErr != nil {
+		return 0, false, s.heldLookupErr
+	}
+	return s.Store.HeldWakeEvent(ctx, key, above)
 }
 
 type budgetHoldFixture struct {
@@ -175,4 +183,17 @@ func TestHold_FenceMismatch_DoesNotMoveMark(t *testing.T) {
 	require.Empty(t, f.sent)
 	hw, _ := f.registration(t)
 	require.Equal(t, int64(5), hw, "a refused fence must not move the mark")
+}
+
+func TestHold_HeldEventLookupError_FailsClosedKeepingMarkAndHold(t *testing.T) {
+	f := newBudgetHoldFixture(t, nil, &faultyHoldStore{heldLookupErr: errors.New("injected held lookup failure")})
+	_, err := f.store.WriteDB().ExecContext(t.Context(), "UPDATE agent_registrations SET pending_hold = 1 WHERE agent_id = ?", f.key.AgentID)
+	require.NoError(t, err)
+	err = f.d.Pass(t.Context(), []model.WakeKey{f.at(8)})
+	require.Error(t, err)
+	require.NotErrorIs(t, err, model.ErrWakeHeldEventMissing)
+	require.Empty(t, f.sent)
+	hw, hold := f.registration(t)
+	require.Equal(t, int64(5), hw)
+	require.True(t, hold)
 }

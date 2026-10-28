@@ -131,6 +131,23 @@ func TestPersistConflicts_HostileEventIDs_ErrorRendersBothSafely(t *testing.T) {
 	}
 }
 
+// TestPersistConflicts_HostileEventIDs_BindsRawIDsAsParameters: the safe
+// rendering is for text only; the INSERT binds the exact ids, in column order
+// (event_id_a = new, event_id_b = conflicting), then node and field
+// (MTIX-187.4.11).
+func TestPersistConflicts_HostileEventIDs_BindsRawIDsAsParameters(t *testing.T) {
+	for idName, id := range hostileIDs {
+		t.Run(idName, func(t *testing.T) {
+			other := id + "-other\n"
+			tx := &scriptTx{execTag: pgconn.NewCommandTag("INSERT 0 1")}
+			err := transport.PersistConflictsForTest(context.Background(), tx,
+				[]transport.ConflictDescriptor{{NewEventID: id, ConflictingEventID: other, NodeID: "MTIX-1", FieldName: "title"}})
+			require.NoError(t, err)
+			require.Equal(t, [][]any{{id, other, "MTIX-1", "title"}}, tx.args)
+		})
+	}
+}
+
 // TestRecordCollision_HostileEventIDs_ErrorsRenderBothSafely covers every
 // failure branch of the restore-collision recorder.
 func TestRecordCollision_HostileEventIDs_ErrorsRenderBothSafely(t *testing.T) {

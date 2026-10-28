@@ -114,8 +114,9 @@ func TestRunSyncQuarantineList_HostileEventID_TextSafeAndJSONUnchanged(t *testin
 	require.NoError(t, runSyncQuarantineList(t.Context(), &text))
 	for _, line := range strings.Split(text.String(), "\n") {
 		if strings.Contains(line, format.EventID(hostileEventID)) {
-			// The id column only: the node column is outside this ticket.
-			requirePrintableASCII(t, strings.SplitN(line, "  ", 2)[0], hostileEventID)
+			// The event id column (second, after the handle): the node
+			// column is outside this ticket. The quoted form holds no spaces.
+			requirePrintableASCII(t, strings.Fields(line)[1], hostileEventID)
 		}
 	}
 	require.Contains(t, text.String(), format.EventID(hostileEventID))

@@ -5,7 +5,6 @@ package sqlite
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 )
 
@@ -47,11 +46,11 @@ func pushSubjects(ctx context.Context, q pushQuerier, eventIDs []string) (map[st
 	if len(eventIDs) == 0 {
 		return out, nil
 	}
-	ids, err := json.Marshal(eventIDs)
+	ids, err := hexIDList(eventIDs)
 	if err != nil {
 		return nil, fmt.Errorf("read push subjects: %w", err)
 	}
-	// The uid of each event in the bound JSON array and the current number
+	// The uid of each event in the bound hex-encoded JSON array (byte-exact, MTIX-187.7.15) and the current number
 	// of the node that has it; for a creation, also the task it created (n
 	// by uid, else s by the event's own id for an event without a uid, else
 	// f by the number the event names; idx_nodes_uid and the primary key).
@@ -66,7 +65,7 @@ func pushSubjects(ctx context.Context, q pushQuerier, eventIDs []string) (map[st
 		     AND COALESCE(e.uid, '') = '' AND s.uid = e.event_id AND s.uid <> ''
 		LEFT JOIN nodes f ON e.op_type = 'create_node' AND n.id IS NULL AND s.id IS NULL
 		     AND f.id = e.node_id
-		WHERE e.event_id IN (SELECT value FROM json_each(?))`, string(ids))
+		WHERE e.event_id IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?))`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("read push subjects: %w", err)
 	}

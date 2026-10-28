@@ -11,6 +11,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -157,7 +158,7 @@ func recordHolds(ctx context.Context, store holdWriter, d batchHolds) ([]*model.
 func reportHolds(stderr io.Writer, holds []sqlite.QuarantinedEvent) {
 	for _, h := range holds {
 		fmt.Fprintf(stderr, "push: held event %s (%s %s), not pushed: %s. See mtix sync doctor\n",
-			oneLine(h.EventID), oneLine(h.NodeID), oneLine(h.OpType), h.Reason)
+			format.EventID(h.EventID), oneLine(h.NodeID), oneLine(h.OpType), h.Reason)
 	}
 }
 
@@ -222,7 +223,7 @@ func pushHoldDecision(e *model.SyncEvent, c *holdCheck, refused error, blocked *
 func pushHold(e *model.SyncEvent, reason string) (sqlite.QuarantinedEvent, error) {
 	raw, err := json.Marshal(e)
 	if err != nil {
-		return sqlite.QuarantinedEvent{}, fmt.Errorf("hold %s: encode event: %w", e.EventID, err)
+		return sqlite.QuarantinedEvent{}, fmt.Errorf("hold %s: encode event: %w", format.EventID(e.EventID), err)
 	}
 	return sqlite.QuarantinedEvent{EventID: e.EventID, RawEvent: string(raw),
 		Reason: reason, NodeID: e.NodeID, OpType: string(e.OpType)}, nil

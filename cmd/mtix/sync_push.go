@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -358,7 +359,7 @@ func pushBatch(ctx context.Context, stderr io.Writer, pool eventPusher, store *s
 	}
 	for _, r := range res.Renumbers {
 		if _, err := store.RenumberForHubRejection(ctx, r.EventID); err != nil {
-			return transport.PushResult{}, 0, fmt.Errorf("resolve renumber for %s (batch %d): %w", r.EventID, batch, err)
+			return transport.PushResult{}, 0, fmt.Errorf("resolve renumber for %s (batch %d): %w", format.EventID(r.EventID), batch, err)
 		}
 	}
 	return res, mismatched, nil

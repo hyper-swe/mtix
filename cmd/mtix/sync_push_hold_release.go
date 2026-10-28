@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -52,7 +53,7 @@ func releasePushHolds(ctx context.Context, stderr io.Writer, store *sqlite.Store
 	for _, h := range holds {
 		if why, ok := p.released[h.EventID]; ok {
 			fmt.Fprintf(stderr, "push: released held event %s (%s %s): %s\n",
-				oneLine(h.EventID), oneLine(h.NodeID), oneLine(h.OpType), why)
+				format.EventID(h.EventID), oneLine(h.NodeID), oneLine(h.OpType), why)
 		}
 	}
 	return blocked, nil

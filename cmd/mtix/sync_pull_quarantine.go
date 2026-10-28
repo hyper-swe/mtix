@@ -157,7 +157,7 @@ func ingestPulledEvent(ctx context.Context, tx *sql.Tx, in pullIngest,
 func admitPulledEvent(ctx context.Context, tx *sql.Tx, in pullIngest, e *model.SyncEvent) (refused, err error) {
 	local, err := sqlite.LocalLamport(ctx, tx)
 	if err != nil {
-		return nil, fmt.Errorf("admit %s: %w", e.EventID, err)
+		return nil, fmt.Errorf("admit %s: %w", format.EventID(e.EventID), err)
 	}
 	return checkPulledEvent(in, e, local), nil
 }
@@ -207,7 +207,7 @@ func applyPulledEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, appli
 		return sqlite.RemoveQuarantined(ctx, tx, e.EventID)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("apply %s: %w", e.EventID, err)
+		return nil, fmt.Errorf("apply %s: %w", format.EventID(e.EventID), err)
 	}
 	return rejected, nil
 }
@@ -221,7 +221,7 @@ func quarantinePulledEvent(ctx context.Context, tx *sql.Tx, in pullIngest,
 ) error {
 	raw, err := json.Marshal(e)
 	if err != nil {
-		return fmt.Errorf("quarantine %s: encode event: %w", e.EventID, err)
+		return fmt.Errorf("quarantine %s: encode event: %w", format.EventID(e.EventID), err)
 	}
 	return recordQuarantine(ctx, tx, in, sqlite.QuarantinedEvent{
 		EventID: e.EventID, Source: source, RawEvent: string(raw),
@@ -412,7 +412,7 @@ func reportQuarantined(w io.Writer, source string, events []*model.SyncEvent, he
 	for _, e := range events {
 		if reason, ok := held[e.EventID]; ok && !errors.Is(reason, errAlreadyQuarantined) {
 			fmt.Fprintf(w, "pull: quarantined event %s (%s pass): %s; retried on every pull\n",
-				oneLine(e.EventID), source, quarantineReason(reason))
+				format.EventID(e.EventID), source, quarantineReason(reason))
 		}
 	}
 }

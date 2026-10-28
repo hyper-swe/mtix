@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
@@ -54,7 +55,7 @@ func cloneRefusal(e *model.SyncEvent, reason error, written bool) error {
 		state = "the batches before it were applied"
 	}
 	return fmt.Errorf("%w: hub event %s fails the checks sync pull runs (%s); %s. "+cloneRecovery,
-		errCloneRefused, oneLine(e.EventID), quarantineReason(reason), state)
+		errCloneRefused, format.EventID(e.EventID), quarantineReason(reason), state)
 }
 
 // preflightClone runs, before a clone writes anything, the pull's checks on

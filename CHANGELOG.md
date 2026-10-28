@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Hardening: webhook hooks deliver only to origins the operator consented to (MTIX-112.13).** A webhook hook is now delivered only to an origin the operator has listed on this host with the new `mtix hooks allow-origin <url>` (run from an interactive terminal outside agent sessions). On upgrade, existing webhook hooks are skipped (recorded as `skipped-untrusted` with the exact fix) until each origin is consented; a loopback, link-local or private destination also needs `--allow-private`. `mtix hooks status` (`origins[]`) and a `hooks.origins` row in `mtix doctor` list each hook that would be skipped with the command to fix it. The user manual, the instruction templates and the admin skill describe the routine.
 - **Terminal output normalizes titles and assignees (MTIX-187.7.4).** `mtix show`, `list`, `ready`, `search`, `tree`, `progress`, `context`, `create` and `decompose --dry-run` no longer print control characters, escape sequences, carriage returns, bidirectional controls or zero-width characters from a title or assignee; tabs and line breaks become spaces, printable non-ASCII text stays readable, and truncated titles are cut on character boundaries instead of mid-character. `--json` still prints the exact stored text.
 
 ### Added

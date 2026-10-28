@@ -74,7 +74,7 @@ func NewHooksDispatcher(store *sqlite.Store, mtixDir string, logger *slog.Logger
 	// exec adapter is registered with independent per-hook approval decisions.
 	reg := hooks.NewRegistry(
 		&inboxAdapter{store: store},
-		hooks.NewWebhookAdapter(nil),
+		hooks.NewWebhookAdapter(hooks.ProcessOriginSource()),
 		hooks.NewAppendFileAdapter(filepath.Dir(mtixDir)),
 		hooks.NewExecAdapter(),
 	)
@@ -300,9 +300,11 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 			continue
 		}
 		if err := adapter.Deliver(ctx, adapterDel); err != nil {
-			d.logger.Warn("hook dispatch: adapter failed", "hook", h.Name, "adapter", name, "error", err)
-			d.logFiring(ctx, h, evt, name, "error", err.Error())
-			anyError = true
+			if d.recordAdapterFailure(ctx, h, evt, name, err) {
+				anySkipped = true
+			} else {
+				anyError = true
+			}
 			continue
 		}
 		d.logger.Info("hook dispatch: delivered",
@@ -319,6 +321,23 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 	default:
 		return sqlite.OutcomeDelivered
 	}
+}
+
+// recordAdapterFailure logs a failed delivery. A webhook refused by origin
+// consent (W15) is a loud skip with the exact fix, not an error: nothing was
+// sent and the outcome is terminal like an untrusted exec hook. It reports
+// whether the failure was such a skip.
+func (d *HooksDispatcher) recordAdapterFailure(ctx context.Context, h hooks.Hook, evt hooks.Event, adapter string, err error) bool {
+	var refused *hooks.OriginRefusedError
+	if errors.As(err, &refused) {
+		d.logger.Warn("hook dispatch: webhook origin refused",
+			"hook", h.Name, "origin", refused.Origin, "reason", refused.Reason, "fix", refused.Fix)
+		d.logFiring(ctx, h, evt, adapter, "skipped-untrusted", refused.Reason+"; fix: "+refused.Fix)
+		return true
+	}
+	d.logger.Warn("hook dispatch: adapter failed", "hook", h.Name, "adapter", adapter, "error", err)
+	d.logFiring(ctx, h, evt, adapter, "error", err.Error())
+	return false
 }
 
 // prepareAdapterDelivery attaches the verified launch plan to an exec

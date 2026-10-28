@@ -19,16 +19,20 @@ const (
 	wakeAttempted    wakeOutcome = iota // a send ran, or another claimant already owns the event
 	wakeBudgetHeld                      // the recipient budget or back-off refused the claim
 	wakeNotAttempted                    // a claim or fence error: nothing was sent, retry next pass
+	wakeInFlight                        // another claimant's unexpired claim: wait, the mark stays
 )
 
 // sendWake claims and sends one wake and reports its outcome (see wakeOutcome).
 func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop int64) (wakeOutcome, error) {
-	attempt, won, budgetHeld, err := d.budgets.claimHeld(ctx, key)
+	attempt, won, state, err := d.budgets.claimState(ctx, key)
 	if err != nil {
 		return wakeNotAttempted, fmt.Errorf("claim wake candidate: %w", err)
 	}
-	if budgetHeld {
+	switch state {
+	case claimBudgetHeld:
 		return wakeBudgetHeld, nil
+	case claimInFlight:
+		return wakeInFlight, nil
 	}
 	if !won {
 		return wakeAttempted, nil

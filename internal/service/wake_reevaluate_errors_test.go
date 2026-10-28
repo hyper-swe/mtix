@@ -21,6 +21,7 @@ func TestReevaluate_Dispatcher_RefusalsAndEmptyHolds(t *testing.T) {
 	state := testutil.OperatorState(t)
 	build := func(backend service.WakeStore) *service.WakeDispatcher {
 		d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: backend, Alerts: alerts, Settings: state, BudgetState: state, Clock: time.Now,
+			HostID: "host", UID: "uid", CandidateFilter: allowAll,
 			Send: func(context.Context, model.WakeAttempt) error { return nil }})
 		require.NoError(t, err)
 		return d

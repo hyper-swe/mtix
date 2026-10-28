@@ -56,15 +56,15 @@ func (s *Store) SetWakeHold(ctx context.Context, key model.WakeKey, advanceTo in
 	return nil
 }
 
-// HeldWakeCandidates lists, for each registration with a pending hold (all agents when
-// agent is empty), the unacknowledged addressed events above that registration's own
+// HeldWakeCandidates lists, for each registration of this host and uid with a pending hold
+// (all agents when agent is empty), the unacknowledged addressed events above that registration's own
 // high-water mark, oldest first (FR-20.3, ADR-007 section 5.4).
-func (s *Store) HeldWakeCandidates(ctx context.Context, agent string) ([]model.WakeKey, error) {
-	// Held registrations only; the agent filter is a bound parameter.
+func (s *Store) HeldWakeCandidates(ctx context.Context, hostID, uid, agent string) ([]model.WakeKey, error) {
+	// Held registrations of this host and uid only (I31); every filter is a bound parameter.
 	rows, err := s.readDB.QueryContext(ctx,
 		`SELECT agent_id, host_id, uid, epoch, high_water FROM agent_registrations
-		  WHERE pending_hold = 1 AND (? = '' OR agent_id = ?)
-		  ORDER BY agent_id, host_id, uid`, agent, agent)
+		  WHERE pending_hold = 1 AND host_id = ? AND uid = ? AND (? = '' OR agent_id = ?)
+		  ORDER BY agent_id, host_id, uid`, hostID, uid, agent, agent)
 	if err != nil {
 		return nil, fmt.Errorf("list held registrations: %w", err)
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/testutil"
 )
 
@@ -107,41 +108,116 @@ func TestReevaluate_NilReevaluator_IsNoOp(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestReevaluate_LoosenedBudget_WakesHeldEventWithoutExplicitPass drives a real dispatcher:
-// the setting change entry point alone lifts the hold and wakes the held event.
-func TestReevaluate_LoosenedBudget_WakesHeldEventWithoutExplicitPass(t *testing.T) {
+type reevaluateFixture struct {
+	state   *oplocal.State
+	store   *sqlite.Store
+	d       *service.WakeDispatcher
+	entries []sqlite.InboxEvent
+	sent    []int64
+	filter  func(context.Context, model.WakeKey) (bool, error)
+}
+
+func allowAll(context.Context, model.WakeKey) (bool, error) { return true, nil }
+
+// newReevaluateFixture holds the second of two real addressed events behind wakes_per_hour=1.
+func newReevaluateFixture(t *testing.T) *reevaluateFixture {
+	t.Helper()
+	return newReevaluateFixtureWith(t, allowAll)
+}
+
+func newReevaluateFixtureWith(t *testing.T, filter func(context.Context, model.WakeKey) (bool, error)) *reevaluateFixture {
+	t.Helper()
 	prompts, nodes, store, _ := newTestPromptService(t)
 	node, err := nodes.CreateNode(t.Context(), &service.CreateNodeRequest{Project: "TEST", Title: "held", Creator: "sender"})
 	require.NoError(t, err)
 	for range 2 {
 		require.NoError(t, prompts.AddAnnotation(t.Context(), node.ID, "event", "sender", "worker"))
 	}
-	entries, err := store.InboxList(t.Context(), "worker")
+	f := &reevaluateFixture{store: store, state: testutil.OperatorState(t), filter: filter}
+	f.entries, err = store.InboxList(t.Context(), "worker")
 	require.NoError(t, err)
-	require.Len(t, entries, 2)
-	state := testutil.OperatorState(t)
-	_, err = wakeConfig(t, state, "", true).Set("wake.wakes_per_hour", "1")
+	require.Len(t, f.entries, 2)
+	_, err = wakeConfig(t, f.state, "", true).Set("wake.wakes_per_hour", "1")
 	require.NoError(t, err)
 	_, err = store.WriteDB().ExecContext(t.Context(), `INSERT INTO agent_registrations
 		(agent_id,harness,uid,host_id,origin,epoch,high_water,pending_hold,registered_at,last_seen,registrar_version,attach_protocol)
 		VALUES ('worker','claude','uid','host','manual',1,0,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','test',1)`)
 	require.NoError(t, err)
-	var sent []int64
 	alerts := service.NewAlerts(operatorAlertsFixture(t), time.Now)
-	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: store, Alerts: alerts, Settings: state, BudgetState: state, Clock: time.Now, Held: func(string) {},
-		Send: func(_ context.Context, a model.WakeAttempt) error { sent = append(sent, a.Key.EventSeq); return nil }})
+	f.d, err = service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: store, Alerts: alerts, Settings: f.state, BudgetState: f.state, Clock: time.Now, Held: func(string) {}, HostID: "host", UID: "uid", CandidateFilter: filter,
+		Send: func(_ context.Context, a model.WakeAttempt) error {
+			f.sent = append(f.sent, a.Key.EventSeq)
+			return nil
+		}})
 	require.NoError(t, err)
-	keys := make([]model.WakeKey, len(entries))
-	for i, entry := range entries {
+	keys := make([]model.WakeKey, len(f.entries))
+	for i, entry := range f.entries {
 		keys[i] = model.WakeKey{AgentID: "worker", HostID: "host", UID: "uid", EventSeq: entry.Seq, Epoch: 1}
 	}
-	require.NoError(t, d.Pass(t.Context(), keys))
-	require.Equal(t, []int64{entries[0].Seq}, sent, "the budget of one holds the second event")
+	require.NoError(t, f.d.Pass(t.Context(), keys))
+	return f
+}
 
-	_, err = wakeConfig(t, state, "", true).WithWakeReevaluator(d).Set("wake.wakes_per_hour", "5")
+// TestReevaluate_LoosenedBudget_WakesHeldEventWithoutExplicitPass drives a real dispatcher:
+// the setting change entry point alone lifts the hold and wakes the held event.
+func TestReevaluate_LoosenedBudget_WakesHeldEventWithoutExplicitPass(t *testing.T) {
+	f := newReevaluateFixture(t)
+	require.Equal(t, []int64{f.entries[0].Seq}, f.sent, "the budget of one holds the second event")
+	_, err := wakeConfig(t, f.state, "", true).WithWakeReevaluator(f.d).Set("wake.wakes_per_hour", "5")
 	require.NoError(t, err)
-	require.Equal(t, []int64{entries[0].Seq, entries[1].Seq}, sent, "loosening alone wakes the held event")
+	require.Equal(t, []int64{f.entries[0].Seq, f.entries[1].Seq}, f.sent, "loosening alone wakes the held event")
 	var hold int
-	require.NoError(t, store.ReadDB().QueryRowContext(t.Context(), "SELECT pending_hold FROM agent_registrations WHERE agent_id='worker'").Scan(&hold))
+	require.NoError(t, f.store.ReadDB().QueryRowContext(t.Context(), "SELECT pending_hold FROM agent_registrations WHERE agent_id='worker'").Scan(&hold))
 	require.Zero(t, hold)
+}
+
+// TestReevaluate_LiveOff_WakesNothing is the review probe: the operator off switch
+// is itself a wake.* setting change and must never wake a held event.
+func TestReevaluate_LiveOff_WakesNothing(t *testing.T) {
+	f := newReevaluateFixture(t)
+	require.Equal(t, []int64{f.entries[0].Seq}, f.sent, "the budget of one holds the second event")
+	_, err := wakeConfig(t, f.state, "", true).Set("wake.live", "false")
+	require.NoError(t, err)
+	_, err = wakeConfig(t, f.state, "", true).WithWakeReevaluator(f.d).Set("wake.wakes_per_hour", "5")
+	require.NoError(t, err)
+	require.Equal(t, []int64{f.entries[0].Seq}, f.sent, "live wake off wakes nothing, whatever the trigger")
+}
+
+func TestReevaluate_NilFilter_FailsClosedWithTypedRefusal(t *testing.T) {
+	f := newReevaluateFixtureWith(t, nil)
+	require.ErrorIs(t, f.d.Reevaluate(t.Context(), "worker"), model.ErrWakeFilterRequired)
+	_, err := wakeConfig(t, f.state, "", true).WithWakeReevaluator(f.d).Set("wake.wakes_per_hour", "5")
+	require.NoError(t, err, "the refusal is logged, never fails the user's command")
+	require.Equal(t, []int64{f.entries[0].Seq}, f.sent, "without the scanner filter nothing is re-evaluated")
+}
+
+func TestReevaluate_FilterRefusesOrFails_WakesNothing(t *testing.T) {
+	for name, filter := range map[string]func(context.Context, model.WakeKey) (bool, error){
+		"denied": func(context.Context, model.WakeKey) (bool, error) { return false, nil },
+		"filter error": func(context.Context, model.WakeKey) (bool, error) {
+			return false, errors.New("operator state unreadable")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newReevaluateFixtureWith(t, filter)
+			_, err := wakeConfig(t, f.state, "", true).Set("wake.wakes_per_hour", "5")
+			require.NoError(t, err)
+			err = f.d.Reevaluate(t.Context(), "worker")
+			if name == "filter error" {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, []int64{f.entries[0].Seq}, f.sent)
+		})
+	}
+}
+
+func TestReevaluate_OtherUIDRegistration_NeverWoken(t *testing.T) {
+	f := newReevaluateFixture(t)
+	_, err := f.store.WriteDB().ExecContext(t.Context(), "UPDATE agent_registrations SET uid='other-uid' WHERE agent_id='worker'")
+	require.NoError(t, err)
+	_, err = wakeConfig(t, f.state, "", true).WithWakeReevaluator(f.d).Set("wake.wakes_per_hour", "5")
+	require.NoError(t, err)
+	require.Equal(t, []int64{f.entries[0].Seq}, f.sent, "a held registration of another uid is never re-evaluated")
 }

@@ -44,19 +44,20 @@ func (s *faultyHoldStore) WakeRegistrationMark(ctx context.Context, key model.Wa
 
 type budgetHoldFixture struct {
 	*holdFixture
-	state *oplocal.State
-	now   time.Time
+	state    *oplocal.State
+	now      time.Time
+	storeNow *time.Time
 }
 
 func newBudgetHoldFixture(t *testing.T, settings map[string]string, faulty *faultyHoldStore) *budgetHoldFixture {
 	t.Helper()
-	store, _, alerts := wakeServiceStore(t)
+	store, storeNow, alerts := wakeServiceStore(t)
 	state := testutil.OperatorState(t)
 	for key, value := range settings {
 		_, err := wakeConfig(t, state, "", true).Set(key, value)
 		require.NoError(t, err)
 	}
-	f := &budgetHoldFixture{holdFixture: &holdFixture{store: store, key: wakeServiceKey(), hops: map[int64]int64{}}, state: state,
+	f := &budgetHoldFixture{holdFixture: &holdFixture{store: store, key: wakeServiceKey(), hops: map[int64]int64{}}, state: state, storeNow: storeNow,
 		now: time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)}
 	_, err := store.WriteDB().ExecContext(t.Context(), `INSERT INTO agent_registrations
 		(agent_id,harness,uid,host_id,origin,epoch,high_water,pending_hold,registered_at,last_seen,registrar_version,attach_protocol)
@@ -135,4 +136,43 @@ func TestHold_OutOfOrderCandidates_HeldLowerBlocksHigher(t *testing.T) {
 	require.Empty(t, f.sent, "event 8 must not overtake the held event 7 although it was listed first")
 	hw, _ := f.registration(t)
 	require.Equal(t, int64(5), hw)
+}
+
+func TestHold_InFlightClaimOfOtherClaimant_BlocksAndIsReclaimedAfterLease(t *testing.T) {
+	f := newBudgetHoldFixture(t, nil, nil)
+	_, won, err := f.store.ClaimWake(t.Context(), f.at(7), time.Minute)
+	require.NoError(t, err)
+	require.True(t, won, "another dispatcher holds an unexpired claim on event 7")
+	require.NoError(t, f.d.Pass(t.Context(), []model.WakeKey{f.at(7), f.at(8)}))
+	require.Empty(t, f.sent, "event 8 waits behind the in-flight event 7")
+	hw, _ := f.registration(t)
+	require.Equal(t, int64(5), hw, "an in-flight claim must not move the mark")
+	*f.storeNow = f.storeNow.Add(2 * time.Minute)
+	require.NoError(t, f.d.Pass(t.Context(), []model.WakeKey{f.at(7), f.at(8)}))
+	require.Equal(t, []int64{7, 8}, f.sent, "the claimant never finished: the expired lease is reclaimed")
+}
+
+func TestHold_TerminalClaimOfOtherClaimant_AdvancesMark(t *testing.T) {
+	f := newBudgetHoldFixture(t, nil, nil)
+	attempt, won, err := f.store.ClaimWake(t.Context(), f.at(7), time.Minute)
+	require.NoError(t, err)
+	require.True(t, won)
+	require.NoError(t, f.store.RecordWakeOutcome(t.Context(), attempt, model.WakeDelivered))
+	require.NoError(t, f.d.Pass(t.Context(), []model.WakeKey{f.at(7), f.at(8)}))
+	require.Equal(t, []int64{8}, f.sent, "event 7 was already delivered by the other claimant")
+	hw, _ := f.registration(t)
+	require.Equal(t, int64(8), hw)
+}
+
+func TestHold_FenceMismatch_DoesNotMoveMark(t *testing.T) {
+	f := newBudgetHoldFixture(t, nil, nil)
+	store := emptyWakeFence{f.store}
+	alerts := service.NewAlerts(operatorAlertsFixture(t), time.Now)
+	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: store, Alerts: alerts, Settings: f.state, BudgetState: f.state, Clock: time.Now,
+		Send: func(context.Context, model.WakeAttempt) error { f.sent = append(f.sent, 0); return nil }})
+	require.NoError(t, err)
+	require.ErrorIs(t, d.Pass(t.Context(), []model.WakeKey{f.at(7)}), model.ErrConflict)
+	require.Empty(t, f.sent)
+	hw, _ := f.registration(t)
+	require.Equal(t, int64(5), hw, "a refused fence must not move the mark")
 }

@@ -96,7 +96,8 @@ func (d *WakeDispatcher) passOne(ctx context.Context, key model.WakeKey, st *pas
 	switch outcome {
 	case wakeBudgetHeld:
 		return errors.Join(sendErr, d.markHeld(ctx, key, st))
-	case wakeNotAttempted:
+	case wakeNotAttempted, wakeInFlight:
+		// Nothing was sent by us: the mark stays so the event is retried or reclaimed later.
 		st.blocked[holdRegistrationID(key)] = true
 		return sendErr
 	}

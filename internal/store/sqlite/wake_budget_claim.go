@@ -69,6 +69,7 @@ func (s *Store) wakeBudgetProposal(ctx context.Context, tx *sql.Tx, key model.Wa
 	}
 	now := s.clock().UTC()
 	if found && (outcome != model.WakeClaimed || now.Sub(previous.ClaimedAt) < lease) {
+		p.InFlight = outcome == model.WakeClaimed
 		return p, nil
 	}
 	id, err := uuid.NewRandom()
@@ -86,7 +87,7 @@ func (s *Store) wakeBudgetProposal(ctx context.Context, tx *sql.Tx, key model.Wa
 func applyWakeBudgetDecision(ctx context.Context, tx *sql.Tx, key model.WakeKey,
 	p model.WakeBudgetProposal, d model.WakeBudgetDecision,
 ) (model.WakeBudgetResult, error) {
-	r := model.WakeBudgetResult{Snapshot: p.Snapshot, Held: p.Claimable && !d.Allow}
+	r := model.WakeBudgetResult{Snapshot: p.Snapshot, Held: p.Claimable && !d.Allow, InFlight: p.InFlight}
 	if d.Floor < 0 {
 		return r, fmt.Errorf("protected wake counter floor is negative: %w", model.ErrInvalidInput)
 	}

@@ -38,6 +38,13 @@ type WakeDispatcherOptions struct {
 	Held        func(string)
 	BudgetState *oplocal.State
 	Clock       func() time.Time
+	// HostID and UID scope re-evaluation to this host's and operating-system user's
+	// registrations (I31). Required by Reevaluate; Pass ignores them.
+	HostID, UID string
+	// CandidateFilter applies the gates the wake scanner owns (grant or wakeable and
+	// registration liveness, ADR-007 section 2.7). Required by Reevaluate, which fails
+	// closed without it; it is called once per held registration.
+	CandidateFilter func(context.Context, model.WakeKey) (bool, error)
 }
 
 // WakeDispatcher guards each callable pass before issuing any fenced send (ADR-007 §6.4).
@@ -50,6 +57,7 @@ type WakeDispatcher struct {
 	held       func(string)
 	budgets    *wakeBudgets
 	holds      WakeHoldStore
+	reeval     reevaluationScope
 }
 
 // NewWakeDispatcher requires storage, delivery and durable alert capabilities.
@@ -70,7 +78,7 @@ func NewWakeDispatcher(opts WakeDispatcherOptions) (*WakeDispatcher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct wake accounting: %w", err)
 	}
-	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, send: opts.Send, alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets, holds: holdStore(opts.Store)}, nil
+	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, send: opts.Send, alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets, holds: holdStore(opts.Store), reeval: reevaluationScope{host: opts.HostID, uid: opts.UID, filter: opts.CandidateFilter}}, nil
 }
 
 func holdStore(store WakeStore) WakeHoldStore {

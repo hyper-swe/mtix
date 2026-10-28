@@ -395,7 +395,7 @@ provider-specific quirks.
 
 ### CI
 
-Every PR and main push must pass all 25 checks, including ten Go race shards
+Every PR and main push must pass all 29 checks, including fourteen Go race shards
 and the strict `test-go` aggregate. See [CI and release gates](docs/CI-GATES.md)
 for package coverage, failure handling, merge checks and release gates.
 

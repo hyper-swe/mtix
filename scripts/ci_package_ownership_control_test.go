@@ -39,12 +39,16 @@ func TestGoWorkflow_PackageOwnership_RejectsSQLiteManifestMove(t *testing.T) {
 			cmd.Env = append(os.Environ(), "PATH="+filepath.Join(root, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"),
 				"SHARD_TEST_LIST="+filepath.Join(root, "packages.txt"))
 			output, err := cmd.CombinedOutput()
-			if moveTo != "sqlite" {
+			if moveTo == "" {
 				require.NoError(t, err, string(output))
 				return
 			}
+			// MTIX-112.17.22.1: cli.txt is now run only for cmd/mtix by
+			// test-go-cmd, so a package moved there is owned by no job.
 			require.Error(t, err, string(output))
-			require.Contains(t, string(output), "--- FAIL: TestGoWorkflow_SQLiteManifest_ContainsOnlySQLite")
+			if moveTo == "sqlite" {
+				require.Contains(t, string(output), "--- FAIL: TestGoWorkflow_SQLiteManifest_ContainsOnlySQLite")
+			}
 			require.Contains(t, string(output), "--- FAIL: TestGoWorkflow_PackageOwnership_CoversEveryPackage")
 			require.Contains(t, string(output), shardModule+"/internal/api/http")
 		})

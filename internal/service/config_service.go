@@ -24,6 +24,8 @@ type ConfigService struct {
 	ignoredWake map[string]string
 	values      map[string]string
 	path        string // Path to config file.
+	// historyGuard checks the history.export rollout guard (MTIX-95.31.19.6).
+	historyGuard func() (HistoryGuardReport, error)
 }
 
 // NewConfigService creates a ConfigService, loading from the given path.
@@ -95,6 +97,9 @@ func (cs *ConfigService) Set(key, value string) (string, error) {
 		}
 	}
 	if err := validateMaxLamportJump(key, value); err != nil {
+		return "", err
+	}
+	if err := cs.guardHistoryExport(key, value); err != nil {
 		return "", err
 	}
 	if key == "sync.keep_roles" {

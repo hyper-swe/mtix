@@ -114,10 +114,10 @@ func upsertRegistration(ctx context.Context, tx *sql.Tx, r *Registration) error 
 	_, err := tx.ExecContext(ctx, `
 		INSERT OR REPLACE INTO agent_registrations
 		(agent_id, harness, session_handle, uid, host_id, pid, pid_start_time, permission_mode,
-		 origin, epoch, high_water, pending_hold, registered_at, last_seen, registrar_version, attach_protocol)
-		VALUES (?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, 0), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 origin, epoch, high_water, pending_hold, registered_at, last_seen, registrar_version, attach_protocol, capabilities)
+		VALUES (?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, 0), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.AgentID, r.Harness, r.SessionHandle, r.UID, r.HostID, r.PID, r.PIDStartTime, r.PermissionMode,
-		r.Origin, r.Epoch, r.HighWater, hold, r.RegisteredAt, r.LastSeen, r.RegistrarVersion, r.AttachProtocol)
+		r.Origin, r.Epoch, r.HighWater, hold, r.RegisteredAt, r.LastSeen, r.RegistrarVersion, r.AttachProtocol, HistoryReaderCapability)
 	if err != nil {
 		return fmt.Errorf("write registration %q: %w", r.AgentID, err)
 	}

@@ -999,6 +999,7 @@ Reads never ack — acknowledgement stays explicit.
 
 - `ack <seq>...` — Acknowledge specific inbox events (selective); --through acks everything up to a seq
 - `lease` — Acquire or release board-local wake ownership
+- `status` — Show the wake delivery state for an agent and its recent wake outcomes
 ---
 
 ## ack
@@ -1079,6 +1080,26 @@ mtix inbox lease release --agent developer --holder "$HOLDER"
 | `--holder` |  | Owner token (required for release; renews acquire) |  |
 | `--json` |  | Print JSON | false |
 | `--ttl` |  | Lease duration, inclusive 1m..24h | 15m |
+---
+
+## status
+
+**Usage:** `status`
+
+Show the wake delivery state for an agent and its recent wake outcomes
+
+Show the wake delivery state for an agent and its last wake outcomes with age
+(MTIX-112.40.6). States: queued, nudged, unconfirmed, confirmed, held, undeliverable,
+off, no-live-session, no-dispatcher, unknown. unconfirmed is derived at read time from
+wake.confirm_window (default 30 seconds) and is never written as an inbox event.
+This reads local state only and never contacts a hub.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--agent` |  | Agent id whose wake status to show (required) |  |
+| `--limit` |  | Number of recent wake rows to show (1-1000) | 10 |
 ---
 
 ## init

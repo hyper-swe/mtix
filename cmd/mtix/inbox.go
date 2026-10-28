@@ -67,7 +67,7 @@ func newInboxCmd() *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", "",
 		"Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection)")
 	_ = cmd.MarkFlagRequired("agent")
-	cmd.AddCommand(newInboxAckCmd(), newInboxLeaseCmd())
+	cmd.AddCommand(newInboxAckCmd(), newInboxLeaseCmd(), newInboxStatusCmd())
 	return cmd
 }
 

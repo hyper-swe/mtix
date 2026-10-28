@@ -65,7 +65,9 @@ func validateQuarantineAcknowledgement(q sqlite.QuarantinedEvent) error {
 	if err := json.Unmarshal([]byte(q.RawEvent), &event); err != nil {
 		return fmt.Errorf("decode retained event: %w", err)
 	}
-	if event.EventID != q.EventID {
+	// JSON text is UTF-8, so a retained event whose stored id holds invalid
+	// bytes decodes with each such byte as U+FFFD (MTIX-187.7.6).
+	if event.EventID != q.EventID && event.EventID != strings.Map(func(r rune) rune { return r }, q.EventID) {
 		return fmt.Errorf("retained event id does not match quarantine: %w", model.ErrInvalidInput)
 	}
 	// Ingest rejects malformed envelopes before its PR153 node-id check.

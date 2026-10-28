@@ -353,11 +353,11 @@ func (p *Publisher) verifyTail(ctx context.Context) error {
 		seq, ok := seqs[id]
 		if !ok {
 			p.diverged = true
-			return p.divergedError(fmt.Sprintf("published event %s is absent from the journal", id))
+			return p.divergedError(fmt.Sprintf("published event %s is absent from the journal", format.EventID(id)))
 		}
 		if i > 0 && seq <= prev {
 			p.diverged = true
-			return p.divergedError(fmt.Sprintf("published events are out of order in the journal at %s", id))
+			return p.divergedError(fmt.Sprintf("published events are out of order in the journal at %s", format.EventID(id)))
 		}
 		prev = seq
 	}

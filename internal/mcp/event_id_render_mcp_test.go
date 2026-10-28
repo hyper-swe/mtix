@@ -76,11 +76,15 @@ func TestToolsCall_HostileEventIDError_TextIsPrintableASCII(t *testing.T) {
 	}
 }
 
-// TestToolsCall_RawEventIDError_IsDetected pins the oracle for the mutation check.
-func TestToolsCall_RawEventIDError_IsDetected(t *testing.T) {
+// TestToolsCall_RawEventIDError_IsEscapedAtTheBoundary pins the boundary
+// contract (MTIX-187.7.8): handleToolsCall escapes a raw id in an error.
+func TestToolsCall_RawEventIDError_IsEscapedAtTheBoundary(t *testing.T) {
 	for _, id := range hostileEventIDs {
 		text, _ := toolErrorText(t, errors.New("event "+id+" rejected"))
-		assert.False(t, isPrintableASCII(text), "%q", id)
+		assert.NotContains(t, text, "\x1b", "%q", id)
+		assert.NotContains(t, text, "\n", "%q", id)
+		assert.NotContains(t, text, "\x00", "%q", id)
+		assert.NotContains(t, text, "\u202e", "%q", id)
 	}
 }
 

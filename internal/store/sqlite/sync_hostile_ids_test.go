@@ -49,15 +49,9 @@ const hostileWireLimit = 64 * 1024
 // MTIX-187.7.15: JSON copies of an event (json.Marshal and json_each over a
 // marshalled list) replace invalid UTF-8 with U+FFFD, so a surface that
 // carries the id through JSON cannot return the original bytes.
-var hostileBoundary = func() map[string]string {
-	out := map[string]string{}
-	for _, surface := range []string{"export_json"} {
-		for _, fixture := range []string{"invalid_utf8_lone_continuation", "invalid_utf8_truncated"} {
-			out[hostileKey(surface, fixture)] = "MTIX-187.7.15"
-		}
-	}
-	return out
-}()
+// MTIX-187.7.15.1 closed the export_json entries: the export file carries
+// such an id as uid_hex, task_uid_hex and event_id_hex, so the list is empty.
+var hostileBoundary = map[string]string{}
 
 // requireSurface judges one surface for one fixture. A pair listed in
 // hostileBoundary must still be lossy: when it round-trips, the entry is
@@ -550,7 +544,6 @@ func TestHostileBoundary_ListIsNotStale(t *testing.T) {
 		require.Equal(t, testutil.ClassInvalidUTF8, byName[fixture], "%s must name an invalid UTF-8 fixture", key)
 		require.Equal(t, "MTIX-187.7.15", ticket, key)
 	}
-	require.NotEmpty(t, hostileBoundary)
 }
 
 // FuzzSyncEventIDRoundTrip feeds arbitrary event ids through apply and the

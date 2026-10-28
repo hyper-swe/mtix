@@ -53,7 +53,7 @@ func registerClaimTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Claimed %s for %s", p.ID, p.AgentID)), nil
+		return SuccessResult(textClaimed(p.ID, p.AgentID)), nil
 	})
 }
 
@@ -92,7 +92,7 @@ func registerUnclaimTool(reg *ToolRegistry, svc *service.NodeService, author str
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Unclaimed %s", p.ID)), nil
+		return SuccessResult(textUnclaimed(p.ID)), nil
 	})
 }
 
@@ -119,7 +119,7 @@ func registerDoneTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("%s → done", p.ID)), nil
+		return SuccessResult(textDone(p.ID)), nil
 	})
 }
 
@@ -169,9 +169,9 @@ func registerDeferTool(reg *ToolRegistry, svc *service.NodeService, author strin
 		}
 
 		if wake != nil {
-			return SuccessResult(fmt.Sprintf("Deferred %s until %s", p.ID, wake.Format(time.RFC3339))), nil
+			return SuccessResult(textDeferred(p.ID, wake.Format(time.RFC3339))), nil
 		}
-		return SuccessResult(fmt.Sprintf("Deferred %s", p.ID)), nil
+		return SuccessResult(textDeferred(p.ID, "")), nil
 	})
 }
 
@@ -202,7 +202,7 @@ func registerCancelTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Cancelled %s: %s", p.ID, p.Reason)), nil
+		return SuccessResult(textCancelled(p.ID, p.Reason)), nil
 	})
 }
 
@@ -229,7 +229,7 @@ func registerReopenTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Reopened %s", p.ID)), nil
+		return SuccessResult(textReopened(p.ID)), nil
 	})
 }
 
@@ -382,6 +382,6 @@ func registerRerunTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Rerun %s with strategy %s", p.ID, p.Strategy)), nil
+		return SuccessResult(textRerun(p.ID, p.Strategy)), nil
 	})
 }

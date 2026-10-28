@@ -33,6 +33,7 @@ const (
 	ClassControl         HostileClass = "tab_del_c1"
 	ClassDot             HostileClass = "single_dot"
 	ClassUnicodeForm     HostileClass = "unicode_form"
+	ClassWhitespace      HostileClass = "whitespace"
 )
 
 // HostileFixture is one named, class-tagged hostile value.
@@ -49,7 +50,7 @@ func AllHostileClasses() []HostileClass {
 		ClassInvalidUTF8, ClassLong, ClassTraversal, ClassSlash,
 		ClassBackslash, ClassShell, ClassQuote, ClassScript, ClassJSURI,
 		ClassJSONBreaker, ClassWindowsReserved, ClassLeadingDash,
-		ClassLikeWildcard, ClassControl, ClassDot, ClassUnicodeForm,
+		ClassLikeWildcard, ClassControl, ClassDot, ClassUnicodeForm, ClassWhitespace,
 	}
 }
 
@@ -59,7 +60,7 @@ const longHostileLen = 64*1024 + 1
 // HostileIDs returns a fresh, stable catalog of hostile event or node IDs.
 // Each call builds a new slice, so callers may mutate the result freely.
 func HostileIDs() []HostileFixture {
-	return []HostileFixture{
+	return append([]HostileFixture{
 		{"nul_middle", ClassNUL, "evt\x00tail"},
 		{"nul_only", ClassNUL, "\x00"},
 		{"esc_csi_color", ClassESC, "evt\x1b[31mred\x1b[0m"},
@@ -106,6 +107,15 @@ func HostileIDs() []HostileFixture {
 		{"unicode_nfd_e_acute", ClassUnicodeForm, "cafe\u0301"},
 		{"unicode_kelvin_sign", ClassUnicodeForm, "\u212aelvin"},
 		{"unicode_dotted_capital_i", ClassUnicodeForm, "\u0130d"},
+	}, whitespaceIDs()...)
+}
+
+// whitespaceIDs exercise trimming at both boundaries of otherwise plain IDs.
+func whitespaceIDs() []HostileFixture {
+	return []HostileFixture{
+		{"leading_space", ClassWhitespace, " evt"},
+		{"trailing_space", ClassWhitespace, "evt "},
+		{"trailing_newline", ClassCRLF, "evt\n"},
 	}
 }
 
@@ -137,5 +147,6 @@ func HostileText() []HostileFixture {
 		{"control_chars_text", ClassControl, "a\tb\x7fc\u0085d"},
 		{"single_dot_text", ClassDot, "."},
 		{"unicode_forms_text", ClassUnicodeForm, "caf\u00e9 vs cafe\u0301 \u212a"},
+		{"boundary_whitespace_text", ClassWhitespace, " Keep boundary whitespace "},
 	}
 }

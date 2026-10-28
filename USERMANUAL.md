@@ -1726,6 +1726,7 @@ Import validates, before it writes anything (a failed check writes nothing):
 - The major `schema_version` is not higher than the one this mtix writes; a newer file is refused with `newer than supported ... upgrade mtix` (the automatic import skips it with the same message)
 - Node count matches the `node_count` field
 - SHA-256 checksum over canonical JSON. A file written by mtix always verifies, including one holding text that is not valid UTF-8. One exception: a file written by 0.5.3 or earlier that held both invalid UTF-8 and a genuine U+FFFD replacement character still fails; check it, then import it with `mtix import --recompute-checksum`
+- Hex id fields are decoded and `ids_checksum` is verified: an id that is not valid UTF-8 (a sync event id is stored as received) travels in an export as an optional `uid_hex` (node) or `task_uid_hex` / `event_id_hex` (history) field, covered by an optional `ids_checksum`. The main `checksum` stays what mtix 0.5.4 verifies: 0.5.4 imports a 2.0.0 snapshot holding a hex field and gives that node a fresh uid; history files need a current reader. Files without such an id are unchanged (see `docs/EXPORT-FORMAT.md`).
 - Every time value (node timestamps, annotation and activity times, dependency, agent and session times) is RFC 3339 with a UTC year from 1 to 9999, and the required ones (a node's `created_at` and `updated_at`, a dependency's `created_at`, a session's `started_at`) are not empty; the error names the record and the field
 
 A refused import leaves `.mtix/tasks.json` and its stored hash as they were. The automatic import of a changed `.mtix/tasks.json` also refuses, and changes nothing, when the local store cannot be exported (for example a stored annotations or activity value that does not parse): it cannot rule out local changes the file lacks. `mtix export` fails the same way. Both messages name the node, the field and `mtix recover`, which salvages everything readable (see "Disk full and corruption recovery").
@@ -1820,6 +1821,15 @@ Last auto-import refusal: 2026-09-24T10:15:00Z (pending): a replace import would
 `mtix sync` never reports `In sync` while an automatic import of the file is pending, or while the file holds an id under another uid than the store (listed under `Another uid in tasks.json`).
 
 `mtix sync --json` reports `in_sync` and those ids as `different_uid`, and the rest under `auto_import`: `enabled`, `setting`, `setting_error`, and `last_refusal` with `refused_at`, `file_hash`, `kind`, `reason`, `loss` (what a replace of the file would delete, when known), `synced` (true when the store synced with a hub or relay when it was refused, so the way out mtix names rebuilds from the hub instead of offering a replace import), `resolved_at` and `pending`. The record is kept in `.mtix/data/auto-import-refusal.json`, next to the other local sync state.
+
+### Filesystem names
+
+Identifiers and ticket text are data, not filesystem paths. Relay segments
+use numeric segment names; relay keys use numeric epochs; automatic backups
+use UTC timestamps; operator alerts use fixed names and hashed rate keys;
+verified hook copies use content hashes and the approved script basename.
+Keep explicit backup destinations and hook script paths under operator control.
+Do not derive those paths from event IDs, titles, or other received ticket fields.
 
 ---
 

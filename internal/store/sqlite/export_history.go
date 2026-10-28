@@ -35,6 +35,9 @@ type exportHistoryEntry struct {
 	Old     *string `json:"old,omitempty"`
 	New     *string `json:"new,omitempty"`
 	EventID string  `json:"event_id,omitempty"`
+
+	// readerView: see exportNode.readerView.
+	readerView bool
 }
 
 // SetHistoryExportSource installs the reader of the history.export switch

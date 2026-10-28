@@ -74,10 +74,15 @@ func TestNewWakeDispatcher_InvalidCapabilities_Refuses(t *testing.T) {
 		{"clock", func(o *service.WakeDispatcherOptions) { o.Clock = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			opts := service.WakeDispatcherOptions{Store: s, Alerts: alerts, Clock: time.Now, Send: func(context.Context, model.WakeAttempt) error { return nil }}
+			// BudgetState is set so the accounting constructor reaches the clock check
+			// instead of refusing earlier on the missing protected state.
+			opts := service.WakeDispatcherOptions{Store: s, Alerts: alerts, BudgetState: testutil.OperatorState(t), Clock: time.Now, Send: func(context.Context, model.WakeAttempt) error { return nil }}
 			tc.change(&opts)
 			_, err := service.NewWakeDispatcher(opts)
 			require.ErrorIs(t, err, model.ErrInvalidInput)
+			if tc.name == "clock" {
+				require.ErrorContains(t, err, "clock")
+			}
 		})
 	}
 }

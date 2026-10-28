@@ -106,11 +106,10 @@ count and `-race -count=1 -timeout 20m`, nothing skipped). `scripts/ci-go-shards
 still lists `cmd/mtix`, so the package partition guard proves it has exactly one
 owner, and `cmd-mtix-shards.sh check` proves every test is in exactly one shard.
 The budget is **12 minutes wall time per shard job** (60 percent of the 20m
-timeout), a target not yet measured on `test-go-cmd`. As a proxy only, the same
-split took 6.8 to 11.0 minutes per shard in the PostgreSQL job of that run (that
-job adds PostgreSQL setup, `-p 1` and `-v`). The six real `test-go-cmd` job
-times are recorded here after the PR's CI runs; if any exceeds the budget, raise
-the shard count. The shard count lives in `cmd-mtix-shards.sh` (`SHARDS`) and
+timeout). Measured on the first `test-go-cmd` run (PR 261, run 40726735086),
+shards 1, 2 and 3: macOS 6m26s, 7m59s and 9m14s; Ubuntu 8m19s, 5m17s and 6m01s.
+All six are under budget; the slowest uses 46 percent of the timeout. If any
+shard job exceeds the budget, raise the shard count. The shard count lives in `cmd-mtix-shards.sh` (`SHARDS`) and
 a workflow test fails if CI, the PostgreSQL job and the remote bar disagree. The
 macOS remote bar still runs `make test-race` unsharded (tracked separately).
 

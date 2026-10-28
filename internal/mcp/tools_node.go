@@ -236,7 +236,7 @@ func registerDeleteTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Deleted %s", p.ID)), nil
+		return SuccessResult(textDeleted(p.ID)), nil
 	})
 }
 
@@ -263,7 +263,7 @@ func registerUndeleteTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Undeleted %s", p.ID)), nil
+		return SuccessResult(textUndeleted(p.ID)), nil
 	})
 }
 
@@ -343,7 +343,7 @@ func registerUpdateTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Updated %s", p.ID)), nil
+		return SuccessResult(textUpdated(p.ID)), nil
 	})
 }
 

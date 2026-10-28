@@ -36,9 +36,14 @@ var ErrBehindQuarantinedCreate = errors.New("depends on a quarantined create")
 // creation, when its parent_id; when it is a link or unlink, when its target;
 // when it has no uid, when its own number, is the creation's number or lies
 // below it. The creation's own event never depends on itself.
+//
+// The task numbers it matches come from events that passed the node id
+// grammar (validator.ValidateEventNodeIDs, MTIX-187), so in production they
+// are ASCII; they are bound as a hex list like every id list
+// (MTIX-187.7.15), so an arbitrary byte sequence still matches only itself.
 func QuarantinedCreateBehind(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (string, error) {
 	numbers := dependencyNumbers(e)
-	arg, err := json.Marshal(numbers)
+	arg, err := hexIDList(numbers)
 	if err != nil {
 		return "", fmt.Errorf("event %s: encode numbers: %w", format.EventID(e.EventID), err)
 	}
@@ -50,9 +55,9 @@ func QuarantinedCreateBehind(ctx context.Context, tx *sql.Tx, e *model.SyncEvent
 		 WHERE q.source <> 'push' AND q.event_id <> ? AND json_valid(q.raw_event)
 		   AND json_extract(q.raw_event, '$.op_type') = 'create_node'
 		   AND ((? <> '' AND COALESCE(NULLIF(json_extract(q.raw_event, '$.uid'), ''), q.event_id) = ?)
-		        OR json_extract(q.raw_event, '$.node_id') IN (SELECT value FROM json_each(?)))
+		        OR json_extract(q.raw_event, '$.node_id') IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?)))
 		 ORDER BY q.event_id LIMIT 1`,
-		e.EventID, e.UID, e.UID, string(arg)).Scan(&id)
+		e.EventID, e.UID, e.UID, arg).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

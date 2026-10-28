@@ -62,7 +62,7 @@ func TestHooksAllowOrigin_Terminal_ReportsAndStores(t *testing.T) {
 	require.Len(t, list.Origins, 2)
 }
 
-func TestHooksStatus_ReportsUnconsentedAndPrivateWebhookOrigins(t *testing.T) {
+func TestHooksOrigins_StatusReportsUnconsentedAndPrivate(t *testing.T) {
 	saveAndResetApp(t)
 	state := originTestState(t)
 	require.NoError(t, state.Ensure())
@@ -105,7 +105,7 @@ func TestHooksStatus_ReportsUnconsentedAndPrivateWebhookOrigins(t *testing.T) {
 	require.NotContains(t, text, `hook "ok" webhook`)
 }
 
-func TestHooksStatus_NoWebhooks_OriginsEmptyArray(t *testing.T) {
+func TestHooksOrigins_StatusNoWebhooksEmptyArray(t *testing.T) {
 	saveAndResetApp(t)
 	state := originTestState(t)
 	require.NoError(t, state.Ensure())

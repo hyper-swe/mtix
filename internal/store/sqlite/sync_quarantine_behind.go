@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -44,7 +45,7 @@ func QuarantinedCreateBehind(ctx context.Context, tx *sql.Tx, e *model.SyncEvent
 	numbers := dependencyNumbers(e)
 	arg, err := hexIDList(numbers)
 	if err != nil {
-		return "", fmt.Errorf("event %s: encode numbers: %w", e.EventID, err)
+		return "", fmt.Errorf("event %s: encode numbers: %w", format.EventID(e.EventID), err)
 	}
 	var id string
 	// The first quarantined pull or sweep creation (never a held push event)
@@ -61,7 +62,7 @@ func QuarantinedCreateBehind(ctx context.Context, tx *sql.Tx, e *model.SyncEvent
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("event %s: check quarantined creations: %w", e.EventID, err)
+		return "", fmt.Errorf("event %s: check quarantined creations: %w", format.EventID(e.EventID), err)
 	}
 	return id, nil
 }

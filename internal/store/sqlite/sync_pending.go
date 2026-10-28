@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -140,7 +141,7 @@ func scanPushEvents(rows *sql.Rows, capHint int) ([]*model.SyncEvent, error) {
 		e.OpType = model.OpType(opType)
 		e.Payload = json.RawMessage(payload)
 		if err := json.Unmarshal([]byte(vc), &e.VectorClock); err != nil {
-			return nil, fmt.Errorf("decode VC for %s: %w", e.EventID, err)
+			return nil, fmt.Errorf("decode VC for %s: %w", format.EventID(e.EventID), err)
 		}
 		out = append(out, &e)
 	}

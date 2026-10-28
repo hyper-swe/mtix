@@ -20,7 +20,7 @@ func TestAttachSchema_Columns_MatchStoredContract(t *testing.T) {
 	db := newTestDB(t, path)
 	expected := map[string][]string{
 		"agent_registrations":     {"agent_id", "harness", "session_handle", "uid", "host_id", "pid", "pid_start_time", "permission_mode", "mode_seen_at", "origin", "epoch", "high_water", "pending_hold", "registered_at", "last_seen", "registrar_version", "attach_protocol", "principal_id", "returned_seq_mark"},
-		"wake_ledger":             {"agent_id", "host_id", "uid", "event_seq", "epoch", "claimed_at", "outcome", "attempt_token"},
+		"wake_ledger":             {"agent_id", "host_id", "uid", "event_seq", "epoch", "claimed_at", "outcome", "attempt_token", "route", "reason", "outcome_at"},
 		"wake_outcome_rejections": {"agent_id", "host_id", "uid", "event_seq", "epoch", "attempt_token", "outcome", "rejected_at"},
 		"wake_scan_cursor":        {"host_id", "uid", "cursor"},
 		"dispatcher_heartbeat":    {"host_id", "uid", "pid", "protocol", "version", "seen_at"},

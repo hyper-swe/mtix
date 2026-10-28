@@ -32,6 +32,7 @@ import (
 	"regexp"
 	"sync/atomic"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/relay/segment"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -252,7 +253,7 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 	for _, row := range rows {
 		payload, marshalErr := json.Marshal(row.Event)
 		if marshalErr != nil {
-			return appended, fmt.Errorf("encode event %s: %w", row.Event.EventID, marshalErr)
+			return appended, fmt.Errorf("encode event %s: %w", format.EventID(row.Event.EventID), marshalErr)
 		}
 		if _, appendErr := w.Append(payload); appendErr != nil {
 			// Everything appended before this point is real and on the

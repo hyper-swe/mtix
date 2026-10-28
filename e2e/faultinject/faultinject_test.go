@@ -31,6 +31,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 // mtixBin is the path of the binary built by TestMain. Tests exercise the
@@ -38,6 +40,11 @@ import (
 var mtixBin string
 
 func TestMain(m *testing.M) {
+	stop, isolateErr := hostguard.Start()
+	if isolateErr != nil {
+		fmt.Fprintln(os.Stderr, "host config isolation:", isolateErr)
+		os.Exit(1)
+	}
 	tmp, err := os.MkdirTemp("", "mtix-faultinject-bin")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "mkdir temp:", err)
@@ -53,7 +60,9 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	os.Exit(m.Run())
+	code := m.Run()
+	stop()
+	os.Exit(code)
 }
 
 // faultFSDir returns the dedicated small volume, skipping the test when
@@ -92,7 +101,7 @@ func newProject(t *testing.T, base string) string {
 func runMtix(dir string, extraEnv []string, args ...string) ([]byte, error) {
 	cmd := exec.Command(mtixBin, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), extraEnv...)
+	cmd.Env = append(hostguard.Environ(), extraEnv...)
 	return cmd.CombinedOutput()
 }
 
@@ -286,7 +295,7 @@ func TestKill9DuringWrites_OnTightDisk(t *testing.T) {
 		cmd := exec.Command(mtixBin, "create", fmt.Sprintf("kill round %d", round),
 			"--description", string(bytes.Repeat([]byte("x"), 2048)))
 		cmd.Dir = proj
-		cmd.Env = os.Environ()
+		cmd.Env = hostguard.Environ()
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("start: %v", err)
 		}
@@ -536,7 +545,7 @@ func TestKill9DuringSyncBackfill_OnTightDisk(t *testing.T) {
 	for round := 0; round < 12; round++ {
 		cmd := exec.Command(mtixBin, "sync", "backfill", "--force")
 		cmd.Dir = proj
-		cmd.Env = os.Environ()
+		cmd.Env = hostguard.Environ()
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("start backfill round %d: %v", round, err)
 		}

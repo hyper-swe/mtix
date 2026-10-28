@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/hyper-swe/mtix/internal/format"
 )
 
 // Data access for held push events (MTIX-95.12, review F-15). `mtix sync
@@ -241,7 +243,7 @@ func (s *Store) SetPushHoldReasons(ctx context.Context, reasons map[string]strin
 			if _, err := tx.ExecContext(ctx, `
 				UPDATE sync_quarantine SET reason = ?
 				WHERE event_id = ? AND source = 'push'`, reasons[id], id); err != nil {
-				return fmt.Errorf("set reason of push hold %s: %w", id, err)
+				return fmt.Errorf("set reason of push hold %s: %w", format.EventID(id), err)
 			}
 		}
 		return nil

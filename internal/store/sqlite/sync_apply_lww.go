@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -63,7 +64,7 @@ func detectLWWOutcome(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (lwwO
 	// Reject unknown update columns before even constructing the LWW lookup.
 	if e.OpType == model.OpUpdateField && !allowedUpdateFields[fieldName] {
 		return lwwOutcome{}, fmt.Errorf("LWW update_field %s: field %q not in whitelist: %w",
-			e.EventID, fieldName, model.ErrInvalidInput)
+			format.EventID(e.EventID), fieldName, model.ErrInvalidInput)
 	}
 
 	query, args := lwwPriorQuery(e, fieldName)
@@ -162,7 +163,7 @@ func incomingBeats(e *model.SyncEvent, priorLamp, priorTS int64, priorHash strin
 func (a syncApplier) mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	vcJSON, err := json.Marshal(e.VectorClock)
 	if err != nil {
-		return fmt.Errorf("mirror %s: marshal VC: %w", e.EventID, err)
+		return fmt.Errorf("mirror %s: marshal VC: %w", format.EventID(e.EventID), err)
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT OR IGNORE INTO sync_events
@@ -192,7 +193,7 @@ func (a syncApplier) dispatchWithLWW(ctx context.Context, tx *sql.Tx, event *mod
 	if isWorkflowOp(event.OpType) {
 		wins, err := workflowEventWins(ctx, tx, event)
 		if err != nil {
-			return fmt.Errorf("apply %s: workflow winner: %w", event.EventID, err)
+			return fmt.Errorf("apply %s: workflow winner: %w", format.EventID(event.EventID), err)
 		}
 		if !wins {
 			return nil
@@ -202,14 +203,14 @@ func (a syncApplier) dispatchWithLWW(ctx context.Context, tx *sql.Tx, event *mod
 
 	outcome, err := detectLWWOutcome(ctx, tx, event)
 	if err != nil {
-		return fmt.Errorf("apply %s: LWW: %w", event.EventID, err)
+		return fmt.Errorf("apply %s: LWW: %w", format.EventID(event.EventID), err)
 	}
 
 	if outcome.HasPrior && !outcome.IncomingWins {
 		if err := a.recordLocalConflict(ctx, tx,
 			outcome.PriorEventID, event.EventID, event.NodeID, outcome.FieldName,
 		); err != nil {
-			return fmt.Errorf("apply %s: record loser conflict: %w", event.EventID, err)
+			return fmt.Errorf("apply %s: record loser conflict: %w", format.EventID(event.EventID), err)
 		}
 		return nil
 	}
@@ -221,7 +222,7 @@ func (a syncApplier) dispatchWithLWW(ctx context.Context, tx *sql.Tx, event *mod
 		if err := a.recordLocalConflict(ctx, tx,
 			event.EventID, outcome.PriorEventID, event.NodeID, outcome.FieldName,
 		); err != nil {
-			return fmt.Errorf("apply %s: record winner conflict: %w", event.EventID, err)
+			return fmt.Errorf("apply %s: record winner conflict: %w", format.EventID(event.EventID), err)
 		}
 	}
 	return nil

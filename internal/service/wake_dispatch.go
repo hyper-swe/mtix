@@ -29,10 +29,17 @@ type WakeAlertWriter interface {
 
 // WakeDispatcherOptions supplies already-selected candidates' delivery capabilities.
 // Candidate discovery, enrollment and host-dispatcher wiring belong to their own features.
+// The candidate source must follow the Pass contract: every unacknowledged addressed event
+// above each registration's mark, so held events are never omitted. The held event is
+// derived from the inbox, so the candidate set must equal the inbox set above the mark
+// (an event the inbox lists but the candidates omit stalls a held registration until acked).
 type WakeDispatcherOptions struct {
-	Store       WakeStore
-	Alerts      WakeAlertWriter
-	Send        func(context.Context, model.WakeAttempt) error
+	Store  WakeStore
+	Alerts WakeAlertWriter
+	Send   func(context.Context, model.WakeAttempt) error
+	// Adapters are the delivery routes, selected per registration in route order.
+	// Send, when set, joins them as the legacy route. At least one of the two is required.
+	Adapters    []WakeAdapter
 	AlertAgent  string
 	Settings    WakeSettingsReader
 	Held        func(string)
@@ -51,7 +58,7 @@ type WakeDispatcherOptions struct {
 type WakeDispatcher struct {
 	store      WakeStore
 	alerts     WakeAlertWriter
-	send       func(context.Context, model.WakeAttempt) error
+	adapters   []WakeAdapter
 	alertAgent string
 	settings   WakeSettingsReader
 	held       func(string)
@@ -62,7 +69,7 @@ type WakeDispatcher struct {
 
 // NewWakeDispatcher requires storage, delivery and durable alert capabilities.
 func NewWakeDispatcher(opts WakeDispatcherOptions) (*WakeDispatcher, error) {
-	if opts.Store == nil || opts.Alerts == nil || opts.Send == nil {
+	if opts.Store == nil || opts.Alerts == nil || (opts.Send == nil && len(opts.Adapters) == 0) {
 		return nil, fmt.Errorf("wake dispatcher capabilities are required: %w", model.ErrInvalidInput)
 	}
 	if opts.AlertAgent == "" {
@@ -78,7 +85,11 @@ func NewWakeDispatcher(opts WakeDispatcherOptions) (*WakeDispatcher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct wake accounting: %w", err)
 	}
-	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, send: opts.Send, alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets, holds: holdStore(opts.Store), reeval: reevaluationScope{host: opts.HostID, uid: opts.UID, filter: opts.CandidateFilter}}, nil
+	adapters := append([]WakeAdapter(nil), opts.Adapters...)
+	if opts.Send != nil {
+		adapters = append(adapters, legacyAdapter{send: opts.Send})
+	}
+	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, adapters: orderAdapters(adapters), alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets, holds: holdStore(opts.Store), reeval: reevaluationScope{host: opts.HostID, uid: opts.UID, filter: opts.CandidateFilter}}, nil
 }
 
 func holdStore(store WakeStore) WakeHoldStore {
@@ -89,6 +100,15 @@ func holdStore(store WakeStore) WakeHoldStore {
 // Pass re-reads the protocol floor even when there are no candidates.
 // Every pass re-evaluates held registrations from their own high-water mark (FR-20.3, I10).
 // Each attempted send is terminal; an independent candidate still runs after a send error.
+//
+// Contract (ADR-007 section 2.7): the caller passes every unacknowledged addressed event
+// above each registration's high-water mark. A candidate above a registration's pending hold
+// while the held lower event is not handled in the same pass is refused with
+// model.ErrWakeHeldEventMissing, as is any candidate when the held event cannot be read:
+// nothing is sent and the mark and hold stay. If a concurrent pass records the hold after
+// this check, the higher event may already be sent, but the store refuses the advance in its
+// own transaction, so the mark and hold stay and the wake ledger prevents a second wake.
+// A pass that omits a held event can therefore never advance the mark past it.
 func (d *WakeDispatcher) Pass(ctx context.Context, keys []model.WakeKey) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("start wake pass: %w", err)

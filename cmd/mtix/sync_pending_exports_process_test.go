@@ -23,6 +23,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 func TestPendingExports_NativeCLIStatusAndDoctorDoNotDrain(t *testing.T) {
@@ -74,7 +75,7 @@ func runPendingDiagnosticChild(t *testing.T, dir, mode string) []byte {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "-test.run=^TestPendingExports_CLIProcessHelper$", "--", mode)
 	cmd.Dir = filepath.Dir(dir)
-	for _, value := range os.Environ() {
+	for _, value := range hostguard.Environ() {
 		key, _, _ := strings.Cut(value, "=")
 		if !strings.HasPrefix(key, "MTIX_") && !strings.HasPrefix(key, "PG") && key != "XDG_CONFIG_HOME" {
 			cmd.Env = append(cmd.Env, value)

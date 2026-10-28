@@ -1,6 +1,8 @@
 [
   {
     "event_id": "0193fb00-0000-7000-8000-000000000001",
+    "handle": "914809b83eee",
+    "event_id_sha256": "914809b83eee4365fbf2eb9a286f95c95508603fcb0adabe3d5d4f72c00b358e",
     "node_id": "TEST-1é",
     "op_type": "create_node",
     "lamport_clock": 1,

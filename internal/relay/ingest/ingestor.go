@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/relay/segment"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -375,7 +376,7 @@ func (in *Ingestor) refuse(stats *Stats, peerID string, header segment.Header, r
 	}
 	in.log.Error("relay ingest quarantined a record from an authenticated peer",
 		slog.String("peer", peerID), slog.Uint64("rs", rec.RS),
-		slog.String("event_id", eventID), slog.Any("error", cause))
+		slog.String("event_id", format.EventID(eventID)), slog.Any("error", cause))
 	stats.Quarantined++
 	stats.Quarantines = append(stats.Quarantines, Quarantine{
 		PeerID: peerID, Segment: header.SegmentNo, RS: rec.RS,

@@ -23,6 +23,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/testutil"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 type doctorCLIOutput struct {
@@ -51,10 +52,10 @@ func doctorCLIBoard(t *testing.T, relay string) string {
 
 func doctorCLIEnv(args string, dsn string) []string {
 	var env []string
-	for _, value := range os.Environ() {
+	for _, value := range hostguard.Environ() {
 		key, _, _ := strings.Cut(value, "=")
 		// Preserve GOCOVERDIR so instrumented child main writes coverage without warnings.
-		if strings.HasPrefix(key, "MTIX_") && key != isolatedOperatorEnv {
+		if strings.HasPrefix(key, "MTIX_") && !strings.HasPrefix(key, "MTIX_TEST_") {
 			continue
 		}
 		// Preserve GOCOVERDIR for instrumented stock-main children.

@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -259,7 +260,7 @@ func (s *Store) ReadRelayJournalSince(ctx context.Context, seq int64, limit int)
 		rec.Event.Payload = json.RawMessage(payload)
 		rec.Event.UID = uid.String
 		if err := json.Unmarshal([]byte(vc), &rec.Event.VectorClock); err != nil {
-			return nil, fmt.Errorf("decode vector clock for %s: %w", rec.Event.EventID, err)
+			return nil, fmt.Errorf("decode vector clock for %s: %w", format.EventID(rec.Event.EventID), err)
 		}
 		out = append(out, rec)
 	}

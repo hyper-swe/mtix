@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/store/postgres/migrations"
 	"github.com/hyper-swe/mtix/internal/sync/redact"
 	"github.com/jackc/pgx/v5"
@@ -87,7 +88,7 @@ func recordCollision(ctx context.Context, tx pgx.Tx, rc *RestoreCollision,
 	if err := tx.QueryRow(ctx, `SELECT pg_catalog.to_regprocedure($1) IS NOT NULL`,
 		migrations.RecordCollisionSignature).Scan(&present); err != nil {
 		return fmt.Errorf("record collision %s vs %s: look up the hub recorder: %s",
-			rc.EventID, rc.HeldEventID, redact.DSN(err.Error()))
+			format.EventID(rc.EventID), format.EventID(rc.HeldEventID), redact.DSN(err.Error()))
 	}
 	if !present {
 		return recordCollisionDirect(ctx, tx, rc, incomingUID, incomingWallClockTS)
@@ -98,11 +99,11 @@ func recordCollision(ctx context.Context, tx pgx.Tx, rc *RestoreCollision,
 		rc.ProjectPrefix, rc.DisplayPath, rc.EventID, incomingUID, incomingWallClockTS,
 	).Scan(&onRecord); err != nil {
 		return fmt.Errorf("record collision %s vs %s: %s",
-			rc.EventID, rc.HeldEventID, redact.DSN(err.Error()))
+			format.EventID(rc.EventID), format.EventID(rc.HeldEventID), redact.DSN(err.Error()))
 	}
 	if !onRecord {
 		return fmt.Errorf("record collision %s vs %s: the hub reports the collision not on record, "+
-			"so the push stops instead of withholding the create", rc.EventID, rc.HeldEventID)
+			"so the push stops instead of withholding the create", format.EventID(rc.EventID), format.EventID(rc.HeldEventID))
 	}
 	return nil
 }
@@ -133,7 +134,7 @@ func recordCollisionDirect(ctx context.Context, tx pgx.Tx, rc *RestoreCollision,
 	)
 	if err != nil {
 		return fmt.Errorf("record collision %s vs %s: %s",
-			rc.EventID, rc.HeldEventID, redact.DSN(err.Error()))
+			format.EventID(rc.EventID), format.EventID(rc.HeldEventID), redact.DSN(err.Error()))
 	}
 	return nil
 }

@@ -244,8 +244,8 @@ func eventBlock(r *envelopeBuilder, event Event, bodyCap int) (string, bool) {
 	fmt.Fprintf(&b, "%s\nsender (as claimed, not verified): %s\ntask: %s\nseq: %d\nbody: %s\n%s\n", BeginMarker, displayToken(event.Sender, validSender), displayToken(event.Task, validTask), event.Seq, body, EndMarker)
 	if truncated {
 		b.WriteString("truncated; full event remains unacked in your inbox")
-		if validTask {
-			fmt.Fprintf(&b, "; full text: mtix show %s%s", event.Task, boardArg)
+		if word, typeable := ShellOperand(event.Task); validTask && typeable {
+			b.WriteString("; full text: " + showCommand(word, boardArg))
 		}
 		fmt.Fprintf(&b, "; read full events: mtix inbox --agent %s --json%s\n\n", quotedAgent, boardArg)
 		return b.String(), true
@@ -262,4 +262,13 @@ func displayToken(value string, valid bool) string {
 		return "<invalid>"
 	}
 	return quoteMetadata(value)
+}
+
+// showCommand renders the mtix show hint. A "-- operand" word puts the board
+// argument first, because a flag after -- would be read as a task id.
+func showCommand(operand, boardArg string) string {
+	if strings.HasPrefix(operand, "-- ") {
+		return "mtix show" + boardArg + " " + operand
+	}
+	return "mtix show " + operand + boardArg
 }

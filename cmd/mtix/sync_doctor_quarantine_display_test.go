@@ -7,10 +7,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -48,9 +48,10 @@ func doctorDisplayCases() []doctorDisplayCase {
 }
 
 // expectedDoctorDisplayHint pins the required-explanation command independently
-// of the formatter under test, including its event-id quoting.
+// of the formatter under test: the event is always named by its handle.
 func expectedDoctorDisplayHint(id string) string {
-	return "Inspect and report retained events (1 eligible unacknowledged; first shown); add --reason '<your explanation>' before --, then: mtix sync quarantine acknowledge -- '" + strings.ReplaceAll(id, "'", "'\"'\"'") + "'"
+	sum := sha256.Sum256([]byte(id))
+	return "Inspect and report retained events (1 eligible unacknowledged; first shown): mtix sync quarantine list; add --reason '<your explanation>' after the handle, then: mtix sync quarantine acknowledge --handle " + hex.EncodeToString(sum[:])[:12] + ""
 }
 
 func TestDoctorRecoveryHint_DisplayContract(t *testing.T) {
@@ -108,15 +109,13 @@ func assertDoctorInspectHint(t *testing.T, id, fix string) {
 			t.Fatalf("text hint contains a value outside printable ASCII: %U", r)
 		}
 	}
-	require.Contains(t, fix, "mtix sync quarantine list --json")
-	require.Contains(t, fix, strconv.QuoteToASCII(id))
-	require.NotContains(t, fix, "mtix sync quarantine acknowledge")
+	require.Equal(t, expectedDoctorDisplayHint(id), fix)
 }
 
 func TestDoctorRecoveryHint_ByteDisplay(t *testing.T) {
 	for n, id := range []string{"evt-\x85", "evt-\xff"} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
-			fix := quarantineAcknowledgementCommand(id, 1, false)
+			fix := quarantineAcknowledgementCommand(id, 1, nil)
 			assertDoctorInspectHint(t, id, fix)
 		})
 	}

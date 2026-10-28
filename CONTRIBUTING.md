@@ -176,6 +176,10 @@ For every feature, you must write:
 | Model / CLI / API / MCP | 90% | 85% |
 | Overall Project | **90% minimum** | 85% |
 
+### Tests never touch your real user configuration
+
+Test packages that resolve the user config or home directory install `hostguard.Run` (`internal/testutil/hostguard`) in `TestMain`. It points `HOME`, `USERPROFILE`, `XDG_CONFIG_HOME` and `APPDATA` at a scratch tree and repoints `TMPDIR`; the real directories are never read or written. The scratch tree needs a base directory that is user-owned, not group or other writable, outside your home and outside `/tmp` and `/var/tmp`. macOS per-user temp directories already qualify. On Linux with `TMPDIR` unset or `/tmp` the run stops with a message naming `MTIX_TEST_SCRATCH_BASE`; set it once, for example `mkdir -m 700 /run/user/$(id -u)/mtix-test && export MTIX_TEST_SCRATCH_BASE=/run/user/$(id -u)/mtix-test`. On GitHub-hosted runners `RUNNER_TEMP` is used automatically.
+
 ---
 
 ## Architecture
@@ -391,7 +395,7 @@ provider-specific quirks.
 
 ### CI
 
-Every PR and main push must pass all 25 checks, including ten Go race shards
+Every PR and main push must pass all 29 checks, including fourteen Go race shards
 and the strict `test-go` aggregate. See [CI and release gates](docs/CI-GATES.md)
 for package coverage, failure handling, merge checks and release gates.
 

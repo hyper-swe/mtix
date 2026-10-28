@@ -1480,8 +1480,11 @@ overrides and isolates), zero-width characters and tag characters
 paragraph separator (U+2028, U+2029) become newlines, and
 leading blank lines and trailing whitespace are trimmed, so stored text
 cannot overwrite a line, restyle the terminal or display in a misleading
-order. Title and assignee still print as stored, control characters and
-newlines included. The directional marks (U+200E, U+200F, U+061C) are
+order. Title and assignee print on one line through the same rule (control
+characters, escapes, bidirectional controls, zero-width and tag characters
+and every other invisible format character removed; tabs, newlines and
+the line and paragraph separators become spaces; printable non-ASCII text
+stays readable). The directional marks (U+200E, U+200F, U+061C) are
 kept, so a lone mark can still change how digits are ordered. The
 --history list follows the same rule and prints each entry on one line,
 with line breaks shown as spaces. Quote exact text from --json.
@@ -2245,13 +2248,13 @@ pulled event, with a required reason; it stays retained and unapplied.
 
 ### Subcommands
 
-- `acknowledge <event-id> --reason <text>` — Record a local receipt accepting an invalid-id pulled event as unapplied
+- `acknowledge (<event-id> | --handle <handle>) --reason <text>` — Record a local receipt accepting an invalid-id pulled event as unapplied
 - `list` — List quarantined and held events (read-only)
 ---
 
 ## acknowledge
 
-**Usage:** `acknowledge <event-id> --reason <text>`
+**Usage:** `acknowledge (<event-id> | --handle <handle>) --reason <text>`
 
 Record a local receipt accepting an invalid-id pulled event as unapplied
 
@@ -2268,10 +2271,18 @@ replica. Push holds, unrelated failures and malformed retained events are
 refused. Doctor passes its quarantine check only when no unacknowledged
 pulled event remains; other checks keep their own results.
 
+Name the event by its id, or by --handle: a prefix of the SHA-256 of the exact
+id bytes, printed as at least 12 hex characters (longer when two retained
+events share the shorter prefix). 8 hex characters are accepted when
+unambiguous; an ambiguous prefix is refused with the length that separates the
+events. 'mtix sync quarantine list' and 'mtix sync doctor' print the handle. Use
+the handle when the id holds NUL, invalid UTF-8 or characters that cannot be typed.
+
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
+| `--handle` |  | Event handle from 'mtix sync quarantine list' (instead of the event id) |  |
 | `--reason` |  | Required explanation for accepting this event as unapplied |  |
 ---
 
@@ -2282,11 +2293,16 @@ pulled event remains; other checks keep their own results.
 List quarantined and held events (read-only)
 
 List the events held in the local quarantine, in Lamport clock order,
-then event id: event id, node, op, failed attempts, first seen, last
+then event id: handle, event id, node, op, failed attempts, first seen, last
 attempt and the reason the event was quarantined. --json adds the Lamport
-clock, the source (pull or sweep for a pulled event, push for an event
+clock, the event_id_sha256, the source (pull or sweep for a pulled event, push for an event
 push holds) and the mtix version that recorded it. Acknowledged rows show
 their retained local receipt, including author, reason, time and raw SHA256.
+
+The handle is at least 12 hex characters of the SHA-256 of the exact event
+id bytes (longer when two retained events share the shorter prefix): always printable and typeable, even when the id holds NUL, invalid
+UTF-8 or shell metacharacters. Use it with 'mtix sync quarantine acknowledge
+--handle'.
 
 Read-only and local: it never retries, removes or changes an event and
 does not contact the hub. 'mtix sync pull' retries every quarantined

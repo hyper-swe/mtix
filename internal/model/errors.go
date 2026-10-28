@@ -15,6 +15,11 @@ var (
 	// candidate filter (grant, liveness) is not injected: re-evaluation fails closed.
 	ErrWakeFilterRequired = errors.New("wake candidate filter required")
 
+	// ErrWakeHeldEventMissing indicates a wake pass named an event above a registration's mark
+	// while a lower event of that registration is held and absent from the pass. The pass
+	// refuses so the mark never moves past the held event (ADR-007 section 2.7, FR-20.3).
+	ErrWakeHeldEventMissing = errors.New("held wake event missing from pass")
+
 	// ErrOperatorStateUnreadable indicates operator state validation failed.
 	ErrOperatorStateUnreadable = errors.New("operator state unreadable")
 

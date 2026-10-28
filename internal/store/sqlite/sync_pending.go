@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -77,6 +78,18 @@ func (s *Store) ReadPendingEventsAfter(ctx context.Context, afterLamport int64, 
 	return events, nil
 }
 
+// pendingByIDSQL selects the pending events whose ids are in the bound
+// hex-encoded JSON array (hexIDList), with the push projection columns (uid
+// included, MTIX-91). The id list keeps the primary-key probe (a test pins
+// the plan, MTIX-187.7.15).
+const pendingByIDSQL = `
+	SELECT event_id, project_prefix, node_id, uid, op_type, payload,
+	       wall_clock_ts, lamport_clock, vector_clock,
+	       author_id, author_machine_hash
+	FROM sync_events
+	WHERE sync_status = 'pending' AND event_id IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?))
+	ORDER BY lamport_clock ASC, event_id ASC`
+
 // ReadPendingEventsByID returns the pending events among ids, read from
 // sync_events in one query, in (lamport, event id) order. Push re-reads its
 // held events this way to validate them again before releasing a hold
@@ -86,19 +99,14 @@ func (s *Store) ReadPendingEventsByID(ctx context.Context, ids []string) ([]*mod
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	list, err := json.Marshal(ids)
+	list, err := hexIDList(ids)
 	if err != nil {
 		return nil, fmt.Errorf("read pending events by id: %w", err)
 	}
-	// The pending events whose ids are in the bound JSON array, with the
-	// push projection columns (uid included, MTIX-91).
-	rows, err := s.readDB.QueryContext(ctx, `
-		SELECT event_id, project_prefix, node_id, uid, op_type, payload,
-		       wall_clock_ts, lamport_clock, vector_clock,
-		       author_id, author_machine_hash
-		FROM sync_events
-		WHERE sync_status = 'pending' AND event_id IN (SELECT value FROM json_each(?))
-		ORDER BY lamport_clock ASC, event_id ASC`, string(list))
+	// The pending events whose ids are in the bound hex-encoded JSON array
+	// (byte-exact, MTIX-187.7.15), with the push projection columns (uid
+	// included, MTIX-91).
+	rows, err := s.readDB.QueryContext(ctx, pendingByIDSQL, list)
 	if err != nil {
 		return nil, fmt.Errorf("read pending events by id: %w", err)
 	}
@@ -133,7 +141,7 @@ func scanPushEvents(rows *sql.Rows, capHint int) ([]*model.SyncEvent, error) {
 		e.OpType = model.OpType(opType)
 		e.Payload = json.RawMessage(payload)
 		if err := json.Unmarshal([]byte(vc), &e.VectorClock); err != nil {
-			return nil, fmt.Errorf("decode VC for %s: %w", e.EventID, err)
+			return nil, fmt.Errorf("decode VC for %s: %w", format.EventID(e.EventID), err)
 		}
 		out = append(out, &e)
 	}

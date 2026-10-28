@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
@@ -65,7 +66,7 @@ func TestRunSyncPull_SameClientPushStraddlesCursor_QuarantinedThenApplied(t *tes
 
 	errOut := f.pullPeerTwice(t)
 
-	require.Contains(t, errOut, "quarantined event "+late[20].EventID)
+	require.Contains(t, errOut, "quarantined event "+format.EventID(late[20].EventID))
 	require.Contains(t, errOut, "quarantined events applied on retry; 0 still quarantined")
 	require.Empty(t, quarantined(t))
 	node, err := app.store.GetNode(ctx, "TEST-2")
@@ -117,7 +118,7 @@ func TestRunSyncPull_CrossClientEditStraddlesCursor_QuarantinedThenApplied(t *te
 
 	errOut := f.pullPeerTwice(t)
 
-	require.Contains(t, errOut, "quarantined event "+fromC[0].EventID)
+	require.Contains(t, errOut, "quarantined event "+format.EventID(fromC[0].EventID))
 	require.Contains(t, errOut, "quarantined events applied on retry; 0 still quarantined")
 	require.Empty(t, quarantined(t))
 	node, err := app.store.GetNode(ctx, "TEST-2")

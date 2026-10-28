@@ -18,8 +18,11 @@ function PushDetail() {
   const { subscribeAll } = useWebSocket();
   const [node, setNode] = useState<Node | null>(null);
   useEffect(() => subscribeAll((event) => {
-    if (event.type === "node.created") setNode(event.node);
-    if (event.type === "node.updated") setNode((old) => old ? { ...old, ...event.fields } : old);
+    if (event.type === "node.created" && "node" in event) setNode(event.node);
+    if (event.type === "node.updated" && "fields" in event) {
+      const { fields } = event;
+      setNode((old) => old ? { ...old, ...fields } : old);
+    }
   }), [subscribeAll]);
   if (!node) return null;
   return <><NodeDetail node={node} children={[]} contextChain={[]} activityEntries={[]}

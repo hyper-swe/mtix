@@ -261,6 +261,12 @@ func TestScanRawEventIDs_FlagsEveryWrapperAndPassesSafeRendering(t *testing.T) {
 		{"Sprint of a field", `fmt.Sprint(h.EventID)`, 1},
 		{"TrimSpace wrapper", `fmt.Sprintf("%s", strings.TrimSpace(h.EventID))`, 1},
 		{"string conversion", `fmt.Sprintf("%s", string(e.EventID))`, 1},
+		{"conflict winner field", `fmt.Fprintf(w, "winner=%s", r.EventIDWinner)`, 1},
+		{"conflict loser through a truncating helper", `fmt.Fprintf(w, "loser=%s", shortHashForCLI(r.EventIDLoser))`, 1},
+		{"conflict winner and loser in one call", `fmt.Fprintf(w, "%s %s", shortHashForCLI(r.EventIDWinner), r.EventIDLoser)`, 2},
+		{"suffix-form field", `fmt.Sprint(d.WinnerEventID)`, 1},
+		{"infix-form field", `fmt.Sprint(d.PriorEventIDWinner)`, 1},
+		{"conflict winner rendered safely", `fmt.Fprintf(w, "winner=%s", format.EventID(r.EventIDWinner))`, 0},
 		{"safe rendering in Errorf", `fmt.Errorf("apply %s", format.EventID(e.EventID))`, 0},
 		{"safe rendering in concatenation", `errors.New("apply " + format.EventID(e.EventID))`, 0},
 		{"no id", `errors.New("apply " + name)`, 0},
@@ -331,7 +337,7 @@ func rawEventIDUses(a ast.Expr, file string) []token.Pos {
 				return false
 			}
 		case *ast.SelectorExpr:
-			if strings.HasSuffix(strings.ToLower(v.Sel.Name), "eventid") || (syncFile && v.Sel.Name == "id") {
+			if strings.Contains(strings.ToLower(v.Sel.Name), "eventid") || (syncFile && v.Sel.Name == "id") {
 				out = append(out, v.Pos())
 			}
 		case *ast.Ident:

@@ -157,30 +157,123 @@ func TestEventIDPrints_NoRawEventIDInFormattedText(t *testing.T) {
 		scanned++
 		parsed, perr := parser.ParseFile(fset, f, nil, 0)
 		require.NoError(t, perr)
-		ast.Inspect(parsed, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			if isFormatEventIDCall(call) {
-				safe++
-			}
-			if !isFormattingCall(call) {
-				return true
-			}
-			calls++
-			for _, a := range call.Args {
-				for _, pos := range rawEventIDUses(a, f) {
-					bad = append(bad, fset.Position(pos).String())
-				}
-			}
-			return true
-		})
+		sites, c, s := scanRawEventIDs(parsed, f)
+		calls, safe = calls+c, safe+s
+		for _, pos := range sites {
+			bad = append(bad, fset.Position(pos).String())
+		}
 	}
 	require.Greater(t, scanned, 50, "the scan must see the package")
 	require.Greater(t, calls, 100, "the scan must see formatting calls")
 	require.Greater(t, safe, 20, "the scan must see format.EventID calls")
 	require.Empty(t, bad, "event ids must be rendered with format.EventID in formatted text")
+}
+
+// scanRawEventIDs returns the positions in file where an event id reaches
+// text outside format.EventID: as an argument of a formatting call or of
+// errors.New, or inside a string concatenation. It also counts the formatting
+// calls and format.EventID calls it saw. Functions in rawIDFuncs are skipped.
+func scanRawEventIDs(file *ast.File, name string) (sites []token.Pos, calls, safe int) {
+	seen := map[token.Pos]bool{}
+	add := func(a ast.Expr) {
+		for _, pos := range rawEventIDUses(a, name) {
+			if !seen[pos] {
+				seen[pos] = true
+				sites = append(sites, pos)
+			}
+		}
+	}
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && rawIDFuncs[fn.Name.Name] {
+			continue
+		}
+		ast.Inspect(decl, func(n ast.Node) bool {
+			switch v := n.(type) {
+			case *ast.CallExpr:
+				if isFormatEventIDCall(v) {
+					safe++
+				}
+				if isFormattingCall(v) || isErrorsNewCall(v) {
+					calls++
+					for _, a := range v.Args {
+						add(a)
+					}
+				}
+			case *ast.BinaryExpr:
+				if v.Op == token.ADD && hasStringLiteral(v) {
+					add(v)
+				}
+			}
+			return true
+		})
+	}
+	return sites, calls, safe
+}
+
+// hasStringLiteral reports whether a concatenation has a string literal
+// operand, at any depth of the chain.
+func hasStringLiteral(e ast.Expr) bool {
+	switch v := e.(type) {
+	case *ast.BasicLit:
+		return v.Kind == token.STRING
+	case *ast.BinaryExpr:
+		return v.Op == token.ADD && (hasStringLiteral(v.X) || hasStringLiteral(v.Y))
+	case *ast.ParenExpr:
+		return hasStringLiteral(v.X)
+	}
+	return false
+}
+
+func isErrorsNewCall(call *ast.CallExpr) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "New" {
+		return false
+	}
+	x, ok := sel.X.(*ast.Ident)
+	return ok && x.Name == "errors"
+}
+
+// rawIDFuncs are functions that build a stored reason from an id on purpose:
+// refuseBehindQuarantinedCreate stores the creation id as received, and the
+// id is rendered when the reason is printed (displayHoldReason).
+// quarantineAcknowledgementCommand builds a copyable shell command that must
+// carry the id itself; recoveryHintNeedsInspection sends any id with a
+// non-printable rune to the quoted form instead (MTIX-187.2.6.3). A printable
+// non-ASCII id still appears raw there until MTIX-187.7.6.
+var rawIDFuncs = map[string]bool{
+	"refuseBehindQuarantinedCreate":    true,
+	"quarantineAcknowledgementCommand": true,
+}
+
+// TestScanRawEventIDs_FlagsEveryWrapperAndPassesSafeRendering is the positive
+// control of the scan: each bypass shape is flagged, each safe form is not.
+func TestScanRawEventIDs_FlagsEveryWrapperAndPassesSafeRendering(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"errors.New with a bare id", `errors.New(e.EventID)`, 1},
+		{"errors.New with concatenation", `errors.New("apply " + e.EventID)`, 1},
+		{"errors.Join over errors.New", `errors.Join(errors.New("apply "+e.EventID), err)`, 1},
+		{"bare concatenation", `x := "apply " + e.EventID; _ = x`, 1},
+		{"fmt.Errorf local id", `fmt.Errorf("apply %s", id)`, 1},
+		{"Sprint of a field", `fmt.Sprint(h.EventID)`, 1},
+		{"TrimSpace wrapper", `fmt.Sprintf("%s", strings.TrimSpace(h.EventID))`, 1},
+		{"string conversion", `fmt.Sprintf("%s", string(e.EventID))`, 1},
+		{"safe rendering in Errorf", `fmt.Errorf("apply %s", format.EventID(e.EventID))`, 0},
+		{"safe rendering in concatenation", `errors.New("apply " + format.EventID(e.EventID))`, 0},
+		{"no id", `errors.New("apply " + name)`, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := "package main\nfunc f() {\n" + tt.body + "\n}\n"
+			parsed, err := parser.ParseFile(token.NewFileSet(), "sync_probe.go", src, 0)
+			require.NoError(t, err)
+			sites, _, _ := scanRawEventIDs(parsed, "sync_probe.go")
+			require.Len(t, sites, tt.want)
+		})
+	}
 }
 
 // eventIDNames are the identifiers and field names that hold a sync event id

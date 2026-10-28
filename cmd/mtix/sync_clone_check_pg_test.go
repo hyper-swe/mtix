@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/sync/validator"
@@ -93,7 +94,7 @@ func TestRunSyncClone_ExtremeLamportHubRow_RefusedNothingWritten(t *testing.T) {
 	require.Equal(t, fmt.Sprintf("mtix sync clone check: clone refused: hub event %s fails the checks sync pull runs "+
 		"(lamport_clock %d is %d above the local clock %d (sync.max_lamport_jump %d): lamport_clock jump beyond "+
 		"sync.max_lamport_jump); nothing was written. "+cloneRecoveryText,
-		extreme.EventID, extreme.LamportClock, extreme.LamportClock-ok.LamportClock, ok.LamportClock,
+		format.EventID(extreme.EventID), extreme.LamportClock, extreme.LamportClock-ok.LamportClock, ok.LamportClock,
 		validator.DefaultMaxLamportJump), err.Error(), "the exact refusal, recovery included")
 	require.Equal(t, before, readPeerState(t, f),
 		"a refused clone writes nothing: clock, cursor, rows, the seeded quarantine row and the sweep time")

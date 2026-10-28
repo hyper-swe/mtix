@@ -2179,10 +2179,13 @@ pull's position either, so later changes keep arriving.
   ordinary id looks like `"0193fb00-0000-7000-8000-000000000001"`), so a
   hostile id cannot reach the terminal. This covers the quarantine list and
   acknowledgement, the pull, push, clone and repair messages that name an
-  event, and the event ids inside hold and quarantine reasons. The quoted
-  form is display only: take the exact id from the `--json` output. `--json` output and
-  the stored id are unchanged. Error text from the local store layer
-  can still show an id as stored.
+  event, and the id inside the "depends on held create" and "depends on a
+  quarantined create" reasons. The quoted form is display only: take the
+  exact id from the `--json` output. `--json` output and the stored id are
+  unchanged. Refusal reasons written by the event validator (tracked in
+  MTIX-187.4.4), error text from the local store layer, and rows recorded
+  by older versions can still show an id as received, so always take the
+  exact id from `--json`.
 - **What to do.** Run `mtix sync pull` again first. An event waiting for
   a task or dependency target that has not been pushed yet applies once
   its teammate pushes it. An event that fails the size, shape or clock

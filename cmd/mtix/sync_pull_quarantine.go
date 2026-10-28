@@ -412,7 +412,7 @@ func reportQuarantined(w io.Writer, source string, events []*model.SyncEvent, he
 	for _, e := range events {
 		if reason, ok := held[e.EventID]; ok && !errors.Is(reason, errAlreadyQuarantined) {
 			fmt.Fprintf(w, "pull: quarantined event %s (%s pass): %s; retried on every pull\n",
-				format.EventID(e.EventID), source, quarantineReason(reason))
+				format.EventID(e.EventID), source, displayHoldReason(quarantineReason(reason)))
 		}
 	}
 }
@@ -462,5 +462,8 @@ func refuseBehindQuarantinedCreate(ctx context.Context, tx *sql.Tx, e *model.Syn
 	if creation == "" {
 		return nil, nil
 	}
-	return fmt.Errorf("%w %s", sqlite.ErrBehindQuarantinedCreate, format.EventID(creation)), nil
+	// The reason is stored as received; the id is rendered when it is printed
+	// (displayHoldReason), so rows recorded by older versions and new rows
+	// display alike and the --json reason is the stored reason (MTIX-187.4.2).
+	return fmt.Errorf("%w %s", sqlite.ErrBehindQuarantinedCreate, creation), nil
 }

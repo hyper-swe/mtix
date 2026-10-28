@@ -55,7 +55,7 @@ func cloneRefusal(e *model.SyncEvent, reason error, written bool) error {
 		state = "the batches before it were applied"
 	}
 	return fmt.Errorf("%w: hub event %s fails the checks sync pull runs (%s); %s. "+cloneRecovery,
-		errCloneRefused, format.EventID(e.EventID), quarantineReason(reason), state)
+		errCloneRefused, format.EventID(e.EventID), displayHoldReason(quarantineReason(reason)), state)
 }
 
 // preflightClone runs, before a clone writes anything, the pull's checks on

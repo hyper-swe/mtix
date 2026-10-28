@@ -53,7 +53,7 @@ func applyStagedChunk(ctx context.Context, in pullIngest, hub lateEventHub, st *
 	chunk []string, limit int,
 ) (int, error) {
 	in.receipt.observe(chunk)
-	missing, err := missingLocalEventIDs(ctx, st, chunk)
+	missing, err := st.MissingLocalEventIDs(ctx, chunk)
 	if err != nil {
 		return 0, err
 	}

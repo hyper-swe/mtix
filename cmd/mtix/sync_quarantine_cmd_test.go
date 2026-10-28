@@ -44,7 +44,7 @@ func TestRunSyncQuarantineList_TextAndJSON(t *testing.T) {
 	out.Reset()
 	require.NoError(t, runSyncQuarantineList(ctx, &out))
 	require.Regexp(t, regexp.MustCompile(`(?m)^EVENT ID\s+NODE\s+OP\s+ATTEMPTS\s+FIRST SEEN\s+LAST ATTEMPT\s+REASON$`), out.String())
-	require.Regexp(t, regexp.MustCompile(`(?m)^0193fb00-0000-7000-8000-000000000001\s+TEST-3\s+link_dep\s+1\s+2026-09-25T01:00:00Z\s+2026-09-25T02:00:00Z\s+apply: FOREIGN KEY constraint failed$`), out.String())
+	require.Regexp(t, regexp.MustCompile(`(?m)^"0193fb00-0000-7000-8000-000000000001"\s+TEST-3\s+link_dep\s+1\s+2026-09-25T01:00:00Z\s+2026-09-25T02:00:00Z\s+apply: FOREIGN KEY constraint failed$`), out.String())
 
 	out.Reset()
 	app.jsonOutput = true

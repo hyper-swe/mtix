@@ -1480,8 +1480,11 @@ overrides and isolates), zero-width characters and tag characters
 paragraph separator (U+2028, U+2029) become newlines, and
 leading blank lines and trailing whitespace are trimmed, so stored text
 cannot overwrite a line, restyle the terminal or display in a misleading
-order. Title and assignee still print as stored, control characters and
-newlines included. The directional marks (U+200E, U+200F, U+061C) are
+order. Title and assignee print on one line through the same rule (control
+characters, escapes, bidirectional controls, zero-width and tag characters
+and every other invisible format character removed; tabs, newlines and
+the line and paragraph separators become spaces; printable non-ASCII text
+stays readable). The directional marks (U+200E, U+200F, U+061C) are
 kept, so a lone mark can still change how digits are ordered. The
 --history list follows the same rule and prints each entry on one line,
 with line breaks shown as spaces. Quote exact text from --json.

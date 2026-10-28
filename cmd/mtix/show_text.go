@@ -42,12 +42,10 @@ func displayText(s string) string {
 }
 
 // singleLine renders a field that must stay on one line, such as an author
-// or addressee, per FR-3.4 (MTIX-100.1): displayText, with any remaining
-// newline or tab turned into a space so the field cannot start a line of its
-// own, and outer whitespace trimmed.
+// or addressee, per FR-3.4 (MTIX-100.1). It is format.SafeLine, the one
+// definition shared with title and assignee output (MTIX-187.7.4).
 func singleLine(s string) string {
-	s = strings.NewReplacer("\n", " ", "\t", " ").Replace(displayText(s))
-	return strings.TrimSpace(s)
+	return format.SafeLine(s)
 }
 
 // indentContinuation indents every line after the first, per FR-6.3

@@ -157,7 +157,7 @@ func ingestPulledEvent(ctx context.Context, tx *sql.Tx, in pullIngest,
 func admitPulledEvent(ctx context.Context, tx *sql.Tx, in pullIngest, e *model.SyncEvent) (refused, err error) {
 	local, err := sqlite.LocalLamport(ctx, tx)
 	if err != nil {
-		return nil, fmt.Errorf("admit %s: %w", e.EventID, err)
+		return nil, fmt.Errorf("admit %s: %w", format.EventID(e.EventID), err)
 	}
 	return checkPulledEvent(in, e, local), nil
 }
@@ -181,7 +181,7 @@ func checkPulledEvent(in pullIngest, e *model.SyncEvent, local int64) error {
 	for _, id := range res.FutureTimestamps {
 		fmt.Fprintf(in.stderr,
 			"WARN: pull: event %s is stamped more than 24h ahead of this machine's clock (wall_clock_ts %s); applying it (check this machine's clock)\n",
-			oneLine(id), time.UnixMilli(e.WallClockTS).UTC().Format(time.RFC3339))
+			format.EventID(id), time.UnixMilli(e.WallClockTS).UTC().Format(time.RFC3339))
 	}
 	return nil
 }
@@ -207,7 +207,7 @@ func applyPulledEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, appli
 		return sqlite.RemoveQuarantined(ctx, tx, e.EventID)
 	})
 	if err != nil {
-		return nil, fmt.Errorf("apply %s: %w", e.EventID, err)
+		return nil, fmt.Errorf("apply %s: %w", format.EventID(e.EventID), err)
 	}
 	return rejected, nil
 }
@@ -221,7 +221,7 @@ func quarantinePulledEvent(ctx context.Context, tx *sql.Tx, in pullIngest,
 ) error {
 	raw, err := json.Marshal(e)
 	if err != nil {
-		return fmt.Errorf("quarantine %s: encode event: %w", e.EventID, err)
+		return fmt.Errorf("quarantine %s: encode event: %w", format.EventID(e.EventID), err)
 	}
 	return recordQuarantine(ctx, tx, in, sqlite.QuarantinedEvent{
 		EventID: e.EventID, Source: source, RawEvent: string(raw),
@@ -412,7 +412,7 @@ func reportQuarantined(w io.Writer, source string, events []*model.SyncEvent, he
 	for _, e := range events {
 		if reason, ok := held[e.EventID]; ok && !errors.Is(reason, errAlreadyQuarantined) {
 			fmt.Fprintf(w, "pull: quarantined event %s (%s pass): %s; retried on every pull\n",
-				oneLine(e.EventID), source, quarantineReason(reason))
+				format.EventID(e.EventID), source, displayHoldReason(quarantineReason(reason)))
 		}
 	}
 }
@@ -462,5 +462,8 @@ func refuseBehindQuarantinedCreate(ctx context.Context, tx *sql.Tx, e *model.Syn
 	if creation == "" {
 		return nil, nil
 	}
+	// The reason is stored as received; the id is rendered when it is printed
+	// (displayHoldReason), so rows recorded by older versions and new rows
+	// display alike and the --json reason is the stored reason (MTIX-187.4.2).
 	return fmt.Errorf("%w %s", sqlite.ErrBehindQuarantinedCreate, creation), nil
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
@@ -106,7 +107,7 @@ func printQuarantineTable(w io.Writer, events []service.QuarantinedEvent) error 
 	fmt.Fprintln(tw, "EVENT ID\tNODE\tOP\tATTEMPTS\tFIRST SEEN\tLAST ATTEMPT\tREASON")
 	for _, q := range events {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			oneLine(q.EventID), oneLine(q.NodeID), oneLine(q.OpType), strconv.Itoa(q.Attempts),
+			format.EventID(q.EventID), oneLine(q.NodeID), oneLine(q.OpType), strconv.Itoa(q.Attempts),
 			oneLine(q.FirstSeen), oneLine(q.LastAttempt), oneLine(quarantineDisplayReason(q)))
 	}
 	return tw.Flush()

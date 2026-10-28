@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
@@ -388,7 +389,7 @@ func TestSweepLateEvents_ListingInterrupted_ResumesListingThenApplies(t *testing
 				{CreatedAt: events[0].CreatedAt, EventID: ids[0]},
 				{CreatedAt: events[1].CreatedAt, EventID: ids[1]},
 			}, resumed.calls, "the listing resumes after the saved position, not from the start")
-			require.Contains(t, stderr.String(), tt.wantResume+ids[0])
+			require.Contains(t, stderr.String(), tt.wantResume+format.EventID(ids[0]))
 			require.Equal(t, "2026-09-24T10:00:00.123456Z", lastSweep(t),
 				"the next window is measured from the hub time before the FIRST page")
 			requireNoFullSweepProgress(t)

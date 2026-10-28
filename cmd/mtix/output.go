@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/hyper-swe/mtix/internal/format"
 )
@@ -109,15 +110,19 @@ func (h *humanWriter) WriteTable(headers []string, rows [][]string) {
 }
 
 // calcColumnWidths computes the maximum width for each column.
+// Widths count runes, not terminal cells: wide CJK or emoji text and
+// combining marks can still misalign a column. Title is the last column in
+// every current table, so the effect is cosmetic; measure display width if a
+// non-final column ever carries stored text (MTIX-187.7.4).
 func calcColumnWidths(headers []string, rows [][]string) []int {
 	widths := make([]int, len(headers))
 	for i, hdr := range headers {
-		widths[i] = len(hdr)
+		widths[i] = utf8.RuneCountInString(hdr)
 	}
 	for _, row := range rows {
 		for i, cell := range row {
-			if i < len(widths) && len(cell) > widths[i] {
-				widths[i] = len(cell)
+			if n := utf8.RuneCountInString(cell); i < len(widths) && n > widths[i] {
+				widths[i] = n
 			}
 		}
 	}
@@ -242,15 +247,18 @@ func colorize(text, color string, enabled bool) string {
 	return color + text + colorReset
 }
 
-// Truncate shortens a string to maxLen characters, appending "..." if truncated.
+// Truncate shortens a string to maxLen runes, appending "..." if truncated.
+// It counts and cuts on rune boundaries, so a multibyte title is never split
+// into invalid UTF-8 (MTIX-187.7.4). A maxLen of 3 or less returns s as is.
 func Truncate(s string, maxLen int) string {
 	if maxLen <= 3 {
 		return s
 	}
-	if len(s) <= maxLen {
+	if utf8.RuneCountInString(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen-3] + "..."
+	runes := []rune(s)
+	return string(runes[:maxLen-3]) + "..."
 }
 
 // FormatNodeRow returns a formatted table row for a node. A provisional id
@@ -265,7 +273,7 @@ func FormatNodeRow(id, status string, priority int, title string, progress float
 		statusStr = colorize(statusStr, clr, true)
 	}
 	progressStr := fmt.Sprintf("%.0f%%", progress*100)
-	return []string{format.AnnotateID(id), statusStr, fmt.Sprintf("%d", priority), progressStr, Truncate(title, 50)}
+	return []string{format.AnnotateID(id), statusStr, fmt.Sprintf("%d", priority), progressStr, Truncate(format.SafeLine(title), 50)}
 }
 
 // TreeLine renders a single line of an ASCII tree. A provisional id (one still
@@ -273,6 +281,7 @@ func FormatNodeRow(id, status string, priority int, title string, progress float
 // number is not yet settled and must not be externalized (ADR-003 §8).
 func TreeLine(id, status, title string, progress float64, prefix string, isLast bool, depth int, useColor bool) string {
 	id = format.AnnotateID(id)
+	title = format.SafeLine(title)
 	icon := StatusIcon(status)
 	statusStr := fmt.Sprintf("%s %s", icon, status)
 	if useColor {

@@ -10,17 +10,24 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
+	"io/fs"
 	"log/slog"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/sync/validator"
 	"github.com/hyper-swe/mtix/internal/testutil"
 )
 
@@ -44,7 +51,7 @@ const hostileWireLimit = 64 * 1024
 // carries the id through JSON cannot return the original bytes.
 var hostileBoundary = func() map[string]string {
 	out := map[string]string{}
-	for _, surface := range []string{"pending_by_id", "export_json", "push_subjects", "events_awaiting_creation", "release_push_holds"} {
+	for _, surface := range []string{"export_json"} {
 		for _, fixture := range []string{"invalid_utf8_lone_continuation", "invalid_utf8_truncated"} {
 			out[hostileKey(surface, fixture)] = "MTIX-187.7.15"
 		}
@@ -539,7 +546,7 @@ func TestHostileBoundary_ListIsNotStale(t *testing.T) {
 	for key, ticket := range hostileBoundary {
 		surface, fixture, ok := strings.Cut(key, "/")
 		require.True(t, ok, key)
-		require.Contains(t, []string{"pending_by_id", "export_json", "push_subjects", "events_awaiting_creation", "release_push_holds"}, surface, key)
+		require.Contains(t, []string{"export_json"}, surface, key)
 		require.Equal(t, testutil.ClassInvalidUTF8, byName[fixture], "%s must name an invalid UTF-8 fixture", key)
 		require.Equal(t, "MTIX-187.7.15", ticket, key)
 	}
@@ -620,4 +627,301 @@ func FuzzSyncEventIDRoundTrip(f *testing.F) {
 			return sqlite.RemoveQuarantined(context.Background(), tx, id)
 		}))
 	})
+}
+
+// jsonEachParam matches json_each over any bound-parameter form: ?, ?1, $name,
+// :name, @name, with optional spaces.
+var jsonEachParam = regexp.MustCompile(`json_each\(\s*[?$:@]\w*\s*\)`)
+
+// hexListRead matches the one accepted way to read a bound id list: the
+// hex-decoding subquery over THAT json_each (idListSubquery in id_list.go).
+var hexListRead = regexp.MustCompile(`CAST\(\s*unhex\(\s*value\s*\)\s+AS\s+TEXT\s*\)(?:\s+AS\s+\w+)?\s+FROM\s+json_each\(\s*[?$:@]\w*\s*\)`)
+
+// receiptListRead matches the quarantine-receipt lookup, which reads its
+// hex fields with unhex(json_extract(lookup.value, ...)) (MTIX-187.2.7).
+var receiptListRead = regexp.MustCompile(`json_each\(\s*[?$:@]\w*\s*\)\s+AS\s+lookup[\s\S]*?unhex\(\s*json_extract\(\s*lookup\.value`)
+
+// TestSQLiteIDLists_NeverBindPlainJSONLists is the guard for MTIX-187.7.15:
+// json.Marshal changes invalid UTF-8, so a statement that reads a bound list
+// through json_each must decode a hex list with unhex over that very
+// json_each. It scans every non-test Go file of the repository: each string
+// literal's json_each(<parameter>) count must equal the count of accepted
+// reads. Labels and annotations bind no parameter, so nothing is allowlisted.
+func TestSQLiteIDLists_NeverBindPlainJSONLists(t *testing.T) {
+	root := filepath.Join("..", "..", "..")
+	fset := token.NewFileSet()
+	var bad []string
+	seen, scanned := 0, 0
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", ".hyperswe", ".mgit", "node_modules", "vendor", "web":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		parsed, perr := parser.ParseFile(fset, path, nil, 0)
+		require.NoError(t, perr)
+		scanned++
+		sites, n := plainJSONListSites(parsed)
+		seen += n
+		for _, pos := range sites {
+			bad = append(bad, fset.Position(pos).String())
+		}
+		return nil
+	})
+	require.NoError(t, err)
+	require.Greater(t, scanned, 200, "the scan must see the repository")
+	require.GreaterOrEqual(t, seen, 9, "the scan must see the json_each statements")
+	require.Empty(t, bad, "a bound list read with json_each must be hex encoded and decoded with unhex over that json_each")
+}
+
+// plainJSONListSites returns the positions of string literals in which a
+// json_each over a bound parameter is not read through an accepted hex
+// decoding, and how many literals use json_each over a parameter.
+func plainJSONListSites(file *ast.File) (sites []token.Pos, seen int) {
+	ast.Inspect(file, func(n ast.Node) bool {
+		lit, ok := n.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		eachCount := len(jsonEachParam.FindAllString(lit.Value, -1))
+		if eachCount == 0 {
+			return true
+		}
+		seen++
+		accepted := len(hexListRead.FindAllString(lit.Value, -1)) + len(receiptListRead.FindAllString(lit.Value, -1))
+		if accepted != eachCount {
+			sites = append(sites, lit.Pos())
+		}
+		return true
+	})
+	return sites, seen
+}
+
+func TestPlainJSONListSites_FlagsEveryBypassAndAcceptsOnlyHexReads(t *testing.T) {
+	tests := []struct {
+		name string
+		stmt string
+		want int
+	}{
+		{"plain list", "`SELECT 1 FROM t WHERE id IN (SELECT value FROM json_each(?))`", 1},
+		{"hex list", "`SELECT 1 FROM t WHERE id IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?))`", 0},
+		{"hex list aliased", "`SELECT 1 FROM (SELECT key, CAST(unhex(value) AS TEXT) AS id FROM json_each(?)) AS h`", 0},
+		{"numbered parameter", "`SELECT 1 FROM t WHERE id IN (SELECT value FROM json_each(?1))`", 1},
+		{"named parameter", "`SELECT 1 FROM t WHERE id IN (SELECT value FROM json_each(:ids))`", 1},
+		{"dollar parameter", "`SELECT 1 FROM t WHERE id IN (SELECT value FROM json_each($1))`", 1},
+		{"spaced", "`SELECT 1 FROM t WHERE id IN (SELECT value FROM json_each( ? ))`", 1},
+		{"unrelated unhex in the literal", "`SELECT unhex(x) FROM t WHERE id IN (SELECT value FROM json_each(?))`", 1},
+		{"unhex of another list", "`SELECT 1 FROM t WHERE a IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?)) AND b IN (SELECT value FROM json_each(?))`", 1},
+		{"two plain statements", "`SELECT value FROM json_each(?)`, `SELECT j.value FROM json_each(?) j`", 2},
+		{"receipt lookup form", "`FROM json_each(?) AS lookup JOIN a ON a.event_id = CAST(unhex(json_extract(lookup.value, '$.x')) AS TEXT)`", 0},
+		{"labels column, no parameter", "`EXISTS (SELECT 1 FROM json_each(nodes.labels) WHERE json_each.value = ?)`", 0},
+		{"no list", "`SELECT 1`", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := "package main\nvar _ = []string{" + tt.stmt + "}\n"
+			parsed, err := parser.ParseFile(token.NewFileSet(), "probe.go", src, 0)
+			require.NoError(t, err)
+			sites, _ := plainJSONListSites(parsed)
+			require.Len(t, sites, tt.want)
+		})
+	}
+}
+
+// TestSyncExchange_HostileEventIDs_UnresolvedCountIsByteExact judges
+// countUnresolvedExchange through ExportExchangeSnapshot: an applied id is
+// resolved, a quarantined one and an unknown one are not, for every fixture
+// the exchange accepts (ids up to 128 bytes).
+func TestSyncExchange_HostileEventIDs_UnresolvedCountIsByteExact(t *testing.T) {
+	ctx := context.Background()
+	for _, fx := range testutil.HostileIDs() {
+		t.Run(fx.Name, func(t *testing.T) {
+			if len(fx.Value) > 128 {
+				t.Skip("over the exchange id budget")
+			}
+			s, _ := hostileStore(t)
+			unresolved := func(id string) int64 {
+				_, boundary, err := s.ExportExchangeSnapshot(ctx, "MTIX", "test", []string{id}, 1<<20)
+				require.NoError(t, err)
+				return boundary.Unresolved
+			}
+			require.Equal(t, int64(1), unresolved(fx.Value), "an unknown id is unresolved")
+			hostileQuarantine(t, s, hostileQuarantineRow(t, fx.Value))
+			require.Equal(t, int64(1), unresolved(fx.Value), "a quarantined id is unresolved")
+			require.NoError(t, s.WithTx(ctx, func(tx *sql.Tx) error {
+				return sqlite.RemoveQuarantined(ctx, tx, fx.Value)
+			}))
+			require.NoError(t, hostileApply(t, s, hostileCreate(t, fx.Value, "MTIX-1", 1)))
+			require.Equal(t, int64(0), unresolved(fx.Value), "an applied id is resolved by its exact bytes")
+		})
+	}
+}
+
+// TestQuarantinedCreateBehind_HostileNodeNumbers_MatchByExactBytes judges the
+// node-number list of the dependency lookup: a quarantined creation is found
+// by the exact number the dependent event names, and an invalid UTF-8 number
+// never matches a creation whose number only differs by U+FFFD.
+func TestQuarantinedCreateBehind_HostileNodeNumbers_MatchByExactBytes(t *testing.T) {
+	ctx := context.Background()
+	for _, fx := range testutil.HostileIDs() {
+		t.Run(fx.Name, func(t *testing.T) {
+			if len(fx.Value) > hostileWireLimit {
+				t.Skip("over the wire cap")
+			}
+			s, _ := hostileStore(t)
+			create := hostileCreate(t, "ev-create", fx.Value, 1)
+			createRow := hostileQuarantineRow(t, "ev-create")
+			rawEvent, err := json.Marshal(create)
+			require.NoError(t, err)
+			createRow.RawEvent = string(rawEvent)
+			hostileQuarantine(t, s, createRow)
+
+			dependent := hostileCreate(t, "ev-dependent", fx.Value, 2)
+			dependent.OpType = model.OpUpdateField
+			var found string
+			require.NoError(t, s.WithTx(ctx, func(tx *sql.Tx) error {
+				var err error
+				found, err = sqlite.QuarantinedCreateBehind(ctx, tx, dependent)
+				return err
+			}))
+			// In production only grammar-valid ASCII numbers reach this lookup:
+			// the ingest validator refuses every other node id first.
+			if validator.ValidateEventNodeIDs(dependent) != nil {
+				t.Logf("node id %q is outside the grammar: it never reaches the lookup in production; checked here as a defensive property", fx.Value)
+			}
+			if utf8.ValidString(fx.Value) {
+				require.Equal(t, "ev-create", found, "the creation of the exact number is found")
+			} else {
+				require.Empty(t, found, "a number that is not valid UTF-8 matches no JSON copy of another number")
+			}
+		})
+	}
+}
+
+// TestQuarantinedCreateBehind_NodeIDsReachingIt_AreGrammarValidASCII pins the
+// premise stated in QuarantinedCreateBehind's godoc: the ingest validator
+// refuses every node id outside the grammar, so only ASCII numbers reach it.
+func TestQuarantinedCreateBehind_NodeIDsReachingIt_AreGrammarValidASCII(t *testing.T) {
+	for _, fx := range testutil.HostileIDs() {
+		e := hostileCreate(t, "ev-x", fx.Value, 1)
+		if err := validator.ValidateEventNodeIDs(e); err == nil {
+			for i := 0; i < len(fx.Value); i++ {
+				require.Less(t, fx.Value[i], byte(0x80), "%s passes the node id grammar, so it must be ASCII", fx.Name)
+			}
+		}
+	}
+	require.NoError(t, validator.ValidateEventNodeIDs(hostileCreate(t, "ev-x", "MTIX-1", 1)))
+}
+
+// TestSyncStore_MissingLocalEventIDs_HostileIDsMatchByExactBytes judges the
+// late-event sweep diff: an applied or quarantined id is found locally, an
+// unknown one is missing, for every fixture; the order of the page is kept.
+func TestSyncStore_MissingLocalEventIDs_HostileIDsMatchByExactBytes(t *testing.T) {
+	ctx := context.Background()
+	for _, fx := range testutil.HostileIDs() {
+		t.Run(fx.Name, func(t *testing.T) {
+			if len(fx.Value) > hostileWireLimit {
+				t.Skip("over the wire cap")
+			}
+			s, _ := hostileStore(t)
+			missing, err := s.MissingLocalEventIDs(ctx, []string{"zz-first", fx.Value, "zz-last"})
+			require.NoError(t, err)
+			require.Equal(t, []string{"zz-first", fx.Value, "zz-last"}, missing, "unknown ids are missing, in page order")
+
+			require.NoError(t, hostileApply(t, s, hostileCreate(t, fx.Value, "MTIX-1", 1)))
+			missing, err = s.MissingLocalEventIDs(ctx, []string{"zz-first", fx.Value, "zz-last"})
+			require.NoError(t, err)
+			require.Equal(t, []string{"zz-first", "zz-last"}, missing, "an applied id is found by its exact bytes")
+
+			quarantined := fx.Value + "-q"
+			hostileQuarantine(t, s, hostileQuarantineRow(t, quarantined))
+			missing, err = s.MissingLocalEventIDs(ctx, []string{quarantined, "zz-last"})
+			require.NoError(t, err)
+			require.Equal(t, []string{"zz-last"}, missing, "a quarantined id is found by its exact bytes")
+		})
+	}
+}
+
+// TestSyncPush_HostileUIDs_PendingCreationWithExplicitUIDStillMakesEventsWait
+// covers the second UNION branch of pendingCreationSQL: a pending creation
+// whose uid differs from its event id, found through idx_sync_events_uid.
+func TestSyncPush_HostileUIDs_PendingCreationWithExplicitUIDStillMakesEventsWait(t *testing.T) {
+	ctx := context.Background()
+	for _, fx := range testutil.HostileIDs() {
+		t.Run(fx.Name, func(t *testing.T) {
+			if len(fx.Value) > hostileWireLimit {
+				t.Skip("over the wire cap")
+			}
+			s, raw := hostileStore(t)
+			create := hostileCreate(t, "ev-create-explicit", "MTIX-1", 1)
+			create.UID = fx.Value
+			require.NoError(t, hostileApply(t, s, create))
+			_, err := raw.Exec(`UPDATE sync_events SET sync_status = 'pending' WHERE event_id = ?`, "ev-create-explicit")
+			require.NoError(t, err)
+			singleID(t, idsIn(t, raw, `SELECT uid FROM nodes WHERE id = 'MTIX-1'`), fx.Value)
+
+			about := hostileCreate(t, "ev-about", "MTIX-1", 2)
+			about.OpType = model.OpUpdateField
+			waiting, err := s.EventsAwaitingCreation(ctx, []*model.SyncEvent{about})
+			require.NoError(t, err)
+			_, waits := waiting["ev-about"]
+			require.True(t, waits, "the task of the pending creation is found through its explicit uid")
+		})
+	}
+}
+
+// Rule 1b: a test may prefix EXPLAIN QUERY PLAN to the package's own constant
+// statement. The real id-list statements keep indexed access: the push hold
+// release and the sweep diff probe the event_id primary key; the pending read
+// is led by the status index (as it was with a plain list) and never scans.
+func TestIDListStatements_UsePrimaryKeyIndexes(t *testing.T) {
+	_, raw := hostileStore(t)
+	tests := []struct {
+		name    string
+		explain string
+		want    []string
+		notWant []string
+	}{
+		{"ReadPendingEventsByID", "EXPLAIN QUERY PLAN " + sqlite.PendingByIDSQLForTest,
+			[]string{"SEARCH sync_events USING INDEX idx_sync_events_status_lamport"}, []string{"SCAN sync_events"}},
+		{"ReleasePushHolds", "EXPLAIN QUERY PLAN " + sqlite.ReleasePushHoldsSQLForTest,
+			[]string{"SEARCH sync_quarantine USING INDEX sqlite_autoindex_sync_quarantine_1 (event_id=?)"}, []string{"SCAN sync_quarantine"}},
+		{"MissingLocalEventIDs", "EXPLAIN QUERY PLAN " + sqlite.MissingLocalIDsSQLForTest,
+			[]string{
+				"SEARCH s USING COVERING INDEX sqlite_autoindex_sync_events_1 (event_id=?)",
+				"SEARCH a USING COVERING INDEX sqlite_autoindex_applied_events_1 (event_id=?)",
+				"SEARCH q USING COVERING INDEX sqlite_autoindex_sync_quarantine_1 (event_id=?)",
+			}, []string{"SCAN s", "SCAN a", "SCAN q"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows, err := raw.Query(tt.explain, "[]")
+			require.NoError(t, err)
+			defer func() { require.NoError(t, rows.Close()) }()
+			var details []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+				details = append(details, detail)
+			}
+			require.NoError(t, rows.Err())
+			plan := strings.Join(details, "\n")
+			for _, w := range tt.want {
+				require.Contains(t, plan, w, plan)
+			}
+			for _, n := range tt.notWant {
+				require.NotContains(t, plan, n+"\n", plan)
+				require.False(t, strings.HasSuffix(plan, n), plan)
+			}
+		})
+	}
 }

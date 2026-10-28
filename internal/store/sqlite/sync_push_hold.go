@@ -6,7 +6,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -172,6 +171,12 @@ func (s *Store) HeldPushEvents(ctx context.Context, limit int) ([]HeldPushEvent,
 	return out, nil
 }
 
+// releasePushHoldsSQL drops the push holds of the events in the bound
+// hex-encoded JSON array (hexIDList); a test pins its plan (MTIX-187.7.15).
+const releasePushHoldsSQL = `
+	DELETE FROM sync_quarantine
+	WHERE source = 'push' AND event_id IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?))`
+
 // ReleasePushHolds removes the push holds of eventIDs in one statement
 // (MTIX-95.12): a clock hold whose event now passes, and the events of a
 // released creation's subtree. The events keep their sync_events rows,
@@ -181,16 +186,14 @@ func (s *Store) ReleasePushHolds(ctx context.Context, eventIDs []string) error {
 	if len(eventIDs) == 0 {
 		return nil
 	}
-	ids, err := json.Marshal(eventIDs)
+	ids, err := hexIDList(eventIDs)
 	if err != nil {
 		return fmt.Errorf("release push holds: %w", err)
 	}
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
 		// Drop the push holds of the events in the bound JSON array, in one
 		// statement; their sync_events rows stay.
-		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM sync_quarantine
-			WHERE source = 'push' AND event_id IN (SELECT value FROM json_each(?))`, string(ids)); err != nil {
+		if _, err := tx.ExecContext(ctx, releasePushHoldsSQL, ids); err != nil {
 			return fmt.Errorf("release push holds: %w", err)
 		}
 		return nil

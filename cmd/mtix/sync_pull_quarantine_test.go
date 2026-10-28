@@ -535,7 +535,7 @@ func TestMissingLocalEventIDs_Quarantined_NotMissing(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, held, 1, "precondition: the edit without its node is quarantined")
 
-	got, err := missingLocalEventIDs(ctx, app.store, eventIDs(events))
+	got, err := app.store.MissingLocalEventIDs(ctx, eventIDs(events))
 
 	require.NoError(t, err)
 	require.Equal(t, []string{events[0].EventID, events[2].EventID}, got)

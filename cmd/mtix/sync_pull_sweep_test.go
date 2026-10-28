@@ -675,12 +675,12 @@ func TestMissingLocalEventIDs_HeldInEitherTable_NotMissing(t *testing.T) {
 	require.Zero(t, countTestRows(t, `SELECT COUNT(*) FROM applied_events WHERE event_id = ?`, own[0].EventID),
 		"precondition: own event held in sync_events only")
 
-	got, err := missingLocalEventIDs(ctx, app.store, []string{"zz-not-held", events[2].EventID,
+	got, err := app.store.MissingLocalEventIDs(ctx, []string{"zz-not-held", events[2].EventID,
 		own[0].EventID, events[1].EventID, events[0].EventID, "aa-not-held"})
 
 	require.NoError(t, err)
 	require.Equal(t, []string{"zz-not-held", events[2].EventID, "aa-not-held"}, got)
-	none, err := missingLocalEventIDs(ctx, app.store, nil)
+	none, err := app.store.MissingLocalEventIDs(ctx, nil)
 	require.NoError(t, err)
 	require.Empty(t, none)
 }

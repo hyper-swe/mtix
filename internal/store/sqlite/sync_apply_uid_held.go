@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -29,8 +30,8 @@ func refuseUIDHeldByOtherNode(ctx context.Context, tx *sql.Tx, e *model.SyncEven
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("apply create_node %s: look up uid holder: %w", e.EventID, err)
+		return fmt.Errorf("apply create_node %s: look up uid holder: %w", format.EventID(e.EventID), err)
 	}
 	return fmt.Errorf("apply create_node %s: uid %s is held by local task %s: %w",
-		e.EventID, uid, holder, model.ErrConflict)
+		format.EventID(e.EventID), format.EventID(uid), holder, model.ErrConflict)
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/jackc/pgx/v5"
 )
@@ -203,7 +204,7 @@ func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, 
 	// the number is free and we insert it below.
 	outcome, err := registryDecide(ctx, tx, e, acc.batchClaims, acc.currentEpoch)
 	if err != nil {
-		return fmt.Errorf("registry check for %s: %w", e.EventID, err)
+		return fmt.Errorf("registry check for %s: %w", format.EventID(e.EventID), err)
 	}
 	if outcome.restoreCollision != nil {
 		// RESTORE collision (ADR-003 §6.1/§15, Option B): the number is held
@@ -240,7 +241,7 @@ func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, 
 
 	vcJSON, err := json.Marshal(e.VectorClock)
 	if err != nil {
-		return fmt.Errorf("marshal VC for %s: %w", e.EventID, err)
+		return fmt.Errorf("marshal VC for %s: %w", format.EventID(e.EventID), err)
 	}
 	// uid is dual-carried alongside node_id (ADR-003 §3, §7 Phase 3).
 	// NULL when the pusher (an old CLI) does not set it; apply then falls
@@ -268,7 +269,7 @@ func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, 
 		e.AuthorID, e.AuthorMachineHash, acc.currentEpoch,
 	)
 	if err != nil {
-		return fmt.Errorf("insert %s: %w", e.EventID, err)
+		return fmt.Errorf("insert %s: %w", format.EventID(e.EventID), err)
 	}
 	// ON CONFLICT (event_id) DO NOTHING inserted no row: the event_id is
 	// already on the hub. The event goes to the batch's presence check
@@ -286,7 +287,7 @@ func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, 
 	// out (event_id <> $2), so it sees the same prior events as before it.
 	conf, err := detectConflicts(ctx, tx, e)
 	if err != nil {
-		return fmt.Errorf("detect conflicts for %s: %w", e.EventID, err)
+		return fmt.Errorf("detect conflicts for %s: %w", format.EventID(e.EventID), err)
 	}
 	acc.conflicts = append(acc.conflicts, conf...)
 	return persistConflicts(ctx, tx, conf)
@@ -307,7 +308,7 @@ func persistConflicts(ctx context.Context, tx pgx.Tx, conf []ConflictDescriptor)
 			c.NewEventID, c.ConflictingEventID, c.NodeID, c.FieldName,
 		); err != nil {
 			return fmt.Errorf("persist conflict %s vs %s: %w",
-				c.NewEventID, c.ConflictingEventID, err)
+				format.EventID(c.NewEventID), format.EventID(c.ConflictingEventID), err)
 		}
 	}
 	return nil

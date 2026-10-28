@@ -24,6 +24,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sys/unix"
 )
@@ -78,7 +79,7 @@ func startDaemonPendingChild(t *testing.T, mode, dir string) *daemonPendingChild
 	binary, err := os.Executable()
 	require.NoError(t, err)
 	child.cmd = exec.Command(binary, "-test.run=^TestDaemonPendingExportProcessHelper$", "--", mode) //nolint:gosec,noctx // owned test binary, cleanup kills and joins
-	child.cmd.Env = append(os.Environ(), transport.EnvDSN+"=")
+	child.cmd.Env = append(hostguard.Environ(), transport.EnvDSN+"=")
 	// Owned child discovers its operator-selected project via cwd.
 	child.cmd.Dir = dir
 	child.cmd.Stderr = &child.stderr

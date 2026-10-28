@@ -35,5 +35,6 @@ github.com/hyper-swe/mtix/internal/sync/redact
 github.com/hyper-swe/mtix/internal/sync/validator
 github.com/hyper-swe/mtix/internal/sync/workflow
 github.com/hyper-swe/mtix/internal/testutil
+github.com/hyper-swe/mtix/internal/testutil/hostguard
 github.com/hyper-swe/mtix/internal/web
 github.com/hyper-swe/mtix/scripts

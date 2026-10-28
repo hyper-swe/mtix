@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 )
@@ -35,7 +36,7 @@ func resolveNodeRef(ctx context.Context, r *service.NodeService, ref string) (*m
 	displayPath, err := r.ResolveDisplayPathByUID(ctx, ref)
 	if err != nil {
 		if errors.Is(err, model.ErrNotFound) {
-			return nil, fmt.Errorf("node %q not found by id or uid: %w", ref, model.ErrNotFound)
+			return nil, fmt.Errorf("node %s not found by id or uid: %w", format.EventID(ref), model.ErrNotFound)
 		}
 		return nil, err
 	}

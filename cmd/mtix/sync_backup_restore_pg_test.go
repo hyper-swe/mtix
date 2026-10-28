@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/store/postgres/migrations"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 // PG-gated tests of mtix sync backup against a real hub with the real
@@ -139,7 +140,7 @@ func psqlEnv(t *testing.T, dsn string) []string {
 	u, err := url.Parse(dsn)
 	require.NoError(t, err)
 	pw, _ := u.User.Password()
-	env := append(os.Environ(),
+	env := append(hostguard.Environ(),
 		"PGHOST="+u.Hostname(), "PGPORT="+u.Port(), "PGUSER="+u.User.Username(),
 		"PGPASSWORD="+pw, "PGDATABASE="+strings.TrimPrefix(u.Path, "/"))
 	for k, envName := range map[string]string{"sslmode": "PGSSLMODE", "sslrootcert": "PGSSLROOTCERT"} {

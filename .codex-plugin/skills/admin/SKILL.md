@@ -513,7 +513,7 @@ mtix sync push
 
 ## Quarantined Pulled Events: uid held by a local task
 
-A pulled `create_node` event whose uid a different local task already holds is not applied and not dropped: it is quarantined with the reason `uid <u> is held by local task <id>` and retried on every pull. `mtix sync quarantine list` shows it and the doctor's `quarantined events` check names this step.
+A pulled `create_node` event whose uid a different local task already holds is not applied and not dropped: it is quarantined with the reason `uid "<u>" is held by local task <id>` and retried on every pull. `mtix sync quarantine list` shows it and the doctor's `quarantined events` check names this step.
 
 **Decide which case it is:** run `mtix show <id>` and compare it with the quarantined event's title and content. A uid names one task for good (ADR-003), so the same uid means the same task: the same title and content means the task exists twice under two ids, and different content means the uid was duplicated (an old import, a restored copy). No mtix command resolves either case in this version (tracked as MTIX-95.31.8.1; `mtix sync reconcile` keeps uids, so it does not apply).
 

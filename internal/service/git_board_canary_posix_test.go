@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 func TestMergeBaseBoard_Canary_ExpiredWatchdogRejectsExistingMarker(t *testing.T) {
@@ -31,7 +33,7 @@ func TestMergeBaseBoard_Canary_ExpiredWatchdogRejectsExistingMarker(t *testing.T
 			// The direct shell blocks opening the FIFO until its watchdog cancels it.
 			path := boardScript(t, "printf observed > '"+marker+"'; read value < '"+gate+"'; exit 1")
 			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestMergeBaseBoard_Canary_ProcessHelper$", "-test.count=1", "-test.timeout=4s")
-			cmd.Env = append(os.Environ(), "MTIX_BOARD_CANARY_HELPER=1", "MTIX_BOARD_CANARY_POSITIVE=0", "MTIX_BOARD_CANARY_PATH="+path, "MTIX_BOARD_CANARY_MARKER="+marker)
+			cmd.Env = append(hostguard.Environ(), "MTIX_BOARD_CANARY_HELPER=1", "MTIX_BOARD_CANARY_POSITIVE=0", "MTIX_BOARD_CANARY_PATH="+path, "MTIX_BOARD_CANARY_MARKER="+marker)
 			if positive {
 				cmd.Env = append(cmd.Env, "MTIX_BOARD_CANARY_POSITIVE=1")
 			}

@@ -54,3 +54,29 @@ func TestBackoff_SelectiveAckBelowCursorDoesNotReset(t *testing.T) {
 	require.NoError(t, b.dispatcher(t, false, nil).Pass(t.Context(), b.keys[6:]))
 	require.Equal(t, int64(6), f.sent.Load(), "a genuinely new selective acknowledgement still resets")
 }
+
+// TestBackoff_ThroughAck_OnlyNewRecipientEventsReset reproduces the review probe:
+// seq 1 is foreign (node creation), and seq 2 is already selectively acked.
+func TestBackoff_ThroughAck_OnlyNewRecipientEventsReset(t *testing.T) {
+	f := newWakeBackoffFixture(t)
+	b := f.board(t, 12)
+	acks := service.NewInboxService(b.store)
+	require.Equal(t, int64(2), b.keys[0].EventSeq)
+	require.NoError(t, acks.InboxAck(t.Context(), "budget-worker", 2))
+	require.NoError(t, b.dispatcher(t, false, nil).Pass(t.Context(), b.keys[1:6]))
+	require.Equal(t, int64(5), f.sent.Load())
+	require.NoError(t, acks.InboxAckThrough(t.Context(), "budget-worker", 1))
+	require.NoError(t, b.dispatcher(t, false, nil).Pass(t.Context(), b.keys[6:7]))
+	require.Equal(t, int64(5), f.sent.Load(), "foreign-only cursor movement cannot reset back-off")
+	require.NoError(t, acks.InboxAckThrough(t.Context(), "budget-worker", 2))
+	require.NoError(t, b.dispatcher(t, false, nil).Pass(t.Context(), b.keys[6:7]))
+	require.Equal(t, int64(5), f.sent.Load(), "through 2 adds no recipient coverage")
+	require.NoError(t, acks.InboxAckThrough(t.Context(), "budget-worker", 3))
+	require.NoError(t, b.dispatcher(t, false, nil).Pass(t.Context(), b.keys[6:11]))
+	require.Equal(t, int64(10), f.sent.Load(), "new recipient coverage resets back-off")
+	require.NoError(t, b.store.Close())
+	b.open(t)
+	require.NoError(t, service.NewInboxService(b.store).InboxAckThrough(t.Context(), "budget-worker", 3))
+	require.NoError(t, b.dispatcher(t, false, nil).Pass(t.Context(), b.keys[11:]))
+	require.Equal(t, int64(10), f.sent.Load(), "repeated through-ack cannot reset again after reopening")
+}

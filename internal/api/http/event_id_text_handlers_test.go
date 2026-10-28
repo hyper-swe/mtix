@@ -113,6 +113,7 @@ func TestHandlers_HostileUIDAndAnnotationID_MessagesAreSafeAndJSONExact(t *testi
 			w := hostileGet(s, p)
 			var body any
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
+			assertNoControlBytes(t, w.Body.Bytes())
 			assertMessageFieldsSafe(t, body, "$")
 		})
 	}

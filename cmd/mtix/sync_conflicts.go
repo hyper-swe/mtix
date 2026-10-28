@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -439,7 +440,9 @@ func nullIfEmpty(s string) any {
 
 // printConflictsTable prints one line per row, marked unresolved or not.
 // Its banner counts the unresolved rows only, whether or not all rows
-// are listed (FR-18.12, MTIX-95.7).
+// are listed (FR-18.12, MTIX-95.7). The winner and loser event ids come from
+// pulled events, so they print in full through format.EventID (quoted,
+// printable ASCII); --json carries the stored ids unchanged (MTIX-187.4.2.1).
 func printConflictsTable(w io.Writer, rows []ConflictRow, all bool) error {
 	if len(rows) == 0 {
 		msg := "no unresolved conflicts"
@@ -463,7 +466,7 @@ func printConflictsTable(w io.Writer, rows []ConflictRow, all bool) error {
 	for _, r := range rows {
 		fmt.Fprintf(w, "[%d] %s field=%s resolution=%s unresolved=%t winner=%s loser=%s\n",
 			r.ConflictID, r.NodeID, emptyDash(r.FieldName), r.Resolution, r.Unresolved,
-			shortHashForCLI(r.EventIDWinner), shortHashForCLI(r.EventIDLoser))
+			format.EventID(r.EventIDWinner), format.EventID(r.EventIDLoser))
 	}
 	return nil
 }

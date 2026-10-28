@@ -17,7 +17,7 @@ func TestQuarantineAcknowledgementGuidance_ManagedAndWorkflowRecovery(t *testing
 			content, err := os.ReadFile(path)
 			require.NoError(t, err)
 			text := string(content)
-			require.Contains(t, text, "mtix sync quarantine acknowledge <event-id> --reason <text>")
+			require.Contains(t, text, "mtix sync quarantine acknowledge --handle <handle> --reason <text>")
 			require.Contains(t, text, "no unacknowledged pulled event remains")
 			require.Contains(t, text, "retained and unapplied")
 			require.NotContains(t, text, "quarantined events` check while any remain")

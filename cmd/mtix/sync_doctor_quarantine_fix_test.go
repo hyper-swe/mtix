@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 )
 
 func seedDoctorFixCandidate(t *testing.T, id, source string) {
@@ -31,7 +32,7 @@ func seedDoctorFixCandidate(t *testing.T, id, source string) {
 func TestDoctorQuarantineFix_ExactTextAndJSON(t *testing.T) {
 	initAckCLI(t)
 	report := appendQuarantineCheck(t.Context(), DoctorReport{OverallPass: true}, app.store)
-	want := "Inspect and report retained events (1 eligible unacknowledged; first shown); add --reason '<your explanation>' before --, then: mtix sync quarantine acknowledge -- '" + ackCLIEventID + "'"
+	want := "Inspect and report retained events (1 eligible unacknowledged; first shown): mtix sync quarantine list; add --reason '<your explanation>' after the handle, then: mtix sync quarantine acknowledge --handle " + service.QuarantineHandle(ackCLIEventID)
 	require.Equal(t, want, report.Checks[0].Fix)
 	var text bytes.Buffer
 	printDoctorTable(&text, report)
@@ -54,7 +55,7 @@ func TestDoctorQuarantineFix_FirstEligibleAndCountAcrossPages(t *testing.T) {
 	}
 	fix, err := quarantineAcknowledgementFix(t.Context(), app.store, false)
 	require.NoError(t, err)
-	require.Equal(t, "Inspect and report retained events (501 eligible unacknowledged; first shown); add --reason '<your explanation>' before --, then: mtix sync quarantine acknowledge -- 'event-0000'", fix)
+	require.Equal(t, "Inspect and report retained events (501 eligible unacknowledged; first shown): mtix sync quarantine list; add --reason '<your explanation>' after the handle, then: mtix sync quarantine acknowledge --handle "+service.QuarantineHandle("event-0000"), fix)
 }
 
 func TestDoctorQuarantineFix_HostileIDsAreSingleShellArguments(t *testing.T) {
@@ -70,7 +71,7 @@ func TestDoctorQuarantineFix_HostileIDsAreSingleShellArguments(t *testing.T) {
 			out, err := exec.CommandContext(t.Context(), "sh", "-c", `mtix() { printf '%s\000' "$@"; }; `+command).CombinedOutput()
 			require.NoError(t, err, "%s", out)
 			got := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
-			require.Equal(t, []string{"sync", "quarantine", "acknowledge", "--", id}, got)
+			require.Equal(t, []string{"sync", "quarantine", "acknowledge", "--handle", service.QuarantineHandle(id)}, got)
 		})
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -51,8 +52,7 @@ func releasePushHolds(ctx context.Context, stderr io.Writer, store *sqlite.Store
 	}
 	for _, h := range holds {
 		if why, ok := p.released[h.EventID]; ok {
-			fmt.Fprintf(stderr, "push: released held event %s (%s %s): %s\n",
-				oneLine(h.EventID), oneLine(h.NodeID), oneLine(h.OpType), why)
+			reportReleased(stderr, h, why)
 		}
 	}
 	return blocked, nil
@@ -413,4 +413,12 @@ func (h *heldIndex) decideLocked(ctx context.Context, l sqlite.PushLocked, event
 	}
 	h.blocked, h.version, h.stale = blocked, version, false
 	return d, valid, newly, nil
+}
+
+// reportReleased names a released hold on stderr. The event id and the reason
+// are shown the way every human-facing event line shows them
+// (format.EventID, displayHoldReason; MTIX-187.4.2).
+func reportReleased(stderr io.Writer, h sqlite.HeldPushEvent, why string) {
+	fmt.Fprintf(stderr, "push: released held event %s (%s %s): %s\n",
+		format.EventID(h.EventID), oneLine(h.NodeID), oneLine(h.OpType), displayHoldReason(why))
 }

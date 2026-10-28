@@ -22,8 +22,9 @@ func TestDoctorRecoveryDisplay_Instructions(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			body, err := os.ReadFile(filepath.Join("..", "..", path))
 			require.NoError(t, err)
-			require.Contains(t, string(body), "Text recovery hints use an escaped label and an inspect command when an id needs special handling.")
+			require.Contains(t, string(body), "always printable and typeable, even when the id holds NUL, invalid UTF-8 or shell metacharacters")
 			require.Contains(t, string(body), "report the original id to the operator")
+			require.Contains(t, string(body), "shows invalid UTF-8 bytes as U+FFFD; `event_id_sha256` and the handle always name the exact stored bytes")
 		})
 	}
 }

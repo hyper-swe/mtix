@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
@@ -42,8 +43,8 @@ func TestDoctorQuarantineFix_CopiedCommandRequiresOperatorReason(t *testing.T) {
 			counts, err := app.store.CountQuarantineAcknowledgements(t.Context())
 			require.NoError(t, err)
 			require.Zero(t, counts.Acknowledged)
-			require.Equal(t, []string{"sync", "quarantine", "acknowledge", "--", id}, args)
-			require.Contains(t, fix, "add --reason '<your explanation>' before --")
+			require.Equal(t, []string{"sync", "quarantine", "acknowledge", "--handle", service.QuarantineHandle(id)}, args)
+			require.Contains(t, fix, "add --reason '<your explanation>' after the handle")
 
 			// The operator inserts both the flag and its explanation before --.
 			const reason = "node owner confirmed this event must remain unapplied"

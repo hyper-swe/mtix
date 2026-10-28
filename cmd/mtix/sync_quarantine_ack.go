@@ -16,9 +16,9 @@ import (
 
 // newSyncQuarantineAcknowledgeCmd exposes audited local recovery (MTIX-187.2).
 func newSyncQuarantineAcknowledgeCmd() *cobra.Command {
-	var reason string
+	var reason, handle string
 	cmd := &cobra.Command{
-		Use:   "acknowledge <event-id> --reason <text>",
+		Use:   "acknowledge (<event-id> | --handle <handle>) --reason <text>",
 		Short: "Record a local receipt accepting an invalid-id pulled event as unapplied",
 		Long: `Acknowledge one retained pull or sweep event refused for an invalid node id.
 The required reason and resolved author, UTC time and exact raw-event SHA256
@@ -31,18 +31,47 @@ The event stays quarantined and unapplied; every pull still retries it.
 This does not repair or remove it, change the hub or acknowledge another
 replica. Push holds, unrelated failures and malformed retained events are
 refused. Doctor passes its quarantine check only when no unacknowledged
-pulled event remains; other checks keep their own results.`,
-		Args: syncExactArgs(1),
+pulled event remains; other checks keep their own results.
+
+Name the event by its id, or by --handle: a prefix of the SHA-256 of the exact
+id bytes, printed as at least 12 hex characters (longer when two retained
+events share the shorter prefix). 8 hex characters are accepted when
+unambiguous; an ambiguous prefix is refused with the length that separates the
+events. 'mtix sync quarantine list' and 'mtix sync doctor' print the handle. Use
+the handle when the id holds NUL, invalid UTF-8 or characters that cannot be typed.`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if handle != "" {
+				return syncExactArgs(0)(cmd, args)
+			}
+			return syncExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if handle != "" {
+				return runSyncQuarantineAcknowledgeHandle(cmd.Context(), cmd.OutOrStdout(), handle, reason)
+			}
 			return runSyncQuarantineAcknowledge(cmd.Context(), cmd.OutOrStdout(), args[0], reason)
 		},
 	}
+	cmd.Flags().StringVar(&handle, "handle", "", "Event handle from 'mtix sync quarantine list' (instead of the event id)")
 	cmd.Flags().StringVar(&reason, "reason", "", "Required explanation for accepting this event as unapplied")
 	if err := cmd.MarkFlagRequired("reason"); err != nil {
 		// This constructor just declared the flag; failure is a programming invariant.
 		panic(fmt.Errorf("mark acknowledgement reason required: %w", err))
 	}
 	return cmd
+}
+
+// runSyncQuarantineAcknowledgeHandle resolves a handle to the one retained event
+// it names and acknowledges that event exactly as the id form does (MTIX-187.7.6).
+func runSyncQuarantineAcknowledgeHandle(ctx context.Context, w io.Writer, handle, reason string) error {
+	if app.mtixDir == "" || app.syncSvc == nil {
+		return fmt.Errorf("mtix sync quarantine acknowledge: local project store not initialized")
+	}
+	eventID, err := app.syncSvc.ResolveQuarantineHandle(ctx, handle)
+	if err != nil {
+		return fmt.Errorf("mtix sync quarantine acknowledge: %w", err)
+	}
+	return runSyncQuarantineAcknowledge(ctx, w, eventID, reason)
 }
 
 // runSyncQuarantineAcknowledge reports the first receipt and repeat status (MTIX-187.2).

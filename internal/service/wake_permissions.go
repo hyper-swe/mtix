@@ -44,7 +44,16 @@ type PermissionDeps struct {
 }
 
 // WakePermissions manages operator-local grants; it never installs a wake route.
-type WakePermissions struct{ PermissionDeps }
+type WakePermissions struct {
+	PermissionDeps
+	reevaluator WakeReevaluator
+}
+
+// WithReevaluator injects the held-wake re-evaluator run after a committed grant change.
+func (s *WakePermissions) WithReevaluator(r WakeReevaluator) *WakePermissions {
+	s.reevaluator = r
+	return s
+}
 
 func NewWakePermissions(d PermissionDeps) *WakePermissions {
 	return &WakePermissions{PermissionDeps: d}
@@ -121,6 +130,22 @@ func (s *WakePermissions) registered(ctx context.Context, agent string) (bool, e
 // ApplyBatch validates every id before a protected, recoverable batch is accepted.
 // File callers set Mode=file; CLI callers use interactive or yes.
 func (s *WakePermissions) ApplyBatch(ctx context.Context, board PermissionBoard, batch oplocal.PermissionBatch) error {
+	changes := append([]oplocal.PermissionChange{}, batch.Changes...)
+	if err := s.applyBatch(ctx, board, batch); err != nil {
+		return err
+	}
+	// The grant change is committed: re-evaluate each affected agent's held wakes.
+	seen := map[string]bool{}
+	for _, change := range changes {
+		if !seen[change.AgentID] {
+			seen[change.AgentID] = true
+			notifyReevaluator(ctx, s.reevaluator, change.AgentID, "grant change")
+		}
+	}
+	return nil
+}
+
+func (s *WakePermissions) applyBatch(ctx context.Context, board PermissionBoard, batch oplocal.PermissionBatch) error {
 	if batch.Mode != "file" && batch.Mode != "interactive" && batch.Mode != "yes" {
 		return fmt.Errorf("permission mode is invalid: %w", model.ErrInvalidInput)
 	}

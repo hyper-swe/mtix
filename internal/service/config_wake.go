@@ -27,6 +27,14 @@ func (cs *ConfigService) WithWakeSettings(options WakeConfigOptions) *ConfigServ
 	return &scoped
 }
 
+// WithWakeReevaluator returns a view that re-evaluates held wakes after a committed
+// wake.* setting change. A nil re-evaluator keeps the no-op default.
+func (cs *ConfigService) WithWakeReevaluator(r WakeReevaluator) *ConfigService {
+	scoped := *cs
+	scoped.reevaluator = r
+	return &scoped
+}
+
 func (cs *ConfigService) wakeOptions() (WakeConfigOptions, error) {
 	if cs.wake != nil {
 		if err := validateAgentID(cs.wake.Agent); err != nil {
@@ -94,7 +102,12 @@ func (cs *ConfigService) changeWakeSetting(key string, value *string) error {
 			return authErr
 		}
 	}
-	return options.State.UpdateWakeSetting(context.Background(), oplocal.WakeSettingUpdate{Agent: options.Agent, Key: key, Value: value}, authorize)
+	if updateErr := options.State.UpdateWakeSetting(context.Background(), oplocal.WakeSettingUpdate{Agent: options.Agent, Key: key, Value: value}, authorize); updateErr != nil {
+		return updateErr
+	}
+	// The change is committed: a loosened setting may lift a hold. Failure here is logged only.
+	notifyReevaluator(context.Background(), cs.reevaluator, options.Agent, "wake setting change")
+	return nil
 }
 
 func (cs *ConfigService) setWakeSetting(key, value string) (string, error) {

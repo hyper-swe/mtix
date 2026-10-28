@@ -402,12 +402,13 @@ you should not need routine tuning. Handle and ack each event explicitly.
 The callable dispatcher enforces recipient budgets across boards and durable
 backoff. A new acknowledgement resets the host recipient's delay; already
 acknowledged events do not reset it or return rate allowance. `budget.rewind`
-reports protected accounting after a restore. Scanner discovery and hold
-re-arm remain separate; settings do not install a route.
+reports protected accounting after a restore. Held wakes re-arm from the registration's own high-water mark; scanner discovery
+remains separate; settings do not install a route.
 
 On an opened local board, `wake.ledger` reports retained rows and protocol refusal;
 `--fix` preserves wake state. See the multi-agent skill for lease and retry behavior.
 `budget.rewind` compares local counters with protected recipient accounting.
+`wake.guard-trips` lists recent loop-guard trips with agent, chain, time and the exact fix; read-only.
 It retains spent allowance after a restore; `--fix` never resets that accounting.
 Moved boards and database copies share a local identity and protected floor.
 Identity-less restores at an unseen path may under-count history, never

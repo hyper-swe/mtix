@@ -30,6 +30,7 @@ history (see [Task history in the export](#task-history-in-the-export-experiment
 | `history` | Only in a 2.1.0 file, and only when it has entries: the change history of tasks that no longer exist (see below). Covered by the checksum. |
 | `node_count` | Number of entries in `nodes`; an import refuses a file where they differ. |
 | `checksum` | SHA-256 of the canonical JSON of `nodes` and `dependencies` (see [Checksum](#checksum)). |
+| `ids_checksum` | Optional. Present only when the file holds an `uid_hex`, `task_uid_hex` or `event_id_hex` field (see [Ids that are not valid UTF-8](#ids-that-are-not-valid-utf-8)). It covers those fields. A file without such a field has neither the field nor this checksum. |
 
 ## Node fields
 
@@ -163,6 +164,37 @@ text holding invalid UTF-8 never verified. Verification also accepts that
 checksum: the same decoded content with every U+FFFD spelled as `\ufffd`.
 A file that held both invalid UTF-8 and a genuine U+FFFD character still
 fails; check it, then import it with `mtix import --recompute-checksum`.
+
+## Ids that are not valid UTF-8
+
+A node `uid` or a history `task_uid` or `event_id` can hold bytes that are not
+valid UTF-8 (a sync event id is accepted as received). JSON cannot carry them,
+so the file adds an optional hex field, written only for such a value:
+
+| Where | Field | Plain field beside it |
+|---|---|---|
+| node | `uid_hex` | `uid` is left out |
+| history entry | `task_uid_hex`, `event_id_hex` | `task_uid` and `event_id` keep the U+FFFD spelling |
+
+mtix reads the hex field in preference to the plain one, so the bytes round
+trip exactly through export and import. A value that is not hex is refused
+(`invalid input`). A file with no such id has none of these fields, and is
+byte-for-byte what earlier versions wrote.
+
+The two checksums are split so that older readers keep working. `checksum`
+covers exactly what mtix 0.5.4 decodes (no hex field, an invalid-UTF-8 `uid`
+left out). mtix 0.5.4 imports a 2.0.0 snapshot (`history.export` off) holding
+a hex field and gives that one node a fresh uid; every other column and node is
+unchanged. A history file (2.1.0) needs a current reader: 0.5.4 refuses every
+2.1.0 file, with or without hex fields. `ids_checksum` covers the hex fields
+(each by kind, owner and bytes). mtix verifies both, so an edit to a hex field
+is detected, and so is removing one hex field or `ids_checksum` while others
+remain. The checksums guard against accidents, not deliberate edits: removing
+every hex field together with `ids_checksum` leaves the old-reader form, and
+that node then imports with a fresh uid.
+
+The 1.0.0 form (written for a conflict baseline) keeps JSON's U+FFFD spelling
+of such a `uid`, as 0.5.3 wrote it, and has no hex field.
 
 ## Compatibility
 

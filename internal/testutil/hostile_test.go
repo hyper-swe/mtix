@@ -105,6 +105,7 @@ var classPredicates = map[HostileClass]func(string) bool{
 	ClassLikeWildcard: func(s string) bool { return strings.ContainsAny(s, "%_") },
 	ClassControl:      func(s string) bool { return strings.ContainsAny(s, "\t\x7f\u0085\u0090") },
 	ClassDot:          func(s string) bool { return s == "." },
+	ClassWhitespace:   func(s string) bool { return s != strings.TrimSpace(s) },
 	ClassUnicodeForm: func(s string) bool {
 		return strings.Contains(s, "\u00e9") || strings.Contains(s, "e\u0301") || strings.Contains(s, "\u212a") || strings.Contains(s, "\u0130")
 	},
@@ -130,6 +131,9 @@ var requiredIDNames = []string{
 	"c1_csi",
 	"crlf_injection",
 	"cr_overwrite",
+	"leading_space",
+	"trailing_space",
+	"trailing_newline",
 	"bidi_rlo",
 	"bidi_isolate",
 	"zero_width_space",
@@ -194,6 +198,7 @@ var requiredTextNames = []string{
 	"control_chars_text",
 	"single_dot_text",
 	"unicode_forms_text",
+	"boundary_whitespace_text",
 }
 
 func TestHostileFixtures_RequiredNamesPresent(t *testing.T) {
@@ -219,6 +224,9 @@ func TestHostileFixtures_ExactValues(t *testing.T) {
 		byName[f.Name] = f.Value
 	}
 	require.Equal(t, "\x00", byName["nul_only"])
+	require.Equal(t, " evt", byName["leading_space"])
+	require.Equal(t, "evt ", byName["trailing_space"])
+	require.Equal(t, "evt\n", byName["trailing_newline"])
 	require.Equal(t, "CON", byName["windows_reserved_con"])
 	require.Equal(t, "JaVaScRiPt:alert(1)", byName["javascript_uri_mixed_case"])
 	require.Equal(t, "$(touch pwned)", byName["shell_subshell"])

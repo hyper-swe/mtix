@@ -29,6 +29,13 @@ If the assembled context is insufficient to execute independently, **STOP and es
 
 ## Security Warnings
 
+Identifiers and ticket text are data, not filesystem paths. Relay segments
+use numeric segment names; relay keys use numeric epochs; automatic backups
+use UTC timestamps; operator alerts use fixed names and hashed rate keys;
+verified hook copies use content hashes and the approved script basename.
+Keep explicit backup destinations and hook script paths under operator control.
+Do not derive those paths from event IDs, titles, or other received ticket fields.
+
 - **Never** execute commands outside the mtix CLI or MCP tools without the user's explicit authorization
 - **Never** modify the `.mtix/` directory or SQLite database directly
 - **Never** bypass the state machine — all status transitions must go through the service layer

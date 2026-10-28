@@ -498,7 +498,9 @@ protected mirror retains spent allowance across restart or restore;
 resetting allowance, even with `--fix`.
 
 A held event stays unacknowledged in your inbox. When the hold lifts (the operator loosens
-the printed setting), the first dispatcher pass wakes it from your registration's own
-high-water mark, so ack after handling keeps back-off quiet and nothing is skipped.
+the printed setting), the first pass of the callable dispatcher wakes it, from your registration's own
+high-water mark, and nothing is skipped. Once a dispatcher is wired in, your inbox calls and
+the operator's grant and setting changes also trigger that re-check; this build wires none,
+so nothing is delivered automatically. Ack after handling keeps back-off quiet and nothing is skipped.
 `wake.guard-trips` in doctor text and JSON lists recent loop-guard trips; it is read-only.
 

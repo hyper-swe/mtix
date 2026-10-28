@@ -6,6 +6,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -37,7 +39,22 @@ func WakeGuardTripsDoctorCheck(alerts WakeGuardTripsReader) DoctorCheck {
 	}}
 }
 
+var guardTripChainPattern = regexp.MustCompile(`\[chain: ([^\]]+)\]`)
+
+// guardTripChain extracts the chain identity (triggering event and hop or unacked count)
+// that the trip alert recorded; it is empty only for alerts raised by an older build.
+func guardTripChain(detail string) string {
+	match := guardTripChainPattern.FindStringSubmatch(detail)
+	if match == nil {
+		return ""
+	}
+	return match[1]
+}
+
 func summarizeGuardTrips(rows []oplocal.Alert) DoctorResult {
+	// Newest first by last occurrence, whatever order the reader returned.
+	rows = append([]oplocal.Alert(nil), rows...)
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].LastAt.After(rows[j].LastAt) })
 	trips := make([]any, 0, guardTripLimit)
 	var lines []string
 	fix := ""
@@ -48,9 +65,9 @@ func summarizeGuardTrips(rows []oplocal.Alert) DoctorResult {
 		if len(trips) == guardTripLimit {
 			break
 		}
-		trips = append(trips, map[string]any{"agent": row.Agent, "class": row.Class, "chain": row.Detail, "fix": row.Fix,
+		trips = append(trips, map[string]any{"agent": row.Agent, "class": row.Class, "chain": guardTripChain(row.Detail), "fix": row.Fix,
 			"first_at": row.FirstAt.UTC().Format(time.RFC3339), "last_at": row.LastAt.UTC().Format(time.RFC3339), "count": row.Count})
-		lines = append(lines, fmt.Sprintf("%s %s at %s (x%d): %s; fix: %s", row.Agent, row.Class, row.LastAt.UTC().Format(time.RFC3339), row.Count, row.Detail, row.Fix))
+		lines = append(lines, fmt.Sprintf("%s %s at %s (x%d) chain %s: %s; fix: %s", row.Agent, row.Class, row.LastAt.UTC().Format(time.RFC3339), row.Count, guardTripChain(row.Detail), row.Detail, row.Fix))
 		if fix == "" {
 			fix = row.Fix
 		}

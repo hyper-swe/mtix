@@ -43,3 +43,21 @@ func TestSetWakeHold_AdvancesMonotonicallyAndGuardsEpoch(t *testing.T) {
 	require.Equal(t, int64(12), mark.HighWater)
 	require.False(t, mark.Held, "a stale epoch cannot change a re-registered row")
 }
+
+func TestHeldWakeCandidates_OnlyHeldRegistrationsAndAgentFilter(t *testing.T) {
+	s := newTestStore(t)
+	for _, row := range []struct {
+		agent string
+		hold  int
+	}{{"a", 1}, {"b", 1}, {"c", 0}} {
+		_, err := s.WriteDB().ExecContext(t.Context(), `INSERT INTO agent_registrations
+			(agent_id,harness,uid,host_id,origin,epoch,high_water,pending_hold,registered_at,last_seen,registrar_version,attach_protocol)
+			VALUES (?,'claude','u','h','manual',1,0,?,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','t',1)`, row.agent, row.hold)
+		require.NoError(t, err)
+	}
+	for _, agent := range []string{"", "a", "c", "nobody"} {
+		keys, err := s.HeldWakeCandidates(t.Context(), agent)
+		require.NoError(t, err)
+		require.Empty(t, keys, "no addressed events exist, so no candidates for %q", agent)
+	}
+}

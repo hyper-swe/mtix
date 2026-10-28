@@ -55,3 +55,46 @@ func (s *Store) SetWakeHold(ctx context.Context, key model.WakeKey, advanceTo in
 	}
 	return nil
 }
+
+// HeldWakeCandidates lists, for each registration with a pending hold (all agents when
+// agent is empty), the unacknowledged addressed events above that registration's own
+// high-water mark, oldest first (FR-20.3, ADR-007 section 5.4).
+func (s *Store) HeldWakeCandidates(ctx context.Context, agent string) ([]model.WakeKey, error) {
+	// Held registrations only; the agent filter is a bound parameter.
+	rows, err := s.readDB.QueryContext(ctx,
+		`SELECT agent_id, host_id, uid, epoch, high_water FROM agent_registrations
+		  WHERE pending_hold = 1 AND (? = '' OR agent_id = ?)
+		  ORDER BY agent_id, host_id, uid`, agent, agent)
+	if err != nil {
+		return nil, fmt.Errorf("list held registrations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var held []model.WakeKey
+	var marks []int64
+	for rows.Next() {
+		var key model.WakeKey
+		var highWater int64
+		if scanErr := rows.Scan(&key.AgentID, &key.HostID, &key.UID, &key.Epoch, &highWater); scanErr != nil {
+			return nil, fmt.Errorf("scan held registration: %w", scanErr)
+		}
+		held, marks = append(held, key), append(marks, highWater)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("read held registrations: %w", err)
+	}
+	var keys []model.WakeKey
+	for i, base := range held {
+		events, listErr := s.InboxList(ctx, base.AgentID)
+		if listErr != nil {
+			return nil, fmt.Errorf("list held inbox events: %w", listErr)
+		}
+		for _, event := range events {
+			if event.Seq > marks[i] {
+				key := base
+				key.EventSeq = event.Seq
+				keys = append(keys, key)
+			}
+		}
+	}
+	return keys, nil
+}

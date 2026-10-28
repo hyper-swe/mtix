@@ -1354,7 +1354,11 @@ their cause and exact configuration command.
 
 A held wake (loop guard or recipient budget) never advances the registration's own
 high-water mark, and later events of that registration wait behind it so none is skipped.
-Every dispatcher pass re-checks the hold; the first pass after you loosen the setting
+Every pass of the callable dispatcher re-checks the hold. Once a dispatcher is wired in, a
+grant change, a `wake.*` setting change and an inbox call also re-check the affected agent's
+held wakes; there is no timer or background loop, and a failed re-check never fails your command.
+This build wires no dispatcher yet, so those activities start no pass and nothing is delivered
+automatically; the first pass after you loosen the setting
 (for example the printed `mtix config set wake.max_hop_depth <n>`) wakes the held event,
 and the registration continues from its own mark. Events at or below the mark never wake.
 `wake.guard-trips` in `mtix doctor` text and JSON lists recent loop-guard trips (hop depth

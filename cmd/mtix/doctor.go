@@ -174,9 +174,6 @@ func registerWakeDoctorChecks(svc *service.DoctorService) error {
 	if err := registerConfiguredWakeBudgetDoctor(svc); err != nil {
 		return fmt.Errorf("register wake budget diagnostics: %w", err)
 	}
-	if err := registerWakeGuardTripsDoctor(svc); err != nil {
-		return fmt.Errorf("register wake guard-trips diagnostics: %w", err)
-	}
 	if err := registerConfiguredWakeLedgerDoctor(svc); err != nil {
 		return fmt.Errorf("register wake ledger diagnostics: %w", err)
 	}

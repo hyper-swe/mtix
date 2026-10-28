@@ -77,22 +77,28 @@ func (d *WakeDispatcher) advanced(ctx context.Context, key model.WakeKey) error 
 	return nil
 }
 
-// passOne evaluates one candidate: eligibility, loop guard, budget, send, then mark.
+// passOne evaluates one candidate: guard (including the own-mark re-arm rule), budget,
+// send, then mark. The mark moves only over an event that was sent or lost to another
+// claimant; a hold or any error blocks the registration's later events and is retried.
 func (d *WakeDispatcher) passOne(ctx context.Context, key model.WakeKey, st *passState) error {
-	ok, err := d.eligible(ctx, key, st)
-	if err != nil || !ok {
+	hop, verdict, err := d.guardWakeHop(ctx, key, st)
+	if err != nil && verdict != verdictHeld {
+		st.blocked[holdRegistrationID(key)] = true
 		return err
 	}
-	hop, held, err := d.guardWakeHop(ctx, key)
-	if held {
+	switch verdict {
+	case verdictSkip:
+		return nil
+	case verdictHeld:
 		return errors.Join(err, d.markHeld(ctx, key, st))
 	}
-	if err != nil {
-		return err
-	}
-	budgetHeld, sendErr := d.sendWake(ctx, key, hop)
-	if budgetHeld {
+	outcome, sendErr := d.sendWake(ctx, key, hop)
+	switch outcome {
+	case wakeBudgetHeld:
 		return errors.Join(sendErr, d.markHeld(ctx, key, st))
+	case wakeNotAttempted:
+		st.blocked[holdRegistrationID(key)] = true
+		return sendErr
 	}
 	// A completed send, even a failed one, is terminal in the ledger, so the mark moves.
 	return errors.Join(sendErr, d.advanced(ctx, key))

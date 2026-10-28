@@ -11,6 +11,10 @@ import "errors"
 // These errors MUST be used consistently across all layers.
 // Wrap them with context using fmt.Errorf("context: %w", ErrSentinel).
 var (
+	// ErrWakeFilterRequired indicates a re-evaluation was refused because the scanner-owned
+	// candidate filter (grant, liveness) is not injected: re-evaluation fails closed.
+	ErrWakeFilterRequired = errors.New("wake candidate filter required")
+
 	// ErrOperatorStateUnreadable indicates operator state validation failed.
 	ErrOperatorStateUnreadable = errors.New("operator state unreadable")
 

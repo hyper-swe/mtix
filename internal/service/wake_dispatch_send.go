@@ -12,16 +12,33 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
-func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop int64) error {
-	attempt, won, err := d.budgets.claim(ctx, key)
+// wakeOutcome says what became of one claim-and-send.
+type wakeOutcome int
+
+const (
+	wakeAttempted    wakeOutcome = iota // a send ran, or another claimant already owns the event
+	wakeBudgetHeld                      // the recipient budget or back-off refused the claim
+	wakeNotAttempted                    // a claim or fence error: nothing was sent, retry next pass
+	wakeInFlight                        // another claimant's unexpired claim: wait, the mark stays
+)
+
+// sendWake claims and sends one wake and reports its outcome (see wakeOutcome).
+func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop int64) (wakeOutcome, error) {
+	attempt, won, state, err := d.budgets.claimState(ctx, key)
 	if err != nil {
-		return fmt.Errorf("claim wake candidate: %w", err)
+		return wakeNotAttempted, fmt.Errorf("claim wake candidate: %w", err)
+	}
+	switch state {
+	case claimBudgetHeld:
+		return wakeBudgetHeld, nil
+	case claimInFlight:
+		return wakeInFlight, nil
 	}
 	if !won {
-		return nil
+		return wakeAttempted, nil
 	}
 	if attempt.Token == "" || attempt.Key != key {
-		return fmt.Errorf("wake attempt fence is missing or mismatched: %w", model.ErrConflict)
+		return wakeNotAttempted, fmt.Errorf("wake attempt fence is missing or mismatched: %w", model.ErrConflict)
 	}
 	attempt.Hop = hop
 	sendErr := d.send(ctx, attempt)
@@ -40,5 +57,5 @@ func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop in
 	if recordErr != nil {
 		failures = errors.Join(failures, fmt.Errorf("record wake completion: %w", recordErr))
 	}
-	return failures
+	return wakeAttempted, failures
 }

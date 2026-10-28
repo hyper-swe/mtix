@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,7 +45,7 @@ func startDaemonOwnerChild(t *testing.T, dir, mode string) *daemonOwnerChild {
 	require.NoError(t, err)
 	c.cmd = exec.Command(binary, "-test.run=^TestDaemonOwnerProcessHelper$", "--", mode) //nolint:gosec,noctx // owned executable, cleanup terminates and joins
 	c.cmd.Dir = dir                                                                      // Operator-selected cwd; no project paths from argv.
-	c.cmd.Env = append(os.Environ(), transport.EnvDSN+"=")
+	c.cmd.Env = append(hostguard.Environ(), transport.EnvDSN+"=")
 	c.cmd.Stderr = &c.stderr
 	c.stdin, err = c.cmd.StdinPipe()
 	require.NoError(t, err)

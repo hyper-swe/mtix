@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 func TestHopField_PostgresPushPull_054ReaderIgnores(t *testing.T) {
@@ -17,7 +19,7 @@ func TestHopField_PostgresPushPull_054ReaderIgnores(t *testing.T) {
 	require.NoError(t, err)
 	cmd := exec.CommandContext(t.Context(), "go", "test", "./internal/store/sqlite", "-run", "^TestHopField_PushPull_054ReaderIgnores$", "-count=1", "-v")
 	cmd.Dir = filepath.Clean(filepath.Join(dir, "..", ".."))
-	cmd.Env = append(os.Environ(), "MTIX_HOP_TEST_DSN="+dsn)
+	cmd.Env = append(hostguard.Environ(), "MTIX_HOP_TEST_DSN="+dsn)
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "released hop reader fixture: %s", output)
 	require.Contains(t, string(output), "HOP_COMPAT_REAL_PG_PUSH_PULL")

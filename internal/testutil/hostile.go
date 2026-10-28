@@ -28,6 +28,11 @@ const (
 	ClassJSURI           HostileClass = "javascript_uri"
 	ClassJSONBreaker     HostileClass = "json_breaker"
 	ClassWindowsReserved HostileClass = "windows_reserved"
+	ClassLeadingDash     HostileClass = "leading_dash"
+	ClassLikeWildcard    HostileClass = "like_wildcard"
+	ClassControl         HostileClass = "tab_del_c1"
+	ClassDot             HostileClass = "single_dot"
+	ClassUnicodeForm     HostileClass = "unicode_form"
 )
 
 // HostileFixture is one named, class-tagged hostile value.
@@ -43,7 +48,8 @@ func AllHostileClasses() []HostileClass {
 		ClassNUL, ClassESC, ClassCRLF, ClassBidi, ClassZeroWidth,
 		ClassInvalidUTF8, ClassLong, ClassTraversal, ClassSlash,
 		ClassBackslash, ClassShell, ClassQuote, ClassScript, ClassJSURI,
-		ClassJSONBreaker, ClassWindowsReserved,
+		ClassJSONBreaker, ClassWindowsReserved, ClassLeadingDash,
+		ClassLikeWildcard, ClassControl, ClassDot, ClassUnicodeForm,
 	}
 }
 
@@ -88,6 +94,18 @@ func HostileIDs() []HostileFixture {
 		{"windows_reserved_con", ClassWindowsReserved, "CON"},
 		{"windows_reserved_nul_ext", ClassWindowsReserved, "nul.txt"},
 		{"windows_reserved_com1", ClassWindowsReserved, "COM1"},
+		{"leading_dash_flag", ClassLeadingDash, "--flag=value"},
+		{"leading_dash_short", ClassLeadingDash, "-rf"},
+		{"like_percent", ClassLikeWildcard, "100%"},
+		{"like_underscore", ClassLikeWildcard, "a_b"},
+		{"control_tab", ClassControl, "evt\ttab"},
+		{"control_del", ClassControl, "evt\x7f"},
+		{"control_c1_nel", ClassControl, "evt\u0085next"},
+		{"single_dot", ClassDot, "."},
+		{"unicode_nfc_e_acute", ClassUnicodeForm, "caf\u00e9"},
+		{"unicode_nfd_e_acute", ClassUnicodeForm, "cafe\u0301"},
+		{"unicode_kelvin_sign", ClassUnicodeForm, "\u212aelvin"},
+		{"unicode_dotted_capital_i", ClassUnicodeForm, "\u0130d"},
 	}
 }
 
@@ -114,5 +132,10 @@ func HostileText() []HostileFixture {
 		{"javascript_link", ClassJSURI, "[click](javascript:alert(1))"},
 		{"json_breaker_text", ClassJSONBreaker, `"}],"admin":true,"x":["`},
 		{"windows_reserved_text", ClassWindowsReserved, "AUX.log PRN COM9"},
+		{"leading_dash_text", ClassLeadingDash, "-rf /tmp/x"},
+		{"like_wildcards_text", ClassLikeWildcard, "50% off_sale"},
+		{"control_chars_text", ClassControl, "a\tb\x7fc\u0085d"},
+		{"single_dot_text", ClassDot, "."},
+		{"unicode_forms_text", ClassUnicodeForm, "caf\u00e9 vs cafe\u0301 \u212a"},
 	}
 }

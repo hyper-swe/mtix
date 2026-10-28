@@ -530,16 +530,16 @@ A task id has the form `PREFIX-<number>` followed by `.<number>` segments: an up
 **Routine:** run `mtix sync quarantine list --json` and report the event ids, nodes and reasons to whoever runs the hub. After reviewing an invalid-node-id pulled event, record that this replica accepts it as unapplied:
 
 ```bash
-mtix sync quarantine acknowledge <event-id> --reason '<why this event is accepted as unapplied>'
+mtix sync quarantine acknowledge --handle <handle> --reason '<why this event is accepted as unapplied>'
 ```
 
-Doctor's Fix supplies the first eligible event id and eligible count in a shell-quoted acknowledgement command. Add `--reason '<your explanation>'` before `--` in the printed command; replace `<your explanation>` in the `--reason` value with why this event is safe to accept as unapplied. Without that flag, the printed command is refused until you supply it. Then run doctor again after each acknowledgement. Text recovery hints use an escaped label and an inspect command when an id needs special handling. Use `mtix sync quarantine list --json` and report the original id to the operator. JSON retains the original id data and also requires an operator explanation. For example, with one eligible event, doctor prints this full Fix line:
+Doctor's Fix names the event by its handle: the first 12 hex characters of the SHA-256 of the exact event id bytes, which `mtix sync quarantine list` also prints in a HANDLE column (`handle` and `event_id_sha256` in `--json`). The handle is always printable and typeable, even when the id holds NUL, invalid UTF-8 or shell metacharacters, so the printed command can be copied as it is: `mtix sync quarantine acknowledge --handle <handle> --reason '<your explanation>'`. Replace `<your explanation>` with why this event is safe to accept as unapplied; without `--reason` the command is refused. A handle may be shortened to 8 hex characters; one that matches more than one event is refused with the length that separates them. Use the positional `<event-id>` form only for an ordinary id. Then run doctor again after each acknowledgement. Use `mtix sync quarantine list --json` to report the original id to the operator; JSON keeps NUL and escapable bytes in the id exactly but shows invalid UTF-8 bytes as U+FFFD; `event_id_sha256` and the handle always name the exact stored bytes. A printed handle may be longer than 12 characters when two retained events share a shorter prefix. For example, with one eligible event, doctor prints this full Fix line:
 
 ```text
-fix: Inspect and report retained events (1 eligible unacknowledged; first shown); add --reason '<your explanation>' before --, then: mtix sync quarantine acknowledge -- '0193fb00-0000-7000-8000-000000000001'
+fix: Inspect and report retained events (1 eligible unacknowledged; first shown): mtix sync quarantine list; add --reason '<your explanation>' after the handle, then: mtix sync quarantine acknowledge --handle 914809b83eee
 ```
 
-The command starts after `then:`; add `--reason` and your own explanation before `--` as described above.
+The command starts after `then:`; add `--reason` and your own explanation after the handle as described above.
 
 Only retained events with `source` `pull` or `sweep` whose raw event fails the node-id validator are eligible. Stored reason text alone cannot grant eligibility. A missing or blank reason, a held push event, an unrelated failure, malformed raw JSON or a raw event-id mismatch is refused. No terminal or hub connection is required. The resolved process author, required reason, UTC time and exact raw-event SHA256 form an immutable local receipt; repeating a valid acknowledgement returns the first receipt. Reasons are limited to 500 UTF-8 bytes. On a repeat, text explains that the first receipt stands and the supplied reason was not recorded; JSON sets `already_acknowledged` to `true` (`false` for a new receipt). The receipt is local to this replica and is never exported, imported or synced.
 

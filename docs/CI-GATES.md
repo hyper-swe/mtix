@@ -1,14 +1,15 @@
 # CI and release gates
 
-Every pull request and push to `main` runs **25 CI checks**. Merge only the
+Every pull request and push to `main` runs **29 CI checks**. Merge only the
 reviewed commit with every check successful; a skipped or cancelled check is
 not a passing check.
 
 | Checks | Count | Purpose |
 | --- | ---: | --- |
-| `test-go-shard (OS, shard)` | 4 | CLI and other-package shards on each of `ubuntu-22.04` and `macos-latest` |
+| `test-go-shard (OS, other)` | 2 | The other-package shard on each of `ubuntu-22.04` and `macos-latest` |
 | `test-go-sqlite (OS, shard N)` | 6 | Three SQLite test shards on each OS |
-| `test-go` | 1 | Require all ten Go shard jobs from both matrices to succeed |
+| `test-go-cmd (OS, shard N)` | 6 | Three `cmd/mtix` test shards on each OS |
+| `test-go` | 1 | Require all fourteen Go shard jobs from the three matrices to succeed |
 | `test-web` | 1 | Web tests |
 | `lint` | 1 | Pinned Go lint |
 | `pg-16 package`, `pg-17 package` | 4 | Transport and end-to-end suites against each PostgreSQL version |
@@ -21,7 +22,7 @@ not a passing check.
 The explicit package lists are in `scripts/ci-go-shards/`:
 
 - `sqlite.txt`: `internal/store/sqlite`, run in the separate three-test-shard matrix on each OS.
-- `cli.txt`: `cmd/mtix` on a different runner.
+- `cli.txt`: `cmd/mtix`, run in the separate three-test-shard `test-go-cmd` matrix on each OS.
 - `other.txt`: every remaining selected package.
 
 Each OS verifies the complete partition before running a shard. The guard
@@ -41,9 +42,9 @@ available, including to the bookkeeping test.
 
 Both shard matrices have `fail-fast: false`, so one failed shard does not
 cancel the others. The aggregate job named exactly `test-go` needs both
-`test-go-shards` and `test-go-sqlite` and uses `always()` so failed or skipped
-dependencies cannot skip the gate. It accepts only `success` from both
-matrices; failure, cancellation, skipping or a missing result from either
+`test-go-shards`, `test-go-sqlite` and `test-go-cmd` and uses `always()` so failed or
+skipped dependencies cannot skip the gate. It accepts only `success` from all
+three matrices; failure, cancellation, skipping or a missing result from any of the three
 fails the aggregate. The build continues to depend on this gate.
 
 The workflow tests execute the aggregate's actual shell for those outcomes
@@ -76,7 +77,7 @@ or timeout is weakened, and no skip flag is added.
 
 The two old SQLite job names are replaced by six `test-go-sqlite` checks.
 Together with the four CLI/other jobs, the aggregate and the remaining checks,
-this changes the merge requirement from 21 successful checks to **25 of 25**.
+this changes the merge requirement from 21 successful checks to **25 of 25**; the `cmd/mtix` split below makes it **29 of 29**.
 
 Before the split, the last five completed main CI runs measured these SQLite
 package times (seconds from the original Go output; setup is excluded):
@@ -94,6 +95,25 @@ links and per-shard durations in the PR evidence before merging. The remote
 bar dispatches `remote-bar.yml` from main; it does not exercise `ci.yml`.
 
 ## cmd/mtix shards
+
+### Ordinary CI (MTIX-112.17.22.1)
+
+The whole-package `cmd/mtix` race run was the `test-go-shard (OS, cli)` job. It
+took 19m29s on macOS and 20m29s on Ubuntu in main run 40695298246 (PRs 251 and
+254 timed out at about 20m51s). It now runs as `test-go-cmd`: three shards per
+OS from the same `scripts/cmd-mtix-shards.sh` hash split (same script, shard
+count and `-race -count=1 -timeout 20m`, nothing skipped). `scripts/ci-go-shards/cli.txt`
+still lists `cmd/mtix`, so the package partition guard proves it has exactly one
+owner, and `cmd-mtix-shards.sh check` proves every test is in exactly one shard.
+The budget is **12 minutes wall time per shard job** (60 percent of the 20m
+timeout). Measured on the first `test-go-cmd` run (PR 261, run 40726735086),
+shards 1, 2 and 3: macOS 6m26s, 7m59s and 9m14s; Ubuntu 8m19s, 5m17s and 6m01s.
+All six are under budget; the slowest uses 46 percent of the timeout. If any
+shard job exceeds the budget, raise the shard count. The shard count lives in `cmd-mtix-shards.sh` (`SHARDS`) and
+a workflow test fails if CI, the PostgreSQL job and the remote bar disagree. The
+macOS remote bar still runs `make test-race` unsharded (tracked separately).
+
+### PostgreSQL and remote bar
 
 `cmd/mtix` alone approached the 20-minute per-package budget in one
 PostgreSQL job. Its tests now run in three shards per PostgreSQL version in the
@@ -262,7 +282,7 @@ that a changed remote-bar workflow ran.
 ## Release gates
 
 Run [the release checklist](RELEASE-CHECKLIST.md) on the exact CI-green commit
-before tagging. All 25 ordinary CI checks, including the ten race shards and
+before tagging. All 29 ordinary CI checks, including the fourteen race shards and
 `test-go` aggregate, must pass alongside independent review and the other
 documented quality gates.
 

@@ -159,6 +159,6 @@ func registerInboxAckTool(reg *ToolRegistry, svc *service.InboxService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Acked inbox event %d for %s", *p.Seq, p.Agent)), nil
+		return SuccessResult(textInboxAcked(*p.Seq, p.Agent)), nil
 	})
 }

@@ -110,6 +110,17 @@ func holdStore(store WakeStore) WakeHoldStore {
 // own transaction, so the mark and hold stay and the wake ledger prevents a second wake.
 // A pass that omits a held event can therefore never advance the mark past it.
 func (d *WakeDispatcher) Pass(ctx context.Context, keys []model.WakeKey) error {
+	return d.PassSkipping(ctx, keys, nil)
+}
+
+// PassSkipping is Pass where the candidate keys named in skip (registration and event) are
+// covered without being sent: the
+// scanner passes the recipient's own events this way, so they stay in the candidate set the
+// head-of-line guard reads from the inbox, never wake the recipient, and still let the mark
+// move past them once every lower event is handled (ADR-007 section 2.7 steps 1 and 5).
+// A skipped event obeys the same ordering as a sent one: it is covered only when no lower
+// event of the registration blocked earlier in the pass.
+func (d *WakeDispatcher) PassSkipping(ctx context.Context, keys []model.WakeKey, skip map[model.WakeKey]bool) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("start wake pass: %w", err)
 	}
@@ -122,7 +133,7 @@ func (d *WakeDispatcher) Pass(ctx context.Context, keys []model.WakeKey) error {
 		}
 	}
 	var failures error
-	st := &passState{blocked: map[string]bool{}}
+	st := &passState{blocked: map[string]bool{}, skip: skip}
 	for _, key := range orderedCandidates(keys) {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(failures, fmt.Errorf("continue wake pass: %w", err))

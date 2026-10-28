@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
@@ -500,7 +501,7 @@ func TestPullSweep_FirstRunUnappliableEvent_QuarantinedSweepCompletes(t *testing
 	out, errOut := f.pullPeerStreams(t, 1)
 	after := f.hubNow(t)
 
-	require.Contains(t, errOut, "quarantined event "+late[2].EventID+" (sweep pass)")
+	require.Contains(t, errOut, "quarantined event "+format.EventID(late[2].EventID)+" (sweep pass)")
 	require.Contains(t, out, "2 late events recovered")
 	require.Contains(t, out, "quarantine: 1 pulled events held")
 	q := quarantined(t)[late[2].EventID]

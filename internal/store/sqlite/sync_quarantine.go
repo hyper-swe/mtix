@@ -8,6 +8,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
+
+	"github.com/hyper-swe/mtix/internal/format"
 )
 
 // Data access for the pulled-event quarantine of `mtix sync pull`
@@ -77,7 +79,7 @@ func QuarantineEvent(ctx context.Context, tx *sql.Tx, q QuarantinedEvent) error 
 		q.EventID, q.Source, q.RawEvent, q.Reason, q.FirstSeen, q.LastAttempt, q.CLIVersion,
 	)
 	if err != nil {
-		return fmt.Errorf("quarantine %s: %w", q.EventID, err)
+		return fmt.Errorf("quarantine %s: %w", format.EventID(q.EventID), err)
 	}
 	return nil
 }
@@ -90,7 +92,7 @@ func RemoveQuarantined(ctx context.Context, tx *sql.Tx, eventID string) error {
 	// Drop the row of a pulled event that has now applied.
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM sync_quarantine WHERE event_id = ? AND source <> 'push'`, eventID); err != nil {
-		return fmt.Errorf("unquarantine %s: %w", eventID, err)
+		return fmt.Errorf("unquarantine %s: %w", format.EventID(eventID), err)
 	}
 	return nil
 }
@@ -211,7 +213,7 @@ func IsQuarantined(ctx context.Context, tx *sql.Tx, eventID string) (bool, error
 	// One primary-key probe of the quarantine.
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM sync_quarantine WHERE event_id = ?`, eventID).Scan(&n); err != nil {
-		return false, fmt.Errorf("check quarantine for %s: %w", eventID, err)
+		return false, fmt.Errorf("check quarantine for %s: %w", format.EventID(eventID), err)
 	}
 	return n > 0, nil
 }
@@ -228,7 +230,7 @@ func EventApplied(ctx context.Context, tx *sql.Tx, eventID string) (bool, error)
 	// One primary-key probe of applied_events.
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM applied_events WHERE event_id = ?`, eventID).Scan(&n); err != nil {
-		return false, fmt.Errorf("check applied_events for %s: %w", eventID, err)
+		return false, fmt.Errorf("check applied_events for %s: %w", format.EventID(eventID), err)
 	}
 	return n > 0, nil
 }

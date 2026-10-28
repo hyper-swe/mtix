@@ -33,6 +33,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -95,7 +96,7 @@ func Validate(e *model.SyncEvent, now time.Time, res *Result) error {
 	wallTS := time.UnixMilli(tsMS).UTC()
 	if wallTS.After(now.Add(FutureTimestampGrace)) {
 		return fmt.Errorf("event %s wall_clock_ts %s > now+%s: %w",
-			e.EventID, wallTS.Format(time.RFC3339), FutureTimestampGrace, ErrTimestampFuture)
+			format.EventID(e.EventID), wallTS.Format(time.RFC3339), FutureTimestampGrace, ErrTimestampFuture)
 	}
 	if wallTS.Before(now.Add(-PastTimestampWarn)) && res != nil {
 		res.StaleTimestamps = append(res.StaleTimestamps, e.EventID)
@@ -119,19 +120,19 @@ func validateEnvelope(e *model.SyncEvent) error {
 
 	if len(e.Payload) > MaxPayloadBytes {
 		return fmt.Errorf("event %s payload %d bytes (max %d): %w",
-			e.EventID, len(e.Payload), MaxPayloadBytes, ErrPayloadTooLarge)
+			format.EventID(e.EventID), len(e.Payload), MaxPayloadBytes, ErrPayloadTooLarge)
 	}
 	if depth := jsonDepth(e.Payload); depth > MaxPayloadNestingDepth {
 		return fmt.Errorf("event %s payload depth %d (max %d): %w",
-			e.EventID, depth, MaxPayloadNestingDepth, ErrPayloadTooNested)
+			format.EventID(e.EventID), depth, MaxPayloadNestingDepth, ErrPayloadTooNested)
 	}
 
 	if e.LamportClock >= MaxLamportClock {
 		return fmt.Errorf("event %s lamport %d (max %d): %w",
-			e.EventID, e.LamportClock, MaxLamportClock-1, ErrLamportOverflow)
+			format.EventID(e.EventID), e.LamportClock, MaxLamportClock-1, ErrLamportOverflow)
 	}
 	if err := e.VectorClock.Validate(); err != nil {
-		return fmt.Errorf("event %s vector_clock: %w", e.EventID, err)
+		return fmt.Errorf("event %s vector_clock: %w", format.EventID(e.EventID), err)
 	}
 	return nil
 }

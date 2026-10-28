@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -60,7 +61,7 @@ var (
 // that check.
 func ValidateIngest(e *model.SyncEvent, now time.Time, res *Result) error {
 	if e != nil && e.Malformed != "" {
-		return fmt.Errorf("event %s: %s: %w", e.EventID, e.Malformed, ErrMalformedEvent)
+		return fmt.Errorf("event %s: %s: %w", format.EventID(e.EventID), e.Malformed, ErrMalformedEvent)
 	}
 	if err := validateEnvelope(e); err != nil {
 		return err

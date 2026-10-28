@@ -11,9 +11,23 @@ Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whit
 
 `mtix create --type` accepts bug, feature, task, chore, refactor, test or doc (omitted = unset), independently of depth-derived hierarchy; `--assign <agent>` claims atomically as `in_progress`, overrides parent auto-claim and preserves the creator as author. MCP/REST/gRPC use `issue_type` and `assignee`. `mtix update --type` changes work classification (empty clears, omitted preserves). `mtix list --type` filters hierarchy; `mtix list --issue-type` filters work classification. See the planning skill for the full routine.
 
-Terminal output (`show`, `list`, `ready`, `search`, `tree`, `progress`, `context`, `create`, `decompose --dry-run`) prints titles and assignees on one line: control characters, escapes, bidirectional overrides and isolates, zero-width and other invisible format characters are removed, line breaks become spaces, and the directional marks (U+200E, U+200F, U+061C) are kept. Use `--json` for the exact stored text, for example when quoting a title.
+Terminal output (`show`, `list`, `ready`, `search`, `tree`, `progress`, `context`, `create`, `decompose --dry-run`) prints titles and assignees on one line: control characters, escapes, bidirectional overrides and isolates, zero-width and other invisible format characters are removed, line breaks become spaces, and the directional marks (U+200E, U+200F, U+061C) are kept. Use `--json` for the exact stored text, for example when quoting a title. The plain `mtix inbox` listing and error lines are stripped the same way, but an inbox body and an error keep their line breaks (the body is indented). The `mtix context` Assembled Prompt block folds titles, annotation authors and dependency ids onto one line and indents every line of prompts and annotation text.
 
 
+
+## Every action item becomes a ticket
+
+When you find or promise an action item (a follow-up, cleanup, promised check or open question), file an mtix ticket right away. Do not leave it in chat, notes or a state file. A ticket keeps the item traceable, findable later and auditable.
+
+```bash
+mtix create "Add retry to the export check" --under PROJ-12 --type chore \
+  --description "Why the item exists and its scope" \
+  --prompt "Exact files, functions and edge cases" \
+  --acceptance "Testable outcome"
+mtix create "Cleanup after the migration" --description "..." --prompt "..." --acceptance "..."
+```
+
+Use `--under <id>` to place the item under related work. Omit it for a new root ticket.
 
 ## Overview
 

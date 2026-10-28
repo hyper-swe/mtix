@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -43,7 +44,9 @@ var sentinelMapping = []struct {
 	{model.ErrInvalidConfigKey, http.StatusBadRequest, "INVALID_CONFIG_KEY"},
 }
 
-// HandleError sends a structured error response per FR-7.7.
+// HandleError sends a structured error response per FR-7.7. The message is
+// escaped with format.SafeText, because service errors repeat caller-supplied
+// ids (MTIX-187.7.8); JSON data fields keep the exact id.
 // Maps sentinel errors to appropriate HTTP status codes.
 // Unknown errors return 500 without leaking internal details.
 func HandleError(c *gin.Context, err error) {
@@ -52,7 +55,7 @@ func HandleError(c *gin.Context, err error) {
 			c.JSON(m.status, ErrorResponse{
 				Error: ErrorDetail{
 					Code:    m.code,
-					Message: err.Error(),
+					Message: format.SafeText(err.Error()),
 				},
 			})
 			return
@@ -73,7 +76,7 @@ func HandleValidationError(c *gin.Context, message string) {
 	c.JSON(http.StatusBadRequest, ErrorResponse{
 		Error: ErrorDetail{
 			Code:    "INVALID_INPUT",
-			Message: message,
+			Message: format.SafeText(message),
 		},
 	})
 }

@@ -754,6 +754,8 @@ When an annotation has been addressed:
 mtix resolve-annotation PROJ-1.1 <annotation-id>
 ```
 
+`mtix show PROJ-1.1` prints each annotation with its short id, for example `[2026-09-01T09:30:00Z] (id "01ARZ3NDEKTS") reviewer-a: PASS`. The short id is the first 12 characters of the annotation id; give it as `<annotation-id>`. The full id (shown by `mtix show --json`) always works. A prefix of at least 12 characters works when it matches exactly one annotation. If it matches several, mtix refuses and lists their full ids; if it matches none, you get a not found error. The MCP tool `mtix_resolve_annotation` follows the same rule.
+
 Resolved annotations are excluded from context assembly.
 
 ---

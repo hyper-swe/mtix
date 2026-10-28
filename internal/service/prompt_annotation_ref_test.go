@@ -107,6 +107,34 @@ func TestResolveAnnotationRef_BidiInStoredIDs_ListsThemEscaped(t *testing.T) {
 	assert.Contains(t, err.Error(), `\u202e`)
 }
 
+// TestResolveAnnotationRef_HostileTooShortPrefixOfStoredID_ErrorIsEscaped pins
+// that the too-short refusal renders the typed reference through
+// format.EventID, so a hostile fragment cannot reach a terminal raw.
+func TestResolveAnnotationRef_HostileTooShortPrefixOfStoredID_ErrorIsEscaped(t *testing.T) {
+	tests := []struct {
+		name string
+		ref  string
+		want string
+	}{
+		{"escape sequence", "\x1b[2J", `"\x1b[2J"`},
+		{"newline and carriage return", "\r\nFORGED", `"\r\nFORGED"`},
+		{"bidi override", "\u202eab", `"\u202eab"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, nodeID, read := seedAnnotations(t, tt.ref+"01ARZ3NDEKTSV4RRFFQ69G5FAA")
+			_, err := svc.ResolveAnnotationRef(context.Background(), nodeID, tt.ref, true)
+			require.ErrorIs(t, err, model.ErrInvalidInput)
+			assert.Contains(t, err.Error(), tt.want)
+			assert.Contains(t, err.Error(), "at least 12")
+			for _, r := range err.Error() {
+				assert.True(t, r >= 0x20 && r < 0x7f, "raw control or non-ASCII %U in %q", r, err.Error())
+			}
+			assert.False(t, read()[0].Resolved, "a refused reference must resolve nothing")
+		})
+	}
+}
+
 // TestResolveAnnotationRef_EmptyReferenceOnNodeWithoutAnnotations_IsInvalid
 // pins the empty-reference rule when there is nothing to match against.
 func TestResolveAnnotationRef_EmptyReferenceOnNodeWithoutAnnotations_IsInvalid(t *testing.T) {

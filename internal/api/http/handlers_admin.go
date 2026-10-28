@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 )
@@ -351,7 +352,7 @@ func (s *Server) bulkUpdateNodes(c *gin.Context) {
 			results = append(results, gin.H{
 				"id":      upd.ID,
 				"success": false,
-				"error":   err.Error(),
+				"error":   format.SafeText(err.Error()),
 			})
 		} else {
 			results = append(results, gin.H{

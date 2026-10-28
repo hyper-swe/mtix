@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 func requireFreshFixtureRoutesRejectsImage(t *testing.T) {
@@ -22,7 +24,7 @@ func requireFreshFixtureRoutesRejectsImage(t *testing.T) {
 	require.NoError(t, err)
 	cmd := exec.CommandContext(t.Context(), binary, "-test.run=^TestFreshFixtureRoutes_RealTree_UseFreshConstructor$", "-test.count=1")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "MTIX_TEST_FRESH_ROUTES_CHILD=1")
+	cmd.Env = append(hostguard.Environ(), "MTIX_TEST_FRESH_ROUTES_CHILD=1")
 	out, err := cmd.CombinedOutput()
 	require.Error(t, err, "fresh fixture guard accepted an image-backed creation route: %s", out)
 	require.Contains(t, string(out), "fresh fixture routing:")

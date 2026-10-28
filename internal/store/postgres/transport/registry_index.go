@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/sync/redact"
 )
 
@@ -211,10 +212,7 @@ func registryLeftOut(ctx context.Context, conn *pgxpool.Conn) ([]string, error) 
 		return nil, err
 	}
 	if len(elsewhere) > 0 {
-		return nil, fmt.Errorf("registry index not built: %d duplicate create(s) belong to a node already "+
-			"recorded at another number, and the remap ledger records one number per node: %s; pushes keep "+
-			"working; a durable design for such hubs is tracked as MTIX-97.12",
-			len(elsewhere), strings.Join(elsewhere, ", "))
+		return nil, elsewhereRefusal(elsewhere)
 	}
 	if notYet > 0 {
 		return nil, fmt.Errorf("registry index not built: %d duplicate create(s) on the hub are not recorded yet; "+
@@ -233,6 +231,21 @@ func idBytes(ids []string) int {
 		n += len(id)
 	}
 	return n
+}
+
+// elsewhereRefusal is the refusal for duplicate creates whose node is already
+// recorded at another number. eventIDs are hub event ids, which any peer may
+// have chosen freely, so each is rendered with format.EventID before it
+// reaches the operator (MTIX-187.4.4); the ids themselves are unchanged.
+func elsewhereRefusal(eventIDs []string) error {
+	rendered := make([]string, len(eventIDs))
+	for i, id := range eventIDs {
+		rendered[i] = format.EventID(id)
+	}
+	return fmt.Errorf("registry index not built: %d duplicate create(s) belong to a node already "+
+		"recorded at another number, and the remap ledger records one number per node: %s; pushes keep "+
+		"working; a durable design for such hubs is tracked as MTIX-97.12",
+		len(eventIDs), strings.Join(rendered, ", "))
 }
 
 // capRefusal is the exact refusal of a left-out list the registry index

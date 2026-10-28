@@ -131,14 +131,14 @@ func (s *Store) currentNumbersByUID(ctx context.Context, events []*model.SyncEve
 	if len(uids) == 0 {
 		return out, nil
 	}
-	arg, err := json.Marshal(uids)
+	arg, err := hexIDList(uids)
 	if err != nil {
 		return nil, fmt.Errorf("read current numbers: %w", err)
 	}
 	// The current number of the node of each uid in the bound JSON array;
 	// "uid <> ''" lets the partial idx_nodes_uid serve it (MTIX-95.47).
 	rows, err := s.Query(ctx,
-		`SELECT uid, id FROM nodes WHERE uid IN (SELECT value FROM json_each(?)) AND uid <> ''`, string(arg))
+		`SELECT uid, id FROM nodes WHERE uid IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?)) AND uid <> ''`, arg)
 	if err != nil {
 		return nil, fmt.Errorf("read current numbers: %w", err)
 	}
@@ -166,11 +166,11 @@ func (s *Store) currentNumbersByUID(ctx context.Context, events []*model.SyncEve
 // every create_node row. The plan is pinned by a test.
 const pendingCreationSQL = `
 	SELECT n.id FROM nodes n JOIN sync_events c ON c.event_id = n.uid
-	 WHERE n.id IN (SELECT value FROM json_each(?)) AND n.uid <> ''
+	 WHERE n.id IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?)) AND n.uid <> ''
 	   AND +c.op_type = 'create_node' AND +c.sync_status = 'pending'
 	UNION
 	SELECT n.id FROM nodes n JOIN sync_events c ON c.uid = n.uid AND c.uid <> ''
-	 WHERE n.id IN (SELECT value FROM json_each(?)) AND n.uid <> ''
+	 WHERE n.id IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?)) AND n.uid <> ''
 	   AND +c.op_type = 'create_node' AND +c.sync_status = 'pending'`
 
 // pendingCreationQuerier is what pendingCreationIDs reads through: the store
@@ -186,11 +186,11 @@ func pendingCreationIDs(ctx context.Context, q pendingCreationQuerier, ids []str
 	if len(ids) == 0 {
 		return out, nil
 	}
-	arg, err := json.Marshal(ids)
+	arg, err := hexIDList(ids)
 	if err != nil {
 		return nil, fmt.Errorf("read pending creations: %w", err)
 	}
-	rows, err := q.QueryContext(ctx, pendingCreationSQL, string(arg), string(arg))
+	rows, err := q.QueryContext(ctx, pendingCreationSQL, arg, arg)
 	if err != nil {
 		return nil, fmt.Errorf("read pending creations: %w", err)
 	}

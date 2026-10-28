@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -314,7 +313,7 @@ func listLateEvents(ctx context.Context, hub lateEventHub, st *sqlite.Store,
 		for _, tracker := range trackers {
 			tracker.observe(page.IDs)
 		}
-		missing, err := missingLocalEventIDs(ctx, st, page.IDs)
+		missing, err := st.MissingLocalEventIDs(ctx, page.IDs)
 		if err != nil {
 			return listing, err
 		}
@@ -378,46 +377,6 @@ func stageLateEvents(ctx context.Context, st *sqlite.Store, staged []stagedLateE
 			sweepStartedAtKey:      startedAt.UTC().Format(time.RFC3339Nano),
 		})
 	})
-}
-
-// missingLocalEventIDs returns, in the given order, the ids this store
-// holds in neither sync_events (its own events and every mirrored one) nor
-// applied_events, and has not quarantined (sync_quarantine, MTIX-95.11): a
-// quarantined event is already stored locally and the quarantine retries
-// it on every pull, so the sweep never fetches it again.
-func missingLocalEventIDs(ctx context.Context, st *sqlite.Store, ids []string) ([]string, error) {
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	page, err := json.Marshal(ids)
-	if err != nil {
-		return nil, fmt.Errorf("encode hub id page: %w", err)
-	}
-	// Expand the page, passed as ONE JSON-array parameter, with json_each,
-	// so the SQL text is fixed whatever the page size; keep the ids found in
-	// none of the local tables (all keyed by event_id), in page order.
-	rows, err := st.Query(ctx, `
-		SELECT j.value FROM json_each(?) AS j
-		WHERE NOT EXISTS (SELECT 1 FROM sync_events s WHERE s.event_id = j.value)
-		  AND NOT EXISTS (SELECT 1 FROM applied_events a WHERE a.event_id = j.value)
-		  AND NOT EXISTS (SELECT 1 FROM sync_quarantine q WHERE q.event_id = j.value)
-		ORDER BY j.key`, string(page))
-	if err != nil {
-		return nil, fmt.Errorf("diff hub ids against local events: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var missing []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("diff hub ids against local events: %w", err)
-		}
-		missing = append(missing, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("diff hub ids against local events: %w", err)
-	}
-	return missing, nil
 }
 
 // finishLateEventSweep records a completed sweep, in one transaction and

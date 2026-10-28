@@ -17,6 +17,9 @@ import (
 type WakeHoldStore interface {
 	WakeRegistrationMark(context.Context, model.WakeKey) (model.WakeRegistrationMark, error)
 	SetWakeHold(ctx context.Context, key model.WakeKey, advanceTo int64, hold bool) error
+	// HeldWakeEvent returns the lowest unacknowledged addressed event above the given mark:
+	// the event a pending hold protects. found is false when there is none.
+	HeldWakeEvent(ctx context.Context, key model.WakeKey, above int64) (seq int64, found bool, err error)
 }
 
 // passState carries which registrations were held earlier in one pass. A held event
@@ -51,7 +54,31 @@ func (d *WakeDispatcher) eligible(ctx context.Context, key model.WakeKey, st *pa
 	if !mark.Found {
 		return true, nil
 	}
-	return mark.Epoch == key.Epoch && key.EventSeq > mark.HighWater, nil
+	if mark.Epoch != key.Epoch || key.EventSeq <= mark.HighWater {
+		return false, nil
+	}
+	if mark.Held {
+		if err := d.checkHeldEventPresent(ctx, key, mark.HighWater); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// checkHeldEventPresent refuses an event above a pending hold when a lower event of the
+// registration was not handled earlier in the pass (a handled held event lifts the hold, and
+// a still-held one blocks the registration before this point): the mark must never move past a held event, even across
+// passes (ADR-007 section 2.7). The held event is derived from the store, and a failed
+// lookup refuses too, so nothing is sent and the mark and hold stay as they are.
+func (d *WakeDispatcher) checkHeldEventPresent(ctx context.Context, key model.WakeKey, mark int64) error {
+	held, found, err := d.holds.HeldWakeEvent(ctx, key, mark)
+	if err != nil {
+		return fmt.Errorf("read held wake event: %w", err)
+	}
+	if found && key.EventSeq > held {
+		return fmt.Errorf("event %d above held event %d: %w", key.EventSeq, held, model.ErrWakeHeldEventMissing)
+	}
+	return nil
 }
 
 // markHeld records the hold on the registration and blocks later events of it this pass.

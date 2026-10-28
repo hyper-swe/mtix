@@ -1400,6 +1400,25 @@ mtix serve --port 8377
 
 Open `http://127.0.0.1:8377` in your browser.
 
+### Web UI security
+
+Ticket IDs, titles, descriptions, prompts and annotations are untrusted data.
+Plain-text surfaces display them literally, including updates received through
+WebSocket. Activity comment Markdown uses an allowlist sanitizer; raw scripts,
+frames, event handlers and JavaScript URLs are removed. ID-bearing API path
+segments use `encodeURIComponent`; query parameters use `URLSearchParams`.
+Invalid UTF-8 becomes replacement characters at the JSON/browser boundary.
+
+The embedded SPA and API responses carry `Content-Security-Policy` and
+`X-Content-Type-Options: nosniff`. Scripts, fonts and connections are restricted
+to the same origin; inline scripts, evaluation, frames, objects, base URLs and
+form submissions are forbidden. Inline styles remain allowed for the UI's
+React style properties. Images may load from the same origin or HTTPS URLs,
+preserving sanitized Markdown images. External image servers receive those
+requests and can observe the viewer's IP address; avoid external images in
+sensitive comments. The policy is applied by `mtix serve`, including SPA
+fallback routes; the Vite development server does not apply this header.
+
 ### Views
 
 - **All Issues** — Filterable table of all nodes with status, priority, assignee, and progress. Filter by status using the tab bar.

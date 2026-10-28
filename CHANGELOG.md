@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Content-Security-Policy on every web response (MTIX-187.7.9).** The API and the embedded web UI now send a CSP that allows scripts, connections and fonts from the same origin only, forbids inline script, eval, frames, plugins, base-URI changes and form posts, and keeps `nosniff`. Images may load from the same origin or any `https:` host, so Markdown images in tickets keep working; that means an external image server can see the viewer's IP address. Hostile ids and ticket text are covered by new web test suites and an HTML-sink guard.
 - **Terminal output normalizes titles and assignees (MTIX-187.7.4).** `mtix show`, `list`, `ready`, `search`, `tree`, `progress`, `context`, `create` and `decompose --dry-run` no longer print control characters, escape sequences, carriage returns, bidirectional controls or zero-width characters from a title or assignee; tabs and line breaks become spaces, printable non-ASCII text stays readable, and truncated titles are cut on character boundaries instead of mid-character. `--json` still prints the exact stored text.
 
 ### Added

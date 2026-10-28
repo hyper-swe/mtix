@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Hook path checks refuse over-long link chains (MTIX-112.34.2.3.3).** The inside-project path check for exec hooks now treats a path whose link chain exceeds the expansion limit as unresolvable and refuses it, in strict and non-strict mode, instead of judging it by its text.
 - **Terminal output normalizes titles and assignees (MTIX-187.7.4).** `mtix show`, `list`, `ready`, `search`, `tree`, `progress`, `context`, `create` and `decompose --dry-run` no longer print control characters, escape sequences, carriage returns, bidirectional controls or zero-width characters from a title or assignee; tabs and line breaks become spaces, printable non-ASCII text stays readable, and truncated titles are cut on character boundaries instead of mid-character. `--json` still prints the exact stored text.
 
 ### Added

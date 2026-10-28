@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 const (
@@ -79,7 +80,7 @@ func TestNew_ConcurrentFirstOpenAcrossProcesses_AllSucceed(t *testing.T) {
 		for i := range firstOpenWorkers {
 			wg.Go(func() {
 				cmd := exec.Command(os.Args[0], "-test.run=^TestNew_ConcurrentFirstOpenAcrossProcesses_AllSucceed$") //nolint:gosec // re-exec of this test binary
-				cmd.Env = append(os.Environ(), firstOpenPathEnv+"="+path)
+				cmd.Env = append(hostguard.Environ(), firstOpenPathEnv+"="+path)
 				outs[i], errs[i] = cmd.CombinedOutput()
 			})
 		}

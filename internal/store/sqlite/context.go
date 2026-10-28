@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -196,7 +197,7 @@ func (s *Store) ResolveAnnotation(ctx context.Context, nodeID, annotationID stri
 				return next, nil
 			}
 		}
-		return nil, fmt.Errorf("annotation %s on node %s: %w", annotationID, nodeID, model.ErrNotFound)
+		return nil, fmt.Errorf("annotation %s on node %s: %w", format.EventID(annotationID), nodeID, model.ErrNotFound)
 	}, "", 0)
 }
 

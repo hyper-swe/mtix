@@ -12,7 +12,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -24,6 +23,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/validator"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 type quarantineRecoveryCLI struct {
@@ -52,7 +52,7 @@ func newQuarantineRecoveryCLI(t *testing.T, binary string) quarantineRecoveryCLI
 	initTestApp(t)
 	operator := operatorTestHome(t)
 	f := quarantineRecoveryCLI{binary: binary, project: filepath.Dir(app.mtixDir), hub: hub}
-	f.env = append(os.Environ(), "MTIX_AUTHOR_ID=replica-op", "XDG_CONFIG_HOME="+operator, "APPDATA="+operator)
+	f.env = append(hostguard.Environ(), "MTIX_AUTHOR_ID=replica-op", "XDG_CONFIG_HOME="+operator, "APPDATA="+operator)
 	out := f.run(t, "sync", "init", "--insecure-tls")
 	require.Zero(t, out.exitCode, "%s", out.stderr)
 	return f

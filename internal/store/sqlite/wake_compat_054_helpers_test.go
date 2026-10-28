@@ -17,6 +17,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/testutil"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 type wakeCompatRun struct {
@@ -68,7 +69,7 @@ func runWakeCompatOldMutation(t *testing.T, binary, project string) []byte {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "create", "released dispatch witness")
 	cmd.Dir = project
-	cmd.Env = append(os.Environ(), "MTIX_SYNC_DSN=", "MTIX_SYNC_HOOK=", "MTIX_AUTHOR_ID=test-author")
+	cmd.Env = append(hostguard.Environ(), "MTIX_SYNC_DSN=", "MTIX_SYNC_HOOK=", "MTIX_AUTHOR_ID=test-author")
 	output, err := cmd.CombinedOutput()
 	if cmd.ProcessState != nil {
 		t.Logf("released dispatch witness joined pid=%d exit=%d", cmd.Process.Pid, cmd.ProcessState.ExitCode())

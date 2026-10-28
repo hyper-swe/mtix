@@ -139,11 +139,12 @@ func requirePRPackageOwnership(t *testing.T) {
 	t.Helper()
 	inventory := prPackageInventory(t)
 	root, jobs := prPackageReplica(t, inventory), readCIJobs(t)
-	ordinary, sqlite := jobs["test-go-shards"], jobs["test-go-sqlite"]
+	ordinary, sqlite, cmdJob := jobs["test-go-shards"], jobs["test-go-sqlite"], jobs["test-go-cmd"]
 	for _, platform := range []string{"ubuntu-22.04", "macos-latest"} {
 		t.Run(platform, func(t *testing.T) {
 			require.Contains(t, ordinary.Strategy.Matrix.OS, platform)
 			require.Contains(t, sqlite.Strategy.Matrix.OS, platform)
+			require.Contains(t, cmdJob.Strategy.Matrix.OS, platform)
 			owners := map[string][]string{}
 			for _, shard := range ordinary.Strategy.Matrix.Shard {
 				for _, pkg := range expandedPRPackages(t, prJobPackages(t, root, ordinary, shard, ""), inventory) {
@@ -158,6 +159,14 @@ func requirePRPackageOwnership(t *testing.T) {
 				require.Equal(t, []string{shardModule + "/internal/store/sqlite"}, selected)
 			}
 			owners[shardModule+"/internal/store/sqlite"] = append(owners[shardModule+"/internal/store/sqlite"], "sqlite")
+			// MTIX-112.17.22.1: cmd/mtix has one owner, the test-go-cmd matrix;
+			// cmd-mtix-shards.sh check proves each test is in exactly one shard.
+			require.NotEmpty(t, cmdJob.Strategy.Matrix.Shard)
+			for _, shard := range cmdJob.Strategy.Matrix.Shard {
+				selected := expandedPRPackages(t, prJobPackages(t, root, cmdJob, shard, ""), inventory)
+				require.Equal(t, []string{shardModule + "/cmd/mtix"}, selected)
+			}
+			owners[shardModule+"/cmd/mtix"] = append(owners[shardModule+"/cmd/mtix"], "cmd")
 			requirePackageOwners(t, inventory, owners)
 		})
 	}

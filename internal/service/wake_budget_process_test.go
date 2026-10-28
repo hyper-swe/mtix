@@ -21,6 +21,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 func TestWakeBudget_CrossProcessBoards_OnlyOneLastSlot(t *testing.T) {
@@ -56,7 +57,7 @@ func TestWakeBudget_CrossProcessBoards_OnlyOneLastSlot(t *testing.T) {
 func startWakeBudgetChild(t *testing.T, board *wakeBudgetBoard, ready, start, result string) (*exec.Cmd, *bytes.Buffer) {
 	t.Helper()
 	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestWakeBudgetProcessHelper$", "-test.timeout=30s")
-	cmd.Env = append(os.Environ(), "MTIX_TEST_BUDGET_CHILD=1", "MTIX_TEST_BUDGET_DB="+board.path,
+	cmd.Env = append(hostguard.Environ(), "MTIX_TEST_BUDGET_CHILD=1", "MTIX_TEST_BUDGET_DB="+board.path,
 		"MTIX_TEST_BUDGET_SEQ="+strconv.FormatInt(board.keys[0].EventSeq, 10), "MTIX_TEST_BUDGET_UID="+board.keys[0].UID,
 		"MTIX_TEST_BUDGET_READY="+ready, "MTIX_TEST_BUDGET_START="+start, "MTIX_TEST_BUDGET_RESULT="+result)
 	var log bytes.Buffer

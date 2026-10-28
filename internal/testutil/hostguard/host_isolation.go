@@ -14,13 +14,16 @@
 package hostguard
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -32,6 +35,10 @@ const (
 	RealHomeEnv = "MTIX_TEST_REAL_HOME"
 	// OriginalTmpEnv records the temporary directory before TMPDIR was repointed.
 	OriginalTmpEnv = "MTIX_TEST_ORIGINAL_TMPDIR"
+
+	// RealCacheEnv records the real user cache directory seen before isolation,
+	// so caches that must survive runs (released-binary builds) stay stable.
+	RealCacheEnv = "MTIX_TEST_REAL_CACHE"
 
 	scratchPrefix = "mtix-host-"
 )
@@ -156,22 +163,102 @@ func (l Layout) values(base string) map[string]string {
 // Run isolates the whole test process, asserts the isolation, runs the tests
 // and removes the scratch tree. Call it from TestMain: os.Exit(hostguard.Run(m)).
 func Run(m *testing.M) int {
-	owner := os.Getenv(RootEnv) == "" && !adoptExisting()
+	stop, err := Start()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "host config isolation:", err)
+		return 1
+	}
+	code := m.Run()
+	stop()
+	return code
+}
+
+// Start isolates the process for a TestMain that must do its own setup before
+// m.Run (for example building a binary). It returns the function that removes
+// the scratch tree; call it after the tests finish. Call it before any child
+// process is started.
+func Start() (stop func(), err error) {
+	adopted := false
+	owner := os.Getenv(RootEnv) == ""
 	if owner {
-		code, ok := setUp()
-		if !ok {
-			return code
+		adopted = adoptExisting()
+		owner = !adopted
+	}
+	if !owner {
+		return func() {}, assertChild(adopted)
+	}
+	if code, ok := setUp(); !ok {
+		return func() {}, fmt.Errorf("set up scratch tree (code %d)", code)
+	}
+	if err := Assert(); err != nil {
+		tearDown()
+		return func() {}, err
+	}
+	return tearDown, nil
+}
+
+// assertChild checks a re-executed helper. An adopted child (reduced
+// environment) gets the full assertion. An inheriting child gets HOME only,
+// because a test may start it with a deliberately malformed XDG_CONFIG_HOME to
+// exercise config resolution.
+func assertChild(adopted bool) error {
+	if adopted {
+		return Assert()
+	}
+	return assertHome()
+}
+
+// RealCacheDir returns the user cache directory recorded before isolation, so
+// tests that keep a build cache across runs do not lose it to the scratch HOME.
+func RealCacheDir() (string, error) {
+	if v := os.Getenv(RealCacheEnv); v != "" {
+		return v, nil
+	}
+	return os.UserCacheDir()
+}
+
+// Environ returns the process environment for a child process after checking
+// that the harness is installed and HOME is isolated. It panics otherwise, so a
+// helper without a *testing.T still fails loudly instead of leaking the host.
+func Environ() []string {
+	if err := assertHome(); err != nil {
+		panic("host config isolation: " + err.Error())
+	}
+	return os.Environ()
+}
+
+func assertHome() error {
+	root := os.Getenv(RootEnv)
+	if root == "" {
+		return errors.New("host config not isolated: " + RootEnv + " is unset; install hostguard.Run in TestMain")
+	}
+	if home := os.Getenv("HOME"); home != "" && !inside(root, home) {
+		return fmt.Errorf("host config not isolated: HOME=%s is outside the scratch root", home)
+	}
+	return nil
+}
+
+// goEnvVars are resolved before HOME is repointed, because the Go tool derives
+// their defaults from HOME and would otherwise start cold under the scratch home.
+var goEnvVars = []string{"GOCACHE", "GOMODCACHE", "GOPATH", "GOTOOLCHAIN", "GOFLAGS", "GOENV"}
+
+func exportGoEnv() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, name := range goEnvVars {
+		if os.Getenv(name) != "" {
+			continue
 		}
-		defer tearDown()
-		if err := Assert(); err != nil {
-			fmt.Fprintln(os.Stderr, "host config isolation:", err)
-			return 1
+		out, err := exec.CommandContext(ctx, "go", "env", name).Output()
+		if err != nil {
+			return // no go tool on PATH: tests that build do not run either
+		}
+		if v := strings.TrimSpace(string(out)); v != "" {
+			if setErr := os.Setenv(name, v); setErr != nil {
+				return
+			}
 		}
 	}
-	// A re-executed helper inherits a tree its parent already asserted. It is
-	// not asserted again, because a test may start it with a deliberately
-	// malformed path variable to exercise config resolution.
-	return m.Run()
 }
 
 func setUp() (int, bool) {
@@ -186,6 +273,13 @@ func setUp() (int, bool) {
 			return 1, false
 		}
 	}
+	if cache, cacheErr := os.UserCacheDir(); cacheErr == nil {
+		if setErr := os.Setenv(RealCacheEnv, cache); setErr != nil {
+			fmt.Fprintln(os.Stderr, "host config isolation:", setErr)
+			return 1, false
+		}
+	}
+	exportGoEnv()
 	l, err := newLayout(base)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "host config isolation:", err)

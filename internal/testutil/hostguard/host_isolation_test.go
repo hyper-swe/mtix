@@ -5,6 +5,7 @@ package hostguard_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -162,4 +163,37 @@ func TestChooseBase_TableOfTempConfigurations(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestRun_GoToolEnvironment_StaysOutsideScratchHome(t *testing.T) {
+	goTool, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go tool not on PATH")
+	}
+	root := os.Getenv(hostguard.RootEnv)
+	for _, name := range []string{"GOMODCACHE", "GOCACHE", "GOPATH"} {
+		out, runErr := exec.Command(goTool, "env", name).Output()
+		require.NoError(t, runErr)
+		value := strings.TrimSpace(string(out))
+		require.NotEmpty(t, value, name)
+		assert.False(t, within(root, value), "%s=%s must not relocate under the scratch root", name, value)
+		assert.Equal(t, os.Getenv(name), value, "%s must be exported unchanged before HOME moved", name)
+	}
+}
+
+func TestRealCacheDir_RecordedBeforeIsolation_IsOutsideScratchRoot(t *testing.T) {
+	dir, err := hostguard.RealCacheDir()
+	require.NoError(t, err)
+	assert.False(t, within(os.Getenv(hostguard.RootEnv), dir))
+}
+
+func TestEnviron_HomeOutsideRoot_Panics(t *testing.T) {
+	assert.NotPanics(t, func() { _ = hostguard.Environ() })
+	t.Setenv("HOME", filepath.Join(filepath.Dir(os.Getenv(hostguard.RootEnv)), "elsewhere"))
+	assert.Panics(t, func() { _ = hostguard.Environ() })
+}
+
+func TestEnviron_HarnessMissing_Panics(t *testing.T) {
+	t.Setenv(hostguard.RootEnv, "")
+	assert.Panics(t, func() { _ = hostguard.Environ() })
 }

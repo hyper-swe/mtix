@@ -62,9 +62,15 @@ type wakeAdmission struct {
 }
 
 func (b *wakeBudgets) claim(ctx context.Context, key model.WakeKey) (model.WakeAttempt, bool, error) {
+	attempt, won, _, err := b.claimHeld(ctx, key)
+	return attempt, won, err
+}
+
+// claimHeld also reports whether the configured recipient budget held the wake.
+func (b *wakeBudgets) claimHeld(ctx context.Context, key model.WakeKey) (model.WakeAttempt, bool, bool, error) {
 	policy, err := b.policy(key.AgentID)
 	if err != nil {
-		return model.WakeAttempt{}, false, fmt.Errorf("load wake admission policy: %w", err)
+		return model.WakeAttempt{}, false, false, fmt.Errorf("load wake admission policy: %w", err)
 	}
 	admission := wakeAdmission{key: key, policy: policy}
 	err = b.state.UpdateWakeBudget(ctx, key.Recipient(), func(m *oplocal.WakeBudgetMirror, save func() error) error {
@@ -76,9 +82,9 @@ func (b *wakeBudgets) claim(ctx context.Context, key model.WakeKey) (model.WakeA
 	})
 	alertErr := b.reportAdmission(ctx, key.AgentID, admission)
 	if err != nil || alertErr != nil {
-		return model.WakeAttempt{}, false, fmt.Errorf("admit protected wake attempt: %w", errors.Join(err, alertErr))
+		return model.WakeAttempt{}, false, false, fmt.Errorf("admit protected wake attempt: %w", errors.Join(err, alertErr))
 	}
-	return admission.result.Attempt, admission.result.Won, nil
+	return admission.result.Attempt, admission.result.Won, admission.held != "", nil
 }
 
 func (b *wakeBudgets) claimLocked(ctx context.Context, a *wakeAdmission) error {

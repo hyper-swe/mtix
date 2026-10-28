@@ -12,16 +12,17 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
-func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop int64) error {
-	attempt, won, err := d.budgets.claim(ctx, key)
+// sendWake reports budgetHeld when the recipient budget refused the claim.
+func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop int64) (budgetHeld bool, err error) {
+	attempt, won, budgetHeld, err := d.budgets.claimHeld(ctx, key)
 	if err != nil {
-		return fmt.Errorf("claim wake candidate: %w", err)
+		return false, fmt.Errorf("claim wake candidate: %w", err)
 	}
 	if !won {
-		return nil
+		return budgetHeld, nil
 	}
 	if attempt.Token == "" || attempt.Key != key {
-		return fmt.Errorf("wake attempt fence is missing or mismatched: %w", model.ErrConflict)
+		return false, fmt.Errorf("wake attempt fence is missing or mismatched: %w", model.ErrConflict)
 	}
 	attempt.Hop = hop
 	sendErr := d.send(ctx, attempt)
@@ -40,5 +41,5 @@ func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop in
 	if recordErr != nil {
 		failures = errors.Join(failures, fmt.Errorf("record wake completion: %w", recordErr))
 	}
-	return failures
+	return false, failures
 }

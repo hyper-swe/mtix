@@ -39,6 +39,9 @@ HYPERSWE.md suppresses missing native pointers, but MTIX.md is still checked.
 
 On an opened local board, budget.rewind reports counters below their protected
 mirror and retained rewind diagnostics. It never resets allowance, even with --fix.
+wake.guard-trips lists recent loop-guard trips (hop depth and back-off), newest
+first, with agent, chain, time and the exact mtix config set command; it is
+read-only and --json carries the same rows under data.trips.
 wake.ledger reports retained wake rows, claimed rows
 and rejected completions. A newer dispatch protocol reports FAIL: install a
 compatible binary, restart the dispatcher and rerun doctor. This read-only check
@@ -170,6 +173,9 @@ func registerWakeDoctorChecks(svc *service.DoctorService) error {
 	}
 	if err := registerConfiguredWakeBudgetDoctor(svc); err != nil {
 		return fmt.Errorf("register wake budget diagnostics: %w", err)
+	}
+	if err := registerWakeGuardTripsDoctor(svc); err != nil {
+		return fmt.Errorf("register wake guard-trips diagnostics: %w", err)
 	}
 	if err := registerConfiguredWakeLedgerDoctor(svc); err != nil {
 		return fmt.Errorf("register wake ledger diagnostics: %w", err)

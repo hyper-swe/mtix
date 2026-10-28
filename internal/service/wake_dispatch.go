@@ -49,6 +49,7 @@ type WakeDispatcher struct {
 	settings   WakeSettingsReader
 	held       func(string)
 	budgets    *wakeBudgets
+	holds      WakeHoldStore
 }
 
 // NewWakeDispatcher requires storage, delivery and durable alert capabilities.
@@ -69,10 +70,16 @@ func NewWakeDispatcher(opts WakeDispatcherOptions) (*WakeDispatcher, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct wake accounting: %w", err)
 	}
-	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, send: opts.Send, alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets}, nil
+	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, send: opts.Send, alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets, holds: holdStore(opts.Store)}, nil
+}
+
+func holdStore(store WakeStore) WakeHoldStore {
+	holds, _ := store.(WakeHoldStore)
+	return holds
 }
 
 // Pass re-reads the protocol floor even when there are no candidates.
+// Every pass re-evaluates held registrations from their own high-water mark (FR-20.3, I10).
 // Each attempted send is terminal; an independent candidate still runs after a send error.
 func (d *WakeDispatcher) Pass(ctx context.Context, keys []model.WakeKey) error {
 	if err := ctx.Err(); err != nil {
@@ -87,18 +94,12 @@ func (d *WakeDispatcher) Pass(ctx context.Context, keys []model.WakeKey) error {
 		}
 	}
 	var failures error
-	for _, key := range keys {
+	st := &passState{blocked: map[string]bool{}}
+	for _, key := range orderedCandidates(keys) {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(failures, fmt.Errorf("continue wake pass: %w", err))
 		}
-		hop, held, err := d.guardWakeHop(ctx, key)
-		if err != nil {
-			failures = errors.Join(failures, err)
-			continue
-		}
-		if !held {
-			failures = errors.Join(failures, d.sendWake(ctx, key, hop))
-		}
+		failures = errors.Join(failures, d.passOne(ctx, key, st))
 	}
 	return failures
 }

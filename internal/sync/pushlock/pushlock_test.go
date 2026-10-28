@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/sync/pushlock"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 	"github.com/stretchr/testify/require"
 )
 
@@ -124,7 +125,7 @@ func TestPushLock_AutoReleaseOnProcessExit(t *testing.T) {
 		"-test.v=false",
 		"-test.timeout=10s",
 	)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(hostguard.Environ(),
 		"MTIX_PUSHLOCK_CHILD=1",
 		"MTIX_PUSHLOCK_DIR="+dir,
 	)

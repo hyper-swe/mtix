@@ -16,11 +16,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/oplocal"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 func permissionDraftClearMarkers(t *testing.T) {
 	t.Helper()
-	for _, entry := range os.Environ() {
+	for _, entry := range hostguard.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
 		if key == "CLAUDECODE" || key == "CODEX_THREAD_ID" || strings.HasPrefix(key, "CLAUDE_CODE_") || strings.HasPrefix(key, "CODEX_SANDBOX") || strings.HasPrefix(key, "PI_") {
 			t.Setenv(key, "")

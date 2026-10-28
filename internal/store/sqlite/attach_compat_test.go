@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -54,7 +55,7 @@ func attachReaderCommand(t *testing.T, binary, project, dsn string, args ...stri
 	t.Logf("released reader before execution commit=%s sha256=%x", compat054TagCommit, sha256.Sum256(raw))
 	cmd := exec.CommandContext(t.Context(), binary, args...)
 	cmd.Dir = project
-	cmd.Env = append(os.Environ(), "MTIX_SYNC_DSN="+dsn, "MTIX_SYNC_HOOK=")
+	cmd.Env = append(hostguard.Environ(), "MTIX_SYNC_DSN="+dsn, "MTIX_SYNC_HOOK=")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "released reader %v: %s", args, output)
 	t.Logf("released reader pid=%d exit=%d args=%v", cmd.Process.Pid, cmd.ProcessState.ExitCode(), args)

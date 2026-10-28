@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/service"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 // MTIX-90 acceptance: a piped-stdin run refuses; a wrong typed value
@@ -207,7 +208,7 @@ func TestDiscardLocal_RealPipedStdin_Refuses(t *testing.T) {
 
 	child := exec.Command(os.Args[0], "-test.run=^TestHelperProcessMtixCLI$") //nolint:gosec // re-executes this test binary
 	child.Dir = projectDir
-	child.Env = append(os.Environ(),
+	child.Env = append(hostguard.Environ(),
 		"MTIX_TEST_HELPER_PROCESS=1",
 		"MTIX_TEST_HELPER_ARGS=sync reconcile --discard-local --yes",
 	)

@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 func TestPendingExports_ManyWriters_Coalesce(t *testing.T) {
@@ -137,7 +138,7 @@ func startExportRequestChild(t *testing.T, dir, mode string) *coalescingWriter {
 
 func coalescingWriterEnv() []string {
 	var env []string
-	for _, value := range os.Environ() {
+	for _, value := range hostguard.Environ() {
 		key, _, _ := strings.Cut(value, "=")
 		if !strings.HasPrefix(key, "MTIX_") && !strings.HasPrefix(key, "PG") {
 			env = append(env, value)

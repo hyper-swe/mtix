@@ -16,6 +16,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 func writeUnrelatedQuarantineImport(t *testing.T) []byte {
@@ -37,7 +38,7 @@ func TestSyncQuarantineAcknowledge_ActualProcess_NoDSNNoTTYSkipsUnrelatedImport(
 	initAckCLI(t)
 	operator := operatorTestHome(t)
 	f := quarantineRecoveryCLI{binary: binary, project: filepath.Dir(app.mtixDir)}
-	f.env = append(os.Environ(), "MTIX_AUTHOR_ID=cli-operator", "XDG_CONFIG_HOME="+operator, "APPDATA="+operator)
+	f.env = append(hostguard.Environ(), "MTIX_AUTHOR_ID=cli-operator", "XDG_CONFIG_HOME="+operator, "APPDATA="+operator)
 	incoming := writeUnrelatedQuarantineImport(t)
 	before := readPeerState(t, &sweepFixture{})
 	out := f.run(t, "sync", "quarantine", "acknowledge", ackCLIEventID, "--reason", "reviewed", "--json")
@@ -63,7 +64,7 @@ func newLocalQuarantineRecoveryCLI(t *testing.T, binary string) quarantineRecove
 	operator := operatorTestHome(t)
 	return quarantineRecoveryCLI{
 		binary: binary, project: filepath.Dir(app.mtixDir),
-		env: append(os.Environ(), "MTIX_AUTHOR_ID=cli-operator", "XDG_CONFIG_HOME="+operator, "APPDATA="+operator),
+		env: append(hostguard.Environ(), "MTIX_AUTHOR_ID=cli-operator", "XDG_CONFIG_HOME="+operator, "APPDATA="+operator),
 	}
 }
 

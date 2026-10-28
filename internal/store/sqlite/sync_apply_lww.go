@@ -196,7 +196,7 @@ func (a syncApplier) dispatchWithLWW(ctx context.Context, tx *sql.Tx, event *mod
 			return fmt.Errorf("apply %s: workflow winner: %w", format.EventID(event.EventID), err)
 		}
 		if !wins {
-			return nil
+			return suppressWorkflowHook(ctx, tx, event.EventID)
 		}
 		return a.dispatchApply(ctx, tx, event)
 	}

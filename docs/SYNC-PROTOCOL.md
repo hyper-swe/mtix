@@ -191,7 +191,13 @@ teammate's concurrent claim or status change.
   are merged and it is recorded in `applied_events`, so a re-pull is a
   no-op. It changes no node column and writes **no** `sync_conflicts`
   row: workflow state is not a user-authored field, and a conflict row
-  for every lost claim race or late replay would be noise.
+  for every lost claim race or late replay would be noise. The FR-19 hook
+  journal skips losing workflow events: they do not report a state change
+  or deliver to any hook adapter. This decision is persisted locally in
+  the same transaction as apply, keyed by event ID, and survives restart.
+  Events that won at ingest remain eligible even if a later event wins.
+  Existing events ingested before this rule have no suppression marker;
+  they are not retroactively reclassified.
 - **Local mutations** need no check. Their Lamport clock is above
   every event the replica holds, so they are the winner when they are
   written.

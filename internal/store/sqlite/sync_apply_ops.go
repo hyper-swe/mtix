@@ -187,7 +187,7 @@ func (a syncApplier) applyUpdateField(ctx context.Context, tx *sql.Tx, e *model.
 	}
 	if !allowedUpdateFields[p.FieldName] {
 		return fmt.Errorf("apply update_field %s: field %q not in whitelist: %w",
-			e.EventID, p.FieldName, model.ErrInvalidInput)
+			format.EventID(e.EventID), p.FieldName, model.ErrInvalidInput)
 	}
 	id, err := resolveNodeRef(ctx, tx, e)
 	if err != nil {

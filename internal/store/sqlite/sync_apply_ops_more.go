@@ -188,7 +188,7 @@ func resolveNodeRef(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (string
 	}
 	err = tx.QueryRowContext(ctx, query, arg).Scan(&id)
 	if err == sql.ErrNoRows {
-		return "", fmt.Errorf("node %s (uid=%q): %w", e.NodeID, e.UID, model.ErrNotFound)
+		return "", fmt.Errorf("node %s (uid=%s): %w", e.NodeID, format.EventID(e.UID), model.ErrNotFound)
 	}
 	if err != nil {
 		return "", err

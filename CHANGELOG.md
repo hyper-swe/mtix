@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Host-local wake settings and agent overrides, read-only doctor diagnostics, and additive hop metadata with released-reader compatibility; live control and hop delivery await the wake scanner (MTIX-112.17.10.1).
 
+### Security
+
+- **Terminal output normalizes titles and assignees (MTIX-187.7.4).** `mtix show`, `list`, `ready`, `search`, `tree`, `progress`, `context`, `create` and `decompose --dry-run` no longer print control characters, escape sequences, carriage returns, bidirectional controls or zero-width characters from a title or assignee; tabs and line breaks become spaces, printable non-ASCII text stays readable, and truncated titles are cut on character boundaries instead of mid-character. `--json` still prints the exact stored text.
+
 ### Added
 - Callable wake dispatch now holds an event past a loop guard or recipient budget without moving the registration's own high-water mark, and re-arms it on the first pass after the hold lifts; events at or below the mark never wake. Read-only `wake.guard-trips` in `mtix doctor` (text and `--json`) lists recent loop-guard trips with agent, chain, time and the exact fix command (MTIX-112.17.10.3).
 - Callable wake dispatch now enforces recipient rolling-hour budgets across boards and durable exponential backoff after unacknowledged wakes. New inbox acknowledgements reset backoff; read-only `budget.rewind` doctor diagnostics report restored counters without refunding protected allowance. Sender budgets, C1 controls and scanner/rearm wiring remain separate work (MTIX-112.17.10.2).

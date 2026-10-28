@@ -7,9 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
@@ -149,11 +152,13 @@ func runContext(id string, maxTokens int) error {
 		for i := 0; i < entry.Depth; i++ {
 			indent += "  "
 		}
-		fmt.Printf("%s%s [%s] %s\n", indent, entry.ID, entry.Status, entry.Title)
+		fmt.Printf("%s%s [%s] %s\n", indent, entry.ID, entry.Status, format.SafeLine(entry.Title))
 	}
-	if resp.AssembledPrompt != "" {
-		fmt.Printf("\n=== Assembled Prompt (%d chars) ===\n%s\n",
-			len(resp.AssembledPrompt), resp.AssembledPrompt)
+	// The assembled prompt embeds stored titles and prompt text; print it
+	// through the same terminal rule as `mtix show` (MTIX-187.7.4). --json
+	// carries the exact text.
+	if shown := strings.ReplaceAll(displayText(resp.AssembledPrompt), "\t", "    "); shown != "" {
+		fmt.Printf("\n=== Assembled Prompt (%d chars) ===\n%s\n", utf8.RuneCountInString(shown), shown)
 	}
 	return nil
 }

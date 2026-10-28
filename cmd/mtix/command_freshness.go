@@ -79,7 +79,7 @@ func fixedCommandFreshness(path string) freshnessScope {
 	case "agent allow", "agent deny", "agent heartbeat", "agent register", "agent unregister", "annotate",
 		"backup", "cancel", "claim", "comment", "config delete", "config set",
 		"create", "daemon install", "daemon start", "daemon stop", "daemon uninstall",
-		"decompose", "defer", "delete", "dep add", "dep remove", "docs generate",
+		"decompose", "defer", "delete", "dep add", "dep remove", "docs generate", "hooks allow-origin",
 		"done", "export", "gc", "import", "inbox ack", "inbox lease acquire",
 		"inbox lease release", "init", "micro", "migrate", "plugin install",
 		"prompt", "recover", "reopen", "rerun", "resolve-annotation", "restore",

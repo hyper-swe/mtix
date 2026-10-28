@@ -266,12 +266,12 @@ func TestConfig_SessionTimeout_WithCustomValue(t *testing.T) {
 
 // TestConfig_ValidConfigKeys_ReturnsWorkspaceAndHostKeys verifies FR-13.2 documentation introspection.
 // The count moved from 29 to 36 when the FR-21 relay transport added its
-// seven sync.relay.* keys, and to 37 with sync.max_lamport_jump (MTIX-95.11), and to 38 with sync.keep_roles (MTIX-95.1), and to 39 with history.export (MTIX-95.31.19.5), and to 40 with history.max_entries_per_task (MTIX-95.31.19.4); the number is asserted so a key can never be
+// seven sync.relay.* keys, and to 37 with sync.max_lamport_jump (MTIX-95.11), and to 38 with sync.keep_roles (MTIX-95.1), and to 39 with history.export (MTIX-95.31.19.5), and to 40 with history.max_entries_per_task (MTIX-95.31.19.4), and to 45 with the five hub-contact and listen keys (MTIX-112.20.1); the number is asserted so a key can never be
 // added without the FR-11.2 allowlist being updated deliberately.
 func TestConfig_ValidConfigKeys_ReturnsWorkspaceAndHostKeys(t *testing.T) {
 	keys := service.ValidConfigKeys()
 
-	assert.Len(t, keys, 51, "should return exactly 40 workspace and 11 host-local config keys")
+	assert.Len(t, keys, 56, "should return exactly 45 workspace and 11 host-local config keys")
 
 	// Verify sorted order.
 	for i := 1; i < len(keys); i++ {

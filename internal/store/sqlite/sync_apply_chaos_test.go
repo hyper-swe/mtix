@@ -20,6 +20,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/clock"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 	"github.com/stretchr/testify/require"
 
 	_ "modernc.org/sqlite"
@@ -64,7 +65,7 @@ func TestApply_AtomicityUnderKill(t *testing.T) {
 				"-test.v=false",
 				"-test.timeout=30s",
 			)
-			cmd.Env = append(os.Environ(),
+			cmd.Env = append(hostguard.Environ(),
 				"MTIX_APPLY_CHAOS_CHILD=1",
 				"MTIX_APPLY_CHAOS_DB="+dbPath,
 				"MTIX_APPLY_CHAOS_EVENT_ID="+eventID,

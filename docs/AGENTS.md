@@ -334,6 +334,7 @@ review of that hook; other hook approvals remain independent.
 On an opened local board, `wake.ledger` reports retained rows and protocol refusal;
 `--fix` preserves wake state. See the multi-agent skill for lease and retry behavior.
 `budget.rewind` compares local counters with protected recipient accounting.
+`wake.guard-trips` lists recent loop-guard trips with agent, chain, time and the exact fix; read-only.
 It retains spent allowance after a restore; `--fix` never resets that accounting.
 Moved boards and database copies share a local identity and protected floor.
 Identity-less restores at an unseen path may under-count history, never

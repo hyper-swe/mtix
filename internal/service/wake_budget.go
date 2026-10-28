@@ -62,9 +62,24 @@ type wakeAdmission struct {
 }
 
 func (b *wakeBudgets) claim(ctx context.Context, key model.WakeKey) (model.WakeAttempt, bool, error) {
+	attempt, won, _, err := b.claimState(ctx, key)
+	return attempt, won, err
+}
+
+// wakeClaimState says why a claim was not won.
+type wakeClaimState int
+
+const (
+	claimSettled    wakeClaimState = iota // won, or the ledger row is terminal
+	claimBudgetHeld                       // the recipient budget or back-off refused the claim
+	claimInFlight                         // another claimant holds an unexpired unfinished claim
+)
+
+// claimState also reports whether the budget held the wake or another claim is in flight.
+func (b *wakeBudgets) claimState(ctx context.Context, key model.WakeKey) (model.WakeAttempt, bool, wakeClaimState, error) {
 	policy, err := b.policy(key.AgentID)
 	if err != nil {
-		return model.WakeAttempt{}, false, fmt.Errorf("load wake admission policy: %w", err)
+		return model.WakeAttempt{}, false, claimSettled, fmt.Errorf("load wake admission policy: %w", err)
 	}
 	admission := wakeAdmission{key: key, policy: policy}
 	err = b.state.UpdateWakeBudget(ctx, key.Recipient(), func(m *oplocal.WakeBudgetMirror, save func() error) error {
@@ -76,9 +91,16 @@ func (b *wakeBudgets) claim(ctx context.Context, key model.WakeKey) (model.WakeA
 	})
 	alertErr := b.reportAdmission(ctx, key.AgentID, admission)
 	if err != nil || alertErr != nil {
-		return model.WakeAttempt{}, false, fmt.Errorf("admit protected wake attempt: %w", errors.Join(err, alertErr))
+		return model.WakeAttempt{}, false, claimSettled, fmt.Errorf("admit protected wake attempt: %w", errors.Join(err, alertErr))
 	}
-	return admission.result.Attempt, admission.result.Won, nil
+	state := claimSettled
+	switch {
+	case admission.held != "":
+		state = claimBudgetHeld
+	case admission.result.InFlight:
+		state = claimInFlight
+	}
+	return admission.result.Attempt, admission.result.Won, state, nil
 }
 
 func (b *wakeBudgets) claimLocked(ctx context.Context, a *wakeAdmission) error {

@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
 )
@@ -128,7 +129,7 @@ func (svc *PromptService) ResolveAnnotation(
 ) error {
 	// One atomic store update by annotation ID (MTIX-148).
 	if err := svc.store.ResolveAnnotation(ctx, nodeID, annotationID, resolved); err != nil {
-		return fmt.Errorf("resolve annotation %s on node %s: %w", annotationID, nodeID, err)
+		return fmt.Errorf("resolve annotation %s on node %s: %w", format.EventID(annotationID), nodeID, err)
 	}
 
 	svc.broadcastPromptEvent(ctx, EventNodeUpdated, nodeID, "", nil)

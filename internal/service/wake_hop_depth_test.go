@@ -7,6 +7,7 @@ package service_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
@@ -31,11 +32,13 @@ func runHopChain(t *testing.T, last int, held bool) {
 	sent := 0
 	dispatcher, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: store, Alerts: alerts, BudgetState: state, Settings: state, Clock: time.Now, Send: func(context.Context, model.WakeAttempt) error { sent++; return nil }})
 	require.NoError(t, err)
+	var lastSeq int64
 	for depth := 0; depth <= last; depth++ {
 		require.NoError(t, prompts.AddAnnotation(t.Context(), node.ID, "chain event", "sender", "worker"))
 		entries, err := store.InboxList(t.Context(), "worker")
 		require.NoError(t, err)
 		entry := entries[len(entries)-1]
+		lastSeq = entry.Seq
 		events, err := store.ReadPendingEvents(t.Context(), 100)
 		require.NoError(t, err)
 		var payload struct {
@@ -58,6 +61,7 @@ func runHopChain(t *testing.T, last int, held bool) {
 		require.Len(t, rows, 1)
 		require.Equal(t, "wake.hop-depth", rows[0].Class)
 		require.Contains(t, rows[0].Fix, "mtix config set wake.max_hop_depth 33")
+		require.Contains(t, rows[0].Detail, fmt.Sprintf("[chain: event %d hop 33]", lastSeq), "the trip records its chain identity")
 	} else {
 		require.Empty(t, rows)
 	}

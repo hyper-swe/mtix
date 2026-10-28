@@ -406,8 +406,8 @@ context. A hook nudge into an already-running session carries no environment
 change, so replies there start at zero. The hop guard is an accident net, not
 an adversarial control. The scanner will leave a held wake unacknowledged and its alert will name
 the exact config command. The callable dispatcher enforces recipient budgets
-across boards and durable backoff; scanner discovery and hold re-arm remain
-separate features. Configuring settings does not install a wake route.
+across boards and durable backoff; held wakes re-arm in the same dispatcher; scanner discovery remains
+a separate feature. Configuring settings does not install a wake route.
 
 A local board identity keeps moved boards and ordinary database copies on the
 same protected counter floor, including moves back to an earlier path. Each
@@ -427,4 +427,11 @@ recipient limit holds before claim or send, preserving inbox events. The
 protected mirror retains spent allowance across restart or restore;
 `budget.rewind` in doctor text and JSON reports a rewound counter without
 resetting allowance, even with `--fix`.
+
+A held event stays unacknowledged in your inbox. When the hold lifts (the operator loosens
+the printed setting), the first pass of the callable dispatcher wakes it, from your registration's own
+high-water mark, and nothing is skipped. Once a dispatcher is wired in, your inbox calls and
+the operator's grant and setting changes also trigger that re-check; this build wires none,
+so nothing is delivered automatically. Ack after handling keeps back-off quiet and nothing is skipped.
+`wake.guard-trips` in doctor text and JSON lists recent loop-guard trips; it is read-only.
 

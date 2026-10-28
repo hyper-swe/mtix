@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -43,8 +44,8 @@ func TestRunSyncQuarantineList_TextAndJSON(t *testing.T) {
 	}))
 	out.Reset()
 	require.NoError(t, runSyncQuarantineList(ctx, &out))
-	require.Regexp(t, regexp.MustCompile(`(?m)^EVENT ID\s+NODE\s+OP\s+ATTEMPTS\s+FIRST SEEN\s+LAST ATTEMPT\s+REASON$`), out.String())
-	require.Regexp(t, regexp.MustCompile(`(?m)^"0193fb00-0000-7000-8000-000000000001"\s+TEST-3\s+link_dep\s+1\s+2026-09-25T01:00:00Z\s+2026-09-25T02:00:00Z\s+apply: FOREIGN KEY constraint failed$`), out.String())
+	require.Regexp(t, regexp.MustCompile(`(?m)^HANDLE\s+EVENT ID\s+NODE\s+OP\s+ATTEMPTS\s+FIRST SEEN\s+LAST ATTEMPT\s+REASON$`), out.String())
+	require.Regexp(t, regexp.MustCompile(`(?m)^`+service.QuarantineHandle("0193fb00-0000-7000-8000-000000000001")+`\s+"0193fb00-0000-7000-8000-000000000001"\s+TEST-3\s+link_dep\s+1\s+2026-09-25T01:00:00Z\s+2026-09-25T02:00:00Z\s+apply: FOREIGN KEY constraint failed$`), out.String())
 
 	out.Reset()
 	app.jsonOutput = true
@@ -56,7 +57,8 @@ func TestRunSyncQuarantineList_TextAndJSON(t *testing.T) {
 		"event_id": "0193fb00-0000-7000-8000-000000000001", "node_id": "TEST-3", "op_type": "link_dep",
 		"lamport_clock": float64(4), "source": "pull", "reason": "apply: FOREIGN KEY constraint failed",
 		"attempts": float64(1), "first_seen": "2026-09-25T01:00:00Z", "last_attempt": "2026-09-25T02:00:00Z",
-		"cli_version": "0.5.4",
+		"cli_version": "0.5.4", "handle": service.QuarantineHandle("0193fb00-0000-7000-8000-000000000001"),
+		"event_id_sha256": service.QuarantineHandleFull("0193fb00-0000-7000-8000-000000000001"),
 	}, got[0])
 }
 

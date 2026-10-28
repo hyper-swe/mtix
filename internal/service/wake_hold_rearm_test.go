@@ -23,6 +23,8 @@ type holdFixture struct {
 	key   model.WakeKey
 	sent  []int64
 	hops  map[int64]int64
+	// onSend, when set, runs inside the Send hook before the send is recorded.
+	onSend func(seq int64)
 }
 
 type hopTableStore struct {
@@ -49,6 +51,9 @@ func newHoldFixture(t *testing.T, limit string, highWater int64) *holdFixture {
 	f.d, err = service.NewWakeDispatcher(service.WakeDispatcherOptions{Store: hopTableStore{store, f.hops}, Alerts: alerts,
 		Settings: state, BudgetState: state, Clock: time.Now, Held: func(string) {},
 		Send: func(_ context.Context, a model.WakeAttempt) error {
+			if f.onSend != nil {
+				f.onSend(a.Key.EventSeq)
+			}
 			f.sent = append(f.sent, a.Key.EventSeq)
 			return nil
 		}})

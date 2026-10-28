@@ -264,6 +264,10 @@ func TestScanRawEventIDs_FlagsEveryWrapperAndPassesSafeRendering(t *testing.T) {
 		{"conflict winner field", `fmt.Fprintf(w, "winner=%s", r.EventIDWinner)`, 1},
 		{"conflict loser through a truncating helper", `fmt.Fprintf(w, "loser=%s", shortHashForCLI(r.EventIDLoser))`, 1},
 		{"conflict winner and loser in one call", `fmt.Fprintf(w, "%s %s", shortHashForCLI(r.EventIDWinner), r.EventIDLoser)`, 2},
+		{"held uid through truncation", `fmt.Fprintf(w, "%s", shortHashForCLI(c.HeldUID))`, 1},
+		{"incoming uid", `fmt.Sprint(c.IncomingUID)`, 1},
+		{"safe held uid", `fmt.Sprint(format.EventID(c.HeldUID))`, 0},
+		{"safe incoming uid", `fmt.Sprint(format.EventID(c.IncomingUID))`, 0},
 		{"suffix-form field", `fmt.Sprint(d.WinnerEventID)`, 1},
 		{"infix-form field", `fmt.Sprint(d.PriorEventIDWinner)`, 1},
 		{"conflict winner rendered safely", `fmt.Fprintf(w, "winner=%s", format.EventID(r.EventIDWinner))`, 0},
@@ -337,7 +341,7 @@ func rawEventIDUses(a ast.Expr, file string) []token.Pos {
 				return false
 			}
 		case *ast.SelectorExpr:
-			if strings.Contains(strings.ToLower(v.Sel.Name), "eventid") || (syncFile && v.Sel.Name == "id") {
+			if strings.Contains(strings.ToLower(v.Sel.Name), "eventid") || (syncFile && (v.Sel.Name == "id" || v.Sel.Name == "HeldUID" || v.Sel.Name == "IncomingUID")) {
 				out = append(out, v.Pos())
 			}
 		case *ast.Ident:

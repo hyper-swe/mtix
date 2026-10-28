@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Inbox text, unclaim errors and the final error line render stored text safely (MTIX-187.7.13, MTIX-187.7.18).** The plain `mtix inbox` listing prints author and node id on one line and each body with its lines kept and indented, so a stored body cannot forge another entry or the ack line; invisible and control characters (the directional marks are kept) are removed. The unclaim refusal names a synced assignee through the same rule, `mtix context` prints its assembled prompt block with titles, annotation authors and dependency ids folded onto one line and every prompt and annotation line indented, so no stored line can start a heading of its own, and the final `error:` line strips control, escape and bidirectional characters while keeping its line breaks. `--json` still prints the exact stored text; `--format prompt` and `context` already quoted the body. New `format.SafeBlock` is the multi-line form of `format.SafeLine`.
+
 - **Terminal output normalizes titles and assignees (MTIX-187.7.4).** `mtix show`, `list`, `ready`, `search`, `tree`, `progress`, `context`, `create` and `decompose --dry-run` no longer print control characters, escape sequences, carriage returns, bidirectional controls or zero-width characters from a title or assignee; tabs and line breaks become spaces, printable non-ASCII text stays readable, and truncated titles are cut on character boundaries instead of mid-character. `--json` still prints the exact stored text.
 
 ### Added

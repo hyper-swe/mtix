@@ -147,6 +147,9 @@ func waitInbox(ctx context.Context, agent string, timeout time.Duration) ([]sqli
 	return events, err
 }
 
+// inboxBodyIndent indents continuation lines of an inbox body under its entry.
+const inboxBodyIndent = "    "
+
 // writeInbox renders the inbox in the selected shape: agent-ready formats
 // (MTIX-56.8), JSON, or the human listing.
 func writeInbox(agent, format string, events []sqlite.InboxEvent) error {
@@ -183,7 +186,11 @@ func writeInbox(agent, format string, events []sqlite.InboxEvent) error {
 		return fmt.Errorf("render inbox: %w", err)
 	}
 	for _, e := range events {
-		out.WriteHuman("[%d] %s  %s: %s\n", e.Seq, e.NodeID, e.Author, e.Body)
+		// Author and node id are one-line text; the body keeps its lines but
+		// every continuation line is indented, so a stored body cannot forge
+		// another entry or the ack line (MTIX-187.7.13).
+		out.WriteHuman("[%d] %s  %s: %s\n", e.Seq, inboxformat.SafeLine(e.NodeID), inboxformat.SafeLine(e.Author),
+			indentContinuation(inboxformat.SafeBlock(e.Body), inboxBodyIndent))
 	}
 	out.WriteHuman("\nack with: mtix inbox ack %d --agent %s%s\n", events[len(events)-1].Seq, agent, boardArg)
 	return nil

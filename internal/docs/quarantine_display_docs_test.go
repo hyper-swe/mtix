@@ -8,6 +8,7 @@ package docs
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,11 @@ func TestDoctorRecoveryDisplay_Instructions(t *testing.T) {
 			require.NoError(t, err)
 			require.Contains(t, string(body), "always printable and typeable, even when the id holds NUL, invalid UTF-8 or shell metacharacters")
 			require.Contains(t, string(body), "report the original id to the operator")
-			require.Contains(t, string(body), "shows invalid UTF-8 bytes as U+FFFD; `event_id_sha256` and the handle always name the exact stored bytes")
+			if strings.HasSuffix(path, "agents.md.tmpl") || strings.HasSuffix(path, "claude.md.tmpl") || path == "docs/AGENTS.md" {
+				require.Contains(t, string(body), "shows invalid UTF-8 bytes as U+FFFD; the digest and the handle always name the exact stored bytes")
+			} else {
+				require.Contains(t, string(body), "shows invalid UTF-8 bytes as U+FFFD; `event_id_sha256` and the handle always name the exact stored bytes")
+			}
 		})
 	}
 }

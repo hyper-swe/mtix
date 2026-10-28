@@ -5,6 +5,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"go/ast"
@@ -13,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -133,37 +136,56 @@ func TestRunSyncQuarantineList_HostileEventID_TextSafeAndJSONUnchanged(t *testin
 	require.True(t, found, "the stored id is listed unchanged")
 }
 
-// TestEventIDPrints_NoRawEventIDInFormattedText covers the print sites a unit
-// test cannot reach cheaply (batch apply, admit, renumber, hold encode and the
-// sweep resume lines): no formatting call in cmd/mtix may take an event id
-// field, raw or through oneLine, as an argument. They go through
-// format.EventID. A site that bypasses the helper fails this test.
+// TestEventIDPrints_NoRawEventIDInFormattedText backs the behavioural tests
+// with a scan of cmd/mtix: no formatting call (fmt.Errorf, Fprint*, Sprint*,
+// Print*) may carry an event id, in any wrapper (oneLine, string, strings.*,
+// concatenation), unless it sits directly inside format.EventID. An event id
+// is a selector or identifier named like one (EventID, WinnerEventID, eventID,
+// or the id fields and locals listed in eventIDNames). The scan must see
+// files, formatting calls and format.EventID calls, so it cannot pass by
+// finding nothing.
 func TestEventIDPrints_NoRawEventIDInFormattedText(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	require.NoError(t, err)
 	fset := token.NewFileSet()
 	var bad []string
+	scanned, calls, safe := 0, 0, 0
 	for _, f := range files {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
 		}
+		scanned++
 		parsed, perr := parser.ParseFile(fset, f, nil, 0)
 		require.NoError(t, perr)
 		ast.Inspect(parsed, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
-			if !ok || !isFormattingCall(call) {
+			if !ok {
 				return true
 			}
+			if isFormatEventIDCall(call) {
+				safe++
+			}
+			if !isFormattingCall(call) {
+				return true
+			}
+			calls++
 			for _, a := range call.Args {
-				if rawEventIDArg(a) {
-					bad = append(bad, fset.Position(a.Pos()).String())
+				for _, pos := range rawEventIDUses(a, f) {
+					bad = append(bad, fset.Position(pos).String())
 				}
 			}
 			return true
 		})
 	}
+	require.Greater(t, scanned, 50, "the scan must see the package")
+	require.Greater(t, calls, 100, "the scan must see formatting calls")
+	require.Greater(t, safe, 20, "the scan must see format.EventID calls")
 	require.Empty(t, bad, "event ids must be rendered with format.EventID in formatted text")
 }
+
+// eventIDNames are the identifiers and field names that hold a sync event id
+// where the name alone does not say so.
+var eventIDNames = map[string]bool{"eventID": true, "creation": true, "acceptedID": true}
 
 func isFormattingCall(call *ast.CallExpr) bool {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
@@ -171,23 +193,62 @@ func isFormattingCall(call *ast.CallExpr) bool {
 		return false
 	}
 	switch sel.Sel.Name {
-	case "Errorf", "Fprintf", "Sprintf", "Printf":
+	case "Errorf", "Fprintf", "Sprintf", "Printf", "Fprint", "Fprintln", "Sprint", "Sprintln", "Print", "Println":
 		return true
 	}
 	return false
 }
 
-// rawEventIDArg reports whether a is an event id field (EventID, WinnerEventID,
-// MatchedEventID) used as is or wrapped in oneLine.
-func rawEventIDArg(a ast.Expr) bool {
-	if call, ok := a.(*ast.CallExpr); ok {
-		if id, isIdent := call.Fun.(*ast.Ident); isIdent && id.Name == "oneLine" && len(call.Args) == 1 {
-			return rawEventIDArg(call.Args[0])
-		}
+// rawIDAllowed are files whose formatted ids are not display text of event
+// ids: sync.go prints node ids; sync_push_hold_rule.go builds the stored hold
+// reasons that heldFor parses back, which stay raw by design and are rendered
+// at print time by displayHoldReason.
+var rawIDAllowed = map[string]bool{"sync.go": true, "sync_push_hold_rule.go": true}
+
+func isQuoteToASCII(call *ast.CallExpr) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "QuoteToASCII" {
 		return false
 	}
-	sel, ok := a.(*ast.SelectorExpr)
-	return ok && strings.HasSuffix(sel.Sel.Name, "EventID")
+	x, ok := sel.X.(*ast.Ident)
+	return ok && x.Name == "strconv"
+}
+
+func isFormatEventIDCall(call *ast.CallExpr) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != "EventID" {
+		return false
+	}
+	x, ok := sel.X.(*ast.Ident)
+	return ok && x.Name == "format"
+}
+
+// rawEventIDUses returns the positions in a where an event id appears
+// outside a format.EventID call, however it is wrapped or joined.
+func rawEventIDUses(a ast.Expr, file string) []token.Pos {
+	if rawIDAllowed[file] {
+		return nil
+	}
+	syncFile := strings.HasPrefix(file, "sync_")
+	var out []token.Pos
+	ast.Inspect(a, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.CallExpr:
+			if isFormatEventIDCall(v) || isQuoteToASCII(v) {
+				return false
+			}
+		case *ast.SelectorExpr:
+			if strings.HasSuffix(strings.ToLower(v.Sel.Name), "eventid") || (syncFile && v.Sel.Name == "id") {
+				out = append(out, v.Pos())
+			}
+		case *ast.Ident:
+			if eventIDNames[v.Name] || (syncFile && v.Name == "id") {
+				out = append(out, v.Pos())
+			}
+		}
+		return true
+	})
+	return out
 }
 
 // hostileRaw is ackCLIRaw carrying hostileEventID as its event_id, so the
@@ -197,4 +258,123 @@ func hostileRaw(t *testing.T) string {
 	id, err := json.Marshal(hostileEventID)
 	require.NoError(t, err)
 	return strings.Replace(ackCLIRaw, `"event_id":"`+ackCLIEventID+`"`, `"event_id":`+string(id), 1)
+}
+
+// fakeRenumberPusher answers every push with one renumber request for a
+// hostile event id and nothing accepted.
+type fakeRenumberPusher struct{}
+
+func (fakeRenumberPusher) PushEventsResult(context.Context, []*model.SyncEvent) (transport.PushResult, error) {
+	return transport.PushResult{Renumbers: []transport.RenumberRequired{{EventID: hostileEventID}}}, nil
+}
+
+func TestPushBatch_HostileRenumberEventID_RendersPrintableASCII(t *testing.T) {
+	initTestApp(t)
+	_, _, err := pushBatch(t.Context(), &bytes.Buffer{}, fakeRenumberPusher{}, app.store, nil, 1)
+	require.Error(t, err)
+	// Only this layer's text: the store's own "renumber uid" error is the
+	// MTIX-187.4.3 surface.
+	mine, _, _ := strings.Cut(err.Error(), "(batch 1): ")
+	requirePrintableASCII(t, mine, hostileEventID)
+}
+
+func TestReportReleased_HostileEventID_RendersPrintableASCII(t *testing.T) {
+	var out bytes.Buffer
+	reportReleased(&out, sqlite.HeldPushEvent{EventID: hostileEventID, NodeID: "N-1", OpType: "claim"},
+		holdDependsPrefix+hostileEventID+" (N-1)")
+	requirePrintableASCII(t, out.String(), hostileEventID)
+	require.Len(t, strings.Split(strings.TrimRight(out.String(), "\n"), "\n"), 1)
+}
+
+func TestAdmitPulledEvent_HostileEventIDOnLocalFailure_RendersPrintableASCII(t *testing.T) {
+	initTestApp(t)
+	e := &model.SyncEvent{EventID: hostileEventID}
+	err := app.store.WithTx(t.Context(), func(tx *sql.Tx) error {
+		cancelled, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, aerr := admitPulledEvent(cancelled, tx, testIngest(nil), e)
+		return aerr
+	})
+	require.Error(t, err)
+	requirePrintableASCII(t, err.Error(), hostileEventID)
+}
+
+func TestApplyBatch_HostileEventIDOnApplyFailure_RendersPrintableASCII(t *testing.T) {
+	initTestApp(t)
+	events := offlineEvents(t)
+	events[1].EventID = hostileEventID
+	err := applyBatch(t.Context(), testIngest(nil), app.store, events[1:2])
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errCloneRefused, "this must be the apply failure, not the clock refusal")
+	require.Contains(t, err.Error(), "apply ")
+	requirePrintableASCII(t, err.Error(), hostileEventID)
+}
+
+func TestPageCursorAdvance_HostileEventIDs_RenderPrintableASCII(t *testing.T) {
+	c := newPageCursor(transport.PullCursor{Lamport: 5, EventID: hostileEventID})
+	err := c.advance([]*model.SyncEvent{{LamportClock: 3, EventID: hostileEventID + "-end"}})
+	require.ErrorIs(t, err, errPageNotAfterCursor)
+	requirePrintableASCII(t, err.Error(), hostileEventID)
+	require.Contains(t, err.Error(), format.EventID(hostileEventID+"-end"))
+}
+
+func TestDisplayHoldReason_DependentHold_RendersIDAndKeepsStoredReason(t *testing.T) {
+	raw := holdDependsPrefix + hostileEventID + " (N-é)"
+	// The id has a space-free body here; the rule cuts at the first space.
+	id, ok := heldDependencyID(raw)
+	require.True(t, ok)
+	got := displayHoldReason(raw)
+	require.Contains(t, got, format.EventID(id))
+	require.NotContains(t, got, "\x1b")
+	b := &blocker{eventID: "ev-1", nodeID: "N-1"}
+	stored := b.reason()
+	require.Equal(t, holdDependsPrefix+"ev-1 (N-1)", stored, "the stored reason keeps the raw id: heldFor parses it")
+	bs := newBlockers()
+	bs.add(b, "")
+	require.True(t, bs.heldFor(stored))
+	require.Equal(t, holdDependsPrefix+format.EventID("ev-1")+" (N-1)", displayHoldReason(stored))
+	require.Equal(t, stored, b.reason(), "displaying does not change the stored value")
+}
+
+func TestReportHolds_DependentHold_ShowsIDSafelyAndStoredReasonIntact(t *testing.T) {
+	stored := holdDependsPrefix + "ev-é-1 (N-1)"
+	h := sqlite.QuarantinedEvent{EventID: "ev-2", NodeID: "N-2", OpType: "claim", Reason: stored}
+	var out bytes.Buffer
+	reportHolds(&out, []sqlite.QuarantinedEvent{h})
+	requirePrintableASCII(t, out.String(), "ev-2")
+	require.Contains(t, out.String(), format.EventID("ev-é-1"))
+	require.Equal(t, holdDependsPrefix+"ev-é-1 (N-1)", h.Reason, "the held row is not rewritten")
+}
+
+func TestQuarantineTable_DependentHoldReason_ShowsIDSafely(t *testing.T) {
+	q := service.QuarantinedEvent{EventID: "ev-2", NodeID: "N-2", OpType: "claim", Source: "push",
+		Reason: holdDependsPrefix + "ev-é-1 (N-1)"}
+	var out bytes.Buffer
+	require.NoError(t, printQuarantineTable(&out, []service.QuarantinedEvent{q}))
+	requirePrintableASCII(t, out.String(), "ev-2")
+	require.Contains(t, out.String(), format.EventID("ev-é-1"))
+}
+
+func TestCheckHeldPushEvents_DependentHoldReason_ShowsIDSafely(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, app.store.WithTx(t.Context(), func(tx *sql.Tx) error {
+		return sqlite.QuarantineEvent(t.Context(), tx, sqlite.QuarantinedEvent{
+			EventID: "ev-2", Source: "push", RawEvent: `{"node_id":"TEST-2","op_type":"claim"}`,
+			Reason: holdDependsPrefix + "ev-é-1 (TEST-1)", FirstSeen: "2026-03-14T10:00:00Z", LastAttempt: "2026-03-14T10:00:00Z",
+		})
+	}))
+	ok, detail := checkHeldPushEvents(t.Context(), app.store)
+	require.False(t, ok)
+	require.Contains(t, detail, format.EventID("ev-é-1"))
+	require.NotContains(t, detail, "é")
+}
+
+func TestCheckPulledEvent_HostileFutureStampedID_WarnsPrintableASCII(t *testing.T) {
+	var warn bytes.Buffer
+	in := testIngest(&warn)
+	future := &model.SyncEvent{EventID: hostileEventID, ProjectPrefix: "TEST", AuthorID: "peer", AuthorMachineHash: "0123456789abcdef",
+		LamportClock: 1, NodeID: "TEST-1", OpType: model.OpCreateNode, WallClockTS: in.now().Add(72 * time.Hour).UnixMilli(),
+		VectorClock: map[string]int64{}, Payload: json.RawMessage(`{"title":"t"}`)}
+	require.NoError(t, checkPulledEvent(in, future, 0))
+	requirePrintableASCII(t, warn.String(), hostileEventID)
 }

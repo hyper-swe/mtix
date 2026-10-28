@@ -181,7 +181,7 @@ func checkPulledEvent(in pullIngest, e *model.SyncEvent, local int64) error {
 	for _, id := range res.FutureTimestamps {
 		fmt.Fprintf(in.stderr,
 			"WARN: pull: event %s is stamped more than 24h ahead of this machine's clock (wall_clock_ts %s); applying it (check this machine's clock)\n",
-			oneLine(id), time.UnixMilli(e.WallClockTS).UTC().Format(time.RFC3339))
+			format.EventID(id), time.UnixMilli(e.WallClockTS).UTC().Format(time.RFC3339))
 	}
 	return nil
 }
@@ -462,5 +462,5 @@ func refuseBehindQuarantinedCreate(ctx context.Context, tx *sql.Tx, e *model.Syn
 	if creation == "" {
 		return nil, nil
 	}
-	return fmt.Errorf("%w %s", sqlite.ErrBehindQuarantinedCreate, creation), nil
+	return fmt.Errorf("%w %s", sqlite.ErrBehindQuarantinedCreate, format.EventID(creation)), nil
 }

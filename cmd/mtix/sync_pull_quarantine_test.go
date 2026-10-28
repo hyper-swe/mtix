@@ -209,7 +209,7 @@ func TestPull_FutureStampedHubEvent_AppliedWithWarning(t *testing.T) {
 	require.NoError(t, err, "the event applied")
 	require.Empty(t, quarantined(t))
 	require.Contains(t, stderr.String(),
-		"WARN: pull: event "+ahead.EventID+" is stamped more than 24h ahead of this machine's clock")
+		"WARN: pull: event "+format.EventID(ahead.EventID)+" is stamped more than 24h ahead of this machine's clock")
 }
 
 // TestPull_ExtremeLamport_QuarantinedClockUnchanged: an event stamped more

@@ -158,7 +158,7 @@ func recordHolds(ctx context.Context, store holdWriter, d batchHolds) ([]*model.
 func reportHolds(stderr io.Writer, holds []sqlite.QuarantinedEvent) {
 	for _, h := range holds {
 		fmt.Fprintf(stderr, "push: held event %s (%s %s), not pushed: %s. See mtix sync doctor\n",
-			format.EventID(h.EventID), oneLine(h.NodeID), oneLine(h.OpType), h.Reason)
+			format.EventID(h.EventID), oneLine(h.NodeID), oneLine(h.OpType), displayHoldReason(h.Reason))
 	}
 }
 

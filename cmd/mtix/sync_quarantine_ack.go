@@ -76,8 +76,8 @@ func runSyncQuarantineAcknowledge(ctx context.Context, w io.Writer, eventID, rea
 // quarantineDisplayReason appends the retained receipt without changing the original reason (MTIX-187.2).
 func quarantineDisplayReason(q service.QuarantinedEvent) string {
 	if q.Acknowledgement == nil {
-		return q.Reason
+		return displayHoldReason(q.Reason)
 	}
 	a := q.Acknowledgement
-	return fmt.Sprintf("%s; acknowledged by %s at %s; raw SHA256 %s; reason: %s", q.Reason, a.Actor, a.AcknowledgedAt, a.RawEventSHA256, a.Reason)
+	return fmt.Sprintf("%s; acknowledged by %s at %s; raw SHA256 %s; reason: %s", displayHoldReason(q.Reason), a.Actor, a.AcknowledgedAt, a.RawEventSHA256, a.Reason)
 }

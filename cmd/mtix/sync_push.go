@@ -390,7 +390,7 @@ func markPushed(ctx context.Context, store *sqlite.Store, acceptedIDs []string) 
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE sync_events SET sync_status = 'pushed' WHERE event_id = ?`, id,
 			); err != nil {
-				return fmt.Errorf("mark %s pushed: %w", id, err)
+				return fmt.Errorf("mark %s pushed: %w", format.EventID(id), err)
 			}
 		}
 		return nil

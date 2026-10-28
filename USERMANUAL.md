@@ -2177,9 +2177,12 @@ pull's position either, so later changes keep arriving.
   In text output every event id is shown double-quoted with control
   characters, escapes and non-ASCII text written as ASCII escapes (an
   ordinary id looks like `"0193fb00-0000-7000-8000-000000000001"`), so a
-  hostile id cannot reach the terminal. `--json` output and the stored id
-  are unchanged. This applies to the pull, push, clone, repair and
-  quarantine messages that name an event.
+  hostile id cannot reach the terminal. This covers the quarantine list and
+  acknowledgement, the pull, push, clone and repair messages that name an
+  event, and the event ids inside hold and quarantine reasons. The quoted
+  form is display only: take the exact id from the `--json` output. `--json` output and
+  the stored id are unchanged. Error text from the local store layer
+  can still show an id as stored.
 - **What to do.** Run `mtix sync pull` again first. An event waiting for
   a task or dependency target that has not been pushed yet applies once
   its teammate pushes it. An event that fails the size, shape or clock

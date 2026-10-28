@@ -27,6 +27,8 @@ func TestEventIDDisplay_InstructionsExplainQuotedIDs(t *testing.T) {
 			require.NoError(t, err)
 			require.Contains(t, string(body), phrase)
 			require.Contains(t, string(body), "--json")
+			require.NotContains(t, string(body), "without the quotes")
+			require.Contains(t, string(body), "display only")
 		})
 	}
 }

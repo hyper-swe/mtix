@@ -369,7 +369,7 @@ func stageLateEvents(ctx context.Context, st *sqlite.Store, staged []stagedLateE
 				`INSERT OR IGNORE INTO sync_sweep_pending (event_id, lamport_clock) VALUES (?, ?)`,
 				e.id, e.lamport,
 			); err != nil {
-				return fmt.Errorf("stage %s: %w", e.id, err)
+				return fmt.Errorf("stage %s: %w", format.EventID(e.id), err)
 			}
 		}
 		return upsertSweepMeta(ctx, tx, map[string]string{

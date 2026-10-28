@@ -2664,6 +2664,28 @@ the key authenticates the fleet rather than the individual peer, and
 records are authenticated but not encrypted. See
 [docs/SECURITY-MODEL.md](docs/SECURITY-MODEL.md).
 
+### Terminal display security
+
+Sync event IDs are opaque stored values. Terminal output quotes them as printable
+ASCII with backslash escapes; titles and assignees use the existing single-line
+sanitizer, and multiline ticket prose is sanitized before display. The terminal
+guard tests run the real binary over shared hostile fixtures for board queries,
+creation, decomposition previews, agent work, sync status, doctor and quarantine,
+including stderr failures. They reject invalid UTF-8, C0 controls except newline
+and tab, DEL, C1 controls, and escape/OSC sequences. Printable Unicode remains
+readable: a UTF-8 continuation byte is not itself a terminal control character.
+The syntax guard has limits. It covers fmt, cobra Print, log, slog and Write
+sinks in `cmd/mtix` (fmt only in `internal`), and the EventID, Title, NodeID,
+Reason, Assignee and UID-family fields as selectors. It follows local aliases,
+range variables and tuple results inside one function. It does not follow
+values returned by other helpers, struct fields assigned from raw text, or text
+built in a builder and printed later. Those paths rely on the real-binary test.
+Existing raw prints in `cmd/mtix` are recorded in the guard allowlist with the
+reason `tracked: MTIX-187.7.25` until they are fixed.
+
+Use structured `--json` output to inspect the stored record, rather than copying
+the rendered label back as an event ID.
+
 ### Peers whose workspace does not survive between sessions
 
 Some agent runtimes hand out a fresh, empty workspace every session. A

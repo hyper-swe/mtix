@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
 )
@@ -115,7 +116,7 @@ func runProgress(id string) error {
 		for _, c := range children {
 			cIcon := StatusIcon(string(c.Status))
 			out.WriteHuman("  %s %-12s %s %s\n",
-				cIcon, c.ID, ProgressBar(c.Progress, 10), Truncate(c.Title, 40))
+				cIcon, c.ID, ProgressBar(c.Progress, 10), Truncate(format.SafeLine(c.Title), 40))
 		}
 	}
 	return nil

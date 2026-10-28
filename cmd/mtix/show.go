@@ -57,8 +57,11 @@ overrides and isolates), zero-width characters and tag characters
 paragraph separator (U+2028, U+2029) become newlines, and
 leading blank lines and trailing whitespace are trimmed, so stored text
 cannot overwrite a line, restyle the terminal or display in a misleading
-order. Title and assignee still print as stored, control characters and
-newlines included. The directional marks (U+200E, U+200F, U+061C) are
+order. Title and assignee print on one line through the same rule (control
+characters, escapes, bidirectional controls, zero-width and tag characters
+and every other invisible format character removed; tabs, newlines and
+the line and paragraph separators become spaces; printable non-ASCII text
+stays readable). The directional marks (U+200E, U+200F, U+061C) are
 kept, so a lone mark can still change how digits are ordered. The
 --history list follows the same rule and prints each entry on one line,
 with line breaks shown as spaces. Quote exact text from --json.
@@ -177,7 +180,7 @@ func runShowWith(id string, opts showOptions) error {
 	// A provisional id is flagged so the reader knows its number is not yet
 	// settled and must not be externalized (ADR-003 §8).
 	out.WriteHuman("ID:       %s\n", format.AnnotateID(node.ID))
-	out.WriteHuman("Title:    %s\n", node.Title)
+	out.WriteHuman("Title:    %s\n", format.SafeLine(node.Title))
 	out.WriteHuman("Status:   %s\n", showStatus(node))
 	out.WriteHuman("Priority: %d\n", node.Priority)
 	out.WriteHuman("Type:     %s\n", node.NodeType)
@@ -185,7 +188,7 @@ func runShowWith(id string, opts showOptions) error {
 		out.WriteHuman("Issue type: %s\n", node.IssueType)
 	}
 	if node.Assignee != "" {
-		out.WriteHuman("Assignee: %s\n", node.Assignee)
+		out.WriteHuman("Assignee: %s\n", format.SafeLine(node.Assignee))
 	}
 	// Description and prompt are normalized and their continuation lines
 	// indented, so no stored line can pass for a label; one that normalizes
@@ -334,7 +337,7 @@ func runList(status, under, assignee, nodeType, priority, fields, changedSince, 
 			fmt.Sprintf("%s %s", icon, n.Status),
 			fmt.Sprintf("%d", n.Priority),
 			fmt.Sprintf("%.0f%%", n.Progress*100),
-			Truncate(n.Title, 50),
+			Truncate(format.SafeLine(n.Title), 50),
 		})
 	}
 	out.WriteTable(headers, rows)

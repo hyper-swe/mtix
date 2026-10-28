@@ -13,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 func TestBuiltBinaryLifecycle_ProcessExit_CleansOwnedDirectory(t *testing.T) {
@@ -64,7 +66,7 @@ func lifecycleChildEnvironment(t *testing.T, sandbox, tmp, mode string) []string
 	shim := "#!/bin/sh\nprintf 'build\\n' >> \"$MTIX_BINARY_BUILD_CALLS\"\n" + action
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "go"), []byte(shim), 0700))
 	env := []string{}
-	for _, value := range os.Environ() {
+	for _, value := range hostguard.ChildEnv(t, os.Environ()) {
 		if !strings.HasPrefix(value, "TMPDIR=") && !strings.HasPrefix(value, "PATH=") && !strings.HasPrefix(value, "MTIX_BINARY_CHILD=") {
 			env = append(env, value)
 		}

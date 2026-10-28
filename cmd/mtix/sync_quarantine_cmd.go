@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
@@ -47,11 +48,16 @@ func newSyncQuarantineListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List quarantined and held events (read-only)",
 		Long: `List the events held in the local quarantine, in Lamport clock order,
-then event id: event id, node, op, failed attempts, first seen, last
+then event id: handle, event id, node, op, failed attempts, first seen, last
 attempt and the reason the event was quarantined. --json adds the Lamport
-clock, the source (pull or sweep for a pulled event, push for an event
+clock, the event_id_sha256, the source (pull or sweep for a pulled event, push for an event
 push holds) and the mtix version that recorded it. Acknowledged rows show
 their retained local receipt, including author, reason, time and raw SHA256.
+
+The handle is at least 12 hex characters of the SHA-256 of the exact event
+id bytes (longer when two retained events share the shorter prefix): always printable and typeable, even when the id holds NUL, invalid
+UTF-8 or shell metacharacters. Use it with 'mtix sync quarantine acknowledge
+--handle'.
 
 Read-only and local: it never retries, removes or changes an event and
 does not contact the hub. 'mtix sync pull' retries every quarantined
@@ -103,10 +109,10 @@ func printQuarantineTable(w io.Writer, events []service.QuarantinedEvent) error 
 		return err
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "EVENT ID\tNODE\tOP\tATTEMPTS\tFIRST SEEN\tLAST ATTEMPT\tREASON")
+	fmt.Fprintln(tw, "HANDLE\tEVENT ID\tNODE\tOP\tATTEMPTS\tFIRST SEEN\tLAST ATTEMPT\tREASON")
 	for _, q := range events {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			oneLine(q.EventID), oneLine(q.NodeID), oneLine(q.OpType), strconv.Itoa(q.Attempts),
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			q.Handle, format.EventID(q.EventID), oneLine(q.NodeID), oneLine(q.OpType), strconv.Itoa(q.Attempts),
 			oneLine(q.FirstSeen), oneLine(q.LastAttempt), oneLine(quarantineDisplayReason(q)))
 	}
 	return tw.Flush()

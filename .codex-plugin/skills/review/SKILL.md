@@ -8,6 +8,7 @@ description: Review completed work against mtix task acceptance criteria and saf
 ## Review Process
 
 1. Run `mtix show <id> --json` to read the task's acceptance criteria
+   (`mtix show`, `list`, `ready`, `search`, `tree`, `progress`, `context`, `create` and `decompose --dry-run` print titles and assignees on one line: controls, escapes, bidirectional overrides and isolates and other invisible format characters are removed, line breaks become spaces, and the directional marks U+200E, U+200F and U+061C are kept; `--json` is the exact text)
 2. Run `mtix context <id>` to understand the full context chain
 3. Verify each acceptance criterion is met
 4. Check test coverage meets thresholds (90% overall)

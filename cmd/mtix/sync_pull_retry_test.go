@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
@@ -48,7 +49,7 @@ func TestPullThenSweep_CursorPassMissingNode_QuarantinedThenAppliedSamePull(t *t
 	require.Zero(t, got.pulled, "the cursor pass applied nothing")
 	require.Equal(t, 1, got.sweep.Recovered)
 	require.Equal(t, 2, got.retried, "the end-of-pull retry applied both edits")
-	require.Contains(t, stderr.String(), "quarantined event "+events[1].EventID)
+	require.Contains(t, stderr.String(), "quarantined event "+format.EventID(events[1].EventID))
 	require.Contains(t, stderr.String(), "2 quarantined events applied on retry; 0 still quarantined")
 	cursor, err := readLastPulledClock(ctx, app.store)
 	require.NoError(t, err)

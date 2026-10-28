@@ -12,6 +12,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -81,7 +82,7 @@ func advanceAppliedSequence(ctx context.Context, tx *sql.Tx, e *model.SyncEvent,
 		return nil
 	}
 	if err := advanceSequence(ctx, tx, e.ProjectPrefix, parentID, seq); err != nil {
-		return fmt.Errorf("apply create_node %s: %w", e.EventID, err)
+		return fmt.Errorf("apply create_node %s: %w", format.EventID(e.EventID), err)
 	}
 	return nil
 }

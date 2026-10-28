@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -417,7 +418,7 @@ func runAfterEach(tx *sql.Tx, e *model.SyncEvent,
 ) error {
 	for _, after := range afterEach {
 		if err := after(tx, e); err != nil {
-			return fmt.Errorf("after apply %s: %w", e.EventID, err)
+			return fmt.Errorf("after apply %s: %w", format.EventID(e.EventID), err)
 		}
 	}
 	return nil

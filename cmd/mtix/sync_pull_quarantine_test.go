@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -152,7 +153,7 @@ func TestPull_OversizedHubEvent_QuarantinedNotApplied(t *testing.T) {
 			q := requireQuarantinedAs(t, &bad, "pull", tt.wantReason)
 			require.Equal(t, 1, q.Attempts)
 			require.Zero(t, peerLamport(t), "a quarantined event never advances the local clock")
-			require.Contains(t, stderr.String(), "quarantined event "+bad.EventID)
+			require.Contains(t, stderr.String(), "quarantined event "+format.EventID(bad.EventID))
 			require.Empty(t, hub.fetched, "the late-event sweep leaves a quarantined event to the quarantine")
 			if !tt.clockRefused {
 				requireCursor(t, bad.LamportClock, "the cursor moves past a quarantined event")
@@ -208,7 +209,7 @@ func TestPull_FutureStampedHubEvent_AppliedWithWarning(t *testing.T) {
 	require.NoError(t, err, "the event applied")
 	require.Empty(t, quarantined(t))
 	require.Contains(t, stderr.String(),
-		"WARN: pull: event "+ahead.EventID+" is stamped more than 24h ahead of this machine's clock")
+		"WARN: pull: event "+format.EventID(ahead.EventID)+" is stamped more than 24h ahead of this machine's clock")
 }
 
 // TestPull_ExtremeLamport_QuarantinedClockUnchanged: an event stamped more
@@ -522,7 +523,7 @@ func TestSweepLateEvents_EventFailsApply_QuarantinedAndSweepCompletes(t *testing
 	node, err := app.store.GetNode(ctx, "TEST-9")
 	require.NoError(t, err)
 	require.Equal(t, "second edit", node.Description)
-	require.Contains(t, stderr.String(), "quarantined event "+bad.EventID+" (sweep pass)")
+	require.Contains(t, stderr.String(), "quarantined event "+format.EventID(bad.EventID)+" (sweep pass)")
 }
 
 // TestMissingLocalEventIDs_Quarantined_NotMissing: the sweep never stages a

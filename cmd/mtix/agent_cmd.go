@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -251,6 +252,6 @@ func runAgentWork(agentID string) error {
 	if app.jsonOutput {
 		return NewOutputWriter(true).WriteJSON(node)
 	}
-	fmt.Printf("%s is working on: %s — %s\n", agentID, node.ID, node.Title)
+	fmt.Printf("%s is working on: %s — %s\n", agentID, node.ID, format.SafeLine(node.Title))
 	return nil
 }

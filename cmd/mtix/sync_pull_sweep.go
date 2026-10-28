@@ -12,6 +12,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -181,10 +182,10 @@ func announceSweep(stderr io.Writer, window sweepWindow) {
 	case window.resuming && window.full:
 		fmt.Fprintf(stderr,
 			"late-event sweep: resuming the full hub event comparison after %s (started at hub time %s)\n",
-			window.from.EventID, started)
+			format.EventID(window.from.EventID), started)
 	case window.resuming:
 		fmt.Fprintf(stderr, "late-event sweep: resuming after %s (started at hub time %s)\n",
-			window.from.EventID, started)
+			format.EventID(window.from.EventID), started)
 	case window.full:
 		fmt.Fprintln(stderr,
 			"late-event sweep: first sweep on this store; comparing the full hub event history once")
@@ -368,7 +369,7 @@ func stageLateEvents(ctx context.Context, st *sqlite.Store, staged []stagedLateE
 				`INSERT OR IGNORE INTO sync_sweep_pending (event_id, lamport_clock) VALUES (?, ?)`,
 				e.id, e.lamport,
 			); err != nil {
-				return fmt.Errorf("stage %s: %w", e.id, err)
+				return fmt.Errorf("stage %s: %w", format.EventID(e.id), err)
 			}
 		}
 		return upsertSweepMeta(ctx, tx, map[string]string{

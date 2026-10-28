@@ -11,6 +11,8 @@ Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whit
 
 `mtix create --type` accepts bug, feature, task, chore, refactor, test or doc (omitted = unset), independently of depth-derived hierarchy; `--assign <agent>` claims atomically as `in_progress`, overrides parent auto-claim and preserves the creator as author. MCP/REST/gRPC use `issue_type` and `assignee`. `mtix update --type` changes work classification (empty clears, omitted preserves). `mtix list --type` filters hierarchy; `mtix list --issue-type` filters work classification. See the planning skill for the full routine.
 
+Terminal output (`show`, `list`, `ready`, `search`, `tree`, `progress`, `context`, `create`, `decompose --dry-run`) prints titles and assignees on one line: control characters, escapes, bidirectional overrides and isolates, zero-width and other invisible format characters are removed, line breaks become spaces, and the directional marks (U+200E, U+200F, U+061C) are kept. Use `--json` for the exact stored text, for example when quoting a title.
+
 
 
 ## Overview

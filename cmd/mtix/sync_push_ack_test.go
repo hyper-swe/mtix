@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -280,7 +281,7 @@ func TestPushLoop_IDOnHubWithOtherContent_HeldNotAcknowledged(t *testing.T) {
 			require.Equal(t, "push", q.Source)
 			require.True(t, strings.HasPrefix(q.Reason, holdRefusedPrefix+"the hub already holds this event id with a different payload"), q.Reason)
 			require.Contains(t, q.Reason, "TEST-1 create_node")
-			require.Contains(t, stderr.String(), "push: held event "+ids[0])
+			require.Contains(t, stderr.String(), "push: held event "+format.EventID(ids[0]))
 			pass, detail := checkHeldPushEvents(ctx, app.store)
 			require.False(t, pass)
 			require.Contains(t, detail, "the hub already holds this event id with a different payload")

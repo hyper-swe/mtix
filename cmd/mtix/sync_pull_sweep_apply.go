@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -129,7 +130,7 @@ func unstageLateEvents(ctx context.Context, st *sqlite.Store, ids []string) erro
 			// Drop one staged id that needs no apply.
 			if _, err := tx.ExecContext(ctx,
 				`DELETE FROM sync_sweep_pending WHERE event_id = ?`, id); err != nil {
-				return fmt.Errorf("unstage %s: %w", id, err)
+				return fmt.Errorf("unstage %s: %w", format.EventID(id), err)
 			}
 		}
 		return nil

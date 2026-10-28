@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -221,13 +222,13 @@ func applyBatch(ctx context.Context, in pullIngest, store *sqlite.Store, events 
 		for _, e := range events {
 			local, err := sqlite.LocalLamport(ctx, tx)
 			if err != nil {
-				return fmt.Errorf("check %s: %w", e.EventID, err)
+				return fmt.Errorf("check %s: %w", format.EventID(e.EventID), err)
 			}
 			if refused := checkPulledEvent(in, e, local); refused != nil {
 				return cloneRefusal(e, refused, true)
 			}
 			if err := store.IdempotentApply(ctx, tx, e); err != nil {
-				return fmt.Errorf("apply %s: %w", e.EventID, err)
+				return fmt.Errorf("apply %s: %w", format.EventID(e.EventID), err)
 			}
 		}
 		return nil

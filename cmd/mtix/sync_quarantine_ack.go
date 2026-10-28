@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
@@ -65,7 +66,7 @@ func runSyncQuarantineAcknowledge(ctx context.Context, w io.Writer, eventID, rea
 		status = "already acknowledged; first receipt stands; supplied reason was not recorded; event"
 	}
 	_, err = fmt.Fprintf(w, "%s %s on this replica; retained, unapplied; author %s; at %s; raw SHA256 %s; reason: %s\n",
-		status, oneLine(a.EventID), oneLine(a.Actor), oneLine(a.AcknowledgedAt), oneLine(a.RawEventSHA256), oneLine(a.Reason))
+		status, format.EventID(a.EventID), oneLine(a.Actor), oneLine(a.AcknowledgedAt), oneLine(a.RawEventSHA256), oneLine(a.Reason))
 	if err != nil {
 		return fmt.Errorf("write quarantine acknowledgement receipt: %w", err)
 	}
@@ -75,8 +76,8 @@ func runSyncQuarantineAcknowledge(ctx context.Context, w io.Writer, eventID, rea
 // quarantineDisplayReason appends the retained receipt without changing the original reason (MTIX-187.2).
 func quarantineDisplayReason(q service.QuarantinedEvent) string {
 	if q.Acknowledgement == nil {
-		return q.Reason
+		return displayHoldReason(q.Reason)
 	}
 	a := q.Acknowledgement
-	return fmt.Sprintf("%s; acknowledged by %s at %s; raw SHA256 %s; reason: %s", q.Reason, a.Actor, a.AcknowledgedAt, a.RawEventSHA256, a.Reason)
+	return fmt.Sprintf("%s; acknowledged by %s at %s; raw SHA256 %s; reason: %s", displayHoldReason(q.Reason), a.Actor, a.AcknowledgedAt, a.RawEventSHA256, a.Reason)
 }

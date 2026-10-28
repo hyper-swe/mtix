@@ -2173,6 +2173,19 @@ pull's position either, so later changes keep arriving.
   `reason` is why the event was first quarantined; `attempts` counts
   the failed tries; `source` (in `--json`) is `pull` (the regular fetch)
   or `sweep` (the late-event sweep).
+
+  In text output every event id is shown double-quoted with control
+  characters, escapes and non-ASCII text written as ASCII escapes (an
+  ordinary id looks like `"0193fb00-0000-7000-8000-000000000001"`), so a
+  hostile id cannot reach the terminal. This covers the quarantine list and
+  acknowledgement, the pull, push, clone and repair messages that name an
+  event, and the id inside the "depends on held create" and "depends on a
+  quarantined create" reasons. The quoted form is display only: take the
+  exact id from the `--json` output. `--json` output and the stored id are
+  unchanged. Refusal reasons written by the event validator (tracked in
+  MTIX-187.4.4), error text from the local store layer, and rows recorded
+  by older versions can still show an id as received, so always take the
+  exact id from `--json`.
 - **What to do.** Run `mtix sync pull` again first. An event waiting for
   a task or dependency target that has not been pushed yet applies once
   its teammate pushes it. An event that fails the size, shape or clock

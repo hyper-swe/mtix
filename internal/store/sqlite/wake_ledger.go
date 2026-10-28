@@ -88,7 +88,8 @@ func writeWakeAttempt(ctx context.Context, tx *sql.Tx, attempt model.WakeAttempt
 	result, err := tx.ExecContext(ctx, `INSERT INTO wake_ledger
 		(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome,attempt_token) VALUES(?,?,?,?,?,?,?,?)
 		ON CONFLICT(agent_id,host_id,uid,event_seq,epoch) DO UPDATE SET
-		claimed_at=excluded.claimed_at,outcome=excluded.outcome,attempt_token=excluded.attempt_token`,
+		claimed_at=excluded.claimed_at,outcome=excluded.outcome,attempt_token=excluded.attempt_token,
+		route='',reason='',outcome_at=''`,
 		k.AgentID, k.HostID, k.UID, k.EventSeq, k.Epoch, attempt.ClaimedAt.Format(time.RFC3339Nano), model.WakeClaimed, attempt.Token)
 	return checkWakeWrite(result, err, "write wake attempt")
 }

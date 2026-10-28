@@ -1,0 +1,38 @@
+# Exact AST call fingerprints; no file or function-wide exemptions.
+# Review each reason when a call changes; stale entries fail the test.
+cmd/mtix/output.go:TreeLine:Sprintf:24104b50ef0477fb | title is reassigned through format.SafeLine before either branch; real-binary tree test covers the helper.
+cmd/mtix/output.go:TreeLine:Sprintf:a9df3c512d273616 | title is reassigned through format.SafeLine before either branch; real-binary tree test covers the helper.
+cmd/mtix/sync_doctor_quarantine_ack.go:quarantineAcknowledgementCommand:Sprintf:238a65bf030c271a | text mode uses QuoteToASCII or requires recoveryHintNeedsInspection=false before shell quoting; JSON preserves the command record. Safe handles belong to child C.
+cmd/mtix/sync_doctor_quarantine_ack.go:quarantineAcknowledgementCommand:Sprintf:362e77280acd3a4a | text mode uses QuoteToASCII or requires recoveryHintNeedsInspection=false before shell quoting; JSON preserves the command record. Safe handles belong to child C.
+cmd/mtix/sync_harden.go:printHardenFindings:Fprintln:3d559c98a0af9044 | title is a static section heading supplied only by the four literal call sites in this file, not ticket text.
+cmd/mtix/sync_push_hold_rule.go:linkReason:Errorf:cdf3145a14b6759b | internal persisted dependency marker must preserve event-id bytes for heldDependencyID; quarantineReason bounds it and terminal quarantine/status writers sanitize it.
+cmd/mtix/sync_push_hold_rule.go:reason:Errorf:89d8af62092a342a | internal persisted dependency marker must preserve event-id bytes for heldDependencyID; quarantineReason bounds it and terminal quarantine/status writers sanitize it.
+internal/service/context_service.go:assemblePrompt:Fprintf:b4b3ca9f38b5c436 | assembles the data/API prompt; CLI runContext applies displayText at the terminal boundary. JSON retains stored text.
+internal/service/decompose.go:prepareDecomposeChildren:Errorf:251aba9d7de8cf11 | title uses %q, which escapes control and invisible characters in Go quoted-string syntax.
+internal/service/truncation.go:buildEntrySection:Fprintf:b4b3ca9f38b5c436 | assembles the data/API prompt; CLI runContext applies displayText at the terminal boundary. JSON retains stored text.
+internal/service/truncation.go:buildTitleOnlySection:Sprintf:262fa275fdea6714 | assembles the data/API prompt; CLI runContext applies displayText at the terminal boundary. JSON retains stored text.
+internal/store/sqlite/import_title_identity.go:refuseTitleMismatch:Errorf:60bff35e88e35b81 | both titles use %q, which escapes control and invisible characters in Go quoted-string syntax.
+internal/store/sqlite/import_workflow_report.go:writeWorkflowConflicts:Fprintf:33e5c7d6f24c9e83 | title uses %q, which escapes control and invisible characters in Go quoted-string syntax.
+cmd/mtix/relay_phase.go:runRelayPhase:Fprintf:7daed9048802c0c9 | tracked: MTIX-187.7.25
+cmd/mtix/sync.go:printAutoImportState:Printf:42e26db5d69953aa | tracked: MTIX-187.7.25
+cmd/mtix/sync_collisions.go:printCollisions:Fprintf:396318e5950a5956 | tracked: MTIX-187.7.25
+cmd/mtix/sync_collisions.go:printCollisions:Fprintf:fdc222d34c671b3b | tracked: MTIX-187.7.25
+cmd/mtix/sync_collisions.go:runSyncCollisionsResolve:Errorf:f318a3be8f418ce3 | tracked: MTIX-187.7.25
+cmd/mtix/sync_collisions.go:runSyncCollisionsResolve:Fprintf:181cf041b7ca3c4f | tracked: MTIX-187.7.25
+cmd/mtix/sync_collisions.go:runSyncCollisionsResolve:Fprintf:73fcc02deae0285f | tracked: MTIX-187.7.25
+cmd/mtix/sync_conflicts.go:checkResolveTarget:Errorf:2478afcc5ff8e9be | tracked: MTIX-187.7.25
+cmd/mtix/sync_conflicts.go:checkResolveTarget:Errorf:fe3efdb0fd90bb75 | tracked: MTIX-187.7.25
+cmd/mtix/sync_conflicts.go:printConflictsTable:Fprintf:2955868779c6ae4d | tracked: MTIX-187.7.25
+cmd/mtix/sync_conflicts.go:printResolveResult:Fprintf:bff076508c618da8 | tracked: MTIX-187.7.25
+cmd/mtix/sync_conflicts.go:printResolveResult:Fprintln:962426f84fe2becc | prints the encoding/json body, which escapes control characters.
+cmd/mtix/sync_doctor_node_ids.go:invalidNodeIDDetail:Sprintf:442957adbffebb5c | tracked: MTIX-187.7.25
+cmd/mtix/sync_pull_quarantine.go:retryQuarantinedEvents:Fprintf:2712cc30509683b2 | integer counts from a tuple result; no stored text is printed.
+cmd/mtix/sync_pull_quarantine.go:retryQuarantinedEvents:Fprintf:94549611c9be9ede | integer counts from a tuple result; no stored text is printed.
+cmd/mtix/sync_pull_sweep_apply.go:applyStagedChunk:Errorf:22a7764a7a370313 | tracked: MTIX-187.7.25
+cmd/mtix/sync_quarantine_ack.go:quarantineDisplayReason:Sprintf:83b7a4f3b112c295 | its only caller, printQuarantineTable, passes the result through oneLine (sync_quarantine_cmd.go); no other caller.
+cmd/mtix/sync_relay.go:printRelayPass:Fprintf:b452dc5aa4dc6cda | tracked: MTIX-187.7.25
+cmd/mtix/sync_relay.go:printRelayPass:Fprintf:d7500dda6a3ad741 | tracked: MTIX-187.7.25
+cmd/mtix/sync_repair.go:printStatusRepairDiffs:Fprintf:34255af5c61b7b4c | tracked: MTIX-187.7.25
+cmd/mtix/sync_repair_uids.go:printUIDRepairReports:Fprintf:83d2edd0b6d4a592 | tracked: MTIX-187.7.25
+cmd/mtix/sync_status.go:printStatusTable:Fprintf:80b20b622adb877b | tracked: MTIX-187.7.25
+cmd/mtix/sync_status.go:printStatusTable:Sprintf:03d153a781dbaca2 | tracked: MTIX-187.7.25

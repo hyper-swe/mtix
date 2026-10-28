@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -51,7 +52,7 @@ func (a syncApplier) dispatchApply(ctx context.Context, tx *sql.Tx, e *model.Syn
 func (a syncApplier) applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.CreateNodePayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		return fmt.Errorf("apply create_node %s: decode payload: %w", e.EventID, err)
+		return fmt.Errorf("apply create_node %s: decode payload: %w", format.EventID(e.EventID), err)
 	}
 	// The parent is named by number: refuse one a pending local task holds
 	// (MTIX-95.37).
@@ -109,7 +110,7 @@ func (a syncApplier) applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.S
 	// yet applied (causal order).
 	if p.ParentID != "" {
 		if err := recalculateProgress(ctx, tx, p.ParentID); err != nil {
-			return fmt.Errorf("apply create_node %s: recalc progress: %w", e.EventID, err)
+			return fmt.Errorf("apply create_node %s: recalc progress: %w", format.EventID(e.EventID), err)
 		}
 	}
 
@@ -119,7 +120,7 @@ func (a syncApplier) applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.S
 	// and import-merge identity checks (FR-7.8). Deterministic over content, so it
 	// matches the emitting replica's hash.
 	if err := recomputeContentHashRow(ctx, tx, e.NodeID); err != nil {
-		return fmt.Errorf("apply create_node %s: %w", e.EventID, err)
+		return fmt.Errorf("apply create_node %s: %w", format.EventID(e.EventID), err)
 	}
 	return advanceAppliedSequence(ctx, tx, e, p.ParentID) // MTIX-95.38
 }
@@ -182,7 +183,7 @@ var allowedUpdateFields = map[string]bool{
 func (a syncApplier) applyUpdateField(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.UpdateFieldPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		return fmt.Errorf("apply update_field %s: decode payload: %w", e.EventID, err)
+		return fmt.Errorf("apply update_field %s: decode payload: %w", format.EventID(e.EventID), err)
 	}
 	if !allowedUpdateFields[p.FieldName] {
 		return fmt.Errorf("apply update_field %s: field %q not in whitelist: %w",
@@ -194,7 +195,7 @@ func (a syncApplier) applyUpdateField(ctx context.Context, tx *sql.Tx, e *model.
 	}
 	value, err := decodeNewValueForColumn(p.FieldName, p.NewValue)
 	if err != nil {
-		return fmt.Errorf("apply update_field %s: decode value: %w", e.EventID, err)
+		return fmt.Errorf("apply update_field %s: decode value: %w", format.EventID(e.EventID), err)
 	}
 	now := a.clock().UTC().Format(time.RFC3339)
 	if p.FieldName == "issue_type" {
@@ -275,12 +276,12 @@ func (a syncApplier) applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *m
 	// same tx so the applied status and the recompute are atomic.
 	if parentID := model.ParseIDParent(id); parentID != "" {
 		if err := recalculateProgress(ctx, tx, parentID); err != nil {
-			return fmt.Errorf("apply transition_status %s: recalc progress: %w", e.EventID, err)
+			return fmt.Errorf("apply transition_status %s: recalc progress: %w", format.EventID(e.EventID), err)
 		}
 	}
 	if isResolvingStatus(in.to) {
 		if err := unblockDependents(ctx, tx, a.store, id, e.AuthorID, a.clock); err != nil {
-			return fmt.Errorf("apply transition_status %s: auto-unblock dependents: %w", e.EventID, err)
+			return fmt.Errorf("apply transition_status %s: auto-unblock dependents: %w", format.EventID(e.EventID), err)
 		}
 	}
 	return nil
@@ -323,7 +324,7 @@ func (a syncApplier) applyDefer(ctx context.Context, tx *sql.Tx, e *model.SyncEv
 func (a syncApplier) applyComment(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.CommentPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		return fmt.Errorf("apply comment %s: decode payload: %w", e.EventID, err)
+		return fmt.Errorf("apply comment %s: decode payload: %w", format.EventID(e.EventID), err)
 	}
 	id, err := resolveNodeRef(ctx, tx, e)
 	if err != nil {
@@ -366,7 +367,7 @@ func (a syncApplier) applyComment(ctx context.Context, tx *sql.Tx, e *model.Sync
 func (a syncApplier) applyLinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.LinkDepPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		return fmt.Errorf("apply link_dep %s: decode payload: %w", e.EventID, err)
+		return fmt.Errorf("apply link_dep %s: decode payload: %w", format.EventID(e.EventID), err)
 	}
 	now := a.clock().UTC().Format(time.RFC3339)
 	// Route the edge's source node through the uid-aware ref so a dep
@@ -374,7 +375,7 @@ func (a syncApplier) applyLinkDep(ctx context.Context, tx *sql.Tx, e *model.Sync
 	// FK to nodes(id) is satisfied by the resolved current display path.
 	fromID, err := fromIDForDepEdge(ctx, tx, e)
 	if err != nil {
-		return fmt.Errorf("apply link_dep %s: %w", e.EventID, err)
+		return fmt.Errorf("apply link_dep %s: %w", format.EventID(e.EventID), err)
 	}
 	if err := refusePendingNumber(ctx, tx, e.EventID, p.DependsOnNodeID); err != nil {
 		return err
@@ -396,7 +397,7 @@ func (a syncApplier) applyLinkDep(ctx context.Context, tx *sql.Tx, e *model.Sync
 	// dep.ToID (LinkDepPayload.DependsOnNodeID is set from dep.ToID at emit).
 	if p.DepType == string(model.DepTypeBlocks) {
 		if err := autoBlockNode(ctx, tx, a.store, p.DependsOnNodeID, a.clock); err != nil {
-			return fmt.Errorf("apply link_dep %s: auto-block %s: %w", e.EventID, p.DependsOnNodeID, err)
+			return fmt.Errorf("apply link_dep %s: auto-block %s: %w", format.EventID(e.EventID), p.DependsOnNodeID, err)
 		}
 	}
 	return nil
@@ -405,7 +406,7 @@ func (a syncApplier) applyLinkDep(ctx context.Context, tx *sql.Tx, e *model.Sync
 func (a syncApplier) applyUnlinkDep(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.UnlinkDepPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		return fmt.Errorf("apply unlink_dep %s: decode payload: %w", e.EventID, err)
+		return fmt.Errorf("apply unlink_dep %s: decode payload: %w", format.EventID(e.EventID), err)
 	}
 	depType := p.DepType
 	if depType == "" {
@@ -413,7 +414,7 @@ func (a syncApplier) applyUnlinkDep(ctx context.Context, tx *sql.Tx, e *model.Sy
 	}
 	fromID, err := fromIDForDepEdge(ctx, tx, e)
 	if err != nil {
-		return fmt.Errorf("apply unlink_dep %s: %w", e.EventID, err)
+		return fmt.Errorf("apply unlink_dep %s: %w", format.EventID(e.EventID), err)
 	}
 	if err := refusePendingNumber(ctx, tx, e.EventID, p.DependsOnNodeID); err != nil {
 		return err
@@ -433,7 +434,7 @@ func (a syncApplier) applyUnlinkDep(ctx context.Context, tx *sql.Tx, e *model.Sy
 	// so it is a safe no-op when others remain.
 	if depType == string(model.DepTypeBlocks) {
 		if err := autoUnblockNode(ctx, tx, a.store, p.DependsOnNodeID, a.clock); err != nil {
-			return fmt.Errorf("apply unlink_dep %s: auto-unblock %s: %w", e.EventID, p.DependsOnNodeID, err)
+			return fmt.Errorf("apply unlink_dep %s: auto-unblock %s: %w", format.EventID(e.EventID), p.DependsOnNodeID, err)
 		}
 	}
 	return nil

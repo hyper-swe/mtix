@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -69,7 +70,7 @@ func (a syncApplier) applyDelete(ctx context.Context, tx *sql.Tx, e *model.SyncE
 	// carries its own delete event), matching applyDelete's contract.
 	if parentID := model.ParseIDParent(id); parentID != "" {
 		if err := recalculateProgress(ctx, tx, parentID); err != nil {
-			return fmt.Errorf("apply delete %s: recalc progress: %w", e.EventID, err)
+			return fmt.Errorf("apply delete %s: recalc progress: %w", format.EventID(e.EventID), err)
 		}
 	}
 	return nil
@@ -78,7 +79,7 @@ func (a syncApplier) applyDelete(ctx context.Context, tx *sql.Tx, e *model.SyncE
 func (a syncApplier) applySetAcceptance(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.SetAcceptancePayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		return fmt.Errorf("apply set_acceptance %s: decode payload: %w", e.EventID, err)
+		return fmt.Errorf("apply set_acceptance %s: decode payload: %w", format.EventID(e.EventID), err)
 	}
 	id, err := resolveNodeRef(ctx, tx, e)
 	if err != nil {
@@ -97,7 +98,7 @@ func (a syncApplier) applySetAcceptance(ctx context.Context, tx *sql.Tx, e *mode
 func (a syncApplier) applySetPrompt(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	var p model.SetPromptPayload
 	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		return fmt.Errorf("apply set_prompt %s: decode payload: %w", e.EventID, err)
+		return fmt.Errorf("apply set_prompt %s: decode payload: %w", format.EventID(e.EventID), err)
 	}
 	id, err := resolveNodeRef(ctx, tx, e)
 	if err != nil {
@@ -252,10 +253,10 @@ func insertAppliedCreate(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, ro
 		1.0,
 	)
 	if err != nil {
-		return fmt.Errorf("apply create_node %s: insert node %s: %w", e.EventID, e.NodeID, err)
+		return fmt.Errorf("apply create_node %s: insert node %s: %w", format.EventID(e.EventID), e.NodeID, err)
 	}
 	if inserted, rowsErr := res.RowsAffected(); rowsErr != nil {
-		return fmt.Errorf("apply create_node %s: rows affected: %w", e.EventID, rowsErr)
+		return fmt.Errorf("apply create_node %s: rows affected: %w", format.EventID(e.EventID), rowsErr)
 	} else if inserted == 0 {
 		if err := refuseHeldNumber(ctx, tx, e, uid); err != nil {
 			return err

@@ -45,7 +45,7 @@ func holdWakeBackoff(agent string, policy wakeBudgetPolicy, now time.Time,
 	}
 	a.class = oplocal.AlertClassWakeBackoff
 	a.fix = "mtix config set wake.backoff_after_unacked " + strconv.FormatInt(threshold, 10) + " --agent " + wakeBudgetAgentArgument(agent)
-	a.held = fmt.Sprintf("held wake: %d consecutive unacknowledged wakes; backoff until %s; %s",
-		m.Unacked, m.NextWakeAt.Format(time.RFC3339Nano), a.fix)
+	a.held = fmt.Sprintf("held wake: %d consecutive unacknowledged wakes; backoff until %s [chain: event %d, %d unacked wakes]; %s",
+		m.Unacked, m.NextWakeAt.Format(time.RFC3339Nano), a.key.EventSeq, m.Unacked, a.fix)
 	return true
 }

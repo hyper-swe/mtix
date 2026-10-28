@@ -76,6 +76,8 @@ func assertEmptyWakeDoctorInfo(t *testing.T, id, status, detail, fix string) boo
 		require.Contains(t, detail, "0 claimed")
 	case "budget.rewind":
 		require.Equal(t, "No protected recipient accounting exists. Identity-less restores at an unseen path may under-count history, never over-count. An identity-less database at a previously used path is treated as that path's board and can charge its own history. Existing recipient credits and debt are retained.", detail)
+	case "wake.guard-trips":
+		require.Contains(t, detail, "No loop-guard trips")
 	default:
 		return false
 	}

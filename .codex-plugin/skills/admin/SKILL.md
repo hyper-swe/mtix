@@ -71,8 +71,8 @@ not an adversarial control. The scanner's held diagnostic will name the depth an
 exact configuration command; changing a guard never acknowledges the event.
 
 These settings do not install a wake route. The callable dispatcher enforces
-recipient budgets and durable backoff; scanner discovery and hold re-arm remain
-separate features. A configured limit of 12 holds the 13th attempt in a rolling
+recipient budgets and durable backoff; held wakes re-arm in the same dispatcher; scanner discovery remains
+a separate feature. A configured limit of 12 holds the 13th attempt in a rolling
 hour, before claim or send, across boards for the same agent, host and user.
 Duplicate claims and held events spend no allowance; transport failures do.
 
@@ -99,6 +99,20 @@ retained rewind diagnostic. It is read-only, even with `--fix`; doctor never
 repairs counters or resets allowance. Interrupted accepted attempts remain
 conservatively charged. Budget and backoff holds retain inbox events and name
 their cause and exact configuration command.
+
+A held wake (loop guard or recipient budget) never advances the registration's own
+high-water mark, and later events of that registration wait behind it so none is skipped.
+Every pass of the callable dispatcher re-checks the hold. Once a dispatcher is wired in, a
+grant change, a `wake.*` setting change and an inbox call also re-check the affected agent's
+held wakes; there is no timer or background loop, and a failed re-check never fails your command.
+This build wires no dispatcher yet, so those activities start no pass and nothing is delivered
+automatically; the first pass after you loosen the setting
+(for example the printed `mtix config set wake.max_hop_depth <n>`) wakes the held event,
+and the registration continues from its own mark. Events at or below the mark never wake.
+`wake.guard-trips` in `mtix doctor` text and JSON lists recent loop-guard trips (hop depth
+and back-off), newest first, with agent, chain, time and the exact fix command; JSON rows
+are under `data.trips`. It is read-only, even with `--fix`. You should not need to tune
+these guards; an empty list is the normal state.
 
 ## Health checks
 

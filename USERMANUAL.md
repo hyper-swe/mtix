@@ -1323,8 +1323,8 @@ not an adversarial control. The scanner's held diagnostic will name the depth an
 exact configuration command; changing a guard never acknowledges the event.
 
 These settings do not install a wake route. The callable dispatcher enforces
-recipient budgets and durable backoff; scanner discovery and hold re-arm remain
-separate features. A configured limit of 12 holds the 13th attempt in a rolling
+recipient budgets and durable backoff; held wakes re-arm in the same dispatcher; scanner discovery remains
+a separate feature. A configured limit of 12 holds the 13th attempt in a rolling
 hour, before claim or send, across boards for the same agent, host and user.
 Duplicate claims and held events spend no allowance; transport failures do.
 
@@ -1351,6 +1351,20 @@ retained rewind diagnostic. It is read-only, even with `--fix`; doctor never
 repairs counters or resets allowance. Interrupted accepted attempts remain
 conservatively charged. Budget and backoff holds retain inbox events and name
 their cause and exact configuration command.
+
+A held wake (loop guard or recipient budget) never advances the registration's own
+high-water mark, and later events of that registration wait behind it so none is skipped.
+Every pass of the callable dispatcher re-checks the hold. Once a dispatcher is wired in, a
+grant change, a `wake.*` setting change and an inbox call also re-check the affected agent's
+held wakes; there is no timer or background loop, and a failed re-check never fails your command.
+This build wires no dispatcher yet, so those activities start no pass and nothing is delivered
+automatically; the first pass after you loosen the setting
+(for example the printed `mtix config set wake.max_hop_depth <n>`) wakes the held event,
+and the registration continues from its own mark. Events at or below the mark never wake.
+`wake.guard-trips` in `mtix doctor` text and JSON lists recent loop-guard trips (hop depth
+and back-off), newest first, with agent, chain, time and the exact fix command; JSON rows
+are under `data.trips`. It is read-only, even with `--fix`. You should not need to tune
+these guards; an empty list is the normal state.
 
 ### Configuration Reference
 
@@ -3864,6 +3878,7 @@ change the node's status with the normal commands instead.
 | `mtix sync init`, or a `mtix sync harden --apply` that would restore or replace a TRUNCATE guard, fails with `the sync tables are in schema …, but the first schema on the search_path is …` (and `mtix sync doctor`'s `hub-triggers` says so) | The session's search_path puts another schema before the one holding the sync tables, so new objects would land away from them; nothing was changed. The usual cause is a schema named after the connecting role, which the default search_path (`"$user", public`) puts first | Set the search_path so the sync tables' schema comes first: `ALTER ROLE <owner> SET search_path = public` when the tables are in `public`, else `ALTER ROLE <owner> SET search_path = <schema>, public` (or `options=-c search_path=...` in the DSN); then run the command again. To keep a separate hub in the first schema instead (one hub per search_path), put that schema alone on the search_path (`ALTER ROLE <owner> SET search_path = <first schema>`). A `mtix sync harden --apply` that only changes privileges is not affected |
 | `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
 | `mtix sync backup` fails with `a hub table was not found` (`pg_dump` names the table above it) | `pg_dump` found no table of that name through the search_path of the role the DSN names; no file was left. The hub has not been initialized since an upgrade added the table; or the hub's schema is named only in the DSN, which `pg_dump` does not receive; or the DSN's role lacks USAGE on the hub's schema, which leaves that schema off its search_path | Run `mtix sync init` with the DSN naming the table owner, then back up again; for a hub whose schema only the DSN names, first run the printed `ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`, which takes precedence over a role-wide `ALTER ROLE <the DSN's role> SET search_path = <schema>, public`; for a DSN role without USAGE, run the GRANT statements the backup prints: the schema's owner grants USAGE on the schema (find it with `SELECT nspowner::regrole FROM pg_catalog.pg_namespace WHERE nspname = '<schema>';`; for `public` in a database created on PostgreSQL 15 or later it is `pg_database_owner`, that is, the database's owner), and the table owner grants SELECT on each sync table and sync-table sequence by name (`GRANT SELECT ON TABLE <schema>.applied_events, <schema>.audit_log, ... TO <the DSN's role>;`), so the role gets nothing else in the schema; then keep that role with `--keep-role` so `mtix sync harden --apply` leaves its access |
+| An id in mtix text looks like `"evt\u00e9"` or `"a\nb"`, with quotes and backslash escapes | mtix prints a sync event id, and the ids that come from sync (a task uid, an annotation id), in plain text output as double-quoted, printable-ASCII text, so a control character, bidirectional mark or non-ASCII letter in a stored id cannot alter a terminal or log. The stored id is unchanged. REST, MCP and gRPC do the same in their text and error messages; their JSON and protobuf fields carry the exact id | Read the escapes as the id (`\n` is a newline, `\u00e9` is é). Use the JSON output for the exact value, and give the quoted form to whoever runs the hub; never edit or rename the stored id |
 | `mtix sync conflicts resolve` fails with `is a manual resolution` | The id is a recorded decision, not a conflict | Run `mtix sync conflicts list --all` and resolve the conflict it answers |
 | `mtix sync conflicts resolve` fails with `has a later conflict` or `is already resolved` | A later conflict or a later decision exists for the same node and field | Resolve the newest conflict the error names; if it says that one is resolved too, the decision already stands |
 

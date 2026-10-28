@@ -11,7 +11,12 @@ import (
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
+// registerConfiguredWakeBudgetDoctor registers the wake accounting diagnostics: the
+// operator-local wake.guard-trips row always, and budget.rewind on an opened board.
 func registerConfiguredWakeBudgetDoctor(svc *service.DoctorService) error {
+	if err := registerWakeGuardTripsDoctor(svc); err != nil {
+		return err
+	}
 	if app.store == nil {
 		return nil
 	}

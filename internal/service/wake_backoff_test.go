@@ -46,6 +46,7 @@ func TestBackoff_FiveUnacked_DoublesToThirtyMin(t *testing.T) {
 	for _, row := range rows {
 		require.Equal(t, "wake.backoff", row.Class)
 		require.Contains(t, row.Fix, "mtix config set wake.backoff_after_unacked")
+		require.Regexp(t, `\[chain: event [0-9]+, [0-9]+ unacked wakes\]`, row.Detail, "the trip records its chain identity")
 	}
 }
 

@@ -29,6 +29,8 @@ type WakeBudgetProposal struct {
 	BoardCandidate string
 	Attempt        WakeAttempt
 	Claimable      bool
+	// InFlight is true when another claimant holds an unexpired, unfinished claim.
+	InFlight bool
 }
 
 // WakeBudgetDecision supplies the protected counter floor and send admission.
@@ -44,6 +46,8 @@ type WakeBudgetResult struct {
 	Attempt  WakeAttempt
 	Won      bool
 	Held     bool
+	// InFlight reports a lost claim whose owner has not recorded an outcome yet.
+	InFlight bool
 }
 
 // WakeBudgetCounter is one board's durable recipient counter for diagnostics.

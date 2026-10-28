@@ -25,6 +25,7 @@ type InboxService struct {
 	reader   InboxReadStore
 	counter  InboxCountStore
 	wakeAcks WakeAckPublisher
+	reeval   WakeReevaluator
 }
 
 // InboxEvent is the per-agent event contract per FR-19.4, with unchanged JSON.
@@ -34,6 +35,12 @@ type InboxEvent sqlite.InboxEvent
 type InboxReadStore interface {
 	InboxList(context.Context, string) ([]sqlite.InboxEvent, error)
 	InboxWait(context.Context, string, time.Duration) ([]sqlite.InboxEvent, error)
+}
+
+// WithWakeReevaluator injects the held-wake re-evaluator run after a successful inbox call.
+func (s *InboxService) WithWakeReevaluator(r WakeReevaluator) *InboxService {
+	s.reeval = r
+	return s
 }
 
 // NewInboxService injects the durable selective acknowledgement backend (FR-19.5).
@@ -54,6 +61,7 @@ func (s *InboxService) InboxAck(ctx context.Context, agent string, seq int64) er
 	if err := s.acknowledgeWithWake(ctx, agent, seq, false, func() error { return s.store.InboxAck(ctx, agent, seq) }); err != nil {
 		return wrapAPIOperation(fmt.Sprintf("ack inbox event %d for %s", seq, agent), err)
 	}
+	notifyReevaluator(ctx, s.reeval, agent, "inbox ack")
 	return nil
 }
 
@@ -66,6 +74,7 @@ func (s *InboxService) InboxList(ctx context.Context, agent string) ([]InboxEven
 	if err != nil {
 		return nil, wrapAPIOperation("list inbox", err)
 	}
+	notifyReevaluator(ctx, s.reeval, agent, "inbox list")
 	return inboxEvents(events), nil
 }
 
@@ -82,6 +91,7 @@ func (s *InboxService) InboxWait(ctx context.Context, agent string, timeout time
 	if err != nil {
 		return nil, wrapAPIOperation("wait inbox", err)
 	}
+	notifyReevaluator(ctx, s.reeval, agent, "inbox wait")
 	return inboxEvents(events), nil
 }
 

@@ -136,5 +136,6 @@ func TestDoctorBudgetRewind_NoStoreDoesNotRegisterAccounting(t *testing.T) {
 	require.NoError(t, registerConfiguredWakeBudgetDoctor(svc))
 	rows, err := svc.Run(t.Context(), service.DoctorRunOptions{})
 	require.NoError(t, err)
-	require.Empty(t, rows)
+	require.Len(t, rows, 1, "only the operator-local guard-trips row registers without a store")
+	require.Equal(t, "wake.guard-trips", rows[0].ID)
 }

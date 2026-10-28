@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -232,7 +233,7 @@ func TestToolMutation_ResolvedAnnotation_PersistsAndLeavesOtherOpen(t *testing.T
 	require.Len(t, before.Annotations, 2)
 	id := before.Annotations[0].ID
 	out := behaviorCall(t, env.reg, "mtix_resolve_annotation", fmt.Sprintf(`{"id":%q,"annotation_id":%q,"author":"test-author"}`, node.ID, id))
-	require.Equal(t, "Annotation "+id+" resolved on "+node.ID, out)
+	require.Equal(t, "Annotation "+format.EventID(id)+" resolved on "+node.ID, out)
 	after, err := env.store.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.True(t, after.Annotations[0].Resolved)

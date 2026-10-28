@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
@@ -146,6 +147,6 @@ func registerResolveAnnotationTool(reg *ToolRegistry, svc *service.PromptService
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Annotation %s resolved on %s", p.AnnotationID, p.ID)), nil
+		return SuccessResult(fmt.Sprintf("Annotation %s resolved on %s", format.EventID(p.AnnotationID), p.ID)), nil
 	})
 }

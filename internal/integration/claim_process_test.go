@@ -24,6 +24,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 func newClaimService(t *testing.T, path string) *service.NodeService {
@@ -70,7 +71,7 @@ func startClaimProcess(t *testing.T, path, nodeID, agent string) *claimProcess {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestClaimProcess_Helper$")
-	cmd.Env = append(os.Environ(), "MTIX_CLAIM_HELPER=1", "MTIX_CLAIM_DB="+path, "MTIX_CLAIM_NODE="+nodeID, "MTIX_CLAIM_AGENT="+agent)
+	cmd.Env = append(hostguard.ChildEnv(t, os.Environ()), "MTIX_CLAIM_HELPER=1", "MTIX_CLAIM_DB="+path, "MTIX_CLAIM_NODE="+nodeID, "MTIX_CLAIM_AGENT="+agent)
 	// Leave verbose testing banners off: stdout carries the result protocol.
 	cmd.Stderr = os.Stderr
 	process := &claimProcess{cmd: cmd, cancel: cancel}

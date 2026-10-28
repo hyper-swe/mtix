@@ -319,24 +319,30 @@ func terminalSink(e ast.Expr, imports terminalCtx) bool {
 		return imports.pkgs["."] == "fmt" && terminalFmtSink(name)
 	}
 	if id, named := s.X.(*ast.Ident); named && imports.pkgs[id.Name] != "" {
-		if imports.pkgs[id.Name] == "fmt" {
-			return terminalFmtSink(name)
-		}
-		if !imports.wide {
-			return false
-		}
-		switch imports.pkgs[id.Name] {
-		case "log":
-			return strings.HasPrefix(name, "Print") || strings.HasPrefix(name, "Fatal") || strings.HasPrefix(name, "Panic")
-		case "log/slog":
-			return terminalSlogSinks[name]
-		case "io":
-			return name == "WriteString"
-		}
-		return false
+		return terminalPackageSink(imports.pkgs[id.Name], name, imports.wide)
 	}
 	// Method call: cobra cmd.Print*, io.Writer/os.File Write*, logger methods.
 	return imports.wide && (terminalCobraSinks[name] || terminalSlogSinks[name] || name == "Write" || name == "WriteString")
+}
+
+// terminalPackageSink matches package-level functions by import path; only fmt
+// applies outside wide mode.
+func terminalPackageSink(path, name string, wide bool) bool {
+	if path == "fmt" {
+		return terminalFmtSink(name)
+	}
+	if !wide {
+		return false
+	}
+	switch path {
+	case "log":
+		return strings.HasPrefix(name, "Print") || strings.HasPrefix(name, "Fatal") || strings.HasPrefix(name, "Panic")
+	case "log/slog":
+		return terminalSlogSinks[name]
+	case "io":
+		return name == "WriteString"
+	}
+	return false
 }
 
 func terminalFmtSink(name string) bool {

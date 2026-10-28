@@ -345,6 +345,7 @@ func splitOption(arg string) (value, prefix string) {
 // projectPath classifies a path against both the entered (logical) and the
 // resolved project root. resolved follows links through the deepest existing
 // parent, so a path that does not exist yet is judged where it would land.
+// An exhausted link budget returns ("", false, true) to require refusal.
 func projectPath(logical, root, value string) (resolved string, lexical, inside bool) {
 	if value == "" {
 		return "", false, false
@@ -356,7 +357,13 @@ func projectPath(logical, root, value string) (resolved string, lexical, inside 
 		// Not Join: cleaning would apply a parent segment to link text.
 		path = root + string(filepath.Separator) + value
 	}
-	resolved = resolveDeepest(path, 0)
+	var complete bool
+	resolved, complete = resolveDeepestStatus(path, 0)
+	if !complete {
+		// No physical answer exists within the budget. Mark it for refusal
+		// regardless of its lexical relationship to the project (FR-19.2).
+		return "", false, true
+	}
 	rel, err := filepath.Rel(root, resolved)
 	byName := err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 	return resolved, lexical, lexical || byName || underRoot(root, resolved)
@@ -383,64 +390,6 @@ func underRoot(root, path string) bool {
 	}
 }
 
-// maxLinkExpansions bounds how many links one resolution follows, so a cycle
-// ends (the OS refuses such a path, so nothing runs through it).
-const maxLinkExpansions = 64
-
-// resolveDeepest resolves path the way the OS does: component by component,
-// following each link before the next component is applied, so a parent-
-// directory segment after a link goes to the link target's parent, not to the
-// parent of the link's text. Components that do not exist yet are attached
-// lexically, so a path is judged where it would land; a dangling link is
-// followed by its target. depth is the number of links already followed.
-func resolveDeepest(path string, depth int) string {
-	if !filepath.IsAbs(path) {
-		return filepath.Clean(path)
-	}
-	vol := filepath.VolumeName(path)
-	root := vol + string(filepath.Separator)
-	todo := splitPathComponents(path[len(vol):])
-	cur, links := root, depth
-	for len(todo) > 0 {
-		comp := todo[0]
-		todo = todo[1:]
-		switch comp {
-		case "", ".":
-			continue
-		case "..":
-			cur = filepath.Dir(cur)
-			continue
-		}
-		next := filepath.Join(cur, comp)
-		info, err := os.Lstat(next)
-		if err != nil {
-			return finishResolved(cur, append([]string{comp}, todo...))
-		}
-		if info.Mode()&os.ModeSymlink == 0 {
-			cur = next
-			continue
-		}
-		links++
-		if links > maxLinkExpansions {
-			// Past the limit the path is not resolved: it keeps the link it
-			// stopped at, so it never equals its own resolution and is never
-			// taken for a physical directory.
-			return filepath.Join(append([]string{next}, todo...)...)
-		}
-		target, readErr := os.Readlink(next)
-		if readErr != nil {
-			return finishResolved(next, todo)
-		}
-		if filepath.IsAbs(target) {
-			targetVol := filepath.VolumeName(target)
-			cur = targetVol + string(filepath.Separator)
-			target = target[len(targetVol):]
-		}
-		todo = append(splitPathComponents(target), todo...)
-	}
-	return finishResolved(cur, nil)
-}
-
 // checkOperands refuses a launch that would run, by path, a file that is not
 // one of the approved copies: an unapproved script operand, or any operand
 // that reaches into the project through a link from outside it.
@@ -455,6 +404,8 @@ func checkOperands(h Hook, in *hookInputs) error {
 		}
 		resolved, lexical, inside := projectPath(in.logical, in.root, value)
 		switch {
+		case inside && resolved == "":
+			return fmt.Errorf("exec launch refused for hook %q: path %q exceeds the link expansion limit", h.Name, arg)
 		case i == in.script && inside:
 			return fmt.Errorf("exec launch refused for hook %q: script %q is not an approved project file; create it and approve the hook again", h.Name, arg)
 		case inside && !lexical:

@@ -1821,6 +1821,15 @@ Last auto-import refusal: 2026-09-24T10:15:00Z (pending): a replace import would
 
 `mtix sync --json` reports `in_sync` and those ids as `different_uid`, and the rest under `auto_import`: `enabled`, `setting`, `setting_error`, and `last_refusal` with `refused_at`, `file_hash`, `kind`, `reason`, `loss` (what a replace of the file would delete, when known), `synced` (true when the store synced with a hub or relay when it was refused, so the way out mtix names rebuilds from the hub instead of offering a replace import), `resolved_at` and `pending`. The record is kept in `.mtix/data/auto-import-refusal.json`, next to the other local sync state.
 
+### Filesystem names
+
+Identifiers and ticket text are data, not filesystem paths. Relay segments
+use numeric segment names; relay keys use numeric epochs; automatic backups
+use UTC timestamps; operator alerts use fixed names and hashed rate keys;
+verified hook copies use content hashes and the approved script basename.
+Keep explicit backup destinations and hook script paths under operator control.
+Do not derive those paths from event IDs, titles, or other received ticket fields.
+
 ---
 
 ## Content Integrity

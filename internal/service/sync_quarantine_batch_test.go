@@ -41,7 +41,7 @@ func newBatchListingFixture(tb testing.TB, count int) (*service.SyncService, *sq
 			if err := sqlite.QuarantineEvent(tb.Context(), tx, q); err != nil {
 				return err
 			}
-			want = append(want, service.QuarantinedEvent{EventID: id, NodeID: "TEST-1é", OpType: "create_node", LamportClock: 1, Source: source, Reason: q.Reason, Attempts: 1, FirstSeen: q.FirstSeen, LastAttempt: q.LastAttempt, CLIVersion: q.CLIVersion})
+			want = append(want, service.QuarantinedEvent{EventID: id, Handle: service.QuarantineHandle(id), EventIDSHA256: service.QuarantineHandleFull(id), NodeID: "TEST-1é", OpType: "create_node", LamportClock: 1, Source: source, Reason: q.Reason, Attempts: 1, FirstSeen: q.FirstSeen, LastAttempt: q.LastAttempt, CLIVersion: q.CLIVersion})
 		}
 		return nil
 	}))

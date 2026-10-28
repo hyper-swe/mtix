@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/sync/validator"
 )
@@ -38,7 +39,7 @@ func TestRunSyncPull_ExtremeLamportHubEvent_QuarantinedNextPushSucceeds(t *testi
 
 	out, errOut := f.pullPeerStreams(t, 100)
 
-	require.Contains(t, errOut, "quarantined event "+extreme.EventID)
+	require.Contains(t, errOut, "quarantined event "+format.EventID(extreme.EventID))
 	require.Contains(t, out, "quarantine: 1 pulled events held")
 	require.Contains(t, quarantined(t)[extreme.EventID].Reason, "sync.max_lamport_jump")
 	require.Zero(t, peerLamport(t), "the local clock does not move")
@@ -72,7 +73,7 @@ func TestRunSyncPull_CorruptVectorClockRow_QuarantinedPullContinues(t *testing.T
 
 	out, errOut := f.pullPeerStreams(t, 100)
 
-	require.Contains(t, errOut, "quarantined event "+pushed[0].EventID)
+	require.Contains(t, errOut, "quarantined event "+format.EventID(pushed[0].EventID))
 	require.Contains(t, out, "quarantine: 1 pulled events held")
 	q := quarantined(t)[pushed[0].EventID]
 	require.Contains(t, q.Reason, "vector_clock does not decode")

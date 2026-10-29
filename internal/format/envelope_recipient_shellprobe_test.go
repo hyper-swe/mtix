@@ -19,12 +19,19 @@ func TestShellHonoursSyntaxOnly_Shells_ReportsSupport(t *testing.T) {
 	ignoring := filepath.Join(dir, "sh-ignores-n")
 	// Mimics an older dash that drops -n when combined with -c.
 	require.NoError(t, os.WriteFile(ignoring, []byte("#!/bin/sh\nshift 2\nexec /bin/sh -c \"$1\"\n"), 0o700))
+	honouring := filepath.Join(dir, "sh-honours-n")
+	// Parse from stdin so this fake honours -n even when the host's -n -c does not.
+	require.NoError(t, os.WriteFile(honouring, []byte(`#!/bin/sh
+[ "$#" -eq 3 ] && [ "$1" = "-n" ] && [ "$2" = "-c" ] || exit 64
+printf '%s\n' "$3" | /bin/sh -n
+`), 0o700))
 
 	tests := []struct {
 		name  string
 		shell string
 		want  bool
 	}{
+		{"shell that honours -n", honouring, true},
 		{"shell that ignores -n", ignoring, false},
 		{"missing shell", filepath.Join(dir, "absent"), false},
 	}

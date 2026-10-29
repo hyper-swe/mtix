@@ -475,6 +475,8 @@ func TestInboxWaitServe_AdmissionBoundSlowBackendStillObservesWorkers(t *testing
 	requireAdmissionBound(t, newServeInboxHarnessWith(t, nil, 50*time.Millisecond))
 }
 
+const admissionStartDeadline = 5 * time.Second
+
 func requireAdmissionBound(t *testing.T, h *serveInboxHarness) {
 	t.Helper()
 	// This is a resource ceiling rather than a prescribed internal pool size.
@@ -484,7 +486,7 @@ func requireAdmissionBound(t *testing.T, h *serveInboxHarness) {
 	}
 	h.in.send(t, 129, MethodPing, nil)
 	h.requireAdmissionRefusals(t)
-	h.collectAdmitted()
+	h.collectAdmitted(t)
 	require.NotEmpty(t, h.observed)
 	require.LessOrEqual(t, len(h.observed), 64, "indefinite wait resources must be bounded")
 	require.NoError(t, h.in.Close())
@@ -521,12 +523,31 @@ func (h *serveInboxHarness) requireAdmissionRefusals(t *testing.T) {
 	}
 }
 
-func (h *serveInboxHarness) collectAdmitted() {
+// collectAdmitted blocks until at least one admitted wait has reached the
+// backend, then drains further starts until a quiet period passes, so
+// observed holds every admitted worker regardless of scheduling.
+func (h *serveInboxHarness) collectAdmitted(t *testing.T) {
+	t.Helper()
+	const quiet = 200 * time.Millisecond
+	deadline := time.NewTimer(admissionStartDeadline)
+	defer deadline.Stop()
+	select {
+	case call := <-h.backend.started:
+		h.observed = append(h.observed, call)
+	case <-deadline.C:
+		t.Fatalf("no admitted wait reached the backend within %s", admissionStartDeadline)
+	}
+	idle := time.NewTimer(quiet)
+	defer idle.Stop()
 	for {
 		select {
 		case call := <-h.backend.started:
 			h.observed = append(h.observed, call)
-		default:
+			if !idle.Stop() {
+				<-idle.C
+			}
+			idle.Reset(quiet)
+		case <-idle.C:
 			return
 		}
 	}

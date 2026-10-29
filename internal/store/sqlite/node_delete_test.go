@@ -323,3 +323,21 @@ func TestDeleteNode_InvalidateBeforeDelete_WhenRerunDelete(t *testing.T) {
 	_, err = s.GetNode(ctx, "PROJ-1")
 	assert.ErrorIs(t, err, model.ErrNotFound)
 }
+
+// TestDeleteNodeWithRoot_RejectsInvalidGroups verifies boundary validation
+// before a grouped delete can mutate a node (MTIX-107.20).
+func TestDeleteNodeWithRoot_RejectsInvalidGroups(t *testing.T) {
+	s := newTestStore(t)
+	deleter, ok := any(s).(interface {
+		DeleteNodeWithRoot(context.Context, string, string, string) error
+	})
+	require.True(t, ok, "store supports explicit recovery groups")
+	for _, rootID := range []string{"", "TEST-2", "TEST-1.10", "TEST-1.1.1"} {
+		t.Run(rootID, func(t *testing.T) {
+			err := deleter.DeleteNodeWithRoot(context.Background(), "TEST-1.1", rootID, "admin")
+			assert.ErrorIs(t, err, model.ErrInvalidInput)
+		})
+	}
+	err := deleter.DeleteNodeWithRoot(context.Background(), "TEST-1.1", "TEST-1", "admin")
+	assert.ErrorIs(t, err, model.ErrNotFound)
+}

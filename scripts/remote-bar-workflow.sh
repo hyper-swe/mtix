@@ -30,6 +30,29 @@ rb_bar_workflow_unchanged() {
 	git diff-tree -r --quiet "$1" "$2" -- ".github/workflows/$RB_WORKFLOW"
 }
 
+# rb_snapshot_base <parent> <rev>: prints the commit the snapshot is based on:
+# <rev> when given, else the merge-base of HEAD and <parent>. Fails when
+# neither resolves (for example in a shallow clone).
+rb_snapshot_base() {
+	if [ -n "$2" ]; then
+		git rev-parse --verify "$2^{commit}" 2>/dev/null
+	else
+		git merge-base HEAD "$1" 2>/dev/null
+	fi
+}
+
+# rb_workflows_older_base <parent> <tree> <rev>: succeeds when the snapshot's
+# .github equals that of its own base, so it only lacks main's later changes.
+rb_workflows_older_base() {
+	local base
+	if [ -n "$3" ]; then
+		base="$(rb_snapshot_base "$1" "$3")" || rb_die 2 "--base $3 is not a commit"
+	else
+		base="$(rb_snapshot_base "$1" "")" || return 1
+	fi
+	rb_workflows_unchanged "$base" "$2"
+}
+
 # headBranch/headSha describe the workflow-dispatch source, not scratch_ref.
 # A missing or contradictory response must never become a green result.
 rb_workflow_source() {

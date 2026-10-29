@@ -24,7 +24,9 @@ const annotationTextIndent = "      "
 // displayText normalizes stored text for `mtix show` per FR-6.3 (MTIX-100.1):
 // every control character except LF and TAB is removed, so a stray CR cannot
 // overwrite a line, an escape sequence cannot restyle the terminal, and CRLF
-// becomes LF; then leading blank lines and trailing whitespace are trimmed.
+// becomes LF; bidirectional controls and zero-width characters are removed
+// and U+2028 and U+2029 become newlines (MTIX-100.7); then leading blank
+// lines and trailing whitespace are trimmed.
 // Whitespace here is unicode.IsSpace throughout, so text that is only
 // whitespace normalizes to "". The stored value is untouched; --json prints
 // it raw.
@@ -40,12 +42,10 @@ func displayText(s string) string {
 }
 
 // singleLine renders a field that must stay on one line, such as an author
-// or addressee, per FR-3.4 (MTIX-100.1): displayText, with any remaining
-// newline or tab turned into a space so the field cannot start a line of its
-// own, and outer whitespace trimmed.
+// or addressee, per FR-3.4 (MTIX-100.1). It is format.SafeLine, the one
+// definition shared with title and assignee output (MTIX-187.7.4).
 func singleLine(s string) string {
-	s = strings.NewReplacer("\n", " ", "\t", " ").Replace(displayText(s))
-	return strings.TrimSpace(s)
+	return format.SafeLine(s)
 }
 
 // indentContinuation indents every line after the first, per FR-6.3

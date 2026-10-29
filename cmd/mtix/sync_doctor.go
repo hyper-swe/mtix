@@ -71,8 +71,14 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            warns after 1h; run mtix list for protected
                            import-first recovery (refusals need resolution)
   No orphan applied      - every applied_event has a matching node OR tombstone
+  Board matches sync log - on a project that syncs, the board holds every
+                           task the local sync log creates; a pull cannot
+                           restore a missing one, so the fix rebuilds the
+                           board from the hub
   Quarantined events     - no pulled event is held in the local quarantine;
                            each pull retries them ('mtix sync quarantine list')
+  Valid node ids         - warns when a local task id is outside the node id
+                           grammar; names each task, its uid and the fix
   Unique node uids       - no two tasks share a uid; names each uid, its tasks
                            and the recovery (see 'mtix verify')
   sync.exchange-record   - local received provenance and recorded omission;
@@ -262,6 +268,9 @@ func appendLocalChecks(ctx context.Context, report DoctorReport) DoctorReport {
 		report = appendCheck(report, "queue draining", drainOK, detail)
 	}
 	report = appendLocalStoreChecks(ctx, report, app.store)
+	if app.store != nil {
+		report = appendWakeBudgetRewindCheck(ctx, report, app.store)
+	}
 	report = appendHeldPushCheck(ctx, report, app.store)
 	modeOK, detail := checkSecretsFileMode(app.mtixDir)
 	return appendCheck(report, "secrets file mode", modeOK, detail)

@@ -12,15 +12,67 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/hooks"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil"
 )
 
 // FR-20 / MTIX-56.1: the ledger dispatcher. One dispatch path for every
 // trigger; a hook fires for a journaled event based only on the event being in
 // the journal and the hook not yet having fired for it on this host — never on
 // who wrote it or how it arrived.
+
+// FR-19.2: the dispatch ledger must expose the exec trust gate to operators.
+func TestLedgerDispatch_UntrustedExec_RecordsSkippedUntrusted(t *testing.T) {
+	svc, store, _ := newTestNodeService(t)
+	ctx := context.Background()
+	// Keep journal emission independent of the host's network interfaces.
+	_, err := store.WriteDB().ExecContext(ctx,
+		`UPDATE meta SET value = ? WHERE key = ?`, "0123456789abcdef", "meta.sync.machine_hash")
+	require.NoError(t, err)
+	_, dir := projectDirs(t)
+	writeHooks(t, dir, `
+hooks:
+  - name: exec-wake
+    match: {events: [status.changed], status-to: [done]}
+    deliver: [exec]
+    exec: {command: [unapproved-hook]}
+`)
+	dispatch := service.NewHooksDispatcher(store, dir, slog.Default())
+	// Isolated operator state has no approval for this hooks.yaml.
+	dispatch.SetApprovals(hooks.NewApprovals(dir, testutil.OperatorState(t), false))
+	node, err := svc.CreateNode(ctx, &service.CreateNodeRequest{
+		Project: "TEST", Title: "Untrusted exec ledger outcome", Creator: "worker",
+	})
+	require.NoError(t, err)
+	firstSeq, err := store.JournalTail(ctx)
+	require.NoError(t, err)
+	// Dispatch prunes terminal ledger rows at or below the scan floor after it
+	// finishes, which would delete the skipped-untrusted row before it can be read.
+	// A fresh claim of an unrelated hook at the earlier sequence stays 'claimed'
+	// (never pruned) and clamps the floor below the target row, so the row is
+	// retained. This changes the test setup only, not production behaviour.
+	won, err := store.ClaimHookDispatch(ctx, "in-flight-hook", firstSeq, time.Minute)
+	require.NoError(t, err)
+	require.True(t, won)
+	require.NoError(t, svc.TransitionStatus(ctx, node.ID, model.StatusInProgress, "", "worker"))
+	require.NoError(t, svc.TransitionStatus(ctx, node.ID, model.StatusDone, "", "worker"))
+	doneSeq, err := store.JournalTail(ctx)
+	require.NoError(t, err)
+
+	dispatch.Dispatch(ctx)
+
+	// The store exposes no read API for a ledger row's outcome (only claim, record,
+	// stale-claim and prune), so read it directly, as the neighbouring dispatch
+	// tests do. The SQL is a constant with bound arguments.
+	var outcome string
+	require.NoError(t, store.ReadDB().QueryRowContext(ctx, `
+		SELECT outcome FROM hook_dispatch_ledger WHERE hook_name = ? AND event_seq = ?`,
+		"exec-wake", doneSeq).Scan(&outcome))
+	require.Equal(t, sqlite.OutcomeSkippedUntrusted, outcome)
+}
 
 // markEventsSynced inserts every current sync_events row into applied_events, so
 // ReadJournalSince reports them as Synced=true — the in-test equivalent of those

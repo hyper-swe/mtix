@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/hyper-swe/mtix/internal/format"
 )
 
 // uidIndexDDL is the one index over nodes.uid: UNIQUE over every non-empty
@@ -138,7 +140,11 @@ func duplicateUIDMessage(dups []duplicateUID) string {
 	var b strings.Builder
 	b.WriteString("nodes share a uid:")
 	for _, d := range dups {
-		fmt.Fprintf(&b, " uid %s is held by %s;", d.uid, strings.Join(d.ids, ", "))
+		ids := make([]string, len(d.ids))
+		for i, id := range d.ids {
+			ids[i] = format.EventID(id)
+		}
+		fmt.Fprintf(&b, " uid %s is held by %s;", format.EventID(d.uid), strings.Join(ids, ", "))
 	}
 	b.WriteString(" recovery: back up the database (mtix backup .mtix/data/backups/pre-uid-fix.db), keep the uid on the original task, and for every other holder run" +
 		" UPDATE nodes SET uid = '' WHERE id = '<id>' against .mtix/data/mtix.db with no mtix running, then open mtix again:" +

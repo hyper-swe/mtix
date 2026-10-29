@@ -74,29 +74,51 @@ func RenderNudge(agent string, seqs []int64) (string, error) {
 // RenderEnvelope quotes inbox bodies and builds commands only from revalidated
 // tokens (FR-20.2, ADR-007 I12/I13). Rendering never acknowledges events.
 func RenderEnvelope(agent string, events []Event, caps Caps) (string, error) {
-	return renderInbox(agent, events, caps, false)
+	return renderInbox(agent, "", events, caps, false)
 }
 
 // RenderPrompt composes a fixed nudge and an envelope (ADR-007 I33).
 // The configured total bound includes the nudge and all framing bytes.
 func RenderPrompt(agent string, events []Event, caps Caps) (string, error) {
-	return renderInbox(agent, events, caps, true)
+	return renderInbox(agent, "", events, caps, true)
 }
 
-func renderInbox(agent string, events []Event, caps Caps, prompt bool) (string, error) {
+// RenderEnvelopeOn is RenderEnvelope with every displayed mtix command pinned
+// to board, the absolute project root the events were read from, as a trailing
+// -C word (MTIX-189). An agent that pastes the ack line from another
+// repository, which has its own .mtix, then acks on the board it read instead
+// of being refused by that repository's journal.
+func RenderEnvelopeOn(agent, board string, events []Event, caps Caps) (string, error) {
+	return renderInbox(agent, board, events, caps, false)
+}
+
+// RenderPromptOn is RenderPrompt with every displayed mtix command, the nudge
+// included, pinned to board (MTIX-189); see RenderEnvelopeOn.
+func RenderPromptOn(agent, board string, events []Event, caps Caps) (string, error) {
+	return renderInbox(agent, board, events, caps, true)
+}
+
+func renderInbox(agent, board string, events []Event, caps Caps, prompt bool) (string, error) {
 	if err := caps.Validate(); err != nil {
 		return "", err
 	}
 	if err := validateRecipient(agent); err != nil {
 		return "", fmt.Errorf("envelope recipient: %w", err)
 	}
+	boardArg, err := BoardSelection(board)
+	if err != nil {
+		return "", err
+	}
 	if len(events) == 0 {
 		return "", nil
 	}
-	renderer := envelopeBuilder{agent: agent, quotedAgent: quoteRecipient(agent), prompt: prompt}
+	renderer := envelopeBuilder{agent: agent, quotedAgent: quoteRecipient(agent), boardArg: boardArg, prompt: prompt}
+	if err := framingFits(caps, renderer.quotedAgent, boardArg, len(events)); err != nil {
+		return "", err
+	}
 	renderer.body.WriteString(Preamble + "\n\n")
 	if prompt && caps.MaxTotalBytes > 0 {
-		renderer.nudgeFixed = len(fmt.Sprintf(nudgeTemplate, renderer.quotedAgent, "", renderer.quotedAgent)) + 1
+		renderer.nudgeFixed = len(renderer.nudge("")) + 1
 	}
 	for _, event := range events {
 		added, err := renderer.appendEvent(event, caps, len(events)-renderer.shown-1)
@@ -110,6 +132,23 @@ func renderInbox(agent string, events []Event, caps Caps, prompt bool) (string, 
 	return renderer.finish(len(events) - renderer.shown), nil
 }
 
+// framingFits refuses a total cap too small for the mandatory framing once
+// the board selection lengthens it (MTIX-189). The smallest output is the
+// preamble plus the overflow line naming every event; the cap counts every
+// byte, so a cap below that fails loudly instead of being exceeded.
+// MinimumEnvelopeBytes covers the framing without a board.
+func framingFits(caps Caps, quotedAgent, boardArg string, count int) error {
+	if caps.MaxTotalBytes == 0 || boardArg == "" {
+		return nil
+	}
+	need := len(Preamble) + 2 + len(overflowLine(quotedAgent, boardArg, count))
+	if need > caps.MaxTotalBytes {
+		return fmt.Errorf("max_total_bytes %d is too small for the envelope framing with the board selection (%d bytes needed); raise max_total_bytes in wake.json or set it to 0 (unlimited): %w",
+			caps.MaxTotalBytes, need, model.ErrInvalidInput)
+	}
+	return nil
+}
+
 // envelopeBuilder accumulates output once; uncapped rendering never rebuilds
 // cumulative candidate text or sequence lists (FR-20.3 unlimited defaults).
 type envelopeBuilder struct {
@@ -117,6 +156,7 @@ type envelopeBuilder struct {
 	seqs        strings.Builder
 	agent       string
 	quotedAgent string
+	boardArg    string // "" or " -C '<board>'", appended to every displayed command
 	prompt      bool
 	shown       int
 	nudgeFixed  int
@@ -129,7 +169,7 @@ func (r *envelopeBuilder) appendEvent(event Event, caps Caps, remaining int) (bo
 	if caps.MaxEvents > 0 && r.shown == caps.MaxEvents {
 		return false, nil
 	}
-	block, ok := eventBlock(r.agent, r.quotedAgent, event, caps.MaxBodyBytes)
+	block, ok := eventBlock(r, event, caps.MaxBodyBytes)
 	if !ok {
 		return false, nil
 	}
@@ -152,7 +192,7 @@ func (r *envelopeBuilder) appendEvent(event Event, caps Caps, remaining int) (bo
 }
 
 func (r *envelopeBuilder) fits(block, sequence string, remaining, limit int) bool {
-	bytes := r.body.Len() + len(block) + len(overflowLine(r.quotedAgent, remaining))
+	bytes := r.body.Len() + len(block) + len(overflowLine(r.quotedAgent, r.boardArg, remaining))
 	if r.prompt {
 		bytes += r.nudgeFixed + r.seqs.Len() + len(sequence)
 		if r.shown > 0 {
@@ -163,11 +203,16 @@ func (r *envelopeBuilder) fits(block, sequence string, remaining, limit int) boo
 }
 
 func (r *envelopeBuilder) finish(remaining int) string {
-	r.body.WriteString(overflowLine(r.quotedAgent, remaining))
+	r.body.WriteString(overflowLine(r.quotedAgent, r.boardArg, remaining))
 	if !r.prompt || r.shown == 0 {
 		return r.body.String()
 	}
-	return fmt.Sprintf(nudgeTemplate, r.quotedAgent, r.seqs.String(), r.quotedAgent) + "\n" + r.body.String()
+	return r.nudge(r.seqs.String()) + "\n" + r.body.String()
+}
+
+// nudge renders the fixed prompt nudge; its read command carries the board.
+func (r *envelopeBuilder) nudge(seqs string) string {
+	return fmt.Sprintf(nudgeTemplate, r.quotedAgent, seqs, r.quotedAgent) + r.boardArg
 }
 
 // validatedNudge is shared by composition and RenderNudge after token checks.
@@ -180,14 +225,15 @@ func validatedNudge(agent string, seqs []int64) string {
 	return fmt.Sprintf(nudgeTemplate, quoted, strings.Join(parts, ", "), quoted)
 }
 
-func overflowLine(agent string, count int) string {
+func overflowLine(agent, boardArg string, count int) string {
 	if count == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%d more events not shown; they remain in your inbox. Read full events with mtix inbox --agent %s --json or increase the caps.\n", count, agent)
+	return fmt.Sprintf("%d more events not shown; they remain in your inbox. Read full events with mtix inbox --agent %s --json%s or increase the caps.\n", count, agent, boardArg)
 }
 
-func eventBlock(agent, quotedAgent string, event Event, bodyCap int) (string, bool) {
+func eventBlock(r *envelopeBuilder, event Event, bodyCap int) (string, bool) {
+	agent, quotedAgent, boardArg := r.agent, r.quotedAgent, r.boardArg
 	body, truncated, ok := quoteBody(event.Body, bodyCap)
 	if !ok {
 		return "", false
@@ -198,16 +244,16 @@ func eventBlock(agent, quotedAgent string, event Event, bodyCap int) (string, bo
 	fmt.Fprintf(&b, "%s\nsender (as claimed, not verified): %s\ntask: %s\nseq: %d\nbody: %s\n%s\n", BeginMarker, displayToken(event.Sender, validSender), displayToken(event.Task, validTask), event.Seq, body, EndMarker)
 	if truncated {
 		b.WriteString("truncated; full event remains unacked in your inbox")
-		if validTask {
-			fmt.Fprintf(&b, "; full text: mtix show %s", event.Task)
+		if word, typeable := ShellOperand(event.Task); validTask && typeable {
+			b.WriteString("; full text: " + showCommand(word, boardArg))
 		}
-		fmt.Fprintf(&b, "; read full events: mtix inbox --agent %s --json\n\n", quotedAgent)
+		fmt.Fprintf(&b, "; read full events: mtix inbox --agent %s --json%s\n\n", quotedAgent, boardArg)
 		return b.String(), true
 	}
 	if validTask && validSender && event.Sender != agent && !event.Alert {
-		fmt.Fprintf(&b, "reply: mtix comment %s --to %s \"<text>\"\n", event.Task, event.Sender)
+		fmt.Fprintf(&b, "reply: mtix comment %s --to %s \"<text>\"%s\n", event.Task, event.Sender, boardArg)
 	}
-	fmt.Fprintf(&b, "ack: mtix inbox ack %d --agent %s\n\n", event.Seq, quotedAgent)
+	fmt.Fprintf(&b, "ack: mtix inbox ack %d --agent %s%s\n\n", event.Seq, quotedAgent, boardArg)
 	return b.String(), true
 }
 
@@ -216,4 +262,13 @@ func displayToken(value string, valid bool) string {
 		return "<invalid>"
 	}
 	return quoteMetadata(value)
+}
+
+// showCommand renders the mtix show hint. A "-- operand" word puts the board
+// argument first, because a flag after -- would be read as a task id.
+func showCommand(operand, boardArg string) string {
+	if strings.HasPrefix(operand, "-- ") {
+		return "mtix show" + boardArg + " " + operand
+	}
+	return "mtix show " + operand + boardArg
 }

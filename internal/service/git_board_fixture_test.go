@@ -21,19 +21,65 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// boardGitFixtureBound bounds each owned fixture Git call. The former 10s
+// bound killed a single call on hosted macOS runners under -race and load (PR
+// 181 and PR 182 CI, signal: killed; whole-test times 10s to 16s, so the worst
+// single call seen was about 16s). 60s is nearly four times that, which a
+// loaded runner clears, and it stays finite: a hung Git still fails the test,
+// naming the subcommand and the elapsed time. Each test stops at its first
+// failed call (require), so the worst case is one bound per test. Production
+// timeouts are unrelated.
+const boardGitFixtureBound = 60 * time.Second
+
+// boardGitWaitDelay caps how long a finished or killed Git call may keep its
+// output pipes open, so a surviving helper cannot stretch the bound.
+const boardGitWaitDelay = time.Second
+
+// boardGitRunFunc runs one owned Git call; runBoardGit is the real one.
+type boardGitRunFunc func(bin, dir, home string, bound time.Duration, args ...string) (string, error)
+
+// runBoardGit runs one owned Git call under bound and returns its combined
+// output. Any failure names the subcommand, the elapsed time and the bound.
+func runBoardGit(bin, dir, home string, bound time.Duration, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
+	return runBoardGitCtx(ctx, bin, dir, home, bound, args...)
+}
+
+// runBoardGitCtx is runBoardGit under a caller-owned context; bound is only
+// reported in the failure text. Cancelling ctx kills the call's whole group.
+func runBoardGitCtx(ctx context.Context, bin, dir, home string, bound time.Duration, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Dir = dir
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + home, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=Fixture", "GIT_AUTHOR_EMAIL=fixture@example.invalid", "GIT_COMMITTER_NAME=Fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid", "GIT_TERMINAL_PROMPT=0"}
+	isolateBoardGit(cmd)
+	cmd.WaitDelay = boardGitWaitDelay
+	start := time.Now()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		sub := ""
+		if len(args) > 0 {
+			sub = args[0]
+		}
+		return string(out), fmt.Errorf("git %s failed after %s (bound %s): %w: %s", sub, time.Since(start).Round(time.Millisecond), bound, err, out)
+	}
+	return string(out), nil
+}
+
+// boardGitUsing runs one owned Git call through run under the fixture bound.
+func boardGitUsing(t *testing.T, run boardGitRunFunc, dir string, args ...string) string {
+	t.Helper()
+	out, err := run("/usr/bin/git", dir, t.TempDir(), boardGitFixtureBound, args...)
+	require.NoError(t, err, "owned Git setup")
+	return out
+}
+
 func boardGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("native Git policy is unavailable on this platform")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "/usr/bin/git", args...)
-	cmd.Dir = dir
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=Fixture", "GIT_AUTHOR_EMAIL=fixture@example.invalid", "GIT_COMMITTER_NAME=Fixture", "GIT_COMMITTER_EMAIL=fixture@example.invalid", "GIT_TERMINAL_PROMPT=0"}
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "owned Git setup: %s", out)
-	return string(out)
+	return boardGitUsing(t, runBoardGit, dir, args...)
 }
 
 func boardWrite(t *testing.T, path string, data []byte) {

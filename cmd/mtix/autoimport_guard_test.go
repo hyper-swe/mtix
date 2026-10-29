@@ -82,7 +82,13 @@ func pulledProject(t *testing.T, config string) {
 // the next mtix command after the pull would, and returns its stderr.
 func runPreRun(t *testing.T, name string) string {
 	t.Helper()
-	cmd := &cobra.Command{Use: name}
+	jsonMode := app.jsonOutput
+	root := newRootCmd()
+	cmd, _, err := root.Find(strings.Fields(name))
+	require.NoError(t, err)
+	require.NotEqual(t, root, cmd, "fixture must resolve the actual command path")
+	// Registering persistent flags installs defaults; retain the fixture's mode.
+	app.jsonOutput = jsonMode
 	cmd.SetContext(testContext(t))
 	return captureStderr(t, func() {
 		require.NoError(t, persistentPreRun(cmd, nil, ""))

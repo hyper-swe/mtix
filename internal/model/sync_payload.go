@@ -87,6 +87,8 @@ type CommentPayload struct {
 	// syncs with the comment and so the per-agent inbox — a query over the event
 	// journal — can filter on it without a new op_type.
 	To string `json:"to,omitempty"`
+	// Hop is additive wake-chain context; absent is zero (FR-20.3).
+	Hop int64 `json:"hop,omitempty"`
 }
 
 // LinkDepPayload captures a dependency creation.

@@ -5,7 +5,7 @@ description: Execute mtix tasks using the context chain. Claim tasks, read assem
 
 # Task Execution with mtix
 
-Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim and unclaim keep their existing required/default actor rules. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
+Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
 
 ## Before Starting Any Work
 
@@ -21,6 +21,20 @@ The dot-notation hierarchy (e.g., PROJ-42.1.3) IS your briefing. Each level adds
 - Leaf: exact implementation instructions
 
 Always run `mtix context <id>` before starting — it assembles the full prompt from root to your task.
+
+## Every action item becomes a ticket
+
+When you find or promise an action item (a follow-up, cleanup, promised check or open question), file an mtix ticket right away. Do not leave it in chat, notes or a state file. A ticket keeps the item traceable, findable later and auditable.
+
+```bash
+mtix create "Add retry to the export check" --under PROJ-12 --type chore \
+  --description "Why the item exists and its scope" \
+  --prompt "Exact files, functions and edge cases" \
+  --acceptance "Testable outcome"
+mtix create "Cleanup after the migration" --description "..." --prompt "..." --acceptance "..."
+```
+
+Use `--under <id>` to place the item under related work. Omit it for a new root ticket.
 
 ## Workflow
 
@@ -57,3 +71,7 @@ Connect a WebSocket client to the local server's `/ws/events` endpoint and send
 for that task and its descendants. Verify the watch with an event for the named
 task or a child; a lookalike sibling must not appear. If expected events are
 missing, check both `under` and the non-empty event whitelist before retrying.
+
+## Reading Ticket Comments
+
+With `mtix serve`, open a ticket's **Activity** tab. **All** includes comments and other events, newest first; **Comments** filters the loaded activity pages to plain and addressed comments. Each comment shows its author and, when present, recipient. Bodies use sanitized Markdown; identities stay literal text. Use **Load more** for older entries and refresh the ticket after comments arrive from another process. Viewing a comment does not acknowledge an inbox event: acknowledge explicitly after handling it.

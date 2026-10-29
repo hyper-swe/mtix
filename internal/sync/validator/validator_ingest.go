@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -54,12 +55,18 @@ var (
 // at ingest would diverge this replica from its peers. Stale timestamps
 // are reported in res.StaleTimestamps as by Validate. A nil res opts out
 // of both observations. An event whose hub row did not decode (Malformed
-// set) is rejected first, with ErrMalformedEvent.
+// set) is rejected first, with ErrMalformedEvent. After the envelope, every
+// node id the event names is checked against the node id grammar
+// (ValidateEventNodeIDs, ErrInvalidNodeID, MTIX-187); push does not run
+// that check.
 func ValidateIngest(e *model.SyncEvent, now time.Time, res *Result) error {
 	if e != nil && e.Malformed != "" {
-		return fmt.Errorf("event %s: %s: %w", e.EventID, e.Malformed, ErrMalformedEvent)
+		return fmt.Errorf("event %s: %s: %w", format.EventID(e.EventID), e.Malformed, ErrMalformedEvent)
 	}
 	if err := validateEnvelope(e); err != nil {
+		return err
+	}
+	if err := ValidateEventNodeIDs(e); err != nil {
 		return err
 	}
 	if res == nil {

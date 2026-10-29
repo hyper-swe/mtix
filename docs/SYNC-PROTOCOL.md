@@ -589,6 +589,25 @@ it, in this order:
    an event at push, but at ingest this machine's clock may be the wrong
    one, and refusing a hub event would make this replica diverge from its
    peers.
+3. **Task ids** (`validator.ValidateEventNodeIDs`, MTIX-187). The
+   event's `node_id`, a `create_node` payload's `parent_id` (when set)
+   and a `link_dep` or `unlink_dep` payload's `depends_on_node_id`
+   (always) must match the node id grammar (`model.ValidateSyncNodeID`):
+   `PREFIX-<root>` followed by `.<segment>` parts, a numeric root,
+   numeric or uid child segments, ASCII only and no empty segment. The
+   prefix follows the sync `project_prefix` grammar, which admits `_`
+   (MTIX-95.17). mtix never creates any other id, so an event that names
+   one came from another client or a hub row changed by hand. It is
+   refused with `validator.ErrInvalidNodeID` (the reason contains
+   `invalid node id`, the field and the id), and no retry applies it.
+   Push does not run this check, so a replica that already holds such a
+   task can still push its changes; the relay ingest runs it after its
+   envelope check, and `Store.Import` refuses a file that names such an
+   id unless the store already holds a task with that id. `mtix sync
+   status` counts these quarantined events (`quarantined_invalid_ids`)
+   and the local tasks with such an id (`invalid_node_ids`), and `mtix
+   sync doctor` warns in its `valid node ids` check, naming each local
+   task and its uid.
 
 An admitted event is applied through `IdempotentApply` inside its own
 savepoint. An event that fails a check or its apply has the savepoint
@@ -685,12 +704,45 @@ sync status` shows `quarantined events` (`quarantined_events` in
 every quarantined event read-only through the service layer: event id,
 node, op, attempts, first seen, last attempt and reason, and in JSON
 also the Lamport clock, source and CLI version. `mtix sync doctor` has a
-`quarantined events` check that fails while the table is not empty; its
+`quarantined events` check that fails while any pulled event is unacknowledged; its
 detail says the events are retried on every pull, to run `mtix sync
 pull` first, and to list them with `mtix sync quarantine list`.
 
 The table is created with `CREATE TABLE IF NOT EXISTS` the next time
 mtix opens the store (no schema version change) and is local only.
+
+**Audited invalid-node-id recovery.** After inspection and reporting to the hub
+maintainer, `mtix sync quarantine acknowledge --handle <handle> --reason <text>` (the handle is the first 12 hex characters of the SHA-256 of the exact event id bytes, printed by `mtix sync quarantine list`, so ids with NUL or invalid UTF-8 can be named; `<event-id>` also works for an ordinary id) records
+an immutable local receipt accepting one pulled invalid-node-id event as
+unapplied. Eligibility is based on the retained raw event and the node-id
+validator, not the stored reason: only `pull`/`sweep` sources are eligible.
+Push holds, unrelated failures, malformed raw JSON, event-id mismatches and
+missing or blank reasons are refused. No terminal or hub connection is needed.
+The first receipt records the resolved process author, reason, UTC
+time and SHA256 of the exact retained raw bytes; a valid repeat returns that
+receipt unchanged. Reasons are limited to 500 UTF-8 bytes. Repeats explicitly report
+that the first receipt stands and the supplied reason was not recorded; response
+JSON includes `already_acknowledged` (`true` for repeats, `false` for new receipts).
+A different raw event with the same id needs a fresh receipt.
+
+Doctor's Fix names the event by its handle: the first 12 hex characters of the SHA-256 of the exact event id bytes, which `mtix sync quarantine list` also prints in a HANDLE column (`handle` and `event_id_sha256` in `--json`). The handle is always printable and typeable, even when the id holds NUL, invalid UTF-8 or shell metacharacters, so the printed command can be copied as it is: `mtix sync quarantine acknowledge --handle <handle> --reason '<your explanation>'`. Replace `<your explanation>` with why this event is safe to accept as unapplied; without `--reason` the command is refused. A handle may be shortened to 8 hex characters; one that matches more than one event is refused with the length that separates them. Use the positional `<event-id>` form only for an ordinary id. Then run doctor again after each acknowledgement. Use `mtix sync quarantine list --json` to report the original id to the operator; JSON keeps NUL and escapable bytes in the id exactly but shows invalid UTF-8 bytes as U+FFFD; `event_id_sha256` and the handle always name the exact stored bytes. A printed handle may be longer than 12 characters when two retained events share a shorter prefix.
+
+The additive `sync_quarantine_acknowledgements` table is local only, outside
+exports/imports and the sync protocol, with no schema version bump. Receipts
+survive later quarantine removal. The guarded transaction rechecks source and
+raw bytes before persisting; any write/read error fails closed. A legacy store
+opened read-only without the additive table treats every pulled event as
+unacknowledged and refuses acknowledgement writes.
+
+Acknowledgement never applies or removes the retained event, changes its original
+reason, clocks, cursors, nodes, sync/applied logs or hub, or acknowledges another
+replica. Every pull still retries it. Status retains the unapplied total and
+adds `acknowledged_quarantined_events` and `unacknowledged_quarantined_events`.
+List text marks acknowledged rows, and JSON adds optional `acknowledgement`
+metadata (`actor`, `reason`, `acknowledged_at`, `raw_event_sha256`). Doctor passes
+its quarantine check only at zero unacknowledged pulled rows and reports the
+retained acknowledged count; other failures retain their results. Verify those
+counts and receipts, rather than expecting the retained total to become zero.
 
 The same table holds the events push holds back, with source `push`
 (see [Push: held events](#push-held-events)). The pull side leaves those
@@ -765,6 +817,101 @@ hook dispatch and inbox delivery still see each event exactly once. The
 hook journal's `Synced` flag keeps its semantics: it is still derived
 from `applied_events`, and an own event returned by a pull is recorded
 there, as it was before this rule.
+
+## Replace import and the sync log
+
+A replace import (`mtix import --mode replace`, and the automatic import
+of a changed `.mtix/tasks.json`) deletes the local nodes and writes the
+file's. It writes no sync event and deletes none, so on a replica that
+syncs it can leave events in the local log whose effect is no longer on
+the board: a node the file lacks is gone while its `create_node` event
+stays. A later pull cannot repair that. The cursor is already past those
+events, and the own-event rule acknowledges any event the log holds
+instead of applying it, so the board stays behind the hub for good
+(projection drift, ADR-006 section 5.3; MTIX-107.31).
+
+**Decision: refuse.** Of the three ways to keep the board and the log
+consistent (refuse the replace on a replica that syncs; clear
+`sync_events` and `applied_events` and reset the pull cursor in the
+replace's transaction, so the next pull rebuilds from the hub; or
+re-derive the missing nodes from the held events), mtix refuses. Clearing
+the log would also discard unpushed local events and rewind the inbox,
+hook and relay cursors keyed to it, which is what `mtix sync reconcile
+--discard-local` does on purpose, behind its own confirmation.
+Re-deriving nodes from events would make an import write sync state.
+Refusing changes nothing and names the way out.
+
+- **`mtix import --mode replace`** is refused, before the typed
+  confirmation and with nothing written, when the store holds nodes and
+  syncs with a hub or relay: it carries the hub-connected mark, holds an
+  event it pulled (`applied_events`) or pushed (a `sync_events` row past
+  `pending`), a DSN is configured, or local config shows a hub or relay.
+  The error wraps `sqlite.ErrReplaceOnSyncedStore` and names the
+  recovery: `mtix sync push`, check that `mtix sync status` shows
+  `pending` 0, then `mtix sync reconcile --discard-local --yes`, then
+  `mtix sync pull`. A replace into an empty store, such as
+  a restore into a fresh data directory, deletes nothing and runs as
+  before. A store counts as synced when it carries the hub-connected
+  mark, holds a pulled event or an event past `pending`, or has
+  published to or ingested from a file relay (a relay publish keeps the
+  journal events pending, so the relay cursors are read too). The
+  relay publisher writes its cursor only after the append, so a first
+  publish that crashed or failed to advance leaves no cursor: the
+  automatic import therefore records the local hub or relay evidence (a
+  configured relay directory, hub endpoint or stored DSN) as the
+  hub-connected mark before it imports, and fails closed, importing
+  nothing, if that evidence cannot be read or stored (MTIX-107.31.7).
+  One helper gathers the evidence for the automatic import, the
+  command-line replace guard and the doctor check (MTIX-107.31.8): the
+  config keys (`sync.relay.dir`, `sync.enabled`, `sync.endpoint`), a DSN
+  in the secrets file, one that `transport.Source` refuses, and an
+  exported `MTIX_SYNC_DSN`. The exported DSN is transient: it makes the
+  automatic import treat the store as synced for that import
+  (`sqlite.AsSyncedStore`), so a replace that would delete local data or
+  drop a task the sync log holds is refused, and `mtix import --mode
+  replace` is refused while it is set; it is never recorded as the mark.
+  The command-line guard already counted a refused DSN (a DSN key in a
+  tracked config file, or a secrets file with the wrong mode, even an
+  empty one); the automatic import now counts it too, transiently, and
+  does not record it. Only a DSN in the secrets file, whatever its mode,
+  is recorded as the mark, by its content. Unreadable evidence (a
+  secrets file that is not a regular file or cannot be opened, a config
+  key that cannot be read) is an error: the automatic import stops, and
+  the command-line guards refuse, naming the cause. A missing secrets
+  file is no evidence.
+- **On a store that never synced** nothing was shared, so every event
+  is still pending, and a replace that drops a task discards, in the
+  same transaction, the pending events of that task (matched by uid, as
+  the synced-store guard matches), their held copies in
+  `sync_quarantine`, and the pending link events whose target is the
+  dropped task. Without that, the first push after a hub or relay is
+  configured would create a task the board does not hold. A retained or
+  renumbered task keeps its events (MTIX-107.31.3).
+- **Every replace** (the store's `Import` in replace mode, which the
+  automatic import also uses) is refused in its own transaction, before
+  anything is deleted, when the store has synced and the file does not
+  hold, as the same task, a local node that has an event in
+  `sync_events`. A task is the same task by its uid, as the comparison of
+  the automatic import (`DiffReplace`) takes it: a file that keeps a
+  task's number but drops or changes its uid loses the task, because the
+  logged creation is left without a task and a later pull fails with
+  `not found`. A task that keeps its number and title and takes the
+  file's uid is not refused while its creation is still pending: its
+  pending events are carried to the new uid (MTIX-95.31.16). The same holds for a task
+  whose uid is a marked backfill uid, which a board written before uids
+  were shared replaces with the file's. A board that only renumbers
+  a task keeps its uid and imports, as before, and so does a teammate's
+  board that adds tasks.
+
+**Doctor.** `mtix sync doctor` (and `mtix doctor`) runs the `board
+matches sync log` check on a replica that syncs. It fails while the log
+holds a `create_node` event whose task is not on the board by uid (by
+number only for an event that carries no uid) and has no `delete` event
+(`mtix gc` purges deleted nodes, which is not drift), names the nodes, and
+prints the steps to run one at a time: `mtix sync push`, check that `mtix
+sync status` shows `pending` 0, then `mtix sync reconcile --discard-local
+--yes`, then `mtix sync pull`. A renumbered task is not drift; a task
+whose uid was replaced under its number is.
 
 ## Migration single-flight
 

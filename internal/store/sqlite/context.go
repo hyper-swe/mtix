@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -96,7 +97,8 @@ func (s *Store) GetSiblings(ctx context.Context, nodeID string) ([]*model.Node, 
 func (s *Store) SetAnnotations(ctx context.Context, nodeID string, annotations []model.Annotation) error {
 	var annotJSON string
 	if len(annotations) > 0 {
-		data, err := json.Marshal(annotations)
+		// Stored in the canonical (created_at, id) order (MTIX-100.2).
+		data, err := json.Marshal(model.SortAnnotations(annotations))
 		if err != nil {
 			return fmt.Errorf("marshal annotations for %s: %w", nodeID, err)
 		}
@@ -177,7 +179,7 @@ func (s *Store) AppendAnnotation(ctx context.Context, nodeID string, annotation 
 		next := make([]model.Annotation, 0, len(current)+1)
 		next = append(next, current...)
 		return append(next, annotation), nil
-	})
+	}, "", annotation.Hop)
 }
 
 // ResolveAnnotation sets the resolved flag of one annotation, identified by
@@ -195,17 +197,16 @@ func (s *Store) ResolveAnnotation(ctx context.Context, nodeID, annotationID stri
 				return next, nil
 			}
 		}
-		return nil, fmt.Errorf("annotation %s on node %s: %w", annotationID, nodeID, model.ErrNotFound)
-	})
+		return nil, fmt.Errorf("annotation %s on node %s: %w", format.EventID(annotationID), nodeID, model.ErrNotFound)
+	}, "", 0)
 }
 
 // mutateAnnotations loads a node's annotations, applies change and stores the
 // result plus the comment sync event, all inside one write transaction. The
 // single write connection serializes writers; BEGIN IMMEDIATE (see New) makes
 // other processes wait on busy_timeout instead of reading a stale array.
-func (s *Store) mutateAnnotations(
-	ctx context.Context, nodeID string,
-	change func([]model.Annotation) ([]model.Annotation, error),
+func (s *Store) mutateAnnotations(ctx context.Context, nodeID string,
+	change func([]model.Annotation) ([]model.Annotation, error), eventID string, hop int64,
 ) error {
 	// MTIX-95.31.19.3: the annotations change is recorded as a value-free history entry.
 	return s.withHistoryTx(ctx, historyScope{id: nodeID}, func(tx *sql.Tx) error {
@@ -233,7 +234,9 @@ func (s *Store) mutateAnnotations(
 		if err != nil {
 			return err
 		}
-		data, err := json.Marshal(next)
+		// Stored in the canonical (created_at, id) order (MTIX-100.2); the
+		// comment event below still names the entry the caller appended.
+		data, err := json.Marshal(model.SortAnnotations(next))
 		if err != nil {
 			return fmt.Errorf("marshal annotations for %s: %w", nodeID, err)
 		}
@@ -252,6 +255,14 @@ func (s *Store) mutateAnnotations(
 			ProjectCode: projectPrefixFromNodeID(nodeID),
 			OpType:      model.OpComment,
 			Author:      author,
-		}, &model.CommentPayload{AuthorID: author, Body: body, To: to})
+			EventID:     eventID,
+		}, &model.CommentPayload{AuthorID: author, Body: body, To: to, Hop: addressedStoredHop(to, hop)})
 	})
+}
+
+func addressedStoredHop(to string, hop int64) int64 {
+	if to == "" {
+		return 0
+	}
+	return hop
 }

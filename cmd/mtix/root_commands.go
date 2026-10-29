@@ -19,6 +19,11 @@ func rootPostRun(cmd *cobra.Command, _ []string) error {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not mirror the hub-connected mark: %v\n", err)
 		}
 	}
+	// MTIX-112.20.1: real activity (a mutation, an addressed send, an agent
+	// heartbeat) restarts the hub-contact window. Waits and reads do not.
+	if kind, ok := commandActivity(cmd); ok && app.mtixDir != "" {
+		recordHubActivity(kind)
+	}
 	// Auto-export after mutation commands per FR-15.3, with the
 	// interval-gated rolling backup riding the same trigger
 	// (FR-26.6).
@@ -32,6 +37,12 @@ func rootPostRun(cmd *cobra.Command, _ []string) error {
 		// errors are logged inside Dispatch. Events from a command that
 		// errored (skipping this path) are picked up by the next one.
 		app.hooksDisp.Dispatch(cmd.Context())
+	}
+	// Rewrite stale or marked release-defined attach artifacts (shim, glue)
+	// without a terminal; grants are never rewritten (ADR-007 §6.5).
+	// Top-level doctor repairs attach artifacts only through its registered --fix fixers.
+	if !isTopLevelDoctor(cmd) {
+		refreshAttachArtifacts(cmd.Context(), app.logger)
 	}
 	return finishCommand(cmd) // payload warnings (MTIX-95.12), then closeApp
 }
@@ -64,6 +75,9 @@ func registerRootCommands(rootCmd *cobra.Command) {
 		newOrphansCmd(),
 		newProjectsCmd(),
 		newStatsCmd(),
+		// Hidden harness-glue verbs; the handshake serves N and N-1 and marks
+		// N-1 glue for refresh (ADR-007 §6.5).
+		newAttachCmd(),
 	)
 	registerRemainingRootCommands(rootCmd)
 }

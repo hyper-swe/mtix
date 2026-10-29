@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -194,6 +195,11 @@ func connectAndPull(ctx context.Context, in pullIngest, args []string,
 	defer pool.Close()
 	// The hub accepted this connection: sticky evidence for the board (ADR-007 A9).
 	noteHubConnection(ctx, os.Stderr)
+	// Register this client with the hub before the cursor loop, so a client
+	// that only pulls is visible to the version gate even when its pull
+	// fails later or finds nothing new (MTIX-95.13). Never fails the pull.
+	registerPullClient(ctx, in.stderr, pool, app.store,
+		clientIdentity{machineHash: clientMachineHash(), cliVersion: version})
 
 	since, err := readLastPulledClock(ctx, app.store)
 	if err != nil {
@@ -412,7 +418,7 @@ func runAfterEach(tx *sql.Tx, e *model.SyncEvent,
 ) error {
 	for _, after := range afterEach {
 		if err := after(tx, e); err != nil {
-			return fmt.Errorf("after apply %s: %w", e.EventID, err)
+			return fmt.Errorf("after apply %s: %w", format.EventID(e.EventID), err)
 		}
 	}
 	return nil

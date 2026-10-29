@@ -13,166 +13,22 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
-	"github.com/hyper-swe/mtix/internal/relay/segment"
 )
 
-// validConfigKeys lists all 38 allowed config keys per FR-11.2.
-//
-// The sync.relay.* family configures the FR-21 file transport, which is
-// EXPERIMENTAL and opt-in (trial use; behavior and on-disk format may
-// change in 0.6.0; nothing changes unless sync.relay.dir is set). It is a
-// second transport beside the hub, so its cadence and thresholds are
-// its own settings rather than the hub's: the daemon's tick and a
-// shared medium's propagation are unrelated concerns (D-R12).
-var validConfigKeys = map[string]bool{
-	"prefix":                       true,
-	"author_id":                    true,
-	"mcp.read_only":                true,
-	"api.bind":                     true,
-	"api.http_port":                true,
-	"api.grpc_port":                true,
-	"api.rate_limit":               true,
-	"mcp.enabled":                  true,
-	"mcp.transport":                true,
-	"data.dir":                     true,
-	"data.soft_delete_retention":   true,
-	"history.export":               true,
-	"sync.enabled":                 true,
-	"sync.endpoint":                true,
-	"sync.team_id":                 true,
-	"sync.max_lamport_jump":        true,
-	"sync.auto_sync":               true,
-	"sync.interval":                true,
-	"sync.keep_roles":              true,
-	"sync.relay.dir":               true,
-	"sync.relay.peer_id":           true,
-	"sync.relay.poll_interval":     true,
-	"sync.relay.retention_days":    true,
-	"sync.relay.silent_peer_days":  true,
-	"sync.relay.max_segment_bytes": true,
-	"sync.relay.require_auth":      true,
-	"agent.heartbeat_interval":     true,
-	"agent.stale_threshold":        true,
-	"agent.session_timeout":        true,
-	"agent.stuck_timeout":          true,
-	"agent.id_pattern":             true,
-	"agent.auto_claim":             true,
-	"context.token_estimator":      true,
-	"logging.file":                 true,
-	"logging.level":                true,
-	"progress.weighted":            true,
-	"ui.default_depth":             true,
-	"ui.collapse_done":             true,
-	"ui.theme":                     true,
-}
-
-// valueValidators check a value before it is stored, for keys where a
-// malformed one fails somewhere far from the command that set it.
-//
-// The check belongs here so an operator learns at the moment they type
-// it rather than at the next tick, when the message would arrive
-// detached from the action that caused it.
-var valueValidators = map[string]func(string) error{
-	// FR-21 §5.2 identity grammar. Empty means "derive from this
-	// machine", which is the default. The grammar is reused from the
-	// relay's own frame layer rather than restated — a second copy of
-	// an identity rule is a second thing to disagree.
-	"sync.relay.peer_id": func(v string) error {
-		if v == "" {
-			return nil
-		}
-		if err := segment.ValidatePeerID(v); err != nil {
-			return fmt.Errorf("sync.relay.peer_id %q is malformed "+
-				"(16 hex characters, optionally -label): %w", v, model.ErrInvalidInput)
-		}
-		return nil
-	},
-	// MTIX-95.31.2: sync.auto_sync accepts true or false in any form;
-	// a mistyped value is refused here rather than read as "on" later.
-	"sync.auto_sync": func(v string) error {
-		_, err := parseAutoSync(v)
-		return err
-	},
-	"history.export": validateHistoryExport, // MTIX-95.31.19.5
-}
-
-// serverRestartKeys are keys that affect a running server and require restart.
-var serverRestartKeys = map[string]bool{
-	"api.bind":       true,
-	"api.http_port":  true,
-	"api.grpc_port":  true,
-	"api.rate_limit": true,
-	"mcp.enabled":    true,
-	"mcp.transport":  true,
-	"logging.file":   true,
-	"logging.level":  true,
-}
-
-// configDefaults contains default values for all 38 keys per FR-11.2.
-var configDefaults = map[string]string{
-	"prefix":                     "PROJ",
-	"author_id":                  "",
-	"mcp.read_only":              "false",
-	"api.bind":                   "127.0.0.1",
-	"api.http_port":              "6849",
-	"api.grpc_port":              "6850",
-	"api.rate_limit":             "100",
-	"mcp.enabled":                "true",
-	"mcp.transport":              "stdio",
-	"data.dir":                   ".mtix/data",
-	"data.soft_delete_retention": "30d",
-	"history.export":             "false",
-	"sync.enabled":               "false",
-	"sync.endpoint":              "",
-	"sync.team_id":               "",
-	"sync.max_lamport_jump":      maxLamportJumpDefault,
-	"sync.auto_sync":             "true",
-	"sync.interval":              "30s",
-	"sync.keep_roles":            "",
-	// EXPERIMENTAL, opt-in file relay. An empty relay directory means no
-	// relay is configured; every relay phase is then a no-op rather than
-	// an error.
-	"sync.relay.dir": "",
-	// An operator-assigned relay identity, for peers whose workspace is
-	// rebuilt somewhere else between sessions. Empty derives it from
-	// the machine, which is right whenever the machine is the thing
-	// that persists.
-	"sync.relay.peer_id": "",
-	// Poll cadence is the relay's own, not the daemon's (D-R12). "0"
-	// is legal and declares a tick-only peer (§6.6) — a turn-driven
-	// agent seat, a cron-locked appliance, a sneakernet courier — which
-	// is a deployment, not a misconfiguration.
-	"sync.relay.poll_interval": "5s",
-	// The prune safety window, and the silence threshold that prompts
-	// retirement at twice it (§6.7).
-	"sync.relay.retention_days":   "7",
-	"sync.relay.silent_peer_days": "14",
-	// Rotation threshold (§5.3).
-	"sync.relay.max_segment_bytes": "4194304",
-	// Authenticated by default: the relay medium is a less trusted
-	// channel than the hub, so running without MACs is an explicit,
-	// logged opt-out rather than something a peer drifts into (§8.3).
-	"sync.relay.require_auth":  "true",
-	"agent.heartbeat_interval": "60s",
-	"agent.stale_threshold":    "24h",
-	"agent.session_timeout":    "4h",
-	"agent.stuck_timeout":      "",
-	"agent.id_pattern":         "agent-*",
-	"agent.auto_claim":         "true",
-	"context.token_estimator":  "chars4",
-	"logging.file":             ".mtix/logs/mtix.log",
-	"logging.level":            "info",
-	"progress.weighted":        "false",
-	"ui.default_depth":         "3",
-	"ui.collapse_done":         "false",
-	"ui.theme":                 "system",
-}
-
-// ConfigService manages mtix configuration per FR-11.1 and FR-11.2.
-// Stores config in .mtix/config.yaml with dot-notation key access.
+// ConfigService manages workspace configuration (FR-11.1/11.2) and host wake
+// settings (FR-20.3/20.5). Wake authority is stored operator-locally; ordinary
+// workspace values use .mtix/config.yaml with dot-notation key access.
 type ConfigService struct {
-	values map[string]string
-	path   string // Path to config file.
+	wake        *WakeConfigOptions
+	reevaluator WakeReevaluator
+	ignoredWake map[string]string
+	values      map[string]string
+	path        string // Path to config file.
+
+	// legacyHubContact is true when an existing config file predates
+	// sync.hub_contact and the operator has not set it since (MTIX-112.20.1).
+	legacyHubContact bool
+	seenInFile       map[string]bool
 }
 
 // NewConfigService creates a ConfigService, loading from the given path.
@@ -194,29 +50,38 @@ func NewConfigService(configPath string) (*ConfigService, error) {
 			if !os.IsNotExist(err) {
 				return nil, fmt.Errorf("load config: %w", err)
 			}
+		} else {
+			cs.legacyHubContact = !cs.seenInFile[hubContactKey]
 		}
 	}
 
 	return cs, nil
 }
 
-// Get returns the value for a config key using dot-notation.
+// Get returns a workspace or effective host/agent value using dot-notation.
 // Returns ErrInvalidConfigKey if the key is not recognized.
 func (cs *ConfigService) Get(key string) (string, error) {
-	if !validConfigKeys[key] {
+	if model.IsWakeSetting(key) {
+		return cs.getWakeSetting(key)
+	}
+	if !validConfigKey(key) {
 		return "", fmt.Errorf(
 			"unknown config key %q; valid keys: %s: %w",
 			key, validKeyList(), model.ErrInvalidConfigKey,
 		)
 	}
 
+	if key == hubContactKey && cs.legacyHubContact {
+		return HubContactMode{Kind: HubContactInterval, Interval: GrandfatherInterval}.String(), nil
+	}
 	if v, ok := cs.values[key]; ok {
 		return v, nil
 	}
 	return configDefaults[key], nil
 }
 
-// Set writes a config value for the given key.
+// Set writes a config value for the given key. Host wake changes use protected
+// operator-local storage; loosening requires terminal stdin (FR-20.3).
 // Returns ErrInvalidConfigKey if the key is not recognized, and
 // ErrInvalidInput for a sync.auto_sync value that is neither true nor false
 // (MTIX-95.31.2), a sync.max_lamport_jump value that is not a positive
@@ -225,7 +90,10 @@ func (cs *ConfigService) Get(key string) (string, error) {
 // written then.
 // Returns a warning string if the key requires server restart.
 func (cs *ConfigService) Set(key, value string) (string, error) {
-	if !validConfigKeys[key] {
+	if model.IsWakeSetting(key) {
+		return cs.setWakeSetting(key, value)
+	}
+	if !validConfigKey(key) {
 		return "", fmt.Errorf(
 			"unknown config key %q; valid keys: %s: %w",
 			key, validKeyList(), model.ErrInvalidConfigKey,
@@ -246,6 +114,9 @@ func (cs *ConfigService) Set(key, value string) (string, error) {
 	}
 
 	cs.values[key] = value
+	if key == hubContactKey {
+		cs.legacyHubContact = false
+	}
 
 	if err := cs.saveToFile(); err != nil {
 		return "", fmt.Errorf("save config: %w", err)
@@ -257,10 +128,14 @@ func (cs *ConfigService) Set(key, value string) (string, error) {
 	return "", nil
 }
 
-// Delete removes a config key, reverting it to its default value.
+// Delete removes an override, reverting to its inherited or default value.
+// Loosening host wake policy requires terminal stdin (FR-20.3).
 // Returns ErrInvalidConfigKey if the key is not recognized.
 func (cs *ConfigService) Delete(key string) error {
-	if !validConfigKeys[key] {
+	if model.IsWakeSetting(key) {
+		return cs.changeWakeSetting(key, nil)
+	}
+	if !validConfigKey(key) {
 		return fmt.Errorf(
 			"unknown config key %q; valid keys: %s: %w",
 			key, validKeyList(), model.ErrInvalidConfigKey,
@@ -420,9 +295,7 @@ func (cs *ConfigService) loadFromFile(path string) error {
 			fullKey = currentSection + "." + key
 		}
 
-		if validConfigKeys[fullKey] {
-			cs.values[fullKey] = value
-		}
+		cs.loadWorkspaceKey(fullKey, value)
 	}
 
 	return nil
@@ -450,6 +323,9 @@ func (cs *ConfigService) saveToFile() error {
 			buf.WriteString("\n" + section + ":\n")
 		}
 		for key, value := range cs.values {
+			if key == hubContactKey && cs.legacyHubContact {
+				continue // keep a pre-existing board grandfathered until set
+			}
 			if section == "" {
 				if !strings.Contains(key, ".") {
 					buf.WriteString(key + ": " + quoteIfNeeded(value) + "\n")
@@ -467,8 +343,11 @@ func (cs *ConfigService) saveToFile() error {
 // ValidConfigKeys returns all valid config key names for documentation introspection.
 // Used by DocGen engine per FR-13.2.
 func ValidConfigKeys() []string {
-	keys := make([]string, 0, len(validConfigKeys))
+	keys := make([]string, 0, len(validConfigKeys)+len(model.WakeSettingDefaults()))
 	for k := range validConfigKeys {
+		keys = append(keys, k)
+	}
+	for k := range model.WakeSettingDefaults() {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
@@ -477,8 +356,11 @@ func ValidConfigKeys() []string {
 
 // validKeyList returns a comma-separated list of valid config keys.
 func validKeyList() string {
-	keys := make([]string, 0, len(validConfigKeys))
+	keys := make([]string, 0, len(validConfigKeys)+len(model.WakeSettingDefaults()))
 	for k := range validConfigKeys {
+		keys = append(keys, k)
+	}
+	for k := range model.WakeSettingDefaults() {
 		keys = append(keys, k)
 	}
 	return strings.Join(keys, ", ")
@@ -505,4 +387,21 @@ func quoteIfNeeded(s string) string {
 		return "\"" + s + "\""
 	}
 	return "\"" + s + "\""
+}
+
+func (cs *ConfigService) loadWorkspaceKey(key, value string) {
+	if ignoredWorkspaceKey(key) {
+		if cs.ignoredWake == nil {
+			cs.ignoredWake = map[string]string{}
+		}
+		cs.ignoredWake[key] = value
+		return
+	}
+	if validConfigKeys[key] {
+		cs.values[key] = value
+		if cs.seenInFile == nil {
+			cs.seenInFile = map[string]bool{}
+		}
+		cs.seenInFile[key] = true
+	}
 }

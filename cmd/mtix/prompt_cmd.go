@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
@@ -141,21 +143,21 @@ func runContext(id string, maxTokens int) error {
 	}
 
 	if app.jsonOutput {
-		data, _ := json.MarshalIndent(resp, "", "  ")
-		fmt.Println(string(data))
-	} else {
-		fmt.Println("=== Context Chain ===")
-		for _, entry := range resp.Chain {
-			indent := ""
-			for i := 0; i < entry.Depth; i++ {
-				indent += "  "
-			}
-			fmt.Printf("%s%s [%s] %s\n", indent, entry.ID, entry.Status, entry.Title)
+		return NewOutputWriter(true).WriteJSON(resp)
+	}
+	fmt.Println("=== Context Chain ===")
+	for _, entry := range resp.Chain {
+		indent := ""
+		for i := 0; i < entry.Depth; i++ {
+			indent += "  "
 		}
-		if resp.AssembledPrompt != "" {
-			fmt.Printf("\n=== Assembled Prompt (%d chars) ===\n%s\n",
-				len(resp.AssembledPrompt), resp.AssembledPrompt)
-		}
+		fmt.Printf("%s%s [%s] %s\n", indent, entry.ID, entry.Status, format.SafeLine(entry.Title))
+	}
+	// The assembled prompt embeds stored titles and prompt text; print the
+	// display form, in which no stored line can start a heading of its own
+	// (MTIX-187.7.13). --json carries the exact text.
+	if shown := format.SafeBlock(app.ctxSvc.AssembleDisplayPrompt(resp, maxTokens)); shown != "" {
+		fmt.Printf("\n=== Assembled Prompt (%d chars) ===\n%s\n", utf8.RuneCountInString(shown), shown)
 	}
 	return nil
 }

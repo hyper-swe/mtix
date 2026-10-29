@@ -6,9 +6,10 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
+
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"time"
 )
 
 // InboxAckStore persists selective inbox acknowledgements per FR-19.5.
@@ -20,8 +21,11 @@ type InboxAckStore interface {
 // InboxService owns durable list/wait reads and selective acknowledgements
 // without inventing domain broadcasts (FR-19.4/FR-19.5, Commandment 7).
 type InboxService struct {
-	store  InboxAckStore
-	reader InboxReadStore
+	store    InboxAckStore
+	reader   InboxReadStore
+	counter  InboxCountStore
+	wakeAcks WakeAckPublisher
+	reeval   WakeReevaluator
 }
 
 // InboxEvent is the per-agent event contract per FR-19.4, with unchanged JSON.
@@ -33,6 +37,12 @@ type InboxReadStore interface {
 	InboxWait(context.Context, string, time.Duration) ([]sqlite.InboxEvent, error)
 }
 
+// WithWakeReevaluator injects the held-wake re-evaluator run after a successful inbox call.
+func (s *InboxService) WithWakeReevaluator(r WakeReevaluator) *InboxService {
+	s.reeval = r
+	return s
+}
+
 // NewInboxService injects the durable selective acknowledgement backend (FR-19.5).
 func NewInboxService(st InboxAckStore) *InboxService {
 	reader, _ := st.(InboxReadStore)
@@ -42,15 +52,16 @@ func NewInboxService(st InboxAckStore) *InboxService {
 // NewInboxServiceWithReads injects separate durable read/ack capabilities per
 // FR-19.4/FR-19.5, preserving ack-only backends and selective acknowledgement.
 func NewInboxServiceWithReads(st InboxAckStore, reader InboxReadStore) *InboxService {
-	return &InboxService{store: st, reader: reader}
+	return NewInboxServiceWithWakeAcks(st, reader, defaultWakeAckPublisher(st))
 }
 
 // InboxAck acknowledges only the requested event, preserving backend validation,
 // idempotency and cancellation errors through wrapping (FR-19.5).
 func (s *InboxService) InboxAck(ctx context.Context, agent string, seq int64) error {
-	if err := s.store.InboxAck(ctx, agent, seq); err != nil {
+	if err := s.acknowledgeWithWake(ctx, agent, seq, false, func() error { return s.store.InboxAck(ctx, agent, seq) }); err != nil {
 		return wrapAPIOperation(fmt.Sprintf("ack inbox event %d for %s", seq, agent), err)
 	}
+	notifyReevaluator(ctx, s.reeval, agent, "inbox ack")
 	return nil
 }
 
@@ -63,6 +74,7 @@ func (s *InboxService) InboxList(ctx context.Context, agent string) ([]InboxEven
 	if err != nil {
 		return nil, wrapAPIOperation("list inbox", err)
 	}
+	notifyReevaluator(ctx, s.reeval, agent, "inbox list")
 	return inboxEvents(events), nil
 }
 
@@ -79,6 +91,7 @@ func (s *InboxService) InboxWait(ctx context.Context, agent string, timeout time
 	if err != nil {
 		return nil, wrapAPIOperation("wait inbox", err)
 	}
+	notifyReevaluator(ctx, s.reeval, agent, "inbox wait")
 	return inboxEvents(events), nil
 }
 

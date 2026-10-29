@@ -23,6 +23,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/testutil"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 type doctorCLIOutput struct {
@@ -51,11 +52,13 @@ func doctorCLIBoard(t *testing.T, relay string) string {
 
 func doctorCLIEnv(args string, dsn string) []string {
 	var env []string
-	for _, value := range os.Environ() {
+	for _, value := range hostguard.Environ() {
 		key, _, _ := strings.Cut(value, "=")
-		if (strings.HasPrefix(key, "MTIX_") && key != isolatedOperatorEnv) || key == "GOCOVERDIR" {
+		// Preserve GOCOVERDIR so instrumented child main writes coverage without warnings.
+		if strings.HasPrefix(key, "MTIX_") && !strings.HasPrefix(key, "MTIX_TEST_") {
 			continue
 		}
+		// Preserve GOCOVERDIR for instrumented stock-main children.
 		env = append(env, value)
 	}
 	return append(env, "MTIX_STDIO_BEHAVIOR_CHILD=1", "MTIX_STDIO_BEHAVIOR_ARGS="+args,
@@ -86,19 +89,52 @@ func doctorCLIExecute(t *testing.T, root string, dsn string, args ...string) doc
 	return doctorCLIOutput{stdout: stdout.String(), stderr: stderr.String(), exit: cmd.ProcessState.ExitCode()}
 }
 
+// doctorCLIRows validates the public row envelope and returns its string fields.
+// Optional structured data is validated separately instead of decoded as a string.
 func doctorCLIRows(t *testing.T, body string) []map[string]string {
 	t.Helper()
-	var rows []map[string]string
-	require.NoError(t, json.Unmarshal([]byte(body), &rows), "doctor must emit an array: %s", body)
-	require.NotNil(t, rows, "empty output is [] rather than null")
-	for _, row := range rows {
-		assert.Len(t, row, 4)
+	var wire []map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal([]byte(body), &wire), "doctor must emit an array: %s", body)
+	require.NotNil(t, wire, "empty output is [] rather than null")
+	rows := make([]map[string]string, 0, len(wire))
+	for _, raw := range wire {
+		for key := range raw {
+			require.Contains(t, []string{"id", "status", "detail", "fix", "data"}, key)
+		}
+		row := map[string]string{}
 		for _, key := range []string{"id", "status", "detail", "fix"} {
-			assert.Contains(t, row, key)
+			require.Contains(t, raw, key)
+			require.NotEqual(t, "null", string(raw[key]), "required doctor fields are strings")
+			var value string
+			require.NoError(t, json.Unmarshal(raw[key], &value))
+			row[key] = value
+		}
+		if data, present := raw["data"]; present {
+			var object map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(data, &object))
+			require.NotNil(t, object, "optional doctor data is an object")
 		}
 		assert.Contains(t, []string{"pass", "warn", "fail", "info"}, row["status"])
+		rows = append(rows, row)
 	}
 	return rows
+}
+
+func assertWakeSettingsDoctorInfo(t *testing.T, id, status, detail, fix string) bool {
+	t.Helper()
+	switch id {
+	case "wake.settings":
+		require.Equal(t, "info", status)
+		require.Contains(t, detail, "wake.max_hop_depth=32 (default)")
+		require.Contains(t, fix, "mtix config set wake.live off")
+	case "settings.ignored-workspace-key":
+		require.Equal(t, "info", status)
+		require.Contains(t, detail, "No workspace wake authority keys")
+		require.Empty(t, fix)
+	default:
+		return false
+	}
+	return true
 }
 
 func TestDoctorCLI_Help_DocumentsJSONFixAndExitCodes(t *testing.T) {
@@ -112,21 +148,31 @@ func TestDoctorCLI_Help_DocumentsJSONFixAndExitCodes(t *testing.T) {
 	assert.Empty(t, out.stderr)
 }
 
-func TestDoctorCLI_Unconfigured_EmptyArrayExitZero(t *testing.T) {
+func TestDoctorCLI_Unconfigured_DocumentAndRetainedWakeInfoExitZero(t *testing.T) {
 	for _, flags := range [][]string{{"--json"}, {"--json", "--fix"}} {
 		t.Run(strings.Join(flags, " "), func(t *testing.T) {
 			root := doctorCLIBoard(t, "")
 			out := doctorCLIExecute(t, root, "", append([]string{"doctor"}, flags...)...)
 			assert.Equal(t, 0, out.exit, out.stderr)
 			rows := doctorCLIRows(t, out.stdout)
+			wantRows := 6
 			if runtime.GOOS == "windows" {
-				require.Len(t, rows, 1)
+				wantRows++
 				assert.Equal(t, "platform.windows", rows[0]["id"])
 				assert.Equal(t, "info", rows[0]["status"])
-			} else {
-				assert.Empty(t, rows)
-				assert.JSONEq(t, "[]", out.stdout)
 			}
+			require.Len(t, rows, wantRows)
+			assert.Equal(t, "docs.stale", rows[len(rows)-6]["id"])
+			assert.Equal(t, "warn", rows[len(rows)-6]["status"])
+
+			wakeRows := 0
+			for _, row := range rows {
+				if assertEmptyWakeDoctorInfo(t, row["id"], row["status"], row["detail"], row["fix"]) {
+					wakeRows++
+				}
+			}
+			assert.Equal(t, 3, wakeRows)
+			assert.Equal(t, "wake.ledger", rows[len(rows)-1]["id"])
 			assert.Empty(t, out.stderr)
 		})
 	}
@@ -139,9 +185,19 @@ func TestDoctorCLI_BrokenRelay_OnlyApplicableRowsExitTwo(t *testing.T) {
 	rows := doctorCLIRows(t, out.stdout)
 	var relayFailure bool
 	for _, row := range rows {
+		if assertEmptyWakeDoctorInfo(t, row["id"], row["status"], row["detail"], row["fix"]) {
+			continue
+		}
+		if assertWakeSettingsDoctorInfo(t, row["id"], row["status"], row["detail"], row["fix"]) {
+			continue
+		}
 		if runtime.GOOS == "windows" && row["id"] == "platform.windows" {
 			assert.Equal(t, "info", row["status"])
 			assert.Empty(t, row["fix"])
+			continue
+		}
+		if row["id"] == "docs.stale" {
+			assert.Equal(t, "warn", row["status"])
 			continue
 		}
 		assert.True(t, strings.HasPrefix(row["id"], "sync."), row)

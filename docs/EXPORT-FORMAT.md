@@ -30,6 +30,7 @@ history (see [Task history in the export](#task-history-in-the-export-experiment
 | `history` | Only in a 2.1.0 file, and only when it has entries: the change history of tasks that no longer exist (see below). Covered by the checksum. |
 | `node_count` | Number of entries in `nodes`; an import refuses a file where they differ. |
 | `checksum` | SHA-256 of the canonical JSON of `nodes` and `dependencies` (see [Checksum](#checksum)). |
+| `ids_checksum` | Optional. Present only when the file holds an `uid_hex`, `task_uid_hex` or `event_id_hex` field (see [Ids that are not valid UTF-8](#ids-that-are-not-valid-utf-8)). It covers those fields. A file without such a field has neither the field nor this checksum. |
 
 ## Node fields
 
@@ -118,6 +119,19 @@ records locally.
   incomplete; it is silent otherwise. A file is refused
   when an entry has a kind, origin or time outside what mtix writes, or
   when a top-level entry names a task the file holds.
+- **Retention.** With `history.max_entries_per_task` set, a task's oldest
+  change entries are trimmed and one `retention_drop` entry is written (field
+  `retention`, `new` the count dropped as a decimal string, `old` the time of
+  the newest dropped entry, in the `ts` form). Such entries are exempt from
+  trimming and travel like any other. When reading, a change entry at or
+  before the cutoff this copy of the board recorded when it trimmed the task is
+  skipped (counted in `history_skipped`), so an older export does not bring
+  trimmed entries back. An entry dated more than 24 hours ahead of the reading machine's clock is
+  skipped and counted, and a cutoff is never later than that clock. A change entry dated ahead of that clock (inside the allowance) is neither counted toward the limit nor trimmed until the clock passes it. A stored cutoff later than the clock counts as the clock when reading. That cutoff is a local record of each copy, never part
+  of the export, so trimming on one machine does not trim the others. A marker
+  from another replica is stored as history but is never a cutoff, so a board
+  that never trimmed keeps the grow-only union; a marker whose `old` is not a stored-form time or whose
+  `new` is not a positive whole number is skipped with a warning.
 - **Conflict detection.** For a 2.1.0 file the writer-version key is left
   out of the hash used to detect conflicts, so an upgrade does not look like
   a change to the board.
@@ -150,6 +164,37 @@ text holding invalid UTF-8 never verified. Verification also accepts that
 checksum: the same decoded content with every U+FFFD spelled as `\ufffd`.
 A file that held both invalid UTF-8 and a genuine U+FFFD character still
 fails; check it, then import it with `mtix import --recompute-checksum`.
+
+## Ids that are not valid UTF-8
+
+A node `uid` or a history `task_uid` or `event_id` can hold bytes that are not
+valid UTF-8 (a sync event id is accepted as received). JSON cannot carry them,
+so the file adds an optional hex field, written only for such a value:
+
+| Where | Field | Plain field beside it |
+|---|---|---|
+| node | `uid_hex` | `uid` is left out |
+| history entry | `task_uid_hex`, `event_id_hex` | `task_uid` and `event_id` keep the U+FFFD spelling |
+
+mtix reads the hex field in preference to the plain one, so the bytes round
+trip exactly through export and import. A value that is not hex is refused
+(`invalid input`). A file with no such id has none of these fields, and is
+byte-for-byte what earlier versions wrote.
+
+The two checksums are split so that older readers keep working. `checksum`
+covers exactly what mtix 0.5.4 decodes (no hex field, an invalid-UTF-8 `uid`
+left out). mtix 0.5.4 imports a 2.0.0 snapshot (`history.export` off) holding
+a hex field and gives that one node a fresh uid; every other column and node is
+unchanged. A history file (2.1.0) needs a current reader: 0.5.4 refuses every
+2.1.0 file, with or without hex fields. `ids_checksum` covers the hex fields
+(each by kind, owner and bytes). mtix verifies both, so an edit to a hex field
+is detected, and so is removing one hex field or `ids_checksum` while others
+remain. The checksums guard against accidents, not deliberate edits: removing
+every hex field together with `ids_checksum` leaves the old-reader form, and
+that node then imports with a fresh uid.
+
+The 1.0.0 form (written for a conflict baseline) keeps JSON's U+FFFD spelling
+of such a `uid`, as 0.5.3 wrote it, and has no hex field.
 
 ## Compatibility
 

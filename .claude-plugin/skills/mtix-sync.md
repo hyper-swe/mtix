@@ -6,6 +6,35 @@ description: "Set up, use, verify and recover the MTIX sync hub, the shared Post
 
 The hub is a Postgres database that you and your teammates' agents push task changes to and pull each other's changes from. Each machine keeps its own local store; the hub carries the event log between them. This skill is the full runbook: requirements, setup from zero, daily use, verification, troubleshooting and recovery. The short routine is in the managed SYNC section of `CLAUDE.md` and `AGENTS.md`.
 
+## CLI read freshness
+
+CLI board reads retry a busy local sync lock briefly, with a total wait budget of
+500 ms. If ownership becomes available during the retry, auto-import checks the
+board normally. Persistent contention lets the command read the local cache but
+marks JSON responses with `"stale": true` and
+`"stale_reason": "sync_lock_busy"`. Object responses retain their existing fields;
+array, scalar and null responses are wrapped as
+`{"data": <original response>, "stale": true, "stale_reason": "sync_lock_busy"}`.
+Fresh reads keep their original shape and omit these fields. One possibly stale
+notice also goes to stderr, including protocol and daemon startup when `--json`
+is supplied. CLI JSON stdout remains one valid response.
+
+These fields describe read responses only. Successful mutation acknowledgements
+omit `stale` and `stale_reason`; their absence on an acknowledgement does not
+verify cached read freshness. When a write succeeds despite busy auto-import
+ownership, one completion notice says the write succeeded and must not be
+repeated. Follow that notice: never repeat a successful write. When the write
+itself fails, no completion notice claims it succeeded. A later export or cleanup
+error does not undo a successful write.
+
+Check freshness before using task state or assembled context to take an action.
+When stale is true, retry the same read after the current owner finishes. Never
+delete, replace or unlink `.mtix/data/sync.lock` to bypass its owner, and do not
+use `mtix sync --fix` to force a fresh read: it rewrites the pulled board from the
+local cache. These fields describe sync-lock contention only; still follow any
+other auto-import refusal or warning. Commands that skip automatic import,
+including `mtix sync status` and `mtix sync doctor`, do not make this check.
+
 ## Automatic export activity
 
 An unchanged board keeps `.mtix/tasks.json` bytes, mtime and `exported_at`,
@@ -57,9 +86,12 @@ evidence of a hub or relay: sync or relay keys in `.mtix/config.yaml`, a DSN in
 the environment by a sync command that actually connected. A DSN that is only
 exported in the shell never marks a board. The mark stays set when the keys or
 credentials are later removed, because the board has already exchanged events.
-The mark is stored the first time `mtix sync doctor` or a sync command sees
-the config keys, the secrets DSN or an applied-event record; until one of them
-runs, nothing is stored.
+The mark is stored the first time `mtix doctor` or `mtix sync doctor` finds evidence (sync or
+relay keys, a secrets DSN or an applied-event record), or the first time
+`mtix sync init`, `clone`, `pull` or `push` connects to the hub. A hub event
+applied to the board also stores it. `mtix sync relay attach`, `mtix sync status`
+and a failed connection do not store it; until one of the others happens,
+nothing is stored.
 Older mtix builds do not set it, so any applied-event record is also treated as
 evidence and sets the mark. `mtix sync doctor` shows it as `board.hub-mark` with
 its source in text and `--json`. A command to clear it, at an interactive
@@ -116,6 +148,7 @@ Each task carries a change log (field, old and new value for structured fields, 
 3. **Use.** History of tasks that no longer exist travels in an optional top-level `history` list, covered by the checksum. `mtix import` (replace or merge) and the automatic import union the file's history into the store by entry id: a local entry is never dropped or changed, an entry the store already holds is counted as skipped, and the union is idempotent, so importing the same file twice adds nothing. The import result (`--json`) carries `history_added`, `history_skipped`, `history_conflicts` and `history_skipped_legacy_key`. A conflict is an entry id the store holds with other content: the local entry is kept, the import still succeeds and a warning names the count and the first few entry ids, never the content. Entries keyed by an old dot id rather than a task uid are skipped and counted, because the dot id could name a different task on another machine. The automatic import reports conflicts and skipped legacy-key entries once per imported file on stderr (with `--json`: one JSON line with `"warning":"history_import"` and the counts). An entry id the file repeats with different content is stored in neither copy and counts as a conflict. The older-writer warning applies only while `history.export` is on: when the file's last writer is older than the first mtix release that keeps task history (0.6.0 today; the threshold rises whenever the history format changes in a way older writers would lose) or recorded no version, the import prints the warning "history may be incomplete: board last written by mtix X; upgrade mtix on that machine" (for a file with no recorded version: "...written by mtix of an unrecorded version; upgrade mtix on that machine") on stderr, prefixed `warning:` for `mtix import` and `mtix: warning:` for the automatic import (with `--json`: a `warnings` list in the result, and a one-line JSON `{"warning":"history_incomplete",...}` on stderr for the automatic import). A writer at or above that release, a development build and a board with `history.export` off never warn. Upgrade that machine and let it write the board again; do not hand-edit entries. Experimental until the doctor guard (MTIX-95.31.19.6) ships.
 4. **Troubleshoot.** An older mtix reporting `checksum verification failed` on a file with `schema_version` `2.1.0` is not corruption: that binary cannot read history. Upgrade it, or turn the switch off and let the next change rewrite the file as 2.0.0.
 5. **Recover.** `mtix config set history.export false`, then run any writing command (for example `mtix sync push`) so the file is rewritten without history. The local change log is kept in the store either way.
+6. **Bound it (optional).** `mtix config set history.max_entries_per_task <N>` keeps at most N change entries per task; unset (the default) keeps everything. Only a positive whole number is accepted, and `mtix config set history.max_entries_per_task ""` unsets it. When a task's change entries exceed N, the next change to it trims the oldest down to 90% of N (at least one is kept) and records one `retention_drop` marker (field `retention`, the count dropped in `new`, the cutoff time of the newest dropped entry in `old`); markers and redactions are never trimmed. Lowering the limit trims only at the next change, never in a sweep. A long-running process (daemon, MCP server) reads the limit when it starts, so restart it after changing the limit. An import or sync skips an incoming change entry at or before the cutoff this copy of the board recorded when it trimmed the task (a local record that is never exported, imported or synced), so trimmed entries do not come back (counted as `history_skipped`). The cutoff is local to each copy: trimming on one machine does not trim the others, and a copy that never trimmed keeps every entry. An incoming entry dated more than 24 hours ahead of this machine's clock is skipped and counted (a wrong clock must not erase local history), and a cutoff is never later than this machine's clock: a change entry dated ahead of the clock (inside the 24 hour allowance) is neither counted toward the limit nor trimmed until the clock passes it (`mtix doctor` reports how many in `ahead_of_clock`). A cutoff recorded while the clock ran ahead and now later than the clock counts as the clock on import (entries trimmed meanwhile may return from a peer); doctor warns and shows the fix, counting these in `cutoffs_ahead_of_clock`. A marker received from another machine is stored as history but is never a cutoff, and a marker with an unreadable cutoff or count is skipped with a warning. `mtix doctor --json` shows the `history.size` row with rows, tasks, `largest_tasks`, `max_entries_per_task`, `oversize_tasks` and `ahead_of_clock` in its `data` object (the row appears once the board has history or a limit is set; it warns, naming the key and the exact `mtix config set` fix, when a hand-edited value is not a positive whole number, because such a value is read as unset and nothing is trimmed). `mtix show <id> --history` lists a task's history newest first (`--history-limit`, default 50); `mtix show <id> --json` carries the same list as `history`, an empty list when the task has none (each entry has `id`, `task_uid`, `ts`, `actor`, `origin`, `kind`, `field`, `old`, `new`). Free-text fields show no text.
 
 Never edit history entries in `.mtix/tasks.json` by hand (the checksum covers them), and never turn the switch on to work around a sync problem.
 
@@ -150,8 +183,10 @@ below; each one maps to one mtix setting.
   suspends after inactivity, the first command waits for it to resume, and a
   direct endpoint may refuse the first connection while it is suspended. Wake
   it once (run any trivial query) before `mtix sync init`, or keep it active
-  during setup. mtix does not poll the hub on a timer by default, so an idle
-  database stays idle.
+  during setup. mtix does not poll the hub on a timer from the CLI, and the daemon
+  contacts it only after activity by default (`sync.hub_contact`), so an idle
+  database stays idle unless you set an interval (a listener-based hold,
+  `sync.listen`, is configured but inert until a later release).
 - **Tables exposed over an HTTP API.** If your platform can expose tables
   through an HTTP API, keep the mtix tables unexposed. `mtix sync doctor`
   confirms reachability and schema; it does not check exposure, so verify that
@@ -166,6 +201,25 @@ below; each one maps to one mtix setting.
 export MTIX_SYNC_SSLROOTCERT="/path/to/ca-bundle.crt"   # only for a private CA
 export MTIX_SYNC_DSN="postgresql://<user>:<pw>@<host>:5432/<db>?sslmode=verify-full"
 ```
+
+- **Special characters in the password.** The URL form needs a password with
+  `/`, `?`, `#`, `%` or a space percent-encoded. To avoid encoding, give the
+  DSN in the libpq key=value form and single-quote the password, escaping `'`
+  and `\` with a backslash. Or leave the password out of the DSN and set
+  `MTIX_SYNC_PASSWORD`; a password in the DSN takes precedence. The TLS rules
+  are the same for both forms.
+
+```bash
+# Shell single quotes pass the DSN through unchanged. This form suits a password
+# with no space, quote or backslash in it; for any other password use the second form:
+export MTIX_SYNC_DSN='host=<host> port=5432 dbname=<db> user=<user> password=<pw> sslmode=verify-full'
+# Or keep the password out of the DSN and read it without echo, so the shell
+# never expands $, backticks or backslashes in it:
+export MTIX_SYNC_DSN='postgresql://<user>@<host>:5432/<db>?sslmode=verify-full'
+IFS= read -r -s MTIX_SYNC_PASSWORD && export MTIX_SYNC_PASSWORD
+```
+Do not put a generated password inside shell double quotes: the shell rewrites
+`\`, `$` and backticks in it before mtix sees it.
 
 ## Least-privilege roles
 
@@ -205,6 +259,8 @@ GRANT UPDATE ON TABLE sync_project_clients TO mtix_writer;
 GRANT USAGE ON SEQUENCE sync_conflicts_conflict_id_seq TO mtix_writer;
 GRANT EXECUTE ON FUNCTION record_restore_collision TO mtix_writer;
 ```
+
+A pull also records this client on the hub. Right after `mtix sync pull` (and each daemon pull) connects, and before it reads any events, it writes one row to `sync_project_clients`: the board's sync project prefix (set by `mtix sync init`), this machine's hash and the CLI version. That one statement uses the connection the pull already opened, so it adds no connection and no timer and wakes a hub only when a pull was going to contact it anyway. It is what lets the version gate and any stale-client report see a client that only pulls. A role that only pulls therefore needs the same INSERT and UPDATE on `sync_project_clients` as a role that pushes. If the write fails, for instance for a role without those grants, the pull still completes with the same exit status, result and cursor, and prints one `WARN: pull client registration skipped` line that names the grant; the client then stays invisible to the version gate. To verify, after a pull the owner finds the client in `SELECT project_prefix, cli_version, last_seen_at FROM sync_project_clients ORDER BY last_seen_at DESC;`, or checks the role with `SELECT has_table_privilege('ROLE', 'sync_project_clients', 'INSERT') AND has_table_privilege('ROLE', 'sync_project_clients', 'UPDATE');`, which must return true (replace `ROLE` with the pulling role's name).
 
 Three more grants are for a writer that also runs the command named in the comment; leave them out otherwise:
 
@@ -247,7 +303,7 @@ For a development hub on this machine (loopback or a local socket only), `--inse
 
 - At session start run `mtix sync push`, then `mtix sync pull`. Push first, so a pull never runs while local changes are unpushed.
 - After you change tasks, run `mtix sync push`.
-- `mtix sync status` shows the local queue (`pending`, quarantined and held events, open conflicts) and does not contact the hub.
+- `mtix sync status` shows the local queue (`pending`, quarantined and held events, open conflicts), the quarantined events refused for an invalid node id and the local tasks with such an id, and does not contact the hub.
 - In a git hook or script, set `MTIX_SYNC_HOOK=1`: a transient hub error then prints a warning and the command continues. A busy local sync lock also warns that pull was not performed; retry after the current owner finishes.
 - After a pull, read the output for `conflicts`, `quarantined` and `renumbered`. A task number can change once when two agents created the same number; re-resolve by title, as the operating guide says.
 
@@ -255,7 +311,9 @@ For a development hub on this machine (loopback or a local socket only), `--inse
 
 Every `mtix sync init`, `push`, `pull`, `clone`, `doctor`, `backup`, `harden`, `migrate`, `mark-restored` and `collisions` command contacts the hub, even when nothing is pending. A database that scales to zero or suspends when idle therefore wakes on each of them (a push or pull at session start is one wake-up), and the first contact after idle waits for it to resume (mtix allows each hub connection 30 seconds). `mtix sync status`, `mtix sync quarantine list` and `mtix sync repair --status` read only the local store. Task commands such as `mtix create` and `mtix done` write locally and do not contact the hub.
 
-mtix does not poll the hub on a timer by default. Keep it that way against a database that pauses: sync after activity (session start and after changes), never in a loop. `mtix daemon` and `mtix sync daemon` pull on an interval and keep the database awake around the clock; do not start either, and do not put sync in a cron job or a short-interval hook, without telling the user what it costs.
+mtix does not poll the hub on a timer from the CLI. After activity, sync (session start and after changes), never in a loop. When `mtix daemon` contacts the hub is set by `sync.hub_contact` (read fresh every pass, so a change applies without a restart): `activity` (the default for new boards) contacts the hub every 5 seconds for 10 minutes after real activity, every 60 seconds until 30 minutes, then not at all, so a database that pauses when idle can pause; `interval:<duration>` (at least 1s) contacts it on that period all day and keeps such a database awake around the clock; `manual` never contacts it from the daemon. `mtix config get sync.hub_contact` shows the effective mode. Real activity is recorded operator-locally (outside the board, never synced) by: a local mutation command, an addressed `mtix comment --to`, a commit made through the MCP server, `mtix agent heartbeat` (run by a model turn or a person), the attach glue's session-start and prompt-submit. It is not recorded by reads, `mtix inbox`, any wait, or any waiter arming, re-arming or refreshing a lease (a second waiter process that re-arms after the first exits never moves the activity window or the clamp). The first message to a host that has been idle past the window waits for that host's next activity (or for the listen hold below). A board created before this key existed keeps contacting the hub at the daemon's own `--interval` until you set the key, and `mtix doctor` row `sync.hub-contact` says so and prints `mtix config set sync.hub_contact activity`. With `interval:<duration>` the daemon prints a one-time cost warning at start. Local work (pending-export recovery, relay, hook dispatch) runs on every pass and never depends on the hub.
+
+Listen hold: `sync.listen` is `live` or `off` (shipped default: `live`). In this build the hold is inert: no listener arms a lease yet (a later release adds one), so `sync.listen` is accepted and stored but changes nothing, and `mtix doctor` shows no live listener lease. The rest of this paragraph describes what the hold does once a listener runs. While it is `live`, a live listener lease on this host makes the daemon contact the hub every `sync.listen_interval` (default `10s`) even after the activity window closed, so an idle session can be woken by a message from another machine; `off` is strict activity-only contact. There is exactly one clamp: the hold ends `sync.listen_max_idle` (default `8h`, at most `72h`) after the last real activity, or sooner when the last lease's process is gone or `sync.listen` is set to `off`; re-arming or refreshing a lease never extends it. A live listening session therefore keeps a scale-to-zero database awake, at about 360 contacts an hour per board at the default interval, until that clamp; if the user does not want that, run `mtix config set sync.listen off`. `manual` overrides the hold. `sync.push_on_addressed_send` is reserved: it has no effect in this build. Verify with `mtix doctor`: row `sync.hub-contact` shows the mode, the last activity, the last contact and whether any contact will happen; row `sync.listen` shows whether the hold is on, its route (`poll`), the interval, the idle clamp and when the current hold ends; each failing row prints the exact `mtix config set` command. `mtix doctor` reads only local state and never contacts the hub for these rows. Never start `mtix daemon` or a cron job or a short-interval hook that pulls without telling the user what it costs. `mtix sync daemon` is the deprecated alias and keeps a fixed 5 second cadence.
 
 ## Verify with doctor
 
@@ -268,7 +326,9 @@ Run `mtix sync doctor`, or `mtix sync doctor --json` for machine-readable output
 | `queue draining` | no event waits in `pending` for over an hour |
 | `quarantined events` | no pulled event is held in the local quarantine |
 | `held push events` | push holds no event the hub would refuse |
+| `valid node ids` | every local task id is inside the node id grammar (WARN, naming each task and its uid, when one is not) |
 | `unique node uids` | no two tasks share a uid |
+| `board matches sync log` | on a project that syncs, the board holds every task the local sync log creates |
 | `secrets file mode` | `.mtix/secrets` is mode 0600 (passes when the file is absent) |
 | `hub-triggers` | every hub function and trigger exists, is bound correctly and is enabled |
 | `hub-privileges` | which roles besides the owner can use the sync tables |
@@ -288,9 +348,14 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 | `schema current` names a role that cannot execute `record_restore_collision`, or can write collision rows | the writer's grants differ from the list above | Ask the table owner to run the GRANT or REVOKE the check prints. |
 | `schema current` names the node-number registry index | the index is not valid or not ready | Ask the table owner to run `mtix sync migrate --yes`, then `mtix sync init` again if init asked for it. |
 | `pending` never goes down; `queue draining` fails | an earlier push delivered events whose confirmation was lost | Run `mtix sync push`: it acknowledges events already on the hub (the `already on the hub` count) and pushes the rest. |
-| `quarantined events` fails | `mtix sync pull` held events it could not validate or apply | Run `mtix sync pull` again. If events remain, run `mtix sync quarantine list` and give the user the event ids and reasons. Never delete quarantine rows or raise `sync.max_lamport_jump`. |
+| `quarantined events` fails | `mtix sync pull` held events it could not validate or apply | Run `mtix sync pull` again. If events remain, run `mtix sync quarantine list` and give the user the event ids and reasons. Never delete quarantine rows or raise `sync.max_lamport_jump`. Text output shows each event id double-quoted with control and non-ASCII characters escaped (for example `"0193fb00-0000-7000-8000-000000000001"`). That form is display only: never paste it into a command, and take the exact id from the `--json` output. Refusal reasons written by the event validator (tracked in MTIX-187.4.4), error text from the local store layer, and rows recorded by older versions can still show an id as received, so always take the exact id from the `--json` output. |
 | `held push events` fails, or a `WARN: ... over the 65536-byte sync limit` line | push holds an event the hub would refuse | Follow the fix doctor prints for each event: shorten or split the field and save it again; for a held task creation, stop editing that task and tell the user. |
+| `quarantined events` names an `invalid node id` | a pulled event names a task id outside the node id grammar, such as `AA-1é.4`; it is never applied | Inspect with `mtix sync quarantine list --json` and report the event ids, nodes and reasons to whoever runs the hub. No retry applies these events. After review, record a local receipt with `mtix sync quarantine acknowledge --handle <handle> --reason <text>` (the handle is in the HANDLE column of `mtix sync quarantine list` and in doctor's Fix; it works for every id, including ones with NUL or invalid UTF-8) (invalid-node-id pull/sweep only; reason up to 500 UTF-8 bytes; no terminal required). It stays retained and unapplied; doctor passes this check only when no unacknowledged pulled event remains. Doctor's Fix names the event by its handle: the first 12 hex characters of the SHA-256 of the exact event id bytes, which `mtix sync quarantine list` also prints in a HANDLE column (`handle` and `event_id_sha256` in `--json`). The handle is always printable and typeable, even when the id holds NUL, invalid UTF-8 or shell metacharacters, so the printed command can be copied as it is: `mtix sync quarantine acknowledge --handle <handle> --reason '<your explanation>'`. Replace `<your explanation>` with why this event is safe to accept as unapplied; without `--reason` the command is refused. A handle may be shortened to 8 hex characters; one that matches more than one event is refused with the length that separates them. Use the positional `<event-id>` form only for an ordinary id. Then run doctor again after each acknowledgement. Use `mtix sync quarantine list --json` to report the original id to the operator; JSON keeps NUL and escapable bytes in the id exactly but shows invalid UTF-8 bytes as U+FFFD; `event_id_sha256` and the handle always name the exact stored bytes. A printed handle may be longer than 12 characters when two retained events share a shorter prefix. See the admin invalid-node-id routine. |
+| an id in output is quoted with backslash escapes, such as `"a\nb"` | ids that can come from sync (sync event ids, including the winner and loser of `mtix sync conflicts list`, task uids, annotation ids) are shown in plain text output as double-quoted printable ASCII, so control or non-ASCII characters in a stored id cannot affect a terminal or log; the stored id is unchanged; `mtix sync collisions list` shows both held and incoming task uids in full with the same quoting and escaping, without truncation; its `--json` output preserves the exact uids. REST, MCP and gRPC do the same in text and error messages; their JSON and protobuf fields carry the exact id. Validator refusals (and the quarantine reasons recorded from them from now on) and hub push and collision errors name the event id the same way; reasons from the apply path follow with MTIX-187.4.3, and a reason recorded by an earlier version can still hold the raw id. An id or text a caller sends that a server repeats in an error or result message is escaped in the message (control, invisible and invalid bytes appear as `\n`, `\r`, `\t`, `\xNN`, `\uNNNN` or `\UNNNNNNNN`; printable text stays readable; a literal backslash is not escaped, so read the escapes as a hint); the JSON fields still carry what was sent. The exact id is in the quarantine event_id column and in --json output, not in a log field or error text | Read the escapes as the id and report the quoted form; use the JSON output for the exact value. Never edit or rename a stored id. |
+| `valid node ids` WARN | an earlier sync brought in a task whose id is outside the node id grammar | The task stays readable and editable here (`mtix show <uid>`), but other replicas quarantine its changes. Recreate each task you still need with `mtix create` and stop using the old one. |
 | `unique node uids` fails | two tasks share a uid | Do not edit the database. Follow the recovery the check names, and ask the user. |
+| `board matches sync log` fails | a replace import of an earlier version deleted tasks whose events stay in the local sync log; a pull acknowledges those events instead of applying them, so it cannot restore the tasks | Tell the user. The steps the check prints rebuild the board from the hub, run one at a time: `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull`. The discard deletes every local task and unpushed change, which is why `pending` 0 comes first; it asks for the ticket count typed at an interactive terminal, so the user runs it. |
+| `mtix import --mode replace` fails with `this store syncs with a hub` | a replace would delete tasks and changes whose events stay in the local sync log, and a pull could not restore them; the replace needs the ticket count typed at an interactive terminal, so an agent never runs it | Run `mtix sync pull` to receive teammates' changes. To rebuild the board from the hub, ask the user to run the commands the refusal names. A replace into an empty store, such as a restore into a fresh data directory, still runs. On a project that never synced a replace is allowed and discards the pending events of the tasks it drops, so a later first push cannot create them; a project that published to or ingested from a file relay counts as synced, and the automatic import records a configured relay or hub as the hub-connected mark before it imports, so a project with a relay configured is refused too. While an exported `MTIX_SYNC_DSN` is set, or a DSN key sits in a tracked config file, or the secrets file has the wrong mode and is empty, `mtix import --mode replace` is refused, and so is an automatic replace that would delete local data or drop a task the sync log holds (one that deletes nothing still runs). None of these is recorded, so removing it lifts the refusal. A secrets file that holds a DSN is recorded as the hub-connected mark by its content, whatever its mode, so fixing the mode does not lift the refusal. If the hub evidence cannot be read (for example `.mtix/secrets` is not a regular file), the automatic import stops and the replace refuses, naming the cause: fix the file, then retry. |
 | `hub-triggers` WARN or FAIL | a hub function or trigger is missing, rebound or disabled | Ask the table owner to run `mtix sync init` or the `ALTER TABLE ... ENABLE TRIGGER` statement the check prints. |
 | `hub-privileges` WARN | roles besides the owner can use the sync tables | Acceptable on a private network. To restrict, the owner runs `mtix sync harden` (dry run) and, with the user's approval of its role list, `--apply`. |
 | `mtix sync conflicts list` shows conflicts | two machines changed the same field | `mtix sync conflicts resolve <id>` records a decision and changes no task: apply the chosen value with `mtix update`, then push. |
@@ -308,7 +373,7 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 
 ## When to ask the user
 
-Stop and ask the user, with the exact command, when: setup needs a database role, a grant, a revoke or a password; a DSN or CA bundle must be set; doctor names a fix that only the table owner or a role administrator can run; a repair, a harden `--apply` or a `mtix sync reconcile` is the next step; events stay quarantined or held after the fixes above; or the same failure comes back after you fixed it. Give the user the check name, the error line without any credential, and what you already tried.
+Stop and ask the user, with the exact command, when: setup needs a database role, a grant, a revoke or a password; a DSN or CA bundle must be set; doctor names a fix that only the table owner or a role administrator can run; a repair, a harden `--apply` or a `mtix sync reconcile` is the next step; events stay unacknowledged or held after the fixes above; or the same failure comes back after you fixed it. Give the user the check name, the error line without any credential, and what you already tried.
 
 ## Never
 

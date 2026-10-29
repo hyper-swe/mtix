@@ -19,6 +19,7 @@ prompt chain propagation, and multi-agent orchestration.
 
 - `agent` — Manage agent lifecycle
 - `annotate <id> <text>` — Add an annotation to a node
+- `attach` — Harness glue entry points (internal; called through the attach shim)
 - `backup <path>` — Create a backup of the mtix database
 - `blocked [id]` — List nodes blocked by dependencies, or show the blockers of one node
 - `cancel <id>` — Cancel a node with mandatory reason
@@ -79,12 +80,41 @@ Manage agent lifecycle
 
 ### Subcommands
 
+- `allow <agent-id>` — allow this host's wake permission for an agent
+- `deny <agent-id>` — deny this host's wake permission for an agent
 - `heartbeat <agent-id>` — Send a heartbeat for an agent
 - `list --registrations` — List session registrations on this host
+- `permissions` — Inspect and recover this host's wake permission batches
 - `register <agent-id>` — Register an agent and this session, or refresh them
 - `state <agent-id>` — Get or set agent state
 - `unregister <agent-id>` — Remove this host's session registration for an agent id
 - `work <agent-id>` — Show current work assignment for an agent
+---
+
+## allow
+
+**Usage:** `allow <agent-id>`
+
+allow this host's wake permission for an agent
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--yes` |  | Record a non-interactive confirmation, including in a harness session | false |
+---
+
+## deny
+
+**Usage:** `deny <agent-id>`
+
+deny this host's wake permission for an agent
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--yes` |  | Record a non-interactive confirmation, including in a harness session | false |
 ---
 
 ## heartbeat
@@ -109,6 +139,32 @@ exists and whether the row is held. Use --json for machine-readable output.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--registrations` |  | List session registrations | false |
+---
+
+## permissions
+
+**Usage:** `permissions`
+
+Inspect and recover this host's wake permission batches
+
+### Subcommands
+
+- `recover` — List stuck batches and quarantine holds, or cancel an uncommitted batch with audit
+---
+
+## recover
+
+**Usage:** `recover`
+
+List stuck batches and quarantine holds, or cancel an uncommitted batch with audit
+
+List this host's pending wake permission batches and legacy quarantine holds. A quarantine hold is cleared only by a fresh operator allow in that board checkout; the file API cannot clear it. Use --cancel <batch-id> to cancel or quarantine its uncommitted allows, preserve accepted denies and committed state, and permanently refuse stale caller retries. Cancellation never grants permission.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--cancel` |  | Cancel this pending caller batch id with durable audit; never grants permission |  |
 ---
 
 ## register
@@ -187,6 +243,83 @@ Show current work assignment for an agent
 **Usage:** `annotate <id> <text>`
 
 Add an annotation to a node
+---
+
+## attach
+
+**Usage:** `attach`
+
+Harness glue entry points (internal; called through the attach shim)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+
+### Subcommands
+
+- `prompt-submit --harness <harness> --protocol <n>` — Attach verb prompt-submit (internal)
+- `session-end --harness <harness> --protocol <n>` — Attach verb session-end (internal)
+- `session-start --harness <harness> --protocol <n>` — Attach verb session-start (internal)
+- `wait --harness <harness> --protocol <n>` — Attach verb wait (internal)
+---
+
+## prompt-submit
+
+**Usage:** `prompt-submit --harness <harness> --protocol <n>`
+
+Attach verb prompt-submit (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+---
+
+## session-end
+
+**Usage:** `session-end --harness <harness> --protocol <n>`
+
+Attach verb session-end (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+---
+
+## session-start
+
+**Usage:** `session-start --harness <harness> --protocol <n>`
+
+Attach verb session-start (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
+---
+
+## wait
+
+**Usage:** `wait --harness <harness> --protocol <n>`
+
+Attach verb wait (internal)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
+| `--protocol` |  | Attach protocol the glue was written for |  |
 ---
 
 ## backup
@@ -281,6 +414,12 @@ Get, set, or delete configuration values using dot-notation keys.
 **Usage:** `delete <key>`
 
 Delete a configuration value (revert to default)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--agent` |  | Select an agent override for host-local wake settings |  |
 ---
 
 ## get
@@ -288,6 +427,12 @@ Delete a configuration value (revert to default)
 **Usage:** `get <key>`
 
 Get a configuration value
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--agent` |  | Select an agent override for host-local wake settings |  |
 ---
 
 ## set
@@ -295,6 +440,12 @@ Get a configuration value
 **Usage:** `set <key> <value>`
 
 Set a configuration value
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--agent` |  | Select an agent override for host-local wake settings |  |
 ---
 
 ## context
@@ -340,9 +491,15 @@ Create a new node. Use --under to create a child node.
 
 Run this host's event dispatcher: pull from the hub (if configured), then fire hooks — continuously (FR-20)
 
-Run the origin-independent dispatch loop: every interval (default 5s),
-pull new events from the BYO Postgres hub (when one is configured) and
-fire this host's hooks for every journaled event not yet dispatched
+Run the origin-independent dispatch loop. Local work (pending-export
+recovery, relay, hook dispatch) runs every interval (default 5s); the hub is
+contacted only when sync.hub_contact says so: activity (default: only for
+30 minutes after real activity), interval:<duration>, or manual (never). While
+sync.listen is live and a listener holds a lease (a later release; no listener
+exists in this build, so the hold is inert), the hub is also contacted every
+sync.listen_interval until sync.listen_max_idle after the last activity. Each
+contact pulls new events from the BYO Postgres hub (when one is configured) and
+fires this host's hooks for every journaled event not yet dispatched
 here — whoever wrote it and however it arrived (local CLI, MCP,
 sync-arrival, another process). The per-(hook,event) dispatch ledger
 makes firing exactly-once per host; a hook fires on every host whose
@@ -568,7 +725,8 @@ of CLI commands, state machine, MCP tools, and configuration.
 Generate agent-facing documentation
 
 Fully regenerate the root MTIX.md briefing and append one native instruction
-pointer in CLAUDE.md and AGENTS.md, preserving other user content. Valid old
+pointer in CLAUDE.md and AGENTS.md, preserving other user content. Keep the
+first live owned pointer and remove later duplicates. Valid old
 mtix marker blocks are migrated; malformed pairs are refused. HYPERSWE.md
 suppresses new pointers and native-file creation; existing pointers remain.
 Also generate all 11 reference files in the project's .mtix/docs/ directory.
@@ -596,12 +754,37 @@ Sync checks run only for configured transports. An unused Postgres transport is
 not checked on a relay-only board. WARN and INFO are advisory: exit 0 when no
 check fails, or 2 when any check reports FAIL.
 
---json emits an array with exactly id, status, detail and fix for each check.
+--json emits an array with id, status, detail and fix for each check; a check may add
+a data object of machine-readable numbers (the history.size row does), and rows
+without one have exactly the four fields.
 --fix performs only explicitly registered non-grant repairs and rechecks them.
 Grant commands are printed for you to run yourself; they are never executed.
+Without --fix, operator-local files, including attach artifacts, stay unchanged.
 
-Setup and document-freshness checks will be registered by their future features;
-they are not available in this version.
+The read-only docs.stale check compares board-root MTIX.md with this binary
+and checks live native pointers. WARN prints mtix -C <board-root> docs generate;
+run that command and rerun doctor. --fix never writes these documents.
+HYPERSWE.md suppresses missing native pointers, but MTIX.md is still checked.
+
+On an opened local board, budget.rewind reports counters below their protected
+mirror and retained rewind diagnostics. It never resets allowance, even with --fix.
+wake.guard-trips lists recent loop-guard trips (hop depth and back-off), newest
+first, with agent, chain, time and the exact mtix config set command; it is
+read-only and --json carries the same rows under data.trips.
+wake.ledger reports retained wake rows, claimed rows
+and rejected completions. A newer dispatch protocol reports FAIL: install a
+compatible binary, restart the dispatcher and rerun doctor. This read-only check
+never prunes wake rows or lowers the protocol floor, including with --fix.
+
+The read-only export.schema check compares the schema_version .mtix/tasks.json
+declares with the one this binary writes. Every write re-exports the file in
+this binary's schema; sync.auto_sync does not stop that. WARN prints the fix.
+
+wake.settings reports effective host/agent wake values and sources.
+settings.ignored-workspace-key reports authority keys ignored in config.yaml
+and prints exact host-local config commands. These checks never change settings.
+
+Setup checks will be registered by their future features.
 
 ### Flags
 
@@ -650,6 +833,7 @@ Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 - `list` — List configured hooks with their events and delivery adapters
 - `log` — Show recent hook firings (audit trail, newest first)
 - `status` — Show operator-local state and per-hook approvals
+- `strict <on|off|status>` — Show or change strict program mode for exec hooks on this host
 - `trust <hook>` — Review and approve one exec hook on this host
 ---
 
@@ -719,18 +903,28 @@ Show operator-local state and per-hook approvals
 Validate operator-local state and report its path, availability, per-hook approvals, legacy workspace records, and exact corrective commands. This command does not create state or grant hook approval.
 ---
 
+## strict
+
+**Usage:** `strict <on|off|status>`
+
+Show or change strict program mode for exec hooks on this host
+
+Strict program mode is an opt-in, host-level setting stored in operator-local state. When on, an exec hook whose program is not a pinned project script or a known interpreter running one launches only after the operator approves that program with: mtix hooks trust --program <hook>. on and off require terminal stdin outside an agent session. status works without a terminal and supports --json.
+---
+
 ## trust
 
 **Usage:** `trust <hook>`
 
 Review and approve one exec hook on this host
 
-Review one configured exec hook and save its host-specific approval outside the project. Requires terminal stdin outside an agent session. Editing that hook or its project scripts requires another review. Use hooks status --json for corrective guidance.
+Review one configured exec hook and save its host-specific approval outside the project. Requires terminal stdin outside an agent session. Editing that hook or its project scripts requires another review. With --program, instead approve the hook's program for strict program mode (see mtix hooks strict); the approval is bound to the symlink-resolved program path, the hook and the project. Use hooks status --json for corrective guidance.
 
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
+| `--program` |  | Approve the hook's program for strict program mode | false |
 | `--status` |  | Show this hook's approval without changing it | false |
 ---
 
@@ -764,6 +958,17 @@ Show events addressed to an agent
 Show comments addressed to an agent (via 'mtix comment --to <agent>'),
 oldest first, past the agent's ack cursor.
 
+--count prints the pending event count; --count --all prints every retained
+addressed event, including acknowledged events. --json returns an object with agent and integer
+pending and total fields. Zero is success (exit 0). Comments and hook deliveries
+count once per journal event. Count never acknowledges, moves the cursor or
+refreshes session last_seen; it skips auto-import and makes no hub contact.
+Ordinary project startup, including schema/index installation, still applies.
+Do not combine active --count with explicitly supplied --wait or --format,
+including --wait=false or --format=. Any --all flag requires active --count;
+--count=false alone keeps listing behavior. Count flags apply only to inbox,
+not its ack or lease subcommands.
+
 With --wait, return already pending events even if the initial database lookup
 outlasts --timeout. That lookup remains interruptible by SIGINT or SIGTERM.
 After an empty lookup, wait for new addressed events using only the remaining
@@ -785,11 +990,21 @@ Both print NOTHING when the inbox is empty, so a wake script's idempotency
 check is: payload=$(mtix inbox --agent X --format prompt); [ -z "$payload" ].
 Reads never ack — acknowledgement stays explicit.
 
+The plain listing prints each entry's author and node id on one line and the
+body with its line breaks, every continuation line indented, after removing
+control characters, escapes, bidirectional overrides and isolates, zero-width
+and other invisible format characters (the directional marks U+200E, U+200F
+and U+061C are kept), so a stored body cannot forge another entry or the ack
+line. --json prints the exact stored text; --format prompt and context quote
+the body.
+
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--agent` |  | Agent id whose inbox to read (required) |  |
+| `--all` |  | With --count, print total retained events including acknowledged events | false |
+| `--count` |  | Print pending count without acknowledging or touching sessions | false |
 | `--format` |  | Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection) |  |
 | `--timeout` |  | Wait budget in seconds from entry; initial pending read may take longer (0 = no limit; negative refused) | 300 |
 | `--wait` |  | Long-poll: block until an event arrives or --timeout | false |
@@ -1252,31 +1467,52 @@ Show a node's details and annotations as labeled lines, in this order:
   Type         node type
   Assignee     current assignee (only when set)
   Desc         full description (only when set; omitted when it holds only
-               whitespace or control characters), further lines indented
-  Annotations  every annotation, oldest first: its ISO-8601 UTC timestamp
+               whitespace, control characters or invisible formatting
+               characters), further lines indented
+  Annotations  every annotation, oldest first (equal times by id): its ISO-8601 UTC timestamp
                ("unknown time" when none was recorded), author, addressee
                and resolved marker when present, then the text, with
                further lines indented and "(empty)" for an empty text;
                "Annotations: none" when the node has none
   Prompt       the prompt, cut to 100 characters ending in "..." when
                longer (only when set; omitted when it holds only
-               whitespace or control characters), further lines indented
+               whitespace, control characters or invisible formatting
+               characters), further lines indented
   Progress     progress bar
   Created      creation time
+  History      with --history: the change history, newest first, at most
+               --history-limit entries (default 50), one line each with the
+               UTC time, field, actor, origin and, for a structured field,
+               the old and new value; free-text fields show no text.
+               --json always includes the same list as "history"
 
 Annotation text, author and addressee, the description and the prompt are
 normalized for the terminal: control characters other than newline and tab
-are removed (so CRLF becomes LF), and leading blank lines and trailing
-whitespace are trimmed, so a stored carriage return or escape sequence
-cannot overwrite a line or restyle the terminal. Title and assignee still
-print as stored, control characters and newlines included. Invisible
-Unicode formatting characters, such as bidirectional overrides, are not
-removed yet, so text can still display in a misleading order; quote exact
-text from --json.
+are removed (so CRLF becomes LF), bidirectional controls (such as
+overrides and isolates), zero-width characters and tag characters
+(U+E0001, U+E0020-U+E007F) are removed, the line separator and
+paragraph separator (U+2028, U+2029) become newlines, and
+leading blank lines and trailing whitespace are trimmed, so stored text
+cannot overwrite a line, restyle the terminal or display in a misleading
+order. Title and assignee print on one line through the same rule (control
+characters, escapes, bidirectional controls, zero-width and tag characters
+and every other invisible format character removed; tabs, newlines and
+the line and paragraph separators become spaces; printable non-ASCII text
+stays readable). The directional marks (U+200E, U+200F, U+061C) are
+kept, so a lone mark can still change how digits are ordered. The
+--history list follows the same rule and prints each entry on one line,
+with line breaks shown as spaces. Quote exact text from --json.
 
 Acceptance criteria, labels, dependencies, activity and the full prompt are
 not printed. Use --json for the complete node record, including every
 annotation.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--history` |  | Also list the task's change history, newest first (always included in --json) | false |
+| `--history-limit` |  | Most history entries to list with --history and in --json | 50 |
 ---
 
 ## stale
@@ -1336,7 +1572,7 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.
 - `migrate` — Drive the ADR-003 §7 node-identity migration phases
 - `pull` — Pull events from the sync hub and apply locally (FR-18)
 - `push` — Push pending events to the sync hub (FR-18)
-- `quarantine` — Inspect events held in the local quarantine
+- `quarantine` — Inspect retained events and acknowledge invalid-id pulled events
 - `reconcile` — Resolve divergent history (FR-18.13)
 - `relay` — EXPERIMENTAL: manage the file-based sync relay (FR-21)
 - `repair` — Repair local state from the local sync event log (--status)
@@ -1668,8 +1904,14 @@ Run health checks against the local store and the BYO Postgres hub:
                            warns after 1h; run mtix list for protected
                            import-first recovery (refusals need resolution)
   No orphan applied      - every applied_event has a matching node OR tombstone
+  Board matches sync log - on a project that syncs, the board holds every
+                           task the local sync log creates; a pull cannot
+                           restore a missing one, so the fix rebuilds the
+                           board from the hub
   Quarantined events     - no pulled event is held in the local quarantine;
                            each pull retries them ('mtix sync quarantine list')
+  Valid node ids         - warns when a local task id is outside the node id
+                           grammar; names each task, its uid and the fix
   Unique node uids       - no two tasks share a uid; names each uid, its tasks
                            and the recovery (see 'mtix verify')
   sync.exchange-record   - local received provenance and recorded omission;
@@ -2003,7 +2245,7 @@ so git pre-push hooks never block code pushes.
 
 **Usage:** `quarantine`
 
-Inspect events held in the local quarantine
+Inspect retained events and acknowledge invalid-id pulled events
 
 Inspect the events held in the local quarantine: pulled events that
 'mtix sync pull' could not take (they failed the pull's checks, the FR-18.7
@@ -2015,9 +2257,47 @@ clock is released automatically once the event's stamp is within 24 h of
 this machine's clock, together with the events of its task's subtree
 that the hub would accept; every other push hold stays.
 
+Acknowledge records a local audit receipt for a reviewed invalid-node-id
+pulled event, with a required reason; it stays retained and unapplied.
+
 ### Subcommands
 
+- `acknowledge (<event-id> | --handle <handle>) --reason <text>` — Record a local receipt accepting an invalid-id pulled event as unapplied
 - `list` — List quarantined and held events (read-only)
+---
+
+## acknowledge
+
+**Usage:** `acknowledge (<event-id> | --handle <handle>) --reason <text>`
+
+Record a local receipt accepting an invalid-id pulled event as unapplied
+
+Acknowledge one retained pull or sweep event refused for an invalid node id.
+The required reason and resolved author, UTC time and exact raw-event SHA256
+are recorded in an immutable local receipt. Repeating the command returns
+the first receipt, marking already_acknowledged in JSON or explaining that
+the supplied reason was not recorded in text. The reason is limited to
+500 UTF-8 bytes. No terminal or hub connection is required.
+
+The event stays quarantined and unapplied; every pull still retries it.
+This does not repair or remove it, change the hub or acknowledge another
+replica. Push holds, unrelated failures and malformed retained events are
+refused. Doctor passes its quarantine check only when no unacknowledged
+pulled event remains; other checks keep their own results.
+
+Name the event by its id, or by --handle: a prefix of the SHA-256 of the exact
+id bytes, printed as at least 12 hex characters (longer when two retained
+events share the shorter prefix). 8 hex characters are accepted when
+unambiguous; an ambiguous prefix is refused with the length that separates the
+events. 'mtix sync quarantine list' and 'mtix sync doctor' print the handle. Use
+the handle when the id holds NUL, invalid UTF-8 or characters that cannot be typed.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--handle` |  | Event handle from 'mtix sync quarantine list' (instead of the event id) |  |
+| `--reason` |  | Required explanation for accepting this event as unapplied |  |
 ---
 
 ## list
@@ -2027,10 +2307,16 @@ that the hub would accept; every other push hold stays.
 List quarantined and held events (read-only)
 
 List the events held in the local quarantine, in Lamport clock order,
-then event id: event id, node, op, failed attempts, first seen, last
+then event id: handle, event id, node, op, failed attempts, first seen, last
 attempt and the reason the event was quarantined. --json adds the Lamport
-clock, the source (pull or sweep for a pulled event, push for an event
-push holds) and the mtix version that recorded it.
+clock, the event_id_sha256, the source (pull or sweep for a pulled event, push for an event
+push holds) and the mtix version that recorded it. Acknowledged rows show
+their retained local receipt, including author, reason, time and raw SHA256.
+
+The handle is at least 12 hex characters of the SHA-256 of the exact event
+id bytes (longer when two retained events share the shorter prefix): always printable and typeable, even when the id holds NUL, invalid
+UTF-8 or shell metacharacters. Use it with 'mtix sync quarantine acknowledge
+--handle'.
 
 Read-only and local: it never retries, removes or changes an event and
 does not contact the hub. 'mtix sync pull' retries every quarantined
@@ -2393,10 +2679,17 @@ remains, the node stays blocked.
 
 Release a node assignment
 
+Release a node assignment. Only the assignee can release a claim.
+The acting agent is --agent, else MTIX_AUTHOR_ID, else the author_id config key.
+Use --force to release a claim another agent holds; the activity log records
+you, the previous assignee and the reason.
+
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
+| `--agent` |  | Acting agent ID (default: MTIX_AUTHOR_ID, then the author_id config key) |  |
+| `--force` |  | Release a claim held by another agent | false |
 | `--reason` |  | Reason for unclaiming (required) |  |
 ---
 

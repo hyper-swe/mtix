@@ -796,8 +796,8 @@ func TestClaimNode_WithForceReclaim_Returns200(t *testing.T) {
 	assert.Equal(t, "agent-2", resp["agent"])
 }
 
-// TestUnclaim_WithOptionalAgentID_Returns200 verifies agent ID handling.
-func TestUnclaim_WithOptionalAgentID_Returns200(t *testing.T) {
+// TestUnclaim_WithAssigneeAgentID_Returns200 verifies the assignee can unclaim.
+func TestUnclaim_WithAssigneeAgentID_Returns200(t *testing.T) {
 	s := testServer(t)
 	nodeID := createTestNode(t, s, "Unclaim Agent ID Test", "TEST")
 
@@ -808,10 +808,11 @@ func TestUnclaim_WithOptionalAgentID_Returns200(t *testing.T) {
 	s.Router().ServeHTTP(claimW, claimReq)
 	require.Equal(t, http.StatusOK, claimW.Code)
 
-	// Unclaim without agent ID (defaults to "api").
+	// Unclaim as the assignee (MTIX-169).
 	w := httptest.NewRecorder()
 	body := `{"reason":"testing"}`
 	req := apiRequest(http.MethodPost, "/api/v1/nodes/"+nodeID+"/unclaim", body)
+	req.Header.Set("X-Agent-ID", "agent-1")
 	s.Router().ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)

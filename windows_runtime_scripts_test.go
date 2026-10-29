@@ -55,9 +55,12 @@ if ($LASTEXITCODE -ne 0) { throw 'checked-out source SHA unavailable' }
 $oplocalExit = $LASTEXITCODE
 & go test ./cmd/mtix -race -count=1 -timeout=8m -json -run '^TestHooksStatus_' > "$env:MTIX_WINDOWS_CAPTURE_DIR/hooks.json"
 $hooksExit = $LASTEXITCODE
+& go test ./internal/hooks -race -count=1 -timeout=8m -json -run '^Test(IsBareName_RelativeSpellingsAreNotBare|KnownWrapperAndInterpreter_RelativeSpellingNamedLikeTheProgramIsNotKnown)$' > "$env:MTIX_WINDOWS_CAPTURE_DIR/hooks-launch.json"
+$hooksLaunchExit = $LASTEXITCODE
 $requiredOplocal = @ACL_NAMES@
 $requiredHooks = @HOOK_NAMES@
-foreach ($suite in @(@{ file='oplocal.json'; package='github.com/hyper-swe/mtix/internal/oplocal'; names=$requiredOplocal }, @{ file='hooks.json'; package='github.com/hyper-swe/mtix/cmd/mtix'; names=$requiredHooks })) {
+$requiredLaunch = @('TestIsBareName_RelativeSpellingsAreNotBare', 'TestKnownWrapperAndInterpreter_RelativeSpellingNamedLikeTheProgramIsNotKnown')
+foreach ($suite in @(@{ file='oplocal.json'; package='github.com/hyper-swe/mtix/internal/oplocal'; names=$requiredOplocal }, @{ file='hooks.json'; package='github.com/hyper-swe/mtix/cmd/mtix'; names=$requiredHooks }, @{ file='hooks-launch.json'; package='github.com/hyper-swe/mtix/internal/hooks'; names=$requiredLaunch })) {
   $events = Get-Content -LiteralPath "$env:MTIX_WINDOWS_CAPTURE_DIR/$($suite.file)" | ForEach-Object { $_ | ConvertFrom-Json }
   $package = $suite.package
   if ($package -eq 'github.com/hyper-swe/mtix/internal/oplocal') {
@@ -80,7 +83,7 @@ foreach ($suite in @(@{ file='oplocal.json'; package='github.com/hyper-swe/mtix/
   if ($packagePassed.Count -ne 1) { throw "Required native package did not PASS: $package" }
 }
 if (!(Test-Path "$env:MTIX_WINDOWS_CAPTURE_DIR/capture.json" -PathType Leaf)) { throw 'actual native stock capture missing' }
-if ($oplocalExit -ne 0 -or $hooksExit -ne 0) { throw "Native test failure: oplocal=$oplocalExit hooks=$hooksExit" }
+if ($oplocalExit -ne 0 -or $hooksExit -ne 0 -or $hooksLaunchExit -ne 0) { throw "Native test failure: oplocal=$oplocalExit hooks=$hooksExit hooks-launch=$hooksLaunchExit" }
 `
 
 const windowsRuntimeDurationScript = `$ErrorActionPreference = 'Stop'

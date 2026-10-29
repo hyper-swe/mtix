@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -54,7 +55,7 @@ func attachReaderCommand(t *testing.T, binary, project, dsn string, args ...stri
 	t.Logf("released reader before execution commit=%s sha256=%x", compat054TagCommit, sha256.Sum256(raw))
 	cmd := exec.CommandContext(t.Context(), binary, args...)
 	cmd.Dir = project
-	cmd.Env = append(os.Environ(), "MTIX_SYNC_DSN="+dsn, "MTIX_SYNC_HOOK=")
+	cmd.Env = append(hostguard.Environ(), "MTIX_SYNC_DSN="+dsn, "MTIX_SYNC_HOOK=")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "released reader %v: %s", args, output)
 	t.Logf("released reader pid=%d exit=%d args=%v", cmd.Process.Pid, cmd.ProcessState.ExitCode(), args)
@@ -64,8 +65,8 @@ func attachReaderCommand(t *testing.T, binary, project, dsn string, args ...stri
 func attachSeedLocalState(t *testing.T, s *sqlite.Store) {
 	t.Helper()
 	for _, query := range []string{
-		"INSERT INTO agent_registrations(agent_id,harness,uid,host_id,origin,registered_at,last_seen,registrar_version,attach_protocol,returned_seq_mark) VALUES('worker','local','uid','host','manual','now','now','v',1,7)",
-		"INSERT INTO wake_ledger VALUES('worker','host','uid',7,1,'now','claimed')",
+		"INSERT INTO agent_registrations(agent_id,harness,uid,host_id,origin,registered_at,last_seen,registrar_version,attach_protocol,returned_seq_mark,stale_since) VALUES('worker','local','uid','host','manual','now','now','v',1,7,'then')",
+		"INSERT INTO wake_ledger(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome) VALUES('worker','host','uid',7,1,'now','claimed')",
 		"INSERT INTO wake_scan_cursor VALUES('host','uid',7)",
 		"INSERT INTO dispatcher_heartbeat VALUES('host','uid',123,1,'v','now')",
 		"INSERT INTO board_flags VALUES('flag','kept','now','local')",
@@ -82,7 +83,7 @@ func attachLocalState(t *testing.T, s *sqlite.Store) map[string]string {
 	t.Helper()
 	state := map[string]string{}
 	for _, query := range []string{
-		"SELECT * FROM agent_registrations", "SELECT * FROM wake_ledger", "SELECT * FROM wake_scan_cursor",
+		"SELECT * FROM agent_registrations", "SELECT * FROM wake_ledger", "SELECT * FROM wake_scan_cursor", "SELECT * FROM wake_outcome_rejections",
 		"SELECT * FROM dispatcher_heartbeat", "SELECT * FROM board_flags", "SELECT * FROM attach_pending", "SELECT * FROM wake_leases",
 		"SELECT key,value FROM meta WHERE key IN ('store_instance_id','min_dispatch_protocol','schema_version') ORDER BY key",
 	} {

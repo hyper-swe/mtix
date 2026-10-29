@@ -36,7 +36,7 @@ func newHooksCmd() *cobra.Command {
 		Use:   "hooks",
 		Short: "Inspect and test FR-19 event hooks (.mtix/hooks.yaml)",
 	}
-	cmd.AddCommand(newHooksStatusCmd(), newHooksListCmd(), newHooksFireCmd(), newHooksTrustCmd(), newHooksLogCmd(), newHooksExecDispatchCmd())
+	cmd.AddCommand(newHooksStatusCmd(), newHooksListCmd(), newHooksFireCmd(), newHooksTrustCmd(), newHooksStrictCmd(), newHooksLogCmd(), newHooksExecDispatchCmd())
 	return cmd
 }
 
@@ -86,10 +86,10 @@ func runHooksLog(limit int) error {
 
 // newHooksTrustCmd creates per-hook operator approval commands (FR-19).
 func newHooksTrustCmd() *cobra.Command {
-	var status bool
+	var status, program bool
 	cmd := &cobra.Command{
 		Use: "trust <hook>", Short: "Review and approve one exec hook on this host",
-		Long: "Review one configured exec hook and save its host-specific approval outside the project. Requires terminal stdin outside an agent session. Editing that hook or its project scripts requires another review. Use hooks status --json for corrective guidance.",
+		Long: "Review one configured exec hook and save its host-specific approval outside the project. Requires terminal stdin outside an agent session. Editing that hook or its project scripts requires another review. With --program, instead approve the hook's program for strict program mode (see mtix hooks strict); the approval is bound to the symlink-resolved program path, the hook and the project. Use hooks status --json for corrective guidance.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			if app.mtixDir == "" {
@@ -99,10 +99,14 @@ func newHooksTrustCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if program {
+				return runHooksTrustProgram(approvals, args[0], status, hookStdinTerminal())
+			}
 			return runHooksTrustInput(approvals, args[0], status, hookStdinTerminal())
 		},
 	}
 	cmd.Flags().BoolVar(&status, "status", false, "Show this hook's approval without changing it")
+	cmd.Flags().BoolVar(&program, "program", false, "Approve the hook's program for strict program mode")
 	return cmd
 }
 

@@ -5,7 +5,6 @@ package sqlite
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 )
 
@@ -36,21 +35,28 @@ type PushSubject struct {
 // creation whose uid no node has, the task found another way, see
 // PushSubject).
 func (s *Store) PushSubjects(ctx context.Context, eventIDs []string) (map[string]PushSubject, error) {
+	return pushSubjects(ctx, readPool{s}, eventIDs)
+}
+
+// pushSubjects is PushSubjects over q: the store's read pool, or the write
+// transaction of a PushLocked, which then sees the held rows and the tasks
+// in one state (MTIX-95.39).
+func pushSubjects(ctx context.Context, q pushQuerier, eventIDs []string) (map[string]PushSubject, error) {
 	out := make(map[string]PushSubject, len(eventIDs))
 	if len(eventIDs) == 0 {
 		return out, nil
 	}
-	ids, err := json.Marshal(eventIDs)
+	ids, err := hexIDList(eventIDs)
 	if err != nil {
 		return nil, fmt.Errorf("read push subjects: %w", err)
 	}
-	// The uid of each event in the bound JSON array and the current number
+	// The uid of each event in the bound hex-encoded JSON array (byte-exact, MTIX-187.7.15) and the current number
 	// of the node that has it; for a creation, also the task it created (n
 	// by uid, else s by the event's own id for an event without a uid, else
 	// f by the number the event names; idx_nodes_uid and the primary key).
 	// "uid <> ''" lets the partial idx_nodes_uid serve n and s; without it s
 	// is found through an index built over every node (MTIX-95.47).
-	rows, err := s.Query(ctx, `
+	rows, err := q.QueryContext(ctx, `
 		SELECT e.event_id, COALESCE(e.uid, ''), COALESCE(n.id, ''),
 		       CASE WHEN e.op_type = 'create_node' THEN COALESCE(n.id, s.id, f.id, '') ELSE '' END
 		FROM sync_events e
@@ -59,7 +65,7 @@ func (s *Store) PushSubjects(ctx context.Context, eventIDs []string) (map[string
 		     AND COALESCE(e.uid, '') = '' AND s.uid = e.event_id AND s.uid <> ''
 		LEFT JOIN nodes f ON e.op_type = 'create_node' AND n.id IS NULL AND s.id IS NULL
 		     AND f.id = e.node_id
-		WHERE e.event_id IN (SELECT value FROM json_each(?))`, string(ids))
+		WHERE e.event_id IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?))`, ids)
 	if err != nil {
 		return nil, fmt.Errorf("read push subjects: %w", err)
 	}

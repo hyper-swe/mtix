@@ -7,13 +7,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store"
 )
 
@@ -30,27 +30,41 @@ const showLongHelp = `Show a node's details and annotations as labeled lines, in
   Type         node type
   Assignee     current assignee (only when set)
   Desc         full description (only when set; omitted when it holds only
-               whitespace or control characters), further lines indented
-  Annotations  every annotation, oldest first: its ISO-8601 UTC timestamp
+               whitespace, control characters or invisible formatting
+               characters), further lines indented
+  Annotations  every annotation, oldest first (equal times by id): its ISO-8601 UTC timestamp
                ("unknown time" when none was recorded), author, addressee
                and resolved marker when present, then the text, with
                further lines indented and "(empty)" for an empty text;
                "Annotations: none" when the node has none
   Prompt       the prompt, cut to 100 characters ending in "..." when
                longer (only when set; omitted when it holds only
-               whitespace or control characters), further lines indented
+               whitespace, control characters or invisible formatting
+               characters), further lines indented
   Progress     progress bar
   Created      creation time
+  History      with --history: the change history, newest first, at most
+               --history-limit entries (default 50), one line each with the
+               UTC time, field, actor, origin and, for a structured field,
+               the old and new value; free-text fields show no text.
+               --json always includes the same list as "history"
 
 Annotation text, author and addressee, the description and the prompt are
 normalized for the terminal: control characters other than newline and tab
-are removed (so CRLF becomes LF), and leading blank lines and trailing
-whitespace are trimmed, so a stored carriage return or escape sequence
-cannot overwrite a line or restyle the terminal. Title and assignee still
-print as stored, control characters and newlines included. Invisible
-Unicode formatting characters, such as bidirectional overrides, are not
-removed yet, so text can still display in a misleading order; quote exact
-text from --json.
+are removed (so CRLF becomes LF), bidirectional controls (such as
+overrides and isolates), zero-width characters and tag characters
+(U+E0001, U+E0020-U+E007F) are removed, the line separator and
+paragraph separator (U+2028, U+2029) become newlines, and
+leading blank lines and trailing whitespace are trimmed, so stored text
+cannot overwrite a line, restyle the terminal or display in a misleading
+order. Title and assignee print on one line through the same rule (control
+characters, escapes, bidirectional controls, zero-width and tag characters
+and every other invisible format character removed; tabs, newlines and
+the line and paragraph separators become spaces; printable non-ASCII text
+stays readable). The directional marks (U+200E, U+200F, U+061C) are
+kept, so a lone mark can still change how digits are ordered. The
+--history list follows the same rule and prints each entry on one line,
+with line breaks shown as spaces. Quote exact text from --json.
 
 Acceptance criteria, labels, dependencies, activity and the full prompt are
 not printed. Use --json for the complete node record, including every
@@ -58,15 +72,18 @@ annotation.`
 
 // newShowCmd creates the mtix show command per FR-6.3.
 func newShowCmd() *cobra.Command {
+	opts := showOptions{historyLimit: service.DefaultHistoryLimit}
 	cmd := &cobra.Command{
 		Use:   "show <id>",
 		Short: "Show a node's details and annotations",
 		Long:  showLongHelp,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runShow(args[0])
+			return runShowWith(args[0], opts)
 		},
 	}
+	cmd.Flags().BoolVar(&opts.history, "history", false, "Also list the task's change history, newest first (always included in --json)")
+	cmd.Flags().IntVar(&opts.historyLimit, "history-limit", service.DefaultHistoryLimit, "Most history entries to list with --history and in --json")
 	return cmd
 }
 
@@ -136,6 +153,11 @@ func newTreeCmd() *cobra.Command {
 
 // runShow displays full details of a single node with status icons and progress bars.
 func runShow(id string) error {
+	return runShowWith(id, showOptions{historyLimit: service.DefaultHistoryLimit})
+}
+
+// runShowWith is runShow with the history options (MTIX-95.31.19.4).
+func runShowWith(id string, opts showOptions) error {
 	if app.nodeSvc == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -152,13 +174,13 @@ func runShow(id string) error {
 	out := NewOutputWriter(app.jsonOutput)
 
 	if app.jsonOutput {
-		return out.WriteJSON(node)
+		return writeShowJSON(ctx, out, node, opts)
 	}
 
 	// A provisional id is flagged so the reader knows its number is not yet
 	// settled and must not be externalized (ADR-003 §8).
 	out.WriteHuman("ID:       %s\n", format.AnnotateID(node.ID))
-	out.WriteHuman("Title:    %s\n", node.Title)
+	out.WriteHuman("Title:    %s\n", format.SafeLine(node.Title))
 	out.WriteHuman("Status:   %s\n", showStatus(node))
 	out.WriteHuman("Priority: %d\n", node.Priority)
 	out.WriteHuman("Type:     %s\n", node.NodeType)
@@ -166,7 +188,7 @@ func runShow(id string) error {
 		out.WriteHuman("Issue type: %s\n", node.IssueType)
 	}
 	if node.Assignee != "" {
-		out.WriteHuman("Assignee: %s\n", node.Assignee)
+		out.WriteHuman("Assignee: %s\n", format.SafeLine(node.Assignee))
 	}
 	// Description and prompt are normalized and their continuation lines
 	// indented, so no stored line can pass for a label; one that normalizes
@@ -180,11 +202,15 @@ func runShow(id string) error {
 	}
 	out.WriteHuman("Progress: %s\n", ProgressBar(node.Progress, 15))
 	out.WriteHuman("Created:  %s\n", node.CreatedAt.Format("2006-01-02 15:04"))
+	if opts.history {
+		return writeShowHistory(ctx, out, node.ID, opts.historyLimit)
+	}
 	return nil
 }
 
-// writeAnnotations prints every annotation of a node for `mtix show`, oldest
-// first, each headed by its UTC timestamp and author (FR-3.4, MTIX-98).
+// writeAnnotations prints every annotation of a node for `mtix show`, ordered
+// by (created_at, id) as model.SortAnnotations defines, the order the store,
+// `--json` and the MCP show tool use too, each headed by its UTC timestamp and author (FR-3.4, MTIX-98).
 // Absence is stated as "Annotations: none", never left silent, so a reader can
 // tell "no verdict" from "verdict not shown". Text is normalized first
 // (MTIX-100.1): control characters removed, CRLF normalized, leading blank
@@ -197,7 +223,7 @@ func writeAnnotations(out OutputWriter, annotations []model.Annotation) {
 		return
 	}
 	out.WriteHuman("Annotations:\n")
-	for _, a := range sortedAnnotations(annotations) {
+	for _, a := range model.SortAnnotations(annotations) {
 		lines := strings.Split(indentContinuation(annotationText(a.Text), annotationTextIndent), "\n")
 		out.WriteHuman("  [%s] %s: %s\n", annotationTime(a.CreatedAt), annotationByline(a), lines[0])
 		for _, line := range lines[1:] {
@@ -218,18 +244,6 @@ func annotationByline(a model.Annotation) string {
 		byline += " (resolved)"
 	}
 	return byline
-}
-
-// sortedAnnotations returns a copy ordered oldest first. The sort is stable,
-// so annotations with equal timestamps keep their stored order, which is the
-// order they were added in.
-func sortedAnnotations(annotations []model.Annotation) []model.Annotation {
-	sorted := make([]model.Annotation, len(annotations))
-	copy(sorted, annotations)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
-	})
-	return sorted
 }
 
 // runList displays nodes with status icons and aligned columns.
@@ -323,7 +337,7 @@ func runList(status, under, assignee, nodeType, priority, fields, changedSince, 
 			fmt.Sprintf("%s %s", icon, n.Status),
 			fmt.Sprintf("%d", n.Priority),
 			fmt.Sprintf("%.0f%%", n.Progress*100),
-			Truncate(n.Title, 50),
+			Truncate(format.SafeLine(n.Title), 50),
 		})
 	}
 	out.WriteTable(headers, rows)

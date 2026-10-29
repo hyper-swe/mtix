@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
@@ -37,7 +38,7 @@ func TestPull_CreateWhoseUIDALocalTaskHolds_QuarantinedThenAppliedAfterRepair(t 
 	_, err := pullThenSweep(ctx, testIngest(&stderr), hub, app.store, transport.PullCursor{}, 100)
 	require.NoError(t, err)
 	requireNotApplied(t, &theirs)
-	requireQuarantinedAs(t, &theirs, "pull", "uid "+localUID+" is held by local task TEST-1")
+	requireQuarantinedAs(t, &theirs, "pull", "uid "+format.EventID(localUID)+" is held by local task TEST-1")
 
 	var out bytes.Buffer
 	app.jsonOutput = true

@@ -21,6 +21,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 func TestInboxWait_TimeoutZero_SignalExitsDocumentedCode(t *testing.T) {
@@ -59,7 +61,7 @@ func newInboxSignalChild(t *testing.T) *inboxSignalChild {
 	t.Helper()
 	child := &inboxSignalChild{finished: make(chan struct{}), scanned: make(chan struct{}), done: make(chan error, 1), ready: make(chan bool, 1)}
 	child.cmd = exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestInboxWaitSignalProcessHelper$") //nolint:gosec // only re-executes this test binary
-	child.cmd.Env = append(os.Environ(), "MTIX_TEST_INBOX_SIGNAL=1")
+	child.cmd.Env = append(hostguard.Environ(), "MTIX_TEST_INBOX_SIGNAL=1")
 	pipe, err := child.cmd.StdoutPipe()
 	require.NoError(t, err)
 	child.control, err = child.cmd.StdinPipe()

@@ -6,10 +6,11 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/hyper-swe/mtix/internal/format"
 )
 
 // Data access for held push events (MTIX-95.12, review F-15). `mtix sync
@@ -50,16 +51,21 @@ func (s *Store) HoldPushEvents(ctx context.Context, holds []QuarantinedEvent, cl
 	if len(holds) == 0 {
 		return nil
 	}
-	at := s.Now().Format(time.RFC3339Nano)
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
-		for _, q := range holds {
-			q.Source, q.FirstSeen, q.LastAttempt, q.CLIVersion = QuarantineSourcePush, at, at, cliVersion
-			if err := QuarantineEvent(ctx, tx, q); err != nil {
-				return fmt.Errorf("hold push event: %w", err)
-			}
-		}
-		return nil
+		return holdPushEvents(ctx, tx, s.Now(), holds, cliVersion)
 	})
+}
+
+// holdPushEvents records holds in tx, stamped with at and cliVersion.
+func holdPushEvents(ctx context.Context, tx *sql.Tx, now time.Time, holds []QuarantinedEvent, cliVersion string) error {
+	at := now.Format(time.RFC3339Nano)
+	for _, q := range holds {
+		q.Source, q.FirstSeen, q.LastAttempt, q.CLIVersion = QuarantineSourcePush, at, at, cliVersion
+		if err := QuarantineEvent(ctx, tx, q); err != nil {
+			return fmt.Errorf("hold push event: %w", err)
+		}
+	}
+	return nil
 }
 
 // CountHeldPushEvents returns how many own events push holds, for `mtix
@@ -72,6 +78,51 @@ func (s *Store) CountHeldPushEvents(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("count held push events: %w", err)
 	}
 	return n, nil
+}
+
+// HeldPushCreations returns the held push events that are task creations,
+// in queue order, without their payloads (MTIX-95.39): what push needs to
+// rebuild its index of held creations (node, uid, Lamport clock and the task
+// each created), at a cost that does not grow with the payloads held.
+func (s *Store) HeldPushCreations(ctx context.Context) ([]HeldPushEvent, error) {
+	return heldPushCreations(ctx, readPool{s})
+}
+
+// heldPushCreations is HeldPushCreations over q.
+func heldPushCreations(ctx context.Context, q pushQuerier) ([]HeldPushEvent, error) {
+	// The held creations in queue order with the task each created (n by
+	// uid, else s by the event's own id for an event without a uid, else f
+	// by the number the event names). No payload column is read.
+	rows, err := q.QueryContext(ctx, `
+		SELECT q.event_id, COALESCE(e.node_id, ''), e.op_type, q.reason,
+		       COALESCE(e.lamport_clock, 0), COALESCE(e.uid, ''), COALESCE(n.id, ''),
+		       COALESCE(n.id, s.id, f.id, '')
+		FROM sync_quarantine q
+		JOIN sync_events e ON e.event_id = q.event_id AND e.op_type = 'create_node'
+		LEFT JOIN nodes n ON n.uid = e.uid AND n.uid IS NOT NULL AND n.uid <> ''
+		LEFT JOIN nodes s ON n.id IS NULL
+		     AND COALESCE(e.uid, '') = '' AND s.uid = e.event_id AND s.uid <> ''
+		LEFT JOIN nodes f ON n.id IS NULL AND s.id IS NULL
+		     AND f.id = e.node_id
+		WHERE q.source = 'push'
+		ORDER BY COALESCE(e.lamport_clock, 0), q.event_id`)
+	if err != nil {
+		return nil, fmt.Errorf("read held push creations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []HeldPushEvent
+	for rows.Next() {
+		var h HeldPushEvent
+		if err := rows.Scan(&h.EventID, &h.NodeID, &h.OpType, &h.Reason,
+			&h.Lamport, &h.UID, &h.CurrentNodeID, &h.TaskNodeID); err != nil {
+			return nil, fmt.Errorf("read held push creations: %w", err)
+		}
+		out = append(out, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read held push creations: %w", err)
+	}
+	return out, nil
 }
 
 // HeldPushEvents returns up to limit held push events (every one when limit
@@ -122,6 +173,12 @@ func (s *Store) HeldPushEvents(ctx context.Context, limit int) ([]HeldPushEvent,
 	return out, nil
 }
 
+// releasePushHoldsSQL drops the push holds of the events in the bound
+// hex-encoded JSON array (hexIDList); a test pins its plan (MTIX-187.7.15).
+const releasePushHoldsSQL = `
+	DELETE FROM sync_quarantine
+	WHERE source = 'push' AND event_id IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?))`
+
 // ReleasePushHolds removes the push holds of eventIDs in one statement
 // (MTIX-95.12): a clock hold whose event now passes, and the events of a
 // released creation's subtree. The events keep their sync_events rows,
@@ -131,16 +188,14 @@ func (s *Store) ReleasePushHolds(ctx context.Context, eventIDs []string) error {
 	if len(eventIDs) == 0 {
 		return nil
 	}
-	ids, err := json.Marshal(eventIDs)
+	ids, err := hexIDList(eventIDs)
 	if err != nil {
 		return fmt.Errorf("release push holds: %w", err)
 	}
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
 		// Drop the push holds of the events in the bound JSON array, in one
 		// statement; their sync_events rows stay.
-		if _, err := tx.ExecContext(ctx, `
-			DELETE FROM sync_quarantine
-			WHERE source = 'push' AND event_id IN (SELECT value FROM json_each(?))`, string(ids)); err != nil {
+		if _, err := tx.ExecContext(ctx, releasePushHoldsSQL, ids); err != nil {
 			return fmt.Errorf("release push holds: %w", err)
 		}
 		return nil
@@ -191,7 +246,7 @@ func (s *Store) SetPushHoldReasons(ctx context.Context, reasons map[string]strin
 			if _, err := tx.ExecContext(ctx, `
 				UPDATE sync_quarantine SET reason = ?
 				WHERE event_id = ? AND source = 'push'`, reasons[id], id); err != nil {
-				return fmt.Errorf("set reason of push hold %s: %w", id, err)
+				return fmt.Errorf("set reason of push hold %s: %w", format.EventID(id), err)
 			}
 		}
 		return nil

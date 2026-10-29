@@ -388,6 +388,15 @@ mcp/ ──┘
 - **Default rule:** Narrow, single-consumer interfaces SHOULD be defined in the package that USES them (consumer side). For example, a `NodeCreator` interface used only in a specific test or a single handler belongs in that consumer's package.
 - **Shared contract exception:** Interfaces consumed by multiple packages (service, CLI, API, MCP, gRPC) live in their own package as the canonical contract. The `store.Store` interface lives in `internal/store/store.go` because it is the central data access contract shared across all layers — not a narrow consumer-side interface.
 - The `service` package defines any interfaces it needs from external systems (e.g., `EventBroadcaster`)
+- Wake lease handlers use `service.WakeLeaseService` for acquire, renew, release
+  and abandon. The service owns request validation (agent/host/user identity,
+  TTL and holder token) and operation intent through its narrow `WakeLeaseStore`
+  consumer interface. CLI code derives process identity and handles flags,
+  diagnostics and output. SQLite retains defensive validation and the atomic
+  ownership, contention, fencing and same-owner rearm invariants inside its
+  transaction, using the store's injected clock. Do not split those operations
+  into a service-side read/check/write sequence. Existing lease JSON shapes,
+  diagnostics and exit codes remain the CLI compatibility contract.
 - **Rule of thumb:** If only one package imports an interface, define it in that package. If multiple packages import it, give it its own package or place it at the provider.
 
 ---
@@ -464,3 +473,46 @@ Path overrides and unsafe agent-kit version suffixes are refused before writes.
 Do not replace this with recursive `rm`. Build directories must not be changed
 concurrently with cleanup. The cloud-secret probe trap uses the same sequence
 only for its own `mktemp` directory; testing that trap requires no credentials.
+
+## Web content security (MTIX-187.7.9)
+
+Treat IDs and every ticket text field as untrusted, including WebSocket data.
+Use React text/attribute escaping, `encodeURIComponent` for ID path segments,
+and `URLSearchParams` for query values. HTML sinks are confined to SafeMarkdown
+and its allowlist sanitizer; the `noInnerHtml.test.ts` and existing HTML sink
+guards enforce this boundary. Do not weaken these guards to add a new sink.
+The shared browser fixture snapshot comes from `internal/testutil/HostileIDs`
+and `HostileText`; `TestHostileWebFixtures_MatchSharedCatalog` checks parity.
+Invalid UTF-8 has the same U+FFFD replacement as Go's JSON responses.
+
+`SecurityHeadersMiddleware` applies CSP to API and SPA responses while keeping
+nosniff. Inline script/eval and frames are forbidden; inline styles support
+React style props. HTTPS images remain allowed for SafeMarkdown compatibility
+and can disclose the viewer's IP to the image server. Keep this tradeoff and
+any changes to the policy documented in USERMANUAL's Web UI security section.
+
+Web contributors: never add an inline `<script>` or event-handler attribute to
+`web/index.html` or a component, never add a new HTML sink outside SafeMarkdown,
+and use `web/src/test/hostileFixtures.ts` in tests for any new surface that
+shows an id or ticket text. The policy string is asserted exactly by
+`TestSecurityHeaders_CSPPresent`, so a policy change must update that test.
+
+## Terminal output regression guards (MTIX-187.7.5)
+
+Render human-facing sync event IDs with `internal/format.EventID` and stored
+single-line ticket text with `format.SafeLine`. Preserve structured data;
+apply multiline sanitization at the terminal boundary. Run
+`go test ./cmd/mtix -run '^TestTerminal(Guard|Binary)_' -race` when changing these
+writers. The AST guard scans production Go under `cmd/mtix` and `internal`,
+including platform-specific files, for raw EventID/Title arguments to fmt
+printing, string-formatting and error calls, and follows local aliases.
+`cmd/mtix/terminal_guard_allowlist.txt` contains exact call fingerprints and
+review reasons for data assembly, quoted values and existing safe boundaries;
+never add a file-wide exception. In `cmd/mtix` the guard also covers cobra Print, log, slog and Write sinks and
+the NodeID, Reason, Assignee and UID-family selectors; `oneLine` and
+`displayHoldReason` count as safe. Allowlist reasons for raw prints read
+`tracked: MTIX-187.7.25`. Unknown function returns and cross-function
+aliases require behavioral coverage. The real-binary hostile-board test uses
+the shared `internal/testutil` catalogs and checks stdout and stderr separately,
+including diagnostic failures. C1 checks decode UTF-8: continuation bytes in
+printable Unicode are valid; raw C1 bytes and C1 control runes are forbidden.

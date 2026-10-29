@@ -34,7 +34,7 @@ func TestDoctorGuidance_ManualTemplatesAndMirrorsMatch(t *testing.T) {
 	} {
 		assert.Equal(t, want, doctorGuidanceSection(t, filepath.Join(root, path)), path)
 	}
-	for _, phrase := range []string{"`mtix doctor --json`", "`mtix doctor --fix`", "Exit 2", "non-grant", "four", "FUTURE", "MTIX-112.19.2", "MTIX-112.32.1"} {
+	for _, phrase := range []string{"`mtix doctor --json`", "`mtix doctor --fix`", "Exit 2", "non-grant", "four", "FUTURE", "MTIX-112.19.2", "`docs.stale`", "mtix -C <board-root> docs generate", "including with `--fix`"} {
 		if phrase == "four" {
 			assert.Contains(t, want, "exactly `id`, `status`, `detail`")
 			continue

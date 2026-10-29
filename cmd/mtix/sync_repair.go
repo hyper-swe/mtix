@@ -5,12 +5,12 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
@@ -132,11 +132,11 @@ func writeStatusRepairReport(w io.Writer, report *service.StatusRepairReport) er
 		return nil
 	}
 	report.Reminder = pullFirstReminder(report)
-	data, err := json.MarshalIndent(report, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal repair report: %w", err)
+	writer := newJSONOutputWriter(w)
+	if report.Apply {
+		writer.staleReason = "" // Applied work is a mutation acknowledgement.
 	}
-	if _, err := fmt.Fprintln(w, string(data)); err != nil {
+	if err := writer.WriteJSON(report); err != nil {
 		return fmt.Errorf("print repair report: %w", err)
 	}
 	return nil
@@ -211,9 +211,9 @@ func printStatusRepairDiffs(w io.Writer, diffs []service.StatusRepairDiff) {
 			origin = "this machine"
 		}
 		fmt.Fprintf(w, "%s  %s%s\n", d.NodeID, marker, d.Reason)
-		fmt.Fprintf(w, "  winner: %s %s at %s (%s)\n", d.WinnerOp, d.WinnerEventID, d.WinnerWallClock, origin)
+		fmt.Fprintf(w, "  winner: %s %s at %s (%s)\n", d.WinnerOp, format.EventID(d.WinnerEventID), d.WinnerWallClock, origin)
 		if d.MatchedEventID != "" {
-			fmt.Fprintf(w, "  replayed event: %s\n", d.MatchedEventID)
+			fmt.Fprintf(w, "  replayed event: %s\n", format.EventID(d.MatchedEventID))
 		}
 		for _, c := range d.Columns {
 			fmt.Fprintf(w, "  %s: %s -> %s\n", c.Column, nullText(c.Current), nullText(c.Expected))

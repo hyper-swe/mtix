@@ -130,14 +130,65 @@ func reviewBaseName(program string) string {
 // directories at approval time. Any other path (relative, or an absolute
 // path outside PATH) is not trusted by its name.
 func knownInterpreterProgram(root, program string) bool {
-	if !reviewInterpreterName.MatchString(reviewBaseName(program)) {
-		return false
+	_, ok := knownInterpreterPin(root, program)
+	return ok
+}
+
+// knownInterpreterPin is knownInterpreterProgram that also returns the path to
+// launch: the physical directory it was judged in plus the program's own name.
+// The directory is resolved once, so the judged and the launched directory are
+// the same.
+func knownInterpreterPin(root, program string) (string, bool) {
+	return knownProgramPin(root, program, func(p string) bool { return reviewInterpreterName.MatchString(reviewBaseName(p)) })
+}
+
+// knownProgramPin decides a program by name and by the physical directory that
+// holds it (a fixed PATH directory), and returns that directory joined with the
+// program's own name. A bare name is looked up on the fixed PATH and is
+// returned as written.
+func knownProgramPin(root, program string, nameKnown func(string) bool) (string, bool) {
+	if !nameKnown(program) {
+		return "", false
 	}
 	if filepath.IsAbs(program) {
-		return inPathDirectory(root, filepath.Dir(program))
+		dir := programDirectory(program)
+		if !physicalDirectory(dir) || !inPathDirectory(root, dir) {
+			return "", false
+		}
+		return filepath.Join(dir, filepath.Base(program)), true
 	}
-	return !strings.ContainsRune(program, filepath.Separator)
+	if isBareName(program) {
+		return program, true
+	}
+	return "", false
 }
+
+// programDirectory returns the physical directory that holds the program: the
+// text before the last separator, resolved link by link, so a parent-directory
+// segment after a link is applied where the OS applies it. The final component
+// is left alone, so a program that is itself a link (a multi-call binary) keeps
+// the name it is run by.
+func programDirectory(program string) string {
+	cut := strings.LastIndexAny(program, "/"+string(filepath.Separator))
+	if cut <= 0 {
+		return resolveDeepest(program[:cut+1], 0)
+	}
+	return resolveDeepest(program[:cut], 0)
+}
+
+// physicalDirectory reports a directory path with no link left in it: its own
+// resolution is itself. A slot is known only in such a directory, so the path
+// that is pinned cannot be re-pointed after the check.
+func physicalDirectory(dir string) bool {
+	resolved, err := filepath.EvalSymlinks(dir)
+	return err == nil && resolved == dir
+}
+
+// isBareName reports a program written without any path separator, using the
+// rule resolveLauncher uses to look a name up on PATH: filepath.Base returns
+// it unchanged. On Windows that counts a forward slash as a separator, as
+// the launcher does, so a relative spelling is never trusted by its name.
+func isBareName(program string) bool { return filepath.Base(program) == program }
 
 func inPathDirectory(root, dir string) bool {
 	for _, entry := range filepath.SplitList(FixedHookPath(root)) {

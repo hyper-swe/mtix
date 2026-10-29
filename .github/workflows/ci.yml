@@ -10,10 +10,13 @@ permissions:
   contents: read
 
 jobs:
-  test-go:
+  test-go-shards:
+    name: test-go-shard (${{ matrix.os }}, ${{ matrix.shard }})
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-22.04, macos-latest]
+        shard: [other]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,16 +31,104 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go mod verify
-      # MTIX-72: an explicit budget, chosen rather than inherited. This is
-      # the heaviest invocation in CI and was the only one on Go's 10m
-      # default while the others carry 8m/12m. internal/store/sqlite alone
-      # runs ~312s here under -race (~104s locally), so a 2x runner blip
-      # killed the job with no test having failed — a timeout that reads
-      # as a test failure in the summary, and trains people to re-run
-      # instead of read. 20m keeps ~4x headroom over the observed cost
-      # while still killing a genuine hang: the package completes, so
-      # this is duration, not deadlock.
-      - run: go test $(go list ./... | grep -v node_modules) -race -count=1 -timeout 20m
+      # MTIX-112.17.29: SQLite runs in three test shards below.
+      # MTIX-112.17.22.1: cmd/mtix runs in test-go-cmd below. This job keeps
+      # the remaining packages' explicit list. Every
+      # OS validates the complete package partition before selection.
+      - name: Verify exact package coverage
+        run: bash scripts/ci-go-shards.sh check
+      - name: Run shard race tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          package_list=$(bash scripts/ci-go-shards.sh list "$SHARD")
+          packages=()
+          while IFS= read -r package; do
+            packages+=("$package")
+          done <<< "$package_list"
+          go test "${packages[@]}" -race -count=1 -timeout 20m
+
+  test-go-sqlite:
+    # MTIX-112.17.29: the unsharded SQLite race run approached 20m on macOS.
+    # Reuse the remote bar's three exact test-name shards on each OS.
+    name: test-go-sqlite (${{ matrix.os }}, shard ${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+        shard: ["1", "2", "3"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go mod verify
+      - name: Verify exact package coverage
+        run: bash scripts/ci-go-shards.sh check
+      - name: Verify exact SQLite test coverage
+        run: bash scripts/ci-go-shards.sh test-check internal/store/sqlite 3
+      - name: Run SQLite shard race tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          pattern=$(bash scripts/ci-go-shards.sh test-pattern internal/store/sqlite 3 "$SHARD")
+          go test ./internal/store/sqlite/ -race -count=1 -timeout 20m -run "$pattern"
+
+  test-go-cmd:
+    # MTIX-112.17.22.1: the whole-package cmd/mtix race run took 19-21 minutes
+    # of the 20m go test timeout on one job (PRs failed at ~20m51s). Its tests
+    # run in three deterministic hash shards per OS, using the same script and
+    # shard count as the PostgreSQL job and the remote bar's bar-cmd. Budget:
+    # each shard job under 12 minutes wall (60 percent of the unchanged 20m
+    # timeout). -race, -count=1 and the 20m timeout are unchanged; nothing is
+    # skipped. The package guard still proves cmd/mtix is owned by exactly one
+    # list (scripts/ci-go-shards/cli.txt), and the test guard proves every
+    # test is selected by exactly one shard.
+    name: test-go-cmd (${{ matrix.os }}, shard ${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+        shard: ["1", "2", "3"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go mod verify
+      - name: Verify exact package coverage
+        run: bash scripts/ci-go-shards.sh check
+      - name: Verify exact cmd/mtix test coverage
+        run: bash scripts/cmd-mtix-shards.sh check
+      - name: Run cmd/mtix shard race tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          pattern=$(bash scripts/cmd-mtix-shards.sh pattern "$SHARD")
+          go test ./cmd/mtix/ -race -count=1 -timeout 20m -run "$pattern"
+
+  test-go:
+    name: test-go
+    needs: [test-go-shards, test-go-sqlite, test-go-cmd]
+    if: ${{ always() }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Require every Go shard to succeed
+        env:
+          SHARD_RESULT: ${{ needs.test-go-shards.result }}
+          SQLITE_RESULT: ${{ needs.test-go-sqlite.result }}
+          CMD_RESULT: ${{ needs.test-go-cmd.result }}
+        run: |
+          if [ "$SHARD_RESULT" != success ] || [ "$SQLITE_RESULT" != success ] || [ "$CMD_RESULT" != success ]; then
+            echo "Go race shards did not all succeed: packages=$SHARD_RESULT sqlite=$SQLITE_RESULT cmd=$CMD_RESULT" >&2
+            exit 1
+          fi
 
   test-web:
     runs-on: ubuntu-22.04
@@ -80,8 +171,10 @@ jobs:
     # always set here. Service image, credentials, DSN and the 20m go test
     # timeout mirror release.yml's test-go job.
     #
+    # MTIX-112.17.24: cmd/mtix runs in test-go-postgres-cmd below, in shards.
+    #
     # One job per (PG version, package): pg and pkg are both real matrix axes
-    # (2 x 3 = 6 jobs; an include entry that carries only one of them would be
+    # (2 x 2 = 4 jobs; an include entry that carries only one of them would be
     # merged into every combination and collapse the matrix, so none is used
     # for pg or pkg). Each job has its own service container, so packages
     # never share a database concurrently: the gated tests in cmd/mtix and e2e
@@ -102,15 +195,12 @@ jobs:
       matrix:
         pg: ["16", "17"]
         pkg:
-          - ./cmd/mtix/
           - ./internal/store/postgres/transport/
           - ./e2e/...
         include:
           # Extra flag for the e2e package only; it matches an existing pkg
-          # value, so it augments those two jobs rather than adding any.
+          # value, so it augments that job rather than adding any.
           - pkg: ./e2e/...
-            verbose: -v
-          - pkg: ./cmd/mtix/
             verbose: -v
     services:
       postgres:
@@ -138,6 +228,54 @@ jobs:
       - name: Run ${{ matrix.pkg }} against PostgreSQL ${{ matrix.pg }}
         run: go test ${{ matrix.pkg }} ${{ matrix.verbose }} -race -count=1 -p 1 -timeout 20m
 
+  test-go-postgres-cmd:
+    # MTIX-112.17.24: cmd/mtix took 900-1200s of the 20m per-package budget in
+    # one pg job. Its tests are split into three deterministic shards by a
+    # stable hash of the test name (scripts/cmd-mtix-shards.sh), per PostgreSQL
+    # version: 2 x 3 = 6 jobs, each with its own service container, so no two
+    # shards share a database. The guard fails unless every test is selected by
+    # exactly one shard. -race, -count=1, -p 1 and the 20m timeout are
+    # unchanged and nothing is skipped; each shard keeps -v.
+    name: pg-${{ matrix.pg }} cmd/mtix shard ${{ matrix.shard }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: ["16", "17"]
+        shard: ["1", "2", "3"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.pg }}
+        env:
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: mtix_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MTIX_PG_TEST_DSN: "postgres://postgres:ci@localhost:5432/mtix_ci?sslmode=disable"
+      MTIX_PG_TEST_REQUIRE_SUPERUSER: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Verify exact cmd/mtix test coverage
+        run: bash scripts/cmd-mtix-shards.sh check
+      - name: Run cmd/mtix shard ${{ matrix.shard }} against PostgreSQL ${{ matrix.pg }}
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          pattern=$(bash scripts/cmd-mtix-shards.sh pattern "$SHARD")
+          go test ./cmd/mtix/ -v -race -count=1 -p 1 -timeout 20m -run "$pattern"
+
   test-fault-injection:
     # NFR-2.8 conformance (MTIX-26.7): storage must survive disk-full and
     # kill -9 mid-write — either complete safely or fail-stop, never
@@ -160,13 +298,15 @@ jobs:
         run: go test ./e2e/faultinject/ -tags=faultinject -count=1 -timeout=12m -v
 
   build:
-    needs: [test-go, test-web, lint, test-go-postgres-docker, test-fault-injection]
+    needs: [test-go, test-web, lint, test-go-postgres-docker, test-go-postgres-cmd, test-fault-injection]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: Check quiet relay reference and benchmarks
+        run: go test ./benchmarks -run '^TestRelayPublish_MeetsTheLatencyTarget$' -bench '^BenchmarkRelay(Publish|Ingest)$' -benchtime=200x -count=1 -timeout=5m -v -args -relay-quiet
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"

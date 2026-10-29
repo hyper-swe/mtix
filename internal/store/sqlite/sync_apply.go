@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -69,16 +70,16 @@ func (a syncApplier) IdempotentApply(ctx context.Context, tx *sql.Tx, event *mod
 		return fmt.Errorf("apply: event nil: %w", model.ErrInvalidInput)
 	}
 	if err := event.Validate(); err != nil {
-		return fmt.Errorf("apply %s: %w", event.EventID, err)
+		return fmt.Errorf("apply %s: %w", format.EventID(event.EventID), err)
 	}
 
 	if payloadErr := validateIssueTypeEvent(event); payloadErr != nil {
-		return fmt.Errorf("apply %s: classification payload: %w", event.EventID, payloadErr)
+		return fmt.Errorf("apply %s: classification payload: %w", format.EventID(event.EventID), payloadErr)
 	}
 
 	already, err := isAppliedEvent(ctx, tx, event.EventID)
 	if err != nil {
-		return fmt.Errorf("apply %s: dedupe check: %w", event.EventID, err)
+		return fmt.Errorf("apply %s: dedupe check: %w", format.EventID(event.EventID), err)
 	}
 	if already {
 		return nil
@@ -94,13 +95,13 @@ func (a syncApplier) IdempotentApply(ctx context.Context, tx *sql.Tx, event *mod
 	// LWW lookups find it. Only a foreign event reaches this point: an
 	// event already in the log returned above.
 	if mirrorErr := a.mirrorIncomingEvent(ctx, tx, event); mirrorErr != nil {
-		return fmt.Errorf("apply %s: mirror: %w", event.EventID, mirrorErr)
+		return fmt.Errorf("apply %s: mirror: %w", format.EventID(event.EventID), mirrorErr)
 	}
 
 	// A foreign event is evidence of a hub or relay: set the sticky mark in
 	// this transaction so it rolls back with a failed apply (ADR-007 A9).
-	if _, markErr := setHubMark(ctx, tx, "foreign_event", a.clock()); markErr != nil {
-		return fmt.Errorf("apply %s: hub mark: %w", event.EventID, markErr)
+	if _, markErr := setForeignHubMark(ctx, tx, event.EventID, a.clock()); markErr != nil {
+		return fmt.Errorf("apply %s: hub mark: %w", format.EventID(event.EventID), markErr)
 	}
 
 	if err := a.dispatchWithLWW(ctx, tx, event); err != nil {
@@ -108,13 +109,13 @@ func (a syncApplier) IdempotentApply(ctx context.Context, tx *sql.Tx, event *mod
 	}
 
 	if err := advanceLamport(ctx, tx, event.LamportClock); err != nil {
-		return fmt.Errorf("apply %s: advance lamport: %w", event.EventID, err)
+		return fmt.Errorf("apply %s: advance lamport: %w", format.EventID(event.EventID), err)
 	}
 	if err := mergeVectorClock(ctx, tx, event.AuthorID, event.VectorClock); err != nil {
-		return fmt.Errorf("apply %s: merge VC: %w", event.EventID, err)
+		return fmt.Errorf("apply %s: merge VC: %w", format.EventID(event.EventID), err)
 	}
 	if err := a.recordApplied(ctx, tx, event); err != nil {
-		return fmt.Errorf("apply %s: record applied: %w", event.EventID, err)
+		return fmt.Errorf("apply %s: record applied: %w", format.EventID(event.EventID), err)
 	}
 	return nil
 }

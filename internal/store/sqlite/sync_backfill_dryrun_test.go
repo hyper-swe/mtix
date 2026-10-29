@@ -22,7 +22,7 @@ var backfillCommentTime = backfillCreated.Add(2 * time.Hour)
 func backfillBehaviorStore(t *testing.T) *sqlite.Store {
 	t.Helper()
 	t.Setenv(sqlite.AuthorIDEnv, "")
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	s.SetClock(func() time.Time { return backfillUpdated })
 	require.NoError(t, s.SetDefaultAuthor(t.Context(), "fixture-default"))
 	return s

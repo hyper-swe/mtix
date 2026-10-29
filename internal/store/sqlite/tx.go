@@ -26,17 +26,19 @@ func (s *Store) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) (err erro
 	return s.withWriteTx(ctx, fn, true)
 }
 
-// withWriteTx shares all write guards; local export bookkeeping alone suppresses
-// mutation callbacks to avoid recursively marking the metadata transaction.
+// withWriteTx shares all write guards. Local bookkeeping suppresses mutation
+// callbacks so export metadata and quarantine receipts cannot schedule task exports.
 func (s *Store) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error, notify bool) (err error) {
 	if pfErr := s.preflightWrite(); pfErr != nil {
 		return pfErr
 	}
 
-	tx, err := s.writeDB.BeginTx(ctx, nil)
+	wtx, err := s.beginWriterTx(ctx) // pinned until Release: MTIX-198
 	if err != nil {
 		return s.classifyWriteError(wrapBusyError(fmt.Errorf("begin transaction: %w", err)))
 	}
+	defer wtx.Release(ctx)
+	tx := wtx.Tx
 
 	defer func() {
 		if p := recover(); p != nil {
@@ -54,25 +56,35 @@ func (s *Store) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error, noti
 	if err = fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			// Both the original error and rollback error matter.
-			return s.classifyWriteError(fmt.Errorf("rollback failed (%v) after error: %w", rbErr, err))
+			return s.classifyWriteError(fmt.Errorf("rollback failed (%w) after error: %w", rbErr, err))
 		}
 		return s.classifyWriteError(err)
 	}
 
-	if err = tx.Commit(); err != nil {
-		return s.classifyWriteError(wrapBusyError(fmt.Errorf("commit transaction: %w", err)))
+	if err = wtx.Commit(); err != nil {
+		err = wtx.RecoverAfterCommit(ctx, fmt.Errorf("commit transaction: %w", err)) // MTIX-198
+		return s.classifyWriteError(wrapBusyError(err))
 	}
 
+	wtx.Release(ctx) // the callbacks below write on the pool, so the connection must be free
 	if notify {
-		s.reportVCPrune(ctx)
-		for _, fn := range s.onCommit {
-			if fn != nil {
-				fn()
-			}
-		}
+		s.notifyCommitted(ctx)
 	}
 
 	return nil
+}
+
+// notifyCommitted runs what follows a committed write: the version-clock
+// prune report and the on-commit callbacks (auto-export request, hook
+// dispatch). WithPushLock calls it itself, and only when the lock recorded
+// something (MTIX-95.39).
+func (s *Store) notifyCommitted(ctx context.Context) {
+	s.reportVCPrune(ctx)
+	for _, fn := range s.onCommit {
+		if fn != nil {
+			fn()
+		}
+	}
 }
 
 // wrapBusyError checks if an error is a SQLite busy/locked error and wraps

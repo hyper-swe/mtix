@@ -109,16 +109,21 @@ func registerMCPTools(reg *mcp.ToolRegistry) string {
 			primary = v
 		}
 	}
-	mcp.RegisterNodeTools(reg, app.nodeSvc, mcp.WithPrimaryProject(primary))
-	mcp.RegisterWorkflowTools(reg, app.nodeSvc, app.bgSvc,
-		mcp.WithPrimaryProject(primary), mcp.WithAuthor(mcpToolAuthor()))
-	mcp.RegisterContextTools(reg, app.ctxSvc, app.promptSvc)
-	mcp.RegisterDepTools(reg, service.NewDependencyServiceFromNodeService(app.nodeSvc))
-	mcp.RegisterInboxTools(reg, service.NewInboxService(app.store))
-	mcp.RegisterSessionTools(reg, app.sessionSvc, app.agentSvc)
-	mcp.RegisterAnalyticsTools(reg, app.nodeSvc, app.agentSvc, app.configSvc)
-	mcp.RegisterDocsTools(reg)
-	mcp.RegisterSyncWorkflowTool(reg, app.syncSvc, app.mtixDir)
+	mcp.RegisterAllTools(reg, mcp.ToolSet{
+		Node:       app.nodeSvc,
+		Background: app.bgSvc,
+		Context:    app.ctxSvc,
+		Prompt:     app.promptSvc,
+		Dependency: service.NewDependencyServiceFromNodeService(app.nodeSvc),
+		Inbox:      service.NewInboxService(app.store),
+		Session:    app.sessionSvc,
+		Agent:      app.agentSvc,
+		Config:     app.configSvc,
+		Sync:       app.syncSvc,
+		MtixDir:    app.mtixDir,
+		Primary:    primary,
+		Author:     mcpToolAuthor(),
+	})
 	// MTIX-95.12: warn in the tool result when a mutation's sync event is
 	// over the wire cap and a hub is configured.
 	reg.SetPayloadWarnings(func() bool { return hubConfigured(app.mtixDir) })
@@ -131,6 +136,13 @@ func registerMCPTools(reg *mcp.ToolRegistry) string {
 // otherwise, so the tools keep their "mcp" default instead of the CLI's
 // "cli" fallback.
 func mcpToolAuthor() string {
+	return configuredAuthorID()
+}
+
+// configuredAuthorID returns the process identity (app.authorID, MTIX-24)
+// when MTIX_AUTHOR_ID or the author_id config key sets one, and "" when only
+// the "cli" fallback applies (MTIX-169).
+func configuredAuthorID() string {
 	if os.Getenv(sqlite.AuthorIDEnv) != "" {
 		return app.authorID
 	}
@@ -160,6 +172,9 @@ func runMCP(channelAgent string, readOnly bool) error {
 	// MTIX-53: fire hooks on every mutation host-side (exec cold-start path).
 	// After wireMirrorExporter so the mirror keeps on-commit slot 0.
 	defer wireHookDispatch()()
+
+	// MTIX-112.20.1: an agent mutation through MCP is real activity.
+	defer wireHubActivity()()
 
 	srv := mcp.NewServer(os.Stdin, os.Stdout, logger, version)
 	reg := srv.Registry()

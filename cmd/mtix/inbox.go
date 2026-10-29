@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -19,6 +20,7 @@ import (
 	inboxformat "github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -37,41 +39,29 @@ func newInboxCmd() *cobra.Command {
 	var (
 		agent   string
 		wait    bool
+		count   bool
+		all     bool
 		timeout int
 		format  string
 	)
 	cmd := &cobra.Command{
 		Use:   "inbox",
 		Short: "Show events addressed to an agent",
-		Long: `Show comments addressed to an agent (via 'mtix comment --to <agent>'),
-oldest first, past the agent's ack cursor.
-
-With --wait, return already pending events even if the initial database lookup
-outlasts --timeout. That lookup remains interruptible by SIGINT or SIGTERM.
-After an empty lookup, wait for new addressed events using only the remaining
---timeout budget measured from entry (default 300 seconds).
-Use --timeout 0 for no limit: wait until an event or a signal. A negative timeout
-or a value too large to represent a duration is refused. Returned events mean
-exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM means exit 7.
-Use bounded waits within foreground tool limits; an indefinite park suits a
-background task whose harness supports it.
-
---format emits agent-ready text instead of the plain listing (FR-20 §9,
-"delivery terminates in the prompt"):
-  prompt   a complete opening prompt for a cold-started agent — the events
-           quoted in an untrusted-message envelope plus the ack/reply contract. A wake exec launches the
-           harness CLI with this as the prompt.
-  context  a compact block for harness context-injection hooks
-           (session-start / prompt-submit).
-Both print NOTHING when the inbox is empty, so a wake script's idempotency
-check is: payload=$(mtix inbox --agent X --format prompt); [ -z "$payload" ].
-Reads never ack — acknowledgement stays explicit.`,
-		Args: cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		Long:  inboxLongHelp,
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateInboxCountFlags(cmd); err != nil {
+				return err
+			}
+			if count {
+				return runInboxCount(cmd, agent, all)
+			}
 			return runInbox(agent, wait, timeout, format)
 		},
 	}
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent id whose inbox to read (required)")
+	cmd.Flags().BoolVar(&count, "count", false, "Print pending count without acknowledging or touching sessions")
+	cmd.Flags().BoolVar(&all, "all", false, "With --count, print total retained events including acknowledged events")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Long-poll: block until an event arrives or --timeout")
 	cmd.Flags().IntVar(&timeout, "timeout", 300, "Wait budget in seconds from entry; initial pending read may take longer (0 = no limit; negative refused)")
 	cmd.Flags().StringVar(&format, "format", "",
@@ -157,12 +147,15 @@ func waitInbox(ctx context.Context, agent string, timeout time.Duration) ([]sqli
 	return events, err
 }
 
+// inboxBodyIndent indents continuation lines of an inbox body under its entry.
+const inboxBodyIndent = "    "
+
 // writeInbox renders the inbox in the selected shape: agent-ready formats
 // (MTIX-56.8), JSON, or the human listing.
 func writeInbox(agent, format string, events []sqlite.InboxEvent) error {
 	out := NewOutputWriter(app.jsonOutput)
 	if format != "" {
-		caps, err := loadInboxEnvelopeCaps()
+		caps, err := loadInboxEnvelopeCaps(agent)
 		if err != nil {
 			return err
 		}
@@ -188,20 +181,55 @@ func writeInbox(agent, format string, events []sqlite.InboxEvent) error {
 		out.WriteHuman("(inbox empty)\n")
 		return nil
 	}
-	for _, e := range events {
-		out.WriteHuman("[%d] %s  %s: %s\n", e.Seq, e.NodeID, e.Author, e.Body)
+	boardArg, err := inboxformat.BoardSelection(inboxBoardRoot())
+	if err != nil {
+		return fmt.Errorf("render inbox: %w", err)
 	}
-	out.WriteHuman("\nack with: mtix inbox ack %d --agent %s\n", events[len(events)-1].Seq, agent)
+	for _, e := range events {
+		// Author and node id are one-line text; the body keeps its lines but
+		// every continuation line is indented, so a stored body cannot forge
+		// another entry or the ack line (MTIX-187.7.13).
+		out.WriteHuman("[%d] %s  %s: %s\n", e.Seq, inboxformat.SafeLine(e.NodeID), inboxformat.SafeLine(e.Author),
+			indentContinuation(inboxformat.SafeBlock(e.Body), inboxBodyIndent))
+	}
+	out.WriteHuman("\nack with: mtix inbox ack %d --agent %s%s\n", events[len(events)-1].Seq, agent, boardArg)
 	return nil
 }
 
-func loadInboxEnvelopeCaps() (inboxformat.Caps, error) {
+// inboxBoardRoot is the absolute project root of the board this command opened
+// (after any -C), or "" when no board is open. Inbox output pins every printed
+// mtix command to it, so an agent acting from another repository, which has
+// its own .mtix, still acts on the board it read (MTIX-189).
+func inboxBoardRoot() string {
+	if app.mtixDir == "" {
+		return ""
+	}
+	return filepath.Dir(app.mtixDir)
+}
+
+// explainAckBoard names the board an ack checked when the seq is outside its
+// journal (MTIX-189): such a seq almost always came from reading another
+// board, for example through -C, while the ack ran from a repository with its
+// own .mtix. The wrapped error keeps its class and exit code.
+func explainAckBoard(err error) error {
+	if !errors.Is(err, sqlite.ErrSeqOutsideJournal) {
+		return err
+	}
+	return fmt.Errorf("%w\nboard checked: %s\nthe event may belong to another board: read and ack with the same board selection, for example mtix -C <board> inbox ack <seq> --agent <id>",
+		err, inboxBoardRoot())
+}
+
+func loadInboxEnvelopeCaps(agents ...string) (inboxformat.Caps, error) {
 	env, err := oplocal.FromProcess()
 	if err != nil {
 		return inboxformat.Caps{}, fmt.Errorf("inbox operator state: %w", err)
 	}
 	state := oplocal.New(env)
-	caps, reports, err := state.EnvelopeCaps()
+	agent := ""
+	if len(agents) > 0 {
+		agent = agents[0]
+	}
+	caps, reports, err := state.EnvelopeCapsForAgent(agent)
 	if err != nil {
 		return inboxformat.Caps{}, fmt.Errorf("inbox envelope configuration: %w; %s", err, state.EnvelopeCapsRemedy(reports...))
 	}
@@ -219,13 +247,13 @@ func inboxEnvelopeEvents(events []sqlite.InboxEvent) []inboxformat.Event {
 // formatInboxPrompt composes only a fixed nudge and the quoted envelope
 // (FR-20.2, ADR-007 I33). Empty inbox remains empty for wake-script checks.
 func formatInboxPrompt(agent string, events []sqlite.InboxEvent, caps inboxformat.Caps) (string, error) {
-	return inboxformat.RenderPrompt(agent, inboxEnvelopeEvents(events), caps)
+	return inboxformat.RenderPromptOn(agent, inboxBoardRoot(), inboxEnvelopeEvents(events), caps)
 }
 
 // formatInboxContext uses the shared envelope and revalidated command tokens
 // (FR-20.2, ADR-007 I12/I13), without acknowledging or changing the inbox.
 func formatInboxContext(agent string, events []sqlite.InboxEvent, caps inboxformat.Caps) (string, error) {
-	return inboxformat.RenderEnvelope(agent, inboxEnvelopeEvents(events), caps)
+	return inboxformat.RenderEnvelopeOn(agent, inboxBoardRoot(), inboxEnvelopeEvents(events), caps)
 }
 
 func runInboxAck(agent string, seqs []string, through bool) error {
@@ -246,11 +274,12 @@ func runInboxAck(agent string, seqs []string, through bool) error {
 	}
 	ctx := sessionContext(context.Background()) // refreshes last_seen for the registered session
 	out := NewOutputWriter(app.jsonOutput)
+	inbox := service.NewInboxService(app.store)
 
 	if through {
 		// Cumulative: mark everything up to the highest given seq as seen.
-		if err := app.store.InboxAckThrough(ctx, agent, maxSeq); err != nil {
-			return err
+		if err := inbox.InboxAckThrough(ctx, agent, maxSeq); err != nil {
+			return explainAckBoard(err)
 		}
 		if app.jsonOutput {
 			return out.WriteJSON(map[string]any{"agent": agent, "acked_through": maxSeq})
@@ -261,8 +290,8 @@ func runInboxAck(agent string, seqs []string, through bool) error {
 
 	// Selective (default): ack exactly the given seq(s); unacked events resurface.
 	for _, n := range parsed {
-		if err := app.store.InboxAck(ctx, agent, n); err != nil {
-			return err
+		if err := inbox.InboxAck(ctx, agent, n); err != nil {
+			return explainAckBoard(err)
 		}
 	}
 	if app.jsonOutput {

@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/relay/segment"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -339,6 +340,11 @@ func (in *Ingestor) applyRecord(ctx context.Context, peerID string, header segme
 	if err := validator.Validate(&e, time.Now().UTC(), nil); err != nil {
 		return in.refuse(stats, peerID, header, rec, e.EventID, err)
 	}
+	// Every node id the record names must be inside the node id grammar,
+	// as at pull (MTIX-187).
+	if err := validator.ValidateEventNodeIDs(&e); err != nil {
+		return in.refuse(stats, peerID, header, rec, e.EventID, err)
+	}
 	if err := in.checkUID(ctx, &e); err != nil {
 		return in.refuse(stats, peerID, header, rec, e.EventID, err)
 	}
@@ -370,7 +376,7 @@ func (in *Ingestor) refuse(stats *Stats, peerID string, header segment.Header, r
 	}
 	in.log.Error("relay ingest quarantined a record from an authenticated peer",
 		slog.String("peer", peerID), slog.Uint64("rs", rec.RS),
-		slog.String("event_id", eventID), slog.Any("error", cause))
+		slog.String("event_id", format.EventID(eventID)), slog.Any("error", cause))
 	stats.Quarantined++
 	stats.Quarantines = append(stats.Quarantines, Quarantine{
 		PeerID: peerID, Segment: header.SegmentNo, RS: rec.RS,

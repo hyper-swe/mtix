@@ -513,7 +513,7 @@ Import behavior:
 - **Replace mode writes every field (MTIX-95.31.1):** a replace import MUST write back every exported node field, annotations and activity included, so an export followed by a replace import leaves the store unchanged.
 - **Time validation (MTIX-95.31.1):** before writing anything, import MUST reject a time value that is not RFC 3339 or whose UTC year is outside 1..9999 (node timestamps, annotation and activity times, dependency, agent and session times), and an empty value in a required time field (node `created_at` and `updated_at`, dependency `created_at`, session `started_at`), with an error naming the record and the field.
 - Schema version mismatch: if the export's `version` is newer than the binary's expected version, refuse with error. If older, apply forward migrations to the imported data before merging.
-- **Post-import sequences rebuild (FR-7.8.x):** After `mtix import` completes (both `--replace` and merge modes), the implementation MUST rebuild the `sequences` table. For every unique `{project}:{parent_dotpath}` key derivable from imported nodes, the sequence value MUST be set to the maximum `seq` among children at that path. This ensures subsequent node creation (`mtix create` / `mtix micro`) operations generate non-colliding IDs.
+- **Post-import sequences rebuild (FR-7.8.x):** After `mtix import` completes (both `--replace` and merge modes), the implementation MUST rebuild the `sequences` table. For every unique `{project}:{parent_dotpath}` key derivable from imported nodes, the sequence value MUST be at least the maximum `seq` among children at that path (soft-deleted nodes included). In merge mode a counter already above that maximum is kept: a counter is never lowered, and a temporary number used while renumbering local tasks MUST NOT remain in a counter. In `--replace` mode the counters are cleared first, so each ends at exactly the maximum. This ensures subsequent node creation (`mtix create` / `mtix micro`) operations generate non-colliding IDs.
 - **Non-node data merge (FR-7.8.y):** In merge mode, dependencies, agents, and sessions MUST also be imported. Dependencies not present locally MUST be created (INSERT OR IGNORE by composite primary key `(from_id, to_id, dep_type)`); dependencies already present locally MUST be kept unchanged. Dependencies where either `from_id` or `to_id` does not exist in the local store after merge MUST be logged as warnings and skipped. Agent records MUST be upserted by `agent_id` — local state is authoritative (imported agent state is only used for new agent IDs). Session records not present locally MUST be created; existing sessions MUST be kept unchanged. In `--replace` mode, all data types are dropped and reimported — no merge logic needed.
 
 ### FR-8: gRPC API (Python Integration)
@@ -744,6 +744,11 @@ sync:
   endpoint: ""                 # Cloud sync endpoint URL
   team_id: ""
   auto_sync: true              # Automatic import of a changed .mtix/tasks.json (FR-15.2j); false turns it off; exports never overwrite a pulled board (FR-15.3e)
+  hub_contact: activity        # When the daemon contacts the hub: activity | interval:<dur> | manual (MTIX-112.20.1)
+  push_on_addressed_send: true # Reserved: no effect until the addressed-send auto-push (MTIX-112.20.2)
+  listen: live                 # live: once a listener runs (later release; inert in this build) a live lease keeps the hub contacted while idle; off: activity-only
+  listen_interval: 10s         # Hub contact period while the listen hold is armed (>= 1s)
+  listen_max_idle: 8h          # The hold ends this long after the last real activity (<= 72h)
   interval: "30s"
 
 agent:

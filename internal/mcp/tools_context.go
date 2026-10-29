@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
@@ -78,7 +79,7 @@ func registerPromptTool(reg *ToolRegistry, svc *service.PromptService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Prompt updated for %s", p.ID)), nil
+		return SuccessResult(textPromptUpdated(p.ID)), nil
 	})
 }
 
@@ -111,11 +112,7 @@ func registerAnnotateTool(reg *ToolRegistry, svc *service.PromptService) {
 			return nil, err
 		}
 
-		msg := fmt.Sprintf("Annotation added to %s", p.ID)
-		if p.To != "" {
-			msg = fmt.Sprintf("Annotation added to %s (→ %s inbox)", p.ID, p.To)
-		}
-		return SuccessResult(msg), nil
+		return SuccessResult(textAnnotationAdded(p.ID, p.To)), nil
 	})
 }
 
@@ -146,6 +143,6 @@ func registerResolveAnnotationTool(reg *ToolRegistry, svc *service.PromptService
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Annotation %s resolved on %s", p.AnnotationID, p.ID)), nil
+		return SuccessResult(textAnnotationResolved(format.EventID(p.AnnotationID), p.ID)), nil
 	})
 }

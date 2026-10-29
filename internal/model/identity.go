@@ -171,11 +171,41 @@ func BuildProvisionalID(parentDisplayPath, uid string) (string, error) {
 //
 // Returns ErrInvalidInput describing the first violation.
 func ValidateNodeID(id string) error {
+	return validateNodeIDWith(id, ValidatePrefix)
+}
+
+// ValidateSyncNodeID validates a node id that arrives from another replica,
+// by sync or import (MTIX-187): the ValidateNodeID grammar, except that the
+// prefix is checked against the sync project_prefix grammar
+// (^[A-Z][A-Z0-9_-]{0,19}$), which also admits '_'. The difference is
+// deliberate (MTIX-95.17): 0.5.x hubs may already hold events whose ids use
+// such a prefix, and refusing them would stop those projects from syncing.
+// Every other rule is the local one: ASCII only, a numeric root, and
+// numeric or uid child segments with no empty segment.
+//
+// Returns ErrInvalidInput describing the first violation.
+func ValidateSyncNodeID(id string) error {
+	return validateNodeIDWith(id, validateSyncPrefix)
+}
+
+// validateSyncPrefix checks a prefix against the sync project_prefix
+// grammar (projectPrefixPattern).
+func validateSyncPrefix(prefix string) error {
+	if !projectPrefixPattern.MatchString(prefix) {
+		return fmt.Errorf("invalid project prefix %q: must match ^[A-Z][A-Z0-9_-]{0,19}$: %w",
+			prefix, ErrInvalidInput)
+	}
+	return nil
+}
+
+// validateNodeIDWith checks id against the node id grammar, with the
+// prefix checked by checkPrefix (ValidateNodeID, ValidateSyncNodeID).
+func validateNodeIDWith(id string, checkPrefix func(string) error) error {
 	prefix, rootSeg, childSegs, ok := splitID(id)
 	if !ok {
 		return fmt.Errorf("invalid node id %q: missing prefix-dash: %w", id, ErrInvalidInput)
 	}
-	if err := ValidatePrefix(prefix); err != nil {
+	if err := checkPrefix(prefix); err != nil {
 		return fmt.Errorf("invalid node id %q: %w", id, err)
 	}
 	// The project root sequence is always hub-assigned and numeric (ADR-003 §4):

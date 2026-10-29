@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 // wakePidRm starts the renewer's pid-file write, the step the handshake probe holds back.
@@ -123,7 +125,7 @@ func wakeScriptCommand(ctx context.Context, dir, log string, o wakeRenewerOpts) 
 	cmd.Dir, cmd.WaitDelay = dir, 2*time.Second
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.Env = append(append(os.Environ(), o.env...), "PATH="+dir+":/usr/bin:/bin", "WAKE_DIR="+dir, "WAKE_AGENT_LOG="+log,
+	cmd.Env = append(append(hostguard.Environ(), o.env...), "PATH="+dir+":/usr/bin:/bin", "WAKE_DIR="+dir, "WAKE_AGENT_LOG="+log,
 		wakeMarkerEnv+"="+log+".stop.fixed", "MTIX_BIN="+filepath.Join(dir, "mtix"), "HARNESS_BIN="+filepath.Join(dir, "claude"))
 	return cmd
 }

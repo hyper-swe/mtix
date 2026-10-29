@@ -12,8 +12,7 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/oklog/ulid/v2"
-
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
 )
@@ -24,6 +23,7 @@ type PromptService struct {
 	broadcaster EventBroadcaster
 	logger      *slog.Logger
 	clock       func() time.Time
+	ids         *annotationIDs
 }
 
 // NewPromptService creates a PromptService with required dependencies.
@@ -44,35 +44,16 @@ func NewPromptService(
 		broadcaster: broadcaster,
 		logger:      logger,
 		clock:       clock,
+		ids:         newAnnotationIDs(rand.Reader),
 	}
 }
 
 // UpdatePrompt updates a node's prompt field per FR-12.1.
-// Recomputes content_hash (FR-3.7), sets updated_at, creates prompt_edit activity entry.
+// The store commits the prompt and its hashes atomically (FR-3.7), then the
+// service broadcasts that transaction-specific pair (FR-7.5).
 func (svc *PromptService) UpdatePrompt(ctx context.Context, nodeID, text, author string) error {
-	node, err := svc.store.GetNode(ctx, nodeID)
+	oldHash, newHash, err := svc.store.UpdatePrompt(ctx, nodeID, text)
 	if err != nil {
-		return fmt.Errorf("get node %s for prompt update: %w", nodeID, err)
-	}
-
-	oldHash := node.ContentHash
-
-	// Update the prompt and recompute hash.
-	node.Prompt = text
-	node.UpdatedAt = svc.clock()
-	newHash := node.ComputeHash()
-
-	// Build update.
-	promptPtr := &text
-	hashPtr := &newHash
-	updatedAt := node.UpdatedAt.UTC().Format(time.RFC3339)
-	update := &store.NodeUpdate{
-		Prompt:      promptPtr,
-		ContentHash: hashPtr,
-		UpdatedAt:   &updatedAt,
-	}
-
-	if err := svc.store.UpdateNode(ctx, nodeID, update); err != nil {
 		return fmt.Errorf("update prompt for %s: %w", nodeID, err)
 	}
 
@@ -117,18 +98,19 @@ func (svc *PromptService) AddAnnotation(ctx context.Context, nodeID, text, autho
 	}
 
 	now := svc.clock()
-	id, err := ulid.New(ulid.Timestamp(now), rand.Reader)
+	id, err := svc.ids.next(now)
 	if err != nil {
-		return fmt.Errorf("generate annotation ULID: %w", err)
+		return err
 	}
 
 	annotation := model.Annotation{
-		ID:        id.String(),
+		ID:        id,
 		Author:    author,
 		Text:      text,
 		CreatedAt: now,
 		Resolved:  false,
 		Addressee: addressee,
+		Hop:       addressedCommentHop(addressee, svc.logger),
 	}
 
 	// One atomic store append: no read-modify-write outside a transaction (MTIX-148).
@@ -147,7 +129,7 @@ func (svc *PromptService) ResolveAnnotation(
 ) error {
 	// One atomic store update by annotation ID (MTIX-148).
 	if err := svc.store.ResolveAnnotation(ctx, nodeID, annotationID, resolved); err != nil {
-		return fmt.Errorf("resolve annotation %s on node %s: %w", annotationID, nodeID, err)
+		return fmt.Errorf("resolve annotation %s on node %s: %w", format.EventID(annotationID), nodeID, err)
 	}
 
 	svc.broadcastPromptEvent(ctx, EventNodeUpdated, nodeID, "", nil)

@@ -13,17 +13,29 @@ import (
 // how many pulled events are held in the local quarantine, not applied
 // (sync_quarantine, MTIX-95.11); every pull retries them. It also fills
 // st.HeldPushEvents: how many own events push holds, not pushed (source
-// push, MTIX-95.12).
+// push, MTIX-95.12). It fills st.QuarantinedInvalidIDs and
+// st.InvalidNodeIDs too: the quarantined pulled events and the local tasks
+// that name a task id outside the node id grammar (MTIX-187).
 func readQuarantineStatus(ctx context.Context, store *sqlite.Store, st *SyncStatus) error {
-	n, err := store.CountQuarantined(ctx)
+	counts, err := store.CountQuarantineAcknowledgements(ctx)
 	if err != nil {
 		return err
 	}
-	st.QuarantinedEvents = n
+	st.QuarantinedEvents = counts.Total
+	st.AcknowledgedQuarantinedEvents = counts.Acknowledged
+	st.UnacknowledgedQuarantinedEvents = counts.Unacknowledged
 	held, err := store.CountHeldPushEvents(ctx)
 	if err != nil {
 		return err
 	}
 	st.HeldPushEvents = held
+	if st.QuarantinedInvalidIDs, err = store.CountQuarantinedInvalidIDs(ctx); err != nil {
+		return err
+	}
+	invalid, err := store.InvalidNodeIDs(ctx)
+	if err != nil {
+		return err
+	}
+	st.InvalidNodeIDs = len(invalid)
 	return nil
 }

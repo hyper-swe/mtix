@@ -38,8 +38,9 @@ func trimIDs(ids []string) []string {
 }
 
 // importModeFor validates the workflow flags (nothing is written when they
-// are invalid) and returns the import mode; a replace passes the MTIX-90
-// gate first (MTIX-95.31.13).
+// are invalid) and returns the import mode; a replace is refused on a store
+// that syncs with a hub (MTIX-107.31), then passes the MTIX-90 gate
+// (MTIX-95.31.13).
 func importModeFor(ctx context.Context, exportData *sqlite.ExportData, f importFlags) (sqlite.ImportMode, error) {
 	if flagErr := checkWorkflowFlags(f); flagErr != nil {
 		return "", nothingWritten(flagErr)
@@ -47,10 +48,45 @@ func importModeFor(ctx context.Context, exportData *sqlite.ExportData, f importF
 	if f.mode != "replace" {
 		return sqlite.ImportModeMerge, nil
 	}
+	if syncErr := refuseSyncedReplace(ctx); syncErr != nil {
+		return "", nothingWritten(syncErr)
+	}
 	if guardErr := guardImportReplace(ctx, exportData); guardErr != nil {
 		return "", guardErr
 	}
 	return sqlite.ImportModeReplace, nil
+}
+
+// refuseSyncedReplace refuses a replace import into a store that holds
+// tasks and syncs with a hub or relay (MTIX-107.31): it has exchanged
+// events or carries the hub-connected mark, a hub is configured, or local
+// config shows one. A replace into an empty store, such as a restore into
+// a fresh data directory, deletes nothing and runs as before. A
+// replace deletes every task and value the file lacks while their events
+// stay in the local sync log, which a pull then acknowledges instead of
+// applying, so the board would stay behind the hub. It runs before the
+// typed confirmation, so nobody is asked to confirm a delete that is
+// refused.
+func refuseSyncedReplace(ctx context.Context) error {
+	nodes, err := countRows(ctx, "nodes")
+	if err != nil || nodes == 0 {
+		return err
+	}
+	synced, err := app.store.HasSyncedWithHub(ctx)
+	if err != nil {
+		return fmt.Errorf("import failed: %w", err)
+	}
+	counts, err := hubGuardCounts(ctx)
+	if err != nil {
+		return fmt.Errorf("import failed: %w: %w", err, sqlite.ErrReplaceOnSyncedStore)
+	}
+	if !synced && !counts {
+		return nil
+	}
+	return fmt.Errorf("import failed: this store syncs with a hub, and a replace import would delete tasks and "+
+		"changes whose events stay in the local sync log, which a pull cannot restore; nothing was imported. "+
+		"To rebuild the board from the hub, run %s. To load the file as it is, import it into a project that "+
+		"does not sync: %w", sqlite.SyncLogRecovery, sqlite.ErrReplaceOnSyncedStore)
 }
 
 // workflowResolution returns the caller's answer to workflow conflicts from

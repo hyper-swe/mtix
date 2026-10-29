@@ -18,7 +18,7 @@ import (
 
 // TestBackup_CreatesValidCopy verifies backup creates a readable copy per FR-6.3a.
 func TestBackup_CreatesValidCopy(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -46,7 +46,7 @@ func TestBackup_CreatesValidCopy(t *testing.T) {
 
 // TestBackup_VerificationPasses verifies PRAGMA quick_check passes on good backup.
 func TestBackup_VerificationPasses(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 
 	destPath := filepath.Join(t.TempDir(), "backup_verify.db")
@@ -57,7 +57,7 @@ func TestBackup_VerificationPasses(t *testing.T) {
 
 // TestBackup_EmptyDestPath_ReturnsError verifies empty path is rejected.
 func TestBackup_EmptyDestPath_ReturnsError(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 
 	_, err := s.Backup(ctx, "")
@@ -67,7 +67,7 @@ func TestBackup_EmptyDestPath_ReturnsError(t *testing.T) {
 
 // TestBackup_PreservesData verifies backup contains the same data as source.
 func TestBackup_PreservesData(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -92,7 +92,7 @@ func TestBackup_PreservesData(t *testing.T) {
 
 // TestBackup_InvalidPath_ReturnsError verifies error on invalid destination path.
 func TestBackup_InvalidPath_ReturnsError(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 
 	// Use a path that cannot be written to.
@@ -102,7 +102,7 @@ func TestBackup_InvalidPath_ReturnsError(t *testing.T) {
 
 // TestBackup_MultipleNodes_PreservesAll verifies backup of multiple nodes per FR-6.3a.
 func TestBackup_MultipleNodes_PreservesAll(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -135,7 +135,7 @@ func TestBackup_MultipleNodes_PreservesAll(t *testing.T) {
 
 // TestBackup_EmptyDB_Succeeds verifies backup of empty database per FR-6.3a.
 func TestBackup_EmptyDB_Succeeds(t *testing.T) {
-	s := newTestStore(t)
+	s := newFreshTestStore(t)
 	ctx := context.Background()
 
 	destPath := filepath.Join(t.TempDir(), "backup_empty.db")

@@ -5,6 +5,7 @@ package service_test
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"testing"
 	"time"
@@ -151,6 +152,34 @@ func TestAddAnnotation_AppendsToArray(t *testing.T) {
 	require.Len(t, got.Annotations, 2)
 	assert.Equal(t, "First annotation", got.Annotations[0].Text)
 	assert.Equal(t, "Second annotation", got.Annotations[1].Text)
+}
+
+// TestAddAnnotation_FixedClock_ListsInAppendOrder verifies annotations created
+// at the same instant keep their creation order: the ids ascend, so the
+// (created_at, id) listing order is the append order (MTIX-100.2). With random
+// id entropy, two annotations of one millisecond would list in random order.
+func TestAddAnnotation_FixedClock_ListsInAppendOrder(t *testing.T) {
+	promptSvc, nodeSvc, s, _ := newTestPromptService(t)
+	ctx := context.Background()
+	node, err := nodeSvc.CreateNode(ctx, &service.CreateNodeRequest{
+		Project: "PROJ", Title: "Same instant", Creator: "admin",
+	})
+	require.NoError(t, err)
+
+	const n = 50
+	for i := 0; i < n; i++ {
+		require.NoError(t, promptSvc.AddAnnotation(ctx, node.ID, fmt.Sprintf("note %02d", i), "reviewer@test.com", ""))
+	}
+
+	got, err := s.GetNode(ctx, node.ID)
+	require.NoError(t, err)
+	require.Len(t, got.Annotations, n)
+	for i, a := range got.Annotations {
+		assert.Equal(t, fmt.Sprintf("note %02d", i), a.Text, "annotation %d lists in append order", i)
+		if i > 0 {
+			assert.Less(t, got.Annotations[i-1].ID, a.ID, "ids ascend with creation order")
+		}
+	}
 }
 
 // TestAddAnnotation_AtTokenSetsAddressee verifies an @<agent> token in the text

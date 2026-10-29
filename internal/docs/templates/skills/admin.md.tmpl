@@ -7,6 +7,118 @@ allowed-tools:
 
 # {{ .ProjectPrefix }} — Administration
 
+
+## Host wake settings
+
+This build stores and reports `wake.live` and `wake.max_hop_depth`.
+Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect
+when the wake scanner ships. They do not control live delivery in this build.
+
+The wake scan core ships in this build, but nothing constructs or runs it yet:
+no delivery route exists before a later release. So in this build no scan runs,
+no registration is marked stale by a scan and no stale registration is expired by
+one, and no agent is woken live.
+
+**When the scanner is available, stop live wakes on this host with `mtix config set wake.live off`.**
+For one agent use `mtix config set wake.live off --agent worker`.
+The stored live-wake default is on, regardless of session approval mode.
+You should not need to tune these settings: use the normal handle, reply and ack routine.
+
+These keys belong to this host's operator-local `wake.json`, never to
+`.mtix/config.yaml`. The host-bound JSON envelope stores scopes in
+`data.host` and `data.agents`. Without `--agent` the config commands select
+the host scope; `--agent worker` selects that agent's override. An omitted
+agent key inherits the host value, then the default. Effective host live-off
+dominates an agent live-on override; the scanner will enforce that value. Settings in a committed
+workspace file are ignored and reported; they never grant wake authority.
+Existing flat envelope and strict-identity settings remain readable.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `wake.live` | `true` | Live wake on/off setting for the scanner |
+| `wake.wakes_per_hour` | unset, unlimited | Enforced by the callable dispatcher: recipient wakes across boards per rolling hour |
+| `wake.per_sender_per_hour` | unset, unlimited | stored, not yet enforced: sender events per hour |
+| `wake.remote_awake_daily_cap` | unset, unlimited | stored, not yet enforced: remote-induced awake seconds per day |
+| `wake.reply_extensions_per_hour` | unset, unlimited | stored, not yet enforced: reply-window extensions per hour |
+| `wake.envelope_max_events` | unset, unlimited | Events in one pulled envelope |
+| `wake.envelope_max_body_bytes` | unset, unlimited | Bytes per event body |
+| `wake.envelope_max_total_bytes` | unset, unlimited | Total envelope bytes |
+| `wake.max_hop_depth` | `32` | Scanner hop guard; depth 32 will be allowed, 33 held |
+| `wake.backoff_after_unacked` | `5` | Enforced by the callable dispatcher: durable unacknowledged-wake backoff |
+| `inbox.strict_board_identity` | `false` | Also require matching hub identity |
+
+Read a value with `mtix config get wake.max_hop_depth`, or append `--agent worker`.
+Set an optional limit with `mtix config set wake.wakes_per_hour 12`.
+Optional limits accept a nonnegative whole number; `0`, `off` or `unset`
+means unlimited. Guards are always on: zero, negative, empty and off values
+are refused. Tightening a limit, enabling strict identity or turning live
+wake off needs no terminal. Loosening a limit, disabling strict identity or
+turning live wake on requires terminal stdin. Deleting an override follows
+the same rule when the inherited value would loosen it.
+
+`mtix doctor` and `mtix doctor --json` report effective values and their
+source under `wake.settings`, including configured agent overrides.
+`settings.ignored-workspace-key` lists ignored workspace keys and exact
+`mtix config set` remedies. Remove those keys from `.mtix/config.yaml` and
+configure desired values operator-locally. Doctor is read-only, including
+with `--fix`; it never changes these settings or grants permission.
+
+Addressed-comment payloads carry optional nonnegative integer `hop` context;
+missing means zero; malformed sync metadata warns and is read as zero without
+withholding the comment. When the scanner ships, a wake exec child receives
+`MTIX_WAKE_HOP`, the maximum
+hop of its covered events, and `MTIX_WAKE_ATTEMPT`, an audit-only attempt token.
+Its addressed sends carry one more hop. Other sends start at zero; malformed
+process context logs a warning and starts at zero without failing the send.
+Context injected by a hook into an already-running session cannot change that
+session's environment, so its sends start at zero. This is an accident net,
+not an adversarial control. The scanner's held diagnostic will name the depth and
+exact configuration command; changing a guard never acknowledges the event.
+
+These settings do not install a wake route. The callable dispatcher enforces
+recipient budgets and durable backoff; held wakes re-arm in the same dispatcher; scanner discovery remains
+a separate feature. A configured limit of 12 holds the 13th attempt in a rolling
+hour, before claim or send, across boards for the same agent, host and user.
+Duplicate claims and held events spend no allowance; transport failures do.
+
+After five consecutive wakes without a new acknowledgement, the next wake
+waits 1 minute; each further unacknowledged attempt doubles the delay up to
+30 minutes. Ack after handling keeps backoff quiet. A new acknowledgement on
+any board resets this host recipient's backoff, including a lower selective
+sequence or newly covered cumulative prefix. Repeating an already acknowledged
+event or prefix does not reset it. Acknowledgements do not return rate allowance.
+
+A local board identity keeps moved boards and ordinary database copies on the
+same protected counter floor, including moves back to an earlier path. Each
+fresh fenced attempt still spends one credit. The identity stays local; exports
+and sync do not carry it. Identity-less restores at an unseen path, and legacy
+mirrors without an identity, may under-count history, never over-count. They
+establish an uncharged history baseline while retaining existing recipient
+credits and unacked debt. An identity-less database at a previously used path
+is treated as that path's board and can charge its own history. Doctor reads
+this state without creating an identity.
+
+The protected mirror retains spent allowance across restarts and store restores.
+`budget.rewind` in `mtix doctor` text and JSON reports a lower local counter or
+retained rewind diagnostic. It is read-only, even with `--fix`; doctor never
+repairs counters or resets allowance. Interrupted accepted attempts remain
+conservatively charged. Budget and backoff holds retain inbox events and name
+their cause and exact configuration command.
+
+A held wake (loop guard or recipient budget) never advances the registration's own
+high-water mark, and later events of that registration wait behind it so none is skipped.
+Every pass of the callable dispatcher re-checks the hold. Once a dispatcher is wired in, a
+grant change, a `wake.*` setting change and an inbox call also re-check the affected agent's
+held wakes; there is no timer or background loop, and a failed re-check never fails your command.
+This build wires no dispatcher yet, so those activities start no pass and nothing is delivered
+automatically; the first pass after you loosen the setting
+(for example the printed `mtix config set wake.max_hop_depth <n>`) wakes the held event,
+and the registration continues from its own mark. Events at or below the mark never wake.
+`wake.guard-trips` in `mtix doctor` text and JSON lists recent loop-guard trips (hop depth
+and back-off), newest first, with agent, chain, time and the exact fix command; JSON rows
+are under `data.trips`. It is read-only, even with `--fix`. You should not need to tune
+these guards; an empty list is the normal state.
+
 ## Health checks
 
 Run `mtix doctor` for registered checkout and host diagnostics, or
@@ -16,9 +128,21 @@ means no FAIL; WARN and INFO are advisory. Exit 2 means at least one FAIL.
 An empty applicable registry is `[]` in JSON. Windows reports
 `platform.windows` as INFO because built-in wakes are unavailable.
 
+On an opened local board, `wake.ledger` reports retained wake rows, claimed
+rows and rejected completions as INFO, including when all counts are zero.
+A board requiring a dispatch protocol newer than this binary supports reports
+FAIL. Install a compatible binary, restart the dispatcher and rerun doctor;
+never lower the board's protocol floor to bypass refusal. This check is
+read-only: `mtix doctor --fix` does not prune wake rows, reset claims, lower
+the protocol floor or grant permissions.
+
 The sync result rows use a `sync.` prefix and run only for configured
 transports. A relay-only checkout does not run unused Postgres checks.
 The separate `mtix sync doctor` command keeps its existing report and behavior.
+
+Plain `mtix doctor` preserves operator-local files, including stale attach shims
+and records. Use `mtix doctor --fix` for registered shim and glue repairs;
+other commands retain automatic attach refresh.
 
 Use `mtix doctor --fix` only when you want explicitly registered non-grant
 repairs to run; each successful repair is checked again. Grant commands and
@@ -27,10 +151,95 @@ by this flag. Existing sync checks currently register no automatic repairs.
 Follow each printed remedy and rerun doctor. All report fields and diagnostics
 are redacted before output; never put credentials into a command argument.
 
-Setup completion (`setup.done`, MTIX-112.19.2) and document freshness
-(`docs.stale`, MTIX-112.32.1) are FUTURE registrations, not checks available
-in this version. Do not infer that setup or generated documents are current
-from the absence of those rows.
+The read-only `docs.stale` check compares the board-root `MTIX.md` with
+this binary's generated instructions and checks live native pointer lines.
+Missing or stale instructions and missing or duplicate pointers produce WARN.
+Fenced and indented examples do not count as live pointers. `HYPERSWE.md`
+suppresses the missing-pointer requirement; existing pointers are allowed and
+`MTIX.md` is still checked. Follow the exact printed command,
+`mtix -C <board-root> docs generate`, then rerun doctor. Generation keeps the
+first live owned pointer and removes later duplicates, preserving other bytes.
+This check never writes documents or Git exclusions, including with `--fix`.
+
+Every write (for example `mtix create`) re-exports `.mtix/tasks.json` in this
+binary's export schema: `2.0.0`, or `2.1.0` with `history.export`. The first
+write after an mtix upgrade can change a committed file's `schema_version` and
+add fields, which breaks a reader that rejects unknown fields.
+`sync.auto_sync` does not stop this re-export: it turns off automatic import
+only. The read-only `export.schema` check reports PASS when the file declares
+the schema this binary writes and WARN with the fix when it declares another.
+To upgrade deliberately, run `mtix sync` and, when it reports no pending import,
+`mtix sync --fix`, then commit `.mtix/tasks.json` and update the strict reader.
+To keep the older schema, write to the board only with the mtix version that
+wrote it. When the file declares a NEWER schema than this binary writes, the
+fix says to upgrade mtix instead. The check never writes the file, including with `--fix`.
+
+Setup completion (`setup.done`, MTIX-112.19.2) remains a FUTURE registration.
+Do not infer that setup is current from the absence of that row.
+
+### Attach checks
+
+The operator-local directory can hold release-defined attach artifacts. The
+attach shim (`mtix-shim`) is a POSIX shell script that records the unresolved
+mtix path and the operator's uid. On every run, with a fixed `PATH`, it walks
+that path one component at a time from `/`, following at most 32 symbolic
+links (to files or directories) and resolving `..` physically. It refuses
+unless every directory it enters (so every ancestor and the directory holding
+each link), every link and the final file are owned by the operator or root
+and not writable by group or others (a root-owned sticky directory such as
+`/tmp` is allowed). It then runs the fully resolved path it checked, never a
+path through a link. The Go check behind `setup.shim` applies the same rule.
+This version installs no shim, harness glue or host
+dispatcher service; it checks and repairs those artifacts when they exist.
+Doctor shows these rows only when they apply:
+
+- `setup.shim`: PASS when the shim matches this release. WARN with the fix
+  `mtix doctor --fix` when its bytes are out of date; the repair rewrites
+  only the shim and its record. FAIL when its target is refused or its record is
+  missing; the fix names the refused component (for example `chmod go-w`
+  on the writable directory or file, or removing a link owned by another
+  user). Windows has no shim,
+  and `platform.windows` says so.
+- `glue.<harness>`: harness glue called mtix with an attach protocol other
+  than this release's. The previous protocol is still served and the glue is
+  marked for refresh; any other protocol makes that session inbox-only, so
+  read messages with `mtix inbox`. The fix names `mtix doctor --fix` only
+  when this build can rewrite that glue; glue newer than this mtix needs an
+  mtix upgrade (compare `mtix version`), and older glue this build cannot
+  rewrite must be corrected or removed in the harness configuration. The
+  attach verb's stderr line and alert name the same fix.
+- `attach.failures`: recent `attach.protocol-skew` and `attach.verb-failure`
+  operator alerts from the hidden attach verbs, with counts. These verbs are
+  entry points for harness glue, not for agents. They always exit 0, even on
+  arguments they cannot parse or a verb this build does not know, print one
+  line on stderr and nothing on stdout, and record every failure as an
+  operator alert that carries its own fix (for example the glue fix above for
+  protocol skew, or upgrading mtix for an unknown verb).
+- `attach.state`: INFO when operator state cannot be read at all (for example
+  `HOME` is unset); the attach rows are skipped and the row names the remedy.
+  Doctor itself still runs.
+- `skew.dispatchers`: a host dispatcher heartbeat on this board that is older
+  than this mtix, or below the board's `min_dispatch_protocol`. This version
+  installs no dispatcher service, so mtix cannot restart it; the fix names
+  the PID to stop and start. `mtix agent register` prints the same notice.
+  It never restarts a dispatcher from inside a harness session, and restarts
+  one at most once per hour. Until a restart has really happened, every check
+  reports the older dispatcher again and raises an operator alert; mtix never
+  claims a restart it did not make.
+
+Unsandboxed commands other than plain `mtix doctor`, and registered
+`mtix doctor --fix` repairs, rewrite an out-of-date shim without a terminal. These repairs never change a grant,
+approval or confirmation.
+
+## Trust and grants
+
+On a board never connected to a hub or relay, registered ids are implicitly wakeable unless explicitly denied. A hub or relay board requires one confirmation per agent, board and host. To confirm an id, run `mtix agent allow dev`; terminal stdin is required. For automation use `mtix agent allow dev --yes`. The beta accepts this under harness session markers, records their names without values and flags them in doctor; it does not refuse the confirmation. `mtix agent deny dev` needs no terminal and explicitly holds that id, including on local-only boards. Both commands assign a missing board identity when upgrading a legacy board. You can allow a valid id before registration: its preconfirmation stays pending for this host, board and exact id. It becomes usable when that id registers here, without a second confirmation; denial revokes it immediately. On a hub board, a preconfirmation also needs the same known hub identity. Doctor shows the current pending registration count and each exact `mtix agent deny ID` revoke command.
+
+Grants and the protected `confirmations.jsonl` log live in the operator-local mtix configuration directory, outside the project. The log records action, source, time, mode and harness marker names with private file access. `mtix doctor` and `mtix doctor --json` show `agents.unconfirmed` with the real allow command and `agents.confirmations` with the retained audit history. `mtix doctor --fix` never confirms an id. Uncommitted allows stay ineffective while publication is pending; accepted denies remain effective. Use `mtix agent permissions recover` to list stuck batches and `mtix agent permissions recover --cancel <batch-id>` to cancel one with durable audit. Cancellation preserves prior committed grants and accepted denies, and permanently refuses the cancelled caller id. A new operator deny cancels older uncommitted allows for that id and quarantines other pending allows so unavailable publication cannot block denial. Removed notice targets are retained as `undeliverable`. Recovery never grants permission. A legacy pending allow without a committed preimage becomes a quarantine hold, separate from an operator deny. It stays held after cancellation and registration, and file requests leave it unchanged with `quarantined_requires_operator`. Only a fresh `mtix agent allow <agent-id>` confirmation in that board checkout clears the hold (use `--yes` for automation). Doctor reports each hold and its exact clearing command; `mtix agent permissions recover` lists pending batches and holds. A completed receipt stays committed if only cleanup fails and cannot be cancelled. The reusable file batch API remembers supplied ids and accepted time/registration metadata, so identical retries never regrant an older allow after a later deny. Its protected `permissions-replays.json` retains at most 1024 batches within 1 MiB. New batches evict the oldest completed receipts by completion time; pending batches are never evicted. Retained completed ids replay their accepted result, while an evicted completed id is treated as a new request. Cancelled or quarantined ids remain terminal in separate protected audit records even after replay-receipt eviction. File-mode allow never clears an explicit deny: that agent is unchanged with outcome `denied_requires_operator`, and the rest of the batch applies. Only the actual operator command `mtix agent allow <agent-id>` at a terminal, or `--yes` with logged harness markers, clears the deny. Doctor shows receipt count and bytes and retained denied file-allow outcomes. Explicit denials are informational with their time and source; doctor gives no allow remedy for an operator denial. The reusable `PermissionReplayResult` accessor returns a complete retained completed batch or an explicit unavailable result after receipt eviction; it never reconstructs partial counts from rotated history. There is no apply/setup command for this API.
+
+Each committed change batch publishes one unaddressed neutral board line with a separately generated UUIDv7 event identity, independent of caller batch ids: wake permissions changed on a host (see that host's mtix doctor). It contains no host or agent id, path or user name; ordinary sync provenance remains unchanged. An empty board receives no new task or line: the local log and doctor show `skipped_no_node`. When a board first becomes hub-connected, implicitly eligible ids become held and operator-local Alerts report the required confirmation.
+
+Grants match board identity by default; optional strict hub-identity matching remains off by default. No sender allowlist is added in this beta: share a hub only with trusted principals. The reusable file-batch API supports orchestration; the full setup and file-application commands belong to a future setup release and are not shipped here. Confirmation selection facts remain separate and start unchecked.
 
 ## Local coordination schema
 
@@ -77,11 +286,13 @@ Run `mtix import <file> --mode merge` from the CLI. If it reports renumbering wi
 - **merge** — creates nodes the store lacks; for a node it has, annotations and activity merge as a union (no local annotation is ever dropped, and a resolved annotation stays resolved), and the other fields take the file's values only when the node's content hash differs
 - **replace** — replaces all project data with the import file, annotations and activity included; a file written before mtix 0.5.4 carries no annotations, so a replace import of it leaves every node without them. It needs the ticket count typed at an interactive terminal, so an agent never runs it: ask the user; prefer merge.
 
+Every import refuses a file that names a task id outside the node id grammar (as a task, a parent or a dependency end) that the store does not already hold, and writes nothing; the error starts `nothing was imported: invalid node id` and names the ids. A store that already holds such a task imports a file that holds it, such as its own export. See Quarantined Pulled Events: invalid node id.
+
 **Uid adoptions (merge).** When the file holds a task's id under another uid and one of the two uids was assigned when a clone upgraded (more than an hour after the task was created), `mtix import --mode merge` treats them as one task and gives the local task the file's uid. It lists every adoption under `uids adopted from the file` in its report on stderr, applied or not: the id, both uids and both titles (`uid_adoptions` in `--json` once the import is applied; `--remap-file` maps the local uid to the id). The merge, and the automatic import after a git pull, carry the adopted uid onto the task's unpushed sync events and any held copy of them in the same step, so a later push sends the task's creation and its changes under one uid; changes already pushed keep theirs. If the import is refused because a push is running, run it again when the push has ended. Do not edit event uids by hand. Known limit (experimental relay): a change already published to the relay keeps its old uid on relay peers. Check every adoption whose titles differ: two different tasks created in the same second, when at least one clone assigned its uid after the task was created (at upgrade, or as a backfill uid on import or open, for example for a task created before 0.2), are treated as one, the merge keeps the file's task, and the local one survives only in the backup the merge took first. The automatic import refuses such a pair and lists it as `treated as the same task (uid assigned at upgrade)` with both titles; for it, the merge takes the file's title and content. If the titles name two different tasks, do not merge yet: show both to the user, copy the local task to a new one (`mtix show <id>`, then `mtix create` with its title and description; writes stay local while the refusal is pending), then merge. If a merge already took it, restoring the backup drops every change made since the merge: recover right away, or first note the later changes and redo them afterwards. The user stops every mtix process that uses this store (the MCP server, `mtix serve`, a running `mtix daemon`), copies the backup over `.mtix/data/mtix.db` and deletes `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm` (they belong to the replaced database and must not be replayed onto the backup), then, before any mtix command runs, restores the pulled board (`git checkout -- .mtix/tasks.json`, or the file from the pulled commit), because the merge's own export rewrote it. The next command refuses again; copy the task as above, then run `mtix import .mtix/tasks.json --mode merge --confirm`. mtix gives every task it imports without a uid a backfill uid (a UUIDv8 with a fixed marker), and a store gives its tasks without a uid one when it opens, so boards written by 0.5.4 carry a uid for every task, and two clones that each backfilled a task keep one task. A board without uids does not lose a backfill uid: the missing uid is no loss, and the replace keeps the local uid, so a teammate's boards from a client at 0.3 or older keep importing (a uid given at creation that such a board leaves out is still a loss). When the file's copy has no uid to compare (a board from a client at 0.3 or older, or one never re-exported after an upgrade), the titles decide: another title is a different task, which the automatic import lists as `a task under this id with a different title and no uid to compare` and the merge renumbers with `--confirm` (listed under `of these, a task under this id with a different title and no uid to compare`); if a teammate only retitled it, the merge keeps both copies, and the renumbered one holds the comments, activity and field values the board lacked: the user moves them to the task at the id, or keeps the renumbered copy, before anything is deleted. The opposite case: two copies with identical titles listed as `a different task under this id` (every uid the task carries was assigned within an hour of its creation) are one task; the merge renumbers the local copy only with `--confirm`, and the user decides whether to delete the duplicate.
 
 Import writes nothing when the schema version (a higher major version than this mtix writes), the node count, the checksum or any time value (RFC 3339, UTC year 1 to 9999; the required ones not empty) fails its check; the error names what failed. A refused import leaves `.mtix/tasks.json` untouched.
 
-If an export, or the automatic import of a changed `.mtix/tasks.json`, fails because a stored node field cannot be read, the error names the node, the field and `mtix recover`: nothing was imported, and local changes are kept. Run `mtix recover` to salvage everything readable (see its report) before importing again. For such a field (comments, activity, `code_refs`, `commit_refs`), `mtix recover` takes the value from the task's copy in `.mtix/tasks.json` when that copy is usable (the only task under that id, the same uid when both carry one, `schema_version` 2.0.0 or later, times that pass the import checks), and its report says `restored from the mirror <path>` with the number of entries. The copy is whatever `.mtix/tasks.json` holds: the last export, or a file a `git pull` or checkout put there (for example one whose automatic import was refused), which is another clone's copy and can hold its comments and lack local ones. A mirror whose checksum does not verify is still used, and the note then ends `(the mirror checksum did not verify)`. Otherwise the report says the field is dropped and why, and the task is salvaged without it. A note `node A: the index entry for A points at the row of B; ...` means the primary-key index is damaged: nothing from that row is salvaged as A, and the row is salvaged once, as B. A itself is then salvaged from the database when another index entry reaches A's own row, taken from `.mtix/tasks.json` when the mirror holds it, or listed on the report's LOST line; show such tasks to the user. Before the salvage file is imported, show the user every dropped or restored field and every note ending `(the mirror checksum did not verify)`, and have them compare each restored field with the local history (for example `git log -p .mtix/tasks.json`).
+If an export, or the automatic import of a changed `.mtix/tasks.json`, fails because a stored node field cannot be read, the error names the node, the field and `mtix recover`: nothing was imported, and local changes are kept. Run `mtix recover` to salvage everything readable (see its report) before importing again. For such a field (comments, activity, `code_refs`, `commit_refs`), `mtix recover` takes the value from the task's copy in `.mtix/tasks.json` when that copy is usable (the only task under that id, the same uid when both carry one, `schema_version` 2.0.0 or later, times that pass the import checks), and its report says `restored from the mirror <path>` with the number of entries. The copy is whatever `.mtix/tasks.json` holds: the last export, or a file a `git pull` or checkout put there (for example one whose automatic import was refused), which is another clone's copy and can hold its comments and lack local ones. A mirror whose checksum does not verify is still used, and the note then ends `(the mirror checksum did not verify)`. Otherwise the report says the field is dropped and why, and the task is salvaged without it. A note `node A: the index entry for A points at the row of B; ...` means the primary-key index is damaged: nothing from that row is salvaged as A, and the row is salvaged once, as B. A itself is then salvaged from the database when another index entry reaches A's own row, taken from `.mtix/tasks.json` when the mirror holds it, or listed on the report's LOST line; show such tasks to the user. A note `node B: the table holds two rows with id B: ...` means the table itself holds two rows with that id: the first row read is salvaged as B, B is listed once, and the note names both rowids and holds the content of the row that is not salvaged, as exported JSON. Show that note to the user and have them decide which content to keep before the salvage file is imported. Before the salvage file is imported, show the user every dropped or restored field and every note ending `(the mirror checksum did not verify)`, and have them compare each restored field with the local history (for example `git log -p .mtix/tasks.json`).
 
 **Import protocol:**
 1. Run `mtix backup <path>` first
@@ -105,6 +316,7 @@ When a `git pull` or checkout changes `.mtix/tasks.json`, the next mtix CLI comm
 - **Never** run the replace import (it needs the ticket count typed at an interactive terminal, it cannot run unattended) to silence a refusal that lists annotations, activity entries or nodes: they hold review verdicts and close receipts. If you cannot tell whose changes are newer, stop and ask the user.
 - **Verify.** `mtix sync` never prints `In sync` while an import of the board is pending or an id carries another uid in the file (`OUT OF SYNC: tasks.json changed and has not been imported`, `Another uid in tasks.json`). It prints `Auto-import: enabled (sync.auto_sync: <value>)` or `disabled`, and `Last auto-import refusal: <time> (pending|resolved <time>|no longer pending): <reason>` or `none`; `mtix sync --json` reports the same under `auto_import`. After you resolve a refusal, it must no longer read `pending`.
 - **Switch.** `sync.auto_sync` (default `true`) switches only the automatic import; `mtix config set sync.auto_sync false` turns it off, and `mtix config set` accepts only true or false. `.mtix/config.yaml` is tracked in git, so the switch applies to every clone, but a store with no tasks (a fresh clone) is always imported. With it off, a pulled board is not overwritten by writes; import it with `mtix import .mtix/tasks.json --mode merge` (the merge writes nothing while a task's status, assignee, agent state, wake time or deletion state differs from the file's: it lists each conflict, and you rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`, which it records in the task's activity; where they agree, your other field values win when the task's content (title, description, prompt, acceptance, labels) matches the file's, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid), or keep your board with `mtix sync --fix`.
+- **Export schema.** Every write re-exports `.mtix/tasks.json` in this binary's export schema, with `sync.auto_sync` on or off, so the first write after an mtix upgrade can change a committed file's `schema_version` and break a reader that rejects unknown fields. `mtix doctor`'s `export.schema` row warns about a mismatch and prints the fix (see Health checks).
 
 ## Garbage Collection
 
@@ -271,9 +483,9 @@ mtix sync push
 
 ## Sync Recovery: Quarantined Pulled Events
 
-`mtix sync pull` checks every event it receives before applying it: first its Lamport clock (below 2^53, and at most `sync.max_lamport_jump` above the local clock; default 4294967296, that is 2^32), then the same size, shape and id rules the hub applies at push (payload at most 64 KB and 10 levels deep, at most 100 vector-clock entries, well-formed author, machine and project ids, a hub row that decodes). An event stamped more than 24 hours ahead of this machine's clock is applied with a `WARN`. Each event applies on its own: an event that fails a check or its apply (for example a dependency whose target has not arrived) is rolled back and kept in the local table `sync_quarantine` (in `.mtix/data/mtix.db`), and the pull goes on. A quarantined event never changes the local clock and is never lost, and one refused for its clock never moves the pull cursor. Every pull retries the quarantine at its start, before it contacts the hub, and again at its end when it applied events; an event that applies, or that the store has already applied, leaves the quarantine. Retries are local and add no hub query, so they do not keep a scale-to-zero database awake; an event refused for its clock is downloaded again by each pull.
+`mtix sync pull` checks every event it receives before applying it: first its Lamport clock (below 2^53, and at most `sync.max_lamport_jump` above the local clock; default 4294967296, that is 2^32), then the same size, shape and id rules the hub applies at push (payload at most 64 KB and 10 levels deep, at most 100 vector-clock entries, well-formed author, machine and project ids, a hub row that decodes), and then every task id the event names (its task, a creation's parent, a link's or unlink's target) against the node id grammar. An event stamped more than 24 hours ahead of this machine's clock is applied with a `WARN`. Each event applies on its own: an event that fails a check or its apply (for example a dependency whose target has not arrived) is rolled back and kept in the local table `sync_quarantine` (in `.mtix/data/mtix.db`), and the pull goes on. A quarantined event never changes the local clock and is never lost, and one refused for its clock never moves the pull cursor. Every pull retries the quarantine at its start, before it contacts the hub, and again at its end when it applied events; an event that applies, or that the store has already applied, leaves the quarantine. Retries are local and add no hub query, so they do not keep a scale-to-zero database awake; an event refused for its clock is downloaded again by each pull.
 
-**Recognize:** `mtix sync doctor` fails its `quarantined events` check (exit 2; with `--json` the check has `"pass": false` and the detail); `mtix sync status` shows `quarantined events` above 0 (`quarantined_events` in `--json`); a pull prints `quarantined event <id> (<pass> pass): <reason>` on stderr and `quarantine: N pulled events held, not applied` at the end.
+**Recognize:** `mtix sync doctor` fails its `quarantined events` check while any pulled event remains unacknowledged (exit 2; with `--json` the check has `"pass": false` and the detail); `mtix sync status` shows `quarantined events` above 0 (`quarantined_events` in `--json`); a pull prints `quarantined event <id> (<pass> pass): <reason>` on stderr and `quarantine: N pulled events held, not applied` at the end.
 
 **Routine:**
 1. Run `mtix sync pull` again. Events that were waiting for a task or a dependency target apply once it has arrived.
@@ -289,7 +501,7 @@ mtix sync push
    - `lamport_clock at or above 2^53`: the event's clock is past the overflow guard. It will never apply; show it to the user, for whoever runs the hub.
    - `sync.max_lamport_jump`: the event's Lamport clock is far above this replica's. If the user confirms the hub's clocks are legitimately that high, raise the bound: `mtix config set sync.max_lamport_jump <positive integer>` (only a positive integer is accepted; `mtix config delete sync.max_lamport_jump` restores the default). The next pull retries the event with the new bound.
 
-**Verify:** `mtix sync doctor` passes the `quarantined events` check, `mtix sync status` shows `quarantined events 0`, and `mtix sync quarantine list --json` has no event with `source` `pull` or `sweep` (events with `source` `push` are held push events: see Sync Recovery: Held Push Events).
+**Verify:** `mtix sync doctor` passes the `quarantined events` check when no unacknowledged pulled event remains. Events that applied leave the quarantine; reviewed invalid-node-id events may stay retained with their local acknowledgement (see the invalid-node-id routine below). Check `unacknowledged quarantined events 0` in `mtix sync status`; the retained `quarantined events` total need not be zero. Events with `source` `push` are held push events: see Sync Recovery: Held Push Events.
 
 **Recover:**
 - **A refused clone on a fresh store:** run `mtix sync pull` alone. It quarantines the event and applies the rest. Clone has no quarantine: it runs the same checks on every hub event before it writes anything and refuses the whole clone, naming the event and the reason, while the hub holds an event that fails them; a clone that completes empties the quarantine because every hub event passed.
@@ -306,13 +518,43 @@ mtix sync push
 
 ## Quarantined Pulled Events: uid held by a local task
 
-A pulled `create_node` event whose uid a different local task already holds is not applied and not dropped: it is quarantined with the reason `uid <u> is held by local task <id>` and retried on every pull. `mtix sync quarantine list` shows it and the doctor's `quarantined events` check names this step.
+A pulled `create_node` event whose uid a different local task already holds is not applied and not dropped: it is quarantined with the reason `uid "<u>" is held by local task <id>` and retried on every pull. `mtix sync quarantine list` shows it and the doctor's `quarantined events` check names this step.
 
 **Decide which case it is:** run `mtix show <id>` and compare it with the quarantined event's title and content. A uid names one task for good (ADR-003), so the same uid means the same task: the same title and content means the task exists twice under two ids, and different content means the uid was duplicated (an old import, a restored copy). No mtix command resolves either case in this version (tracked as MTIX-95.31.8.1; `mtix sync reconcile` keeps uids, so it does not apply).
 
 **Never:** delete the local task, edit `sync_quarantine` rows, or clear the uid yourself. Ask the user with the uid, the local task id and the event id, and stop.
 
 **Verify:** `mtix sync pull` retries it; `mtix sync doctor` passes `quarantined events` and `mtix sync quarantine list --json` no longer shows the event.
+
+## Quarantined Pulled Events: invalid node id
+
+A task id has the form `PREFIX-<number>` followed by `.<number>` segments: an uppercase ASCII prefix of at most 20 characters (letters, digits, `-` and `_`, starting with a letter), a numeric root and numeric or uid child segments, with no empty segment. mtix never creates any other id. A pulled event that names another id (its task, a creation's parent, or a link's or unlink's target), such as `AA-1é.4`, came from a modified client or a hub row changed by hand. It is quarantined with a reason that contains `invalid node id`, the field and the id, and it is never applied; no retry applies it. The relay refuses such a record the same way, and every import refuses a file that brings in such an id.
+
+**Recognize:** `mtix sync status` shows `quarantined invalid ids` above 0 (`quarantined_invalid_ids` in `--json`), and the doctor's `quarantined events` check says how many of the quarantined events are for an invalid node id.
+
+**Routine:** run `mtix sync quarantine list --json` and report the event ids, nodes and reasons to whoever runs the hub. After reviewing an invalid-node-id pulled event, record that this replica accepts it as unapplied:
+
+```bash
+mtix sync quarantine acknowledge --handle <handle> --reason '<why this event is accepted as unapplied>'
+```
+
+Doctor's Fix names the event by its handle: the first 12 hex characters of the SHA-256 of the exact event id bytes, which `mtix sync quarantine list` also prints in a HANDLE column (`handle` and `event_id_sha256` in `--json`). The handle is always printable and typeable, even when the id holds NUL, invalid UTF-8 or shell metacharacters, so the printed command can be copied as it is: `mtix sync quarantine acknowledge --handle <handle> --reason '<your explanation>'`. Replace `<your explanation>` with why this event is safe to accept as unapplied; without `--reason` the command is refused. A handle may be shortened to 8 hex characters; one that matches more than one event is refused with the length that separates them. Use the positional `<event-id>` form only for an ordinary id. Then run doctor again after each acknowledgement. Use `mtix sync quarantine list --json` to report the original id to the operator; JSON keeps NUL and escapable bytes in the id exactly but shows invalid UTF-8 bytes as U+FFFD; `event_id_sha256` and the handle always name the exact stored bytes. A printed handle may be longer than 12 characters when two retained events share a shorter prefix. For example, with one eligible event, doctor prints this full Fix line:
+
+```text
+fix: Inspect and report retained events (1 eligible unacknowledged; first shown): mtix sync quarantine list; add --reason '<your explanation>' after the handle, then: mtix sync quarantine acknowledge --handle 914809b83eee
+```
+
+The command starts after `then:`; add `--reason` and your own explanation after the handle as described above.
+
+Only retained events with `source` `pull` or `sweep` whose raw event fails the node-id validator are eligible. Stored reason text alone cannot grant eligibility. A missing or blank reason, a held push event, an unrelated failure, malformed raw JSON or a raw event-id mismatch is refused. No terminal or hub connection is required. The resolved process author, required reason, UTC time and exact raw-event SHA256 form an immutable local receipt; repeating a valid acknowledgement returns the first receipt. Reasons are limited to 500 UTF-8 bytes. On a repeat, text explains that the first receipt stands and the supplied reason was not recorded; JSON sets `already_acknowledged` to `true` (`false` for a new receipt). The receipt is local to this replica and is never exported, imported or synced.
+
+The command retains the raw quarantine and original reason. It never applies, removes or repairs the event, changes sync clocks or cursors, changes the hub, or acknowledges another replica. Every pull still retries the event. A different raw event reusing the same id needs a fresh acknowledgement. Do not try to apply the invalid event.
+
+**Tasks this store already holds.** A sync from before this check could bring such a task in. It stays in the store: you can read and edit it here, and `mtix list` shows it; `mtix show` takes its uid in place of the id. Other replicas quarantine every change to it that they pull, and the doctor's `valid node ids` check warns, naming each task and its uid (`mtix sync status` counts them as `invalid local ids`). Recreate each task you still need with `mtix create` and stop using the old one; no mtix command renames a task in this version.
+
+**Never:** edit `sync_quarantine` rows or the `nodes` table to change an id, and never create a task id by hand.
+
+**Verify:** `mtix sync doctor` passes `quarantined events` only when zero unacknowledged pulled events remain, and reports the retained acknowledged count. Any unrelated or unacknowledged quarantine still fails that check; all other doctor failures need their own fixes. `mtix sync status` retains the unapplied total and adds `acknowledged quarantined events` and `unacknowledged quarantined events` (`acknowledged_quarantined_events` and `unacknowledged_quarantined_events` in JSON). `quarantined invalid ids` can remain above zero. `mtix sync quarantine list` marks acknowledged rows; `--json` includes their `acknowledgement` with `actor`, `reason`, `acknowledged_at` and `raw_event_sha256`. Retained acknowledged events need not disappear. The separate `valid node ids` check passes without a warning only once no local task has such an id.
 
 ## Recovery: Duplicate Task UIDs
 
@@ -354,6 +596,8 @@ Once a clock hold on a task's creation clears, the creation and the changes of i
 - **Clock hold** (fix: `check this machine's clock; the event pushes once its stamp is within 24 h of the clock`): tell the user this machine's clock was ahead when the change was made, or is behind now. The event pushes on the first push after its stamp is within 24 hours of the clock; if it is a task's creation, the changes of its subtree push with it.
 
 **Verify:** `mtix sync push` prints no new `push: held event` line for your edit, and the node's new value reaches teammates on their next `mtix sync pull`; a released clock hold prints `push: released held event`. Permanent holds and their dependents stay held and listed: `mtix sync doctor` keeps failing its `held push events` check and `mtix sync status` keeps counting them, because this release has no command to release or discard one held event. Tell the user which held events your edit supersedes.
+
+**Push stops with `another mtix operation is in progress, retry in a moment`:** while it decides which events to hold, push may wait for the local database's write lock, up to 5 seconds. If another mtix process (a pull applying a backlog, another agent) keeps it longer, push fails with `hold invalid events of batch N: another mtix operation is in progress, retry in a moment`. The batches before the failing one were already sent and marked pushed; the events of the failing batch and later were not sent and stay pending. Nothing is lost and nothing is sent twice. Let the other mtix command finish, then run `mtix sync push` again to send the rest.
 
 **Never:**
 - Never delete rows from `sync_quarantine` or edit the local database to release or remove a held event.
@@ -595,3 +839,58 @@ problem, PASS means none do (no row appears when there is no `hooks.yaml`).
 The notice is advisory: the hook still runs as written and launch behaviour
 does not change. To clear it, run the program through a pinned project script
 and approve the hook again.
+
+Strict program mode (opt-in, off by default): on a host where you want more
+than the advisory notice, run `mtix hooks strict on` at a terminal. With it on,
+an exec hook whose program is not a pinned project script or a known
+interpreter running one launches only after you approve that program with
+`mtix hooks trust --program <hook>`. The approval is bound to the
+symlink-resolved program path, the hook name and the project, and a changed
+program path or hook configuration voids it; a program that resolves inside
+the project is refused because it is a script and must be pinned instead. A
+refused launch reports the rule and the exact approval command. The setting
+and the approvals are operator-local state outside the project: `strict on`,
+`strict off` and `trust --program` need terminal stdin and are refused under an
+agent session. `mtix hooks strict status` works without a terminal and has
+`--json` (`enabled`, `detail`, `fix`, `programs`); `mtix hooks status --json`
+carries the same object under `strict`, and `mtix doctor` shows the
+`hooks.strict` check (PASS when the mode is off or nothing needs approval, WARN
+with the exact approval commands otherwise). An unreadable strict record
+refuses launches rather than allowing them. An approval binds the program's resolved path, not its file content: the
+contents are not pinned, so approve only programs in locations that
+agents and other untrusted processes cannot write. A launch wrapper other than
+the known env, found by name in a PATH directory, is itself the program that
+needs approval.
+Whether a wrapper or an interpreter is the known one is decided by the
+physical directory that holds it, after links are followed. A slot is the known
+one only when that directory has no link left in it (a path that still passes
+through a link, such as a chain of links too long to follow, is not known and
+needs approval); under strict mode a known slot launches from that directory.
+`mtix hooks trust --program`
+prints the program it will approve before it writes the approval.
+
+Hook program paths must be clean: a program written with a parent-directory
+segment ("..") is refused at launch, naming the hook, because the checked path
+and the file the operating system runs can differ once a link comes before the
+segment. Write the program as an absolute path without ".." or as a
+project-relative path (scripts/run.sh and ./scripts/run.sh are fine). Paths are
+resolved link by link, so a script operand is judged where it actually lands.
+
+Append-file hooks: an `append-file` hook writes only to a regular file inside
+the project. Its `append-file.path` must be relative. The file is opened
+through a handle on the project directory, so a path that leads outside the
+project, including through a symlinked directory, is refused at open time. A
+final component that is a symlink, a file that is not a regular file, and a
+file with more than one hard link are refused, and nothing is written through
+them; a pipe never blocks delivery. A new file is created with mode 0600. An
+existing file keeps its mode: `mtix hooks status` warns when it is readable or
+writable by group or others and prints `chmod 600 <file>`, and delivery still
+writes to it. An event whose name or node id holds a control or line-separator
+character, or whose payload holds a line break, is refused, so one event is one
+line. `mtix hooks status` lists each configured `append-file` path that
+delivery would refuse, with the reason and the exact fix: text output prints
+`Fix:` lines and `--json` carries an `append_file` list of `hook`, `path`,
+`reason`, `fix` and `refused`. On Windows the same confinement and
+same-file checks apply and a multiply linked file is refused at delivery (as is a file whose
+link count cannot be read), but
+`mtix hooks status` does not list it and permission bits are not reported.

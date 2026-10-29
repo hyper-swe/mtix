@@ -89,9 +89,22 @@ No production code may be written without a corresponding test written first.
 
 ### 3.2a PostgreSQL-gated suites in CI (MTIX-95.51)
 
-Tests gated on `MTIX_PG_TEST_DSN` skip when it is unset, so a plain `go test ./...` does not exercise them. Every push to `main` and every pull request runs them with `-race` on PostgreSQL 16 and 17 service containers, in the `test-go-postgres-docker` job of `.github/workflows/ci.yml`: one job per version and package (`./cmd/mtix/`, `./internal/store/postgres/transport/`, `./e2e/...`), each with its own database, `-p 1 -count=1 -timeout 20m`. The service image, credentials, DSN and timeout match the `test-go` job of `release.yml`, which keeps running every package on a tag. To reproduce one job locally, point `MTIX_PG_TEST_DSN` at a disposable database and run the same `go test` command.
+Tests gated on `MTIX_PG_TEST_DSN` skip when it is unset, so a plain `go test ./...` does not exercise them. Every push to `main` and every pull request runs them with `-race` on PostgreSQL 16 and 17 service containers, in the `test-go-postgres-docker` job of `.github/workflows/ci.yml`: one job per version and package (`./internal/store/postgres/transport/`, `./e2e/...`), plus three deterministic shards of `./cmd/mtix/` per version (`test-go-postgres-cmd`, MTIX-112.17.24), each with its own database, `-p 1 -count=1 -timeout 20m`. The service image, credentials, DSN and timeout match the `test-go` job of `release.yml`, which keeps running every package on a tag. To reproduce one job locally, point `MTIX_PG_TEST_DSN` at a disposable database and run the same `go test` command.
 
 The PG-gated cmd tests create a unique disposable database per test (MTIX-107.67). The login configured through `MTIX_PG_TEST_DSN` therefore needs `CREATE DATABASE` permission on the disposable server. Repeated fixture lookups within one test reuse that database; cleanup closes its connections and drops only that owned database. Other test packages and processes may share the configured server without a cmd fixture resetting their hub tables. A missing privilege fails fixture setup rather than silently skipping coverage.
+
+### 3.2b Go race shards and merge checks (MTIX-112.17.22)
+
+Ordinary CI keeps three explicit package lists on each supported OS. SQLite
+and `cmd/mtix` each run in three test-name shards per OS; the remaining
+packages have their own package-shard runner.
+Every OS checks that the manifests cover `go list ./...` excluding
+`node_modules` exactly once. Missing, duplicate or stale entries fail the
+guard. Race detection, count 1 and the 20-minute per-package limit remain
+unchanged, with no new test skips. The aggregate `test-go` job must reject
+failed, cancelled or skipped shard results. All 29 CI checks must succeed
+before merge or release; see [CI and release gates](docs/CI-GATES.md).
+The release preflight keeps its serialized, PostgreSQL-enabled full suite.
 
 ### 3.3 Test Naming Convention
 
@@ -234,7 +247,7 @@ scenario declared here without a linked, existing test fails CI.
 - New dependencies MUST go through the approval process (PACKAGE-APPROVAL-PROCESS.md)
 - `go.sum` MUST be committed and verified
 - Known CVEs in dependencies MUST be tracked and patched within 72 hours
-- npm audit policy (MTIX-95.53), enforced identically by the release workflow, `make security-audit`, `make verify` and `make preflight`: (1) `npm audit --omit=dev --audit-level=high` blocks, covering shipped (production) dependencies; (2) `npm audit --audit-level=critical` blocks, covering dev dependencies too, because dev dependencies are build-time tools whose code is not in the shipped bundle but the release builds the bundle with them; (3) a full `npm audit` is reported without blocking. High and lower advisories in dev tooling MUST be triaged and ticketed. The current ones: the braces chain via Tailwind 3 is cleared by the Tailwind 4 migration (MTIX-113); the moderate @vitest/mocker path traversal (vitest, @vitest/coverage-v8) is tracked in MTIX-114
+- npm audit policy (MTIX-95.53), enforced identically by the release workflow, `make security-audit`, `make verify` and `make preflight`: (1) `npm audit --omit=dev --audit-level=high` blocks, covering shipped (production) dependencies; (2) `npm audit --audit-level=critical` blocks, covering dev dependencies too, because dev dependencies are build-time tools whose code is not in the shipped bundle but the release builds the bundle with them; (3) a full `npm audit` is reported without blocking. High and lower advisories in dev tooling MUST be triaged and ticketed. The current ones: the braces chain that came in through Tailwind 3 was cleared by the Tailwind 4 migration (MTIX-186); the moderate @vitest/mocker path traversal (vitest, @vitest/coverage-v8) is tracked in MTIX-114
 
 ### 5.4 OWASP Compliance
 

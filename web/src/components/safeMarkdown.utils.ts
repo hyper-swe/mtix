@@ -7,37 +7,68 @@
  * hr, images (only https:// URLs).
  */
 
+/** Validate only explicitly permitted absolute URL schemes (NFR-5.1). */
+function permittedURL(value: string | null, protocols: readonly string[]): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return protocols.includes(url.protocol) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function permittedAttribute(tag: string, attribute: Attr): boolean {
+  if (tag === "A") return attribute.name === "href";
+  if (tag === "IMG") return attribute.name === "src" || attribute.name === "alt";
+  return tag === "CODE" && attribute.name === "class" && /^language-\w+$/.test(attribute.value);
+}
+
+/** Add trusted link/image attributes only after validating their URLs. */
+function sanitizeURLAttributes(element: Element, tag: string): void {
+  if (tag === "A") {
+    const href = permittedURL(element.getAttribute("href"), ["http:", "https:", "mailto:"]);
+    if (href === null) {
+      element.removeAttribute("href");
+    } else {
+      element.setAttribute("href", href);
+      element.setAttribute("target", "_blank");
+      element.setAttribute("rel", "noopener noreferrer");
+    }
+  } else if (tag === "IMG") {
+    const src = permittedURL(element.getAttribute("src"), ["https:"]);
+    if (src === null) {
+      element.remove();
+    } else {
+      element.setAttribute("src", src);
+      element.setAttribute("loading", "lazy");
+    }
+  }
+}
+
 /**
- * Sanitize an HTML string by removing dangerous elements and attributes.
- * This is the core XSS protection layer per NFR-5.1.
+ * Sanitize parsed DOM with an element/attribute allowlist per NFR-5.1.
+ * Parsed nodes remain in an inert template until the cleaned HTML is used.
  */
 export function sanitizeHTML(html: string): string {
-  // Strip <script> tags and content.
-  let clean = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
-
-  // Strip event handlers (on*="...").
-  clean = clean.replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, "");
-  clean = clean.replace(/\s+on\w+\s*=\s*[^\s>]+/gi, "");
-
-  // Strip javascript: URLs.
-  clean = clean.replace(/href\s*=\s*["']\s*javascript:[^"']*["']/gi, 'href="#"');
-  clean = clean.replace(/src\s*=\s*["']\s*javascript:[^"']*["']/gi, 'src=""');
-
-  // Strip data: URLs.
-  clean = clean.replace(/href\s*=\s*["']\s*data:[^"']*["']/gi, 'href="#"');
-  clean = clean.replace(/src\s*=\s*["']\s*data:[^"']*["']/gi, 'src=""');
-
-  // Strip dangerous elements: iframe, object, embed, form, style, svg.
-  clean = clean.replace(/<(iframe|object|embed|form|style|base|meta|link|svg)\b[^>]*>[\s\S]*?<\/\1>/gi, "");
-  clean = clean.replace(/<(iframe|object|embed|form|style|base|meta|link|svg)\b[^>]*\/?>/gi, "");
-
-  // Validate image src — only allow https:// URLs.
-  clean = clean.replace(
-    /<img\s+([^>]*)src\s*=\s*["'](?!https:\/\/)[^"']*["']([^>]*)>/gi,
-    "",
-  );
-
-  return clean;
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  const allowed = new Set([
+    "A", "BLOCKQUOTE", "BR", "CODE", "EM", "H1", "H2", "H3", "H4", "H5", "H6",
+    "HR", "IMG", "LI", "OL", "P", "PRE", "STRONG", "UL",
+  ]);
+  for (const element of template.content.querySelectorAll("*")) {
+    const tag = element.tagName.toUpperCase();
+    if (!allowed.has(tag) || element.namespaceURI !== "http://www.w3.org/1999/xhtml") {
+      element.remove();
+      continue;
+    }
+    for (const attribute of Array.from(element.attributes)) {
+      if (!permittedAttribute(tag, attribute)) element.removeAttribute(attribute.name);
+    }
+    sanitizeURLAttributes(element, tag);
+  }
+  return template.innerHTML;
 }
 
 /**

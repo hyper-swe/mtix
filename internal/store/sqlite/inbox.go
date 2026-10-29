@@ -70,6 +70,12 @@ func (s *Store) InboxList(ctx context.Context, agentID string) ([]InboxEvent, er
 	return out, nil
 }
 
+// ErrSeqOutsideJournal marks an ack refused because its seq is not in this
+// board's journal (FR-21 §12.4 tail clamp). It wraps model.ErrInvalidInput, so
+// the exit-code class is unchanged; the CLI uses it to name the board it
+// checked, because such a seq usually belongs to another board (MTIX-189).
+var ErrSeqOutsideJournal = fmt.Errorf("seq outside this board's journal: %w", model.ErrInvalidInput)
+
 // journalTail returns the current highest sync_events rowid (0 for an empty
 // journal) — the upper bound of ackable inbox seqs, read inside the caller's
 // transaction so the bound and the ack are consistent.
@@ -94,27 +100,7 @@ func journalTail(ctx context.Context, tx *sql.Tx) (int64, error) {
 // agent has never seen would arrive already-seen and be silently dropped
 // from the inbox (relay-epic prerequisite fix; see FR-21 §12.4).
 func (s *Store) InboxAck(ctx context.Context, agentID string, seq int64) error {
-	if agentID == "" {
-		return fmt.Errorf("inbox ack: agent id required: %w", model.ErrInvalidInput)
-	}
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
-		tail, err := journalTail(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if seq < 1 || seq > tail {
-			return fmt.Errorf("inbox ack: seq %d is outside the journal (tail is %d); acking beyond the tail would silently pre-acknowledge future events: %w",
-				seq, tail, model.ErrInvalidInput)
-		}
-		_, err = tx.ExecContext(ctx, `
-			INSERT OR IGNORE INTO agent_inbox_ack (agent_id, event_seq, acked_at)
-			VALUES (?, ?, ?)`,
-			agentID, seq, s.clock().Format(time.RFC3339Nano))
-		return err
-	})
-	if err == nil {
-		s.touchFromContext(ctx, agentID)
-	}
+	_, _, err := s.InboxAckCoverage(ctx, agentID, seq, false)
 	return err
 }
 
@@ -129,36 +115,7 @@ func (s *Store) InboxAck(ctx context.Context, agentID string, seq int64) error {
 // silently swallow messages it never saw (relay-epic prerequisite fix; see
 // FR-21 §12.4). The caller acks what exists, or the call fails loudly.
 func (s *Store) InboxAckThrough(ctx context.Context, agentID string, seq int64) error {
-	if agentID == "" {
-		return fmt.Errorf("inbox ack: agent id required: %w", model.ErrInvalidInput)
-	}
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
-		tail, err := journalTail(ctx, tx)
-		if err != nil {
-			return err
-		}
-		if seq < 1 || seq > tail {
-			return fmt.Errorf("inbox ack: --through %d is outside the journal (tail is %d); acking beyond the tail would silently pre-acknowledge future events: %w",
-				seq, tail, model.ErrInvalidInput)
-		}
-		if _, err = tx.ExecContext(ctx, `
-			INSERT INTO agent_inbox_cursor (agent_id, cursor) VALUES (?, ?)
-			ON CONFLICT(agent_id) DO UPDATE SET cursor = MAX(cursor, excluded.cursor)`,
-			agentID, seq); err != nil {
-			return err
-		}
-		// Compact: ledger entries at/below the (possibly advanced) watermark are
-		// now redundant — the watermark hides them.
-		_, err = tx.ExecContext(ctx, `
-			DELETE FROM agent_inbox_ack
-			 WHERE agent_id = ?
-			   AND event_seq <= (SELECT cursor FROM agent_inbox_cursor WHERE agent_id = ?)`,
-			agentID, agentID)
-		return err
-	})
-	if err == nil {
-		s.touchFromContext(ctx, agentID)
-	}
+	_, _, err := s.InboxAckCoverage(ctx, agentID, seq, true)
 	return err
 }
 

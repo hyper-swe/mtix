@@ -32,6 +32,8 @@ type Registration struct {
 	LastSeen         string `json:"last_seen"`
 	RegistrarVersion string `json:"registrar_version"`
 	AttachProtocol   int64  `json:"attach_protocol"`
+	// StaleSince is when the wake scanner first saw the session dead; empty when not marked.
+	StaleSince string `json:"stale_since,omitempty"`
 }
 
 // RegistrationKey identifies a registration: one row per agent, host and
@@ -44,7 +46,8 @@ type RegistrationKey struct {
 
 const registrationColumns = `agent_id, host_id, uid, harness, COALESCE(session_handle,''),
 	COALESCE(pid,0), COALESCE(pid_start_time,''), COALESCE(permission_mode,''), origin, epoch,
-	high_water, pending_hold, registered_at, last_seen, registrar_version, attach_protocol`
+	high_water, pending_hold, registered_at, last_seen, registrar_version, attach_protocol,
+	COALESCE(stale_since,'')`
 
 type registrationScanner interface{ Scan(dest ...any) error }
 
@@ -55,7 +58,7 @@ func scanRegistration(r registrationScanner) (*Registration, error) {
 	)
 	if err := r.Scan(&reg.AgentID, &reg.HostID, &reg.UID, &reg.Harness, &reg.SessionHandle,
 		&reg.PID, &reg.PIDStartTime, &reg.PermissionMode, &reg.Origin, &reg.Epoch,
-		&reg.HighWater, &hold, &reg.RegisteredAt, &reg.LastSeen, &reg.RegistrarVersion, &reg.AttachProtocol); err != nil {
+		&reg.HighWater, &hold, &reg.RegisteredAt, &reg.LastSeen, &reg.RegistrarVersion, &reg.AttachProtocol, &reg.StaleSince); err != nil {
 		return nil, err
 	}
 	reg.PendingHold = hold != 0
@@ -221,9 +224,19 @@ func WithSessionTouch(ctx context.Context, t SessionTouch) context.Context {
 	return context.WithValue(ctx, sessionTouchKey{}, t)
 }
 
+// sessionTouchTimeout bounds the last_seen refresh. The refresh runs detached
+// from the caller's deadline, so it needs its own bound (MTIX-112.17.19).
+const sessionTouchTimeout = 5 * time.Second
+
 // touchFromContext refreshes last_seen when ctx carries a session identity.
 // A failure is logged and never fails the inbox operation: last_seen is a
 // liveness hint, not delivery state.
+//
+// The write runs on a context detached from ctx's deadline and cancellation
+// (context.WithoutCancel keeps the session value) with its own short bound,
+// so a poll that finishes just before an inbox wait deadline still refreshes
+// last_seen instead of logging a spurious WARN on the expired wait context
+// (MTIX-112.17.19, ADR-007 §3.3).
 func (s *Store) touchFromContext(ctx context.Context, agentID string) {
 	t, ok := ctx.Value(sessionTouchKey{}).(SessionTouch)
 	if !ok || t.Handle == "" {
@@ -233,7 +246,9 @@ func (s *Store) touchFromContext(ctx context.Context, agentID string) {
 		return // writes are refused (unsafe filesystem, fail-stop, full disk): a read path must not write
 	}
 	key := RegistrationKey{AgentID: agentID, HostID: t.HostID, UID: t.UID}
-	if _, err := s.TouchRegistration(ctx, key, t.Handle, s.clock().UTC().Format(time.RFC3339)); err != nil {
+	touchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionTouchTimeout)
+	defer cancel()
+	if _, err := s.TouchRegistration(touchCtx, key, t.Handle, s.clock().UTC().Format(time.RFC3339)); err != nil {
 		s.logger.Warn("refresh registration last_seen", slog.String("agent_id", agentID), slog.Any("error", err))
 	}
 }

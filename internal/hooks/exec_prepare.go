@@ -56,7 +56,14 @@ func (a *Approvals) PrepareExec(h Hook) (*ExecPlan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("exec launch: %w", err)
 	}
-	return buildPlan(h, in, root, filepath.Join(opDir, execCopiesDir), a.stager)
+	plan, err := buildPlan(h, in, root, filepath.Join(opDir, execCopiesDir), a.stager)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.enforceStrict(h, in, plan); err != nil {
+		return nil, err
+	}
+	return plan, nil
 }
 
 // approvedInputs reads the hook's inputs once and requires their digest to
@@ -119,6 +126,9 @@ func buildPlan(h Hook, in *hookInputs, root, copies string, st stager) (*ExecPla
 // launchProgram makes the program (index 0) absolute and refuses one that
 // resolves into the project.
 func launchProgram(hook string, in *hookInputs, arg string) (string, error) {
+	if hasParentSegment(arg) {
+		return "", fmt.Errorf("exec launch refused for hook %q: program %q contains a parent-directory segment; write its absolute path without \"..\" or a project-relative path", hook, arg)
+	}
 	resolved, err := resolveLauncher(in.root, arg)
 	if err != nil {
 		return "", err
@@ -135,7 +145,7 @@ func resolveLauncher(root, name string) (string, error) {
 	switch {
 	case filepath.IsAbs(name):
 		return name, nil
-	case filepath.Base(name) == name:
+	case isBareName(name):
 		path, found := lookPathFixed(filepath.SplitList(FixedHookPath(root)), name)
 		if !found {
 			return "", fmt.Errorf("exec launch: %q was not found on the fixed hook PATH; use an absolute program path", name)

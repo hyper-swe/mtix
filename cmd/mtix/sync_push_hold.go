@@ -9,7 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -77,16 +79,16 @@ type batchHolds struct {
 // applied, only when it can hold something: some creation is held, or this
 // batch has a refused one. It writes nothing (heldIndex.holdBatch records
 // the holds once the decision stands).
-func decideBatch(ctx context.Context, store *sqlite.Store, events []*model.SyncEvent, blocked *blockers,
+func decideBatch(ctx context.Context, reads pushReads, events []*model.SyncEvent, blocked *blockers,
 ) (batchHolds, error) {
-	now := store.Now()
+	now := reads.Now()
 	refusals := make([]error, len(events))
 	rule := !blocked.empty()
 	for i, e := range events {
 		refusals[i] = transport.ValidatePushEvent(e, now)
 		rule = rule || (refusals[i] != nil && e.OpType == model.OpCreateNode)
 	}
-	checks, err := batchChecks(ctx, store, events, rule)
+	checks, err := batchChecks(ctx, reads, events, rule)
 	if err != nil {
 		return batchHolds{}, err
 	}
@@ -110,11 +112,38 @@ func decideBatch(ctx context.Context, store *sqlite.Store, events []*model.SyncE
 	return d, nil
 }
 
+// pushReads is what deciding a batch reads (MTIX-95.39): the clock and the
+// tasks the batch's events are about. *sqlite.Store reads them from the read
+// pool; sqlite.PushLocked reads them inside the write lock.
+type pushReads interface {
+	Now() time.Time
+	PushSubjects(ctx context.Context, eventIDs []string) (map[string]sqlite.PushSubject, error)
+}
+
+// holdWriter is what recording holds needs: *sqlite.Store, or the
+// sqlite.PushLocked that already holds the write lock.
+type holdWriter interface {
+	CountHeldPushEvents(ctx context.Context) (int, error)
+	HoldPushEvents(ctx context.Context, holds []sqlite.QuarantinedEvent, cliVersion string) error
+}
+
 // recordBatch records the holds of d in sync_quarantine with source push
 // and the reason, names each on stderr, and returns the events to send and
 // how many it newly held.
-func recordBatch(ctx context.Context, stderr io.Writer, store *sqlite.Store, d batchHolds,
+func recordBatch(ctx context.Context, stderr io.Writer, store holdWriter, d batchHolds,
 ) ([]*model.SyncEvent, int, error) {
+	valid, held, err := recordHolds(ctx, store, d)
+	if err != nil {
+		return nil, 0, err
+	}
+	reportHolds(stderr, d.holds)
+	return valid, held, nil
+}
+
+// recordHolds records the holds of d and returns the events to send and how
+// many it newly held, saying nothing: the locked attempt names the holds
+// only once its transaction has committed (MTIX-95.39).
+func recordHolds(ctx context.Context, store holdWriter, d batchHolds) ([]*model.SyncEvent, int, error) {
 	if len(d.holds) == 0 {
 		return d.valid, 0, nil
 	}
@@ -122,11 +151,15 @@ func recordBatch(ctx context.Context, stderr io.Writer, store *sqlite.Store, d b
 	if err != nil {
 		return nil, 0, err
 	}
-	for _, h := range d.holds {
-		fmt.Fprintf(stderr, "push: held event %s (%s %s), not pushed: %s. See mtix sync doctor\n",
-			oneLine(h.EventID), oneLine(h.NodeID), oneLine(h.OpType), h.Reason)
-	}
 	return d.valid, held, nil
+}
+
+// reportHolds names each of holds on stderr.
+func reportHolds(stderr io.Writer, holds []sqlite.QuarantinedEvent) {
+	for _, h := range holds {
+		fmt.Fprintf(stderr, "push: held event %s (%s %s), not pushed: %s. See mtix sync doctor\n",
+			format.EventID(h.EventID), oneLine(h.NodeID), oneLine(h.OpType), displayHoldReason(h.Reason))
+	}
 }
 
 // pushSubjectsHookKey is the context key of a test seam (MTIX-95.12): a
@@ -138,7 +171,7 @@ type pushSubjectsHookKey struct{}
 // batchChecks returns the holdCheck of each of events, with the task each
 // is about (sqlite.PushSubjects), when rule is set; with rule unset it
 // returns nil and reads nothing.
-func batchChecks(ctx context.Context, store *sqlite.Store, events []*model.SyncEvent, rule bool) ([]holdCheck, error) {
+func batchChecks(ctx context.Context, reads pushReads, events []*model.SyncEvent, rule bool) ([]holdCheck, error) {
 	if !rule {
 		return nil, nil
 	}
@@ -149,7 +182,7 @@ func batchChecks(ctx context.Context, store *sqlite.Store, events []*model.SyncE
 	if hook, ok := ctx.Value(pushSubjectsHookKey{}).(func()); ok {
 		hook()
 	}
-	subjects, err := store.PushSubjects(ctx, ids)
+	subjects, err := reads.PushSubjects(ctx, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +223,7 @@ func pushHoldDecision(e *model.SyncEvent, c *holdCheck, refused error, blocked *
 func pushHold(e *model.SyncEvent, reason string) (sqlite.QuarantinedEvent, error) {
 	raw, err := json.Marshal(e)
 	if err != nil {
-		return sqlite.QuarantinedEvent{}, fmt.Errorf("hold %s: encode event: %w", e.EventID, err)
+		return sqlite.QuarantinedEvent{}, fmt.Errorf("hold %s: encode event: %w", format.EventID(e.EventID), err)
 	}
 	return sqlite.QuarantinedEvent{EventID: e.EventID, RawEvent: string(raw),
 		Reason: reason, NodeID: e.NodeID, OpType: string(e.OpType)}, nil
@@ -198,7 +231,7 @@ func pushHold(e *model.SyncEvent, reason string) (sqlite.QuarantinedEvent, error
 
 // recordPushHolds stores holds and returns how many of them were not held
 // before; an event already held only has one more attempt counted.
-func recordPushHolds(ctx context.Context, store *sqlite.Store, holds []sqlite.QuarantinedEvent) (int, error) {
+func recordPushHolds(ctx context.Context, store holdWriter, holds []sqlite.QuarantinedEvent) (int, error) {
 	before, err := store.CountHeldPushEvents(ctx)
 	if err != nil {
 		return 0, err

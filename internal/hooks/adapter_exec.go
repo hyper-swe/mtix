@@ -79,7 +79,14 @@ func (a *ExecAdapter) Deliver(_ context.Context, d Delivery) error {
 	if pathValue == "" {
 		pathValue = FixedHookPath(plan.Dir)
 	}
-	cmd.Env = childEnvironment(os.Environ(), runtime.GOOS, d.Hook, d.EventJSON, plan.ScriptPath, pathValue)
+	hook := d.Hook
+	var err error
+	hook.wakeEnv, err = wakeExecEnvironment(d.Wake)
+	if err != nil {
+		return fmt.Errorf("exec wake context: %w", err)
+	}
+	d.Hook = hook
+	cmd.Env = childEnvironment(os.Environ(), runtime.GOOS, d, plan.ScriptPath, pathValue)
 	cmd.Stdin = bytes.NewReader(d.EventJSON)
 	cmd.SysProcAttr = detachedSysProcAttr() // own session: parent exit never kills the wake
 

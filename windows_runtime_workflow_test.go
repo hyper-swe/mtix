@@ -98,7 +98,7 @@ func windowsRuntimeSteps() []any {
 }
 
 func windowsRuntimeArtifactInputs() map[string]any {
-	paths := []string{"capture.json", "oplocal.json", "hooks.json", "toolchain.json", "duration.json", "started.txt", "named-locks.json", "dispatch-lock.json", "named-lock-exits.json", "alerts.json", "alerts-doctor.json"}
+	paths := []string{"capture.json", "oplocal.json", "hooks.json", "hooks-launch.json", "toolchain.json", "duration.json", "started.txt", "named-locks.json", "dispatch-lock.json", "named-lock-exits.json", "alerts.json", "alerts-doctor.json"}
 	for i := range paths {
 		paths[i] = windowsRuntimeDir + "/" + paths[i]
 	}

@@ -353,48 +353,92 @@ func projectPath(logical, root, value string) (resolved string, lexical, inside 
 	lexical = err == nil && in
 	path := value
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(root, path)
+		// Not Join: cleaning would apply a parent segment to link text.
+		path = root + string(filepath.Separator) + value
 	}
 	resolved = resolveDeepest(path, 0)
 	rel, err := filepath.Rel(root, resolved)
-	return resolved, lexical, lexical || (err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+	byName := err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return resolved, lexical, lexical || byName || underRoot(root, resolved)
 }
 
-// resolveDeepest resolves links up to the deepest existing parent and
-// re-attaches the rest, following a dangling link by its target.
-func resolveDeepest(path string, depth int) string {
-	if depth > 32 {
-		return path
+// underRoot reports whether path is the project root or lies under it by file
+// identity: some existing ancestor of path is the same file as root. A string
+// comparison alone is wrong on a case-insensitive volume, where a case-variant
+// spelling names the same file.
+func underRoot(root, path string) bool {
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return false
 	}
-	current, rest := filepath.Clean(path), ""
-	for {
-		if _, err := os.Lstat(current); err == nil {
-			return filepath.Join(resolveExisting(current, depth), rest)
+	for current := filepath.Clean(path); ; {
+		if info, statErr := os.Stat(current); statErr == nil && os.SameFile(rootInfo, info) {
+			return true
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			return path
+			return false
 		}
-		rest = filepath.Join(filepath.Base(current), rest)
 		current = parent
 	}
 }
 
-// resolveExisting resolves a path that exists; a dangling link is followed by
-// its target.
-func resolveExisting(current string, depth int) string {
-	if info, err := os.Lstat(current); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		if target, rerr := os.Readlink(current); rerr == nil {
-			if !filepath.IsAbs(target) {
-				target = filepath.Join(filepath.Dir(current), target)
-			}
-			return resolveDeepest(target, depth+1)
+// maxLinkExpansions bounds how many links one resolution follows, so a cycle
+// ends (the OS refuses such a path, so nothing runs through it).
+const maxLinkExpansions = 64
+
+// resolveDeepest resolves path the way the OS does: component by component,
+// following each link before the next component is applied, so a parent-
+// directory segment after a link goes to the link target's parent, not to the
+// parent of the link's text. Components that do not exist yet are attached
+// lexically, so a path is judged where it would land; a dangling link is
+// followed by its target. depth is the number of links already followed.
+func resolveDeepest(path string, depth int) string {
+	if !filepath.IsAbs(path) {
+		return filepath.Clean(path)
+	}
+	vol := filepath.VolumeName(path)
+	root := vol + string(filepath.Separator)
+	todo := splitPathComponents(path[len(vol):])
+	cur, links := root, depth
+	for len(todo) > 0 {
+		comp := todo[0]
+		todo = todo[1:]
+		switch comp {
+		case "", ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			continue
 		}
+		next := filepath.Join(cur, comp)
+		info, err := os.Lstat(next)
+		if err != nil {
+			return finishResolved(cur, append([]string{comp}, todo...))
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			cur = next
+			continue
+		}
+		links++
+		if links > maxLinkExpansions {
+			// Past the limit the path is not resolved: it keeps the link it
+			// stopped at, so it never equals its own resolution and is never
+			// taken for a physical directory.
+			return filepath.Join(append([]string{next}, todo...)...)
+		}
+		target, readErr := os.Readlink(next)
+		if readErr != nil {
+			return finishResolved(next, todo)
+		}
+		if filepath.IsAbs(target) {
+			targetVol := filepath.VolumeName(target)
+			cur = targetVol + string(filepath.Separator)
+			target = target[len(targetVol):]
+		}
+		todo = append(splitPathComponents(target), todo...)
 	}
-	if resolved, err := filepath.EvalSymlinks(current); err == nil {
-		return resolved
-	}
-	return current
+	return finishResolved(cur, nil)
 }
 
 // checkOperands refuses a launch that would run, by path, a file that is not

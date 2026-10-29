@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -27,6 +28,9 @@ func newAgentCmd() *cobra.Command {
 		newAgentStateCmd(),
 		newAgentHeartbeatCmd(),
 		newAgentWorkCmd(),
+		newAgentPermissionCmd("allow"),
+		newAgentPermissionCmd("deny"),
+		newAgentPermissionsCmd(),
 	)
 	return cmd
 }
@@ -150,13 +154,11 @@ func runGetAgentState(agentID string) error {
 	}
 
 	if app.jsonOutput {
-		data, _ := json.Marshal(map[string]string{
+		return NewOutputWriter(true).WriteJSON(map[string]string{
 			"agent_id": agentID, "state": string(state),
 		})
-		fmt.Println(string(data))
-	} else {
-		fmt.Printf("%s: %s\n", agentID, state)
 	}
+	fmt.Printf("%s: %s\n", agentID, state)
 	return nil
 }
 
@@ -241,18 +243,15 @@ func runAgentWork(agentID string) error {
 
 	if node == nil {
 		if app.jsonOutput {
-			fmt.Println("{\"node\": null}")
-		} else {
-			fmt.Printf("No current work for %s\n", agentID)
+			return NewOutputWriter(true).WriteJSON(map[string]any{"node": nil})
 		}
+		fmt.Printf("No current work for %s\n", agentID)
 		return nil
 	}
 
 	if app.jsonOutput {
-		data, _ := json.MarshalIndent(node, "", "  ")
-		fmt.Println(string(data))
-	} else {
-		fmt.Printf("%s is working on: %s — %s\n", agentID, node.ID, node.Title)
+		return NewOutputWriter(true).WriteJSON(node)
 	}
+	fmt.Printf("%s is working on: %s — %s\n", agentID, node.ID, format.SafeLine(node.Title))
 	return nil
 }

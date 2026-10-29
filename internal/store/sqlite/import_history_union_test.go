@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -286,12 +287,7 @@ func TestImportHistory_ConcurrentMergeImports_EndWithOneCopyOfEachEntry(t *testi
 	wg.Wait()
 	close(errs)
 	for err := range errs {
-		// The index rebuild after the import's transaction is not serialized
-		// (a separate defect: concurrent imports can collide on sequences);
-		// the history union itself must still hold.
-		if err != nil {
-			require.ErrorIs(t, err, sqlite.ErrImportIncomplete)
-		}
+		require.NoError(t, err) // MTIX-95.31.27: no import may fail
 	}
 	ids := historyIDs(t, dst.db)
 	sort.Strings(ids)
@@ -406,8 +402,8 @@ func TestImportHistory_InFileEventKeyCollision_OrderIndependent(t *testing.T) {
 func TestImportReconcile_AppliedButIncomplete_ReportIsMarkedApplied(t *testing.T) {
 	file, _ := unionFile(t)
 	dst, _ := unionDest(t)
-	_, err := dst.db.Exec(`CREATE TRIGGER test_fail_sequence_rebuild BEFORE INSERT ON sequences
-		BEGIN SELECT RAISE(ABORT, 'test: sequence rebuild fails'); END`)
+	_, err := dst.db.Exec(`CREATE TRIGGER test_fail_fts_rebuild BEFORE DELETE ON nodes_fts_data
+		BEGIN SELECT RAISE(ABORT, 'test: fts rebuild fails'); END`)
 	require.NoError(t, err)
 	report, res, err := dst.s.ImportReconcile(context.Background(), file, sqlite.ImportReconcileOptions{
 		Mode: sqlite.ImportModeMerge, Force: true, Confirm: true})
@@ -416,4 +412,249 @@ func TestImportReconcile_AppliedButIncomplete_ReportIsMarkedApplied(t *testing.T
 	assert.True(t, report.Applied)
 	assert.Equal(t, len(file.Nodes), report.Idempotent, "every node was an exact no-op, as on a complete import")
 	assert.Equal(t, res.WorkflowResolved, report.WorkflowConflicts)
+}
+
+// A change entry at or before the cutoff of the task's newest local
+// retention_drop marker is a trimmed entry coming back: it is skipped, not
+// added. Later entries and markers union normally.
+func TestImportHistory_EntriesAtOrBeforeTheLocalCutoff_AreSkippedNotResurrected(t *testing.T) {
+	const cutoff = "2026-03-14T12:00:05.000000000Z"
+	at := func(sec int) string { return fmt.Sprintf("2026-03-14T12:00:%02d.000000000Z", sec) }
+	for _, mode := range bothModes {
+		t.Run(string(mode), func(t *testing.T) {
+			base, uid := unionFile(t)
+			mk := func(id string, sec int) map[string]any {
+				e := entry(id, uid, "status")
+				e["ts"] = at(sec)
+				return e
+			}
+			marker := entry("01U0000000000000000000S900", uid, "retention")
+			marker["kind"], marker["origin"], marker["old"], marker["new"], marker["ts"] = "retention_drop", "system", at(30), "2", at(31)
+			file := editFile(t, base, func(m map[string]any) {
+				node0(m)["history"] = []any{mk("01U0000000000000000000S001", 4), mk("01U0000000000000000000S002", 5),
+					mk("01U0000000000000000000S003", 6), marker}
+			})
+			dst, _ := unionDest(t)
+			localMarker(t, dst, "01U0000000000000000000S800", uid, at(20), cutoff)
+			res := importMode(t, dst.s, file, mode)
+			assert.Equal(t, []string{"01U0000000000000000000S003", "01U0000000000000000000S800", "01U0000000000000000000S900"}, historyIDs(t, dst.db))
+			assert.Equal(t, 2, res.HistorySkipped, "the entries at and before the cutoff")
+			assert.Equal(t, 2, res.HistoryAdded, "the later entry and the file's marker")
+		})
+	}
+}
+
+// localMarker records a trim as this store does: a display marker in the
+// history and the store-local cutoff that alone drives the union's skip rule.
+func localMarker(t *testing.T, f *historyFixture, id, uid, ts, cutoff string) {
+	t.Helper()
+	// A cutoff is never later than the clock, so the store clock runs past the
+	// fixture's cutoffs (all in the minute 2026-03-14T12:00).
+	f.s.SetClock(func() time.Time { return time.Date(2026, 3, 14, 13, 0, 0, 0, time.UTC) })
+	_, err := f.db.Exec(`INSERT INTO task_history (entry_id, task_uid, ts, actor, origin, kind, field, old_value, new_value)
+		VALUES (?, ?, ?, 'a', 'system', 'retention_drop', 'retention', ?, '3')`, id, uid, ts, cutoff)
+	require.NoError(t, err)
+	_, err = f.db.Exec(`INSERT INTO history_retention_cutoff (task_uid, cutoff_ts, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT (task_uid) DO UPDATE SET cutoff_ts = MAX(cutoff_ts, excluded.cutoff_ts)`, uid, cutoff, ts)
+	require.NoError(t, err)
+}
+
+func peerMarker(id, uid, ts, cutoff string) map[string]any {
+	m := entry(id, uid, "retention")
+	m["kind"], m["origin"], m["ts"], m["old"], m["new"] = "retention_drop", "system", ts, cutoff, "3"
+	return m
+}
+
+func tsAt(sec int) string { return fmt.Sprintf("2026-03-14T12:00:%02d.000000000Z", sec) }
+
+// A marker received from a peer is a history row like any other and never a
+// cutoff: importing a peer's marker and then another file's untrimmed entry
+// gives the same store as the other order (the grow-only union converges).
+func TestImportHistory_PeerMarker_NeverActsAsCutoff_InAnyImportOrder(t *testing.T) {
+	for _, mode := range bothModes {
+		base, uid := unionFile(t)
+		fileA := editFile(t, base, func(m map[string]any) {
+			node0(m)["history"] = []any{peerMarker("01U0000000000000000000V900", uid, tsAt(40), tsAt(30))}
+		})
+		z := entry("01U0000000000000000000V001", uid, "status")
+		z["ts"] = tsAt(10)
+		fileB := editFile(t, base, func(m map[string]any) { node0(m)["history"] = []any{z} })
+		var want []string
+		for i, order := range [][]*sqlite.ExportData{{fileA, fileB}, {fileB, fileA}} {
+			dst, _ := unionDest(t)
+			for _, f := range order {
+				importMode(t, dst.s, f, mode)
+			}
+			got := historyIDs(t, dst.db)
+			if i == 0 {
+				want = got
+			}
+			assert.Equal(t, want, got, "%s: the import order changes nothing", mode)
+			assert.Equal(t, []string{"01U0000000000000000000V001", "01U0000000000000000000V900"}, got)
+		}
+	}
+}
+
+// The newest cutoff among the store's own markers governs, and a marker
+// arriving in a file is added even when it is at or before that cutoff.
+func TestImportHistory_NewestLocalCutoffGoverns_AndIncomingMarkersAreNotSkipped(t *testing.T) {
+	for _, mode := range bothModes {
+		base, uid := unionFile(t)
+		dst, _ := unionDest(t)
+		localMarker(t, dst, "01U0000000000000000000W800", uid, tsAt(50), tsAt(10))
+		localMarker(t, dst, "01U0000000000000000000W801", uid, tsAt(51), tsAt(20))
+		mid := entry("01U0000000000000000000W001", uid, "status")
+		mid["ts"] = tsAt(15) // after the older cutoff, before the newer: skipped only if MAX governs
+		late := entry("01U0000000000000000000W002", uid, "status")
+		late["ts"] = tsAt(25)
+		old := peerMarker("01U0000000000000000000W900", uid, tsAt(5), tsAt(4)) // at or before the cutoff
+		file := editFile(t, base, func(m map[string]any) { node0(m)["history"] = []any{mid, late, old} })
+		res := importMode(t, dst.s, file, mode)
+		assert.Equal(t, []string{"01U0000000000000000000W002", "01U0000000000000000000W800", "01U0000000000000000000W801", "01U0000000000000000000W900"},
+			historyIDs(t, dst.db), string(mode))
+		assert.Equal(t, 1, res.HistorySkipped)
+	}
+}
+
+// A store that trimmed itself still refuses the entries it dropped.
+func TestImportHistory_SelfTrimmedStore_SkipsEntriesAtOrBeforeItsOwnCutoff(t *testing.T) {
+	f := retentionFixture(t, 2)
+	f.bump(t, 3) // 3 > 2: trims to 1 and writes the store's own marker
+	var cutoff string
+	require.NoError(t, f.db.QueryRow(`SELECT old_value FROM task_history WHERE kind = 'retention_drop'`).Scan(&cutoff))
+	f.s.SetHistoryExportSource(func() bool { return true })
+	data, err := f.s.Export(context.Background(), "PROJ", "0.6.0")
+	require.NoError(t, err)
+	uid := f.rootUID(t)
+	back := entry("01U0000000000000000000X001", uid, "status")
+	back["ts"] = cutoff
+	fresh := entry("01U0000000000000000000X002", uid, "status")
+	fresh["ts"] = "2026-10-13T09:00:30.000000000Z"
+	file := editFile(t, data, func(m map[string]any) {
+		for _, n := range m["nodes"].([]any) {
+			if n.(map[string]any)["uid"] == uid {
+				n.(map[string]any)["history"] = []any{back, fresh}
+			}
+		}
+	})
+	res, err := f.s.Import(context.Background(), file, sqlite.ImportModeMerge, true)
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.HistorySkipped)
+	var n int
+	require.NoError(t, f.db.QueryRow(`SELECT COUNT(*) FROM task_history WHERE entry_id IN ('01U0000000000000000000X001')`).Scan(&n))
+	assert.Zero(t, n)
+	require.NoError(t, f.db.QueryRow(`SELECT COUNT(*) FROM task_history WHERE entry_id IN ('01U0000000000000000000X002')`).Scan(&n))
+	assert.Equal(t, 1, n)
+}
+
+// A marker with a count or cutoff that cannot be read is skipped and counted
+// with a warning, never stored and never used.
+func TestImportHistory_MalformedRetentionMarkers_AreSkippedWithAWarning(t *testing.T) {
+	base, uid := unionFile(t)
+	cases := map[string]func(m map[string]any){
+		"far-future cutoff": func(m map[string]any) { m["old"] = "9999" },
+		"loose cutoff":      func(m map[string]any) { m["old"] = "2026-03-14T12:00:30Z" },
+		"count not number":  func(m map[string]any) { m["new"] = "many" },
+		"count zero":        func(m map[string]any) { m["new"] = "0" },
+		"wrong field":       func(m map[string]any) { m["field"] = "status" },
+		"no cutoff":         func(m map[string]any) { delete(m, "old") },
+	}
+	for name, mutate := range cases {
+		for _, mode := range bothModes {
+			t.Run(name+"/"+string(mode), func(t *testing.T) {
+				mk := peerMarker("01U0000000000000000000Y900", uid, tsAt(40), tsAt(30))
+				mutate(mk)
+				file := editFile(t, base, func(m map[string]any) { node0(m)["history"] = []any{mk} })
+				dst, _ := unionDest(t)
+				res := importMode(t, dst.s, file, mode)
+				assert.Empty(t, historyIDs(t, dst.db))
+				assert.Equal(t, 1, res.HistorySkipped)
+				assert.Contains(t, strings.Join(res.Warnings, "\n"), "retention marker")
+			})
+		}
+	}
+}
+
+// A marker in a file is plain history, whatever its event id claims: a forged
+// marker naming this store's identity drops nothing.
+func TestImportHistory_ForgedMarkerClaimingThisStoresIdentity_DropsNothing(t *testing.T) {
+	for _, mode := range bothModes {
+		base, uid := unionFile(t)
+		dst, _ := unionDest(t)
+		inst, err := dst.s.StoreInstanceID(context.Background())
+		require.NoError(t, err)
+		forged := peerMarker("01U0000000000000000000F900", uid, tsAt(40), tsAt(30))
+		forged["event_id"] = "retention:" + inst + ":01U0000000000000000000F900"
+		a := editFile(t, base, func(m map[string]any) { node0(m)["history"] = []any{forged} })
+		z := entry("01U0000000000000000000F001", uid, "status")
+		z["ts"] = tsAt(10)
+		b := editFile(t, base, func(m map[string]any) { node0(m)["history"] = []any{z} })
+		importMode(t, dst.s, a, mode)
+		importMode(t, dst.s, b, mode)
+		assert.Equal(t, []string{"01U0000000000000000000F001", "01U0000000000000000000F900"}, historyIDs(t, dst.db), string(mode))
+	}
+}
+
+// A board created before stores carried an instance id trims and refuses
+// resurrection like any other.
+func TestRetention_LegacyStoreWithoutInstanceID_StillRefusesTrimmedEntriesBack(t *testing.T) {
+	f := retentionFixture(t, 2)
+	_, err := f.db.Exec(`DELETE FROM meta WHERE key = 'store_instance_id'`)
+	require.NoError(t, err)
+	f.bump(t, 3)
+	var cutoff string
+	require.NoError(t, f.db.QueryRow(`SELECT old_value FROM task_history WHERE kind = 'retention_drop'`).Scan(&cutoff))
+	f.s.SetHistoryExportSource(func() bool { return true })
+	data, err := f.s.Export(context.Background(), "PROJ", "0.6.0")
+	require.NoError(t, err)
+	uid := f.rootUID(t)
+	back := entry("01U0000000000000000000L001", uid, "status")
+	back["ts"] = cutoff
+	file := editFile(t, data, func(m map[string]any) {
+		for _, n := range m["nodes"].([]any) {
+			if n.(map[string]any)["uid"] == uid {
+				n.(map[string]any)["history"] = []any{back}
+			}
+		}
+	})
+	res, err := f.s.Import(context.Background(), file, sqlite.ImportModeMerge, true)
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.HistorySkipped)
+	var n int
+	require.NoError(t, f.db.QueryRow(`SELECT COUNT(*) FROM task_history WHERE entry_id = '01U0000000000000000000L001'`).Scan(&n))
+	assert.Zero(t, n)
+}
+
+// Syncing the same files again does not grow the markers: a marker the store
+// already holds is deduplicated by entry id, and only this store's own trim
+// writes a new one.
+func TestImportHistory_ReimportedMarkers_DoNotGrowWithoutAnotherTrim(t *testing.T) {
+	for _, mode := range bothModes {
+		base, uid := unionFile(t)
+		dst, _ := unionDest(t)
+		file := editFile(t, base, func(m map[string]any) {
+			node0(m)["history"] = []any{peerMarker("01U0000000000000000000G900", uid, tsAt(40), tsAt(30))}
+		})
+		for i := 0; i < 4; i++ {
+			importMode(t, dst.s, file, mode)
+		}
+		var n int
+		require.NoError(t, dst.db.QueryRow(`SELECT COUNT(*) FROM task_history WHERE kind = 'retention_drop'`).Scan(&n))
+		assert.Equal(t, 1, n, string(mode))
+	}
+}
+
+// The cutoff table is local to the copy of the board: no export carries it.
+func TestExport_NeverCarriesTheStoreLocalCutoffs(t *testing.T) {
+	f := retentionFixture(t, 2)
+	f.bump(t, 3)
+	var n int
+	require.NoError(t, f.db.QueryRow(`SELECT COUNT(*) FROM history_retention_cutoff`).Scan(&n))
+	require.Equal(t, 1, n, "the trim recorded its cutoff")
+	f.s.SetHistoryExportSource(func() bool { return true })
+	data, err := f.s.Export(context.Background(), "PROJ", "0.6.0")
+	require.NoError(t, err)
+	raw := string(marshalExport(t, data))
+	assert.NotContains(t, raw, "cutoff")
+	assert.NotContains(t, raw, "history_retention_cutoff")
 }

@@ -71,7 +71,7 @@ export function ProjectSelector() {
   return (
     <div ref={containerRef} className="relative mr-auto" data-testid="project-selector">
       <button
-        className="flex items-center gap-1 text-xs px-2 py-1 rounded cursor-pointer"
+        className="flex items-center gap-1 text-xs px-2 py-1 rounded-sm cursor-pointer"
         style={{
           color: "var(--color-text-secondary)",
           border: "1px solid var(--color-border)",
@@ -91,7 +91,7 @@ export function ProjectSelector() {
 
       {open && (
         <div
-          className="absolute left-0 mt-1 min-w-[180px] z-50 py-1 rounded"
+          className="absolute left-0 mt-1 min-w-[180px] z-50 py-1 rounded-sm"
           style={{
             backgroundColor: "var(--color-surface-overlay)",
             border: "1px solid var(--color-border)",

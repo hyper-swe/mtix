@@ -7,7 +7,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -70,6 +69,8 @@ func registerCurrentSession(ctx context.Context, agentID string, opts sessionOpt
 	if err != nil {
 		return nil, fmt.Errorf("register session for %s: %w", agentID, err)
 	}
+	// A newer CLI that meets an older dispatcher restarts it or says why not (ADR-007 §6.4).
+	productionDispatcherRestart(ctx, os.Stderr)
 	r := res.Registration
 	return &sessionReport{Outcome: res.Outcome, Harness: r.Harness, Origin: r.Origin, Epoch: r.Epoch, NoticeSent: res.NoticeSent}, nil
 }
@@ -163,10 +164,5 @@ func dash(s string) string {
 }
 
 func printJSON(v any) error {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Errorf("encode output: %w", err)
-	}
-	fmt.Println(string(data))
-	return nil
+	return NewOutputWriter(true).WriteJSON(v)
 }

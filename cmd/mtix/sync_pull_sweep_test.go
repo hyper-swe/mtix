@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
@@ -388,7 +389,7 @@ func TestSweepLateEvents_ListingInterrupted_ResumesListingThenApplies(t *testing
 				{CreatedAt: events[0].CreatedAt, EventID: ids[0]},
 				{CreatedAt: events[1].CreatedAt, EventID: ids[1]},
 			}, resumed.calls, "the listing resumes after the saved position, not from the start")
-			require.Contains(t, stderr.String(), tt.wantResume+ids[0])
+			require.Contains(t, stderr.String(), tt.wantResume+format.EventID(ids[0]))
 			require.Equal(t, "2026-09-24T10:00:00.123456Z", lastSweep(t),
 				"the next window is measured from the hub time before the FIRST page")
 			requireNoFullSweepProgress(t)
@@ -675,12 +676,12 @@ func TestMissingLocalEventIDs_HeldInEitherTable_NotMissing(t *testing.T) {
 	require.Zero(t, countTestRows(t, `SELECT COUNT(*) FROM applied_events WHERE event_id = ?`, own[0].EventID),
 		"precondition: own event held in sync_events only")
 
-	got, err := missingLocalEventIDs(ctx, app.store, []string{"zz-not-held", events[2].EventID,
+	got, err := app.store.MissingLocalEventIDs(ctx, []string{"zz-not-held", events[2].EventID,
 		own[0].EventID, events[1].EventID, events[0].EventID, "aa-not-held"})
 
 	require.NoError(t, err)
 	require.Equal(t, []string{"zz-not-held", events[2].EventID, "aa-not-held"}, got)
-	none, err := missingLocalEventIDs(ctx, app.store, nil)
+	none, err := app.store.MissingLocalEventIDs(ctx, nil)
 	require.NoError(t, err)
 	require.Empty(t, none)
 }

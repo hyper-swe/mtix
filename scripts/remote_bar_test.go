@@ -478,14 +478,26 @@ for a in "$@"; do
 done
 emit() { if [ -n "$jqexpr" ]; then printf '%s' "$1" | jq -r "$jqexpr"; else printf '%s\n' "$1"; fi; }
 case "$1 $2" in
-"workflow run") exit 0 ;;
+"workflow run")
+  [ -n "$STUB_FAIL_DISPATCH" ] && { echo "HTTP 502 bad gateway" >&2; exit 1; }
+  case "$*" in *base_commit=*) [ -n "$STUB_REJECT_BASE" ] && { echo "Unexpected inputs provided: base_commit" >&2; exit 1; } ;; esac
+  exit 0 ;;
 "run list")
+  case "$*" in *"--status success"*) emit "${STUB_REUSE_RUNS:-[]}"; exit 0 ;; esac
   n=$(cat "$D/lists" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$D/lists"
   if [ -n "$STUB_LIST_EMPTY_FIRST" ] && [ "$n" -eq 1 ]; then emit '[]'; exit 0; fi
   emit "[{\"databaseId\":1111,\"displayTitle\":\"remote-bar ci-scratch/other\"},{\"databaseId\":4242,\"displayTitle\":\"remote-bar $(cat "$D/ref")\"}]" ;;
 "run cancel") exit 0 ;;
+"api repos/hyper-swe/mtix/contents/.github/workflows/remote-bar.yml"*)
+  case "$*" in
+  *"ref=main"*) [ -n "$STUB_MAIN_BLOB" ] && emit "{\"sha\":\"$STUB_MAIN_BLOB\"}" ;;
+  *) [ -n "$STUB_RUN_BLOB" ] && emit "{\"sha\":\"$STUB_RUN_BLOB\"}" ;;
+  esac ;;
 "run view")
   case "$*" in
+  *"--json headBranch"*)
+    [ -n "$STUB_FAIL_SOURCE" ] && exit 1
+    emit "{\"headBranch\":\"${STUB_WORKFLOW_REF-main}\",\"headSha\":\"${STUB_WORKFLOW_SHA-1111111111111111111111111111111111111111}\"}" ;;
   *"--json status"*)
     st="${STUB_STATE:-completed success}"; status="${st%% *}"; concl="${st#* }"; [ "$concl" = "$st" ] && concl=""
     if [ -n "$concl" ]; then emit "{\"status\":\"$status\",\"conclusion\":\"$concl\"}"; else emit "{\"status\":\"$status\",\"conclusion\":null}"; fi ;;
@@ -531,6 +543,8 @@ func TestRemoteBar_Run_MapsRunOutcomesToExitCodesAndDeletesBranch(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			out, code, bare, logPath := runWithStub(t, tc.env...)
 			require.Equal(t, tc.want, code, out)
+			require.Contains(t, out, " workflow_ref=main workflow_sha=")
+			require.Contains(t, out, "workflow_sha="+strings.Repeat("1", 40))
 			require.Contains(t, out, tc.extra)
 			require.Empty(t, git(t, bare, "for-each-ref", "refs/heads/ci-scratch"), "scratch branch must be deleted")
 			logged, err := os.ReadFile(logPath) //nolint:gosec // test-owned path
@@ -549,6 +563,8 @@ func TestRemoteBar_Run_MapsRunOutcomesToExitCodesAndDeletesBranch(t *testing.T) 
 func TestRemoteBar_Run_TimeoutCancelsTheRunAndReportsInfraFailure(t *testing.T) {
 	out, code, bare, logPath := runWithStub(t, "STUB_STATE=in_progress ", "RB_TIMEOUT_SECS=1")
 	require.Equal(t, 2, code, out)
+	require.Contains(t, out, " workflow_ref=main workflow_sha=")
+	require.Contains(t, out, "workflow_sha="+strings.Repeat("1", 40))
 	require.Empty(t, git(t, bare, "for-each-ref", "refs/heads/ci-scratch"))
 	logged, err := os.ReadFile(logPath) //nolint:gosec // test-owned path
 	require.NoError(t, err)
@@ -669,7 +685,9 @@ func TestRemoteBarWorkflow_GoFlags_NeverSetInAnyEnvBlock(t *testing.T) {
 }
 
 func TestRemoteBarWorkflow_GoEnvWrite_PrecedesTheBar(t *testing.T) {
-	wf := readWorkflow(t)
+	// MTIX-112.17.27: only the macOS job still runs make test-race and so still
+	// serializes through go env -w; the Linux jobs pass -p explicitly.
+	wf := jobBlock(t, readWorkflow(t), "bar-macos")
 	write := strings.Index(wf, "go env -w GOFLAGS=-p=1")
 	bar := strings.Index(wf, "- name: Run committed bar")
 	require.GreaterOrEqual(t, write, 0, "the -p=1 setting must be written with go env -w")

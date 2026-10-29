@@ -37,6 +37,7 @@ func resolveDBPath(path string) string {
 // It uses separate read and write connection pools per NFR-2.1.
 type Store struct {
 	writeDB         *sql.DB
+	rollbackWriter  RollbackWriterFunc // nil in production; a test seam for the post-commit-failure rollback (MTIX-198)
 	readDB          *sql.DB
 	logger          *slog.Logger
 	vcReported      atomic.Bool // this Store has seen the vector-clock prune notice issued (MTIX-95.16)
@@ -74,6 +75,11 @@ type Store struct {
 	// called once per export, so a changed setting applies to the next export
 	// (the config service re-reads the file for it).
 	historyExport func() bool
+
+	// historyLimit returns the history.max_entries_per_task limit (0 = unset,
+	// nothing is trimmed; MTIX-95.31.19.4). Nil means unset. It is called once
+	// per write that records history.
+	historyLimit func() int
 
 	// writerVersion is the mtix version recorded as the last writer of an
 	// export that carries history.
@@ -184,7 +190,7 @@ func openDBWith(ctx context.Context, path string, isWriter, readOnly bool, rt op
 		// under preflightWrite's refusal, covering direct writeDB.Exec paths too.
 		dsn = path + "?_pragma=query_only(1)"
 	case isWriter:
-		dsn = path + "?_txlock=immediate"
+		dsn = path + "?_txlock=immediate" + writerConnPragmas
 	}
 
 	db, err := sql.Open("sqlite", dsn)

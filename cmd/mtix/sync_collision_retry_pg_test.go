@@ -48,7 +48,7 @@ func TestCLI_CollisionsResolve_LocalFailureRetry(t *testing.T) {
 	require.Len(t, pending, 1)
 	require.Equal(t, id, pending[0].CollisionID)
 	var listed bytes.Buffer
-	require.NoError(t, runSyncCollisionsList(ctx, &listed, &bytes.Buffer{}, nil, transport.Options{InsecureTLS: true}, ""))
+	require.NoError(t, runSyncCollisionsList(ctx, &listed, &bytes.Buffer{}, nil, transport.Options{InsecureTLS: true}, "TEST"))
 	require.Contains(t, listed.String(), "waiting for the local move")
 	require.Contains(t, listed.String(), "mtix sync collisions resolve "+strconv.FormatInt(id, 10)+" --winner incoming")
 	winner, path := hubCollisionDecision(t, dsn, id)

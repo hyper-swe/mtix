@@ -18,9 +18,10 @@ import (
 // task holds the uid.
 func (s *Store) LiveNodeIDByUID(ctx context.Context, uid string) (string, error) {
 	var id string
-	// uid is unique among nodes (idx_nodes_uid); a soft-deleted task is not live.
+	// uid is unique among nodes (idx_nodes_uid, a partial index that needs
+	// uid <> '' in the query to be used); a soft-deleted task is not live.
 	err := s.readDB.QueryRowContext(ctx,
-		`SELECT id FROM nodes WHERE uid = ? AND deleted_at IS NULL`, uid).Scan(&id)
+		`SELECT id FROM nodes WHERE uid = ? AND uid <> '' AND deleted_at IS NULL`, uid).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("task with uid: %w", model.ErrNotFound)
 	}

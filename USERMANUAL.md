@@ -336,7 +336,7 @@ Each delete records which delete removed each node it soft-deletes, and `mtix un
 
 That record also carries the node's deletion time and author, and mtix uses it only while they still match the node. Earlier mtix versions did not record which delete removed each descendant. An earlier 0.5.x binary that opens the same database restores without clearing records and deletes without writing them. A delete that arrives through sync or an import carries no record either. When you undelete a node without a usable record, mtix restores the descendants without a usable record that were deleted in the same second by the same author. That can include a descendant that was deleted separately in that second.
 
-After `mtix rerun --strategy delete`, undelete restores one node at a time, because rerun deletes each descendant separately. To bring the subtree back, undelete each node, starting from the top.
+After `mtix rerun --strategy delete`, undeleting a direct child restores its subtree removed by that rerun. Previously deleted descendants stay deleted.
 
 Undelete is local: it emits no sync event. Other replicas keep the node deleted.
 
@@ -627,7 +627,7 @@ Available strategies:
 - `delete` — soft-delete descendants for fresh start
 - `review` — mark for manual review
 
-`--strategy delete` invalidates each descendant and then deletes it separately, so `mtix undelete` restores one node at a time: undeleting a child leaves its own children deleted. To bring the subtree back, undelete each node, starting from the top, then use `mtix restore` to return each one from `invalidated` to its previous status.
+`--strategy delete` invalidates and deletes each descendant separately, emitting one sync delete event per node. Each direct child and its descendants share a recovery group: `mtix undelete CHILD_ID` restores that child and the descendants removed by the rerun. Other direct child subtrees and previously deleted descendants stay deleted. Restored nodes remain `invalidated`; use `mtix restore` on each node to return it to its previous status. This recovery is local to the machine that ran the rerun: other machines receive only the per-node delete events, with no recovery record, so a copy elsewhere has to restore its nodes one at a time; undelete does not emit sync events.
 
 ### Restore (After Invalidation)
 

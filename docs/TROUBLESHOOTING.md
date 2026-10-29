@@ -162,7 +162,7 @@ A contended local sync lock makes ordinary `mtix sync pull` fail. With `MTIX_SYN
 
 **Solution:** Verify the ID with `mtix show <id>`. If soft-deleted, use `mtix undelete <id>`.
 
-`mtix undelete` restores only what the same delete removed: descendants deleted separately stay deleted. After `mtix rerun --strategy delete`, undelete each node, starting from the top.
+`mtix undelete` restores only what the same delete removed: descendants deleted separately stay deleted. After `mtix rerun --strategy delete`, undelete each direct child of the rerun task: one undelete of a child restores that child and the descendants the rerun deleted beneath it. Other direct children keep their own recovery, and restored nodes stay `invalidated` until you run `mtix restore`.
 
 ### ErrInvalidTransition
 

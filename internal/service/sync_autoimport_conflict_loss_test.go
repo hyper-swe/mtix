@@ -167,3 +167,39 @@ func assertClaimSurvivesNothingImported(t *testing.T, f *guardFixture) {
 	_, err = f.store.GetNode(context.Background(), "PROJ-3")
 	assert.ErrorIs(t, err, model.ErrNotFound, "nothing from the file was imported")
 }
+
+// TestAutoImport_ActivitylessLocalPrompt_RefusesLoss covers an unexported
+// update that leaves no activity; the teammate's later timestamp proves nothing.
+func TestAutoImport_ActivitylessLocalPrompt_RefusesLoss(t *testing.T) {
+	ctx := context.Background()
+	f := newProjectFixture(t)
+	_, err := f.store.WriteDB().ExecContext(ctx, "UPDATE meta SET value = ? WHERE key = ?", "0123456789abcdef", "meta.sync.machine_hash")
+	require.NoError(t, err)
+	require.NoError(t, f.store.CreateNode(ctx, &model.Node{
+		ID: "TEST-1", Project: "TEST", Seq: 1, Title: "Activity-less prompt", Status: model.StatusOpen,
+		Priority: model.PriorityMedium, Weight: 1, NodeType: model.NodeTypeEpic,
+		ContentHash: model.ComputeContentHash("Activity-less prompt", "", "", "", nil),
+		CreatedAt:   f.now, UpdatedAt: f.now,
+	}))
+	_, err = f.store.WriteDB().ExecContext(ctx, "UPDATE nodes SET activity = ? WHERE id = ?", "[]", "TEST-1")
+	require.NoError(t, err)
+	require.NoError(t, f.svc.AutoExport(ctx, f.mtixDir))
+	board := f.teammateBoard(t, func(d *sqlite.ExportData) {
+		n := &d.Nodes[nodeIndex(t, d, "TEST-1")]
+		n.UpdatedAt = "2099-01-01T00:00:00Z"
+	})
+	prompt := "Local instructions never exported"
+	require.NoError(t, f.store.UpdateNode(ctx, "TEST-1", &store.NodeUpdate{Prompt: &prompt}))
+	entries, err := f.store.GetActivity(ctx, "TEST-1", 0, 0)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+	before := f.storeSnapshot(t)
+	hash := f.read(t, "data/sync.sha256")
+	f.pull(t, board)
+	require.ErrorIs(t, f.svc.AutoImport(ctx, f.mtixDir), service.ErrAutoImportRefused)
+	assert.Contains(t, f.notices.String(), "TEST-1: field prompt")
+	assert.Equal(t, before, f.storeSnapshot(t))
+	assert.Equal(t, hash, f.read(t, "data/sync.sha256"))
+	assert.Equal(t, board, f.read(t, "tasks.json"))
+	assert.Empty(t, f.preSyncBackups(t))
+}

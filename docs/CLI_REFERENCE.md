@@ -495,8 +495,7 @@ Run the origin-independent dispatch loop. Local work (pending-export
 recovery, relay, hook dispatch) runs every interval (default 5s); the hub is
 contacted only when sync.hub_contact says so: activity (default: only for
 30 minutes after real activity), interval:<duration>, or manual (never). While
-sync.listen is live and a listener holds a lease (a later release; no listener
-exists in this build, so the hold is inert), the hub is also contacted every
+sync.listen is live and a waiter (mtix inbox --wait) holds a lease, the hub is also contacted every
 sync.listen_interval until sync.listen_max_idle after the last activity. Each
 contact pulls new events from the BYO Postgres hub (when one is configured) and
 fires this host's hooks for every journaled event not yet dispatched
@@ -522,6 +521,7 @@ Push and dispatch lock files and their data directory must be real and user-owne
 | `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--install` |  | Print a systemd unit / launchd plist stub (deprecated: use 'mtix daemon install') | false |
 | `--interval` |  | Pull-then-dispatch interval in seconds | 5 |
+| `--listen` |  | Listener mode: pull once, serve while a waiter lease is live, exit when the last lease ends (started by mtix inbox --wait) | false |
 
 ### Subcommands
 
